@@ -43,18 +43,16 @@ GenericCommTask<SocketType, Base>::GenericCommTask(
 template<rest::SocketType SocketType, typename Base>
 void GenericCommTask<SocketType, Base>::Stop() {
   _stopped.store(true, std::memory_order_release);
-  if (!_protocol) {
-    return;
+  if (_protocol) {
+    asio_ns::dispatch(_protocol->context.io_context,
+                      [self = this->shared_from_this()] { self->Close(); });
+  } else {
+    this->_server.unregisterTask(this);
   }
-  asio_ns::dispatch(
-    _protocol->context.io_context, [self = this->shared_from_this()] {
-      static_cast<GenericCommTask<SocketType, Base>&>(*self).Close(
-        asio_ns::error_code());
-    });
 }
 
 template<rest::SocketType SocketType, typename Base>
-void GenericCommTask<SocketType, Base>::Close(const asio_ns::error_code& ec) {
+void GenericCommTask<SocketType, Base>::Close(asio_ns::error_code ec) {
   _stopped.store(true, std::memory_order_release);
   if (ec && (ec != asio_ns::error::misc_errors::eof &&
              ec != asio_ns::ssl::error::stream_truncated)) {
@@ -67,7 +65,7 @@ void GenericCommTask<SocketType, Base>::Close(const asio_ns::error_code& ec) {
   if (_protocol) {
     _protocol->timer.cancel();
     _protocol->shutdown(
-      [this, self(this->shared_from_this())](asio_ns::error_code ec) {
+      [self = this->shared_from_this(), this](asio_ns::error_code ec) {
         if (ec) {
           SDB_INFO("xxxxx", Logger::REQUESTS,
                    "error shutting down asio socket: '", ec.message(), "'");
@@ -75,7 +73,7 @@ void GenericCommTask<SocketType, Base>::Close(const asio_ns::error_code& ec) {
         this->_server.unregisterTask(this);
       });
   } else {
-    this->_server.unregisterTask(this);  // will delete us
+    this->_server.unregisterTask(this);
   }
 }
 

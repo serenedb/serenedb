@@ -161,8 +161,6 @@ PgSQLCommTaskBase::PgSQLCommTaskBase(rest::GeneralServer& server,
                                      ConnectionInfo info)
   : rest::CommTask(server, std::move(info)),
     _feature{server.server().getFeature<PostgresFeature>()},
-    _queue{ResourceUsageAllocator<MonitoredString, ResourceMonitor>{
-      _feature.CommTasksMemory()}},
     _send{64, 4096, 4096,
           [this](message::SequenceView data) { this->SendAsync(data); }} {}
 
@@ -274,11 +272,11 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
 
     if (auth.auth.auth_method == hba::UserAuth::Trust) {
       _database = std::move(database);
-      _session_ctx.auth_method = auth.auth.auth_method;
-      _session_ctx.session_user = auth.user;
-      _session_ctx.user = _session_ctx.user;
-      _session_ctx.database = auth.database;
-      _session_ctx.system_user = UserName();
+      // _session_ctx.auth_method = auth.auth.auth_method;
+      // _session_ctx.session_user = auth.user;
+      // _session_ctx.user = _session_ctx.user;
+      // _session_ctx.database = auth.database;
+      // _session_ctx.system_user = UserName();
       _state = State::Idle;
       _send.Write(ToBuffer(kAuthOk), false);
       _key = _feature.RegisterTask(*this);
@@ -902,7 +900,7 @@ void PgSQLCommTaskBase::ExecutePortal(SqlPortal& portal, size_t limit) {
       user_task->WakeupHandler();
     });
   if (RegisterCursor(std::move(cursor), portal)) {
-    SDB_ASSERT(&portal == _active_portal);
+    SDB_ASSERT(&portal == _current_portal);
     // Throws if soft shutdown is ongoing!
     _pop_packet = true;
     auto state = ProcessState::DonePacket;
@@ -919,8 +917,8 @@ void PgSQLCommTaskBase::NextRootPortal() {
     // We don't need to hold cancellation mutex here
     // as active portal is only changed during packet execution.
     // But here we are just re-startin next root in simple query.
-    SDB_ASSERT(_active_portal);
-    ExecutePortal(*_active_portal, 0);
+    SDB_ASSERT(_current_portal);
+    ExecutePortal(*_current_portal, 0);
   } catch (const SqlException& e) {
     SendNotice(PQ_MSG_ERROR_RESPONSE, e.error(), _current_query);
   } catch (const std::exception& e) {
@@ -995,8 +993,8 @@ void PgSQLCommTaskBase::WakeupHandler() noexcept {
 }
 
 void PgSQLCommTaskBase::SendBatch(const velox::RowVectorPtr& batch) {
-  SDB_ASSERT(_active_portal);
-  auto& portal = *_active_portal;
+  SDB_ASSERT(_current_portal);
+  auto& portal = *_current_portal;
   const velox::vector_size_t batch_rows = batch ? batch->size() : 0;
   if (batch_rows == 0) {
     return;
@@ -1036,8 +1034,8 @@ void PgSQLCommTaskBase::SendBatch(const velox::RowVectorPtr& batch) {
 }
 
 auto PgSQLCommTaskBase::ProcessQueryResult() -> ProcessState {
-  SDB_ASSERT(_active_portal);
-  auto& portal = *_active_portal;
+  SDB_ASSERT(_current_portal);
+  auto& portal = *_current_portal;
   SDB_ASSERT(portal.stmt);
   SDB_ASSERT(portal.stmt->query);
   SDB_ASSERT(portal.cursor);
@@ -1140,22 +1138,22 @@ void PgSQLCommTaskBase::ParseClientParameters(std::string_view data) {
 }
 
 void PgSQLCommTaskBase::CancelPacket() {
-  std::scoped_lock lock(_cancellation_mutex);
+  std::lock_guard lock{_queue_mutex};
   _cancel_packet.store(true, std::memory_order_relaxed);
-  if (_active_portal && _active_portal->cursor) {
-    _active_portal->cursor->RequestCancel();
+  if (_current_portal && _current_portal->cursor) {
+    _current_portal->cursor->RequestCancel();
   }
 }
 
 void PgSQLCommTaskBase::ReleaseCursor(SqlPortal& portal) {
-  std::lock_guard lock{_cancellation_mutex};
+  std::lock_guard lock{_queue_mutex};
   portal.cursor.reset();
 }
 
 bool PgSQLCommTaskBase::RegisterCursor(std::unique_ptr<query::Cursor> cursor,
                                        SqlPortal& portal) {
   SDB_ASSERT(cursor);
-  std::lock_guard lock{_cancellation_mutex};
+  std::lock_guard lock{_queue_mutex};
   if (IsCancelled()) {
     // No need to remove wakeup handler.
     // Should be none set yet.
@@ -1163,7 +1161,7 @@ bool PgSQLCommTaskBase::RegisterCursor(std::unique_ptr<query::Cursor> cursor,
   }
   SDB_ASSERT(!portal.cursor);
   portal.cursor = std::move(cursor);
-  _active_portal = &portal;
+  _current_portal = &portal;
   return true;
 }
 
@@ -1243,13 +1241,12 @@ void PgSQLCommTaskBase::FinishPacket() noexcept try {
       _current_packet_type == PQ_MSG_SYNC) {
     _send.Write(ToBuffer(kReadyForQuery), true);
   }
+  std::lock_guard lock{_queue_mutex};
   if (_current_packet_type == PQ_MSG_QUERY ||
       _current_packet_type == PQ_MSG_EXECUTE) {
-    std::scoped_lock lock(_cancellation_mutex);
-    _active_portal = nullptr;
+    _current_portal = nullptr;
   }
   _current_packet_type = 0;
-  std::scoped_lock lock(_queue_mutex);
   SDB_ASSERT(!_queue.empty());
   _queue.pop();
   if (Stopped()) {
@@ -1338,10 +1335,8 @@ template<rest::SocketType T>
 PgSQLCommTask<T>::PgSQLCommTask(rest::GeneralServer& server,
                                 ConnectionInfo info,
                                 std::shared_ptr<rest::AsioSocket<T>> so)
-  : GenericCommTask<T, PgSQLCommTaskBase>(server, std::move(info),
-                                          std::move(so)),
-    _packet{ResourceUsageAllocator<MonitoredString, ResourceMonitor>{
-      this->_feature.CommTasksMemory()}} {
+  : GenericCommTask<T, PgSQLCommTaskBase>{server, std::move(info),
+                                          std::move(so)} {
   this->_protocol->socket.lowest_layer().set_option(
     asio_ns::ip::tcp::no_delay{true});
 }
@@ -1359,20 +1354,16 @@ void PgSQLCommTask<T>::Start() {
 template<rest::SocketType T>
 void PgSQLCommTask<T>::SendAsync(message::SequenceView data) {
   SDB_ASSERT(!data.Empty());
-
   SDB_LOG_PGSQL("Sending Packet:", data.Print());
-
-  auto& socket = this->_protocol->socket;
   asio_ns::async_write(
-    socket, data,
+    this->_protocol->socket, data,
     [self = this->shared_from_this()](asio_ns::error_code ec, size_t nwrite) {
+      auto& task = basics::downCast<PgSQLCommTask<T>>(*self);
+      // TODO: Make PGSQL connecton statistics
       // if (!ec) {
-      //  auto& me = static_cast<PgSQLCommTask<T>&>(*self);
-      //  TODO: Make PGSQL connecton statistics
-      //  me.statistics(1UL).ADD_SENT_BYTES(nwrite);
-      //}
-      auto& me = basics::downCast<PgSQLCommTask<T>>(*self);
-      me._send.FlushDone();
+      //   task.statistics(1UL).ADD_SENT_BYTES(nwrite);
+      // }
+      task._send.FlushDone();
     });
 }
 
@@ -1399,7 +1390,7 @@ bool PgSQLCommTask<T>::ReadCallback(asio_ns::error_code ec) {
           SDB_DEBUG("xxxxx", Logger::REQUESTS,
                     "Too long startup packet. Dropping connection ptr",
                     std::bit_cast<size_t>(this));
-          this->Close(ec);
+          this->Close();
           return false;
         }
       } while (SDB_UNLIKELY(data < end));
@@ -1431,9 +1422,6 @@ bool PgSQLCommTask<T>::ReadCallback(asio_ns::error_code ec) {
             }
             return ss_str;
           }());
-          this->_protocol->timer.cancel();
-          // TODO: get rid of this redundant flag
-          this->_reading = false;
           if (this->_state.load() != State::ClientHello &&
               _packet[0] == PQ_MSG_TERMINATE) {
             SDB_DEBUG("xxxxx", Logger::REQUESTS, "Termination request for ",
@@ -1444,19 +1432,14 @@ bool PgSQLCommTask<T>::ReadCallback(asio_ns::error_code ec) {
             return false;
           }
           {
-            std::scoped_lock lock(this->_queue_mutex);
-            this->_queue.emplace(_packet.data(), _pending_len);
+            std::string packet{_packet.data(), _pending_len};
+            std::scoped_lock lock{this->_queue_mutex};
+            this->_queue.emplace(std::move(packet));
             if (this->_queue.size() == 1 && !this->Stopped()) {
               this->Reschedule();
             }
           }
-          if (_packet.size() > _pending_len) {
-            memmove(_packet.data(), _packet.data() + _pending_len,
-                    _packet.size() - _pending_len);
-            _packet.resize(_packet.size() - _pending_len);
-          } else {
-            _packet.clear();
-          }
+          _packet.erase(0, _pending_len);
           _pending_len = 0;
         }
       }
@@ -1500,20 +1483,28 @@ void PgSQLCommTask<T>::SetIOTimeoutImpl() {
   auto millis = std::chrono::milliseconds(static_cast<int64_t>(secs * 1000));
   this->_protocol->timer.expires_after(millis);
   this->_protocol->timer.async_wait(
-    [self = this->weak_from_this()](const asio_ns::error_code& ec) {
-      std::shared_ptr<rest::CommTask> s;
-      if (ec || !(s = self.lock())) {  // was canceled / deallocated
+    [weak = this->weak_from_this()](const asio_ns::error_code& ec) {
+      std::shared_ptr<rest::CommTask> self;
+      if (ec || !(self = weak.lock())) {  // was canceled / deallocated
         return;
       }
 
-      auto& me = basics::downCast<PgSQLCommTask<T>>(*s);
-      if (me.IsEmpty()) {
-        SDB_INFO("xxxxx", Logger::REQUESTS,
-                 "keep alive timeout, closing stream!");
-        me._send.Write(ToBuffer(kTimeoutTermination), true);
-        me.Close(ec);
-      }
+      auto& task = basics::downCast<PgSQLCommTask<T>>(*self);
+      task.TimeoutStop();
     });
+}
+
+
+template<rest::SocketType T>
+void PgSQLCommTask<T>::TimeoutStop() {
+  std::lock_guard lock{this->_queue_mutex};
+  if (!this->_queue.empty() || this->Stopped()) {
+    return;
+  }
+  SDB_INFO("xxxxx", Logger::REQUESTS, "keep alive timeout, closing stream!");
+  SDB_ASSERT(!this->_current_portal);
+  this->_send.Write(ToBuffer(kTimeoutTermination), true);
+  Base::Close();
 }
 
 template class PgSQLCommTask<rest::SocketType::Tcp>;

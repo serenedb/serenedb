@@ -29,6 +29,7 @@
 #include <mutex>
 
 #include "auth/token_cache.h"
+#include "basics/asio_ns.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/result.h"
 #include "endpoint/connection_info.h"
@@ -59,6 +60,8 @@ class CommTask : public std::enable_shared_from_this<CommTask> {
   // callable from any thread
   virtual void Start() = 0;
   virtual void Stop() = 0;
+  // callable from asio context thread
+  virtual void Close(asio_ns::error_code err = {}) = 0;
 
   const ConnectionInfo& GetConnectionInfo() const noexcept {
     return _connection_info;

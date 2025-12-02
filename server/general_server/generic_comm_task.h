@@ -38,8 +38,7 @@ class GenericCommTask : public Base {
                   std::shared_ptr<rest::AsioSocket<SocketType>>);
 
   void Stop() override;
-
-  void Close(const asio_ns::error_code& err = asio_ns::error_code());
+  void Close(asio_ns::error_code err = {}) override;
 
  protected:
   /// default max chunksize is 30kb in serenedb (each read fits)

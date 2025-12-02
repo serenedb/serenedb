@@ -16,7 +16,8 @@
         "SDB_FAULT_INJECTION": "On",
         "BUILD_IRS_TESTS": "On",
         "SDB_GTEST": "On",
-        "SDB_IOURING": "On"
+        "SDB_IOURING": "On",
+        "SDB_CLUSTER": "On"
       }
     },
     {

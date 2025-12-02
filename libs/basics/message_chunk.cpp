@@ -31,7 +31,10 @@ Chunk::Chunk(size_t capacity)
     _capacity{capacity} {}
 
 size_t Chunk::TryWrite(std::string_view data) {
-  size_t write_length = std::min(data.size(), FreeSpace());
+  const auto write_length = std::min(data.size(), FreeSpace());
+  if (write_length == 0) [[unlikely]] {
+    return 0;
+  }
   std::memcpy(_data + _end, data.data(), write_length);
   _end += write_length;
   SDB_ASSERT(_end <= _capacity);

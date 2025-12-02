@@ -37,6 +37,7 @@
 #include <velox/functions/sparksql/aggregates/Register.h>
 #include <velox/functions/sparksql/registration/Register.h>
 #include <velox/functions/sparksql/window/WindowFunctionsRegistration.h>
+#include <velox/type/TypeCoercer.h>
 
 #include "basics/assert.h"
 #include "basics/down_cast.h"
@@ -104,6 +105,31 @@ void PostgresFeature::UnregisterTask(uint64_t key) {
   SDB_ASSERT(count == 1);
 }
 
+velox::AllowedCoercions AllowedCoercions() {
+  velox::AllowedCoercions coercions;
+
+  auto add = [&](const velox::TypePtr& from,
+                 const std::vector<velox::TypePtr>& to) {
+    int32_t cost = 0;
+    for (const auto& to_type : to) {
+      coercions.emplace(std::make_pair<std::string, std::string>(
+                          from->toString(), to_type->toString()),
+                        velox::Coercion{.type = to_type, .cost = ++cost});
+    }
+  };
+
+  add(velox::TINYINT(), {velox::SMALLINT(), velox::INTEGER(), velox::BIGINT(),
+                         velox::HUGEINT(), velox::REAL(), velox::DOUBLE()});
+  add(velox::SMALLINT(), {velox::INTEGER(), velox::BIGINT(), velox::HUGEINT(),
+                          velox::REAL(), velox::DOUBLE()});
+  add(velox::INTEGER(), {velox::BIGINT(), velox::HUGEINT(), velox::DOUBLE()});
+  add(velox::BIGINT(), {velox::HUGEINT(), velox::DOUBLE()});
+  add(velox::REAL(), {velox::DOUBLE()});
+  add(velox::DATE(), {velox::TIMESTAMP()});
+
+  return coercions;
+}
+
 void PostgresFeature::prepare() {
   folly::SingletonVault::singleton()->registrationComplete();
 
@@ -137,6 +163,7 @@ void PostgresFeature::prepare() {
 
   pg::RegisterTypes();
   pg::functions::registerFunctions("pg_");
+  velox::TypeCoercer::registerCoercions(AllowedCoercions());
 }
 
 void PostgresFeature::start() {

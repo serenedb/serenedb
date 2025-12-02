@@ -2990,9 +2990,9 @@ lp::ExprPtr SqlAnalyzer::MaybeIntervalOp(std::string_view op, lp::ExprPtr& lhs,
   const auto is_interval_op = [](lp::ExprPtr& lhs, lp::ExprPtr& rhs) -> bool {
     const auto& l_type = lhs->type();
     const auto& r_type = rhs->type();
-    return (l_type->isDate() || l_type->isTimestamp() ||
-            pg::IsInterval(l_type)) &&
-           pg::IsInterval(r_type);
+    return pg::IsInterval(r_type) &&
+           (l_type->isDate() || l_type->isTimestamp() ||
+            pg::IsInterval(l_type));
   };
 
   if (!is_interval_op(lhs, rhs) && !is_interval_op(rhs, lhs)) {

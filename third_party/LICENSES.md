@@ -104,3 +104,6 @@
 
 * Project Home: https://cmake.org/
 * License: BSD 3-clause "New" or "Revised" License
+
+## Tests
+* [sqlite sqllogictest](https://github.com/gregrahn/sqllogictest/blob/master/COPYRIGHT.md)

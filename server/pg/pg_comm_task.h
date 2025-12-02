@@ -185,7 +185,7 @@ class PgSQLCommTaskBase : public rest::CommTask {
   std::atomic_bool _cancel_packet{false};
   std::atomic<State> _state{State::ClientHello};
   std::shared_ptr<ConnectionContext> _connection_ctx;
-  message::Buffer _buffer;
+  message::Buffer _send;
 };
 
 template<rest::SocketType T>

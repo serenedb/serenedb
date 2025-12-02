@@ -109,7 +109,9 @@ set(LIBCXX_GENERATE_COVERAGE OFF)
 set(LIBCXX_HERMETIC_STATIC_LIBRARY ON)
 
 include(UpdateModule)
-updatemodule(${GIT_EXECUTABLE} "llvm-project" ${CMAKE_SOURCE_DIR}/third_party "LICENSE.TXT")
+
+sdb_update_module(${GIT_EXECUTABLE} "llvm-project" ${CMAKE_SOURCE_DIR}/third_party "LICENSE.TXT")
+
 add_subdirectory(third_party/llvm-project/runtimes EXCLUDE_FROM_ALL)
 
 if(${SDB_GTEST})

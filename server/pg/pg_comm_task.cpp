@@ -1359,7 +1359,7 @@ void PgSQLCommTask<T>::SendAsync(message::SequenceView data) {
     this->_protocol->socket, data,
     [self = this->shared_from_this()](asio_ns::error_code ec, size_t nwrite) {
       auto& task = basics::downCast<PgSQLCommTask<T>>(*self);
-      // TODO: Make PGSQL connecton statistics
+      // TODO: Make PGSQL connection statistics
       // if (!ec) {
       //   task.statistics(1UL).ADD_SENT_BYTES(nwrite);
       // }
@@ -1493,7 +1493,6 @@ void PgSQLCommTask<T>::SetIOTimeoutImpl() {
       task.TimeoutStop();
     });
 }
-
 
 template<rest::SocketType T>
 void PgSQLCommTask<T>::TimeoutStop() {

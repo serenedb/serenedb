@@ -7,6 +7,9 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused -Wno-sign-compare -Wno-depre
 include(ExternalProject)
 include(UpdateModule)
 
+UpdateModule(${GIT_EXECUTABLE} "sqllogictest-rs" ${CMAKE_SOURCE_DIR}/scripts "README.md")
+
+# TODO(mbkkt) make it submodule
 add_subdirectory(geographiclib-c)
 if (USE_DTRACE)
   set(SDT_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/sdt PARENT_SCOPE)
@@ -23,7 +26,7 @@ if (SDB_DEV)
 else ()
   set(YACLIB_LOG "")
 endif ()
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/yaclib)
+add_subdirectory(yaclib)
 
 ################################################################################
 ## openssl
@@ -91,6 +94,7 @@ set(WITH_INFLATE_STRICT OFF CACHE BOOL "" FORCE)
 set(WITH_INFLATE_ALLOW_INVALID_DIST OFF CACHE BOOL "" FORCE)
 set(SKIP_INSTALL_ALL ON CACHE BOOL "" FORCE)
 
+UpdateModule(${GIT_EXECUTABLE} "zlib-ng" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(zlib-ng)
 
 ################################################################################
@@ -111,6 +115,7 @@ set(MZ_OPENSSL OFF CACHE BOOL "" FORCE)
 set(MZ_LIBBSD OFF CACHE BOOL "" FORCE)
 set(MZ_ICONV OFF CACHE BOOL "" FORCE)
 
+UpdateModule(${GIT_EXECUTABLE} "minizip-ng" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(minizip-ng)
 
 target_link_libraries(minizip PUBLIC zlib)
@@ -120,6 +125,7 @@ target_link_libraries(minizip PUBLIC zlib)
 ################################################################################
 
 if ("${SDB_ALLOC}" MATCHES "JE")
+  # TODO(mbkkt) make it submodule
   add_subdirectory(jemalloc)
   include_directories("${JEMALLOC_HOME}/include")
   add_library(jemalloc INTERFACE)
@@ -138,6 +144,7 @@ endif ()
 ## BOOST
 ################################################################################
 
+# TODO(mbkkt) make it submodule
 add_subdirectory(boost)
 set(BOOST_VERSION ${BOOST_VERSION} PARENT_SCOPE)
 set(BOOST_INCLUDE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/boost")
@@ -155,7 +162,7 @@ add_library(Boost::headers ALIAS boost_boost)
 
 if (NOT TARGET ICU::uc)
   UpdateModule(${GIT_EXECUTABLE} "icu" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/icu)
+  add_subdirectory(icu)
 
   # For re2
   add_library(icu-uc ALIAS _icuuc)
@@ -169,7 +176,7 @@ endif ()
 UpdateModule(${GIT_EXECUTABLE} "abseil-cpp" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 set(ABSL_PROPAGATE_CXX_STD OFF CACHE BOOL "" FORCE)
 set(ABSL_USE_SYSTEM_INCLUDES ON CACHE BOOL "" FORCE)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/abseil-cpp)
+add_subdirectory(abseil-cpp)
 
 ################################################################################
 ### re2 library
@@ -178,13 +185,14 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/abseil-cpp)
 UpdateModule(${GIT_EXECUTABLE} "re2" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 set(RE2_USE_ICU ON CACHE BOOL "" FORCE)
 set(RE2_INSTALL OFF CACHE BOOL "" FORCE)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/re2)
+add_subdirectory(re2)
 
 ################################################################################
 ### tcmalloc library
 ################################################################################
 
 if ("${SDB_ALLOC}" MATCHES "TC")
+  UpdateModule(${GIT_EXECUTABLE} "tcmalloc" ${CMAKE_CURRENT_SOURCE_DIR} "LICENSE")
   add_subdirectory(tcmalloc)
 endif ()
 
@@ -195,7 +203,7 @@ endif ()
 UpdateModule(${GIT_EXECUTABLE} "googletest" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
 set(GTEST_HAS_ABSL ON CACHE BOOL "" FORCE)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/googletest)
+add_subdirectory(googletest)
 
 ################################################################################
 ### benchmark library
@@ -205,7 +213,7 @@ UpdateModule(${GIT_EXECUTABLE} "benchmark" ${CMAKE_CURRENT_SOURCE_DIR} "README.m
 set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
 set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
 set(BENCHMARK_CXX_STANDARD ${CMAKE_CXX_STANDARD} CACHE STRING "" FORCE)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/benchmark)
+add_subdirectory(benchmark)
 
 ################################################################################
 ### sse2neon library -- need this after abseil and highway, but before simdcomp
@@ -270,6 +278,7 @@ target_include_directories(
 ### SIMDCOMP library
 ################################################################################
 
+# TODO(mbkkt) make it submodule
 add_subdirectory(simdcomp)
 
 ################################################################################
@@ -284,6 +293,7 @@ set(FROZEN_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/frozen/include PARENT_SCOPE)
 ################################################################################
 
 set(CXX_STD ${CMAKE_CXX_STANDARD} CACHE STRING "" FORCE)
+# TODO(mbkkt) make it submodule
 add_subdirectory(text)
 target_compile_definitions(text PUBLIC
   -DBOOST_STL_INTERFACES_DISABLE_CONCEPTS=1
@@ -294,6 +304,7 @@ target_compile_definitions(text PUBLIC
 ### fastText library
 ################################################################################
 
+# TODO(mbkkt) make it submodule
 add_subdirectory(fastText)
 
 ################################################################################
@@ -313,7 +324,7 @@ endif ()
 UpdateModule(${GIT_EXECUTABLE} "faiss" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 set(FAISS_ENABLE_GPU OFF CACHE BOOL "" FORCE)
 set(FAISS_ENABLE_PYTHON OFF CACHE BOOL "" FORCE)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/faiss)
+add_subdirectory(faiss)
 
 ################################################################################
 ## some stuff for IResearch
@@ -328,6 +339,7 @@ if(NOT PERL_FOUND)
   endif()
 endif()
 
+UpdateModule(${GIT_EXECUTABLE} "lz4" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 set(LZ4_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/lz4")
 set(LZ4_INCLUDE_DIR "${LZ4_ROOT}/lib")
 set(SNOWBALL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/snowball")
@@ -344,6 +356,7 @@ add_library(stemmer::stemmer ALIAS stemmer-static)
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(S2_USE_SYSTEM_INCLUDES ON CACHE BOOL "" FORCE)
+UpdateModule(${GIT_EXECUTABLE} "s2geometry" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(s2geometry)
 
 ################################################################################
@@ -397,6 +410,7 @@ add_subdirectory(immer)
 ## DATE
 ################################################################################
 
+UpdateModule(${GIT_EXECUTABLE} "date" ${CMAKE_CURRENT_SOURCE_DIR} "LICENSE.txt")
 add_library(date_interface INTERFACE)
 target_include_directories(date_interface SYSTEM INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/date/include)
 
@@ -498,6 +512,7 @@ add_subdirectory(libpg_query)
 
 set(SIMDJSON_ENABLE_THREADS OFF CACHE BOOL "" FORCE)
 set(SIMDJSON_CXX_STANDARD ${CMAKE_CXX_STANDARD} CACHE STRING "" FORCE)
+UpdateModule(${GIT_EXECUTABLE} "simdjson" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(simdjson)
 
 ################################################################################
@@ -511,6 +526,7 @@ add_subdirectory(tests)
 ################################################################################
 
 set(FASTFLOAT_INSTALL OFF CACHE BOOL "" FORCE)
+UpdateModule(${GIT_EXECUTABLE} "fast_float" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(fast_float)
 
 ################################################################################
@@ -518,12 +534,14 @@ add_subdirectory(fast_float)
 ################################################################################
 
 set(XSIMD_SKIP_INSTALL OFF CACHE BOOL "" FORCE)
+UpdateModule(${GIT_EXECUTABLE} "xsimd" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(xsimd)
 
 ################################################################################
 ## double-conversion
 ################################################################################
 
+UpdateModule(${GIT_EXECUTABLE} "double-conversion" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(double-conversion)
 add_library(double-conversion::double-conversion ALIAS double-conversion)
 
@@ -532,6 +550,7 @@ add_library(double-conversion::double-conversion ALIAS double-conversion)
 ################################################################################
 
 if (SDB_USE_FMT)
+  UpdateModule(${GIT_EXECUTABLE} "fmt" ${CMAKE_CURRENT_SOURCE_DIR} "LICENSE")
   add_subdirectory(fmt)
 endif()
 
@@ -549,6 +568,7 @@ set(FOLLY_HAVE_INT128_T ON)
 set(FOLLY_HAVE_EXTRANDOM_SFMT19937 OFF)
 set(FOLLY_HAVE_LIBGFLAGS OFF)
 set(FOLLY_HAVE_LIBGLOG OFF)
+UpdateModule(${GIT_EXECUTABLE} "folly" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(folly)
 target_include_directories(folly PUBLIC ${OPENSSL_INCLUDE_DIR})
 target_link_libraries(folly PUBLIC ${OPENSSL_LIBRARIES})
@@ -595,12 +615,14 @@ set(VELOX_BUILD_RUNNER OFF CACHE BOOL "" FORCE)
 set(VELOX_ENABLE_INT64_BUILD_PARTITION_BOUND ON CACHE BOOL "" FORCE)
 set(VELOX_SIMDJSON_SKIPUTF8VALIDATION OFF CACHE BOOL "" FORCE)
 
+UpdateModule(${GIT_EXECUTABLE} "velox" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(velox)
 
 ################################################################################
 ## axiom
 ################################################################################
 
+UpdateModule(${GIT_EXECUTABLE} "axiom" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(axiom)
 
 target_include_directories(velox SYSTEM

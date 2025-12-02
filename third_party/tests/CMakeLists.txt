@@ -17,6 +17,8 @@ target_include_directories(
 ### RapidJSON library
 ################################################################################
 
+UpdateModule(${GIT_EXECUTABLE} "rapidjson" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+
 add_library(rapidjson INTERFACE)
 
 target_include_directories(rapidjson SYSTEM

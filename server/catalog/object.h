@@ -40,6 +40,7 @@ enum class ObjectType : uint8_t {
   Role,
   Schema,
   Database,
+  Virtual,
 };
 
 // https://www.postgresql.org/docs/current/sql-grant.html
@@ -143,14 +144,30 @@ struct ObjectById {
   }
 };
 
-class SchemaObject : public Object {
+class DatabaseObject : public Object {
+ public:
+  ObjectId GetDatabaseId() const noexcept { return _database_id; }
+
+  virtual void WriteProperties(vpack::Builder& build) const {
+    WriteInternal(build);
+  }
+
+ protected:
+  DatabaseObject(ObjectId owner_id, ObjectId database_id, ObjectId id,
+                 std::string_view name, ObjectType type)
+    : Object{owner_id, id, name, type}, _database_id{database_id} {}
+
+  const ObjectId _database_id;
+};
+
+class SchemaObject : public DatabaseObject {
  public:
   ObjectId GetSchemaId() const noexcept { return _schema_id; }
 
  protected:
   SchemaObject(ObjectId owner_id, ObjectId schema_id, ObjectId id,
                std::string_view name, ObjectType type)
-    : Object{owner_id, id, name, type}, _schema_id{schema_id} {}
+    : DatabaseObject{owner_id, schema_id, id, name, type} {}
 
  private:
   ObjectId _schema_id;

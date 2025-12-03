@@ -90,6 +90,8 @@ struct LogicalCatalog {
   virtual Result CreateDatabase(
     std::shared_ptr<catalog::Database> database) = 0;
   virtual Result CreateRole(std::shared_ptr<catalog::Role> role) = 0;
+  virtual Result CreateSchema(ObjectId database_id,
+                              std::shared_ptr<catalog::Schema> schema) = 0;
   virtual Result CreateView(ObjectId database_id, std::string_view schema,
                             std::shared_ptr<catalog::View> view) = 0;
   virtual Result CreateFunction(
@@ -156,6 +158,11 @@ struct LogicalCatalog {
     std::vector<std::pair<std::shared_ptr<catalog::Table>,
                           std::shared_ptr<TableShard>>>& tables) const = 0;
   virtual std::vector<std::shared_ptr<Database>> GetDatabases() const = 0;
+  virtual Result GetSchemas(
+    ObjectId database_id,
+    std::vector<std::shared_ptr<Schema>>& schemas) const = 0;
+  virtual std::shared_ptr<Schema> GetSchema(ObjectId database_id,
+                                            std::string_view schema) const = 0;
 
   virtual std::shared_ptr<Object> GetObject(ObjectId id) const = 0;
 
@@ -222,6 +229,7 @@ class CatalogFeature final : public SerenedFeature {
  private:
   Result OpenDatabase(DatabaseOptions database);
   Result AddDatabase(const DatabaseOptions& database);
+  Result AddSchemas(ObjectId database_id, std::string_view database_name);
   Result AddViews(ObjectId database_id, std::string_view database_name);
   Result AddFunctions(ObjectId database_id, std::string_view database_name);
   Result AddRoles();

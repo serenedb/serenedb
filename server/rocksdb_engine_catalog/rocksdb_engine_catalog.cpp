@@ -43,6 +43,7 @@
 
 #include <iomanip>
 #include <limits>
+#include <memory>
 #include <utility>
 
 #include "app/app_server.h"
@@ -68,8 +69,8 @@
 #include "catalog/database.h"
 #include "catalog/function.h"
 #include "catalog/identifiers/object_id.h"
-#include "catalog/logical_object.h"
 #include "catalog/role.h"
+#include "catalog/schema.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "catalog/types.h"
@@ -2528,15 +2529,25 @@ void RocksDBEngineCatalog::EnsureSystemDatabase() {
   }
 
   const auto database = catalog::MakeSystemDatabaseOptions();
-
   vpack::Builder builder;
   vpack::WriteTuple(builder, database);
-
   auto r = createDatabase(database.id, builder.slice());
-
   if (!r.ok()) {
     SDB_FATAL("xxxxx", Logger::STARTUP,
               "unable to write database marker: ", r.errorMessage());
+  }
+
+  catalog::SchemaOptions schema_options{
+    .id = catalog::NextId(),
+    .name = std::string{StaticStrings::kPublic},
+  };
+  builder.clear();
+  vpack::WriteTuple(builder, schema_options);
+  r = createSchema(database.id, schema_options.id,
+                   [&](bool) { return builder.slice(); });
+  if (!r.ok()) {
+    SDB_FATAL("xxxxx", Logger::STARTUP,
+              "unable to write schema marker: ", r.errorMessage());
   }
 }
 

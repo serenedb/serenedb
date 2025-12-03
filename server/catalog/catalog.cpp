@@ -158,6 +158,29 @@ Result CatalogFeature::AddDatabase(const DatabaseOptions& options) {
     std::make_shared<catalog::Database>(options));
 }
 
+Result CatalogFeature::AddSchemas(ObjectId database_id,
+                                  std::string_view database_name) {
+  auto r = GetServerEngine().VisitObjects(
+    database_id, RocksDBEntryType::Schema,
+    [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
+      SchemaOptions options;
+      if (auto r = vpack::ReadTupleNothrow(slice, options); !r.ok()) {
+        return ErrorMeta(r.errorNumber(), "schema", r.errorMessage(), slice);
+      }
+
+      return Global().RegisterSchema(
+        database_id,
+        std::make_shared<catalog::Schema>(database_id, std::move(options)));
+    });
+
+  if (!r.ok()) {
+    return {r.errorNumber(),
+            "Failed to read schemas, error: ", r.errorMessage()};
+  }
+
+  return {};
+}
+
 Result CatalogFeature::AddRoles() {
   auto& engine = GetServerEngine();
   auto r = engine.VisitObjects(
@@ -365,6 +388,9 @@ Result CatalogFeature::OpenDatabase(catalog::DatabaseOptions database) {
   return basics::SafeCall(
     [&] -> Result {
       if (auto r = AddDatabase(database); !r.ok()) {
+        return r;
+      }
+      if (auto r = AddSchemas(database.id, database.name); !r.ok()) {
         return r;
       }
       if (ServerState::instance()->IsSingle()) {

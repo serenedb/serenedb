@@ -27,6 +27,7 @@
 #include "basics/fwd.h"
 #include "basics/static_strings.h"
 #include "catalog/identifiers/identifier.h"
+#include "catalog/object.h"
 #include "catalog/search_analyzer_impl.h"
 #include "catalog/sql_function_impl.h"
 #include "query/types.h"
@@ -150,10 +151,11 @@ Result catalog::Function::Instantiate(
 
 catalog::Function::Function(std::string_view name, FunctionSignature signature,
                             FunctionOptions options, aql::FunctionImpl impl)
-  : LogicalObject{catalog::Function::category(),
-                  {},
-                  {},  // TOOD(mbkkt) think about id
-                  std::string{name}},
+  : SchemaObject{{},
+                 {},
+                 {},  // TOOD(mbkkt) think about id
+                 std::string{name},
+                 ObjectType::Function},
     _signature{std::move(signature)},
     _options{std::move(options)},
     _aql_impl{std::move(impl)} {
@@ -164,10 +166,11 @@ catalog::Function::Function(std::string_view name, FunctionSignature signature,
 
 catalog::Function::Function(std::string_view name, FunctionSignature signature,
                             FunctionOptions options)
-  : LogicalObject{catalog::Function::category(),
-                  {},
-                  {},  // TOOD(mbkkt) think about id
-                  std::string{name}},
+  : SchemaObject{{},
+                 {},
+                 {},  // TOOD(mbkkt) think about id
+                 std::string{name},
+                 ObjectType::Function},
     _signature{std::move(signature)},
     _options{std::move(options)} {
   SDB_ASSERT(!this->GetName().empty());
@@ -178,8 +181,11 @@ catalog::Function::Function(std::string_view name, FunctionSignature signature,
 catalog::Function::Function(FunctionProperties&& properties,
                             std::unique_ptr<search::AnalyzerImpl> analyzer,
                             ObjectId database_id)
-  : LogicalObject{catalog::Function::category(), database_id, properties.id,
-                  std::move(properties.name)},
+  : SchemaObject{{},
+                 database_id,
+                 properties.id,
+                 std::move(properties.name),
+                 ObjectType::Function},
     _signature{std::move(properties.signature)},
     _options{std::move(properties.options)},
     _analyzer_impl{std::move(analyzer)} {
@@ -191,8 +197,11 @@ catalog::Function::Function(FunctionProperties&& properties,
 catalog::Function::Function(FunctionProperties&& properties,
                             std::unique_ptr<pg::FunctionImpl> function,
                             ObjectId database_id)
-  : LogicalObject{catalog::Function::category(), database_id, properties.id,
-                  std::move(properties.name)},
+  : SchemaObject{{},
+                 database_id,
+                 properties.id,
+                 std::move(properties.name),
+                 ObjectType::Function},
     _signature{std::move(properties.signature)},
     _options{std::move(properties.options)},
     _sql_impl{std::move(function)} {

@@ -33,7 +33,6 @@
 #include "basics/system-functions.h"
 #include "basics/write_locker.h"
 #include "catalog/identifiers/object_id.h"
-#include "catalog/logical_object.h"
 #include "catalog/types.h"
 #include "utils/exec_context.h"
 #include "vpack/vpack_helper.h"

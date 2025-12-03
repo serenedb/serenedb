@@ -39,7 +39,6 @@
 #include "catalog/database.h"
 #include "catalog/identifiers/identifier.h"
 #include "catalog/identifiers/object_id.h"
-#include "catalog/logical_object.h"
 #include "catalog/table.h"
 #include "catalog/types.h"
 #include "catalog/view.h"
@@ -83,7 +82,7 @@ auto MakeCollectionChecker(ObjectId database) {
       return {ERROR_BAD_PARAMETER, "Cannot find collection '", edge, "'"};
     }
 
-    if (collection->GetType() != TableType::Edge) {
+    if (collection->GetTableType() != TableType::Edge) {
       return {ERROR_BAD_PARAMETER, "Collection '", edge,
               "' is not an edge collection."};
     }

@@ -27,13 +27,13 @@
 
 #include "basics/fwd.h"
 #include "basics/system-compiler.h"
-#include "catalog/logical_object.h"
+#include "catalog/object.h"
 
 namespace sdb::catalog {
 
 class VirtualTable;
 
-class VritualTableSnapshot : public LogicalObject {
+class VritualTableSnapshot : public SchemaObject {
  public:
   virtual velox::RowTypePtr RowType() const noexcept = 0;
 
@@ -46,7 +46,7 @@ class VritualTableSnapshot : public LogicalObject {
   }
 
  protected:
-  using LogicalObject::LogicalObject;
+  using SchemaObject::SchemaObject;
 
   const VirtualTable* _table = nullptr;
 };

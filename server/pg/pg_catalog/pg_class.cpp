@@ -26,7 +26,6 @@
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/local_catalog.h"
-#include "catalog/logical_object.h"
 #include "catalog/object.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/system_catalog.h"
@@ -53,19 +52,18 @@ void RetrieveObjects(uint64_t database_id,
                      const catalog::LogicalCatalog& catalog,
                      std::vector<PgClass>& values) {
   auto insert_object =
-    [&](const std::shared_ptr<catalog::LogicalObject>& object) {
+    [&](const std::shared_ptr<catalog::SchemaObject>& object) {
       PgClass::Relkind relkind;
-      switch (object->category()) {
-        case catalog::ObjectCategory::Collection:
+      switch (object->GetType()) {
+        case catalog::ObjectType::Table:
           relkind = PgClass::Relkind::OrdinaryTable;
           break;
-        case catalog::ObjectCategory::View:
+        case catalog::ObjectType::View:
           relkind = PgClass::Relkind::View;
           break;
         default:
-          SDB_THROW(ERROR_INTERNAL,
-                    "Unsupported object category for pg_class: {}",
-                    static_cast<uint8_t>(object->category()));
+          SDB_THROW(ERROR_INTERNAL, "Unsupported object type for pg_class: {}",
+                    static_cast<uint8_t>(object->GetType()));
       };
 
       PgClass row{

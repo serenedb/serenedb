@@ -112,9 +112,9 @@ CollectionOutput MakeOutput(const catalog::Table& c) {
 }  // namespace
 
 Table::Table(const catalog::Table& other, NewOptions options)
-  : LogicalObject{catalog::Table::category(), other.GetDatabaseId(),
-                  other.GetId(), std::string{options.name}},
-    _type{other.GetType()},
+  : SchemaObject{other.GetOwnerId(), other.GetDatabaseId(), other.GetId(),
+                 options.name, ObjectType::Table},
+    _type{other.GetTableType()},
     _wait_for_sync{options.wait_for_sync},
     _shard_keys{other.shardKeys()},
     _pk_type{other._pk_type},
@@ -133,8 +133,11 @@ Table::Table(const catalog::Table& other, NewOptions options)
     _write_concern{options.write_concern} {}
 
 Table::Table(TableOptions&& options, ObjectId database_id)
-  : LogicalObject{catalog::Table::category(), database_id, options.id,
-                  std::move(options.name)},
+  : SchemaObject{{},
+                 database_id,
+                 options.id,
+                 std::move(options.name),
+                 ObjectType::Table},
     _type{static_cast<TableType>(options.type)},
     _wait_for_sync{options.waitForSync},
     _shard_keys{std::move(options.shardKeys)},

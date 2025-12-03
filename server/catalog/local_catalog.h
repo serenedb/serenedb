@@ -63,6 +63,8 @@ class LocalCatalog final : public LogicalCatalog,
   Result CreateRole(std::shared_ptr<catalog::Role> role) final;
   Result CreateView(ObjectId database_id, std::string_view schema,
                     std::shared_ptr<catalog::View> view) final;
+  Result CreateSchema(ObjectId database_id,
+                      std::shared_ptr<catalog::Schema> schema) final;
   Result CreateFunction(ObjectId database_id, std::string_view schema,
                         std::shared_ptr<catalog::Function> function) final;
   Result CreateTable(ObjectId database_id, std::string_view schema,
@@ -103,6 +105,8 @@ class LocalCatalog final : public LogicalCatalog,
                                            std::string_view schema,
                                            std::string_view name) const final;
   std::shared_ptr<Database> GetDatabase(std::string_view name) const final;
+  std::shared_ptr<Schema> GetSchema(ObjectId database_id,
+                                    std::string_view schema) const final;
 
   Result GetRoles(
     std::vector<std::shared_ptr<catalog::Role>>& roles) const final;
@@ -117,6 +121,8 @@ class LocalCatalog final : public LogicalCatalog,
                                          std::shared_ptr<TableShard>>>&
                      collections) const final;
   std::vector<std::shared_ptr<Database>> GetDatabases() const final;
+  Result GetSchemas(ObjectId database_id,
+                    std::vector<std::shared_ptr<Schema>>& schemas) const final;
 
   std::shared_ptr<Object> GetObject(ObjectId id) const final;
 

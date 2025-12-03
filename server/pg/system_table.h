@@ -28,6 +28,7 @@
 #include <type_traits>
 
 #include "basics/down_cast.h"
+#include "catalog/object.h"
 #include "catalog/virtual_table.h"
 #include "pg/information_schema/fwd.h"
 #include "pg/pg_catalog/fwd.h"
@@ -152,8 +153,11 @@ class SystemTableSnapshot final : public catalog::VritualTableSnapshot {
  public:
   explicit SystemTableSnapshot(const catalog::VirtualTable& table,
                                ObjectId database)
-    : VritualTableSnapshot{catalog::ObjectCategory::Virtual, database,
-                           table.Id(), std::string{table.Name()}} {
+    : VritualTableSnapshot{{},
+                           database,
+                           table.Id(),
+                           std::string{table.Name()},
+                           catalog::ObjectType::Virtual} {
     _table = &table;
   }
 

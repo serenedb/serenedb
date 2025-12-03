@@ -54,8 +54,11 @@ Result ViewOptions::Read(ViewOptions& options, vpack::Slice slice) {
 }
 
 View::View(ViewMeta&& options, ObjectId database_id)
-  : LogicalObject{View::category(), database_id, *options.id,
-                  std::move(options.name)},
+  : SchemaObject{{},
+                 database_id,
+                 *options.id,
+                 std::move(options.name),
+                 ObjectType::View},
     _type{options.type} {}
 
 Result CreateViewInstance(std::shared_ptr<catalog::View>& view,

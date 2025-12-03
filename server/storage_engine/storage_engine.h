@@ -35,7 +35,6 @@
 #include "catalog/identifiers/index_id.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/identifiers/transaction_id.h"
-#include "catalog/logical_object.h"
 #include "catalog/table.h"
 #include "catalog/types.h"
 #include "database/access_mode.h"

@@ -23,6 +23,7 @@
 
 #include "basics/containers/small_vector.h"
 #include "basics/result.h"
+#include "catalog/object.h"
 #include "catalog/types.h"
 #include "storage_engine/storage_engine.h"
 #include "vpack/serializer.h"
@@ -59,14 +60,12 @@ struct ViewOptions {
 };
 // NOLINTEND
 
-class View : public LogicalObject {
+class View : public SchemaObject {
  public:
   using Indexes = containers::SmallVector<IndexId, 1>;
   // TODO(mbkkt) absl::FunctionRef
   // visitor for map<CollectionId, set<IndexId>>, Indexes is movable
   using CollectionVisitor = std::function<bool(ObjectId, Indexes*)>;
-
-  static constexpr auto category() noexcept { return ObjectCategory::View; }
 
   auto GetViewType() const noexcept { return _type; }
 

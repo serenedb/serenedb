@@ -1,4 +1,3 @@
-
 add_library(serene_tests_connector_deps INTERFACE)
 
 target_link_libraries(

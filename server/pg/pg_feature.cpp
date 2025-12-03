@@ -37,10 +37,10 @@
 #include <velox/functions/sparksql/aggregates/Register.h>
 #include <velox/functions/sparksql/registration/Register.h>
 #include <velox/functions/sparksql/window/WindowFunctionsRegistration.h>
+#include <velox/type/TypeCoercer.h>
 
 #include "basics/assert.h"
 #include "basics/down_cast.h"
-#include "basics/global_resource_monitor.h"
 #include "basics/random/random_generator.h"
 #include "connector/serenedb_connector.hpp"
 #include "pg/functions.h"
@@ -55,19 +55,16 @@ namespace sdb::pg {
 
 static constexpr std::string kConnectorId = "serenedb";
 
-using namespace transaction;
-
 PostgresFeature::PostgresFeature(SerenedServer& server)
-  : SerenedFeature(server, name()),
-    _comm_tasks_memory{GlobalResourceMonitor::instance()} {
+  : SerenedFeature{server, name()} {
   setOptional(true);
 }
 
 void PostgresFeature::CancelTaskPacket(uint64_t key) {
   auto task = [&] {
-    std::scoped_lock lock(_comm_tasks_mutex);
-    auto it = _comm_tasks.find(key);
-    return it != _comm_tasks.end() ? it->second.lock() : nullptr;
+    std::lock_guard lock{_mutex};
+    auto it = _tasks.find(key);
+    return it != _tasks.end() ? it->second.lock() : nullptr;
   }();
   if (task) {
     basics::downCast<PgSQLCommTaskBase>(*task).CancelPacket();
@@ -76,10 +73,10 @@ void PostgresFeature::CancelTaskPacket(uint64_t key) {
 
 uint64_t PostgresFeature::RegisterTask(PgSQLCommTaskBase& task) {
   auto weak = task.weak_from_this();
-  std::scoped_lock lock(_comm_tasks_mutex);
+  std::lock_guard lock{_mutex};
   while (true) {
     const auto key = random::RandU64();
-    if (key != 0 && _comm_tasks.try_emplace(key, std::move(weak)).second) {
+    if (key != 0 && _tasks.try_emplace(key, std::move(weak)).second) {
       return key;
     }
   }
@@ -99,9 +96,35 @@ void PostgresFeature::validateOptions(
 }
 
 void PostgresFeature::UnregisterTask(uint64_t key) {
-  std::scoped_lock lock(_comm_tasks_mutex);
-  [[maybe_unused]] auto count = _comm_tasks.erase(key);
+  std::lock_guard lock{_mutex};
+  [[maybe_unused]] auto count = _tasks.erase(key);
   SDB_ASSERT(count == 1);
+}
+
+velox::AllowedCoercions AllowedCoercions() {
+  velox::AllowedCoercions coercions;
+
+  auto add = [&](const velox::TypePtr& from,
+                 const std::vector<velox::TypePtr>& to) {
+    int32_t cost = 0;
+    for (const auto& to_type : to) {
+      coercions.emplace(std::make_pair<std::string, std::string>(
+                          from->toString(), to_type->toString()),
+                        velox::Coercion{.type = to_type, .cost = ++cost});
+    }
+  };
+
+  add(velox::TINYINT(), {velox::SMALLINT(), velox::INTEGER(), velox::BIGINT(),
+                         velox::HUGEINT(), velox::REAL(), velox::DOUBLE()});
+  add(velox::SMALLINT(), {velox::INTEGER(), velox::BIGINT(), velox::HUGEINT(),
+                          velox::REAL(), velox::DOUBLE()});
+  add(velox::INTEGER(),
+      {velox::BIGINT(), velox::HUGEINT(), velox::REAL(), velox::DOUBLE()});
+  add(velox::BIGINT(), {velox::HUGEINT(), velox::REAL(), velox::DOUBLE()});
+  add(velox::REAL(), {velox::DOUBLE()});
+  add(velox::DATE(), {velox::TIMESTAMP()});
+
+  return coercions;
 }
 
 void PostgresFeature::prepare() {
@@ -128,8 +151,8 @@ void PostgresFeature::prepare() {
   velox::functions::aggregate::sparksql::registerAggregateFunctions("spark_");
   velox::functions::window::sparksql::registerWindowFunctions("spark_");
 
-  // Make Presto function override spark functions if both are registered as
-  // presto is more SQL compliant.
+  // Make Presto functions override Spark functions if both are registered
+  // as Presto is more SQL compliant.
   velox::functions::prestosql::registerAllScalarFunctions("presto_");
   velox::aggregate::prestosql::registerAllAggregateFunctions("presto_");
   velox::window::prestosql::registerAllWindowFunctions("presto_");
@@ -137,6 +160,7 @@ void PostgresFeature::prepare() {
 
   pg::RegisterTypes();
   pg::functions::registerFunctions("pg_");
+  velox::TypeCoercer::registerCoercions(AllowedCoercions());
 }
 
 void PostgresFeature::start() {
@@ -158,10 +182,6 @@ void PostgresFeature::start() {
                                                           connector_metadata);
   }
 }
-
-void PostgresFeature::beginShutdown() {}
-
-void PostgresFeature::stop() {}
 
 void PostgresFeature::unprepare() {
   folly::SingletonVault::singleton()->destroyInstancesFinal();

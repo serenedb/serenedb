@@ -23,11 +23,9 @@
 #include "app/app_feature.h"
 #include "app/app_server.h"
 #include "basics/containers/flat_hash_map.h"
-#include "basics/resource_usage.h"
-#include "general_server/scheduler_feature.h"
-#include "metrics/fwd.h"
-#include "pg/sql_error.h"
-#include "pg_comm_task.h"
+#include "general_server/request_lane.h"
+#include "general_server/scheduler.h"
+#include "pg/pg_comm_task.h"
 
 namespace sdb::pg {
 
@@ -38,42 +36,33 @@ class PostgresFeature final : public SerenedFeature {
   explicit PostgresFeature(SerenedServer& server);
 
   void validateOptions(std::shared_ptr<options::ProgramOptions> options) final;
-  void prepare() override;
-  void start() override;
-  void beginShutdown() override;
-  void stop() override;
-  void unprepare() override;
+  void prepare() final;
+  void start() final;
+  void unprepare() final;
 
   uint64_t RegisterTask(PgSQLCommTaskBase& task);
   void UnregisterTask(uint64_t key);
   void CancelTaskPacket(uint64_t key);
 
-  ResourceMonitor& CommTasksMemory() noexcept { return _comm_tasks_memory; }
-
-  void ScheduleProcessing(std::weak_ptr<rest::CommTask> ptr) {
-    server().getFeature<SchedulerFeature>().gScheduler->queue(
-      RequestLane::ClientAql, [ptr]() {
-        auto task = ptr.lock();
-        if (task) {
-          basics::downCast<PgSQLCommTaskBase>(*task).Process();
-        }
-      });
+  void ScheduleProcessing(std::weak_ptr<rest::CommTask> weak) {
+    GetScheduler()->queue(RequestLane::ClientAql, [weak = std::move(weak)] {
+      if (auto self = weak.lock()) {
+        basics::downCast<PgSQLCommTaskBase>(*self).Process();
+      }
+    });
   }
 
-  void ScheduleContinueProcessing(std::weak_ptr<rest::CommTask> ptr) {
-    server().getFeature<SchedulerFeature>().gScheduler->queue(
-      RequestLane::ClientAql, [ptr]() {
-        auto task = ptr.lock();
-        if (task) {
-          basics::downCast<PgSQLCommTaskBase>(*task).NextRootPortal();
-        }
-      });
+  void ScheduleContinueProcessing(std::weak_ptr<rest::CommTask> weak) {
+    GetScheduler()->queue(RequestLane::ClientAql, [weak = std::move(weak)] {
+      if (auto self = weak.lock()) {
+        basics::downCast<PgSQLCommTaskBase>(*self).NextRootPortal();
+      }
+    });
   }
 
  private:
-  absl::Mutex _comm_tasks_mutex;
-  containers::FlatHashMap<uint64_t, std::weak_ptr<rest::CommTask>> _comm_tasks;
-  ResourceMonitor _comm_tasks_memory;
+  absl::Mutex _mutex;
+  containers::FlatHashMap<uint64_t, std::weak_ptr<rest::CommTask>> _tasks;
 };
 
 }  // namespace sdb::pg

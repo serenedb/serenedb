@@ -1,4 +1,4 @@
-macro(UpdateModule _GIT _SUBMODULE _CWD _SENTINEL)
+macro(sdb_update_module _GIT _SUBMODULE _CWD _SENTINEL)
     if(AUTO_UPDATE_MODULES)
         execute_process(
             COMMAND ${_GIT} rev-parse @:./${_SUBMODULE}
@@ -30,4 +30,4 @@ macro(UpdateModule _GIT _SUBMODULE _CWD _SENTINEL)
             endif()
         endif()
     endif()
-endmacro(UpdateModule)
+endmacro(sdb_update_module)

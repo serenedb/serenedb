@@ -1,4 +1,4 @@
-UpdateModule(${GIT_EXECUTABLE} "nghttp2-lib" ${CMAKE_CURRENT_SOURCE_DIR} "README")
+sdb_update_module(${GIT_EXECUTABLE} "nghttp2-lib" ${CMAKE_CURRENT_SOURCE_DIR} "README")
 
 set(ENABLE_WERROR      OFF)
 set(ENABLE_DEBUG       OFF)

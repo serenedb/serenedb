@@ -77,17 +77,13 @@ class PgSQLCommTaskBase : public rest::CommTask {
   virtual void SendAsync(message::SequenceView data) = 0;
 
   void ParseClientParameters(std::string_view data);
-
-  bool IsEmpty() const {
-    std::scoped_lock lock{_queue_mutex};
-    return _queue.empty();
-  }
   void CancelPacket();
-  std::string_view DatabaseName() const noexcept;
-  std::string_view UserName() const noexcept;
   bool IsCancelled() const noexcept {
     return _cancel_packet.load(std::memory_order_relaxed);
   }
+
+  std::string_view DatabaseName() const noexcept;
+  std::string_view UserName() const noexcept;
 
  protected:
   // Binded Query
@@ -159,19 +155,14 @@ class PgSQLCommTaskBase : public rest::CommTask {
   void SendBatch(const velox::RowVectorPtr& batch);
   void SendCommandComplete(const SqlTree& tree, size_t rows_affected);
 
-  using PacketsQueue = std::queue<
-    MonitoredString,
-    std::deque<MonitoredString,
-               ResourceUsageAllocator<MonitoredString, ResourceMonitor>>>;
+  using PacketsQueue = std::queue<std::string>;
   PostgresFeature& _feature;
   PacketsQueue _queue;
   mutable absl::Mutex _queue_mutex;
   absl::Mutex _execution_mutex;
   containers::FlatHashMap<std::string, std::string> _client_parameters;
-  SessionContext _session_ctx;
   std::shared_ptr<catalog::Database> _database;
-  absl::Mutex _cancellation_mutex;
-  SqlPortal* _active_portal{nullptr};
+  SqlPortal* _current_portal{nullptr};
   std::string_view _current_query;
   containers::NodeHashMap<std::string, SqlStatement> _statements;
   // TODO: optimize portal layout
@@ -185,7 +176,7 @@ class PgSQLCommTaskBase : public rest::CommTask {
   std::atomic_bool _cancel_packet{false};
   std::atomic<State> _state{State::ClientHello};
   std::shared_ptr<ConnectionContext> _connection_ctx;
-  message::Buffer _buffer;
+  message::Buffer _send;
 };
 
 template<rest::SocketType T>
@@ -203,11 +194,16 @@ class PgSQLCommTask final : public GenericCommTask<T, PgSQLCommTaskBase> {
     this->CancelPacket();
     Base::Stop();
   }
+  void Close(asio_ns::error_code err = {}) final {
+    std::lock_guard lock{this->_queue_mutex};
+    Base::Close(err);
+  }
   bool ReadCallback(asio_ns::error_code ec) final;
   void SetIOTimeout() final;
   void SetIOTimeoutImpl() final;
+  void TimeoutStop();
 
-  MonitoredString _packet;
+  std::string _packet;
   uint32_t _pending_len{0};
 };
 

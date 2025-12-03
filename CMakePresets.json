@@ -11,13 +11,27 @@
         "CMAKE_CXX_COMPILER": "clang++",
         "CMAKE_EXE_LINKER_FLAGS": "-fuse-ld=lld",
         "CMAKE_SHARED_LINKER_FLAGS": "-fuse-ld=lld",
-        "AUTO_UPDATE_MODULES": "Off",
+        "AUTO_UPDATE_MODULES": "On",
         "USE_DEBUG_INFO": "LLDB",
         "SDB_FAULT_INJECTION": "On",
         "BUILD_IRS_TESTS": "On",
         "SDB_GTEST": "On",
         "SDB_IOURING": "On",
-        "SDB_CLUSTER": "On"
+        "SDB_CLUSTER": "Off",
+        "USE_V8": "Off"
+      }
+    },
+    {
+      "name": "lldb",
+      "binaryDir": "build",
+      "inherits": [
+        "common"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "STATIC_EXECUTABLES": "Off",
+        "SDB_DEV": "On",
+        "SDB_ALLOC": "SYS"
       }
     },
     {
@@ -27,10 +41,9 @@
       ],
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "STATIC_EXECUTABLES": "On",
+        "STATIC_EXECUTABLES": "Off",
         "SDB_DEV": "On",
-        "SDB_ALLOC": "JE",
-        "USE_V8": "On"
+        "SDB_ALLOC": "JE"
       }
     },
     {
@@ -46,22 +59,7 @@
         "SDB_FAULT_INJECTION": "Off",
         "BUILD_IRS_TESTS": "Off",
         "SDB_GTEST": "Off",
-        "SDB_ALLOC": "JE",
-        "USE_V8": "Off"
-      }
-    },
-    {
-      "name": "lldb",
-      "binaryDir": "build",
-      "inherits": [
-        "common"
-      ],
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "STATIC_EXECUTABLES": "Off",
-        "SDB_DEV": "On",
-        "SDB_ALLOC": "SYS",
-        "USE_V8": "Off"
+        "SDB_ALLOC": "JE"
       }
     }
   ]

@@ -48,7 +48,7 @@ constexpr Oid kPublicNamespaceOid = 2200;
 
 }  // namespace
 
-void RetrieveObjects(uint64_t database_id,
+void RetrieveObjects(ObjectId database_id,
                      const catalog::LogicalCatalog& catalog,
                      std::vector<PgClass>& values) {
   auto insert_object =
@@ -82,8 +82,8 @@ void RetrieveObjects(uint64_t database_id,
     std::vector<
       std::pair<std::shared_ptr<catalog::Table>, std::shared_ptr<TableShard>>>
       collections;
-    auto res = catalog.GetTables(ObjectId{database_id}, StaticStrings::kPublic,
-                                 collections);
+    auto res =
+      catalog.GetTables(database_id, StaticStrings::kPublic, collections);
     if (!res.ok()) {
       SDB_THROW(ERROR_INTERNAL, "Failed to get collections for pg_class");
     }
@@ -95,8 +95,7 @@ void RetrieveObjects(uint64_t database_id,
 
   {  // retrieve views
     std::vector<std::shared_ptr<catalog::View>> views;
-    auto res =
-      catalog.GetViews(ObjectId{database_id}, StaticStrings::kPublic, views);
+    auto res = catalog.GetViews(database_id, StaticStrings::kPublic, views);
     if (!res.ok()) {
       SDB_THROW(ERROR_INTERNAL, "Failed to get views for pg_class");
     }
@@ -116,7 +115,7 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgClass>::GetTableData(
   result.reserve(boost::pfr::tuple_size_v<PgClass>);
   std::vector<PgClass> values;
   std::vector<uint64_t> database_ids;
-  RetrieveObjects(GetDatabaseId().id(), catalog, values);
+  RetrieveObjects(GetDatabaseId(), catalog, values);
 
   {  // get system tables
     VisitSystemTables([&](const catalog::VirtualTable& table) {

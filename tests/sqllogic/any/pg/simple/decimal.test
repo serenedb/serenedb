@@ -1,0 +1,56 @@
+query
+SELECT 1::numeric(5, 2);
+----
+numeric
+1.00
+
+
+query
+SELECT 1.2::numeric(5, 3) + 0.3::numeric(4, 1);
+----
+?column?
+1.500
+
+
+query
+SELECT 0.2::numeric(5, 3) * 0.3::numeric(4, 1);
+----
+?column?
+0.0600
+
+
+query
+SELECT 0.3373::numeric(3, 2) - 0.3::numeric(4, 1);
+----
+?column?
+0.04
+
+
+query
+SELECT 10000000000000000000000::numeric(24, 0);
+----
+numeric
+10000000000000000000000
+
+
+query ??
+SELECT * FROM (VALUES ('A+', 5.0::numeric(3, 2)), ('B-', 3.6091::numeric(3, 2)));
+----
+column1	column2
+A+	5.00
+B-	3.61
+
+
+# TODO(codeworse): support different numeric numeric scales and precisions?
+# SELECT * FROM (VALUES ('A+', 5.0::numeric(5, 4)), ('B-', 3.6091::numeric(3, 2)));
+# ----
+# column1	column2
+# A+	5.0000
+# B-	3.61
+
+# TODO(codeworse): compare decimals with different scales and precisions
+# query
+# SELECT 0.2::numeric(3, 1) + 0.1::numeric(4, 3) = 0.3::numeric(10, 1);
+# ----
+# ?column?
+# t

@@ -112,8 +112,8 @@ CollectionOutput MakeOutput(const catalog::Table& c) {
 }  // namespace
 
 Table::Table(const catalog::Table& other, NewOptions options)
-  : SchemaObject{other.GetOwnerId(), other.GetDatabaseId(), other.GetId(),
-                 options.name, ObjectType::Table},
+  : SchemaObject{other.GetOwnerId(), other.GetDatabaseId(), other.GetSchemaId(),
+                 other.GetId(),      options.name,          ObjectType::Table},
     _type{other.GetTableType()},
     _wait_for_sync{options.wait_for_sync},
     _shard_keys{other.shardKeys()},
@@ -135,6 +135,7 @@ Table::Table(const catalog::Table& other, NewOptions options)
 Table::Table(TableOptions&& options, ObjectId database_id)
   : SchemaObject{{},
                  database_id,
+                 {},
                  options.id,
                  std::move(options.name),
                  ObjectType::Table},

@@ -33,7 +33,7 @@ namespace sdb::catalog {
 
 class VirtualTable;
 
-class VritualTableSnapshot : public SchemaObject {
+class VirtualTableSnapshot : public SchemaObject {
  public:
   virtual velox::RowTypePtr RowType() const noexcept = 0;
 
@@ -55,7 +55,7 @@ class VritualTableSnapshot : public SchemaObject {
 // kind of C++ namespaces but with virtual functions
 class VirtualTable {
  public:
-  virtual std::shared_ptr<VritualTableSnapshot> CreateSnapshot(
+  virtual std::shared_ptr<VirtualTableSnapshot> CreateSnapshot(
     ObjectId database) const = 0;
 
   virtual ~VirtualTable() = default;

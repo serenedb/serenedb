@@ -56,6 +56,7 @@ Result ViewOptions::Read(ViewOptions& options, vpack::Slice slice) {
 View::View(ViewMeta&& options, ObjectId database_id)
   : SchemaObject{{},
                  database_id,
+                 {},
                  *options.id,
                  std::move(options.name),
                  ObjectType::View},

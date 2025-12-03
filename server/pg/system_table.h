@@ -149,12 +149,13 @@ template<typename T>
 class SystemTable;
 
 template<typename T>
-class SystemTableSnapshot final : public catalog::VritualTableSnapshot {
+class SystemTableSnapshot final : public catalog::VirtualTableSnapshot {
  public:
   explicit SystemTableSnapshot(const catalog::VirtualTable& table,
                                ObjectId database)
-    : VritualTableSnapshot{{},
+    : VirtualTableSnapshot{{},
                            database,
+                           {},
                            table.Id(),
                            std::string{table.Name()},
                            catalog::ObjectType::Virtual} {
@@ -209,7 +210,7 @@ class SystemTable : public catalog::VirtualTable {
     _name = T::kName;
   }
 
-  std::shared_ptr<catalog::VritualTableSnapshot> CreateSnapshot(
+  std::shared_ptr<catalog::VirtualTableSnapshot> CreateSnapshot(
     ObjectId database) const final {
     return std::make_shared<SystemTableSnapshot<T>>(*this, database);
   }

@@ -20,41 +20,63 @@
 
 #include "pg/pg_catalog/pg_namespace.h"
 
-#include "pg/pg_catalog/fwd.h"
+#include "app/app_server.h"
+#include "catalog/catalog.h"
 
 namespace sdb::pg {
 namespace {
 
-constexpr auto kSampleData = std::to_array<PgNamespace>({
-  {
-    .oid = 11,
-    .nspname = "pg_catalog",
-  },
-  {
-    .oid = 2200,
-    .nspname = "public",
-  },
-});
+constexpr auto kPgCatalog = PgNamespace{
+  .oid = 11,
+  .nspname = "pg_catalog",
+};
 
 constexpr uint64_t kNullMask = MaskFromNonNulls({
   GetIndex(&PgNamespace::oid),
   GetIndex(&PgNamespace::nspname),
 });
 
+void RetrieveObjects(ObjectId database_id,
+                     const catalog::LogicalCatalog& catalog,
+                     std::vector<PgNamespace>& values) {
+  std::vector<std::shared_ptr<catalog::Schema>> schemas;
+  auto res = catalog.GetSchemas(database_id, schemas);
+  if (!res.ok()) {
+    SDB_THROW(ERROR_INTERNAL, "Failed to get schemas for pg_namespace");
+  }
+
+  values.emplace_back(kPgCatalog);
+  for (const auto& object : schemas) {
+    PgNamespace row{
+      .oid = object->GetId().id(),
+      .nspname = object->GetName(),
+    };
+
+    // TODO(codeworse): fill other fields
+    values.emplace_back(std::move(row));
+  }
+}
+
 }  // namespace
 
 template<>
 std::vector<velox::VectorPtr> SystemTableSnapshot<PgNamespace>::GetTableData(
   velox::memory::MemoryPool& pool) {
+  auto& catalog =
+    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+
+  std::vector<PgNamespace> values;
+  RetrieveObjects(GetDatabaseId(), catalog, values);
+
   std::vector<velox::VectorPtr> result;
   result.reserve(boost::pfr::tuple_size_v<PgNamespace>);
   boost::pfr::for_each_field(
     PgNamespace{}, [&]<typename Field>(const Field& field) {
-      auto column = CreateColumn<Field>(kSampleData.size(), &pool);
+      auto column = CreateColumn<Field>(values.size(), &pool);
       result.push_back(std::move(column));
     });
-  for (size_t row = 0; row < kSampleData.size(); ++row) {
-    WriteData(result, kSampleData[row], kNullMask, row, &pool);
+  for (size_t row = 0; row < values.size(); ++row) {
+    WriteData(result, values[row], kNullMask, row, &pool);
   }
   return result;
 }

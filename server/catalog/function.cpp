@@ -153,6 +153,7 @@ catalog::Function::Function(std::string_view name, FunctionSignature signature,
                             FunctionOptions options, aql::FunctionImpl impl)
   : SchemaObject{{},
                  {},
+                 {},
                  {},  // TOOD(mbkkt) think about id
                  std::string{name},
                  ObjectType::Function},
@@ -167,6 +168,7 @@ catalog::Function::Function(std::string_view name, FunctionSignature signature,
 catalog::Function::Function(std::string_view name, FunctionSignature signature,
                             FunctionOptions options)
   : SchemaObject{{},
+                 {},
                  {},
                  {},  // TOOD(mbkkt) think about id
                  std::string{name},
@@ -183,6 +185,7 @@ catalog::Function::Function(FunctionProperties&& properties,
                             ObjectId database_id)
   : SchemaObject{{},
                  database_id,
+                 {},
                  properties.id,
                  std::move(properties.name),
                  ObjectType::Function},
@@ -199,6 +202,7 @@ catalog::Function::Function(FunctionProperties&& properties,
                             ObjectId database_id)
   : SchemaObject{{},
                  database_id,
+                 {},
                  properties.id,
                  std::move(properties.name),
                  ObjectType::Function},

@@ -677,7 +677,7 @@ class SqlAnalyzer {
                      const RangeVar* node);
 
   State ProcessSystemTable(State* parent, std::string_view name,
-                           catalog::VritualTableSnapshot& snapshot,
+                           catalog::VirtualTableSnapshot& snapshot,
                            const RangeVar* node);
 
   void ProcessFilterNode(State& state, const Node* node, ExprKind expr_kind);
@@ -2313,7 +2313,7 @@ State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
 }
 
 State SqlAnalyzer::ProcessSystemTable(State* parent, std::string_view name,
-                                      catalog::VritualTableSnapshot& snapshot,
+                                      catalog::VirtualTableSnapshot& snapshot,
                                       const RangeVar* node) {
   const auto& row_type = snapshot.RowType();
   SDB_ASSERT(row_type);
@@ -2350,7 +2350,7 @@ State SqlAnalyzer::ProcessRangeVar(State* parent, const RangeVar* node) {
   } else if (logical_object.GetType() == catalog::ObjectType::Virtual) {
     // Only for system tables now
     auto& snapshot =
-      basics::downCast<catalog::VritualTableSnapshot>(logical_object);
+      basics::downCast<catalog::VirtualTableSnapshot>(logical_object);
     return ProcessSystemTable(parent, snapshot.GetTable().Name(), snapshot,
                               node);
   }

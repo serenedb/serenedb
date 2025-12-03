@@ -39,6 +39,9 @@ namespace sdb::pg {
 yaclib::Future<Result> CreateDatabase(ExecContext& ctx,
                                       const CreatedbStmt& stmt);
 
+yaclib::Future<Result> CreateSchema(ExecContext& ctx,
+                                    const CreateSchemaStmt& stmt);
+
 yaclib::Future<Result> DropDatabase(ExecContext& ctx, const DropdbStmt& stmt);
 
 yaclib::Future<Result> CreateTable(ExecContext& ctx, const CreateStmt& stmt);

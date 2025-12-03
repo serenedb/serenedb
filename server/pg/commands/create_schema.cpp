@@ -37,7 +37,7 @@ LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 
-yaclib::Future<Result> CreateSchema(const ExecContext& context,
+yaclib::Future<Result> CreateSchema(ExecContext& context,
                                     const CreateSchemaStmt& stmt) {
   if (stmt.schemaElts) {
     return yaclib::MakeFuture<Result>(

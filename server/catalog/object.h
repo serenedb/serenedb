@@ -165,9 +165,10 @@ class SchemaObject : public DatabaseObject {
   ObjectId GetSchemaId() const noexcept { return _schema_id; }
 
  protected:
-  SchemaObject(ObjectId owner_id, ObjectId schema_id, ObjectId id,
-               std::string_view name, ObjectType type)
-    : DatabaseObject{owner_id, schema_id, id, name, type} {}
+  SchemaObject(ObjectId owner_id, ObjectId database_id, ObjectId schema_id,
+               ObjectId id, std::string_view name, ObjectType type)
+    : DatabaseObject{owner_id, database_id, id, name, type},
+      _schema_id{schema_id} {}
 
  private:
   ObjectId _schema_id;

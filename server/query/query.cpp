@@ -121,7 +121,37 @@ void Query::CompileQuery() {
   axiom::optimizer::VeloxHistory dummy_history;
   velox::exec::SimpleExpressionEvaluator evaluator{
     _query_ctx.velox_query_ctx.get(), _query_ctx.query_memory_pool.get()};
-  axiom::optimizer::OptimizerOptions optimizer_options;
+  // TODO(mbkkt) add options in config
+  axiom::optimizer::OptimizerOptions optimizer_options{
+    .parallelProjectWidth = 1,
+
+    // TODO(mbkkt) Should be true?
+    .pushdownSubfields = false,
+
+    // TODO(mbkkt) Can be true to avoid support maps in postgres frontend?
+    .allMapsAsStruct = false,
+
+    // TODO(mbkkt) Use advanced statistics somehow?
+    .sampleJoins = false,
+    .sampleFilters = false,
+
+    // TODO(mbkkt) Maybe disable?
+    .enableReducingExistences = false,
+
+    .syntacticJoinOrder = false,
+
+    // TODO(mbkkt) single option about aggregation?
+    .alwaysPlanPartialAggregation = false,
+    .alwaysPlanSingleAggregation = false,
+
+    // TODO(mbkkt) single option about limit?
+    .alwaysPushdownLimit = false,
+    .alwaysPullupLimit = false,
+    .planBestThroughput = false,
+
+    // TODO(mbkkt) maybe enable it for prepared statements?
+    .enableSubqueryConstantFolding = false,
+  };
   axiom::runner::MultiFragmentPlan::Options runner_options{
     .numWorkers = 1,
     .numDrivers = 1,
@@ -140,7 +170,7 @@ void Query::CompileQuery() {
   };
 
   auto best = optimization.bestPlan();
-  // This is not really correct, but it works for now
+  // This is not really good for prepared statements, but it works for now
   auto result = optimization.toVeloxPlan(best->op);
   _execution_plan = std::move(result.plan);
   _finish_write = std::move(result.finishWrite);

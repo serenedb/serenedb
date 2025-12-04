@@ -33,20 +33,16 @@ numeric
 10000000000000000000000
 
 
-query ??
-SELECT * FROM (VALUES ('A+', 5.0::numeric(3, 2)), ('B-', 3.6091::numeric(3, 2)));
+query
+SELECT ARRAY[5.0::numeric(3, 2), 3.6091::numeric(3, 2)];
 ----
-column1	column2
-A+	5.00
-B-	3.61
+array
+{5.00,3.61}
 
 
 # TODO(codeworse): support different numeric numeric scales and precisions?
 # SELECT * FROM (VALUES ('A+', 5.0::numeric(5, 4)), ('B-', 3.6091::numeric(3, 2)));
-# ----
-# column1	column2
-# A+	5.0000
-# B-	3.61
+# SELECT ARRAY[5.0::numeric(3, 2), 3.6091::numeric(3, 1)];
 
 # TODO(codeworse): compare decimals with different scales and precisions
 # query

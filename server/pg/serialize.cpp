@@ -243,7 +243,8 @@ void SerializeDecimal(SerializationContext context,
   const auto [precision, scale] = velox::getDecimalPrecisionScale(*type);
   auto value = decoded_vector.valueAt<UnscaledType>(row);
   if constexpr (Format == VarFormat::Text) {
-    size_t max_size = velox::DecimalUtil::maxStringViewSize(precision, scale);
+    const auto max_size =
+      velox::DecimalUtil::maxStringViewSize(precision, scale);
     context.buffer->WriteContiguousData(max_size, [&](auto* data) {
       char* buf = reinterpret_cast<char*>(data);
       return velox::DecimalUtil::castToString<UnscaledType>(
@@ -271,51 +272,44 @@ void SerializeDecimal(SerializationContext context,
     // dscale = 2
     // digits[0] = 123
     // digits[1] = 4500
-    constexpr size_t kBaseSystem = 10'000;
-    constexpr int16_t kPositive = 0x0000;
-    constexpr int16_t kNegative = 0x4000;
-    int16_t ndigits = 0;
-    {
-      auto val = value;
-      while (val != 0) {
-        val /= kBaseSystem;
+    static constexpr size_t kBaseSystem = 10'000;
+    static constexpr int16_t kPositive = 0x0000;
+    static constexpr int16_t kNegative = 0x4000;
+    int16_t ndigits = [scale](auto value) {
+      int16_t ndigits = 0;
+      for (; value != 0; value /= kBaseSystem) {
         ++ndigits;
       }
-    }
-    ndigits = scale % 4 == 0 ? ndigits : ndigits + 1;
-    int16_t weight = static_cast<int16_t>(ndigits - ((scale + 3) / 4) - 1);
-    int16_t sign = (value < 0) ? kNegative : kPositive;
-    int16_t dscale = static_cast<int16_t>(scale);
-    value = value < 0 ? -value : value;
-    context.buffer->WriteContiguousData(8 + ndigits * 2, [&](auto* data) {
-      char* buf = reinterpret_cast<char*>(data);
-      absl::big_endian::Store16(buf, ndigits);
-      buf += 2;
-      absl::big_endian::Store16(buf, weight);
-      buf += 2;
-      absl::big_endian::Store16(buf, sign);
-      buf += 2;
-      absl::big_endian::Store16(buf, dscale);
-      buf += 2;
-      buf += ndigits * 2;
-      if (scale % 4) {  // Adjust dscale to be multiple of 4 for ndigits
-        buf -= 2;
-        int16_t extra_digits = (4 - (scale % 4)) % 4;
-        int16_t extra_base =
-          static_cast<int16_t>(velox::DecimalUtil::kPowersOfTen[extra_digits]);
-        int16_t extra_value = (value % (kBaseSystem / extra_base)) * extra_base;
-        value /= (kBaseSystem / extra_base);
-        absl::big_endian::Store16(buf, extra_value);
-      }
+      return scale % 4 == 0 ? ndigits : ndigits + 1;
+    }(value);
 
-      while (value != 0) {
-        buf -= 2;
-        absl::big_endian::Store16(buf,
-                                  static_cast<int16_t>(value % kBaseSystem));
-        value /= kBaseSystem;
-      }
-      return static_cast<size_t>(8 + ndigits * 2);
-    });
+    auto weight = static_cast<int16_t>(ndigits - ((scale + 3) / 4) - 1);
+    auto sign = (value < 0) ? kNegative : kPositive;
+    auto dscale = static_cast<int16_t>(scale);
+    value = value < 0 ? -value : value;
+    auto* data = context.buffer->GetContiguousData(8 + ndigits * 2);
+    absl::big_endian::Store16(data, ndigits);
+    absl::big_endian::Store16(data + 2, weight);
+    absl::big_endian::Store16(data + 4, sign);
+    absl::big_endian::Store16(data + 6, dscale);
+    data += 8 + ndigits * 2;
+
+    if (scale % 4) {  // Adjust dscale to be multiple of 4 for ndigits
+      data -= 2;
+      int16_t extra_digits = (4 - (scale % 4)) % 4;
+      int16_t extra_base =
+        static_cast<int16_t>(velox::DecimalUtil::kPowersOfTen[extra_digits]);
+      int16_t extra_value = (value % (kBaseSystem / extra_base)) * extra_base;
+      value /= (kBaseSystem / extra_base);
+      absl::big_endian::Store16(data, extra_value);
+    }
+
+    while (value != 0) {
+      data -= 2;
+      absl::big_endian::Store16(data,
+                                static_cast<int16_t>(value % kBaseSystem));
+      value /= kBaseSystem;
+    }
   }
 }
 

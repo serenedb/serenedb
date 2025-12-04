@@ -338,7 +338,6 @@ void PgSQLCommTaskBase::HandleClientPacket(std::string_view packet) {
   const auto msg = packet.front();
   SDB_ASSERT(absl::big_endian::Load32(packet.data() + 1) == packet.size() - 1);
   packet.remove_prefix(5);
-  SDB_PRINT(packet);
   switch (msg) {
     case PQ_MSG_QUERY:
       return RunSimpleQuery(packet);

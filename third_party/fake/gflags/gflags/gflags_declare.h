@@ -20,6 +20,7 @@ struct Flag;
 
 #define DECLARE_bool(name) GFLAGS_DECLARE_FLAG_INTERNAL(bool, name)
 #define DECLARE_int32(name) GFLAGS_DECLARE_FLAG_INTERNAL(int32_t, name)
+#define DECLARE_int64(name) GFLAGS_DECLARE_FLAG_INTERNAL(int64_t, name)
 #define DECLARE_string(name) GFLAGS_DECLARE_FLAG_INTERNAL(std::string, name)
 
 #define GFLAGS_NAMESPACE gflags

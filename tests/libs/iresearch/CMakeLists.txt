@@ -12,6 +12,7 @@ set(iresearch-tests_sources
     ./analysis/normalizing_tokenizer_tests.cpp
     ./analysis/stemming_tokenizer_tests.cpp
     ./analysis/stopwords_tokenizer_tests.cpp
+    ./analysis/synonyms_tokenizer_tests.cpp
     ./analysis/token_attributes_test.cpp
     ./analysis/tokenizer_tests.cpp
     ./formats/columnstore2_test.cpp

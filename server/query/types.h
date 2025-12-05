@@ -54,6 +54,16 @@ struct IntervalTrait {
 };
 using Interval = velox::CustomType<IntervalTrait>;
 
+struct UnknownTrait {
+  using type = velox::Varchar;
+  static constexpr const char* typeName = "pg_unknown";  // NOLINT
+};
+using Unknown = velox::CustomType<UnknownTrait>;
+
+velox::TypePtr UNKNOWN();
+bool IsUnknown(const velox::TypePtr& type);
+bool IsUnknown(const velox::Type& type);
+
 void RegisterTypes();
 
 }  // namespace sdb::pg

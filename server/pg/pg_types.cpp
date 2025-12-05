@@ -32,6 +32,7 @@
 #include <charconv>
 
 #include "basics/assert.h"
+#include "basics/logger/logger.h"
 #include "basics/system-compiler.h"
 #include "pg/interval.h"
 #include "pg/serialize.h"
@@ -68,7 +69,9 @@ int32_t GetTypeOID(const velox::TypePtr& type, bool in_array) {
   if (composite_oid >= 0) {
     return composite_oid;
   }
-  return GetPrimitiveTypeOID(type->kind(), in_array);
+  auto x = GetPrimitiveTypeOID(type->kind(), in_array);
+  SDB_PRINT("OID = ", x);
+  return x;
 }
 
 namespace {

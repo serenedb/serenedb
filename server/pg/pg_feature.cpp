@@ -37,6 +37,7 @@
 #include <velox/functions/sparksql/aggregates/Register.h>
 #include <velox/functions/sparksql/registration/Register.h>
 #include <velox/functions/sparksql/window/WindowFunctionsRegistration.h>
+#include <velox/type/Type.h>
 #include <velox/type/TypeCoercer.h>
 
 #include "basics/assert.h"
@@ -124,6 +125,10 @@ velox::AllowedCoercions AllowedCoercions() {
   add(velox::REAL(), {velox::DOUBLE()});
   add(velox::DATE(), {velox::TIMESTAMP()});
 
+  add(pg::UNKNOWN(), {velox::VARCHAR()});
+  add(velox::VARCHAR(), {pg::UNKNOWN()});  // Remove later. Signature of
+                                           // varchars should be used instead
+
   return coercions;
 }
 
@@ -164,7 +169,9 @@ void PostgresFeature::prepare() {
 }
 
 void PostgresFeature::start() {
-  pg::RegisterSystemViews();
+  // TODO find out why doesn't work
+  // pg::RegisterSystemViews();
+
   auto& selector = server().getFeature<EngineSelectorFeature>();
   if (selector.isRocksDB() && (ServerState::instance()->IsDBServer() ||
                                ServerState::instance()->IsSingle())) {

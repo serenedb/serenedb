@@ -20,7 +20,13 @@
 
 #include "types.h"
 
+#include <velox/expression/CastExpr.h>
+#include <velox/type/StringView.h>
+#include <velox/type/Type.h>
+
 #include <memory>
+
+#include "basics/assert.h"
 
 namespace sdb::aql {
 
@@ -108,9 +114,98 @@ class IntervalTypeFactory : public velox::CustomTypeFactory {
   }
 };
 
+class UnknownType final : public velox::VarcharType {
+  UnknownType() = default;
+
+ public:
+  static std::shared_ptr<const UnknownType> get() {
+    VELOX_CONSTEXPR_SINGLETON UnknownType kInstance;
+    return {std::shared_ptr<const UnknownType>{}, &kInstance};
+  }
+
+  bool equivalent(const Type& other) const override {
+    // Pointer comparison works since this type is a singleton.
+    return this == &other;
+  }
+
+  const char* name() const override { return "PG_UNKNOWN"; }
+
+  std::string toString() const override { return name(); }
+
+  folly::dynamic serialize() const override {
+    folly::dynamic obj = folly::dynamic::object;
+    obj["name"] = "Type";
+    obj["type"] = name();
+    return obj;
+  }
+
+  bool isOrderable() const override { return false; }
+};
+
+velox::TypePtr UNKNOWN() { return UnknownType::get(); }
+
+bool IsUnknown(const velox::TypePtr& type) { return type == UNKNOWN(); }
+
+bool IsUnknown(const velox::Type& type) { return &type == UNKNOWN().get(); }
+
+class UnknownTypeCastOperator : public velox::exec::CastOperator {
+  bool isSupportedFromType(const velox::TypePtr& other) const final {
+    return other == velox::VARCHAR();
+  }
+
+  bool isSupportedToType(const velox::TypePtr& other) const final {
+    return other == velox::VARCHAR();
+  }
+
+  void castTo(const velox::BaseVector& input, velox::exec::EvalCtx& context,
+              const velox::SelectivityVector& rows,
+              const velox::TypePtr& resultType,  // NOLINT
+              velox::VectorPtr& result) const final {
+    SDB_ASSERT(resultType == velox::VARCHAR());
+    context.ensureWritable(rows, resultType, result);
+    auto* flat_result =
+      result->asChecked<velox::FlatVector<velox::StringView>>();
+    flat_result->copy(&input, rows, nullptr);
+  }
+
+  void castFrom(const velox::BaseVector& input, velox::exec::EvalCtx& context,
+                const velox::SelectivityVector& rows,
+                const velox::TypePtr& resultType,  // NOLINT
+                velox::VectorPtr& result) const final {
+    SDB_ASSERT(resultType == velox::VARCHAR());
+    context.ensureWritable(rows, resultType, result);
+    auto* flat_result =
+      result->asChecked<velox::FlatVector<velox::StringView>>();
+    flat_result->copy(&input, rows, nullptr);
+  }
+};
+
+class UnknownTypeFactory : public velox::CustomTypeFactory {
+ public:
+  UnknownTypeFactory() = default;
+
+  velox::TypePtr getType(
+    const std::vector<velox::TypeParameter>& parameters) const final {
+    VELOX_CHECK(parameters.empty(), "UNKNOWN type does not take parameters");
+    return UNKNOWN();
+  }
+
+  velox::exec::CastOperatorPtr getCastOperator() const final {
+    // TODO it is not true, varchars should be able to be casted into UNKNOWN
+    return std::make_shared<UnknownTypeCastOperator>();
+  }
+
+  velox::AbstractInputGeneratorPtr getInputGenerator(
+    const velox::InputGeneratorConfig& /*config*/) const final {
+    VELOX_CHECK(false, "Input generation for UNKNOWN type is not implemented");
+  }
+};
+
 void RegisterTypes() {
   velox::registerCustomType(IntervalTrait::typeName,
                             std::make_unique<const IntervalTypeFactory>());
+  velox::registerCustomType(UnknownTrait::typeName,
+                            std::make_unique<const UnknownTypeFactory>());
 }
 
 }  // namespace sdb::pg

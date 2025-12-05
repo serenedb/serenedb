@@ -45,9 +45,6 @@ yaclib::Future<Result> CreateSchema(ExecContext& context,
       "CREATE SCHEMA with schema elements is not implemented");
   }
 
-  // TODO: use correct schema
-  const auto db = context.GetDatabaseId();
-
   SDB_ASSERT(stmt.schemaname);
 
   auto& catalogs =
@@ -57,6 +54,7 @@ yaclib::Future<Result> CreateSchema(ExecContext& context,
   catalog::SchemaOptions options;
   options.name = stmt.schemaname;
 
+  const auto db = context.GetDatabaseId();
   auto r = catalog.CreateSchema(
     db, std::make_shared<catalog::Schema>(db, std::move(options)));
   if (r.is(ERROR_SERVER_DUPLICATE_NAME) && stmt.if_not_exists) {

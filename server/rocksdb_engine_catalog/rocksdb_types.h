@@ -54,8 +54,7 @@ enum class RocksDBEntryType : char {
   Role = '-',
   Schema = '+',
   TableTombstone = '|',
-  DatabaseTombstone = '~',
-  SchemaTombstone = '`',
+  ScopeTombstone = '~',
 };
 
 ////////////////////////////////////////////////////////////////////////////////

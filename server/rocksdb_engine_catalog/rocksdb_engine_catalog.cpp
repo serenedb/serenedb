@@ -1452,12 +1452,14 @@ Result RocksDBEngineCatalog::MarkDeleted(const catalog::Database& database) {
     },
     [&] {
       RocksDBKeyWithBuffer key;
-      key.constructObject(RocksDBEntryType::DatabaseTombstone,
-                          id::kTombstoneDatabase, database.GetId());
+      key.constructSchemaObject(RocksDBEntryType::ScopeTombstone,
+                                id::kTombstoneDatabase, database.GetId(),
+                                ObjectId{});
       return key;
     },
     [&] {
-      return RocksDBValue::Object(RocksDBEntryType::DatabaseTombstone,
+      // TODO(gnusi): write empty value
+      return RocksDBValue::Object(RocksDBEntryType::ScopeTombstone,
                                   vpack::Slice::emptyArraySlice());
     },
     [&] {
@@ -1482,13 +1484,14 @@ Result RocksDBEngineCatalog::MarkDeleted(const catalog::Schema& schema) {
     },
     [&] {
       RocksDBKeyWithBuffer key;
-      key.constructSchemaObject(RocksDBEntryType::SchemaTombstone,
+      key.constructSchemaObject(RocksDBEntryType::ScopeTombstone,
                                 id::kTombstoneDatabase, schema.GetDatabaseId(),
                                 schema.GetId());
       return key;
     },
     [&] {
-      return RocksDBValue::Object(RocksDBEntryType::SchemaTombstone,
+      // TODO(gnusi): write empty value
+      return RocksDBValue::Object(RocksDBEntryType::ScopeTombstone,
                                   vpack::Slice::emptyArraySlice());
     },
     [&] {
@@ -2070,7 +2073,7 @@ Result RocksDBEngineCatalog::dropSchema(ObjectId db, ObjectId id) {
     _db->GetRootDB(),
     [&] {
       RocksDBKeyWithBuffer key;
-      key.constructSchemaObject(RocksDBEntryType::SchemaTombstone,
+      key.constructSchemaObject(RocksDBEntryType::ScopeTombstone,
                                 id::kTombstoneDatabase, db, id);
       return key;
     },
@@ -2530,8 +2533,8 @@ Result RocksDBEngineCatalog::dropDatabase(ObjectId id) {
     db,
     [&] {
       RocksDBKeyWithBuffer key;
-      key.constructObject(RocksDBEntryType::DatabaseTombstone,
-                          id::kTombstoneDatabase, ObjectId{id});
+      key.constructSchemaObject(RocksDBEntryType::ScopeTombstone,
+                                id::kTombstoneDatabase, id, ObjectId{});
       return key;
     },
     [] { return std::string_view{}; });

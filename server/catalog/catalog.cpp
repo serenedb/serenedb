@@ -274,68 +274,42 @@ Result CatalogFeature::ProcessTombstones() {
   }
 
   r = engine.VisitObjects(
-    id::kTombstoneDatabase, RocksDBEntryType::SchemaTombstone,
+    id::kTombstoneDatabase, RocksDBEntryType::ScopeTombstone,
     [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
       ObjectId database_id{RocksDBKey::SchemaId(key)};
 
       if (!database_id.isSet()) {
-        return ErrorMeta(ERROR_BAD_PARAMETER, "schema tombstone",
+        return ErrorMeta(ERROR_BAD_PARAMETER, "scope tombstone",
                          "invalid database id", slice);
       }
 
       ObjectId schema_id{RocksDBKey::objectId(key)};
-      if (!schema_id.isSet()) {
-        return ErrorMeta(ERROR_BAD_PARAMETER, "schema tombstone",
-                         "invalid schema id", slice);
-      }
 
-      if (auto r = process_schema(database_id, schema_id); !r.ok()) {
-        return r;
-      }
+      auto r = [&] {
+        if (schema_id.isSet()) {
+          return process_schema(database_id, schema_id);
+        } else {
+          return engine.VisitObjects(
+            database_id, RocksDBEntryType::Schema,
+            [&](rocksdb::Slice key, vpack::Slice slice) {
+              ObjectId schema_id{RocksDBKey::objectId(key)};
+              if (!schema_id.isSet()) {
+                return ErrorMeta(ERROR_BAD_PARAMETER, "schema",
+                                 "invalid schema id", slice);
+              }
 
-      Physical().RegisterSchemaDrop(database_id, schema_id);
-      return {};
-    });
-
-  if (!r.ok()) {
-    return {r.errorNumber(),
-            "Failed to process schema tombstones, error: ", r.errorMessage()};
-  }
-
-  r = engine.VisitObjects(
-    id::kTombstoneDatabase, RocksDBEntryType::DatabaseTombstone,
-    [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
-      ObjectId database_id{RocksDBKey::databaseId(key)};
-
-      if (!database_id.isSet()) {
-        return ErrorMeta(ERROR_BAD_PARAMETER, "database tombstone",
-                         "invalid database id", slice);
-      }
-
-      auto r =
-        engine.VisitObjects(database_id, RocksDBEntryType::Schema,
-                            [&](rocksdb::Slice key, vpack::Slice slice) {
-                              ObjectId schema_id{RocksDBKey::objectId(key)};
-                              if (!schema_id.isSet()) {
-                                return ErrorMeta(ERROR_BAD_PARAMETER, "schema",
-                                                 "invalid schema id", slice);
-                              }
-
-                              return process_schema(database_id, schema_id);
-                            });
+              return process_schema(database_id, schema_id);
+            });
+        }
+      }();
 
       if (!r.ok()) {
         return r;
       }
 
-      Physical().RegisterDatabaseDrop(database_id);
+      Physical().RegisterScopeDrop(database_id, schema_id);
       return {};
     });
-
-  if (!r.ok()) {
-    return {r.errorNumber(),
-            "Failed to process database tombstones, error: ", r.errorMessage()};
-  }
 
   return {};
 }

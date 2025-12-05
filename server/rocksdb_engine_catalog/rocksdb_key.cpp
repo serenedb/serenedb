@@ -82,7 +82,6 @@ void RocksDBKey::constructObject(RocksDBEntryType type, ObjectId database_id,
   SDB_ASSERT(database_id.isSet());
   SDB_ASSERT(id.isSet());
   SDB_ASSERT(type == RocksDBEntryType::TableTombstone ||
-               type == RocksDBEntryType::DatabaseTombstone ||
                type == RocksDBEntryType::Schema ||
                type == RocksDBEntryType::Role,
              magic_enum::enum_name(type));
@@ -97,7 +96,7 @@ void RocksDBKey::constructSchemaObject(RocksDBEntryType type,
   SDB_ASSERT(id.isSet());
   SDB_ASSERT(type == RocksDBEntryType::Collection ||
              type == RocksDBEntryType::Function ||
-             type == RocksDBEntryType::SchemaTombstone ||
+             type == RocksDBEntryType::ScopeTombstone ||
              type == RocksDBEntryType::View);
   _type = type;
   rocksutils::Concat(*_buffer, type, database_id, schema_id.id(), id.id());
@@ -234,10 +233,6 @@ Tick RocksDBKey::databaseId(const char* data, size_t size) {
     case RocksDBEntryType::ReplicationApplierConfig: {
       SDB_ASSERT(size >= (sizeof(char) + sizeof(uint64_t)));
       return Uint64FromPersistent(data + sizeof(char));
-    }
-    case RocksDBEntryType::DatabaseTombstone: {
-      SDB_ASSERT(size >= (sizeof(char) + 2 * sizeof(uint64_t)));
-      return Uint64FromPersistent(data + sizeof(char) + sizeof(uint64_t));
     }
 
     default:

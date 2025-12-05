@@ -205,7 +205,7 @@ class RocksDBKey {
       case RocksDBEntryType::View:
       case RocksDBEntryType::Role:
       case RocksDBEntryType::TableTombstone:
-      case RocksDBEntryType::DatabaseTombstone:
+      case RocksDBEntryType::ScopeTombstone:
         return type;
       default:
         return RocksDBEntryType::Placeholder;

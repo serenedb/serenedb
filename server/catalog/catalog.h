@@ -182,8 +182,7 @@ class PhysicalCatalog {
   virtual ~PhysicalCatalog() = default;
   virtual std::shared_ptr<TableShard> GetTableShard(ObjectId id) const = 0;
   virtual void RegisterTableDrop(TableTombstone tombstone) = 0;
-  virtual void RegisterDatabaseDrop(ObjectId database_id) = 0;
-  virtual void RegisterSchemaDrop(ObjectId database_id, ObjectId schema_id) = 0;
+  virtual void RegisterScopeDrop(ObjectId database_id, ObjectId schema_id) = 0;
   virtual std::vector<std::shared_ptr<TableShard>> GetTableShards() = 0;
 };
 

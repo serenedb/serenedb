@@ -128,8 +128,7 @@ class LocalCatalog final : public LogicalCatalog,
   std::shared_ptr<Object> GetObject(ObjectId id) const final;
 
   void RegisterTableDrop(TableTombstone tombstone) final;
-  void RegisterDatabaseDrop(ObjectId database_id) final;
-  void RegisterSchemaDrop(ObjectId database_id, ObjectId schema_id) final;
+  void RegisterScopeDrop(ObjectId database_id, ObjectId schema_id) final;
   std::shared_ptr<TableShard> GetTableShard(ObjectId id) const final;
   std::vector<std::shared_ptr<TableShard>> GetTableShards() final;
   void DropTableShard(ObjectId id);

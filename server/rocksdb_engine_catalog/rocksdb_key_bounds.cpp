@@ -180,7 +180,7 @@ rocksdb::ColumnFamilyHandle* RocksDBKeyBounds::columnFamily() const {
     case RocksDBEntryType::Role:
     case RocksDBEntryType::Schema:
     case RocksDBEntryType::TableTombstone:
-    case RocksDBEntryType::DatabaseTombstone:
+    case RocksDBEntryType::ScopeTombstone:
       return RocksDBColumnFamilyManager::get(
         RocksDBColumnFamilyManager::Family::Definitions);
   }
@@ -226,7 +226,7 @@ RocksDBKeyBounds::RocksDBKeyBounds(RocksDBEntryType type, uint64_t first)
   : _type(type) {
   switch (_type) {
     case RocksDBEntryType::TableTombstone:
-    case RocksDBEntryType::DatabaseTombstone:
+    case RocksDBEntryType::ScopeTombstone:
     case RocksDBEntryType::Collection:
     case RocksDBEntryType::Schema:
     case RocksDBEntryType::Role: {

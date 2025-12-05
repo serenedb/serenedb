@@ -1464,16 +1464,7 @@ void LocalCatalog::RegisterTableDrop(TableTombstone tombstone) {
   QueueTask(std::move(task)).Detach();
 }
 
-void LocalCatalog::RegisterDatabaseDrop(ObjectId database_id) {
-  auto task = std::make_shared<ScopeDrop>();
-  task->database = database_id;
-  task->catalog = shared_from_this();
-
-  QueueTask(std::move(task)).Detach();
-}
-
-void LocalCatalog::RegisterSchemaDrop(ObjectId database_id,
-                                      ObjectId schema_id) {
+void LocalCatalog::RegisterScopeDrop(ObjectId database_id, ObjectId schema_id) {
   auto task = std::make_shared<ScopeDrop>();
   task->database = database_id;
   task->schema = schema_id;

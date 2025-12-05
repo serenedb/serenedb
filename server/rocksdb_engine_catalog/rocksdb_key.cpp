@@ -25,6 +25,7 @@
 #include <absl/strings/internal/resize_uninitialized.h>
 
 #include "basics/exceptions.h"
+#include "catalog/identifiers/object_id.h"
 #include "rocksdb_engine_catalog/concat.h"
 #include "rocksdb_engine_catalog/rocksdb_format.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
@@ -96,6 +97,7 @@ void RocksDBKey::constructSchemaObject(RocksDBEntryType type,
   SDB_ASSERT(id.isSet());
   SDB_ASSERT(type == RocksDBEntryType::Collection ||
              type == RocksDBEntryType::Function ||
+             type == RocksDBEntryType::SchemaTombstone ||
              type == RocksDBEntryType::View);
   _type = type;
   rocksutils::Concat(*_buffer, type, database_id, schema_id.id(), id.id());

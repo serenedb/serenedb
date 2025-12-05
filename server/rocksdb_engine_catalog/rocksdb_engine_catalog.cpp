@@ -1482,8 +1482,9 @@ Result RocksDBEngineCatalog::MarkDeleted(const catalog::Schema& schema) {
     },
     [&] {
       RocksDBKeyWithBuffer key;
-      key.constructObject(RocksDBEntryType::SchemaTombstone,
-                          id::kTombstoneDatabase, schema.GetId());
+      key.constructSchemaObject(RocksDBEntryType::SchemaTombstone,
+                                id::kTombstoneDatabase, schema.GetDatabaseId(),
+                                schema.GetId());
       return key;
     },
     [&] {
@@ -2063,10 +2064,17 @@ Result RocksDBEngineCatalog::changeSchema(ObjectId db, ObjectId id,
                    RocksDBLogType::SchemaChange);
 }
 
-Result RocksDBEngineCatalog::dropSchema(ObjectId db, ObjectId id,
-                                        std::string_view name) {
-  return DeleteObject(db, id, name, RocksDBEntryType::Schema,
-                      RocksDBLogType::SchemaDrop);
+Result RocksDBEngineCatalog::dropSchema(ObjectId db, ObjectId id) {
+  // Remove tombstone definition
+  return DeleteDefinition(
+    _db->GetRootDB(),
+    [&] {
+      RocksDBKeyWithBuffer key;
+      key.constructSchemaObject(RocksDBEntryType::SchemaTombstone,
+                                id::kTombstoneDatabase, db, id);
+      return key;
+    },
+    [] { return std::string_view{}; });
 }
 
 Result RocksDBEngineCatalog::changeView(ObjectId db, ObjectId schema_id,

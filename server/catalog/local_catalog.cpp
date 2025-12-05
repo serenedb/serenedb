@@ -110,8 +110,8 @@ AsyncResult QueueTask(std::shared_ptr<T> task) {
         }
 
         if (!r.ok()) {
-          SDB_FATAL("xxxxx", Logger::THREADS, "Failed to execute ", T::kName,
-                    ", error: ", r.errorMessage());
+          SDB_FATAL("xxxxx", Logger::THREADS, "Failed to execute ",
+                    task->GetContext(), ", error: ", r.errorMessage());
         }
 
         return yaclib::MakeFuture<Result>();
@@ -152,6 +152,10 @@ struct TableDrop {
   std::shared_ptr<LocalCatalog> catalog;
   uint32_t delay = kInitialDelay;  // delay in microseconds
 
+  std::string GetContext() const {
+    return absl::StrCat("table ", tombstone.table);
+  }
+
   Result operator()() {
     SDB_DEBUG("xxxxx", Logger::THREADS,
               "Start dropping table: ", tombstone.table);
@@ -160,8 +164,6 @@ struct TableDrop {
     if (server.isStopping()) {
       return {};
     }
-
-    auto& engine = server.getFeature<EngineSelectorFeature>().engine();
 
 #ifdef SDB_CLUSTER
     auto r = basics::SafeCall([&] {
@@ -183,6 +185,7 @@ struct TableDrop {
 
     const bool fatal = !catalog->GetSkipBackgroundErrors();
 
+    auto& engine = GetServerEngine();
     for (auto& index : tombstone.indexes) {
       if (auto r = engine.dropIndex(index); !r.ok()) {
         SDB_WARN("xxxxx", Logger::THREADS, "Failed dropping index ", index.id,
@@ -215,16 +218,44 @@ struct TableDrop {
 };
 
 struct ScopeDrop : std::enable_shared_from_this<ScopeDrop> {
-  static constexpr std::string_view kName = "database drop";
+  static constexpr std::string_view kName = "scope drop";
 
-  ObjectId object;
+  ObjectId database;
+  ObjectId schema;
   std::vector<TableDrop> tables;
   std::shared_ptr<LocalCatalog> catalog;
-  std::function<Result(const ScopeDrop&)> finish = [&](const ScopeDrop& drop) {
-    return Result{};
-  };
   uint32_t delay = kInitialDelay;  // delay in microseconds
-  ObjectType type = ObjectType::Database;
+
+  std::string GetContext() const {
+    if (schema.isSet()) {
+      return absl::StrCat("schema ", database, ".", schema);
+    } else {
+      return absl::StrCat("database ", database);
+    }
+  }
+
+  Result Finish() {
+    auto r = [&]() {
+      if (schema.isSet()) {
+        SDB_ASSERT(database.isSet());
+        return GetServerEngine().dropSchema(database, schema);
+      } else {
+#ifdef SDB_CLUSTER
+        search::CleanupDatabase(database);
+#endif
+        return GetServerEngine().dropDatabase(database);
+      }
+    }();
+    if (!r.ok()) {
+      SDB_WARN("xxxxx", Logger::THREADS, "Failed dropping ", GetContext(),
+               ", error: ", r.errorMessage());
+      if (!catalog->GetSkipBackgroundErrors()) {
+        return {ERROR_INTERNAL};
+      }
+    }
+
+    return {};
+  }
 
   Result DropTables(auto& tasks) const {
     if (tasks.empty()) {
@@ -240,8 +271,7 @@ struct ScopeDrop : std::enable_shared_from_this<ScopeDrop> {
           for (auto& result : results) {
             if (auto r = std::move(result).Ok(); !r.ok()) {
               SDB_WARN("xxxxx", Logger::THREADS, "Failed dropping table in ",
-                       magic_enum::enum_name(type), " ", object,
-                       ", error: ", r.errorMessage());
+                       GetContext(), ", error: ", r.errorMessage());
               error = true;
             }
 
@@ -256,8 +286,7 @@ struct ScopeDrop : std::enable_shared_from_this<ScopeDrop> {
   }
 
   Result operator()() {
-    SDB_DEBUG("xxxxx", Logger::THREADS, "Start dropping ",
-              magic_enum::enum_name(type), ": ", object);
+    SDB_DEBUG("xxxxx", Logger::THREADS, "Start dropping ", GetContext());
 
     if (SerenedServer::Instance().isStopping()) {
       return {};
@@ -275,37 +304,15 @@ struct ScopeDrop : std::enable_shared_from_this<ScopeDrop> {
       return r;
     }
 
-    r = finish(*this);
+    r = Finish();
     if (!r.ok()) {
       return r;
     }
 
-    SDB_DEBUG("xxxxx", Logger::THREADS, "Finish dropping ",
-              magic_enum::enum_name(type), ": ", object);
-    return r;
+    SDB_DEBUG("xxxxx", Logger::THREADS, "Finish dropping ", GetContext());
+    return {};
   }
 };
-
-Result DatabaseDropFinish(const ScopeDrop& drop) {
-#ifdef SDB_CLUSTER
-  search::CleanupDatabase(drop.object);
-#endif
-
-  if (auto r = SerenedServer::Instance()
-                 .getFeature<EngineSelectorFeature>()
-                 .engine()
-                 .dropDatabase(drop.object);
-      !r.ok()) {
-    SDB_WARN("xxxxx", Logger::THREADS, "Failed dropping ",
-             magic_enum::enum_name(drop.type), " ", drop.object,
-             ", error: ", r.errorMessage());
-    if (!drop.catalog->GetSkipBackgroundErrors()) {
-      return {ERROR_INTERNAL};
-    }
-  }
-
-  return {};
-}
 
 auto MakePropertiesWriter() {
   return [b = vpack::Builder{}](const DatabaseObject& object,
@@ -1197,9 +1204,8 @@ Result LocalCatalog::DropDatabase(std::string_view name,
     // TODO(mbkkt) probably index estimators should be cleared in unload
     shard.physical->freeMemory();
   }
-  task->object = database_id;
+  task->database = database_id;
   task->catalog = std::move(self);
-  task->finish = &DatabaseDropFinish;
 
   if (auto f = QueueTask(std::move(task)); async_result) {
     *async_result = std::move(f);
@@ -1223,8 +1229,7 @@ Result LocalCatalog::DropSchema(ObjectId database_id, std::string_view schema,
       [&](auto&, auto& schema) {
         schema_id = schema->GetId();
 
-        return _engine->dropSchema(database_id, schema->GetId(),
-                                   schema->GetName());
+        return _engine->MarkDeleted(*schema);
       },
       [&](auto& obj) {
         if (obj->GetType() == catalog::ObjectType::Table) {
@@ -1249,7 +1254,8 @@ Result LocalCatalog::DropSchema(ObjectId database_id, std::string_view schema,
     // TODO(mbkkt) probably index estimators should be cleared in unload
     shard.physical->freeMemory();
   }
-  task->object = database_id;
+  task->database = database_id;
+  task->schema = schema_id;
   task->catalog = std::move(self);
 
   if (auto f = QueueTask(std::move(task)); async_result) {
@@ -1460,9 +1466,18 @@ void LocalCatalog::RegisterTableDrop(TableTombstone tombstone) {
 
 void LocalCatalog::RegisterDatabaseDrop(ObjectId database_id) {
   auto task = std::make_shared<ScopeDrop>();
-  task->object = database_id;
+  task->database = database_id;
   task->catalog = shared_from_this();
-  task->finish = &DatabaseDropFinish;
+
+  QueueTask(std::move(task)).Detach();
+}
+
+void LocalCatalog::RegisterSchemaDrop(ObjectId database_id,
+                                      ObjectId schema_id) {
+  auto task = std::make_shared<ScopeDrop>();
+  task->database = database_id;
+  task->schema = schema_id;
+  task->catalog = shared_from_this();
 
   QueueTask(std::move(task)).Detach();
 }

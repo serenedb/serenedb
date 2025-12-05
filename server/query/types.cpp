@@ -27,6 +27,7 @@
 #include <memory>
 
 #include "basics/assert.h"
+#include "basics/logger/logger.h"
 
 namespace sdb::aql {
 
@@ -161,7 +162,10 @@ class UnknownTypeCastOperator : public velox::exec::CastOperator {
               const velox::SelectivityVector& rows,
               const velox::TypePtr& resultType,  // NOLINT
               velox::VectorPtr& result) const final {
-    SDB_ASSERT(resultType == velox::VARCHAR());
+    SDB_ASSERT(resultType);
+    SDB_PRINT("Result type = ", resultType->name());
+    // TODO find out why self in resultType
+    SDB_ASSERT(resultType == velox::VARCHAR() || resultType == pg::UNKNOWN());
     context.ensureWritable(rows, resultType, result);
     auto* flat_result =
       result->asChecked<velox::FlatVector<velox::StringView>>();

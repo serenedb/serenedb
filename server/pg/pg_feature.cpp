@@ -40,6 +40,9 @@
 #include <velox/type/Type.h>
 #include <velox/type/TypeCoercer.h>
 
+#include <chrono>
+#include <thread>
+
 #include "basics/assert.h"
 #include "basics/down_cast.h"
 #include "basics/random/random_generator.h"
@@ -169,8 +172,9 @@ void PostgresFeature::prepare() {
 }
 
 void PostgresFeature::start() {
-  // TODO find out why doesn't work
-  // pg::RegisterSystemViews();
+  // for debug
+  // std::this_thread::sleep_for(std::chrono::seconds(10));
+  pg::RegisterSystemViews();
 
   auto& selector = server().getFeature<EngineSelectorFeature>();
   if (selector.isRocksDB() && (ServerState::instance()->IsDBServer() ||

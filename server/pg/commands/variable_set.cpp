@@ -125,8 +125,8 @@ yaclib::Future<Result> VariableSet(ExecContext& ctx,
     stmt_name.remove_prefix(kFailPointPrefix.size());
     if (stmt_name == "s") {
       if (stmt.kind != VAR_RESET) {
-        return yaclib::MakeFuture<Result>(
-          ERROR_FAILED, "only RESET sdb_faults is valid");
+        return yaclib::MakeFuture<Result>(ERROR_FAILED,
+                                          "only RESET sdb_faults is valid");
       }
       ClearFailurePointsDebugging();
       return {};

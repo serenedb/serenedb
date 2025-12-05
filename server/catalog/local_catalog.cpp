@@ -861,8 +861,6 @@ Result LocalCatalog::CreateDatabase(std::shared_ptr<Database> database) {
 
 Result LocalCatalog::CreateSchema(ObjectId database_id,
                                   std::shared_ptr<catalog::Schema> schema) {
-  auto writer = MakePropertiesWriter();
-
   RECURSIVE_WRITE_LOCKER(_mutex, _owner);
   return _snapshot->RegisterSchema(
     database_id, std::move(schema), [&](auto& object) {
@@ -873,7 +871,7 @@ Result LocalCatalog::CreateSchema(ObjectId database_id,
 
       return _engine->createSchema(
         schema.GetDatabaseId(), object->GetId(),
-        [&](bool internal) { return writer(schema, internal); });
+        [&](bool internal) { return builder.slice(); });
     });
 }
 

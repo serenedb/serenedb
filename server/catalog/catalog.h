@@ -121,7 +121,8 @@ struct LogicalCatalog {
   virtual Result DropDatabase(std::string_view name,
                               AsyncResult* async_result) = 0;
   virtual Result DropRole(std::string_view name) = 0;
-  virtual Result DropSchema(ObjectId database, std::string_view name) = 0;
+  virtual Result DropSchema(ObjectId database, std::string_view name,
+                            bool cascade, AsyncResult* async_result) = 0;
   virtual Result DropFunction(ObjectId database, std::string_view schema,
                               std::string_view name) = 0;
   virtual Result DropView(ObjectId database, std::string_view schema,

@@ -35,6 +35,7 @@
 #include "catalog/identifiers/index_id.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/identifiers/transaction_id.h"
+#include "catalog/schema.h"
 #include "catalog/table.h"
 #include "catalog/types.h"
 #include "database/access_mode.h"
@@ -127,7 +128,7 @@ struct IndexTombstone {
 };
 
 struct TableTombstone {
-  ObjectId collection;
+  ObjectId table;
   uint64_t number_documents = kRead;
   std::vector<IndexTombstone> indexes;
 };
@@ -148,7 +149,7 @@ class StorageEngine : public SerenedFeature {
     return {};
   }
 
-  virtual Result createTableShard(const catalog::Table& collection, bool is_new,
+  virtual Result createTableShard(const catalog::Table& table, bool is_new,
                                   std::shared_ptr<TableShard>& physical) {
     SDB_ASSERT(false);
     return {ERROR_NOT_IMPLEMENTED};
@@ -183,7 +184,7 @@ class StorageEngine : public SerenedFeature {
   // TODO(mbkkt) is it expected for dbservers?
   virtual std::string databasePath() const { return {}; }
 
-  // database, collection and index management
+  // database, table and index management
 
   // if not stated other wise functions may throw and the caller has to take
   // care of error handling the return values will be the usual  ERROR_*
@@ -214,35 +215,35 @@ class StorageEngine : public SerenedFeature {
   virtual Result dropFunction(ObjectId db, ObjectId schema_id, ObjectId id,
                               std::string_view name) = 0;
 
-  //// Operations on Collections
-  // asks the storage engine to create a collection as specified in the VPack
+  // asks the storage engine to create a table as specified in the VPack
   // Slice object and persist the creation info. It is guaranteed by the server
-  // that no other active collection with the same name and id exists in the
+  // that no other active table with the same name and id exists in the
   // same database when this function is called. If this operation fails
   // somewhere in the middle, the storage engine is required to fully clean up
-  // the creation and throw only then, so that subsequent collection creation
-  // requests will not fail. the WAL entry for the collection creation will be
+  // the creation and throw only then, so that subsequent table creation
+  // requests will not fail. the WAL entry for the table creation will be
   // written *after* the call to "createTable" returns
-  virtual void createTable(const catalog::Table& collection,
+  virtual void createTable(const catalog::Table& table,
                            TableShard& physical) = 0;
-  virtual Result MarkDeleted(const catalog::Table& collection,
+  virtual Result MarkDeleted(const catalog::Table& table,
                              const TableShard& physical,
                              const TableTombstone& tombstone) {
     return {};
   };
 
   virtual Result MarkDeleted(const catalog::Database& database) { return {}; };
+  virtual Result MarkDeleted(const catalog::Schema& schema) { return {}; };
 
-  // method that is called prior to deletion of a collection. allows the storage
-  // engine to clean up arbitrary data for this collection before the collection
+  // method that is called prior to deletion of a table. allows the storage
+  // engine to clean up arbitrary data for this table before the table
   // moves into status "deleted". this method may be called multiple times for
-  // the same collection
-  virtual void prepareDropTable(ObjectId collection) {}
+  // the same table
+  virtual void prepareDropTable(ObjectId table) {}
 
-  // asks the storage engine to drop the specified collection and persist the
-  // deletion info. Note that physical deletion of the collection data must not
+  // asks the storage engine to drop the specified table and persist the
+  // deletion info. Note that physical deletion of the table data must not
   // be carried out by this call, as there may
-  // still be readers of the collection's data. It is recommended that this
+  // still be readers of the table's data. It is recommended that this
   // operation only sets a deletion flag for the collection but lets an async
   // task perform the actual deletion. the WAL entry for collection deletion
   // will be written *after* the call to "dropCollection" returns

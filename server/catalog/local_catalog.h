@@ -57,7 +57,7 @@ class LocalCatalog final : public LogicalCatalog,
   Result RegisterFunction(ObjectId database_id, std::string_view schema,
                           std::shared_ptr<catalog::Function> function) final;
   Result RegisterTable(ObjectId database_id, std::string_view schema,
-                       CreateTableOptions collection) final;
+                       CreateTableOptions table) final;
 
   Result CreateDatabase(std::shared_ptr<catalog::Database> database) final;
   Result CreateRole(std::shared_ptr<catalog::Role> role) final;
@@ -68,7 +68,7 @@ class LocalCatalog final : public LogicalCatalog,
   Result CreateFunction(ObjectId database_id, std::string_view schema,
                         std::shared_ptr<catalog::Function> function) final;
   Result CreateTable(ObjectId database_id, std::string_view schema,
-                     CreateTableOptions collection,
+                     CreateTableOptions table,
                      CreateTableOperationOptions operation_options) final;
 
   Result RenameView(ObjectId database_id, std::string_view schema,
@@ -86,7 +86,8 @@ class LocalCatalog final : public LogicalCatalog,
 
   Result DropDatabase(std::string_view name, AsyncResult* async_result) final;
   Result DropRole(std::string_view role) final;
-  Result DropSchema(ObjectId database_id, std::string_view name) final;
+  Result DropSchema(ObjectId database_id, std::string_view name, bool cascade,
+                    AsyncResult* async_result) final;
   Result DropView(ObjectId database_id, std::string_view schema,
                   std::string_view name) final;
   Result DropFunction(ObjectId database_id, std::string_view schema,
@@ -116,10 +117,10 @@ class LocalCatalog final : public LogicalCatalog,
   Result GetFunctions(
     ObjectId database_id, std::string_view schema,
     std::vector<std::shared_ptr<catalog::Function>>& functions) const final;
-  Result GetTables(ObjectId database_id, std::string_view schema,
-                   std::vector<std::pair<std::shared_ptr<catalog::Table>,
-                                         std::shared_ptr<TableShard>>>&
-                     collections) const final;
+  Result GetTables(
+    ObjectId database_id, std::string_view schema,
+    std::vector<std::pair<std::shared_ptr<catalog::Table>,
+                          std::shared_ptr<TableShard>>>& tables) const final;
   std::vector<std::shared_ptr<Database>> GetDatabases() const final;
   Result GetSchemas(ObjectId database_id,
                     std::vector<std::shared_ptr<Schema>>& schemas) const final;
@@ -142,7 +143,7 @@ class LocalCatalog final : public LogicalCatalog,
   mutable basics::ReadWriteLock _mutex;
   mutable std::atomic<std::thread::id> _owner;
   std::shared_ptr<Snapshot> _snapshot;
-  containers::FlatHashMap<ObjectId, std::shared_ptr<TableShard>> _collections;
+  containers::FlatHashMap<ObjectId, std::shared_ptr<TableShard>> _tables;
   StorageEngine* const _engine;
   bool _skip_background_errors;
 };

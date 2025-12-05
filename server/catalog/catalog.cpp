@@ -251,7 +251,7 @@ Result CatalogFeature::ProcessTombstones() {
           }
 
           TableTombstone tombstone;
-          tombstone.collection = options.id;
+          tombstone.table = options.id;
 
           // TODO(gnusi): this will be gone once we have normal indexes
           struct IndexMeta {

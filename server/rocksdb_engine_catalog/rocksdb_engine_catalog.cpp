@@ -1469,6 +1469,36 @@ Result RocksDBEngineCatalog::MarkDeleted(const catalog::Database& database) {
     });
 }
 
+Result RocksDBEngineCatalog::MarkDeleted(const catalog::Schema& schema) {
+  vpack::Builder b;
+  schema.WriteInternal(b);
+
+  return WriteDefinition(
+    _db->GetRootDB(),
+    [&] {
+      RocksDBKeyWithBuffer key;
+      key.constructSchema(schema.GetDatabaseId(), schema.GetId());
+      return key;
+    },
+    [&] {
+      RocksDBKeyWithBuffer key;
+      key.constructObject(RocksDBEntryType::SchemaTombstone,
+                          id::kTombstoneDatabase, schema.GetId());
+      return key;
+    },
+    [&] {
+      return RocksDBValue::Object(RocksDBEntryType::SchemaTombstone,
+                                  vpack::Slice::emptyArraySlice());
+    },
+    [&] {
+      const wal::Database entry{
+        .database_id = schema.GetId(),
+        .data = b.slice(),
+      };
+      return wal::Write(RocksDBLogType::SchemaDrop, entry);
+    });
+}
+
 RecoveryState RocksDBEngineCatalog::recoveryState() noexcept {
   return server().getFeature<RocksDBRecoveryManager>().recoveryState();
 }
@@ -1861,20 +1891,19 @@ bool RocksDBEngineCatalog::UseRangeDelete(ObjectId id,
 Result RocksDBEngineCatalog::dropCollection(const TableTombstone& tombstone) {
   const bool prefix_same_as_start = true;
   const bool use_range_delete =
-    UseRangeDelete(tombstone.collection, tombstone.number_documents);
+    UseRangeDelete(tombstone.table, tombstone.number_documents);
 
   rocksdb::DB* db = _db->GetRootDB();
 
   // Unregister collection metadata
-  auto r = DeleteTableMeta(db, tombstone.collection.id());
+  auto r = DeleteTableMeta(db, tombstone.table.id());
   if (!r.ok()) {
     SDB_ERROR("xxxxx", Logger::ENGINES, "error removing collection meta-data: ",
               r.errorMessage());  // continue regardless
   }
 
   // delete documents
-  auto bounds =
-    RocksDBKeyBounds::CollectionDocuments(tombstone.collection.id());
+  auto bounds = RocksDBKeyBounds::CollectionDocuments(tombstone.table.id());
   r = rocksutils::RemoveLargeRange(db, bounds, prefix_same_as_start,
                                    use_range_delete);
 
@@ -1891,7 +1920,7 @@ Result RocksDBEngineCatalog::dropCollection(const TableTombstone& tombstone) {
     [&] {
       RocksDBKeyWithBuffer key;
       key.constructObject(RocksDBEntryType::TableTombstone,
-                          id::kTombstoneDatabase, tombstone.collection);
+                          id::kTombstoneDatabase, tombstone.table);
       return key;
     },
     [] { return std::string_view{}; });

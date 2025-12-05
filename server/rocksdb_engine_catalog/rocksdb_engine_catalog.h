@@ -255,6 +255,7 @@ class RocksDBEngineCatalog : public StorageEngine {
                      const TableShard& physical,
                      const TableTombstone& tombstone) final;
   Result MarkDeleted(const catalog::Database& database) final;
+  Result MarkDeleted(const catalog::Schema& schema) final;
 
   void prepareDropTable(ObjectId collection) final;
   Result dropIndex(IndexTombstone tombstone) final;

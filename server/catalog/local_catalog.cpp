@@ -124,7 +124,7 @@ AsyncResult QueueTask(std::shared_ptr<T> task) {
 
 TableTombstone MakeTableTombstone(const TableShard& physical) {
   TableTombstone result{
-    .collection = physical.GetMeta().id,
+    .table = physical.GetMeta().id,
     .number_documents = physical.approxNumberDocuments(),
   };
 
@@ -145,7 +145,7 @@ TableTombstone MakeTableTombstone(const TableShard& physical) {
 }
 
 struct TableDrop {
-  static constexpr std::string_view kName = "collection drop";
+  static constexpr std::string_view kName = "table drop";
 
   TableTombstone tombstone;
   std::shared_ptr<TableShard> physical;
@@ -154,7 +154,7 @@ struct TableDrop {
 
   Result operator()() {
     SDB_DEBUG("xxxxx", Logger::THREADS,
-              "Start dropping collection: ", tombstone.collection);
+              "Start dropping table: ", tombstone.table);
 
     auto& server = SerenedServer::Instance();
     if (server.isStopping()) {
@@ -166,7 +166,7 @@ struct TableDrop {
 #ifdef SDB_CLUSTER
     auto r = basics::SafeCall([&] {
       transaction::cluster::AbortTransactions(ExecContext::superuser(),
-                                              tombstone.collection);
+                                              tombstone.table);
     });
 
     if (!r.ok()) {
@@ -177,7 +177,7 @@ struct TableDrop {
 
     if (physical.use_count() > 2) {
       SDB_DEBUG("xxxxx", Logger::THREADS,
-                "Reschedule dropping collection: ", tombstone.collection);
+                "Reschedule dropping table: ", tombstone.table);
       return {ERROR_LOCKED};
     }
 
@@ -194,8 +194,8 @@ struct TableDrop {
     }
 
     if (auto r = engine.dropCollection(tombstone); !r.ok()) {
-      SDB_WARN("xxxxx", Logger::THREADS, "Failed dropping collection ",
-               tombstone.collection, ", error: ", r.errorMessage());
+      SDB_WARN("xxxxx", Logger::THREADS, "Failed dropping table ",
+               tombstone.table, ", error: ", r.errorMessage());
       if (fatal) {
         return {ERROR_INTERNAL};
       }
@@ -205,22 +205,26 @@ struct TableDrop {
       physical->drop();
     }
 
-    catalog->DropTableShard(tombstone.collection);
+    catalog->DropTableShard(tombstone.table);
 
     SDB_DEBUG("xxxxx", Logger::THREADS,
-              "Finish dropping collection: ", tombstone.collection);
+              "Finish dropping table: ", tombstone.table);
 
     return {};
   }
 };
 
-struct DatabaseDrop : std::enable_shared_from_this<DatabaseDrop> {
+struct ScopeDrop : std::enable_shared_from_this<ScopeDrop> {
   static constexpr std::string_view kName = "database drop";
 
-  ObjectId database;
-  std::vector<TableDrop> collections;
+  ObjectId object;
+  std::vector<TableDrop> tables;
   std::shared_ptr<LocalCatalog> catalog;
+  std::function<Result(const ScopeDrop&)> finish = [&](const ScopeDrop& drop) {
+    return Result{};
+  };
   uint32_t delay = kInitialDelay;  // delay in microseconds
+  ObjectType type = ObjectType::Database;
 
   Result DropTables(auto& tasks) const {
     if (tasks.empty()) {
@@ -235,8 +239,8 @@ struct DatabaseDrop : std::enable_shared_from_this<DatabaseDrop> {
           bool error = false;
           for (auto& result : results) {
             if (auto r = std::move(result).Ok(); !r.ok()) {
-              SDB_WARN("xxxxx", Logger::THREADS,
-                       "Failed dropping collection in database ", database,
+              SDB_WARN("xxxxx", Logger::THREADS, "Failed dropping table in ",
+                       magic_enum::enum_name(type), " ", object,
                        ", error: ", r.errorMessage());
               error = true;
             }
@@ -251,38 +255,18 @@ struct DatabaseDrop : std::enable_shared_from_this<DatabaseDrop> {
       .Ok();
   }
 
-  Result Finish() const {
-#ifdef SDB_CLUSTER
-    search::CleanupDatabase(database);
-#endif
-
-    if (auto r = SerenedServer::Instance()
-                   .getFeature<EngineSelectorFeature>()
-                   .engine()
-                   .dropDatabase(database);
-        !r.ok()) {
-      SDB_WARN("xxxxx", Logger::THREADS, "Failed dropping database ", database,
-               ", error: ", r.errorMessage());
-      if (const bool fatal = !catalog->GetSkipBackgroundErrors(); fatal) {
-        return {ERROR_INTERNAL};
-      }
-    }
-
-    SDB_DEBUG("xxxxx", Logger::THREADS, "Finish dropping database: ", database);
-    return {};
-  }
-
   Result operator()() {
-    SDB_DEBUG("xxxxx", Logger::THREADS, "Start dropping database: ", database);
+    SDB_DEBUG("xxxxx", Logger::THREADS, "Start dropping ",
+              magic_enum::enum_name(type), ": ", object);
 
     if (SerenedServer::Instance().isStopping()) {
       return {};
     }
 
     // TODO(gnusi): this can be overwhelming
-    auto tasks = collections | std::views::transform([&](auto& collection) {
-                   return QueueTask(std::shared_ptr<TableDrop>{
-                     shared_from_this(), &collection});
+    auto tasks = tables | std::views::transform([&](auto& table) {
+                   return QueueTask(
+                     std::shared_ptr<TableDrop>{shared_from_this(), &table});
                  }) |
                  std::ranges::to<std::vector>();
 
@@ -290,9 +274,38 @@ struct DatabaseDrop : std::enable_shared_from_this<DatabaseDrop> {
     if (!r.ok()) {
       return r;
     }
-    return Finish();
+
+    r = finish(*this);
+    if (!r.ok()) {
+      return r;
+    }
+
+    SDB_DEBUG("xxxxx", Logger::THREADS, "Finish dropping ",
+              magic_enum::enum_name(type), ": ", object);
+    return r;
   }
 };
+
+Result DatabaseDropFinish(const ScopeDrop& drop) {
+#ifdef SDB_CLUSTER
+  search::CleanupDatabase(drop.object);
+#endif
+
+  if (auto r = SerenedServer::Instance()
+                 .getFeature<EngineSelectorFeature>()
+                 .engine()
+                 .dropDatabase(drop.object);
+      !r.ok()) {
+    SDB_WARN("xxxxx", Logger::THREADS, "Failed dropping ",
+             magic_enum::enum_name(drop.type), " ", drop.object,
+             ", error: ", r.errorMessage());
+    if (!drop.catalog->GetSkipBackgroundErrors()) {
+      return {ERROR_INTERNAL};
+    }
+  }
+
+  return {};
+}
 
 auto MakePropertiesWriter() {
   return [b = vpack::Builder{}](const DatabaseObject& object,
@@ -383,8 +396,8 @@ class Snapshot {
     });
   }
 
-  template<typename W>
-  Result DropDatabase(std::string_view database, W&& writer) {
+  template<typename W, typename C>
+  Result DropDatabase(std::string_view database, W&& writer, C&& callback) {
     return ResolveDatabase(database, [&](auto it) -> Result {
       if (auto r = writer(it->first); !r.ok()) {
         return r;
@@ -393,6 +406,7 @@ class Snapshot {
       for (auto& [schema, schema_objects] : it->second) {
         for (auto& obj : schema_objects) {
           _objects_by_id.erase(obj->GetId());
+          callback(obj);
         }
         _objects_by_id.erase(schema->GetId());
       }
@@ -542,16 +556,23 @@ class Snapshot {
       });
   }
 
-  template<typename W, typename D>
-  Result DropSchema(D database, std::string_view schema, W&& writer) {
+  template<typename W, typename D, typename C>
+  Result DropSchema(D database, std::string_view schema, bool cascade,
+                    W&& writer, C&& callback) {
     return ResolveSchema(
       database, schema, [&](auto database_it, auto schema_it) -> Result {
+        if (!cascade && !schema_it->second.empty()) {
+          return {ERROR_BAD_PARAMETER, "cannot drop schema ", schema,
+                  " because other objects depend on it"};
+        }
+
         if (auto r = writer(database_it->first, schema_it->first); !r.ok()) {
           return r;
         }
 
         for (auto& obj : schema_it->second) {
           _objects_by_id.erase(obj->GetId());
+          callback(obj);
         }
         _objects_by_id.erase(schema_it->first->GetId());
         database_it->second.erase(schema_it);
@@ -793,26 +814,26 @@ Result LocalCatalog::RegisterView(ObjectId database_id, std::string_view schema,
 Result LocalCatalog::RegisterTable(ObjectId database_id,
                                    std::string_view schema,
                                    CreateTableOptions options) {
-  auto collection =
+  auto table =
     std::make_shared<catalog::Table>(std::move(options), database_id);
 
   RECURSIVE_WRITE_LOCKER(_mutex, _owner);
   return _snapshot->RegisterObject(
-    database_id, schema, std::move(collection), [&](auto& object) -> Result {
-      auto& collection = basics::downCast<catalog::Table>(*object);
+    database_id, schema, std::move(table), [&](auto& object) -> Result {
+      auto& table = basics::downCast<catalog::Table>(*object);
 
       std::shared_ptr<TableShard> physical;
-      auto r = _engine->createTableShard(collection, false, physical);
+      auto r = _engine->createTableShard(table, false, physical);
       if (!r.ok()) {
         return r;
       }
 
       // TODO(gnusi): this might throw, but indexes will become a separate
       // objects soon anyway
-      physical->prepareIndexes(collection, options.indexes);
+      physical->prepareIndexes(table, options.indexes);
 
       auto [it, is_new] =
-        _collections.try_emplace(collection.GetId(), std::move(physical));
+        _tables.try_emplace(table.GetId(), std::move(physical));
       SDB_ASSERT(is_new);
 
       return {};
@@ -924,32 +945,32 @@ Result LocalCatalog::CreateFunction(
 Result LocalCatalog::CreateTable(
   ObjectId database_id, std::string_view schema, CreateTableOptions options,
   CreateTableOperationOptions operation_options) {
-  auto collection =
+  auto table =
     std::make_shared<catalog::Table>(std::move(options), database_id);
 
   RECURSIVE_WRITE_LOCKER(_mutex, _owner);
   return _snapshot->RegisterObject(
-    database_id, schema, std::move(collection), [&](auto& object) -> Result {
-      auto& collection = basics::downCast<catalog::Table>(*object);
+    database_id, schema, std::move(table), [&](auto& object) -> Result {
+      auto& table = basics::downCast<catalog::Table>(*object);
 
       std::shared_ptr<TableShard> physical;
-      auto r = _engine->createTableShard(collection, true, physical);
+      auto r = _engine->createTableShard(table, true, physical);
       if (!r.ok()) {
         return r;
       }
 
       // TODO(gnusi): this might throw, but indexes will become a separate
       // objects soon anyway
-      physical->prepareIndexes(collection, options.indexes);
+      physical->prepareIndexes(table, options.indexes);
 
       auto [it, is_new] =
-        _collections.try_emplace(collection.GetId(), std::move(physical));
+        _tables.try_emplace(table.GetId(), std::move(physical));
       SDB_ASSERT(is_new);
 
       try {
-        _engine->createTable(collection, *it->second);
+        _engine->createTable(table, *it->second);
       } catch (...) {
-        _collections.erase(it);
+        _tables.erase(it);
         throw;
       }
 
@@ -992,38 +1013,38 @@ Result LocalCatalog::RenameTable(ObjectId database_id, std::string_view schema,
                                  std::string_view name,
                                  std::string_view new_name) {
   auto writer = MakePropertiesWriter();
-  ObjectId collection_id;
+  ObjectId table_id;
 
   auto r = [&] {
     RECURSIVE_WRITE_LOCKER(_mutex, _owner);
     return _snapshot->ReplaceObject<catalog::Table>(
       database_id, schema, name,
-      [&](const auto& old_object, auto& new_collection) -> Result {
+      [&](const auto& old_object, auto& new_table) -> Result {
         if (old_object.GetName() == new_name) {
           return {};  // Nothing to change
         }
 
-        collection_id = old_object.GetId();
-        auto& old_collection = basics::downCast<catalog::Table>(old_object);
+        table_id = old_object.GetId();
+        auto& old_table = basics::downCast<catalog::Table>(old_object);
 
         NewOptions options{
           .name = new_name,
-          .schema = old_collection.GetSchema(),
-          .number_of_shards = old_collection.numberOfShards(),
-          .replication_factor = old_collection.replicationFactor(),
-          .write_concern = old_collection.writeConcern(),
-          .wait_for_sync = old_collection.waitForSync(),
+          .schema = old_table.GetSchema(),
+          .number_of_shards = old_table.numberOfShards(),
+          .replication_factor = old_table.replicationFactor(),
+          .write_concern = old_table.writeConcern(),
+          .wait_for_sync = old_table.waitForSync(),
         };
 
-        new_collection =
-          std::make_shared<catalog::Table>(old_collection, std::move(options));
+        new_table =
+          std::make_shared<catalog::Table>(old_table, std::move(options));
         return {};
       },
       [&](auto& database, auto& schema, auto& object) -> Result {
-        auto& collection = basics::downCast<catalog::Table>(*object);
-        auto it = _collections.find(collection.GetId());
-        SDB_ENSURE(it != _collections.end(), ERROR_INTERNAL);
-        return _engine->renameCollection(collection, *it->second, name);
+        auto& table = basics::downCast<catalog::Table>(*object);
+        auto it = _tables.find(table.GetId());
+        SDB_ENSURE(it != _tables.end(), ERROR_INTERNAL);
+        return _engine->renameCollection(table, *it->second, name);
       });
   }();
 
@@ -1031,8 +1052,8 @@ Result LocalCatalog::RenameTable(ObjectId database_id, std::string_view schema,
     return r;
   }
 
-  if (collection_id.isSet()) {
-    aql::QueryCache::instance()->invalidate(database_id, collection_id);
+  if (table_id.isSet()) {
+    aql::QueryCache::instance()->invalidate(database_id, table_id);
   }
   return {};
 }
@@ -1083,26 +1104,26 @@ Result LocalCatalog::ChangeView(ObjectId database_id, std::string_view schema,
   return {};
 }
 
-Result LocalCatalog::ChangeTable(
-  ObjectId database_id, std::string_view schema, std::string_view name,
-  ChangeCallback<catalog::Table> new_collection) {
+Result LocalCatalog::ChangeTable(ObjectId database_id, std::string_view schema,
+                                 std::string_view name,
+                                 ChangeCallback<catalog::Table> new_table) {
   auto writer = MakePropertiesWriter();
 
-  ObjectId collection_id;
+  ObjectId table_id;
 
   auto r = [&] {
     RECURSIVE_WRITE_LOCKER(_mutex, _owner);
     return _snapshot->ReplaceObject<catalog::Table>(
-      database_id, schema, name, new_collection,
+      database_id, schema, name, new_table,
       [&](auto& database, auto& schema, auto& object) -> Result {
-        auto& collection = basics::downCast<catalog::Table>(*object);
+        auto& table = basics::downCast<catalog::Table>(*object);
 
-        collection_id = collection.GetId();
-        auto it = _collections.find(collection_id);
-        SDB_ENSURE(it != _collections.end(), ERROR_INTERNAL);
+        table_id = table.GetId();
+        auto it = _tables.find(table_id);
+        SDB_ENSURE(it != _tables.end(), ERROR_INTERNAL);
 
         return basics::SafeCall(
-          [&] { _engine->changeCollection(collection, *it->second); });
+          [&] { _engine->changeCollection(table, *it->second); });
       });
   }();
 
@@ -1110,7 +1131,7 @@ Result LocalCatalog::ChangeTable(
     return r;
   }
 
-  aql::QueryCache::instance()->invalidate(database_id, collection_id);
+  aql::QueryCache::instance()->invalidate(database_id, table_id);
   return {};
 }
 
@@ -1133,23 +1154,24 @@ Result LocalCatalog::DropRole(std::string_view role) {
 Result LocalCatalog::DropDatabase(std::string_view name,
                                   AsyncResult* async_result) {
   ObjectId database_id;
-  std::vector<
-    std::pair<std::shared_ptr<catalog::Table>, std::shared_ptr<TableShard>>>
-    collections;
+  auto self = shared_from_this();
+  auto task = std::make_shared<ScopeDrop>();
 
   auto r = [&] {
     RECURSIVE_WRITE_LOCKER(_mutex, _owner);
-    return _snapshot->DropDatabase(name, [&](auto& object) {
-      database_id = object->GetId();
-
-      // TODO(gnusi): all schemas
-      auto r = GetTables(database_id, StaticStrings::kPublic, collections);
-      if (!r.ok()) {
-        return r;
-      }
-
-      return _engine->MarkDeleted(basics::downCast<catalog::Database>(*object));
-    });
+    return _snapshot->DropDatabase(
+      name,
+      [&](auto& object) {
+        database_id = object->GetId();
+        return _engine->MarkDeleted(
+          basics::downCast<catalog::Database>(*object));
+      },
+      [&](auto& obj) {
+        auto it = _tables.find(obj->GetId());
+        SDB_ENSURE(it != _tables.end(), ERROR_INTERNAL);
+        auto& shard = it->second;
+        task->tables.emplace_back(MakeTableTombstone(*shard), shard, self);
+      });
   }();
 
   if (!r.ok()) {
@@ -1170,19 +1192,14 @@ Result LocalCatalog::DropDatabase(std::string_view name,
   }
 #endif
 
-  auto self = shared_from_this();
-  auto task = std::make_shared<DatabaseDrop>();
-  task->collections.reserve(collections.size());
-  for (auto& [_, physical] : collections) {
-    physical->setDeleted();
+  for (auto& shard : task->tables) {
+    shard.physical->setDeleted();
     // TODO(mbkkt) probably index estimators should be cleared in unload
-    physical->freeMemory();
-
-    task->collections.emplace_back(MakeTableTombstone(*physical),
-                                   std::move(physical), self);
+    shard.physical->freeMemory();
   }
-  task->database = database_id;
+  task->object = database_id;
   task->catalog = std::move(self);
+  task->finish = &DatabaseDropFinish;
 
   if (auto f = QueueTask(std::move(task)); async_result) {
     *async_result = std::move(f);
@@ -1193,11 +1210,55 @@ Result LocalCatalog::DropDatabase(std::string_view name,
   return {};
 }
 
-Result LocalCatalog::DropSchema(ObjectId database_id, std::string_view schema) {
-  RECURSIVE_WRITE_LOCKER(_mutex, _owner);
-  return _snapshot->DropSchema(database_id, schema, [&](auto&, auto& schema) {
-    return _engine->dropSchema(database_id, schema->GetId(), schema->GetName());
-  });
+Result LocalCatalog::DropSchema(ObjectId database_id, std::string_view schema,
+                                bool cascade, AsyncResult* async_result) {
+  ObjectId schema_id;
+  auto self = shared_from_this();
+  auto task = std::make_shared<ScopeDrop>();
+
+  auto r = [&] {
+    RECURSIVE_WRITE_LOCKER(_mutex, _owner);
+    return _snapshot->DropSchema(
+      database_id, schema, cascade,
+      [&](auto&, auto& schema) {
+        schema_id = schema->GetId();
+
+        return _engine->dropSchema(database_id, schema->GetId(),
+                                   schema->GetName());
+      },
+      [&](auto& obj) {
+        if (obj->GetType() == catalog::ObjectType::Table) {
+          auto it = _tables.find(obj->GetId());
+          SDB_ENSURE(it != _tables.end(), ERROR_INTERNAL);
+          auto& shard = it->second;
+          task->tables.emplace_back(MakeTableTombstone(*shard), shard, self);
+        }
+      });
+  }();
+
+  if (!r.ok()) {
+    return r;
+  }
+
+  irs::Finally cleanup = [database_id] noexcept {
+    aql::QueryCache::instance()->invalidate(database_id);
+  };
+
+  for (auto& shard : task->tables) {
+    shard.physical->setDeleted();
+    // TODO(mbkkt) probably index estimators should be cleared in unload
+    shard.physical->freeMemory();
+  }
+  task->object = database_id;
+  task->catalog = std::move(self);
+
+  if (auto f = QueueTask(std::move(task)); async_result) {
+    *async_result = std::move(f);
+  } else {
+    std::move(f).Detach();
+  }
+
+  return {};
 }
 
 Result LocalCatalog::DropView(ObjectId database_id, std::string_view schema,
@@ -1241,11 +1302,10 @@ Result LocalCatalog::DropTable(ObjectId database_id, std::string_view schema,
     return _snapshot->DropObject<catalog::Table>(
       database_id, schema, name,
       [&](auto& database, auto&, auto& object) -> Result {
-        auto it = _collections.find(object->GetId());
-        SDB_ENSURE(it != _collections.end(), ERROR_INTERNAL,
-                   "Physical collection not found");
+        auto it = _tables.find(object->GetId());
+        SDB_ENSURE(it != _tables.end(), ERROR_INTERNAL,
+                   "Physical table not found");
         physical = it->second;
-        physical->setDeleted();
 
         task->tombstone = MakeTableTombstone(*physical);
 
@@ -1258,6 +1318,7 @@ Result LocalCatalog::DropTable(ObjectId database_id, std::string_view schema,
     return r;
   }
 
+  physical->setDeleted();
   _engine->prepareDropTable(physical->GetMeta().id);
 
   irs::Finally cleanup = [database_id, id = physical->GetMeta().id] noexcept {
@@ -1338,18 +1399,18 @@ Result LocalCatalog::GetFunctions(
 Result LocalCatalog::GetTables(
   ObjectId database_id, std::string_view schema,
   std::vector<std::pair<std::shared_ptr<catalog::Table>,
-                        std::shared_ptr<TableShard>>>& collections) const {
-  SDB_ASSERT(collections.empty());
+                        std::shared_ptr<TableShard>>>& tables) const {
+  SDB_ASSERT(tables.empty());
 
   RECURSIVE_READ_LOCKER(_mutex, _owner);
-  collections.reserve(_collections.size());
+  tables.reserve(_tables.size());
   std::ignore = _snapshot->VisitObjects(database_id, schema, [&](auto& object) {
     if (object->GetType() == GetObjectType<catalog::Table>()) {
-      auto it = _collections.find(object->GetId());
-      SDB_ENSURE(it != _collections.end(), ERROR_INTERNAL);
+      auto it = _tables.find(object->GetId());
+      SDB_ENSURE(it != _tables.end(), ERROR_INTERNAL);
 
-      collections.emplace_back(std::static_pointer_cast<catalog::Table>(object),
-                               it->second);
+      tables.emplace_back(std::static_pointer_cast<catalog::Table>(object),
+                          it->second);
     }
     return true;
   });
@@ -1380,13 +1441,13 @@ std::shared_ptr<Object> LocalCatalog::GetObject(ObjectId id) const {
 
 std::shared_ptr<TableShard> LocalCatalog::GetTableShard(ObjectId id) const {
   RECURSIVE_READ_LOCKER(_mutex, _owner);
-  auto it = _collections.find(id);
-  return it == _collections.end() ? nullptr : it->second;
+  auto it = _tables.find(id);
+  return it == _tables.end() ? nullptr : it->second;
 }
 
 void LocalCatalog::DropTableShard(ObjectId id) {
   RECURSIVE_WRITE_LOCKER(_mutex, _owner);
-  _collections.erase(id);
+  _tables.erase(id);
 }
 
 void LocalCatalog::RegisterTableDrop(TableTombstone tombstone) {
@@ -1398,16 +1459,17 @@ void LocalCatalog::RegisterTableDrop(TableTombstone tombstone) {
 }
 
 void LocalCatalog::RegisterDatabaseDrop(ObjectId database_id) {
-  auto task = std::make_shared<DatabaseDrop>();
-  task->database = database_id;
+  auto task = std::make_shared<ScopeDrop>();
+  task->object = database_id;
   task->catalog = shared_from_this();
+  task->finish = &DatabaseDropFinish;
 
   QueueTask(std::move(task)).Detach();
 }
 
 std::vector<std::shared_ptr<TableShard>> LocalCatalog::GetTableShards() {
   RECURSIVE_READ_LOCKER(_mutex, _owner);
-  return _collections | std::views::values | std::ranges::to<std::vector>();
+  return _tables | std::views::values | std::ranges::to<std::vector>();
 }
 
 }  // namespace sdb::catalog

@@ -27,6 +27,13 @@ SELECT 0.3373::numeric(3, 2) - 0.3::numeric(4, 1);
 
 
 query
+SELECT 0.3373::numeric(3, 2) - 0.9::numeric(4, 1);
+----
+?column?
+-0.56
+
+
+query
 SELECT 10000000000000000000000::numeric(24, 0);
 ----
 numeric

@@ -275,12 +275,19 @@ void SerializeDecimal(SerializationContext context,
     static constexpr size_t kBaseSystem = 10'000;
     static constexpr int16_t kPositive = 0x0000;
     static constexpr int16_t kNegative = 0x4000;
-    int16_t ndigits = [scale](auto value) {
+    int16_t extra_digits = (4 - (scale % 4)) % 4;
+    auto extra_base =
+      static_cast<int16_t>(velox::DecimalUtil::kPowersOfTen[extra_digits]);
+    int16_t ndigits = [extra_base](auto value) -> int16_t {
       int16_t ndigits = 0;
+      if (extra_base != 1) {
+        ndigits++;
+        value /= extra_base;
+      }
       for (; value != 0; value /= kBaseSystem) {
         ++ndigits;
       }
-      return scale % 4 == 0 ? ndigits : ndigits + 1;
+      return ndigits;
     }(value);
 
     auto weight = static_cast<int16_t>(ndigits - ((scale + 3) / 4) - 1);
@@ -294,11 +301,8 @@ void SerializeDecimal(SerializationContext context,
     absl::big_endian::Store16(data + 6, dscale);
     data += 8 + ndigits * 2;
 
-    if (scale % 4) {  // Adjust dscale to be multiple of 4 for ndigits
+    if (extra_base != 1) {  // Adjust dscale to be multiple of 4 for ndigits
       data -= 2;
-      int16_t extra_digits = (4 - (scale % 4)) % 4;
-      int16_t extra_base =
-        static_cast<int16_t>(velox::DecimalUtil::kPowersOfTen[extra_digits]);
       int16_t extra_value = (value % (kBaseSystem / extra_base)) * extra_base;
       value /= (kBaseSystem / extra_base);
       absl::big_endian::Store16(data, extra_value);

@@ -262,9 +262,10 @@ ObjectId RocksDBKey::SchemaId(const char* data, size_t size) {
   SDB_ASSERT(data);
   SDB_ASSERT(size >= sizeof(char));
   const auto type = RocksDBKey::type(data, size);
-  SDB_ENSURE(
-    type == RocksDBEntryType::Function || type == RocksDBEntryType::View,
-    ERROR_TYPE_ERROR);
+  SDB_ENSURE(type == RocksDBEntryType::Function ||
+               type == RocksDBEntryType::View ||
+               type == RocksDBEntryType::ScopeTombstone,
+             ERROR_TYPE_ERROR);
   SDB_ASSERT(size >= (sizeof(char) + (3 * sizeof(uint64_t))));
   return ObjectId{Uint64FromPersistent(data + sizeof(char) + sizeof(uint64_t))};
 }

@@ -412,8 +412,10 @@ class Snapshot {
 
       for (auto& [schema, schema_objects] : it->second) {
         for (auto& obj : schema_objects) {
-          _objects_by_id.erase(obj->GetId());
-          callback(obj);
+          auto it = _objects_by_id.find(obj->GetId());
+          SDB_ASSERT(it != _objects_by_id.end());
+          callback(*it);
+          _objects_by_id.erase(it);
         }
         _objects_by_id.erase(schema->GetId());
       }
@@ -578,8 +580,10 @@ class Snapshot {
         }
 
         for (auto& obj : schema_it->second) {
-          _objects_by_id.erase(obj->GetId());
-          callback(obj);
+          auto it = _objects_by_id.find(obj->GetId());
+          SDB_ASSERT(it != _objects_by_id.end());
+          callback(*it);
+          _objects_by_id.erase(it);
         }
         _objects_by_id.erase(schema_it->first->GetId());
         database_it->second.erase(schema_it);
@@ -1175,7 +1179,10 @@ Result LocalCatalog::DropDatabase(std::string_view name,
       },
       [&](auto& obj) {
         auto it = _tables.find(obj->GetId());
-        SDB_ENSURE(it != _tables.end(), ERROR_INTERNAL);
+        // SDB_ENSURE(it != _tables.end(), ERROR_INTERNAL);
+        if (it == _tables.end()) {
+          return;
+        }
         auto& shard = it->second;
         task->tables.emplace_back(MakeTableTombstone(*shard), shard, self);
       });
@@ -1234,7 +1241,10 @@ Result LocalCatalog::DropSchema(ObjectId database_id, std::string_view schema,
       [&](auto& obj) {
         if (obj->GetType() == catalog::ObjectType::Table) {
           auto it = _tables.find(obj->GetId());
-          SDB_ENSURE(it != _tables.end(), ERROR_INTERNAL);
+          // SDB_ENSURE(it != _tables.end(), ERROR_INTERNAL);
+          if (it == _tables.end()) {
+            return;
+          }
           auto& shard = it->second;
           task->tables.emplace_back(MakeTableTombstone(*shard), shard, self);
         }

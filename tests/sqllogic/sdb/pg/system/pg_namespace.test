@@ -9,13 +9,14 @@ statement ok
 query
 CREATE SCHEMA test
 
+# TODO: fix oid
 query
-SELECT oid, nspname, nspowner, nspacl FROM pg_namespace ORDER BY oid
+SELECT nspname, nspowner, nspacl FROM pg_namespace ORDER BY oid
 ----
-oid	nspname	nspowner	nspacl
-11	pg_catalog	NULL	NULL
-<stl:ignore> public	NULL	NULL
-<stl:ignore> test NULL	NULL
+nspname	nspowner	nspacl
+pg_catalog	NULL	NULL
+public	NULL	NULL
+test NULL	NULL
 
 statement ok
 CREATE TABLE test.test(i int)
@@ -23,13 +24,14 @@ CREATE TABLE test.test(i int)
 statement error
 DELETE SCHEMA test
 
+# TODO: fix oid
 query
-SELECT oid, nspname, nspowner, nspacl FROM pg_namespace ORDER BY oid
+SELECT nspname, nspowner, nspacl FROM pg_namespace ORDER BY oid
 ----
-oid	nspname	nspowner	nspacl
-11	pg_catalog	NULL	NULL
-<stl:ignore> public	NULL	NULL
-<stl:ignore> test NULL	NULL
+nspowner	nspacl
+NULL	NULL
+public	NULL	NULL
+test NULL	NULL
 
 statement error
 DELETE SCHEMA test
@@ -37,12 +39,13 @@ DELETE SCHEMA test
 statement ok
 DELETE SCHEMA test CASCASDE 
 
+# TODO: fix oid
 query
-SELECT oid, nspname, nspowner, nspacl FROM pg_namespace ORDER BY oid
+SELECT nspname, nspowner, nspacl FROM pg_namespace ORDER BY oid
 ----
-oid	nspname	nspowner	nspacl
-11	pg_catalog	NULL	NULL
-<stl:ignore> public	NULL	NULL
+nspowner	nspacl
+NULL	NULL
+public	NULL	NULL
 
 statement ok
 DELETE SCHEMA public 

@@ -38,10 +38,14 @@ namespace {
 constexpr uint64_t kNullMask = MaskFromNonNulls({
   GetIndex(&PgClass::oid),
   GetIndex(&PgClass::relname),
+  GetIndex(&PgClass::relnamespace),
   GetIndex(&PgClass::reltablespace),
   GetIndex(&PgClass::relkind),
   GetIndex(&PgClass::reloptions),
 });
+
+constexpr Oid kPgCatalogNamespaceOid = 11;
+constexpr Oid kPublicNamespaceOid = 2200;
 
 }  // namespace
 
@@ -67,6 +71,7 @@ void RetrieveObjects(uint64_t database_id,
       PgClass row{
         .oid = object->GetId().id(),
         .relname = object->GetName(),
+        .relnamespace = kPublicNamespaceOid,
         .reltablespace = 0,
         .relkind = relkind,
       };
@@ -120,6 +125,7 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgClass>::GetTableData(
       PgClass row{
         .oid = table.Id().id(),
         .relname = table.Name(),
+        .relnamespace = kPgCatalogNamespaceOid,
         .reltablespace = 0,
         .relkind = PgClass::Relkind::OrdinaryTable,
       };

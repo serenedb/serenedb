@@ -282,7 +282,7 @@ void SerializeDecimal(SerializationContext context,
       int16_t ndigits = 0;
       if (extra_base != 1) {
         ndigits++;
-        value /= extra_base;
+        value /= (kBaseSystem / extra_base);
       }
       for (; value != 0; value /= kBaseSystem) {
         ++ndigits;

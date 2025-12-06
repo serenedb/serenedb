@@ -103,7 +103,7 @@ CollectionOutput MakeOutput(const catalog::Table& c) {
     .shardingStrategy = c.shardingStrategy().name(),
     .numberOfShards = c.numberOfShards(),
     .replicationFactor = c.replicationFactor(),
-    .type = std::to_underlying(c.GetType()),
+    .type = std::to_underlying(c.GetTableType()),
     .writeConcern = c.writeConcern(),
     .waitForSync = c.waitForSync(),
   };

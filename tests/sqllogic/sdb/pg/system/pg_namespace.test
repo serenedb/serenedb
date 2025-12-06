@@ -1,0 +1,54 @@
+query
+SELECT oid, nspname, nspowner, nspacl FROM pg_namespace ORDER BY oid
+----
+oid	nspname	nspowner	nspacl
+11	pg_catalog	NULL	NULL
+<stl:ignore> public	NULL	NULL
+
+statement ok
+query
+CREATE SCHEMA test
+
+query
+SELECT oid, nspname, nspowner, nspacl FROM pg_namespace ORDER BY oid
+----
+oid	nspname	nspowner	nspacl
+11	pg_catalog	NULL	NULL
+<stl:ignore> public	NULL	NULL
+<stl:ignore> test NULL	NULL
+
+statement ok
+CREATE TABLE test.test(i int)
+
+statement error
+DELETE SCHEMA test
+
+query
+SELECT oid, nspname, nspowner, nspacl FROM pg_namespace ORDER BY oid
+----
+oid	nspname	nspowner	nspacl
+11	pg_catalog	NULL	NULL
+<stl:ignore> public	NULL	NULL
+<stl:ignore> test NULL	NULL
+
+statement error
+DELETE SCHEMA test
+
+statement ok
+DELETE SCHEMA test CASCASDE 
+
+query
+SELECT oid, nspname, nspowner, nspacl FROM pg_namespace ORDER BY oid
+----
+oid	nspname	nspowner	nspacl
+11	pg_catalog	NULL	NULL
+<stl:ignore> public	NULL	NULL
+
+statement ok
+DELETE SCHEMA public 
+
+query
+SELECT oid, nspname, nspowner, nspacl FROM pg_namespace ORDER BY oid
+----
+oid	nspname	nspowner	nspacl
+11	pg_catalog	NULL	NULL

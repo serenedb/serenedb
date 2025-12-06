@@ -93,7 +93,6 @@ void RocksDBKey::constructSchemaObject(RocksDBEntryType type,
                                        ObjectId database_id, ObjectId schema_id,
                                        ObjectId id) {
   SDB_ASSERT(database_id.isSet());
-  SDB_ASSERT(id.isSet());
   SDB_ASSERT(type == RocksDBEntryType::Collection ||
              type == RocksDBEntryType::Function ||
              type == RocksDBEntryType::ScopeTombstone ||

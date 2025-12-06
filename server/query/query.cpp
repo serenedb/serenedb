@@ -48,7 +48,7 @@ class SchemaResolver final : public axiom::connector::SchemaResolver {
     auto object = _objects.getData(schema, table);
     SDB_ASSERT(object);
     SDB_ASSERT(object->object);
-    if (object->object->Is(TableType::Document)) {
+    if (object->object->GetType() == catalog::ObjectType::Table) {
       return std::make_shared<connector::RocksDBTable>(
         name, basics::downCast<catalog::Table>(*object->object));
     }

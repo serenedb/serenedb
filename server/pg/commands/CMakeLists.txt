@@ -5,6 +5,7 @@ target_sources(
         drop_database.cpp
         create_function.cpp
         create_table.cpp
+        create_schema.cpp
         create_view.cpp
         drop_object.cpp
         transaction.cpp

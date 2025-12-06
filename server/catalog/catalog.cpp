@@ -158,6 +158,29 @@ Result CatalogFeature::AddDatabase(const DatabaseOptions& options) {
     std::make_shared<catalog::Database>(options));
 }
 
+Result CatalogFeature::AddSchemas(ObjectId database_id,
+                                  std::string_view database_name) {
+  auto r = GetServerEngine().VisitObjects(
+    database_id, RocksDBEntryType::Schema,
+    [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
+      SchemaOptions options;
+      if (auto r = vpack::ReadTupleNothrow(slice, options); !r.ok()) {
+        return ErrorMeta(r.errorNumber(), "schema", r.errorMessage(), slice);
+      }
+
+      return Global().RegisterSchema(
+        database_id,
+        std::make_shared<catalog::Schema>(database_id, std::move(options)));
+    });
+
+  if (!r.ok()) {
+    return {r.errorNumber(),
+            "Failed to read schemas, error: ", r.errorMessage()};
+  }
+
+  return {};
+}
+
 Result CatalogFeature::AddRoles() {
   auto& engine = GetServerEngine();
   auto r = engine.VisitObjects(
@@ -183,6 +206,53 @@ Result CatalogFeature::AddRoles() {
 
 Result CatalogFeature::ProcessTombstones() {
   auto& engine = GetServerEngine();
+  auto process_schema = [&](ObjectId database_id,
+                            ObjectId schema_id) -> Result {
+    return engine.VisitSchemaObjects(
+      database_id, schema_id, RocksDBEntryType::Collection,
+      [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
+        CreateTableOptions options;
+
+        // TODO(gnusi): .skip_unknown = false, .strict = true
+        if (auto r = vpack::ReadObjectNothrow<TableOptions>(
+              slice, options, {.skip_unknown = true, .strict = false},
+              ObjectInternal{});
+            !r.ok()) {
+          return ErrorMeta(r.errorNumber(), "collection", r.errorMessage(),
+                           slice);
+        }
+
+        TableTombstone tombstone;
+        tombstone.table = options.id;
+
+        // TODO(gnusi): this will be gone once we have normal indexes
+        struct IndexMeta {
+          std::string_view objectId;  // NOLINT
+          IndexType type = IndexType::kTypeUnknown;
+          bool unique = false;
+        };
+        for (auto index_slice : vpack::ArrayIterator{options.indexes}) {
+          IndexMeta index;
+          auto r = vpack::ReadObjectNothrow(
+            index_slice, index, {.skip_unknown = true, .strict = false});
+          if (!r.ok()) {
+            return ErrorMeta(r.errorNumber(), "index", r.errorMessage(),
+                             index_slice);
+          }
+          ObjectId index_id{basics::string_utils::Uint64(index.objectId)};
+          if (!index_id.isSet()) {
+            continue;
+          }
+          tombstone.indexes.emplace_back(index_id, index.type,
+                                         std::numeric_limits<uint64_t>::max(),
+                                         index.unique);
+        }
+
+        Physical().RegisterTableDrop(std::move(tombstone));
+        return {};
+      });
+  };
+
   auto r = engine.VisitObjects(
     id::kTombstoneDatabase, RocksDBEntryType::TableTombstone,
     [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
@@ -204,71 +274,42 @@ Result CatalogFeature::ProcessTombstones() {
   }
 
   r = engine.VisitObjects(
-    id::kTombstoneDatabase, RocksDBEntryType::DatabaseTombstone,
+    id::kTombstoneDatabase, RocksDBEntryType::ScopeTombstone,
     [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
-      ObjectId database_id{RocksDBKey::databaseId(key)};
+      ObjectId database_id{RocksDBKey::SchemaId(key)};
 
       if (!database_id.isSet()) {
-        return ErrorMeta(ERROR_BAD_PARAMETER, "database tombstone",
-                         "invalid id", slice);
+        return ErrorMeta(ERROR_BAD_PARAMETER, "scope tombstone",
+                         "invalid database id", slice);
       }
 
-      auto r = engine.VisitSchemaObjects(
-        database_id, database_id, RocksDBEntryType::Collection,
-        [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
-          CreateTableOptions options;
+      ObjectId schema_id{RocksDBKey::objectId(key)};
 
-          // TODO(gnusi): .skip_unknown = false, .strict = true
-          if (auto r = vpack::ReadObjectNothrow<TableOptions>(
-                slice, options, {.skip_unknown = true, .strict = false},
-                ObjectInternal{});
-              !r.ok()) {
-            return ErrorMeta(r.errorNumber(), "collection", r.errorMessage(),
-                             slice);
-          }
+      auto r = [&] {
+        if (schema_id.isSet()) {
+          return process_schema(database_id, schema_id);
+        } else {
+          return engine.VisitObjects(
+            database_id, RocksDBEntryType::Schema,
+            [&](rocksdb::Slice key, vpack::Slice slice) {
+              ObjectId schema_id{RocksDBKey::objectId(key)};
+              if (!schema_id.isSet()) {
+                return ErrorMeta(ERROR_BAD_PARAMETER, "schema",
+                                 "invalid schema id", slice);
+              }
 
-          TableTombstone tombstone;
-          tombstone.collection = options.id;
-
-          // TODO(gnusi): this will be gone once we have normal indexes
-          struct IndexMeta {
-            std::string_view objectId;  // NOLINT
-            IndexType type = IndexType::kTypeUnknown;
-            bool unique = false;
-          };
-          for (auto index_slice : vpack::ArrayIterator{options.indexes}) {
-            IndexMeta index;
-            auto r = vpack::ReadObjectNothrow(
-              index_slice, index, {.skip_unknown = true, .strict = false});
-            if (!r.ok()) {
-              return ErrorMeta(r.errorNumber(), "index", r.errorMessage(),
-                               index_slice);
-            }
-            ObjectId index_id{basics::string_utils::Uint64(index.objectId)};
-            if (!index_id.isSet()) {
-              continue;
-            }
-            tombstone.indexes.emplace_back(index_id, index.type,
-                                           std::numeric_limits<uint64_t>::max(),
-                                           index.unique);
-          }
-
-          Physical().RegisterTableDrop(std::move(tombstone));
-          return {};
-        });
+              return process_schema(database_id, schema_id);
+            });
+        }
+      }();
 
       if (!r.ok()) {
         return r;
       }
 
-      Physical().RegisterDatabaseDrop(database_id);
+      Physical().RegisterScopeDrop(database_id, schema_id);
       return {};
     });
-
-  if (!r.ok()) {
-    return {r.errorNumber(),
-            "Failed to process database tombstones, error: ", r.errorMessage()};
-  }
 
   return {};
 }
@@ -365,6 +406,9 @@ Result CatalogFeature::OpenDatabase(catalog::DatabaseOptions database) {
   return basics::SafeCall(
     [&] -> Result {
       if (auto r = AddDatabase(database); !r.ok()) {
+        return r;
+      }
+      if (auto r = AddSchemas(database.id, database.name); !r.ok()) {
         return r;
       }
       if (ServerState::instance()->IsSingle()) {

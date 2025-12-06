@@ -21,11 +21,6 @@
 
 #pragma once
 
-// This list of includes was deliberately moved to this file to avoid
-// duplication between server/RestServer/serened.cpp and tests/sepp/Server.cpp
-// since both use SerenedServer and therefore need to know all the features.
-// This also helps to avoid accidentally breaking the sepp build.
-
 #include "app/app_server.h"
 #include "app/app_version.h"
 #include "app/bump_file_descriptors.h"

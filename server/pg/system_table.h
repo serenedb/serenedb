@@ -28,6 +28,7 @@
 #include <type_traits>
 
 #include "basics/down_cast.h"
+#include "catalog/object.h"
 #include "catalog/virtual_table.h"
 #include "pg/information_schema/fwd.h"
 #include "pg/pg_catalog/fwd.h"
@@ -148,12 +149,16 @@ template<typename T>
 class SystemTable;
 
 template<typename T>
-class SystemTableSnapshot final : public catalog::VritualTableSnapshot {
+class SystemTableSnapshot final : public catalog::VirtualTableSnapshot {
  public:
   explicit SystemTableSnapshot(const catalog::VirtualTable& table,
                                ObjectId database)
-    : VritualTableSnapshot{catalog::ObjectCategory::Virtual, database,
-                           table.Id(), std::string{table.Name()}} {
+    : VirtualTableSnapshot{{},
+                           database,
+                           {},
+                           table.Id(),
+                           std::string{table.Name()},
+                           catalog::ObjectType::Virtual} {
     _table = &table;
   }
 
@@ -205,7 +210,7 @@ class SystemTable : public catalog::VirtualTable {
     _name = T::kName;
   }
 
-  std::shared_ptr<catalog::VritualTableSnapshot> CreateSnapshot(
+  std::shared_ptr<catalog::VirtualTableSnapshot> CreateSnapshot(
     ObjectId database) const final {
     return std::make_shared<SystemTableSnapshot<T>>(*this, database);
   }

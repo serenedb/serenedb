@@ -28,7 +28,7 @@
 #include "catalog/fwd.h"
 #include "catalog/identifiers/identifier.h"
 #include "catalog/identifiers/object_id.h"
-#include "catalog/logical_object.h"
+#include "catalog/object.h"
 
 namespace sdb {
 namespace aql {
@@ -170,10 +170,8 @@ struct FunctionProperties {
 };
 // NOLINTEND
 
-class Function final : public LogicalObject {
+class Function final : public SchemaObject {
  public:
-  static constexpr auto category() noexcept { return ObjectCategory::Function; }
-
   static Result Instantiate(std::shared_ptr<catalog::Function>& function,
                             ObjectId database_id, vpack::Slice definition,
                             bool is_user_request);

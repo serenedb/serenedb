@@ -25,7 +25,7 @@
 
 #include "basics/containers/flat_hash_map.h"
 #include "basics/memory.hpp"
-#include "catalog/logical_object.h"
+#include "catalog/object.h"
 #include "pg/pg_types.h"
 
 struct RawStmt;
@@ -64,7 +64,7 @@ class Objects : public irs::memory::Managed {
 
   struct ObjectData {
     AccessType type = AccessType::None;
-    std::shared_ptr<catalog::LogicalObject> object;
+    std::shared_ptr<catalog::SchemaObject> object;
   };
 
   using Map = containers::FlatHashMap<ObjectName, ObjectData>;

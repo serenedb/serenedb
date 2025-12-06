@@ -255,6 +255,7 @@ class RocksDBEngineCatalog : public StorageEngine {
                      const TableShard& physical,
                      const TableTombstone& tombstone) final;
   Result MarkDeleted(const catalog::Database& database) final;
+  Result MarkDeleted(const catalog::Schema& schema) final;
 
   void prepareDropTable(ObjectId collection) final;
   Result dropIndex(IndexTombstone tombstone) final;
@@ -271,7 +272,7 @@ class RocksDBEngineCatalog : public StorageEngine {
                       WriteProperties properties) final;
   Result changeSchema(ObjectId db, ObjectId id,
                       WriteProperties properties) final;
-  Result dropSchema(ObjectId db, ObjectId id, std::string_view name) final;
+  Result dropSchema(ObjectId db, ObjectId id) final;
 
   Result changeView(ObjectId db, ObjectId schema_id, ObjectId id,
                     WriteProperties properties) final;

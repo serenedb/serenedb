@@ -13,7 +13,6 @@
 #include "catalog/geo_analyzer.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/identity_analyzer.h"
-#include "catalog/logical_object.h"
 #include "catalog/mangling.h"
 #include "catalog/search_common.h"
 #include "catalog/types.h"

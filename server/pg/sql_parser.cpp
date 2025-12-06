@@ -22,6 +22,7 @@
 
 #include "basics/assert.h"
 #include "basics/static_strings.h"
+#include "catalog/identifiers/object_id.h"
 #include "pg/connection_context.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
@@ -131,7 +132,7 @@ List* Parse(MemoryContextData& ctx, const QueryString& query_string) {
 pg::SqlStatement ParseSystemView(std::string_view query) {
   static auto gConnCtx = std::make_shared<ConnectionContext>(
     ExecContext::superuser().user(), StaticStrings::kSystemDatabase,
-    id::kInvalid);
+    id::kSystemDB);
 
   pg::SqlStatement res;
   res.query_string = std::make_shared<QueryString>(query);

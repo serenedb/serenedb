@@ -31,11 +31,11 @@
 #include "basics/memory_types.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/identifiers/revision_id.h"
-#include "catalog/logical_object.h"
+#include "catalog/object.h"
 
 namespace sdb::catalog {
 
-class Role final : public LogicalObject {
+class Role final : public catalog::DatabaseObject {
   struct PrivateTag {
     explicit PrivateTag() = default;
   };
@@ -45,12 +45,8 @@ class Role final : public LogicalObject {
  public:
   explicit Role(PrivateTag, ObjectId id, std::string_view name);
 
-  static constexpr ObjectCategory category() noexcept {
-    return ObjectCategory::Role;
-  }
-
   void WriteInternal(vpack::Builder& build) const final;
-  void WriteProperties(vpack::Builder& build) const final;
+  void WriteProperties(vpack::Builder& build) const;
 
   static std::shared_ptr<catalog::Role> NewUser(std::string_view name,
                                                 std::string_view password,

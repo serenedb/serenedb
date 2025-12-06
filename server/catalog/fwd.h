@@ -20,7 +20,7 @@
 
 namespace sdb::catalog {
 
-class LogicalObject;
+class SchemaObject;
 class Function;
 class Table;
 class Role;

@@ -180,7 +180,7 @@ rocksdb::ColumnFamilyHandle* RocksDBKeyBounds::columnFamily() const {
     case RocksDBEntryType::Role:
     case RocksDBEntryType::Schema:
     case RocksDBEntryType::TableTombstone:
-    case RocksDBEntryType::DatabaseTombstone:
+    case RocksDBEntryType::ScopeTombstone:
       return RocksDBColumnFamilyManager::get(
         RocksDBColumnFamilyManager::Family::Definitions);
   }
@@ -226,8 +226,9 @@ RocksDBKeyBounds::RocksDBKeyBounds(RocksDBEntryType type, uint64_t first)
   : _type(type) {
   switch (_type) {
     case RocksDBEntryType::TableTombstone:
-    case RocksDBEntryType::DatabaseTombstone:
+    case RocksDBEntryType::ScopeTombstone:
     case RocksDBEntryType::Collection:
+    case RocksDBEntryType::Schema:
     case RocksDBEntryType::Role: {
       // Key: 1 + 8-byte SereneDB database ID + 8-byte SereneDB collection ID
       _internals.reserve(2 * sizeof(char) + 3 * sizeof(uint64_t));

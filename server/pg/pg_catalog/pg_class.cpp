@@ -44,7 +44,6 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
 });
 
 constexpr Oid kPgCatalogNamespaceOid = 11;
-constexpr Oid kPublicNamespaceOid = 2200;
 
 }  // namespace
 
@@ -69,7 +68,7 @@ void RetrieveObjects(ObjectId database_id,
       PgClass row{
         .oid = object->GetId().id(),
         .relname = object->GetName(),
-        .relnamespace = kPublicNamespaceOid,
+        .relnamespace = object->GetSchemaId().id(),
         .reltablespace = 0,
         .relkind = relkind,
       };

@@ -992,7 +992,7 @@ void VisitNodes(const List* list, Visitor&& visitor) {
 }
 
 template<typename Visitor>
-auto VisitName(List* name, Visitor&& visitor) {
+auto VisitName(const List* name, Visitor&& visitor) {
   SDB_ASSERT(name->type == T_List);
 
   switch (list_length(name)) {

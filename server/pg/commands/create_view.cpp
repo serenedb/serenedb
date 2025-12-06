@@ -72,7 +72,9 @@ yaclib::Future<Result> CreateView(const ExecContext& context,
                                   const ViewStmt& stmt) {
   // TODO: use correct schema
   const auto db = context.GetDatabaseId();
-  std::string_view schema = StaticStrings::kPublic;
+  const std::string_view schema = stmt.view->schemaname
+                                    ? std::string_view{stmt.view->schemaname}
+                                    : StaticStrings::kPublic;
 
   SDB_ASSERT(stmt.view);
   SDB_ASSERT(stmt.view->relname);

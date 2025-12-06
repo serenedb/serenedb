@@ -34,11 +34,11 @@ namespace sdb::pg {
 
 yaclib::Future<Result> CreateTable(ExecContext& context,
                                    const CreateStmt& stmt) {
-  // std::string_view db = stmt.relation->catalogname;
-  // std::string_view schema = stmt.relation->schemaname;
   const auto db = context.GetDatabaseId();
-  std::string_view schema = StaticStrings::kPublic;
-  std::string_view table = stmt.relation->relname;
+  const std::string_view schema =
+    stmt.relation->schemaname ? std::string_view{stmt.relation->schemaname}
+                              : StaticStrings::kPublic;
+  const std::string_view table = stmt.relation->relname;
 
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();

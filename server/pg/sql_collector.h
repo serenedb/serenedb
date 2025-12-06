@@ -29,6 +29,7 @@
 #include "pg/pg_types.h"
 
 struct RawStmt;
+struct List;
 
 namespace sdb::pg {
 
@@ -104,5 +105,9 @@ void Collect(std::string_view database, const RawStmt& node, Objects& objects);
 
 void Collect(std::string_view database, const RawStmt& node, Objects& objects,
              pg::ParamIndex& max_bind_param_idx);
+
+Objects::ObjectName ParseObjectName(const List* names,
+                                    std::string_view database,
+                                    std::string_view default_schema = {});
 
 }  // namespace sdb::pg

@@ -22,6 +22,8 @@
 
 #include <absl/functional/overload.h>
 
+#include <string_view>
+
 #include "basics/containers/flat_hash_set.h"
 #include "basics/exceptions.h"
 #include "pg/pg_list_utils.h"
@@ -148,28 +150,7 @@ void ObjectCollector::CollectAExpr(const State& state, const A_Expr& expr) {
 
 void ObjectCollector::CollectFuncCall(const State& state,
                                       const FuncCall& expr) {
-  auto name = VisitName(
-    expr.funcname,
-    absl::Overload{
-      [](auto relation) { return Objects::ObjectName{{}, relation}; },
-      [](std::string_view schema, std::string_view relation) {
-        return Objects::ObjectName{schema, relation};
-      },
-      [&](std::string_view db, std::string_view schema,
-          std::string_view relation) {
-        if (_database.data() && db != _database) {
-          SDB_THROW(ERROR_BAD_PARAMETER,
-                    "Cross database queries are not allowed: ", db,
-                    " accessed instead of ", _database);
-        }
-        return Objects::ObjectName{schema, relation};
-      },
-      [&](...) -> Objects::ObjectName {
-        SDB_THROW(ERROR_NOT_IMPLEMENTED,
-                  "unsupported function call with too many dotted names");
-      },
-    });
-
+  auto name = ParseObjectName(expr.funcname, _database);
   if (expr.agg_within_group || expr.func_variadic) {
     SDB_THROW(ERROR_NOT_IMPLEMENTED,
               "unsupported function call with aggregate options");
@@ -270,27 +251,7 @@ void ObjectCollector::CollectRangeFunction(const State& state,
     switch (tag) {
       case T_FuncCall: {
         auto* n = castNode(FuncCall, function);
-        auto name = VisitName(
-          n->funcname,
-          absl::Overload{
-            [](auto relation) { return Objects::ObjectName{{}, relation}; },
-            [](std::string_view schema, std::string_view relation) {
-              return Objects::ObjectName{schema, relation};
-            },
-            [&](std::string_view db, std::string_view schema,
-                std::string_view relation) {
-              if (_database.data() && db != _database) {
-                SDB_THROW(ERROR_BAD_PARAMETER,
-                          "Cross database queries are not allowed: ", db,
-                          " accessed instead of ", _database);
-              }
-              return Objects::ObjectName{schema, relation};
-            },
-            [&](...) -> Objects::ObjectName {
-              SDB_THROW(ERROR_NOT_IMPLEMENTED,
-                        "unsupported function call with too many dotted names");
-            },
-          });
+        auto name = ParseObjectName(n->funcname, _database);
         if (n->agg_within_group || n->func_variadic) {
           SDB_THROW(ERROR_NOT_IMPLEMENTED,
                     "unsupported function call with aggregate options");
@@ -595,6 +556,34 @@ void Collect(std::string_view database, const RawStmt& node, Objects& objects,
 void Collect(std::string_view database, const RawStmt& node, Objects& objects) {
   ParamIndex dummy = 0;
   Collect(database, node, objects, dummy);
+}
+
+Objects::ObjectName ParseObjectName(const List* names,
+                                    std::string_view database,
+                                    std::string_view default_schema) {
+  return VisitName(
+    names, absl::Overload{
+             [&](std::string_view relation) {
+               return Objects::ObjectName{default_schema, relation};
+             },
+             [](std::string_view schema, std::string_view relation) {
+               return Objects::ObjectName{schema, relation};
+             },
+             [&](std::string_view db, std::string_view schema,
+                 std::string_view relation) {
+               if (database.data() && db != database) {
+                 SDB_THROW(ERROR_BAD_PARAMETER,
+                           "Cross database queries are not allowed: ", db,
+                           " accessed instead of ", database);
+               }
+               return Objects::ObjectName{schema, relation};
+             },
+             [&](...) -> Objects::ObjectName {
+               SDB_THROW(
+                 ERROR_NOT_IMPLEMENTED,
+                 "unsupported function call with too many dotted names");
+             },
+           });
 }
 
 }  // namespace sdb::pg

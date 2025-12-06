@@ -22,6 +22,7 @@ SELECT nspname, nspowner, nspacl FROM pg_namespace ORDER BY oid
 nspname	nspowner	nspacl
 pg_catalog	NULL	NULL
 public	NULL	NULL
+test	NULL	NULL
 
 statement ok
 CREATE TABLE test.test(i int)
@@ -29,7 +30,7 @@ CREATE TABLE test.test(i int)
 statement error
 DROP SCHEMA test
 ----
-db error: ERROR: bla bla
+db error: ERROR: cannot drop schema test because other objects depend on it
 
 
 # TODO: fix oid
@@ -39,15 +40,21 @@ SELECT nspname, nspowner, nspacl FROM pg_namespace ORDER BY oid
 nspname	nspowner	nspacl
 pg_catalog	NULL	NULL
 public	NULL	NULL
+test	NULL	NULL
 
 statement error
 DROP SCHEMA test
 ----
-db error: ERROR: bla bla
+db error: ERROR: cannot drop schema test because other objects depend on it
 
 
-statement ok 
-DROP SCHEMA test CASCASDE 
+statement ok
+DROP SCHEMA test CASCADE 
+
+statement error
+DROP SCHEMA test 
+----
+db error: ERROR: Schema not found: test
 
 
 # TODO: fix oid

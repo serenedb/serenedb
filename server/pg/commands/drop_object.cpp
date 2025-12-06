@@ -40,32 +40,11 @@ yaclib::Future<Result> DropObject(ExecContext& context, const DropStmt& stmt) {
                                       "DROP ... RESTRICT is not implemented");
   }
 
-  List* names = list_nth_node(List, stmt.objects, 0);
-
-  auto [schema, name] = VisitName(
-    names,
-    absl::Overload{
-      [](auto name) { return pg::Objects::ObjectName{{}, name}; },
-      [](std::string_view schema, std::string_view name) {
-        return pg::Objects::ObjectName{schema, name};
-      },
-      [&](std::string_view db, std::string_view schema, std::string_view name) {
-        if (context.GetDatabase() != db) {
-          SDB_THROW(ERROR_BAD_PARAMETER,
-                    "Cross database queries are not allowed: ", db,
-                    " accessed instead of ", context.GetDatabase());
-        }
-        return pg::Objects::ObjectName{schema, name};
-      },
-      [&](...) -> pg::Objects::ObjectName {
-        SDB_THROW(ERROR_NOT_IMPLEMENTED,
-                  "unsupported function call with too many dotted names");
-      }});
-
-  if (stmt.removeType != OBJECT_SCHEMA && schema.empty()) {
-    // TODO: fix schema resolution
-    schema = StaticStrings::kPublic;
-  }
+  auto* names = stmt.removeType == OBJECT_SCHEMA
+                  ? stmt.objects
+                  : list_nth_node(List, stmt.objects, 0);
+  auto [schema, name] =
+    ParseObjectName(names, context.GetDatabase(), StaticStrings::kPublic);
 
   Result r;
   const auto db = context.GetDatabaseId();

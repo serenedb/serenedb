@@ -35,8 +35,7 @@ yaclib::Future<Result> DropObject(ExecContext& context, const DropStmt& stmt) {
   auto& catalogs =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
   auto& catalog = catalogs.Global();
-  Result r;
-  if (stmt.behavior == DROP_RESTRICT) {
+  if (stmt.removeType != OBJECT_SCHEMA && stmt.behavior == DROP_RESTRICT) {
     return yaclib::MakeFuture<Result>(ERROR_NOT_IMPLEMENTED,
                                       "DROP ... RESTRICT is not implemented");
   }
@@ -68,7 +67,7 @@ yaclib::Future<Result> DropObject(ExecContext& context, const DropStmt& stmt) {
     schema = StaticStrings::kPublic;
   }
 
-  const bool cascade = stmt.behavior == DROP_CASCADE;
+  Result r;
   const auto db = context.GetDatabaseId();
   switch (stmt.removeType) {
     case OBJECT_TABLE:
@@ -82,6 +81,7 @@ yaclib::Future<Result> DropObject(ExecContext& context, const DropStmt& stmt) {
     } break;
     case OBJECT_SCHEMA: {
       // TODO: ensure that schema is empty
+      const bool cascade = stmt.behavior == DROP_CASCADE;
       r = catalog.DropSchema(db, name, cascade, nullptr);
     } break;
     default:

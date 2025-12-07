@@ -135,7 +135,7 @@ WITH networth AS (
   ) AS lmao(guy, coins)
   GROUP BY guy
 )
-SELECT * FROM networth 
+SELECT * FROM networth
 WHERE networth.name IN (
   SELECT name FROM networth WHERE name IN ('pudge', 'deadinside')
 );
@@ -163,7 +163,7 @@ guys AS (
     VALUES ('vedernikoff'), ('makak'), ('deadinside')
   )
 )
-SELECT * FROM networth 
+SELECT * FROM networth
 WHERE networth.name IN (
   SELECT name FROM guys WHERE name = networth.name
 );

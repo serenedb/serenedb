@@ -3,9 +3,10 @@
 
 #include "gtest/gtest.h"
 
+using SynonymsTokenizer = irs::analysis::SynonymsTokenizer;
+
 TEST(token_synonyms_stream_tests, consts) {
-  static_assert("synonyms" ==
-                irs::Type<irs::analysis::SynonymsTokenizer>::name());
+  static_assert("synonyms" == irs::Type<SynonymsTokenizer>::name());
 }
 
 TEST(token_synonyms_stream_tests, test_masking) {
@@ -13,9 +14,9 @@ TEST(token_synonyms_stream_tests, test_masking) {
   {
     std::string_view data0("abc");
     std::string_view data1("ghi");
-    irs::analysis::SynonymsTokenizer::synonyms_map mask;
-    irs::analysis::SynonymsTokenizer stream(std::move(mask));
-    ASSERT_EQ(irs::Type<irs::analysis::SynonymsTokenizer>::id(), stream.type());
+    SynonymsTokenizer::synonyms_map mask;
+    SynonymsTokenizer stream(std::move(mask));
+    ASSERT_EQ(irs::Type<SynonymsTokenizer>::id(), stream.type());
 
     auto* offset = irs::get<irs::OffsAttr>(stream);
     auto* term = irs::get<irs::TermAttr>(stream);
@@ -44,12 +45,12 @@ TEST(token_synonyms_stream_tests, test_masking) {
     std::string_view data1("bar");
     std::string_view data2("xyz");
 
-    std::vector<std::string_view> synonyms{"foo", "bar"};
-    irs::analysis::SynonymsTokenizer::synonyms_map mask = {
+    const std::vector<std::string_view> synonyms{"foo", "bar"};
+    SynonymsTokenizer::synonyms_map mask = {
       {"foo", &synonyms},
       {"bar", &synonyms},
     };
-    irs::analysis::SynonymsTokenizer stream(std::move(mask));
+    SynonymsTokenizer stream(std::move(mask));
 
     auto* offset = irs::get<irs::OffsAttr>(stream);
     auto* term = irs::get<irs::TermAttr>(stream);
@@ -96,5 +97,46 @@ TEST(token_synonyms_stream_tests, test_masking) {
     ASSERT_EQ(1, inc->value);
 
     ASSERT_FALSE(stream.next());
+  }
+}
+
+TEST(token_synonyms_stream_tests, parsing) {
+  {
+    std::string_view data0("foo,bar\n");
+    auto result = SynonymsTokenizer::parse(data0);
+    const auto holder = result.result;
+    {
+      SynonymsTokenizer::synonyms_holder expected{{"foo", "bar"}};
+      ASSERT_EQ(expected, holder);
+    }
+
+    {
+      const auto sysnosyms_map = SynonymsTokenizer::parse(holder);
+      SynonymsTokenizer::synonyms_map expected = {
+        {"foo", &holder.back()},
+        {"bar", &holder.back()},
+      };
+      ASSERT_EQ(expected, sysnosyms_map.result);
+    }
+  }
+
+  {
+    std::string_view data0("foo,bar\n\n#some comment\naaa, bbb, cc");
+    auto result = SynonymsTokenizer::parse(data0);
+    const auto holder = result.result;
+    {
+      SynonymsTokenizer::synonyms_holder expected{{"foo", "bar"},
+                                                  {"aaa", "bbb", "cc"}};
+      ASSERT_EQ(expected, holder);
+    }
+
+    {
+      const auto actual = SynonymsTokenizer::parse(holder);
+      SynonymsTokenizer::synonyms_map expected = {
+        {"foo", &holder[0]}, {"bar", &holder[0]}, {"aaa", &holder[1]},
+        {"bbb", &holder[1]}, {"cc", &holder[1]},
+      };
+      ASSERT_EQ(expected, actual.result);
+    }
   }
 }

@@ -93,16 +93,26 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
   std::string name = _object_key;
   const auto parent_size = name.size();
   velox::IndexRange all_rows(0, input->size());
-  const auto& input_type = input->type()->asRow();
+  [[maybe_unused]]const auto& input_type = input->type()->asRow();
+  // TODO(Dronplane) make it even more granular by splitting on several ranges.
+  std::string_view min_key = _row_keys[0];
+  std::string_view max_key = _row_keys[0];
+  for (const auto& key : _row_keys) {
+      if (key < min_key) {
+        min_key = key;
+      } else if (key > max_key) {
+        max_key = key;
+      }
+  }
+  std::string full_min_key, full_max_key;
   for (velox::column_index_t i = 0; i < num_columns; ++i) {
-    // see #issue-309
     // Exclude only UNKNOWN from equivalency check as UNKNOWN is just a NULL and
     // compatible with everything.
     // Intentionally check UNKNOWN after equivalency to make compiler execute
     // child lookup by name as it is also a necessary check.
     // Even keys during UPDATE should be validated as it is important for
     // RocksDB key generation
-    VELOX_CHECK(_row_type->findChild(input_type.nameOf(i))
+    VELOX_DCHECK(_row_type->findChild(input_type.nameOf(i))
                   ->equivalent(*input_type.childAt(i)) ||
                 input_type.childAt(i)->kind() == velox::TypeKind::UNKNOWN);
 
@@ -112,6 +122,21 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
     // TODO(Dronplane) implement proper column name encoding
     SDB_ASSERT(!input->type()->asRow().nameOf(i).empty());
     absl::StrAppend(&name, ".", input->type()->asRow().nameOf(i), ".");
+    // Acquire range locks
+    full_max_key.clear();
+    full_min_key.clear();
+    absl::StrAppend(&full_max_key, name, max_key);
+    absl::StrAppend(&full_min_key, name, min_key);
+    rocksdb::Endpoint key_range[2] = {
+      {full_min_key.data(), full_min_key.size(), false},
+      {full_max_key.data(), full_max_key.size(), false}};
+
+    // TODO(Dronplane): investigate. What if we set transaction to skip concurrency control
+    // and do locks manually here. Only for PK columns for insert and for update only changed columns.
+    // Check what would do range lock in that case.
+    VELOX_CHECK(_transaction.GetRangeLock(&_cf, key_range[0], key_range[1]).ok(),
+                "Failed to acquire range lock for table {}",
+                _object_key);
     WriteColumn(name, input->childAt(i), folly::Range{&all_rows, 1}, {});
     name.erase(parent_size);
   }
@@ -1762,7 +1787,7 @@ void RocksDBDataSink::WriteRowSlices(std::string_view key) {
   if (_row_slices.size() == 1) {
     // Optimizing single slice case - rocksdb does not do additional copying
     // while gathering slice parts
-    status = _transaction.Put(&_cf, key_slice, _row_slices.front());
+    status = _transaction.Put(&_cf, key_slice, _row_slices.front(), true);
   } else {
     // TODO(Dronplane): Currenly RocksDB does intermediate merging
     // all parts to a single string before actual inserting where it copies it
@@ -1770,7 +1795,7 @@ void RocksDBDataSink::WriteRowSlices(std::string_view key) {
     // keeps SliceParts until they are copied to the transaction buffer.
     status = _transaction.Put(
       &_cf, rocksdb::SliceParts(&key_slice, 1),
-      rocksdb::SliceParts(_row_slices.data(), _row_slices.size()));
+      rocksdb::SliceParts(_row_slices.data(), _row_slices.size()), true);
   }
   if (!status.ok()) {
     SDB_THROW(rocksutils::ConvertStatus(status));

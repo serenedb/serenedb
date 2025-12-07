@@ -56,7 +56,7 @@ void BmCalculateAbseil(benchmark::State& state) {
 }
 
 #ifdef BENCH_FOLLY
-void BM_CalculateFolly(benchmark::State& state) {
+void BmCalculateFolly(benchmark::State& state) {
   int len = state.range(0);
   std::string data = TestString(len);
   for (auto s : state) {
@@ -69,7 +69,7 @@ void BM_CalculateFolly(benchmark::State& state) {
 #endif
 
 #ifdef BENCH_ROCKSDB
-void BM_CalculateRocksDB(benchmark::State& state) {
+void BmCalculateRocksDB(benchmark::State& state) {
   int len = state.range(0);
   std::string data = TestString(len);
   for (auto s : state) {
@@ -111,11 +111,11 @@ void BM_CalculateRocksDB(benchmark::State& state) {
 BENCHMARK(BmCalculateAbseil)->ARGS2;
 
 #ifdef BENCH_FOLLY
-BENCHMARK(BM_CalculateFolly)->ARGS2;
+BENCHMARK(BmCalculateFolly)->ARGS2;
 #endif
 
 #ifdef BENCH_ROCKSDB
-BENCHMARK(BM_CalculateRocksDB)->ARGS2;
+BENCHMARK(BmCalculateRocksDB)->ARGS2;
 #endif
 
 }  // namespace

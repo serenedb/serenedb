@@ -220,7 +220,7 @@ add_subdirectory(benchmark)
 ################################################################################
 
 add_library(sse2neon INTERFACE)
-if(IS_ARM)
+if(ARCH_AARCH64)
     target_include_directories(
         sse2neon
         SYSTEM
@@ -615,8 +615,13 @@ add_subdirectory(fake)
 
 set(FOLLY_HAVE_INT128_T ON)
 set(FOLLY_HAVE_EXTRANDOM_SFMT19937 OFF)
-set(FOLLY_HAVE_LIBGFLAGS OFF)
-set(FOLLY_HAVE_LIBGLOG OFF)
+set(FOLLY_HAVE_LIBGFLAGS ON)
+set(FOLLY_HAVE_LIBGLOG ON)
+# TODO(mbkkt) FOLLY_LIBRARY_SANITIZE_ADDRESS
+set(FOLLY_USE_SYMBOLIZER OFF)
+set(FOLLY_HAVE_LIBUNWIND OFF)
+set(FOLLY_HAVE_ELF OFF)
+set(FOLLY_HAVE_DWARF OFF)
 sdb_update_module(${GIT_EXECUTABLE} "folly" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(folly)
 target_include_directories(folly PUBLIC ${OPENSSL_INCLUDE_DIR})

@@ -20,6 +20,7 @@
 #include <mutex>
 
 #include <boost/asio/detail/push_options.hpp>
+#include <absl/base/call_once.h>
 
 namespace boost {
 namespace asio {
@@ -40,13 +41,13 @@ struct std_global_impl
     delete ptr_;
   }
 
-  static std::once_flag init_once_;
+  static absl::once_flag init_once_;
   static std_global_impl instance_;
   T* ptr_;
 };
 
 template <typename T>
-std::once_flag std_global_impl<T>::init_once_;
+absl::once_flag std_global_impl<T>::init_once_;
 
 template <typename T>
 std_global_impl<T> std_global_impl<T>::instance_;
@@ -54,7 +55,7 @@ std_global_impl<T> std_global_impl<T>::instance_;
 template <typename T>
 T& std_global()
 {
-  std::call_once(std_global_impl<T>::init_once_, &std_global_impl<T>::do_init);
+  absl::call_once(std_global_impl<T>::init_once_, &std_global_impl<T>::do_init);
   return *std_global_impl<T>::instance_.ptr_;
 }
 

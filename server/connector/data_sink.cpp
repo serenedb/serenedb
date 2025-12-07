@@ -1881,6 +1881,13 @@ void RocksDBDataSink::GatherNulls(
       velox::raw_vector<velox::vector_size_t> rows_holder(&_memory_pool);
       rows_holder.resize(total_rows_number);
       velox::vector_size_t* raw_buffer = rows_holder.data();
+#ifdef DATA_SINK_USE_MEMORY_SANITIZER
+      // rawvector allocates tail long enough to load last simd batch but
+      // does not initialize it. So we must do it here to avoid sanitizer
+      // warnings while loading last batch.
+      std::fill(raw_buffer + total_rows_number,
+                raw_buffer + rows_holder.capacity(), 0);
+#endif
       auto current = raw_buffer;
       for (const auto& range : ranges) {
         if (range.begin < 0) {
@@ -1898,8 +1905,17 @@ void RocksDBDataSink::GatherNulls(
         const auto* wrapper_words =
           reinterpret_cast<const uint64_t*>(wrapper_nulls.data());
         SDB_ASSERT(wrapper_nulls.size() == null_buffer_size);
-        for (size_t i = 0; i < velox::bits::nwords(total_rows_number); ++i) {
-          nulls[i] &= wrapper_words[i];
+        constexpr auto kLoadStep = xsimd::batch<uint64_t>::size;
+        const auto steps = null_buffer_size / sizeof(uint64_t) / kLoadStep;
+        const auto num_words = steps * kLoadStep;
+        for (size_t i = 0; i < num_words; i += kLoadStep) {
+          auto current_batch = xsimd::load_unaligned(nulls + i);
+          current_batch &= xsimd::load_unaligned(wrapper_words + i);
+          current_batch.store_unaligned(nulls + i);
+        }
+        for (size_t i = num_words * sizeof(uint64_t); i < null_buffer_size;
+             ++i) {
+          char_nulls[i] &= wrapper_nulls[i];
         }
       }
     }

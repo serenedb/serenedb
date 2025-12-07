@@ -22,8 +22,8 @@
 #pragma once
 
 #include <cstdlib>
-#include <set>
 #include <string_view>
+#include <vector>
 
 /// macro SDB_IF_FAILURE
 /// this macro can be used in maintainer mode to make the server fail at
@@ -41,6 +41,8 @@
 
 namespace sdb {
 
+inline constexpr std::string_view kFailPointPrefix = "sdb_fault";
+
 /// intentionally cause a segmentation violation or other failures
 #ifdef SDB_FAULT_INJECTION
 void TerminateDebugging(std::string_view value);
@@ -48,49 +50,47 @@ void TerminateDebugging(std::string_view value);
 inline void TerminateDebugging(std::string_view) {}
 #endif
 
-/// check whether we should fail at a failure point
 #ifdef SDB_FAULT_INJECTION
 bool ShouldFailDebugging(std::string_view value) noexcept;
 #else
-inline constexpr bool ShouldFailDebugging(std::string_view) noexcept {
+constexpr bool ShouldFailDebugging(std::string_view) noexcept { return false; }
+#endif
+
+#ifdef SDB_FAULT_INJECTION
+bool AddFailurePointDebugging(std::string_view value);
+#else
+constexpr bool AddFailurePointDebugging(std::string_view) noexcept {
   return false;
 }
 #endif
 
-/// add a failure point
 #ifdef SDB_FAULT_INJECTION
-void AddFailurePointDebugging(std::string_view value);
+bool RemoveFailurePointDebugging(std::string_view value);
 #else
-inline void AddFailurePointDebugging(std::string_view) {}
+constexpr bool RemoveFailurePointDebugging(std::string_view) noexcept {
+  return false;
+}
 #endif
 
-/// remove a failure point
-#ifdef SDB_FAULT_INJECTION
-void RemoveFailurePointDebugging(std::string_view value);
-#else
-inline void RemoveFailurePointDebugging(std::string_view) {}
-#endif
-
-/// clear all failure points
 #ifdef SDB_FAULT_INJECTION
 void ClearFailurePointsDebugging() noexcept;
 #else
-inline void ClearFailurePointsDebugging() noexcept {}
+constexpr void ClearFailurePointsDebugging() noexcept {}
 #endif
 
-/// return all currently set failure points
 #ifdef SDB_FAULT_INJECTION
-std::set<std::string> GetFailurePointsDebugging();
+std::vector<std::string> GetFailurePointsDebugging();
 #else
-inline std::set<std::string> GetFailurePointsDebugging() { return {}; }
+constexpr std::vector<std::string> GetFailurePointsDebugging() { return {}; }
 #endif
 
-/// returns whether failure point debugging can be used
+constexpr bool CanUseFailurePointsDebugging() {
 #ifdef SDB_FAULT_INJECTION
-inline constexpr bool CanUseFailurePointsDebugging() { return true; }
+  return true;
 #else
-inline constexpr bool CanUseFailurePointsDebugging() { return false; }
+  return false;
 #endif
+}
 
 }  // namespace sdb
 

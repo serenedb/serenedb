@@ -170,7 +170,7 @@ void EnvironmentFeature::prepare() {
 
     const std::string filename("/proc/cpu/alignment");
     try {
-      if (basics::file_utils::exists(filename)) {
+      if (basics::file_utils::Exists(filename)) {
         const std::string cpuAlignment = basics::file_utils::Slurp(filename);
         auto start = cpuAlignment.find("User faults:");
 
@@ -231,7 +231,7 @@ void EnvironmentFeature::prepare() {
 
     const std::string cpuInfoFilename("/proc/cpuinfo");
     try {
-      if (basics::file_utils::exists(cpuInfoFilename)) {
+      if (basics::file_utils::Exists(cpuInfoFilename)) {
         const std::string cpuInfo = basics::file_utils::Slurp(cpuInfoFilename);
         auto start = cpuInfo.find("ARMv6");
 

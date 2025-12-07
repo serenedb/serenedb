@@ -7,6 +7,7 @@ function(add_bench FILE_NAME)
     add_dependencies(serenedb-bench-micro ${NAME})
 endfunction()
 
+add_bench(call_once)
 add_bench(column_writer)
 add_bench(crc32c)
 add_bench(function)

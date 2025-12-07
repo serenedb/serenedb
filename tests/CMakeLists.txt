@@ -6,4 +6,5 @@ add_subdirectory(bench)
 
 if(SDB_GTEST)
     add_subdirectory(libs)
+    add_subdirectory(server)
 endif()

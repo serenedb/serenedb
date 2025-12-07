@@ -14,3 +14,17 @@ SELECT
 ----
 basic with_nulls
 {t,f,t} {f,NULL,NULL}
+
+
+query
+SELECT array_to_string(ARRAY[127, 0, 0, 1], '.');
+----
+array_to_string
+127.0.0.1
+
+
+query ?
+SELECT array_to_string(ARRAY['abba', 'banana'], '*');
+----
+array_to_string
+abba*banana

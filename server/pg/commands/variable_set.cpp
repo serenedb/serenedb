@@ -118,7 +118,47 @@ yaclib::Future<Result> VariableSet(ExecContext& ctx,
     config.ResetAll();
     return {};
   }
-  auto value_name = GetOriginalName(stmt.name);
+  std::string_view stmt_name = stmt.name;
+
+#ifdef SDB_FAULT_INJECTION
+  if (stmt_name.starts_with(kFailPointPrefix)) {
+    stmt_name.remove_prefix(kFailPointPrefix.size());
+    if (stmt_name == "s") {
+      if (stmt.kind != VAR_RESET) {
+        return yaclib::MakeFuture<Result>(ERROR_FAILED,
+                                          "only RESET sdb_faults is valid");
+      }
+      ClearFailurePointsDebugging();
+      return {};
+    }
+    if (!stmt_name.starts_with('_')) {
+      return yaclib::MakeFuture<Result>(
+        ERROR_FAILED, "failure point configuration parameter must start with '",
+        kFailPointPrefix, "_'");
+    }
+    stmt_name.remove_prefix(1);
+    if (stmt.kind == VAR_RESET) {
+      if (!RemoveFailurePointDebugging(stmt_name)) {
+        return yaclib::MakeFuture<Result>(ERROR_FAILED, "failure point '",
+                                          stmt_name,
+                                          "' not set so cannot remove");
+      }
+    } else if (stmt.kind == VAR_SET_DEFAULT) {
+      if (!AddFailurePointDebugging(stmt_name)) {
+        return yaclib::MakeFuture<Result>(ERROR_FAILED, "failure point '",
+                                          stmt_name,
+                                          "' already set so cannot add");
+      }
+    } else {
+      return yaclib::MakeFuture<Result>(
+        ERROR_FAILED,
+        "only SET ... TO DEFAULT and RESET are supported for fail points");
+    }
+    return {};
+  }
+#endif
+
+  auto value_name = GetOriginalName(stmt_name);
   if (!value_name.data()) {
     return yaclib::MakeFuture<Result>(
       ERROR_FAILED, "unrecognized configuration parameter \"", stmt.name, "\"");
@@ -150,6 +190,9 @@ yaclib::Future<Result> VariableSet(ExecContext& ctx,
       break;
     default:
       SDB_UNREACHABLE();
+  }
+  if (r.ok()) {
+    return {};
   }
   return yaclib::MakeFuture(std::move(r));
 }

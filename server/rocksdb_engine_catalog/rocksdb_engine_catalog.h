@@ -243,10 +243,10 @@ class RocksDBEngineCatalog : public StorageEngine {
   void compactRange(RocksDBKeyBounds bounds);
   void processCompactions();
 
-  Result createFunction(ObjectId db, ObjectId schema_id, ObjectId id,
+  Result CreateFunction(ObjectId db, ObjectId schema_id, ObjectId id,
                         WriteProperties properties) final;
 
-  Result dropFunction(ObjectId db, ObjectId schema_id, ObjectId id,
+  Result DropFunction(ObjectId db, ObjectId schema_id, ObjectId id,
                       std::string_view name) final;
 
   void createTable(const catalog::Table& collection,
@@ -258,36 +258,36 @@ class RocksDBEngineCatalog : public StorageEngine {
   Result MarkDeleted(const catalog::Schema& schema) final;
 
   void prepareDropTable(ObjectId collection) final;
-  Result dropIndex(IndexTombstone tombstone) final;
-  Result dropCollection(const TableTombstone& tombstone) final;
+  Result DropIndex(IndexTombstone tombstone) final;
+  Result DropTable(const TableTombstone& tombstone) final;
 
-  void changeCollection(const catalog::Table& collection,
-                        const TableShard& physical) final;
+  void ChangeTable(const catalog::Table& collection,
+                   const TableShard& physical) final;
 
-  Result renameCollection(const catalog::Table& collection,
-                          const TableShard& physical,
-                          std::string_view old_name) final;
+  Result RenameTable(const catalog::Table& collection,
+                     const TableShard& physical,
+                     std::string_view old_name) final;
 
-  Result createSchema(ObjectId db, ObjectId id,
+  Result CreateSchema(ObjectId db, ObjectId id,
                       WriteProperties properties) final;
-  Result changeSchema(ObjectId db, ObjectId id,
+  Result ChangeSchema(ObjectId db, ObjectId id,
                       WriteProperties properties) final;
-  Result dropSchema(ObjectId db, ObjectId id) final;
+  Result DropSchema(ObjectId db, ObjectId id) final;
 
-  Result changeView(ObjectId db, ObjectId schema_id, ObjectId id,
+  Result ChangeView(ObjectId db, ObjectId schema_id, ObjectId id,
                     WriteProperties properties) final;
 
-  Result createView(ObjectId db, ObjectId schema_id, ObjectId id,
+  Result CreateView(ObjectId db, ObjectId schema_id, ObjectId id,
                     WriteProperties properties) final;
 
-  Result dropView(ObjectId db, ObjectId schema_id, ObjectId id,
+  Result DropView(ObjectId db, ObjectId schema_id, ObjectId id,
                   std::string_view name) final;
 
-  Result changeRole(ObjectId db, ObjectId id, WriteProperties properties) final;
+  Result ChangeRole(ObjectId db, ObjectId id, WriteProperties properties) final;
 
-  Result createRole(const catalog::Role& role) final;
+  Result CreateRole(const catalog::Role& role) final;
 
-  Result dropRole(const catalog::Role& role) final;
+  Result DropRole(const catalog::Role& role) final;
 
   yaclib::Future<Result> compactAll(bool change_level,
                                     bool compact_bottom_most_level) final;

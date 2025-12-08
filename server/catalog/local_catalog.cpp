@@ -187,7 +187,7 @@ struct TableDrop {
 
     auto& engine = GetServerEngine();
     for (auto& index : tombstone.indexes) {
-      if (auto r = engine.dropIndex(index); !r.ok()) {
+      if (auto r = engine.DropIndex(index); !r.ok()) {
         SDB_WARN("xxxxx", Logger::THREADS, "Failed dropping index ", index.id,
                  ", error: ", r.errorMessage());
         if (fatal) {
@@ -196,7 +196,7 @@ struct TableDrop {
       }
     }
 
-    if (auto r = engine.dropCollection(tombstone); !r.ok()) {
+    if (auto r = engine.DropTable(tombstone); !r.ok()) {
       SDB_WARN("xxxxx", Logger::THREADS, "Failed dropping table ",
                tombstone.table, ", error: ", r.errorMessage());
       if (fatal) {
@@ -238,7 +238,7 @@ struct ScopeDrop : std::enable_shared_from_this<ScopeDrop> {
     auto r = [&]() {
       if (schema.isSet()) {
         SDB_ASSERT(database.isSet());
-        return GetServerEngine().dropSchema(database, schema);
+        return GetServerEngine().DropSchema(database, schema);
       } else {
 #ifdef SDB_CLUSTER
         search::CleanupDatabase(database);
@@ -905,7 +905,7 @@ Result LocalCatalog::CreateSchema(ObjectId database_id,
       vpack::Builder builder;
       schema.WriteInternal(builder);
 
-      return _engine->createSchema(
+      return _engine->CreateSchema(
         schema.GetDatabaseId(), object->GetId(),
         [&](bool internal) { return builder.slice(); });
     });
@@ -916,7 +916,7 @@ Result LocalCatalog::CreateRole(std::shared_ptr<catalog::Role> role) {
     RECURSIVE_WRITE_LOCKER(_mutex, _owner);
     return _snapshot->RegisterRole(
       std::move(role), [&](auto& object) -> Result {
-        return _engine->createRole(basics::downCast<catalog::Role>(*object));
+        return _engine->CreateRole(basics::downCast<catalog::Role>(*object));
       });
   }();
 
@@ -936,7 +936,7 @@ Result LocalCatalog::CreateView(ObjectId database_id, std::string_view schema,
   return _snapshot->RegisterObject(
     database_id, schema, std::move(view), [&](auto& object) {
       auto& view = basics::downCast<catalog::View>(*object);
-      return _engine->createView(
+      return _engine->CreateView(
         view.GetDatabaseId(), view.GetSchemaId(), view.GetId(),
         [&](bool internal) { return writer(view, internal); });
     });
@@ -951,7 +951,7 @@ Result LocalCatalog::CreateFunction(
   return _snapshot->RegisterObject(
     database_id, schema, std::move(function), [&](auto& object) {
       auto& function = basics::downCast<catalog::Function>(*object);
-      return _engine->createFunction(
+      return _engine->CreateFunction(
         function.GetDatabaseId(), function.GetSchemaId(), function.GetId(),
         [&](bool internal) { return writer(function, internal); });
     });
@@ -1010,7 +1010,7 @@ Result LocalCatalog::RenameView(ObjectId database_id, std::string_view schema,
         return old_object.Rename(new_view, new_name);
       },
       [&](auto& database, auto& schema, auto& object) -> Result {
-        return _engine->changeView(
+        return _engine->ChangeView(
           object->GetDatabaseId(), object->GetSchemaId(), object->GetId(),
           [&](bool internal) { return writer(*object, internal); });
       });
@@ -1059,7 +1059,7 @@ Result LocalCatalog::RenameTable(ObjectId database_id, std::string_view schema,
         auto& table = basics::downCast<catalog::Table>(*object);
         auto it = _tables.find(table.GetId());
         SDB_ENSURE(it != _tables.end(), ERROR_INTERNAL);
-        return _engine->renameCollection(table, *it->second, name);
+        return _engine->RenameTable(table, *it->second, name);
       });
   }();
 
@@ -1080,7 +1080,7 @@ Result LocalCatalog::ChangeRole(std::string_view name,
   auto r = [&] {
     RECURSIVE_WRITE_LOCKER(_mutex, _owner);
     return _snapshot->ReplaceRole(name, new_role, [&](auto& object) -> Result {
-      return _engine->changeRole(
+      return _engine->ChangeRole(
         object->GetDatabaseId(), object->GetId(),
         [&](bool internal) { return writer(*object, internal); });
     });
@@ -1105,7 +1105,7 @@ Result LocalCatalog::ChangeView(ObjectId database_id, std::string_view schema,
     return _snapshot->ReplaceObject<catalog::View>(
       database_id, schema, name, new_view,
       [&](auto& database, auto& schema, auto& object) -> Result {
-        return _engine->changeView(
+        return _engine->ChangeView(
           object->GetDatabaseId(), object->GetSchemaId(), object->GetId(),
           [&](bool internal) { return writer(*object, internal); });
       });
@@ -1138,7 +1138,7 @@ Result LocalCatalog::ChangeTable(ObjectId database_id, std::string_view schema,
         SDB_ENSURE(it != _tables.end(), ERROR_INTERNAL);
 
         return basics::SafeCall(
-          [&] { _engine->changeCollection(table, *it->second); });
+          [&] { _engine->ChangeTable(table, *it->second); });
       });
   }();
 
@@ -1154,7 +1154,7 @@ Result LocalCatalog::DropRole(std::string_view role) {
   auto r = [&] {
     RECURSIVE_WRITE_LOCKER(_mutex, _owner);
     return _snapshot->DropRole(
-      role, [&](auto& object) -> Result { return _engine->dropRole(*object); });
+      role, [&](auto& object) -> Result { return _engine->DropRole(*object); });
   }();
 
   if (!r.ok()) {
@@ -1288,7 +1288,7 @@ Result LocalCatalog::DropView(ObjectId database_id, std::string_view schema,
     return _snapshot->DropObject<catalog::View>(
       database_id, schema, name,
       [&](auto& database, auto&, auto& object) -> Result {
-        return _engine->dropView(database->GetId(), object->GetSchemaId(),
+        return _engine->DropView(database->GetId(), object->GetSchemaId(),
                                  object->GetId(), object->GetName());
       });
   }();
@@ -1306,7 +1306,7 @@ Result LocalCatalog::DropFunction(ObjectId database_id, std::string_view schema,
   RECURSIVE_WRITE_LOCKER(_mutex, _owner);
   return _snapshot->DropObject<catalog::Function>(
     database_id, schema, name, [&](auto& database, auto&, auto& object) {
-      return _engine->dropFunction(database->GetId(), object->GetSchemaId(),
+      return _engine->DropFunction(database->GetId(), object->GetSchemaId(),
                                    object->GetId(), object->GetName());
     });
 }

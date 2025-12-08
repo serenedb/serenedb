@@ -221,71 +221,71 @@ class StorageEngine : public SerenedFeature {
 
   virtual void prepareDropTable(ObjectId table) {}
 
-  virtual Result dropCollection(const TableTombstone& tombstone) {
+  virtual Result DropTable(const TableTombstone& tombstone) {
     return {ERROR_NOT_IMPLEMENTED};
   }
-  virtual Result dropIndex(IndexTombstone tombstone) {
+  virtual Result DropIndex(IndexTombstone tombstone) {
     return {ERROR_NOT_IMPLEMENTED};
   }
 
-  virtual void changeCollection(const catalog::Table& collection,
-                                const TableShard& physical) {
+  virtual void ChangeTable(const catalog::Table& collection,
+                           const TableShard& physical) {
     SDB_ASSERT(false);
   }
 
-  virtual Result renameCollection(const catalog::Table& collection,
-                                  const TableShard& physical,
-                                  std::string_view old_name) {
+  virtual Result RenameTable(const catalog::Table& collection,
+                             const TableShard& physical,
+                             std::string_view old_name) {
     return {ERROR_NOT_IMPLEMENTED};
   }
 
-  virtual Result createFunction(ObjectId db, ObjectId schema_id, ObjectId id,
+  virtual Result CreateFunction(ObjectId db, ObjectId schema_id, ObjectId id,
                                 WriteProperties properties) {
     return {ERROR_NOT_IMPLEMENTED};
   }
 
-  virtual Result dropFunction(ObjectId db, ObjectId schema_id, ObjectId id,
+  virtual Result DropFunction(ObjectId db, ObjectId schema_id, ObjectId id,
                               std::string_view name) {
     return {ERROR_NOT_IMPLEMENTED};
   }
 
-  virtual Result createSchema(ObjectId db, ObjectId id,
+  virtual Result CreateSchema(ObjectId db, ObjectId id,
                               WriteProperties properties) {
     return {ERROR_NOT_IMPLEMENTED};
   }
-  virtual Result changeSchema(ObjectId db, ObjectId id,
+  virtual Result ChangeSchema(ObjectId db, ObjectId id,
                               WriteProperties properties) {
     return {ERROR_NOT_IMPLEMENTED};
   }
-  virtual Result dropSchema(ObjectId db, ObjectId id) {
+  virtual Result DropSchema(ObjectId db, ObjectId id) {
     return {ERROR_NOT_IMPLEMENTED};
   }
 
-  virtual Result changeView(ObjectId db, ObjectId schema_id, ObjectId id,
+  virtual Result ChangeView(ObjectId db, ObjectId schema_id, ObjectId id,
                             WriteProperties properties) {
     return {ERROR_NOT_IMPLEMENTED};
   }
 
-  virtual Result createView(ObjectId db, ObjectId schema_id, ObjectId id,
+  virtual Result CreateView(ObjectId db, ObjectId schema_id, ObjectId id,
                             WriteProperties properties) {
     return {ERROR_NOT_IMPLEMENTED};
   }
 
-  virtual Result dropView(ObjectId db, ObjectId schema_id, ObjectId id,
+  virtual Result DropView(ObjectId db, ObjectId schema_id, ObjectId id,
                           std::string_view name) {
     return {ERROR_NOT_IMPLEMENTED};
   }
 
-  virtual Result changeRole(ObjectId db, ObjectId id,
+  virtual Result ChangeRole(ObjectId db, ObjectId id,
                             WriteProperties properties) {
     return {ERROR_NOT_IMPLEMENTED};
   }
 
-  virtual Result createRole(const catalog::Role& role) {
+  virtual Result CreateRole(const catalog::Role& role) {
     return {ERROR_NOT_IMPLEMENTED};
   }
 
-  virtual Result dropRole(const catalog::Role& role) {
+  virtual Result DropRole(const catalog::Role& role) {
     return {ERROR_NOT_IMPLEMENTED};
   }
 

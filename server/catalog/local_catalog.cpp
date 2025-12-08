@@ -1189,7 +1189,6 @@ Result LocalCatalog::DropDatabase(std::string_view name,
       },
       [&](auto& obj) {
         auto it = _tables.find(obj->GetId());
-        // SDB_ENSURE(it != _tables.end(), ERROR_INTERNAL);
         if (it == _tables.end()) {
           return;
         }
@@ -1251,7 +1250,6 @@ Result LocalCatalog::DropSchema(ObjectId database_id, std::string_view schema,
       [&](auto& obj) {
         if (obj->GetType() == catalog::ObjectType::Table) {
           auto it = _tables.find(obj->GetId());
-          // SDB_ENSURE(it != _tables.end(), ERROR_INTERNAL);
           if (it == _tables.end()) {
             return;
           }

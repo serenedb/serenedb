@@ -94,33 +94,21 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
   const auto parent_size = name.size();
   velox::IndexRange all_rows(0, input->size());
   [[maybe_unused]] const auto& input_type = input->type()->asRow();
-  // TODO(Dronplane) make it even more granular by splitting on several ranges.
-  std::string_view min_key = _row_keys[0];
-  std::string_view max_key = _row_keys[0];
+  // lock only first PK column as entire row marker.
+  std::vector<std::string> lock_keys;
+  lock_keys.reserve(input->size());
   for (const auto& key : _row_keys) {
-    if (key < min_key) {
-      min_key = key;
-    } else if (key > max_key) {
-      max_key = key;
-    }
+    lock_keys.emplace_back(absl::StrCat(
+    _object_key, ".", input->type()->asRow().nameOf(_key_childs.front()), ".",
+    key));
   }
-  // Acquire range locks
-  const auto full_min_key = absl::StrCat(
-    _object_key, ".", input->type()->asRow().nameOf(_key_childs.front()), ".",
-    min_key);
-  const auto full_max_key = absl::StrCat(
-    _object_key, ".", input->type()->asRow().nameOf(_key_childs.front()), ".",
-    max_key);
-  rocksdb::Endpoint key_range[2] = {
-    {full_min_key.data(), full_min_key.size(), false},
-    {full_max_key.data(), full_max_key.size(), false}};
-
-  // TODO(Dronplane): investigate. What if we set transaction to skip
-  // concurrency control and do locks manually here. Only for first PK column or
-  // only for first column in case we move to not storing PK. Check what would
-  // do range lock in that case
-  VELOX_CHECK(_transaction.GetRangeLock(&_cf, key_range[0], key_range[1]).ok(),
-              "Failed to acquire range lock for table {}", _object_key);
+  // sort keys to reduce deadlocks
+  absl::c_sort(lock_keys);
+  for (const auto& key : lock_keys) {
+    rocksdb::Endpoint endp{key.data(), key.size(), false};
+    VELOX_CHECK(_transaction.GetRangeLock(&_cf, endp, endp).ok(),
+              "Failed to acquire row lock for table {}", _object_key);
+  }
   for (velox::column_index_t i = 0; i < num_columns; ++i) {
     // Exclude only UNKNOWN from equivalency check as UNKNOWN is just a NULL and
     // compatible with everything.
@@ -1788,15 +1776,15 @@ void RocksDBDataSink::WriteRowSlices(std::string_view key) {
   if (_row_slices.size() == 1) {
     // Optimizing single slice case - rocksdb does not do additional copying
     // while gathering slice parts
-    status = _transaction.PutUntracked(&_cf, key_slice, _row_slices.front());
+    status = _transaction.Put(&_cf, key_slice, _row_slices.front(), true);
   } else {
     // TODO(Dronplane): Currenly RocksDB does intermediate merging
     // all parts to a single string before actual inserting where it copies it
     // all again to the transaction buffer. Let's  propose a PR for them that
     // keeps SliceParts until they are copied to the transaction buffer.
-    status = _transaction.PutUntracked(
+    status = _transaction.Put(
       &_cf, rocksdb::SliceParts(&key_slice, 1),
-      rocksdb::SliceParts(_row_slices.data(), _row_slices.size()));
+      rocksdb::SliceParts(_row_slices.data(), _row_slices.size()), true);
   }
   if (!status.ok()) {
     SDB_THROW(rocksutils::ConvertStatus(status));
@@ -2027,6 +2015,11 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
     for (velox::column_index_t col_idx = 0; col_idx < num_columns; ++col_idx) {
       key.erase(key_old_size);
       absl::StrAppend(&key, _row_type->nameOf(col_idx), ".", row_key);
+      if (col_idx == 0) {
+        rocksdb::Endpoint endp{key.data(), key.size(), false};
+        VELOX_CHECK(_transaction.GetRangeLock(&_cf, endp, endp).ok(),
+                    "Failed to acquire row lock for table {}", _object_key);
+      }
 
       auto status = _transaction.Delete(&_cf, rocksdb::Slice(key));
 

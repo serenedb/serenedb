@@ -409,6 +409,7 @@ class SereneDBConnector final : public velox::connector::Connector {
     auto* transaction = serene_insert_handle.GetTransaction();
     if (!transaction) {
       rocksdb::TransactionOptions txn_options;
+      // we will lock rows explicitly
       txn_options.skip_concurrency_control = true;
       serene_insert_handle.SetLocalTransaction(
         std::unique_ptr<rocksdb::Transaction>(

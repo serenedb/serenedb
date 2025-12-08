@@ -129,8 +129,7 @@ Role::Role(PrivateTag, ObjectId id, std::string_view name)
   : catalog::Role{id, name} {}
 
 Role::Role(ObjectId id, std::string_view name)
-  : catalog::DatabaseObject{
-      {}, id::kSystemDB, id, std::string{name}, ObjectType::Role} {}
+  : catalog::Object{{}, id, std::string{name}, ObjectType::Role} {}
 
 void catalog::Role::WriteInternal(vpack::Builder& build) const {
   WriteProperties(build);

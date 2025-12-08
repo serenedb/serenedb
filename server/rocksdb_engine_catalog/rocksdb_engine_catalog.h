@@ -283,7 +283,7 @@ class RocksDBEngineCatalog : public StorageEngine {
   Result DropView(ObjectId db, ObjectId schema_id, ObjectId id,
                   std::string_view name) final;
 
-  Result ChangeRole(ObjectId db, ObjectId id, WriteProperties properties) final;
+  Result ChangeRole(ObjectId id, WriteProperties properties) final;
 
   Result CreateRole(const catalog::Role& role) final;
 

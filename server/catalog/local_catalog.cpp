@@ -1076,14 +1076,19 @@ Result LocalCatalog::RenameTable(ObjectId database_id, std::string_view schema,
 
 Result LocalCatalog::ChangeRole(std::string_view name,
                                 ChangeCallback<catalog::Role> new_role) {
-  auto writer = MakePropertiesWriter();
+  vpack::Builder b;
 
   auto r = [&] {
     RECURSIVE_WRITE_LOCKER(_mutex, _owner);
     return _snapshot->ReplaceRole(name, new_role, [&](auto& object) -> Result {
-      return _engine->ChangeRole(
-        object->GetDatabaseId(), object->GetId(),
-        [&](bool internal) { return writer(*object, internal); });
+      return _engine->ChangeRole(object->GetId(), [&](bool) {
+        if (b.isEmpty()) {
+          b.openObject();
+          object->WriteInternal(b);
+          b.close();
+        }
+        return b.slice();
+      });
     });
   }();
 

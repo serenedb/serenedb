@@ -2090,19 +2090,19 @@ Result RocksDBEngineCatalog::ChangeView(ObjectId db, ObjectId schema_id,
 Result RocksDBEngineCatalog::CreateRole(const catalog::Role& role) {
   vpack::Builder b;
   return PutObject(
-    role.GetDatabaseId(), role.GetId(),
+    id::kSystemDB, role.GetId(),
     [&](bool internal) { return GetObjectProperties(b, role, internal); },
     RocksDBEntryType::Role, RocksDBLogType::RoleCreate);
 }
 
 Result RocksDBEngineCatalog::DropRole(const catalog::Role& role) {
-  return DeleteObject(role.GetDatabaseId(), role.GetId(), role.GetName(),
+  return DeleteObject(id::kSystemDB, role.GetId(), role.GetName(),
                       RocksDBEntryType::Role, RocksDBLogType::RoleDrop);
 }
 
-Result RocksDBEngineCatalog::ChangeRole(ObjectId db, ObjectId id,
+Result RocksDBEngineCatalog::ChangeRole(ObjectId id,
                                         WriteProperties properties) {
-  return PutObject(db, id, properties, RocksDBEntryType::Role,
+  return PutObject(id::kSystemDB, id, properties, RocksDBEntryType::Role,
                    RocksDBLogType::RoleChange);
 }
 

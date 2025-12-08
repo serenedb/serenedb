@@ -276,8 +276,7 @@ class StorageEngine : public SerenedFeature {
     return {ERROR_NOT_IMPLEMENTED};
   }
 
-  virtual Result ChangeRole(ObjectId db, ObjectId id,
-                            WriteProperties properties) {
+  virtual Result ChangeRole(ObjectId id, WriteProperties properties) {
     return {ERROR_NOT_IMPLEMENTED};
   }
 

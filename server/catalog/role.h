@@ -35,7 +35,7 @@
 
 namespace sdb::catalog {
 
-class Role final : public catalog::DatabaseObject {
+class Role final : public catalog::Object {
   struct PrivateTag {
     explicit PrivateTag() = default;
   };

@@ -5,7 +5,6 @@
 
 #include <iresearch/analysis/pipeline_tokenizer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
-#include <iterator>
 #include <string_view>
 
 #include "basics/exceptions.h"
@@ -14,24 +13,26 @@
 namespace irs::analysis {
 
 namespace {
-SynonymsTokenizer::synonyms_list SplitLine(const std::string_view line) {
-  std::set<std::string_view> outputs;
-  for (std::string_view s : absl::StrSplit(line, ',')) {
-    auto candidate = absl::StripAsciiWhitespace(s);
-    if (candidate.empty()) {
+SynonymsTokenizer::SynonymsList SplitLine(const std::string_view line) {
+  std::vector<std::string_view> outputs(absl::StrSplit(line, ','));
+
+  for (auto& s : outputs) {
+    s = absl::StripAsciiWhitespace(s);
+    if (s.empty()) {
       SDB_THROW(sdb::ERROR_VALIDATION_BAD_PARAMETER);
     }
-    // @todo unescape?
-    outputs.insert(absl::StripAsciiWhitespace(s));
   }
-  return {std::make_move_iterator(outputs.begin()),
-          std::make_move_iterator(outputs.end())};
+
+  std::sort(outputs.begin(), outputs.end());
+  outputs.erase(std::unique(outputs.begin(), outputs.end()), outputs.end());
+
+  return outputs;
 }
 }  // namespace
 
-sdb::ResultOr<SynonymsTokenizer::synonyms_lines>
-SynonymsTokenizer::parseSynonymsLines(std::string_view input) {
-  synonyms_lines synonyms_lines;
+sdb::ResultOr<SynonymsTokenizer::SynonymsLines>
+SynonymsTokenizer::ParseSynonymsLines(std::string_view input) {
+  SynonymsLines synonyms_lines;
 
   std::vector<std::string_view> lines = absl::StrSplit(input, '\n');
   size_t line_number{};
@@ -77,9 +78,9 @@ SynonymsTokenizer::parseSynonymsLines(std::string_view input) {
   return synonyms_lines;
 }
 
-sdb::ResultOr<SynonymsTokenizer::synonyms_map> SynonymsTokenizer::parse(
-  const synonyms_lines& lines) {
-  synonyms_map result;
+sdb::ResultOr<SynonymsTokenizer::SynonymsMap> SynonymsTokenizer::Parse(
+  const SynonymsLines& lines) {
+  SynonymsMap result;
   for (const auto& synonyms_line : lines) {
     if (synonyms_line.in.empty()) {
       for (std::string_view synonym : synonyms_line.out) {
@@ -94,7 +95,7 @@ sdb::ResultOr<SynonymsTokenizer::synonyms_map> SynonymsTokenizer::parse(
   return result;
 }
 
-SynonymsTokenizer::SynonymsTokenizer(SynonymsTokenizer::synonyms_map&& synonyms)
+SynonymsTokenizer::SynonymsTokenizer(SynonymsTokenizer::SynonymsMap&& synonyms)
   : _synonyms(std::move(synonyms)) {}
 
 bool SynonymsTokenizer::next() {

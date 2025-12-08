@@ -23,11 +23,12 @@ class SynonymsTokenizer final : public TypedAnalyzer<SynonymsTokenizer>,
    *                  left side     right side
    *               ["i-pod", "i pod"] ["ipod"]
    */
-  using synonyms_list = std::vector<std::string_view>;
+  using SynonymsList = std::vector<std::string_view>;
 
   struct SynonymsLine;
-  using synonyms_lines = std::vector<SynonymsLine>;
-  using synonyms_map = absl::flat_hash_map<std::string, const synonyms_list*>;
+  using SynonymsLines = std::vector<SynonymsLine>;
+  using SynonymsMap =
+    absl::flat_hash_map<std::string_view, const SynonymsList*>;
 
   /* Represents a parsed synonym line from Solr format.
    * - If 'in' is empty: this is a bidirectional synonym (full line)
@@ -37,21 +38,19 @@ class SynonymsTokenizer final : public TypedAnalyzer<SynonymsTokenizer>,
    *   Example: "i-pod, i pod => ipod" -> in=["i-pod", "i pod"], out=["ipod"]
    */
   struct SynonymsLine final {
-    synonyms_list in;
-    synonyms_list out;
+    SynonymsList in;
+    SynonymsList out;
 
-    bool operator==(const SynonymsLine& line) const {
-      return in == line.in && out == line.out;
-    }
+    bool operator==(const SynonymsLine& line) const = default;
   };
 
   static constexpr std::string_view type_name() noexcept { return "synonyms"; }
 
-  static sdb::ResultOr<synonyms_lines> parseSynonymsLines(
+  static sdb::ResultOr<SynonymsLines> ParseSynonymsLines(
     std::string_view input);
-  static sdb::ResultOr<synonyms_map> parse(const synonyms_lines& lines);
+  static sdb::ResultOr<SynonymsMap> Parse(const SynonymsLines& lines);
 
-  explicit SynonymsTokenizer(synonyms_map&&);
+  explicit SynonymsTokenizer(SynonymsMap&&);
   Attribute* GetMutable(TypeInfo::type_id type) final {
     return irs::GetMutable(_attrs, type);
   }
@@ -59,7 +58,7 @@ class SynonymsTokenizer final : public TypedAnalyzer<SynonymsTokenizer>,
   bool reset(std::string_view data) final;
 
  private:
-  synonyms_map _synonyms;
+  SynonymsMap _synonyms;
 
   using attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
   attributes _attrs;

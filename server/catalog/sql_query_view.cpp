@@ -41,7 +41,6 @@
 #include "basics/result.h"
 #include "basics/std.hpp"
 #include "catalog/catalog.h"
-#include "catalog/logical_object.h"
 #include "catalog/types.h"
 #include "catalog/view.h"
 #include "general_server/state.h"

@@ -26,7 +26,7 @@
 #include "basics/fwd.h"
 #include "catalog/identifiers/identifier.h"
 #include "catalog/identifiers/object_id.h"
-#include "catalog/logical_object.h"
+#include "catalog/object.h"
 #include "catalog/table_options.h"
 #include "catalog/types.h"
 #include "catalog/validators.h"
@@ -46,12 +46,8 @@ struct NewOptions {
 
 NewOptions ParseTableChange(vpack::Slice slice);
 
-class Table : public LogicalObject {
+class Table : public SchemaObject {
  public:
-  static constexpr auto category() noexcept {
-    return ObjectCategory::Collection;
-  }
-
   Table(TableOptions&& options, ObjectId database_id);
   Table(const catalog::Table& other, NewOptions options);
 
@@ -61,7 +57,7 @@ class Table : public LogicalObject {
 
   const auto& PKType() const noexcept { return _pk_type; }
   const auto& RowType() const noexcept { return _row_type; }
-  auto GetType() const noexcept { return _type; }
+  auto GetTableType() const noexcept { return _type; }
   auto& GetSchema() const noexcept { return _schema; }
   auto& sharding(this auto& self) noexcept { return self._sharding; }
   bool waitForSync() const noexcept { return _wait_for_sync; }

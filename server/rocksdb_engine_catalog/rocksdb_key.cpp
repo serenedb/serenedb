@@ -25,6 +25,7 @@
 #include <absl/strings/internal/resize_uninitialized.h>
 
 #include "basics/exceptions.h"
+#include "catalog/identifiers/object_id.h"
 #include "rocksdb_engine_catalog/concat.h"
 #include "rocksdb_engine_catalog/rocksdb_format.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
@@ -81,7 +82,6 @@ void RocksDBKey::constructObject(RocksDBEntryType type, ObjectId database_id,
   SDB_ASSERT(database_id.isSet());
   SDB_ASSERT(id.isSet());
   SDB_ASSERT(type == RocksDBEntryType::TableTombstone ||
-               type == RocksDBEntryType::DatabaseTombstone ||
                type == RocksDBEntryType::Schema ||
                type == RocksDBEntryType::Role,
              magic_enum::enum_name(type));
@@ -93,9 +93,9 @@ void RocksDBKey::constructSchemaObject(RocksDBEntryType type,
                                        ObjectId database_id, ObjectId schema_id,
                                        ObjectId id) {
   SDB_ASSERT(database_id.isSet());
-  SDB_ASSERT(id.isSet());
   SDB_ASSERT(type == RocksDBEntryType::Collection ||
              type == RocksDBEntryType::Function ||
+             type == RocksDBEntryType::ScopeTombstone ||
              type == RocksDBEntryType::View);
   _type = type;
   rocksutils::Concat(*_buffer, type, database_id, schema_id.id(), id.id());
@@ -233,10 +233,6 @@ Tick RocksDBKey::databaseId(const char* data, size_t size) {
       SDB_ASSERT(size >= (sizeof(char) + sizeof(uint64_t)));
       return Uint64FromPersistent(data + sizeof(char));
     }
-    case RocksDBEntryType::DatabaseTombstone: {
-      SDB_ASSERT(size >= (sizeof(char) + 2 * sizeof(uint64_t)));
-      return Uint64FromPersistent(data + sizeof(char) + sizeof(uint64_t));
-    }
 
     default:
       SDB_THROW(ERROR_TYPE_ERROR);
@@ -266,9 +262,10 @@ ObjectId RocksDBKey::SchemaId(const char* data, size_t size) {
   SDB_ASSERT(data);
   SDB_ASSERT(size >= sizeof(char));
   const auto type = RocksDBKey::type(data, size);
-  SDB_ENSURE(
-    type == RocksDBEntryType::Function || type == RocksDBEntryType::View,
-    ERROR_TYPE_ERROR);
+  SDB_ENSURE(type == RocksDBEntryType::Function ||
+               type == RocksDBEntryType::View ||
+               type == RocksDBEntryType::ScopeTombstone,
+             ERROR_TYPE_ERROR);
   SDB_ASSERT(size >= (sizeof(char) + (3 * sizeof(uint64_t))));
   return ObjectId{Uint64FromPersistent(data + sizeof(char) + sizeof(uint64_t))};
 }

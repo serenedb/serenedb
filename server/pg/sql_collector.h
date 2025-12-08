@@ -25,10 +25,11 @@
 
 #include "basics/containers/flat_hash_map.h"
 #include "basics/memory.hpp"
-#include "catalog/logical_object.h"
+#include "catalog/object.h"
 #include "pg/pg_types.h"
 
 struct RawStmt;
+struct List;
 
 namespace sdb::pg {
 
@@ -64,7 +65,7 @@ class Objects : public irs::memory::Managed {
 
   struct ObjectData {
     AccessType type = AccessType::None;
-    std::shared_ptr<catalog::LogicalObject> object;
+    std::shared_ptr<catalog::SchemaObject> object;
   };
 
   using Map = containers::FlatHashMap<ObjectName, ObjectData>;
@@ -104,5 +105,9 @@ void Collect(std::string_view database, const RawStmt& node, Objects& objects);
 
 void Collect(std::string_view database, const RawStmt& node, Objects& objects,
              pg::ParamIndex& max_bind_param_idx);
+
+Objects::ObjectName ParseObjectName(const List* names,
+                                    std::string_view database,
+                                    std::string_view default_schema = {});
 
 }  // namespace sdb::pg

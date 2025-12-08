@@ -155,8 +155,9 @@ RocksDBValue::RocksDBValue(RocksDBEntryType type, vpack::Slice data)
     case RocksDBEntryType::Database:
     case RocksDBEntryType::Function:
     case RocksDBEntryType::Collection:
+    case RocksDBEntryType::Schema:
     case RocksDBEntryType::TableTombstone:
-    case RocksDBEntryType::DatabaseTombstone:
+    case RocksDBEntryType::ScopeTombstone:
     case RocksDBEntryType::View:
     case RocksDBEntryType::Role:
     case RocksDBEntryType::KeyGeneratorValue:

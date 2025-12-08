@@ -26,7 +26,6 @@
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/local_catalog.h"
-#include "catalog/logical_object.h"
 #include "catalog/object.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/system_catalog.h"
@@ -45,33 +44,31 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
 });
 
 constexpr Oid kPgCatalogNamespaceOid = 11;
-constexpr Oid kPublicNamespaceOid = 2200;
 
 }  // namespace
 
-void RetrieveObjects(uint64_t database_id,
+void RetrieveObjects(ObjectId database_id,
                      const catalog::LogicalCatalog& catalog,
                      std::vector<PgClass>& values) {
   auto insert_object =
-    [&](const std::shared_ptr<catalog::LogicalObject>& object) {
+    [&](const std::shared_ptr<catalog::SchemaObject>& object) {
       PgClass::Relkind relkind;
-      switch (object->category()) {
-        case catalog::ObjectCategory::Collection:
+      switch (object->GetType()) {
+        case catalog::ObjectType::Table:
           relkind = PgClass::Relkind::OrdinaryTable;
           break;
-        case catalog::ObjectCategory::View:
+        case catalog::ObjectType::View:
           relkind = PgClass::Relkind::View;
           break;
         default:
-          SDB_THROW(ERROR_INTERNAL,
-                    "Unsupported object category for pg_class: {}",
-                    static_cast<uint8_t>(object->category()));
+          SDB_THROW(ERROR_INTERNAL, "Unsupported object type for pg_class: {}",
+                    static_cast<uint8_t>(object->GetType()));
       };
 
       PgClass row{
         .oid = object->GetId().id(),
         .relname = object->GetName(),
-        .relnamespace = kPublicNamespaceOid,
+        .relnamespace = object->GetSchemaId().id(),
         .reltablespace = 0,
         .relkind = relkind,
       };
@@ -84,8 +81,8 @@ void RetrieveObjects(uint64_t database_id,
     std::vector<
       std::pair<std::shared_ptr<catalog::Table>, std::shared_ptr<TableShard>>>
       collections;
-    auto res = catalog.GetTables(ObjectId{database_id}, StaticStrings::kPublic,
-                                 collections);
+    auto res =
+      catalog.GetTables(database_id, StaticStrings::kPublic, collections);
     if (!res.ok()) {
       SDB_THROW(ERROR_INTERNAL, "Failed to get collections for pg_class");
     }
@@ -97,8 +94,7 @@ void RetrieveObjects(uint64_t database_id,
 
   {  // retrieve views
     std::vector<std::shared_ptr<catalog::View>> views;
-    auto res =
-      catalog.GetViews(ObjectId{database_id}, StaticStrings::kPublic, views);
+    auto res = catalog.GetViews(database_id, StaticStrings::kPublic, views);
     if (!res.ok()) {
       SDB_THROW(ERROR_INTERNAL, "Failed to get views for pg_class");
     }
@@ -118,7 +114,7 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgClass>::GetTableData(
   result.reserve(boost::pfr::tuple_size_v<PgClass>);
   std::vector<PgClass> values;
   std::vector<uint64_t> database_ids;
-  RetrieveObjects(GetDatabaseId().id(), catalog, values);
+  RetrieveObjects(GetDatabaseId(), catalog, values);
 
   {  // get system tables
     VisitSystemTables([&](const catalog::VirtualTable& table) {

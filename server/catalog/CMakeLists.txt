@@ -2,6 +2,7 @@ target_sources(
     sereneserver
     PRIVATE
         database.cpp
+        schema.cpp
         databases.cpp
         local_catalog.cpp
         catalog.cpp
@@ -11,7 +12,6 @@ target_sources(
         search_analyzer_impl.cpp
         sql_function_impl.cpp
         table.cpp
-        logical_object.cpp
         view.cpp
         function.cpp
         native_functions.cpp

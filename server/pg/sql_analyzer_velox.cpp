@@ -55,6 +55,7 @@
 #include "basics/down_cast.h"
 #include "basics/utf8_utils.hpp"
 #include "catalog/function.h"
+#include "catalog/object.h"
 #include "catalog/sql_function_impl.h"
 #include "catalog/sql_query_view.h"
 #include "catalog/table.h"
@@ -676,7 +677,7 @@ class SqlAnalyzer {
                      const RangeVar* node);
 
   State ProcessSystemTable(State* parent, std::string_view name,
-                           catalog::VritualTableSnapshot& snapshot,
+                           catalog::VirtualTableSnapshot& snapshot,
                            const RangeVar* node);
 
   void ProcessFilterNode(State& state, const Node* node, ExprKind expr_kind);
@@ -1153,14 +1154,14 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
   SDB_ASSERT(object);
   SDB_ASSERT(object->object);
   const auto& logical_object = *object->object;
-  if (!logical_object.Is(TableType::Document)) {
+  if (logical_object.GetType() != catalog::ObjectType::Table) {
     // TODO: write more pg-like error message
     THROW_SQL_ERROR(
       ERR_CODE(ERROR_SERVER_OBJECT_TYPE_MISMATCH),
       CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
       ERR_MSG(
         "INSERT statement is only applicable for tables, but the object is: ",
-        magic_enum::enum_name(logical_object.category())));
+        magic_enum::enum_name(logical_object.GetType())));
   }
   const auto& table = basics::downCast<catalog::Table>(logical_object);
 
@@ -1224,14 +1225,14 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
   SDB_ASSERT(object);
   SDB_ASSERT(object->object);
   const auto& logical_object = *object->object;
-  if (!logical_object.Is(TableType::Document)) {
+  if (logical_object.GetType() != catalog::ObjectType::Table) {
     // TODO: write more pg-like error message
     THROW_SQL_ERROR(
       ERR_CODE(ERROR_SERVER_OBJECT_TYPE_MISMATCH),
       CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
       ERR_MSG(
         "UPDATE statement is only applicable for tables, but the object is: ",
-        magic_enum::enum_name(logical_object.category())));
+        magic_enum::enum_name(logical_object.GetType())));
   }
 
   const auto& table = basics::downCast<catalog::Table>(logical_object);
@@ -1303,14 +1304,14 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
   SDB_ASSERT(object);
   SDB_ASSERT(object->object);
   const auto& logical_object = *object->object;
-  if (!logical_object.Is(TableType::Document)) {
+  if (logical_object.GetType() != catalog::ObjectType::Table) {
     // TODO: write more pg-like error message
     THROW_SQL_ERROR(
       ERR_CODE(ERROR_SERVER_OBJECT_TYPE_MISMATCH),
       CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
       ERR_MSG(
         "DELETE statement is only applicable for tables , but the object is: ",
-        magic_enum::enum_name(logical_object.category())));
+        magic_enum::enum_name(logical_object.GetType())));
   }
 
   const auto& table = basics::downCast<catalog::Table>(logical_object);
@@ -2312,7 +2313,7 @@ State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
 }
 
 State SqlAnalyzer::ProcessSystemTable(State* parent, std::string_view name,
-                                      catalog::VritualTableSnapshot& snapshot,
+                                      catalog::VirtualTableSnapshot& snapshot,
                                       const RangeVar* node) {
   const auto& row_type = snapshot.RowType();
   SDB_ASSERT(row_type);
@@ -2340,16 +2341,16 @@ State SqlAnalyzer::ProcessRangeVar(State* parent, const RangeVar* node) {
   SDB_ASSERT(object->object);
   auto& logical_object = *object->object;
 
-  if (logical_object.Is(catalog::ObjectCategory::View)) {
+  if (logical_object.GetType() == catalog::ObjectType::View) {
     const auto& view = basics::downCast<SqlQueryView>(*object->object);
     return ProcessView(parent, name, view, node);
-  } else if (logical_object.Is(TableType::Document)) {
+  } else if (logical_object.GetType() == catalog::ObjectType::Table) {
     const auto& table = basics::downCast<catalog::Table>(logical_object);
     return ProcessTable(parent, schema_name, name, table, node);
-  } else if (logical_object.Is(catalog::ObjectCategory::Virtual)) {
+  } else if (logical_object.GetType() == catalog::ObjectType::Virtual) {
     // Only for system tables now
     auto& snapshot =
-      basics::downCast<catalog::VritualTableSnapshot>(logical_object);
+      basics::downCast<catalog::VirtualTableSnapshot>(logical_object);
     return ProcessSystemTable(parent, snapshot.GetTable().Name(), snapshot,
                               node);
   }
@@ -2357,7 +2358,7 @@ State SqlAnalyzer::ProcessRangeVar(State* parent, const RangeVar* node) {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                   CURSOR_POS(ErrorPosition(ExprLocation(node))),
                   ERR_MSG("object '", name, "' of type '",
-                          magic_enum::enum_name(logical_object.category()),
+                          magic_enum::enum_name(logical_object.GetType()),
                           "' cannot be used in FROM clause"));
 }
 

@@ -75,8 +75,7 @@ const auto kRevisionTree = MakeSlice<RocksDBEntryType::RevisionTreeValue>();
 
 const auto kTableTombstone = MakeSlice<RocksDBEntryType::TableTombstone>();
 
-const auto kDatabaseTombstone =
-  MakeSlice<RocksDBEntryType::DatabaseTombstone>();
+const auto kScopeTombstone = MakeSlice<RocksDBEntryType::ScopeTombstone>();
 
 }  // namespace
 
@@ -122,8 +121,8 @@ const rocksdb::Slice& RocksDbSlice(const RocksDBEntryType& type) {
       return kRevisionTree;
     case RocksDBEntryType::TableTombstone:
       return kTableTombstone;
-    case RocksDBEntryType::DatabaseTombstone:
-      return kDatabaseTombstone;
+    case RocksDBEntryType::ScopeTombstone:
+      return kScopeTombstone;
   }
 
   return kPlaceholder;  // avoids warning - errorslice instead ?!

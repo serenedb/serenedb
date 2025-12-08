@@ -1,4 +1,4 @@
-#include "synonyms_tokenizer.hpp"
+#include "solr_synonyms_tokenizer.hpp"
 
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_split.h>
@@ -13,7 +13,7 @@
 namespace irs::analysis {
 
 namespace {
-SynonymsTokenizer::SynonymsList SplitLine(const std::string_view line) {
+SolrSynonymsTokenizer::SynonymsList SplitLine(const std::string_view line) {
   std::vector<std::string_view> outputs(absl::StrSplit(line, ','));
 
   for (auto& s : outputs) {
@@ -30,8 +30,8 @@ SynonymsTokenizer::SynonymsList SplitLine(const std::string_view line) {
 }
 }  // namespace
 
-sdb::ResultOr<SynonymsTokenizer::SynonymsLines>
-SynonymsTokenizer::ParseSynonymsLines(std::string_view input) {
+sdb::ResultOr<SolrSynonymsTokenizer::SynonymsLines>
+SolrSynonymsTokenizer::ParseSynonymsLines(std::string_view input) {
   SynonymsLines synonyms_lines;
 
   std::vector<std::string_view> lines = absl::StrSplit(input, '\n');
@@ -78,7 +78,7 @@ SynonymsTokenizer::ParseSynonymsLines(std::string_view input) {
   return synonyms_lines;
 }
 
-sdb::ResultOr<SynonymsTokenizer::SynonymsMap> SynonymsTokenizer::Parse(
+sdb::ResultOr<SolrSynonymsTokenizer::SynonymsMap> SolrSynonymsTokenizer::Parse(
   const SynonymsLines& lines) {
   SynonymsMap result;
   for (const auto& synonyms_line : lines) {
@@ -95,10 +95,11 @@ sdb::ResultOr<SynonymsTokenizer::SynonymsMap> SynonymsTokenizer::Parse(
   return result;
 }
 
-SynonymsTokenizer::SynonymsTokenizer(SynonymsTokenizer::SynonymsMap&& synonyms)
+SolrSynonymsTokenizer::SolrSynonymsTokenizer(
+  SolrSynonymsTokenizer::SynonymsMap&& synonyms)
   : _synonyms(std::move(synonyms)) {}
 
-bool SynonymsTokenizer::next() {
+bool SolrSynonymsTokenizer::next() {
   if (_curr == _end) {
     return false;
   }
@@ -111,7 +112,7 @@ bool SynonymsTokenizer::next() {
   return true;
 }
 
-bool SynonymsTokenizer::reset(std::string_view data) {
+bool SolrSynonymsTokenizer::reset(std::string_view data) {
   auto& offset = std::get<irs::OffsAttr>(_attrs);
   offset.start = 0;
   offset.end = data.size();

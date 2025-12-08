@@ -10,8 +10,8 @@
 
 namespace irs::analysis {
 
-class SynonymsTokenizer final : public TypedAnalyzer<SynonymsTokenizer>,
-                                private util::Noncopyable {
+class SolrSynonymsTokenizer final : public TypedAnalyzer<SolrSynonymsTokenizer>,
+                                    private util::Noncopyable {
  public:
   /* synonyms_list represents either a full synonym line from Solr format,
    * or split halves (left/right side of '=>' for one-way mappings)
@@ -44,13 +44,15 @@ class SynonymsTokenizer final : public TypedAnalyzer<SynonymsTokenizer>,
     bool operator==(const SynonymsLine& line) const = default;
   };
 
-  static constexpr std::string_view type_name() noexcept { return "synonyms"; }
+  static constexpr std::string_view type_name() noexcept {
+    return "solr_synonyms";
+  }
 
   static sdb::ResultOr<SynonymsLines> ParseSynonymsLines(
     std::string_view input);
   static sdb::ResultOr<SynonymsMap> Parse(const SynonymsLines& lines);
 
-  explicit SynonymsTokenizer(SynonymsMap&&);
+  explicit SolrSynonymsTokenizer(SynonymsMap&&);
   Attribute* GetMutable(TypeInfo::type_id type) final {
     return irs::GetMutable(_attrs, type);
   }

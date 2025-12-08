@@ -67,7 +67,8 @@ set(IResearch_core_sources
     ./analysis/text_tokenizer.cpp
     ./analysis/multi_delimited_tokenizer.cpp
     ./analysis/delimited_tokenizer.cpp
-    ./analysis/synonyms_tokenizer.cpp
+    ./analysis/solr_synonyms_tokenizer.cpp
+    ./analysis/wordnet_synonyms_tokenizer.cpp
     ./error/error.cpp
     ./formats/columnstore2.cpp
     ./formats/formats.cpp

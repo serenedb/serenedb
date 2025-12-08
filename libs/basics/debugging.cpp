@@ -23,35 +23,31 @@
 #include <stdlib.h>
 
 #include <csignal>
-#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include <type_traits>
 #include <utility>
 
+#include "basics/assert.h"
 #include "basics/crash_handler.h"
 #include "basics/logger/logger.h"
-#include "basics/read_locker.h"
-#include "basics/read_write_lock.h"
-#include "basics/write_locker.h"
 
 #ifdef SERENEDB_HAVE_UNISTD_H
 #include <unistd.h>
 #endif
 
-namespace sdb {
-
 #ifdef SDB_FAULT_INJECTION
-
+namespace sdb {
 namespace {
-std::atomic<bool> gHasFailurePoints{false};
+
+std::atomic_bool gHasFailurePoints{false};
 
 // a read-write lock for thread-safe access to the failure points set
 constinit absl::Mutex gFailurePointsLock{absl::kConstInit};
 
 // a global set containing the currently registered failure points
-std::set<std::string> gFailurePoints;
+containers::FlatHashSet<std::string> gFailurePoints;
+
 }  // namespace
 
 /// intentionally cause a segmentation violation or other failures
@@ -113,34 +109,35 @@ bool ShouldFailDebugging(std::string_view value) noexcept {
   return false;
 }
 
-void AddFailurePointDebugging(std::string_view value) {
+bool AddFailurePointDebugging(std::string_view value) {
   bool added = false;
   {
     absl::WriterMutexLock write_locker{&gFailurePointsLock};
     added = gFailurePoints.emplace(value).second;
     gHasFailurePoints.store(true, std::memory_order_relaxed);
   }
-
   if (added) {
     SDB_WARN("xxxxx", sdb::Logger::FIXME,
              "activating intentional failure point '", value,
              "'. the server will misbehave!");
   }
+  return added;
 }
 
-void RemoveFailurePointDebugging(std::string_view value) {
-  size_t num_removed = 0;
+bool RemoveFailurePointDebugging(std::string_view value) {
+  bool removed = false;
   {
     absl::WriterMutexLock write_locker{&gFailurePointsLock};
-    num_removed = gFailurePoints.erase(std::string(value));
+    removed = gFailurePoints.erase(value) != 0;
     if (gFailurePoints.size() == 0) {
       gHasFailurePoints.store(false, std::memory_order_relaxed);
     }
   }
 
-  if (num_removed > 0) {
+  if (removed) {
     SDB_INFO("xxxxx", sdb::Logger::FIXME, "cleared failure point ", value);
   }
+  return removed;
 }
 
 void ClearFailurePointsDebugging() noexcept {
@@ -158,10 +155,15 @@ void ClearFailurePointsDebugging() noexcept {
   }
 }
 
-std::set<std::string> GetFailurePointsDebugging() {
-  absl::ReaderMutexLock read_locker{&gFailurePointsLock};
-  return gFailurePoints;
+std::vector<std::string> GetFailurePointsDebugging() {
+  std::vector<std::string> result;
+  {
+    absl::ReaderMutexLock read_locker{&gFailurePointsLock};
+    result.assign_range(gFailurePoints);
+  }
+  absl::c_sort(result);
+  return result;
 }
-#endif
 
 }  // namespace sdb
+#endif

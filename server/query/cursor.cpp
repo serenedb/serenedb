@@ -205,44 +205,68 @@ std::tuple<Cursor::Process, Result> Cursor::ExecuteShow(
     _query.GetOutputType()->equivalent(*velox::ROW({velox::VARCHAR()})));
   const auto& config = _query.GetContext().velox_query_ctx->queryConfig();
   const std::string& name = _query.GetOutputType()->nameOf(0);
+
+#ifdef SDB_FAULT_INJECTION
+  if (name.starts_with(kFailPointPrefix)) {
+    std::string_view point = name;
+    point.remove_prefix(kFailPointPrefix.size());
+    if (point == "s") {
+      auto column = GetFailurePointsDebugging();
+      BuildBatch(batch, {std::move(column)});
+      return {Process::Done, Result{}};
+    }
+    if (!point.starts_with('_')) {
+      return {
+        Process::Done,
+        Result{ERROR_FAILED,
+               "failure point configuration parameter must start with '",
+               kFailPointPrefix, "_'"},
+      };
+    }
+    point.remove_prefix(1);
+    std::vector<std::string> column{ShouldFailDebugging(point) ? "on" : "off"};
+    BuildBatch(batch, {std::move(column)});
+    return {Process::Done, Result{}};
+  }
+#endif
+
   auto value = config.get<std::string>(name);
   if (!value) {
     return {
       Process::Done,
-      Result(
-        ERROR_FAILED,
-        absl::StrFormat("unrecognized configuration parameter \"%s\"", name)),
+      Result{ERROR_FAILED, "unrecognized configuration parameter \"", name,
+             "\""},
     };
   }
-  std::vector<std::string> data{*value};
-  BuildBatch(batch, {std::move(data)});
+  std::vector<std::string> column{*value};
+  BuildBatch(batch, {std::move(column)});
   return {Process::Done, Result{}};
 }
 
 void Cursor::BuildBatch(velox::RowVectorPtr& batch,
-                        std::span<const std::vector<std::string>> data) {
+                        std::span<const std::vector<std::string>> columns) {
   SDB_ASSERT(_query.GetOutputType()->isRow());
   SDB_ASSERT(
     absl::c_all_of(_query.GetOutputType()->children(),
                    [](const auto& ptr) { return ptr == velox::VARCHAR(); }));
-  std::vector<velox::VectorPtr> velox_data;
-  velox_data.reserve(data.size());
+  std::vector<velox::VectorPtr> vectors;
+  vectors.reserve(columns.size());
   size_t batch_rows = 0;
-  for (size_t i = 0; i < data.size(); ++i) {
-    auto data_column =
+  for (size_t i = 0; i < columns.size(); ++i) {
+    auto vector =
       velox::BaseVector::create<velox::FlatVector<velox::StringView>>(
-        _query.GetOutputType()->children()[i], data[i].size(),
+        _query.GetOutputType()->children()[i], columns[i].size(),
         _data_memory_pool.get());
-    for (size_t j = 0; j < data[i].size(); ++j) {
-      data_column->set(j, velox::StringView(data[i][j]));
+    for (size_t j = 0; j < columns[i].size(); ++j) {
+      vector->set(j, velox::StringView(columns[i][j]));
     }
-    batch_rows = std::max(batch_rows, data[i].size());
-    velox_data.push_back(std::move(data_column));
+    batch_rows = std::max(batch_rows, columns[i].size());
+    vectors.push_back(std::move(vector));
   }
 
   batch = std::make_shared<velox::RowVector>(_data_memory_pool.get(),
                                              _query.GetOutputType(), nullptr,
-                                             batch_rows, velox_data);
+                                             batch_rows, std::move(vectors));
 }
 
 Cursor::Cursor(std::function<void()>&& user_task, const Query& query)

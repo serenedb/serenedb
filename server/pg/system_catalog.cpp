@@ -348,6 +348,9 @@ constexpr auto kMapping =
     {"like_escape",
      {"pg_like_escape", false, FunctionLanguage::VeloxNative,
       FunctionKind::Scalar}},
+    {"array_to_string",
+     {"presto_array_join", false, FunctionLanguage::VeloxNative,
+      FunctionKind::Scalar}},
   });
 }  // namespace
 

@@ -220,7 +220,7 @@ add_subdirectory(benchmark)
 ################################################################################
 
 add_library(sse2neon INTERFACE)
-if(IS_ARM)
+if(ARCH_AARCH64)
     target_include_directories(
         sse2neon
         SYSTEM

@@ -1,0 +1,12 @@
+query
+SELECT 1.0::numeric(5, 3) / 3.0::numeric(4, 1);
+----
+?column?
+0.333
+
+
+query
+SELECT 1.0::numeric(5, 3) / 3.0::numeric(10, 5);
+----
+?column?
+0.33333

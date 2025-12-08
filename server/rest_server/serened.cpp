@@ -48,6 +48,8 @@ constexpr auto kNonServerFeatures = std::array{
   SerenedServer::id<StatisticsFeature>(),
 };
 
+static const boost::asio::ssl::detail::openssl_init<true> kSslInit{};
+
 static int RunServer(int argc, char** argv, GlobalContext& context) {
   try {
     CrashHandler::installCrashHandler();

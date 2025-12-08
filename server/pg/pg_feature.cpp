@@ -175,8 +175,8 @@ void PostgresFeature::prepare() {
 
 void PostgresFeature::start() {
   // for debug
-  // std::this_thread::sleep_for(std::chrono::seconds(10));
-  // pg::RegisterSystemViews();
+  std::this_thread::sleep_for(std::chrono::seconds(10));
+  pg::RegisterSystemViews();
 
   auto& selector = server().getFeature<EngineSelectorFeature>();
   if (selector.isRocksDB() && (ServerState::instance()->IsDBServer() ||

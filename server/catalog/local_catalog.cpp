@@ -532,6 +532,7 @@ class Snapshot {
         }
 
         SDB_ASSERT(new_object->GetId() == (*object_it)->GetId());
+        new_object->SetSchemaId((*object_it)->GetSchemaId());
 
         auto object = *object_it;
         auto [new_object_it, is_new] = schema_it->second.emplace(new_object);

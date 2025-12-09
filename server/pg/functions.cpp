@@ -214,27 +214,26 @@ struct CurrentSchemaFunction {
     const std::vector<velox::TypePtr>& /*inputTypes*/,
     const velox::core::QueryConfig& config) {
     auto cfg = basics::downCast<const Config>(config.config());
-    _database_id = cfg->GetCurrentDatabase();
-    _search_path = cfg->Get<VariableType::PgSearchPath>("search_path")
-                     .value_or(std::vector<std::string>{});
+    auto database_id = cfg->GetCurrentDatabase();
+    auto search_path = cfg->Get<VariableType::PgSearchPath>("search_path")
+                         .value_or(std::vector<std::string>{});
+    auto& catalog =
+      SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+    auto it = absl::c_find_if(search_path, [&](const std::string& schema_name) {
+      return catalog.GetSchema(database_id, schema_name);
+    });
+    if (it != search_path.end()) {
+      _schema_name = std::move(*it);
+    }
   }
 
   FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& out) {  // NOLINT
-    auto& catalog =
-      SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-    for (const std::string_view schema_name : _search_path) {
-      auto schema = catalog.GetSchema(_database_id, schema_name);
-      if (schema) {
-        out = schema_name;
-        return;
-      }
-    }
+    out = _schema_name;
     return;
   }
 
  private:
-  ObjectId _database_id;
-  std::vector<std::string> _search_path;
+  std::string _schema_name;
 };
 
 template<typename T>
@@ -246,9 +245,16 @@ struct CurrentSchemasFunction {
     const velox::core::QueryConfig& config,
     const arg_type<bool>& /*include_implicit*/) {
     auto cfg = basics::downCast<const Config>(config.config());
-    _database_id = cfg->GetCurrentDatabase();
-    _search_path = cfg->Get<VariableType::PgSearchPath>("search_path")
-                     .value_or(std::vector<std::string>{});
+    auto database_id = cfg->GetCurrentDatabase();
+    auto search_path = cfg->Get<VariableType::PgSearchPath>("search_path")
+                         .value_or(std::vector<std::string>{});
+    auto& catalog =
+      SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+    auto filter = [&](const std::string_view schema_name) {
+      return catalog.GetSchema(database_id, schema_name) != nullptr;
+    };
+    _schema_names = std::move(search_path) | std::views::filter(filter) |
+                    std::ranges::to<std::vector>();
   }
 
   FOLLY_ALWAYS_INLINE void call(  // NOLINT
@@ -257,24 +263,14 @@ struct CurrentSchemasFunction {
     if (include_implicit) {
       out.add_item().copy_from("pg_catalog");
     }
-    GetCurrentSchemas(out);
+    absl::c_for_each(_schema_names,
+                     [&](const std::string& schema_name) mutable {
+                       out.add_item().copy_from(schema_name);
+                     });
   }
 
  private:
-  void GetCurrentSchemas(out_type<velox::Array<velox::Varchar>>& out) {
-    auto& catalog =
-      SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-    std::vector<std::shared_ptr<catalog::Schema>> schemas;
-    for (const auto& schema_name : _search_path) {
-      auto schema_ptr = catalog.GetSchema(_database_id, schema_name);
-      if (schema_ptr) {
-        out.add_item().copy_from(schema_name);
-      }
-    }
-  }
-
-  std::vector<std::string> _search_path;
-  ObjectId _database_id;
+  std::vector<std::string> _schema_names;
 };
 
 template<typename T>

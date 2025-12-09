@@ -94,20 +94,17 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
   const auto parent_size = name.size();
   velox::IndexRange all_rows(0, input->size());
   [[maybe_unused]] const auto& input_type = input->type()->asRow();
-  // lock only first PK column as entire row marker.
-  std::vector<std::string> lock_keys;
-  lock_keys.reserve(input->size());
+  std::string lock_key = absl::StrCat(_object_key, ".");
+  const auto lock_key_base_size = lock_key.size();
   for (const auto& key : _row_keys) {
-    lock_keys.emplace_back(absl::StrCat(
-    _object_key, ".", input->type()->asRow().nameOf(_key_childs.front()), ".",
-    key));
-  }
-  // sort keys to reduce deadlocks
-  absl::c_sort(lock_keys);
-  for (const auto& key : lock_keys) {
-    rocksdb::Endpoint endp{key.data(), key.size(), false};
-    VELOX_CHECK(_transaction.GetRangeLock(&_cf, endp, endp).ok(),
-              "Failed to acquire row lock for table {}", _object_key);
+    lock_key.resize(lock_key_base_size);
+    absl::StrAppend(&lock_key, key);
+    VELOX_CHECK(
+      _transaction
+        .GetKeyLock(&_cf, rocksdb::Slice(lock_key.data(), lock_key.size()),
+                    false, true)
+        .ok(),
+      "Failed to acquire row lock for table {}", _object_key);
   }
   for (velox::column_index_t i = 0; i < num_columns; ++i) {
     // Exclude only UNKNOWN from equivalency check as UNKNOWN is just a NULL and
@@ -1776,7 +1773,7 @@ void RocksDBDataSink::WriteRowSlices(std::string_view key) {
   if (_row_slices.size() == 1) {
     // Optimizing single slice case - rocksdb does not do additional copying
     // while gathering slice parts
-    status = _transaction.Put(&_cf, key_slice, _row_slices.front(), true);
+    status = _transaction.Put(&_cf, key_slice, _row_slices.front());
   } else {
     // TODO(Dronplane): Currenly RocksDB does intermediate merging
     // all parts to a single string before actual inserting where it copies it
@@ -1784,7 +1781,7 @@ void RocksDBDataSink::WriteRowSlices(std::string_view key) {
     // keeps SliceParts until they are copied to the transaction buffer.
     status = _transaction.Put(
       &_cf, rocksdb::SliceParts(&key_slice, 1),
-      rocksdb::SliceParts(_row_slices.data(), _row_slices.size()), true);
+      rocksdb::SliceParts(_row_slices.data(), _row_slices.size()));
   }
   if (!status.ok()) {
     SDB_THROW(rocksutils::ConvertStatus(status));
@@ -1869,7 +1866,13 @@ const std::string& RocksDBDataSink::GetRowKey(
 
 void RocksDBDataSink::ResetForNewRow() noexcept {
   _row_slices.clear();
-  _bytes_allocator.clear();
+  // memory reclaim is relatively expensive so do it only when we have
+  // accumulated some noticable amount of memory.
+  // TODO(Dronplane): make configurable option?
+  constexpr uint64_t kMemoryReclaimThreshold = 10 * 1024 * 1024;  // 10 MB
+  if (_bytes_allocator.currentBytes() > kMemoryReclaimThreshold) {
+    _bytes_allocator.clear();
+  }
 }
 
 void RocksDBDataSink::GatherNulls(
@@ -2011,15 +2014,13 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
   for (velox::vector_size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
     row_key.clear();
     primary_key::Create(*input, row_idx, row_key);
+    absl::StrAppend(&key, row_key);
+    VELOX_CHECK(_transaction.GetKeyLock(&_cf, key, false, true).ok(),
+                "Failed to acquire row lock for table {}", _object_key);
 
     for (velox::column_index_t col_idx = 0; col_idx < num_columns; ++col_idx) {
       key.erase(key_old_size);
       absl::StrAppend(&key, _row_type->nameOf(col_idx), ".", row_key);
-      if (col_idx == 0) {
-        rocksdb::Endpoint endp{key.data(), key.size(), false};
-        VELOX_CHECK(_transaction.GetRangeLock(&_cf, endp, endp).ok(),
-                    "Failed to acquire row lock for table {}", _object_key);
-      }
 
       auto status = _transaction.Delete(&_cf, rocksdb::Slice(key));
 

@@ -1459,7 +1459,6 @@ rocksdb::TransactionDBOptions RocksDBOptionFeature::getTransactionDBOptions()
   result.num_stripes =
     std::max(size_t(1), static_cast<size_t>(_transaction_lock_stripes));
   result.transaction_lock_timeout = _transaction_lock_timeout;
-  result.lock_mgr_handle.reset(rocksdb::NewRangeLockManager(nullptr));
   return result;
 }
 

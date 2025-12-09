@@ -193,7 +193,6 @@ add_library(
     app/temp_path.cpp
     app/app_version.cpp
     app/logger_feature.cpp
-    app/ssl_feature.cpp
     app/name_validator.cpp
     app/options/ini_file_parser.cpp
     app/options/option.cpp

@@ -70,7 +70,6 @@ class TempPath;
 class DatabasePathFeature;
 class PrivilegeFeature;
 class SchedulerFeature;
-class SslFeature;
 class AuthenticationFeature;
 class LanguageCheckFeature;
 class InitDatabaseFeature;
@@ -126,7 +125,6 @@ using SerenedFeaturesList = type::List<
   DatabasePathFeature,
   PrivilegeFeature,
   SchedulerFeature,
-  SslFeature,
   AuthenticationFeature,
   LanguageCheckFeature,
   InitDatabaseFeature,

@@ -144,4 +144,3 @@ There's an example of the creation of these actions and attaching to the SereneD
 <p align="center">
   <img src="https://github.com/user-attachments/assets/86dedb73-478f-4344-9dcb-320200435b99" width="300" style="border-radius: 8px;">
 </p>
-

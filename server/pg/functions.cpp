@@ -214,7 +214,7 @@ struct CurrentSchemaFunction {
     const std::vector<velox::TypePtr>& /*inputTypes*/,
     const velox::core::QueryConfig& config) {
     auto cfg = basics::downCast<const Config>(config.config());
-    _database_id = cfg->Get<VariableType::ObjectId>("current_database_id");
+    _database_id = cfg->GetCurrentDatabase();
     _search_path = cfg->Get<VariableType::PgSearchPath>("search_path")
                      .value_or(std::vector<std::string>{});
   }
@@ -246,7 +246,9 @@ struct CurrentSchemasFunction {
     const velox::core::QueryConfig& config,
     const arg_type<bool>& /*include_implicit*/) {
     auto cfg = basics::downCast<const Config>(config.config());
-    _database_id = cfg->Get<VariableType::ObjectId>("current_database_id");
+    _database_id = cfg->GetCurrentDatabase();
+    _search_path = cfg->Get<VariableType::PgSearchPath>("search_path")
+                     .value_or(std::vector<std::string>{});
   }
 
   FOLLY_ALWAYS_INLINE void call(  // NOLINT
@@ -263,17 +265,15 @@ struct CurrentSchemasFunction {
     auto& catalog =
       SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
     std::vector<std::shared_ptr<catalog::Schema>> schemas;
-    auto r = catalog.GetSchemas(_database_id, schemas);
-    if (!r.ok()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                      ERR_MSG("Failed to get schemas: ", r.errorMessage()));
-    }
-    for (const auto& schema : schemas) {
-      SDB_ASSERT(schema);
-      out.add_item().copy_from(schema->GetName());
+    for (const auto& schema_name : _search_path) {
+      auto schema_ptr = catalog.GetSchema(_database_id, schema_name);
+      if (schema_ptr) {
+        out.add_item().copy_from(schema_name);
+      }
     }
   }
 
+  std::vector<std::string> _search_path;
   ObjectId _database_id;
 };
 

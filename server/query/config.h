@@ -48,7 +48,6 @@ enum class VariableType {
   U64,
   F64,
   String,
-  ObjectId,
   PgSearchPath,
   PgExtraFloatDigits,
   PgByteaOutput,
@@ -120,10 +119,6 @@ class Config : public velox::config::IConfig {
                    "bytea_output is not validated");
         return ByteaOutput::Escape;
       }
-    } else if constexpr (T == VariableType::ObjectId) {
-      SDB_ASSERT(value_str);
-      uint64_t value = folly::to<uint64_t>(*value_str);
-      return ObjectId{value};
     } else {
       SDB_THROW(ERROR_NOT_IMPLEMENTED);
     }
@@ -142,6 +137,10 @@ class Config : public velox::config::IConfig {
   void Abort();
 
   bool InsideTransaction() const { return _inside_transaction; }
+
+  void SetCurrentDatabase(ObjectId database_id) { _database_id = database_id; }
+
+  ObjectId GetCurrentDatabase() const { return _database_id; }
 
   std::unordered_map<std::string, std::string> rawConfigsCopy() const final;
 
@@ -165,6 +164,7 @@ class Config : public velox::config::IConfig {
   containers::FlatHashMap<std::string_view, TxnVariable> _transaction;
 
   bool _inside_transaction = false;
+  ObjectId _database_id = ObjectId::none();
 };
 
 };  // namespace sdb

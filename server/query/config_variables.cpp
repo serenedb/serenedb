@@ -147,12 +147,6 @@ constexpr auto kVariableDescription =
         "Etc/UTC",
       },
     },
-    {"current_database_id",
-     {
-       VariableType::ObjectId,
-       "Shows the OID of the current database.",
-       "0",
-     }},
   });
 
 constexpr auto kVeloxVariableDescription =

@@ -69,7 +69,7 @@ Also it's possible to specify a filter:
 
 ## Importing a profile
 
-We have a VScode profile which has already all the extension which are needed (for instance for code navigation). Here is a config of this: 
+We have a VScode profile which has already all the extensions which are needed (for instance for code navigation). Here is a config of this: 
 ```json
 {
   "name": "SereneDB C++ template",

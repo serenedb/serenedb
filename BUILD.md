@@ -20,8 +20,8 @@ git submodule update --init --recursive --jobs=$(nproc)
 ## Build Prerequisites
 
 1) Compiler: clang-20 / clang++-20
-2) Build system: Ninja  
-3) CMake >= 3.26  
+2) Build system: Ninja
+3) CMake >= 3.26
 
 ## Build
 

@@ -214,17 +214,7 @@ struct CurrentSchemaFunction {
     const std::vector<velox::TypePtr>& /*inputTypes*/,
     const velox::core::QueryConfig& config) {
     auto cfg = basics::downCast<const Config>(config.config());
-    auto database_id = cfg->GetCurrentDatabase();
-    auto search_path = cfg->Get<VariableType::PgSearchPath>("search_path")
-                         .value_or(std::vector<std::string>{});
-    auto& catalog =
-      SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-    auto it = absl::c_find_if(search_path, [&](const std::string& schema_name) {
-      return catalog.GetSchema(database_id, schema_name);
-    });
-    if (it != search_path.end()) {
-      _schema_name = std::move(*it);
-    }
+    _schema_name = cfg->GetCurrentSchema();
   }
 
   FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& out) {  // NOLINT

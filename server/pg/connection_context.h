@@ -37,6 +37,7 @@ class ConnectionContext : public ExecContext {
   }
 
   Config& GetConfig() { return _config; }
+  const Config& GetConfig() const { return _config; }
 
  private:
   Config _config;

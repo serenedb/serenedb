@@ -138,9 +138,14 @@ class Config : public velox::config::IConfig {
 
   bool InsideTransaction() const { return _inside_transaction; }
 
-  void SetCurrentDatabase(ObjectId database_id) { _database_id = database_id; }
+  void SetCurrentDatabase(ObjectId database_id) {
+    _database_id = database_id;
+    _current_schema = "";
+  }
 
   ObjectId GetCurrentDatabase() const { return _database_id; }
+
+  std::string GetCurrentSchema() const;
 
   std::unordered_map<std::string, std::string> rawConfigsCopy() const final;
 
@@ -165,6 +170,7 @@ class Config : public velox::config::IConfig {
 
   bool _inside_transaction = false;
   ObjectId _database_id = ObjectId::none();
+  std::string _current_schema = "";
 };
 
 };  // namespace sdb

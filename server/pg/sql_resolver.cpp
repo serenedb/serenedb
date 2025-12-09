@@ -34,7 +34,8 @@ namespace sdb::pg {
 
 namespace {
 
-void ResolveObject(ObjectId database, Objects& objects, Disallowed& disallowed,
+void ResolveObject(ObjectId database, std::string_view current_schema,
+                   Objects& objects, Disallowed& disallowed,
                    const Objects::ObjectName& name, Objects::ObjectData& data) {
   if (data.object) {
     return;
@@ -54,7 +55,18 @@ void ResolveObject(ObjectId database, Objects& objects, Disallowed& disallowed,
     auto& catalogs =
       SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
     auto& catalog = catalogs.Global();
-    std::string_view schema = StaticStrings::kPublic;
+    std::string_view schema =
+      name.schema.empty() ? current_schema : name.schema;
+
+    if (schema.empty()) {
+      SDB_THROW(ERROR_BAD_PARAMETER,
+                "no schema selected to resolve relation \"", name.FullName(),
+                "\"");
+    }
+
+    if (schema.empty()) {
+      schema = current_schema;
+    }
     std::string_view key = name.relation;
     if (auto object = catalog.GetTable(database, schema, key)) {
       data.object = object;
@@ -73,7 +85,8 @@ void ResolveObject(ObjectId database, Objects& objects, Disallowed& disallowed,
     bool changed = disallowed.emplace(name).second;
     SDB_ASSERT(changed);
     auto state = basics::downCast<SqlQueryView>(*data.object).GetState();
-    ResolveQueryView(database, objects, disallowed, state->objects);
+    ResolveQueryView(database, current_schema, objects, disallowed,
+                     state->objects);
     changed = disallowed.erase(name) != 0;
     SDB_ASSERT(changed);
   } else if (data.object->GetType() == catalog::ObjectType::Function) {
@@ -81,7 +94,7 @@ void ResolveObject(ObjectId database, Objects& objects, Disallowed& disallowed,
     if (func.Options().language == catalog::FunctionLanguage::SQL) {
       bool changed = disallowed.emplace(name).second;
       SDB_ASSERT(changed);
-      ResolveFunction(database, objects, disallowed,
+      ResolveFunction(database, current_schema, objects, disallowed,
                       func.SqlFunction().GetObjects());
       changed = disallowed.erase(name) != 0;
       SDB_ASSERT(changed);
@@ -89,7 +102,8 @@ void ResolveObject(ObjectId database, Objects& objects, Disallowed& disallowed,
   }
 }
 
-void ResolveEntity(ObjectId database, Objects& objects, Disallowed& disallowed,
+void ResolveEntity(ObjectId database, std::string_view current_schema,
+                   Objects& objects, Disallowed& disallowed,
                    const Objects& query, std::string_view entity_name) {
   for (const auto& [name, old_data] : query.getObjects()) {
     if (disallowed.contains(name)) {
@@ -98,30 +112,36 @@ void ResolveEntity(ObjectId database, Objects& objects, Disallowed& disallowed,
     }
     auto& new_data = objects.ensureData(name.schema, name.relation);
     new_data = old_data;
-    ResolveObject(database, objects, disallowed, name, new_data);
+    ResolveObject(database, current_schema, objects, disallowed, name,
+                  new_data);
   }
 }
 
 }  // namespace
 
-void ResolveQueryView(ObjectId database, Objects& objects,
-                      Disallowed& disallowed, const Objects& query) {
-  ResolveEntity(database, objects, disallowed, query, "view");
+void ResolveQueryView(ObjectId database, std::string_view current_schema,
+                      Objects& objects, Disallowed& disallowed,
+                      const Objects& query) {
+  ResolveEntity(database, current_schema, objects, disallowed, query, "view");
 }
 
-void ResolveFunction(ObjectId database, Objects& objects,
-                     Disallowed& disallowed, const Objects& query) {
-  ResolveEntity(database, objects, disallowed, query, "function");
+void ResolveFunction(ObjectId database, std::string_view current_schema,
+                     Objects& objects, Disallowed& disallowed,
+                     const Objects& query) {
+  ResolveEntity(database, current_schema, objects, disallowed, query,
+                "function");
 }
 
-void Resolve(ObjectId database, Objects& objects) {
+void Resolve(ObjectId database, Objects& objects, const Config& config) {
   SDB_ASSERT(!ServerState::instance()->IsDBServer());
   Disallowed disallowed;
   auto query = std::move(objects.getObjects());
+  auto current_schema = config.GetCurrentSchema();
   for (auto& [name, old_data] : query) {
     auto& new_data = objects.ensureData(name.schema, name.relation);
     new_data = std::move(old_data);
-    ResolveObject(database, objects, disallowed, name, new_data);
+    ResolveObject(database, current_schema, objects, disallowed, name,
+                  new_data);
   }
 }
 

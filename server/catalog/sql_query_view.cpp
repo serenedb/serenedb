@@ -98,10 +98,13 @@ Result SqlQueryViewImpl::Check(ObjectId database, std::string_view name,
             "sql query view should contains select statement"};
   }
 
+  std::string current_schema = Config().GetCurrentSchema();
+
   return basics::SafeCall([&] {
     pg::Objects objects;
-    pg::Disallowed dissallowed{pg::Objects::ObjectName{{}, name}};
-    pg::ResolveQueryView(database, objects, dissallowed, state.objects);
+    pg::Disallowed disallowed{pg::Objects::ObjectName{{}, name}};
+    pg::ResolveQueryView(database, current_schema, objects, disallowed,
+                         state.objects);
   });
 }
 

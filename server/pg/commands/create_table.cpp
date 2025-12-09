@@ -26,6 +26,7 @@
 #include "catalog/database.h"
 #include "catalog/sharding_strategy.h"
 #include "pg/commands.h"
+#include "pg/connection_context.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_analyzer_velox.h"
 #include "rest_server/database_feature.h"
@@ -35,9 +36,11 @@ namespace sdb::pg {
 yaclib::Future<Result> CreateTable(ExecContext& context,
                                    const CreateStmt& stmt) {
   const auto db = context.GetDatabaseId();
+  const auto& conn_config = basics::downCast<const ConnectionContext>(context);
+  std::string current_schema = conn_config.GetConfig().GetCurrentSchema();
   const std::string_view schema =
     stmt.relation->schemaname ? std::string_view{stmt.relation->schemaname}
-                              : StaticStrings::kPublic;
+                              : current_schema;
   const std::string_view table = stmt.relation->relname;
 
   auto& catalog =

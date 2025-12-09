@@ -24,11 +24,13 @@
 
 #include <optional>
 
+#include "app/app_server.h"
 #include "basics/assert.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
 #include "basics/logger/logger.h"
-
+#include "catalog/catalog.h"
+#include "rest_server/serened.h"
 namespace sdb {
 
 template<std::integral T>
@@ -163,4 +165,16 @@ void Config::Abort() {
   _inside_transaction = false;
 }
 
+std::string Config::GetCurrentSchema() const {
+  auto database_id = GetCurrentDatabase();
+  auto search_path = Get<VariableType::PgSearchPath>("search_path")
+                       .value_or(std::vector<std::string>{});
+  auto& catalog =
+    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+  auto it = absl::c_find_if(search_path, [&](const std::string& schema_name) {
+    return catalog.GetSchema(database_id, schema_name);
+  });
+
+  return it != search_path.end() ? *it : "";
+}
 }  // namespace sdb

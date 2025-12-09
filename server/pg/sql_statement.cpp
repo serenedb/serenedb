@@ -79,7 +79,7 @@ bool SqlStatement::ProcessNextRoot(
     SDB_ASSERT(RootCount() == 1);
   }
 
-  pg::Resolve(connection_ctx->GetDatabaseId(), objects);
+  pg::Resolve(connection_ctx->GetDatabaseId(), objects, connection_ctx->GetConfig());
   SDB_ASSERT(memory_context);
 
   auto& cpu_executor = GetScheduler()->GetCPUExecutor();

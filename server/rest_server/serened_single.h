@@ -76,7 +76,6 @@ class InitDatabaseFeature;
 class RocksDBOptionFeature;
 class RocksDBEngineCatalog;
 class EngineSelectorFeature;
-class DatabaseFeature;
 class ServerIdFeature;
 class CheckVersionFeature;
 class FlushFeature;
@@ -131,7 +130,6 @@ using SerenedFeaturesList = type::List<
   RocksDBOptionFeature,
   RocksDBEngineCatalog,
   EngineSelectorFeature,
-  DatabaseFeature,
   ServerIdFeature,
   CheckVersionFeature,
   app::CommunicationFeaturePhase,

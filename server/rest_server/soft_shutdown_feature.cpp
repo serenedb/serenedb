@@ -27,7 +27,6 @@
 #include "general_server/general_server_feature.h"
 #include "general_server/scheduler.h"
 #include "general_server/scheduler_feature.h"
-#include "rest_server/database_feature.h"
 
 #ifdef SDB_CLUSTER
 #include "aql/query_registry_feature.h"

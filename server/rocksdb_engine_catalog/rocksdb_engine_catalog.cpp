@@ -84,7 +84,6 @@
 #include "metrics/metric.h"
 #include "metrics/metrics_feature.h"
 #include "rest/version.h"
-#include "rest_server/database_feature.h"
 #include "rest_server/database_path_feature.h"
 #include "rest_server/dump_limits_feature.h"
 #include "rest_server/flush_feature.h"

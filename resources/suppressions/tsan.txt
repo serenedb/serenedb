@@ -21,7 +21,6 @@ race:VersionSet::SetLastSequence
 
 # TODO Fix known thread leaks
 thread:ClusterFeature::startHeartbeatThread
-thread:DatabaseFeature::start
 
 # TODO Fix lock order inversion
 deadlock:consensus::Agent::setPersistedState

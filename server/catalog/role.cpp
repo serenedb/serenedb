@@ -40,7 +40,6 @@
 #include "catalog/object.h"
 #include "general_server/general_server_feature.h"
 #include "general_server/state.h"
-#include "rest_server/database_feature.h"
 #include "vpack/vpack_helper.h"
 
 namespace sdb::catalog {

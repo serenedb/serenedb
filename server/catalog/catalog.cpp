@@ -45,11 +45,11 @@
 #include "catalog/table.h"
 #include "catalog/view.h"
 #include "general_server/state.h"
-#include "rest_server/database_feature.h"
 #include "rest_server/serened.h"
 #include "rocksdb_engine_catalog/rocksdb_key.h"
 #include "storage_engine/engine_selector_feature.h"
 #include "storage_engine/storage_engine.h"
+#include "utils/query_cache.h"
 #include "vpack/builder.h"
 #include "vpack/iterator.h"
 #include "vpack/serializer.h"
@@ -115,7 +115,17 @@ void CatalogFeature::unprepare() {
 
 void CatalogFeature::beginShutdown() {}
 
-void CatalogFeature::stop() {}
+void CatalogFeature::stop() {
+  aql::QueryCacheProperties p{
+    .mode = aql::QueryCacheMode::CacheAlwaysOff,
+    .max_results_count = 0,
+    .max_results_size = 0,
+    .max_entry_size = 0,
+    .show_bind_vars = false,
+  };
+  aql::QueryCache::instance()->properties(p);
+  aql::QueryCache::instance()->invalidate();
+}
 
 Result CatalogFeature::Open() {
   if (ServerState::instance()->IsCoordinator()) {

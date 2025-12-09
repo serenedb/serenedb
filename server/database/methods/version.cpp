@@ -33,7 +33,6 @@
 #include "basics/logger/logger.h"
 #include "general_server/state.h"
 #include "rest/version.h"
-#include "rest_server/database_feature.h"
 #include "storage_engine/engine_selector_feature.h"
 #include "storage_engine/storage_engine.h"
 #include "vpack/vpack_helper.h"

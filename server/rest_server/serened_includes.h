@@ -54,7 +54,6 @@
 #include "rest_server/check_version_feature.h"
 #include "rest_server/cpu_usage_feature.h"
 #include "rest_server/daemon_feature.h"
-#include "rest_server/database_feature.h"
 #include "rest_server/database_path_feature.h"
 #include "rest_server/dump_limits_feature.h"
 #include "rest_server/endpoint_feature.h"

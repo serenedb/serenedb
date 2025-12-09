@@ -28,7 +28,6 @@
 #include "pg/commands.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_analyzer_velox.h"
-#include "rest_server/database_feature.h"
 
 namespace sdb::pg {
 

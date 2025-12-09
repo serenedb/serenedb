@@ -35,18 +35,16 @@ class CheckVersionFeature final : public SerenedFeature {
   explicit CheckVersionFeature(Server& server, int* result,
                                std::span<const size_t> non_server_features);
 
- private:
-  bool _check_version;
-
- public:
   void collectOptions(std::shared_ptr<options::ProgramOptions>) final;
   void validateOptions(std::shared_ptr<options::ProgramOptions>) final;
   void start() final;
+  bool GetCheckVersion() const { return _check_version; }
 
  private:
   void checkVersion();
 
   int* _result;
+  bool _check_version = false;
   std::span<const size_t> _non_server_features;
 };
 

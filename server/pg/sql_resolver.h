@@ -28,11 +28,11 @@ namespace sdb::pg {
 
 using Disallowed = containers::FlatHashSet<Objects::ObjectName>;
 
-void ResolveQueryView(ObjectId database, std::string_view current_schema,
+void ResolveQueryView(ObjectId database, std::span<std::string> search_path,
                       Objects& objects, Disallowed& disallowed,
                       const Objects& query);
 
-void ResolveFunction(ObjectId database, std::string_view current_schema,
+void ResolveFunction(ObjectId database, std::span<std::string> search_path,
                      Objects& objects, Disallowed& disallowed,
                      const Objects& query);
 

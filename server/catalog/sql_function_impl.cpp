@@ -81,11 +81,12 @@ Result FunctionImpl::Init(ObjectId database, std::string_view name,
   if (!r.ok()) {
     return r;
   }
-  auto current_schema = Config().GetCurrentSchema();
+  auto search_path = Config().Get<VariableType::PgSearchPath>("search_path")
+                          .value_or(std::vector<std::string>{});
   r = basics::SafeCall([&] {
     pg::Objects objects;
     pg::Disallowed disallowed{pg::Objects::ObjectName{{}, name}};
-    pg::ResolveFunction(database, current_schema, objects, disallowed,
+    pg::ResolveFunction(database, search_path, objects, disallowed,
                         _objects);
   });
   if (!r.ok()) {

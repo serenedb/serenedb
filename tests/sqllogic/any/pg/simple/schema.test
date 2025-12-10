@@ -1,0 +1,42 @@
+statement ok
+CREATE SCHEMA some_schema;
+
+
+statement ok
+CREATE TABLE t(r text);
+
+
+statement ok
+CREATE TABLE some_schema.t(r2 text);
+
+
+statement ok
+CREATE TABLE t2(r text);
+
+
+query
+SELECT * FROM t AS first, some_schema.t AS second WHERE first.r = second.r2;
+----
+r	r2
+
+
+query
+SELECT * FROM t;
+----
+r
+
+
+statement ok
+SET search_path TO some_schema, public 
+
+
+query
+SELECT * FROM t;
+----
+r2
+
+
+query
+SELECT * FROM t2;
+----
+r

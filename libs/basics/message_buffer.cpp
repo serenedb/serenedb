@@ -97,10 +97,10 @@ void Buffer::WriteUncommitted(std::string_view data) {
 }
 
 void Buffer::FlushDone() {
-  SDB_ASSERT(_head);
   SDB_ASSERT(_socket_end);
   SDB_ASSERT(_send_end.load(std::memory_order_relaxed));
   FreeTill(_socket_end.chunk);
+  SDB_ASSERT(_head == _socket_end.chunk);
 
   _head->SetBegin(_socket_end.in_chunk);
   if (_head->GetBegin() == _head->GetCapacity()) {
@@ -122,7 +122,14 @@ void Buffer::FlushDone() {
 
 void Buffer::SendData() const {
   SDB_ASSERT(_socket_end);
-  SequenceView data{BufferOffset{_head, _head->GetBegin()}, _socket_end};
+  SDB_ASSERT(_head != _socket_end.chunk ||
+             _head->GetBegin() < _socket_end.in_chunk);
+  auto head = _head;
+  if (head->GetBegin() == head->GetEnd()) [[unlikely]] {
+    head = head->Next();
+  }
+  SDB_ASSERT(head && head->GetBegin() < head->GetCapacity());
+  SequenceView data{BufferOffset{head, head->GetBegin()}, _socket_end};
   if (!_send_callback || data.Empty()) {
     return;
   }

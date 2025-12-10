@@ -27,7 +27,7 @@ r
 
 
 statement ok
-SET search_path TO some_schema, public 
+SET search_path TO some_schema, public
 
 
 query

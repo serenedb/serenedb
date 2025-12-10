@@ -2507,11 +2507,11 @@ TEST_F(DataSinkTest, test_deleteDataSinkPartial) {
 
   delete_sink.appendData(row_data);
   ASSERT_TRUE(delete_sink.finish());
-  
+
   // check for conflict
   {
     sdb::connector::RocksDBDeleteDataSink delete_sink2(
-    *transaction2, *_cf_handles.front(), row_type, object_key);
+      *transaction2, *_cf_handles.front(), row_type, object_key);
     ASSERT_ANY_THROW(delete_sink2.appendData(row_data));
     // should be empty
     transaction2->Commit();
@@ -2521,8 +2521,7 @@ TEST_F(DataSinkTest, test_deleteDataSinkPartial) {
     for (it_after->SeekToFirst(); it_after->Valid(); it_after->Next()) {
       count_after++;
     }
-    ASSERT_EQ(count_after, 12)
-      << "Should still have all data";
+    ASSERT_EQ(count_after, 12) << "Should still have all data";
   }
 
   ASSERT_TRUE(transaction->Commit().ok());

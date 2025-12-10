@@ -63,7 +63,7 @@ namespace sdb::connector {
 
 RocksDBDataSink::RocksDBDataSink(
   rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
-  velox::RowTypePtr row_type, velox::memory::MemoryPool& memory_pool,
+  const velox::RowTypePtr& row_type, velox::memory::MemoryPool& memory_pool,
   std::string_view object_key,
   std::span<const velox::column_index_t> key_childs,
   bool skip_primary_key_columns)

@@ -137,8 +137,7 @@ void Resolve(ObjectId database, Objects& objects, const Config& config) {
   SDB_ASSERT(!ServerState::instance()->IsDBServer());
   Disallowed disallowed;
   auto query = std::move(objects.getObjects());
-  auto search_path = config.Get<VariableType::PgSearchPath>("search_path")
-                       .value_or(std::vector<std::string>{});
+  auto search_path = config.Get<VariableType::PgSearchPath>("search_path");
 
   for (auto& [name, old_data] : query) {
     auto& new_data = objects.ensureData(name.schema, name.relation);

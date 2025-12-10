@@ -167,8 +167,7 @@ void Config::Abort() {
 
 std::string Config::GetCurrentSchema() const {
   auto database_id = GetCurrentDatabase();
-  auto search_path = Get<VariableType::PgSearchPath>("search_path")
-                       .value_or(std::vector<std::string>{});
+  auto search_path = Get<VariableType::PgSearchPath>("search_path");
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
   auto it = absl::c_find_if(search_path, [&](const std::string& schema_name) {

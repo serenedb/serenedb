@@ -98,9 +98,7 @@ Result SqlQueryViewImpl::Check(ObjectId database, std::string_view name,
             "sql query view should contains select statement"};
   }
 
-  auto search_path = Config()
-                       .Get<VariableType::PgSearchPath>("search_path")
-                       .value_or(std::vector<std::string>{});
+  auto search_path = Config().Get<VariableType::PgSearchPath>("search_path");
 
   return basics::SafeCall([&] {
     pg::Objects objects;

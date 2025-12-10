@@ -58,3 +58,19 @@ query
 SELECT * FROM another_schema.t4;
 ----
 r4
+
+
+statement ok
+DROP SCHEMA some_schema CASCADE;
+
+
+query error db error: ERROR: relation "some_schema\.t" does not exist
+SELECT * from some_schema.t;
+
+
+statement ok
+SET search_path TO '';
+
+
+query error db error: ERROR: relation "t" does not exist
+SELECT * FROM t;

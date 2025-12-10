@@ -236,8 +236,7 @@ struct CurrentSchemasFunction {
     const arg_type<bool>& /*include_implicit*/) {
     auto cfg = basics::downCast<const Config>(config.config());
     auto database_id = cfg->GetCurrentDatabase();
-    auto search_path = cfg->Get<VariableType::PgSearchPath>("search_path")
-                         .value_or(std::vector<std::string>{});
+    auto search_path = cfg->Get<VariableType::PgSearchPath>("search_path");
     auto& catalog =
       SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
     auto filter = [&](const std::string_view schema_name) {

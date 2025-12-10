@@ -45,7 +45,10 @@ std::string ProcessValue(const A_Const& value) {
 }
 
 bool NeedQuotes(std::string_view str) {
-  SDB_ASSERT(str.data() != nullptr && !str.empty());
+  SDB_ASSERT(str.data() != nullptr);
+  if (str.empty()) {
+    return true;
+  }
   if (str[0] == '_' || absl::ascii_isalpha(str[0])) {
     return absl::c_any_of(str, [](char c) {
       return absl::ascii_isupper(c) || (!absl::ascii_isalnum(c) && c != '_');

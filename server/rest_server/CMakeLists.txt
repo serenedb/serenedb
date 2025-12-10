@@ -7,7 +7,6 @@ target_sources(
         cpu_usage_feature.cpp
         daemon_feature.cpp
         database_path_feature.cpp
-        dump_limits_feature.cpp
         endpoint_feature.cpp
         environment_feature.cpp
         file_descriptors_feature.cpp
@@ -16,7 +15,6 @@ target_sources(
         language_check_feature.cpp
         lockfile_feature.cpp
         log_buffer_feature.cpp
-        max_map_count_feature.cpp
         privilege_feature.cpp
         server_feature.cpp
         server_id_feature.cpp

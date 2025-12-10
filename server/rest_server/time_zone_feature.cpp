@@ -46,7 +46,7 @@ using namespace sdb::options;
 namespace sdb {
 
 TimeZoneFeature::TimeZoneFeature(Server& server)
-  : SerenedFeature{server, name()}, _binary_path(server.getBinaryPath()) {
+  : SerenedFeature{server, name()} {
   setOptional(false);
 }
 
@@ -102,13 +102,9 @@ void TimeZoneFeature::prepareTimeZoneData(
 }
 
 void TimeZoneFeature::prepare() {
-  std::string p;
   auto context = GlobalContext::gContext;
-  std::string binary_execution_path = context->getBinaryPath();
-  std::string binary_name = context->binaryName();
-
-  TimeZoneFeature::prepareTimeZoneData(_binary_path, binary_execution_path,
-                                       binary_name);
+  TimeZoneFeature::prepareTimeZoneData(
+    server().getBinaryPath(), context->getBinaryPath(), context->binaryName());
 }
 
 void TimeZoneFeature::start() {

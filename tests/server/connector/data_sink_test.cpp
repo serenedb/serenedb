@@ -2352,7 +2352,8 @@ TEST_F(DataSinkTest, test_tableWriteConcurrent) {
   ASSERT_TRUE(transaction_non_conflict->Commit().ok());
   ASSERT_ANY_THROW(PrepareRocksDBWrite(
     data_conflict, kObjectKey, pk, transaction_conflict, written_row_keys3));
-  transaction_conflict->Rollback();
+  // should be empty
+  transaction_conflict->Commit();
   written_row_keys3.clear();
   ASSERT_TRUE(transaction->Commit().ok());
   rocksdb::ReadOptions read_options;
@@ -2434,6 +2435,7 @@ TEST_F(DataSinkTest, test_deleteDataSink) {
   auto row_type = velox::ROW(names, types);
 
   rocksdb::TransactionOptions trx_opts;
+  trx_opts.skip_concurrency_control = true;
   rocksdb::WriteOptions wo;
   std::unique_ptr<rocksdb::Transaction> transaction{
     _db->BeginTransaction(wo, trx_opts, nullptr)};
@@ -2490,16 +2492,39 @@ TEST_F(DataSinkTest, test_deleteDataSinkPartial) {
   auto row_type = velox::ROW(names, types);
 
   rocksdb::TransactionOptions trx_opts;
+  trx_opts.skip_concurrency_control = true;
+  trx_opts.lock_timeout = 100;
   rocksdb::WriteOptions wo;
   std::unique_ptr<rocksdb::Transaction> transaction{
     _db->BeginTransaction(wo, trx_opts, nullptr)};
   ASSERT_NE(transaction, nullptr);
+  std::unique_ptr<rocksdb::Transaction> transaction2{
+    _db->BeginTransaction(wo, trx_opts, nullptr)};
+  ASSERT_NE(transaction2, nullptr);
 
   sdb::connector::RocksDBDeleteDataSink delete_sink(
     *transaction, *_cf_handles.front(), row_type, object_key);
 
   delete_sink.appendData(row_data);
   ASSERT_TRUE(delete_sink.finish());
+  
+  // check for conflict
+  {
+    sdb::connector::RocksDBDeleteDataSink delete_sink2(
+    *transaction2, *_cf_handles.front(), row_type, object_key);
+    ASSERT_ANY_THROW(delete_sink2.appendData(row_data));
+    // should be empty
+    transaction2->Commit();
+    std::unique_ptr<rocksdb::Iterator> it_after{
+      _db->NewIterator(read_options, _cf_handles.front())};
+    int count_after = 0;
+    for (it_after->SeekToFirst(); it_after->Valid(); it_after->Next()) {
+      count_after++;
+    }
+    ASSERT_EQ(count_after, 12)
+      << "Should still have all data";
+  }
+
   ASSERT_TRUE(transaction->Commit().ok());
 
   std::unique_ptr<rocksdb::Iterator> it_after{

@@ -101,10 +101,6 @@ void Buffer::FlushDone() {
   SDB_ASSERT(_head == _socket_end.chunk);
 
   _head->SetBegin(_socket_end.in_chunk);
-  if (_head->GetBegin() == _head->GetCapacity()) {
-    _head->FreeData();
-  }
-
   auto socket_end = std::exchange(_socket_end, {});
   auto send_end = _send_end.load(std::memory_order_acquire);
   if (send_end == socket_end &&

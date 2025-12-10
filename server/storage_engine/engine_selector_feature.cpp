@@ -23,8 +23,11 @@
 
 #include "app/app_server.h"
 #include "catalog/catalog.h"
-#include "replication/replication_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+
+#ifdef SDB_CLUSTER
+#include "replication/replication_feature.h"
+#endif
 
 namespace sdb {
 

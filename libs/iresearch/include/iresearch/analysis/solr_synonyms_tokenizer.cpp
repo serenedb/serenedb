@@ -1,3 +1,23 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
 #include "solr_synonyms_tokenizer.hpp"
 
 #include <absl/strings/ascii.h>
@@ -19,7 +39,7 @@ SolrSynonymsTokenizer::SynonymsList SplitLine(const std::string_view line) {
   for (auto& s : outputs) {
     s = absl::StripAsciiWhitespace(s);
     if (s.empty()) {
-      SDB_THROW(sdb::ERROR_VALIDATION_BAD_PARAMETER);
+      SDB_THROW(sdb::ERROR_BAD_PARAMETER);
     }
   }
 
@@ -47,7 +67,7 @@ SolrSynonymsTokenizer::ParseSynonymsLines(std::string_view input) {
     if (sides.size() > 1) {
       if (sides.size() != 2) {
         return std::unexpected<sdb::Result>{
-          std::in_place, sdb::ERROR_VALIDATION_BAD_PARAMETER,
+          std::in_place, sdb::ERROR_BAD_PARAMETER,
           "More than one explicit mapping specified on the line ", line_number};
       }
 
@@ -56,7 +76,7 @@ SolrSynonymsTokenizer::ParseSynonymsLines(std::string_view input) {
         synonyms_line.out = SplitLine(sides[1]);
       } catch (...) {
         return std::unexpected<sdb::Result>{std::in_place,
-                                            sdb::ERROR_VALIDATION_BAD_PARAMETER,
+                                            sdb::ERROR_BAD_PARAMETER,
                                             "Failed parse line ", line_number};
       }
 
@@ -67,7 +87,7 @@ SolrSynonymsTokenizer::ParseSynonymsLines(std::string_view input) {
         synonyms_line.out = SplitLine(sides[0]);
       } catch (...) {
         return std::unexpected<sdb::Result>{std::in_place,
-                                            sdb::ERROR_VALIDATION_BAD_PARAMETER,
+                                            sdb::ERROR_BAD_PARAMETER,
                                             "Failed parse line ", line_number};
       }
 

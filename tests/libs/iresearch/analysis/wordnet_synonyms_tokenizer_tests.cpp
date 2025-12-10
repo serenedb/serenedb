@@ -1,3 +1,23 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/wordnet_synonyms_tokenizer.hpp>
 #include <stdexcept>
@@ -150,47 +170,63 @@ TEST(wordnet_synonyms_tests, parsing) {
   {
     std::string_view data0("go");
     auto result = WordnetSynonymsTokenizer::Parse(data0);
-    ASSERT_TRUE(result.error().is(sdb::ERROR_VALIDATION_BAD_PARAMETER));
+    ASSERT_TRUE(result.error().is(sdb::ERROR_BAD_PARAMETER));
     ASSERT_EQ(result.error().errorMessage(), "Failed parse line 1");
   }
 
   {
     std::string_view data0("s(100000002,1,come,v,1,0).");
     auto result = WordnetSynonymsTokenizer::Parse(data0);
-    ASSERT_TRUE(result.error().is(sdb::ERROR_VALIDATION_BAD_PARAMETER));
+    ASSERT_TRUE(result.error().is(sdb::ERROR_BAD_PARAMETER));
     ASSERT_EQ(result.error().errorMessage(), "Failed parse line 1");
   }
 
   {
     std::string_view data0("s(100000002,1,'come,v,1,0).");
     auto result = WordnetSynonymsTokenizer::Parse(data0);
-    ASSERT_TRUE(result.error().is(sdb::ERROR_VALIDATION_BAD_PARAMETER));
+    ASSERT_TRUE(result.error().is(sdb::ERROR_BAD_PARAMETER));
     ASSERT_EQ(result.error().errorMessage(), "Failed parse line 1");
   }
 
   {
     std::string_view data0("s(100000002,1,come',v,1,0).");
     auto result = WordnetSynonymsTokenizer::Parse(data0);
-    ASSERT_TRUE(result.error().is(sdb::ERROR_VALIDATION_BAD_PARAMETER));
+    ASSERT_TRUE(result.error().is(sdb::ERROR_BAD_PARAMETER));
     ASSERT_EQ(result.error().errorMessage(), "Failed parse line 1");
   }
 
   {
     std::string_view data0("s(100000002,1,'',v,1,0).");
     auto result = WordnetSynonymsTokenizer::Parse(data0);
-    ASSERT_TRUE(result.error().is(sdb::ERROR_VALIDATION_BAD_PARAMETER));
+    ASSERT_TRUE(result.error().is(sdb::ERROR_BAD_PARAMETER));
     ASSERT_EQ(result.error().errorMessage(), "Failed parse line 1");
   }
 
   {
     std::string_view data0("a");
-    ASSERT_THROW(WordnetSynonymsTokenizer::Parse(data0), std::out_of_range);
+    auto result = WordnetSynonymsTokenizer::Parse(data0);
+    ASSERT_TRUE(result.error().is(sdb::ERROR_BAD_PARAMETER));
+    ASSERT_EQ(result.error().errorMessage(), "Failed parse line 1");
   }
 
   {
     std::string_view data0("s(100000002,1,'come',v,1,0).\nasd");
     auto result = WordnetSynonymsTokenizer::Parse(data0);
-    ASSERT_TRUE(result.error().is(sdb::ERROR_VALIDATION_BAD_PARAMETER));
+    ASSERT_TRUE(result.error().is(sdb::ERROR_BAD_PARAMETER));
     ASSERT_EQ(result.error().errorMessage(), "Failed parse line 2");
+  }
+
+  {
+    std::string_view data0("s(100000002,1,'come',v,1,0,2).\n");
+    auto result = WordnetSynonymsTokenizer::Parse(data0);
+    ASSERT_TRUE(result.error().is(sdb::ERROR_BAD_PARAMETER));
+    ASSERT_EQ(result.error().errorMessage(), "Failed parse line 1");
+  }
+
+  {
+    std::string_view data0("s(100000002,1,'come',v,1).\n");
+    auto result = WordnetSynonymsTokenizer::Parse(data0);
+    ASSERT_TRUE(result.error().is(sdb::ERROR_BAD_PARAMETER));
+    ASSERT_EQ(result.error().errorMessage(), "Failed parse line 1");
   }
 }

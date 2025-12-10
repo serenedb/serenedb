@@ -26,7 +26,7 @@
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 
 #ifdef SDB_CLUSTER
-#include "cluster/replication/replication_feature.h"
+#include "replication/replication_feature.h"
 #endif
 
 namespace sdb {

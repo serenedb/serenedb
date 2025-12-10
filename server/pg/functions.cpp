@@ -219,7 +219,6 @@ struct CurrentSchemaFunction {
 
   FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& out) {  // NOLINT
     out = _schema_name;
-    return;
   }
 
  private:

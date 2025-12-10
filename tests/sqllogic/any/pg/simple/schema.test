@@ -40,3 +40,21 @@ query
 SELECT * FROM t2;
 ----
 r
+
+
+statement ok
+CREATE SCHEMA another_schema;
+
+
+statement ok
+CREATE TABLE another_schema.t4(r4 text);
+
+
+query error db error: ERROR: relation "t4" does not exist
+SELECT * FROM t4;
+
+
+query
+SELECT * FROM another_schema.t4;
+----
+r4

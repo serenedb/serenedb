@@ -20,8 +20,6 @@
 
 #include "basics/message_buffer.h"
 
-#include <atomic>
-
 #include "basics/assert.h"
 
 namespace sdb::message {
@@ -97,16 +95,12 @@ void Buffer::WriteUncommitted(std::string_view data) {
 }
 
 void Buffer::FlushDone() {
-  SDB_ASSERT(_head);
   SDB_ASSERT(_socket_end);
   SDB_ASSERT(_send_end.load(std::memory_order_relaxed));
   FreeTill(_socket_end.chunk);
+  SDB_ASSERT(_head == _socket_end.chunk);
 
   _head->SetBegin(_socket_end.in_chunk);
-  if (_head->GetBegin() == _head->GetCapacity()) {
-    _head->FreeData();
-  }
-
   auto socket_end = std::exchange(_socket_end, {});
   auto send_end = _send_end.load(std::memory_order_acquire);
   if (send_end == socket_end &&
@@ -122,6 +116,8 @@ void Buffer::FlushDone() {
 
 void Buffer::SendData() const {
   SDB_ASSERT(_socket_end);
+  SDB_ASSERT(_head != _socket_end.chunk ||
+             _head->GetBegin() <= _socket_end.in_chunk);
   SequenceView data{BufferOffset{_head, _head->GetBegin()}, _socket_end};
   if (!_send_callback || data.Empty()) {
     return;

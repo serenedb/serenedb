@@ -43,7 +43,7 @@ SequenceView::ConstIterator& SequenceView::ConstIterator::operator++() {
 boost::asio::const_buffer SequenceView::ConstIterator::operator*() const {
   SDB_ASSERT(_it != _end);
   SDB_ASSERT(_it.in_chunk == _it.chunk->GetBegin());
-  SDB_ASSERT(_it.in_chunk < _it.chunk->GetEnd());
+  SDB_ASSERT(_it.in_chunk <= _it.chunk->GetEnd());
   if (_it.chunk != _end.chunk) [[likely]] {
     return _it.chunk->Data(_it.chunk->GetEnd());
   }

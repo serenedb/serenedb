@@ -118,12 +118,7 @@ void Buffer::SendData() const {
   SDB_ASSERT(_socket_end);
   SDB_ASSERT(_head != _socket_end.chunk ||
              _head->GetBegin() < _socket_end.in_chunk);
-  auto head = _head;
-  if (head->GetBegin() == head->GetEnd()) [[unlikely]] {
-    head = head->Next();
-  }
-  SDB_ASSERT(head && head->GetBegin() < head->GetEnd());
-  SequenceView data{BufferOffset{head, head->GetBegin()}, _socket_end};
+  SequenceView data{BufferOffset{_head, _head->GetBegin()}, _socket_end};
   if (!_send_callback || data.Empty()) {
     return;
   }

@@ -2926,6 +2926,9 @@ lp::ExprPtr SqlAnalyzer::ProcessLikeOp(std::string_view type, lp::ExprPtr input,
                                        lp::ExprPtr pattern) {
   SDB_ASSERT(IsLikeOperator(type));
   lp::ExprPtr escape = MakeConst(std::string_view("\\"), velox::VARCHAR());
+  if (pattern->type() != velox::VARCHAR()) {
+    pattern = MakeCast(velox::VARCHAR(), pattern);
+  }
   pattern = std::make_shared<lp::CallExpr>(
     velox::VARCHAR(), "pg_process_escape_pattern",
     std::vector<lp::ExprPtr>{std::move(pattern)});
@@ -3179,7 +3182,7 @@ lp::ExprPtr SqlAnalyzer::ProcessAExpr(State& state, const A_Expr& expr) {
 
 lp::ExprPtr SqlAnalyzer::ProcessAConst(State& state, const A_Const& expr) {
   if (expr.isnull) {
-    return MakeConst(velox::TypeKind::UNKNOWN);
+    return MakeConst(velox::TypeKind::UNKNOWN, pg::UNKNOWN());
   }
   switch (nodeTag(&expr.val)) {
     case T_Integer: {
@@ -3196,7 +3199,7 @@ lp::ExprPtr SqlAnalyzer::ProcessAConst(State& state, const A_Const& expr) {
     }
     case T_String: {
       std::string_view v = strVal(&expr.val);
-      return MakeConst(v);
+      return MakeConst(v, pg::UNKNOWN());
     }
     case T_BitString:
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -3492,7 +3495,7 @@ lp::ExprPtr SqlAnalyzer::ProcessColumnRef(State& state, const ColumnRef& expr) {
 // You should be catious with alias names, because some of them transformed in
 // the parser, so don't add them here!
 const containers::FlatHashMap<std::string_view, velox::TypePtr> kTypeCasts{
-  {"unknown", velox::UNKNOWN()},
+  {"unknown", pg::UNKNOWN()},
   {"bool", velox::BOOLEAN()},
   {"bpchar", velox::TINYINT()},
   {"int2", velox::SMALLINT()},
@@ -3876,7 +3879,8 @@ State SqlAnalyzer::ResolveSQLFunctionAndInferArgsCommonType(
   const auto& signature = logical_function.Signature();
 
   std::string_view name = logical_function.GetName();
-  if (!signature.Matches(GetExprsTypes(args))) {
+  auto types = GetExprsTypes(args);
+  if (!signature.Matches(types)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_UNDEFINED_FUNCTION), CURSOR_POS(ErrorPosition(location)),
       ERR_HINT("maybe you intended to call ", ToPgFunctionString(name, args),
@@ -4235,6 +4239,11 @@ velox::TypePtr NameToType(const TypeName& type_name) {
   if (name == "interval") {
     return wrap_in_array(pg::INTERVAL());
   }
+
+  // TODO into unknown
+  // if (name == "interval") {
+  //   return wrap_in_array(pg::INTERVAL());
+  // }
 
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                   CURSOR_POS(ExprLocation(&type_name)),

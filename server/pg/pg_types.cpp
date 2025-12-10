@@ -32,6 +32,7 @@
 #include <charconv>
 
 #include "basics/assert.h"
+#include "basics/logger/logger.h"
 #include "basics/system-compiler.h"
 #include "pg/interval.h"
 #include "pg/serialize.h"
@@ -57,6 +58,8 @@ int32_t GetCompositeOID(const velox::TypePtr& type, bool in_array) {
     return in_array ? PgTypeOID::kDateArray : PgTypeOID::kDate;
   } else if (IsInterval(type)) {
     return in_array ? PgTypeOID::kIntervalArray : PgTypeOID::kInterval;
+  } else if (IsUnknown(type)) {
+    return PgTypeOID::kUnknown;
   }
   return -1;
 }
@@ -64,11 +67,14 @@ int32_t GetCompositeOID(const velox::TypePtr& type, bool in_array) {
 }  // namespace
 
 int32_t GetTypeOID(const velox::TypePtr& type, bool in_array) {
+  // SDB_PRINT("TYPE = ", type->name());
   int32_t composite_oid = GetCompositeOID(type, in_array);
   if (composite_oid >= 0) {
     return composite_oid;
   }
-  return GetPrimitiveTypeOID(type->kind(), in_array);
+  auto x = GetPrimitiveTypeOID(type->kind(), in_array);
+  // SDB_PRINT("OID = ", x);
+  return x;
 }
 
 namespace {

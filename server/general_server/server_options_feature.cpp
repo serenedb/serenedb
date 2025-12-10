@@ -456,14 +456,19 @@ void ServerOptionsFeature::prepare() {
   SDB_INFO("xxxxx", Logger::FIXME, StaticStrings::kLgplNotice);
 #endif
 
+  const auto& options = server().options();
+
 #if defined(SDB_DEV) || defined(SDB_GTEST)
   SDB_WARN("xxxxx", Logger::FIXME, "This version is FOR DEVELOPMENT ONLY!");
   SDB_WARN("xxxxx", Logger::FIXME,
            "==================================================================="
            "================");
+
+  if (!options) {
+    return;
+  }
 #endif
 
-  const auto& options = server().options();
   if (const auto& modernized_options = options->modernizedOptions();
       !modernized_options.empty()) {
     for (const auto& it : modernized_options) {

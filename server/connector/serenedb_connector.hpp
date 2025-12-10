@@ -77,16 +77,12 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
   explicit SereneDBTableLayout(
     std::string_view name, const axiom::connector::Table& table,
     velox::connector::Connector& connector,
-    std::vector<const axiom::connector::Column*> columns)
-    : TableLayout{std::string{name},
-                  &table,
-                  &connector,
-                  std::move(columns),
-                  {},
-                  {},
-                  {},
-                  {},
-                  true} {}
+    std::vector<const axiom::connector::Column*> columns,
+    std::vector<const axiom::connector::Column*> order_columns,
+    std::vector<axiom::connector::SortOrder> sort_order)
+    : TableLayout{std::string{name},    &table, &connector,
+                  std::move(columns),   {},     std::move(order_columns),
+                  std::move(sort_order)} {}
 
   std::pair<int64_t, int64_t> sample(
     const velox::connector::ConnectorTableHandlePtr&, float,
@@ -99,12 +95,8 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
   velox::connector::ColumnHandlePtr createColumnHandle(
     const axiom::connector::ConnectorSessionPtr& session,
     const std::string& column_name,
-    std::vector<velox::common::Subfield> subfields,
-    std::optional<velox::TypePtr> cast_to_type,
-    axiom::connector::SubfieldMapping subfield_mapping) const final {
+    std::vector<velox::common::Subfield> subfields) const final {
     VELOX_CHECK(subfields.empty());
-    VELOX_CHECK(!cast_to_type);
-    VELOX_CHECK(subfield_mapping.empty());
     return std::make_shared<SereneDBColumnHandle>(column_name);
   }
 
@@ -113,12 +105,8 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
     std::vector<velox::connector::ColumnHandlePtr> column_handles,
     velox::core::ExpressionEvaluator& evaluator,
     std::vector<velox::core::TypedExprPtr> filters,
-    std::vector<velox::core::TypedExprPtr>& rejected_filters,
-    velox::RowTypePtr data_columns,
-    std::optional<axiom::connector::LookupKeys> lookup_keys) const final {
+    std::vector<velox::core::TypedExprPtr>& rejected_filters) const final {
     rejected_filters = std::move(filters);
-    VELOX_CHECK_NULL(data_columns);
-    VELOX_CHECK(!lookup_keys);
     SDB_ASSERT(!table().columnMap().empty(),
                "SereneDBConnectorTableHandle: need a column for count field");
     return std::make_shared<SereneDBConnectorTableHandle>(session, *this);
@@ -130,20 +118,36 @@ class RocksDBTable final : public axiom::connector::Table {
   explicit RocksDBTable(std::string_view name, const catalog::Table& collection)
     : Table{std::string{name}, collection.RowType()},
       _pk_type(collection.PKType()) {
-    std::vector<const axiom::connector::Column*> layout_columns;
     _column_map.reserve(collection.RowType()->size());
-    layout_columns.reserve(collection.RowType()->size());
     _column_handles.reserve(collection.RowType()->size());
+
+    std::vector<const axiom::connector::Column*> columns;
+    std::vector<const axiom::connector::Column*> order_columns;
+    std::vector<axiom::connector::SortOrder> sort_order;
+    columns.reserve(collection.RowType()->size());
+    order_columns.reserve(_pk_type->size());
+    // TODO(mbkkt) We want something like null order doesn't matter, because in
+    // primary key nulls are not allowed. For now we just set nulls last,
+    // because it's default.
+    sort_order.resize(
+      _pk_type->size(),
+      axiom::connector::SortOrder{.isAscending = true, .isNullsFirst = false});
     for (const auto& [name, type] : std::views::zip(
            collection.RowType()->names(), collection.RowType()->children())) {
       auto column = std::make_unique<SereneDBColumn>(name, type);
+      columns.push_back(column.get());
       _column_map.emplace(name, column.get());
-      layout_columns.push_back(column.get());
       _column_handles.push_back(std::move(column));
+    }
+    for (const auto& name : _pk_type->names()) {
+      const auto* column = findColumn(name);
+      SDB_ASSERT(column, "RocksDBTable: can't find PK column ", name);
+      order_columns.push_back(column);
     }
     auto connector = velox::connector::getConnector("serenedb");
     auto layout = std::make_unique<SereneDBTableLayout>(
-      name, *this, *connector, std::move(layout_columns));
+      name, *this, *connector, std::move(columns), std::move(order_columns),
+      std::move(sort_order));
     _layouts.push_back(layout.get());
     _layout_handles.push_back(std::move(layout));
     _object_id = absl::StrCat(collection.GetId());

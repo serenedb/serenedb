@@ -35,11 +35,6 @@ yaclib::Future<Result> DropObject(ExecContext& context, const DropStmt& stmt) {
   auto& catalogs =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
   auto& catalog = catalogs.Global();
-  if (stmt.removeType != OBJECT_SCHEMA && stmt.behavior == DROP_RESTRICT) {
-    return yaclib::MakeFuture<Result>(ERROR_NOT_IMPLEMENTED,
-                                      "DROP ... RESTRICT is not implemented");
-  }
-
   auto* names = stmt.removeType == OBJECT_SCHEMA
                   ? stmt.objects
                   : list_nth_node(List, stmt.objects, 0);

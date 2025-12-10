@@ -151,6 +151,9 @@ void Query::CompileQuery() {
 
     // TODO(mbkkt) maybe enable it for prepared statements?
     .enableSubqueryConstantFolding = false,
+
+    // TODO(mbkkt) disable for now as it's broken
+    .enableIndexLookupJoin = false,
   };
   axiom::runner::MultiFragmentPlan::Options runner_options{
     .numWorkers = 1,

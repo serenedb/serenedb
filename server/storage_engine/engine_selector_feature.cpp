@@ -22,6 +22,8 @@
 #include "engine_selector_feature.h"
 
 #include "app/app_server.h"
+#include "catalog/catalog.h"
+#include "replication/replication_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 
 namespace sdb {
@@ -45,13 +47,37 @@ StorageEngine& GetServerEngine() {
   return SerenedServer::Instance().getFeature<EngineSelectorFeature>().engine();
 }
 
+void EngineSelectorFeature::start() {
+  auto r = server().getFeature<catalog::CatalogFeature>().Open();
+  if (!r.ok()) {
+    SDB_THROW(std::move(r));
+  }
+
+  _started.store(true);
+}
+
+void EngineSelectorFeature::stop() {
+#ifdef SDB_CLUSTER
+  if (auto replication = server().TryGetFeature<ReplicationFeature>();
+      replication && !ServerState::instance()->IsCoordinator()) {
+    for (auto [_, applier] : GetAllReplicationAppliers()) {
+      replication->stopApplier(applier);
+    }
+  }
+#endif
+  _engine->cleanupReplicationContexts();
+}
+
 #ifndef SDB_CLUSTER
 void EngineSelectorFeature::prepare() {
   _engine = &SerenedServer::Instance().getFeature<RocksDBEngineCatalog>();
   SDB_ASSERT(_engine);
 }
 
-void EngineSelectorFeature::unprepare() { _engine = nullptr; }
+void EngineSelectorFeature::unprepare() {
+  SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Cleanup();
+  _engine = nullptr;
+}
 #endif
 
 }  // namespace sdb

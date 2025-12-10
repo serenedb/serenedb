@@ -38,12 +38,6 @@ class InitDatabaseFeature final : public SerenedFeature {
   bool isInitDatabase() const { return _init_database; }
   bool restoreAdmin() const { return _restore_admin; }
 
- private:
-  bool _init_database = false;
-  bool _restore_admin = false;
-  std::string _password;
-
- public:
   void collectOptions(std::shared_ptr<options::ProgramOptions>) final;
   void validateOptions(std::shared_ptr<options::ProgramOptions>) final;
   void prepare() final;
@@ -53,6 +47,9 @@ class InitDatabaseFeature final : public SerenedFeature {
   std::string readPassword(const std::string&);
 
   bool _seen_password = false;
+  bool _init_database = false;
+  bool _restore_admin = false;
+  std::string _password;
   std::span<const size_t> _non_server_features;
 };
 

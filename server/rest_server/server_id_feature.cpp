@@ -29,7 +29,7 @@
 #include "basics/random/random_generator.h"
 #include "basics/string_utils.h"
 #include "basics/system-functions.h"
-#include "rest_server/database_feature.h"
+#include "rest_server/check_version_feature.h"
 #include "rest_server/database_path_feature.h"
 #include "vpack/vpack_helper.h"
 
@@ -50,17 +50,16 @@ void ServerIdFeature::start() {
   auto& database_path = server().getFeature<DatabasePathFeature>();
   _id_filename = database_path.subdirectoryName("SERVER");
 
-  auto& database = server().getFeature<DatabaseFeature>();
-
   // read the server id or create a new one
-  const bool check_version = database.checkVersion();
+  const bool check_version =
+    server().getFeature<CheckVersionFeature>().GetCheckVersion();
   auto res = determineId(check_version);
 
   if (res == ERROR_SERVER_EMPTY_DATADIR) {
     if (check_version) {
       // when we are version checking, we will not fail here
       // additionally notify the database feature that we had no VERSION file
-      database.isInitiallyEmpty(true);
+      _is_initially_empty = true;
       return;
     }
 

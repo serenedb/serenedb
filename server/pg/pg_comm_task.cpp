@@ -60,7 +60,6 @@
 #include "query/config.h"
 #include "query/cursor.h"
 #include "query/utils.h"
-#include "rest_server/database_feature.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"

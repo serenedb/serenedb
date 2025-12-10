@@ -36,9 +36,9 @@
 #include "database/methods/version.h"
 #include "general_server/server_options_feature.h"
 #include "general_server/state.h"
-#include "rest_server/database_feature.h"
 #include "rest_server/database_path_feature.h"
 #include "rest_server/environment_feature.h"
+#include "rest_server/server_id_feature.h"
 
 #ifdef SDB_CLUSTER
 #include "replication/replication_feature.h"
@@ -53,7 +53,6 @@ namespace sdb {
 CheckVersionFeature::CheckVersionFeature(
   Server& server, int* result, std::span<const size_t> non_server_features)
   : SerenedFeature{server, name()},
-    _check_version(false),
     _result(result),
     _non_server_features(non_server_features) {
   setOptional(false);
@@ -84,13 +83,8 @@ void CheckVersionFeature::validateOptions(
   logger.disableThreaded();
 
 #ifdef SDB_CLUSTER
-  ReplicationFeature& replication_feature =
-    server().getFeature<ReplicationFeature>();
-  replication_feature.disableReplicationApplier();
+  server().getFeature<ReplicationFeature>().disableReplicationApplier();
 #endif
-
-  DatabaseFeature& database_feature = server().getFeature<DatabaseFeature>();
-  database_feature.enableCheckVersion();
 
   // we can turn off all warnings about environment here, because they
   // wil show up on a regular start later anyway
@@ -103,7 +97,7 @@ void CheckVersionFeature::start() {
   }
 
   // check the version
-  if (server().getFeature<DatabaseFeature>().isInitiallyEmpty()) {
+  if (server().getFeature<ServerIdFeature>().GetIsInitiallyEmpty()) {
     SDB_TRACE("xxxxx", sdb::Logger::STARTUP,
               "skipping version check because database directory was initially "
               "empty");

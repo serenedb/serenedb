@@ -46,7 +46,7 @@
 #include "metrics/metrics_feature.h"
 #include "network/network_feature.h"
 #include "rest_server/cpu_usage_feature.h"
-#include "rest_server/database_feature.h"
+#include "rest_server/upgrade_feature.h"
 #include "statistics/connection_statistics.h"
 #include "statistics/descriptions.h"
 #include "statistics/request_statistics.h"
@@ -582,8 +582,7 @@ void StatisticsFeature::start() {
   SDB_ASSERT(isEnabled());
 
   // don't start the thread when we are running an upgrade
-  auto& database_feature = server().getFeature<sdb::DatabaseFeature>();
-  if (!database_feature.upgrade()) {
+  if (!server().getFeature<sdb::UpgradeFeature>().upgrading()) {
     _statistics_thread = std::make_unique<StatisticsThread>(server());
 
     if (!_statistics_thread->start()) {

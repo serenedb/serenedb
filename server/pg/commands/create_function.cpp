@@ -35,7 +35,6 @@
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "query/types.h"
-#include "rest_server/database_feature.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"

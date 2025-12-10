@@ -6,7 +6,6 @@ target_sources(
         check_version_feature.cpp
         cpu_usage_feature.cpp
         daemon_feature.cpp
-        database_feature.cpp
         database_path_feature.cpp
         dump_limits_feature.cpp
         endpoint_feature.cpp

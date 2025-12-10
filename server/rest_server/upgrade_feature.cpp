@@ -35,7 +35,7 @@
 #include "general_server/authentication_feature.h"
 #include "general_server/server_options_feature.h"
 #include "general_server/state.h"
-#include "rest_server/database_feature.h"
+#include "rest_server/check_version_feature.h"
 #include "rest_server/init_database_feature.h"
 #include "rest_server/restart_action.h"
 
@@ -119,11 +119,19 @@ void UpgradeFeature::validateOptions(std::shared_ptr<ProgramOptions> options) {
              StaticStrings::kUpgradeEnvName, " with value ", upgrade,
              " will perform database auto-upgrade and immediately restart.");
   }
+
   if (_upgrade && !_upgrade_check) {
     SDB_FATAL_EXIT_CODE(
       "xxxxx", sdb::Logger::FIXME, EXIT_INVALID_OPTION_VALUE,
       "cannot specify both '--database.auto-upgrade true' and "
       "'--database.upgrade-check false'");
+  }
+
+  if (_upgrade &&
+      server().getFeature<CheckVersionFeature>().GetCheckVersion()) {
+    SDB_FATAL("xxxxx", Logger::FIXME,
+              "cannot specify both '--database.check-version' and "
+              "'--database.auto-upgrade'");
   }
 
   if (!_upgrade) {
@@ -156,16 +164,9 @@ void UpgradeFeature::validateOptions(std::shared_ptr<ProgramOptions> options) {
   }
 
 #ifdef SDB_CLUSTER
-  ReplicationFeature& replication_feature =
-    server().getFeature<ReplicationFeature>();
-  replication_feature.disableReplicationApplier();
-
-  BackupFeature& backup_feature = server().getFeature<BackupFeature>();
-  backup_feature.forceDisable();
+  server().getFeature<ReplicationFeature>().disableReplicationApplier();
+  server().getFeature<BackupFeature>().forceDisable();
 #endif
-
-  DatabaseFeature& database = server().getFeature<DatabaseFeature>();
-  database.enableUpgrade();
 }
 
 void UpgradeFeature::prepare() {

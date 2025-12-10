@@ -100,8 +100,6 @@ void RocksDBRecoveryManager::start() {
   recoveryDone();
 }
 
-/// parse recent RocksDB WAL entries and notify the
-/// DatabaseFeature about the successful recovery
 void RocksDBRecoveryManager::runRecovery() {
   auto res = parseRocksWAL();
   if (res.fail()) {

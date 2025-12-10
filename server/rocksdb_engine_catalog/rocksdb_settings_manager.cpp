@@ -40,7 +40,6 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table.h"
 #include "database/ticks.h"
-#include "rest_server/database_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"

@@ -20,8 +20,6 @@
 
 #include "basics/message_buffer.h"
 
-#include <atomic>
-
 #include "basics/assert.h"
 
 namespace sdb::message {
@@ -128,7 +126,7 @@ void Buffer::SendData() const {
   if (head->GetBegin() == head->GetEnd()) [[unlikely]] {
     head = head->Next();
   }
-  SDB_ASSERT(head && head->GetBegin() < head->GetCapacity());
+  SDB_ASSERT(head && head->GetBegin() < head->GetEnd());
   SequenceView data{BufferOffset{head, head->GetBegin()}, _socket_end};
   if (!_send_callback || data.Empty()) {
     return;

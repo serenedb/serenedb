@@ -20,8 +20,6 @@
 
 #include "basics/message_chunk.h"
 
-#include <new>
-
 #include "basics/assert.h"
 
 namespace sdb::message {

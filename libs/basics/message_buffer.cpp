@@ -117,7 +117,7 @@ void Buffer::FlushDone() {
 void Buffer::SendData() const {
   SDB_ASSERT(_socket_end);
   SDB_ASSERT(_head != _socket_end.chunk ||
-             _head->GetBegin() < _socket_end.in_chunk);
+             _head->GetBegin() <= _socket_end.in_chunk);
   SequenceView data{BufferOffset{_head, _head->GetBegin()}, _socket_end};
   if (!_send_callback || data.Empty()) {
     return;

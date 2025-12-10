@@ -132,7 +132,7 @@ void TableShard::prepareIndexes(catalog::Table& logical_collection,
   if (!_indexes.empty()) {
     auto it = _indexes.cbegin();
     if ((*it)->type() != IndexType::kTypePrimaryIndex ||
-        (TableType::Edge == logical_collection.GetType() &&
+        (TableType::Edge == logical_collection.GetTableType() &&
          (_indexes.size() < 3 ||
           ((*++it)->type() != IndexType::kTypeEdgeIndex ||
            (*++it)->type() != IndexType::kTypeEdgeIndex)))) {

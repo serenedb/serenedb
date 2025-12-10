@@ -20,24 +20,21 @@
 
 #pragma once
 
-#include "catalog/identifiers/identifier.h"
 #include "catalog/object.h"
-#include "catalog/view.h"
 
 namespace sdb::catalog {
 
 struct SchemaOptions {
-  std::string name;
-  ObjectId id;
   ObjectId owner_id;
+  ObjectId id;
+  std::string name;
 };
 
-class Schema : public Object {
+class Schema : public DatabaseObject {
  public:
-  Schema(ObjectId owner_id, ObjectId id, std::string_view name)
-    : Object{owner_id, id, name, ObjectType::Schema} {}
+  Schema(ObjectId database_id, SchemaOptions options);
 
-  void WriteInternal(vpack::Builder& build) const override {}
+  void WriteInternal(vpack::Builder& build) const override;
 };
 
 }  // namespace sdb::catalog

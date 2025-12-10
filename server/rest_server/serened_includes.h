@@ -21,11 +21,6 @@
 
 #pragma once
 
-// This list of includes was deliberately moved to this file to avoid
-// duplication between server/RestServer/serened.cpp and tests/sepp/Server.cpp
-// since both use SerenedServer and therefore need to know all the features.
-// This also helps to avoid accidentally breaking the sepp build.
-
 #include "app/app_server.h"
 #include "app/app_version.h"
 #include "app/bump_file_descriptors.h"
@@ -39,7 +34,6 @@
 #include "app/options_check.h"
 #include "app/shell_colors.h"
 #include "app/shutdown.h"
-#include "app/ssl_feature.h"
 #include "app/temp_path.h"
 #include "basics/common.h"
 #include "basics/crash_handler.h"
@@ -60,7 +54,6 @@
 #include "rest_server/check_version_feature.h"
 #include "rest_server/cpu_usage_feature.h"
 #include "rest_server/daemon_feature.h"
-#include "rest_server/database_feature.h"
 #include "rest_server/database_path_feature.h"
 #include "rest_server/dump_limits_feature.h"
 #include "rest_server/endpoint_feature.h"

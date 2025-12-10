@@ -43,6 +43,7 @@
 
 #include <iomanip>
 #include <limits>
+#include <memory>
 #include <utility>
 
 #include "app/app_server.h"
@@ -68,8 +69,8 @@
 #include "catalog/database.h"
 #include "catalog/function.h"
 #include "catalog/identifiers/object_id.h"
-#include "catalog/logical_object.h"
 #include "catalog/role.h"
+#include "catalog/schema.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "catalog/types.h"
@@ -83,7 +84,6 @@
 #include "metrics/metric.h"
 #include "metrics/metrics_feature.h"
 #include "rest/version.h"
-#include "rest_server/database_feature.h"
 #include "rest_server/database_path_feature.h"
 #include "rest_server/dump_limits_feature.h"
 #include "rest_server/flush_feature.h"
@@ -1451,12 +1451,14 @@ Result RocksDBEngineCatalog::MarkDeleted(const catalog::Database& database) {
     },
     [&] {
       RocksDBKeyWithBuffer key;
-      key.constructObject(RocksDBEntryType::DatabaseTombstone,
-                          id::kTombstoneDatabase, database.GetId());
+      key.constructSchemaObject(RocksDBEntryType::ScopeTombstone,
+                                id::kTombstoneDatabase, database.GetId(),
+                                ObjectId{});
       return key;
     },
     [&] {
-      return RocksDBValue::Object(RocksDBEntryType::DatabaseTombstone,
+      // TODO(gnusi): write empty value
+      return RocksDBValue::Object(RocksDBEntryType::ScopeTombstone,
                                   vpack::Slice::emptyArraySlice());
     },
     [&] {
@@ -1465,6 +1467,38 @@ Result RocksDBEngineCatalog::MarkDeleted(const catalog::Database& database) {
         .data = b.slice(),
       };
       return wal::Write(RocksDBLogType::DatabaseDrop, entry);
+    });
+}
+
+Result RocksDBEngineCatalog::MarkDeleted(const catalog::Schema& schema) {
+  vpack::Builder b;
+  schema.WriteInternal(b);
+
+  return WriteDefinition(
+    _db->GetRootDB(),
+    [&] {
+      RocksDBKeyWithBuffer key;
+      key.constructSchema(schema.GetDatabaseId(), schema.GetId());
+      return key;
+    },
+    [&] {
+      RocksDBKeyWithBuffer key;
+      key.constructSchemaObject(RocksDBEntryType::ScopeTombstone,
+                                id::kTombstoneDatabase, schema.GetDatabaseId(),
+                                schema.GetId());
+      return key;
+    },
+    [&] {
+      // TODO(gnusi): write empty value
+      return RocksDBValue::Object(RocksDBEntryType::ScopeTombstone,
+                                  vpack::Slice::emptyArraySlice());
+    },
+    [&] {
+      const wal::Database entry{
+        .database_id = schema.GetId(),
+        .data = b.slice(),
+      };
+      return wal::Write(RocksDBLogType::SchemaDrop, entry);
     });
 }
 
@@ -1798,7 +1832,7 @@ void RocksDBEngineCatalog::prepareDropTable(ObjectId collection) {
 #endif
 }
 
-Result RocksDBEngineCatalog::dropIndex(IndexTombstone tombstone) {
+Result RocksDBEngineCatalog::DropIndex(IndexTombstone tombstone) {
   SDB_ASSERT(tombstone.type != IndexType::kTypeUnknown &&
              tombstone.type != IndexType::kTypeNoAccessIndex);
 
@@ -1857,23 +1891,22 @@ bool RocksDBEngineCatalog::UseRangeDelete(ObjectId id,
   return number_documents >= 32 * 1024;
 }
 
-Result RocksDBEngineCatalog::dropCollection(const TableTombstone& tombstone) {
+Result RocksDBEngineCatalog::DropTable(const TableTombstone& tombstone) {
   const bool prefix_same_as_start = true;
   const bool use_range_delete =
-    UseRangeDelete(tombstone.collection, tombstone.number_documents);
+    UseRangeDelete(tombstone.table, tombstone.number_documents);
 
   rocksdb::DB* db = _db->GetRootDB();
 
   // Unregister collection metadata
-  auto r = DeleteTableMeta(db, tombstone.collection.id());
+  auto r = DeleteTableMeta(db, tombstone.table.id());
   if (!r.ok()) {
     SDB_ERROR("xxxxx", Logger::ENGINES, "error removing collection meta-data: ",
               r.errorMessage());  // continue regardless
   }
 
   // delete documents
-  auto bounds =
-    RocksDBKeyBounds::CollectionDocuments(tombstone.collection.id());
+  auto bounds = RocksDBKeyBounds::CollectionDocuments(tombstone.table.id());
   r = rocksutils::RemoveLargeRange(db, bounds, prefix_same_as_start,
                                    use_range_delete);
 
@@ -1890,7 +1923,7 @@ Result RocksDBEngineCatalog::dropCollection(const TableTombstone& tombstone) {
     [&] {
       RocksDBKeyWithBuffer key;
       key.constructObject(RocksDBEntryType::TableTombstone,
-                          id::kTombstoneDatabase, tombstone.collection);
+                          id::kTombstoneDatabase, tombstone.table);
       return key;
     },
     [] { return std::string_view{}; });
@@ -1923,8 +1956,8 @@ Result RocksDBEngineCatalog::dropCollection(const TableTombstone& tombstone) {
   return {};
 }
 
-void RocksDBEngineCatalog::changeCollection(const catalog::Table& c,
-                                            const TableShard& physical) {
+void RocksDBEngineCatalog::ChangeTable(const catalog::Table& c,
+                                       const TableShard& physical) {
   const auto db_id = c.GetDatabaseId();
   const auto schema_id = c.GetSchemaId();
 
@@ -1957,9 +1990,9 @@ void RocksDBEngineCatalog::changeCollection(const catalog::Table& c,
   }
 }
 
-Result RocksDBEngineCatalog::renameCollection(const catalog::Table& c,
-                                              const TableShard& physical,
-                                              std::string_view old_name) {
+Result RocksDBEngineCatalog::RenameTable(const catalog::Table& c,
+                                         const TableShard& physical,
+                                         std::string_view old_name) {
   const auto db_id = c.GetDatabaseId();
   const auto cid = c.GetId();
 
@@ -1994,7 +2027,7 @@ Result RocksDBEngineCatalog::renameCollection(const catalog::Table& c,
     });
 }
 
-Result RocksDBEngineCatalog::createFunction(ObjectId db, ObjectId schema_id,
+Result RocksDBEngineCatalog::CreateFunction(ObjectId db, ObjectId schema_id,
                                             ObjectId id,
                                             WriteProperties properties) {
   return PutSchemaObject(db, schema_id, id, properties,
@@ -2002,66 +2035,73 @@ Result RocksDBEngineCatalog::createFunction(ObjectId db, ObjectId schema_id,
                          RocksDBLogType::FunctionCreate);
 }
 
-Result RocksDBEngineCatalog::dropFunction(ObjectId db, ObjectId schema_id,
+Result RocksDBEngineCatalog::DropFunction(ObjectId db, ObjectId schema_id,
                                           ObjectId id, std::string_view name) {
   return DeleteSchemaObject(db, schema_id, id, name, RocksDBEntryType::Function,
                             RocksDBLogType::FunctionDrop);
 }
 
-Result RocksDBEngineCatalog::createView(ObjectId db, ObjectId schema_id,
+Result RocksDBEngineCatalog::CreateView(ObjectId db, ObjectId schema_id,
                                         ObjectId id,
                                         WriteProperties properties) {
   return PutSchemaObject(db, schema_id, id, properties, RocksDBEntryType::View,
                          RocksDBLogType::ViewCreate);
 }
 
-Result RocksDBEngineCatalog::dropView(ObjectId db, ObjectId schema_id,
+Result RocksDBEngineCatalog::DropView(ObjectId db, ObjectId schema_id,
                                       ObjectId id, std::string_view name) {
   return DeleteSchemaObject(db, schema_id, id, name, RocksDBEntryType::View,
                             RocksDBLogType::ViewDrop);
 }
 
-Result RocksDBEngineCatalog::createSchema(ObjectId db, ObjectId id,
+Result RocksDBEngineCatalog::CreateSchema(ObjectId db, ObjectId id,
                                           WriteProperties properties) {
   return PutObject(db, id, properties, RocksDBEntryType::Schema,
                    RocksDBLogType::SchemaCreate);
 }
 
-Result RocksDBEngineCatalog::changeSchema(ObjectId db, ObjectId id,
+Result RocksDBEngineCatalog::ChangeSchema(ObjectId db, ObjectId id,
                                           WriteProperties properties) {
   return PutObject(db, id, properties, RocksDBEntryType::Schema,
                    RocksDBLogType::SchemaChange);
 }
 
-Result RocksDBEngineCatalog::dropSchema(ObjectId db, ObjectId id,
-                                        std::string_view name) {
-  return DeleteObject(db, id, name, RocksDBEntryType::Schema,
-                      RocksDBLogType::SchemaDrop);
+Result RocksDBEngineCatalog::DropSchema(ObjectId db, ObjectId id) {
+  // Remove tombstone definition
+  return DeleteDefinition(
+    _db->GetRootDB(),
+    [&] {
+      RocksDBKeyWithBuffer key;
+      key.constructSchemaObject(RocksDBEntryType::ScopeTombstone,
+                                id::kTombstoneDatabase, db, id);
+      return key;
+    },
+    [] { return std::string_view{}; });
 }
 
-Result RocksDBEngineCatalog::changeView(ObjectId db, ObjectId schema_id,
+Result RocksDBEngineCatalog::ChangeView(ObjectId db, ObjectId schema_id,
                                         ObjectId id,
                                         WriteProperties properties) {
   return PutSchemaObject(db, schema_id, id, properties, RocksDBEntryType::View,
                          RocksDBLogType::ViewChange);
 }
 
-Result RocksDBEngineCatalog::createRole(const catalog::Role& role) {
+Result RocksDBEngineCatalog::CreateRole(const catalog::Role& role) {
   vpack::Builder b;
   return PutObject(
-    role.GetDatabaseId(), role.GetId(),
+    id::kSystemDB, role.GetId(),
     [&](bool internal) { return GetObjectProperties(b, role, internal); },
     RocksDBEntryType::Role, RocksDBLogType::RoleCreate);
 }
 
-Result RocksDBEngineCatalog::dropRole(const catalog::Role& role) {
-  return DeleteObject(role.GetDatabaseId(), role.GetId(), role.GetName(),
+Result RocksDBEngineCatalog::DropRole(const catalog::Role& role) {
+  return DeleteObject(id::kSystemDB, role.GetId(), role.GetName(),
                       RocksDBEntryType::Role, RocksDBLogType::RoleDrop);
 }
 
-Result RocksDBEngineCatalog::changeRole(ObjectId db, ObjectId id,
+Result RocksDBEngineCatalog::ChangeRole(ObjectId id,
                                         WriteProperties properties) {
-  return PutObject(db, id, properties, RocksDBEntryType::Role,
+  return PutObject(id::kSystemDB, id, properties, RocksDBEntryType::Role,
                    RocksDBLogType::RoleChange);
 }
 
@@ -2492,8 +2532,8 @@ Result RocksDBEngineCatalog::dropDatabase(ObjectId id) {
     db,
     [&] {
       RocksDBKeyWithBuffer key;
-      key.constructObject(RocksDBEntryType::DatabaseTombstone,
-                          id::kTombstoneDatabase, ObjectId{id});
+      key.constructSchemaObject(RocksDBEntryType::ScopeTombstone,
+                                id::kTombstoneDatabase, id, ObjectId{});
       return key;
     },
     [] { return std::string_view{}; });
@@ -2528,15 +2568,25 @@ void RocksDBEngineCatalog::EnsureSystemDatabase() {
   }
 
   const auto database = catalog::MakeSystemDatabaseOptions();
-
   vpack::Builder builder;
   vpack::WriteTuple(builder, database);
-
   auto r = createDatabase(database.id, builder.slice());
-
   if (!r.ok()) {
     SDB_FATAL("xxxxx", Logger::STARTUP,
               "unable to write database marker: ", r.errorMessage());
+  }
+
+  catalog::SchemaOptions schema_options{
+    .id = catalog::NextId(),
+    .name = std::string{StaticStrings::kPublic},
+  };
+  builder.clear();
+  vpack::WriteTuple(builder, schema_options);
+  r = CreateSchema(database.id, schema_options.id,
+                   [&](bool) { return builder.slice(); });
+  if (!r.ok()) {
+    SDB_FATAL("xxxxx", Logger::STARTUP,
+              "unable to write schema marker: ", r.errorMessage());
   }
 }
 

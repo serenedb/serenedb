@@ -29,11 +29,11 @@
 #include "pg/commands.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_analyzer_velox.h"
+#include "pg/sql_collector.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "query/types.h"
-#include "rest_server/database_feature.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
@@ -148,19 +148,18 @@ yaclib::Future<Result> CreateFunction(ExecContext& context,
                                       const CreateFunctionStmt& stmt) {
   // TODO: use correct schema
   const auto db = context.GetDatabaseId();
-  std::string_view schema = StaticStrings::kPublic;
 
   SDB_ASSERT(stmt.funcname);
 
-  std::string function_name =
-    strVal(list_nth(stmt.funcname, list_length(stmt.funcname) - 1));
+  auto [schema, function_name] = ParseObjectName(
+    stmt.funcname, context.GetDatabase(), StaticStrings::kPublic);
 
   auto& catalogs =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
   auto& catalog = catalogs.Global();
 
   catalog::FunctionProperties properties;
-  properties.name = function_name;
+  properties.name = std::string{function_name};
 
   std::string function_body;
   std::tie(function_body, properties.options) = ParseOptions(stmt.options);

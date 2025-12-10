@@ -37,6 +37,8 @@ class ServerIdFeature final : public SerenedFeature {
 
   void start() final;
 
+  bool GetIsInitiallyEmpty() const { return _is_initially_empty; }
+
   static ServerId GetId() {
     SDB_ASSERT(gServerid.isSet());
     return gServerid;
@@ -59,6 +61,8 @@ class ServerIdFeature final : public SerenedFeature {
   ErrorCode determineId(bool check_version);
 
   std::string _id_filename;
+
+  bool _is_initially_empty = false;
 
   static ServerId gServerid;
 };

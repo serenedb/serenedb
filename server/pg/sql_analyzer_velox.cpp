@@ -55,6 +55,7 @@
 #include "basics/down_cast.h"
 #include "basics/utf8_utils.hpp"
 #include "catalog/function.h"
+#include "catalog/object.h"
 #include "catalog/sql_function_impl.h"
 #include "catalog/sql_query_view.h"
 #include "catalog/table.h"
@@ -460,10 +461,16 @@ struct AliasResolver : ColumnResolver {
   containers::FlatHashMap<std::string_view, ColumnResolver> _tables;
 };
 
-struct RootState;
+struct State;
 
 using ColumnRefHook =
   std::function<lp::ExprPtr(std::string_view, const ColumnRef&)>;
+
+struct CTE {
+  const CommonTableExpr* node = nullptr;
+  // ^ we could use LogicalPlanNode, but axiom renaming logic
+  // doesn't consider DAG; so we reprocess CTE each time to make it tree
+};
 
 struct State {
   lp::LogicalPlanNodePtr root;
@@ -498,13 +505,9 @@ struct State {
   ExprKind expr_kind{};
   AliasResolver resolver;
 
-#ifdef SDB_DEV
-  // only needs for assert at AsRootStateChecked
-  virtual ~State() = default;
-#endif
-
-  RootState& AsRootStateChecked();
-  const RootState& AsRootStateChecked() const;
+  containers::FlatHashMap<std::string_view, CTE> ctes;
+  const Node* pgsql_node = nullptr;
+  const List* options = nullptr;  // list of DefElem
 
   void Project(UniqueIdGenerator& id_generator, std::vector<std::string> names,
                std::vector<lp::ExprPtr> exprs) {
@@ -546,31 +549,11 @@ struct State {
   }
 };
 
-struct CTE {
-  lp::LogicalPlanNodePtr root;
-  List* alias_columns = nullptr;  // list of String
-};
-
-struct RootState : public State {
-  containers::FlatHashMap<std::string_view, CTE> ctes;
-  const Node* pgsql_node = nullptr;
-  const List* options = nullptr;  // list of DefElem
-};
-
-RootState& State::AsRootStateChecked() {
-  return basics::downCast<RootState>(*this);
-}
-
-const RootState& State::AsRootStateChecked() const {
-  return basics::downCast<const RootState>(*this);
-}
-
 const CTE* GetCTE(const State* state, std::string_view name) {
-  for (; state->parent; state = state->parent) {
-  }
-  auto& root_state = state->AsRootStateChecked();
-  if (auto it = root_state.ctes.find(name); it != root_state.ctes.end()) {
-    return &it->second;
+  for (; state; state = state->parent) {
+    if (auto it = state->ctes.find(name); it != state->ctes.end()) {
+      return &it->second;
+    }
   }
   return nullptr;
 }
@@ -648,7 +631,7 @@ class SqlAnalyzer {
       _memory_pool{*query_ctx.query_memory_pool},
       _params{params} {}
 
-  VeloxQuery ProcessRoot(RootState& state, const Node& node);
+  VeloxQuery ProcessRoot(State& state, const Node& node);
 
  private:
   SqlCommandType ProcessStmt(State& state, const Node& node);
@@ -658,10 +641,9 @@ class SqlAnalyzer {
   void ProcessUpdateStmt(State& state, const UpdateStmt& stmt);
   void ProcessDeleteStmt(State& state, const DeleteStmt& stmt);
   void ProcessMergeStmt(State& state, const MergeStmt& stmt);
-  void ProcessCreateFunctionStmt(RootState& state,
-                                 const CreateFunctionStmt& stmt);
-  void ProcessCreateViewStmt(RootState& state, const ViewStmt& stmt);
-  void ProcessCallStmt(RootState& state, const CallStmt& stmt);
+  void ProcessCreateFunctionStmt(State& state, const CreateFunctionStmt& stmt);
+  void ProcessCreateViewStmt(State& state, const ViewStmt& stmt);
+  void ProcessCallStmt(State& state, const CallStmt& stmt);
 
   void ProcessValuesList(State& state, const List* list);
   void ProcessPipeline(State& state, const SelectStmt& stmt);
@@ -695,7 +677,7 @@ class SqlAnalyzer {
                      const RangeVar* node);
 
   State ProcessSystemTable(State* parent, std::string_view name,
-                           catalog::VritualTableSnapshot& snapshot,
+                           catalog::VirtualTableSnapshot& snapshot,
                            const RangeVar* node);
 
   void ProcessFilterNode(State& state, const Node* node, ExprKind expr_kind);
@@ -820,11 +802,11 @@ class SqlAnalyzer {
   // TODO(pashandor789): use project + to_array in a subquery (when
   // it will be able to use in axiom) to return multiple columns as a single
   // expression for ProcessFuncCall
-  RootState ResolveSQLFunctionAndInferArgsCommonType(
+  State ResolveSQLFunctionAndInferArgsCommonType(
     const catalog::Function& logical_function, std::vector<lp::ExprPtr> args,
     int location);
 
-  void ProcessFunctionBody(RootState& state,
+  void ProcessFunctionBody(State& state,
                            const State::FuncParamToExpr& func_params,
                            const Node& function_body,
                            const catalog::FunctionSignature& signature);
@@ -1172,14 +1154,14 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
   SDB_ASSERT(object);
   SDB_ASSERT(object->object);
   const auto& logical_object = *object->object;
-  if (!logical_object.Is(TableType::Document)) {
+  if (logical_object.GetType() != catalog::ObjectType::Table) {
     // TODO: write more pg-like error message
     THROW_SQL_ERROR(
       ERR_CODE(ERROR_SERVER_OBJECT_TYPE_MISMATCH),
       CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
       ERR_MSG(
         "INSERT statement is only applicable for tables, but the object is: ",
-        magic_enum::enum_name(logical_object.category())));
+        magic_enum::enum_name(logical_object.GetType())));
   }
   const auto& table = basics::downCast<catalog::Table>(logical_object);
 
@@ -1243,14 +1225,14 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
   SDB_ASSERT(object);
   SDB_ASSERT(object->object);
   const auto& logical_object = *object->object;
-  if (!logical_object.Is(TableType::Document)) {
+  if (logical_object.GetType() != catalog::ObjectType::Table) {
     // TODO: write more pg-like error message
     THROW_SQL_ERROR(
       ERR_CODE(ERROR_SERVER_OBJECT_TYPE_MISMATCH),
       CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
       ERR_MSG(
         "UPDATE statement is only applicable for tables, but the object is: ",
-        magic_enum::enum_name(logical_object.category())));
+        magic_enum::enum_name(logical_object.GetType())));
   }
 
   const auto& table = basics::downCast<catalog::Table>(logical_object);
@@ -1322,14 +1304,14 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
   SDB_ASSERT(object);
   SDB_ASSERT(object->object);
   const auto& logical_object = *object->object;
-  if (!logical_object.Is(TableType::Document)) {
+  if (logical_object.GetType() != catalog::ObjectType::Table) {
     // TODO: write more pg-like error message
     THROW_SQL_ERROR(
       ERR_CODE(ERROR_SERVER_OBJECT_TYPE_MISMATCH),
       CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
       ERR_MSG(
         "DELETE statement is only applicable for tables , but the object is: ",
-        magic_enum::enum_name(logical_object.category())));
+        magic_enum::enum_name(logical_object.GetType())));
   }
 
   const auto& table = basics::downCast<catalog::Table>(logical_object);
@@ -1369,7 +1351,7 @@ void SqlAnalyzer::ProcessMergeStmt(State& state, const MergeStmt& stmt) {
   SDB_THROW(ERROR_NOT_IMPLEMENTED, "MERGE statement is not implemented yet");
 }
 
-void SqlAnalyzer::ProcessCallStmt(RootState& state, const CallStmt& stmt) {
+void SqlAnalyzer::ProcessCallStmt(State& state, const CallStmt& stmt) {
   const auto& func_call = *stmt.funccall;
   const auto [_, schema, name] = GetDbSchemaRelation(func_call.funcname);
   auto* function = _objects.getData(schema, name);
@@ -1408,7 +1390,7 @@ void SqlAnalyzer::ProcessCallStmt(RootState& state, const CallStmt& stmt) {
 }
 
 // Just validate a body
-void SqlAnalyzer::ProcessCreateFunctionStmt(RootState& state,
+void SqlAnalyzer::ProcessCreateFunctionStmt(State& state,
                                             const CreateFunctionStmt& stmt) {
   // TODO: validate also function body from AS in options (look at
   // create_function.cpp ParseOptions for details)
@@ -1448,15 +1430,14 @@ void SqlAnalyzer::ProcessCreateFunctionStmt(RootState& state,
 }
 
 // Just validate a body
-void SqlAnalyzer::ProcessCreateViewStmt(RootState& state,
-                                        const ViewStmt& stmt) {
+void SqlAnalyzer::ProcessCreateViewStmt(State& state, const ViewStmt& stmt) {
   if (stmt.options) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
                     ERR_MSG("VIEW options are not implemented yet"));
   }
 
-  RootState dummy{};
+  State dummy{};
   auto type = ProcessStmt(dummy, *stmt.query);
   SDB_ASSERT(type == SqlCommandType::Select);
   SDB_ASSERT(dummy.root);
@@ -1504,28 +1485,25 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node) {
     }
     case T_CallStmt: {
       auto& stmt = *castNode(CallStmt, &node);
-      ProcessCallStmt(state.AsRootStateChecked(), stmt);
+      ProcessCallStmt(state, stmt);
       return SqlCommandType::Call;
     }
     case T_ExplainStmt: {
       auto& stmt = *castNode(ExplainStmt, &node);
-      auto& root_state = state.AsRootStateChecked();
-      root_state.options = stmt.options;
+      state.options = stmt.options;
       ProcessStmt(state, *stmt.query);
       return SqlCommandType::Explain;
     }
     case T_ViewStmt: {  // CREATE VIEW
       const auto& stmt = *castNode(ViewStmt, &node);
-      RootState& root_state = state.AsRootStateChecked();
-      ProcessCreateViewStmt(root_state, stmt);
-      root_state.pgsql_node = &node;
+      ProcessCreateViewStmt(state, stmt);
+      state.pgsql_node = &node;
       return SqlCommandType::DDL;
     }
     case T_CreateFunctionStmt: {
       auto& stmt = *castNode(CreateFunctionStmt, &node);
-      RootState& root_state = state.AsRootStateChecked();
-      ProcessCreateFunctionStmt(root_state, stmt);
-      root_state.pgsql_node = &node;
+      ProcessCreateFunctionStmt(state, stmt);
+      state.pgsql_node = &node;
       return SqlCommandType::DDL;
     }
     case T_CreateRoleStmt:
@@ -1535,19 +1513,19 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node) {
     case T_CreateSchemaStmt:
     case T_CreateStmt:
     case T_DropStmt: {
-      state.AsRootStateChecked().pgsql_node = &node;
+      state.pgsql_node = &node;
       return SqlCommandType::DDL;
     }
     case T_VariableSetStmt: {
-      state.AsRootStateChecked().pgsql_node = &node;
+      state.pgsql_node = &node;
       return SqlCommandType::Set;
     }
     case T_TransactionStmt: {
-      state.AsRootStateChecked().pgsql_node = &node;
+      state.pgsql_node = &node;
       return SqlCommandType::Transaction;
     }
     case T_VariableShowStmt: {
-      state.AsRootStateChecked().pgsql_node = &node;
+      state.pgsql_node = &node;
       return SqlCommandType::Show;
     }
     default:
@@ -1565,7 +1543,6 @@ void SqlAnalyzer::ProcessWithClause(State& state, const WithClause* clause) {
                     ERR_MSG("recursive WITH query is not supported"));
   }
 
-  auto& root_state = state.AsRootStateChecked();
   VisitNodes(clause->ctes, [&](const CommonTableExpr& cte) {
     std::string_view ctename = cte.ctename;
 
@@ -1591,8 +1568,7 @@ void SqlAnalyzer::ProcessWithClause(State& state, const WithClause* clause) {
       }
     }
 
-    auto [_, emplaced] = root_state.ctes.emplace(
-      ctename, CTE{std::move(child_state.root), cte.aliascolnames});
+    auto [_, emplaced] = state.ctes.emplace(ctename, CTE{&cte});
     if (!emplaced) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_DUPLICATE_ALIAS),
@@ -2251,15 +2227,17 @@ std::optional<State> SqlAnalyzer::MaybeCTE(State* parent, std::string_view name,
     return std::nullopt;
   }
 
+  SDB_ASSERT(cte->node);
   auto state = parent->MakeChild();
-  state.root = cte->root;
+  ProcessStmt(state, *cte->node->ctequery);
   if (node->alias) {
-    ProcessAlias(state, node->alias->colnames, cte->alias_columns,
+    ProcessAlias(state, node->alias->colnames, cte->node->aliascolnames,
                  node->alias->aliasname);
   } else {
     // rewrite column's ids to avoid velox names conflicts
     // (for ex: select * from cte1, cte1)
-    ProcessAlias(state, cte->alias_columns, cte->alias_columns, node->relname);
+    ProcessAlias(state, cte->node->aliascolnames, cte->node->aliascolnames,
+                 node->relname);
   }
   return state;
 }
@@ -2335,7 +2313,7 @@ State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
 }
 
 State SqlAnalyzer::ProcessSystemTable(State* parent, std::string_view name,
-                                      catalog::VritualTableSnapshot& snapshot,
+                                      catalog::VirtualTableSnapshot& snapshot,
                                       const RangeVar* node) {
   const auto& row_type = snapshot.RowType();
   SDB_ASSERT(row_type);
@@ -2363,16 +2341,16 @@ State SqlAnalyzer::ProcessRangeVar(State* parent, const RangeVar* node) {
   SDB_ASSERT(object->object);
   auto& logical_object = *object->object;
 
-  if (logical_object.Is(catalog::ObjectCategory::View)) {
+  if (logical_object.GetType() == catalog::ObjectType::View) {
     const auto& view = basics::downCast<SqlQueryView>(*object->object);
     return ProcessView(parent, name, view, node);
-  } else if (logical_object.Is(TableType::Document)) {
+  } else if (logical_object.GetType() == catalog::ObjectType::Table) {
     const auto& table = basics::downCast<catalog::Table>(logical_object);
     return ProcessTable(parent, schema_name, name, table, node);
-  } else if (logical_object.Is(catalog::ObjectCategory::Virtual)) {
+  } else if (logical_object.GetType() == catalog::ObjectType::Virtual) {
     // Only for system tables now
     auto& snapshot =
-      basics::downCast<catalog::VritualTableSnapshot>(logical_object);
+      basics::downCast<catalog::VirtualTableSnapshot>(logical_object);
     return ProcessSystemTable(parent, snapshot.GetTable().Name(), snapshot,
                               node);
   }
@@ -2380,7 +2358,7 @@ State SqlAnalyzer::ProcessRangeVar(State* parent, const RangeVar* node) {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                   CURSOR_POS(ErrorPosition(ExprLocation(node))),
                   ERR_MSG("object '", name, "' of type '",
-                          magic_enum::enum_name(logical_object.category()),
+                          magic_enum::enum_name(logical_object.GetType()),
                           "' cannot be used in FROM clause"));
 }
 
@@ -3557,7 +3535,7 @@ std::string ToString(BoolExprType type) {
 }
 
 void SqlAnalyzer::ProcessFunctionBody(
-  RootState& state, const State::FuncParamToExpr& func_params,
+  State& state, const State::FuncParamToExpr& func_params,
   const Node& func_body, const catalog::FunctionSignature& signature) {
   state.func_params = &func_params;
   auto cmd_type = ProcessStmt(state, func_body);
@@ -3889,7 +3867,7 @@ lp::ExprPtr SqlAnalyzer::ResolveVeloxFunctionAndInferArgsCommonType(
                                                std::move(args));
 }
 
-RootState SqlAnalyzer::ResolveSQLFunctionAndInferArgsCommonType(
+State SqlAnalyzer::ResolveSQLFunctionAndInferArgsCommonType(
   const catalog::Function& logical_function, std::vector<lp::ExprPtr> args,
   int location) {
   SDB_ASSERT(logical_function.Options().language ==
@@ -3922,7 +3900,7 @@ RootState SqlAnalyzer::ResolveSQLFunctionAndInferArgsCommonType(
     param2expr.try_emplace(param.name, std::move(expr));
   }
 
-  RootState state;
+  State state;
   const auto& function_body = *sql_function.GetStatement()->stmt;
   ProcessFunctionBody(state, param2expr, function_body, signature);
   return state;
@@ -4186,7 +4164,7 @@ lp::ExprPtr SqlAnalyzer::ProcessAIndirection(State& state,
   return arg;
 }
 
-VeloxQuery SqlAnalyzer::ProcessRoot(RootState& state, const Node& node) {
+VeloxQuery SqlAnalyzer::ProcessRoot(State& state, const Node& node) {
   auto command_type = ProcessStmt(state, node);
   return {
     .root = std::move(state.root),
@@ -4202,7 +4180,7 @@ VeloxQuery AnalyzeVelox(const RawStmt& node, const QueryString& query_string,
                         const Objects& objects, UniqueIdGenerator& id_generator,
                         query::QueryContext& query_ctx, pg::Params& params) {
   SqlAnalyzer analyzer{query_string, objects, id_generator, query_ctx, params};
-  RootState state;
+  State state;
   auto query = analyzer.ProcessRoot(state, *node.stmt);
 
   // PG set default param types to text if they are not casted

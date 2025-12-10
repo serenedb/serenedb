@@ -124,6 +124,195 @@ WHERE EXISTS(
 name iq
 
 
+query
+WITH networth AS (
+  SELECT
+    guy AS name,
+    SUM(coins) AS total_money
+  FROM (
+    VALUES
+      ('pudge', 100), ('pudge', 50), ('deadinside', 200), ('makak', 150), ('makak', 25)
+  ) AS lmao(guy, coins)
+  GROUP BY guy
+)
+SELECT * FROM networth
+WHERE networth.name IN (
+  SELECT name FROM networth WHERE name IN ('pudge', 'deadinside')
+);
+----
+name total_money
+pudge 150
+deadinside 200
+
+
+query
+WITH networth AS (
+  SELECT
+    guy AS name,
+    SUM(coins) AS total_money
+  FROM (
+    VALUES
+      ('pudge', 100), ('pudge', 50), ('deadinside', 200), ('makak', 150), ('makak', 25)
+  ) AS lmao(guy, coins)
+  GROUP BY guy
+),
+guys AS (
+  SELECT column1 as name
+  FROM
+  (
+    VALUES ('vedernikoff'), ('makak'), ('deadinside')
+  )
+)
+SELECT * FROM networth
+WHERE networth.name IN (
+  SELECT name FROM guys WHERE name = networth.name
+);
+----
+name total_money
+deadinside 200
+makak 175
+
+
+query
+SELECT * FROM
+(
+  VALUES (123, 69), (123, 69), (123, 69)
+) AS outer_skuf(iq1)
+WHERE EXISTS(
+  SELECT 'vedernikoff is my best friend' WHERE false
+);
+----
+iq1 column2
+
+
+query
+SELECT * FROM
+(
+  VALUES (123, 69), (123, 69), (123, 69)
+) AS outer_skuf(iq1, iq2)
+WHERE EXISTS(
+  SELECT 'i wanna be fired' WHERE true
+);
+----
+iq1 iq2
+123 69
+123 69
+123 69
+
+
+query
+SELECT * FROM
+(
+  VALUES (228, 69), (228, 69), (228, 69)
+) AS outer_skuf(iq1, iq2)
+WHERE NOT EXISTS(
+  SELECT * FROM
+  (
+    VALUES ('salkobaki2', 96)
+  )  AS inner_skuf(name, iq)
+  WHERE iq1 + iq2 + iq = 3 * iq1 + iq
+);
+----
+iq1 iq2
+228 69
+228 69
+228 69
+
+
+query
+WITH guys AS (
+  SELECT column1 as name
+  FROM
+  (
+    VALUES ('vedernikoff'), ('makak'), ('deadinside')
+  )
+)
+SELECT 1 as salkobaki
+FROM guys
+WHERE guys.name IN (
+  SELECT g1.name FROM guys as g1, guys as g2 WHERE true
+);
+----
+salkobaki
+1
+1
+1
+
+
+query
+WITH salkobaki1 AS (
+  SELECT column1, column2, column3
+  FROM
+  (
+    VALUES (1, 2, 'lmao'), (3, 4, 'lmao')
+  )
+),
+salkobaki2 AS (
+  SELECT column1, column2, column3
+  FROM
+  (
+    VALUES (1, 2, 'lmao'), (3, 4, 'lmao')
+  )
+)
+SELECT * FROM salkobaki1, salkobaki2
+WHERE salkobaki1.column1 + salkobaki2.column2 IN (
+  SELECT column1 FROM salkobaki1
+);
+----
+column1 column2 column3 column1 column2 column3
+1 2 lmao 1 2 lmao
+
+
+query
+WITH networth AS (
+  SELECT
+    guy AS name,
+    SUM(coins) AS total_money
+  FROM (
+    VALUES
+      ('pudge', 100), ('pudge', 50), ('deadinside', 200), ('makak', 150), ('makak', 25)
+  ) AS lmao(guy, coins)
+  GROUP BY guy
+)
+SELECT
+  hero.name,
+  hero.description,
+  networth.total_money
+FROM
+(
+  VALUES
+    ('pudge', 'Pudge the Butcher'), ('deadinside', 'Sad Guy'), ('makak', 'Tree Climber')
+) AS hero(name, description)
+JOIN networth ON hero.name = networth.name
+WHERE
+  networth.total_money = (
+    SELECT MAX(total_money) FROM networth
+  )
+ORDER BY hero.name;
+----
+name description total_money
+deadinside Sad Guy 200
+
+
+query
+WITH m(name, total) AS (
+  VALUES
+    ('pudge', 150),
+    ('pudge', 0),
+    ('deadinside', 200),
+    ('deadinside', 250),
+    ('makak', 175),
+    ('makak', 65)
+)
+SELECT * FROM m
+WHERE total = (
+  SELECT SUM(total)
+  FROM m m2
+  WHERE m2.name = m.name
+);
+----
+name total
+pudge 150
 
 # query -- there's no node in axiom
 # SELECT *
@@ -141,14 +330,18 @@ name iq
 # ----
 
 
-# query -- doesn't work in axiom
-# SELECT *
-# FROM
-# (
-#   VALUES ('pudgino'), ('mom'), ('tralaleolo tralalala')
-# )
-# WHERE EXISTS(SELECT 'pathetic exists thinks that he does somethings');
-# ----
+query
+SELECT *
+FROM
+(
+  VALUES ('pudgino'), ('mom'), ('tralaleolo tralalala')
+)
+WHERE EXISTS(SELECT 'pathetic exists thinks that he does somethings');
+----
+column1
+pudgino
+mom
+tralaleolo tralalala
 
 
 # query -- there's no node in axiom
@@ -160,22 +353,27 @@ name iq
 # WHERE salary >= ALL(SELECT salary FROM tindex);
 
 
-# query -- doesn't work in axiom
-# SELECT *
-# FROM
-# (
-#   VALUES ('clickclack', 666),
-#          ('deadinside', 993),
-#          ('pudge', 228)
-# ) AS lol(kostya, vedernikoff)
-# WHERE EXISTS (
-#   SELECT 1
-#   FROM
-#   (
-#     VALUES ('abugubugu', 777)
-#   ) AS kek(whoever, whatever)
-# );
-# ----
+query
+SELECT *
+FROM
+(
+  VALUES ('clickclack', 666),
+         ('deadinside', 993),
+         ('pudge', 228)
+) AS lol(kostya, vedernikoff)
+WHERE EXISTS (
+  SELECT 1
+  FROM
+  (
+    VALUES ('abugubugu', 777)
+  ) AS kek(whoever, whatever)
+);
+----
+kostya vedernikoff
+clickclack 666
+deadinside 993
+pudge 228
+
 
 # query -- doesn't work in axiom
 # SELECT * FROM

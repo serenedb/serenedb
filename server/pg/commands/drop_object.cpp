@@ -18,12 +18,16 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/functional/overload.h>
+
 #include <yaclib/async/make.hpp>
 
 #include "app/app_server.h"
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
 #include "pg/commands.h"
+#include "pg/pg_list_utils.h"
+#include "pg/sql_collector.h"
 
 namespace sdb::pg {
 
@@ -31,19 +35,19 @@ yaclib::Future<Result> DropObject(ExecContext& context, const DropStmt& stmt) {
   auto& catalogs =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
   auto& catalog = catalogs.Global();
-  Result r;
-  if (stmt.behavior == DROP_RESTRICT) {
+  if (stmt.removeType != OBJECT_SCHEMA && stmt.behavior == DROP_RESTRICT) {
     return yaclib::MakeFuture<Result>(ERROR_NOT_IMPLEMENTED,
                                       "DROP ... RESTRICT is not implemented");
   }
 
-  // TODO: use correct schema
+  auto* names = stmt.removeType == OBJECT_SCHEMA
+                  ? stmt.objects
+                  : list_nth_node(List, stmt.objects, 0);
+  auto [schema, name] =
+    ParseObjectName(names, context.GetDatabase(), StaticStrings::kPublic);
+
+  Result r;
   const auto db = context.GetDatabaseId();
-  std::string_view schema = StaticStrings::kPublic;
-
-  List* names = list_nth_node(List, stmt.objects, 0);
-  std::string_view name = strVal(llast(names));
-
   switch (stmt.removeType) {
     case OBJECT_TABLE:
       r = catalog.DropTable(db, schema, name, nullptr);
@@ -53,6 +57,11 @@ yaclib::Future<Result> DropObject(ExecContext& context, const DropStmt& stmt) {
     } break;
     case OBJECT_FUNCTION: {
       r = catalog.DropFunction(db, schema, name);
+    } break;
+    case OBJECT_SCHEMA: {
+      // TODO: ensure that schema is empty
+      const bool cascade = stmt.behavior == DROP_CASCADE;
+      r = catalog.DropSchema(db, name, cascade, nullptr);
     } break;
     default:
       r = {ERROR_NOT_IMPLEMENTED,

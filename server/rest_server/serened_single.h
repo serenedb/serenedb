@@ -70,14 +70,12 @@ class TempPath;
 class DatabasePathFeature;
 class PrivilegeFeature;
 class SchedulerFeature;
-class SslFeature;
 class AuthenticationFeature;
 class LanguageCheckFeature;
 class InitDatabaseFeature;
 class RocksDBOptionFeature;
 class RocksDBEngineCatalog;
 class EngineSelectorFeature;
-class DatabaseFeature;
 class ServerIdFeature;
 class CheckVersionFeature;
 class FlushFeature;
@@ -126,14 +124,12 @@ using SerenedFeaturesList = type::List<
   DatabasePathFeature,
   PrivilegeFeature,
   SchedulerFeature,
-  SslFeature,
   AuthenticationFeature,
   LanguageCheckFeature,
   InitDatabaseFeature,
   RocksDBOptionFeature,
   RocksDBEngineCatalog,
   EngineSelectorFeature,
-  DatabaseFeature,
   ServerIdFeature,
   CheckVersionFeature,
   app::CommunicationFeaturePhase,

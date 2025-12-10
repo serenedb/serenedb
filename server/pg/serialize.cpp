@@ -34,6 +34,7 @@
 #include <velox/functions/prestosql/types/TimeWithTimezoneType.h>
 #include <velox/functions/prestosql/types/TimestampWithTimeZoneType.h>
 #include <velox/functions/prestosql/types/UuidType.h>
+#include <velox/type/DecimalUtil.h>
 #include <velox/type/Timestamp.h>
 #include <velox/type/Type.h>
 #include <velox/vector/ComplexVector.h>
@@ -231,6 +232,97 @@ void SerializeVarchar(SerializationContext context,
     }
   } else {
     context.buffer->WriteUncommitted(value);
+  }
+}
+
+template<VarFormat Format, typename UnscaledType>
+void SerializeDecimal(SerializationContext context,
+                      const velox::DecodedVector& decoded_vector,
+                      velox::vector_size_t row) {
+  const auto& type = decoded_vector.base()->type();
+  const auto [precision, scale] = velox::getDecimalPrecisionScale(*type);
+  auto value = decoded_vector.valueAt<UnscaledType>(row);
+  if constexpr (Format == VarFormat::Text) {
+    const auto max_size =
+      velox::DecimalUtil::maxStringViewSize(precision, scale);
+    context.buffer->WriteContiguousData(max_size, [&](auto* data) {
+      char* buf = reinterpret_cast<char*>(data);
+      return velox::DecimalUtil::castToString<UnscaledType>(
+        value, scale, static_cast<int32_t>(max_size), buf);
+    });
+  } else {
+    // Well, here we go...
+    // Postgre numeric(decimal) type has special binary layout:
+    // int16_t ndigits;  number of digits
+    // int16_t weight;  weight of first digit(the exponent of the first digit)
+    // int16_t sign;  sign of the number
+    // int16_t dscale;  display scale
+    // int16_t digits[ndigits];  base 10000 digits
+
+    // So, in velox value = real_value * 10^scale
+    // However, in Postgres each digit represents 4 decimal digits,
+    // i.e. base 10000. So we need to convert velox decimal representation
+    // to Postgres numeric representation.
+
+    // E.g. value = 12345 with scale = 2 means real_value = 123.45
+    // In Postgres representation it will be:
+    // ndigits = 2
+    // weight = 0
+    // sign = 0x0000
+    // dscale = 2
+    // digits[0] = 123
+    // digits[1] = 4500
+    static constexpr size_t kBaseSystem = 10'000;
+    static constexpr int16_t kPositive = 0x0000;
+    static constexpr int16_t kNegative = 0x4000;
+    int16_t extra_digits = (4 - (scale % 4)) % 4;
+    auto extra_base =
+      static_cast<int16_t>(velox::DecimalUtil::kPowersOfTen[extra_digits]);
+
+    auto sign = (value < 0) ? kNegative : kPositive;
+    value = value < 0 ? -value : value;
+
+    int16_t ndigits = [extra_base](auto value) -> int16_t {
+      if (value == 0) {
+        return 0;
+      }
+      int16_t ndigits = 0;
+      if (extra_base != 1) {
+        ndigits++;
+        value /= (kBaseSystem / extra_base);
+      }
+      for (; value != 0; value /= kBaseSystem) {
+        ++ndigits;
+      }
+      return ndigits;
+    }(value);
+
+    auto weight = static_cast<int16_t>(ndigits - ((scale + 3) / 4) - 1);
+    auto dscale = static_cast<int16_t>(scale);
+    auto* data = context.buffer->GetContiguousData(8 + ndigits * 2);
+    absl::big_endian::Store16(data, ndigits);
+    absl::big_endian::Store16(data + 2, weight);
+    absl::big_endian::Store16(data + 4, sign);
+    absl::big_endian::Store16(data + 6, dscale);
+    data += 8 + ndigits * 2;
+
+    // Adjust dscale to be multiple of 4 for ndigits
+    if (extra_base != 1 && value != 0) {
+      data -= 2;
+      ndigits--;
+      int16_t extra_value = (value % (kBaseSystem / extra_base)) * extra_base;
+      value /= (kBaseSystem / extra_base);
+      absl::big_endian::Store16(data, extra_value);
+    }
+
+    while (value != 0) {
+      data -= 2;
+      ndigits--;
+      absl::big_endian::Store16(data,
+                                static_cast<int16_t>(value % kBaseSystem));
+      value /= kBaseSystem;
+    }
+    SDB_ASSERT(ndigits == 0);
   }
 }
 
@@ -630,10 +722,20 @@ SerializationFunction GetArraySerialization(const velox::TypePtr& type,
     return nullptr;
   }
 
-  if (type->isDecimal()) {
-    SDB_ASSERT(false,
-               "TODO(mkornaukhov): Array of Decimal is not supported yet");
-    return nullptr;
+  if (type->isShortDecimal()) {
+    static constexpr auto kSerializeText =
+      SerializeDecimal<VarFormat::Text, int64_t>;
+    static constexpr auto kSerializeBinary =
+      SerializeDecimal<VarFormat::Binary, int64_t>;
+    RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, 1231);
+  }
+
+  if (type->isLongDecimal()) {
+    static constexpr auto kSerializeText =
+      SerializeDecimal<VarFormat::Text, velox::int128_t>;
+    static constexpr auto kSerializeBinary =
+      SerializeDecimal<VarFormat::Binary, velox::int128_t>;
+    RETURN_ARRAY_SERIALIZATION(kSerializeText, kSerializeBinary, 1231);
   }
 
   if (type->isIntervalYearMonth()) {
@@ -856,9 +958,20 @@ SerializationFunction GetSerialization(const velox::TypePtr& type,
     return nullptr;
   }
 
-  if (type->isDecimal()) {
-    SDB_ASSERT(false, "TODO(mkornaukhov): Decimal is not supported yet");
-    return nullptr;
+  if (type->isShortDecimal()) {
+    static constexpr auto kSerializeText =
+      SerializeDecimal<VarFormat::Text, int64_t>;
+    static constexpr auto kSerializeBinary =
+      SerializeDecimal<VarFormat::Binary, int64_t>;
+    RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
+  }
+
+  if (type->isLongDecimal()) {
+    static constexpr auto kSerializeText =
+      SerializeDecimal<VarFormat::Text, velox::int128_t>;
+    static constexpr auto kSerializeBinary =
+      SerializeDecimal<VarFormat::Binary, velox::int128_t>;
+    RETURN_SERIALIZATION(kSerializeText, kSerializeBinary);
   }
 
   if (type->isIntervalYearMonth()) {

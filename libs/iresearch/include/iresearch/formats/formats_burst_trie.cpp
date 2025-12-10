@@ -520,7 +520,7 @@ void MergeBlocks(Blocks& blocks, OutputBuffer& buffer) {
   //   fst::kStringInfinity } Suffix = fst::Divide(StringWeight1, CommonPrefix)
   //   -> { fst::kStringBad }
   // But actually Suffix should be equal to { 0x22 ... }
-  SDB_ASSERT(char(root_block.meta) != fst::kStringInfinity);
+  SDB_ASSERT(static_cast<int8_t>(root_block.meta) != fst::kStringInfinity);
 
   // will store just several bytes here
   out.WriteByte(static_cast<byte_type>(root_block.meta));  // block metadata

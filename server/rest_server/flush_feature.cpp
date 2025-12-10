@@ -130,9 +130,6 @@ std::tuple<size_t, size_t, Tick> FlushFeature::releaseUnusedTicks() {
 void FlushFeature::stop() {
   std::lock_guard lock{_flush_subscriptions_mutex};
 
-  // release any remaining flush subscriptions so that they may get
-  // deallocated ASAP subscriptions could survive after
-  // FlushFeature::stop(), e.g. DatabaseFeature::unprepare()
   _flush_subscriptions.clear();
   _stopped = true;
 }

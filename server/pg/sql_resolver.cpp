@@ -23,7 +23,6 @@
 #include "app/app_server.h"
 #include "basics/down_cast.h"
 #include "catalog/catalog.h"
-#include "catalog/logical_object.h"
 #include "catalog/native_functions.h"
 #include "catalog/sql_function_impl.h"
 #include "catalog/sql_query_view.h"
@@ -70,14 +69,14 @@ void ResolveObject(ObjectId database, Objects& objects, Disallowed& disallowed,
     }
   }
 
-  if (data.object->Is(catalog::ViewType::ViewSqlQuery)) {
+  if (data.object->GetType() == catalog::ObjectType::View) {
     bool changed = disallowed.emplace(name).second;
     SDB_ASSERT(changed);
     auto state = basics::downCast<SqlQueryView>(*data.object).GetState();
     ResolveQueryView(database, objects, disallowed, state->objects);
     changed = disallowed.erase(name) != 0;
     SDB_ASSERT(changed);
-  } else if (data.object->category() == catalog::ObjectCategory::Function) {
+  } else if (data.object->GetType() == catalog::ObjectType::Function) {
     auto& func = basics::downCast<catalog::Function>(*data.object);
     if (func.Options().language == catalog::FunctionLanguage::SQL) {
       bool changed = disallowed.emplace(name).second;

@@ -1066,3 +1066,37 @@ SELECT (SELECT (SELECT 'lmao' as lol));
 ----
 lol
 lmao
+
+
+query
+WITH vedernikoff as
+(
+  SELECT 228 as iq
+),
+kostya as (
+  SELECT 4 as pencil_size
+)
+SELECT * FROM
+(
+  WITH vedernikoff as
+  (
+    SELECT 1337 as iq
+  )
+  SELECT * FROM vedernikoff, kostya
+),
+kostya,
+vedernikoff;
+----
+iq pencil_size pencil_size iq
+1337 4 4 228
+
+
+query
+WITH vedernikoff as
+(
+  SELECT 228 as iq
+)
+SELECT * FROM vedernikoff as kirkuch, vedernikoff as danpuz;
+----
+iq iq
+228 228

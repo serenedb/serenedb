@@ -40,7 +40,6 @@
 #include "rest/general_request.h"
 #include "rest/general_response.h"
 #include "rest_server/database_context.h"
-#include "rest_server/database_feature.h"
 
 namespace sdb::rest {
 namespace {

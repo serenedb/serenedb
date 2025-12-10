@@ -39,7 +39,6 @@
 #include "catalog/catalog.h"
 #include "catalog/identifiers/identifier.h"
 #include "catalog/identifiers/object_id.h"
-#include "catalog/logical_object.h"
 #include "catalog/sql_query_view.h"
 #include "catalog/view.h"
 #include "vpack/serializer.h"

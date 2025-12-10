@@ -22,51 +22,15 @@
 #include "engine_selector_feature.h"
 
 #include "app/app_server.h"
-#include "basics/down_cast.h"
-#include "general_server/state.h"
-#include "rest_server/serened.h"
-#ifdef SDB_CLUSTER
-#include "cluster_engine/cluster_engine.h"
-#include "rocksdb_engine/rocksdb_engine.h"
-#else
+#include "catalog/catalog.h"
+#include "replication/replication_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#endif
 
 namespace sdb {
 
 EngineSelectorFeature::EngineSelectorFeature(Server& server)
   : SerenedFeature{server, name()} {
   setOptional(false);
-}
-
-void EngineSelectorFeature::prepare() {
-#ifdef SDB_CLUSTER
-  _engine = &SerenedServer::Instance().getFeature<RocksDBEngine>();
-#else
-  _engine = &SerenedServer::Instance().getFeature<RocksDBEngineCatalog>();
-#endif
-
-#ifdef SDB_CLUSTER
-  if (ServerState::instance()->IsCoordinator()) {
-    _engine->disable();
-
-    auto& engine = server().getFeature<ClusterEngine>();
-    engine.setActualEngine(_engine);
-    _engine = &engine;
-  }
-#endif
-
-  SDB_ASSERT(_engine);
-}
-
-void EngineSelectorFeature::unprepare() {
-#ifdef SDB_CLUSTER
-  if (ServerState::instance()->IsCoordinator()) {
-    basics::downCast<ClusterEngine>(_engine)->setActualEngine(nullptr);
-  }
-#endif
-
-  _engine = nullptr;
 }
 
 StorageEngine& EngineSelectorFeature::engine() {
@@ -82,5 +46,38 @@ bool EngineSelectorFeature::isRocksDB() {
 StorageEngine& GetServerEngine() {
   return SerenedServer::Instance().getFeature<EngineSelectorFeature>().engine();
 }
+
+void EngineSelectorFeature::start() {
+  auto r = server().getFeature<catalog::CatalogFeature>().Open();
+  if (!r.ok()) {
+    SDB_THROW(std::move(r));
+  }
+
+  _started.store(true);
+}
+
+void EngineSelectorFeature::stop() {
+#ifdef SDB_CLUSTER
+  if (auto replication = server().TryGetFeature<ReplicationFeature>();
+      replication && !ServerState::instance()->IsCoordinator()) {
+    for (auto [_, applier] : GetAllReplicationAppliers()) {
+      replication->stopApplier(applier);
+    }
+  }
+#endif
+  _engine->cleanupReplicationContexts();
+}
+
+#ifndef SDB_CLUSTER
+void EngineSelectorFeature::prepare() {
+  _engine = &SerenedServer::Instance().getFeature<RocksDBEngineCatalog>();
+  SDB_ASSERT(_engine);
+}
+
+void EngineSelectorFeature::unprepare() {
+  SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Cleanup();
+  _engine = nullptr;
+}
+#endif
 
 }  // namespace sdb

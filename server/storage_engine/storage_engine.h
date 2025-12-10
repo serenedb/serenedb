@@ -35,7 +35,7 @@
 #include "catalog/identifiers/index_id.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/identifiers/transaction_id.h"
-#include "catalog/logical_object.h"
+#include "catalog/schema.h"
 #include "catalog/table.h"
 #include "catalog/types.h"
 #include "database/access_mode.h"
@@ -128,7 +128,7 @@ struct IndexTombstone {
 };
 
 struct TableTombstone {
-  ObjectId collection;
+  ObjectId table;
   uint64_t number_documents = kRead;
   std::vector<IndexTombstone> indexes;
 };
@@ -149,7 +149,7 @@ class StorageEngine : public SerenedFeature {
     return {};
   }
 
-  virtual Result createTableShard(const catalog::Table& collection, bool is_new,
+  virtual Result createTableShard(const catalog::Table& table, bool is_new,
                                   std::shared_ptr<TableShard>& physical) {
     SDB_ASSERT(false);
     return {ERROR_NOT_IMPLEMENTED};
@@ -184,12 +184,6 @@ class StorageEngine : public SerenedFeature {
   // TODO(mbkkt) is it expected for dbservers?
   virtual std::string databasePath() const { return {}; }
 
-  // database, collection and index management
-
-  // if not stated other wise functions may throw and the caller has to take
-  // care of error handling the return values will be the usual  ERROR_*
-  // codes.
-
   virtual Result flushWal(bool wait_for_sync = false,
                           bool flush_column_families = false) = 0;
 
@@ -209,90 +203,90 @@ class StorageEngine : public SerenedFeature {
 
   virtual Tick recoveryTick() = 0;
 
-  virtual Result createFunction(ObjectId db, ObjectId schema_id, ObjectId id,
-                                WriteProperties properties) = 0;
-
-  virtual Result dropFunction(ObjectId db, ObjectId schema_id, ObjectId id,
-                              std::string_view name) = 0;
-
-  //// Operations on Collections
-  // asks the storage engine to create a collection as specified in the VPack
-  // Slice object and persist the creation info. It is guaranteed by the server
-  // that no other active collection with the same name and id exists in the
-  // same database when this function is called. If this operation fails
-  // somewhere in the middle, the storage engine is required to fully clean up
-  // the creation and throw only then, so that subsequent collection creation
-  // requests will not fail. the WAL entry for the collection creation will be
-  // written *after* the call to "createTable" returns
-  virtual void createTable(const catalog::Table& collection,
-                           TableShard& physical) = 0;
-  virtual Result MarkDeleted(const catalog::Table& collection,
+  virtual void createTable(const catalog::Table& table, TableShard& physical) {
+    SDB_ASSERT(false);
+  }
+  virtual Result MarkDeleted(const catalog::Table& table,
                              const TableShard& physical,
                              const TableTombstone& tombstone) {
-    return {};
+    return {ERROR_NOT_IMPLEMENTED};
   };
 
-  virtual Result MarkDeleted(const catalog::Database& database) { return {}; };
-
-  // method that is called prior to deletion of a collection. allows the storage
-  // engine to clean up arbitrary data for this collection before the collection
-  // moves into status "deleted". this method may be called multiple times for
-  // the same collection
-  virtual void prepareDropTable(ObjectId collection) {}
-
-  // asks the storage engine to drop the specified collection and persist the
-  // deletion info. Note that physical deletion of the collection data must not
-  // be carried out by this call, as there may
-  // still be readers of the collection's data. It is recommended that this
-  // operation only sets a deletion flag for the collection but lets an async
-  // task perform the actual deletion. the WAL entry for collection deletion
-  // will be written *after* the call to "dropCollection" returns
-  virtual Result dropCollection(const TableTombstone& tombstone) { return {}; }
-  virtual Result dropIndex(IndexTombstone tombstone) { return {}; }
-
-  // asks the storage engine to change properties of the collection as specified
-  // in the VPack Slice object and persist them. If this operation fails
-  // somewhere in the middle, the storage engine is required to fully revert the
-  // property changes and throw only then, so that subsequent operations will
-  // not fail. the WAL entry for the propery change will be written *after* the
-  // call to "changeCollection" returns
-  virtual void changeCollection(const catalog::Table& collection,
-                                const TableShard& physical) {}
-
-  // asks the storage engine to persist renaming of a collection
-  virtual Result renameCollection(const catalog::Table& collection,
-                                  const TableShard& physical,
-                                  std::string_view old_name) {
-    return {};
+  virtual Result MarkDeleted(const catalog::Database& database) {
+    return {ERROR_NOT_IMPLEMENTED};
+  }
+  virtual Result MarkDeleted(const catalog::Schema& schema) {
+    return {ERROR_NOT_IMPLEMENTED};
   }
 
-  // If this operation fails somewhere in the middle, the storage engine is
-  // required to fully revert the property changes and throw only then, so that
-  // subsequent operations will not fail. The WAL entry for the property change
-  // will be written *after* the call to "change*" returns
+  virtual void prepareDropTable(ObjectId table) {}
 
-  virtual Result createSchema(ObjectId db, ObjectId id,
-                              WriteProperties properties) = 0;
-  virtual Result changeSchema(ObjectId db, ObjectId id,
-                              WriteProperties properties) = 0;
-  virtual Result dropSchema(ObjectId db, ObjectId id,
-                            std::string_view name) = 0;
+  virtual Result DropTable(const TableTombstone& tombstone) {
+    return {ERROR_NOT_IMPLEMENTED};
+  }
+  virtual Result DropIndex(IndexTombstone tombstone) {
+    return {ERROR_NOT_IMPLEMENTED};
+  }
 
-  virtual Result changeView(ObjectId db, ObjectId schema_id, ObjectId id,
-                            WriteProperties properties) = 0;
+  virtual void ChangeTable(const catalog::Table& collection,
+                           const TableShard& physical) {
+    SDB_ASSERT(false);
+  }
 
-  virtual Result createView(ObjectId db, ObjectId schema_id, ObjectId id,
-                            WriteProperties properties) = 0;
+  virtual Result RenameTable(const catalog::Table& collection,
+                             const TableShard& physical,
+                             std::string_view old_name) {
+    return {ERROR_NOT_IMPLEMENTED};
+  }
 
-  virtual Result dropView(ObjectId db, ObjectId schema_id, ObjectId id,
-                          std::string_view name) = 0;
+  virtual Result CreateFunction(ObjectId db, ObjectId schema_id, ObjectId id,
+                                WriteProperties properties) {
+    return {ERROR_NOT_IMPLEMENTED};
+  }
 
-  virtual Result changeRole(ObjectId db, ObjectId id,
-                            WriteProperties properties) = 0;
+  virtual Result DropFunction(ObjectId db, ObjectId schema_id, ObjectId id,
+                              std::string_view name) {
+    return {ERROR_NOT_IMPLEMENTED};
+  }
 
-  virtual Result createRole(const catalog::Role& role) = 0;
+  virtual Result CreateSchema(ObjectId db, ObjectId id,
+                              WriteProperties properties) {
+    return {ERROR_NOT_IMPLEMENTED};
+  }
+  virtual Result ChangeSchema(ObjectId db, ObjectId id,
+                              WriteProperties properties) {
+    return {ERROR_NOT_IMPLEMENTED};
+  }
+  virtual Result DropSchema(ObjectId db, ObjectId id) {
+    return {ERROR_NOT_IMPLEMENTED};
+  }
 
-  virtual Result dropRole(const catalog::Role& role) = 0;
+  virtual Result ChangeView(ObjectId db, ObjectId schema_id, ObjectId id,
+                            WriteProperties properties) {
+    return {ERROR_NOT_IMPLEMENTED};
+  }
+
+  virtual Result CreateView(ObjectId db, ObjectId schema_id, ObjectId id,
+                            WriteProperties properties) {
+    return {ERROR_NOT_IMPLEMENTED};
+  }
+
+  virtual Result DropView(ObjectId db, ObjectId schema_id, ObjectId id,
+                          std::string_view name) {
+    return {ERROR_NOT_IMPLEMENTED};
+  }
+
+  virtual Result ChangeRole(ObjectId id, WriteProperties properties) {
+    return {ERROR_NOT_IMPLEMENTED};
+  }
+
+  virtual Result CreateRole(const catalog::Role& role) {
+    return {ERROR_NOT_IMPLEMENTED};
+  }
+
+  virtual Result DropRole(const catalog::Role& role) {
+    return {ERROR_NOT_IMPLEMENTED};
+  }
 
   // Compacts the entire database
   virtual yaclib::Future<Result> compactAll(bool change_level,
@@ -370,7 +364,6 @@ class StorageEngine : public SerenedFeature {
   virtual void toPrometheus(std::string& result, std::string_view globals,
                             bool ensure_whitespace) const {}
 
-  // management methods for synchronizing with external persistent stores
   virtual Tick currentTick() const = 0;
   virtual Tick releasedTick() const = 0;
   virtual void releaseTick(Tick tick) = 0;

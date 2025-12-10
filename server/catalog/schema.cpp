@@ -1,8 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2014-2023 ArangoDB GmbH, Cologne, Germany
-/// Copyright 2004-2014 triAGENS GmbH, Cologne, Germany
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -16,23 +15,25 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "ssl_feature.h"
+#include "catalog/schema.h"
 
-#define OPENSSL_THREAD_DEFINES
-#include <openssl/opensslconf.h>
+#include "vpack/serializer.h"
 
-#ifndef OPENSSL_THREADS
-#error missing thread support for openssl, please recomple OpenSSL with threads
-#endif
+namespace sdb::catalog {
 
-using namespace sdb::basics;
-using namespace sdb::options;
+Schema::Schema(ObjectId database_id, SchemaOptions options)
+  : DatabaseObject{options.owner_id, database_id, options.id,
+                   std::move(options.name), ObjectType::Schema} {}
 
-namespace sdb {
+void Schema::WriteInternal(vpack::Builder& build) const {
+  vpack::WriteTuple(build, SchemaOptions{
+                             .owner_id = GetOwnerId(),
+                             .id = GetId(),
+                             .name = _name,
+                           });
+}
 
-const asio_ns::ssl::detail::openssl_init<true> SslFeature::kSslBase{};
-
-}  // namespace sdb
+}  // namespace sdb::catalog

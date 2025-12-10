@@ -37,9 +37,9 @@
 #include "basics/system-functions.h"
 #include "basics/write_locker.h"
 #include "catalog/identifiers/object_id.h"
+#include "catalog/object.h"
 #include "general_server/general_server_feature.h"
 #include "general_server/state.h"
-#include "rest_server/database_feature.h"
 #include "vpack/vpack_helper.h"
 
 namespace sdb::catalog {
@@ -128,7 +128,7 @@ Role::Role(PrivateTag, ObjectId id, std::string_view name)
   : catalog::Role{id, name} {}
 
 Role::Role(ObjectId id, std::string_view name)
-  : LogicalObject{ObjectCategory::Role, id::kSystemDB, id, std::string{name}} {}
+  : catalog::Object{{}, id, std::string{name}, ObjectType::Role} {}
 
 void catalog::Role::WriteInternal(vpack::Builder& build) const {
   WriteProperties(build);
@@ -136,8 +136,8 @@ void catalog::Role::WriteInternal(vpack::Builder& build) const {
 
 void catalog::Role::WriteProperties(vpack::Builder& build) const {
   SDB_ASSERT(build.isOpenObject());
-  build.add("id", _id.id());
-  build.add("name", _name);
+  build.add("id", GetId().id());
+  build.add("name", GetName());
   {
     vpack::ObjectBuilder auth_guard{&build, "authData", true};
     build.add("active", _active);

@@ -2975,7 +2975,7 @@ lp::ExprPtr SqlAnalyzer::ProcessJsonExtractOp(std::string_view type,
   }
   SDB_ASSERT(res);
   if (IsExtractText(type)) {
-    res = ResolveVeloxFunctionAndInferArgsCommonType("presto_json_to_text",
+    res = ResolveVeloxFunctionAndInferArgsCommonType("presto_json_format",
                                                      {std::move(res)});
   }
   return res;
@@ -3105,7 +3105,7 @@ lp::ExprPtr SqlAnalyzer::ProcessOp(std::string_view name, lp::ExprPtr lhs,
     return ProcessLikeOp(name, std::move(lhs), std::move(rhs));
   }
 
-  if (IsJsonOperator(name)) {
+  if (IsJsonOperator(name) && velox::isJsonType(lhs->type())) {
     return ProcessJsonOp(name, std::move(lhs), std::move(rhs));
   }
 

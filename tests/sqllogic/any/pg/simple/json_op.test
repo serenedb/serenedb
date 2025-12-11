@@ -23,3 +23,10 @@ SELECT '[[1, 2], [3, 4]]'::json -> 0 -> 1;
 ----
 ?column?
 2
+
+
+query
+SELECT '[[1, 2], [3, 4]]'::json ->> 0;
+----
+?column?
+[1,<slt:ignore>2]

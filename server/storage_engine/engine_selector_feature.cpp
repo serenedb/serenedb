@@ -28,6 +28,7 @@
 #ifdef SDB_CLUSTER
 #include "replication/replication_feature.h"
 #endif
+
 namespace sdb {
 
 EngineSelectorFeature::EngineSelectorFeature(Server& server)

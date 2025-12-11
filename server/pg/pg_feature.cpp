@@ -107,7 +107,7 @@ velox::AllowedCoercions AllowedCoercions() {
 
   auto add = [&](const velox::TypePtr& from,
                  const std::vector<velox::TypePtr>& to) {
-    velox::CostT cost = velox::kMinCoercionCost;
+    velox::Cost cost = velox::kMinCoercionCost;
     for (const auto& to_type : to) {
       coercions.emplace(std::make_pair<std::string, std::string>(
                           from->name(), to_type->name()),

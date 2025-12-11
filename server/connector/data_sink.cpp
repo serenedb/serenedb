@@ -2010,7 +2010,7 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
   std::string key;
   absl::StrAppend(&key, _object_key, ".");
 
-  const size_t key_old_size = _object_key.size() + 1;  // erase to _object_key.
+  const size_t key_old_size = key.size();
   for (velox::vector_size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
     row_key.clear();
     primary_key::Create(*input, row_idx, row_key);

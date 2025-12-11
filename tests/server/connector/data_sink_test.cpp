@@ -11,6 +11,8 @@ using namespace sdb::connector;
 
 namespace {
 
+constexpr std::string_view kObjectKey{"123456"};
+
 class DataSinkTest : public ::testing::Test,
                      public velox::test::VectorTestBase {
  public:
@@ -84,7 +86,7 @@ class DataSinkTest : public ::testing::Test,
                         std::string& object_key,
                         sdb::connector::primary_key::Keys& written_row_keys) {
     // TODO(Dronplane) implement proper object encoding from catalog
-    object_key = "123456";
+    object_key = kObjectKey;
     // creating  PK column
     names.push_back("id");
     std::vector<int32_t> idx;
@@ -2339,7 +2341,6 @@ TEST_F(DataSinkTest, test_tableWriteConcurrent) {
     names, {makeFlatVector<int32_t>({5, 6, 7}),
             makeFlatVector<velox::StringView>({"one", "two", "three"})});
   const std::vector<velox::column_index_t> pk = {0};
-  constexpr std::string_view kObjectKey = "565656";
   std::unique_ptr<rocksdb::Transaction> transaction;
   std::unique_ptr<rocksdb::Transaction> transaction_non_conflict;
   std::unique_ptr<rocksdb::Transaction> transaction_conflict;

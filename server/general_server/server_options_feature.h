@@ -7,7 +7,19 @@ namespace sdb {
 // hard-coded limit for maximum replicationFactor value
 inline constexpr uint32_t kMaxReplicationFactor = 10;
 
+struct DumpLimits {
+  uint64_t docs_per_batch_lower_bound = 10;
+  uint64_t docs_per_batch_upper_bound = 1 * 1000 * 1000;
+  uint64_t batch_size_lower_bound = 4 * 1024;
+  uint64_t batch_size_upper_bound = 1024 * 1024 * 1024;
+  uint64_t parallelism_lower_bound = 1;
+  uint64_t parallelism_upper_bound = 8;
+  uint64_t memory_usage = 512 * 1024 * 1024;
+};
+
 struct ServerOptions {
+  DumpLimits dump_limits;
+
   std::vector<std::string> cluster_agency_endpoints;
   std::string cluster_my_role;
   std::string cluster_my_endpoint;
@@ -35,6 +47,9 @@ struct ServerOptions {
   double cluster_index_creation_timeout = 72.0 * 3600.0;
 
   bool database_ignore_datafile_errors = false;
+
+  bool app_print_version = false;
+  bool app_print_json_version = false;
 };
 
 class ServerOptionsFeature : public SerenedFeature {
@@ -47,6 +62,8 @@ class ServerOptionsFeature : public SerenedFeature {
 
   void collectOptions(std::shared_ptr<options::ProgramOptions>) final;
   void validateOptions(std::shared_ptr<options::ProgramOptions>) final;
+  void prepare() final;
+  void unprepare() final;
 
   auto& GetOptions(this auto& self) { return self._options; }
 

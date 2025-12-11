@@ -1,0 +1,31 @@
+statement ok
+CREATE TABLE t1(id INTEGER PRIMARY KEY, v1 TEXT);
+
+statement ok
+CREATE TABLE t2(id INTEGER PRIMARY KEY, v2 TEXT);
+
+
+statement ok
+INSERT INTO t1 VALUES (1, 'a'), (2, 'b'), (3, 'c');
+
+
+statement ok
+INSERT INTO t2 VALUES (1, 'foo'), (2, 'bar'), (4, 'baz');
+
+query
+EXPLAIN (EXECUTION) SELECT * FROM t1 NATURAL JOIN t2;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- MergeJoin[2][INNER id=id] -> "id":INTEGER, "v1":VARCHAR, "v2":VARCHAR
+  -- TableScan[0][.t1] -> "id":INTEGER, "v1":VARCHAR
+  -- TableScan[1][.t2] -> "id":INTEGER, "v2":VARCHAR
+
+
+query ??? rowsort
+SELECT * FROM t1 NATURAL JOIN t2;
+----
+id v1 v2
+1 a foo
+2 b bar

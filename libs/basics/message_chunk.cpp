@@ -20,8 +20,6 @@
 
 #include "basics/message_chunk.h"
 
-#include <new>
-
 #include "basics/assert.h"
 
 namespace sdb::message {
@@ -32,9 +30,6 @@ Chunk::Chunk(size_t capacity)
 
 size_t Chunk::TryWrite(std::string_view data) {
   const auto write_length = std::min(data.size(), FreeSpace());
-  if (write_length == 0) [[unlikely]] {
-    return 0;
-  }
   std::memcpy(_data + _end, data.data(), write_length);
   _end += write_length;
   SDB_ASSERT(_end <= _capacity);

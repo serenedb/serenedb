@@ -33,7 +33,6 @@ class ProgramOptions;
 }
 
 class LoggerFeature;
-class AppVersion;
 
 class ConfigFeature final : public app::AppFeature {
  public:
@@ -41,17 +40,12 @@ class ConfigFeature final : public app::AppFeature {
 
   template<typename Server>
   ConfigFeature(Server& server, const std::string& progname,
+                std::function<bool()> print_version,
                 std::string_view config_filename = "")
     : app::AppFeature{server, name()},
-      _version{[&server]() {
-        return server.template hasFeature<AppVersion>()
-                 ? &server.template getFeature<AppVersion>()
-                 : nullptr;
-      }()},
+      _print_version{std::move(print_version)},
       _file(config_filename),
       _progname(progname) {
-    static_assert(Server::template isCreatedAfter<ConfigFeature, AppVersion>());
-
     setOptional(false);
   }
 
@@ -65,7 +59,7 @@ class ConfigFeature final : public app::AppFeature {
   void loadConfigFile(std::shared_ptr<options::ProgramOptions>,
                       const std::string& progname, const char* binary_path);
 
-  AppVersion* _version;
+  std::function<bool()> _print_version;
   std::string _file;
   std::string _progname;
   std::vector<std::string> _defines;

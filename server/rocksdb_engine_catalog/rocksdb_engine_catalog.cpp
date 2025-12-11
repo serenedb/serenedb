@@ -77,6 +77,7 @@
 #include "database/ticks.h"
 #include "general_server/rest_handler_factory.h"
 #include "general_server/scheduler_feature.h"
+#include "general_server/server_options_feature.h"
 #include "general_server/state.h"
 #include "metrics/counter_builder.h"
 #include "metrics/gauge_builder.h"
@@ -85,7 +86,6 @@
 #include "metrics/metrics_feature.h"
 #include "rest/version.h"
 #include "rest_server/database_path_feature.h"
-#include "rest_server/dump_limits_feature.h"
 #include "rest_server/flush_feature.h"
 #include "rest_server/server_id_feature.h"
 #include "rocksdb_engine_catalog/listeners/rocksdb_background_error_listener.h"
@@ -1020,7 +1020,7 @@ void RocksDBEngineCatalog::start() {
 #ifdef SDB_CLUSTER
   _replication_manager = std::make_shared<RocksDBReplicationManager>();
   _dump_manager = std::make_shared<RocksDBDumpManager>(
-    *_db, _metrics, server().getFeature<DumpLimitsFeature>().limits());
+    *_db, _metrics, GetServerOptions().dump_limits);
 #endif
 
   _settings_manager->retrieveInitialValues();

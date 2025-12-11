@@ -43,9 +43,6 @@ class TimeZoneFeature final : public SerenedFeature {
   static void prepareTimeZoneData(const std::string& binary_path,
                                   const std::string& binary_execution_path,
                                   const std::string& binary_name);
-
- private:
-  const char* _binary_path;
 };
 
 }  // namespace sdb

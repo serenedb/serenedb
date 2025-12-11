@@ -26,7 +26,6 @@
 #include <cstdlib>
 
 #include "app/app_server.h"
-#include "app/app_version.h"
 #include "app/global_context.h"
 #include "app/options/ini_file_parser.h"
 #include "app/options/option.h"
@@ -123,11 +122,7 @@ void ConfigFeature::loadConfigFile(std::shared_ptr<ProgramOptions> options,
     return;
   }
 
-  bool fatal = true;
-
-  if (_version) {
-    fatal = !_version->printVersion();
-  }
+  bool fatal = !_print_version();
 
   // always prefer an explicitly given config file
   if (!_file.empty()) {

@@ -36,8 +36,6 @@ namespace options {
 class ProgramOptions;
 }
 
-class AppVersion;
-
 class LoggerFeature final : public app::AppFeature {
  public:
   static constexpr std::string_view name() { return "Logger"; }

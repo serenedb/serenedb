@@ -1,0 +1,4 @@
+command script import lldb_addons.py
+
+type summary add --python-function "lldb_addons.class_with_toString" facebook::velox::Type
+type summary add --python-function "lldb_addons.class_with_toString" facebook::axiom::logical_plan::Expr

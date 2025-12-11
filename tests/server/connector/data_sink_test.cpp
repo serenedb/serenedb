@@ -2515,7 +2515,7 @@ TEST_F(DataSinkTest, test_deleteDataSinkPartial) {
       *transaction2, *_cf_handles.front(), row_type, object_key);
     ASSERT_ANY_THROW(delete_sink2.appendData(row_data));
     // should be empty
-    transaction2->Commit();
+    ASSERT_TRUE(transaction2->Commit().ok());
     std::unique_ptr<rocksdb::Iterator> it_after{
       _db->NewIterator(read_options, _cf_handles.front())};
     int count_after = 0;
@@ -2535,6 +2535,51 @@ TEST_F(DataSinkTest, test_deleteDataSinkPartial) {
   }
   ASSERT_EQ(count_after, 4)
     << "Should have 4 keys remaining (1 row x 4 columns)";
+}
+
+TEST_F(DataSinkTest, test_insertDeleteConflict) {
+  std::vector<std::string> names = {"id", "name"};
+  auto row_type =
+    velox::ROW(names, {velox::createScalarType(velox::TypeKind::INTEGER),
+                       velox::createScalarType(velox::TypeKind::VARCHAR)});
+  auto data = makeRowVector(
+    names, {makeFlatVector<int32_t>({1, 2, 3, 4, 5, 6, 7, 8, 9, 10}),
+            makeFlatVector<velox::StringView>({"one", "two", "three", "four",
+                                               "five", "six", "seven", "eight",
+                                               "nine", "ten"})});
+
+  const std::vector<velox::column_index_t> pk = {0};
+  std::unique_ptr<rocksdb::Transaction> transaction;
+  sdb::connector::primary_key::Keys written_row_keys{*pool_.get()};
+  PrepareRocksDBWrite(data, kObjectKey, pk, transaction, written_row_keys);
+
+  rocksdb::TransactionOptions trx_opts;
+  trx_opts.skip_concurrency_control = true;
+  trx_opts.lock_timeout = 100;
+  rocksdb::WriteOptions wo;
+  std::unique_ptr<rocksdb::Transaction> transaction_delete{
+    _db->BeginTransaction(wo, trx_opts, nullptr)};
+  sdb::connector::RocksDBDeleteDataSink delete_sink(
+    *transaction_delete, *_cf_handles.front(), row_type, kObjectKey);
+  auto delete_data = makeRowVector({makeFlatVector<int32_t>({5, 6, 7, 10})});
+  ASSERT_ANY_THROW(delete_sink.appendData(delete_data));
+  // should be empty
+  ASSERT_TRUE(transaction_delete->Commit().ok());
+  ASSERT_TRUE(transaction->Commit().ok());
+  // insert should be fully written
+  rocksdb::ReadOptions read_options;
+  size_t i = 0;
+  for (const auto& key : written_row_keys) {
+    std::string value;
+    std::string rocksdb_key =
+      absl::StrFormat("%s.%s.%s", kObjectKey, names[1], key);
+    ASSERT_TRUE(_db
+                  ->Get(read_options, _cf_handles.front(),
+                        rocksdb::Slice(rocksdb_key), &value)
+                  .ok());
+    ASSERT_EQ(
+      value, data->childAt(1)->asFlatVector<velox::StringView>()->valueAt(i++));
+  }
 }
 
 }  // namespace

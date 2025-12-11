@@ -109,7 +109,7 @@ velox::AllowedCoercions AllowedCoercions() {
     int32_t cost = 0;
     for (const auto& to_type : to) {
       coercions.emplace(std::make_pair<std::string, std::string>(
-                          from->toString(), to_type->toString()),
+                          from->name(), to_type->name()),
                         velox::Coercion{.type = to_type, .cost = ++cost});
     }
   };

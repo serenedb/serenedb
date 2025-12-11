@@ -67,7 +67,7 @@ sdb::ResultOr<std::vector<std::string_view>> ParseParams(
 }
 }  // namespace
 
-sdb::ResultOr<WordnetSynonymsTokenizer::WordnetInput>
+sdb::ResultOr<WordnetSynonymsTokenizer::SynonymsMap>
 WordnetSynonymsTokenizer::Parse(const std::string_view input) {
   std::vector<std::string_view> lines = absl::StrSplit(input, '\n');
 
@@ -115,28 +115,34 @@ WordnetSynonymsTokenizer::Parse(const std::string_view input) {
                                           "Failed parse line ", line_number};
     }
 
-    mapping.emplace(std::move(synonym), synset.back());
+    mapping[synonym].push_back(synset.back());
 
     last_syn_set_id = syn_set_id;
   }
-  return WordnetInput{.groups = std::move(synset),
-                      .mapping = std::move(mapping)};
+  return mapping;
 }
 
 WordnetSynonymsTokenizer::WordnetSynonymsTokenizer(
-  WordnetSynonymsTokenizer::SynonymsGroups&& groups,
   WordnetSynonymsTokenizer::SynonymsMap&& mapping)
-  : _groups(std::move(groups)), _mapping(std::move(mapping)) {}
+  : _mapping(std::move(mapping)) {}
 
 bool WordnetSynonymsTokenizer::next() {
   if (!_term_exists) {
     return false;
   }
-  _term_exists = false;
+
+  auto& term = std::get<TermAttr>(_attrs);
+  term.value = ViewCast<byte_type>(*_curr);
+  _curr++;
+
+  if (_curr == _end) {
+    _term_exists = false;
+  }
+
   return true;
 }
 
-bool WordnetSynonymsTokenizer::reset(std::string_view data) {
+bool WordnetSynonymsTokenizer::reset(const std::string_view data) {
   auto& offset = std::get<irs::OffsAttr>(_attrs);
   offset.start = 0;
   offset.end = data.size();
@@ -144,12 +150,13 @@ bool WordnetSynonymsTokenizer::reset(std::string_view data) {
   if (const auto it = _mapping.find(data); it == _mapping.end()) {
     _term_exists = false;
   } else {
-    auto& term = std::get<TermAttr>(_attrs);
-    term.value = ViewCast<byte_type>(it->second);
+    _begin = _curr = it->second.data();
+    _end = _curr + it->second.size();
+
     _term_exists = true;
   }
 
-  return true;
+  return _term_exists;
 }
 
 }  // namespace irs::analysis

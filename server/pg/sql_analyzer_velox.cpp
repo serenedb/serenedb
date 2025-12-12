@@ -2922,10 +2922,6 @@ static constexpr std::string_view kJsonDeletePath = "#-";
 static constexpr std::string_view kJsonPathQuery = "@?";
 static constexpr std::string_view kJsonPathPredicate = "@@";
 
-static constexpr std::string_view kJsonExtractElement = "presto_json_array_get";
-// TODO(codeworse): add object field extraction
-// static constexpr std::string_view kJsonExtractField = "presto_json_extract";
-
 bool IsExtractSingleKey(std::string_view name) {
   return name == kJsonExtract || name == kJsonExtractText;
 }
@@ -2957,12 +2953,11 @@ lp::ExprPtr SqlAnalyzer::ProcessJsonExtractOp(std::string_view type,
         key->type() == velox::SMALLINT() || key->type() == velox::TINYINT()) {
       // array index
       res = ResolveVeloxFunctionAndInferArgsCommonType(
-        std::string{kJsonExtractElement}, {std::move(input), std::move(key)});
+        "presto_json_array_get", {std::move(input), std::move(key)});
     } else if (key->type() == velox::VARCHAR()) {
-      // TODO(codeworse): object field
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-        ERR_MSG("JSON object field extraction is not supported yet"));
+      // object field
+      res = ResolveVeloxFunctionAndInferArgsCommonType(
+        "pg_json_extract_path", {std::move(input), std::move(key)});
     } else {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -2970,8 +2965,8 @@ lp::ExprPtr SqlAnalyzer::ProcessJsonExtractOp(std::string_view type,
     };
   } else {
     // TODO(codeworse): path extraction
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG("JSON path extraction is not supported yet"));
+    res = ResolveVeloxFunctionAndInferArgsCommonType(
+      "pg_json_extract_path", {std::move(input), std::move(key)});
   }
   SDB_ASSERT(res);
   if (IsExtractText(type)) {

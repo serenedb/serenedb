@@ -52,12 +52,21 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
   std::vector<velox::TypePtr> pk_column_types;
   std::vector<std::string> column_names;
   std::vector<velox::TypePtr> column_types;
+  catalog::ColumnToDefaultMap column_to_default;
   VisitNodes(stmt.tableElts, [&](const Node& node) {
     if (IsA(&node, ColumnDef)) {
       const auto& col_def = *castNode(ColumnDef, &node);
       column_names.push_back(col_def.colname);
       column_types.push_back(pg::NameToType(*col_def.typeName));
+
       VisitNodes(col_def.constraints, [&](const Constraint& constraint) {
+        if (constraint.contype == CONSTR_DEFAULT) {
+          auto r = default_value.Init(db, constraint.raw_expr);
+          SDB_ENSURE(r.ok(), r.errorNumber(), std::move(r).errorMessage());
+          auto [_, emplaced] = column_to_default.emplace(
+            column_names.back(), std::move(default_value));
+          SDB_ASSERT(emplaced);
+        }
         if (constraint.contype == CONSTR_PRIMARY) {
           pk_column_names.push_back(column_names.back());
           pk_column_types.push_back(column_types.back());
@@ -83,6 +92,11 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
   });
   SDB_ASSERT(!stmt.constraints);
 
+  SDB_ASSERT(pk_column_names.size() == pk_column_types.size());
+  if (pk_column_names.empty()) {
+    return yaclib::MakeFuture<Result>(ERROR_BAD_PARAMETER,
+                                      "Table must have a primary key");
+  }
   request.pkType =
     velox::ROW(std::move(pk_column_names), std::move(pk_column_types));
   if (request.pkType->size() != request.pkType->nameToIndex().size()) {

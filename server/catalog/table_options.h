@@ -29,6 +29,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "basics/containers/node_hash_map.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
 #include "basics/fwd.h"
@@ -38,9 +39,12 @@
 #include "catalog/fwd.h"
 #include "catalog/identifiers/identifier.h"
 #include "catalog/identifiers/object_id.h"
+#include "catalog/default_value.h"
 #include "catalog/key_generator.h"
 #include "catalog/types.h"
 #include "catalog/validators.h"
+#include "pg/sql_collector.h"
+#include "pg/sql_utils.h"
 #include "utils/velox_vpack.h"
 
 namespace sdb::catalog {
@@ -132,6 +136,7 @@ struct CreateTableRequest {
   std::vector<std::string> shardKeys{std::string{StaticStrings::kKeyString}};
   velox::RowTypePtr pkType;
   velox::RowTypePtr rowType;
+  DefaultValue default_value;
   // TOOD(gnusi): we don't need it to be a part of collection slice
   std::vector<std::string> avoidServers;
   std::optional<std::string> distributeShardsLike;

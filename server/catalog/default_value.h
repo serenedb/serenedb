@@ -20,26 +20,45 @@
 
 #pragma once
 
-#include <string_view>
+#include <vpack/slice.h>
 
-#include "pg/sql_statement.h"
+#include "pg/sql_collector.h"
 #include "pg/sql_utils.h"
 
-struct ErrorData;
-struct List;
-struct MemoryContextData;
-
 namespace sdb {
-namespace pg {
 
-List* Parse(MemoryContextData& ctx, const QueryString& query_string);
+class DefaultValue {
+ public:
+  DefaultValue() = default;
 
-List* ParseExpression(MemoryContextData& ctx, const QueryString& query_string);
+  Result Init(ObjectId database, const Node* expr);
 
-Node* ParseSingleExpression(MemoryContextData& ctx,
-                            const QueryString& query_string);
+  static Result FromVPack(ObjectId database, vpack::Slice slice,
+                          std::unique_ptr<DefaultValue>& default_value);
 
-pg::SqlStatement ParseSystemView(std::string_view query);
+  void ToVPack(vpack::Builder& builder) const;
 
-}  // namespace pg
+  std::string_view GetQuery() const noexcept { return _query; }
+
+  const Node* GetExpr() const noexcept { return _expr; }
+
+  pg::Objects& GetObjects() noexcept { return _objects; }
+
+ private:
+  Result Init(ObjectId database, std::string query);
+
+  std::string _query;
+  pg::MemoryContextPtr _memory_context;
+  const Node* _expr{nullptr};
+  pg::Objects _objects;
+};
+
+void VPackWrite(auto ctx, const DefaultValue& default_value) {
+
+}
+
+void VPackRead(auto ctx, DefaultValue& default_value) {
+  
+}
+
 }  // namespace sdb

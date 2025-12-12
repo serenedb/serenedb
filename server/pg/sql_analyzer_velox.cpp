@@ -1925,6 +1925,11 @@ lp::AggregateExprPtr SqlAnalyzer::MaybeAggregateFuncCall(
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_GROUPING_ERROR),
                       CURSOR_POS(ErrorPosition(ExprLocation(&func_call))),
                       ERR_MSG("aggregate functions are not allowed in OFFSET"));
+    case ExprKind::ColumnDefault:
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_GROUPING_ERROR),
+        CURSOR_POS(ErrorPosition(ExprLocation(&func_call))),
+        ERR_MSG("aggregate functions are not allowed in DEFAULT expressions"));
     default:
       break;
   }
@@ -3334,6 +3339,11 @@ lp::WindowExprPtr SqlAnalyzer::MaybeWindowFuncCall(
         ERR_CODE(ERRCODE_WINDOWING_ERROR),
         CURSOR_POS(ErrorPosition(ExprLocation(&func_call))),
         ERR_MSG("window function calls are not allowed in window definitions"));
+    case ExprKind::ColumnDefault:
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_WINDOWING_ERROR),
+        CURSOR_POS(ErrorPosition(ExprLocation(&func_call))),
+        ERR_MSG("window functions are not allowed in DEFAULT expressions"));
     default:
       break;
   }
@@ -3445,6 +3455,13 @@ lp::ExprPtr SqlAnalyzer::ProcessColumnRef(State& state, const ColumnRef& expr) {
   std::string name = NameToStr(expr.fields);
 
   SDB_ASSERT(state.root);
+
+  if (state.expr_kind == ExprKind::ColumnDefault) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_COLUMN_REFERENCE),
+      CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
+      ERR_MSG("cannot use column reference in DEFAULT expression"));
+  }
 
   if (state.pre_columnref_hook) {
     if (auto res = state.pre_columnref_hook(name, expr)) {
@@ -4004,6 +4021,13 @@ lp::ExprPtr SqlAnalyzer::ProcessParamRef(State& state, const ParamRef& expr) {
 
 lp::ExprPtr SqlAnalyzer::ProcessSubLink(State& state, const SubLink& expr) {
   SDB_ASSERT(expr.subselect);
+
+  if (state.expr_kind == ExprKind::ColumnDefault) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      CURSOR_POS(ErrorPosition(expr.location)),
+      ERR_MSG("subqueries are not allowed in DEFAULT expressions"));
+  }
 
   auto child_state = state.MakeChild();
   child_state.is_sublink = true;

@@ -4,6 +4,7 @@ target_sources(
         database.cpp
         schema.cpp
         databases.cpp
+        default_value.cpp
         local_catalog.cpp
         catalog.cpp
         object.cpp

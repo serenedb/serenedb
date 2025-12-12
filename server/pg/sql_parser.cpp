@@ -129,6 +129,33 @@ List* Parse(MemoryContextData& ctx, const QueryString& query_string) {
   return result;
 }
 
+List* ParseExpression(MemoryContextData& ctx, const QueryString& query_string) {
+  if (query_string.empty()) {
+    return {};
+  }
+
+  auto scope = EnterMemoryContext(ctx);
+
+  auto [result, err] =
+    SqlParse(query_string.data(), PG_QUERY_PARSE_PLPGSQL_EXPR);
+
+  if (err) {
+    THROW_SQL_ERROR(ERR_CODE(err->sqlerrcode), CURSOR_POS(err->cursorpos),
+                    ERR_MSG(err->message ? err->message : ""),
+                    ERR_DETAIL(err->detail ? err->detail : ""),
+                    ERR_HINT(err->hint ? err->hint : ""));
+  }
+
+  return result;
+}
+
+Node* ParseSingleExpression(MemoryContextData& ctx,
+                            const QueryString& query_string) {
+  auto list = ParseExpression(ctx, query_string);
+  SDB_ASSERT(list_length(list) == 1);
+  return list_nth_node(Node, list, 0);
+}
+
 pg::SqlStatement ParseSystemView(std::string_view query) {
   static auto gConnCtx = std::make_shared<ConnectionContext>(
     ExecContext::superuser().user(), StaticStrings::kSystemDatabase,

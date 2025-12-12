@@ -653,21 +653,22 @@ template<VarFormat Format, bool InArray>
 void SerializeJson(SerializationContext context,
                    const velox::DecodedVector& decoded_vector,
                    velox::vector_size_t row) {
-  const auto value_quoted = decoded_vector.valueAt<velox::StringView>(row);
+  const auto value_str = decoded_vector.valueAt<velox::StringView>(row);
+  bool quoted = (value_str.size() >= 2 && value_str.data()[0] == '"' &&
+                 value_str.data()[value_str.size() - 1] == '"');
 
   // By default, only unicode("\u") and slashes("\/") are unescaped.
   // Should be true if you want to unescape conventional symbols
   // ("\r", "\n", "\\"" etc)
   bool fully_unescape = true;
 
-  SDB_ASSERT(value_quoted.size() >= 2);
-  SDB_ASSERT(*value_quoted.begin() == '"');
-  SDB_ASSERT(*(value_quoted.end() - 1) == '"');
-  auto value =
-    std::string_view(value_quoted.begin() + 1, value_quoted.end() - 1);
+  std::string_view value =
+    quoted ? std::string_view{value_str.begin() + 1, value_str.end() - 1}
+           : std::string_view{value_str};
   if constexpr (InArray && Format == VarFormat::Text) {
     if (ArrayItemNeedQuotesAndEscape(value)) {
-      value = static_cast<std::string_view>(value_quoted);
+      SDB_ASSERT(quoted);  // The error would appear during parsing such value
+      value = static_cast<std::string_view>(value_str);
       fully_unescape = false;
     }
   }

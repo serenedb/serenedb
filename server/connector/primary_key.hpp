@@ -26,6 +26,7 @@
 #include <string>
 
 #include "basics/fwd.h"
+#include "rocksdb_engine_catalog/concat.h"
 
 namespace sdb::connector::primary_key {
 

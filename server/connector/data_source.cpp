@@ -111,8 +111,7 @@ std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
         _current_split.reset();
         return nullptr;
       }
-      columns.push_back(ReadColumn(*it, size, key,
-                                   _row_type->childAt(col_idx),
+      columns.push_back(ReadColumn(*it, size, key, _row_type->childAt(col_idx),
                                    col_idx == 0 ? &last_column_key : nullptr));
     }
     _last_read_key = last_column_key;
@@ -127,7 +126,8 @@ std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
                                               std::move(columns));
   }
   SDB_ASSERT(_column_oids.size() == 1);
-  const std::string column_key = key_utils::PrepareColumnKey(_object_key, _column_oids.front());
+  const std::string column_key =
+    key_utils::PrepareColumnKey(_object_key, _column_oids.front());
   auto it = CreateColumnIterator(column_key, read_options);
   if (!it) {
     _current_split.reset();

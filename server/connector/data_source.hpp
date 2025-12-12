@@ -23,9 +23,9 @@
 #include <velox/connectors/Connector.h>
 
 #include "basics/fwd.h"
+#include "catalog/identifiers/object_id.h"
 #include "connector/key_utils.hpp"
 #include "rocksdb/utilities/transaction.h"
-#include "catalog/identifiers/object_id.h"
 
 namespace sdb::connector {
 

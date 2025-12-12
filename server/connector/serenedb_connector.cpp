@@ -30,6 +30,8 @@ SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
     _table_id{basics::downCast<RocksDBTable>(layout.table()).TableId()},
     // TODO(Dronplane): measure the performance! Maybe it worth select smallest
     // possible field as count field not just first
-    _table_count_field{basics::downCast<const SereneDBColumn>(layout.table().columnMap().begin()->second)->Oid()} {}
+    _table_count_field{basics::downCast<const SereneDBColumn>(
+                         layout.table().columnMap().begin()->second)
+                         ->Oid()} {}
 
 }  // namespace sdb::connector

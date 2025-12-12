@@ -71,7 +71,7 @@ size_t WriteImpl(char* p, const T& v) noexcept {
     std::memcpy(p, v.data(), v.size());
     return v.size();
   } else {
-    absl::big_endian::Store(p,v);
+    absl::big_endian::Store(p, v);
     return sizeof(T);
   }
 }

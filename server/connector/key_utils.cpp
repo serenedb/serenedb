@@ -22,7 +22,6 @@
 
 namespace sdb::connector::key_utils {
 
-
 std::string PrepareTableKey(ObjectId id) {
   SDB_ASSERT(id.isSet());
   std::string key;
@@ -44,7 +43,8 @@ void AppendColumnKey(std::string& key, ColumnId column_oid) {
   rocksutils::Concat(key, column_oid, kKeySeparator);
 }
 
-void AppendCellKey(std::string& key, ColumnId column_oid, std::string_view primary_key) {
+void AppendCellKey(std::string& key, ColumnId column_oid,
+                   std::string_view primary_key) {
   SDB_ASSERT(!primary_key.empty());
   SDB_ASSERT(!key.empty());
   SDB_ASSERT(key.ends_with(kKeySeparator),
@@ -72,7 +72,8 @@ std::pair<std::string, std::string> CreateTableRange(ObjectId id) {
   return {start_key, end_key};
 }
 
-std::pair<std::string, std::string> CreateTableColumnRange(ObjectId id, ColumnId column_oid) {
+std::pair<std::string, std::string> CreateTableColumnRange(
+  ObjectId id, ColumnId column_oid) {
   SDB_ASSERT(id.isSet());
   SDB_ASSERT(column_oid != std::numeric_limits<ColumnId>::max());
   std::string start_key;
@@ -83,5 +84,4 @@ std::pair<std::string, std::string> CreateTableColumnRange(ObjectId id, ColumnId
   return {start_key, end_key};
 }
 
-
-} // namespace sdb::connector::key_utils
+}  // namespace sdb::connector::key_utils

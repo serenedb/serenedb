@@ -42,8 +42,7 @@ class RocksDBDataSink : public velox::connector::DataSink {
   RocksDBDataSink(rocksdb::Transaction& transaction,
                   rocksdb::ColumnFamilyHandle& cf,
                   const velox::RowTypePtr& row_type,
-                  velox::memory::MemoryPool& memory_pool,
-                  ObjectId object_key,
+                  velox::memory::MemoryPool& memory_pool, ObjectId object_key,
                   std::span<const velox::column_index_t> key_childs,
                   std::vector<key_utils::ColumnId> column_oids,
                   bool skip_primary_key_columns = false);
@@ -198,8 +197,7 @@ class RocksDBDeleteDataSink : public velox::connector::DataSink {
  public:
   RocksDBDeleteDataSink(rocksdb::Transaction& transaction,
                         rocksdb::ColumnFamilyHandle& cf,
-                        velox::RowTypePtr row_type,
-                        ObjectId object_key,
+                        velox::RowTypePtr row_type, ObjectId object_key,
                         std::vector<key_utils::ColumnId> column_oids);
 
   void appendData(velox::RowVectorPtr input) final;

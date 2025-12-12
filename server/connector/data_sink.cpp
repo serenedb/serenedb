@@ -34,8 +34,8 @@
 #include "basics/misc.hpp"
 #include "common.h"
 #include "iresearch/utils/bytes_utils.hpp"
-#include "rocksdb_engine_catalog/rocksdb_utils.h"
 #include "key_utils.hpp"
+#include "rocksdb_engine_catalog/rocksdb_utils.h"
 
 #if __has_feature(memory_sanitizer)
 #define DATA_SINK_USE_MEMORY_SANITIZER
@@ -64,10 +64,8 @@ namespace sdb::connector {
 RocksDBDataSink::RocksDBDataSink(
   rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
   const velox::RowTypePtr& row_type, velox::memory::MemoryPool& memory_pool,
-  ObjectId object_key,
-  std::span<const velox::column_index_t> key_childs,
-  std::vector<key_utils::ColumnId> column_oids,
-  bool skip_primary_key_columns)
+  ObjectId object_key, std::span<const velox::column_index_t> key_childs,
+  std::vector<key_utils::ColumnId> column_oids, bool skip_primary_key_columns)
   : _row_type{std::move(row_type)},
     _transaction{transaction},
     _cf{cf},
@@ -80,9 +78,10 @@ RocksDBDataSink::RocksDBDataSink(
     _skip_primary_key_columns{skip_primary_key_columns} {
   _key_childs.assign_range(key_childs);
   SDB_ASSERT(_object_key.isSet(), "RocksDBDataSource: object key is empty");
-  SDB_ASSERT(_row_type->size() == _column_oids.size(),
-             "RocksDBDataSink: column oids size {} doesn't match row type size {}",
-             _column_oids.size(), _row_type->size());
+  SDB_ASSERT(
+    _row_type->size() == _column_oids.size(),
+    "RocksDBDataSink: column oids size {} doesn't match row type size {}",
+    _column_oids.size(), _row_type->size());
 }
 
 // TODO(Dronplane)
@@ -99,7 +98,7 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
   std::string table_key = key_utils::PrepareTableKey(_object_key);
   const auto parent_size = table_key.size();
   velox::IndexRange all_rows(0, input->size());
-  [[maybe_unused]]const auto& input_type = input->type()->asRow();
+  [[maybe_unused]] const auto& input_type = input->type()->asRow();
   for (const auto& key : _row_keys) {
     table_key.resize(parent_size);
     key_utils::AppendPrimaryKey(table_key, key);
@@ -127,7 +126,7 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
     // TODO(Dronplane) implement proper column name encoding
     SDB_ASSERT(!input->type()->asRow().nameOf(i).empty());
     table_key.resize(parent_size);
-    key_utils::AppendColumnKey(table_key,  _column_oids[i]);
+    key_utils::AppendColumnKey(table_key, _column_oids[i]);
     WriteColumn(table_key, input->childAt(i), folly::Range{&all_rows, 1}, {});
   }
 }
@@ -1994,18 +1993,17 @@ velox::connector::DataSink::Stats RocksDBDataSink::stats() const {
   return {};
 }
 
-RocksDBDeleteDataSink::RocksDBDeleteDataSink(rocksdb::Transaction& transaction,
-                                             rocksdb::ColumnFamilyHandle& cf,
-                                             velox::RowTypePtr row_type,
-                                             ObjectId object_key,
-                                            std::vector<key_utils::ColumnId> column_oids)
+RocksDBDeleteDataSink::RocksDBDeleteDataSink(
+  rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
+  velox::RowTypePtr row_type, ObjectId object_key,
+  std::vector<key_utils::ColumnId> column_oids)
   : _row_type{std::move(row_type)},
     _transaction{transaction},
     _cf{cf},
     _object_key{object_key},
     _column_oids{std::move(column_oids)} {
-    SDB_ASSERT(_object_key.isSet(), "RocksDBDataSource: object key is empty");
-    }
+  SDB_ASSERT(_object_key.isSet(), "RocksDBDataSource: object key is empty");
+}
 
 // TODO(issue#277): measure alternative approach
 void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {

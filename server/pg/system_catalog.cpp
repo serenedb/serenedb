@@ -210,6 +210,7 @@ const PgCatalogSchema kPgCatalog{
   MakeTable<SystemTable<PgTsTemplate>>(),
   MakeTable<SystemTable<PgType>>(),
   MakeTable<SystemTable<PgUserMapping>>(),
+  MakeTable<SystemTable<SdbLog>>(),
 };
 
 const PgCatalogSchema kInformationSchema{
@@ -217,10 +218,6 @@ const PgCatalogSchema kInformationSchema{
    MakeTable<SystemTable<SqlImplementationInfo>>(),
    MakeTable<SystemTable<SqlParts>>(),
    MakeTable<SystemTable<SqlSizing>>(),
-};
-
-const PgCatalogSchema kSdbCatalog{
-   MakeTable<SystemTable<SdbLog>>(),
 };
 // clang-format on
 
@@ -373,8 +370,6 @@ const VirtualTable* GetTable(std::string_view name) {
     return find(kPgCatalog);
   } else if (name.starts_with("sql_")) {
     return find(kInformationSchema);
-  } else if (name.starts_with("sdb_")) {
-    return find(kSdbCatalog);
   }
   return nullptr;
 }

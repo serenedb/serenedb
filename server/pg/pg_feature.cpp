@@ -38,6 +38,7 @@
 #include <velox/functions/sparksql/registration/Register.h>
 #include <velox/functions/sparksql/window/WindowFunctionsRegistration.h>
 #include <velox/type/Cost.h>
+#include <velox/type/Type.h>
 #include <velox/type/TypeCoercer.h>
 
 #include "basics/assert.h"
@@ -124,6 +125,21 @@ velox::AllowedCoercions AllowedCoercions() {
   add(velox::BIGINT(), {velox::HUGEINT(), velox::REAL(), velox::DOUBLE()});
   add(velox::REAL(), {velox::DOUBLE()});
   add(velox::DATE(), {velox::TIMESTAMP()});
+
+  coercions.emplace(std::make_pair<std::string, std::string>(
+                      PG_UNKNOWN()->name(), velox::VARCHAR()->name()),
+                    // If we have
+                    // 1. foo(varchar)
+                    // 2. foo(generic<T>)
+                    // Then for foo(pg_unknown) we should chooose the first
+                    // choice. cost = 0 is required for that
+                    velox::Coercion{.type = velox::VARCHAR(), .cost = 0});
+
+  add(PG_UNKNOWN(),
+      {velox::TINYINT(), velox::SMALLINT(), velox::INTEGER(), velox::BIGINT(),
+       velox::HUGEINT(), velox::REAL(), velox::DOUBLE(), velox::UNKNOWN()});
+
+  // TODO byteain byteaout date etc
 
   return coercions;
 }

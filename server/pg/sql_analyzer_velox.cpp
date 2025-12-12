@@ -831,6 +831,9 @@ class SqlAnalyzer {
     for (size_t i = 0; i < coercions.size(); ++i) {
       if (coercions[i]) {
         args[i] = MakeCast(coercions[i], std::move(args[i]));
+      } else if (args[i]->type() == PG_UNKNOWN()) {
+        // OK?
+        args[i] = MakeCast(velox::VARCHAR(), args[i]);
       }
     }
   }
@@ -3179,7 +3182,7 @@ lp::ExprPtr SqlAnalyzer::ProcessAExpr(State& state, const A_Expr& expr) {
 
 lp::ExprPtr SqlAnalyzer::ProcessAConst(State& state, const A_Const& expr) {
   if (expr.isnull) {
-    return MakeConst(velox::TypeKind::UNKNOWN);
+    return MakeConst(velox::TypeKind::UNKNOWN, PG_UNKNOWN());
   }
   switch (nodeTag(&expr.val)) {
     case T_Integer: {
@@ -3196,7 +3199,7 @@ lp::ExprPtr SqlAnalyzer::ProcessAConst(State& state, const A_Const& expr) {
     }
     case T_String: {
       std::string_view v = strVal(&expr.val);
-      return MakeConst(v);
+      return MakeConst(v, PG_UNKNOWN());
     }
     case T_BitString:
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -4077,9 +4080,13 @@ lp::ExprPtr SqlAnalyzer::ProcessTypeCast(State& state, const TypeCast& expr) {
 
   auto arg = ProcessExprNodeImpl(state, expr.arg);
 
+  // Avoid to sophisticate logical plan, so do not make a cast node
+  const bool arg_has_varchar_semantics =
+    arg->type() == velox::VARCHAR() || arg->type() == PG_UNKNOWN();
+
   // TODO(mkornaukhov): use velox::exec::CastHook for custom cast functions
   // instead of such hacks
-  if (arg->type() == velox::VARCHAR() && type == velox::VARBINARY()) {
+  if (arg_has_varchar_semantics && type == velox::VARBINARY()) {
     return std::make_shared<lp::CallExpr>(std::move(type), "pg_byteain",
                                           std::move(arg));
   }
@@ -4088,7 +4095,9 @@ lp::ExprPtr SqlAnalyzer::ProcessTypeCast(State& state, const TypeCast& expr) {
                                           std::move(arg));
   }
 
-  if (arg->type() == velox::VARCHAR() && pg::IsInterval(type)) {
+  // TODO add test NULL::varchar::bytea and NULL::bytea
+
+  if (arg_has_varchar_semantics && pg::IsInterval(type)) {
     const auto* typemod = type_name.typmods;
     auto range = TryGet<int>(typemod, 0).value_or(INTERVAL_FULL_RANGE);
     auto precision = TryGet<int>(typemod, 1).value_or(INTERVAL_FULL_PRECISION);

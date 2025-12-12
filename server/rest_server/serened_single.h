@@ -56,7 +56,6 @@ class SslServerFeature;
 class ConfigFeature;
 class LogBufferFeature;
 class BumpFileDescriptorsFeature;
-class CpuUsageFeature;
 class DaemonFeature;
 class MaxMapCountFeature;
 class EnvironmentFeature;
@@ -100,7 +99,6 @@ using SerenedFeaturesList = type::List<
 #ifdef SERENEDB_HAVE_GETRLIMIT
   BumpFileDescriptorsFeature,
 #endif
-  CpuUsageFeature,
 #ifdef SERENEDB_HAVE_FORK
   DaemonFeature,
 #endif

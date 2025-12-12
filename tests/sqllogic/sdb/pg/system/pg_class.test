@@ -70,6 +70,7 @@ oid	relname	reltablespace	relkind
 166	sql_implementation_info	0	r
 167	sql_parts	0	r
 168	sql_sizing	0	r
+999999	sdb_log	0	r
 
 
 statement ok

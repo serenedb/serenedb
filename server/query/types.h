@@ -49,7 +49,7 @@ bool IsInterval(const velox::TypePtr& type);
 bool IsInterval(const velox::Type& type);
 
 struct IntervalTrait {
-  using type = velox::int128_t;
+  using type = velox::int128_t;                           // NOLINT
   static constexpr const char* typeName = "PG_INTERVAL";  // NOLINT
 };
 using Interval = velox::CustomType<IntervalTrait>;
@@ -59,10 +59,10 @@ bool IsPgUnknown(const velox::TypePtr& type);
 bool IsPgUnknown(const velox::Type& type);
 
 struct PgUnknownTrait {
-  using type = velox::VarcharType;
+  using type = velox::VarcharType;                       // NOLINT
   static constexpr const char* typeName = "PG_UNKNOWN";  // NOLINT
 };
-using PgUnknown = velox::CustomType<IntervalTrait>;
+using PgUnknown = velox::CustomType<PgUnknownTrait>;
 
 void RegisterTypes();
 

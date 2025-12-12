@@ -4080,13 +4080,13 @@ lp::ExprPtr SqlAnalyzer::ProcessTypeCast(State& state, const TypeCast& expr) {
 
   auto arg = ProcessExprNodeImpl(state, expr.arg);
 
-  // Avoid to sophisticate logical plan, so do not make a cast node
-  const bool arg_has_varchar_semantics =
-    arg->type() == velox::VARCHAR() || arg->type() == PG_UNKNOWN();
+  if (arg->type() == PG_UNKNOWN()) {
+    arg = MakeCast(velox::VARCHAR(), arg);
+  }
 
   // TODO(mkornaukhov): use velox::exec::CastHook for custom cast functions
   // instead of such hacks
-  if (arg_has_varchar_semantics && type == velox::VARBINARY()) {
+  if (arg->type() == velox::VARCHAR() && type == velox::VARBINARY()) {
     return std::make_shared<lp::CallExpr>(std::move(type), "pg_byteain",
                                           std::move(arg));
   }
@@ -4097,7 +4097,7 @@ lp::ExprPtr SqlAnalyzer::ProcessTypeCast(State& state, const TypeCast& expr) {
 
   // TODO add test NULL::varchar::bytea and NULL::bytea
 
-  if (arg_has_varchar_semantics && pg::IsInterval(type)) {
+  if (arg->type() == velox::VARCHAR() && pg::IsInterval(type)) {
     const auto* typemod = type_name.typmods;
     auto range = TryGet<int>(typemod, 0).value_or(INTERVAL_FULL_RANGE);
     auto precision = TryGet<int>(typemod, 1).value_or(INTERVAL_FULL_PRECISION);

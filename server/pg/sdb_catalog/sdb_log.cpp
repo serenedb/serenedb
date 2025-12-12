@@ -23,6 +23,7 @@
 #include <bit>
 
 #include "app/app_server.h"
+#include "app/logger_feature.h"
 #include "basics/logger/logger.h"
 #include "rest_server/log_buffer_feature.h"
 
@@ -40,12 +41,16 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
 template<>
 std::vector<velox::VectorPtr> SystemTableSnapshot<SdbLog>::GetTableData(
   velox::memory::MemoryPool& pool) {
-  auto& log = SerenedServer::Instance().getFeature<LogBufferFeature>();
+  if (!SerenedServer::Instance().getFeature<LoggerFeature>().isAPIEnabled()) {
+    return std::vector<velox::VectorPtr>(boost::pfr::tuple_size_v<SdbLog>);
+  }
 
   std::vector<velox::VectorPtr> result;
   result.reserve(boost::pfr::tuple_size_v<SdbLog>);
 
-  auto entries = log.entries(LogLevel::TRACE, 0, true, {});
+  auto entries =
+    SerenedServer::Instance().getFeature<LogBufferFeature>().entries(
+      LogLevel::TRACE, 0, true, {});
   std::vector<SdbLog> values;
   values.reserve(entries.size());
 

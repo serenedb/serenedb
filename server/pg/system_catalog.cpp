@@ -366,7 +366,7 @@ const VirtualTable* GetTable(std::string_view name) {
     }
     return *it;
   };
-  if (name.starts_with("pg_")) {
+  if (name.starts_with("pg_") || name.starts_with("sdb_")) {
     return find(kPgCatalog);
   } else if (name.starts_with("sql_")) {
     return find(kInformationSchema);

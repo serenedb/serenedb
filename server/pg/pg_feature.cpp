@@ -135,9 +135,9 @@ velox::AllowedCoercions AllowedCoercions() {
                     // choice. cost = 0 is required for that
                     velox::Coercion{.type = velox::VARCHAR(), .cost = 0});
 
-  add(PG_UNKNOWN(),
-      {velox::TINYINT(), velox::SMALLINT(), velox::INTEGER(), velox::BIGINT(),
-       velox::HUGEINT(), velox::REAL(), velox::DOUBLE(), velox::UNKNOWN()});
+  add(PG_UNKNOWN(), {velox::TINYINT(), velox::SMALLINT(), velox::INTEGER(),
+                     velox::BIGINT(), velox::HUGEINT(), velox::REAL(),
+                     velox::DOUBLE(), velox::BOOLEAN(), velox::UNKNOWN()});
 
   // TODO byteain byteaout date etc
 

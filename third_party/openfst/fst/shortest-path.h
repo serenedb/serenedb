@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -20,6 +20,8 @@
 #ifndef FST_SHORTEST_PATH_H_
 #define FST_SHORTEST_PATH_H_
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <type_traits>
@@ -27,13 +29,19 @@
 #include <vector>
 
 #include <fst/log.h>
-
+#include <fst/arc.h>
+#include <fst/arcfilter.h>
 #include <fst/cache.h>
+#include <fst/connect.h>
 #include <fst/determinize.h>
+#include <fst/fst.h>
+#include <fst/mutable-fst.h>
+#include <fst/properties.h>
 #include <fst/queue.h>
+#include <fst/reverse.h>
 #include <fst/shortest-distance.h>
-#include <fst/test-properties.h>
-
+#include <fst/vector-fst.h>
+#include <fst/weight.h>
 
 namespace fst {
 
@@ -179,15 +187,15 @@ bool SingleShortestPath(
   auto f_distance = Weight::Zero();
   distance->clear();
   state_queue->Clear();
-  while (distance->size() < source) {
-    distance->push_back(Weight::Zero());
-    enqueued.push_back(false);
-    parent->emplace_back(kNoStateId, kNoArc);
+  if (distance->size() < source) {
+    distance->resize(source, Weight::Zero());
+    enqueued.resize(source, false);
+    parent->resize(source, std::make_pair(kNoStateId, kNoArc));
   }
   distance->push_back(Weight::One());
+  enqueued.push_back(true);
   parent->emplace_back(kNoStateId, kNoArc);
   state_queue->Enqueue(source);
-  enqueued.push_back(true);
   while (!state_queue->Empty()) {
     const auto s = state_queue->Head();
     state_queue->Dequeue();
@@ -200,8 +208,8 @@ bool SingleShortestPath(
         FirstPath(*state_queue)(s, sd, f_distance)) {
       break;
     }
-    if (ifst.Final(s) != Weight::Zero()) {
-      const auto plus = Plus(f_distance, Times(sd, ifst.Final(s)));
+    if (const auto final = ifst.Final(s); final != Weight::Zero()) {
+      const auto plus = Plus(f_distance, Times(sd, final));
       if (f_distance != plus) {
         f_distance = plus;
         *f_parent = s;
@@ -211,15 +219,15 @@ bool SingleShortestPath(
     }
     for (ArcIterator<Fst<Arc>> aiter(ifst, s); !aiter.Done(); aiter.Next()) {
       const auto &arc = aiter.Value();
-      while (distance->size() <= arc.nextstate) {
-        distance->push_back(Weight::Zero());
-        enqueued.push_back(false);
-        parent->emplace_back(kNoStateId, kNoArc);
+      if (distance->size() <= arc.nextstate) {
+        distance->resize(arc.nextstate + 1, Weight::Zero());
+        enqueued.resize(arc.nextstate + 1, false);
+        parent->resize(arc.nextstate + 1, std::make_pair(kNoStateId, kNoArc));
       }
       auto &nd = (*distance)[arc.nextstate];
       const auto weight = Times(sd, arc.weight);
-      if (nd != Plus(nd, weight)) {
-        nd = Plus(nd, weight);
+      if (const auto plus = Plus(nd, weight); nd != plus) {
+        nd = plus;
         if (!nd.Member()) return false;
         (*parent)[arc.nextstate] = std::make_pair(s, aiter.Position());
         if (!enqueued[arc.nextstate]) {
@@ -264,9 +272,9 @@ class ShortestPathCompare {
 
  private:
   Weight PWeight(StateId state) const {
-    return (state == superfinal_)
-               ? Weight::One()
-               : (state < distance_.size()) ? distance_[state] : Weight::Zero();
+    return (state == superfinal_)       ? Weight::One()
+           : (state < distance_.size()) ? distance_[state]
+                                        : Weight::Zero();
   }
 
   const std::vector<std::pair<StateId, Weight>> &pairs_;
@@ -361,10 +369,9 @@ void NShortestPath(const Fst<RevArc> &ifst, MutableFst<Arc> *ofst,
     const auto state = heap.back();
     const auto p = pairs[state];
     heap.pop_back();
-    const auto d =
-        (p.first == kNoStateId)
-            ? Weight::One()
-            : (p.first < distance.size()) ? distance[p.first] : Weight::Zero();
+    const auto d = (p.first == kNoStateId)       ? Weight::One()
+                   : (p.first < distance.size()) ? distance[p.first]
+                                                 : Weight::Zero();
     if (less(limit, Times(d, p.second)) ||
         (state_threshold != kNoStateId &&
          ofst->NumStates() >= state_threshold)) {

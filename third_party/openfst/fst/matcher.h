@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -20,16 +20,23 @@
 #ifndef FST_MATCHER_H_
 #define FST_MATCHER_H_
 
+#include <sys/types.h>
+
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <map>
 #include <memory>
+#include <optional>
 #include <tuple>
+#include <unordered_map>
 #include <utility>
 
 #include <fst/log.h>
-
+#include <fst/fst.h>
 #include <fst/mutable-fst.h>  // for all internal FST accessors.
-
+#include <fst/properties.h>
+#include <fst/util.h>
 #include <unordered_map>
 #include <optional>
 
@@ -137,7 +144,7 @@ class MatcherBase {
   using StateId = typename Arc::StateId;
   using Weight = typename Arc::Weight;
 
-  virtual ~MatcherBase() {}
+  virtual ~MatcherBase() = default;
 
   // Virtual interface.
 
@@ -203,8 +210,7 @@ class SortedMatcher : public MatcherBase<typename F::Arc> {
       case MATCH_NONE:
         break;
       case MATCH_OUTPUT:
-        using std::swap;
-        swap(loop_.ilabel, loop_.olabel);
+        std::swap(loop_.ilabel, loop_.olabel);
         break;
       default:
         FSTERROR() << "SortedMatcher: Bad match type";

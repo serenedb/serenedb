@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -24,9 +24,13 @@
 #include <cstdint>
 #include <vector>
 
-
 #include <fst/cache.h>
-
+#include <fst/cc-visitors.h>
+#include <fst/dfs-visit.h>
+#include <fst/expanded-fst.h>
+#include <fst/fst.h>
+#include <fst/mutable-fst.h>
+#include <fst/properties.h>
 
 namespace fst {
 
@@ -52,8 +56,8 @@ void Reverse(const Fst<FromArc> &ifst, MutableFst<ToArc> *ofst,
   ofst->DeleteStates();
   ofst->SetInputSymbols(ifst.InputSymbols());
   ofst->SetOutputSymbols(ifst.OutputSymbols());
-  if (ifst.Properties(kExpanded, false)) {
-    ofst->ReserveStates(CountStates(ifst) + 1);
+  if (std::optional<StateId> num_states = ifst.NumStatesIfKnown()) {
+    ofst->ReserveStates(*num_states + 1);
   }
   StateId istart = ifst.Start();
   StateId ostart = kNoStateId;

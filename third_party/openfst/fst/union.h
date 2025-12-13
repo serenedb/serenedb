@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -24,11 +24,18 @@
 #include <utility>
 #include <vector>
 
-
+#include <fst/log.h>
+#include <fst/arc.h>
+#include <fst/cache.h>
 #include <fst/expanded-fst.h>
+#include <fst/float-weight.h>
+#include <fst/fst.h>
+#include <fst/impl-to-fst.h>
 #include <fst/mutable-fst.h>
+#include <fst/properties.h>
 #include <fst/rational.h>
-
+#include <fst/symbol-table.h>
+#include <fst/util.h>
 
 namespace fst {
 
@@ -64,9 +71,9 @@ void Union(MutableFst<Arc> *fst1, const Fst<Arc> &fst2) {
     if (props2 & kError) fst1->SetProperties(kError, kError);
     return;
   }
-  if (fst2.Properties(kExpanded, false)) {
-    fst1->ReserveStates(numstates1 + CountStates(fst2) +
-                        (initial_acyclic1 ? 0 : 1));
+  if (std::optional<typename Arc::StateId> numstates2 =
+          fst2.NumStatesIfKnown()) {
+    fst1->ReserveStates(numstates1 + *numstates2 + (initial_acyclic1 ? 0 : 1));
   }
   for (StateIterator<Fst<Arc>> siter(fst2); !siter.Done(); siter.Next()) {
     const auto s1 = fst1->AddState();
@@ -128,6 +135,8 @@ using UnionFstOptions = RationalFstOptions;
 // arc is assumed and exclusive of caching.
 template <class A>
 class UnionFst : public RationalFst<A> {
+  using Base = RationalFst<A>;
+
  public:
   using Arc = A;
   using StateId = typename Arc::StateId;
@@ -139,13 +148,12 @@ class UnionFst : public RationalFst<A> {
 
   UnionFst(const Fst<Arc> &fst1, const Fst<Arc> &fst2,
            const UnionFstOptions &opts)
-      : RationalFst<Arc>(opts) {
+      : Base(opts) {
     GetMutableImpl()->InitUnion(fst1, fst2);
   }
 
   // See Fst<>::Copy() for doc.
-  UnionFst(const UnionFst &fst, bool safe = false)
-      : RationalFst<Arc>(fst, safe) {}
+  UnionFst(const UnionFst &fst, bool safe = false) : Base(fst, safe) {}
 
   // Gets a copy of this UnionFst. See Fst<>::Copy() for further doc.
   UnionFst *Copy(bool safe = false) const override {
@@ -153,8 +161,8 @@ class UnionFst : public RationalFst<A> {
   }
 
  private:
-  using ImplToFst<internal::RationalFstImpl<Arc>>::GetImpl;
-  using ImplToFst<internal::RationalFstImpl<Arc>>::GetMutableImpl;
+  using Base::GetImpl;
+  using Base::GetMutableImpl;
 };
 
 // Specialization for UnionFst.

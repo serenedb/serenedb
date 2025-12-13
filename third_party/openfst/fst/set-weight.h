@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -23,16 +23,23 @@
 #define FST_SET_WEIGHT_H_
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <ios>
+#include <istream>
 #include <list>
+#include <optional>
+#include <ostream>
 #include <random>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include <fst/log.h>
 #include <fst/union-weight.h>
+#include <fst/util.h>
 #include <fst/weight.h>
 #include <string_view>
-
 
 namespace fst {
 
@@ -71,7 +78,7 @@ class SetWeight {
   template <typename L2, SetType S2>
   friend class SetWeight;
 
-  SetWeight() {}
+  SetWeight() = default;
 
   // Input should be positive, sorted and unique.
   template <typename Iterator>

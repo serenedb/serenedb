@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -41,7 +41,7 @@ inline constexpr int kAllocFit = 4;
 // easily manipulate collections of variously sized arenas.
 class MemoryArenaBase {
  public:
-  virtual ~MemoryArenaBase() {}
+  virtual ~MemoryArenaBase() = default;
   virtual size_t Size() const = 0;
 };
 
@@ -99,7 +99,7 @@ using MemoryArena = internal::MemoryArenaImpl<sizeof(T)>;
 // manipulate collections of variously sized pools.
 class MemoryPoolBase {
  public:
-  virtual ~MemoryPoolBase() {}
+  virtual ~MemoryPoolBase() = default;
   virtual size_t Size() const = 0;
 };
 
@@ -241,7 +241,8 @@ class BlockAllocator {
     if (n * kAllocFit <= kAllocSize) {
       return static_cast<T *>(Arena()->Allocate(n));
     } else {
-      return Allocator().allocate(n, hint);
+      auto allocator = Allocator();
+      return std::allocator_traits<Allocator>::allocate(allocator, n, hint);
     }
   }
 
@@ -291,7 +292,7 @@ class PoolAllocator {
   explicit PoolAllocator(const PoolAllocator<U> &pool_alloc)
       : pools_(pool_alloc.Pools()) {}
 
-  T *allocate(size_type n) {
+  T *allocate(size_type n, const void *hint = nullptr) {
     if (n == 1) {
       return static_cast<T *>(Pool<1>()->Allocate());
     } else if (n == 2) {
@@ -307,7 +308,8 @@ class PoolAllocator {
     } else if (n <= 64) {
       return static_cast<T *>(Pool<64>()->Allocate());
     } else {
-      return Allocator().allocate(n);
+      auto allocator = Allocator();
+      return std::allocator_traits<Allocator>::allocate(allocator, n, hint);
     }
   }
 

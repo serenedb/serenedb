@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -19,7 +19,19 @@
 #include <fst/symbol-table-ops.h>
 
 #include <cstdint>
+#include <functional>
+#include <ios>
+#include <map>
+#include <memory>
 #include <string>
+#include <utility>
+#include <vector>
+
+#include <fst/log.h>
+#include <fstream>
+#include <fst/fst.h>
+#include <fst/symbol-table.h>
+#include <fst/util.h>
 
 namespace fst {
 
@@ -80,13 +92,14 @@ SymbolTable *CompactSymbolTable(const SymbolTable &syms) {
   for (const auto &stitem : syms) {
     sorted[stitem.Label()] = stitem.Symbol();
   }
-  auto *compact = new SymbolTable(syms.Name() + "_compact");
+  auto compact = std::make_unique<SymbolTable>(syms.Name() + "_compact");
   int64_t newkey = 0;
   for (const auto &kv : sorted) compact->AddSymbol(kv.second, newkey++);
-  return compact;
+  return compact.release();
 }
 
-SymbolTable *FstReadSymbols(const std::string &source, bool input_symbols) {
+SymbolTable * FstReadSymbols(const std::string &source,
+                                             bool input_symbols) {
   std::ifstream in(source, std::ios_base::in | std::ios_base::binary);
   if (!in) {
     LOG(ERROR) << "FstReadSymbols: Can't open file " << source;

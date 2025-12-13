@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -22,16 +22,17 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <istream>
+#include <ostream>
 #include <string>
 #include <vector>
 
 #include <fst/flags.h>
 #include <fst/log.h>
-
 #include <fst/weight.h>
-
 
 namespace fst {
 

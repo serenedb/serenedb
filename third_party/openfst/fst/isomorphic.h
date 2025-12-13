@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -24,14 +24,17 @@
 #define FST_ISOMORPHIC_H_
 
 #include <algorithm>
+#include <cstddef>
+#include <memory>
 #include <queue>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include <fst/log.h>
-
 #include <fst/fst.h>
-
+#include <fst/util.h>
+#include <fst/weight.h>
 
 namespace fst {
 namespace internal {

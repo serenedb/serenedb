@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -21,14 +21,15 @@
 #ifndef FST_COMPOSE_FILTER_H_
 #define FST_COMPOSE_FILTER_H_
 
+#include <cstddef>
 #include <cstdint>
-
+#include <memory>
 
 #include <fst/filter-state.h>
 #include <fst/fst-decl.h>  // For optional argument declarations
 #include <fst/fst.h>
 #include <fst/matcher.h>
-
+#include <fst/properties.h>
 
 namespace fst {
 
@@ -254,8 +255,9 @@ class SequenceComposeFilter {
 
   FilterState FilterArc(Arc *arc1, Arc *arc2) const {
     if (arc1->olabel == kNoLabel) {
-      return alleps1_ ? FilterState::NoState()
-                      : noeps1_ ? FilterState(0) : FilterState(1);
+      return alleps1_  ? FilterState::NoState()
+             : noeps1_ ? FilterState(0)
+                       : FilterState(1);
     } else if (arc2->ilabel == kNoLabel) {
       return fs_ != FilterState(0) ? FilterState::NoState() : FilterState(0);
     } else {
@@ -333,8 +335,9 @@ class AltSequenceComposeFilter {
 
   FilterState FilterArc(Arc *arc1, Arc *arc2) const {
     if (arc2->ilabel == kNoLabel) {
-      return alleps2_ ? FilterState::NoState()
-                      : noeps2_ ? FilterState(0) : FilterState(1);
+      return alleps2_  ? FilterState::NoState()
+             : noeps2_ ? FilterState(0)
+                       : FilterState(1);
     } else if (arc1->olabel == kNoLabel) {
       return fs_ == FilterState(1) ? FilterState::NoState() : FilterState(0);
     } else {

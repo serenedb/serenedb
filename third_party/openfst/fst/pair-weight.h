@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -21,7 +21,11 @@
 #ifndef FST_PAIR_WEIGHT_H_
 #define FST_PAIR_WEIGHT_H_
 
+#include <climits>
+#include <cstddef>
 #include <cstdint>
+#include <istream>
+#include <ostream>
 #include <random>
 #include <stack>
 #include <string>
@@ -29,9 +33,7 @@
 
 #include <fst/flags.h>
 #include <fst/log.h>
-
 #include <fst/weight.h>
-
 
 namespace fst {
 
@@ -41,7 +43,7 @@ class PairWeight {
   using ReverseWeight =
       PairWeight<typename W1::ReverseWeight, typename W2::ReverseWeight>;
 
-  PairWeight() {}
+  PairWeight() = default;
 
   PairWeight(W1 w1, W2 w2) : value1_(std::move(w1)), value2_(std::move(w2)) {}
 

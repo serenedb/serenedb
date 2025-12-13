@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -22,17 +22,26 @@
 #ifndef FST_STATE_MAP_H_
 #define FST_STATE_MAP_H_
 
+#include <sys/types.h>
+
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include <fst/log.h>
-
 #include <fst/arc-map.h>
+#include <fst/arc.h>
 #include <fst/cache.h>
+#include <fst/expanded-fst.h>
+#include <fst/float-weight.h>
+#include <fst/fst.h>
+#include <fst/impl-to-fst.h>
 #include <fst/mutable-fst.h>
+#include <fst/properties.h>
 
 namespace fst {
 
@@ -141,7 +150,9 @@ void StateMap(const Fst<A> &ifst, MutableFst<B> *ofst, C *mapper) {
     return;
   }
   // Adds all states.
-  if (ifst.Properties(kExpanded, false)) ofst->ReserveStates(CountStates(ifst));
+  if (std::optional<typename A::StateId> num_states = ifst.NumStatesIfKnown()) {
+    ofst->ReserveStates(*num_states);
+  }
   for (StateIterator<Fst<A>> siter(ifst); !siter.Done(); siter.Next()) {
     ofst->AddState();
   }
@@ -335,6 +346,8 @@ class StateMapFstImpl : public CacheImpl<B> {
 // C. This version is a delayed FST.
 template <class A, class B, class C>
 class StateMapFst : public ImplToFst<internal::StateMapFstImpl<A, B, C>> {
+  using Base = ImplToFst<internal::StateMapFstImpl<A, B, C>>;
+
  public:
   friend class ArcIterator<StateMapFst<A, B, C>>;
 
@@ -343,26 +356,23 @@ class StateMapFst : public ImplToFst<internal::StateMapFstImpl<A, B, C>> {
   using Weight = typename Arc::Weight;
   using Store = DefaultCacheStore<Arc>;
   using State = typename Store::State;
-  using Impl = internal::StateMapFstImpl<A, B, C>;
+  using typename Base::Impl;
 
   StateMapFst(const Fst<A> &fst, const C &mapper,
               const StateMapFstOptions &opts)
-      : ImplToFst<Impl>(std::make_shared<Impl>(fst, mapper, opts)) {}
+      : Base(std::make_shared<Impl>(fst, mapper, opts)) {}
 
   StateMapFst(const Fst<A> &fst, C *mapper, const StateMapFstOptions &opts)
-      : ImplToFst<Impl>(std::make_shared<Impl>(fst, mapper, opts)) {}
+      : Base(std::make_shared<Impl>(fst, mapper, opts)) {}
 
   StateMapFst(const Fst<A> &fst, const C &mapper)
-      : ImplToFst<Impl>(
-            std::make_shared<Impl>(fst, mapper, StateMapFstOptions())) {}
+      : Base(std::make_shared<Impl>(fst, mapper, StateMapFstOptions())) {}
 
   StateMapFst(const Fst<A> &fst, C *mapper)
-      : ImplToFst<Impl>(
-            std::make_shared<Impl>(fst, mapper, StateMapFstOptions())) {}
+      : Base(std::make_shared<Impl>(fst, mapper, StateMapFstOptions())) {}
 
   // See Fst<>::Copy() for doc.
-  StateMapFst(const StateMapFst &fst, bool safe = false)
-      : ImplToFst<Impl>(fst, safe) {}
+  StateMapFst(const StateMapFst &fst, bool safe = false) : Base(fst, safe) {}
 
   // Get a copy of this StateMapFst. See Fst<>::Copy() for further doc.
   StateMapFst *Copy(bool safe = false) const override {
@@ -378,8 +388,8 @@ class StateMapFst : public ImplToFst<internal::StateMapFstImpl<A, B, C>> {
   }
 
  protected:
-  using ImplToFst<Impl>::GetImpl;
-  using ImplToFst<Impl>::GetMutableImpl;
+  using Base::GetImpl;
+  using Base::GetMutableImpl;
 
  private:
   StateMapFst &operator=(const StateMapFst &) = delete;

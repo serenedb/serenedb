@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -22,16 +22,19 @@
 #ifndef FST_ADD_ON_H_
 #define FST_ADD_ON_H_
 
-#include <stddef.h>
-
+#include <cstddef>
 #include <cstdint>
+#include <istream>
 #include <memory>
+#include <ostream>
 #include <string>
 #include <utility>
 
 #include <fst/log.h>
-
 #include <fst/fst.h>
+#include <fst/properties.h>
+#include <fst/util.h>
+#include <string_view>
 
 namespace fst {
 
@@ -41,7 +44,7 @@ inline constexpr int32_t kAddOnMagicNumber = 446681434;
 // Nothing to save.
 class NullAddOn {
  public:
-  NullAddOn() {}
+  NullAddOn() = default;
 
   static NullAddOn *Read(std::istream &strm, const FstReadOptions &opts) {
     return new NullAddOn();
@@ -122,7 +125,7 @@ class AddOnImpl : public FstImpl<typename FST::Arc> {
 
   // We make a thread-safe copy of the FST by default since an FST
   // implementation is expected to not share mutable data between objects.
-  AddOnImpl(const FST &fst, const std::string &type,
+  AddOnImpl(const FST &fst, std::string_view type,
             std::shared_ptr<T> t = nullptr)
       : fst_(fst, true), t_(std::move(t)) {
     SetType(type);
@@ -133,7 +136,7 @@ class AddOnImpl : public FstImpl<typename FST::Arc> {
 
   // Conversion from const Fst<Arc> & to F always copies the underlying
   // implementation.
-  AddOnImpl(const Fst<Arc> &fst, const std::string &type,
+  AddOnImpl(const Fst<Arc> &fst, std::string_view type,
             std::shared_ptr<T> t = nullptr)
       : fst_(fst), t_(std::move(t)) {
     SetType(type);
@@ -232,7 +235,7 @@ class AddOnImpl : public FstImpl<typename FST::Arc> {
   void SetAddOn(std::shared_ptr<T> t) { t_ = t; }
 
  private:
-  explicit AddOnImpl(const std::string &type) : t_() {
+  explicit AddOnImpl(std::string_view type) : t_() {
     SetType(type);
     SetProperties(kExpanded);
   }

@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -21,12 +21,16 @@
 #define FST_TEST_PROPERTIES_H_
 
 #include <cstdint>
+#include <optional>
+#include <vector>
 
 #include <fst/flags.h>
-
-#include <fst/connect.h>
+#include <fst/log.h>
+#include <fst/cc-visitors.h>
 #include <fst/dfs-visit.h>
-
+#include <fst/fst.h>
+#include <fst/properties.h>
+#include <fst/util.h>
 #include <unordered_set>
 
 DECLARE_bool(fst_verify_properties);
@@ -40,7 +44,7 @@ namespace internal {
 // specifically requested in the mask, certain other properties may be
 // determined (those with little additional expense) and their values will be
 // returned as well. The complete set of known properties (whether true or
-// false) determined by this operation will be assigned to the the value pointed
+// false) determined by this operation will be assigned to the value pointed
 // to by KNOWN. 'mask & required_mask' is used to determine whether the stored
 // properties can be used. This routine is seldom called directly; instead it is
 // used to implement fst.Properties(mask, /*test=*/true).
@@ -79,18 +83,18 @@ uint64_t ComputeProperties(const Fst<Arc> &fst, uint64_t mask,
     if (mask & (kDfsProps | kWeightedCycles | kUnweightedCycles)) {
       comp_props |= kUnweightedCycles;
     }
-    std::unique_ptr<std::unordered_set<Label>> ilabels;
-    std::unique_ptr<std::unordered_set<Label>> olabels;
+    std::optional<std::unordered_set<Label>> ilabels;
+    std::optional<std::unordered_set<Label>> olabels;
     StateId nfinal = 0;
     for (StateIterator<Fst<Arc>> siter(fst); !siter.Done(); siter.Next()) {
       StateId s = siter.Value();
       Arc prev_arc;
       // Creates these only if we need to.
       if (mask & (kIDeterministic | kNonIDeterministic)) {
-        ilabels = std::make_unique<std::unordered_set<Label>>();
+        ilabels.emplace();
       }
       if (mask & (kODeterministic | kNonODeterministic)) {
-        olabels = std::make_unique<std::unordered_set<Label>>();
+        olabels.emplace();
       }
       bool first_arc = true;
       for (ArcIterator<Fst<Arc>> aiter(fst, s); !aiter.Done(); aiter.Next()) {

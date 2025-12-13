@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -20,6 +20,8 @@
 #ifndef FST_DISAMBIGUATE_H_
 #define FST_DISAMBIGUATE_H_
 
+#include <sys/types.h>
+
 #include <cstdint>
 #include <list>
 #include <map>
@@ -28,18 +30,29 @@
 #include <utility>
 #include <vector>
 
-
+#include <fst/log.h>
 #include <fst/arcsort.h>
+#include <fst/cc-visitors.h>
+#include <fst/compose-filter.h>
 #include <fst/compose.h>
 #include <fst/connect.h>
 #include <fst/determinize.h>
 #include <fst/dfs-visit.h>
+#include <fst/expanded-fst.h>
+#include <fst/filter-state.h>
+#include <fst/fst.h>
+#include <fst/matcher.h>
+#include <fst/mutable-fst.h>
 #include <fst/project.h>
+#include <fst/properties.h>
 #include <fst/prune.h>
 #include <fst/state-map.h>
 #include <fst/state-table.h>
 #include <fst/union-find.h>
+#include <fst/util.h>
+#include <fst/vector-fst.h>
 #include <fst/verify.h>
+#include <fst/weight.h>
 
 namespace fst {
 
@@ -103,9 +116,9 @@ class RelationDeterminizeFilter {
   RelationDeterminizeFilter(const RelationDeterminizeFilter &filter,
                             const Fst<Arc> *fst = nullptr)
       : fst_(fst ? fst->Copy() : filter.fst_->Copy()),
-        head_(nullptr) ,
+        head_(nullptr),
         r_(std::make_unique<Relation>(*filter.r_)),
-        s_(kNoStateId){}
+        s_(kNoStateId) {}
 
   FilterState Start() const { return FilterState(fst_->Start()); }
 
@@ -465,7 +478,7 @@ void Disambiguator<Arc>::FindAmbiguousPairs(const ExpandedFst<Arc> &fst,
               head_[spr.first] == head_[spr.second]) {
             if (!merge_) {
               merge_ = std::make_unique<UnionFind<StateId>>(fst.NumStates(),
-                                                             kNoStateId);
+                                                            kNoStateId);
               merge_->MakeAllSet(fst.NumStates());
             }
             merge_->Union(spr.first, spr.second);

@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -23,16 +23,22 @@
 #include <algorithm>
 #include <cstdint>
 #include <queue>
+#include <utility>
 #include <vector>
 
 #include <fst/log.h>
-
+#include <fst/arc-map.h>
 #include <fst/encode.h>
+#include <fst/fst.h>
+#include <fst/properties.h>
 #include <fst/push.h>
+#include <fst/reweight.h>
+#include <fst/symbol-table.h>
 #include <fst/union-find.h>
+#include <fst/util.h>
 #include <fst/vector-fst.h>
+#include <fst/weight.h>
 #include <unordered_map>
-
 
 namespace fst {
 namespace internal {

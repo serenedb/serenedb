@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -23,6 +23,9 @@
 #include <fst/compat.h>
 #include <string_view>
 #include <fst/lock.h>
+#ifndef FST_NO_DYNAMIC_LINKING
+#include <dlfcn.h>
+#endif
 #include <map>
 #include <string>
 
@@ -81,13 +84,35 @@ class GenericRegister {
     }
   }
 
-  virtual ~GenericRegister() {}
+  virtual ~GenericRegister() = default;
 
  protected:
   // Override this if you want to be able to load missing definitions from
   // shared object files.
   virtual EntryType LoadEntryFromSharedObject(KeyLookupRef key) const {
+#ifdef FST_NO_DYNAMIC_LINKING
     return EntryType();
+#else
+    const auto so_filename = ConvertKeyToSoFilename(key);
+    void *handle = dlopen(so_filename.c_str(), RTLD_LAZY);
+    if (handle == nullptr) {
+      LOG(ERROR) << "GenericRegister::GetEntry: " << dlerror();
+      return EntryType();
+    }
+#ifdef RUN_MODULE_INITIALIZERS
+    RUN_MODULE_INITIALIZERS();
+#endif
+    // We assume that the DSO constructs a static object in its global scope
+    // that does the registration. Thus we need only load it, not call any
+    // methods.
+    const auto *entry = this->LookupEntry(key);
+    if (entry == nullptr) {
+      LOG(ERROR) << "GenericRegister::GetEntry: "
+                 << "lookup failed in shared object: " << so_filename;
+      return EntryType();
+    }
+    return *entry;
+#endif  // FST_NO_DYNAMIC_LINKING
   }
 
   // Override this to define how to turn a key into an SO filename.
@@ -95,8 +120,8 @@ class GenericRegister {
 
   virtual const EntryType *LookupEntry(KeyLookupRef key) const {
     MutexLock l(&register_lock_);
-    const auto it = register_table_.find(key);
-    if (it != register_table_.end()) {
+    if (const auto it = register_table_.find(key);
+        it != register_table_.end()) {
       return &it->second;
     } else {
       return nullptr;

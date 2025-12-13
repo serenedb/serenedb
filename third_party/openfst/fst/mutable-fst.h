@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -25,6 +25,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <ios>
+#include <iostream>
 #include <istream>
 #include <memory>
 #include <string>
@@ -32,26 +34,16 @@
 #include <vector>
 
 #include <fst/log.h>
-#include <fstream>
-
+#include <fst/arc.h>
 #include <fst/expanded-fst.h>
+#include <fstream>
+#include <fst/fst.h>
+#include <fst/properties.h>
+#include <fst/register.h>
+#include <fst/symbol-table.h>
 #include <string_view>
 
 namespace fst {
-
-namespace detail {
-
-template<typename T>
-std::enable_if_t<!std::is_void_v<decltype(std::declval<T>().GetAlloc())>,
-                 std::true_type>
-has_alloc_helper(int);
-
-template<typename>
-std::false_type has_alloc_helper(...);
-
-template<typename T>
-struct has_alloc : decltype(has_alloc_helper<T>(0)) {};
-}  // namespace
 
 template <class Arc>
 struct MutableArcIteratorData;
@@ -297,17 +289,19 @@ inline ssize_t NumOutputEpsilons(const MutableFst<Arc> &fst,
 // A useful alias when using StdArc.
 using StdMutableFst = MutableFst<StdArc>;
 
-
 // This is a helper class template useful for attaching a MutableFst interface
 // to its implementation, handling reference counting and COW semantics.
-template <class Impl, class FST = MutableFst<typename Impl::Arc>>
-class ImplToMutableFst : public ImplToExpandedFst<Impl, FST> {
+template <class I, class FST = MutableFst<typename I::Arc>>
+class ImplToMutableFst : public ImplToExpandedFst<I, FST> {
+  using Base = ImplToExpandedFst<I, FST>;
+
  public:
+  using Impl = I;
   using Arc = typename Impl::Arc;
   using StateId = typename Arc::StateId;
   using Weight = typename Arc::Weight;
 
-  using ImplToExpandedFst<Impl, FST>::operator=;
+  using Base::operator=;
 
   void SetStart(StateId s) override {
     MutateCheck();
@@ -356,11 +350,7 @@ class ImplToMutableFst : public ImplToExpandedFst<Impl, FST> {
     if (!Unique()) {
       const auto *isymbols = GetImpl()->InputSymbols();
       const auto *osymbols = GetImpl()->OutputSymbols();
-      if constexpr (detail::has_alloc<Impl>::value) {
-        SetImpl(std::make_shared<Impl>(GetImpl()->GetAlloc()));
-      } else {
-        SetImpl(std::make_shared<Impl>());
-      }
+      SetImpl(std::make_shared<Impl>());
       GetMutableImpl()->SetInputSymbols(isymbols);
       GetMutableImpl()->SetOutputSymbols(osymbols);
     } else {
@@ -417,26 +407,18 @@ class ImplToMutableFst : public ImplToExpandedFst<Impl, FST> {
   }
 
  protected:
-  using ImplToExpandedFst<Impl, FST>::GetImpl;
-  using ImplToExpandedFst<Impl, FST>::GetMutableImpl;
-  using ImplToExpandedFst<Impl, FST>::Unique;
-  using ImplToExpandedFst<Impl, FST>::SetImpl;
-  using ImplToExpandedFst<Impl, FST>::InputSymbols;
+  using Base::GetImpl;
+  using Base::GetMutableImpl;
+  using Base::InputSymbols;
+  using Base::SetImpl;
+  using Base::Unique;
 
-  explicit ImplToMutableFst(std::shared_ptr<Impl> impl)
-      : ImplToExpandedFst<Impl, FST>(impl) {}
+  explicit ImplToMutableFst(std::shared_ptr<Impl> impl) : Base(impl) {}
 
-  ImplToMutableFst(const ImplToMutableFst &fst, bool safe)
-      : ImplToExpandedFst<Impl, FST>(fst, safe) {}
+  ImplToMutableFst(const ImplToMutableFst &fst, bool safe) : Base(fst, safe) {}
 
   void MutateCheck() {
-    if (!Unique()) {
-      if constexpr (detail::has_alloc<Impl>::value) {
-        SetImpl(std::make_shared<Impl>(*this, this->GetImpl()->GetAlloc()));
-      } else {
-        SetImpl(std::make_shared<Impl>(*this));
-      }
-    }
+    if (!Unique()) SetImpl(std::make_shared<Impl>(*this));
   }
 };
 

@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -21,11 +21,17 @@
 #define FST_INVERT_H_
 
 #include <cstdint>
-
+#include <memory>
 
 #include <fst/arc-map.h>
+#include <fst/arc.h>
+#include <fst/cache.h>
+#include <fst/float-weight.h>
+#include <fst/fst.h>
+#include <fst/impl-to-fst.h>
 #include <fst/mutable-fst.h>
-
+#include <fst/properties.h>
+#include <fst/symbol-table.h>
 
 namespace fst {
 
@@ -35,7 +41,7 @@ struct InvertMapper {
   using FromArc = A;
   using ToArc = A;
 
-  InvertMapper() {}
+  InvertMapper() = default;
 
   ToArc operator()(const FromArc &arc) const {
     return ToArc(arc.olabel, arc.ilabel, arc.weight, arc.nextstate);
@@ -99,20 +105,21 @@ inline void Invert(MutableFst<Arc> *fst) {
 // caching.
 template <class A>
 class InvertFst : public ArcMapFst<A, A, InvertMapper<A>> {
+  using Base = ArcMapFst<A, A, InvertMapper<A>>;
+
  public:
   using Arc = A;
 
   using Mapper = InvertMapper<Arc>;
-  using Impl = internal::ArcMapFstImpl<A, A, InvertMapper<A>>;
+  using typename Base::Impl;
 
-  explicit InvertFst(const Fst<Arc> &fst) : ArcMapFst<Arc, Arc, Mapper>(fst) {
+  explicit InvertFst(const Fst<Arc> &fst) : Base(fst) {
     GetMutableImpl()->SetOutputSymbols(fst.InputSymbols());
     GetMutableImpl()->SetInputSymbols(fst.OutputSymbols());
   }
 
   // See Fst<>::Copy() for doc.
-  InvertFst(const InvertFst &fst, bool safe = false)
-      : ArcMapFst<Arc, Arc, Mapper>(fst, safe) {}
+  InvertFst(const InvertFst &fst, bool safe = false) : Base(fst, safe) {}
 
   // Get a copy of this InvertFst. See Fst<>::Copy() for further doc.
   InvertFst *Copy(bool safe = false) const override {
@@ -120,7 +127,7 @@ class InvertFst : public ArcMapFst<A, A, InvertMapper<A>> {
   }
 
  private:
-  using ImplToFst<Impl>::GetMutableImpl;
+  using Base::GetMutableImpl;
 };
 
 // Specialization for InvertFst.

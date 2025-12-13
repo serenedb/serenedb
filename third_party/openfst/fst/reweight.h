@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -24,10 +24,11 @@
 #include <vector>
 
 #include <fst/log.h>
-
+#include <fst/fst.h>
 #include <fst/mutable-fst.h>
 #include <fst/properties.h>
-
+#include <fst/util.h>
+#include <fst/weight.h>
 
 namespace fst {
 
@@ -139,7 +140,7 @@ void Reweight(MutableFst<Arc> *fst,
     }
   }
   fst->SetProperties(ReweightProperties(input_props, added_start_epsilon) |
-                     fst->Properties(kFstProperties, false),
+                         fst->Properties(kFstProperties, false),
                      kFstProperties);
 }
 

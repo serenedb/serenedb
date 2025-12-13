@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -21,13 +21,16 @@
 #ifndef FST_DFS_VISIT_H_
 #define FST_DFS_VISIT_H_
 
+#include <cstddef>
 #include <cstdint>
+#include <new>
 #include <stack>
 #include <vector>
 
 #include <fst/arcfilter.h>
 #include <fst/fst.h>
-
+#include <fst/memory.h>
+#include <fst/properties.h>
 
 namespace fst {
 
@@ -108,6 +111,8 @@ struct DfsState {
 template <class FST, class Visitor, class ArcFilter>
 void DfsVisit(const FST &fst, Visitor *visitor, ArcFilter filter,
               bool access_only = false) {
+  using Arc = typename FST::Arc;
+  using StateId = typename Arc::StateId;
   visitor->InitVisit(fst);
   const auto start = fst.Start();
   if (start == kNoStateId) {
@@ -123,12 +128,9 @@ void DfsVisit(const FST &fst, Visitor *visitor, ArcFilter filter,
   std::vector<StateColor> state_color;
   std::stack<internal::DfsState<FST> *> state_stack;  // DFS execution stack.
   MemoryPool<internal::DfsState<FST>> state_pool;     // Pool for DFSStates.
-  auto nstates = start + 1;  // Number of known states in general case.
-  bool expanded = false;
-  if (fst.Properties(kExpanded, false)) {  // Tests if expanded case, then
-    nstates = CountStates(fst);            // uses ExpandedFst::NumStates().
-    expanded = true;
-  }
+  // Exact number of states if known, otherwise lower bound.
+  StateId nstates = fst.NumStatesIfKnown().value_or(start + 1);
+  const bool expanded = fst.Properties(kExpanded, false);
   state_color.resize(nstates, StateColor::kWhite);
   StateIterator<FST> siter(fst);
   // Continue DFS while true.

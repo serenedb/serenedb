@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -20,17 +20,23 @@
 #ifndef FST_STRING_WEIGHT_H_
 #define FST_STRING_WEIGHT_H_
 
+#include <cstddef>
 #include <cstdint>
+#include <ios>
+#include <istream>
 #include <list>
+#include <optional>
+#include <ostream>
 #include <random>
 #include <string>
 #include <vector>
 
+#include <fst/log.h>
 #include <fst/product-weight.h>
 #include <fst/union-weight.h>
+#include <fst/util.h>
 #include <fst/weight.h>
 #include <string_view>
-
 
 namespace fst {
 
@@ -67,7 +73,7 @@ class StringWeight {
   friend class StringWeightIterator<StringWeight>;
   friend class StringWeightReverseIterator<StringWeight>;
 
-  StringWeight() {}
+  StringWeight() = default;
 
   template <typename Iterator>
   StringWeight(const Iterator begin, const Iterator end) {
@@ -577,11 +583,11 @@ struct GallicWeight
 
   using ProductWeight<SW, W>::Properties;
 
-  GallicWeight() {}
+  GallicWeight() = default;
 
   GallicWeight(SW w1, W w2) : ProductWeight<SW, W>(w1, w2) {}
 
-  explicit GallicWeight(const std::string &s, int *nread = nullptr)
+  explicit GallicWeight(std::string_view s, int *nread = nullptr)
       : ProductWeight<SW, W>(s, nread) {}
 
   explicit GallicWeight(const ProductWeight<SW, W> &w)
@@ -727,7 +733,7 @@ struct GallicWeight<Label, W, GALLIC>
 
   using UW::Properties;
 
-  GallicWeight() {}
+  GallicWeight() = default;
 
   // Copy constructor.
   // NOLINTNEXTLINE(google-explicit-constructor)
@@ -740,7 +746,7 @@ struct GallicWeight<Label, W, GALLIC>
 
   GallicWeight(SW w1, W w2) : UW(GW(w1, w2)) {}
 
-  explicit GallicWeight(const std::string &str, int *nread = nullptr)
+  explicit GallicWeight(std::string_view str, int *nread = nullptr)
       : UW(str, nread) {}
 
   static const GallicWeight<Label, W, GALLIC> &Zero() {

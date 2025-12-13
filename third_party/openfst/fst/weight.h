@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -22,17 +22,20 @@
 
 #include <cctype>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <ios>
 #include <iostream>
+#include <istream>
+#include <ostream>
 #include <sstream>
+#include <string>
 #include <type_traits>
 #include <utility>
 
 #include <fst/compat.h>
 #include <fst/log.h>
-
 #include <fst/util.h>
-
 
 DECLARE_string(fst_weight_parentheses);
 DECLARE_string(fst_weight_separator);
@@ -150,7 +153,7 @@ inline constexpr uint64_t kPath = 0x0000000000000010ULL;
 // This is also used for a few other weight generation defaults.
 inline constexpr size_t kNumRandomWeights = 5;
 
-// Weight property boolean constants needed for SFINAE.
+// Weight property boolean constants.
 
 template <class W>
 using IsIdempotent = std::bool_constant<(W::Properties() & kIdempotent) != 0>;
@@ -190,8 +193,6 @@ template <class W>
 struct NaturalLess {
   using Weight = W;
   static_assert(IsIdempotent<W>::value, "W must be idempotent.");
-
-  NaturalLess() = default;  // Work-around possible GCC bug
 
   bool operator()(const Weight &w1, const Weight &w2) const {
     return w1 != w2 && Plus(w1, w2) == w1;

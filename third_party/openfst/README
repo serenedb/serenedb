@@ -21,7 +21,8 @@ INSTALLATION:
   --enable-far             Enable FAR extensions (def: no)
   --enable-fsts            Enable all FST SO extensions (def: no)
   --enable-grm             Enable all dependencies of OpenGrm (def: no)
-  --enable-linear-fsts     Enable LinearTagger/ClassifierFst extensions (def: no)
+  --enable-linear-fsts     Enable LinearTagger/ClassifierFst extensions
+                               (def: no)
   --enable-lookahead-fsts  Enable LookAheadFst extensions (def: no)
   --enable-mpdt            Enable MPDT extensions (def: no)
   --enable-ngram-fsts      Enable NGramFst extensions (def: no)
@@ -34,7 +35,7 @@ INSTALLATION:
 
   Configuring with --enable-python will attempt to install the Python module to
   whichever site-packages (or dist-packages, on Debian or Ubuntu) is found
-  during configuration. If `import pywrapfst` fails from a PYthon 3.6 or better 
+  during configuration. If `import pywrapfst` fails from a PYthon 3.6 or better
   interpreter after installation, relocate pywrapfst.so to a directory in your
   interpreter's `sys.path` or $PYTHONPATH.
 
@@ -47,9 +48,29 @@ INSTALLATION:
   If you encounter an error about loading shared objects when attempting to use
   the library immediately after installation, (e.g, `...cannot open shared
   object file...`) you may need to refresh your system's shared object cache.
-  On Linux, this is accomplished by invoking ldconfig; the corresponding command
-  on OS X is called update_dyld_shared_cache. Both of these require superuser
-  privileges (and so should be executed with sudo).
+  On Linux, this is accomplished by invoking ldconfig; the corresponding
+  command on OS X is called update_dyld_shared_cache. Both of these require
+  superuser privileges and so should be executed with `sudo`.
+
+  The Python wrapper is difficult to install because the autoconf macros do
+  not have a detailed understanding of Python packaging. One alternative is to
+  install the `pynini` extension from PyPI.org via `pip`; this includes a
+  copy of `pywrapfst` as well:
+
+      pip install pynini
+
+  On Linux x86_64, this will install precompiled binaries; on other platforms,
+  it will attempt to built the package from source. If building from source,
+  first build and install OpenFst while issuing `--enable-grm` during the
+  configuration phase.
+
+  If instead using `--enable-python`, the Python wrapper is ordinarily
+  installed to the local `site-packages`. This may cause issues on
+  Debian-based Linux distributions as these use a non-standard `dist-packages`
+  directory and do not include `site-packages` in their Python module path. To
+  correct this, move, copy, or link `pywrapfst.so` into `dist-packages`, or
+  modify your module load path (e.g., environmental variable `$PYTHONPATH`) to
+  include the local `site-packages` directory.
 
 USAGE:
   Assuming you've installed under the default /usr/local, the FST binaries are

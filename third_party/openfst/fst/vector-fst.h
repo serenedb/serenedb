@@ -606,11 +606,11 @@ class VectorFst : public ImplToMutableFst<internal::VectorFstImpl<S>> {
   inline void InitMutableArcIterator(StateId s,
                                      MutableArcIteratorData<Arc> *) override;
 
+  using Base::GetImpl;
   using Base::ReserveArcs;
   using Base::ReserveStates;
 
  private:
-  using Base::GetImpl;
   using Base::GetMutableImpl;
   using Base::MutateCheck;
   using Base::SetImpl;

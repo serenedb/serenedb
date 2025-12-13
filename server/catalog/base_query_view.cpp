@@ -69,13 +69,13 @@ Result BaseQueryView<ImplQueryView>::Make(std::shared_ptr<catalog::View>& view,
 
   auto state = ImplQueryView::Create();
 
-  r = ImplQueryView::Parse(*state, ObjectId{database_id}, meta.query);
+  r = ImplQueryView::Parse(*state, database_id, meta.query);
   if (!r.ok()) {
     return r;
   }
 
   if (ctx == ViewContext::User) {
-    r = ImplQueryView::Check(ObjectId{database_id}, options.meta.name, *state);
+    r = ImplQueryView::Check(database_id, options.meta.name, *state);
     if (!r.ok()) {
       return r;
     }

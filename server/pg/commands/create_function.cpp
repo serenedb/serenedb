@@ -201,22 +201,10 @@ yaclib::Future<Result> CreateFunction(ExecContext& context,
   auto function = std::make_shared<catalog::Function>(std::move(properties),
                                                       std::move(sql_impl), db);
 
-  r = catalog.CreateFunction(db, schema, function);
-  // TODO(ISSUE#214): use replace function instead,
-  // code below has race condition and ugly
+  r = catalog.CreateFunction(db, schema, function, stmt.replace);
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-    if (!stmt.replace) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_DUPLICATE_TABLE),
-        ERR_MSG("relation \"", function_name, "\" already exists"));
-    }
-
-    r = catalog.DropFunction(db, schema, function_name);
-    if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
-                      ERR_MSG("\"", function_name, "\" is not a function"));
-    }
-    r = catalog.CreateFunction(db, schema, std::move(function));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
+                    ERR_MSG("relation \"", function_name, "\" already exists"));
   }
 
   return yaclib::MakeFuture(std::move(r));

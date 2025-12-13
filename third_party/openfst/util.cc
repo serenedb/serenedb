@@ -49,7 +49,8 @@ std::optional<int64_t> ParseInt64(std::string_view s, int base) {
   // do not return implicit char pointers on this platforms. Using data()
   // and size() instead should be more portable.
   //
-  // See: https://stackoverflow.com/questions/61203317/stdfrom-chars-doenst-compile-under-msvc
+  // See:
+  // https://stackoverflow.com/questions/61203317/stdfrom-chars-doenst-compile-under-msvc
   int64_t n;
   if (const auto [p, ec] =
           std::from_chars(s.data(), s.data() + s.size(), n, /*base=*/base);
@@ -60,7 +61,7 @@ std::optional<int64_t> ParseInt64(std::string_view s, int base) {
 }
 
 int64_t StrToInt64(std::string_view s, std::string_view source, size_t nline,
-                   bool * error) {
+                   bool *error) {
   if (error) *error = false;
   const std::optional<int64_t> maybe_n = ParseInt64(s);
   if (!maybe_n.has_value()) {
@@ -111,8 +112,7 @@ bool AlignOutput(std::ostream &strm, size_t align) {
   return true;
 }
 
-int AlignBufferWithOutputStream(std::ostream &strm,
-                                std::ostringstream &buffer,
+int AlignBufferWithOutputStream(std::ostream &strm, std::ostringstream &buffer,
                                 size_t align) {
   const auto strm_pos = strm.tellp();
   if (strm_pos == -1) {

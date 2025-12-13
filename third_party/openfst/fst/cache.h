@@ -51,9 +51,8 @@ struct CacheOptions {
   bool gc;          // Enables GC.
   size_t gc_limit;  // Number of bytes allowed before GC.
 
-  explicit CacheOptions(
-      bool gc = FST_FLAGS_fst_default_cache_gc,
-      size_t gc_limit = FST_FLAGS_fst_default_cache_gc_limit)
+  explicit CacheOptions(bool gc = FST_FLAGS_fst_default_cache_gc,
+                        size_t gc_limit = FST_FLAGS_fst_default_cache_gc_limit)
       : gc(gc), gc_limit(gc_limit) {}
 };
 

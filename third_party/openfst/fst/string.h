@@ -182,9 +182,8 @@ class StringCompiler {
   // specify the set of char separators between symbols, in addition of '\n',
   // which is always treated as a separator. Returns true on success.
   template <class FST>
-  bool operator()(
-      std::string_view str, FST *fst,
-      std::string_view sep = FST_FLAGS_fst_field_separator) const {
+  bool operator()(std::string_view str, FST *fst,
+                  std::string_view sep = FST_FLAGS_fst_field_separator) const {
     std::vector<Label> labels;
     if (!internal::ConvertStringToLabels(str, token_type_, syms_,
                                          unknown_label_, &labels, sep)) {
@@ -196,9 +195,8 @@ class StringCompiler {
 
   // Same as above but allows to specify a weight for the string.
   template <class FST>
-  bool operator()(
-      std::string_view str, FST *fst, Weight weight,
-      std::string_view sep = FST_FLAGS_fst_field_separator) const {
+  bool operator()(std::string_view str, FST *fst, Weight weight,
+                  std::string_view sep = FST_FLAGS_fst_field_separator) const {
     std::vector<Label> labels;
     if (!internal::ConvertStringToLabels(str, token_type_, syms_,
                                          unknown_label_, &labels, sep)) {
@@ -342,11 +340,11 @@ bool StringFstToOutputLabels(const Fst<Arc> &fst,
 // token type is SYMBOL, epsilon symbols will be printed only if omit_epsilon
 // is false. Returns true on success.
 template <class Label>
-bool LabelsToString(
-    const std::vector<Label> &labels, std::string *str,
-    TokenType ttype = TokenType::BYTE, const SymbolTable *syms = nullptr,
-    std::string_view sep = FST_FLAGS_fst_field_separator,
-    bool omit_epsilon = true) {
+bool LabelsToString(const std::vector<Label> &labels, std::string *str,
+                    TokenType ttype = TokenType::BYTE,
+                    const SymbolTable *syms = nullptr,
+                    std::string_view sep = FST_FLAGS_fst_field_separator,
+                    bool omit_epsilon = true) {
   switch (ttype) {
     case TokenType::BYTE: {
       return LabelsToByteString(labels, str);
@@ -378,9 +376,8 @@ class StringPrinter {
 
   // Converts the FST into a string. With SYMBOL token type, the last character
   // of sep is used as a separator between symbols. Returns true on success.
-  bool operator()(
-      const Fst<Arc> &fst, std::string *str,
-      std::string_view sep = FST_FLAGS_fst_field_separator) const {
+  bool operator()(const Fst<Arc> &fst, std::string *str,
+                  std::string_view sep = FST_FLAGS_fst_field_separator) const {
     std::vector<Label> labels;
     return StringFstToOutputLabels(fst, &labels) &&
            LabelsToString(labels, str, token_type_, syms_, sep, omit_epsilon_);
@@ -388,9 +385,8 @@ class StringPrinter {
 
   // Same as above but also computes the path weight. The output weight
   // parameter is only set if labels extraction is successful.
-  bool operator()(
-      const Fst<Arc> &fst, std::string *str, Weight *weight,
-      std::string_view sep = FST_FLAGS_fst_field_separator) const {
+  bool operator()(const Fst<Arc> &fst, std::string *str, Weight *weight,
+                  std::string_view sep = FST_FLAGS_fst_field_separator) const {
     std::vector<Label> labels;
     return StringFstToOutputLabels(fst, &labels, weight) &&
            LabelsToString(labels, str, token_type_, syms_, sep, omit_epsilon_);

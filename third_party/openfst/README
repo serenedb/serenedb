@@ -76,7 +76,7 @@ USAGE:
   Assuming you've installed under the default /usr/local, the FST binaries are
   found on /usr/local/bin.
 
-  To use in your own program, include <fst/fstlib.h> and compile with 
+  To use in your own program, include <fst/fstlib.h> and compile with
   -I/usr/local/include. The compiler must support C++11 (for g++ add the flag
   -std=c++17). Link against /usr/local/lib/libfst.so and -ldl. Set your
   LD_LIBRARY_PATH (or equivalent) to contain /usr/local/lib. The linking is,

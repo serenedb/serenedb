@@ -355,13 +355,11 @@ class FastLogAccumulator {
 
  private:
   static double LogPosExp(double x) {
-    return x == FloatLimits<double>::PosInfinity() ? 0.0
-                                                   : log(1.0F + exp(-x));
+    return x == FloatLimits<double>::PosInfinity() ? 0.0 : log(1.0F + exp(-x));
   }
 
   static double LogMinusExp(double x) {
-    return x == FloatLimits<double>::PosInfinity() ? 0.0
-                                                   : log(1.0F - exp(-x));
+    return x == FloatLimits<double>::PosInfinity() ? 0.0 : log(1.0F - exp(-x));
   }
 
   Weight LogPlus(Weight w, Weight v) const {
@@ -600,13 +598,11 @@ class CacheLogAccumulator {
 
  private:
   double LogPosExp(double x) {
-    return x == FloatLimits<double>::PosInfinity() ? 0.0
-                                                   : log(1.0F + exp(-x));
+    return x == FloatLimits<double>::PosInfinity() ? 0.0 : log(1.0F + exp(-x));
   }
 
   double LogMinusExp(double x) {
-    return x == FloatLimits<double>::PosInfinity() ? 0.0
-                                                   : log(1.0F - exp(-x));
+    return x == FloatLimits<double>::PosInfinity() ? 0.0 : log(1.0F - exp(-x));
   }
 
   Weight LogPlus(Weight w, Weight v) {

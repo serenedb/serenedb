@@ -55,16 +55,15 @@ CompositeWeightIO::CompositeWeightIO(char separator,
 }
 
 CompositeWeightIO::CompositeWeightIO()
-    : CompositeWeightIO(
-          FST_FLAGS_fst_weight_separator.empty()
-              ? 0
-              : FST_FLAGS_fst_weight_separator.front(),
-          {FST_FLAGS_fst_weight_parentheses.empty()
-               ? 0
-               : FST_FLAGS_fst_weight_parentheses[0],
-           FST_FLAGS_fst_weight_parentheses.size() < 2
-               ? 0
-               : FST_FLAGS_fst_weight_parentheses[1]}) {
+    : CompositeWeightIO(FST_FLAGS_fst_weight_separator.empty()
+                            ? 0
+                            : FST_FLAGS_fst_weight_separator.front(),
+                        {FST_FLAGS_fst_weight_parentheses.empty()
+                             ? 0
+                             : FST_FLAGS_fst_weight_parentheses[0],
+                         FST_FLAGS_fst_weight_parentheses.size() < 2
+                             ? 0
+                             : FST_FLAGS_fst_weight_parentheses[1]}) {
   if (FST_FLAGS_fst_weight_separator.size() != 1) {
     FSTERROR() << "CompositeWeight: "
                << "FST_FLAGS_fst_weight_separator.size() is not equal to 1";

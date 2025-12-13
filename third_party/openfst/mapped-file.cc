@@ -76,10 +76,8 @@ MappedFile::~MappedFile() {
   }
 }
 
-MappedFile * MappedFile::Map(std::istream &istrm,
-                                             bool memorymap,
-                                             const std::string &source,
-                                             size_t size) {
+MappedFile *MappedFile::Map(std::istream &istrm, bool memorymap,
+                            const std::string &source, size_t size) {
   const auto spos = istrm.tellg();
   VLOG(2) << "memorymap: " << (memorymap ? "true" : "false") << " source: \""
           << source << "\""
@@ -129,9 +127,7 @@ MappedFile * MappedFile::Map(std::istream &istrm,
   return mf.release();
 }
 
-MappedFile * MappedFile::MapFromFileDescriptor(int fd,
-                                                               size_t pos,
-                                                               size_t size) {
+MappedFile *MappedFile::MapFromFileDescriptor(int fd, size_t pos, size_t size) {
 #ifdef _WIN32
   SYSTEM_INFO sysInfo;
   GetSystemInfo(&sysInfo);
@@ -165,12 +161,12 @@ MappedFile * MappedFile::MapFromFileDescriptor(int fd,
     return nullptr;
   }
 
-  const DWORD offset_pos_hi =
-      sizeof(size_t) > sizeof(DWORD) ? offset_pos >> (CHAR_BIT * sizeof(DWORD))
-                                     : 0;
+  const DWORD offset_pos_hi = sizeof(size_t) > sizeof(DWORD)
+                                  ? offset_pos >> (CHAR_BIT * sizeof(DWORD))
+                                  : 0;
   const DWORD offset_pos_lo = offset_pos & DWORD_MAX;
-  void *map = MapViewOfFile(file_mapping, FILE_MAP_READ,
-                            offset_pos_hi, offset_pos_lo, upsize);
+  void *map = MapViewOfFile(file_mapping, FILE_MAP_READ, offset_pos_hi,
+                            offset_pos_lo, upsize);
   if (!map) {
     LOG(ERROR) << "mmap failed for fd=" << fd << " size=" << upsize
                << " offset=" << offset_pos << ": " << GetLastError();
@@ -202,9 +198,8 @@ MappedFile *MappedFile::Allocate(size_t size, size_t align) {
   region.offset = 0;
   if (size > 0) {
     region.offset = align;
-    region.data = static_cast<char *>(operator new(
-        size, std::align_val_t{align}
-        ));
+    region.data =
+        static_cast<char *>(operator new(size, std::align_val_t{align}));
   }
   region.mmap = nullptr;
   region.size = size;

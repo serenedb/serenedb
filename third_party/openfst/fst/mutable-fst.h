@@ -164,8 +164,7 @@ class MutableFst : public ExpandedFst<A> {
                           std::string_view convert_type = "vector") {
     if (convert == false) {
       if (!source.empty()) {
-        std::ifstream strm(source,
-                                std::ios_base::in | std::ios_base::binary);
+        std::ifstream strm(source, std::ios_base::in | std::ios_base::binary);
         if (!strm) {
           LOG(ERROR) << "MutableFst::Read: Can't open file: " << source;
           return nullptr;

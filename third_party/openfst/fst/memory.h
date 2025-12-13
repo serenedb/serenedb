@@ -66,8 +66,7 @@ class MemoryArenaImpl : public MemoryArenaBase {
     const auto byte_size = size * kObjectSize;
     if (byte_size * kAllocFit > block_size_) {
       // Large block; adds new large block.
-      blocks_.push_back(
-          fst::make_unique_for_overwrite<std::byte[]>(byte_size));
+      blocks_.push_back(fst::make_unique_for_overwrite<std::byte[]>(byte_size));
       return blocks_.back().get();
     }
     if (block_pos_ + byte_size > block_size_) {

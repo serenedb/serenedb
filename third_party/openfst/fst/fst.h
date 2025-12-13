@@ -81,11 +81,10 @@ struct FstReadOptions {
   bool read_isymbols;           // Read isymbols, if any (default: true).
   bool read_osymbols;           // Read osymbols, if any (default: true).
 
-  explicit FstReadOptions(
-      std::string_view source = "<unspecified>",
-      const FstHeader * header = nullptr,
-      const SymbolTable * isymbols = nullptr,
-      const SymbolTable * osymbols = nullptr);
+  explicit FstReadOptions(std::string_view source = "<unspecified>",
+                          const FstHeader *header = nullptr,
+                          const SymbolTable *isymbols = nullptr,
+                          const SymbolTable *osymbols = nullptr);
 
   explicit FstReadOptions(std::string_view source, const SymbolTable *isymbols,
                           const SymbolTable *osymbols = nullptr);
@@ -277,7 +276,7 @@ class Fst {
   static Fst *Read(std::string_view source) {
     if (!source.empty()) {
       std::ifstream strm(std::string(source),
-                              std::ios_base::in | std::ios_base::binary);
+                         std::ios_base::in | std::ios_base::binary);
       if (!strm) {
         LOG(ERROR) << "Fst::Read: Can't open file: " << source;
         return nullptr;
@@ -330,8 +329,7 @@ class Fst {
  protected:
   bool WriteFile(const std::string &source) const {
     if (!source.empty()) {
-      std::ofstream strm(source,
-                               std::ios_base::out | std::ios_base::binary);
+      std::ofstream strm(source, std::ios_base::out | std::ios_base::binary);
       if (!strm) {
         LOG(ERROR) << "Fst::WriteFile: Can't open file: " << source;
         return false;
@@ -407,9 +405,7 @@ class StateIterator {
   using Arc = typename FST::Arc;
   using StateId = typename Arc::StateId;
 
-  explicit StateIterator(const FST &fst) {
-    fst.InitStateIterator(&data_);
-  }
+  explicit StateIterator(const FST &fst) { fst.InitStateIterator(&data_); }
 
   bool Done() const {
     return data_.base ? data_.base->Done() : s_ >= data_.nstates;
@@ -516,9 +512,7 @@ class ArcIterator {
   using Arc = typename FST::Arc;
   using StateId = typename Arc::StateId;
 
-  ArcIterator(const FST &fst, StateId s) {
-    fst.InitArcIterator(s, &data_);
-  }
+  ArcIterator(const FST &fst, StateId s) { fst.InitArcIterator(s, &data_); }
 
   explicit ArcIterator(const ArcIteratorData<Arc> &data) = delete;
 
@@ -581,8 +575,7 @@ class ArcIterator {
 // the global namespace.
 
 template <class FST>
-void *operator new(size_t size,
-                   fst::MemoryPool<fst::ArcIterator<FST>> *pool) {
+void *operator new(size_t size, fst::MemoryPool<fst::ArcIterator<FST>> *pool) {
   return pool->Allocate();
 }
 

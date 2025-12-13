@@ -35,7 +35,7 @@ struct ErrorWeight {
   bool Member() const { return false; }
   ErrorWeight Quantize(float = 0.0) const { return ErrorWeight(); }
   ReverseWeight Reverse() const { return ErrorWeight(); }
-  void Write(std::ostream &) const { }
+  void Write(std::ostream &) const {}
 
   static constexpr uint64_t Properties() { return 0; }
   static ErrorWeight Zero() { return ErrorWeight(); }

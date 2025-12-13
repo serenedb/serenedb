@@ -411,8 +411,7 @@ inline void SynchronizeFst<Arc>::InitStateIterator(
 template <class Arc>
 void Synchronize(const Fst<Arc> &ifst, MutableFst<Arc> *ofst) {
   // Caches only the last state for fastest copy.
-  const SynchronizeFstOptions opts(FST_FLAGS_fst_default_cache_gc,
-                                   0);
+  const SynchronizeFstOptions opts(FST_FLAGS_fst_default_cache_gc, 0);
   *ofst = SynchronizeFst<Arc>(ifst, opts);
 }
 

@@ -131,12 +131,12 @@ constexpr bool operator==(const FloatWeightTpl<T> &w1,
 // won't be found.
 constexpr bool operator==(const FloatWeightTpl<float> &w1,
                           const FloatWeightTpl<float> &w2) {
-  return operator==<float>(w1, w2);
+  return operator== <float>(w1, w2);
 }
 
 constexpr bool operator==(const FloatWeightTpl<double> &w1,
                           const FloatWeightTpl<double> &w2) {
-  return operator==<double>(w1, w2);
+  return operator== <double>(w1, w2);
 }
 
 template <class T>

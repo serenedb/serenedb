@@ -202,8 +202,9 @@ uint64_t ComputeOrUseStoredProperties(const Fst<Arc> &fst, uint64_t mask,
 
 // This is a wrapper around ComputeProperties that will cause a fatal error if
 // the stored properties and the computed properties are incompatible when
-// FST_FLAGS_fst_verify_properties is true. This routine is seldom called directly;
-// instead it is used to implement fst.Properties(mask, /*test=*/true).
+// FST_FLAGS_fst_verify_properties is true. This routine is seldom called
+// directly; instead it is used to implement fst.Properties(mask,
+// /*test=*/true).
 template <class Arc>
 uint64_t TestProperties(const Fst<Arc> &fst, uint64_t mask, uint64_t *known) {
   if (FST_FLAGS_fst_verify_properties) {

@@ -43,8 +43,8 @@ bool EncodeTableHeader::Read(std::istream &strm, std::string_view source) {
     }
     case internal::kEncodeDeprecatedMagicNumber: {
       LOG(ERROR) << "This old-style Encoder is written in a deprecated "
-                      "format and will soon cease to be readable. Please read "
-                      "and re-write it in order to be future-proof.";
+                    "format and will soon cease to be readable. Please read "
+                    "and re-write it in order to be future-proof.";
       // TODO(b/141172858): deprecated, remove by 2020-01-01.
       uint32_t flags;
       ReadType(strm, &flags);

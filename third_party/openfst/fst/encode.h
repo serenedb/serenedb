@@ -85,9 +85,7 @@ class EncodeTableHeader {
 
   // Setters.
 
-  void SetArcType(std::string_view arctype) {
-    arctype_ = std::string(arctype);
-  }
+  void SetArcType(std::string_view arctype) { arctype_ = std::string(arctype); }
 
   void SetFlags(uint8_t flags) { flags_ = flags; }
 
@@ -397,10 +395,9 @@ class EncodeMapper {
     return table ? new EncodeMapper(table->Flags(), type, table) : nullptr;
   }
 
-  static EncodeMapper *Read(std::string_view source,
-                            EncodeType type = ENCODE) {
+  static EncodeMapper *Read(std::string_view source, EncodeType type = ENCODE) {
     std::ifstream strm(std::string(source),
-                            std::ios_base::in | std::ios_base::binary);
+                       std::ios_base::in | std::ios_base::binary);
     if (!strm) {
       LOG(ERROR) << "EncodeMapper: Can't open file: " << source;
       return nullptr;
@@ -414,7 +411,7 @@ class EncodeMapper {
 
   bool Write(std::string_view source) const {
     std::ofstream strm(std::string(source),
-                             std::ios_base::out | std::ios_base::binary);
+                       std::ios_base::out | std::ios_base::binary);
     if (!strm) {
       LOG(ERROR) << "EncodeMapper: Can't open file: " << source;
       return false;

@@ -206,8 +206,7 @@ class MatcherFst : public ImplToExpandedFst<internal::AddOnImpl<F, Data>> {
   }
 
   // Makes a thread-safe copy of fst.
-  static std::shared_ptr<Impl> CreateImpl(const FST &fst,
-                                          std::string_view name,
+  static std::shared_ptr<Impl> CreateImpl(const FST &fst, std::string_view name,
                                           std::shared_ptr<Data> data) {
     auto impl = std::make_shared<Impl>(fst, name);
     impl->SetAddOn(data);

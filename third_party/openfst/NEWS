@@ -276,7 +276,7 @@ OpenFst: Release 1.2
    * Added SignedLogWeight and SignedLogArc (1.2.4)
    * Added ExpectationWeight and ExpectationArc (1.2.4)
    * Added AStarQueue, PruneQueue and NaturalPruneQueue disciplines (1.2.6)
-   * Added Log64Weight and Log64Arc to FST library throughout, including 
+   * Added Log64Weight and Log64Arc to FST library throughout, including
      support throughout scripts/bins/dsos (1.2.8)
    * Added delayed RandGenFst that outputs tree of paths weighted
      by count (1.2.8)

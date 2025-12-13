@@ -88,7 +88,7 @@ class ExpandedFst : public Fst<A> {
   static ExpandedFst *Read(std::string_view source) {
     if (!source.empty()) {
       std::ifstream strm(std::string(source),
-                              std::ios_base::in | std::ios_base::binary);
+                         std::ios_base::in | std::ios_base::binary);
       if (!strm) {
         LOG(ERROR) << "ExpandedFst::Read: Can't open file: " << source;
         return nullptr;
@@ -163,7 +163,7 @@ class ImplToExpandedFst : public ImplToFst<I, FST> {
   static Impl *Read(std::string_view source) {
     if (!source.empty()) {
       std::ifstream strm(std::string(source),
-                              std::ios_base::in | std::ios_base::binary);
+                         std::ios_base::in | std::ios_base::binary);
       if (!strm) {
         LOG(ERROR) << "ExpandedFst::Read: Can't open file: " << source;
         return nullptr;

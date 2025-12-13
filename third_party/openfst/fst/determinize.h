@@ -208,7 +208,7 @@ struct DeterminizeArc {
   Label label = kNoLabel;          // Arc label.
   Weight weight = Weight::Zero();  // Arc weight.
   std::unique_ptr<StateTuple>
-      dest_tuple;                  // Destination subset and filter state.
+      dest_tuple;  // Destination subset and filter state.
 };
 
 }  // namespace internal
@@ -696,7 +696,7 @@ class DeterminizeFsaImpl : public DeterminizeFstImplBase<Arc> {
     auto &dest_subset = det_arc->dest_tuple->subset;
     dest_subset.sort();
     auto piter = dest_subset.begin();
-    for (auto diter = dest_subset.begin(); diter != dest_subset.end(); ) {
+    for (auto diter = dest_subset.begin(); diter != dest_subset.end();) {
       auto &dest_element = *diter;
       auto &prev_element = *piter;
       // Computes arc weight.

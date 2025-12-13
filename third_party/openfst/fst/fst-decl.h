@@ -22,7 +22,6 @@
 
 // Do not let Include-What-You-Use suggest this file.
 
-
 #include <sys/types.h>
 
 #include <cstdint>

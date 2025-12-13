@@ -122,6 +122,7 @@ template <class K, class H, class E, HSType HS>
 struct HashSet : public absl::flat_hash_set<K, H, E, PoolAllocator<K>> {
  private:
   using Base = absl::flat_hash_set<K, H, E, PoolAllocator<K>>;
+
  public:
   using Base::Base;
 

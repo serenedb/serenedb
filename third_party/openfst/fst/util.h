@@ -54,9 +54,8 @@
 
 DECLARE_bool(fst_error_fatal);
 
-#define FSTERROR()                                                     \
-  (FST_FLAGS_fst_error_fatal ? LOG(FATAL) : LOG(ERROR))
- 
+#define FSTERROR() (FST_FLAGS_fst_error_fatal ? LOG(FATAL) : LOG(ERROR))
+
 namespace fst {
 
 // Utility for type I/O.  For portability of serialized objects across
@@ -324,12 +323,14 @@ std::ostream &WriteType(std::ostream &strm, const std::map<T...> &c) {
 }
 
 template <typename... T>
-std::ostream &WriteType(std::ostream &strm, const absl::flat_hash_map<T...> &c) {
+std::ostream &WriteType(std::ostream &strm,
+                        const absl::flat_hash_map<T...> &c) {
   return internal::WriteContainer(strm, c);
 }
 
 template <typename... T>
-std::ostream &WriteType(std::ostream &strm, const absl::flat_hash_set<T...> &c) {
+std::ostream &WriteType(std::ostream &strm,
+                        const absl::flat_hash_set<T...> &c) {
   return internal::WriteContainer(strm, c);
 }
 
@@ -342,7 +343,7 @@ std::ostream &WriteType(std::ostream &strm, const absl::flat_hash_set<T...> &c) 
 std::optional<int64_t> ParseInt64(std::string_view s, int base = 10);
 
 int64_t StrToInt64(std::string_view s, std::string_view source, size_t nline,
-                   bool * error = nullptr);
+                   bool *error = nullptr);
 
 template <typename Weight>
 Weight StrToWeight(std::string_view s) {

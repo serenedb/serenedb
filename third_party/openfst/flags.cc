@@ -54,8 +54,8 @@ static void SetProgSrc(const char *src) {
   }
 }
 
-void SetFlags(const char *usage, int *argc, char ***argv,
-              bool remove_flags, const char *src) {
+void SetFlags(const char *usage, int *argc, char ***argv, bool remove_flags,
+              const char *src) {
   flag_usage = usage;
   SetProgSrc(src);
 
@@ -73,8 +73,7 @@ void SetFlags(const char *usage, int *argc, char ***argv,
       val = argval.substr(pos + 1);
     }
     auto bool_register = FlagRegister<bool>::GetRegister();
-    if (bool_register->SetFlag(arg, val))
-      continue;
+    if (bool_register->SetFlag(arg, val)) continue;
     auto string_register = FlagRegister<std::string>::GetRegister();
     if (string_register->SetFlag(arg, val)) continue;
     auto int32_register = FlagRegister<int32_t>::GetRegister();

@@ -106,9 +106,9 @@ std::string FstHeader::DebugString() const {
 }
 
 FstReadOptions::FstReadOptions(const std::string_view source,
-                               const FstHeader * header,
-                               const SymbolTable * isymbols,
-                               const SymbolTable * osymbols)
+                               const FstHeader *header,
+                               const SymbolTable *isymbols,
+                               const SymbolTable *osymbols)
     : source(source),
       header(header),
       isymbols(isymbols),

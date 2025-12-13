@@ -78,8 +78,7 @@ SymbolTable *MergeSymbolTable(const SymbolTable &left, const SymbolTable &right,
 // Read the symbol table from any Fst::Read()able file, without loading the
 // corresponding FST. Returns nullptr if the FST does not contain a symbol
 // table or the symbol table cannot be read.
-SymbolTable * FstReadSymbols(const std::string &source,
-                                             bool input);
+SymbolTable *FstReadSymbols(const std::string &source, bool input);
 
 // Adds a contiguous range of symbols to a symbol table using a simple prefix
 // for the string, returning false if the inserted symbol string clashes with

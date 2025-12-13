@@ -114,8 +114,7 @@ void MutableSymbolTableImpl::AddTable(const SymbolTable &table) {
   }
 }
 
-std::unique_ptr<SymbolTableImplBase>
-ConstSymbolTableImpl::Copy() const {
+std::unique_ptr<SymbolTableImplBase> ConstSymbolTableImpl::Copy() const {
   LOG(FATAL) << "ConstSymbolTableImpl can't be copied";
   return nullptr;
 }
@@ -141,8 +140,9 @@ void ConstSymbolTableImpl::AddTable(const SymbolTable &table) {
   LOG(FATAL) << "ConstSymbolTableImpl does not support AddTable";
 }
 
-SymbolTableImpl * SymbolTableImpl::ReadText(
-    std::istream &strm, std::string_view name, std::string_view sep) {
+SymbolTableImpl *SymbolTableImpl::ReadText(std::istream &strm,
+                                           std::string_view name,
+                                           std::string_view sep) {
   auto impl = std::make_unique<SymbolTableImpl>(name);
   int64_t nline = 0;
   char line[kLineLen];
@@ -285,8 +285,8 @@ void SymbolTableImpl::RemoveSymbol(const int64_t key) {
   if (key == available_key_ - 1) available_key_ = key;
 }
 
-SymbolTableImpl * SymbolTableImpl::Read(
-    std::istream &strm, std::string_view source) {
+SymbolTableImpl *SymbolTableImpl::Read(std::istream &strm,
+                                       std::string_view source) {
   int32_t magic_number = 0;
   ReadType(strm, &magic_number);
   if (strm.fail()) {
@@ -345,8 +345,8 @@ void SymbolTableImpl::ShrinkToFit() { symbols_.ShrinkToFit(); }
 
 }  // namespace internal
 
-SymbolTable * SymbolTable::ReadText(const std::string &source,
-                                                    std::string_view sep) {
+SymbolTable *SymbolTable::ReadText(const std::string &source,
+                                   std::string_view sep) {
   std::ifstream strm(source, std::ios_base::in);
   if (!strm.good()) {
     LOG(ERROR) << "SymbolTable::ReadText: Can't open file: " << source;
@@ -357,8 +357,7 @@ SymbolTable * SymbolTable::ReadText(const std::string &source,
 
 bool SymbolTable::Write(const std::string &source) const {
   if (!source.empty()) {
-    std::ofstream strm(source,
-                             std::ios_base::out | std::ios_base::binary);
+    std::ofstream strm(source, std::ios_base::out | std::ios_base::binary);
     if (!strm) {
       LOG(ERROR) << "SymbolTable::Write: Can't open file: " << source;
       return false;

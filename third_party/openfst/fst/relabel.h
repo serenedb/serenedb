@@ -48,15 +48,17 @@ namespace fst {
 template <class Arc>
 void Relabel(
     MutableFst<Arc> *fst,
-    const std::vector<std::pair<typename Arc::Label, typename Arc::Label>> &        ipairs,
-    const std::vector<std::pair<typename Arc::Label, typename Arc::Label>> &        opairs) {
+    const std::vector<std::pair<typename Arc::Label, typename Arc::Label>>
+        &ipairs,
+    const std::vector<std::pair<typename Arc::Label, typename Arc::Label>>
+        &opairs) {
   using Label = typename Arc::Label;
   const auto props = fst->Properties(kFstProperties, false);
   // Constructs label-to-label maps.
-  const absl::flat_hash_map<Label, Label> input_map(
-      ipairs.begin(), ipairs.end());
-  const absl::flat_hash_map<Label, Label> output_map(
-      opairs.begin(), opairs.end());
+  const absl::flat_hash_map<Label, Label> input_map(ipairs.begin(),
+                                                    ipairs.end());
+  const absl::flat_hash_map<Label, Label> output_map(opairs.begin(),
+                                                     opairs.end());
   for (StateIterator<MutableFst<Arc>> siter(*fst); !siter.Done();
        siter.Next()) {
     for (MutableArcIterator<MutableFst<Arc>> aiter(fst, siter.Value());

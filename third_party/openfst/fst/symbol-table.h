@@ -206,7 +206,7 @@ class SymbolTableImpl final : public MutableSymbolTableImpl {
   // potentially reduced size of the dense key interval.
   void RemoveSymbol(int64_t key) override;
 
-  static SymbolTableImpl * ReadText(
+  static SymbolTableImpl *ReadText(
       std::istream &strm, std::string_view name,
       // Characters to be used as a separator between fields in a textual
       // `SymbolTable` file, encoded as a string. Each byte in the string is
@@ -215,8 +215,7 @@ class SymbolTableImpl final : public MutableSymbolTableImpl {
       std::string_view sep = FST_FLAGS_fst_field_separator);
 
   // Reads a binary SymbolTable from stream, using source in error messages.
-  static SymbolTableImpl * Read(std::istream &strm,
-                                                std::string_view source);
+  static SymbolTableImpl *Read(std::istream &strm, std::string_view source);
 
   bool Write(std::ostream &strm) const override;
 
@@ -382,7 +381,7 @@ class SymbolTable {
   }
 
   // Reads a text representation of the symbol table.
-  static SymbolTable * ReadText(
+  static SymbolTable *ReadText(
       const std::string &source,
       std::string_view sep = FST_FLAGS_fst_field_separator);
 

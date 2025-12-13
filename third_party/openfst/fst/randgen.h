@@ -271,8 +271,8 @@ class ArcSampler {
 // sized the same as the vector of probabilities.
 // probs.size()).
 template <class Result, class RNG>
-void OneMultinomialSample(const std::vector<double> &probs, size_t num_to_sample,
-                          Result *result, RNG *rng) {
+void OneMultinomialSample(const std::vector<double> &probs,
+                          size_t num_to_sample, Result *result, RNG *rng) {
   using distribution = std::binomial_distribution<size_t>;
   // Left-over probability mass. Keep an array of the partial sums because
   // keeping a scalar and modifying norm -= probs[i] in the loop will result

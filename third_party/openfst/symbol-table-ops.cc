@@ -98,8 +98,7 @@ SymbolTable *CompactSymbolTable(const SymbolTable &syms) {
   return compact.release();
 }
 
-SymbolTable * FstReadSymbols(const std::string &source,
-                                             bool input_symbols) {
+SymbolTable *FstReadSymbols(const std::string &source, bool input_symbols) {
   std::ifstream in(source, std::ios_base::in | std::ios_base::binary);
   if (!in) {
     LOG(ERROR) << "FstReadSymbols: Can't open file " << source;

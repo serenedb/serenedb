@@ -210,7 +210,8 @@ class SortedMatcher : public MatcherBase<typename F::Arc> {
       case MATCH_NONE:
         break;
       case MATCH_OUTPUT:
-        std::swap(loop_.ilabel, loop_.olabel);
+        using std::swap;
+        swap(loop_.ilabel, loop_.olabel);
         break;
       default:
         FSTERROR() << "SortedMatcher: Bad match type";

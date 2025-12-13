@@ -438,7 +438,7 @@ class HashCacheStore {
   using StateId = typename Arc::StateId;
 
   using StateMap =
-      absl::flat_hash_map<StateId, State *, std::hash<StateId>,
+      absl::flat_hash_map<StateId, State *, absl::Hash<StateId>,
                           std::equal_to<StateId>,
                           PoolAllocator<std::pair<const StateId, State *>>>;
 

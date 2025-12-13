@@ -65,7 +65,7 @@ namespace fst {
 
 // An implementation using a hash map for the entry to ID mapping. H is the
 // hash function and E is the equality function.
-template <class I, class T, class H = std::hash<T>, class E = std::equal_to<T>>
+template <class I, class T, class H = absl::Hash<T>, class E = std::equal_to<T>>
 class HashBiTable {
  public:
   // Reserves space for table_size elements.
@@ -133,7 +133,7 @@ struct HashSet : public absl::flat_hash_set<K, H, E, PoolAllocator<K>> {
 // to entries either by looking up in the entry vector or, if kCurrentKey, in
 // current_entry_. The hash and key equality functions map to entries first. H
 // is the hash function and E is the equality function.
-template <class I, class T, class H = std::hash<T>, class E = std::equal_to<T>,
+template <class I, class T, class H = absl::Hash<T>, class E = std::equal_to<T>,
           HSType HS = HS_FLAT>
 class CompactHashBiTable {
   static_assert(HS == HS_STL || HS == HS_FLAT, "Unsupported hash set type");
@@ -309,7 +309,7 @@ class VectorBiTable {
 // fingerprinting functor FP returns a unique fingerprint for each entry to be
 // hashed in the vector (these need to be suitable for indexing in a vector).
 // The hash functor H is used when hashing entry into the compact hash table.
-template <class I, class T, class S, class FP, class H = std::hash<T>,
+template <class I, class T, class S, class FP, class H = absl::Hash<T>,
           HSType HS = HS_FLAT>
 class VectorHashBiTable {
  public:

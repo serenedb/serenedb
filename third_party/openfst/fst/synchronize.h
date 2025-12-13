@@ -275,7 +275,7 @@ class SynchronizeFstImpl : public CacheImpl<Arc> {
   };
 
   // Hash function for set of strings. This only has to be specified since
-  // `std::hash<std::basic_string<T>>` is only guaranteed to be defined for
+  // `absl::Hash<std::basic_string<T>>` is only guaranteed to be defined for
   // certain values of `T`. Not defining this works fine on clang, but fails
   // under GCC.
   class StringKey {

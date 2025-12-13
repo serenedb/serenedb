@@ -20,6 +20,7 @@
 #ifndef FST_SYMBOL_TABLE_H_
 #define FST_SYMBOL_TABLE_H_
 
+#include <absl/hash/hash.h>
 #include <sys/types.h>
 
 #include <cstddef>
@@ -85,7 +86,7 @@ class DenseSymbolMap {
     return str_hash_(key) & hash_mask_;
   }
 
-  const std::hash<std::string_view> str_hash_;
+  const absl::Hash<std::string_view> str_hash_;
   std::vector<std::string> symbols_;
   std::vector<int64_t> buckets_;
   uint64_t hash_mask_;

@@ -47,9 +47,6 @@
    with Weighted Finite State Transducers") by M. Mohri, for more context.
 */
 
-#include <unordered_map>
-using std::unordered_map;
-
 #include <algorithm>
 #include <string>
 #include <vector>
@@ -236,13 +233,15 @@ class InverseContextFst : public DeterministicOnDemandFst<StdArc> {
   // Map type to map from vectors of int32 (representing phonetic contexts,
   // which will be of dimension context_width - 1) to StateId (corresponding to
   // the state index in this FST).
-  typedef unordered_map<std::vector<int32>, StateId, kaldi::VectorHasher<int32>>
+  typedef absl::node_hash_map<std::vector<int32>, StateId,
+                              kaldi::VectorHasher<int32>>
     VectorToStateMap;
 
   // Map type to map from vectors of int32 (representing ilabel-info,
   // see http://kaldi-asr.org/doc/tree_externals.html#tree_ilabel) to
   // Label (the output label in this FST).
-  typedef unordered_map<std::vector<int32>, Label, kaldi::VectorHasher<int32>>
+  typedef absl::node_hash_map<std::vector<int32>, Label,
+                              kaldi::VectorHasher<int32>>
     VectorToLabelMap;
 
   // Sometimes called N, context_width_ this is the width of the

@@ -184,7 +184,7 @@ StdArc::Label InverseLeftBiphoneContextFst::FindLabel(
   const vector<int32>& label_vec) {
   // Finds the ilabel corresponding to this vector (creates a new ilabel if
   // necessary).
-  VectorToLabelMap::const_iterator iter = ilabel_map_.find(label_vec);
+  auto iter = ilabel_map_.find(label_vec);
   if (iter == ilabel_map_.end()) {  // Not already in map.
     Label this_label = ilabel_info_.size();
     ilabel_info_.push_back(label_vec);

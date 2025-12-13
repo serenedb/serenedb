@@ -120,9 +120,7 @@ class PruneSpecialClass {
   // priority costs in ProcessState().
   inline OutputStateId GetOutputStateId(InputStateId istate,
                                         const Weight& weight) {
-    typedef
-      typename unordered_map<InputStateId, OutputStateId>::iterator IterType;
-    IterType iter = state_map_.find(istate);
+    auto iter = state_map_.find(istate);
     if (iter == state_map_.end())
       return ProcessState(istate, weight);
     else
@@ -153,7 +151,7 @@ class PruneSpecialClass {
   Weight beam_;
   size_t max_states_;
 
-  unordered_map<InputStateId, OutputStateId> state_map_;
+  absl::node_hash_map<InputStateId, OutputStateId> state_map_;
   std::priority_queue<Task> queue_;
   Weight
     best_weight_;  // if not Zero(), then we have now processed a successful

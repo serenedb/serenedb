@@ -402,8 +402,8 @@ template<class FloatType>
 inline std::ostream& operator<<(std::ostream& strm,
                                 const LatticeWeightTpl<FloatType>& w) {
   LatticeWeightTpl<FloatType>::WriteFloatType(strm, w.Value1());
-  CHECK(FLAGS_fst_weight_separator.size() == 1);
-  strm << FLAGS_fst_weight_separator[0];  // comma by default;
+  CHECK(FST_FLAGS_fst_weight_separator.size() == 1);
+  strm << FST_FLAGS_fst_weight_separator[0];  // comma by default;
   // may or may not be settable from Kaldi programs.
   LatticeWeightTpl<FloatType>::WriteFloatType(strm, w.Value2());
   return strm;
@@ -412,9 +412,9 @@ inline std::ostream& operator<<(std::ostream& strm,
 template<class FloatType>
 inline std::istream& operator>>(std::istream& strm,
                                 LatticeWeightTpl<FloatType>& w1) {
-  CHECK(FLAGS_fst_weight_separator.size() == 1);
+  CHECK(FST_FLAGS_fst_weight_separator.size() == 1);
   // separator defaults to ','
-  return w1.ReadNoParen(strm, FLAGS_fst_weight_separator[0]);
+  return w1.ReadNoParen(strm, FST_FLAGS_fst_weight_separator[0]);
 }
 
 // CompactLattice will be an acceptor (accepting the words/output-symbols),
@@ -695,7 +695,7 @@ inline CompactLatticeWeightTpl<WeightType, IntType> Times(
   } else {
     std::vector<IntType> v;
     v.resize(w1.String().size() + w2.String().size());
-    typename std::vector<IntType>::iterator iter = v.begin();
+    auto iter = v.begin();
     iter = std::copy(w1.String().begin(), w1.String().end(),
                      iter);  // returns end of first range.
     std::copy(w2.String().begin(), w2.String().end(), iter);
@@ -723,10 +723,7 @@ inline CompactLatticeWeightTpl<WeightType, IntType> Divide(
   if (v2.size() > v1.size()) {
     KALDI_ERR << "Cannot divide, length mismatch";
   }
-  typename std::vector<IntType>::const_iterator v1b = v1.begin(),
-                                                v1e = v1.end(),
-                                                v2b = v2.begin(),
-                                                v2e = v2.end();
+  auto v1b = v1.begin(), v1e = v1.end(), v2b = v2.begin(), v2e = v2.end();
   if (div == DIVIDE_LEFT) {
     if (!std::equal(v2b, v2e,
                     v1b)) {  // v2 must be identical to first part of v1.
@@ -756,8 +753,8 @@ template<class WeightType, class IntType>
 inline std::ostream& operator<<(
   std::ostream& strm, const CompactLatticeWeightTpl<WeightType, IntType>& w) {
   strm << w.Weight();
-  CHECK(FLAGS_fst_weight_separator.size() == 1);
-  strm << FLAGS_fst_weight_separator[0];  // comma by default.
+  CHECK(FST_FLAGS_fst_weight_separator.size() == 1);
+  strm << FST_FLAGS_fst_weight_separator[0];  // comma by default.
   for (size_t i = 0; i < w.String().size(); i++) {
     strm << w.String()[i];
     if (i + 1 < w.String().size())
@@ -775,8 +772,8 @@ inline std::istream& operator>>(
   if (strm.fail()) {
     return strm;
   }
-  CHECK(FLAGS_fst_weight_separator.size() == 1);
-  size_t pos = s.find_last_of(FLAGS_fst_weight_separator);  // normally ","
+  CHECK(FST_FLAGS_fst_weight_separator.size() == 1);
+  size_t pos = s.find_last_of(FST_FLAGS_fst_weight_separator);  // normally ","
   if (pos == std::string::npos) {
     strm.clear(std::ios::badbit);
     return strm;
@@ -817,10 +814,8 @@ class CompactLatticeWeightCommonDivisorTpl {
 
   Weight operator()(const Weight& w1, const Weight& w2) const {
     // First find longest common prefix of the strings.
-    typename std::vector<IntType>::const_iterator s1b = w1.String().begin(),
-                                                  s1e = w1.String().end(),
-                                                  s2b = w2.String().begin(),
-                                                  s2e = w2.String().end();
+    auto s1b = w1.String().begin(), s1e = w1.String().end(),
+         s2b = w2.String().begin(), s2e = w2.String().end();
     while (s1b < s1e && s2b < s2e && *s1b == *s2b) {
       s1b++;
       s2b++;

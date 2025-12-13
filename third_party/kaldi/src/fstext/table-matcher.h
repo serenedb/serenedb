@@ -217,7 +217,7 @@ class TableMatcherImpl : public MatcherBase<typename F::Arc> {
     return NULL;
   }
 
-  virtual uint64 Properties(uint64 props) const {
+  virtual uint64_t Properties(uint64_t props) const {
     return props;
   }  // simple matcher that does
      // not change its FST, so properties are properties of FST it is applied to
@@ -261,7 +261,7 @@ class TableMatcher : public MatcherBase<typename F::Arc> {
   TableMatcher(const TableMatcher<FST, BackoffMatcher>& matcher,
                bool safe = false)
     : impl_(matcher.impl_) {
-    if (safe == true) {
+    if (safe) {
       LOG(FATAL) << "TableMatcher: Safe copy not supported";
     }
   }
@@ -286,7 +286,7 @@ class TableMatcher : public MatcherBase<typename F::Arc> {
     return new TableMatcher<FST, BackoffMatcher>(*this, safe);
   }
 
-  virtual uint64 Properties(uint64 props) const {
+  virtual uint64_t Properties(uint64_t props) const {
     return impl_->Properties(props);
   }  // simple matcher that does
      // not change its FST, so properties are properties of FST it is applied to

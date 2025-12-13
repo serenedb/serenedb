@@ -238,7 +238,8 @@ class InverseLeftBiphoneContextFst : public DeterministicOnDemandFst<StdArc> {
   // Map type to map from vectors of int32 (representing ilabel-info,
   // see http://kaldi-asr.org/doc/tree_externals.html#tree_ilabel) to
   // Label (the output label in this FST).
-  typedef unordered_map<std::vector<int32>, Label, kaldi::VectorHasher<int32>>
+  typedef absl::node_hash_map<std::vector<int32>, Label,
+                              kaldi::VectorHasher<int32>>
     VectorToLabelMap;
 
   // The following three variables were also passed in by the caller:

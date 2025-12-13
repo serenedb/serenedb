@@ -188,7 +188,8 @@ class UnweightedNgramFst : public DeterministicOnDemandFst<Arc> {
   bool GetArc(StateId s, Label ilabel, Arc* oarc);
 
  private:
-  typedef unordered_map<std::vector<Label>, StateId, kaldi::VectorHasher<Label>>
+  typedef absl::node_hash_map<std::vector<Label>, StateId,
+                              kaldi::VectorHasher<Label>>
     MapType;
   // The order of the n-gram.
   int n_;
@@ -221,8 +222,8 @@ class ComposeDeterministicOnDemandFst : public DeterministicOnDemandFst<Arc> {
  private:
   DeterministicOnDemandFst<Arc>* fst1_;
   DeterministicOnDemandFst<Arc>* fst2_;
-  typedef unordered_map<std::pair<StateId, StateId>, StateId,
-                        kaldi::PairHasher<StateId>>
+  typedef absl::node_hash_map<std::pair<StateId, StateId>, StateId,
+                              kaldi::PairHasher<StateId>>
     MapType;
   MapType state_map_;
   std::vector<std::pair<StateId, StateId>> state_vec_;  // maps from
@@ -283,7 +284,8 @@ class LmExampleDeterministicOnDemandFst : public DeterministicOnDemandFst<Arc> {
   // Get index for cached arc.
   inline size_t GetIndex(StateId src_state, Label ilabel);
 
-  typedef unordered_map<std::vector<Label>, StateId, kaldi::VectorHasher<Label>>
+  typedef absl::node_hash_map<std::vector<Label>, StateId,
+                              kaldi::VectorHasher<Label>>
     MapType;
   void* lm_;
   Label bos_symbol_;  // beginning of sentence symbol

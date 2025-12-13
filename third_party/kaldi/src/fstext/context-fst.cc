@@ -216,7 +216,7 @@ StdArc::StateId InverseContextFst::FindState(const vector<int32>& seq) {
   // Finds state-id corresponding to this vector of phones.  Inserts it if
   // necessary.
   KALDI_ASSERT(static_cast<int32>(seq.size()) == context_width_ - 1);
-  VectorToStateMap::const_iterator iter = state_map_.find(seq);
+  auto iter = state_map_.find(seq);
   if (iter == state_map_.end()) {  // Not already in map.
     StateId this_state_id = (StateId)state_seqs_.size();
     state_seqs_.push_back(seq);
@@ -230,7 +230,7 @@ StdArc::StateId InverseContextFst::FindState(const vector<int32>& seq) {
 StdArc::Label InverseContextFst::FindLabel(const vector<int32>& label_vec) {
   // Finds the ilabel corresponding to this vector (creates a new ilabel if
   // necessary).
-  VectorToLabelMap::const_iterator iter = ilabel_map_.find(label_vec);
+  auto iter = ilabel_map_.find(label_vec);
   if (iter == ilabel_map_.end()) {  // Not already in map.
     Label this_label = ilabel_info_.size();
     ilabel_info_.push_back(label_vec);

@@ -50,9 +50,6 @@
 // This has the advantage that it always works, for any input (also I just
 // prefer this approach).
 
-#include <unordered_map>
-using std::unordered_map;
-
 #include <algorithm>
 #include <string>
 #include <utility>
@@ -211,7 +208,7 @@ class TrivialFactorWeightFstImpl : public CacheImpl<A> {
   // Find state corresponding to an element. Create new state
   // if element not found.
   StateId FindState(const Element& e) {
-    typename ElementMap::iterator eit = element_map_.find(e);
+    auto eit = element_map_.find(e);
     if (eit != element_map_.end()) {
       return (*eit).second;
     } else {
@@ -291,7 +288,8 @@ class TrivialFactorWeightFstImpl : public CacheImpl<A> {
     static const int kPrime = 7853;
   };
 
-  typedef unordered_map<Element, StateId, ElementKey, ElementEqual> ElementMap;
+  typedef absl::node_hash_map<Element, StateId, ElementKey, ElementEqual>
+    ElementMap;
 
   std::unique_ptr<const Fst<A>> fst_;
   float delta_;
@@ -391,7 +389,7 @@ class ArcIterator<TrivialFactorWeightFst<A, F>>
 template<class A, class F>
 inline void TrivialFactorWeightFst<A, F>::InitStateIterator(
   StateIteratorData<A>* data) const {
-  data->base = new StateIterator<TrivialFactorWeightFst<A, F>>(*this);
+  data->base.reset(new StateIterator<TrivialFactorWeightFst<A, F>>(*this));
 }
 
 }  // namespace fst

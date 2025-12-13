@@ -116,9 +116,8 @@ bool UnweightedNgramFst<Arc>::GetArc(StateId s, Label ilabel, Arc* oarc) {
   std::pair<const std::vector<Label>, StateId> new_state(
     seq, static_cast<Label>(state_vec_.size()));
   // Now get state id for destination state.
-  typedef typename MapType::iterator IterType;
-  std::pair<IterType, bool> result = state_map_.insert(new_state);
-  if (result.second == true) {
+  auto result = state_map_.insert(new_state);
+  if (result.second) {
     state_vec_.push_back(seq);
   }
   oarc->weight = Weight::One();  // Because the FST is unweightd.
@@ -162,7 +161,6 @@ typename Arc::Weight ComposeDeterministicOnDemandFst<Arc>::Final(StateId s) {
 template<class Arc>
 bool ComposeDeterministicOnDemandFst<Arc>::GetArc(StateId s, Label ilabel,
                                                   Arc* oarc) {
-  typedef typename MapType::iterator IterType;
   KALDI_ASSERT(ilabel != 0 &&
                "This program expects epsilon-free compact lattices as input");
   KALDI_ASSERT(s < static_cast<StateId>(state_vec_.size()));
@@ -176,12 +174,12 @@ bool ComposeDeterministicOnDemandFst<Arc>::GetArc(StateId s, Label ilabel,
     std::pair<const std::pair<StateId, StateId>, StateId> new_value(
       std::pair<StateId, StateId>(arc1.nextstate, pr.second), next_state_);
 
-    std::pair<IterType, bool> result = state_map_.insert(new_value);
+    auto result = state_map_.insert(new_value);
     oarc->ilabel = ilabel;
     oarc->olabel = 0;
     oarc->nextstate = result.first->second;
     oarc->weight = arc1.weight;
-    if (result.second == true) {  // was inserted
+    if (result.second) {  // was inserted
       next_state_++;
       const std::pair<StateId, StateId>& new_pair(new_value.first);
       state_vec_.push_back(new_pair);
@@ -195,12 +193,12 @@ bool ComposeDeterministicOnDemandFst<Arc>::GetArc(StateId s, Label ilabel,
     return false;
   std::pair<const std::pair<StateId, StateId>, StateId> new_value(
     std::pair<StateId, StateId>(arc1.nextstate, arc2.nextstate), next_state_);
-  std::pair<IterType, bool> result = state_map_.insert(new_value);
+  auto result = state_map_.insert(new_value);
   oarc->ilabel = ilabel;
   oarc->olabel = arc2.olabel;
   oarc->nextstate = result.first->second;
   oarc->weight = Times(arc1.weight, arc2.weight);
-  if (result.second == true) {  // was inserted
+  if (result.second) {  // was inserted
     next_state_++;
     const std::pair<StateId, StateId>& new_pair(new_value.first);
     state_vec_.push_back(new_pair);
@@ -308,9 +306,8 @@ bool LmExampleDeterministicOnDemandFst<Arc>::GetArc(StateId s, Label ilabel,
     wseq, static_cast<Label>(state_vec_.size()));
 
   // Now get state id for destination state.
-  typedef typename MapType::iterator IterType;
-  std::pair<IterType, bool> result = state_map_.insert(new_value);
-  if (result.second == true)  // was inserted
+  auto result = state_map_.insert(new_value);
+  if (result.second)  // was inserted
     state_vec_.push_back(wseq);
   oarc->ilabel = ilabel;
   oarc->olabel = ilabel;
@@ -326,8 +323,8 @@ void ComposeDeterministicOnDemand(const Fst<Arc>& fst1,
   typedef typename Arc::Weight Weight;
   typedef typename Arc::StateId StateId;
   typedef std::pair<StateId, StateId> StatePair;
-  typedef unordered_map<StatePair, StateId, kaldi::PairHasher<StateId>> MapType;
-  typedef typename MapType::iterator IterType;
+  typedef absl::node_hash_map<StatePair, StateId, kaldi::PairHasher<StateId>>
+    MapType;
 
   fst_composed->DeleteStates();
 
@@ -343,8 +340,8 @@ void ComposeDeterministicOnDemand(const Fst<Arc>& fst1,
   // A mapping between pairs of states in fst1 and fst2 and the corresponding
   // state in fst_composed.
   std::pair<const StatePair, StateId> start_map(start_pair, start_state);
-  std::pair<IterType, bool> result = state_map.insert(start_map);
-  KALDI_ASSERT(result.second == true);
+  auto result = state_map.insert(start_map);
+  KALDI_ASSERT(result.second);
 
   while (!state_queue.empty()) {
     StatePair q = state_queue.front();
@@ -375,15 +372,15 @@ void ComposeDeterministicOnDemand(const Fst<Arc>& fst1,
         next_state2 = arc2.nextstate;
       }
       next_pair = StatePair(next_state1, next_state2);
-      IterType sitr = state_map.find(next_pair);
+      auto sitr = state_map.find(next_pair);
       // If sitr == state_map.end() then the state isn't in fst_composed yet.
       if (sitr == state_map.end()) {
         next_state = fst_composed->AddState();
         std::pair<const StatePair, StateId> new_state(next_pair, next_state);
-        std::pair<IterType, bool> result = state_map.insert(new_state);
+        auto result = state_map.insert(new_state);
         // Since we already checked if state_map contained new_state,
         // it should always be added if we reach here.
-        KALDI_ASSERT(result.second == true);
+        KALDI_ASSERT(result.second);
         state_queue.push(next_pair);
         // If sitr != state_map.end() then the next state is already in
         // the state_map.
@@ -410,8 +407,8 @@ void ComposeDeterministicOnDemandInverse(const Fst<Arc>& right,
   typedef typename Arc::Weight Weight;
   typedef typename Arc::StateId StateId;
   typedef std::pair<StateId, StateId> StatePair;
-  typedef unordered_map<StatePair, StateId, kaldi::PairHasher<StateId>> MapType;
-  typedef typename MapType::iterator IterType;
+  typedef absl::node_hash_map<StatePair, StateId, kaldi::PairHasher<StateId>>
+    MapType;
 
   fst_composed->DeleteStates();
 
@@ -430,8 +427,8 @@ void ComposeDeterministicOnDemandInverse(const Fst<Arc>& right,
   // A mapping between pairs of states in *left and right, and the corresponding
   // state in fst_composed.
   std::pair<const StatePair, StateId> start_map(start_pair, start_state);
-  std::pair<IterType, bool> result = state_map.insert(start_map);
-  KALDI_ASSERT(result.second == true);
+  auto result = state_map.insert(start_map);
+  KALDI_ASSERT(result.second);
 
   while (!state_queue.empty()) {
     StatePair q = state_queue.front();
@@ -469,15 +466,15 @@ void ComposeDeterministicOnDemandInverse(const Fst<Arc>& right,
         next_state_left = arc_left.nextstate;
       }
       next_pair = StatePair(next_state_left, next_state_right);
-      IterType sitr = state_map.find(next_pair);
+      auto sitr = state_map.find(next_pair);
       // If sitr == state_map.end() then the state isn't in fst_composed yet.
       if (sitr == state_map.end()) {
         next_state = fst_composed->AddState();
         std::pair<const StatePair, StateId> new_state(next_pair, next_state);
-        std::pair<IterType, bool> result = state_map.insert(new_state);
+        auto result = state_map.insert(new_state);
         // Since we already checked if state_map contained new_state,
         // it should always be added if we reach here.
-        KALDI_ASSERT(result.second == true);
+        KALDI_ASSERT(result.second);
         state_queue.push(next_pair);
         // If sitr != state_map.end() then the next state is already in
         // the state_map.

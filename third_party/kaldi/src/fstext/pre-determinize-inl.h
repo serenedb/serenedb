@@ -234,8 +234,9 @@ inline bool HasBannedPrefixPlusDigits(SymbolTable* symTable, std::string prefix,
   const char* prefix_ptr = prefix.c_str();
   size_t prefix_len =
     strlen(prefix_ptr);  // allowed to be zero but not encouraged.
-  for (SymbolTableIterator siter(*symTable); !siter.Done(); siter.Next()) {
-    const std::string& sym = siter.Symbol();
+  for (auto it = symTable->begin(), end = symTable->end();
+       it != symTable->end(); ++it) {
+    const std::string& sym = it->Symbol();
     if (!strncmp(prefix_ptr, sym.c_str(), prefix_len)) {  // has prefix.
       if (isdigit(sym[prefix_len])) {  // we don't allow prefix followed by a
                                        // digit, as a symbol.
@@ -261,8 +262,8 @@ void CopySetToVector(const std::set<T> s, std::vector<T>* v) {
   // (because the set was in sorted order).
   assert(v != NULL);
   v->resize(s.size());
-  typename std::set<T>::const_iterator siter = s.begin();
-  typename std::vector<T>::iterator viter = v->begin();
+  auto siter = s.begin();
+  auto viter = v->begin();
   for (; siter != s.end(); ++siter, ++viter) {
     assert(viter != v->end());
     *viter = *siter;
@@ -310,8 +311,7 @@ void Closure(MutableFst<Arc>* fst, std::set<typename Arc::StateId>* S,
       // more transitions with epsilons as input labels.
       if (!pVec[arc.nextstate]) {  // Next state is not problematic -> we can
                                    // use this transition.
-        std::pair<typename std::set<StateId>::iterator, bool> p =
-          S->insert(arc.nextstate);
+        auto p = S->insert(arc.nextstate);
         if (p.second) {  // True means: was inserted into S (wasn't already
                          // there).
           Q.push_back(arc.nextstate);
@@ -444,8 +444,6 @@ void PreDeterminize(MutableFst<Arc>* fst, typename Arc::Label first_new_sym,
   std::vector<bool> d_vec(max_state + 1,
                           false);  // "done vector".  Purely for debugging.
 
-  size_t num_extra_det_states = 0;
-
   // (D)(v)
   while (Q.size() != 0) {
     // (D)(v)(a)
@@ -456,7 +454,7 @@ void PreDeterminize(MutableFst<Arc>* fst, typename Arc::Label first_new_sym,
 
     // (D)(v)(b)
     for (size_t idx = 0; idx < A.size(); idx++) {
-      assert(d_vec[A[idx]] == false &&
+      assert(!d_vec[A[idx]] &&
              "This state has been seen before.  Algorithm error.");
       d_vec[A[idx]] = true;
     }
@@ -492,10 +490,7 @@ void PreDeterminize(MutableFst<Arc>* fst, typename Arc::Label first_new_sym,
     if (arc_hash.count(0) == 1) {  // We have epsilon transitions out.
       std::set<std::pair<std::pair<StateId, ArcId>, StateId>>& eps_set =
         arc_hash[0];
-      typedef typename std::set<
-        std::pair<std::pair<StateId, ArcId>, StateId>>::iterator set_iter_t;
-      for (set_iter_t siter = eps_set.begin(); siter != eps_set.end();
-           ++siter) {
+      for (auto siter = eps_set.begin(); siter != eps_set.end(); ++siter) {
         const std::pair<std::pair<StateId, ArcId>, StateId>& this_pr = *siter;
         if (p_vec[this_pr.second]) {  // Eps-transition to problematic state.
           assert(m_map.count(this_pr.first) == 0);
@@ -507,14 +502,7 @@ void PreDeterminize(MutableFst<Arc>* fst, typename Arc::Label first_new_sym,
 
     // (D)(v)(e)
     {
-      typedef typename std::map<
-        Label,
-        std::set<std::pair<std::pair<StateId, ArcId>, StateId>>>::iterator
-        map_iter_t;
-      typedef typename std::set<
-        std::pair<std::pair<StateId, ArcId>, StateId>>::iterator set_iter_t2;
-      for (map_iter_t miter = arc_hash.begin(); miter != arc_hash.end();
-           ++miter) {
+      for (auto miter = arc_hash.begin(); miter != arc_hash.end(); ++miter) {
         Label t = miter->first;
         std::set<std::pair<std::pair<StateId, ArcId>, StateId>>& S_t =
           miter->second;
@@ -538,7 +526,6 @@ void PreDeterminize(MutableFst<Arc>* fst, typename Arc::Label first_new_sym,
                 assert(m_map.count(this_pr.first) == 0);
                 m_map[this_pr.first] = k;
                 k++;
-                num_extra_det_states++;
               }
             } else {  // Create the set V_t.
               V_t.insert(this_pr.second);
@@ -564,16 +551,14 @@ void PreDeterminize(MutableFst<Arc>* fst, typename Arc::Label first_new_sym,
     for (StateIterator<MutableFst<Arc>> siter(*fst); !siter.Done();
          siter.Next()) {
       StateId val = siter.Value();
-      assert(d_vec[val] == true);
+      assert(d_vec[val]);
     }
   }
 
   {  // (D)(vii): compute symbol-table ID's.
     // sets up symsOut array.
     int64 n = -1;
-    for (typename std::map<std::pair<StateId, ArcId>, size_t>::iterator m_iter =
-           m_map.begin();
-         m_iter != m_map.end(); ++m_iter) {
+    for (auto m_iter = m_map.begin(); m_iter != m_map.end(); ++m_iter) {
       n = std::max(n,
                    (int64)m_iter->second);  // m_iter->second is of type size_t.
     }
@@ -592,9 +577,7 @@ void PreDeterminize(MutableFst<Arc>* fst, typename Arc::Label first_new_sym,
     // Core part of this is below, search for (*)
     size_t n_states_added = 0;
 
-    for (typename std::map<std::pair<StateId, ArcId>, size_t>::iterator m_iter =
-           m_map.begin();
-         m_iter != m_map.end(); ++m_iter) {
+    for (auto m_iter = m_map.begin(); m_iter != m_map.end(); ++m_iter) {
       StateId state = m_iter->first.first;
       ArcId arcpos = m_iter->first.second;
       size_t m_a = m_iter->second;

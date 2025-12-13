@@ -158,8 +158,7 @@ class PushSpecialClass {
         new_occ[i] = 0.1 * occ_[i];
 
       for (int i = 0; i < num_states_; i++) {
-        std::vector<std::pair<StateId, double>>::const_iterator iter,
-          end = pred_[i].end();
+        auto iter, end = pred_[i].end();
         for (iter = pred_[i].begin(); iter != end; ++iter) {
           StateId j = iter->first;
           double p = iter->second;

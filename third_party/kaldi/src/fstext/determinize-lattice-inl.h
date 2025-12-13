@@ -59,7 +59,7 @@ class LatticeStringRepository {
     new_entry_->parent = parent;
     new_entry_->i = i;
 
-    std::pair<typename SetType::iterator, bool> pr = set_.insert(new_entry_);
+    auto pr = set_.insert(new_entry_);
     if (pr.second) {  // Was successfully inserted (was not there).  We need to
                       // replace the element we inserted, which resides on the
                       // stack, with one from the heap.
@@ -105,7 +105,7 @@ class LatticeStringRepository {
     }
     if (b_size > a_size)
       b_size = a_size;
-    typename std::vector<IntType>::iterator b_begin = b->begin();
+    auto b_begin = b->begin();
     while (a_size != 0) {
       if (a->i != *(b_begin + a_size - 1))
         b_size = a_size - 1;
@@ -173,8 +173,7 @@ class LatticeStringRepository {
   LatticeStringRepository() { new_entry_ = new Entry; }
 
   void Destroy() {
-    for (typename SetType::iterator iter = set_.begin(); iter != set_.end();
-         ++iter)
+    for (auto iter = set_.begin(); iter != set_.end(); ++iter)
       delete *iter;
     SetType tmp;
     tmp.swap(set_);
@@ -190,13 +189,10 @@ class LatticeStringRepository {
   // this is to save memory.
   void Rebuild(const std::vector<const Entry*>& to_keep) {
     SetType tmp_set;
-    for (typename std::vector<const Entry*>::const_iterator iter =
-           to_keep.begin();
-         iter != to_keep.end(); ++iter)
+    for (auto iter = to_keep.begin(); iter != to_keep.end(); ++iter)
       RebuildHelper(*iter, &tmp_set);
     // Now delete all elems not in tmp_set.
-    for (typename SetType::iterator iter = set_.begin(); iter != set_.end();
-         ++iter) {
+    for (auto iter = set_.begin(); iter != set_.end(); ++iter) {
       if (tmp_set.count(*iter) == 0)
         delete (*iter);  // delete the Entry; not needed.
     }
@@ -224,13 +220,13 @@ class LatticeStringRepository {
       return (*e1 == *e2);
     }
   };
-  typedef std::unordered_set<const Entry*, EntryKey, EntryEqual> SetType;
+  typedef absl::node_hash_set<const Entry*, EntryKey, EntryEqual> SetType;
 
   void RebuildHelper(const Entry* to_add, SetType* tmp_set) {
     while (true) {
       if (to_add == NULL)
         return;
-      typename SetType::iterator iter = tmp_set->find(to_add);
+      auto iter = tmp_set->find(to_add);
       if (iter == tmp_set->end()) {  // not in tmp_set.
         tmp_set->insert(to_add);
         to_add = to_add->parent;  // and loop.
@@ -290,8 +286,7 @@ class LatticeDeterminizer {
     // now process transitions.
     for (StateId this_state = 0; this_state < nStates; this_state++) {
       std::vector<TempArc>& this_vec(output_arcs_[this_state]);
-      typename std::vector<TempArc>::const_iterator iter = this_vec.begin(),
-                                                    end = this_vec.end();
+      auto iter = this_vec.begin(), end = this_vec.end();
 
       for (; iter != end; ++iter) {
         const TempArc& temp_arc(*iter);
@@ -345,8 +340,7 @@ class LatticeDeterminizer {
     for (OutputStateId this_state = 0; this_state < nStates; this_state++) {
       std::vector<TempArc>& this_vec(output_arcs_[this_state]);
 
-      typename std::vector<TempArc>::const_iterator iter = this_vec.begin(),
-                                                    end = this_vec.end();
+      auto iter = this_vec.begin(), end = this_vec.end();
       for (; iter != end; ++iter) {
         const TempArc& temp_arc(*iter);
         std::vector<Label> seq;
@@ -433,15 +427,13 @@ class LatticeDeterminizer {
       delete ifst_;
       ifst_ = NULL;
     }
-    for (typename MinimalSubsetHash::iterator iter = minimal_hash_.begin();
-         iter != minimal_hash_.end(); ++iter)
+    for (auto iter = minimal_hash_.begin(); iter != minimal_hash_.end(); ++iter)
       delete iter->first;
     {
       MinimalSubsetHash tmp;
       tmp.swap(minimal_hash_);
     }
-    for (typename InitialSubsetHash::iterator iter = initial_hash_.begin();
-         iter != initial_hash_.end(); ++iter)
+    for (auto iter = initial_hash_.begin(); iter != initial_hash_.end(); ++iter)
       delete iter->first;
     {
       InitialSubsetHash tmp;
@@ -485,9 +477,8 @@ class LatticeDeterminizer {
         needed_strings.push_back((*(output_states_[i]))[j].string);
 
     // the following loop covers strings present in initial_hash_.
-    for (typename InitialSubsetHash::const_iterator iter =
-           initial_hash_.begin();
-         iter != initial_hash_.end(); ++iter) {
+    for (auto iter = initial_hash_.begin(); iter != initial_hash_.end();
+         ++iter) {
       const std::vector<Element>& vec = *(iter->first);
       Element elem = iter->second;
       for (size_t i = 0; i < vec.size(); i++)
@@ -622,8 +613,7 @@ class LatticeDeterminizer {
     size_t operator()(const std::vector<Element>* subset)
       const {  // hashes only the state and string.
       size_t hash = 0, factor = 1;
-      for (typename std::vector<Element>::const_iterator iter = subset->begin();
-           iter != subset->end(); ++iter) {
+      for (auto iter = subset->begin(); iter != subset->end(); ++iter) {
         hash *= factor;
         hash += iter->state + reinterpret_cast<size_t>(iter->string);
         factor *= 23531;  // these numbers are primes.
@@ -642,9 +632,7 @@ class LatticeDeterminizer {
       assert(sz >= 0);
       if (sz != s2->size())
         return false;
-      typename std::vector<Element>::const_iterator iter1 = s1->begin(),
-                                                    iter1_end = s1->end(),
-                                                    iter2 = s2->begin();
+      auto iter1 = s1->begin(), iter1_end = s1->end(), iter2 = s2->begin();
       for (; iter1 < iter1_end; ++iter1, ++iter2) {
         if (iter1->state != iter2->state || iter1->string != iter2->string ||
             !ApproxEqual(iter1->weight, iter2->weight, delta_))
@@ -667,9 +655,7 @@ class LatticeDeterminizer {
       assert(sz >= 0);
       if (sz != s2->size())
         return false;
-      typename std::vector<Element>::const_iterator iter1 = s1->begin(),
-                                                    iter1_end = s1->end(),
-                                                    iter2 = s2->begin();
+      auto iter1 = s1->begin(), iter1_end = s1->end(), iter2 = s2->begin();
       for (; iter1 < iter1_end; ++iter1, ++iter2) {
         if (iter1->state != iter2->state)
           return false;
@@ -680,8 +666,8 @@ class LatticeDeterminizer {
 
   // Define the hash type we use to map subsets (in minimal
   // representation) to OutputStateId.
-  typedef std::unordered_map<const std::vector<Element>*, OutputStateId,
-                             SubsetKey, SubsetEqual>
+  typedef absl::node_hash_map<const std::vector<Element>*, OutputStateId,
+                              SubsetKey, SubsetEqual>
     MinimalSubsetHash;
 
   // Define the hash type we use to map subsets (in initial
@@ -689,8 +675,8 @@ class LatticeDeterminizer {
   // extra weight. [note: we interpret the Element.state in here
   // as an OutputStateId even though it's declared as InputStateId;
   // these types are the same anyway].
-  typedef std::unordered_map<const std::vector<Element>*, Element, SubsetKey,
-                             SubsetEqual>
+  typedef absl::node_hash_map<const std::vector<Element>*, Element, SubsetKey,
+                              SubsetEqual>
     InitialSubsetHash;
 
   // converts the representation of the subset from canonical (all states) to
@@ -698,9 +684,9 @@ class LatticeDeterminizer {
   // states).  Output is not necessarily normalized, even if input_subset was.
   void ConvertToMinimal(std::vector<Element>* subset) {
     assert(!subset->empty());
-    typename std::vector<Element>::iterator cur_in = subset->begin(),
-                                            cur_out = subset->begin(),
-                                            end = subset->end();
+    auto cur_in = subset->begin();
+    auto cur_out = subset->begin();
+    auto end = subset->end();
     while (cur_in != end) {
       if (IsIsymbolOrFinal(cur_in->state)) {  // keep it...
         *cur_out = *cur_in;
@@ -715,8 +701,7 @@ class LatticeDeterminizer {
   // Involves a hash lookup, and possibly adding a new OutputStateId.
   // If it creates a new OutputStateId, it adds it to the queue.
   OutputStateId MinimalToStateId(const std::vector<Element>& subset) {
-    typename MinimalSubsetHash::const_iterator iter =
-      minimal_hash_.find(&subset);
+    auto iter = minimal_hash_.find(&subset);
     if (iter != minimal_hash_.end())  // Found a matching subset.
       return iter->second;
     OutputStateId ans = static_cast<OutputStateId>(output_arcs_.size());
@@ -734,8 +719,7 @@ class LatticeDeterminizer {
   OutputStateId InitialToStateId(const std::vector<Element>& subset_in,
                                  Weight* remaining_weight,
                                  StringId* common_prefix) {
-    typename InitialSubsetHash::const_iterator iter =
-      initial_hash_.find(&subset_in);
+    auto iter = initial_hash_.find(&subset_in);
     if (iter != initial_hash_.end()) {  // Found a matching subset.
       const Element& elem = iter->second;
       *remaining_weight = elem.weight;
@@ -825,10 +809,7 @@ class LatticeDeterminizer {
     // subset accordingly.
 
     std::deque<Element> queue;
-    std::unordered_map<InputStateId, Element> cur_subset;
-    typedef
-      typename std::unordered_map<InputStateId, Element>::iterator MapIter;
-    typedef typename std::vector<Element>::const_iterator VecIter;
+    absl::node_hash_map<InputStateId, Element> cur_subset;
 
     for (VecIter iter = subset->begin(); iter != subset->end(); ++iter) {
       queue.push_back(*iter);
@@ -926,8 +907,7 @@ class LatticeDeterminizer {
     bool is_final = false;
     StringId final_string = NULL;  // = NULL to keep compiler happy.
     Weight final_weight = Weight::Zero();
-    typename std::vector<Element>::const_iterator iter = minimal_subset.begin(),
-                                                  end = minimal_subset.end();
+    auto iter = minimal_subset.begin(), end = minimal_subset.end();
     for (; iter != end; ++iter) {
       const Element& elem = *iter;
       Weight this_final_weight = Times(elem.weight, ifst_->Final(elem.state));
@@ -991,13 +971,11 @@ class LatticeDeterminizer {
   // merge any Elements that have the same state (taking the best
   // (weight, string) pair in the semiring).
   void MakeSubsetUnique(std::vector<Element>* subset) {
-    typedef typename std::vector<Element>::iterator IterType;
-
     // This assert is designed to fail (usually) if the subset is not sorted on
     // state.
     assert(subset->size() < 2 || (*subset)[0].state <= (*subset)[1].state);
 
-    IterType cur_in = subset->begin(), cur_out = cur_in, end = subset->end();
+    auto cur_in = subset->begin(), cur_out = cur_in, end = subset->end();
     size_t num_out = 0;
     // Merge elements with same state-id
     while (cur_in != end) {  // while we have more elements to process.
@@ -1096,9 +1074,7 @@ class LatticeDeterminizer {
     {
       // Push back into "all_elems", elements corresponding to all
       // non-epsilon-input transitions out of all states in "minimal_subset".
-      typename std::vector<Element>::const_iterator iter =
-                                                      minimal_subset.begin(),
-                                                    end = minimal_subset.end();
+      auto iter = minimal_subset.begin(), end = minimal_subset.end();
       for (; iter != end; ++iter) {
         const Element& elem = *iter;
         for (ArcIterator<Fst<Arc>> aiter(*ifst_, elem.state); !aiter.Done();
@@ -1124,9 +1100,7 @@ class LatticeDeterminizer {
     PairComparator pc;
     std::sort(all_elems.begin(), all_elems.end(), pc);
     // now sorted first on input label, then on state.
-    typedef
-      typename std::vector<std::pair<Label, Element>>::const_iterator PairIter;
-    PairIter cur = all_elems.begin(), end = all_elems.end();
+    auto cur = all_elems.begin(), end = all_elems.end();
     std::vector<Element> this_subset;
     while (cur != end) {
       // Process ranges that share the same input symbol.

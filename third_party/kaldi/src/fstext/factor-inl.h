@@ -103,7 +103,7 @@ void Factor(const Fst<Arc>& fst, MutableFst<Arc>* ofst,
                    (kStateArcsIn | kStateArcsOut | kStateIlabelsOut));
   std::vector<StateId> state_mapping(max_state + 1, kNoStateId);
 
-  typedef unordered_map<std::vector<I>, Label, kaldi::VectorHasher<I>>
+  typedef absl::node_hash_map<std::vector<I>, Label, kaldi::VectorHasher<I>>
     SymbolMapType;
   SymbolMapType symbol_mapping;
   Label symbol_counter = 0;
@@ -157,8 +157,8 @@ void Factor(const Fst<Arc>& fst, MutableFst<Arc>* ofst,
 
   // Now output the symbol sequences.
   symbols_out->resize(symbol_counter);
-  for (typename SymbolMapType::const_iterator iter = symbol_mapping.begin();
-       iter != symbol_mapping.end(); ++iter) {
+  for (auto iter = symbol_mapping.begin(); iter != symbol_mapping.end();
+       ++iter) {
     (*symbols_out)[iter->second] = iter->first;
   }
 }

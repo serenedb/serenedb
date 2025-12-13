@@ -109,8 +109,7 @@ inline void WriteIntegerPairVector(std::ostream& os, bool binary,
     // reading-in is dominated by low-level operations anyway:
     // for efficiency use binary.
     os << "[ ";
-    typename std::vector<std::pair<T, T>>::const_iterator iter = v.begin(),
-                                                          end = v.end();
+    auto iter = v.begin(), end = v.end();
     for (; iter != end; ++iter) {
       if (sizeof(T) == 1)
         os << static_cast<int16>(iter->first) << ','
@@ -220,7 +219,7 @@ inline void WriteIntegerVector(std::ostream& os, bool binary,
     // reading-in is dominated by low-level operations anyway:
     // for efficiency use binary.
     os << "[ ";
-    typename std::vector<T>::const_iterator iter = v.begin(), end = v.end();
+    auto iter = v.begin(), end = v.end();
     for (; iter != end; ++iter) {
       if (sizeof(T) == 1)
         os << static_cast<int16>(*iter) << " ";

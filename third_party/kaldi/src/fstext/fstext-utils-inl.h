@@ -96,7 +96,7 @@ template<class Arc, class I>
 void GetInputSymbols(const Fst<Arc>& fst, bool include_eps,
                      std::vector<I>* symbols) {
   KALDI_ASSERT_IS_INTEGER_TYPE(I);
-  unordered_set<I> all_syms;
+  absl::node_hash_set<I> all_syms;
   for (StateIterator<Fst<Arc>> siter(fst); !siter.Done(); siter.Next()) {
     typename Arc::StateId s = siter.Value();
     for (ArcIterator<Fst<Arc>> aiter(fst, s); !aiter.Done(); aiter.Next()) {
@@ -165,7 +165,7 @@ void RemoveSomeInputSymbols(const std::vector<I>& to_remove,
                             MutableFst<Arc>* fst) {
   KALDI_ASSERT_IS_INTEGER_TYPE(I);
   RemoveSomeInputSymbolsMapper<Arc, I> mapper(to_remove);
-  Map(fst, mapper);
+  ArcMap(fst, mapper);
 }
 
 template<class Arc, class I>
@@ -391,11 +391,10 @@ void GetSymbols(const SymbolTable& symtab, bool include_eps,
                 std::vector<I>* syms_out) {
   KALDI_ASSERT(syms_out != NULL);
   syms_out->clear();
-  for (SymbolTableIterator iter(symtab); !iter.Done(); iter.Next()) {
-    if (include_eps || iter.Value() != 0) {
-      syms_out->push_back(iter.Value());
-      KALDI_ASSERT(syms_out->back() ==
-                   iter.Value());  // an integer-range thing.
+  for (auto it = symtab.begin(), end = symtab.end(); it != end; ++it) {
+    if (include_eps || it->Label() != 0) {
+      syms_out->push_back(it->Label());
+      KALDI_ASSERT(syms_out->back() == it->Label());  // an integer-range thing.
     }
   }
 }
@@ -742,16 +741,15 @@ VectorFst<Arc>* MakeLoopFst(const std::vector<const ExpandedFst<Arc>*>& fsts) {
 
   // "cache" is used as an optimization when some of the pointers in "fsts"
   // may have the same value.
-  unordered_map<const ExpandedFst<Arc>*, Arc> cache;
+  absl::node_hash_map<const ExpandedFst<Arc>*, Arc> cache;
 
   for (Label i = 0; i < static_cast<Label>(fsts.size()); i++) {
     const ExpandedFst<Arc>* fst = fsts[i];
     if (fst == NULL)
       continue;
     {  // optimization with cache: helpful if some members of "fsts" may
-      // contain the same pointer value (e.g. in GetHTransducer).
-      typename unordered_map<const ExpandedFst<Arc>*, Arc>::iterator iter =
-        cache.find(fst);
+       // contain the same pointer value (e.g. in GetHTransducer).
+      auto iter = cache.find(fst);
       if (iter != cache.end()) {
         Arc arc = iter->second;
         arc.olabel = i;
@@ -1028,9 +1026,7 @@ void RemoveUselessArcs(MutableFst<Arc>* fst) {
       arcs.push_back(arc);
       pair2arclist[std::make_pair(arc.ilabel, arc.nextstate)].push_back(pos);
     }
-    typename std::map<std::pair<Label, StateId>, std::vector<size_t>>::iterator
-      iter = pair2arclist.begin(),
-      end = pair2arclist.end();
+    auto iter = pair2arclist.begin(), end = pair2arclist.end();
     for (; iter != end; ++iter) {
       const std::vector<size_t>& poslist = iter->second;
       if (poslist.size() > 1) {  // >1 arc with same ilabel, dest-state

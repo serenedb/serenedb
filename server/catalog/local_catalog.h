@@ -65,11 +65,11 @@ class LocalCatalog final : public LogicalCatalog,
   Result CreateDatabase(std::shared_ptr<Database> database) final;
   Result CreateRole(std::shared_ptr<Role> role) final;
   Result CreateView(ObjectId database_id, std::string_view schema,
-                    std::shared_ptr<View> view) final;
+                    std::shared_ptr<View> view, bool replace) final;
   Result CreateSchema(ObjectId database_id,
                       std::shared_ptr<Schema> schema) final;
   Result CreateFunction(ObjectId database_id, std::string_view schema,
-                        std::shared_ptr<Function> function) final;
+                        std::shared_ptr<Function> function, bool replace) final;
   Result CreateTable(ObjectId database_id, std::string_view schema,
                      CreateTableOptions table,
                      CreateTableOperationOptions operation_options) final;

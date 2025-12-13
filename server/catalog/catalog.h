@@ -116,10 +116,11 @@ struct LogicalCatalog {
   virtual Result CreateSchema(ObjectId database_id,
                               std::shared_ptr<catalog::Schema> schema) = 0;
   virtual Result CreateView(ObjectId database_id, std::string_view schema,
-                            std::shared_ptr<catalog::View> view) = 0;
-  virtual Result CreateFunction(
-    ObjectId database_id, std::string_view schema,
-    std::shared_ptr<catalog::Function> function) = 0;
+                            std::shared_ptr<catalog::View> view,
+                            bool replace) = 0;
+  virtual Result CreateFunction(ObjectId database_id, std::string_view schema,
+                                std::shared_ptr<catalog::Function> function,
+                                bool replace) = 0;
 
   virtual Result CreateTable(ObjectId database_id, std::string_view schema,
                              CreateTableOptions options,

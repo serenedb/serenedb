@@ -241,8 +241,8 @@ struct CurrentSchemasFunction {
     auto search_path = conn_ctx->Get<VariableType::PgSearchPath>("search_path");
     auto& catalog =
       SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-    auto filter = [&](const std::string_view schema_name) -> bool {
-      return catalog.GetSchema(database_id, schema_name).get();
+    auto filter = [&](const std::string_view schema_name) {
+      return catalog.GetSchema(database_id, schema_name) != nullptr;
     };
     _schema_names = std::move(search_path) | std::views::filter(filter) |
                     std::ranges::to<std::vector>();

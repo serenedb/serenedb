@@ -91,6 +91,8 @@ class Config : public velox::config::IConfig {
 
   template<VariableType T>
   auto Get(std::string_view key) const {
+    // TODO(codeworse): consider to use std::string_view as return type to avoid
+    // copy
     auto value_str = Get(key);
     if constexpr (T == VariableType::PgSearchPath) {
       auto value = value_str.and_then([](std::string_view str) {

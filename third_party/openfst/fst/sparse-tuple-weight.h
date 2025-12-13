@@ -159,7 +159,7 @@ class SparseTupleWeight {
   // Assumes H() function exists for the hash of the key value.
   size_t Hash() const {
     size_t h = 0;
-    static const std::hash<K> H;
+    const absl::Hash<K> H;
     for (Iterator it(*this); !it.Done(); it.Next()) {
       h = 5 * h + H(it.Value().first);
       h = 13 * h + it.Value().second.Hash();

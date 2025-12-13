@@ -22,7 +22,6 @@
 #pragma once
 
 #include "app/app_server.h"
-#include "app/bump_file_descriptors.h"
 #include "app/communication_phase.h"
 #include "app/config.h"
 #include "app/global_context.h"

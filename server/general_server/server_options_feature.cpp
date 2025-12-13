@@ -4,11 +4,14 @@
 #include "app/options/parameters.h"
 #include "app/options/program_options.h"
 #include "basics/application-exit.h"
+#include "basics/exitcodes.h"
+#include "basics/file_descriptors.h"
 #include "basics/logger/logger.h"
 #include "basics/physical_memory.h"
 #include "basics/static_strings.h"
 #include "general_server/state.h"
 #include "rest/version.h"
+#include "rest_server/environment_feature.h"
 
 namespace sdb {
 
@@ -27,6 +30,7 @@ uint64_t GetDefaultMemoryUsage() {
 ServerOptionsFeature::ServerOptionsFeature(Server& server)
   : SerenedFeature{server, name()} {
   _options.dump_limits.memory_usage = GetDefaultMemoryUsage();
+  _options.descriptors_minimum = FileDescriptors::recommendedMinimum();
 }
 
 void ServerOptionsFeature::collectOptions(
@@ -405,6 +409,14 @@ for all ongoing dump actions combined.)");
     .setLongDescription(R"(Each dump action on a server can use at most
 this many parallel threads. Note that end users can still start multiple
 dump actions that run in parallel.)");
+
+  options->addOption(
+    "--server.descriptors-minimum",
+    "The minimum number of file descriptors needed to start (0 = no "
+    "minimum)",
+    new options::UInt64Parameter(&_options.descriptors_minimum),
+    sdb::options::MakeFlags(options::Flags::DefaultNoOs,
+                            options::Flags::OsLinux, options::Flags::OsMac));
 }
 
 void ServerOptionsFeature::validateOptions(
@@ -447,6 +459,51 @@ void ServerOptionsFeature::validateOptions(
     SDB_FATAL("xxxxx", Logger::CONFIG,
               "invalid value for --dump.max-parallelism. Please use a value ",
               "of at least ", _options.dump_limits.parallelism_lower_bound);
+  }
+
+  if (_options.descriptors_minimum > 0 &&
+      (_options.descriptors_minimum < FileDescriptors::kRequiredMinimum ||
+       _options.descriptors_minimum > FileDescriptors::kMaximumValue)) {
+    SDB_FATAL("xxxxx", Logger::STARTUP,
+              "invalid value for --server.descriptors-minimum",
+              ". must be between ", FileDescriptors::kRequiredMinimum, " and ",
+              FileDescriptors::kMaximumValue);
+  }
+
+  if (auto r = FileDescriptors::adjustTo(
+        static_cast<FileDescriptors::ValueType>(_options.descriptors_minimum));
+      !r.ok()) {
+    SDB_FATAL_EXIT_CODE("xxxxx", Logger::SYSCALL, EXIT_RESOURCES_TOO_LOW, r);
+  }
+
+  FileDescriptors current;
+  if (auto r = FileDescriptors::load(current); !r.ok()) {
+    SDB_FATAL_EXIT_CODE("xxxxx", Logger::SYSCALL, EXIT_RESOURCES_TOO_LOW,
+                        "cannot get the file descriptors limit value: ", r);
+  }
+
+  SDB_INFO("xxxxx", Logger::SYSCALL,
+           "file-descriptors (nofiles) hard limit is ",
+           FileDescriptors::stringify(current.hard), ", soft limit is ",
+           FileDescriptors::stringify(current.soft));
+
+  auto required = std::max(
+    static_cast<FileDescriptors::ValueType>(_options.descriptors_minimum),
+    FileDescriptors::kRequiredMinimum);
+
+  if (current.soft < required) {
+    auto message = absl::StrCat(
+      "file-descriptors (nofiles) soft limit is too low, currently ",
+      FileDescriptors::stringify(current.soft), ". please raise to at least ",
+      required, " (e.g. via ulimit -n ", required,
+      ") or adjust the value of the startup option "
+      "--server.descriptors-minimum");
+    if (_options.descriptors_minimum == 0) {
+      SDB_WARN("xxxxx", Logger::SYSCALL, message);
+    } else {
+      SDB_FATAL_EXIT_CODE("xxxxx", Logger::SYSCALL, EXIT_RESOURCES_TOO_LOW,
+                          message);
+    }
   }
 }
 
@@ -509,6 +566,8 @@ void ServerOptionsFeature::prepare() {
       }
     },
     true, true);
+
+  PrintEnvironment();
 }
 
 void ServerOptionsFeature::unprepare() {

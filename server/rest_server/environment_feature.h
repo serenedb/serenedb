@@ -21,28 +21,8 @@
 
 #pragma once
 
-#include "app/app_feature.h"
-#include "rest_server/serened.h"
-
 namespace sdb {
-namespace app {
-class AppServer;
-}
 
-class EnvironmentFeature final : public SerenedFeature {
- public:
-  static constexpr std::string_view name() noexcept { return "Environment"; }
-
-  explicit EnvironmentFeature(Server& server);
-
-  void prepare() final;
-
-  const std::string& operatingSystem() const noexcept {
-    return _operating_system;
-  }
-
- private:
-  std::string _operating_system;
-};
+void PrintEnvironment();
 
 }  // namespace sdb

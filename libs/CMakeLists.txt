@@ -184,7 +184,6 @@ add_library(
     app/app_feature.cpp
     app/app_server.cpp
     app/global_context.cpp
-    app/bump_file_descriptors.cpp
     app/config.cpp
     app/language.cpp
     app/shutdown.cpp

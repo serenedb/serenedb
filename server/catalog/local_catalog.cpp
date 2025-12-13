@@ -511,7 +511,8 @@ class SnapshotImpl : public Snapshot {
                     "Object already exists: ", (*object_it)->GetName()};
           }
 
-          _objects_by_id.erase((*object_it)->GetId());
+          const bool found = _objects_by_id.erase((*object_it)->GetId());
+          SDB_ASSERT(found);
           const_cast<std::shared_ptr<SchemaObject>&>(*object_it) =
             std::move(object);
         }

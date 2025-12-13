@@ -462,8 +462,8 @@ class SnapshotImpl : public Snapshot {
     });
   }
 
-  template<typename W, typename D>
-  Result RegisterSchema(D database, std::shared_ptr<Schema> schema,
+  template<typename W>
+  Result RegisterSchema(ObjectId database, std::shared_ptr<Schema> schema,
                         W&& writer) {
     return ResolveDatabase(database, [&](auto database_it) -> Result {
       const auto [schema_it, is_new] = database_it->second->emplace(
@@ -481,8 +481,8 @@ class SnapshotImpl : public Snapshot {
     });
   }
 
-  template<typename W, typename D>
-  Result RegisterObject(D database, std::string_view schema,
+  template<typename W>
+  Result RegisterObject(ObjectId database, std::string_view schema,
                         std::shared_ptr<SchemaObject> object, W&& writer) {
     return ResolveSchema(
       database, schema, [&](auto database_it, auto schema_it) -> Result {
@@ -553,8 +553,8 @@ class SnapshotImpl : public Snapshot {
     });
   }
 
-  template<typename T, typename F, typename W, typename D>
-  Result ReplaceObject(D database, std::string_view schema,
+  template<typename T, typename F, typename W>
+  Result ReplaceObject(ObjectId database, std::string_view schema,
                        std::string_view name, F&& factory, W&& writer) {
     return ResolveObject<T>(
       database, schema, name,
@@ -611,8 +611,8 @@ class SnapshotImpl : public Snapshot {
       });
   }
 
-  template<typename W, typename D, typename C>
-  Result DropSchema(D database, std::string_view schema, bool cascade,
+  template<typename W, typename C>
+  Result DropSchema(ObjectId database, std::string_view schema, bool cascade,
                     W&& writer, C&& callback) {
     return ResolveSchema(
       database, schema, [&](auto database_it, auto schema_it) -> Result {
@@ -639,9 +639,9 @@ class SnapshotImpl : public Snapshot {
       });
   }
 
-  template<typename T, typename W, typename D>
-  Result DropObject(D database, std::string_view schema, std::string_view name,
-                    W&& writer) {
+  template<typename T, typename W>
+  Result DropObject(ObjectId database, std::string_view schema,
+                    std::string_view name, W&& writer) {
     return ResolveObject<T>(
       database, schema, name,
       [&](auto database_it, auto schema_it, auto object_it) -> Result {
@@ -687,8 +687,8 @@ class SnapshotImpl : public Snapshot {
     return object;
   }
 
-  template<typename T, typename D>
-  std::shared_ptr<T> GetObject(D database, std::string_view schema,
+  template<typename T>
+  std::shared_ptr<T> GetObject(ObjectId database, std::string_view schema,
                                std::string_view name) const {
     std::shared_ptr<T> object;
     std::ignore = ResolveObject<T>(
@@ -737,8 +737,8 @@ class SnapshotImpl : public Snapshot {
     return *it;
   }
 
-  template<typename W, typename D>
-  auto VisitObjects(D database, std::string_view schema, W&& writer) {
+  template<typename W>
+  auto VisitObjects(ObjectId database, std::string_view schema, W&& writer) {
     return ResolveSchema(
       database, schema, [&](auto database_it, auto schema_it) -> Result {
         for (auto& object : std::array{*schema_it->second.relations,
@@ -752,8 +752,8 @@ class SnapshotImpl : public Snapshot {
       });
   }
 
-  template<typename T, typename D>
-  void GetObjects(D database, std::string_view schema,
+  template<typename T>
+  void GetObjects(ObjectId database, std::string_view schema,
                   std::vector<std::shared_ptr<T>>& objects) {
     std::ignore = VisitObjects(database, schema, [&](auto& object) {
       if (object->GetType() == GetObjectType<T>()) {
@@ -817,9 +817,10 @@ class SnapshotImpl : public Snapshot {
     }
   }
 
-  template<typename T, typename W, typename D>
-  Result ResolveObject(this auto&& self, D database, std::string_view schema,
-                       std::string_view name, W&& writer) {
+  template<typename T, typename W>
+  Result ResolveObject(this auto&& self, ObjectId database,
+                       std::string_view schema, std::string_view name,
+                       W&& writer) {
     return self.ResolveSchema(
       database, schema, [&](auto database_it, auto schema_it) -> Result {
         auto& objects = std::is_same_v<T, Function>
@@ -848,9 +849,9 @@ class SnapshotImpl : public Snapshot {
     return writer(role_it);
   }
 
-  template<typename W, typename D>
-  Result ResolveSchema(this auto&& self, D database, std::string_view schema,
-                       W&& writer) {
+  template<typename W>
+  Result ResolveSchema(this auto&& self, ObjectId database,
+                       std::string_view schema, W&& writer) {
     return self.ResolveDatabase(database, [&](auto database_it) -> Result {
       auto impl = [&](auto& objects) -> Result {
         auto schema_it = objects->find(schema);

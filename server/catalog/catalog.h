@@ -59,18 +59,42 @@ constexpr ObjectType GetObjectType() noexcept {
     return ObjectType::View;
   } else if constexpr (std::is_same_v<T, Schema>) {
     return ObjectType::Schema;
-  } else if constexpr (std::is_same_v<T, catalog::Role>) {
+  } else if constexpr (std::is_same_v<T, Role>) {
     return ObjectType::Role;
   } else if constexpr (std::is_same_v<T, Database>) {
     return ObjectType::Database;
-  } else if constexpr (std::is_same_v<T, catalog::Function>) {
+  } else if constexpr (std::is_same_v<T, Function>) {
     return ObjectType::Function;
-  } else if constexpr (std::is_same_v<T, catalog::Table>) {
+  } else if constexpr (std::is_same_v<T, Table>) {
     return ObjectType::Table;
   } else {
     static_assert(false);
   }
 }
+
+struct Snapshot {
+  virtual ~Snapshot() = default;
+  virtual std::vector<std::shared_ptr<Role>> GetRoles() const = 0;
+  virtual std::vector<std::shared_ptr<Database>> GetDatabases() const = 0;
+  virtual std::vector<std::shared_ptr<Schema>> GetSchemas(
+    ObjectId database) const = 0;
+  virtual std::vector<std::shared_ptr<SchemaObject>> GetRelations(
+    ObjectId database, std::string_view schema) const = 0;
+  virtual std::vector<std::shared_ptr<Function>> GetFunctions(
+    ObjectId database, std::string_view schema) const = 0;
+
+  virtual std::shared_ptr<Role> GetRole(std::string_view name) const = 0;
+  virtual std::shared_ptr<Database> GetDatabase(
+    std::string_view database) const = 0;
+  virtual std::shared_ptr<Schema> GetSchema(ObjectId database,
+                                            std::string_view schema) const = 0;
+  virtual std::shared_ptr<SchemaObject> GetRelation(
+    ObjectId database, std::string_view schema,
+    std::string_view name) const = 0;
+  virtual std::shared_ptr<Function> GetFunction(
+    ObjectId database, std::string_view schema,
+    std::string_view name) const = 0;
+};
 
 struct LogicalCatalog {
   virtual ~LogicalCatalog() = default;
@@ -175,6 +199,8 @@ struct LogicalCatalog {
     }
     return nullptr;
   }
+
+  virtual std::shared_ptr<Snapshot> GetSnapshot() const { return {}; }
 };
 
 class PhysicalCatalog {

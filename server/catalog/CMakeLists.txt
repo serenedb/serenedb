@@ -12,6 +12,7 @@ target_sources(
         search_analyzer_impl.cpp
         sql_function_impl.cpp
         table.cpp
+        index.cpp
         view.cpp
         function.cpp
         native_functions.cpp

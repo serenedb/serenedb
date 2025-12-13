@@ -241,7 +241,7 @@ Result CatalogFeature::ProcessTombstones() {
         // TODO(gnusi): this will be gone once we have normal indexes
         struct IndexMeta {
           std::string_view objectId;  // NOLINT
-          IndexType type = IndexType::kTypeUnknown;
+          sdb::IndexType type = sdb::IndexType::kTypeUnknown;
           bool unique = false;
         };
         for (auto index_slice : vpack::ArrayIterator{options.indexes}) {

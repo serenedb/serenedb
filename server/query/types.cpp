@@ -20,6 +20,8 @@
 
 #include "types.h"
 
+#include <velox/type/SimpleFunctionApi.h>
+
 #include <memory>
 
 namespace sdb::aql {
@@ -108,9 +110,62 @@ class IntervalTypeFactory : public velox::CustomTypeFactory {
   }
 };
 
+class PgUnknownType final : public velox::VarcharType {
+  PgUnknownType() = default;
+
+ public:
+  static std::shared_ptr<const PgUnknownType> get() {
+    VELOX_CONSTEXPR_SINGLETON PgUnknownType kInstance;
+    return {std::shared_ptr<const PgUnknownType>{}, &kInstance};
+  }
+
+  bool equivalent(const Type& other) const override {
+    // Pointer comparison works since this type is a singleton.
+    return this == &other;
+  }
+
+  const char* name() const override { return "PG_UNKNOWN"; }
+
+  std::string toString() const override { return name(); }
+};
+
+velox::TypePtr PG_UNKNOWN() {  // NOLINT
+  return PgUnknownType::get();
+}
+
+bool IsPgUnknown(const velox::TypePtr& type) { return type == PG_UNKNOWN(); }
+
+bool IsPgUnknown(const velox::Type& type) {
+  return &type == PG_UNKNOWN().get();
+}
+
+class PgUnknownTypeFactory : public velox::CustomTypeFactory {
+ public:
+  PgUnknownTypeFactory() = default;
+
+  velox::TypePtr getType(
+    const std::vector<velox::TypeParameter>& parameters) const final {
+    VELOX_CHECK(parameters.empty(), "PG_UNKNOWN type does not take parameters");
+    return PG_UNKNOWN();
+  }
+
+  velox::exec::CastOperatorPtr getCastOperator() const final {
+    // It will use physical casts internally
+    return nullptr;
+  }
+
+  velox::AbstractInputGeneratorPtr getInputGenerator(
+    const velox::InputGeneratorConfig& /*config*/) const final {
+    VELOX_CHECK(false,
+                "Input generation for PG_UNKNOWN type is not implemented");
+  }
+};
+
 void RegisterTypes() {
   velox::registerCustomType(IntervalTrait::typeName,
                             std::make_unique<const IntervalTypeFactory>());
+  velox::registerCustomType(PgUnknownTrait::typeName,
+                            std::make_unique<const PgUnknownTypeFactory>());
 }
 
 }  // namespace sdb::pg

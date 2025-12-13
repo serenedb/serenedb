@@ -81,7 +81,7 @@ class VectorState {
     arcs_.clear();
   }
 
-  Weight Final() const { return final_weight_; }
+  const Weight &Final() const { return final_weight_; }
 
   size_t NumInputEpsilons() const { return niepsilons_; }
 
@@ -210,7 +210,7 @@ class VectorFstBaseImpl : public FstImpl<typename S::Arc> {
 
   StateId Start() const { return start_; }
 
-  Weight Final(StateId state) const { return states_[state]->Final(); }
+  const Weight &Final(StateId state) const { return states_[state]->Final(); }
 
   StateId NumStates() const { return states_.size(); }
 

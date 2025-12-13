@@ -74,3 +74,6 @@ SET search_path TO '';
 
 query error db error: ERROR: relation "t" does not exist
 SELECT * FROM t;
+
+query error db error: ERROR: no schema has been selected to create in
+CREATE TABLE t42(r text);

@@ -49,22 +49,36 @@ void ResolveObject(ObjectId database, std::span<const std::string> search_path,
     return;
   }
 
+  if (name.schema == StaticStrings::kInformationSchema) {
+    // information_schema must be explictly defined
+    if (const auto* table =
+          GetSystemTable(StaticStrings::kInformationSchema, name.relation)) {
+      data.object = table->CreateSnapshot(database);
+    }
+  }
+
   if (const auto view = pg::GetView(name.relation)) {
     data.object = std::move(view);
   } else {
-    auto& catalogs =
-      SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
-    auto& catalog = catalogs.Global();
+    auto& catalog =
+      SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
 
     std::string_view key = name.relation;
 
     auto resolve_object = [&](std::string_view schema) {
+      if (schema == StaticStrings::kInformationSchema) {
+        if (const auto* table =
+              GetSystemTable(StaticStrings::kInformationSchema, key)) {
+          data.object = table->CreateSnapshot(database);
+        }
+        return;
+      }
       if (auto object = catalog.GetTable(database, schema, key)) {
         data.object = object;
       } else if (auto object = catalog.GetView(database, schema, key)) {
         data.object = object;
-      } else {
-        data.object = catalog.GetFunction(database, schema, key);
+      } else if (auto object = catalog.GetFunction(database, schema, key)) {
+        data.object = object;
       }
     };
 

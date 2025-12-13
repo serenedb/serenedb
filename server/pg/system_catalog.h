@@ -28,6 +28,8 @@
 
 namespace sdb::pg {
 
+const catalog::VirtualTable* GetSystemTable(std::string_view schema,
+                                            std::string_view name);
 const catalog::VirtualTable* GetTable(std::string_view name);
 
 void VisitSystemTables(

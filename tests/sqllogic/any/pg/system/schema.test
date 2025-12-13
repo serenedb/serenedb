@@ -1,0 +1,28 @@
+statement error
+DROP SCHEMA pg_catalog;
+----
+db error: ERROR: cannot drop schema pg_catalog because it is required by the database system
+
+
+statement error
+CREATE SCHEMA pg_catalog;
+
+
+query error db error: ERROR: relation "sql_parts" does not exist
+SELECT * FROM sql_parts LIMIT 0;
+
+
+query
+SELECT * FROM information_schema.sql_parts LIMIT 0;
+----
+feature_id	feature_name	is_supported	is_verified_by	comments
+
+
+statement ok
+SET search_path TO information_schema, public;
+
+
+query
+SELECT * FROM sql_parts LIMIT 0;
+----
+feature_id	feature_name	is_supported	is_verified_by	comments

@@ -135,7 +135,7 @@ struct HashEq {
   }
 };
 
-using PgCatalogSchema =
+using PgSystemSchema =
   containers::FlatHashSet<const VirtualTable*, HashEq, HashEq>;
 
 template<typename T>
@@ -145,7 +145,7 @@ const VirtualTable* MakeTable() {
 }
 
 // clang-format off
-const PgCatalogSchema kPgCatalog{
+const PgSystemSchema kPgCatalog{
   MakeTable<SystemTable<PgAggregate>>(),
   MakeTable<SystemTable<PgAm>>(),
   MakeTable<SystemTable<PgAmop>>(),
@@ -213,7 +213,7 @@ const PgCatalogSchema kPgCatalog{
   MakeTable<SystemTable<SdbLog>>(),
 };
 
-const PgCatalogSchema kInformationSchema{
+const PgSystemSchema kInformationSchema{
    MakeTable<SystemTable<SqlFeatures>>(),
    MakeTable<SystemTable<SqlImplementationInfo>>(),
    MakeTable<SystemTable<SqlParts>>(),
@@ -354,22 +354,28 @@ constexpr auto kMapping =
      {"presto_array_join", false, FunctionLanguage::VeloxNative,
       FunctionKind::Scalar}},
   });
+const VirtualTable* GetTableFromSchema(std::string_view name,
+                                       const PgSystemSchema& schema) {
+  auto it = schema.find(name);
+  return it == schema.end() ? nullptr : *it;
+}
 }  // namespace
 
+const VirtualTable* GetSystemTable(std::string_view schema,
+                                   std::string_view name) {
+  if (schema == StaticStrings::kPgCatalogSchema) {
+    return GetTableFromSchema(name, kPgCatalog);
+  } else if (schema == StaticStrings::kInformationSchema) {
+    return GetTableFromSchema(name, kInformationSchema);
+  } else {
+    SDB_UNREACHABLE();
+  }
+}
 const VirtualTable* GetTable(std::string_view name) {
   SDB_ASSERT(SerenedServer::Instance().isEnabled<pg::PostgresFeature>());
 
-  auto find = [&](const PgCatalogSchema& schema) -> const VirtualTable* {
-    auto it = schema.find(name);
-    if (it == schema.end()) {
-      return nullptr;
-    }
-    return *it;
-  };
   if (name.starts_with("pg_") || name.starts_with("sdb_")) {
-    return find(kPgCatalog);
-  } else if (name.starts_with("sql_")) {
-    return find(kInformationSchema);
+    return GetTableFromSchema(name, kPgCatalog);
   }
   return nullptr;
 }

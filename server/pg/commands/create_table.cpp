@@ -42,8 +42,8 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
     stmt.relation->schemaname ? std::string_view{stmt.relation->schemaname}
                               : current_schema;
   if (schema.empty()) {
-    return yaclib::MakeFuture<Result>(ERROR_BAD_PARAMETER,
-                                      "no schema has been selected to create in");
+    return yaclib::MakeFuture<Result>(
+      ERROR_BAD_PARAMETER, "no schema has been selected to create in");
   }
   const std::string_view table = stmt.relation->relname;
 

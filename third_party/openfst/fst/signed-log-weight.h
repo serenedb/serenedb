@@ -223,12 +223,6 @@ inline bool operator==(const SignedLogWeightTpl<T> &w1,
   }
 }
 
-template <class T>
-inline bool operator!=(const SignedLogWeightTpl<T> &w1,
-                       const SignedLogWeightTpl<T> &w2) {
-  return !(w1 == w2);
-}
-
 // All functions and operators with a LogWeightTpl arg need to be
 // explicitly specified since the implicit constructor will not be
 // tried in conjunction with function overloading.
@@ -305,18 +299,6 @@ template <class T>
 inline bool operator==(const SignedLogWeightTpl<T> &w1,
                        const LogWeightTpl<T> &w2) {
   return w1 == SignedLogWeightTpl<T>(w2);
-}
-
-template <class T>
-inline bool operator!=(const LogWeightTpl<T> &w1,
-                       const SignedLogWeightTpl<T> &w2) {
-  return SignedLogWeightTpl<T>(w1) != w2;
-}
-
-template <class T>
-inline bool operator!=(const SignedLogWeightTpl<T> &w1,
-                       const LogWeightTpl<T> &w2) {
-  return w1 != SignedLogWeightTpl<T>(w2);
 }
 
 // Single-precision signed-log weight.

@@ -298,12 +298,6 @@ inline bool operator==(const StringWeight<Label, S> &w1,
 }
 
 template <typename Label, StringType S>
-inline bool operator!=(const StringWeight<Label, S> &w1,
-                       const StringWeight<Label, S> &w2) {
-  return !(w1 == w2);
-}
-
-template <typename Label, StringType S>
 inline bool ApproxEqual(const StringWeight<Label, S> &w1,
                         const StringWeight<Label, S> &w2,
                         float delta = kDelta) {

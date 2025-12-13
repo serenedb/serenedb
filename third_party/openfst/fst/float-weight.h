@@ -140,22 +140,6 @@ constexpr bool operator==(const FloatWeightTpl<double> &w1,
 }
 
 template <class T>
-constexpr bool operator!=(const FloatWeightTpl<T> &w1,
-                          const FloatWeightTpl<T> &w2) {
-  return !(w1 == w2);
-}
-
-constexpr bool operator!=(const FloatWeightTpl<float> &w1,
-                          const FloatWeightTpl<float> &w2) {
-  return operator!=<float>(w1, w2);
-}
-
-constexpr bool operator!=(const FloatWeightTpl<double> &w1,
-                          const FloatWeightTpl<double> &w2) {
-  return operator!=<double>(w1, w2);
-}
-
-template <class T>
 constexpr bool FloatApproxEqual(T w1, T w2, float delta = kDelta) {
   return w1 <= w2 + delta && w2 <= w1 + delta;
 }

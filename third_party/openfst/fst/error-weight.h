@@ -51,9 +51,6 @@ struct ErrorWeight {
 inline bool operator==(const ErrorWeight &, const ErrorWeight &) {
   return false;
 }
-inline bool operator!=(const ErrorWeight &, const ErrorWeight &) {
-  return false;
-}
 
 inline bool ApproxEqual(const ErrorWeight &, const ErrorWeight &, float) {
   return false;

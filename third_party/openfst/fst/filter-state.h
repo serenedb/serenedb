@@ -51,9 +51,6 @@ namespace fst {
 //   // Equality of filter states.
 //   bool operator==(const FilterState &fs) const;
 //
-//   // Inequality of filter states.
-//   bool operator!=(const FilterState &fs) const;
-//
 //   // Assignment to filter states.
 //   FilterState &operator=(const FilterState& fs);
 // };
@@ -72,10 +69,6 @@ class IntegerFilterState {
 
   bool operator==(const IntegerFilterState &fs) const {
     return state_ == fs.state_;
-  }
-
-  bool operator!=(const IntegerFilterState &fs) const {
-    return state_ != fs.state_;
   }
 
   T GetState() const { return state_; }
@@ -104,10 +97,6 @@ class WeightFilterState {
     return weight_ == fs.weight_;
   }
 
-  bool operator!=(const WeightFilterState &fs) const {
-    return weight_ != fs.weight_;
-  }
-
   W GetWeight() const { return weight_; }
 
  private:
@@ -132,8 +121,6 @@ class ListFilterState {
   }
 
   bool operator==(const ListFilterState &fs) const { return list_ == fs.list_; }
-
-  bool operator!=(const ListFilterState &fs) const { return list_ != fs.list_; }
 
   const std::forward_list<T> &GetState() const { return list_; }
 
@@ -168,10 +155,6 @@ class PairFilterState {
     return fs1_ == fs.fs1_ && fs2_ == fs.fs2_;
   }
 
-  bool operator!=(const PairFilterState &fs) const {
-    return fs1_ != fs.fs1_ || fs2_ != fs.fs2_;
-  }
-
   const FilterState1 &GetState1() const { return fs1_; }
 
   const FilterState2 &GetState2() const { return fs2_; }
@@ -192,10 +175,6 @@ class TrivialFilterState {
 
   bool operator==(const TrivialFilterState &fs) const {
     return state_ == fs.state_;
-  }
-
-  bool operator!=(const TrivialFilterState &fs) const {
-    return state_ != fs.state_;
   }
 
  private:

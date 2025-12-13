@@ -352,13 +352,6 @@ inline bool operator==(const UnionWeight<W, O> &w1,
 
 // Requires union weight has been canonicalized.
 template <class W, class O>
-inline bool operator!=(const UnionWeight<W, O> &w1,
-                       const UnionWeight<W, O> &w2) {
-  return !(w1 == w2);
-}
-
-// Requires union weight has been canonicalized.
-template <class W, class O>
 inline bool ApproxEqual(const UnionWeight<W, O> &w1,
                         const UnionWeight<W, O> &w2, float delta = kDelta) {
   if (w1.Size() != w2.Size()) return false;

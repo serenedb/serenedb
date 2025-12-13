@@ -330,12 +330,6 @@ inline bool operator==(const SetWeight<Label, SET_BOOLEAN> &w1,
 }
 
 template <typename Label, SetType S>
-inline bool operator!=(const SetWeight<Label, S> &w1,
-                       const SetWeight<Label, S> &w2) {
-  return !(w1 == w2);
-}
-
-template <typename Label, SetType S>
 inline bool ApproxEqual(const SetWeight<Label, S> &w1,
                         const SetWeight<Label, S> &w2, float delta = kDelta) {
   return w1 == w2;

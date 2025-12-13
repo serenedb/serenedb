@@ -35,8 +35,8 @@
 #include <fst/impl-to-fst.h>
 #include <fst/mutable-fst.h>
 #include <fst/properties.h>
-#include <unordered_map>
-#include <unordered_set>
+#include <absl/container/flat_hash_map.h>
+#include <absl/container/flat_hash_set.h>
 
 namespace fst {
 
@@ -288,8 +288,8 @@ class SynchronizeFstImpl : public CacheImpl<Arc> {
   };
 
   using ElementMap =
-      std::unordered_map<Element, StateId, ElementKey, ElementEqual>;
-  using StringSet = std::unordered_set<String, StringKey>;
+      absl::flat_hash_map<Element, StateId, ElementKey, ElementEqual>;
+  using StringSet = absl::flat_hash_set<String, StringKey>;
 
   std::unique_ptr<const Fst<Arc>> fst_;
   std::vector<Element> elements_;  // Maps FST state to Elements.

@@ -25,7 +25,7 @@
 
 #include <fst/fst.h>
 #include <fst/symbol-table.h>
-#include <unordered_set>
+#include <absl/container/flat_hash_set.h>
 
 namespace fst {
 
@@ -35,7 +35,7 @@ namespace fst {
 template <class Arc>
 SymbolTable *PruneSymbolTable(const Fst<Arc> &fst, const SymbolTable &syms,
                               bool input) {
-  std::unordered_set<typename Arc::Label> seen;
+  absl::flat_hash_set<typename Arc::Label> seen;
   seen.insert(0);  // Always keep epsilon.
   for (StateIterator<Fst<Arc>> siter(fst); !siter.Done(); siter.Next()) {
     for (ArcIterator<Fst<Arc>> aiter(fst, siter.Value()); !aiter.Done();

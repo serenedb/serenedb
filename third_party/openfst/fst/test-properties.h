@@ -31,7 +31,7 @@
 #include <fst/fst.h>
 #include <fst/properties.h>
 #include <fst/util.h>
-#include <unordered_set>
+#include <absl/container/flat_hash_set.h>
 
 DECLARE_bool(fst_verify_properties);
 
@@ -83,8 +83,8 @@ uint64_t ComputeProperties(const Fst<Arc> &fst, uint64_t mask,
     if (mask & (kDfsProps | kWeightedCycles | kUnweightedCycles)) {
       comp_props |= kUnweightedCycles;
     }
-    std::optional<std::unordered_set<Label>> ilabels;
-    std::optional<std::unordered_set<Label>> olabels;
+    std::optional<absl::flat_hash_set<Label>> ilabels;
+    std::optional<absl::flat_hash_set<Label>> olabels;
     StateId nfinal = 0;
     for (StateIterator<Fst<Arc>> siter(fst); !siter.Done(); siter.Next()) {
       StateId s = siter.Value();

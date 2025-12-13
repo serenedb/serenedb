@@ -29,7 +29,7 @@
 #include <memory>
 #include <optional>
 #include <tuple>
-#include <unordered_map>
+#include <absl/container/flat_hash_map.h>
 #include <utility>
 
 #include <fst/log.h>
@@ -37,7 +37,7 @@
 #include <fst/mutable-fst.h>  // for all internal FST accessors.
 #include <fst/properties.h>
 #include <fst/util.h>
-#include <unordered_map>
+#include <absl/container/flat_hash_map.h>
 #include <optional>
 
 namespace fst {
@@ -526,7 +526,7 @@ class HashMatcher : public MatcherBase<typename F::Arc> {
   bool Search(Label match_label);
 
   using LabelTable = std::unordered_multimap<Label, size_t>;
-  using StateTable = std::unordered_map<StateId, std::unique_ptr<LabelTable>>;
+  using StateTable = absl::flat_hash_map<StateId, std::unique_ptr<LabelTable>>;
 
   std::unique_ptr<const FST> owned_fst_;  // ptr to FST if owned.
   const FST &fst_;                        // FST for matching.

@@ -30,7 +30,7 @@
 
 #include <fst/fst.h>
 #include <fst/memory.h>
-#include <unordered_map>
+#include <absl/container/flat_hash_map.h>
 
 namespace fst {
 
@@ -243,7 +243,7 @@ class ArcArenaStateStore {
     size_t narcs_;
   };
 
-  std::unordered_map<StateId, State *> cache_;
+  absl::flat_hash_map<StateId, State *> cache_;
   std::deque<State> states_;
   ArcArena<Arc> arena_;
 };

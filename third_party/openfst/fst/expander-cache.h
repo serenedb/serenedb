@@ -51,8 +51,8 @@
 
 #include <fst/cache.h>
 #include <fst/fst.h>
-#include <unordered_map>
-#include <unordered_map>
+#include <absl/container/flat_hash_map.h>
+#include <absl/container/flat_hash_map.h>
 
 namespace fst {
 
@@ -158,7 +158,7 @@ class NoGcKeepOneExpanderCache {
 
   StateId state_id_ = kNoStateId;
   std::unique_ptr<State> state_;
-  std::unordered_map<StateId, std::unique_ptr<State>> cache_;
+  absl::flat_hash_map<StateId, std::unique_ptr<State>> cache_;
 };
 
 template <class A>
@@ -191,7 +191,7 @@ class HashExpanderCache {
   }
 
  private:
-  std::unordered_map<StateId, std::unique_ptr<State>> cache_;
+  absl::flat_hash_map<StateId, std::unique_ptr<State>> cache_;
 };
 
 template <class A>

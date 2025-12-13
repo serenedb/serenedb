@@ -36,7 +36,7 @@
 #include <fst/string-weight.h>
 #include <fst/union-weight.h>
 #include <fst/weight.h>
-#include <unordered_map>
+#include <absl/container/flat_hash_map.h>
 
 namespace fst {
 
@@ -430,7 +430,7 @@ class FactorWeightFstImpl : public CacheImpl<Arc> {
   };
 
   using ElementMap =
-      std::unordered_map<Element, StateId, ElementKey, ElementEqual>;
+      absl::flat_hash_map<Element, StateId, ElementKey, ElementEqual>;
 
   std::unique_ptr<const Fst<Arc>> fst_;
   float delta_;

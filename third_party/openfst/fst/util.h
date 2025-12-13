@@ -36,8 +36,8 @@
 #include <string>
 #include <tuple>
 #include <type_traits>
-#include <unordered_map>
-#include <unordered_set>
+#include <absl/container/flat_hash_map.h>
+#include <absl/container/flat_hash_set.h>
 #include <utility>
 #include <vector>
 
@@ -46,7 +46,7 @@
 #include <fst/log.h>
 #include <fstream>
 #include <fst/mapped-file.h>
-#include <unordered_map>
+#include <absl/container/flat_hash_map.h>
 #include <string_view>
 #include <optional>
 
@@ -118,9 +118,9 @@ std::istream &ReadType(std::istream &strm, std::set<T...> *c);
 template <class... T>
 std::istream &ReadType(std::istream &strm, std::map<T...> *c);
 template <class... T>
-std::istream &ReadType(std::istream &strm, std::unordered_map<T...> *c);
+std::istream &ReadType(std::istream &strm, absl::flat_hash_map<T...> *c);
 template <class... T>
-std::istream &ReadType(std::istream &strm, std::unordered_set<T...> *c);
+std::istream &ReadType(std::istream &strm, absl::flat_hash_set<T...> *c);
 
 // Pair case.
 template <typename S, typename T>
@@ -207,13 +207,13 @@ std::istream &ReadType(std::istream &strm, std::map<T...> *c) {
 }
 
 template <class... T>
-std::istream &ReadType(std::istream &strm, std::unordered_set<T...> *c) {
+std::istream &ReadType(std::istream &strm, absl::flat_hash_set<T...> *c) {
   return internal::ReadContainerType(
       strm, c, [](decltype(c) v, int n) { v->reserve(n); });
 }
 
 template <class... T>
-std::istream &ReadType(std::istream &strm, std::unordered_map<T...> *c) {
+std::istream &ReadType(std::istream &strm, absl::flat_hash_map<T...> *c) {
   return internal::ReadContainerType(
       strm, c, [](decltype(c) v, int n) { v->reserve(n); });
 }
@@ -267,10 +267,10 @@ template <typename... T>
 std::ostream &WriteType(std::ostream &strm, const std::map<T...> &c);
 
 template <typename... T>
-std::ostream &WriteType(std::ostream &strm, const std::unordered_map<T...> &c);
+std::ostream &WriteType(std::ostream &strm, const absl::flat_hash_map<T...> &c);
 
 template <typename... T>
-std::ostream &WriteType(std::ostream &strm, const std::unordered_set<T...> &c);
+std::ostream &WriteType(std::ostream &strm, const absl::flat_hash_set<T...> &c);
 
 // Pair case.
 template <typename S, typename T>
@@ -324,12 +324,12 @@ std::ostream &WriteType(std::ostream &strm, const std::map<T...> &c) {
 }
 
 template <typename... T>
-std::ostream &WriteType(std::ostream &strm, const std::unordered_map<T...> &c) {
+std::ostream &WriteType(std::ostream &strm, const absl::flat_hash_map<T...> &c) {
   return internal::WriteContainer(strm, c);
 }
 
 template <typename... T>
-std::ostream &WriteType(std::ostream &strm, const std::unordered_set<T...> &c) {
+std::ostream &WriteType(std::ostream &strm, const absl::flat_hash_set<T...> &c) {
   return internal::WriteContainer(strm, c);
 }
 

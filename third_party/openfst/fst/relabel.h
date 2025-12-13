@@ -37,7 +37,7 @@
 #include <fst/properties.h>
 #include <fst/symbol-table.h>
 #include <fst/util.h>
-#include <unordered_map>
+#include <absl/container/flat_hash_map.h>
 
 namespace fst {
 
@@ -53,9 +53,9 @@ void Relabel(
   using Label = typename Arc::Label;
   const auto props = fst->Properties(kFstProperties, false);
   // Constructs label-to-label maps.
-  const std::unordered_map<Label, Label> input_map(
+  const absl::flat_hash_map<Label, Label> input_map(
       ipairs.begin(), ipairs.end());
-  const std::unordered_map<Label, Label> output_map(
+  const absl::flat_hash_map<Label, Label> output_map(
       opairs.begin(), opairs.end());
   for (StateIterator<MutableFst<Arc>> siter(*fst); !siter.Done();
        siter.Next()) {
@@ -354,8 +354,8 @@ class RelabelFstImpl : public CacheImpl<Arc> {
  private:
   std::unique_ptr<const Fst<Arc>> fst_;
 
-  std::unordered_map<Label, Label> input_map_;
-  std::unordered_map<Label, Label> output_map_;
+  absl::flat_hash_map<Label, Label> input_map_;
+  absl::flat_hash_map<Label, Label> output_map_;
   bool relabel_input_;
   bool relabel_output_;
 };

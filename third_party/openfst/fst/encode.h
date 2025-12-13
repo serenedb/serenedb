@@ -45,7 +45,7 @@
 #include <fst/rmfinalepsilon.h>
 #include <fst/symbol-table.h>
 #include <fst/util.h>
-#include <unordered_map>
+#include <absl/container/flat_hash_map.h>
 #include <string_view>
 
 namespace fst {
@@ -250,7 +250,7 @@ class EncodeTable {
 
   uint8_t flags_;
   std::vector<std::unique_ptr<Triple>> triples_;
-  std::unordered_map<const Triple *, Label, TripleHash, TripleEqual>
+  absl::flat_hash_map<const Triple *, Label, TripleHash, TripleEqual>
       triple2label_;
   std::unique_ptr<SymbolTable> isymbols_;
   std::unique_ptr<SymbolTable> osymbols_;

@@ -24,13 +24,11 @@
 
 #include <optional>
 
-#include "app/app_server.h"
 #include "basics/assert.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
 #include "basics/logger/logger.h"
-#include "catalog/catalog.h"
-#include "rest_server/serened.h"
+
 namespace sdb {
 
 template<std::integral T>

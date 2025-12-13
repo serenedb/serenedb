@@ -35,7 +35,6 @@
 #include "basics/exceptions.h"
 #include "basics/fwd.h"
 #include "basics/system-compiler.h"
-#include "catalog/identifiers/object_id.h"
 
 namespace sdb {
 

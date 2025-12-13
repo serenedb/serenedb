@@ -49,10 +49,6 @@ struct IntInterval {
     return begin == i.begin && end == i.end;
   }
 
-  bool operator!=(const IntInterval<T> &i) const {
-    return begin != i.begin || end != i.end;
-  }
-
   std::istream &Read(std::istream &strm) {
     T n;
     ReadType(strm, &n);
@@ -167,13 +163,6 @@ class IntervalSet {
     return Size() == iset.Size() &&
            std::equal(intervals_.begin(), intervals_.end(),
                       iset.intervals_.begin());
-  }
-
-  // Requires intervals be normalized.
-  bool operator!=(const IntervalSet<T, Store> &iset) const {
-    return Size() != iset.Size() ||
-           !std::equal(intervals_.begin(), intervals_.end(),
-                       iset.intervals_.begin());
   }
 
   bool Singleton() const {

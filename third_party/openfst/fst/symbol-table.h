@@ -348,8 +348,6 @@ class SymbolTable {
 
     bool operator==(const iterator &that) const { return (pos_ == that.pos_); }
 
-    bool operator!=(const iterator &that) const { return !(*this == that); }
-
     reference operator*() { return iter_item_; }
 
     pointer operator->() const { return &iter_item_; }

@@ -264,12 +264,6 @@ bool operator==(const BlockAllocator<T> &alloc1,
   return false;
 }
 
-template <typename T, typename U>
-bool operator!=(const BlockAllocator<T> &alloc1,
-                const BlockAllocator<U> &alloc2) {
-  return true;
-}
-
 // STL allocator using memory pools. Memory is allocated from underlying
 // blocks of size 'block_size * sizeof(T)'. Keeps an internal list of freed
 // chunks thare are reused on the next allocation.
@@ -353,12 +347,6 @@ template <typename T, typename U>
 bool operator==(const PoolAllocator<T> &alloc1,
                 const PoolAllocator<U> &alloc2) {
   return false;
-}
-
-template <typename T, typename U>
-bool operator!=(const PoolAllocator<T> &alloc1,
-                const PoolAllocator<U> &alloc2) {
-  return true;
 }
 
 }  // namespace fst

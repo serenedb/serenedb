@@ -391,12 +391,6 @@ inline bool operator==(const SparseTupleWeight<W, K> &w1,
 }
 
 template <class W, class K>
-inline bool operator!=(const SparseTupleWeight<W, K> &w1,
-                       const SparseTupleWeight<W, K> &w2) {
-  return !(w1 == w2);
-}
-
-template <class W, class K>
 inline std::ostream &operator<<(std::ostream &strm,
                                 const SparseTupleWeight<W, K> &weight) {
   CompositeWeightWriter writer(strm);

@@ -128,15 +128,6 @@ inline bool operator==(const TupleWeight<W, n> &w1,
 }
 
 template <class W, size_t n>
-inline bool operator!=(const TupleWeight<W, n> &w1,
-                       const TupleWeight<W, n> &w2) {
-  for (size_t i = 0; i < n; ++i) {
-    if (w1.Value(i) != w2.Value(i)) return true;
-  }
-  return false;
-}
-
-template <class W, size_t n>
 inline bool ApproxEqual(const TupleWeight<W, n> &w1,
                         const TupleWeight<W, n> &w2, float delta = kDelta) {
   for (size_t i = 0; i < n; ++i) {

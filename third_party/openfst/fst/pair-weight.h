@@ -110,12 +110,6 @@ inline bool operator==(const PairWeight<W1, W2> &w1,
 }
 
 template <class W1, class W2>
-inline bool operator!=(const PairWeight<W1, W2> &w1,
-                       const PairWeight<W1, W2> &w2) {
-  return w1.Value1() != w2.Value1() || w1.Value2() != w2.Value2();
-}
-
-template <class W1, class W2>
 inline bool ApproxEqual(const PairWeight<W1, W2> &w1,
                         const PairWeight<W1, W2> &w2, float delta = kDelta) {
   return ApproxEqual(w1.Value1(), w2.Value1(), delta) &&

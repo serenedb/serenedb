@@ -167,10 +167,6 @@ struct DeterminizeElement {
     return state_id == element.state_id && weight == element.weight;
   }
 
-  inline bool operator!=(const DeterminizeElement &element) const {
-    return !(*this == element);
-  }
-
   inline bool operator<(const DeterminizeElement<Arc> &element) const {
     return state_id < element.state_id;
   }
@@ -190,10 +186,6 @@ struct DeterminizeStateTuple {
 
   inline bool operator==(const DeterminizeStateTuple &tuple) const {
     return (tuple.filter_state == filter_state) && (tuple.subset == subset);
-  }
-
-  inline bool operator!=(const DeterminizeStateTuple &tuple) const {
-    return (tuple.filter_state != filter_state) || (tuple.subset != subset);
   }
 
   Subset subset;

@@ -445,17 +445,16 @@ class SereneDBConnector final : public velox::connector::Connector {
       basics::downCast<const RocksDBTable>(*serene_insert_handle.Table());
     const auto& object_key = table.TableId();
     std::vector<key_utils::ColumnId> column_oids;
-    column_oids.reserve(input_type->size());
-    for (auto& col : input_type->names()) {
-      auto handle = table.columnMap().find(col);
-      SDB_ASSERT(handle != table.columnMap().end(),
-                 "RocksDBDataSink: can't find column handle for ", col);
-      column_oids.push_back(
-        basics::downCast<const SereneDBColumn>(handle->second)->Oid());
-    }
-
     if (serene_insert_handle.Kind() == axiom::connector::WriteKind::kInsert ||
         serene_insert_handle.Kind() == axiom::connector::WriteKind::kUpdate) {
+      column_oids.reserve(input_type->size());
+      for (auto& col : input_type->names()) {
+        auto handle = table.columnMap().find(col);
+        SDB_ASSERT(handle != table.columnMap().end(),
+                   "RocksDBDataSink: can't find column handle for ", col);
+        column_oids.push_back(
+          basics::downCast<const SereneDBColumn>(handle->second)->Oid());
+      }
       return irs::ResolveBool(
         serene_insert_handle.Kind() == axiom::connector::WriteKind::kUpdate,
         [&]<bool IsUpdate>() {
@@ -490,6 +489,14 @@ class SereneDBConnector final : public velox::connector::Connector {
         });
     }
     if (serene_insert_handle.Kind() == axiom::connector::WriteKind::kDelete) {
+      column_oids.reserve(table.type()->size());
+      for (auto& col : table.type()->names()) {
+        auto handle = table.columnMap().find(col);
+        SDB_ASSERT(handle != table.columnMap().end(),
+                   "RocksDBDataSink: can't find column handle for ", col);
+        column_oids.push_back(
+          basics::downCast<const SereneDBColumn>(handle->second)->Oid());
+      }
       return std::make_unique<RocksDBDeleteDataSink>(
         *(serene_insert_handle.GetTransaction()), _cf, table.type(), object_key,
         column_oids);

@@ -284,7 +284,8 @@ bool ImmutableFst<A>::Write(const FST& fst, irs::BufferedOutput& stream,
   for (StateIterator<FST> siter(fst); !siter.Done(); siter.Next()) {
     const StateId s = siter.Value();
 
-    size_t weight_size = impl->FinalRef(s).Size();
+    static_assert(std::is_reference_v<decltype(impl->Final(s))>);
+    size_t weight_size = impl->Final(s).Size();
 
     if (weight_size <= Impl::kMaxStateWeight) [[likely]] {
       const size_t narcs = impl->NumArcs(s);
@@ -314,7 +315,8 @@ bool ImmutableFst<A>::Write(const FST& fst, irs::BufferedOutput& stream,
   for (StateIterator<FST> siter(fst); !siter.Done(); siter.Next()) {
     const StateId s = siter.Value();
 
-    if (const auto& weight = impl->FinalRef(s); !weight.Empty()) {
+    static_assert(std::is_reference_v<decltype(impl->Final(s))>);
+    if (const auto& weight = impl->Final(s); !weight.Empty()) {
       stream.WriteBytes(weight.c_str(), weight.Size());
     }
 

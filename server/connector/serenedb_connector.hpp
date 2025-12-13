@@ -152,8 +152,7 @@ class RocksDBTable final : public axiom::connector::Table {
       _pk_type->size(),
       axiom::connector::SortOrder{.isAscending = true, .isNullsFirst = false});
     // TODO(Dronplane) take it from the catalog when available
-    // Start from 1 to mimic Postgres style OIDs for table columns
-    key_utils::ColumnId col_oid = 1;
+    key_utils::ColumnId col_oid = 0;
     for (const auto& [name, type] : std::views::zip(
            collection.RowType()->names(), collection.RowType()->children())) {
       auto column = std::make_unique<SereneDBColumn>(name, type, col_oid++);
@@ -447,11 +446,10 @@ class SereneDBConnector final : public velox::connector::Connector {
     const auto& object_key = table.TableId();
     std::vector<key_utils::ColumnId> column_oids;
     column_oids.reserve(input_type->size());
-    for (auto& col : input_type->children()) {
-      auto handle = table.columnMap().find(col->name());
+    for (auto& col : input_type->names()) {
+      auto handle = table.columnMap().find(col);
       SDB_ASSERT(handle != table.columnMap().end(),
-                 "RocksDBDataSink: can't find column handle for {}",
-                 col->name());
+                 "RocksDBDataSink: can't find column handle for ", col);
       column_oids.push_back(
         basics::downCast<const SereneDBColumn>(handle->second)->Oid());
     }

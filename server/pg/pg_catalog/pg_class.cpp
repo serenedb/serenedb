@@ -76,13 +76,14 @@ void RetrieveObjects(ObjectId database_id,
       // TODO(codeworse): fill other fields
       values.push_back(std::move(row));
     };
+  std::vector<std::shared_ptr<catalog::Schema>> schemas;
+  auto res = catalog.GetSchemas(database_id, schemas);
 
-  {  // retrieve collections
+  for (const auto& schema : schemas) {  // retrieve collections
     std::vector<
       std::pair<std::shared_ptr<catalog::Table>, std::shared_ptr<TableShard>>>
       collections;
-    auto res =
-      catalog.GetTables(database_id, StaticStrings::kPublic, collections);
+    auto res = catalog.GetTables(database_id, schema->GetName(), collections);
     if (!res.ok()) {
       SDB_THROW(ERROR_INTERNAL, "Failed to get collections for pg_class");
     }

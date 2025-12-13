@@ -15,6 +15,16 @@ CREATE TABLE t2(r text);
 
 
 query
+SELECT c.relname, n.nspname FROM pg_class c JOIN pg_namespace n ON c.relnamespace = n.oid WHERE relkind = 'r' AND n.nspname <> 'pg_catalog' AND n.nspname <> 'information_schema' ORDER BY n.nspname, c.relname;
+----
+relname	nspname
+t	public
+t2	public
+t	some_schema
+
+
+
+query
 SELECT * FROM t AS first, some_schema.t AS second WHERE first.r = second.r2;
 ----
 r	r2

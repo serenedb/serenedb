@@ -89,9 +89,9 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
   // UPDATE with PK columns changing would have PK columns at the
   // beginning and same columns again as write data. So here we validate
   // column oids size with input type not row type size.
-  SDB_ASSERT(input->size() == _column_oids.size(),
+  SDB_ASSERT(input->type()->size() == _column_oids.size(),
              "RocksDBDataSink: column oids size ", _column_oids.size(),
-             " doesn't match input type size ", input->size());
+             " doesn't match input type size ", input->type()->size());
   // TODO(Dronplane) implement updating PK fields
   _row_keys.clear();
   primary_key::Create(*input, _key_childs, _row_keys);

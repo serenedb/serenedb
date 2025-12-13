@@ -2346,7 +2346,7 @@ TEST_F(DataSinkTest, test_tableWriteConcurrent) {
     {makeFlatVector<int32_t>({11, 12, 13, 14}),
      makeFlatVector<velox::StringView>({"one", "two", "three", "four"})});
   auto data_conflict = makeRowVector(
-    names, {makeFlatVector<int32_t>({5, 6, 7}),
+    names, {makeFlatVector<int32_t>({15, 6, 7}),
             makeFlatVector<velox::StringView>({"one", "two", "three"})});
   const std::vector<velox::column_index_t> pk = {0};
   std::unique_ptr<rocksdb::Transaction> transaction;
@@ -2575,7 +2575,7 @@ TEST_F(DataSinkTest, test_insertDeleteConflict) {
   sdb::connector::RocksDBDeleteDataSink delete_sink(
     *transaction_delete, *_cf_handles.front(), row_type, kObjectKey,
     column_ids);
-  auto delete_data = makeRowVector({makeFlatVector<int32_t>({5, 6, 7, 10})});
+  auto delete_data = makeRowVector({makeFlatVector<int32_t>({15, 6, 7, 10})});
   ASSERT_ANY_THROW(delete_sink.appendData(delete_data));
   // should be empty
   ASSERT_TRUE(transaction_delete->Commit().ok());

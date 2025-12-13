@@ -35,8 +35,9 @@ namespace sdb::pg {
 yaclib::Future<Result> CreateTable(ExecContext& context,
                                    const CreateStmt& stmt) {
   const auto db = context.GetDatabaseId();
-  const auto& conn_config = basics::downCast<const ConnectionContext>(context);
-  std::string current_schema = conn_config.GetConfig().GetCurrentSchema();
+  const ConnectionContext& conn_config =
+    basics::downCast<const ConnectionContext>(context);
+  std::string current_schema = conn_config.GetCurrentSchema();
   const std::string_view schema =
     stmt.relation->schemaname ? std::string_view{stmt.relation->schemaname}
                               : current_schema;

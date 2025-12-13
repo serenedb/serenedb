@@ -152,9 +152,8 @@ yaclib::Future<Result> CreateFunction(ExecContext& context,
 
   SDB_ASSERT(stmt.funcname);
 
-  auto current_schema = basics::downCast<const ConnectionContext>(context)
-                          .GetConfig()
-                          .GetCurrentSchema();
+  auto current_schema =
+    basics::downCast<const ConnectionContext>(context).GetCurrentSchema();
 
   auto [schema, function_name] =
     ParseObjectName(stmt.funcname, context.GetDatabase(), current_schema);

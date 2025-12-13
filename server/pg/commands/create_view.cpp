@@ -72,9 +72,8 @@ yaclib::Future<Result> CreateView(const ExecContext& context,
                                   const ViewStmt& stmt) {
   // TODO: use correct schema
   const auto db = context.GetDatabaseId();
-  auto current_schema = basics::downCast<const ConnectionContext>(context)
-                          .GetConfig()
-                          .GetCurrentSchema();
+  auto current_schema =
+    basics::downCast<const ConnectionContext>(context).GetCurrentSchema();
   const std::string_view schema = stmt.view->schemaname
                                     ? std::string_view{stmt.view->schemaname}
                                     : current_schema;

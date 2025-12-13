@@ -44,9 +44,8 @@ yaclib::Future<Result> DropObject(ExecContext& context, const DropStmt& stmt) {
   auto* names = stmt.removeType == OBJECT_SCHEMA
                   ? stmt.objects
                   : list_nth_node(List, stmt.objects, 0);
-  auto current_schema = basics::downCast<const ConnectionContext>(context)
-                          .GetConfig()
-                          .GetCurrentSchema();
+  auto current_schema =
+    basics::downCast<const ConnectionContext>(context).GetCurrentSchema();
   auto [schema, name] =
     ParseObjectName(names, context.GetDatabase(), current_schema);
 

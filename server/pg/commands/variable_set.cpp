@@ -104,7 +104,7 @@ Result ProcessValues(const List* list, std::string_view name, VariableType type,
 
 yaclib::Future<Result> VariableSet(ExecContext& ctx,
                                    const VariableSetStmt& stmt) {
-  auto& config = basics::downCast<ConnectionContext>(ctx).GetConfig();
+  ConnectionContext& config = basics::downCast<ConnectionContext>(ctx);
   auto context = Config::VariableContext::Session;
   if (stmt.is_local) {
     context = Config::VariableContext::Local;

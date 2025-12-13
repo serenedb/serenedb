@@ -29,7 +29,7 @@ namespace sdb::pg {
 
 yaclib::Future<Result> Transaction(ExecContext& context,
                                    const TransactionStmt& stmt) {
-  auto& config = basics::downCast<ConnectionContext>(context).GetConfig();
+  ConnectionContext& config = basics::downCast<ConnectionContext>(context);
   Result r;
   switch (stmt.kind) {
     case TRANS_STMT_BEGIN:

@@ -165,15 +165,4 @@ void Config::Abort() {
   _inside_transaction = false;
 }
 
-std::string Config::GetCurrentSchema() const {
-  auto database_id = GetCurrentDatabase();
-  auto search_path = Get<VariableType::PgSearchPath>("search_path");
-  auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  auto it = absl::c_find_if(search_path, [&](const std::string& schema_name) {
-    return catalog.GetSchema(database_id, schema_name);
-  });
-
-  return it != search_path.end() ? *it : "";
-}
 }  // namespace sdb

@@ -103,7 +103,7 @@ class Config : public velox::config::IConfig {
         }
         return std::optional{result};
       });
-      SDB_ASSERT(value.has_value());
+      SDB_ASSERT(value);
       return *value;
     } else if constexpr (T == VariableType::PgExtraFloatDigits) {
       SDB_ASSERT(value_str);
@@ -140,15 +140,6 @@ class Config : public velox::config::IConfig {
 
   bool InsideTransaction() const { return _inside_transaction; }
 
-  void SetCurrentDatabase(ObjectId database_id) {
-    _database_id = database_id;
-    _current_schema = "";
-  }
-
-  ObjectId GetCurrentDatabase() const { return _database_id; }
-
-  std::string GetCurrentSchema() const;
-
   std::unordered_map<std::string, std::string> rawConfigsCopy() const final;
 
   // Visit all the settings and call function f(setting_name, value,
@@ -171,8 +162,6 @@ class Config : public velox::config::IConfig {
   containers::FlatHashMap<std::string_view, TxnVariable> _transaction;
 
   bool _inside_transaction = false;
-  ObjectId _database_id = ObjectId::none();
-  std::string _current_schema = "";
 };
 
 };  // namespace sdb

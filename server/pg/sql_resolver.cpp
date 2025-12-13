@@ -34,7 +34,7 @@ namespace sdb::pg {
 
 namespace {
 
-void ResolveObject(ObjectId database, std::span<std::string> search_path,
+void ResolveObject(ObjectId database, std::span<const std::string> search_path,
                    Objects& objects, Disallowed& disallowed,
                    const Objects::ObjectName& name, Objects::ObjectData& data) {
   if (data.object) {
@@ -69,7 +69,7 @@ void ResolveObject(ObjectId database, std::span<std::string> search_path,
     };
 
     if (!name.schema.empty()) {
-      resolve_object(std::string_view{name.schema});
+      resolve_object(name.schema);
     } else {
       for (const auto& schema : search_path) {
         resolve_object(schema);
@@ -105,7 +105,7 @@ void ResolveObject(ObjectId database, std::span<std::string> search_path,
   }
 }
 
-void ResolveEntity(ObjectId database, std::span<std::string> search_path,
+void ResolveEntity(ObjectId database, std::span<const std::string> search_path,
                    Objects& objects, Disallowed& disallowed,
                    const Objects& query, std::string_view entity_name) {
   for (const auto& [name, old_data] : query.getObjects()) {
@@ -121,15 +121,16 @@ void ResolveEntity(ObjectId database, std::span<std::string> search_path,
 
 }  // namespace
 
-void ResolveQueryView(ObjectId database, std::span<std::string> search_path,
+void ResolveQueryView(ObjectId database,
+                      std::span<const std::string> search_path,
                       Objects& objects, Disallowed& disallowed,
                       const Objects& query) {
   ResolveEntity(database, search_path, objects, disallowed, query, "view");
 }
 
-void ResolveFunction(ObjectId database, std::span<std::string> search_path,
-                     Objects& objects, Disallowed& disallowed,
-                     const Objects& query) {
+void ResolveFunction(ObjectId database,
+                     std::span<const std::string> search_path, Objects& objects,
+                     Disallowed& disallowed, const Objects& query) {
   ResolveEntity(database, search_path, objects, disallowed, query, "function");
 }
 

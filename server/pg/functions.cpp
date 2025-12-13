@@ -33,6 +33,7 @@
 #include "basics/down_cast.h"
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
+#include "pg/connection_context.h"
 #include "pg/extract.h"
 #include "pg/interval.h"
 #include "pg/serialize.h"
@@ -213,8 +214,9 @@ struct CurrentSchemaFunction {
   FOLLY_ALWAYS_INLINE void initialize(  // NOLINT
     const std::vector<velox::TypePtr>& /*inputTypes*/,
     const velox::core::QueryConfig& config) {
-    auto cfg = basics::downCast<const Config>(config.config());
-    _schema_name = cfg->GetCurrentSchema();
+    auto conn_ctx = basics::downCast<const ConnectionContext>(config.config());
+    SDB_ASSERT(conn_ctx);
+    _schema_name = conn_ctx->GetCurrentSchema();
   }
 
   FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& out) {  // NOLINT
@@ -233,13 +235,15 @@ struct CurrentSchemasFunction {
     const std::vector<velox::TypePtr>& /*inputTypes*/,
     const velox::core::QueryConfig& config,
     const arg_type<bool>& /*include_implicit*/) {
-    auto cfg = basics::downCast<const Config>(config.config());
-    auto database_id = cfg->GetCurrentDatabase();
-    auto search_path = cfg->Get<VariableType::PgSearchPath>("search_path");
+    auto conn_ctx = basics::downCast<const ConnectionContext>(config.config());
+    SDB_ASSERT(conn_ctx);
+    auto database_id = conn_ctx->GetDatabaseId();
+    std::vector<std::string> search_path =
+      conn_ctx->Get<VariableType::PgSearchPath>("search_path");
     auto& catalog =
       SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-    auto filter = [&](const std::string_view schema_name) {
-      return catalog.GetSchema(database_id, schema_name) != nullptr;
+    auto filter = [&](const std::string_view schema_name) -> bool {
+      return catalog.GetSchema(database_id, schema_name).get();
     };
     _schema_names = std::move(search_path) | std::views::filter(filter) |
                     std::ranges::to<std::vector>();
@@ -251,10 +255,9 @@ struct CurrentSchemasFunction {
     if (include_implicit) {
       out.add_item().copy_from("pg_catalog");
     }
-    absl::c_for_each(_schema_names,
-                     [&](const std::string& schema_name) mutable {
-                       out.add_item().copy_from(schema_name);
-                     });
+    for (const auto& schema_name : _schema_names) {
+      out.add_item().copy_from(schema_name);
+    }
   }
 
  private:

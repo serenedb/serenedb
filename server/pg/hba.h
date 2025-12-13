@@ -109,14 +109,4 @@ hba::AuthMethod Find(const hba::Client& client, const catalog::Database& db,
 
 }  // namespace hba
 
-struct SessionContext {
-  std::vector<std::string> search_path{"$user", "public", "pg_catalog"};
-  std::string_view system_user;
-  ObjectId session_user = id::kInvalid;
-  ObjectId user = id::kInvalid;
-  ObjectId database = id::kInvalid;
-  ObjectId catalog = id::kInvalid;
-  hba::UserAuth auth_method{hba::UserAuth::Reject};
-};
-
 }  // namespace sdb

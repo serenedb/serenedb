@@ -24,7 +24,6 @@
 #include <cstdio>
 
 #include "app/app_server.h"
-#include "app/bump_file_descriptors.h"
 #include "app/options/parameters.h"
 #include "app/options/program_options.h"
 #include "app/options/section.h"

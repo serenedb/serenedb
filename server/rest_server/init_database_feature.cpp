@@ -80,10 +80,6 @@ void InitDatabaseFeature::validateOptions(
   if (_init_database || _restore_admin) {
     server().forceDisableFeatures(_non_server_features);
     ServerState::instance()->SetRole(ServerState::Role::Single);
-
-    // we can turn off all warnings about environment here, because they
-    // wil show up on a regular start later anyway
-    server().disableFeatures({SerenedServer::id<EnvironmentFeature>()});
   }
 }
 

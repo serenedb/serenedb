@@ -26,20 +26,11 @@
 
 namespace sdb {
 
-class ConnectionContext : public ExecContext {
+class ConnectionContext : public ExecContext, public Config {
  public:
   ConnectionContext(std::string_view user, std::string_view dbname,
                     ObjectId database_id);
-
-  [[nodiscard]] static std::shared_ptr<Config> GetConfig(
-    const std::shared_ptr<ConnectionContext>& context) {
-    return {context, &context->_config};
-  }
-
-  Config& GetConfig() { return _config; }
-
- private:
-  Config _config;
+  std::string GetCurrentSchema() const;
 };
 
 }  // namespace sdb

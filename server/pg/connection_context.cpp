@@ -20,7 +20,10 @@
 
 #include "pg/connection_context.h"
 
+#include "app/app_server.h"
+#include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
+#include "rest_server/serened.h"
 
 namespace sdb {
 
@@ -29,4 +32,15 @@ ConnectionContext::ConnectionContext(std::string_view user,
                                      ObjectId database_id)
   : ExecContext{user, dbname, database_id} {}
 
+std::string ConnectionContext::GetCurrentSchema() const {
+  auto database_id = ExecContext::GetDatabaseId();
+  auto search_path = Config::Get<VariableType::PgSearchPath>("search_path");
+  auto& catalog =
+    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+  auto it = absl::c_find_if(search_path, [&](const std::string& schema_name) {
+    return catalog.GetSchema(database_id, schema_name);
+  });
+
+  return it != search_path.end() ? *it : "";
+}
 }  // namespace sdb

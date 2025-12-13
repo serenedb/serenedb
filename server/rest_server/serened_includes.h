@@ -22,7 +22,6 @@
 #pragma once
 
 #include "app/app_server.h"
-#include "app/bump_file_descriptors.h"
 #include "app/communication_phase.h"
 #include "app/config.h"
 #include "app/global_context.h"
@@ -49,7 +48,6 @@
 #include "pg/pg_feature.h"
 #include "rest_server/bootstrap_feature.h"
 #include "rest_server/check_version_feature.h"
-#include "rest_server/cpu_usage_feature.h"
 #include "rest_server/daemon_feature.h"
 #include "rest_server/database_path_feature.h"
 #include "rest_server/endpoint_feature.h"

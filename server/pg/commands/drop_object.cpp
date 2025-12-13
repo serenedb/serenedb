@@ -26,6 +26,7 @@
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
 #include "pg/commands.h"
+#include "pg/connection_context.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_collector.h"
 
@@ -38,8 +39,10 @@ yaclib::Future<Result> DropObject(ExecContext& context, const DropStmt& stmt) {
   auto* names = stmt.removeType == OBJECT_SCHEMA
                   ? stmt.objects
                   : list_nth_node(List, stmt.objects, 0);
+  auto current_schema =
+    basics::downCast<const ConnectionContext>(context).GetCurrentSchema();
   auto [schema, name] =
-    ParseObjectName(names, context.GetDatabase(), StaticStrings::kPublic);
+    ParseObjectName(names, context.GetDatabase(), current_schema);
 
   Result r;
   const auto db = context.GetDatabaseId();

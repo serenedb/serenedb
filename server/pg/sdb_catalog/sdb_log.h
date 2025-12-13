@@ -20,23 +20,25 @@
 
 #pragma once
 
-#include "basics/containers/flat_hash_set.h"
-#include "pg/sql_collector.h"
-#include "query/config.h"
+#include "pg/system_table.h"
 
 namespace sdb::pg {
 
-using Disallowed = containers::FlatHashSet<Objects::ObjectName>;
+// NOLINTBEGIN
+struct SdbLog {
+  static constexpr uint64_t kId = 999999;  // TODO(gnusi): assign proper OID
+  static constexpr std::string_view kName = "sdb_log";
 
-void ResolveQueryView(ObjectId database,
-                      std::span<const std::string> search_path,
-                      Objects& objects, Disallowed& disallowed,
-                      const Objects& query);
+  uint64_t id;
+  uint64_t timestamp;  // TODO(gnusi): use proper timestamptz type
+  CharacterData topic;
+  CharacterData level;
+  CharacterData message;
+};
+// NOLINTEND
 
-void ResolveFunction(ObjectId database,
-                     std::span<const std::string> search_path, Objects& objects,
-                     Disallowed& disallowed, const Objects& query);
-
-void Resolve(ObjectId database, Objects& objects, const Config& config);
+template<>
+std::vector<velox::VectorPtr> SystemTableSnapshot<SdbLog>::GetTableData(
+  velox::memory::MemoryPool& pool);
 
 }  // namespace sdb::pg

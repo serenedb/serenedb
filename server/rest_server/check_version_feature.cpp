@@ -85,10 +85,6 @@ void CheckVersionFeature::validateOptions(
 #ifdef SDB_CLUSTER
   server().getFeature<ReplicationFeature>().disableReplicationApplier();
 #endif
-
-  // we can turn off all warnings about environment here, because they
-  // wil show up on a regular start later anyway
-  server().disableFeatures({SerenedServer::id<EnvironmentFeature>()});
 }
 
 void CheckVersionFeature::start() {

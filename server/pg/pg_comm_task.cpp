@@ -928,7 +928,7 @@ void PgSQLCommTaskBase::NextRootPortal() {
 auto PgSQLCommTaskBase::BindStatement(SqlStatement& stmt, BindInfo bind_info)
   -> SqlPortal {
   SqlPortal portal{.serialization_context{.buffer = &_send}};
-  FillContext(_connection_ctx->GetConfig(), portal.serialization_context);
+  FillContext(*_connection_ctx, portal.serialization_context);
 
   portal.bind_info = std::move(bind_info);
   auto& param_values = portal.bind_info.param_values;

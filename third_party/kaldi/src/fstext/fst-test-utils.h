@@ -20,7 +20,6 @@
 #ifndef KALDI_FSTEXT_FST_TEST_UTILS_H_
 #define KALDI_FSTEXT_FST_TEST_UTILS_H_
 
-
 #include <sstream>
 #include <string>
 
@@ -28,6 +27,4 @@
 #include "fst/script/print-impl.h"
 #include "fstext/rand-fst.h"
 
-
 #endif
-

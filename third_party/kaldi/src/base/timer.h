@@ -22,7 +22,6 @@
 #include "base/kaldi-utils.h"
 #include "base/kaldi-error.h"
 
-
 #if defined(_MSC_VER) || defined(MINGW)
 
 namespace kaldi {
@@ -32,11 +31,12 @@ class Timer {
 
   // You can initialize with bool to control whether or not you want the time to
   // be set when the object is created.
-  explicit Timer(bool set_timer) { if (set_timer) Reset(); }
-
-  void Reset() {
-    QueryPerformanceCounter(&time_start_);
+  explicit Timer(bool set_timer) {
+    if (set_timer)
+      Reset();
   }
+
+  void Reset() { QueryPerformanceCounter(&time_start_); }
   double Elapsed() const {
     LARGE_INTEGER time_end;
     LARGE_INTEGER freq;
@@ -50,10 +50,10 @@ class Timer {
             static_cast<double>(time_start_.QuadPart)) /
            (static_cast<double>(freq.QuadPart));
   }
+
  private:
   LARGE_INTEGER time_start_;
 };
-
 
 #else
 #include <sys/time.h>
@@ -66,7 +66,10 @@ class Timer {
 
   // You can initialize with bool to control whether or not you want the time to
   // be set when the object is created.
-  explicit Timer(bool set_timer) { if (set_timer) Reset(); }
+  explicit Timer(bool set_timer) {
+    if (set_timer)
+      Reset();
+  }
 
   void Reset() { gettimeofday(&this->time_start_, &time_zone_); }
 
@@ -76,11 +79,11 @@ class Timer {
     struct timezone time_zone;
     gettimeofday(&time_end, &time_zone);
     double t1, t2;
-    t1 =  static_cast<double>(time_start_.tv_sec) +
-          static_cast<double>(time_start_.tv_usec)/(1000*1000);
-    t2 =  static_cast<double>(time_end.tv_sec) +
-          static_cast<double>(time_end.tv_usec)/(1000*1000);
-    return t2-t1;
+    t1 = static_cast<double>(time_start_.tv_sec) +
+         static_cast<double>(time_start_.tv_usec) / (1000 * 1000);
+    t2 = static_cast<double>(time_end.tv_sec) +
+         static_cast<double>(time_end.tv_usec) / (1000 * 1000);
+    return t2 - t1;
   }
 
  private:
@@ -94,11 +97,12 @@ class Profiler {
  public:
   // Caution: the 'const char' should always be a string constant; for speed,
   // internally the profiling code uses the address of it as a lookup key.
-  Profiler(const char *function_name): name_(function_name) { }
+  Profiler(const char* function_name) : name_(function_name) {}
   ~Profiler();
+
  private:
   Timer tim_;
-  const char *name_;
+  const char* name_;
 };
 
 //  To add timing info for a function, you just put
@@ -107,9 +111,6 @@ class Profiler {
 //  include the class name.
 #define KALDI_PROFILE Profiler _profiler(__func__)
 
-
-
 }  // namespace kaldi
-
 
 #endif  // KALDI_BASE_TIMER_H_

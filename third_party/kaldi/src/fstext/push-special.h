@@ -34,9 +34,8 @@ namespace fst {
   that the total weight of each state (i.e. the sum of the arc
   probabilities plus the final-prob) is the same for all states.
 */
-void PushSpecial(VectorFst<StdArc> *fst,
-                 float delta = kDelta);
+void PushSpecial(VectorFst<StdArc>* fst, float delta = kDelta);
 
-}
+}  // namespace fst
 
 #endif

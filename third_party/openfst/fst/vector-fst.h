@@ -178,7 +178,8 @@ class VectorFstBaseImpl : public FstImpl<typename S::Arc> {
   using StateId = typename Arc::StateId;
   using Weight = typename Arc::Weight;
 
-  VectorFstBaseImpl() = default;
+  VectorFstBaseImpl(const typename State::ArcAllocator &alloc = {})
+      : arc_alloc_(alloc), state_alloc_(alloc) {}
 
   ~VectorFstBaseImpl() override {
     for (auto *state : states_) State::Destroy(state, &state_alloc_);
@@ -192,7 +193,9 @@ class VectorFstBaseImpl : public FstImpl<typename S::Arc> {
   VectorFstBaseImpl(VectorFstBaseImpl &&impl) noexcept
       : FstImpl<typename S::Arc>(),
         states_(std::move(impl.states_)),
-        start_(impl.start_) {
+        start_(impl.start_),
+        arc_alloc_(impl.arc_alloc_),
+        state_alloc_(impl.state_alloc_) {
     impl.states_.clear();
     impl.start_ = kNoStateId;
   }
@@ -328,13 +331,17 @@ class VectorFstBaseImpl : public FstImpl<typename S::Arc> {
     data->ref_count = nullptr;
   }
 
+  const typename State::ArcAllocator &GetAlloc() const noexcept {
+    return arc_alloc_;
+  }
+
  private:
   State *CreateState() { return new (&state_alloc_) State(arc_alloc_); }
 
   std::vector<State *> states_;
   StateId start_ = kNoStateId;
-  typename State::StateAllocator state_alloc_;
   typename State::ArcAllocator arc_alloc_;
+  typename State::StateAllocator state_alloc_;
 };
 
 // This is a VectorFstBaseImpl container that holds VectorStates and manages FST
@@ -363,14 +370,17 @@ class VectorFstImpl : public VectorFstBaseImpl<S> {
 
   using BaseImpl = VectorFstBaseImpl<S>;
 
-  VectorFstImpl() {
+  VectorFstImpl(const typename State::ArcAllocator &alloc = {})
+      : BaseImpl(alloc) {
     SetType("vector");
     SetProperties(kNullProperties | kStaticProperties);
   }
 
-  explicit VectorFstImpl(const Fst<Arc> &fst);
+  explicit VectorFstImpl(const Fst<Arc> &fst,
+                         const typename State::ArcAllocator &alloc = {});
 
-  static VectorFstImpl *Read(std::istream &strm, const FstReadOptions &opts);
+  static VectorFstImpl *Read(std::istream &strm, const FstReadOptions &opts,
+                             const typename State::ArcAllocator &alloc = {});
 
   void SetStart(StateId state) {
     BaseImpl::SetStart(state);
@@ -452,7 +462,9 @@ class VectorFstImpl : public VectorFstBaseImpl<S> {
 };
 
 template <class S>
-VectorFstImpl<S>::VectorFstImpl(const Fst<Arc> &fst) {
+VectorFstImpl<S>::VectorFstImpl(const Fst<Arc> &fst,
+                                const typename State::ArcAllocator &alloc)
+    : BaseImpl(alloc) {
   SetType("vector");
   SetInputSymbols(fst.InputSymbols());
   SetOutputSymbols(fst.OutputSymbols());
@@ -474,9 +486,10 @@ VectorFstImpl<S>::VectorFstImpl(const Fst<Arc> &fst) {
 }
 
 template <class S>
-VectorFstImpl<S> *VectorFstImpl<S>::Read(std::istream &strm,
-                                         const FstReadOptions &opts) {
-  auto impl = std::make_unique<VectorFstImpl>();
+VectorFstImpl<S> *VectorFstImpl<S>::Read(
+    std::istream &strm, const FstReadOptions &opts,
+    const typename State::ArcAllocator &alloc) {
+  auto impl = std::make_unique<VectorFstImpl>(alloc);
   FstHeader hdr;
   if (!impl->ReadHeader(strm, opts, kMinFileVersion, &hdr)) return nullptr;
   impl->BaseImpl::SetStart(hdr.Start());
@@ -541,9 +554,12 @@ class VectorFst : public ImplToMutableFst<internal::VectorFstImpl<S>> {
   template <class F, class G>
   friend void Cast(const F &, G *);
 
-  VectorFst() : Base(std::make_shared<Impl>()) {}
+  VectorFst(const typename State::ArcAllocator &alloc = {})
+      : Base(std::make_shared<Impl>(alloc)) {}
 
-  explicit VectorFst(const Fst<Arc> &fst) : Base(std::make_shared<Impl>(fst)) {}
+  explicit VectorFst(const Fst<Arc> &fst,
+                     const typename State::ArcAllocator &alloc = {})
+      : Base(std::make_shared<Impl>(fst, alloc)) {}
 
   VectorFst(const VectorFst &fst, bool unused_safe = false)
       : Base(fst.GetSharedImpl()) {}
@@ -560,7 +576,8 @@ class VectorFst : public ImplToMutableFst<internal::VectorFstImpl<S>> {
   VectorFst &operator=(VectorFst &&) noexcept;
 
   VectorFst &operator=(const Fst<Arc> &fst) override {
-    if (this != &fst) SetImpl(std::make_shared<Impl>(fst));
+    if (this != &fst)
+      SetImpl(std::make_shared<Impl>(fst, GetImpl()->GetAlloc()));
     return *this;
   }
 
@@ -571,8 +588,9 @@ class VectorFst : public ImplToMutableFst<internal::VectorFstImpl<S>> {
   }
 
   // Reads a VectorFst from an input stream, returning nullptr on error.
-  static VectorFst *Read(std::istream &strm, const FstReadOptions &opts) {
-    auto *impl = Impl::Read(strm, opts);
+  static VectorFst *Read(std::istream &strm, const FstReadOptions &opts,
+                         const typename State::ArcAllocator &alloc = {}) {
+    auto *impl = Impl::Read(strm, opts, alloc);
     return impl ? new VectorFst(std::shared_ptr<Impl>(impl)) : nullptr;
   }
 

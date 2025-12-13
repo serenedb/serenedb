@@ -44,6 +44,12 @@
 #include <string_view>
 
 namespace fst {
+namespace detail {
+
+template <typename T>
+concept HasGetAlloc = requires(const T t) { t.GetAlloc(); };
+
+}  // namespace detail
 
 template <class Arc>
 struct MutableArcIteratorData;
@@ -350,7 +356,11 @@ class ImplToMutableFst : public ImplToExpandedFst<I, FST> {
     if (!Unique()) {
       const auto *isymbols = GetImpl()->InputSymbols();
       const auto *osymbols = GetImpl()->OutputSymbols();
-      SetImpl(std::make_shared<Impl>());
+      if constexpr (detail::HasGetAlloc<Impl>) {
+        SetImpl(std::make_shared<Impl>(GetImpl()->GetAlloc()));
+      } else {
+        SetImpl(std::make_shared<Impl>());
+      }
       GetMutableImpl()->SetInputSymbols(isymbols);
       GetMutableImpl()->SetOutputSymbols(osymbols);
     } else {
@@ -418,7 +428,13 @@ class ImplToMutableFst : public ImplToExpandedFst<I, FST> {
   ImplToMutableFst(const ImplToMutableFst &fst, bool safe) : Base(fst, safe) {}
 
   void MutateCheck() {
-    if (!Unique()) SetImpl(std::make_shared<Impl>(*this));
+    if (!Unique()) {
+      if constexpr (detail::HasGetAlloc<Impl>) {
+        SetImpl(std::make_shared<Impl>(*this, this->GetImpl()->GetAlloc()));
+      } else {
+        SetImpl(std::make_shared<Impl>(*this));
+      }
+    }
   }
 };
 

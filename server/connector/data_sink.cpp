@@ -63,7 +63,7 @@ namespace sdb::connector {
 
 RocksDBDataSink::RocksDBDataSink(
   rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
-  velox::RowTypePtr row_type, velox::memory::MemoryPool& memory_pool,
+  const velox::RowTypePtr& row_type, velox::memory::MemoryPool& memory_pool,
   std::string_view object_key,
   std::span<const velox::column_index_t> key_childs,
   bool skip_primary_key_columns)
@@ -93,18 +93,29 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
   std::string name = _object_key;
   const auto parent_size = name.size();
   velox::IndexRange all_rows(0, input->size());
-  const auto& input_type = input->type()->asRow();
+  [[maybe_unused]] const auto& input_type = input->type()->asRow();
+  std::string lock_key = absl::StrCat(_object_key, ".");
+  const auto lock_key_base_size = lock_key.size();
+  for (const auto& key : _row_keys) {
+    lock_key.resize(lock_key_base_size);
+    absl::StrAppend(&lock_key, key);
+    VELOX_CHECK(
+      _transaction
+        .GetKeyLock(&_cf, rocksdb::Slice(lock_key.data(), lock_key.size()),
+                    false, true)
+        .ok(),
+      "Failed to acquire row lock for table {}", _object_key);
+  }
   for (velox::column_index_t i = 0; i < num_columns; ++i) {
-    // see #issue-309
     // Exclude only UNKNOWN from equivalency check as UNKNOWN is just a NULL and
     // compatible with everything.
     // Intentionally check UNKNOWN after equivalency to make compiler execute
     // child lookup by name as it is also a necessary check.
     // Even keys during UPDATE should be validated as it is important for
     // RocksDB key generation
-    VELOX_CHECK(_row_type->findChild(input_type.nameOf(i))
-                  ->equivalent(*input_type.childAt(i)) ||
-                input_type.childAt(i)->kind() == velox::TypeKind::UNKNOWN);
+    VELOX_DCHECK(_row_type->findChild(input_type.nameOf(i))
+                   ->equivalent(*input_type.childAt(i)) ||
+                 input_type.childAt(i)->kind() == velox::TypeKind::UNKNOWN);
 
     if (_skip_primary_key_columns && i < _key_childs.size()) {
       continue;
@@ -1855,7 +1866,13 @@ const std::string& RocksDBDataSink::GetRowKey(
 
 void RocksDBDataSink::ResetForNewRow() noexcept {
   _row_slices.clear();
-  _bytes_allocator.clear();
+  // memory reclaim is relatively expensive so do it only when we have
+  // accumulated some noticable amount of memory.
+  // TODO(Dronplane): make configurable option?
+  constexpr uint64_t kMemoryReclaimThreshold = 10 * 1024 * 1024;  // 10 MB
+  if (_bytes_allocator.currentBytes() > kMemoryReclaimThreshold) {
+    _bytes_allocator.clear();
+  }
 }
 
 void RocksDBDataSink::GatherNulls(
@@ -1993,10 +2010,13 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
   std::string key;
   absl::StrAppend(&key, _object_key, ".");
 
-  const size_t key_old_size = _object_key.size() + 1;  // erase to _object_key.
+  const size_t key_old_size = key.size();
   for (velox::vector_size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
     row_key.clear();
     primary_key::Create(*input, row_idx, row_key);
+    absl::StrAppend(&key, row_key);
+    VELOX_CHECK(_transaction.GetKeyLock(&_cf, key, false, true).ok(),
+                "Failed to acquire row lock for table {}", _object_key);
 
     for (velox::column_index_t col_idx = 0; col_idx < num_columns; ++col_idx) {
       key.erase(key_old_size);

@@ -45,9 +45,6 @@ namespace sdb {
 DatabasePathFeature::DatabasePathFeature(Server& server)
   : SerenedFeature{server, name()}, _required_directory_state("any") {
   setOptional(false);
-
-  if constexpr (Server::contains<FileDescriptorsFeature>()) {
-  }
 }
 
 void DatabasePathFeature::collectOptions(

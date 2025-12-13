@@ -23,6 +23,7 @@
 
 #include <absl/functional/overload.h>
 
+#include "general_server/server_options_feature.h"
 #include "rest_server/serened_includes.h"
 
 using namespace sdb;
@@ -40,7 +41,6 @@ constexpr auto kNonServerFeatures = std::array{
   SerenedServer::id<DaemonFeature>(),
 #endif
   SerenedServer::id<GeneralServerFeature>(),
-  SerenedServer::id<GreetingsFeature>(),
   SerenedServer::id<HttpEndpointProvider>(),
   SerenedServer::id<LogBufferFeature>(),
   SerenedServer::id<ServerFeature>(),
@@ -83,7 +83,8 @@ static int RunServer(int argc, char** argv, GlobalContext& context) {
                                                      kNonServerFeatures);
       },
       [&name](auto& server, type::Tag<ConfigFeature>) {
-        return std::make_unique<ConfigFeature>(server, name);
+        return std::make_unique<ConfigFeature>(
+          server, name, [] { return GetServerOptions().app_print_version; });
       },
       [](auto& server, type::Tag<InitDatabaseFeature>) {
         return std::make_unique<InitDatabaseFeature>(server,

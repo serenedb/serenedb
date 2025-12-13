@@ -3,15 +3,46 @@
 #include "app/app_server.h"
 #include "app/options/parameters.h"
 #include "app/options/program_options.h"
+#include "basics/application-exit.h"
+#include "basics/logger/logger.h"
+#include "basics/physical_memory.h"
+#include "basics/static_strings.h"
 #include "general_server/state.h"
+#include "rest/version.h"
 
 namespace sdb {
 
+namespace {
+uint64_t GetDefaultMemoryUsage() {
+  if (physical_memory::GetValue() >= (static_cast<uint64_t>(4) << 30)) {
+    // if we have at least 4GB of RAM, the default size is (RAM - 2GB) * 0.2
+    return static_cast<uint64_t>(
+      (physical_memory::GetValue() - (static_cast<uint64_t>(2) << 30)) * 0.2);
+  }
+  // if we have at least 2GB of RAM, the default size is 64MB
+  return (static_cast<uint64_t>(64) << 20);
+}
+}  // namespace
+
 ServerOptionsFeature::ServerOptionsFeature(Server& server)
-  : SerenedFeature{server, name()} {}
+  : SerenedFeature{server, name()} {
+  _options.dump_limits.memory_usage = GetDefaultMemoryUsage();
+}
 
 void ServerOptionsFeature::collectOptions(
   std::shared_ptr<options::ProgramOptions> options) {
+  options->addOption(
+    "--version", "Print the version and other related information, then exit.",
+    new options::BooleanParameter(&_options.app_print_version),
+    options::MakeDefaultFlags(options::Flags::Command));
+
+  options->addOption(
+    "--version-json",
+    "Print the version and other related information in JSON "
+    "format, then exit.",
+    new options::BooleanParameter(&_options.app_print_json_version),
+    options::MakeDefaultFlags(options::Flags::Command));
+
   options->addSection("database", "database options");
 
   options->addOption(
@@ -315,13 +346,173 @@ Note that a random delay is added to the interval on each server, so that
 different servers do not execute their connectivity checks all at the
 same time.
 Setting this option to a value of zero disables these connectivity checks.")");
+
+  options->addSection("dump", "Dump limits");
+
+  options
+    ->addOption(
+      "--dump.max-memory-usage",
+      "Maximum memory usage (in bytes) to be used by all ongoing dumps.",
+      new options::UInt64Parameter(&_options.dump_limits.memory_usage, 1,
+                                   /*minimum*/ 16 * 1024 * 1024),
+      sdb::options::MakeFlags(
+        sdb::options::Flags::Dynamic, sdb::options::Flags::DefaultNoComponents,
+        sdb::options::Flags::OnDBServer, sdb::options::Flags::OnSingle))
+
+    .setLongDescription(
+      R"(The approximate per-server maximum allowed memory usage value
+for all ongoing dump actions combined.)");
+
+  options
+    ->addOption(
+      "--dump.max-docs-per-batch",
+      "Maximum number of documents per batch that can be used in a dump.",
+      new options::UInt64Parameter(
+        &_options.dump_limits.docs_per_batch_upper_bound, 1,
+        /*minimum*/ _options.dump_limits.docs_per_batch_lower_bound),
+      sdb::options::MakeFlags(
+        sdb::options::Flags::Uncommon, sdb::options::Flags::DefaultNoComponents,
+        sdb::options::Flags::OnDBServer, sdb::options::Flags::OnSingle))
+
+    .setLongDescription(
+      R"(Each batch in a dump can grow to at most this size.)");
+
+  options
+    ->addOption(
+      "--dump.max-batch-size",
+      "Maximum batch size value (in bytes) that can be used in a dump.",
+      new options::UInt64Parameter(
+        &_options.dump_limits.batch_size_upper_bound, 1,
+        /*minimum*/ _options.dump_limits.batch_size_lower_bound),
+      sdb::options::MakeFlags(
+        sdb::options::Flags::Uncommon, sdb::options::Flags::DefaultNoComponents,
+        sdb::options::Flags::OnDBServer, sdb::options::Flags::OnSingle))
+
+    .setLongDescription(
+      R"(Each batch in a dump can grow to at most this size.)");
+
+  options
+    ->addOption(
+      "--dump.max-parallelism",
+      "Maximum parallelism that can be used in a dump.",
+      new options::UInt64Parameter(
+        &_options.dump_limits.parallelism_upper_bound, 1,
+        /*minimum*/ _options.dump_limits.parallelism_lower_bound),
+      sdb::options::MakeFlags(
+        sdb::options::Flags::Uncommon, sdb::options::Flags::DefaultNoComponents,
+        sdb::options::Flags::OnDBServer, sdb::options::Flags::OnSingle))
+
+    .setLongDescription(R"(Each dump action on a server can use at most
+this many parallel threads. Note that end users can still start multiple
+dump actions that run in parallel.)");
 }
 
 void ServerOptionsFeature::validateOptions(
   std::shared_ptr<options::ProgramOptions>) {
+  if (_options.app_print_json_version) {
+    vpack::Builder builder;
+    {
+      vpack::ObjectBuilder ob(&builder);
+      rest::Version::getVPack(builder);
+
+      builder.add("version", rest::Version::getServerVersion());
+    }
+
+    std::cout << builder.slice().toJson() << std::endl;
+    exit(EXIT_SUCCESS);
+  }
+
+  if (_options.app_print_version) {
+    std::cout << rest::Version::getServerVersion() << std::endl
+              << std::endl
+              << StaticStrings::kLgplNotice << std::endl
+              << std::endl
+              << rest::Version::getDetailed() << std::endl;
+    exit(EXIT_SUCCESS);
+  }
+
   if (_options.cluster_agency_endpoints.empty()) {
     ServerState::instance()->SetRole(ServerState::Role::Single);
   }
+
+  if (_options.dump_limits.batch_size_lower_bound >
+      _options.dump_limits.batch_size_upper_bound) {
+    SDB_FATAL("xxxxx", Logger::CONFIG,
+              "invalid value for --dump.max-batch-size. Please use a value ",
+              "of at least ", _options.dump_limits.batch_size_lower_bound);
+  }
+
+  if (_options.dump_limits.parallelism_lower_bound >
+      _options.dump_limits.parallelism_upper_bound) {
+    SDB_FATAL("xxxxx", Logger::CONFIG,
+              "invalid value for --dump.max-parallelism. Please use a value ",
+              "of at least ", _options.dump_limits.parallelism_lower_bound);
+  }
+}
+
+void ServerOptionsFeature::prepare() {
+  SDB_INFO("xxxxx", Logger::FIXME, rest::Version::getVerboseVersionString());
+#ifdef __GLIBC__
+  SDB_INFO("xxxxx", Logger::FIXME, StaticStrings::kLgplNotice);
+#endif
+
+  const auto& options = server().options();
+
+#if defined(SDB_DEV) || defined(SDB_GTEST)
+  SDB_WARN("xxxxx", Logger::FIXME, "This version is FOR DEVELOPMENT ONLY!");
+  SDB_WARN("xxxxx", Logger::FIXME,
+           "==================================================================="
+           "================");
+
+  if (!options) {
+    return;
+  }
+#endif
+
+  if (const auto& modernized_options = options->modernizedOptions();
+      !modernized_options.empty()) {
+    for (const auto& it : modernized_options) {
+      SDB_WARN("xxxxx", Logger::STARTUP,
+               "please note that the specified option '--", it.first,
+               " has been renamed to '--", it.second, "'");
+    }
+
+    SDB_INFO("xxxxx", Logger::STARTUP,
+             "please read the release notes about changed options");
+  }
+
+  options->walk(
+    [](const auto&, const auto& option) {
+      if (option.hasDeprecatedIn()) {
+        SDB_WARN("xxxxx", Logger::STARTUP, "option '", option.displayName(),
+                 "' is deprecated since ", option.deprecatedInString(),
+                 " and may be removed or unsupported in a future version");
+      }
+    },
+    true, true);
+
+  options->walk(
+    [](const auto&, const auto& option) {
+      if (option.hasFlag(sdb::options::Flags::Obsolete)) {
+        SDB_WARN("xxxxx", Logger::STARTUP, "obsolete option '",
+                 option.displayName(), "' used in configuration. ",
+                 "Setting this option does not have any effect.");
+      }
+    },
+    true, true);
+
+  options->walk(
+    [](const auto&, const auto& option) {
+      if (option.hasFlag(sdb::options::Flags::Experimental)) {
+        SDB_WARN("xxxxx", Logger::STARTUP, "experimental option '",
+                 option.displayName(), "' used in configuration.");
+      }
+    },
+    true, true);
+}
+
+void ServerOptionsFeature::unprepare() {
+  SDB_INFO("xxxxx", Logger::FIXME, "SereneDB has been shut down");
 }
 
 const ServerOptions& GetServerOptions() {

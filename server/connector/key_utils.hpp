@@ -26,7 +26,6 @@
 namespace sdb::connector::key_utils {
 
 using ColumnId = uint32_t;
-static inline constexpr std::string_view kKeySeparator = ".";
 
 // Constructs common part of table row. Result could be used with AppendXXX
 // methods to construct full keys.

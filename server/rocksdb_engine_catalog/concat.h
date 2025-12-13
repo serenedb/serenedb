@@ -132,6 +132,15 @@ void Concat(std::string& str, const Args&... args) {
   ((p += detail::WriteImpl(p, args)), ...);
 }
 
+template<typename... Args>
+void Append(std::string& str, const Args&... args) {
+  // TODO(mbkkt) maybe amortized?
+  const auto old_size = str.size();
+  basics::StrResize(str, (detail::GetByteSizeImpl(args) + ...) + old_size);
+  auto* p = str.data() + old_size;
+  ((p += detail::WriteImpl(p, args)), ...);
+}
+
 template<typename U>
 size_t GetByteSize(const U& in) noexcept {
   size_t size = 0;

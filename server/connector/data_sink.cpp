@@ -127,6 +127,8 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
     SDB_ASSERT(!input->type()->asRow().nameOf(i).empty());
     table_key.resize(parent_size);
     key_utils::AppendColumnKey(table_key, _column_oids[i]);
+    SDB_ASSERT(table_key.size() >
+               parent_size);  // ensure column key was appended
     WriteColumn(table_key, input->childAt(i), folly::Range{&all_rows, 1}, {});
   }
 }

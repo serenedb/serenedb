@@ -25,63 +25,46 @@ namespace sdb::connector::key_utils {
 std::string PrepareTableKey(ObjectId id) {
   SDB_ASSERT(id.isSet());
   std::string key;
-  rocksutils::Concat(key, id, kKeySeparator);
+  rocksutils::Concat(key, id);
   return key;
 }
 
 std::string PrepareColumnKey(ObjectId id, ColumnId column_oid) {
   SDB_ASSERT(id.isSet());
   std::string key;
-  rocksutils::Concat(key, id, kKeySeparator, column_oid, kKeySeparator);
+  rocksutils::Concat(key, id, column_oid);
   return key;
 }
 
 void AppendColumnKey(std::string& key, ColumnId column_oid) {
   SDB_ASSERT(!key.empty());
-  SDB_ASSERT(key.ends_with(kKeySeparator),
-             "Key must end with column key separator");
-  rocksutils::Concat(key, column_oid, kKeySeparator);
+  rocksutils::Append(key, column_oid);
 }
 
 void AppendCellKey(std::string& key, ColumnId column_oid,
                    std::string_view primary_key) {
   SDB_ASSERT(!primary_key.empty());
   SDB_ASSERT(!key.empty());
-  SDB_ASSERT(key.ends_with(kKeySeparator),
-             "Key must end with column key separator");
-  absl::StrAppend(&key, column_oid, kKeySeparator, primary_key);
+  rocksutils::Append(key, column_oid, primary_key);
 }
 
 void AppendPrimaryKey(std::string& key, std::string_view primary_key) {
   SDB_ASSERT(!primary_key.empty());
   SDB_ASSERT(!key.empty());
-  SDB_ASSERT(key.ends_with(kKeySeparator),
-             "Key must end with column key separator");
-  absl::StrAppend(&key, primary_key);
+  rocksutils::Append(key, primary_key);
 }
 
 std::pair<std::string, std::string> CreateTableRange(ObjectId id) {
   SDB_ASSERT(id.isSet());
   SDB_ASSERT(id.id() != std::numeric_limits<decltype(id.id())>::max());
-  std::string start_key;
-  rocksutils::Concat(start_key, id);
-
-  std::string end_key;
-  rocksutils::Concat(end_key, id.id() + 1);
-
-  return {start_key, end_key};
+  return {PrepareTableKey(id), PrepareTableKey(ObjectId{id.id() + 1})};
 }
 
 std::pair<std::string, std::string> CreateTableColumnRange(
   ObjectId id, ColumnId column_oid) {
-  SDB_ASSERT(id.isSet());
   SDB_ASSERT(column_oid != std::numeric_limits<ColumnId>::max());
-  std::string start_key;
-  rocksutils::Concat(start_key, id, kKeySeparator, column_oid);
-
-  std::string end_key;
-  rocksutils::Concat(end_key, id, kKeySeparator, column_oid + 1);
-  return {start_key, end_key};
+  return {PrepareColumnKey(id, column_oid),
+          PrepareColumnKey(id, column_oid + 1)};
 }
 
 }  // namespace sdb::connector::key_utils

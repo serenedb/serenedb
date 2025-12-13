@@ -46,7 +46,7 @@
 #include <fst/state-table.h>
 #include <fst/symbol-table.h>
 #include <fst/util.h>
-#include <unordered_map>
+#include <absl/container/flat_hash_map.h>
 
 namespace fst {
 
@@ -158,7 +158,7 @@ class ReplaceHash {
     // all 32-bits on a 32-bit machine), so that all 64-bits (respectively
     // 32-bits) of the resulting hash would look random.  However, these
     // modest-sized prime numbers are good enough for hash tables (such as
-    // std::unordered_set and std::unordered_set) that use the low-order bits
+    // absl::flat_hash_set and absl::flat_hash_set) that use the low-order bits
     // of the hash.
     //
     // It is important that all three components are multiplied by a prime
@@ -166,7 +166,7 @@ class ReplaceHash {
     //   t.prefix_id + t.fst_id * prime1 + t.fst_state * prime2
     // which is just the identity on t.prefix_id.  Using the identity will
     // result in long probe sequences in open-addressed hash tables (such as
-    // std::unordered_map).
+    // absl::flat_hash_map).
     static constexpr size_t prime0 = 7853;
     static constexpr size_t prime1 = 9001;
     static constexpr size_t prime2 = 100003;
@@ -508,7 +508,7 @@ class ReplaceFstImpl
   using PrefixId = typename StateTable::PrefixId;
   using StateTuple = ReplaceStateTuple<StateId, PrefixId>;
   using StackPrefix = ReplaceStackPrefix<Label, StateId>;
-  using NonTerminalHash = std::unordered_map<Label, Label>;
+  using NonTerminalHash = absl::flat_hash_map<Label, Label>;
 
   using FstImpl<Arc>::SetType;
   using FstImpl<Arc>::SetProperties;

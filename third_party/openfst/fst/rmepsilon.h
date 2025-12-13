@@ -48,7 +48,7 @@
 #include <fst/topsort.h>
 #include <fst/util.h>
 #include <fst/weight.h>
-#include <unordered_map>
+#include <absl/container/flat_hash_map.h>
 
 namespace fst {
 
@@ -129,7 +129,7 @@ class RmEpsilonState {
     }
   };
 
-  using ElementMap = std::unordered_map<Element, std::pair<StateId, size_t>,
+  using ElementMap = absl::flat_hash_map<Element, std::pair<StateId, size_t>,
                                          ElementHash, ElementEqual>;
 
   const Fst<Arc> &fst_;

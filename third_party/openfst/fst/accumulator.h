@@ -39,7 +39,7 @@
 #include <fst/replace.h>
 #include <fst/util.h>
 #include <fst/weight.h>
-#include <unordered_map>
+#include <absl/container/flat_hash_map.h>
 
 namespace fst {
 
@@ -471,7 +471,7 @@ class CacheLogAccumulatorData {
     if (!free_recent && cache_size_ > cache_target) GC(true);
   }
 
-  std::unordered_map<StateId, CacheState> cache_;  // Cache.
+  absl::flat_hash_map<StateId, CacheState> cache_;  // Cache.
   bool cache_gc_;       // Enables garbage collection.
   size_t cache_limit_;  // # of bytes cached.
   size_t cache_size_;   // # of bytes allowed before GC.

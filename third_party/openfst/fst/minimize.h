@@ -53,7 +53,7 @@
 #include <fst/util.h>
 #include <fst/vector-fst.h>
 #include <fst/weight.h>
-#include <unordered_map>
+#include <absl/container/flat_hash_map.h>
 
 namespace fst {
 namespace internal {
@@ -204,7 +204,7 @@ class CyclicMinimizer {
       // (final-prob == One()) and one for non-final states
       // (final-prob == Zero()). We are processing unweighted acceptors, so the
       // are the only two possible values.
-      using HashToClassMap = std::unordered_map<size_t, StateId>;
+      using HashToClassMap = absl::flat_hash_map<size_t, StateId>;
       HashToClassMap hash_to_class_nonfinal;
       HashToClassMap hash_to_class_final;
       StateILabelHasher hasher(fst);

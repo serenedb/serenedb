@@ -38,7 +38,7 @@
 #include <fst/properties.h>
 #include <fst/util.h>
 #include <fst/vector-fst.h>
-#include <unordered_map>
+#include <absl/container/flat_hash_map.h>
 #include <functional>
 
 DECLARE_bool(fst_default_cache_gc);
@@ -438,7 +438,7 @@ class HashCacheStore {
   using StateId = typename Arc::StateId;
 
   using StateMap =
-      std::unordered_map<StateId, State *, std::hash<StateId>,
+      absl::flat_hash_map<StateId, State *, std::hash<StateId>,
                           std::equal_to<StateId>,
                           PoolAllocator<std::pair<const StateId, State *>>>;
 

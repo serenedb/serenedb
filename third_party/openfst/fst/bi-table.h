@@ -29,14 +29,14 @@
 #include <functional>
 #include <memory>
 #include <type_traits>
-#include <unordered_set>
+#include <absl/container/flat_hash_set.h>
 #include <vector>
 
 #include <fst/log.h>
 #include <fst/memory.h>
 #include <fst/windows_defs.inc>
-#include <unordered_map>
-#include <unordered_set>
+#include <absl/container/flat_hash_map.h>
+#include <absl/container/flat_hash_set.h>
 #include <functional>
 
 namespace fst {
@@ -110,7 +110,7 @@ class HashBiTable {
  private:
   H hash_func_;
   E hash_equal_;
-  std::unordered_map<T, I, H, E> entry2id_;
+  absl::flat_hash_map<T, I, H, E> entry2id_;
   std::vector<T> id2entry_;
 };
 
@@ -119,9 +119,9 @@ enum HSType { HS_STL, HS_FLAT };
 
 // Default hash set is STL hash_set.
 template <class K, class H, class E, HSType HS>
-struct HashSet : public std::unordered_set<K, H, E, PoolAllocator<K>> {
+struct HashSet : public absl::flat_hash_set<K, H, E, PoolAllocator<K>> {
  private:
-  using Base = std::unordered_set<K, H, E, PoolAllocator<K>>;
+  using Base = absl::flat_hash_set<K, H, E, PoolAllocator<K>>;
  public:
   using Base::Base;
 
@@ -478,7 +478,7 @@ class ErasableBiTable {
   }
 
  private:
-  std::unordered_map<T, I, F> entry2id_;
+  absl::flat_hash_map<T, I, F> entry2id_;
   std::deque<T> id2entry_;
   const T empty_entry_;
   I first_;  // I of first element in the deque.

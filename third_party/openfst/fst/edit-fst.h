@@ -56,7 +56,7 @@
 #include <fst/properties.h>
 #include <fst/util.h>
 #include <fst/vector-fst.h>
-#include <unordered_map>
+#include <absl/container/flat_hash_map.h>
 #include <string_view>
 
 namespace fst {
@@ -252,22 +252,22 @@ class EditFstData {
  private:
   // Returns the iterator of the map from external to internal state IDs
   // of edits_ for the specified external state IDs.
-  typename std::unordered_map<StateId, StateId>::const_iterator
+  typename absl::flat_hash_map<StateId, StateId>::const_iterator
   GetEditedIdMapIterator(StateId s) const {
     return external_to_internal_ids_.find(s);
   }
 
-  typename std::unordered_map<StateId, StateId>::const_iterator
+  typename absl::flat_hash_map<StateId, StateId>::const_iterator
   NotInEditedMap() const {
     return external_to_internal_ids_.end();
   }
 
-  typename std::unordered_map<StateId, Weight>::const_iterator
+  typename absl::flat_hash_map<StateId, Weight>::const_iterator
   GetFinalWeightIterator(StateId s) const {
     return edited_final_weights_.find(s);
   }
 
-  typename std::unordered_map<StateId, Weight>::const_iterator
+  typename absl::flat_hash_map<StateId, Weight>::const_iterator
   NotInFinalWeightMap() const {
     return edited_final_weights_.end();
   }
@@ -306,12 +306,12 @@ class EditFstData {
   MutableFstT edits_;
   // A mapping from external state IDs to the internal IDs of states that
   // appear in edits_.
-  std::unordered_map<StateId, StateId> external_to_internal_ids_;
+  absl::flat_hash_map<StateId, StateId> external_to_internal_ids_;
   // A mapping from external state IDs to final state weights assigned to
   // those states. The states in this map are *only* those whose final weight
   // has been modified; if any other part of the state has been modified,
   // the entire state is copied to edits_, and all modifications reside there.
-  std::unordered_map<StateId, Weight> edited_final_weights_;
+  absl::flat_hash_map<StateId, Weight> edited_final_weights_;
   // The number of new states added to this mutable FST impl, which is <= the
   // number of states in edits_ (since edits_ contains both edited *and* new
   // states).

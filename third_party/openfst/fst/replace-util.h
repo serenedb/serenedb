@@ -37,8 +37,8 @@
 #include <fst/topsort.h>
 #include <fst/util.h>
 #include <fst/vector-fst.h>
-#include <unordered_map>
-#include <unordered_set>
+#include <absl/container/flat_hash_map.h>
+#include <absl/container/flat_hash_set.h>
 
 namespace fst {
 
@@ -114,7 +114,7 @@ class ReplaceUtil {
 
   using FstPair = std::pair<Label, const Fst<Arc> *>;
   using MutableFstPair = std::pair<Label, MutableFst<Arc> *>;
-  using NonTerminalHash = std::unordered_map<Label, Label>;
+  using NonTerminalHash = absl::flat_hash_map<Label, Label>;
 
   // Constructs from mutable FSTs; FST ownership is given to ReplaceUtil.
   ReplaceUtil(const std::vector<MutableFstPair> &fst_pairs,
@@ -479,7 +479,7 @@ bool ReplaceUtil<Arc>::GetTopOrder(const Fst<Arc> &fst,
 template <class Arc>
 void ReplaceUtil<Arc>::ReplaceLabels(const std::vector<Label> &labels) {
   CheckMutableFsts();
-  std::unordered_set<Label> label_set;
+  absl::flat_hash_set<Label> label_set;
   for (const auto label : labels) {
     // Can't replace root.
     if (label != root_label_) label_set.insert(label);

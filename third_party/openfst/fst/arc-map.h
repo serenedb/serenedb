@@ -42,7 +42,7 @@
 #include <fst/symbol-table.h>
 #include <fst/util.h>
 #include <fst/weight.h>
-#include <unordered_map>
+#include <absl/container/flat_hash_map.h>
 
 namespace fst {
 
@@ -1193,7 +1193,7 @@ class GallicToNewSymbolsMapper {
     size_t operator()(const SW &x) const { return x.Hash(); }
   };
 
-  using Map = std::unordered_map<SW, Label, StringKey>;
+  using Map = absl::flat_hash_map<SW, Label, StringKey>;
 
   MutableFst<ToArc> *fst_;
   Map map_;

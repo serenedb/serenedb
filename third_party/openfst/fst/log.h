@@ -29,7 +29,6 @@
 #include <fst/flags.h>
 
 class LogMessage;
-class LogMessage;
 
 DECLARE_int32(v);
 

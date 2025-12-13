@@ -26,7 +26,6 @@
 #include <string>
 
 #include <fst/fst.h>
-#include <fst/impl-to-fst.h>
 #include <fst/symbol-table.h>
 #include <fst/test-properties.h>
 
@@ -125,7 +124,7 @@ class ImplToFst : public FST {
 
   Impl *GetMutableImpl() const { return impl_.get(); }
 
-  // Returns a ref-counted smart poiner to the implementation.
+  // Returns a ref-counted smart pointer to the implementation.
   std::shared_ptr<Impl> GetSharedImpl() const { return impl_; }
 
   bool Unique() const { return impl_.use_count() == 1; }

@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -21,19 +21,25 @@
 #ifndef FST_LABEL_REACHABLE_H_
 #define FST_LABEL_REACHABLE_H_
 
+#include <sys/types.h>
+
+#include <cstddef>
+#include <istream>
 #include <memory>
+#include <ostream>
 #include <utility>
 #include <vector>
 
 #include <fst/log.h>
-
 #include <fst/accumulator.h>
 #include <fst/arcsort.h>
+#include <fst/fst.h>
 #include <fst/interval-set.h>
+#include <fst/mutable-fst.h>
+#include <fst/properties.h>
 #include <fst/state-reachable.h>
 #include <fst/util.h>
 #include <fst/vector-fst.h>
-
 #include <unordered_map>
 
 namespace fst {
@@ -51,7 +57,7 @@ class LabelReachableData {
         have_relabel_data_(true),
         final_label_(kNoLabel) {}
 
-  ~LabelReachableData() {}
+  ~LabelReachableData() = default;
 
   bool ReachInput() const { return reach_input_; }
 
@@ -106,7 +112,7 @@ class LabelReachableData {
   }
 
  private:
-  LabelReachableData() {}
+  LabelReachableData() = default;
 
   bool reach_input_;                               // Input labels considered?
   bool keep_relabel_data_;                         // Save label2index_ to file?
@@ -284,8 +290,9 @@ class LabelReachable {
   Label Relabel(Label label) {
     if (label == 0 || error_) return label;
     const auto &label2index = *data_->Label2Index();
-    auto iter = label2index.find(label);
-    if (iter != label2index.end()) return iter->second;
+    if (auto iter = label2index.find(label); iter != label2index.end()) {
+      return iter->second;
+    }
     auto &relabel = oov_label2index_[label];
     if (!relabel) {
       // Adds new label.
@@ -340,7 +347,10 @@ class LabelReachable {
       for (size_t i = 1; i <= label2index.size(); ++i) {
         const auto it = label2index.find(i);
         bool unmapped = it == label2index.end();
-        if (unmapped) unmapped = oov_label2index_.count(i) == 0;
+        if (unmapped) {
+          // TODO: Use contains() when C++20 is allowed in OpenFST.
+          unmapped = oov_label2index_.find(i) == oov_label2index_.end();
+        }
         if (unmapped || it->second == data_->FinalLabel()) {
           pairs->emplace_back(i, label2index.size() + 1);
         }

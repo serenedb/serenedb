@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -221,7 +221,10 @@ void SetFlag(Type *flag, Value value) {
   *flag = Type(value);
 }
 
+void FailedNewHandler();
+
 #define SET_FLAGS(usage, argc, argv, rmflags) \
+std::set_new_handler(FailedNewHandler); \
 SetFlags(usage, argc, argv, rmflags, __FILE__)
 
 // Deprecated; for backward compatibility.

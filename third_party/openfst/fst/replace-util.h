@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -20,18 +20,23 @@
 #ifndef FST_REPLACE_UTIL_H_
 #define FST_REPLACE_UTIL_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <utility>
 #include <vector>
 
 #include <fst/log.h>
-
+#include <fst/cc-visitors.h>
 #include <fst/connect.h>
+#include <fst/dfs-visit.h>
+#include <fst/fst.h>
 #include <fst/mutable-fst.h>
+#include <fst/properties.h>
 #include <fst/topsort.h>
+#include <fst/util.h>
 #include <fst/vector-fst.h>
-
 #include <unordered_map>
 #include <unordered_set>
 
@@ -139,9 +144,11 @@ class ReplaceUtil {
   // replace FSTS.
   StateId SCC(Label label) const {
     GetDependencies(false);
-    const auto it = nonterminal_hash_.find(label);
-    if (it == nonterminal_hash_.end()) return kNoStateId;
-    return depscc_[it->second];
+    if (const auto it = nonterminal_hash_.find(label);
+        it != nonterminal_hash_.end()) {
+      return depscc_[it->second];
+    }
+    return kNoStateId;
   }
 
   // Returns properties for the strongly-connected component in the dependency
@@ -250,8 +257,8 @@ class ReplaceUtil {
   mutable std::vector<StateId> depscc_;               // FST SCC ID.
   mutable std::vector<bool> depaccess_;               // FST ID accessibility.
   mutable uint64_t depprops_;                         // Dependency FST props.
-  mutable bool have_stats_;                  // Have dependency statistics?
-  mutable std::vector<ReplaceStats> stats_;  // Per-FST statistics.
+  mutable bool have_stats_;                   // Have dependency statistics?
+  mutable std::vector<ReplaceStats> stats_;   // Per-FST statistics.
   mutable std::vector<uint8_t> depsccprops_;  // SCC properties.
   ReplaceUtil(const ReplaceUtil &) = delete;
   ReplaceUtil &operator=(const ReplaceUtil &) = delete;
@@ -360,8 +367,8 @@ void ReplaceUtil<Arc>::GetDependencies(bool stats) const {
       for (ArcIterator<Fst<Arc>> aiter(*ifst, s); !aiter.Done(); aiter.Next()) {
         if (have_stats_) ++stats_[ilabel].narcs;
         const auto &arc = aiter.Value();
-        auto it = nonterminal_hash_.find(arc.olabel);
-        if (it != nonterminal_hash_.end()) {
+        if (auto it = nonterminal_hash_.find(arc.olabel);
+            it != nonterminal_hash_.end()) {
           const auto nextstate = it->second;
           depfst_.EmplaceArc(ilabel, arc.olabel, arc.olabel, nextstate);
           if (have_stats_) {

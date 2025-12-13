@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -20,12 +20,16 @@
 
 #include <algorithm>
 #include <climits>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #include <iostream>
+#include <iterator>
 #include <memory>
 #include <numeric>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -39,8 +43,6 @@
 #else
 #define OPENFST_DEPRECATED(message)
 #endif
-
-void FailedNewHandler();
 
 namespace fst {
 
@@ -62,8 +64,15 @@ inline Dest bit_cast(const Source &source) {
   static_assert(sizeof(Dest) == sizeof(Source),
                 "Bitcasting unsafe for specified types");
   Dest dest;
-  memcpy(&dest, &source, sizeof(dest));
+  std::memcpy(&dest, &source, sizeof(dest));
   return dest;
+}
+
+template <typename T>
+T UnalignedLoad(const void *p) {
+  T t;
+  std::memcpy(&t, p, sizeof t);
+  return t;
 }
 
 namespace internal {
@@ -176,8 +185,16 @@ size_t GetResultSize(const std::vector<S> &elements, size_t s_size) {
 
 }  // namespace internal
 
+inline bool StrContains(std::string_view haystack, std::string_view needle) {
+  return haystack.find(needle) != haystack.npos;
+}
+
+inline bool StrContains(std::string_view haystack, char needle) {
+  return haystack.find(needle) != haystack.npos;
+}
+
 template <class S>
-std::string StringJoin(const std::vector<S> &elements, std::string_view delim) {
+std::string StrJoin(const std::vector<S> &elements, std::string_view delim) {
   std::string result;
   if (elements.empty()) return result;
   const size_t s_size = delim.size();
@@ -192,9 +209,9 @@ std::string StringJoin(const std::vector<S> &elements, std::string_view delim) {
 }
 
 template <class S>
-std::string StringJoin(const std::vector<S> &elements, char delim) {
+std::string StrJoin(const std::vector<S> &elements, char delim) {
   const std::string_view view_delim(&delim, 1);
-  return StringJoin(elements, view_delim);
+  return StrJoin(elements, view_delim);
 }
 
 struct SkipEmpty {};
@@ -274,7 +291,6 @@ class StringOrInt {
   std::string str_;
 };
 
-// TODO(kbg): Make this work with variadic template, maybe.
 
 inline std::string StrCat(const StringOrInt &s1, const StringOrInt &s2) {
   return s1.Get() + s2.Get();
@@ -282,18 +298,19 @@ inline std::string StrCat(const StringOrInt &s1, const StringOrInt &s2) {
 
 inline std::string StrCat(const StringOrInt &s1, const StringOrInt &s2,
                           const StringOrInt &s3) {
-  return s1.Get() + StrCat(s2, s3);
+  return s1.Get() + s2.Get() + s3.Get();
 }
 
-inline std::string StrCat(const StringOrInt &s1, const StringOrInt &s2,
-                          const StringOrInt &s3, const StringOrInt &s4) {
-  return s1.Get() + StrCat(s2, s3, s4);
-}
-
-inline std::string StrCat(const StringOrInt &s1, const StringOrInt &s2,
-                          const StringOrInt &s3, const StringOrInt &s4,
-                          const StringOrInt &s5) {
-  return s1.Get() + StrCat(s2, s3, s4, s5);
+// For four or more args, wrap them up into an initializer list and use an
+// explicit loop.
+template <typename... Args>
+std::string StrCat(const StringOrInt &s1, const StringOrInt &s2,
+                   const StringOrInt &s3, const Args &...args) {
+  const std::initializer_list<StringOrInt> list{
+      s1, s2, s3, static_cast<const StringOrInt &>(args)...};
+  std::ostringstream ostrm;
+  for (const auto &s : list) ostrm << s.Get();
+  return ostrm.str();
 }
 
 // TODO(agutkin): Remove this once we migrate to C++20, where `starts_with`
@@ -301,7 +318,7 @@ inline std::string StrCat(const StringOrInt &s1, const StringOrInt &s2,
 inline bool StartsWith(std::string_view text, std::string_view prefix) {
   return prefix.empty() ||
          (text.size() >= prefix.size() &&
-          memcmp(text.data(), prefix.data(), prefix.size()) == 0);
+          std::memcmp(text.data(), prefix.data(), prefix.size()) == 0);
 }
 
 inline bool ConsumePrefix(std::string_view *s, std::string_view expected) {

@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -18,9 +18,9 @@
 #ifndef FST_MAPPED_FILE_H_
 #define FST_MAPPED_FILE_H_
 
+#include <fst/compat.h>
 #ifdef _WIN32
 #include <windows.h>
-#include <fst/compat.h>
 #endif
 
 #include <cstddef>
@@ -61,14 +61,16 @@ class MappedFile {
   // bool is advisory, and Map will default to allocating and reading. The
   // source argument needs to contain the filename that was used to open the
   // input stream.
-  static MappedFile *Map(std::istream &istrm, bool memorymap,
-                         const std::string &source, size_t size);
+  static MappedFile * Map(std::istream &istrm, bool memorymap,
+                                          const std::string &source,
+                                          size_t size);
 
   // Returns a MappedFile object that contains the contents of the file referred
   // to by the file descriptor starting from pos with size bytes. If the
   // memory mapping fails, nullptr is returned. In contrast to Map(), this
   // factory function does not backoff to allocating and reading.
-  static MappedFile *MapFromFileDescriptor(int fd, size_t pos, size_t size);
+  static MappedFile * MapFromFileDescriptor(int fd, size_t pos,
+                                                            size_t size);
 
   // Creates a MappedFile object with a new'ed block of memory of size. The
   // align argument can be used to specify a desired block alignment.

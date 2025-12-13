@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -20,10 +20,16 @@
 #include <fst/fst.h>
 
 #include <cstdint>
+#include <istream>
+#include <ostream>
 #include <sstream>
+#include <string>
 
 #include <fst/flags.h>
 #include <fst/log.h>
+#include <fst/symbol-table.h>
+#include <fst/util.h>
+#include <string_view>
 
 // FST flag definitions.
 
@@ -76,7 +82,7 @@ bool FstHeader::Read(std::istream &strm, const std::string &source,
 }
 
 // Writes FST magic number and FST header.
-bool FstHeader::Write(std::ostream &strm, const std::string &) const {
+bool FstHeader::Write(std::ostream &strm, std::string_view) const {
   WriteType(strm, kFstMagicNumber);
   WriteType(strm, fsttype_);
   WriteType(strm, arctype_);
@@ -100,9 +106,9 @@ std::string FstHeader::DebugString() const {
 }
 
 FstReadOptions::FstReadOptions(const std::string_view source,
-                               const FstHeader *header,
-                               const SymbolTable *isymbols,
-                               const SymbolTable *osymbols)
+                               const FstHeader * header,
+                               const SymbolTable * isymbols,
+                               const SymbolTable * osymbols)
     : source(source),
       header(header),
       isymbols(isymbols),

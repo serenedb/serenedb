@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -19,13 +19,12 @@
 #define FST_SYMBOL_TABLE_OPS_H_
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
-
 #include <fst/fst.h>
 #include <fst/symbol-table.h>
-
 #include <unordered_set>
 
 namespace fst {
@@ -45,12 +44,12 @@ SymbolTable *PruneSymbolTable(const Fst<Arc> &fst, const SymbolTable &syms,
       seen.insert(sym);
     }
   }
-  auto *pruned = new SymbolTable(syms.Name() + "_pruned");
+  auto pruned = std::make_unique<SymbolTable>(syms.Name() + "_pruned");
   for (const auto &stitem : syms) {
     const auto label = stitem.Label();
     if (seen.count(label)) pruned->AddSymbol(stitem.Symbol(), label);
   }
-  return pruned;
+  return pruned.release();
 }
 
 // Relabels a symbol table to make it a contiguous mapping.
@@ -79,7 +78,8 @@ SymbolTable *MergeSymbolTable(const SymbolTable &left, const SymbolTable &right,
 // Read the symbol table from any Fst::Read()able file, without loading the
 // corresponding FST. Returns nullptr if the FST does not contain a symbol
 // table or the symbol table cannot be read.
-SymbolTable *FstReadSymbols(const std::string &source, bool input);
+SymbolTable * FstReadSymbols(const std::string &source,
+                                             bool input);
 
 // Adds a contiguous range of symbols to a symbol table using a simple prefix
 // for the string, returning false if the inserted symbol string clashes with

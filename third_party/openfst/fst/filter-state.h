@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -20,14 +20,14 @@
 #ifndef FST_FILTER_STATE_H_
 #define FST_FILTER_STATE_H_
 
+#include <climits>
+#include <cstddef>
 #include <forward_list>
 #include <utility>
-
 
 #include <fst/fst-decl.h>  // For optional argument declarations
 #include <fst/fst.h>
 #include <fst/matcher.h>
-
 
 namespace fst {
 
@@ -119,7 +119,7 @@ class WeightFilterState {
 template <typename T>
 class ListFilterState {
  public:
-  ListFilterState() {}
+  ListFilterState() = default;
 
   explicit ListFilterState(T s) { list_.push_front(s); }
 

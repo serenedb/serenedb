@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <map>
 #include <memory>
 #include <queue>
@@ -29,21 +30,28 @@
 #include <vector>
 
 #include <fst/log.h>
-
+#include <fst/arc-map.h>
+#include <fst/arc.h>
 #include <fst/arcsort.h>
 #include <fst/connect.h>
 #include <fst/dfs-visit.h>
 #include <fst/encode.h>
+#include <fst/expanded-fst.h>
 #include <fst/factor-weight.h>
 #include <fst/fst.h>
 #include <fst/mutable-fst.h>
 #include <fst/partition.h>
+#include <fst/properties.h>
 #include <fst/push.h>
 #include <fst/queue.h>
 #include <fst/reverse.h>
+#include <fst/reweight.h>
 #include <fst/shortest-distance.h>
 #include <fst/state-map.h>
-
+#include <fst/string-weight.h>
+#include <fst/symbol-table.h>
+#include <fst/util.h>
+#include <fst/vector-fst.h>
 #include <fst/weight.h>
 #include <unordered_map>
 

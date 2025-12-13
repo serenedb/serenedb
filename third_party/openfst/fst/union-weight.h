@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -22,17 +22,20 @@
 #ifndef FST_UNION_WEIGHT_H_
 #define FST_UNION_WEIGHT_H_
 
+#include <climits>
+#include <cstddef>
 #include <cstdint>
 #include <iostream>
+#include <istream>
 #include <list>
+#include <ostream>
 #include <random>
 #include <sstream>
 #include <string>
 #include <utility>
 
-
+#include <fst/util.h>
 #include <fst/weight.h>
-
 
 namespace fst {
 
@@ -67,10 +70,8 @@ namespace fst {
 
 template <class W, class O>
 class UnionWeight;
-
 template <class W, class O>
 class UnionWeightIterator;
-
 template <class W, class O>
 class UnionWeightReverseIterator;
 

@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -23,10 +23,11 @@
 #include <cstdint>
 #include <vector>
 
-
+#include <fst/cc-visitors.h>
 #include <fst/connect.h>
+#include <fst/dfs-visit.h>
+#include <fst/fst.h>
 #include <fst/mutable-fst.h>
-
 #include <unordered_set>
 
 namespace fst {

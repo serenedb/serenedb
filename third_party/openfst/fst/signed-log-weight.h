@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -25,14 +25,20 @@
 #ifndef FST_SIGNED_LOG_WEIGHT_H_
 #define FST_SIGNED_LOG_WEIGHT_H_
 
+#include <climits>
+#include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <random>
+#include <string>
 
-
+#include <fst/log.h>
 #include <fst/float-weight.h>
 #include <fst/pair-weight.h>
 #include <fst/product-weight.h>
-
+#include <fst/util.h>
+#include <fst/weight.h>
 
 namespace fst {
 template <class T>

@@ -69,6 +69,19 @@ Result ErrorMeta(ErrorCode code, std::string_view object_type,
           error, " metadata: ",     meta.toJson()};
 }
 
+template<typename T>
+ResultOr<std::shared_ptr<Database>> GetDatabaseImpl(T key) {
+  auto& catalog =
+    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+  auto database = catalog.GetDatabase(key);
+  if (!database) [[unlikely]] {
+    return std::unexpected<Result>(std::in_place,
+                                   ERROR_SERVER_DATABASE_NOT_FOUND,
+                                   "Cannot find database ", key);
+  }
+  return database;
+}
+
 }  // namespace
 
 CatalogFeature::CatalogFeature(Server& server)
@@ -452,27 +465,11 @@ Result CatalogFeature::OpenDatabase(catalog::DatabaseOptions database) {
 }
 
 ResultOr<std::shared_ptr<Database>> GetDatabase(ObjectId database_id) {
-  auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  auto database = catalog.GetObject<catalog::Database>(database_id);
-  if (!database) [[unlikely]] {
-    return std::unexpected<Result>(std::in_place,
-                                   ERROR_SERVER_DATABASE_NOT_FOUND,
-                                   "Cannot find database ", database_id);
-  }
-  return database;
+  return GetDatabaseImpl(database_id);
 }
 
 ResultOr<std::shared_ptr<Database>> GetDatabase(std::string_view name) {
-  auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  auto database = catalog.GetDatabase(name);
-  if (!database) [[unlikely]] {
-    return std::unexpected<Result>(std::in_place,
-                                   ERROR_SERVER_DATABASE_NOT_FOUND,
-                                   "Cannot find database ", name);
-  }
-  return database;
+  return GetDatabaseImpl(name);
 }
 
 }  // namespace sdb::catalog

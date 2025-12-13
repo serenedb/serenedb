@@ -61,8 +61,6 @@ constexpr ObjectType GetObjectType() noexcept {
     return ObjectType::Schema;
   } else if constexpr (std::is_same_v<T, Role>) {
     return ObjectType::Role;
-  } else if constexpr (std::is_same_v<T, Database>) {
-    return ObjectType::Database;
   } else if constexpr (std::is_same_v<T, Function>) {
     return ObjectType::Function;
   } else if constexpr (std::is_same_v<T, Table>) {
@@ -86,6 +84,7 @@ struct Snapshot {
   virtual std::shared_ptr<Role> GetRole(std::string_view name) const = 0;
   virtual std::shared_ptr<Database> GetDatabase(
     std::string_view database) const = 0;
+  virtual std::shared_ptr<Database> GetDatabase(ObjectId database) const = 0;
   virtual std::shared_ptr<Schema> GetSchema(ObjectId database,
                                             std::string_view schema) const = 0;
   virtual std::shared_ptr<SchemaObject> GetRelation(
@@ -190,6 +189,7 @@ struct LogicalCatalog {
                                             std::string_view schema) const = 0;
 
   virtual std::shared_ptr<Object> GetObject(ObjectId id) const = 0;
+  virtual std::shared_ptr<Database> GetDatabase(ObjectId id) const = 0;
 
   template<typename T>
   std::shared_ptr<T> GetObject(ObjectId id) const {

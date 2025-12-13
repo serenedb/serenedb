@@ -109,6 +109,7 @@ class LocalCatalog final : public LogicalCatalog,
   std::shared_ptr<Table> GetTable(ObjectId database_id, std::string_view schema,
                                   std::string_view name) const final;
   std::shared_ptr<Database> GetDatabase(std::string_view name) const final;
+  std::shared_ptr<Database> GetDatabase(ObjectId id) const final;
   std::shared_ptr<Schema> GetSchema(ObjectId database_id,
                                     std::string_view schema) const final;
 

@@ -150,7 +150,7 @@ Table::Table(TableOptions&& options, ObjectId database_id)
     }()},
     _plan_db{[&] {
       auto plan_db = options.planDb.value_or(ObjectId{});
-      return plan_db.isSet() ? plan_db : ObjectId{database_id};
+      return plan_db.isSet() ? plan_db : database_id;
     }()},
     _distribute_shards_like{options.distributeShardsLike.value_or(ObjectId{})},
     _from{options.from},

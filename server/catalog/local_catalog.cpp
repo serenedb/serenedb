@@ -50,6 +50,7 @@
 #include "catalog/catalog.h"
 #include "catalog/database.h"
 #include "catalog/function.h"
+#include "catalog/identifiers/object_id.h"
 #include "catalog/object.h"
 #include "catalog/role.h"
 #include "catalog/schema.h"
@@ -329,8 +330,8 @@ auto MakePropertiesWriter() {
   };
 }
 
-Result RegisterDatabaseImpl(ObjectId id, std::string_view name,
-                            bool start_applier) {
+[[maybe_unused]] Result RegisterDatabaseImpl(ObjectId id, std::string_view name,
+                                             bool start_applier) {
 #ifdef SDB_CLUSTER
   if (ServerState::instance()->IsAgent()) {
     return {};
@@ -375,6 +376,7 @@ class SnapshotImpl : public Snapshot {
     auto result = std::make_shared<SnapshotImpl>();
     result->_roles = _roles;
     result->_databases = _databases;
+    result->_databases_by_name = _databases_by_name;
     result->_objects_by_id = _objects_by_id;
     return result;
   }
@@ -411,19 +413,30 @@ class SnapshotImpl : public Snapshot {
 
   template<typename W>
   Result RegisterDatabase(std::shared_ptr<Database> database, W&& writer) {
-    const auto [it, is_new] = _databases.emplace(
-      std::piecewise_construct, std::forward_as_tuple(database),
-      std::forward_as_tuple(
-        std::make_shared<ObjectMap<Schema, SchemaObjects>>()));
+    auto [it, is_new] = _databases_by_name.emplace(database);
 
-    if (!is_new) {
+    if (!is_new) [[unlikely]] {
       return {ERROR_SERVER_DUPLICATE_NAME,
               "Database already exists: ", database->GetName()};
     };
 
-    return RegisterObjectId(
-      std::move(database), [&] { _databases.erase(it); },
-      std::forward<W>(writer));
+    absl::Cleanup cleanup = [&] { _databases_by_name.erase(it); };
+
+    is_new =
+      _databases
+        .emplace(std::piecewise_construct,
+                 std::forward_as_tuple(std::move(database)),
+                 std::forward_as_tuple(
+                   std::make_shared<ObjectMapByName<Schema, SchemaObjects>>()))
+        .second;
+
+    if (!is_new) [[unlikely]] {
+      return {ERROR_SERVER_DUPLICATE_NAME,
+              "Database with the same id alread exists: ", database->GetId()};
+    };
+
+    std::move(cleanup).Cancel();
+    return {};
   }
 
   template<typename W>
@@ -669,6 +682,14 @@ class SnapshotImpl : public Snapshot {
   }
 
   std::shared_ptr<Database> GetDatabase(std::string_view database) const final {
+    const auto it = _databases_by_name.find(database);
+    if (it == _databases_by_name.end()) {
+      return {};
+    }
+    return *it;
+  }
+
+  std::shared_ptr<Database> GetDatabase(ObjectId database) const {
     const auto it = _databases.find(database);
     if (it == _databases.end()) {
       return {};
@@ -796,7 +817,7 @@ class SnapshotImpl : public Snapshot {
                     "Database not found: ", key};
     };
 
-    auto impl = [&](std::string_view database) -> Result {
+    auto impl = [&](ObjectId database) -> Result {
       auto it = self._databases.find(database);
       if (it == self._databases.end()) {
         return error();
@@ -805,13 +826,13 @@ class SnapshotImpl : public Snapshot {
     };
 
     if constexpr (std::is_same_v<D, ObjectId>) {
-      auto database = self.GetObject(key);
-      if (!database || database->GetType() != ObjectType::Database) {
+      return impl(key);
+    } else if constexpr (std::is_same_v<D, std::string_view>) {
+      auto database = self._databases_by_name.find(key);
+      if (database == self._databases_by_name.end()) {
         return error();
       }
-      return impl(database->GetName());
-    } else if constexpr (std::is_same_v<D, std::string_view>) {
-      return impl(key);
+      return impl((*database)->GetId());
     } else {
       static_assert(false);
     }
@@ -888,8 +909,11 @@ class SnapshotImpl : public Snapshot {
   using ObjectSet =
     containers::FlatHashSet<std::shared_ptr<T>, ObjectByName, ObjectByName>;
   template<typename K, typename V>
-  using ObjectMap =
+  using ObjectMapByName =
     containers::FlatHashMap<std::shared_ptr<K>, V, ObjectByName, ObjectByName>;
+  template<typename K, typename V>
+  using ObjectMapById =
+    containers::FlatHashMap<std::shared_ptr<K>, V, ObjectById, ObjectById>;
   struct SchemaObjects {
     bool empty() const { return relations->empty() && functions->empty(); }
 
@@ -900,8 +924,10 @@ class SnapshotImpl : public Snapshot {
   };
 
   ObjectSet<Role> _roles;
-  ObjectMap<Database, std::shared_ptr<ObjectMap<Schema, SchemaObjects>>>
+  ObjectMapById<Database,
+                std::shared_ptr<ObjectMapByName<Schema, SchemaObjects>>>
     _databases;
+  ObjectSet<Database> _databases_by_name;
   containers::FlatHashSet<std::shared_ptr<Object>, ObjectById, ObjectById>
     _objects_by_id;
 };
@@ -1561,6 +1587,11 @@ std::shared_ptr<Schema> LocalCatalog::GetSchema(ObjectId database_id,
 std::shared_ptr<Database> LocalCatalog::GetDatabase(
   std::string_view name) const {
   return GetSnapshot()->GetDatabase(name);
+}
+
+std::shared_ptr<Database> LocalCatalog::GetDatabase(
+  ObjectId database_id) const {
+  return GetSnapshot()->GetDatabase(database_id);
 }
 
 Result LocalCatalog::GetRoles(

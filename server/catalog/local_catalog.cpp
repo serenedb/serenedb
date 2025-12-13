@@ -1073,7 +1073,7 @@ Result LocalCatalog::CreateView(ObjectId database_id, std::string_view schema,
 
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
-    return _snapshot->RegisterObject(
+    return clone->RegisterObject(
       database_id, schema, std::move(view), [&](auto& object) {
         auto& view = basics::downCast<catalog::View>(*object);
         return _engine->CreateView(
@@ -1316,7 +1316,7 @@ Result LocalCatalog::DropRole(std::string_view role) {
   auto r = [&] {
     absl::MutexLock lock{&_mutex};
     return Apply(_snapshot, [&](auto& clone) {
-      return _snapshot->DropRole(role, [&](auto& object) -> Result {
+      return clone->DropRole(role, [&](auto& object) -> Result {
         return _engine->DropRole(*object);
       });
     });

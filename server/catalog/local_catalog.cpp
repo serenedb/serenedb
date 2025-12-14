@@ -1647,10 +1647,10 @@ Result LocalCatalog::GetTables(
                   ->VisitObjects(database_id, schema, [&](auto& object) {
                     if (object->GetType() == GetObjectType<Table>()) {
                       auto it = _tables.find(object->GetId());
-                      SDB_ENSURE(it != _tables.end(), ERROR_INTERNAL);
-
-                      tables.emplace_back(
-                        std::static_pointer_cast<Table>(object), it->second);
+                      if (it != _tables.end()) {
+                        tables.emplace_back(
+                          std::static_pointer_cast<Table>(object), it->second);
+                      }
                     }
                     return true;
                   });

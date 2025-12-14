@@ -36,14 +36,16 @@ TEST(KeyUtilsTest, PrepareColumnKey) {
   ObjectId id{1};
   ColumnId col = 7;
   std::string key = PrepareColumnKey(id, col);
-  ASSERT_EQ(key, std::string_view("\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x07", 12));
+  ASSERT_EQ(key, std::string_view(
+                   "\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x07", 12));
 }
 
 TEST(KeyUtilsTest, AppendColumnKey) {
   ObjectId id{42};
   std::string key = PrepareTableKey(id);
   AppendColumnKey(key, 5);
-  ASSERT_EQ(key, std::string_view("\x00\x00\x00\x00\x00\x00\x00\x2A\x00\x00\x00\x05", 12));
+  ASSERT_EQ(key, std::string_view(
+                   "\x00\x00\x00\x00\x00\x00\x00\x2A\x00\x00\x00\x05", 12));
 }
 
 TEST(KeyUtilsTest, AppendCellKey) {
@@ -51,7 +53,9 @@ TEST(KeyUtilsTest, AppendCellKey) {
   std::string key = PrepareTableKey(id);
   std::string pk = "pkval";
   AppendCellKey(key, 4, pk);
-  ASSERT_EQ(key, std::string_view("\x00\x00\x00\x00\x00\x00\x00\x2B\x00\x00\x00\x04pkval", 17));
+  ASSERT_EQ(key,
+            std::string_view(
+              "\x00\x00\x00\x00\x00\x00\x00\x2B\x00\x00\x00\x04pkval", 17));
 }
 
 TEST(KeyUtilsTest, AppendPrimaryKey) {
@@ -65,31 +69,44 @@ TEST(KeyUtilsTest, AppendPrimaryKey) {
 TEST(KeyUtilsTest, CreateTableRange) {
   ObjectId id{10};
   auto range = CreateTableRange(id);
-  ASSERT_EQ(range.first, std::string_view("\x00\x00\x00\x00\x00\x00\x00\x0A", 8));
-  ASSERT_EQ(range.second, std::string_view("\x00\x00\x00\x00\x00\x00\x00\x0B", 8));
+  ASSERT_EQ(range.first,
+            std::string_view("\x00\x00\x00\x00\x00\x00\x00\x0A", 8));
+  ASSERT_EQ(range.second,
+            std::string_view("\x00\x00\x00\x00\x00\x00\x00\x0B", 8));
 }
 
 TEST(KeyUtilsTest, CreateTableRangeMax) {
   ObjectId id{std::numeric_limits<decltype(id.id())>::max()};
   auto range = CreateTableRange(id);
-  ASSERT_EQ(range.first, std::string_view("\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF", 8));
-  ASSERT_EQ(range.second, std::string_view("\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF", 12));
+  ASSERT_EQ(range.first,
+            std::string_view("\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF", 8));
+  ASSERT_EQ(
+    range.second,
+    std::string_view("\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF", 12));
 }
 
 TEST(KeyUtilsTest, CreateTableColumnRange) {
   ObjectId id{11};
   ColumnId col = 2;
   auto range = CreateTableColumnRange(id, col);
-  ASSERT_EQ(range.first, std::string_view("\x00\x00\x00\x00\x00\x00\x00\x0B\x00\x00\x00\x02", 12));
-  ASSERT_EQ(range.second, std::string_view("\x00\x00\x00\x00\x00\x00\x00\x0B\x00\x00\x00\x03", 12));
+  ASSERT_EQ(
+    range.first,
+    std::string_view("\x00\x00\x00\x00\x00\x00\x00\x0B\x00\x00\x00\x02", 12));
+  ASSERT_EQ(
+    range.second,
+    std::string_view("\x00\x00\x00\x00\x00\x00\x00\x0B\x00\x00\x00\x03", 12));
 }
 
 TEST(KeyUtilsTest, CreateTableColumnRangeMax) {
   ObjectId id{std::numeric_limits<decltype(id.id())>::max()};
   ColumnId col = std::numeric_limits<ColumnId>::max() - 1;
   auto range = CreateTableColumnRange(id, col);
-  ASSERT_EQ(range.first, std::string_view("\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFE", 12));
-  ASSERT_EQ(range.second, std::string_view("\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF", 12));
+  ASSERT_EQ(
+    range.first,
+    std::string_view("\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFE", 12));
+  ASSERT_EQ(
+    range.second,
+    std::string_view("\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF", 12));
 }
 
 }  // namespace

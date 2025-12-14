@@ -32,6 +32,7 @@
 #include "catalog/database.h"
 #include "catalog/function.h"
 #include "catalog/identifiers/object_id.h"
+#include "catalog/index.h"
 #include "catalog/object.h"
 #include "catalog/role.h"
 #include "catalog/schema.h"
@@ -109,6 +110,8 @@ struct LogicalCatalog {
   virtual Result RegisterFunction(
     ObjectId database_id, std::string_view schema,
     std::shared_ptr<catalog::Function> function) = 0;
+  virtual Result RegisterIndex(ObjectId database_id, std::string_view schema,
+                               std::string_view table, IndexOptions index) = 0;
 
   virtual Result CreateDatabase(
     std::shared_ptr<catalog::Database> database) = 0;
@@ -125,6 +128,8 @@ struct LogicalCatalog {
   virtual Result CreateTable(ObjectId database_id, std::string_view schema,
                              CreateTableOptions options,
                              CreateTableOperationOptions operation_options) = 0;
+  virtual Result CreateIndex(ObjectId database_id, std::string_view schema,
+                             std::string_view table, IndexOptions options) = 0;
 
   virtual Result RenameTable(ObjectId database_id, std::string_view schema,
                              std::string_view name,
@@ -154,6 +159,8 @@ struct LogicalCatalog {
   virtual Result DropTable(ObjectId database, std::string_view schema,
                            std::string_view name,
                            AsyncResult* async_result) = 0;
+  virtual Result DropIndex(ObjectId database_id, std::string_view schema,
+                           std::string_view name) = 0;
 
   virtual std::shared_ptr<catalog::Role> GetRole(
     std::string_view name) const = 0;

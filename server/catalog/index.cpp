@@ -23,11 +23,12 @@
 namespace sdb::catalog {
 
 Index::Index(IndexOptions options, ObjectId database_id)
-  : DatabaseObject{{},
-                   database_id,
-                   options.id,
-                   std::move(options.name),
-                   ObjectType::Index},
+  : SchemaObject{{},
+                 database_id,
+                 {},
+                 options.id,
+                 std::move(options.name),
+                 ObjectType::Index},
     _table_id{options.table},
     _type(options.type) {}
 

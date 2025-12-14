@@ -37,9 +37,10 @@ struct IndexOptions {
   ObjectId table;
   std::string name;
   IndexType type = IndexType::Invalid;
+  vpack::Slice options;
 };
 
-class Index : DatabaseObject {
+class Index : public SchemaObject {
  public:
   Index(IndexOptions options, ObjectId database_id);
 

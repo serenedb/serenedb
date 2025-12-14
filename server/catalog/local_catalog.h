@@ -61,6 +61,8 @@ class LocalCatalog final : public LogicalCatalog,
                           std::shared_ptr<Function> function) final;
   Result RegisterTable(ObjectId database_id, std::string_view schema,
                        CreateTableOptions table) final;
+  Result RegisterIndex(ObjectId database_id, std::string_view schema,
+                       std::string_view table, IndexOptions index) final;
 
   Result CreateDatabase(std::shared_ptr<Database> database) final;
   Result CreateRole(std::shared_ptr<Role> role) final;
@@ -74,7 +76,7 @@ class LocalCatalog final : public LogicalCatalog,
                      CreateTableOptions table,
                      CreateTableOperationOptions operation_options) final;
   Result CreateIndex(ObjectId database_id, std::string_view schema,
-                     std::string_view table, IndexOptions options);
+                     std::string_view table, IndexOptions options) final;
 
   Result RenameView(ObjectId database_id, std::string_view schema,
                     std::string_view name, std::string_view new_name) final;
@@ -98,7 +100,7 @@ class LocalCatalog final : public LogicalCatalog,
   Result DropTable(ObjectId database_id, std::string_view schema,
                    std::string_view name, AsyncResult* async_result) final;
   Result DropIndex(ObjectId database_id, std::string_view schema,
-                   std::string_view table, std::string_view name);
+                   std::string_view name) final;
 
   std::shared_ptr<Role> GetRole(std::string_view name) const final;
   std::shared_ptr<View> GetView(ObjectId database_id, std::string_view schema,
@@ -141,7 +143,8 @@ class LocalCatalog final : public LogicalCatalog,
   }
 
  private:
-  mutable absl::Mutex _mutex;
+  mutable basics::ReadWriteLock _mutex;
+  mutable std::atomic<std::thread::id> _owner;
   std::shared_ptr<SnapshotImpl> _snapshot;
   containers::FlatHashMap<ObjectId, std::shared_ptr<TableShard>> _tables;
   StorageEngine* _engine;

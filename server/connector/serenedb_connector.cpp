@@ -32,6 +32,6 @@ SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
     // possible field as count field not just first
     _table_count_field{basics::downCast<const SereneDBColumn>(
                          layout.table().columnMap().begin()->second)
-                         ->Oid()} {}
+                         ->Id()} {}
 
 }  // namespace sdb::connector

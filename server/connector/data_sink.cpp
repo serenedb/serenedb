@@ -70,7 +70,7 @@ RocksDBDataSink::RocksDBDataSink(
     _transaction{transaction},
     _cf{cf},
     _object_key{object_key},
-    _column_oids{std::move(column_oids)},
+    _column_ids{std::move(column_oids)},
     _memory_pool{memory_pool},
     _row_slices{memory_pool},
     _row_keys{memory_pool},
@@ -89,8 +89,8 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
   // UPDATE with PK columns changing would have PK columns at the
   // beginning and same columns again as write data. So here we validate
   // column oids size against input type not row type size.
-  SDB_ASSERT(input->type()->size() == _column_oids.size(),
-             "RocksDBDataSink: column oids size ", _column_oids.size(),
+  SDB_ASSERT(input->type()->size() == _column_ids.size(),
+             "RocksDBDataSink: column oids size ", _column_ids.size(),
              " doesn't match input type size ", input->type()->size());
   // TODO(Dronplane) implement updating PK fields
   _row_keys.clear();
@@ -126,7 +126,7 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
       continue;
     }
     table_key.resize(parent_size);
-    key_utils::AppendColumnKey(table_key, _column_oids[i]);
+    key_utils::AppendColumnKey(table_key, _column_ids[i]);
     WriteColumn(table_key, input->childAt(i), folly::Range{&all_rows, 1}, {});
   }
 }

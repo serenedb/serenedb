@@ -39,7 +39,7 @@ class RocksDBDataSource final : public velox::connector::DataSource {
                     // WriteBatchWithindex or plain DB with snapshot
                     rocksdb::Snapshot* snapshot, rocksdb::DB& db,
                     rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
-                    std::vector<key_utils::ColumnId> column_oids,
+                    std::vector<key_utils::ColumnId> column_ids,
                     ObjectId object_key);
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
@@ -81,7 +81,7 @@ class RocksDBDataSource final : public velox::connector::DataSource {
   rocksdb::DB& _db;
   rocksdb::ColumnFamilyHandle& _cf;
   velox::RowTypePtr _row_type;
-  std::vector<key_utils::ColumnId> _column_oids;
+  std::vector<key_utils::ColumnId> _column_ids;
   std::shared_ptr<velox::connector::ConnectorSplit> _current_split;
   ObjectId _object_key;
   std::string _last_read_key;

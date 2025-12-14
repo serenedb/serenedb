@@ -36,17 +36,16 @@ namespace sdb::connector {
 
 class SereneDBColumnHandle final : public velox::connector::ColumnHandle {
  public:
-  explicit SereneDBColumnHandle(const std::string& name,
-                                key_utils::ColumnId oid)
-    : _name{name}, _oid{oid} {}
+  explicit SereneDBColumnHandle(const std::string& name, key_utils::ColumnId id)
+    : _name{name}, _id{id} {}
 
   const std::string& name() const final { return _name; }
 
-  const key_utils::ColumnId& Oid() const noexcept { return _oid; }
+  const key_utils::ColumnId& Id() const noexcept { return _id; }
 
  private:
   std::string _name;
-  key_utils::ColumnId _oid;
+  key_utils::ColumnId _id;
 };
 
 class SereneDBConnectorTableHandle final
@@ -76,13 +75,13 @@ class SereneDBConnectorTableHandle final
 class SereneDBColumn final : public axiom::connector::Column {
  public:
   explicit SereneDBColumn(std::string_view name, velox::TypePtr type,
-                          key_utils::ColumnId oid)
-    : Column{std::string{name}, type}, _oid{oid} {}
+                          key_utils::ColumnId id)
+    : Column{std::string{name}, type}, _id{id} {}
 
-  const key_utils::ColumnId& Oid() const noexcept { return _oid; }
+  const key_utils::ColumnId& Id() const noexcept { return _id; }
 
  private:
-  key_utils::ColumnId _oid;
+  key_utils::ColumnId _id;
 };
 
 class SereneDBTableLayout final : public axiom::connector::TableLayout {
@@ -115,7 +114,7 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
                column_name);
     return std::make_shared<SereneDBColumnHandle>(
       column_name,
-      basics::downCast<const SereneDBColumn>(findColumn(column_name))->Oid());
+      basics::downCast<const SereneDBColumn>(findColumn(column_name))->Id());
   }
 
   velox::connector::ConnectorTableHandlePtr createTableHandle(
@@ -152,10 +151,10 @@ class RocksDBTable final : public axiom::connector::Table {
       _pk_type->size(),
       axiom::connector::SortOrder{.isAscending = true, .isNullsFirst = false});
     // TODO(Dronplane) take it from the catalog when available
-    key_utils::ColumnId col_oid = 0;
+    key_utils::ColumnId col_id = 0;
     for (const auto& [name, type] : std::views::zip(
            collection.RowType()->names(), collection.RowType()->children())) {
-      auto column = std::make_unique<SereneDBColumn>(name, type, col_oid++);
+      auto column = std::make_unique<SereneDBColumn>(name, type, col_id++);
       columns.push_back(column.get());
       _column_map.emplace(name, column.get());
       _column_handles.push_back(std::move(column));
@@ -194,7 +193,7 @@ class RocksDBTable final : public axiom::connector::Table {
     for (const auto& name : _pk_type->names()) {
       handles.push_back(std::make_shared<SereneDBColumnHandle>(
         name,
-        basics::downCast<const SereneDBColumn>(_column_map.at(name))->Oid()));
+        basics::downCast<const SereneDBColumn>(_column_map.at(name))->Id()));
     }
     return handles;
   }
@@ -401,7 +400,7 @@ class SereneDBConnector final : public velox::connector::Connector {
         auto handle = column_handles.find(output_type->nameOf(i));
         VELOX_CHECK(handle != column_handles.end());
         column_oids.push_back(
-          basics::downCast<const SereneDBColumnHandle>(handle->second)->Oid());
+          basics::downCast<const SereneDBColumnHandle>(handle->second)->Id());
       }
     } else {
       column_oids.push_back(serene_table_handle.GetCountField());
@@ -455,7 +454,7 @@ class SereneDBConnector final : public velox::connector::Connector {
         SDB_ASSERT(handle != table.columnMap().end(),
                    "RocksDBDataSink: can't find column handle for ", col);
         column_oids.push_back(
-          basics::downCast<const SereneDBColumn>(handle->second)->Oid());
+          basics::downCast<const SereneDBColumn>(handle->second)->Id());
       }
       return irs::ResolveBool(
         serene_insert_handle.Kind() == axiom::connector::WriteKind::kUpdate,
@@ -497,7 +496,7 @@ class SereneDBConnector final : public velox::connector::Connector {
         SDB_ASSERT(handle != table.columnMap().end(),
                    "RocksDBDataSink: can't find column handle for ", col);
         column_oids.push_back(
-          basics::downCast<const SereneDBColumn>(handle->second)->Oid());
+          basics::downCast<const SereneDBColumn>(handle->second)->Id());
       }
       return std::make_unique<RocksDBDeleteDataSink>(
         *(serene_insert_handle.GetTransaction()), _cf, table.type(), object_key,

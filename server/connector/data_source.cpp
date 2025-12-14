@@ -39,13 +39,13 @@ RocksDBDataSource::RocksDBDataSource(
     _db{db},
     _cf{cf},
     _row_type{std::move(row_type)},
-    _column_oids(std::move(column_oids)),
+    _column_ids(std::move(column_oids)),
     _object_key{object_key} {
   SDB_ASSERT(_row_type, "RocksDBDataSource: row type is null");
   SDB_ASSERT(_object_key.isSet(), "RocksDBDataSource: object key is empty");
-  SDB_ASSERT(!_column_oids.empty(),
+  SDB_ASSERT(!_column_ids.empty(),
              "RocksDBDataSource: at least one column must be requested");
-  SDB_ASSERT(_row_type->size() == 0 || _row_type->size() == _column_oids.size(),
+  SDB_ASSERT(_row_type->size() == 0 || _row_type->size() == _column_ids.size(),
              "RocksDBDataSource: number of columns does not match row type");
 }
 
@@ -105,7 +105,7 @@ std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
   if (num_columns) {
     for (velox::column_index_t col_idx = 0; col_idx < num_columns; ++col_idx) {
       key.resize(key_old_size);
-      key_utils::AppendColumnKey(key, _column_oids[col_idx]);
+      key_utils::AppendColumnKey(key, _column_ids[col_idx]);
       auto it = CreateColumnIterator(key, read_options);
       if (!it) {
         // no rows found. This should happen only for the first column.
@@ -129,9 +129,9 @@ std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
                                               columns.front()->size(),
                                               std::move(columns));
   }
-  SDB_ASSERT(_column_oids.size() == 1);
+  SDB_ASSERT(_column_ids.size() == 1);
   const std::string column_key =
-    key_utils::PrepareColumnKey(_object_key, _column_oids.front());
+    key_utils::PrepareColumnKey(_object_key, _column_ids.front());
   auto it = CreateColumnIterator(column_key, read_options);
   if (!it) {
     _current_split.reset();

@@ -88,7 +88,7 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
   SDB_ASSERT(input->encoding() == velox::VectorEncoding::Simple::ROW);
   // UPDATE with PK columns changing would have PK columns at the
   // beginning and same columns again as write data. So here we validate
-  // column oids size with input type not row type size.
+  // column oids size against input type not row type size.
   SDB_ASSERT(input->type()->size() == _column_oids.size(),
              "RocksDBDataSink: column oids size ", _column_oids.size(),
              " doesn't match input type size ", input->type()->size());
@@ -125,8 +125,6 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
     if (_skip_primary_key_columns && i < _key_childs.size()) {
       continue;
     }
-    // TODO(Dronplane) implement proper column name encoding
-    SDB_ASSERT(!input->type()->asRow().nameOf(i).empty());
     table_key.resize(parent_size);
     key_utils::AppendColumnKey(table_key, _column_oids[i]);
     WriteColumn(table_key, input->childAt(i), folly::Range{&all_rows, 1}, {});

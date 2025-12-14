@@ -56,8 +56,11 @@ void AppendPrimaryKey(std::string& key, std::string_view primary_key) {
 
 std::pair<std::string, std::string> CreateTableRange(ObjectId id) {
   SDB_ASSERT(id.isSet());
-  SDB_ASSERT(id.id() != std::numeric_limits<decltype(id.id())>::max());
-  return {PrepareTableKey(id), PrepareTableKey(ObjectId{id.id() + 1})};
+  if (id.id() != std::numeric_limits<decltype(id.id())>::max()) {
+    return {PrepareTableKey(id), PrepareTableKey(ObjectId{id.id() + 1})};
+  }
+  return {PrepareTableKey(id),
+          PrepareColumnKey(id, std::numeric_limits<ColumnId>::max())};
 }
 
 std::pair<std::string, std::string> CreateTableColumnRange(

@@ -91,10 +91,10 @@ class PgSQLCommTaskBase : public rest::CommTask {
     void Reset(PgSQLCommTaskBase& task) {
       task.ReleaseCursor(*this);
       stmt = nullptr;
-      rows_fetched = 0;
+      rows = 0;
     }
     SqlStatement* stmt{nullptr};
-    size_t rows_fetched{0};
+    uint64_t rows{0};
     std::unique_ptr<query::Cursor> cursor;
     BindInfo bind_info;
     SerializationContext serialization_context;
@@ -132,8 +132,9 @@ class PgSQLCommTaskBase : public rest::CommTask {
   SqlPortal BindStatement(SqlStatement& stmt, BindInfo bind_info);
   void DescribePortal(const SqlPortal& portal);
   void DescribeStatement(SqlStatement& statement);
-  void DescribeAnalyzedQuery(const velox::RowTypePtr& output_type,
-                             const std::vector<VarFormat>& formats);
+  void DescribeAnalyzedQuery(const query::Query& query,
+                             const std::vector<VarFormat>& formats,
+                             bool extended = true);
   std::optional<BindInfo> ParseBindVars(
     std::string_view packet, const std::string_view statement_name,
     const std::vector<velox::TypePtr>& param_types);
@@ -153,7 +154,7 @@ class PgSQLCommTaskBase : public rest::CommTask {
   void WakeupHandler() noexcept;
   ProcessState ProcessQueryResult();
   void SendBatch(const velox::RowVectorPtr& batch);
-  void SendCommandComplete(const SqlTree& tree, size_t rows_affected);
+  void SendCommandComplete(const SqlTree& tree, uint64_t rows);
 
   using PacketsQueue = std::queue<std::string>;
   PostgresFeature& _feature;

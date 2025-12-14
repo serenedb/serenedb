@@ -77,7 +77,7 @@ RocksDBDataSink::RocksDBDataSink(
     _bytes_allocator{&memory_pool},
     _skip_primary_key_columns{skip_primary_key_columns} {
   _key_childs.assign_range(key_childs);
-  SDB_ASSERT(_object_key.isSet(), "RocksDBDataSource: object key is empty");
+  SDB_ASSERT(_object_key.isSet(), "RocksDBDataSink: object key is empty");
 }
 
 // TODO(Dronplane)
@@ -2002,7 +2002,7 @@ RocksDBDeleteDataSink::RocksDBDeleteDataSink(
     _cf{cf},
     _object_key{object_key},
     _column_oids{std::move(column_oids)} {
-  SDB_ASSERT(_object_key.isSet(), "RocksDBDataSource: object key is empty");
+  SDB_ASSERT(_object_key.isSet(), "RocksDBDeleteDataSink: object key is empty");
   SDB_ASSERT(_column_oids.size() == _row_type->size(),
              "RocksDBDeleteDataSink: column oids size ", _column_oids.size(),
              " does not match row "

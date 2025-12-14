@@ -2001,10 +2001,10 @@ RocksDBDeleteDataSink::RocksDBDeleteDataSink(
     _transaction{transaction},
     _cf{cf},
     _object_key{object_key},
-    _column_oids{std::move(column_oids)} {
+    _column_ids{std::move(column_oids)} {
   SDB_ASSERT(_object_key.isSet(), "RocksDBDeleteDataSink: object key is empty");
-  SDB_ASSERT(_column_oids.size() == _row_type->size(),
-             "RocksDBDeleteDataSink: column oids size ", _column_oids.size(),
+  SDB_ASSERT(_column_ids.size() == _row_type->size(),
+             "RocksDBDeleteDataSink: column oids size ", _column_ids.size(),
              " does not match row "
              "type size",
              _row_type->size());
@@ -2031,7 +2031,7 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
 
     for (velox::column_index_t col_idx = 0; col_idx < num_columns; ++col_idx) {
       key.resize(key_old_size);
-      key_utils::AppendCellKey(key, _column_oids[col_idx], row_key);
+      key_utils::AppendCellKey(key, _column_ids[col_idx], row_key);
       auto status = _transaction.Delete(&_cf, rocksdb::Slice(key));
       if (!status.ok()) {
         SDB_THROW(rocksutils::ConvertStatus(status));

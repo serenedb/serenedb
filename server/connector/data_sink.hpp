@@ -198,7 +198,7 @@ class RocksDBDeleteDataSink : public velox::connector::DataSink {
   RocksDBDeleteDataSink(rocksdb::Transaction& transaction,
                         rocksdb::ColumnFamilyHandle& cf,
                         velox::RowTypePtr row_type, ObjectId object_key,
-                        std::vector<key_utils::ColumnId> column_oids);
+                        std::vector<key_utils::ColumnId> column_ids);
 
   void appendData(velox::RowVectorPtr input) final;
   bool finish() final;
@@ -213,7 +213,7 @@ class RocksDBDeleteDataSink : public velox::connector::DataSink {
   rocksdb::Transaction& _transaction;
   rocksdb::ColumnFamilyHandle& _cf;
   ObjectId _object_key;
-  std::vector<key_utils::ColumnId> _column_oids;
+  std::vector<key_utils::ColumnId> _column_ids;
 };
 
 }  // namespace sdb::connector

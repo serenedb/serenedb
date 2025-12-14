@@ -360,8 +360,8 @@ Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,
     return r;
   }
   options.shardKeys = std::move(request.shardKeys);
-  options.pkType = std::move(request.pkType);
-  options.rowType = std::move(request.rowType);
+  options.columns = std::move(request.columns);
+  options.pkColumns = std::move(request.pkColumns);
   options.avoidServers = std::move(request.avoidServers);
   if (request.shardingStrategy) {
     options.shardingStrategy = std::move(*request.shardingStrategy);

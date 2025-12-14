@@ -374,12 +374,12 @@ void ObjectCollector::CollectExprNode(const State& state, const Node* expr) {
     case T_ColumnRef:
     case T_A_Const:
     case T_CollateClause:
+    case T_SetToDefault:
       // nothing to collect
       // TODO(mbkkt) but validate names, etc should be here
       return;
     default:
-      SDB_THROW(ERROR_NOT_IMPLEMENTED,
-                "unsupported node type: ", magic_enum::enum_name(expr->type));
+      SDB_THROW(ERROR_NOT_IMPLEMENTED, "unsupported node type: ", expr->type);
   }
 }
 

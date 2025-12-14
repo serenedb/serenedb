@@ -129,7 +129,8 @@ List* Parse(MemoryContextData& ctx, const QueryString& query_string) {
   return result;
 }
 
-List* ParseExpression(MemoryContextData& ctx, const QueryString& query_string) {
+List* ParseExpressions(MemoryContextData& ctx,
+                       const QueryString& query_string) {
   if (query_string.empty()) {
     return {};
   }
@@ -151,9 +152,14 @@ List* ParseExpression(MemoryContextData& ctx, const QueryString& query_string) {
 
 Node* ParseSingleExpression(MemoryContextData& ctx,
                             const QueryString& query_string) {
-  auto list = ParseExpression(ctx, query_string);
+  auto list = ParseExpressions(ctx, query_string);
   SDB_ASSERT(list_length(list) == 1);
-  return list_nth_node(Node, list, 0);
+  auto* raw_stmt = list_nth_node(RawStmt, list, 0);
+  SDB_ASSERT(IsA(raw_stmt->stmt, SelectStmt));
+  auto* select = castNode(SelectStmt, raw_stmt->stmt);
+  SDB_ASSERT(list_length(select->targetList) == 1);
+  auto* expr = list_nth_node(ResTarget, select->targetList, 0)->val;
+  return expr;
 }
 
 pg::SqlStatement ParseSystemView(std::string_view query) {

@@ -151,6 +151,7 @@ enum class ExprKind {
   CycleMark = EXPR_KIND_CYCLE_MARK,  // cycle mark value
   AggregateOrder,                    // ORDER BY in aggregate function
   AggregateArgument,                 // arguments of aggregate function
+  InsertSelect
 };
 
 constexpr lp::SpecialForm kSpecialFormPlaceholder{
@@ -1128,13 +1129,13 @@ void SqlAnalyzer::ProcessSelectStmt(State& state, const SelectStmt& stmt) {
   // TODO: ProcessFinalProject
 }
 
+const lp::ExprPtr kDefaultValuePlaceHolder = std::make_shared<lp::CallExpr>(
+  velox::UNKNOWN(), "presto_fail",
+  MakeConst("DEFAULT is not allowed in this context"));
+
 void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
   if (stmt.returningList) {
     SDB_THROW(ERROR_NOT_IMPLEMENTED, "RETURNING clause is not implemented yet");
-  }
-  if (!stmt.selectStmt) {
-    SDB_THROW(ERROR_NOT_IMPLEMENTED,
-              "INSERT ... DEFAULT VALUES is not implemented yet");
   }
   if (stmt.onConflictClause) {
     SDB_THROW(ERROR_NOT_IMPLEMENTED,
@@ -1145,7 +1146,18 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
               "OVERRIDING clause is not implemented yet");
   }
   ProcessWithClause(state, stmt.withClause);
-  ProcessStmt(state, *stmt.selectStmt);
+
+  if (stmt.selectStmt) {
+    // at least why we need it :
+    // insert has their ctes and select stmt too
+    auto child_state = state.MakeChild();
+    child_state.expr_kind = ExprKind::InsertSelect;
+    ProcessStmt(child_state, *stmt.selectStmt);
+    state.root = std::move(child_state.root);
+  } else {
+    // INSERT ... DEFAULT VALUES
+    EnsureRoot(state);
+  }
 
   const auto& relation = *stmt.relation;
   const auto schema_name = absl::NullSafeStringView(relation.schemaname);
@@ -1163,22 +1175,32 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
         "INSERT statement is only applicable for tables, but the object is: ",
         magic_enum::enum_name(logical_object.GetType())));
   }
-  const auto& table = basics::downCast<catalog::Table>(logical_object);
 
+  const auto& table = basics::downCast<catalog::Table>(logical_object);
+  const auto& table_type = *table.RowType();
   std::vector<std::string> column_names;
   std::vector<lp::ExprPtr> column_exprs;
-  const auto& table_type = *table.RowType();
+  column_names.reserve(table_type.size());
+  column_exprs.reserve(table_type.size());
+
+  const uint32_t explicit_columns = list_length(stmt.cols);
   const auto& input_type = *state.root->outputType();
-  column_names.reserve(input_type.size());
-  column_exprs.reserve(input_type.size());
-  const uint32_t explicit_columns = stmt.cols ? list_length(stmt.cols) : 0;
   if (explicit_columns > input_type.size()) {
-    THROW_SQL_ERROR(ERR_MSG("INSERT has more target columns than expressions"));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                    ERR_MSG("INSERT has more target columns than expressions"),
+                    CURSOR_POS(ExprLocation(&stmt)));
   }
   if ((stmt.cols ? explicit_columns : table_type.size()) < input_type.size()) {
-    THROW_SQL_ERROR(ERR_MSG("INSERT has more expressions than target columns"));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                    ERR_MSG("INSERT has more expressions than target columns"),
+                    CURSOR_POS(ExprLocation(&stmt)));
   }
+  containers::FlatHashSet<std::string_view> unique_aliases;
+  unique_aliases.reserve(input_type.size());
   for (uint32_t i = 0; i < input_type.size(); ++i) {
+    if (input_type.childAt(i) == kDefaultValuePlaceHolder) {
+      continue;  // will be handled in cycle below
+    }
     if (stmt.cols) {
       const std::string_view name = strVal(list_nth(stmt.cols, i));
       if (!table_type.containsChild(name)) {
@@ -1187,6 +1209,13 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
                         ERR_MSG("column \"", name, "\" of relation \"",
                                 table_name, "\" does not exist"));
       }
+      auto [_, emplaced] = unique_aliases.emplace(name);
+      if (!emplaced) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_DUPLICATE_COLUMN),
+          CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
+          ERR_MSG("column \"", name, "\" specified more than once"));
+      }
       column_names.emplace_back(name);
     } else {
       column_names.emplace_back(table_type.names()[i]);
@@ -1194,10 +1223,25 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
     lp::ExprPtr raw_expr = std::make_shared<lp::InputReferenceExpr>(
       input_type.childAt(i), input_type.nameOf(i));
     const auto& table_column_type = table_type.findChild(column_names.back());
-    if (raw_expr->type()->kind() != table_column_type->kind()) {
+    if (raw_expr->type() != table_column_type) {
       raw_expr = MakeCast(table_column_type, std::move(raw_expr));
     }
     column_exprs.push_back(std::move(raw_expr));
+  }
+
+  // set default value for not mentioned columns
+  for (const auto& column : table.Columns()) {
+    if (std::ranges::find(column_names, column.name) == column_names.end()) {
+      const auto& default_value = column.default_value;
+      lp::ExprPtr expr;
+      if (default_value) {
+        expr = ProcessExprNodeImpl(state, default_value->GetExpr());
+      } else {
+        expr = MakeConst(velox::TypeKind::UNKNOWN);
+      }
+      column_names.emplace_back(column.name);
+      column_exprs.emplace_back(std::move(expr));
+    }
   }
 
   state.root = std::make_shared<lp::TableWriteNode>(
@@ -2820,6 +2864,13 @@ lp::ExprPtr SqlAnalyzer::ProcessExprNodeImpl(State& state, const Node* expr) {
     case T_CollateClause:
       res = ProcessCollateClause(state, *castNode(CollateClause, expr));
       break;
+    case T_SetToDefault:
+      if (state.expr_kind != ExprKind::Values) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        CURSOR_POS(ErrorPosition(ExprLocation(expr))),
+                        ERR_MSG("DEFAULT is not allowed in this context"));
+      }
+      return kDefaultValuePlaceHolder;
     case T_MultiAssignRef:
     case T_GroupingFunc:
     case T_NamedArgExpr:
@@ -2831,7 +2882,6 @@ lp::ExprPtr SqlAnalyzer::ProcessExprNodeImpl(State& state, const Node* expr) {
     case T_JsonObjectConstructor:
     case T_JsonArrayConstructor:
     case T_JsonArrayQueryConstructor:
-    case T_SetToDefault:
     case T_XmlExpr:
     case T_XmlSerialize:
     default:

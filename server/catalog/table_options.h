@@ -49,8 +49,12 @@
 
 namespace sdb::catalog {
 
-struct ObjectInternal {};
-struct ObjectProperties {};
+struct ObjectInternal {
+  ObjectId database;
+};
+struct ObjectProperties {
+  ObjectId database;
+};
 
 struct ForeignId : ObjectId {
   using ObjectId::ObjectId;
@@ -132,11 +136,19 @@ struct AgencyIsBuildingFlags {
   bool isBuilding = true;
 };
 
+struct Column {
+  using Id = uint32_t;
+
+  Id id;
+  velox::TypePtr type;
+  std::string name;
+  std::optional<DefaultValue> default_value;
+};
+
 struct CreateTableRequest {
   std::vector<std::string> shardKeys{std::string{StaticStrings::kKeyString}};
-  velox::RowTypePtr pkType;
-  velox::RowTypePtr rowType;
-  DefaultValue default_value;
+  std::vector<Column> columns;
+  std::vector<Column::Id> pkColumns;
   // TOOD(gnusi): we don't need it to be a part of collection slice
   std::vector<std::string> avoidServers;
   std::optional<std::string> distributeShardsLike;
@@ -161,8 +173,8 @@ struct CreateTableRequest {
 
 struct TableOptions {
   std::vector<std::string> shardKeys{std::string{StaticStrings::kKeyString}};
-  velox::RowTypePtr pkType;
-  velox::RowTypePtr rowType;
+  std::vector<Column> columns;
+  std::vector<Column::Id> pkColumns;
   std::string shardingStrategy = std::string{kDefaultSharding};
   std::string name;
   std::shared_ptr<ValidatorBase> schema;

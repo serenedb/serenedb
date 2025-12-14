@@ -57,13 +57,15 @@ class Table : public SchemaObject {
 
   const auto& PKType() const noexcept { return _pk_type; }
   const auto& RowType() const noexcept { return _row_type; }
+  const std::vector<Column>& Columns() const noexcept;
+  const std::vector<Column::Id>& PKColumns() const noexcept;
   auto GetTableType() const noexcept { return _type; }
   auto& GetSchema() const noexcept { return _schema; }
   auto& sharding(this auto& self) noexcept { return self._sharding; }
   bool waitForSync() const noexcept { return _wait_for_sync; }
   auto& keyGenerator() const noexcept {
     SDB_ASSERT(_key_generator);
-    return *_key_generator;
+    return _key_generator;
   }
   auto from() const noexcept { return _from; }
   auto to() const noexcept { return _to; }
@@ -92,9 +94,13 @@ class Table : public SchemaObject {
 #endif
 
  private:
+  TableOptions MakeTableOptions() const;
+
   const TableType _type = TableType::Unknown;
   bool _wait_for_sync = false;
   std::vector<std::string> _shard_keys;
+  std::vector<Column> _columns;
+  std::vector<Column::Id> _pk_columns;
   velox::RowTypePtr _pk_type;
   velox::RowTypePtr _row_type;
   const ObjectId _plan_id;

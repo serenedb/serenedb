@@ -42,11 +42,11 @@ namespace {
 
 Result ParseDefaultValue(ObjectId database_id, std::string_view query,
                          pg::Objects& objects,
-                         pg::MemoryContextPtr& memory_context,
+                         pg::SharedMemoryContextPtr& memory_context,
                          const Node*& expr) {
   return basics::SafeCall([&] -> Result {
     const QueryString query_string{query};
-    memory_context = pg::CreateMemoryContext();
+    memory_context = pg::CreateSharedMemoryContext();
     expr = pg::ParseSingleExpression(*memory_context, query_string);
     SDB_ASSERT(expr);
     SDB_ASSERT(objects.getObjects().empty());
@@ -64,11 +64,9 @@ Result ParseDefaultValue(ObjectId database_id, std::string_view query,
 
 }  // namespace
 
-Result DefaultValue::Init(ObjectId database, const Node* expr) {
-  if (!expr) {
-    return {ERROR_BAD_PARAMETER, "default value expression cannot be null"};
-  }
-  auto query = pg::Deparse(const_cast<Node*>(expr));
+Result DefaultValue::Init(ObjectId database, Node* expr) {
+  SDB_ASSERT(expr);
+  auto query = pg::Deparse(expr);
   return Init(database, std::move(query));
 }
 
@@ -90,49 +88,26 @@ Result DefaultValue::Init(ObjectId database, std::string query) {
 }
 
 Result DefaultValue::FromVPack(ObjectId database, vpack::Slice slice,
-                               std::unique_ptr<DefaultValue>& default_value) {
-  auto query = basics::VPackHelper::getString(slice, "query", {});
-  if (query.empty()) {
-    return {ERROR_BAD_PARAMETER,
-            "default value query must be a non-empty string"};
+                               DefaultValue& default_value) {
+  auto query_slice = slice.get("query");
+  if (query_slice.isNone()) {
+    return {};
   }
-  auto impl = std::make_unique<DefaultValue>();
-  auto r = ParseDefaultValue(database, query, impl->_objects,
-                             impl->_memory_context, impl->_expr);
+  auto query = basics::VPackHelper::getString(slice, "query", {});
+  SDB_ASSERT(!query.empty());
+  auto r =
+    ParseDefaultValue(database, query, default_value._objects,
+                      default_value._memory_context, default_value._expr);
   if (!r.ok()) {
     return r;
   }
-  impl->_query = std::move(query);
-  default_value = std::move(impl);
+  default_value._query = std::move(query);
   return {};
 }
 
 void DefaultValue::ToVPack(vpack::Builder& builder) const {
-  builder.openObject();
+  vpack::ObjectBuilder o{&builder};
   builder.add("query", _query);
-  builder.close();
 }
-
-// void VPackWrite(auto ctx, const DefaultValue& default_value) {
-// vpack::Builder builder;
-// default_value.ToVPack(builder);
-// ctx.vpack().add(builder.slice());
-// }
-
-// void VPackRead(auto ctx, DefaultValue& default_value) {
-// auto vpack = ctx.vpack();
-// if (vpack.isObject()) {
-//   std::unique_ptr<DefaultValue> impl;
-//   auto r = DefaultValue::FromVPack(ObjectId::Invalid(), vpack, impl);
-//   if (!r.ok()) {
-//     SDB_THROW(r.code(), "Failed to read default value from vpack: {}",
-//               r.message());
-//   }
-//   default_value = std::move(*impl);
-// } else {
-//   SDB_THROW(sdb::ERROR_BAD_PARAMETER,
-//             "Invalid value for default value, expecting an object");
-// }
-// }
 
 }  // namespace sdb

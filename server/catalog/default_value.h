@@ -31,34 +31,39 @@ class DefaultValue {
  public:
   DefaultValue() = default;
 
-  Result Init(ObjectId database, const Node* expr);
+  Result Init(ObjectId database, Node* expr);
 
   static Result FromVPack(ObjectId database, vpack::Slice slice,
-                          std::unique_ptr<DefaultValue>& default_value);
+                          DefaultValue& default_value);
 
   void ToVPack(vpack::Builder& builder) const;
 
   std::string_view GetQuery() const noexcept { return _query; }
 
-  const Node* GetExpr() const noexcept { return _expr; }
+  const Node* GetExpr() const noexcept {
+    SDB_ASSERT(_expr != nullptr);
+    return _expr;
+  }
 
-  pg::Objects& GetObjects() noexcept { return _objects; }
+  const pg::Objects& GetObjects() const noexcept { return _objects; }
 
  private:
   Result Init(ObjectId database, std::string query);
 
   std::string _query;
-  pg::MemoryContextPtr _memory_context;
+  pg::SharedMemoryContextPtr _memory_context;
   const Node* _expr{nullptr};
   pg::Objects _objects;
 };
 
 void VPackWrite(auto ctx, const DefaultValue& default_value) {
-
+  default_value.ToVPack(ctx.vpack());
 }
 
 void VPackRead(auto ctx, DefaultValue& default_value) {
-  
+  auto database_id = ctx.arg().database;
+  auto r = DefaultValue::FromVPack(database_id, ctx.vpack(), default_value);
+  SDB_ENSURE(r.ok(), r.errorNumber(), r.errorMessage());
 }
 
 }  // namespace sdb

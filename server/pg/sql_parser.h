@@ -28,13 +28,14 @@
 struct ErrorData;
 struct List;
 struct MemoryContextData;
+struct Expr;
 
 namespace sdb {
 namespace pg {
 
 List* Parse(MemoryContextData& ctx, const QueryString& query_string);
 
-List* ParseExpression(MemoryContextData& ctx, const QueryString& query_string);
+List* ParseExpressions(MemoryContextData& ctx, const QueryString& query_string);
 
 Node* ParseSingleExpression(MemoryContextData& ctx,
                             const QueryString& query_string);

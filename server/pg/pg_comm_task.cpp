@@ -368,6 +368,8 @@ void PgSQLCommTaskBase::DescribeAnalyzedQuery(
   bool extended) {
   const auto& output_type = query.GetOutputType();
   const uint16_t num_fields = output_type ? output_type->size() : 0;
+  // If it's DML but name of column isn't "rows" it means it's explain for DML.
+  // In such case we should send rows as usual.
   if (num_fields == 0 || (query.IsDML() && output_type->nameOf(0) == "rows")) {
     if (extended) {
       _send.Write(ToBuffer(kNoData), extended);
@@ -1006,7 +1008,8 @@ void PgSQLCommTaskBase::SendBatch(const velox::RowVectorPtr& batch) {
     return;
   }
 
-  // We need to check output type name, because explain command
+  // If it's DML but name of column isn't "rows" it means it's explain for DML.
+  // In such case we should send rows as usual.
   if (portal.stmt->query->IsDML() && output_type->nameOf(0) == "rows") {
     const auto& column = batch->childAt(0);
     const auto& cell = column->variantAt(0);

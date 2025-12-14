@@ -334,9 +334,11 @@ class SereneDBConnectorMetadata final
         handle->veloxHandle());
     VELOX_CHECK_NOT_NULL(serene_insert_handle,
                          "Wrong type of insert table handle");
-    SDB_ASSERT(serene_insert_handle->GetTransaction());
-    serene_insert_handle->GetTransaction()->Commit();
-    return 0;
+    auto* transaction = serene_insert_handle->GetTransaction();
+    SDB_ASSERT(transaction);
+    const int64_t number_of_locked_primary_keys = transaction->GetNumKeys();
+    transaction->Commit();
+    return number_of_locked_primary_keys;
   }
 
   velox::ContinueFuture abortWrite(

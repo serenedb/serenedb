@@ -1,4 +1,48 @@
 OpenFst: Release 1.8
+   * Adds `NumStatesIfKnown()` method to `FstClass` in script layer and
+     `num_states_if_known()` to `Fst` in Python layer, exposing library-layer
+     `Fst::NumStatesIfKnown()` (1.8.4)
+   * When possible, avoids expanding `ArcMapFst` when calling
+     `ArcMapFst::NumArcs()`, which can be done as long as a superfinal state is
+     guaranteed not to exist (1.8.4)
+   * Adds an option allowing `ArcMapFst` to be an `ExpandedFst` (thus only
+     accepting `ExpandedFst` inputs) rather than always fulfilling just the
+     `Fst` interface, even when it could have provided `NumStates()` (1.8.4)
+   * Allows specifying custom cache store on `ArcMapFst` (with default of
+     `DefaultCacheStore`) and adds such an alternate, `GCHashCacheStore` (1.8.4)
+   * Modest performance optimizations in `SingleShortestPath` (1.8.4)
+   * Adds `CustomShortestFirstQueue`, a generalization of
+     `NaturalShortestFirstQueue` allowing setting a custom comparator (1.8.4)
+   * Avoids a compilation warning (`unknown-warning-option`) in Clang regarding
+     the specification of a warning unknown to it
+     (`no-missing-template-keyword`) (1.8.4)
+   * Fixes compilation errors in some versions of GCC and Clang for certain
+     (internally) unused methods on class templates (1.8.4)
+   * Removes nominal memory leak in `fstquantize` binary which would occur
+     briefly before exiting (1.8.4)
+   * Removes over-eager deprecation warning on `StringCompiler` (1.8.4)
+   * Renames compatibility shim `StringJoin` to `StrJoin` (1.8.4)
+   * When reading FARs via stdin, warns that arc type and FAR type are assumed
+     as StdArc and STList respectively (1.8.4)
+   * Raises exception in `pywrapfst.equivalent` when the given FSTs fail
+     preconditions of the algorithm (1.8.4)
+   * Exposes various properties and flags in script API (as
+     `WeightClass::Properties()`) and Python extension (as `WeightProperties`,
+     `ArcIteratorFlags` and `EncodeMapperFlags`) (1.8.4)
+   * Eliminates negative label option in `SymbolTable` (1.8.3)
+   * Change `allow_negative_labels` arg of `SymbolTable.read_text` to
+     keyword-only in pywrapfst (1.8.3)
+   * Adds `FastNumStates` method (1.8.3)
+   * Splits `cc-visitors.h` from `connect.h` (1.8.3)
+   * Standardizes default seeds for `fstrandgen` (1.8.3)
+   * fstclosure now has a `--closure_type` flag expecting values
+     (`star`, `plus`) (1.8.2)
+   * fstepsnormalize now has a `--eps_norm_type` flag expecting values
+     (`input`, `output`) (1.8.2)
+   * fstpush and fstreweight now has a `--reweight_type` flag expecting values
+     (`to_initial`, `to_final`) (1.8.2)
+   * Makes mapper argument to ArcMapFst optional, in which case it is default
+     constructed (1.8.2)
    * Adds farencode (1.8.2)
    * Deletes MakeArcMapFst in favor of CTAD on ArcMapFst (1.8.2)
    * Removes `int64` (etc.) type shims in place of <cstdint> (1.8.2)
@@ -10,7 +54,7 @@ OpenFst: Release 1.8
    * Updates Bazel build (1.8.0)
    * Better handling for empty FARs (1.8.0)
    * Improves to ExpectationWeight (1.8.0)
-   * Improves display of properties masks in pywrapfst (1.8.0) 
+   * Improves display of properties masks in pywrapfst (1.8.0)
    * Internal reference-counting/smart pointer improvements (1.8.0)
    * Deprecates PROJECT_(IN|OUT)PUT in favor of scoped enum ProjectType (1.8.0)
 
@@ -232,7 +276,7 @@ OpenFst: Release 1.2
    * Added SignedLogWeight and SignedLogArc (1.2.4)
    * Added ExpectationWeight and ExpectationArc (1.2.4)
    * Added AStarQueue, PruneQueue and NaturalPruneQueue disciplines (1.2.6)
-   * Added Log64Weight and Log64Arc to FST library throughout, including 
+   * Added Log64Weight and Log64Arc to FST library throughout, including
      support throughout scripts/bins/dsos (1.2.8)
    * Added delayed RandGenFst that outputs tree of paths weighted
      by count (1.2.8)

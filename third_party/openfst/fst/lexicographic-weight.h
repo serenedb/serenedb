@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -27,15 +27,14 @@
 #ifndef FST_LEXICOGRAPHIC_WEIGHT_H_
 #define FST_LEXICOGRAPHIC_WEIGHT_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <random>
 #include <string>
 
 #include <fst/log.h>
-
 #include <fst/pair-weight.h>
 #include <fst/weight.h>
-
 
 namespace fst {
 
@@ -58,7 +57,7 @@ class LexicographicWeight : public PairWeight<W1, W2> {
   using PairWeight<W1, W2>::Quantize;
   using PairWeight<W1, W2>::Reverse;
 
-  LexicographicWeight() {}
+  LexicographicWeight() = default;
 
   explicit LexicographicWeight(const PairWeight<W1, W2> &w)
       : PairWeight<W1, W2>(w) {}

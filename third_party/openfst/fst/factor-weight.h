@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -21,17 +21,22 @@
 #define FST_FACTOR_WEIGHT_H_
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include <fst/log.h>
-
 #include <fst/cache.h>
-#include <fst/test-properties.h>
-
-#include <unordered_map>
+#include <fst/fst.h>
+#include <fst/impl-to-fst.h>
+#include <fst/properties.h>
+#include <fst/string-weight.h>
+#include <fst/union-weight.h>
+#include <fst/weight.h>
+#include <absl/container/flat_hash_map.h>
 
 namespace fst {
 
@@ -241,7 +246,7 @@ class FactorWeightFstImpl : public CacheImpl<Arc> {
   using CacheBaseImpl<CacheState<Arc>>::SetStart;
 
   struct Element {
-    Element() {}
+    Element() = default;
 
     Element(StateId s, Weight weight_) : state(s), weight(std::move(weight_)) {}
 
@@ -425,7 +430,7 @@ class FactorWeightFstImpl : public CacheImpl<Arc> {
   };
 
   using ElementMap =
-      std::unordered_map<Element, StateId, ElementKey, ElementEqual>;
+      absl::flat_hash_map<Element, StateId, ElementKey, ElementEqual>;
 
   std::unique_ptr<const Fst<Arc>> fst_;
   float delta_;
@@ -455,6 +460,8 @@ class FactorWeightFstImpl : public CacheImpl<Arc> {
 template <class A, class FactorIterator>
 class FactorWeightFst
     : public ImplToFst<internal::FactorWeightFstImpl<A, FactorIterator>> {
+  using Base = ImplToFst<internal::FactorWeightFstImpl<A, FactorIterator>>;
+
  public:
   using Arc = A;
   using StateId = typename Arc::StateId;
@@ -462,21 +469,19 @@ class FactorWeightFst
 
   using Store = DefaultCacheStore<Arc>;
   using State = typename Store::State;
-  using Impl = internal::FactorWeightFstImpl<Arc, FactorIterator>;
+  using typename Base::Impl;
 
   friend class ArcIterator<FactorWeightFst<Arc, FactorIterator>>;
   friend class StateIterator<FactorWeightFst<Arc, FactorIterator>>;
 
   explicit FactorWeightFst(const Fst<Arc> &fst)
-      : ImplToFst<Impl>(
-            std::make_shared<Impl>(fst, FactorWeightOptions<Arc>())) {}
+      : Base(std::make_shared<Impl>(fst, FactorWeightOptions<Arc>())) {}
 
   FactorWeightFst(const Fst<Arc> &fst, const FactorWeightOptions<Arc> &opts)
-      : ImplToFst<Impl>(std::make_shared<Impl>(fst, opts)) {}
+      : Base(std::make_shared<Impl>(fst, opts)) {}
 
   // See Fst<>::Copy() for doc.
-  FactorWeightFst(const FactorWeightFst &fst, bool copy)
-      : ImplToFst<Impl>(fst, copy) {}
+  FactorWeightFst(const FactorWeightFst &fst, bool copy) : Base(fst, copy) {}
 
   // Get a copy of this FactorWeightFst. See Fst<>::Copy() for further doc.
   FactorWeightFst *Copy(bool copy = false) const override {
@@ -490,8 +495,8 @@ class FactorWeightFst
   }
 
  private:
-  using ImplToFst<Impl>::GetImpl;
-  using ImplToFst<Impl>::GetMutableImpl;
+  using Base::GetImpl;
+  using Base::GetMutableImpl;
 
   FactorWeightFst &operator=(const FactorWeightFst &) = delete;
 };

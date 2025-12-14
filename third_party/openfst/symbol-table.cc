@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -19,13 +19,29 @@
 
 #include <fst/symbol-table.h>
 
+#include <algorithm>
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <ios>
+#include <iostream>
+#include <istream>
+#include <memory>
+#include <ostream>
+#include <sstream>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include <fst/flags.h>
 #include <fst/log.h>
 
 #include <fstream>
 #include <fst/util.h>
+#include <map>
+#include <functional>
+#include <fst/compat.h>
 #include <string_view>
 #include <fst/lock.h>
 
@@ -35,11 +51,6 @@ DEFINE_string(fst_field_separator, "\t ",
               "Set of characters used as a separator between printed fields");
 
 namespace fst {
-
-SymbolTableTextOptions::SymbolTableTextOptions(bool allow_negative_labels)
-    : allow_negative_labels(allow_negative_labels),
-      fst_field_separator(FST_FLAGS_fst_field_separator) {}
-
 namespace internal {
 
 // Identifies stream data as a symbol table (and its endianity).
@@ -131,31 +142,27 @@ void ConstSymbolTableImpl::AddTable(const SymbolTable &table) {
 
 SymbolTableImpl *SymbolTableImpl::ReadText(std::istream &strm,
                                            std::string_view name,
-                                           const SymbolTableTextOptions &opts) {
+                                           std::string_view sep) {
   auto impl = std::make_unique<SymbolTableImpl>(name);
   int64_t nline = 0;
   char line[kLineLen];
-  const auto separator = opts.fst_field_separator + "\n";
+  const std::string separator = fst::StrCat(sep, "\n");
   while (!strm.getline(line, kLineLen).fail()) {
     ++nline;
-    std::vector<std::string_view> col =
+    const std::vector<std::string_view> col =
         StrSplit(line, ByAnyChar(separator), SkipEmpty());
     if (col.empty()) continue;  // Empty line.
     if (col.size() != 2) {
       LOG(ERROR) << "SymbolTable::ReadText: Bad number of columns ("
                  << col.size() << "), "
-                 << "file = " << name << ", line = " << nline << ":<" << line
-                 << ">";
+                 << "file = " << name << ", line = " << nline << ": " << line;
       return nullptr;
     }
     std::string_view symbol = col[0];
     std::string_view value = col[1];
     const auto maybe_key = ParseInt64(value);
-    if (!maybe_key.has_value() ||
-        (!opts.allow_negative_labels && *maybe_key < 0) ||
-        *maybe_key == kNoSymbol) {
-      LOG(ERROR) << "SymbolTable::ReadText: Bad non-negative integer \""
-                 << value << "\", "
+    if (!maybe_key.has_value() || *maybe_key == kNoSymbol) {
+      LOG(ERROR) << "SymbolTable::ReadText: Bad label (" << value << "), "
                  << "file = " << name << ", line = " << nline;
       return nullptr;
     }
@@ -339,19 +346,18 @@ void SymbolTableImpl::ShrinkToFit() { symbols_.ShrinkToFit(); }
 }  // namespace internal
 
 SymbolTable *SymbolTable::ReadText(const std::string &source,
-                                   const SymbolTableTextOptions &opts) {
+                                   std::string_view sep) {
   std::ifstream strm(source, std::ios_base::in);
   if (!strm.good()) {
     LOG(ERROR) << "SymbolTable::ReadText: Can't open file: " << source;
     return nullptr;
   }
-  return ReadText(strm, source, opts);
+  return ReadText(strm, source, sep);
 }
 
 bool SymbolTable::Write(const std::string &source) const {
   if (!source.empty()) {
-    std::ofstream strm(source,
-                             std::ios_base::out | std::ios_base::binary);
+    std::ofstream strm(source, std::ios_base::out | std::ios_base::binary);
     if (!strm) {
       LOG(ERROR) << "SymbolTable::Write: Can't open file: " << source;
       return false;
@@ -366,40 +372,30 @@ bool SymbolTable::Write(const std::string &source) const {
   }
 }
 
-bool SymbolTable::WriteText(std::ostream &strm,
-                            const SymbolTableTextOptions &opts) const {
-  if (opts.fst_field_separator.empty()) {
-    LOG(ERROR) << "Missing required field separator";
-    return false;
-  }
-  bool once_only = false;
+bool SymbolTable::WriteText(std::ostream &strm, std::string_view sep) const {
   for (const auto &item : *this) {
     std::ostringstream line;
-    if (item.Label() < 0 && !opts.allow_negative_labels && !once_only) {
-      LOG(WARNING) << "Negative symbol table entry when not allowed";
-      once_only = true;
-    }
-    line << item.Symbol() << opts.fst_field_separator[0] << item.Label()
-         << '\n';
+    line << item.Symbol() << sep[0] << item.Label() << '\n';
     strm.write(line.str().data(), line.str().length());
   }
   return true;
 }
 
-bool SymbolTable::WriteText(const std::string &source) const {
-  if (!source.empty()) {
-    std::ofstream strm(source);
+bool SymbolTable::WriteText(const std::string &sink,
+                            std::string_view sep) const {
+  if (!sink.empty()) {
+    std::ofstream strm(sink);
     if (!strm) {
-      LOG(ERROR) << "SymbolTable::WriteText: Can't open file: " << source;
+      LOG(ERROR) << "SymbolTable::WriteText: Can't open file: " << sink;
       return false;
     }
-    if (!WriteText(strm, SymbolTableTextOptions())) {
-      LOG(ERROR) << "SymbolTable::WriteText: Write failed: " << source;
+    if (!WriteText(strm, sep)) {
+      LOG(ERROR) << "SymbolTable::WriteText: Write failed: " << sink;
       return false;
     }
     return true;
   } else {
-    return WriteText(std::cout, SymbolTableTextOptions());
+    return WriteText(std::cout, sep);
   }
 }
 

@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -21,16 +21,18 @@
 #define FST_STATESORT_H_
 
 #include <algorithm>
+#include <utility>
 #include <vector>
 
 #include <fst/log.h>
-
+#include <fst/fst.h>
 #include <fst/mutable-fst.h>
-
+#include <fst/properties.h>
+#include <fst/util.h>
 
 namespace fst {
 
-// Sorts the input states of an FST. order[i] gives the the state ID after
+// Sorts the input states of an FST. order[i] gives the state ID after
 // sorting that corresponds to the state ID i before sorting; it must
 // therefore be a permutation of the input FST's states ID sequence.
 template <class Arc>

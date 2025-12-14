@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -21,19 +21,23 @@
 #ifndef FST_BI_TABLE_H_
 #define FST_BI_TABLE_H_
 
+#include <sys/types.h>
+
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <functional>
 #include <memory>
 #include <type_traits>
-#include <unordered_set>
+#include <absl/container/flat_hash_set.h>
 #include <vector>
 
 #include <fst/log.h>
 #include <fst/memory.h>
 #include <fst/windows_defs.inc>
-#include <unordered_map>
-#include <unordered_set>
+#include <absl/container/flat_hash_map.h>
+#include <absl/container/flat_hash_set.h>
+#include <functional>
 
 namespace fst {
 
@@ -61,7 +65,7 @@ namespace fst {
 
 // An implementation using a hash map for the entry to ID mapping. H is the
 // hash function and E is the equality function.
-template <class I, class T, class H, class E = std::equal_to<T>>
+template <class I, class T, class H = absl::Hash<T>, class E = std::equal_to<T>>
 class HashBiTable {
  public:
   // Reserves space for table_size elements.
@@ -106,7 +110,7 @@ class HashBiTable {
  private:
   H hash_func_;
   E hash_equal_;
-  std::unordered_map<T, I, H, E> entry2id_;
+  absl::flat_hash_map<T, I, H, E> entry2id_;
   std::vector<T> id2entry_;
 };
 
@@ -115,9 +119,10 @@ enum HSType { HS_STL, HS_FLAT };
 
 // Default hash set is STL hash_set.
 template <class K, class H, class E, HSType HS>
-struct HashSet : public std::unordered_set<K, H, E, PoolAllocator<K>> {
+struct HashSet : public absl::flat_hash_set<K, H, E, PoolAllocator<K>> {
  private:
-  using Base = std::unordered_set<K, H, E, PoolAllocator<K>>;
+  using Base = absl::flat_hash_set<K, H, E, PoolAllocator<K>>;
+
  public:
   using Base::Base;
 
@@ -129,7 +134,7 @@ struct HashSet : public std::unordered_set<K, H, E, PoolAllocator<K>> {
 // to entries either by looking up in the entry vector or, if kCurrentKey, in
 // current_entry_. The hash and key equality functions map to entries first. H
 // is the hash function and E is the equality function.
-template <class I, class T, class H, class E = std::equal_to<T>,
+template <class I, class T, class H = absl::Hash<T>, class E = std::equal_to<T>,
           HSType HS = HS_FLAT>
 class CompactHashBiTable {
   static_assert(HS == HS_STL || HS == HS_FLAT, "Unsupported hash set type");
@@ -305,7 +310,8 @@ class VectorBiTable {
 // fingerprinting functor FP returns a unique fingerprint for each entry to be
 // hashed in the vector (these need to be suitable for indexing in a vector).
 // The hash functor H is used when hashing entry into the compact hash table.
-template <class I, class T, class S, class FP, class H, HSType HS = HS_FLAT>
+template <class I, class T, class S, class FP, class H = absl::Hash<T>,
+          HSType HS = HS_FLAT>
 class VectorHashBiTable {
  public:
   friend class HashFunc;
@@ -351,8 +357,9 @@ class VectorHashBiTable {
       return fp2id_[fp] - 1;  // NB: assoc_value = ID + 1.
     } else {                  // Uses the hash table otherwise.
       current_entry_ = &entry;
-      const auto it = keys_.find(kCurrentKey);
-      if (it == keys_.end()) {
+      if (const auto it = keys_.find(kCurrentKey); it != keys_.end()) {
+        return *it;
+      } else {
         if (insert) {
           I key = id2entry_.size();
           id2entry_.push_back(entry);
@@ -361,8 +368,6 @@ class VectorHashBiTable {
         } else {
           return -1;
         }
-      } else {
-        return *it;
       }
     }
   }
@@ -375,7 +380,7 @@ class VectorHashBiTable {
 
   const FP &Fingerprint() const { return fp_; }
 
-  const H &Hash() const { return h_; }
+  const H &HashFunction() const { return h_; }
 
  private:
   static constexpr I kCurrentKey = -1;
@@ -474,7 +479,7 @@ class ErasableBiTable {
   }
 
  private:
-  std::unordered_map<T, I, F> entry2id_;
+  absl::flat_hash_map<T, I, F> entry2id_;
   std::deque<T> id2entry_;
   const T empty_entry_;
   I first_;  // I of first element in the deque.

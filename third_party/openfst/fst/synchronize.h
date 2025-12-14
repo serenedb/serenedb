@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -21,18 +21,22 @@
 #define FST_SYNCHRONIZE_H_
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <fst/cache.h>
-#include <fst/test-properties.h>
-
-#include <unordered_map>
-#include <unordered_set>
+#include <fst/fst.h>
+#include <fst/impl-to-fst.h>
+#include <fst/mutable-fst.h>
+#include <fst/properties.h>
+#include <absl/container/flat_hash_map.h>
+#include <absl/container/flat_hash_set.h>
 
 namespace fst {
 
@@ -63,11 +67,16 @@ class SynchronizeFstImpl : public CacheImpl<Arc> {
   using CacheBaseImpl<CacheState<Arc>>::SetFinal;
   using CacheBaseImpl<CacheState<Arc>>::SetStart;
 
-  using String = std::basic_string<Label>;
-  using StringView = std::basic_string_view<Label>;
+  // To avoid using `std::char_traits<Label>`, which is not guaranteed to exist,
+  // use `char32_t` for the backing strings instead of `Label`.  We should
+  // probably use our own traits type instead.
+  static_assert(sizeof(Label) <= sizeof(char32_t),
+                "Label must fit in 32 bits.  This is a hack.");
+  using String = std::basic_string<char32_t>;
+  using StringView = std::basic_string_view<char32_t>;
 
   struct Element {
-    Element() {}
+    Element() = default;
 
     Element(StateId state_, StringView i, StringView o)
         : state(state_), istring(i), ostring(o) {}
@@ -266,7 +275,7 @@ class SynchronizeFstImpl : public CacheImpl<Arc> {
   };
 
   // Hash function for set of strings. This only has to be specified since
-  // `std::hash<std::basic_string<T>>` is only guaranteed to be defined for
+  // `absl::Hash<std::basic_string<T>>` is only guaranteed to be defined for
   // certain values of `T`. Not defining this works fine on clang, but fails
   // under GCC.
   class StringKey {
@@ -279,8 +288,8 @@ class SynchronizeFstImpl : public CacheImpl<Arc> {
   };
 
   using ElementMap =
-      std::unordered_map<Element, StateId, ElementKey, ElementEqual>;
-  using StringSet = std::unordered_set<String, StringKey>;
+      absl::flat_hash_map<Element, StateId, ElementKey, ElementEqual>;
+  using StringSet = absl::flat_hash_set<String, StringKey>;
 
   std::unique_ptr<const Fst<Arc>> fst_;
   std::vector<Element> elements_;  // Maps FST state to Elements.
@@ -313,6 +322,8 @@ class SynchronizeFstImpl : public CacheImpl<Arc> {
 // counting, delegating most methods to ImplToFst.
 template <class A>
 class SynchronizeFst : public ImplToFst<internal::SynchronizeFstImpl<A>> {
+  using Base = ImplToFst<internal::SynchronizeFstImpl<A>>;
+
  public:
   using Arc = A;
   using StateId = typename Arc::StateId;
@@ -320,18 +331,18 @@ class SynchronizeFst : public ImplToFst<internal::SynchronizeFstImpl<A>> {
 
   using Store = DefaultCacheStore<Arc>;
   using State = typename Store::State;
-  using Impl = internal::SynchronizeFstImpl<A>;
+  using typename Base::Impl;
 
   friend class ArcIterator<SynchronizeFst<A>>;
   friend class StateIterator<SynchronizeFst<A>>;
 
   explicit SynchronizeFst(const Fst<A> &fst, const SynchronizeFstOptions &opts =
                                                  SynchronizeFstOptions())
-      : ImplToFst<Impl>(std::make_shared<Impl>(fst, opts)) {}
+      : Base(std::make_shared<Impl>(fst, opts)) {}
 
   // See Fst<>::Copy() for doc.
   SynchronizeFst(const SynchronizeFst &fst, bool safe = false)
-      : ImplToFst<Impl>(fst, safe) {}
+      : Base(fst, safe) {}
 
   // Gets a copy of this SynchronizeFst. See Fst<>::Copy() for further doc.
   SynchronizeFst *Copy(bool safe = false) const override {
@@ -345,8 +356,8 @@ class SynchronizeFst : public ImplToFst<internal::SynchronizeFstImpl<A>> {
   }
 
  private:
-  using ImplToFst<Impl>::GetImpl;
-  using ImplToFst<Impl>::GetMutableImpl;
+  using Base::GetImpl;
+  using Base::GetMutableImpl;
 
   SynchronizeFst &operator=(const SynchronizeFst &) = delete;
 };
@@ -400,8 +411,7 @@ inline void SynchronizeFst<Arc>::InitStateIterator(
 template <class Arc>
 void Synchronize(const Fst<Arc> &ifst, MutableFst<Arc> *ofst) {
   // Caches only the last state for fastest copy.
-  const SynchronizeFstOptions opts(FST_FLAGS_fst_default_cache_gc,
-                                   0);
+  const SynchronizeFstOptions opts(FST_FLAGS_fst_default_cache_gc, 0);
   *ofst = SynchronizeFst<Arc>(ifst, opts);
 }
 

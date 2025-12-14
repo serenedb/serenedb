@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -23,16 +23,22 @@
 #include <algorithm>
 #include <cstdint>
 #include <queue>
+#include <utility>
 #include <vector>
 
 #include <fst/log.h>
-
+#include <fst/arc-map.h>
 #include <fst/encode.h>
+#include <fst/fst.h>
+#include <fst/properties.h>
 #include <fst/push.h>
+#include <fst/reweight.h>
+#include <fst/symbol-table.h>
 #include <fst/union-find.h>
+#include <fst/util.h>
 #include <fst/vector-fst.h>
-#include <unordered_map>
-
+#include <fst/weight.h>
+#include <absl/container/flat_hash_map.h>
 
 namespace fst {
 namespace internal {
@@ -171,7 +177,7 @@ bool Equivalent(const Fst<Arc> &fst1, const Fst<Arc> &fst2,
   // fst2: input labels mapped to pairs of MappedIds representing destination
   // states of the corresponding arcs in fst1 and fst2, respectively.
   using Label2StatePairMap =
-      std::unordered_map<typename Arc::Label, std::pair<MappedId, MappedId>>;
+      absl::flat_hash_map<typename Arc::Label, std::pair<MappedId, MappedId>>;
   Label2StatePairMap arc_pairs;
   // Pairs of MappedId's to be processed, organized in a queue.
   std::queue<std::pair<MappedId, MappedId>> q;

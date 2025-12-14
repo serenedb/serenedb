@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -21,23 +21,25 @@
 #ifndef FST_STATE_REACHABLE_H_
 #define FST_STATE_REACHABLE_H_
 
+#include <cstddef>
+#include <cstdlib>
 #include <vector>
 
 #include <fst/log.h>
-
 #include <fst/connect.h>
 #include <fst/dfs-visit.h>
 #include <fst/fst.h>
 #include <fst/interval-set.h>
+#include <fst/properties.h>
+#include <fst/util.h>
 #include <fst/vector-fst.h>
-
 
 namespace fst {
 
 // Computes the (final) states reachable from a given state in an FST. After
 // this visitor has been called, a final state f can be reached from a state
 // s iff (*isets)[s].Member(state2index[f]) is true, where (*isets[s]) is a
-// set of half-open inteval of final state indices and state2index[f] maps from
+// set of half-open interval of final state indices and state2index[f] maps from
 // a final state to its index. If state2index is empty, it is filled-in with
 // suitable indices. If it is non-empty, those indices are used; in this case,
 // the final states must have out-degree 0.

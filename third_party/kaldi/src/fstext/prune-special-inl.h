@@ -27,24 +27,25 @@
 
 namespace fst {
 
-
 /// This class is used to implement the function PruneSpecial.
-template<class Arc> class PruneSpecialClass {
+template<class Arc>
+class PruneSpecialClass {
  public:
   typedef typename Arc::StateId InputStateId;
   typedef typename Arc::StateId OutputStateId;
   typedef typename Arc::Weight Weight;
   typedef typename Arc::Label Label;
-  
-  PruneSpecialClass(const Fst<Arc> &ifst,
-                    VectorFst<Arc> *ofst,
-                    Weight beam,
-                    size_t max_states):
-      ifst_(ifst), ofst_(ofst), beam_(beam), max_states_(max_states),
+
+  PruneSpecialClass(const Fst<Arc>& ifst, VectorFst<Arc>* ofst, Weight beam,
+                    size_t max_states)
+    : ifst_(ifst),
+      ofst_(ofst),
+      beam_(beam),
+      max_states_(max_states),
       best_weight_(Weight::Zero()) {
     KALDI_ASSERT(beam != Weight::One());
     KALDI_ASSERT(queue_.size() == 0);
-    ofst_->DeleteStates(); // make sure it's empty.
+    ofst_->DeleteStates();  // make sure it's empty.
     if (ifst_.Start() == kNoStateId)
       return;
     ofst_->SetStart(ProcessState(ifst_.Start(), Weight::One()));
@@ -52,29 +53,31 @@ template<class Arc> class PruneSpecialClass {
     while (!queue_.empty()) {
       Task task = queue_.top();
       queue_.pop();
-      if (Done(task)) break;
-      else ProcessTask(task);
+      if (Done(task))
+        break;
+      else
+        ProcessTask(task);
     }
     Connect(ofst);
     if (beam_ != Weight::One())
       Prune(ofst, beam_);
   }
-  
+
   struct Task {
     InputStateId istate;
-    OutputStateId ostate; // could be looked up; this is for speed.
-    size_t position; // arc position, or -1 if final-prob.
+    OutputStateId ostate;  // could be looked up; this is for speed.
+    size_t position;       // arc position, or -1 if final-prob.
     Weight weight;
-    
+
     Task(InputStateId istate, OutputStateId ostate, size_t position,
-         Weight weight): istate(istate), ostate(ostate), position(position),
-                         weight(weight) { }
-    bool operator < (const Task &other) const {
+         Weight weight)
+      : istate(istate), ostate(ostate), position(position), weight(weight) {}
+    bool operator<(const Task& other) const {
       return Compare(weight, other.weight) < 0;
     }
   };
 
-  bool Done(const Task &task) {
+  bool Done(const Task& task) {
     if (beam_ != Weight::One() && best_weight_ != Weight::Zero() &&
         Compare(task.weight, Times(best_weight_, beam_)) < 0)
       return true;
@@ -83,18 +86,17 @@ template<class Arc> class PruneSpecialClass {
       return true;
     return false;
   }
-  
 
   // This function assumes "state" has not been seen before, so we need to
   // create a new output-state for it and add tasks.  It returns the
   // output-state id.  "weight" is the best cost from the start-state to this
   // state.
-  inline OutputStateId ProcessState(InputStateId istate, const Weight &weight) {
+  inline OutputStateId ProcessState(InputStateId istate, const Weight& weight) {
     OutputStateId ostate = ofst_->AddState();
     state_map_[istate] = ostate;
-    for (ArcIterator<Fst<Arc> > aiter(ifst_, istate); !aiter.Done();
+    for (ArcIterator<Fst<Arc>> aiter(ifst_, istate); !aiter.Done();
          aiter.Next()) {
-      const Arc &arc = aiter.Value();
+      const Arc& arc = aiter.Value();
       Task new_task(istate, ostate, aiter.Position(),
                     Times(weight, arc.weight));
       KALDI_ASSERT(Compare(arc.weight, Weight::One()) != 1);
@@ -117,57 +119,51 @@ template<class Arc> class PruneSpecialClass {
   // cost from the start-state to this state, and it can be used in setting the
   // priority costs in ProcessState().
   inline OutputStateId GetOutputStateId(InputStateId istate,
-                                        const Weight &weight) {
-    typedef typename unordered_map<InputStateId, OutputStateId>::iterator IterType;
-    IterType iter = state_map_.find(istate);
+                                        const Weight& weight) {
+    auto iter = state_map_.find(istate);
     if (iter == state_map_.end())
       return ProcessState(istate, weight);
-    else 
+    else
       return iter->second;
   }
-  
-  void ProcessTask(const Task &task) {
+
+  void ProcessTask(const Task& task) {
     if (task.position == static_cast<size_t>(-1)) {
       ofst_->SetFinal(task.ostate, ifst_.Final(task.istate));
       if (best_weight_ == Weight::Zero())
-        best_weight_ = task.weight; // best-path cost through FST, used for
-                                    // beam-pruning.
+        best_weight_ = task.weight;  // best-path cost through FST, used for
+                                     // beam-pruning.
     } else {
-      ArcIterator<Fst<Arc> > aiter(ifst_, task.istate);
-      aiter.Seek(task.position); // if we spend most of our time here, we may
-                                 // need to store the arc in the Task.
-      const Arc &arc = aiter.Value();
+      ArcIterator<Fst<Arc>> aiter(ifst_, task.istate);
+      aiter.Seek(task.position);  // if we spend most of our time here, we may
+                                  // need to store the arc in the Task.
+      const Arc& arc = aiter.Value();
       InputStateId next_istate = arc.nextstate;
       OutputStateId next_ostate = GetOutputStateId(next_istate, task.weight);
       Arc oarc(arc.ilabel, arc.olabel, arc.weight, next_ostate);
       ofst_->AddArc(task.ostate, oarc);
     }
   }
-  
+
  private:
-  const Fst<Arc> &ifst_;
-  VectorFst<Arc> *ofst_;
+  const Fst<Arc>& ifst_;
+  VectorFst<Arc>* ofst_;
   Weight beam_;
   size_t max_states_;
 
-  unordered_map<InputStateId, OutputStateId> state_map_;
+  absl::node_hash_map<InputStateId, OutputStateId> state_map_;
   std::priority_queue<Task> queue_;
-  Weight best_weight_; // if not Zero(), then we have now processed a successful path
-                       // through ifst_, and this is the weight.
-  
+  Weight
+    best_weight_;  // if not Zero(), then we have now processed a successful
+                   // path through ifst_, and this is the weight.
 };
 
 template<class Arc>
-void PruneSpecial(const Fst<Arc> &ifst,
-                  VectorFst<Arc> *ofst,
-                  typename Arc::Weight beam,
-                  size_t max_states) {
+void PruneSpecial(const Fst<Arc>& ifst, VectorFst<Arc>* ofst,
+                  typename Arc::Weight beam, size_t max_states) {
   PruneSpecialClass<Arc> c(ifst, ofst, beam, max_states);
 }
 
-
-
-}
-
+}  // namespace fst
 
 #endif

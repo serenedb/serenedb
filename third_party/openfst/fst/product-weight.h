@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -25,10 +25,8 @@
 #include <string>
 #include <utility>
 
-
 #include <fst/pair-weight.h>
 #include <fst/weight.h>
-
 
 namespace fst {
 
@@ -39,7 +37,7 @@ class ProductWeight : public PairWeight<W1, W2> {
   using ReverseWeight =
       ProductWeight<typename W1::ReverseWeight, typename W2::ReverseWeight>;
 
-  ProductWeight() {}
+  ProductWeight() = default;
 
   explicit ProductWeight(const PairWeight<W1, W2> &weight)
       : PairWeight<W1, W2>(weight) {}
@@ -110,7 +108,7 @@ class Adder<ProductWeight<W1, W2>> {
  public:
   using Weight = ProductWeight<W1, W2>;
 
-  Adder() {}
+  Adder() = default;
 
   explicit Adder(Weight w) : adder1_(w.Value1()), adder2_(w.Value2()) {}
 

@@ -162,10 +162,10 @@ fi
 final_exit_code=0
 
 if [[ "$debug" == "true" ]]; then
-  cargo install --debug --path $runner/sqllogictest-bin --quiet
+  cargo install --debug --path $runner/sqllogictest-bin --quiet --force
   test_exit_code=$?
 else
-  cargo install --path $runner/sqllogictest-bin --quiet
+  cargo install --path $runner/sqllogictest-bin --quiet --force
   test_exit_code=$?
 fi
 [[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code

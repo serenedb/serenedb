@@ -61,6 +61,11 @@ class Query {
 
   bool HasExternal() const { return _executor != nullptr; }
 
+  bool IsDML() const {
+    return _logical_plan &&
+           _logical_plan->is(axiom::logical_plan::NodeKind::kTableWrite);
+  }
+
   std::unique_ptr<Cursor> MakeCursor(std::function<void()>&& user_task) const;
 
   Runner MakeRunner() const;

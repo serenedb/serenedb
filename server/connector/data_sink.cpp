@@ -102,7 +102,7 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
   velox::IndexRange all_rows(0, input->size());
   [[maybe_unused]] const auto& input_type = input->type()->asRow();
   for (const auto& key : _row_keys) {
-    table_key.resize(parent_size);
+    basics::StrResize(table_key, parent_size);
     key_utils::AppendPrimaryKey(table_key, key);
     VELOX_CHECK(
       _transaction
@@ -125,7 +125,7 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
     if (_skip_primary_key_columns && i < _key_childs.size()) {
       continue;
     }
-    table_key.resize(parent_size);
+    basics::StrResize(table_key, parent_size);
     key_utils::AppendColumnKey(table_key, _column_ids[i]);
     WriteColumn(table_key, input->childAt(i), folly::Range{&all_rows, 1}, {});
   }
@@ -2022,7 +2022,7 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
 
   const size_t key_old_size = key.size();
   for (velox::vector_size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-    key.resize(key_old_size);
+    basics::StrResize(key, key_old_size);
     row_key.clear();
     primary_key::Create(*input, row_idx, row_key);
     key_utils::AppendPrimaryKey(key, row_key);
@@ -2030,7 +2030,7 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
                 "Failed to acquire row lock for table {}", _object_key.id());
 
     for (velox::column_index_t col_idx = 0; col_idx < num_columns; ++col_idx) {
-      key.resize(key_old_size);
+      basics::StrResize(key, key_old_size);
       key_utils::AppendCellKey(key, _column_ids[col_idx], row_key);
       auto status = _transaction.Delete(&_cf, rocksdb::Slice(key));
       if (!status.ok()) {

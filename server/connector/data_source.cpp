@@ -104,7 +104,7 @@ std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
   const auto key_old_size = key.size();
   if (num_columns) {
     for (velox::column_index_t col_idx = 0; col_idx < num_columns; ++col_idx) {
-      key.resize(key_old_size);
+      basics::StrResize(key, key_old_size);
       key_utils::AppendColumnKey(key, _column_ids[col_idx]);
       auto it = CreateColumnIterator(key, read_options);
       if (!it) {

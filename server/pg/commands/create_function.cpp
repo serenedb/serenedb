@@ -202,7 +202,9 @@ yaclib::Future<Result> CreateFunction(ExecContext& context,
                                                       std::move(sql_impl), db);
 
   r = catalog.CreateFunction(db, schema, function, stmt.replace);
+
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
+    SDB_ASSERT(!stmt.replace);
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
                     ERR_MSG("relation \"", function_name, "\" already exists"));
   }

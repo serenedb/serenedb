@@ -194,11 +194,48 @@ std::vector<velox::TypePtr> GetExprsTypes(
          std::ranges::to<std::vector>();
 }
 
+// TODO get rid of extra copy
+velox::TypePtr FixupReturnType(const velox::TypePtr& ret_type) {
+  if (!ret_type) {
+    return ret_type;
+  }
+  if (ret_type == PG_UNKNOWN()) {
+    return velox::VARCHAR();
+  }
+  const auto& params = ret_type->parameters();
+  const auto params_cnt = params.size();
+
+  std::vector<velox::TypeParameter> new_params;
+  bool changed = false;
+
+  new_params.reserve(params_cnt);
+  for (size_t i = 0; i < params_cnt; ++i) {
+    if (params[i].kind != velox::TypeParameterKind::kType) {
+      continue;
+    }
+
+    auto new_param_type = FixupReturnType(params[i].type);
+    if (new_param_type != params[i].type) {
+      changed = true;
+      new_params.emplace_back(std::move(new_param_type),
+                              params[i].rowFieldName);
+    } else {
+      new_params.emplace_back(params[i]);
+    }
+  }
+  if (!changed) {
+    return ret_type;
+  }
+  return velox::getType(ret_type->name(), std::move(new_params));
+}
+
 velox::TypePtr ResolveFunction(const std::string& function_name,
                                std::span<const lp::ExprPtr> arg_exprs,
                                std::vector<velox::TypePtr>* arg_coercions) {
-  return ResolveFunction(function_name, GetExprsTypes(arg_exprs),
-                         arg_coercions);
+  auto ret_type =
+    ResolveFunction(function_name, GetExprsTypes(arg_exprs), arg_coercions);
+
+  return FixupReturnType(ret_type);
 }
 
 template<typename V>
@@ -842,7 +879,8 @@ class SqlAnalyzer {
         } else {
           args[i] = MakeCast(velox::VARCHAR(), args[i]);
         }
-      } else if (coercions[i]) {
+        // prevent varchar -> varchar coercion
+      } else if (coercions[i] && coercions[i] != args[i]->type()) {
         args[i] = MakeCast(coercions[i], std::move(args[i]));
       }
     }
@@ -1943,7 +1981,8 @@ lp::AggregateExprPtr SqlAnalyzer::MaybeAggregateFuncCall(
   }
 
   std::string aggr_func_name{logical_function.GetName()};
-  auto type = ve::resolveResultType(aggr_func_name, GetExprsTypes(func_args));
+  auto type = FixupReturnType(
+    ve::resolveResultType(aggr_func_name, GetExprsTypes(func_args)));
 
   auto filter_expr =
     ProcessExprNode(state, func_call.agg_filter, ExprKind::Filter);
@@ -3869,6 +3908,9 @@ lp::ExprPtr SqlAnalyzer::ResolveVeloxFunctionAndInferArgsCommonType(
       ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
       ERR_MSG("function ", ToPgFunctionString(name, args), " does not exist"));
   }
+
+  // TODO rewrite it recursive and make separate function for this
+  // type = FixupReturnType(type);
 
   ApplyCoercions(args, coercions);
   auto it = kSpecialForms.find(name);

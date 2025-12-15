@@ -23,6 +23,7 @@
 #include <yaclib/async/make.hpp>
 
 #include "app/app_server.h"
+#include "basics/assert.h"
 #include "catalog/catalog.h"
 #include "catalog/function.h"
 #include "catalog/sql_function_impl.h"

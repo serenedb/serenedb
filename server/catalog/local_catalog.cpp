@@ -532,13 +532,14 @@ class SnapshotImpl : public Snapshot {
                         W&& writer) {
     return ResolveSchema(
       database, schema, [&](auto database_it, auto schema_it) -> Result {
-        auto& objects = object->GetType() == ObjectType::Function
+        const auto type = object->GetType();
+        auto& objects = type == ObjectType::Function
                           ? schema_it->second.functions
                           : schema_it->second.relations;
         const auto [object_it, is_new] = objects.emplace(std::move(object));
 
         if (!is_new) {
-          if (!replace) {
+          if (!replace || (*object_it)->GetType() != type) {
             return {ERROR_SERVER_DUPLICATE_NAME,
                     "Object already exists: ", (*object_it)->GetName()};
           }

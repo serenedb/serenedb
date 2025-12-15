@@ -113,10 +113,6 @@ class LocalCatalog final : public LogicalCatalog,
   // TODO(gnusi): remove
   std::shared_ptr<Table> GetTable(ObjectId database_id, std::string_view schema,
                                   std::string_view name) const final;
-  Result GetTables(
-    ObjectId database_id, std::string_view schema,
-    std::vector<std::pair<std::shared_ptr<Table>, std::shared_ptr<TableShard>>>&
-      tables) const final;
   std::shared_ptr<Object> GetObject(ObjectId id) const final;
 
  private:

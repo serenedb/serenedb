@@ -1586,28 +1586,6 @@ std::shared_ptr<Table> LocalCatalog::GetTable(ObjectId database_id,
     ->GetObject<Table>(database_id, schema, name);
 }
 
-Result LocalCatalog::GetTables(
-  ObjectId database_id, std::string_view schema,
-  std::vector<std::pair<std::shared_ptr<Table>, std::shared_ptr<TableShard>>>&
-    tables) const {
-  SDB_ASSERT(tables.empty());
-
-  auto snapshot = basics::downCast<SnapshotImpl>(GetSnapshot());
-
-  std::ignore = snapshot->VisitObjects(database_id, schema, [&](auto& object) {
-    if (object->GetType() == GetObjectType<Table>()) {
-      auto shard = snapshot->GetTableShard(object->GetId());
-      if (shard) {
-        tables.emplace_back(std::static_pointer_cast<Table>(object),
-                            std::move(shard));
-      }
-    }
-    return true;
-  });
-
-  return {};
-}
-
 std::shared_ptr<Object> LocalCatalog::GetObject(ObjectId id) const {
   return basics::downCast<SnapshotImpl>(GetSnapshot())->GetObject(id);
 }

@@ -209,11 +209,6 @@ struct LogicalCatalog {
     ObjectId database, std::string_view schema,
     std::string_view name) const = 0;
 
-  virtual Result GetTables(
-    ObjectId database_id, std::string_view schema,
-    std::vector<std::pair<std::shared_ptr<catalog::Table>,
-                          std::shared_ptr<TableShard>>>& tables) const = 0;
-
   virtual std::shared_ptr<Object> GetObject(ObjectId id) const = 0;
 
   template<typename T>

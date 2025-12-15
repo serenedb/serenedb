@@ -61,8 +61,7 @@ yaclib::Future<Result> DropObject(ExecContext& context, const DropStmt& stmt) {
       if (name == StaticStrings::kPgCatalogSchema ||
           name == StaticStrings::kInformationSchema) {
         r = {ERROR_BAD_PARAMETER, "cannot drop schema ", name,
-             " because it is required by the "
-             "database system"};
+             " because it is required by the database system"};
       } else {
         const bool cascade = stmt.behavior == DROP_CASCADE;
         r = catalog.DropSchema(db, name, cascade, nullptr);

@@ -6,6 +6,8 @@ db error: ERROR: cannot drop schema pg_catalog because it is required by the dat
 
 statement error
 CREATE SCHEMA pg_catalog;
+----
+db error: ERROR: unacceptable schema name "pg_catalog"<slt:ignore>
 
 
 query error db error: ERROR: relation "sql_parts" does not exist

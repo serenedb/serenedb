@@ -59,7 +59,7 @@ void ResolveObject(ObjectId database, std::span<const std::string> search_path,
   }
 
   if (name.schema == StaticStrings::kInformationSchema) {
-    // information_schema must be explictly defined
+    // information_schema must be explicitly defined
     // (except the case it is in the search path)
     ResolveInformationSchema(database, name.relation, data);
     if (data.object) {

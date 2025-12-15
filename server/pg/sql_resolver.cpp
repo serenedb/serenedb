@@ -34,6 +34,15 @@ namespace sdb::pg {
 
 namespace {
 
+void ResolveInformationSchema(ObjectId database, std::string_view relation,
+                              Objects::ObjectData& data) {
+  if (const auto* table =
+        GetSystemTable(StaticStrings::kInformationSchema, relation)) {
+    data.object = table->CreateSnapshot(database);
+  }
+  // TODO(codeworse): add views and functions from information_schema
+}
+
 void ResolveObject(ObjectId database, std::span<const std::string> search_path,
                    Objects& objects, Disallowed& disallowed,
                    const Objects::ObjectName& name, Objects::ObjectData& data) {
@@ -51,9 +60,10 @@ void ResolveObject(ObjectId database, std::span<const std::string> search_path,
 
   if (name.schema == StaticStrings::kInformationSchema) {
     // information_schema must be explictly defined
-    if (const auto* table =
-          GetSystemTable(StaticStrings::kInformationSchema, name.relation)) {
-      data.object = table->CreateSnapshot(database);
+    // (except the case it is in the search path)
+    ResolveInformationSchema(database, name.relation, data);
+    if (data.object) {
+      return;
     }
   }
 
@@ -66,11 +76,10 @@ void ResolveObject(ObjectId database, std::span<const std::string> search_path,
     std::string_view key = name.relation;
 
     auto resolve_object = [&](std::string_view schema) {
+      SDB_ASSERT(!data.object);
       if (schema == StaticStrings::kInformationSchema) {
-        if (const auto* table =
-              GetSystemTable(StaticStrings::kInformationSchema, key)) {
-          data.object = table->CreateSnapshot(database);
-        }
+        // In case information_schema is in the search path
+        ResolveInformationSchema(database, name.relation, data);
         return;
       }
       if (auto object = catalog.GetTable(database, schema, key)) {

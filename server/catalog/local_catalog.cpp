@@ -374,6 +374,7 @@ Result Apply(auto& snapshot, auto&& f) {
 class SnapshotImpl : public Snapshot {
  public:
   std::shared_ptr<SnapshotImpl> Clone() const {
+    // TODO(gnusi): COW
     auto result = std::make_shared<SnapshotImpl>();
     result->_roles = _roles;
     result->_databases = _databases;
@@ -933,7 +934,7 @@ class SnapshotImpl : public Snapshot {
     containers::FlatHashSet<std::shared_ptr<T>, ObjectById, ObjectById>;
   template<typename K, typename V>
   using ObjectMapByName =
-    containers::FlatHashMap<std::shared_ptr<K>, V, ObjectByName, ObjectByName>;
+    containers::NodeHashMap<std::shared_ptr<K>, V, ObjectByName, ObjectByName>;
   template<typename K, typename V>
   using ObjectMapById =
     containers::FlatHashMap<std::shared_ptr<K>, V, ObjectById, ObjectById>;

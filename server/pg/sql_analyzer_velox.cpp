@@ -210,6 +210,7 @@ velox::TypePtr FixupReturnType(const velox::TypePtr& ret_type) {
   new_params.reserve(params_cnt);
   for (size_t i = 0; i < params_cnt; ++i) {
     if (params[i].kind != velox::TypeParameterKind::kType) {
+      new_params.emplace_back(params[i]);
       continue;
     }
 
@@ -4123,10 +4124,6 @@ lp::ExprPtr SqlAnalyzer::ProcessTypeCast(State& state, const TypeCast& expr) {
   }
 
   auto arg = ProcessExprNodeImpl(state, expr.arg);
-
-  if (arg->type() == PG_UNKNOWN()) {
-    arg = MakeCast(velox::VARCHAR(), arg);
-  }
 
   // TODO(mkornaukhov): use velox::exec::CastHook for custom cast functions
   // instead of such hacks

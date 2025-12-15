@@ -77,7 +77,9 @@ void RetrieveObjects(ObjectId database_id,
       values.push_back(std::move(row));
     };
   std::vector<std::shared_ptr<catalog::Schema>> schemas;
-  auto res = catalog.GetSchemas(database_id, schemas);
+  if (!catalog.GetSchemas(database_id, schemas).ok()) {
+    SDB_THROW(ERROR_INTERNAL, "Failed to get schemas for pg_class");
+  }
 
   for (const auto& schema : schemas) {  // retrieve collections
     std::vector<

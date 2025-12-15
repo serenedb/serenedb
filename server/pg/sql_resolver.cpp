@@ -86,8 +86,8 @@ void ResolveObject(ObjectId database, std::span<const std::string> search_path,
         data.object = object;
       } else if (auto object = catalog.GetView(database, schema, key)) {
         data.object = object;
-      } else if (auto object = catalog.GetFunction(database, schema, key)) {
-        data.object = object;
+      } else {
+        data.object = catalog.GetFunction(database, schema, key);
       }
     };
 

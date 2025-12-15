@@ -63,7 +63,7 @@ class Table : public SchemaObject {
   auto& GetSchema() const noexcept { return _schema; }
   auto& sharding(this auto& self) noexcept { return self._sharding; }
   bool waitForSync() const noexcept { return _wait_for_sync; }
-  const auto& keyGenerator() const noexcept {
+  auto& keyGenerator() const noexcept {
     SDB_ASSERT(_key_generator);
     return *_key_generator;
   }

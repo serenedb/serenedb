@@ -54,7 +54,7 @@ INSERT INTO t (c2, c2) VALUES (1, 4);
 db error: ERROR: column "c2" specified more than once
 
 
-statement ok
+statement count 1
 WITH 
 babsky as (select 1 as pencil),
 zhidsky as (select 3 as iq)
@@ -65,5 +65,6 @@ SELECT * FROM babsky as buterbrod1, zhidsky, babsky as buterbrod2;
 
 query
 SELECT * FROM series_table;
+----
 a b c
 2 3 2

@@ -15,23 +15,23 @@ CREATE TABLE tindex(
 );
 
 
-statement ok
+statement count 1
 INSERT INTO tindex DEFAULT VALUES;
 
 
-statement ok
+statement count 1
 INSERT INTO tindex (id, pencil_size) VALUES (2, 3);
 
 
-statement ok
+statement count 1
 INSERT INTO tindex (id, name, weight, pencil_size) VALUES (1, 'vedernikoff', 54, 1);
 
 
-statement ok
+statement count 1
 INSERT INTO tindex (id, name, weight, pencil_size) VALUES (3, DEFAULT, DEFAULT, 1);
 
 
-statement ok
+statement count 1
 INSERT INTO tindex (id, name, weight, pencil_size) VALUES (4, NULL, NULL, NULL);
 
 

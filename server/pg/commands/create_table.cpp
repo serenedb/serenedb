@@ -98,7 +98,6 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
   };
 
   catalog::Column::Id next_column_id = 0;
-  containers::FlatHashSet<std::string_view> unique_pk_column_names;
   VisitNodes(stmt.tableElts, [&](const Node& node) {
     if (IsA(&node, ColumnDef)) {
       const auto& col_def = *castNode(ColumnDef, &node);

@@ -151,7 +151,7 @@ enum class ExprKind {
   CycleMark = EXPR_KIND_CYCLE_MARK,  // cycle mark value
   AggregateOrder,                    // ORDER BY in aggregate function
   AggregateArgument,                 // arguments of aggregate function
-  InsertSelect
+  InsertSelect                       // SELECT in INSERT statement
 };
 
 constexpr lp::SpecialForm kSpecialFormPlaceholder{
@@ -1130,7 +1130,8 @@ void SqlAnalyzer::ProcessSelectStmt(State& state, const SelectStmt& stmt) {
   // TODO: ProcessFinalProject
 }
 
-// It's literally UNKNOWN but have different address to distinguish
+// It's literally UNKNOWN
+// but have different address to distinguish it from UNKNOWN().
 const auto kDefaultValueTypePlaceHolder =
   std::make_shared<const velox::UnknownType>();
 const lp::ExprPtr kDefaultValuePlaceHolder = std::make_shared<lp::CallExpr>(
@@ -1152,8 +1153,8 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
   ProcessWithClause(state, stmt.withClause);
 
   if (stmt.selectStmt) {
-    // at least why we need it :
-    // insert has their ctes and select stmt too
+    // We need a child state here because both the INSERT statement and its
+    // SELECT sub-statement can have their own CTEs
     auto child_state = state.MakeChild();
     child_state.expr_kind = ExprKind::InsertSelect;
     ProcessStmt(child_state, *stmt.selectStmt);
@@ -1236,9 +1237,8 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
   // set default value for not mentioned columns
   for (const auto& column : table.Columns()) {
     if (!absl::c_linear_search(column_names, column.name)) {
-      const auto& default_value = column.default_value;
       lp::ExprPtr expr;
-      if (default_value) {
+      if (const auto& default_value = column.default_value) {
         expr = ProcessExprNodeImpl(state, default_value->GetExpr());
       } else {
         expr = MakeConst(velox::TypeKind::UNKNOWN);
@@ -2012,7 +2012,7 @@ lp::AggregateExprPtr SqlAnalyzer::MaybeAggregateFuncCall(
                       ERR_MSG("aggregate functions are not allowed in OFFSET"));
     case ExprKind::ColumnDefault:
       THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+        ERR_CODE(ERRCODE_GROUPING_ERROR),
         CURSOR_POS(ErrorPosition(ExprLocation(&func_call))),
         ERR_MSG("aggregate functions are not allowed in DEFAULT expressions"));
     default:

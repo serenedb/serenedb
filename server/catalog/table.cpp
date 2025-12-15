@@ -58,7 +58,6 @@
 #endif
 
 namespace sdb::catalog {
-namespace {}  // namespace
 
 Table::Table(const catalog::Table& other, NewOptions options)
   : SchemaObject{other.GetOwnerId(), other.GetDatabaseId(), other.GetSchemaId(),
@@ -87,8 +86,8 @@ velox::RowTypePtr BuildPkType(const std::vector<Column>& columns,
                               const std::vector<Column::Id>& pk_columns) {
   std::vector<std::string> names;
   std::vector<velox::TypePtr> types;
-  names.reserve(columns.size());
-  types.reserve(columns.size());
+  names.reserve(pk_columns.size());
+  types.reserve(pk_columns.size());
 
   for (auto pk_col_id : pk_columns) {
     auto it = std::find_if(

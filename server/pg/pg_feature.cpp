@@ -133,7 +133,7 @@ velox::AllowedCoercions AllowedCoercions() {
                     // 2. foo(generic<T>)
                     // Then for foo(pg_unknown) we should chooose the first
                     // choice. cost = 0 is required for that
-                    velox::Coercion{.type = velox::VARCHAR(), .cost = 0});
+                    velox::Coercion{.type = velox::VARCHAR(), .cost = 1});
 
   add(PG_UNKNOWN(), {velox::TINYINT(), velox::SMALLINT(), velox::INTEGER(),
                      velox::BIGINT(), velox::HUGEINT(), velox::REAL(),

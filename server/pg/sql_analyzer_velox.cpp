@@ -2012,7 +2012,7 @@ lp::AggregateExprPtr SqlAnalyzer::MaybeAggregateFuncCall(
                       ERR_MSG("aggregate functions are not allowed in OFFSET"));
     case ExprKind::ColumnDefault:
       THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_GROUPING_ERROR),
+        ERR_CODE(ERRCODE_SYNTAX_ERROR),
         CURSOR_POS(ErrorPosition(ExprLocation(&func_call))),
         ERR_MSG("aggregate functions are not allowed in DEFAULT expressions"));
     default:
@@ -3549,7 +3549,7 @@ lp::ExprPtr SqlAnalyzer::ProcessColumnRef(State& state, const ColumnRef& expr) {
 
   if (state.expr_kind == ExprKind::ColumnDefault) {
     THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_COLUMN_REFERENCE),
+      ERR_CODE(ERRCODE_SYNTAX_ERROR),
       CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
       ERR_MSG("cannot use column reference in DEFAULT expression"));
   }
@@ -4115,8 +4115,8 @@ lp::ExprPtr SqlAnalyzer::ProcessSubLink(State& state, const SubLink& expr) {
 
   if (state.expr_kind == ExprKind::ColumnDefault) {
     THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      CURSOR_POS(ErrorPosition(expr.location)),
+      ERR_CODE(ERRCODE_SYNTAX_ERROR),
+      CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
       ERR_MSG("subqueries are not allowed in DEFAULT expressions"));
   }
 

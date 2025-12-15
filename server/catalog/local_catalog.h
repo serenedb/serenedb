@@ -98,17 +98,7 @@ class LocalCatalog final : public LogicalCatalog,
                    std::string_view name, AsyncResult* async_result) final;
   Result DropIndex(ObjectId database_id, std::string_view schema,
                    std::string_view name) final;
-
-  std::shared_ptr<Table> GetTable(ObjectId database_id, std::string_view schema,
-                                  std::string_view name) const final;
-
-  Result GetTables(
-    ObjectId database_id, std::string_view schema,
-    std::vector<std::pair<std::shared_ptr<Table>, std::shared_ptr<TableShard>>>&
-      tables) const final;
   std::shared_ptr<Snapshot> GetSnapshot() const noexcept final;
-
-  std::shared_ptr<Object> GetObject(ObjectId id) const final;
 
   void RegisterTableDrop(TableTombstone tombstone) final;
   void RegisterScopeDrop(ObjectId database_id, ObjectId schema_id) final;
@@ -119,6 +109,15 @@ class LocalCatalog final : public LogicalCatalog,
   bool GetSkipBackgroundErrors() const noexcept {
     return _skip_background_errors;
   }
+
+  // TODO(gnusi): remove
+  std::shared_ptr<Table> GetTable(ObjectId database_id, std::string_view schema,
+                                  std::string_view name) const final;
+  Result GetTables(
+    ObjectId database_id, std::string_view schema,
+    std::vector<std::pair<std::shared_ptr<Table>, std::shared_ptr<TableShard>>>&
+      tables) const final;
+  std::shared_ptr<Object> GetObject(ObjectId id) const final;
 
  private:
   mutable absl::Mutex _mutex;

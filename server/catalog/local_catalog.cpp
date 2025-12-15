@@ -820,8 +820,9 @@ class SnapshotImpl : public Snapshot {
     std::vector<std::shared_ptr<SchemaObject>> objects;
     std::ignore = ResolveSchema(
       database, schema, [&](auto database_it, auto schema_it) -> Result {
-        auto& relations = *schema_it->second.relations;
-        objects.assign(relations.begin(), relations.end());
+        auto& relations = schema_it->second.relations;
+        SDB_ASSERT(relations);
+        objects.assign_range(*relations);
         return {};
       });
     return objects;
@@ -832,10 +833,11 @@ class SnapshotImpl : public Snapshot {
     std::vector<std::shared_ptr<Function>> objects;
     std::ignore = ResolveSchema(
       database, schema, [&](auto database_it, auto schema_it) -> Result {
-        auto& functions = *schema_it->second.functions;
-        objects.assign_range(functions | std::views::transform([](auto& func) {
-                               return std::static_pointer_cast<Function>(func);
-                             }));
+        auto& functions = schema_it->second.functions;
+        SDB_ASSERT(functions);
+        objects.assign_range(*functions | std::views::transform([](auto& func) {
+          return basics::downCast<Function>(func);
+        }));
         return {};
       });
     return objects;

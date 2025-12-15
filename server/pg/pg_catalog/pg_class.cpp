@@ -43,8 +43,6 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
   GetIndex(&PgClass::reloptions),
 });
 
-constexpr Oid kPgCatalogNamespaceOid = 11;
-
 }  // namespace
 
 void RetrieveObjects(ObjectId database_id,
@@ -120,11 +118,11 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgClass>::GetTableData(
   RetrieveObjects(GetDatabaseId(), catalog, values);
 
   {  // get system tables
-    VisitSystemTables([&](const catalog::VirtualTable& table) {
+    VisitSystemTables([&](const catalog::VirtualTable& table, Oid schema_oid) {
       PgClass row{
         .oid = table.Id().id(),
         .relname = table.Name(),
-        .relnamespace = kPgCatalogNamespaceOid,
+        .relnamespace = schema_oid,
         .reltablespace = 0,
         .relkind = PgClass::Relkind::OrdinaryTable,
       };

@@ -435,8 +435,8 @@ class Snapshot {
         std::forward_as_tuple());
 
       if (!is_new) {
-        return {ERROR_SERVER_DUPLICATE_NAME,
-                "Schema already exists: ", schema->GetName()};
+        return {ERROR_SERVER_DUPLICATE_NAME, "schema \"", schema->GetName(),
+                "\" already exists"};
       }
 
       return RegisterObjectId(

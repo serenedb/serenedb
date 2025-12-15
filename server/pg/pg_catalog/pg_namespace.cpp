@@ -22,13 +22,21 @@
 
 #include "app/app_server.h"
 #include "catalog/catalog.h"
+#include "catalog/identifiers/object_id.h"
 
 namespace sdb::pg {
 namespace {
 
 constexpr auto kPgCatalog = PgNamespace{
-  .oid = 11,
+  .oid = id::kPgCatalogSchema.id(),
   .nspname = "pg_catalog",
+};
+
+// Actually information_schema oid is not fixed in postgres,
+// but we forbid to drop/create it, so we can use a fixed oid here.
+constexpr auto kPgInformationSchema = PgNamespace{
+  .oid = id::kPgInformationSchema.id(),
+  .nspname = "information_schema",
 };
 
 constexpr uint64_t kNullMask = MaskFromNonNulls({
@@ -46,6 +54,7 @@ void RetrieveObjects(ObjectId database_id,
   }
 
   values.emplace_back(kPgCatalog);
+  values.emplace_back(kPgInformationSchema);
   for (const auto& object : schemas) {
     PgNamespace row{
       .oid = object->GetId().id(),

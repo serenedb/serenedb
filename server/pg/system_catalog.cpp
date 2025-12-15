@@ -380,15 +380,16 @@ const VirtualTable* GetTable(std::string_view name) {
   return nullptr;
 }
 
-void VisitSystemTables(absl::FunctionRef<void(const VirtualTable&)> visitor) {
+void VisitSystemTables(
+  absl::FunctionRef<void(const VirtualTable&, Oid)> visitor) {
   SDB_ASSERT(SerenedServer::Instance().isEnabled<pg::PostgresFeature>());
   for (const auto* table : kPgCatalog) {
     SDB_ASSERT(table);
-    visitor(*table);
+    visitor(*table, id::kPgCatalogSchema.id());
   }
   for (const auto* table : kInformationSchema) {
     SDB_ASSERT(table);
-    visitor(*table);
+    visitor(*table, id::kPgInformationSchema.id());
   }
 }
 

@@ -43,6 +43,8 @@ inline constexpr ObjectId kTombstoneDatabase{1000001};
 inline constexpr ObjectId kSystemDB{1000002};
 inline constexpr ObjectId kMaxSystem{2000000};
 inline constexpr ObjectId kCalculationDB{std::numeric_limits<uint64_t>::max()};
+inline constexpr ObjectId kPgCatalogSchema{11};
+inline constexpr ObjectId kPgInformationSchema{12};
 
 }  // namespace id
 

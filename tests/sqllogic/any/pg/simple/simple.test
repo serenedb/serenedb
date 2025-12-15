@@ -734,3 +734,11 @@ column1	column2
 TUM	Munich
 LMU	Munich
 CMU	Pittsburgh
+
+query
+SELECT * FROM (VALUES ('TUM', 'Munich'::varchar), ('LMU', 'Munich'), ('CMU'::varchar, 'Pittsburgh'));
+----
+column1	column2
+TUM	Munich
+LMU	Munich
+CMU	Pittsburgh

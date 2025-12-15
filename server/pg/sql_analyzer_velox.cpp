@@ -1235,7 +1235,7 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
 
   // set default value for not mentioned columns
   for (const auto& column : table.Columns()) {
-    if (!absl::c_contains(column_names, column.name)) {
+    if (!absl::c_linear_search(column_names, column.name)) {
       const auto& default_value = column.default_value;
       lp::ExprPtr expr;
       if (default_value) {
@@ -2531,7 +2531,7 @@ SqlAnalyzer::JoinUsingReturn SqlAnalyzer::ProcessJoinUsingClause(
     for (const auto& [name, type] :
          std::ranges::views::zip(output->names(), output->children())) {
       auto alias = ToAlias(name);
-      if (absl::c_contains(using_list, alias)) {
+      if (absl::c_linear_search(using_list, alias)) {
         continue;
       }
       auto column_ref = std::make_shared<lp::InputReferenceExpr>(type, name);

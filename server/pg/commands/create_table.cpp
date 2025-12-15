@@ -81,7 +81,7 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
   };
   auto append_pk = [&](const catalog::Column::Id column_id, int location) {
     SDB_ASSERT(column_id < request.columns.size());
-    if (absl::c_contains(request.pkColumns, column_id)) {
+    if (absl::c_linear_search(request.pkColumns, column_id)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_COLUMN), CURSOR_POS(location),
                       ERR_MSG("column \"", request.columns[column_id].name,
                               "\" appears twice in primary key constraint"));

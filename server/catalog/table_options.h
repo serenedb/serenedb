@@ -36,10 +36,10 @@
 #include "basics/reboot_id.h"
 #include "basics/static_strings.h"
 #include "catalog/cluster_types.h"
+#include "catalog/default_value.h"
 #include "catalog/fwd.h"
 #include "catalog/identifiers/identifier.h"
 #include "catalog/identifiers/object_id.h"
-#include "catalog/default_value.h"
 #include "catalog/key_generator.h"
 #include "catalog/types.h"
 #include "catalog/validators.h"
@@ -50,6 +50,8 @@
 namespace sdb::catalog {
 
 struct ObjectInternal {
+  ObjectInternal(ObjectId database_id) : database(database_id) {}
+
   ObjectId database;
 };
 struct ObjectProperties {

@@ -50,12 +50,12 @@
 namespace sdb::catalog {
 
 struct ObjectInternal {
-  ObjectInternal(ObjectId database_id) : database(database_id) {}
+  ObjectInternal(ObjectId database_id) : database_id(database_id) {}
 
-  ObjectId database;
+  ObjectId database_id;
 };
+
 struct ObjectProperties {
-  ObjectId database;
 };
 
 struct ForeignId : ObjectId {

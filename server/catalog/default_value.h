@@ -61,7 +61,7 @@ void VPackWrite(auto ctx, const DefaultValue& default_value) {
 }
 
 void VPackRead(auto ctx, DefaultValue& default_value) {
-  auto database_id = ctx.arg().database;
+  auto database_id = ctx.arg().database_id;
   auto r = DefaultValue::FromVPack(database_id, ctx.vpack(), default_value);
   SDB_ENSURE(r.ok(), r.errorNumber(), r.errorMessage());
 }

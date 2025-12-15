@@ -81,8 +81,7 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
   };
   auto append_pk = [&](const catalog::Column::Id column_id, int location) {
     SDB_ASSERT(column_id < request.columns.size());
-    if (std::ranges::find(request.pkColumns, column_id) !=
-        request.pkColumns.end()) {
+    if (absl::c_contains(request.pkColumns, column_id)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_COLUMN), CURSOR_POS(location),
                       ERR_MSG("column \"", request.columns[column_id].name,
                               "\" appears twice in primary key constraint"));
@@ -146,17 +145,13 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
           append_pk(it->id, ExprLocation(&key));
         });
       } break;
+      case CONSTR_DEFAULT:
+        SDB_UNREACHABLE();
       default:
         error_constraint_not_supported(constraint);
     }
   });
   SDB_ASSERT(!stmt.constraints);
-
-  if (request.pkColumns.empty()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TABLE_DEFINITION),
-                    CURSOR_POS(ExprLocation(&stmt)),
-                    ERR_MSG("table must have a primary key"));
-  }
 
   catalog::CreateTableOptions options;
   auto r = MakeTableOptions(std::move(request), database->GetId(), options,

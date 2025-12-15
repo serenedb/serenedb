@@ -644,6 +644,7 @@ class SqlAnalyzer {
   void ProcessMergeStmt(State& state, const MergeStmt& stmt);
   void ProcessCreateFunctionStmt(State& state, const CreateFunctionStmt& stmt);
   void ProcessCreateViewStmt(State& state, const ViewStmt& stmt);
+  void ProcessCreateStmt(State& state, const CreateStmt& stmt);
   void ProcessCallStmt(State& state, const CallStmt& stmt);
 
   void ProcessValuesList(State& state, const List* list);
@@ -1129,8 +1130,11 @@ void SqlAnalyzer::ProcessSelectStmt(State& state, const SelectStmt& stmt) {
   // TODO: ProcessFinalProject
 }
 
+// It's literally UNKNOWN but have different address to distinguish
+const auto kDefaultValueTypePlaceHolder =
+  std::make_shared<const velox::UnknownType>();
 const lp::ExprPtr kDefaultValuePlaceHolder = std::make_shared<lp::CallExpr>(
-  velox::UNKNOWN(), "presto_fail",
+  kDefaultValueTypePlaceHolder, "presto_fail",
   MakeConst("DEFAULT is not allowed in this context"));
 
 void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
@@ -1188,17 +1192,17 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
   if (explicit_columns > input_type.size()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
                     ERR_MSG("INSERT has more target columns than expressions"),
-                    CURSOR_POS(ExprLocation(&stmt)));
+                    CURSOR_POS(ErrorPosition(ExprLocation(&stmt))));
   }
   if ((stmt.cols ? explicit_columns : table_type.size()) < input_type.size()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
                     ERR_MSG("INSERT has more expressions than target columns"),
-                    CURSOR_POS(ExprLocation(&stmt)));
+                    CURSOR_POS(ErrorPosition(ExprLocation(&stmt))));
   }
   containers::FlatHashSet<std::string_view> unique_aliases;
   unique_aliases.reserve(input_type.size());
   for (uint32_t i = 0; i < input_type.size(); ++i) {
-    if (input_type.childAt(i) == kDefaultValuePlaceHolder) {
+    if (input_type.childAt(i) == kDefaultValueTypePlaceHolder) {
       continue;  // will be handled in cycle below
     }
     if (stmt.cols) {
@@ -1231,7 +1235,7 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
 
   // set default value for not mentioned columns
   for (const auto& column : table.Columns()) {
-    if (std::ranges::find(column_names, column.name) == column_names.end()) {
+    if (!absl::c_contains(column_names, column.name)) {
       const auto& default_value = column.default_value;
       lp::ExprPtr expr;
       if (default_value) {
@@ -1500,40 +1504,72 @@ void SqlAnalyzer::ProcessCreateViewStmt(State& state, const ViewStmt& stmt) {
   }
 }
 
+// Just validate some parts
+void SqlAnalyzer::ProcessCreateStmt(State& state, const CreateStmt& stmt) {
+  State dummy{};
+  EnsureRoot(dummy);
+
+  VisitNodes(stmt.tableElts, [&](const Node& node) {
+    if (IsA(&node, ColumnDef)) {
+      const auto& col_def = *castNode(ColumnDef, &node);
+      VisitNodes(col_def.constraints, [&](const Constraint& constraint) {
+        switch (constraint.contype) {
+          case CONSTR_DEFAULT: {
+            auto column_type = NameToType(*col_def.typeName);
+            auto expr = ProcessExprNode(dummy, constraint.raw_expr,
+                                        ExprKind::ColumnDefault);
+            if (expr->type() != column_type) {
+              THROW_SQL_ERROR(
+                ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+                CURSOR_POS(ErrorPosition(ExprLocation(&constraint))),
+                ERR_MSG("column \"", col_def.colname, "\" is of type ",
+                        ToPgTypeString(column_type),
+                        " but default expression is of type ",
+                        ToPgTypeString(expr->type())),
+                ERR_HINT("You will need to rewrite or cast the expression."));
+            }
+          }
+          default:
+        }
+      });
+    }
+  });
+}
+
 SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node) {
   switch (node.type) {
     case T_SelectStmt: {
-      auto& stmt = *castNode(SelectStmt, &node);
+      const auto& stmt = *castNode(SelectStmt, &node);
       ProcessSelectStmt(state, stmt);
       return SqlCommandType::Select;
     }
     case T_InsertStmt: {
-      auto& stmt = *castNode(InsertStmt, &node);
+      const auto& stmt = *castNode(InsertStmt, &node);
       ProcessInsertStmt(state, stmt);
       return SqlCommandType::Insert;
     }
     case T_UpdateStmt: {
-      auto& stmt = *castNode(UpdateStmt, &node);
+      const auto& stmt = *castNode(UpdateStmt, &node);
       ProcessUpdateStmt(state, stmt);
       return SqlCommandType::Update;
     }
     case T_DeleteStmt: {
-      auto& stmt = *castNode(DeleteStmt, &node);
+      const auto& stmt = *castNode(DeleteStmt, &node);
       ProcessDeleteStmt(state, stmt);
       return SqlCommandType::Delete;
     }
     case T_MergeStmt: {
-      auto& stmt = *castNode(MergeStmt, &node);
+      const auto& stmt = *castNode(MergeStmt, &node);
       ProcessMergeStmt(state, stmt);
       return SqlCommandType::Merge;
     }
     case T_CallStmt: {
-      auto& stmt = *castNode(CallStmt, &node);
+      const auto& stmt = *castNode(CallStmt, &node);
       ProcessCallStmt(state, stmt);
       return SqlCommandType::Call;
     }
     case T_ExplainStmt: {
-      auto& stmt = *castNode(ExplainStmt, &node);
+      const auto& stmt = *castNode(ExplainStmt, &node);
       state.options = stmt.options;
       ProcessStmt(state, *stmt.query);
       return SqlCommandType::Explain;
@@ -1545,8 +1581,14 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node) {
       return SqlCommandType::DDL;
     }
     case T_CreateFunctionStmt: {
-      auto& stmt = *castNode(CreateFunctionStmt, &node);
+      const auto& stmt = *castNode(CreateFunctionStmt, &node);
       ProcessCreateFunctionStmt(state, stmt);
+      state.pgsql_node = &node;
+      return SqlCommandType::DDL;
+    }
+    case T_CreateStmt: {
+      const auto& stmt = *castNode(CreateStmt, &node);
+      ProcessCreateStmt(state, stmt);
       state.pgsql_node = &node;
       return SqlCommandType::DDL;
     }
@@ -1555,7 +1597,6 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node) {
     case T_CreatedbStmt:
     case T_DropdbStmt:
     case T_CreateSchemaStmt:
-    case T_CreateStmt:
     case T_DropStmt: {
       state.pgsql_node = &node;
       return SqlCommandType::DDL;
@@ -2490,7 +2531,7 @@ SqlAnalyzer::JoinUsingReturn SqlAnalyzer::ProcessJoinUsingClause(
     for (const auto& [name, type] :
          std::ranges::views::zip(output->names(), output->children())) {
       auto alias = ToAlias(name);
-      if (std::ranges::find(using_list, alias) != using_list.end()) {
+      if (absl::c_contains(using_list, alias)) {
         continue;
       }
       auto column_ref = std::make_shared<lp::InputReferenceExpr>(type, name);

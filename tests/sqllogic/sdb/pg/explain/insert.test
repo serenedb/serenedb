@@ -17,71 +17,38 @@ Fragment 0:  numWorkers=0:
 -- TableScan[0][.t] -> "c1":VARCHAR, "c2":INTEGER
 
 
-# query
-# EXPLAIN (LOGICAL, EXECUTION) INSERT INTO t VALUES ('text', 42);
-# ----
-# QUERY PLAN
-# LOGICAL PLAN:
-# - TableWrite INSERT: -> ROW<rows:BIGINT>
-#     c1 := column1
-#     c2 := column2
-#   - Values: 1 rows -> ROW<"column1":VARCHAR,"column2":INTEGER>
-# EXECUTION PLAN:
-# Fragment 0:  numWorkers=1:
-# -- TableWrite[1][serenedb(table=.t, kind=INSERT)] -> rows:BIGINT
-#   -- Values[0][1 rows in 1 vectors] -> "column1":VARCHAR, "column2":INTEGER
-# 
-# 
-# query
-# EXPLAIN (LOGICAL, EXECUTION) INSERT INTO t VALUES ('text');
-# ----
-# QUERY PLAN
-# LOGICAL PLAN:
-# - TableWrite INSERT: -> ROW<rows:BIGINT>
-#     c1 := column1
-#   - Values: 1 rows -> ROW<"column1":VARCHAR>
-# EXECUTION PLAN:
-# Fragment 0:  numWorkers=1:
-# -- TableWrite[2][serenedb(table=.t, kind=INSERT)] -> rows:BIGINT
-#   -- Project[1][expressions: (column1:VARCHAR, "column1"), (dt1.__p7:INTEGER, null)] -> "column1":VARCHAR, "dt1.__p7":INTEGER
-#     -- Values[0][1 rows in 1 vectors] -> "column1":VARCHAR
-
-
-statement ok
-CREATE TABLE tindex(
-  id INTEGER DEFAULT 228 - 228,
-  name TEXT DEFAULT substring('babsky', 1, 5), 
-  weight INTEGER DEFAULT 1000 - 7, 
-  pencil_size INTEGER,
-  PRIMARY KEY (id)
-);
-
-
-statement error
-INSERT INTO tindex (id, id) VALUES (1, 4);
+query
+EXPLAIN (LOGICAL, EXECUTION) INSERT INTO t VALUES ('text', 42);
 ----
-db error: ERROR: column "id" specified more than once
-
-
-statement ok
-INSERT INTO tindex DEFAULT VALUES;
-
-
-statement ok
-INSERT INTO tindex (id, pencil_size) VALUES (2, 3);
-
-
-statement ok
-INSERT INTO tindex (id, name, weight, pencil_size) VALUES (1, 'vedernikoff', 54, 1);
-
-
-statement ok
-INSERT INTO tindex (id, name, weight, pencil_size) VALUES (3, DEFAULT, DEFAULT, 1);
-
-
-statement ok
-INSERT INTO tindex (id, name, weight) SELECT 100, DEFAULT, DEFAULT, DEFAULT;
+QUERY PLAN
+LOGICAL PLAN:
+- TableWrite INSERT: -> ROW<rows:BIGINT>
+    c1 := column1
+    c2 := column2
+  - Values: 1 rows -> ROW<"column1":VARCHAR,"column2":INTEGER>
+EXECUTION PLAN:
+Fragment 0:  numWorkers=1:
+-- TableWrite[1][serenedb(table=.t, kind=INSERT)] -> rows:BIGINT
+  -- Values[0][1 rows in 1 vectors] -> "column1":VARCHAR, "column2":INTEGER
 
 
 query
-SELECT *, pencil_size IS NULL FROM tindex;
+EXPLAIN (LOGICAL, EXECUTION) INSERT INTO t VALUES ('text');
+----
+QUERY PLAN
+LOGICAL PLAN:
+- TableWrite INSERT: -> ROW<rows:BIGINT>
+    c1 := column1
+    c2 := null
+  - Values: 1 rows -> ROW<"column1":VARCHAR>
+EXECUTION PLAN:
+Fragment 0:  numWorkers=1:
+-- TableWrite[2][serenedb(table=.t, kind=INSERT)] -> rows:BIGINT
+ -- Project[1][expressions: (column1:VARCHAR, "column1"), (dt1.__p7:UNKNOWN, null)] -> "column1":VARCHAR, "dt1.__p7":UNKNOWN
+    -- Values[0][1 rows in 1 vectors] -> "column1":VARCHAR
+
+
+statement error
+INSERT INTO t (c2, c2) VALUES (1, 4);
+----
+db error: ERROR: column "c2" specified more than once

@@ -200,7 +200,7 @@ void catalog::Table::WriteInternal(vpack::Builder& build) const {
   // TODO(gnusi) writeTuple?
   SDB_ASSERT(build.isOpenObject());
   vpack::WriteObject(build, vpack::Embedded{MakeTableOptions()},
-                     ObjectInternal(_database_id));
+                     ObjectInternal{_database_id});
 }
 
 Result ChangeTableHelper(const catalog::Table& old_collection,
@@ -414,12 +414,6 @@ Result ValidateShardsAndReplicationFactor(vpack::Slice slice,
   }
 
   return {};
-}
-
-const std::vector<Column>& Table::Columns() const noexcept { return _columns; }
-
-const std::vector<Column::Id>& Table::PKColumns() const noexcept {
-  return _pk_columns;
 }
 
 }  // namespace sdb::catalog

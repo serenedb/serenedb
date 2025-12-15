@@ -229,7 +229,7 @@ Result CatalogFeature::ProcessTombstones() {
         // TODO(gnusi): .skip_unknown = false, .strict = true
         if (auto r = vpack::ReadObjectNothrow<TableOptions>(
               slice, options, {.skip_unknown = true, .strict = false},
-              ObjectInternal(database_id));
+              ObjectInternal{database_id});
             !r.ok()) {
           return ErrorMeta(r.errorNumber(), "collection", r.errorMessage(),
                            slice);
@@ -338,7 +338,7 @@ Result CatalogFeature::AddTables(ObjectId database_id, const Schema& schema,
       // TODO(gnusi): .skip_unknown = false, .strict = true
       if (auto r = vpack::ReadObjectNothrow<TableOptions>(
             slice, options, {.skip_unknown = true, .strict = false},
-            ObjectInternal(database_id));
+            ObjectInternal{database_id});
           !r.ok()) {
         return ErrorMeta(r.errorNumber(), "collection", r.errorMessage(),
                          slice);

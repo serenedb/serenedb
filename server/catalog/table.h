@@ -57,13 +57,13 @@ class Table : public SchemaObject {
 
   const auto& PKType() const noexcept { return _pk_type; }
   const auto& RowType() const noexcept { return _row_type; }
-  const std::vector<Column>& Columns() const noexcept;
-  const std::vector<Column::Id>& PKColumns() const noexcept;
+  const auto& Columns() const noexcept { return _columns; }
+  const auto& PKColumns() const noexcept { return _pk_columns; }
   auto GetTableType() const noexcept { return _type; }
   auto& GetSchema() const noexcept { return _schema; }
   auto& sharding(this auto& self) noexcept { return self._sharding; }
   bool waitForSync() const noexcept { return _wait_for_sync; }
-  auto& keyGenerator() const noexcept {
+  const auto& keyGenerator() const noexcept {
     SDB_ASSERT(_key_generator);
     return _key_generator;
   }

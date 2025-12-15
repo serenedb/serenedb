@@ -31,6 +31,9 @@
 #include "pg/connection_context.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_analyzer_velox.h"
+#include "pg/sql_exception.h"
+#include "pg/sql_exception_macro.h"
+#include "pg/sql_utils.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
@@ -135,10 +138,13 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
         // create table (field integer, primary key(field))
         VisitNodes(constraint.keys, [&](const String& key) {
           std::string_view name = key.sval;
+
           auto it = std::ranges::find_if(
             request.columns,
             [name](const catalog::Column& col) { return col.name == name; });
-          if (it == request.columns.end()) {
+          if (absl::c_find_if(request.columns, [&](const catalog::Column& col) {
+                return col.name == name;
+              }) == request.columns.end()) {
             THROW_SQL_ERROR(
               ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
               CURSOR_POS(ExprLocation(&key)),

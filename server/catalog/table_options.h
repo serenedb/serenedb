@@ -50,8 +50,6 @@
 namespace sdb::catalog {
 
 struct ObjectInternal {
-  ObjectInternal(ObjectId database_id) : database_id(database_id) {}
-
   ObjectId database_id;
 };
 

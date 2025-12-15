@@ -65,7 +65,7 @@ class Table : public SchemaObject {
   bool waitForSync() const noexcept { return _wait_for_sync; }
   const auto& keyGenerator() const noexcept {
     SDB_ASSERT(_key_generator);
-    return _key_generator;
+    return *_key_generator;
   }
   auto from() const noexcept { return _from; }
   auto to() const noexcept { return _to; }

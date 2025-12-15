@@ -166,8 +166,11 @@ SELECT false IS NOT UNKNOWN;
 t
 
 
-query error db error: ERROR: syntax error at or near "'false'"
-SELECT false IS 'false';
+query ??
+SELECT false = 'false';
+----
+?column?
+t
 
 
 query

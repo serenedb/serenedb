@@ -742,3 +742,10 @@ column1	column2
 TUM	Munich
 LMU	Munich
 CMU	Pittsburgh
+
+
+query
+SELECT '123' + 123;
+----
+?column?
+246

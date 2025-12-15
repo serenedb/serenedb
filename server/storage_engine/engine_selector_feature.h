@@ -34,15 +34,19 @@ class EngineSelectorFeature : public SerenedFeature {
 
   explicit EngineSelectorFeature(Server& server);
 
+  void start() final;
+  void stop() final;
   void prepare() override;
   void unprepare() override;
 
   StorageEngine& engine();
+  bool started() const { return _started.load(std::memory_order_relaxed); }
 
   bool isRocksDB();
 
  protected:
   StorageEngine* _engine = nullptr;
+  std::atomic_bool _started = false;
 };
 
 StorageEngine& GetServerEngine();

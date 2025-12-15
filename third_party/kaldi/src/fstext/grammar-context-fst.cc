@@ -25,14 +25,12 @@ namespace fst {
 using std::vector;
 
 InverseLeftBiphoneContextFst::InverseLeftBiphoneContextFst(
-    Label nonterm_phones_offset,
-    const vector<int32>& phones,
-    const vector<int32>& disambig_syms):
-    nonterm_phones_offset_(nonterm_phones_offset),
+  Label nonterm_phones_offset, const vector<int32>& phones,
+  const vector<int32>& disambig_syms)
+  : nonterm_phones_offset_(nonterm_phones_offset),
     phone_syms_(phones),
     disambig_syms_(disambig_syms) {
-
-  { // This block does some checks.
+  {  // This block does some checks.
     std::vector<int32> all_inputs(phones);
     all_inputs.insert(all_inputs.end(), disambig_syms.begin(),
                       disambig_syms.end());
@@ -41,22 +39,24 @@ InverseLeftBiphoneContextFst::InverseLeftBiphoneContextFst(
     kaldi::SortAndUniq(&all_inputs);
     if (all_inputs.size() != size) {
       KALDI_ERR << "There was overlap between disambig symbols, phones, "
-          "and/or --nonterm-phones-offset";
+                   "and/or --nonterm-phones-offset";
     }
     if (all_inputs.front() <= 0)
       KALDI_ERR << "Symbols <= 0 were passed in as phones, disambig-syms, "
-          "or nonterm-phones-offset.";
+                   "or nonterm-phones-offset.";
     if (all_inputs.back() != nonterm_phones_offset) {
       // the value passed --nonterm-phones-offset is not higher numbered
       // than all the phones and disambig syms... do some more checking.
       for (int32 i = 1; i < 4; i++) {
         int32 symbol = nonterm_phones_offset + i;
-        // None of the symbols --nonterm-phones-offset + {kNontermBos, kNontermBegin,
+        // None of the symbols --nonterm-phones-offset + {kNontermBos,
+        // kNontermBegin,
         //                  kNontermEnd, kNontermReenter, kNontermUserDefined}
         // (i.e. the special symbols plus the first user-defined symbol) may be
         // listed as phones or disambig symbols... this doesn't make sense.  We
         // do allow disambig symbols to be higher-numbered than the nonterminal
-        // sybols, just in case that happens to be needed, but they can't overlap.
+        // sybols, just in case that happens to be needed, but they can't
+        // overlap.
         if (std::binary_search(all_inputs.begin(), all_inputs.end(), symbol)) {
           KALDI_ERR << "The symbol " << symbol
                     << " = --nonterm-phones-offset + " << i
@@ -65,8 +65,9 @@ InverseLeftBiphoneContextFst::InverseLeftBiphoneContextFst(
       }
     }
     if (phone_syms_.empty())
-      KALDI_WARN << "Context FST created but there are no phone symbols: probably "
-          "input FST was empty.";
+      KALDI_WARN
+        << "Context FST created but there are no phone symbols: probably "
+           "input FST was empty.";
   }
 
   // empty vector, will be the ilabel_info vector that corresponds to epsilon,
@@ -77,8 +78,8 @@ InverseLeftBiphoneContextFst::InverseLeftBiphoneContextFst(
   KALDI_ASSERT(epsilon_label == 0);
 }
 
-
-InverseLeftBiphoneContextFst::Weight InverseLeftBiphoneContextFst::Final(StateId s) {
+InverseLeftBiphoneContextFst::Weight InverseLeftBiphoneContextFst::Final(
+  StateId s) {
   if (s == 0 || phone_syms_.count(s) != 0 ||
       s == GetPhoneSymbolFor(kNontermEnd))
     return Weight::One();
@@ -86,9 +87,9 @@ InverseLeftBiphoneContextFst::Weight InverseLeftBiphoneContextFst::Final(StateId
     return Weight::Zero();
 }
 
-bool InverseLeftBiphoneContextFst::GetArc(
-    StateId s, Label ilabel, Arc *arc) {
-  // it's a rule of the DeterministicOnDemandFst that the ilabel cannot be zero.q
+bool InverseLeftBiphoneContextFst::GetArc(StateId s, Label ilabel, Arc* arc) {
+  // it's a rule of the DeterministicOnDemandFst that the ilabel cannot be
+  // zero.q
   KALDI_ASSERT(ilabel != 0);
 
   arc->ilabel = ilabel;
@@ -115,8 +116,7 @@ bool InverseLeftBiphoneContextFst::GetArc(
       arc->olabel = FindLabel(this_ilabel_info);
       arc->nextstate = s;
       return true;
-    } else if (ilabel == GetPhoneSymbolFor(kNontermBegin) &&
-               s == 0) {
+    } else if (ilabel == GetPhoneSymbolFor(kNontermBegin) && s == 0) {
       // We were at the start state and saw the symbol #nonterm_begin.
       // Output nothing, but transition to the special #nonterm_begin state.
       // when we're in that state, arcs for phones generate special
@@ -148,7 +148,8 @@ bool InverseLeftBiphoneContextFst::GetArc(
       return false;
     }
   } else if (s == GetPhoneSymbolFor(kNontermBegin)) {
-    if (phone_syms_.count(ilabel) != 0 || ilabel == GetPhoneSymbolFor(kNontermBos)) {
+    if (phone_syms_.count(ilabel) != 0 ||
+        ilabel == GetPhoneSymbolFor(kNontermBos)) {
       std::vector<int32> this_ilabel_info(2);
       this_ilabel_info[0] = -GetPhoneSymbolFor(kNontermBegin);
       this_ilabel_info[1] = ilabel;
@@ -161,7 +162,8 @@ bool InverseLeftBiphoneContextFst::GetArc(
   } else if (s == GetPhoneSymbolFor(kNontermEnd)) {
     return false;
   } else if (s == GetPhoneSymbolFor(kNontermUserDefined)) {
-    if (phone_syms_.count(ilabel) != 0 || ilabel == GetPhoneSymbolFor(kNontermBos)) {
+    if (phone_syms_.count(ilabel) != 0 ||
+        ilabel == GetPhoneSymbolFor(kNontermBos)) {
       std::vector<int32> this_ilabel_info(2);
       this_ilabel_info[0] = -GetPhoneSymbolFor(kNontermReenter);
       this_ilabel_info[1] = ilabel;
@@ -178,10 +180,11 @@ bool InverseLeftBiphoneContextFst::GetArc(
   }
 }
 
-StdArc::Label InverseLeftBiphoneContextFst::FindLabel(const vector<int32> &label_vec) {
+StdArc::Label InverseLeftBiphoneContextFst::FindLabel(
+  const vector<int32>& label_vec) {
   // Finds the ilabel corresponding to this vector (creates a new ilabel if
   // necessary).
-  VectorToLabelMap::const_iterator iter = ilabel_map_.find(label_vec);
+  auto iter = ilabel_map_.find(label_vec);
   if (iter == ilabel_map_.end()) {  // Not already in map.
     Label this_label = ilabel_info_.size();
     ilabel_info_.push_back(label_vec);
@@ -192,30 +195,26 @@ StdArc::Label InverseLeftBiphoneContextFst::FindLabel(const vector<int32> &label
   }
 }
 
-
-void ComposeContextLeftBiphone(
-    int32 nonterm_phones_offset,
-    const vector<int32> &disambig_syms_in,
-    const VectorFst<StdArc> &ifst,
-    VectorFst<StdArc> *ofst,
-    std::vector<std::vector<int32> > *ilabels) {
-
+void ComposeContextLeftBiphone(int32 nonterm_phones_offset,
+                               const vector<int32>& disambig_syms_in,
+                               const VectorFst<StdArc>& ifst,
+                               VectorFst<StdArc>* ofst,
+                               std::vector<std::vector<int32>>* ilabels) {
   vector<int32> disambig_syms(disambig_syms_in);
   std::sort(disambig_syms.begin(), disambig_syms.end());
 
   vector<int32> all_syms;
-  GetInputSymbols(ifst, false/*no eps*/, &all_syms);
+  GetInputSymbols(ifst, false /*no eps*/, &all_syms);
   std::sort(all_syms.begin(), all_syms.end());
   vector<int32> phones;
   for (size_t i = 0; i < all_syms.size(); i++)
-    if (!std::binary_search(disambig_syms.begin(),
-                            disambig_syms.end(), all_syms[i]) &&
+    if (!std::binary_search(disambig_syms.begin(), disambig_syms.end(),
+                            all_syms[i]) &&
         all_syms[i] < nonterm_phones_offset)
       phones.push_back(all_syms[i]);
 
-
-  InverseLeftBiphoneContextFst inv_c(nonterm_phones_offset,
-                                     phones, disambig_syms);
+  InverseLeftBiphoneContextFst inv_c(nonterm_phones_offset, phones,
+                                     disambig_syms);
 
   // The following statement is equivalent to the following
   // (if FSTs had the '*' operator for composition):

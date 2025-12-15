@@ -23,26 +23,11 @@
 
 #include <absl/strings/str_split.h>
 
-#include <array>
-#include <atomic>
-#include <cmath>
-#include <cstdint>
-#include <cstdlib>
-#include <string>
-#include <string_view>
-#include <vector>
-
-#include "app/app_server.h"
-#include "basics/application-exit.h"
 #include "basics/file_utils.h"
 #include "basics/logger/logger.h"
 #include "basics/number_of_cores.h"
-#include "basics/operating-system.h"
 #include "basics/physical_memory.h"
-#include "basics/process-utils.h"
-#include "basics/result.h"
 #include "basics/string_utils.h"
-#include "rest_server/max_map_count_feature.h"
 
 #ifdef __linux__
 #include <sys/sysinfo.h>
@@ -82,33 +67,66 @@ std::string_view TrimProcName(std::string_view content) {
   return {};
 }
 #endif
+
+uint64_t ActualMaxMappings() {
+  uint64_t max_mappings = UINT64_MAX;
+
+  // in case we cannot determine the number of max_map_count, we will
+  // assume an effectively unlimited number of mappings
+#ifdef __linux__
+  // test max_map_count value in /proc/sys/vm
+  try {
+    std::string value =
+      sdb::basics::file_utils::Slurp("/proc/sys/vm/max_map_count");
+
+    max_mappings = sdb::basics::string_utils::Uint64(value);
+  } catch (...) {
+    // file not found or values not convertible into integers
+  }
+#endif
+
+  return max_mappings;
+}
+
+uint64_t MinimumExpectedMaxMappings() {
+#ifdef __linux__
+  uint64_t expected = 65530;  // Linux kernel default
+
+  uint64_t nproc = sdb::number_of_cores::GetValue();
+
+  // we expect at most 8 times the number of cores as the effective number of
+  // threads, and we want to allow at least 8000 mmaps per thread
+  if (nproc * 8 * 8000 > expected) {
+    expected = nproc * 8 * 8000;
+  }
+
+  return expected;
+#else
+  return 0;
+#endif
+}
+
 }  // namespace
 
 using namespace sdb::basics;
 
 namespace sdb {
-class OptionsCheckFeature;
 
-EnvironmentFeature::EnvironmentFeature(Server& server)
-  : SerenedFeature{server, name()} {
-  setOptional(true);
-}
-
-void EnvironmentFeature::prepare() {
+void PrintEnvironment() {
 #ifdef __linux__
-  _operating_system = "linux";
+  std::string operating_system = "linux";
   try {
     const std::string version_filename("/proc/version");
 
     if (basics::file_utils::Exists(version_filename)) {
-      _operating_system =
+      operating_system =
         basics::string_utils::Trim(basics::file_utils::Slurp(version_filename));
     }
   } catch (...) {
     // ignore any errors as the log output is just informational
   }
 #else
-  _operating_system = "unknown";
+  operating_system = "unknown";
 #endif
 
   // find parent process id and name
@@ -134,7 +152,7 @@ void EnvironmentFeature::prepare() {
 #endif
 
   SDB_INFO("xxxxx", Logger::FIXME,
-           "detected operating system: ", _operating_system, parent);
+           "detected operating system: ", operating_system, parent);
 
   if (sizeof(void*) == 4) {
     // 32 bit build
@@ -419,19 +437,16 @@ void EnvironmentFeature::prepare() {
   }
 
   // test max_map_count
-  if (MaxMapCountFeature::needsChecking()) {
-    uint64_t actual = MaxMapCountFeature::actualMaxMappings();
-    uint64_t expected = MaxMapCountFeature::minimumExpectedMaxMappings();
+  uint64_t actual = ActualMaxMappings();
+  uint64_t expected = MinimumExpectedMaxMappings();
 
-    if (actual < expected) {
-      SDB_WARN(
-        "xxxxx", sdb::Logger::MEMORY,
-        "maximum number of memory mappings per process is ", actual,
-        ", which seems too low. it is recommended to set it to at least ",
-        expected);
-      SDB_WARN("xxxxx", Logger::MEMORY,
-               "execute 'sudo sysctl -w \"vm.max_map_count=", expected, "\"'");
-    }
+  if (actual < expected) {
+    SDB_WARN("xxxxx", sdb::Logger::MEMORY,
+             "maximum number of memory mappings per process is ", actual,
+             ", which seems too low. it is recommended to set it to at least ",
+             expected);
+    SDB_WARN("xxxxx", Logger::MEMORY,
+             "execute 'sudo sysctl -w \"vm.max_map_count=", expected, "\"'");
   }
 
   // test zone_reclaim_mode

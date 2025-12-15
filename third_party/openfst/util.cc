@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -21,13 +21,17 @@
 
 #include <cctype>
 #include <charconv>
+#include <cstddef>
 #include <cstdint>
+#include <istream>
+#include <optional>
+#include <ostream>
 #include <sstream>
 #include <string>
+#include <system_error>
 
 #include <fst/flags.h>
 #include <fst/log.h>
-#include <fst/mapped-file.h>
 #include <string_view>
 #include <optional>
 
@@ -45,7 +49,8 @@ std::optional<int64_t> ParseInt64(std::string_view s, int base) {
   // do not return implicit char pointers on this platforms. Using data()
   // and size() instead should be more portable.
   //
-  // See: https://stackoverflow.com/questions/61203317/stdfrom-chars-doenst-compile-under-msvc
+  // See:
+  // https://stackoverflow.com/questions/61203317/stdfrom-chars-doenst-compile-under-msvc
   int64_t n;
   if (const auto [p, ec] =
           std::from_chars(s.data(), s.data() + s.size(), n, /*base=*/base);
@@ -56,10 +61,10 @@ std::optional<int64_t> ParseInt64(std::string_view s, int base) {
 }
 
 int64_t StrToInt64(std::string_view s, std::string_view source, size_t nline,
-                   bool allow_negative, bool *error) {
+                   bool *error) {
   if (error) *error = false;
   const std::optional<int64_t> maybe_n = ParseInt64(s);
-  if (!maybe_n.has_value() || (!allow_negative && *maybe_n < 0)) {
+  if (!maybe_n.has_value()) {
     FSTERROR() << "StrToInt64: Bad integer = " << s << "\", source = " << source
                << ", line = " << nline;
     if (error) *error = true;
@@ -107,8 +112,7 @@ bool AlignOutput(std::ostream &strm, size_t align) {
   return true;
 }
 
-int AlignBufferWithOutputStream(std::ostream &strm,
-                                std::ostringstream &buffer,
+int AlignBufferWithOutputStream(std::ostream &strm, std::ostringstream &buffer,
                                 size_t align) {
   const auto strm_pos = strm.tellp();
   if (strm_pos == -1) {

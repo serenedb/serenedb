@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -29,14 +29,17 @@
 #define FST_SPARSE_TUPLE_WEIGHT_H_
 
 #include <algorithm>
+#include <cstddef>
+#include <functional>
+#include <istream>
 #include <list>
+#include <ostream>
 #include <stack>
 #include <string>
 #include <utility>
 
-
+#include <fst/util.h>
 #include <fst/weight.h>
-
 
 namespace fst {
 
@@ -156,7 +159,7 @@ class SparseTupleWeight {
   // Assumes H() function exists for the hash of the key value.
   size_t Hash() const {
     size_t h = 0;
-    static const std::hash<K> H;
+    const absl::Hash<K> H;
     for (Iterator it(*this); !it.Done(); it.Next()) {
       h = 5 * h + H(it.Value().first);
       h = 13 * h + it.Value().second.Hash();
@@ -385,12 +388,6 @@ inline bool operator==(const SparseTupleWeight<W, K> &w1,
     }
   }
   return true;
-}
-
-template <class W, class K>
-inline bool operator!=(const SparseTupleWeight<W, K> &w1,
-                       const SparseTupleWeight<W, K> &w2) {
-  return !(w1 == w2);
 }
 
 template <class W, class K>

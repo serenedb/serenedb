@@ -18,7 +18,6 @@
 // limitations under the License.
 //
 
-
 #ifndef KALDI_FSTEXT_GRAMMAR_CONTEXT_FST_H_
 #define KALDI_FSTEXT_GRAMMAR_CONTEXT_FST_H_
 
@@ -40,7 +39,6 @@
    documentation on how this framework works.
 */
 
-
 #include <algorithm>
 #include <string>
 #include <vector>
@@ -52,7 +50,6 @@
 #include "fstext/context-fst.h"
 
 namespace fst {
-
 
 /**
    An anonymous enum to define some values for symbols used in our grammar-fst
@@ -66,11 +63,12 @@ namespace fst {
  */
 
 enum NonterminalValues {
-  kNontermBos = 0,  // #nonterm_bos
-  kNontermBegin = 1,  // #nonterm_begin
-  kNontermEnd = 2,  // #nonterm_end
+  kNontermBos = 0,      // #nonterm_bos
+  kNontermBegin = 1,    // #nonterm_begin
+  kNontermEnd = 2,      // #nonterm_end
   kNontermReenter = 3,  // #nonterm_reenter
-  kNontermUserDefined = 4,   // the lowest-numbered user-defined nonterminal, e.g. #nonterm:foo
+  kNontermUserDefined =
+    4,  // the lowest-numbered user-defined nonterminal, e.g. #nonterm:foo
   // kNontermMediumNumber and kNontermBigNumber come into the encoding of
   // nonterminal-related symbols in HCLG.fst.  The only hard constraint on them
   // is that kNontermBigNumber must be bigger than the biggest transition-id in
@@ -80,8 +78,6 @@ enum NonterminalValues {
   kNontermBigNumber = 10000000
 };
 
-
-
 // Returns the smallest multiple of 1000 that is strictly greater than
 // nonterm_phones_offset.  Used in the encoding of special symbol in HCLG;
 // they are encoded as
@@ -90,7 +86,7 @@ enum NonterminalValues {
 inline int32 GetEncodingMultiple(int32 nonterm_phones_offset) {
   int32 medium_number = static_cast<int32>(kNontermMediumNumber);
   return medium_number *
-      ((nonterm_phones_offset + medium_number) / medium_number);
+         ((nonterm_phones_offset + medium_number) / medium_number);
 }
 
 /**
@@ -105,35 +101,32 @@ inline int32 GetEncodingMultiple(int32 nonterm_phones_offset) {
 
     @param [in] nonterm_phones_offset  The integer id of the symbol
                   #nonterm_bos in the phones.txt file.  You can just set this
-                  to a large value (like 1 million) if you are not actually using
-                  nonterminals (e.g. for testing purposes).
+                  to a large value (like 1 million) if you are not actually
+   using nonterminals (e.g. for testing purposes).
     @param [in] disambig_syms  List of disambiguation symbols, e.g. the integer
                  ids of #0, #1, #2 ... in the phones.txt.
     @param [in,out] ifst   The FST we are composing with C (e.g. LG.fst).
     @param [out] ofst   Composed output FST (would be CLG.fst).
-    @param [out] ilabels  Vector, indexed by ilabel of CLG.fst, providing information
-                  about the meaning of that ilabel; see \ref tree_ilabel
+    @param [out] ilabels  Vector, indexed by ilabel of CLG.fst, providing
+   information about the meaning of that ilabel; see \ref tree_ilabel
                   (http://kaldi-asr.org/doc/tree_externals.html#tree_ilabel)
                   and also \ref grammar_special_clg
                   (http://kaldi-asr.org/doc/grammar#grammar_special_clg).
   */
-void ComposeContextLeftBiphone(
-    int32 nonterm_phones_offset,
-    const std::vector<int32> &disambig_syms,
-    const VectorFst<StdArc> &ifst,
-    VectorFst<StdArc> *ofst,
-    std::vector<std::vector<int32> > *ilabels);
-
-
+void ComposeContextLeftBiphone(int32 nonterm_phones_offset,
+                               const std::vector<int32>& disambig_syms,
+                               const VectorFst<StdArc>& ifst,
+                               VectorFst<StdArc>* ofst,
+                               std::vector<std::vector<int32>>* ilabels);
 
 /*
-   InverseLeftBiphoneContextFst represents the inverse of the context FST "C" (the "C" in
-   "HCLG") which transduces from symbols representing phone context windows
-   (e.g. "a, b, c") to individual phones, e.g. "a".  So InverseContextFst
-   transduces from phones to symbols representing phone context windows.  The
-   point is that the inverse is deterministic, so the DeterministicOnDemandFst
-   interface is applicable, which turns out to be a convenient way to implement
-   this.
+   InverseLeftBiphoneContextFst represents the inverse of the context FST "C"
+   (the "C" in "HCLG") which transduces from symbols representing phone context
+   windows (e.g. "a, b, c") to individual phones, e.g. "a".  So
+   InverseContextFst transduces from phones to symbols representing phone
+   context windows.  The point is that the inverse is deterministic, so the
+   DeterministicOnDemandFst interface is applicable, which turns out to be a
+   convenient way to implement this.
 
    This doesn't implement the full Fst interface, it implements the
    DeterministicOnDemandFst interface which is much simpler and which is
@@ -143,8 +136,8 @@ void ComposeContextLeftBiphone(
    Transducers") by M. Mohri, for more context.
 */
 
-class InverseLeftBiphoneContextFst: public DeterministicOnDemandFst<StdArc> {
-public:
+class InverseLeftBiphoneContextFst : public DeterministicOnDemandFst<StdArc> {
+ public:
   typedef StdArc Arc;
   typedef typename StdArc::StateId StateId;
   typedef typename StdArc::Weight Weight;
@@ -160,9 +153,10 @@ public:
                   #nonterm_bos in the phones.txt file. You can just set this to
                   a large value (like 1 million) if you are not actually using
                   nonterminals (e.g. for testing purposes).
-        @param [in] phones      List of integer ids of phones, as you would see in phones.txt
-        @param [in] disambig_syms   List of integer ids of disambiguation symbols,
-                                   e.g. the ids of #0, #1, #2 in phones.txt
+        @param [in] phones      List of integer ids of phones, as you would see
+     in phones.txt
+        @param [in] disambig_syms   List of integer ids of disambiguation
+     symbols, e.g. the ids of #0, #1, #2 in phones.txt
 
      See \ref graph_context for more details.
   */
@@ -185,52 +179,53 @@ public:
 
        If p is equal to nonterm_phones_offset_ + kNontermBegin (i.e. the
        integer form of `\#nonterm_begin`), then this is the state we transition
-       to when we see that symbol starting from left-context==0 (no context).  The
-       transition to this special state will have epsilon on the output.  (talking
-       here about inv(C), not C, so input/output are reversed).
-       The state is nonfinal and when we see a regular phone p1 or #nonterm_bos, instead of
-       outputting that phone in context, we output the pair (#nonterm_begin,p1) or
+       to when we see that symbol starting from left-context==0 (no context).
+     The transition to this special state will have epsilon on the output.
+     (talking here about inv(C), not C, so input/output are reversed). The state
+     is nonfinal and when we see a regular phone p1 or #nonterm_bos, instead of
+       outputting that phone in context, we output the pair (#nonterm_begin,p1)
+     or
        (#nonterm_begin,#nonterm_bos).  This state is not final.
 
        If p is equal to nonterm_phones_offset_ + kNontermUserDefined, then this
        is the state we transition to when we see any user-defined nonterminal.
-       Transitions to this special state have olabels of the form (#nonterm:foo,p1)
-       where p1 is the preceding context (with #nonterm_begin if that context was
-       0); transitions out of it have olabels of the form (#nonterm_reenter,p2), where
-       p2 is the phone on the ilabel of that transition.  Again: talking about inv(C).
-       This state is not final.
+       Transitions to this special state have olabels of the form
+     (#nonterm:foo,p1) where p1 is the preceding context (with #nonterm_begin if
+     that context was 0); transitions out of it have olabels of the form
+     (#nonterm_reenter,p2), where p2 is the phone on the ilabel of that
+     transition.  Again: talking about inv(C). This state is not final.
 
        If p is equal to nonterm_phones_offset_ + kNontermEnd, then this is
-       the state we transition to when we see the ilabel #nonterm_end.  The olabels
-       on the transitions to it (talking here about inv(C), so ilabels and olabels
-       are reversed) are of the form (#nonterm_end, p1) where p1 corresponds to the
-       context we were in.  This state is final.
+       the state we transition to when we see the ilabel #nonterm_end.  The
+     olabels on the transitions to it (talking here about inv(C), so ilabels and
+     olabels are reversed) are of the form (#nonterm_end, p1) where p1
+     corresponds to the context we were in.  This state is final.
    */
-
 
   virtual StateId Start() { return 0; }
 
   virtual Weight Final(StateId s);
 
   /// Note: ilabel must not be epsilon.
-  virtual bool GetArc(StateId s, Label ilabel, Arc *arc);
+  virtual bool GetArc(StateId s, Label ilabel, Arc* arc);
 
-  ~InverseLeftBiphoneContextFst() { }
+  ~InverseLeftBiphoneContextFst() {}
 
   // Returns a reference to a vector<vector<int32> > with information about all
   // the input symbols of C (i.e. all the output symbols of this
   // InverseContextFst).  See
   // "http://kaldi-asr.org/doc/tree_externals.html#tree_ilabel".
-  const std::vector<std::vector<int32> > &IlabelInfo() const {
+  const std::vector<std::vector<int32>>& IlabelInfo() const {
     return ilabel_info_;
   }
 
   // A way to destructively obtain the ilabel-info.  Only do this if you
   // are just about to destroy this object.
-  void SwapIlabelInfo(std::vector<std::vector<int32> > *vec) { ilabel_info_.swap(*vec); }
+  void SwapIlabelInfo(std::vector<std::vector<int32>>* vec) {
+    ilabel_info_.swap(*vec);
+  }
 
-private:
-
+ private:
   inline int32 GetPhoneSymbolFor(enum NonterminalValues n) {
     return nonterm_phones_offset_ + static_cast<int32>(n);
   }
@@ -238,15 +233,14 @@ private:
   /// Finds the label index corresponding to this context-window of phones
   /// (likely of width context_width_).  Inserts it into the
   /// ilabel_info_/ilabel_map_ tables if necessary.
-  Label FindLabel(const std::vector<int32> &label_info);
-
+  Label FindLabel(const std::vector<int32>& label_info);
 
   // Map type to map from vectors of int32 (representing ilabel-info,
   // see http://kaldi-asr.org/doc/tree_externals.html#tree_ilabel) to
   // Label (the output label in this FST).
-  typedef unordered_map<std::vector<int32>, Label,
-                        kaldi::VectorHasher<int32> > VectorToLabelMap;
-
+  typedef absl::node_hash_map<std::vector<int32>, Label,
+                              kaldi::VectorHasher<int32>>
+    VectorToLabelMap;
 
   // The following three variables were also passed in by the caller:
   int32 nonterm_phones_offset_;
@@ -263,7 +257,6 @@ private:
   // information.
   kaldi::ConstIntegerSet<Label> disambig_syms_;
 
-
   // maps from vector<int32>, representing phonetic contexts of length
   // context_width_ - 1, to Label.  These are actually the output labels of this
   // InverseContextFst (because of the "Inverse" part), but for historical
@@ -277,11 +270,9 @@ private:
   // information about the meaning of each symbol on the input of C
   // aka the output of inv(C).
   // See "http://kaldi-asr.org/doc/tree_externals.html#tree_ilabel".
-  std::vector<std::vector<int32> > ilabel_info_;
-
+  std::vector<std::vector<int32>> ilabel_info_;
 };
 
 }  // namespace fst
-
 
 #endif  // KALDI_FSTEXT_GRAMMAR_CONTEXT_FST_H_

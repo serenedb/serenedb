@@ -60,7 +60,6 @@
 #include "query/config.h"
 #include "query/cursor.h"
 #include "query/utils.h"
-#include "rest_server/database_feature.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
@@ -365,14 +364,20 @@ void PgSQLCommTaskBase::HandleClientPacket(std::string_view packet) {
 }
 
 void PgSQLCommTaskBase::DescribeAnalyzedQuery(
-  const velox::RowTypePtr& output_type, const std::vector<VarFormat>& formats) {
-  if (!output_type) {
-    _send.Write(ToBuffer(kNoData), false);
+  const query::Query& query, const std::vector<VarFormat>& formats,
+  bool extended) {
+  const auto& output_type = query.GetOutputType();
+  const uint16_t num_fields = output_type ? output_type->size() : 0;
+  // If it's DML but name of column isn't "rows" it means it's explain for DML.
+  // In such case we should send rows as usual.
+  if (num_fields == 0 || (query.IsDML() && output_type->nameOf(0) == "rows")) {
+    if (extended) {
+      _send.Write(ToBuffer(kNoData), extended);
+    }
     return;
   }
   const auto uncommitted_size = _send.GetUncommittedSize();
   auto* prefix_data = _send.GetContiguousData(7);
-  const uint16_t num_fields = output_type ? output_type->size() : 0;
   SDB_ASSERT(formats.size() <= 1 || num_fields == formats.size());
   const auto default_format = formats.empty() ? VarFormat::Text : formats[0];
   for (uint16_t i = 0; i < num_fields; ++i) {
@@ -398,8 +403,7 @@ void PgSQLCommTaskBase::DescribeAnalyzedQuery(
   absl::big_endian::Store32(prefix_data + 1,
                             _send.GetUncommittedSize() - uncommitted_size - 1);
   absl::big_endian::Store16(prefix_data + 5, num_fields);
-  // TODO(mbkkt) flush not needed here for simple protocol
-  _send.Commit(true);
+  _send.Commit(extended);
 }
 
 void DescribeParameters(const std::vector<velox::TypePtr>& param_types,
@@ -425,8 +429,8 @@ void PgSQLCommTaskBase::DescribePortal(const SqlPortal& portal) {
   if (!portal.stmt->query && portal.stmt->NextRoot(_connection_ctx)) {
     SendWarnings();
   }
-  DescribeAnalyzedQuery(portal.stmt->query->GetOutputType(),
-                        portal.bind_info.output_formats);
+  SDB_ASSERT(portal.stmt->query);
+  DescribeAnalyzedQuery(*portal.stmt->query, portal.bind_info.output_formats);
 }
 
 void PgSQLCommTaskBase::DescribeStatement(SqlStatement& statement) {
@@ -434,7 +438,8 @@ void PgSQLCommTaskBase::DescribeStatement(SqlStatement& statement) {
     SendWarnings();
   }
   DescribeParameters(statement.params.types, _send);
-  DescribeAnalyzedQuery(statement.query->GetOutputType(), {});
+  SDB_ASSERT(statement.query);
+  DescribeAnalyzedQuery(*statement.query, {});
 }
 
 void PgSQLCommTaskBase::DescribeQuery(std::string_view packet) {
@@ -540,12 +545,8 @@ void PgSQLCommTaskBase::RunSimpleQuery(std::string_view query_string) {
 
     if (_anonymous_statement.query) {
       _anonymous_portal = BindStatement(_anonymous_statement, {});
-      if (auto type = _anonymous_statement.query->GetOutputType();
-          type && type->size() != 0) {
-        // TODO: enter here only in case we wanna an output data from query.
-        // maybe determine it with query type
-        DescribeAnalyzedQuery(type, _anonymous_portal.bind_info.output_formats);
-      }
+      DescribeAnalyzedQuery(*_anonymous_statement.query,
+                            _anonymous_portal.bind_info.output_formats, false);
       ExecutePortal(_anonymous_portal, 0);
     } else if (!IsCancelled()) {
       _send.Write(ToBuffer(kEmptyResult), false);
@@ -647,6 +648,7 @@ std::optional<std::vector<VarFormat>> PgSQLCommTaskBase::ParseBindFormats(
 std::optional<BindInfo> PgSQLCommTaskBase::ParseBindVars(
   std::string_view packet, const std::string_view statement_name,
   const std::vector<velox::TypePtr>& param_types) {
+  // TODO: reuse vectors for BindInfo
   auto maybe_input_formats = ParseBindFormats(packet);
   if (!maybe_input_formats) {
     return std::nullopt;
@@ -735,7 +737,6 @@ std::optional<BindInfo> PgSQLCommTaskBase::ParseBindVars(
   }
   SDB_ASSERT(packet.empty());
   return BindInfo{
-    std::move(input_formats),
     std::move(*maybe_output_formats),
     std::move(param_values),
   };
@@ -929,7 +930,7 @@ void PgSQLCommTaskBase::NextRootPortal() {
 auto PgSQLCommTaskBase::BindStatement(SqlStatement& stmt, BindInfo bind_info)
   -> SqlPortal {
   SqlPortal portal{.serialization_context{.buffer = &_send}};
-  FillContext(_connection_ctx->GetConfig(), portal.serialization_context);
+  FillContext(*_connection_ctx, portal.serialization_context);
 
   portal.bind_info = std::move(bind_info);
   auto& param_values = portal.bind_info.param_values;
@@ -1007,6 +1008,17 @@ void PgSQLCommTaskBase::SendBatch(const velox::RowVectorPtr& batch) {
     return;
   }
 
+  // If it's DML but name of column isn't "rows" it means it's explain for DML.
+  // In such case we should send rows as usual.
+  if (portal.stmt->query->IsDML() && output_type->nameOf(0) == "rows") {
+    const auto& column = batch->childAt(0);
+    const auto& cell = column->variantAt(0);
+    const auto& value = cell.value<int64_t>();
+    SDB_ENSURE(value >= 0, ERROR_INTERNAL);
+    portal.rows += value;
+    return;
+  }
+
   const auto& formats = portal.bind_info.output_formats;
   SDB_ASSERT(formats.size() <= 1 || batch_columns == formats.size());
 
@@ -1018,7 +1030,7 @@ void PgSQLCommTaskBase::SendBatch(const velox::RowVectorPtr& batch) {
   }
 
   for (velox::vector_size_t row = 0; row < batch_rows; ++row) {
-    ++portal.rows_fetched;
+    ++portal.rows;
     const auto uncommitted_size = _send.GetUncommittedSize();
     auto* prefix_data = _send.GetContiguousData(7);
     for (uint16_t column = 0; column < batch_columns; ++column) {
@@ -1059,24 +1071,16 @@ auto PgSQLCommTaskBase::ProcessQueryResult() -> ProcessState {
                    .errmsg = std::string{r.errorMessage()},
                  },
                  {});
-      if (state == query::Cursor::Process::Done) {
-        // Complete command should be sent after warnings either
-        SendCommandComplete(portal.stmt->tree, portal.rows_fetched);
-      }
     } else {
       SendError(r.errorMessage(), "58000");
     }
   }
-
-  if (r.ok()) {
-    if (state == query::Cursor::Process::More) {
-      return ProcessState::More;
-    }
-    SDB_ASSERT(state == query::Cursor::Process::Done);
-    // TODO assign count of executed writes to rows_fetched for modify
-    // commands
-    SendCommandComplete(portal.stmt->tree, portal.rows_fetched);
+  if (state == query::Cursor::Process::More) {
+    return ProcessState::More;
   }
+  SDB_ASSERT(state == query::Cursor::Process::Done);
+  SendCommandComplete(portal.stmt->tree, portal.rows);
+
   // In case of EXPLAIN statement
   // batch should be cleaned before cursor,
   // because cursor stores batch's memory pool
@@ -1093,23 +1097,32 @@ auto PgSQLCommTaskBase::ProcessQueryResult() -> ProcessState {
 }
 
 void PgSQLCommTaskBase::SendCommandComplete(const SqlTree& tree,
-                                            size_t rows_affected) {
+                                            uint64_t rows) {
   SDB_ASSERT(tree.root_idx);
   auto* root = castNode(Node, tree.GetRoot());
 
-  const QueryCompletion qc{.commandTag = CreateCommandTag(root),
-                           .nprocessed = rows_affected};
+  const auto command_tag = CreateCommandTag(root);
   const auto uncommitted_size = _send.GetUncommittedSize();
   auto* prefix_data = _send.GetContiguousData(5);
   {
     Size taglen = 0;
-    const char* tagname = GetCommandTagNameAndLen(qc.commandTag, &taglen);
-    // TODO: Use WriteUncommitted?
-    auto* tag_data = _send.GetContiguousData(taglen + 1);
-    std::memcpy(tag_data, tagname, taglen);
-    // TODO: Do we need zero-termination here?
-    tag_data[taglen] = '\0';
+    const char* tagname = GetCommandTagNameAndLen(command_tag, &taglen);
+    _send.WriteUncommitted({tagname, taglen});
   }
+  if (command_tag_display_rowcount(command_tag)) {
+    _send.WriteContiguousData(3 + basics::kIntStrMaxLen, [&](auto* data) {
+      char* const buf = reinterpret_cast<char*>(data);
+      char* ptr = buf;
+      if (command_tag == CMDTAG_INSERT) {
+        *ptr++ = ' ';
+        *ptr++ = '0';
+      }
+      *ptr++ = ' ';
+      ptr = absl::numbers_internal::FastIntToBuffer(rows, ptr);
+      return static_cast<size_t>(ptr - buf);
+    });
+  }
+  _send.WriteUncommitted({"\0", 1});
   prefix_data[0] = PQ_MSG_COMMAND_COMPLETE;
   absl::big_endian::Store32(prefix_data + 1,
                             _send.GetUncommittedSize() - uncommitted_size - 1);

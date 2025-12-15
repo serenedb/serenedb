@@ -54,10 +54,9 @@ class UpgradeFeature final : public SerenedFeature {
   bool upgrading() const noexcept { return _upgrade; }
 
  private:
-  void upgradeLocalDatabase();
-
- private:
   friend struct methods::Upgrade;  // to allow access to '_tasks'
+
+  void upgradeLocalDatabase();
 
   bool _upgrade;
   bool _upgrade_check;

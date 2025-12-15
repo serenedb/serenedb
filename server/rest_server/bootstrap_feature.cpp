@@ -33,8 +33,8 @@
 #include "catalog/identifiers/object_id.h"
 #include "general_server/state.h"
 #include "rest/version.h"
-#include "rest_server/database_feature.h"
 #include "rest_server/serened.h"
+#include "rest_server/upgrade_feature.h"
 
 #ifdef SDB_CLUSTER
 #include "agency/agency_comm.h"
@@ -285,7 +285,7 @@ void BootstrapFeature::start() {
   // Start service properly:
   ServerState::instance()->SetMode(ServerState::Mode::Default);
 
-  if (!server().getFeature<DatabaseFeature>().upgrade()) {
+  if (!server().getFeature<UpgradeFeature>().upgrading()) {
     SDB_INFO("xxxxx", sdb::Logger::FIXME, "SereneDB (version ",
              SERENEDB_VERSION_FULL, ") is ready for business. Have fun!");
   }

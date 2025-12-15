@@ -21,11 +21,14 @@
 
 #pragma once
 
+#include <absl/base/thread_annotations.h>
+
 #include <array>
 #include <initializer_list>
 #include <string>
 #include <string_view>
 
+#include "basics/cpu_usage_snapshot.h"
 #include "basics/result.h"
 #include "basics/system-functions.h"
 #include "metrics/fwd.h"
@@ -92,6 +95,22 @@ extern RequestFigures gSuperuserRequestFigures;
 extern RequestFigures gUserRequestFigures;
 }  // namespace statistics
 
+class CpuUsage final {
+ public:
+  CpuUsage();
+  ~CpuUsage();
+  CpuUsageSnapshot snapshot();
+
+ private:
+  struct SnapshotProvider;
+
+  std::unique_ptr<SnapshotProvider> _snapshot_provider;
+  absl::Mutex _snapshot_mutex;
+  CpuUsageSnapshot _snapshot ABSL_GUARDED_BY(_snapshot_mutex);
+  CpuUsageSnapshot _snapshot_delta ABSL_GUARDED_BY(_snapshot_mutex);
+  bool _update_in_progress ABSL_GUARDED_BY(_snapshot_mutex) = false;
+};
+
 class StatisticsFeature final : public SerenedFeature {
  public:
   static double time() { return utilities::GetMicrotime(); }
@@ -128,6 +147,7 @@ class StatisticsFeature final : public SerenedFeature {
                               bool ensure_whitespace);
   bool _statistics;
 
+  CpuUsage _cpu_usage;
   stats::Descriptions _descriptions;
   std::unique_ptr<Thread> _statistics_thread;
   metrics::Gauge<uint64_t>& _request_statistics_memory_usage;

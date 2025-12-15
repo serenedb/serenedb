@@ -28,12 +28,9 @@
 #include "catalog/sharding_strategy.h"
 #include "catalog/table_options.h"
 #include "pg/commands.h"
+#include "pg/connection_context.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_analyzer_velox.h"
-#include "pg/sql_exception.h"
-#include "pg/sql_exception_macro.h"
-#include "pg/sql_utils.h"
-#include "rest_server/database_feature.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
@@ -54,9 +51,15 @@ inline int ExprLocation(const T* node) noexcept {
 yaclib::Future<Result> CreateTable(ExecContext& context,
                                    const CreateStmt& stmt) {
   const auto db = context.GetDatabaseId();
+  const auto& conn_ctx = basics::downCast<const ConnectionContext>(context);
+  std::string current_schema = conn_ctx.GetCurrentSchema();
   const std::string_view schema =
     stmt.relation->schemaname ? std::string_view{stmt.relation->schemaname}
-                              : StaticStrings::kPublic;
+                              : current_schema;
+  if (schema.empty()) {
+    return yaclib::MakeFuture<Result>(
+      ERROR_BAD_PARAMETER, "no schema has been selected to create in");
+  }
   const std::string_view table = stmt.relation->relname;
 
   auto& catalog =

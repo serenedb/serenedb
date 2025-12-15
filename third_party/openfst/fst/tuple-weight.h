@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -22,16 +22,17 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <istream>
+#include <ostream>
 #include <string>
 #include <vector>
 
 #include <fst/flags.h>
 #include <fst/log.h>
-
 #include <fst/weight.h>
-
 
 namespace fst {
 
@@ -124,15 +125,6 @@ inline bool operator==(const TupleWeight<W, n> &w1,
     if (w1.Value(i) != w2.Value(i)) return false;
   }
   return true;
-}
-
-template <class W, size_t n>
-inline bool operator!=(const TupleWeight<W, n> &w1,
-                       const TupleWeight<W, n> &w2) {
-  for (size_t i = 0; i < n; ++i) {
-    if (w1.Value(i) != w2.Value(i)) return true;
-  }
-  return false;
 }
 
 template <class W, size_t n>

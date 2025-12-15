@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -23,11 +23,11 @@
 #include <algorithm>
 #include <initializer_list>
 #include <iostream>
+#include <istream>
+#include <ostream>
 #include <vector>
 
-
 #include <fst/util.h>
-
 
 namespace fst {
 
@@ -47,10 +47,6 @@ struct IntInterval {
 
   bool operator==(const IntInterval<T> &i) const {
     return begin == i.begin && end == i.end;
-  }
-
-  bool operator!=(const IntInterval<T> &i) const {
-    return begin != i.begin || end != i.end;
   }
 
   std::istream &Read(std::istream &strm) {
@@ -167,13 +163,6 @@ class IntervalSet {
     return Size() == iset.Size() &&
            std::equal(intervals_.begin(), intervals_.end(),
                       iset.intervals_.begin());
-  }
-
-  // Requires intervals be normalized.
-  bool operator!=(const IntervalSet<T, Store> &iset) const {
-    return Size() != iset.Size() ||
-           !std::equal(intervals_.begin(), intervals_.end(),
-                       iset.intervals_.begin());
   }
 
   bool Singleton() const {

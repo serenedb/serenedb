@@ -27,6 +27,7 @@
 #include "catalog/function.h"
 #include "catalog/sql_function_impl.h"
 #include "pg/commands.h"
+#include "pg/connection_context.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_analyzer_velox.h"
 #include "pg/sql_collector.h"
@@ -34,7 +35,6 @@
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "query/types.h"
-#include "rest_server/database_feature.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
@@ -152,8 +152,11 @@ yaclib::Future<Result> CreateFunction(ExecContext& context,
 
   SDB_ASSERT(stmt.funcname);
 
-  auto [schema, function_name] = ParseObjectName(
-    stmt.funcname, context.GetDatabase(), StaticStrings::kPublic);
+  auto current_schema =
+    basics::downCast<const ConnectionContext>(context).GetCurrentSchema();
+
+  auto [schema, function_name] =
+    ParseObjectName(stmt.funcname, context.GetDatabase(), current_schema);
 
   auto& catalogs =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>();

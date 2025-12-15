@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -23,17 +23,21 @@
 #include <algorithm>
 #include <vector>
 
-
+#include <fst/arc.h>
+#include <fst/cache.h>
+#include <fst/float-weight.h>
+#include <fst/fst.h>
+#include <fst/impl-to-fst.h>
 #include <fst/mutable-fst.h>
+#include <fst/properties.h>
 #include <fst/rational.h>
-
 
 namespace fst {
 
 // Computes the concatenative closure. This version modifies its
 // MutableFst input. If an FST transduces string x to y with weight a,
 // then its closure transduces x to y with weight a, xx to yy with
-// weight Times(a, a), xxx to yyy with with Times(Times(a, a), a),
+// weight Times(a, a), xxx to yyy with Times(Times(a, a), a),
 // etc. If closure_type == CLOSURE_STAR, then the empty string is
 // transduced to itself with weight Weight::One() as well.
 //
@@ -97,6 +101,8 @@ struct ClosureFstOptions : RationalFstOptions {
 // input state or arc is assumed and exclusive of caching.
 template <class A>
 class ClosureFst : public RationalFst<A> {
+  using Base = RationalFst<A>;
+
  public:
   using Arc = A;
 
@@ -104,14 +110,12 @@ class ClosureFst : public RationalFst<A> {
     GetMutableImpl()->InitClosure(fst, closure_type);
   }
 
-  ClosureFst(const Fst<Arc> &fst, const ClosureFstOptions &opts)
-      : RationalFst<A>(opts) {
+  ClosureFst(const Fst<Arc> &fst, const ClosureFstOptions &opts) : Base(opts) {
     GetMutableImpl()->InitClosure(fst, opts.type);
   }
 
   // See Fst<>::Copy() for doc.
-  ClosureFst(const ClosureFst &fst, bool safe = false)
-      : RationalFst<A>(fst, safe) {}
+  ClosureFst(const ClosureFst &fst, bool safe = false) : Base(fst, safe) {}
 
   // Gets a copy of this ClosureFst. See Fst<>::Copy() for further doc.
   ClosureFst *Copy(bool safe = false) const override {
@@ -119,8 +123,8 @@ class ClosureFst : public RationalFst<A> {
   }
 
  private:
-  using ImplToFst<internal::RationalFstImpl<Arc>>::GetImpl;
-  using ImplToFst<internal::RationalFstImpl<Arc>>::GetMutableImpl;
+  using Base::GetImpl;
+  using Base::GetMutableImpl;
 };
 
 // Specialization for ClosureFst.

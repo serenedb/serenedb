@@ -23,10 +23,9 @@
 #include <cstdio>
 #include <thread>
 
-
 namespace kaldi {
 
-std::string CharToString(const char &c) {
+std::string CharToString(const char& c) {
   char buf[20];
   if (std::isprint(c))
     std::snprintf(buf, sizeof(buf), "\'%c\'", c);

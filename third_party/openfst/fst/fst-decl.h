@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -19,6 +19,8 @@
 
 #ifndef FST_FST_DECL_H_
 #define FST_FST_DECL_H_
+
+// Do not let Include-What-You-Use suggest this file.
 
 #include <sys/types.h>
 
@@ -59,7 +61,7 @@ using MinMaxWeight = MinMaxWeightTpl<float>;
 
 // Arc templates and arcs.
 
-template <class Weight>
+template <class Weight, class Label = int, class StateId = int>
 struct ArcTpl;
 
 using StdArc = ArcTpl<TropicalWeight>;
@@ -142,9 +144,6 @@ class IntersectFst;
 
 template <class Arc>
 class InvertFst;
-
-template <class AArc, class BArc, class Mapper>
-class ArcMapFst;
 
 template <class Arc>
 class ProjectFst;

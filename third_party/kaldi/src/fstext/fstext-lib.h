@@ -1,6 +1,7 @@
 // fstext/fstext-lib.h
 
-// Copyright 2009-2012  Microsoft Corporation  Johns Hopkins University (author: Daniel Povey)
+// Copyright 2009-2012  Microsoft Corporation  Johns Hopkins University (author:
+// Daniel Povey)
 
 // See ../../COPYING for clarification regarding multiple authors
 //

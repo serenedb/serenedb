@@ -26,10 +26,8 @@
 
 namespace fst {
 
-
-template <class Arc>
-void WriteFstKaldi(std::ostream &os, bool binary,
-                   const VectorFst<Arc> &t) {
+template<class Arc>
+void WriteFstKaldi(std::ostream& os, bool binary, const VectorFst<Arc>& t) {
   bool ok;
   if (binary) {
     // Binary-mode writing.
@@ -42,9 +40,9 @@ void WriteFstKaldi(std::ostream &os, bool binary,
     // appear on its own line.
     os << '\n';
     bool acceptor = false, write_one = false;
-    FstPrinter<Arc> printer(t, t.InputSymbols(), t.OutputSymbols(),
-                            NULL, acceptor, write_one, "\t");
-    printer.Print(&os, "<unknown>");
+    FstPrinter<Arc> printer(t, t.InputSymbols(), t.OutputSymbols(), NULL,
+                            acceptor, write_one, "\t");
+    printer.Print(os, "<unknown>");
     if (os.fail())
       KALDI_ERR << "Stream failure detected writing FST to stream";
     // Write another newline as a terminating character.  The read routine will
@@ -59,8 +57,8 @@ void WriteFstKaldi(std::ostream &os, bool binary,
 }
 
 // Utility function used in ReadFstKaldi
-template <class W>
-inline bool StrToWeight(const std::string &s, bool allow_zero, W *w) {
+template<class W>
+inline bool StrToWeight(const std::string& s, bool allow_zero, W* w) {
   std::istringstream strm(s);
   strm >> *w;
   if (strm.fail() || (!allow_zero && *w == W::Zero())) {
@@ -69,15 +67,14 @@ inline bool StrToWeight(const std::string &s, bool allow_zero, W *w) {
   return true;
 }
 
-template <class Arc>
-void ReadFstKaldi(std::istream &is, bool binary,
-                  VectorFst<Arc> *fst) {
+template<class Arc>
+void ReadFstKaldi(std::istream& is, bool binary, VectorFst<Arc>* fst) {
   typedef typename Arc::Weight Weight;
   typedef typename Arc::StateId StateId;
   if (binary) {
     // We don't have access to the filename here, so write [unknown].
-    VectorFst<Arc> *ans =
-        VectorFst<Arc>::Read(is, fst::FstReadOptions(std::string("[unknown]")));
+    VectorFst<Arc>* ans =
+      VectorFst<Arc>::Read(is, fst::FstReadOptions(std::string("[unknown]")));
     if (ans == NULL) {
       KALDI_ERR << "Error reading FST from stream.";
     }
@@ -86,26 +83,29 @@ void ReadFstKaldi(std::istream &is, bool binary,
   } else {
     // Consume the \r on Windows, the \n that the text-form FST format starts
     // with, and any extra spaces that might have got in there somehow.
-    while (std::isspace(is.peek()) && is.peek() != '\n') is.get();
-    if (is.peek() == '\n') is.get(); // consume the newline.
-    else { // saw spaces but no newline.. this is not expected.
+    while (std::isspace(is.peek()) && is.peek() != '\n')
+      is.get();
+    if (is.peek() == '\n')
+      is.get();  // consume the newline.
+    else {       // saw spaces but no newline.. this is not expected.
       KALDI_ERR << "Reading FST: unexpected sequence of spaces "
                 << " at file position " << is.tellg();
     }
+    using kaldi::ConvertStringToInteger;
+    using kaldi::SplitStringToIntegers;
     using std::string;
     using std::vector;
-    using kaldi::SplitStringToIntegers;
-    using kaldi::ConvertStringToInteger;
     fst->DeleteStates();
     string line;
     size_t nline = 0;
-    string separator = FLAGS_fst_field_separator + "\r\n";
+    string separator = FST_FLAGS_fst_field_separator + "\r\n";
     while (std::getline(is, line)) {
       nline++;
       vector<string> col;
       // on Windows we'll write in text and read in binary mode.
       kaldi::SplitStringToVector(line, separator.c_str(), true, &col);
-      if (col.size() == 0) break; // Empty line is a signal to stop, in our
+      if (col.size() == 0)
+        break;  // Empty line is a signal to stop, in our
       // archive format.
       if (col.size() > 5) {
         KALDI_ERR << "Bad line in FST: " << line;
@@ -116,7 +116,8 @@ void ReadFstKaldi(std::istream &is, bool binary,
       }
       while (s >= fst->NumStates())
         fst->AddState();
-      if (nline == 1) fst->SetStart(s);
+      if (nline == 1)
+        fst->SetStart(s);
 
       bool ok = true;
       Arc arc;
@@ -127,16 +128,18 @@ void ReadFstKaldi(std::istream &is, bool binary,
           fst->SetFinal(s, Weight::One());
           break;
         case 2:
-          if (!StrToWeight(col[1], true, &w)) ok = false;
-          else fst->SetFinal(s, w);
+          if (!StrToWeight(col[1], true, &w))
+            ok = false;
+          else
+            fst->SetFinal(s, w);
           break;
-        case 3: // 3 columns not ok for Lattice format; it's not an acceptor.
+        case 3:  // 3 columns not ok for Lattice format; it's not an acceptor.
           ok = false;
           break;
         case 4:
           ok = ConvertStringToInteger(col[1], &arc.nextstate) &&
-              ConvertStringToInteger(col[2], &arc.ilabel) &&
-              ConvertStringToInteger(col[3], &arc.olabel);
+               ConvertStringToInteger(col[2], &arc.ilabel) &&
+               ConvertStringToInteger(col[3], &arc.olabel);
           if (ok) {
             d = arc.nextstate;
             arc.weight = Weight::One();
@@ -145,9 +148,9 @@ void ReadFstKaldi(std::istream &is, bool binary,
           break;
         case 5:
           ok = ConvertStringToInteger(col[1], &arc.nextstate) &&
-              ConvertStringToInteger(col[2], &arc.ilabel) &&
-              ConvertStringToInteger(col[3], &arc.olabel) &&
-              StrToWeight(col[4], false, &arc.weight);
+               ConvertStringToInteger(col[2], &arc.ilabel) &&
+               ConvertStringToInteger(col[3], &arc.olabel) &&
+               StrToWeight(col[4], false, &arc.weight);
           if (ok) {
             d = arc.nextstate;
             fst->AddArc(s, arc);
@@ -156,18 +159,16 @@ void ReadFstKaldi(std::istream &is, bool binary,
         default:
           ok = false;
       }
-      while (d >= fst->NumStates()) fst->AddState();
+      while (d >= fst->NumStates())
+        fst->AddState();
       if (!ok)
         KALDI_ERR << "Bad line in FST: " << line;
     }
   }
 }
 
-
-
-
-template<class Arc> // static
-bool VectorFstTplHolder<Arc>::Write(std::ostream &os, bool binary, const T &t) {
+template<class Arc>  // static
+bool VectorFstTplHolder<Arc>::Write(std::ostream& os, bool binary, const T& t) {
   try {
     WriteFstKaldi(os, binary, t);
     return true;
@@ -176,17 +177,17 @@ bool VectorFstTplHolder<Arc>::Write(std::ostream &os, bool binary, const T &t) {
   }
 }
 
-template<class Arc> // static
-bool VectorFstTplHolder<Arc>::Read(std::istream &is) {
+template<class Arc>  // static
+bool VectorFstTplHolder<Arc>::Read(std::istream& is) {
   Clear();
   int c = is.peek();
   if (c == -1) {
     KALDI_WARN << "End of stream detected reading Fst";
     return false;
-  } else if (isspace(c)) { // The text form of the FST begins
+  } else if (isspace(c)) {  // The text form of the FST begins
     // with space (normally, '\n'), so this means it's text (the binary form
-    // cannot begin with space because it starts with the FST Type() which is not
-    // space).
+    // cannot begin with space because it starts with the FST Type() which is
+    // not space).
     try {
       t_ = new VectorFst<Arc>();
       ReadFstKaldi(is, false, t_);
@@ -206,6 +207,6 @@ bool VectorFstTplHolder<Arc>::Read(std::istream &is) {
   return true;
 }
 
-} // namespace fst.
+}  // namespace fst.
 
 #endif  // KALDI_FSTEXT_KALDI_FST_IO_INL_H_

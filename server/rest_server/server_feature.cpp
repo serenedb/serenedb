@@ -34,7 +34,7 @@
 #include "basics/process-utils.h"
 #include "general_server/scheduler_feature.h"
 #include "general_server/state.h"
-#include "rest_server/database_feature.h"
+#include "rest_server/upgrade_feature.h"
 #include "statistics/statistics_feature.h"
 #include "vpack/vpack_helper.h"
 
@@ -72,9 +72,7 @@ void ServerFeature::collectOptions(std::shared_ptr<ProgramOptions> options) {
 }
 
 void ServerFeature::validateOptions(std::shared_ptr<ProgramOptions> options) {
-  auto& db = server().getFeature<DatabaseFeature>();
-
-  if (!_rest_server && !db.upgrade() &&
+  if (!_rest_server && !server().getFeature<UpgradeFeature>().upgrading() &&
       !options->processingResult().touched("rocksdb.verify-sst")) {
     SDB_FATAL("xxxxx", sdb::Logger::FIXME,
               "restServer disabled only for upgrade");
@@ -103,9 +101,7 @@ void ServerFeature::validateOptions(std::shared_ptr<ProgramOptions> options) {
       // turn off replication applier when we do not have a rest server
       // but only if the config option is not explicitly set (the recovery
       // test want the applier to be enabled for testing it)
-      ReplicationFeature& replication_feature =
-        server().getFeature<ReplicationFeature>();
-      replication_feature.disableReplicationApplier();
+      server().getFeature<ReplicationFeature>().disableReplicationApplier();
     }
 #endif
   }

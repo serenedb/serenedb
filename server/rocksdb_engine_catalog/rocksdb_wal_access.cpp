@@ -48,7 +48,6 @@
 #include "catalog/table_options.h"
 #include "catalog/types.h"
 #include "catalog/view.h"
-#include "rest_server/database_feature.h"
 #include "rest_server/serened.h"
 #include "rocksdb_engine_catalog/concat.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"

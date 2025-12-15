@@ -79,7 +79,7 @@ bool SqlStatement::ProcessNextRoot(
     SDB_ASSERT(RootCount() == 1);
   }
 
-  pg::Resolve(connection_ctx->GetDatabaseId(), objects);
+  pg::Resolve(connection_ctx->GetDatabaseId(), objects, *connection_ctx);
   SDB_ASSERT(memory_context);
 
   auto& cpu_executor = GetScheduler()->GetCPUExecutor();
@@ -88,7 +88,7 @@ bool SqlStatement::ProcessNextRoot(
     velox::core::QueryCtx::create(
       &cpu_executor,
       velox::core::QueryConfig{velox::core::QueryConfig::ConfigTag{},
-                               ConnectionContext::GetConfig(connection_ctx)}),
+                               connection_ctx}),
     objects};
 
   auto query_desc = pg::AnalyzeVelox(*raw_stmt, *query_string, objects,

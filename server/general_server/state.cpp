@@ -51,7 +51,6 @@
 #include "database/ticks.h"
 #include "rest/common_defines.h"
 #include "rest/version.h"
-#include "rest_server/database_feature.h"
 #include "rest_server/database_path_feature.h"
 #include "rest_server/serened.h"
 #include "storage_engine/engine_selector_feature.h"

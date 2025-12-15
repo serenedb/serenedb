@@ -169,9 +169,7 @@ class AppenderMetricsCounter final : public Appender {
 }  // namespace log
 
 LogBufferFeature::LogBufferFeature(Server& server)
-  : SerenedFeature{server, name()},
-    _min_in_memory_log_level("info"),
-    _use_in_memory_appender(true) {
+  : SerenedFeature{server, name()} {
   setOptional(true);
 
   _metrics_counter = std::make_shared<log::AppenderMetricsCounter>(

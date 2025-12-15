@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -20,20 +20,22 @@
 #ifndef FST_SYMBOL_TABLE_H_
 #define FST_SYMBOL_TABLE_H_
 
+#include <absl/hash/hash.h>
+#include <sys/types.h>
+
+#include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <ios>
 #include <iostream>
+#include <istream>
 #include <iterator>
 #include <memory>
-#include <sstream>
+#include <ostream>
 #include <string>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
 #include <fst/compat.h>
-#include <fst/flags.h>
 #include <fst/log.h>
 #include <fstream>
 #include <fst/windows_defs.inc>
@@ -43,19 +45,13 @@
 #include <fst/lock.h>
 
 DECLARE_bool(fst_compat_symbols);
+DECLARE_string(fst_field_separator);
 
 namespace fst {
 
 inline constexpr int64_t kNoSymbol = -1;
 
 class SymbolTable;
-
-struct SymbolTableTextOptions {
-  explicit SymbolTableTextOptions(bool allow_negative_labels = false);
-
-  bool allow_negative_labels;
-  std::string fst_field_separator;
-};
 
 namespace internal {
 
@@ -90,7 +86,7 @@ class DenseSymbolMap {
     return str_hash_(key) & hash_mask_;
   }
 
-  const std::hash<std::string_view> str_hash_;
+  const absl::Hash<std::string_view> str_hash_;
   std::vector<std::string> symbols_;
   std::vector<int64_t> buckets_;
   uint64_t hash_mask_;
@@ -212,7 +208,11 @@ class SymbolTableImpl final : public MutableSymbolTableImpl {
 
   static SymbolTableImpl *ReadText(
       std::istream &strm, std::string_view name,
-      const SymbolTableTextOptions &opts = SymbolTableTextOptions());
+      // Characters to be used as a separator between fields in a textual
+      // `SymbolTable` file, encoded as a string. Each byte in the string is
+      // considered a valid separator. Multi-byte separators are not permitted.
+      // The default value, "\t ", accepts space and tab.
+      std::string_view sep = FST_FLAGS_fst_field_separator);
 
   // Reads a binary SymbolTable from stream, using source in error messages.
   static SymbolTableImpl *Read(std::istream &strm, std::string_view source);
@@ -224,7 +224,7 @@ class SymbolTableImpl final : public MutableSymbolTableImpl {
   std::string Find(int64_t key) const override;
 
   // Returns the key associated with the symbol; if the symbol
-  // does not exists, returns kNoSymbol.
+  // does not exist, returns kNoSymbol.
   int64_t Find(std::string_view symbol) const override {
     int64_t idx = symbols_.Find(symbol);
     if (idx == kNoSymbol || idx < dense_key_limit_) return idx;
@@ -347,8 +347,6 @@ class SymbolTable {
 
     bool operator==(const iterator &that) const { return (pos_ == that.pos_); }
 
-    bool operator!=(const iterator &that) const { return !(*this == that); }
-
     reference operator*() { return iter_item_; }
 
     pointer operator->() const { return &iter_item_; }
@@ -370,25 +368,25 @@ class SymbolTable {
   explicit SymbolTable(std::string_view name = "<unspecified>")
       : impl_(std::make_shared<internal::SymbolTableImpl>(name)) {}
 
-  virtual ~SymbolTable() {}
+  virtual ~SymbolTable() = default;
 
   // Reads a text representation of the symbol table from an istream. Pass a
   // name to give the resulting SymbolTable.
   static SymbolTable *ReadText(
       std::istream &strm, std::string_view name,
-      const SymbolTableTextOptions &opts = SymbolTableTextOptions()) {
+      std::string_view sep = FST_FLAGS_fst_field_separator) {
     auto impl =
-        fst::WrapUnique(internal::SymbolTableImpl::ReadText(strm, name, opts));
+        fst::WrapUnique(internal::SymbolTableImpl::ReadText(strm, name, sep));
     return impl ? new SymbolTable(std::move(impl)) : nullptr;
   }
 
   // Reads a text representation of the symbol table.
   static SymbolTable *ReadText(
       const std::string &source,
-      const SymbolTableTextOptions &opts = SymbolTableTextOptions());
+      std::string_view sep = FST_FLAGS_fst_field_separator);
 
   // Reads a binary dump of the symbol table from a stream.
-  static SymbolTable *Read(std::istream &strm, const std::string &source) {
+  static SymbolTable *Read(std::istream &strm, std::string_view source) {
     auto impl = fst::WrapUnique(internal::SymbolTableImpl::Read(strm, source));
     return impl ? new SymbolTable(std::move(impl)) : nullptr;
   }
@@ -480,12 +478,11 @@ class SymbolTable {
 
   bool Write(const std::string &source) const;
 
-  // Dumps a text representation of the symbol table via a stream.
-  bool WriteText(std::ostream &strm, const SymbolTableTextOptions &opts =
-                                         SymbolTableTextOptions()) const;
+  bool WriteText(std::ostream &strm,
+                 std::string_view sep = FST_FLAGS_fst_field_separator) const;
 
-  // Dumps a text representation of the symbol table.
-  bool WriteText(const std::string &source) const;
+  bool WriteText(const std::string &sink,
+                 std::string_view sep = FST_FLAGS_fst_field_separator) const;
 
   const_iterator begin() const { return const_iterator(*this, 0); }
 
@@ -529,7 +526,7 @@ class OPENFST_DEPRECATED(
   explicit SymbolTableIterator(const SymbolTable &table)
       : table_(table), iter_(table.begin()), end_(table.end()) {}
 
-  ~SymbolTableIterator() {}
+  ~SymbolTableIterator() = default;
 
   // Returns whether iterator is done.
   bool Done() const { return (iter_ == end_); }
@@ -562,13 +559,13 @@ template <class Label>
 SymbolTable *RelabelSymbolTable(
     const SymbolTable *table,
     const std::vector<std::pair<Label, Label>> &pairs) {
-  auto *new_table = new SymbolTable(
+  auto new_table = std::make_unique<SymbolTable>(
       table->Name().empty() ? std::string()
                             : (std::string("relabeled_") + table->Name()));
   for (const auto &[old_label, new_label] : pairs) {
     new_table->AddSymbol(table->Find(old_label), new_label);
   }
-  return new_table;
+  return new_table.release();
 }
 
 // Returns true if the two symbol tables have equal checksums. Passing in

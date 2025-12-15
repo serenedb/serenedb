@@ -40,15 +40,8 @@ struct SqlTree {
 };
 
 struct BindInfo {
-  std::vector<VarFormat> input_formats;
   std::vector<VarFormat> output_formats;
   std::vector<std::shared_ptr<velox::Variant>> param_values;
-
-  void Reset() {
-    input_formats.clear();
-    output_formats.clear();
-    param_values.clear();
-  }
 };
 
 class Params {

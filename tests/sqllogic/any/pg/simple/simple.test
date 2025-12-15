@@ -749,3 +749,8 @@ SELECT '123' + 123;
 ----
 ?column?
 246
+
+
+# TODO better error message
+query error
+SELECT '123' + '123';

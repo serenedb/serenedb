@@ -72,6 +72,7 @@ class ObjectCollector {
   void CollectCallStmt(State& state, const CallStmt& stmt);
   void CollectViewStmt(State& state, const ViewStmt& stmt);
   void CollectCreateFunctionStmt(State& state, const CreateFunctionStmt& stmt);
+  void CollectCreateStmt(State& state, const CreateStmt& stmt);
 
   void CollectRangeVar(const State& state, const RangeVar* var,
                        Objects::AccessType type);
@@ -516,6 +517,23 @@ void ObjectCollector::CollectCreateFunctionStmt(
   _max_bind_param_idx = 0;
 }
 
+void ObjectCollector::CollectCreateStmt(State& state, const CreateStmt& stmt) {
+  VisitNodes(stmt.tableElts, [&](const Node& node) {
+    if (IsA(&node, ColumnDef)) {
+      const auto& col_def = *castNode(ColumnDef, &node);
+      VisitNodes(col_def.constraints, [&](const Constraint& constraint) {
+        switch (constraint.contype) {
+          case CONSTR_DEFAULT: {
+            CollectExprNode(state, constraint.raw_expr);
+          }
+          default:
+            break;
+        }
+      });
+    }
+  });
+}
+
 void ObjectCollector::CollectStmt(const State* parent, const Node* node) {
   if (!node) {
     return;
@@ -541,6 +559,8 @@ void ObjectCollector::CollectStmt(const State* parent, const Node* node) {
     case T_CreateFunctionStmt:
       return CollectCreateFunctionStmt(state,
                                        *castNode(CreateFunctionStmt, node));
+    case T_CreateStmt:
+      return CollectCreateStmt(state, *castNode(CreateStmt, node));
     default:
       break;
   }

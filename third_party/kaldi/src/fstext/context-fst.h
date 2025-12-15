@@ -38,8 +38,6 @@
 // Copyright 2005-2010 Google, Inc.
 // Author: riley@google.com (Michael Riley)
 
-
-
 #ifndef KALDI_FSTEXT_CONTEXT_FST_H_
 #define KALDI_FSTEXT_CONTEXT_FST_H_
 
@@ -48,9 +46,6 @@
    individual phones, e.g. "a".  Search for "hbka.pdf" ("Speech Recognition
    with Weighted Finite State Transducers") by M. Mohri, for more context.
 */
-
-#include <unordered_map>
-using std::unordered_map;
 
 #include <algorithm>
 #include <string>
@@ -63,29 +58,23 @@ using std::unordered_map;
 
 namespace fst {
 
-
-
-
 /// Utility function for writing ilabel-info vectors to disk.
-void WriteILabelInfo(std::ostream &os, bool binary,
-                     const std::vector<std::vector<int32> > &ilabel_info);
+void WriteILabelInfo(std::ostream& os, bool binary,
+                     const std::vector<std::vector<int32>>& ilabel_info);
 
 /// Utility function for reading ilabel-info vectors from disk.
-void ReadILabelInfo(std::istream &is, bool binary,
-                    std::vector<std::vector<int32> > *ilabel_info);
-
+void ReadILabelInfo(std::istream& is, bool binary,
+                    std::vector<std::vector<int32>>* ilabel_info);
 
 /// The following function is mainly of use for printing and debugging.
-SymbolTable *CreateILabelInfoSymbolTable(const std::vector<std::vector<int32> > &ilabel_info,
-                                         const SymbolTable &phones_symtab,
-                                         std::string separator,
-                                         std::string disambig_prefix);  // e.g. separator = "/", disambig_prefix = "#"
-
-
+SymbolTable* CreateILabelInfoSymbolTable(
+  const std::vector<std::vector<int32>>& ilabel_info,
+  const SymbolTable& phones_symtab, std::string separator,
+  std::string disambig_prefix);  // e.g. separator = "/", disambig_prefix = "#"
 
 /**
-   Used in the command-line tool fstcomposecontext.  It creates a context FST and
-   composes it on the left with "ifst" to make "ofst".  It outputs the label
+   Used in the command-line tool fstcomposecontext.  It creates a context FST
+   and composes it on the left with "ifst" to make "ofst".  It outputs the label
    information to ilabels_out.  "ifst" is mutable because we need to add the
    subsequential loop.
 
@@ -94,11 +83,11 @@ SymbolTable *CreateILabelInfoSymbolTable(const std::vector<std::vector<int32> > 
     @param [in] context_width  Size of context window, e.g. 3 for triphone.
     @param [in] central_position  Central position in phonetic context window
                   (zero-based index), e.g. 1 for triphone.
-    @param [in,out] ifst   The FST we are composing with C (e.g. LG.fst), mustable because
-                  we need to add the subsequential loop to it.
+    @param [in,out] ifst   The FST we are composing with C (e.g. LG.fst),
+   mustable because we need to add the subsequential loop to it.
     @param [out] ofst   Composed output FST (would be CLG.fst).
-    @param [out] ilabels_out  Vector, indexed by ilabel of CLG.fst, providing information
-                  about the meaning of that ilabel; see
+    @param [out] ilabels_out  Vector, indexed by ilabel of CLG.fst, providing
+   information about the meaning of that ilabel; see
                   "http://kaldi-asr.org/doc/tree_externals.html#tree_ilabel".
     @param [in] project_ifst  This is intended only to be set to true
                   in the program 'fstmakecontextfst'... if true, it will
@@ -106,31 +95,28 @@ SymbolTable *CreateILabelInfoSymbolTable(const std::vector<std::vector<int32> > 
                   to 'ifst', which allows us to reconstruct the context
                   fst C.fst.
  */
-void ComposeContext(const std::vector<int32> &disambig_syms,
+void ComposeContext(const std::vector<int32>& disambig_syms,
                     int32 context_width, int32 central_position,
-                    VectorFst<StdArc> *ifst,
-                    VectorFst<StdArc> *ofst,
-                    std::vector<std::vector<int32> > *ilabels_out,
+                    VectorFst<StdArc>* ifst, VectorFst<StdArc>* ofst,
+                    std::vector<std::vector<int32>>* ilabels_out,
                     bool project_ifst = false);
-
 
 /**
   Modifies an FST so that it transuces the same paths, but the input side of the
   paths can all have the subsequential symbol '$' appended to them any number of
-  times (we could easily specify the number of times, but accepting any number of
-  repetitions is just more convenient).  The actual way we do this is for each
-  final state, we add a transition with weight equal to the final-weight of that
-  state, with input-symbol '$' and output-symbols \<eps\>, and ending in a new
-  super-final state that has unit final-probability and a unit-weight self-loop
-  with '$' on its input and \<eps\> on its output.  The reason we don't just
-  add a loop to each final-state has to do with preserving stochasticity
-  (see \ref fst_algo_stochastic).  We keep the final-probability in all the
-  original final-states rather than setting them to zero, so the resulting FST
-  can accept zero '$' symbols at the end (in case we had no right context).
+  times (we could easily specify the number of times, but accepting any number
+  of repetitions is just more convenient).  The actual way we do this is for
+  each final state, we add a transition with weight equal to the final-weight of
+  that state, with input-symbol '$' and output-symbols \<eps\>, and ending in a
+  new super-final state that has unit final-probability and a unit-weight
+  self-loop with '$' on its input and \<eps\> on its output.  The reason we
+  don't just add a loop to each final-state has to do with preserving
+  stochasticity (see \ref fst_algo_stochastic).  We keep the final-probability
+  in all the original final-states rather than setting them to zero, so the
+  resulting FST can accept zero '$' symbols at the end (in case we had no right
+  context).
 */
-void AddSubsequentialLoop(StdArc::Label subseq_symbol,
-                          MutableFst<StdArc> *fst);
-
+void AddSubsequentialLoop(StdArc::Label subseq_symbol, MutableFst<StdArc>* fst);
 
 /*
    InverseContextFst represents the inverse of the context FST "C" (the "C" in
@@ -149,8 +135,8 @@ void AddSubsequentialLoop(StdArc::Label subseq_symbol,
    Transducers") by M. Mohri, for more context.
 */
 
-class InverseContextFst: public DeterministicOnDemandFst<StdArc> {
-public:
+class InverseContextFst : public DeterministicOnDemandFst<StdArc> {
+ public:
   typedef StdArc Arc;
   typedef typename StdArc::StateId StateId;
   typedef typename StdArc::Weight Weight;
@@ -158,78 +144,79 @@ public:
 
   /**
      Constructor.
-        @param [in] subsequential_symbol   The integer id of the 'subsequential symbol'
-                          (usually represented as '$') that terminates sequences on the
-                          output of C.fst (input of InverseContextFst).  Search for
-                          "quential" in https://cs.nyu.edu/~mohri/pub/hbka.pdf.
-                          This may just be the first unused integer id.  Must be nonzer.
-        @param [in] phones      List of integer ids of phones, as you would see in phones.txt
-        @param [in] disambig_syms   List of integer ids of disambiguation symbols,
-                                   e.g. the ids of #0, #1, #2 in phones.txt
+        @param [in] subsequential_symbol   The integer id of the 'subsequential
+     symbol' (usually represented as '$') that terminates sequences on the
+                          output of C.fst (input of InverseContextFst).  Search
+     for "quential" in https://cs.nyu.edu/~mohri/pub/hbka.pdf. This may just be
+     the first unused integer id.  Must be nonzer.
+        @param [in] phones      List of integer ids of phones, as you would see
+     in phones.txt
+        @param [in] disambig_syms   List of integer ids of disambiguation
+     symbols, e.g. the ids of #0, #1, #2 in phones.txt
         @param [in] context_width  Size of context window, e.g. 3 for triphone.
-        @param [in] central_position  Central position in context window (zero-based),
-                                   e.g. 1 for triphone.
-     See \ref graph_context for more details.
+        @param [in] central_position  Central position in context window
+     (zero-based), e.g. 1 for triphone. See \ref graph_context for more details.
   */
   InverseContextFst(Label subsequential_symbol,
                     const std::vector<int32>& phones,
                     const std::vector<int32>& disambig_syms,
-                    int32 context_width,
-                    int32 central_position);
-
+                    int32 context_width, int32 central_position);
 
   virtual StateId Start() { return 0; }
 
   virtual Weight Final(StateId s);
 
   /// Note: ilabel must not be epsilon.
-  virtual bool GetArc(StateId s, Label ilabel, Arc *arc);
+  virtual bool GetArc(StateId s, Label ilabel, Arc* arc);
 
-  ~InverseContextFst() { }
+  ~InverseContextFst() {}
 
   // Returns a reference to a vector<vector<int32> > with information about all
   // the input symbols of C (i.e. all the output symbols of this
   // InverseContextFst).  See
   // "http://kaldi-asr.org/doc/tree_externals.html#tree_ilabel".
-  const std::vector<std::vector<int32> > &IlabelInfo() const {
+  const std::vector<std::vector<int32>>& IlabelInfo() const {
     return ilabel_info_;
   }
 
   // A way to destructively obtain the ilabel-info.  Only do this if you
   // are just about to destroy this object.
-  void SwapIlabelInfo(std::vector<std::vector<int32> > *vec) { ilabel_info_.swap(*vec); }
+  void SwapIlabelInfo(std::vector<std::vector<int32>>* vec) {
+    ilabel_info_.swap(*vec);
+  }
 
-private:
-
+ private:
   /// Returns the state-id corresponding to this vector of phones; creates the
   /// state it if necessary.  Requires seq.size() == context_width_ - 1.
-  StateId FindState(const std::vector<int32> &seq);
+  StateId FindState(const std::vector<int32>& seq);
 
   /// Finds the label index corresponding to this context-window of phones
   /// (likely of width context_width_).  Inserts it into the
   /// ilabel_info_/ilabel_map_ tables if necessary.
-  Label FindLabel(const std::vector<int32> &label_info);
+  Label FindLabel(const std::vector<int32>& label_info);
 
-  inline bool IsDisambigSymbol(Label lab) { return (disambig_syms_.count(lab) != 0); }
+  inline bool IsDisambigSymbol(Label lab) {
+    return (disambig_syms_.count(lab) != 0);
+  }
 
   inline bool IsPhoneSymbol(Label lab) { return (phone_syms_.count(lab) != 0); }
 
-  /// Create disambiguation-symbol self-loop arc; where 'ilabel' must correspond to
-  /// a disambiguation symbol.  Called from CreateArc().
-  inline void CreateDisambigArc(StateId s, Label ilabel, Arc *arc);
+  /// Create disambiguation-symbol self-loop arc; where 'ilabel' must correspond
+  /// to a disambiguation symbol.  Called from CreateArc().
+  inline void CreateDisambigArc(StateId s, Label ilabel, Arc* arc);
 
   /// Creates an arc, this function is to be called only when 'ilabel'
   /// corresponds to a phone.  Called from CreateArc().  The olabel may end be
   /// epsilon, instead of a phone-in-context, if the system has right context
   /// and we are very near the beginning of the phone sequence.
   inline void CreatePhoneOrEpsArc(StateId src, StateId dst, Label ilabel,
-                                  const std::vector<int32> &phone_seq, Arc *arc);
-
+                                  const std::vector<int32>& phone_seq,
+                                  Arc* arc);
 
   /// If phone_seq is nonempty then this function it left by one and appends
   /// 'label' to it, otherwise it does nothing.  We expect (but do not check)
   /// that phone_seq->size() == context_width_ - 1.
-  inline void ShiftSequenceLeft(Label label, std::vector<int32> *phone_seq);
+  inline void ShiftSequenceLeft(Label label, std::vector<int32>* phone_seq);
 
   /// This utility function does something equivalent to the following 3 steps:
   ///   *full_phone_sequence =  seq;
@@ -240,21 +227,22 @@ private:
   /// This function assumes that seq.size() == context_width_ - 1, and also that
   /// 'subsequential_symbol_' does not appear in positions 0 through
   /// central_position_ of 'seq'.
-  inline void GetFullPhoneSequence(const std::vector<int32> &seq, Label label,
-                                   std::vector<int32> *full_phone_sequence);
+  inline void GetFullPhoneSequence(const std::vector<int32>& seq, Label label,
+                                   std::vector<int32>* full_phone_sequence);
 
   // Map type to map from vectors of int32 (representing phonetic contexts,
   // which will be of dimension context_width - 1) to StateId (corresponding to
   // the state index in this FST).
-  typedef unordered_map<std::vector<int32>, StateId,
-                        kaldi::VectorHasher<int32> > VectorToStateMap;
+  typedef absl::node_hash_map<std::vector<int32>, StateId,
+                              kaldi::VectorHasher<int32>>
+    VectorToStateMap;
 
   // Map type to map from vectors of int32 (representing ilabel-info,
   // see http://kaldi-asr.org/doc/tree_externals.html#tree_ilabel) to
   // Label (the output label in this FST).
-  typedef unordered_map<std::vector<int32>, Label,
-                        kaldi::VectorHasher<int32> > VectorToLabelMap;
-
+  typedef absl::node_hash_map<std::vector<int32>, Label,
+                              kaldi::VectorHasher<int32>>
+    VectorToLabelMap;
 
   // Sometimes called N, context_width_ this is the width of the
   // phonetic context, e.g. 3 for triphone, 2 for biphone, one for monophone.
@@ -291,12 +279,12 @@ private:
   // (c.f. AddSubsequentialLoop()).
   Label subsequential_symbol_;
 
-
-  // pseudo_eps_symbol_, which in printed form we refer to as "#-1", is a symbol that
-  // appears on the ilabels of the context transducer C, i.e. the olabels of this
-  // FST which is C's inverse.  It is a symbol we introduce to solve a special problem
-  // in systems with right-context (context_width_ > central_position_ + 1) that
-  // use disambiguation symbols.  It exists to prevent CLG from being nondeterminizable.
+  // pseudo_eps_symbol_, which in printed form we refer to as "#-1", is a symbol
+  // that appears on the ilabels of the context transducer C, i.e. the olabels
+  // of this FST which is C's inverse.  It is a symbol we introduce to solve a
+  // special problem in systems with right-context (context_width_ >
+  // central_position_ + 1) that use disambiguation symbols.  It exists to
+  // prevent CLG from being nondeterminizable.
   //
   // The issue is that, in this case, the disambiguation symbols are shifted
   // left w.r.t. the phones, and there becomes an ambiguity, if a disambiguation
@@ -315,7 +303,7 @@ private:
 
   // The inverse of 'state_map_': gives us the phonetic context corresponding to
   // each state-id.
-  std::vector<std::vector<int32> > state_seqs_;
+  std::vector<std::vector<int32>> state_seqs_;
 
   // maps from vector<int32>, representing phonetic contexts of length
   // context_width_ - 1, to Label.  These are actually the output labels of this
@@ -330,11 +318,9 @@ private:
   // information about the meaning of each symbol on the input of C
   // aka the output of inv(C).
   // See "http://kaldi-asr.org/doc/tree_externals.html#tree_ilabel".
-  std::vector<std::vector<int32> > ilabel_info_;
-
+  std::vector<std::vector<int32>> ilabel_info_;
 };
 
 }  // namespace fst
-
 
 #endif  // KALDI_FSTEXT_CONTEXT_FST_H_

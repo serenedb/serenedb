@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -49,22 +49,22 @@
 //
 // ShowUsage() can be used to print out command and flag usage.
 
-#define DECLARE_bool(name) extern bool FST_FLAGS_ ## name
+#define DECLARE_bool(name) extern bool FST_FLAGS_##name
 #define DECLARE_string(name) extern std::string FST_FLAGS_##name
 #define DECLARE_int32(name) extern int32_t FST_FLAGS_##name
 #define DECLARE_int64(name) extern int64_t FST_FLAGS_##name
 #define DECLARE_uint64(name) extern uint64_t FST_FLAGS_##name
-#define DECLARE_double(name) extern double FST_FLAGS_ ## name
+#define DECLARE_double(name) extern double FST_FLAGS_##name
 
 template <typename T>
 struct FlagDescription {
   FlagDescription(T *addr, std::string_view doc, std::string_view type,
                   std::string_view file, const T val)
       : address(addr),
-    doc_string(doc),
-    type_name(type),
-    file_name(file),
-    default_value(val) {}
+        doc_string(doc),
+        type_name(type),
+        file_name(file),
+        default_value(val) {}
 
   T *address;
   std::string_view doc_string;
@@ -190,15 +190,11 @@ class FlagRegisterer {
   FlagRegisterer &operator=(const FlagRegisterer &) = delete;
 };
 
-
-#define DEFINE_VAR(type, name, value, doc)                                    \
-  type FST_FLAGS_ ## name = value;                                            \
-  static FlagRegisterer<type>                                                 \
-  name ## _flags_registerer(#name, FlagDescription<type>(&FST_FLAGS_ ## name, \
-                                                         doc,                 \
-                                                         #type,               \
-                                                         __FILE__,            \
-                                                         value))
+#define DEFINE_VAR(type, name, value, doc)             \
+  type FST_FLAGS_##name = value;                       \
+  static FlagRegisterer<type> name##_flags_registerer( \
+      #name,                                           \
+      FlagDescription<type>(&FST_FLAGS_##name, doc, #type, __FILE__, value))
 
 #define DEFINE_bool(name, value, doc) DEFINE_VAR(bool, name, value, doc)
 #define DEFINE_string(name, value, doc) \
@@ -207,7 +203,6 @@ class FlagRegisterer {
 #define DEFINE_int64(name, value, doc) DEFINE_VAR(int64_t, name, value, doc)
 #define DEFINE_uint64(name, value, doc) DEFINE_VAR(uint64_t, name, value, doc)
 #define DEFINE_double(name, value, doc) DEFINE_VAR(double, name, value, doc)
-
 
 // Temporary directory.
 DECLARE_string(tmpdir);
@@ -221,8 +216,11 @@ void SetFlag(Type *flag, Value value) {
   *flag = Type(value);
 }
 
+void FailedNewHandler();
+
 #define SET_FLAGS(usage, argc, argv, rmflags) \
-SetFlags(usage, argc, argv, rmflags, __FILE__)
+  std::set_new_handler(FailedNewHandler);     \
+  SetFlags(usage, argc, argv, rmflags, __FILE__)
 
 // Deprecated; for backward compatibility.
 inline void InitFst(const char *usage, int *argc, char ***argv, bool rmflags) {

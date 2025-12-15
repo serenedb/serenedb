@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <climits>
+#include <cstddef>
 #include <cstdint>
 #include <forward_list>
 #include <map>
@@ -31,15 +32,30 @@
 #include <vector>
 
 #include <fst/log.h>
-#include <fst/const-fst.h>
-
 #include <fst/arc-map.h>
+#include <fst/arc.h>
+#include <fst/arcfilter.h>
 #include <fst/bi-table.h>
 #include <fst/cache.h>
+#include <fst/const-fst.h>
 #include <fst/factor-weight.h>
 #include <fst/filter-state.h>
+#include <fst/float-weight.h>
+#include <fst/fst.h>
+#include <fst/impl-to-fst.h>
+#include <fst/lexicographic-weight.h>
+#include <fst/mutable-fst.h>
+#include <fst/pair-weight.h>
+#include <fst/power-weight.h>
+#include <fst/product-weight.h>
+#include <fst/properties.h>
 #include <fst/prune.h>
-#include <fst/test-properties.h>
+#include <fst/shortest-distance.h>
+#include <fst/string-weight.h>
+#include <fst/tuple-weight.h>
+#include <fst/union-weight.h>
+#include <fst/util.h>
+#include <fst/weight.h>
 
 namespace fst {
 
@@ -48,6 +64,12 @@ namespace fst {
 // permit more efficient determinization when the output contains strings.
 
 // The default common divisor uses the semiring Plus.
+namespace internal {
+template <class Arc, class Relation>
+class RelationDeterminizeFilter;
+}  // namespace internal
+struct PairArc;
+
 template <class W>
 struct DefaultCommonDivisor {
  public:
@@ -141,12 +163,8 @@ struct DeterminizeElement {
   DeterminizeElement(StateId s, Weight weight)
       : state_id(s), weight(std::move(weight)) {}
 
-  inline bool operator==(const DeterminizeElement<Arc> &element) const {
+  inline bool operator==(const DeterminizeElement &element) const {
     return state_id == element.state_id && weight == element.weight;
-  }
-
-  inline bool operator!=(const DeterminizeElement<Arc> &element) const {
-    return !(*this == element);
   }
 
   inline bool operator<(const DeterminizeElement<Arc> &element) const {
@@ -166,14 +184,8 @@ struct DeterminizeStateTuple {
 
   DeterminizeStateTuple() : filter_state(FilterState::NoState()) {}
 
-  inline bool operator==(
-      const DeterminizeStateTuple<Arc, FilterState> &tuple) const {
+  inline bool operator==(const DeterminizeStateTuple &tuple) const {
     return (tuple.filter_state == filter_state) && (tuple.subset == subset);
-  }
-
-  inline bool operator!=(
-      const DeterminizeStateTuple<Arc, FilterState> &tuple) const {
-    return (tuple.filter_state != filter_state) || (tuple.subset != subset);
   }
 
   Subset subset;
@@ -187,16 +199,14 @@ struct DeterminizeArc {
   using Label = typename Arc::Label;
   using Weight = typename Arc::Weight;
 
-  DeterminizeArc()
-      : label(kNoLabel), weight(Weight::Zero()), dest_tuple(nullptr) {}
+  DeterminizeArc() = default;
 
   explicit DeterminizeArc(const Arc &arc)
       : label(arc.ilabel),
-        weight(Weight::Zero()),
         dest_tuple(fst::make_unique_for_overwrite<StateTuple>()) {}
 
-  Label label;             // Arc label.
-  Weight weight;           // Arc weight.
+  Label label = kNoLabel;          // Arc label.
+  Weight weight = Weight::Zero();  // Arc weight.
   std::unique_ptr<StateTuple>
       dest_tuple;  // Destination subset and filter state.
 };
@@ -235,7 +245,7 @@ class DefaultDeterminizeFilter {
       : fst_(fst.Copy()) {}
 
   // Copy constructor; the FST can be passed if it has been deep-copied.
-  DefaultDeterminizeFilter(const DefaultDeterminizeFilter<Arc> &filter,
+  DefaultDeterminizeFilter(const DefaultDeterminizeFilter &filter,
                            const Fst<Arc> *fst = nullptr)
       : fst_(fst ? fst->Copy() : filter.fst_->Copy()) {}
 
@@ -317,8 +327,7 @@ class DefaultDeterminizeStateTable {
   explicit DefaultDeterminizeStateTable(size_t table_size = 0)
       : table_size_(table_size), tuples_(table_size_) {}
 
-  DefaultDeterminizeStateTable(
-      const DefaultDeterminizeStateTable<Arc, FilterState> &table)
+  DefaultDeterminizeStateTable(const DefaultDeterminizeStateTable &table)
       : table_size_(table.table_size_), tuples_(table_size_) {}
 
   ~DefaultDeterminizeStateTable() {
@@ -684,11 +693,10 @@ class DeterminizeFsaImpl : public DeterminizeFstImplBase<Arc> {
   // Sorts subsets and removes duplicate elements, normalizing transition and
   // subset weights.
   void NormArc(DetArc *det_arc) {
-    std::unique_ptr<StateTuple> &dest_tuple = det_arc->dest_tuple;
-    dest_tuple->subset.sort();
-    auto piter = dest_tuple->subset.begin();
-    for (auto diter = dest_tuple->subset.begin();
-         diter != dest_tuple->subset.end();) {
+    auto &dest_subset = det_arc->dest_tuple->subset;
+    dest_subset.sort();
+    auto piter = dest_subset.begin();
+    for (auto diter = dest_subset.begin(); diter != dest_subset.end();) {
       auto &dest_element = *diter;
       auto &prev_element = *piter;
       // Computes arc weight.
@@ -698,7 +706,7 @@ class DeterminizeFsaImpl : public DeterminizeFstImplBase<Arc> {
         prev_element.weight = Plus(prev_element.weight, dest_element.weight);
         if (!prev_element.weight.Member()) SetProperties(kError, kError);
         ++diter;
-        dest_tuple->subset.erase_after(piter);
+        dest_subset.erase_after(piter);
       } else {
         piter = diter;
         ++diter;
@@ -706,7 +714,7 @@ class DeterminizeFsaImpl : public DeterminizeFstImplBase<Arc> {
     }
     // Divides out label weight from destination subset elements, quantizing to
     // ensure comparisons are effective.
-    for (auto &dest_element : dest_tuple->subset) {
+    for (auto &dest_element : dest_subset) {
       dest_element.weight =
           Divide(dest_element.weight, det_arc->weight, DIVIDE_LEFT);
       dest_element.weight = dest_element.weight.Quantize(delta_);
@@ -855,6 +863,8 @@ class DeterminizeFstImpl : public DeterminizeFstImplBase<Arc> {
 // counting, delegating most methods to ImplToFst.
 template <class A>
 class DeterminizeFst : public ImplToFst<internal::DeterminizeFstImplBase<A>> {
+  using Base = ImplToFst<internal::DeterminizeFstImplBase<A>>;
+
  public:
   using Arc = A;
   using Label = typename Arc::Label;
@@ -863,7 +873,7 @@ class DeterminizeFst : public ImplToFst<internal::DeterminizeFstImplBase<A>> {
 
   using Store = DefaultCacheStore<Arc>;
   using State = typename Store::State;
-  using Impl = internal::DeterminizeFstImplBase<Arc>;
+  using typename Base::Impl;
 
   friend class ArcIterator<DeterminizeFst<Arc>>;
   friend class StateIterator<DeterminizeFst<Arc>>;
@@ -872,8 +882,7 @@ class DeterminizeFst : public ImplToFst<internal::DeterminizeFstImplBase<A>> {
             class StateTable>
   friend class DeterminizeFstImpl;
 
-  explicit DeterminizeFst(const Fst<A> &fst)
-      : ImplToFst<Impl>(CreateImpl(fst)) {}
+  explicit DeterminizeFst(const Fst<A> &fst) : Base(CreateImpl(fst)) {}
 
   template <class CommonDivisor, class Filter, class StateTable>
   explicit DeterminizeFst(
@@ -881,7 +890,7 @@ class DeterminizeFst : public ImplToFst<internal::DeterminizeFstImplBase<A>> {
       const DeterminizeFstOptions<Arc, CommonDivisor, Filter, StateTable>
           &opts =
               DeterminizeFstOptions<Arc, CommonDivisor, Filter, StateTable>())
-      : ImplToFst<Impl>(CreateImpl(fst, opts)) {}
+      : Base(CreateImpl(fst, opts)) {}
 
   // This acceptor-only version additionally computes the distance to final
   // states in the output if provided with those distances for the input; this
@@ -893,10 +902,9 @@ class DeterminizeFst : public ImplToFst<internal::DeterminizeFstImplBase<A>> {
       const DeterminizeFstOptions<Arc, CommonDivisor, Filter, StateTable>
           &opts =
               DeterminizeFstOptions<Arc, CommonDivisor, Filter, StateTable>())
-      : ImplToFst<Impl>(
-            std::make_shared<internal::DeterminizeFsaImpl<Arc, CommonDivisor,
-                                                          Filter, StateTable>>(
-                fst, in_dist, out_dist, opts)) {
+      : Base(std::make_shared<internal::DeterminizeFsaImpl<Arc, CommonDivisor,
+                                                           Filter, StateTable>>(
+            fst, in_dist, out_dist, opts)) {
     if (!fst.Properties(kAcceptor, true)) {
       FSTERROR() << "DeterminizeFst: "
                  << "Distance to final states computed for acceptors only";
@@ -906,8 +914,8 @@ class DeterminizeFst : public ImplToFst<internal::DeterminizeFstImplBase<A>> {
 
   // See Fst<>::Copy() for doc.
   DeterminizeFst(const DeterminizeFst &fst, bool safe = false)
-      : ImplToFst<Impl>(safe ? std::shared_ptr<Impl>(fst.GetImpl()->Copy())
-                             : fst.GetSharedImpl()) {}
+      : Base(safe ? std::shared_ptr<Impl>(fst.GetImpl()->Copy())
+                  : fst.GetSharedImpl()) {}
 
   // Get a copy of this DeterminizeFst. See Fst<>::Copy() for further doc.
   DeterminizeFst *Copy(bool safe = false) const override {
@@ -921,8 +929,8 @@ class DeterminizeFst : public ImplToFst<internal::DeterminizeFstImplBase<A>> {
   }
 
  private:
-  using ImplToFst<Impl>::GetImpl;
-  using ImplToFst<Impl>::GetMutableImpl;
+  using Base::GetImpl;
+  using Base::GetMutableImpl;
 
   static std::shared_ptr<Impl> CreateImpl(const Fst<Arc> &fst) {
     using D = DefaultCommonDivisor<Weight>;
@@ -994,8 +1002,8 @@ void DeterminizeFstImpl<A, G, D, F, T>::Init(const Fst<A> &fst,
       subsequential_label_, increment_subsequential_label_,
       increment_subsequential_label_);
   const FactorWeightFst<ToArc, FactorIterator> factored_fst(det_fsa, fopts);
-  from_fst_ = std::make_unique<FromFst>(factored_fst,
-                                         FromMapper(subsequential_label_));
+  from_fst_ =
+      std::make_unique<FromFst>(factored_fst, FromMapper(subsequential_label_));
 }
 
 }  // namespace internal

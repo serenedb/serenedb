@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -20,14 +20,17 @@
 #ifndef FST_ARC_ARENA_H_
 #define FST_ARC_ARENA_H_
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <list>
 #include <memory>
 #include <utility>
 
 #include <fst/fst.h>
 #include <fst/memory.h>
-#include <unordered_map>
+#include <absl/container/flat_hash_map.h>
 
 namespace fst {
 
@@ -240,7 +243,7 @@ class ArcArenaStateStore {
     size_t narcs_;
   };
 
-  std::unordered_map<StateId, State *> cache_;
+  absl::flat_hash_map<StateId, State *> cache_;
   std::deque<State> states_;
   ArcArena<Arc> arena_;
 };

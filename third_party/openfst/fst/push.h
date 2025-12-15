@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -25,13 +25,16 @@
 #include <vector>
 
 #include <fst/log.h>
-
 #include <fst/arc-map.h>
+#include <fst/arc.h>
 #include <fst/factor-weight.h>
 #include <fst/fst.h>
+#include <fst/mutable-fst.h>
 #include <fst/reweight.h>
 #include <fst/shortest-distance.h>
-
+#include <fst/string-weight.h>
+#include <fst/vector-fst.h>
+#include <fst/weight.h>
 
 namespace fst {
 

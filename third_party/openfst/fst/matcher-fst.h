@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -21,14 +21,22 @@
 #define FST_MATCHER_FST_H_
 
 #include <cstdint>
+#include <istream>
 #include <memory>
+#include <ostream>
 #include <string>
 
-
+#include <fst/accumulator.h>
 #include <fst/add-on.h>
+#include <fst/arc.h>
 #include <fst/const-fst.h>
+#include <fst/expanded-fst.h>
+#include <fst/float-weight.h>
+#include <fst/fst.h>
+#include <fst/impl-to-fst.h>
 #include <fst/lookahead-matcher.h>
-
+#include <fst/matcher.h>
+#include <string_view>
 
 namespace fst {
 
@@ -84,6 +92,8 @@ template <
     class F, class M, const char *Name, class Init = NullMatcherFstInit<M>,
     class Data = AddOnPair<typename M::MatcherData, typename M::MatcherData>>
 class MatcherFst : public ImplToExpandedFst<internal::AddOnImpl<F, Data>> {
+  using Base = ImplToExpandedFst<internal::AddOnImpl<F, Data>>;
+
  public:
   using FST = F;
   using Arc = typename FST::Arc;
@@ -92,32 +102,31 @@ class MatcherFst : public ImplToExpandedFst<internal::AddOnImpl<F, Data>> {
   using FstMatcher = M;
   using MatcherData = typename FstMatcher::MatcherData;
 
-  using Impl = internal::AddOnImpl<FST, Data>;
+  using typename Base::Impl;
   using D = Data;
 
   friend class StateIterator<MatcherFst<FST, FstMatcher, Name, Init, Data>>;
   friend class ArcIterator<MatcherFst<FST, FstMatcher, Name, Init, Data>>;
 
-  MatcherFst() : ImplToExpandedFst<Impl>(std::make_shared<Impl>(FST(), Name)) {}
+  MatcherFst() : Base(std::make_shared<Impl>(FST(), Name)) {}
 
   // Constructs a MatcherFst from an FST, which is the underlying FST type used
   // by this class. Uses the existing Data if present, and runs Init on it.
   // Stores fst internally, making a thread-safe copy of it.
   explicit MatcherFst(const FST &fst, std::shared_ptr<Data> data = nullptr)
-      : ImplToExpandedFst<Impl>(data ? CreateImpl(fst, Name, data)
-                                     : CreateDataAndImpl(fst, Name)) {}
+      : Base(data ? CreateImpl(fst, Name, data)
+                  : CreateDataAndImpl(fst, Name)) {}
 
   // Constructs a MatcherFst from an Fst<Arc>, which is *not* the underlying
   // FST type used by this class. Uses the existing Data if present, and
   // runs Init on it. Stores fst internally, converting Fst<Arc> to FST and
   // therefore making a deep copy.
   explicit MatcherFst(const Fst<Arc> &fst, std::shared_ptr<Data> data = nullptr)
-      : ImplToExpandedFst<Impl>(data ? CreateImpl(fst, Name, data)
-                                     : CreateDataAndImpl(fst, Name)) {}
+      : Base(data ? CreateImpl(fst, Name, data)
+                  : CreateDataAndImpl(fst, Name)) {}
 
   // See Fst<>::Copy() for doc.
-  MatcherFst(const MatcherFst &fst, bool safe = false)
-      : ImplToExpandedFst<Impl>(fst, safe) {}
+  MatcherFst(const MatcherFst &fst, bool safe = false) : Base(fst, safe) {}
 
   // Get a copy of this MatcherFst. See Fst<>::Copy() for further doc.
   MatcherFst *Copy(bool safe = false) const override {
@@ -132,8 +141,8 @@ class MatcherFst : public ImplToExpandedFst<internal::AddOnImpl<F, Data>> {
 
   // Read a MatcherFst from a file; return nullptr on error
   // Empty source reads from standard input
-  static MatcherFst *Read(const std::string &source) {
-    auto *impl = ImplToExpandedFst<Impl>::Read(source);
+  static MatcherFst *Read(std::string_view source) {
+    auto *impl = Base::Read(source);
     return impl ? new MatcherFst(std::shared_ptr<Impl>(impl)) : nullptr;
   }
 
@@ -177,11 +186,11 @@ class MatcherFst : public ImplToExpandedFst<internal::AddOnImpl<F, Data>> {
   }
 
  protected:
-  using ImplToFst<Impl, ExpandedFst<Arc>>::GetImpl;
+  using Base::GetImpl;
 
   // Makes a thread-safe copy of fst.
   static std::shared_ptr<Impl> CreateDataAndImpl(const FST &fst,
-                                                 const std::string &name) {
+                                                 std::string_view name) {
     FstMatcher imatcher(fst, MATCH_INPUT);
     FstMatcher omatcher(fst, MATCH_OUTPUT);
     return CreateImpl(fst, name,
@@ -191,14 +200,13 @@ class MatcherFst : public ImplToExpandedFst<internal::AddOnImpl<F, Data>> {
 
   // Makes a deep copy of fst.
   static std::shared_ptr<Impl> CreateDataAndImpl(const Fst<Arc> &fst,
-                                                 const std::string &name) {
+                                                 std::string_view name) {
     FST result(fst);
     return CreateDataAndImpl(result, name);
   }
 
   // Makes a thread-safe copy of fst.
-  static std::shared_ptr<Impl> CreateImpl(const FST &fst,
-                                          const std::string &name,
+  static std::shared_ptr<Impl> CreateImpl(const FST &fst, std::string_view name,
                                           std::shared_ptr<Data> data) {
     auto impl = std::make_shared<Impl>(fst, name);
     impl->SetAddOn(data);
@@ -208,7 +216,7 @@ class MatcherFst : public ImplToExpandedFst<internal::AddOnImpl<F, Data>> {
 
   // Makes a deep copy of fst.
   static std::shared_ptr<Impl> CreateImpl(const Fst<Arc> &fst,
-                                          const std::string &name,
+                                          std::string_view name,
                                           std::shared_ptr<Data> data) {
     auto impl = std::make_shared<Impl>(fst, name);
     impl->SetAddOn(data);
@@ -216,8 +224,7 @@ class MatcherFst : public ImplToExpandedFst<internal::AddOnImpl<F, Data>> {
     return impl;
   }
 
-  explicit MatcherFst(std::shared_ptr<Impl> impl)
-      : ImplToExpandedFst<Impl>(impl) {}
+  explicit MatcherFst(std::shared_ptr<Impl> impl) : Base(impl) {}
 
  private:
   MatcherFst &operator=(const MatcherFst &) = delete;

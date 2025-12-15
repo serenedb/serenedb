@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -22,18 +22,22 @@
 #define FST_RANDEQUIVALENT_H_
 
 #include <cstdint>
+#include <limits>
 #include <random>
 
 #include <fst/log.h>
-
 #include <fst/arcsort.h>
 #include <fst/compose.h>
+#include <fst/connect.h>
+#include <fst/fst.h>
 #include <fst/project.h>
+#include <fst/properties.h>
 #include <fst/randgen.h>
 #include <fst/shortest-distance.h>
+#include <fst/symbol-table.h>
+#include <fst/util.h>
 #include <fst/vector-fst.h>
 #include <fst/weight.h>
-
 
 namespace fst {
 

@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -19,21 +19,47 @@
 
 #include <fst/encode.h>
 
+#include <cstddef>
 #include <cstdint>
+#include <istream>
+#include <ostream>
+#include <string>
+
+#include <fst/log.h>
+#include <fst/util.h>
+#include <string_view>
 
 namespace fst {
 
-bool EncodeTableHeader::Read(std::istream &strm, const std::string &source) {
+bool EncodeTableHeader::Read(std::istream &strm, std::string_view source) {
   int32_t magic_number;
   ReadType(strm, &magic_number);
-  if (magic_number != internal::kEncodeMagicNumber) {
-    LOG(ERROR) << "EncodeTableHeader::Read: Bad encode table header: " << source
-               << ". Magic number not matched. Got: " << magic_number;
-    return false;
+  switch (magic_number) {
+    case internal::kEncodeMagicNumber: {
+      ReadType(strm, &arctype_);
+      ReadType(strm, &flags_);
+      ReadType(strm, &size_);
+      break;
+    }
+    case internal::kEncodeDeprecatedMagicNumber: {
+      LOG(ERROR) << "This old-style Encoder is written in a deprecated "
+                    "format and will soon cease to be readable. Please read "
+                    "and re-write it in order to be future-proof.";
+      // TODO(b/141172858): deprecated, remove by 2020-01-01.
+      uint32_t flags;
+      ReadType(strm, &flags);
+      flags_ = flags;
+      int64_t size;
+      ReadType(strm, &size);
+      size_ = size;
+      break;
+    }
+    default: {
+      LOG(ERROR) << "EncodeTableHeader::Read: Bad encode table header: "
+                 << source;
+      return false;
+    }
   }
-  ReadType(strm, &arctype_);
-  ReadType(strm, &flags_);
-  ReadType(strm, &size_);
   if (!strm) {
     LOG(ERROR) << "EncodeTableHeader::Read: Read failed: " << source;
     return false;
@@ -42,7 +68,7 @@ bool EncodeTableHeader::Read(std::istream &strm, const std::string &source) {
 }
 
 bool EncodeTableHeader::Write(std::ostream &strm,
-                              const std::string &source) const {
+                              std::string_view source) const {
   WriteType(strm, internal::kEncodeMagicNumber);
   WriteType(strm, arctype_);
   WriteType(strm, flags_);

@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -20,13 +20,14 @@
 #ifndef FST_VERIFY_H_
 #define FST_VERIFY_H_
 
+#include <cstddef>
 #include <cstdint>
 
 #include <fst/log.h>
-
+#include <fst/expanded-fst.h>
 #include <fst/fst.h>
+#include <fst/properties.h>
 #include <fst/test-properties.h>
-
 
 namespace fst {
 

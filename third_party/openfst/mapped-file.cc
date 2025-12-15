@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -19,7 +19,10 @@
 #include <fst/mapped-file.h>
 
 #include <fcntl.h>
-#include <sys/types.h>
+
+#include <cstddef>
+#include <cstdint>
+#include <new>
 
 #ifdef _WIN32
 #include <io.h>         // for _get_osfhandle, _open
@@ -34,8 +37,9 @@
 #include <cerrno>
 #include <cstring>
 #include <ios>
-#include <limits>
+#include <istream>
 #include <memory>
+#include <string>
 
 #include <fst/log.h>
 
@@ -65,7 +69,8 @@ MappedFile::~MappedFile() {
 #endif
     } else {
       if (region_.data) {
-        operator delete(static_cast<char *>(region_.data) - region_.offset);
+        operator delete(region_.data, region_.size,
+                        std::align_val_t{region_.offset});
       }
     }
   }
@@ -126,7 +131,7 @@ MappedFile *MappedFile::MapFromFileDescriptor(int fd, size_t pos, size_t size) {
 #ifdef _WIN32
   SYSTEM_INFO sysInfo;
   GetSystemInfo(&sysInfo);
-  const DWORD pagesize = sysInfo.dwPageSize;
+  const DWORD pagesize = sysInfo.dwAllocationGranularity;
 #else
   const int pagesize = sysconf(_SC_PAGESIZE);
 #endif  // _WIN32
@@ -156,12 +161,12 @@ MappedFile *MappedFile::MapFromFileDescriptor(int fd, size_t pos, size_t size) {
     return nullptr;
   }
 
-  const DWORD offset_pos_hi =
-      sizeof(size_t) > sizeof(DWORD) ? offset_pos >> (CHAR_BIT * sizeof(DWORD))
-                                     : 0;
+  const DWORD offset_pos_hi = sizeof(size_t) > sizeof(DWORD)
+                                  ? offset_pos >> (CHAR_BIT * sizeof(DWORD))
+                                  : 0;
   const DWORD offset_pos_lo = offset_pos & DWORD_MAX;
-  void *map = MapViewOfFile(file_mapping, FILE_MAP_READ,
-                            offset_pos_hi, offset_pos_lo, upsize);
+  void *map = MapViewOfFile(file_mapping, FILE_MAP_READ, offset_pos_hi,
+                            offset_pos_lo, upsize);
   if (!map) {
     LOG(ERROR) << "mmap failed for fd=" << fd << " size=" << upsize
                << " offset=" << offset_pos << ": " << GetLastError();
@@ -192,12 +197,9 @@ MappedFile *MappedFile::Allocate(size_t size, size_t align) {
   region.data = nullptr;
   region.offset = 0;
   if (size > 0) {
-    // TODO(jrosenstock,sorenj): Use std::align() when that is no longer banned.
-    // Use std::aligned_alloc() when C++17 is allowed.
-    char *buffer = static_cast<char *>(operator new(size + align));
-    uintptr_t address = reinterpret_cast<uintptr_t>(buffer);
-    region.offset = align - (address % align);
-    region.data = buffer + region.offset;
+    region.offset = align;
+    region.data =
+        static_cast<char *>(operator new(size, std::align_val_t{align}));
   }
   region.mmap = nullptr;
   region.size = size;

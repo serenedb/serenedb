@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -21,14 +21,14 @@
 #ifndef FST_SPARSE_POWER_WEIGHT_H_
 #define FST_SPARSE_POWER_WEIGHT_H_
 
+#include <climits>
+#include <cstddef>
 #include <cstdint>
 #include <random>
 #include <string>
 
-
 #include <fst/sparse-tuple-weight.h>
 #include <fst/weight.h>
-
 
 namespace fst {
 
@@ -51,7 +51,7 @@ class SparsePowerWeight : public SparseTupleWeight<W, K> {
   using Base = SparseTupleWeight<W, K>;
   using ReverseWeight = SparsePowerWeight<typename W::ReverseWeight, K>;
 
-  SparsePowerWeight() {}
+  SparsePowerWeight() = default;
 
   explicit SparsePowerWeight(const Base &weight) : Base(weight) {}
 

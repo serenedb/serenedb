@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -23,26 +23,30 @@
 #include <algorithm>
 #include <climits>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
+#include <ios>
+#include <istream>
 #include <limits>
+#include <ostream>
 #include <random>
 #include <sstream>
 #include <string>
 #include <type_traits>
 
+#include <fst/log.h>
 #include <fst/util.h>
 #include <fst/weight.h>
-
 #include <fst/compat.h>
 #include <string_view>
 
 namespace fst {
 
 namespace internal {
-// TODO(wolfsonkin): Replace with `std::isnan` if and when that ends up
-// constexpr. For context, see
-// http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2020/p0533r6.pdf.
+// `std::isnan` is not `constexpr` until C++23.
+// TODO(wolfsonkin): Replace with `std::isnan` when C++23 can be used.
 template <class T>
 inline constexpr bool IsNan(T value) {
   return value != value;
@@ -68,7 +72,7 @@ class FloatWeightTpl {
  public:
   using ValueType = T;
 
-  FloatWeightTpl() noexcept {}
+  FloatWeightTpl() noexcept = default;
 
   constexpr FloatWeightTpl(T f) : value_(f) {}  // NOLINT
 
@@ -94,12 +98,11 @@ class FloatWeightTpl {
   void SetValue(const T &f) { value_ = f; }
 
   static constexpr std::string_view GetPrecisionString() {
-    return sizeof(T) == 4
-               ? ""
-               : sizeof(T) == 1
-                     ? "8"
-                     : sizeof(T) == 2 ? "16"
-                                      : sizeof(T) == 8 ? "64" : "unknown";
+    return sizeof(T) == 4   ? ""
+           : sizeof(T) == 1 ? "8"
+           : sizeof(T) == 2 ? "16"
+           : sizeof(T) == 8 ? "64"
+                            : "unknown";
   }
 
  private:
@@ -128,28 +131,12 @@ constexpr bool operator==(const FloatWeightTpl<T> &w1,
 // won't be found.
 constexpr bool operator==(const FloatWeightTpl<float> &w1,
                           const FloatWeightTpl<float> &w2) {
-  return operator==<float>(w1, w2);
+  return operator== <float>(w1, w2);
 }
 
 constexpr bool operator==(const FloatWeightTpl<double> &w1,
                           const FloatWeightTpl<double> &w2) {
-  return operator==<double>(w1, w2);
-}
-
-template <class T>
-constexpr bool operator!=(const FloatWeightTpl<T> &w1,
-                          const FloatWeightTpl<T> &w2) {
-  return !(w1 == w2);
-}
-
-constexpr bool operator!=(const FloatWeightTpl<float> &w1,
-                          const FloatWeightTpl<float> &w2) {
-  return operator!=<float>(w1, w2);
-}
-
-constexpr bool operator!=(const FloatWeightTpl<double> &w1,
-                          const FloatWeightTpl<double> &w2) {
-  return operator!=<double>(w1, w2);
+  return operator== <double>(w1, w2);
 }
 
 template <class T>
@@ -267,7 +254,8 @@ template <class T>
 constexpr TropicalWeightTpl<T> Plus(const TropicalWeightTpl<T> &w1,
                                     const TropicalWeightTpl<T> &w2) {
   return (!w1.Member() || !w2.Member()) ? TropicalWeightTpl<T>::NoWeight()
-                                        : w1.Value() < w2.Value() ? w1 : w2;
+         : w1.Value() < w2.Value()      ? w1
+                                        : w2;
 }
 
 // See comment at operator==(FloatWeightTpl<float>, FloatWeightTpl<float>)
@@ -395,10 +383,9 @@ template <class T, class V, bool Enable = !std::is_same_v<V, size_t>,
           typename std::enable_if_t<Enable> * = nullptr>
 constexpr TropicalWeightTpl<T> Power(const TropicalWeightTpl<T> &w, V n) {
   using Weight = TropicalWeightTpl<T>;
-  return (!w.Member() || internal::IsNan(n))
-             ? Weight::NoWeight()
-             : (n == 0 || w == Weight::One()) ? Weight::One()
-                                              : Weight(w.Value() * n);
+  return (!w.Member() || internal::IsNan(n)) ? Weight::NoWeight()
+         : (n == 0 || w == Weight::One())    ? Weight::One()
+                                             : Weight(w.Value() * n);
 }
 
 // Specializes the library-wide template to use the above implementation; rules
@@ -602,10 +589,9 @@ template <class T, class V, bool Enable = !std::is_same_v<V, size_t>,
           typename std::enable_if_t<Enable> * = nullptr>
 constexpr LogWeightTpl<T> Power(const LogWeightTpl<T> &w, V n) {
   using Weight = LogWeightTpl<T>;
-  return (!w.Member() || internal::IsNan(n))
-             ? Weight::NoWeight()
-             : (n == 0 || w == Weight::One()) ? Weight::One()
-                                              : Weight(w.Value() * n);
+  return (!w.Member() || internal::IsNan(n)) ? Weight::NoWeight()
+         : (n == 0 || w == Weight::One())    ? Weight::One()
+                                             : Weight(w.Value() * n);
 }
 
 // Specializes the library-wide template to use the above implementation; rules
@@ -805,10 +791,9 @@ template <class T, class V, bool Enable = !std::is_same_v<V, size_t>,
           typename std::enable_if_t<Enable> * = nullptr>
 constexpr RealWeightTpl<T> Power(const RealWeightTpl<T> &w, V n) {
   using Weight = RealWeightTpl<T>;
-  return (!w.Member() || internal::IsNan(n))
-             ? Weight::NoWeight()
-             : (n == 0 || w == Weight::One()) ? Weight::One()
-                                              : Weight(pow(w.Value(), n));
+  return (!w.Member() || internal::IsNan(n)) ? Weight::NoWeight()
+         : (n == 0 || w == Weight::One())    ? Weight::One()
+                                             : Weight(pow(w.Value(), n));
 }
 
 // Specializes the library-wide template to use the above implementation; rules
@@ -912,7 +897,8 @@ template <class T>
 constexpr MinMaxWeightTpl<T> Plus(const MinMaxWeightTpl<T> &w1,
                                   const MinMaxWeightTpl<T> &w2) {
   return (!w1.Member() || !w2.Member()) ? MinMaxWeightTpl<T>::NoWeight()
-                                        : w1.Value() < w2.Value() ? w1 : w2;
+         : w1.Value() < w2.Value()      ? w1
+                                        : w2;
 }
 
 constexpr MinMaxWeightTpl<float> Plus(const MinMaxWeightTpl<float> &w1,
@@ -930,7 +916,8 @@ template <class T>
 constexpr MinMaxWeightTpl<T> Times(const MinMaxWeightTpl<T> &w1,
                                    const MinMaxWeightTpl<T> &w2) {
   return (!w1.Member() || !w2.Member()) ? MinMaxWeightTpl<T>::NoWeight()
-                                        : w1.Value() >= w2.Value() ? w1 : w2;
+         : w1.Value() >= w2.Value()     ? w1
+                                        : w2;
 }
 
 constexpr MinMaxWeightTpl<float> Times(const MinMaxWeightTpl<float> &w1,

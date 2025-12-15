@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -21,15 +21,21 @@
 #ifndef FST_LOOKAHEAD_FILTER_H_
 #define FST_LOOKAHEAD_FILTER_H_
 
+#include <sys/types.h>
+
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 #include <fst/log.h>
-
+#include <fst/arc.h>
 #include <fst/filter-state.h>
+#include <fst/fst-decl.h>
 #include <fst/fst.h>
 #include <fst/lookahead-matcher.h>
-
+#include <fst/matcher.h>
+#include <fst/properties.h>
+#include <fst/util.h>
 
 namespace fst {
 
@@ -438,8 +444,8 @@ class PushLabelsComposeFilter {
     if (flabel != kNoLabel) {                   // Have a lookahead label?
       GetMatcher1()->AddMultiEpsLabel(flabel);  // Yes, make it a multi-epsilon
       GetMatcher2()->AddMultiEpsLabel(flabel);  // label so that it matches the
-    }                                           // implicit epsilon arc to be
-  }                                             // modified below when pushing.
+    }  // implicit epsilon arc to be
+  }  // modified below when pushing.
 
   FilterState FilterArc(Arc *arc1, Arc *arc2) const {
     if (!(LookAheadFlags() & kLookAheadPrefix)) {
@@ -485,8 +491,8 @@ class PushLabelsComposeFilter {
 
  private:
   const LookAheadSelector<typename Filter::Matcher1, typename Filter::Matcher2,
-                          MT>
-      &Selector() const {
+                          MT> &
+  Selector() const {
     return filter_.Selector();
   }
 

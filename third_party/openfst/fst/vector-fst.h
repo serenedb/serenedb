@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -22,17 +22,28 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
+#include <ios>
+#include <iosfwd>
+#include <istream>
 #include <memory>
+#include <new>
+#include <ostream>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include <fst/log.h>
-
+#include <fst/arc.h>
+#include <fst/expanded-fst.h>
+#include <fst/float-weight.h>
 #include <fst/fst-decl.h>  // For optional argument declarations
+#include <fst/fst.h>
 #include <fst/mutable-fst.h>
-#include <fst/test-properties.h>
+#include <fst/properties.h>
+#include <fst/util.h>
+#include <string_view>
 
 namespace fst {
 
@@ -55,11 +66,7 @@ class VectorState {
       ArcAllocator>::template rebind_alloc<VectorState<Arc, M>>;
 
   // Provide STL allocator for arcs.
-  explicit VectorState(const ArcAllocator &alloc)
-      : final_weight_(Weight::Zero()),
-        niepsilons_(0),
-        noepsilons_(0),
-        arcs_(alloc) {}
+  explicit VectorState(const ArcAllocator &alloc) : arcs_(alloc) {}
 
   VectorState(const VectorState<A, M> &state, const ArcAllocator &alloc)
       : final_weight_(state.Final()),
@@ -74,9 +81,7 @@ class VectorState {
     arcs_.clear();
   }
 
-  const Weight &FinalRef() const noexcept { return final_weight_; }
-
-  Weight Final() const { return final_weight_; }
+  const Weight &Final() const { return final_weight_; }
 
   size_t NumInputEpsilons() const { return niepsilons_; }
 
@@ -109,7 +114,7 @@ class VectorState {
   }
 
   template <class... T>
-  void EmplaceArc(T &&... ctor_args) {
+  void EmplaceArc(T &&...ctor_args) {
     arcs_.emplace_back(std::forward<T>(ctor_args)...);
     IncrementNumEpsilons(arcs_.back());
   }
@@ -155,10 +160,10 @@ class VectorState {
     if (arc.olabel == 0) ++noepsilons_;
   }
 
-  Weight final_weight_;                // Final weight.
-  size_t niepsilons_;                  // # of input epsilons
-  size_t noepsilons_;                  // # of output epsilons
-  std::vector<A, ArcAllocator> arcs_;  // Arc container.
+  Weight final_weight_ = Weight::Zero();  // Final weight.
+  size_t niepsilons_ = 0;                 // # of input epsilons
+  size_t noepsilons_ = 0;                 // # of output epsilons
+  std::vector<A, ArcAllocator> arcs_;     // Arc container.
 };
 
 namespace internal {
@@ -173,9 +178,8 @@ class VectorFstBaseImpl : public FstImpl<typename S::Arc> {
   using StateId = typename Arc::StateId;
   using Weight = typename Arc::Weight;
 
-  VectorFstBaseImpl(
-    const typename State::ArcAllocator &alloc = {})
-    : start_(kNoStateId), state_alloc_(alloc), arc_alloc_(alloc) {}
+  VectorFstBaseImpl(const typename State::ArcAllocator &alloc = {})
+      : arc_alloc_(alloc), state_alloc_(alloc) {}
 
   ~VectorFstBaseImpl() override {
     for (auto *state : states_) State::Destroy(state, &state_alloc_);
@@ -190,8 +194,8 @@ class VectorFstBaseImpl : public FstImpl<typename S::Arc> {
       : FstImpl<typename S::Arc>(),
         states_(std::move(impl.states_)),
         start_(impl.start_),
-        state_alloc_(impl.state_alloc_),
-        arc_alloc_(impl.arc_alloc_) {
+        arc_alloc_(impl.arc_alloc_),
+        state_alloc_(impl.state_alloc_) {
     impl.states_.clear();
     impl.start_ = kNoStateId;
   }
@@ -209,11 +213,7 @@ class VectorFstBaseImpl : public FstImpl<typename S::Arc> {
 
   StateId Start() const { return start_; }
 
-  const Weight &FinalRef(StateId state) const noexcept {
-    return states_[state]->FinalRef();
-  }
-
-  Weight Final(StateId state) const { return states_[state]->Final(); }
+  const Weight &Final(StateId state) const { return states_[state]->Final(); }
 
   StateId NumStates() const { return states_.size(); }
 
@@ -254,7 +254,7 @@ class VectorFstBaseImpl : public FstImpl<typename S::Arc> {
   }
 
   template <class... T>
-  void EmplaceArc(StateId state, T &&... ctor_args) {
+  void EmplaceArc(StateId state, T &&...ctor_args) {
     states_[state]->EmplaceArc(std::forward<T>(ctor_args)...);
   }
 
@@ -331,7 +331,7 @@ class VectorFstBaseImpl : public FstImpl<typename S::Arc> {
     data->ref_count = nullptr;
   }
 
-  const typename State::ArcAllocator& GetAlloc() const noexcept {
+  const typename State::ArcAllocator &GetAlloc() const noexcept {
     return arc_alloc_;
   }
 
@@ -339,9 +339,9 @@ class VectorFstBaseImpl : public FstImpl<typename S::Arc> {
   State *CreateState() { return new (&state_alloc_) State(arc_alloc_); }
 
   std::vector<State *> states_;
-  StateId start_;
-  typename State::StateAllocator state_alloc_;
+  StateId start_ = kNoStateId;
   typename State::ArcAllocator arc_alloc_;
+  typename State::StateAllocator state_alloc_;
 };
 
 // This is a VectorFstBaseImpl container that holds VectorStates and manages FST
@@ -370,20 +370,17 @@ class VectorFstImpl : public VectorFstBaseImpl<S> {
 
   using BaseImpl = VectorFstBaseImpl<S>;
 
-  
   VectorFstImpl(const typename State::ArcAllocator &alloc = {})
-    : BaseImpl(alloc) {
+      : BaseImpl(alloc) {
     SetType("vector");
     SetProperties(kNullProperties | kStaticProperties);
   }
 
-  explicit VectorFstImpl(
-    const Fst<Arc> &fst,
-    const typename State::ArcAllocator &alloc = {});
+  explicit VectorFstImpl(const Fst<Arc> &fst,
+                         const typename State::ArcAllocator &alloc = {});
 
-  static VectorFstImpl *Read(
-    std::istream &strm, const FstReadOptions &opts,
-    const typename State::ArcAllocator &alloc = {});
+  static VectorFstImpl *Read(std::istream &strm, const FstReadOptions &opts,
+                             const typename State::ArcAllocator &alloc = {});
 
   void SetStart(StateId state) {
     BaseImpl::SetStart(state);
@@ -420,7 +417,7 @@ class VectorFstImpl : public VectorFstBaseImpl<S> {
   }
 
   template <class... T>
-  void EmplaceArc(StateId state, T &&... ctor_args) {
+  void EmplaceArc(StateId state, T &&...ctor_args) {
     BaseImpl::EmplaceArc(state, std::forward<T>(ctor_args)...);
     UpdatePropertiesAfterAddArc(state);
   }
@@ -465,16 +462,15 @@ class VectorFstImpl : public VectorFstBaseImpl<S> {
 };
 
 template <class S>
-VectorFstImpl<S>::VectorFstImpl(
-  const Fst<Arc> &fst,
-  const typename State::ArcAllocator &alloc)
-  : BaseImpl(alloc) {
+VectorFstImpl<S>::VectorFstImpl(const Fst<Arc> &fst,
+                                const typename State::ArcAllocator &alloc)
+    : BaseImpl(alloc) {
   SetType("vector");
   SetInputSymbols(fst.InputSymbols());
   SetOutputSymbols(fst.OutputSymbols());
   BaseImpl::SetStart(fst.Start());
-  if (fst.Properties(kExpanded, false)) {
-    BaseImpl::ReserveStates(CountStates(fst));
+  if (std::optional<StateId> num_states = fst.NumStatesIfKnown()) {
+    BaseImpl::ReserveStates(*num_states);
   }
   for (StateIterator<Fst<Arc>> siter(fst); !siter.Done(); siter.Next()) {
     const auto state = siter.Value();
@@ -490,9 +486,9 @@ VectorFstImpl<S>::VectorFstImpl(
 }
 
 template <class S>
-VectorFstImpl<S> *VectorFstImpl<S>::Read(std::istream &strm,
-                                         const FstReadOptions &opts,
-                                         const typename State::ArcAllocator &alloc) {
+VectorFstImpl<S> *VectorFstImpl<S>::Read(
+    std::istream &strm, const FstReadOptions &opts,
+    const typename State::ArcAllocator &alloc) {
   auto impl = std::make_unique<VectorFstImpl>(alloc);
   FstHeader hdr;
   if (!impl->ReadHeader(strm, opts, kMinFileVersion, &hdr)) return nullptr;
@@ -542,12 +538,14 @@ VectorFstImpl<S> *VectorFstImpl<S>::Read(std::istream &strm,
 // VectorFst is thread-compatible.
 template <class A, class S /* = VectorState<A> */>
 class VectorFst : public ImplToMutableFst<internal::VectorFstImpl<S>> {
+  using Base = ImplToMutableFst<internal::VectorFstImpl<S>>;
+
  public:
   using Arc = A;
   using StateId = typename Arc::StateId;
 
   using State = S;
-  using Impl = internal::VectorFstImpl<State>;
+  using typename Base::Impl;
 
   friend class StateIterator<VectorFst<Arc, State>>;
   friend class ArcIterator<VectorFst<Arc, State>>;
@@ -556,22 +554,17 @@ class VectorFst : public ImplToMutableFst<internal::VectorFstImpl<S>> {
   template <class F, class G>
   friend void Cast(const F &, G *);
 
-  VectorFst(const typename State::ArcAllocator& alloc = {})
-    : ImplToMutableFst<Impl>(std::make_shared<Impl>(alloc)) {}
+  VectorFst(const typename State::ArcAllocator &alloc = {})
+      : Base(std::make_shared<Impl>(alloc)) {}
 
-  explicit VectorFst(
-    const Fst<Arc> &fst,
-    const typename State::ArcAllocator &alloc = {})
-      : ImplToMutableFst<Impl>(std::make_shared<Impl>(fst, alloc)) {}
+  explicit VectorFst(const Fst<Arc> &fst,
+                     const typename State::ArcAllocator &alloc = {})
+      : Base(std::make_shared<Impl>(fst, alloc)) {}
 
   VectorFst(const VectorFst &fst, bool unused_safe = false)
-      : ImplToMutableFst<Impl>(fst.GetSharedImpl()) {}
+      : Base(fst.GetSharedImpl()) {}
 
   VectorFst(VectorFst &&) noexcept;
-
-  const typename State::ArcAllocator& GetAlloc() const noexcept {
-    return GetImpl()->GetAlloc();
-  }
 
   // Get a copy of this VectorFst. See Fst<>::Copy() for further doc.
   VectorFst *Copy(bool safe = false) const override {
@@ -583,27 +576,27 @@ class VectorFst : public ImplToMutableFst<internal::VectorFstImpl<S>> {
   VectorFst &operator=(VectorFst &&) noexcept;
 
   VectorFst &operator=(const Fst<Arc> &fst) override {
-    if (this != &fst) SetImpl(std::make_shared<Impl>(fst, GetImpl()->GetAlloc()));
+    if (this != &fst)
+      SetImpl(std::make_shared<Impl>(fst, GetImpl()->GetAlloc()));
     return *this;
   }
 
   template <class... T>
-  void EmplaceArc(StateId state, T &&... ctor_args) {
+  void EmplaceArc(StateId state, T &&...ctor_args) {
     MutateCheck();
     GetMutableImpl()->EmplaceArc(state, std::forward<T>(ctor_args)...);
   }
 
   // Reads a VectorFst from an input stream, returning nullptr on error.
-  static VectorFst *Read(
-    std::istream &strm, const FstReadOptions &opts,
-    const typename State::ArcAllocator &alloc = {}) {
+  static VectorFst *Read(std::istream &strm, const FstReadOptions &opts,
+                         const typename State::ArcAllocator &alloc = {}) {
     auto *impl = Impl::Read(strm, opts, alloc);
     return impl ? new VectorFst(std::shared_ptr<Impl>(impl)) : nullptr;
   }
 
   // Read a VectorFst from a file, returning nullptr on error; empty source
   // reads from standard input.
-  static VectorFst *Read(const std::string &source) {
+  static VectorFst *Read(std::string_view source) {
     auto *impl = ImplToExpandedFst<Impl, MutableFst<Arc>>::Read(source);
     return impl ? new VectorFst(std::shared_ptr<Impl>(impl)) : nullptr;
   }
@@ -631,17 +624,16 @@ class VectorFst : public ImplToMutableFst<internal::VectorFstImpl<S>> {
   inline void InitMutableArcIterator(StateId s,
                                      MutableArcIteratorData<Arc> *) override;
 
-  using ImplToMutableFst<Impl, MutableFst<Arc>>::ReserveArcs;
-  using ImplToMutableFst<Impl, MutableFst<Arc>>::ReserveStates;
-  using ImplToMutableFst<Impl, MutableFst<Arc>>::GetImpl;
+  using Base::GetImpl;
+  using Base::ReserveArcs;
+  using Base::ReserveStates;
 
  private:
-  using ImplToMutableFst<Impl, MutableFst<Arc>>::GetMutableImpl;
-  using ImplToMutableFst<Impl, MutableFst<Arc>>::MutateCheck;
-  using ImplToMutableFst<Impl, MutableFst<Arc>>::SetImpl;
+  using Base::GetMutableImpl;
+  using Base::MutateCheck;
+  using Base::SetImpl;
 
-  explicit VectorFst(std::shared_ptr<Impl> impl)
-      : ImplToMutableFst<Impl>(impl) {}
+  explicit VectorFst(std::shared_ptr<Impl> impl) : Base(impl) {}
 };
 
 template <class Arc, class State>
@@ -714,7 +706,7 @@ class StateIterator<VectorFst<Arc, State>> {
   using StateId = typename Arc::StateId;
 
   explicit StateIterator(const VectorFst<Arc, State> &fst)
-      : nstates_(fst.GetImpl()->NumStates()), s_(0) {}
+      : nstates_(fst.GetImpl()->NumStates()) {}
 
   bool Done() const { return s_ >= nstates_; }
 
@@ -726,7 +718,7 @@ class StateIterator<VectorFst<Arc, State>> {
 
  private:
   const StateId nstates_;
-  StateId s_;
+  StateId s_ = 0;
 };
 
 // Specialization for VectorFst; see generic version in fst.h for sample usage
@@ -738,8 +730,7 @@ class ArcIterator<VectorFst<Arc, State>> {
 
   ArcIterator(const VectorFst<Arc, State> &fst, StateId s)
       : arcs_(fst.GetImpl()->GetState(s)->Arcs()),
-        narcs_(fst.GetImpl()->GetState(s)->NumArcs()),
-        i_(0) {}
+        narcs_(fst.GetImpl()->GetState(s)->NumArcs()) {}
 
   bool Done() const { return i_ >= narcs_; }
 
@@ -760,7 +751,7 @@ class ArcIterator<VectorFst<Arc, State>> {
  private:
   const Arc *arcs_;
   size_t narcs_;
-  size_t i_;
+  size_t i_ = 0;
 };
 
 // Specialization for VectorFst; see generic version in mutable-fst.h for sample
@@ -772,7 +763,7 @@ class MutableArcIterator<VectorFst<Arc, State>>
   using StateId = typename Arc::StateId;
   using Weight = typename Arc::Weight;
 
-  MutableArcIterator(VectorFst<Arc, State> *fst, StateId s) : i_(0) {
+  MutableArcIterator(VectorFst<Arc, State> *fst, StateId s) {
     fst->MutateCheck();
     state_ = fst->GetMutableImpl()->GetState(s);
     properties_ = &fst->GetImpl()->properties_;
@@ -836,7 +827,7 @@ class MutableArcIterator<VectorFst<Arc, State>>
  private:
   State *state_;
   std::atomic<uint64_t> *properties_;
-  size_t i_;
+  size_t i_ = 0;
 };
 
 // Provides information needed for the generic mutable arc iterator.

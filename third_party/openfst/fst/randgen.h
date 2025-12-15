@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -24,6 +24,8 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <functional>
 #include <limits>
 #include <map>
 #include <memory>
@@ -33,18 +35,18 @@
 #include <vector>
 
 #include <fst/log.h>
-
 #include <fst/accumulator.h>
+#include <fst/arc.h>
 #include <fst/cache.h>
 #include <fst/dfs-visit.h>
 #include <fst/float-weight.h>
 #include <fst/fst-decl.h>
 #include <fst/fst.h>
+#include <fst/impl-to-fst.h>
 #include <fst/mutable-fst.h>
 #include <fst/properties.h>
 #include <fst/util.h>
 #include <fst/weight.h>
-
 #include <vector>
 
 namespace fst {
@@ -133,9 +135,6 @@ class LogProbArcSelector {
   mutable std::mt19937_64 rand_;
   const WeightConvert<Weight, Log64Weight> to_log_weight_{};
 };
-
-// Useful alias when using StdArc.
-using StdArcSelector = LogProbArcSelector<StdArc>;
 
 // Same as LogProbArcSelector but use CacheLogAccumulator to cache the weight
 // accumulation computations. This class is not thread-safe.
@@ -540,9 +539,9 @@ class RandGenFstImpl : public CacheImpl<ToArc> {
             weighted_ ? to_weight_(Log64Weight(-log(prob))) : ToWeight::One();
         EmplaceArc(s, aarc.ilabel, aarc.olabel, std::move(weight),
                    state_table_.size());
-        auto *nrstate = new RandState<FromArc>(aarc.nextstate, count,
-                                               rstate.length + 1, pos, &rstate);
-        state_table_.emplace_back(nrstate);
+        auto nrstate = std::make_unique<RandState<FromArc>>(
+            aarc.nextstate, count, rstate.length + 1, pos, &rstate);
+        state_table_.push_back(std::move(nrstate));
       } else {  // Super-final transition.
         if (weighted_) {
           const auto weight =
@@ -581,6 +580,8 @@ class RandGenFstImpl : public CacheImpl<ToArc> {
 template <class FromArc, class ToArc, class Sampler>
 class RandGenFst
     : public ImplToFst<internal::RandGenFstImpl<FromArc, ToArc, Sampler>> {
+  using Base = ImplToFst<internal::RandGenFstImpl<FromArc, ToArc, Sampler>>;
+
  public:
   using Label = typename FromArc::Label;
   using StateId = typename FromArc::StateId;
@@ -589,17 +590,16 @@ class RandGenFst
   using Store = DefaultCacheStore<FromArc>;
   using State = typename Store::State;
 
-  using Impl = internal::RandGenFstImpl<FromArc, ToArc, Sampler>;
+  using typename Base::Impl;
 
   friend class ArcIterator<RandGenFst<FromArc, ToArc, Sampler>>;
   friend class StateIterator<RandGenFst<FromArc, ToArc, Sampler>>;
 
   RandGenFst(const Fst<FromArc> &fst, const RandGenFstOptions<Sampler> &opts)
-      : ImplToFst<Impl>(std::make_shared<Impl>(fst, opts)) {}
+      : Base(std::make_shared<Impl>(fst, opts)) {}
 
   // See Fst<>::Copy() for doc.
-  RandGenFst(const RandGenFst &fst, bool safe = false)
-      : ImplToFst<Impl>(fst, safe) {}
+  RandGenFst(const RandGenFst &fst, bool safe = false) : Base(fst, safe) {}
 
   // Get a copy of this RandGenFst. See Fst<>::Copy() for further doc.
   RandGenFst *Copy(bool safe = false) const override {
@@ -613,8 +613,8 @@ class RandGenFst
   }
 
  private:
-  using ImplToFst<Impl>::GetImpl;
-  using ImplToFst<Impl>::GetMutableImpl;
+  using Base::GetImpl;
+  using Base::GetMutableImpl;
 
   RandGenFst &operator=(const RandGenFst &) = delete;
 };
@@ -752,9 +752,11 @@ template <class FromArc, class ToArc, class Selector>
 void RandGen(const Fst<FromArc> &ifst, MutableFst<ToArc> *ofst,
              const RandGenOptions<Selector> &opts) {
   using Sampler = ArcSampler<FromArc, Selector>;
-  auto *sampler = new Sampler(ifst, opts.selector, opts.max_length);
-  RandGenFstOptions<Sampler> fopts(CacheOptions(true, 0), sampler, opts.npath,
-                                   opts.weighted, opts.remove_total_weight);
+  auto sampler =
+      std::make_unique<Sampler>(ifst, opts.selector, opts.max_length);
+  RandGenFstOptions<Sampler> fopts(CacheOptions(true, 0), sampler.release(),
+                                   opts.npath, opts.weighted,
+                                   opts.remove_total_weight);
   RandGenFst<FromArc, ToArc, Sampler> rfst(ifst, fopts);
   if (opts.weighted) {
     *ofst = rfst;

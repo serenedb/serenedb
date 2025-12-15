@@ -18,19 +18,17 @@
 // limitations under the License.
 
 #include "base/timer.h"
+#include <absl/container/flat_hash_map.h>
 #include "base/kaldi-error.h"
 #include <algorithm>
 #include <iomanip>
-#include <map>
-#include <unordered_map>
 
 namespace kaldi {
 
 class ProfileStats {
  public:
-  void AccStats(const char *function_name, double elapsed) {
-    std::unordered_map<const char*, ProfileStatsEntry>::iterator
-        iter = map_.find(function_name);
+  void AccStats(const char* function_name, double elapsed) {
+    auto iter = map_.find(function_name);
     if (iter == map_.end()) {
       map_[function_name] = ProfileStatsEntry(function_name);
       map_[function_name].total_time = elapsed;
@@ -41,31 +39,31 @@ class ProfileStats {
   ~ProfileStats() {
     // This map makes sure we agglomerate the time if there were any duplicate
     // addresses of strings.
-    std::unordered_map<std::string, double> total_time;
+    absl::flat_hash_map<std::string, double> total_time;
     for (auto iter = map_.begin(); iter != map_.end(); iter++)
       total_time[iter->second.name] += iter->second.total_time;
 
     ReverseSecondComparator comp;
-    std::vector<std::pair<std::string, double> > pairs(total_time.begin(),
-                                                       total_time.end());
+    std::vector<std::pair<std::string, double>> pairs(total_time.begin(),
+                                                      total_time.end());
     std::sort(pairs.begin(), pairs.end(), comp);
     for (size_t i = 0; i < pairs.size(); i++) {
-      KALDI_LOG << "Time taken in " << pairs[i].first << " is "
-                << std::fixed << std::setprecision(2) << pairs[i].second << "s.";
+      KALDI_LOG << "Time taken in " << pairs[i].first << " is " << std::fixed
+                << std::setprecision(2) << pairs[i].second << "s.";
     }
   }
- private:
 
+ private:
   struct ProfileStatsEntry {
     std::string name;
     double total_time;
-    ProfileStatsEntry() { }
-    ProfileStatsEntry(const char *name): name(name) { }
+    ProfileStatsEntry() {}
+    ProfileStatsEntry(const char* name) : name(name) {}
   };
 
   struct ReverseSecondComparator {
-    bool operator () (const std::pair<std::string, double> &a,
-                      const std::pair<std::string, double> &b) {
+    bool operator()(const std::pair<std::string, double>& a,
+                    const std::pair<std::string, double>& b) {
       return a.second > b.second;
     }
   };
@@ -73,13 +71,11 @@ class ProfileStats {
   // Note: this map is keyed on the address of the string, there is no proper
   // hash function.  The assumption is that the strings are compile-time
   // constants.
-  std::unordered_map<const char*, ProfileStatsEntry> map_;
+  absl::flat_hash_map<const char*, ProfileStatsEntry> map_;
 };
 
 ProfileStats g_profile_stats;
 
-Profiler::~Profiler() {
-  g_profile_stats.AccStats(name_, tim_.Elapsed());
-}
+Profiler::~Profiler() { g_profile_stats.AccStats(name_, tim_.Elapsed()); }
 
 }  // namespace kaldi

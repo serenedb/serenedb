@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -20,15 +20,22 @@
 #ifndef FST_ARCSORT_H_
 #define FST_ARCSORT_H_
 
+#include <sys/types.h>
+
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <string>
+#include <tuple>
 #include <vector>
 
+#include <fst/arc-map.h>
+#include <fst/arc.h>
 #include <fst/cache.h>
+#include <fst/fst.h>
+#include <fst/mutable-fst.h>
+#include <fst/properties.h>
 #include <fst/state-map.h>
-#include <fst/test-properties.h>
-
 
 namespace fst {
 
@@ -184,7 +191,7 @@ class ArcIterator<ArcSortFst<Arc, Compare>>
 template <class Arc>
 class ILabelCompare {
  public:
-  constexpr ILabelCompare() {}
+  constexpr ILabelCompare() = default;
 
   constexpr bool operator()(const Arc &lhs, const Arc &rhs) const {
     return std::forward_as_tuple(lhs.ilabel, lhs.olabel) <
@@ -201,7 +208,7 @@ class ILabelCompare {
 template <class Arc>
 class OLabelCompare {
  public:
-  constexpr OLabelCompare() {}
+  constexpr OLabelCompare() = default;
 
   constexpr bool operator()(const Arc &lhs, const Arc &rhs) const {
     return std::forward_as_tuple(lhs.olabel, lhs.ilabel) <

@@ -181,11 +181,11 @@ velox::TypePtr ResolveFunction(const std::string& function_name,
 }
 
 std::vector<velox::TypePtr> GetExprsTypes(
-  std::span<const lp::ExprPtr> arg_exprs) {
-  return arg_exprs | std::views::transform([](const auto& arg) {
+  std::span<const lp::ExprPtr> arg_exprs, bool use_pg_unknown = true) {
+  return arg_exprs | std::views::transform([&](const auto& arg) {
            const auto& arg_type = arg->type();
-           // Literal
-           if (arg_type == velox::VARCHAR() &&
+           // String literal as pg_unknown
+           if (use_pg_unknown && arg_type == velox::VARCHAR() &&
                arg->kind() == lp::ExprKind::kConstant) {
              return PG_UNKNOWN();
            }
@@ -194,7 +194,6 @@ std::vector<velox::TypePtr> GetExprsTypes(
          std::ranges::to<std::vector>();
 }
 
-// TODO get rid of extra copy
 velox::TypePtr FixupReturnType(const velox::TypePtr& ret_type) {
   if (!ret_type) {
     return ret_type;
@@ -228,13 +227,16 @@ velox::TypePtr FixupReturnType(const velox::TypePtr& ret_type) {
   }
   return velox::getType(ret_type->name(), std::move(new_params));
 }
-
 velox::TypePtr ResolveFunction(const std::string& function_name,
                                std::span<const lp::ExprPtr> arg_exprs,
                                std::vector<velox::TypePtr>* arg_coercions) {
-  auto ret_type =
-    ResolveFunction(function_name, GetExprsTypes(arg_exprs), arg_coercions);
+  if (const auto ret_type = ResolveFunction(
+        function_name, GetExprsTypes(arg_exprs), arg_coercions)) {
+    return FixupReturnType(ret_type);
+  }
 
+  const auto ret_type = ResolveFunction(
+    function_name, GetExprsTypes(arg_exprs, false), arg_coercions);
   return FixupReturnType(ret_type);
 }
 

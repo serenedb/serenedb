@@ -153,8 +153,8 @@ Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,
     auto& catalog =
       SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
     auto snapshot = catalog.GetSnapshot();
-    auto leader = catalog.GetSnapshot()->GetTable(
-      database_id, StaticStrings::kPublic, *request.distributeShardsLike);
+    auto leader = snapshot->GetTable(database_id, StaticStrings::kPublic,
+                                     *request.distributeShardsLike);
     if (!leader) {
       return {ERROR_CLUSTER_UNKNOWN_DISTRIBUTESHARDSLIKE,
               "Collection not found: ", *request.distributeShardsLike};

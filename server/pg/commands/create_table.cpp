@@ -48,7 +48,7 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
 
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  auto database = catalog.GetDatabase(db);
+  auto database = catalog.GetSnapshot()->GetDatabase(db);
   SDB_ENSURE(database, ERROR_SERVER_DATABASE_NOT_FOUND);
 
   catalog::CreateTableRequest request;

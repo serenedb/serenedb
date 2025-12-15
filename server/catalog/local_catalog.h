@@ -24,10 +24,8 @@
 #include <absl/synchronization/mutex.h>
 
 #include <memory>
-#include <thread>
 #include <vector>
 
-#include "basics/read_write_lock.h"
 #include "catalog/catalog.h"
 #include "catalog/database.h"
 #include "catalog/function.h"
@@ -37,7 +35,6 @@
 #include "catalog/schema.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
-#include "catalog/types.h"
 #include "storage_engine/storage_engine.h"
 #include "storage_engine/table_shard.h"
 
@@ -102,32 +99,13 @@ class LocalCatalog final : public LogicalCatalog,
   Result DropIndex(ObjectId database_id, std::string_view schema,
                    std::string_view name) final;
 
-  std::shared_ptr<Role> GetRole(std::string_view name) const final;
-  std::shared_ptr<View> GetView(ObjectId database_id, std::string_view schema,
-                                std::string_view name) const final;
-  std::shared_ptr<Function> GetFunction(ObjectId database_id,
-                                        std::string_view schema,
-                                        std::string_view name) const final;
   std::shared_ptr<Table> GetTable(ObjectId database_id, std::string_view schema,
                                   std::string_view name) const final;
-  std::shared_ptr<Database> GetDatabase(std::string_view name) const final;
-  std::shared_ptr<Database> GetDatabase(ObjectId id) const final;
-  std::shared_ptr<Schema> GetSchema(ObjectId database_id,
-                                    std::string_view schema) const final;
 
-  Result GetRoles(std::vector<std::shared_ptr<Role>>& roles) const final;
-  Result GetViews(ObjectId database_id, std::string_view schema,
-                  std::vector<std::shared_ptr<View>>& views) const final;
-  Result GetFunctions(
-    ObjectId database_id, std::string_view schema,
-    std::vector<std::shared_ptr<Function>>& functions) const final;
   Result GetTables(
     ObjectId database_id, std::string_view schema,
     std::vector<std::pair<std::shared_ptr<Table>, std::shared_ptr<TableShard>>>&
       tables) const final;
-  std::vector<std::shared_ptr<Database>> GetDatabases() const final;
-  Result GetSchemas(ObjectId database_id,
-                    std::vector<std::shared_ptr<Schema>>& schemas) const final;
   std::shared_ptr<Snapshot> GetSnapshot() const noexcept final;
 
   std::shared_ptr<Object> GetObject(ObjectId id) const final;
@@ -135,7 +113,7 @@ class LocalCatalog final : public LogicalCatalog,
   void RegisterTableDrop(TableTombstone tombstone) final;
   void RegisterScopeDrop(ObjectId database_id, ObjectId schema_id) final;
   std::shared_ptr<TableShard> GetTableShard(ObjectId id) const final;
-  std::vector<std::shared_ptr<TableShard>> GetTableShards() final;
+  std::vector<std::shared_ptr<TableShard>> GetTableShards() const final;
   void DropTableShard(ObjectId id);
 
   bool GetSkipBackgroundErrors() const noexcept {
@@ -143,10 +121,8 @@ class LocalCatalog final : public LogicalCatalog,
   }
 
  private:
-  mutable basics::ReadWriteLock _mutex;
-  mutable std::atomic<std::thread::id> _owner;
+  mutable absl::Mutex _mutex;
   std::shared_ptr<SnapshotImpl> _snapshot;
-  containers::FlatHashMap<ObjectId, std::shared_ptr<TableShard>> _tables;
   StorageEngine* _engine;
   bool _skip_background_errors;
 };

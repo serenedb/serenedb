@@ -55,16 +55,15 @@ void ResolveObject(ObjectId database, std::span<const std::string> search_path,
     auto& catalogs =
       SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
     auto& catalog = catalogs.Global();
+    auto snapshot = catalog.GetSnapshot();
 
     std::string_view key = name.relation;
 
     auto resolve_object = [&](std::string_view schema) {
-      if (auto object = catalog.GetTable(database, schema, key)) {
-        data.object = object;
-      } else if (auto object = catalog.GetView(database, schema, key)) {
+      if (auto object = snapshot->GetRelation(database, schema, key)) {
         data.object = object;
       } else {
-        data.object = catalog.GetFunction(database, schema, key);
+        data.object = snapshot->GetFunction(database, schema, key);
       }
     };
 

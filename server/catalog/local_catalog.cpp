@@ -379,8 +379,25 @@ class SnapshotImpl : public Snapshot {
     result->_databases = _databases;
     result->_databases_by_name = _databases_by_name;
     result->_objects_by_id = _objects_by_id;
+    result->_table_shards = _table_shards;
     return result;
   }
+
+  std::vector<std::shared_ptr<TableShard>> GetTableShards() const {
+    return {_table_shards.begin(), _table_shards.end()};
+  }
+
+  std::shared_ptr<TableShard> GetTableShard(ObjectId id) const final {
+    auto it = _table_shards.find(id);
+    return it == _table_shards.end() ? nullptr : *it;
+  }
+
+  void AddTableShard(std::shared_ptr<TableShard> physical) {
+    const auto is_new = _table_shards.emplace(std::move(physical)).second;
+    SDB_ENSURE(is_new, ERROR_INTERNAL);
+  }
+
+  void DropTableShard(ObjectId id) { _table_shards.erase(id); }
 
   std::vector<std::shared_ptr<Role>> GetRoles() const final {
     return {_roles.begin(), _roles.end()};
@@ -920,8 +937,11 @@ class SnapshotImpl : public Snapshot {
   }
 
   template<typename T>
-  using ObjectSet =
+  using ObjectSetByName =
     containers::FlatHashSet<std::shared_ptr<T>, ObjectByName, ObjectByName>;
+  template<typename T>
+  using ObjectSetById =
+    containers::FlatHashSet<std::shared_ptr<T>, ObjectById, ObjectById>;
   template<typename K, typename V>
   using ObjectMapByName =
     containers::FlatHashMap<std::shared_ptr<K>, V, ObjectByName, ObjectByName>;
@@ -931,19 +951,19 @@ class SnapshotImpl : public Snapshot {
   struct SchemaObjects {
     bool empty() const { return relations->empty() && functions->empty(); }
 
-    std::shared_ptr<ObjectSet<SchemaObject>> relations =
-      std::make_shared<ObjectSet<SchemaObject>>();
-    std::shared_ptr<ObjectSet<SchemaObject>> functions =
-      std::make_shared<ObjectSet<SchemaObject>>();
+    std::shared_ptr<ObjectSetByName<SchemaObject>> relations =
+      std::make_shared<ObjectSetByName<SchemaObject>>();
+    std::shared_ptr<ObjectSetByName<SchemaObject>> functions =
+      std::make_shared<ObjectSetByName<SchemaObject>>();
   };
 
-  ObjectSet<Role> _roles;
+  ObjectSetByName<Role> _roles;
   ObjectMapById<Database,
                 std::shared_ptr<ObjectMapByName<Schema, SchemaObjects>>>
     _databases;
-  ObjectSet<Database> _databases_by_name;
-  containers::FlatHashSet<std::shared_ptr<Object>, ObjectById, ObjectById>
-    _objects_by_id;
+  ObjectSetByName<Database> _databases_by_name;
+  ObjectSetById<Object> _objects_by_id;
+  ObjectSetById<TableShard> _table_shards;
 };
 
 LocalCatalog::LocalCatalog(StorageEngine& engine, bool skip_background_errors)
@@ -952,13 +972,13 @@ LocalCatalog::LocalCatalog(StorageEngine& engine, bool skip_background_errors)
     _skip_background_errors{skip_background_errors} {}
 
 Result LocalCatalog::RegisterRole(std::shared_ptr<Role> role) {
-  RECURSIVE_WRITE_LOCKER(_mutex, _owner);
+  absl::MutexLock lock{&_mutex};
   return _snapshot->RegisterRole(std::move(role),
                                  [](auto&) { return Result{}; });
 }
 
 Result LocalCatalog::RegisterDatabase(std::shared_ptr<Database> database) {
-  RECURSIVE_WRITE_LOCKER(_mutex, _owner);
+  absl::MutexLock lock{&_mutex};
   return _snapshot->RegisterDatabase(std::move(database), [&](auto& object) {
     return RegisterDatabaseImpl(object->GetId(), object->GetName(), false);
   });
@@ -966,14 +986,14 @@ Result LocalCatalog::RegisterDatabase(std::shared_ptr<Database> database) {
 
 Result LocalCatalog::RegisterSchema(ObjectId database_id,
                                     std::shared_ptr<Schema> schema) {
-  RECURSIVE_WRITE_LOCKER(_mutex, _owner);
+  absl::MutexLock lock{&_mutex};
   return _snapshot->RegisterSchema(database_id, std::move(schema),
                                    [&](auto&) { return Result{}; });
 }
 
 Result LocalCatalog::RegisterView(ObjectId database_id, std::string_view schema,
                                   std::shared_ptr<View> view) {
-  RECURSIVE_WRITE_LOCKER(_mutex, _owner);
+  absl::MutexLock lock{&_mutex};
   return _snapshot->RegisterObject(database_id, schema, std::move(view), false,
                                    [&](auto& object) { return Result{}; });
 }
@@ -983,7 +1003,7 @@ Result LocalCatalog::RegisterTable(ObjectId database_id,
                                    CreateTableOptions options) {
   auto table = std::make_shared<Table>(std::move(options), database_id);
 
-  RECURSIVE_WRITE_LOCKER(_mutex, _owner);
+  absl::MutexLock lock{&_mutex};
   return _snapshot->RegisterObject(
     database_id, schema, std::move(table), false, [&](auto& object) -> Result {
       auto& table = basics::downCast<Table>(*object);
@@ -997,10 +1017,7 @@ Result LocalCatalog::RegisterTable(ObjectId database_id,
       // TODO(gnusi): this might throw, but indexes will become a separate
       // objects soon anyway
       physical->prepareIndexes(table, options.indexes);
-
-      auto [it, is_new] =
-        _tables.try_emplace(table.GetId(), std::move(physical));
-      SDB_ASSERT(is_new);
+      _snapshot->AddTableShard(std::move(physical));
 
       return {};
     });
@@ -1009,7 +1026,7 @@ Result LocalCatalog::RegisterTable(ObjectId database_id,
 Result LocalCatalog::RegisterFunction(ObjectId database_id,
                                       std::string_view schema,
                                       std::shared_ptr<Function> function) {
-  RECURSIVE_WRITE_LOCKER(_mutex, _owner);
+  absl::MutexLock lock{&_mutex};
   return _snapshot->RegisterObject(database_id, schema, std::move(function),
                                    false,
                                    [&](auto& object) { return Result{}; });
@@ -1021,7 +1038,7 @@ Result LocalCatalog::CreateDatabase(std::shared_ptr<Database> database) {
 
   // TODO(gnusi): make it atomic
 
-  RECURSIVE_WRITE_LOCKER(_mutex, _owner);
+  absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
     auto r =
       clone->RegisterDatabase(std::move(database), [&](auto& object) -> Result {
@@ -1062,7 +1079,7 @@ Result LocalCatalog::CreateDatabase(std::shared_ptr<Database> database) {
 
 Result LocalCatalog::CreateSchema(ObjectId database_id,
                                   std::shared_ptr<Schema> schema) {
-  RECURSIVE_WRITE_LOCKER(_mutex, _owner);
+  absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
     return clone->RegisterSchema(
       database_id, std::move(schema), [&](auto& object) {
@@ -1080,7 +1097,7 @@ Result LocalCatalog::CreateSchema(ObjectId database_id,
 
 Result LocalCatalog::CreateRole(std::shared_ptr<Role> role) {
   auto r = [&] {
-    RECURSIVE_WRITE_LOCKER(_mutex, _owner);
+    absl::MutexLock lock{&_mutex};
     return Apply(_snapshot, [&](auto& clone) {
       return clone->RegisterRole(std::move(role), [&](auto& object) -> Result {
         return _engine->CreateRole(basics::downCast<Role>(*object));
@@ -1100,19 +1117,19 @@ Result LocalCatalog::RegisterIndex(ObjectId database_id,
                                    std::string_view schema,
                                    std::string_view table,
                                    IndexOptions options) {
-  RECURSIVE_WRITE_LOCKER(_mutex, _owner);
+  absl::MutexLock lock{&_mutex};
   return {};
 }
 
 Result LocalCatalog::CreateIndex(ObjectId database_id, std::string_view schema,
                                  std::string_view table, IndexOptions options) {
-  RECURSIVE_WRITE_LOCKER(_mutex, _owner);
+  absl::MutexLock lock{&_mutex};
   return {};
 }
 
 Result LocalCatalog::DropIndex(ObjectId database_id, std::string_view schema,
                                std::string_view name) {
-  RECURSIVE_WRITE_LOCKER(_mutex, _owner);
+  absl::MutexLock lock{&_mutex};
   return {};
 }
 
@@ -1120,7 +1137,7 @@ Result LocalCatalog::CreateView(ObjectId database_id, std::string_view schema,
                                 std::shared_ptr<View> view, bool replace) {
   auto writer = MakePropertiesWriter();
 
-  RECURSIVE_WRITE_LOCKER(_mutex, _owner);
+  absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
     return clone->RegisterObject(
       database_id, schema, std::move(view), replace, [&](auto& object) {
@@ -1138,7 +1155,7 @@ Result LocalCatalog::CreateFunction(ObjectId database_id,
                                     bool replace) {
   auto writer = MakePropertiesWriter();
 
-  RECURSIVE_WRITE_LOCKER(_mutex, _owner);
+  absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
     return clone->RegisterObject(
       database_id, schema, std::move(function), replace, [&](auto& object) {
@@ -1155,7 +1172,7 @@ Result LocalCatalog::CreateTable(
   CreateTableOperationOptions operation_options) {
   auto table = std::make_shared<Table>(std::move(options), database_id);
 
-  RECURSIVE_WRITE_LOCKER(_mutex, _owner);
+  absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
     return clone->RegisterObject(
       database_id, schema, std::move(table), false,
@@ -1168,20 +1185,9 @@ Result LocalCatalog::CreateTable(
           return r;
         }
 
-        // TODO(gnusi): this might throw, but indexes will become
-        // a separate objects soon anyway
         physical->prepareIndexes(table, options.indexes);
-
-        auto [it, is_new] =
-          _tables.try_emplace(table.GetId(), std::move(physical));
-        SDB_ASSERT(is_new);
-
-        try {
-          _engine->createTable(table, *it->second);
-        } catch (...) {
-          _tables.erase(it);
-          throw;
-        }
+        clone->AddTableShard(physical);
+        _engine->createTable(table, *physical);
 
         return {};
       });
@@ -1194,7 +1200,7 @@ Result LocalCatalog::RenameView(ObjectId database_id, std::string_view schema,
   auto writer = MakePropertiesWriter();
 
   auto r = [&] -> Result {
-    RECURSIVE_WRITE_LOCKER(_mutex, _owner);
+    absl::MutexLock lock{&_mutex};
     return Apply(_snapshot, [&](auto& clone) -> Result {
       return clone->template ReplaceObject<View>(
         database_id, schema, name,
@@ -1230,7 +1236,7 @@ Result LocalCatalog::RenameTable(ObjectId database_id, std::string_view schema,
   ObjectId table_id;
 
   auto r = [&] {
-    RECURSIVE_WRITE_LOCKER(_mutex, _owner);
+    absl::MutexLock lock{&_mutex};
     return Apply(_snapshot, [&](auto& clone) -> Result {
       return clone->template ReplaceObject<Table>(
         database_id, schema, name,
@@ -1256,9 +1262,9 @@ Result LocalCatalog::RenameTable(ObjectId database_id, std::string_view schema,
         },
         [&](auto& database, auto& schema, auto& object) -> Result {
           auto& table = basics::downCast<Table>(*object);
-          auto it = _tables.find(table.GetId());
-          SDB_ENSURE(it != _tables.end(), ERROR_INTERNAL);
-          return _engine->RenameTable(table, *it->second, name);
+          auto shard = clone->GetTableShard(table.GetId());
+          SDB_ENSURE(shard, ERROR_INTERNAL);
+          return _engine->RenameTable(table, *shard, name);
         });
     });
   }();
@@ -1278,7 +1284,7 @@ Result LocalCatalog::ChangeRole(std::string_view name,
   vpack::Builder b;
 
   auto r = [&] {
-    RECURSIVE_WRITE_LOCKER(_mutex, _owner);
+    absl::MutexLock lock{&_mutex};
     return Apply(_snapshot, [&](auto& clone) {
       return clone->ReplaceRole(name, new_role, [&](auto& object) -> Result {
         return _engine->ChangeRole(object->GetId(), [&](bool) {
@@ -1308,7 +1314,7 @@ Result LocalCatalog::ChangeView(ObjectId database_id, std::string_view schema,
   auto writer = MakePropertiesWriter();
 
   auto r = [&] {
-    RECURSIVE_WRITE_LOCKER(_mutex, _owner);
+    absl::MutexLock lock{&_mutex};
     return Apply(_snapshot, [&](auto& clone) {
       return clone->template ReplaceObject<View>(
         database_id, schema, name, new_view,
@@ -1336,7 +1342,7 @@ Result LocalCatalog::ChangeTable(ObjectId database_id, std::string_view schema,
   ObjectId table_id;
 
   auto r = [&] {
-    RECURSIVE_WRITE_LOCKER(_mutex, _owner);
+    absl::MutexLock lock{&_mutex};
     return Apply(_snapshot, [&](auto& clone) {
       return clone->template ReplaceObject<Table>(
         database_id, schema, name, new_table,
@@ -1344,11 +1350,10 @@ Result LocalCatalog::ChangeTable(ObjectId database_id, std::string_view schema,
           auto& table = basics::downCast<Table>(*object);
 
           table_id = table.GetId();
-          auto it = _tables.find(table_id);
-          SDB_ENSURE(it != _tables.end(), ERROR_INTERNAL);
+          auto shard = clone->GetTableShard(table_id);
+          SDB_ENSURE(shard, ERROR_INTERNAL);
 
-          return basics::SafeCall(
-            [&] { _engine->ChangeTable(table, *it->second); });
+          return basics::SafeCall([&] { _engine->ChangeTable(table, *shard); });
         });
     });
   }();
@@ -1363,7 +1368,7 @@ Result LocalCatalog::ChangeTable(ObjectId database_id, std::string_view schema,
 
 Result LocalCatalog::DropRole(std::string_view role) {
   auto r = [&] {
-    RECURSIVE_WRITE_LOCKER(_mutex, _owner);
+    absl::MutexLock lock{&_mutex};
     return Apply(_snapshot, [&](auto& clone) {
       return clone->DropRole(role, [&](auto& object) -> Result {
         return _engine->DropRole(*object);
@@ -1387,7 +1392,7 @@ Result LocalCatalog::DropDatabase(std::string_view name,
   auto task = std::make_shared<ScopeDrop>();
 
   auto r = [&] {
-    RECURSIVE_WRITE_LOCKER(_mutex, _owner);
+    absl::MutexLock lock{&_mutex};
     return Apply(_snapshot, [&](auto& clone) {
       return clone->DropDatabase(
         name,
@@ -1396,11 +1401,10 @@ Result LocalCatalog::DropDatabase(std::string_view name,
           return _engine->MarkDeleted(basics::downCast<Database>(*object));
         },
         [&](auto& obj) {
-          auto it = _tables.find(obj->GetId());
-          if (it == _tables.end()) {
+          auto shard = clone->GetTableShard(obj->GetId());
+          if (!shard) {
             return;
           }
-          auto& shard = it->second;
           task->tables.emplace_back(MakeTableTombstone(*shard), shard, self);
         });
     });
@@ -1448,7 +1452,7 @@ Result LocalCatalog::DropSchema(ObjectId database_id, std::string_view schema,
   auto task = std::make_shared<ScopeDrop>();
 
   auto r = [&] {
-    RECURSIVE_WRITE_LOCKER(_mutex, _owner);
+    absl::MutexLock lock{&_mutex};
     return Apply(_snapshot, [&](auto& clone) {
       return clone->DropSchema(
         database_id, schema, cascade,
@@ -1459,11 +1463,10 @@ Result LocalCatalog::DropSchema(ObjectId database_id, std::string_view schema,
         },
         [&](auto& obj) {
           if (obj->GetType() == ObjectType::Table) {
-            auto it = _tables.find(obj->GetId());
-            if (it == _tables.end()) {
+            auto shard = clone->GetTableShard(obj->GetId());
+            if (!shard) {
               return;
             }
-            auto& shard = it->second;
             task->tables.emplace_back(MakeTableTombstone(*shard), shard, self);
           }
         });
@@ -1499,7 +1502,7 @@ Result LocalCatalog::DropSchema(ObjectId database_id, std::string_view schema,
 Result LocalCatalog::DropView(ObjectId database_id, std::string_view schema,
                               std::string_view name) {
   auto r = [&] {
-    RECURSIVE_WRITE_LOCKER(_mutex, _owner);
+    absl::MutexLock lock{&_mutex};
     return Apply(_snapshot, [&](auto& clone) {
       return clone->template DropObject<View>(
         database_id, schema, name,
@@ -1520,7 +1523,7 @@ Result LocalCatalog::DropView(ObjectId database_id, std::string_view schema,
 
 Result LocalCatalog::DropFunction(ObjectId database_id, std::string_view schema,
                                   std::string_view name) {
-  RECURSIVE_WRITE_LOCKER(_mutex, _owner);
+  absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
     return clone->template DropObject<Function>(
       database_id, schema, name, [&](auto& database, auto&, auto& object) {
@@ -1537,15 +1540,13 @@ Result LocalCatalog::DropTable(ObjectId database_id, std::string_view schema,
   auto task = std::make_shared<TableDrop>();
 
   auto r = basics::SafeCall([&] {
-    RECURSIVE_WRITE_LOCKER(_mutex, _owner);
+    absl::MutexLock lock{&_mutex};
     return Apply(_snapshot, [&](auto& clone) {
       return clone->template DropObject<Table>(
         database_id, schema, name,
         [&](auto& database, auto&, auto& object) -> Result {
-          auto it = _tables.find(object->GetId());
-          SDB_ENSURE(it != _tables.end(), ERROR_INTERNAL,
-                     "Physical table not found");
-          physical = it->second;
+          auto shard = clone->GetTableShard(object->GetId());
+          SDB_ENSURE(shard, ERROR_INTERNAL);
 
           task->tombstone = MakeTableTombstone(*physical);
 
@@ -1578,62 +1579,11 @@ Result LocalCatalog::DropTable(ObjectId database_id, std::string_view schema,
   return {};
 }
 
-std::shared_ptr<Role> LocalCatalog::GetRole(std::string_view name) const {
-  return GetSnapshot()->GetRole(name);
-}
-
-std::shared_ptr<View> LocalCatalog::GetView(ObjectId database_id,
-                                            std::string_view schema,
-                                            std::string_view name) const {
-  return basics::downCast<SnapshotImpl>(GetSnapshot())
-    ->GetObject<View>(database_id, schema, name);
-}
-
-std::shared_ptr<Function> LocalCatalog::GetFunction(
-  ObjectId database_id, std::string_view schema, std::string_view name) const {
-  return GetSnapshot()->GetFunction(database_id, schema, name);
-}
-
 std::shared_ptr<Table> LocalCatalog::GetTable(ObjectId database_id,
                                               std::string_view schema,
                                               std::string_view name) const {
   return basics::downCast<SnapshotImpl>(GetSnapshot())
     ->GetObject<Table>(database_id, schema, name);
-}
-
-std::shared_ptr<Schema> LocalCatalog::GetSchema(ObjectId database_id,
-                                                std::string_view schema) const {
-  return GetSnapshot()->GetSchema(database_id, schema);
-}
-
-std::shared_ptr<Database> LocalCatalog::GetDatabase(
-  std::string_view name) const {
-  return GetSnapshot()->GetDatabase(name);
-}
-
-std::shared_ptr<Database> LocalCatalog::GetDatabase(
-  ObjectId database_id) const {
-  return GetSnapshot()->GetDatabase(database_id);
-}
-
-Result LocalCatalog::GetRoles(std::vector<std::shared_ptr<Role>>& roles) const {
-  roles = GetSnapshot()->GetRoles();
-  return {};
-}
-
-Result LocalCatalog::GetViews(ObjectId database_id, std::string_view schema,
-                              std::vector<std::shared_ptr<View>>& views) const {
-  basics::downCast<SnapshotImpl>(GetSnapshot())
-    ->GetObjects(database_id, schema, views);
-  return {};
-}
-
-Result LocalCatalog::GetFunctions(
-  ObjectId database_id, std::string_view schema,
-  std::vector<std::shared_ptr<Function>>& functions) const {
-  basics::downCast<SnapshotImpl>(GetSnapshot())
-    ->GetObjects(database_id, schema, functions);
-  return {};
 }
 
 Result LocalCatalog::GetTables(
@@ -1642,29 +1592,19 @@ Result LocalCatalog::GetTables(
     tables) const {
   SDB_ASSERT(tables.empty());
 
-  tables.reserve(_tables.size());
-  std::ignore = basics::downCast<SnapshotImpl>(GetSnapshot())
-                  ->VisitObjects(database_id, schema, [&](auto& object) {
-                    if (object->GetType() == GetObjectType<Table>()) {
-                      auto it = _tables.find(object->GetId());
-                      if (it != _tables.end()) {
-                        tables.emplace_back(
-                          std::static_pointer_cast<Table>(object), it->second);
-                      }
-                    }
-                    return true;
-                  });
+  auto snapshot = basics::downCast<SnapshotImpl>(GetSnapshot());
 
-  return {};
-}
+  std::ignore = snapshot->VisitObjects(database_id, schema, [&](auto& object) {
+    if (object->GetType() == GetObjectType<Table>()) {
+      auto shard = snapshot->GetTableShard(object->GetId());
+      if (shard) {
+        tables.emplace_back(std::static_pointer_cast<Table>(object),
+                            std::move(shard));
+      }
+    }
+    return true;
+  });
 
-std::vector<std::shared_ptr<Database>> LocalCatalog::GetDatabases() const {
-  return GetSnapshot()->GetDatabases();
-}
-
-Result LocalCatalog::GetSchemas(
-  ObjectId database_id, std::vector<std::shared_ptr<Schema>>& schemas) const {
-  schemas = GetSnapshot()->GetSchemas(database_id);
   return {};
 }
 
@@ -1673,14 +1613,19 @@ std::shared_ptr<Object> LocalCatalog::GetObject(ObjectId id) const {
 }
 
 std::shared_ptr<TableShard> LocalCatalog::GetTableShard(ObjectId id) const {
-  RECURSIVE_READ_LOCKER(_mutex, _owner);
-  auto it = _tables.find(id);
-  return it == _tables.end() ? nullptr : it->second;
+  return basics::downCast<SnapshotImpl>(GetSnapshot())->GetTableShard(id);
+}
+
+std::vector<std::shared_ptr<TableShard>> LocalCatalog::GetTableShards() const {
+  return basics::downCast<SnapshotImpl>(GetSnapshot())->GetTableShards();
 }
 
 void LocalCatalog::DropTableShard(ObjectId id) {
-  RECURSIVE_WRITE_LOCKER(_mutex, _owner);
-  _tables.erase(id);
+  absl::MutexLock lock{&_mutex};
+  std::ignore = Apply(_snapshot, [&](auto& clone) {
+    clone->DropTableShard(id);
+    return Result{};
+  });
 }
 
 void LocalCatalog::RegisterTableDrop(TableTombstone tombstone) {
@@ -1698,11 +1643,6 @@ void LocalCatalog::RegisterScopeDrop(ObjectId database_id, ObjectId schema_id) {
   task->catalog = shared_from_this();
 
   QueueTask(std::move(task)).Detach();
-}
-
-std::vector<std::shared_ptr<TableShard>> LocalCatalog::GetTableShards() {
-  RECURSIVE_READ_LOCKER(_mutex, _owner);
-  return _tables | std::views::values | std::ranges::to<std::vector>();
 }
 
 std::shared_ptr<Snapshot> LocalCatalog::GetSnapshot() const noexcept {

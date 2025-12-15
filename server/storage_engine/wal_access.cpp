@@ -65,7 +65,8 @@ const catalog::Database* WalAccessContext::LoadDatabase(ObjectId dbid) try {
     it->second = SerenedServer::Instance()
                    .getFeature<catalog::CatalogFeature>()
                    .Local()
-                   .GetDatabase(dbid);
+                   .GetSnapshot()
+                   ->GetDatabase(dbid);
   }
   return it->second.get();
 } catch (...) {

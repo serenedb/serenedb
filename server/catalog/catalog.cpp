@@ -73,7 +73,7 @@ template<typename T>
 ResultOr<std::shared_ptr<Database>> GetDatabaseImpl(T key) {
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  auto database = catalog.GetDatabase(key);
+  auto database = catalog.GetSnapshot()->GetDatabase(key);
   if (!database) [[unlikely]] {
     return std::unexpected<Result>(std::in_place,
                                    ERROR_SERVER_DATABASE_NOT_FOUND,

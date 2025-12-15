@@ -182,8 +182,15 @@ velox::TypePtr ResolveFunction(const std::string& function_name,
 
 std::vector<velox::TypePtr> GetExprsTypes(
   std::span<const lp::ExprPtr> arg_exprs) {
-  return arg_exprs |
-         std::views::transform([](const auto& arg) { return arg->type(); }) |
+  return arg_exprs | std::views::transform([](const auto& arg) {
+           const auto& arg_type = arg->type();
+           // Literal
+           if (arg_type == velox::VARCHAR() &&
+               arg->kind() == lp::ExprKind::kConstant) {
+             return PG_UNKNOWN();
+           }
+           return arg->type();
+         }) |
          std::ranges::to<std::vector>();
 }
 
@@ -829,11 +836,14 @@ class SqlAnalyzer {
                       std::span<const velox::TypePtr> coercions) {
     SDB_ASSERT(coercions.size() <= args.size());
     for (size_t i = 0; i < coercions.size(); ++i) {
-      if (coercions[i]) {
+      if (args[i]->type() == PG_UNKNOWN()) {
+        if (!coercions[i] || coercions[i] == velox::VARCHAR()) {
+          // do nothing
+        } else {
+          args[i] = MakeCast(velox::VARCHAR(), args[i]);
+        }
+      } else if (coercions[i]) {
         args[i] = MakeCast(coercions[i], std::move(args[i]));
-      } else if (args[i]->type() == PG_UNKNOWN()) {
-        // OK?
-        args[i] = MakeCast(velox::VARCHAR(), args[i]);
       }
     }
   }
@@ -3182,7 +3192,7 @@ lp::ExprPtr SqlAnalyzer::ProcessAExpr(State& state, const A_Expr& expr) {
 
 lp::ExprPtr SqlAnalyzer::ProcessAConst(State& state, const A_Const& expr) {
   if (expr.isnull) {
-    return MakeConst(velox::TypeKind::UNKNOWN, PG_UNKNOWN());
+    return MakeConst(velox::TypeKind::UNKNOWN);
   }
   switch (nodeTag(&expr.val)) {
     case T_Integer: {
@@ -3199,7 +3209,7 @@ lp::ExprPtr SqlAnalyzer::ProcessAConst(State& state, const A_Const& expr) {
     }
     case T_String: {
       std::string_view v = strVal(&expr.val);
-      return MakeConst(v, PG_UNKNOWN());
+      return MakeConst(v);
     }
     case T_BitString:
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),

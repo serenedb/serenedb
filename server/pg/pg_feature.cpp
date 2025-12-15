@@ -126,18 +126,10 @@ velox::AllowedCoercions AllowedCoercions() {
   add(velox::REAL(), {velox::DOUBLE()});
   add(velox::DATE(), {velox::TIMESTAMP()});
 
-  coercions.emplace(std::make_pair<std::string, std::string>(
-                      PG_UNKNOWN()->name(), velox::VARCHAR()->name()),
-                    // If we have
-                    // 1. foo(varchar)
-                    // 2. foo(generic<T>)
-                    // Then for foo(pg_unknown) we should chooose the first
-                    // choice. cost = 0 is required for that
-                    velox::Coercion{.type = velox::VARCHAR(), .cost = 1});
-
-  add(PG_UNKNOWN(), {velox::TINYINT(), velox::SMALLINT(), velox::INTEGER(),
-                     velox::BIGINT(), velox::HUGEINT(), velox::REAL(),
-                     velox::DOUBLE(), velox::BOOLEAN(), velox::UNKNOWN()});
+  add(PG_UNKNOWN(),
+      {velox::VARCHAR(), velox::TINYINT(), velox::SMALLINT(), velox::INTEGER(),
+       velox::BIGINT(), velox::HUGEINT(), velox::REAL(), velox::DOUBLE(),
+       velox::BOOLEAN(), velox::UNKNOWN()});
 
   // TODO byteain byteaout date etc
 

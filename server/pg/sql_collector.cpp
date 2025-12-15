@@ -523,7 +523,7 @@ void ObjectCollector::CollectCreateStmt(State& state, const CreateStmt& stmt) {
       const auto& col_def = *castNode(ColumnDef, &node);
       VisitNodes(col_def.constraints, [&](const Constraint& constraint) {
         switch (constraint.contype) {
-          case CONSTR_DEFAULT: 
+          case CONSTR_DEFAULT:
             CollectExprNode(state, constraint.raw_expr);
             break;
           default:

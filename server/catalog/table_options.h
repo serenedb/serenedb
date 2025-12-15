@@ -53,8 +53,7 @@ struct ObjectInternal {
   ObjectId database_id;
 };
 
-struct ObjectProperties {
-};
+struct ObjectProperties {};
 
 struct ForeignId : ObjectId {
   using ObjectId::ObjectId;

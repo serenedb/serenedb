@@ -75,10 +75,10 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
   request.columns.reserve(list_length(stmt.tableElts));
 
   auto append_column = [&](catalog::Column column, int location) {
-    if (std::ranges::find_if(request.columns,
-                             [&](const catalog::Column& existing_column) {
-                               return existing_column.name == column.name;
-                             }) != request.columns.end()) {
+    if (absl::c_any_of(request.columns,
+                       [&](const catalog::Column& existing_column) {
+                         return existing_column.name == column.name;
+                       })) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_DUPLICATE_COLUMN), CURSOR_POS(location),
         ERR_MSG("column \"", column.name, "\" specified more than once"));

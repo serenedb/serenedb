@@ -55,11 +55,11 @@ db error: ERROR: column "c2" specified more than once
 
 
 statement count 1
-WITH 
+WITH
 babsky as (select 1 as pencil),
 zhidsky as (select 3 as iq)
-INSERT INTO series_table 
-WITH babsky as (select 2 as pencil) 
+INSERT INTO series_table
+WITH babsky as (select 2 as pencil)
 SELECT * FROM babsky as buterbrod1, zhidsky, babsky as buterbrod2;
 
 

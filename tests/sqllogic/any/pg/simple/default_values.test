@@ -8,8 +8,8 @@ HINT: You will need to rewrite or cast the expression.
 statement ok
 CREATE TABLE tindex(
   id INTEGER DEFAULT 228 - 228,
-  name TEXT DEFAULT substring('babsky', 1, 5), 
-  weight INTEGER DEFAULT 1000 - 7, 
+  name TEXT DEFAULT substring('babsky', 1, 5),
+  weight INTEGER DEFAULT 1000 - 7,
   pencil_size INTEGER,
   PRIMARY KEY (id)
 );

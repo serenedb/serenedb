@@ -457,7 +457,7 @@ class SnapshotImpl : public Snapshot {
 
     if (!is_new2) [[unlikely]] {
       return {ERROR_SERVER_DUPLICATE_NAME,
-              "Database with the same id alread exists: ", database->GetId()};
+              "Database with the same id already exists: ", database->GetId()};
     };
 
     absl::Cleanup cleanup2 = [&] { _databases.erase(it2); };

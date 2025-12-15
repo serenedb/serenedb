@@ -18,8 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
-
 #include "catalog/secondary_index.h"
 
 namespace sdb::catalog {

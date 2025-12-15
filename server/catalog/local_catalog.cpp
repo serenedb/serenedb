@@ -1536,7 +1536,7 @@ Result LocalCatalog::DropFunction(ObjectId database_id, std::string_view schema,
 Result LocalCatalog::DropTable(ObjectId database_id, std::string_view schema,
                                std::string_view name,
                                AsyncResult* async_result) {
-  std::shared_ptr<TableShard> physical;
+  std::shared_ptr<TableShard> shard;
   auto task = std::make_shared<TableDrop>();
 
   auto r = basics::SafeCall([&] {
@@ -1545,13 +1545,13 @@ Result LocalCatalog::DropTable(ObjectId database_id, std::string_view schema,
       return clone->template DropObject<Table>(
         database_id, schema, name,
         [&](auto& database, auto&, auto& object) -> Result {
-          auto shard = clone->GetTableShard(object->GetId());
+          shard = clone->GetTableShard(object->GetId());
           SDB_ENSURE(shard, ERROR_INTERNAL);
 
-          task->tombstone = MakeTableTombstone(*physical);
+          task->tombstone = MakeTableTombstone(*shard);
 
-          return _engine->MarkDeleted(basics::downCast<Table>(*object),
-                                      *physical, task->tombstone);
+          return _engine->MarkDeleted(basics::downCast<Table>(*object), *shard,
+                                      task->tombstone);
         });
     });
   });
@@ -1560,15 +1560,15 @@ Result LocalCatalog::DropTable(ObjectId database_id, std::string_view schema,
     return r;
   }
 
-  physical->setDeleted();
-  _engine->prepareDropTable(physical->GetMeta().id);
+  shard->setDeleted();
+  _engine->prepareDropTable(shard->GetMeta().id);
 
-  irs::Finally cleanup = [database_id, id = physical->GetMeta().id] noexcept {
+  irs::Finally cleanup = [database_id, id = shard->GetMeta().id] noexcept {
     aql::QueryCache::instance()->invalidate(database_id, id);
   };
 
   task->catalog = shared_from_this();
-  task->physical = std::move(physical);
+  task->physical = std::move(shard);
 
   if (auto f = QueueTask(std::move(task)); async_result) {
     *async_result = std::move(f);

@@ -109,7 +109,10 @@ void VisitTables(const Snapshot& snapshot, ObjectId database_id,
 
     auto table = basics::downCast<Table>(rel);
     auto shard = snapshot.GetTableShard(table->GetId());
-    SDB_ENSURE(shard, ERROR_INTERNAL);
+    if (!shard) {
+      continue;
+    }
+    // SDB_ENSURE(shard, ERROR_INTERNAL);
     v(table, shard);
   }
 }

@@ -136,9 +136,6 @@ velox::AllowedCoercions AllowedCoercions() {
   add(velox::REAL(), {velox::DOUBLE()});
   add(velox::DATE(), {velox::TIMESTAMP()});
 
-  // add_same_cost(PG_UNKNOWN(),
-  //               {velox::VARCHAR()},
-  //               kNullCoercionCost + 1);
   add_same_cost(PG_UNKNOWN(),
                 {velox::VARCHAR(), velox::TINYINT(), velox::SMALLINT(),
                  velox::INTEGER(), velox::BIGINT(), velox::HUGEINT(),

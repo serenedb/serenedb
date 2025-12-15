@@ -875,14 +875,7 @@ class SqlAnalyzer {
                       std::span<const velox::TypePtr> coercions) {
     SDB_ASSERT(coercions.size() <= args.size());
     for (size_t i = 0; i < coercions.size(); ++i) {
-      if (args[i]->type() == PG_UNKNOWN()) {
-        if (!coercions[i] || coercions[i] == velox::VARCHAR()) {
-          // do nothing
-        } else {
-          args[i] = MakeCast(velox::VARCHAR(), args[i]);
-        }
-        // prevent varchar -> varchar coercion
-      } else if (coercions[i] && coercions[i] != args[i]->type()) {
+      if (coercions[i] && coercions[i] != args[i]->type()) {
         args[i] = MakeCast(coercions[i], std::move(args[i]));
       }
     }
@@ -3911,9 +3904,6 @@ lp::ExprPtr SqlAnalyzer::ResolveVeloxFunctionAndInferArgsCommonType(
       ERR_MSG("function ", ToPgFunctionString(name, args), " does not exist"));
   }
 
-  // TODO rewrite it recursive and make separate function for this
-  // type = FixupReturnType(type);
-
   ApplyCoercions(args, coercions);
   auto it = kSpecialForms.find(name);
   if (it == kSpecialForms.end()) {
@@ -4144,12 +4134,11 @@ lp::ExprPtr SqlAnalyzer::ProcessTypeCast(State& state, const TypeCast& expr) {
     return std::make_shared<lp::CallExpr>(std::move(type), "pg_byteain",
                                           std::move(arg));
   }
+
   if (arg->type() == velox::VARBINARY() && type == velox::VARCHAR()) {
     return std::make_shared<lp::CallExpr>(std::move(type), "pg_byteaout",
                                           std::move(arg));
   }
-
-  // TODO add test NULL::varchar::bytea and NULL::bytea
 
   if (arg->type() == velox::VARCHAR() && pg::IsInterval(type)) {
     const auto* typemod = type_name.typmods;

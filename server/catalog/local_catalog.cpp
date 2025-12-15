@@ -411,7 +411,7 @@ class SnapshotImpl : public Snapshot {
     ObjectId database) const noexcept final {
     std::vector<std::shared_ptr<Schema>> schemas;
     std::ignore = ResolveDatabase(database, [&](auto database_it) -> Result {
-      schemas.assign_range(*database_it->second | std::views::keys);
+      schemas.assign_range(database_it->second | std::views::keys);
       return {};
     });
     return schemas;
@@ -442,8 +442,7 @@ class SnapshotImpl : public Snapshot {
 
     auto [it2, is_new2] = _databases.emplace(
       std::piecewise_construct, std::forward_as_tuple(std::move(database)),
-      std::forward_as_tuple(
-        std::make_shared<ObjectMapByName<Schema, SchemaObjects>>()));
+      std::forward_as_tuple());
 
     if (!is_new2) [[unlikely]] {
       return {ERROR_SERVER_DUPLICATE_NAME,
@@ -480,15 +479,14 @@ class SnapshotImpl : public Snapshot {
         return r;
       }
 
-      for (auto& [schema, schema_objects] : *it->second) {
-        for (auto& obj :
-             std::array{*schema_objects.relations, *schema_objects.functions} |
-               std::views::join) {
-          auto it = _objects_by_id.find(obj->GetId());
+      for (auto& [schema, schema_objects] : it->second) {
+        schema_objects.VisitObjects([&](auto& object) {
+          auto it = _objects_by_id.find(object->GetId());
           SDB_ASSERT(it != _objects_by_id.end());
           callback(*it);
           _objects_by_id.erase(it);
-        }
+          return true;
+        });
         _objects_by_id.erase(schema->GetId());
       }
       _objects_by_id.erase(it->first->GetId());
@@ -502,7 +500,7 @@ class SnapshotImpl : public Snapshot {
   Result RegisterSchema(ObjectId database, std::shared_ptr<Schema> schema,
                         W&& writer) {
     return ResolveDatabase(database, [&](auto database_it) -> Result {
-      const auto [schema_it, is_new] = database_it->second->emplace(
+      const auto [schema_it, is_new] = database_it->second.emplace(
         std::piecewise_construct, std::forward_as_tuple(schema),
         std::forward_as_tuple());
 
@@ -512,7 +510,7 @@ class SnapshotImpl : public Snapshot {
       }
 
       return RegisterObjectId(
-        std::move(schema), [&] { database_it->second->erase(schema_it); },
+        std::move(schema), [&] { database_it->second.erase(schema_it); },
         std::forward<W>(writer));
     });
   }
@@ -523,10 +521,10 @@ class SnapshotImpl : public Snapshot {
                         W&& writer) {
     return ResolveSchema(
       database, schema, [&](auto database_it, auto schema_it) -> Result {
-        const auto& objects = object->GetType() == ObjectType::Function
-                                ? schema_it->second.functions
-                                : schema_it->second.relations;
-        const auto [object_it, is_new] = objects->emplace(std::move(object));
+        auto& objects = object->GetType() == ObjectType::Function
+                          ? schema_it->second.functions
+                          : schema_it->second.relations;
+        const auto [object_it, is_new] = objects.emplace(std::move(object));
 
         if (!is_new) {
           if (!replace) {
@@ -544,7 +542,7 @@ class SnapshotImpl : public Snapshot {
         (*object_it)->SetSchemaId(schema_it->first->GetId());
 
         return RegisterObjectId(
-          *object_it, [&] { objects->erase(object_it); },
+          *object_it, [&] { objects.erase(object_it); },
           std::forward<W>(writer));
       });
   }
@@ -620,7 +618,7 @@ class SnapshotImpl : public Snapshot {
         auto& objects = std::is_same_v<T, Function>
                           ? schema_it->second.functions
                           : schema_it->second.relations;
-        auto [new_object_it, is_new] = objects->emplace(new_object);
+        auto [new_object_it, is_new] = objects.emplace(new_object);
 
         if (!is_new && object_it != new_object_it) {
           return {ERROR_SERVER_DUPLICATE_NAME,
@@ -630,7 +628,7 @@ class SnapshotImpl : public Snapshot {
         absl::Cleanup cleanup = [&] {
           if (is_new) {
             // Rollback only if we created a new object
-            objects->erase(new_object_it);
+            objects.erase(new_object_it);
           }
         };
 
@@ -640,7 +638,7 @@ class SnapshotImpl : public Snapshot {
         }
 
         if (is_new) {
-          objects->erase(object);  // object_it might be invalidated
+          objects.erase(object);  // object_it might be invalidated
         } else {
           SDB_ASSERT(new_object->GetName() == (*object_it)->GetName());
           const_cast<std::shared_ptr<SchemaObject>&>(*object_it) = new_object;
@@ -669,16 +667,15 @@ class SnapshotImpl : public Snapshot {
           return r;
         }
 
-        for (auto& obj : std::array{*schema_it->second.relations,
-                                    *schema_it->second.functions} |
-                           std::views::join) {
-          auto it = _objects_by_id.find(obj->GetId());
+        schema_it->second.VisitObjects([&](auto& object) {
+          auto it = _objects_by_id.find(object->GetId());
           SDB_ASSERT(it != _objects_by_id.end());
           callback(*it);
           _objects_by_id.erase(it);
-        }
+          return true;
+        });
         _objects_by_id.erase(schema_it->first->GetId());
-        database_it->second->erase(schema_it);
+        database_it->second.erase(schema_it);
         return {};
       });
   }
@@ -699,7 +696,7 @@ class SnapshotImpl : public Snapshot {
         auto& objects = std::is_same_v<T, Function>
                           ? schema_it->second.functions
                           : schema_it->second.relations;
-        objects->erase(object_it);
+        objects.erase(object_it);
         return {};
       });
   }
@@ -758,7 +755,7 @@ class SnapshotImpl : public Snapshot {
     std::ignore = ResolveSchema(
       database, schema, [&](auto database_it, auto schema_it) -> Result {
         auto& objects = schema_it->second.relations;
-        if (const auto it = objects->find(name); it != objects->end()) {
+        if (const auto it = objects.find(name); it != objects.end()) {
           object = *it;
         }
         return {};
@@ -773,7 +770,7 @@ class SnapshotImpl : public Snapshot {
     std::ignore = ResolveSchema(
       database, schema, [&](auto database_it, auto schema_it) -> Result {
         auto& objects = schema_it->second.functions;
-        if (const auto it = objects->find(name); it != objects->end()) {
+        if (const auto it = objects.find(name); it != objects.end()) {
           object = std::static_pointer_cast<Function>(*it);
         }
         return {};
@@ -791,17 +788,12 @@ class SnapshotImpl : public Snapshot {
 
   template<typename W>
   auto VisitObjects(ObjectId database, std::string_view schema, W&& writer) {
-    return ResolveSchema(
-      database, schema, [&](auto database_it, auto schema_it) -> Result {
-        for (auto& object : std::array{*schema_it->second.relations,
-                                       *schema_it->second.functions} |
-                              std::views::join) {
-          if (!writer(object)) {
-            break;
-          }
-        }
-        return {};
-      });
+    return ResolveSchema(database, schema,
+                         [&](auto database_it, auto schema_it) -> Result {
+                           schema_it->second.VisitObjects(
+                             [&](auto& object) { return writer(object); });
+                           return {};
+                         });
   }
 
   template<typename T>
@@ -821,8 +813,7 @@ class SnapshotImpl : public Snapshot {
     std::ignore = ResolveSchema(
       database, schema, [&](auto database_it, auto schema_it) -> Result {
         auto& relations = schema_it->second.relations;
-        SDB_ASSERT(relations);
-        objects.assign_range(*relations);
+        objects.assign_range(relations);
         return {};
       });
     return objects;
@@ -834,10 +825,9 @@ class SnapshotImpl : public Snapshot {
     std::ignore = ResolveSchema(
       database, schema, [&](auto database_it, auto schema_it) -> Result {
         auto& functions = schema_it->second.functions;
-        SDB_ASSERT(functions);
-        objects.assign_range(*functions | std::views::transform([](auto& func) {
-          return basics::downCast<Function>(func);
-        }));
+        objects.assign_range(functions | std::views::transform([](auto& func) {
+                               return basics::downCast<Function>(func);
+                             }));
         return {};
       });
     return objects;
@@ -880,8 +870,8 @@ class SnapshotImpl : public Snapshot {
         auto& objects = std::is_same_v<T, Function>
                           ? schema_it->second.functions
                           : schema_it->second.relations;
-        const auto object_it = objects->find(name);
-        if (object_it == objects->end() ||
+        const auto object_it = objects.find(name);
+        if (object_it == objects.end() ||
             GetObjectType<T>() != (*object_it)->GetType()) {
           return {ERROR_SERVER_DATA_SOURCE_NOT_FOUND,
                   magic_enum::enum_name(GetObjectType<T>()),
@@ -907,17 +897,14 @@ class SnapshotImpl : public Snapshot {
   Result ResolveSchema(this auto&& self, ObjectId database,
                        std::string_view schema, W&& writer) {
     return self.ResolveDatabase(database, [&](auto database_it) -> Result {
-      auto impl = [&](auto& objects) -> Result {
-        auto schema_it = objects->find(schema);
-        if (schema_it == objects->end()) {
-          return {ERROR_SERVER_DATABASE_NOT_FOUND,  // schema not found
-                  "Schema not found: ", schema};
-        }
+      auto& schemas = database_it->second;
+      auto schema_it = schemas.find(schema);
+      if (schema_it == schemas.end()) {
+        return {ERROR_SERVER_DATABASE_NOT_FOUND,  // TODO: schema not found
+                "Schema not found: ", schema};
+      }
 
-        return writer(database_it, schema_it);
-      };
-
-      return impl(database_it->second);
+      return writer(database_it, schema_it);
     });
   }
 
@@ -951,18 +938,28 @@ class SnapshotImpl : public Snapshot {
   using ObjectMapById =
     containers::FlatHashMap<std::shared_ptr<K>, V, ObjectById, ObjectById>;
   struct SchemaObjects {
-    bool empty() const { return relations->empty() && functions->empty(); }
+    bool empty() const { return relations.empty() && functions.empty(); }
 
-    std::shared_ptr<ObjectSetByName<SchemaObject>> relations =
-      std::make_shared<ObjectSetByName<SchemaObject>>();
-    std::shared_ptr<ObjectSetByName<SchemaObject>> functions =
-      std::make_shared<ObjectSetByName<SchemaObject>>();
+    bool VisitObjects(auto&& writer) {
+      for (auto& object : relations) {
+        if (!writer(object)) {
+          return false;
+        }
+      }
+      for (auto& object : functions) {
+        if (!writer(object)) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    ObjectSetByName<SchemaObject> relations;
+    ObjectSetByName<SchemaObject> functions;
   };
 
   ObjectSetByName<Role> _roles;
-  ObjectMapById<Database,
-                std::shared_ptr<ObjectMapByName<Schema, SchemaObjects>>>
-    _databases;
+  ObjectMapById<Database, ObjectMapByName<Schema, SchemaObjects>> _databases;
   ObjectSetByName<Database> _databases_by_name;
   ObjectSetById<Object> _objects_by_id;
   ObjectSetById<TableShard> _table_shards;

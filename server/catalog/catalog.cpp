@@ -194,7 +194,7 @@ Result CatalogFeature::AddSchemas(
 
       auto schema =
         std::make_shared<catalog::Schema>(database_id, std::move(options));
-      schemas.push_back(schema);
+      schemas.emplace_back(schema);
 
       return Global().RegisterSchema(database_id, std::move(schema));
     });

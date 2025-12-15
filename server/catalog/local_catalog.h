@@ -43,7 +43,6 @@ namespace sdb::catalog {
 class SnapshotImpl;
 
 class LocalCatalog final : public LogicalCatalog,
-                           public PhysicalCatalog,
                            public std::enable_shared_from_this<LocalCatalog> {
  public:
   explicit LocalCatalog(StorageEngine& engine, bool skip_background_errors);
@@ -102,18 +101,11 @@ class LocalCatalog final : public LogicalCatalog,
 
   void RegisterTableDrop(TableTombstone tombstone) final;
   void RegisterScopeDrop(ObjectId database_id, ObjectId schema_id) final;
-  std::shared_ptr<TableShard> GetTableShard(ObjectId id) const final;
-  std::vector<std::shared_ptr<TableShard>> GetTableShards() const final;
   void DropTableShard(ObjectId id);
 
   bool GetSkipBackgroundErrors() const noexcept {
     return _skip_background_errors;
   }
-
-  // TODO(gnusi): remove
-  std::shared_ptr<Table> GetTable(ObjectId database_id, std::string_view schema,
-                                  std::string_view name) const final;
-  std::shared_ptr<Object> GetObject(ObjectId id) const final;
 
  private:
   mutable absl::Mutex _mutex;

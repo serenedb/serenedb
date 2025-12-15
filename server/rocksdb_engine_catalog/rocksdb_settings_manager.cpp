@@ -140,13 +140,14 @@ ResultOr<bool> RocksDBSettingsManager::sync(bool force) {
 #ifdef SDB_CLUSTER
     auto& catalog =
       SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
-    for (auto& physical : catalog.Physical().GetTableShards()) {
+    auto snapshot = catalog.Local().GetSnapshot();
+
+    for (auto& physical : snapshot->GetTableShards()) {
       if (physical->deleted()) {
         continue;
       }
 
-      auto coll =
-        catalog.Local().GetObject<catalog::Table>(physical->GetMeta().id);
+      auto coll = snapshot->GetObject<catalog::Table>(physical->GetMeta().id);
       if (!coll) {
         continue;
       }

@@ -95,8 +95,22 @@ struct Snapshot {
   virtual std::shared_ptr<Function> GetFunction(
     ObjectId database, std::string_view schema,
     std::string_view name) const = 0;
+  virtual std::shared_ptr<Table> GetTable(ObjectId database_id,
+                                          std::string_view schema,
+                                          std::string_view name) const = 0;
+  virtual std::shared_ptr<Object> GetObject(ObjectId id) const = 0;
 
   virtual std::shared_ptr<TableShard> GetTableShard(ObjectId id) const = 0;
+  virtual std::vector<std::shared_ptr<TableShard>> GetTableShards() const = 0;
+
+  template<typename T>
+  std::shared_ptr<T> GetObject(ObjectId id) const {
+    auto obj = GetObject(id);
+    if (obj && obj->GetType() == GetObjectType<T>()) {
+      return basics::downCast<T>(obj);
+    }
+    return nullptr;
+  }
 };
 
 template<typename V>
@@ -205,31 +219,10 @@ struct LogicalCatalog {
   virtual Result DropIndex(ObjectId database_id, std::string_view schema,
                            std::string_view name) = 0;
 
-  virtual std::shared_ptr<catalog::Table> GetTable(
-    ObjectId database, std::string_view schema,
-    std::string_view name) const = 0;
-
-  virtual std::shared_ptr<Object> GetObject(ObjectId id) const = 0;
-
-  template<typename T>
-  std::shared_ptr<T> GetObject(ObjectId id) const {
-    auto obj = GetObject(id);
-    if (obj && obj->GetType() == GetObjectType<T>()) {
-      return basics::downCast<T>(obj);
-    }
-    return nullptr;
-  }
-
-  virtual std::shared_ptr<Snapshot> GetSnapshot() const = 0;
-};
-
-class PhysicalCatalog {
- public:
-  virtual ~PhysicalCatalog() = default;
-  virtual std::shared_ptr<TableShard> GetTableShard(ObjectId id) const = 0;
   virtual void RegisterTableDrop(TableTombstone tombstone) = 0;
   virtual void RegisterScopeDrop(ObjectId database_id, ObjectId schema_id) = 0;
-  virtual std::vector<std::shared_ptr<TableShard>> GetTableShards() const = 0;
+
+  virtual std::shared_ptr<Snapshot> GetSnapshot() const = 0;
 };
 
 class CatalogFeature final : public SerenedFeature {
@@ -248,7 +241,6 @@ class CatalogFeature final : public SerenedFeature {
   void Cleanup() {
     _local.reset();
     _global.reset();
-    _physical.reset();
   }
 
   Result Open();
@@ -261,11 +253,6 @@ class CatalogFeature final : public SerenedFeature {
   LogicalCatalog& Local() const noexcept {
     SDB_ASSERT(_local, "Local catalog is not initialized");
     return *_local;
-  }
-
-  PhysicalCatalog& Physical(this auto& self) noexcept {
-    SDB_ASSERT(self._physical, "Physical catalog is not initialized");
-    return *self._physical;
   }
 
 #ifdef SDB_GTEST
@@ -289,7 +276,6 @@ class CatalogFeature final : public SerenedFeature {
 
   std::shared_ptr<LogicalCatalog> _global;
   std::shared_ptr<LogicalCatalog> _local;
-  std::shared_ptr<PhysicalCatalog> _physical;
   bool _skip_background_errors = false;
 };
 

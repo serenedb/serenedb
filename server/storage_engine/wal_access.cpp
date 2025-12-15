@@ -84,7 +84,7 @@ catalog::Table* WalAccessContext::loadCollection(ObjectId dbid,
 
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Local();
-  auto c = catalog.GetObject<catalog::Table>(cid);
+  auto c = catalog.GetSnapshot()->GetObject<catalog::Table>(cid);
   if (!c) {
     return nullptr;
   }

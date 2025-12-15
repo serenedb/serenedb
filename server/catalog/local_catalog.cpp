@@ -384,13 +384,23 @@ class SnapshotImpl : public Snapshot {
     return result;
   }
 
-  std::vector<std::shared_ptr<TableShard>> GetTableShards() const {
+  std::shared_ptr<Table> GetTable(ObjectId database_id, std::string_view schema,
+                                  std::string_view name) const final {
+    return GetObject<Table>(database_id, schema, name);
+  }
+
+  std::vector<std::shared_ptr<TableShard>> GetTableShards() const final {
     return {_table_shards.begin(), _table_shards.end()};
   }
 
   std::shared_ptr<TableShard> GetTableShard(ObjectId id) const final {
     auto it = _table_shards.find(id);
     return it == _table_shards.end() ? nullptr : *it;
+  }
+
+  std::shared_ptr<Object> GetObject(ObjectId id) const final {
+    auto it = _objects_by_id.find(id);
+    return it == _objects_by_id.end() ? nullptr : *it;
   }
 
   void AddTableShard(std::shared_ptr<TableShard> physical) {
@@ -777,14 +787,6 @@ class SnapshotImpl : public Snapshot {
         return {};
       });
     return object;
-  }
-
-  std::shared_ptr<Object> GetObject(ObjectId id) const {
-    const auto it = _objects_by_id.find(id);
-    if (it == _objects_by_id.end()) {
-      return {};
-    }
-    return *it;
   }
 
   template<typename W>
@@ -1577,25 +1579,6 @@ Result LocalCatalog::DropTable(ObjectId database_id, std::string_view schema,
   }
 
   return {};
-}
-
-std::shared_ptr<Table> LocalCatalog::GetTable(ObjectId database_id,
-                                              std::string_view schema,
-                                              std::string_view name) const {
-  return basics::downCast<SnapshotImpl>(GetSnapshot())
-    ->GetObject<Table>(database_id, schema, name);
-}
-
-std::shared_ptr<Object> LocalCatalog::GetObject(ObjectId id) const {
-  return basics::downCast<SnapshotImpl>(GetSnapshot())->GetObject(id);
-}
-
-std::shared_ptr<TableShard> LocalCatalog::GetTableShard(ObjectId id) const {
-  return basics::downCast<SnapshotImpl>(GetSnapshot())->GetTableShard(id);
-}
-
-std::vector<std::shared_ptr<TableShard>> LocalCatalog::GetTableShards() const {
-  return basics::downCast<SnapshotImpl>(GetSnapshot())->GetTableShards();
 }
 
 void LocalCatalog::DropTableShard(ObjectId id) {

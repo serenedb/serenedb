@@ -100,17 +100,13 @@ void CatalogFeature::prepare() {
   auto catalog =
     std::make_shared<LocalCatalog>(GetServerEngine(), _skip_background_errors);
   _global = catalog;
-  _local = catalog;
-  _physical = std::move(catalog);
+  _local = std::move(catalog);
 }
 
 void CatalogFeature::start() {
 #ifdef SDB_CLUSTER
-  if (ServerState::instance()->IsCoordinator()) {
-    auto catalog = std::make_shared<GlobalCatalog>(GetClusterInfo());
-    _global = catalog;
-    _physical = std::move(catalog);
-  } else if (ServerState::instance()->IsDBServer()) {
+  if (ServerState::instance()->IsCoordinator() ||
+      ServerState::instance()->IsDBServer()) {
     _global = std::make_shared<GlobalCatalog>(GetClusterInfo());
   }
 #endif
@@ -120,10 +116,8 @@ void CatalogFeature::unprepare() {
   // TODO(gnusi): fix
   SDB_ASSERT(_local);
   SDB_ASSERT(_global);
-  SDB_ASSERT(_physical);
   //_local.reset();
   //_global.reset();
-  //_physical.reset();
 }
 
 void CatalogFeature::beginShutdown() {}
@@ -274,7 +268,7 @@ Result CatalogFeature::ProcessTombstones() {
                                          index.unique);
         }
 
-        Physical().RegisterTableDrop(std::move(tombstone));
+        Local().RegisterTableDrop(std::move(tombstone));
         return {};
       });
   };
@@ -290,7 +284,7 @@ Result CatalogFeature::ProcessTombstones() {
                          r.errorMessage(), slice);
       }
 
-      Physical().RegisterTableDrop(std::move(tombstone));
+      Local().RegisterTableDrop(std::move(tombstone));
       return {};
     });
 
@@ -333,7 +327,7 @@ Result CatalogFeature::ProcessTombstones() {
         return r;
       }
 
-      Physical().RegisterScopeDrop(database_id, schema_id);
+      Local().RegisterScopeDrop(database_id, schema_id);
       return {};
     });
 

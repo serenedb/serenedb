@@ -91,9 +91,11 @@ class Config : public velox::config::IConfig {
 
   template<VariableType T>
   auto Get(std::string_view key) const {
+    // TODO(codeworse): consider to use std::string_view as return type to avoid
+    // copy
     auto value_str = Get(key);
     if constexpr (T == VariableType::PgSearchPath) {
-      return value_str.and_then([](std::string_view str) {
+      auto value = value_str.and_then([](std::string_view str) {
         auto arr = absl::StrSplit(str, ", ");
         std::vector<std::string> result;
         for (const auto& str : arr) {
@@ -102,6 +104,8 @@ class Config : public velox::config::IConfig {
         }
         return std::optional{result};
       });
+      SDB_ASSERT(value);
+      return *value;
     } else if constexpr (T == VariableType::PgExtraFloatDigits) {
       SDB_ASSERT(value_str);
       int8_t result{};

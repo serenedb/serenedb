@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -23,11 +23,18 @@
 #include <algorithm>
 #include <vector>
 
-
+#include <fst/log.h>
+#include <fst/arc.h>
+#include <fst/cache.h>
 #include <fst/expanded-fst.h>
+#include <fst/float-weight.h>
+#include <fst/fst.h>
+#include <fst/impl-to-fst.h>
 #include <fst/mutable-fst.h>
+#include <fst/properties.h>
 #include <fst/rational.h>
-
+#include <fst/symbol-table.h>
+#include <fst/util.h>
 
 namespace fst {
 
@@ -64,8 +71,8 @@ void Concat(MutableFst<Arc> *fst1, const Fst<Arc> &fst2) {
     return;
   }
   const auto numstates1 = fst1->NumStates();
-  if (fst2.Properties(kExpanded, false)) {
-    fst1->ReserveStates(numstates1 + CountStates(fst2));
+  if (std::optional<StateId> numstates2 = fst2.NumStatesIfKnown()) {
+    fst1->ReserveStates(numstates1 + *numstates2);
   }
   for (StateIterator<Fst<Arc>> siter2(fst2); !siter2.Done(); siter2.Next()) {
     const auto s1 = fst1->AddState();
@@ -112,6 +119,7 @@ void Concat(RationalFst<Arc> *fst1, const Fst<Arc> &fst2) {
 // FST.
 template <class Arc>
 void Concat(const Fst<Arc> &fst1, MutableFst<Arc> *fst2) {
+  using StateId = typename Arc::StateId;
   using Weight = typename Arc::Weight;
   // Checks that the symbol table are compatible.
   if (!CompatSymbols(fst1.InputSymbols(), fst2->InputSymbols()) ||
@@ -129,8 +137,8 @@ void Concat(const Fst<Arc> &fst1, MutableFst<Arc> *fst2) {
     return;
   }
   const auto numstates2 = fst2->NumStates();
-  if (fst1.Properties(kExpanded, false)) {
-    fst2->ReserveStates(numstates2 + CountStates(fst1));
+  if (std::optional<StateId> numstates1 = fst1.NumStatesIfKnown()) {
+    fst2->ReserveStates(numstates2 + *numstates1);
   }
   for (StateIterator<Fst<Arc>> siter(fst1); !siter.Done(); siter.Next()) {
     const auto s1 = siter.Value();
@@ -189,6 +197,8 @@ using ConcatFstOptions = RationalFstOptions;
 // arc is assumed and exclusive of caching.
 template <class A>
 class ConcatFst : public RationalFst<A> {
+  using Base = RationalFst<A>;
+
  public:
   using Arc = A;
   using StateId = typename Arc::StateId;
@@ -214,8 +224,8 @@ class ConcatFst : public RationalFst<A> {
   }
 
  private:
-  using ImplToFst<internal::RationalFstImpl<Arc>>::GetImpl;
-  using ImplToFst<internal::RationalFstImpl<Arc>>::GetMutableImpl;
+  using Base::GetImpl;
+  using Base::GetMutableImpl;
 };
 
 // Specialization for ConcatFst.

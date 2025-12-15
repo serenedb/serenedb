@@ -5,11 +5,11 @@ statement ok
 CREATE TABLE t2(id INTEGER PRIMARY KEY, v2 TEXT);
 
 
-statement ok
+statement count 3
 INSERT INTO t1 VALUES (1, 'a'), (2, 'b'), (3, 'c');
 
 
-statement ok
+statement count 3
 INSERT INTO t2 VALUES (1, 'foo'), (2, 'bar'), (4, 'baz');
 
 query

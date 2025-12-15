@@ -45,7 +45,10 @@ std::string ProcessValue(const A_Const& value) {
 }
 
 bool NeedQuotes(std::string_view str) {
-  SDB_ASSERT(str.data() != nullptr && !str.empty());
+  SDB_ASSERT(str.data() != nullptr);
+  if (str.empty()) {
+    return true;
+  }
   if (str[0] == '_' || absl::ascii_isalpha(str[0])) {
     return absl::c_any_of(str, [](char c) {
       return absl::ascii_isupper(c) || (!absl::ascii_isalnum(c) && c != '_');
@@ -101,21 +104,21 @@ Result ProcessValues(const List* list, std::string_view name, VariableType type,
 
 yaclib::Future<Result> VariableSet(ExecContext& ctx,
                                    const VariableSetStmt& stmt) {
-  auto& config = basics::downCast<ConnectionContext>(ctx).GetConfig();
+  auto& conn_ctx = basics::downCast<ConnectionContext>(ctx);
   auto context = Config::VariableContext::Session;
   if (stmt.is_local) {
     context = Config::VariableContext::Local;
-    if (!config.InsideTransaction()) {
+    if (!conn_ctx.InsideTransaction()) {
       return yaclib::MakeFuture<Result>(
         ERROR_QUERY_USER_WARN,
         "SET LOCAL can only be used in transaction blocks");
     }
-  } else if (config.InsideTransaction()) {
+  } else if (conn_ctx.InsideTransaction()) {
     context = Config::VariableContext::Transaction;
   }
 
   if (stmt.kind == VAR_RESET_ALL) {
-    config.ResetAll();
+    conn_ctx.ResetAll();
     return {};
   }
   std::string_view stmt_name = stmt.name;
@@ -170,16 +173,16 @@ yaclib::Future<Result> VariableSet(ExecContext& ctx,
     case VAR_SET_DEFAULT: {
       auto default_value = description->default_value;
       if (default_value.data()) {
-        config.Set(context, value_name, std::string{default_value});
+        conn_ctx.Set(context, value_name, std::string{default_value});
       } else {
         r = {ERROR_FAILED, "No default value for variable ", value_name};
       }
     } break;
     case VAR_RESET:
-      config.Reset(value_name);
+      conn_ctx.Reset(value_name);
       break;
     case VAR_SET_VALUE:
-      r = ProcessValues(stmt.args, value_name, description->type, config,
+      r = ProcessValues(stmt.args, value_name, description->type, conn_ctx,
                         context);
       break;
     case VAR_SET_CURRENT:

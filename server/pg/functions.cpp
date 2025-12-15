@@ -28,9 +28,12 @@
 #include <velox/functions/prestosql/DateTimeImpl.h>
 #include <velox/type/SimpleFunctionApi.h>
 
+#include "app/app_server.h"
 #include "basics/assert.h"
 #include "basics/down_cast.h"
 #include "basics/static_strings.h"
+#include "catalog/catalog.h"
+#include "pg/connection_context.h"
 #include "pg/extract.h"
 #include "pg/interval.h"
 #include "pg/serialize.h"
@@ -208,26 +211,56 @@ template<typename T>
 struct CurrentSchemaFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
-  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& out) {  // NOLINT
-    // TODO(codeworse): implement proper schema resolution
-    out = StaticStrings::kPublic;
+  FOLLY_ALWAYS_INLINE void initialize(  // NOLINT
+    const std::vector<velox::TypePtr>& /*inputTypes*/,
+    const velox::core::QueryConfig& config) {
+    auto conn_ctx = basics::downCast<const ConnectionContext>(config.config());
+    SDB_ASSERT(conn_ctx);
+    _schema_name = conn_ctx->GetCurrentSchema();
   }
+
+  FOLLY_ALWAYS_INLINE void call(out_type<velox::Varchar>& out) {  // NOLINT
+    out = _schema_name;
+  }
+
+ private:
+  std::string _schema_name;
 };
 
 template<typename T>
 struct CurrentSchemasFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
+  FOLLY_ALWAYS_INLINE void initialize(  // NOLINT
+    const std::vector<velox::TypePtr>& /*inputTypes*/,
+    const velox::core::QueryConfig& config,
+    const arg_type<bool>& /*include_implicit*/) {
+    auto conn_ctx = basics::downCast<const ConnectionContext>(config.config());
+    SDB_ASSERT(conn_ctx);
+    auto database_id = conn_ctx->GetDatabaseId();
+    auto search_path = conn_ctx->Get<VariableType::PgSearchPath>("search_path");
+    auto& catalog =
+      SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+    auto filter = [&](const std::string_view schema_name) {
+      return catalog.GetSchema(database_id, schema_name) != nullptr;
+    };
+    _schema_names = std::move(search_path) | std::views::filter(filter) |
+                    std::ranges::to<std::vector>();
+  }
+
   FOLLY_ALWAYS_INLINE void call(  // NOLINT
     out_type<velox::Array<velox::Varchar>>& out,
     const arg_type<bool>& include_implicit) {
-    // TODO(codeworse): implement proper schema resolution
-
     if (include_implicit) {
       out.add_item().copy_from("pg_catalog");
     }
-    out.add_item().copy_from(StaticStrings::kPublic);
+    for (const auto& schema_name : _schema_names) {
+      out.add_item().copy_from(schema_name);
+    }
   }
+
+ private:
+  std::vector<std::string> _schema_names;
 };
 
 template<typename T>

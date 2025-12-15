@@ -25,12 +25,9 @@
 #include "base/kaldi-error.h"
 #include "iresearch/utils/automaton.hpp"
 
-#include <unordered_map>
+#include <absl/container/node_hash_map.h>
 #include <algorithm>
-using std::unordered_map;
-
 #include <vector>
-#include <climits>
 
 namespace fst {
 
@@ -52,7 +49,7 @@ class StringRepository {
     assert(vec != NULL);
     size_t hash = 0, factor = 1;
     for (const auto& label : *vec) {
-      hash += factor * (label);
+      hash += factor * label;
       factor *= 103333;  // just an arbitrary prime number.
     }
     return hash;
@@ -65,11 +62,11 @@ class StringRepository {
   class VectorEqual {  // Equality-operator function object.
    public:
     bool operator()(const Key& lhs, const Key& rhs) const noexcept {
-      return (*lhs.first == *rhs.first);
+      return *lhs.first == *rhs.first;
     }
   };
 
-  typedef unordered_map<Key, StringId, VectorKey, VectorEqual> MapType;
+  typedef absl::node_hash_map<Key, StringId, VectorKey, VectorEqual> MapType;
 
   StringId IdOfEmpty() { return no_symbol; }
 
@@ -124,9 +121,7 @@ class StringRepository {
   }
 
   void Destroy() {
-    for (typename std::vector<std::vector<Label>*>::iterator iter =
-           vec_.begin();
-         iter != vec_.end(); ++iter)
+    for (auto iter = vec_.begin(); iter != vec_.end(); ++iter)
       delete *iter;
     std::vector<std::vector<Label>*> tmp_vec;
     tmp_vec.swap(vec_);
@@ -204,7 +199,7 @@ class DeterminizerStar {
                     2 +
                   3
               : 20,
-            SubsetKey(), SubsetEqual(delta_)),
+            SubsetKey{}, SubsetEqual{delta_}),
       epsilon_closure_(ifst_, max_states, &repository_, delta) {}
 
   void Determinize(bool* debug_ptr) {
@@ -232,7 +227,7 @@ class DeterminizerStar {
       if (debug_ptr && *debug_ptr)
         Debug();  // will exit.
       if (max_states_ > 0 && output_arcs_.size() > max_states_) {
-        if (allow_partial_ == false) {
+        if (!allow_partial_) {
           KALDI_ERR << "Determinization aborted since passed " << max_states_
                     << " states";
         } else {
@@ -256,8 +251,7 @@ class DeterminizerStar {
       delete ifst_;
       ifst_ = NULL;
     }
-    for (typename SubsetHash::iterator iter = hash_.begin();
-         iter != hash_.end(); ++iter)
+    for (auto iter = hash_.begin(); iter != hash_.end(); ++iter)
       delete iter->first.first;
     SubsetHash tmp;
     tmp.swap(hash_);
@@ -364,9 +358,7 @@ class DeterminizerStar {
       assert(sz >= 0);
       if (sz != s2->size())
         return false;
-      typename std::vector<Element>::const_iterator iter1 = s1->begin(),
-                                                    iter1_end = s1->end(),
-                                                    iter2 = s2->begin();
+      auto iter1 = s1->begin(), iter1_end = s1->end(), iter2 = s2->begin();
       for (; iter1 < iter1_end; ++iter1, ++iter2) {
         if (iter1->state != iter2->state || iter1->string != iter2->string ||
             !ApproxEqual(iter1->weight, iter2->weight, delta_))
@@ -389,9 +381,7 @@ class DeterminizerStar {
       assert(sz >= 0);
       if (sz != s2->size())
         return false;
-      typename std::vector<Element>::const_iterator iter1 = s1->begin(),
-                                                    iter1_end = s1->end(),
-                                                    iter2 = s2->begin();
+      auto iter1 = s1->begin(), iter1_end = s1->end(), iter2 = s2->begin();
       for (; iter1 < iter1_end; ++iter1, ++iter2) {
         if (iter1->state != iter2->state)
           return false;
@@ -401,15 +391,16 @@ class DeterminizerStar {
   };
 
   // Define the hash type we use to store subsets.
-  typedef unordered_map<Key, OutputStateId, SubsetKey, SubsetEqual> SubsetHash;
+  typedef absl::node_hash_map<Key, OutputStateId, SubsetKey, SubsetEqual>
+    SubsetHash;
 
   class EpsilonClosure {
    public:
     EpsilonClosure(const Fst<Arc>* ifst, int max_states,
                    StringRepository<Label, StringId>* repository, float delta)
       : ifst_(ifst),
-        max_states_(max_states),
         repository_(repository),
+        max_states_(max_states),
         delta_(delta),
         sorted_(ifst->Properties(kILabelSorted, false) & kILabelSorted) {}
 
@@ -483,8 +474,8 @@ class DeterminizerStar {
 
     // no pointers below would take the ownership
     const Fst<Arc>* ifst_;
-    int max_states_;
     StringRepository<Label, StringId>* repository_;
+    int max_states_;
     float delta_;
     bool sorted_;
   };
@@ -503,8 +494,7 @@ class DeterminizerStar {
     // we just set it to avoid spurious compiler warnings.  We avoid setting it
     // to Zero() because floating-point infinities can sometimes generate
     // interrupts and slow things down.
-    typename std::vector<Element>::const_iterator iter = closed_subset.begin(),
-                                                  end = closed_subset.end();
+    auto iter = closed_subset.begin(), end = closed_subset.end();
     for (; iter != end; ++iter) {
       const Element& elem = *iter;
       Weight this_final_weight = ifst_->Final(elem.state);
@@ -661,7 +651,7 @@ class DeterminizerStar {
 
       const OutputStateId new_state_id = iter->second;
       output_arcs_.emplace_back();
-      if (allow_partial_ == false) {
+      if (!allow_partial_) {
         // If --allow-partial is not requested, we do the old way.
         Q_.emplace_front(new_subset, new_state_id);
       } else {
@@ -817,7 +807,7 @@ void DeterminizerStar<F>::EpsilonClosure::GetEpsilonClosure(
 
   {
     // this sorting is based on StateId
-    sort(ecinfo_.begin(), ecinfo_.end());
+    std::sort(ecinfo_.begin(), ecinfo_.end());
 
     output_subset->clear();
 
@@ -970,8 +960,7 @@ void DeterminizerStar<F>::Output(MutableFst<GallicArc<Arc>>* ofst,
   // now process transitions.
   for (StateId this_state = 0; this_state < nStates; this_state++) {
     std::vector<TempArc>& this_vec(output_arcs_[this_state]);
-    typename std::vector<TempArc>::const_iterator iter = this_vec.begin(),
-                                                  end = this_vec.end();
+    auto iter = this_vec.begin(), end = this_vec.end();
     for (; iter != end; ++iter) {
       const TempArc& temp_arc(*iter);
       GallicArc<Arc> new_arc;
@@ -1026,8 +1015,7 @@ void DeterminizerStar<F>::Output(MutableFst<Arc>* ofst, bool destroy) {
   for (OutputStateId this_state = 0; this_state < num_states; this_state++) {
     std::vector<TempArc>& this_vec(output_arcs_[this_state]);
 
-    typename std::vector<TempArc>::const_iterator iter = this_vec.begin(),
-                                                  end = this_vec.end();
+    auto iter = this_vec.begin(), end = this_vec.end();
     for (; iter != end; ++iter) {
       const TempArc& temp_arc(*iter);
       std::vector<Label> seq;
@@ -1096,10 +1084,9 @@ void DeterminizerStar<F>::ProcessTransition(OutputStateId state, Label ilabel,
   // it, and adds a transition to the dest. state (possibly affecting Q_ and
   // hash_, if state did not exist).
 
-  typedef typename std::vector<Element>::iterator IterType;
   {  // This block makes the subset have one unique Element per state, adding
      // the weights.
-    IterType cur_in = subset->begin(), cur_out = cur_in, end = subset->end();
+    auto cur_in = subset->begin(), cur_out = cur_in, end = subset->end();
     size_t num_out = 0;
     // Merge elements with same state-id
     while (cur_in != end) {  // while we have more elements to process.
@@ -1130,7 +1117,8 @@ void DeterminizerStar<F>::ProcessTransition(OutputStateId state, Label ilabel,
     // and removes them from the elements.
     std::vector<Label> seq;
 
-    IterType begin = subset->begin(), iter, end = subset->end();
+    auto begin = subset->begin(), end = subset->end();
+    decltype(begin) iter;
     {  // This block computes "seq", which is the common prefix, and
        // "common_str",
       // which is the StringId version of "seq".

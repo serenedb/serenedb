@@ -20,6 +20,8 @@ struct DumpLimits {
 struct ServerOptions {
   DumpLimits dump_limits;
 
+  uint64_t descriptors_minimum = 0;
+
   std::vector<std::string> cluster_agency_endpoints;
   std::string cluster_my_role;
   std::string cluster_my_endpoint;

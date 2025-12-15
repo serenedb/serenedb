@@ -66,18 +66,13 @@ size_t WriteImpl(char* p, const T& v) noexcept {
       absl::big_endian::Store64(p, v.id());
     }
     return sizeof(T);
-  } else if constexpr (std::is_same_v<T, char>) {
-    *p = v;
-    return sizeof(T);
-  } else if constexpr (std::is_same_v<T, uint64_t>) {
-    absl::big_endian::Store64(p, v);
-    return sizeof(T);
   } else if constexpr (std::is_same_v<T, std::string_view>) {
     // TODO(gnusi): std::string_view must be last
     std::memcpy(p, v.data(), v.size());
     return v.size();
   } else {
-    static_assert(false);
+    absl::big_endian::Store(p, v);
+    return sizeof(T);
   }
 }
 
@@ -98,16 +93,12 @@ const char* ReadImpl(const char* p, const char* end, T& v) noexcept {
       v = T{absl::big_endian::Load64(p)};
     }
     p += sizeof(T);
-  } else if constexpr (std::is_same_v<T, char>) {
-    v = *p++;
-  } else if constexpr (std::is_same_v<T, uint64_t>) {
-    v = absl::big_endian::Load64(p);
-    p += sizeof(T);
   } else if constexpr (std::is_same_v<T, std::string_view>) {
     v = {p, end};
     p = end;
   } else {
-    static_assert(false);
+    v = absl::big_endian::Load<T>(p);
+    p += sizeof(T);
   }
   return p;
 }
@@ -138,6 +129,15 @@ void Concat(std::string& str, const Args&... args) {
   // TODO(mbkkt) maybe amortized?
   basics::StrResize(str, (detail::GetByteSizeImpl(args) + ...));
   auto* p = str.data();
+  ((p += detail::WriteImpl(p, args)), ...);
+}
+
+template<typename... Args>
+void Append(std::string& str, const Args&... args) {
+  // TODO(mbkkt) maybe amortized?
+  const auto old_size = str.size();
+  basics::StrResize(str, (detail::GetByteSizeImpl(args) + ...) + old_size);
+  auto* p = str.data() + old_size;
   ((p += detail::WriteImpl(p, args)), ...);
 }
 

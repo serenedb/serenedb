@@ -23,34 +23,33 @@
 #include "basics/down_cast.h"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
-#include "query/config.h"
 
 namespace sdb::pg {
 
 yaclib::Future<Result> Transaction(ExecContext& context,
                                    const TransactionStmt& stmt) {
-  auto& config = basics::downCast<ConnectionContext>(context).GetConfig();
+  auto& conn_ctx = basics::downCast<ConnectionContext>(context);
   Result r;
   switch (stmt.kind) {
     case TRANS_STMT_BEGIN:
     case TRANS_STMT_START:
-      if (!config.InsideTransaction()) {
-        config.Begin();
+      if (!conn_ctx.InsideTransaction()) {
+        conn_ctx.Begin();
       } else {
         r = {ERROR_QUERY_USER_WARN,
              "there is already a transaction in progress"};
       }
       break;
     case TRANS_STMT_COMMIT:
-      if (config.InsideTransaction()) {
-        config.Commit();
+      if (conn_ctx.InsideTransaction()) {
+        conn_ctx.Commit();
       } else {
         r = {ERROR_QUERY_USER_WARN, "there is no transaction in progress"};
       }
       break;
     case TRANS_STMT_ROLLBACK:
-      if (config.InsideTransaction()) {
-        config.Abort();
+      if (conn_ctx.InsideTransaction()) {
+        conn_ctx.Abort();
       } else {
         r = {ERROR_QUERY_USER_WARN, "there is no transaction in progress"};
       }

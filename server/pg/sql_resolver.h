@@ -22,17 +22,21 @@
 
 #include "basics/containers/flat_hash_set.h"
 #include "pg/sql_collector.h"
+#include "query/config.h"
 
 namespace sdb::pg {
 
 using Disallowed = containers::FlatHashSet<Objects::ObjectName>;
 
-void ResolveQueryView(ObjectId database, Objects& objects,
-                      Disallowed& disallowed, const Objects& query);
+void ResolveQueryView(ObjectId database,
+                      std::span<const std::string> search_path,
+                      Objects& objects, Disallowed& disallowed,
+                      const Objects& query);
 
-void ResolveFunction(ObjectId database, Objects& objects,
+void ResolveFunction(ObjectId database,
+                     std::span<const std::string> search_path, Objects& objects,
                      Disallowed& disallowed, const Objects& query);
 
-void Resolve(ObjectId database, Objects& objects);
+void Resolve(ObjectId database, Objects& objects, const Config& config);
 
 }  // namespace sdb::pg

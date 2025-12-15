@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -20,17 +20,24 @@
 #ifndef FST_MATCHER_H_
 #define FST_MATCHER_H_
 
+#include <sys/types.h>
+
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <map>
 #include <memory>
+#include <optional>
 #include <tuple>
+#include <absl/container/flat_hash_map.h>
 #include <utility>
 
 #include <fst/log.h>
-
+#include <fst/fst.h>
 #include <fst/mutable-fst.h>  // for all internal FST accessors.
-
-#include <unordered_map>
+#include <fst/properties.h>
+#include <fst/util.h>
+#include <absl/container/flat_hash_map.h>
 #include <optional>
 
 namespace fst {
@@ -137,7 +144,7 @@ class MatcherBase {
   using StateId = typename Arc::StateId;
   using Weight = typename Arc::Weight;
 
-  virtual ~MatcherBase() {}
+  virtual ~MatcherBase() = default;
 
   // Virtual interface.
 
@@ -519,7 +526,7 @@ class HashMatcher : public MatcherBase<typename F::Arc> {
   bool Search(Label match_label);
 
   using LabelTable = std::unordered_multimap<Label, size_t>;
-  using StateTable = std::unordered_map<StateId, std::unique_ptr<LabelTable>>;
+  using StateTable = absl::flat_hash_map<StateId, std::unique_ptr<LabelTable>>;
 
   std::unique_ptr<const FST> owned_fst_;  // ptr to FST if owned.
   const FST &fst_;                        // FST for matching.

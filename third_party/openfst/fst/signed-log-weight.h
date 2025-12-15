@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -25,14 +25,20 @@
 #ifndef FST_SIGNED_LOG_WEIGHT_H_
 #define FST_SIGNED_LOG_WEIGHT_H_
 
+#include <climits>
+#include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <random>
+#include <string>
 
-
+#include <fst/log.h>
 #include <fst/float-weight.h>
 #include <fst/pair-weight.h>
 #include <fst/product-weight.h>
-
+#include <fst/util.h>
+#include <fst/weight.h>
 
 namespace fst {
 template <class T>
@@ -217,12 +223,6 @@ inline bool operator==(const SignedLogWeightTpl<T> &w1,
   }
 }
 
-template <class T>
-inline bool operator!=(const SignedLogWeightTpl<T> &w1,
-                       const SignedLogWeightTpl<T> &w2) {
-  return !(w1 == w2);
-}
-
 // All functions and operators with a LogWeightTpl arg need to be
 // explicitly specified since the implicit constructor will not be
 // tried in conjunction with function overloading.
@@ -299,18 +299,6 @@ template <class T>
 inline bool operator==(const SignedLogWeightTpl<T> &w1,
                        const LogWeightTpl<T> &w2) {
   return w1 == SignedLogWeightTpl<T>(w2);
-}
-
-template <class T>
-inline bool operator!=(const LogWeightTpl<T> &w1,
-                       const SignedLogWeightTpl<T> &w2) {
-  return SignedLogWeightTpl<T>(w1) != w2;
-}
-
-template <class T>
-inline bool operator!=(const SignedLogWeightTpl<T> &w1,
-                       const LogWeightTpl<T> &w2) {
-  return w1 != SignedLogWeightTpl<T>(w2);
 }
 
 // Single-precision signed-log weight.

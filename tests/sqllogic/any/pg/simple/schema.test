@@ -1,0 +1,79 @@
+statement ok
+CREATE SCHEMA some_schema;
+
+
+statement ok
+CREATE TABLE t(r text);
+
+
+statement ok
+CREATE TABLE some_schema.t(r2 text);
+
+
+statement ok
+CREATE TABLE t2(r text);
+
+
+query
+SELECT * FROM t AS first, some_schema.t AS second WHERE first.r = second.r2;
+----
+r	r2
+
+
+query
+SELECT * FROM t;
+----
+r
+
+
+statement ok
+SET search_path TO some_schema, public
+
+
+query
+SELECT * FROM t;
+----
+r2
+
+
+query
+SELECT * FROM t2;
+----
+r
+
+
+statement ok
+CREATE SCHEMA another_schema;
+
+
+statement ok
+CREATE TABLE another_schema.t4(r4 text);
+
+
+query error db error: ERROR: relation "t4" does not exist
+SELECT * FROM t4;
+
+
+query
+SELECT * FROM another_schema.t4;
+----
+r4
+
+
+statement ok
+DROP SCHEMA some_schema CASCADE;
+
+
+query error db error: ERROR: relation "some_schema\.t" does not exist
+SELECT * from some_schema.t;
+
+
+statement ok
+SET search_path TO '';
+
+
+query error db error: ERROR: relation "t" does not exist
+SELECT * FROM t;
+
+query error db error: ERROR: no schema has been selected to create in
+CREATE TABLE t42(r text);

@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -20,16 +20,20 @@
 #ifndef FST_STATE_TABLE_H_
 #define FST_STATE_TABLE_H_
 
+#include <sys/types.h>
+
+#include <cstddef>
 #include <deque>
 #include <utility>
 #include <vector>
 
 #include <fst/log.h>
-
 #include <fst/bi-table.h>
 #include <fst/expanded-fst.h>
 #include <fst/filter-state.h>
-
+#include <fst/fst.h>
+#include <fst/properties.h>
+#include <fst/util.h>
 
 namespace fst {
 
@@ -157,7 +161,7 @@ class VectorHashStateTable
   using VectorHashBiTable<StateId, StateTuple, Select, FP, H>::Size;
   using VectorHashBiTable<StateId, StateTuple, Select, FP, H>::Selector;
   using VectorHashBiTable<StateId, StateTuple, Select, FP, H>::Fingerprint;
-  using VectorHashBiTable<StateId, StateTuple, Select, FP, H>::Hash;
+  using VectorHashBiTable<StateId, StateTuple, Select, FP, H>::HashFunction;
 
   VectorHashStateTable(const Select &select, const FP &fingerprint,
                        const H &hash, size_t vector_size = 0,

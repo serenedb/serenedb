@@ -4,7 +4,6 @@ target_sources(
         restart_action.cpp
         bootstrap_feature.cpp
         check_version_feature.cpp
-        cpu_usage_feature.cpp
         daemon_feature.cpp
         database_path_feature.cpp
         endpoint_feature.cpp

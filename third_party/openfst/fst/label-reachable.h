@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -21,20 +21,26 @@
 #ifndef FST_LABEL_REACHABLE_H_
 #define FST_LABEL_REACHABLE_H_
 
+#include <sys/types.h>
+
+#include <cstddef>
+#include <istream>
 #include <memory>
+#include <ostream>
 #include <utility>
 #include <vector>
 
 #include <fst/log.h>
-
 #include <fst/accumulator.h>
 #include <fst/arcsort.h>
+#include <fst/fst.h>
 #include <fst/interval-set.h>
+#include <fst/mutable-fst.h>
+#include <fst/properties.h>
 #include <fst/state-reachable.h>
 #include <fst/util.h>
 #include <fst/vector-fst.h>
-
-#include <unordered_map>
+#include <absl/container/flat_hash_map.h>
 
 namespace fst {
 
@@ -51,7 +57,7 @@ class LabelReachableData {
         have_relabel_data_(true),
         final_label_(kNoLabel) {}
 
-  ~LabelReachableData() {}
+  ~LabelReachableData() = default;
 
   bool ReachInput() const { return reach_input_; }
 
@@ -65,14 +71,14 @@ class LabelReachableData {
 
   int NumIntervalSets() const { return interval_sets_.size(); }
 
-  std::unordered_map<Label, Label> *MutableLabel2Index() {
+  absl::flat_hash_map<Label, Label> *MutableLabel2Index() {
     if (!have_relabel_data_) {
       FSTERROR() << "LabelReachableData: No relabeling data";
     }
     return &label2index_;
   }
 
-  const std::unordered_map<Label, Label> *Label2Index() const {
+  const absl::flat_hash_map<Label, Label> *Label2Index() const {
     if (!have_relabel_data_) {
       FSTERROR() << "LabelReachableData: No relabeling data";
     }
@@ -106,13 +112,13 @@ class LabelReachableData {
   }
 
  private:
-  LabelReachableData() {}
+  LabelReachableData() = default;
 
   bool reach_input_;                               // Input labels considered?
   bool keep_relabel_data_;                         // Save label2index_ to file?
   bool have_relabel_data_;                         // Using label2index_?
   Label final_label_;                              // Final label.
-  std::unordered_map<Label, Label> label2index_;  // Finds index for a label.
+  absl::flat_hash_map<Label, Label> label2index_;  // Finds index for a label.
   std::vector<LabelIntervalSet> interval_sets_;    // Interval sets per state.
 };
 
@@ -284,8 +290,9 @@ class LabelReachable {
   Label Relabel(Label label) {
     if (label == 0 || error_) return label;
     const auto &label2index = *data_->Label2Index();
-    auto iter = label2index.find(label);
-    if (iter != label2index.end()) return iter->second;
+    if (auto iter = label2index.find(label); iter != label2index.end()) {
+      return iter->second;
+    }
     auto &relabel = oov_label2index_[label];
     if (!relabel) {
       // Adds new label.
@@ -340,7 +347,10 @@ class LabelReachable {
       for (size_t i = 1; i <= label2index.size(); ++i) {
         const auto it = label2index.find(i);
         bool unmapped = it == label2index.end();
-        if (unmapped) unmapped = oov_label2index_.count(i) == 0;
+        if (unmapped) {
+          // TODO: Use contains() when C++20 is allowed in OpenFST.
+          unmapped = oov_label2index_.find(i) == oov_label2index_.end();
+        }
         if (unmapped || it->second == data_->FinalLabel()) {
           pairs->emplace_back(i, label2index.size() + 1);
         }
@@ -477,7 +487,7 @@ class LabelReachable {
   // Access to the relabeling map. Excludes epsilon (0) label but
   // includes kNoLabel that is used internally for super-final
   // transitions.
-  const std::unordered_map<Label, Label> &Label2Index() const {
+  const absl::flat_hash_map<Label, Label> &Label2Index() const {
     return *data_->Label2Index();
   }
 
@@ -579,7 +589,7 @@ class LabelReachable {
   // Current state
   StateId s_;
   // Finds final state for a label
-  std::unordered_map<Label, StateId> label2state_;
+  absl::flat_hash_map<Label, StateId> label2state_;
   // Iterator position of first match.
   ssize_t reach_begin_;
   // Iterator position after last match.
@@ -593,7 +603,7 @@ class LabelReachable {
   // Functor for computing LowerBound(Iterator*, begin, end, label).
   LowerBound lower_bound_;
   // Relabeling map for OOV labels.
-  std::unordered_map<Label, Label> oov_label2index_;
+  absl::flat_hash_map<Label, Label> oov_label2index_;
   double ncalls_ = 0;
   double nintervals_ = 0;
   bool reach_fst_input_ = false;

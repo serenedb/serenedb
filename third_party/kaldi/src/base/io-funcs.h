@@ -37,8 +37,6 @@
 
 namespace kaldi {
 
-
-
 /*
   This comment describes the Kaldi approach to I/O.  All objects can be written
   and read in two modes: binary and text.  In addition we want to make the I/O
@@ -55,15 +53,16 @@ namespace kaldi {
 
   and we expect these functions to be defined in such a way that they work when
   the type T changes between float and double, so you can read float into double
-  and vice versa].  Note that for efficiency and space-saving reasons, the Vector
-  and Matrix classes do not use these functions [but they preserve the type
-  interchangeability in their own way]
+  and vice versa].  Note that for efficiency and space-saving reasons, the
+  Vector and Matrix classes do not use these functions [but they preserve the
+  type interchangeability in their own way]
 
   For a class (or struct) C:
   class C {
   ..
-    Write(std::ostream &, bool binary, [possibly extra optional args for specific classes]) const;
-    Read(std::istream &, bool binary, [possibly extra optional args for specific classes]);
+    Write(std::ostream &, bool binary, [possibly extra optional args for
+  specific classes]) const; Read(std::istream &, bool binary, [possibly extra
+  optional args for specific classes]);
   ..
   }
   NOTE: The only actual optional args we used are the "add" arguments in
@@ -82,18 +81,18 @@ namespace kaldi {
 
   For a type std::vector<T>:
 
-   void WriteIntegerVector(std::ostream &os, bool binary, const std::vector<T> &v);
-   void ReadIntegerVector(std::istream &is, bool binary, std::vector<T> *v);
+   void WriteIntegerVector(std::ostream &os, bool binary, const std::vector<T>
+  &v); void ReadIntegerVector(std::istream &is, bool binary, std::vector<T> *v);
 
-  For other types, e.g. vectors of pairs, the user should create a routine of the
-  type WriteMyTypedefName.  This is to avoid introducing confusing templated functions;
-  we could easily create templated functions to handle most of these cases but they
-  would have to share the same name.
+  For other types, e.g. vectors of pairs, the user should create a routine of
+  the type WriteMyTypedefName.  This is to avoid introducing confusing templated
+  functions; we could easily create templated functions to handle most of these
+  cases but they would have to share the same name.
 
   It also often happens that the user needs to write/read special tokens as part
-  of a file.  These might be class headers, or separators/identifiers in the class.
-  We provide special functions for manipulating these.  These special tokens must
-  be nonempty and must not contain any whitespace.
+  of a file.  These might be class headers, or separators/identifiers in the
+  class. We provide special functions for manipulating these.  These special
+  tokens must be nonempty and must not contain any whitespace.
 
     void WriteToken(std::ostream &os, bool binary, const char*);
     void WriteToken(std::ostream &os, bool binary, const std::string & token);
@@ -114,10 +113,11 @@ namespace kaldi {
   different object types are written to the same file; using PeekToken one can
   decide which of the objects to read.
 
-  There is currently no special functionality for writing/reading strings (where the strings
-  contain data rather than "special tokens" that are whitespace-free and nonempty).  This is
-  because Kaldi is structured in such a way that strings don't appear, except as OpenFst symbol
-  table entries (and these have their own format).
+  There is currently no special functionality for writing/reading strings (where
+  the strings contain data rather than "special tokens" that are whitespace-free
+  and nonempty).  This is because Kaldi is structured in such a way that strings
+  don't appear, except as OpenFst symbol table entries (and these have their own
+  format).
 
 
   NOTE: you should not call ReadIntegerType and WriteIntegerType with types,
@@ -131,42 +131,42 @@ namespace kaldi {
 /// \addtogroup io_funcs_basic
 /// @{
 
-
 /// WriteBasicType is the name of the write function for bool, integer types,
 /// and floating-point types. They all throw on error.
-template<class T> void WriteBasicType(std::ostream &os, bool binary, T t);
+template<class T>
+void WriteBasicType(std::ostream& os, bool binary, T t);
 
 /// ReadBasicType is the name of the read function for bool, integer types,
 /// and floating-point types. They all throw on error.
-template<class T> void ReadBasicType(std::istream &is, bool binary, T *t);
-
+template<class T>
+void ReadBasicType(std::istream& is, bool binary, T* t);
 
 // Declare specialization for bool.
 template<>
-void WriteBasicType<bool>(std::ostream &os, bool binary, bool b);
+void WriteBasicType<bool>(std::ostream& os, bool binary, bool b);
 
-template <>
-void ReadBasicType<bool>(std::istream &is, bool binary, bool *b);
+template<>
+void ReadBasicType<bool>(std::istream& is, bool binary, bool* b);
 
 // Declare specializations for float and double.
 template<>
-void WriteBasicType<float>(std::ostream &os, bool binary, float f);
+void WriteBasicType<float>(std::ostream& os, bool binary, float f);
 
 template<>
-void WriteBasicType<double>(std::ostream &os, bool binary, double f);
+void WriteBasicType<double>(std::ostream& os, bool binary, double f);
 
 template<>
-void ReadBasicType<float>(std::istream &is, bool binary, float *f);
+void ReadBasicType<float>(std::istream& is, bool binary, float* f);
 
 template<>
-void ReadBasicType<double>(std::istream &is, bool binary, double *f);
+void ReadBasicType<double>(std::istream& is, bool binary, double* f);
 
 // Define ReadBasicType that accepts an "add" parameter to add to
 // the destination.  Caution: if used in Read functions, be careful
 // to initialize the parameters concerned to zero in the default
 // constructor.
 template<class T>
-inline void ReadBasicType(std::istream &is, bool binary, T *t, bool add) {
+inline void ReadBasicType(std::istream& is, bool binary, T* t, bool add) {
   if (!add) {
     ReadBasicType(is, binary, t);
   } else {
@@ -177,69 +177,69 @@ inline void ReadBasicType(std::istream &is, bool binary, T *t, bool add) {
 }
 
 /// Function for writing STL vectors of integer types.
-template<class T> inline void WriteIntegerVector(std::ostream &os, bool binary,
-                                                 const std::vector<T> &v);
+template<class T>
+inline void WriteIntegerVector(std::ostream& os, bool binary,
+                               const std::vector<T>& v);
 
 /// Function for reading STL vector of integer types.
-template<class T> inline void ReadIntegerVector(std::istream &is, bool binary,
-                                                std::vector<T> *v);
+template<class T>
+inline void ReadIntegerVector(std::istream& is, bool binary, std::vector<T>* v);
 
 /// Function for writing STL vectors of pairs of integer types.
 template<class T>
-inline void WriteIntegerPairVector(std::ostream &os, bool binary,
-                                   const std::vector<std::pair<T, T> > &v);
+inline void WriteIntegerPairVector(std::ostream& os, bool binary,
+                                   const std::vector<std::pair<T, T>>& v);
 
 /// Function for reading STL vector of pairs of integer types.
 template<class T>
-inline void ReadIntegerPairVector(std::istream &is, bool binary,
-                                  std::vector<std::pair<T, T> > *v);
+inline void ReadIntegerPairVector(std::istream& is, bool binary,
+                                  std::vector<std::pair<T, T>>* v);
 
 /// The WriteToken functions are for writing nonempty sequences of non-space
 /// characters. They are not for general strings.
-void WriteToken(std::ostream &os, bool binary, const char *token);
-void WriteToken(std::ostream &os, bool binary, const std::string & token);
+void WriteToken(std::ostream& os, bool binary, const char* token);
+void WriteToken(std::ostream& os, bool binary, const std::string& token);
 
 /// Peek consumes whitespace (if binary == false) and then returns the peek()
 /// value of the stream.
-int Peek(std::istream &is, bool binary);
+int Peek(std::istream& is, bool binary);
 
 /// ReadToken gets the next token and puts it in str (exception on failure). If
 /// PeekToken() had been previously called, it is possible that the stream had
 /// failed to unget the starting '<' character. In this case ReadToken() returns
 /// the token string without the leading '<'. You must be prepared to handle
 /// this case. ExpectToken() handles this internally, and is not affected.
-void ReadToken(std::istream &is, bool binary, std::string *token);
+void ReadToken(std::istream& is, bool binary, std::string* token);
 
 /// PeekToken will return the first character of the next token, or -1 if end of
 /// file.  It's the same as Peek(), except if the first character is '<' it will
 /// skip over it and will return the next character. It will attempt to unget
 /// the '<' so the stream is where it was before you did PeekToken(), however,
 /// this is not guaranteed (see ReadToken()).
-int PeekToken(std::istream &is, bool binary);
+int PeekToken(std::istream& is, bool binary);
 
 /// ExpectToken tries to read in the given token, and throws an exception
 /// on failure.
-void ExpectToken(std::istream &is, bool binary, const char *token);
-void ExpectToken(std::istream &is, bool binary, const std::string & token);
+void ExpectToken(std::istream& is, bool binary, const char* token);
+void ExpectToken(std::istream& is, bool binary, const std::string& token);
 
 /// ExpectPretty attempts to read the text in "token", but only in non-binary
 /// mode.  Throws exception on failure.  It expects an exact match except that
 /// arbitrary whitespace matches arbitrary whitespace.
-void ExpectPretty(std::istream &is, bool binary, const char *token);
-void ExpectPretty(std::istream &is, bool binary, const std::string & token);
+void ExpectPretty(std::istream& is, bool binary, const char* token);
+void ExpectPretty(std::istream& is, bool binary, const std::string& token);
 
 /// @} end "addtogroup io_funcs_basic"
-
 
 /// InitKaldiOutputStream initializes an opened stream for writing by writing an
 /// optional binary header and modifying the floating-point precision; it will
 /// typically not be called by users directly.
-inline void InitKaldiOutputStream(std::ostream &os, bool binary);
+inline void InitKaldiOutputStream(std::ostream& os, bool binary);
 
 /// InitKaldiInputStream initializes an opened stream for reading by detecting
 /// the binary header and setting the "binary" value appropriately;
 /// It will typically not be called by users directly.
-inline bool InitKaldiInputStream(std::istream &is, bool *binary);
+inline bool InitKaldiInputStream(std::istream& is, bool* binary);
 
 }  // end namespace kaldi.
 #endif  // KALDI_BASE_IO_FUNCS_H_

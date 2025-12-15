@@ -23,6 +23,8 @@
 #include <velox/connectors/Connector.h>
 
 #include "basics/fwd.h"
+#include "catalog/identifiers/object_id.h"
+#include "connector/key_utils.hpp"
 #include "rocksdb/utilities/transaction.h"
 
 namespace sdb::connector {
@@ -37,8 +39,8 @@ class RocksDBDataSource final : public velox::connector::DataSource {
                     // WriteBatchWithindex or plain DB with snapshot
                     rocksdb::Snapshot* snapshot, rocksdb::DB& db,
                     rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
-                    std::vector<std::string> column_names,
-                    std::string_view object_key);
+                    std::vector<key_utils::ColumnId> column_ids,
+                    ObjectId object_key);
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
   std::optional<velox::RowVectorPtr> next(uint64_t size,
@@ -79,9 +81,9 @@ class RocksDBDataSource final : public velox::connector::DataSource {
   rocksdb::DB& _db;
   rocksdb::ColumnFamilyHandle& _cf;
   velox::RowTypePtr _row_type;
-  std::vector<std::string> _column_names;
+  std::vector<key_utils::ColumnId> _column_ids;
   std::shared_ptr<velox::connector::ConnectorSplit> _current_split;
-  std::string _object_key;
+  ObjectId _object_key;
   std::string _last_read_key;
   uint64_t _produced{0};
 };

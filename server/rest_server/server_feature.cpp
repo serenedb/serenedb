@@ -101,9 +101,7 @@ void ServerFeature::validateOptions(std::shared_ptr<ProgramOptions> options) {
       // turn off replication applier when we do not have a rest server
       // but only if the config option is not explicitly set (the recovery
       // test want the applier to be enabled for testing it)
-      ReplicationFeature& replication_feature =
-        server().getFeature<ReplicationFeature>();
-      replication_feature.disableReplicationApplier();
+      server().getFeature<ReplicationFeature>().disableReplicationApplier();
     }
 #endif
   }

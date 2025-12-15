@@ -23,130 +23,131 @@
 
 namespace sdb {
 
-constexpr auto kVariableDescription = frozen::make_unordered_map<
-  std::string_view, VariableDescription>(
-  {{
-     "search_path",
-     {
-       VariableType::PgSearchPath,
-       "Sets the schema search order for names that are not schema-qualified.",
-       "\"$user\", public",
-     },
-   },
-   {
-     "extra_float_digits",
-     {
-       VariableType::PgExtraFloatDigits,
-       "Sets the number of digits displayed for floating-point values.",
-       "1",
-     },
-   },
-   {
-     "bytea_output",
-     {
-       VariableType::PgByteaOutput,
-       "Sets the output format for values of type bytea. Valid values are "
-       "'hex' "
-       "(the default) and 'escape' (the traditional PostgreSQL format).",
-       "hex",
-     },
-   },
-   {
-     "client_encoding",
-     {
-       VariableType::String,
-       "Sets the client character set encoding.",
-       "UTF8",
-     },
-   },
-   {
-     "datestyle",
-     {
-       VariableType::String,
-       "Sets the display format for date and time values.",
-       "ISO, MDY",
-     },
-   },
-   {
-     "application_name",
-     {
-       VariableType::String,
-       "Sets the application name to be reported in statistics and logs.",
-       "",
-     },
-   },
-   {
-     "default_transaction_read_only",
-     {
-       VariableType::Bool,
-       "Sets the default read-only status of new transactions.",
-       "off",
-     },
-   },
-   {
-     "in_hot_standby",
-     {
-       VariableType::Bool,
-       "Shows whether the server is currently in hot standby mode.",
-       "off",
-     },
-   },
-   {
-     "integer_datetimes",
-     {
-       VariableType::Bool,
-       "Shows whether datetimes are integer based.",
-       "on",
-     },
-   },
-   {
-     "intervalstyle",
-     {
-       VariableType::String,
-       "Sets the display format for interval values.",
-       "postgres",
-     },
-   },
-   {
-     "scram_iterations",
-     {
-       VariableType::I32,
-       "Sets the number of SCRAM iterations for password hashing.",
-       "4096",
-     },
-   },
-   {
-     "server_encoding",
-     {
-       VariableType::String,
-       "Sets the server character set encoding.",
-       "UTF8",
-     },
-   },
-   {
-     "server_version",
-     {
-       VariableType::String,
-       "Shows the server version.",
-       "18.1",
-     },
-   },
-   {
-     "standard_conforming_strings",
-     {
-       VariableType::Bool,
-       "Causes '...' strings to treat backslashes literally.",
-       "on",
-     },
-   },
-   {
-     "timezone",
-     {
-       VariableType::String,
-       "Sets the time zone for displaying and interpreting time stamps.",
-       "Etc/UTC",
-     },
-   }});
+constexpr auto kVariableDescription =
+  frozen::make_unordered_map<std::string_view, VariableDescription>({
+    {
+      "search_path",
+      {
+        VariableType::PgSearchPath,
+        "Sets the schema search order for names that are not schema-qualified.",
+        "\"$user\", public",
+      },
+    },
+    {
+      "extra_float_digits",
+      {
+        VariableType::PgExtraFloatDigits,
+        "Sets the number of digits displayed for floating-point values.",
+        "1",
+      },
+    },
+    {
+      "bytea_output",
+      {
+        VariableType::PgByteaOutput,
+        "Sets the output format for values of type bytea. Valid values are "
+        "'hex' "
+        "(the default) and 'escape' (the traditional PostgreSQL format).",
+        "hex",
+      },
+    },
+    {
+      "client_encoding",
+      {
+        VariableType::String,
+        "Sets the client character set encoding.",
+        "UTF8",
+      },
+    },
+    {
+      "datestyle",
+      {
+        VariableType::String,
+        "Sets the display format for date and time values.",
+        "ISO, MDY",
+      },
+    },
+    {
+      "application_name",
+      {
+        VariableType::String,
+        "Sets the application name to be reported in statistics and logs.",
+        "",
+      },
+    },
+    {
+      "default_transaction_read_only",
+      {
+        VariableType::Bool,
+        "Sets the default read-only status of new transactions.",
+        "off",
+      },
+    },
+    {
+      "in_hot_standby",
+      {
+        VariableType::Bool,
+        "Shows whether the server is currently in hot standby mode.",
+        "off",
+      },
+    },
+    {
+      "integer_datetimes",
+      {
+        VariableType::Bool,
+        "Shows whether datetimes are integer based.",
+        "on",
+      },
+    },
+    {
+      "intervalstyle",
+      {
+        VariableType::String,
+        "Sets the display format for interval values.",
+        "postgres",
+      },
+    },
+    {
+      "scram_iterations",
+      {
+        VariableType::I32,
+        "Sets the number of SCRAM iterations for password hashing.",
+        "4096",
+      },
+    },
+    {
+      "server_encoding",
+      {
+        VariableType::String,
+        "Sets the server character set encoding.",
+        "UTF8",
+      },
+    },
+    {
+      "server_version",
+      {
+        VariableType::String,
+        "Shows the server version.",
+        "18.1",
+      },
+    },
+    {
+      "standard_conforming_strings",
+      {
+        VariableType::Bool,
+        "Causes '...' strings to treat backslashes literally.",
+        "on",
+      },
+    },
+    {
+      "timezone",
+      {
+        VariableType::String,
+        "Sets the time zone for displaying and interpreting time stamps.",
+        "Etc/UTC",
+      },
+    },
+  });
 
 constexpr auto kVeloxVariableDescription =
   frozen::make_unordered_map<std::string_view, VariableDescription>({

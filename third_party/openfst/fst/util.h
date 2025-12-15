@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -21,42 +21,57 @@
 #define FST_UTIL_H_
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
+#include <ios>
 #include <iostream>
+#include <istream>
 #include <iterator>
 #include <list>
 #include <map>
+#include <optional>
+#include <ostream>
 #include <set>
 #include <sstream>
 #include <string>
+#include <tuple>
 #include <type_traits>
-#include <unordered_map>
-#include <unordered_set>
+#include <absl/container/flat_hash_map.h>
+#include <absl/container/flat_hash_set.h>
 #include <utility>
 #include <vector>
 
 #include <fst/compat.h>
+#include <fst/flags.h>
 #include <fst/log.h>
 #include <fstream>
 #include <fst/mapped-file.h>
-
-#include <fst/flags.h>
-#include <unordered_map>
+#include <absl/container/flat_hash_map.h>
 #include <string_view>
 #include <optional>
-
 
 // Utility for error handling.
 
 DECLARE_bool(fst_error_fatal);
 
-#define FSTERROR()                                                     \
-  LOG(LEVEL(FST_FLAGS_fst_error_fatal ? base_logging::FATAL \
-                                                 : base_logging::ERROR))
+#define FSTERROR() (FST_FLAGS_fst_error_fatal ? LOG(FATAL) : LOG(ERROR))
 
 namespace fst {
 
-// Utility for type I/O.
+// Utility for type I/O.  For portability of serialized objects across
+// architectures, care must be taken so that only fixed-size types (like
+// `int32_t`) are used with `WriteType`/`ReadType`, not types that may differ in
+// size depending on the architecture, such as `int`.  For `enum` types, a
+// fixed-size base (like `enum E : int32_t`) should be used.  Objects are
+// written and read in the host byte order, so will not be portable across
+// different endiannesses.
+
+namespace internal {
+// Whether the scalar type is supported by `ReadType`/`WriteType`.
+template <class T>
+inline constexpr bool IsScalarIOTypeV =
+    std::is_arithmetic_v<T> || std::is_enum_v<T>;
+}  // namespace internal
 
 // Reads types from an input stream.
 
@@ -66,17 +81,18 @@ inline std::istream &ReadType(std::istream &strm, T *t) {
   return t->Read(strm);
 }
 
-// Numeric (boolean, integral, floating-point) case.
-template <class T,
-          typename std::enable_if_t<std::is_arithmetic_v<T>, T> * = nullptr>
+// Numeric (boolean, integral, floating-point) or enum case.
+template <class T, typename std::enable_if_t<internal::IsScalarIOTypeV<T>, T>
+                       * = nullptr>
 inline std::istream &ReadType(std::istream &strm, T *t) {
   return strm.read(reinterpret_cast<char *>(t), sizeof(T));
 }
 
-// Numeric (boolean, integral, floating-point) case only.
+// Numeric (boolean, integral, floating-point) or enum case only.
 template <class T>
-inline std::istream &ReadTypeN(std::istream &strm, size_t n, T *t) {
-  static_assert(std::is_arithmetic_v<T>, "Type not supported for batch read.");
+inline std::istream &ReadType(std::istream &strm, size_t n, T *t) {
+  static_assert(internal::IsScalarIOTypeV<T>,
+                "Type not supported for batch read.");
   return strm.read(reinterpret_cast<char *>(t), sizeof(T) * n);
 }
 
@@ -87,7 +103,7 @@ inline std::istream &ReadType(std::istream &strm, std::string *s) {
   ReadType(strm, &ns);
   if (ns <= 0) return strm;
   s->resize(ns);
-  ReadTypeN(strm, ns, s->data());
+  ReadType(strm, ns, s->data());
   return strm;
 }
 
@@ -101,9 +117,9 @@ std::istream &ReadType(std::istream &strm, std::set<T...> *c);
 template <class... T>
 std::istream &ReadType(std::istream &strm, std::map<T...> *c);
 template <class... T>
-std::istream &ReadType(std::istream &strm, std::unordered_map<T...> *c);
+std::istream &ReadType(std::istream &strm, absl::flat_hash_map<T...> *c);
 template <class... T>
-std::istream &ReadType(std::istream &strm, std::unordered_set<T...> *c);
+std::istream &ReadType(std::istream &strm, absl::flat_hash_set<T...> *c);
 
 // Pair case.
 template <typename S, typename T>
@@ -144,24 +160,25 @@ inline std::istream &ReadVectorType(std::istream &strm, std::vector<T, A> *c) {
       strm, c, [](decltype(c) v, int n) { v->reserve(n); });
 }
 
-// Vector of numerics (boolean, integral, floating-point, char) case.
-template <typename T, class A,
-          typename std::enable_if_t<std::is_arithmetic_v<T>, T> * = nullptr>
+// Vector of numerics (boolean, integral, floating-point, char) or enum case.
+template <
+    typename T, class A,
+    typename std::enable_if_t<internal::IsScalarIOTypeV<T>, T> * = nullptr>
 inline std::istream &ReadVectorType(std::istream &strm, std::vector<T, A> *c) {
   c->clear();
   int64_t n = 0;
   ReadType(strm, &n);
   if (n == 0) return strm;
   c->resize(n);
-  ReadTypeN(strm, n, c->data());
+  ReadType(strm, n, c->data());
   return strm;
 }
 }  // namespace internal
 
 template <class T, size_t N>
 std::istream &ReadType(std::istream &strm, std::array<T, N> *c) {
-  if (std::is_arithmetic_v<T>) {
-    ReadTypeN(strm, c->size(), c->data());
+  if constexpr (internal::IsScalarIOTypeV<T>) {
+    ReadType(strm, c->size(), c->data());
   } else {
     for (auto &v : *c) ReadType(strm, &v);
   }
@@ -189,13 +206,13 @@ std::istream &ReadType(std::istream &strm, std::map<T...> *c) {
 }
 
 template <class... T>
-std::istream &ReadType(std::istream &strm, std::unordered_set<T...> *c) {
+std::istream &ReadType(std::istream &strm, absl::flat_hash_set<T...> *c) {
   return internal::ReadContainerType(
       strm, c, [](decltype(c) v, int n) { v->reserve(n); });
 }
 
 template <class... T>
-std::istream &ReadType(std::istream &strm, std::unordered_map<T...> *c) {
+std::istream &ReadType(std::istream &strm, absl::flat_hash_map<T...> *c) {
   return internal::ReadContainerType(
       strm, c, [](decltype(c) v, int n) { v->reserve(n); });
 }
@@ -213,11 +230,19 @@ inline std::ostream &WriteType(std::ostream &strm, const T t) {
   return strm;
 }
 
-// Numeric (boolean, integral, floating-point) case.
-template <class T,
-          typename std::enable_if_t<std::is_arithmetic_v<T>, T> * = nullptr>
+// Numeric (boolean, integral, floating-point) or enum case.
+template <class T, typename std::enable_if_t<internal::IsScalarIOTypeV<T>, T>
+                       * = nullptr>
 inline std::ostream &WriteType(std::ostream &strm, const T t) {
   return strm.write(reinterpret_cast<const char *>(&t), sizeof(T));
+}
+
+// Numeric (boolean, integral, floating-point) or enum case only.
+template <class T>
+inline std::ostream &WriteType(std::ostream &strm, size_t n, const T *t) {
+  static_assert(internal::IsScalarIOTypeV<T>,
+                "Type not supported for batch write.");
+  return strm.write(reinterpret_cast<const char *>(t), sizeof(T) * n);
 }
 
 inline std::ostream &WriteType(std::ostream &strm, std::string_view s) {
@@ -241,15 +266,14 @@ template <typename... T>
 std::ostream &WriteType(std::ostream &strm, const std::map<T...> &c);
 
 template <typename... T>
-std::ostream &WriteType(std::ostream &strm, const std::unordered_map<T...> &c);
+std::ostream &WriteType(std::ostream &strm, const absl::flat_hash_map<T...> &c);
 
 template <typename... T>
-std::ostream &WriteType(std::ostream &strm, const std::unordered_set<T...> &c);
+std::ostream &WriteType(std::ostream &strm, const absl::flat_hash_set<T...> &c);
 
 // Pair case.
 template <typename S, typename T>
-inline std::ostream &WriteType(std::ostream &strm,
-                               const std::pair<S, T> &p) {
+inline std::ostream &WriteType(std::ostream &strm, const std::pair<S, T> &p) {
   WriteType(strm, p.first);
   WriteType(strm, p.second);
   return strm;
@@ -299,12 +323,14 @@ std::ostream &WriteType(std::ostream &strm, const std::map<T...> &c) {
 }
 
 template <typename... T>
-std::ostream &WriteType(std::ostream &strm, const std::unordered_map<T...> &c) {
+std::ostream &WriteType(std::ostream &strm,
+                        const absl::flat_hash_map<T...> &c) {
   return internal::WriteContainer(strm, c);
 }
 
 template <typename... T>
-std::ostream &WriteType(std::ostream &strm, const std::unordered_set<T...> &c) {
+std::ostream &WriteType(std::ostream &strm,
+                        const absl::flat_hash_set<T...> &c) {
   return internal::WriteContainer(strm, c);
 }
 
@@ -317,7 +343,7 @@ std::ostream &WriteType(std::ostream &strm, const std::unordered_set<T...> &c) {
 std::optional<int64_t> ParseInt64(std::string_view s, int base = 10);
 
 int64_t StrToInt64(std::string_view s, std::string_view source, size_t nline,
-                   bool allow_negative, bool *error = nullptr);
+                   bool *error = nullptr);
 
 template <typename Weight>
 Weight StrToWeight(std::string_view s) {
@@ -342,10 +368,9 @@ std::string WeightToStr(Weight w) {
 // Utilities for reading/writing integer pairs (typically labels).
 
 template <typename I>
-bool ReadIntPairs(const std::string &source,
-                  std::vector<std::pair<I, I>> *pairs,
-                  bool allow_negative = false) {
-  std::ifstream strm(source, std::ios_base::in);
+bool ReadIntPairs(std::string_view source,
+                  std::vector<std::pair<I, I>> *pairs) {
+  std::ifstream strm(std::string(source), std::ios_base::in);
   if (!strm) {
     LOG(ERROR) << "ReadIntPairs: Can't open file: " << source;
     return false;
@@ -366,9 +391,9 @@ bool ReadIntPairs(const std::string &source,
       return false;
     }
     bool err;
-    I i1 = StrToInt64(col[0], source, nline, allow_negative, &err);
+    I i1 = StrToInt64(col[0], source, nline, &err);
     if (err) return false;
-    I i2 = StrToInt64(col[1], source, nline, allow_negative, &err);
+    I i2 = StrToInt64(col[1], source, nline, &err);
     if (err) return false;
     pairs->emplace_back(i1, i2);
   }
@@ -376,11 +401,11 @@ bool ReadIntPairs(const std::string &source,
 }
 
 template <typename I>
-bool WriteIntPairs(const std::string &source,
+bool WriteIntPairs(std::string_view source,
                    const std::vector<std::pair<I, I>> &pairs) {
   std::ofstream fstrm;
   if (!source.empty()) {
-    fstrm.open(source);
+    fstrm.open(std::string(source));
     if (!fstrm) {
       LOG(ERROR) << "WriteIntPairs: Can't open file: " << source;
       return false;
@@ -396,14 +421,13 @@ bool WriteIntPairs(const std::string &source,
 // Utilities for reading/writing label pairs.
 
 template <typename Label>
-bool ReadLabelPairs(const std::string &source,
-                    std::vector<std::pair<Label, Label>> *pairs,
-                    bool allow_negative = false) {
-  return ReadIntPairs(source, pairs, allow_negative);
+bool ReadLabelPairs(std::string_view source,
+                    std::vector<std::pair<Label, Label>> *pairs) {
+  return ReadIntPairs(source, pairs);
 }
 
 template <typename Label>
-bool WriteLabelPairs(const std::string &source,
+bool WriteLabelPairs(std::string_view source,
                      const std::vector<std::pair<Label, Label>> &pairs) {
   return WriteIntPairs(source, pairs);
 }

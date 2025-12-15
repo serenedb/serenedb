@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@
 #include <ostream>
 #include <string>
 
+#include <fst/log.h>
 #include <fst/util.h>
 
 namespace fst {
@@ -34,7 +35,7 @@ struct ErrorWeight {
   bool Member() const { return false; }
   ErrorWeight Quantize(float = 0.0) const { return ErrorWeight(); }
   ReverseWeight Reverse() const { return ErrorWeight(); }
-  void Write(std::ostream &) const { }
+  void Write(std::ostream &) const {}
 
   static constexpr uint64_t Properties() { return 0; }
   static ErrorWeight Zero() { return ErrorWeight(); }
@@ -48,9 +49,6 @@ struct ErrorWeight {
 };
 
 inline bool operator==(const ErrorWeight &, const ErrorWeight &) {
-  return false;
-}
-inline bool operator!=(const ErrorWeight &, const ErrorWeight &) {
   return false;
 }
 

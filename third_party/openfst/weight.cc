@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -13,6 +13,18 @@
 // limitations under the License.
 //
 #include <fst/weight.h>
+
+#include <cctype>
+#include <cstdio>
+#include <ios>
+#include <istream>
+#include <ostream>
+#include <string>
+#include <utility>
+
+#include <fst/flags.h>
+#include <fst/log.h>
+#include <fst/util.h>
 
 DEFINE_string(fst_weight_separator, ",",
               "Character separator between printed composite weights; "
@@ -43,16 +55,15 @@ CompositeWeightIO::CompositeWeightIO(char separator,
 }
 
 CompositeWeightIO::CompositeWeightIO()
-    : CompositeWeightIO(
-          FST_FLAGS_fst_weight_separator.empty()
-              ? 0
-              : FST_FLAGS_fst_weight_separator.front(),
-          {FST_FLAGS_fst_weight_parentheses.empty()
-               ? 0
-               : FST_FLAGS_fst_weight_parentheses[0],
-           FST_FLAGS_fst_weight_parentheses.size() < 2
-               ? 0
-               : FST_FLAGS_fst_weight_parentheses[1]}) {
+    : CompositeWeightIO(FST_FLAGS_fst_weight_separator.empty()
+                            ? 0
+                            : FST_FLAGS_fst_weight_separator.front(),
+                        {FST_FLAGS_fst_weight_parentheses.empty()
+                             ? 0
+                             : FST_FLAGS_fst_weight_parentheses[0],
+                         FST_FLAGS_fst_weight_parentheses.size() < 2
+                             ? 0
+                             : FST_FLAGS_fst_weight_parentheses[1]}) {
   if (FST_FLAGS_fst_weight_separator.size() != 1) {
     FSTERROR() << "CompositeWeight: "
                << "FST_FLAGS_fst_weight_separator.size() is not equal to 1";

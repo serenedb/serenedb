@@ -17,7 +17,6 @@
 // See the Apache 2 License for the specific language governing permissions and
 // limitations under the License.
 
-
 #ifndef KALDI_FSTEXT_PRUNE_SPECIAL_H_
 #define KALDI_FSTEXT_PRUNE_SPECIAL_H_
 
@@ -26,8 +25,6 @@
 #include "fstext/factor.h"
 
 namespace fst {
-
-
 
 /**
    The function PruneSpecial is like the standard OpenFst function "prune",
@@ -38,22 +35,20 @@ namespace fst {
    two must be specified.
 
    Requirements:
-     - Costs must be non-negative (equivalently, weights must not be greater than One()).
-     - There must be a Compare(a, b) function that compares two weights and returns (-1,0,1)
-       if (a<b, a=b, a>b).  We define this in Kaldi, for TropicalWeight, LogWeight (I think),
-       and LatticeWeight... also CompactLatticeWeight, but we doubt that will be used here;
-       better to use PruneCompactLattice().
+     - Costs must be non-negative (equivalently, weights must not be greater
+   than One()).
+     - There must be a Compare(a, b) function that compares two weights and
+   returns (-1,0,1) if (a<b, a=b, a>b).  We define this in Kaldi, for
+   TropicalWeight, LogWeight (I think), and LatticeWeight... also
+   CompactLatticeWeight, but we doubt that will be used here; better to use
+   PruneCompactLattice().
  */
 
 template<class Arc>
-void PruneSpecial(const Fst<Arc> &ifst,
-                  VectorFst<Arc> *ofst,
-                  typename Arc::Weight beam,
-                  size_t max_states =  0);
+void PruneSpecial(const Fst<Arc>& ifst, VectorFst<Arc>* ofst,
+                  typename Arc::Weight beam, size_t max_states = 0);
 
-
-
-} // end namespace fst
+}  // end namespace fst
 
 #include "fstext/prune-special-inl.h"
 

@@ -23,24 +23,10 @@
 
 #include <absl/strings/str_split.h>
 
-#include <array>
-#include <atomic>
-#include <cmath>
-#include <cstdint>
-#include <cstdlib>
-#include <string>
-#include <string_view>
-#include <vector>
-
-#include "app/app_server.h"
-#include "basics/application-exit.h"
 #include "basics/file_utils.h"
 #include "basics/logger/logger.h"
 #include "basics/number_of_cores.h"
-#include "basics/operating-system.h"
 #include "basics/physical_memory.h"
-#include "basics/process-utils.h"
-#include "basics/result.h"
 #include "basics/string_utils.h"
 
 #ifdef __linux__
@@ -126,26 +112,21 @@ using namespace sdb::basics;
 
 namespace sdb {
 
-EnvironmentFeature::EnvironmentFeature(Server& server)
-  : SerenedFeature{server, name()} {
-  setOptional(true);
-}
-
-void EnvironmentFeature::prepare() {
+void PrintEnvironment() {
 #ifdef __linux__
-  _operating_system = "linux";
+  std::string operating_system = "linux";
   try {
     const std::string version_filename("/proc/version");
 
     if (basics::file_utils::Exists(version_filename)) {
-      _operating_system =
+      operating_system =
         basics::string_utils::Trim(basics::file_utils::Slurp(version_filename));
     }
   } catch (...) {
     // ignore any errors as the log output is just informational
   }
 #else
-  _operating_system = "unknown";
+  operating_system = "unknown";
 #endif
 
   // find parent process id and name
@@ -171,7 +152,7 @@ void EnvironmentFeature::prepare() {
 #endif
 
   SDB_INFO("xxxxx", Logger::FIXME,
-           "detected operating system: ", _operating_system, parent);
+           "detected operating system: ", operating_system, parent);
 
   if (sizeof(void*) == 4) {
     // 32 bit build

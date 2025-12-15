@@ -50,7 +50,7 @@ std::string DeparseWithAlias(Node* select, const char* table_alias,
                              const List* column_aliases) {
   SDB_ASSERT(select->type == T_SelectStmt);
 
-  std::string body = pg::Deparse(select);
+  std::string body = pg::DeparseStmt(select);
   if (list_length(column_aliases) == 0) {
     return body;
   }

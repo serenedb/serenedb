@@ -66,7 +66,7 @@ Result ParseDefaultValue(ObjectId database_id, std::string_view query,
 
 Result DefaultValue::Init(ObjectId database, Node* expr) {
   SDB_ASSERT(expr);
-  auto query = pg::Deparse(expr);
+  auto query = pg::DeparseExpr(expr);
   return Init(database, std::move(query));
 }
 

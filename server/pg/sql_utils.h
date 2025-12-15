@@ -72,7 +72,9 @@ std::string GetUnnamedFunctionArgumentName(size_t param_idx);
 catalog::FunctionSignature ToSignature(const List* pg_parameters,
                                        const TypeName* pg_return_type);
 
-std::string Deparse(Node* node);
+std::string DeparseStmt(Node* node);
+
+std::string DeparseExpr(Node* expr);
 
 struct MemoryContextDeleter {
   void operator()(MemoryContextData* p) const noexcept;

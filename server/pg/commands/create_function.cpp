@@ -175,7 +175,7 @@ yaclib::Future<Result> CreateFunction(ExecContext& context,
     const auto* inner_list = castNode(List, inner_list_node);
     SDB_ASSERT(list_length(inner_list) == 1);
     auto* body_stmt = list_nth_node(Node, inner_list, 0);
-    function_body = pg::Deparse(body_stmt);
+    function_body = pg::DeparseStmt(body_stmt);
   }
 
   auto& signature = properties.signature;

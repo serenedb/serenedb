@@ -205,9 +205,14 @@ lp::ExprPtr MakeConst(V v, velox::TypePtr type = nullptr) {
                                             std::move(variant));
 }
 
-velox::RowTypePtr MakeRowPtrView(const velox::RowTypePtr& type) {
-  return std::shared_ptr<const velox::RowType>(
-    std::shared_ptr<const velox::RowType>{}, type.get());
+template<typename T>
+std::shared_ptr<const T> MakePtrView(const T* ptr) {
+  return std::shared_ptr<const T>(std::shared_ptr<const T>{}, ptr);
+}
+
+template<typename T>
+std::shared_ptr<const T> MakePtrView(const std::shared_ptr<const T>& ptr) {
+  return MakePtrView(ptr.get());
 }
 
 void AndToLeft(lp::ExprPtr& left, lp::ExprPtr right) {
@@ -1065,7 +1070,8 @@ void SqlAnalyzer::ProcessAlias(State& state, const List* new_aliases,
   state.root = std::make_shared<lp::ProjectNode>(
     _id_generator.NextPlanId(), std::move(state.root), std::move(names),
     std::move(exprs));
-  state.resolver.CreateTable(table, MakeRowPtrView(state.root->outputType()));
+  state.resolver.CreateTable(
+    table, MakePtrView<velox::RowType>(state.root->outputType()));
 }
 
 std::pair<std::string_view, query::QueryContext::OptionValue> ConvertToOption(
@@ -1132,11 +1138,14 @@ void SqlAnalyzer::ProcessSelectStmt(State& state, const SelectStmt& stmt) {
 
 // It's literally UNKNOWN
 // but have different address to distinguish it from UNKNOWN().
-const auto kDefaultValueTypePlaceHolder =
-  std::make_shared<const velox::UnknownType>();
-const lp::ExprPtr kDefaultValuePlaceHolder = std::make_shared<lp::CallExpr>(
-  kDefaultValueTypePlaceHolder, "presto_fail",
-  MakeConst("DEFAULT is not allowed in this context"));
+const velox::UnknownType kDefaultValueTypePlaceHolder{};
+const auto kDefaultValueTypePlaceHolderPtr =
+  MakePtrView<velox::UnknownType>(&kDefaultValueTypePlaceHolder);
+const lp::CallExpr kDefaultValuePlaceHolder{
+  kDefaultValueTypePlaceHolderPtr, "presto_fail",
+  MakeConst("DEFAULT is not allowed in this context")};
+const auto kDefaultValuePlaceHolderPtr =
+  MakePtrView<lp::CallExpr>(&kDefaultValuePlaceHolder);
 
 void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
   if (stmt.returningList) {
@@ -1203,7 +1212,7 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
   containers::FlatHashSet<std::string_view> unique_aliases;
   unique_aliases.reserve(input_type.size());
   for (uint32_t i = 0; i < input_type.size(); ++i) {
-    if (input_type.childAt(i) == kDefaultValueTypePlaceHolder) {
+    if (input_type.childAt(i) == kDefaultValueTypePlaceHolderPtr) {
       continue;  // will be handled in cycle below
     }
     if (stmt.cols) {
@@ -1241,7 +1250,7 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
       if (const auto& default_value = column.default_value) {
         expr = ProcessExprNodeImpl(state, default_value->GetExpr());
       } else {
-        expr = MakeConst(velox::TypeKind::UNKNOWN);
+        expr = MakeConst(velox::TypeKind::UNKNOWN, column.type);
       }
       column_names.emplace_back(column.name);
       column_exprs.emplace_back(std::move(expr));
@@ -2194,7 +2203,7 @@ void SqlAnalyzer::ProcessGroupByList(State& state, const List* groupby,
 
   // this will help us to resolve columns after
   // aggregation removed all the columns in the output_type
-  state.lookup_columns = MakeRowPtrView(state.root->outputType());
+  state.lookup_columns = MakePtrView<velox::RowType>(state.root->outputType());
 
   state.root = std::make_shared<lp::AggregateNode>(
     _id_generator.NextPlanId(), std::move(state.root), std::move(grouping_keys),
@@ -2347,8 +2356,8 @@ State SqlAnalyzer::ProcessView(State* parent, std::string_view view_name,
   if (node->alias) {
     ProcessAlias(state, node->alias);
   } else {
-    state.resolver.CreateTable(view_name,
-                               MakeRowPtrView(state.root->outputType()));
+    state.resolver.CreateTable(
+      view_name, MakePtrView<velox::RowType>(state.root->outputType()));
   }
 
   return state;
@@ -2397,8 +2406,8 @@ State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
     _id_generator.NextPlanId(),
     velox::ROW(std::move(column_names), type.children()), "serenedb",
     absl::StrCat(schema_name, ".", table_name), type.names());
-  state.resolver.CreateTable(table_alias,
-                             MakeRowPtrView(state.root->outputType()));
+  state.resolver.CreateTable(
+    table_alias, MakePtrView<velox::RowType>(state.root->outputType()));
   return state;
 }
 
@@ -2911,7 +2920,7 @@ lp::ExprPtr SqlAnalyzer::ProcessExprNodeImpl(State& state, const Node* expr) {
                         CURSOR_POS(ErrorPosition(ExprLocation(expr))),
                         ERR_MSG("DEFAULT is not allowed in this context"));
       }
-      return kDefaultValuePlaceHolder;
+      return kDefaultValuePlaceHolderPtr;
     case T_MultiAssignRef:
     case T_GroupingFunc:
     case T_NamedArgExpr:

@@ -44,7 +44,7 @@ LOGICAL PLAN:
 EXECUTION PLAN:
 Fragment 0:  numWorkers=1:
 -- TableWrite[2][serenedb(table=.t, kind=INSERT)] -> rows:BIGINT
- -- Project[1][expressions: (column1:VARCHAR, "column1"), (dt1.__p7:UNKNOWN, null)] -> "column1":VARCHAR, "dt1.__p7":UNKNOWN
+ -- Project[1][expressions: (column1:VARCHAR, "column1"), (dt1.__p7:INTEGER, null)] -> "column1":VARCHAR, "dt1.__p7":INTEGER
     -- Values[0][1 rows in 1 vectors] -> "column1":VARCHAR
 
 

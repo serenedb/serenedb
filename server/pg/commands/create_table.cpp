@@ -142,9 +142,9 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
           auto it = std::ranges::find_if(
             request.columns,
             [name](const catalog::Column& col) { return col.name == name; });
-          if (absl::c_find_if(request.columns, [&](const catalog::Column& col) {
+          if (absl::c_none_of(request.columns, [&](const catalog::Column& col) {
                 return col.name == name;
-              }) == request.columns.end()) {
+              })) {
             THROW_SQL_ERROR(
               ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
               CURSOR_POS(ExprLocation(&key)),

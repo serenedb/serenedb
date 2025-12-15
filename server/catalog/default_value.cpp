@@ -75,15 +75,6 @@ Result DefaultValue::Init(ObjectId database, std::string query) {
   if (!r.ok()) {
     return r;
   }
-
-  r = basics::SafeCall([&] {
-    pg::Objects objects;
-    pg::Disallowed disallowed{};
-    pg::Resolve(database, objects, Config());
-  });
-  if (!r.ok()) {
-    return r;
-  }
   _query = std::move(query);
   return r;
 }

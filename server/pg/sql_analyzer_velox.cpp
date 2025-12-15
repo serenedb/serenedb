@@ -1213,7 +1213,7 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
   unique_aliases.reserve(input_type.size());
   for (uint32_t i = 0; i < input_type.size(); ++i) {
     if (input_type.childAt(i) == kDefaultValueTypePlaceHolderPtr) {
-      continue;  // will be handled in cycle below
+      continue;  // will be handled in the loop below
     }
     if (stmt.cols) {
       const std::string_view name = strVal(list_nth(stmt.cols, i));
@@ -1537,7 +1537,7 @@ void SqlAnalyzer::ProcessCreateStmt(State& state, const CreateStmt& stmt) {
                         ToPgTypeString(expr->type())),
                 ERR_HINT("You will need to rewrite or cast the expression."));
             }
-          }
+          } break;
           default:
         }
       });

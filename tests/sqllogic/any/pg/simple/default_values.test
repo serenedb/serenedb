@@ -5,6 +5,12 @@ db error: ERROR: column "a" is of type boolean but default expression is of type
 HINT: You will need to rewrite or cast the expression.
 
 
+statement error
+CREATE TABLE koshareff(a BOOLEAN, DEFAULT (a = 0));
+----
+db error: ERROR: syntax error at or near "DEFAULT"
+
+
 statement ok
 CREATE TABLE tindex(
   id INTEGER DEFAULT 228 - 228,

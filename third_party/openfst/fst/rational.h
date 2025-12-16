@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -22,14 +22,20 @@
 #define FST_RATIONAL_H_
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
-
+#include <fst/cache.h>
+#include <fst/fst.h>
+#include <fst/impl-to-fst.h>
 #include <fst/mutable-fst.h>
+#include <fst/properties.h>
 #include <fst/replace.h>
-#include <fst/test-properties.h>
+#include <fst/vector-fst.h>
 
 namespace fst {
 
@@ -265,11 +271,13 @@ class RationalFstImpl : public FstImpl<A> {
 // reference counting, delegating most methods to ImplToFst.
 template <class A>
 class RationalFst : public ImplToFst<internal::RationalFstImpl<A>> {
+  using Base = ImplToFst<internal::RationalFstImpl<A>>;
+
  public:
   using Arc = A;
   using StateId = typename Arc::StateId;
 
-  using Impl = internal::RationalFstImpl<Arc>;
+  using typename Base::Impl;
 
   friend class StateIterator<RationalFst<Arc>>;
   friend class ArcIterator<RationalFst<Arc>>;
@@ -287,14 +295,13 @@ class RationalFst : public ImplToFst<internal::RationalFstImpl<A>> {
   }
 
  protected:
-  using ImplToFst<Impl>::GetImpl;
+  using Base::GetImpl;
 
   explicit RationalFst(const RationalFstOptions &opts = RationalFstOptions())
-      : ImplToFst<Impl>(std::make_shared<Impl>(opts)) {}
+      : Base(std::make_shared<Impl>(opts)) {}
 
   // See Fst<>::Copy() for doc.
-  RationalFst(const RationalFst &fst, bool safe = false)
-      : ImplToFst<Impl>(fst, safe) {}
+  RationalFst(const RationalFst &fst, bool safe = false) : Base(fst, safe) {}
 
  private:
   RationalFst &operator=(const RationalFst &) = delete;

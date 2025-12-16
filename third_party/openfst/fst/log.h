@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -21,11 +21,14 @@
 #define FST_LOG_H_
 
 #include <cassert>
+#include <cstdlib>
 #include <iostream>
 #include <ostream>
 #include <string_view>
 
 #include <fst/flags.h>
+
+class LogMessage;
 
 DECLARE_int32(v);
 
@@ -47,7 +50,8 @@ class LogMessage {
 };
 
 #define LOG(type) LogMessage(#type).stream()
-#define VLOG(level) if ((level) <= FST_FLAGS_v) LOG(INFO)
+#define VLOG(level) \
+  if ((level) <= FST_FLAGS_v) LOG(INFO)
 
 // Checks.
 inline void FstCheck(bool x, std::string_view expr, std::string_view file,

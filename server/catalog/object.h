@@ -127,17 +127,16 @@ struct ObjectById {
 
   size_t operator()(ObjectId id) const { return absl::HashOf(id); }
 
-  size_t operator()(const std::shared_ptr<Object>& obj) const {
+  size_t operator()(const auto& obj) const {
     SDB_ASSERT(obj);
     return (*this)(obj->GetId());
   }
 
-  bool operator()(const std::shared_ptr<Object>& obj, ObjectId id) const {
+  bool operator()(const auto& obj, ObjectId id) const {
     return obj->GetId() == id;
   }
 
-  bool operator()(const std::shared_ptr<Object>& r,
-                  const std::shared_ptr<Object>& l) const {
+  bool operator()(const auto& r, const auto& l) const {
     SDB_ASSERT(l);
     SDB_ASSERT(r);
     return l->GetId() == r->GetId();

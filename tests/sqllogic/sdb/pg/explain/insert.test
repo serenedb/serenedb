@@ -5,8 +5,9 @@ CREATE TABLE series_table(a INTEGER, b INTEGER, c INTEGER, PRIMARY KEY (a,b,c));
 statement ok
 CREATE TABLE t (c1 VARCHAR PRIMARY KEY, c2 INT);
 
+
 query
-explain (logical, execution) select * from t;
+EXPLAIN (LOGICAL, EXECUTION) select * from t;
 ----
 QUERY PLAN
 LOGICAL PLAN:
@@ -15,8 +16,9 @@ EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
 -- TableScan[0][.t] -> "c1":VARCHAR, "c2":INTEGER
 
+
 query
-explain (logical, execution) insert into t values ('text', 42);
+EXPLAIN (LOGICAL, EXECUTION) INSERT INTO t VALUES ('text', 42);
 ----
 QUERY PLAN
 LOGICAL PLAN:
@@ -31,15 +33,38 @@ Fragment 0:  numWorkers=1:
 
 
 query
-explain (logical, execution) insert into t values ('text');
+EXPLAIN (LOGICAL, EXECUTION) INSERT INTO t VALUES ('text');
 ----
 QUERY PLAN
 LOGICAL PLAN:
 - TableWrite INSERT: -> ROW<rows:BIGINT>
     c1 := column1
+    c2 := null
   - Values: 1 rows -> ROW<"column1":VARCHAR>
 EXECUTION PLAN:
 Fragment 0:  numWorkers=1:
 -- TableWrite[2][serenedb(table=.t, kind=INSERT)] -> rows:BIGINT
   -- Project[1][expressions: (column1:VARCHAR, "column1"), (dt1.__p7:INTEGER, null)] -> "column1":VARCHAR, "dt1.__p7":INTEGER
     -- Values[0][1 rows in 1 vectors] -> "column1":VARCHAR
+
+
+statement error
+INSERT INTO t (c2, c2) VALUES (1, 4);
+----
+db error: ERROR: column "c2" specified more than once
+
+
+statement count 1
+WITH
+babsky as (select 1 as pencil),
+zhidsky as (select 3 as iq)
+INSERT INTO series_table
+WITH babsky as (select 2 as pencil)
+SELECT * FROM babsky as buterbrod1, zhidsky, babsky as buterbrod2;
+
+
+query
+SELECT * FROM series_table;
+----
+a b c
+2 3 2

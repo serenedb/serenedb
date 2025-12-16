@@ -184,14 +184,10 @@ add_library(
     app/app_feature.cpp
     app/app_server.cpp
     app/global_context.cpp
-    app/bump_file_descriptors.cpp
     app/config.cpp
-    app/greetings.cpp
     app/language.cpp
-    app/options_check.cpp
     app/shutdown.cpp
     app/temp_path.cpp
-    app/app_version.cpp
     app/logger_feature.cpp
     app/name_validator.cpp
     app/options/ini_file_parser.cpp

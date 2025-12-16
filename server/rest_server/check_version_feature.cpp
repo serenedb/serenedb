@@ -85,10 +85,6 @@ void CheckVersionFeature::validateOptions(
 #ifdef SDB_CLUSTER
   server().getFeature<ReplicationFeature>().disableReplicationApplier();
 #endif
-
-  // we can turn off all warnings about environment here, because they
-  // wil show up on a regular start later anyway
-  server().disableFeatures({SerenedServer::id<EnvironmentFeature>()});
 }
 
 void CheckVersionFeature::start() {
@@ -126,8 +122,11 @@ void CheckVersionFeature::checkVersion() {
     GetServerOptions().database_ignore_datafile_errors;
 
   // iterate over all databases
-  for (const auto& database :
-       server().getFeature<catalog::CatalogFeature>().Global().GetDatabases()) {
+  for (const auto& database : server()
+                                .getFeature<catalog::CatalogFeature>()
+                                .Global()
+                                .GetSnapshot()
+                                ->GetDatabases()) {
     methods::VersionResult res = methods::Version::check(database->GetId());
 
     if (res.status == methods::VersionResult::kCannotParseVersionFile ||

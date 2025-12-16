@@ -23,10 +23,12 @@
 #include <yaclib/async/make.hpp>
 
 #include "app/app_server.h"
+#include "basics/assert.h"
 #include "catalog/catalog.h"
 #include "catalog/function.h"
 #include "catalog/sql_function_impl.h"
 #include "pg/commands.h"
+#include "pg/connection_context.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_analyzer_velox.h"
 #include "pg/sql_collector.h"
@@ -151,8 +153,11 @@ yaclib::Future<Result> CreateFunction(ExecContext& context,
 
   SDB_ASSERT(stmt.funcname);
 
-  auto [schema, function_name] = ParseObjectName(
-    stmt.funcname, context.GetDatabase(), StaticStrings::kPublic);
+  auto current_schema =
+    basics::downCast<const ConnectionContext>(context).GetCurrentSchema();
+
+  auto [schema, function_name] =
+    ParseObjectName(stmt.funcname, context.GetDatabase(), current_schema);
 
   auto& catalogs =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
@@ -174,7 +179,7 @@ yaclib::Future<Result> CreateFunction(ExecContext& context,
     const auto* inner_list = castNode(List, inner_list_node);
     SDB_ASSERT(list_length(inner_list) == 1);
     auto* body_stmt = list_nth_node(Node, inner_list, 0);
-    function_body = pg::Deparse(body_stmt);
+    function_body = pg::DeparseStmt(body_stmt);
   }
 
   auto& signature = properties.signature;
@@ -197,22 +202,12 @@ yaclib::Future<Result> CreateFunction(ExecContext& context,
   auto function = std::make_shared<catalog::Function>(std::move(properties),
                                                       std::move(sql_impl), db);
 
-  r = catalog.CreateFunction(db, schema, function);
-  // TODO(ISSUE#214): use replace function instead,
-  // code below has race condition and ugly
-  if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-    if (!stmt.replace) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_DUPLICATE_TABLE),
-        ERR_MSG("relation \"", function_name, "\" already exists"));
-    }
+  r = catalog.CreateFunction(db, schema, function, stmt.replace);
 
-    r = catalog.DropFunction(db, schema, function_name);
-    if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
-                      ERR_MSG("\"", function_name, "\" is not a function"));
-    }
-    r = catalog.CreateFunction(db, schema, std::move(function));
+  if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
+    SDB_ASSERT(!stmt.replace);
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
+                    ERR_MSG("relation \"", function_name, "\" already exists"));
   }
 
   return yaclib::MakeFuture(std::move(r));

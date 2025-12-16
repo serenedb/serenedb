@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -20,24 +20,33 @@
 #ifndef FST_REPLACE_H_
 #define FST_REPLACE_H_
 
+#include <sys/types.h>
+
+#include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <set>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include <fst/log.h>
-
+#include <fst/arc.h>
+#include <fst/bi-table.h>
 #include <fst/cache.h>
 #include <fst/expanded-fst.h>
+#include <fst/float-weight.h>
 #include <fst/fst-decl.h>  // For optional argument declarations.
 #include <fst/fst.h>
+#include <fst/impl-to-fst.h>
 #include <fst/matcher.h>
+#include <fst/mutable-fst.h>
+#include <fst/properties.h>
 #include <fst/replace-util.h>
 #include <fst/state-table.h>
-#include <fst/test-properties.h>
-
-#include <unordered_map>
+#include <fst/symbol-table.h>
+#include <fst/util.h>
+#include <absl/container/flat_hash_map.h>
 
 namespace fst {
 
@@ -83,6 +92,11 @@ struct ReplaceStateTuple {
   ReplaceStateTuple(PrefixId prefix_id = -1, StateId fst_id = kNoStateId,
                     StateId fst_state = kNoStateId)
       : prefix_id(prefix_id), fst_id(fst_id), fst_state(fst_state) {}
+
+  template <typename H>
+  friend H AbslHashValue(H h, const ReplaceStateTuple &t) {
+    return H::combine(std::move(h), t.prefix_id, t.fst_id, t.fst_state);
+  }
 
   PrefixId prefix_id;  // Index in prefix table.
   StateId fst_id;      // Current FST being walked.
@@ -137,10 +151,6 @@ template <typename S, typename P>
 class ReplaceHash {
  public:
   size_t operator()(const ReplaceStateTuple<S, P> &t) const {
-    // TODO(189578616): Use the AbslHashValue framework.  See
-    // b/189578616#comment8 for a proposed patch and a discussion of the
-    // concerns for making such a change.
-    //
     // We want three prime numbers that are all reasonably large and whose
     // differences are far from each other.  (E.g., we want prime1-prime0 to be
     // far from prime2-prime1).  It would be safer still to use large prime
@@ -148,7 +158,7 @@ class ReplaceHash {
     // all 32-bits on a 32-bit machine), so that all 64-bits (respectively
     // 32-bits) of the resulting hash would look random.  However, these
     // modest-sized prime numbers are good enough for hash tables (such as
-    // std::unordered_set and std::unordered_set) that use the low-order bits
+    // absl::flat_hash_set and absl::flat_hash_set) that use the low-order bits
     // of the hash.
     //
     // It is important that all three components are multiplied by a prime
@@ -156,7 +166,7 @@ class ReplaceHash {
     //   t.prefix_id + t.fst_id * prime1 + t.fst_state * prime2
     // which is just the identity on t.prefix_id.  Using the identity will
     // result in long probe sequences in open-addressed hash tables (such as
-    // std::unordered_map).
+    // absl::flat_hash_map).
     static constexpr size_t prime0 = 7853;
     static constexpr size_t prime1 = 9001;
     static constexpr size_t prime2 = 100003;
@@ -176,7 +186,7 @@ class ReplaceStackPrefix {
     StateId nextstate;
   };
 
-  ReplaceStackPrefix() {}
+  ReplaceStackPrefix() = default;
 
   ReplaceStackPrefix(const ReplaceStackPrefix &other)
       : prefix_(other.prefix_) {}
@@ -256,8 +266,7 @@ class VectorHashReplaceStateTable {
         root_size_ = CountStates(*fst);
         size_array_.push_back(size_array_.back());
       } else {
-        size_array_.push_back(size_array_.back() +
-                              CountStates(*fst));
+        size_array_.push_back(size_array_.back() + CountStates(*fst));
       }
     }
     state_table_ = std::make_unique<StateTable>(
@@ -499,7 +508,7 @@ class ReplaceFstImpl
   using PrefixId = typename StateTable::PrefixId;
   using StateTuple = ReplaceStateTuple<StateId, PrefixId>;
   using StackPrefix = ReplaceStackPrefix<Label, StateId>;
-  using NonTerminalHash = std::unordered_map<Label, Label>;
+  using NonTerminalHash = absl::flat_hash_map<Label, Label>;
 
   using FstImpl<Arc>::SetType;
   using FstImpl<Arc>::SetProperties;
@@ -837,8 +846,11 @@ class ReplaceFstImpl
       *arcp = arc;
       return true;
     }
-    if (arc.olabel == 0 || arc.olabel < *nonterminal_set_.begin() ||
-        arc.olabel > *nonterminal_set_.rbegin()) {  // Expands local FST.
+    // NB: These redundant parentheses are necessary to avoid a compiler warning
+    // in GCC where `arc.olabel <...>` is interpreted to be a template usage:
+    // https://gcc.gnu.org/onlinedocs/gcc/Warning-Options.html#index-Wmissing-template-keyword
+    if (arc.olabel == 0 || (arc.olabel < *nonterminal_set_.begin()) ||
+        (arc.olabel > *nonterminal_set_.rbegin())) {  // Expands local FST.
       const auto nextstate =
           flags & kArcNextStateValue
               ? state_table_->FindState(
@@ -847,8 +859,8 @@ class ReplaceFstImpl
       *arcp = Arc(arc.ilabel, arc.olabel, arc.weight, nextstate);
     } else {
       // Checks for non-terminal.
-      const auto it = nonterminal_hash_.find(arc.olabel);
-      if (it != nonterminal_hash_.end()) {  // Recurses into non-terminal.
+      if (const auto it = nonterminal_hash_.find(arc.olabel);
+          it != nonterminal_hash_.end()) {  // Recurses into non-terminal.
         const auto nonterminal = it->second;
         const auto nt_prefix =
             PushPrefix(state_table_->GetStackPrefix(tuple.prefix_id),
@@ -932,7 +944,7 @@ class ReplaceFstImpl
   ReplaceLabelType return_label_type_;  // How to label return arc.
   int64_t call_output_label_;  // Specifies output label to put on call arc
   int64_t return_label_;       // Specifies label to put on return arc.
-  bool always_cache_;        // Disable optional caching of arc iterator?
+  bool always_cache_;          // Disable optional caching of arc iterator?
 
   // State table.
   std::unique_ptr<StateTable> state_table_;
@@ -983,6 +995,8 @@ template <class A, class T /* = DefaultReplaceStateTable<A> */,
           class CacheStore /* = DefaultCacheStore<A> */>
 class ReplaceFst
     : public ImplToFst<internal::ReplaceFstImpl<A, T, CacheStore>> {
+  using Base = ImplToFst<internal::ReplaceFstImpl<A, T, CacheStore>>;
+
  public:
   using Arc = A;
   using Label = typename Arc::Label;
@@ -992,10 +1006,10 @@ class ReplaceFst
   using StateTable = T;
   using Store = CacheStore;
   using State = typename CacheStore::State;
-  using Impl = internal::ReplaceFstImpl<Arc, StateTable, CacheStore>;
+  using typename Base::Impl;
   using CacheImpl = internal::CacheBaseImpl<State, CacheStore>;
 
-  using ImplToFst<Impl>::Properties;
+  using Base::Properties;
 
   friend class ArcIterator<ReplaceFst<Arc, StateTable, CacheStore>>;
   friend class StateIterator<ReplaceFst<Arc, StateTable, CacheStore>>;
@@ -1003,16 +1017,15 @@ class ReplaceFst
 
   ReplaceFst(const std::vector<std::pair<Label, const Fst<Arc> *>> &fst_array,
              Label root)
-      : ImplToFst<Impl>(std::make_shared<Impl>(
+      : Base(std::make_shared<Impl>(
             fst_array, ReplaceFstOptions<Arc, StateTable, CacheStore>(root))) {}
 
   ReplaceFst(const std::vector<std::pair<Label, const Fst<Arc> *>> &fst_array,
              const ReplaceFstOptions<Arc, StateTable, CacheStore> &opts)
-      : ImplToFst<Impl>(std::make_shared<Impl>(fst_array, opts)) {}
+      : Base(std::make_shared<Impl>(fst_array, opts)) {}
 
   // See Fst<>::Copy() for doc.
-  ReplaceFst(const ReplaceFst &fst, bool safe = false)
-      : ImplToFst<Impl>(fst, safe) {}
+  ReplaceFst(const ReplaceFst &fst, bool safe = false) : Base(fst, safe) {}
 
   // Get a copy of this ReplaceFst. See Fst<>::Copy() for further doc.
   ReplaceFst *Copy(bool safe = false) const override {
@@ -1048,8 +1061,8 @@ class ReplaceFst
   }
 
  private:
-  using ImplToFst<Impl>::GetImpl;
-  using ImplToFst<Impl>::GetMutableImpl;
+  using Base::GetImpl;
+  using Base::GetMutableImpl;
 
   ReplaceFst &operator=(const ReplaceFst &) = delete;
 };
@@ -1154,7 +1167,7 @@ class ArcIterator<ReplaceFst<Arc, StateTable, CacheStore>> {
     if (local_data_.ref_count) --(*local_data_.ref_count);
   }
 
-  void ExpandAndCache() const  {
+  void ExpandAndCache() const {
     // TODO(allauzen): revisit this.
     // fst_.GetImpl()->Expand(s_, tuple_, local_data_);
     // (fst_.GetImpl())->CacheImpl<A>*>::InitArcIterator(s_,
@@ -1260,9 +1273,9 @@ class ArcIterator<ReplaceFst<Arc, StateTable, CacheStore>> {
   mutable ArcIteratorData<Arc> cache_data_;  // Arc iterator data in cache.
   mutable ArcIteratorData<Arc> local_data_;  // Arc iterator data in local FST.
 
-  mutable const Arc *arcs_;    // Array of arcs.
-  mutable uint8_t data_flags_;  // Arc value flags valid for data in arcs_.
-  mutable Arc final_arc_;      // Final arc (when required).
+  mutable const Arc *arcs_;      // Array of arcs.
+  mutable uint8_t data_flags_;   // Arc value flags valid for data in arcs_.
+  mutable Arc final_arc_;        // Final arc (when required).
   mutable uint8_t final_flags_;  // Arc value flags valid for final_arc_.
 
   ArcIterator(const ArcIterator &) = delete;
@@ -1339,8 +1352,8 @@ class ReplaceFstMatcher : public MatcherBase<Arc> {
     matcher_.resize(fst_array.size());
     for (Label i = 0; i < fst_array.size(); ++i) {
       if (fst_array[i]) {
-        matcher_[i] = std::make_unique<LocalMatcher>(
-            *fst_array[i], match_type_, kMultiEpsList);
+        matcher_[i] = std::make_unique<LocalMatcher>(*fst_array[i], match_type_,
+                                                     kMultiEpsList);
         auto it = impl_->nonterminal_set_.begin();
         for (; it != impl_->nonterminal_set_.end(); ++it) {
           matcher_[i]->AddMultiEpsLabel(*it);

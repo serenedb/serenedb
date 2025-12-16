@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -20,16 +20,19 @@
 #ifndef FST_PRUNE_H_
 #define FST_PRUNE_H_
 
+#include <cstddef>
+#include <cstdlib>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
 #include <fst/log.h>
-
 #include <fst/arcfilter.h>
+#include <fst/fst.h>
 #include <fst/heap.h>
+#include <fst/mutable-fst.h>
 #include <fst/shortest-distance.h>
-
+#include <fst/weight.h>
 
 namespace fst {
 namespace internal {

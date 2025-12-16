@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -16,8 +16,9 @@
 
 #include <fst/flags.h>
 
+#include <cstddef>
 #include <cstdint>
-#include <cstring>
+#include <cstdlib>
 #include <iostream>
 #include <ostream>
 #include <set>
@@ -53,8 +54,8 @@ static void SetProgSrc(const char *src) {
   }
 }
 
-void SetFlags(const char *usage, int *argc, char ***argv,
-              bool remove_flags, const char *src) {
+void SetFlags(const char *usage, int *argc, char ***argv, bool remove_flags,
+              const char *src) {
   flag_usage = usage;
   SetProgSrc(src);
 
@@ -72,8 +73,7 @@ void SetFlags(const char *usage, int *argc, char ***argv,
       val = argval.substr(pos + 1);
     }
     auto bool_register = FlagRegister<bool>::GetRegister();
-    if (bool_register->SetFlag(arg, val))
-      continue;
+    if (bool_register->SetFlag(arg, val)) continue;
     auto string_register = FlagRegister<std::string>::GetRegister();
     if (string_register->SetFlag(arg, val)) continue;
     auto int32_register = FlagRegister<int32_t>::GetRegister();
@@ -127,6 +127,11 @@ static void ShowUsageRestrict(
     usage_out = true;
   }
   if (usage_out) std::cout << std::endl;
+}
+
+void FailedNewHandler() {
+  std::cerr << "Memory allocation failed" << std::endl;
+  std::exit(1);
 }
 
 void ShowUsage(bool long_usage) {

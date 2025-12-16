@@ -184,20 +184,19 @@ Level DatabaseAuthLevel(std::string_view name, std::string_view database,
 }
 
 std::vector<std::shared_ptr<catalog::Role>> GetRoles() {
-  auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  std::vector<std::shared_ptr<catalog::Role>> roles;
-  auto r = catalog.GetRoles(roles);
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
-  return roles;
+  return SerenedServer::Instance()
+    .getFeature<catalog::CatalogFeature>()
+    .Global()
+    .GetSnapshot()
+    ->GetRoles();
 }
 
 std::shared_ptr<catalog::Role> GetRole(std::string_view name) {
-  auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  return catalog.GetRole(name);
+  return SerenedServer::Instance()
+    .getFeature<catalog::CatalogFeature>()
+    .Global()
+    .GetSnapshot()
+    ->GetRole(name);
 }
 
 void IncGlobalVersion() noexcept {

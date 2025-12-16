@@ -50,7 +50,7 @@ bool IsInterval(const velox::Type& type);
 
 struct IntervalTrait {
   using type = velox::int128_t;
-  static constexpr const char* typeName = "pg_interval";  // NOLINT
+  static constexpr const char* typeName = "PG_INTERVAL";  // NOLINT
 };
 using Interval = velox::CustomType<IntervalTrait>;
 

@@ -58,58 +58,6 @@
 #endif
 
 namespace sdb::catalog {
-namespace {
-
-// NOLINTBEGIN
-struct CollectionOutput {
-  Identifier id;
-  Identifier planId;
-  ObjectId planDb;
-  ForeignId distributeShardsLike;
-  ForeignId from;
-  ForeignId to;
-  std::string_view name;
-  std::span<const std::string> shardKeys;
-  velox::RowTypePtr pkType;
-  velox::RowTypePtr rowType;
-  const KeyGenerator* keyOptions = nullptr;
-  // make them just pointers if catalog::Table became immutable
-  vpack::Nullable<std::shared_ptr<ValidatorBase>> schema;
-  std::shared_ptr<ShardMap> shards;
-  std::string_view shardingStrategy;
-  uint32_t numberOfShards = 0;
-  uint32_t replicationFactor = 0;
-  int type = std::to_underlying(TableType::Document);
-  uint32_t writeConcern = 0;
-  bool waitForSync = 0;
-};
-// NOLINTEND
-
-CollectionOutput MakeOutput(const catalog::Table& c) {
-  return {
-    .id = Identifier{c.GetId().id()},
-    .planId = Identifier{c.planId().id()},
-    .planDb = c.planDb(),
-    .distributeShardsLike = ForeignId{c.distributeShardsLike().id()},
-    .from = ForeignId{c.from().id()},
-    .to = ForeignId{c.to().id()},
-    .name = c.GetName(),
-    .shardKeys = c.shardKeys(),
-    .pkType = c.PKType(),
-    .rowType = c.RowType(),
-    .keyOptions = &c.keyGenerator(),
-    .schema = c.GetSchema(),
-    .shards = c.shardIds(),
-    .shardingStrategy = c.shardingStrategy().name(),
-    .numberOfShards = c.numberOfShards(),
-    .replicationFactor = c.replicationFactor(),
-    .type = std::to_underlying(c.GetTableType()),
-    .writeConcern = c.writeConcern(),
-    .waitForSync = c.waitForSync(),
-  };
-}
-
-}  // namespace
 
 Table::Table(const catalog::Table& other, NewOptions options)
   : SchemaObject{other.GetOwnerId(), other.GetDatabaseId(), other.GetSchemaId(),
@@ -117,6 +65,8 @@ Table::Table(const catalog::Table& other, NewOptions options)
     _type{other.GetTableType()},
     _wait_for_sync{options.wait_for_sync},
     _shard_keys{other.shardKeys()},
+    _columns{other._columns},
+    _pk_columns{other._pk_columns},
     _pk_type{other._pk_type},
     _row_type{other._row_type},
     _plan_id{other.planId()},
@@ -132,6 +82,38 @@ Table::Table(const catalog::Table& other, NewOptions options)
     _replication_factor{options.replication_factor},
     _write_concern{options.write_concern} {}
 
+velox::RowTypePtr BuildPkType(const std::vector<Column>& columns,
+                              const std::vector<Column::Id>& pk_columns) {
+  std::vector<std::string> names;
+  std::vector<velox::TypePtr> types;
+  names.reserve(pk_columns.size());
+  types.reserve(pk_columns.size());
+
+  for (auto pk_col_id : pk_columns) {
+    auto it = std::find_if(
+      columns.begin(), columns.end(),
+      [pk_col_id](const Column& col) { return col.id == pk_col_id; });
+    SDB_ASSERT(it != columns.end());
+    names.push_back(it->name);
+    types.push_back(it->type);
+  }
+
+  return velox::ROW(std::move(names), std::move(types));
+}
+
+velox::RowTypePtr BuildRowType(const std::vector<Column>& columns) {
+  std::vector<std::string> names;
+  std::vector<velox::TypePtr> types;
+  names.reserve(columns.size());
+  types.reserve(columns.size());
+  for (const auto& col : columns) {
+    names.push_back(col.name);
+    types.push_back(col.type);
+  }
+
+  return velox::ROW(std::move(names), std::move(types));
+}
+
 Table::Table(TableOptions&& options, ObjectId database_id)
   : SchemaObject{{},
                  database_id,
@@ -142,15 +124,17 @@ Table::Table(TableOptions&& options, ObjectId database_id)
     _type{static_cast<TableType>(options.type)},
     _wait_for_sync{options.waitForSync},
     _shard_keys{std::move(options.shardKeys)},
-    _pk_type{std::move(options.pkType)},
-    _row_type{std::move(options.rowType)},
+    _columns{std::move(options.columns)},
+    _pk_columns{std::move(options.pkColumns)},
+    _pk_type{BuildPkType(_columns, _pk_columns)},
+    _row_type{BuildRowType(_columns)},
     _plan_id{[&] {
       auto plan_id = options.planId.value_or(Identifier{});
       return plan_id.isSet() ? plan_id : GetId();
     }()},
     _plan_db{[&] {
       auto plan_db = options.planDb.value_or(ObjectId{});
-      return plan_db.isSet() ? plan_db : ObjectId{database_id};
+      return plan_db.isSet() ? plan_db : database_id;
     }()},
     _distribute_shards_like{options.distributeShardsLike.value_or(ObjectId{})},
     _from{options.from},
@@ -182,17 +166,41 @@ Table::Table(TableOptions&& options, ObjectId database_id)
   SDB_ASSERT(_sharding_strategy);
 }
 
+TableOptions Table::MakeTableOptions() const {
+  return {
+    .shardKeys = _shard_keys,
+    .columns = _columns,
+    .pkColumns = _pk_columns,
+    .shardingStrategy = std::string{_sharding_strategy->name()},
+    .name = std::string{GetName()},
+    .schema = _schema,
+    .keyOptions = _key_generator,
+    .shards = _shard_ids,
+    .id = Identifier{GetId().id()},
+    .distributeShardsLike = _distribute_shards_like,
+    .planId = Identifier{_plan_id.id()},
+    .planDb = _plan_db,
+    .from = ForeignId{_from.id()},
+    .to = ForeignId{_to.id()},
+    .numberOfShards = _number_of_shards,
+    .replicationFactor = _replication_factor,
+    .writeConcern = _write_concern,
+    .type = std::to_underlying(_type),
+    .waitForSync = _wait_for_sync,
+  };
+}
+
 void catalog::Table::WriteProperties(vpack::Builder& build) const {
   SDB_ASSERT(build.isOpenObject());
-  vpack::WriteObject(build, vpack::Embedded{MakeOutput(*this)},
+  vpack::WriteObject(build, vpack::Embedded{MakeTableOptions()},
                      ObjectProperties{});
 }
 
 void catalog::Table::WriteInternal(vpack::Builder& build) const {
   // TODO(gnusi) writeTuple?
   SDB_ASSERT(build.isOpenObject());
-  vpack::WriteObject(build, vpack::Embedded{MakeOutput(*this)},
-                     ObjectInternal{});
+  vpack::WriteObject(build, vpack::Embedded{MakeTableOptions()},
+                     ObjectInternal{_database_id});
 }
 
 Result ChangeTableHelper(const catalog::Table& old_collection,

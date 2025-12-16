@@ -67,8 +67,8 @@ class LogBufferFeature final : public SerenedFeature {
  private:
   std::shared_ptr<log::Appender> _in_memory_appender;
   std::shared_ptr<log::Appender> _metrics_counter;
-  std::string _min_in_memory_log_level;
-  bool _use_in_memory_appender;
+  std::string _min_in_memory_log_level = "info";
+  bool _use_in_memory_appender = true;
 };
 
 }  // namespace sdb

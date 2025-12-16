@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -43,6 +43,7 @@
 #ifndef FST_EXPANDER_CACHE_H_
 #define FST_EXPANDER_CACHE_H_
 
+#include <cstddef>
 #include <deque>
 #include <memory>
 #include <utility>
@@ -50,8 +51,8 @@
 
 #include <fst/cache.h>
 #include <fst/fst.h>
-#include <unordered_map>
-#include <unordered_map>
+#include <absl/container/flat_hash_map.h>
+#include <absl/container/flat_hash_map.h>
 
 namespace fst {
 
@@ -145,8 +146,9 @@ class NoGcKeepOneExpanderCache {
       expander.Expand(state_id_, state_.get());
       return state_.get();
     }
-    auto i = cache_.find(state_id_);
-    if (i != cache_.end()) state_ = std::move(i->second);
+    if (auto i = cache_.find(state_id_); i != cache_.end()) {
+      state_ = std::move(i->second);
+    }
     if (state_ == nullptr) {
       state_ = std::make_unique<State>();
       expander.Expand(state_id_, state_.get());
@@ -156,7 +158,7 @@ class NoGcKeepOneExpanderCache {
 
   StateId state_id_ = kNoStateId;
   std::unique_ptr<State> state_;
-  std::unordered_map<StateId, std::unique_ptr<State>> cache_;
+  absl::flat_hash_map<StateId, std::unique_ptr<State>> cache_;
 };
 
 template <class A>
@@ -189,7 +191,7 @@ class HashExpanderCache {
   }
 
  private:
-  std::unordered_map<StateId, std::unique_ptr<State>> cache_;
+  absl::flat_hash_map<StateId, std::unique_ptr<State>> cache_;
 };
 
 template <class A>

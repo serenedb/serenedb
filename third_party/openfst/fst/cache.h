@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -21,18 +21,25 @@
 #define FST_CACHE_H_
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <list>
 #include <memory>
+#include <new>
+#include <utility>
 #include <vector>
 
 #include <fst/flags.h>
 #include <fst/log.h>
-
+#include <fst/fst.h>
+#include <fst/memory.h>
+#include <fst/mutable-fst.h>
+#include <fst/properties.h>
+#include <fst/util.h>
 #include <fst/vector-fst.h>
-
-#include <unordered_map>
+#include <absl/container/flat_hash_map.h>
+#include <functional>
 
 DECLARE_bool(fst_default_cache_gc);
 DECLARE_int64(fst_default_cache_gc_limit);
@@ -44,9 +51,8 @@ struct CacheOptions {
   bool gc;          // Enables GC.
   size_t gc_limit;  // Number of bytes allowed before GC.
 
-  explicit CacheOptions(
-      bool gc = FST_FLAGS_fst_default_cache_gc,
-      size_t gc_limit = FST_FLAGS_fst_default_cache_gc_limit)
+  explicit CacheOptions(bool gc = FST_FLAGS_fst_default_cache_gc,
+                        size_t gc_limit = FST_FLAGS_fst_default_cache_gc_limit)
       : gc(gc), gc_limit(gc_limit) {}
 };
 
@@ -160,7 +166,7 @@ class CacheState {
 
   // Adds one arc at a time with delayed book-keeping; finalize with SetArcs().
   template <class... T>
-  void EmplaceArc(T &&... ctor_args) {
+  void EmplaceArc(T &&...ctor_args) {
     arcs_.emplace_back(std::forward<T>(ctor_args)...);
   }
 
@@ -431,7 +437,7 @@ class HashCacheStore {
   using StateId = typename Arc::StateId;
 
   using StateMap =
-      std::unordered_map<StateId, State *, std::hash<StateId>,
+      absl::flat_hash_map<StateId, State *, absl::Hash<StateId>,
                           std::equal_to<StateId>,
                           PoolAllocator<std::pair<const StateId, State *>>>;
 
@@ -835,6 +841,14 @@ class DefaultCacheStore
   }
 };
 
+template <class Arc>
+class GCHashCacheStore
+    : public GCCacheStore<FirstCacheStore<HashCacheStore<CacheState<Arc>>>> {
+ public:
+  explicit GCHashCacheStore(const CacheOptions &opts)
+      : GCCacheStore<FirstCacheStore<HashCacheStore<CacheState<Arc>>>>(opts) {}
+};
+
 namespace internal {
 
 // This class is used to cache FST elements stored in states of type State
@@ -944,7 +958,7 @@ class CacheBaseImpl : public FstImpl<typename State::Arc> {
   // be called when all PushArc and EmplaceArc calls at a state are complete.
   // Do not mix with calls to AddArc.
   template <class... T>
-  void EmplaceArc(StateId s, T &&... ctor_args) {
+  void EmplaceArc(StateId s, T &&...ctor_args) {
     auto *state = cache_store_->GetMutableState(s);
     state->EmplaceArc(std::forward<T>(ctor_args)...);
   }
@@ -1123,7 +1137,7 @@ class CacheImpl : public CacheBaseImpl<CacheState<Arc>> {
  public:
   using State = CacheState<Arc>;
 
-  CacheImpl() {}
+  CacheImpl() = default;
 
   explicit CacheImpl(const CacheOptions &opts)
       : CacheBaseImpl<CacheState<Arc>>(opts) {}

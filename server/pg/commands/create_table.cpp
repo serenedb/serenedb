@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <unordered_set>
 #include <yaclib/async/make.hpp>
 
 #include "app/app_server.h"
@@ -25,75 +26,141 @@
 #include "catalog/catalog.h"
 #include "catalog/database.h"
 #include "catalog/sharding_strategy.h"
+#include "catalog/table_options.h"
 #include "pg/commands.h"
+#include "pg/connection_context.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_analyzer_velox.h"
+#include "pg/sql_exception.h"
+#include "pg/sql_exception_macro.h"
+#include "pg/sql_utils.h"
+
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+
+#include "nodes/nodeFuncs.h"
+#include "parser/parse_node.h"
+#include "utils/errcodes.h"
+LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 
+template<typename T>
+inline int ExprLocation(const T* node) noexcept {
+  return exprLocation(reinterpret_cast<const Node*>(node));
+}
+
+// TODO: use ErrorPosition in ThrowSqlError
 yaclib::Future<Result> CreateTable(ExecContext& context,
                                    const CreateStmt& stmt) {
   const auto db = context.GetDatabaseId();
+  const auto& conn_ctx = basics::downCast<const ConnectionContext>(context);
+  std::string current_schema = conn_ctx.GetCurrentSchema();
   const std::string_view schema =
     stmt.relation->schemaname ? std::string_view{stmt.relation->schemaname}
-                              : StaticStrings::kPublic;
+                              : current_schema;
+  if (schema.empty()) {
+    return yaclib::MakeFuture<Result>(
+      ERROR_BAD_PARAMETER, "no schema has been selected to create in");
+  }
   const std::string_view table = stmt.relation->relname;
 
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  auto database = catalog.GetObject<catalog::Database>(db);
+  auto database = catalog.GetSnapshot()->GetDatabase(db);
   SDB_ENSURE(database, ERROR_SERVER_DATABASE_NOT_FOUND);
 
   catalog::CreateTableRequest request;
   request.name = table;
+  request.columns.reserve(list_length(stmt.tableElts));
 
-  std::vector<std::string> pk_column_names;
-  std::vector<velox::TypePtr> pk_column_types;
-  std::vector<std::string> column_names;
-  std::vector<velox::TypePtr> column_types;
+  auto append_column = [&](catalog::Column column, int location) {
+    if (absl::c_any_of(request.columns,
+                       [&](const catalog::Column& existing_column) {
+                         return existing_column.name == column.name;
+                       })) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DUPLICATE_COLUMN), CURSOR_POS(location),
+        ERR_MSG("column \"", column.name, "\" specified more than once"));
+    }
+    request.columns.push_back(std::move(column));
+  };
+  auto append_pk = [&](const catalog::Column::Id column_id, int location) {
+    SDB_ASSERT(column_id < request.columns.size());
+    if (absl::c_linear_search(request.pkColumns, column_id)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_COLUMN), CURSOR_POS(location),
+                      ERR_MSG("column \"", request.columns[column_id].name,
+                              "\" appears twice in primary key constraint"));
+    }
+    request.pkColumns.push_back(column_id);
+  };
+
+  auto error_constraint_not_supported = [&](const Constraint& constraint) {
+    auto constraint_name = absl::NullSafeStringView(constraint.conname);
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      CURSOR_POS(ExprLocation(&constraint)),
+      ERR_MSG("constraint is not supported yet: ", constraint_name));
+  };
+
+  catalog::Column::Id next_column_id = 0;
   VisitNodes(stmt.tableElts, [&](const Node& node) {
     if (IsA(&node, ColumnDef)) {
       const auto& col_def = *castNode(ColumnDef, &node);
-      column_names.push_back(col_def.colname);
-      column_types.push_back(pg::NameToType(*col_def.typeName));
+      append_column(catalog::Column{.id = next_column_id++,
+                                    .type = pg::NameToType(*col_def.typeName),
+                                    .name = col_def.colname},
+                    ExprLocation(&col_def));
+      auto& col = request.columns.back();
       VisitNodes(col_def.constraints, [&](const Constraint& constraint) {
-        if (constraint.contype == CONSTR_PRIMARY) {
-          pk_column_names.push_back(column_names.back());
-          pk_column_types.push_back(column_types.back());
+        switch (constraint.contype) {
+          case CONSTR_DEFAULT: {
+            DefaultValue default_value;
+            auto r = default_value.Init(db, constraint.raw_expr);
+            SDB_ENSURE(r.ok(), r.errorNumber(), std::move(r).errorMessage());
+            col.default_value = std::move(default_value);
+          } break;
+          case CONSTR_PRIMARY:  // create table (field integer primary key)
+            append_pk(col.id, ExprLocation(&constraint));
+            break;
+          default:
+            error_constraint_not_supported(constraint);
         }
       });
-    } else if (IsA(&node, Constraint)) {
-      const auto& constraint = *castNode(Constraint, &node);
-      if (constraint.contype == CONSTR_PRIMARY) {
+
+      return;
+    }
+
+    SDB_ASSERT(IsA(&node, Constraint));
+    const auto& constraint = *castNode(Constraint, &node);
+    switch (constraint.contype) {
+      case CONSTR_PRIMARY: {
+        // create table (field integer, primary key(field))
         VisitNodes(constraint.keys, [&](const String& key) {
-          std::string_view name = pk_column_names.emplace_back(key.sval);
-          auto it = std::find(column_names.begin(), column_names.end(), name);
-          if (it == column_names.end()) {
-            VELOX_USER_FAIL("Primary key column '{}' not found", name);
+          std::string_view name = key.sval;
+
+          auto it = std::ranges::find_if(
+            request.columns,
+            [name](const catalog::Column& col) { return col.name == name; });
+          if (absl::c_none_of(request.columns, [&](const catalog::Column& col) {
+                return col.name == name;
+              })) {
+            THROW_SQL_ERROR(
+              ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+              CURSOR_POS(ExprLocation(&key)),
+              ERR_MSG("column \"", name, "\" named in key does not exist"));
           }
-          const auto index = std::distance(column_names.begin(), it);
-          pk_column_types.push_back(column_types[index]);
+          append_pk(it->id, ExprLocation(&key));
         });
-      }
-    } else {
-      SDB_ENSURE(false, ERROR_NOT_IMPLEMENTED,
-                 "Unsupported table element type: ", node.type);
+      } break;
+      case CONSTR_DEFAULT:
+        SDB_UNREACHABLE();
+      default:
+        error_constraint_not_supported(constraint);
     }
   });
   SDB_ASSERT(!stmt.constraints);
 
-  request.pkType =
-    velox::ROW(std::move(pk_column_names), std::move(pk_column_types));
-  if (request.pkType->size() != request.pkType->nameToIndex().size()) {
-    return yaclib::MakeFuture<Result>(ERROR_BAD_PARAMETER,
-                                      "Duplicate column names in primary key");
-  }
-  request.rowType =
-    velox::ROW(std::move(column_names), std::move(column_types));
-  if (request.rowType->size() != request.rowType->nameToIndex().size()) {
-    return yaclib::MakeFuture<Result>(ERROR_BAD_PARAMETER,
-                                      "Duplicate column names in row type");
-  }
   catalog::CreateTableOptions options;
   auto r = MakeTableOptions(std::move(request), database->GetId(), options,
                             database->GetReplicationFactor(),

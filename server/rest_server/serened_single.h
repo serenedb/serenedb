@@ -52,17 +52,11 @@ class PostgresFeature;
 
 class LoggerFeature;
 class ServerOptionsFeature;
-class AppVersion;
 class SslServerFeature;
 class ConfigFeature;
-class GreetingsFeature;
 class LogBufferFeature;
-class BumpFileDescriptorsFeature;
-class CpuUsageFeature;
 class DaemonFeature;
 class MaxMapCountFeature;
-class OptionsCheckFeature;
-class EnvironmentFeature;
 class FileDescriptorsFeature;
 class LanguageFeature;
 class SupervisorFeature;
@@ -84,7 +78,6 @@ class RocksDBRecoveryManager;
 class UpgradeFeature;
 class ServerFeature;
 class NetworkFeature;
-class DumpLimitsFeature;
 class HttpEndpointProvider;
 class GeneralServerFeature;
 class StatisticsFeature;
@@ -97,22 +90,13 @@ class TimeZoneFeature;
 using SerenedFeaturesList = type::List<
   LoggerFeature,
   ServerOptionsFeature,
-  AppVersion,
   SslServerFeature,
   ConfigFeature,
-  GreetingsFeature,
   metrics::MetricsFeature,
   LogBufferFeature,
-#ifdef SERENEDB_HAVE_GETRLIMIT
-  BumpFileDescriptorsFeature,
-#endif
-  CpuUsageFeature,
 #ifdef SERENEDB_HAVE_FORK
   DaemonFeature,
 #endif
-  MaxMapCountFeature,
-  OptionsCheckFeature,
-  EnvironmentFeature,
 #ifdef SERENEDB_HAVE_GETRLIMIT
   FileDescriptorsFeature,
 #endif
@@ -140,7 +124,6 @@ using SerenedFeaturesList = type::List<
   UpgradeFeature,
   ServerFeature,
   NetworkFeature,
-  DumpLimitsFeature,
   HttpEndpointProvider,
   GeneralServerFeature,
   StatisticsFeature,

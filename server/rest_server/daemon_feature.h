@@ -38,8 +38,8 @@ class DaemonFeature final : public SerenedFeature {
 
   explicit DaemonFeature(Server& server);
 
-  void collectOptions(std::shared_ptr<options::ProgramOptions>) final;
   void validateOptions(std::shared_ptr<options::ProgramOptions>) final;
+  void collectOptions(std::shared_ptr<options::ProgramOptions>) final;
   void daemonize() final;
   void unprepare() final;
 

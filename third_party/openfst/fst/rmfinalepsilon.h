@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -23,11 +23,12 @@
 #include <cstdint>
 #include <vector>
 
-
+#include <fst/cc-visitors.h>
 #include <fst/connect.h>
+#include <fst/dfs-visit.h>
+#include <fst/fst.h>
 #include <fst/mutable-fst.h>
-
-#include <unordered_set>
+#include <absl/container/flat_hash_set.h>
 
 namespace fst {
 
@@ -45,7 +46,7 @@ void RmFinalEpsilon(MutableFst<Arc> *fst) {
   // Finds potential list of removable final states. These are final states that
   // have no outgoing transitions or final states that have a non-coaccessible
   // future.
-  std::unordered_set<StateId> finals;
+  absl::flat_hash_set<StateId> finals;
   for (StateIterator<Fst<Arc>> siter(*fst); !siter.Done(); siter.Next()) {
     const auto s = siter.Value();
     if (fst->Final(s) != Weight::Zero()) {

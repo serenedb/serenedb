@@ -37,6 +37,7 @@
 #include <velox/functions/sparksql/aggregates/Register.h>
 #include <velox/functions/sparksql/registration/Register.h>
 #include <velox/functions/sparksql/window/WindowFunctionsRegistration.h>
+#include <velox/type/Cost.h>
 #include <velox/type/TypeCoercer.h>
 
 #include "basics/assert.h"
@@ -106,11 +107,11 @@ velox::AllowedCoercions AllowedCoercions() {
 
   auto add = [&](const velox::TypePtr& from,
                  const std::vector<velox::TypePtr>& to) {
-    int32_t cost = 0;
+    velox::Cost cost = velox::kMinCoercionCost;
     for (const auto& to_type : to) {
-      coercions.emplace(std::make_pair<std::string, std::string>(
-                          from->toString(), to_type->toString()),
-                        velox::Coercion{.type = to_type, .cost = ++cost});
+      coercions.emplace(
+        std::make_pair<std::string, std::string>(from->name(), to_type->name()),
+        velox::Coercion{.type = to_type, .cost = ++cost});
     }
   };
 

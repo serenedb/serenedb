@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -22,9 +22,14 @@
 
 #include <cstdint>
 
-
 #include <fst/arc-map.h>
+#include <fst/arc.h>
+#include <fst/cache.h>
+#include <fst/float-weight.h>
+#include <fst/fst.h>
+#include <fst/impl-to-fst.h>
 #include <fst/mutable-fst.h>
+#include <fst/properties.h>
 
 namespace fst {
 
@@ -121,14 +126,16 @@ inline void Project(MutableFst<Arc> *fst, ProjectType project_type) {
 // caching.
 template <class A>
 class ProjectFst : public ArcMapFst<A, A, ProjectMapper<A>> {
+  using Base = ArcMapFst<A, A, ProjectMapper<A>>;
+
  public:
   using FromArc = A;
   using ToArc = A;
 
-  using Impl = internal::ArcMapFstImpl<A, A, ProjectMapper<A>>;
+  using typename Base::Impl;
 
   ProjectFst(const Fst<A> &fst, ProjectType project_type)
-      : ArcMapFst<A, A, ProjectMapper<A>>(fst, ProjectMapper<A>(project_type)) {
+      : Base(fst, ProjectMapper<A>(project_type)) {
     if (project_type == ProjectType::INPUT) {
       GetMutableImpl()->SetOutputSymbols(fst.InputSymbols());
     }
@@ -138,8 +145,7 @@ class ProjectFst : public ArcMapFst<A, A, ProjectMapper<A>> {
   }
 
   // See Fst<>::Copy() for doc.
-  ProjectFst(const ProjectFst &fst, bool safe = false)
-      : ArcMapFst<A, A, ProjectMapper<A>>(fst, safe) {}
+  ProjectFst(const ProjectFst &fst, bool safe = false) : Base(fst, safe) {}
 
   // Gets a copy of this ProjectFst. See Fst<>::Copy() for further doc.
   ProjectFst *Copy(bool safe = false) const override {
@@ -147,7 +153,7 @@ class ProjectFst : public ArcMapFst<A, A, ProjectMapper<A>> {
   }
 
  private:
-  using ImplToFst<Impl>::GetMutableImpl;
+  using Base::GetMutableImpl;
 };
 
 // Specialization for ProjectFst.

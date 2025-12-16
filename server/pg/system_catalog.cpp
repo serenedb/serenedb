@@ -101,6 +101,7 @@
 #include "pg/pg_catalog/pg_type.h"
 #include "pg/pg_catalog/pg_user_mapping.h"
 #include "pg/pg_feature.h"
+#include "pg/sdb_catalog/sdb_log.h"
 #include "pg/sql_parser.h"
 #include "pg/system_table.h"
 #include "pg/system_views.h"
@@ -209,6 +210,7 @@ const PgCatalogSchema kPgCatalog{
   MakeTable<SystemTable<PgTsTemplate>>(),
   MakeTable<SystemTable<PgType>>(),
   MakeTable<SystemTable<PgUserMapping>>(),
+  MakeTable<SystemTable<SdbLog>>(),
 };
 
 const PgCatalogSchema kInformationSchema{
@@ -367,7 +369,7 @@ const VirtualTable* GetTable(std::string_view name) {
     }
     return *it;
   };
-  if (name.starts_with("pg_")) {
+  if (name.starts_with("pg_") || name.starts_with("sdb_")) {
     return find(kPgCatalog);
   } else if (name.starts_with("sql_")) {
     return find(kInformationSchema);

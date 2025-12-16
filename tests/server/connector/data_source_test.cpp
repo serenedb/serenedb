@@ -1,3 +1,23 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
 #include <velox/vector/tests/utils/VectorTestBase.h>
 
 #include "connector/common.h"
@@ -13,6 +33,7 @@ using namespace sdb::connector;
 
 namespace {
 
+constexpr sdb::ObjectId kObjectKey{1};
 class DataSourceTest : public ::testing::Test,
                        public velox::test::VectorTestBase {
  public:
@@ -49,12 +70,15 @@ class DataSourceTest : public ::testing::Test,
     std::filesystem::remove_all(_path);
   }
 
-  void MakeRocksDBWrite(velox::RowVectorPtr data, std::string& object_key) {
+  void MakeRocksDBWrite(velox::RowVectorPtr data, sdb::ObjectId object_key) {
     std::vector<velox::column_index_t> pk;
+    std::vector<sdb::connector::key_utils::ColumnId> column_ids;
+    column_ids.reserve(data->type()->asRow().size());
     for (velox::vector_size_t i = 0; i < data->type()->asRow().size(); ++i) {
       if (!data->childAt(i)->mayHaveNulls()) {
         pk.push_back(i);
       }
+      column_ids.emplace_back(i);
     }
     rocksdb::TransactionOptions trx_opts;
     rocksdb::WriteOptions wo;
@@ -65,7 +89,7 @@ class DataSourceTest : public ::testing::Test,
       *transaction, *_cf_handles.front(),
       std::shared_ptr<const velox::RowType>(
         std::shared_ptr<const velox::RowType>{nullptr}, &data->type()->asRow()),
-      *pool_.get(), object_key, pk);
+      *pool_.get(), object_key, pk, column_ids);
     sink.appendData(data);
     while (!sink.finish()) {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -73,13 +97,19 @@ class DataSourceTest : public ::testing::Test,
     ASSERT_TRUE(transaction->Commit().ok());
   }
 
-  void MakeRocksDBWriteRead(velox::RowVectorPtr data, std::string& object_key) {
+  void MakeRocksDBWriteRead(velox::RowVectorPtr data,
+                            sdb::ObjectId object_key) {
     MakeRocksDBWrite(data, object_key);
+    std::vector<sdb::connector::key_utils::ColumnId> column_ids;
+    column_ids.reserve(data->type()->asRow().size());
+    for (velox::vector_size_t i = 0; i < data->type()->asRow().size(); ++i) {
+      column_ids.emplace_back(i);
+    }
     sdb::connector::RocksDBDataSource source(
       *pool_.get(), nullptr, *_db, *_cf_handles.front(),
       std::shared_ptr<const velox::RowType>(
         std::shared_ptr<const velox::RowType>{nullptr}, &data->type()->asRow()),
-      data->type()->asRow().names(), object_key);
+      column_ids, object_key);
 
     // read as single batch
     {
@@ -169,13 +199,12 @@ TEST_F(DataSourceTest, test_tableReadFlatScalar) {
     {makeFlatVector<int32_t>(data), makeFlatVector<int32_t>(data_col2),
      makeFlatVector<bool>(data_col3),
      makeFlatVector<velox::Timestamp>(data_col4)});
-  std::string object_key = "TestInt";
-  MakeRocksDBWriteRead(row_data, object_key);
+  MakeRocksDBWriteRead(row_data, kObjectKey);
 
   // same column name but different object
   std::vector<int32_t> data2 = {10, 20, 30, 40, 50};
   auto row_data2 = makeRowVector({"col"}, {makeFlatVector<int32_t>(data2)});
-  std::string object_key2 = "TestInt2";
+  sdb::ObjectId object_key2{2};
   MakeRocksDBWriteRead(row_data2, object_key2);
 }
 
@@ -187,8 +216,7 @@ TEST_F(DataSourceTest, test_tableReadString) {
   auto row_data = makeRowVector(
     {"id", "strcol"},
     {makeFlatVector<int32_t>(key_data), makeFlatVector<std::string>(data)});
-  std::string object_key = "TestString";
-  MakeRocksDBWriteRead(row_data, object_key);
+  MakeRocksDBWriteRead(row_data, kObjectKey);
 }
 
 TEST_F(DataSourceTest, test_tableReadWithNulls) {
@@ -238,8 +266,7 @@ TEST_F(DataSourceTest, test_tableReadWithNulls) {
      makeNullableFlatVector<bool>(data_col3),
      makeNullableFlatVector<velox::Timestamp>(data_col4),
      makeNullableFlatVector<std::string>(data_col5)});
-  std::string object_key = "TestInt";
-  MakeRocksDBWriteRead(row_data, object_key);
+  MakeRocksDBWriteRead(row_data, kObjectKey);
 }
 
 TEST_F(DataSourceTest, test_tableReadUnknown) {
@@ -248,8 +275,7 @@ TEST_F(DataSourceTest, test_tableReadUnknown) {
     velox::BaseVector::create(velox::UNKNOWN(), key_data.size(), pool_.get());
   auto row_data = makeRowVector(
     {"id", "unkcol"}, {makeFlatVector<int32_t>(key_data), flat_vector});
-  std::string object_key = "TestString";
-  MakeRocksDBWriteRead(row_data, object_key);
+  MakeRocksDBWriteRead(row_data, kObjectKey);
 }
 
 TEST_F(DataSourceTest, test_tableReadEmptyOutput) {
@@ -260,12 +286,11 @@ TEST_F(DataSourceTest, test_tableReadEmptyOutput) {
   auto row_data = makeRowVector(
     {"id", "strcol"},
     {makeFlatVector<int32_t>(key_data), makeFlatVector<std::string>(data)});
-  std::string object_key = "TestString";
   auto row_type_empty = velox::ROW({});
-  MakeRocksDBWrite(row_data, object_key);
-  sdb::connector::RocksDBDataSource source(
-    *pool_.get(), nullptr, *_db, *_cf_handles.front(), row_type_empty,
-    {row_data->type()->asRow().names().front()}, object_key);
+  MakeRocksDBWrite(row_data, kObjectKey);
+  sdb::connector::RocksDBDataSource source(*pool_.get(), nullptr, *_db,
+                                           *_cf_handles.front(), row_type_empty,
+                                           {0}, kObjectKey);
 
   // read as single batch
   {

@@ -25,23 +25,28 @@
 
 #include "basics/assert.h"
 #include "common.h"
+#include "connector/key_utils.hpp"
 
 namespace sdb::connector {
 
 RocksDBDataSource::RocksDBDataSource(
   velox::memory::MemoryPool& memory_pool, rocksdb::Snapshot* snapshot,
   rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
-  std::vector<std::string> column_names, std::string_view object_key)
+  std::vector<key_utils::ColumnId> column_oids, ObjectId object_key)
   : velox::connector::DataSource{},
     _memory_pool{memory_pool},
     _snapshot{snapshot},
     _db{db},
     _cf{cf},
     _row_type{std::move(row_type)},
-    _column_names(std::move(column_names)),
+    _column_ids(std::move(column_oids)),
     _object_key{object_key} {
   SDB_ASSERT(_row_type, "RocksDBDataSource: row type is null");
-  SDB_ASSERT(!_object_key.empty(), "RocksDBDataSource: object key is empty");
+  SDB_ASSERT(_object_key.isSet(), "RocksDBDataSource: object key is empty");
+  SDB_ASSERT(!_column_ids.empty(),
+             "RocksDBDataSource: at least one column must be requested");
+  SDB_ASSERT(_row_type->size() == 0 || _row_type->size() == _column_ids.size(),
+             "RocksDBDataSource: number of columns does not match row type");
 }
 
 void RocksDBDataSource::addSplit(
@@ -95,13 +100,13 @@ std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
 
   const auto num_columns = _row_type->size();
   std::string last_column_key;
-  auto make_column_key = [&](velox::column_index_t col_idx) {
-    return absl::StrCat(_object_key, ".", _column_names[col_idx], ".");
-  };
+  std::string key = key_utils::PrepareTableKey(_object_key);
+  const auto key_old_size = key.size();
   if (num_columns) {
     for (velox::column_index_t col_idx = 0; col_idx < num_columns; ++col_idx) {
-      std::string column_key = make_column_key(col_idx);
-      auto it = CreateColumnIterator(column_key, read_options);
+      basics::StrResize(key, key_old_size);
+      key_utils::AppendColumnKey(key, _column_ids[col_idx]);
+      auto it = CreateColumnIterator(key, read_options);
       if (!it) {
         // no rows found. This should happen only for the first column.
         // Otherwise we have a misaligned data.
@@ -110,8 +115,7 @@ std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
         _current_split.reset();
         return nullptr;
       }
-      columns.push_back(ReadColumn(*it, size, column_key,
-                                   _row_type->childAt(col_idx),
+      columns.push_back(ReadColumn(*it, size, key, _row_type->childAt(col_idx),
                                    col_idx == 0 ? &last_column_key : nullptr));
     }
     _last_read_key = last_column_key;
@@ -125,9 +129,9 @@ std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
                                               columns.front()->size(),
                                               std::move(columns));
   }
-  SDB_ASSERT(_column_names.size() == 1,
-             "RocksDBDataSource: invalid columns count to read for count");
-  const std::string column_key = make_column_key(0);
+  SDB_ASSERT(_column_ids.size() == 1);
+  const std::string column_key =
+    key_utils::PrepareColumnKey(_object_key, _column_ids.front());
   auto it = CreateColumnIterator(column_key, read_options);
   if (!it) {
     _current_split.reset();

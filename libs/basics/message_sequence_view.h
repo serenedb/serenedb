@@ -22,7 +22,6 @@
 
 #include <boost/asio/buffer.hpp>
 
-#include "basics/assert.h"
 #include "basics/message_chunk.h"
 
 namespace sdb::message {

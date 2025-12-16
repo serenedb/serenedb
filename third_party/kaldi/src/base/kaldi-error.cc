@@ -21,15 +21,15 @@
 // limitations under the License.
 
 #ifdef HAVE_EXECINFO_H
-#include <execinfo.h> // To get stack trace in error messages.
+#include <execinfo.h>  // To get stack trace in error messages.
 // If this #include fails there is an error in the Makefile, it does not
 // support your platform well. Make sure HAVE_EXECINFO_H is undefined,
 // and the code will compile.
 #ifdef HAVE_CXXABI_H
-#include <cxxabi.h> // For name demangling.
+#include <cxxabi.h>  // For name demangling.
 // Useful to decode the stack trace, but only used if we have execinfo.h
-#endif // HAVE_CXXABI_H
-#endif // HAVE_EXECINFO_H
+#endif  // HAVE_CXXABI_H
+#endif  // HAVE_EXECINFO_H
 
 #include "base/kaldi-common.h"
 #include "base/kaldi-error.h"
@@ -47,7 +47,7 @@ int32 g_kaldi_verbose_level = 0;
 static std::string program_name;
 static LogHandler log_handler = NULL;
 
-void SetProgramName(const char *basename) {
+void SetProgramName(const char* basename) {
   // Using the 'static std::string' for the program name is mostly harmless,
   // because (a) Kaldi logging is undefined before main(), and (b) no stdc++
   // string implementation has been found in the wild that would not be just
@@ -60,7 +60,7 @@ void SetProgramName(const char *basename) {
 // Trim filename to at most 1 trailing directory long. Given a filename like
 // "/a/b/c/d/e/f.cc", return "e/f.cc". Support both '/' and '\' as the path
 // separator.
-static const char *GetShortFileName(const char *path) {
+static const char* GetShortFileName(const char* path) {
   if (path == nullptr)
     return "";
 
@@ -76,8 +76,8 @@ static const char *GetShortFileName(const char *path) {
 /***** STACK TRACE *****/
 
 namespace internal {
-bool LocateSymbolRange(const std::string &trace_name, size_t *begin,
-                       size_t *end) {
+bool LocateSymbolRange(const std::string& trace_name, size_t* begin,
+                       size_t* end) {
   // Find the first '_' with leading ' ' or '('.
   *begin = std::string::npos;
   for (size_t i = 1; i < trace_name.size(); i++) {
@@ -95,13 +95,13 @@ bool LocateSymbolRange(const std::string &trace_name, size_t *begin,
   *end = trace_name.find_first_of(" +", *begin);
   return *end != std::string::npos;
 }
-} // namespace internal
+}  // namespace internal
 
 #ifdef HAVE_EXECINFO_H
 static std::string Demangle(std::string trace_name) {
 #ifndef HAVE_CXXABI_H
   return trace_name;
-#else  // HAVE_CXXABI_H
+#else   // HAVE_CXXABI_H
   // Try demangle the symbol. We are trying to support the following formats
   // produced by different platforms:
   //
@@ -119,28 +119,28 @@ static std::string Demangle(std::string trace_name) {
   }
   std::string symbol = trace_name.substr(begin, end - begin);
   int status;
-  char *demangled_name = abi::__cxa_demangle(symbol.c_str(), 0, 0, &status);
+  char* demangled_name = abi::__cxa_demangle(symbol.c_str(), 0, 0, &status);
   if (status == 0 && demangled_name != nullptr) {
     symbol = demangled_name;
     free(demangled_name);
   }
   return trace_name.substr(0, begin) + symbol +
          trace_name.substr(end, std::string::npos);
-#endif // HAVE_CXXABI_H
+#endif  // HAVE_CXXABI_H
 }
-#endif // HAVE_EXECINFO_H
+#endif  // HAVE_EXECINFO_H
 
 static std::string KaldiGetStackTrace() {
   std::string ans;
 #ifdef HAVE_EXECINFO_H
   const size_t KALDI_MAX_TRACE_SIZE = 50;
-  const size_t KALDI_MAX_TRACE_PRINT = 50; // Must be even.
+  const size_t KALDI_MAX_TRACE_PRINT = 50;  // Must be even.
   // Buffer for the trace.
-  void *trace[KALDI_MAX_TRACE_SIZE];
+  void* trace[KALDI_MAX_TRACE_SIZE];
   // Get the trace.
   size_t size = backtrace(trace, KALDI_MAX_TRACE_SIZE);
   // Get the trace symbols.
-  char **trace_symbol = backtrace_symbols(trace, size);
+  char** trace_symbol = backtrace_symbols(trace, size);
   if (trace_symbol == NULL)
     return ans;
 
@@ -150,7 +150,7 @@ static std::string KaldiGetStackTrace() {
     for (size_t i = 0; i < size; i++) {
       ans += Demangle(trace_symbol[i]) + "\n";
     }
-  } else { // Print out first+last (e.g.) 5.
+  } else {  // Print out first+last (e.g.) 5.
     for (size_t i = 0; i < KALDI_MAX_TRACE_PRINT / 2; i++) {
       ans += Demangle(trace_symbol[i]) + "\n";
     }
@@ -159,24 +159,24 @@ static std::string KaldiGetStackTrace() {
       ans += Demangle(trace_symbol[i]) + "\n";
     }
     if (size == KALDI_MAX_TRACE_SIZE)
-      ans += ".\n.\n.\n"; // Stack was too long, probably a bug.
+      ans += ".\n.\n.\n";  // Stack was too long, probably a bug.
   }
 
   // We must free the array of pointers allocated by backtrace_symbols(),
   // but not the strings themselves.
   free(trace_symbol);
-#endif // HAVE_EXECINFO_H
+#endif  // HAVE_EXECINFO_H
   return ans;
 }
 
 /***** KALDI LOGGING *****/
 
 MessageLogger::MessageLogger(LogMessageEnvelope::Severity severity,
-                             const char *func, const char *file, int32 line) {
+                             const char* func, const char* file, int32 line) {
   // Obviously, we assume the strings survive the destruction of this object.
   envelope_.severity = severity;
   envelope_.func = func;
-  envelope_.file = GetShortFileName(file); // Points inside 'file'.
+  envelope_.file = GetShortFileName(file);  // Points inside 'file'.
   envelope_.line = line;
 }
 
@@ -194,19 +194,19 @@ void MessageLogger::LogMessage() const {
     full_message << "VLOG[" << envelope_.severity << "] (";
   } else {
     switch (envelope_.severity) {
-    case LogMessageEnvelope::kInfo:
-      full_message << "LOG (";
-      break;
-    case LogMessageEnvelope::kWarning:
-      full_message << "WARNING (";
-      break;
-    case LogMessageEnvelope::kAssertFailed:
-      full_message << "ASSERTION_FAILED (";
-      break;
-    case LogMessageEnvelope::kError:
-    default: // If not the ERROR, it still an error!
-      full_message << "ERROR (";
-      break;
+      case LogMessageEnvelope::kInfo:
+        full_message << "LOG (";
+        break;
+      case LogMessageEnvelope::kWarning:
+        full_message << "WARNING (";
+        break;
+      case LogMessageEnvelope::kAssertFailed:
+        full_message << "ASSERTION_FAILED (";
+        break;
+      case LogMessageEnvelope::kError:
+      default:  // If not the ERROR, it still an error!
+        full_message << "ERROR (";
+        break;
     }
   }
   // Add other info from the envelope and the message text.
@@ -216,7 +216,7 @@ void MessageLogger::LogMessage() const {
 
   // Add stack trace for errors and assertion failures, if available.
   if (envelope_.severity < LogMessageEnvelope::kWarning) {
-    const std::string &stack_trace = KaldiGetStackTrace();
+    const std::string& stack_trace = KaldiGetStackTrace();
     if (!stack_trace.empty()) {
       full_message << "\n\n" << stack_trace;
     }
@@ -229,12 +229,12 @@ void MessageLogger::LogMessage() const {
 
 /***** KALDI ASSERTS *****/
 
-void KaldiAssertFailure_(const char *func, const char *file, int32 line,
-                         const char *cond_str) {
+void KaldiAssertFailure_(const char* func, const char* file, int32 line,
+                         const char* cond_str) {
   MessageLogger::Log() =
-      MessageLogger(LogMessageEnvelope::kAssertFailed, func, file, line)
-      << "Assertion failed: (" << cond_str << ")";
-  fflush(NULL); // Flush all pending buffers, abort() may not flush stderr.
+    MessageLogger(LogMessageEnvelope::kAssertFailed, func, file, line)
+    << "Assertion failed: (" << cond_str << ")";
+  fflush(NULL);  // Flush all pending buffers, abort() may not flush stderr.
   std::abort();
 }
 
@@ -246,4 +246,4 @@ LogHandler SetLogHandler(LogHandler handler) {
   return old_handler;
 }
 
-} // namespace kaldi
+}  // namespace kaldi

@@ -14,6 +14,7 @@ target_sources(
         pg_catalog/pg_class.cpp
         pg_catalog/pg_namespace.cpp
         pg_catalog/pg_type.cpp
+        sdb_catalog/sdb_log.cpp
         functions.cpp
         extract.cpp
         interval.cpp

@@ -76,7 +76,8 @@ auto MakeCollectionChecker(ObjectId database) {
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
   return [&, database](std::string_view edge,
                        std::shared_ptr<catalog::Table>& collection) -> Result {
-    collection = catalog.GetTable(database, StaticStrings::kPublic, edge);
+    collection =
+      catalog.GetSnapshot()->GetTable(database, StaticStrings::kPublic, edge);
 
     if (!collection) {
       return {ERROR_BAD_PARAMETER, "Cannot find collection '", edge, "'"};
@@ -117,7 +118,7 @@ Result ToInternal(vpack::Slice definition, ObjectId database_id, auto& meta) {
     [[unlikely]] {
     auto& catalog =
       SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-    auto c = catalog.GetObject(it->cid);
+    auto c = catalog.GetSnapshot()->GetObject(it->cid);
     return {ERROR_BAD_PARAMETER,
             "Collection specified multiple times: ", c ? c->GetName() : ""};
   }
@@ -179,12 +180,13 @@ void GraphView::WriteProperties(vpack::Builder& b) const {
   const auto r = [&] {
     auto& catalog =
       SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+    auto snapshot = catalog.GetSnapshot();
     vpack::WriteObject(b, vpack::Embedded{ViewMeta::Make(*this)});
 
     properties.edges->reserve(_meta.edges.size());
 
     for (auto& edge : _meta.edges) {
-      auto collection = catalog.GetObject<catalog::Table>(edge.cid);
+      auto collection = snapshot->GetObject<catalog::Table>(edge.cid);
 
       if (!collection) {
         // collection doesn't exist anymore

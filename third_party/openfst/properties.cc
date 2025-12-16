@@ -1,4 +1,4 @@
-// Copyright 2005-2020 Google LLC
+// Copyright 2005-2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the 'License');
 // you may not use this file except in compliance with the License.
@@ -22,7 +22,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <string>
 #include <vector>
 
 #include <string_view>
@@ -249,7 +248,7 @@ uint64_t RandGenProperties(uint64_t inprops, bool weighted) {
 }
 
 // Properties for a replace FST.
-uint64_t ReplaceProperties(const std::vector<uint64_t>& inprops, size_t root,
+uint64_t ReplaceProperties(const std::vector<uint64_t> &inprops, size_t root,
                            bool epsilon_on_call, bool epsilon_on_return,
                            bool out_epsilon_on_call, bool out_epsilon_on_return,
                            bool replace_transducer, bool no_empty_fsts,

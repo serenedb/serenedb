@@ -45,6 +45,13 @@ yaclib::Future<Result> CreateSchema(ExecContext& context,
       "CREATE SCHEMA with schema elements is not implemented");
   }
 
+  if (stmt.schemaname == StaticStrings::kPgCatalogSchema ||
+      stmt.schemaname == StaticStrings::kInformationSchema) {
+    return yaclib::MakeFuture<Result>(ERROR_BAD_PARAMETER,
+                                      "unacceptable schema name \"",
+                                      stmt.schemaname, "\"");
+  }
+
   SDB_ASSERT(stmt.schemaname);
 
   auto& catalogs =

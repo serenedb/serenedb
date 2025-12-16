@@ -516,8 +516,8 @@ class SnapshotImpl : public Snapshot {
         std::forward_as_tuple());
 
       if (!is_new) {
-        return {ERROR_SERVER_DUPLICATE_NAME,
-                "Schema already exists: ", schema->GetName()};
+        return {ERROR_SERVER_DUPLICATE_NAME, "schema \"", schema->GetName(),
+                "\" already exists"};
       }
 
       return RegisterObjectId(
@@ -905,7 +905,7 @@ class SnapshotImpl : public Snapshot {
       auto schema_it = schemas.find(schema);
       if (schema_it == schemas.end()) {
         return {ERROR_SERVER_DATABASE_NOT_FOUND,  // TODO: schema not found
-                "Schema not found: ", schema};
+                "schema \"", schema, "\" does not exist"};
       }
 
       return writer(database_it, schema_it);

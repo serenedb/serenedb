@@ -37,12 +37,19 @@ static_assert(sizeof(ObjectId) == sizeof(ObjectId::BaseType));
 
 namespace id {  // system IDs
 
+// User IDs
 inline constexpr ObjectId kInvalid{};
 inline constexpr ObjectId kRootUser{1000000};
+
+// Database IDs
 inline constexpr ObjectId kTombstoneDatabase{1000001};
 inline constexpr ObjectId kSystemDB{1000002};
 inline constexpr ObjectId kMaxSystem{2000000};
 inline constexpr ObjectId kCalculationDB{std::numeric_limits<uint64_t>::max()};
+
+// Schema IDs
+inline constexpr ObjectId kPgCatalogSchema{11};
+inline constexpr ObjectId kPgInformationSchema{1000003};
 
 }  // namespace id
 

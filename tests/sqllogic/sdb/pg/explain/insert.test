@@ -68,3 +68,25 @@ SELECT * FROM series_table;
 ----
 a b c
 2 3 2
+
+
+statement ok
+CREATE TABLE tindex(
+  id INTEGER
+);
+
+
+statement count 1
+INSERT INTO tindex (id) VALUES (1);
+
+
+statement count 1
+INSERT INTO tindex  (id) VALUES (0);
+
+
+query
+SELECT * FROM tindex;
+----
+id
+0
+1

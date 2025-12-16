@@ -464,3 +464,10 @@ SELECT ARRAY['\121\121'::bytea, '\121\121'::bytea];
 ----
 array
 {QQ,QQ}
+
+
+query
+SELECT '\x48656c6c6f'::bytea = '\x48656c6c6f'::varchar::bytea;
+----
+?column?
+t

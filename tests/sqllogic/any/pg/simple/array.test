@@ -28,3 +28,31 @@ SELECT array_to_string(ARRAY['abba', 'banana'], '*');
 ----
 array_to_string
 abba*banana
+
+
+query
+SELECT array_position(ARRAY[10, 20, 30, 40], 30);
+----
+array_position
+3
+
+
+query
+SELECT array_position(ARRAY[5, 15, 25], 15);
+----
+array_position
+2
+
+
+query
+SELECT cardinality(ARRAY[10, 20, 30, 40]);
+----
+cardinality
+4
+
+
+query
+SELECT cardinality(ARRAY[5, 15, 25]);
+----
+cardinality
+3

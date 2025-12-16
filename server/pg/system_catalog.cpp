@@ -135,7 +135,7 @@ struct HashEq {
   }
 };
 
-using PgCatalogSchema =
+using PgSystemSchema =
   containers::FlatHashSet<const VirtualTable*, HashEq, HashEq>;
 
 template<typename T>
@@ -145,7 +145,7 @@ const VirtualTable* MakeTable() {
 }
 
 // clang-format off
-const PgCatalogSchema kPgCatalog{
+const PgSystemSchema kPgCatalog{
   MakeTable<SystemTable<PgAggregate>>(),
   MakeTable<SystemTable<PgAm>>(),
   MakeTable<SystemTable<PgAmop>>(),
@@ -213,7 +213,7 @@ const PgCatalogSchema kPgCatalog{
   MakeTable<SystemTable<SdbLog>>(),
 };
 
-const PgCatalogSchema kInformationSchema{
+const PgSystemSchema kInformationSchema{
    MakeTable<SystemTable<SqlFeatures>>(),
    MakeTable<SystemTable<SqlImplementationInfo>>(),
    MakeTable<SystemTable<SqlParts>>(),
@@ -233,10 +233,66 @@ constexpr auto kMapping =
     {"generate_series", {"presto_sequence", true}},
     {"unnest", {"unnest", true, FunctionLanguage::Decorator}},
     // Scalars
-    {"substring", {"presto_substring", false}},
+    // String functions
+    {"chr", {"presto_chr", false}},
+    {"concat", {"presto_concat", false}},
     {"length", {"presto_length", false}},
-    {"extract", {"pg_extract", false}},
+    {"lower", {"presto_lower", false}},
+    {"upper", {"presto_upper", false}},
+    {"ltrim", {"presto_ltrim", false}},
+    {"rtrim", {"presto_rtrim", false}},
+    {"btrim", {"presto_trim", false}},
+    {"lpad", {"presto_lpad", false}},
+    {"rpad", {"presto_rpad", false}},
+    {"replace", {"presto_replace", false}},
+    {"reverse", {"presto_reverse", false}},
+    {"substring", {"presto_substring", false}},
+    {"substr", {"presto_substr", false}},
+    {"strpos", {"presto_strpos", false}},
+    {"split_part", {"presto_split_part", false}},
+    {"regexp_replace", {"presto_regexp_replace", false}},
+    {"similar_to_escape",
+     {"pg_similar_to_escape", false, FunctionLanguage::VeloxNative,
+      FunctionKind::Scalar}},
+    {"like_escape",
+     {"pg_like_escape", false, FunctionLanguage::VeloxNative,
+      FunctionKind::Scalar}},
+    // Math functions
+    {"abs", {"presto_abs", false}},
+    {"acos", {"presto_acos", false}},
+    {"asin", {"presto_asin", false}},
+    {"atan", {"presto_atan", false}},
+    {"atan2", {"presto_atan2", false}},
+    {"cbrt", {"presto_cbrt", false}},
+    {"ceil", {"presto_ceil", false}},
+    {"ceiling", {"presto_ceiling", false}},
+    {"cos", {"presto_cos", false}},
+    {"degrees", {"presto_degrees", false}},
+    {"exp", {"presto_exp", false}},
+    {"floor", {"presto_floor", false}},
+    {"ln", {"presto_ln", false}},
+    {"mod", {"presto_mod", false}},
+    {"pi", {"presto_pi", false}},
+    {"pow", {"presto_pow", false}},
+    {"power", {"presto_power", false}},
+    {"radians", {"presto_radians", false}},
+    {"random", {"presto_random", false}},
     {"round", {"presto_round", false}},
+    {"sign", {"presto_sign", false}},
+    {"sin", {"presto_sin", false}},
+    {"sqrt", {"presto_sqrt", false}},
+    {"tan", {"presto_tan", false}},
+    {"trunc", {"presto_truncate", false}},
+    {"width_bucket", {"presto_width_bucket", false}},
+    // Date/Time functions
+    {"date_trunc", {"presto_date_trunc", false}},
+    {"extract", {"pg_extract", false}},
+    // Array functions
+    {"array_position", {"presto_array_position", false}},
+    {"cardinality", {"presto_cardinality", false}},
+    {"array_to_string",
+     {"presto_array_join", false, FunctionLanguage::VeloxNative,
+      FunctionKind::Scalar}},
     // Aggregates
     {"avg",
      {"presto_avg", false, FunctionLanguage::VeloxNative,
@@ -326,6 +382,7 @@ constexpr auto kMapping =
     {"nth_value",
      {"presto_nth_value", false, FunctionLanguage::VeloxNative,
       FunctionKind::Window}},
+    // PostgreSQL system functions
     {"current_schema",
      {"pg_current_schema", false, FunctionLanguage::VeloxNative,
       FunctionKind::Scalar}},
@@ -357,35 +414,42 @@ constexpr auto kMapping =
      {"pg_json_extract_path", false, FunctionLanguage::VeloxNative,
       FunctionKind::Scalar}},
   });
+const VirtualTable* GetTableFromSchema(std::string_view name,
+                                       const PgSystemSchema& schema) {
+  auto it = schema.find(name);
+  return it == schema.end() ? nullptr : *it;
+}
 }  // namespace
 
+const VirtualTable* GetSystemTable(std::string_view schema,
+                                   std::string_view name) {
+  if (schema == StaticStrings::kPgCatalogSchema) {
+    return GetTableFromSchema(name, kPgCatalog);
+  } else if (schema == StaticStrings::kInformationSchema) {
+    return GetTableFromSchema(name, kInformationSchema);
+  } else {
+    SDB_UNREACHABLE();
+  }
+}
 const VirtualTable* GetTable(std::string_view name) {
   SDB_ASSERT(SerenedServer::Instance().isEnabled<pg::PostgresFeature>());
 
-  auto find = [&](const PgCatalogSchema& schema) -> const VirtualTable* {
-    auto it = schema.find(name);
-    if (it == schema.end()) {
-      return nullptr;
-    }
-    return *it;
-  };
   if (name.starts_with("pg_") || name.starts_with("sdb_")) {
-    return find(kPgCatalog);
-  } else if (name.starts_with("sql_")) {
-    return find(kInformationSchema);
+    return GetTableFromSchema(name, kPgCatalog);
   }
   return nullptr;
 }
 
-void VisitSystemTables(absl::FunctionRef<void(const VirtualTable&)> visitor) {
+void VisitSystemTables(
+  absl::FunctionRef<void(const VirtualTable&, Oid)> visitor) {
   SDB_ASSERT(SerenedServer::Instance().isEnabled<pg::PostgresFeature>());
   for (const auto* table : kPgCatalog) {
     SDB_ASSERT(table);
-    visitor(*table);
+    visitor(*table, id::kPgCatalogSchema.id());
   }
   for (const auto* table : kInformationSchema) {
     SDB_ASSERT(table);
-    visitor(*table);
+    visitor(*table, id::kPgInformationSchema.id());
   }
 }
 

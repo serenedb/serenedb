@@ -212,3 +212,10 @@ SELECT ('\x01 02 03 4d'::bytea)::varchar;
 ----
 varchar
 \\001\\002\\003M
+
+
+query
+SELECT 'str' = 'str'::varchar;
+----
+?column?
+t

@@ -3058,11 +3058,11 @@ lp::ExprPtr SqlAnalyzer::ProcessJsonExtractOp(std::string_view type,
         key->type() == velox::SMALLINT() || key->type() == velox::TINYINT()) {
       // array index
       res = ResolveVeloxFunctionAndInferArgsCommonType(
-        "presto_json_array_get", {std::move(input), std::move(key)});
+        "pg_json_extract_path_text", {std::move(input), std::move(key)});
     } else if (key->type() == velox::VARCHAR()) {
       // object field
       res = ResolveVeloxFunctionAndInferArgsCommonType(
-        "pg_json_extract_path", {std::move(input), std::move(key)});
+        "pg_json_extract_path_text", {std::move(input), std::move(key)});
     } else {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -3071,12 +3071,11 @@ lp::ExprPtr SqlAnalyzer::ProcessJsonExtractOp(std::string_view type,
   } else {
     // TODO(codeworse): path extraction
     res = ResolveVeloxFunctionAndInferArgsCommonType(
-      "pg_json_extract_path", {std::move(input), std::move(key)});
+      "pg_json_extract_path_text", {std::move(input), std::move(key)});
   }
   SDB_ASSERT(res);
-  if (IsExtractText(type)) {
-    res = ResolveVeloxFunctionAndInferArgsCommonType("presto_json_format",
-                                                     {std::move(res)});
+  if (!IsExtractText(type)) {
+    res = MakeCast(velox::JSON(), std::move(res));
   }
   return res;
 }
@@ -4310,10 +4309,6 @@ lp::ExprPtr SqlAnalyzer::ProcessTypeCast(State& state, const TypeCast& expr) {
                                           MakeConst(precision));
   }
 
-  if (arg->type() == velox::VARCHAR() && type == velox::JSON()) {
-    return std::make_shared<lp::CallExpr>(std::move(type), "presto_json_parse",
-                                          std::move(arg));
-  }
   if (pg::IsInterval(arg->type()) && type == velox::VARCHAR()) {
     return std::make_shared<lp::CallExpr>(std::move(type), "pg_intervalout",
                                           std::move(arg));

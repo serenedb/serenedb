@@ -36,6 +36,7 @@
 #include "catalog/catalog.h"
 #include "pg/connection_context.h"
 #include "pg/extract.h"
+#include "pg/functions/json.h"
 #include "pg/interval.h"
 #include "pg/serialize.h"
 #include "pg/sql_exception_macro.h"
@@ -522,65 +523,6 @@ struct ProcessEscapePattern {
   }
 };
 
-template<typename T>
-struct PgJsonExtractPath {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
-
-  void call(out_type<velox::Varchar>& result,
-            const arg_type<velox::Varchar>& json,
-            const arg_type<velox::Array<velox::Varchar>>& path) {
-    simdjson::ondemand::parser parser;
-    simdjson::padded_string padded_input(json.data(), json.size());
-    simdjson::ondemand::document doc;
-    if (path.size() == 0) {
-      result = std::string_view{json.data(), json.size()};
-      return;
-    }
-    if (auto ec = parser.iterate(padded_input).get(doc);
-        ec != simdjson::SUCCESS) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG("Invalid JSON input: ", simdjson::error_message(ec)));
-    }
-
-    if (doc.type().error()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG("Invalid JSON input: tape error"));
-    }
-    auto value = doc.get_value();
-    for (size_t i = 0; i < path.size(); ++i) {
-      const auto& key = path[i];
-      if (!key.has_value()) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("JSON path element at position ", i + 1, " is null"));
-      }
-      const auto& key_value = key.value();
-
-      if (value.error()) {
-        return;
-      }
-      if (doc.type() == simdjson::ondemand::json_type::array) {
-        int64_t index;
-        try {
-          index = folly::to<int64_t>(std::string_view{key_value});
-        } catch (const folly::ConversionError&) {
-          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                          ERR_MSG("Invalid JSON path element for array: \"",
-                                  std::string_view{key_value}, "\""));
-        }
-        value = value.at(index);
-      } else if (doc.type() == simdjson::ondemand::json_type::object) {
-        value = value.find_field(std::string_view{key_value});
-      }
-    }
-    if (value.error()) {
-      return;
-    }
-
-    result = simdjson::to_json_string(value).value();
-  }
-};
 }  // namespace
 
 void registerFunctions(const std::string& prefix) {
@@ -620,9 +562,13 @@ void registerFunctions(const std::string& prefix) {
                           velox::Varchar>({prefix + "like_escape"});
   velox::registerFunction<ProcessEscapePattern, velox::Varchar, velox::Varchar>(
     {prefix + "process_escape_pattern"});
-  velox::registerFunction<PgJsonExtractPath, velox::Varchar, velox::Varchar,
+  velox::registerFunction<PgJsonExtractText, velox::Varchar, velox::Json,
+                          int64_t>({prefix + "json_extract_path_text"});
+  velox::registerFunction<PgJsonExtractText, velox::Varchar, velox::Json,
+                          velox::Varchar>({prefix + "json_extract_path_text"});
+  velox::registerFunction<PgJsonExtractText, velox::Varchar, velox::Json,
                           velox::Array<velox::Varchar>>(
-    {prefix + "json_extract_path"});
+    {prefix + "json_extract_path_text"});
 
   registerExtractFunctions(prefix);
 }

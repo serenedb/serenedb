@@ -353,7 +353,7 @@ constexpr auto kMapping =
     {"array_to_string",
      {"presto_array_join", false, FunctionLanguage::VeloxNative,
       FunctionKind::Scalar}},
-    {"pg_json_extract_path",
+    {"json_extract_path",
      {"pg_json_extract_path", false, FunctionLanguage::VeloxNative,
       FunctionKind::Scalar}},
   });

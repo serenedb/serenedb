@@ -286,6 +286,7 @@ constexpr auto kMapping =
     {"width_bucket", {"presto_width_bucket", false}},
     // Date/Time functions
     {"date_trunc", {"presto_date_trunc", false}},
+    {"extract", {"presto_extract", false}},
     // Array functions
     {"array_position", {"presto_array_position", false}},
     {"cardinality", {"presto_cardinality", false}},

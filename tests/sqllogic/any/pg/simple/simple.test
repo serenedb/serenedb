@@ -1021,6 +1021,8 @@ SELECT regexp_replace('hello world', 'world', 'universe');
 ----
 regexp_replace
 hello universe
+
+
 query
 SELECT * FROM (VALUES ('TUM', 'Munich'::varchar), ('LMU', 'Munich'), ('CMU'::varchar, 'Pittsburgh'));
 ----

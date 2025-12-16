@@ -58,16 +58,6 @@ simdjson::ondemand::document GetJsonDocument(
   return doc;
 }
 
-auto PrepareJson(std::string_view json) {
-  simdjson::ondemand::parser parser;
-  CheckQuoted(json);
-  size_t length =
-    velox::unescapeSizeForJsonFunctions(json.data() + 1, json.size() - 2, true);
-  simdjson::padded_string padded_input(length);
-  velox::unescapeForJsonFunctions(json.data() + 1, json.size() - 2,
-                                  padded_input.data(), true);
-  return std::tuple(std::move(parser), std::move(padded_input));
-}
 }  // namespace
 
 template<typename T>
@@ -77,8 +67,8 @@ struct PgJsonExtractText {
   bool call(  // NOLINT
     out_type<velox::Varchar>& result, const arg_type<velox::Json>& json,
     const arg_type<int64_t>& index) {
-    auto [parser, padded_input] = PrepareJson({json.data(), json.size()});
-    auto doc = GetJsonDocument(padded_input, parser);
+    PrepareJson({json.data(), json.size()});
+    auto doc = GetJsonDocument(_padded_input, _parser);
     simdjson::ondemand::array arr;
     if (doc.get_array().get(arr)) {
       return false;
@@ -93,8 +83,8 @@ struct PgJsonExtractText {
 
   bool call(out_type<velox::Varchar>& result, const arg_type<velox::Json>& json,
             const arg_type<velox::Varchar>& field) {
-    auto [parser, padded_input] = PrepareJson({json.data(), json.size()});
-    auto doc = GetJsonDocument(padded_input, parser);
+    PrepareJson({json.data(), json.size()});
+    auto doc = GetJsonDocument(_padded_input, _parser);
     simdjson::ondemand::value value;
     if (doc.get_value().get(value)) {
       return false;
@@ -109,24 +99,24 @@ struct PgJsonExtractText {
 
   bool call(out_type<velox::Varchar>& result, const arg_type<velox::Json>& json,
             const arg_type<velox::Array<velox::Varchar>>& path) {
-    auto [parser, padded_input] = PrepareJson({json.data(), json.size()});
+    PrepareJson({json.data(), json.size()});
     if (path.size() == 0) {
       result = std::string_view{json.data(), json.size()};
       return false;
     }
-    auto doc = GetJsonDocument(padded_input, parser);
+    auto doc = GetJsonDocument(_padded_input, _parser);
     simdjson::ondemand::value value;
     if (doc.get_value().get(value)) {
       return false;
     }
     for (size_t i = 0; i < path.size(); ++i) {
-      if (!path[i].has_value()) {
+      if (!path[i]) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
           ERR_MSG("JSON path element at position ", i + 1, " is null"));
       }
-      const auto& key_value = path[i].value();
-      std::string_view key = std::string_view{key_value};
+      const auto& key_value = *path[i];
+      auto key = std::string_view{key_value};
 
       if (value.type() == simdjson::ondemand::json_type::array) {
         int64_t index;
@@ -150,6 +140,19 @@ struct PgJsonExtractText {
     result = simdjson::to_json_string(value).value();
     return true;
   }
+
+  void PrepareJson(std::string_view json) {
+    CheckQuoted(json);
+    size_t length = velox::unescapeSizeForJsonFunctions(json.data() + 1,
+                                                        json.size() - 2, true);
+    _padded_input = simdjson::padded_string(length);
+    velox::unescapeForJsonFunctions(json.data() + 1, json.size() - 2,
+                                    _padded_input.data(), true);
+  }
+
+ private:
+  simdjson::ondemand::parser _parser;
+  simdjson::padded_string _padded_input;
 };
 
 }  // namespace sdb::pg

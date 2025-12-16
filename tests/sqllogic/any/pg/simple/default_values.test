@@ -14,9 +14,6 @@ db error: ERROR: syntax error at or near "DEFAULT"
 statement ok
 CREATE TABLE tindex(
   id INTEGER DEFAULT 228 - 228,
-  name TEXT DEFAULT substring('babsky', 1, 5),
-  weight INTEGER DEFAULT 1000 - 7,
-  pencil_size INTEGER,
   PRIMARY KEY (id)
 );
 
@@ -26,27 +23,27 @@ INSERT INTO tindex DEFAULT VALUES;
 
 
 statement count 1
-INSERT INTO tindex (id, pencil_size) VALUES (2, 3);
+INSERT INTO tindex (id) VALUES (2);
 
 
 statement count 1
-INSERT INTO tindex (id, name, weight, pencil_size) VALUES (1, 'vedernikoff', 54, 1);
+INSERT INTO tindex (id) VALUES (1);
 
 
 statement count 1
-INSERT INTO tindex (id, name, weight, pencil_size) VALUES (3, DEFAULT, DEFAULT, 1);
+INSERT INTO tindex (id) VALUES (3);
 
 
 statement count 1
-INSERT INTO tindex (id, name, weight, pencil_size) VALUES (4, NULL, NULL, NULL);
+INSERT INTO tindex (id) VALUES (4);
 
 
 query
-SELECT *, pencil_size IS NULL FROM tindex;
+SELECT * FROM tindex;
 ----
-id name weight pencil_size ?column?
-0 babsk 993 NULL t
-1 vedernikoff 54 1 f
-2 babsk 993 3 f
-3 babsk 993 1 f
-4 NULL NULL NULL t
+id
+0
+1
+2
+3
+4

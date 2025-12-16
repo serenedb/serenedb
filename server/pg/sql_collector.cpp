@@ -54,7 +54,9 @@ class ObjectCollector {
       _objects{objects},
       _max_bind_param_idx{max_bind_param_idx} {}
 
-  void Collect(const State* parent, const Node* node);
+  void CollectStmt(const State* parent, const Node* node);
+
+  void CollectExprNode(const State& state, const Node* expr);
 
  private:
   void CollectFromClause(const State& state, const List* from_clause);
@@ -70,6 +72,7 @@ class ObjectCollector {
   void CollectCallStmt(State& state, const CallStmt& stmt);
   void CollectViewStmt(State& state, const ViewStmt& stmt);
   void CollectCreateFunctionStmt(State& state, const CreateFunctionStmt& stmt);
+  void CollectCreateStmt(State& state, const CreateStmt& stmt);
 
   void CollectRangeVar(const State& state, const RangeVar* var,
                        Objects::AccessType type);
@@ -79,7 +82,6 @@ class ObjectCollector {
   void CollectRangeFunction(const State& state, const RangeFunction& function);
 
   void CollectSortClause(const State& state, const List* sort_clause);
-  void CollectExprNode(const State& state, const Node* expr);
   void CollectExprList(const State& state, const List* expr_list);
   void CollectValuesLists(const State& state, const List* values_lists);
 
@@ -102,7 +104,7 @@ class ObjectCollector {
 void ObjectCollector::CollectSubLink(const State& state,
                                      const SubLink& sublink) {
   SDB_ASSERT(sublink.subselect);
-  Collect(&state, sublink.subselect);
+  CollectStmt(&state, sublink.subselect);
   CollectExprNode(state, sublink.testexpr);
 }
 
@@ -231,7 +233,7 @@ void ObjectCollector::CollectRangeVar(const State& state, const RangeVar* var,
 
 void ObjectCollector::CollectRangeSubSelect(const State& state,
                                             const RangeSubselect& subselect) {
-  Collect(&state, subselect.subquery);
+  CollectStmt(&state, subselect.subquery);
 }
 
 void ObjectCollector::CollectJoinExpr(const State& state,
@@ -351,7 +353,8 @@ void ObjectCollector::CollectExprNode(const State& state, const Node* expr) {
       return CollectJsonArrayConstructor(state,
                                          *castNode(JsonArrayConstructor, expr));
     case T_JsonArrayQueryConstructor:
-      return Collect(&state, castNode(JsonArrayQueryConstructor, expr)->query);
+      return CollectStmt(&state,
+                         castNode(JsonArrayQueryConstructor, expr)->query);
     case T_TypeCast:
       return CollectExprNode(state, castNode(TypeCast, expr)->arg);
     case T_ParamRef: {
@@ -372,12 +375,12 @@ void ObjectCollector::CollectExprNode(const State& state, const Node* expr) {
     case T_ColumnRef:
     case T_A_Const:
     case T_CollateClause:
+    case T_SetToDefault:
       // nothing to collect
       // TODO(mbkkt) but validate names, etc should be here
       return;
     default:
-      SDB_THROW(ERROR_NOT_IMPLEMENTED,
-                "unsupported node type: ", magic_enum::enum_name(expr->type));
+      SDB_THROW(ERROR_NOT_IMPLEMENTED, "unsupported node type: ", expr->type);
   }
 }
 
@@ -417,7 +420,7 @@ void ObjectCollector::CollectWithClause(State& state,
   VisitNodes(with_clause->ctes, [&](const CommonTableExpr& cte) {
     const auto* ctequery = cte.ctequery;
     SDB_ASSERT(ctequery);
-    Collect(&state, ctequery);
+    CollectStmt(&state, ctequery);
 
     SDB_ASSERT(cte.ctename);
     state.ctes.emplace(cte.ctename);
@@ -426,7 +429,7 @@ void ObjectCollector::CollectWithClause(State& state,
 
 void ObjectCollector::CollectInsertStmt(State& state, const InsertStmt& stmt) {
   CollectWithClause(state, stmt.withClause);
-  Collect(&state, stmt.selectStmt);
+  CollectStmt(&state, stmt.selectStmt);
   CollectRangeVar(state, stmt.relation, Objects::AccessType::Insert);
 }
 
@@ -476,7 +479,7 @@ void ObjectCollector::CollectSelectStmt(State& state, const SelectStmt* stmt) {
 
 void ObjectCollector::CollectExplainStmt(const State* parent,
                                          const ExplainStmt& stmt) {
-  Collect(parent, stmt.query);
+  CollectStmt(parent, stmt.query);
 }
 
 void ObjectCollector::CollectCallStmt(State& state, const CallStmt& stmt) {
@@ -503,10 +506,10 @@ void ObjectCollector::CollectCreateFunctionStmt(
     const auto* outer_list = castNode(List, stmt.sql_body);
     VisitNodes(outer_list, [&](const List& inner_list) {
       VisitNodes(&inner_list,
-                 [&](const Node& node) { Collect(&state, &node); });
+                 [&](const Node& node) { CollectStmt(&state, &node); });
     });
   } else {
-    Collect(&state, stmt.sql_body);
+    CollectStmt(&state, stmt.sql_body);
   }
 
   // function body unnamed parameters are param refs
@@ -514,7 +517,24 @@ void ObjectCollector::CollectCreateFunctionStmt(
   _max_bind_param_idx = 0;
 }
 
-void ObjectCollector::Collect(const State* parent, const Node* node) {
+void ObjectCollector::CollectCreateStmt(State& state, const CreateStmt& stmt) {
+  VisitNodes(stmt.tableElts, [&](const Node& node) {
+    if (IsA(&node, ColumnDef)) {
+      const auto& col_def = *castNode(ColumnDef, &node);
+      VisitNodes(col_def.constraints, [&](const Constraint& constraint) {
+        switch (constraint.contype) {
+          case CONSTR_DEFAULT:
+            CollectExprNode(state, constraint.raw_expr);
+            break;
+          default:
+            break;
+        }
+      });
+    }
+  });
+}
+
+void ObjectCollector::CollectStmt(const State* parent, const Node* node) {
   if (!node) {
     return;
   }
@@ -539,6 +559,8 @@ void ObjectCollector::Collect(const State* parent, const Node* node) {
     case T_CreateFunctionStmt:
       return CollectCreateFunctionStmt(state,
                                        *castNode(CreateFunctionStmt, node));
+    case T_CreateStmt:
+      return CollectCreateStmt(state, *castNode(CreateStmt, node));
     default:
       break;
   }
@@ -550,7 +572,15 @@ void Collect(std::string_view database, const RawStmt& node, Objects& objects,
              ParamIndex& max_bind_param_idx) {
   ObjectCollector collector{database, objects, max_bind_param_idx};
   SDB_ASSERT(node.stmt);
-  collector.Collect(nullptr, node.stmt);
+  collector.CollectStmt(nullptr, node.stmt);
+}
+
+void CollectExpr(std::string_view database, const Node& expr,
+                 Objects& objects) {
+  ParamIndex dummy_idx = 0;
+  ObjectCollector collector{database, objects, dummy_idx};
+  State dummy_state;
+  collector.CollectExprNode(dummy_state, &expr);
 }
 
 void Collect(std::string_view database, const RawStmt& node, Objects& objects) {

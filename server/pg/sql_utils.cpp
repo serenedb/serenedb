@@ -140,7 +140,50 @@ catalog::FunctionSignature ToSignature(const List* pg_parameters,
   return signature;
 }
 
-std::string Deparse(Node* node) {
+bool IsExpr(const Node* node) {
+  switch (nodeTag(node)) {
+    case T_ColumnRef:
+    case T_A_Const:
+    case T_ParamRef:
+    case T_A_Indirection:
+    case T_CaseExpr:
+    case T_SubLink:
+    case T_A_ArrayExpr:
+    case T_RowExpr:
+    case T_GroupingFunc:
+    case T_TypeCast:
+    case T_CollateClause:
+    case T_A_Expr:
+    case T_BoolExpr:
+    case T_NullTest:
+    case T_BooleanTest:
+    case T_JsonIsPredicate:
+    case T_SetToDefault:
+    case T_MergeSupportFunc:
+    case T_JsonParseExpr:
+    case T_JsonScalarExpr:
+    case T_JsonSerializeExpr:
+    case T_JsonFuncExpr:
+    case T_FuncCall:
+    case T_SQLValueFunction:
+    case T_MinMaxExpr:
+    case T_CoalesceExpr:
+    case T_XmlExpr:
+    case T_XmlSerialize:
+    case T_JsonObjectAgg:
+    case T_JsonArrayAgg:
+    case T_JsonObjectConstructor:
+    case T_JsonArrayConstructor:
+    case T_JsonArrayQueryConstructor:
+      return true;
+    default:
+      return false;
+  }
+}
+
+std::string DeparseStmt(Node* node) {
+  SDB_ASSERT(!IsExpr(node));
+
   auto ctx = CreateMemoryContext();
   auto scope = EnterMemoryContext(*ctx);
   StringInfoData buf;
@@ -151,6 +194,29 @@ std::string Deparse(Node* node) {
   std::string query_sql{buf.data, static_cast<size_t>(buf.len)};
   pfree(buf.data);
   return query_sql;
+}
+
+std::string DeparseExpr(Node* expr) {
+  SDB_ASSERT(IsExpr(expr));
+
+  ResTarget dummy_res_target{};
+  dummy_res_target.val = expr;
+  dummy_res_target.location = -1;
+  dummy_res_target.type = T_ResTarget;
+
+  List* target_list = list_make1(&dummy_res_target);
+
+  SelectStmt dummy_select{};
+  dummy_select.targetList = target_list;
+  dummy_select.type = T_SelectStmt;
+
+  auto deparsed = DeparseStmt(castNode(Node, &dummy_select));
+
+  static constexpr std::string_view kSelectPrefix = "SELECT ";
+  SDB_ASSERT(deparsed.starts_with(kSelectPrefix));
+  deparsed = deparsed.substr(kSelectPrefix.size());
+
+  return deparsed;
 }
 
 void MemoryContextDeleter::operator()(MemoryContext p) const noexcept {
@@ -175,6 +241,11 @@ MemoryContextPtr CreateMemoryContext() {
 
 void ResetMemoryContext(MemoryContextData& ctx) noexcept {
   MemoryContextReset(&ctx);
+}
+
+SharedMemoryContextPtr CreateSharedMemoryContext() {
+  return std::shared_ptr<MemoryContextData>(CreateMemoryContext().release(),
+                                            MemoryContextDeleter{});
 }
 
 void MemoryContextScopeGuard::operator()(MemoryContext p) const noexcept {

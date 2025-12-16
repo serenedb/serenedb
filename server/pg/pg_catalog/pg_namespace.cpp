@@ -39,11 +39,7 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
 void RetrieveObjects(ObjectId database_id,
                      const catalog::LogicalCatalog& catalog,
                      std::vector<PgNamespace>& values) {
-  std::vector<std::shared_ptr<catalog::Schema>> schemas;
-  auto res = catalog.GetSchemas(database_id, schemas);
-  if (!res.ok()) {
-    SDB_THROW(ERROR_INTERNAL, "Failed to get schemas for pg_namespace");
-  }
+  auto schemas = catalog.GetSnapshot()->GetSchemas(database_id);
 
   values.emplace_back(kPgCatalog);
   for (const auto& object : schemas) {

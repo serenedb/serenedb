@@ -1,0 +1,52 @@
+statement error
+CREATE TABLE koshareff(a BOOLEAN DEFAULT 228);
+----
+db error: ERROR: column "a" is of type boolean but default expression is of type integer
+HINT: You will need to rewrite or cast the expression.
+
+
+statement error
+CREATE TABLE koshareff(a BOOLEAN, DEFAULT (a = 0));
+----
+db error: ERROR: syntax error at or near "DEFAULT"
+
+
+statement ok
+CREATE TABLE tindex(
+  id INTEGER DEFAULT 228 - 228,
+  name TEXT DEFAULT substring('babsky', 1, 5),
+  weight INTEGER DEFAULT 1000 - 7,
+  pencil_size INTEGER,
+  PRIMARY KEY (id)
+);
+
+
+statement count 1
+INSERT INTO tindex DEFAULT VALUES;
+
+
+statement count 1
+INSERT INTO tindex (id, name, weight, pencil_size) VALUES (1, 'vedernikoff', 54, 1);
+
+
+statement count 1
+INSERT INTO tindex (id, pencil_size) VALUES (2, 3);
+
+
+statement count 1
+INSERT INTO tindex (id, name, weight, pencil_size) VALUES (3, DEFAULT, DEFAULT, 1);
+
+
+statement count 1
+INSERT INTO tindex (id, name, weight, pencil_size) VALUES (4, NULL, NULL, NULL);
+
+
+query
+SELECT *, pencil_size IS NULL FROM tindex;
+----
+id name weight pencil_size ?column?
+0 babsk 993 NULL t
+1 vedernikoff 54 1 f
+2 babsk 993 3 f
+3 babsk 993 1 f
+4 NULL NULL NULL t

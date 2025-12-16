@@ -129,6 +129,39 @@ List* Parse(MemoryContextData& ctx, const QueryString& query_string) {
   return result;
 }
 
+List* ParseExpressions(MemoryContextData& ctx,
+                       const QueryString& query_string) {
+  if (query_string.empty()) {
+    return {};
+  }
+
+  auto scope = EnterMemoryContext(ctx);
+
+  auto [result, err] =
+    SqlParse(query_string.data(), PG_QUERY_PARSE_PLPGSQL_EXPR);
+
+  if (err) {
+    THROW_SQL_ERROR(ERR_CODE(err->sqlerrcode), CURSOR_POS(err->cursorpos),
+                    ERR_MSG(err->message ? err->message : ""),
+                    ERR_DETAIL(err->detail ? err->detail : ""),
+                    ERR_HINT(err->hint ? err->hint : ""));
+  }
+
+  return result;
+}
+
+Node* ParseSingleExpression(MemoryContextData& ctx,
+                            const QueryString& query_string) {
+  auto list = ParseExpressions(ctx, query_string);
+  SDB_ASSERT(list_length(list) == 1);
+  auto* raw_stmt = list_nth_node(RawStmt, list, 0);
+  SDB_ASSERT(IsA(raw_stmt->stmt, SelectStmt));
+  auto* select = castNode(SelectStmt, raw_stmt->stmt);
+  SDB_ASSERT(list_length(select->targetList) == 1);
+  auto* expr = list_nth_node(ResTarget, select->targetList, 0)->val;
+  return expr;
+}
+
 pg::SqlStatement ParseSystemView(std::string_view query) {
   static auto gConnCtx = std::make_shared<ConnectionContext>(
     ExecContext::superuser().user(), StaticStrings::kSystemDatabase,

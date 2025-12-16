@@ -30,6 +30,7 @@
 
 struct RawStmt;
 struct List;
+struct Node;
 
 namespace sdb::pg {
 
@@ -101,8 +102,11 @@ class Objects : public irs::memory::Managed {
 
 // collect objects to objects
 void Collect(std::string_view database, const RawStmt& node, Objects& objects);
-// collect objects to objects and track max binding param index
 
+// collect objects to objects
+void CollectExpr(std::string_view database, const Node& expr, Objects& objects);
+
+// collect objects to objects and track max binding param index
 void Collect(std::string_view database, const RawStmt& node, Objects& objects,
              pg::ParamIndex& max_bind_param_idx);
 

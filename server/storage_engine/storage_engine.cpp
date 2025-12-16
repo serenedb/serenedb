@@ -165,9 +165,11 @@ Result StorageEngine::enhanceIndexDefinition(catalog::Table& collection,
 }
 
 std::shared_ptr<TableShard> GetTableShard(ObjectId id) {
-  auto& catalog =
+  auto& catalogs =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
-  return catalog.Physical().GetTableShard(id);
+  auto& catalog = ServerState::instance()->IsCoordinator() ? catalogs.Global()
+                                                           : catalogs.Local();
+  return catalog.GetSnapshot()->GetTableShard(id);
 }
 
 }  // namespace sdb

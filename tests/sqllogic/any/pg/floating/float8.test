@@ -56,6 +56,13 @@ float8
 -Infinity
 
 
+query
+SELECT (-3.14)::float8 + '1.14'
+----
+?column?
+-2
+
+
 statement ok
 SET EXTRA_FLOAT_DIGITS = -7;
 

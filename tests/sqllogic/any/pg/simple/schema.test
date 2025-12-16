@@ -15,6 +15,84 @@ CREATE TABLE t2(r text);
 
 
 query
+SELECT c.relname, n.nspname FROM pg_class c JOIN pg_namespace n ON c.relnamespace = n.oid WHERE relkind = 'r' AND c.relname NOT LIKE 'sdb_%' ORDER BY n.nspname, c.relname;
+----
+relname	nspname
+sql_features	information_schema
+sql_implementation_info	information_schema
+sql_parts	information_schema
+sql_sizing	information_schema
+pg_aggregate	pg_catalog
+pg_am	pg_catalog
+pg_amop	pg_catalog
+pg_amproc	pg_catalog
+pg_attrdef	pg_catalog
+pg_attribute	pg_catalog
+pg_auth_members	pg_catalog
+pg_authid	pg_catalog
+pg_cast	pg_catalog
+pg_class	pg_catalog
+pg_collation	pg_catalog
+pg_constraint	pg_catalog
+pg_conversion	pg_catalog
+pg_database	pg_catalog
+pg_db_role_setting	pg_catalog
+pg_default_acl	pg_catalog
+pg_depend	pg_catalog
+pg_description	pg_catalog
+pg_enum	pg_catalog
+pg_event_trigger	pg_catalog
+pg_extension	pg_catalog
+pg_foreign_data_wrapper	pg_catalog
+pg_foreign_server	pg_catalog
+pg_foreign_table	pg_catalog
+pg_index	pg_catalog
+pg_inherits	pg_catalog
+pg_init_privs	pg_catalog
+pg_language	pg_catalog
+pg_largeobject	pg_catalog
+pg_largeobject_metadata	pg_catalog
+pg_namespace	pg_catalog
+pg_opclass	pg_catalog
+pg_operator	pg_catalog
+pg_opfamily	pg_catalog
+pg_parameter_acl	pg_catalog
+pg_partitioned_table	pg_catalog
+pg_policy	pg_catalog
+pg_proc	pg_catalog
+pg_publication	pg_catalog
+pg_publication_namespace	pg_catalog
+pg_publication_rel	pg_catalog
+pg_range	pg_catalog
+pg_replication_origin	pg_catalog
+pg_rewrite	pg_catalog
+pg_seclabel	pg_catalog
+pg_sequence	pg_catalog
+pg_shdepend	pg_catalog
+pg_shdescription	pg_catalog
+pg_shseclabel	pg_catalog
+pg_statistic	pg_catalog
+pg_statistic_ext	pg_catalog
+pg_statistic_ext_data	pg_catalog
+pg_subscription	pg_catalog
+pg_subscription_rel	pg_catalog
+pg_tablespace	pg_catalog
+pg_transform	pg_catalog
+pg_trigger	pg_catalog
+pg_ts_config	pg_catalog
+pg_ts_config_map	pg_catalog
+pg_ts_dict	pg_catalog
+pg_ts_parser	pg_catalog
+pg_ts_template	pg_catalog
+pg_type	pg_catalog
+pg_user_mapping	pg_catalog
+t	public
+t2	public
+t	some_schema
+
+
+
+query
 SELECT * FROM t AS first, some_schema.t AS second WHERE first.r = second.r2;
 ----
 r	r2

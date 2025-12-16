@@ -182,17 +182,63 @@ velox::TypePtr ResolveFunction(const std::string& function_name,
 }
 
 std::vector<velox::TypePtr> GetExprsTypes(
-  std::span<const lp::ExprPtr> arg_exprs) {
-  return arg_exprs |
-         std::views::transform([](const auto& arg) { return arg->type(); }) |
+  std::span<const lp::ExprPtr> arg_exprs, bool use_pg_unknown = true) {
+  return arg_exprs | std::views::transform([&](const auto& arg) {
+           const auto& arg_type = arg->type();
+           // String literal as pg_unknown
+           if (use_pg_unknown && arg_type == velox::VARCHAR() &&
+               arg->kind() == lp::ExprKind::kConstant) {
+             return PG_UNKNOWN();
+           }
+           return arg->type();
+         }) |
          std::ranges::to<std::vector>();
 }
 
+velox::TypePtr FixupReturnType(const velox::TypePtr& ret_type) {
+  if (!ret_type) {
+    return ret_type;
+  }
+  if (ret_type == PG_UNKNOWN()) {
+    return velox::VARCHAR();
+  }
+  const auto& params = ret_type->parameters();
+  const auto params_cnt = params.size();
+
+  std::vector<velox::TypeParameter> new_params;
+  bool changed = false;
+
+  new_params.reserve(params_cnt);
+  for (const auto& param : params) {
+    if (param.kind != velox::TypeParameterKind::kType) {
+      new_params.emplace_back(param);
+      continue;
+    }
+
+    auto new_param_type = FixupReturnType(param.type);
+    if (new_param_type != param.type) {
+      changed = true;
+      new_params.emplace_back(std::move(new_param_type), param.rowFieldName);
+    } else {
+      new_params.emplace_back(param);
+    }
+  }
+  if (!changed) {
+    return ret_type;
+  }
+  return velox::getType(ret_type->name(), std::move(new_params));
+}
 velox::TypePtr ResolveFunction(const std::string& function_name,
                                std::span<const lp::ExprPtr> arg_exprs,
                                std::vector<velox::TypePtr>* arg_coercions) {
-  return ResolveFunction(function_name, GetExprsTypes(arg_exprs),
-                         arg_coercions);
+  if (const auto ret_type = ResolveFunction(
+        function_name, GetExprsTypes(arg_exprs), arg_coercions)) {
+    return FixupReturnType(ret_type);
+  }
+
+  const auto ret_type = ResolveFunction(
+    function_name, GetExprsTypes(arg_exprs, false), arg_coercions);
+  return FixupReturnType(ret_type);
 }
 
 template<typename V>
@@ -836,7 +882,7 @@ class SqlAnalyzer {
                       std::span<const velox::TypePtr> coercions) {
     SDB_ASSERT(coercions.size() <= args.size());
     for (size_t i = 0; i < coercions.size(); ++i) {
-      if (coercions[i]) {
+      if (coercions[i] && coercions[i] != args[i]->type()) {
         args[i] = MakeCast(coercions[i], std::move(args[i]));
       }
     }
@@ -2029,7 +2075,8 @@ lp::AggregateExprPtr SqlAnalyzer::MaybeAggregateFuncCall(
   }
 
   std::string aggr_func_name{logical_function.GetName()};
-  auto type = ve::resolveResultType(aggr_func_name, GetExprsTypes(func_args));
+  auto type = FixupReturnType(
+    ve::resolveResultType(aggr_func_name, GetExprsTypes(func_args)));
 
   auto filter_expr =
     ProcessExprNode(state, func_call.agg_filter, ExprKind::Filter);
@@ -4207,6 +4254,7 @@ lp::ExprPtr SqlAnalyzer::ProcessTypeCast(State& state, const TypeCast& expr) {
     return std::make_shared<lp::CallExpr>(std::move(type), "pg_byteain",
                                           std::move(arg));
   }
+
   if (arg->type() == velox::VARBINARY() && type == velox::VARCHAR()) {
     return std::make_shared<lp::CallExpr>(std::move(type), "pg_byteaout",
                                           std::move(arg));

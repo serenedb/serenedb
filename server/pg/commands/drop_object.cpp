@@ -58,8 +58,14 @@ yaclib::Future<Result> DropObject(ExecContext& context, const DropStmt& stmt) {
     } break;
     case OBJECT_SCHEMA: {
       // TODO: ensure that schema is empty
-      const bool cascade = stmt.behavior == DROP_CASCADE;
-      r = catalog.DropSchema(db, name, cascade, nullptr);
+      if (name == StaticStrings::kPgCatalogSchema ||
+          name == StaticStrings::kInformationSchema) {
+        r = {ERROR_BAD_PARAMETER, "cannot drop schema ", name,
+             " because it is required by the database system"};
+      } else {
+        const bool cascade = stmt.behavior == DROP_CASCADE;
+        r = catalog.DropSchema(db, name, cascade, nullptr);
+      }
     } break;
     default:
       r = {ERROR_NOT_IMPLEMENTED,

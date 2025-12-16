@@ -1021,3 +1021,22 @@ SELECT regexp_replace('hello world', 'world', 'universe');
 ----
 regexp_replace
 hello universe
+query
+SELECT * FROM (VALUES ('TUM', 'Munich'::varchar), ('LMU', 'Munich'), ('CMU'::varchar, 'Pittsburgh'));
+----
+column1	column2
+TUM	Munich
+LMU	Munich
+CMU	Pittsburgh
+
+
+query
+SELECT '123' + 123;
+----
+?column?
+246
+
+
+# TODO better error message
+query error
+SELECT '123' + '123';

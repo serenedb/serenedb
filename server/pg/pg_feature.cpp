@@ -37,6 +37,7 @@
 #include <velox/functions/sparksql/aggregates/Register.h>
 #include <velox/functions/sparksql/registration/Register.h>
 #include <velox/functions/sparksql/window/WindowFunctionsRegistration.h>
+#include <velox/type/Timestamp.h>
 #include <velox/type/Type.h>
 #include <velox/type/TypeCoercer.h>
 
@@ -136,11 +137,12 @@ velox::AllowedCoercions AllowedCoercions() {
   add(velox::REAL(), {velox::DOUBLE()});
   add(velox::DATE(), {velox::TIMESTAMP()});
 
-  add_same_cost(PG_UNKNOWN(),
-                {velox::VARCHAR(), velox::TINYINT(), velox::SMALLINT(),
-                 velox::INTEGER(), velox::BIGINT(), velox::HUGEINT(),
-                 velox::REAL(), velox::DOUBLE(), velox::BOOLEAN()},
-                kNullCoercionCost + 1);
+  add_same_cost(
+    PG_UNKNOWN(),
+    {velox::VARCHAR(), velox::TINYINT(), velox::SMALLINT(), velox::INTEGER(),
+     velox::BIGINT(), velox::HUGEINT(), velox::REAL(), velox::DOUBLE(),
+     velox::BOOLEAN(), velox::TIMESTAMP(), velox::DATE(), INTERVAL()},
+    kNullCoercionCost + 1);
 
   return coercions;
 }

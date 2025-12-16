@@ -208,19 +208,18 @@ velox::TypePtr FixupReturnType(const velox::TypePtr& ret_type) {
   bool changed = false;
 
   new_params.reserve(params_cnt);
-  for (size_t i = 0; i < params_cnt; ++i) {
-    if (params[i].kind != velox::TypeParameterKind::kType) {
-      new_params.emplace_back(params[i]);
+  for (const auto& param : params) {
+    if (param.kind != velox::TypeParameterKind::kType) {
+      new_params.emplace_back(param);
       continue;
     }
 
-    auto new_param_type = FixupReturnType(params[i].type);
-    if (new_param_type != params[i].type) {
+    auto new_param_type = FixupReturnType(param.type);
+    if (new_param_type != param.type) {
       changed = true;
-      new_params.emplace_back(std::move(new_param_type),
-                              params[i].rowFieldName);
+      new_params.emplace_back(std::move(new_param_type), param.rowFieldName);
     } else {
-      new_params.emplace_back(params[i]);
+      new_params.emplace_back(param);
     }
   }
   if (!changed) {

@@ -926,9 +926,9 @@ floor
 
 
 query
-SELECT ln(2.718281828459045);
+SELECT round(ln(2.718281828459045));
 ----
-ln
+round
 1
 
 

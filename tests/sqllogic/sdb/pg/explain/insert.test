@@ -72,21 +72,32 @@ a b c
 
 statement ok
 CREATE TABLE tindex(
-  id INTEGER PRIMARY KEY
+  id INTEGER DEFAULT 228 - 228,
+  name TEXT DEFAULT substring('babsky', 1, 5),
+  weight INTEGER DEFAULT 1000 - 7,
+  pencil_size INTEGER,
+  PRIMARY KEY (id)
 );
 
 
 statement count 1
-INSERT INTO tindex (id) VALUES (1);
+INSERT INTO tindex (id, name, weight, pencil_size) VALUES (1, 'vedernikoff', 54, 1);
 
 
 statement count 1
-INSERT INTO tindex (id) VALUES (0);
+INSERT INTO tindex DEFAULT VALUES;
+
+
+statement count 1
+INSERT INTO tindex (id, pencil_size) VALUES (2, 3);
 
 
 query
 SELECT * FROM tindex;
 ----
-id
-0
-1
+id name weight pencil_size
+0 babsk 993 NULL
+1 vedernikoff 54 1
+2 babsk 993 3
+3 babsk 993 1
+4 NULL NULL NULL

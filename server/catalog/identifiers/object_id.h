@@ -49,7 +49,7 @@ inline constexpr ObjectId kCalculationDB{std::numeric_limits<uint64_t>::max()};
 
 // Schema IDs
 inline constexpr ObjectId kPgCatalogSchema{11};
-inline constexpr ObjectId kPgInformationSchema{1000000};
+inline constexpr ObjectId kPgInformationSchema{1000003};
 
 }  // namespace id
 

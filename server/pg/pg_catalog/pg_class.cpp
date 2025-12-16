@@ -27,6 +27,7 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/local_catalog.h"
 #include "catalog/object.h"
+#include "catalog/schema.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/system_catalog.h"
 #include "rest_server/serened.h"
@@ -93,16 +94,9 @@ void RetrieveObjects(ObjectId database_id,
     }
   }
 
-  {  // retrieve views
-    std::vector<std::shared_ptr<catalog::View>> views;
-    auto res = catalog.GetViews(database_id, StaticStrings::kPublic, views);
-    if (!res.ok()) {
-      SDB_THROW(ERROR_INTERNAL, "Failed to get views for pg_class");
-    }
-
-    for (const auto& view : views) {
-      insert_object(view);
-    }
+  for (const auto& view : catalog.GetSnapshot()->GetRelations(
+         database_id, StaticStrings::kPublic)) {
+    insert_object(view);
   }
 }
 

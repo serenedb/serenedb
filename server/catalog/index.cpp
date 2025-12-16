@@ -18,29 +18,18 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
+#include "catalog/index.h"
 
-#include <string_view>
+namespace sdb::catalog {
 
-#include "pg/sql_statement.h"
-#include "pg/sql_utils.h"
+Index::Index(IndexOptions options, ObjectId database_id)
+  : SchemaObject{{},
+                 database_id,
+                 {},
+                 options.id,
+                 std::move(options.name),
+                 ObjectType::Index},
+    _table_id{options.table},
+    _type(options.type) {}
 
-struct ErrorData;
-struct List;
-struct MemoryContextData;
-struct Expr;
-
-namespace sdb {
-namespace pg {
-
-List* Parse(MemoryContextData& ctx, const QueryString& query_string);
-
-List* ParseExpressions(MemoryContextData& ctx, const QueryString& query_string);
-
-Node* ParseSingleExpression(MemoryContextData& ctx,
-                            const QueryString& query_string);
-
-pg::SqlStatement ParseSystemView(std::string_view query);
-
-}  // namespace pg
-}  // namespace sdb
+}  // namespace sdb::catalog

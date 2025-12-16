@@ -151,6 +151,7 @@ enum class ExprKind {
   CycleMark = EXPR_KIND_CYCLE_MARK,  // cycle mark value
   AggregateOrder,                    // ORDER BY in aggregate function
   AggregateArgument,                 // arguments of aggregate function
+  InsertSelect                       // SELECT in INSERT statement
 };
 
 constexpr lp::SpecialForm kSpecialFormPlaceholder{
@@ -204,9 +205,14 @@ lp::ExprPtr MakeConst(V v, velox::TypePtr type = nullptr) {
                                             std::move(variant));
 }
 
-velox::RowTypePtr MakeRowPtrView(const velox::RowTypePtr& type) {
-  return std::shared_ptr<const velox::RowType>(
-    std::shared_ptr<const velox::RowType>{}, type.get());
+template<typename T>
+std::shared_ptr<const T> MakePtrView(const T* ptr) {
+  return std::shared_ptr<const T>(std::shared_ptr<const T>{}, ptr);
+}
+
+template<typename T>
+std::shared_ptr<const T> MakePtrView(const std::shared_ptr<const T>& ptr) {
+  return MakePtrView(ptr.get());
 }
 
 void AndToLeft(lp::ExprPtr& left, lp::ExprPtr right) {
@@ -643,6 +649,7 @@ class SqlAnalyzer {
   void ProcessMergeStmt(State& state, const MergeStmt& stmt);
   void ProcessCreateFunctionStmt(State& state, const CreateFunctionStmt& stmt);
   void ProcessCreateViewStmt(State& state, const ViewStmt& stmt);
+  void ProcessCreateStmt(State& state, const CreateStmt& stmt);
   void ProcessCallStmt(State& state, const CallStmt& stmt);
 
   void ProcessValuesList(State& state, const List* list);
@@ -1063,7 +1070,8 @@ void SqlAnalyzer::ProcessAlias(State& state, const List* new_aliases,
   state.root = std::make_shared<lp::ProjectNode>(
     _id_generator.NextPlanId(), std::move(state.root), std::move(names),
     std::move(exprs));
-  state.resolver.CreateTable(table, MakeRowPtrView(state.root->outputType()));
+  state.resolver.CreateTable(
+    table, MakePtrView<velox::RowType>(state.root->outputType()));
 }
 
 std::pair<std::string_view, query::QueryContext::OptionValue> ConvertToOption(
@@ -1128,13 +1136,20 @@ void SqlAnalyzer::ProcessSelectStmt(State& state, const SelectStmt& stmt) {
   // TODO: ProcessFinalProject
 }
 
+// It's literally UNKNOWN
+// but have different address to distinguish it from UNKNOWN().
+const velox::UnknownType kDefaultValueTypePlaceHolder{};
+const auto kDefaultValueTypePlaceHolderPtr =
+  MakePtrView<velox::UnknownType>(&kDefaultValueTypePlaceHolder);
+const lp::CallExpr kDefaultValuePlaceHolder{
+  kDefaultValueTypePlaceHolderPtr, "presto_fail",
+  MakeConst("DEFAULT is not allowed in this context")};
+const auto kDefaultValuePlaceHolderPtr =
+  MakePtrView<lp::CallExpr>(&kDefaultValuePlaceHolder);
+
 void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
   if (stmt.returningList) {
     SDB_THROW(ERROR_NOT_IMPLEMENTED, "RETURNING clause is not implemented yet");
-  }
-  if (!stmt.selectStmt) {
-    SDB_THROW(ERROR_NOT_IMPLEMENTED,
-              "INSERT ... DEFAULT VALUES is not implemented yet");
   }
   if (stmt.onConflictClause) {
     SDB_THROW(ERROR_NOT_IMPLEMENTED,
@@ -1145,7 +1160,18 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
               "OVERRIDING clause is not implemented yet");
   }
   ProcessWithClause(state, stmt.withClause);
-  ProcessStmt(state, *stmt.selectStmt);
+
+  if (stmt.selectStmt) {
+    // We need a child state here because both the INSERT statement and its
+    // SELECT sub-statement can have their own CTEs
+    auto child_state = state.MakeChild();
+    child_state.expr_kind = ExprKind::InsertSelect;
+    ProcessStmt(child_state, *stmt.selectStmt);
+    state.root = std::move(child_state.root);
+  } else {
+    // INSERT ... DEFAULT VALUES
+    EnsureRoot(state);
+  }
 
   const auto& relation = *stmt.relation;
   const auto schema_name = absl::NullSafeStringView(relation.schemaname);
@@ -1163,22 +1189,32 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
         "INSERT statement is only applicable for tables, but the object is: ",
         magic_enum::enum_name(logical_object.GetType())));
   }
-  const auto& table = basics::downCast<catalog::Table>(logical_object);
 
+  const auto& table = basics::downCast<catalog::Table>(logical_object);
+  const auto& table_type = *table.RowType();
   std::vector<std::string> column_names;
   std::vector<lp::ExprPtr> column_exprs;
-  const auto& table_type = *table.RowType();
+  column_names.reserve(table_type.size());
+  column_exprs.reserve(table_type.size());
+
+  const uint32_t explicit_columns = list_length(stmt.cols);
   const auto& input_type = *state.root->outputType();
-  column_names.reserve(input_type.size());
-  column_exprs.reserve(input_type.size());
-  const uint32_t explicit_columns = stmt.cols ? list_length(stmt.cols) : 0;
   if (explicit_columns > input_type.size()) {
-    THROW_SQL_ERROR(ERR_MSG("INSERT has more target columns than expressions"));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                    ERR_MSG("INSERT has more target columns than expressions"),
+                    CURSOR_POS(ErrorPosition(ExprLocation(&stmt))));
   }
   if ((stmt.cols ? explicit_columns : table_type.size()) < input_type.size()) {
-    THROW_SQL_ERROR(ERR_MSG("INSERT has more expressions than target columns"));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                    ERR_MSG("INSERT has more expressions than target columns"),
+                    CURSOR_POS(ErrorPosition(ExprLocation(&stmt))));
   }
+  containers::FlatHashSet<std::string_view> unique_aliases;
+  unique_aliases.reserve(input_type.size());
   for (uint32_t i = 0; i < input_type.size(); ++i) {
+    if (input_type.childAt(i) == kDefaultValueTypePlaceHolderPtr) {
+      continue;  // will be handled in the loop below
+    }
     if (stmt.cols) {
       const std::string_view name = strVal(list_nth(stmt.cols, i));
       if (!table_type.containsChild(name)) {
@@ -1187,6 +1223,13 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
                         ERR_MSG("column \"", name, "\" of relation \"",
                                 table_name, "\" does not exist"));
       }
+      auto [_, emplaced] = unique_aliases.emplace(name);
+      if (!emplaced) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_DUPLICATE_COLUMN),
+          CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
+          ERR_MSG("column \"", name, "\" specified more than once"));
+      }
       column_names.emplace_back(name);
     } else {
       column_names.emplace_back(table_type.names()[i]);
@@ -1194,10 +1237,24 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
     lp::ExprPtr raw_expr = std::make_shared<lp::InputReferenceExpr>(
       input_type.childAt(i), input_type.nameOf(i));
     const auto& table_column_type = table_type.findChild(column_names.back());
-    if (raw_expr->type()->kind() != table_column_type->kind()) {
+    if (raw_expr->type() != table_column_type) {
       raw_expr = MakeCast(table_column_type, std::move(raw_expr));
     }
     column_exprs.push_back(std::move(raw_expr));
+  }
+
+  // set default value for not mentioned columns
+  for (const auto& column : table.Columns()) {
+    if (!absl::c_linear_search(column_names, column.name)) {
+      lp::ExprPtr expr;
+      if (const auto& default_value = column.default_value) {
+        expr = ProcessExprNodeImpl(state, default_value->GetExpr());
+      } else {
+        expr = MakeConst(velox::TypeKind::UNKNOWN, column.type);
+      }
+      column_names.emplace_back(column.name);
+      column_exprs.emplace_back(std::move(expr));
+    }
   }
 
   state.root = std::make_shared<lp::TableWriteNode>(
@@ -1456,40 +1513,72 @@ void SqlAnalyzer::ProcessCreateViewStmt(State& state, const ViewStmt& stmt) {
   }
 }
 
+// Just validate some parts
+void SqlAnalyzer::ProcessCreateStmt(State& state, const CreateStmt& stmt) {
+  State dummy{};
+  EnsureRoot(dummy);
+
+  VisitNodes(stmt.tableElts, [&](const Node& node) {
+    if (IsA(&node, ColumnDef)) {
+      const auto& col_def = *castNode(ColumnDef, &node);
+      VisitNodes(col_def.constraints, [&](const Constraint& constraint) {
+        switch (constraint.contype) {
+          case CONSTR_DEFAULT: {
+            auto column_type = NameToType(*col_def.typeName);
+            auto expr = ProcessExprNode(dummy, constraint.raw_expr,
+                                        ExprKind::ColumnDefault);
+            if (expr->type() != column_type) {
+              THROW_SQL_ERROR(
+                ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+                CURSOR_POS(ErrorPosition(ExprLocation(&constraint))),
+                ERR_MSG("column \"", col_def.colname, "\" is of type ",
+                        ToPgTypeString(column_type),
+                        " but default expression is of type ",
+                        ToPgTypeString(expr->type())),
+                ERR_HINT("You will need to rewrite or cast the expression."));
+            }
+          } break;
+          default:
+        }
+      });
+    }
+  });
+}
+
 SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node) {
   switch (node.type) {
     case T_SelectStmt: {
-      auto& stmt = *castNode(SelectStmt, &node);
+      const auto& stmt = *castNode(SelectStmt, &node);
       ProcessSelectStmt(state, stmt);
       return SqlCommandType::Select;
     }
     case T_InsertStmt: {
-      auto& stmt = *castNode(InsertStmt, &node);
+      const auto& stmt = *castNode(InsertStmt, &node);
       ProcessInsertStmt(state, stmt);
       return SqlCommandType::Insert;
     }
     case T_UpdateStmt: {
-      auto& stmt = *castNode(UpdateStmt, &node);
+      const auto& stmt = *castNode(UpdateStmt, &node);
       ProcessUpdateStmt(state, stmt);
       return SqlCommandType::Update;
     }
     case T_DeleteStmt: {
-      auto& stmt = *castNode(DeleteStmt, &node);
+      const auto& stmt = *castNode(DeleteStmt, &node);
       ProcessDeleteStmt(state, stmt);
       return SqlCommandType::Delete;
     }
     case T_MergeStmt: {
-      auto& stmt = *castNode(MergeStmt, &node);
+      const auto& stmt = *castNode(MergeStmt, &node);
       ProcessMergeStmt(state, stmt);
       return SqlCommandType::Merge;
     }
     case T_CallStmt: {
-      auto& stmt = *castNode(CallStmt, &node);
+      const auto& stmt = *castNode(CallStmt, &node);
       ProcessCallStmt(state, stmt);
       return SqlCommandType::Call;
     }
     case T_ExplainStmt: {
-      auto& stmt = *castNode(ExplainStmt, &node);
+      const auto& stmt = *castNode(ExplainStmt, &node);
       state.options = stmt.options;
       ProcessStmt(state, *stmt.query);
       return SqlCommandType::Explain;
@@ -1501,8 +1590,14 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node) {
       return SqlCommandType::DDL;
     }
     case T_CreateFunctionStmt: {
-      auto& stmt = *castNode(CreateFunctionStmt, &node);
+      const auto& stmt = *castNode(CreateFunctionStmt, &node);
       ProcessCreateFunctionStmt(state, stmt);
+      state.pgsql_node = &node;
+      return SqlCommandType::DDL;
+    }
+    case T_CreateStmt: {
+      const auto& stmt = *castNode(CreateStmt, &node);
+      ProcessCreateStmt(state, stmt);
       state.pgsql_node = &node;
       return SqlCommandType::DDL;
     }
@@ -1511,7 +1606,6 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node) {
     case T_CreatedbStmt:
     case T_DropdbStmt:
     case T_CreateSchemaStmt:
-    case T_CreateStmt:
     case T_DropStmt: {
       state.pgsql_node = &node;
       return SqlCommandType::DDL;
@@ -1925,6 +2019,11 @@ lp::AggregateExprPtr SqlAnalyzer::MaybeAggregateFuncCall(
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_GROUPING_ERROR),
                       CURSOR_POS(ErrorPosition(ExprLocation(&func_call))),
                       ERR_MSG("aggregate functions are not allowed in OFFSET"));
+    case ExprKind::ColumnDefault:
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_GROUPING_ERROR),
+        CURSOR_POS(ErrorPosition(ExprLocation(&func_call))),
+        ERR_MSG("aggregate functions are not allowed in DEFAULT expressions"));
     default:
       break;
   }
@@ -2104,7 +2203,7 @@ void SqlAnalyzer::ProcessGroupByList(State& state, const List* groupby,
 
   // this will help us to resolve columns after
   // aggregation removed all the columns in the output_type
-  state.lookup_columns = MakeRowPtrView(state.root->outputType());
+  state.lookup_columns = MakePtrView<velox::RowType>(state.root->outputType());
 
   state.root = std::make_shared<lp::AggregateNode>(
     _id_generator.NextPlanId(), std::move(state.root), std::move(grouping_keys),
@@ -2257,8 +2356,8 @@ State SqlAnalyzer::ProcessView(State* parent, std::string_view view_name,
   if (node->alias) {
     ProcessAlias(state, node->alias);
   } else {
-    state.resolver.CreateTable(view_name,
-                               MakeRowPtrView(state.root->outputType()));
+    state.resolver.CreateTable(
+      view_name, MakePtrView<velox::RowType>(state.root->outputType()));
   }
 
   return state;
@@ -2307,8 +2406,8 @@ State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
     _id_generator.NextPlanId(),
     velox::ROW(std::move(column_names), type.children()), "serenedb",
     absl::StrCat(schema_name, ".", table_name), type.names());
-  state.resolver.CreateTable(table_alias,
-                             MakeRowPtrView(state.root->outputType()));
+  state.resolver.CreateTable(
+    table_alias, MakePtrView<velox::RowType>(state.root->outputType()));
   return state;
 }
 
@@ -2441,7 +2540,7 @@ SqlAnalyzer::JoinUsingReturn SqlAnalyzer::ProcessJoinUsingClause(
     for (const auto& [name, type] :
          std::ranges::views::zip(output->names(), output->children())) {
       auto alias = ToAlias(name);
-      if (std::ranges::find(using_list, alias) != using_list.end()) {
+      if (absl::c_linear_search(using_list, alias)) {
         continue;
       }
       auto column_ref = std::make_shared<lp::InputReferenceExpr>(type, name);
@@ -2815,6 +2914,13 @@ lp::ExprPtr SqlAnalyzer::ProcessExprNodeImpl(State& state, const Node* expr) {
     case T_CollateClause:
       res = ProcessCollateClause(state, *castNode(CollateClause, expr));
       break;
+    case T_SetToDefault:
+      if (state.expr_kind != ExprKind::Values) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        CURSOR_POS(ErrorPosition(ExprLocation(expr))),
+                        ERR_MSG("DEFAULT is not allowed in this context"));
+      }
+      return kDefaultValuePlaceHolderPtr;
     case T_MultiAssignRef:
     case T_GroupingFunc:
     case T_NamedArgExpr:
@@ -2826,7 +2932,6 @@ lp::ExprPtr SqlAnalyzer::ProcessExprNodeImpl(State& state, const Node* expr) {
     case T_JsonObjectConstructor:
     case T_JsonArrayConstructor:
     case T_JsonArrayQueryConstructor:
-    case T_SetToDefault:
     case T_XmlExpr:
     case T_XmlSerialize:
     default:
@@ -3334,6 +3439,11 @@ lp::WindowExprPtr SqlAnalyzer::MaybeWindowFuncCall(
         ERR_CODE(ERRCODE_WINDOWING_ERROR),
         CURSOR_POS(ErrorPosition(ExprLocation(&func_call))),
         ERR_MSG("window function calls are not allowed in window definitions"));
+    case ExprKind::ColumnDefault:
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_WINDOWING_ERROR),
+        CURSOR_POS(ErrorPosition(ExprLocation(&func_call))),
+        ERR_MSG("window functions are not allowed in DEFAULT expressions"));
     default:
       break;
   }
@@ -3445,6 +3555,13 @@ lp::ExprPtr SqlAnalyzer::ProcessColumnRef(State& state, const ColumnRef& expr) {
   std::string name = NameToStr(expr.fields);
 
   SDB_ASSERT(state.root);
+
+  if (state.expr_kind == ExprKind::ColumnDefault) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_SYNTAX_ERROR),
+      CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
+      ERR_MSG("cannot use column reference in DEFAULT expression"));
+  }
 
   if (state.pre_columnref_hook) {
     if (auto res = state.pre_columnref_hook(name, expr)) {
@@ -4004,6 +4121,13 @@ lp::ExprPtr SqlAnalyzer::ProcessParamRef(State& state, const ParamRef& expr) {
 
 lp::ExprPtr SqlAnalyzer::ProcessSubLink(State& state, const SubLink& expr) {
   SDB_ASSERT(expr.subselect);
+
+  if (state.expr_kind == ExprKind::ColumnDefault) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_SYNTAX_ERROR),
+      CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
+      ERR_MSG("subqueries are not allowed in DEFAULT expressions"));
+  }
 
   auto child_state = state.MakeChild();
   child_state.is_sublink = true;

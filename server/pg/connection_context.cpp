@@ -35,10 +35,12 @@ ConnectionContext::ConnectionContext(std::string_view user,
 std::string ConnectionContext::GetCurrentSchema() const {
   auto database_id = ExecContext::GetDatabaseId();
   auto search_path = Config::Get<VariableType::PgSearchPath>("search_path");
-  auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+  auto catalog = SerenedServer::Instance()
+                   .getFeature<catalog::CatalogFeature>()
+                   .Global()
+                   .GetSnapshot();
   auto it = absl::c_find_if(search_path, [&](const std::string& schema_name) {
-    return catalog.GetSchema(database_id, schema_name);
+    return catalog->GetSchema(database_id, schema_name);
   });
 
   return it != search_path.end() ? *it : "";

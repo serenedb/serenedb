@@ -87,6 +87,7 @@ class TableShard {
   virtual uint64_t approxNumberDocuments() const { return 0; }
 
   auto& GetMeta() const noexcept { return _collection_meta; }
+  auto GetId() const noexcept { return _collection_meta.id; }
 
   virtual void close();
 

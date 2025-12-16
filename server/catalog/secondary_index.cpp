@@ -18,29 +18,13 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
+#include "catalog/secondary_index.h"
 
-#include <string_view>
+namespace sdb::catalog {
 
-#include "pg/sql_statement.h"
-#include "pg/sql_utils.h"
+SecondaryIndex::SecondaryIndex(SecondaryIndexOptions options,
+                               IndexOptions index_options, ObjectId database_id)
+  : Index(std::move(index_options), database_id),
+    _options(std::move(options)) {}
 
-struct ErrorData;
-struct List;
-struct MemoryContextData;
-struct Expr;
-
-namespace sdb {
-namespace pg {
-
-List* Parse(MemoryContextData& ctx, const QueryString& query_string);
-
-List* ParseExpressions(MemoryContextData& ctx, const QueryString& query_string);
-
-Node* ParseSingleExpression(MemoryContextData& ctx,
-                            const QueryString& query_string);
-
-pg::SqlStatement ParseSystemView(std::string_view query);
-
-}  // namespace pg
-}  // namespace sdb
+}  // namespace sdb::catalog

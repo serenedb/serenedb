@@ -231,7 +231,8 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
     auto database = _feature.server()
                       .getFeature<catalog::CatalogFeature>()
                       .Global()
-                      .GetDatabase(DatabaseName());
+                      .GetSnapshot()
+                      ->GetDatabase(DatabaseName());
     if (!database) {
       // sending invalid schema name as SQLSTATE
       return SendError(

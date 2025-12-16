@@ -947,14 +947,14 @@ pi
 
 
 query
-SELECT pow(2.0, 3.0);
+SELECT pow(2.0, 3.0)::integer;
 ----
 pow
 8
 
 
 query
-SELECT power(2.0, 3.0);
+SELECT power(2.0, 3.0)::integer;
 ----
 power
 8
@@ -989,7 +989,7 @@ sin
 
 
 query
-SELECT sqrt(16.0);
+SELECT sqrt(16.0)::integer;
 ----
 sqrt
 4

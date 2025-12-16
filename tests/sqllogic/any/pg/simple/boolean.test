@@ -166,7 +166,7 @@ SELECT false IS NOT UNKNOWN;
 t
 
 
-query ??
+query
 SELECT false = 'false';
 ----
 ?column?

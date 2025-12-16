@@ -26,11 +26,11 @@ INSERT INTO tindex DEFAULT VALUES;
 
 
 statement count 1
-INSERT INTO tindex (id, name, weight, pencil_size) VALUES (1, 'vedernikoff', 54, 1);
+INSERT INTO tindex (id, pencil_size) VALUES (2, 3);
 
 
 statement count 1
-INSERT INTO tindex (id, pencil_size) VALUES (2, 3);
+INSERT INTO tindex (id, name, weight, pencil_size) VALUES (1, 'vedernikoff', 54, 1);
 
 
 statement count 1

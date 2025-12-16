@@ -13,7 +13,7 @@ db error: ERROR: syntax error at or near "DEFAULT"
 
 statement ok
 CREATE TABLE tindex(
-  id INTEGER DEFAULT 228 - 228,
+  id INTEGER DEFAULT,
   PRIMARY KEY (id)
 );
 

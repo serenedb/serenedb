@@ -49,6 +49,7 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
 void RetrieveObjects(ObjectId database_id,
                      const catalog::LogicalCatalog& catalog,
                      std::vector<PgClass>& values) {
+  auto snapshot = catalog.GetSnapshot();
   auto insert_object =
     [&](const std::shared_ptr<catalog::SchemaObject>& object) {
       PgClass::Relkind relkind;
@@ -75,28 +76,14 @@ void RetrieveObjects(ObjectId database_id,
       // TODO(codeworse): fill other fields
       values.push_back(std::move(row));
     };
-  std::vector<std::shared_ptr<catalog::Schema>> schemas;
-  if (!catalog.GetSchemas(database_id, schemas).ok()) {
-    SDB_THROW(ERROR_INTERNAL, "Failed to get schemas for pg_class");
-  }
+  auto schemas = snapshot->GetSchemas(database_id);
 
   for (const auto& schema : schemas) {  // retrieve collections
-    std::vector<
-      std::pair<std::shared_ptr<catalog::Table>, std::shared_ptr<TableShard>>>
-      collections;
-    auto res = catalog.GetTables(database_id, schema->GetName(), collections);
-    if (!res.ok()) {
-      SDB_THROW(ERROR_INTERNAL, "Failed to get collections for pg_class");
-    }
+    auto collections = snapshot->GetRelations(database_id, schema->GetName());
 
-    for (const auto& [logical, _] : collections) {
+    for (const auto& logical : collections) {
       insert_object(logical);
     }
-  }
-
-  for (const auto& view : catalog.GetSnapshot()->GetRelations(
-         database_id, StaticStrings::kPublic)) {
-    insert_object(view);
   }
 }
 

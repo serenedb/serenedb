@@ -912,9 +912,9 @@ degrees
 
 
 query
-SELECT ROUND(exp(1.0), 5);
+SELECT round(exp(1.0), 5);
 ----
-exp
+round
 2.71828
 
 

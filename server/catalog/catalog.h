@@ -29,9 +29,11 @@
 
 #include "basics/containers/flat_hash_map.h"
 #include "basics/down_cast.h"
+#include "basics/errors.h"
 #include "catalog/database.h"
 #include "catalog/function.h"
 #include "catalog/identifiers/object_id.h"
+#include "catalog/index.h"
 #include "catalog/object.h"
 #include "catalog/role.h"
 #include "catalog/schema.h"
@@ -59,17 +61,96 @@ constexpr ObjectType GetObjectType() noexcept {
     return ObjectType::View;
   } else if constexpr (std::is_same_v<T, Schema>) {
     return ObjectType::Schema;
-  } else if constexpr (std::is_same_v<T, catalog::Role>) {
+  } else if constexpr (std::is_same_v<T, Role>) {
     return ObjectType::Role;
-  } else if constexpr (std::is_same_v<T, Database>) {
-    return ObjectType::Database;
-  } else if constexpr (std::is_same_v<T, catalog::Function>) {
+  } else if constexpr (std::is_same_v<T, Function>) {
     return ObjectType::Function;
-  } else if constexpr (std::is_same_v<T, catalog::Table>) {
+  } else if constexpr (std::is_same_v<T, Table>) {
     return ObjectType::Table;
   } else {
     static_assert(false);
   }
+}
+
+struct Snapshot {
+  virtual ~Snapshot() = default;
+  virtual std::vector<std::shared_ptr<Role>> GetRoles() const = 0;
+  virtual std::vector<std::shared_ptr<Database>> GetDatabases() const = 0;
+  virtual std::vector<std::shared_ptr<Schema>> GetSchemas(
+    ObjectId database) const = 0;
+  virtual std::vector<std::shared_ptr<SchemaObject>> GetRelations(
+    ObjectId database, std::string_view schema) const = 0;
+  virtual std::vector<std::shared_ptr<Function>> GetFunctions(
+    ObjectId database, std::string_view schema) const = 0;
+
+  virtual std::shared_ptr<Role> GetRole(std::string_view name) const = 0;
+  virtual std::shared_ptr<Database> GetDatabase(
+    std::string_view database) const = 0;
+  virtual std::shared_ptr<Database> GetDatabase(ObjectId database) const = 0;
+  virtual std::shared_ptr<Schema> GetSchema(ObjectId database,
+                                            std::string_view schema) const = 0;
+  virtual std::shared_ptr<SchemaObject> GetRelation(
+    ObjectId database, std::string_view schema,
+    std::string_view name) const = 0;
+  virtual std::shared_ptr<Function> GetFunction(
+    ObjectId database, std::string_view schema,
+    std::string_view name) const = 0;
+  virtual std::shared_ptr<Table> GetTable(ObjectId database_id,
+                                          std::string_view schema,
+                                          std::string_view name) const = 0;
+  virtual std::shared_ptr<Object> GetObject(ObjectId id) const = 0;
+
+  virtual std::shared_ptr<TableShard> GetTableShard(ObjectId id) const = 0;
+  virtual std::vector<std::shared_ptr<TableShard>> GetTableShards() const = 0;
+
+  template<typename T>
+  std::shared_ptr<T> GetObject(ObjectId id) const {
+    auto obj = GetObject(id);
+    if (obj && obj->GetType() == GetObjectType<T>()) {
+      return basics::downCast<T>(obj);
+    }
+    return nullptr;
+  }
+};
+
+template<typename V>
+void VisitTables(const Snapshot& snapshot, ObjectId database_id,
+                 std::string_view schema, V&& v) {
+  for (auto& rel : snapshot.GetRelations(database_id, schema)) {
+    if (rel->GetType() != ObjectType::Table) {
+      continue;
+    }
+
+    auto table = basics::downCast<Table>(rel);
+    auto shard = snapshot.GetTableShard(table->GetId());
+    if (!shard) {
+      continue;
+    }
+    // SDB_ENSURE(shard, ERROR_INTERNAL);
+    v(table, shard);
+  }
+}
+
+inline auto GetTables(const Snapshot& snapshot, ObjectId database_id,
+                      std::string_view schema) {
+  std::vector<std::pair<std::shared_ptr<Table>, std::shared_ptr<TableShard>>>
+    tables;
+  VisitTables(snapshot, database_id, schema, [&](auto& table, auto& shard) {
+    tables.emplace_back(table, shard);
+  });
+  return tables;
+}
+
+inline auto GetViews(const Snapshot& snapshot, ObjectId database_id,
+                     std::string_view schema) {
+  std::vector<std::shared_ptr<View>> views;
+  for (auto& rel : snapshot.GetRelations(database_id, schema)) {
+    if (rel->GetType() != ObjectType::View) {
+      continue;
+    }
+    views.push_back(basics::downCast<View>(rel));
+  }
+  return views;
 }
 
 struct LogicalCatalog {
@@ -86,6 +167,8 @@ struct LogicalCatalog {
   virtual Result RegisterFunction(
     ObjectId database_id, std::string_view schema,
     std::shared_ptr<catalog::Function> function) = 0;
+  virtual Result RegisterIndex(ObjectId database_id, std::string_view schema,
+                               std::string_view table, IndexOptions index) = 0;
 
   virtual Result CreateDatabase(
     std::shared_ptr<catalog::Database> database) = 0;
@@ -93,14 +176,17 @@ struct LogicalCatalog {
   virtual Result CreateSchema(ObjectId database_id,
                               std::shared_ptr<catalog::Schema> schema) = 0;
   virtual Result CreateView(ObjectId database_id, std::string_view schema,
-                            std::shared_ptr<catalog::View> view) = 0;
-  virtual Result CreateFunction(
-    ObjectId database_id, std::string_view schema,
-    std::shared_ptr<catalog::Function> function) = 0;
+                            std::shared_ptr<catalog::View> view,
+                            bool replace) = 0;
+  virtual Result CreateFunction(ObjectId database_id, std::string_view schema,
+                                std::shared_ptr<catalog::Function> function,
+                                bool replace) = 0;
 
   virtual Result CreateTable(ObjectId database_id, std::string_view schema,
                              CreateTableOptions options,
                              CreateTableOperationOptions operation_options) = 0;
+  virtual Result CreateIndex(ObjectId database_id, std::string_view schema,
+                             std::string_view table, IndexOptions options) = 0;
 
   virtual Result RenameTable(ObjectId database_id, std::string_view schema,
                              std::string_view name,
@@ -130,60 +216,13 @@ struct LogicalCatalog {
   virtual Result DropTable(ObjectId database, std::string_view schema,
                            std::string_view name,
                            AsyncResult* async_result) = 0;
+  virtual Result DropIndex(ObjectId database_id, std::string_view schema,
+                           std::string_view name) = 0;
 
-  virtual std::shared_ptr<catalog::Role> GetRole(
-    std::string_view name) const = 0;
-  virtual std::shared_ptr<catalog::View> GetView(
-    ObjectId database, std::string_view schema,
-    std::string_view name) const = 0;
-  virtual std::shared_ptr<catalog::Function> GetFunction(
-    ObjectId database, std::string_view schema,
-    std::string_view name) const = 0;
-  // TODO(gnusi): add options to return Table + TableShard together
-  virtual std::shared_ptr<catalog::Table> GetTable(
-    ObjectId database, std::string_view schema,
-    std::string_view name) const = 0;
-  virtual std::shared_ptr<Database> GetDatabase(
-    std::string_view name) const = 0;
-
-  virtual Result GetRoles(
-    std::vector<std::shared_ptr<catalog::Role>>& roles) const = 0;
-  virtual Result GetViews(
-    ObjectId database_id, std::string_view schema,
-    std::vector<std::shared_ptr<catalog::View>>& views) const = 0;
-  virtual Result GetFunctions(
-    ObjectId database_id, std::string_view schema,
-    std::vector<std::shared_ptr<catalog::Function>>& functions) const = 0;
-  virtual Result GetTables(
-    ObjectId database_id, std::string_view schema,
-    std::vector<std::pair<std::shared_ptr<catalog::Table>,
-                          std::shared_ptr<TableShard>>>& tables) const = 0;
-  virtual std::vector<std::shared_ptr<Database>> GetDatabases() const = 0;
-  virtual Result GetSchemas(
-    ObjectId database_id,
-    std::vector<std::shared_ptr<Schema>>& schemas) const = 0;
-  virtual std::shared_ptr<Schema> GetSchema(ObjectId database_id,
-                                            std::string_view schema) const = 0;
-
-  virtual std::shared_ptr<Object> GetObject(ObjectId id) const = 0;
-
-  template<typename T>
-  std::shared_ptr<T> GetObject(ObjectId id) const {
-    auto obj = GetObject(id);
-    if (obj && obj->GetType() == GetObjectType<T>()) {
-      return basics::downCast<T>(obj);
-    }
-    return nullptr;
-  }
-};
-
-class PhysicalCatalog {
- public:
-  virtual ~PhysicalCatalog() = default;
-  virtual std::shared_ptr<TableShard> GetTableShard(ObjectId id) const = 0;
   virtual void RegisterTableDrop(TableTombstone tombstone) = 0;
   virtual void RegisterScopeDrop(ObjectId database_id, ObjectId schema_id) = 0;
-  virtual std::vector<std::shared_ptr<TableShard>> GetTableShards() = 0;
+
+  virtual std::shared_ptr<Snapshot> GetSnapshot() const = 0;
 };
 
 class CatalogFeature final : public SerenedFeature {
@@ -202,7 +241,6 @@ class CatalogFeature final : public SerenedFeature {
   void Cleanup() {
     _local.reset();
     _global.reset();
-    _physical.reset();
   }
 
   Result Open();
@@ -215,11 +253,6 @@ class CatalogFeature final : public SerenedFeature {
   LogicalCatalog& Local() const noexcept {
     SDB_ASSERT(_local, "Local catalog is not initialized");
     return *_local;
-  }
-
-  PhysicalCatalog& Physical(this auto& self) noexcept {
-    SDB_ASSERT(self._physical, "Physical catalog is not initialized");
-    return *self._physical;
   }
 
 #ifdef SDB_GTEST
@@ -243,7 +276,6 @@ class CatalogFeature final : public SerenedFeature {
 
   std::shared_ptr<LogicalCatalog> _global;
   std::shared_ptr<LogicalCatalog> _local;
-  std::shared_ptr<PhysicalCatalog> _physical;
   bool _skip_background_errors = false;
 };
 

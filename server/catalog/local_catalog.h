@@ -24,65 +24,66 @@
 #include <absl/synchronization/mutex.h>
 
 #include <memory>
-#include <thread>
+#include <vector>
 
-#include "basics/read_write_lock.h"
 #include "catalog/catalog.h"
 #include "catalog/database.h"
 #include "catalog/function.h"
+#include "catalog/index.h"
+#include "catalog/object.h"
 #include "catalog/role.h"
 #include "catalog/schema.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
-#include "catalog/types.h"
 #include "storage_engine/storage_engine.h"
 #include "storage_engine/table_shard.h"
 
 namespace sdb::catalog {
 
-class Snapshot;
+class SnapshotImpl;
 
 class LocalCatalog final : public LogicalCatalog,
-                           public PhysicalCatalog,
                            public std::enable_shared_from_this<LocalCatalog> {
  public:
   explicit LocalCatalog(StorageEngine& engine, bool skip_background_errors);
 
-  Result RegisterRole(std::shared_ptr<catalog::Role> role) final;
+  Result RegisterRole(std::shared_ptr<Role> role) final;
   Result RegisterDatabase(std::shared_ptr<Database> database) final;
   Result RegisterSchema(ObjectId database_id,
                         std::shared_ptr<Schema> schema) final;
   Result RegisterView(ObjectId database_id, std::string_view schema,
-                      std::shared_ptr<catalog::View> view) final;
+                      std::shared_ptr<View> view) final;
   Result RegisterFunction(ObjectId database_id, std::string_view schema,
-                          std::shared_ptr<catalog::Function> function) final;
+                          std::shared_ptr<Function> function) final;
   Result RegisterTable(ObjectId database_id, std::string_view schema,
                        CreateTableOptions table) final;
+  Result RegisterIndex(ObjectId database_id, std::string_view schema,
+                       std::string_view table, IndexOptions index) final;
 
-  Result CreateDatabase(std::shared_ptr<catalog::Database> database) final;
-  Result CreateRole(std::shared_ptr<catalog::Role> role) final;
+  Result CreateDatabase(std::shared_ptr<Database> database) final;
+  Result CreateRole(std::shared_ptr<Role> role) final;
   Result CreateView(ObjectId database_id, std::string_view schema,
-                    std::shared_ptr<catalog::View> view) final;
+                    std::shared_ptr<View> view, bool replace) final;
   Result CreateSchema(ObjectId database_id,
-                      std::shared_ptr<catalog::Schema> schema) final;
+                      std::shared_ptr<Schema> schema) final;
   Result CreateFunction(ObjectId database_id, std::string_view schema,
-                        std::shared_ptr<catalog::Function> function) final;
+                        std::shared_ptr<Function> function, bool replace) final;
   Result CreateTable(ObjectId database_id, std::string_view schema,
                      CreateTableOptions table,
                      CreateTableOperationOptions operation_options) final;
+  Result CreateIndex(ObjectId database_id, std::string_view schema,
+                     std::string_view table, IndexOptions options) final;
 
   Result RenameView(ObjectId database_id, std::string_view schema,
                     std::string_view name, std::string_view new_name) final;
   Result RenameTable(ObjectId database_id, std::string_view schema,
                      std::string_view name, std::string_view new_name) final;
   Result ChangeView(ObjectId database_id, std::string_view schema,
-                    std::string_view name,
-                    ChangeCallback<catalog::View> callback) final;
+                    std::string_view name, ChangeCallback<View> callback) final;
   Result ChangeTable(ObjectId database_id, std::string_view schema,
                      std::string_view name,
-                     ChangeCallback<catalog::Table> callback) final;
-  Result ChangeRole(std::string_view name,
-                    ChangeCallback<catalog::Role> callback) final;
+                     ChangeCallback<Table> callback) final;
+  Result ChangeRole(std::string_view name, ChangeCallback<Role> callback) final;
 
   Result DropDatabase(std::string_view name, AsyncResult* async_result) final;
   Result DropRole(std::string_view role) final;
@@ -94,43 +95,12 @@ class LocalCatalog final : public LogicalCatalog,
                       std::string_view name) final;
   Result DropTable(ObjectId database_id, std::string_view schema,
                    std::string_view name, AsyncResult* async_result) final;
-
-  std::shared_ptr<catalog::Role> GetRole(std::string_view name) const final;
-  std::shared_ptr<catalog::View> GetView(ObjectId database_id,
-                                         std::string_view schema,
-                                         std::string_view name) const final;
-  std::shared_ptr<catalog::Function> GetFunction(
-    ObjectId database_id, std::string_view schema,
-    std::string_view name) const final;
-  std::shared_ptr<catalog::Table> GetTable(ObjectId database_id,
-                                           std::string_view schema,
-                                           std::string_view name) const final;
-  std::shared_ptr<Database> GetDatabase(std::string_view name) const final;
-  std::shared_ptr<Schema> GetSchema(ObjectId database_id,
-                                    std::string_view schema) const final;
-
-  Result GetRoles(
-    std::vector<std::shared_ptr<catalog::Role>>& roles) const final;
-  Result GetViews(
-    ObjectId database_id, std::string_view schema,
-    std::vector<std::shared_ptr<catalog::View>>& views) const final;
-  Result GetFunctions(
-    ObjectId database_id, std::string_view schema,
-    std::vector<std::shared_ptr<catalog::Function>>& functions) const final;
-  Result GetTables(
-    ObjectId database_id, std::string_view schema,
-    std::vector<std::pair<std::shared_ptr<catalog::Table>,
-                          std::shared_ptr<TableShard>>>& tables) const final;
-  std::vector<std::shared_ptr<Database>> GetDatabases() const final;
-  Result GetSchemas(ObjectId database_id,
-                    std::vector<std::shared_ptr<Schema>>& schemas) const final;
-
-  std::shared_ptr<Object> GetObject(ObjectId id) const final;
+  Result DropIndex(ObjectId database_id, std::string_view schema,
+                   std::string_view name) final;
+  std::shared_ptr<Snapshot> GetSnapshot() const noexcept final;
 
   void RegisterTableDrop(TableTombstone tombstone) final;
   void RegisterScopeDrop(ObjectId database_id, ObjectId schema_id) final;
-  std::shared_ptr<TableShard> GetTableShard(ObjectId id) const final;
-  std::vector<std::shared_ptr<TableShard>> GetTableShards() final;
   void DropTableShard(ObjectId id);
 
   bool GetSkipBackgroundErrors() const noexcept {
@@ -138,13 +108,9 @@ class LocalCatalog final : public LogicalCatalog,
   }
 
  private:
-  // TODO(gnusi): use absl::Mutex, need this because of Update/Rename causing
-  // recursive access in cases where it needs object resolution
-  mutable basics::ReadWriteLock _mutex;
-  mutable std::atomic<std::thread::id> _owner;
-  std::shared_ptr<Snapshot> _snapshot;
-  containers::FlatHashMap<ObjectId, std::shared_ptr<TableShard>> _tables;
-  StorageEngine* const _engine;
+  mutable absl::Mutex _mutex;
+  std::shared_ptr<SnapshotImpl> _snapshot;
+  StorageEngine* _engine;
   bool _skip_background_errors;
 };
 

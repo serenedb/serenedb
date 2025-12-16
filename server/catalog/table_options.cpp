@@ -78,7 +78,8 @@ Result ResolveId(ObjectId database, const auto& name, ObjectId& id) {
 
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  auto c = catalog.GetTable(database, StaticStrings::kPublic, name);
+  auto c =
+    catalog.GetSnapshot()->GetTable(database, StaticStrings::kPublic, name);
   if (!c) {
     return {ERROR_SERVER_DATA_SOURCE_NOT_FOUND, "Collection not found: ", name};
   }
@@ -151,15 +152,16 @@ Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,
   } else if (request.distributeShardsLike) {
     auto& catalog =
       SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-    auto leader = catalog.GetTable(database_id, StaticStrings::kPublic,
-                                   *request.distributeShardsLike);
+    auto snapshot = catalog.GetSnapshot();
+    auto leader = snapshot->GetTable(database_id, StaticStrings::kPublic,
+                                     *request.distributeShardsLike);
     if (!leader) {
       return {ERROR_CLUSTER_UNKNOWN_DISTRIBUTESHARDSLIKE,
               "Collection not found: ", *request.distributeShardsLike};
     }
 
     if (leader->distributeShardsLike().isSet()) {
-      auto new_leader = catalog.GetObject(leader->distributeShardsLike());
+      auto new_leader = snapshot->GetObject(leader->distributeShardsLike());
       SDB_ENSURE(new_leader, ERROR_CLUSTER_CHAIN_OF_DISTRIBUTESHARDSLIKE,
                  "Collection not found: ", leader->distributeShardsLike());
 
@@ -382,7 +384,7 @@ Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,
 void WriteTableName(vpack::Builder& b, ObjectId id) {
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  auto c = catalog.GetObject<catalog::Table>(id);
+  auto c = catalog.GetSnapshot()->GetObject<catalog::Table>(id);
   if (!c) {
     b.add(vpack::Slice::emptyStringSlice());  // dangling reference
   } else {
@@ -394,7 +396,8 @@ std::shared_ptr<Table> GetVertexByName(ObjectId database,
                                        std::string_view name) {
   auto& catalog =
     SerenedServer::Instance().getFeature<CatalogFeature>().Global();
-  return catalog.GetTable(database, StaticStrings::kPublic, name);
+  return catalog.GetSnapshot()->GetTable(database, StaticStrings::kPublic,
+                                         name);
 }
 
 }  // namespace sdb::catalog

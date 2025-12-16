@@ -69,6 +69,19 @@ Result ErrorMeta(ErrorCode code, std::string_view object_type,
           error, " metadata: ",     meta.toJson()};
 }
 
+template<typename T>
+ResultOr<std::shared_ptr<Database>> GetDatabaseImpl(T key) {
+  auto& catalog =
+    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+  auto database = catalog.GetSnapshot()->GetDatabase(key);
+  if (!database) [[unlikely]] {
+    return std::unexpected<Result>(std::in_place,
+                                   ERROR_SERVER_DATABASE_NOT_FOUND,
+                                   "Cannot find database ", key);
+  }
+  return database;
+}
+
 }  // namespace
 
 CatalogFeature::CatalogFeature(Server& server)
@@ -87,17 +100,13 @@ void CatalogFeature::prepare() {
   auto catalog =
     std::make_shared<LocalCatalog>(GetServerEngine(), _skip_background_errors);
   _global = catalog;
-  _local = catalog;
-  _physical = std::move(catalog);
+  _local = std::move(catalog);
 }
 
 void CatalogFeature::start() {
 #ifdef SDB_CLUSTER
-  if (ServerState::instance()->IsCoordinator()) {
-    auto catalog = std::make_shared<GlobalCatalog>(GetClusterInfo());
-    _global = catalog;
-    _physical = std::move(catalog);
-  } else if (ServerState::instance()->IsDBServer()) {
+  if (ServerState::instance()->IsCoordinator() ||
+      ServerState::instance()->IsDBServer()) {
     _global = std::make_shared<GlobalCatalog>(GetClusterInfo());
   }
 #endif
@@ -107,10 +116,8 @@ void CatalogFeature::unprepare() {
   // TODO(gnusi): fix
   SDB_ASSERT(_local);
   SDB_ASSERT(_global);
-  SDB_ASSERT(_physical);
   //_local.reset();
   //_global.reset();
-  //_physical.reset();
 }
 
 void CatalogFeature::beginShutdown() {}
@@ -181,7 +188,7 @@ Result CatalogFeature::AddSchemas(
 
       auto schema =
         std::make_shared<catalog::Schema>(database_id, std::move(options));
-      schemas.push_back(schema);
+      schemas.emplace_back(schema);
 
       return Global().RegisterSchema(database_id, std::move(schema));
     });
@@ -241,7 +248,7 @@ Result CatalogFeature::ProcessTombstones() {
         // TODO(gnusi): this will be gone once we have normal indexes
         struct IndexMeta {
           std::string_view objectId;  // NOLINT
-          IndexType type = IndexType::kTypeUnknown;
+          sdb::IndexType type = sdb::IndexType::kTypeUnknown;
           bool unique = false;
         };
         for (auto index_slice : vpack::ArrayIterator{options.indexes}) {
@@ -261,7 +268,7 @@ Result CatalogFeature::ProcessTombstones() {
                                          index.unique);
         }
 
-        Physical().RegisterTableDrop(std::move(tombstone));
+        Local().RegisterTableDrop(std::move(tombstone));
         return {};
       });
   };
@@ -277,7 +284,7 @@ Result CatalogFeature::ProcessTombstones() {
                          r.errorMessage(), slice);
       }
 
-      Physical().RegisterTableDrop(std::move(tombstone));
+      Local().RegisterTableDrop(std::move(tombstone));
       return {};
     });
 
@@ -320,7 +327,7 @@ Result CatalogFeature::ProcessTombstones() {
         return r;
       }
 
-      Physical().RegisterScopeDrop(database_id, schema_id);
+      Local().RegisterScopeDrop(database_id, schema_id);
       return {};
     });
 
@@ -452,27 +459,11 @@ Result CatalogFeature::OpenDatabase(catalog::DatabaseOptions database) {
 }
 
 ResultOr<std::shared_ptr<Database>> GetDatabase(ObjectId database_id) {
-  auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  auto database = catalog.GetObject<catalog::Database>(database_id);
-  if (!database) [[unlikely]] {
-    return std::unexpected<Result>(std::in_place,
-                                   ERROR_SERVER_DATABASE_NOT_FOUND,
-                                   "Cannot find database ", database_id);
-  }
-  return database;
+  return GetDatabaseImpl(database_id);
 }
 
 ResultOr<std::shared_ptr<Database>> GetDatabase(std::string_view name) {
-  auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  auto database = catalog.GetDatabase(name);
-  if (!database) [[unlikely]] {
-    return std::unexpected<Result>(std::in_place,
-                                   ERROR_SERVER_DATABASE_NOT_FOUND,
-                                   "Cannot find database ", name);
-  }
-  return database;
+  return GetDatabaseImpl(name);
 }
 
 }  // namespace sdb::catalog

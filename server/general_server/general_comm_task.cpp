@@ -96,8 +96,10 @@ std::shared_ptr<catalog::Database> LookupDatabaseFromRequest(
     req.setDatabaseName(StaticStrings::kSystemDatabase);
   }
 
-  return server.getFeature<catalog::CatalogFeature>().Global().GetDatabase(
-    req.databaseName());
+  return server.getFeature<catalog::CatalogFeature>()
+    .Global()
+    .GetSnapshot()
+    ->GetDatabase(req.databaseName());
 }
 
 bool ResolveRequestContext(SerenedServer& server, GeneralRequest& req) {

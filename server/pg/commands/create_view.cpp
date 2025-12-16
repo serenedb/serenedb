@@ -103,22 +103,17 @@ yaclib::Future<Result> CreateView(const ExecContext& context,
     return yaclib::MakeFuture(std::move(r));
   }
 
-  r = catalog.CreateView(db, schema, view);
-  // TODO(ISSUE#214): use replace view instead,
-  // code below has race condition and ugly
+  r = catalog.CreateView(db, schema, view, stmt.replace);
+
   if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-    if (!stmt.replace) {
+    if (stmt.replace) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
+                      ERR_MSG("\"", stmt.view->relname, "\" is not a view"));
+    } else {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_DUPLICATE_TABLE),
         ERR_MSG("relation \"", stmt.view->relname, "\" already exists"));
     }
-
-    r = catalog.DropView(db, schema, stmt.view->relname);
-    if (r.is(ERROR_SERVER_DATA_SOURCE_NOT_FOUND)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
-                      ERR_MSG("\"", stmt.view->relname, "\" is not a view"));
-    }
-    r = catalog.CreateView(db, schema, std::move(view));
   }
 
   return yaclib::MakeFuture(std::move(r));

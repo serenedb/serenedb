@@ -321,7 +321,8 @@ class WBReader final : public rocksdb::WriteBatch::Handler {
       if (idx) {
         auto& catalog =
           SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
-        auto c = catalog.Local().GetObject<catalog::Table>(idx->GetMeta().id);
+        auto c = catalog.Local().GetSnapshot()->GetObject<catalog::Table>(
+          idx->GetMeta().id);
         SDB_ENSURE(c, ERROR_INTERNAL);
 
         c->keyGenerator().track(ref);

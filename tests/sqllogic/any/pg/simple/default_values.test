@@ -19,7 +19,7 @@ CREATE TABLE tindex(
 
 
 statement count 1
-INSERT INTO tindex DEFAULT VALUES;
+INSERT INTO tindex (id) VALUES (0);
 
 
 statement count 1

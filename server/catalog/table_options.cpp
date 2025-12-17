@@ -217,7 +217,7 @@ Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,
               leader->shardKeys().size()};
     }
 
-    options.distributeShardsLike = ForeignId{leader->GetId().id()};
+    options.distributeShardsLike = leader->GetId();
   } else {
     if (request.shardingStrategy) {
       if (*request.shardingStrategy != "hash") {

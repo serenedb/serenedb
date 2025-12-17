@@ -175,7 +175,7 @@ Table::TableOutput Table::MakeTableOptions() const {
     .name = GetName(),
     .schema = _schema.get(),
     .keyOptions = _key_generator.get(),
-    .shards = _shard_ids.get(),
+    .shards = _shard_ids,
     .id = Identifier{GetId().id()},
     .distributeShardsLike = ForeignId{_distribute_shards_like.id()},
     .planId = Identifier{_plan_id.id()},

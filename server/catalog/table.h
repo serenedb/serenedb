@@ -56,21 +56,20 @@ class Table : public SchemaObject {
     std::span<const Column::Id> pkColumns;
     std::string_view shardingStrategy;
     std::string_view name;
-    const ValidatorBase* schema;
+    vpack::Nullable<std::shared_ptr<ValidatorBase>> schema;
     const KeyGenerator* keyOptions;
-    const ShardMap* shards;
+    std::shared_ptr<ShardMap> shards;
     Identifier id;
     ForeignId distributeShardsLike;
     Identifier planId;  // TODO(gnusi): remove
     ObjectId planDb;    // TODO(gnusi): remove
     ForeignId from;
     ForeignId to;
-    vpack::Slice indexes = vpack::Slice::emptyArraySlice();
-    uint32_t numberOfShards = 0;
-    uint32_t replicationFactor = 0;
-    uint32_t writeConcern = 0;
+    uint32_t numberOfShards;
+    uint32_t replicationFactor;
+    uint32_t writeConcern;
     int type = std::to_underlying(TableType::Document);
-    bool waitForSync = false;
+    bool waitForSync;
   };
   // NOLINTEND
 

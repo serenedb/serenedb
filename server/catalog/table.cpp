@@ -166,18 +166,44 @@ Table::Table(TableOptions&& options, ObjectId database_id)
   SDB_ASSERT(_sharding_strategy);
 }
 
-TableOptions Table::MakeTableOptions() const {
+// NOLINTBEGIN
+// Just a TableOptions but with views to light-weight serialize
+struct Table::TableOutput {
+  std::span<const std::string> shardKeys;
+  std::span<const Column> columns;
+  std::span<const Column::Id> pkColumns;
+  std::string_view shardingStrategy;
+  std::string_view name;
+  // TODO make them just pointers if catalog::Table became immutable
+  vpack::Nullable<std::shared_ptr<ValidatorBase>> schema;
+  const KeyGenerator* keyOptions;
+  std::shared_ptr<ShardMap> shards;
+  Identifier id;
+  ForeignId distributeShardsLike;
+  Identifier planId;
+  ObjectId planDb;
+  ForeignId from;
+  ForeignId to;
+  uint32_t numberOfShards;
+  uint32_t replicationFactor;
+  uint32_t writeConcern;
+  int type;
+  bool waitForSync;
+};
+// NOLINTEND
+
+Table::TableOutput Table::MakeTableOptions() const {
   return {
     .shardKeys = _shard_keys,
     .columns = _columns,
     .pkColumns = _pk_columns,
-    .shardingStrategy = std::string{_sharding_strategy->name()},
-    .name = std::string{GetName()},
+    .shardingStrategy = _sharding_strategy->name(),
+    .name = GetName(),
     .schema = _schema,
-    .keyOptions = _key_generator,
+    .keyOptions = _key_generator.get(),
     .shards = _shard_ids,
     .id = Identifier{GetId().id()},
-    .distributeShardsLike = _distribute_shards_like,
+    .distributeShardsLike = ForeignId{_distribute_shards_like.id()},
     .planId = Identifier{_plan_id.id()},
     .planDb = _plan_db,
     .from = ForeignId{_from.id()},

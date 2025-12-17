@@ -164,3 +164,17 @@ SELECT false IS NOT UNKNOWN;
 ----
 ?column?
 t
+
+
+query
+SELECT false = 'false';
+----
+?column?
+t
+
+
+query
+SELECT 'TRUE' IS true;
+----
+?column?
+t

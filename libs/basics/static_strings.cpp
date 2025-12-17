@@ -77,7 +77,6 @@ const std::string StaticStrings::kDatabaseName("name");
 const std::string StaticStrings::kDatabaseId("id");
 const std::string StaticStrings::kProperties("properties");
 
-const std::string StaticStrings::kDataSourceDeleted("deleted");
 const std::string StaticStrings::kDataSourceId("id");
 const std::string StaticStrings::kDataSourceName("name");
 const std::string StaticStrings::kDataSourcePlanId("planId");

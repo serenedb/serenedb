@@ -6,6 +6,20 @@ Serene%
 
 
 query
+SELECT like_escape('Serene%'::varchar, '\');
+----
+like_escape
+Serene%
+
+
+query
+SELECT like_escape('Serene%'::varchar, '\'::varchar);
+----
+like_escape
+Serene%
+
+
+query
 SELECT like_escape('Serene_DB', '\');
 ----
 like_escape

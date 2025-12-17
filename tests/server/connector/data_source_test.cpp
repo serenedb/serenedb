@@ -72,7 +72,7 @@ class DataSourceTest : public ::testing::Test,
 
   void MakeRocksDBWrite(velox::RowVectorPtr data, sdb::ObjectId object_key) {
     std::vector<velox::column_index_t> pk;
-    std::vector<sdb::connector::key_utils::ColumnId> column_ids;
+    std::vector<sdb::catalog::Column::Id> column_ids;
     column_ids.reserve(data->type()->asRow().size());
     for (velox::vector_size_t i = 0; i < data->type()->asRow().size(); ++i) {
       if (!data->childAt(i)->mayHaveNulls()) {
@@ -100,7 +100,7 @@ class DataSourceTest : public ::testing::Test,
   void MakeRocksDBWriteRead(velox::RowVectorPtr data,
                             sdb::ObjectId object_key) {
     MakeRocksDBWrite(data, object_key);
-    std::vector<sdb::connector::key_utils::ColumnId> column_ids;
+    std::vector<sdb::catalog::Column::Id> column_ids;
     column_ids.reserve(data->type()->asRow().size());
     for (velox::vector_size_t i = 0; i < data->type()->asRow().size(); ++i) {
       column_ids.emplace_back(i);

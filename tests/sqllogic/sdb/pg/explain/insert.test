@@ -11,10 +11,10 @@ EXPLAIN (LOGICAL, EXECUTION) select * from t;
 ----
 QUERY PLAN
 LOGICAL PLAN:
-- TableScan: serenedb..t -> ROW<"c1":VARCHAR,"c2":INTEGER>
+- TableScan: t -> ROW<"c1":VARCHAR,"c2":INTEGER>
 EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
--- TableScan[0][.t] -> "c1":VARCHAR, "c2":INTEGER
+-- TableScan[0][t] -> "c1":VARCHAR, "c2":INTEGER
 
 
 query
@@ -28,7 +28,7 @@ LOGICAL PLAN:
   - Values: 1 rows -> ROW<"column1":VARCHAR,"column2":INTEGER>
 EXECUTION PLAN:
 Fragment 0:  numWorkers=1:
--- TableWrite[1][serenedb(table=.t, kind=INSERT)] -> rows:BIGINT
+-- TableWrite[1][serenedb(table=t, kind=INSERT)] -> rows:BIGINT
   -- Values[0][1 rows in 1 vectors] -> "column1":VARCHAR, "column2":INTEGER
 
 
@@ -43,7 +43,7 @@ LOGICAL PLAN:
   - Values: 1 rows -> ROW<"column1":VARCHAR>
 EXECUTION PLAN:
 Fragment 0:  numWorkers=1:
--- TableWrite[2][serenedb(table=.t, kind=INSERT)] -> rows:BIGINT
+-- TableWrite[2][serenedb(table=t, kind=INSERT)] -> rows:BIGINT
   -- Project[1][expressions: (column1:VARCHAR, "column1"), (dt1.__p7:INTEGER, null)] -> "column1":VARCHAR, "dt1.__p7":INTEGER
     -- Values[0][1 rows in 1 vectors] -> "column1":VARCHAR
 

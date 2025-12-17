@@ -94,7 +94,8 @@ class Table : public SchemaObject {
 #endif
 
  private:
-  TableOptions MakeTableOptions() const;
+  struct TableOutput;
+  TableOutput MakeTableOptions() const;
 
   const TableType _type = TableType::Unknown;
   bool _wait_for_sync = false;

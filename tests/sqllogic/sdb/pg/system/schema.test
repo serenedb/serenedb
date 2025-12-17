@@ -1,0 +1,10 @@
+statement error
+DROP SCHEMA information_schema;
+----
+db error: ERROR: cannot drop schema information_schema because it is required by the database system
+
+
+statement error
+CREATE SCHEMA information_schema;
+----
+db error: ERROR: unacceptable schema name "information_schema"

@@ -1,7 +1,7 @@
 # See https://pre-commit.com for more information
 
 # General excludes, files can also be excluded on a hook level
-exclude: js/.*|resources/.*|third_party/.*|.*.js|LICENSE|private/aql/tokens.cpp|private/aql/grammar.cpp|private/aql/grammar.hpp
+exclude: resources/.*|third_party/.*/.*|LICENSE
 default_install_hook_types: [pre-commit, pre-push]
 repos:
   - repo: meta
@@ -19,7 +19,7 @@ repos:
       - id: check-json
       - id: check-shebang-scripts-are-executable
       - id: check-merge-conflict
-      - id: pretty-format-json
+      # TODO(mbkkt) - id: pretty-format-json
       - id: check-symlinks
       - id: check-toml
       - id: check-vcs-permalinks

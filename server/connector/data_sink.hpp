@@ -30,7 +30,7 @@
 #include <vector>
 
 #include "catalog/identifiers/object_id.h"
-#include "connector/key_utils.hpp"
+#include "catalog/table_options.h"
 #include "primary_key.hpp"
 #include "rocksdb/utilities/transaction.h"
 #include "rocksdb/write_batch.h"
@@ -44,7 +44,7 @@ class RocksDBDataSink : public velox::connector::DataSink {
                   const velox::RowTypePtr& row_type,
                   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
                   std::span<const velox::column_index_t> key_childs,
-                  std::vector<key_utils::ColumnId> column_ids,
+                  std::vector<catalog::Column::Id> column_ids,
                   bool skip_primary_key_columns = false);
 
   void appendData(velox::RowVectorPtr input) final;
@@ -185,7 +185,7 @@ class RocksDBDataSink : public velox::connector::DataSink {
   rocksdb::ColumnFamilyHandle& _cf;
   ObjectId _object_key;
   std::vector<velox::column_index_t> _key_childs;
-  std::vector<key_utils::ColumnId> _column_ids;
+  std::vector<catalog::Column::Id> _column_ids;
   velox::memory::MemoryPool& _memory_pool;
   SliceVector _row_slices;
   primary_key::Keys _row_keys;
@@ -198,7 +198,7 @@ class RocksDBDeleteDataSink : public velox::connector::DataSink {
   RocksDBDeleteDataSink(rocksdb::Transaction& transaction,
                         rocksdb::ColumnFamilyHandle& cf,
                         velox::RowTypePtr row_type, ObjectId object_key,
-                        std::vector<key_utils::ColumnId> column_ids);
+                        std::vector<catalog::Column::Id> column_ids);
 
   void appendData(velox::RowVectorPtr input) final;
   bool finish() final;
@@ -213,7 +213,7 @@ class RocksDBDeleteDataSink : public velox::connector::DataSink {
   rocksdb::Transaction& _transaction;
   rocksdb::ColumnFamilyHandle& _cf;
   ObjectId _object_key;
-  std::vector<key_utils::ColumnId> _column_ids;
+  std::vector<catalog::Column::Id> _column_ids;
 };
 
 }  // namespace sdb::connector

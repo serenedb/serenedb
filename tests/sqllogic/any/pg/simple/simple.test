@@ -734,3 +734,311 @@ column1	column2
 TUM	Munich
 LMU	Munich
 CMU	Pittsburgh
+
+
+query
+SELECT chr(65);
+----
+chr
+A
+
+
+query
+SELECT concat('Hello', ' ', 'World');
+----
+concat
+Hello World
+
+
+query
+SELECT length('SereneDB');
+----
+length
+8
+
+
+query
+SELECT lower('SERENEDB');
+----
+lower
+serenedb
+
+
+query
+SELECT upper('serenedb');
+----
+upper
+SERENEDB
+
+
+query
+SELECT ltrim('   hello   ');
+----
+ltrim
+hello
+
+
+query
+SELECT rtrim('   hello   ');
+----
+rtrim
+   hello
+
+
+query
+SELECT trim('   hello   ');
+----
+btrim
+hello
+
+
+query
+SELECT lpad('hi', 5, 'xy');
+----
+lpad
+xyxhi
+
+
+query
+SELECT rpad('hi', 5, 'xy');
+----
+rpad
+hixyx
+
+
+query
+SELECT replace('hello world', 'world', 'universe');
+----
+replace
+hello universe
+
+
+query
+SELECT reverse('hello');
+----
+reverse
+olleh
+
+
+query
+SELECT substr('SereneDB', 1, 6);
+----
+substr
+Serene
+
+
+query
+SELECT strpos('hello world', 'world');
+----
+strpos
+7
+
+
+query
+SELECT split_part('a,b,c', ',', 2);
+----
+split_part
+b
+
+
+query
+SELECT abs(-42);
+----
+abs
+42
+
+
+query
+SELECT acos(0.5);
+----
+acos
+1.0471975511965979
+
+
+query
+SELECT asin(0.5);
+----
+asin
+0.5235987755982989
+
+
+query
+SELECT atan(1.0);
+----
+atan
+0.7853981633974483
+
+
+query
+SELECT atan2(1.0, 1.0);
+----
+atan2
+0.7853981633974483
+
+
+query
+SELECT cbrt(8.0);
+----
+cbrt
+2
+
+
+query
+SELECT ceil(3.14);
+----
+ceil
+4
+
+
+query
+SELECT ceiling(3.14);
+----
+ceiling
+4
+
+
+query
+SELECT cos(0.0);
+----
+cos
+1
+
+
+query
+SELECT degrees(3.141592653589793);
+----
+degrees
+180
+
+
+query
+SELECT round(exp(1.0), 5);
+----
+round
+2.71828
+
+
+query
+SELECT floor(3.14);
+----
+floor
+3
+
+
+query
+SELECT round(ln(2.718281828459045));
+----
+round
+1
+
+
+query
+SELECT mod(10, 3);
+----
+mod
+1
+
+
+query
+SELECT pi();
+----
+pi
+3.141592653589793
+
+
+query
+SELECT pow(2.0, 3.0)::integer;
+----
+pow
+8
+
+
+query
+SELECT power(2.0, 3.0)::integer;
+----
+power
+8
+
+
+query
+SELECT radians(180.0);
+----
+radians
+3.141592653589793
+
+
+query
+SELECT round(3.14159, 2);
+----
+round
+3.14
+
+
+query
+SELECT sign(-42);
+----
+sign
+-1
+
+
+query
+SELECT sin(0.0);
+----
+sin
+0
+
+
+query
+SELECT sqrt(16.0)::integer;
+----
+sqrt
+4
+
+
+query
+SELECT tan(0.0);
+----
+tan
+0
+
+
+query
+SELECT trunc(3.14159);
+----
+trunc
+3
+
+
+query
+SELECT width_bucket(5.0, 0.0, 10.0, 5);
+----
+width_bucket
+3
+
+
+query
+SELECT regexp_replace('hello world', 'world', 'universe');
+----
+regexp_replace
+hello universe
+
+
+query
+SELECT * FROM (VALUES ('TUM', 'Munich'::varchar), ('LMU', 'Munich'), ('CMU'::varchar, 'Pittsburgh'));
+----
+column1	column2
+TUM	Munich
+LMU	Munich
+CMU	Pittsburgh
+
+
+query
+SELECT '123' + 123;
+----
+?column?
+246
+
+
+# TODO better error message
+query error
+SELECT '123' + '123';

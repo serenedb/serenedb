@@ -25,7 +25,9 @@
 #include <string_view>
 
 #include "basics/containers/flat_hash_set.h"
+#include "basics/down_cast.h"
 #include "basics/exceptions.h"
+#include "connector/serenedb_connector.hpp"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_exception_macro.h"
 
@@ -552,6 +554,14 @@ void ObjectCollector::CollectStmt(const State* parent, const Node* node) {
 }
 
 }  // namespace
+
+void Objects::ObjectData::EnsureTable() const {
+  if (!table) {
+    SDB_ASSERT(object);
+    table = std::make_shared<connector::RocksDBTable>(
+      basics::downCast<catalog::Table>(*object));
+  }
+}
 
 void Collect(std::string_view database, const RawStmt& node, Objects& objects,
              ParamIndex& max_bind_param_idx) {

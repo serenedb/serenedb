@@ -44,13 +44,12 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
   GetIndex(&PgClass::reloptions),
 });
 
-constexpr Oid kPgCatalogNamespaceOid = 11;
-
 }  // namespace
 
 void RetrieveObjects(ObjectId database_id,
                      const catalog::LogicalCatalog& catalog,
                      std::vector<PgClass>& values) {
+  auto snapshot = catalog.GetSnapshot();
   auto insert_object =
     [&](const std::shared_ptr<catalog::SchemaObject>& object) {
       PgClass::Relkind relkind;
@@ -77,10 +76,14 @@ void RetrieveObjects(ObjectId database_id,
       // TODO(codeworse): fill other fields
       values.push_back(std::move(row));
     };
+  auto schemas = snapshot->GetSchemas(database_id);
 
-  for (const auto& view : catalog.GetSnapshot()->GetRelations(
-         database_id, StaticStrings::kPublic)) {
-    insert_object(view);
+  for (const auto& schema : schemas) {  // retrieve collections
+    auto collections = snapshot->GetRelations(database_id, schema->GetName());
+
+    for (const auto& logical : collections) {
+      insert_object(logical);
+    }
   }
 }
 
@@ -96,11 +99,11 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgClass>::GetTableData(
   RetrieveObjects(GetDatabaseId(), catalog, values);
 
   {  // get system tables
-    VisitSystemTables([&](const catalog::VirtualTable& table) {
+    VisitSystemTables([&](const catalog::VirtualTable& table, Oid schema_oid) {
       PgClass row{
         .oid = table.Id().id(),
         .relname = table.Name(),
-        .relnamespace = kPgCatalogNamespaceOid,
+        .relnamespace = schema_oid,
         .reltablespace = 0,
         .relkind = PgClass::Relkind::OrdinaryTable,
       };

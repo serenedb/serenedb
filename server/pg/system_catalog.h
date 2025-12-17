@@ -25,13 +25,16 @@
 #include <string_view>
 
 #include "catalog/fwd.h"
+#include "pg/pg_catalog/fwd.h"
 
 namespace sdb::pg {
 
+const catalog::VirtualTable* GetSystemTable(std::string_view schema,
+                                            std::string_view name);
 const catalog::VirtualTable* GetTable(std::string_view name);
 
 void VisitSystemTables(
-  absl::FunctionRef<void(const catalog::VirtualTable&)> visitor);
+  absl::FunctionRef<void(const catalog::VirtualTable&, Oid)> visitor);
 
 std::shared_ptr<catalog::Function> GetFunction(std::string_view name);
 

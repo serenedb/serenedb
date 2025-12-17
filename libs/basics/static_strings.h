@@ -93,6 +93,9 @@ class StaticStrings {
   static constexpr std::string_view kPublic = "public";
   static constexpr std::string_view kCalculationDatabase = "Z";
   static constexpr std::string_view kPgDefaultDatabase = "postgres";
+  // system schema names
+  static constexpr std::string_view kPgCatalogSchema = "pg_catalog";
+  static constexpr std::string_view kInformationSchema = "information_schema";
 
   // user names
   static constexpr std::string_view kPgDefaultUser = "postgres";
@@ -102,7 +105,6 @@ class StaticStrings {
   static const std::string kDatabaseName;
   static const std::string kProperties;
 
-  static const std::string kDataSourceDeleted;
   static const std::string kDataSourceId;
   static const std::string kDataSourceName;
   static const std::string kDataSourcePlanId;

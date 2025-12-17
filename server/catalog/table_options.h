@@ -136,12 +136,24 @@ struct AgencyIsBuildingFlags {
 };
 
 struct Column {
+  enum GeneratedType : uint8_t {
+    kNone = 0,
+    kStored = 1,
+    kVirtual = 2
+  };
+
+  bool IsGenerated() const noexcept {
+    return generated_type != GeneratedType::kNone;
+  }
+
   using Id = uint32_t;
 
   Id id;
   velox::TypePtr type;
   std::string name;
+  // if generated type is not kNone, default_value = generated expression
   ColumnExpr default_value;
+  GeneratedType generated_type;
 };
 
 struct CreateTableRequest {

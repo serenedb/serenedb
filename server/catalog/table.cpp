@@ -199,7 +199,7 @@ Table::TableOutput Table::MakeTableOptions() const {
     .pkColumns = _pk_columns,
     .shardingStrategy = _sharding_strategy->name(),
     .name = GetName(),
-    .schema = _schema.get(),
+    .schema = _schema,
     .keyOptions = _key_generator.get(),
     .shards = _shard_ids,
     .id = Identifier{GetId().id()},

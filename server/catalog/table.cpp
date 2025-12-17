@@ -166,16 +166,16 @@ Table::Table(TableOptions&& options, ObjectId database_id)
   SDB_ASSERT(_sharding_strategy);
 }
 
-TableOptions Table::MakeTableOptions() const {
+Table::TableOutput Table::MakeTableOptions() const {
   return {
     .shardKeys = _shard_keys,
     .columns = _columns,
     .pkColumns = _pk_columns,
-    .shardingStrategy = std::string{_sharding_strategy->name()},
-    .name = std::string{GetName()},
-    .schema = _schema,
-    .keyOptions = _key_generator,
-    .shards = _shard_ids,
+    .shardingStrategy = _sharding_strategy->name(),
+    .name = GetName(),
+    .schema = _schema.get(),
+    .keyOptions = _key_generator.get(),
+    .shards = _shard_ids.get(),
     .id = Identifier{GetId().id()},
     .distributeShardsLike = ForeignId{_distribute_shards_like.id()},
     .planId = Identifier{_plan_id.id()},

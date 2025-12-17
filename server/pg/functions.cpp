@@ -562,13 +562,21 @@ void registerFunctions(const std::string& prefix) {
                           velox::Varchar>({prefix + "like_escape"});
   velox::registerFunction<ProcessEscapePattern, velox::Varchar, velox::Varchar>(
     {prefix + "process_escape_pattern"});
-  velox::registerFunction<PgJsonExtractText, velox::Varchar, velox::Json,
+  velox::registerFunction<PgJsonExtractPathText, velox::Varchar, velox::Json,
                           int64_t>({prefix + "json_extract_path_text"});
-  velox::registerFunction<PgJsonExtractText, velox::Varchar, velox::Json,
+  velox::registerFunction<PgJsonExtractPathText, velox::Varchar, velox::Json,
                           velox::Varchar>({prefix + "json_extract_path_text"});
-  velox::registerFunction<PgJsonExtractText, velox::Varchar, velox::Json,
+  velox::registerFunction<PgJsonExtractPathText, velox::Varchar, velox::Json,
                           velox::Array<velox::Varchar>>(
     {prefix + "json_extract_path_text"});
+
+  velox::registerFunction<PgJsonExtractPath, velox::Varchar, velox::Json,
+                          int64_t>({prefix + "json_extract_path"});
+  velox::registerFunction<PgJsonExtractPath, velox::Varchar, velox::Json,
+                          velox::Varchar>({prefix + "json_extract_path"});
+  velox::registerFunction<PgJsonExtractPath, velox::Varchar, velox::Json,
+                          velox::Array<velox::Varchar>>(
+    {prefix + "json_extract_path"});
 
   registerExtractFunctions(prefix);
 }

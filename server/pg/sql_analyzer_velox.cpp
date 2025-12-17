@@ -3082,9 +3082,9 @@ bool IsExtractPath(std::string_view name) {
   return name == kJsonExtractPath || name == kJsonExtractPathText;
 }
 
-bool IsExtractText(std::string_view name) {
-  return name == kJsonExtractText || name == kJsonExtractPathText;
-}
+// bool IsExtractText(std::string_view name) {
+//   return name == kJsonExtractText || name == kJsonExtractPathText;
+// }
 
 bool IsJsonOperator(std::string_view name) {
   return name == kJsonExtract || name == kJsonExtractText ||
@@ -3104,12 +3104,28 @@ lp::ExprPtr SqlAnalyzer::ProcessJsonExtractOp(std::string_view type,
     if (key->type() == velox::INTEGER() || key->type() == velox::BIGINT() ||
         key->type() == velox::SMALLINT() || key->type() == velox::TINYINT()) {
       // array index
-      res = ResolveVeloxFunctionAndInferArgsCommonType(
-        "pg_json_extract_path_text", {std::move(input), std::move(key)});
+      if (type == kJsonExtract) {
+        res = ResolveVeloxFunctionAndInferArgsCommonType(
+          "pg_json_extract_path", {std::move(input), std::move(key)});
+        return MakeCast(velox::JSON(), std::move(res));
+      } else {
+        SDB_ASSERT(type == kJsonExtractText);
+        res = ResolveVeloxFunctionAndInferArgsCommonType(
+          "pg_json_extract_path_text", {std::move(input), std::move(key)});
+        return res;
+      }
     } else if (key->type() == velox::VARCHAR()) {
       // object field
-      res = ResolveVeloxFunctionAndInferArgsCommonType(
-        "pg_json_extract_path_text", {std::move(input), std::move(key)});
+      if (type == kJsonExtract) {
+        res = ResolveVeloxFunctionAndInferArgsCommonType(
+          "pg_json_extract_path", {std::move(input), std::move(key)});
+        return MakeCast(velox::JSON(), std::move(res));
+      } else {
+        SDB_ASSERT(type == kJsonExtractText);
+        res = ResolveVeloxFunctionAndInferArgsCommonType(
+          "pg_json_extract_path_text", {std::move(input), std::move(key)});
+        return res;
+      }
     } else {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -3117,14 +3133,18 @@ lp::ExprPtr SqlAnalyzer::ProcessJsonExtractOp(std::string_view type,
     };
   } else {
     // TODO(codeworse): path extraction
-    res = ResolveVeloxFunctionAndInferArgsCommonType(
-      "pg_json_extract_path_text", {std::move(input), std::move(key)});
+    if (type == kJsonExtractPath) {
+      res = ResolveVeloxFunctionAndInferArgsCommonType(
+        "pg_json_extract_path", {std::move(input), std::move(key)});
+      return MakeCast(velox::JSON(), std::move(res));
+    } else {
+      SDB_ASSERT(type == kJsonExtractPathText);
+      res = ResolveVeloxFunctionAndInferArgsCommonType(
+        "pg_json_extract_path_text", {std::move(input), std::move(key)});
+      return res;
+    }
   }
-  SDB_ASSERT(res);
-  if (!IsExtractText(type)) {
-    res = MakeCast(velox::JSON(), std::move(res));
-  }
-  return res;
+  SDB_UNREACHABLE();
 }
 
 lp::ExprPtr SqlAnalyzer::ProcessMatchOp(std::string_view type,

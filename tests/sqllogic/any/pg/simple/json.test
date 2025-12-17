@@ -19,6 +19,20 @@ NULL
 
 
 query
+SELECT '["string"]'::json -> 0;
+----
+?column?
+"string"
+
+
+query
+SELECT '["string"]'::json ->> 0;
+----
+?column?
+string
+
+
+query
 SELECT '[[1, 2], [3, 4]]'::json -> 0 -> 1;
 ----
 ?column?
@@ -30,6 +44,13 @@ SELECT '[[ 1,     2 ], [3, 4]]'::json ->> 0;
 ----
 ?column?
 [ 1,     2 ]
+
+
+query
+SELECT concat('[[ 1,     2 ], [3, 4]]'::json ->> 0, '[[ 1,     2 ], [3, 4]]'::json ->> 0);
+----
+concat
+[ 1,     2 ][ 1,     2 ]
 
 
 query
@@ -54,6 +75,13 @@ SELECT '[{"b" : 0, "A": [  " a", "aba"]}]'::json -> -1 ->> 'A'
 
 
 query
+SELECT concat('[{"b" : 0, "A": [  " a", "aba"]}]'::json -> -1 ->> 'A', '[{"b" : 0, "A": [  " a", "aba"]}]'::json -> -1 ->> 'A');
+----
+concat
+[  " a", "aba"][  " a", "aba"]
+
+
+query
 SELECT '{"a": {"b": [ "foo" , "bar"]}}'::json #> ARRAY['a', 'b', '1'];
 ----
 ?column?
@@ -65,3 +93,10 @@ SELECT '{"a": {"b": ["foo" , "bar"]}}'::json #> ARRAY['a', 'b'];
 ----
 ?column?
 ["foo" , "bar"]
+
+
+query
+SELECT concat('{"a": {"b": [ "foo" , "bar"]}}'::json #>> ARRAY['a', 'b', '1'], '{"a": {"b": [ "foo" , "bar"]}}'::json #>> ARRAY['a', 'b', '1']);
+----
+concat
+barbar

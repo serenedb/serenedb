@@ -1,5 +1,5 @@
 add_subdirectory(commands)
-
+add_subdirectory(functions)
 target_sources(
     sereneserver
     PRIVATE

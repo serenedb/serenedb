@@ -105,7 +105,6 @@ class StaticStrings {
   static const std::string kDatabaseName;
   static const std::string kProperties;
 
-  static const std::string kDataSourceDeleted;
   static const std::string kDataSourceId;
   static const std::string kDataSourceName;
   static const std::string kDataSourcePlanId;

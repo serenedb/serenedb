@@ -21,30 +21,28 @@
 
 #include "geo/geo_json.h"
 
-#include <algorithm>
-#include <string>
-#include <string_view>
-#include <vector>
-#include <span>
-
 #include <absl/strings/match.h>
-
-#include <vpack/iterator.h>
-
 #include <s2/s2loop.h>
 #include <s2/s2point_region.h>
 #include <s2/s2polygon.h>
 #include <s2/s2polyline.h>
 #include <s2/util/coding/coder.h>
+#include <vpack/iterator.h>
 
-#include "basics/string_utils.h"
-#include "vpack/vpack_helper.h"
+#include <algorithm>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
+
 #include "basics/debugging.h"
+#include "basics/logger/logger.h"
+#include "basics/string_utils.h"
 #include "geo/geo_params.h"
-#include "geo/shape_container.h"
 #include "geo/s2/multi_point_region.h"
 #include "geo/s2/multi_polyline_region.h"
-#include "basics/logger/logger.h"
+#include "geo/shape_container.h"
+#include "vpack/vpack_helper.h"
 
 namespace sdb::geo::json {
 namespace {

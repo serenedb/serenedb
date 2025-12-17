@@ -60,9 +60,9 @@ class Table : public SchemaObject {
     const KeyGenerator* keyOptions;
     const ShardMap* shards;
     Identifier id;
-    std::optional<ForeignId> distributeShardsLike;
-    std::optional<Identifier> planId;  // TODO(gnusi): remove
-    std::optional<ObjectId> planDb;    // TODO(gnusi): remove
+    ForeignId distributeShardsLike;
+    Identifier planId;  // TODO(gnusi): remove
+    ObjectId planDb;    // TODO(gnusi): remove
     ForeignId from;
     ForeignId to;
     vpack::Slice indexes = vpack::Slice::emptyArraySlice();

@@ -180,7 +180,7 @@ struct TableOptions {
   std::shared_ptr<KeyGenerator> keyOptions;
   std::shared_ptr<ShardMap> shards = std::make_shared<ShardMap>();
   Identifier id;
-  std::optional<ObjectId> distributeShardsLike;
+  std::optional<ForeignId> distributeShardsLike;
   std::optional<Identifier> planId;  // TODO(gnusi): remove
   std::optional<ObjectId> planDb;    // TODO(gnusi): remove
   ForeignId from;

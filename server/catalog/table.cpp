@@ -136,7 +136,7 @@ Table::Table(TableOptions&& options, ObjectId database_id)
       auto plan_db = options.planDb.value_or(ObjectId{});
       return plan_db.isSet() ? plan_db : database_id;
     }()},
-    _distribute_shards_like{options.distributeShardsLike.value_or(ObjectId{})},
+    _distribute_shards_like{options.distributeShardsLike.value_or(ForeignId{})},
     _from{options.from},
     _to{options.to},
     _key_generator{std::move(options.keyOptions)},
@@ -177,7 +177,7 @@ TableOptions Table::MakeTableOptions() const {
     .keyOptions = _key_generator,
     .shards = _shard_ids,
     .id = Identifier{GetId().id()},
-    .distributeShardsLike = _distribute_shards_like,
+    .distributeShardsLike = ForeignId{_distribute_shards_like.id()},
     .planId = Identifier{_plan_id.id()},
     .planDb = _plan_db,
     .from = ForeignId{_from.id()},

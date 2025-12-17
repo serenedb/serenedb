@@ -56,7 +56,6 @@ WindowsLibraries/
 p/
 /tests/sqllogic/.venv/**
 .venv/*
-private
 
 TAGS
 
@@ -75,7 +74,6 @@ server/aql/grammar.output
 
 /bin
 logs/
-out/
 
 etc/serenedb/*.conf
 

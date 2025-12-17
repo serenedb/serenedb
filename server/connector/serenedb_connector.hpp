@@ -328,12 +328,8 @@ class SereneDBConnectorMetadata final
     // TODO(Dronplane) if we have here transaction from upstream, we should not
     // commit here. But currently we don't have such case so transaction must be
     // local and stored in the insert handle.
-    auto serene_insert_handle =
-      std::dynamic_pointer_cast<const SereneDBConnectorInsertTableHandle>(
-        handle->veloxHandle());
-    VELOX_CHECK_NOT_NULL(serene_insert_handle,
-                         "Wrong type of insert table handle");
-    auto* transaction = serene_insert_handle->GetTransaction();
+    auto& serene_insert_handle = basics::downCast<const SereneDBConnectorInsertTableHandle>(*handle->veloxHandle());
+    auto* transaction = serene_insert_handle.GetTransaction();
     SDB_ASSERT(transaction);
     const int64_t number_of_locked_primary_keys = transaction->GetNumKeys();
     transaction->Commit();
@@ -347,13 +343,9 @@ class SereneDBConnectorMetadata final
     // TODO(Dronplane) if we have here transaction from upstream, we should not
     // rollback here. But currently we don't have such case so transaction must
     // be local and stored in the insert handle.
-    auto serene_insert_handle =
-      std::dynamic_pointer_cast<const SereneDBConnectorInsertTableHandle>(
-        handle->veloxHandle());
-    VELOX_CHECK_NOT_NULL(serene_insert_handle,
-                         "Wrong type of insert table handle");
-    if (serene_insert_handle->GetTransaction()) {
-      serene_insert_handle->GetTransaction()->Rollback();
+    auto& serene_insert_handle = basics::downCast<const SereneDBConnectorInsertTableHandle>(*handle->veloxHandle());
+    if (serene_insert_handle.GetTransaction()) {
+      serene_insert_handle.GetTransaction()->Rollback();
     }
     return {};
   } catch (...) {

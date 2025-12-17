@@ -18,24 +18,41 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
-#include "connector/key_utils.hpp"
-#include "primary_key.hpp"
-#include <velox/vector/ComplexVector.h>
-#include <iresearch/index/index_writer.hpp>
+#include <velox/vector/tests/utils/VectorTestBase.h>
 
-namespace sdb::connector {
+#include "connector/common.h"
+#include "connector/search_data_sink.hpp"
+#include "connector/primary_key.hpp"
+#include "gtest/gtest.h"
+#include "iresearch/utils/bytes_utils.hpp"
 
-class SearchDataSink {
+
+using namespace sdb::connector;
+
+namespace {
+
+constexpr sdb::ObjectId kObjectKey{123456};
+
+class SearchDataSinkTest : public ::testing::Test,
+                     public velox::test::VectorTestBase {
  public:
-  SearchDataSink(irs::IndexWriter::Transaction& trx) : _trx(trx) {};
+  static void SetUpTestCase() {
+    velox::memory::MemoryManager::testingSetInstance({});
+  }
 
-  void AppendData(velox::RowVector& input, const std::span<key_utils::ColumnId>& column_ids, const primary_key::Keys& keys);
-  bool Finish();
-  void Abort();
+  void SetUp() final {
+    _path = testing::TempDir() + "/" +
+            ::testing::UnitTest::GetInstance()->current_test_info()->name() +
+            "_XXXXXX";
+    ASSERT_NE(mkdtemp(_path.data()), nullptr);
+    
+  }
 
-private:
-  irs::IndexWriter::Transaction& _trx;
+  void TearDown() final {
+    std::filesystem::remove_all(_path);
+  }
+ protected:
+  std::string _path;
 };
 
-} // namespace sdb::connector
+}  // namespace

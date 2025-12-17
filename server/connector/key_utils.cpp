@@ -29,19 +29,19 @@ std::string PrepareTableKey(ObjectId id) {
   return key;
 }
 
-std::string PrepareColumnKey(ObjectId id, ColumnId column_oid) {
+std::string PrepareColumnKey(ObjectId id, catalog::Column::Id column_oid) {
   SDB_ASSERT(id.isSet());
   std::string key;
   rocksutils::Concat(key, id, column_oid);
   return key;
 }
 
-void AppendColumnKey(std::string& key, ColumnId column_oid) {
+void AppendColumnKey(std::string& key, catalog::Column::Id column_oid) {
   SDB_ASSERT(!key.empty());
   rocksutils::Append(key, column_oid);
 }
 
-void AppendCellKey(std::string& key, ColumnId column_oid,
+void AppendCellKey(std::string& key, catalog::Column::Id column_oid,
                    std::string_view primary_key) {
   SDB_ASSERT(!primary_key.empty());
   SDB_ASSERT(!key.empty());
@@ -59,13 +59,14 @@ std::pair<std::string, std::string> CreateTableRange(ObjectId id) {
   if (id.id() != std::numeric_limits<decltype(id.id())>::max()) {
     return {PrepareTableKey(id), PrepareTableKey(ObjectId{id.id() + 1})};
   }
-  return {PrepareTableKey(id),
-          PrepareColumnKey(id, std::numeric_limits<ColumnId>::max())};
+  return {
+    PrepareTableKey(id),
+    PrepareColumnKey(id, std::numeric_limits<catalog::Column::Id>::max())};
 }
 
 std::pair<std::string, std::string> CreateTableColumnRange(
-  ObjectId id, ColumnId column_oid) {
-  SDB_ASSERT(column_oid != std::numeric_limits<ColumnId>::max());
+  ObjectId id, catalog::Column::Id column_oid) {
+  SDB_ASSERT(column_oid != std::numeric_limits<catalog::Column::Id>::max());
   return {PrepareColumnKey(id, column_oid),
           PrepareColumnKey(id, column_oid + 1)};
 }

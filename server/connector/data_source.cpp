@@ -25,14 +25,14 @@
 
 #include "basics/assert.h"
 #include "common.h"
-#include "connector/key_utils.hpp"
+#include "key_utils.hpp"
 
 namespace sdb::connector {
 
 RocksDBDataSource::RocksDBDataSource(
   velox::memory::MemoryPool& memory_pool, rocksdb::Snapshot* snapshot,
   rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
-  std::vector<key_utils::ColumnId> column_oids, ObjectId object_key)
+  std::vector<catalog::Column::Id> column_oids, ObjectId object_key)
   : velox::connector::DataSource{},
     _memory_pool{memory_pool},
     _snapshot{snapshot},

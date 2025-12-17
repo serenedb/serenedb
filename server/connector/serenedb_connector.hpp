@@ -27,7 +27,6 @@
 #include "basics/misc.hpp"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table.h"
-#include "connector/key_utils.hpp"
 #include "data_sink.hpp"
 #include "data_source.hpp"
 #include "rocksdb/utilities/transaction_db.h"
@@ -36,16 +35,16 @@ namespace sdb::connector {
 
 class SereneDBColumnHandle final : public velox::connector::ColumnHandle {
  public:
-  explicit SereneDBColumnHandle(const std::string& name, key_utils::ColumnId id)
+  explicit SereneDBColumnHandle(const std::string& name, catalog::Column::Id id)
     : _name{name}, _id{id} {}
 
   const std::string& name() const final { return _name; }
 
-  const key_utils::ColumnId& Id() const noexcept { return _id; }
+  const catalog::Column::Id& Id() const noexcept { return _id; }
 
  private:
   std::string _name;
-  key_utils::ColumnId _id;
+  catalog::Column::Id _id;
 };
 
 class SereneDBConnectorTableHandle final
@@ -61,27 +60,27 @@ class SereneDBConnectorTableHandle final
 
   ObjectId TableId() const noexcept { return _table_id; }
 
-  const key_utils::ColumnId& GetCountField() const noexcept {
+  const catalog::Column::Id& GetCountField() const noexcept {
     return _table_count_field;
   }
 
  private:
   std::string _name;
   ObjectId _table_id;
-  key_utils::ColumnId _table_count_field;
+  catalog::Column::Id _table_count_field;
   // TODO(Dronplane) transaction/snapshot management here
 };
 
 class SereneDBColumn final : public axiom::connector::Column {
  public:
   explicit SereneDBColumn(std::string_view name, velox::TypePtr type,
-                          key_utils::ColumnId id)
+                          catalog::Column::Id id)
     : Column{std::string{name}, type}, _id{id} {}
 
-  const key_utils::ColumnId& Id() const noexcept { return _id; }
+  const catalog::Column::Id& Id() const noexcept { return _id; }
 
  private:
-  key_utils::ColumnId _id;
+  catalog::Column::Id _id;
 };
 
 class SereneDBTableLayout final : public axiom::connector::TableLayout {
@@ -151,7 +150,7 @@ class RocksDBTable final : public axiom::connector::Table {
       _pk_type->size(),
       axiom::connector::SortOrder{.isAscending = true, .isNullsFirst = false});
     // TODO(Dronplane) take it from the catalog when available
-    key_utils::ColumnId col_id = 0;
+    catalog::Column::Id col_id = 0;
     for (const auto& [name, type] : std::views::zip(
            collection.RowType()->names(), collection.RowType()->children())) {
       auto column = std::make_unique<SereneDBColumn>(name, type, col_id++);
@@ -393,7 +392,7 @@ class SereneDBConnector final : public velox::connector::Connector {
     const auto& object_key = serene_table_handle.TableId();
 
     // need to remap names to oids
-    std::vector<key_utils::ColumnId> column_oids;
+    std::vector<catalog::Column::Id> column_oids;
     if (output_type->size() > 0) {
       column_oids.reserve(output_type->size());
       for (uint32_t i = 0; i < output_type->size(); ++i) {
@@ -445,7 +444,7 @@ class SereneDBConnector final : public velox::connector::Connector {
     const auto& table =
       basics::downCast<const RocksDBTable>(*serene_insert_handle.Table());
     const auto& object_key = table.TableId();
-    std::vector<key_utils::ColumnId> column_oids;
+    std::vector<catalog::Column::Id> column_oids;
     if (serene_insert_handle.Kind() == axiom::connector::WriteKind::kInsert ||
         serene_insert_handle.Kind() == axiom::connector::WriteKind::kUpdate) {
       column_oids.reserve(input_type->size());

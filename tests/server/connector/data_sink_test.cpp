@@ -22,6 +22,7 @@
 
 #include "connector/common.h"
 #include "connector/data_sink.hpp"
+#include "connector/key_utils.hpp"
 #include "connector/primary_key.hpp"
 #include "gtest/gtest.h"
 #include "iresearch/utils/bytes_utils.hpp"
@@ -90,11 +91,10 @@ class DataSinkTest : public ::testing::Test,
     rocksdb::WriteOptions wo;
     transaction.reset(_db->BeginTransaction(wo, trx_opts, nullptr));
     ASSERT_NE(transaction, nullptr);
-    std::vector<sdb::connector::key_utils::ColumnId> column_oids;
+    std::vector<sdb::catalog::Column::Id> column_oids;
     column_oids.reserve(data->childrenSize());
     for (velox::column_index_t i = 0; i < data->childrenSize(); ++i) {
-      column_oids.push_back(
-        static_cast<sdb::connector::key_utils::ColumnId>(i));
+      column_oids.push_back(static_cast<sdb::catalog::Column::Id>(i));
     }
     sdb::connector::primary_key::Create(*data, pk, written_row_keys);
     sdb::connector::RocksDBDataSink sink(
@@ -2490,8 +2490,7 @@ TEST_F(DataSinkTest, test_deleteDataSink) {
 }
 
 TEST_F(DataSinkTest, test_deleteDataSinkPartial) {
-  const std::vector<sdb::connector::key_utils::ColumnId> column_ids = {0, 1, 2,
-                                                                       3};
+  const std::vector<sdb::catalog::Column::Id> column_ids = {0, 1, 2, 3};
   std::vector<std::string> names = {"hero", "role", "skill_level"};
   std::vector<velox::TypePtr> types = {velox::VARCHAR(), velox::VARCHAR(),
                                        velox::INTEGER()};
@@ -2569,7 +2568,7 @@ TEST_F(DataSinkTest, test_deleteDataSinkPartial) {
 }
 
 TEST_F(DataSinkTest, test_insertDeleteConflict) {
-  const std::vector<sdb::connector::key_utils::ColumnId> column_ids = {0, 1};
+  const std::vector<sdb::catalog::Column::Id> column_ids = {0, 1};
   std::vector<std::string> names = {"id", "name"};
   auto row_type =
     velox::ROW(names, {velox::createScalarType(velox::TypeKind::INTEGER),

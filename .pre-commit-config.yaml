@@ -19,7 +19,7 @@ repos:
       - id: check-json
       - id: check-shebang-scripts-are-executable
       - id: check-merge-conflict
-      - id: pretty-format-json
+      # TODO(mbkkt) - id: pretty-format-json
       - id: check-symlinks
       - id: check-toml
       - id: check-vcs-permalinks

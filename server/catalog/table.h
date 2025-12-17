@@ -48,31 +48,6 @@ NewOptions ParseTableChange(vpack::Slice slice);
 
 class Table : public SchemaObject {
  public:
-  // NOLINTBEGIN
-  // Just a TableOptions but with views to light-weight serialize
-  struct TableOutput {
-    std::span<const std::string> shardKeys;
-    std::span<const Column> columns;
-    std::span<const Column::Id> pkColumns;
-    std::string_view shardingStrategy;
-    std::string_view name;
-    vpack::Nullable<std::shared_ptr<ValidatorBase>> schema;
-    const KeyGenerator* keyOptions;
-    std::shared_ptr<ShardMap> shards;
-    Identifier id;
-    ForeignId distributeShardsLike;
-    Identifier planId;  // TODO(gnusi): remove
-    ObjectId planDb;    // TODO(gnusi): remove
-    ForeignId from;
-    ForeignId to;
-    uint32_t numberOfShards;
-    uint32_t replicationFactor;
-    uint32_t writeConcern;
-    int type = std::to_underlying(TableType::Document);
-    bool waitForSync;
-  };
-  // NOLINTEND
-
   Table(TableOptions&& options, ObjectId database_id);
   Table(const catalog::Table& other, NewOptions options);
 
@@ -119,6 +94,7 @@ class Table : public SchemaObject {
 #endif
 
  private:
+  struct TableOutput;
   TableOutput MakeTableOptions() const;
 
   const TableType _type = TableType::Unknown;

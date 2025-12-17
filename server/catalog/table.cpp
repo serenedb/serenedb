@@ -166,6 +166,32 @@ Table::Table(TableOptions&& options, ObjectId database_id)
   SDB_ASSERT(_sharding_strategy);
 }
 
+// NOLINTBEGIN
+// Just a TableOptions but with views to light-weight serialize
+struct Table::TableOutput {
+  std::span<const std::string> shardKeys;
+  std::span<const Column> columns;
+  std::span<const Column::Id> pkColumns;
+  std::string_view shardingStrategy;
+  std::string_view name;
+  // make them just pointers if catalog::Table became immutable
+  vpack::Nullable<std::shared_ptr<ValidatorBase>> schema;
+  const KeyGenerator* keyOptions;
+  std::shared_ptr<ShardMap> shards;
+  Identifier id;
+  ForeignId distributeShardsLike;
+  Identifier planId;
+  ObjectId planDb;
+  ForeignId from;
+  ForeignId to;
+  uint32_t numberOfShards;
+  uint32_t replicationFactor;
+  uint32_t writeConcern;
+  int type = std::to_underlying(TableType::Document);
+  bool waitForSync;
+};
+// NOLINTEND
+
 Table::TableOutput Table::MakeTableOptions() const {
   return {
     .shardKeys = _shard_keys,

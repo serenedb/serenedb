@@ -523,7 +523,7 @@ class WALDumper final : public rocksdb::WriteBatch::Handler,
 
       auto& catalog =
         SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Local();
-      const auto obj = catalog.GetObject<catalog::Table>(cid);
+      const auto obj = catalog.GetSnapshot()->GetObject<catalog::Table>(cid);
       if (!obj) {
         return {};
       }

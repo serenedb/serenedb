@@ -272,9 +272,9 @@ target_include_directories(
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/kaldi/src
 )
 
-target_link_libraries(iresearch-ofst PUBLIC
-    absl::flat_hash_set
-    absl::flat_hash_map
+target_link_libraries(
+    iresearch-ofst
+    PUBLIC absl::flat_hash_set absl::flat_hash_map
 )
 
 ################################################################################

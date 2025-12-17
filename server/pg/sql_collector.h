@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <axiom/connectors/ConnectorMetadata.h>
+
 #include <string_view>
 #include <type_traits>
 
@@ -30,6 +32,7 @@
 
 struct RawStmt;
 struct List;
+struct Node;
 
 namespace sdb::pg {
 
@@ -66,6 +69,12 @@ class Objects : public irs::memory::Managed {
   struct ObjectData {
     AccessType type = AccessType::None;
     std::shared_ptr<catalog::SchemaObject> object;
+
+    // TODO(mbkkt) Maybe remove this and instead make catalog::Table be able
+    // to implement connector::Table without allocation.
+    // This probably requires changing axiom::connector::Table.
+    void EnsureTable() const;
+    mutable std::shared_ptr<axiom::connector::Table> table;
   };
 
   using Map = containers::FlatHashMap<ObjectName, ObjectData>;
@@ -101,8 +110,11 @@ class Objects : public irs::memory::Managed {
 
 // collect objects to objects
 void Collect(std::string_view database, const RawStmt& node, Objects& objects);
-// collect objects to objects and track max binding param index
 
+// collect objects to objects
+void CollectExpr(std::string_view database, const Node& expr, Objects& objects);
+
+// collect objects to objects and track max binding param index
 void Collect(std::string_view database, const RawStmt& node, Objects& objects,
              pg::ParamIndex& max_bind_param_idx);
 

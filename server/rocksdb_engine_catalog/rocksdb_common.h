@@ -23,6 +23,7 @@
 
 #include <rocksdb/iterator.h>
 #include <rocksdb/options.h>
+#include <rocksdb/slice.h>
 #include <rocksdb/status.h>
 #include <rocksdb/utilities/transaction_db.h>
 
@@ -58,7 +59,10 @@ namespace rocksutils {
 /// used by IndexIterators to verify that an iterator is still in good shape
 void CheckIteratorStatus(const rocksdb::Iterator& iterator);
 
-/// iterate over all keys in range and count them
+size_t CountKeyRange(rocksdb::DB* db, rocksdb::Slice lower,
+                     rocksdb::Slice upper, rocksdb::ColumnFamilyHandle* cf,
+                     const rocksdb::Snapshot* snapshot,
+                     bool prefix_same_as_start);
 size_t CountKeyRange(rocksdb::DB*, const RocksDBKeyBounds&,
                      const rocksdb::Snapshot* snapshot,
                      bool prefix_same_as_start);
@@ -68,8 +72,8 @@ bool HasKeys(rocksdb::DB*, const RocksDBKeyBounds&,
              const rocksdb::Snapshot* snapshot, bool prefix_same_as_start);
 
 /// helper method to remove large ranges of data
-/// Should mainly be used to implement the drop() call
-Result RemoveLargeRange(rocksdb::DB* db, const RocksDBKeyBounds& bounds,
+Result RemoveLargeRange(rocksdb::DB* db, rocksdb::Slice lower,
+                        rocksdb::Slice upper, rocksdb::ColumnFamilyHandle* cf,
                         bool prefix_same_as_start, bool use_range_delete);
 
 /// compacts the entire key range of the database.

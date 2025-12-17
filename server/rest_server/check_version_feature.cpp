@@ -122,8 +122,11 @@ void CheckVersionFeature::checkVersion() {
     GetServerOptions().database_ignore_datafile_errors;
 
   // iterate over all databases
-  for (const auto& database :
-       server().getFeature<catalog::CatalogFeature>().Global().GetDatabases()) {
+  for (const auto& database : server()
+                                .getFeature<catalog::CatalogFeature>()
+                                .Global()
+                                .GetSnapshot()
+                                ->GetDatabases()) {
     methods::VersionResult res = methods::Version::check(database->GetId());
 
     if (res.status == methods::VersionResult::kCannotParseVersionFile ||

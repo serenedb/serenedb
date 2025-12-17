@@ -240,7 +240,7 @@ query
 SELECT '   {  "spaced" : [ 1 , 2 , 3 ] }   '::json;
 ----
 json
-   {  "spaced" : [ 1 , 2 , 3 ] }   
+   {  "spaced" : [ 1 , 2 , 3 ] }
 
 
 # Larger object sample

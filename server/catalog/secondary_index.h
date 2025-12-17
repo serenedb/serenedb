@@ -20,27 +20,24 @@
 
 #pragma once
 
-#include <string_view>
+#include "catalog/index.h"
 
-#include "pg/sql_statement.h"
-#include "pg/sql_utils.h"
+namespace sdb::catalog {
 
-struct ErrorData;
-struct List;
-struct MemoryContextData;
-struct Expr;
+struct SecondaryIndexOptions {
+  bool unique = false;
+  std::vector<std::string> columns;  // TODO: should be a ref to table column
+};
 
-namespace sdb {
-namespace pg {
+class SecondaryIndex : public Index {
+ public:
+  SecondaryIndex(SecondaryIndexOptions options, IndexOptions index_options,
+                 ObjectId database_id);
 
-List* Parse(MemoryContextData& ctx, const QueryString& query_string);
+  auto& GetOptions() const noexcept { return _options; }
 
-List* ParseExpressions(MemoryContextData& ctx, const QueryString& query_string);
+ private:
+  SecondaryIndexOptions _options;
+};
 
-Node* ParseSingleExpression(MemoryContextData& ctx,
-                            const QueryString& query_string);
-
-pg::SqlStatement ParseSystemView(std::string_view query);
-
-}  // namespace pg
-}  // namespace sdb
+}  // namespace sdb::catalog

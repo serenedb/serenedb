@@ -251,8 +251,11 @@ void UpgradeFeature::upgradeLocalDatabase() {
   const bool ignore_datafile_errors =
     GetServerOptions().database_ignore_datafile_errors;
 
-  for (auto& database :
-       server().getFeature<catalog::CatalogFeature>().Local().GetDatabases()) {
+  for (auto& database : server()
+                          .getFeature<catalog::CatalogFeature>()
+                          .Local()
+                          .GetSnapshot()
+                          ->GetDatabases()) {
     auto res =
       methods::Upgrade::startup(*database, _upgrade, ignore_datafile_errors);
 

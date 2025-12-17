@@ -20,27 +20,36 @@
 
 #pragma once
 
-#include <string_view>
+#include <string>
 
-#include "pg/sql_statement.h"
-#include "pg/sql_utils.h"
+#include "catalog/object.h"
 
-struct ErrorData;
-struct List;
-struct MemoryContextData;
-struct Expr;
+namespace sdb::catalog {
 
-namespace sdb {
-namespace pg {
+enum class IndexType : uint8_t {
+  Invalid = 0,
+  Secondary,
+  Inverted,
+};
 
-List* Parse(MemoryContextData& ctx, const QueryString& query_string);
+struct IndexOptions {
+  ObjectId id;
+  ObjectId table;
+  std::string name;
+  IndexType type = IndexType::Invalid;
+  vpack::Slice options;
+};
 
-List* ParseExpressions(MemoryContextData& ctx, const QueryString& query_string);
+class Index : public SchemaObject {
+ public:
+  Index(IndexOptions options, ObjectId database_id);
 
-Node* ParseSingleExpression(MemoryContextData& ctx,
-                            const QueryString& query_string);
+  auto GetIndexType() const noexcept { return _type; }
+  auto GetTableId() const noexcept { return _table_id; }
 
-pg::SqlStatement ParseSystemView(std::string_view query);
+ private:
+  ObjectId _table_id;
+  IndexType _type;
+};
 
-}  // namespace pg
-}  // namespace sdb
+}  // namespace sdb::catalog

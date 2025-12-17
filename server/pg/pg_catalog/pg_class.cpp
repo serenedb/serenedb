@@ -27,6 +27,7 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/local_catalog.h"
 #include "catalog/object.h"
+#include "catalog/schema.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/system_catalog.h"
 #include "rest_server/serened.h"
@@ -43,13 +44,12 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
   GetIndex(&PgClass::reloptions),
 });
 
-constexpr Oid kPgCatalogNamespaceOid = 11;
-
 }  // namespace
 
 void RetrieveObjects(ObjectId database_id,
                      const catalog::LogicalCatalog& catalog,
                      std::vector<PgClass>& values) {
+  auto snapshot = catalog.GetSnapshot();
   auto insert_object =
     [&](const std::shared_ptr<catalog::SchemaObject>& object) {
       PgClass::Relkind relkind;
@@ -76,31 +76,13 @@ void RetrieveObjects(ObjectId database_id,
       // TODO(codeworse): fill other fields
       values.push_back(std::move(row));
     };
+  auto schemas = snapshot->GetSchemas(database_id);
 
-  {  // retrieve collections
-    std::vector<
-      std::pair<std::shared_ptr<catalog::Table>, std::shared_ptr<TableShard>>>
-      collections;
-    auto res =
-      catalog.GetTables(database_id, StaticStrings::kPublic, collections);
-    if (!res.ok()) {
-      SDB_THROW(ERROR_INTERNAL, "Failed to get collections for pg_class");
-    }
+  for (const auto& schema : schemas) {  // retrieve collections
+    auto collections = snapshot->GetRelations(database_id, schema->GetName());
 
-    for (const auto& [logical, _] : collections) {
+    for (const auto& logical : collections) {
       insert_object(logical);
-    }
-  }
-
-  {  // retrieve views
-    std::vector<std::shared_ptr<catalog::View>> views;
-    auto res = catalog.GetViews(database_id, StaticStrings::kPublic, views);
-    if (!res.ok()) {
-      SDB_THROW(ERROR_INTERNAL, "Failed to get views for pg_class");
-    }
-
-    for (const auto& view : views) {
-      insert_object(view);
     }
   }
 }
@@ -117,11 +99,11 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgClass>::GetTableData(
   RetrieveObjects(GetDatabaseId(), catalog, values);
 
   {  // get system tables
-    VisitSystemTables([&](const catalog::VirtualTable& table) {
+    VisitSystemTables([&](const catalog::VirtualTable& table, Oid schema_oid) {
       PgClass row{
         .oid = table.Id().id(),
         .relname = table.Name(),
-        .relnamespace = kPgCatalogNamespaceOid,
+        .relnamespace = schema_oid,
         .reltablespace = 0,
         .relkind = PgClass::Relkind::OrdinaryTable,
       };

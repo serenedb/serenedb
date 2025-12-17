@@ -34,6 +34,19 @@ namespace sdb::pg {
 
 namespace {
 
+void ResolveInformationSchema(ObjectId database, std::string_view relation,
+                              Objects::ObjectData& data) {
+  if (const auto* table =
+        GetSystemTable(StaticStrings::kInformationSchema, relation)) {
+    data.object = table->CreateSnapshot(database);
+  }
+  // TODO(codeworse): add views and functions from information_schema
+}
+
+void ResolveEntity(ObjectId database, std::span<const std::string> search_path,
+                   Objects& objects, Disallowed& disallowed,
+                   const Objects& query, std::string_view entity_name);
+
 void ResolveObject(ObjectId database, std::span<const std::string> search_path,
                    Objects& objects, Disallowed& disallowed,
                    const Objects::ObjectName& name, Objects::ObjectData& data) {
@@ -49,22 +62,36 @@ void ResolveObject(ObjectId database, std::span<const std::string> search_path,
     return;
   }
 
+  if (name.schema == StaticStrings::kInformationSchema) {
+    // information_schema must be explicitly defined
+    // (except the case it is in the search path)
+    ResolveInformationSchema(database, name.relation, data);
+    if (data.object) {
+      return;
+    }
+  }
+
   if (const auto view = pg::GetView(name.relation)) {
     data.object = std::move(view);
   } else {
-    auto& catalogs =
-      SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
-    auto& catalog = catalogs.Global();
+    auto& catalog =
+      SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+    auto snapshot = catalog.GetSnapshot();
 
     std::string_view key = name.relation;
 
     auto resolve_object = [&](std::string_view schema) {
-      if (auto object = catalog.GetTable(database, schema, key)) {
-        data.object = object;
-      } else if (auto object = catalog.GetView(database, schema, key)) {
+      SDB_ASSERT(!data.object);
+      if (schema == StaticStrings::kInformationSchema) {
+        // In case information_schema is in the search path
+        ResolveInformationSchema(database, name.relation, data);
+        return;
+      }
+
+      if (auto object = snapshot->GetRelation(database, schema, key)) {
         data.object = object;
       } else {
-        data.object = catalog.GetFunction(database, schema, key);
+        data.object = snapshot->GetFunction(database, schema, key);
       }
     };
 
@@ -101,6 +128,15 @@ void ResolveObject(ObjectId database, std::span<const std::string> search_path,
                       func.SqlFunction().GetObjects());
       changed = disallowed.erase(name) != 0;
       SDB_ASSERT(changed);
+    }
+  } else if (data.object->GetType() == catalog::ObjectType::Table) {
+    auto table = basics::downCast<catalog::Table>(*data.object);
+    for (const auto& column : table.Columns()) {
+      if (const auto& default_value = column.default_value) {
+        const auto& default_value_objects = default_value->GetObjects();
+        ResolveEntity(database, search_path, objects, disallowed,
+                      default_value_objects, "default_value");
+      }
     }
   }
 }

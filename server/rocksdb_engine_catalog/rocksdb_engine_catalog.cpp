@@ -74,6 +74,7 @@
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "catalog/types.h"
+#include "connector/key_utils.hpp"
 #include "database/ticks.h"
 #include "general_server/rest_handler_factory.h"
 #include "general_server/scheduler_feature.h"
@@ -1858,7 +1859,8 @@ Result RocksDBEngineCatalog::DropIndex(IndexTombstone tombstone) {
   const auto bounds =
     GetIndexBounds(tombstone.type, tombstone.id.id(), tombstone.unique);
 
-  r = rocksutils::RemoveLargeRange(db, bounds, prefix_same_as_start,
+  r = rocksutils::RemoveLargeRange(db, bounds.start(), bounds.end(),
+                                   bounds.columnFamily(), prefix_same_as_start,
                                    use_range_delete);
 
   if (use_range_delete) {
@@ -1892,10 +1894,8 @@ bool RocksDBEngineCatalog::UseRangeDelete(ObjectId id,
 }
 
 Result RocksDBEngineCatalog::DropTable(const TableTombstone& tombstone) {
-  const bool prefix_same_as_start = true;
   const bool use_range_delete =
     UseRangeDelete(tombstone.table, tombstone.number_documents);
-
   rocksdb::DB* db = _db->GetRootDB();
 
   // Unregister collection metadata
@@ -1905,15 +1905,28 @@ Result RocksDBEngineCatalog::DropTable(const TableTombstone& tombstone) {
               r.errorMessage());  // continue regardless
   }
 
-  // delete documents
+  // Delete documents
   auto bounds = RocksDBKeyBounds::CollectionDocuments(tombstone.table.id());
-  r = rocksutils::RemoveLargeRange(db, bounds, prefix_same_as_start,
-                                   use_range_delete);
-
+  r =
+    rocksutils::RemoveLargeRange(db, bounds.start(), bounds.end(),
+                                 bounds.columnFamily(), true, use_range_delete);
   if (!r.ok()) {
     // We try to remove all documents.
     // If it does not work they cannot be accessed any more and leaked.
     SDB_ERROR("xxxxx", Logger::ENGINES, "error removing collection data: ",
+              r.errorMessage());  // continue regardless
+  }
+
+  // Delete columns
+  auto [lower, upper] = connector::key_utils::CreateTableRange(tombstone.table);
+  auto* table_cf =
+    RocksDBColumnFamilyManager::get(RocksDBColumnFamilyManager::Family::Data);
+  r = rocksutils::RemoveLargeRange(db, lower, upper, table_cf, true,
+                                   true);  // TODO(gnusi): Check rows*columns
+  if (!r.ok()) {
+    // We try to remove all columns.
+    // If it does not work they cannot be accessed any more and leaked.
+    SDB_ERROR("xxxxx", Logger::ENGINES, "error removing table data: ",
               r.errorMessage());  // continue regardless
   }
 
@@ -1948,6 +1961,15 @@ Result RocksDBEngineCatalog::DropTable(const TableTombstone& tombstone) {
               "deletion check in collection drop failed - not all documents "
               "have been deleted. remaining: ",
               num_docs);
+  }
+  // check if columns have been deleted
+  if (size_t num_values =
+        rocksutils::CountKeyRange(_db, lower, upper, table_cf, nullptr, true);
+      num_values > 0) {
+    SDB_THROW(ERROR_INTERNAL,
+              "deletion check in table drop failed - not all values have been "
+              "deleted. remaining: ",
+              num_values);
   }
 #endif
 
@@ -2509,9 +2531,10 @@ Result RocksDBEngineCatalog::dropDatabase(ObjectId id) {
   auto* db = _db->GetRootDB();
 
   auto remove_definitions = [&](RocksDBEntryType type) {
-    return rocksutils::RemoveLargeRange(
-      db, RocksDBKeyBounds::SchemaObjects(type, id, ObjectId{id}), true,
-      /*rangeDel*/ false);
+    auto bounds = RocksDBKeyBounds::SchemaObjects(type, id, id);
+    return rocksutils::RemoveLargeRange(db, bounds.start(), bounds.end(),
+                                        bounds.columnFamily(), true,
+                                        /*rangeDel*/ false);
   };
 
   auto r = remove_definitions(RocksDBEntryType::View);

@@ -149,9 +149,10 @@ SELECT * FROM pg_largeobject_metadata LIMIT 0
 oid	lomowner	lomacl
 
 query
-SELECT oid, nspname FROM pg_namespace WHERE nspname = 'pg_catalog' OR nspname = 'public'
+SELECT oid, nspname FROM pg_namespace WHERE nspname IN ('pg_catalog', 'public', 'information_schema') ORDER BY nspname;
 ----
 oid	nspname
+<slt:ignore>	information_schema
 11	pg_catalog
 <slt:ignore>	public
 

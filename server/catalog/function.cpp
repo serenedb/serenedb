@@ -47,7 +47,8 @@ bool FunctionSignature::Matches(
     [](const velox::TypePtr& arg, const FunctionParameter& param) {
       SDB_ASSERT(param.type);
       SDB_ASSERT(arg);
-      return *arg == *param.type;
+      return *arg == *param.type ||
+             (arg == pg::PG_UNKNOWN() && param.type == velox::VARCHAR());
     });
 }
 

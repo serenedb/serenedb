@@ -19,8 +19,8 @@ QUERY PLAN
 EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
 -- MergeJoin[2][INNER id=id] -> "id":INTEGER, "v1":VARCHAR, "v2":VARCHAR
-  -- TableScan[0][.t1] -> "id":INTEGER, "v1":VARCHAR
-  -- TableScan[1][.t2] -> "id":INTEGER, "v2":VARCHAR
+  -- TableScan[0][t1] -> "id":INTEGER, "v1":VARCHAR
+  -- TableScan[1][t2] -> "id":INTEGER, "v2":VARCHAR
 
 
 query ??? rowsort

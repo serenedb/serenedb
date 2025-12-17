@@ -174,7 +174,7 @@ struct Table::TableOutput {
   std::span<const Column::Id> pkColumns;
   std::string_view shardingStrategy;
   std::string_view name;
-  // make them just pointers if catalog::Table became immutable
+  // TODO make them just pointers if catalog::Table became immutable
   vpack::Nullable<std::shared_ptr<ValidatorBase>> schema;
   const KeyGenerator* keyOptions;
   std::shared_ptr<ShardMap> shards;

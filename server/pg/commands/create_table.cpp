@@ -115,13 +115,15 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
       VisitNodes(col_def.constraints, [&](const Constraint& constraint) {
         switch (constraint.contype) {
           case CONSTR_DEFAULT: {
-            DefaultValue default_value;
+            ColumnExpr default_value;
             auto r = default_value.Init(db, constraint.raw_expr);
             SDB_ENSURE(r.ok(), r.errorNumber(), std::move(r).errorMessage());
             col.default_value = std::move(default_value);
           } break;
           case CONSTR_PRIMARY:  // create table (field integer primary key)
             append_pk(col.id, ExprLocation(&constraint));
+            break;
+          case CONSTR_GENERATED:
             break;
           default:
             error_constraint_not_supported(constraint);
@@ -154,6 +156,7 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
         });
       } break;
       case CONSTR_DEFAULT:
+      case CONSTR_GENERATED:
         SDB_UNREACHABLE();
       default:
         error_constraint_not_supported(constraint);

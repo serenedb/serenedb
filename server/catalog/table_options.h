@@ -36,7 +36,7 @@
 #include "basics/reboot_id.h"
 #include "basics/static_strings.h"
 #include "catalog/cluster_types.h"
-#include "catalog/default_value.h"
+#include "catalog/column_expr.h"
 #include "catalog/fwd.h"
 #include "catalog/identifiers/identifier.h"
 #include "catalog/identifiers/object_id.h"
@@ -141,7 +141,7 @@ struct Column {
   Id id;
   velox::TypePtr type;
   std::string name;
-  std::optional<DefaultValue> default_value;
+  std::optional<ColumnExpr> default_value;
 };
 
 struct CreateTableRequest {

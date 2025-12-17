@@ -1,10 +1,10 @@
 target_sources(
     sereneserver
     PRIVATE
+        column_expr.cpp
         database.cpp
         schema.cpp
         databases.cpp
-        default_value.cpp
         local_catalog.cpp
         catalog.cpp
         object.cpp

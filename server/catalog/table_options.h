@@ -141,7 +141,7 @@ struct Column {
   Id id;
   velox::TypePtr type;
   std::string name;
-  std::optional<ColumnExpr> default_value;
+  ColumnExpr default_value;
 };
 
 struct CreateTableRequest {

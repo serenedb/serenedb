@@ -34,7 +34,7 @@ class ColumnExpr {
   Result Init(ObjectId database, Node* expr);
 
   static Result FromVPack(ObjectId database, vpack::Slice slice,
-                          ColumnExpr& default_value);
+                          ColumnExpr& column_expr);
 
   void ToVPack(vpack::Builder& builder) const;
 
@@ -45,9 +45,9 @@ class ColumnExpr {
     return _expr;
   }
 
-  bool IsNull() const noexcept { return _query.empty(); }
+  bool IsSet() const noexcept { return _query.empty(); }
 
-  operator bool() const { return !IsNull(); }
+  operator bool() const { return !IsSet(); }
 
   const pg::Objects& GetObjects() const noexcept { return _objects; }
 
@@ -60,17 +60,17 @@ class ColumnExpr {
   pg::Objects _objects;
 };
 
-bool VPackWriteHook(auto ctx, auto&&, const ColumnExpr& default_value) {
-  return !default_value.IsNull();
+bool VPackWriteHook(auto ctx, auto&&, const ColumnExpr& column_expr) {
+  return !column_expr.IsSet();
 }
 
-void VPackWrite(auto ctx, const ColumnExpr& default_value) {
-  default_value.ToVPack(ctx.vpack());
+void VPackWrite(auto ctx, const ColumnExpr& column_expr) {
+  column_expr.ToVPack(ctx.vpack());
 }
 
-void VPackRead(auto ctx, ColumnExpr& default_value) {
+void VPackRead(auto ctx, ColumnExpr& column_expr) {
   auto database_id = ctx.arg().database_id;
-  auto r = ColumnExpr::FromVPack(database_id, ctx.vpack(), default_value);
+  auto r = ColumnExpr::FromVPack(database_id, ctx.vpack(), column_expr);
   SDB_ENSURE(r.ok(), r.errorNumber(), r.errorMessage());
 }
 

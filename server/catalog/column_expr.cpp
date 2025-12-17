@@ -80,19 +80,19 @@ Result ColumnExpr::Init(ObjectId database, std::string query) {
 }
 
 Result ColumnExpr::FromVPack(ObjectId database, vpack::Slice slice,
-                             ColumnExpr& default_value) {
+                             ColumnExpr& column_expr) {
   auto query_slice = slice.get("query");
   if (query_slice.isNone()) {
     return {};
   }
   auto query = basics::VPackHelper::getString(slice, "query", {});
   SDB_ASSERT(!query.empty());
-  auto r = ParseColumnExpr(database, query, default_value._objects,
-                           default_value._memory_context, default_value._expr);
+  auto r = ParseColumnExpr(database, query, column_expr._objects,
+                           column_expr._memory_context, column_expr._expr);
   if (!r.ok()) {
     return r;
   }
-  default_value._query = std::move(query);
+  column_expr._query = std::move(query);
   return {};
 }
 

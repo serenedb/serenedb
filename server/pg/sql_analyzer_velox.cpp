@@ -1303,7 +1303,7 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
     }
   }
 
-  object->Ensure();
+  object->EnsureTable();
 
   state.root = std::make_shared<lp::TableWriteNode>(
     _id_generator.NextPlanId(), std::move(state.root), object->table,
@@ -1384,7 +1384,7 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
     column_exprs.emplace_back(std::move(expr));
   });
 
-  object->Ensure();
+  object->EnsureTable();
 
   state.root = std::make_shared<lp::TableWriteNode>(
     _id_generator.NextPlanId(), std::move(state.root), object->table,
@@ -1448,7 +1448,7 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
     column_names.emplace_back(name);
   }
 
-  object->Ensure();
+  object->EnsureTable();
 
   state.root = std::make_shared<lp::TableWriteNode>(
     _id_generator.NextPlanId(), std::move(state.root), object->table,
@@ -2455,7 +2455,7 @@ State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
   std::string_view table_alias =
     ProcessTableColumns(parent, node, table.RowType(), column_names);
 
-  object.Ensure();
+  object.EnsureTable();
 
   auto state = parent->MakeChild();
   state.root = std::make_shared<lp::TableScanNode>(

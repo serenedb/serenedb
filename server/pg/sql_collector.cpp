@@ -570,7 +570,7 @@ void ObjectCollector::CollectStmt(const State* parent, const Node* node) {
 
 }  // namespace
 
-void Objects::ObjectData::Ensure() const {
+void Objects::ObjectData::EnsureTable() const {
   if (!table) {
     SDB_ASSERT(object);
     table = std::make_shared<connector::RocksDBTable>(

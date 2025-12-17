@@ -726,8 +726,8 @@ class SqlAnalyzer {
   State ProcessView(State* parent, std::string_view view_name,
                     const SqlQueryView& view, const RangeVar* node);
   State ProcessTable(State* parent, std::string_view schema_name,
-                     std::string_view table_name, const catalog::Table& table,
-                     const RangeVar* node);
+                     std::string_view table_name,
+                     const Objects::ObjectData& object, const RangeVar* node);
 
   State ProcessSystemTable(State* parent, std::string_view name,
                            catalog::VirtualTableSnapshot& snapshot,
@@ -1303,10 +1303,12 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
     }
   }
 
+  object->Ensure();
+
   state.root = std::make_shared<lp::TableWriteNode>(
-    _id_generator.NextPlanId(), std::move(state.root), "serenedb",
-    absl::StrCat(schema_name, ".", table_name), lp::WriteKind::kInsert,
-    std::move(column_names), std::move(column_exprs));
+    _id_generator.NextPlanId(), std::move(state.root), object->table,
+    axiom::connector::WriteKind::kInsert, std::move(column_names),
+    std::move(column_exprs));
 }
 
 void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
@@ -1338,15 +1340,15 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
         magic_enum::enum_name(logical_object.GetType())));
   }
 
-  const auto& table = basics::downCast<catalog::Table>(logical_object);
   const std::string_view table_name = relation.relname;
 
   auto table_state =
-    ProcessTable(&state, schema_name, table_name, table, &relation);
+    ProcessTable(&state, schema_name, table_name, *object, &relation);
   state.root = std::move(table_state.root);
 
   ProcessFilterNode(state, stmt.whereClause, ExprKind::Where);
 
+  const auto& table = basics::downCast<catalog::Table>(logical_object);
   const auto& pk_type = *table.PKType();
   std::vector<std::string> column_names;
   std::vector<lp::ExprPtr> column_exprs;
@@ -1382,10 +1384,12 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
     column_exprs.emplace_back(std::move(expr));
   });
 
+  object->Ensure();
+
   state.root = std::make_shared<lp::TableWriteNode>(
-    _id_generator.NextPlanId(), std::move(state.root), "serenedb",
-    absl::StrCat(schema_name, ".", table_name), lp::WriteKind::kUpdate,
-    std::move(column_names), std::move(column_exprs));
+    _id_generator.NextPlanId(), std::move(state.root), object->table,
+    axiom::connector::WriteKind::kUpdate, std::move(column_names),
+    std::move(column_exprs));
 }
 
 void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
@@ -1417,15 +1421,15 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
         magic_enum::enum_name(logical_object.GetType())));
   }
 
-  const auto& table = basics::downCast<catalog::Table>(logical_object);
   const std::string_view table_name = relation.relname;
 
   auto table_state =
-    ProcessTable(&state, schema_name, table_name, table, &relation);
+    ProcessTable(&state, schema_name, table_name, *object, &relation);
   state.root = std::move(table_state.root);
 
   ProcessFilterNode(state, stmt.whereClause, ExprKind::Where);
 
+  const auto& table = basics::downCast<catalog::Table>(logical_object);
   const auto& pk_type = *table.PKType();
   std::vector<std::string> column_names;
   std::vector<lp::ExprPtr> column_exprs;
@@ -1444,10 +1448,12 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
     column_names.emplace_back(name);
   }
 
+  object->Ensure();
+
   state.root = std::make_shared<lp::TableWriteNode>(
-    _id_generator.NextPlanId(), std::move(state.root), "serenedb",
-    absl::StrCat(schema_name, ".", table_name), lp::WriteKind::kDelete,
-    std::move(column_names), std::move(column_exprs));
+    _id_generator.NextPlanId(), std::move(state.root), object->table,
+    axiom::connector::WriteKind::kDelete, std::move(column_names),
+    std::move(column_exprs));
 }
 
 void SqlAnalyzer::ProcessMergeStmt(State& state, const MergeStmt& stmt) {
@@ -2440,19 +2446,22 @@ std::string_view SqlAnalyzer::ProcessTableColumns(
 
 State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
                                 std::string_view table_name,
-                                const catalog::Table& table,
+                                const Objects::ObjectData& object,
                                 const RangeVar* node) {
+  const auto& table = basics::downCast<catalog::Table>(*object.object);
   const auto& type = *table.RowType();
   std::vector<std::string> column_names;
   column_names.reserve(type.size());
   std::string_view table_alias =
     ProcessTableColumns(parent, node, table.RowType(), column_names);
 
+  object.Ensure();
+
   auto state = parent->MakeChild();
   state.root = std::make_shared<lp::TableScanNode>(
     _id_generator.NextPlanId(),
-    velox::ROW(std::move(column_names), type.children()), "serenedb",
-    absl::StrCat(schema_name, ".", table_name), type.names());
+    velox::ROW(std::move(column_names), type.children()), object.table,
+    type.names());
   state.resolver.CreateTable(
     table_alias, MakePtrView<velox::RowType>(state.root->outputType()));
   return state;
@@ -2491,8 +2500,7 @@ State SqlAnalyzer::ProcessRangeVar(State* parent, const RangeVar* node) {
     const auto& view = basics::downCast<SqlQueryView>(*object->object);
     return ProcessView(parent, name, view, node);
   } else if (logical_object.GetType() == catalog::ObjectType::Table) {
-    const auto& table = basics::downCast<catalog::Table>(logical_object);
-    return ProcessTable(parent, schema_name, name, table, node);
+    return ProcessTable(parent, schema_name, name, *object, node);
   } else if (logical_object.GetType() == catalog::ObjectType::Virtual) {
     // Only for system tables now
     auto& snapshot =

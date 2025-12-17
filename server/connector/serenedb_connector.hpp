@@ -132,8 +132,8 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
 
 class RocksDBTable final : public axiom::connector::Table {
  public:
-  explicit RocksDBTable(std::string_view name, const catalog::Table& collection)
-    : Table{std::string{name}, collection.RowType()},
+  explicit RocksDBTable(const catalog::Table& collection)
+    : Table{std::string{collection.GetName()}, collection.RowType()},
       _pk_type(collection.PKType()),
       _table_id(collection.GetId()) {
     _column_map.reserve(collection.RowType()->size());
@@ -166,7 +166,7 @@ class RocksDBTable final : public axiom::connector::Table {
     }
     auto connector = velox::connector::getConnector("serenedb");
     auto layout = std::make_unique<SereneDBTableLayout>(
-      name, *this, *connector, std::move(columns), std::move(order_columns),
+      name(), *this, *connector, std::move(columns), std::move(order_columns),
       std::move(sort_order));
     _layouts.push_back(layout.get());
     _layout_handles.push_back(std::move(layout));

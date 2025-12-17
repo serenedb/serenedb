@@ -36,28 +36,37 @@
 #include "query/cursor.h"
 
 namespace sdb::query {
+namespace {
 
-class SchemaResolver final : public axiom::connector::SchemaResolver {
+class NoopHistory final : public axiom::optimizer::History {
  public:
-  SchemaResolver(const pg::Objects& objects) : _objects{objects} {}
-
-  axiom::connector::TablePtr findTable(std::string_view catalog,
-                                       std::string_view name) const final {
-    auto [schema, table] =
-      std::pair<std::string_view, std::string_view>{absl::StrSplit(name, '.')};
-    auto object = _objects.getData(schema, table);
-    SDB_ASSERT(object);
-    SDB_ASSERT(object->object);
-    if (object->object->GetType() == catalog::ObjectType::Table) {
-      return std::make_shared<connector::RocksDBTable>(
-        name, basics::downCast<catalog::Table>(*object->object));
-    }
-    return nullptr;
+  std::optional<axiom::optimizer::Cost> findCost(
+    axiom::optimizer::RelationOp&) final {
+    return std::nullopt;
   }
 
- private:
-  const pg::Objects& _objects;
+  void recordCost(const axiom::optimizer::RelationOp&,
+                  axiom::optimizer::Cost) final {}
+
+  bool setLeafSelectivity(axiom::optimizer::BaseTable&,
+                          const velox::RowTypePtr&) {
+    return false;
+  }
+
+  void recordJoinSample(std::string_view, float, float) final {}
+
+  std::pair<float, float> sampleJoin(axiom::optimizer::JoinEdge*) final {
+    return {1.0f, 1.0f};
+  }
+
+  void recordLeafSelectivity(std::string_view, float, bool) final {}
+
+  folly::dynamic serialize() final { return {}; }
+
+  void update(folly::dynamic&) final {}
 };
+
+}  // namespace
 
 std::unique_ptr<Query> Query::CreateQuery(
   const axiom::logical_plan::LogicalPlanNodePtr& root,
@@ -117,8 +126,7 @@ void Query::CompileQuery() {
     axiom::optimizer::queryCtx() = nullptr;
   };
 
-  SchemaResolver schema_resolver{_query_ctx.objects};
-  axiom::optimizer::VeloxHistory dummy_history;
+  NoopHistory history;
   velox::exec::SimpleExpressionEvaluator evaluator{
     _query_ctx.velox_query_ctx.get(), _query_ctx.query_memory_pool.get()};
   // TODO(mbkkt) add options in config
@@ -154,24 +162,27 @@ void Query::CompileQuery() {
 
     // TODO(mbkkt) disable for now as it's broken
     .enableIndexLookupJoin = false,
+
+    .lazyOptimizeGraph = true,
   };
   axiom::runner::MultiFragmentPlan::Options runner_options{
     .numWorkers = 1,
     .numDrivers = 1,
   };
   axiom::Session session{""};
+  std::shared_ptr<axiom::Session> session_ptr{std::shared_ptr<axiom::Session>{},
+                                              &session};
   axiom::optimizer::Optimization optimization{
-    std::shared_ptr<axiom::Session>{std::shared_ptr<axiom::Session>{},
-                                    &session},
+    std::move(session_ptr),
     *_logical_plan,
-    schema_resolver,
-    dummy_history,
+    history,
     _query_ctx.velox_query_ctx,
     evaluator,
     optimizer_options,
     runner_options,
   };
 
+  optimization.optimizeGraph();
   auto best = optimization.bestPlan();
   // This is not really good for prepared statements, but it works for now
   auto result = optimization.toVeloxPlan(best->op);

@@ -6,10 +6,10 @@ explain (logical, execution) select * from t;
 ----
 QUERY PLAN
 LOGICAL PLAN:
-- TableScan: serenedb..t -> ROW<"column1":VARCHAR,"column2":INTEGER>
+- TableScan: t -> ROW<"column1":VARCHAR,"column2":INTEGER>
 EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
--- TableScan[0][.t] -> "column1":VARCHAR, "column2":INTEGER
+-- TableScan[0][t] -> "column1":VARCHAR, "column2":INTEGER
 
 query
 explain (logical, execution) delete from t where column2 = 42;
@@ -19,12 +19,12 @@ LOGICAL PLAN:
 - TableWrite DELETE: -> ROW<rows:BIGINT>
     column1 := column1
   - Filter: presto_eq(column2, 42) -> ROW<"column1":VARCHAR,"column2":INTEGER>
-    - TableScan: serenedb..t -> ROW<"column1":VARCHAR,"column2":INTEGER>
+    - TableScan: t -> ROW<"column1":VARCHAR,"column2":INTEGER>
 EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
--- TableWrite[2][serenedb(table=.t, kind=DELETE)] -> rows:BIGINT
+-- TableWrite[2][serenedb(table=t, kind=DELETE)] -> rows:BIGINT
   -- Filter[1][expression: presto_eq("column2",42)] -> "column1":VARCHAR, "column2":INTEGER
-    -- TableScan[0][.t] -> "column1":VARCHAR, "column2":INTEGER
+    -- TableScan[0][t] -> "column1":VARCHAR, "column2":INTEGER
 
 
 query
@@ -34,8 +34,8 @@ QUERY PLAN
 LOGICAL PLAN:
 - TableWrite DELETE: -> ROW<rows:BIGINT>
     column1 := column1
-  - TableScan: serenedb..t -> ROW<"column1":VARCHAR,"column2":INTEGER>
+  - TableScan: t -> ROW<"column1":VARCHAR,"column2":INTEGER>
 EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
--- TableWrite[1][serenedb(table=.t, kind=DELETE)] -> rows:BIGINT
-  -- TableScan[0][.t] -> "column1":VARCHAR
+-- TableWrite[1][serenedb(table=t, kind=DELETE)] -> rows:BIGINT
+  -- TableScan[0][t] -> "column1":VARCHAR

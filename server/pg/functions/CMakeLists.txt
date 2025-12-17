@@ -1,5 +1,1 @@
-target_sources(
-  sereneserver
-  PRIVATE
-      json.cpp
-)
+target_sources(sereneserver PRIVATE json.cpp)

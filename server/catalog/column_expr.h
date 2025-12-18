@@ -26,14 +26,15 @@
 
 namespace sdb {
 
-class DefaultValue {
+// Column Expression which can be serialized / deserialized
+class ColumnExpr {
  public:
-  DefaultValue() = default;
+  ColumnExpr() = default;
 
   Result Init(ObjectId database, Node* expr);
 
   static Result FromVPack(ObjectId database, vpack::Slice slice,
-                          DefaultValue& default_value);
+                          ColumnExpr& column_expr);
 
   void ToVPack(vpack::Builder& builder) const;
 
@@ -43,6 +44,10 @@ class DefaultValue {
     SDB_ASSERT(_expr != nullptr);
     return _expr;
   }
+
+  bool IsSet() const noexcept { return _query.empty(); }
+
+  operator bool() const { return !IsSet(); }
 
   const pg::Objects& GetObjects() const noexcept { return _objects; }
 
@@ -55,13 +60,17 @@ class DefaultValue {
   pg::Objects _objects;
 };
 
-void VPackWrite(auto ctx, const DefaultValue& default_value) {
-  default_value.ToVPack(ctx.vpack());
+bool VPackWriteHook(auto ctx, auto&&, const ColumnExpr& column_expr) {
+  return !column_expr.IsSet();
 }
 
-void VPackRead(auto ctx, DefaultValue& default_value) {
+void VPackWrite(auto ctx, const ColumnExpr& column_expr) {
+  column_expr.ToVPack(ctx.vpack());
+}
+
+void VPackRead(auto ctx, ColumnExpr& column_expr) {
   auto database_id = ctx.arg().database_id;
-  auto r = DefaultValue::FromVPack(database_id, ctx.vpack(), default_value);
+  auto r = ColumnExpr::FromVPack(database_id, ctx.vpack(), column_expr);
   SDB_ENSURE(r.ok(), r.errorNumber(), r.errorMessage());
 }
 

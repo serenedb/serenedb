@@ -1,0 +1,99 @@
+statement error
+CREATE TABLE tindex (
+    iq INTEGER,
+    name VARCHAR,
+    iq VARCHAR
+);
+----
+db error: ERROR: column "iq" specified more than once
+
+
+statement error
+CREATE TABLE clickclack (
+    vedernikoff INTEGER,
+    babsky VARCHAR,
+    pudge BOOLEAN,
+    babsky INTEGER
+);
+----
+db error: ERROR: column "babsky" specified more than once
+
+
+statement error
+CREATE TABLE vedernikoff (
+    yagami INTEGER,
+    kostya VARCHAR,
+    PRIMARY KEY (yagami, yagami)
+);
+----
+db error: ERROR: column "yagami" appears twice in primary key constraint
+
+
+statement error
+CREATE TABLE babsky (
+    deadinside INTEGER,
+    makak VARCHAR,
+    bulatb INTEGER,
+    PRIMARY KEY (deadinside, makak, deadinside)
+);
+----
+db error: ERROR: column "deadinside" appears twice in primary key constraint
+
+
+statement error
+CREATE TABLE pudge (
+    vitalig INTEGER,
+    lol VARCHAR,
+    kal INTEGER,
+    PRIMARY KEY (vitalig, lol, kal, lol)
+);
+----
+db error: ERROR: column "lol" appears twice in primary key constraint
+
+
+statement error
+CREATE TABLE clickclack (
+    iq INTEGER,
+    name VARCHAR,
+    PRIMARY KEY (iq, nonexistent_column)
+);
+----
+db error: ERROR: column "nonexistent_column" named in key does not exist
+
+
+statement error
+CREATE TABLE tindex (
+    vedernikoff INTEGER,
+    babsky VARCHAR,
+    PRIMARY KEY (missing_col)
+);
+----
+db error: ERROR: column "missing_col" named in key does not exist
+
+
+statement error
+CREATE TABLE kostya (
+    yagami INTEGER,
+    pudge VARCHAR,
+    deadinside BOOLEAN,
+    PRIMARY KEY (yagami, pudge, wrong_column, deadinside)
+);
+----
+db error: ERROR: column "wrong_column" named in key does not exist
+
+
+statement ok
+CREATE TABLE vedernikoff (iq INTEGER PRIMARY KEY, name VARCHAR);
+
+statement error
+CREATE TABLE babsky (
+    makak INTEGER,
+    bulatb VARCHAR,
+    makak INTEGER
+);
+----
+db error: ERROR: column "makak" specified more than once
+
+
+statement ok
+DROP TABLE vedernikoff;

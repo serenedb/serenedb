@@ -21,13 +21,12 @@
 
 #pragma once
 
+#include <s2/s2point.h>
+#include <vpack/slice.h>
+
 #include <cstdint>
 #include <string_view>
 #include <vector>
-
-#include <s2/s2point.h>
-
-#include <vpack/slice.h>
 
 #include "basics/result.h"
 #include "geo/coding.h"

@@ -65,7 +65,7 @@ RocksDBDataSink::RocksDBDataSink(
   rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
   const velox::RowTypePtr& row_type, velox::memory::MemoryPool& memory_pool,
   ObjectId object_key, std::span<const velox::column_index_t> key_childs,
-  std::vector<key_utils::ColumnId> column_oids, bool skip_primary_key_columns)
+  std::vector<catalog::Column::Id> column_oids, bool skip_primary_key_columns)
   : _row_type{std::move(row_type)},
     _transaction{transaction},
     _cf{cf},
@@ -1996,7 +1996,7 @@ velox::connector::DataSink::Stats RocksDBDataSink::stats() const {
 RocksDBDeleteDataSink::RocksDBDeleteDataSink(
   rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
   velox::RowTypePtr row_type, ObjectId object_key,
-  std::vector<key_utils::ColumnId> column_oids)
+  std::vector<catalog::Column::Id> column_oids)
   : _row_type{std::move(row_type)},
     _transaction{transaction},
     _cf{cf},

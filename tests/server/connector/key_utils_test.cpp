@@ -34,7 +34,7 @@ TEST(KeyUtilsTest, PrepareTableKey) {
 
 TEST(KeyUtilsTest, PrepareColumnKey) {
   ObjectId id{1};
-  ColumnId col = 7;
+  catalog::Column::Id col = 7;
   std::string key = PrepareColumnKey(id, col);
   ASSERT_EQ(key, std::string_view(
                    "\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x07", 12));
@@ -87,7 +87,7 @@ TEST(KeyUtilsTest, CreateTableRangeMax) {
 
 TEST(KeyUtilsTest, CreateTableColumnRange) {
   ObjectId id{11};
-  ColumnId col = 2;
+  catalog::Column::Id col = 2;
   auto range = CreateTableColumnRange(id, col);
   ASSERT_EQ(
     range.first,
@@ -99,7 +99,7 @@ TEST(KeyUtilsTest, CreateTableColumnRange) {
 
 TEST(KeyUtilsTest, CreateTableColumnRangeMax) {
   ObjectId id{std::numeric_limits<decltype(id.id())>::max()};
-  ColumnId col = std::numeric_limits<ColumnId>::max() - 1;
+  catalog::Column::Id col = std::numeric_limits<catalog::Column::Id>::max() - 1;
   auto range = CreateTableColumnRange(id, col);
   ASSERT_EQ(
     range.first,

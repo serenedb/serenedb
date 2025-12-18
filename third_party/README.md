@@ -35,7 +35,7 @@ index 8cf2fd9f876..11489b3f03d 100644
 --- a/3rdParty/jemalloc/jemalloc/src/pages.c
 +++ b/3rdParty/jemalloc/jemalloc/src/pages.c
 @@ -37,7 +37,7 @@ size_t        os_page;
- 
+
  #ifndef _WIN32
  #  define PAGES_PROT_COMMIT (PROT_READ | PROT_WRITE)
 -#  define PAGES_PROT_DECOMMIT (PROT_NONE)
@@ -58,7 +58,7 @@ https://github.com/AmokHuginnsson/replxx
 Don't forget to update `iresearch.build/modules.h`, see [iresearch.build](#iresearchbuild)!
 
 http://snowball.tartarus.org/ stemming for IResearch. We use the latest provided cmake which we maintain.
-  
+
 ## tzdata
 
 IANA time zone database / Olson database
@@ -79,7 +79,7 @@ This is maintained via https://github.com/serenedb/v8
 
 Upstream is: https://chromium.googlesource.com/v8/v8.git
 
-- On upgrade the ICU data file(s) need to be replaced with ICU upstream, 
+- On upgrade the ICU data file(s) need to be replaced with ICU upstream,
   since the V8 copy doesn't contain all locales (known as full-icu, ~25 MB icudt*.dat).
 
 ## ZLib

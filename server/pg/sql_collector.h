@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <axiom/connectors/ConnectorMetadata.h>
+
 #include <string_view>
 #include <type_traits>
 
@@ -67,6 +69,12 @@ class Objects : public irs::memory::Managed {
   struct ObjectData {
     AccessType type = AccessType::None;
     std::shared_ptr<catalog::SchemaObject> object;
+
+    // TODO(mbkkt) Maybe remove this and instead make catalog::Table be able
+    // to implement connector::Table without allocation.
+    // This probably requires changing axiom::connector::Table.
+    void EnsureTable() const;
+    mutable std::shared_ptr<axiom::connector::Table> table;
   };
 
   using Map = containers::FlatHashMap<ObjectName, ObjectData>;

@@ -25,7 +25,9 @@
 #include <string_view>
 
 #include "basics/containers/flat_hash_set.h"
+#include "basics/down_cast.h"
 #include "basics/exceptions.h"
+#include "connector/serenedb_connector.hpp"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_exception_macro.h"
 
@@ -262,22 +264,6 @@ void ObjectCollector::CollectRangeFunction(const State& state,
         _objects.ensureData(name.schema, name.relation);
         return;
       } break;
-      // case T_SQLValueFunction: {
-      //   auto* n = castNode(SQLValueFunction, function);
-      //   std::cerr << magic_enum::enum_name(n->op) << std::endl;
-      // } break;
-      // case T_TypeCast: {
-      //   auto* n = castNode(TypeCast, function);
-      //   std::cerr << n->typeName << std::endl;
-      // } break;
-      // case T_CoalesceExpr: {
-      //   auto* n = castNode(CoalesceExpr, function);
-      //   std::cerr << "coalesce: " << n->location << std::endl;
-      // } break;
-      // case T_MinMaxExpr: {
-      //   auto* n = castNode(MinMaxExpr, function);
-      //   std::cerr << magic_enum::enum_name(n->op) << std::endl;
-      // } break;
       default:
         break;
     }
@@ -524,6 +510,7 @@ void ObjectCollector::CollectCreateStmt(State& state, const CreateStmt& stmt) {
       VisitNodes(col_def.constraints, [&](const Constraint& constraint) {
         switch (constraint.contype) {
           case CONSTR_DEFAULT:
+          case CONSTR_GENERATED:
             CollectExprNode(state, constraint.raw_expr);
             break;
           default:
@@ -567,6 +554,14 @@ void ObjectCollector::CollectStmt(const State* parent, const Node* node) {
 }
 
 }  // namespace
+
+void Objects::ObjectData::EnsureTable() const {
+  if (!table) {
+    SDB_ASSERT(object);
+    table = std::make_shared<connector::RocksDBTable>(
+      basics::downCast<catalog::Table>(*object));
+  }
+}
 
 void Collect(std::string_view database, const RawStmt& node, Objects& objects,
              ParamIndex& max_bind_param_idx) {

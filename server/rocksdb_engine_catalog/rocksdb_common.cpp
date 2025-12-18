@@ -25,12 +25,14 @@
 #include <rocksdb/convenience.h>
 #include <rocksdb/db.h>
 #include <rocksdb/options.h>
+#include <rocksdb/slice.h>
 #include <rocksdb/status.h>
 #include <rocksdb/utilities/transaction_db.h>
 #include <vpack/iterator.h>
 
 #include <initializer_list>
 
+#include "basics/error_code.h"
 #include "basics/exceptions.h"
 #include "basics/logger/logger.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
@@ -52,12 +54,11 @@ void CheckIteratorStatus(const rocksdb::Iterator& iterator) {
 }
 
 /// iterate over all keys in range and count them
-size_t CountKeyRange(rocksdb::DB* db, const RocksDBKeyBounds& bounds,
+size_t CountKeyRange(rocksdb::DB* db, rocksdb::Slice lower,
+                     rocksdb::Slice upper, rocksdb::ColumnFamilyHandle* cf,
                      const rocksdb::Snapshot* snapshot,
                      bool prefix_same_as_start) {
   // note: snapshot may be a nullptr!
-  rocksdb::Slice lower(bounds.start());
-  rocksdb::Slice upper(bounds.end());
 
   rocksdb::ReadOptions read_options;
   read_options.snapshot = snapshot;
@@ -69,8 +70,7 @@ size_t CountKeyRange(rocksdb::DB* db, const RocksDBKeyBounds& bounds,
   read_options.prefix_same_as_start = prefix_same_as_start;
   read_options.adaptive_readahead = true;
 
-  rocksdb::ColumnFamilyHandle* cf = bounds.columnFamily();
-  const rocksdb::Comparator* cmp = cf->GetComparator();
+  const auto* cmp = cf->GetComparator();
   std::unique_ptr<rocksdb::Iterator> it(db->NewIterator(read_options, cf));
   size_t count = 0;
 
@@ -80,6 +80,12 @@ size_t CountKeyRange(rocksdb::DB* db, const RocksDBKeyBounds& bounds,
     it->Next();
   }
   return count;
+}
+size_t CountKeyRange(rocksdb::DB* db, const RocksDBKeyBounds& bounds,
+                     const rocksdb::Snapshot* snapshot,
+                     bool prefix_same_as_start) {
+  return CountKeyRange(db, bounds.start(), bounds.end(), bounds.columnFamily(),
+                       snapshot, prefix_same_as_start);
 }
 
 /// whether or not the specified range has keys
@@ -109,116 +115,98 @@ bool HasKeys(rocksdb::DB* db, const RocksDBKeyBounds& bounds,
   return (it->Valid() && cmp->Compare(it->key(), upper) < 0);
 }
 
-/// helper method to remove large ranges of data
-/// Should mainly be used to implement the drop() call
-Result RemoveLargeRange(rocksdb::DB* db, const RocksDBKeyBounds& bounds,
+Result RemoveLargeRange(rocksdb::DB* db, rocksdb::Slice lower,
+                        rocksdb::Slice upper, rocksdb::ColumnFamilyHandle* cf,
                         bool prefix_same_as_start, bool use_range_delete) {
-  // SDB_DEBUG("xxxxx", Logger::ENGINES, "removing large range: ", bounds);
+  db = db->GetRootDB();
+  SDB_ASSERT(db);
 
-  rocksdb::ColumnFamilyHandle* cf = bounds.columnFamily();
-  rocksdb::DB* b_db = db->GetRootDB();
-  SDB_ASSERT(b_db != nullptr);
-
-  try {
-    // delete files in range lower..upper
-    rocksdb::Slice lower(bounds.start());
-    rocksdb::Slice upper(bounds.end());
-    {
-      rocksdb::Status s = rocksdb::DeleteFilesInRange(b_db, cf, &lower, &upper);
-      if (!s.ok()) {
+  return basics::SafeCall(
+    [&] -> Result {
+      // delete files in range lower..upper
+      if (auto s = rocksdb::DeleteFilesInRange(db, cf, &lower, &upper);
+          !s.ok()) {
         // if file deletion failed, we will still iterate over the remaining
         // keys, so we don't need to abort and raise an error here
         sdb::Result r = rocksutils::ConvertStatus(s);
         SDB_WARN("xxxxx", sdb::Logger::ENGINES,
                  "RocksDB file deletion failed: ", r.errorMessage());
       }
-    }
 
-    // go on and delete the remaining keys (delete files in range does not
-    // necessarily find them all, just complete files)
-    if (use_range_delete) {
-      rocksdb::WriteOptions wo;
-      rocksdb::Status s = b_db->DeleteRange(wo, cf, lower, upper);
-      if (!s.ok()) {
-        SDB_WARN("xxxxx", sdb::Logger::ENGINES,
-                 "RocksDB key deletion failed: ", s.ToString());
-        return rocksutils::ConvertStatus(s);
+      // go on and delete the remaining keys (delete files in range does not
+      // necessarily find them all, just complete files)
+      if (use_range_delete) {
+        rocksdb::WriteOptions wo;
+        rocksdb::Status s = db->DeleteRange(wo, cf, lower, upper);
+        if (!s.ok()) {
+          SDB_WARN("xxxxx", sdb::Logger::ENGINES,
+                   "RocksDB key deletion failed: ", s.ToString());
+          return rocksutils::ConvertStatus(s);
+        }
+        return {};
       }
-      return {};
-    }
 
-    // go on and delete the remaining keys (delete files in range does not
-    // necessarily find them all, just complete files)
-    rocksdb::ReadOptions read_options;
-    read_options.verify_checksums = false;  // TODO investigate
-    read_options.fill_cache = false;
-    read_options.async_io = true;
-    read_options.iterate_upper_bound = &upper;
-    read_options.total_order_seek = !prefix_same_as_start;
-    read_options.prefix_same_as_start = prefix_same_as_start;
-    read_options.adaptive_readahead = true;
-    std::unique_ptr<rocksdb::Iterator> it(b_db->NewIterator(read_options, cf));
+      // go on and delete the remaining keys (delete files in range does not
+      // necessarily find them all, just complete files)
+      rocksdb::ReadOptions read_options;
+      read_options.verify_checksums = false;  // TODO investigate
+      read_options.fill_cache = false;
+      read_options.async_io = true;
+      read_options.iterate_upper_bound = &upper;
+      read_options.total_order_seek = !prefix_same_as_start;
+      read_options.prefix_same_as_start = prefix_same_as_start;
+      read_options.adaptive_readahead = true;
+      std::unique_ptr<rocksdb::Iterator> it(db->NewIterator(read_options, cf));
 
-    rocksdb::WriteOptions wo;
+      rocksdb::WriteOptions wo;
 
-    const rocksdb::Comparator* cmp = cf->GetComparator();
-    rocksdb::WriteBatch batch;
+      const rocksdb::Comparator* cmp = cf->GetComparator();
+      rocksdb::WriteBatch batch;
 
-    size_t total = 0;
-    size_t counter = 0;
-    for (it->Seek(lower); it->Valid(); it->Next()) {
-      SDB_ASSERT(cmp->Compare(it->key(), lower) > 0);
-      SDB_ASSERT(cmp->Compare(it->key(), upper) < 0);
-      ++total;
-      ++counter;
-      batch.Delete(cf, it->key());
-      if (counter >= 1000) {
+      size_t total = 0;
+      size_t counter = 0;
+      for (it->Seek(lower); it->Valid(); it->Next()) {
+        SDB_ASSERT(cmp->Compare(it->key(), lower) > 0);
+        SDB_ASSERT(cmp->Compare(it->key(), upper) < 0);
+        ++total;
+        ++counter;
+        batch.Delete(cf, it->key());
+        if (counter >= 1000) {
+          SDB_DEBUG("xxxxx", Logger::ENGINES, "intermediate delete write");
+          // Persist deletes all 1000 documents
+          rocksdb::Status status = db->Write(wo, &batch);
+          if (!status.ok()) {
+            SDB_WARN("xxxxx", sdb::Logger::ENGINES,
+                     "RocksDB key deletion failed: ", status.ToString());
+            return rocksutils::ConvertStatus(status);
+          }
+          batch.Clear();
+          counter = 0;
+        }
+      }
+
+      SDB_DEBUG("xxxxx", Logger::ENGINES,
+                "removing large range, deleted in total: ", total);
+
+      if (counter > 0) {
         SDB_DEBUG("xxxxx", Logger::ENGINES, "intermediate delete write");
-        // Persist deletes all 1000 documents
-        rocksdb::Status status = b_db->Write(wo, &batch);
+        // We still have sth to write
+        // now apply deletion batch
+        rocksdb::Status status = db->Write(rocksdb::WriteOptions(), &batch);
+
         if (!status.ok()) {
           SDB_WARN("xxxxx", sdb::Logger::ENGINES,
                    "RocksDB key deletion failed: ", status.ToString());
           return rocksutils::ConvertStatus(status);
         }
-        batch.Clear();
-        counter = 0;
       }
-    }
 
-    SDB_DEBUG("xxxxx", Logger::ENGINES,
-              "removing large range, deleted in total: ", total);
-
-    if (counter > 0) {
-      SDB_DEBUG("xxxxx", Logger::ENGINES, "intermediate delete write");
-      // We still have sth to write
-      // now apply deletion batch
-      rocksdb::Status status = b_db->Write(rocksdb::WriteOptions(), &batch);
-
-      if (!status.ok()) {
-        SDB_WARN("xxxxx", sdb::Logger::ENGINES,
-                 "RocksDB key deletion failed: ", status.ToString());
-        return rocksutils::ConvertStatus(status);
-      }
-    }
-
-    return {};
-  } catch (const sdb::basics::Exception& ex) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::ENGINES,
-      "caught exception during RocksDB key prefix deletion: ", ex.what());
-    return Result(ex.code(), ex.what());
-  } catch (const std::exception& ex) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::ENGINES,
-      "caught exception during RocksDB key prefix deletion: ", ex.what());
-    return Result(ERROR_INTERNAL, ex.what());
-  } catch (...) {
-    SDB_ERROR("xxxxx", sdb::Logger::ENGINES,
-              "caught unknown exception during RocksDB key prefix deletion");
-    return Result(ERROR_INTERNAL,
-                  "unknown exception during RocksDB key prefix deletion");
-  }
+      return {};
+    },
+    [](ErrorCode code, std::string_view msg) -> Result {
+      return {code,
+              "caught exception during RocksDB key prefix deletion: ", msg};
+    });
 }
 
 Result CompactAll(rocksdb::DB* db, bool change_level,

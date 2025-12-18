@@ -24,12 +24,12 @@
 /// @author Copyright 2015, ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <fstream>
 #include <iostream>
 #include <string>
-#include <fstream>
 
-#include "vpack/vpack.h"
 #include "vpack/exception_macros.h"
+#include "vpack/vpack.h"
 
 using namespace vpack;
 

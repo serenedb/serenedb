@@ -18,13 +18,15 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "pg/pg_catalog/pg_class.h"
+#include "pg/pg_catalog/pg_index.h"
 
 #include "app/app_server.h"
 #include "basics/assert.h"
+#include "basics/down_cast.h"
 #include "basics/errors.h"
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
+#include "catalog/index.h"
 #include "catalog/local_catalog.h"
 #include "catalog/object.h"
 #include "catalog/schema.h"
@@ -36,50 +38,34 @@ namespace sdb::pg {
 namespace {
 
 constexpr uint64_t kNullMask = MaskFromNonNulls({
-  GetIndex(&PgClass::oid),
-  GetIndex(&PgClass::relname),
-  GetIndex(&PgClass::relnamespace),
-  GetIndex(&PgClass::reltablespace),
-  GetIndex(&PgClass::relkind),
-  GetIndex(&PgClass::reloptions),
+  GetIndex(&PgIndex::indexrelid),
+  GetIndex(&PgIndex::indrelid),
 });
 
 }  // namespace
 
 void RetrieveObjects(ObjectId database_id,
                      const catalog::LogicalCatalog& catalog,
-                     std::vector<PgClass>& values) {
+                     std::vector<PgIndex>& values) {
+  auto snapshot = catalog.GetSnapshot();
+
   auto insert_object =
     [&](const std::shared_ptr<catalog::SchemaObject>& object) {
-      PgClass::Relkind relkind;
-      switch (object->GetType()) {
-        case catalog::ObjectType::Table:
-          relkind = PgClass::Relkind::OrdinaryTable;
-          break;
-        case catalog::ObjectType::View:
-          relkind = PgClass::Relkind::View;
-          break;
-        case catalog::ObjectType::Index:
-          relkind = PgClass::Relkind::Index;
-          break;
-        default:
-          SDB_THROW(ERROR_INTERNAL, "Unsupported object type for pg_class: {}",
-                    static_cast<uint8_t>(object->GetType()));
-      };
+      if (object->GetType() != catalog::ObjectType::Index) {
+        return;
+      }
 
-      PgClass row{
-        .oid = object->GetId().id(),
-        .relname = object->GetName(),
-        .relnamespace = object->GetSchemaId().id(),
-        .reltablespace = 0,
-        .relkind = relkind,
+      auto& index = basics::downCast<catalog::Index>(*object);
+
+      PgIndex row{
+        .indexrelid = index.GetId().id(),
+        .indrelid = index.GetRelationId().id(),
       };
 
       // TODO(codeworse): fill other fields
       values.push_back(std::move(row));
     };
 
-  auto snapshot = catalog.GetSnapshot();
   for (const auto& schema : snapshot->GetSchemas(database_id)) {
     for (const auto& relation :
          snapshot->GetRelations(database_id, schema->GetName())) {
@@ -89,31 +75,17 @@ void RetrieveObjects(ObjectId database_id,
 }
 
 template<>
-std::vector<velox::VectorPtr> SystemTableSnapshot<PgClass>::GetTableData(
+std::vector<velox::VectorPtr> SystemTableSnapshot<PgIndex>::GetTableData(
   velox::memory::MemoryPool& pool) {
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
   std::vector<velox::VectorPtr> result;
-  result.reserve(boost::pfr::tuple_size_v<PgClass>);
-  std::vector<PgClass> values;
+  result.reserve(boost::pfr::tuple_size_v<PgIndex>);
+  std::vector<PgIndex> values;
   RetrieveObjects(GetDatabaseId(), catalog, values);
 
-  {  // get system tables
-    VisitSystemTables([&](const catalog::VirtualTable& table, Oid schema_oid) {
-      PgClass row{
-        .oid = table.Id().id(),
-        .relname = table.Name(),
-        .relnamespace = schema_oid,
-        .reltablespace = 0,
-        .relkind = PgClass::Relkind::OrdinaryTable,
-      };
-      // TODO(codeworse): fill other fields
-      values.push_back(std::move(row));
-    });
-  }
-
   boost::pfr::for_each_field(
-    PgClass{}, [&]<typename Field>(const Field& field) {
+    PgIndex{}, [&]<typename Field>(const Field& field) {
       auto column = CreateColumn<Field>(values.size(), &pool);
       result.push_back(std::move(column));
     });

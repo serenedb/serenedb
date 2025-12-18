@@ -7,6 +7,7 @@ target_sources(
         create_table.cpp
         create_schema.cpp
         create_view.cpp
+        create_index.cpp
         drop_object.cpp
         transaction.cpp
         variable_set.cpp

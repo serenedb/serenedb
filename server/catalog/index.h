@@ -27,8 +27,7 @@
 namespace sdb::catalog {
 
 enum class IndexType : uint8_t {
-  Invalid = 0,
-  Secondary,
+  Secondary = 0,
   Inverted,
 };
 
@@ -36,7 +35,7 @@ struct IndexOptions {
   ObjectId id;
   ObjectId relation_id;
   std::string name;
-  IndexType type = IndexType::Invalid;
+  IndexType type = IndexType::Secondary;
   vpack::Slice options;
 };
 
@@ -56,3 +55,20 @@ class Index final : public SchemaObject {
 };
 
 }  // namespace sdb::catalog
+
+namespace magic_enum {
+
+template<>
+constexpr customize::customize_t customize::enum_name<sdb::catalog::IndexType>(
+  sdb::catalog::IndexType type) noexcept {
+  switch (type) {
+    case sdb::catalog::IndexType::Secondary:
+      return "secondary";
+    case sdb::catalog::IndexType::Inverted:
+      return "gin";
+    default:
+      return invalid_tag;
+  }
+}
+
+}  // namespace magic_enum

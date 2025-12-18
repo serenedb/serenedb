@@ -521,7 +521,6 @@ struct ProcessEscapePattern {
     result = std::move(res);
   }
 };
-
 }  // namespace
 
 void registerFunctions(const std::string& prefix) {

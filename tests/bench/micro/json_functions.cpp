@@ -14,6 +14,8 @@ using sdb::pg::JsonParser;
 
 namespace {
 
+// Very simple JSON quoting(handles only double quotes) for test data
+// generation.
 static inline std::string JsonStringLiteral(std::string_view raw) {
   std::string out;
   out.reserve(raw.size() + 16);
@@ -23,32 +25,8 @@ static inline std::string JsonStringLiteral(std::string_view raw) {
       case '"':
         out += "\\\"";
         break;
-      case '\\':
-        out += "\\\\";
-        break;
-      case '\b':
-        out += "\\b";
-        break;
-      case '\f':
-        out += "\\f";
-        break;
-      case '\n':
-        out += "\\n";
-        break;
-      case '\r':
-        out += "\\r";
-        break;
-      case '\t':
-        out += "\\t";
-        break;
       default:
-        if (c < 0x20) {
-          char buf[7];
-          std::snprintf(buf, sizeof(buf), "\\u%04X", c);
-          out += buf;
-        } else {
-          out.push_back(static_cast<char>(c));
-        }
+        out.push_back(static_cast<char>(c));
     }
   }
   out.push_back('"');

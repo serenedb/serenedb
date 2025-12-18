@@ -40,14 +40,15 @@ struct IndexOptions {
   vpack::Slice options;
 };
 
-class Index : public SchemaObject {
+class Index final : public SchemaObject {
  public:
   Index(IndexOptions options, ObjectId database_id);
 
   auto GetIndexType() const noexcept { return _type; }
   auto GetRelationId() const noexcept { return _relation_id; }
 
-  void WriteInternal(vpack::Builder& builder) const {}
+  void WriteInternal(vpack::Builder& builder) const final;
+  void WriteProperties(vpack::Builder& builder) const final;
 
  private:
   ObjectId _relation_id;

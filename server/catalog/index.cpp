@@ -20,6 +20,8 @@
 
 #include "catalog/index.h"
 
+#include "vpack/serializer.h"
+
 namespace sdb::catalog {
 
 Index::Index(IndexOptions options, ObjectId database_id)
@@ -31,5 +33,27 @@ Index::Index(IndexOptions options, ObjectId database_id)
                  ObjectType::Index},
     _relation_id{options.relation_id},
     _type(options.type) {}
+
+void Index::WriteInternal(vpack::Builder& b) const {
+  SDB_ASSERT(b.isOpenObject());
+  vpack::WriteTuple(b, IndexOptions{
+                         .id = GetId(),
+                         .relation_id = GetRelationId(),
+                         .name = std::string{GetName()},
+                         .type = GetIndexType(),
+                         .options = vpack::Slice{},
+                       });
+}
+
+void Index::WriteProperties(vpack::Builder& b) const {
+  SDB_ASSERT(b.isOpenObject());
+  vpack::WriteObject(b, IndexOptions{
+                          .id = GetId(),
+                          .relation_id = GetRelationId(),
+                          .name = std::string{GetName()},
+                          .type = GetIndexType(),
+                          .options = vpack::Slice{},
+                        });
+}
 
 }  // namespace sdb::catalog

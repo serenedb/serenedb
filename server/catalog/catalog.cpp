@@ -338,8 +338,7 @@ Result CatalogFeature::AddTables(ObjectId database_id, const Schema& schema) {
             slice, options, {.skip_unknown = true, .strict = false},
             ObjectInternal{database_id});
           !r.ok()) {
-        return ErrorMeta(r.errorNumber(), "collection", r.errorMessage(),
-                         slice);
+        return ErrorMeta(r.errorNumber(), "table", r.errorMessage(), slice);
       }
 
       return Local().RegisterTable(database_id, schema.GetName(),
@@ -371,7 +370,7 @@ Result CatalogFeature::AddFunctions(ObjectId database_id,
       auto r =
         catalog::Function::Instantiate(function, database_id, slice, false);
       if (!r.ok()) {
-        return ErrorMeta(r.errorNumber(), "role", r.errorMessage(), slice);
+        return ErrorMeta(r.errorNumber(), "function", r.errorMessage(), slice);
       }
 
       return Global().RegisterFunction(database_id, schema.GetName(),

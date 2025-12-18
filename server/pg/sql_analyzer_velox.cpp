@@ -3058,7 +3058,7 @@ static constexpr bool IsMatchOperator(std::string_view type) {
          type == kIMatchNot;
 }
 
-static constexpr bool IsTypeIntegral(const velox::TypePtr& type) {
+static constexpr bool IsIntegralType(const velox::TypePtr& type) {
   return type == velox::INTEGER() || type == velox::BIGINT() ||
          type == velox::SMALLINT() || type == velox::TINYINT();
 }
@@ -3102,7 +3102,7 @@ lp::ExprPtr SqlAnalyzer::ProcessJsonExtractOp(std::string_view type,
                                               lp::ExprPtr key) {
   lp::ExprPtr res;
   if (IsExtractSingleKey(type)) {
-    if (IsTypeIntegral(key->type())) {
+    if (IsIntegralType(key->type())) {
       // array index
       if (type == kJsonExtract) {
         res = ResolveVeloxFunctionAndInferArgsCommonType(

@@ -35,6 +35,7 @@
 #include "catalog/identifiers/index_id.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/identifiers/transaction_id.h"
+#include "catalog/index.h"
 #include "catalog/schema.h"
 #include "catalog/table.h"
 #include "catalog/types.h"
@@ -206,9 +207,16 @@ class StorageEngine : public SerenedFeature {
   virtual void createTable(const catalog::Table& table, TableShard& physical) {
     SDB_ASSERT(false);
   }
+  virtual Result CreateIndex(const catalog::Index& index) {
+    return {ERROR_NOT_IMPLEMENTED};
+  }
   virtual Result MarkDeleted(const catalog::Table& table,
                              const TableShard& physical,
                              const TableTombstone& tombstone) {
+    return {ERROR_NOT_IMPLEMENTED};
+  };
+  virtual Result MarkDeleted(const catalog::Index& index,
+                             const IndexTombstone& tombstone) {
     return {ERROR_NOT_IMPLEMENTED};
   };
 

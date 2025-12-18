@@ -251,9 +251,12 @@ class RocksDBEngineCatalog : public StorageEngine {
 
   void createTable(const catalog::Table& collection,
                    TableShard& physical) final;
+  Result CreateIndex(const catalog::Index& index) final;
   Result MarkDeleted(const catalog::Table& collection,
                      const TableShard& physical,
                      const TableTombstone& tombstone) final;
+  Result MarkDeleted(const catalog::Index& index,
+                     const IndexTombstone& tombstone) final;
   Result MarkDeleted(const catalog::Database& database) final;
   Result MarkDeleted(const catalog::Schema& schema) final;
 

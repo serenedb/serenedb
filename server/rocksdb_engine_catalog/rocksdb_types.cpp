@@ -77,6 +77,10 @@ const auto kTableTombstone = MakeSlice<RocksDBEntryType::TableTombstone>();
 
 const auto kScopeTombstone = MakeSlice<RocksDBEntryType::ScopeTombstone>();
 
+const auto kIndexTombstone = MakeSlice<RocksDBEntryType::IndexTombstone>();
+
+const auto kIndex = MakeSlice<RocksDBEntryType::Index>();
+
 }  // namespace
 
 char RocksDbFormatVersion() { return '1'; }
@@ -123,6 +127,10 @@ const rocksdb::Slice& RocksDbSlice(const RocksDBEntryType& type) {
       return kTableTombstone;
     case RocksDBEntryType::ScopeTombstone:
       return kScopeTombstone;
+    case RocksDBEntryType::Index:
+      return kIndex;
+    case RocksDBEntryType::IndexTombstone:
+      return kIndexTombstone;
   }
 
   return kPlaceholder;  // avoids warning - errorslice instead ?!

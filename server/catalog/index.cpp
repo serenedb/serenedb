@@ -29,7 +29,7 @@ Index::Index(IndexOptions options, ObjectId database_id)
                  options.id,
                  std::move(options.name),
                  ObjectType::Index},
-    _table_id{options.table},
+    _relation_id{options.relation_id},
     _type(options.type) {}
 
 }  // namespace sdb::catalog

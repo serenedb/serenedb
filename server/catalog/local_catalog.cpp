@@ -1118,22 +1118,74 @@ Result LocalCatalog::CreateRole(std::shared_ptr<Role> role) {
 
 Result LocalCatalog::RegisterIndex(ObjectId database_id,
                                    std::string_view schema,
-                                   std::string_view table,
                                    IndexOptions options) {
+  if (!options.relation_id.isSet()) [[unlikely]] {
+    return {ERROR_BAD_PARAMETER, "Index relation is not set"};
+  }
+
+  auto index = std::make_shared<Index>(std::move(options), database_id);
+
   absl::MutexLock lock{&_mutex};
-  return {};
+  return _snapshot->RegisterObject(database_id, schema, std::move(index), false,
+                                   [&](auto& object) -> Result {
+                                     // std::shared_ptr<TableShard> physical;
+                                     // auto r =
+                                     // _engine->createTableShard(table, true,
+                                     // physical); if (!r.ok()) {
+                                     //   return r;
+                                     // }
+
+                                     // physical->prepareIndexes(table,
+                                     // options.indexes);
+                                     // clone->AddTableShard(physical);
+                                     return {};
+                                   });
 }
 
 Result LocalCatalog::CreateIndex(ObjectId database_id, std::string_view schema,
-                                 std::string_view table, IndexOptions options) {
+                                 IndexOptions options) {
+  if (!options.relation_id.isSet()) [[unlikely]] {
+    return {ERROR_BAD_PARAMETER, "Index relation is not set"};
+  }
+
+  auto index = std::make_shared<Index>(std::move(options), database_id);
+
   absl::MutexLock lock{&_mutex};
-  return {};
+  return Apply(_snapshot, [&](auto& clone) {
+    return clone->RegisterObject(database_id, schema, std::move(index), false,
+                                 [&](auto& object) -> Result {
+                                   auto& index =
+                                     basics::downCast<Index>(*object);
+
+                                   // std::shared_ptr<TableShard> physical;
+                                   // auto r = _engine->createTableShard(table,
+                                   // true, physical); if (!r.ok()) {
+                                   //   return r;
+                                   // }
+
+                                   // physical->prepareIndexes(table,
+                                   // options.indexes);
+                                   // clone->AddTableShard(physical);
+                                   return _engine->CreateIndex(index);
+                                 });
+  });
 }
 
 Result LocalCatalog::DropIndex(ObjectId database_id, std::string_view schema,
                                std::string_view name) {
+  IndexTombstone tombstone;
+
   absl::MutexLock lock{&_mutex};
-  return {};
+  return Apply(_snapshot, [&](auto& clone) {
+    return clone->template DropObject<Index>(
+      database_id, schema, name,
+      [&](auto& database, auto& schema, auto& object) -> Result {
+        auto& index = basics::downCast<Index>(*object);
+
+        tombstone.id = index.GetId();
+        return _engine->MarkDeleted(index, tombstone);
+      });
+  });
 }
 
 Result LocalCatalog::CreateView(ObjectId database_id, std::string_view schema,

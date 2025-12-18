@@ -34,7 +34,7 @@ enum class IndexType : uint8_t {
 
 struct IndexOptions {
   ObjectId id;
-  ObjectId table;
+  ObjectId relation_id;
   std::string name;
   IndexType type = IndexType::Invalid;
   vpack::Slice options;
@@ -45,10 +45,12 @@ class Index : public SchemaObject {
   Index(IndexOptions options, ObjectId database_id);
 
   auto GetIndexType() const noexcept { return _type; }
-  auto GetTableId() const noexcept { return _table_id; }
+  auto GetRelationId() const noexcept { return _relation_id; }
+
+  void WriteInternal(vpack::Builder& builder) const {}
 
  private:
-  ObjectId _table_id;
+  ObjectId _relation_id;
   IndexType _type;
 };
 

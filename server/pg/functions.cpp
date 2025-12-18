@@ -23,7 +23,6 @@
 #include <absl/strings/escaping.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_format.h>
-#include <simdjson.h>
 #include <velox/functions/Macros.h>
 #include <velox/functions/Registerer.h>
 #include <velox/functions/prestosql/DateTimeImpl.h>

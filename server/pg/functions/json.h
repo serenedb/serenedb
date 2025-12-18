@@ -23,11 +23,12 @@ class JsonParser {
  public:
   void PrepareJson(std::string_view json);
   simdjson::simdjson_result<simdjson::ondemand::value> Extract(
-    std::span<const std::string> path);
+    std::span<velox::StringView> path);
   simdjson::simdjson_result<simdjson::ondemand::value> ExtractByIndex(
     int64_t index);
   simdjson::simdjson_result<simdjson::ondemand::value> ExtractByField(
     std::string_view field);
+
   static bool CheckQuoted(std::string_view str) {
     return !str.empty() && str.front() == '"' && str.back() == '"';
   }
@@ -47,7 +48,7 @@ struct PgJsonExtractPathText {
   bool call(  // NOLINT
     out_type<velox::Varchar>& result, const arg_type<velox::Json>& json,
     const arg_type<int64_t>& index) {
-    _parser.PrepareJson({json.data(), json.size()});
+    _parser.PrepareJson({json});
     simdjson::ondemand::value value;
     if (_parser.ExtractByIndex(index).get(value)) {
       return false;
@@ -63,7 +64,7 @@ struct PgJsonExtractPathText {
   // call for ->> operator (field text)
   bool call(out_type<velox::Varchar>& result, const arg_type<velox::Json>& json,
             const arg_type<velox::Varchar>& field) {
-    _parser.PrepareJson({json.data(), json.size()});
+    _parser.PrepareJson({json});
     simdjson::ondemand::value value;
     if (_parser.ExtractByField({field.data(), field.size()}).get(value)) {
       return false;
@@ -79,21 +80,19 @@ struct PgJsonExtractPathText {
   // call for #>> operator (path text)
   bool call(out_type<velox::Varchar>& result, const arg_type<velox::Json>& json,
             const arg_type<velox::Array<velox::Varchar>>& path) {
-    _parser.PrepareJson({json.data(), json.size()});
-    std::vector<std::string> keys;
-    keys.reserve(path.size());
+    _parser.PrepareJson({json});
+    _path.reserve(path.size());
     for (size_t i = 0; i < path.size(); ++i) {
       if (!path[i]) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
           ERR_MSG("JSON path element at position ", i + 1, " is null"));
       }
-      const auto& key_value = *path[i];
-      keys.emplace_back(std::string_view{key_value});
+      _path.emplace_back(*path[i]);
     }
 
     simdjson::ondemand::value value;
-    if (_parser.Extract(keys).get(value)) {
+    if (_parser.Extract(_path).get(value)) {
       return false;
     }
     if (value.type() == simdjson::ondemand::json_type::string) {
@@ -105,21 +104,7 @@ struct PgJsonExtractPathText {
   }
 
  private:
-  // void StoreTextValue(out_type<velox::Varchar>& result,
-  //                     simdjson::ondemand::value& value) {
-  //   if (value.type() != simdjson::ondemand::json_type::string) {
-  //     result = simdjson::to_json_string(value).value();
-  //     return;
-  //   }
-  //   std::string_view str = value.get_string().value();
-  //   if (!JsonParser::CheckQuoted(str)) {
-  //     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-  //                     ERR_MSG("JSON string value must be quoted: ", str));
-  //   }
-  //   result.resize(velox::unescapeSizeForJsonCast(str.data(), str.size()));
-  //   velox::unescapeForJsonCast(str.data(), str.size(), result.data());
-  // }
-
+  std::vector<velox::StringView> _path;
   JsonParser _parser;
 };
 
@@ -131,7 +116,7 @@ struct PgJsonExtractPath {
   bool call(  // NOLINT
     out_type<velox::Json>& result, const arg_type<velox::Json>& json,
     const arg_type<int64_t>& index) {
-    _parser.PrepareJson({json.data(), json.size()});
+    _parser.PrepareJson({json});
     simdjson::ondemand::value value;
     if (_parser.ExtractByIndex(index).get(value)) {
       return false;
@@ -143,7 +128,7 @@ struct PgJsonExtractPath {
   // call for -> operator (field json)
   bool call(out_type<velox::Json>& result, const arg_type<velox::Json>& json,
             const arg_type<velox::Varchar>& field) {
-    _parser.PrepareJson({json.data(), json.size()});
+    _parser.PrepareJson({json});
     simdjson::ondemand::value value;
     if (_parser.ExtractByField({field.data(), field.size()}).get(value)) {
       return false;
@@ -155,9 +140,8 @@ struct PgJsonExtractPath {
   // call for #>> operator (path json)
   bool call(out_type<velox::Json>& result, const arg_type<velox::Json>& json,
             const arg_type<velox::Array<velox::Varchar>>& path) {
-    _parser.PrepareJson({json.data(), json.size()});
-    std::vector<std::string> keys;
-    keys.reserve(path.size());
+    _parser.PrepareJson({json});
+    _path.reserve(path.size());
     for (size_t i = 0; i < path.size(); ++i) {
       if (!path[i]) {
         THROW_SQL_ERROR(
@@ -165,10 +149,10 @@ struct PgJsonExtractPath {
           ERR_MSG("JSON path element at position ", i + 1, " is null"));
       }
       const auto key_value = *path[i];
-      keys.emplace_back(key_value.data(), key_value.size());
+      _path.emplace_back(key_value.data(), key_value.size());
     }
     simdjson::ondemand::value value;
-    if (_parser.Extract(keys).get(value)) {
+    if (_parser.Extract(_path).get(value)) {
       return false;
     }
     result = simdjson::to_json_string(value).value();
@@ -176,6 +160,7 @@ struct PgJsonExtractPath {
   }
 
  private:
+  std::vector<velox::StringView> _path;
   JsonParser _parser;
 };
 

@@ -81,7 +81,7 @@ simdjson::simdjson_result<simdjson::ondemand::value> JsonParser::ExtractByField(
 }
 
 simdjson::simdjson_result<simdjson::ondemand::value> JsonParser::Extract(
-  std::span<const std::string> path) {
+  std::span<velox::StringView> path) {
   simdjson::ondemand::value value;
   if (auto ec = _doc.get_value().get(value)) {
     return {ec};
@@ -92,15 +92,12 @@ simdjson::simdjson_result<simdjson::ondemand::value> JsonParser::Extract(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
         ERR_MSG("JSON path element at position ", i + 1, " is null"));
     }
-    const auto& key_value = path[i];
-    auto key = std::string_view{key_value};
+    auto key = std::string_view{path[i]};
 
     if (value.type() == simdjson::ondemand::json_type::array) {
       int64_t index;
       if (!absl::SimpleAtoi(key, &index)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("Invalid JSON path element for array: \"", key, "\""));
+        return {simdjson::INCORRECT_TYPE};
       }
       simdjson::ondemand::array arr;
       if (auto ec = value.get_array().get(arr)) {

@@ -3058,21 +3058,26 @@ static constexpr bool IsMatchOperator(std::string_view type) {
          type == kIMatchNot;
 }
 
+static constexpr bool IsTypeIntegral(const velox::TypePtr& type) {
+  return type == velox::INTEGER() || type == velox::BIGINT() ||
+         type == velox::SMALLINT() || type == velox::TINYINT();
+}
+
 // https://www.postgresql.org/docs/current/functions-json.html
-static constexpr std::string_view kJsonExtract = "->";
-static constexpr std::string_view kJsonExtractText = "->>";
-static constexpr std::string_view kJsonExtractPath = "#>";
-static constexpr std::string_view kJsonExtractPathText = "#>>";
-static constexpr std::string_view kJsonContainsLeft = "@>";
-static constexpr std::string_view kJsonContainsRight = "<@";
-static constexpr std::string_view kJsonExists = "?";
-static constexpr std::string_view kJsonExistsAny = "?|";
-static constexpr std::string_view kJsonExistsAll = "?&";
-static constexpr std::string_view kJsonConcat = "||";
-static constexpr std::string_view kJsonDeleteKey = "-";
-static constexpr std::string_view kJsonDeletePath = "#-";
-static constexpr std::string_view kJsonPathQuery = "@?";
-static constexpr std::string_view kJsonPathPredicate = "@@";
+constexpr std::string_view kJsonExtract = "->";
+constexpr std::string_view kJsonExtractText = "->>";
+constexpr std::string_view kJsonExtractPath = "#>";
+constexpr std::string_view kJsonExtractPathText = "#>>";
+constexpr std::string_view kJsonContainsLeft = "@>";
+constexpr std::string_view kJsonContainsRight = "<@";
+constexpr std::string_view kJsonExists = "?";
+constexpr std::string_view kJsonExistsAny = "?|";
+constexpr std::string_view kJsonExistsAll = "?&";
+constexpr std::string_view kJsonConcat = "||";
+constexpr std::string_view kJsonDeleteKey = "-";
+constexpr std::string_view kJsonDeletePath = "#-";
+constexpr std::string_view kJsonPathQuery = "@?";
+constexpr std::string_view kJsonPathPredicate = "@@";
 
 bool IsExtractSingleKey(std::string_view name) {
   return name == kJsonExtract || name == kJsonExtractText;
@@ -3081,10 +3086,6 @@ bool IsExtractSingleKey(std::string_view name) {
 bool IsExtractPath(std::string_view name) {
   return name == kJsonExtractPath || name == kJsonExtractPathText;
 }
-
-// bool IsExtractText(std::string_view name) {
-//   return name == kJsonExtractText || name == kJsonExtractPathText;
-// }
 
 bool IsJsonOperator(std::string_view name) {
   return name == kJsonExtract || name == kJsonExtractText ||
@@ -3101,8 +3102,7 @@ lp::ExprPtr SqlAnalyzer::ProcessJsonExtractOp(std::string_view type,
                                               lp::ExprPtr key) {
   lp::ExprPtr res;
   if (IsExtractSingleKey(type)) {
-    if (key->type() == velox::INTEGER() || key->type() == velox::BIGINT() ||
-        key->type() == velox::SMALLINT() || key->type() == velox::TINYINT()) {
+    if (IsTypeIntegral(key->type())) {
       // array index
       if (type == kJsonExtract) {
         res = ResolveVeloxFunctionAndInferArgsCommonType(
@@ -3130,7 +3130,7 @@ lp::ExprPtr SqlAnalyzer::ProcessJsonExtractOp(std::string_view type,
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
         ERR_MSG("JSON key must be either string or integer type"));
-    };
+    }
   } else {
     // TODO(codeworse): path extraction
     if (type == kJsonExtractPath) {
@@ -3271,7 +3271,7 @@ lp::ExprPtr SqlAnalyzer::ProcessOp(std::string_view name, lp::ExprPtr lhs,
     return ProcessLikeOp(name, std::move(lhs), std::move(rhs));
   }
 
-  if (IsJsonOperator(name) && velox::isJsonType(lhs->type())) {
+  if (IsJsonOperator(name) && isJsonType(lhs->type())) {
     return ProcessJsonOp(name, std::move(lhs), std::move(rhs));
   }
 

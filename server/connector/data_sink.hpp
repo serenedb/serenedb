@@ -55,19 +55,17 @@ class RocksDBDataSink : public velox::connector::DataSink {
 
  private:
   // VERTICAL encoding methods
-  void WriteColumn( const velox::VectorPtr& input,
+  void WriteColumn(const velox::VectorPtr& input,
                    const folly::Range<const velox::IndexRange*>& ranges,
                    std::span<const velox::vector_size_t> idx);
 
   template<velox::TypeKind Kind>
-  void WriteFlatColumn(
-                       const velox::BaseVector& input,
+  void WriteFlatColumn(const velox::BaseVector& input,
                        const folly::Range<const velox::IndexRange*>& ranges,
                        std::span<const velox::vector_size_t> idx);
 
   template<velox::TypeKind Kind>
-  void WriteBiasedColumn(
-                         const velox::BaseVector& input,
+  void WriteBiasedColumn(const velox::BaseVector& input,
                          const folly::Range<const velox::IndexRange*>& ranges,
                          std::span<const velox::vector_size_t> idx);
 
@@ -77,19 +75,17 @@ class RocksDBDataSink : public velox::connector::DataSink {
   // vector operations. Can we eventually get rid of this and have consistent
   // vector argument type?
   void WriteDictionaryColumn(
-   const velox::VectorPtr& input,
+    const velox::VectorPtr& input,
     const folly::Range<const velox::IndexRange*>& ranges,
     std::span<const velox::vector_size_t> idx);
 
   template<velox::TypeKind Kind>
-  void WriteConstantColumn(
-                           const velox::BaseVector& input,
+  void WriteConstantColumn(const velox::BaseVector& input,
                            const folly::Range<const velox::IndexRange*>& ranges,
                            std::span<const velox::vector_size_t> idx);
 
   template<velox::VectorEncoding::Simple Encoding>
-  void WriteComplexColumn(
-                          const velox::BaseVector& input,
+  void WriteComplexColumn(const velox::BaseVector& input,
                           const folly::Range<const velox::IndexRange*>& ranges,
                           std::span<const velox::vector_size_t> idx);
 

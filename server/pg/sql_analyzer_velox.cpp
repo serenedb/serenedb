@@ -4306,10 +4306,9 @@ lp::ExprPtr SqlAnalyzer::ProcessSubLink(State& state, const SubLink& expr) {
 
   switch (state.expr_kind) {
     case ExprKind::ColumnDefault:
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-        CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
-        ERR_MSG("cannot use subquery in DEFAULT expression"));
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                      CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
+                      ERR_MSG("cannot use subquery in DEFAULT expression"));
     case ExprKind::GeneratedColumn:
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_SYNTAX_ERROR),

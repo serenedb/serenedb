@@ -15,7 +15,7 @@ db error: ERROR: multiple default values specified for column "yagami" of table 
 
 statement error
 CREATE TABLE vedernikoff(
-  yagami TEXT DEFAULT 'saygex' GENERATED ALWAYS AS ('300 bucks') STORED 
+  yagami TEXT DEFAULT 'saygex' GENERATED ALWAYS AS ('300 bucks') STORED
 );
 ----
 db error: ERROR: both default and generation expression specified for column "yagami" of table "vedernikoff"
@@ -84,7 +84,7 @@ id name weight pencil_size ?column?
 
 
 statement ok
-UPDATE tindex 
+UPDATE tindex
 SET pencil_size = DEFAULT, weight = DEFAULT;
 
 
@@ -119,7 +119,7 @@ CREATE TABLE clickclack(
   id INTEGER PRIMARY KEY DEFAULT 1000,
   weight INTEGER DEFAULT 100,
   age INTEGER DEFAULT 228,
-  grade INTEGER GENERATED ALWAYS AS ( (2 * weight + age) / 10 + length('vedro')::integer - 5) STORED 
+  grade INTEGER GENERATED ALWAYS AS ( (2 * weight + age) / 10 + length('vedro')::integer - 5) STORED
 );
 
 
@@ -157,7 +157,7 @@ id weight age grade
 
 
 statement ok
-UPDATE clickclack 
+UPDATE clickclack
 SET weight = weight * 1000, age = age * 1000
 WHERE id = 1000;
 
@@ -173,7 +173,7 @@ id weight age grade
 
 
 statement error
-UPDATE clickclack 
+UPDATE clickclack
 SET grade = 228
 WHERE id = 1000;
 ----

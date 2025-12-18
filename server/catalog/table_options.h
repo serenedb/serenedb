@@ -136,11 +136,7 @@ struct AgencyIsBuildingFlags {
 };
 
 struct Column {
-  enum GeneratedType : uint8_t {
-    kNone = 0,
-    kStored = 1,
-    kVirtual = 2
-  };
+  enum GeneratedType : uint8_t { kNone = 0, kStored = 1, kVirtual = 2 };
 
   bool IsGenerated() const noexcept {
     return generated_type != GeneratedType::kNone;
@@ -153,7 +149,7 @@ struct Column {
   std::string name;
   // if generated type is not kNone, default_value = generated expression
   ColumnExpr default_value;
-  GeneratedType generated_type;
+  GeneratedType generated_type = GeneratedType::kNone;
 };
 
 struct CreateTableRequest {

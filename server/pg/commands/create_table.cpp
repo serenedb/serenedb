@@ -162,7 +162,6 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
                           col.name, "\" of table \"", table, "\""));
               case kNone:
                 if (col.default_value) {
-                  ATTRIBUTE_IDENTITY_ALWAYS;
                   THROW_SQL_ERROR(
                     ERR_CODE(ERRCODE_INVALID_COLUMN_DEFINITION),
                     CURSOR_POS(ExprLocation(&constraint)),

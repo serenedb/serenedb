@@ -99,11 +99,12 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
   std::string table_key = key_utils::PrepareTableKey(_object_key);
   const auto parent_size = table_key.size();
 
+  table_key.resize(parent_size + sizeof(catalog::Column::id));
   _row_keys.clear();
-  primary_key::Create(*input, _key_childs, _row_keys, table_key,
-                      sizeof(catalog::Column::id));
+  primary_key::Create(*input, _key_childs, _row_keys, table_key);
+  table_key.resize(parent_size);
 
-  const auto immutable_prefix = table_key.size() + sizeof(catalog::Column::id);
+  const auto immutable_prefix = parent_size + sizeof(catalog::Column::id);
 
   SDB_ASSERT(input->type()->kind() == velox::TypeKind::ROW);
   const auto num_columns = input->childrenSize();

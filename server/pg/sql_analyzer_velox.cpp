@@ -688,8 +688,9 @@ class SqlAnalyzer {
  private:
   SqlCommandType ProcessStmt(State& state, const Node& node);
 
-  template<lp::WriteKind WriteKind>
-  void MakeTableWrite(State& state, std::string table_path,
+  template<axiom::connector::WriteKind WriteKind>
+  void MakeTableWrite(State& state,
+                      std::shared_ptr<axiom::connector::Table> table,
                       std::vector<std::string> column_names,
                       std::vector<lp::ExprPtr> column_exprs,
                       std::vector<const catalog::Column*> generated_columns);
@@ -1188,10 +1189,10 @@ void SqlAnalyzer::ProcessSelectStmt(State& state, const SelectStmt& stmt) {
   // TODO: ProcessFinalProject
 }
 
-template<lp::WriteKind WriteKind>
+template<axiom::connector::WriteKind WriteKind>
 void SqlAnalyzer::MakeTableWrite(
-  State& state, std::string table_path, std::vector<std::string> column_names,
-  std::vector<lp::ExprPtr> column_exprs,
+  State& state, std::shared_ptr<axiom::connector::Table> table,
+  std::vector<std::string> column_names, std::vector<lp::ExprPtr> column_exprs,
   std::vector<const catalog::Column*> generated_columns) {
   if (!generated_columns.empty()) {
     // generated columns may depend on other columns (default indeed)
@@ -1222,8 +1223,8 @@ void SqlAnalyzer::MakeTableWrite(
   }
 
   state.root = std::make_shared<lp::TableWriteNode>(
-    _id_generator.NextPlanId(), std::move(state.root), "serenedb", table_path,
-    WriteKind, std::move(column_names), std::move(column_exprs));
+    _id_generator.NextPlanId(), std::move(state.root), table, WriteKind,
+    std::move(column_names), std::move(column_exprs));
 }
 
 // It's literally UNKNOWN
@@ -1365,10 +1366,9 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
   }
 
   object->EnsureTable();
-
-  MakeTableWrite<lp::WriteKind::kInsert>(
-    state, absl::StrCat(schema_name, ".", table_name), std::move(column_names),
-    std::move(column_exprs), std::move(generated_columns));
+  MakeTableWrite<axiom::connector::WriteKind::kInsert>(
+    state, object->table, std::move(column_names), std::move(column_exprs),
+    std::move(generated_columns));
 }
 
 void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
@@ -1486,10 +1486,9 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
   }
 
   object->EnsureTable();
-
-  MakeTableWrite<lp::WriteKind::kUpdate>(
-    state, absl::StrCat(schema_name, ".", table_name), std::move(column_names),
-    std::move(column_exprs), std::move(generated_columns));
+  MakeTableWrite<axiom::connector::WriteKind::kUpdate>(
+    state, object->table, std::move(column_names), std::move(column_exprs),
+    std::move(generated_columns));
 }
 
 void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
@@ -4310,7 +4309,7 @@ lp::ExprPtr SqlAnalyzer::ProcessSubLink(State& state, const SubLink& expr) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_SYNTAX_ERROR),
         CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
-        ERR_MSG("subqueries are not allowed in DEFAULT expressions"));
+        ERR_MSG("cannot use subquery in DEFAULT expression"));
     case ExprKind::GeneratedColumn:
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_SYNTAX_ERROR),

@@ -49,7 +49,7 @@ CREATE TABLE clickclack(
   kal INTEGER DEFAULT ((SELECT * FROM tindex))
 );
 ----
-db error: ERROR: subqueries are not allowed in DEFAULT expressions
+db error: ERROR: cannot use subquery in DEFAULT expression
 
 
 statement count 1

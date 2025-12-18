@@ -162,6 +162,7 @@ class RocksDBDataSink : public velox::connector::DataSink {
     velox::vector_size_t idx,
     std::span<const velox::vector_size_t> original_idx) const;
 
+    
   void ResetForNewRow() noexcept;
 
   void GatherNulls(const velox::BaseVector& input,

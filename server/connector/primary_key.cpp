@@ -142,7 +142,8 @@ void AppendKeyValue(std::string& key, const velox::BaseVector& column,
 }  // namespace
 
 void Create(const velox::RowVector& data,
-            std::span<const velox::column_index_t> key_childs, Keys& buffer) {
+            std::span<const velox::column_index_t> key_childs, Keys& buffer,
+            std::string_view base, size_t reserved) {
   buffer.reserve(data.size());
   // TODO(Dronplane) benchmark this more.
   // Currenly on quick benchmarks implemented approach looks better.
@@ -155,11 +156,13 @@ void Create(const velox::RowVector& data,
   //  - calculate required size and still do copy&&clear. Works almost the same
   //    as current approach.
   //  - more....
-  std::string key;
+  const auto immutable_prefix = base.size() + reserved;
+  std::string key{base};
+  key.resize(immutable_prefix);
   for (velox::vector_size_t i = 0; i < data.size(); ++i) {
     Create(data, key_childs, i, key);
     buffer.push_back(key);
-    key.clear();
+    key.erase(immutable_prefix);
   }
 }
 

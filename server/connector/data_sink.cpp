@@ -20,6 +20,7 @@
 
 #include "data_sink.hpp"
 
+#include <absl/base/internal/endian.h>
 #include <velox/common/base/SimdUtil.h>
 #include <velox/type/Type.h>
 #include <velox/vector/BiasVector.h>
@@ -93,17 +94,23 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
              "RocksDBDataSink: column oids size ", _column_ids.size(),
              " doesn't match input type size ", input->type()->size());
   // TODO(Dronplane) implement updating PK fields
-  _row_keys.clear();
-  primary_key::Create(*input, _key_childs, _row_keys);
-  SDB_ASSERT(input->type()->kind() == velox::TypeKind::ROW);
-  const auto num_columns = input->childrenSize();
   std::string table_key = key_utils::PrepareTableKey(_object_key);
   const auto parent_size = table_key.size();
+
+  _row_keys.clear();
+  primary_key::Create(*input, _key_childs, _row_keys, table_key,
+                      sizeof(catalog::Column::id));
+
+  const auto immutable_prefix = table_key.size() + sizeof(catalog::Column::id);
+
+  SDB_ASSERT(input->type()->kind() == velox::TypeKind::ROW);
+  const auto num_columns = input->childrenSize();
   velox::IndexRange all_rows(0, input->size());
-  [[maybe_unused]] const auto& input_type = input->type()->asRow();
-  for (const auto& key : _row_keys) {
+  for (const auto& combined_row_key : _row_keys) {
+    std::string_view row_key{combined_row_key.begin() + immutable_prefix,
+                             combined_row_key.end()};
     basics::StrResize(table_key, parent_size);
-    key_utils::AppendPrimaryKey(table_key, key);
+    key_utils::AppendPrimaryKey(table_key, row_key);
     VELOX_CHECK(
       _transaction
         .GetKeyLock(&_cf, rocksdb::Slice(table_key.data(), table_key.size()),
@@ -111,6 +118,8 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
         .ok(),
       "Failed to acquire row lock for table {}", _object_key.id());
   }
+
+  [[maybe_unused]] const auto& input_type = input->type()->asRow();
   for (velox::column_index_t i = 0; i < num_columns; ++i) {
     // Exclude only UNKNOWN from equivalency check as UNKNOWN is just a NULL and
     // compatible with everything.
@@ -125,11 +134,52 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
     if (_skip_primary_key_columns && i < _key_childs.size()) {
       continue;
     }
-    basics::StrResize(table_key, parent_size);
-    key_utils::AppendColumnKey(table_key, _column_ids[i]);
+    // basics::StrResize(table_key, parent_size);
+
+    // key_utils::AppendColumnKey(table_key, _column_ids[i]);
+
+    // Or bind column id through all function?
+    for (auto& combined_row_key : _row_keys) {
+      absl::big_endian::Store32(combined_row_key.data() + parent_size,
+                                _column_ids[i]);
+    }
+
     WriteColumn(table_key, input->childAt(i), folly::Range{&all_rows, 1}, {});
   }
 }
+
+/*
+Now:
+key = table_id
+for col_id in col_ids:
+  key.erase(table_id.size)
+  key += col_id.to_bytes()
+  for row in rows:
+    key += get_primary_key(row)
+    ... fill value
+
+Want:
+PK_OFFSET = sizeof(tableid) + sizeof(column_id)
+keys[batch_cnt] = [table_id + reserve(sizeof(column_id))] * batch_cnt
+
+// First
+col_id = col_ids[0]
+for row_id, row in enumerate(rows):
+  pk = get_primary_key(row)
+  keys[row_id][PK_OFFSET..PK_OFFSET + pk.size()] = pk
+
+  keys[row_id][sizeof(tableid)..sizeof(tableid) + sizeof(column_id)] =
+column_id.to_bytes()
+  ... fill value
+
+
+// Other
+for col_id in col_ids:
+  for row_id, row in enumerate(rows):
+    keys[row_id][sizeof(tableid)..sizeof(tableid) + sizeof(column_id)] =
+column_id.to_bytes()
+    ... fill value
+*/
 
 // Stores column backed by Flat vector.
 // Actual ranges might be from decoding of dictionary encoded vector.
@@ -138,7 +188,7 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
 // rocksdb as a single value.
 template<velox::TypeKind Kind>
 void RocksDBDataSink::WriteFlatColumn(
-  std::string& key, const velox::BaseVector& input,
+  [[maybe_unused]] std::string&, const velox::BaseVector& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   std::span<const velox::vector_size_t> original_idx) {
   // Flat vectors of complex types ARRAY, MAP and ROW / STRUCT are
@@ -149,14 +199,15 @@ void RocksDBDataSink::WriteFlatColumn(
   using T = typename velox::TypeTraits<Kind>::NativeType;
   auto* flat_vector = input.as<velox::FlatVector<T>>();
   SDB_ASSERT(flat_vector);
-  const auto base_size = key.size();
+  // const auto base_size = key.size();
   irs::ResolveBool(flat_vector->mayHaveNulls(), [&]<bool MayHaveNulls>() {
     size_t row_id = 0;
     for (const auto& range : ranges) {
       const auto range_end = range.begin + range.size;
       for (velox::vector_size_t idx = range.begin; idx < range_end; ++idx) {
-        key.erase(base_size);
-        key_utils::AppendPrimaryKey(key, GetRowKey(row_id++, original_idx));
+        // key.erase(base_size);
+        // key_utils::AppendPrimaryKey(key, GetRowKey(row_id++, original_idx));
+        const auto& key = GetRowKey(row_id++, original_idx);
         if constexpr (MayHaveNulls) {
           if (flat_vector->isNullAt(idx)) {
             WriteNull(_transaction, _cf, key);
@@ -173,21 +224,23 @@ void RocksDBDataSink::WriteFlatColumn(
 
 template<velox::TypeKind Kind>
 void RocksDBDataSink::WriteBiasedColumn(
-  std::string& key, const velox::BaseVector& input,
+  std::string&, const velox::BaseVector& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   std::span<const velox::vector_size_t> original_idx) {
   using T = typename velox::TypeTraits<Kind>::NativeType;
   if constexpr (velox::admitsBias<T>()) {
     auto* bias_vector = input.as<velox::BiasVector<T>>();
     SDB_ASSERT(bias_vector);
-    const auto base_size = key.size();
+    // const auto base_size = key.size();
     irs::ResolveBool(bias_vector->mayHaveNulls(), [&]<bool MayHaveNulls>() {
       size_t row_id = 0;
       for (const auto& range : ranges) {
         const auto range_end = range.begin + range.size;
         for (velox::vector_size_t idx = range.begin; idx < range_end; ++idx) {
-          key.erase(base_size);
-          key_utils::AppendPrimaryKey(key, GetRowKey(row_id++, original_idx));
+          // key.erase(base_size);
+          // key_utils::AppendPrimaryKey(key, GetRowKey(row_id++,
+          // original_idx));
+          const auto& key = GetRowKey(row_id++, original_idx);
           if constexpr (MayHaveNulls) {
             if (bias_vector->isNullAt(idx)) {
               WriteNull(_transaction, _cf, key);
@@ -230,7 +283,7 @@ void RocksDBDataSink::WriteDictionaryColumn(
   }
   size_t current = 0;
   size_t row_id = 0;
-  const auto base_size = key.size();
+  // const auto base_size = key.size();
   for (const auto& range : ranges) {
     const auto end = range.begin + range.size;
     for (int32_t offset = range.begin; offset < end; ++offset) {
@@ -239,12 +292,12 @@ void RocksDBDataSink::WriteDictionaryColumn(
         if (!sub_ranges.empty()) {
           WriteColumn(key, wrapped, sub_ranges,
                       original_idx.subspan(current, sub_ranges.size()));
-          key.erase(base_size);
+          // key.erase(base_size);
           sub_ranges.clear();
         }
-        key_utils::AppendPrimaryKey(key, GetRowKey(row_id++, original_idx));
-        WriteNull(_transaction, _cf, key);
-        key.erase(base_size);
+        // key_utils::AppendPrimaryKey(key, GetRowKey(row_id++, original_idx));
+        WriteNull(_transaction, _cf, GetRowKey(row_id++, original_idx));
+        // key.erase(base_size);
         current = row_id;
         continue;
       }
@@ -260,17 +313,18 @@ void RocksDBDataSink::WriteDictionaryColumn(
 
 template<velox::VectorEncoding::Simple Encoding>
 void RocksDBDataSink::WriteComplexColumn(
-  std::string& key, const velox::BaseVector& input,
+  std::string&, const velox::BaseVector& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   std::span<const velox::vector_size_t> original_idx) {
   size_t row_id = 0;
-  const auto base_size = key.size();
+  // const auto base_size = key.size();
   for (size_t i = 0; i < ranges.size(); ++i) {
     int32_t begin = ranges[i].begin;
     int32_t end = begin + ranges[i].size;
     for (int32_t offset = begin; offset < end; ++offset) {
-      key.erase(base_size);
-      key_utils::AppendPrimaryKey(key, GetRowKey(row_id++, original_idx));
+      // key.erase(base_size);
+      // key_utils::AppendPrimaryKey(key, GetRowKey(row_id++, original_idx));
+      const auto& key = GetRowKey(row_id++, original_idx);
       if (input.isNullAt(offset)) {
         WriteNull(_transaction, _cf, key);
       } else {
@@ -298,11 +352,11 @@ void RocksDBDataSink::WriteComplexColumn(
 
 template<velox::TypeKind Kind>
 void RocksDBDataSink::WriteConstantColumn(
-  std::string& key, const velox::BaseVector& input,
+  std::string&, const velox::BaseVector& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   std::span<const velox::vector_size_t> original_idx) {
   size_t row_id = 0;
-  const auto base_size = key.size();
+  // const auto base_size = key.size();
   ResetForNewRow();
   if (input.isNullAt(0)) {
     _row_slices.emplace_back();
@@ -312,8 +366,9 @@ void RocksDBDataSink::WriteConstantColumn(
   for (const auto& range : ranges) {
     const auto end = range.begin + range.size;
     for (int32_t offset = range.begin; offset < end; ++offset) {
-      key.erase(base_size);
-      key_utils::AppendPrimaryKey(key, GetRowKey(row_id++, original_idx));
+      // key.erase(base_size);
+      // key_utils::AppendPrimaryKey(key, GetRowKey(row_id++, original_idx));
+      const auto& key = GetRowKey(row_id++, original_idx);
       WriteRowSlices(key);
     }
   }

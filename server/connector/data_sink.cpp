@@ -77,7 +77,7 @@ RocksDBDataSink::RocksDBDataSink(
     _column_ids{std::move(column_oids)},
     _memory_pool{memory_pool},
     _row_slices{memory_pool},
-    _row_keys{memory_pool},
+    _cell_keys_buffers{memory_pool},
     _bytes_allocator{&memory_pool},
     _skip_primary_key_columns{skip_primary_key_columns} {
   _key_childs.assign_range(key_childs);
@@ -100,11 +100,12 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
 
   // TODO(Dronplane) implement updating PK fields
   std::string combined_key = key_utils::PrepareTableKey(_object_key);
-  const auto object_key_size = combined_key.size();
+  SDB_ASSERT(sizeof(ObjectId) == combined_key.size());
+  static constexpr auto kObjectKeySize = sizeof(ObjectId);
 
   const auto num_rows = input->size();
-  _row_keys.clear();
-  _row_keys.reserve(num_rows);
+  _cell_keys_buffers.clear();
+  _cell_keys_buffers.reserve(num_rows);
   for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
     // [object_id] [pk]
     primary_key::Create(*input, _key_childs, row_idx, combined_key);
@@ -116,15 +117,16 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
         .ok(),
       "Failed to acquire row lock for table {}", _object_key.id());
 
-    auto& row_key = _row_keys.emplace_back();
+    auto& row_key = _cell_keys_buffers.emplace_back();
     // [object_id] [column_id] [pk]
     basics::StrResize(row_key,
                       combined_key.size() + sizeof(catalog::Column::Id));
-    std::memcpy(row_key.data(), combined_key.data(), object_key_size);
-    std::memcpy(row_key.data() + object_key_size + sizeof(catalog::Column::Id),
-                combined_key.data() + object_key_size,
-                combined_key.size() - object_key_size);
-    combined_key.resize(object_key_size);
+    std::memcpy(row_key.data(), combined_key.data(), kObjectKeySize);
+    std::memcpy(row_key.data() + kObjectKeySize + sizeof(catalog::Column::Id),
+                combined_key.data() + kObjectKeySize,
+                combined_key.size() - kObjectKeySize);
+
+    combined_key.resize(kObjectKeySize);
   }
 
   velox::IndexRange all_rows(0, num_rows);
@@ -1868,9 +1870,9 @@ const std::string& RocksDBDataSink::SetupRowKey(
   SDB_ASSERT(original_idx.empty() ||
              original_idx.size() > static_cast<size_t>(idx));
   const auto row_id = original_idx.empty() ? idx : original_idx[idx];
-  SDB_ASSERT(static_cast<size_t>(row_id) < _row_keys.size());
+  SDB_ASSERT(static_cast<size_t>(row_id) < _cell_keys_buffers.size());
 
-  auto& row_key = _row_keys[row_id];
+  auto& row_key = _cell_keys_buffers[row_id];
   absl::big_endian::Store32(row_key.data() + sizeof(ObjectId), _column_id);
 
   return row_key;
@@ -2031,22 +2033,24 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
 
   std::string row_key = key_utils::PrepareTableKey(_object_key);
   std::string cell_key = row_key;
-  const size_t object_key_size = row_key.size();
+  SDB_ASSERT(row_key.size() == sizeof(ObjectId));
+  static constexpr size_t kObjectKeySize = sizeof(ObjectId);
+  // constexpr auto kObjectKeySize = sizeof(ObjectId);
 
   for (velox::vector_size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-    basics::StrResize(row_key, object_key_size);
+    basics::StrResize(row_key, kObjectKeySize);
 
     primary_key::Create(*input, row_idx, row_key);
     VELOX_CHECK(_transaction.GetKeyLock(&_cf, row_key, false, true).ok(),
                 "Failed to acquire row lock for table {}", _object_key.id());
 
     basics::StrResize(cell_key, sizeof(catalog::Column::Id) + row_key.size());
-    std::memcpy(cell_key.data() + object_key_size + sizeof(catalog::Column::Id),
-                row_key.data() + object_key_size,
-                row_key.size() - object_key_size);
+    std::memcpy(cell_key.data() + kObjectKeySize + sizeof(catalog::Column::Id),
+                row_key.data() + kObjectKeySize,
+                row_key.size() - kObjectKeySize);
 
     for (velox::column_index_t col_idx = 0; col_idx < num_columns; ++col_idx) {
-      absl::big_endian::Store32(cell_key.data() + object_key_size,
+      absl::big_endian::Store32(cell_key.data() + kObjectKeySize,
                                 _column_ids[col_idx]);
       auto status = _transaction.Delete(&_cf, rocksdb::Slice(cell_key));
       if (!status.ok()) {

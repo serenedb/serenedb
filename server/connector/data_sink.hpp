@@ -188,7 +188,7 @@ class RocksDBDataSink : public velox::connector::DataSink {
   std::vector<catalog::Column::Id> _column_ids;
   velox::memory::MemoryPool& _memory_pool;
   SliceVector _row_slices;
-  primary_key::Keys _cell_keys_buffers;
+  primary_key::Keys _cell_keys_buffers;  // buffer per row
   velox::HashStringAllocator _bytes_allocator;
   catalog::Column::Id _column_id;
   bool _skip_primary_key_columns;

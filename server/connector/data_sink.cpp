@@ -117,12 +117,12 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
         .ok(),
       "Failed to acquire row lock for table {}", _object_key.id());
 
-    auto& row_key = _cell_keys_buffers.emplace_back();
+    auto& cell_key_buffer = _cell_keys_buffers.emplace_back();
     // [object_id] [column_id] [pk]
-    basics::StrResize(row_key,
+    basics::StrResize(cell_key_buffer,
                       combined_key.size() + sizeof(catalog::Column::Id));
-    std::memcpy(row_key.data(), combined_key.data(), kObjectKeySize);
-    std::memcpy(row_key.data() + kObjectKeySize + sizeof(catalog::Column::Id),
+    std::memcpy(cell_key_buffer.data(), combined_key.data(), kObjectKeySize);
+    std::memcpy(cell_key_buffer.data() + kObjectKeySize + sizeof(catalog::Column::Id),
                 combined_key.data() + kObjectKeySize,
                 combined_key.size() - kObjectKeySize);
 

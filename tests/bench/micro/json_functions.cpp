@@ -81,6 +81,19 @@ class JsonArrayFixture : public benchmark::Fixture, public JsonFixture {
 };
 
 BENCHMARK_DEFINE_F(JsonArrayFixture,
+                   BmJsonArrayExtractIndexText)(benchmark::State& state) {
+  const std::string& json = GetJson();
+
+  for (auto _ : state) {
+    JsonParser parser;
+    parser.PrepareJson(json);
+    const int64_t index = GetNextIndex();
+    auto r = parser.ExtractByIndex<JsonParser::OutputType::TEXT>(index);
+    benchmark::DoNotOptimize(r);
+  }
+}
+
+BENCHMARK_DEFINE_F(JsonArrayFixture,
                    BmJsonArrayExtractIndex)(benchmark::State& state) {
   const std::string& json = GetJson();
 
@@ -88,8 +101,7 @@ BENCHMARK_DEFINE_F(JsonArrayFixture,
     JsonParser parser;
     parser.PrepareJson(json);
     const int64_t index = GetNextIndex();
-    simdjson::ondemand::value v;
-    auto r = parser.ExtractByIndex(index).get(v);
+    auto r = parser.ExtractByIndex<JsonParser::OutputType::JSON>(index);
     benchmark::DoNotOptimize(r);
   }
 }
@@ -127,6 +139,19 @@ class JsonObjectFixture : public benchmark::Fixture, public JsonFixture {
 };
 
 BENCHMARK_DEFINE_F(JsonObjectFixture,
+                   BmJsonObjectExtractFieldText)(benchmark::State& state) {
+  const std::string& json = GetJson();
+
+  for (auto _ : state) {
+    JsonParser parser;
+    parser.PrepareJson(json);
+    const std::string& field = GetNextField();
+    auto r = parser.ExtractByField<JsonParser::OutputType::TEXT>(field);
+    benchmark::DoNotOptimize(r);
+  }
+}
+
+BENCHMARK_DEFINE_F(JsonObjectFixture,
                    BmJsonObjectExtractField)(benchmark::State& state) {
   const std::string& json = GetJson();
 
@@ -134,8 +159,7 @@ BENCHMARK_DEFINE_F(JsonObjectFixture,
     JsonParser parser;
     parser.PrepareJson(json);
     const std::string& field = GetNextField();
-    simdjson::ondemand::value v;
-    auto r = parser.ExtractByField(field).get(v);
+    auto r = parser.ExtractByField<JsonParser::OutputType::JSON>(field);
     benchmark::DoNotOptimize(r);
   }
 }
@@ -168,6 +192,25 @@ class JsonPathFixture : public benchmark::Fixture, public JsonFixture {
 };
 
 BENCHMARK_DEFINE_F(JsonPathFixture,
+                   BmJsonPathExtractText)(benchmark::State& state) {
+  const std::string& json = GetJson();
+
+  for (auto _ : state) {
+    JsonParser parser;
+    parser.PrepareJson(json);
+    const std::vector<std::string>& path = GetNextPath();
+    std::vector<std::optional<velox::StringView>> path_views;
+    path_views.reserve(path.size());
+    for (const auto& p : path) {
+      path_views.emplace_back(
+        std::make_optional<velox::StringView>(p.data(), p.size()));
+    }
+    auto r = parser.Extract<JsonParser::OutputType::TEXT>(path_views);
+    benchmark::DoNotOptimize(r);
+  }
+}
+
+BENCHMARK_DEFINE_F(JsonPathFixture,
                    BmJsonPathExtract)(benchmark::State& state) {
   const std::string& json = GetJson();
 
@@ -175,19 +218,22 @@ BENCHMARK_DEFINE_F(JsonPathFixture,
     JsonParser parser;
     parser.PrepareJson(json);
     const std::vector<std::string>& path = GetNextPath();
-    std::vector<velox::StringView> path_views;
+    std::vector<std::optional<velox::StringView>> path_views;
     path_views.reserve(path.size());
     for (const auto& p : path) {
-      path_views.emplace_back(p.data(), p.size());
+      path_views.emplace_back(
+        std::make_optional<velox::StringView>(p.data(), p.size()));
     }
-    simdjson::ondemand::value v;
-    auto r = parser.Extract(path_views).get(v);
+    auto r = parser.Extract<JsonParser::OutputType::JSON>(path_views);
     benchmark::DoNotOptimize(r);
   }
 }
 
 }  // namespace
-BENCHMARK_REGISTER_F(JsonArrayFixture, BmJsonArrayExtractIndex);
-BENCHMARK_REGISTER_F(JsonObjectFixture, BmJsonObjectExtractField);
-BENCHMARK_REGISTER_F(JsonPathFixture, BmJsonPathExtract);
+BENCHMARK_REGISTER_F(JsonArrayFixture, BmJsonArrayExtractIndexText);
+BENCHMARK_REGISTER_F(JsonObjectFixture, BmJsonObjectExtractFieldText);
+BENCHMARK_REGISTER_F(JsonPathFixture, BmJsonPathExtractText);
+BENCHMARK_REGISTER_F(JsonArrayFixture, BmJsonArrayExtractIndexText);
+BENCHMARK_REGISTER_F(JsonObjectFixture, BmJsonObjectExtractFieldText);
+BENCHMARK_REGISTER_F(JsonPathFixture, BmJsonPathExtractText);
 BENCHMARK_MAIN();

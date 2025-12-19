@@ -21,7 +21,6 @@
 #include "pg/functions/json.h"
 
 namespace sdb::pg {
-
 namespace {
 
 void AssertQuoted(std::string_view str) {

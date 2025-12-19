@@ -27,8 +27,6 @@
 #include <velox/vector/FlatMapVector.h>
 #include <velox/vector/FlatVector.h>
 
-#include <cstring>
-
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/endian.h"
@@ -105,21 +103,19 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
   _cell_keys_buffers.clear();
   _cell_keys_buffers.reserve(num_rows);
 
-  std::string combined_key;
+  std::string key_buffer;
   for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-    key_utils::ReserveBuffer(combined_key);
-    key_utils::PrepareBufferForLockKey(combined_key, table_key);
-    primary_key::Create(*input, _key_childs, row_idx, combined_key);
-    auto lock_key = key_utils::GetLockKey(combined_key);
+    key_utils::ReserveBuffer(key_buffer);
+    key_utils::PrepareBufferForLockKey(key_buffer, table_key);
+    primary_key::Create(*input, _key_childs, row_idx, key_buffer);
     VELOX_CHECK(
       _transaction
-        .GetKeyLock(&_cf, rocksdb::Slice(lock_key.data(), lock_key.size()),
-                    false, true)
+        .GetKeyLock(&_cf, key_utils::GetLockKey(key_buffer), false, true)
         .ok(),
       "Failed to acquire row lock for table {}", _object_key.id());
 
     auto& cell_key_buffer =
-      _cell_keys_buffers.emplace_back(std::move(combined_key));
+      _cell_keys_buffers.emplace_back(std::move(key_buffer));
 
     key_utils::PrepareBufferForCellKey(cell_key_buffer, table_key);
   }
@@ -2024,18 +2020,22 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
   const auto num_columns = _row_type->size();
   const auto num_rows = input->size();
 
-  std::string combined_key;
+  std::string key_buffer;
   for (velox::vector_size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-    key_utils::PrepareBufferForLockKey(combined_key, table_key);
-    primary_key::Create(*input, row_idx, combined_key);
-    VELOX_CHECK(_transaction.GetKeyLock(&_cf, combined_key, false, true).ok(),
-                "Failed to acquire row lock for table {}", _object_key.id());
+    key_utils::ReserveBuffer(key_buffer);
+    key_utils::PrepareBufferForLockKey(key_buffer, table_key);
+    primary_key::Create(*input, row_idx, key_buffer);
+    VELOX_CHECK(
+      _transaction
+        .GetKeyLock(&_cf, key_utils::GetLockKey(key_buffer), false, true)
+        .ok(),
+      "Failed to acquire row lock for table {}", _object_key.id());
 
-    key_utils::PrepareBufferForCellKey(combined_key, table_key);
+    key_utils::PrepareBufferForCellKey(key_buffer, table_key);
 
     for (velox::column_index_t col_idx = 0; col_idx < num_columns; ++col_idx) {
-      key_utils::SetupColumnForCellKey(combined_key, _column_ids[col_idx]);
-      auto status = _transaction.Delete(&_cf, rocksdb::Slice(combined_key));
+      key_utils::SetupColumnForCellKey(key_buffer, _column_ids[col_idx]);
+      auto status = _transaction.Delete(&_cf, rocksdb::Slice(key_buffer));
       if (!status.ok()) {
         SDB_THROW(rocksutils::ConvertStatus(status));
       }

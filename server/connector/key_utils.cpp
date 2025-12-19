@@ -41,13 +41,6 @@ void AppendColumnKey(std::string& key, catalog::Column::Id column_oid) {
   rocksutils::Append(key, column_oid);
 }
 
-void AppendCellKey(std::string& key, catalog::Column::Id column_oid,
-                   std::string_view primary_key) {
-  SDB_ASSERT(!primary_key.empty());
-  SDB_ASSERT(!key.empty());
-  rocksutils::Append(key, column_oid, primary_key);
-}
-
 void AppendPrimaryKey(std::string& key, std::string_view primary_key) {
   SDB_ASSERT(!primary_key.empty());
   SDB_ASSERT(!key.empty());

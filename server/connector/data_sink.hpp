@@ -188,7 +188,7 @@ class RocksDBDataSink : public velox::connector::DataSink {
   std::vector<catalog::Column::Id> _column_ids;
   velox::memory::MemoryPool& _memory_pool;
   SliceVector _row_slices;
-  primary_key::Keys _cell_keys_buffers;  // buffer per row
+  primary_key::Keys _keys_buffers;
   velox::HashStringAllocator _bytes_allocator;
   catalog::Column::Id _column_id;
   bool _skip_primary_key_columns;
@@ -215,6 +215,7 @@ class RocksDBDeleteDataSink : public velox::connector::DataSink {
   rocksdb::ColumnFamilyHandle& _cf;
   ObjectId _object_key;
   std::vector<catalog::Column::Id> _column_ids;
+  std::vector<velox::column_index_t> _key_childs;
 };
 
 }  // namespace sdb::connector

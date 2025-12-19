@@ -76,7 +76,7 @@ RocksDBDataSink::RocksDBDataSink(
     _column_ids{std::move(column_oids)},
     _memory_pool{memory_pool},
     _row_slices{memory_pool},
-    _cell_keys_buffers{memory_pool},
+    _keys_buffers{memory_pool},
     _bytes_allocator{&memory_pool},
     _skip_primary_key_columns{skip_primary_key_columns} {
   _key_childs.assign_range(key_childs);
@@ -100,24 +100,19 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
   // TODO(Dronplane) implement updating PK fields
   const std::string table_key = key_utils::PrepareTableKey(_object_key);
   const auto num_rows = input->size();
-  _cell_keys_buffers.clear();
-  _cell_keys_buffers.reserve(num_rows);
+  _keys_buffers.clear();
+  _keys_buffers.reserve(num_rows);
 
-  std::string key_buffer;
   for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-    key_utils::ReserveBuffer(key_buffer);
-    key_utils::PrepareBufferForLockKey(key_buffer, table_key);
-    primary_key::Create(*input, _key_childs, row_idx, key_buffer);
-    VELOX_CHECK(
-      _transaction
-        .GetKeyLock(&_cf, key_utils::GetLockKey(key_buffer), false, true)
-        .ok(),
-      "Failed to acquire row lock for table {}", _object_key.id());
-
-    auto& cell_key_buffer =
-      _cell_keys_buffers.emplace_back(std::move(key_buffer));
-
-    key_utils::PrepareBufferForCellKey(cell_key_buffer, table_key);
+    auto& key_buffer = _keys_buffers.emplace_back();
+    key_utils::MakeColumnKey(
+      input, _key_childs, row_idx, table_key,
+      [&](std::string_view row_key) {
+        VELOX_CHECK(_transaction.GetKeyLock(&_cf, row_key, false, true).ok(),
+                    "Failed to acquire row lock for table {}",
+                    _object_key.id());
+      },
+      key_buffer);
   }
 
   velox::IndexRange all_rows(0, num_rows);
@@ -1861,10 +1856,10 @@ const std::string& RocksDBDataSink::SetupRowKey(
   SDB_ASSERT(original_idx.empty() ||
              original_idx.size() > static_cast<size_t>(idx));
   const auto row_id = original_idx.empty() ? idx : original_idx[idx];
-  SDB_ASSERT(static_cast<size_t>(row_id) < _cell_keys_buffers.size());
+  SDB_ASSERT(static_cast<size_t>(row_id) < _keys_buffers.size());
 
-  auto& row_key = _cell_keys_buffers[row_id];
-  key_utils::SetupColumnForCellKey(row_key, _column_id);
+  auto& row_key = _keys_buffers[row_id];
+  key_utils::SetupColumnForKey(row_key, _column_id);
 
   return row_key;
 }
@@ -2010,6 +2005,8 @@ RocksDBDeleteDataSink::RocksDBDeleteDataSink(
              " does not match row "
              "type size",
              _row_type->size());
+  _key_childs.resize(_row_type->size());
+  absl::c_iota(_key_childs, 0);
 }
 
 void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
@@ -2020,21 +2017,20 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
   const auto num_columns = _row_type->size();
   const auto num_rows = input->size();
 
+  _key_childs.resize(input->childrenSize());
   std::string key_buffer;
   for (velox::vector_size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-    key_utils::ReserveBuffer(key_buffer);
-    key_utils::PrepareBufferForLockKey(key_buffer, table_key);
-    primary_key::Create(*input, row_idx, key_buffer);
-    VELOX_CHECK(
-      _transaction
-        .GetKeyLock(&_cf, key_utils::GetLockKey(key_buffer), false, true)
-        .ok(),
-      "Failed to acquire row lock for table {}", _object_key.id());
-
-    key_utils::PrepareBufferForCellKey(key_buffer, table_key);
+    key_utils::MakeColumnKey(
+      input, _key_childs, row_idx, table_key,
+      [&](std::string_view row_key) {
+        VELOX_CHECK(_transaction.GetKeyLock(&_cf, row_key, false, true).ok(),
+                    "Failed to acquire row lock for table {}",
+                    _object_key.id());
+      },
+      key_buffer);
 
     for (velox::column_index_t col_idx = 0; col_idx < num_columns; ++col_idx) {
-      key_utils::SetupColumnForCellKey(key_buffer, _column_ids[col_idx]);
+      key_utils::SetupColumnForKey(key_buffer, _column_ids[col_idx]);
       auto status = _transaction.Delete(&_cf, rocksdb::Slice(key_buffer));
       if (!status.ok()) {
         SDB_THROW(rocksutils::ConvertStatus(status));

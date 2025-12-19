@@ -20,8 +20,12 @@
 
 #pragma once
 
+#include <velox/vector/BaseVector.h>
+#include <velox/vector/ComplexVector.h>
+
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
+#include "connector/primary_key.hpp"
 
 namespace sdb::connector::key_utils {
 
@@ -35,23 +39,26 @@ std::string PrepareColumnKey(ObjectId id, catalog::Column::Id column_oid);
 // Appends column OID to the Table key created with PrepareTableKey.
 void AppendColumnKey(std::string& key, catalog::Column::Id column_oid);
 
-// Reserves space for column_id and object_id
-void ReserveBuffer(std::string& buf);
-
-// Prepare suffix of the buffer to get lock key
-void PrepareBufferForLockKey(std::string& buf, std::string_view table_key);
-
-// Get corresponding suffix
-std::string_view GetLockKey(std::string& buf);
-
-// Prepare the whole buffer to the format
-// 'object_id | reserved for column_id | pk'
-void PrepareBufferForCellKey(std::string& buf, std::string_view table_key);
+// Prepare buffer for column key and call 'row_key_handle' on row_key
+template<typename Func>
+void MakeColumnKey(const velox::RowVectorPtr& input,
+                   const std::vector<velox::column_index_t>& pk_columns,
+                   velox::vector_size_t row_idx, std::string_view object_id,
+                   Func row_key_handle, std::string& key_buffer) {
+  SDB_ASSERT(object_id.size() == sizeof(ObjectId));
+  basics::StrResize(key_buffer, sizeof(catalog::Column::Id) + sizeof(ObjectId));
+  std::memcpy(key_buffer.data() + sizeof(catalog::Column::Id), object_id.data(),
+              sizeof(ObjectId));
+  primary_key::Create(*input, pk_columns, row_idx, key_buffer);
+  row_key_handle(std::string_view{
+    key_buffer.begin() + sizeof(catalog::Column::Id), key_buffer.end()});
+  std::memcpy(key_buffer.data(), object_id.data(), sizeof(ObjectId));
+}
 
 // Takes buffer in format
 // 'object_id | reserved for column_id | pk'
 // and fills column_id
-void SetupColumnForCellKey(std::string& buf, catalog::Column::Id column_id);
+void SetupColumnForKey(std::string& buf, catalog::Column::Id column_id);
 
 // creates range covering all rows of all columns of the table
 std::pair<std::string, std::string> CreateTableRange(ObjectId id);

@@ -742,7 +742,8 @@ class DataSinkTest : public ::testing::Test,
       rocksdb::ReadOptions read_options;
       std::string value;
       key.resize(base_size);
-      sdb::connector::key_utils::AppendCellKey(key, 0, row_keys[i]);
+      sdb::rocksutils::Append(key, 0,
+                              static_cast<std::string_view>(row_keys[i]));
       ASSERT_TRUE(
         _db->Get(read_options, _cf_handles.front(), rocksdb::Slice(key), &value)
           .ok());

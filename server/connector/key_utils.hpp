@@ -36,10 +36,6 @@ std::string PrepareColumnKey(ObjectId id, catalog::Column::Id column_oid);
 // Appends column OID to the Table key created with PrepareTableKey.
 void AppendColumnKey(std::string& key, catalog::Column::Id column_oid);
 
-// Appends primary key to the base key part. Could be table key for creating
-// lock key or column key for creating full cell key.
-void AppendPrimaryKey(std::string& key, std::string_view primary_key);
-
 // creates range covering all rows of all columns of the table
 std::pair<std::string, std::string> CreateTableRange(ObjectId id);
 

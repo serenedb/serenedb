@@ -44,7 +44,7 @@ template<typename Func>
 void MakeColumnKey(const velox::RowVectorPtr& input,
                    const std::vector<velox::column_index_t>& pk_columns,
                    velox::vector_size_t row_idx, std::string_view object_id,
-                   Func row_key_handle, std::string& key_buffer) {
+                   Func&& row_key_handle, std::string& key_buffer) {
   SDB_ASSERT(object_id.size() == sizeof(ObjectId));
   basics::StrResize(key_buffer, sizeof(catalog::Column::Id) + sizeof(ObjectId));
   std::memcpy(key_buffer.data() + sizeof(catalog::Column::Id), object_id.data(),

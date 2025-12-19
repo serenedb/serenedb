@@ -122,9 +122,10 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
     basics::StrResize(cell_key_buffer,
                       combined_key.size() + sizeof(catalog::Column::Id));
     std::memcpy(cell_key_buffer.data(), combined_key.data(), kObjectKeySize);
-    std::memcpy(cell_key_buffer.data() + kObjectKeySize + sizeof(catalog::Column::Id),
-                combined_key.data() + kObjectKeySize,
-                combined_key.size() - kObjectKeySize);
+    std::memcpy(
+      cell_key_buffer.data() + kObjectKeySize + sizeof(catalog::Column::Id),
+      combined_key.data() + kObjectKeySize,
+      combined_key.size() - kObjectKeySize);
 
     combined_key.resize(kObjectKeySize);
   }

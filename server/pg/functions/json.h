@@ -59,12 +59,11 @@ class JsonParser {
     if (doc.get_value().get(value)) {
       return {};
     }
-    for (const auto& element : path) {
+    for (const std::optional<velox::StringView>& element : path) {
       if (!element.has_value()) {
         return {};
       }
-      const velox::StringView& element_ref = *element;
-      std::string_view key{element_ref};
+      auto key = static_cast<std::string_view>(*element);
 
       if (value.type() == simdjson::ondemand::json_type::array) {
         int64_t index;

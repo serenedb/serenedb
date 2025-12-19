@@ -53,6 +53,7 @@ simdjson::simdjson_result<simdjson::ondemand::value> JsonParser::GetByIndex(
 }
 
 void JsonParser::PrepareJson(std::string_view json) {
+  // TODO(codeworse): erase unquote after erasing quotes in velox Json type
   AssertQuoted(json);
   size_t length =
     velox::unescapeSizeForJsonFunctions(json.data() + 1, json.size() - 2, true);

@@ -36,6 +36,7 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
 #include "common.h"
+#include "connector/primary_key.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "key_utils.hpp"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
@@ -95,35 +96,44 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
   SDB_ASSERT(input->type()->size() == _column_ids.size(),
              "RocksDBDataSink: column oids size ", _column_ids.size(),
              " doesn't match input type size ", input->type()->size());
-  // TODO(Dronplane) implement updating PK fields
-  std::string table_key = key_utils::PrepareTableKey(_object_key);
-  const auto parent_size = table_key.size();
-
-  table_key.resize(parent_size + sizeof(catalog::Column::id));
-  _row_keys.clear();
-  primary_key::Create(*input, _key_childs, _row_keys, table_key);
-  table_key.resize(parent_size);
-
-  const auto immutable_prefix = parent_size + sizeof(catalog::Column::id);
-
   SDB_ASSERT(input->type()->kind() == velox::TypeKind::ROW);
-  const auto num_columns = input->childrenSize();
-  velox::IndexRange all_rows(0, input->size());
-  for (const auto& combined_row_key : _row_keys) {
-    std::string_view row_key{combined_row_key.begin() + immutable_prefix,
-                             combined_row_key.end()};
-    basics::StrResize(table_key, parent_size);
-    key_utils::AppendPrimaryKey(table_key, row_key);
+
+  // TODO(Dronplane) implement updating PK fields
+  std::string combined_key = key_utils::PrepareTableKey(_object_key);
+  const auto object_key_size = combined_key.size();
+
+  const auto rows_cnt = input->size();
+  _row_keys.clear();
+  _row_keys.reserve(rows_cnt);
+  for (size_t row_idx = 0; row_idx < rows_cnt; ++row_idx) {
+    // [object key] [pk of row]
+    primary_key::Create(*input, _key_childs, row_idx, combined_key);
     VELOX_CHECK(
       _transaction
-        .GetKeyLock(&_cf, rocksdb::Slice(table_key.data(), table_key.size()),
+        .GetKeyLock(&_cf,
+                    rocksdb::Slice(combined_key.data(), combined_key.size()),
                     false, true)
         .ok(),
       "Failed to acquire row lock for table {}", _object_key.id());
+
+    auto& row_key = _row_keys.emplace_back();
+    // [object key] [reserved for column_id] [pk of row]
+    row_key.resize_and_overwrite(
+      combined_key.size() + sizeof(catalog::Column::Id),
+      [&](char* buf, size_t new_size) {
+        std::memcpy(buf, combined_key.data(), object_key_size);
+        std::memcpy(buf + object_key_size + sizeof(catalog::Column::Id),
+                    combined_key.data() + object_key_size,
+                    combined_key.size() - object_key_size);
+        return new_size;
+      });
+    combined_key.resize(object_key_size);
   }
 
+  velox::IndexRange all_rows(0, rows_cnt);
+  const auto columns_cnt = input->childrenSize();
   [[maybe_unused]] const auto& input_type = input->type()->asRow();
-  for (velox::column_index_t i = 0; i < num_columns; ++i) {
+  for (velox::column_index_t i = 0; i < columns_cnt; ++i) {
     // Exclude only UNKNOWN from equivalency check as UNKNOWN is just a NULL and
     // compatible with everything.
     // Intentionally check UNKNOWN after equivalency to make compiler execute
@@ -237,7 +247,6 @@ void RocksDBDataSink::WriteDictionaryColumn(
   }
   size_t current = 0;
   size_t row_id = 0;
-  // const auto base_size = key.size();
   for (const auto& range : ranges) {
     const auto end = range.begin + range.size;
     for (int32_t offset = range.begin; offset < end; ++offset) {
@@ -248,7 +257,6 @@ void RocksDBDataSink::WriteDictionaryColumn(
                       original_idx.subspan(current, sub_ranges.size()));
           sub_ranges.clear();
         }
-        // key_utils::AppendPrimaryKey(key, GetRowKey(row_id++, original_idx));
         WriteNull(_transaction, _cf, SetupRowKey(row_id++, original_idx));
         current = row_id;
         continue;
@@ -2015,28 +2023,66 @@ RocksDBDeleteDataSink::RocksDBDeleteDataSink(
 }
 
 // TODO(issue#277): measure alternative approach
+// void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
+//   SDB_ASSERT(input->encoding() == velox::VectorEncoding::Simple::ROW);
+
+//   const auto num_columns = _row_type->size();
+//   const auto num_rows = input->size();
+
+//   std::string row_key;
+//   std::string key = key_utils::PrepareTableKey(_object_key);
+
+//   const size_t key_old_size = key.size();
+//   for (velox::vector_size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+//     basics::StrResize(key, key_old_size);
+//     row_key.clear();
+//     primary_key::Create(*input, row_idx, row_key);
+//     key_utils::AppendPrimaryKey(key, row_key);
+//     VELOX_CHECK(_transaction.GetKeyLock(&_cf, key, false, true).ok(),
+//                 "Failed to acquire row lock for table {}", _object_key.id());
+
+//     for (velox::column_index_t col_idx = 0; col_idx < num_columns; ++col_idx)
+//     {
+//       basics::StrResize(key, key_old_size);
+//       key_utils::AppendCellKey(key, _column_ids[col_idx], row_key);
+//       auto status = _transaction.Delete(&_cf, rocksdb::Slice(key));
+//       if (!status.ok()) {
+//         SDB_THROW(rocksutils::ConvertStatus(status));
+//       }
+//     }
+//   }
+// }
+
 void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
+  // `input` is vector of rows that consists of **only primary** columns
   SDB_ASSERT(input->encoding() == velox::VectorEncoding::Simple::ROW);
 
   const auto num_columns = _row_type->size();
   const auto num_rows = input->size();
 
-  std::string row_key;
-  std::string key = key_utils::PrepareTableKey(_object_key);
+  // row  key: [object_id] [pk]
+  // cell key: [object_id] [column_id] [pk]
 
-  const size_t key_old_size = key.size();
+  std::string row_key = key_utils::PrepareTableKey(_object_key);
+  std::string cell_key = row_key;
+  const size_t object_key_size = row_key.size();
+
   for (velox::vector_size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-    basics::StrResize(key, key_old_size);
-    row_key.clear();
+    basics::StrResize(row_key, object_key_size);
+
     primary_key::Create(*input, row_idx, row_key);
-    key_utils::AppendPrimaryKey(key, row_key);
-    VELOX_CHECK(_transaction.GetKeyLock(&_cf, key, false, true).ok(),
+    VELOX_CHECK(_transaction.GetKeyLock(&_cf, row_key, false, true).ok(),
                 "Failed to acquire row lock for table {}", _object_key.id());
 
+    basics::StrResize(cell_key, sizeof(catalog::Column::Id) + row_key.size());
+    std::memcpy(cell_key.data() + object_key_size + sizeof(catalog::Column::Id),
+                row_key.data() + object_key_size,
+                row_key.size() - object_key_size);
+
     for (velox::column_index_t col_idx = 0; col_idx < num_columns; ++col_idx) {
-      basics::StrResize(key, key_old_size);
-      key_utils::AppendCellKey(key, _column_ids[col_idx], row_key);
-      auto status = _transaction.Delete(&_cf, rocksdb::Slice(key));
+      absl::big_endian::Store32(cell_key.data() + object_key_size,
+                                _column_ids[col_idx]);
+      auto status = _transaction.Delete(&_cf, rocksdb::Slice(cell_key));
       if (!status.ok()) {
         SDB_THROW(rocksutils::ConvertStatus(status));
       }

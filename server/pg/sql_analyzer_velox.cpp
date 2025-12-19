@@ -688,6 +688,12 @@ class SqlAnalyzer {
  private:
   SqlCommandType ProcessStmt(State& state, const Node& node);
 
+  template<axiom::connector::WriteKind WriteKind>
+  void MakeTableWrite(State& state,
+                      std::shared_ptr<axiom::connector::Table> table,
+                      std::vector<std::string> column_names,
+                      std::vector<lp::ExprPtr> column_exprs,
+                      std::vector<const catalog::Column*> generated_columns);
   void ProcessSelectStmt(State& state, const SelectStmt& stmt);
   void ProcessInsertStmt(State& state, const InsertStmt& stmt);
   void ProcessUpdateStmt(State& state, const UpdateStmt& stmt);
@@ -703,9 +709,10 @@ class SqlAnalyzer {
   void ProcessPipelineSet(State& state, const SelectStmt& stmt);
 
   void ProcessWithClause(State& state, const WithClause* clause);
-  std::string_view ProcessTableColumns(State* parent, const RangeVar* node,
-                                       const velox::RowTypePtr& row_type,
-                                       std::vector<std::string>& column_names);
+  using TableAliasAndColumnNames =
+    std::pair<std::string_view, std::vector<std::string>>;
+  TableAliasAndColumnNames ProcessTableColumns(
+    State* parent, const RangeVar* node, const velox::RowTypePtr& row_type);
 
   void ProcessFromList(State& state, const List* list);
   State ProcessFromNode(State* parent, const Node* node);
@@ -1182,6 +1189,44 @@ void SqlAnalyzer::ProcessSelectStmt(State& state, const SelectStmt& stmt) {
   // TODO: ProcessFinalProject
 }
 
+template<axiom::connector::WriteKind WriteKind>
+void SqlAnalyzer::MakeTableWrite(
+  State& state, std::shared_ptr<axiom::connector::Table> table,
+  std::vector<std::string> column_names, std::vector<lp::ExprPtr> column_exprs,
+  std::vector<const catalog::Column*> generated_columns) {
+  if (!generated_columns.empty()) {
+    // generated columns may depend on other columns (default indeed)
+    auto projected_column_names =
+      column_names | std::views::transform([&](const std::string& name) {
+        return _id_generator.NextColumnName(name);
+      }) |
+      std::ranges::to<std::vector>();
+    state.root = std::make_shared<lp::ProjectNode>(
+      _id_generator.NextPlanId(), std::move(state.root),
+      std::move(projected_column_names), std::move(column_exprs));
+
+    const auto& output = state.root->outputType();
+    for (const auto& [type, expr] :
+         std::views::zip(output->children(), output->names())) {
+      column_exprs.emplace_back(
+        std::make_shared<lp::InputReferenceExpr>(type, expr));
+    }
+
+    for (const auto* column : generated_columns) {
+      SDB_ASSERT(column);
+      SDB_ASSERT(column->IsGenerated());
+      SDB_ASSERT(column->default_value);
+      auto expr = ProcessExprNodeImpl(state, column->default_value.GetExpr());
+      column_names.emplace_back(column->name);
+      column_exprs.emplace_back(std::move(expr));
+    }
+  }
+
+  state.root = std::make_shared<lp::TableWriteNode>(
+    _id_generator.NextPlanId(), std::move(state.root), table, WriteKind,
+    std::move(column_names), std::move(column_exprs));
+}
+
 // It's literally UNKNOWN
 // but have different address to distinguish it from UNKNOWN().
 const velox::UnknownType kDefaultValueTypePlaceHolder{};
@@ -1290,25 +1335,40 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
   }
 
   // set default value for not mentioned columns
+  std::vector<const catalog::Column*> generated_columns;
   for (const auto& column : table.Columns()) {
     if (!absl::c_linear_search(column_names, column.name)) {
+      const auto& default_value = column.default_value;
+      if (column.IsGenerated()) {
+        SDB_ASSERT(default_value);
+        generated_columns.emplace_back(&column);
+        continue;
+      }
+
       lp::ExprPtr expr;
-      if (const auto& default_value = column.default_value) {
-        expr = ProcessExprNodeImpl(state, default_value->GetExpr());
+      if (default_value) {
+        expr = ProcessExprNodeImpl(state, default_value.GetExpr());
       } else {
         expr = MakeConst(velox::TypeKind::UNKNOWN, column.type);
       }
+
       column_names.emplace_back(column.name);
       column_exprs.emplace_back(std::move(expr));
+
+    } else if (column.IsGenerated()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_GENERATED_ALWAYS),
+        CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
+        ERR_MSG("cannot insert a non-DEFAULT value into column \"", column.name,
+                "\""),
+        ERR_DETAIL("Column \"", column.name, "\" is a generated column."));
     }
   }
 
   object->EnsureTable();
-
-  state.root = std::make_shared<lp::TableWriteNode>(
-    _id_generator.NextPlanId(), std::move(state.root), object->table,
-    axiom::connector::WriteKind::kInsert, std::move(column_names),
-    std::move(column_exprs));
+  MakeTableWrite<axiom::connector::WriteKind::kInsert>(
+    state, object->table, std::move(column_names), std::move(column_exprs),
+    std::move(generated_columns));
 }
 
 void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
@@ -1368,6 +1428,15 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
     column_names.emplace_back(name);
   }
 
+  using NameToColumnMap =
+    containers::FlatHashMap<std::string_view, const catalog::Column*>;
+  auto name_to_column =
+    table.Columns() | std::views::transform([](const catalog::Column& column) {
+      return std::pair<std::string_view, const catalog::Column*>{column.name,
+                                                                 &column};
+    }) |
+    std::ranges::to<NameToColumnMap>();
+
   VisitNodes(stmt.targetList, [&](const ResTarget& target) {
     if (target.indirection) {
       SDB_THROW(ERROR_NOT_IMPLEMENTED,
@@ -1376,20 +1445,50 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
 
     column_names.emplace_back(target.name);
     auto expr = ProcessExprNode(state, target.val, ExprKind::UpdateSource);
-    const auto& table_column_type =
-      table.RowType()->findChild(column_names.back());
-    if (expr->type()->kind() != table_column_type->kind()) {
-      expr = MakeCast(table_column_type, std::move(expr));
+    auto it = name_to_column.find(column_names.back());
+    if (it == name_to_column.end()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+        CURSOR_POS(ErrorPosition(ExprLocation(&target))),
+        ERR_MSG("column \"", column_names.back(), "\" of relation \"",
+                table_name, "\" does not exist"));
+    }
+    SDB_ASSERT(it->second);
+    const auto& column = *(it->second);
+    if (expr->type() == kDefaultValueTypePlaceHolderPtr) {
+      if (const auto& default_value = column.default_value) {
+        expr = ProcessExprNodeImpl(state, default_value.GetExpr());
+      } else {
+        expr = MakeConst(velox::TypeKind::UNKNOWN, column.type);
+      }
+    }
+    if (expr->type() != column.type) {
+      expr = MakeCast(column.type, std::move(expr));
     }
     column_exprs.emplace_back(std::move(expr));
   });
 
-  object->EnsureTable();
+  std::vector<const catalog::Column*> generated_columns;
+  for (const auto& column : table.Columns()) {
+    if (!column.IsGenerated()) {
+      continue;
+    }
 
-  state.root = std::make_shared<lp::TableWriteNode>(
-    _id_generator.NextPlanId(), std::move(state.root), object->table,
-    axiom::connector::WriteKind::kUpdate, std::move(column_names),
-    std::move(column_exprs));
+    if (absl::c_linear_search(column_names, column.name)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_GENERATED_ALWAYS),
+        CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
+        ERR_MSG("column \"", column.name, "\" can only be updated to DEFAULT"),
+        ERR_DETAIL("Column \"", column.name, "\" is a generated column."));
+    }
+
+    generated_columns.emplace_back(&column);
+  }
+
+  object->EnsureTable();
+  MakeTableWrite<axiom::connector::WriteKind::kUpdate>(
+    state, object->table, std::move(column_names), std::move(column_exprs),
+    std::move(generated_columns));
 }
 
 void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
@@ -1570,15 +1669,34 @@ void SqlAnalyzer::ProcessCreateStmt(State& state, const CreateStmt& stmt) {
   State dummy{};
   EnsureRoot(dummy);
 
+  std::vector<std::string> column_names;
+  std::vector<velox::TypePtr> column_types;
+  column_names.reserve(list_length(stmt.tableElts));
+  column_types.reserve(list_length(stmt.tableElts));
+  VisitNodes(stmt.tableElts, [&](const Node& node) {
+    if (IsA(&node, ColumnDef)) {
+      const auto& col_def = *castNode(ColumnDef, &node);
+      column_names.emplace_back(_id_generator.NextColumnName(col_def.colname));
+      column_types.emplace_back(NameToType(*col_def.typeName));
+    }
+  });
+
+  velox::RowType dummy_output_type{std::move(column_names),
+                                   std::move(column_types)};
+  dummy.lookup_columns = MakePtrView<velox::RowType>(&dummy_output_type);
+
   VisitNodes(stmt.tableElts, [&](const Node& node) {
     if (IsA(&node, ColumnDef)) {
       const auto& col_def = *castNode(ColumnDef, &node);
       VisitNodes(col_def.constraints, [&](const Constraint& constraint) {
         switch (constraint.contype) {
-          case CONSTR_DEFAULT: {
+          case CONSTR_DEFAULT:
+          case CONSTR_GENERATED: {
             auto column_type = NameToType(*col_def.typeName);
-            auto expr = ProcessExprNode(dummy, constraint.raw_expr,
-                                        ExprKind::ColumnDefault);
+            auto kind = constraint.contype == CONSTR_DEFAULT
+                          ? ExprKind::ColumnDefault
+                          : ExprKind::GeneratedColumn;
+            auto expr = ProcessExprNode(dummy, constraint.raw_expr, kind);
             if (expr->type() != column_type) {
               THROW_SQL_ERROR(
                 ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
@@ -1590,6 +1708,7 @@ void SqlAnalyzer::ProcessCreateStmt(State& state, const CreateStmt& stmt) {
                 ERR_HINT("You will need to rewrite or cast the expression."));
             }
           } break;
+
           default:
         }
       });
@@ -2076,6 +2195,12 @@ lp::AggregateExprPtr SqlAnalyzer::MaybeAggregateFuncCall(
         ERR_CODE(ERRCODE_GROUPING_ERROR),
         CURSOR_POS(ErrorPosition(ExprLocation(&func_call))),
         ERR_MSG("aggregate functions are not allowed in DEFAULT expressions"));
+    case ExprKind::GeneratedColumn:
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_GROUPING_ERROR),
+        CURSOR_POS(ErrorPosition(ExprLocation(&func_call))),
+        ERR_MSG(
+          "aggregate functions are not allowed in generation expressions"));
     default:
       break;
   }
@@ -2250,9 +2375,7 @@ void SqlAnalyzer::ProcessGroupByList(State& state, const List* groupby,
     SDB_ASSERT(emplaced);
     output_names.emplace_back(std::move(name));
   }
-  output_names.insert(output_names.end(),
-                      std::make_move_iterator(collected.names.begin()),
-                      std::make_move_iterator(collected.names.end()));
+  absl::c_move(collected.names, std::back_inserter(output_names));
 
   // this will help us to resolve columns after
   // aggregation removed all the columns in the output_type
@@ -2416,11 +2539,12 @@ State SqlAnalyzer::ProcessView(State* parent, std::string_view view_name,
   return state;
 }
 
-std::string_view SqlAnalyzer::ProcessTableColumns(
-  State* parent, const RangeVar* node, const velox::RowTypePtr& row_type,
-  std::vector<std::string>& column_names) {
+SqlAnalyzer::TableAliasAndColumnNames SqlAnalyzer::ProcessTableColumns(
+  State* parent, const RangeVar* node, const velox::RowTypePtr& row_type) {
   const auto& type = *row_type;
   std::string_view table_alias = node->relname;
+  std::vector<std::string> column_names;
+  column_names.reserve(type.size());
   if (node->alias) {
     const auto* aliases = node->alias->colnames;
     const uint32_t aliases_size = list_length(aliases);
@@ -2441,7 +2565,7 @@ std::string_view SqlAnalyzer::ProcessTableColumns(
   for (size_t i = column_names.size(); i < type.size(); ++i) {
     column_names.emplace_back(_id_generator.NextColumnName(type.nameOf(i)));
   }
-  return table_alias;
+  return {table_alias, std::move(column_names)};
 }
 
 State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
@@ -2450,10 +2574,8 @@ State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
                                 const RangeVar* node) {
   const auto& table = basics::downCast<catalog::Table>(*object.object);
   const auto& type = *table.RowType();
-  std::vector<std::string> column_names;
-  column_names.reserve(type.size());
-  std::string_view table_alias =
-    ProcessTableColumns(parent, node, table.RowType(), column_names);
+  auto [table_alias, column_names] =
+    ProcessTableColumns(parent, node, table.RowType());
 
   object.EnsureTable();
 
@@ -2472,10 +2594,8 @@ State SqlAnalyzer::ProcessSystemTable(State* parent, std::string_view name,
                                       const RangeVar* node) {
   const auto& row_type = snapshot.RowType();
   SDB_ASSERT(row_type);
-  std::vector<std::string> column_names;
-  column_names.reserve(row_type->size());
-  std::string_view table_alias =
-    ProcessTableColumns(parent, node, row_type, column_names);
+  auto [table_alias, column_names] =
+    ProcessTableColumns(parent, node, row_type);
   auto state = parent->MakeChild();
   auto data = snapshot.GetData(std::move(column_names), _memory_pool);
   state.root = std::make_shared<lp::ValuesNode>(
@@ -2970,7 +3090,8 @@ lp::ExprPtr SqlAnalyzer::ProcessExprNodeImpl(State& state, const Node* expr) {
       res = ProcessCollateClause(state, *castNode(CollateClause, expr));
       break;
     case T_SetToDefault:
-      if (state.expr_kind != ExprKind::Values) {
+      if (state.expr_kind != ExprKind::Values &&
+          state.expr_kind != ExprKind::UpdateSource) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
                         CURSOR_POS(ErrorPosition(ExprLocation(expr))),
                         ERR_MSG("DEFAULT is not allowed in this context"));
@@ -3499,6 +3620,12 @@ lp::WindowExprPtr SqlAnalyzer::MaybeWindowFuncCall(
         ERR_CODE(ERRCODE_WINDOWING_ERROR),
         CURSOR_POS(ErrorPosition(ExprLocation(&func_call))),
         ERR_MSG("window functions are not allowed in DEFAULT expressions"));
+    case ExprKind::GeneratedColumn:
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_WINDOWING_ERROR),
+        CURSOR_POS(ErrorPosition(ExprLocation(&func_call))),
+        ERR_MSG("window functions are not allowed in generation column "
+                "expressions"));
     default:
       break;
   }
@@ -4177,11 +4304,18 @@ lp::ExprPtr SqlAnalyzer::ProcessParamRef(State& state, const ParamRef& expr) {
 lp::ExprPtr SqlAnalyzer::ProcessSubLink(State& state, const SubLink& expr) {
   SDB_ASSERT(expr.subselect);
 
-  if (state.expr_kind == ExprKind::ColumnDefault) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_SYNTAX_ERROR),
-      CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
-      ERR_MSG("subqueries are not allowed in DEFAULT expressions"));
+  switch (state.expr_kind) {
+    case ExprKind::ColumnDefault:
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                      CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
+                      ERR_MSG("cannot use subquery in DEFAULT expression"));
+    case ExprKind::GeneratedColumn:
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+        CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
+        ERR_MSG("subqueries are not allowed in generation expressions"));
+    default:
+      break;
   }
 
   auto child_state = state.MakeChild();

@@ -133,7 +133,7 @@ void ResolveObject(ObjectId database, std::span<const std::string> search_path,
     auto table = basics::downCast<catalog::Table>(*data.object);
     for (const auto& column : table.Columns()) {
       if (const auto& default_value = column.default_value) {
-        const auto& default_value_objects = default_value->GetObjects();
+        const auto& default_value_objects = default_value.GetObjects();
         ResolveEntity(database, search_path, objects, disallowed,
                       default_value_objects, "default_value");
       }

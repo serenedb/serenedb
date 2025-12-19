@@ -40,8 +40,7 @@ void Create(const velox::RowVector& data,
             velox::vector_size_t idx, std::string& key);
 
 void Create(const velox::RowVector& data,
-            std::span<const velox::column_index_t> key_childs, Keys& buffer,
-            std::string_view base = {});
+            std::span<const velox::column_index_t> key_childs, Keys& buffer);
 
 void Create(const velox::RowVector& data, velox::vector_size_t idx,
             std::string& key);

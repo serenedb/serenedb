@@ -28,11 +28,14 @@
 #include <velox/vector/FlatMapVector.h>
 #include <velox/vector/FlatVector.h>
 
+#include <cstring>
+
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/endian.h"
 #include "basics/exceptions.h"
 #include "basics/misc.hpp"
+#include "basics/string_utils.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
 #include "common.h"
@@ -99,16 +102,24 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
   SDB_ASSERT(input->type()->kind() == velox::TypeKind::ROW);
 
   // TODO(Dronplane) implement updating PK fields
-  std::string combined_key = key_utils::PrepareTableKey(_object_key);
-  SDB_ASSERT(sizeof(ObjectId) == combined_key.size());
+  const std::string table_key = key_utils::PrepareTableKey(_object_key);
+  SDB_ASSERT(sizeof(ObjectId) == table_key.size());
   static constexpr auto kObjectKeySize = sizeof(ObjectId);
 
   const auto num_rows = input->size();
   _cell_keys_buffers.clear();
   _cell_keys_buffers.reserve(num_rows);
+  std::string combined_key;
+
   for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-    // [object_id] [pk]
+    // [column_id placeholder][object_id] [pk]
+    //                        ^--------------^
+    //               use this view as locking key
+    basics::StrResize(combined_key,
+                      kObjectKeySize + sizeof(catalog::Column::Id));
     primary_key::Create(*input, _key_childs, row_idx, combined_key);
+    std::memcpy(combined_key.data() + sizeof(catalog::Column::Id),
+                table_key.data(), kObjectKeySize);
     VELOX_CHECK(
       _transaction
         .GetKeyLock(&_cf,
@@ -117,17 +128,11 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
         .ok(),
       "Failed to acquire row lock for table {}", _object_key.id());
 
-    auto& cell_key_buffer = _cell_keys_buffers.emplace_back();
-    // [object_id] [column_id] [pk]
-    basics::StrResize(cell_key_buffer,
-                      combined_key.size() + sizeof(catalog::Column::Id));
-    std::memcpy(cell_key_buffer.data(), combined_key.data(), kObjectKeySize);
-    std::memcpy(
-      cell_key_buffer.data() + kObjectKeySize + sizeof(catalog::Column::Id),
-      combined_key.data() + kObjectKeySize,
-      combined_key.size() - kObjectKeySize);
+    auto& cell_key_buffer =
+      _cell_keys_buffers.emplace_back(std::move(combined_key));
 
-    combined_key.resize(kObjectKeySize);
+    // [object_id] [column_id placeholder] [pk]
+    std::memcpy(cell_key_buffer.data(), table_key.data(), kObjectKeySize);
   }
 
   velox::IndexRange all_rows(0, num_rows);
@@ -2029,31 +2034,28 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
   const auto num_columns = _row_type->size();
   const auto num_rows = input->size();
 
-  // row  key: [object_id] [pk]
-  // cell key: [object_id] [column_id] [pk]
-
-  std::string row_key = key_utils::PrepareTableKey(_object_key);
-  std::string cell_key = row_key;
-  SDB_ASSERT(row_key.size() == sizeof(ObjectId));
+  const std::string table_key = key_utils::PrepareTableKey(_object_key);
+  SDB_ASSERT(table_key.size() == sizeof(ObjectId));
   static constexpr size_t kObjectKeySize = sizeof(ObjectId);
-  // constexpr auto kObjectKeySize = sizeof(ObjectId);
+
+  std::string combined_key;
 
   for (velox::vector_size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-    basics::StrResize(row_key, kObjectKeySize);
+    basics::StrResize(combined_key,
+                      kObjectKeySize + sizeof(catalog::Column::Id));
 
-    primary_key::Create(*input, row_idx, row_key);
-    VELOX_CHECK(_transaction.GetKeyLock(&_cf, row_key, false, true).ok(),
+    primary_key::Create(*input, row_idx, combined_key);
+    std::memcpy(combined_key.data() + sizeof(catalog::Column::Id),
+                table_key.data(), kObjectKeySize);
+    VELOX_CHECK(_transaction.GetKeyLock(&_cf, combined_key, false, true).ok(),
                 "Failed to acquire row lock for table {}", _object_key.id());
 
-    basics::StrResize(cell_key, sizeof(catalog::Column::Id) + row_key.size());
-    std::memcpy(cell_key.data() + kObjectKeySize + sizeof(catalog::Column::Id),
-                row_key.data() + kObjectKeySize,
-                row_key.size() - kObjectKeySize);
+    std::memcpy(combined_key.data(), table_key.data(), kObjectKeySize);
 
     for (velox::column_index_t col_idx = 0; col_idx < num_columns; ++col_idx) {
-      absl::big_endian::Store32(cell_key.data() + kObjectKeySize,
+      absl::big_endian::Store32(combined_key.data() + kObjectKeySize,
                                 _column_ids[col_idx]);
-      auto status = _transaction.Delete(&_cf, rocksdb::Slice(cell_key));
+      auto status = _transaction.Delete(&_cf, rocksdb::Slice(combined_key));
       if (!status.ok()) {
         SDB_THROW(rocksutils::ConvertStatus(status));
       }

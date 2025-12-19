@@ -58,7 +58,10 @@ void MakeColumnKey(const velox::RowVectorPtr& input,
 // Takes buffer in format
 // 'object_id | reserved for column_id | pk'
 // and fills column_id
-void SetupColumnForKey(std::string& buf, catalog::Column::Id column_id);
+inline void SetupColumnForKey(std::string& buf, catalog::Column::Id column_id) {
+  SDB_ASSERT(buf.size() >= sizeof(ObjectId) + sizeof(catalog::Column::Id));
+  absl::big_endian::Store(buf.data() + sizeof(ObjectId), column_id);
+}
 
 // creates range covering all rows of all columns of the table
 std::pair<std::string, std::string> CreateTableRange(ObjectId id);

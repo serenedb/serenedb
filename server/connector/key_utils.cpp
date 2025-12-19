@@ -46,11 +46,6 @@ void AppendColumnKey(std::string& key, catalog::Column::Id column_oid) {
   rocksutils::Append(key, column_oid);
 }
 
-void SetupColumnForKey(std::string& buf, catalog::Column::Id column_id) {
-  SDB_ASSERT(buf.size() >= sizeof(ObjectId) + sizeof(catalog::Column::Id));
-  absl::big_endian::Store(buf.data() + sizeof(ObjectId), column_id);
-}
-
 std::pair<std::string, std::string> CreateTableRange(ObjectId id) {
   SDB_ASSERT(id.isSet());
   if (id.id() != std::numeric_limits<decltype(id.id())>::max()) {

@@ -22,7 +22,6 @@
 
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
-#include "rocksdb_engine_catalog/concat.h"
 
 namespace sdb::connector::key_utils {
 
@@ -35,6 +34,24 @@ std::string PrepareColumnKey(ObjectId id, catalog::Column::Id column_oid);
 
 // Appends column OID to the Table key created with PrepareTableKey.
 void AppendColumnKey(std::string& key, catalog::Column::Id column_oid);
+
+// Reserves space for column_id and object_id
+void ReserveBuffer(std::string& buf);
+
+// Prepare suffix of the buffer to get lock key
+void PrepareBufferForLockKey(std::string& buf, std::string_view table_key);
+
+// Get corresponding suffix
+std::string_view GetLockKey(std::string& buf);
+
+// Prepare the whole buffer to the format
+// 'object_id | reserved for column_id | pk'
+void PrepareBufferForCellKey(std::string& buf, std::string_view table_key);
+
+// Takes buffer in format
+// 'object_id | reserved for column_id | pk'
+// and fills column_id
+void SetupColumnForCellKey(std::string& buf, catalog::Column::Id column_id);
 
 // creates range covering all rows of all columns of the table
 std::pair<std::string, std::string> CreateTableRange(ObjectId id);

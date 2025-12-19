@@ -20,6 +20,10 @@
 
 #include "key_utils.hpp"
 
+#include "catalog/identifiers/object_id.h"
+#include "catalog/table_options.h"
+#include "rocksdb_engine_catalog/concat.h"
+
 namespace sdb::connector::key_utils {
 
 std::string PrepareTableKey(ObjectId id) {
@@ -39,6 +43,29 @@ std::string PrepareColumnKey(ObjectId id, catalog::Column::Id column_oid) {
 void AppendColumnKey(std::string& key, catalog::Column::Id column_oid) {
   SDB_ASSERT(!key.empty());
   rocksutils::Append(key, column_oid);
+}
+
+void ReserveBuffer(std::string& buf) {
+  basics::StrResize(buf, sizeof(catalog::Column::Id) + sizeof(ObjectId));
+}
+
+void PrepareBufferForLockKey(std::string& buf, std::string_view table_key) {
+  SDB_ASSERT(table_key.size() == sizeof(ObjectId));
+  std::memcpy(buf.data() + sizeof(catalog::Column::Id), table_key.data(),
+              sizeof(ObjectId));
+}
+
+std::string_view GetLockKey(std::string& buf) {
+  return {buf.begin() + sizeof(catalog::Column::Id), buf.end()};
+}
+
+void PrepareBufferForCellKey(std::string& buf, std::string_view table_key) {
+  SDB_ASSERT(table_key.size() == sizeof(ObjectId));
+  std::memcpy(buf.data(), table_key.data(), sizeof(ObjectId));
+}
+
+void SetupColumnForCellKey(std::string& buf, catalog::Column::Id column_id) {
+  absl::big_endian::Store32(buf.data() + sizeof(ObjectId), column_id);
 }
 
 std::pair<std::string, std::string> CreateTableRange(ObjectId id) {

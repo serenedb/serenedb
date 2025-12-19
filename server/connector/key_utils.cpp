@@ -20,6 +20,7 @@
 
 #include "key_utils.hpp"
 
+#include "basics/assert.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
 #include "rocksdb_engine_catalog/concat.h"
@@ -46,6 +47,7 @@ void AppendColumnKey(std::string& key, catalog::Column::Id column_oid) {
 }
 
 void SetupColumnForKey(std::string& buf, catalog::Column::Id column_id) {
+  SDB_ASSERT(buf.size() >= sizeof(ObjectId) + sizeof(catalog::Column::Id));
   absl::big_endian::Store32(buf.data() + sizeof(ObjectId), column_id);
 }
 

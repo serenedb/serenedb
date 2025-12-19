@@ -258,6 +258,18 @@ TEST(wordnet_synonyms_tests, parsing_some_lines) {
   ASSERT_EQ(expected, input);
 }
 
+TEST(wordnet_synonyms_tests, parsing_short_version) {
+  std::string_view data0("s(301380267,1,'aerial',s).");
+  auto result = WordnetSynonymsTokenizer::Parse(data0);
+  ASSERT_TRUE(result);
+  const auto input = *result;
+
+  WordnetSynonymsTokenizer::SynonymsMap expected{
+    {"aerial", {"301380267"}},
+  };
+  ASSERT_EQ(expected, input);
+}
+
 TEST(wordnet_synonyms_tests, parsing_homonym_diffrent_synset_order) {
   std::string_view data0(
     "s(100000001,1,'word0',v,1,0).\ns(100000002,2,'word0',v,1,0).\n\ns("
@@ -308,7 +320,7 @@ TEST(wordnet_synonyms_tests, parsing_broken_line_more_param) {
 }
 
 TEST(wordnet_synonyms_tests, parsing_broken_line_less_param) {
-  std::string_view data0("s(100000002,1,'come',v,1).\n");
+  std::string_view data0("s(100000002,1,'come').\n");
   auto result = WordnetSynonymsTokenizer::Parse(data0);
   ASSERT_TRUE(result.error().is(sdb::ERROR_BAD_PARAMETER));
   ASSERT_EQ(result.error().errorMessage(), "Failed parse line 1");

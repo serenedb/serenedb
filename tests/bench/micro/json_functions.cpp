@@ -233,7 +233,7 @@ BENCHMARK_DEFINE_F(JsonPathFixture,
 BENCHMARK_REGISTER_F(JsonArrayFixture, BmJsonArrayExtractIndexText);
 BENCHMARK_REGISTER_F(JsonObjectFixture, BmJsonObjectExtractFieldText);
 BENCHMARK_REGISTER_F(JsonPathFixture, BmJsonPathExtractText);
-BENCHMARK_REGISTER_F(JsonArrayFixture, BmJsonArrayExtractIndexText);
-BENCHMARK_REGISTER_F(JsonObjectFixture, BmJsonObjectExtractFieldText);
-BENCHMARK_REGISTER_F(JsonPathFixture, BmJsonPathExtractText);
+BENCHMARK_REGISTER_F(JsonArrayFixture, BmJsonArrayExtractIndex);
+BENCHMARK_REGISTER_F(JsonObjectFixture, BmJsonObjectExtractField);
+BENCHMARK_REGISTER_F(JsonPathFixture, BmJsonPathExtract);
 BENCHMARK_MAIN();

@@ -13,8 +13,6 @@ add_executable(
     ${CMAKE_CURRENT_SOURCE_DIR}/key_utils_test.cpp
 )
 
-set_target_properties(serenedb-tests_connector PROPERTIES EXCLUDE_FROM_ALL TRUE)
-
 target_link_libraries(
     serenedb-tests_connector
     PUBLIC serene_tests_connector_deps gtest gtest_main

@@ -5,7 +5,7 @@ target_link_libraries(
     INTERFACE sereneserver 
 )
 
-add_library(
+add_executable(
     serenedb-tests_basics
     conversions_test.cpp
     escaper_test.cpp
@@ -50,8 +50,6 @@ add_library(
     vpack_load_test.cpp
     vpack_save_test.cpp
 )
-
-set_target_properties(serenedb-tests_basics PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
 target_link_libraries(
     serenedb-tests_basics

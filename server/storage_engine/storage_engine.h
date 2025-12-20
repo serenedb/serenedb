@@ -160,9 +160,9 @@ class StorageEngine : public SerenedFeature {
   // TODO(mbkkt) remove it and everything related to name
   virtual std::string_view typeName() const { return _type_name; }
 
-  virtual bool VisitDatabases(
-    absl::FunctionRef<bool(vpack::Slice database)> visitor) {
-    return true;
+  virtual Result VisitDatabases(
+    absl::FunctionRef<Result(vpack::Slice database)> visitor) {
+    return {};
   }
 
   // TODO: don't use rocksdb types?

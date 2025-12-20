@@ -60,6 +60,9 @@ class Index : public SchemaObject {
 ResultOr<std::shared_ptr<Index>> CreateIndex(
   ObjectId database_id, IndexOptions<vpack::Slice> options);
 
+ResultOr<std::shared_ptr<Index>> CreateIndex(const SchemaObject& relation,
+                                             IndexBaseOptions options);
+
 }  // namespace sdb::catalog
 
 namespace magic_enum {

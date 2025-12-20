@@ -159,6 +159,7 @@ RocksDBValue::RocksDBValue(RocksDBEntryType type, vpack::Slice data)
     case RocksDBEntryType::TableTombstone:
     case RocksDBEntryType::ScopeTombstone:
     case RocksDBEntryType::View:
+    case RocksDBEntryType::Index:
     case RocksDBEntryType::Role:
     case RocksDBEntryType::KeyGeneratorValue:
     case RocksDBEntryType::ReplicationApplierConfig: {

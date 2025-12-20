@@ -1155,8 +1155,8 @@ bool RocksDBEngineCatalog::hasBackgroundError() const {
   return _error_listener != nullptr && _error_listener->called();
 }
 
-bool RocksDBEngineCatalog::VisitDatabases(
-  absl::FunctionRef<bool(vpack::Slice database)> visitor) {
+Result RocksDBEngineCatalog::VisitDatabases(
+  absl::FunctionRef<Result(vpack::Slice database)> visitor) {
   rocksdb::ReadOptions read_options;
   read_options.async_io = true;
   // TODO: more options?
@@ -1169,11 +1169,11 @@ bool RocksDBEngineCatalog::VisitDatabases(
     auto slice =
       vpack::Slice(reinterpret_cast<const uint8_t*>(iter->value().data()));
     auto r = visitor(slice);
-    if (!r) {
-      return false;
+    if (!r.ok()) {
+      return r;
     }
   }
-  return true;
+  return {};
 }
 
 // TODO: Rewrite this to use single scan.
@@ -2625,15 +2625,14 @@ Result RocksDBEngineCatalog::dropDatabase(ObjectId id) {
 
 void RocksDBEngineCatalog::EnsureSystemDatabase() {
   bool has_system = false;
-  VisitDatabases([&](vpack::Slice result) {
+  std::ignore = VisitDatabases([&](vpack::Slice result) -> Result {
     catalog::DatabaseOptions options;
 
-    if (auto r = vpack::ReadTupleNothrow(result, options); !r.ok()) {
-      return false;
+    if (auto r = vpack::ReadTupleNothrow(result, options); r.ok()) {
+      has_system = options.id == id::kSystemDB;
     }
 
-    has_system = options.id == id::kSystemDB;
-    return false;
+    return {ERROR_INTERNAL};  // stop iteration
   });
 
   if (has_system) {

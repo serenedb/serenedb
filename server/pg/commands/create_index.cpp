@@ -25,9 +25,13 @@
 #include <yaclib/async/make.hpp>
 
 #include "app/app_server.h"
+#include "basics/down_cast.h"
 #include "basics/errors.h"
 #include "catalog/catalog.h"
 #include "catalog/index.h"
+#include "catalog/object.h"
+#include "catalog/secondary_index.h"
+#include "catalog/table.h"
 #include "magic_enum/magic_enum.hpp"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
@@ -48,6 +52,57 @@ namespace {
 std::optional<catalog::IndexType> GetIndexType(char* method) {
   return method ? magic_enum::enum_cast<catalog::IndexType>(method)
                 : catalog::IndexType::Secondary;
+}
+
+ResultOr<std::shared_ptr<catalog::Index>> MakeSecondaryIndex(
+  catalog::IndexBaseOptions options, const catalog::SchemaObject& relation,
+  PgListWrapper<IndexElem> index_columns) {
+  if (relation.GetType() != catalog::ObjectType::Table) {
+    return std::unexpected<Result>{
+      std::in_place, ERROR_NOT_IMPLEMENTED,
+      "Indexes over views are not implemented yet."};
+  }
+  auto& table = basics::downCast<catalog::Table>(relation);
+  auto& columns = table.Columns();
+
+  auto find_column = [&](std::string_view name) {
+    auto it = absl::c_find_if(
+      columns, [&](const catalog::Column& c) { return c.name == name; });
+    return it != columns.end() ? &*it : nullptr;
+  };
+
+  catalog::SecondaryIndexOptions impl_options;
+  impl_options.columns.reserve(index_columns.size());
+
+  for (auto* index_elem : index_columns) {
+    auto* column = find_column(index_elem->name);
+    if (!column) {
+      return std::unexpected<Result>{
+        std::in_place, ERROR_SERVER_DATA_SOURCE_NOT_FOUND, "column \"",
+        index_elem->name, "\" does not exist"};
+    }
+    impl_options.columns.push_back(column->id);
+  }
+
+  return std::make_shared<catalog::SecondaryIndex>(
+    catalog::IndexOptions<catalog::SecondaryIndexOptions>{
+      .base = std::move(options),
+      .impl = std::move(impl_options),
+    },
+    relation.GetDatabaseId());
+}
+
+ResultOr<std::shared_ptr<catalog::Index>> MakeIndex(
+  catalog::IndexBaseOptions options, const catalog::SchemaObject& relation,
+  PgListWrapper<IndexElem> index_columns) {
+  switch (options.type) {
+    case catalog::IndexType::Secondary:
+      return MakeSecondaryIndex(std::move(options), relation, index_columns);
+    case catalog::IndexType::Inverted:
+      return std::unexpected<Result>{std::in_place, ERROR_NOT_IMPLEMENTED};
+  }
+
+  return {};
 }
 
 }  // namespace
@@ -91,25 +146,19 @@ yaclib::Future<Result> CreateIndex(ExecContext& context,
 
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  auto snapshot = catalog.GetSnapshot();
-
-  auto relation = snapshot->GetRelation(db, schema, relation_name);
-
-  if (!relation) {
-    return yaclib::MakeFuture<Result>(ERROR_BAD_PARAMETER, "Relation \'",
-                                      relation_name, "\' does not exist");
-  }
 
   catalog::IndexBaseOptions options;
   options.name = stmt.idxname;
   options.type = *index_type;
 
-  auto r = catalog.CreateIndex(db, schema, relation_name,
-                               [&](const catalog::SchemaObject* relation)
-                                 -> ResultOr<std::shared_ptr<catalog::Index>> {
-                                 return std::unexpected<Result>{
-                                   std::in_place, ERROR_NOT_IMPLEMENTED};
-                               });
+  auto r = catalog.CreateIndex(
+    db, schema, relation_name, [&](const catalog::SchemaObject* relation) {
+      SDB_ASSERT(relation);
+      options.relation_id = relation->GetId();
+
+      return MakeIndex(std::move(options), *relation,
+                       PgListWrapper<IndexElem>{stmt.indexParams});
+    });
 
   if (r.is(ERROR_SERVER_DUPLICATE_NAME) && stmt.if_not_exists) {
     r = {};

@@ -175,8 +175,8 @@ class RocksDBEngineCatalog : public StorageEngine {
   void toPrometheus(std::string& result, std::string_view globals,
                     bool ensure_whitespace) const final;
 
-  bool VisitDatabases(
-    absl::FunctionRef<bool(vpack::Slice database)> visitor) final;
+  Result VisitDatabases(
+    absl::FunctionRef<Result(vpack::Slice database)> visitor) final;
 
   std::string versionFilename(ObjectId id) const final;
   std::string databasePath() const final { return _base_path; }

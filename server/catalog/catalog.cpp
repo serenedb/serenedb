@@ -151,17 +151,22 @@ Result CatalogFeature::Open() {
     }
   }
 
-  GetServerEngine().VisitDatabases([&](vpack::Slice slice) {
+  r = GetServerEngine().VisitDatabases([&](vpack::Slice slice) -> Result {
     catalog::DatabaseOptions database;
     if (auto r = vpack::ReadTupleNothrow(slice, database); !r.ok()) {
-      return false;
+      return r;
     }
 
     if (auto r = OpenDatabase(std::move(database)); !r.ok()) {
-      return false;
+      return r;
     }
-    return true;
+    return {};
   });
+
+  if (!r.ok()) {
+    SDB_FATAL("xxxxx", Logger::FIXME, "Failed to open database, ",
+              r.errorMessage());
+  }
 
   if (!catalog::GetDatabase(StaticStrings::kSystemDatabase)) {
     SDB_FATAL("xxxxx", Logger::FIXME, "No ", StaticStrings::kSystemDatabase,

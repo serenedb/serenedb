@@ -350,14 +350,17 @@ Result CatalogFeature::AddIndexes(ObjectId database_id, const Schema& schema) {
   return GetServerEngine().VisitSchemaObjects(
     database_id, schema.GetId(), RocksDBEntryType::Index,
     [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
-      IndexOptions options;
+      IndexOptions<vpack::Slice> options;
 
       if (auto r = vpack::ReadTupleNothrow(slice, options); !r.ok()) {
         return ErrorMeta(r.errorNumber(), "index", r.errorMessage(), slice);
       }
 
-      return Local().RegisterIndex(database_id, schema.GetName(),
-                                   std::move(options));
+      return Local().RegisterIndex(
+        database_id, schema.GetName(), [&](const SchemaObject*) {
+          return CreateIndex(database_id, std::move(options));
+        });
+      ;
     });
 }
 

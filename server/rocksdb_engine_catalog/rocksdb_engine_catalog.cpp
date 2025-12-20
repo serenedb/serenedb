@@ -1750,6 +1750,7 @@ Result RocksDBEngineCatalog::CreateIndex(const catalog::Index& index) {
   SDB_ASSERT(index_id.isSet());
 
   vpack::Builder b;
+  index.WriteInternal(b);
 
   return WriteDefinition(
     _db->GetRootDB(),
@@ -1759,57 +1760,38 @@ Result RocksDBEngineCatalog::CreateIndex(const catalog::Index& index) {
                                 index_id);
       return key;
     },
-    [&] {
-      return RocksDBValue::Object(RocksDBEntryType::Index,
-                                  GetObjectProperties(b, index, true));
-    },
-    [&] {
-      const wal::IndexCreate entry{
-        .database_id = db_id,
-        .object_id = index_id,
-        .data = GetObjectProperties(b, index, false),
-      };
-      return wal::Write(RocksDBLogType::IndexCreate, entry);
-    });
+    [&] { return RocksDBValue::Object(RocksDBEntryType::Index, b.slice()); },
+    [&] { return std::string_view{}; });
 }
 
 Result RocksDBEngineCatalog::MarkDeleted(const catalog::Index& index,
                                          const IndexTombstone& tombstone) {
   const auto db_id = index.GetDatabaseId();
   const auto schema_id = index.GetSchemaId();
-  const auto collection_id = index.GetId();
-  SDB_ASSERT(collection_id.isSet());
+  const auto relation_id = index.GetId();
+  SDB_ASSERT(relation_id.isSet());
 
   vpack::Builder b;
+  vpack::WriteTuple(b, tombstone);
 
   return WriteDefinition(
     _db->GetRootDB(),
     [&] {
       RocksDBKeyWithBuffer key;
       key.constructSchemaObject(RocksDBEntryType::Index, db_id, schema_id,
-                                collection_id);
+                                relation_id);
       return key;
     },
     [&] {
       RocksDBKeyWithBuffer key;
       key.constructObject(RocksDBEntryType::IndexTombstone,
-                          id::kTombstoneDatabase, index.GetId());
+                          id::kTombstoneDatabase, tombstone.id);
       return key;
     },
     [&] {
-      b.clear();
-      vpack::WriteTuple(b, tombstone);
-
       return RocksDBValue::Object(RocksDBEntryType::IndexTombstone, b.slice());
     },
-    [&] {
-      const wal::IndexDrop entry{
-        .database_id = db_id,
-        .object_id = index.GetRelationId(),
-        .index_id = IndexId{index.GetId().id()},
-      };
-      return wal::Write(RocksDBLogType::IndexDrop, entry);
-    });
+    [&] { return std::string_view{}; });
 }
 
 Result RocksDBEngineCatalog::MarkDeleted(const catalog::Table& c,

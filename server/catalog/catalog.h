@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
 
 #include <expected>
@@ -155,6 +156,9 @@ inline auto GetViews(const Snapshot& snapshot, ObjectId database_id,
   return views;
 }
 
+using IndexFactory =
+  absl::FunctionRef<ResultOr<std::shared_ptr<Index>>(const SchemaObject*)>;
+
 struct LogicalCatalog {
   virtual ~LogicalCatalog() = default;
 
@@ -170,7 +174,7 @@ struct LogicalCatalog {
     ObjectId database_id, std::string_view schema,
     std::shared_ptr<catalog::Function> function) = 0;
   virtual Result RegisterIndex(ObjectId database_id, std::string_view schema,
-                               IndexOptions index) = 0;
+                               IndexFactory index) = 0;
 
   virtual Result CreateDatabase(
     std::shared_ptr<catalog::Database> database) = 0;
@@ -187,7 +191,8 @@ struct LogicalCatalog {
                              CreateTableOptions options,
                              CreateTableOperationOptions operation_options) = 0;
   virtual Result CreateIndex(ObjectId database_id, std::string_view schema,
-                             IndexOptions options) = 0;
+                             std::string_view relation,
+                             IndexFactory index_factory) = 0;
 
   virtual Result RenameTable(ObjectId database_id, std::string_view schema,
                              std::string_view name,

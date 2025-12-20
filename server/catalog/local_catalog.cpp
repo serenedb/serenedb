@@ -21,6 +21,7 @@
 #include "catalog/local_catalog.h"
 
 #include <absl/cleanup/cleanup.h>
+#include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
 
 #include <algorithm>
@@ -52,6 +53,7 @@
 #include "catalog/database.h"
 #include "catalog/function.h"
 #include "catalog/identifiers/object_id.h"
+#include "catalog/index.h"
 #include "catalog/object.h"
 #include "catalog/role.h"
 #include "catalog/schema.h"
@@ -1118,41 +1120,36 @@ Result LocalCatalog::CreateRole(std::shared_ptr<Role> role) {
 
 Result LocalCatalog::RegisterIndex(ObjectId database_id,
                                    std::string_view schema,
-                                   IndexOptions options) {
-  if (!options.relation_id.isSet()) [[unlikely]] {
-    return {ERROR_BAD_PARAMETER, "Index relation is not set"};
+                                   IndexFactory factory) {
+  auto index = factory(nullptr);
+  if (!index) {
+    return std::move(index).error();
   }
 
-  auto index = std::make_shared<Index>(std::move(options), database_id);
-
   absl::MutexLock lock{&_mutex};
-  return _snapshot->RegisterObject(database_id, schema, std::move(index), false,
-                                   [&](auto& object) -> Result {
-                                     // std::shared_ptr<TableShard> physical;
-                                     // auto r =
-                                     // _engine->createTableShard(table, true,
-                                     // physical); if (!r.ok()) {
-                                     //   return r;
-                                     // }
-
-                                     // physical->prepareIndexes(table,
-                                     // options.indexes);
-                                     // clone->AddTableShard(physical);
-                                     return {};
-                                   });
+  return _snapshot->RegisterObject(database_id, schema, std::move(*index),
+                                   false,
+                                   [&](auto& object) -> Result { return {}; });
 }
 
 Result LocalCatalog::CreateIndex(ObjectId database_id, std::string_view schema,
-                                 IndexOptions options) {
-  if (!options.relation_id.isSet()) [[unlikely]] {
-    return {ERROR_BAD_PARAMETER, "Index relation is not set"};
+                                 std::string_view relation_name,
+                                 IndexFactory index_factory) {
+  absl::MutexLock lock{&_mutex};
+
+  auto relation = _snapshot->GetRelation(database_id, schema, relation_name);
+  if (!relation) {
+    return {ERROR_SERVER_DATA_SOURCE_NOT_FOUND, "Relation \'", relation_name,
+            "\' does not exist"};
   }
 
-  auto index = std::make_shared<Index>(std::move(options), database_id);
+  auto index = index_factory(relation.get());
+  if (!index) {
+    return std::move(index).error();
+  }
 
-  absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
-    return clone->RegisterObject(database_id, schema, std::move(index), false,
+    return clone->RegisterObject(database_id, schema, std::move(*index), false,
                                  [&](auto& object) -> Result {
                                    auto& index =
                                      basics::downCast<Index>(*object);

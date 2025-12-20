@@ -1772,6 +1772,10 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node) {
       state.pgsql_node = &node;
       return SqlCommandType::DDL;
     }
+    case T_IndexStmt: {  // CREATE INDEX
+      state.pgsql_node = &node;
+      return SqlCommandType::DDL;
+    }
     case T_CreateRoleStmt:
     case T_DropRoleStmt:
     case T_CreatedbStmt:

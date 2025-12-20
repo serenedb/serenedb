@@ -24,6 +24,7 @@ target_sources(
         sharding_strategy.cpp
         replication_common.cpp
         role.cpp
+        secondary_index.cpp
         # TODO search
         geo.cpp
         identity_analyzer.cpp

@@ -31,28 +31,34 @@ enum class IndexType : uint8_t {
   Inverted,
 };
 
-struct IndexOptions {
+struct IndexBaseOptions {
   ObjectId id;
   ObjectId relation_id;
   std::string name;
   IndexType type = IndexType::Secondary;
-  vpack::Slice options;
 };
 
-class Index final : public SchemaObject {
- public:
-  Index(IndexOptions options, ObjectId database_id);
+template<typename Impl>
+struct IndexOptions {
+  IndexBaseOptions base;
+  Impl impl;
+};
 
+class Index : public SchemaObject {
+ public:
   auto GetIndexType() const noexcept { return _type; }
   auto GetRelationId() const noexcept { return _relation_id; }
 
-  void WriteInternal(vpack::Builder& builder) const final;
-  void WriteProperties(vpack::Builder& builder) const final;
+ protected:
+  Index(IndexBaseOptions options, ObjectId database_id);
 
  private:
   ObjectId _relation_id;
   IndexType _type;
 };
+
+ResultOr<std::shared_ptr<Index>> CreateIndex(
+  ObjectId database_id, IndexOptions<vpack::Slice> options);
 
 }  // namespace sdb::catalog
 

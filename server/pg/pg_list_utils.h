@@ -1012,6 +1012,94 @@ auto VisitName(const List* name, Visitor&& visitor) {
   return std::forward<Visitor>(visitor)();
 }
 
+template<typename T>
+class PgListWrapper {
+ public:
+  using iterator_category = std::random_access_iterator_tag;
+  using value_type = T*;
+  using difference_type = std::ptrdiff_t;
+  using pointer = T**;
+  using reference = T*&;
+  using iterator = PgListWrapper;
+  using const_iterator = PgListWrapper;
+
+  PgListWrapper() = default;
+
+  explicit PgListWrapper(const List* list) : _list(list), _index(0) {}
+
+  PgListWrapper(const List* list, size_t index) : _list(list), _index(index) {}
+
+  // Iterator interface
+  T* operator*() const {
+    SDB_ASSERT(_index < list_length(_list));
+    return castNode(T, lfirst(&_list->elements[_index]));
+  }
+
+  PgListWrapper& operator++() {
+    ++_index;
+    return *this;
+  }
+
+  PgListWrapper operator++(int) {
+    PgListWrapper tmp = *this;
+    ++(*this);
+    return tmp;
+  }
+
+  PgListWrapper& operator--() {
+    --_index;
+    return *this;
+  }
+
+  PgListWrapper operator--(int) {
+    PgListWrapper tmp = *this;
+    --(*this);
+    return tmp;
+  }
+
+  PgListWrapper& operator+=(difference_type n) {
+    _index += n;
+    return *this;
+  }
+
+  PgListWrapper& operator-=(difference_type n) {
+    _index -= n;
+    return *this;
+  }
+
+  PgListWrapper operator+(difference_type n) const {
+    return PgListWrapper(_list, _index + n);
+  }
+
+  PgListWrapper operator-(difference_type n) const {
+    return PgListWrapper(_list, _index - n);
+  }
+
+  difference_type operator-(const PgListWrapper& other) const {
+    return _index - other._index;
+  }
+
+  bool operator==(const PgListWrapper& other) const = default;
+  auto operator<=>(const PgListWrapper& other) const = default;
+
+  // Container interface
+  PgListWrapper begin() const { return PgListWrapper(_list, 0); }
+
+  PgListWrapper end() const { return PgListWrapper(_list, size()); }
+
+  auto rbegin() const { return std::reverse_iterator(end()); }
+
+  auto rend() const { return std::reverse_iterator(begin()); }
+
+  size_t size() const { return list_length(_list); }
+
+  bool empty() const { return size() == 0; }
+
+ private:
+  const List* _list = nullptr;
+  size_t _index = 0;
+};
+
 // Non-owning wrapper for PostgreSQL string lists with iterator support
 // It's convenient to use it in a template code
 // where also std::vector<std::string> can be used

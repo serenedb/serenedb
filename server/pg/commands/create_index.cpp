@@ -18,6 +18,10 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/functional/overload.h>
+
+#include <memory>
+#include <string_view>
 #include <yaclib/async/make.hpp>
 
 #include "app/app_server.h"
@@ -27,6 +31,7 @@
 #include "magic_enum/magic_enum.hpp"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
+#include "pg/pg_list_utils.h"
 #include "pg/sql_utils.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
@@ -38,15 +43,18 @@ LIBPG_QUERY_INCLUDES_BEGIN
 LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
-
-template<typename T>
-inline int ExprLocation(const T* node) noexcept {
-  return exprLocation(reinterpret_cast<const Node*>(node));
-}
+namespace {
 
 std::optional<catalog::IndexType> GetIndexType(char* method) {
   return method ? magic_enum::enum_cast<catalog::IndexType>(method)
                 : catalog::IndexType::Secondary;
+}
+
+}  // namespace
+
+template<typename T>
+inline int ExprLocation(const T* node) noexcept {
+  return exprLocation(reinterpret_cast<const Node*>(node));
 }
 
 // TODO: use ErrorPosition in ThrowSqlError
@@ -71,6 +79,16 @@ yaclib::Future<Result> CreateIndex(ExecContext& context,
       ERROR_BAD_PARAMETER, "no schema has been selected to create in");
   }
 
+  for (auto* index_elem : PgListWrapper<IndexElem>{stmt.indexParams}) {
+    auto i = index_elem->name;
+    (void)i;
+
+    for (auto* def_elem : PgListWrapper<DefElem>{index_elem->opclassopts}) {
+      auto n = def_elem->defname;
+      (void)n;
+    }
+  }
+
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
   auto snapshot = catalog.GetSnapshot();
@@ -82,12 +100,17 @@ yaclib::Future<Result> CreateIndex(ExecContext& context,
                                       relation_name, "\' does not exist");
   }
 
-  catalog::IndexOptions options;
+  catalog::IndexBaseOptions options;
   options.name = stmt.idxname;
-  options.relation_id = relation->GetId();
   options.type = *index_type;
 
-  auto r = catalog.CreateIndex(db, schema, std::move(options));
+  auto r = catalog.CreateIndex(db, schema, relation_name,
+                               [&](const catalog::SchemaObject* relation)
+                                 -> ResultOr<std::shared_ptr<catalog::Index>> {
+                                 return std::unexpected<Result>{
+                                   std::in_place, ERROR_NOT_IMPLEMENTED};
+                               });
+
   if (r.is(ERROR_SERVER_DUPLICATE_NAME) && stmt.if_not_exists) {
     r = {};
   }

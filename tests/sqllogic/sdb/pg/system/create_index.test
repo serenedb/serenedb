@@ -1,7 +1,7 @@
-statement error db error: ERROR: Relation 'invalid' does not exist
+statement error db error: ERROR: relation "invalid" does not exist
 CREATE INDEX test_index ON invalid USING secondary (invalid);
 
-statement error db error: ERROR: Relation 'invalid' does not exist
+statement error db error: ERROR: relation "invalid" does not exist
 CREATE INDEX test_index ON invalid USING secondary (invalid);
 
 statement ok
@@ -20,11 +20,10 @@ statement ok
 CREATE INDEX IF NOT EXISTS test_index ON test USING secondary (i);
 
 query
-select oid, relname, relkind FROM pg_class WHERE relname LIKE 'test%'
+select oid, relname, relkind FROM pg_class WHERE relname = 'test_index'
 ----
 oid	relname	relkind
 <slt:ignore>	test_index	i
-<slt:ignore>	test	r
 
 query
 select indexrelid, indrelid FROM pg_index

@@ -1139,8 +1139,8 @@ Result LocalCatalog::CreateIndex(ObjectId database_id, std::string_view schema,
 
   auto relation = _snapshot->GetRelation(database_id, schema, relation_name);
   if (!relation) {
-    return {ERROR_SERVER_DATA_SOURCE_NOT_FOUND, "Relation \'", relation_name,
-            "\' does not exist"};
+    return {ERROR_SERVER_DATA_SOURCE_NOT_FOUND, "relation \"", relation_name,
+            "\" does not exist"};
   }
 
   auto index = index_factory(relation.get());

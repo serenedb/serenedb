@@ -81,10 +81,6 @@ void RocksDBKey::constructObject(RocksDBEntryType type, ObjectId database_id,
                                  ObjectId id) {
   SDB_ASSERT(database_id.isSet());
   SDB_ASSERT(id.isSet());
-  SDB_ASSERT(type == RocksDBEntryType::TableTombstone ||
-               type == RocksDBEntryType::Schema ||
-               type == RocksDBEntryType::Role,
-             magic_enum::enum_name(type));
   _type = type;
   rocksutils::Concat(*_buffer, _type, database_id, id.id());
 }

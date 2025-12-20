@@ -291,12 +291,11 @@ TEST(wordnet_synonyms_tests, parsing_duplicate_synsets) {
   ASSERT_TRUE(result);
   const auto input = *result;
   WordnetSynonymsTokenizer::SynonymsMap expected{
-    {"word1", { "100000002"}},
-    {"word2", { "100000003"}},
+    {"word1", {"100000002"}},
+    {"word2", {"100000003"}},
   };
   ASSERT_EQ(expected, input);
 }
-
 
 TEST(wordnet_synonyms_tests, parsing_broken_short_line) {
   for (std::string_view data0 : {std::string("a"), std::string("go")}) {

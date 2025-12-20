@@ -1153,16 +1153,6 @@ Result LocalCatalog::CreateIndex(ObjectId database_id, std::string_view schema,
                                  [&](auto& object) -> Result {
                                    auto& index =
                                      basics::downCast<Index>(*object);
-
-                                   // std::shared_ptr<TableShard> physical;
-                                   // auto r = _engine->createTableShard(table,
-                                   // true, physical); if (!r.ok()) {
-                                   //   return r;
-                                   // }
-
-                                   // physical->prepareIndexes(table,
-                                   // options.indexes);
-                                   // clone->AddTableShard(physical);
                                    return _engine->CreateIndex(index);
                                  });
   });

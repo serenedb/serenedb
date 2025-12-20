@@ -134,16 +134,6 @@ yaclib::Future<Result> CreateIndex(ExecContext& context,
       ERROR_BAD_PARAMETER, "no schema has been selected to create in");
   }
 
-  for (auto* index_elem : PgListWrapper<IndexElem>{stmt.indexParams}) {
-    auto i = index_elem->name;
-    (void)i;
-
-    for (auto* def_elem : PgListWrapper<DefElem>{index_elem->opclassopts}) {
-      auto n = def_elem->defname;
-      (void)n;
-    }
-  }
-
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
 

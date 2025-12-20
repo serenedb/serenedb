@@ -1,3 +1,4 @@
+add_subdirectory(fuerte)
 add_subdirectory(vpack)
 
 # set test resource directory

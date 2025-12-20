@@ -1,0 +1,200 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2017 ArangoDB GmbH, Cologne, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#include <absl/cleanup/cleanup.h>
+#include <fuerte/fuerte.h>
+#include <fuerte/helper.h>
+#include <fuerte/loop.h>
+
+#include <atomic>
+#include <string_view>
+#include <utility>
+#include <yaclib/algo/wait_group.hpp>
+
+#include "basics/logger/logger.h"
+#include "gtest/gtest.h"
+
+namespace f = ::sdb::fuerte;
+
+extern std::string gMyEndpoint;
+
+// for testing connection failures, we need a free port that is not used by
+// another service. because we can't be sure about high port numbers, we are
+// using some from the very range. according to
+// https://www.iana.org/assignments/service-names-port-numbers/service-names-port-numbers.xhtml?&page=2
+// port 60 is unassigned and thus likely not taken by any service on the test
+// host. previously we used port 8629 for testing connection failures, but this
+// was flawed because it was possible that some service was running on port
+// 8629, which then made the connection failure tests fail.
+constexpr std::string_view kUrls[] = {
+  "http://localhost:60",
+  "h2://localhost:60",
+  "ssl://localhost:60",
+  "h2s://localhost:60",
+};
+
+static std::pair<int, int> RunTimeoutTest(f::ConnectionBuilder& cbuilder,
+                                          int n) {
+  cbuilder.verifyHost(false);
+
+  yaclib::WaitGroup<> wg{1};
+  f::EventLoopService loop;
+
+  std::atomic<int> callbacks_called = 0;
+  std::atomic<int> failure_callbacks_called = 0;
+
+  cbuilder.onFailure(
+    [&](f::Error error_code, const std::string& error_message) {
+      absl::Cleanup done = [&] { wg.Done(); };
+      ASSERT_EQ(error_code, f::Error::CouldNotConnect);
+      ++failure_callbacks_called;
+    });
+
+  for (int i = 0; i < n; ++i) {
+    wg.Add();
+    auto connection = cbuilder.connect(loop);
+    // Send a first request. (HTTP connection is only started upon first
+    // request)
+    auto request = f::CreateRequest(f::RestVerb::Get, "/_api/version");
+    connection->sendRequest(std::move(request),
+                            [&](f::Error error, std::unique_ptr<f::Request>,
+                                std::unique_ptr<f::Response>) {
+                              ++callbacks_called;
+                              if (error != f::Error::CouldNotConnect) {
+                                wg.Done();
+                              }
+                            });
+  }
+  wg.Done();
+  auto success = wg.WaitFor(std::chrono::seconds(60));
+  EXPECT_TRUE(success);
+
+  return {callbacks_called.load(), failure_callbacks_called.load()};
+}
+
+// tryToConnectExpectFailure tries to make a connection to a host with given
+// url. This is expected to fail.
+static void TryToConnectExpectFailure(f::EventLoopService& event_loop_service,
+                                      std::string_view url, bool use_retries) {
+  yaclib::WaitGroup<> wg;
+
+  wg.Add();
+  f::ConnectionBuilder cbuilder;
+  cbuilder.connectTimeout(std::chrono::milliseconds(250));
+  cbuilder.connectRetryPause(std::chrono::milliseconds(100));
+#ifdef SDB_GTEST
+  if (use_retries) {
+    cbuilder.failConnectAttempts(2);
+  }
+  cbuilder.maxConnectRetries(3);
+#endif
+  cbuilder.endpoint(std::string{url});
+
+  cbuilder.onFailure(
+    [&](f::Error error_code, const std::string& error_message) {
+      absl::Cleanup done = [&] { wg.Done(); };
+      ASSERT_EQ(error_code, f::Error::CouldNotConnect);
+    });
+  auto connection = cbuilder.connect(event_loop_service);
+  // Send a first request. (HTTP connection is only started upon first request)
+  auto request = f::CreateRequest(f::RestVerb::Get, "/_api/version");
+  connection->sendRequest(std::move(request),
+                          [&](f::Error, std::unique_ptr<f::Request>,
+                              std::unique_ptr<f::Response>) {});
+
+  auto success = wg.WaitFor(std::chrono::seconds(50));
+  ASSERT_TRUE(success);
+}
+
+// CannotResolve tests try to make a connection to a host with a name
+// that cannot be resolved.
+TEST(ConnectionFailureTest, CannotResolveHttp) {
+  f::EventLoopService loop;
+  TryToConnectExpectFailure(
+    loop, "http://thishostmustnotexist.invalidaddress.com:8529", false);
+}
+
+// CannotConnect tests try to make a connection to a host with a valid name
+// but a wrong port.
+TEST(ConnectionFailureTest, CannotConnect) {
+  for (const auto& url : kUrls) {
+    f::EventLoopService loop;
+    TryToConnectExpectFailure(loop, url, /*useRetries*/ false);
+  }
+}
+
+TEST(ConnectionFailureTest, CannotConnectForceRetries) {
+  for (const auto& url : kUrls) {
+    f::EventLoopService loop;
+    TryToConnectExpectFailure(loop, url, /*useRetries*/ true);
+  }
+}
+
+TEST(ConnectionFailureTest, LowTimeouts) {
+  f::ConnectionBuilder cbuilder;
+  cbuilder.connectTimeout(std::chrono::milliseconds(1));
+  cbuilder.connectRetryPause(std::chrono::milliseconds(1));
+  cbuilder.maxConnectRetries(15);
+  cbuilder.endpoint("ssl://localhost:60");
+
+  int n = 100;
+  auto [callbacksCalled, failureCallbacksCalled] = RunTimeoutTest(cbuilder, n);
+  ASSERT_EQ(n, callbacksCalled);
+  ASSERT_LE(failureCallbacksCalled, n);
+}
+
+TEST(ConnectionFailureTest, LowTimeoutsActualBackend) {
+  f::ConnectionBuilder cbuilder;
+  cbuilder.connectTimeout(std::chrono::milliseconds(1));
+  cbuilder.connectRetryPause(std::chrono::milliseconds(5));
+  cbuilder.maxConnectRetries(15);
+  cbuilder.endpoint(gMyEndpoint);
+
+  int n = 100;
+  auto [callbacksCalled, failureCallbacksCalled] = RunTimeoutTest(cbuilder, n);
+  ASSERT_EQ(n, callbacksCalled);
+  ASSERT_LE(failureCallbacksCalled, n);
+}
+
+TEST(ConnectionFailureTest, BorderlineTimeoutsActualBackend) {
+  f::ConnectionBuilder cbuilder;
+  cbuilder.connectTimeout(std::chrono::milliseconds(5));
+  cbuilder.connectRetryPause(std::chrono::milliseconds(5));
+  cbuilder.maxConnectRetries(15);
+  cbuilder.endpoint(gMyEndpoint);
+
+  int n = 100;
+  auto [callbacksCalled, failureCallbacksCalled] = RunTimeoutTest(cbuilder, n);
+  ASSERT_EQ(n, callbacksCalled);
+  ASSERT_LE(failureCallbacksCalled, n);
+}
+
+TEST(ConnectionFailureTest, HighEnoughTimeoutsActualBackend) {
+  f::ConnectionBuilder cbuilder;
+  cbuilder.connectTimeout(std::chrono::milliseconds(60000));
+  cbuilder.connectRetryPause(std::chrono::milliseconds(5));
+  cbuilder.maxConnectRetries(15);
+  cbuilder.endpoint(gMyEndpoint);
+
+  int n = 100;
+  auto [callbacksCalled, failureCallbacksCalled] = RunTimeoutTest(cbuilder, n);
+  ASSERT_EQ(n, callbacksCalled);
+  ASSERT_EQ(0, failureCallbacksCalled);
+}

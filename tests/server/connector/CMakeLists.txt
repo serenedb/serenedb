@@ -19,3 +19,5 @@ target_link_libraries(
     serenedb-tests_connector
     PUBLIC serene_tests_connector_deps gtest gtest_main
 )
+
+add_dependencies(serenedb-tests serenedb-tests_connector)

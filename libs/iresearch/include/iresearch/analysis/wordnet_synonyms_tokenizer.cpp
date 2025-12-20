@@ -107,14 +107,11 @@ WordnetSynonymsTokenizer::Parse(const std::string_view input) {
   }
 
   for (auto& [word, synset] : mapping) {
-    // expect that we don't have duplicate.
     absl::c_sort(synset);
-    if (auto it = absl::c_adjacent_find(synset); it != synset.end()) {
-      return std::unexpected<sdb::Result>{
-        std::in_place, sdb::ERROR_BAD_PARAMETER,
-        "Duplicate for " + word + ": synset ", *it};
-    }
+    synset.erase(std::unique(synset.begin(), synset.end()), synset.end());
+    synset.shrink_to_fit();
   }
+
   return mapping;
 }
 

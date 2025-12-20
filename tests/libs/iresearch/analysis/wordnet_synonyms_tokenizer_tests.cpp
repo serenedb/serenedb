@@ -283,6 +283,21 @@ TEST(wordnet_synonyms_tests, parsing_homonym_diffrent_synset_order) {
   ASSERT_EQ(expected, input);
 }
 
+TEST(wordnet_synonyms_tests, parsing_duplicate_synsets) {
+  std::string_view data0(
+    "s(100000002,1,'word1',v,1,0).\ns(100000003,1,'word2',v,1,0).\ns(100000002,"
+    "1,'word1',v,1,0).\n");
+  auto result = WordnetSynonymsTokenizer::Parse(data0);
+  ASSERT_TRUE(result);
+  const auto input = *result;
+  WordnetSynonymsTokenizer::SynonymsMap expected{
+    {"word1", { "100000002"}},
+    {"word2", { "100000003"}},
+  };
+  ASSERT_EQ(expected, input);
+}
+
+
 TEST(wordnet_synonyms_tests, parsing_broken_short_line) {
   for (std::string_view data0 : {std::string("a"), std::string("go")}) {
     auto result = WordnetSynonymsTokenizer::Parse(data0);
@@ -324,14 +339,4 @@ TEST(wordnet_synonyms_tests, parsing_broken_line_less_param) {
   auto result = WordnetSynonymsTokenizer::Parse(data0);
   ASSERT_TRUE(result.error().is(sdb::ERROR_BAD_PARAMETER));
   ASSERT_EQ(result.error().errorMessage(), "Failed parse line 1");
-}
-
-TEST(wordnet_synonyms_tests, parsing_broken_order_synsets) {
-  std::string_view data0(
-    "s(100000002,1,'word1',v,1,0).\ns(100000003,1,'word2',v,1,0).\ns(100000002,"
-    "1,'word1',v,1,0).\n");
-  auto result = WordnetSynonymsTokenizer::Parse(data0);
-  ASSERT_TRUE(result.error().is(sdb::ERROR_BAD_PARAMETER));
-  ASSERT_EQ(result.error().errorMessage(),
-            "Duplicate for word1: synset 100000002");
 }

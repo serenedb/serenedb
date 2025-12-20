@@ -101,8 +101,6 @@ ResultOr<std::shared_ptr<catalog::Index>> MakeIndex(
     case catalog::IndexType::Inverted:
       return std::unexpected<Result>{std::in_place, ERROR_NOT_IMPLEMENTED};
   }
-
-  return {};
 }
 
 }  // namespace

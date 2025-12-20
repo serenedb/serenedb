@@ -365,7 +365,6 @@ Result CatalogFeature::AddIndexes(ObjectId database_id, const Schema& schema) {
         database_id, schema.GetName(), [&](const SchemaObject*) {
           return CreateIndex(database_id, std::move(options));
         });
-      ;
     });
 }
 

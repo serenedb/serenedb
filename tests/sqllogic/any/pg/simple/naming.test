@@ -1106,8 +1106,8 @@ query
 SELECT iq
 FROM
 (
-  VALUES 
-    (-2, 17, 'bbbsky'), (-2, 0, 'babsky'), (100, 13, 'zhidky'), 
+  VALUES
+    (-2, 17, 'bbbsky'), (-2, 0, 'babsky'), (100, 13, 'zhidky'),
     (3, 24, 'androed'), (-2, 2, 'myasnig')
 ) AS lol(iq, kostya, vedernikoff)
 GROUP BY 1
@@ -1122,8 +1122,8 @@ query
 SELECT iq, kostya
 FROM
 (
-  VALUES 
-    (-2, 17, 'bbbsky'), (15, 0, 'babsky'), (100, 13, 'zhidky'), 
+  VALUES
+    (-2, 17, 'bbbsky'), (15, 0, 'babsky'), (100, 13, 'zhidky'),
     (3, 24, 'androed'), (403, 2, 'myasnig')
 ) AS lol(iq, kostya, vedernikoff)
 GROUP BY 1, 2

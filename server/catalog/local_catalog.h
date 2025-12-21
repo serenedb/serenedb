@@ -58,7 +58,7 @@ class LocalCatalog final : public LogicalCatalog,
   Result RegisterTable(ObjectId database_id, std::string_view schema,
                        CreateTableOptions table) final;
   Result RegisterIndex(ObjectId database_id, std::string_view schema,
-                       std::string_view table, IndexOptions index) final;
+                       IndexFactory index) final;
 
   Result CreateDatabase(std::shared_ptr<Database> database) final;
   Result CreateRole(std::shared_ptr<Role> role) final;
@@ -71,8 +71,10 @@ class LocalCatalog final : public LogicalCatalog,
   Result CreateTable(ObjectId database_id, std::string_view schema,
                      CreateTableOptions table,
                      CreateTableOperationOptions operation_options) final;
+
   Result CreateIndex(ObjectId database_id, std::string_view schema,
-                     std::string_view table, IndexOptions options) final;
+                     std::string_view relation,
+                     IndexFactory index_factory) final;
 
   Result RenameView(ObjectId database_id, std::string_view schema,
                     std::string_view name, std::string_view new_name) final;

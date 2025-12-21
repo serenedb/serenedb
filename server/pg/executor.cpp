@@ -48,6 +48,10 @@ yaclib::Future<Result> Executor::Execute() {
       const auto& stmt = *castNode(CreateStmt, &_node);
       return CreateTable(*_context, stmt);
     }
+    case NodeTag::T_IndexStmt: {
+      const auto& stmt = *castNode(IndexStmt, &_node);
+      return CreateIndex(*_context, stmt);
+    }
     case NodeTag::T_ViewStmt: {
       const auto& stmt = *castNode(ViewStmt, &_node);
       return CreateView(*_context, stmt);

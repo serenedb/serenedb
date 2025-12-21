@@ -20,6 +20,11 @@
 
 #include "key_utils.hpp"
 
+#include "basics/assert.h"
+#include "catalog/identifiers/object_id.h"
+#include "catalog/table_options.h"
+#include "rocksdb_engine_catalog/concat.h"
+
 namespace sdb::connector::key_utils {
 
 std::string PrepareTableKey(ObjectId id) {
@@ -39,19 +44,6 @@ std::string PrepareColumnKey(ObjectId id, catalog::Column::Id column_oid) {
 void AppendColumnKey(std::string& key, catalog::Column::Id column_oid) {
   SDB_ASSERT(!key.empty());
   rocksutils::Append(key, column_oid);
-}
-
-void AppendCellKey(std::string& key, catalog::Column::Id column_oid,
-                   std::string_view primary_key) {
-  SDB_ASSERT(!primary_key.empty());
-  SDB_ASSERT(!key.empty());
-  rocksutils::Append(key, column_oid, primary_key);
-}
-
-void AppendPrimaryKey(std::string& key, std::string_view primary_key) {
-  SDB_ASSERT(!primary_key.empty());
-  SDB_ASSERT(!key.empty());
-  rocksutils::Append(key, primary_key);
 }
 
 std::pair<std::string, std::string> CreateTableRange(ObjectId id) {

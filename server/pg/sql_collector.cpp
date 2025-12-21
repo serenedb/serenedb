@@ -264,22 +264,6 @@ void ObjectCollector::CollectRangeFunction(const State& state,
         _objects.ensureData(name.schema, name.relation);
         return;
       } break;
-      // case T_SQLValueFunction: {
-      //   auto* n = castNode(SQLValueFunction, function);
-      //   std::cerr << magic_enum::enum_name(n->op) << std::endl;
-      // } break;
-      // case T_TypeCast: {
-      //   auto* n = castNode(TypeCast, function);
-      //   std::cerr << n->typeName << std::endl;
-      // } break;
-      // case T_CoalesceExpr: {
-      //   auto* n = castNode(CoalesceExpr, function);
-      //   std::cerr << "coalesce: " << n->location << std::endl;
-      // } break;
-      // case T_MinMaxExpr: {
-      //   auto* n = castNode(MinMaxExpr, function);
-      //   std::cerr << magic_enum::enum_name(n->op) << std::endl;
-      // } break;
       default:
         break;
     }
@@ -526,6 +510,7 @@ void ObjectCollector::CollectCreateStmt(State& state, const CreateStmt& stmt) {
       VisitNodes(col_def.constraints, [&](const Constraint& constraint) {
         switch (constraint.contype) {
           case CONSTR_DEFAULT:
+          case CONSTR_GENERATED:
             CollectExprNode(state, constraint.raw_expr);
             break;
           default:

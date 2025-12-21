@@ -55,17 +55,17 @@ class RocksDBDataSink : public velox::connector::DataSink {
 
  private:
   // VERTICAL encoding methods
-  void WriteColumn(std::string& key, const velox::VectorPtr& input,
+  void WriteColumn(const velox::VectorPtr& input,
                    const folly::Range<const velox::IndexRange*>& ranges,
                    std::span<const velox::vector_size_t> idx);
 
   template<velox::TypeKind Kind>
-  void WriteFlatColumn(std::string& key, const velox::BaseVector& input,
+  void WriteFlatColumn(const velox::BaseVector& input,
                        const folly::Range<const velox::IndexRange*>& ranges,
                        std::span<const velox::vector_size_t> idx);
 
   template<velox::TypeKind Kind>
-  void WriteBiasedColumn(std::string& key, const velox::BaseVector& input,
+  void WriteBiasedColumn(const velox::BaseVector& input,
                          const folly::Range<const velox::IndexRange*>& ranges,
                          std::span<const velox::vector_size_t> idx);
 
@@ -75,17 +75,17 @@ class RocksDBDataSink : public velox::connector::DataSink {
   // vector operations. Can we eventually get rid of this and have consistent
   // vector argument type?
   void WriteDictionaryColumn(
-    std::string& key, const velox::VectorPtr& input,
+    const velox::VectorPtr& input,
     const folly::Range<const velox::IndexRange*>& ranges,
     std::span<const velox::vector_size_t> idx);
 
   template<velox::TypeKind Kind>
-  void WriteConstantColumn(std::string& key, const velox::BaseVector& input,
+  void WriteConstantColumn(const velox::BaseVector& input,
                            const folly::Range<const velox::IndexRange*>& ranges,
                            std::span<const velox::vector_size_t> idx);
 
   template<velox::VectorEncoding::Simple Encoding>
-  void WriteComplexColumn(std::string& key, const velox::BaseVector& input,
+  void WriteComplexColumn(const velox::BaseVector& input,
                           const folly::Range<const velox::IndexRange*>& ranges,
                           std::span<const velox::vector_size_t> idx);
 
@@ -158,9 +158,9 @@ class RocksDBDataSink : public velox::connector::DataSink {
 
   void WriteRowSlices(std::string_view key);
 
-  const std::string& GetRowKey(
+  const std::string& SetupRowKey(
     velox::vector_size_t idx,
-    std::span<const velox::vector_size_t> original_idx) const;
+    std::span<const velox::vector_size_t> original_idx);
 
   void ResetForNewRow() noexcept;
 
@@ -188,8 +188,9 @@ class RocksDBDataSink : public velox::connector::DataSink {
   std::vector<catalog::Column::Id> _column_ids;
   velox::memory::MemoryPool& _memory_pool;
   SliceVector _row_slices;
-  primary_key::Keys _row_keys;
+  primary_key::Keys _keys_buffers;
   velox::HashStringAllocator _bytes_allocator;
+  catalog::Column::Id _column_id;
   bool _skip_primary_key_columns;
 };
 
@@ -214,6 +215,7 @@ class RocksDBDeleteDataSink : public velox::connector::DataSink {
   rocksdb::ColumnFamilyHandle& _cf;
   ObjectId _object_key;
   std::vector<catalog::Column::Id> _column_ids;
+  std::vector<velox::column_index_t> _key_childs;
 };
 
 }  // namespace sdb::connector

@@ -32,7 +32,10 @@
 #include "basics/endian.h"
 #include "basics/exceptions.h"
 #include "basics/misc.hpp"
+#include "catalog/identifiers/object_id.h"
+#include "catalog/table_options.h"
 #include "common.h"
+#include "connector/primary_key.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "key_utils.hpp"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
@@ -73,7 +76,7 @@ RocksDBDataSink::RocksDBDataSink(
     _column_ids{std::move(column_oids)},
     _memory_pool{memory_pool},
     _row_slices{memory_pool},
-    _row_keys{memory_pool},
+    _keys_buffers{memory_pool},
     _bytes_allocator{&memory_pool},
     _skip_primary_key_columns{skip_primary_key_columns} {
   _key_childs.assign_range(key_childs);
@@ -92,25 +95,29 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
   SDB_ASSERT(input->type()->size() == _column_ids.size(),
              "RocksDBDataSink: column oids size ", _column_ids.size(),
              " doesn't match input type size ", input->type()->size());
-  // TODO(Dronplane) implement updating PK fields
-  _row_keys.clear();
-  primary_key::Create(*input, _key_childs, _row_keys);
   SDB_ASSERT(input->type()->kind() == velox::TypeKind::ROW);
-  const auto num_columns = input->childrenSize();
-  std::string table_key = key_utils::PrepareTableKey(_object_key);
-  const auto parent_size = table_key.size();
-  velox::IndexRange all_rows(0, input->size());
-  [[maybe_unused]] const auto& input_type = input->type()->asRow();
-  for (const auto& key : _row_keys) {
-    basics::StrResize(table_key, parent_size);
-    key_utils::AppendPrimaryKey(table_key, key);
-    VELOX_CHECK(
-      _transaction
-        .GetKeyLock(&_cf, rocksdb::Slice(table_key.data(), table_key.size()),
-                    false, true)
-        .ok(),
-      "Failed to acquire row lock for table {}", _object_key.id());
+
+  // TODO(Dronplane) implement updating PK fields
+  const std::string table_key = key_utils::PrepareTableKey(_object_key);
+  const auto num_rows = input->size();
+  _keys_buffers.clear();
+  _keys_buffers.reserve(num_rows);
+
+  for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+    auto& key_buffer = _keys_buffers.emplace_back();
+    key_utils::MakeColumnKey(
+      input, _key_childs, row_idx, table_key,
+      [&](std::string_view row_key) {
+        VELOX_CHECK(_transaction.GetKeyLock(&_cf, row_key, false, true).ok(),
+                    "Failed to acquire row lock for table {}",
+                    _object_key.id());
+      },
+      key_buffer);
   }
+
+  velox::IndexRange all_rows(0, num_rows);
+  const auto num_columns = input->childrenSize();
+  [[maybe_unused]] const auto& input_type = input->type()->asRow();
   for (velox::column_index_t i = 0; i < num_columns; ++i) {
     // Exclude only UNKNOWN from equivalency check as UNKNOWN is just a NULL and
     // compatible with everything.
@@ -125,9 +132,8 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
     if (_skip_primary_key_columns && i < _key_childs.size()) {
       continue;
     }
-    basics::StrResize(table_key, parent_size);
-    key_utils::AppendColumnKey(table_key, _column_ids[i]);
-    WriteColumn(table_key, input->childAt(i), folly::Range{&all_rows, 1}, {});
+    _column_id = _column_ids[i];
+    WriteColumn(input->childAt(i), folly::Range{&all_rows, 1}, {});
   }
 }
 
@@ -138,7 +144,7 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
 // rocksdb as a single value.
 template<velox::TypeKind Kind>
 void RocksDBDataSink::WriteFlatColumn(
-  std::string& key, const velox::BaseVector& input,
+  const velox::BaseVector& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   std::span<const velox::vector_size_t> original_idx) {
   // Flat vectors of complex types ARRAY, MAP and ROW / STRUCT are
@@ -149,14 +155,12 @@ void RocksDBDataSink::WriteFlatColumn(
   using T = typename velox::TypeTraits<Kind>::NativeType;
   auto* flat_vector = input.as<velox::FlatVector<T>>();
   SDB_ASSERT(flat_vector);
-  const auto base_size = key.size();
   irs::ResolveBool(flat_vector->mayHaveNulls(), [&]<bool MayHaveNulls>() {
     size_t row_id = 0;
     for (const auto& range : ranges) {
       const auto range_end = range.begin + range.size;
       for (velox::vector_size_t idx = range.begin; idx < range_end; ++idx) {
-        key.erase(base_size);
-        key_utils::AppendPrimaryKey(key, GetRowKey(row_id++, original_idx));
+        const auto& key = SetupRowKey(row_id++, original_idx);
         if constexpr (MayHaveNulls) {
           if (flat_vector->isNullAt(idx)) {
             WriteNull(_transaction, _cf, key);
@@ -173,21 +177,19 @@ void RocksDBDataSink::WriteFlatColumn(
 
 template<velox::TypeKind Kind>
 void RocksDBDataSink::WriteBiasedColumn(
-  std::string& key, const velox::BaseVector& input,
+  const velox::BaseVector& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   std::span<const velox::vector_size_t> original_idx) {
   using T = typename velox::TypeTraits<Kind>::NativeType;
   if constexpr (velox::admitsBias<T>()) {
     auto* bias_vector = input.as<velox::BiasVector<T>>();
     SDB_ASSERT(bias_vector);
-    const auto base_size = key.size();
     irs::ResolveBool(bias_vector->mayHaveNulls(), [&]<bool MayHaveNulls>() {
       size_t row_id = 0;
       for (const auto& range : ranges) {
         const auto range_end = range.begin + range.size;
         for (velox::vector_size_t idx = range.begin; idx < range_end; ++idx) {
-          key.erase(base_size);
-          key_utils::AppendPrimaryKey(key, GetRowKey(row_id++, original_idx));
+          const auto& key = SetupRowKey(row_id++, original_idx);
           if constexpr (MayHaveNulls) {
             if (bias_vector->isNullAt(idx)) {
               WriteNull(_transaction, _cf, key);
@@ -213,7 +215,7 @@ void RocksDBDataSink::WriteBiasedColumn(
 // For actual writing we just decode indexes and
 // call write on the wrapped column
 void RocksDBDataSink::WriteDictionaryColumn(
-  std::string& key, const velox::VectorPtr& input,
+  const velox::VectorPtr& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   std::span<const velox::vector_size_t> original_idx) {
   ManagedVector<velox::IndexRange> sub_ranges{_memory_pool};
@@ -230,21 +232,17 @@ void RocksDBDataSink::WriteDictionaryColumn(
   }
   size_t current = 0;
   size_t row_id = 0;
-  const auto base_size = key.size();
   for (const auto& range : ranges) {
     const auto end = range.begin + range.size;
     for (int32_t offset = range.begin; offset < end; ++offset) {
       if (may_nulls && input->isNullAt(offset)) {
         // Write not null rows in order to have continious original idx span
         if (!sub_ranges.empty()) {
-          WriteColumn(key, wrapped, sub_ranges,
+          WriteColumn(wrapped, sub_ranges,
                       original_idx.subspan(current, sub_ranges.size()));
-          key.erase(base_size);
           sub_ranges.clear();
         }
-        key_utils::AppendPrimaryKey(key, GetRowKey(row_id++, original_idx));
-        WriteNull(_transaction, _cf, key);
-        key.erase(base_size);
+        WriteNull(_transaction, _cf, SetupRowKey(row_id++, original_idx));
         current = row_id;
         continue;
       }
@@ -253,24 +251,22 @@ void RocksDBDataSink::WriteDictionaryColumn(
     }
   }
   if (!sub_ranges.empty()) {
-    WriteColumn(key, wrapped, sub_ranges,
+    WriteColumn(wrapped, sub_ranges,
                 original_idx.subspan(current, sub_ranges.size()));
   }
 }
 
 template<velox::VectorEncoding::Simple Encoding>
 void RocksDBDataSink::WriteComplexColumn(
-  std::string& key, const velox::BaseVector& input,
+  const velox::BaseVector& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   std::span<const velox::vector_size_t> original_idx) {
   size_t row_id = 0;
-  const auto base_size = key.size();
   for (size_t i = 0; i < ranges.size(); ++i) {
     int32_t begin = ranges[i].begin;
     int32_t end = begin + ranges[i].size;
     for (int32_t offset = begin; offset < end; ++offset) {
-      key.erase(base_size);
-      key_utils::AppendPrimaryKey(key, GetRowKey(row_id++, original_idx));
+      const auto& key = SetupRowKey(row_id++, original_idx);
       if (input.isNullAt(offset)) {
         WriteNull(_transaction, _cf, key);
       } else {
@@ -298,11 +294,10 @@ void RocksDBDataSink::WriteComplexColumn(
 
 template<velox::TypeKind Kind>
 void RocksDBDataSink::WriteConstantColumn(
-  std::string& key, const velox::BaseVector& input,
+  const velox::BaseVector& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   std::span<const velox::vector_size_t> original_idx) {
   size_t row_id = 0;
-  const auto base_size = key.size();
   ResetForNewRow();
   if (input.isNullAt(0)) {
     _row_slices.emplace_back();
@@ -312,8 +307,7 @@ void RocksDBDataSink::WriteConstantColumn(
   for (const auto& range : ranges) {
     const auto end = range.begin + range.size;
     for (int32_t offset = range.begin; offset < end; ++offset) {
-      key.erase(base_size);
-      key_utils::AppendPrimaryKey(key, GetRowKey(row_id++, original_idx));
+      const auto& key = SetupRowKey(row_id++, original_idx);
       WriteRowSlices(key);
     }
   }
@@ -321,8 +315,7 @@ void RocksDBDataSink::WriteConstantColumn(
 
 template<>
 void RocksDBDataSink::WriteConstantColumn<velox::TypeKind::OPAQUE>(
-  std::string&, const velox::BaseVector&,
-  const folly::Range<const velox::IndexRange*>&,
+  const velox::BaseVector&, const folly::Range<const velox::IndexRange*>&,
   std::span<const velox::vector_size_t>) {
   SDB_THROW(ERROR_NOT_IMPLEMENTED,
             "RocksDB Sink does not support OPAQUE columns");
@@ -331,50 +324,50 @@ void RocksDBDataSink::WriteConstantColumn<velox::TypeKind::OPAQUE>(
 // Main writing method. Used to dispatch actual writes depending on column kind
 // and encoding. See corresponding methods for description of storage formats.
 void RocksDBDataSink::WriteColumn(
-  std::string& key, const velox::VectorPtr& input,
+  const velox::VectorPtr& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   std::span<const velox::vector_size_t> original_idx) {
   switch (input->encoding()) {
     case velox::VectorEncoding::Simple::FLAT:
       if (input->typeKind() == velox::TypeKind::UNKNOWN) {
-        WriteConstantColumn<velox::TypeKind::UNKNOWN>(key, *input, ranges,
+        WriteConstantColumn<velox::TypeKind::UNKNOWN>(*input, ranges,
                                                       original_idx);
         break;
       }
       VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(WriteFlatColumn, input->typeKind(),
-                                         key, *input, ranges, original_idx);
+                                         *input, ranges, original_idx);
       break;
     case velox::VectorEncoding::Simple::CONSTANT:
       VELOX_DYNAMIC_TYPE_DISPATCH_ALL(WriteConstantColumn, input->typeKind(),
-                                      key, *input, ranges, original_idx);
+                                      *input, ranges, original_idx);
       break;
     case velox::VectorEncoding::Simple::DICTIONARY:
     case velox::VectorEncoding::Simple::SEQUENCE:
-      WriteDictionaryColumn(key, input, ranges, original_idx);
+      WriteDictionaryColumn(input, ranges, original_idx);
       break;
     case velox::VectorEncoding::Simple::BIASED:
       VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(WriteBiasedColumn, input->typeKind(),
-                                         key, *input, ranges, original_idx);
+                                         *input, ranges, original_idx);
       break;
     case velox::VectorEncoding::Simple::LAZY:
-      WriteColumn(key, velox::BaseVector::loadedVectorShared(input), ranges,
+      WriteColumn(velox::BaseVector::loadedVectorShared(input), ranges,
                   original_idx);
       break;
     case velox::VectorEncoding::Simple::ARRAY:
-      WriteComplexColumn<velox::VectorEncoding::Simple::ARRAY>(
-        key, *input, ranges, original_idx);
+      WriteComplexColumn<velox::VectorEncoding::Simple::ARRAY>(*input, ranges,
+                                                               original_idx);
       break;
     case velox::VectorEncoding::Simple::ROW:
-      WriteComplexColumn<velox::VectorEncoding::Simple::ROW>(
-        key, *input, ranges, original_idx);
+      WriteComplexColumn<velox::VectorEncoding::Simple::ROW>(*input, ranges,
+                                                             original_idx);
       break;
     case velox::VectorEncoding::Simple::MAP:
-      WriteComplexColumn<velox::VectorEncoding::Simple::MAP>(
-        key, *input, ranges, original_idx);
+      WriteComplexColumn<velox::VectorEncoding::Simple::MAP>(*input, ranges,
+                                                             original_idx);
       break;
     case velox::VectorEncoding::Simple::FLAT_MAP:
       WriteComplexColumn<velox::VectorEncoding::Simple::FLAT_MAP>(
-        key, *input, ranges, original_idx);
+        *input, ranges, original_idx);
       break;
     default:
       SDB_THROW(ERROR_NOT_IMPLEMENTED,
@@ -1857,14 +1850,18 @@ void RocksDBDataSink::WritePrimitive(const T& value) {
   }
 }
 
-const std::string& RocksDBDataSink::GetRowKey(
+const std::string& RocksDBDataSink::SetupRowKey(
   velox::vector_size_t idx,
-  std::span<const velox::vector_size_t> original_idx) const {
+  std::span<const velox::vector_size_t> original_idx) {
   SDB_ASSERT(original_idx.empty() ||
              original_idx.size() > static_cast<size_t>(idx));
   const auto row_id = original_idx.empty() ? idx : original_idx[idx];
-  SDB_ASSERT(static_cast<size_t>(row_id) < _row_keys.size());
-  return _row_keys[row_id];
+  SDB_ASSERT(static_cast<size_t>(row_id) < _keys_buffers.size());
+
+  auto& row_key = _keys_buffers[row_id];
+  key_utils::SetupColumnForKey(row_key, _column_id);
+
+  return row_key;
 }
 
 void RocksDBDataSink::ResetForNewRow() noexcept {
@@ -2008,31 +2005,33 @@ RocksDBDeleteDataSink::RocksDBDeleteDataSink(
              " does not match row "
              "type size",
              _row_type->size());
+  _key_childs.resize(_row_type->size());
+  absl::c_iota(_key_childs, 0);
 }
 
-// TODO(issue#277): measure alternative approach
 void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
+  // `input` is vector of rows that consists of **only primary** columns
   SDB_ASSERT(input->encoding() == velox::VectorEncoding::Simple::ROW);
 
+  const std::string table_key = key_utils::PrepareTableKey(_object_key);
   const auto num_columns = _row_type->size();
   const auto num_rows = input->size();
 
-  std::string row_key;
-  std::string key = key_utils::PrepareTableKey(_object_key);
-
-  const size_t key_old_size = key.size();
+  _key_childs.resize(input->childrenSize());
+  std::string key_buffer;
   for (velox::vector_size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-    basics::StrResize(key, key_old_size);
-    row_key.clear();
-    primary_key::Create(*input, row_idx, row_key);
-    key_utils::AppendPrimaryKey(key, row_key);
-    VELOX_CHECK(_transaction.GetKeyLock(&_cf, key, false, true).ok(),
-                "Failed to acquire row lock for table {}", _object_key.id());
+    key_utils::MakeColumnKey(
+      input, _key_childs, row_idx, table_key,
+      [&](std::string_view row_key) {
+        VELOX_CHECK(_transaction.GetKeyLock(&_cf, row_key, false, true).ok(),
+                    "Failed to acquire row lock for table {}",
+                    _object_key.id());
+      },
+      key_buffer);
 
     for (velox::column_index_t col_idx = 0; col_idx < num_columns; ++col_idx) {
-      basics::StrResize(key, key_old_size);
-      key_utils::AppendCellKey(key, _column_ids[col_idx], row_key);
-      auto status = _transaction.Delete(&_cf, rocksdb::Slice(key));
+      key_utils::SetupColumnForKey(key_buffer, _column_ids[col_idx]);
+      auto status = _transaction.Delete(&_cf, rocksdb::Slice(key_buffer));
       if (!status.ok()) {
         SDB_THROW(rocksutils::ConvertStatus(status));
       }

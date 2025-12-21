@@ -1,10 +1,10 @@
 target_sources(
     sereneserver
     PRIVATE
+        column_expr.cpp
         database.cpp
         schema.cpp
         databases.cpp
-        default_value.cpp
         local_catalog.cpp
         catalog.cpp
         object.cpp
@@ -24,6 +24,7 @@ target_sources(
         sharding_strategy.cpp
         replication_common.cpp
         role.cpp
+        secondary_index.cpp
         # TODO search
         geo.cpp
         identity_analyzer.cpp

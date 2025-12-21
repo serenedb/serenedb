@@ -20,9 +20,12 @@
 
 #pragma once
 
+#include <velox/vector/BaseVector.h>
+#include <velox/vector/ComplexVector.h>
+
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
-#include "rocksdb_engine_catalog/concat.h"
+#include "connector/primary_key.hpp"
 
 namespace sdb::connector::key_utils {
 
@@ -36,14 +39,29 @@ std::string PrepareColumnKey(ObjectId id, catalog::Column::Id column_oid);
 // Appends column OID to the Table key created with PrepareTableKey.
 void AppendColumnKey(std::string& key, catalog::Column::Id column_oid);
 
-// Gets full row key by appending column OID and primary key to the Table key
-// created with PrepareTableKey.
-void AppendCellKey(std::string& key, catalog::Column::Id column_oid,
-                   std::string_view primary_key);
+// Prepare buffer for column key and call 'row_key_handle' on row_key
+template<typename Func>
+void MakeColumnKey(const velox::RowVectorPtr& input,
+                   const std::vector<velox::column_index_t>& pk_columns,
+                   velox::vector_size_t row_idx, std::string_view object_id,
+                   Func&& row_key_handle, std::string& key_buffer) {
+  SDB_ASSERT(object_id.size() == sizeof(ObjectId));
+  basics::StrResize(key_buffer, sizeof(catalog::Column::Id) + sizeof(ObjectId));
+  std::memcpy(key_buffer.data() + sizeof(catalog::Column::Id), object_id.data(),
+              sizeof(ObjectId));
+  primary_key::Create(*input, pk_columns, row_idx, key_buffer);
+  row_key_handle(std::string_view{
+    key_buffer.begin() + sizeof(catalog::Column::Id), key_buffer.end()});
+  std::memcpy(key_buffer.data(), object_id.data(), sizeof(ObjectId));
+}
 
-// Appends primary key to the base key part. Could be table key for creating
-// lock key or column key for creating full cell key.
-void AppendPrimaryKey(std::string& key, std::string_view primary_key);
+// Takes buffer in format
+// 'object_id | reserved for column_id | pk'
+// and fills column_id
+inline void SetupColumnForKey(std::string& buf, catalog::Column::Id column_id) {
+  SDB_ASSERT(buf.size() >= sizeof(ObjectId) + sizeof(catalog::Column::Id));
+  absl::big_endian::Store(buf.data() + sizeof(ObjectId), column_id);
+}
 
 // creates range covering all rows of all columns of the table
 std::pair<std::string, std::string> CreateTableRange(ObjectId id);

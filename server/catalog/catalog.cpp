@@ -40,6 +40,7 @@
 #include "basics/string_utils.h"
 #include "catalog/database.h"
 #include "catalog/identifiers/object_id.h"
+#include "catalog/index.h"
 #include "catalog/local_catalog.h"
 #include "catalog/schema.h"
 #include "catalog/table.h"
@@ -150,17 +151,22 @@ Result CatalogFeature::Open() {
     }
   }
 
-  GetServerEngine().VisitDatabases([&](vpack::Slice slice) {
+  r = GetServerEngine().VisitDatabases([&](vpack::Slice slice) -> Result {
     catalog::DatabaseOptions database;
     if (auto r = vpack::ReadTupleNothrow(slice, database); !r.ok()) {
-      return false;
+      return r;
     }
 
     if (auto r = OpenDatabase(std::move(database)); !r.ok()) {
-      return false;
+      return r;
     }
-    return true;
+    return {};
   });
+
+  if (!r.ok()) {
+    SDB_FATAL("xxxxx", Logger::FIXME, "Failed to open database, ",
+              r.errorMessage());
+  }
 
   if (!catalog::GetDatabase(StaticStrings::kSystemDatabase)) {
     SDB_FATAL("xxxxx", Logger::FIXME, "No ", StaticStrings::kSystemDatabase,
@@ -176,9 +182,8 @@ Result CatalogFeature::AddDatabase(const DatabaseOptions& options) {
 }
 
 Result CatalogFeature::AddSchemas(
-  ObjectId database_id, std::string_view database_name,
-  std::vector<std::shared_ptr<Schema>>& schemas) {
-  auto r = GetServerEngine().VisitObjects(
+  ObjectId database_id, std::vector<std::shared_ptr<Schema>>& schemas) {
+  return GetServerEngine().VisitObjects(
     database_id, RocksDBEntryType::Schema,
     [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
       SchemaOptions options;
@@ -192,13 +197,6 @@ Result CatalogFeature::AddSchemas(
 
       return Global().RegisterSchema(database_id, std::move(schema));
     });
-
-  if (!r.ok()) {
-    return {r.errorNumber(),
-            "Failed to read schemas, error: ", r.errorMessage()};
-  }
-
-  return {};
 }
 
 Result CatalogFeature::AddRoles() {
@@ -334,10 +332,8 @@ Result CatalogFeature::ProcessTombstones() {
   return {};
 }
 
-Result CatalogFeature::AddTables(ObjectId database_id, const Schema& schema,
-                                 std::string_view database_name) {
-  auto& engine = GetServerEngine();
-  auto r = engine.VisitSchemaObjects(
+Result CatalogFeature::AddTables(ObjectId database_id, const Schema& schema) {
+  return GetServerEngine().VisitSchemaObjects(
     database_id, schema.GetId(), RocksDBEntryType::Collection,
     [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
       CreateTableOptions options;
@@ -347,51 +343,50 @@ Result CatalogFeature::AddTables(ObjectId database_id, const Schema& schema,
             slice, options, {.skip_unknown = true, .strict = false},
             ObjectInternal{database_id});
           !r.ok()) {
-        return ErrorMeta(r.errorNumber(), "collection", r.errorMessage(),
-                         slice);
+        return ErrorMeta(r.errorNumber(), "table", r.errorMessage(), slice);
       }
 
       return Local().RegisterTable(database_id, schema.GetName(),
                                    std::move(options));
     });
-
-  if (!r.ok()) {
-    return {r.errorNumber(),
-            "Failed to read functions in database: ", database_name,
-            " error: ", r.errorMessage()};
-  }
-  return {};
 }
 
-Result CatalogFeature::AddFunctions(ObjectId database_id, const Schema& schema,
-                                    std::string_view database_name) {
-  auto& engine = GetServerEngine();
-  auto r = engine.VisitSchemaObjects(
+Result CatalogFeature::AddIndexes(ObjectId database_id, const Schema& schema) {
+  return GetServerEngine().VisitSchemaObjects(
+    database_id, schema.GetId(), RocksDBEntryType::Index,
+    [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
+      IndexOptions<vpack::Slice> options;
+
+      if (auto r = vpack::ReadTupleNothrow(slice, options); !r.ok()) {
+        return ErrorMeta(r.errorNumber(), "index", r.errorMessage(), slice);
+      }
+
+      return Local().RegisterIndex(
+        database_id, schema.GetName(), [&](const SchemaObject*) {
+          return CreateIndex(database_id, std::move(options));
+        });
+    });
+}
+
+Result CatalogFeature::AddFunctions(ObjectId database_id,
+                                    const Schema& schema) {
+  return GetServerEngine().VisitSchemaObjects(
     database_id, schema.GetId(), RocksDBEntryType::Function,
     [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
       std::shared_ptr<catalog::Function> function;
       auto r =
         catalog::Function::Instantiate(function, database_id, slice, false);
       if (!r.ok()) {
-        return ErrorMeta(r.errorNumber(), "role", r.errorMessage(), slice);
+        return ErrorMeta(r.errorNumber(), "function", r.errorMessage(), slice);
       }
 
       return Global().RegisterFunction(database_id, schema.GetName(),
                                        std::move(function));
     });
-
-  if (!r.ok()) {
-    return {r.errorNumber(),
-            "Failed to read functions in database: ", database_name,
-            " error: ", r.errorMessage()};
-  }
-  return {};
 }
 
-Result CatalogFeature::AddViews(ObjectId database_id, const Schema& schema,
-                                std::string_view database_name) {
-  auto& engine = GetServerEngine();
-  auto r = engine.VisitSchemaObjects(
+Result CatalogFeature::AddViews(ObjectId database_id, const Schema& schema) {
+  return GetServerEngine().VisitSchemaObjects(
     database_id, schema.GetId(), RocksDBEntryType::View,
     [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
       ViewOptions options;
@@ -408,14 +403,6 @@ Result CatalogFeature::AddViews(ObjectId database_id, const Schema& schema,
       return Global().RegisterView(database_id, schema.GetName(),
                                    std::move(view));
     });
-
-  if (!r.ok()) {
-    return {r.errorNumber(),
-            "Failed to read views in database: ", database_name,
-            " error: ", r.errorMessage()};
-  }
-
-  return {};
 }
 
 Result CatalogFeature::OpenDatabase(catalog::DatabaseOptions database) {
@@ -429,24 +416,32 @@ Result CatalogFeature::OpenDatabase(catalog::DatabaseOptions database) {
         return r;
       }
 
+      auto make_error = [&](auto& r, std::string_view context) {
+        return Result{r.errorNumber(),  "Failed to read ", context,
+                      " in database: ", database.name,     " error: ",
+                      r.errorMessage()};
+      };
+
       std::vector<std::shared_ptr<Schema>> schemas;
-      if (auto r = AddSchemas(database.id, database.name, schemas); !r.ok()) {
-        return r;
+      if (auto r = AddSchemas(database.id, schemas); !r.ok()) {
+        return make_error(r, "schemas");
       }
 
       for (auto& schema : schemas) {
         if (ServerState::instance()->IsSingle()) {
-          if (auto r = AddFunctions(database.id, *schema, database.name);
-              !r.ok()) {
-            return r;
+          if (auto r = AddFunctions(database.id, *schema); !r.ok()) {
+            return make_error(r, "functions");
           }
         }
-        if (auto r = AddTables(database.id, *schema, database.name); !r.ok()) {
-          return r;
+        if (auto r = AddTables(database.id, *schema); !r.ok()) {
+          return make_error(r, "tables");
+        }
+        if (auto r = AddIndexes(database.id, *schema); !r.ok()) {
+          return make_error(r, "indexes");
         }
         if (ServerState::instance()->IsSingle()) {
-          if (auto r = AddViews(database.id, *schema, database.name); !r.ok()) {
-            return r;
+          if (auto r = AddViews(database.id, *schema); !r.ok()) {
+            return make_error(r, "views");
           }
         }
       }

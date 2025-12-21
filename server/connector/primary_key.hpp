@@ -38,6 +38,7 @@ using Keys = std::vector<std::string, velox::memory::StlAllocator<std::string>>;
 void Create(const velox::RowVector& data,
             std::span<const facebook::velox::column_index_t> key_childs,
             velox::vector_size_t idx, std::string& key);
+
 void Create(const velox::RowVector& data,
             std::span<const velox::column_index_t> key_childs, Keys& buffer);
 

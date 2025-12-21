@@ -1012,84 +1012,78 @@ auto VisitName(const List* name, Visitor&& visitor) {
   return std::forward<Visitor>(visitor)();
 }
 
-// Non-owning wrapper for PostgreSQL string lists with iterator support
-// It's convenient to use it in a template code
-// where also std::vector<std::string> can be used
-// This class acts as both a container and an iterator
-class PgStrListWrapper {
+template<typename Traits>
+class PgListWrapperImpl : public Traits {
  public:
   using iterator_category = std::random_access_iterator_tag;
-  using value_type = std::string_view;
   using difference_type = std::ptrdiff_t;
-  using pointer = const std::string_view*;
-  using reference = std::string_view;
-  using iterator = PgStrListWrapper;
-  using const_iterator = PgStrListWrapper;
+  using iterator = PgListWrapperImpl;
+  using const_iterator = PgListWrapperImpl;
 
-  PgStrListWrapper() = default;
+  PgListWrapperImpl() = default;
 
-  explicit PgStrListWrapper(const List* list) : _list(list), _index(0) {}
+  explicit PgListWrapperImpl(const List* list) : _list(list) {}
 
-  PgStrListWrapper(const List* list, size_t index)
+  PgListWrapperImpl(const List* list, size_t index)
     : _list(list), _index(index) {}
 
   // Iterator interface
-  std::string_view operator*() const {
+  auto operator*() const {
     SDB_ASSERT(_index < list_length(_list));
-    return strVal(lfirst(&_list->elements[_index]));
+    return this->ToValue(castNode(Node, lfirst(&_list->elements[_index])));
   }
 
-  PgStrListWrapper& operator++() {
+  PgListWrapperImpl& operator++() {
     ++_index;
     return *this;
   }
 
-  PgStrListWrapper operator++(int) {
-    PgStrListWrapper tmp = *this;
+  PgListWrapperImpl operator++(int) {
+    PgListWrapperImpl tmp = *this;
     ++(*this);
     return tmp;
   }
 
-  PgStrListWrapper& operator--() {
+  PgListWrapperImpl& operator--() {
     --_index;
     return *this;
   }
 
-  PgStrListWrapper operator--(int) {
-    PgStrListWrapper tmp = *this;
+  PgListWrapperImpl operator--(int) {
+    PgListWrapperImpl tmp = *this;
     --(*this);
     return tmp;
   }
 
-  PgStrListWrapper& operator+=(difference_type n) {
+  PgListWrapperImpl& operator+=(difference_type n) {
     _index += n;
     return *this;
   }
 
-  PgStrListWrapper& operator-=(difference_type n) {
+  PgListWrapperImpl& operator-=(difference_type n) {
     _index -= n;
     return *this;
   }
 
-  PgStrListWrapper operator+(difference_type n) const {
-    return PgStrListWrapper(_list, _index + n);
+  PgListWrapperImpl operator+(difference_type n) const {
+    return PgListWrapperImpl(_list, _index + n);
   }
 
-  PgStrListWrapper operator-(difference_type n) const {
-    return PgStrListWrapper(_list, _index - n);
+  PgListWrapperImpl operator-(difference_type n) const {
+    return PgListWrapperImpl(_list, _index - n);
   }
 
-  difference_type operator-(const PgStrListWrapper& other) const {
+  difference_type operator-(const PgListWrapperImpl& other) const {
     return _index - other._index;
   }
 
-  bool operator==(const PgStrListWrapper& other) const = default;
-  auto operator<=>(const PgStrListWrapper& other) const = default;
+  bool operator==(const PgListWrapperImpl& other) const = default;
+  auto operator<=>(const PgListWrapperImpl& other) const = default;
 
   // Container interface
-  PgStrListWrapper begin() const { return PgStrListWrapper(_list, 0); }
+  PgListWrapperImpl begin() const { return PgListWrapperImpl(_list); }
 
-  PgStrListWrapper end() const { return PgStrListWrapper(_list, size()); }
+  PgListWrapperImpl end() const { return PgListWrapperImpl(_list, size()); }
 
   auto rbegin() const { return std::reverse_iterator(end()); }
 
@@ -1104,8 +1098,36 @@ class PgStrListWrapper {
   size_t _index = 0;
 };
 
+template<typename T>
+struct PgNodeTraits {
+  using value_type = T*;
+  using pointer = T**;
+  using reference = T*&;
+
+  static T* ToValue(Node* v) { return castNode(T, v); }
+
+  bool operator==(const PgNodeTraits& other) const = default;
+  auto operator<=>(const PgNodeTraits& other) const = default;
+};
+
+struct PgStrTraits {
+  using value_type = std::string_view;
+  using pointer = const std::string_view*;
+  using reference = std::string_view;
+
+  static std::string_view ToValue(Node* value) { return strVal(value); }
+
+  bool operator==(const PgStrTraits& other) const = default;
+  auto operator<=>(const PgStrTraits& other) const = default;
+};
+
+template<typename T>
+using PgListWrapper = PgListWrapperImpl<PgNodeTraits<T>>;
+
+using PgStrListWrapper = PgListWrapperImpl<PgStrTraits>;
+
 }  // namespace sdb
 
-template<>
+template<typename T>
 inline constexpr bool
-  std::ranges::enable_borrowed_range<sdb::PgStrListWrapper> = true;
+  std::ranges::enable_borrowed_range<sdb::PgListWrapperImpl<T>> = true;

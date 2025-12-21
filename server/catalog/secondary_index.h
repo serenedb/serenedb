@@ -20,24 +20,31 @@
 
 #pragma once
 
+#include <vector>
+
 #include "catalog/index.h"
 
 namespace sdb::catalog {
 
 struct SecondaryIndexOptions {
+  std::vector<uint16_t> columns;
   bool unique = false;
-  std::vector<std::string> columns;  // TODO: should be a ref to table column
 };
 
 class SecondaryIndex : public Index {
  public:
-  SecondaryIndex(SecondaryIndexOptions options, IndexOptions index_options,
+  using Options = SecondaryIndexOptions;
+
+  SecondaryIndex(IndexOptions<SecondaryIndexOptions> options,
                  ObjectId database_id);
 
-  auto& GetOptions() const noexcept { return _options; }
+  void WriteInternal(vpack::Builder& builder) const;
+  std::span<const uint16_t> GetColumns() const noexcept { return _columns; }
+  bool IsUnique() const noexcept { return _unique; }
 
  private:
-  SecondaryIndexOptions _options;
+  std::vector<uint16_t> _columns;
+  bool _unique;
 };
 
 }  // namespace sdb::catalog

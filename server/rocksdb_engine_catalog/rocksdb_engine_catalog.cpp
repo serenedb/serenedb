@@ -1155,8 +1155,8 @@ bool RocksDBEngineCatalog::hasBackgroundError() const {
   return _error_listener != nullptr && _error_listener->called();
 }
 
-bool RocksDBEngineCatalog::VisitDatabases(
-  absl::FunctionRef<bool(vpack::Slice database)> visitor) {
+Result RocksDBEngineCatalog::VisitDatabases(
+  absl::FunctionRef<Result(vpack::Slice database)> visitor) {
   rocksdb::ReadOptions read_options;
   read_options.async_io = true;
   // TODO: more options?
@@ -1169,11 +1169,11 @@ bool RocksDBEngineCatalog::VisitDatabases(
     auto slice =
       vpack::Slice(reinterpret_cast<const uint8_t*>(iter->value().data()));
     auto r = visitor(slice);
-    if (!r) {
-      return false;
+    if (!r.ok()) {
+      return r;
     }
   }
-  return true;
+  return {};
 }
 
 // TODO: Rewrite this to use single scan.
@@ -1741,6 +1741,57 @@ void RocksDBEngineCatalog::processCompactions() {
       SDB_ASSERT(count);
     });
   }
+}
+
+Result RocksDBEngineCatalog::CreateIndex(const catalog::Index& index) {
+  const auto db_id = index.GetDatabaseId();
+  const auto schema_id = index.GetSchemaId();
+  const auto index_id = index.GetId();
+  SDB_ASSERT(index_id.isSet());
+
+  vpack::Builder b;
+  index.WriteInternal(b);
+
+  return WriteDefinition(
+    _db->GetRootDB(),
+    [&] {
+      RocksDBKeyWithBuffer key;
+      key.constructSchemaObject(RocksDBEntryType::Index, db_id, schema_id,
+                                index_id);
+      return key;
+    },
+    [&] { return RocksDBValue::Object(RocksDBEntryType::Index, b.slice()); },
+    [&] { return std::string_view{}; });
+}
+
+Result RocksDBEngineCatalog::MarkDeleted(const catalog::Index& index,
+                                         const IndexTombstone& tombstone) {
+  const auto db_id = index.GetDatabaseId();
+  const auto schema_id = index.GetSchemaId();
+  const auto relation_id = index.GetId();
+  SDB_ASSERT(relation_id.isSet());
+
+  vpack::Builder b;
+  vpack::WriteTuple(b, tombstone);
+
+  return WriteDefinition(
+    _db->GetRootDB(),
+    [&] {
+      RocksDBKeyWithBuffer key;
+      key.constructSchemaObject(RocksDBEntryType::Index, db_id, schema_id,
+                                relation_id);
+      return key;
+    },
+    [&] {
+      RocksDBKeyWithBuffer key;
+      key.constructObject(RocksDBEntryType::IndexTombstone,
+                          id::kTombstoneDatabase, tombstone.id);
+      return key;
+    },
+    [&] {
+      return RocksDBValue::Object(RocksDBEntryType::IndexTombstone, b.slice());
+    },
+    [&] { return std::string_view{}; });
 }
 
 Result RocksDBEngineCatalog::MarkDeleted(const catalog::Table& c,
@@ -2574,15 +2625,14 @@ Result RocksDBEngineCatalog::dropDatabase(ObjectId id) {
 
 void RocksDBEngineCatalog::EnsureSystemDatabase() {
   bool has_system = false;
-  VisitDatabases([&](vpack::Slice result) {
+  std::ignore = VisitDatabases([&](vpack::Slice result) -> Result {
     catalog::DatabaseOptions options;
 
-    if (auto r = vpack::ReadTupleNothrow(result, options); !r.ok()) {
-      return false;
+    if (auto r = vpack::ReadTupleNothrow(result, options); r.ok()) {
+      has_system = options.id == id::kSystemDB;
     }
 
-    has_system = options.id == id::kSystemDB;
-    return false;
+    return {ERROR_INTERNAL};  // stop iteration
   });
 
   if (has_system) {

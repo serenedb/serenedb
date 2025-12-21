@@ -1,6 +1,7 @@
 statement ok
 CREATE TABLE t (column1 VARCHAR PRIMARY KEY, column2 INT);
 
+
 query
 explain (logical, execution) select * from t;
 ----
@@ -11,8 +12,9 @@ EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
 -- TableScan[0][t] -> "column1":VARCHAR, "column2":INTEGER
 
+
 query
-explain (logical, execution) update t set column2 = 42 where column1 = 'foo';
+EXPLAIN (LOGICAL, EXECUTION) UPDATE t SET column2 = 42 WHERE column1 = 'foo';
 ----
 QUERY PLAN
 LOGICAL PLAN:
@@ -30,7 +32,7 @@ Fragment 0:  numWorkers=0:
 
 
 query
-explain (logical, execution) update t set column2 = column2 + 1;
+EXPLAIN (LOGICAL, EXECUTION) UPDATE t SET column2 = column2 + 1;
 ----
 QUERY PLAN
 LOGICAL PLAN:
@@ -43,3 +45,7 @@ Fragment 0:  numWorkers=0:
 -- TableWrite[2][serenedb(table=t, kind=UPDATE)] -> rows:BIGINT
   -- Project[1][expressions: (column1:VARCHAR, "column1"), (dt1.__p10:INTEGER, presto_plus("column2",1))] -> "column1":VARCHAR, "dt1.__p10":INTEGER
     -- TableScan[0][t] -> "column1":VARCHAR, "column2":INTEGER
+
+
+statement error
+UPDATE t SET pencil_size = 31343;

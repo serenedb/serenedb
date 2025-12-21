@@ -48,24 +48,6 @@ TEST(KeyUtilsTest, AppendColumnKey) {
                    "\x00\x00\x00\x00\x00\x00\x00\x2A\x00\x00\x00\x05", 12));
 }
 
-TEST(KeyUtilsTest, AppendCellKey) {
-  ObjectId id{43};
-  std::string key = PrepareTableKey(id);
-  std::string pk = "pkval";
-  AppendCellKey(key, 4, pk);
-  ASSERT_EQ(key,
-            std::string_view(
-              "\x00\x00\x00\x00\x00\x00\x00\x2B\x00\x00\x00\x04pkval", 17));
-}
-
-TEST(KeyUtilsTest, AppendPrimaryKey) {
-  ObjectId id{4};
-  std::string key = PrepareTableKey(id);
-  std::string orig = key;
-  AppendPrimaryKey(key, "zzaz");
-  ASSERT_EQ(key, std::string_view("\x00\x00\x00\x00\x00\x00\x00\x04zzaz", 12));
-}
-
 TEST(KeyUtilsTest, CreateTableRange) {
   ObjectId id{10};
   auto range = CreateTableRange(id);

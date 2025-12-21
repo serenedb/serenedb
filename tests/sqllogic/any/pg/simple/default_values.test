@@ -30,6 +30,15 @@ db error: ERROR: for a generated column, GENERATED ALWAYS must be specified
 
 
 statement error
+CREATE TABLE kil (
+    id INTEGER GENERATED ALWAYS AS (1) STORED,
+    id2 INTEGER GENERATED ALWAYS AS (id) STORED
+);
+----
+db error: ERROR:  cannot use generated column "id" in column generation expression
+
+
+statement error
 CREATE TABLE koshareff(a BOOLEAN, DEFAULT (a = 0));
 ----
 db error: ERROR: syntax error at or near "DEFAULT"
@@ -179,3 +188,17 @@ WHERE id = 1000;
 ----
 db error: ERROR: column "grade" can only be updated to DEFAULT
 DETAIL: Column "grade" is a generated column.
+
+
+
+
+
+query
+
+SELECT DISTINCT *, * FROM
+(
+  VALUES 
+    ('babsky', 22 ), ('babsky', 20), ('babsky', 21), ('babsky', 21),
+    ('vedernikoff', 14), ('vedernikoff', 13), ('vedernikoff', 14)
+) as clickclack(name, grade)
+ORDER BY name, grade DESC;

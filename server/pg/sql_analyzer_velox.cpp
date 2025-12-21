@@ -662,6 +662,7 @@ class TargetList {
   };
 
   std::vector<Entry> GetEntries() && { return std::move(_entries); }
+  const std::vector<Entry>& GetEntries() const& { return _entries; }
 
  private:
   bool IsAmbiguous(const lp::ExprPtr& expr) const { return expr == nullptr; }
@@ -760,8 +761,11 @@ class SqlAnalyzer {
   void ProjectTargetListWindows(State& state, const List* target_list);
 
   void ProcessGroupByList(State& state, const List* groupby,
-                          const List* target_list,
-                          CollectedAggregates collected);
+                          const List* target_list, const List* orderby_list,
+                          const Node* having);
+
+  void ProcessDistinctClause(State& state, TargetList& target_list,
+                             const List* tlist, const List* distinct_clause);
 
   // something like a cache to avoid processing expressions twice
   TargetList ProcessTargetList(State& state, const List* target_list);
@@ -1673,17 +1677,37 @@ void SqlAnalyzer::ProcessCreateStmt(State& state, const CreateStmt& stmt) {
   std::vector<velox::TypePtr> column_types;
   column_names.reserve(list_length(stmt.tableElts));
   column_types.reserve(list_length(stmt.tableElts));
+  containers::FlatHashSet<std::string_view> generated_columns;
   VisitNodes(stmt.tableElts, [&](const Node& node) {
     if (IsA(&node, ColumnDef)) {
       const auto& col_def = *castNode(ColumnDef, &node);
       column_names.emplace_back(_id_generator.NextColumnName(col_def.colname));
       column_types.emplace_back(NameToType(*col_def.typeName));
+      VisitNodes(col_def.constraints, [&](const Constraint& constraint) {
+        switch (constraint.contype) {
+          case CONSTR_GENERATED: {
+            generated_columns.emplace(col_def.colname);
+          }
+          default:
+            break;
+        }
+      });
     }
   });
 
   velox::RowType dummy_output_type{std::move(column_names),
                                    std::move(column_types)};
   dummy.lookup_columns = MakePtrView<velox::RowType>(&dummy_output_type);
+  dummy.pre_columnref_hook = [&](std::string_view name,
+                                 const ColumnRef& ref) -> lp::ExprPtr {
+    if (generated_columns.contains(name)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                      CURSOR_POS(ErrorPosition(ExprLocation(&ref))),
+                      ERR_MSG("cannot use generated column \"", name,
+                              "\" in column generation expression"));
+    }
+    return nullptr;
+  };
 
   VisitNodes(stmt.tableElts, [&](const Node& node) {
     if (IsA(&node, ColumnDef)) {
@@ -2043,8 +2067,8 @@ void SqlAnalyzer::ProcessValuesList(State& state, const List* list) {
     values_nodes.emplace_back(std::move(value_state.root));
   }
 
-  // TODO: Create an issue about ExpandNode can be used when it's just access +
-  // const to optimize large VALUES clause. Also we can extend ExpandNode to
+  // TODO: Create an issue about ExpandNode can be used when it's just access
+  // + const to optimize large VALUES clause. Also we can extend ExpandNode to
   // support more expressions. Also we need to support ExpandNode in axiom.
 
   SDB_ASSERT(!state.root);
@@ -2341,7 +2365,13 @@ void SqlAnalyzer::ProjectTargetListWindows(State& state,
 
 void SqlAnalyzer::ProcessGroupByList(State& state, const List* groupby,
                                      const List* tlist,
-                                     CollectedAggregates collected) {
+                                     const List* orderby_list,
+                                     const Node* having) {
+  auto collected =
+    CollectAggregateFunctions(state, tlist, orderby_list, having);
+  state.has_groupby = list_length(groupby) > 0;
+  state.has_aggregate = !collected.aggregates.empty();
+
   if (!state.has_aggregate && !state.has_groupby) {
     return;
   }
@@ -2364,7 +2394,8 @@ void SqlAnalyzer::ProcessGroupByList(State& state, const List* groupby,
   for (size_t i = 0; i < grouping_keys.size(); ++i) {
     std::string name;
     if (grouping_keys[i]->isInputReference()) {
-      // we don't want to keep an old name otherwise table scope will be invalid
+      // we don't want to keep an old name otherwise table scope will be
+      // invalid
       name = grouping_keys[i]->as<lp::InputReferenceExpr>()->name();
     } else {
       name = _id_generator.NextColumnName(
@@ -2387,17 +2418,47 @@ void SqlAnalyzer::ProcessGroupByList(State& state, const List* groupby,
     std::move(collected.aggregates), std::move(output_names));
 }
 
+void SqlAnalyzer::ProcessDistinctClause(State& state, TargetList& target_list,
+                                        const List* tlist,
+                                        const List* distinct_clause) {
+  if (!distinct_clause) {
+    return;
+  }
+
+  [[maybe_unused]] const bool is_distinct_all =
+    list_length(distinct_clause) == 1 &&
+    list_nth(distinct_clause, 0) == nullptr;
+
+  auto entries = std::move(target_list).GetEntries();
+
+  std::vector<lp::ExprPtr> grouping_keys;
+  std::vector<std::string> output_names;
+  grouping_keys.reserve(entries.size());
+  output_names.reserve(entries.size());
+  for (auto&& [expr, alias] : entries) {
+    grouping_keys.emplace_back(std::move(expr));
+    output_names.emplace_back(_id_generator.NextColumnName(alias));
+  }
+
+  // std::vector<lp::SortingField> fields;
+  // std::vector<lp::AggregateExprPtr> aggrs;
+  // std::make_shared<lp::AggregateExpr>();
+
+  state.root = std::make_shared<lp::AggregateNode>(
+    _id_generator.NextPlanId(), std::move(state.root), std::move(grouping_keys),
+    std::vector<lp::AggregateNode::GroupingSet>{},
+    std::vector<lp::AggregateExprPtr>{}, std::move(output_names));
+
+  target_list = ProcessTargetList(state, tlist);
+}
+
 void SqlAnalyzer::ProcessPipeline(State& state, const SelectStmt& stmt) {
   ProcessFromList(state, stmt.fromClause);
   EnsureRoot(state);
   ProcessFilterNode(state, stmt.whereClause, ExprKind::Where);
 
-  auto collected = CollectAggregateFunctions(
-    state, stmt.targetList, stmt.sortClause, stmt.havingClause);
-  state.has_groupby = list_length(stmt.groupClause) > 0;
-  state.has_aggregate = !collected.aggregates.empty();
-  ProcessGroupByList(state, stmt.groupClause, stmt.targetList,
-                     std::move(collected));
+  ProcessGroupByList(state, stmt.groupClause, stmt.targetList, stmt.sortClause,
+                     stmt.havingClause);
   ProcessFilterNode(state, stmt.havingClause, ExprKind::Having);
 
   // PG OrderBy has access to items before target list
@@ -2406,6 +2467,8 @@ void SqlAnalyzer::ProcessPipeline(State& state, const SelectStmt& stmt) {
   // before order by - because sort and project nodes are mixed up.
   ProjectTargetListWindows(state, stmt.targetList);
   auto target_list = ProcessTargetList(state, stmt.targetList);
+  ProcessDistinctClause(state, target_list, stmt.targetList,
+                        stmt.distinctClause);
   ProcessSortClause(state, stmt.sortClause, target_list);
   ProjectTargetList(state, std::move(target_list));
 }
@@ -2432,7 +2495,8 @@ void SqlAnalyzer::ProcessPipelineSet(State& state, const SelectStmt& stmt) {
         }
       case SETOP_INTERSECT:
         if (stmt.all) {
-          // TODO: implement, I'm also not sure that current intersect isn't all
+          // TODO: implement, I'm also not sure that current intersect isn't
+          // all
           SDB_THROW(ERROR_NOT_IMPLEMENTED,
                     "INTERSECT ALL is not implemented yet");
         } else {
@@ -3897,8 +3961,8 @@ void SqlAnalyzer::ProcessFunctionBody(
   exprs.reserve(expected_row.size());
 
   size_t size = std::min(expected_row.size(), actual_type.size());
-  // we do min size just to make it act like postgres (first check all the types
-  // then detailed message 'final statement too ...')
+  // we do min size just to make it act like postgres (first check all the
+  // types then detailed message 'final statement too ...')
   for (size_t i = 0; i < size; ++i) {
     const auto& expected_col_type = expected_row.childAt(i);
     const auto& actual_col_type = actual_type.childAt(i);

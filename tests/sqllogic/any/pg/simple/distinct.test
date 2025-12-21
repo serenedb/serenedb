@@ -1,0 +1,20 @@
+query
+SELECT DISTINCT * FROM
+(
+  VALUES 
+    ('babsky', 22 ), ('babsky', 20), ('babsky', 21), ('babsky', 21),
+    ('vedernikoff', 14), ('vedernikoff', 13), ('vedernikoff', 14)
+) as clickclack(name, grade)
+ORDER BY name, grade DESC;
+----
+
+
+query
+SELECT DISTINCT * FROM
+(
+  VALUES 
+    ('babsky', 22 ), ('babsky', 20), ('babsky', 21), ('babsky', 21),
+    ('vedernikoff', 14), ('vedernikoff', 13), ('vedernikoff', 14)
+) as clickclack(name, grade)
+ORDER BY name, grade DESC;
+----

@@ -84,6 +84,7 @@ class ObjectCollector {
   void CollectRangeFunction(const State& state, const RangeFunction& function);
 
   void CollectSortClause(const State& state, const List* sort_clause);
+  void CollectDistinctClause(const State& state, const List* distinct_clause);
   void CollectExprList(const State& state, const List* expr_list);
   void CollectValuesLists(const State& state, const List* values_lists);
 
@@ -376,6 +377,20 @@ void ObjectCollector::CollectExprList(const State& state,
              [&](const Node& expr) { CollectExprNode(state, &expr); });
 }
 
+void ObjectCollector::CollectDistinctClause(const State& state,
+                                            const List* distinct_clause) {
+  if (!distinct_clause) {
+    return;
+  }
+
+  if (list_length(distinct_clause) == 1 &&
+      list_nth(distinct_clause, 0) == nullptr) {
+    return;
+  }
+
+  CollectExprList(state, distinct_clause);
+}
+
 void ObjectCollector::CollectSortClause(const State& state,
                                         const List* sort_clause) {
   VisitNodes(sort_clause, [&](const SortBy& sort_by) {
@@ -452,7 +467,7 @@ void ObjectCollector::CollectSelectStmt(State& state, const SelectStmt* stmt) {
   CollectSelectStmt(state, stmt->larg);
   CollectSelectStmt(state, stmt->rarg);
 
-  CollectExprList(state, stmt->distinctClause);
+  CollectDistinctClause(state, stmt->distinctClause);
   CollectExprList(state, stmt->targetList);
 
   CollectExprNode(state, stmt->whereClause);

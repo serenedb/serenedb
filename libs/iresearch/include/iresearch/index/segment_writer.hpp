@@ -105,6 +105,7 @@ class SegmentWriter final : public ColumnProvider, util::Noncopyable {
     if (!_valid) [[unlikely]] {
       return false;
     }
+    SDB_ASSERT(doc <= LastDocId());
     if constexpr (Action::INDEX == A) {
       return index(std::forward<Field>(field), doc);
     } else if constexpr (Action::STORE == A) {

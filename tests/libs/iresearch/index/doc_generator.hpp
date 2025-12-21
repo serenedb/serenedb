@@ -756,6 +756,29 @@ bool Insert(irs::IndexWriter& writer, Indexed ibegin, Indexed iend,
          doc.Insert<irs::Action::STORE>(sbegin, send);
 }
 
+template<typename Doc>
+bool InsertBatch(irs::IndexWriter& writer, std::span<const Doc*> docs) {
+  auto ctx = writer.GetBatch();
+  auto doc = ctx.Insert(false, docs.size());
+
+  for (const auto d : docs) {
+    if (!doc.template Insert<irs::Action::INDEX>(d->indexed.begin(),
+                                                 d->indexed.end())) {
+      return false;
+    };
+    doc.NextDocument();
+  }
+  doc.NextFieldBatch();
+  for (const auto d : docs) {
+    if (!doc.template Insert<irs::Action::STORE>(d->stored.begin(),
+                                                 d->stored.end())) {
+      return false;
+    };
+    doc.NextDocument();
+  }
+  return true;
+}
+
 template<typename Indexed, typename Stored, typename Sorted>
 bool Insert(irs::IndexWriter& writer, Indexed ibegin, Indexed iend,
             Stored sbegin, Stored send, Sorted sorted = nullptr) {

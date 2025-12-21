@@ -295,13 +295,34 @@ class IndexWriter : private util::Noncopyable {
   // separate instance.
   class Document : private util::Noncopyable {
    public:
-    Document(SegmentContext& segment, SegmentWriter::DocContext doc,
+    Document(SegmentContext& segment, SegmentWriter::DocContext doc, doc_id_t batch_size = 1,
              QueryContext* query = nullptr);
 
     Document(Document&&) = default;
     Document& operator=(Document&&) = delete;
 
     ~Document() noexcept;
+
+    // start new field batch.
+    // same as NextDocument + reset doc idx in batch
+    void NextFieldBatch() noexcept {
+      SDB_ASSERT(_batch_size > 1);
+      // Batch should be full before starting new one
+      // +1 as there should be no redundant NextDocument call
+      // and no redundant Finish call as it will break field statistics
+      SDB_ASSERT(_batch_size == _batch_offset + 1);
+      Finish();
+      _batch_offset = 0;
+    }
+
+    // finalize fields norms and increment doc idx in batch
+    void NextDocument() noexcept {
+      SDB_ASSERT(_batch_size > 1);
+      Finish();
+      // writer _doc.clear();  // clear norm fields
+      _writer.ResetNorms();
+      ++_batch_offset;
+    }
 
     // Return current state of the object
     // Note that if the object is in an invalid state all further operations
@@ -315,7 +336,7 @@ class IndexWriter : private util::Noncopyable {
     // Return true, if field was successfully inserted
     template<Action A, typename Field>
     bool Insert(Field&& field) const {
-      return _writer.insert<A>(std::forward<Field>(field));
+      return _writer.insert<A>(std::forward<Field>(field), _batch_offset);
     }
 
     // Inserts the specified field (denoted by the pointer) into the
@@ -326,7 +347,7 @@ class IndexWriter : private util::Noncopyable {
     // Return true, if field was successfully inserted
     template<Action A, typename Field>
     bool Insert(Field* field) const {
-      return _writer.insert<A>(*field);
+      return _writer.insert<A>(*field, _batch_offset);
     }
 
     // Inserts the specified range of fields, denoted by the [begin;end)
@@ -345,8 +366,12 @@ class IndexWriter : private util::Noncopyable {
     }
 
    private:
+    void Finish() noexcept;
+
     SegmentWriter& _writer;
     QueryContext* _query;
+    doc_id_t _batch_offset{0};
+    doc_id_t _batch_size;
   };
   static_assert(std::is_nothrow_move_constructible_v<Document>);
 
@@ -411,6 +436,7 @@ class IndexWriter : private util::Noncopyable {
       segment.has_replace = true;
       return {segment,
               SegmentWriter::DocContext{++_queries, segment.queries.size() - 1},
+              1, // Replace is only for single document
               &query};
     }
 

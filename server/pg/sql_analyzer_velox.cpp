@@ -313,6 +313,11 @@ std::optional<T> TryGet(const Node* node) {
 }
 
 template<typename T>
+std::optional<T> TryGet(const Node& node) {
+  return TryGet<T>(&node);
+}
+
+template<typename T>
 std::optional<T> TryGet(const List* list, size_t i) {
   if (i < list_length(list)) {
     return TryGet<T>(castNode(Node, list_nth(list, i)));
@@ -662,6 +667,7 @@ class TargetList {
   };
 
   std::vector<Entry> GetEntries() && { return std::move(_entries); }
+  const std::vector<Entry>& GetEntries() const& { return _entries; }
 
  private:
   bool IsAmbiguous(const lp::ExprPtr& expr) const { return expr == nullptr; }
@@ -759,9 +765,15 @@ class SqlAnalyzer {
   // make a projection with state.root and appended windows from target_list.
   void ProjectTargetListWindows(State& state, const List* target_list);
 
-  void ProcessGroupByList(State& state, const List* groupby,
-                          const List* target_list,
-                          CollectedAggregates collected);
+  // sometimes is used for lazy target list creation
+  using TargetListGetter = absl::FunctionRef<const TargetList&()>;
+
+  std::vector<lp::ExprPtr> ProcessGroupByExprList(
+    State& state, TargetListGetter target_list_getter, const List* groupby);
+
+  void ProcessGroupClause(State& state, const List* groupby,
+                          const List* target_list, const List* sort_clause,
+                          Node* having_clause);
 
   // something like a cache to avoid processing expressions twice
   TargetList ProcessTargetList(State& state, const List* target_list);
@@ -770,9 +782,18 @@ class SqlAnalyzer {
 
   void ProcessSortClause(State& state, const List* list,
                          const TargetList& target_list);
+
+  std::vector<lp::SortingField> ProcessOrderByList(
+    State& state, TargetListGetter target_list_getter, const List* list);
+
   std::vector<lp::SortingField> ProcessSortByList(State& state,
                                                   const List* list,
                                                   ExprKind expr_kind);
+
+  lp::ExprPtr MaybeOrdinalColumnRef(const Node& node,
+                                    TargetListGetter target_list_getter,
+                                    ExprKind expr_kind);
+
   void ProcessLimitNodes(State& state, const Node* limit_offset,
                          const Node* limit_count, LimitOption limit_option);
 
@@ -906,7 +927,7 @@ class SqlAnalyzer {
   }
 
   ColumnRefHook GetTargetListNamingResolver(
-    absl::FunctionRef<const TargetList&()> target_list_getter);
+    TargetListGetter target_list_getter);
 
   int ErrorPosition(int location) {
     // TODO(pasha): We should change _query_string when we going into a
@@ -1005,7 +1026,7 @@ class SqlAnalyzer {
 };
 
 ColumnRefHook SqlAnalyzer::GetTargetListNamingResolver(
-  absl::FunctionRef<const TargetList&()> target_list_getter) {
+  TargetListGetter target_list_getter) {
   return [this, target_list_getter](std::string_view name,
                                     const ColumnRef& ref) -> lp::ExprPtr {
     if (name.contains('.')) {
@@ -1872,27 +1893,42 @@ void SqlAnalyzer::ProjectTargetList(State& state, TargetList target_list) {
   state.resolver.ClearTables();
 }
 
+lp::SortOrder GetSortOrder(const SortBy& sort_by) {
+  const auto dir = sort_by.sortby_dir;
+  SDB_ASSERT(dir != SORTBY_USING);
+  const bool ascending = dir == SORTBY_DEFAULT || dir == SORTBY_ASC;
+  const auto nulls = sort_by.sortby_nulls;
+  const bool nulls_first = nulls == SORTBY_NULLS_FIRST ||
+                           (!ascending && nulls == SORTBY_NULLS_DEFAULT);
+  return lp::SortOrder{ascending, nulls_first};
+}
+
+std::vector<lp::SortingField> SqlAnalyzer::ProcessOrderByList(
+  State& state, TargetListGetter target_list_getter, const List* list) {
+  std::vector<lp::SortingField> fields;
+  fields.reserve(list_length(list));
+
+  VisitNodes(list, [&](const SortBy& sort_by) {
+    if (auto maybe_column_ref = MaybeOrdinalColumnRef(
+          *sort_by.node, target_list_getter, ExprKind::OrderBy)) {
+      fields.emplace_back(std::move(maybe_column_ref), GetSortOrder(sort_by));
+      return;
+    }
+    auto expr = ProcessExprNode(state, sort_by.node, ExprKind::OrderBy);
+    fields.emplace_back(std::move(expr), GetSortOrder(sort_by));
+  });
+
+  return fields;
+}
+
 std::vector<lp::SortingField> SqlAnalyzer::ProcessSortByList(
   State& state, const List* list, ExprKind expr_kind) {
-  const auto size = list_length(list);
-  if (size == 0) {
-    return {};
-  }
-
   std::vector<lp::SortingField> fields;
-  fields.reserve(size);
+  fields.reserve(list_length(list));
 
   VisitNodes(list, [&](const SortBy& sort_by) {
     auto expr = ProcessExprNode(state, sort_by.node, expr_kind);
-
-    const auto dir = sort_by.sortby_dir;
-    SDB_ASSERT(dir != SORTBY_USING);
-    const bool ascending = dir == SORTBY_DEFAULT || dir == SORTBY_ASC;
-    const auto nulls = sort_by.sortby_nulls;
-    const bool nulls_first = nulls == SORTBY_NULLS_FIRST ||
-                             (!ascending && nulls == SORTBY_NULLS_DEFAULT);
-
-    fields.emplace_back(std::move(expr), lp::SortOrder{ascending, nulls_first});
+    fields.emplace_back(std::move(expr), GetSortOrder(sort_by));
   });
 
   return fields;
@@ -1903,7 +1939,7 @@ void SqlAnalyzer::ProcessSortClause(State& state, const List* list,
   auto getter = [&] -> const TargetList& { return target_list; };
   // for order by first we try to resolve columns in target list
   state.pre_columnref_hook = GetTargetListNamingResolver(getter);
-  auto fields = ProcessSortByList(state, list, ExprKind::OrderBy);
+  auto fields = ProcessOrderByList(state, getter, list);
   state.pre_columnref_hook = nullptr;
   if (fields.empty()) {
     return;
@@ -2348,9 +2384,53 @@ void SqlAnalyzer::ProjectTargetListWindows(State& state,
     std::move(exprs));
 }
 
-void SqlAnalyzer::ProcessGroupByList(State& state, const List* groupby,
-                                     const List* tlist,
-                                     CollectedAggregates collected) {
+lp::ExprPtr SqlAnalyzer::MaybeOrdinalColumnRef(
+  const Node& node, TargetListGetter target_list_getter, ExprKind expr_kind) {
+  auto maybe_ordinal_idx = TryGet<int>(node);
+  if (!maybe_ordinal_idx) {
+    return nullptr;
+  }
+  int idx = *maybe_ordinal_idx - 1;
+  const auto& entries = target_list_getter().GetEntries();
+  if (!(0 <= idx && idx < static_cast<int>(entries.size()))) {
+    std::string_view clause_name =
+      expr_kind == ExprKind::OrderBy ? "ORDER BY" : "GROUP BY";
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_COLUMN_REFERENCE),
+      CURSOR_POS(ErrorPosition(ExprLocation(&node))),
+      ERR_MSG(clause_name, " position ", idx + 1, " is not in select list"));
+  }
+  return entries[idx].expr;
+}
+
+std::vector<lp::ExprPtr> SqlAnalyzer::ProcessGroupByExprList(
+  State& state, TargetListGetter target_list_getter, const List* groupby) {
+  std::vector<lp::ExprPtr> result;
+  result.reserve(list_length(groupby));
+
+  VisitNodes(groupby, [&](const Node& n) {
+    if (auto maybe_column_ref =
+          MaybeOrdinalColumnRef(n, target_list_getter, ExprKind::GroupBy)) {
+      result.emplace_back(std::move(maybe_column_ref));
+      return;
+    }
+
+    auto expr = ProcessExprNode(state, &n, ExprKind::GroupBy);
+    SDB_ASSERT(expr);
+    result.emplace_back(std::move(expr));
+  });
+
+  return result;
+}
+
+void SqlAnalyzer::ProcessGroupClause(State& state, const List* groupby,
+                                     const List* tlist, const List* sort_clause,
+                                     Node* having_clause) {
+  auto collected =
+    CollectAggregateFunctions(state, tlist, sort_clause, having_clause);
+  state.has_groupby = list_length(groupby) > 0;
+  state.has_aggregate = !collected.aggregates.empty();
+
   if (!state.has_aggregate && !state.has_groupby) {
     return;
   }
@@ -2365,7 +2445,7 @@ void SqlAnalyzer::ProcessGroupByList(State& state, const List* groupby,
   // we try to resolve columns in target list if they weren't found
   // in root
   state.post_columnref_hook = GetTargetListNamingResolver(getter);
-  auto grouping_keys = ProcessExprList(state, groupby, ExprKind::GroupBy);
+  auto grouping_keys = ProcessGroupByExprList(state, getter, groupby);
   state.post_columnref_hook = nullptr;
 
   std::vector<std::string> output_names;
@@ -2401,12 +2481,8 @@ void SqlAnalyzer::ProcessPipeline(State& state, const SelectStmt& stmt) {
   EnsureRoot(state);
   ProcessFilterNode(state, stmt.whereClause, ExprKind::Where);
 
-  auto collected = CollectAggregateFunctions(
-    state, stmt.targetList, stmt.sortClause, stmt.havingClause);
-  state.has_groupby = list_length(stmt.groupClause) > 0;
-  state.has_aggregate = !collected.aggregates.empty();
-  ProcessGroupByList(state, stmt.groupClause, stmt.targetList,
-                     std::move(collected));
+  ProcessGroupClause(state, stmt.groupClause, stmt.targetList, stmt.sortClause,
+                     stmt.havingClause);
   ProcessFilterNode(state, stmt.havingClause, ExprKind::Having);
 
   // PG OrderBy has access to items before target list

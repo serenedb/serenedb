@@ -76,8 +76,7 @@ class ObjectCollector {
   void CollectCreateFunctionStmt(State& state, const CreateFunctionStmt& stmt);
   void CollectCreateStmt(State& state, const CreateStmt& stmt);
 
-  void CollectRangeVar(const State& state, const RangeVar* var,
-                       Objects::AccessType type);
+  void CollectRangeVar(const State& state, const RangeVar* var);
   void CollectRangeSubSelect(const State& state,
                              const RangeSubselect& subselect);
   void CollectJoinExpr(const State& state, const JoinExpr& expr);
@@ -207,8 +206,7 @@ void ObjectCollector::CollectAIndirection(const State& state,
   });
 }
 
-void ObjectCollector::CollectRangeVar(const State& state, const RangeVar* var,
-                                      Objects::AccessType type) {
+void ObjectCollector::CollectRangeVar(const State& state, const RangeVar* var) {
   if (!var) {
     return;
   }
@@ -228,9 +226,7 @@ void ObjectCollector::CollectRangeVar(const State& state, const RangeVar* var,
               " accessed instead of ", _database);
   }
 
-  auto& object = _objects.ensureData(var->schemaname, relation);
-  object.type = static_cast<Objects::AccessType>(
-    std::to_underlying(object.type) | std::to_underlying(type));
+  _objects.ensureData(var->schemaname, relation);
 }
 
 void ObjectCollector::CollectRangeSubSelect(const State& state,
@@ -278,8 +274,7 @@ void ObjectCollector::CollectFromNode(const State& state, const Node* node) {
   }
   switch (node->type) {
     case T_RangeVar:
-      CollectRangeVar(state, castNode(RangeVar, node),
-                      Objects::AccessType::Read);
+      CollectRangeVar(state, castNode(RangeVar, node));
       break;
     case T_RangeSubselect:
       CollectRangeSubSelect(state, *castNode(RangeSubselect, node));
@@ -416,26 +411,26 @@ void ObjectCollector::CollectWithClause(State& state,
 void ObjectCollector::CollectInsertStmt(State& state, const InsertStmt& stmt) {
   CollectWithClause(state, stmt.withClause);
   CollectStmt(&state, stmt.selectStmt);
-  CollectRangeVar(state, stmt.relation, Objects::AccessType::Insert);
+  CollectRangeVar(state, stmt.relation);
 }
 
 void ObjectCollector::CollectDeleteStmt(State& state, const DeleteStmt& stmt) {
   CollectWithClause(state, stmt.withClause);
   // postgres for DeleteStmt named fromClause as usingClause
   CollectFromClause(state, stmt.usingClause);
-  CollectRangeVar(state, stmt.relation, Objects::AccessType::Delete);
+  CollectRangeVar(state, stmt.relation);
 }
 
 void ObjectCollector::CollectUpdateStmt(State& state, const UpdateStmt& stmt) {
   CollectWithClause(state, stmt.withClause);
   CollectFromClause(state, stmt.fromClause);
-  CollectRangeVar(state, stmt.relation, Objects::AccessType::Update);
+  CollectRangeVar(state, stmt.relation);
 }
 
 void ObjectCollector::CollectMergeStmt(State& state, const MergeStmt& stmt) {
   CollectWithClause(state, stmt.withClause);
   CollectFromNode(state, stmt.sourceRelation);
-  CollectRangeVar(state, stmt.relation, Objects::AccessType::Merge);
+  CollectRangeVar(state, stmt.relation);
 }
 
 void ObjectCollector::CollectSelectStmt(State& state, const SelectStmt* stmt) {

@@ -269,7 +269,7 @@ void IndexTestBase::add_segments(irs::IndexWriter& writer,
 }
 
 void IndexTestBase::add_segment(tests::DocGeneratorBase& gen,
-                                irs::OpenMode mode /*= irs::OM_CREATE*/,
+                                irs::OpenMode mode /*= irs::kOmCreate*/,
                                 const irs::IndexWriterOptions& opts /*= {}*/) {
   auto writer = open_writer(mode, opts);
   add_segment(*writer, gen);
@@ -277,7 +277,7 @@ void IndexTestBase::add_segment(tests::DocGeneratorBase& gen,
 
 void IndexTestBase::add_segment_batched(
   tests::DocGeneratorBase& gen, size_t batch_size,
-  irs::OpenMode mode /*= irs::OM_CREATE*/,
+  irs::OpenMode mode /*= irs::kOmCreate*/,
   const irs::IndexWriterOptions& opts /*= {}*/) {
   auto writer = open_writer(mode, opts);
   _index.emplace_back(writer->FeatureInfo());

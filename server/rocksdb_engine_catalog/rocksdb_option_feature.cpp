@@ -48,6 +48,7 @@
 #include "basics/physical_memory.h"
 #include "basics/process-utils.h"
 #include "basics/system-functions.h"
+#include "catalog/table_options.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 
 #ifdef SDB_CLUSTER
@@ -298,12 +299,12 @@ RocksDBOptionFeature::RocksDBOptionFeature(Server& server)
     // TODO(mbkkt) try direct io
     _use_direct_reads{false},
     _use_direct_io_for_flush_and_compaction{false},
-    _use_f_sync(gRocksDbDefaults.use_fsync),
+    _use_fsync(gRocksDbDefaults.use_fsync),
     _skip_corrupted(false),
     _dynamic_level_bytes(true),
     _enable_statistics(false),
     _limit_open_files_at_startup(false),
-    _allow_f_allocate(true),
+    _allow_fallocate(true),
     _enable_blob_garbage_collection(true),
     _min_write_buffer_number_to_merge_touched(false),
     _partition_files_for_documents_cf(true),
@@ -608,7 +609,7 @@ number of cross-page I/O operations.)");
     "--rocksdb.use-fsync",
     "Whether to use fsync calls when writing to disk (set to false "
     "for issuing fdatasync calls only).",
-    new BooleanParameter(&_use_f_sync),
+    new BooleanParameter(&_use_fsync),
     options::MakeFlags(options::Flags::Uncommon,
                        options::Flags::DefaultNoComponents,
                        options::Flags::OnAgent, options::Flags::OnDBServer,
@@ -876,7 +877,7 @@ the overall size of the block cache.)");
                 "Whether to allow RocksDB to use fallocate calls. "
                 "If disabled, fallocate calls are bypassed and no "
                 "pre-allocation is done.",
-                new BooleanParameter(&_allow_f_allocate),
+                new BooleanParameter(&_allow_fallocate),
                 options::MakeFlags(
                   options::Flags::Uncommon, options::Flags::DefaultNoComponents,
                   options::Flags::OnAgent, options::Flags::OnDBServer,
@@ -1446,8 +1447,8 @@ void RocksDBOptionFeature::start() {
     ", optimize_filters_for_hits: ", _optimize_filters_for_hits,
     ", use_direct_reads: ", _use_direct_reads,
     ", use_direct_io_for_flush_and_compaction: ",
-    _use_direct_io_for_flush_and_compaction, ", use_fsync: ", _use_f_sync,
-    ", allow_fallocate: ", _allow_f_allocate,
+    _use_direct_io_for_flush_and_compaction, ", use_fsync: ", _use_fsync,
+    ", allow_fallocate: ", _allow_fallocate,
     ", max_open_files limit: ", _limit_open_files_at_startup,
     ", dynamic_level_bytes: ", _dynamic_level_bytes);
 }
@@ -1476,7 +1477,7 @@ rocksdb::Options RocksDBOptionFeature::doGetOptions() const {
   // TODO ability to enable result.block_protection_bytes_per_key
   // TODO ability to enable result.paranoid_memory_checks
   // TODO result.max_sequential_skip_in_iterations
-  result.allow_fallocate = _allow_f_allocate;
+  result.allow_fallocate = _allow_fallocate;
   result.enable_pipelined_write = _enable_pipelined_write;
   result.write_buffer_size = static_cast<size_t>(_write_buffer_size);
   result.max_write_buffer_number = static_cast<int>(_max_write_buffer_number);
@@ -1514,7 +1515,7 @@ rocksdb::Options RocksDBOptionFeature::doGetOptions() const {
 
   result.max_background_jobs = static_cast<int>(_max_background_jobs);
   result.max_subcompactions = _max_subcompactions;
-  result.use_fsync = _use_f_sync;
+  result.use_fsync = _use_fsync;
 
   rocksdb::CompressionType compression_type =
     ::CompressionTypeFromString(_compression_type);
@@ -1724,7 +1725,8 @@ rocksdb::ColumnFamilyOptions RocksDBOptionFeature::getColumnFamilyOptions(
   RocksDBColumnFamilyManager::Family family) const {
   auto result = RocksDBOptionsProvider::getColumnFamilyOptions(family);
 
-  if (family == RocksDBColumnFamilyManager::Family::Documents) {
+  if (family == RocksDBColumnFamilyManager::Family::Documents ||
+      family == RocksDBColumnFamilyManager::Family::Data) {
     result.enable_blob_files = _enable_blob_files;
     result.min_blob_size = _min_blob_size;
     result.blob_file_size = _blob_file_size;
@@ -1745,8 +1747,14 @@ rocksdb::ColumnFamilyOptions RocksDBOptionFeature::getColumnFamilyOptions(
     }
     if (_partition_files_for_documents_cf) {
       // partition .sst files by object id prefix
-      result.sst_partitioner_factory =
-        rocksdb::NewSstPartitionerFixedPrefixFactory(sizeof(uint64_t));
+      if (family == RocksDBColumnFamilyManager::Family::Data) {
+        result.sst_partitioner_factory =
+          rocksdb::NewSstPartitionerFixedPrefixFactory(
+            RocksDBKey::objectIdSize() + sizeof(catalog::Column::Id));
+      } else {
+        result.sst_partitioner_factory =
+          rocksdb::NewSstPartitionerFixedPrefixFactory(sizeof(uint64_t));
+      }
     }
   } else if (family == RocksDBColumnFamilyManager::Family::PrimaryIndex) {
     // partition .sst files by object id prefix

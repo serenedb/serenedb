@@ -29,6 +29,7 @@
 #include "catalog/table.h"
 #include "data_sink.hpp"
 #include "data_source.hpp"
+#include "query/config.h"
 #include "rocksdb/utilities/transaction_db.h"
 
 namespace sdb::connector {
@@ -251,7 +252,15 @@ class SereneDBConnectorInsertTableHandle final
   explicit SereneDBConnectorInsertTableHandle(
     const axiom::connector::ConnectorSessionPtr& session,
     const axiom::connector::TablePtr& table, axiom::connector::WriteKind kind)
-    : _session{session}, _table{table}, _kind{kind} {}
+    : _session{session}, _table{table}, _kind{kind} {
+    if (!session->config()) {
+      return;
+    }
+    const auto& config = basics::downCast<Config>(*_session->config());
+    if (config.GetTxnState().InsideTransaction()) {
+      _local_transaction = config.GetTxnState().GetTransaction();
+    }
+  }
 
   bool supportsMultiThreading() const final { return false; }
 
@@ -268,7 +277,7 @@ class SereneDBConnectorInsertTableHandle final
   }
 
   void SetLocalTransaction(
-    std::unique_ptr<rocksdb::Transaction>&& transaction) const noexcept {
+    std::shared_ptr<rocksdb::Transaction>&& transaction) const noexcept {
     _local_transaction = std::move(transaction);
   }
 
@@ -278,7 +287,7 @@ class SereneDBConnectorInsertTableHandle final
   axiom::connector::ConnectorSessionPtr _session;
   axiom::connector::TablePtr _table;
   axiom::connector::WriteKind _kind;
-  mutable std::unique_ptr<rocksdb::Transaction> _local_transaction;
+  mutable std::shared_ptr<rocksdb::Transaction> _local_transaction;
   std::vector<velox::connector::ColumnHandlePtr> _row_id_handles;
 };
 
@@ -433,12 +442,8 @@ class SereneDBConnector final : public velox::connector::Connector {
 
     auto* transaction = serene_insert_handle.GetTransaction();
     if (!transaction) {
-      rocksdb::TransactionOptions txn_options;
-      // we will lock rows explicitly
-      txn_options.skip_concurrency_control = true;
-      serene_insert_handle.SetLocalTransaction(
-        std::unique_ptr<rocksdb::Transaction>(
-          _db.BeginTransaction(rocksdb::WriteOptions{}, txn_options)));
+      serene_insert_handle.SetLocalTransaction(CreateTransaction(_db));
+      transaction = serene_insert_handle.GetTransaction();
     }
 
     const auto& table =

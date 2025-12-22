@@ -1373,10 +1373,7 @@ std::unordered_map<std::string, std::string> Config::rawConfigsCopy() const {
   std::unordered_map<std::string, std::string> result;
   // Since .emplace insert only if key doesn't exist in map,
   // the order of insertation is from transaction to default
-  for (const auto& [key, value] : _transaction) {
-    result.emplace(key, value.value);
-  }
-
+  _txn.CopyVariablesTo(result);
   for (const auto& [key, value] : _session) {
     result.emplace(key, value);
   }

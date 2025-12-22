@@ -28,28 +28,28 @@ namespace sdb::pg {
 
 yaclib::Future<Result> Transaction(ExecContext& context,
                                    const TransactionStmt& stmt) {
-  auto& conn_ctx = basics::downCast<ConnectionContext>(context);
+  auto& txn_state = basics::downCast<ConnectionContext>(context).GetTxnState();
   Result r;
   switch (stmt.kind) {
     case TRANS_STMT_BEGIN:
     case TRANS_STMT_START:
-      if (!conn_ctx.InsideTransaction()) {
-        conn_ctx.Begin();
+      if (!txn_state.InsideTransaction()) {
+        txn_state.Begin();
       } else {
         r = {ERROR_QUERY_USER_WARN,
              "there is already a transaction in progress"};
       }
       break;
     case TRANS_STMT_COMMIT:
-      if (conn_ctx.InsideTransaction()) {
-        conn_ctx.Commit();
+      if (txn_state.InsideTransaction()) {
+        txn_state.Commit();
       } else {
         r = {ERROR_QUERY_USER_WARN, "there is no transaction in progress"};
       }
       break;
     case TRANS_STMT_ROLLBACK:
-      if (conn_ctx.InsideTransaction()) {
-        conn_ctx.Abort();
+      if (txn_state.InsideTransaction()) {
+        txn_state.Abort();
       } else {
         r = {ERROR_QUERY_USER_WARN, "there is no transaction in progress"};
       }

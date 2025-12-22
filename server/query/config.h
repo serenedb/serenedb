@@ -35,6 +35,7 @@
 #include "basics/exceptions.h"
 #include "basics/fwd.h"
 #include "basics/system-compiler.h"
+#include "query/transaction.h"
 
 namespace sdb {
 
@@ -73,21 +74,17 @@ std::string_view GetOriginalName(std::string_view name);
 
 class Config : public velox::config::IConfig {
  public:
+  friend class TxnState;
   enum class VariableContext : uint8_t {
     Session = 0,
     Transaction,
     Local,
   };
 
-  enum class TxnAction : uint8_t {
-    Apply = 0,
-    Revert,
-  };
+  Config() : _txn(*this) {}
 
-  struct TxnVariable {
-    TxnAction action;
-    std::string value;
-  };
+  const TxnState& GetTxnState() const { return _txn; }
+  TxnState& GetTxnState() { return _txn; }
 
   template<VariableType T>
   auto Get(std::string_view key) const {
@@ -133,14 +130,6 @@ class Config : public velox::config::IConfig {
 
   void ResetAll();
 
-  void Begin();
-
-  void Commit();
-
-  void Abort();
-
-  bool InsideTransaction() const { return _inside_transaction; }
-
   std::unordered_map<std::string, std::string> rawConfigsCopy() const final;
 
   // Visit all the settings and call function f(setting_name, value,
@@ -159,10 +148,7 @@ class Config : public velox::config::IConfig {
   // Session variables
   containers::FlatHashMap<std::string_view, std::string> _session;
 
-  // Transaction variable
-  containers::FlatHashMap<std::string_view, TxnVariable> _transaction;
-
-  bool _inside_transaction = false;
+  TxnState _txn;
 };
 
 };  // namespace sdb

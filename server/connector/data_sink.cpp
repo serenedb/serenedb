@@ -64,6 +64,7 @@ void WriteNull(rocksdb::Transaction& trx, rocksdb::ColumnFamilyHandle& cf,
 
 namespace sdb::connector {
 
+// TODO create with row type that does not contain 'fake' column
 RocksDBDataSink::RocksDBDataSink(
   rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
   const velox::RowTypePtr& row_type, velox::memory::MemoryPool& memory_pool,
@@ -87,6 +88,7 @@ RocksDBDataSink::RocksDBDataSink(
 // Looks like it is possible to inspect input vector and create vector of
 // writers and avoid switch/case for kinds and encodings on each row.
 void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
+  // TODO case for update does not work!
   static_assert(basics::IsLittleEndian());
   SDB_ASSERT(input->encoding() == velox::VectorEncoding::Simple::ROW);
   // UPDATE with PK columns changing would have PK columns at the
@@ -102,6 +104,13 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
   const auto num_rows = input->size();
   _keys_buffers.clear();
   _keys_buffers.reserve(num_rows);
+
+  const bool need_gen_pk = !_skip_primary_key_columns &&
+                           _column_ids.size() >= 1 &&
+                           _column_ids.back() == catalog::Column::kFakeId;
+  if (need_gen_pk) {
+    _key_childs = {};
+  }
 
   for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
     auto& key_buffer = _keys_buffers.emplace_back();
@@ -125,6 +134,11 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
     // child lookup by name as it is also a necessary check.
     // Even keys during UPDATE should be validated as it is important for
     // RocksDB key generation
+    _column_id = _column_ids[i];
+    if (_column_id == catalog::Column::kFakeId) {
+      SDB_PRINT("Do not write fake column!");
+      continue;
+    }
     VELOX_DCHECK(_row_type->findChild(input_type.nameOf(i))
                    ->equivalent(*input_type.childAt(i)) ||
                  input_type.childAt(i)->kind() == velox::TypeKind::UNKNOWN);
@@ -132,7 +146,7 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
     if (_skip_primary_key_columns && i < _key_childs.size()) {
       continue;
     }
-    _column_id = _column_ids[i];
+
     WriteColumn(input->childAt(i), folly::Range{&all_rows, 1}, {});
   }
 }

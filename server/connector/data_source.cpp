@@ -21,11 +21,18 @@
 #include "data_source.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/base/internal/endian.h>
 #include <velox/vector/FlatVector.h>
 
+#include <cstdint>
+
 #include "basics/assert.h"
+#include "basics/logger/logger.h"
+#include "catalog/identifiers/revision_id.h"
+#include "catalog/table_options.h"
 #include "common.h"
 #include "key_utils.hpp"
+#include "rocksdb_engine_catalog/concat.h"
 
 namespace sdb::connector {
 
@@ -103,9 +110,67 @@ std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
   std::string key = key_utils::PrepareTableKey(_object_key);
   const auto key_old_size = key.size();
   if (num_columns) {
+    SDB_PRINT("NUM_COLUMNS = ", num_columns);
+    SDB_PRINT("ROW TYPE = ", _row_type->toString());
     for (velox::column_index_t col_idx = 0; col_idx < num_columns; ++col_idx) {
       basics::StrResize(key, key_old_size);
-      key_utils::AppendColumnKey(key, _column_ids[col_idx]);
+      const auto column_id = _column_ids[col_idx];
+
+      auto* key_ptr = col_idx == 0 ? &last_column_key : nullptr;
+
+      // At least 1 non-fake
+      if (column_id == catalog::Column::kFakeId) {
+        // Somehow read from keys...
+        SDB_ASSERT(col_idx >= 1 || col_idx + 1 < num_columns);
+        size_t any_column_idx = (col_idx == 0) ? col_idx + 1 : col_idx - 1;
+
+        key_utils::AppendColumnKey(key, _column_ids[any_column_idx]);
+        auto it = CreateColumnIterator(key, read_options);
+        if (!it) {
+          // no rows found. This should happen only for the first column.
+          // Otherwise we have a misaligned data.
+          SDB_ASSERT(columns.empty(),
+                     "RocksDBDataSource: inconsistent number of columns "
+                     "(mkornaukhov: fake primary colymn)");
+          _current_split.reset();
+          return nullptr;
+        }
+
+        static constexpr uint64_t kInitialVectorSize = 1;  // arbitrary value
+        auto result = velox::BaseVector::create<velox::FlatVector<uint64_t>>(
+          velox::BIGINT(), kInitialVectorSize, &_memory_pool);
+
+        const auto vector_size = IterateColumn(
+          *it, size, key,
+          [&](uint64_t value_idx, [[maybe_unused]] std::string_view key,
+              std::string_view value) {
+            if (value_idx == result->size()) {
+              result->resize(result->size() * 2, false);
+            }
+
+            // TODO better later
+            auto val_view = std::string_view{
+              key.begin() + key_old_size + sizeof(catalog::Column::Id),
+              key.end()};
+            std::string val_mat{val_view};
+            val_mat[0] = static_cast<uint8_t>(val_mat[0]) ^ 0x80;
+            auto val = absl::big_endian::Load64(val_mat.data());
+
+            SDB_PRINT("VIEW_SIZE = ", val_mat.size(), "FAKE COLUMN_ID = ", val);
+            result->set(value_idx, val);
+          },
+          key_ptr);
+        if (vector_size != result->size()) {
+          SDB_ASSERT(vector_size < result->size(),
+                     "RocksDBDataSource: inconsistent vector size "
+                     "(mkornaukhov: bad fake primary column)");
+          result->resize(vector_size, false);
+        }
+        columns.emplace_back(std::move(result));
+        continue;
+      }
+
+      key_utils::AppendColumnKey(key, column_id);
       auto it = CreateColumnIterator(key, read_options);
       if (!it) {
         // no rows found. This should happen only for the first column.
@@ -115,8 +180,8 @@ std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
         _current_split.reset();
         return nullptr;
       }
-      columns.push_back(ReadColumn(*it, size, key, _row_type->childAt(col_idx),
-                                   col_idx == 0 ? &last_column_key : nullptr));
+      columns.push_back(
+        ReadColumn(*it, size, key, _row_type->childAt(col_idx), key_ptr));
     }
     _last_read_key = last_column_key;
     SDB_ASSERT(absl::c_all_of(columns,
@@ -138,7 +203,8 @@ std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
     return nullptr;
   }
   const auto read = IterateColumn(
-    *it, size, column_key, [](uint64_t, std::string_view) {}, &_last_read_key);
+    *it, size, column_key, [](uint64_t, std::string_view, std::string_view) {},
+    &_last_read_key);
   _produced += read;
   return velox::BaseVector::create<velox::RowVector>(_row_type, read,
                                                      &_memory_pool);
@@ -191,7 +257,8 @@ velox::VectorPtr RocksDBDataSource::ReadScalarColumn(
 
   const auto vector_size = IterateColumn(
     it, max_size, column_key,
-    [&](uint64_t value_idx, std::string_view value) {
+    [&](uint64_t value_idx, [[maybe_unused]] std::string_view key,
+        std::string_view value) {
       if (value_idx == result->size()) {
         result->resize(result->size() * 2, false);
       }
@@ -231,7 +298,8 @@ velox::VectorPtr RocksDBDataSource::ReadUnknownColumn(
   rocksdb::Iterator& it, uint64_t max_size, std::string_view column_key,
   std::string* last_key) {
   uint64_t vector_size = IterateColumn(
-    it, max_size, column_key, [](uint64_t, std::string_view) {}, last_key);
+    it, max_size, column_key,
+    [](uint64_t, std::string_view, std::string_view) {}, last_key);
   return velox::BaseVector::createNullConstant(velox::UNKNOWN(), vector_size,
                                                &_memory_pool);
 }
@@ -249,7 +317,7 @@ uint64_t RocksDBDataSource::IterateColumn(rocksdb::Iterator& it,
     if (last_key) {
       *last_key = it.key().ToStringView().substr(column_key.size());
     }
-    func(vector_size, it.value().ToStringView());
+    func(vector_size, it.key().ToStringView(), it.value().ToStringView());
     ++vector_size;
     it.Next();
   }

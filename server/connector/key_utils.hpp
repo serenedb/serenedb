@@ -20,12 +20,14 @@
 
 #pragma once
 
+#include <absl/base/internal/endian.h>
 #include <velox/vector/BaseVector.h>
 #include <velox/vector/ComplexVector.h>
 
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
 #include "connector/primary_key.hpp"
+#include "rocksdb_engine_catalog/concat.h"
 
 namespace sdb::connector::key_utils {
 
@@ -49,7 +51,21 @@ void MakeColumnKey(const velox::RowVectorPtr& input,
   basics::StrResize(key_buffer, sizeof(catalog::Column::Id) + sizeof(ObjectId));
   std::memcpy(key_buffer.data() + sizeof(catalog::Column::Id), object_id.data(),
               sizeof(ObjectId));
+
   primary_key::Create(*input, pk_columns, row_idx, key_buffer);
+
+  if (pk_columns.empty()) {
+    // TODO assert for insert only
+    // TODO or just revision id?
+    auto r = RevisionId::create().id();
+    SDB_PRINT("MAKE FAKE COLUMN_ID = ", absl::StrCat(r));
+    const auto old_size = key_buffer.size();
+    basics::StrResize(key_buffer, old_size + sizeof(r));
+    absl::big_endian::Store64(key_buffer.data() + old_size, r);
+    key_buffer[old_size] = static_cast<uint8_t>(key_buffer[old_size]) ^ 0x80;
+    // sdb::rocksutils::Append(key_buffer, r);
+  }
+
   row_key_handle(std::string_view{
     key_buffer.begin() + sizeof(catalog::Column::Id), key_buffer.end()});
   std::memcpy(key_buffer.data(), object_id.data(), sizeof(ObjectId));

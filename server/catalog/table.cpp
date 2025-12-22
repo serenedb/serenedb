@@ -23,6 +23,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
+#include <velox/type/Type.h>
 #include <vpack/builder.h>
 #include <vpack/iterator.h>
 #include <vpack/slice.h>
@@ -82,8 +83,14 @@ Table::Table(const catalog::Table& other, NewOptions options)
     _replication_factor{options.replication_factor},
     _write_concern{options.write_concern} {}
 
+// Fix here?
 velox::RowTypePtr BuildPkType(const std::vector<Column>& columns,
                               const std::vector<Column::Id>& pk_columns) {
+  if (pk_columns.size() == 1 && pk_columns[0] == Column::kFakeId) {
+    return velox::ROW({std::string("fake")},
+                      {static_cast<velox::TypePtr>(velox::BIGINT())});
+  }
+
   std::vector<std::string> names;
   std::vector<velox::TypePtr> types;
   names.reserve(pk_columns.size());
@@ -101,14 +108,23 @@ velox::RowTypePtr BuildPkType(const std::vector<Column>& columns,
   return velox::ROW(std::move(names), std::move(types));
 }
 
-velox::RowTypePtr BuildRowType(const std::vector<Column>& columns) {
+velox::RowTypePtr BuildRowType(const std::vector<Column>& columns,
+                               const std::vector<Column::Id>& pk_columns) {
   std::vector<std::string> names;
   std::vector<velox::TypePtr> types;
-  names.reserve(columns.size());
-  types.reserve(columns.size());
+  size_t add = 0;
+  if (pk_columns.size() == 1 && pk_columns[0] == Column::kFakeId) {
+    add = 1;
+  }
+  names.reserve(add + columns.size());
+  types.reserve(add + columns.size());
   for (const auto& col : columns) {
     names.push_back(col.name);
     types.push_back(col.type);
+  }
+  if (add == 1) {
+    names.emplace_back("fake");
+    types.emplace_back(velox::BIGINT());
   }
 
   return velox::ROW(std::move(names), std::move(types));
@@ -127,7 +143,7 @@ Table::Table(TableOptions&& options, ObjectId database_id)
     _columns{std::move(options.columns)},
     _pk_columns{std::move(options.pkColumns)},
     _pk_type{BuildPkType(_columns, _pk_columns)},
-    _row_type{BuildRowType(_columns)},
+    _row_type{BuildRowType(_columns, _pk_columns)},
     _plan_id{[&] {
       auto plan_id = options.planId.value_or(Identifier{});
       return plan_id.isSet() ? plan_id : GetId();

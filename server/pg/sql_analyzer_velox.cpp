@@ -1309,10 +1309,15 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
 
   const auto& table = basics::downCast<catalog::Table>(logical_object);
   const auto& table_type = *table.RowType();
+  size_t table_columns = table_type.size();
+  if (!table.PKColumns().empty() && table.PKColumns().back() == catalog::Column::kFakeId) {
+    table_columns--;
+  }
+
   std::vector<std::string> column_names;
   std::vector<lp::ExprPtr> column_exprs;
-  column_names.reserve(table_type.size());
-  column_exprs.reserve(table_type.size());
+  column_names.reserve(table_columns);
+  column_exprs.reserve(table_columns);
 
   const uint32_t explicit_columns = list_length(stmt.cols);
   const auto& input_type = *state.root->outputType();
@@ -1321,7 +1326,7 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
                     ERR_MSG("INSERT has more target columns than expressions"),
                     CURSOR_POS(ErrorPosition(ExprLocation(&stmt))));
   }
-  if ((stmt.cols ? explicit_columns : table_type.size()) < input_type.size()) {
+  if ((stmt.cols ? explicit_columns : table_columns) < input_type.size()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
                     ERR_MSG("INSERT has more expressions than target columns"),
                     CURSOR_POS(ErrorPosition(ExprLocation(&stmt))));

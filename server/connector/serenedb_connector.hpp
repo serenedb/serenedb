@@ -153,7 +153,14 @@ class RocksDBTable final : public axiom::connector::Table {
     catalog::Column::Id col_id = 0;
     for (const auto& [name, type] : std::views::zip(
            collection.RowType()->names(), collection.RowType()->children())) {
-      auto column = std::make_unique<SereneDBColumn>(name, type, col_id++);
+      // TODO fix later
+      catalog::Column::Id id{};
+      if (name == catalog::Column::kFakeName) {
+        id = catalog::Column::kFakeId;
+      } else {
+        id = col_id++;
+      }
+      auto column = std::make_unique<SereneDBColumn>(name, type, id);
       columns.push_back(column.get());
       _column_map.emplace(name, column.get());
       _column_handles.push_back(std::move(column));
@@ -186,7 +193,7 @@ class RocksDBTable final : public axiom::connector::Table {
   std::vector<velox::connector::ColumnHandlePtr> rowIdHandles(
     axiom::connector::WriteKind kind) const final {
     SDB_ASSERT(_pk_type);
-    SDB_ASSERT(!_pk_type->children().empty());
+    // SDB_ASSERT(!_pk_type->children().empty());
     std::vector<velox::connector::ColumnHandlePtr> handles;
     handles.reserve(_pk_type->size());
     for (const auto& name : _pk_type->names()) {

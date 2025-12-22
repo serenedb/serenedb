@@ -27,6 +27,7 @@
 #include <vpack/slice.h>
 
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 #include "basics/containers/node_hash_map.h"
@@ -143,6 +144,9 @@ struct Column {
   }
 
   using Id = uint64_t;
+
+  static constexpr Id kFakeId = std::numeric_limits<Id>::max();
+  static constexpr std::string_view kFakeName = "fake";
 
   Id id;
   velox::TypePtr type;

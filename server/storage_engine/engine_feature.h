@@ -18,8 +18,6 @@ class EngineFeature final : public SerenedFeature {
   void prepare() final;
   void unprepare() final;
   void beginShutdown() final;
-  void collectOptions(std::shared_ptr<options::ProgramOptions>) final;
-  void validateOptions(std::shared_ptr<options::ProgramOptions>) final;
 
   RocksDBEngineCatalog& engine() { return *_engine; }
   bool started() const { return _started.load(std::memory_order_relaxed); }
@@ -30,10 +28,5 @@ class EngineFeature final : public SerenedFeature {
 };
 
 RocksDBEngineCatalog& GetServerEngine();
-
-template<typename T>
-T& GetServerEngineAs() {
-  return basics::downCast<T>(GetServerEngine());
-}
 
 }  // namespace sdb

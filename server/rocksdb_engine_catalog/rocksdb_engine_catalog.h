@@ -52,6 +52,7 @@
 #include "database/access_mode.h"
 #include "metrics/fwd.h"
 #include "rocksdb_engine_catalog/rocksdb_key_bounds.h"
+#include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_recovery_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "storage_engine/health_data.h"
@@ -83,12 +84,7 @@ namespace rest {
 class RestHandlerFactory;
 }
 
-namespace transaction {
-struct Options;
-}  // namespace transaction
-
 class RocksDBEngineCatalog;
-struct RocksDBOptionsProvider;
 
 class StorageSnapshot {
  public:
@@ -171,12 +167,9 @@ class RocksDBEngineCatalog {
   static constexpr std::string_view name() noexcept { return "RocksDBEngine"; }
 
   RocksDBEngineCatalog(SerenedServer& server);
-  RocksDBEngineCatalog(const RocksDBOptionsProvider& options_provider,
+  RocksDBEngineCatalog(const RocksDBOptionFeature& options_provider,
                        metrics::MetricsFeature& metrics);
   ~RocksDBEngineCatalog();
-
-  void collectOptions(std::shared_ptr<options::ProgramOptions>);
-  void validateOptions(std::shared_ptr<options::ProgramOptions>);
 
   void prepare();
   void start();
@@ -333,7 +326,9 @@ class RocksDBEngineCatalog {
   void determinePrunableWalFiles(Tick min_tick_to_keep);
   void pruneWalFiles();
 
-  double pruneWaitTimeInitial() const { return _prune_wait_time_initial; }
+  double pruneWaitTimeInitial() const {
+    return _options_provider.pruneWaitTimeInitial();
+  }
 
   // management methods for synchronizing with external persistent stores
   Tick currentTick() const;
@@ -461,7 +456,7 @@ class RocksDBEngineCatalog {
   bool checkExistingDB(
     const std::vector<rocksdb::ColumnFamilyDescriptor>& cf_families);
 
-  const RocksDBOptionsProvider& _options_provider;
+  const RocksDBOptionFeature& _options_provider;
 
   metrics::MetricsFeature& _metrics;
 
@@ -485,14 +480,6 @@ class RocksDBEngineCatalog {
 
   /// Background thread handling garbage collection etc
   std::unique_ptr<RocksDBBackgroundThread> _background_thread;
-  uint64_t _max_transaction_size;      // maximum allowed size for a transaction
-  uint64_t _intermediate_commit_size;  // maximum size for a
-                                       // transaction before an
-                                       // intermediate commit is performed
-  uint64_t _intermediate_commit_count;  // limit of transaction count
-                                        // for intermediate commit
-
-  uint64_t _max_parallel_compactions = 2;
 
   // hook-ins for recovery process
   static inline std::vector<std::shared_ptr<RocksDBRecoveryHelper>>
@@ -515,16 +502,6 @@ class RocksDBEngineCatalog {
   /// configured size
   containers::FlatHashMap<std::string, double> _prunable_wal_files;
 
-  // number of seconds to wait before an obsolete WAL file is actually pruned
-  double _prune_wait_time = 10.0;
-
-  // number of seconds to wait initially after server start before WAL file
-  // deletion kicks in
-  double _prune_wait_time_initial = 60.0;
-
-  /// maximum total size (in bytes) of archived WAL files
-  uint64_t _max_wal_archive_size_limit = 0;
-
   // do not release walfiles containing writes later than this
   Tick _released_tick = 0;
 
@@ -532,33 +509,9 @@ class RocksDBEngineCatalog {
   /// note: this is a nullptr if automatic syncing is turned off!
   std::unique_ptr<RocksDBSyncThread> _sync_thread;
 
-  // WAL sync interval, specified in milliseconds by end user, but uses
-  // microseconds internally
-  uint64_t _sync_interval = 100;
-
-  // WAL sync delay threshold. Any WAL disk sync longer ago than this value
-  // will trigger a warning (in milliseconds)
-  uint64_t _sync_delay_threshold = 5000;
-
-  /// minimum required percentage of free disk space for considering the
-  /// server "healthy". this is expressed as a floating point value between 0
-  /// and 1! if set to 0.0, the % amount of free disk is ignored in checks.
-  double _required_disk_free_percentage = 0.01;
-
-  /// minimum number of free bytes on disk for considering the server
-  /// healthy. if set to 0, the number of free bytes on disk is ignored in
-  /// checks.
-  uint64_t _required_disk_free_bytes = 16 * 1024 * 1024;
-
   /// whether or not to use _released_tick when determining the WAL files
   /// to prune
   bool _use_released_tick = false;
-
-  /// activate rocksdb's debug logging
-  bool _debug_logging = false;
-
-  /// whether or not to verify the sst files present in the db path
-  bool _verify_sst = false;
 
   /// whether or not the last health check was successful.
   /// this is used to determine when to execute the potentially expensive
@@ -616,11 +569,6 @@ class RocksDBEngineCatalog {
 
   // last point in time when an auto-flush happened
   std::chrono::steady_clock::time_point _auto_flush_last_executed;
-  // interval (in s) in which auto-flushing is tried
-  double _auto_flush_check_interval = 60.0 * 30.0;
-  // minimum number of live WAL files that need to be present to trigger
-  // an auto-flush
-  uint64_t _auto_flush_min_wal_files = 20;
 
   metrics::Gauge<uint64_t>& _metrics_index_estimator_memory_usage;
   metrics::Gauge<uint64_t>& _metrics_wal_released_tick_flush;

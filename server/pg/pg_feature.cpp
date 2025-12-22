@@ -187,7 +187,7 @@ void PostgresFeature::start() {
   pg::RegisterSystemViews();
   if (ServerState::instance()->IsDBServer() ||
       ServerState::instance()->IsSingle()) {
-    auto& engine = GetServerEngineAs<RocksDBEngineCatalog>();
+    auto& engine = GetServerEngine();
     auto* cf =
       RocksDBColumnFamilyManager::get(RocksDBColumnFamilyManager::Family::Data);
     SDB_ASSERT(cf);

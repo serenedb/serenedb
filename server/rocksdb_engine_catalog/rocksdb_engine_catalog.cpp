@@ -235,10 +235,6 @@ DECLARE_COUNTER(
 // global flag to cancel all compactions. will be flipped to true on shutdown
 static std::atomic_bool gCancelCompactions = false;
 
-// minimum value for --rocksdb.sync-interval (in ms)
-// a value of 0 however means turning off the syncing altogether!
-static constexpr uint64_t kMinSyncInterval = 5;
-
 static constexpr ObjectId kDatabaseIdForGlobalApplier;
 
 RocksDBFilePurgePreventer::RocksDBFilePurgePreventer(
@@ -399,16 +395,11 @@ RocksDBEngineCatalog::RocksDBEngineCatalog(SerenedServer& server)
                          server.getFeature<metrics::MetricsFeature>()) {}
 
 RocksDBEngineCatalog::RocksDBEngineCatalog(
-  const RocksDBOptionsProvider& options_provider,
+  const RocksDBOptionFeature& options_provider,
   metrics::MetricsFeature& metrics)
   : _options_provider(options_provider),
     _metrics(metrics),
     _wal_access(std::make_unique<RocksDBWalAccess>(*this)),
-    _max_transaction_size(transaction::Options::gDefaultMaxTransactionSize),
-    _intermediate_commit_size(
-      transaction::Options::gDefaultIntermediateCommitSize),
-    _intermediate_commit_count(
-      transaction::Options::gDefaultIntermediateCommitCount),
     _metrics_index_estimator_memory_usage(
       metrics.add(serenedb_index_estimates_memory_usage{})),
     _metrics_wal_released_tick_flush(
@@ -499,14 +490,16 @@ void RocksDBEngineCatalog::shutdownRocksDBInstance() noexcept {
 }
 
 void RocksDBEngineCatalog::flushOpenFilesIfRequired() {
-  if (_metrics_live_wal_files.load() < _auto_flush_min_wal_files) {
+  if (_metrics_live_wal_files.load() <
+      _options_provider._auto_flush_min_wal_files) {
     return;
   }
 
   auto now = std::chrono::steady_clock::now();
   if (_auto_flush_last_executed.time_since_epoch().count() == 0 ||
       (now - _auto_flush_last_executed) >=
-        std::chrono::duration<double>(_auto_flush_check_interval)) {
+        std::chrono::duration<double>(
+          _options_provider._auto_flush_check_interval)) {
     SDB_INFO("xxxxx", Logger::ENGINES,
              "auto flushing RocksDB wal and column families because number of "
              "live WAL files is ",
@@ -522,253 +515,11 @@ void RocksDBEngineCatalog::flushOpenFilesIfRequired() {
   }
 }
 
-// add the storage engine's specific options to the global list of options
-void RocksDBEngineCatalog::collectOptions(
-  std::shared_ptr<options::ProgramOptions> options) {
-  using namespace options;
-
-  options->addSection("rocksdb", "RocksDB engine");
-
-  /// minimum required percentage of free disk space for considering
-  /// the server "healthy". this is expressed as a floating point value
-  /// between 0 and 1! if set to 0.0, the % amount of free disk is ignored in
-  /// checks.
-  options->addOption(
-    "--rocksdb.minimum-disk-free-percent",
-    "The minimum percentage of free disk space for considering the "
-    "server healthy in health checks (0 = disable the check).",
-    new DoubleParameter(&_required_disk_free_percentage, /*base*/ 1.0,
-                        /*minValue*/ 0.0, /*maxValue*/ 1.0),
-    options::MakeFlags(options::Flags::DefaultNoComponents,
-                       options::Flags::OnDBServer, options::Flags::OnSingle));
-
-  /// minimum number of free bytes on disk for considering the server
-  /// healthy. if set to 0, the number of free bytes on disk is ignored in
-  /// checks.
-  options->addOption(
-    "--rocksdb.minimum-disk-free-bytes",
-    "The minimum number of free disk bytes for considering the "
-    "server healthy in health checks (0 = disable the check).",
-    new UInt64Parameter(&_required_disk_free_bytes),
-    options::MakeFlags(options::Flags::DefaultNoComponents,
-                       options::Flags::OnDBServer, options::Flags::OnSingle));
-
-  // control transaction size for RocksDB engine
-  options
-    ->addOption("--rocksdb.max-transaction-size",
-                "The transaction size limit (in bytes).",
-                new UInt64Parameter(&_max_transaction_size))
-    .setLongDescription(R"(Transactions store all keys and values in RAM, so
-large transactions run the risk of causing out-of-memory situations. This
-setting allows you to ensure that it does not happen by limiting the size of
-any individual transaction. Transactions whose operations would consume more
-RAM than this threshold value are aborted automatically with error 32
-("resource limit exceeded").)");
-
-  options->addOption("--rocksdb.intermediate-commit-size",
-                     "An intermediate commit is performed automatically "
-                     "when a transaction has accumulated operations of this "
-                     "size (in bytes), and a new transaction is started.",
-                     new UInt64Parameter(&_intermediate_commit_size));
-
-  options->addOption("--rocksdb.intermediate-commit-count",
-                     "An intermediate commit is performed automatically "
-                     "when this number of operations is reached in a "
-                     "transaction, and a new transaction is started.",
-                     new UInt64Parameter(&_intermediate_commit_count));
-
-  options->addOption("--rocksdb.max-parallel-compactions",
-                     "The maximum number of parallel compactions jobs.",
-                     new UInt64Parameter(&_max_parallel_compactions));
-
-  options
-    ->addOption(
-      "--rocksdb.sync-interval",
-      "The interval for automatic, non-requested disk syncs (in "
-      "milliseconds, 0 = turn automatic syncing off)",
-      new UInt64Parameter(&_sync_interval),
-      options::MakeFlags(options::Flags::OsLinux, options::Flags::OsMac,
-                         options::Flags::OnDBServer, options::Flags::OnSingle))
-    .setLongDescription(R"(Automatic synchronization of data from RocksDB's
-write-ahead logs to disk is only performed for not-yet synchronized data, and
-only for operations that have been executed without the `waitForSync`
-attribute.)");
-
-  options->addOption(
-    "--rocksdb.sync-delay-threshold",
-    "The threshold for self-observation of WAL disk syncs "
-    "(in milliseconds, 0 = no warnings). Any WAL disk sync longer ago "
-    "than this threshold triggers a warning ",
-    new UInt64Parameter(&_sync_delay_threshold),
-    options::MakeFlags(options::Flags::DefaultNoComponents,
-                       options::Flags::OnDBServer, options::Flags::OnSingle,
-                       options::Flags::Uncommon));
-
-  options
-    ->addOption(
-      "--rocksdb.wal-file-timeout",
-      "The timeout after which unused WAL files are deleted "
-      "(in seconds).",
-      new DoubleParameter(&_prune_wait_time),
-      options::MakeFlags(options::Flags::DefaultNoComponents,
-                         options::Flags::OnDBServer, options::Flags::OnSingle))
-    .setLongDescription(R"(Data of ongoing transactions is stored in RAM.
-Transactions that get too big (in terms of number of operations involved or the
-total size of data created or modified by the transaction) are committed
-automatically. Effectively, this means that big user transactions are split into
-multiple smaller RocksDB transactions that are committed individually.
-The entire user transaction does not necessarily have ACID properties in this
-case.)");
-
-  options
-    ->addOption(
-      "--rocksdb.wal-file-timeout-initial",
-      "The initial timeout (in seconds) after which unused WAL "
-      "files deletion kicks in after server start.",
-      new DoubleParameter(&_prune_wait_time_initial),
-      options::MakeFlags(options::Flags::DefaultNoComponents,
-                         options::Flags::OnDBServer, options::Flags::OnSingle,
-                         options::Flags::Uncommon))
-    .setLongDescription(R"(If you decrease the value, the server starts the
-removal of obsolete WAL files earlier after server start. This is useful in
-testing environments that are space-restricted and do not require keeping much
-WAL file data at all.)");
-
-  options
-    ->addOption(
-      "--rocksdb.debug-logging", "Whether to enable RocksDB debug logging.",
-      new BooleanParameter(&_debug_logging),
-      options::MakeFlags(options::Flags::DefaultNoComponents,
-                         options::Flags::OnDBServer, options::Flags::OnSingle,
-                         options::Flags::Uncommon))
-    .setLongDescription(R"(If set to `true`, enables verbose logging of
-RocksDB's actions into the logfile written by SereneDB (if the
-`--rocksdb.use-file-logging` option is off), or RocksDB's own log (if the
-`--rocksdb.use-file-logging` option is on).
-
-This option is turned off by default, but you can enable it for debugging
-RocksDB internals and performance.)");
-
-  options
-    ->addOption("--rocksdb.verify-sst",
-                "Verify the validity of .sst files present in the "
-                "`engine_rocksdb` directory on startup.",
-                new BooleanParameter(&_verify_sst),
-                options::MakeFlags(
-                  options::Flags::Command, options::Flags::DefaultNoComponents,
-                  options::Flags::OnAgent, options::Flags::OnDBServer,
-                  options::Flags::OnSingle, options::Flags::Uncommon))
-
-    .setLongDescription(R"(If set to `true`, during startup, all .sst files
-in the `engine_rocksdb` folder in the database directory are checked for
-potential corruption and errors. The server process stops after the check and
-returns an exit code of `0` if the validation was successful, or a non-zero
-exit code if there is an error in any of the .sst files.)");
-
-  options
-    ->addOption(
-      "--rocksdb.wal-archive-size-limit",
-      "The maximum total size (in bytes) of archived WAL files to "
-      "keep on the leader (0 = unlimited).",
-      new UInt64Parameter(&_max_wal_archive_size_limit),
-      options::MakeFlags(options::Flags::DefaultNoComponents,
-                         options::Flags::OnDBServer, options::Flags::OnSingle,
-                         options::Flags::Uncommon))
-    .setLongDescription(R"(A value of `0` does not restrict the size of the
-archive, so the leader removes archived WAL files when there are no replication
-clients needing them. Any non-zero value restricts the size of the WAL files
-archive to about the specified value and trigger WAL archive file deletion once
-the threshold is reached. You can use this to get rid of archived WAL files in
-a disk size-constrained environment.
-
-**Note**: The value is only a threshold, so the archive may get bigger than
-the configured value until the background thread actually deletes files from
-the archive. Also note that deletion from the archive only kicks in after
-`--rocksdb.wal-file-timeout-initial` seconds have elapsed after server start.
-
-Archived WAL files are normally deleted automatically after a short while when
-there is no follower attached that may read from the archive. However, in case
-when there are followers attached that may read from the archive, WAL files
-normally remain in the archive until their contents have been streamed to the
-followers. In case there are slow followers that cannot catch up, this causes a
-growth of the WAL files archive over time.
-
-You can use the option to force a deletion of WAL files from the archive even if
-there are followers attached that may want to read the archive. In case the
-option is set and a leader deletes files from the archive that followers want to
-read, this aborts the replication on the followers. Followers can restart the
-replication doing a resync, though, but they may not be able to catch up if WAL
-file deletion happens too early.
-
-Thus it is best to leave this option at its default value of `0` except in cases
-when disk size is very constrained and no replication is used.)");
-
-  options->addOption(
-    "--rocksdb.auto-flush-min-live-wal-files",
-    "The minimum number of live WAL files that triggers an "
-    "auto-flush of WAL "
-    "and column family data.",
-    new UInt64Parameter(&_auto_flush_min_wal_files),
-    options::MakeFlags(options::Flags::DefaultNoComponents,
-                       options::Flags::OnDBServer, options::Flags::OnSingle));
-
-  options->addOption(
-    "--rocksdb.auto-flush-check-interval",
-    "The interval (in seconds) in which auto-flushes of WAL and column "
-    "family data is executed.",
-    new DoubleParameter(&_auto_flush_check_interval),
-    options::MakeFlags(options::Flags::DefaultNoComponents,
-                       options::Flags::OnDBServer, options::Flags::OnSingle));
-}
-
-void RocksDBEngineCatalog::validateOptions(
-  std::shared_ptr<options::ProgramOptions> options) {
-  transaction::Options::setLimits(_max_transaction_size,
-                                  _intermediate_commit_size,
-                                  _intermediate_commit_count);
-  if (_sync_interval > 0) {
-    if (_sync_interval < kMinSyncInterval) {
-      // _sync_interval = 0 means turned off!
-      SDB_FATAL(
-        "xxxxx", Logger::CONFIG,
-        "invalid value for --rocksdb.sync-interval. Please use a value ",
-        "of at least ", kMinSyncInterval);
-    }
-
-    if (_sync_delay_threshold > 0 && _sync_delay_threshold <= _sync_interval) {
-      if (!options->processingResult().touched("rocksdb.sync-interval") &&
-          options->processingResult().touched("rocksdb.sync-delay-threshold")) {
-        // user has not set --rocksdb.sync-interval, but set
-        // --rocksdb.sync-delay-threshold
-        SDB_WARN("xxxxx", Logger::CONFIG,
-                 "invalid value for --rocksdb.sync-delay-threshold. should be "
-                 "higher ",
-                 "than the value of --rocksdb.sync-interval (", _sync_interval,
-                 ")");
-      }
-
-      _sync_delay_threshold = 10 * _sync_interval;
-      SDB_WARN("xxxxx", Logger::CONFIG,
-               "auto-adjusting value of --rocksdb.sync-delay-threshold to ",
-               _sync_delay_threshold, " ms");
-    }
-  }
-
-  if (_prune_wait_time_initial < 10) {
-    SDB_WARN("xxxxx", Logger::ENGINES,
-             "consider increasing the value for "
-             "--rocksdb.wal-file-timeout-initial. ",
-             "Replication clients might have trouble to get in sync");
-  }
-}
-
 // preparation phase for storage engine. can be used for internal setup.
 // the storage engine must not start any threads here or write any files
 void RocksDBEngineCatalog::prepare() {
-  // get base path from DatabaseServerFeature
-  auto& database_path_feature =
-    SerenedServer::Instance().getFeature<DatabasePathFeature>();
-  _base_path = database_path_feature.directory();
+  _base_path =
+    SerenedServer::Instance().getFeature<DatabasePathFeature>().directory();
   SDB_ASSERT(!_base_path.empty());
 }
 
@@ -817,26 +568,13 @@ rocksdb::Options RocksDBEngineCatalog::makeOptions(bool is_new_dir) {
 }
 
 void RocksDBEngineCatalog::start() {
-  // it is already decided that rocksdb is used
-  SDB_ASSERT(!ServerState::instance()->IsCoordinator());
-  auto& server = SerenedServer::Instance();
-
-  if (ServerState::instance()->IsAgent() &&
-      !server.options()->processingResult().touched(
-        "rocksdb.wal-file-timeout-initial")) {
-    // reduce --rocksb.wal-file-timeout-initial to 15 seconds for agency nodes
-    // as we probably won't need the WAL for WAL tailing and replication here
-    _prune_wait_time_initial = 15;
-  }
-
   SDB_TRACE("xxxxx", Logger::ENGINES, "rocksdb version ",
             rest::Version::getRocksDBVersion(),
             ", supported compression types: ", getCompressionSupport());
 
-  // set the database sub-directory for RocksDB
-  auto& database_path_feature = server.getFeature<DatabasePathFeature>();
-  _path =
-    database_path_feature.subdirectoryName(StaticStrings::kRocksDbEngineRoot);
+  _path = SerenedServer::Instance()
+            .getFeature<DatabasePathFeature>()
+            .subdirectoryName(StaticStrings::kRocksDbEngineRoot);
 
   [[maybe_unused]] bool created_engine_dir = false;
   if (!basics::file_utils::IsDirectory(_path)) {
@@ -890,7 +628,7 @@ void RocksDBEngineCatalog::start() {
   SDB_TRACE("xxxxx", Logger::ENGINES, "initializing RocksDB, path: '", _path,
             "', WAL directory '", _db_options.wal_dir, "'");
 
-  if (_verify_sst) {
+  if (_options_provider._verify_sst) {
     verifySstFiles();
     SDB_ASSERT(false);
   }
@@ -902,7 +640,7 @@ void RocksDBEngineCatalog::start() {
     static_cast<int>(_options_provider.numThreadsLow()),
     rocksdb::Env::Priority::LOW);
 
-  if (_debug_logging) {
+  if (_options_provider._debug_logging) {
     _db_options.info_log_level = rocksdb::InfoLogLevel::DEBUG_LEVEL;
   }
 
@@ -1010,10 +748,10 @@ void RocksDBEngineCatalog::start() {
               ServerState::instance()->IsAgent()) ||
              _use_released_tick);
 
-  if (_sync_interval > 0) {
+  if (_options_provider._sync_interval > 0) {
     _sync_thread = std::make_unique<RocksDBSyncThread>(
-      *this, std::chrono::milliseconds(_sync_interval),
-      std::chrono::milliseconds(_sync_delay_threshold));
+      *this, std::chrono::milliseconds(_options_provider._sync_interval),
+      std::chrono::milliseconds(_options_provider._sync_delay_threshold));
     if (!_sync_thread->start()) {
       SDB_FATAL("xxxxx", Logger::ENGINES,
                 "could not start rocksdb sync thread");
@@ -1652,7 +1390,7 @@ void RocksDBEngineCatalog::processCompactions() {
   }
 
   auto& server = SerenedServer::Instance();
-  uint64_t max_iterations = _max_parallel_compactions;
+  uint64_t max_iterations = _options_provider._max_parallel_compactions;
   uint64_t iterations = 0;
   while (++iterations <= max_iterations) {
     if (server.isStopping()) {
@@ -1664,7 +1402,7 @@ void RocksDBEngineCatalog::processCompactions() {
     {
       absl::WriterMutexLock locker{&_pending_compactions_lock};
       if (_pending_compactions.empty() ||
-          _running_compactions >= _max_parallel_compactions) {
+          _running_compactions >= _options_provider._max_parallel_compactions) {
         // nothing to do, or too much to do
         SDB_TRACE(
           "xxxxx", Logger::ENGINES,
@@ -2394,7 +2132,8 @@ void RocksDBEngineCatalog::determinePrunableWalFiles(Tick min_tick_external) {
         // still need
         eligible_step2 = true;
 
-        double stamp = utilities::GetMicrotime() + _prune_wait_time;
+        double stamp =
+          utilities::GetMicrotime() + _options_provider._prune_wait_time;
         const auto [it, emplaced] =
           _prunable_wal_files.try_emplace(f->PathName(), stamp);
 
@@ -2430,14 +2169,15 @@ void RocksDBEngineCatalog::determinePrunableWalFiles(Tick min_tick_external) {
             ", live file size: ", live_files_size,
             ", archived file size: ", archived_files_size);
 
-  if (_max_wal_archive_size_limit > 0 &&
-      archived_files_size > _max_wal_archive_size_limit) {
+  if (_options_provider._max_wal_archive_size_limit > 0 &&
+      archived_files_size > _options_provider._max_wal_archive_size_limit) {
     // size of the archive is restricted, and we overflowed the limit.
 
     // print current archive size
-    SDB_TRACE("xxxxx", Logger::ENGINES,
-              "total size of the RocksDB WAL file archive: ",
-              archived_files_size, ", limit: ", _max_wal_archive_size_limit);
+    SDB_TRACE(
+      "xxxxx", Logger::ENGINES,
+      "total size of the RocksDB WAL file archive: ", archived_files_size,
+      ", limit: ", _options_provider._max_wal_archive_size_limit);
 
     // we got more archived files than configured. time for purging some
     // files!
@@ -2467,7 +2207,8 @@ void RocksDBEngineCatalog::determinePrunableWalFiles(Tick min_tick_external) {
       }
 
       if (do_print) {
-        SDB_ASSERT(archived_files_size > _max_wal_archive_size_limit);
+        SDB_ASSERT(archived_files_size >
+                   _options_provider._max_wal_archive_size_limit);
 
         // never change this id without adjusting wal-archive-size-limit tests
         // in tests/js/client/server-parameters
@@ -2476,7 +2217,7 @@ void RocksDBEngineCatalog::determinePrunableWalFiles(Tick min_tick_external) {
                  "' with start sequence ", f->StartSequence(),
                  " because of overflowing archive. configured maximum archive "
                  "size is ",
-                 _max_wal_archive_size_limit,
+                 _options_provider._max_wal_archive_size_limit,
                  ", actual archive size is: ", archived_files_size,
                  ". if these warnings persist, try to increase the value of ",
                  "the startup option `--rocksdb.wal-archive-size-limit`");
@@ -2485,7 +2226,8 @@ void RocksDBEngineCatalog::determinePrunableWalFiles(Tick min_tick_external) {
       SDB_ASSERT(archived_files_size >= f->SizeFileBytes());
       archived_files_size -= f->SizeFileBytes();
 
-      if (archived_files_size <= _max_wal_archive_size_limit) {
+      if (archived_files_size <=
+          _options_provider._max_wal_archive_size_limit) {
         // got enough files to remove
         break;
       }
@@ -3187,10 +2929,11 @@ HealthData RocksDBEngineCatalog::healthCheck() {
       _health_data.free_disk_space_percent = disk_free_percentage;
 
       if (_health_data.res.ok() &&
-          ((_required_disk_free_percentage > 0.0 &&
-            disk_free_percentage < _required_disk_free_percentage) ||
-           (_required_disk_free_bytes > 0 &&
-            free_space < _required_disk_free_bytes))) {
+          ((_options_provider._required_disk_free_percentage > 0.0 &&
+            disk_free_percentage <
+              _options_provider._required_disk_free_percentage) ||
+           (_options_provider._required_disk_free_bytes > 0 &&
+            free_space < _options_provider._required_disk_free_bytes))) {
         std::string ss_str;
         absl::strings_internal::OStringStream ss{&ss_str};
         ss << "free disk space capacity has reached critical level, "

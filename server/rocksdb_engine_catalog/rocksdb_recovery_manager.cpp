@@ -167,7 +167,7 @@ class WBReader final : public rocksdb::WriteBatch::Handler {
       _entries_scanned(0),
       _batch_start_sequence(0),
       _current_sequence(current_sequence),
-      _engine(GetServerEngineAs<RocksDBEngineCatalog>()) {}
+      _engine(GetServerEngine()) {}
 
   void StartNewBatch(rocksdb::SequenceNumber start_sequence) {
     SDB_ASSERT(_current_sequence <= start_sequence);
@@ -598,7 +598,7 @@ Result RocksDBRecoveryManager::parseRocksWAL() {
   Result shutdown_rv;
 
   Result res = basics::SafeCall([&] -> Result {
-    auto& engine = GetServerEngineAs<RocksDBEngineCatalog>();
+    auto& engine = GetServerEngine();
 
     auto db = engine.db();
 

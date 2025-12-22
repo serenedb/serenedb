@@ -73,6 +73,9 @@ class RocksDBOptionFeature final : public SerenedFeature,
   uint64_t periodicCompactionTtl() const noexcept override {
     return _periodic_compaction_ttl;
   }
+  auto pruneWaitTimeInitial() const noexcept {
+    return _prune_wait_time_initial;
+  }
 
  protected:
   rocksdb::Options doGetOptions() const override;
@@ -154,6 +157,46 @@ class RocksDBOptionFeature final : public SerenedFeature,
   bool _partition_files_for_edge_index_cf;
   bool _partition_files_for_vpack_index_cf;
 
+ public:
+  /// minimum required percentage of free disk space for considering the
+  /// server "healthy". this is expressed as a floating point value between 0
+  /// and 1! if set to 0.0, the % amount of free disk is ignored in checks.
+  double _required_disk_free_percentage = 0.01;
+  /// minimum number of free bytes on disk for considering the server
+  /// healthy. if set to 0, the number of free bytes on disk is ignored in
+  /// checks.
+  uint64_t _required_disk_free_bytes = 16 * 1024 * 1024;
+  uint64_t _max_transaction_size;      // maximum allowed size for a transaction
+  uint64_t _intermediate_commit_size;  // maximum size for a
+                                       // transaction before an
+                                       // intermediate commit is performed
+  uint64_t _intermediate_commit_count;  // limit of transaction count
+                                        // for intermediate commit
+  uint64_t _max_parallel_compactions = 2;
+  // WAL sync interval, specified in milliseconds by end user, but uses
+  // microseconds internally
+  uint64_t _sync_interval = 100;
+  // WAL sync delay threshold. Any WAL disk sync longer ago than this value
+  // will trigger a warning (in milliseconds)
+  uint64_t _sync_delay_threshold = 5000;
+  // number of seconds to wait before an obsolete WAL file is actually pruned
+  double _prune_wait_time = 10.0;
+  // number of seconds to wait initially after server start before WAL file
+  // deletion kicks in
+  double _prune_wait_time_initial = 60.0;
+  /// activate rocksdb's debug logging
+  bool _debug_logging = false;
+  // interval (in s) in which auto-flushing is tried
+  double _auto_flush_check_interval = 60.0 * 30.0;
+  // minimum number of live WAL files that need to be present to trigger
+  // an auto-flush
+  uint64_t _auto_flush_min_wal_files = 20;
+  /// maximum total size (in bytes) of archived WAL files
+  uint64_t _max_wal_archive_size_limit = 0;
+  /// whether or not to verify the sst files present in the db path
+  bool _verify_sst = false;
+
+ private:
   /// per column family write buffer limits
   std::array<uint64_t, RocksDBColumnFamilyManager::kNumberOfColumnFamilies>
     _max_write_buffer_number_cf;

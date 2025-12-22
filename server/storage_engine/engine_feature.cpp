@@ -48,14 +48,4 @@ void EngineFeature::unprepare() { _engine->unprepare(); }
 
 void EngineFeature::beginShutdown() { _engine->beginShutdown(); }
 
-void EngineFeature::collectOptions(
-  std::shared_ptr<options::ProgramOptions> options) {
-  _engine->collectOptions(std::move(options));
-}
-
-void EngineFeature::validateOptions(
-  std::shared_ptr<options::ProgramOptions> options) {
-  _engine->validateOptions(std::move(options));
-}
-
 }  // namespace sdb

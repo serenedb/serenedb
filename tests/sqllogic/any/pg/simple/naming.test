@@ -1102,7 +1102,7 @@ iq iq
 228 228
 
 
-query rowsort
+query ? rowsort
 SELECT iq
 FROM
 (

@@ -1102,7 +1102,7 @@ iq iq
 228 228
 
 
-query
+query rowsort
 SELECT iq
 FROM
 (
@@ -1114,8 +1114,8 @@ GROUP BY 1
 ----
 iq
 -2
-100
 3
+100
 
 
 query

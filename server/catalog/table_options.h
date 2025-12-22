@@ -142,7 +142,7 @@ struct Column {
     return generated_type != GeneratedType::kNone;
   }
 
-  using Id = uint32_t;
+  using Id = uint64_t;
 
   Id id;
   velox::TypePtr type;

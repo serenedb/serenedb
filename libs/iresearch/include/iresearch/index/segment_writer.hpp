@@ -84,24 +84,39 @@ class SegmentWriter final : public ColumnProvider, util::Noncopyable {
     Directory& dir, const SegmentWriterOptions& options);
 
   // begin document-write transaction
-  // Return doc_id_t as per doc_limits
-  doc_id_t begin(DocContext ctx);
+  // Return first doc_id_t in batch as per doc_limits
+  // TODO(Dronplane): does it make sense to have single doc version?
+  doc_id_t begin(DocContext ctx, doc_id_t batch_size = 1);
+
+  void ResetNorms() noexcept {
+    _doc.clear();  // clear norm fields
+  }
 
   template<Action A, typename Field>
   bool insert(Field&& field) {
+    // user should check return of begin() != eof()
+    SDB_ASSERT(LastDocId() < doc_limits::eof());
+    doc_id_t doc = LastDocId();
+    return insert<A>(std::forward<Field>(field), doc);
+  }
+
+  template<Action A, typename Field>
+  bool insert(Field&& field, doc_id_t doc) {
     if (!_valid) [[unlikely]] {
       return false;
     }
+    SDB_ASSERT(doc <= LastDocId());
+    SDB_ASSERT(doc >= _batch_first_doc_id);
     if constexpr (Action::INDEX == A) {
-      return index(std::forward<Field>(field));
+      return index(std::forward<Field>(field), doc);
     } else if constexpr (Action::STORE == A) {
-      return store(std::forward<Field>(field));
+      return store(std::forward<Field>(field), doc);
     } else if constexpr (Action::StoreSorted == A) {
-      return store_sorted(std::forward<Field>(field));
+      return store_sorted(std::forward<Field>(field), doc);
     } else if constexpr ((Action::INDEX | Action::STORE) == A) {
-      return index_and_store<false>(std::forward<Field>(field));
+      return index_and_store<false>(std::forward<Field>(field), doc);
     } else if constexpr ((Action::INDEX | Action::StoreSorted) == A) {
-      return index_and_store<true>(std::forward<Field>(field));
+      return index_and_store<true>(std::forward<Field>(field), doc);
     } else {
       static_assert(false);
     }
@@ -130,7 +145,12 @@ class SegmentWriter final : public ColumnProvider, util::Noncopyable {
   // implicitly noexcept since we reserve memory in 'begin'
   void rollback() noexcept {
     // mark as removed since not fully inserted
-    remove(LastDocId());
+    const auto batch_last_doc_id = LastDocId();
+    for (auto id = _batch_first_doc_id; id <= batch_last_doc_id; ++id) {
+      // TODO(Dronplane): make remove also batch aware? But it is only for
+      // rollback so maybe ok as is
+      remove(id);
+    }
     _valid = false;
   }
 
@@ -148,6 +168,11 @@ class SegmentWriter final : public ColumnProvider, util::Noncopyable {
   doc_id_t LastDocId() const noexcept {
     SDB_ASSERT(buffered_docs() <= doc_limits::eof());
     return doc_limits::min() + static_cast<doc_id_t>(buffered_docs()) - 1;
+  }
+
+  doc_id_t FirstBatchDocId() const noexcept {
+    SDB_ASSERT(doc_limits::valid(_batch_first_doc_id));
+    return _batch_first_doc_id;
   }
 
   SegmentWriter(ConstructToken, Directory& dir,
@@ -260,62 +285,45 @@ class SegmentWriter final : public ColumnProvider, util::Noncopyable {
   }
 
   template<typename Field>
-  bool store(Field&& field) {
+  bool store(Field&& field, doc_id_t doc) {
     const hashed_string_view field_name{
       static_cast<std::string_view>(field.Name())};
 
-    // user should check return of begin() != eof()
-    SDB_ASSERT(LastDocId() < doc_limits::eof());
-    const auto doc_id = LastDocId();
-
-    return store(field_name, doc_id, field);
+    return store(field_name, doc, field);
   }
 
   template<typename Field>
-  bool store_sorted(Field&& field) {
-    // user should check return of begin() != eof()
-    SDB_ASSERT(LastDocId() < doc_limits::eof());
-    const auto doc_id = LastDocId();
-
-    return store_sorted(doc_id, field);
+  bool store_sorted(Field&& field, doc_id_t doc) {
+    return store_sorted(doc, field);
   }
 
   template<typename Field>
-  bool index(Field&& field) {
+  bool index(Field&& field, doc_id_t doc) {
     const hashed_string_view field_name{
       static_cast<std::string_view>(field.Name())};
 
     auto& tokens = static_cast<Tokenizer&>(field.GetTokens());
     const IndexFeatures index_features = field.GetIndexFeatures();
-
-    // user should check return of begin() != eof()
-    SDB_ASSERT(LastDocId() < doc_limits::eof());
-    const auto doc_id = LastDocId();
-
-    return index(field_name, doc_id, index_features, tokens);
+    return index(field_name, doc, index_features, tokens);
   }
 
   template<bool Sorted, typename Field>
-  bool index_and_store(Field&& field) {
+  bool index_and_store(Field&& field, doc_id_t doc) {
     const hashed_string_view field_name{
       static_cast<std::string_view>(field.Name())};
 
     auto& tokens = static_cast<Tokenizer&>(field.GetTokens());
     const IndexFeatures index_features = field.GetIndexFeatures();
 
-    // user should check return of begin() != eof()
-    SDB_ASSERT(LastDocId() < doc_limits::eof());
-    const auto doc_id = LastDocId();
-
-    if (!index(field_name, doc_id, index_features, tokens)) [[unlikely]] {
+    if (!index(field_name, doc, index_features, tokens)) [[unlikely]] {
       return false;  // indexing failed
     }
 
     if constexpr (Sorted) {
-      return store_sorted(doc_id, field);
+      return store_sorted(doc, field);
     }
 
-    return store(field_name, doc_id, field);
+    return store(field_name, doc, field);
   }
 
   // Returns stream for storing attributes in sorted order
@@ -353,6 +361,7 @@ class SegmentWriter final : public ColumnProvider, util::Noncopyable {
   FieldWriter::ptr _field_writer;
   const ColumnInfoProvider* _column_info;
   ColumnstoreWriter::ptr _col_writer;
+  doc_id_t _batch_first_doc_id = doc_limits::eof();
   bool _initialized = false;
   bool _valid = true;
 };

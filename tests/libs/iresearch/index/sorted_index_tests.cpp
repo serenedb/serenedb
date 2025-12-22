@@ -1096,6 +1096,21 @@ TEST_P(SortedIndexTestCase, europarl) {
   assert_index();
 }
 
+TEST_P(SortedIndexTestCase, europarl_docs_batched) {
+  SortedEuroparlDocTemplate doc("date", FieldFeatures());
+  tests::DelimDocGenerator gen(resource("europarl.subset.txt"), doc);
+
+  LongComparer comparer;
+
+  irs::IndexWriterOptions opts;
+  opts.comparator = &comparer;
+  opts.features = Features();
+
+  add_segment_batched(gen, 123, irs::kOmCreate, opts);
+
+  assert_index();
+}
+
 TEST_P(SortedIndexTestCase, multi_valued_sorting_field) {
   struct {
     bool Write(irs::DataOutput& out) {

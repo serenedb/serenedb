@@ -2516,7 +2516,7 @@ void SqlAnalyzer::ProcessPipelineSet(State& state, const SelectStmt& stmt) {
         }
       case SETOP_INTERSECT:
         if (stmt.all) {
-          // TODO: implement, I'm also not sure that current intersect isn't all
+          // TODO: implement in Axiom
           SDB_THROW(ERROR_NOT_IMPLEMENTED,
                     "INTERSECT ALL is not implemented yet");
         } else {
@@ -2524,7 +2524,7 @@ void SqlAnalyzer::ProcessPipelineSet(State& state, const SelectStmt& stmt) {
         }
       case SETOP_EXCEPT:
         if (stmt.all) {
-          // TODO: implement, I'm also not sure that current except isn't all
+          // TODO: implement in Axiom
           SDB_THROW(ERROR_NOT_IMPLEMENTED, "EXCEPT ALL is not implemented yet");
         } else {
           return lp::SetOperation::kExcept;

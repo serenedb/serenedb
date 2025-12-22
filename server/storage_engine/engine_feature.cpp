@@ -14,11 +14,6 @@ EngineFeature::EngineFeature(Server& server)
   setOptional(false);
 }
 
-bool EngineFeature::isRocksDB() {
-  SDB_ASSERT(_engine);
-  return _engine->typeName() == RocksDBEngineCatalog::kEngineName;
-}
-
 RocksDBEngineCatalog& GetServerEngine() {
   return SerenedServer::Instance().getFeature<EngineFeature>().engine();
 }

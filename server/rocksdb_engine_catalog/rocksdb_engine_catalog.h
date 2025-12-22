@@ -43,15 +43,19 @@
 #include "basics/common.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/read_write_lock.h"
+#include "catalog/fwd.h"
 #include "catalog/identifiers/index_id.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/identifiers/revision_id.h"
+#include "catalog/table.h"
 #include "catalog/types.h"
 #include "database/access_mode.h"
 #include "metrics/fwd.h"
 #include "rocksdb_engine_catalog/rocksdb_key_bounds.h"
+#include "rocksdb_engine_catalog/rocksdb_recovery_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
-#include "storage_engine/storage_engine.h"
+#include "storage_engine/health_data.h"
+#include "storage_engine/wal_access.h"
 
 namespace rocksdb {
 class Env;
@@ -85,6 +89,18 @@ struct Options;
 
 class RocksDBEngineCatalog;
 struct RocksDBOptionsProvider;
+
+class StorageSnapshot {
+ public:
+  StorageSnapshot() = default;
+  StorageSnapshot(const StorageSnapshot&) = delete;
+  StorageSnapshot& operator=(const StorageSnapshot&) = delete;
+  virtual ~StorageSnapshot() = default;
+
+  virtual Tick tick() const noexcept = 0;
+};
+
+using WriteProperties = absl::FunctionRef<vpack::Slice(bool internal)>;
 
 /// helper class to make file-purging thread-safe
 /// while there is an object of this type around, it will prevent
@@ -145,7 +161,7 @@ class RocksDBSnapshot final : public StorageSnapshot {
   mutable rocksdb::ManagedSnapshot _snapshot;
 };
 
-class RocksDBEngineCatalog : public StorageEngine {
+class RocksDBEngineCatalog {
   friend class RocksDBFilePurgePreventer;
   friend class RocksDBFilePurgeEnabler;
 
@@ -169,38 +185,35 @@ class RocksDBEngineCatalog : public StorageEngine {
   void unprepare();
 
   void flushOpenFilesIfRequired();
-  HealthData healthCheck() final;
+  HealthData healthCheck();
 
   void getStatistics(vpack::Builder& builder) const;
   void toPrometheus(std::string& result, std::string_view globals,
-                    bool ensure_whitespace) const final;
+                    bool ensure_whitespace) const;
 
   Result VisitDatabases(
-    absl::FunctionRef<Result(vpack::Slice database)> visitor) final;
+    absl::FunctionRef<Result(vpack::Slice database)> visitor);
 
-  std::string versionFilename(ObjectId id) const final;
-  std::string databasePath() const final { return _base_path; }
+  std::string versionFilename(ObjectId id) const;
+  std::string databasePath() const { return _base_path; }
   std::string path() const { return _path; }
   std::string idxPath() const { return _idx_path; }
 
-  void cleanupReplicationContexts() final;
+  void cleanupReplicationContexts();
 
   ErrorCode getReplicationApplierConfiguration(ObjectId database,
-                                               vpack::Builder& builder) final;
-  ErrorCode getReplicationApplierConfiguration(vpack::Builder& builder) final;
-  ErrorCode removeReplicationApplierConfiguration(ObjectId database) final;
-  ErrorCode removeReplicationApplierConfiguration() final;
+                                               vpack::Builder& builder);
+  ErrorCode getReplicationApplierConfiguration(vpack::Builder& builder);
+  ErrorCode removeReplicationApplierConfiguration(ObjectId database);
+  ErrorCode removeReplicationApplierConfiguration();
   ErrorCode saveReplicationApplierConfiguration(ObjectId database,
                                                 vpack::Slice slice,
-                                                bool do_sync) final;
+                                                bool do_sync);
   ErrorCode saveReplicationApplierConfiguration(vpack::Slice slice,
-                                                bool do_sync) final;
-  Result createLoggerState(
-    const ReplicationClientsProgressTracker* replication_clients,
-    vpack::Builder& builder) final;
-  Result createTickRanges(vpack::Builder& builder) final;
-  Result firstTick(uint64_t& tick) final;
-  const WalAccess* walAccess() const final;
+                                                bool do_sync);
+  Result createTickRanges(vpack::Builder& builder);
+  Result firstTick(uint64_t& tick);
+  const WalAccess* walAccess() const;
 
   // database, collection and index management
 
@@ -214,20 +227,20 @@ class RocksDBEngineCatalog : public StorageEngine {
   /// they made more sense. This can be refactored at any point, so that
   /// flushing column families becomes a separate API.
   Result flushWal(bool wait_for_sync = false,
-                  bool flush_column_families = false) final;
-  void waitForEstimatorSync() final;
+                  bool flush_column_families = false);
+  void waitForEstimatorSync();
 
-  Result createDatabase(ObjectId id, vpack::Slice slice) final;
-  Result dropDatabase(ObjectId id) final;
+  Result createDatabase(ObjectId id, vpack::Slice slice);
+  Result dropDatabase(ObjectId id);
 
   // wal in recovery
-  RecoveryState recoveryState() noexcept final;
+  RecoveryState recoveryState() noexcept;
 
   /// current recovery tick
-  Tick recoveryTick() noexcept final;
+  Tick recoveryTick() noexcept;
 
   Result createTableShard(const catalog::Table& collection, bool is_new,
-                          std::shared_ptr<TableShard>& physical) override;
+                          std::shared_ptr<TableShard>& physical);
 
   /// disallow purging of WAL files even if the archive gets too big
   /// removing WAL files does not seem to be thread-safe, so we have to track
@@ -237,6 +250,8 @@ class RocksDBEngineCatalog : public StorageEngine {
   /// whether or not purging of WAL files is currently allowed
   RocksDBFilePurgeEnabler startPurging() noexcept;
 
+  bool inRecovery() { return recoveryState() < RecoveryState::Done; }
+
   void scheduleTreeRebuild(ObjectId database, ObjectId collection);
   void processTreeRebuilds();
 
@@ -244,56 +259,52 @@ class RocksDBEngineCatalog : public StorageEngine {
   void processCompactions();
 
   Result CreateFunction(ObjectId db, ObjectId schema_id, ObjectId id,
-                        WriteProperties properties) final;
+                        WriteProperties properties);
 
   Result DropFunction(ObjectId db, ObjectId schema_id, ObjectId id,
-                      std::string_view name) final;
+                      std::string_view name);
 
-  void createTable(const catalog::Table& collection,
-                   TableShard& physical) final;
-  Result CreateIndex(const catalog::Index& index) final;
+  void createTable(const catalog::Table& collection, TableShard& physical);
+  Result CreateIndex(const catalog::Index& index);
   Result MarkDeleted(const catalog::Table& collection,
                      const TableShard& physical,
-                     const TableTombstone& tombstone) final;
+                     const TableTombstone& tombstone);
   Result MarkDeleted(const catalog::Index& index,
-                     const IndexTombstone& tombstone) final;
-  Result MarkDeleted(const catalog::Database& database) final;
-  Result MarkDeleted(const catalog::Schema& schema) final;
+                     const IndexTombstone& tombstone);
+  Result MarkDeleted(const catalog::Database& database);
+  Result MarkDeleted(const catalog::Schema& schema);
 
-  void prepareDropTable(ObjectId collection) final;
-  Result DropIndex(IndexTombstone tombstone) final;
-  Result DropTable(const TableTombstone& tombstone) final;
+  void prepareDropTable(ObjectId collection);
+  Result DropIndex(IndexTombstone tombstone);
+  Result DropTable(const TableTombstone& tombstone);
 
   void ChangeTable(const catalog::Table& collection,
-                   const TableShard& physical) final;
+                   const TableShard& physical);
 
   Result RenameTable(const catalog::Table& collection,
-                     const TableShard& physical,
-                     std::string_view old_name) final;
+                     const TableShard& physical, std::string_view old_name);
 
-  Result CreateSchema(ObjectId db, ObjectId id,
-                      WriteProperties properties) final;
-  Result ChangeSchema(ObjectId db, ObjectId id,
-                      WriteProperties properties) final;
-  Result DropSchema(ObjectId db, ObjectId id) final;
+  Result CreateSchema(ObjectId db, ObjectId id, WriteProperties properties);
+  Result ChangeSchema(ObjectId db, ObjectId id, WriteProperties properties);
+  Result DropSchema(ObjectId db, ObjectId id);
 
   Result ChangeView(ObjectId db, ObjectId schema_id, ObjectId id,
-                    WriteProperties properties) final;
+                    WriteProperties properties);
 
   Result CreateView(ObjectId db, ObjectId schema_id, ObjectId id,
-                    WriteProperties properties) final;
+                    WriteProperties properties);
 
   Result DropView(ObjectId db, ObjectId schema_id, ObjectId id,
-                  std::string_view name) final;
+                  std::string_view name);
 
-  Result ChangeRole(ObjectId id, WriteProperties properties) final;
+  Result ChangeRole(ObjectId id, WriteProperties properties);
 
-  Result CreateRole(const catalog::Role& role) final;
+  Result CreateRole(const catalog::Role& role);
 
-  Result DropRole(const catalog::Role& role) final;
+  Result DropRole(const catalog::Role& role);
 
   yaclib::Future<Result> compactAll(bool change_level,
-                                    bool compact_bottom_most_level) final;
+                                    bool compact_bottom_most_level);
 
   // TODO(gnusi): remove
   using IndexTriple = std::tuple<ObjectId, ObjectId, IndexId>;
@@ -325,9 +336,9 @@ class RocksDBEngineCatalog : public StorageEngine {
   double pruneWaitTimeInitial() const { return _prune_wait_time_initial; }
 
   // management methods for synchronizing with external persistent stores
-  Tick currentTick() const final;
-  Tick releasedTick() const final;
-  void releaseTick(Tick) final;
+  Tick currentTick() const;
+  Tick releasedTick() const;
+  void releaseTick(Tick);
 
   /// whether or not the database existed at startup. this function
   /// provides a valid answer only after start() has successfully finished,
@@ -351,7 +362,7 @@ class RocksDBEngineCatalog : public StorageEngine {
     return _metrics_index_estimator_memory_usage;
   }
 
-  virtual rocksdb::Options makeOptions(bool is_new_dir);
+  rocksdb::Options makeOptions(bool is_new_dir);
 
   const rocksdb::DBOptions& rocksDBOptions() const { return _db_options; }
 
@@ -393,7 +404,7 @@ class RocksDBEngineCatalog : public StorageEngine {
   }
 #endif
 
-  std::shared_ptr<StorageSnapshot> currentSnapshot() final;
+  std::shared_ptr<StorageSnapshot> currentSnapshot();
 
   void addCacheMetrics(uint64_t initial, uint64_t effective,
                        uint64_t total_inserts,
@@ -405,10 +416,10 @@ class RocksDBEngineCatalog : public StorageEngine {
 
   Result VisitObjects(
     ObjectId database_id, RocksDBEntryType entry,
-    absl::FunctionRef<Result(rocksdb::Slice, vpack::Slice)> visitor) final;
+    absl::FunctionRef<Result(rocksdb::Slice, vpack::Slice)> visitor);
   Result VisitSchemaObjects(
     ObjectId database_id, ObjectId schema_id, RocksDBEntryType entry,
-    absl::FunctionRef<Result(rocksdb::Slice, vpack::Slice)> visitor) final;
+    absl::FunctionRef<Result(rocksdb::Slice, vpack::Slice)> visitor);
 
  private:
   bool UseRangeDelete(ObjectId id, uint64_t number_documents);

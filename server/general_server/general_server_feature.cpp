@@ -48,7 +48,6 @@
 #include "rest_server/endpoint_feature.h"
 #include "rest_server/upgrade_feature.h"
 #include "storage_engine/engine_feature.h"
-#include "storage_engine/storage_engine.h"
 
 #ifdef SDB_CLUSTER
 #include "agency/agency_feature.h"

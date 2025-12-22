@@ -24,8 +24,6 @@ class EngineFeature final : public SerenedFeature {
   RocksDBEngineCatalog& engine() { return *_engine; }
   bool started() const { return _started.load(std::memory_order_relaxed); }
 
-  bool isRocksDB();
-
  protected:
   std::shared_ptr<RocksDBEngineCatalog> _engine;
   std::atomic_bool _started = false;

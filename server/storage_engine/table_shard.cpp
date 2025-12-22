@@ -45,7 +45,6 @@
 #include "database/ticks.h"
 #include "storage_engine/engine_feature.h"
 #include "storage_engine/indexes_snapshot.h"
-#include "storage_engine/storage_engine.h"
 #include "utils/query_cache.h"
 #include "vpack/vpack_helper.h"
 

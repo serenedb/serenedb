@@ -66,9 +66,11 @@
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"
 #include "basics/system-functions.h"
+#include "catalog/catalog.h"
 #include "catalog/database.h"
 #include "catalog/function.h"
 #include "catalog/identifiers/object_id.h"
+#include "catalog/index.h"
 #include "catalog/role.h"
 #include "catalog/schema.h"
 #include "catalog/table.h"
@@ -109,7 +111,6 @@
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 #include "rocksdb_engine_catalog/rocksdb_value.h"
 #include "rocksdb_engine_catalog/rocksdb_wal_access.h"
-#include "storage_engine/storage_engine.h"
 #include "storage_engine/table_shard.h"
 #include "vpack/serializer.h"
 #include "vpack/slice.h"
@@ -400,8 +401,7 @@ RocksDBEngineCatalog::RocksDBEngineCatalog(SerenedServer& server)
 RocksDBEngineCatalog::RocksDBEngineCatalog(
   const RocksDBOptionsProvider& options_provider,
   metrics::MetricsFeature& metrics)
-  : StorageEngine(kEngineName),
-    _options_provider(options_provider),
+  : _options_provider(options_provider),
     _metrics(metrics),
     _wal_access(std::make_unique<RocksDBWalAccess>(*this)),
     _max_transaction_size(transaction::Options::gDefaultMaxTransactionSize),
@@ -1570,7 +1570,7 @@ void RocksDBEngineCatalog::processTreeRebuilds() {
     scheduler->queue(RequestLane::ClientSlow, [this, candidate]() {
       if (!SerenedServer::Instance().isStopping()) {
         try {
-          auto collection = GetTableShard(candidate.second);
+          auto collection = catalog::GetTableShard(candidate.second);
 
           if (collection != nullptr && !collection->deleted()) {
             SDB_INFO("xxxxx", Logger::ENGINES,
@@ -3026,48 +3026,6 @@ void RocksDBEngineCatalog::getStatistics(vpack::Builder& builder) const {
   builder.add("rocksdb.wal-sequence", sequence_number);
 
   builder.close();
-}
-
-Result RocksDBEngineCatalog::createLoggerState(
-  const ReplicationClientsProgressTracker* replication_clients,
-  vpack::Builder& builder) {
-  builder.openObject();  // Base
-  rocksdb::SequenceNumber last_tick = _db->GetLatestSequenceNumber();
-
-  // "state" part
-  builder.add("state", vpack::Value(vpack::ValueType::Object));  // open
-
-  // always hard-coded to true
-  builder.add("running", true);
-
-  builder.add("lastLogTick", std::to_string(last_tick));
-
-  // not used anymore in 3.8:
-  builder.add("lastUncommittedLogTick", std::to_string(last_tick));
-
-  // not used anymore in 3.8:
-  builder.add("totalEvents", last_tick);
-
-  builder.add("time", utilities::TimeString());
-  builder.close();
-
-  // "server" part
-  builder.add("server", vpack::Value(vpack::ValueType::Object));  // open
-  builder.add("version", SERENEDB_VERSION);
-  builder.add("serverId", std::to_string(ServerIdFeature::GetId().id()));
-  builder.close();
-
-  // "clients" part
-  builder.add("clients", vpack::Value(vpack::ValueType::Array));  // open
-#ifdef SDB_CLUSTER
-  if (replication_clients) {
-    replication_clients->toVPack(builder);
-  }
-#endif
-  builder.close();  // clients
-  builder.close();  // base
-
-  return {};
 }
 
 Result RocksDBEngineCatalog::createTickRanges(vpack::Builder& builder) {

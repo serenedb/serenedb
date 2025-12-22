@@ -58,7 +58,6 @@
 #include "rocksdb_engine_catalog/rocksdb_settings_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_value.h"
 #include "storage_engine/engine_feature.h"
-#include "storage_engine/storage_engine.h"
 #include "vpack/vpack_helper.h"
 
 #ifdef SDB_CLUSTER
@@ -78,8 +77,7 @@ RocksDBRecoveryManager::RocksDBRecoveryManager(Server& server)
 }
 
 void RocksDBRecoveryManager::prepare() {
-  if (ServerState::instance()->IsCoordinator() ||
-      !server().getFeature<EngineFeature>().isRocksDB()) {
+  if (ServerState::instance()->IsCoordinator()) {
     disable();
   }
 }

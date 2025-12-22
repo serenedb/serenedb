@@ -185,9 +185,8 @@ void PostgresFeature::prepare() {
 
 void PostgresFeature::start() {
   pg::RegisterSystemViews();
-  auto& selector = server().getFeature<EngineFeature>();
-  if (selector.isRocksDB() && (ServerState::instance()->IsDBServer() ||
-                               ServerState::instance()->IsSingle())) {
+  if (ServerState::instance()->IsDBServer() ||
+      ServerState::instance()->IsSingle()) {
     auto& engine = GetServerEngineAs<RocksDBEngineCatalog>();
     auto* cf =
       RocksDBColumnFamilyManager::get(RocksDBColumnFamilyManager::Family::Data);

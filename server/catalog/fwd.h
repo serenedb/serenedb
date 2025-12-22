@@ -25,6 +25,8 @@ class Function;
 class Table;
 class Role;
 class View;
+class Index;
+class Schema;
 class Database;
 struct FunctionSignature;
 struct CreateTableOptions;

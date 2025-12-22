@@ -67,7 +67,6 @@
 #include "rest_server/serened.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "storage_engine/engine_feature.h"
-#include "storage_engine/storage_engine.h"
 #include "utils/exec_context.h"
 #include "utils/operation_options.h"
 #include "utils/query_cache.h"
@@ -972,9 +971,9 @@ class SnapshotImpl : public Snapshot {
   ObjectSetById<TableShard> _table_shards;
 };
 
-LocalCatalog::LocalCatalog(StorageEngine& engine, bool skip_background_errors)
+LocalCatalog::LocalCatalog(bool skip_background_errors)
   : _snapshot(std::make_shared<SnapshotImpl>()),
-    _engine{&engine},
+    _engine{&GetServerEngine()},
     _skip_background_errors{skip_background_errors} {}
 
 Result LocalCatalog::RegisterRole(std::shared_ptr<Role> role) {

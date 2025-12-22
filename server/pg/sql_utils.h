@@ -86,9 +86,6 @@ using MemoryContextPtr =
 [[nodiscard]] MemoryContextPtr CreateMemoryContext();
 void ResetMemoryContext(MemoryContextData& ctx) noexcept;
 
-using SharedMemoryContextPtr = std::shared_ptr<MemoryContextData>;
-[[nodiscard]] SharedMemoryContextPtr CreateSharedMemoryContext();
-
 struct MemoryContextScopeGuard {
   void operator()(MemoryContextData* p) const noexcept;
 };

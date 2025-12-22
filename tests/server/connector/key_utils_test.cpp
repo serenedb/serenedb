@@ -36,16 +36,20 @@ TEST(KeyUtilsTest, PrepareColumnKey) {
   ObjectId id{1};
   catalog::Column::Id col = 7;
   std::string key = PrepareColumnKey(id, col);
-  ASSERT_EQ(key, std::string_view(
-                   "\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x07", 12));
+  ASSERT_EQ(
+    key,
+    std::string_view(
+      "\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x07", 16));
 }
 
 TEST(KeyUtilsTest, AppendColumnKey) {
   ObjectId id{42};
   std::string key = PrepareTableKey(id);
   AppendColumnKey(key, 5);
-  ASSERT_EQ(key, std::string_view(
-                   "\x00\x00\x00\x00\x00\x00\x00\x2A\x00\x00\x00\x05", 12));
+  ASSERT_EQ(
+    key,
+    std::string_view(
+      "\x00\x00\x00\x00\x00\x00\x00\x2A\x00\x00\x00\x00\x00\x00\x00\x05", 16));
 }
 
 TEST(KeyUtilsTest, CreateTableRange) {
@@ -64,7 +68,8 @@ TEST(KeyUtilsTest, CreateTableRangeMax) {
             std::string_view("\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF", 8));
   ASSERT_EQ(
     range.second,
-    std::string_view("\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF", 12));
+    std::string_view(
+      "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF", 16));
 }
 
 TEST(KeyUtilsTest, CreateTableColumnRange) {
@@ -73,10 +78,12 @@ TEST(KeyUtilsTest, CreateTableColumnRange) {
   auto range = CreateTableColumnRange(id, col);
   ASSERT_EQ(
     range.first,
-    std::string_view("\x00\x00\x00\x00\x00\x00\x00\x0B\x00\x00\x00\x02", 12));
+    std::string_view(
+      "\x00\x00\x00\x00\x00\x00\x00\x0B\x00\x00\x00\x00\x00\x00\x00\x02", 16));
   ASSERT_EQ(
     range.second,
-    std::string_view("\x00\x00\x00\x00\x00\x00\x00\x0B\x00\x00\x00\x03", 12));
+    std::string_view(
+      "\x00\x00\x00\x00\x00\x00\x00\x0B\x00\x00\x00\x00\x00\x00\x00\x03", 16));
 }
 
 TEST(KeyUtilsTest, CreateTableColumnRangeMax) {
@@ -85,10 +92,12 @@ TEST(KeyUtilsTest, CreateTableColumnRangeMax) {
   auto range = CreateTableColumnRange(id, col);
   ASSERT_EQ(
     range.first,
-    std::string_view("\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFE", 12));
+    std::string_view(
+      "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFE", 16));
   ASSERT_EQ(
     range.second,
-    std::string_view("\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF", 12));
+    std::string_view(
+      "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF", 16));
 }
 
 }  // namespace

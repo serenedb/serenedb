@@ -756,29 +756,6 @@ bool Insert(irs::IndexWriter& writer, Indexed ibegin, Indexed iend,
          doc.Insert<irs::Action::STORE>(sbegin, send);
 }
 
-template<typename Doc>
-bool InsertBatch(irs::IndexWriter& writer, std::span<const Doc*> docs) {
-  auto ctx = writer.GetBatch();
-  auto doc = ctx.Insert(false, docs.size());
-
-  for (const auto d : docs) {
-    if (!doc.template Insert<irs::Action::INDEX>(d->indexed.begin(),
-                                                 d->indexed.end())) {
-      return false;
-    };
-    doc.NextDocument();
-  }
-  doc.NextFieldBatch();
-  for (const auto d : docs) {
-    if (!doc.template Insert<irs::Action::STORE>(d->stored.begin(),
-                                                 d->stored.end())) {
-      return false;
-    };
-    doc.NextDocument();
-  }
-  return true;
-}
-
 template<typename Indexed, typename Stored, typename Sorted>
 bool Insert(irs::IndexWriter& writer, Indexed ibegin, Indexed iend,
             Stored sbegin, Stored send, Sorted sorted = nullptr) {
@@ -803,6 +780,70 @@ bool Insert(irs::IndexWriter& writer, const Doc& doc, size_t count = 1,
       return false;
     }
   }
+  return true;
+}
+
+template<typename Doc>
+bool InsertStoreBatch(irs::IndexWriter& writer, std::span<const Doc*> docs) {
+  auto ctx = writer.GetBatch();
+  auto doc = ctx.Insert(false, docs.size());
+
+  for (const auto d : docs) {
+    if (!doc.template Insert<irs::Action::INDEX>(d->indexed.begin(),
+                                                 d->indexed.end())) {
+      return false;
+    };
+    doc.NextDocument();
+  }
+  doc.NextFieldBatch();
+  for (const auto d : docs) {
+    if (!doc.template Insert<irs::Action::STORE>(d->stored.begin(),
+                                                 d->stored.end())) {
+      return false;
+    };
+    doc.NextDocument();
+  }
+  return true;
+}
+
+template<typename DocGenerator, typename ExpectedSegment>
+bool InsertBatch(irs::IndexWriter& writer, DocGenerator& gen,
+                 ExpectedSegment& segment, size_t batch_size) {
+  auto ctx = writer.GetBatch();
+
+  const tests::Document* src = nullptr;
+  do {
+    auto doc = ctx.Insert(false, batch_size);
+    // will need this to truncate not fully written batch as generator can not
+    // say how many docs are left
+    const auto current_last_doc_id = writer.BufferedDocs();
+
+    size_t inserted_docs = 0;
+
+    while (inserted_docs < batch_size && (src = gen.next()) != nullptr) {
+      inserted_docs++;
+      segment.insert(*src);
+      if (src->sorted) {
+        if (!doc.template Insert<irs::Action::StoreSorted>(*src->sorted)) {
+          return false;
+        }
+      }
+      if (!doc.template Insert<irs::Action::INDEX>(src->indexed.begin(),
+                                                   src->indexed.end())) {
+        return false;
+      };
+      if (!doc.template Insert<irs::Action::STORE>(src->stored.begin(),
+                                                   src->stored.end())) {
+        return false;
+      };
+      doc.NextDocument();
+    }
+    while (inserted_docs < batch_size) {
+      SDB_ASSERT(src == nullptr);
+      // truncate not fully used batch
+      doc.Writer().remove(current_last_doc_id - batch_size + inserted_docs++);
+    }
+  } while (src != nullptr);
   return true;
 }
 

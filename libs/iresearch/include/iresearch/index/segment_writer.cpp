@@ -77,6 +77,10 @@ doc_id_t SegmentWriter::begin(DocContext ctx, doc_id_t batch_size) {
     _docs_mask.set.reserve(count);
   }
 
+#ifdef SDB_DEV
+  _batch_first_doc_id = LastDocId() + 1;
+#endif
+
   _docs_context.insert(_docs_context.end(), _batch_size, ctx);
 
   return LastDocId() - batch_size + 1;

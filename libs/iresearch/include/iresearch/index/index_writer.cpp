@@ -657,20 +657,18 @@ IndexWriter::ActiveSegmentContext& IndexWriter::ActiveSegmentContext::operator=(
 
 IndexWriter::Document::Document(SegmentContext& segment,
                                 SegmentWriter::DocContext doc,
-                                doc_id_t batch_size,
-                                QueryContext* query)
+                                doc_id_t batch_size, QueryContext* query)
   : _writer{*segment.writer}, _query{query} {
   SDB_ASSERT(segment.writer != nullptr);
-  _first_doc_id = _writer.begin(doc, batch_size);  // ensure Reset() will be noexcept
+  _first_doc_id =
+    _writer.begin(doc, batch_size);  // ensure Reset() will be noexcept
   SDB_ASSERT(_first_doc_id != irs::doc_limits::eof());
   _doc_id = _first_doc_id;
   segment.buffered_docs.store(_writer.buffered_docs(),
                               std::memory_order_relaxed);
 }
 
-IndexWriter::Document::~Document() noexcept {
-  Finish();
-}
+IndexWriter::Document::~Document() noexcept { Finish(); }
 
 void IndexWriter::Document::Finish() noexcept {
   try {

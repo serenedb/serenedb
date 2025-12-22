@@ -259,7 +259,8 @@ TEST_F(SegmentWriterTests, memory_store_sorted_field) {
     ASSERT_TRUE(writer->valid());
     ASSERT_EQ(100, writer->buffered_docs());
     for (irs::doc_id_t i = 0; i < 100; ++i) {
-      ASSERT_TRUE(writer->insert<irs::Action::StoreSorted>(field, i + irs::doc_limits::min()));
+      ASSERT_TRUE(writer->insert<irs::Action::StoreSorted>(
+        field, i + irs::doc_limits::min()));
       ASSERT_TRUE(writer->valid());
       writer->commit();
     }
@@ -272,7 +273,6 @@ TEST_F(SegmentWriterTests, memory_store_sorted_field) {
     ASSERT_EQ(0, writer->memory_active());
   }
 }
-
 
 TEST_F(SegmentWriterTests, memory_index_store_sorted_field) {
   struct FieldT {
@@ -289,7 +289,7 @@ TEST_F(SegmentWriterTests, memory_index_store_sorted_field) {
       irs::WriteStr(out, Name());
       return true;
     }
-    
+
     irs::Tokenizer& token_stream;
   };
 
@@ -325,7 +325,8 @@ TEST_F(SegmentWriterTests, memory_index_store_sorted_field) {
       stream.token_count = 10;
       writer->begin(ctx);
       ASSERT_TRUE(writer->valid());
-      ASSERT_TRUE(writer->insert<irs::Action::INDEX | irs::Action::StoreSorted>(field));
+      ASSERT_TRUE(
+        writer->insert<irs::Action::INDEX | irs::Action::StoreSorted>(field));
       ASSERT_TRUE(writer->valid());
       writer->commit();
     }
@@ -362,7 +363,8 @@ TEST_F(SegmentWriterTests, memory_index_store_sorted_field) {
     ASSERT_EQ(100, writer->buffered_docs());
     for (irs::doc_id_t i = 0; i < 100; ++i) {
       stream.token_count = 10;
-      ASSERT_TRUE(writer->insert<irs::Action::INDEX | irs::Action::StoreSorted>(field, i + irs::doc_limits::min()));
+      ASSERT_TRUE(writer->insert<irs::Action::INDEX | irs::Action::StoreSorted>(
+        field, i + irs::doc_limits::min()));
       ASSERT_TRUE(writer->valid());
       writer->commit();
     }
@@ -438,7 +440,8 @@ TEST_F(SegmentWriterTests, memory_store_field_sorted) {
     ASSERT_TRUE(writer->valid());
     ASSERT_EQ(100, writer->buffered_docs());
     for (size_t i = 0; i < 100; ++i) {
-      ASSERT_TRUE(writer->insert<irs::Action::STORE>(field, i + irs::doc_limits::min()));
+      ASSERT_TRUE(
+        writer->insert<irs::Action::STORE>(field, i + irs::doc_limits::min()));
       ASSERT_TRUE(writer->valid());
       writer->commit();
     }
@@ -511,7 +514,8 @@ TEST_F(SegmentWriterTests, memory_store_field_unsorted) {
     ASSERT_TRUE(writer->valid());
 
     for (size_t i = 0; i < 100; ++i) {
-      ASSERT_TRUE(writer->insert<irs::Action::STORE>(field, i + irs::doc_limits::min()));
+      ASSERT_TRUE(
+        writer->insert<irs::Action::STORE>(field, i + irs::doc_limits::min()));
       ASSERT_TRUE(writer->valid());
       writer->commit();
     }
@@ -539,7 +543,7 @@ TEST_F(SegmentWriterTests, memory_index_store_field_unsorted) {
       irs::WriteStr(out, Name());
       return true;
     }
-    
+
     irs::Tokenizer& token_stream;
   };
 
@@ -572,7 +576,8 @@ TEST_F(SegmentWriterTests, memory_index_store_field_unsorted) {
       writer->begin(ctx);
       ASSERT_TRUE(writer->valid());
       stream.token_count = 10;
-      ASSERT_TRUE(writer->insert<irs::Action::INDEX | irs::Action::STORE>(field));
+      ASSERT_TRUE(
+        writer->insert<irs::Action::INDEX | irs::Action::STORE>(field));
       ASSERT_TRUE(writer->valid());
       writer->commit();
     }
@@ -608,7 +613,8 @@ TEST_F(SegmentWriterTests, memory_index_store_field_unsorted) {
 
     for (size_t i = 0; i < 100; ++i) {
       stream.token_count = 10;
-      ASSERT_TRUE(writer->insert<irs::Action::INDEX | irs::Action::STORE>(field, i + irs::doc_limits::min()));
+      ASSERT_TRUE(writer->insert<irs::Action::INDEX | irs::Action::STORE>(
+        field, i + irs::doc_limits::min()));
       ASSERT_TRUE(writer->valid());
       writer->commit();
     }
@@ -687,7 +693,8 @@ TEST_F(SegmentWriterTests, memory_index_field) {
     ASSERT_TRUE(writer->valid());
     ASSERT_EQ(100, writer->buffered_docs());
     for (irs::doc_id_t i = 0; i < 100; ++i) {
-      ASSERT_TRUE(writer->insert<irs::Action::INDEX>(field, i + irs::doc_limits::min()));
+      ASSERT_TRUE(
+        writer->insert<irs::Action::INDEX>(field, i + irs::doc_limits::min()));
       ASSERT_TRUE(writer->valid());
       writer->commit();
     }

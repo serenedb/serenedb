@@ -241,6 +241,17 @@ void IndexTestBase::write_segment(irs::IndexWriter& writer,
   }
 }
 
+void IndexTestBase::write_segment_batched(irs::IndexWriter& writer,
+                                          tests::IndexSegment& segment,
+                                          tests::DocGeneratorBase& gen,
+                                          size_t batch_size) {
+  ASSERT_TRUE(InsertBatch(writer, gen, segment, batch_size));
+
+  if (writer.Comparator()) {
+    segment.sort(*writer.Comparator());
+  }
+}
+
 void IndexTestBase::add_segment(irs::IndexWriter& writer,
                                 tests::DocGeneratorBase& gen) {
   _index.emplace_back(writer.FeatureInfo());
@@ -262,6 +273,16 @@ void IndexTestBase::add_segment(tests::DocGeneratorBase& gen,
                                 const irs::IndexWriterOptions& opts /*= {}*/) {
   auto writer = open_writer(mode, opts);
   add_segment(*writer, gen);
+}
+
+void IndexTestBase::add_segment_batched(
+  tests::DocGeneratorBase& gen, size_t batch_size,
+  irs::OpenMode mode /*= irs::OM_CREATE*/,
+  const irs::IndexWriterOptions& opts /*= {}*/) {
+  auto writer = open_writer(mode, opts);
+  _index.emplace_back(writer->FeatureInfo());
+  write_segment_batched(*writer, _index.back(), gen, batch_size);
+  writer->Commit();
 }
 
 }  // namespace tests
@@ -2626,6 +2647,15 @@ TEST_P(IndexTestCase, europarl_docs) {
     tests::EuroparlDocTemplate doc;
     tests::DelimDocGenerator gen(resource("europarl.subset.txt"), doc);
     add_segment(gen);
+  }
+  assert_index();
+}
+
+TEST_P(IndexTestCase, europarl_docs_batched) {
+  {
+    tests::EuroparlDocTemplate doc;
+    tests::DelimDocGenerator gen(resource("europarl.subset.txt"), doc);
+    add_segment_batched(gen, 100);
   }
   assert_index();
 }

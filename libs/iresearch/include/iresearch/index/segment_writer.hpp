@@ -106,6 +106,9 @@ class SegmentWriter final : public ColumnProvider, util::Noncopyable {
       return false;
     }
     SDB_ASSERT(doc <= LastDocId());
+#ifdef SDB_DEV
+    SDB_ASSERT(doc >= _batch_first_doc_id);
+#endif
     if constexpr (Action::INDEX == A) {
       return index(std::forward<Field>(field), doc);
     } else if constexpr (Action::STORE == A) {
@@ -145,7 +148,8 @@ class SegmentWriter final : public ColumnProvider, util::Noncopyable {
   void rollback() noexcept {
     // mark as removed since not fully inserted
     for (doc_id_t idx = 0; idx < _batch_size; ++idx) {
-      // TODO(Dronplane): make remove also batch aware? But it is only for rollback so maybe ok as is
+      // TODO(Dronplane): make remove also batch aware? But it is only for
+      // rollback so maybe ok as is
       remove(LastDocId() - idx);
     }
     _valid = false;
@@ -354,6 +358,9 @@ class SegmentWriter final : public ColumnProvider, util::Noncopyable {
   const ColumnInfoProvider* _column_info;
   ColumnstoreWriter::ptr _col_writer;
   doc_id_t _batch_size = 0;
+#ifdef SDB_DEV
+  doc_id_t _batch_first_doc_id = doc_limits::eof();
+#endif
   bool _initialized = false;
   bool _valid = true;
 };

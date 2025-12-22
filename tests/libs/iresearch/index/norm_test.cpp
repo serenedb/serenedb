@@ -536,8 +536,8 @@ TEST_P(NormTestCase, CheckNormsBatched) {
         }
       }
     });
-  
-  std::vector<const tests::Document*> docs {
+
+  std::vector<const tests::Document*> docs{
     gen.next(),  // name == 'A'
     gen.next(),  // name == 'B'
     gen.next(),  // name == 'C'
@@ -554,7 +554,8 @@ TEST_P(NormTestCase, CheckNormsBatched) {
   // Create actual index
   auto writer = open_writer(irs::kOmCreate, opts);
   ASSERT_NE(nullptr, writer);
-  ASSERT_TRUE(InsertBatch(*writer, std::span<const tests::Document*>{docs}));
+  ASSERT_TRUE(
+    InsertStoreBatch(*writer, std::span<const tests::Document*>{docs}));
   writer->Commit();
   AssertSnapshotEquality(*writer);
 

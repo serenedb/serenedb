@@ -295,24 +295,22 @@ class IndexWriter : private util::Noncopyable {
   // separate instance.
   class Document : private util::Noncopyable {
    public:
-    Document(SegmentContext& segment, SegmentWriter::DocContext doc, doc_id_t batch_size = 1,
-             QueryContext* query = nullptr);
+    Document(SegmentContext& segment, SegmentWriter::DocContext doc,
+             doc_id_t batch_size = 1, QueryContext* query = nullptr);
 
     Document(Document&&) = default;
     Document& operator=(Document&&) = delete;
 
     ~Document() noexcept;
 
-    // Start completely new field batch and start filling it from first document in batch
-    void NextFieldBatch() noexcept {
-      Finish();
-      _doc_id = _first_doc_id;
-    }
+    // Start completely new field batch and start filling it from first document
+    // in the insert batch
+    void NextFieldBatch() noexcept { _doc_id = _first_doc_id; }
 
     // End of field batch for current document, move to next document in batch
     void NextDocument() noexcept {
       Finish();
-     _writer.ResetNorms();
+      _writer.ResetNorms();
       ++_doc_id;
     }
 
@@ -356,6 +354,9 @@ class IndexWriter : private util::Noncopyable {
 
       return _writer.valid();
     }
+#ifdef IRESEARCH_TEST
+    SegmentWriter& Writer() noexcept { return _writer; }
+#endif
 
    private:
     void Finish() noexcept;
@@ -390,7 +391,8 @@ class IndexWriter : private util::Noncopyable {
     // Transaction should be valid
     Document Insert(bool disable_flush = false, doc_id_t batch_size = 1) {
       UpdateSegment(disable_flush);
-      return {*_active.Segment(), SegmentWriter::DocContext{_queries}, batch_size};
+      return {*_active.Segment(), SegmentWriter::DocContext{_queries},
+              batch_size};
     }
 
     // Marks all documents matching the filter for removal.
@@ -428,7 +430,7 @@ class IndexWriter : private util::Noncopyable {
       segment.has_replace = true;
       return {segment,
               SegmentWriter::DocContext{++_queries, segment.queries.size() - 1},
-              1, // Replace is only for single document
+              1,  // Replace is only for single document
               &query};
     }
 

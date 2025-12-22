@@ -147,10 +147,11 @@ class SegmentWriter final : public ColumnProvider, util::Noncopyable {
   // implicitly noexcept since we reserve memory in 'begin'
   void rollback() noexcept {
     // mark as removed since not fully inserted
-    for (doc_id_t idx = 0; idx < _batch_size; ++idx) {
+    const auto batch_last_doc_id = LastDocId();
+    for (auto id = _batch_first_doc_id; id <= batch_last_doc_id; ++id) {
       // TODO(Dronplane): make remove also batch aware? But it is only for
       // rollback so maybe ok as is
-      remove(LastDocId() - idx);
+      remove(id);
     }
     _valid = false;
   }
@@ -169,6 +170,11 @@ class SegmentWriter final : public ColumnProvider, util::Noncopyable {
   doc_id_t LastDocId() const noexcept {
     SDB_ASSERT(buffered_docs() <= doc_limits::eof());
     return doc_limits::min() + static_cast<doc_id_t>(buffered_docs()) - 1;
+  }
+
+  doc_id_t FirstBatchDocId() const noexcept {
+    SDB_ASSERT(doc_limits::valid(_batch_first_doc_id));
+    return _batch_first_doc_id;
   }
 
   SegmentWriter(ConstructToken, Directory& dir,
@@ -357,10 +363,7 @@ class SegmentWriter final : public ColumnProvider, util::Noncopyable {
   FieldWriter::ptr _field_writer;
   const ColumnInfoProvider* _column_info;
   ColumnstoreWriter::ptr _col_writer;
-  doc_id_t _batch_size = 0;
-#ifdef SDB_DEV
   doc_id_t _batch_first_doc_id = doc_limits::eof();
-#endif
   bool _initialized = false;
   bool _valid = true;
 };

@@ -305,7 +305,7 @@ class IndexWriter : private util::Noncopyable {
 
     // Start completely new field batch and start filling it from first document
     // in the insert batch
-    void NextFieldBatch() noexcept { _doc_id = _first_doc_id; }
+    void NextFieldBatch() noexcept { _doc_id = _writer.FirstBatchDocId(); }
 
     // End of field batch for current document, move to next document in batch
     void NextDocument() noexcept {
@@ -363,7 +363,6 @@ class IndexWriter : private util::Noncopyable {
 
     SegmentWriter& _writer;
     QueryContext* _query;
-    doc_id_t _first_doc_id{irs::doc_limits::eof()};
     doc_id_t _doc_id{irs::doc_limits::eof()};
   };
   static_assert(std::is_nothrow_move_constructible_v<Document>);

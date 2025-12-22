@@ -141,12 +141,12 @@ class RocksDBOptionFeature final : public SerenedFeature,
   bool _optimize_filters_for_hits;
   bool _use_direct_reads;
   bool _use_direct_io_for_flush_and_compaction;
-  bool _use_f_sync;
+  bool _use_fsync;
   bool _skip_corrupted;
   bool _dynamic_level_bytes;
   bool _enable_statistics;
   bool _limit_open_files_at_startup;
-  bool _allow_f_allocate;
+  bool _allow_fallocate;
   bool _enable_blob_garbage_collection;
   bool _min_write_buffer_number_to_merge_touched;
   bool _partition_files_for_documents_cf;

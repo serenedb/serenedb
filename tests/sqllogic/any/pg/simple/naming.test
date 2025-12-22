@@ -1111,6 +1111,7 @@ FROM
     (3, 24, 'androed'), (-2, 2, 'myasnig')
 ) AS lol(iq, kostya, vedernikoff)
 GROUP BY 1
+ORDER BY iq
 ----
 iq
 -2

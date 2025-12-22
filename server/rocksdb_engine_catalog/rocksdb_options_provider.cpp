@@ -23,6 +23,7 @@
 
 #include <rocksdb/slice_transform.h>
 
+#include "catalog/table_options.h"
 #include "rocksdb_engine_catalog/rocksdb_prefix_extractor.h"
 
 namespace sdb {
@@ -76,7 +77,12 @@ rocksdb::ColumnFamilyOptions RocksDBOptionsProvider::getColumnFamilyOptions(
   // EdgeIndex                   => Lookup
   switch (family) {
     case sdb::RocksDBColumnFamilyManager::Family::Data: {
-      // TODO(Dronplane): prefix extractor for better reads etc.
+      result.prefix_extractor.reset(rocksdb::NewFixedPrefixTransform(
+        RocksDBKey::objectIdSize() + sizeof(catalog::Column::Id)));
+
+      auto table_options = getTableOptions();
+      result.table_factory.reset(
+        rocksdb::NewBlockBasedTableFactory(table_options));
     } break;
     case RocksDBColumnFamilyManager::Family::Definitions:
     case RocksDBColumnFamilyManager::Family::Invalid:

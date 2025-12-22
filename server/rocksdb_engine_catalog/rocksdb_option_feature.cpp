@@ -48,6 +48,7 @@
 #include "basics/physical_memory.h"
 #include "basics/process-utils.h"
 #include "basics/system-functions.h"
+#include "catalog/table_options.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 
 #ifdef SDB_CLUSTER
@@ -1724,7 +1725,8 @@ rocksdb::ColumnFamilyOptions RocksDBOptionFeature::getColumnFamilyOptions(
   RocksDBColumnFamilyManager::Family family) const {
   auto result = RocksDBOptionsProvider::getColumnFamilyOptions(family);
 
-  if (family == RocksDBColumnFamilyManager::Family::Documents) {
+  if (family == RocksDBColumnFamilyManager::Family::Documents ||
+      family == RocksDBColumnFamilyManager::Family::Data) {
     result.enable_blob_files = _enable_blob_files;
     result.min_blob_size = _min_blob_size;
     result.blob_file_size = _blob_file_size;
@@ -1745,8 +1747,14 @@ rocksdb::ColumnFamilyOptions RocksDBOptionFeature::getColumnFamilyOptions(
     }
     if (_partition_files_for_documents_cf) {
       // partition .sst files by object id prefix
-      result.sst_partitioner_factory =
-        rocksdb::NewSstPartitionerFixedPrefixFactory(sizeof(uint64_t));
+      if (family == RocksDBColumnFamilyManager::Family::Data) {
+        result.sst_partitioner_factory =
+          rocksdb::NewSstPartitionerFixedPrefixFactory(
+            RocksDBKey::objectIdSize() + sizeof(catalog::Column::Id));
+      } else {
+        result.sst_partitioner_factory =
+          rocksdb::NewSstPartitionerFixedPrefixFactory(sizeof(uint64_t));
+      }
     }
   } else if (family == RocksDBColumnFamilyManager::Family::PrimaryIndex) {
     // partition .sst files by object id prefix

@@ -83,21 +83,14 @@ class AstVisitor {
 
     switch (nodeTag(node)) {
       case T_SelectStmt:
-        TraverseSelectStmt(castNode(SelectStmt, node));
-        break;
-
       case T_InsertStmt:
-        TraverseInsertStmt(castNode(InsertStmt, node));
-        break;
-
       case T_UpdateStmt:
-        TraverseUpdateStmt(castNode(UpdateStmt, node));
-        break;
-
       case T_DeleteStmt:
-        TraverseDeleteStmt(castNode(DeleteStmt, node));
+      case T_RangeSubselect:
+      case T_CommonTableExpr:
+        // We do not traverse the statements here
+        // because subqueries processed differently
         break;
-
       case T_FuncCall:
         TraverseFuncCall(castNode(FuncCall, node));
         break;
@@ -150,16 +143,8 @@ class AstVisitor {
         TraverseJoinExpr(castNode(JoinExpr, node));
         break;
 
-      case T_RangeSubselect:
-        TraverseRangeSubselect(castNode(RangeSubselect, node));
-        break;
-
       case T_RangeFunction:
         TraverseRangeFunction(castNode(RangeFunction, node));
-        break;
-
-      case T_CommonTableExpr:
-        TraverseCommonTableExpr(castNode(CommonTableExpr, node));
         break;
 
       case T_WithClause:
@@ -341,7 +326,8 @@ class AstVisitor {
 
     TraverseNode(sublink->testexpr);
     TraverseList(sublink->operName);
-    TraverseNode(sublink->subselect);
+    // We do not traverse the subselect here
+    // because subqueries processed differently
   }
 
   void TraverseTypeCast(const TypeCast* type_cast) {
@@ -395,28 +381,12 @@ class AstVisitor {
     TraverseList(join_expr->usingClause);
   }
 
-  void TraverseRangeSubselect(const RangeSubselect* range_subselect) {
-    if (!range_subselect) {
-      return;
-    }
-
-    TraverseNode(range_subselect->subquery);
-  }
-
   void TraverseRangeFunction(const RangeFunction* range_function) {
     if (!range_function) {
       return;
     }
 
     TraverseList(range_function->functions);
-  }
-
-  void TraverseCommonTableExpr(const CommonTableExpr* cte) {
-    if (!cte) {
-      return;
-    }
-
-    TraverseNode(cte->ctequery);
   }
 
   void TraverseWithClause(const WithClause* with_clause) {

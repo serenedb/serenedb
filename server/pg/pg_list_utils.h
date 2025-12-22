@@ -24,6 +24,7 @@
 #include <tuple>
 
 #include "basics/assert.h"
+#include "basics/errors.h"
 #include "pg/sql_utils.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
@@ -985,7 +986,7 @@ void VisitNodes(const List* list, Visitor&& visitor) {
     const void* p = lfirst(lc);
     SDB_ASSERT(p);
     if constexpr (!std::is_same_v<Type, Node>) {
-      SDB_ASSERT(nodeTag(p) == GetNodeTag<Type>());
+      SDB_ENSURE(nodeTag(p) == GetNodeTag<Type>(), ERROR_INTERNAL);
     }
     visitor(*(ConstType*)(p));
   }

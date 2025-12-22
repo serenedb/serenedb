@@ -43,7 +43,7 @@
 #include "basics/write_locker.h"
 #include "catalog/table.h"
 #include "database/ticks.h"
-#include "storage_engine/engine_selector_feature.h"
+#include "storage_engine/engine_feature.h"
 #include "storage_engine/indexes_snapshot.h"
 #include "storage_engine/storage_engine.h"
 #include "utils/query_cache.h"

@@ -51,7 +51,7 @@
 #include "rest_server/endpoint_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "storage_engine/engine_selector_feature.h"
+#include "storage_engine/engine_feature.h"
 
 namespace sdb::pg {
 
@@ -185,7 +185,7 @@ void PostgresFeature::prepare() {
 
 void PostgresFeature::start() {
   pg::RegisterSystemViews();
-  auto& selector = server().getFeature<EngineSelectorFeature>();
+  auto& selector = server().getFeature<EngineFeature>();
   if (selector.isRocksDB() && (ServerState::instance()->IsDBServer() ||
                                ServerState::instance()->IsSingle())) {
     auto& engine = GetServerEngineAs<RocksDBEngineCatalog>();

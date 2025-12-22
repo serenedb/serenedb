@@ -134,12 +134,12 @@ struct TableTombstone {
   std::vector<IndexTombstone> indexes;
 };
 
-class StorageEngine : public SerenedFeature {
+class StorageEngine {
  public:
   using WriteProperties = absl::FunctionRef<vpack::Slice(bool internal)>;
 
-  StorageEngine(Server& server, std::string_view engine,
-                std::string_view feature);
+  StorageEngine(std::string_view engine);
+  virtual ~StorageEngine() = default;
 
   virtual HealthData healthCheck() { return {}; }
 

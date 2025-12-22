@@ -29,6 +29,7 @@
 #include "metrics/gauge_builder.h"
 #include "metrics/metrics_feature.h"
 #include "rest_server/flush_feature.h"
+#include "rest_server/serened_single.h"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_settings_manager.h"
@@ -47,11 +48,11 @@ DECLARE_GAUGE(rocksdb_wal_released_tick_replication, uint64_t,
 
 RocksDBBackgroundThread::RocksDBBackgroundThread(RocksDBEngineCatalog& engine,
                                                  double interval)
-  : Thread(engine.server(), "RocksDBThread"),
+  : Thread(SerenedServer::Instance(), "RocksDBThread"),
     _engine(engine),
     _interval(interval),
     _metrics_wal_released_tick_replication(
-      engine.server().getFeature<metrics::MetricsFeature>().add(
+      SerenedServer::Instance().getFeature<metrics::MetricsFeature>().add(
         rocksdb_wal_released_tick_replication{})) {}
 
 RocksDBBackgroundThread::~RocksDBBackgroundThread() { shutdown(); }
@@ -65,7 +66,7 @@ void RocksDBBackgroundThread::beginShutdown() {
 }
 
 void RocksDBBackgroundThread::run() {
-  FlushFeature& flush_feature = _engine.server().getFeature<FlushFeature>();
+  auto& flush_feature = SerenedServer::Instance().getFeature<FlushFeature>();
 
   const double start_time = utilities::GetMicrotime();
   uint64_t runs_until_sync_forced = 1;

@@ -47,7 +47,7 @@
 #include "rest/http_response.h"
 #include "rest_server/endpoint_feature.h"
 #include "rest_server/upgrade_feature.h"
-#include "storage_engine/engine_selector_feature.h"
+#include "storage_engine/engine_feature.h"
 #include "storage_engine/storage_engine.h"
 
 #ifdef SDB_CLUSTER
@@ -668,7 +668,7 @@ void GeneralServerFeature::defineRemainingHandlers(
   f.addPrefixHandler("/", RestHandlerCreator<RestNotImplHandler>::createNoData);
 
   // engine specific handlers
-  StorageEngine& engine = server().getFeature<EngineSelectorFeature>().engine();
+  StorageEngine& engine = server().getFeature<EngineFeature>().engine();
   engine.addRestHandlers(f);
 #endif
 }

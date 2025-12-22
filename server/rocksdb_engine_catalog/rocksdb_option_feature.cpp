@@ -1334,19 +1334,6 @@ void RocksDBOptionFeature::validateOptions(
 }
 
 void RocksDBOptionFeature::prepare() {
-  if (_enable_blob_files) {
-    SDB_WARN(
-      "xxxxx", Logger::ENGINES,
-      "using blob files is experimental and not supported for production "
-      "usage");
-  }
-
-  if (_compaction_style != ::kCompactionStyleLevel) {
-    SDB_WARN("xxxxx", Logger::ENGINES, "using compaction style '",
-             _compaction_style,
-             "' is experimental and not supported for production usage");
-  }
-
   if (_enforce_block_cache_size_limit && _block_cache_size > 0) {
     uint64_t shard_size =
       _block_cache_size / (uint64_t(1) << _block_cache_shard_bits);

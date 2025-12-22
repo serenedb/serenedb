@@ -31,7 +31,7 @@
 #include "basics/errors.h"
 #include "catalog/catalog.h"
 #include "general_server/state.h"
-#include "storage_engine/engine_selector_feature.h"
+#include "storage_engine/engine_feature.h"
 #include "vpack/vpack_helper.h"
 
 #ifdef SDB_CLUSTER
@@ -61,15 +61,8 @@ struct InvalidIndexFactory final : public IndexFactory {
 
 }  // namespace
 
-StorageEngine::StorageEngine(Server& server, std::string_view engine_name,
-                             std::string_view feature_name)
-  : SerenedFeature{server, feature_name}, _type_name(engine_name) {
-  // each specific storage engine feature is optional. the storage engine
-  // selection feature will make sure that exactly one engine is selected at
-  // startup
-  setOptional(true);
-  // storage engines must not use elevated privileges for files etc
-}
+StorageEngine::StorageEngine(std::string_view engine_name)
+  : _type_name(engine_name) {}
 
 const IndexFactory& StorageEngine::index_factory(
   std::string_view type) const noexcept {

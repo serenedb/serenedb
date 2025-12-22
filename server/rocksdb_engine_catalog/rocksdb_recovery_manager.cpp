@@ -57,7 +57,7 @@
 #include "rocksdb_engine_catalog/rocksdb_recovery_helper.h"
 #include "rocksdb_engine_catalog/rocksdb_settings_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_value.h"
-#include "storage_engine/engine_selector_feature.h"
+#include "storage_engine/engine_feature.h"
 #include "storage_engine/storage_engine.h"
 #include "vpack/vpack_helper.h"
 
@@ -79,7 +79,7 @@ RocksDBRecoveryManager::RocksDBRecoveryManager(Server& server)
 
 void RocksDBRecoveryManager::prepare() {
   if (ServerState::instance()->IsCoordinator() ||
-      !server().getFeature<EngineSelectorFeature>().isRocksDB()) {
+      !server().getFeature<EngineFeature>().isRocksDB()) {
     disable();
   }
 }
@@ -705,8 +705,7 @@ Result RocksDBRecoveryManager::parseRocksWAL() {
 
 void RocksDBRecoveryManager::recoveryDone() {
   SDB_ASSERT(!ServerState::instance()->IsCoordinator());
-  SDB_ASSERT(
-    !server().getFeature<EngineSelectorFeature>().engine().inRecovery());
+  SDB_ASSERT(!server().getFeature<EngineFeature>().engine().inRecovery());
 
   // '_pending_recovery_callbacks' will not change because
   // !StorageEngine.inRecovery()
@@ -745,7 +744,7 @@ void RocksDBRecoveryManager::recoveryDone() {
 
 Result RocksDBRecoveryManager::registerPostRecoveryCallback(
   std::function<Result()>&& callback) {
-  if (!server().getFeature<EngineSelectorFeature>().engine().inRecovery()) {
+  if (!server().getFeature<EngineFeature>().engine().inRecovery()) {
     return callback();  // if no engine then can't be in recovery
   }
 

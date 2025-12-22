@@ -33,8 +33,8 @@
 #include "basics/logger/logger.h"
 #include "general_server/state.h"
 #include "rest/version.h"
-#include "storage_engine/engine_selector_feature.h"
-#include "storage_engine/storage_engine.h"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#include "storage_engine/engine_feature.h"
 #include "vpack/vpack_helper.h"
 
 namespace sdb::methods {
@@ -92,8 +92,7 @@ VersionResult Version::check(ObjectId database) {
                          server_version, tasks};
   }
 
-  auto& engine =
-    SerenedServer::Instance().getFeature<EngineSelectorFeature>().engine();
+  auto& engine = SerenedServer::Instance().getFeature<EngineFeature>().engine();
   std::string version_file = engine.versionFilename(database);
   if (!basics::file_utils::Exists(version_file)) {
     SDB_DEBUG("xxxxx", Logger::STARTUP, "VERSION file '", version_file,
@@ -165,8 +164,7 @@ VersionResult Version::check(ObjectId database) {
 
 Result Version::write(ObjectId database,
                       const std::map<std::string, bool>& tasks, bool sync) {
-  auto& engine =
-    SerenedServer::Instance().getFeature<EngineSelectorFeature>().engine();
+  auto& engine = SerenedServer::Instance().getFeature<EngineFeature>().engine();
   std::string version_file = engine.versionFilename(database);
   if (version_file.empty()) {
     // cluster engine

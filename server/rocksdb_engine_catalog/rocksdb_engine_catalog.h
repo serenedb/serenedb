@@ -154,19 +154,19 @@ class RocksDBEngineCatalog : public StorageEngine {
 
   static constexpr std::string_view name() noexcept { return "RocksDBEngine"; }
 
-  RocksDBEngineCatalog(SerenedServer& server,
-                       const RocksDBOptionsProvider& options_provider,
+  RocksDBEngineCatalog(SerenedServer& server);
+  RocksDBEngineCatalog(const RocksDBOptionsProvider& options_provider,
                        metrics::MetricsFeature& metrics);
   ~RocksDBEngineCatalog();
 
-  void collectOptions(std::shared_ptr<options::ProgramOptions>) override;
-  void validateOptions(std::shared_ptr<options::ProgramOptions>) override;
+  void collectOptions(std::shared_ptr<options::ProgramOptions>);
+  void validateOptions(std::shared_ptr<options::ProgramOptions>);
 
-  void prepare() override;
-  void start() final;
-  void beginShutdown() final;
-  void stop() final;
-  void unprepare() final;
+  void prepare();
+  void start();
+  void beginShutdown();
+  void stop();
+  void unprepare();
 
   void flushOpenFilesIfRequired();
   HealthData healthCheck() final;

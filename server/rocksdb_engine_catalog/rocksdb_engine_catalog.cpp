@@ -88,6 +88,7 @@
 #include "rest/version.h"
 #include "rest_server/database_path_feature.h"
 #include "rest_server/flush_feature.h"
+#include "rest_server/serened_single.h"
 #include "rest_server/server_id_feature.h"
 #include "rocksdb_engine_catalog/listeners/rocksdb_background_error_listener.h"
 #include "rocksdb_engine_catalog/listeners/rocksdb_metrics_listener.h"
@@ -392,10 +393,14 @@ vpack::Slice GetObjectProperties(vpack::Builder& builder, const T& object,
   return builder.slice();
 }
 
+RocksDBEngineCatalog::RocksDBEngineCatalog(SerenedServer& server)
+  : RocksDBEngineCatalog(server.getFeature<RocksDBOptionFeature>(),
+                         server.getFeature<metrics::MetricsFeature>()) {}
+
 RocksDBEngineCatalog::RocksDBEngineCatalog(
-  Server& server, const RocksDBOptionsProvider& options_provider,
+  const RocksDBOptionsProvider& options_provider,
   metrics::MetricsFeature& metrics)
-  : StorageEngine(server, kEngineName, name()),
+  : StorageEngine(kEngineName),
     _options_provider(options_provider),
     _metrics(metrics),
     _wal_access(std::make_unique<RocksDBWalAccess>(*this)),
@@ -761,7 +766,8 @@ void RocksDBEngineCatalog::validateOptions(
 // the storage engine must not start any threads here or write any files
 void RocksDBEngineCatalog::prepare() {
   // get base path from DatabaseServerFeature
-  auto& database_path_feature = server().getFeature<DatabasePathFeature>();
+  auto& database_path_feature =
+    SerenedServer::Instance().getFeature<DatabasePathFeature>();
   _base_path = database_path_feature.directory();
   SDB_ASSERT(!_base_path.empty());
 }
@@ -812,11 +818,11 @@ rocksdb::Options RocksDBEngineCatalog::makeOptions(bool is_new_dir) {
 
 void RocksDBEngineCatalog::start() {
   // it is already decided that rocksdb is used
-  SDB_ASSERT(isEnabled());
   SDB_ASSERT(!ServerState::instance()->IsCoordinator());
+  auto& server = SerenedServer::Instance();
 
   if (ServerState::instance()->IsAgent() &&
-      !server().options()->processingResult().touched(
+      !server.options()->processingResult().touched(
         "rocksdb.wal-file-timeout-initial")) {
     // reduce --rocksb.wal-file-timeout-initial to 15 seconds for agency nodes
     // as we probably won't need the WAL for WAL tailing and replication here
@@ -828,7 +834,7 @@ void RocksDBEngineCatalog::start() {
             ", supported compression types: ", getCompressionSupport());
 
   // set the database sub-directory for RocksDB
-  auto& database_path_feature = server().getFeature<DatabasePathFeature>();
+  auto& database_path_feature = server.getFeature<DatabasePathFeature>();
   _path =
     database_path_feature.subdirectoryName(StaticStrings::kRocksDbEngineRoot);
 
@@ -903,7 +909,7 @@ void RocksDBEngineCatalog::start() {
   _error_listener = std::make_shared<RocksDBBackgroundErrorListener>();
   _db_options.listeners.push_back(_error_listener);
   _db_options.listeners.push_back(
-    std::make_shared<RocksDBMetricsListener>(server()));
+    std::make_shared<RocksDBMetricsListener>(SerenedServer::Instance()));
 
   // create column families
   std::vector<rocksdb::ColumnFamilyDescriptor> cf_families;
@@ -980,7 +986,7 @@ void RocksDBEngineCatalog::start() {
                ->GetID() == 0);
 
   // will crash the process if version does not match
-  StartupVersionCheck(server(), _db, db_existed);
+  StartupVersionCheck(SerenedServer::Instance(), _db, db_existed);
 
   _db_existed = db_existed;
 
@@ -995,7 +1001,7 @@ void RocksDBEngineCatalog::start() {
                       std::to_string(_options_provider.maxTotalWalSize())}});
 
   {
-    auto& feature = server().getFeature<FlushFeature>();
+    auto& feature = SerenedServer::Instance().getFeature<FlushFeature>();
     _use_released_tick = feature.isEnabled();
   }
 
@@ -1046,8 +1052,6 @@ void RocksDBEngineCatalog::start() {
 }
 
 void RocksDBEngineCatalog::beginShutdown() {
-  SDB_ASSERT(isEnabled());
-
 #ifdef SDB_CLUSTER
   // block the creation of new replication contexts
   if (_replication_manager != nullptr) {
@@ -1066,8 +1070,6 @@ void RocksDBEngineCatalog::beginShutdown() {
 }
 
 void RocksDBEngineCatalog::stop() {
-  SDB_ASSERT(isEnabled());
-
 #ifdef SDB_CLUSTER
   // in case we missed the beginShutdown somehow, call it again
   replicationManager()->beginShutdown();
@@ -1113,7 +1115,6 @@ void RocksDBEngineCatalog::stop() {
 }
 
 void RocksDBEngineCatalog::unprepare() {
-  SDB_ASSERT(isEnabled());
   waitForCompactionJobsToFinish();
   shutdownRocksDBInstance();
 }
@@ -1502,11 +1503,15 @@ Result RocksDBEngineCatalog::MarkDeleted(const catalog::Schema& schema) {
 }
 
 RecoveryState RocksDBEngineCatalog::recoveryState() noexcept {
-  return server().getFeature<RocksDBRecoveryManager>().recoveryState();
+  return SerenedServer::Instance()
+    .getFeature<RocksDBRecoveryManager>()
+    .recoveryState();
 }
 
 Tick RocksDBEngineCatalog::recoveryTick() noexcept {
-  return server().getFeature<RocksDBRecoveryManager>().recoverySequenceNumber();
+  return SerenedServer::Instance()
+    .getFeature<RocksDBRecoveryManager>()
+    .recoverySequenceNumber();
 }
 
 void RocksDBEngineCatalog::scheduleTreeRebuild(ObjectId database,
@@ -1522,10 +1527,12 @@ void RocksDBEngineCatalog::processTreeRebuilds() {
     return;
   }
 
+  auto& server = SerenedServer::Instance();
+
   uint64_t max_parallel_rebuilds = 2;
   uint64_t iterations = 0;
   while (++iterations <= max_parallel_rebuilds) {
-    if (server().isStopping()) {
+    if (server.isStopping()) {
       // don't fire off more tree rebuilds while we are shutting down
       return;
     }
@@ -1555,13 +1562,13 @@ void RocksDBEngineCatalog::processTreeRebuilds() {
       return;
     }
 
-    if (server().isStopping()) {
+    if (SerenedServer::Instance().isStopping()) {
       return;
     }
 
     // TODO(mbkkt) make it coroutine with return type yaclib::Task
     scheduler->queue(RequestLane::ClientSlow, [this, candidate]() {
-      if (!server().isStopping()) {
+      if (!SerenedServer::Instance().isStopping()) {
         try {
           auto collection = GetTableShard(candidate.second);
 
@@ -1644,10 +1651,11 @@ void RocksDBEngineCatalog::processCompactions() {
     return;
   }
 
+  auto& server = SerenedServer::Instance();
   uint64_t max_iterations = _max_parallel_compactions;
   uint64_t iterations = 0;
   while (++iterations <= max_iterations) {
-    if (server().isStopping()) {
+    if (server.isStopping()) {
       // don't fire off more compactions while we are shutting down
       return;
     }
@@ -1684,7 +1692,7 @@ void RocksDBEngineCatalog::processCompactions() {
       bounds = std::move(_pending_compactions.front());
       _pending_compactions.pop_front();
 
-      if (server().isStopping()) {
+      if (SerenedServer::Instance().isStopping()) {
         // if we are stopping, it is ok to not process but lose any pending
         // compactions
         return;
@@ -1700,7 +1708,7 @@ void RocksDBEngineCatalog::processCompactions() {
     }
 
     scheduler->queue(RequestLane::ClientSlow, [this, bounds]() {
-      if (server().isStopping()) {
+      if (SerenedServer::Instance().isStopping()) {
         SDB_TRACE("xxxxx", Logger::ENGINES,
                   "aborting pending compaction due to server shutdown");
       } else {
@@ -2255,7 +2263,7 @@ Result RocksDBEngineCatalog::flushWal(bool wait_for_sync,
 
 void RocksDBEngineCatalog::waitForEstimatorSync() {
   // release all unused ticks from flush feature
-  server().getFeature<FlushFeature>().releaseUnusedTicks();
+  SerenedServer::Instance().getFeature<FlushFeature>().releaseUnusedTicks();
 
   // force-flush
   std::ignore = _settings_manager->sync(/*force*/ true);

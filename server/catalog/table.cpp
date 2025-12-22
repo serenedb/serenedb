@@ -49,7 +49,7 @@
 #include "catalog/validators.h"
 #include "general_server/server_options_feature.h"
 #include "general_server/state.h"
-#include "storage_engine/engine_selector_feature.h"
+#include "storage_engine/engine_feature.h"
 #include "vpack/serializer.h"
 
 #ifdef SDB_CLUSTER

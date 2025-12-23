@@ -42,11 +42,11 @@ namespace {
 
 Result ParseColumnExpr(ObjectId database_id, std::string_view query,
                        pg::Objects& objects,
-                       pg::SharedMemoryContextPtr& memory_context,
+                       pg::MemoryContextPtr& memory_context,
                        const Node*& expr) {
   return basics::SafeCall([&] -> Result {
     const QueryString query_string{query};
-    memory_context = pg::CreateSharedMemoryContext();
+    memory_context = pg::CreateMemoryContext();
     expr = pg::ParseSingleExpression(*memory_context, query_string);
     SDB_ASSERT(expr);
     SDB_ASSERT(objects.getObjects().empty());
@@ -75,6 +75,7 @@ Result ColumnExpr::Init(ObjectId database, std::string query) {
   if (!r.ok()) {
     return r;
   }
+  SDB_ASSERT(!query.empty());
   _query = std::move(query);
   return r;
 }

@@ -296,12 +296,23 @@ class IndexWriter : private util::Noncopyable {
   class Document : private util::Noncopyable {
    public:
     Document(SegmentContext& segment, SegmentWriter::DocContext doc,
-             QueryContext* query = nullptr);
+             doc_id_t batch_size = 1, QueryContext* query = nullptr);
 
     Document(Document&&) = default;
     Document& operator=(Document&&) = delete;
 
     ~Document() noexcept;
+
+    // Start completely new field batch and start filling it from first document
+    // in the insert batch
+    void NextFieldBatch() noexcept { _doc_id = _writer.FirstBatchDocId(); }
+
+    // End of field batch for current document, move to next document in batch
+    void NextDocument() noexcept {
+      Finish();
+      _writer.ResetNorms();
+      ++_doc_id;
+    }
 
     // Return current state of the object
     // Note that if the object is in an invalid state all further operations
@@ -315,7 +326,7 @@ class IndexWriter : private util::Noncopyable {
     // Return true, if field was successfully inserted
     template<Action A, typename Field>
     bool Insert(Field&& field) const {
-      return _writer.insert<A>(std::forward<Field>(field));
+      return _writer.insert<A>(std::forward<Field>(field), _doc_id);
     }
 
     // Inserts the specified field (denoted by the pointer) into the
@@ -326,7 +337,7 @@ class IndexWriter : private util::Noncopyable {
     // Return true, if field was successfully inserted
     template<Action A, typename Field>
     bool Insert(Field* field) const {
-      return _writer.insert<A>(*field);
+      return _writer.insert<A>(*field, _doc_id);
     }
 
     // Inserts the specified range of fields, denoted by the [begin;end)
@@ -343,10 +354,16 @@ class IndexWriter : private util::Noncopyable {
 
       return _writer.valid();
     }
+#ifdef IRESEARCH_TEST
+    SegmentWriter& Writer() noexcept { return _writer; }
+#endif
 
    private:
+    void Finish() noexcept;
+
     SegmentWriter& _writer;
     QueryContext* _query;
+    doc_id_t _doc_id{irs::doc_limits::eof()};
   };
   static_assert(std::is_nothrow_move_constructible_v<Document>);
 
@@ -371,9 +388,10 @@ class IndexWriter : private util::Noncopyable {
     //
     // The changes are not visible until commit()
     // Transaction should be valid
-    Document Insert(bool disable_flush = false) {
+    Document Insert(bool disable_flush = false, doc_id_t batch_size = 1) {
       UpdateSegment(disable_flush);
-      return {*_active.Segment(), SegmentWriter::DocContext{_queries}};
+      return {*_active.Segment(), SegmentWriter::DocContext{_queries},
+              batch_size};
     }
 
     // Marks all documents matching the filter for removal.
@@ -411,6 +429,7 @@ class IndexWriter : private util::Noncopyable {
       segment.has_replace = true;
       return {segment,
               SegmentWriter::DocContext{++_queries, segment.queries.size() - 1},
+              1,  // Replace is only for single document
               &query};
     }
 

@@ -810,8 +810,11 @@ class SqlAnalyzer {
                               ExprKind expr_kind);
   lp::ExprPtr ProcessExprNodeImpl(State& state, const Node* expr);
 
-  lp::ExprPtr ProcessOp(std::string_view name, lp::ExprPtr lhs, lp::ExprPtr rhs,
-                        int location);
+  lp::ExprPtr ProcessPrefixUnaryOp(std::string_view name, lp::ExprPtr arg,
+                                   int location);
+
+  lp::ExprPtr ProcessBinaryOp(std::string_view name, lp::ExprPtr lhs,
+                              lp::ExprPtr rhs, int location);
 
   lp::ExprPtr ProcessLikeOp(std::string_view type, lp::ExprPtr input,
                             lp::ExprPtr pattern);
@@ -1241,8 +1244,8 @@ void SqlAnalyzer::MakeTableWrite(
     for (const auto* column : generated_columns) {
       SDB_ASSERT(column);
       SDB_ASSERT(column->IsGenerated());
-      SDB_ASSERT(column->default_value);
-      auto expr = ProcessExprNodeImpl(state, column->default_value.GetExpr());
+      SDB_ASSERT(column->expr);
+      auto expr = ProcessExprNodeImpl(state, column->expr->GetExpr());
       column_names.emplace_back(column->name);
       column_exprs.emplace_back(std::move(expr));
     }
@@ -1364,16 +1367,15 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
   std::vector<const catalog::Column*> generated_columns;
   for (const auto& column : table.Columns()) {
     if (!absl::c_linear_search(column_names, column.name)) {
-      const auto& default_value = column.default_value;
       if (column.IsGenerated()) {
-        SDB_ASSERT(default_value);
+        SDB_ASSERT(column.expr);
         generated_columns.emplace_back(&column);
         continue;
       }
 
       lp::ExprPtr expr;
-      if (default_value) {
-        expr = ProcessExprNodeImpl(state, default_value.GetExpr());
+      if (column.expr) {
+        expr = ProcessExprNodeImpl(state, column.expr->GetExpr());
       } else {
         expr = MakeConst(velox::TypeKind::UNKNOWN, column.type);
       }
@@ -1482,8 +1484,8 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
     SDB_ASSERT(it->second);
     const auto& column = *(it->second);
     if (expr->type() == kDefaultValueTypePlaceHolderPtr) {
-      if (const auto& default_value = column.default_value) {
-        expr = ProcessExprNodeImpl(state, default_value.GetExpr());
+      if (column.expr) {
+        expr = ProcessExprNodeImpl(state, column.expr->GetExpr());
       } else {
         expr = MakeConst(velox::TypeKind::UNKNOWN, column.type);
       }
@@ -2517,7 +2519,7 @@ void SqlAnalyzer::ProcessPipelineSet(State& state, const SelectStmt& stmt) {
         }
       case SETOP_INTERSECT:
         if (stmt.all) {
-          // TODO: implement, I'm also not sure that current intersect isn't all
+          // TODO: implement in Axiom
           SDB_THROW(ERROR_NOT_IMPLEMENTED,
                     "INTERSECT ALL is not implemented yet");
         } else {
@@ -2525,7 +2527,7 @@ void SqlAnalyzer::ProcessPipelineSet(State& state, const SelectStmt& stmt) {
         }
       case SETOP_EXCEPT:
         if (stmt.all) {
-          // TODO: implement, I'm also not sure that current except isn't all
+          // TODO: implement in Axiom
           SDB_THROW(ERROR_NOT_IMPLEMENTED, "EXCEPT ALL is not implemented yet");
         } else {
           return lp::SetOperation::kExcept;
@@ -3460,8 +3462,27 @@ lp::ExprPtr SqlAnalyzer::MaybeTimeOp(std::string_view op, lp::ExprPtr& lhs,
   return nullptr;
 }
 
-lp::ExprPtr SqlAnalyzer::ProcessOp(std::string_view name, lp::ExprPtr lhs,
-                                   lp::ExprPtr rhs, int location) {
+lp::ExprPtr SqlAnalyzer::ProcessPrefixUnaryOp(std::string_view name,
+                                              lp::ExprPtr arg, int location) {
+  if (name == "+") {
+    return arg;
+  }
+  if (name == "-") {
+    return ResolveVeloxFunctionAndInferArgsCommonType("presto_negate",
+                                                      {std::move(arg)});
+  }
+  if (name == "~") {
+    return ResolveVeloxFunctionAndInferArgsCommonType("presto_bitwise_not",
+                                                      {std::move(arg)});
+  }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
+                  CURSOR_POS(ErrorPosition(location)),
+                  ERR_MSG("operator does not exist:",
+                          ToPgOperatorString(name, {std::move(arg)})));
+}
+
+lp::ExprPtr SqlAnalyzer::ProcessBinaryOp(std::string_view name, lp::ExprPtr lhs,
+                                         lp::ExprPtr rhs, int location) {
   if (auto time_op = MaybeTimeOp(name, lhs, rhs)) {
     return time_op;
   }
@@ -3495,7 +3516,7 @@ lp::ExprPtr SqlAnalyzer::MakeComparator(std::string_view op, lp::ExprPtr lhs,
                                         velox::TypePtr rhs_type, int location) {
   auto lambda_param = std::make_shared<lp::InputReferenceExpr>(rhs_type, "x");
   auto compare_body =
-    ProcessOp(op, std::move(lhs), std::move(lambda_param), location);
+    ProcessBinaryOp(op, std::move(lhs), std::move(lambda_param), location);
   auto signature = velox::ROW({"x"}, {std::move(rhs_type)});
   return std::make_shared<lp::LambdaExpr>(std::move(signature),
                                           std::move(compare_body));
@@ -3507,14 +3528,20 @@ lp::ExprPtr SqlAnalyzer::ProcessAExpr(State& state, const A_Expr& expr) {
     case AEXPR_OP: {
       auto lhs = ProcessExprNodeImpl(state, expr.lexpr);
       auto rhs = ProcessExprNodeImpl(state, expr.rexpr);
-      if (!lhs || !rhs) {
+      const int location = ExprLocation(&expr);
+      if (!lhs && !rhs) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
+                        CURSOR_POS(ErrorPosition(location)),
                         ERR_MSG("expression must have both left and right "
                                 "arguments"));
+      } else if (!lhs) {
+        return ProcessPrefixUnaryOp(name, std::move(rhs), location);
+      } else if (!rhs) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        CURSOR_POS(ErrorPosition(location)),
+                        ERR_MSG("expression must have right argument"));
       }
-      return ProcessOp(name, std::move(lhs), std::move(rhs),
-                       ExprLocation(&expr));
+      return ProcessBinaryOp(name, std::move(lhs), std::move(rhs), location);
     }
     case AEXPR_NULLIF: {
       auto lhs = ProcessExprNodeImpl(state, expr.lexpr);

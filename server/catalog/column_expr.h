@@ -45,24 +45,16 @@ class ColumnExpr {
     return _expr;
   }
 
-  bool IsSet() const noexcept { return _query.empty(); }
-
-  operator bool() const { return !IsSet(); }
-
   const pg::Objects& GetObjects() const noexcept { return _objects; }
 
  private:
   Result Init(ObjectId database, std::string query);
 
   std::string _query;
-  pg::SharedMemoryContextPtr _memory_context;
+  pg::MemoryContextPtr _memory_context;
   const Node* _expr{nullptr};
   pg::Objects _objects;
 };
-
-bool VPackWriteHook(auto ctx, auto&&, const ColumnExpr& column_expr) {
-  return !column_expr.IsSet();
-}
 
 void VPackWrite(auto ctx, const ColumnExpr& column_expr) {
   column_expr.ToVPack(ctx.vpack());

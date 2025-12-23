@@ -1318,7 +1318,7 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
   const auto& table_type = *table.RowType();
   size_t table_columns = table_type.size();
   if (!table.PKColumns().empty() &&
-      table.PKColumns().back() == catalog::Column::kFakeId) {
+      table.PKColumns()[0] == catalog::Column::kFakeId) {
     table_columns--;
   }
 

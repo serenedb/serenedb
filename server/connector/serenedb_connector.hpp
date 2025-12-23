@@ -153,7 +153,6 @@ class RocksDBTable final : public axiom::connector::Table {
     catalog::Column::Id col_id = 0;
     for (const auto& [name, type] : std::views::zip(
            collection.RowType()->names(), collection.RowType()->children())) {
-      // TODO fix later
       catalog::Column::Id id{};
       if (name == catalog::Column::kFakeName) {
         id = catalog::Column::kFakeId;
@@ -193,7 +192,6 @@ class RocksDBTable final : public axiom::connector::Table {
   std::vector<velox::connector::ColumnHandlePtr> rowIdHandles(
     axiom::connector::WriteKind kind) const final {
     SDB_ASSERT(_pk_type);
-    // SDB_ASSERT(!_pk_type->children().empty());
     std::vector<velox::connector::ColumnHandlePtr> handles;
     handles.reserve(_pk_type->size());
     for (const auto& name : _pk_type->names()) {

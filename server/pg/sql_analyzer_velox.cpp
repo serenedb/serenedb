@@ -52,6 +52,7 @@
 #include <memory>
 #include <vector>
 
+#include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/down_cast.h"
 #include "basics/utf8_utils.hpp"
@@ -60,6 +61,7 @@
 #include "catalog/sql_function_impl.h"
 #include "catalog/sql_query_view.h"
 #include "catalog/table.h"
+#include "catalog/table_options.h"
 #include "catalog/virtual_table.h"
 #include "pg/pg_ast_visitor.h"
 #include "pg/pg_list_utils.h"
@@ -742,7 +744,7 @@ class SqlAnalyzer {
   State ProcessTable(State* parent, std::string_view schema_name,
                      std::string_view table_name,
                      const Objects::ObjectData& object, const RangeVar* node,
-                     bool from_select = true);
+                     bool show_fake_column = false);
 
   State ProcessSystemTable(State* parent, std::string_view name,
                            catalog::VirtualTableSnapshot& snapshot,
@@ -1437,7 +1439,7 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
   const std::string_view table_name = relation.relname;
 
   auto table_state =
-    ProcessTable(&state, schema_name, table_name, *object, &relation, false);
+    ProcessTable(&state, schema_name, table_name, *object, &relation, true);
   state.root = std::move(table_state.root);
 
   ProcessFilterNode(state, stmt.whereClause, ExprKind::Where);
@@ -1557,7 +1559,7 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
   const std::string_view table_name = relation.relname;
 
   auto table_state =
-    ProcessTable(&state, schema_name, table_name, *object, &relation, false);
+    ProcessTable(&state, schema_name, table_name, *object, &relation, true);
   state.root = std::move(table_state.root);
 
   ProcessFilterNode(state, stmt.whereClause, ExprKind::Where);
@@ -2665,37 +2667,31 @@ SqlAnalyzer::TableAliasAndColumnNames SqlAnalyzer::ProcessTableColumns(
 State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
                                 std::string_view table_name,
                                 const Objects::ObjectData& object,
-                                const RangeVar* node, bool from_select) {
+                                const RangeVar* node, bool show_fake_column) {
   const auto& table = basics::downCast<catalog::Table>(*object.object);
   auto type = table.RowType();
 
   auto [table_alias, column_names] =
     ProcessTableColumns(parent, node, table.RowType());
 
-  // TODO check and build somehow better
-  SDB_PRINT("from select = ", from_select);
+  object.EnsureTable();
 
-  if (from_select) {
-    SDB_PRINT("column names:");
-    for (const auto& name : column_names) {
-      SDB_PRINT("  ", name);
-    }
-    SDB_PRINT("type names:");
-    for (const auto& name : type->names()) {
-      SDB_PRINT("  ", name);
-    }
-    if (!column_names.empty() && type->names().back() == "fake") {
-      SDB_PRINT("FIXING FAKE COLUMN");
-      column_names.pop_back();
+  if (!show_fake_column) {
+    SDB_ASSERT(object.object);
+    auto table = basics::downCast<catalog::Table>(*object.object);
+    if (table.PKColumns()[0] == catalog::Column::kFakeId) {
       std::vector types = type->children();
       std::vector type_names = type->names();
+
+      SDB_ASSERT(type_names.back() == catalog::Column::kFakeName);
+
       types.pop_back();
       type_names.pop_back();
-      type = velox::ROW(type_names, std::move(types));
+      column_names.pop_back();
+
+      type = velox::ROW(std::move(type_names), std::move(types));
     }
   }
-
-  object.EnsureTable();
 
   auto state = parent->MakeChild();
   state.root = std::make_shared<lp::TableScanNode>(

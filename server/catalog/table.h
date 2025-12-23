@@ -23,6 +23,7 @@
 
 #include <velox/type/Type.h>
 
+#include "basics/assert.h"
 #include "basics/fwd.h"
 #include "catalog/identifiers/identifier.h"
 #include "catalog/identifiers/object_id.h"
@@ -58,7 +59,10 @@ class Table : public SchemaObject {
   const auto& PKType() const noexcept { return _pk_type; }
   const auto& RowType() const noexcept { return _row_type; }
   const auto& Columns() const noexcept { return _columns; }
-  const auto& PKColumns() const noexcept { return _pk_columns; }
+  const auto& PKColumns() const noexcept { 
+    SDB_ASSERT(!_pk_columns.empty());
+    return _pk_columns;
+  }
   auto GetTableType() const noexcept { return _type; }
   auto& GetSchema() const noexcept { return _schema; }
   auto& sharding(this auto& self) noexcept { return self._sharding; }

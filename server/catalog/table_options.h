@@ -147,6 +147,7 @@ struct Column {
 
   static constexpr Id kFakeId = std::numeric_limits<Id>::max();
   static constexpr std::string_view kFakeName = "fake";
+  static inline velox::TypePtr kFakeType = velox::BIGINT();
 
   Id id;
   velox::TypePtr type;

@@ -27,7 +27,6 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
 #include "connector/primary_key.hpp"
-#include "rocksdb_engine_catalog/concat.h"
 
 namespace sdb::connector::key_utils {
 
@@ -55,15 +54,11 @@ void MakeColumnKey(const velox::RowVectorPtr& input,
   primary_key::Create(*input, pk_columns, row_idx, key_buffer);
 
   if (pk_columns.empty()) {
-    // TODO assert for insert only
-    // TODO or just revision id?
-    auto r = RevisionId::create().id();
-    SDB_PRINT("MAKE FAKE COLUMN_ID = ", absl::StrCat(r));
+    auto generated_pk = RevisionId::create().id();
     const auto old_size = key_buffer.size();
-    basics::StrResize(key_buffer, old_size + sizeof(r));
-    absl::big_endian::Store64(key_buffer.data() + old_size, r);
+    basics::StrResize(key_buffer, old_size + sizeof(generated_pk));
+    absl::big_endian::Store64(key_buffer.data() + old_size, generated_pk);
     key_buffer[old_size] = static_cast<uint8_t>(key_buffer[old_size]) ^ 0x80;
-    // sdb::rocksutils::Append(key_buffer, r);
   }
 
   row_key_handle(std::string_view{

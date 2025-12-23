@@ -83,12 +83,11 @@ Table::Table(const catalog::Table& other, NewOptions options)
     _replication_factor{options.replication_factor},
     _write_concern{options.write_concern} {}
 
-// Fix here?
 velox::RowTypePtr BuildPkType(const std::vector<Column>& columns,
                               const std::vector<Column::Id>& pk_columns) {
-  if (pk_columns.size() == 1 && pk_columns[0] == Column::kFakeId) {
-    return velox::ROW({std::string("fake")},
-                      {static_cast<velox::TypePtr>(velox::BIGINT())});
+  SDB_ASSERT(!pk_columns.empty());
+  if (pk_columns[0] == Column::kFakeId) {
+    return velox::ROW({std::string{Column::kFakeName}}, {Column::kFakeType});
   }
 
   std::vector<std::string> names;
@@ -110,21 +109,21 @@ velox::RowTypePtr BuildPkType(const std::vector<Column>& columns,
 
 velox::RowTypePtr BuildRowType(const std::vector<Column>& columns,
                                const std::vector<Column::Id>& pk_columns) {
+  SDB_ASSERT(!pk_columns.empty());
+
   std::vector<std::string> names;
   std::vector<velox::TypePtr> types;
-  size_t add = 0;
-  if (pk_columns.size() == 1 && pk_columns[0] == Column::kFakeId) {
-    add = 1;
-  }
-  names.reserve(add + columns.size());
-  types.reserve(add + columns.size());
+  const bool need_fake_column = pk_columns[0] == Column::kFakeId;
+
+  names.reserve(need_fake_column + columns.size());
+  types.reserve(need_fake_column + columns.size());
   for (const auto& col : columns) {
     names.push_back(col.name);
     types.push_back(col.type);
   }
-  if (add == 1) {
-    names.emplace_back("fake");
-    types.emplace_back(velox::BIGINT());
+  if (need_fake_column) {
+    names.emplace_back(Column::kFakeName);
+    types.push_back(Column::kFakeType);
   }
 
   return velox::ROW(std::move(names), std::move(types));

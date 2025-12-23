@@ -50,9 +50,10 @@ void MakeColumnKey(const velox::RowVectorPtr& input,
   basics::StrResize(key_buffer, sizeof(catalog::Column::Id) + sizeof(ObjectId));
   std::memcpy(key_buffer.data() + sizeof(catalog::Column::Id), object_id.data(),
               sizeof(ObjectId));
-  primary_key::Create(*input, pk_columns, row_idx, key_buffer);
 
-  if (pk_columns.empty()) {
+  if (!pk_columns.empty()) {
+    primary_key::Create(*input, pk_columns, row_idx, key_buffer);
+  } else {
     auto generated_pk = RevisionId::create().id();
     const auto old_size = key_buffer.size();
     basics::StrResize(key_buffer, old_size + sizeof(generated_pk));

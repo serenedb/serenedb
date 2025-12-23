@@ -127,7 +127,7 @@ statement ok
 CREATE TABLE no_pk (a INTEGER, b INTEGER, c VARCHAR);
 
 query
-SELECT * FROM no_pk;
+SELECT * FROM no_pk ORDER BY a;
 ----
 a	b	c
 
@@ -141,7 +141,7 @@ INSERT INTO no_pk VALUES (123, 456, NULL);
 
 
 query
-SELECT * FROM no_pk;
+SELECT * FROM no_pk ORDER BY a;
 ----
 a	b	c
 42	100500	aboba
@@ -161,7 +161,7 @@ DELETE FROM no_pk WHERE a = 123;
 
 
 query
-SELECT * FROM no_pk;
+SELECT * FROM no_pk ORDER BY a;
 ----
 a	b	c
 42	100500	aboba
@@ -172,7 +172,7 @@ UPDATE no_pk set b = 300 where a = 42;
 
 
 query
-SELECT * FROM no_pk;
+SELECT * FROM no_pk ORDER BY a;
 ----
 a	b	c
 42	300	aboba
@@ -185,11 +185,11 @@ statement count 3
 INSERT INTO no_pk VALUES (111, 222, 'same'), (111, 222, 'same'), (111, 222, 'same');
 
 query
-SELECT * FROM no_pk;
+SELECT * FROM no_pk ORDER BY a;
 ----
 a	b	c
 42	300	aboba
+111	222	same
+111	222	same
+111	222	same
 123	888	new str
-111	222	same
-111	222	same
-111	222	same

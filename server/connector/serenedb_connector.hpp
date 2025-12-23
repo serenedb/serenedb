@@ -192,6 +192,9 @@ class RocksDBTable final : public axiom::connector::Table {
   std::vector<velox::connector::ColumnHandlePtr> rowIdHandles(
     axiom::connector::WriteKind kind) const final {
     SDB_ASSERT(_pk_type);
+    if (_pk_type->children().empty()) {
+      return {};
+    }
     std::vector<velox::connector::ColumnHandlePtr> handles;
     handles.reserve(_pk_type->size());
     for (const auto& name : _pk_type->names()) {

@@ -744,7 +744,7 @@ class SqlAnalyzer {
   State ProcessTable(State* parent, std::string_view schema_name,
                      std::string_view table_name,
                      const Objects::ObjectData& object, const RangeVar* node,
-                     bool show_fake_column = false);
+                     bool implicit_pk_column = false);
 
   State ProcessSystemTable(State* parent, std::string_view name,
                            catalog::VirtualTableSnapshot& snapshot,
@@ -2668,7 +2668,7 @@ SqlAnalyzer::TableAliasAndColumnNames SqlAnalyzer::ProcessTableColumns(
 State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
                                 std::string_view table_name,
                                 const Objects::ObjectData& object,
-                                const RangeVar* node, bool show_fake_column) {
+                                const RangeVar* node, bool implicit_pk_column) {
   const auto& table = basics::downCast<catalog::Table>(*object.object);
   auto type = table.RowType();
 
@@ -2677,7 +2677,7 @@ State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
 
   object.EnsureTable();
 
-  if (!show_fake_column) {
+  if (!implicit_pk_column) {
     SDB_ASSERT(object.object);
     auto table = basics::downCast<catalog::Table>(*object.object);
     if (table.PKColumns()[0] == catalog::Column::kFakeId) {

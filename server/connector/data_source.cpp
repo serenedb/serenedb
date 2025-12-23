@@ -30,7 +30,7 @@
 namespace sdb::connector {
 
 RocksDBDataSource::RocksDBDataSource(
-  velox::memory::MemoryPool& memory_pool, rocksdb::Snapshot* snapshot,
+  velox::memory::MemoryPool& memory_pool, const rocksdb::Snapshot* snapshot,
   rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
   std::vector<catalog::Column::Id> column_oids, ObjectId object_key)
   : velox::connector::DataSource{},

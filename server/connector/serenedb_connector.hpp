@@ -65,11 +65,15 @@ class SereneDBConnectorTableHandle final
     return _table_count_field;
   }
 
+  const std::shared_ptr<rocksdb::Transaction>& GetTransaction() const noexcept {
+    return _txn;
+  }
+
  private:
   std::string _name;
   ObjectId _table_id;
   catalog::Column::Id _table_count_field;
-  // TODO(Dronplane) transaction/snapshot management here
+  std::shared_ptr<rocksdb::Transaction> _txn = nullptr;
 };
 
 class SereneDBColumn final : public axiom::connector::Column {
@@ -344,7 +348,12 @@ class SereneDBConnectorMetadata final
     auto* transaction = serene_insert_handle->GetTransaction();
     SDB_ASSERT(transaction);
     const int64_t number_of_locked_primary_keys = transaction->GetNumKeys();
-    transaction->Commit();
+    auto& config = basics::downCast<Config>(*session->config());
+    if (!config.GetTxnState().InsideTransaction()) {
+      // Single statement transaction, we can commit here
+      transaction->Commit();
+    }
+
     return number_of_locked_primary_keys;
   }
 
@@ -360,7 +369,9 @@ class SereneDBConnectorMetadata final
         handle->veloxHandle());
     VELOX_CHECK_NOT_NULL(serene_insert_handle,
                          "Wrong type of insert table handle");
-    if (serene_insert_handle->GetTransaction()) {
+    auto& config = basics::downCast<Config>(*session->config());
+    if (serene_insert_handle->GetTransaction() &&
+        !config.GetTxnState().InsideTransaction()) {
       serene_insert_handle->GetTransaction()->Rollback();
     }
     return {};
@@ -413,9 +424,13 @@ class SereneDBConnector final : public velox::connector::Connector {
     } else {
       column_oids.push_back(serene_table_handle.GetCountField());
     }
+    const rocksdb::Snapshot* snapshot = nullptr;
+    if (auto txn = serene_table_handle.GetTransaction()) {
+      snapshot = txn->GetSnapshot();
+    }
     return std::make_unique<RocksDBDataSource>(
       *connector_query_ctx->memoryPool(),
-      nullptr,  // TODO(Dronplane) snapshot management
+      snapshot,  // TODO(Dronplane) snapshot management
       _db, _cf, output_type, column_oids, object_key);
   }
 

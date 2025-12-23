@@ -59,7 +59,7 @@ class Table : public SchemaObject {
   const auto& PKType() const noexcept { return _pk_type; }
   const auto& RowType() const noexcept { return _row_type; }
   const auto& Columns() const noexcept { return _columns; }
-  const auto& PKColumns() const noexcept { 
+  const auto& PKColumns() const noexcept {
     SDB_ASSERT(!_pk_columns.empty());
     return _pk_columns;
   }

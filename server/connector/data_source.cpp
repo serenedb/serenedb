@@ -112,8 +112,10 @@ std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
 
       size_t read_col_idx = col_idx;
       if (column_id == catalog::Column::kFakeId) {
-        // At least 1 column non-fake required
-        SDB_ASSERT(col_idx >= 1 || col_idx + 1 < num_columns);
+        if (col_idx == 0 && col_idx + 1 >= num_columns) {
+          // It's the case of table without columns. There cannot be rows.
+          return {};
+        }
         read_col_idx = (col_idx == 0) ? col_idx + 1 : col_idx - 1;
       }
 

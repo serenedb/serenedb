@@ -104,11 +104,6 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
   _keys_buffers.clear();
   _keys_buffers.reserve(num_rows);
 
-  if (!_skip_primary_key_columns &&
-      _column_ids.back() == catalog::Column::kFakeId) {
-    _key_childs = {};
-  }
-
   for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
     auto& key_buffer = _keys_buffers.emplace_back();
     key_utils::MakeColumnKey(

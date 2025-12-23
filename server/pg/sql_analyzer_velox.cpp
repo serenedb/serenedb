@@ -50,6 +50,7 @@
 #include <expected>
 #include <iresearch/types.hpp>
 #include <memory>
+#include <vector>
 
 #include "basics/containers/flat_hash_map.h"
 #include "basics/down_cast.h"
@@ -740,7 +741,8 @@ class SqlAnalyzer {
                     const SqlQueryView& view, const RangeVar* node);
   State ProcessTable(State* parent, std::string_view schema_name,
                      std::string_view table_name,
-                     const Objects::ObjectData& object, const RangeVar* node);
+                     const Objects::ObjectData& object, const RangeVar* node,
+                     bool from_select = true);
 
   State ProcessSystemTable(State* parent, std::string_view name,
                            catalog::VirtualTableSnapshot& snapshot,
@@ -1310,7 +1312,8 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
   const auto& table = basics::downCast<catalog::Table>(logical_object);
   const auto& table_type = *table.RowType();
   size_t table_columns = table_type.size();
-  if (!table.PKColumns().empty() && table.PKColumns().back() == catalog::Column::kFakeId) {
+  if (!table.PKColumns().empty() &&
+      table.PKColumns().back() == catalog::Column::kFakeId) {
     table_columns--;
   }
 
@@ -1434,7 +1437,7 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
   const std::string_view table_name = relation.relname;
 
   auto table_state =
-    ProcessTable(&state, schema_name, table_name, *object, &relation);
+    ProcessTable(&state, schema_name, table_name, *object, &relation, false);
   state.root = std::move(table_state.root);
 
   ProcessFilterNode(state, stmt.whereClause, ExprKind::Where);
@@ -1554,7 +1557,7 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
   const std::string_view table_name = relation.relname;
 
   auto table_state =
-    ProcessTable(&state, schema_name, table_name, *object, &relation);
+    ProcessTable(&state, schema_name, table_name, *object, &relation, false);
   state.root = std::move(table_state.root);
 
   ProcessFilterNode(state, stmt.whereClause, ExprKind::Where);
@@ -2658,22 +2661,47 @@ SqlAnalyzer::TableAliasAndColumnNames SqlAnalyzer::ProcessTableColumns(
   return {table_alias, std::move(column_names)};
 }
 
+// TODO add bool?
 State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
                                 std::string_view table_name,
                                 const Objects::ObjectData& object,
-                                const RangeVar* node) {
+                                const RangeVar* node, bool from_select) {
   const auto& table = basics::downCast<catalog::Table>(*object.object);
-  const auto& type = *table.RowType();
+  auto type = table.RowType();
+
   auto [table_alias, column_names] =
     ProcessTableColumns(parent, node, table.RowType());
+
+  // TODO check and build somehow better
+  SDB_PRINT("from select = ", from_select);
+
+  if (from_select) {
+    SDB_PRINT("column names:");
+    for (const auto& name : column_names) {
+      SDB_PRINT("  ", name);
+    }
+    SDB_PRINT("type names:");
+    for (const auto& name : type->names()) {
+      SDB_PRINT("  ", name);
+    }
+    if (!column_names.empty() && type->names().back() == "fake") {
+      SDB_PRINT("FIXING FAKE COLUMN");
+      column_names.pop_back();
+      std::vector types = type->children();
+      std::vector type_names = type->names();
+      types.pop_back();
+      type_names.pop_back();
+      type = velox::ROW(type_names, std::move(types));
+    }
+  }
 
   object.EnsureTable();
 
   auto state = parent->MakeChild();
   state.root = std::make_shared<lp::TableScanNode>(
     _id_generator.NextPlanId(),
-    velox::ROW(std::move(column_names), type.children()), object.table,
-    type.names());
+    velox::ROW(std::move(column_names), type->children()), object.table,
+    type->names());
   state.resolver.CreateTable(
     table_alias, MakePtrView<velox::RowType>(state.root->outputType()));
   return state;

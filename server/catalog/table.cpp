@@ -86,9 +86,6 @@ Table::Table(const catalog::Table& other, NewOptions options)
 velox::RowTypePtr BuildPkType(const std::vector<Column>& columns,
                               const std::vector<Column::Id>& pk_columns) {
   SDB_ASSERT(!pk_columns.empty());
-  if (pk_columns[0] == Column::kFakeId) {
-    return velox::ROW({std::string{Column::kFakeName}}, {Column::kFakeType});
-  }
 
   std::vector<std::string> names;
   std::vector<velox::TypePtr> types;
@@ -113,17 +110,11 @@ velox::RowTypePtr BuildRowType(const std::vector<Column>& columns,
 
   std::vector<std::string> names;
   std::vector<velox::TypePtr> types;
-  const bool need_fake_column = pk_columns[0] == Column::kFakeId;
-
-  names.reserve(need_fake_column + columns.size());
-  types.reserve(need_fake_column + columns.size());
+  names.reserve(columns.size());
+  types.reserve(columns.size());
   for (const auto& col : columns) {
     names.push_back(col.name);
     types.push_back(col.type);
-  }
-  if (need_fake_column) {
-    names.emplace_back(Column::kFakeName);
-    types.push_back(Column::kFakeType);
   }
 
   return velox::ROW(std::move(names), std::move(types));

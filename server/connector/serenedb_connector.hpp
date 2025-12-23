@@ -150,19 +150,12 @@ class RocksDBTable final : public axiom::connector::Table {
       _pk_type->size(),
       axiom::connector::SortOrder{.isAscending = true, .isNullsFirst = false});
     // TODO(Dronplane) take it from the catalog when available
-    catalog::Column::Id col_id = 0;
-    for (const auto& [name, type] : std::views::zip(
-           collection.RowType()->names(), collection.RowType()->children())) {
-      catalog::Column::Id id{};
-      if (name == catalog::Column::kFakeName) {
-        id = catalog::Column::kFakeId;
-      } else {
-        id = col_id++;
-      }
-      auto column = std::make_unique<SereneDBColumn>(name, type, id);
-      columns.push_back(column.get());
-      _column_map.emplace(name, column.get());
-      _column_handles.push_back(std::move(column));
+    for (const auto& catalog_column : collection.Columns()) {
+      auto serenedb_column = std::make_unique<SereneDBColumn>(
+        catalog_column.name, catalog_column.type, catalog_column.id);
+      columns.push_back(serenedb_column.get());
+      _column_map.emplace(catalog_column.name, serenedb_column.get());
+      _column_handles.push_back(std::move(serenedb_column));
     }
     for (const auto& name : _pk_type->names()) {
       const auto* column = findColumn(name);

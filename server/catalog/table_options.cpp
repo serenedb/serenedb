@@ -366,6 +366,9 @@ Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,
   options.pkColumns = std::move(request.pkColumns);
   if (options.pkColumns.empty()) {
     options.pkColumns = {Column::kFakeId};
+    options.columns.push_back(Column{.id = Column::kFakeId,
+                                     .type = Column::kFakeType,
+                                     .name = std::string{Column::kFakeName}});
   }
   options.avoidServers = std::move(request.avoidServers);
   if (request.shardingStrategy) {

@@ -905,8 +905,6 @@ void RocksDBEngineCatalog::start() {
   _db_options.listeners.push_back(
     std::make_shared<RocksDBMetricsListener>(server()));
 
-  rocksdb::BlockBasedTableOptions table_options =
-    _options_provider.getTableOptions();
   // create column families
   std::vector<rocksdb::ColumnFamilyDescriptor> cf_families;
   auto add_family = [this,

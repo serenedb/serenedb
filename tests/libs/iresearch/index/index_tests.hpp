@@ -238,6 +238,10 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
   void write_segment(irs::IndexWriter& writer, tests::IndexSegment& segment,
                      tests::DocGeneratorBase& gen);
 
+  void write_segment_batched(irs::IndexWriter& writer,
+                             tests::IndexSegment& segment,
+                             tests::DocGeneratorBase& gen, size_t batch_size);
+
   void add_segment(irs::IndexWriter& writer, tests::DocGeneratorBase& gen);
 
   void add_segments(irs::IndexWriter& writer,
@@ -246,6 +250,9 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
   void add_segment(tests::DocGeneratorBase& gen,
                    irs::OpenMode mode = irs::kOmCreate,
                    const irs::IndexWriterOptions& opts = {});
+  void add_segment_batched(tests::DocGeneratorBase& gen, size_t batch_size,
+                           irs::OpenMode mode = irs::kOmCreate,
+                           const irs::IndexWriterOptions& opts = {});
 
  private:
   index_t _index;

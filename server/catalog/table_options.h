@@ -152,8 +152,9 @@ struct Column {
   Id id;
   velox::TypePtr type;
   std::string name;
-  // if generated type is not kNone, default_value = generated expression
-  ColumnExpr default_value;
+  // if generated type is not kNone, expr = generated expression
+  // else expr = default value expression (if any)
+  std::shared_ptr<ColumnExpr> expr;
   GeneratedType generated_type = GeneratedType::kNone;
 };
 
@@ -180,7 +181,6 @@ struct CreateTableRequest {
   std::string_view id;  // TODO(gnusi): make ObjectId
   int type = std::to_underlying(TableType::Document);
   bool waitForSync = false;
-  bool deleted = false;  // TODO(gnusi): really needed?
 };
 
 struct TableOptions {

@@ -2683,7 +2683,6 @@ State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
     if (table.PKColumns()[0] == catalog::Column::kFakeId) {
       std::vector types = type->children();
       std::vector type_names = type->names();
-
       SDB_ASSERT(type_names.back() == catalog::Column::kFakeName);
 
       types.pop_back();

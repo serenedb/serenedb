@@ -27,6 +27,7 @@
 #include "basics/misc.hpp"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table.h"
+#include "catalog/table_options.h"
 #include "data_sink.hpp"
 #include "data_source.hpp"
 #include "rocksdb/utilities/transaction_db.h"
@@ -187,7 +188,7 @@ class RocksDBTable final : public axiom::connector::Table {
     SDB_ASSERT(_pk_type);
 
     if (kind == axiom::connector::WriteKind::kInsert && _pk_type->size() == 1 &&
-        _pk_type->names()[0] == catalog::Column::kFakeName) {
+        _column_handles.back()->Id() == catalog::Column::kFakeId) {
       return {};
     }
 

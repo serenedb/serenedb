@@ -243,11 +243,6 @@ void ResetMemoryContext(MemoryContextData& ctx) noexcept {
   MemoryContextReset(&ctx);
 }
 
-SharedMemoryContextPtr CreateSharedMemoryContext() {
-  return std::shared_ptr<MemoryContextData>(CreateMemoryContext().release(),
-                                            MemoryContextDeleter{});
-}
-
 void MemoryContextScopeGuard::operator()(MemoryContext p) const noexcept {
   SDB_ASSERT(p);
   SDB_ASSERT(MemoryContextIsValid(p));

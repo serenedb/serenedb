@@ -27,29 +27,57 @@
 namespace sdb::catalog {
 
 enum class IndexType : uint8_t {
-  Invalid = 0,
-  Secondary,
+  Secondary = 0,
   Inverted,
 };
 
-struct IndexOptions {
+struct IndexBaseOptions {
   ObjectId id;
-  ObjectId table;
+  ObjectId relation_id;
   std::string name;
-  IndexType type = IndexType::Invalid;
-  vpack::Slice options;
+  IndexType type = IndexType::Secondary;
+};
+
+template<typename Impl>
+struct IndexOptions {
+  IndexBaseOptions base;
+  Impl impl;
 };
 
 class Index : public SchemaObject {
  public:
-  Index(IndexOptions options, ObjectId database_id);
-
   auto GetIndexType() const noexcept { return _type; }
-  auto GetTableId() const noexcept { return _table_id; }
+  auto GetRelationId() const noexcept { return _relation_id; }
+
+ protected:
+  Index(IndexBaseOptions options, ObjectId database_id);
 
  private:
-  ObjectId _table_id;
+  ObjectId _relation_id;
   IndexType _type;
 };
 
+ResultOr<std::shared_ptr<Index>> CreateIndex(
+  ObjectId database_id, IndexOptions<vpack::Slice> options);
+
+ResultOr<std::shared_ptr<Index>> CreateIndex(const SchemaObject& relation,
+                                             IndexBaseOptions options);
+
 }  // namespace sdb::catalog
+
+namespace magic_enum {
+
+template<>
+constexpr customize::customize_t customize::enum_name<sdb::catalog::IndexType>(
+  sdb::catalog::IndexType type) noexcept {
+  switch (type) {
+    case sdb::catalog::IndexType::Secondary:
+      return "secondary";
+    case sdb::catalog::IndexType::Inverted:
+      return "gin";
+    default:
+      return invalid_tag;
+  }
+}
+
+}  // namespace magic_enum

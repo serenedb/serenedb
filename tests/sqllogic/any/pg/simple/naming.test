@@ -1100,3 +1100,54 @@ SELECT * FROM vedernikoff as kirkuch, vedernikoff as danpuz;
 ----
 iq iq
 228 228
+
+
+query
+SELECT iq
+FROM
+(
+  VALUES
+    (-2, 17, 'bbbsky'), (-2, 0, 'babsky'), (100, 13, 'zhidky'),
+    (3, 24, 'androed'), (-2, 2, 'myasnig')
+) AS lol(iq, kostya, vedernikoff)
+GROUP BY 1
+ORDER BY iq
+----
+iq
+-2
+3
+100
+
+
+query
+SELECT iq, kostya
+FROM
+(
+  VALUES
+    (-2, 17, 'bbbsky'), (15, 0, 'babsky'), (100, 13, 'zhidky'),
+    (3, 24, 'androed'), (403, 2, 'myasnig')
+) AS lol(iq, kostya, vedernikoff)
+GROUP BY 1, 2
+ORDER BY 2, 1;
+----
+iq kostya
+15 0
+403 2
+100 13
+-2 17
+3 24
+
+
+query
+SELECT *
+FROM
+(
+  VALUES (-2, 17, 'babsky'), (100, 13, 'zhidky'), (3, 24, 'androed'), (403, 2, 'myasnig')
+) AS lol(iq, iq, iq)
+ORDER BY 1;
+----
+iq iq iq
+-2 17 babsky
+3 24 androed
+100 13 zhidky
+403 2 myasnig

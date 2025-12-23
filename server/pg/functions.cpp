@@ -35,6 +35,7 @@
 #include "catalog/catalog.h"
 #include "pg/connection_context.h"
 #include "pg/extract.h"
+#include "pg/functions/json.h"
 #include "pg/interval.h"
 #include "pg/serialize.h"
 #include "pg/sql_exception_macro.h"
@@ -559,6 +560,21 @@ void registerFunctions(const std::string& prefix) {
                           velox::Varchar>({prefix + "like_escape"});
   velox::registerFunction<ProcessEscapePattern, velox::Varchar, velox::Varchar>(
     {prefix + "process_escape_pattern"});
+  velox::registerFunction<PgJsonExtractPathText, velox::Varchar, velox::Json,
+                          int64_t>({prefix + "json_extract_path_text"});
+  velox::registerFunction<PgJsonExtractPathText, velox::Varchar, velox::Json,
+                          velox::Varchar>({prefix + "json_extract_path_text"});
+  velox::registerFunction<PgJsonExtractPathText, velox::Varchar, velox::Json,
+                          velox::Array<velox::Varchar>>(
+    {prefix + "json_extract_path_text"});
+
+  velox::registerFunction<PgJsonExtractPath, velox::Varchar, velox::Json,
+                          int64_t>({prefix + "json_extract_path"});
+  velox::registerFunction<PgJsonExtractPath, velox::Varchar, velox::Json,
+                          velox::Varchar>({prefix + "json_extract_path"});
+  velox::registerFunction<PgJsonExtractPath, velox::Varchar, velox::Json,
+                          velox::Array<velox::Varchar>>(
+    {prefix + "json_extract_path"});
 
   registerExtractFunctions(prefix);
 }

@@ -29,7 +29,9 @@ Buffer::Buffer(size_t min_growth, size_t max_growth, size_t flush_size,
   : _send_callback{std::move(send_callback)},
     _flush_size{flush_size},
     _max_growth{max_growth},
-    _growth{min_growth} {}
+    _growth{min_growth} {
+  _head = _tail = CreateChunk(0);
+}
 
 void Buffer::FlushStart() {
   SDB_ASSERT(_tail);
@@ -45,11 +47,6 @@ void Buffer::FlushStart() {
 }
 
 uint8_t* Buffer::AllocateContiguousData(size_t capacity) {
-  if (!_tail) [[unlikely]] {
-    SDB_ASSERT(!_head);
-    // Happens only in first write
-    _head = _tail = CreateChunk(capacity);
-  }
   if (_tail->FreeSpace() < capacity) {
     _tail = _tail->AppendChunk(CreateChunk(capacity));
     SDB_ASSERT(_tail->GetBegin() == _tail->GetEnd());
@@ -75,20 +72,12 @@ void Buffer::WriteUncommitted(std::string_view data) {
   if (data.empty()) {
     return;
   }
-  size_t data_size = data.size();
-  size_t written = 0;
-  if (_tail) [[likely]] {
-    written = _tail->TryWrite(data);
-    if (written < data.size()) {
-      data.remove_prefix(written);
-      _tail = _tail->AppendChunk(CreateChunk(data.size()));
-      written += _tail->TryWrite(data);
-    }
-  } else {
-    SDB_ASSERT(!_head);
-    // Happens only in first write
-    _head = _tail = CreateChunk(data.size());
-    written = _tail->TryWrite(data);
+  const auto data_size = data.size();
+  auto written = _tail->TryWrite(data);
+  if (written < data.size()) {
+    data.remove_prefix(written);
+    _tail = _tail->AppendChunk(CreateChunk(data.size()));
+    written += _tail->TryWrite(data);
   }
   SDB_ASSERT(data_size == written);
   _uncommitted_size += written;

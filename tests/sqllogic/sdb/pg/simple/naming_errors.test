@@ -538,3 +538,47 @@ FROM
 ) as kostya
 ----
 db error: ERROR: column "kek" does not exist
+
+
+query error
+SELECT *
+FROM
+(
+  VALUES (-2, 17, 'babsky'), (100, 13, 'zhidky'), (3, 24, 'androed'), (403, 2, 'myasnig')
+) AS lol(iq, iq, iq)
+ORDER BY -228;
+----
+db error: ERROR: ORDER BY position -228 is not in select list
+
+
+query error
+SELECT *
+FROM
+(
+  VALUES (-2, 17, 'babsky'), (100, 13, 'zhidky'), (3, 24, 'androed'), (403, 2, 'myasnig')
+) AS lol(iq, iq, iq)
+ORDER BY 4;
+----
+db error: ERROR: ORDER BY position 4 is not in select list
+
+
+query error
+SELECT *
+FROM
+(
+  VALUES (-2, 17, 'babsky'), (100, 13, 'zhidky'), (3, 24, 'androed'), (403, 2, 'myasnig')
+) AS lol(iq, iq, iq)
+GROUP BY -228;
+----
+db error: ERROR: GROUP BY position -228 is not in select list
+
+
+query error
+SELECT *
+FROM
+(
+  VALUES (-2, 17, 'babsky'), (100, 13, 'zhidky'), (3, 24, 'androed'), (403, 2, 'myasnig')
+) AS lol(iq, iq, iq)
+GROUP BY 4;
+----
+db error: ERROR: GROUP BY position 4 is not in select list

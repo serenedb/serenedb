@@ -46,6 +46,8 @@ yaclib::Future<Result> DropDatabase(ExecContext& ctx, const DropdbStmt& stmt);
 
 yaclib::Future<Result> CreateTable(ExecContext& ctx, const CreateStmt& stmt);
 
+yaclib::Future<Result> CreateIndex(ExecContext& ctx, const IndexStmt& stmt);
+
 yaclib::Future<Result> CreateView(const ExecContext& ctx, const ViewStmt& stmt);
 
 std::shared_ptr<catalog::View> CreateSystemView(const ViewStmt& stmt);

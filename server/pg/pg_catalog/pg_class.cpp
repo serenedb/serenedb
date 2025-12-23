@@ -49,7 +49,6 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
 void RetrieveObjects(ObjectId database_id,
                      const catalog::LogicalCatalog& catalog,
                      std::vector<PgClass>& values) {
-  auto snapshot = catalog.GetSnapshot();
   auto insert_object =
     [&](const std::shared_ptr<catalog::SchemaObject>& object) {
       PgClass::Relkind relkind;
@@ -59,6 +58,9 @@ void RetrieveObjects(ObjectId database_id,
           break;
         case catalog::ObjectType::View:
           relkind = PgClass::Relkind::View;
+          break;
+        case catalog::ObjectType::Index:
+          relkind = PgClass::Relkind::Index;
           break;
         default:
           SDB_THROW(ERROR_INTERNAL, "Unsupported object type for pg_class: {}",
@@ -76,13 +78,12 @@ void RetrieveObjects(ObjectId database_id,
       // TODO(codeworse): fill other fields
       values.push_back(std::move(row));
     };
-  auto schemas = snapshot->GetSchemas(database_id);
 
-  for (const auto& schema : schemas) {  // retrieve collections
-    auto collections = snapshot->GetRelations(database_id, schema->GetName());
-
-    for (const auto& logical : collections) {
-      insert_object(logical);
+  auto snapshot = catalog.GetSnapshot();
+  for (const auto& schema : snapshot->GetSchemas(database_id)) {
+    for (const auto& relation :
+         snapshot->GetRelations(database_id, schema->GetName())) {
+      insert_object(relation);
     }
   }
 }
@@ -95,7 +96,6 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgClass>::GetTableData(
   std::vector<velox::VectorPtr> result;
   result.reserve(boost::pfr::tuple_size_v<PgClass>);
   std::vector<PgClass> values;
-  std::vector<uint64_t> database_ids;
   RetrieveObjects(GetDatabaseId(), catalog, values);
 
   {  // get system tables

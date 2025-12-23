@@ -175,8 +175,8 @@ class RocksDBEngineCatalog : public StorageEngine {
   void toPrometheus(std::string& result, std::string_view globals,
                     bool ensure_whitespace) const final;
 
-  bool VisitDatabases(
-    absl::FunctionRef<bool(vpack::Slice database)> visitor) final;
+  Result VisitDatabases(
+    absl::FunctionRef<Result(vpack::Slice database)> visitor) final;
 
   std::string versionFilename(ObjectId id) const final;
   std::string databasePath() const final { return _base_path; }
@@ -251,9 +251,12 @@ class RocksDBEngineCatalog : public StorageEngine {
 
   void createTable(const catalog::Table& collection,
                    TableShard& physical) final;
+  Result CreateIndex(const catalog::Index& index) final;
   Result MarkDeleted(const catalog::Table& collection,
                      const TableShard& physical,
                      const TableTombstone& tombstone) final;
+  Result MarkDeleted(const catalog::Index& index,
+                     const IndexTombstone& tombstone) final;
   Result MarkDeleted(const catalog::Database& database) final;
   Result MarkDeleted(const catalog::Schema& schema) final;
 

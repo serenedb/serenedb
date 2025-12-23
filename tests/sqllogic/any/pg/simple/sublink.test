@@ -393,3 +393,20 @@ pudge 228
 #     WHERE lvl_1_skuf.name = lvl_3_skuf.name
 #   )
 # );
+
+
+statement ok
+create table t(x int primary key);
+
+
+statement count 3
+insert into t values (1), (2), (3);
+
+
+query
+select z, (select count(*) from t t2(y) where z = y) from t t1(z);
+----
+z count
+1 1
+2 1
+3 1

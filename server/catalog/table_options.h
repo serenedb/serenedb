@@ -36,7 +36,7 @@
 #include "basics/reboot_id.h"
 #include "basics/static_strings.h"
 #include "catalog/cluster_types.h"
-#include "catalog/default_value.h"
+#include "catalog/column_expr.h"
 #include "catalog/fwd.h"
 #include "catalog/identifiers/identifier.h"
 #include "catalog/identifiers/object_id.h"
@@ -136,12 +136,21 @@ struct AgencyIsBuildingFlags {
 };
 
 struct Column {
-  using Id = uint32_t;
+  enum GeneratedType : uint8_t { kNone = 0, kStored = 1, kVirtual = 2 };
+
+  bool IsGenerated() const noexcept {
+    return generated_type != GeneratedType::kNone;
+  }
+
+  using Id = uint64_t;
 
   Id id;
   velox::TypePtr type;
   std::string name;
-  std::optional<DefaultValue> default_value;
+  // if generated type is not kNone, expr = generated expression
+  // else expr = default value expression (if any)
+  std::shared_ptr<ColumnExpr> expr;
+  GeneratedType generated_type = GeneratedType::kNone;
 };
 
 struct CreateTableRequest {
@@ -167,7 +176,6 @@ struct CreateTableRequest {
   std::string_view id;  // TODO(gnusi): make ObjectId
   int type = std::to_underlying(TableType::Document);
   bool waitForSync = false;
-  bool deleted = false;  // TODO(gnusi): really needed?
 };
 
 struct TableOptions {

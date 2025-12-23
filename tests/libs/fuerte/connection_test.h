@@ -1,0 +1,108 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2017 ArangoDB GmbH, Cologne, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+#include <fuerte/fuerte.h>
+#include <fuerte/helper.h>
+#include <fuerte/loop.h>
+#include <stdlib.h>
+
+#include <algorithm>
+
+#include "common.h"
+#include "gtest/gtest.h"
+
+namespace fu = ::sdb::fuerte;
+
+struct ConnectionTestParams {
+  const fu::ProtocolType protocol;
+  const size_t threads;  // #Threads to use for the EventLoopService
+  const size_t repeat;   // Number of times to repeat repeatable tests.
+};
+
+/*::std::ostream& operator<<(::std::ostream& os, const ConnectionTestParams& p)
+{ return os << "url=" << p._url << " threads=" << p._threads;
+}*/
+
+// ConnectionTestF is a test fixture that can be used for all kinds of
+// connection tests. You can configure it using the ConnectionTestParams struct.
+class ConnectionTestF : public ::testing::TestWithParam<ConnectionTestParams> {
+ public:
+  static constexpr char kMajorSereneVersion = '1';
+
+ protected:
+  ConnectionTestF() {}
+  ~ConnectionTestF() noexcept override {}
+
+  void SetUp() override {
+    try {
+      // make connection
+      _connection = createConnection();
+    } catch (const std::exception& ex) {
+      std::cout << "SETUP OF FIXTURE FAILED" << std::endl;
+      throw ex;
+    }
+  }
+
+  std::shared_ptr<fu::Connection> createConnection() {
+    // Set connection parameters
+    fu::ConnectionBuilder cbuilder;
+    cbuilder.verifyHost(false);
+    SetupEndpointFromEnv(cbuilder);
+    cbuilder.protocolType(GetParam().protocol);
+    SetupAuthenticationFromEnv(cbuilder);
+    return cbuilder.connect(_event_loop_service);
+  }
+
+  virtual void TearDown() override { _connection.reset(); }
+
+  inline size_t threads() const {
+    return std::max(GetParam().threads, size_t(1));
+  }
+  // Number of times to repeat certain tests.
+  inline size_t repeat() const {
+    return std::max(GetParam().repeat, size_t(1));
+  }
+
+  fu::StatusCode createTable(const std::string& name) {
+    // create the collection
+    vpack::Builder builder;
+    builder.openObject();
+    builder.add("name", name);
+    builder.close();
+    auto request = fu::CreateRequest(fu::RestVerb::Post, "/_api/collection");
+    request->addVPack(builder.slice());
+    auto response = _connection->sendRequest(std::move(request));
+    return response->statusCode();
+  }
+
+  fu::StatusCode dropCollection(const std::string& name) {
+    auto request =
+      fu::CreateRequest(fu::RestVerb::Delete, "/_api/collection/" + name);
+    auto response = _connection->sendRequest(std::move(request));
+    return response->statusCode();
+  }
+
+  std::shared_ptr<fu::Connection> _connection;
+
+ private:
+  fu::EventLoopService _event_loop_service;
+};

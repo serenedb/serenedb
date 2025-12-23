@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "default_value.h"
+#include "column_expr.h"
 
 #include <vpack/builder.h>
 #include <vpack/slice.h>
@@ -40,13 +40,13 @@
 namespace sdb {
 namespace {
 
-Result ParseDefaultValue(ObjectId database_id, std::string_view query,
-                         pg::Objects& objects,
-                         pg::SharedMemoryContextPtr& memory_context,
-                         const Node*& expr) {
+Result ParseColumnExpr(ObjectId database_id, std::string_view query,
+                       pg::Objects& objects,
+                       pg::MemoryContextPtr& memory_context,
+                       const Node*& expr) {
   return basics::SafeCall([&] -> Result {
     const QueryString query_string{query};
-    memory_context = pg::CreateSharedMemoryContext();
+    memory_context = pg::CreateMemoryContext();
     expr = pg::ParseSingleExpression(*memory_context, query_string);
     SDB_ASSERT(expr);
     SDB_ASSERT(objects.getObjects().empty());
@@ -64,40 +64,40 @@ Result ParseDefaultValue(ObjectId database_id, std::string_view query,
 
 }  // namespace
 
-Result DefaultValue::Init(ObjectId database, Node* expr) {
+Result ColumnExpr::Init(ObjectId database, Node* expr) {
   SDB_ASSERT(expr);
   auto query = pg::DeparseExpr(expr);
   return Init(database, std::move(query));
 }
 
-Result DefaultValue::Init(ObjectId database, std::string query) {
-  auto r = ParseDefaultValue(database, query, _objects, _memory_context, _expr);
+Result ColumnExpr::Init(ObjectId database, std::string query) {
+  auto r = ParseColumnExpr(database, query, _objects, _memory_context, _expr);
   if (!r.ok()) {
     return r;
   }
+  SDB_ASSERT(!query.empty());
   _query = std::move(query);
   return r;
 }
 
-Result DefaultValue::FromVPack(ObjectId database, vpack::Slice slice,
-                               DefaultValue& default_value) {
+Result ColumnExpr::FromVPack(ObjectId database, vpack::Slice slice,
+                             ColumnExpr& column_expr) {
   auto query_slice = slice.get("query");
   if (query_slice.isNone()) {
     return {};
   }
   auto query = basics::VPackHelper::getString(slice, "query", {});
   SDB_ASSERT(!query.empty());
-  auto r =
-    ParseDefaultValue(database, query, default_value._objects,
-                      default_value._memory_context, default_value._expr);
+  auto r = ParseColumnExpr(database, query, column_expr._objects,
+                           column_expr._memory_context, column_expr._expr);
   if (!r.ok()) {
     return r;
   }
-  default_value._query = std::move(query);
+  column_expr._query = std::move(query);
   return {};
 }
 
-void DefaultValue::ToVPack(vpack::Builder& builder) const {
+void ColumnExpr::ToVPack(vpack::Builder& builder) const {
   vpack::ObjectBuilder o{&builder};
   builder.add("query", _query);
 }

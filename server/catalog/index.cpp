@@ -20,16 +20,47 @@
 
 #include "catalog/index.h"
 
-namespace sdb::catalog {
+#include "basics/errors.h"
+#include "catalog/object.h"
+#include "catalog/secondary_index.h"
+#include "vpack/serializer.h"
 
-Index::Index(IndexOptions options, ObjectId database_id)
+namespace sdb::catalog {
+namespace {
+template<typename T>
+ResultOr<std::shared_ptr<Index>> MakeIndex(ObjectId database_id,
+                                           IndexOptions<vpack::Slice> options) {
+  IndexOptions<typename T::Options> impl_options{
+    .base = std::move(options.base),
+  };
+
+  auto r = vpack::ReadTupleNothrow(options.impl, impl_options.impl);
+  if (!r.ok()) {
+    return std::unexpected{std::move(r)};
+  }
+
+  return std::make_shared<T>(std::move(impl_options), database_id);
+}
+}  // namespace
+
+Index::Index(IndexBaseOptions options, ObjectId database_id)
   : SchemaObject{{},
                  database_id,
                  {},
                  options.id,
                  std::move(options.name),
                  ObjectType::Index},
-    _table_id{options.table},
+    _relation_id{options.relation_id},
     _type(options.type) {}
+
+ResultOr<std::shared_ptr<Index>> CreateIndex(
+  ObjectId database_id, IndexOptions<vpack::Slice> options) {
+  switch (options.base.type) {
+    case IndexType::Secondary:
+      return MakeIndex<SecondaryIndex>(database_id, std::move(options));
+    case IndexType::Inverted:
+      return std::unexpected<Result>{std::in_place, ERROR_NOT_IMPLEMENTED};
+  }
+}
 
 }  // namespace sdb::catalog

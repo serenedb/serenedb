@@ -62,12 +62,13 @@ SegmentWriter::StoredColumn::StoredColumn(
   }
 }
 
-doc_id_t SegmentWriter::begin(DocContext ctx) {
+doc_id_t SegmentWriter::begin(DocContext ctx, doc_id_t batch_size) {
   SDB_ASSERT(LastDocId() < doc_limits::eof());
   _valid = true;
-  _doc.clear();  // clear norm fields
+  SDB_ASSERT(batch_size > 0);
+  ResetNorms();
 
-  const auto needed_docs = buffered_docs() + 1;
+  const auto needed_docs = buffered_docs() + batch_size;
 
   if (needed_docs >= _docs_mask.set.capacity()) {
     // reserve in blocks of power-of-2
@@ -75,9 +76,10 @@ doc_id_t SegmentWriter::begin(DocContext ctx) {
     _docs_mask.set.reserve(count);
   }
 
-  _docs_context.emplace_back(ctx);
+  _batch_first_doc_id = LastDocId() + 1;
+  _docs_context.insert(_docs_context.end(), batch_size, ctx);
 
-  return LastDocId();
+  return _batch_first_doc_id;
 }
 
 std::unique_ptr<SegmentWriter> SegmentWriter::make(
@@ -270,6 +272,7 @@ void SegmentWriter::reset() noexcept {
   _docs_context.clear();
   _docs_mask.set.clear();
   _docs_mask.count = 0;
+  _batch_first_doc_id = doc_limits::eof();
   _fields.reset();
   _columns.clear();
   _column_ids.clear();

@@ -1,5 +1,5 @@
 add_subdirectory(commands)
-
+add_subdirectory(functions)
 target_sources(
     sereneserver
     PRIVATE
@@ -12,6 +12,7 @@ target_sources(
         serialize.cpp
         system_catalog.cpp
         pg_catalog/pg_class.cpp
+        pg_catalog/pg_index.cpp
         pg_catalog/pg_namespace.cpp
         pg_catalog/pg_type.cpp
         sdb_catalog/sdb_log.cpp

@@ -1,0 +1,44 @@
+statement error db error: ERROR: relation "invalid" does not exist
+CREATE INDEX test_index ON invalid USING secondary (invalid);
+
+statement error db error: ERROR: relation "invalid" does not exist
+CREATE INDEX test_index ON invalid USING secondary (invalid);
+
+statement ok
+CREATE TABLE test(i int);
+
+statement error db error: ERROR: column "invalid" does not exist
+CREATE INDEX test_index ON test USING secondary (invalid);
+
+statement ok
+CREATE INDEX test_index ON test USING secondary (i);
+
+statement error db error: ERROR: Object already exists: test_index
+CREATE INDEX test_index ON test USING secondary (i);
+
+statement ok
+CREATE INDEX IF NOT EXISTS test_index ON test USING secondary (i);
+
+query
+select oid, relname, relkind FROM pg_class WHERE relname = 'test_index'
+----
+oid	relname	relkind
+<slt:ignore>	test_index	i
+
+query
+select indexrelid, indrelid FROM pg_index
+----
+indexrelid	indrelid
+<slt:ignore>	<slt:ignore>
+
+statement ok
+DROP INDEX test_index;
+
+statement error db error: ERROR: Index not found: test_index
+DROP INDEX test_index;
+
+statement ok
+DROP INDEX IF EXISTS test_index;
+
+statement ok
+DROP TABLE test;

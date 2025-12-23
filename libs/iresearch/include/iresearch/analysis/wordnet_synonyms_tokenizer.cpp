@@ -33,7 +33,8 @@
 namespace irs::analysis {
 namespace {
 
-constexpr size_t kWordnetCountParams = 6;
+constexpr size_t kWordnetMinCountParams = 4;
+constexpr size_t kWordnetMaxCountParams = 6;
 
 const RE2 kWordnetPattern(R"(s\(([^)]*)\)\.)");
 
@@ -59,7 +60,8 @@ sdb::ResultOr<std::vector<std::string_view>> ParseParams(
   }
 
   std::vector<std::string_view> outputs = absl::StrSplit(params, ',');
-  if (outputs.size() != kWordnetCountParams) {
+  if (outputs.size() < kWordnetMinCountParams ||
+      outputs.size() > kWordnetMaxCountParams) {
     return std::unexpected<sdb::Result>{std::in_place,
                                         sdb::ERROR_BAD_PARAMETER};
   }
@@ -105,14 +107,11 @@ WordnetSynonymsTokenizer::Parse(const std::string_view input) {
   }
 
   for (auto& [word, synset] : mapping) {
-    // expect that we don't have duplicate.
     absl::c_sort(synset);
-    if (auto it = absl::c_adjacent_find(synset); it != synset.end()) {
-      return std::unexpected<sdb::Result>{
-        std::in_place, sdb::ERROR_BAD_PARAMETER,
-        "Duplicate for " + word + ": synset ", *it};
-    }
+    synset.erase(std::unique(synset.begin(), synset.end()), synset.end());
+    synset.shrink_to_fit();
   }
+
   return mapping;
 }
 

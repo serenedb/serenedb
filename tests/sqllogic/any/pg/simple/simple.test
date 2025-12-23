@@ -1042,3 +1042,24 @@ SELECT '123' + 123;
 # TODO better error message
 query error
 SELECT '123' + '123';
+
+
+query
+select -('-1'::integer);
+----
+?column?
+1
+
+
+query
+select +('-1'::integer);
+----
+?column?
+-1
+
+
+query
+select ~('-1'::integer);
+----
+?column?
+0

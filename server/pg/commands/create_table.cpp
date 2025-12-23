@@ -86,11 +86,18 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
     request.columns.push_back(std::move(column));
   };
   auto append_pk = [&](const catalog::Column::Id column_id, int location) {
-    SDB_ASSERT(column_id < request.columns.size());
     if (absl::c_linear_search(request.pkColumns, column_id)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_COLUMN), CURSOR_POS(location),
                       ERR_MSG("column \"", request.columns[column_id].name,
                               "\" appears twice in primary key constraint"));
+    }
+    SDB_ASSERT(column_id < request.columns.size());
+    if (request.columns[column_id].generated_type ==
+        catalog::Column::GeneratedType::kVirtual) {
+      // pg 18 doesn't support either
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED), CURSOR_POS(location),
+        ERR_MSG("primary keys on virtual generated columns are not supported"));
     }
     request.pkColumns.push_back(column_id);
   };
@@ -115,14 +122,64 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
       VisitNodes(col_def.constraints, [&](const Constraint& constraint) {
         switch (constraint.contype) {
           case CONSTR_DEFAULT: {
-            DefaultValue default_value;
-            auto r = default_value.Init(db, constraint.raw_expr);
+            switch (col.generated_type) {
+              using enum catalog::Column::GeneratedType;
+              case kVirtual:
+              case kStored:
+                THROW_SQL_ERROR(
+                  ERR_CODE(ERRCODE_INVALID_COLUMN_DEFINITION),
+                  CURSOR_POS(ExprLocation(&constraint)),
+                  ERR_MSG("both default and generation expression specified "
+                          "for column \"",
+                          col.name, "\" of table \"", table, "\""));
+              case kNone:
+                if (col.expr) {
+                  THROW_SQL_ERROR(
+                    ERR_CODE(ERRCODE_INVALID_COLUMN_DEFINITION),
+                    CURSOR_POS(ExprLocation(&constraint)),
+                    ERR_MSG("multiple default values specified for column \"",
+                            col.name, "\" of table \"", table, "\""));
+                }
+            }
+
+            auto default_value = std::make_shared<ColumnExpr>();
+            auto r = default_value->Init(db, constraint.raw_expr);
             SDB_ENSURE(r.ok(), r.errorNumber(), std::move(r).errorMessage());
-            col.default_value = std::move(default_value);
+            col.expr = std::move(default_value);
           } break;
           case CONSTR_PRIMARY:  // create table (field integer primary key)
             append_pk(col.id, ExprLocation(&constraint));
             break;
+          case CONSTR_GENERATED: {
+            switch (col.generated_type) {
+              using enum catalog::Column::GeneratedType;
+              case kVirtual:
+              case kStored:
+                THROW_SQL_ERROR(
+                  ERR_CODE(ERRCODE_INVALID_COLUMN_DEFINITION),
+                  CURSOR_POS(ExprLocation(&constraint)),
+                  ERR_MSG("multiple generation clauses specified for column \"",
+                          col.name, "\" of table \"", table, "\""));
+              case kNone:
+                if (col.expr) {
+                  THROW_SQL_ERROR(
+                    ERR_CODE(ERRCODE_INVALID_COLUMN_DEFINITION),
+                    CURSOR_POS(ExprLocation(&constraint)),
+                    ERR_MSG("both default and generation expression specified "
+                            "for column \"",
+                            col.name, "\" of table \"", table, "\""));
+                }
+            }
+
+            // guaranteed by parser
+            SDB_ASSERT(constraint.generated_when == ATTRIBUTE_IDENTITY_ALWAYS);
+
+            auto generated_value = std::make_shared<ColumnExpr>();
+            auto r = generated_value->Init(db, constraint.raw_expr);
+            SDB_ENSURE(r.ok(), r.errorNumber(), std::move(r).errorMessage());
+            col.expr = std::move(generated_value);
+            col.generated_type = catalog::Column::GeneratedType::kStored;
+          } break;
           default:
             error_constraint_not_supported(constraint);
         }
@@ -154,6 +211,7 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
         });
       } break;
       case CONSTR_DEFAULT:
+      case CONSTR_GENERATED:
         SDB_UNREACHABLE();
       default:
         error_constraint_not_supported(constraint);

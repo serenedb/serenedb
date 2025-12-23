@@ -120,3 +120,63 @@ INSERT INTO cast_table VALUES ('qqq', '2025-02-01 12:59:59',  '9');
 
 statement count 2
 DELETE FROM cast_table;
+
+
+# Table without primary key
+statement ok
+CREATE TABLE no_pk (a INTEGER, b INTEGER, c VARCHAR);
+
+query
+SELECT * FROM no_pk;
+----
+a	b	c
+
+
+statement count 1
+INSERT INTO no_pk VALUES (42, 100500, 'aboba');
+
+
+statement count 1
+INSERT INTO no_pk VALUES (123, 456, NULL);
+
+
+query
+SELECT * FROM no_pk;
+----
+a	b	c
+42	100500	aboba
+123	456	NULL
+
+
+query ?
+SELECT a + b FROM no_pk;
+----
+?column?
+100542
+579
+
+
+statement count 1
+DELETE FROM no_pk WHERE a = 123;
+
+
+query
+SELECT * FROM no_pk;
+----
+a	b	c
+42	100500	aboba
+
+
+statement count 1
+UPDATE no_pk set b = 300 where a = 42;
+
+
+query
+SELECT * FROM no_pk;
+----
+a	b	c
+42	300	aboba
+
+
+statement count 1
+INSERT INTO no_pk VALUES (123, 888, 'new str');

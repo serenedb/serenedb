@@ -2665,7 +2665,6 @@ SqlAnalyzer::TableAliasAndColumnNames SqlAnalyzer::ProcessTableColumns(
   return {table_alias, std::move(column_names)};
 }
 
-// TODO add bool?
 State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
                                 std::string_view table_name,
                                 const Objects::ObjectData& object,

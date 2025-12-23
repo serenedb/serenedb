@@ -127,7 +127,6 @@ std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
         _current_split.reset();
         return nullptr;
       }
-
       columns.push_back(ReadColumn(*it, size, key, _row_type->childAt(col_idx),
                                    column_id, table_prefix_size,
                                    col_idx == 0 ? &last_column_key : nullptr));

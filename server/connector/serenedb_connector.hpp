@@ -22,9 +22,11 @@
 
 #include <axiom/connectors/ConnectorMetadata.h>
 #include <velox/connectors/Connector.h>
+#include <velox/type/Type.h>
 
 #include "basics/assert.h"
 #include "basics/fwd.h"
+#include "basics/logger/logger.h"
 #include "basics/misc.hpp"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table.h"
@@ -133,7 +135,7 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
 
 class RocksDBTable final : public axiom::connector::Table {
  public:
-  explicit RocksDBTable(const catalog::Table& collection)
+  explicit RocksDBTable(const catalog::Table& collection, bool is_insert)
     : Table{std::string{collection.GetName()}, collection.RowType()},
       _pk_type(collection.PKType()),
       _table_id(collection.GetId()) {
@@ -163,6 +165,22 @@ class RocksDBTable final : public axiom::connector::Table {
       SDB_ASSERT(column, "RocksDBTable: can't find PK column ", name);
       order_columns.push_back(column);
     }
+
+    if (_pk_type->children().empty() && !is_insert) {
+      auto serenedb_column = std::make_unique<SereneDBColumn>(
+        catalog::Column::kFakeName, catalog::Column::kFakeType,
+        catalog::Column::kFakeId);
+      columns.push_back(serenedb_column.get());
+      _column_map.emplace(catalog::Column::kFakeName, serenedb_column.get());
+      _column_handles.push_back(std::move(serenedb_column));
+      _pk_type = velox::ROW({std::string{catalog::Column::kFakeName}},
+                            {catalog::Column::kFakeType});
+      // TODO IDK we need it or not
+      sort_order.resize(1, axiom::connector::SortOrder{.isAscending = true,
+                                                       .isNullsFirst = false});
+      order_columns.push_back(findColumn(catalog::Column::kFakeName));
+    }
+
     auto connector = velox::connector::getConnector("serenedb");
     auto layout = std::make_unique<SereneDBTableLayout>(
       name(), *this, *connector, std::move(columns), std::move(order_columns),
@@ -186,13 +204,7 @@ class RocksDBTable final : public axiom::connector::Table {
   std::vector<velox::connector::ColumnHandlePtr> rowIdHandles(
     axiom::connector::WriteKind kind) const final {
     SDB_ASSERT(_pk_type);
-    SDB_ASSERT(!_pk_type->children().empty());
-
-    if (kind == axiom::connector::WriteKind::kInsert &&
-        _column_handles.back()->Id() == catalog::Column::kFakeId) {
-      SDB_ASSERT(_pk_type->size() == 1);
-      return {};
-    }
+    // SDB_ASSERT(!_pk_type->children().empty());
 
     std::vector<velox::connector::ColumnHandlePtr> handles;
     handles.reserve(_pk_type->size());
@@ -467,6 +479,7 @@ class SereneDBConnector final : public velox::connector::Connector {
         [&]<bool IsUpdate>() {
           std::vector<velox::column_index_t> pk_indices;
           if constexpr (IsUpdate) {
+            // here?
             pk_indices.resize(table.PKType()->size());
             std::iota(pk_indices.begin(), pk_indices.end(), 0);
 #ifdef SDB_DEV

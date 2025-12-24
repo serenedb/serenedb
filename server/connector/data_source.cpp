@@ -25,6 +25,7 @@
 #include <velox/vector/FlatVector.h>
 
 #include "basics/assert.h"
+#include "basics/logger/logger.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
 #include "common.h"
@@ -102,6 +103,7 @@ std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
   read_options.snapshot = _snapshot;
   std::vector<velox::VectorPtr> columns;
 
+  SDB_PRINT("row type = ", _row_type->toString());
   const auto num_columns = _row_type->size();
   std::string last_column_key;
   std::string key = key_utils::PrepareTableKey(_object_key);

@@ -85,8 +85,6 @@ Table::Table(const catalog::Table& other, NewOptions options)
 
 velox::RowTypePtr BuildPkType(const std::vector<Column>& columns,
                               const std::vector<Column::Id>& pk_columns) {
-  SDB_ASSERT(!pk_columns.empty());
-
   std::vector<std::string> names;
   std::vector<velox::TypePtr> types;
   names.reserve(pk_columns.size());
@@ -104,10 +102,7 @@ velox::RowTypePtr BuildPkType(const std::vector<Column>& columns,
   return velox::ROW(std::move(names), std::move(types));
 }
 
-velox::RowTypePtr BuildRowType(const std::vector<Column>& columns,
-                               const std::vector<Column::Id>& pk_columns) {
-  SDB_ASSERT(!pk_columns.empty());
-
+velox::RowTypePtr BuildRowType(const std::vector<Column>& columns) {
   std::vector<std::string> names;
   std::vector<velox::TypePtr> types;
   names.reserve(columns.size());
@@ -133,7 +128,7 @@ Table::Table(TableOptions&& options, ObjectId database_id)
     _columns{std::move(options.columns)},
     _pk_columns{std::move(options.pkColumns)},
     _pk_type{BuildPkType(_columns, _pk_columns)},
-    _row_type{BuildRowType(_columns, _pk_columns)},
+    _row_type{BuildRowType(_columns)},
     _plan_id{[&] {
       auto plan_id = options.planId.value_or(Identifier{});
       return plan_id.isSet() ? plan_id : GetId();

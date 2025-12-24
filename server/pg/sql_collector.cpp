@@ -550,11 +550,12 @@ void ObjectCollector::CollectStmt(const State* parent, const Node* node) {
 
 }  // namespace
 
-void Objects::ObjectData::EnsureTable() const {
+// TODO add kind here? different types for update and inserts
+void Objects::ObjectData::EnsureTable(bool is_insert) const {
   if (!table) {
     SDB_ASSERT(object);
     table = std::make_shared<connector::RocksDBTable>(
-      basics::downCast<catalog::Table>(*object));
+      basics::downCast<catalog::Table>(*object), is_insert);
   }
 }
 

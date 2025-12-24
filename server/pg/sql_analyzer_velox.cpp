@@ -55,6 +55,7 @@
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/down_cast.h"
+#include "basics/logger/logger.h"
 #include "basics/utf8_utils.hpp"
 #include "catalog/function.h"
 #include "catalog/object.h"
@@ -1255,6 +1256,11 @@ void SqlAnalyzer::MakeTableWrite(
     }
   }
 
+  SDB_PRINT("column_names:");
+  for (const auto& column_name : column_names) {
+    SDB_PRINT("  ", column_name);
+  }
+
   state.root = std::make_shared<lp::TableWriteNode>(
     _id_generator.NextPlanId(), std::move(state.root), table, WriteKind,
     std::move(column_names), std::move(column_exprs));
@@ -1403,7 +1409,7 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
     }
   }
 
-  object->EnsureTable();
+  object->EnsureTable(true);
   MakeTableWrite<axiom::connector::WriteKind::kInsert>(
     state, object->table, std::move(column_names), std::move(column_exprs),
     std::move(generated_columns));
@@ -1464,6 +1470,16 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
       std::make_shared<lp::InputReferenceExpr>(type, std::move(resolved));
     column_exprs.emplace_back(std::move(expr));
     column_names.emplace_back(name);
+  }
+  if (pk_type.size() == 0) {
+    SDB_PRINT("ADD FAKE PRIMARY COLUMN");
+    auto column =
+      state.resolver.Resolve(output_type, catalog::Column::kFakeName);
+    std::string resolved{column.GetColumnName()};
+    auto expr = std::make_shared<lp::InputReferenceExpr>(
+      catalog::Column::kFakeType, std::move(resolved));
+    column_exprs.emplace_back(std::move(expr));
+    column_names.emplace_back(catalog::Column::kFakeName);
   }
 
   using NameToColumnMap =
@@ -1583,6 +1599,16 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
       std::make_shared<lp::InputReferenceExpr>(type, std::move(resolved));
     column_exprs.emplace_back(std::move(expr));
     column_names.emplace_back(name);
+  }
+
+  if (pk_type.size() == 0) {
+    auto column =
+      state.resolver.Resolve(output_type, catalog::Column::kFakeName);
+    std::string resolved{column.GetColumnName()};
+    auto expr = std::make_shared<lp::InputReferenceExpr>(
+      catalog::Column::kFakeType, std::move(resolved));
+    column_exprs.emplace_back(std::move(expr));
+    column_names.emplace_back(catalog::Column::kFakeName);
   }
 
   object->EnsureTable();
@@ -2677,19 +2703,22 @@ State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
 
   object.EnsureTable();
 
-  if (!implicit_pk_column) {
+  SDB_PRINT("implicit_pk_column = ", implicit_pk_column);
+
+  if (implicit_pk_column) {
     SDB_ASSERT(object.object);
     auto table = basics::downCast<catalog::Table>(*object.object);
-    if (table.PKColumns()[0] == catalog::Column::kFakeId) {
+    if (table.PKColumns().empty()) {
+      SDB_PRINT("Add additional pg column");
       std::vector types = type->children();
       std::vector type_names = type->names();
-      SDB_ASSERT(type_names.back() == catalog::Column::kFakeName);
 
-      types.pop_back();
-      type_names.pop_back();
-      column_names.pop_back();
-
+      types.push_back(catalog::Column::kFakeType);
+      type_names.emplace_back(catalog::Column::kFakeName);
       type = velox::ROW(std::move(type_names), std::move(types));
+
+      column_names.emplace_back(
+        _id_generator.NextColumnName(catalog::Column::kFakeName));
     }
   }
 
@@ -2698,6 +2727,9 @@ State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
     _id_generator.NextPlanId(),
     velox::ROW(std::move(column_names), type->children()), object.table,
     type->names());
+
+  SDB_PRINT("output type is = ", state.root->outputType()->toString());
+
   state.resolver.CreateTable(
     table_alias, MakePtrView<velox::RowType>(state.root->outputType()));
   return state;

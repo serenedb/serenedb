@@ -351,7 +351,9 @@ class SereneDBConnectorMetadata final
     auto& config = basics::downCast<Config>(*session->config());
     if (!config.GetTxnState().InsideTransaction()) {
       // Single statement transaction, we can commit here
-      transaction->Commit();
+      auto status = transaction->Commit();
+      VELOX_CHECK(status.ok(),
+                  "Failed to commit transaction: ", status.ToString());
     }
 
     return number_of_locked_primary_keys;
@@ -372,7 +374,9 @@ class SereneDBConnectorMetadata final
     auto& config = basics::downCast<Config>(*session->config());
     if (serene_insert_handle->GetTransaction() &&
         !config.GetTxnState().InsideTransaction()) {
-      serene_insert_handle->GetTransaction()->Rollback();
+      auto status = serene_insert_handle->GetTransaction()->Rollback();
+      VELOX_CHECK(status.ok(),
+                  "Failed to rollback transaction: ", status.ToString());
     }
     return {};
   } catch (...) {
@@ -429,9 +433,8 @@ class SereneDBConnector final : public velox::connector::Connector {
       snapshot = txn->GetSnapshot();
     }
     return std::make_unique<RocksDBDataSource>(
-      *connector_query_ctx->memoryPool(),
-      snapshot,  // TODO(Dronplane) snapshot management
-      _db, _cf, output_type, column_oids, object_key);
+      *connector_query_ctx->memoryPool(), snapshot, _db, _cf, output_type,
+      column_oids, object_key);
   }
 
   std::shared_ptr<velox::connector::IndexSource> createIndexSource(

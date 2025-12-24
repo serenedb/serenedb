@@ -23,6 +23,7 @@
 #include <axiom/connectors/ConnectorMetadata.h>
 #include <velox/connectors/Connector.h>
 
+#include "basics/assert.h"
 #include "basics/fwd.h"
 #include "basics/misc.hpp"
 #include "catalog/identifiers/object_id.h"
@@ -150,7 +151,6 @@ class RocksDBTable final : public axiom::connector::Table {
     sort_order.resize(
       _pk_type->size(),
       axiom::connector::SortOrder{.isAscending = true, .isNullsFirst = false});
-    // TODO(Dronplane) take it from the catalog when available
     for (const auto& catalog_column : collection.Columns()) {
       auto serenedb_column = std::make_unique<SereneDBColumn>(
         catalog_column.name, catalog_column.type, catalog_column.id);
@@ -186,9 +186,11 @@ class RocksDBTable final : public axiom::connector::Table {
   std::vector<velox::connector::ColumnHandlePtr> rowIdHandles(
     axiom::connector::WriteKind kind) const final {
     SDB_ASSERT(_pk_type);
+    SDB_ASSERT(!_pk_type->children().empty());
 
-    if (kind == axiom::connector::WriteKind::kInsert && _pk_type->size() == 1 &&
+    if (kind == axiom::connector::WriteKind::kInsert &&
         _column_handles.back()->Id() == catalog::Column::kFakeId) {
+      SDB_ASSERT(_pk_type->size() == 1);
       return {};
     }
 

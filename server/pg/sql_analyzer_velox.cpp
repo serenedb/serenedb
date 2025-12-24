@@ -3308,10 +3308,6 @@ bool IsJsonOperator(std::string_view name) {
          name == kJsonPathQuery || name == kJsonPathPredicate;
 }
 
-bool IsJsonOutputType(std::string_view name) {
-  return name == kJsonExtract || name == kJsonExtractPath;
-}
-
 lp::ExprPtr SqlAnalyzer::ProcessJsonExtractOp(std::string_view type,
                                               lp::ExprPtr input,
                                               lp::ExprPtr key) {
@@ -3321,21 +3317,25 @@ lp::ExprPtr SqlAnalyzer::ProcessJsonExtractOp(std::string_view type,
       // array index
       if (type == kJsonExtract) {
         res = ResolveVeloxFunctionAndInferArgsCommonType(
-          "pg_json_extract_path", {std::move(input), std::move(key)});
+          "pg_json_extract_index",
+          {std::move(input), std::move(key)});
       } else {
         SDB_ASSERT(type == kJsonExtractText);
         res = ResolveVeloxFunctionAndInferArgsCommonType(
-          "pg_json_extract_path_text", {std::move(input), std::move(key)});
+          "pg_json_extract_index_text",
+          {std::move(input), std::move(key)});
       }
     } else if (key->type() == velox::VARCHAR()) {
       // object field
       if (type == kJsonExtract) {
         res = ResolveVeloxFunctionAndInferArgsCommonType(
-          "pg_json_extract_path", {std::move(input), std::move(key)});
+          "pg_json_extract_field",
+          {std::move(input), std::move(key)});
       } else {
         SDB_ASSERT(type == kJsonExtractText);
         res = ResolveVeloxFunctionAndInferArgsCommonType(
-          "pg_json_extract_path_text", {std::move(input), std::move(key)});
+          "pg_json_extract_field_text",
+          {std::move(input), std::move(key)});
       }
     } else {
       THROW_SQL_ERROR(
@@ -3343,19 +3343,16 @@ lp::ExprPtr SqlAnalyzer::ProcessJsonExtractOp(std::string_view type,
         ERR_MSG("JSON key must be either string or integer type"));
     }
   } else {
-    // TODO(codeworse): path extraction
     if (type == kJsonExtractPath) {
       res = ResolveVeloxFunctionAndInferArgsCommonType(
-        "pg_json_extract_path", {std::move(input), std::move(key)});
+        "pg_json_extract_path",
+        {std::move(input), std::move(key)});
     } else {
       SDB_ASSERT(type == kJsonExtractPathText);
       res = ResolveVeloxFunctionAndInferArgsCommonType(
-        "pg_json_extract_path_text", {std::move(input), std::move(key)});
+        "pg_json_extract_path_text",
+        {std::move(input), std::move(key)});
     }
-  }
-  if (IsJsonOutputType(type)) {
-    res = std::make_shared<lp::CallExpr>(velox::JSON(), "pg_jsonin",
-                                         std::move(res));
   }
   return res;
 }

@@ -126,11 +126,6 @@ class JsonParser {
     return ProcessOutput<Output>(value);
   }
 
-  simdjson::error_code ValidateJson() {
-    auto doc = _parser.iterate(_padded_input);
-    return doc.error();
-  }
-
  private:
   template<OutputType Output>
   std::string_view ProcessOutput(simdjson::ondemand::value& value) {
@@ -155,15 +150,17 @@ class JsonParser {
   simdjson::padded_string _padded_input;
 };
 
-template<typename T>
-struct PgJsonExtractPathText {
+// Process -> operator (by index) and ->> operator (by index text)
+template<JsonParser::OutputType Output, typename T>
+struct PgJsonExtractIndexBase {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
   bool call(  // NOLINT
-    out_type<velox::Varchar>& result, const arg_type<velox::Json>& json,
-    const arg_type<int64_t>& index) {
+    out_type<std::conditional_t<Output == JsonParser::OutputType::TEXT,
+                                velox::Varchar, velox::Json>>& result,
+    const arg_type<velox::Json>& json, const arg_type<int64_t>& index) {
     _parser.PrepareJson({json});
-    auto str = _parser.ExtractByIndex<JsonParser::OutputType::TEXT>(index);
+    auto str = _parser.ExtractByIndex<Output>(index);
     if (!str.data()) {
       return false;
     }
@@ -171,25 +168,73 @@ struct PgJsonExtractPathText {
     return true;
   }
 
-  // call for ->> operator (field text)
-  bool call(out_type<velox::Varchar>& result, const arg_type<velox::Json>& json,
-            const arg_type<velox::Varchar>& field) {
+ private:
+  JsonParser _parser;
+};
+
+template<typename T>
+using PgJsonExtractIndex =
+  PgJsonExtractIndexBase<JsonParser::OutputType::JSON, T>;
+
+template<typename T>
+using PgJsonExtractIndexText =
+  PgJsonExtractIndexBase<JsonParser::OutputType::TEXT, T>;
+
+// Process -> operator (by field) and ->> operator (by field text)
+template<JsonParser::OutputType Output, typename T>
+struct PgJsonExtractFieldBase {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  bool call(  // NOLINT
+    out_type<std::conditional_t<Output == JsonParser::OutputType::TEXT,
+                                velox::Varchar, velox::Json>>& result,
+    const arg_type<velox::Json>& json, const arg_type<velox::Varchar>& field) {
     _parser.PrepareJson({json});
-    auto str = _parser.ExtractByField<JsonParser::OutputType::TEXT>(
-      {field.data(), field.size()});
+    auto str = _parser.ExtractByField<Output>({field.data(), field.size()});
     if (!str.data()) {
       return false;
     }
     result = str;
     return true;
   }
+
+ private:
+  JsonParser _parser;
+};
+
+template<typename T>
+using PgJsonExtractField =
+  PgJsonExtractFieldBase<JsonParser::OutputType::JSON, T>;
+
+template<typename T>
+using PgJsonExtractFieldText =
+  PgJsonExtractFieldBase<JsonParser::OutputType::TEXT, T>;
+
+// Process #> operator (path json) and #>> operator (path text)
+template<JsonParser::OutputType Output, typename T>
+struct PgJsonExtractPathBase {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
 
   // call for #>> operator (path text)
-  bool call(out_type<velox::Varchar>& result, const arg_type<velox::Json>& json,
+  bool call(out_type<std::conditional_t<Output == JsonParser::OutputType::TEXT,
+                                        velox::Varchar, velox::Json>>& result,
+            const arg_type<velox::Json>& json,
             const arg_type<velox::Array<velox::Varchar>>& path) {
     _parser.PrepareJson({json});
 
-    auto str = _parser.Extract<JsonParser::OutputType::TEXT>(path);
+    auto str = _parser.Extract<Output>(path);
+    if (!str.data()) {
+      return false;
+    }
+    result = str;
+    return true;
+  }
+
+  bool call(out_type<velox::Varchar>& result, const arg_type<velox::Json>& json,
+            const arg_type<velox::Variadic<velox::Varchar>>& segments) {
+    _parser.PrepareJson({json});
+
+    auto str = _parser.Extract<Output>(segments);
     if (!str.data()) {
       return false;
     }
@@ -202,50 +247,12 @@ struct PgJsonExtractPathText {
 };
 
 template<typename T>
-struct PgJsonExtractPath {
-  VELOX_DEFINE_FUNCTION_TYPES(T);
+using PgJsonExtractPath =
+  PgJsonExtractPathBase<JsonParser::OutputType::JSON, T>;
 
-  // call for -> operator (index json)
-  bool call(  // NOLINT
-    out_type<velox::Json>& result, const arg_type<velox::Json>& json,
-    const arg_type<int64_t>& index) {
-    _parser.PrepareJson({json});
-    auto str = _parser.ExtractByIndex<JsonParser::OutputType::JSON>(index);
-    if (!str.data()) {
-      return false;
-    }
-    result = str;
-    return true;
-  }
-
-  // call for -> operator (field json)
-  bool call(out_type<velox::Json>& result, const arg_type<velox::Json>& json,
-            const arg_type<velox::Varchar>& field) {
-    _parser.PrepareJson({json});
-    auto str = _parser.ExtractByField<JsonParser::OutputType::JSON>(
-      {field.data(), field.size()});
-    if (!str.data()) {
-      return false;
-    }
-    result = str;
-    return true;
-  }
-
-  // call for #>> operator (path json)
-  bool call(out_type<velox::Json>& result, const arg_type<velox::Json>& json,
-            const arg_type<velox::Array<velox::Varchar>>& path) {
-    _parser.PrepareJson({json});
-    auto str = _parser.Extract<JsonParser::OutputType::JSON>(path);
-    if (!str.data()) {
-      return false;
-    }
-    result = str;
-    return true;
-  }
-
- private:
-  JsonParser _parser;
-};
+template<typename T>
+using PgJsonExtractPathText =
+  PgJsonExtractPathBase<JsonParser::OutputType::TEXT, T>;
 
 template<typename T>
 struct PgJsonInFunction {
@@ -253,13 +260,13 @@ struct PgJsonInFunction {
 
   FOLLY_ALWAYS_INLINE void call(  // NOLINT
     out_type<velox::Json>& result, const arg_type<velox::Varchar>& input) {
-    // Still need to parse json:
+    // Even thouth we need only validation here, we still parse the input:
     // https://github.com/simdjson/simdjson/discussions/1393
 
     std::string_view input_view{input.data(), input.size()};
-    JsonParser parser;
-    parser.PrepareJson(input_view);
-    if (parser.ValidateJson() != simdjson::SUCCESS) {
+    simdjson::dom::parser parser;
+    simdjson::padded_string padded_input{input_view};
+    if (!parser.parse(padded_input).has_value()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_JSON_TEXT),
                       ERR_MSG(absl::StrCat(
                         "Invalid input syntax for type json: ", input_view)));

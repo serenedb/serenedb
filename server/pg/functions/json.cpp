@@ -21,7 +21,6 @@
 #include "pg/functions/json.h"
 
 namespace sdb::pg {
-namespace {}  // namespace
 
 simdjson::simdjson_result<simdjson::ondemand::value> JsonParser::GetByIndex(
   simdjson::ondemand::array arr, int64_t relative_index) {

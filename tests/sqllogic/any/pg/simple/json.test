@@ -1,3 +1,7 @@
+query error
+SELECT 't'::json;
+
+
 query
 SELECT '[1, 2, 3]'::json -> 1;
 ----
@@ -100,3 +104,17 @@ SELECT concat('{"a": {"b": [ "foo" , "bar"]}}'::json #>> ARRAY['a', 'b', '1'], '
 ----
 concat
 barbar
+
+
+query
+SELECT json_extract_path_text('{"a": {"b": [1, 2, 3]}}'::json, 'a', 'b', '0');
+----
+json_extract_path_text
+1
+
+
+query
+SELECT json_extract_path('{"a": {"b": [1, 2, 3]}}'::json, 'a', 'b') -> -1;
+----
+?column?
+3

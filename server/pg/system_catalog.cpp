@@ -404,6 +404,9 @@ constexpr auto kMapping =
     {"json_extract_path",
      {"pg_json_extract_path", false, FunctionLanguage::VeloxNative,
       FunctionKind::Scalar}},
+    {"json_extract_path_text",
+     {"pg_json_extract_path_text", false, FunctionLanguage::VeloxNative,
+      FunctionKind::Scalar}},
   });
 const VirtualTable* GetTableFromSchema(std::string_view name,
                                        const PgSystemSchema& schema) {

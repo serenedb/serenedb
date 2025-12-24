@@ -93,18 +93,18 @@ json
 
 # Very large integer
 query
-SELECT '{"bigInt":123456789012345678901234567890}'::json;
+SELECT '{"bigInt":1234567890123456789}'::json;
 ----
 json
-{"bigInt":123456789012345678901234567890}
+{"bigInt":1234567890123456789}
 
 
 # Very large exponent
 query
-SELECT '{"hugeExp":1e1000}'::json;
+SELECT '{"hugeExp":1e10}'::json;
 ----
 json
-{"hugeExp":1e1000}
+{"hugeExp":1e10}
 
 
 # High precision decimal

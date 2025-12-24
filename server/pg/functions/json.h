@@ -264,7 +264,7 @@ struct PgJsonInFunction {
 
   FOLLY_ALWAYS_INLINE void call(  // NOLINT
     out_type<velox::Json>& result, const arg_type<velox::Varchar>& input) {
-    // Even thouth we need only validation here, we still parse the input:
+    // Even though we need only validation here, we still parse the input:
     // https://github.com/simdjson/simdjson/discussions/1393
 
     std::string_view input_view{input.data(), input.size()};

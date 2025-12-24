@@ -115,6 +115,9 @@ std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
       if (column_id == catalog::Column::kGeneratedPKId) {
         SDB_ASSERT(col_idx > 0 || col_idx + 1 < num_columns,
                    "Tables without columns are not supported");
+        // For updates primary column keys preceed others required, so we use
+        // the next one. For deletes implicit generated key column is the last
+        // one, so we use the previous one.
         read_col_idx = (col_idx == 0) ? col_idx + 1 : col_idx - 1;
       }
 

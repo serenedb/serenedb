@@ -54,7 +54,8 @@ void MakeColumnKey(const velox::RowVectorPtr& input,
   if (!pk_columns.empty()) {
     primary_key::Create(*input, pk_columns, row_idx, key_buffer);
   } else {
-    auto generated_pk = RevisionId::create().id();
+    // Signed type is required as it will be stored in velox vector
+    auto generated_pk = std::bit_cast<int64_t>(RevisionId::create().id());
     primary_key::AppendIntegral(key_buffer, generated_pk);
   }
 

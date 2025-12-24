@@ -113,10 +113,8 @@ std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
 
       size_t read_col_idx = col_idx;
       if (column_id == catalog::Column::kFakeId) {
-        if (col_idx == 0 && col_idx + 1 >= num_columns) {
-          // It's the case of table without columns. There cannot be rows.
-          return {};
-        }
+        SDB_ASSERT(col_idx > 0 || col_idx + 1 < num_columns,
+                   "Table without columns are not supported");
         read_col_idx = (col_idx == 0) ? col_idx + 1 : col_idx - 1;
       }
 
@@ -274,7 +272,7 @@ velox::VectorPtr RocksDBDataSource::ReadFakeColumn(rocksdb::Iterator& it,
         result->resize(result->size() * 2, false);
       }
 
-      auto val = primary_key::ReadIntegral<uint64_t>(
+      auto val = primary_key::ReadIntegral<int64_t>(
         key.data() + table_prefix_size + sizeof(catalog::Column::Id));
       result->set(value_idx, val);
     },

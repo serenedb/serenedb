@@ -24,7 +24,9 @@
 #include <velox/vector/ComplexVector.h>
 
 #include <string>
+#include <type_traits>
 
+#include "basics/assert.h"
 #include "basics/fwd.h"
 #include "rocksdb_engine_catalog/concat.h"
 
@@ -47,6 +49,8 @@ void Create(const velox::RowVector& data, velox::vector_size_t idx,
 
 template<typename T>
 void AppendIntegral(std::string& key, T value) {
+  SDB_ASSERT(std::is_signed_v<T>,
+             "Cannot correctly store unsigned value due to sign bit flipping");
   const auto base_size = key.size();
   basics::StrAppend(key, sizeof(T));
   absl::big_endian::Store(key.data() + base_size, value);
@@ -55,6 +59,8 @@ void AppendIntegral(std::string& key, T value) {
 
 template<typename T>
 T ReadIntegral(const char* buf) {
+  SDB_ASSERT(std::is_signed_v<T>,
+             "Cannot correctly read unsigned value due to sign bit flipping");
   using UnsignedT = typename std::make_unsigned<T>::type;
   constexpr int kBits = sizeof(T) * CHAR_BIT;
 

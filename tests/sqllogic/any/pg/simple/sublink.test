@@ -294,6 +294,7 @@ name description total_money
 deadinside Sad Guy 200
 
 
+onlyif serenedb
 query
 EXPLAIN (LOGICAL, INITIAL_QUERY_GRAPH, FINAL_QUERY_GRAPH, PHYSICAL, EXECUTION, REGISTERS)
 WITH m(name, total) AS (

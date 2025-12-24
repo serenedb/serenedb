@@ -67,6 +67,8 @@ namespace sdb {
 class QueryString;
 namespace pg {
 
+int ExprLocation(const void* node) noexcept;
+
 std::string GetUnnamedFunctionArgumentName(size_t param_idx);
 
 catalog::FunctionSignature ToSignature(const List* pg_parameters,

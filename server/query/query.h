@@ -56,6 +56,11 @@ class Query {
   velox::RowTypePtr GetOutputType() const { return _output_type; }
   const QueryContext& GetContext() const { return _query_ctx; }
   std::string GetLogicalPlan() const;
+  const auto& GetInitialQueryGraphPlan() const {
+    return _initial_query_graph_plan;
+  }
+  const auto& GetFinalQueryGraphPlan() const { return _final_query_graph_plan; }
+  const auto& GetPhysicalPlan() const { return _physical_plan; }
   std::string GetExecutionPlan() const;
   ExternalExecutor& GetExternalExecutor() const;
 
@@ -90,6 +95,10 @@ class Query {
   axiom::logical_plan::LogicalPlanNodePtr _logical_plan;
   velox::RowTypePtr _output_type;
   std::unique_ptr<ExternalExecutor> _executor;
+
+  std::string _initial_query_graph_plan;
+  std::string _final_query_graph_plan;
+  std::string _physical_plan;
 };
 
 using QueryPtr = std::unique_ptr<Query>;

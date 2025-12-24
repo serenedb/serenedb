@@ -45,8 +45,7 @@ LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 
-template<typename T>
-inline int ExprLocation(const T* node) noexcept {
+int ExprLocation(const void* node) noexcept {
   return ::exprLocation(reinterpret_cast<const Node*>(node));
 }
 

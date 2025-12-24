@@ -228,6 +228,7 @@ velox::TypePtr FixupReturnType(const velox::TypePtr& ret_type) {
   }
   return velox::getType(ret_type->name(), std::move(new_params));
 }
+
 velox::TypePtr ResolveFunction(const std::string& function_name,
                                std::span<const lp::ExprPtr> arg_exprs,
                                std::vector<velox::TypePtr>* arg_coercions) {
@@ -269,11 +270,6 @@ void AndToLeft(lp::ExprPtr& left, lp::ExprPtr right) {
   left = std::make_shared<lp::SpecialFormExpr>(
     velox::BOOLEAN(), lp::SpecialForm::kAnd,
     std::vector<lp::ExprPtr>{std::move(left), std::move(right)});
-}
-
-template<typename T>
-inline int ExprLocation(const T* node) noexcept {
-  return ::exprLocation(reinterpret_cast<const Node*>(node));
 }
 
 template<typename T>
@@ -694,12 +690,12 @@ class SqlAnalyzer {
  private:
   SqlCommandType ProcessStmt(State& state, const Node& node);
 
-  template<axiom::connector::WriteKind WriteKind>
-  void MakeTableWrite(State& state,
-                      std::shared_ptr<axiom::connector::Table> table,
-                      std::vector<std::string> column_names,
-                      std::vector<lp::ExprPtr> column_exprs,
-                      std::vector<const catalog::Column*> generated_columns);
+  void MakeTableWrite(
+    axiom::connector::WriteKind write_kind, State& state,
+    const Objects::ObjectData& object, std::vector<std::string> column_names,
+    std::vector<lp::ExprPtr> column_exprs,
+    std::span<const catalog::Column* const> generated_columns);
+
   void ProcessSelectStmt(State& state, const SelectStmt& stmt);
   void ProcessInsertStmt(State& state, const InsertStmt& stmt);
   void ProcessUpdateStmt(State& state, const UpdateStmt& stmt);
@@ -1218,11 +1214,14 @@ void SqlAnalyzer::ProcessSelectStmt(State& state, const SelectStmt& stmt) {
   // TODO: ProcessFinalProject
 }
 
-template<axiom::connector::WriteKind WriteKind>
 void SqlAnalyzer::MakeTableWrite(
-  State& state, std::shared_ptr<axiom::connector::Table> table,
-  std::vector<std::string> column_names, std::vector<lp::ExprPtr> column_exprs,
-  std::vector<const catalog::Column*> generated_columns) {
+  axiom::connector::WriteKind write_kind, State& state,
+  const Objects::ObjectData& object, std::vector<std::string> column_names,
+  std::vector<lp::ExprPtr> column_exprs,
+  std::span<const catalog::Column* const> generated_columns) {
+  object.EnsureTable();
+  const auto& table = object.table;
+
   if (!generated_columns.empty()) {
     // generated columns may depend on other columns (default indeed)
     auto projected_column_names =
@@ -1252,7 +1251,7 @@ void SqlAnalyzer::MakeTableWrite(
   }
 
   state.root = std::make_shared<lp::TableWriteNode>(
-    _id_generator.NextPlanId(), std::move(state.root), table, WriteKind,
+    _id_generator.NextPlanId(), std::move(state.root), table, write_kind,
     std::move(column_names), std::move(column_exprs));
 }
 
@@ -1393,10 +1392,9 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
     }
   }
 
-  object->EnsureTable();
-  MakeTableWrite<axiom::connector::WriteKind::kInsert>(
-    state, object->table, std::move(column_names), std::move(column_exprs),
-    std::move(generated_columns));
+  MakeTableWrite(axiom::connector::WriteKind::kInsert, state, *object,
+                 std::move(column_names), std::move(column_exprs),
+                 std::move(generated_columns));
 }
 
 void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
@@ -1513,10 +1511,9 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
     generated_columns.emplace_back(&column);
   }
 
-  object->EnsureTable();
-  MakeTableWrite<axiom::connector::WriteKind::kUpdate>(
-    state, object->table, std::move(column_names), std::move(column_exprs),
-    std::move(generated_columns));
+  MakeTableWrite(axiom::connector::WriteKind::kUpdate, state, *object,
+                 std::move(column_names), std::move(column_exprs),
+                 std::move(generated_columns));
 }
 
 void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
@@ -3787,6 +3784,7 @@ lp::ExprPtr SqlAnalyzer::ProcessFuncCall(State& state, const FuncCall& expr) {
 velox::TypePtr ResolveWindowFunction(
   const std::string& function_name,
   const std::vector<velox::TypePtr>& arg_types) {
+  // TODO: coercions
   if (auto signatures = ve::getWindowFunctionSignatures(function_name)) {
     for (const auto& signature : signatures.value()) {
       ve::SignatureBinder binder(*signature, arg_types);
@@ -3925,6 +3923,7 @@ lp::WindowExprPtr SqlAnalyzer::MaybeWindowFuncCall(
       }
     }
     if (logical_function.Options().IsAggregate()) {
+      // TODO: resolveResultTypeWithCoercions
       if (auto type = ve::resolveResultType(name, arg_types)) {
         return type;
       }

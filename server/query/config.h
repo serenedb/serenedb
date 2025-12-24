@@ -74,7 +74,9 @@ std::string_view GetOriginalName(std::string_view name);
 
 class Config : public velox::config::IConfig {
  public:
+  // TxnState is friend, so it can access _session to apply changes on commit
   friend class TxnState;
+
   enum class VariableContext : uint8_t {
     Session = 0,
     Transaction,

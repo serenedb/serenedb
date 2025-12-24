@@ -113,10 +113,10 @@ void Config::Set(VariableContext context, std::string_view key,
       _session[key] = std::move(value);
     } break;
     case VariableContext::Transaction: {
-      _txn.Set(key, std::move(value), TxnState::TxnAction::Apply);
+      _txn.Set(key, std::move(value), TxnState::Action::Apply);
     } break;
     case VariableContext::Local: {
-      _txn.Set(key, std::move(value), TxnState::TxnAction::Revert);
+      _txn.Set(key, std::move(value), TxnState::Action::Revert);
     } break;
   }
 }

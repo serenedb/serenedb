@@ -263,6 +263,7 @@ class SereneDBConnectorInsertTableHandle final
     const auto& config = basics::downCast<Config>(*_session->config());
     if (config.GetTxnState().InsideTransaction()) {
       _local_transaction = config.GetTxnState().GetTransaction();
+      SDB_ASSERT(_local_transaction);
     }
   }
 
@@ -274,10 +275,10 @@ class SereneDBConnectorInsertTableHandle final
 
   const axiom::connector::TablePtr& Table() const noexcept { return _table; }
 
-  rocksdb::Transaction* GetTransaction() const noexcept {
+  const std::shared_ptr<rocksdb::Transaction>& GetTransaction() const noexcept {
     // TODO(Dronplane) we will have here non-owned transaction from upper layer
     // so we will check it first when we have it.
-    return _local_transaction.get();
+    return _local_transaction;
   }
 
   void SetLocalTransaction(
@@ -345,9 +346,10 @@ class SereneDBConnectorMetadata final
         handle->veloxHandle());
     VELOX_CHECK_NOT_NULL(serene_insert_handle,
                          "Wrong type of insert table handle");
-    auto* transaction = serene_insert_handle->GetTransaction();
+    const auto& transaction = serene_insert_handle->GetTransaction();
     SDB_ASSERT(transaction);
     const int64_t number_of_locked_primary_keys = transaction->GetNumKeys();
+    SDB_ASSERT(session->config());
     auto& config = basics::downCast<Config>(*session->config());
     if (!config.GetTxnState().InsideTransaction()) {
       // Single statement transaction, we can commit here
@@ -371,6 +373,7 @@ class SereneDBConnectorMetadata final
         handle->veloxHandle());
     VELOX_CHECK_NOT_NULL(serene_insert_handle,
                          "Wrong type of insert table handle");
+    SDB_ASSERT(session->config());
     auto& config = basics::downCast<Config>(*session->config());
     if (serene_insert_handle->GetTransaction() &&
         !config.GetTxnState().InsideTransaction()) {
@@ -458,10 +461,9 @@ class SereneDBConnector final : public velox::connector::Connector {
       basics::downCast<const SereneDBConnectorInsertTableHandle>(
         *connector_insert_table_handle);
 
-    auto* transaction = serene_insert_handle.GetTransaction();
+    const auto& transaction = serene_insert_handle.GetTransaction();
     if (!transaction) {
       serene_insert_handle.SetLocalTransaction(CreateTransaction(_db));
-      transaction = serene_insert_handle.GetTransaction();
     }
 
     const auto& table =

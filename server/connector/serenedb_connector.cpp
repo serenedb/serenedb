@@ -39,6 +39,7 @@ SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
   auto& config = basics::downCast<Config>(*session->config());
   if (config.GetTxnState().InsideTransaction()) {
     _txn = config.GetTxnState().GetTransaction();
+    SDB_ASSERT(_txn);
   }
 }
 

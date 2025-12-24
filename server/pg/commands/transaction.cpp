@@ -34,7 +34,7 @@ yaclib::Future<Result> Transaction(ExecContext& context,
     case TRANS_STMT_BEGIN:
     case TRANS_STMT_START:
       if (!txn_state.InsideTransaction()) {
-        txn_state.Begin();
+        return txn_state.Begin();
       } else {
         r = {ERROR_QUERY_USER_WARN,
              "there is already a transaction in progress"};
@@ -42,14 +42,14 @@ yaclib::Future<Result> Transaction(ExecContext& context,
       break;
     case TRANS_STMT_COMMIT:
       if (txn_state.InsideTransaction()) {
-        txn_state.Commit();
+        return txn_state.Commit();
       } else {
         r = {ERROR_QUERY_USER_WARN, "there is no transaction in progress"};
       }
       break;
     case TRANS_STMT_ROLLBACK:
       if (txn_state.InsideTransaction()) {
-        txn_state.Abort();
+        return txn_state.Abort();
       } else {
         r = {ERROR_QUERY_USER_WARN, "there is no transaction in progress"};
       }

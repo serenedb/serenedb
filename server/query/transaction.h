@@ -21,8 +21,10 @@
 #pragma once
 #include <rocksdb/utilities/transaction_db.h>
 
-#include "basics/assert.h"
+#include <yaclib/async/future.hpp>
+
 #include "basics/containers/flat_hash_map.h"
+#include "basics/result.h"
 
 namespace sdb {
 
@@ -33,23 +35,23 @@ std::shared_ptr<rocksdb::Transaction> CreateTransaction(
 
 class TxnState {
  public:
-  enum class TxnAction : uint8_t {
+  enum class Action : uint8_t {
     Apply = 0,
     Revert,
   };
 
-  struct TxnVariable {
-    TxnAction action;
+  struct Variable {
+    Action action;
     std::string value;
   };
 
   TxnState(Config& config) : _config(config) {}
 
-  void Begin();
+  yaclib::Future<Result> Begin();
 
-  void Commit();
+  yaclib::Future<Result> Commit();
 
-  void Abort();
+  yaclib::Future<Result> Abort();
 
   bool InsideTransaction() const { return _txn.get() != nullptr; }
 
@@ -62,7 +64,7 @@ class TxnState {
     return it == _variables.end() ? std::string_view{} : it->second.value;
   }
 
-  void Set(std::string_view key, std::string value, TxnAction action) {
+  void Set(std::string_view key, std::string value, Action action) {
     _variables[key] = {
       action,
       std::move(value),
@@ -81,7 +83,7 @@ class TxnState {
   }
 
  private:
-  containers::FlatHashMap<std::string_view, TxnVariable> _variables;
+  containers::FlatHashMap<std::string_view, Variable> _variables;
   std::shared_ptr<rocksdb::Transaction> _txn;
   Config& _config;
 };

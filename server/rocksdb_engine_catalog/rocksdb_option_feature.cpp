@@ -1583,9 +1583,7 @@ void RocksDBOptionFeature::validateOptions(
     // for performance
     _enable_blob_garbage_collection = false;
   }
-}
 
-void RocksDBOptionFeature::prepare() {
   if (_enforce_block_cache_size_limit && _block_cache_size > 0) {
     uint64_t shard_size =
       _block_cache_size / (uint64_t(1) << _block_cache_shard_bits);
@@ -1605,9 +1603,7 @@ void RocksDBOptionFeature::prepare() {
                "to avoid incomplete cache reads.");
     }
   }
-}
 
-void RocksDBOptionFeature::start() {
   uint32_t max = _max_background_jobs / 2;
   uint32_t clamped = std::max(
     std::min(static_cast<uint32_t>(number_of_cores::GetValue()), max), 1U);

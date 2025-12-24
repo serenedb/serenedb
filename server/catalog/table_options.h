@@ -148,30 +148,8 @@ struct Column {
   static constexpr Id kMaxRealId = 1'000'000;
 
   static constexpr Id kGeneratedPKId = kMaxRealId + 1;
-  static inline velox::TypePtr kGeneratedPKType = velox::BIGINT();
 
-  static std::string GeneratePKName(std::span<const std::string> column_names) {
-    static constexpr std::string_view kGeneratedPKPrefix = "sdb_generated_pk";
-
-    std::string candidate{kGeneratedPKPrefix};
-
-    size_t suffix = 0;
-    bool found_unique = false;
-
-    while (!found_unique) {
-      found_unique = true;
-      for (const auto& str : column_names) {
-        if (str == candidate) [[unlikely]] {
-          found_unique = false;
-          candidate.resize(kGeneratedPKPrefix.size());
-          absl::StrAppend(&candidate, "_", ++suffix);
-          break;
-        }
-      }
-    }
-
-    return candidate;
-  }
+  static std::string GeneratePKName(std::span<const std::string> column_names);
 
   Id id;
   velox::TypePtr type;

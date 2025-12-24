@@ -134,7 +134,7 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
 
 class RocksDBTable final : public axiom::connector::Table {
  public:
-  explicit RocksDBTable(const catalog::Table& collection, bool load_implicit_pk)
+  explicit RocksDBTable(const catalog::Table& collection)
     : Table{std::string{collection.GetName()}, collection.RowType()},
       _pk_type(collection.PKType()),
       _table_id(collection.GetId()) {
@@ -165,20 +165,18 @@ class RocksDBTable final : public axiom::connector::Table {
       order_columns.push_back(column);
     }
 
-    if (_pk_type->children().empty() && load_implicit_pk) {
+    if (_pk_type->children().empty()) {
       const auto generated_pk_name =
         catalog::Column::GeneratePKName(collection.RowType()->names());
 
       auto serenedb_column = std::make_unique<SereneDBColumn>(
-        generated_pk_name, catalog::Column::kGeneratedPKType,
-        catalog::Column::kGeneratedPKId);
+        generated_pk_name, velox::BIGINT(), catalog::Column::kGeneratedPKId);
       columns.push_back(serenedb_column.get());
 
       _column_map.emplace(generated_pk_name, serenedb_column.get());
       _column_handles.push_back(std::move(serenedb_column));
       order_columns.push_back(findColumn(generated_pk_name));
-      _pk_type = velox::ROW({std::move(generated_pk_name)},
-                            {catalog::Column::kGeneratedPKType});
+      _pk_type = velox::ROW({std::move(generated_pk_name)}, {velox::BIGINT()});
       sort_order.resize(1, axiom::connector::SortOrder{.isAscending = true,
                                                        .isNullsFirst = false});
     }
@@ -206,6 +204,10 @@ class RocksDBTable final : public axiom::connector::Table {
   std::vector<velox::connector::ColumnHandlePtr> rowIdHandles(
     axiom::connector::WriteKind kind) const final {
     SDB_ASSERT(_pk_type);
+    if (kind == axiom::connector::WriteKind::kInsert &&
+        _column_handles.back()->Id() == catalog::Column::kGeneratedPKId) {
+      return {};
+    }
 
     std::vector<velox::connector::ColumnHandlePtr> handles;
     handles.reserve(_pk_type->size());

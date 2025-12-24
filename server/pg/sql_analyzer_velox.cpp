@@ -1403,7 +1403,7 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
     }
   }
 
-  object->EnsureTable(false);
+  object->EnsureTable();
   MakeTableWrite<axiom::connector::WriteKind::kInsert>(
     state, object->table, std::move(column_names), std::move(column_exprs),
     std::move(generated_columns));
@@ -1469,8 +1469,8 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
       catalog::Column::GeneratePKName(table.RowType()->names());
     auto column = state.resolver.Resolve(output_type, generated_pk_name);
     std::string resolved{column.GetColumnName()};
-    auto expr = std::make_shared<lp::InputReferenceExpr>(
-      catalog::Column::kGeneratedPKType, std::move(resolved));
+    auto expr = std::make_shared<lp::InputReferenceExpr>(velox::BIGINT(),
+                                                         std::move(resolved));
     column_exprs.emplace_back(std::move(expr));
     column_names.emplace_back(std::move(generated_pk_name));
   }
@@ -1532,7 +1532,7 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
     generated_columns.emplace_back(&column);
   }
 
-  object->EnsureTable(true);
+  object->EnsureTable();
   MakeTableWrite<axiom::connector::WriteKind::kUpdate>(
     state, object->table, std::move(column_names), std::move(column_exprs),
     std::move(generated_columns));
@@ -1599,13 +1599,13 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
       catalog::Column::GeneratePKName(table.RowType()->names());
     auto column = state.resolver.Resolve(output_type, generated_pk_name);
     std::string resolved{column.GetColumnName()};
-    auto expr = std::make_shared<lp::InputReferenceExpr>(
-      catalog::Column::kGeneratedPKType, std::move(resolved));
+    auto expr = std::make_shared<lp::InputReferenceExpr>(velox::BIGINT(),
+                                                         std::move(resolved));
     column_exprs.emplace_back(std::move(expr));
     column_names.emplace_back(std::move(generated_pk_name));
   }
 
-  object->EnsureTable(true);
+  object->EnsureTable();
 
   state.root = std::make_shared<lp::TableWriteNode>(
     _id_generator.NextPlanId(), std::move(state.root), object->table,
@@ -2694,7 +2694,7 @@ State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
 
   auto [table_alias, column_names] = ProcessTableColumns(parent, node, type);
 
-  object.EnsureTable(load_implicit_pk);
+  object.EnsureTable();
 
   if (load_implicit_pk) {
     SDB_ASSERT(object.object);
@@ -2707,7 +2707,7 @@ State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
       std::vector types = type->children();
       std::vector type_names = type->names();
 
-      types.push_back(catalog::Column::kGeneratedPKType);
+      types.push_back(velox::BIGINT());
       type_names.emplace_back(std::move(generated_pk_name));
       type = velox::ROW(std::move(type_names), std::move(types));
     }

@@ -270,8 +270,9 @@ velox::VectorPtr RocksDBDataSource::ReadColumnFromKey(
         result->resize(result->size() * 2, false);
       }
 
-      auto val = primary_key::ReadSigned<int64_t>(
-        key.data() + table_prefix_size + sizeof(catalog::Column::Id));
+      auto val = primary_key::ReadSigned<int64_t>(std::string_view{
+        key.begin() + table_prefix_size + sizeof(catalog::Column::Id),
+        key.end()});
       result->set(value_idx, val);
     },
     last_key);

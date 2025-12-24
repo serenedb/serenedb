@@ -550,11 +550,11 @@ void ObjectCollector::CollectStmt(const State* parent, const Node* node) {
 
 }  // namespace
 
-void Objects::ObjectData::EnsureTable(bool load_implicit_pk) const {
+void Objects::ObjectData::EnsureTable() const {
   if (!table) {
     SDB_ASSERT(object);
     table = std::make_shared<connector::RocksDBTable>(
-      basics::downCast<catalog::Table>(*object), load_implicit_pk);
+      basics::downCast<catalog::Table>(*object));
   }
 }
 

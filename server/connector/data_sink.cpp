@@ -129,16 +129,14 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
     VELOX_DCHECK(_row_type->findChild(input_type.nameOf(i))
                    ->equivalent(*input_type.childAt(i)) ||
                  input_type.childAt(i)->kind() == velox::TypeKind::UNKNOWN);
-    _column_id = _column_ids[i];
-    if (_column_id == catalog::Column::kGeneratedPKId) {
-      continue;
-    }
 
     if (_skip_primary_key_columns && i < _key_childs.size()) {
       continue;
     }
-
-    WriteColumn(input->childAt(i), folly::Range{&all_rows, 1}, {});
+    _column_id = _column_ids[i];
+    if (_column_id != catalog::Column::kGeneratedPKId) {
+      WriteColumn(input->childAt(i), folly::Range{&all_rows, 1}, {});
+    }
   }
 }
 

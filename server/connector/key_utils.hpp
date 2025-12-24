@@ -56,7 +56,7 @@ void MakeColumnKey(const velox::RowVectorPtr& input,
     primary_key::Create(*input, pk_columns, row_idx, key_buffer);
   } else {
     // TODO: make unsigned when such types will be supported in Velox
-    auto generated_pk = std::bit_cast<int64_t>(RevisionId::create().id());
+    const auto generated_pk = std::bit_cast<int64_t>(RevisionId::create().id());
     primary_key::AppendSigned(key_buffer, generated_pk);
   }
 

@@ -550,7 +550,6 @@ void ObjectCollector::CollectStmt(const State* parent, const Node* node) {
 
 }  // namespace
 
-// TODO add kind here? different types for update and inserts
 void Objects::ObjectData::EnsureTable(bool load_implicit_pk) const {
   if (!table) {
     SDB_ASSERT(object);

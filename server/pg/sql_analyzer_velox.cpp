@@ -2693,14 +2693,12 @@ State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
   const auto& table = basics::downCast<catalog::Table>(*object.object);
   auto type = table.RowType();
 
-  auto [table_alias, column_names] =
-    ProcessTableColumns(parent, node, table.RowType());
+  auto [table_alias, column_names] = ProcessTableColumns(parent, node, type);
 
   object.EnsureTable(load_implicit_pk);
 
   if (load_implicit_pk) {
     SDB_ASSERT(object.object);
-    auto table = basics::downCast<catalog::Table>(*object.object);
     if (table.PKColumns().empty()) {
       auto generated_pk_name = catalog::Column::GeneratePKName(type->names());
 

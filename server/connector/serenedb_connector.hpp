@@ -482,7 +482,6 @@ class SereneDBConnector final : public velox::connector::Connector {
         [&]<bool IsUpdate>() {
           std::vector<velox::column_index_t> pk_indices;
           if constexpr (IsUpdate) {
-            // here?
             pk_indices.resize(table.PKType()->size());
             std::iota(pk_indices.begin(), pk_indices.end(), 0);
 #ifdef SDB_DEV

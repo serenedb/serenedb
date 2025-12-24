@@ -67,10 +67,6 @@ class RocksDBOptionFeature final : public SerenedFeature {
     return _prune_wait_time_initial;
   }
 
- protected:
-  rocksdb::Options doGetOptions() const;
-  rocksdb::BlockBasedTableOptions doGetTableOptions() const;
-
  private:
   uint64_t _transaction_lock_stripes;
   int64_t _transaction_lock_timeout;
@@ -187,6 +183,8 @@ class RocksDBOptionFeature final : public SerenedFeature {
   bool _verify_sst = false;
 
  private:
+  rocksdb::Options doGetOptions() const;
+  rocksdb::BlockBasedTableOptions doGetTableOptions() const;
   rocksdb::ColumnFamilyOptions getColumnFamilyOptionsDefault(
     RocksDBColumnFamilyManager::Family family) const;
 

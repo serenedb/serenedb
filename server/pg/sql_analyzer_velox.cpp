@@ -3317,25 +3317,21 @@ lp::ExprPtr SqlAnalyzer::ProcessJsonExtractOp(std::string_view type,
       // array index
       if (type == kJsonExtract) {
         res = ResolveVeloxFunctionAndInferArgsCommonType(
-          "pg_json_extract_index",
-          {std::move(input), std::move(key)});
+          "pg_json_extract_index", {std::move(input), std::move(key)});
       } else {
         SDB_ASSERT(type == kJsonExtractText);
         res = ResolveVeloxFunctionAndInferArgsCommonType(
-          "pg_json_extract_index_text",
-          {std::move(input), std::move(key)});
+          "pg_json_extract_index_text", {std::move(input), std::move(key)});
       }
     } else if (key->type() == velox::VARCHAR()) {
       // object field
       if (type == kJsonExtract) {
         res = ResolveVeloxFunctionAndInferArgsCommonType(
-          "pg_json_extract_field",
-          {std::move(input), std::move(key)});
+          "pg_json_extract_field", {std::move(input), std::move(key)});
       } else {
         SDB_ASSERT(type == kJsonExtractText);
         res = ResolveVeloxFunctionAndInferArgsCommonType(
-          "pg_json_extract_field_text",
-          {std::move(input), std::move(key)});
+          "pg_json_extract_field_text", {std::move(input), std::move(key)});
       }
     } else {
       THROW_SQL_ERROR(
@@ -3345,13 +3341,11 @@ lp::ExprPtr SqlAnalyzer::ProcessJsonExtractOp(std::string_view type,
   } else {
     if (type == kJsonExtractPath) {
       res = ResolveVeloxFunctionAndInferArgsCommonType(
-        "pg_json_extract_path",
-        {std::move(input), std::move(key)});
+        "pg_json_extract_path", {std::move(input), std::move(key)});
     } else {
       SDB_ASSERT(type == kJsonExtractPathText);
       res = ResolveVeloxFunctionAndInferArgsCommonType(
-        "pg_json_extract_path_text",
-        {std::move(input), std::move(key)});
+        "pg_json_extract_path_text", {std::move(input), std::move(key)});
     }
   }
   return res;

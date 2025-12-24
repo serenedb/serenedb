@@ -73,18 +73,18 @@ array
 
 # Very large integer
 query
-SELECT ARRAY['{"bigInt":1234567890123456789}'::json, '{"bigInt":1234567890123456789}'::json];
+SELECT ARRAY['{"bigInt":123456789012345678901234567890}'::json, '{"bigInt":123456789012345678901234567890}'::json];
 ----
 array
-{"{\\"bigInt\\":1234567890123456789}","{\\"bigInt\\":1234567890123456789}"}
+{"{\\"bigInt\\":123456789012345678901234567890}","{\\"bigInt\\":123456789012345678901234567890}"}
 
 
 # Very large exponent
 query
-SELECT ARRAY['{"hugeExp":1e10}'::json, '{"hugeExp":1e10}'::json];
+SELECT ARRAY['{"hugeExp":1e1000}'::json, '{"hugeExp":1e1000}'::json];
 ----
 array
-{"{\\"hugeExp\\":1e10}","{\\"hugeExp\\":1e10}"}
+{"{\\"hugeExp\\":1e1000}","{\\"hugeExp\\":1e1000}"}
 
 
 # High precision decimal
@@ -297,10 +297,10 @@ array
 
 # Array with large numbers and precision
 query
-SELECT ARRAY['[0.00000001, 1000000000000000000, -3.1415926535897932384626]'::json, '[0.00000001, 1000000000000000000, -3.1415926535897932384626]'::json];
+SELECT ARRAY['[0.00000001, 1000000000000000000000, -3.1415926535897932384626]'::json, '[0.00000001, 1000000000000000000000, -3.1415926535897932384626]'::json];
 ----
 array
-{"[0.00000001, 1000000000000000000, -3.1415926535897932384626]","[0.00000001, 1000000000000000000, -3.1415926535897932384626]"}
+{"[0.00000001, 1000000000000000000000, -3.1415926535897932384626]","[0.00000001, 1000000000000000000000, -3.1415926535897932384626]"}
 
 
 # Newline, tab, carriage return, snowman
@@ -377,10 +377,10 @@ array
 
 # Extremely large exponent
 query
-SELECT ARRAY['{"monsterExp":9.99e16}'::json, '{"monsterExp":9.99e16}'::json];
+SELECT ARRAY['{"monsterExp":9.99e9999}'::json, '{"monsterExp":9.99e9999}'::json];
 ----
 array
-{"{\\"monsterExp\\":9.99e16}","{\\"monsterExp\\":9.99e16}"}
+{"{\\"monsterExp\\":9.99e9999}","{\\"monsterExp\\":9.99e9999}"}
 
 
 # Array mixing all scalar types

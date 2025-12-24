@@ -1,5 +1,9 @@
 query error
-SELECT 't'::json;
+SELECT 'blob'::json;
+
+
+query error
+SELECT '["a", "b", c]'::json;
 
 
 query

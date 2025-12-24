@@ -55,7 +55,6 @@
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/down_cast.h"
-#include "basics/logger/logger.h"
 #include "basics/utf8_utils.hpp"
 #include "catalog/function.h"
 #include "catalog/object.h"

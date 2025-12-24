@@ -26,7 +26,6 @@
 
 #include "basics/assert.h"
 #include "basics/fwd.h"
-#include "basics/logger/logger.h"
 #include "basics/misc.hpp"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table.h"
@@ -207,7 +206,6 @@ class RocksDBTable final : public axiom::connector::Table {
   std::vector<velox::connector::ColumnHandlePtr> rowIdHandles(
     axiom::connector::WriteKind kind) const final {
     SDB_ASSERT(_pk_type);
-    // SDB_ASSERT(!_pk_type->children().empty());
 
     std::vector<velox::connector::ColumnHandlePtr> handles;
     handles.reserve(_pk_type->size());

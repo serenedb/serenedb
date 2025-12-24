@@ -33,6 +33,9 @@ SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
     _table_count_field{basics::downCast<const SereneDBColumn>(
                          layout.table().columnMap().begin()->second)
                          ->Id()} {
+  if (!session->config()) {
+    return;
+  }
   auto& config = basics::downCast<Config>(*session->config());
   if (config.GetTxnState().InsideTransaction()) {
     _txn = config.GetTxnState().GetTransaction();

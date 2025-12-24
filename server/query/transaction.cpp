@@ -40,7 +40,9 @@ void TxnState::Begin() {
     return;
   }
   SDB_ASSERT(_variables.empty());
-  _txn = CreateTransaction(*GetServerEngineAs<RocksDBEngineCatalog>().db());
+  auto* db = GetServerEngineAs<RocksDBEngineCatalog>().db();
+  SDB_ASSERT(db);
+  _txn = CreateTransaction(*db);
   SDB_ASSERT(_txn);
   _txn->SetSnapshot();
 }

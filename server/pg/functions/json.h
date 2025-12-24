@@ -126,8 +126,9 @@ class JsonParser {
     return ProcessOutput<Output>(value);
   }
 
-  static bool CheckQuoted(std::string_view str) {
-    return !str.empty() && str.front() == '"' && str.back() == '"';
+  simdjson::error_code ValidateJson() {
+    auto doc = _parser.iterate(_padded_input);
+    return doc.error();
   }
 
  private:
@@ -244,6 +245,38 @@ struct PgJsonExtractPath {
 
  private:
   JsonParser _parser;
+};
+
+template<typename T>
+struct PgJsonInFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(  // NOLINT
+    out_type<velox::Json>& result, const arg_type<velox::Varchar>& input) {
+    // Still need to parse json:
+    // https://github.com/simdjson/simdjson/discussions/1393
+
+    std::string_view input_view{input.data(), input.size()};
+    JsonParser parser;
+    parser.PrepareJson(input_view);
+    if (parser.ValidateJson() != simdjson::SUCCESS) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_JSON_TEXT),
+                      ERR_MSG(absl::StrCat(
+                        "Invalid input syntax for type json: ", input_view)));
+    } else {
+      result = input_view;
+    }
+  }
+};
+
+template<typename T>
+struct PgJsonOutFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void call(  // NOLINT
+    out_type<velox::Varchar>& result, const arg_type<velox::Json>& input) {
+    result = std::string_view{input.data(), input.size()};
+  }
 };
 
 }  // namespace sdb::pg

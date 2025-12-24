@@ -576,6 +576,11 @@ void registerFunctions(const std::string& prefix) {
                           velox::Array<velox::Varchar>>(
     {prefix + "json_extract_path"});
 
+  velox::registerFunction<PgJsonInFunction, velox::Json, velox::Varchar>(
+    {prefix + "jsonin"});
+  velox::registerFunction<PgJsonOutFunction, velox::Varchar, velox::Json>(
+    {prefix + "jsonout"});
+
   registerExtractFunctions(prefix);
 }
 

@@ -21,16 +21,7 @@
 #include "pg/functions/json.h"
 
 namespace sdb::pg {
-namespace {
-
-void AssertQuoted(std::string_view str) {
-  if (!JsonParser::CheckQuoted(str)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("JSON input must be a valid JSON string"));
-  }
-}
-
-}  // namespace
+namespace {}  // namespace
 
 simdjson::simdjson_result<simdjson::ondemand::value> JsonParser::GetByIndex(
   simdjson::ondemand::array arr, int64_t relative_index) {
@@ -52,13 +43,7 @@ simdjson::simdjson_result<simdjson::ondemand::value> JsonParser::GetByIndex(
 }
 
 void JsonParser::PrepareJson(std::string_view json) {
-  // TODO(codeworse): erase unquote after erasing quotes in velox Json type
-  AssertQuoted(json);
-  size_t length =
-    velox::unescapeSizeForJsonFunctions(json.data() + 1, json.size() - 2, true);
-  _padded_input = simdjson::padded_string(length);
-  velox::unescapeForJsonFunctions(json.data() + 1, json.size() - 2,
-                                  _padded_input.data(), true);
+  _padded_input = simdjson::padded_string{json};
 }
 
 simdjson::ondemand::document JsonParser::GetJsonDocument() {

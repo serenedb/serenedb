@@ -230,7 +230,9 @@ struct PgJsonExtractPathBase {
     return true;
   }
 
-  bool call(out_type<velox::Varchar>& result, const arg_type<velox::Json>& json,
+  bool call(out_type<std::conditional_t<Output == JsonParser::OutputType::TEXT,
+                                        velox::Varchar, velox::Json>>& result,
+            const arg_type<velox::Json>& json,
             const arg_type<velox::Variadic<velox::Varchar>>& segments) {
     _parser.PrepareJson({json});
 

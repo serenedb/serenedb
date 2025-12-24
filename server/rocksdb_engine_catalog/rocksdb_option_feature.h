@@ -31,21 +31,14 @@
 #include "basics/common.h"
 #include "rest_server/serened.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
-#include "rocksdb_engine_catalog/rocksdb_options_provider.h"
+#include "rocksdb_engine_catalog/rocksdb_comparator.h"
 
 namespace sdb {
 namespace options {
 class ProgramOptions;
 }
 
-// This feature is used to configure RocksDB in a central place.
-//
-// The RocksDB-Storage-Engine and the MMFiles-Persistent-Index
-// that are never activated at the same time take options set
-// in this feature
-
-class RocksDBOptionFeature final : public SerenedFeature,
-                                   public RocksDBOptionsProvider {
+class RocksDBOptionFeature final : public SerenedFeature {
  public:
   static constexpr std::string_view name() noexcept { return "RocksDBOption"; }
 
@@ -56,21 +49,20 @@ class RocksDBOptionFeature final : public SerenedFeature,
   void prepare() final;
   void start() final;
 
-  rocksdb::TransactionDBOptions getTransactionDBOptions() const override;
-  rocksdb::ColumnFamilyOptions getColumnFamilyOptions(
-    RocksDBColumnFamilyManager::Family family) const override;
+  const rocksdb::Options& getOptions() const;
+  const rocksdb::BlockBasedTableOptions& getTableOptions() const;
 
-  bool limitOpenFilesAtStartup() const noexcept override {
+  rocksdb::TransactionDBOptions getTransactionDBOptions() const;
+  rocksdb::ColumnFamilyOptions getColumnFamilyOptions(
+    RocksDBColumnFamilyManager::Family family) const;
+
+  bool limitOpenFilesAtStartup() const noexcept {
     return _limit_open_files_at_startup;
   }
-  uint64_t maxTotalWalSize() const noexcept override {
-    return _max_total_wal_size;
-  }
-  uint32_t numThreadsHigh() const noexcept override {
-    return _num_threads_high;
-  }
-  uint32_t numThreadsLow() const noexcept override { return _num_threads_low; }
-  uint64_t periodicCompactionTtl() const noexcept override {
+  uint64_t maxTotalWalSize() const noexcept { return _max_total_wal_size; }
+  uint32_t numThreadsHigh() const noexcept { return _num_threads_high; }
+  uint32_t numThreadsLow() const noexcept { return _num_threads_low; }
+  uint64_t periodicCompactionTtl() const noexcept {
     return _periodic_compaction_ttl;
   }
   auto pruneWaitTimeInitial() const noexcept {
@@ -78,8 +70,8 @@ class RocksDBOptionFeature final : public SerenedFeature,
   }
 
  protected:
-  rocksdb::Options doGetOptions() const override;
-  rocksdb::BlockBasedTableOptions doGetTableOptions() const override;
+  rocksdb::Options doGetOptions() const;
+  rocksdb::BlockBasedTableOptions doGetTableOptions() const;
 
  private:
   uint64_t _transaction_lock_stripes;
@@ -197,6 +189,13 @@ class RocksDBOptionFeature final : public SerenedFeature,
   bool _verify_sst = false;
 
  private:
+  rocksdb::ColumnFamilyOptions getColumnFamilyOptionsDefault(
+    RocksDBColumnFamilyManager::Family family) const;
+
+  std::unique_ptr<RocksDBVPackComparator> _vpack_cmp;
+  mutable std::optional<rocksdb::Options> _options;
+  mutable std::optional<rocksdb::BlockBasedTableOptions> _table_options;
+
   /// per column family write buffer limits
   std::array<uint64_t, RocksDBColumnFamilyManager::kNumberOfColumnFamilies>
     _max_write_buffer_number_cf;

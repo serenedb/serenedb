@@ -145,7 +145,8 @@ struct Column {
 
   using Id = uint64_t;
 
-  static constexpr Id kMaxRealId = 1'000'000;
+  static constexpr Id kMaxRealId =
+    std::numeric_limits<uint64_t>::max() - 1'000'000;
 
   static constexpr Id kGeneratedPKId = kMaxRealId + 1;
 

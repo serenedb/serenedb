@@ -48,7 +48,7 @@ void Create(const velox::RowVector& data, velox::vector_size_t idx,
             std::string& key);
 
 template<typename T>
-void AppendIntegral(std::string& key, T value) {
+void AppendSigned(std::string& key, T value) {
   SDB_ASSERT(std::is_signed_v<T>,
              "Cannot correctly store unsigned value due to sign bit flipping");
   const auto base_size = key.size();
@@ -58,14 +58,14 @@ void AppendIntegral(std::string& key, T value) {
 }
 
 template<typename T>
-T ReadIntegral(const char* buf) {
+T ReadSigned(const char* buf) {
   SDB_ASSERT(std::is_signed_v<T>,
              "Cannot correctly read unsigned value due to sign bit flipping");
-  using UnsignedT = typename std::make_unsigned<T>::type;
-  constexpr int kBits = sizeof(T) * CHAR_BIT;
+  using Unsigned = std::make_unsigned_t<T>;
+  static constexpr int kBits = sizeof(T) * CHAR_BIT;
 
-  auto val = absl::big_endian::Load<UnsignedT>(buf);
-  val ^= static_cast<UnsignedT>(1) << (kBits - 1);
+  auto val = absl::big_endian::Load<Unsigned>(buf);
+  val ^= static_cast<Unsigned>(1) << (kBits - 1);
 
   return std::bit_cast<T>(val);
 }

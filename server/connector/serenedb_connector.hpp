@@ -135,7 +135,7 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
 
 class RocksDBTable final : public axiom::connector::Table {
  public:
-  explicit RocksDBTable(const catalog::Table& collection, bool is_insert)
+  explicit RocksDBTable(const catalog::Table& collection, bool load_implicit_pk)
     : Table{std::string{collection.GetName()}, collection.RowType()},
       _pk_type(collection.PKType()),
       _table_id(collection.GetId()) {
@@ -166,19 +166,22 @@ class RocksDBTable final : public axiom::connector::Table {
       order_columns.push_back(column);
     }
 
-    if (_pk_type->children().empty() && !is_insert) {
+    if (_pk_type->children().empty() && load_implicit_pk) {
+      const auto generated_pk_name =
+        catalog::Column::GeneratePKName(collection.RowType()->names());
+
       auto serenedb_column = std::make_unique<SereneDBColumn>(
-        catalog::Column::kFakeName, catalog::Column::kFakeType,
-        catalog::Column::kFakeId);
+        generated_pk_name, catalog::Column::kGeneratedPKType,
+        catalog::Column::kGeneratedPKId);
       columns.push_back(serenedb_column.get());
-      _column_map.emplace(catalog::Column::kFakeName, serenedb_column.get());
+
+      _column_map.emplace(generated_pk_name, serenedb_column.get());
       _column_handles.push_back(std::move(serenedb_column));
-      _pk_type = velox::ROW({std::string{catalog::Column::kFakeName}},
-                            {catalog::Column::kFakeType});
-      // TODO IDK we need it or not
+      order_columns.push_back(findColumn(generated_pk_name));
+      _pk_type = velox::ROW({std::move(generated_pk_name)},
+                            {catalog::Column::kGeneratedPKType});
       sort_order.resize(1, axiom::connector::SortOrder{.isAscending = true,
                                                        .isNullsFirst = false});
-      order_columns.push_back(findColumn(catalog::Column::kFakeName));
     }
 
     auto connector = velox::connector::getConnector("serenedb");

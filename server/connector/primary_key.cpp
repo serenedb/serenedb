@@ -72,7 +72,7 @@ void AppendKeyValue(std::string& key, const velox::BaseVector& column,
                                                                  : kFalseValue);
   } else if constexpr (std::is_integral_v<T>) {
     auto value = column.as<velox::SimpleVector<T>>()->valueAt(idx);
-    AppendIntegral(key, value);
+    AppendSigned(key, value);
   } else if constexpr (std::is_floating_point_v<T>) {
     basics::StrAppend(key, sizeof(T));
     auto value = column.as<velox::SimpleVector<T>>()->valueAt(idx);

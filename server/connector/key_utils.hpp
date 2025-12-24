@@ -53,14 +53,11 @@ void MakeColumnKey(const velox::RowVectorPtr& input,
               sizeof(ObjectId));
 
   if (!pk_columns.empty()) {
-    SDB_PRINT("pk columns is **NOT** empty");
-
     primary_key::Create(*input, pk_columns, row_idx, key_buffer);
   } else {
-    SDB_PRINT("pk columns is empty");
-    // Signed type is required as it will be stored in velox vector
+    // TODO: make unsigned when such types will be supported in Velox
     auto generated_pk = std::bit_cast<int64_t>(RevisionId::create().id());
-    primary_key::AppendIntegral(key_buffer, generated_pk);
+    primary_key::AppendSigned(key_buffer, generated_pk);
   }
 
   row_key_handle(std::string_view{

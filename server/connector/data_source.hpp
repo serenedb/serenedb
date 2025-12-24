@@ -68,10 +68,10 @@ class RocksDBDataSource final : public velox::connector::DataSource {
                                      std::string_view column_key,
                                      std::string* last_key);
 
-  velox::VectorPtr ReadFakeColumn(rocksdb::Iterator& it, uint64_t max_size,
-                                  std::string_view column_key,
-                                  size_t table_prefix_size,
-                                  std::string* last_key);
+  velox::VectorPtr ReadColumnFromKey(rocksdb::Iterator& it, uint64_t max_size,
+                                     std::string_view column_key,
+                                     size_t table_prefix_size,
+                                     std::string* last_key);
 
   template<typename Callback>
   uint64_t IterateColumn(rocksdb::Iterator& it, uint64_t max_size,

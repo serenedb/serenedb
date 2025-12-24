@@ -103,7 +103,6 @@ std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
   read_options.snapshot = _snapshot;
   std::vector<velox::VectorPtr> columns;
 
-  SDB_PRINT("row type = ", _row_type->toString());
   const auto num_columns = _row_type->size();
   std::string last_column_key;
   std::string key = key_utils::PrepareTableKey(_object_key);
@@ -114,7 +113,7 @@ std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
       const auto column_id = _column_ids[col_idx];
 
       size_t read_col_idx = col_idx;
-      if (column_id == catalog::Column::kFakeId) {
+      if (column_id == catalog::Column::kGeneratedPKId) {
         SDB_ASSERT(col_idx > 0 || col_idx + 1 < num_columns,
                    "Table without columns are not supported");
         read_col_idx = (col_idx == 0) ? col_idx + 1 : col_idx - 1;
@@ -188,9 +187,9 @@ velox::VectorPtr RocksDBDataSource::ReadColumn(
   rocksdb::Iterator& it, uint64_t max_size, std::string_view column_key,
   const velox::TypePtr& type, catalog::Column::Id column_id,
   size_t table_prefix_size, std::string* last_key) {
-  if (column_id == catalog::Column::kFakeId) {
-    return ReadFakeColumn(it, max_size, column_key, table_prefix_size,
-                          last_key);
+  if (column_id == catalog::Column::kGeneratedPKId) {
+    return ReadColumnFromKey(it, max_size, column_key, table_prefix_size,
+                             last_key);
   }
   if (type->kind() == velox::TypeKind::UNKNOWN) {
     return ReadUnknownColumn(it, max_size, column_key, last_key);
@@ -258,11 +257,9 @@ velox::VectorPtr RocksDBDataSource::ReadUnknownColumn(
                                                &_memory_pool);
 }
 
-velox::VectorPtr RocksDBDataSource::ReadFakeColumn(rocksdb::Iterator& it,
-                                                   uint64_t max_size,
-                                                   std::string_view column_key,
-                                                   size_t table_prefix_size,
-                                                   std::string* last_key) {
+velox::VectorPtr RocksDBDataSource::ReadColumnFromKey(
+  rocksdb::Iterator& it, uint64_t max_size, std::string_view column_key,
+  size_t table_prefix_size, std::string* last_key) {
   static constexpr uint64_t kInitialVectorSize = 1;  // arbitrary value
   auto result = velox::BaseVector::create<velox::FlatVector<uint64_t>>(
     velox::BIGINT(), kInitialVectorSize, &_memory_pool);
@@ -274,7 +271,7 @@ velox::VectorPtr RocksDBDataSource::ReadFakeColumn(rocksdb::Iterator& it,
         result->resize(result->size() * 2, false);
       }
 
-      auto val = primary_key::ReadIntegral<int64_t>(
+      auto val = primary_key::ReadSigned<int64_t>(
         key.data() + table_prefix_size + sizeof(catalog::Column::Id));
       result->set(value_idx, val);
     },

@@ -55,10 +55,7 @@ void MakeColumnKey(const velox::RowVectorPtr& input,
     primary_key::Create(*input, pk_columns, row_idx, key_buffer);
   } else {
     auto generated_pk = RevisionId::create().id();
-    const auto old_size = key_buffer.size();
-    basics::StrResize(key_buffer, old_size + sizeof(generated_pk));
-    absl::big_endian::Store64(key_buffer.data() + old_size, generated_pk);
-    key_buffer[old_size] = static_cast<uint8_t>(key_buffer[old_size]) ^ 0x80;
+    primary_key::AppendIntegral(key_buffer, generated_pk);
   }
 
   row_key_handle(std::string_view{

@@ -45,4 +45,23 @@ void Create(const velox::RowVector& data,
 void Create(const velox::RowVector& data, velox::vector_size_t idx,
             std::string& key);
 
+template<typename T>
+void AppendIntegral(std::string& key, T value) {
+  const auto base_size = key.size();
+  basics::StrAppend(key, sizeof(T));
+  absl::big_endian::Store(key.data() + base_size, value);
+  key[base_size] = static_cast<uint8_t>(key[base_size]) ^ 0x80;
+}
+
+template<typename T>
+T ReadIntegral(const char* buf) {
+  using UnsignedT = typename std::make_unsigned<T>::type;
+  constexpr int kBits = sizeof(T) * CHAR_BIT;
+
+  auto val = absl::big_endian::Load<UnsignedT>(buf);
+  val ^= static_cast<UnsignedT>(1) << (kBits - 1);
+
+  return std::bit_cast<T>(val);
+}
+
 }  // namespace sdb::connector::primary_key

@@ -28,6 +28,7 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
 #include "common.h"
+#include "connector/primary_key.hpp"
 #include "key_utils.hpp"
 
 namespace sdb::connector {
@@ -272,9 +273,9 @@ velox::VectorPtr RocksDBDataSource::ReadFakeColumn(rocksdb::Iterator& it,
       if (value_idx == result->size()) {
         result->resize(result->size() * 2, false);
       }
-      auto val = absl::big_endian::Load64(key.data() + table_prefix_size +
-                                          sizeof(catalog::Column::Id));
-      val ^= static_cast<uint64_t>(1) << 63;
+
+      auto val = primary_key::ReadIntegral<uint64_t>(
+        key.data() + table_prefix_size + sizeof(catalog::Column::Id));
       result->set(value_idx, val);
     },
     last_key);

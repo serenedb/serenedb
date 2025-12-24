@@ -199,24 +199,6 @@ bool ArrayItemNeedQuotesAndEscape(std::string_view data) {
          absl::EqualsIgnoreCase(data, "null");
 }
 
-std::string AddQuotesAndEscape(std::string_view str) {
-  std::string result;
-  result.reserve(2 + str.size() * 2);
-  result.push_back('"');
-  for (char c : str) {
-    switch (c) {
-      case '"':
-      case '\\':
-        result.push_back('\\');
-        [[fallthrough]];
-      default:
-        result.push_back(c);
-    }
-  }
-  result.push_back('"');
-  return result;
-}
-
 void WriteArrayItemQuotedAndEscaped(std::string_view item,
                                     SerializationContext context) {
   const auto required_size =
@@ -675,8 +657,7 @@ void SerializeJson(SerializationContext context,
   auto value = static_cast<std::string_view>(str);
   if constexpr (InArray && Format == VarFormat::Text) {
     if (ArrayItemNeedQuotesAndEscape(value)) {
-      auto value_quoted = AddQuotesAndEscape(value);
-      context.buffer->WriteUncommitted(value_quoted);
+      WriteArrayItemQuotedAndEscaped(value, context);
       return;
     }
   }

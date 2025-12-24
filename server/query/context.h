@@ -69,12 +69,19 @@ enum class CommandType : uint64_t {
 
 enum class ExplainWith : uint64_t {
   None = 0,
+
+  // plans
   Logical = 1 << 1,
-  Optimization = 1 << 2,
-  Physical = 1 << 3,
-  Execution = 1 << 4,
-  Stats = 1 << 5,
+  InitialQueryGraph = 1 << 2,
+  FinalQueryGraph = 1 << 3,
+  Physical = 1 << 4,
+  Execution = 1 << 5,
+
+  // parameters
   Registers = 1 << 6,
+  Oneline = 1 << 7,
+  Cost = 1 << 8,
+  Stats = 1 << 9,
 };
 
 struct QueryContext {

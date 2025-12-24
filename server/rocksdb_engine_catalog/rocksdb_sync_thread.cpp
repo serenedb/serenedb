@@ -26,6 +26,7 @@
 
 #include "app/app_server.h"
 #include "basics/logger/logger.h"
+#include "rest_server/serened_single.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 
@@ -34,7 +35,7 @@ using namespace sdb;
 RocksDBSyncThread::RocksDBSyncThread(RocksDBEngineCatalog& engine,
                                      std::chrono::milliseconds interval,
                                      std::chrono::milliseconds delay_threshold)
-  : Thread(engine.server(), "RocksDBSync"),
+  : Thread(SerenedServer::Instance(), "RocksDBSync"),
     _engine(engine),
     _interval(interval),
     _last_sync_time(std::chrono::steady_clock::now()),

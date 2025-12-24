@@ -28,7 +28,6 @@
 #include "basics/common.h"
 #include "basics/result.h"
 #include "rest_server/serened.h"
-#include "storage_engine/storage_engine.h"
 
 namespace rocksdb {
 
@@ -36,6 +35,17 @@ class TransactionDB;
 }  // namespace rocksdb
 
 namespace sdb {
+
+enum class RecoveryState : uint32_t {
+  /// recovery is not yet started
+  Before = 0,
+
+  /// recovery is in progress
+  InProgress,
+
+  /// recovery is done
+  Done,
+};
 
 class RocksDBRecoveryManager final : public SerenedFeature {
  public:

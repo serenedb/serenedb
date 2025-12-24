@@ -37,5 +37,6 @@
     __VA_ARGS__;                            \
     return error;                           \
   }()
+
 #define THROW_SQL_ERROR(...) \
   THROW_SQL_ERROR_FROM_DATA(SQL_ERROR_DATA(ERRCODE_INTERNAL_ERROR, __VA_ARGS__))

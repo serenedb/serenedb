@@ -98,19 +98,6 @@ static int RunServer(int argc, char** argv, GlobalContext& context) {
         return std::make_unique<NetworkFeature>(
           server, metrics, network::ConnectionPool::Config{metrics});
       },
-#ifdef SDB_CLUSTER
-      [](auto& server, type::Tag<RocksDBEngine>) {
-        return std::make_unique<RocksDBEngine>(
-          server, server.template getFeature<RocksDBOptionFeature>(),
-          server.template getFeature<metrics::MetricsFeature>());
-      },
-#else
-      [](auto& server, type::Tag<RocksDBEngineCatalog>) {
-        return std::make_unique<RocksDBEngineCatalog>(
-          server, server.template getFeature<RocksDBOptionFeature>(),
-          server.template getFeature<metrics::MetricsFeature>());
-      },
-#endif
       [&ret](auto& server, type::Tag<ServerFeature>) {
         return std::make_unique<ServerFeature>(server, &ret);
       },

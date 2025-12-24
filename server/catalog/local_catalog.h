@@ -35,8 +35,11 @@
 #include "catalog/schema.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
-#include "storage_engine/storage_engine.h"
 #include "storage_engine/table_shard.h"
+
+namespace sdb {
+class RocksDBEngineCatalog;
+}
 
 namespace sdb::catalog {
 
@@ -45,7 +48,7 @@ class SnapshotImpl;
 class LocalCatalog final : public LogicalCatalog,
                            public std::enable_shared_from_this<LocalCatalog> {
  public:
-  explicit LocalCatalog(StorageEngine& engine, bool skip_background_errors);
+  explicit LocalCatalog(bool skip_background_errors);
 
   Result RegisterRole(std::shared_ptr<Role> role) final;
   Result RegisterDatabase(std::shared_ptr<Database> database) final;
@@ -112,7 +115,7 @@ class LocalCatalog final : public LogicalCatalog,
  private:
   mutable absl::Mutex _mutex;
   std::shared_ptr<SnapshotImpl> _snapshot;
-  StorageEngine* _engine;
+  RocksDBEngineCatalog* _engine;
   bool _skip_background_errors;
 };
 

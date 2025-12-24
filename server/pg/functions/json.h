@@ -258,6 +258,8 @@ template<typename T>
 struct PgJsonInFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
+  static constexpr int32_t reuse_strings_from_arg = 0;
+
   FOLLY_ALWAYS_INLINE void call(  // NOLINT
     out_type<velox::Json>& result, const arg_type<velox::Varchar>& input) {
     // Even thouth we need only validation here, we still parse the input:
@@ -271,7 +273,7 @@ struct PgJsonInFunction {
                       ERR_MSG(absl::StrCat(
                         "Invalid input syntax for type json: ", input_view)));
     } else {
-      result = input_view;
+      result.setNoCopy(input);
     }
   }
 };
@@ -280,9 +282,11 @@ template<typename T>
 struct PgJsonOutFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
+  static constexpr int32_t reuse_strings_from_arg = 0;
+
   FOLLY_ALWAYS_INLINE void call(  // NOLINT
     out_type<velox::Varchar>& result, const arg_type<velox::Json>& input) {
-    result = std::string_view{input.data(), input.size()};
+    result.setNoCopy(input);
   }
 };
 

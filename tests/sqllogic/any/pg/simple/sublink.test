@@ -372,6 +372,14 @@ Project -> dt1.name:3, dt1.total:4
         Aggregation (vt4.column1:5) -> vt4.column1:5, dt3.sum:8
             dt3.sum:8 := presto_sum(vt4.column2:5)
           Values -> vt4.column1:5, vt4.column2:5
+EXECUTION PLAN:
+Fragment 0:  numWorkers=1:
+-- Project[5][expressions: (name:3:VARCHAR, "column1:2"), (total:4:INTEGER, "column2:2")] -> "name:3":VARCHAR, "total:4":INTEGER
+  -- Filter[0][expression: presto_eq("sum:8",cast("column2:2" as BIGINT))] -> "column1:2":VARCHAR, "column2:2":INTEGER, "sum:8":BIGINT
+    -- HashJoin[4][LEFT column1:2=column1:5] -> "column1:2":VARCHAR, "column2:2":INTEGER, "sum:8":BIGINT
+      -- Values[1][6 rows in 6 vectors] -> "column1:2":VARCHAR, "column2:2":INTEGER
+      -- Aggregation[3][SINGLE [column1:5] sum:8 := presto_sum("column2:5")] -> "column1:5":VARCHAR, "sum:8":BIGINT
+        -- Values[2][6 rows in 6 vectors] -> "column1:5":VARCHAR, "column2:5":INTEGER
 
 
 query

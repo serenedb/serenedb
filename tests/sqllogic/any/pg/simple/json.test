@@ -7,8 +7,18 @@ SELECT '[1e10blob]`::json;
 
 
 query error
+SELECT 'nothing'::json;
+
+
+query error
 SELECT '["a", "b", c]'::json;
 
+
+query
+SELECT 'true'::json, 'false'::json, 'null'::json;
+----
+json	json	json
+true	false	null
 
 query
 SELECT '[1, 2, 3]'::json -> 1;

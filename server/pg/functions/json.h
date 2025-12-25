@@ -46,7 +46,7 @@ namespace sdb::pg {
 namespace {
 
 template<typename T>
-static inline bool ValidateJson(T& value) {
+bool ValidateJson(T& value) {
   switch (value.type()) {
     case simdjson::ondemand::json_type::array: {
       simdjson::ondemand::array arr;
@@ -84,18 +84,15 @@ static inline bool ValidateJson(T& value) {
       return value.get_string().error() == simdjson::SUCCESS;
     }
     case simdjson::ondemand::json_type::number: {
-      if (value.get_number().error() == simdjson::SUCCESS) {
-        return true;
-      }
-      // Accept large integers by allowing double parsing; if it fails, fall
-      // back to generic number.
-      return value.get_double().error() == simdjson::SUCCESS;
+      auto num = value.get_number();
+      return num.error() == simdjson::SUCCESS ||
+             num.error() == simdjson::BIGINT_ERROR;
     }
     case simdjson::ondemand::json_type::boolean: {
       return value.get_bool().error() == simdjson::SUCCESS;
     }
     case simdjson::ondemand::json_type::null:
-      return true;
+      return value.is_null();
     default:
       return false;
   }
@@ -205,6 +202,7 @@ class JsonParser {
   simdjson::simdjson_result<simdjson::ondemand::value> GetByIndex(
     simdjson::ondemand::array arr, int64_t relative_index);
 
+  // TODO(codeworse): Try to reuse parser
   simdjson::ondemand::parser _parser;
   simdjson::padded_string _padded_input;
 };

@@ -42,6 +42,8 @@ simdjson::simdjson_result<simdjson::ondemand::value> JsonParser::GetByIndex(
 }
 
 void JsonParser::PrepareJson(std::string_view json) {
+  // TODO(codeworse):
+  // https://github.com/simdjson/simdjson/blob/master/doc/performance.md#free-padding
   _padded_input = simdjson::padded_string{json};
 }
 

@@ -1780,7 +1780,7 @@ void SqlAnalyzer::ProcessCreateStmt(State& state, const CreateStmt& stmt) {
         switch (constraint.contype) {
           case CONSTR_GENERATED: {
             generated_columns.emplace(col_def.colname);
-          }
+          } break;
           default:
             break;
         }
@@ -2179,8 +2179,8 @@ void SqlAnalyzer::ProcessValuesList(State& state, const List* list) {
     values_nodes.emplace_back(std::move(value_state.root));
   }
 
-  // TODO: Create an issue about ExpandNode can be used when it's just access
-  // + const to optimize large VALUES clause. Also we can extend ExpandNode to
+  // TODO: Create an issue about ExpandNode can be used when it's just access +
+  // const to optimize large VALUES clause. Also we can extend ExpandNode to
   // support more expressions. Also we need to support ExpandNode in axiom.
 
   SDB_ASSERT(!state.root);
@@ -2605,9 +2605,9 @@ void SqlAnalyzer::ProcessDistinctOn(State& state, const List* distinct_clause,
        std::views::zip(output.names(), output.children())) {
     if (absl::c_contains(output_names, name)) {
       // for the names which were grouped we don't want to take first for them
-      // since it's doesn't make sense. Also we could don't think about it but
-      //  despite we rename grouping keys => distinct_on_expr_* names, axiom
-      // doesn't use them for input refs and there could occur a conflict.
+      // since it doesn't make sense. Also we don't need to think about it but
+      // even though we rename grouping keys => distinct_on_expr_* names, axiom
+      // doesn't use them for input refs and a conflict could occur.
       continue;
     }
     output_names.emplace_back(name);
@@ -4348,8 +4348,8 @@ void SqlAnalyzer::ProcessFunctionBody(
   exprs.reserve(expected_row.size());
 
   size_t size = std::min(expected_row.size(), actual_type.size());
-  // we do min size just to make it act like postgres (first check all the
-  // types then detailed message 'final statement too ...')
+  // we do min size just to make it act like postgres (first check all the types 
+  // then detailed message 'final statement too ...')
   for (size_t i = 0; i < size; ++i) {
     const auto& expected_col_type = expected_row.childAt(i);
     const auto& actual_col_type = actual_type.childAt(i);

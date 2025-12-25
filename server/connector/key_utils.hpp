@@ -24,7 +24,6 @@
 #include <velox/vector/BaseVector.h>
 #include <velox/vector/ComplexVector.h>
 
-#include "basics/logger/logger.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
 #include "connector/primary_key.hpp"

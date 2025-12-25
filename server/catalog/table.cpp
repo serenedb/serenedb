@@ -23,7 +23,6 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
-#include <velox/type/Type.h>
 #include <vpack/builder.h>
 #include <vpack/iterator.h>
 #include <vpack/slice.h>

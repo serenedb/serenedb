@@ -174,8 +174,8 @@ class RocksDBTable final : public axiom::connector::Table {
       columns.push_back(serenedb_column.get());
 
       _column_map.emplace(generated_pk_name, serenedb_column.get());
+      order_columns.push_back(serenedb_column.get());
       _column_handles.push_back(std::move(serenedb_column));
-      order_columns.push_back(findColumn(generated_pk_name));
       _pk_type = velox::ROW({std::move(generated_pk_name)}, {velox::BIGINT()});
       sort_order.resize(1, axiom::connector::SortOrder{.isAscending = true,
                                                        .isNullsFirst = false});

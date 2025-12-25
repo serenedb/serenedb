@@ -50,11 +50,6 @@ namespace sdb::pg {
 
 namespace {
 
-template<typename T>
-inline int ExprLocation(const T* node) noexcept {
-  return ::exprLocation(reinterpret_cast<const Node*>(node));
-}
-
 // Parses options and return function body and catalog options.
 // For the pre-PG14 syntax function body is stored in the "as" option.
 // Example: CREATE FUNCTION foo() RETURNS int AS $$ SELECT 1; $$ LANGUAGE

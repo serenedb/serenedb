@@ -42,7 +42,6 @@
 #include "catalog/table_options.h"
 #include "catalog/types.h"
 #include "catalog/view.h"
-#include "storage_engine/storage_engine.h"
 
 namespace sdb::catalog {
 
@@ -285,5 +284,6 @@ class CatalogFeature final : public SerenedFeature {
 
 ResultOr<std::shared_ptr<Database>> GetDatabase(ObjectId database_id);
 ResultOr<std::shared_ptr<Database>> GetDatabase(std::string_view name);
+std::shared_ptr<TableShard> GetTableShard(ObjectId id);
 
 }  // namespace sdb::catalog

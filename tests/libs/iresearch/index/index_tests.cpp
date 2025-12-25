@@ -241,6 +241,17 @@ void IndexTestBase::write_segment(irs::IndexWriter& writer,
   }
 }
 
+void IndexTestBase::write_segment_batched(irs::IndexWriter& writer,
+                                          tests::IndexSegment& segment,
+                                          tests::DocGeneratorBase& gen,
+                                          size_t batch_size) {
+  ASSERT_TRUE(InsertBatch(writer, gen, segment, batch_size));
+
+  if (writer.Comparator()) {
+    segment.sort(*writer.Comparator());
+  }
+}
+
 void IndexTestBase::add_segment(irs::IndexWriter& writer,
                                 tests::DocGeneratorBase& gen) {
   _index.emplace_back(writer.FeatureInfo());
@@ -258,10 +269,20 @@ void IndexTestBase::add_segments(irs::IndexWriter& writer,
 }
 
 void IndexTestBase::add_segment(tests::DocGeneratorBase& gen,
-                                irs::OpenMode mode /*= irs::OM_CREATE*/,
+                                irs::OpenMode mode /*= irs::kOmCreate*/,
                                 const irs::IndexWriterOptions& opts /*= {}*/) {
   auto writer = open_writer(mode, opts);
   add_segment(*writer, gen);
+}
+
+void IndexTestBase::add_segment_batched(
+  tests::DocGeneratorBase& gen, size_t batch_size,
+  irs::OpenMode mode /*= irs::kOmCreate*/,
+  const irs::IndexWriterOptions& opts /*= {}*/) {
+  auto writer = open_writer(mode, opts);
+  _index.emplace_back(writer->FeatureInfo());
+  write_segment_batched(*writer, _index.back(), gen, batch_size);
+  writer->Commit();
 }
 
 }  // namespace tests
@@ -1015,6 +1036,92 @@ class IndexTestCase : public tests::IndexTestBase {
                        actual_value->value.data()));  // 'name' value in doc2
       ASSERT_FALSE(docs_itr->next());
     }
+  }
+
+  void WriterBatchWithErrorRollback() {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+
+    struct InvalidTokenizer final : public irs::Tokenizer {
+      irs::Attribute* GetMutable(irs::TypeInfo::type_id) noexcept final {
+        return nullptr;
+      }
+      bool next() final { return false; }
+    };
+    // Field can be stored but can not be indexed due to lack of attributes in
+    // tokenizer
+    struct FieldT {
+      std::string_view Name() const { return "test_field"; }
+
+      irs::IndexFeatures GetIndexFeatures() const {
+        return irs::IndexFeatures::None;
+      }
+
+      irs::Tokenizer& GetTokens() { return token_stream; }
+
+      bool Write(irs::DataOutput& out) const {
+        irs::WriteStr(out, Name());
+        return true;
+      }
+
+      InvalidTokenizer token_stream;
+    } invalid_field;
+
+    const tests::Document* doc1 = gen.next();
+    const tests::Document* doc2 = gen.next();
+    const tests::Document* doc3 = gen.next();
+    auto writer = irs::IndexWriter::Make(dir(), codec(), irs::kOmCreate);
+    {
+      auto ctx = writer->GetBatch();
+      auto doc = ctx.Insert(false, 3);
+
+      ASSERT_TRUE(doc.template Insert<irs::Action::STORE>(doc1->stored.begin(),
+                                                          doc1->stored.end()));
+      doc.NextDocument();
+      ASSERT_TRUE(doc.template Insert<irs::Action::STORE>(doc2->stored.begin(),
+                                                          doc2->stored.end()));
+      doc.NextDocument();
+
+      ASSERT_TRUE(doc.template Insert<irs::Action::STORE>(invalid_field));
+      doc.NextDocument();
+      doc.NextFieldBatch();
+
+      ASSERT_TRUE(doc.template Insert<irs::Action::INDEX>(doc1->stored.begin(),
+                                                          doc1->stored.end()));
+      doc.NextDocument();
+      ASSERT_TRUE(doc.template Insert<irs::Action::INDEX>(doc2->stored.begin(),
+                                                          doc2->stored.end()));
+      doc.NextDocument();
+
+      ASSERT_FALSE(doc.template Insert<irs::Action::INDEX>(invalid_field));
+      ASSERT_FALSE(doc);
+      // entire batch should be rollbacked
+    }
+    ASSERT_TRUE(Insert(*writer, doc3->indexed.begin(), doc3->indexed.end(),
+                       doc3->stored.begin(), doc3->stored.end()));
+    writer->Commit();
+    // should be only one live doc - doc3
+    auto reader = irs::DirectoryReader(dir(), codec());
+    ASSERT_EQ(1, reader.size());
+    auto& segment = reader[0];  // assume 0 is id of first/only segment
+    ASSERT_EQ(1, segment.live_docs_count());
+    auto* column = segment.column("name");
+    ASSERT_NE(nullptr, column);
+    auto values = column->iterator(irs::ColumnHint::Normal);
+    ASSERT_NE(nullptr, values);
+    auto* actual_value = irs::get<irs::PayAttr>(*values);
+    ASSERT_NE(nullptr, actual_value);
+    auto terms = segment.field("same");
+    ASSERT_NE(nullptr, terms);
+    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    ASSERT_TRUE(term_itr->next());
+    // skip docs deleted during batch rollback
+    auto docs_itr = segment.mask(term_itr->postings(irs::IndexFeatures::None));
+    ASSERT_TRUE(docs_itr->next());
+    ASSERT_EQ(docs_itr->value(), values->seek(docs_itr->value()));
+    ASSERT_EQ("C", irs::ToString<std::string_view>(
+                     actual_value->value.data()));  // 'name' value in doc3
+    ASSERT_FALSE(docs_itr->next());
   }
 
   void ConcurrentReadSingleColumnSmoke() {
@@ -2483,6 +2590,8 @@ TEST_P(IndexTestCase, writer_bulk_insert) { WriterBulkInsert(); }
 
 TEST_P(IndexTestCase, writer_begin_rollback) { WriterBeginRollback(); }
 
+TEST_P(IndexTestCase, writer_batch_rollback) { WriterBatchWithErrorRollback(); }
+
 TEST_P(IndexTestCase, writer_begin_clear_empty_index) {
   tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                               &tests::GenericJsonFieldFactory);
@@ -2626,6 +2735,15 @@ TEST_P(IndexTestCase, europarl_docs) {
     tests::EuroparlDocTemplate doc;
     tests::DelimDocGenerator gen(resource("europarl.subset.txt"), doc);
     add_segment(gen);
+  }
+  assert_index();
+}
+
+TEST_P(IndexTestCase, europarl_docs_batched) {
+  {
+    tests::EuroparlDocTemplate doc;
+    tests::DelimDocGenerator gen(resource("europarl.subset.txt"), doc);
+    add_segment_batched(gen, 100);
   }
   assert_index();
 }

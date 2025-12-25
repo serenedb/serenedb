@@ -45,8 +45,7 @@ LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 
-template<typename T>
-inline int ExprLocation(const T* node) noexcept {
+int ExprLocation(const void* node) noexcept {
   return ::exprLocation(reinterpret_cast<const Node*>(node));
 }
 
@@ -241,11 +240,6 @@ MemoryContextPtr CreateMemoryContext() {
 
 void ResetMemoryContext(MemoryContextData& ctx) noexcept {
   MemoryContextReset(&ctx);
-}
-
-SharedMemoryContextPtr CreateSharedMemoryContext() {
-  return std::shared_ptr<MemoryContextData>(CreateMemoryContext().release(),
-                                            MemoryContextDeleter{});
 }
 
 void MemoryContextScopeGuard::operator()(MemoryContext p) const noexcept {

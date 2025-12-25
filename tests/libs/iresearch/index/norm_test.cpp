@@ -508,6 +508,116 @@ TEST_P(NormTestCase, CheckNorms) {
   }
 }
 
+TEST_P(NormTestCase, CheckNormsBatched) {
+  constexpr frozen::map<std::string_view, uint32_t, 4> kSeedMapping{
+    {"name", uint32_t{1}},
+    {"same", uint32_t{1} << 8},
+    {"duplicated", uint32_t{1} << 15},
+    {"prefix", uint32_t{1} << 14}};
+
+  tests::JsonDocGenerator gen(
+    resource("simple_sequential.json"),
+    [count = size_t{0}, &kSeedMapping](
+      tests::Document& doc, const std::string& name,
+      const tests::JsonDocGenerator::JsonValue& data) mutable {
+      if (data.is_string()) {
+        const bool is_name = (name == "name");
+        count += static_cast<size_t>(is_name);
+
+        const auto it = kSeedMapping.find(std::string_view{name});
+        ASSERT_NE(kSeedMapping.end(), it);
+
+        auto field =
+          std::make_shared<NormField>(name, data.str, count * it->second);
+        doc.insert(field);
+
+        if (is_name) {
+          doc.sorted = field;
+        }
+      }
+    });
+
+  std::vector<const tests::Document*> docs{
+    gen.next(),  // name == 'A'
+    gen.next(),  // name == 'B'
+    gen.next(),  // name == 'C'
+    gen.next()   // name == 'D'
+  };
+  auto* doc0 = docs[0];
+  auto* doc1 = docs[1];
+  auto* doc2 = docs[2];
+  auto* doc3 = docs[3];
+
+  irs::IndexWriterOptions opts;
+  opts.features = Features();
+
+  // Create actual index
+  auto writer = open_writer(irs::kOmCreate, opts);
+  ASSERT_NE(nullptr, writer);
+  ASSERT_TRUE(
+    InsertStoreBatch(*writer, std::span<const tests::Document*>{docs}));
+  writer->Commit();
+  AssertSnapshotEquality(*writer);
+
+  // Create expected index
+  auto& expected_index = index();
+  expected_index.emplace_back(writer->FeatureInfo());
+  expected_index.back().insert(doc0->indexed.begin(), doc0->indexed.end(),
+                               doc0->stored.begin(), doc0->stored.end());
+  expected_index.back().insert(doc1->indexed.begin(), doc1->indexed.end(),
+                               doc1->stored.begin(), doc1->stored.end());
+  expected_index.back().insert(doc2->indexed.begin(), doc2->indexed.end(),
+                               doc2->stored.begin(), doc2->stored.end());
+  expected_index.back().insert(doc3->indexed.begin(), doc3->indexed.end(),
+                               doc3->stored.begin(), doc3->stored.end());
+  AssertIndex();
+
+  auto reader = open_reader();
+  ASSERT_EQ(1, reader.size());
+  auto& segment = reader[0];
+  ASSERT_EQ(1, segment.size());
+  ASSERT_EQ(4, segment.docs_count());
+  ASSERT_EQ(4, segment.live_docs_count());
+
+  {
+    constexpr std::string_view kName = "duplicated";
+    const auto it = kSeedMapping.find(kName);
+    ASSERT_NE(kSeedMapping.end(), it);
+    const uint32_t seed{it->second};
+    AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
+                               {{1, seed}, {2, seed * 2}, {3, seed * 3}});
+  }
+
+  {
+    constexpr std::string_view kName = "name";
+    const auto it = kSeedMapping.find(kName);
+    ASSERT_NE(kSeedMapping.end(), it);
+    const uint32_t seed{it->second};
+    AssertNormColumn<uint32_t>(
+      segment, {kName.data(), kName.size()},
+      {{1, seed}, {2, seed * 2}, {3, seed * 3}, {4, seed * 4}});
+  }
+
+  {
+    constexpr std::string_view kName = "same";
+    const auto it = kSeedMapping.find(kName);
+    ASSERT_NE(kSeedMapping.end(), it);
+    const uint32_t seed{it->second};
+    AssertNormColumn<uint32_t>(
+      segment, {kName.data(), kName.size()},
+      {{1, seed}, {2, seed * 2}, {3, seed * 3}, {4, seed * 4}});
+  }
+
+  {
+    constexpr std::string_view kName = "prefix";
+    const auto it = kSeedMapping.find(kName);
+    ASSERT_NE(kSeedMapping.end(), it);
+    const uint32_t seed{it->second};
+    AssertNormColumn<uint32_t>(segment, {kName.data(), kName.size()},
+                               {{1, seed}, {4, seed * 4}});
+  }
+}
+
 TEST_P(NormTestCase, CheckNormsConsolidation) {
   constexpr frozen::map<std::string_view, uint32_t, 4> kSeedMapping{
     {"name", uint32_t{1}},

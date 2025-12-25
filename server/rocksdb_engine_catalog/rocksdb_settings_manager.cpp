@@ -55,8 +55,7 @@
 
 namespace sdb {
 namespace {
-void BuildSettings(sdb::StorageEngine& engine, vpack::Builder& b,
-                   uint64_t seq_number) {
+void BuildSettings(auto& engine, vpack::Builder& b, uint64_t seq_number) {
   b.clear();
   b.openObject();
   b.add("tick", std::to_string(GetCurrentTickServer()));

@@ -45,11 +45,6 @@ LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 
-template<typename T>
-inline int ExprLocation(const T* node) noexcept {
-  return exprLocation(reinterpret_cast<const Node*>(node));
-}
-
 // TODO: use ErrorPosition in ThrowSqlError
 yaclib::Future<Result> CreateTable(ExecContext& context,
                                    const CreateStmt& stmt) {
@@ -133,7 +128,7 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
                           "for column \"",
                           col.name, "\" of table \"", table, "\""));
               case kNone:
-                if (col.default_value) {
+                if (col.expr) {
                   THROW_SQL_ERROR(
                     ERR_CODE(ERRCODE_INVALID_COLUMN_DEFINITION),
                     CURSOR_POS(ExprLocation(&constraint)),
@@ -142,10 +137,10 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
                 }
             }
 
-            ColumnExpr default_value;
-            auto r = default_value.Init(db, constraint.raw_expr);
+            auto default_value = std::make_shared<ColumnExpr>();
+            auto r = default_value->Init(db, constraint.raw_expr);
             SDB_ENSURE(r.ok(), r.errorNumber(), std::move(r).errorMessage());
-            col.default_value = std::move(default_value);
+            col.expr = std::move(default_value);
           } break;
           case CONSTR_PRIMARY:  // create table (field integer primary key)
             append_pk(col.id, ExprLocation(&constraint));
@@ -161,7 +156,7 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
                   ERR_MSG("multiple generation clauses specified for column \"",
                           col.name, "\" of table \"", table, "\""));
               case kNone:
-                if (col.default_value) {
+                if (col.expr) {
                   THROW_SQL_ERROR(
                     ERR_CODE(ERRCODE_INVALID_COLUMN_DEFINITION),
                     CURSOR_POS(ExprLocation(&constraint)),
@@ -174,10 +169,10 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
             // guaranteed by parser
             SDB_ASSERT(constraint.generated_when == ATTRIBUTE_IDENTITY_ALWAYS);
 
-            ColumnExpr generated_value;
-            auto r = generated_value.Init(db, constraint.raw_expr);
+            auto generated_value = std::make_shared<ColumnExpr>();
+            auto r = generated_value->Init(db, constraint.raw_expr);
             SDB_ENSURE(r.ok(), r.errorNumber(), std::move(r).errorMessage());
-            col.default_value = std::move(generated_value);
+            col.expr = std::move(generated_value);
             col.generated_type = catalog::Column::GeneratedType::kStored;
           } break;
           default:

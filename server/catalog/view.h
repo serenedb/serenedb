@@ -23,9 +23,10 @@
 
 #include "basics/containers/small_vector.h"
 #include "basics/result.h"
+#include "catalog/fwd.h"
+#include "catalog/identifiers/index_id.h"
 #include "catalog/object.h"
 #include "catalog/types.h"
-#include "storage_engine/storage_engine.h"
 #include "vpack/serializer.h"
 #include "vpack/slice.h"
 

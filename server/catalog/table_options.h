@@ -27,6 +27,7 @@
 #include <vpack/slice.h>
 
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 #include "basics/containers/node_hash_map.h"
@@ -142,13 +143,21 @@ struct Column {
     return generated_type != GeneratedType::kNone;
   }
 
-  using Id = uint32_t;
+  using Id = uint64_t;
+
+  static constexpr Id kMaxRealId =
+    std::numeric_limits<uint64_t>::max() - 1'000'000;
+
+  static constexpr Id kGeneratedPKId = kMaxRealId + 1;
+
+  static std::string GeneratePKName(std::span<const std::string> column_names);
 
   Id id;
   velox::TypePtr type;
   std::string name;
-  // if generated type is not kNone, default_value = generated expression
-  ColumnExpr default_value;
+  // if generated type is not kNone, expr = generated expression
+  // else expr = default value expression (if any)
+  std::shared_ptr<ColumnExpr> expr;
   GeneratedType generated_type = GeneratedType::kNone;
 };
 
@@ -175,7 +184,6 @@ struct CreateTableRequest {
   std::string_view id;  // TODO(gnusi): make ObjectId
   int type = std::to_underlying(TableType::Document);
   bool waitForSync = false;
-  bool deleted = false;  // TODO(gnusi): really needed?
 };
 
 struct TableOptions {

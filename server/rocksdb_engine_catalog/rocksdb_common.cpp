@@ -41,7 +41,7 @@
 #include "rocksdb_engine_catalog/rocksdb_key.h"
 #include "rocksdb_engine_catalog/rocksdb_key_bounds.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
-#include "storage_engine/engine_selector_feature.h"
+#include "storage_engine/engine_feature.h"
 
 namespace sdb {
 namespace rocksutils {

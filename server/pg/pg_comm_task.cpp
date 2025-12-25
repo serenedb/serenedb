@@ -1369,6 +1369,7 @@ template<rest::SocketType T>
 void PgSQLCommTask<T>::SendAsync(message::SequenceView data) {
   SDB_ASSERT(!data.Empty());
   SDB_LOG_PGSQL("Sending Packet:", data.Print());
+  std::lock_guard lock{this->_queue_mutex};
   asio_ns::async_write(
     this->_protocol->socket, data,
     [self = this->shared_from_this()](asio_ns::error_code ec, size_t nwrite) {

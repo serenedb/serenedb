@@ -29,8 +29,8 @@
 #include "general_server/state.h"
 #include "metrics/gauge_builder.h"
 #include "metrics/metrics_feature.h"
-#include "storage_engine/engine_selector_feature.h"
-#include "storage_engine/storage_engine.h"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#include "storage_engine/engine_feature.h"
 
 using namespace sdb::app;
 using namespace sdb::basics;
@@ -76,7 +76,7 @@ void FlushFeature::registerFlushSubscription(
 }
 
 std::tuple<size_t, size_t, Tick> FlushFeature::releaseUnusedTicks() {
-  auto& engine = server().getFeature<EngineSelectorFeature>().engine();
+  auto& engine = server().getFeature<EngineFeature>().engine();
   const auto initial_tick = engine.currentTick();
 
   size_t stale = 0;

@@ -35,9 +35,9 @@
 #include "basics/debugging.h"
 #include "general_server/state.h"
 #include "metrics/metric.h"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "statistics/statistics_feature.h"
-#include "storage_engine/engine_selector_feature.h"
-#include "storage_engine/storage_engine.h"
+#include "storage_engine/engine_feature.h"
 
 #ifdef SDB_CLUSTER
 #include "agency/node.h"
@@ -247,7 +247,7 @@ void MetricsFeature::toPrometheus(std::string& result,
     sf.toPrometheus(result, time.count(), _globals, _ensure_whitespace);
 
     // Storage engine only provides standard metrics
-    auto& es = server().getFeature<EngineSelectorFeature>().engine();
+    auto& es = server().getFeature<EngineFeature>().engine();
     es.toPrometheus(result, _globals, _ensure_whitespace);
 
 #ifdef SDB_CLUSTER

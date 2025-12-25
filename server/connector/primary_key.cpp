@@ -71,10 +71,8 @@ void AppendKeyValue(std::string& key, const velox::BaseVector& column,
     key.append(column.as<velox::SimpleVector<T>>()->valueAt(idx) ? kTrueValue
                                                                  : kFalseValue);
   } else if constexpr (std::is_integral_v<T>) {
-    basics::StrAppend(key, sizeof(T));
     auto value = column.as<velox::SimpleVector<T>>()->valueAt(idx);
-    absl::big_endian::Store(key.data() + base_size, value);
-    key[base_size] = static_cast<uint8_t>(key[base_size]) ^ 0x80;
+    AppendSigned(key, value);
   } else if constexpr (std::is_floating_point_v<T>) {
     basics::StrAppend(key, sizeof(T));
     auto value = column.as<velox::SimpleVector<T>>()->valueAt(idx);

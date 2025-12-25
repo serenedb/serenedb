@@ -4348,7 +4348,7 @@ void SqlAnalyzer::ProcessFunctionBody(
   exprs.reserve(expected_row.size());
 
   size_t size = std::min(expected_row.size(), actual_type.size());
-  // we do min size just to make it act like postgres (first check all the types 
+  // we do min size just to make it act like postgres (first check all the types
   // then detailed message 'final statement too ...')
   for (size_t i = 0; i < size; ++i) {
     const auto& expected_col_type = expected_row.childAt(i);

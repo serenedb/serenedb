@@ -76,12 +76,12 @@ FROM
 ORDER BY 1 DESC;
 ----
 iq
--5
--3
--4
+87
 6
 4
-87
+-3
+-4
+-5
 
 
 query
@@ -179,8 +179,8 @@ GROUP BY name
 ORDER BY 1 DESC;
 ----
 kek
-17
 138
+17
 
 
 onlyif sdb

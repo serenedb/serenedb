@@ -668,14 +668,14 @@ class TargetList {
   // Replace all entries with new ones (saving previous ambiguity info)
   void ReplaceEntries(std::vector<Entry> entries) {
     _entries = std::move(entries);
-    for (auto& [expr, alias] : _entries) {
+    for (const auto& [expr, alias] : _entries) {
       auto it = _alias_to_expr.find(alias);
       SDB_ASSERT(it != _alias_to_expr.end());
       if (IsAmbiguous(it->second)) {
         continue;
       }
 
-      it->second = std::move(expr);
+      it->second = expr;
     }
   }
   std::vector<Entry> GetEntries() && { return std::move(_entries); }

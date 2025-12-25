@@ -4764,7 +4764,11 @@ lp::ExprPtr SqlAnalyzer::ProcessSubLink(State& state, const SubLink& expr) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_SYNTAX_ERROR),
         CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
-        ERR_MSG("subqueries are not allowed in generation expressions"));
+        ERR_MSG("cannot use subquery in column generation expression"));
+    case ExprKind::DistinctOn:
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
+                      ERR_MSG("subquery are not supported in DISTINCT ON"));
     default:
       break;
   }

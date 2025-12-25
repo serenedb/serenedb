@@ -2557,8 +2557,7 @@ void SqlAnalyzer::ProcessGroupClause(State& state, const List* groupby,
   for (size_t i = 0; i < grouping_keys.size(); ++i) {
     std::string name;
     if (grouping_keys[i]->isInputReference()) {
-      // we don't want to keep an old name otherwise table scope will be
-      // invalid
+      // we want to keep an old name otherwise table scope will be invalid
       name = grouping_keys[i]->as<lp::InputReferenceExpr>()->name();
     } else {
       name = _id_generator.NextColumnName(

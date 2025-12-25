@@ -25,7 +25,7 @@ select 0.0005::numeric;
 numeric
 0.0005000000000000000
 
-# TODO find out why extended drop some tailing zeroes
+# Rust driver decimal doesn't support more than 29 symbols
 skipif postgres-extended
 query
 select 1234567890123456::numeric;

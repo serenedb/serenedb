@@ -4797,9 +4797,12 @@ velox::TypePtr NameToType(const TypeName& type_name) {
     const auto precision = TryGet<int>(type_name.typmods, 0);
     const auto scale =
       mods_size > 1 ? TryGet<int>(type_name.typmods, 1) : std::nullopt;
-    auto decimal =
-      velox::DECIMAL(precision.value_or(velox::LongDecimalType::kMaxPrecision),
-                     scale.value_or(0));
+
+    if (!precision.has_value()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                      ERR_MSG("invalid input syntax for type integer"));
+    }
+    auto decimal = velox::DECIMAL(*precision, scale.value_or(0));
     return wrap_in_array(std::move(decimal));
   }
 

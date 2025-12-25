@@ -35,8 +35,7 @@
 #include "general_server/authentication_feature.h"
 #include "general_server/state.h"
 #include "rest_server/init_database_feature.h"
-#include "storage_engine/engine_selector_feature.h"
-#include "storage_engine/storage_engine.h"
+#include "storage_engine/engine_feature.h"
 
 namespace sdb::auth {
 namespace {

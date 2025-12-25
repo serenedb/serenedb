@@ -45,11 +45,6 @@ LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 
-template<typename T>
-inline int ExprLocation(const T* node) noexcept {
-  return exprLocation(reinterpret_cast<const Node*>(node));
-}
-
 // TODO: use ErrorPosition in ThrowSqlError
 yaclib::Future<Result> CreateTable(ExecContext& context,
                                    const CreateStmt& stmt) {

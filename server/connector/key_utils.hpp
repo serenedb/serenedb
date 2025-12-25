@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/base/internal/endian.h>
 #include <velox/vector/BaseVector.h>
 #include <velox/vector/ComplexVector.h>
 
@@ -49,7 +50,15 @@ void MakeColumnKey(const velox::RowVectorPtr& input,
   basics::StrResize(key_buffer, sizeof(catalog::Column::Id) + sizeof(ObjectId));
   std::memcpy(key_buffer.data() + sizeof(catalog::Column::Id), object_id.data(),
               sizeof(ObjectId));
-  primary_key::Create(*input, pk_columns, row_idx, key_buffer);
+
+  if (!pk_columns.empty()) {
+    primary_key::Create(*input, pk_columns, row_idx, key_buffer);
+  } else {
+    // TODO: make unsigned when such types will be supported in Velox
+    const auto generated_pk = std::bit_cast<int64_t>(RevisionId::create().id());
+    primary_key::AppendSigned(key_buffer, generated_pk);
+  }
+
   row_key_handle(std::string_view{
     key_buffer.begin() + sizeof(catalog::Column::Id), key_buffer.end()});
   std::memcpy(key_buffer.data(), object_id.data(), sizeof(ObjectId));

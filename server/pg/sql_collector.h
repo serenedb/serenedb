@@ -106,6 +106,9 @@ class Objects : public irs::memory::Managed {
   }
 
   containers::FlatHashMap<ObjectName, ObjectData> _objects;
+  containers::FlatHashSet<void*> _search_functions;
+  containers::FlatHashMap<std::string_view, std::vector<void*>>
+    _scope_to_search_functions;
 };
 
 // collect objects to objects

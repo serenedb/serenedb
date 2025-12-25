@@ -49,11 +49,9 @@
 #include "basics/process-utils.h"
 #include "basics/system-functions.h"
 #include "catalog/table_options.h"
+#include "rocksdb_engine_catalog/options.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
-
-#ifdef SDB_CLUSTER
-#include "agency/agency_feature.h"
-#endif
+#include "rocksdb_engine_catalog/rocksdb_prefix_extractor.h"
 
 // It's not atomic because it shouldn't change after initilization.
 // And initialization should happen before rocksdb initialization.
@@ -218,6 +216,10 @@ uint64_t DefaultMinWriteBufferNumberToMerge(uint64_t total_size,
   return safe;
 }
 
+// minimum value for --rocksdb.sync-interval (in ms)
+// a value of 0 however means turning off the syncing altogether!
+static constexpr uint64_t kMinSyncInterval = 5;
+
 }  // namespace
 
 RocksDBOptionFeature::RocksDBOptionFeature(Server& server)
@@ -311,6 +313,12 @@ RocksDBOptionFeature::RocksDBOptionFeature(Server& server)
     _partition_files_for_primary_index_cf(false),
     _partition_files_for_edge_index_cf(false),
     _partition_files_for_vpack_index_cf(false),
+    _max_transaction_size(transaction::Options::gDefaultMaxTransactionSize),
+    _intermediate_commit_size(
+      transaction::Options::gDefaultIntermediateCommitSize),
+    _intermediate_commit_count(
+      transaction::Options::gDefaultIntermediateCommitCount),
+    _vpack_cmp(std::make_unique<RocksDBVPackComparator>()),
     _max_write_buffer_number_cf{0, 0, 0, 0, 0} {
   if (_total_write_buffer_size == 0) {
     // unlimited write buffer size... now set to some fraction of physical RAM
@@ -318,6 +326,21 @@ RocksDBOptionFeature::RocksDBOptionFeature(Server& server)
   }
 
   setOptional(true);
+}
+
+const rocksdb::Options& RocksDBOptionFeature::getOptions() const {
+  if (!_options) {
+    _options = doGetOptions();
+  }
+  return *_options;
+}
+
+const rocksdb::BlockBasedTableOptions& RocksDBOptionFeature::getTableOptions()
+  const {
+  if (!_table_options) {
+    _table_options = doGetTableOptions();
+  }
+  return *_table_options;
 }
 
 void RocksDBOptionFeature::collectOptions(
@@ -1216,6 +1239,197 @@ limited number of edge collections/shards/indexes.)");
                        options::Flags::OnAgent, options::Flags::OnDBServer,
                        options::Flags::OnSingle));
 
+  /// minimum required percentage of free disk space for considering
+  /// the server "healthy". this is expressed as a floating point value
+  /// between 0 and 1! if set to 0.0, the % amount of free disk is ignored in
+  /// checks.
+  options->addOption(
+    "--rocksdb.minimum-disk-free-percent",
+    "The minimum percentage of free disk space for considering the "
+    "server healthy in health checks (0 = disable the check).",
+    new DoubleParameter(&_required_disk_free_percentage, /*base*/ 1.0,
+                        /*minValue*/ 0.0, /*maxValue*/ 1.0),
+    options::MakeFlags(options::Flags::DefaultNoComponents,
+                       options::Flags::OnDBServer, options::Flags::OnSingle));
+
+  /// minimum number of free bytes on disk for considering the server
+  /// healthy. if set to 0, the number of free bytes on disk is ignored in
+  /// checks.
+  options->addOption(
+    "--rocksdb.minimum-disk-free-bytes",
+    "The minimum number of free disk bytes for considering the "
+    "server healthy in health checks (0 = disable the check).",
+    new UInt64Parameter(&_required_disk_free_bytes),
+    options::MakeFlags(options::Flags::DefaultNoComponents,
+                       options::Flags::OnDBServer, options::Flags::OnSingle));
+
+  // control transaction size for RocksDB engine
+  options
+    ->addOption("--rocksdb.max-transaction-size",
+                "The transaction size limit (in bytes).",
+                new UInt64Parameter(&_max_transaction_size))
+    .setLongDescription(R"(Transactions store all keys and values in RAM, so
+large transactions run the risk of causing out-of-memory situations. This
+setting allows you to ensure that it does not happen by limiting the size of
+any individual transaction. Transactions whose operations would consume more
+RAM than this threshold value are aborted automatically with error 32
+("resource limit exceeded").)");
+
+  options->addOption("--rocksdb.intermediate-commit-size",
+                     "An intermediate commit is performed automatically "
+                     "when a transaction has accumulated operations of this "
+                     "size (in bytes), and a new transaction is started.",
+                     new UInt64Parameter(&_intermediate_commit_size));
+
+  options->addOption("--rocksdb.intermediate-commit-count",
+                     "An intermediate commit is performed automatically "
+                     "when this number of operations is reached in a "
+                     "transaction, and a new transaction is started.",
+                     new UInt64Parameter(&_intermediate_commit_count));
+
+  options->addOption("--rocksdb.max-parallel-compactions",
+                     "The maximum number of parallel compactions jobs.",
+                     new UInt64Parameter(&_max_parallel_compactions));
+
+  options
+    ->addOption(
+      "--rocksdb.sync-interval",
+      "The interval for automatic, non-requested disk syncs (in "
+      "milliseconds, 0 = turn automatic syncing off)",
+      new UInt64Parameter(&_sync_interval),
+      options::MakeFlags(options::Flags::OsLinux, options::Flags::OsMac,
+                         options::Flags::OnDBServer, options::Flags::OnSingle))
+    .setLongDescription(R"(Automatic synchronization of data from RocksDB's
+write-ahead logs to disk is only performed for not-yet synchronized data, and
+only for operations that have been executed without the `waitForSync`
+attribute.)");
+
+  options->addOption(
+    "--rocksdb.sync-delay-threshold",
+    "The threshold for self-observation of WAL disk syncs "
+    "(in milliseconds, 0 = no warnings). Any WAL disk sync longer ago "
+    "than this threshold triggers a warning ",
+    new UInt64Parameter(&_sync_delay_threshold),
+    options::MakeFlags(options::Flags::DefaultNoComponents,
+                       options::Flags::OnDBServer, options::Flags::OnSingle,
+                       options::Flags::Uncommon));
+
+  options
+    ->addOption(
+      "--rocksdb.wal-file-timeout",
+      "The timeout after which unused WAL files are deleted "
+      "(in seconds).",
+      new DoubleParameter(&_prune_wait_time),
+      options::MakeFlags(options::Flags::DefaultNoComponents,
+                         options::Flags::OnDBServer, options::Flags::OnSingle))
+    .setLongDescription(R"(Data of ongoing transactions is stored in RAM.
+Transactions that get too big (in terms of number of operations involved or the
+total size of data created or modified by the transaction) are committed
+automatically. Effectively, this means that big user transactions are split into
+multiple smaller RocksDB transactions that are committed individually.
+The entire user transaction does not necessarily have ACID properties in this
+case.)");
+
+  options
+    ->addOption(
+      "--rocksdb.wal-file-timeout-initial",
+      "The initial timeout (in seconds) after which unused WAL "
+      "files deletion kicks in after server start.",
+      new DoubleParameter(&_prune_wait_time_initial),
+      options::MakeFlags(options::Flags::DefaultNoComponents,
+                         options::Flags::OnDBServer, options::Flags::OnSingle,
+                         options::Flags::Uncommon))
+    .setLongDescription(R"(If you decrease the value, the server starts the
+removal of obsolete WAL files earlier after server start. This is useful in
+testing environments that are space-restricted and do not require keeping much
+WAL file data at all.)");
+
+  options
+    ->addOption(
+      "--rocksdb.debug-logging", "Whether to enable RocksDB debug logging.",
+      new BooleanParameter(&_debug_logging),
+      options::MakeFlags(options::Flags::DefaultNoComponents,
+                         options::Flags::OnDBServer, options::Flags::OnSingle,
+                         options::Flags::Uncommon))
+    .setLongDescription(R"(If set to `true`, enables verbose logging of
+RocksDB's actions into the logfile written by SereneDB (if the
+`--rocksdb.use-file-logging` option is off), or RocksDB's own log (if the
+`--rocksdb.use-file-logging` option is on).
+
+This option is turned off by default, but you can enable it for debugging
+RocksDB internals and performance.)");
+
+  options
+    ->addOption("--rocksdb.verify-sst",
+                "Verify the validity of .sst files present in the "
+                "`engine_rocksdb` directory on startup.",
+                new BooleanParameter(&_verify_sst),
+                options::MakeFlags(
+                  options::Flags::Command, options::Flags::DefaultNoComponents,
+                  options::Flags::OnAgent, options::Flags::OnDBServer,
+                  options::Flags::OnSingle, options::Flags::Uncommon))
+
+    .setLongDescription(R"(If set to `true`, during startup, all .sst files
+in the `engine_rocksdb` folder in the database directory are checked for
+potential corruption and errors. The server process stops after the check and
+returns an exit code of `0` if the validation was successful, or a non-zero
+exit code if there is an error in any of the .sst files.)");
+
+  options
+    ->addOption(
+      "--rocksdb.wal-archive-size-limit",
+      "The maximum total size (in bytes) of archived WAL files to "
+      "keep on the leader (0 = unlimited).",
+      new options::UInt64Parameter(&_max_wal_archive_size_limit),
+      options::MakeFlags(options::Flags::DefaultNoComponents,
+                         options::Flags::OnDBServer, options::Flags::OnSingle,
+                         options::Flags::Uncommon))
+    .setLongDescription(R"(A value of `0` does not restrict the size of the
+archive, so the leader removes archived WAL files when there are no replication
+clients needing them. Any non-zero value restricts the size of the WAL files
+archive to about the specified value and trigger WAL archive file deletion once
+the threshold is reached. You can use this to get rid of archived WAL files in
+a disk size-constrained environment.
+
+**Note**: The value is only a threshold, so the archive may get bigger than
+the configured value until the background thread actually deletes files from
+the archive. Also note that deletion from the archive only kicks in after
+`--rocksdb.wal-file-timeout-initial` seconds have elapsed after server start.
+
+Archived WAL files are normally deleted automatically after a short while when
+there is no follower attached that may read from the archive. However, in case
+when there are followers attached that may read from the archive, WAL files
+normally remain in the archive until their contents have been streamed to the
+followers. In case there are slow followers that cannot catch up, this causes a
+growth of the WAL files archive over time.
+
+You can use the option to force a deletion of WAL files from the archive even if
+there are followers attached that may want to read the archive. In case the
+option is set and a leader deletes files from the archive that followers want to
+read, this aborts the replication on the followers. Followers can restart the
+replication doing a resync, though, but they may not be able to catch up if WAL
+file deletion happens too early.
+
+Thus it is best to leave this option at its default value of `0` except in cases
+when disk size is very constrained and no replication is used.)");
+
+  options->addOption(
+    "--rocksdb.auto-flush-min-live-wal-files",
+    "The minimum number of live WAL files that triggers an "
+    "auto-flush of WAL "
+    "and column family data.",
+    new UInt64Parameter(&_auto_flush_min_wal_files),
+    options::MakeFlags(options::Flags::DefaultNoComponents,
+                       options::Flags::OnDBServer, options::Flags::OnSingle));
+
+  options->addOption(
+    "--rocksdb.auto-flush-check-interval",
+    "The interval (in seconds) in which auto-flushes of WAL and column "
+    "family data is executed.",
+    new DoubleParameter(&_auto_flush_check_interval),
+    options::MakeFlags(options::Flags::DefaultNoComponents,
+                       options::Flags::OnDBServer, options::Flags::OnSingle));
+
   //////////////////////////////////////////////////////////////////////////////
   /// add column family-specific options now
   //////////////////////////////////////////////////////////////////////////////
@@ -1245,6 +1459,44 @@ limited number of edge collections/shards/indexes.)");
 
 void RocksDBOptionFeature::validateOptions(
   std::shared_ptr<ProgramOptions> options) {
+  transaction::Options::setLimits(_max_transaction_size,
+                                  _intermediate_commit_size,
+                                  _intermediate_commit_count);
+  if (_sync_interval > 0) {
+    if (_sync_interval < kMinSyncInterval) {
+      // _sync_interval = 0 means turned off!
+      SDB_FATAL(
+        "xxxxx", Logger::CONFIG,
+        "invalid value for --rocksdb.sync-interval. Please use a value ",
+        "of at least ", kMinSyncInterval);
+    }
+
+    if (_sync_delay_threshold > 0 && _sync_delay_threshold <= _sync_interval) {
+      if (!options->processingResult().touched("rocksdb.sync-interval") &&
+          options->processingResult().touched("rocksdb.sync-delay-threshold")) {
+        // user has not set --rocksdb.sync-interval, but set
+        // --rocksdb.sync-delay-threshold
+        SDB_WARN("xxxxx", Logger::CONFIG,
+                 "invalid value for --rocksdb.sync-delay-threshold. should be "
+                 "higher ",
+                 "than the value of --rocksdb.sync-interval (", _sync_interval,
+                 ")");
+      }
+
+      _sync_delay_threshold = 10 * _sync_interval;
+      SDB_WARN("xxxxx", Logger::CONFIG,
+               "auto-adjusting value of --rocksdb.sync-delay-threshold to ",
+               _sync_delay_threshold, " ms");
+    }
+  }
+
+  if (_prune_wait_time_initial < 10) {
+    SDB_WARN("xxxxx", Logger::ENGINES,
+             "consider increasing the value for "
+             "--rocksdb.wal-file-timeout-initial. ",
+             "Replication clients might have trouble to get in sync");
+  }
+
   if (_write_buffer_size > 0 && _write_buffer_size < 1024 * 1024) {
     SDB_FATAL("xxxxx", sdb::Logger::STARTUP,
               "invalid value for '--rocksdb.write-buffer-size'");
@@ -1331,21 +1583,6 @@ void RocksDBOptionFeature::validateOptions(
     // for performance
     _enable_blob_garbage_collection = false;
   }
-}
-
-void RocksDBOptionFeature::prepare() {
-  if (_enable_blob_files) {
-    SDB_WARN(
-      "xxxxx", Logger::ENGINES,
-      "using blob files is experimental and not supported for production "
-      "usage");
-  }
-
-  if (_compaction_style != ::kCompactionStyleLevel) {
-    SDB_WARN("xxxxx", Logger::ENGINES, "using compaction style '",
-             _compaction_style,
-             "' is experimental and not supported for production usage");
-  }
 
   if (_enforce_block_cache_size_limit && _block_cache_size > 0) {
     uint64_t shard_size =
@@ -1366,9 +1603,7 @@ void RocksDBOptionFeature::prepare() {
                "to avoid incomplete cache reads.");
     }
   }
-}
 
-void RocksDBOptionFeature::start() {
   uint32_t max = _max_background_jobs / 2;
   uint32_t clamped = std::max(
     std::min(static_cast<uint32_t>(number_of_cores::GetValue()), max), 1U);
@@ -1723,7 +1958,7 @@ rocksdb::BlockBasedTableOptions RocksDBOptionFeature::doGetTableOptions()
 
 rocksdb::ColumnFamilyOptions RocksDBOptionFeature::getColumnFamilyOptions(
   RocksDBColumnFamilyManager::Family family) const {
-  auto result = RocksDBOptionsProvider::getColumnFamilyOptions(family);
+  auto result = getColumnFamilyOptionsDefault(family);
 
   if (family == RocksDBColumnFamilyManager::Family::Documents ||
       family == RocksDBColumnFamilyManager::Family::Data) {
@@ -1791,6 +2026,96 @@ rocksdb::ColumnFamilyOptions RocksDBOptionFeature::getColumnFamilyOptions(
         _total_write_buffer_size, _write_buffer_size,
         result.max_write_buffer_number));
   }
+
+  return result;
+}
+
+rocksdb::ColumnFamilyOptions
+RocksDBOptionFeature::getColumnFamilyOptionsDefault(
+  RocksDBColumnFamilyManager::Family family) const {
+  rocksdb::ColumnFamilyOptions result(getOptions());
+
+  auto make_column_optimized_for_get = [&] {
+    result.prefix_extractor.reset(
+      rocksdb::NewFixedPrefixTransform(RocksDBKey::objectIdSize()));
+
+    rocksdb::BlockBasedTableOptions table_options(getTableOptions());
+    table_options.data_block_index_type =
+      rocksdb::BlockBasedTableOptions::kDataBlockBinaryAndHash;
+    result.table_factory.reset(
+      rocksdb::NewBlockBasedTableFactory(table_options));
+  };
+
+  // TODO(mbkkt) current column families are wrong
+  // Instead we want to have such column families:
+  // clang-format off
+  // | name      | key             | value      | prefix        | filter        | index    | data blocks |
+  // | Documents | objID, pk       | rev, data  | objID         | hits + key    | binary*  | hash        |
+  // | Unique    | objID, data     | pk         | objID         | key           | binary*  | hash        |
+  // | Sorted    | objID, data, pk |            | objID         | hits + prefix | firstKey | binary      |
+  // | Lookup    | objID, data, pk |            | objID, data   | prefix        | firstKey | binary      |
+  // clang-format on
+  // * -- maybe hash if shouldn't be sorted
+  // Documents and PrimaryIndex  => Documents
+  // PrimaryIndex and VPackIndex => Unique
+  // VPackIndex                  => Sorted
+  // EdgeIndex                   => Lookup
+  switch (family) {
+    case sdb::RocksDBColumnFamilyManager::Family::Data: {
+      result.prefix_extractor.reset(rocksdb::NewFixedPrefixTransform(
+        RocksDBKey::objectIdSize() + sizeof(catalog::Column::Id)));
+
+      auto table_options = getTableOptions();
+      result.table_factory.reset(
+        rocksdb::NewBlockBasedTableFactory(table_options));
+    } break;
+    case RocksDBColumnFamilyManager::Family::Definitions:
+    case RocksDBColumnFamilyManager::Family::Invalid:
+      break;
+    case RocksDBColumnFamilyManager::Family::Documents: {
+      result.optimize_filters_for_hits = true;
+      make_column_optimized_for_get();
+    } break;
+    case RocksDBColumnFamilyManager::Family::PrimaryIndex: {
+      make_column_optimized_for_get();
+    } break;
+    case RocksDBColumnFamilyManager::Family::EdgeIndex: {
+      // we don't expect a lot of source vertexes with 0 outbound edges
+      result.optimize_filters_for_hits = true;
+      result.prefix_extractor = std::make_shared<RocksDBPrefixExtractor>();
+
+      rocksdb::BlockBasedTableOptions table_options(getTableOptions());
+      // there is not a lot of sense in bloom filter for each edge
+      // because it can be used only to remove single edge
+      table_options.whole_key_filtering = false;
+      // kBinarySearchWithFirstKey + kNoShortening best for short scans
+      table_options.index_type =
+        rocksdb::BlockBasedTableOptions::IndexType::kBinarySearchWithFirstKey;
+      table_options.index_shortening =
+        rocksdb::BlockBasedTableOptions::IndexShorteningMode::kNoShortening;
+      result.table_factory.reset(
+        rocksdb::NewBlockBasedTableFactory(table_options));
+    } break;
+    case RocksDBColumnFamilyManager::Family::VPackIndex: {
+      // we expect that index exist
+      result.optimize_filters_for_hits = true;
+      result.prefix_extractor.reset(
+        rocksdb::NewFixedPrefixTransform(RocksDBKey::objectIdSize()));
+      // vpack based index variants with custom comparator
+      // TODO(mbkkt) in general it's unnecessary, we should write vpack value in
+      // another format, like icu::Collator::getSortKey
+      result.comparator = _vpack_cmp.get();
+      rocksdb::BlockBasedTableOptions table_options(getTableOptions());
+      // there is not any sense in bloom filter for each value
+      // because we never makes Get or full key Seek
+      table_options.whole_key_filtering = false;
+      result.table_factory.reset(
+        rocksdb::NewBlockBasedTableFactory(table_options));
+    } break;
+  }
+
+  // set TTL for .sst file compaction
+  result.ttl = periodicCompactionTtl();
 
   return result;
 }

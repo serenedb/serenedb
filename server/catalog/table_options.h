@@ -27,6 +27,7 @@
 #include <vpack/slice.h>
 
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 #include "basics/containers/node_hash_map.h"
@@ -143,6 +144,13 @@ struct Column {
   }
 
   using Id = uint64_t;
+
+  static constexpr Id kMaxRealId =
+    std::numeric_limits<uint64_t>::max() - 1'000'000;
+
+  static constexpr Id kGeneratedPKId = kMaxRealId + 1;
+
+  static std::string GeneratePKName(std::span<const std::string> column_names);
 
   Id id;
   velox::TypePtr type;

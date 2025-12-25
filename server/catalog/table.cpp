@@ -49,7 +49,7 @@
 #include "catalog/validators.h"
 #include "general_server/server_options_feature.h"
 #include "general_server/state.h"
-#include "storage_engine/engine_selector_feature.h"
+#include "storage_engine/engine_feature.h"
 #include "vpack/serializer.h"
 
 #ifdef SDB_CLUSTER
@@ -90,9 +90,8 @@ velox::RowTypePtr BuildPkType(const std::vector<Column>& columns,
   types.reserve(pk_columns.size());
 
   for (auto pk_col_id : pk_columns) {
-    auto it = std::find_if(
-      columns.begin(), columns.end(),
-      [pk_col_id](const Column& col) { return col.id == pk_col_id; });
+    auto it = absl::c_find_if(
+      columns, [pk_col_id](const Column& col) { return col.id == pk_col_id; });
     SDB_ASSERT(it != columns.end());
     names.push_back(it->name);
     types.push_back(it->type);

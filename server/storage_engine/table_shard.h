@@ -36,12 +36,14 @@
 
 #include "basics/errors.h"
 #include "basics/read_write_lock.h"
+#include "catalog/fwd.h"
 #include "catalog/identifiers/index_id.h"
 #include "catalog/identifiers/revision_id.h"
 #include "catalog/identifiers/transaction_id.h"
+#include "catalog/table_options.h"
 #include "catalog/types.h"
 #include "storage_engine/replication_iterator.h"
-#include "storage_engine/storage_engine.h"  // consider just forward declaration
+// consider just forward declaration
 #include "utils/coro_helper.h"
 #include "utils/merkle_tree.h"
 #include "utils/operation_result.h"

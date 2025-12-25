@@ -21,8 +21,10 @@
 #include "query/query.h"
 
 #include <axiom/logical_plan/PlanPrinter.h>
+#include <axiom/optimizer/DerivedTablePrinter.h>
 #include <axiom/optimizer/Optimization.h>
 #include <axiom/optimizer/Plan.h>
+#include <axiom/optimizer/RelationOpPrinter.h>
 #include <axiom/optimizer/Schema.h>
 #include <axiom/optimizer/ToVelox.h>
 #include <axiom/optimizer/VeloxHistory.h>
@@ -98,11 +100,7 @@ std::unique_ptr<Query> Query::CreateShowAll(const QueryContext& query_ctx) {
 Query::Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
              const QueryContext& query_ctx)
   : _query_ctx{query_ctx}, _logical_plan{root} {
-  if (_query_ctx.command_type.HasAnyNot(CommandType::Explain) ||
-      _query_ctx.explain_params.HasAnyNot(ExplainWith::Logical,
-                                          ExplainWith::Registers)) {
-    CompileQuery();
-  }
+  CompileQuery();
 
   if (_query_ctx.command_type.Has(CommandType::Explain)) {
     _output_type = velox::ROW({"QUERY PLAN"}, {velox::VARCHAR()});
@@ -117,6 +115,23 @@ Query::Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
 }
 
 void Query::CompileQuery() {
+  const bool only_explain =
+    !_query_ctx.command_type.HasAnyNot(CommandType::Explain);
+
+  const bool needs_initial_query_graph =
+    _query_ctx.explain_params.Has(ExplainWith::InitialQueryGraph);
+  const bool needs_final_query_graph =
+    _query_ctx.explain_params.Has(ExplainWith::FinalQueryGraph);
+  const bool needs_physical =
+    _query_ctx.explain_params.Has(ExplainWith::Physical);
+  const bool needs_execution =
+    _query_ctx.explain_params.Has(ExplainWith::Execution);
+
+  if (only_explain && !needs_initial_query_graph && !needs_final_query_graph &&
+      !needs_physical && !needs_execution) {
+    return;
+  }
+
   velox::HashStringAllocator query_graph_allocator{
     _query_ctx.query_memory_pool.get()};
   axiom::optimizer::QueryGraphContext query_graph_context{
@@ -182,8 +197,42 @@ void Query::CompileQuery() {
     runner_options,
   };
 
+  if (needs_initial_query_graph) {
+    _initial_query_graph_plan =
+      axiom::optimizer::DerivedTablePrinter::toText(*optimization.graph());
+    if (only_explain && !needs_final_query_graph && !needs_physical &&
+        !needs_execution) {
+      return;
+    }
+  }
+
   optimization.optimizeGraph();
-  auto best = optimization.bestPlan();
+
+  if (needs_final_query_graph) {
+    _final_query_graph_plan =
+      axiom::optimizer::DerivedTablePrinter::toText(*optimization.graph());
+    if (only_explain && !needs_physical && !needs_execution) {
+      return;
+    }
+  }
+
+  auto* best = optimization.bestPlan();
+
+  if (needs_physical) {
+    if (_query_ctx.explain_params.Has(ExplainWith::Oneline)) {
+      _physical_plan =
+        axiom::optimizer::RelationOpPrinter::toOneline(*best->op);
+    } else {
+      const bool include_cost =
+        _query_ctx.explain_params.Has(ExplainWith::Cost);
+      _physical_plan = axiom::optimizer::RelationOpPrinter::toText(
+        *best->op, {.includeCost = include_cost});
+    }
+    if (only_explain && !needs_execution) {
+      return;
+    }
+  }
+
   // This is not really good for prepared statements, but it works for now
   auto result = optimization.toVeloxPlan(best->op);
   _execution_plan = std::move(result.plan);

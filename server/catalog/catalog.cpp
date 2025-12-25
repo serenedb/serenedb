@@ -47,9 +47,9 @@
 #include "catalog/view.h"
 #include "general_server/state.h"
 #include "rest_server/serened.h"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_key.h"
-#include "storage_engine/engine_selector_feature.h"
-#include "storage_engine/storage_engine.h"
+#include "storage_engine/engine_feature.h"
 #include "utils/query_cache.h"
 #include "vpack/builder.h"
 #include "vpack/iterator.h"
@@ -98,20 +98,12 @@ void CatalogFeature::collectOptions(
 }
 
 void CatalogFeature::prepare() {
-  auto catalog =
-    std::make_shared<LocalCatalog>(GetServerEngine(), _skip_background_errors);
+  auto catalog = std::make_shared<LocalCatalog>(_skip_background_errors);
   _global = catalog;
   _local = std::move(catalog);
 }
 
-void CatalogFeature::start() {
-#ifdef SDB_CLUSTER
-  if (ServerState::instance()->IsCoordinator() ||
-      ServerState::instance()->IsDBServer()) {
-    _global = std::make_shared<GlobalCatalog>(GetClusterInfo());
-  }
-#endif
-}
+void CatalogFeature::start() {}
 
 void CatalogFeature::unprepare() {
   // TODO(gnusi): fix
@@ -459,6 +451,14 @@ ResultOr<std::shared_ptr<Database>> GetDatabase(ObjectId database_id) {
 
 ResultOr<std::shared_ptr<Database>> GetDatabase(std::string_view name) {
   return GetDatabaseImpl(name);
+}
+
+std::shared_ptr<TableShard> GetTableShard(ObjectId id) {
+  auto& catalogs =
+    SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
+  auto& catalog = ServerState::instance()->IsCoordinator() ? catalogs.Global()
+                                                           : catalogs.Local();
+  return catalog.GetSnapshot()->GetTableShard(id);
 }
 
 }  // namespace sdb::catalog

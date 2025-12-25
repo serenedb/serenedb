@@ -1,10 +1,9 @@
 target_sources(
     sereneserver
     PRIVATE
-        engine_selector_feature.cpp
+        engine_feature.cpp
         health_data.cpp
         table_shard.cpp
-        storage_engine.cpp
         indexes_snapshot.cpp
         wal_access.cpp
         hints.cpp

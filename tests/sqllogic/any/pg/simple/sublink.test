@@ -294,6 +294,95 @@ name description total_money
 deadinside Sad Guy 200
 
 
+onlyif serenedb
+query
+EXPLAIN (LOGICAL, INITIAL_QUERY_GRAPH, FINAL_QUERY_GRAPH, PHYSICAL, EXECUTION, REGISTERS)
+WITH m(name, total) AS (
+  VALUES
+    ('pudge', 150),
+    ('pudge', 0),
+    ('deadinside', 200),
+    ('deadinside', 250),
+    ('makak', 175),
+    ('makak', 65)
+)
+SELECT * FROM m
+WHERE total = (
+  SELECT SUM(total)
+  FROM m m2
+  WHERE m2.name = m.name
+);
+----
+QUERY PLAN
+LOGICAL PLAN:
+- Filter: presto_eq(CAST(total:4 AS BIGINT), subquery(- Aggregate() -> ROW<"sum:8":BIGINT>     sum:8 := presto_sum(total:7)   - Filter: presto_eq(name:6, name:3) -> ROW<"name:6":VARCHAR,"total:7":INTEGER>     - Project: -> ROW<"name:6":VARCHAR,"total:7":INTEGER>         name:6 := column1:5         total:7 := column2:5       - Values: 6 rows -> ROW<"column1:5":VARCHAR,"column2:5":INTEGER> )) -> ROW<"name:3":VARCHAR,"total:4":INTEGER>
+  - Project: -> ROW<"name:3":VARCHAR,"total:4":INTEGER>
+      name:3 := column1:2
+      total:4 := column2:2
+    - Values: 6 rows -> ROW<"column1:2":VARCHAR,"column2:2":INTEGER>
+INITIAL QUERY GRAPH:
+dt1: name:3, total:4
+  output:
+    name:3 := vt2.column1:2
+    total:4 := vt2.column2:2
+  tables: vt2, dt3
+  joins:
+    vt2 LEFT dt3 ON vt2.column1:2 = dt3.column1:5
+  syntactic join order: 1, 4
+  filter: presto_eq(dt3.sum:8, __cast(vt2.column2:2))
+vt2: column1:2, column2:2
+dt3: column1:5, sum:8
+  output:
+    column1:5 := vt4.column1:5
+    sum:8 := dt3.sum:8
+  tables: vt4
+  aggregates: presto_sum(vt4.column2:5) AS sum:8
+  grouping keys: vt4.column1:5
+vt4: column1:5, column2:5
+FINAL QUERY GRAPH:
+dt1: name:3, total:4
+  output:
+    name:3 := vt2.column1:2
+    total:4 := vt2.column2:2
+  tables: vt2, dt3
+  joins:
+    vt2 LEFT dt3 ON vt2.column1:2 = dt3.column1:5
+  syntactic join order: 1, 4
+  filter: presto_eq(dt3.sum:8, __cast(vt2.column2:2))
+vt2: column1:2, column2:2
+dt3: column1:5, sum:8
+  output:
+    column1:5 := vt4.column1:5
+    sum:8 := dt3.sum:8
+  tables: vt4
+  aggregates: presto_sum(vt4.column2:5) AS sum:8
+  grouping keys: vt4.column1:5
+vt4: column1:5, column2:5
+PHYSICAL PLAN:
+Project -> dt1.name:3, dt1.total:4
+    dt1.name:3 := vt2.column1:2
+    dt1.total:4 := vt2.column2:2
+  Filter -> vt2.column1:2, vt2.column2:2, dt3.sum:8
+      presto_eq(dt3.sum:8, __cast(vt2.column2:2))
+    Join LEFT Hash -> vt2.column1:2, vt2.column2:2, dt3.sum:8
+        vt2.column1:2 = dt3.column1:5
+      Values -> vt2.column1:2, vt2.column2:2
+      Project (redundant) -> dt3.column1:5, dt3.sum:8
+          dt3.column1:5 := vt4.column1:5
+          dt3.sum:8 := dt3.sum:8
+        Aggregation (vt4.column1:5) -> vt4.column1:5, dt3.sum:8
+            dt3.sum:8 := presto_sum(vt4.column2:5)
+          Values -> vt4.column1:5, vt4.column2:5
+EXECUTION PLAN:
+Fragment 0:  numWorkers=1:
+-- Project[5][expressions: (name:3:VARCHAR, "column1:2"), (total:4:INTEGER, "column2:2")] -> "name:3":VARCHAR, "total:4":INTEGER
+  -- Filter[0][expression: presto_eq("sum:8",cast("column2:2" as BIGINT))] -> "column1:2":VARCHAR, "column2:2":INTEGER, "sum:8":BIGINT
+    -- HashJoin[4][LEFT column1:2=column1:5] -> "column1:2":VARCHAR, "column2:2":INTEGER, "sum:8":BIGINT
+      -- Values[1][6 rows in 6 vectors] -> "column1:2":VARCHAR, "column2:2":INTEGER
+      -- Aggregation[3][SINGLE [column1:5] sum:8 := presto_sum("column2:5")] -> "column1:5":VARCHAR, "sum:8":BIGINT
+        -- Values[2][6 rows in 6 vectors] -> "column1:5":VARCHAR, "column2:5":INTEGER
+
+
 query
 WITH m(name, total) AS (
   VALUES
@@ -410,3 +499,91 @@ z count
 1 1
 2 1
 3 1
+
+
+statement ok
+create table t1(a int primary key, b int, c int);
+
+
+statement count 3
+insert into t1 values
+(1, 1, 1),
+(2, 2, 2),
+(3, 3, 3);
+
+
+query
+SELECT (SELECT 1 FROM t1 t2 WHERE t1.a = t2.a)
+  FROM t1
+ ORDER BY 1
+----
+?column?
+1
+1
+1
+
+
+onlyif serenedb
+query
+EXPLAIN(LOGICAL, EXECUTION, REGISTERS) SELECT 1+a
+  FROM t1
+ ORDER BY 1
+----
+QUERY PLAN
+LOGICAL PLAN:
+- Project: -> ROW<"?column?:4":INTEGER>
+    ?column?:4 := presto_plus(1, a:1)
+  - Sort: presto_plus(1, a:1) ASC NULLS LAST -> ROW<"a:1":INTEGER,"b:2":INTEGER,"c:3":INTEGER>
+    - TableScan: t1 -> ROW<"a:1":INTEGER,"b:2":INTEGER,"c:3":INTEGER>
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- Project[3][expressions: (?column?:4:INTEGER, "dt1.__p7")] -> "?column?:4":INTEGER
+  -- OrderBy[2][dt1.__p7 ASC NULLS LAST] -> "dt1.__p7":INTEGER
+    -- Project[1][expressions: (dt1.__p7:INTEGER, presto_plus("a:1",1))] -> "dt1.__p7":INTEGER
+      -- TableScan[0][t1] -> "a:1":INTEGER
+
+
+onlyif serenedb
+query
+EXPLAIN(LOGICAL, EXECUTION, REGISTERS) SELECT CASE WHEN c>(SELECT avg(c) FROM t1) THEN a*2 ELSE b*10 END
+  FROM t1
+ ORDER BY 1, a
+----
+QUERY PLAN
+LOGICAL PLAN:
+- Project: -> ROW<"case:9":INTEGER>
+    case:9 := SWITCH(presto_gt(CAST(c:3 AS DOUBLE), subquery(- Aggregate() -> ROW<"avg:7":DOUBLE>     avg:7 := presto_avg(c:6)   - TableScan: t1 -> ROW<"a:4":INTEGER,"b:5":INTEGER,"c:6":INTEGER> )), presto_multiply(a:1, 2), presto_multiply(b:2, 10))
+  - Sort: SWITCH(presto_gt(CAST(c:3 AS DOUBLE), subquery(- Aggregate() -> ROW<"avg:7":DOUBLE>     avg:7 := presto_avg(c:6)   - TableScan: t1 -> ROW<"a:4":INTEGER,"b:5":INTEGER,"c:6":INTEGER> )), presto_multiply(a:1, 2), presto_multiply(b:2, 10)) ASC NULLS LAST, a:1 ASC NULLS LAST -> ROW<"a:1":INTEGER,"b:2":INTEGER,"c:3":INTEGER>
+    - TableScan: t1 -> ROW<"a:1":INTEGER,"b:2":INTEGER,"c:3":INTEGER>
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- Project[6][expressions: (case:9:INTEGER, "dt1.__p21")] -> "case:9":INTEGER
+  -- OrderBy[5][dt1.__p21 ASC NULLS LAST, a:1 ASC NULLS LAST] -> "dt1.__p21":INTEGER, "a:1":INTEGER
+    -- Project[4][expressions: (dt1.__p21:INTEGER, switch(presto_lt("avg:7",cast("c:3" as DOUBLE)),presto_multiply("a:1",2),presto_multiply("b:2",10))), (a:1:INTEGER, "a:1")] -> "dt1.__p21":INTEGER, "a:1":INTEGER
+      -- NestedLoopJoin[3][INNER] -> "a:1":INTEGER, "b:2":INTEGER, "c:3":INTEGER, "avg:7":DOUBLE
+        -- TableScan[0][t1] -> "a:1":INTEGER, "b:2":INTEGER, "c:3":INTEGER
+        -- Aggregation[2][SINGLE avg:7 := presto_avg("c:6")] -> "avg:7":DOUBLE
+          -- TableScan[1][t1] -> "c:6":INTEGER
+
+
+query
+SELECT CASE WHEN c>(SELECT avg(c) FROM t1) THEN a*2 ELSE b*10 END
+  FROM t1
+ ORDER BY 1
+----
+case
+6
+10
+20
+
+
+# TODO Why do we need integer cast to be same as PG?
+query
+SELECT (SELECT avg(c)::integer FROM t1 t2 WHERE t1.a = t2.a)
+  FROM t1
+ ORDER BY 1
+----
+avg
+1
+2
+3

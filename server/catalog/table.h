@@ -33,6 +33,24 @@
 #include "general_server/state.h"
 #include "vpack/slice.h"
 
+namespace sdb {
+// Read from storage engine if unknown
+static constexpr auto kRead = std::numeric_limits<uint64_t>::max();
+
+struct IndexTombstone {
+  ObjectId id;
+  IndexType type = IndexType::kTypeUnknown;
+  uint64_t number_documents = kRead;
+  bool unique = false;
+};
+
+struct TableTombstone {
+  ObjectId table;
+  uint64_t number_documents = kRead;
+  std::vector<IndexTombstone> indexes;
+};
+}  // namespace sdb
+
 namespace sdb::catalog {
 
 struct NewOptions {

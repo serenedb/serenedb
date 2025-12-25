@@ -81,6 +81,7 @@ RocksDBDataSink::RocksDBDataSink(
     _skip_primary_key_columns{skip_primary_key_columns} {
   _key_childs.assign_range(key_childs);
   SDB_ASSERT(_object_key.isSet(), "RocksDBDataSink: object key is empty");
+  SDB_ASSERT(!_column_ids.empty(), "RocksDBDataSink: no columns in a table");
 }
 
 // TODO(Dronplane)
@@ -133,7 +134,9 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
       continue;
     }
     _column_id = _column_ids[i];
-    WriteColumn(input->childAt(i), folly::Range{&all_rows, 1}, {});
+    if (_column_id != catalog::Column::kGeneratedPKId) {
+      WriteColumn(input->childAt(i), folly::Range{&all_rows, 1}, {});
+    }
   }
 }
 

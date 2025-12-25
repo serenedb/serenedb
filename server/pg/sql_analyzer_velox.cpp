@@ -50,7 +50,9 @@
 #include <expected>
 #include <iresearch/types.hpp>
 #include <memory>
+#include <vector>
 
+#include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/down_cast.h"
 #include "basics/utf8_utils.hpp"
@@ -59,6 +61,7 @@
 #include "catalog/sql_function_impl.h"
 #include "catalog/sql_query_view.h"
 #include "catalog/table.h"
+#include "catalog/table_options.h"
 #include "catalog/virtual_table.h"
 #include "pg/pg_ast_visitor.h"
 #include "pg/pg_list_utils.h"
@@ -736,7 +739,8 @@ class SqlAnalyzer {
                     const SqlQueryView& view, const RangeVar* node);
   State ProcessTable(State* parent, std::string_view schema_name,
                      std::string_view table_name,
-                     const Objects::ObjectData& object, const RangeVar* node);
+                     const Objects::ObjectData& object, const RangeVar* node,
+                     bool implicit_pk_column = false);
 
   State ProcessSystemTable(State* parent, std::string_view name,
                            catalog::VirtualTableSnapshot& snapshot,
@@ -1429,7 +1433,7 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
   const std::string_view table_name = relation.relname;
 
   auto table_state =
-    ProcessTable(&state, schema_name, table_name, *object, &relation);
+    ProcessTable(&state, schema_name, table_name, *object, &relation, true);
   state.root = std::move(table_state.root);
 
   ProcessFilterNode(state, stmt.whereClause, ExprKind::Where);
@@ -1452,6 +1456,16 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
       std::make_shared<lp::InputReferenceExpr>(type, std::move(resolved));
     column_exprs.emplace_back(std::move(expr));
     column_names.emplace_back(name);
+  }
+  if (pk_type.size() == 0) {
+    auto generated_pk_name =
+      catalog::Column::GeneratePKName(table.RowType()->names());
+    auto column = state.resolver.Resolve(output_type, generated_pk_name);
+    std::string resolved{column.GetColumnName()};
+    auto expr = std::make_shared<lp::InputReferenceExpr>(velox::BIGINT(),
+                                                         std::move(resolved));
+    column_exprs.emplace_back(std::move(expr));
+    column_names.emplace_back(std::move(generated_pk_name));
   }
 
   using NameToColumnMap =
@@ -1548,7 +1562,7 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
   const std::string_view table_name = relation.relname;
 
   auto table_state =
-    ProcessTable(&state, schema_name, table_name, *object, &relation);
+    ProcessTable(&state, schema_name, table_name, *object, &relation, true);
   state.root = std::move(table_state.root);
 
   ProcessFilterNode(state, stmt.whereClause, ExprKind::Where);
@@ -1570,6 +1584,17 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
       std::make_shared<lp::InputReferenceExpr>(type, std::move(resolved));
     column_exprs.emplace_back(std::move(expr));
     column_names.emplace_back(name);
+  }
+
+  if (pk_type.size() == 0) {
+    auto generated_pk_name =
+      catalog::Column::GeneratePKName(table.RowType()->names());
+    auto column = state.resolver.Resolve(output_type, generated_pk_name);
+    std::string resolved{column.GetColumnName()};
+    auto expr = std::make_shared<lp::InputReferenceExpr>(velox::BIGINT(),
+                                                         std::move(resolved));
+    column_exprs.emplace_back(std::move(expr));
+    column_names.emplace_back(std::move(generated_pk_name));
   }
 
   object->EnsureTable();
@@ -2655,19 +2680,37 @@ SqlAnalyzer::TableAliasAndColumnNames SqlAnalyzer::ProcessTableColumns(
 State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
                                 std::string_view table_name,
                                 const Objects::ObjectData& object,
-                                const RangeVar* node) {
+                                const RangeVar* node, bool load_implicit_pk) {
   const auto& table = basics::downCast<catalog::Table>(*object.object);
-  const auto& type = *table.RowType();
-  auto [table_alias, column_names] =
-    ProcessTableColumns(parent, node, table.RowType());
+  auto type = table.RowType();
+
+  auto [table_alias, column_names] = ProcessTableColumns(parent, node, type);
 
   object.EnsureTable();
+
+  if (load_implicit_pk) {
+    SDB_ASSERT(object.object);
+    if (table.PKColumns().empty()) {
+      auto generated_pk_name = catalog::Column::GeneratePKName(type->names());
+
+      column_names.emplace_back(
+        _id_generator.NextColumnName(generated_pk_name));
+
+      std::vector types = type->children();
+      std::vector type_names = type->names();
+
+      types.push_back(velox::BIGINT());
+      type_names.emplace_back(std::move(generated_pk_name));
+      type = velox::ROW(std::move(type_names), std::move(types));
+    }
+  }
 
   auto state = parent->MakeChild();
   state.root = std::make_shared<lp::TableScanNode>(
     _id_generator.NextPlanId(),
-    velox::ROW(std::move(column_names), type.children()), object.table,
-    type.names());
+    velox::ROW(std::move(column_names), type->children()), object.table,
+    type->names());
+
   state.resolver.CreateTable(
     table_alias, MakePtrView<velox::RowType>(state.root->outputType()));
   return state;

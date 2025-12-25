@@ -92,6 +92,28 @@ Result ResolveId(ObjectId database, const auto& name, ObjectId& id) {
 
 }  // namespace
 
+std::string Column::GeneratePKName(std::span<const std::string> column_names) {
+  static constexpr std::string_view kGeneratedPKPrefix = "sdb_generated_pk";
+
+  std::string candidate{kGeneratedPKPrefix};
+  size_t suffix = 0;
+  bool found_unique = false;
+
+  while (!found_unique) {
+    found_unique = true;
+    for (const auto& str : column_names) {
+      if (str == candidate) [[unlikely]] {
+        found_unique = false;
+        candidate.resize(kGeneratedPKPrefix.size());
+        absl::StrAppend(&candidate, "_", ++suffix);
+        break;
+      }
+    }
+  }
+
+  return candidate;
+}
+
 Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,
                         CreateTableOptions& options,
                         uint32_t replication_factor, uint32_t write_concern,

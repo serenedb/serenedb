@@ -105,11 +105,6 @@ ResultOr<std::shared_ptr<catalog::Index>> MakeIndex(
 
 }  // namespace
 
-template<typename T>
-inline int ExprLocation(const T* node) noexcept {
-  return exprLocation(reinterpret_cast<const Node*>(node));
-}
-
 // TODO: use ErrorPosition in ThrowSqlError
 yaclib::Future<Result> CreateIndex(ExecContext& context,
                                    const IndexStmt& stmt) {

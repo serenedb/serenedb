@@ -70,7 +70,7 @@
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_recovery_manager.h"
 #include "statistics/statistics_feature.h"
-#include "storage_engine/engine_selector_feature.h"
+#include "storage_engine/engine_feature.h"
 
 #ifdef SDB_CLUSTER
 #include "cluster/cluster_includes.h"

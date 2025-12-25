@@ -57,8 +57,7 @@
 #include "rocksdb_engine_catalog/rocksdb_recovery_helper.h"
 #include "rocksdb_engine_catalog/rocksdb_settings_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_value.h"
-#include "storage_engine/engine_selector_feature.h"
-#include "storage_engine/storage_engine.h"
+#include "storage_engine/engine_feature.h"
 #include "vpack/vpack_helper.h"
 
 #ifdef SDB_CLUSTER
@@ -78,8 +77,7 @@ RocksDBRecoveryManager::RocksDBRecoveryManager(Server& server)
 }
 
 void RocksDBRecoveryManager::prepare() {
-  if (ServerState::instance()->IsCoordinator() ||
-      !server().getFeature<EngineSelectorFeature>().isRocksDB()) {
+  if (ServerState::instance()->IsCoordinator()) {
     disable();
   }
 }
@@ -169,7 +167,7 @@ class WBReader final : public rocksdb::WriteBatch::Handler {
       _entries_scanned(0),
       _batch_start_sequence(0),
       _current_sequence(current_sequence),
-      _engine(GetServerEngineAs<RocksDBEngineCatalog>()) {}
+      _engine(GetServerEngine()) {}
 
   void StartNewBatch(rocksdb::SequenceNumber start_sequence) {
     SDB_ASSERT(_current_sequence <= start_sequence);
@@ -600,7 +598,7 @@ Result RocksDBRecoveryManager::parseRocksWAL() {
   Result shutdown_rv;
 
   Result res = basics::SafeCall([&] -> Result {
-    auto& engine = GetServerEngineAs<RocksDBEngineCatalog>();
+    auto& engine = GetServerEngine();
 
     auto db = engine.db();
 
@@ -705,8 +703,7 @@ Result RocksDBRecoveryManager::parseRocksWAL() {
 
 void RocksDBRecoveryManager::recoveryDone() {
   SDB_ASSERT(!ServerState::instance()->IsCoordinator());
-  SDB_ASSERT(
-    !server().getFeature<EngineSelectorFeature>().engine().inRecovery());
+  SDB_ASSERT(!server().getFeature<EngineFeature>().engine().inRecovery());
 
   // '_pending_recovery_callbacks' will not change because
   // !StorageEngine.inRecovery()
@@ -745,7 +742,7 @@ void RocksDBRecoveryManager::recoveryDone() {
 
 Result RocksDBRecoveryManager::registerPostRecoveryCallback(
   std::function<Result()>&& callback) {
-  if (!server().getFeature<EngineSelectorFeature>().engine().inRecovery()) {
+  if (!server().getFeature<EngineFeature>().engine().inRecovery()) {
     return callback();  // if no engine then can't be in recovery
   }
 

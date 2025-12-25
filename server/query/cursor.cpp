@@ -113,15 +113,35 @@ std::pair<Cursor::Process, Result> Cursor::Next(velox::RowVectorPtr& batch) {
     data.emplace_back("LOGICAL PLAN:");
     post_process_plan(ProcessPlan(_query.GetLogicalPlan(), clean_column_names));
   }
-  if (query_ctx.explain_params.Has(ExplainWith::Execution)) {
-    data.emplace_back("EXECUTION PLAN:");
+
+  if (query_ctx.explain_params.Has(ExplainWith::InitialQueryGraph)) {
+    data.emplace_back("INITIAL QUERY GRAPH:");
     post_process_plan(
-      ProcessPlan(_query.GetExecutionPlan(), clean_column_names));
+      ProcessPlan(_query.GetInitialQueryGraphPlan(), clean_column_names));
   }
-  if (query_ctx.explain_params.Has(ExplainWith::Stats)) {
-    data.emplace_back("EXECUTION PLAN WITH STATS:");
+
+  if (query_ctx.explain_params.Has(ExplainWith::FinalQueryGraph)) {
+    data.emplace_back("FINAL QUERY GRAPH:");
     post_process_plan(
-      ProcessPlan(_runner.PrintPlanWithStats(), clean_column_names));
+      ProcessPlan(_query.GetFinalQueryGraphPlan(), clean_column_names));
+  }
+
+  if (query_ctx.explain_params.Has(ExplainWith::Physical)) {
+    data.emplace_back("PHYSICAL PLAN:");
+    post_process_plan(
+      ProcessPlan(_query.GetPhysicalPlan(), clean_column_names));
+  }
+
+  if (query_ctx.explain_params.Has(ExplainWith::Execution)) {
+    if (query_ctx.explain_params.Has(ExplainWith::Stats)) {
+      data.emplace_back("EXECUTION PLAN WITH STATS:");
+      post_process_plan(
+        ProcessPlan(_runner.PrintPlanWithStats(), clean_column_names));
+    } else {
+      data.emplace_back("EXECUTION PLAN:");
+      post_process_plan(
+        ProcessPlan(_query.GetExecutionPlan(), clean_column_names));
+    }
   }
 
   BuildBatch(batch, {std::move(data)});

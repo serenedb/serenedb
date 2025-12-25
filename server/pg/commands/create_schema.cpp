@@ -28,6 +28,7 @@
 #include "catalog/catalog.h"
 #include "catalog/schema.h"
 #include "pg/sql_utils.h"
+#include "utils/exec_context.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"

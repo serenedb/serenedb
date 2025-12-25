@@ -57,7 +57,8 @@ class RocksDBDataSource final : public velox::connector::DataSource {
   velox::VectorPtr ReadColumn(rocksdb::Iterator& it, uint64_t max_size,
                               std::string_view column_key,
                               const velox::TypePtr& type,
-                              std::string* last_key);
+                              catalog::Column::Id column_id,
+                              size_t table_prefix_size, std::string* last_key);
 
   template<velox::TypeKind Kind>
   velox::VectorPtr ReadScalarColumn(rocksdb::Iterator& it, uint64_t max_size,
@@ -65,6 +66,11 @@ class RocksDBDataSource final : public velox::connector::DataSource {
                                     std::string* last_key);
   velox::VectorPtr ReadUnknownColumn(rocksdb::Iterator& it, uint64_t max_size,
                                      std::string_view column_key,
+                                     std::string* last_key);
+
+  velox::VectorPtr ReadColumnFromKey(rocksdb::Iterator& it, uint64_t max_size,
+                                     std::string_view column_key,
+                                     size_t table_prefix_size,
                                      std::string* last_key);
 
   template<typename Callback>

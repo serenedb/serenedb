@@ -118,14 +118,19 @@ bool SqlStatement::ProcessNextRoot(
   if (query_desc.type == pg::SqlCommandType::Explain) {
     query_ctx.command_type.Add(query::CommandType::Explain);
     if (query_desc.options.contains("analyze")) {
+      query_ctx.explain_params.Add(query::ExplainWith::Execution);
       query_ctx.explain_params.Add(query::ExplainWith::Stats);
       query_ctx.command_type.Add(query::CommandType::Query);
     }
+
     if (query_desc.options.contains("logical")) {
       query_ctx.explain_params.Add(query::ExplainWith::Logical);
     }
-    if (query_desc.options.contains("optimization")) {
-      query_ctx.explain_params.Add(query::ExplainWith::Optimization);
+    if (query_desc.options.contains("initial_query_graph")) {
+      query_ctx.explain_params.Add(query::ExplainWith::InitialQueryGraph);
+    }
+    if (query_desc.options.contains("final_query_graph")) {
+      query_ctx.explain_params.Add(query::ExplainWith::FinalQueryGraph);
     }
     if (query_desc.options.contains("physical")) {
       query_ctx.explain_params.Add(query::ExplainWith::Physical);
@@ -133,11 +138,18 @@ bool SqlStatement::ProcessNextRoot(
     if (query_desc.options.contains("execution")) {
       query_ctx.explain_params.Add(query::ExplainWith::Execution);
     }
-    if (query_desc.options.contains("stats")) {
-      query_ctx.explain_params.Add(query::ExplainWith::Stats);
-    }
+
     if (query_desc.options.contains("registers")) {
       query_ctx.explain_params.Add(query::ExplainWith::Registers);
+    }
+    if (query_desc.options.contains("oneline")) {
+      query_ctx.explain_params.Add(query::ExplainWith::Oneline);
+    }
+    if (query_desc.options.contains("cost")) {
+      query_ctx.explain_params.Add(query::ExplainWith::Cost);
+    }
+    if (query_desc.options.contains("stats")) {
+      query_ctx.explain_params.Add(query::ExplainWith::Stats);
     }
   } else {
     query_ctx.command_type.Add(query::CommandType::Query);

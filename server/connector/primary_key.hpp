@@ -24,7 +24,9 @@
 #include <velox/vector/ComplexVector.h>
 
 #include <string>
+#include <type_traits>
 
+#include "basics/assert.h"
 #include "basics/fwd.h"
 #include "rocksdb_engine_catalog/concat.h"
 
@@ -44,5 +46,29 @@ void Create(const velox::RowVector& data,
 
 void Create(const velox::RowVector& data, velox::vector_size_t idx,
             std::string& key);
+
+template<typename T>
+void AppendSigned(std::string& key, T value) {
+  SDB_ASSERT(std::is_signed_v<T>,
+             "Cannot correctly store unsigned value due to sign bit flipping");
+  const auto base_size = key.size();
+  basics::StrAppend(key, sizeof(T));
+  absl::big_endian::Store(key.data() + base_size, value);
+  key[base_size] = static_cast<uint8_t>(key[base_size]) ^ 0x80;
+}
+
+template<typename T>
+T ReadSigned(std::string_view buf) {
+  SDB_ASSERT(std::is_signed_v<T>,
+             "Cannot correctly read unsigned value due to sign bit flipping");
+  SDB_ASSERT(buf.size() >= sizeof(T));
+  using Unsigned = std::make_unsigned_t<T>;
+  static constexpr int kBits = sizeof(T) * CHAR_BIT;
+
+  auto val = absl::big_endian::Load<Unsigned>(buf.data());
+  val ^= static_cast<Unsigned>(1) << (kBits - 1);
+
+  return std::bit_cast<T>(val);
+}
 
 }  // namespace sdb::connector::primary_key

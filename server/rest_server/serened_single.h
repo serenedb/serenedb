@@ -68,8 +68,7 @@ class AuthenticationFeature;
 class LanguageCheckFeature;
 class InitDatabaseFeature;
 class RocksDBOptionFeature;
-class RocksDBEngineCatalog;
-class EngineSelectorFeature;
+class EngineFeature;
 class ServerIdFeature;
 class CheckVersionFeature;
 class FlushFeature;
@@ -112,8 +111,7 @@ using SerenedFeaturesList = type::List<
   LanguageCheckFeature,
   InitDatabaseFeature,
   RocksDBOptionFeature,
-  RocksDBEngineCatalog,
-  EngineSelectorFeature,
+  EngineFeature,
   ServerIdFeature,
   CheckVersionFeature,
   app::CommunicationFeaturePhase,

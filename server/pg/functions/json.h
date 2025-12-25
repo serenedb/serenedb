@@ -214,10 +214,13 @@ template<JsonParser::OutputType Output, typename T>
 struct PgJsonExtractIndexBase {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
+  using ResultVeloxType =
+    std::conditional_t<Output == JsonParser::OutputType::TEXT, velox::Varchar,
+                       velox::Json>;
+
   bool call(  // NOLINT
-    out_type<std::conditional_t<Output == JsonParser::OutputType::TEXT,
-                                velox::Varchar, velox::Json>>& result,
-    const arg_type<velox::Json>& json, const arg_type<int64_t>& index) {
+    out_type<ResultVeloxType>& result, const arg_type<velox::Json>& json,
+    const arg_type<int64_t>& index) {
     _parser.PrepareJson({json});
     auto str = _parser.ExtractByIndex<Output>(index);
     if (!str.data()) {
@@ -244,10 +247,13 @@ template<JsonParser::OutputType Output, typename T>
 struct PgJsonExtractFieldBase {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
+  using ResultVeloxType =
+    std::conditional_t<Output == JsonParser::OutputType::TEXT, velox::Varchar,
+                       velox::Json>;
+
   bool call(  // NOLINT
-    out_type<std::conditional_t<Output == JsonParser::OutputType::TEXT,
-                                velox::Varchar, velox::Json>>& result,
-    const arg_type<velox::Json>& json, const arg_type<velox::Varchar>& field) {
+    out_type<ResultVeloxType>& result, const arg_type<velox::Json>& json,
+    const arg_type<velox::Varchar>& field) {
     _parser.PrepareJson({json});
     auto str = _parser.ExtractByField<Output>({field.data(), field.size()});
     if (!str.data()) {
@@ -274,9 +280,12 @@ template<JsonParser::OutputType Output, typename T>
 struct PgJsonExtractPathBase {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
+  using ResultVeloxType =
+    std::conditional_t<Output == JsonParser::OutputType::TEXT, velox::Varchar,
+                       velox::Json>;
+
   // call for #>> operator (path text)
-  bool call(out_type<std::conditional_t<Output == JsonParser::OutputType::TEXT,
-                                        velox::Varchar, velox::Json>>& result,
+  bool call(out_type<ResultVeloxType>& result,
             const arg_type<velox::Json>& json,
             const arg_type<velox::Array<velox::Varchar>>& path) {
     _parser.PrepareJson({json});
@@ -289,8 +298,7 @@ struct PgJsonExtractPathBase {
     return true;
   }
 
-  bool call(out_type<std::conditional_t<Output == JsonParser::OutputType::TEXT,
-                                        velox::Varchar, velox::Json>>& result,
+  bool call(out_type<ResultVeloxType>& result,
             const arg_type<velox::Json>& json,
             const arg_type<velox::Variadic<velox::Varchar>>& segments) {
     _parser.PrepareJson({json});

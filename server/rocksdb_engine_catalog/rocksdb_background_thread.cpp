@@ -29,7 +29,7 @@
 #include "metrics/gauge_builder.h"
 #include "metrics/metrics_feature.h"
 #include "rest_server/flush_feature.h"
-#include "rest_server/serened_single.h"
+#include "rest_server/serened.h"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_settings_manager.h"

@@ -26,7 +26,7 @@
 
 #include "app/app_server.h"
 #include "basics/logger/logger.h"
-#include "rest_server/serened_single.h"
+#include "rest_server/serened.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 

@@ -29,7 +29,7 @@
 #include "metrics/gauge.h"
 #include "metrics/metrics_feature.h"
 #include "network/connection_pool.h"
-#include "rest_server/serened_single.h"
+#include "rest_server/serened.h"
 
 using namespace sdb;
 using namespace sdb::network;

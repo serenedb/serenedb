@@ -90,7 +90,7 @@
 #include "rest/version.h"
 #include "rest_server/database_path_feature.h"
 #include "rest_server/flush_feature.h"
-#include "rest_server/serened_single.h"
+#include "rest_server/serened.h"
 #include "rest_server/server_id_feature.h"
 #include "rocksdb_engine_catalog/listeners/rocksdb_background_error_listener.h"
 #include "rocksdb_engine_catalog/listeners/rocksdb_metrics_listener.h"

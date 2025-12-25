@@ -256,10 +256,10 @@ count count
 
 
 query
-SELECT grade 
+SELECT grade
 FROM
 (
-  VALUES 
+  VALUES
     ('babsky', 22 ), ('babsky', 20), ('babsky', 21), ('babsky', 21),
     ('vedernikoff', 14), ('vedernikoff', 13), ('vedernikoff', 14)
 ) as clickclack(name, grade)
@@ -274,10 +274,10 @@ grade
 
 
 query
-SELECT grade 
+SELECT grade
 FROM
 (
-  VALUES 
+  VALUES
     ('babsky', 22 ), ('babsky', 20), ('babsky', 21), ('babsky', 21),
     ('vedernikoff', 14), ('vedernikoff', 13), ('vedernikoff', 14)
 ) as clickclack(name, grade)
@@ -292,10 +292,10 @@ grade
 
 
 query
-SELECT *, * 
+SELECT *, *
 FROM
 (
-  VALUES 
+  VALUES
     ('babsky', 22 ), ('babsky', 20), ('babsky', 21), ('babsky', 21),
     ('vedernikoff', 14), ('vedernikoff', 13), ('vedernikoff', 14)
 ) as clickclack(name, grade)
@@ -310,10 +310,10 @@ vedernikoff 13 vedernikoff 13
 
 
 query
-SELECT *, * 
+SELECT *, *
 FROM
 (
-  VALUES 
+  VALUES
     ('babsky', 22 ), ('babsky', 20), ('babsky', 21), ('babsky', 21),
     ('vedernikoff', 14), ('vedernikoff', 13), ('vedernikoff', 14)
 ) as clickclack(name, grade)
@@ -328,7 +328,7 @@ vedernikoff 13 vedernikoff 13
 
 
 query
-SELECT *, * 
+SELECT *, *
 FROM
 (
   VALUES

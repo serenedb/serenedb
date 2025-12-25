@@ -5,8 +5,9 @@ add_library(
     primary_key.cpp
     data_source.cpp
     serenedb_connector.cpp
-    search_data_sink.cpp
     key_utils.cpp
+    rocksdb_sink_writer.cpp
+    search_sink_writer.cpp
 )
 
 target_link_libraries(

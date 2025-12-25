@@ -34,11 +34,30 @@
 #include "primary_key.hpp"
 #include "rocksdb/utilities/transaction.h"
 #include "rocksdb/write_batch.h"
+#include "rocksdb_sink_writer.hpp"
+#include "sink_writer_base.hpp"
 
 namespace sdb::connector {
 
 class RocksDBDataSink : public velox::connector::DataSink {
  public:
+  // TODO(Dronplane) make this shared somewhere
+  template<typename T>
+  using ManagedVector = std::vector<T, velox::memory::StlAllocator<T>>;
+
+  // writers
+  // RocksDB writer + locker. 
+  // IResearch writer but column_id dependent
+
+  // Writer simple -> only RocksDB
+  // Writer composite -> IResearch + RocksDB 
+
+  // Writer is template for DataSink so simple one has no virtual calls
+
+  // WriterBase  - interface write (slices + key + column_idx + kind). NextColumn. NextDocument is implicit after write.
+  // RocksDB is final. Stores RocksDB stuff
+  // Composite is final. 
+  // IResearch is final. Stores IResearch stuff
   RocksDBDataSink(rocksdb::Transaction& transaction,
                   rocksdb::ColumnFamilyHandle& cf,
                   const velox::RowTypePtr& row_type,
@@ -157,6 +176,7 @@ class RocksDBDataSink : public velox::connector::DataSink {
   void WritePrimitive(const T& value);
 
   void WriteRowSlices(std::string_view key);
+  void WriteNull(std::string_view key);
 
   const std::string& SetupRowKey(
     velox::vector_size_t idx,
@@ -169,9 +189,6 @@ class RocksDBDataSink : public velox::connector::DataSink {
                    velox::vector_size_t total_rows_number, bool whole_vector,
                    rocksdb::Slice wrapper_nulls, bool force_nulls);
 
-  // TODO(Dronplane) make this shared somewhere
-  template<typename T>
-  using ManagedVector = std::vector<T, velox::memory::StlAllocator<T>>;
 
   using SliceVector = ManagedVector<rocksdb::Slice>;
   using IndiciesVector = ManagedVector<velox::vector_size_t>;
@@ -181,8 +198,8 @@ class RocksDBDataSink : public velox::connector::DataSink {
     velox::vector_size_t total_rows_number);
 
   velox::RowTypePtr _row_type;
-  rocksdb::Transaction& _transaction;
-  rocksdb::ColumnFamilyHandle& _cf;
+  RocksDBSinkWriter _data_writer;
+  std::vector<std::unique_ptr<SinkWriterBase>> _index_writers;
   ObjectId _object_key;
   std::vector<velox::column_index_t> _key_childs;
   std::vector<catalog::Column::Id> _column_ids;
@@ -211,8 +228,7 @@ class RocksDBDeleteDataSink : public velox::connector::DataSink {
   // we should store original type as data passed to appendData
   // contains only primary key columns but we need remove all.
   velox::RowTypePtr _row_type;
-  rocksdb::Transaction& _transaction;
-  rocksdb::ColumnFamilyHandle& _cf;
+  RocksDBSinkWriter _data_writer;
   ObjectId _object_key;
   std::vector<catalog::Column::Id> _column_ids;
   std::vector<velox::column_index_t> _key_childs;

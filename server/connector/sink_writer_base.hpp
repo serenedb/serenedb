@@ -19,23 +19,30 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
-#include "connector/key_utils.hpp"
-#include "primary_key.hpp"
-#include <velox/vector/ComplexVector.h>
-#include <iresearch/index/index_writer.hpp>
+
+#include "basics/fwd.h"
+#include "rocksdb/slice.h"
+#include "velox/type/Type.h"
+#include "catalog/table_options.h"
 
 namespace sdb::connector {
 
-class SearchDataSink {
+class SinkWriterBase {
  public:
-  SearchDataSink(irs::IndexWriter::Transaction& trx) : _trx(trx) {};
 
-  void AppendData(velox::RowVector& input, const std::span<key_utils::ColumnId>& column_ids, const primary_key::Keys& keys);
-  bool Finish();
-  void Abort();
+  SinkWriterBase() = default;
+  virtual ~SinkWriterBase() = default;
 
-private:
-  irs::IndexWriter::Transaction& _trx;
+  virtual void Init(size_t batch_size /*row type + column ids ?*/) {}
+
+  virtual void Write(std::span<const rocksdb::Slice> cell_slices,
+             std::string_view full_key) = 0;
+
+  virtual void Delete(std::string_view full_key) = 0;
+
+  virtual void SwitchColumn(velox::TypeKind kind,  sdb::catalog::Column::Id column_id) {}
+
+  virtual void Finish() {};
 };
 
 } // namespace sdb::connector

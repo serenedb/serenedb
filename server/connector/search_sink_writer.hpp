@@ -1,0 +1,104 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+#include <velox/vector/ComplexVector.h>
+
+#include <iresearch/index/index_writer.hpp>
+
+#include "catalog/search_analyzer_impl.h"
+#include "primary_key.hpp"
+#include "sink_writer_base.hpp"
+
+namespace sdb::connector {
+
+class SearchSinkWriter final : public SinkWriterBase {
+ public:
+  SearchSinkWriter(irs::IndexWriter::Transaction& trx);
+
+  void Init(size_t batch_size) override;
+
+  void Write(std::span<const rocksdb::Slice> cell_slices,
+             std::string_view full_key) override;
+
+  void Delete(std::string_view full_key) override;
+
+  void SwitchColumn(velox::TypeKind kind,  sdb::catalog::Column::Id column_id) override;
+  void Finish() override { _document.reset(); }
+
+ private:
+  struct Field {
+    std::string_view Name() const noexcept {
+      SDB_ASSERT(!irs::IsNull(name));
+      return name;
+    }
+
+    irs::IndexFeatures GetIndexFeatures() const noexcept {
+      return index_features;
+    }
+
+    irs::Tokenizer& GetTokens() const noexcept {
+      SDB_ASSERT(analyzer);
+      return *analyzer;
+    }
+
+    bool Write(irs::DataOutput& out) const {
+      if (!irs::IsNull(value)) {
+        out.WriteBytes(value.data(), value.size());
+      }
+
+      return true;
+    }
+
+    void SetStringValue(std::string_view value);
+    void SetNumericValue(double value);
+    void SetBooleanValue(bool value);
+
+    sdb::search::AnalyzerImpl::CacheType::ptr analyzer;
+    std::string_view name;
+    irs::bytes_view value;
+    irs::IndexFeatures index_features;
+  };
+
+  using Writer = std::function<void(std::span<const rocksdb::Slice> cell_slices,
+                                    Field& field)>;
+
+  static void WriteStringValue(std::span<const rocksdb::Slice> cell_slices,
+                               Field& field);
+  static void WriteBooleanValue(std::span<const rocksdb::Slice> cell_slices,
+                                Field& field);
+
+  template<typename T>
+  static void WriteNumericValue(std::span<const rocksdb::Slice> cell_slices,
+                                Field& field);
+
+  template<velox::TypeKind Kind>
+  void SetupColumnWriter(sdb::catalog::Column::Id column_id);
+
+  Field _field;
+  std::string _name_buffer;
+  std::string _pk_buffer;
+  irs::IndexWriter::Transaction& _trx;
+  std::unique_ptr<irs::IndexWriter::Document> _document;
+  Writer _current_writer;
+  bool _emit_pk{true};
+};
+
+}  // namespace sdb::connector

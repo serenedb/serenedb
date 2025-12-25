@@ -1,0 +1,154 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#include <velox/vector/tests/utils/VectorTestBase.h>
+
+#include <iresearch/analysis/analyzers.hpp>
+#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/search/scorers.hpp>
+#include <iresearch/store/memory_directory.hpp>
+
+#include "catalog/table_options.h"
+#include "connector/common.h"
+#include "connector/primary_key.hpp"
+#include "connector/search_sink_writer.hpp"
+#include "gtest/gtest.h"
+#include "iresearch/utils/bytes_utils.hpp"
+
+using namespace sdb::connector;
+
+namespace {
+
+class SearchSinkWriterTest : public ::testing::Test,
+                             public velox::test::VectorTestBase {
+ public:
+  static void SetUpTestCase() {
+    velox::memory::MemoryManager::testingSetInstance({});
+    // TODO(Dronplane): make it to the main function of tests
+    // while running this many times makes no harm but is redundant
+    irs::analysis::analyzers::Init();
+    irs::formats::Init();
+    irs::scorers::Init();
+    irs::compression::Init();
+  }
+
+  void SetUp() final {
+    auto column_info_provider = [](const std::string_view&) {
+      return irs::ColumnInfo{
+        .compression = irs::Type<irs::compression::None>::get(),
+        .options = {},
+        .encryption = false,
+        .track_prev_doc = false};
+    };
+
+    auto feature_provider = [](irs::IndexFeatures) {
+      return std::make_pair(
+        irs::ColumnInfo{.compression = irs::Type<irs::compression::None>::get(),
+                        .options = {},
+                        .encryption = false,
+                        .track_prev_doc = false},
+        irs::FeatureWriterFactory{});
+    };
+    irs::IndexWriterOptions options;
+    options.column_info = column_info_provider;
+    options.features = feature_provider;
+    _codec = irs::formats::Get("1_5");
+    _data_writer =
+      irs::IndexWriter::Make(_dir, _codec, irs::kOmCreate, options);
+  }
+
+  void TearDown() final { _data_writer.reset(); }
+
+ protected:
+  irs::Format::ptr _codec;
+  irs::MemoryDirectory _dir;
+  irs::IndexWriter::ptr _data_writer;
+};
+
+TEST_F(SearchSinkWriterTest, InsertMultipleColumns) {
+  auto trx = _data_writer->GetBatch();
+
+  SearchSinkWriter sink{trx};
+  sink.Init(4);
+
+  const std::vector<sdb::catalog::Column::Id> col_id{1, 2, 3};
+  const std::vector<std::string_view> pk{
+    {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk1", 20},
+    {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x2pk2", 20},
+    {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x3pk3", 20},
+    {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x4pk4", 20}};
+  const std::vector<std::string_view> string_data{
+    std::string_view{"\x0rrr", 4}, std::string_view{"\x0", 1},
+    std::string_view{"abcdef", 6}, std::string_view{"\x0\x0", 2}};
+  const std::vector<std::string_view> integer_data{
+    std::string_view{"\x0\x0\x0\x0", 4}, std::string_view{"\x0\x0\x0\x1", 4},
+    std::string_view{"\x0\x0\x0\x2", 4}, std::string_view{"\x0\x0\x0\x3", 4}};
+
+  const std::vector<std::string_view> boolean_data{
+    std::string_view{"\x0", 1}, std::string_view{"\x1", 1},
+    std::string_view{"\x1", 1}, std::string_view{"\x0", 1}};
+
+  sink.SwitchColumn(velox::TypeKind::INTEGER, col_id[0]);
+  sink.Write({rocksdb::Slice(integer_data[0])}, pk[0]);
+  sink.Write({rocksdb::Slice(integer_data[1])}, pk[1]);
+  sink.Write({rocksdb::Slice(integer_data[2])}, pk[2]);
+  sink.Write({rocksdb::Slice(integer_data[3])}, pk[3]);
+  sink.SwitchColumn(velox::TypeKind::VARCHAR, col_id[1]);
+  sink.Write({rocksdb::Slice(string_data[0])}, pk[0]);
+  sink.Write({rocksdb::Slice(string_data[1])}, pk[1]);
+  sink.Write({rocksdb::Slice(string_data[2])}, pk[2]);
+  sink.Write({rocksdb::Slice(string_data[3])}, pk[3]);
+  sink.SwitchColumn(velox::TypeKind::BOOLEAN, col_id[2]);
+  sink.Write({rocksdb::Slice(boolean_data[0])}, pk[0]);
+  sink.Write({rocksdb::Slice(boolean_data[1])}, pk[1]);
+  sink.Write({rocksdb::Slice(boolean_data[2])}, pk[2]);
+  sink.Write({rocksdb::Slice(boolean_data[3])}, pk[3]);
+  sink.Finish();
+  ASSERT_TRUE(trx.Commit());
+  _data_writer->Commit();
+
+  auto reader = irs::DirectoryReader(_dir, _codec);
+  ASSERT_EQ(1, reader.size());
+  ASSERT_EQ(4, reader.docs_count());
+  ASSERT_EQ(4, reader.live_docs_count());
+  {
+    auto& segment = reader[0];
+    const auto* pk_column = segment.column(std::string_view{"\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF", 8});
+    ASSERT_NE(nullptr, pk_column);
+    auto pk_values = pk_column->iterator(irs::ColumnHint::Normal);
+    ASSERT_NE(nullptr, pk_values);
+    
+    /*auto values = column->iterator(irs::ColumnHint::Normal);
+    ASSERT_NE(nullptr, values);
+    auto* actual_value = irs::get<irs::PayAttr>(*values);
+    ASSERT_NE(nullptr, actual_value);
+    auto terms = segment.field("same");
+    ASSERT_NE(nullptr, terms);
+    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
+    ASSERT_TRUE(term_itr->next());
+    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    ASSERT_TRUE(docs_itr->next());
+    ASSERT_EQ(docs_itr->value(), values->seek(docs_itr->value()));
+    ASSERT_EQ("A", irs::ToString<std::string_view>(actual_value->value.data()));
+    ASSERT_FALSE(docs_itr->next());*/
+  }
+}
+
+}  // namespace

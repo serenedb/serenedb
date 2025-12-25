@@ -51,15 +51,6 @@ constexpr std::string_view kStringPrefix{"\0", 1};
 constexpr std::string_view kZeroLengthVector{"\0", 1};
 constexpr std::string_view kOneValueHeader{"\0\1", 2};
 
-// We encode NULL as empty slice
-void WriteNull(rocksdb::Transaction& trx, rocksdb::ColumnFamilyHandle& cf,
-               std::string_view key) {
-  auto status = trx.Put(&cf, rocksdb::Slice(key), {});
-  if (!status.ok()) {
-    SDB_THROW(sdb::rocksutils::ConvertStatus(status));
-  }
-}
-
 }  // namespace
 
 namespace sdb::connector {
@@ -70,8 +61,7 @@ RocksDBDataSink::RocksDBDataSink(
   ObjectId object_key, std::span<const velox::column_index_t> key_childs,
   std::vector<catalog::Column::Id> column_oids, bool skip_primary_key_columns)
   : _row_type{std::move(row_type)},
-    _transaction{transaction},
-    _cf{cf},
+    _data_writer{transaction, cf},
     _object_key{object_key},
     _column_ids{std::move(column_oids)},
     _memory_pool{memory_pool},
@@ -108,7 +98,7 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
     key_utils::MakeColumnKey(
       input, _key_childs, row_idx, table_key,
       [&](std::string_view row_key) {
-        VELOX_CHECK(_transaction.GetKeyLock(&_cf, row_key, false, true).ok(),
+        VELOX_CHECK(_data_writer.Lock(row_key),
                     "Failed to acquire row lock for table {}",
                     _object_key.id());
       },
@@ -163,7 +153,7 @@ void RocksDBDataSink::WriteFlatColumn(
         const auto& key = SetupRowKey(row_id++, original_idx);
         if constexpr (MayHaveNulls) {
           if (flat_vector->isNullAt(idx)) {
-            WriteNull(_transaction, _cf, key);
+            WriteNull(key);
             continue;
           }
         }
@@ -192,7 +182,7 @@ void RocksDBDataSink::WriteBiasedColumn(
           const auto& key = SetupRowKey(row_id++, original_idx);
           if constexpr (MayHaveNulls) {
             if (bias_vector->isNullAt(idx)) {
-              WriteNull(_transaction, _cf, key);
+              WriteNull(key);
               continue;
             }
           }
@@ -242,7 +232,7 @@ void RocksDBDataSink::WriteDictionaryColumn(
                       original_idx.subspan(current, sub_ranges.size()));
           sub_ranges.clear();
         }
-        WriteNull(_transaction, _cf, SetupRowKey(row_id++, original_idx));
+        WriteNull(SetupRowKey(row_id++, original_idx));
         current = row_id;
         continue;
       }
@@ -268,7 +258,7 @@ void RocksDBDataSink::WriteComplexColumn(
     for (int32_t offset = begin; offset < end; ++offset) {
       const auto& key = SetupRowKey(row_id++, original_idx);
       if (input.isNullAt(offset)) {
-        WriteNull(_transaction, _cf, key);
+        WriteNull(key);
       } else {
         ResetForNewRow();
         static_assert(
@@ -1763,25 +1753,14 @@ void RocksDBDataSink::WriteArrayValue(const velox::BaseVector& input,
 }
 
 void RocksDBDataSink::WriteRowSlices(std::string_view key) {
-  rocksdb::Slice key_slice(key);
-  rocksdb::Status status;
-  SDB_ASSERT(!_row_slices.empty());
-  if (_row_slices.size() == 1) {
-    // Optimizing single slice case - rocksdb does not do additional copying
-    // while gathering slice parts
-    status = _transaction.Put(&_cf, key_slice, _row_slices.front());
-  } else {
-    // TODO(Dronplane): Currenly RocksDB does intermediate merging
-    // all parts to a single string before actual inserting where it copies it
-    // all again to the transaction buffer. Let's  propose a PR for them that
-    // keeps SliceParts until they are copied to the transaction buffer.
-    status = _transaction.Put(
-      &_cf, rocksdb::SliceParts(&key_slice, 1),
-      rocksdb::SliceParts(_row_slices.data(), _row_slices.size()));
-  }
-  if (!status.ok()) {
-    SDB_THROW(rocksutils::ConvertStatus(status));
-  }
+  _data_writer.Write(_row_slices, key);
+}
+
+void RocksDBDataSink::WriteNull(std::string_view key) {
+  // empty slice denotes NULL value
+  static rocksdb::Slice gNullSlice;
+  static constexpr std::span<const rocksdb::Slice> kSlices{&gNullSlice, 1};
+  _data_writer.Write(kSlices, key);
 }
 
 template<velox::TypeKind Kind>
@@ -1995,8 +1974,7 @@ RocksDBDeleteDataSink::RocksDBDeleteDataSink(
   velox::RowTypePtr row_type, ObjectId object_key,
   std::vector<catalog::Column::Id> column_oids)
   : _row_type{std::move(row_type)},
-    _transaction{transaction},
-    _cf{cf},
+    _data_writer{transaction, cf},
     _object_key{object_key},
     _column_ids{std::move(column_oids)} {
   SDB_ASSERT(_object_key.isSet(), "RocksDBDeleteDataSink: object key is empty");
@@ -2023,7 +2001,7 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
     key_utils::MakeColumnKey(
       input, _key_childs, row_idx, table_key,
       [&](std::string_view row_key) {
-        VELOX_CHECK(_transaction.GetKeyLock(&_cf, row_key, false, true).ok(),
+        VELOX_CHECK(_data_writer.Lock(row_key),
                     "Failed to acquire row lock for table {}",
                     _object_key.id());
       },
@@ -2031,10 +2009,7 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
 
     for (velox::column_index_t col_idx = 0; col_idx < num_columns; ++col_idx) {
       key_utils::SetupColumnForKey(key_buffer, _column_ids[col_idx]);
-      auto status = _transaction.Delete(&_cf, rocksdb::Slice(key_buffer));
-      if (!status.ok()) {
-        SDB_THROW(rocksutils::ConvertStatus(status));
-      }
+      _data_writer.Delete(key_buffer);
     }
   }
 }

@@ -1082,9 +1082,8 @@ ColumnRefHook SqlAnalyzer::GetTargetListNamingResolver(
   };
 }
 
-template<bool IsDistinct>
 void ValidateAggrInputRefsImpl(State& state, const lp::ExprPtr& expr,
-                               AliasResolver& resolver) {
+                               AliasResolver& resolver, bool is_distinct) {
   SDB_ASSERT(state.has_aggregate || state.has_groupby);
 
   const auto& output = state.root->outputType();
@@ -1097,7 +1096,7 @@ void ValidateAggrInputRefsImpl(State& state, const lp::ExprPtr& expr,
     if (node.isInputReference()) {
       const auto& input = node.as<lp::InputReferenceExpr>();
       if (!is_grouped_column(input->name())) {
-        if constexpr (IsDistinct) {
+        if (is_distinct) {
           THROW_SQL_ERROR(ERR_CODE(ERRCODE_GROUPING_ERROR),
                           ERR_MSG("for SELECT DISTINCT, ORDER BY expressions "
                                   "must appear in select list"));
@@ -1118,8 +1117,9 @@ void ValidateAggrInputRefsImpl(State& state, const lp::ExprPtr& expr,
   lp::visitExprsRecursively(std::span<const lp::ExprPtr>{expr}, ctx);
 }
 
-template<bool IsDistinct, typename T>
-void ValidateAggrInputRefsImpl(State& state, std::span<T> exprs) {
+template<typename T>
+void ValidateAggrInputRefsImpl(State& state, std::span<const T> exprs,
+                               bool is_distinct) {
   if (!state.has_aggregate && !state.has_groupby) {
     return;
   }
@@ -1127,23 +1127,23 @@ void ValidateAggrInputRefsImpl(State& state, std::span<T> exprs) {
   AliasResolver resolver;
   for (const auto& expr : exprs) {
     if constexpr (requires { expr.expression; }) {
-      ValidateAggrInputRefsImpl<IsDistinct>(state, expr.expression, resolver);
+      ValidateAggrInputRefsImpl(state, expr.expression, resolver, is_distinct);
     } else if constexpr (requires { expr.expr; }) {
-      ValidateAggrInputRefsImpl<IsDistinct>(state, expr.expr, resolver);
+      ValidateAggrInputRefsImpl(state, expr.expr, resolver, is_distinct);
     } else {
-      ValidateAggrInputRefsImpl<IsDistinct>(state, expr, resolver);
+      ValidateAggrInputRefsImpl(state, expr, resolver, is_distinct);
     }
   }
 }
 
 template<typename T>
-void ValidateAggrInputRefs(State& state, std::span<T> exprs) {
-  ValidateAggrInputRefsImpl<false>(state, exprs);
+void ValidateAggrInputRefs(State& state, std::span<const T> exprs) {
+  ValidateAggrInputRefsImpl(state, exprs, false);
 }
 
 template<typename T>
-void ValidateDistinctInputRefs(State& state, std::span<T> exprs) {
-  ValidateAggrInputRefsImpl<true>(state, exprs);
+void ValidateDistinctInputRefs(State& state, std::span<const T> exprs) {
+  ValidateAggrInputRefsImpl(state, exprs, true);
 }
 
 void SqlAnalyzer::ProcessAlias(State& state, const Alias* alias) {
@@ -1794,10 +1794,13 @@ void SqlAnalyzer::ProcessCreateStmt(State& state, const CreateStmt& stmt) {
   dummy.pre_columnref_hook = [&](std::string_view name,
                                  const ColumnRef& ref) -> lp::ExprPtr {
     if (generated_columns.contains(name)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                      CURSOR_POS(ErrorPosition(ExprLocation(&ref))),
-                      ERR_MSG("cannot use generated column \"", name,
-                              "\" in column generation expression"));
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+        CURSOR_POS(ErrorPosition(ExprLocation(&ref))),
+        ERR_MSG("cannot use generated column \"", name,
+                "\" in column generation expression"),
+        ERR_DETAIL(
+          "A generated column cannot reference another generated column."));
     }
     return nullptr;
   };
@@ -1978,7 +1981,7 @@ void SqlAnalyzer::ProjectTargetList(State& state, TargetList target_list) {
     exprs.emplace_back(std::move(expr));
   }
 
-  ValidateAggrInputRefs(state, std::span{exprs});
+  ValidateAggrInputRefs(state, std::span<const lp::ExprPtr>{exprs});
   state.Project(_id_generator, std::move(names), std::move(exprs));
   // after the projection table scopes become invalid in PG
   state.resolver.ClearTables();
@@ -2035,7 +2038,7 @@ void SqlAnalyzer::ProcessSortClause(State& state, const List* list,
   if (fields.empty()) {
     return;
   }
-  ValidateAggrInputRefs(state, std::span{fields});
+  ValidateAggrInputRefs(state, std::span<const lp::SortingField>{fields});
   state.root = std::make_shared<lp::SortNode>(
     _id_generator.NextPlanId(), std::move(state.root), std::move(fields));
 }
@@ -2453,7 +2456,8 @@ void SqlAnalyzer::ProjectTargetListWindows(State& state,
     return;
   }
 
-  ValidateAggrInputRefs(state, std::span{collected.windows});
+  ValidateAggrInputRefs(state,
+                        std::span<const lp::WindowExprPtr>{collected.windows});
   const auto& output_type = *state.root->outputType();
   size_t size = collected.windows.size() + output_type.size();
   std::vector<std::string> names;
@@ -2624,23 +2628,6 @@ void SqlAnalyzer::ProcessDistinctOn(State& state, const List* distinct_clause,
     std::move(output_names));
 }
 
-// TODO: maybe make a logical UniqueNode in axiom?
-SqlAnalyzer::DistinctType SqlAnalyzer::ProcessDistinctClause(
-  State& state, const List* distinct_clause, const List* sort_clause,
-  TargetList& target_list) {
-  if (!distinct_clause) {
-    return DistinctType::None;
-  }
-
-  if (IsDistinctAll(distinct_clause)) {
-    ProcessDistinctAll(state, sort_clause, target_list);
-    return DistinctType::All;
-  }
-
-  ProcessDistinctOn(state, distinct_clause, sort_clause, target_list);
-  return DistinctType::On;
-}
-
 void SqlAnalyzer::ProcessDistinctAll(State& state, const List* sort_clause,
                                      TargetList& target_list) {
   auto entries = target_list.GetEntries();
@@ -2677,10 +2664,27 @@ void SqlAnalyzer::ProcessDistinctAll(State& state, const List* sort_clause,
     target_list.ReplaceEntries(std::move(entries));
     auto fields = ProcessOrderByList(state, target_list, sort_clause);
     SDB_ASSERT(!fields.empty());
-    ValidateDistinctInputRefs(state, std::span{fields});
+    ValidateDistinctInputRefs(state, std::span<const lp::SortingField>{fields});
     state.root = std::make_shared<lp::SortNode>(
       _id_generator.NextPlanId(), std::move(state.root), std::move(fields));
   }
+}
+
+// TODO: maybe make a logical UniqueNode in axiom?
+SqlAnalyzer::DistinctType SqlAnalyzer::ProcessDistinctClause(
+  State& state, const List* distinct_clause, const List* sort_clause,
+  TargetList& target_list) {
+  if (!distinct_clause) {
+    return DistinctType::None;
+  }
+
+  if (IsDistinctAll(distinct_clause)) {
+    ProcessDistinctAll(state, sort_clause, target_list);
+    return DistinctType::All;
+  }
+
+  ProcessDistinctOn(state, distinct_clause, sort_clause, target_list);
+  return DistinctType::On;
 }
 
 void SqlAnalyzer::ProcessPipeline(State& state, const SelectStmt& stmt) {
@@ -3300,7 +3304,7 @@ void SqlAnalyzer::ProcessFilterNode(State& state, const Node* node,
                                     ExprKind expr_kind) {
   if (node) {
     auto condition = ProcessExprNode(state, node, expr_kind);
-    ValidateAggrInputRefs(state, std::span{&condition, 1});
+    ValidateAggrInputRefs(state, std::span<const lp::ExprPtr>{&condition, 1});
     state.root = std::make_shared<lp::FilterNode>(
       _id_generator.NextPlanId(), std::move(state.root), std::move(condition));
   }

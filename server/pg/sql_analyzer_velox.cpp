@@ -4061,7 +4061,8 @@ const containers::FlatHashMap<std::string_view, velox::TypePtr> kTypeCasts{
   {"text", velox::VARCHAR()},
   {"bytea", velox::VARBINARY()},
   {"json", velox::JSON()},
-  {"numeric", velox::DECIMAL(velox::LongDecimalType::kMaxPrecision, 0)},
+  {"numeric", velox::DECIMAL(velox::LongDecimalType::kMaxPrecision,
+                             velox::LongDecimalType::kMaxPrecision / 2)},
   {"timestamp", velox::TIMESTAMP()},
   {"timestamptz", velox::TIMESTAMP_WITH_TIME_ZONE()},
   {"date", velox::DATE()},
@@ -4794,11 +4795,19 @@ velox::TypePtr NameToType(const TypeName& type_name) {
   if (name == "numeric") {
     SDB_ASSERT(mods_size >= 1);
     const auto precision = TryGet<int>(type_name.typmods, 0);
-    const auto scale =
-      mods_size > 1 ? TryGet<int>(type_name.typmods, 1) : std::nullopt;
-    auto decimal =
-      velox::DECIMAL(precision.value_or(velox::LongDecimalType::kMaxPrecision),
-                     scale.value_or(0));
+    std::optional<int> scale = std::nullopt;
+    if (mods_size > 1) {
+      if (scale = TryGet<int>(type_name.typmods, 1); !scale) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                        ERR_MSG("invalid input syntax for type integer"));
+      }
+    }
+
+    if (!precision) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                      ERR_MSG("invalid input syntax for type integer"));
+    }
+    auto decimal = velox::DECIMAL(*precision, scale.value_or(0));
     return wrap_in_array(std::move(decimal));
   }
 

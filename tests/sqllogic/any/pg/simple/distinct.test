@@ -262,7 +262,7 @@ ORDER BY grade * 2;
 
 
 query
-SELECT DISTINCT ON (2 * grade) grade
+SELECT DISTINCT ON (grade) grade
 FROM
 (
   VALUES

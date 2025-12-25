@@ -4795,10 +4795,15 @@ velox::TypePtr NameToType(const TypeName& type_name) {
   if (name == "numeric") {
     SDB_ASSERT(mods_size >= 1);
     const auto precision = TryGet<int>(type_name.typmods, 0);
-    const auto scale =
-      mods_size > 1 ? TryGet<int>(type_name.typmods, 1) : std::nullopt;
+    std::optional<int> scale = std::nullopt;
+    if (mods_size > 1) {
+      if (scale = TryGet<int>(type_name.typmods, 1); !scale) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                        ERR_MSG("invalid input syntax for type integer"));
+      }
+    }
 
-    if (!precision.has_value()) {
+    if (!precision) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
                       ERR_MSG("invalid input syntax for type integer"));
     }

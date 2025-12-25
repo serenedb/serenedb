@@ -35,7 +35,7 @@ CREATE TABLE kil (
     id2 INTEGER GENERATED ALWAYS AS (id) STORED
 );
 ----
-db error: ERROR:  cannot use generated column "id" in column generation expression
+db error: ERROR: cannot use generated column "id" in column generation expression
 
 
 statement error

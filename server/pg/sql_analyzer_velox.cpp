@@ -546,7 +546,7 @@ struct State {
   };
   containers::FlatHashMap<const FuncCall*, Column> aggregate_or_window;
   // str repr of groupby key -> Column
-  containers::FlatHashMap<std::string, Column> groupped_columns;
+  containers::FlatHashMap<std::string, Column> grouped_columns;
 
   // inside of the function refers to passed through parameters
   using FuncParamToExpr =
@@ -2557,8 +2557,8 @@ void SqlAnalyzer::ProcessGroupClause(State& state, const List* groupby,
       name = _id_generator.NextColumnName(
         absl::StrCat("groupby_expr_", _id_generator.NextColumnId()));
     }
-    state.groupped_columns.try_emplace(GroupByExprToName(*grouping_keys[i]),
-                                       grouping_keys[i]->type(), name);
+    state.grouped_columns.try_emplace(GroupByExprToName(*grouping_keys[i]),
+                                      grouping_keys[i]->type(), name);
     output_names.emplace_back(std::move(name));
   }
   absl::c_move(collected.names, std::back_inserter(output_names));
@@ -2611,7 +2611,7 @@ void SqlAnalyzer::ProcessDistinctOn(State& state, const List* distinct_clause,
       // for the names which were grouped we don't want to take first for them
       // since it's doesn't make sense. Also we could don't think about it but
       //  despite we rename grouping keys => distinct_on_expr_* names, axiom
-      // doesn't use them for input refs and there could occure a conflict.
+      // doesn't use them for input refs and there could occur a conflict.
       continue;
     }
     output_names.emplace_back(name);
@@ -2656,8 +2656,8 @@ void SqlAnalyzer::ProcessDistinctAll(State& state, const List* sort_clause,
   grouping_keys.reserve(entries.size());
   for (auto& [expr, alias] : entries) {
     output_names.emplace_back(_id_generator.NextColumnName(alias));
-    state.groupped_columns.try_emplace(GroupByExprToName(*expr), expr->type(),
-                                       output_names.back());
+    state.grouped_columns.try_emplace(GroupByExprToName(*expr), expr->type(),
+                                      output_names.back());
     grouping_keys.emplace_back(std::move(expr));
     expr = std::make_shared<lp::InputReferenceExpr>(
       grouping_keys.back()->type(), output_names.back());
@@ -2667,7 +2667,7 @@ void SqlAnalyzer::ProcessDistinctAll(State& state, const List* sort_clause,
     state.lookup_columns =
       MakePtrView<velox::RowType>(state.root->outputType());
   } else {
-    // if we have an aggregation just inheret its lookup columns
+    // if we have an aggregation just inherit its lookup columns
     SDB_ASSERT(state.has_aggregate);
   }
 
@@ -3441,8 +3441,8 @@ lp::ExprPtr SqlAnalyzer::ProcessExprNodeImpl(State& state, const Node* expr) {
   }
 
   auto maybe_groupby = GroupByExprToName(*res);
-  if (auto it = state.groupped_columns.find(maybe_groupby);
-      it != state.groupped_columns.end()) {
+  if (auto it = state.grouped_columns.find(maybe_groupby);
+      it != state.grouped_columns.end()) {
     const auto& aggr = it->second;
     return std::make_shared<lp::InputReferenceExpr>(aggr.type, aggr.name);
   }

@@ -382,7 +382,7 @@ void ObjectCollector::CollectDistinctClause(const State& state,
     return;
   }
 
-  CollectExprList(state, distinct_clause); 
+  CollectExprList(state, distinct_clause);
 }
 
 void ObjectCollector::CollectSortClause(const State& state,

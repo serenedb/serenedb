@@ -23,6 +23,7 @@
 
 #include <absl/strings/str_split.h>
 
+#include "basics/application-exit.h"
 #include "basics/file_utils.h"
 #include "basics/logger/logger.h"
 #include "basics/number_of_cores.h"

@@ -57,3 +57,11 @@ array
 # ----
 # ?column?
 # t
+
+
+query error invalid input syntax for type integer
+SELECT 1::numeric('aboba');
+
+
+query error invalid input syntax for type integer
+SELECT 1::numeric(10, 'aboba');

@@ -42,7 +42,6 @@ LIBPG_QUERY_INCLUDES_BEGIN
 LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
-
 namespace {
 
 template<typename T>
@@ -202,7 +201,7 @@ class JsonParser {
   simdjson::simdjson_result<simdjson::ondemand::value> GetByIndex(
     simdjson::ondemand::array arr, int64_t relative_index);
 
-  // TODO(codeworse): Try to reuse parser
+  // TODO(codeworse): Try to reuse parser between calls
   simdjson::ondemand::parser _parser;
   simdjson::padded_string _padded_input;
 };

@@ -27,11 +27,21 @@ SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
   const axiom::connector::TableLayout& layout)
   : velox::connector::ConnectorTableHandle{"serenedb"},
     _name{layout.name()},
-    _table_id{basics::downCast<RocksDBTable>(layout.table()).TableId()},
-    // TODO(Dronplane): measure the performance! Maybe it worth select smallest
-    // possible field as count field not just first
-    _table_count_field{basics::downCast<const SereneDBColumn>(
-                         layout.table().columnMap().begin()->second)
-                         ->Id()} {}
+    _table_id{basics::downCast<RocksDBTable>(layout.table()).TableId()} {
+  const auto& column_map = layout.table().columnMap();
+  SDB_ASSERT(!column_map.empty(), "Tables without columns are not supported");
+
+  // TODO(Dronplane): measure the performance! Maybe it worth select smallest
+  // possible field as count field not just first
+  _table_count_field =
+    basics::downCast<const SereneDBColumn>(column_map.begin()->second)->Id();
+  if (_table_count_field == catalog::Column::kGeneratedPKId) {
+    // Iterating over generated primary key gives 0 rows,
+    // use another one
+    _table_count_field = basics::downCast<const SereneDBColumn>(
+                           std::next(column_map.begin())->second)
+                           ->Id();
+  }
+}
 
 }  // namespace sdb::connector

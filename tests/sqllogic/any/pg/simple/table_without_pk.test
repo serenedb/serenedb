@@ -69,6 +69,25 @@ a	b	c
 111	222	same
 123	888	new str
 
+
+query
+SELECT 1 FROM no_pk;
+----
+?column?
+1
+1
+1
+1
+1
+
+
+query
+SELECT count(*) FROM no_pk;
+----
+count
+5
+
+
 # Column name as for generated column
 statement ok
 CREATE TABLE collision (a INTEGER, sdb_generated_pk VARCHAR);

@@ -36,6 +36,7 @@ CREATE TABLE kil (
 );
 ----
 db error: ERROR: cannot use generated column "id" in column generation expression
+DETAIL: A generated column cannot reference another generated column.
 
 
 statement error

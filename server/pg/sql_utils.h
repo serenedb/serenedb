@@ -67,6 +67,8 @@ namespace sdb {
 class QueryString;
 namespace pg {
 
+bool IsDistinctAll(const List* distinct_clause) noexcept;
+
 int ExprLocation(const void* node) noexcept;
 
 std::string GetUnnamedFunctionArgumentName(size_t param_idx);

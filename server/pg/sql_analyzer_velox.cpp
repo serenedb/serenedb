@@ -48,7 +48,6 @@
 
 #include <algorithm>
 #include <expected>
-#include <iostream>
 #include <iresearch/types.hpp>
 #include <memory>
 #include <vector>
@@ -2364,11 +2363,6 @@ std::string GroupByExprToName(const lp::Expr& aggr) {
   static_assert(!query::kColumnSeparator.contains('_'));
   absl::StrReplaceAll({{query::kColumnSeparator, "_"}}, &name);
   return name;
-}
-
-bool IsDistinctAll(const List* distinct_clause) {
-  return list_length(distinct_clause) == 1 &&
-         list_nth(distinct_clause, 0) == nullptr;
 }
 
 SqlAnalyzer::CollectedAggregates SqlAnalyzer::CollectAggregateFunctions(

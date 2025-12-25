@@ -378,12 +378,11 @@ void ObjectCollector::CollectDistinctClause(const State& state,
     return;
   }
 
-  if (list_length(distinct_clause) == 1 &&
-      list_nth(distinct_clause, 0) == nullptr) {
+  if (IsDistinctAll(distinct_clause)) {
     return;
   }
 
-  CollectExprList(state, distinct_clause);
+  CollectExprList(state, distinct_clause); 
 }
 
 void ObjectCollector::CollectSortClause(const State& state,

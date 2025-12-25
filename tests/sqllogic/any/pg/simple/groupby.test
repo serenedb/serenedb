@@ -263,14 +263,15 @@ FROM
     ('babsky', 22 ), ('babsky', 20), ('babsky', 21), ('babsky', 21),
     ('vedernikoff', 14), ('vedernikoff', 13), ('vedernikoff', 14)
 ) as clickclack(name, grade)
-GROUP BY 1, 1;
+GROUP BY 1, 1
+ORDER BY 1, 1, 1, 1;
 ----
 grade
-22
+13
+14
 20
 21
-14
-13
+22
 
 
 query

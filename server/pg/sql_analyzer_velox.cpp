@@ -782,9 +782,6 @@ class SqlAnalyzer {
   // sometimes is used for lazy target list creation
   using TargetListGetter = absl::FunctionRef<const TargetList&()>;
 
-  std::vector<lp::ExprPtr> ProcessGroupByExprList(
-    State& state, TargetListGetter target_list_getter, const List* groupby);
-
   void ProcessGroupClause(State& state, const List* groupby,
                           const List* target_list, const List* sort_clause,
                           const List* distinct_clause,
@@ -2500,26 +2497,6 @@ lp::ExprPtr SqlAnalyzer::MaybeOrdinalColumnRef(
   return entries[idx].expr;
 }
 
-std::vector<lp::ExprPtr> SqlAnalyzer::ProcessGroupByExprList(
-  State& state, TargetListGetter target_list_getter, const List* groupby) {
-  std::vector<lp::ExprPtr> result;
-  result.reserve(list_length(groupby));
-
-  VisitNodes(groupby, [&](const Node& n) {
-    if (auto maybe_column_ref =
-          MaybeOrdinalColumnRef(n, target_list_getter, ExprKind::GroupBy)) {
-      result.emplace_back(std::move(maybe_column_ref));
-      return;
-    }
-
-    auto expr = ProcessExprNode(state, &n, ExprKind::GroupBy);
-    SDB_ASSERT(expr);
-    result.emplace_back(std::move(expr));
-  });
-
-  return result;
-}
-
 void SqlAnalyzer::ProcessGroupClause(State& state, const List* groupby,
                                      const List* tlist, const List* sort_clause,
                                      const List* distinct_clause,
@@ -2535,32 +2512,51 @@ void SqlAnalyzer::ProcessGroupClause(State& state, const List* groupby,
 
   std::optional<TargetList> target_list;
   auto getter = [&]() -> const TargetList& {
-    if (!target_list) {
+    if (!target_list) {  // lazy evaluation
       target_list = ProcessTargetList(state, tlist);
     }
     return *target_list;
   };
-  // we try to resolve columns in target list if they weren't found
-  // in root
-  state.post_columnref_hook = GetTargetListNamingResolver(getter);
-  auto grouping_keys = ProcessGroupByExprList(state, getter, groupby);
-  state.post_columnref_hook = nullptr;
+
+  auto get_expr = [&](const Node& n) -> lp::ExprPtr {
+    if (auto maybe_column_ref =
+          MaybeOrdinalColumnRef(n, getter, ExprKind::GroupBy)) {
+      return maybe_column_ref;
+    }
+    return ProcessExprNode(state, &n, ExprKind::GroupBy);
+  };
+
+  auto get_name = [&](const lp::Expr& expr) -> std::string {
+    if (expr.isInputReference()) {
+      // we want to keep an old name otherwise table scope will be invalid
+      return expr.as<lp::InputReferenceExpr>()->name();
+    }
+
+    return _id_generator.NextColumnName(
+      absl::StrCat("groupby_expr_", _id_generator.NextColumnId()));
+  };
 
   std::vector<std::string> output_names;
-  output_names.reserve(grouping_keys.size() + collected.aggregates.size());
-  for (size_t i = 0; i < grouping_keys.size(); ++i) {
-    std::string name;
-    if (grouping_keys[i]->isInputReference()) {
-      // we want to keep an old name otherwise table scope will be invalid
-      name = grouping_keys[i]->as<lp::InputReferenceExpr>()->name();
-    } else {
-      name = _id_generator.NextColumnName(
-        absl::StrCat("groupby_expr_", _id_generator.NextColumnId()));
+  std::vector<lp::ExprPtr> grouping_keys;
+  output_names.reserve(list_length(groupby) + collected.aggregates.size());
+  grouping_keys.reserve(list_length(groupby));
+  // try to resolve columns in target list if they weren't found in root
+  state.post_columnref_hook = GetTargetListNamingResolver(getter);
+  VisitNodes(groupby, [&](const Node& n) {
+    auto expr = get_expr(n);
+    auto name = get_name(*expr);
+
+    auto [_, emplaced] = state.grouped_columns.try_emplace(
+      GroupByExprToName(*expr), expr->type(), name);
+    if (!emplaced) {  // deduplicate grouping key
+      return;
     }
-    state.grouped_columns.try_emplace(GroupByExprToName(*grouping_keys[i]),
-                                      grouping_keys[i]->type(), name);
+
+    grouping_keys.emplace_back(std::move(expr));
     output_names.emplace_back(std::move(name));
-  }
+  });
+  state.post_columnref_hook = nullptr;
+
   absl::c_move(collected.names, std::back_inserter(output_names));
 
   // this will help us to resolve columns after

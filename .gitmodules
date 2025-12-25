@@ -1,6 +1,3 @@
-[submodule "scripts/sqllogictest-rs"]
-	path = scripts/sqllogictest-rs
-	url = git@github.com:serenedb/sqllogictest-rs.git
 [submodule "third_party/abseil-cpp"]
 	path = third_party/abseil-cpp
 	url = git@github.com:serenedb/abseil-cpp.git
@@ -94,3 +91,6 @@
 [submodule "third_party/zlib-ng"]
 	path = third_party/zlib-ng
 	url = git@github.com:serenedb/zlib-ng.git
+[submodule "third_party/sqllogictest-rs"]
+	path = third_party/sqllogictest-rs
+	url = git@github.com:serenedb/sqllogictest-rs.git

@@ -1,5 +1,5 @@
 query
-SELECT DISTINCT * 
+SELECT DISTINCT *
 FROM
 (
   VALUES
@@ -17,7 +17,7 @@ vedernikoff 13
 
 
 query
-SELECT DISTINCT grade 
+SELECT DISTINCT grade
 FROM
 (
   VALUES
@@ -35,7 +35,7 @@ grade
 
 
 query
-SELECT DISTINCT name 
+SELECT DISTINCT name
 FROM
 (
   VALUES
@@ -50,7 +50,7 @@ babsky
 
 
 query
-SELECT DISTINCT grade + iq 
+SELECT DISTINCT grade + iq
 FROM
 (
   VALUES
@@ -66,7 +66,7 @@ ORDER BY grade + iq DESC;
 
 
 query
-SELECT DISTINCT iq 
+SELECT DISTINCT iq
 FROM
 (
   VALUES
@@ -85,7 +85,7 @@ iq
 
 
 query
-SELECT DISTINCT clickclack.name, tindex.name 
+SELECT DISTINCT clickclack.name, tindex.name
 FROM
 (
   VALUES
@@ -107,7 +107,7 @@ babsky vedernikoff
 
 
 query error
-SELECT DISTINCT iq 
+SELECT DISTINCT iq
 FROM
 (
   VALUES
@@ -121,7 +121,7 @@ db error: ERROR: for SELECT DISTINCT, ORDER BY expressions must appear in select
 
 
 query error
-SELECT DISTINCT name 
+SELECT DISTINCT name
 FROM
 (
   VALUES
@@ -134,7 +134,7 @@ db error: ERROR: for SELECT DISTINCT, ORDER BY expressions must appear in select
 
 
 query
-SELECT DISTINCT *, * 
+SELECT DISTINCT *, *
 FROM
 (
   VALUES
@@ -152,7 +152,7 @@ vedernikoff 13 vedernikoff 13
 
 
 query
-SELECT DISTINCT SUM(grade + iq) as kek 
+SELECT DISTINCT SUM(grade + iq) as kek
 FROM
 (
   VALUES
@@ -168,7 +168,7 @@ kek
 
 
 query
-SELECT DISTINCT SUM(grade + iq) as kek 
+SELECT DISTINCT SUM(grade + iq) as kek
 FROM
 (
   VALUES
@@ -186,7 +186,7 @@ kek
 onlyif sdb
 query error
 SELECT DISTINCT ON(ROW_NUMBER() OVER(PARTITION BY name ORDER BY grade DESC)) name
-FROM                 
+FROM
 (
   VALUES
     ('babsky1', 22, -5), ('babsky2', 20, -3), ('babsky3', 21, -4), ('babsky', 21, -4),
@@ -196,9 +196,9 @@ FROM
 db error: ERROR: window function calls are not supported in DISTINCT ON
 
 
-# TODO: make error like in PG 
-# query error 
-# SELECT DISTINCT SUM(grade + iq) 
+# TODO: make error like in PG
+# query error
+# SELECT DISTINCT SUM(grade + iq)
 # FROM
 # (
 #   VALUES
@@ -300,7 +300,7 @@ not_grade not_name
 
 query
 SELECT DISTINCT ON (name, grade, SUM(grade + iq)) name, SUM(grade + iq)
-FROM                 
+FROM
 (
   VALUES
     ('babsky1', 22, -5), ('babsky2', 20, -3), ('babsky3', 21, -4), ('babsky', 21, -4),

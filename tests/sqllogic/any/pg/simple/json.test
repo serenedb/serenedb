@@ -3,6 +3,10 @@ SELECT 'blob'::json;
 
 
 query error
+SELECT '[1e10blob]`::json;
+
+
+query error
 SELECT '["a", "b", c]'::json;
 
 

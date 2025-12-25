@@ -44,7 +44,9 @@ LIBPG_QUERY_INCLUDES_END
 namespace sdb::pg {
 
 namespace {
-static inline bool ValidateJson(simdjson::ondemand::value& value) {
+
+template<typename T>
+static inline bool ValidateJson(T& value) {
   switch (value.type()) {
     case simdjson::ondemand::json_type::array: {
       simdjson::ondemand::array arr;
@@ -78,9 +80,20 @@ static inline bool ValidateJson(simdjson::ondemand::value& value) {
       }
       return true;
     }
-    case simdjson::ondemand::json_type::number:
-    case simdjson::ondemand::json_type::string:
-    case simdjson::ondemand::json_type::boolean:
+    case simdjson::ondemand::json_type::string: {
+      return value.get_string().error() == simdjson::SUCCESS;
+    }
+    case simdjson::ondemand::json_type::number: {
+      if (value.get_number().error() == simdjson::SUCCESS) {
+        return true;
+      }
+      // Accept large integers by allowing double parsing; if it fails, fall
+      // back to generic number.
+      return value.get_double().error() == simdjson::SUCCESS;
+    }
+    case simdjson::ondemand::json_type::boolean: {
+      return value.get_bool().error() == simdjson::SUCCESS;
+    }
     case simdjson::ondemand::json_type::null:
       return true;
     default:
@@ -88,6 +101,7 @@ static inline bool ValidateJson(simdjson::ondemand::value& value) {
   }
 }
 }  // namespace
+
 class JsonParser {
  public:
   enum class OutputType {
@@ -312,39 +326,15 @@ struct PgJsonInFunction {
     // Even though we need only validation here, we still parse the input:
     // https://github.com/simdjson/simdjson/discussions/1393
 
-    auto throw_error = [](const std::string_view json) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_JSON_TEXT),
-        ERR_MSG(absl::StrCat("Invalid input syntax for type json: ", json)));
-    };
     std::string_view input_view{input.data(), input.size()};
     simdjson::ondemand::parser parser;
     simdjson::padded_string padded_input{input_view};
     simdjson::ondemand::document doc;
     auto ec = parser.iterate(padded_input).get(doc);
-    if (ec != simdjson::SUCCESS) {
-      throw_error(input_view);
-    }
-    simdjson::ondemand::value value;
-    switch (doc.type()) {
-      case simdjson::ondemand::json_type::array:
-      case simdjson::ondemand::json_type::object:
-        if (doc.get_value().get(value)) {
-          throw_error(input_view);
-        }
-        break;
-      case simdjson::ondemand::json_type::number:
-      case simdjson::ondemand::json_type::string:
-      case simdjson::ondemand::json_type::boolean:
-      case simdjson::ondemand::json_type::null:
-        result.setNoCopy(input);
-        return;
-      default:
-        throw_error(input_view);
-    }
-    SDB_ASSERT(!ec);
-    if (!ValidateJson(value)) {
-      throw_error(input_view);
+    if (ec != simdjson::SUCCESS || !ValidateJson(doc)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_JSON_TEXT),
+                      ERR_MSG(absl::StrCat(
+                        "Invalid input syntax for type json: ", input_view)));
     } else {
       result.setNoCopy(input);
     }

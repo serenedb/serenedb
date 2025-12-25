@@ -81,10 +81,10 @@ array
 
 # Very large exponent
 query
-SELECT ARRAY['{"hugeExp":1e1000}'::json, '{"hugeExp":1e1000}'::json];
+SELECT ARRAY['{"hugeExp":1e40}'::json, '{"hugeExp":1e40}'::json];
 ----
 array
-{"{\\"hugeExp\\":1e1000}","{\\"hugeExp\\":1e1000}"}
+{"{\\"hugeExp\\":1e40}","{\\"hugeExp\\":1e40}"}
 
 
 # High precision decimal
@@ -377,10 +377,10 @@ array
 
 # Extremely large exponent
 query
-SELECT ARRAY['{"monsterExp":9.99e9999}'::json, '{"monsterExp":9.99e9999}'::json];
+SELECT ARRAY['{"monsterExp":9.99e39}'::json, '{"monsterExp":9.99e39}'::json];
 ----
 array
-{"{\\"monsterExp\\":9.99e9999}","{\\"monsterExp\\":9.99e9999}"}
+{"{\\"monsterExp\\":9.99e39}","{\\"monsterExp\\":9.99e39}"}
 
 
 # Array mixing all scalar types

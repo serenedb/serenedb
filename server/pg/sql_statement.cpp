@@ -123,7 +123,7 @@ bool SqlStatement::ProcessNextRoot(
       query_ctx.command_type.Add(query::CommandType::Query);
     }
 
-    if (query_desc.options.contains("all")) {
+    if (query_desc.options.contains("all_plans")) {
       query_ctx.explain_params.Add(query::ExplainWith::Logical);
       query_ctx.explain_params.Add(query::ExplainWith::InitialQueryGraph);
       query_ctx.explain_params.Add(query::ExplainWith::FinalQueryGraph);

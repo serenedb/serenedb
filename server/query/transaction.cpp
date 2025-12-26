@@ -24,7 +24,7 @@
 
 #include "query/config.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "storage_engine/engine_selector_feature.h"
+#include "storage_engine/engine_feature.h"
 
 namespace sdb {
 
@@ -43,7 +43,7 @@ yaclib::Future<Result> TxnState::Begin() {
     return yaclib::MakeFuture(std::move(r));
   }
   SDB_ASSERT(_variables.empty());
-  auto* db = GetServerEngineAs<RocksDBEngineCatalog>().db();
+  auto* db = GetServerEngine().db();
   SDB_ASSERT(db);
   _txn = CreateTransaction(*db);
   if (!_txn) {
@@ -57,14 +57,14 @@ yaclib::Future<Result> TxnState::Commit() {
   Result r;
   for (auto&& [key, var] : _variables) {
     if (var.action == Action::Apply) {
-      _config._session.insert_or_assign(key, std::move(var.value));
+      _config.Set(Config::VariableContext::Session, key, std::move(var.value));
     }
   }
   _variables.clear();
   auto status = _txn->Commit();
   if (!status.ok()) {
-    r = {ERROR_INTERNAL, absl::StrCat("Failed to commit RocksDB transaction: ",
-                                      status.ToString())};
+    r = {ERROR_INTERNAL, "Failed to commit RocksDB transaction: ",
+                                      status.ToString()};
   } else {
     _txn.reset();
   }

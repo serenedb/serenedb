@@ -376,8 +376,10 @@ class SereneDBConnectorMetadata final
     if (!config.GetTxnState().InsideTransaction()) {
       // Single statement transaction, we can commit here
       auto status = transaction->Commit();
-      VELOX_CHECK(status.ok(),
+      if (!status.ok()) {
+        SDB_THROW(ERROR_INTERNAL,
                   "Failed to commit transaction: ", status.ToString());
+      }
     }
 
     return number_of_locked_primary_keys;
@@ -400,8 +402,10 @@ class SereneDBConnectorMetadata final
     if (serene_insert_handle->GetTransaction() &&
         !config.GetTxnState().InsideTransaction()) {
       auto status = serene_insert_handle->GetTransaction()->Rollback();
-      VELOX_CHECK(status.ok(),
+      if (!status.ok()) {
+        SDB_THROW(ERROR_INTERNAL,
                   "Failed to rollback transaction: ", status.ToString());
+      }
     }
     return {};
   } catch (...) {

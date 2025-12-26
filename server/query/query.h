@@ -71,7 +71,7 @@ class Query {
            _logical_plan->is(axiom::logical_plan::NodeKind::kTableWrite);
   }
 
-  bool IsDataQuery() const { return static_cast<bool>(_logical_plan); }
+  bool IsDataQuery() const { return _logical_plan != nullptr; }
 
   std::unique_ptr<Cursor> MakeCursor(std::function<void()>&& user_task) const;
 

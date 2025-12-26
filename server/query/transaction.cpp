@@ -63,8 +63,8 @@ yaclib::Future<Result> TxnState::Commit() {
   _variables.clear();
   auto status = _txn->Commit();
   if (!status.ok()) {
-    r = {ERROR_INTERNAL, "Failed to commit RocksDB transaction: ",
-                                      status.ToString()};
+    r = {ERROR_INTERNAL,
+         "Failed to commit RocksDB transaction: ", status.ToString()};
   } else {
     _txn.reset();
   }

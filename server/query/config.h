@@ -74,7 +74,6 @@ std::string_view GetOriginalName(std::string_view name);
 
 class Config : public velox::config::IConfig {
  public:
-
   enum class VariableContext : uint8_t {
     Session = 0,
     Transaction,

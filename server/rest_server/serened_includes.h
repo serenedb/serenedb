@@ -66,7 +66,11 @@
 #include "rest_server/supervisor_feature.h"
 #include "rest_server/time_zone_feature.h"
 #include "rest_server/upgrade_feature.h"
+#ifdef SDB_CLUSTER
+#include "rocksdb_engine/rocksdb_engine.h"
+#else
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#endif
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_recovery_manager.h"
 #include "statistics/statistics_feature.h"

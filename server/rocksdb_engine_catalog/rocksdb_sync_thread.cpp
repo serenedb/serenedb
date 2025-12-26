@@ -27,7 +27,11 @@
 #include "app/app_server.h"
 #include "basics/logger/logger.h"
 #include "rest_server/serened.h"
+#ifdef SDB_CLUSTER
+#include "rocksdb_engine/rocksdb_engine.h"
+#else
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#endif
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 
 using namespace sdb;

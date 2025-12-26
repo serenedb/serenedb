@@ -147,17 +147,18 @@ Table::Table(TableOptions&& options, ObjectId database_id)
   SDB_ASSERT(_shard_ids);
 
   _sharding_strategy = [&] -> std::unique_ptr<ShardingStrategy> {
-#ifdef SDB_CLUSTER
-#ifdef SDB_GTEST
-    if (!ServerState::instance()->IsClusterNode() &&
-        SerenedServer::Instance()
-            .getFeature<EngineSelectorFeature>()
-            .engine()
-            .typeName() == "Mock") {
-      return std::make_unique<ShardingStrategyNone>();
-    }
-#endif
-#endif
+// TODO Make mock flag in EngineFeature
+// #ifdef SDB_CLUSTER
+// #ifdef SDB_GTEST
+//     if (!ServerState::instance()->IsClusterNode() &&
+//         SerenedServer::Instance()
+//             .getFeature<EngineFeature>()
+//             .engine()
+//             .typeName() == "Mock") {
+//       return std::make_unique<ShardingStrategyNone>();
+//     }
+// #endif
+// #endif
     return ShardingStrategy::make(
       options.shardingStrategy,
       {.shard_keys = _shard_keys, .object_id = options.id});

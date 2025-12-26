@@ -232,7 +232,8 @@ class RocksDBEngineCatalog {
   /// current recovery tick
   Tick recoveryTick() noexcept;
 
-  Result createTableShard(const catalog::Table& collection, bool is_new,
+  // TODO(Dronplane): drop virtual when cluster rocksdb engine removed
+  virtual Result createTableShard(const catalog::Table& collection, bool is_new,
                           std::shared_ptr<TableShard>& physical);
 
   /// disallow purging of WAL files even if the archive gets too big

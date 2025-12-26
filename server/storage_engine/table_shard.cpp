@@ -51,6 +51,9 @@
 #ifdef SDB_CLUSTER
 #include "indexes/index.h"
 #include "transaction/helpers.h"
+#include "rocksdb_engine/rocksdb_engine.h"
+#else
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #endif
 
 namespace sdb {
@@ -95,7 +98,7 @@ void TableShard::prepareIndexes(catalog::Table& logical_collection,
   }
 
   auto& engine =
-    SerenedServer::Instance().getFeature<EngineSelectorFeature>().engine();
+    SerenedServer::Instance().getFeature<EngineFeature>().engine();
 
   std::vector<std::shared_ptr<Index>> indexes;
   {
@@ -441,7 +444,7 @@ Result TableShard::dropIndex(const catalog::Table& c, IndexId iid) {
 
   Result res = basics::SafeCall([&]() -> Result {
     auto& engine =
-      SerenedServer::Instance().getFeature<EngineSelectorFeature>().engine();
+      SerenedServer::Instance().getFeature<EngineFeature>().engine();
     const bool in_recovery = engine.inRecovery();
 
     std::shared_ptr<Index> to_remove;

@@ -29,7 +29,11 @@
 #include "general_server/state.h"
 #include "metrics/gauge_builder.h"
 #include "metrics/metrics_feature.h"
+#ifdef SDB_CLUSTER
+#include "rocksdb_engine/rocksdb_engine.h"
+#else
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#endif
 #include "storage_engine/engine_feature.h"
 
 using namespace sdb::app;

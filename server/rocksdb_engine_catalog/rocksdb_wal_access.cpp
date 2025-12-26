@@ -52,7 +52,11 @@
 #include "rocksdb_engine_catalog/concat.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
+#ifdef SDB_CLUSTER
+#include "rocksdb_engine/rocksdb_engine.h"
+#else
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#endif
 #include "rocksdb_engine_catalog/rocksdb_log_value.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "vpack/serializer.h"

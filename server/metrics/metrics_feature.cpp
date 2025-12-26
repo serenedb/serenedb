@@ -35,7 +35,11 @@
 #include "basics/debugging.h"
 #include "general_server/state.h"
 #include "metrics/metric.h"
+#ifdef SDB_CLUSTER
+#include "rocksdb_engine/rocksdb_engine.h"
+#else
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#endif
 #include "statistics/statistics_feature.h"
 #include "storage_engine/engine_feature.h"
 

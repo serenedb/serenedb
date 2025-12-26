@@ -21,7 +21,11 @@
 
 #pragma once
 
+#ifdef SDB_CLUSTER
+#include "rocksdb_engine/rocksdb_engine.h"
+#else
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#endif
 #include "storage_engine/wal_access.h"
 
 namespace sdb {

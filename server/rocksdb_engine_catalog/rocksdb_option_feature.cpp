@@ -53,6 +53,10 @@
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_prefix_extractor.h"
 
+#ifdef SDB_CLUSTER
+#include "agency/agency_feature.h"
+#endif
+
 // It's not atomic because it shouldn't change after initilization.
 // And initialization should happen before rocksdb initialization.
 static bool gIoUringEnabled = true;

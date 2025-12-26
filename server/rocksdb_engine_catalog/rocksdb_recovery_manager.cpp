@@ -50,7 +50,11 @@
 #include "general_server/state.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_common.h"
+#ifdef SDB_CLUSTER
+#include "rocksdb_engine/rocksdb_engine.h"
+#else
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#endif
 #include "rocksdb_engine_catalog/rocksdb_key.h"
 #include "rocksdb_engine_catalog/rocksdb_key_bounds.h"
 #include "rocksdb_engine_catalog/rocksdb_log_value.h"
@@ -241,7 +245,7 @@ class WBReader final : public rocksdb::WriteBatch::Handler {
 
 #ifdef SDB_CLUSTER
   std::shared_ptr<RocksDBCollection> FindCollection(uint64_t object_id) {
-    auto physical = GetTableShard(ObjectId{object_id});
+    auto physical = catalog::GetTableShard(ObjectId{object_id});
     if (!physical) {
       return {};
     }
@@ -255,7 +259,7 @@ class WBReader final : public rocksdb::WriteBatch::Handler {
       return nullptr;
     }
 
-    auto coll = GetTableShard(std::get<1>(triple));
+    auto coll = catalog::GetTableShard(std::get<1>(triple));
     if (coll == nullptr) {
       return nullptr;
     }

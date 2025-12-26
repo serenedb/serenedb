@@ -5,11 +5,21 @@
 
 namespace sdb {
 
+#ifdef SDB_CLUSTER
+class RocksDBEngine;
+#else
 class RocksDBEngineCatalog;
+#endif
 
 class EngineFeature final : public SerenedFeature {
  public:
   static constexpr std::string_view name() noexcept { return "Engine"; }
+
+#ifdef SDB_CLUSTER
+  using EngineType = RocksDBEngine;
+#else
+  using EngineType = RocksDBEngineCatalog;
+#endif
 
   explicit EngineFeature(Server& server);
 
@@ -19,14 +29,15 @@ class EngineFeature final : public SerenedFeature {
   void unprepare() final;
   void beginShutdown() final;
 
-  RocksDBEngineCatalog& engine() { return *_engine; }
+  auto& engine() { return *_engine; }
   bool started() const { return _started.load(std::memory_order_relaxed); }
 
  protected:
-  std::shared_ptr<RocksDBEngineCatalog> _engine;
+  std::shared_ptr<EngineType> _engine;
   std::atomic_bool _started = false;
 };
 
-RocksDBEngineCatalog& GetServerEngine();
+
+EngineFeature::EngineType& GetServerEngine();
 
 }  // namespace sdb

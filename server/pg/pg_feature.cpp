@@ -50,7 +50,11 @@
 #include "query/types.h"
 #include "rest_server/endpoint_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
+#ifdef SDB_CLUSTER
+#include "rocksdb_engine/rocksdb_engine.h"
+#else
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#endif
 #include "storage_engine/engine_feature.h"
 
 namespace sdb::pg {

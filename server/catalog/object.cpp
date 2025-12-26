@@ -28,7 +28,6 @@
 #ifdef SDB_CLUSTER
 #include "cluster/cluster_feature.h"
 #include "cluster/cluster_info.h"
-#include "cluster_engine/cluster_engine.h"
 #endif
 
 namespace sdb::catalog {
@@ -51,11 +50,11 @@ ObjectId NextId() {
       return NewTickServer();
     }
 
-#ifdef SDB_GTEST
-    if (ClusterEngine::gMocking) {
-      return NewTickServer();
-    }
-#endif
+// #ifdef SDB_GTEST
+//     if (ClusterEngine::gMocking) {
+//       return NewTickServer();
+//     }
+// #endif
     return SerenedServer::Instance()
       .getFeature<ClusterFeature>()
       .clusterInfo()

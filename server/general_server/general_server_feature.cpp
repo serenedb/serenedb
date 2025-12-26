@@ -97,6 +97,7 @@
 #include "rest_handler/rest_version_handler.h"
 #include "rest_handler/rest_view_handler.h"
 #include "rest_handler/rest_wal_access_handler.h"
+#include "rocksdb_engine/rocksdb_engine.h"
 #ifdef SDB_DEV
 #include "rest_handler/rest_test_handler.h"
 #endif
@@ -667,7 +668,7 @@ void GeneralServerFeature::defineRemainingHandlers(
   f.addPrefixHandler("/", RestHandlerCreator<RestNotImplHandler>::createNoData);
 
   // engine specific handlers
-  StorageEngine& engine = server().getFeature<EngineFeature>().engine();
+  auto& engine = server().getFeature<EngineFeature>().engine();
   engine.addRestHandlers(f);
 #endif
 }

@@ -337,9 +337,9 @@ struct PgJsonInFunction {
     simdjson::ondemand::document doc;
     auto ec = parser.iterate(padded_input).get(doc);
     if (ec != simdjson::SUCCESS || !ValidateJson(doc)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_JSON_TEXT),
-                      ERR_MSG(absl::StrCat(
-                        "Invalid input syntax for type json: ", input_view)));
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_JSON_TEXT),
+        ERR_MSG("Invalid input syntax for type json: ", input_view));
     } else {
       result.setNoCopy(input);
     }

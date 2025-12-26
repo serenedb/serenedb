@@ -37,54 +37,54 @@ std::shared_ptr<rocksdb::Transaction> CreateTransaction(
     db.BeginTransaction(write_options, txn_options)};
 }
 
+const std::shared_ptr<rocksdb::Transaction>&
+TxnState::LazyTransaction::GetTransaction() const {
+  if (_initialized && !_txn) {
+    auto* db = GetServerEngine().db();
+    _txn = CreateTransaction(*db);
+    if (!_txn) {
+      SDB_THROW(ERROR_INTERNAL, "Failed to create RocksDB transaction");
+    }
+    _txn->SetSnapshot();
+  }
+  return _txn;
+}
+
 yaclib::Future<Result> TxnState::Begin() {
-  Result r;
   if (InsideTransaction()) {
-    return yaclib::MakeFuture(std::move(r));
+    return {};
   }
-  SDB_ASSERT(_variables.empty());
-  auto* db = GetServerEngine().db();
-  SDB_ASSERT(db);
-  _txn = CreateTransaction(*db);
-  if (!_txn) {
-    r = {ERROR_INTERNAL, "Failed to create RocksDB transaction"};
-  }
-  _txn->SetSnapshot();
-  return yaclib::MakeFuture(std::move(r));
+  _txn.SetTransaction();
+  return {};
 }
 
 yaclib::Future<Result> TxnState::Commit() {
-  Result r;
-  for (auto&& [key, var] : _variables) {
-    if (var.action == Action::Apply) {
-      _config.Set(Config::VariableContext::Session, key, std::move(var.value));
-    }
+  if (!InsideTransaction()) {
+    return {};
   }
-  _variables.clear();
-  auto status = _txn->Commit();
+  auto status = _txn.GetTransaction()->Commit();
   if (!status.ok()) {
-    r = {ERROR_INTERNAL,
-         "Failed to commit RocksDB transaction: ", status.ToString()};
-  } else {
-    _txn.reset();
+    return yaclib::MakeFuture(Result{
+      ERROR_INTERNAL, "Failed to commit transaction: ", status.ToString()});
   }
-  return yaclib::MakeFuture(std::move(r));
+  _txn.Reset();
+  Config::CommitVariables();
+  return {};
 }
 
-yaclib::Future<Result> TxnState::Abort() {
-  Result r;
+yaclib::Future<Result> TxnState::Rollback() {
   if (!InsideTransaction()) {
-    return yaclib::MakeFuture(std::move(r));
+    return {};
   }
-  _variables.clear();
-  auto status = _txn->Rollback();
+  Config::RollbackVariables();
+  auto status = _txn.GetTransaction()->Rollback();
   if (!status.ok()) {
-    r = {ERROR_INTERNAL,
-         "Failed to rollback RocksDB transaction: ", status.ToString()};
-  } else {
-    _txn.reset();
+    return yaclib::MakeFuture(
+      Result{ERROR_INTERNAL,
+             "Failed to rollback RocksDB transaction: ", status.ToString()});
   }
-  return yaclib::MakeFuture(std::move(r));
+  _txn.Reset();
+  return {};
 }
 
 }  // namespace sdb

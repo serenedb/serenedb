@@ -21,12 +21,12 @@
 #pragma once
 
 #include "catalog/identifiers/object_id.h"
-#include "query/config.h"
+#include "query/transaction.h"
 #include "utils/exec_context.h"
 
 namespace sdb {
 
-class ConnectionContext : public ExecContext, public Config {
+class ConnectionContext : public ExecContext, public TxnState {
  public:
   ConnectionContext(std::string_view user, std::string_view dbname,
                     ObjectId database_id);

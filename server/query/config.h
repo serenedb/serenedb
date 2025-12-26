@@ -35,7 +35,6 @@
 #include "basics/exceptions.h"
 #include "basics/fwd.h"
 #include "basics/system-compiler.h"
-#include "query/transaction.h"
 
 namespace sdb {
 
@@ -80,10 +79,15 @@ class Config : public velox::config::IConfig {
     Local,
   };
 
-  Config() : _txn(*this) {}
+  enum class TxnAction : uint8_t {
+    Apply = 0,
+    Revert,
+  };
 
-  const TxnState& GetTxnState() const { return _txn; }
-  TxnState& GetTxnState() { return _txn; }
+  struct TxnVariable {
+    TxnAction action;
+    std::string value;
+  };
 
   template<VariableType T>
   auto Get(std::string_view key) const {
@@ -138,6 +142,12 @@ class Config : public velox::config::IConfig {
                            std::string_view)>
       f) const;
 
+ protected:
+  // Used by TxnState(transaction state) to commit/rollback transaction
+  // variables
+  void CommitVariables();
+  void RollbackVariables() { _transaction.clear(); }
+
  private:
   std::optional<std::string> Get(std::string_view key) const;
   std::optional<std::string> access(const std::string& key) const final;
@@ -147,7 +157,8 @@ class Config : public velox::config::IConfig {
   // Session variables
   containers::FlatHashMap<std::string_view, std::string> _session;
 
-  TxnState _txn;
+  // Transaction variable
+  containers::FlatHashMap<std::string_view, TxnVariable> _transaction;
 };
 
 };  // namespace sdb

@@ -108,12 +108,12 @@ yaclib::Future<Result> VariableSet(ExecContext& ctx,
   auto context = Config::VariableContext::Session;
   if (stmt.is_local) {
     context = Config::VariableContext::Local;
-    if (!conn_ctx.GetTxnState().InsideTransaction()) {
+    if (!conn_ctx.InsideTransaction()) {
       return yaclib::MakeFuture<Result>(
         ERROR_QUERY_USER_WARN,
         "SET LOCAL can only be used in transaction blocks");
     }
-  } else if (conn_ctx.GetTxnState().InsideTransaction()) {
+  } else if (conn_ctx.InsideTransaction()) {
     context = Config::VariableContext::Transaction;
   }
 

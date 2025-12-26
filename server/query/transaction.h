@@ -25,66 +25,43 @@
 
 #include "basics/containers/flat_hash_map.h"
 #include "basics/result.h"
+#include "query/config.h"
 
 namespace sdb {
-
-class Config;
 
 std::shared_ptr<rocksdb::Transaction> CreateTransaction(
   rocksdb::TransactionDB& db);
 
-class TxnState {
+class TxnState : public Config {
  public:
-  enum class Action : uint8_t {
-    Apply = 0,
-    Revert,
-  };
+  class LazyTransaction {
+   public:
+    void SetTransaction() { _initialized = true; }
 
-  struct Variable {
-    Action action;
-    std::string value;
-  };
+    const std::shared_ptr<rocksdb::Transaction>& GetTransaction() const;
+    bool IsInitialized() const noexcept { return _initialized; }
 
-  TxnState(Config& config) : _config(config) {}
+    void Reset() {
+      _txn.reset();
+      _initialized = false;
+    }
+
+   private:
+    mutable std::shared_ptr<rocksdb::Transaction> _txn;
+    bool _initialized = false;
+  };
 
   yaclib::Future<Result> Begin();
 
   yaclib::Future<Result> Commit();
 
-  yaclib::Future<Result> Abort();
+  yaclib::Future<Result> Rollback();
 
-  bool InsideTransaction() const { return _txn.get() != nullptr; }
+  bool InsideTransaction() const noexcept { return _txn.IsInitialized(); }
 
-  void Reset(std::string_view key) { _variables.erase(key); }
-
-  void ResetAll() { _variables.clear(); }
-
-  std::string_view Get(std::string_view key) const {
-    auto it = _variables.find(key);
-    return it == _variables.end() ? std::string_view{} : it->second.value;
-  }
-
-  void Set(std::string_view key, std::string value, Action action) {
-    _variables[key] = {
-      action,
-      std::move(value),
-    };
-  }
-
-  void CopyVariablesTo(
-    std::unordered_map<std::string, std::string>& dest) const {
-    for (const auto& [key, var] : _variables) {
-      dest.emplace(key, var.value);
-    }
-  }
-
-  const std::shared_ptr<rocksdb::Transaction>& GetTransaction() const noexcept {
-    return _txn;
-  }
+  const auto& GetTransaction() const { return _txn.GetTransaction(); }
 
  private:
-  containers::FlatHashMap<std::string_view, Variable> _variables;
-  std::shared_ptr<rocksdb::Transaction> _txn;
-  Config& _config;
+  LazyTransaction _txn;
 };
 }  // namespace sdb

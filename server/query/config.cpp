@@ -91,9 +91,9 @@ std::optional<std::string> Config::Get(std::string_view key) const {
 
 std::string_view Config::GetNonDefault(std::string_view key) const {
   {  // get from txn variables
-    auto str = _txn.Get(key);
-    if (str.data()) {
-      return str;
+    auto it = _transaction.find(key);
+    if (it != _transaction.end()) {
+      return it->second.value;
     }
   }
 
@@ -113,22 +113,37 @@ void Config::Set(VariableContext context, std::string_view key,
       _session[key] = std::move(value);
     } break;
     case VariableContext::Transaction: {
-      _txn.Set(key, std::move(value), TxnState::Action::Apply);
+      _transaction[key] = {
+        TxnAction::Apply,
+        std::move(value),
+      };
     } break;
     case VariableContext::Local: {
-      _txn.Set(key, std::move(value), TxnState::Action::Revert);
+      _transaction[key] = {
+        TxnAction::Revert,
+        std::move(value),
+      };
     } break;
   }
 }
 
 void Config::ResetAll() {
   _session.clear();
-  _txn.ResetAll();
+  _transaction.clear();
 }
 
 void Config::Reset(std::string_view key) {
-  _txn.Reset(key);
+  _transaction.erase(key);
   _session.erase(key);
+}
+
+void Config::CommitVariables() {
+  for (auto&& [key, value] : _transaction) {
+    if (value.action == TxnAction::Apply) {
+      _session.insert_or_assign(key, std::move(value.value));
+    }
+  }
+  _transaction.clear();
 }
 
 }  // namespace sdb

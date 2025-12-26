@@ -36,8 +36,8 @@
 #include "rocksdb/utilities/transaction_db.h"
 
 namespace sdb::connector {
-namespace {
-std::shared_ptr<rocksdb::Transaction> ExtractTransaction(
+
+static inline std::shared_ptr<rocksdb::Transaction> ExtractTransaction(
   const axiom::connector::ConnectorSessionPtr& session) {
   SDB_ASSERT(session->config());
   auto& txn = basics::downCast<TxnState>(*session->config());
@@ -47,8 +47,6 @@ std::shared_ptr<rocksdb::Transaction> ExtractTransaction(
   }
   return nullptr;
 }
-
-}  // namespace
 
 class SereneDBColumnHandle final : public velox::connector::ColumnHandle {
  public:

@@ -8,6 +8,7 @@ target_link_libraries(search-benchmark-game-query
   sereneserver 
 )
 
-add_custom_target(search-benchmark-game 
+add_custom_target(search-benchmark-game)
+add_dependencies(search-benchmark-game
   search-benchmark-game-build
   search-benchmark-game-query)

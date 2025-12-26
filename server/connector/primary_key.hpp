@@ -62,12 +62,13 @@ T ReadSigned(std::string_view buf) {
   SDB_ASSERT(std::is_signed_v<T>,
              "Cannot correctly read unsigned value due to sign bit flipping");
   SDB_ASSERT(buf.size() >= sizeof(T));
+  using Unsigned = std::make_unsigned_t<T>;
   static constexpr int kBits = sizeof(T) * CHAR_BIT;
 
-  auto val = absl::big_endian::Load<T>(buf.data());
-  val ^= static_cast<T>(1) << (kBits - 1);
+  auto val = absl::big_endian::Load<Unsigned>(buf.data());
+  val ^= static_cast<Unsigned>(1) << (kBits - 1);
 
-  return val;
+  return std::bit_cast<T>(val);
 }
 
 }  // namespace sdb::connector::primary_key

@@ -373,8 +373,11 @@ void PgSQLCommTaskBase::DescribeAnalyzedQuery(
   const auto* pg_node = castNode(RawStmt, statement.tree.GetRoot());
   SDB_ASSERT(pg_node);
 
-  // If it's DML but name of column isn't "rows" it means it's explain for DML.
-  // In such case we should send rows as usual.
+  // We want **don't** want to describe columns in the following cases:
+  // 1. Query is CALL some_procedure()
+  // 2. Query is without logical plan and doesn't have columns at all,
+  //    for example CREATE and DROP)
+  // 3. Query is INSERT, DELETE or UPDATE and **without** EXPLAIN
   if ((pg_node->stmt->type == T_CallStmt) ||
       (!query.IsDataQuery() && num_fields == 0) ||
       (query.IsDML() && output_type->nameOf(0) == "rows")) {

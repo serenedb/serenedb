@@ -2867,13 +2867,12 @@ State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
 
   if (table.Columns().empty()) {
     auto state = parent->MakeChild();
-    auto row_type = velox::ROW({});
     auto dummy_row = std::make_shared<velox::RowVector>(
-      &_memory_pool, row_type, velox::BufferPtr{}, 0,
+      &_memory_pool, velox::ROW({}), velox::BufferPtr{}, 0,
       std::vector<velox::VectorPtr>{});
     state.root = std::make_shared<lp::ValuesNode>(
       _id_generator.NextPlanId(), std::vector{std::move(dummy_row)});
-    state.resolver.CreateTable(table_alias, std::move(row_type));
+    state.resolver.CreateTable(table_alias, MakePtrView(dummy_row->rowType()));
     return state;
   }
 

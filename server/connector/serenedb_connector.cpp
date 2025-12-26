@@ -29,7 +29,8 @@ SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
     _name{layout.name()},
     _table_id{basics::downCast<RocksDBTable>(layout.table()).TableId()} {
   const auto& column_map = layout.table().columnMap();
-  SDB_ASSERT(!column_map.empty(), "Tables without columns are not supported");
+  SDB_ASSERT(!column_map.empty(),
+             "Tables without columns must be processed in analyzer step");
 
   // TODO(Dronplane): measure the performance! Maybe it worth select smallest
   // possible field as count field not just first
@@ -38,6 +39,7 @@ SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
   if (_table_count_field == catalog::Column::kGeneratedPKId) {
     // Iterating over generated primary key gives 0 rows,
     // use another one
+    SDB_ASSERT(column_map.size() >= 2);
     _table_count_field = basics::downCast<const SereneDBColumn>(
                            std::next(column_map.begin())->second)
                            ->Id();

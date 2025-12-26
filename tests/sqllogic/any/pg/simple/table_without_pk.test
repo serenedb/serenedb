@@ -133,3 +133,27 @@ query
 SELECT * FROM collision ORDER BY a;
 ----
 a	sdb_generated_pk
+
+
+# Table without columns
+statement ok
+CREATE TABLE no_columns ();
+
+
+# TODO(mkornaukhov) fix sqllogictest-rs to process this case properly
+#query
+#SELECT * FROM no_columns;
+#----
+
+
+query
+SELECT count(*) FROM no_columns;
+----
+count
+0
+
+
+query error
+SELECT field FROM no_columns;
+----
+db error: ERROR: column "field" does not exist

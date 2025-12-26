@@ -150,7 +150,7 @@ class RocksDBTable final : public axiom::connector::Table {
     // primary key nulls are not allowed. For now we just set nulls last,
     // because it's default.
     sort_order.resize(
-      _pk_type->size(),
+      std::max(1U, _pk_type->size()),
       axiom::connector::SortOrder{.isAscending = true, .isNullsFirst = false});
     for (const auto& catalog_column : collection.Columns()) {
       auto serenedb_column = std::make_unique<SereneDBColumn>(
@@ -177,8 +177,6 @@ class RocksDBTable final : public axiom::connector::Table {
       order_columns.push_back(serenedb_column.get());
       _column_handles.push_back(std::move(serenedb_column));
       _pk_type = velox::ROW({std::move(generated_pk_name)}, {velox::BIGINT()});
-      sort_order.resize(1, axiom::connector::SortOrder{.isAscending = true,
-                                                       .isNullsFirst = false});
     }
 
     auto connector = velox::connector::getConnector("serenedb");

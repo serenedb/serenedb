@@ -104,7 +104,7 @@ std::string Column::GeneratePKName(std::span<const std::string> column_names) {
     for (const auto& str : column_names) {
       if (str == candidate) [[unlikely]] {
         found_unique = false;
-        candidate.resize(kGeneratedPKPrefix.size());
+        candidate.erase(kGeneratedPKPrefix.size());
         absl::StrAppend(&candidate, "_", ++suffix);
         break;
       }

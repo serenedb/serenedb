@@ -69,6 +69,25 @@ a	b	c
 111	222	same
 123	888	new str
 
+
+query
+SELECT 1 FROM no_pk;
+----
+?column?
+1
+1
+1
+1
+1
+
+
+query
+SELECT count(*) FROM no_pk;
+----
+count
+5
+
+
 # Column name as for generated column
 statement ok
 CREATE TABLE collision (a INTEGER, sdb_generated_pk VARCHAR);
@@ -114,3 +133,27 @@ query
 SELECT * FROM collision ORDER BY a;
 ----
 a	sdb_generated_pk
+
+
+# Table without columns
+statement ok
+CREATE TABLE no_columns ();
+
+
+# TODO(mkornaukhov) fix sqllogictest-rs to process this case properly
+#query
+#SELECT * FROM no_columns;
+#----
+
+
+query
+SELECT count(*) FROM no_columns;
+----
+count
+0
+
+
+query error
+SELECT field FROM no_columns;
+----
+db error: ERROR: column "field" does not exist

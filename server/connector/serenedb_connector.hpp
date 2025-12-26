@@ -37,7 +37,7 @@
 
 namespace sdb::connector {
 
-static inline std::shared_ptr<rocksdb::Transaction> ExtractTransaction(
+inline std::shared_ptr<rocksdb::Transaction> ExtractTransaction(
   const axiom::connector::ConnectorSessionPtr& session) {
   SDB_ASSERT(session->config());
   auto& txn = basics::downCast<TxnState>(*session->config());

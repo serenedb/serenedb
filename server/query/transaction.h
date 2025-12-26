@@ -39,6 +39,7 @@ class TxnState : public Config {
     void SetTransaction() { _initialized = true; }
 
     const std::shared_ptr<rocksdb::Transaction>& GetTransaction() const;
+
     bool IsInitialized() const noexcept { return _initialized; }
 
     void Reset() {
@@ -64,4 +65,5 @@ class TxnState : public Config {
  private:
   LazyTransaction _txn;
 };
+
 }  // namespace sdb

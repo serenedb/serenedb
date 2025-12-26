@@ -51,10 +51,9 @@ TxnState::LazyTransaction::GetTransaction() const {
 }
 
 yaclib::Future<Result> TxnState::Begin() {
-  if (InsideTransaction()) {
-    return {};
+  if (!InsideTransaction()) {
+    _txn.SetTransaction();
   }
-  _txn.SetTransaction();
   return {};
 }
 

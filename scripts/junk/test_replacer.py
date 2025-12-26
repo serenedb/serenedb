@@ -5,7 +5,7 @@ def read_blocks(filename):
         content = f.read()
 
     # Split by double newlines (or more)
-    blocks = [block.strip() for block in content. split('\n\n') if block.strip()]
+    blocks = [block.strip() for block in content.split('\n\n') if block.strip()]
 
     return blocks
 

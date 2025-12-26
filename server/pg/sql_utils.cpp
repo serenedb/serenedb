@@ -45,6 +45,11 @@ LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 
+bool IsDistinctAll(const List* distinct_clause) noexcept {
+  return list_length(distinct_clause) == 1 &&
+         list_nth(distinct_clause, 0) == nullptr;
+}
+
 int ExprLocation(const void* node) noexcept {
   return ::exprLocation(reinterpret_cast<const Node*>(node));
 }

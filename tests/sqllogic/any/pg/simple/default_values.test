@@ -30,6 +30,16 @@ db error: ERROR: for a generated column, GENERATED ALWAYS must be specified
 
 
 statement error
+CREATE TABLE kil (
+    id INTEGER GENERATED ALWAYS AS (1) STORED,
+    id2 INTEGER GENERATED ALWAYS AS (id) STORED
+);
+----
+db error: ERROR: cannot use generated column "id" in column generation expression
+DETAIL: A generated column cannot reference another generated column.
+
+
+statement error
 CREATE TABLE koshareff(a BOOLEAN, DEFAULT (a = 0));
 ----
 db error: ERROR: syntax error at or near "DEFAULT"

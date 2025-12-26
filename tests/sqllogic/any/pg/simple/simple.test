@@ -1063,3 +1063,154 @@ select ~('-1'::integer);
 ----
 ?column?
 0
+
+
+# TODO(mkornaukhov) remove these tests as soon as we enable sqllogic tests
+
+onlyif serenedb
+statement ok
+CREATE TABLE t1(a INTEGER, b INTEGER, c INTEGER, d INTEGER, e INTEGER)
+
+
+onlyif serenedb
+query
+EXPLAIN (ALL_PLANS)
+SELECT CASE a+1 WHEN b THEN 111 WHEN c THEN 222
+        WHEN d THEN 333  WHEN e THEN 444 ELSE 555 END,
+       CASE WHEN a<b-3 THEN 111 WHEN a<=b THEN 222
+        WHEN a<b+3 THEN 333 ELSE 444 END,
+       a+b*2+c*3+d*4,
+       a+b*2+c*3,
+       c,
+       CASE WHEN c>(SELECT avg(c) FROM t1) THEN a*2 ELSE b*10 END,
+       abs(b-c)
+  FROM t1
+ WHERE EXISTS(SELECT 1 FROM t1 AS x WHERE x.b<t1.b)
+    OR b>c
+    OR d NOT BETWEEN 110 AND 150
+ ORDER BY 4,1,5,2,6,3,7
+----
+QUERY PLAN
+LOGICAL PLAN:
+- Project: -> ROW<"case":INTEGER,"case":INTEGER,"?column?":INTEGER,"?column?":INTEGER,"c":INTEGER,"case":INTEGER,"abs":INTEGER>
+    case := SWITCH(presto_eq(presto_plus(a, 1), b), 111, presto_eq(presto_plus(a, 1), c), 222, presto_eq(presto_plus(a, 1), d), 333, presto_eq(presto_plus(a, 1), e), 444, 555)
+    case := SWITCH(presto_lt(a, presto_minus(b, 3)), 111, presto_lte(a, b), 222, presto_lt(a, presto_plus(b, 3)), 333, 444)
+    ?column? := presto_plus(presto_plus(presto_plus(a, presto_multiply(b, 2)), presto_multiply(c, 3)), presto_multiply(d, 4))
+    ?column? := presto_plus(presto_plus(a, presto_multiply(b, 2)), presto_multiply(c, 3))
+    c := c
+    case := SWITCH(presto_gt(CAST(c AS DOUBLE), subquery(- Aggregate() -> ROW<"avg":DOUBLE>     avg := presto_avg(c)   - TableScan: t1 -> ROW<"a":INTEGER,"b":INTEGER,"c":INTEGER,"d":INTEGER,"e":INTEGER> )), presto_multiply(a, 2), presto_multiply(b, 10))
+    abs := presto_abs(presto_minus(b, c))
+  - Sort: presto_plus(presto_plus(a, presto_multiply(b, 2)), presto_multiply(c, 3)) ASC NULLS LAST, SWITCH(presto_eq(presto_plus(a, 1), b), 111, presto_eq(presto_plus(a, 1), c), 222, presto_eq(presto_plus(a, 1), d), 333, presto_eq(presto_plus(a, 1), e), 444, 555) ASC NULLS LAST, c ASC NULLS LAST, SWITCH(presto_lt(a, presto_minus(b, 3)), 111, presto_lte(a, b), 222, presto_lt(a, presto_plus(b, 3)), 333, 444) ASC NULLS LAST, SWITCH(presto_gt(CAST(c AS DOUBLE), subquery(- Aggregate() -> ROW<"avg":DOUBLE>     avg := presto_avg(c)   - TableScan: t1 -> ROW<"a":INTEGER,"b":INTEGER,"c":INTEGER,"d":INTEGER,"e":INTEGER> )), presto_multiply(a, 2), presto_multiply(b, 10)) ASC NULLS LAST, presto_plus(presto_plus(presto_plus(a, presto_multiply(b, 2)), presto_multiply(c, 3)), presto_multiply(d, 4)) ASC NULLS LAST, presto_abs(presto_minus(b, c)) ASC NULLS LAST -> ROW<"a":INTEGER,"b":INTEGER,"c":INTEGER,"d":INTEGER,"e":INTEGER>
+    - Filter: OR(EXISTS(subquery(- Project: -> ROW<"?column?":INTEGER>     ?column? := 1   - Filter: presto_lt(b, b) -> ROW<"a":INTEGER,"b":INTEGER,"c":INTEGER,"d":INTEGER,"e":INTEGER>     - TableScan: t1 -> ROW<"a":INTEGER,"b":INTEGER,"c":INTEGER,"d":INTEGER,"e":INTEGER> )), presto_gt(b, c), presto_not(presto_between(d, 110, 150))) -> ROW<"a":INTEGER,"b":INTEGER,"c":INTEGER,"d":INTEGER,"e":INTEGER>
+      - TableScan: t1 -> ROW<"a":INTEGER,"b":INTEGER,"c":INTEGER,"d":INTEGER,"e":INTEGER>
+INITIAL QUERY GRAPH:
+dt1: case, case, ?column?, ?column?, c, case, abs
+  output:
+    case := __switch(presto_eq(t2.b, presto_plus(t2.a, 1)), 111, presto_eq(t2.c, presto_plus(t2.a, 1)), 222, presto_eq(t2.d, presto_plus(t2.a, 1)), 333, presto_eq(t2.e, presto_plus(t2.a, 1)), 444, 555)
+    case := __switch(presto_lt(t2.a, presto_minus(t2.b, 3)), 111, presto_lte(t2.a, t2.b), 222, presto_lt(t2.a, presto_plus(t2.b, 3)), 333, 444)
+    ?column? := presto_plus(presto_plus(presto_plus(t2.a, presto_multiply(t2.b, 2)), presto_multiply(t2.c, 3)), presto_multiply(t2.d, 4))
+    ?column? := presto_plus(presto_plus(t2.a, presto_multiply(t2.b, 2)), presto_multiply(t2.c, 3))
+    c := t2.c
+    case := __switch(presto_lt(dt5.avg, __cast(t2.c)), presto_multiply(t2.a, 2), presto_multiply(t2.b, 10))
+    abs := presto_abs(presto_minus(t2.b, t2.c))
+  tables: t2, dt3, dt5
+  joins:
+    t2 SEMI dt3 ON  FILTER presto_gt(t2.b, dt3.b)
+  syntactic join order: 7, 13, 28
+  filter: __or(dt1.__mark0, presto_gt(t2.b, t2.c), presto_not(presto_between(t2.d, 110, 150)))
+  orderBy: presto_plus(presto_plus(t2.a, presto_multiply(t2.b, 2)), presto_multiply(t2.c, 3)) ASC NULLS LAST, __switch(presto_eq(t2.b, presto_plus(t2.a, 1)), 111, presto_eq(t2.c, presto_plus(t2.a, 1)), 222, presto_eq(t2.d, presto_plus(t2.a, 1)), 333, presto_eq(t2.e, presto_plus(t2.a, 1)), 444, 555) ASC NULLS LAST, t2.c ASC NULLS LAST, __switch(presto_lt(t2.a, presto_minus(t2.b, 3)), 111, presto_lte(t2.a, t2.b), 222, presto_lt(t2.a, presto_plus(t2.b, 3)), 333, 444) ASC NULLS LAST, __switch(presto_lt(dt5.avg, __cast(t2.c)), presto_multiply(t2.a, 2), presto_multiply(t2.b, 10)) ASC NULLS LAST, presto_plus(presto_plus(presto_plus(t2.a, presto_multiply(t2.b, 2)), presto_multiply(t2.c, 3)), presto_multiply(t2.d, 4)) ASC NULLS LAST, presto_abs(presto_minus(t2.b, t2.c)) ASC NULLS LAST
+t2: a, b, c, d, e
+  table: t1
+dt3: b, ?column?
+  output:
+    b := t4.b
+    ?column? := 1
+  tables: t4
+t4: b
+  table: t1
+dt5: avg
+  output:
+    avg := dt5.avg
+  tables: t6
+  aggregates: presto_avg(t6.c) AS avg
+t6: c
+  table: t1
+FINAL QUERY GRAPH:
+dt1: case, case, ?column?, ?column?, c, case, abs
+  output:
+    case := __switch(presto_eq(t2.b, presto_plus(t2.a, 1)), 111, presto_eq(t2.c, presto_plus(t2.a, 1)), 222, presto_eq(t2.d, presto_plus(t2.a, 1)), 333, presto_eq(t2.e, presto_plus(t2.a, 1)), 444, 555)
+    case := __switch(presto_lt(t2.a, presto_minus(t2.b, 3)), 111, presto_lte(t2.a, t2.b), 222, presto_lt(t2.a, presto_plus(t2.b, 3)), 333, 444)
+    ?column? := presto_plus(presto_plus(presto_plus(t2.a, presto_multiply(t2.b, 2)), presto_multiply(t2.c, 3)), presto_multiply(t2.d, 4))
+    ?column? := presto_plus(presto_plus(t2.a, presto_multiply(t2.b, 2)), presto_multiply(t2.c, 3))
+    c := t2.c
+    case := __switch(presto_lt(dt5.avg, __cast(t2.c)), presto_multiply(t2.a, 2), presto_multiply(t2.b, 10))
+    abs := presto_abs(presto_minus(t2.b, t2.c))
+  tables: t2, dt3, dt5
+  joins:
+    t2 SEMI dt3 ON  FILTER presto_gt(t2.b, dt3.b)
+  syntactic join order: 7, 13, 28
+  filter: __or(dt1.__mark0, presto_gt(t2.b, t2.c), presto_not(presto_between(t2.d, 110, 150)))
+  orderBy: presto_plus(presto_plus(t2.a, presto_multiply(t2.b, 2)), presto_multiply(t2.c, 3)) ASC NULLS LAST, __switch(presto_eq(t2.b, presto_plus(t2.a, 1)), 111, presto_eq(t2.c, presto_plus(t2.a, 1)), 222, presto_eq(t2.d, presto_plus(t2.a, 1)), 333, presto_eq(t2.e, presto_plus(t2.a, 1)), 444, 555) ASC NULLS LAST, t2.c ASC NULLS LAST, __switch(presto_lt(t2.a, presto_minus(t2.b, 3)), 111, presto_lte(t2.a, t2.b), 222, presto_lt(t2.a, presto_plus(t2.b, 3)), 333, 444) ASC NULLS LAST, __switch(presto_lt(dt5.avg, __cast(t2.c)), presto_multiply(t2.a, 2), presto_multiply(t2.b, 10)) ASC NULLS LAST, presto_plus(presto_plus(presto_plus(t2.a, presto_multiply(t2.b, 2)), presto_multiply(t2.c, 3)), presto_multiply(t2.d, 4)) ASC NULLS LAST, presto_abs(presto_minus(t2.b, t2.c)) ASC NULLS LAST
+t2: a, b, c, d, e
+  table: t1
+dt3: b, ?column?
+  output:
+    b := t4.b
+    ?column? := 1
+  tables: t4
+t4: b
+  table: t1
+dt5: avg
+  output:
+    avg := dt5.avg
+  tables: t6
+  aggregates: presto_avg(t6.c) AS avg
+t6: c
+  table: t1
+PHYSICAL PLAN:
+Project -> dt1.case, dt1.case, dt1.?column?, dt1.?column?, dt1.c, dt1.case, dt1.abs
+    dt1.case := dt1.__p51
+    dt1.case := dt1.__p57
+    dt1.?column? := dt1.__p66
+    dt1.?column? := dt1.__p40
+    dt1.c := t2.c
+    dt1.case := dt1.__p63
+    dt1.abs := dt1.__p68
+  OrderBy -> dt1.__p40, dt1.__p51, t2.c, dt1.__p57, dt1.__p63, dt1.__p66, dt1.__p68
+    Project -> dt1.__p40, dt1.__p51, t2.c, dt1.__p57, dt1.__p63, dt1.__p66, dt1.__p68
+        dt1.__p40 := presto_plus(presto_plus(t2.a, presto_multiply(t2.b, 2)), presto_multiply(t2.c, 3))
+        dt1.__p51 := __switch(presto_eq(t2.b, presto_plus(t2.a, 1)), 111, presto_eq(t2.c, presto_plus(t2.a, 1)), 222, presto_eq(t2.d, presto_plus(t2.a, 1)), 333, presto_eq(t2.e, presto_plus(t2.a, 1)), 444, 555)
+        t2.c := t2.c
+        dt1.__p57 := __switch(presto_lt(t2.a, presto_minus(t2.b, 3)), 111, presto_lte(t2.a, t2.b), 222, presto_lt(t2.a, presto_plus(t2.b, 3)), 333, 444)
+        dt1.__p63 := __switch(presto_lt(dt5.avg, __cast(t2.c)), presto_multiply(t2.a, 2), presto_multiply(t2.b, 10))
+        dt1.__p66 := presto_plus(presto_plus(presto_plus(t2.a, presto_multiply(t2.b, 2)), presto_multiply(t2.c, 3)), presto_multiply(t2.d, 4))
+        dt1.__p68 := presto_abs(presto_minus(t2.b, t2.c))
+      Join INNER Cross -> t2.a, t2.b, t2.c, t2.d, t2.e, dt5.avg
+        Filter -> t2.a, t2.b, t2.c, t2.d, t2.e, dt1.__mark0
+            __or(dt1.__mark0, presto_gt(t2.b, t2.c), presto_not(presto_between(t2.d, 110, 150)))
+          Join LEFT SEMI (PROJECT) Cross -> t2.a, t2.b, t2.c, t2.d, t2.e, dt1.__mark0
+              presto_gt(t2.b, dt3.b)
+            TableScan -> t2.a, t2.b, t2.c, t2.d, t2.e
+              table: t1
+            Project (redundant) -> dt3.b
+                dt3.b := t4.b
+              TableScan -> t4.b
+                table: t1
+        Project (redundant) -> dt5.avg
+            dt5.avg := dt5.avg
+          Aggregation -> dt5.avg
+              dt5.avg := presto_avg(t6.c)
+            TableScan -> t6.c
+              table: t1
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- Project[9][expressions: (case:INTEGER, "dt1.__p51"), (case:INTEGER, "dt1.__p57"), (?column?:INTEGER, "dt1.__p66"), (?column?:INTEGER, "dt1.__p40"), (c:INTEGER, "c"), (case:INTEGER, "dt1.__p63"), (abs:INTEGER, "dt1.__p68")] -> "case":INTEGER, "case":INTEGER, "?column?":INTEGER, "?column?":INTEGER, "c":INTEGER, "case":INTEGER, "abs":INTEGER
+  -- OrderBy[8][dt1.__p40 ASC NULLS LAST, dt1.__p51 ASC NULLS LAST, c ASC NULLS LAST, dt1.__p57 ASC NULLS LAST, dt1.__p63 ASC NULLS LAST, dt1.__p66 ASC NULLS LAST, dt1.__p68 ASC NULLS LAST] -> "dt1.__p40":INTEGER, "dt1.__p51":INTEGER, "c":INTEGER, "dt1.__p57":INTEGER, "dt1.__p63":INTEGER, "dt1.__p66":INTEGER, "dt1.__p68":INTEGER
+    -- Project[7][expressions: (dt1.__p40:INTEGER, presto_plus(presto_plus("a",presto_multiply("b",2)),presto_multiply("c",3))), (dt1.__p51:INTEGER, switch(presto_eq("b",presto_plus("a",1)),111,presto_eq("c",presto_plus("a",1)),222,presto_eq("d",presto_plus("a",1)),333,presto_eq("e",presto_plus("a",1)),444,555)), (c:INTEGER, "c"), (dt1.__p57:INTEGER, switch(presto_lt("a",presto_minus("b",3)),111,presto_lte("a","b"),222,presto_lt("a",presto_plus("b",3)),333,444)), (dt1.__p63:INTEGER, switch(presto_lt("avg",cast("c" as DOUBLE)),presto_multiply("a",2),presto_multiply("b",10))), (dt1.__p66:INTEGER, presto_plus(presto_plus(presto_plus("a",presto_multiply("b",2)),presto_multiply("c",3)),presto_multiply("d",4))), (dt1.__p68:INTEGER, presto_abs(presto_minus("b","c")))] -> "dt1.__p40":INTEGER, "dt1.__p51":INTEGER, "c":INTEGER, "dt1.__p57":INTEGER, "dt1.__p63":INTEGER, "dt1.__p66":INTEGER, "dt1.__p68":INTEGER
+      -- NestedLoopJoin[6][INNER] -> "a":INTEGER, "b":INTEGER, "c":INTEGER, "d":INTEGER, "e":INTEGER, "avg":DOUBLE
+        -- Filter[0][expression: or("dt1.__mark0",presto_gt("b","c"),presto_not(presto_between("d",110,150)))] -> "a":INTEGER, "b":INTEGER, "c":INTEGER, "d":INTEGER, "e":INTEGER, "dt1.__mark0":BOOLEAN
+          -- NestedLoopJoin[3][LEFT SEMI (PROJECT), joinCondition: presto_gt("b","b")] -> "a":INTEGER, "b":INTEGER, "c":INTEGER, "d":INTEGER, "e":INTEGER, "dt1.__mark0":BOOLEAN
+            -- TableScan[1][t1] -> "a":INTEGER, "b":INTEGER, "c":INTEGER, "d":INTEGER, "e":INTEGER
+            -- TableScan[2][t1] -> "b":INTEGER
+        -- Aggregation[5][SINGLE avg := presto_avg("c")] -> "avg":DOUBLE
+          -- TableScan[4][t1] -> "c":INTEGER

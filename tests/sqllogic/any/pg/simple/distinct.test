@@ -1,0 +1,336 @@
+query
+SELECT DISTINCT *
+FROM
+(
+  VALUES
+    ('babsky', 22 ), ('babsky', 20), ('babsky', 21), ('babsky', 21),
+    ('vedernikoff', 14), ('vedernikoff', 13), ('vedernikoff', 14)
+) as clickclack(name, grade)
+ORDER BY name, grade DESC;
+----
+name grade
+babsky 22
+babsky 21
+babsky 20
+vedernikoff 14
+vedernikoff 13
+
+
+query
+SELECT DISTINCT grade
+FROM
+(
+  VALUES
+    ('babsky', 22 ), ('babsky', 20), ('babsky', 21), ('babsky', 21),
+    ('vedernikoff', 14), ('vedernikoff', 13), ('vedernikoff', 14)
+) as clickclack(name, grade)
+ORDER BY grade DESC;
+----
+grade
+22
+21
+20
+14
+13
+
+
+query
+SELECT DISTINCT name
+FROM
+(
+  VALUES
+    ('babsky', 22 ), ('babsky', 20), ('babsky', 21), ('babsky', 21),
+    ('vedernikoff', 14), ('vedernikoff', 13), ('vedernikoff', 14)
+) as clickclack(name, grade)
+ORDER BY name DESC;
+----
+name
+vedernikoff
+babsky
+
+
+query
+SELECT DISTINCT grade + iq
+FROM
+(
+  VALUES
+    ('babsky', 22, -5), ('babsky', 20, -3), ('babsky', 21, -4), ('babsky', 21, -4),
+    ('vedernikoff', 14, 6), ('vedernikoff', 13, 4), ('vedernikoff', 14, 87)
+) as clickclack(name, grade, iq)
+ORDER BY grade + iq DESC;
+----
+?column?
+101
+20
+17
+
+
+query
+SELECT DISTINCT iq
+FROM
+(
+  VALUES
+    ('babsky', 22, -5), ('babsky', 20, -3), ('babsky', 21, -4), ('babsky', 21, -4),
+    ('vedernikoff', 14, 6), ('vedernikoff', 13, 4), ('vedernikoff', 14, 87)
+) as clickclack(name, grade, iq)
+ORDER BY 1 DESC;
+----
+iq
+87
+6
+4
+-3
+-4
+-5
+
+
+query
+SELECT DISTINCT clickclack.name, tindex.name
+FROM
+(
+  VALUES
+    ('babsky', 22 ), ('babsky', 20), ('babsky', 21), ('babsky', 21),
+    ('vedernikoff', 14), ('vedernikoff', 13), ('vedernikoff', 14)
+) as clickclack(name, grade),
+(
+  VALUES
+    ('babsky', 22, -5), ('babsky', 20, -3), ('babsky', 21, -4), ('babsky', 21, -4),
+    ('vedernikoff', 14, 6), ('vedernikoff', 13, 4), ('vedernikoff', 14, 87)
+) as tindex(name, grade, iq)
+ORDER BY clickclack.name DESC;
+----
+name name
+vedernikoff babsky
+vedernikoff vedernikoff
+babsky babsky
+babsky vedernikoff
+
+
+query error
+SELECT DISTINCT iq
+FROM
+(
+  VALUES
+    ('babsky', 22, -5), ('babsky', 20, -3), ('babsky', 21, -4), ('babsky', 21, -4),
+    ('vedernikoff', 14, 6), ('vedernikoff', 13, 4), ('vedernikoff', 14, 87)
+) as clickclack(name, grade, iq)
+ORDER BY grade DESC;
+----
+db error: ERROR: for SELECT DISTINCT, ORDER BY expressions must appear in select list
+
+
+
+query error
+SELECT DISTINCT name
+FROM
+(
+  VALUES
+    ('babsky', 22 ), ('babsky', 20), ('babsky', 21), ('babsky', 21),
+    ('vedernikoff', 14), ('vedernikoff', 13), ('vedernikoff', 14)
+) as clickclack(name, grade)
+ORDER BY grade, name DESC;
+----
+db error: ERROR: for SELECT DISTINCT, ORDER BY expressions must appear in select list
+
+
+query
+SELECT DISTINCT *, *
+FROM
+(
+  VALUES
+    ('babsky', 22 ), ('babsky', 20), ('babsky', 21), ('babsky', 21),
+    ('vedernikoff', 14), ('vedernikoff', 13), ('vedernikoff', 14)
+) as clickclack(name, grade)
+ORDER BY name, grade DESC;
+----
+name grade name grade
+babsky 22 babsky 22
+babsky 21 babsky 21
+babsky 20 babsky 20
+vedernikoff 14 vedernikoff 14
+vedernikoff 13 vedernikoff 13
+
+
+query
+SELECT DISTINCT SUM(grade + iq) as kek
+FROM
+(
+  VALUES
+    ('babsky1', 22, -5), ('babsky2', 20, -3), ('babsky3', 21, -4), ('babsky', 21, -4),
+    ('vedernikoff', 14, 6), ('vedernikoff', 13, 4), ('vedernikoff', 14, 87)
+) as clickclack(name, grade, iq)
+GROUP BY name
+ORDER BY kek DESC;
+----
+kek
+138
+17
+
+
+query
+SELECT DISTINCT SUM(grade + iq) as kek
+FROM
+(
+  VALUES
+    ('babsky1', 22, -5), ('babsky2', 20, -3), ('babsky3', 21, -4), ('babsky', 21, -4),
+    ('vedernikoff', 14, 6), ('vedernikoff', 13, 4), ('vedernikoff', 14, 87)
+) as clickclack(name, grade, iq)
+GROUP BY name
+ORDER BY 1 DESC;
+----
+kek
+138
+17
+
+
+onlyif sdb
+query error
+SELECT DISTINCT ON(ROW_NUMBER() OVER(PARTITION BY name ORDER BY grade DESC)) name
+FROM
+(
+  VALUES
+    ('babsky1', 22, -5), ('babsky2', 20, -3), ('babsky3', 21, -4), ('babsky', 21, -4),
+    ('vedernikoff', 14, 6), ('vedernikoff', 13, 4), ('vedernikoff', 14, 87)
+) as clickclack(name, grade, iq)
+----
+db error: ERROR: window function calls are not supported in DISTINCT ON
+
+
+# TODO: make error like in PG
+# query error
+# SELECT DISTINCT SUM(grade + iq)
+# FROM
+# (
+#   VALUES
+#     ('babsky1', 22, -5), ('babsky2', 20, -3), ('babsky3', 21, -4), ('babsky', 21, -4),
+#     ('vedernikoff', 14, 6), ('vedernikoff', 13, 4), ('vedernikoff', 14, 87)
+# ) as clickclack(name, grade, iq)
+# GROUP BY name
+# ORDER BY SUM(iq + grade) DESC;
+# ----
+
+
+query
+SELECT DISTINCT ON(name) *
+FROM
+(
+  VALUES
+    ('babsky', 22 ), ('babsky', 20), ('babsky', 21), ('babsky', 21),
+    ('vedernikoff', 14), ('vedernikoff', 13), ('vedernikoff', 14)
+) as clickclack(name, grade)
+ORDER BY name, grade DESC;
+----
+name grade
+babsky 22
+vedernikoff 14
+
+
+query
+SELECT DISTINCT ON(name, grade) *, *
+FROM
+(
+  VALUES
+    ('babsky', 22 ), ('babsky', 20), ('babsky', 21), ('babsky', 21),
+    ('vedernikoff', 14), ('vedernikoff', 13), ('vedernikoff', 14)
+) as clickclack(name, grade)
+ORDER BY name, grade DESC;
+----
+name grade name grade
+babsky 22 babsky 22
+babsky 21 babsky 21
+babsky 20 babsky 20
+vedernikoff 14 vedernikoff 14
+vedernikoff 13 vedernikoff 13
+
+
+query
+SELECT DISTINCT ON (grade * 2) grade * 2 FROM
+(
+  VALUES
+    ('babsky', 22 ), ('babsky', 20), ('babsky', 21), ('babsky', 21),
+    ('vedernikoff', 14), ('vedernikoff', 13), ('vedernikoff', 14)
+) as clickclack(name, grade)
+GROUP BY grade * 2
+ORDER BY grade * 2;
+----
+?column?
+26
+28
+40
+42
+44
+
+
+query
+SELECT DISTINCT ON (grade) grade
+FROM
+(
+  VALUES
+    ('babsky', 22 ), ('babsky', 20), ('babsky', 21), ('babsky', 21),
+    ('vedernikoff', 14), ('vedernikoff', 13), ('vedernikoff', 14)
+) as clickclack(name, grade)
+GROUP BY grade
+ORDER BY grade;
+----
+grade
+13
+14
+20
+21
+22
+
+
+query
+SELECT DISTINCT ON (grade) grade as not_grade, name as not_name
+FROM
+(
+  VALUES
+    ('babsky', 22 ), ('babsky', 20), ('babsky', 21), ('babsky', 21),
+    ('vedernikoff', 14), ('vedernikoff', 13), ('vedernikoff', 14)
+) as clickclack(name, grade)
+ORDER BY not_grade, grade, not_name, name;
+----
+not_grade not_name
+13 vedernikoff
+14 vedernikoff
+20 babsky
+21 babsky
+22 babsky
+
+
+query
+SELECT DISTINCT ON (name, grade, SUM(grade + iq)) name, SUM(grade + iq)
+FROM
+(
+  VALUES
+    ('babsky1', 22, -5), ('babsky2', 20, -3), ('babsky3', 21, -4), ('babsky', 21, -4),
+    ('vedernikoff', 14, 6), ('vedernikoff', 13, 4), ('vedernikoff', 14, 87)
+) as clickclack(name, grade, iq)
+GROUP BY name, grade
+ORDER BY name, grade;
+----
+name sum
+babsky 17
+babsky1 17
+babsky2 17
+babsky3 17
+vedernikoff 17
+vedernikoff 121
+
+
+query
+SELECT DISTINCT ON (2 * clickclack.grade) clickclack.grade
+FROM
+(
+  VALUES
+    ('babsky', 22 ), ('babsky', 20), ('babsky', 21), ('babsky', 21),
+    ('vedernikoff', 14), ('vedernikoff', 13), ('vedernikoff', 14)
+) as clickclack(name, grade)
+ORDER BY 2 * clickclack.grade;
+----
+grade
+13
+14
+20
+21
+22

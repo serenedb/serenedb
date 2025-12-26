@@ -262,9 +262,7 @@ std::shared_ptr<const T> MakePtrView(const T& val) {
 
 template<typename T>
 std::shared_ptr<const T> MakePtrView(const std::shared_ptr<const T>& ptr) {
-  if (!ptr) {
-    return {};
-  }
+  SDB_ASSERT(ptr);
   return MakePtrView(*ptr);
 }
 

@@ -80,8 +80,7 @@ yaclib::Future<Result> TxnState::Abort() {
   auto status = _txn->Rollback();
   if (!status.ok()) {
     r = {ERROR_INTERNAL,
-         absl::StrCat("Failed to rollback RocksDB transaction: ",
-                      status.ToString())};
+         "Failed to rollback RocksDB transaction: ", status.ToString()};
   } else {
     _txn.reset();
   }

@@ -42,6 +42,7 @@ set(iresearch-tests_sources
     ./index/buffered_column_test.cpp
     ./index/segment_writer_tests.cpp
     ./index/consolidation_policy_tests.cpp
+    ./parser/lucene_parser_test.cpp
     ./search/empty_filter_tests.cpp
     ./search/nested_filter_test.cpp
     ./search/granular_range_filter_tests.cpp

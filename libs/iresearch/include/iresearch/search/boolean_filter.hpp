@@ -57,7 +57,15 @@ class BooleanFilter : public FilterWithBoost, public AllDocsProvider {
   bool empty() const { return _filters.empty(); }
   size_t size() const { return _filters.size(); }
 
-  Query::ptr prepare(const PrepareContext& ctx) const override;
+  Filter::ptr PopBack() {
+    if (_filters.empty())
+      return nullptr;
+    auto result = std::move(_filters.back());
+    _filters.pop_back();
+    return result;
+  }
+
+  Prepared::ptr prepare(const PrepareContext& ctx) const override;
 
  protected:
   bool equals(const Filter& rhs) const noexcept final;

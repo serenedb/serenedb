@@ -1351,11 +1351,20 @@ void SqlAnalyzer::MakeTableWrite(
       expr = ResolveVeloxFunctionAndInferArgsCommonType(
         "coalesce", {std::move(expr), MakeConst(true)});
 
-      auto errcode = MakeConst(static_cast<int32_t>(ERRCODE_CHECK_VIOLATION));
-      
-      auto errmsg = MakeConst(
-        absl::StrCat("new row for relation \"", object.table->name(),
-                     "\" violates check constraint \"", constraint.name, "\""));
+      lp::ExprPtr errcode;
+      lp::ExprPtr errmsg;
+      if (auto [not_null, column_name] = constraint.IsNotNull(); not_null) {
+        errcode = MakeConst(static_cast<int32_t>(ERRCODE_NOT_NULL_VIOLATION));
+        errmsg = MakeConst(absl::StrCat(
+          "null value in column \"", column_name, "\" of relation \"",
+          object.table->name(), "\" violates not-null constraint"));
+      } else {
+        errcode = MakeConst(static_cast<int32_t>(ERRCODE_CHECK_VIOLATION));
+        errmsg = MakeConst(absl::StrCat(
+          "new row for relation \"", object.table->name(),
+          "\" violates check constraint \"", constraint.name, "\""));
+      }
+
       auto throwsql = std::make_shared<lp::CallExpr>(
         velox::UNKNOWN(), "pg_error",
         std::vector<lp::ExprPtr>{std::move(errcode), cursorpos,

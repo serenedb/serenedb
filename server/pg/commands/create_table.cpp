@@ -232,6 +232,7 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
               error_null_conflict(constraint, col.name);
             }
 
+            append_not_null_constraint(constraint, col.name);
             null_info = NullInfo::kNotNull;
             break;
           case CONSTR_DEFAULT: {
@@ -287,7 +288,7 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
             // guaranteed by parser
             SDB_ASSERT(constraint.generated_when == ATTRIBUTE_IDENTITY_ALWAYS);
 
-            auto generated_value = MakeColumnExpr(db, constraint.raw_expr);
+            col.expr = MakeColumnExpr(db, constraint.raw_expr);
             col.generated_type = catalog::Column::GeneratedType::kStored;
           } break;
           default:

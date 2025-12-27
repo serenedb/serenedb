@@ -120,15 +120,26 @@ std::string Column::GeneratePKName(std::span<const std::string> column_names) {
   return candidate;
 }
 
-bool CheckConstraint::IsNotNull() const noexcept {
+std::pair<bool, std::string_view> CheckConstraint::IsNotNull() const noexcept {
   SDB_ASSERT(expr);
 
   const auto* node = expr->GetExpr();
   if (!IsA(node, NullTest)) {
-    return false;
+    return {false, ""};
   }
   const auto& null_test = *castNode(NullTest, node);
-  return false;
+  if (null_test.nulltesttype != IS_NOT_NULL) {
+    return {false, ""};
+  }
+  const auto* arg = null_test.arg;
+  if (!IsA(arg, ColumnRef)) {
+    return {false, ""};
+  }
+  const auto& col_ref = *castNode(ColumnRef, arg);
+  if (list_length(col_ref.fields) != 1) {
+    return {false, ""};
+  }
+  return {true, strVal(linitial(col_ref.fields))};
 }
 
 Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,

@@ -1,9 +1,18 @@
+statement error
+CREATE TABLE arelav
+(
+  id INTEGER NULL NOT NULL
+);
+----
+db error: ERROR: conflicting NULL/NOT NULL declarations for column "id" of table "arelav"
+
+
 statement ok
 CREATE TABLE clickclack
 (
   name TEXT CHECK (name != 'babsky') CHECK (name != 'arelav'),
   weight INTEGER,
-  age INTEGER DEFAULT 40,
+  age INTEGER DEFAULT 40 NOT NULL,
   grade INTEGER GENERATED ALWAYS AS ( (2 * weight + age) / 10 ) STORED CHECK (grade > 22),
   CHECK (name != 'deadinside' OR age != 54),
   CONSTRAINT chk_only_skuf CHECK (age > 30 AND weight > 90)
@@ -57,6 +66,13 @@ INSERT INTO clickclack (name, weight) VALUES ('young_skuf', 91);
 ----
 db error: ERROR: new row for relation "clickclack" violates check constraint "clickclack_grade_check"
 DETAIL: Failing row contains (young_skuf, 91, 40, 22).
+
+
+statement error
+INSERT INTO clickclack (age) VALUES (NULL);
+----
+db error: ERROR: null value in column "age" of relation "clickclack" violates not-null constraint
+DETAIL: Failing row contains (null, null, null, null).
 
 
 statement count 1

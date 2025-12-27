@@ -165,7 +165,9 @@ struct CheckConstraint {
   std::string name;
   std::shared_ptr<ColumnExpr> expr;
 
-  bool IsNotNull() const noexcept;
+  // returns whether this is a NOT NULL constraint; if so, the second value is
+  // the column name
+  std::pair<bool, std::string_view> IsNotNull() const noexcept;
 };
 
 struct CreateTableRequest {

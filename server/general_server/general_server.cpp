@@ -124,8 +124,10 @@ void GeneralServer::stopListening() {
 void GeneralServer::stopConnections() {
   // close connections of all socket tasks so the tasks will
   // eventually shut themselves down
-  std::lock_guard guard(_tasks_lock);
-  for (const auto& pair : _comm_tasks) {
+  std::unique_lock guard(_tasks_lock);
+  auto comm_task = _comm_tasks;
+  guard.unlock();
+  for (const auto& pair : comm_task) {
     pair.second->Stop();
   }
 }

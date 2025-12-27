@@ -16509,8 +16509,6 @@ UNION
 ----
 23 values hashing to 9e99403079efe3a18212fa07303202dc
 
-# TODO(mbkkt) investigate why doesn't work
-skipif serenedb
 query T valuesort
   SELECT a2 FROM t2
    WHERE (315=d2 OR 674=b2)

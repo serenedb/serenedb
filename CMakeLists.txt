@@ -376,6 +376,8 @@ if(SDB_DEV)
     add_definitions("-DSDB_DEV=1")
 
     # TODO(mbkkt) add_definitions("-D_FORTIFY_SOURCE=3")
+else()
+    add_definitions(-DNDEBUG)
 endif()
 
 if(SDB_GTEST)
@@ -433,12 +435,6 @@ if("${SDB_ALLOC}" MATCHES "JE")
 elseif("${SDB_ALLOC}" MATCHES "TC")
     add_definitions("-DSERENEDB_HAVE_TCMALLOC=1")
 endif()
-
-################################################################################
-## NDEBUG
-################################################################################
-
-add_definitions(-DNDEBUG)
 
 ################################################################################
 ## FLAGS

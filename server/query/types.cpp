@@ -101,12 +101,12 @@ class IntervalTypeFactory : public velox::CustomTypeFactory {
   }
 
   velox::exec::CastOperatorPtr getCastOperator() const final {
-    VELOX_CHECK(false, "Casting for INTERVAL type is not implemented");
+    VELOX_FAIL("Casting for INTERVAL type is not implemented");
   }
 
   velox::AbstractInputGeneratorPtr getInputGenerator(
     const velox::InputGeneratorConfig& /*config*/) const final {
-    VELOX_CHECK(false, "Input generation for INTERVAL type is not implemented");
+    VELOX_FAIL("Input generation for INTERVAL type is not implemented");
   }
 };
 
@@ -115,7 +115,7 @@ class PgUnknownType final : public velox::VarcharType {
 
  public:
   static std::shared_ptr<const PgUnknownType> get() {
-    VELOX_CONSTEXPR_SINGLETON PgUnknownType kInstance;
+    static constexpr PgUnknownType kInstance;
     return {std::shared_ptr<const PgUnknownType>{}, &kInstance};
   }
 
@@ -156,8 +156,7 @@ class PgUnknownTypeFactory : public velox::CustomTypeFactory {
 
   velox::AbstractInputGeneratorPtr getInputGenerator(
     const velox::InputGeneratorConfig& /*config*/) const final {
-    VELOX_CHECK(false,
-                "Input generation for PG_UNKNOWN type is not implemented");
+    VELOX_FAIL("Input generation for PG_UNKNOWN type is not implemented");
   }
 };
 

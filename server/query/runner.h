@@ -34,7 +34,12 @@ namespace sdb::query {
 // TODO: Axiom Runner is not designed for async execution this should be fixed.
 class Runner final {
  public:
+  Runner(const Runner&) = delete;
+  Runner& operator=(const Runner&) = delete;
+
   Runner() = default;
+  Runner(Runner&&) = default;
+  Runner& operator=(Runner&&) = default;
 
   explicit Runner(
     axiom::runner::MultiFragmentPlanPtr plan,
@@ -53,22 +58,25 @@ class Runner final {
     return _runner->next();
   }
 
-  yaclib::Future<> RequestCancel() {
-    auto [f, p] = yaclib::MakeContract();
+  void RequestCancel() {
     if (_runner) {
-      auto runner = std::move(_runner);
-      runner->abort();
-      runner->wait().defer(
-        [p = std::move(p)](auto&&) mutable { std::move(p).Set(); });
-    } else {
-      std::move(p).Set();
+      _runner->abort();
     }
-    return std::move(f);
   }
 
   std::string PrintPlanWithStats() {
     SDB_ASSERT(_runner);
     return _runner->printPlanWithStats();
+  }
+
+  ~Runner() {
+    if (!_runner) {
+      return;
+    }
+    _runner->abort();
+    auto f = _runner->wait();
+    _runner = nullptr;
+    f.wait();
   }
 
  private:

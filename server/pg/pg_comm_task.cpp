@@ -1378,9 +1378,14 @@ void PgSQLCommTask<T>::Start() {
 
 template<rest::SocketType T>
 void PgSQLCommTask<T>::SendAsync(message::SequenceView data) {
-  SDB_ASSERT(!data.Empty());
+  if (_send_should_close.load(std::memory_order_acquire)) {
+    Base::Close(this->_close_error);
+    return;
+  }
+  if (data.Empty()) {
+    return;
+  }
   SDB_LOG_PGSQL("Sending Packet:", data.Print());
-  std::lock_guard lock{this->_queue_mutex};
   asio_ns::async_write(
     this->_protocol->socket, data,
     [self = this->shared_from_this()](asio_ns::error_code ec, size_t nwrite) {
@@ -1529,7 +1534,16 @@ void PgSQLCommTask<T>::TimeoutStop() {
   SDB_INFO("xxxxx", Logger::REQUESTS, "keep alive timeout, closing stream!");
   SDB_ASSERT(!this->_current_portal);
   this->_send.Write(ToBuffer(kTimeoutTermination), true);
-  Base::Close();
+  CloseImpl({});
+}
+
+template<rest::SocketType T>
+void PgSQLCommTask<T>::CloseImpl(asio_ns::error_code close_error) {
+  this->_close_error = close_error;
+  this->_send_should_close.store(true, std::memory_order_release);
+  if (this->_queue.empty()) {
+    this->_send.Commit(true);
+  }
 }
 
 template class PgSQLCommTask<rest::SocketType::Tcp>;

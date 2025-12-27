@@ -197,8 +197,9 @@ class PgSQLCommTask final : public GenericCommTask<T, PgSQLCommTaskBase> {
   }
   void Close(asio_ns::error_code err = {}) final {
     std::lock_guard lock{this->_queue_mutex};
-    Base::Close(err);
+    CloseImpl(err);
   }
+  void CloseImpl(asio_ns::error_code close_error);
   bool ReadCallback(asio_ns::error_code ec) final;
   void SetIOTimeout() final;
   void SetIOTimeoutImpl() final;
@@ -206,6 +207,8 @@ class PgSQLCommTask final : public GenericCommTask<T, PgSQLCommTaskBase> {
 
   std::string _packet;
   uint32_t _pending_len{0};
+  std::atomic_bool _send_should_close = false;
+  asio_ns::error_code _close_error;
 };
 
 }  // namespace sdb::pg

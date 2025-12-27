@@ -1,13 +1,23 @@
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_split.h>
+#include <openssl/crypto.h>
 
 #include <iostream>
 #include <iresearch/analysis/analyzers.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
+#include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
+#include <iresearch/search/filter.hpp>
+#include <iresearch/search/score.hpp>
+#include <iresearch/search/scorer.hpp>
 #include <iresearch/search/scorers.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/text_format.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <string>
+
+#include "basics/assert.h"
 
 enum class QueryType {
   Count,
@@ -54,13 +64,15 @@ namespace {
 constexpr std::string_view kFormatName = "1_5simd";
 constexpr std::string_view kScorer = "bm25";
 constexpr std::string_view kScorerOptions = R"({})";
-constexpr std::string_view kTokenizer = "segmentation";
-constexpr std::string_view kTokenizerOptions = R"({})";
+// constexpr std::string_view kTokenizer = "segmentation";
+// constexpr std::string_view kTokenizerOptions = R"({})";
 
 struct Query {
   QueryType type = QueryType::Unsupported;
   std::string_view query;
 };
+
+irs::Filter::ptr ParseFilter(std::string_view str) { return {}; }
 
 Query ParseQuery(std::string_view str) {
   auto parts = absl::StrSplit(str, '\t');
@@ -75,36 +87,126 @@ Query ParseQuery(std::string_view str) {
   return {*type, *begin};
 }
 
-void ExecuteTopK(size_t k, std::string_view query) {}
+class Executor {
+ public:
+  Executor(std::string_view path)
+    : _scorer{irs::scorers::Get(kScorer,
+                                irs::Type<irs::text_format::Json>::get(),
+                                kScorerOptions, false)},
+      _format{irs::formats::Get(kFormatName, false)},
+      _dir{path},
+      _reader{
+        irs::DirectoryReader(_dir, _format, {.scorers = {&_scorer_ptr, 1}})} {}
 
-size_t ExecuteTopKCount(size_t k, std::string_view query) { return 0; }
-
-size_t ExecuteCount(std::string_view query) { return 0; }
-
-size_t ExecuteQuery(Query query) {
-  switch (query.type) {
-    case QueryType::Count:
-      return ExecuteCount(query.query);
-    case QueryType::Top10:
-      ExecuteTopK(10, query.query);
-      return 1;
-    case QueryType::Top100:
-      ExecuteTopK(100, query.query);
-      return 1;
-    case QueryType::Top1000:
-      ExecuteTopK(1000, query.query);
-      return 1;
-    case QueryType::Top10Count:
-      return ExecuteTopKCount(10, query.query);
-    case QueryType::Top100Count:
-      return ExecuteTopKCount(100, query.query);
-    case QueryType::Top1000Count:
-      return ExecuteTopKCount(1000, query.query);
-    default:
-      std::cout << magic_enum::enum_name(QueryType::Unsupported) << "\n";
+  size_t ExecuteTopK(size_t k, std::string_view query) {
+    auto prepared = PrepareFilter(query);
+    if (!prepared) {
       return 0;
+    }
+
+    _results.reserve(k);
+    size_t count = 0;
+
+    for (auto left = k; auto& segment : _reader) {
+      auto docs = prepared->execute(irs::ExecutionContext{
+        .segment = segment, .scorers = _scorers, .wand = _wand});
+      const auto* doc = irs::get<irs::DocAttr>(*docs);
+      const auto* score = irs::get<irs::ScoreAttr>(*docs);
+      auto* threshold = irs::GetMutable<irs::ScoreAttr>(docs.get());
+
+      if (!left && threshold) {
+        threshold->Min(_results.front().first);
+      }
+
+      for (float_t score_value; docs->next();) {
+        ++count;
+
+        (*score)(&score_value);
+
+        if (left) {
+          _results.emplace_back(score_value, doc->value);
+
+          if (0 == --left) {
+            absl::c_make_heap(_results,
+                              [](const auto& lhs, const auto& rhs) noexcept {
+                                return lhs.first > rhs.first;
+                              });
+
+            threshold->Min(_results.front().first);
+          }
+        } else if (_results.front().first < score_value) {
+          absl::c_pop_heap(_results,
+                           [](const auto& lhs, const auto& rhs) noexcept {
+                             return lhs.first > rhs.first;
+                           });
+
+          auto& [score, doc_id] = _results.back();
+          score = score_value;
+          doc_id = doc->value;
+
+          absl::c_push_heap(
+            _results,
+            [](const std::pair<float_t, irs::doc_id_t>& lhs,
+               const std::pair<float_t, irs::doc_id_t>& rhs) noexcept {
+              return lhs.first > rhs.first;
+            });
+
+          threshold->Min(_results.front().first);
+        }
+      }
+    }
+
+    absl::c_sort(_results, [](const auto& lhs, const auto& rhs) noexcept {
+      return lhs.first > rhs.first;
+    });
+
+    return count;
   }
-}
+
+  size_t ExecuteCount(std::string_view query) { return 0; }
+
+  size_t ExecuteQuery(Query query) {
+    switch (query.type) {
+      case QueryType::Count:
+        return ExecuteCount(query.query);
+      case QueryType::Top10:
+        return ExecuteTopK(10, query.query) > 0;
+      case QueryType::Top100:
+        return ExecuteTopK(100, query.query) > 0;
+      case QueryType::Top1000:
+        return ExecuteTopK(1000, query.query) > 0;
+      case QueryType::Top10Count:
+        return ExecuteTopK(10, query.query);
+      case QueryType::Top100Count:
+        return ExecuteTopK(100, query.query);
+      case QueryType::Top1000Count:
+        return ExecuteTopK(1000, query.query);
+      default:
+        return 0;
+    }
+  }
+
+ private:
+  irs::Filter::Prepared::ptr PrepareFilter(std::string_view query) {
+    auto filter = ParseFilter(query);
+    if (!filter) {
+      return {};
+    }
+    return filter->prepare({
+      .index = _reader,
+      .scorers = _scorers,
+    });
+  }
+  std::vector<std::pair<float_t, irs::doc_id_t>> _results;
+  irs::Scorer::ptr _scorer;
+  irs::Scorer* _scorer_ptr{_scorer.get()};
+  irs::Scorers _scorers{irs::Scorers::Prepare(std::span{&_scorer, 1})};
+  irs::Tokenizer::ptr _tokenizer;
+  irs::Format::ptr _format;
+  irs::MMapDirectory _dir;
+  irs::DirectoryReader _reader;
+  irs::WandContext _wand{.index = 0, .strict = true};
+};
 
 }  // namespace
 
@@ -114,35 +216,15 @@ int main(int argc, const char* argv[]) {
   irs::scorers::Init();
   irs::compression::Init();
 
-  auto scorer = irs::scorers::Get(
-    kScorer, irs::Type<irs::text_format::Json>::get(), kScorerOptions, false);
-  SDB_ASSERT(scorer);
-  auto* score = scorer.get();
-
-  auto format = irs::formats::Get(kFormatName, false);
-  SDB_ASSERT(format);
-
-  auto tokenizer = irs::analysis::analyzers::Get(
-    kTokenizer, irs::Type<irs::text_format::Json>::get(), kTokenizerOptions,
-    false);
-  SDB_ASSERT(tokenizer);
-
-  const irs::WandContext wand = [&] -> irs::WandContext {
-    return {.index = 0, .strict = true};
-  }();
-
-  irs::MMapDirectory dir{argv[1]};
-  irs::IndexReaderOptions options;
-  if (wand.Enabled()) {
-    options.scorers = {&score, 1};
-  }
-
-  auto reader = irs::DirectoryReader(dir, format, options);
-  irs::Scorers order;
+  Executor executor{argv[1]};
 
   std::string data;
   while (std::getline(std::cin, data)) {
-    std::cout << ExecuteQuery(ParseQuery(data)) << "\n";
+    const auto count = executor.ExecuteQuery(ParseQuery(data));
+    if (!count) {
+      std::cout << magic_enum::enum_name(QueryType::Unsupported) << "\n";
+    }
+    std::cout << count << "\n";
   }
   return 0;
 }

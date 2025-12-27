@@ -45,6 +45,27 @@ LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 
+std::shared_ptr<ColumnExpr> MakeColumnExpr(ObjectId database_id, Node* expr) {
+  auto column_expr = std::make_shared<ColumnExpr>();
+  auto r = column_expr->Init(database_id, expr);
+  if (!r.ok()) {
+    SDB_THROW(std::move(r));
+  }
+  return column_expr;
+}
+
+std::shared_ptr<ColumnExpr> MakeColumnExpr(ObjectId database_id,
+                                           std::string deparsed) {
+  auto column_expr = std::make_shared<ColumnExpr>();
+  auto r = column_expr->Init(database_id, std::move(deparsed));
+  if (!r.ok()) {
+    SDB_THROW(std::move(r));
+  }
+  return column_expr;
+}
+
+enum NullInfo : uint8_t { kNotStated = 0, kNull = 1, kNotNull = 2 };
+
 // TODO: use ErrorPosition in ThrowSqlError
 yaclib::Future<Result> CreateTable(ExecContext& context,
                                    const CreateStmt& stmt) {
@@ -80,6 +101,7 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
     }
     request.columns.push_back(std::move(column));
   };
+
   auto append_pk = [&](const catalog::Column::Id column_id, int location) {
     if (absl::c_linear_search(request.pkColumns, column_id)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_COLUMN), CURSOR_POS(location),
@@ -105,6 +127,84 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
       ERR_MSG("constraint is not supported yet: ", constraint_name));
   };
 
+  auto error_no_inherit_not_supported = [&](const Constraint& constraint) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    CURSOR_POS(ExprLocation(&constraint)),
+                    ERR_MSG("NO INHERIT is not supported yet for constraints"));
+  };
+
+  auto error_null_conflict = [&](const Constraint& constraint,
+                                 std::string_view col_name) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_SYNTAX_ERROR), CURSOR_POS(ExprLocation(&constraint)),
+      ERR_MSG("conflicting NULL/NOT NULL declarations for column \"", col_name,
+              "\" of table \"", table, "\""));
+  };
+
+  // tries to behave like ChooseConstraintName pg source code function
+  auto choose_constraint_name = [&](std::string_view name1,
+                                    std::string_view name2,
+                                    std::string_view label) -> std::string {
+    std::string base_name;
+    if (name2.empty()) {
+      base_name = absl::StrCat(name1, "_", label);
+    } else {
+      base_name = absl::StrCat(name1, "_", name2, "_", label);
+    }
+
+    auto name_exists = [&](std::string_view candidate) {
+      return absl::c_any_of(
+        request.checkConstraints,
+        [&](const catalog::CheckConstraint& c) { return c.name == candidate; });
+    };
+
+    if (!name_exists(base_name)) {
+      return base_name;
+    }
+
+    for (size_t counter = 1;; ++counter) {
+      std::string candidate = absl::StrCat(base_name, counter);
+      if (!name_exists(candidate)) {
+        return candidate;
+      }
+    }
+  };
+
+  auto append_check_constraint = [&](
+                                   const Constraint& constraint,
+                                   std::string_view column_name = {}) -> void {
+    SDB_ASSERT(constraint.contype == CONSTR_CHECK);
+
+    std::string name;
+    if (constraint.conname) {
+      name = constraint.conname;
+    } else {
+      name = choose_constraint_name(table, column_name, "check");
+    }
+
+    request.checkConstraints.push_back(catalog::CheckConstraint{
+      .name = std::move(name),
+      .expr = MakeColumnExpr(db, constraint.raw_expr),
+    });
+  };
+
+  auto append_not_null_constraint = [&](const Constraint& constraint,
+                                        std::string_view column_name) -> void {
+    SDB_ASSERT(constraint.contype == CONSTR_NOTNULL);
+
+    std::string name;
+    if (constraint.conname) {
+      name = constraint.conname;
+    } else {
+      name = choose_constraint_name(table, column_name, "not_null");
+    }
+
+    request.checkConstraints.push_back(catalog::CheckConstraint{
+      .name = std::move(name),
+      .expr = MakeColumnExpr(db, absl::StrCat(column_name, " IS NOT NULL")),
+    });
+  };
+
   catalog::Column::Id next_column_id = 0;
   VisitNodes(stmt.tableElts, [&](const Node& node) {
     if (IsA(&node, ColumnDef)) {
@@ -114,8 +214,26 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
                                     .name = col_def.colname},
                     ExprLocation(&col_def));
       auto& col = request.columns.back();
+      NullInfo null_info = NullInfo::kNotStated;
       VisitNodes(col_def.constraints, [&](const Constraint& constraint) {
+        if (constraint.is_no_inherit) {
+          error_no_inherit_not_supported(constraint);
+        }
+
         switch (constraint.contype) {
+          case CONSTR_NULL:
+            if (null_info == NullInfo::kNotNull) {
+              error_null_conflict(constraint, col.name);
+            }
+            null_info = NullInfo::kNull;
+            break;
+          case CONSTR_NOTNULL:
+            if (null_info == NullInfo::kNull) {
+              error_null_conflict(constraint, col.name);
+            }
+
+            null_info = NullInfo::kNotNull;
+            break;
           case CONSTR_DEFAULT: {
             switch (col.generated_type) {
               using enum catalog::Column::GeneratedType;
@@ -137,13 +255,13 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
                 }
             }
 
-            auto default_value = std::make_shared<ColumnExpr>();
-            auto r = default_value->Init(db, constraint.raw_expr);
-            SDB_ENSURE(r.ok(), r.errorNumber(), std::move(r).errorMessage());
-            col.expr = std::move(default_value);
+            col.expr = MakeColumnExpr(db, constraint.raw_expr);
           } break;
           case CONSTR_PRIMARY:  // create table (field integer primary key)
             append_pk(col.id, ExprLocation(&constraint));
+            break;
+          case CONSTR_CHECK:
+            append_check_constraint(constraint, col.name);
             break;
           case CONSTR_GENERATED: {
             switch (col.generated_type) {
@@ -169,10 +287,7 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
             // guaranteed by parser
             SDB_ASSERT(constraint.generated_when == ATTRIBUTE_IDENTITY_ALWAYS);
 
-            auto generated_value = std::make_shared<ColumnExpr>();
-            auto r = generated_value->Init(db, constraint.raw_expr);
-            SDB_ENSURE(r.ok(), r.errorNumber(), std::move(r).errorMessage());
-            col.expr = std::move(generated_value);
+            auto generated_value = MakeColumnExpr(db, constraint.raw_expr);
             col.generated_type = catalog::Column::GeneratedType::kStored;
           } break;
           default:
@@ -185,6 +300,9 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
 
     SDB_ASSERT(IsA(&node, Constraint));
     const auto& constraint = *castNode(Constraint, &node);
+    if (constraint.is_no_inherit) {
+      error_no_inherit_not_supported(constraint);
+    }
     switch (constraint.contype) {
       case CONSTR_PRIMARY: {
         // create table (field integer, primary key(field))
@@ -205,6 +323,11 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
           append_pk(it->id, ExprLocation(&key));
         });
       } break;
+      case CONSTR_CHECK:
+        append_check_constraint(constraint);
+        break;
+      case CONSTR_NULL:
+      case CONSTR_NOTNULL:
       case CONSTR_DEFAULT:
       case CONSTR_GENERATED:
         SDB_UNREACHABLE();

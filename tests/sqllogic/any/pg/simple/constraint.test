@@ -1,0 +1,76 @@
+statement ok
+CREATE TABLE clickclack
+(
+  name TEXT CHECK (name != 'babsky') CHECK (name != 'arelav'),
+  weight INTEGER,
+  age INTEGER DEFAULT 40,
+  grade INTEGER GENERATED ALWAYS AS ( (2 * weight + age) / 10 ) STORED CHECK (grade > 22),
+  CHECK (name != 'deadinside' OR age != 54),
+  CONSTRAINT chk_only_skuf CHECK (age > 30 AND weight > 90)
+);
+
+
+statement error
+INSERT INTO clickclack (name, weight, age) VALUES ('babsky', 140, 69);
+----
+db error: ERROR: new row for relation "clickclack" violates check constraint "clickclack_name_check"
+DETAIL: Failing row contains (babsky, 140, 69, 34).
+
+
+statement error
+INSERT INTO clickclack (name, weight, age) VALUES ('arelav', 140, 69);
+----
+db error: ERROR: new row for relation "clickclack" violates check constraint "clickclack_name_check1"
+DETAIL: Failing row contains (arelav, 140, 69, 34).
+
+
+statement error
+INSERT INTO clickclack (name, weight, age) VALUES ('deadinside', 91, 54);
+----
+db error: ERROR: new row for relation "clickclack" violates check constraint "clickclack_check"
+DETAIL: Failing row contains (deadinside, 91, 54, 23).
+
+
+statement error
+INSERT INTO clickclack (name, weight, age) VALUES ('vedernikoff', 120, 21);
+----
+db error: ERROR: new row for relation "clickclack" violates check constraint "chk_only_skuf"
+DETAIL: Failing row contains (vedernikoff, 120, 21, 26).
+
+
+statement error
+INSERT INTO clickclack (name, weight, age) VALUES ('danpuz', 91, 32);
+----
+db error: ERROR: new row for relation "clickclack" violates check constraint "clickclack_grade_check"
+DETAIL: Failing row contains (danpuz, 91, 32, 21).
+
+
+statement error
+INSERT INTO clickclack (name, weight, age) VALUES ('young_skuf', 91, 31);
+----
+db error: ERROR: new row for relation "clickclack" violates check constraint "clickclack_grade_check"
+DETAIL: Failing row contains (young_skuf, 91, 31, 21).
+
+
+statement error
+INSERT INTO clickclack (name, weight) VALUES ('young_skuf', 91);
+----
+db error: ERROR: new row for relation "clickclack" violates check constraint "clickclack_grade_check"
+DETAIL: Failing row contains (young_skuf, 91, 40, 22).
+
+
+statement count 1
+INSERT INTO clickclack (name, weight, age) VALUES ('deadinside', 140, 420);
+
+
+statement count 1
+INSERT INTO clickclack (name) VALUES ('zhme');
+
+
+query
+SELECT * FROM clickclack 
+ORDER BY 1, 2, 3, 4;
+----
+name weight age grade
+deadinside 140 420 70
+zhme NULL 40 NULL

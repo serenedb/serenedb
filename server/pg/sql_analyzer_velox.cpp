@@ -710,7 +710,8 @@ class SqlAnalyzer {
     axiom::connector::WriteKind write_kind, State& state,
     const Objects::ObjectData& object, std::vector<std::string> column_names,
     std::vector<lp::ExprPtr> column_exprs,
-    std::span<const catalog::Column* const> generated_columns);
+    std::span<const catalog::Column* const> generated_columns,
+    std::span<const catalog::CheckConstraint> check_constraints, int location);
 
   void ProcessSelectStmt(State& state, const SelectStmt& stmt);
   void ProcessInsertStmt(State& state, const InsertStmt& stmt);
@@ -1269,17 +1270,18 @@ void SqlAnalyzer::MakeTableWrite(
   axiom::connector::WriteKind write_kind, State& state,
   const Objects::ObjectData& object, std::vector<std::string> column_names,
   std::vector<lp::ExprPtr> column_exprs,
-  std::span<const catalog::Column* const> generated_columns) {
+  std::span<const catalog::Column* const> generated_columns,
+  std::span<const catalog::CheckConstraint> check_constraints, int location) {
   object.EnsureTable();
   const auto& table = object.table;
 
-  if (!generated_columns.empty()) {
-    // generated columns may depend on other columns (default indeed)
+  auto project_columns = [&]() {
     auto projected_column_names =
       column_names | std::views::transform([&](const std::string& name) {
         return _id_generator.NextColumnName(name);
       }) |
       std::ranges::to<std::vector>();
+
     state.root = std::make_shared<lp::ProjectNode>(
       _id_generator.NextPlanId(), std::move(state.root),
       std::move(projected_column_names), std::move(column_exprs));
@@ -1290,6 +1292,11 @@ void SqlAnalyzer::MakeTableWrite(
       column_exprs.emplace_back(
         std::make_shared<lp::InputReferenceExpr>(type, expr));
     }
+  };
+
+  if (!generated_columns.empty()) {
+    // generated columns may depend on other columns (default indeed)
+    project_columns();
 
     for (const auto* column : generated_columns) {
       SDB_ASSERT(column);
@@ -1299,6 +1306,69 @@ void SqlAnalyzer::MakeTableWrite(
       column_names.emplace_back(column->name);
       column_exprs.emplace_back(std::move(expr));
     }
+  }
+
+  if (!check_constraints.empty()) {
+    // constraints may depend on other columns (generated / default indeed)
+    project_columns();
+
+    auto build_failing_row_detail = [&]() -> lp::ExprPtr {
+      std::vector<lp::ExprPtr> concat_parts;
+      concat_parts.push_back(MakeConst(
+        std::string_view("Failing row contains ("), velox::VARCHAR()));
+
+      for (size_t i = 0; i < column_exprs.size(); ++i) {
+        if (i > 0) {
+          concat_parts.push_back(
+            MakeConst(std::string_view(", "), velox::VARCHAR()));
+        }
+        auto str_expr = MakeCast(velox::VARCHAR(), column_exprs[i]);
+        // show "null" instead of empty
+        str_expr = ResolveVeloxFunctionAndInferArgsCommonType(
+          "coalesce", {std::move(str_expr),
+                       MakeConst(std::string_view("null"), velox::VARCHAR())});
+        concat_parts.push_back(std::move(str_expr));
+      }
+
+      concat_parts.push_back(
+        MakeConst(std::string_view(")."), velox::VARCHAR()));
+
+      return ResolveVeloxFunctionAndInferArgsCommonType(
+        "presto_concat", std::move(concat_parts));
+    };
+
+    auto cursorpos = MakeConst(static_cast<int32_t>(ErrorPosition(location)));
+    auto detail = build_failing_row_detail();
+
+    // make condition: if (check) -> ok; else -> fail
+    lp::ExprPtr check;
+    for (const auto& constraint : check_constraints) {
+      SDB_ASSERT(constraint.expr);
+      auto expr = ProcessExprNode(state, constraint.expr->GetExpr(),
+                                  ExprKind::CheckConstraint);
+
+      // PostgreSQL: CHECK fails only if result = FALSE (not NULL)
+      expr = ResolveVeloxFunctionAndInferArgsCommonType(
+        "coalesce", {std::move(expr), MakeConst(true)});
+
+      auto errcode = MakeConst(static_cast<int32_t>(ERRCODE_CHECK_VIOLATION));
+      
+      auto errmsg = MakeConst(
+        absl::StrCat("new row for relation \"", object.table->name(),
+                     "\" violates check constraint \"", constraint.name, "\""));
+      auto throwsql = std::make_shared<lp::CallExpr>(
+        velox::UNKNOWN(), "pg_error",
+        std::vector<lp::ExprPtr>{std::move(errcode), cursorpos,
+                                 std::move(errmsg), detail});
+      expr = ResolveVeloxFunctionAndInferArgsCommonType(
+        "if", std::vector<lp::ExprPtr>{std::move(expr), MakeConst(true),
+                                       std::move(throwsql)});
+
+      AndToLeft(check, std::move(expr));
+    }
+
+    state.root = std::make_shared<lp::FilterNode>(
+      _id_generator.NextPlanId(), std::move(state.root), std::move(check));
   }
 
   state.root = std::make_shared<lp::TableWriteNode>(
@@ -1445,7 +1515,8 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
 
   MakeTableWrite(axiom::connector::WriteKind::kInsert, state, *object,
                  std::move(column_names), std::move(column_exprs),
-                 std::move(generated_columns));
+                 std::move(generated_columns), table.CheckConstraints(),
+                 ExprLocation(&stmt));
 }
 
 void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
@@ -1574,7 +1645,8 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
 
   MakeTableWrite(axiom::connector::WriteKind::kUpdate, state, *object,
                  std::move(column_names), std::move(column_exprs),
-                 std::move(generated_columns));
+                 std::move(generated_columns), table.CheckConstraints(),
+                 ExprLocation(&stmt));
 }
 
 void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
@@ -1791,8 +1863,8 @@ void SqlAnalyzer::ProcessCreateStmt(State& state, const CreateStmt& stmt) {
   velox::RowType dummy_output_type{std::move(column_names),
                                    std::move(column_types)};
   dummy.lookup_columns = MakePtrView<velox::RowType>(&dummy_output_type);
-  dummy.pre_columnref_hook = [&](std::string_view name,
-                                 const ColumnRef& ref) -> lp::ExprPtr {
+  auto forbid_nested_generated_column =
+    [&](std::string_view name, const ColumnRef& ref) -> lp::ExprPtr {
     if (generated_columns.contains(name)) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_SYNTAX_ERROR),
@@ -1803,6 +1875,18 @@ void SqlAnalyzer::ProcessCreateStmt(State& state, const CreateStmt& stmt) {
           "A generated column cannot reference another generated column."));
     }
     return nullptr;
+  };
+
+  auto validate_check_constraint = [&](const Constraint& constraint) {
+    auto expr =
+      ProcessExprNode(dummy, constraint.raw_expr, ExprKind::CheckConstraint);
+    if (!expr->type()->isBoolean()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+        CURSOR_POS(ErrorPosition(ExprLocation(&constraint))),
+        ERR_MSG("check constraint expression must return type boolean, not ",
+                ToPgTypeString(expr->type())));
+    }
   };
 
   VisitNodes(stmt.tableElts, [&](const Node& node) {
@@ -1816,7 +1900,9 @@ void SqlAnalyzer::ProcessCreateStmt(State& state, const CreateStmt& stmt) {
             auto kind = constraint.contype == CONSTR_DEFAULT
                           ? ExprKind::ColumnDefault
                           : ExprKind::GeneratedColumn;
+            dummy.pre_columnref_hook = forbid_nested_generated_column;
             auto expr = ProcessExprNode(dummy, constraint.raw_expr, kind);
+            dummy.pre_columnref_hook = nullptr;
             if (expr->type() != column_type) {
               THROW_SQL_ERROR(
                 ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
@@ -1828,11 +1914,27 @@ void SqlAnalyzer::ProcessCreateStmt(State& state, const CreateStmt& stmt) {
                 ERR_HINT("You will need to rewrite or cast the expression."));
             }
           } break;
-
+          case CONSTR_CHECK:
+            validate_check_constraint(constraint);
+            break;
           default:
+            break;
         }
       });
+
+      return;
     }
+
+    SDB_ASSERT((IsA(&node, Constraint)));
+
+    const auto& constraint = *castNode(Constraint, &node);
+    switch (constraint.contype) {
+      case CONSTR_CHECK:
+        validate_check_constraint(constraint);
+        break;
+      default:
+        break;
+    };
   });
 }
 

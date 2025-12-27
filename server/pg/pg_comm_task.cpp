@@ -1054,7 +1054,16 @@ auto PgSQLCommTaskBase::ProcessQueryResult() -> ProcessState {
   SDB_ASSERT(portal.cursor);
 
   velox::RowVectorPtr batch;
-  const auto [state, r] = portal.cursor->Next(batch);
+  
+  Result r;
+  query::Cursor::Process state;
+
+  try {
+    std::tie(state, r) = portal.cursor->Next(batch);
+  } catch (const SqlException& e) {
+    SendNotice(PQ_MSG_ERROR_RESPONSE, e.error(), _current_query);
+    return ProcessState::DonePacket;
+  }
 
   if (state == query::Cursor::Process::Wait) {
     return ProcessState::Wait;

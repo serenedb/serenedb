@@ -521,6 +521,32 @@ struct ProcessEscapePattern {
     result = std::move(res);
   }
 };
+
+template<typename T>
+struct PgErrorFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  [[noreturn]] FOLLY_ALWAYS_INLINE void call(  // NOLINT
+    out_type<velox::UnknownValue>& /*result*/, const arg_type<int32_t>& errcode,
+    const arg_type<int32_t>& cursorpos, const arg_type<velox::Varchar>& errmsg,
+    const arg_type<velox::Varchar>& detail) {
+    THROW_SQL_ERROR(ERR_CODE(errcode), CURSOR_POS(cursorpos),
+                    ERR_MSG(std::string_view{errmsg.data(), errmsg.size()}),
+                    ERR_DETAIL(std::string_view{detail.data(), detail.size()}));
+  }
+
+  [[noreturn]] FOLLY_ALWAYS_INLINE void call(  // NOLINT
+    out_type<velox::UnknownValue>& /*result*/, const arg_type<int32_t>& errcode,
+    const arg_type<int32_t>& cursorpos, const arg_type<velox::Varchar>& errmsg,
+    const arg_type<velox::Varchar>& detail,
+    const arg_type<velox::Varchar>& hint) {
+    THROW_SQL_ERROR(ERR_CODE(errcode), CURSOR_POS(cursorpos),
+                    ERR_MSG(std::string_view{errmsg.data(), errmsg.size()}),
+                    ERR_DETAIL(std::string_view{detail.data(), detail.size()}),
+                    ERR_HINT(std::string_view{hint.data(), hint.size()}));
+  }
+};
+
 }  // namespace
 
 void registerFunctions(const std::string& prefix) {
@@ -587,6 +613,15 @@ void registerFunctions(const std::string& prefix) {
     {prefix + "jsonin"});
   velox::registerFunction<PgJsonOutFunction, velox::Varchar, velox::Json>(
     {prefix + "jsonout"});
+
+  // pg_error(errcode, cursorpos, message, detail)
+  velox::registerFunction<PgErrorFunction, velox::UnknownValue, int32_t,
+                          int32_t, velox::Varchar, velox::Varchar>(
+    {"pg_error"});
+  // pg_error(errcode, cursorpos, message, detail, hint)
+  velox::registerFunction<PgErrorFunction, velox::UnknownValue, int32_t,
+                          int32_t, velox::Varchar, velox::Varchar,
+                          velox::Varchar>({"pg_error"});
 
   registerExtractFunctions(prefix);
 }

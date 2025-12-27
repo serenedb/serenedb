@@ -32,6 +32,8 @@
 #include "query/query.h"
 #include "utils.h"
 
+#include "pg/sql_exception.h"
+
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
 
@@ -153,7 +155,18 @@ std::tuple<Cursor::Process, Result> Cursor::ExecuteVelox(
   SDB_ASSERT(!batch);
   SDB_ASSERT(_runner);
   yaclib::Future<> wait;
-  auto r = basics::SafeCall([&] { batch = _runner.Next(wait); });
+  std::exception_ptr kal;
+  auto r = basics::SafeCall([&] {
+    try {
+      batch = _runner.Next(wait);
+    } catch (const facebook::velox::VeloxUserError& e) {
+      kal = e.wrappedException();
+    }
+  });
+
+  if (kal)
+    std::rethrow_exception(kal);
+
   if (wait.Valid()) {
     SDB_ASSERT(r.ok());
     SDB_ASSERT(!batch);

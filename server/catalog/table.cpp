@@ -67,6 +67,7 @@ Table::Table(const catalog::Table& other, NewOptions options)
     _shard_keys{other.shardKeys()},
     _columns{other._columns},
     _pk_columns{other._pk_columns},
+    _check_constraints{other._check_constraints},
     _pk_type{other._pk_type},
     _row_type{other._row_type},
     _plan_id{other.planId()},
@@ -125,6 +126,7 @@ Table::Table(TableOptions&& options, ObjectId database_id)
     _shard_keys{std::move(options.shardKeys)},
     _columns{std::move(options.columns)},
     _pk_columns{std::move(options.pkColumns)},
+    _check_constraints{std::move(options.checkConstraints)},
     _pk_type{BuildPkType(_columns, _pk_columns)},
     _row_type{BuildRowType(_columns)},
     _plan_id{[&] {
@@ -171,6 +173,7 @@ struct Table::TableOutput {
   std::span<const std::string> shardKeys;
   std::span<const Column> columns;
   std::span<const Column::Id> pkColumns;
+  std::span<const CheckConstraint> checkConstraints;
   std::string_view shardingStrategy;
   std::string_view name;
   // TODO make them just pointers if catalog::Table became immutable
@@ -196,6 +199,7 @@ Table::TableOutput Table::MakeTableOptions() const {
     .shardKeys = _shard_keys,
     .columns = _columns,
     .pkColumns = _pk_columns,
+    .checkConstraints = _check_constraints,
     .shardingStrategy = _sharding_strategy->name(),
     .name = GetName(),
     .schema = _schema,

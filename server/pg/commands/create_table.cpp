@@ -18,7 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <unordered_set>
 #include <yaclib/async/make.hpp>
 
 #include "app/app_server.h"
@@ -142,9 +141,13 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
   };
 
   // tries to behave like ChooseConstraintName pg source code function
-  auto choose_constraint_name = [&](std::string_view name1,
-                                    std::string_view name2,
-                                    std::string_view label) -> std::string {
+  auto choose_constraint_name =
+    [&](const Constraint& constraint, std::string_view name1,
+        std::string_view name2, std::string_view label) -> std::string {
+    if (constraint.conname) {
+      return constraint.conname;
+    }
+
     std::string base_name;
     if (name2.empty()) {
       base_name = absl::StrCat(name1, "_", label);
@@ -174,16 +177,8 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
                                    const Constraint& constraint,
                                    std::string_view column_name = {}) -> void {
     SDB_ASSERT(constraint.contype == CONSTR_CHECK);
-
-    std::string name;
-    if (constraint.conname) {
-      name = constraint.conname;
-    } else {
-      name = choose_constraint_name(table, column_name, "check");
-    }
-
     request.checkConstraints.push_back(catalog::CheckConstraint{
-      .name = std::move(name),
+      .name = choose_constraint_name(constraint, table, column_name, "check"),
       .expr = MakeColumnExpr(db, constraint.raw_expr),
     });
   };
@@ -191,16 +186,9 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
   auto append_not_null_constraint = [&](const Constraint& constraint,
                                         std::string_view column_name) -> void {
     SDB_ASSERT(constraint.contype == CONSTR_NOTNULL);
-
-    std::string name;
-    if (constraint.conname) {
-      name = constraint.conname;
-    } else {
-      name = choose_constraint_name(table, column_name, "not_null");
-    }
-
     request.checkConstraints.push_back(catalog::CheckConstraint{
-      .name = std::move(name),
+      .name =
+        choose_constraint_name(constraint, table, column_name, "not_null"),
       .expr = MakeColumnExpr(db, absl::StrCat(column_name, " IS NOT NULL")),
     });
   };

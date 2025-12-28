@@ -166,22 +166,23 @@ class Executor {
 
   size_t ExecuteCount(std::string_view query) { return 0; }
 
-  size_t ExecuteQuery(Query query) {
-    switch (query.type) {
+  size_t ExecuteQuery(Query q) {
+    auto [type, query] = q;
+    switch (type) {
       case QueryType::Count:
-        return ExecuteCount(query.query);
+        return ExecuteCount(query);
       case QueryType::Top10:
-        return ExecuteTopK(10, query.query) > 0;
+        return ExecuteTopK(10, query) > 0;
       case QueryType::Top100:
-        return ExecuteTopK(100, query.query) > 0;
+        return ExecuteTopK(100, query) > 0;
       case QueryType::Top1000:
-        return ExecuteTopK(1000, query.query) > 0;
+        return ExecuteTopK(1000, query) > 0;
       case QueryType::Top10Count:
-        return ExecuteTopK(10, query.query);
+        return ExecuteTopK(10, query);
       case QueryType::Top100Count:
-        return ExecuteTopK(100, query.query);
+        return ExecuteTopK(100, query);
       case QueryType::Top1000Count:
-        return ExecuteTopK(1000, query.query);
+        return ExecuteTopK(1000, query);
       default:
         return 0;
     }

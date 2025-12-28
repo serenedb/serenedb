@@ -172,12 +172,18 @@ SET weight = weight * 1000, age = age * 1000
 WHERE id = 1000;
 
 
+statement ok
+UPDATE clickclack
+SET weight = 22228
+WHERE id = 1;
+
+
 query
 SELECT * FROM clickclack;
 ----
 id weight age grade
 0 100 18 21
-1 130 54 31
+1 22228 54 4451
 2 54 130 23
 1000 100000 228000 42800
 

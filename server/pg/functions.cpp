@@ -531,8 +531,8 @@ struct PgErrorFunction {
     const arg_type<int32_t>& cursorpos, const arg_type<velox::Varchar>& errmsg,
     const arg_type<velox::Varchar>& detail) {
     THROW_SQL_ERROR(ERR_CODE(errcode), CURSOR_POS(cursorpos),
-                    ERR_MSG(std::string_view{errmsg.data(), errmsg.size()}),
-                    ERR_DETAIL(std::string_view{detail.data(), detail.size()}));
+                    ERR_MSG(std::string_view{errmsg}),
+                    ERR_DETAIL(std::string_view{detail}));
   }
 
   [[noreturn]] FOLLY_ALWAYS_INLINE void call(  // NOLINT
@@ -541,9 +541,9 @@ struct PgErrorFunction {
     const arg_type<velox::Varchar>& detail,
     const arg_type<velox::Varchar>& hint) {
     THROW_SQL_ERROR(ERR_CODE(errcode), CURSOR_POS(cursorpos),
-                    ERR_MSG(std::string_view{errmsg.data(), errmsg.size()}),
-                    ERR_DETAIL(std::string_view{detail.data(), detail.size()}),
-                    ERR_HINT(std::string_view{hint.data(), hint.size()}));
+                    ERR_MSG(std::string_view{errmsg}),
+                    ERR_DETAIL(std::string_view{detail}),
+                    ERR_HINT(std::string_view{hint}));
   }
 };
 
@@ -617,12 +617,11 @@ void registerFunctions(const std::string& prefix) {
   // pg_error(errcode, cursorpos, message, detail)
   velox::registerFunction<PgErrorFunction, velox::UnknownValue, int32_t,
                           int32_t, velox::Varchar, velox::Varchar>(
-    {"pg_error"});
+    {prefix + "error"});
   // pg_error(errcode, cursorpos, message, detail, hint)
   velox::registerFunction<PgErrorFunction, velox::UnknownValue, int32_t,
                           int32_t, velox::Varchar, velox::Varchar,
-                          velox::Varchar>({"pg_error"});
-
+                          velox::Varchar>({prefix + "error"});
   registerExtractFunctions(prefix);
 }
 

@@ -1276,22 +1276,38 @@ void SqlAnalyzer::MakeTableWrite(
   const auto& table = object.table;
 
   auto project_columns = [&]() {
-    auto projected_column_names =
-      column_names | std::views::transform([&](const std::string& name) {
-        return _id_generator.NextColumnName(name);
-      }) |
-      std::ranges::to<std::vector>();
+    auto project_names = column_names |
+                         std::views::transform([&](const std::string& name) {
+                           return _id_generator.NextColumnName(name);
+                         }) |
+                         std::ranges::to<std::vector>();
+    auto project_exprs = std::move(column_exprs);
+
+    for (const auto& [expr, name] :
+         std::views::zip(project_exprs, project_names)) {
+      column_exprs.emplace_back(
+        std::make_shared<lp::InputReferenceExpr>(expr->type(), name));
+    }
+
+    if (write_kind == axiom::connector::WriteKind::kUpdate) {
+      // for update we need all the columns from the table scan because
+      // they may depend on not only columns being updated
+      const auto& output_type = *state.root->outputType();
+      for (const auto& [type, name] :
+           std::views::zip(output_type.children(), output_type.names())) {
+        if (absl::c_contains(column_names, ToAlias(name))) {
+          continue;
+        }
+
+        project_names.emplace_back(name);
+        auto expr = std::make_shared<lp::InputReferenceExpr>(type, name);
+        project_exprs.push_back(std::move(expr));
+      }
+    }
 
     state.root = std::make_shared<lp::ProjectNode>(
       _id_generator.NextPlanId(), std::move(state.root),
-      std::move(projected_column_names), std::move(column_exprs));
-
-    const auto& output = state.root->outputType();
-    for (const auto& [type, expr] :
-         std::views::zip(output->children(), output->names())) {
-      column_exprs.emplace_back(
-        std::make_shared<lp::InputReferenceExpr>(type, expr));
-    }
+      std::move(project_names), std::move(project_exprs));
   };
 
   if (!generated_columns.empty()) {
@@ -1899,6 +1915,13 @@ void SqlAnalyzer::ProcessCreateStmt(State& state, const CreateStmt& stmt) {
   };
 
   VisitNodes(stmt.tableElts, [&](const Node& node) {
+    if (IsA(&node, TableLikeClause)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        CURSOR_POS(ExprLocation(&node)),
+        ERR_MSG("CREATE TABLE ... (LIKE ...) is not supported yet"));
+    }
+
     if (IsA(&node, ColumnDef)) {
       const auto& col_def = *castNode(ColumnDef, &node);
       VisitNodes(col_def.constraints, [&](const Constraint& constraint) {

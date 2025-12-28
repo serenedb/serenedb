@@ -9,6 +9,7 @@
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
+#include <iresearch/search/doc_collector.hpp>
 #include <iresearch/search/filter.hpp>
 #include <iresearch/search/score.hpp>
 #include <iresearch/search/scorer.hpp>
@@ -103,6 +104,14 @@ class Executor {
         irs::DirectoryReader(_dir, _format, {.scorers = {&_scorer_ptr, 1}})} {}
 
   size_t ExecuteTopK(size_t k, std::string_view query) {
+    auto filter = ParseFilter(query);
+    if (!filter) {
+      return 0;
+    }
+    return irs::ExecuteTopK(_reader, *filter, _scorers, k, _results);
+  }
+
+  size_t ExecuteTopK1(size_t k, std::string_view query) {
     auto prepared = PrepareFilter(query);
     if (!prepared) {
       return 0;

@@ -67,8 +67,8 @@ namespace {
 constexpr std::string_view kFormatName = "1_5simd";
 constexpr std::string_view kScorer = "bm25";
 constexpr std::string_view kScorerOptions = R"({})";
-// constexpr std::string_view kTokenizer = "segmentation";
-// constexpr std::string_view kTokenizerOptions = R"({})";
+constexpr std::string_view kTokenizer = "segmentation";
+constexpr std::string_view kTokenizerOptions = R"({})";
 
 struct Query {
   QueryType type = QueryType::Unsupported;
@@ -94,6 +94,9 @@ class Executor {
     : _scorer{irs::scorers::Get(kScorer,
                                 irs::Type<irs::text_format::Json>::get(),
                                 kScorerOptions, false)},
+      _tokenizer{irs::analysis::analyzers::Get(
+        kTokenizer, irs::Type<irs::text_format::Json>::get(),
+        kTokenizerOptions)},
       _format{irs::formats::Get(kFormatName, false)},
       _dir{path},
       _reader{

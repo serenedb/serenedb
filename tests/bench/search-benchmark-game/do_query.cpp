@@ -167,11 +167,21 @@ class Executor {
     return count;
   }
 
-  size_t ExecuteCount(std::string_view query) { return 0; }
+  size_t ExecuteCount(std::string_view query) {
+    size_t count = 0;
+    auto prepared = PrepareFilter(query);
+    for (auto& segment : _reader) {
+      auto docs = prepared->execute(irs::ExecutionContext{.segment = segment});
+      for (; docs->next(); ++count) {
+      }
+    }
+    return count;
+  }
 
   size_t ExecuteQuery(Query q) {
     auto [type, query] = q;
     switch (type) {
+      case QueryType::UnoptimizedCount:
       case QueryType::Count:
         return ExecuteCount(query);
       case QueryType::Top10:

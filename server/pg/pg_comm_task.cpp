@@ -1065,7 +1065,7 @@ auto PgSQLCommTaskBase::ProcessQueryResult() -> ProcessState {
   SDB_ASSERT(portal.cursor);
 
   velox::RowVectorPtr batch;
-  
+
   Result r;
   query::Cursor::Process state;
 

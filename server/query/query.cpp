@@ -184,7 +184,8 @@ void Query::CompileQuery() {
     .numWorkers = 1,
     .numDrivers = 1,
   };
-  axiom::Session session{""};
+  axiom::Session session{"",
+                         _query_ctx.velox_query_ctx->queryConfig().config()};
   std::shared_ptr<axiom::Session> session_ptr{std::shared_ptr<axiom::Session>{},
                                               &session};
   axiom::optimizer::Optimization optimization{

@@ -365,13 +365,24 @@ void PgSQLCommTaskBase::HandleClientPacket(std::string_view packet) {
 }
 
 void PgSQLCommTaskBase::DescribeAnalyzedQuery(
-  const query::Query& query, const std::vector<VarFormat>& formats,
+  const SqlStatement& statement, const std::vector<VarFormat>& formats,
   bool extended) {
+  const auto& query = *statement.query;
   const auto& output_type = query.GetOutputType();
   const uint16_t num_fields = output_type ? output_type->size() : 0;
-  // If it's DML but name of column isn't "rows" it means it's explain for DML.
-  // In such case we should send rows as usual.
-  if (num_fields == 0 || (query.IsDML() && output_type->nameOf(0) == "rows")) {
+  const auto* pg_node = castNode(RawStmt, statement.tree.GetRoot());
+  SDB_ASSERT(pg_node);
+
+  // We want **don't** want to describe columns in the following cases:
+  // 1. Query is CALL some_procedure()
+  // 2. Query is without logical plan and doesn't have columns at all,
+  //    for example CREATE and DROP). But query may be without logical plan, but
+  //    with columns: SHOW and SHOW ALL. For these cases we **want** to describe
+  //    columns
+  // 3. Query is INSERT, DELETE, UPDATE or MERGE and **without** EXPLAIN
+  if ((pg_node->stmt->type == T_CallStmt) ||
+      (!query.IsDataQuery() && num_fields == 0) ||
+      (query.IsDML() && output_type->nameOf(0) == "rows")) {
     if (extended) {
       _send.Write(ToBuffer(kNoData), extended);
     }
@@ -431,7 +442,7 @@ void PgSQLCommTaskBase::DescribePortal(const SqlPortal& portal) {
     SendWarnings();
   }
   SDB_ASSERT(portal.stmt->query);
-  DescribeAnalyzedQuery(*portal.stmt->query, portal.bind_info.output_formats);
+  DescribeAnalyzedQuery(*portal.stmt, portal.bind_info.output_formats);
 }
 
 void PgSQLCommTaskBase::DescribeStatement(SqlStatement& statement) {
@@ -440,7 +451,7 @@ void PgSQLCommTaskBase::DescribeStatement(SqlStatement& statement) {
   }
   DescribeParameters(statement.params.types, _send);
   SDB_ASSERT(statement.query);
-  DescribeAnalyzedQuery(*statement.query, {});
+  DescribeAnalyzedQuery(statement, {});
 }
 
 void PgSQLCommTaskBase::DescribeQuery(std::string_view packet) {
@@ -546,7 +557,7 @@ void PgSQLCommTaskBase::RunSimpleQuery(std::string_view query_string) {
 
     if (_anonymous_statement.query) {
       _anonymous_portal = BindStatement(_anonymous_statement, {});
-      DescribeAnalyzedQuery(*_anonymous_statement.query,
+      DescribeAnalyzedQuery(_anonymous_statement,
                             _anonymous_portal.bind_info.output_formats, false);
       ExecutePortal(_anonymous_portal, 0);
     } else if (!IsCancelled()) {

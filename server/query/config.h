@@ -133,14 +133,6 @@ class Config : public velox::config::IConfig {
 
   void ResetAll();
 
-  void Begin();
-
-  void Commit();
-
-  void Abort();
-
-  bool InsideTransaction() const { return _inside_transaction; }
-
   std::unordered_map<std::string, std::string> rawConfigsCopy() const final;
 
   // Visit all the settings and call function f(setting_name, value,
@@ -149,6 +141,12 @@ class Config : public velox::config::IConfig {
     absl::FunctionRef<void(std::string_view, std::string_view,
                            std::string_view)>
       f) const;
+
+ protected:
+  // Used by TxnState(transaction state) to commit/rollback transaction
+  // variables
+  void CommitVariables();
+  void RollbackVariables() { _transaction.clear(); }
 
  private:
   std::optional<std::string> Get(std::string_view key) const;
@@ -161,8 +159,6 @@ class Config : public velox::config::IConfig {
 
   // Transaction variable
   containers::FlatHashMap<std::string_view, TxnVariable> _transaction;
-
-  bool _inside_transaction = false;
 };
 
 };  // namespace sdb

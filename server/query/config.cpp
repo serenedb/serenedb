@@ -137,30 +137,13 @@ void Config::Reset(std::string_view key) {
   _session.erase(key);
 }
 
-void Config::Begin() {
-  if (_inside_transaction) {
-    return;
-  }
-  SDB_ASSERT(_transaction.empty());
-  _inside_transaction = true;
-}
-
-void Config::Commit() {
+void Config::CommitVariables() {
   for (auto&& [key, value] : _transaction) {
     if (value.action == TxnAction::Apply) {
       _session.insert_or_assign(key, std::move(value.value));
     }
   }
   _transaction.clear();
-  _inside_transaction = false;
-}
-
-void Config::Abort() {
-  if (!_inside_transaction) {
-    return;
-  }
-  _transaction.clear();
-  _inside_transaction = false;
 }
 
 }  // namespace sdb

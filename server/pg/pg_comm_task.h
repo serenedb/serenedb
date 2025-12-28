@@ -132,7 +132,7 @@ class PgSQLCommTaskBase : public rest::CommTask {
   SqlPortal BindStatement(SqlStatement& stmt, BindInfo bind_info);
   void DescribePortal(const SqlPortal& portal);
   void DescribeStatement(SqlStatement& statement);
-  void DescribeAnalyzedQuery(const query::Query& query,
+  void DescribeAnalyzedQuery(const SqlStatement& statement,
                              const std::vector<VarFormat>& formats,
                              bool extended = true);
   std::optional<BindInfo> ParseBindVars(

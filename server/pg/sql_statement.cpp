@@ -123,6 +123,13 @@ bool SqlStatement::ProcessNextRoot(
       query_ctx.command_type.Add(query::CommandType::Query);
     }
 
+    if (query_desc.options.contains("all_plans")) {
+      query_ctx.explain_params.Add(query::ExplainWith::Logical);
+      query_ctx.explain_params.Add(query::ExplainWith::InitialQueryGraph);
+      query_ctx.explain_params.Add(query::ExplainWith::FinalQueryGraph);
+      query_ctx.explain_params.Add(query::ExplainWith::Physical);
+      query_ctx.explain_params.Add(query::ExplainWith::Execution);
+    }
     if (query_desc.options.contains("logical")) {
       query_ctx.explain_params.Add(query::ExplainWith::Logical);
     }

@@ -1,0 +1,152 @@
+statement ok
+CREATE TABLE t(key INT PRIMARY KEY, value INT);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO t VALUES (0, 0);
+
+
+# Read-your-own-writes
+# query
+# SELECT * FROM t;
+# ----
+# key	value
+# 0	0
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT * FROM t;
+----
+key	value
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO t VALUES (0, 0);
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT * FROM t;
+----
+key	value
+0	0
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO t VALUES (1, 0);
+
+
+# Read-your-own-writes
+# query
+# SELECT * FROM t;
+# ----
+# key	value
+# 0	0
+# 1	0
+
+
+statement ok
+ABORT;
+
+
+query
+SELECT * FROM t;
+----
+key	value
+0	0
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO t VALUES (1, 0);
+
+
+connection client2
+query
+SELECT * FROM t;
+----
+key	value
+0	0
+
+
+statement ok
+COMMIT;
+
+
+connection client2
+query
+SELECT * FROM t;
+----
+key	value
+0	0
+1	0
+
+
+statement ok
+BEGIN;
+
+
+connection client2
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO t VALUES (3, 0);
+
+
+connection client2
+statement ok
+INSERT INTO t VALUES (4, 1);
+
+
+statement ok
+COMMIT;
+
+
+connection client2
+statement ok
+COMMIT;
+
+
+query
+SELECT * FROM t;
+----
+key	value
+0	0
+1	0
+3	0
+4	1
+
+
+connection client2
+query
+SELECT * FROM t;
+----
+key	value
+0	0
+1	0
+3	0
+4	1

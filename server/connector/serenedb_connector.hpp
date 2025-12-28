@@ -214,7 +214,7 @@ class RocksDBTable final : public axiom::connector::Table {
     return _layouts;
   }
 
-  uint64_t numRows() const final { return 1; }
+  uint64_t numRows() const final { return 1000; }
 
   std::vector<velox::connector::ColumnHandlePtr> rowIdHandles(
     axiom::connector::WriteKind kind) const final {

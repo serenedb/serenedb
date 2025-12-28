@@ -145,6 +145,8 @@ void Query::CompileQuery() {
   velox::exec::SimpleExpressionEvaluator evaluator{
     _query_ctx.velox_query_ctx.get(), _query_ctx.query_memory_pool.get()};
   // TODO(mbkkt) add options in config
+  const auto& config = basics::downCast<Config>(
+    *_query_ctx.velox_query_ctx->queryConfig().config());
   axiom::optimizer::OptimizerOptions optimizer_options{
     .parallelProjectWidth = 1,
 
@@ -161,7 +163,8 @@ void Query::CompileQuery() {
     // TODO(mbkkt) Maybe disable?
     .enableReducingExistences = false,
 
-    .syntacticJoinOrder = false,
+    .joinOrder =
+      config.Get<VariableType::JoinOrderAlgorithm>("join_order_algorithm"),
 
     // TODO(mbkkt) single option about aggregation?
     .alwaysPlanPartialAggregation = false,
@@ -182,7 +185,8 @@ void Query::CompileQuery() {
   };
   axiom::runner::MultiFragmentPlan::Options runner_options{
     .numWorkers = 1,
-    .numDrivers = 1,
+    .numDrivers =
+      std::max<int>(config.Get<VariableType::U32>("execution_threads"), 1),
   };
   axiom::Session session{"",
                          _query_ctx.velox_query_ctx->queryConfig().config()};

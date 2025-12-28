@@ -82,11 +82,11 @@ bool SqlStatement::ProcessNextRoot(
   pg::Resolve(connection_ctx->GetDatabaseId(), objects, *connection_ctx);
   SDB_ASSERT(memory_context);
 
-  auto& cpu_executor = GetScheduler()->GetCPUExecutor();
-
   query::QueryContext query_ctx{
     velox::core::QueryCtx::create(
-      &cpu_executor,
+      connection_ctx->Get<VariableType::U32>("execution_threads") == 0
+        ? nullptr
+        : &GetScheduler()->GetCPUExecutor(),
       velox::core::QueryConfig{velox::core::QueryConfig::ConfigTag{},
                                connection_ctx}),
     objects};

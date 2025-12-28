@@ -13,3 +13,5 @@
 
 # Match sqllogic junit test results files
 /tests/sqllogic/*-junit.xml
+
+/perf.*

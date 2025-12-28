@@ -60,11 +60,12 @@ RocksDBDataSource::RocksDBDataSource(
 
 void RocksDBDataSource::addSplit(
   std::shared_ptr<velox::connector::ConnectorSplit> split) {
+  SDB_ENSURE(split, ERROR_INTERNAL, "RocksDBDataSource: split is null");
   if (_current_split) {
-    VELOX_FAIL("A split is already being processed");
+    SDB_THROW(ERROR_INTERNAL,
+              "RocksDBDataSource: a split is already being processed");
   }
-  _current_split = split;
-  VELOX_CHECK_NOT_NULL(_current_split, "Wrong type of split");
+  _current_split = std::move(split);
   _last_read_key.clear();
 }
 

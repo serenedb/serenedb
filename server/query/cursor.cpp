@@ -55,7 +55,7 @@ std::string ProcessPlan(std::string plan, bool clean_column_names) {
 void Cursor::RequestCancel() {
   if (_runner) {
     SDB_ASSERT(!_query.HasExternal());
-    std::ignore = _runner.RequestCancel();
+    _runner.RequestCancel();
   } else if (_query.HasExternal()) {
     std::ignore = _query.GetExternalExecutor().RequestCancel();
   }
@@ -300,10 +300,7 @@ Cursor::Cursor(std::function<void()>&& user_task, const Query& query)
 }
 
 Cursor::~Cursor() {
-  if (_runner) {
-    SDB_ASSERT(!_query.HasExternal());
-    std::ignore = _runner.RequestCancel().Get();
-  } else if (_query.HasExternal()) {
+  if (_query.HasExternal()) {
     std::ignore = _query.GetExternalExecutor().RequestCancel().Get();
   }
 }

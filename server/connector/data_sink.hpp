@@ -41,7 +41,6 @@ class RocksDBDataSink : public velox::connector::DataSink {
  public:
   RocksDBDataSink(rocksdb::Transaction& transaction,
                   rocksdb::ColumnFamilyHandle& cf,
-                  const velox::RowTypePtr& row_type,
                   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
                   std::span<const velox::column_index_t> key_childs,
                   std::vector<catalog::Column::Id> column_ids,
@@ -180,7 +179,6 @@ class RocksDBDataSink : public velox::connector::DataSink {
     const folly::Range<const velox::IndexRange*>& ranges,
     velox::vector_size_t total_rows_number);
 
-  velox::RowTypePtr _row_type;
   rocksdb::Transaction& _transaction;
   rocksdb::ColumnFamilyHandle& _cf;
   ObjectId _object_key;

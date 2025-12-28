@@ -85,11 +85,9 @@ class DataSourceTest : public ::testing::Test,
     std::unique_ptr<rocksdb::Transaction> transaction{
       _db->BeginTransaction(wo, trx_opts, nullptr)};
     ASSERT_NE(transaction, nullptr);
-    sdb::connector::RocksDBDataSink sink(
-      *transaction, *_cf_handles.front(),
-      std::shared_ptr<const velox::RowType>(
-        std::shared_ptr<const velox::RowType>{nullptr}, &data->type()->asRow()),
-      *pool_.get(), object_key, pk, column_ids);
+    sdb::connector::RocksDBDataSink sink(*transaction, *_cf_handles.front(),
+                                         *pool_.get(), object_key, pk,
+                                         column_ids);
     sink.appendData(data);
     while (!sink.finish()) {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));

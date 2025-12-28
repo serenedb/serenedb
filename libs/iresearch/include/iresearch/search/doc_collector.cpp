@@ -8,16 +8,23 @@ namespace irs {
 size_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
                    const Scorers& scorers, size_t k,
                    std::vector<std::pair<score_t, doc_id_t>>& results) {
+  if (!k) [[unlikely]] {
+    return 0;
+  }
+
+  results.resize(2 * k);
+
   auto prepared = filter.prepare({
     .index = reader,
     .scorers = scorers,
   });
 
-  size_t left = 2 * k;
-  results.reserve(left);
-
   size_t count = 0;
   float_t min_threshold = 0;
+  auto begin = results.begin();
+  auto pivot = begin + k;
+  auto end = results.end();
+
   for (auto& segment : reader) {
     auto docs = prepared->execute(
       irs::ExecutionContext{.segment = segment, .scorers = scorers});
@@ -33,30 +40,28 @@ size_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
         continue;
       }
 
-      if (left) {
-        results.emplace_back(score_value, doc->value);
+      *begin = {score_value, doc->value};
+      ++begin;
 
-        if (0 == --left) {
-          absl::c_nth_element(results, results.begin() + k,
-                              [](const auto& lhs, const auto& rhs) noexcept {
-                                return lhs.first > rhs.first;
-                              });
-          min_threshold = results[k - 1].first;
-          results.erase(results.begin() + k, results.end());
-          left = k;
-        }
+      if (begin == end) {
+        absl::c_nth_element(results, pivot,
+                            [](const auto& lhs, const auto& rhs) noexcept {
+                              return lhs.first > rhs.first;
+                            });
+        begin = pivot;
+        min_threshold = begin->first;
       }
     }
   }
 
-  if (left < k) {
-    SDB_ASSERT(results.size() > k);
-    absl::c_nth_element(results, results.begin() + k,
+  if (begin > pivot) {
+    absl::c_nth_element(results, pivot,
                         [](const auto& lhs, const auto& rhs) noexcept {
                           return lhs.first > rhs.first;
                         });
-    results.erase(results.begin() + k, results.end());
+    begin = pivot;
   }
+  results.erase(begin, end);
   absl::c_sort(results, [](const auto& lhs, const auto& rhs) noexcept {
     return lhs.first > rhs.first;
   });

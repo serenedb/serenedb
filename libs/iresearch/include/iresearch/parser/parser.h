@@ -20,6 +20,10 @@
 
 #pragma once
 
+#include <iresearch/analysis/analyzer.hpp>
+#include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/analysis/tokenizer.hpp>
+#include <iresearch/utils/type_id.hpp>
 #include <string>
 #include <string_view>
 
@@ -38,10 +42,12 @@ struct ParserContext {
   irs::BooleanFilter* current_parent;
   std::string_view default_field;
   irs::And* required_and = nullptr;
+  irs::analysis::Analyzer* tokenizer;
   std::string error_message;
 
-  ParserContext(irs::Or& root, std::string_view field)
-    : current_parent{&root}, default_field(field) {}
+  ParserContext(irs::Or& root, std::string_view field,
+                irs::analysis::Analyzer& tokenizer)
+    : current_parent{&root}, default_field(field), tokenizer{&tokenizer} {}
 
   irs::ByTerm& AddTerm(std::string_view value) {
     auto& f = current_parent->add<irs::ByTerm>();
@@ -53,8 +59,11 @@ struct ParserContext {
   irs::ByPhrase& AddPhrase(std::string_view value, int slop = 0) {
     auto& f = current_parent->add<irs::ByPhrase>();
     *f.mutable_field() = default_field;
-    f.mutable_options()->push_back<irs::ByTermOptions>().term =
-      irs::ViewCast<irs::byte_type>(value);
+    tokenizer->reset(value);
+    auto token = irs::get<irs::TermAttr>(*tokenizer);
+    for (; tokenizer->next();) {
+      f.mutable_options()->push_back<irs::ByTermOptions>().term = token->value;
+    }
     return f;
   }
 

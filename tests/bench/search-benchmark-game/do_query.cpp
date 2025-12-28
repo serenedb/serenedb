@@ -1,8 +1,10 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_split.h>
+#include <iresearch/parser/parser.h>
 #include <openssl/crypto.h>
 
 #include <iostream>
+#include <iresearch/analysis/analyzer.hpp>
 #include <iresearch/analysis/analyzers.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/formats/formats.hpp>
@@ -15,6 +17,7 @@
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/text_format.hpp>
 #include <magic_enum/magic_enum.hpp>
+#include <memory>
 #include <string>
 
 #include "basics/assert.h"
@@ -71,8 +74,6 @@ struct Query {
   QueryType type = QueryType::Unsupported;
   std::string_view query;
 };
-
-irs::Filter::ptr ParseFilter(std::string_view str) { return {}; }
 
 Query ParseQuery(std::string_view str) {
   auto parts = absl::StrSplit(str, '\t');
@@ -197,11 +198,22 @@ class Executor {
       .scorers = _scorers,
     });
   }
+
+  irs::Filter::ptr ParseFilter(std::string_view str) {
+    auto root = std::make_unique<irs::Or>();
+    sdb::ParserContext context{*root, "text", *_tokenizer};
+    auto r = sdb::ParseQuery(context, str);
+    if (!r.ok()) {
+      return {};
+    }
+    return root;
+  }
+
   std::vector<std::pair<float_t, irs::doc_id_t>> _results;
   irs::Scorer::ptr _scorer;
   irs::Scorer* _scorer_ptr{_scorer.get()};
   irs::Scorers _scorers{irs::Scorers::Prepare(std::span{&_scorer, 1})};
-  irs::Tokenizer::ptr _tokenizer;
+  irs::analysis::Analyzer::ptr _tokenizer;
   irs::Format::ptr _format;
   irs::MMapDirectory _dir;
   irs::DirectoryReader _reader;

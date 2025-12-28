@@ -21,6 +21,7 @@
 #include <gtest/gtest.h>
 #include <iresearch/parser/parser.h>
 
+#include <iresearch/analysis/segmentation_tokenizer.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/levenshtein_filter.hpp>
 #include <iresearch/search/phrase_filter.hpp>
@@ -37,7 +38,11 @@ namespace {
 class LuceneParserTest : public ::testing::Test {
  protected:
   irs::Or root;
-  sdb::ParserContext ctx{root, "content"};
+  irs::analysis::SegmentationTokenizer::ptr tokenizer{
+    irs::analysis::SegmentationTokenizer::make(
+      irs::analysis::SegmentationTokenizer::Options{})};
+
+  sdb::ParserContext ctx{root, "content", *tokenizer};
 
   void SetUp() override { root.clear(); }
 
@@ -81,7 +86,8 @@ TEST_F(LuceneParserTest, WildcardQuery) {
 
   const auto& wildcard = GetFilter<irs::ByWildcard>(0);
   EXPECT_EQ("content", wildcard.field());
-  EXPECT_EQ("h*llo", irs::ViewCast<char>(irs::bytes_view{wildcard.options().term}));
+  EXPECT_EQ("h*llo",
+            irs::ViewCast<char>(irs::bytes_view{wildcard.options().term}));
 }
 
 TEST_F(LuceneParserTest, FieldSpecificTerm) {
@@ -124,7 +130,8 @@ TEST_F(LuceneParserTest, FuzzyTerm) {
 
   const auto& fuzzy = GetFilter<irs::ByEditDistance>(0);
   EXPECT_EQ("content", fuzzy.field());
-  EXPECT_EQ("hello", irs::ViewCast<char>(irs::bytes_view{fuzzy.options().term}));
+  EXPECT_EQ("hello",
+            irs::ViewCast<char>(irs::bytes_view{fuzzy.options().term}));
   EXPECT_EQ(2, fuzzy.options().max_distance);
 }
 
@@ -142,8 +149,10 @@ TEST_F(LuceneParserTest, RangeInclusive) {
 
   const auto& range = GetFilter<irs::ByRange>(0);
   EXPECT_EQ("content", range.field());
-  EXPECT_EQ("alpha", irs::ViewCast<char>(irs::bytes_view{range.options().range.min}));
-  EXPECT_EQ("omega", irs::ViewCast<char>(irs::bytes_view{range.options().range.max}));
+  EXPECT_EQ("alpha",
+            irs::ViewCast<char>(irs::bytes_view{range.options().range.min}));
+  EXPECT_EQ("omega",
+            irs::ViewCast<char>(irs::bytes_view{range.options().range.max}));
   EXPECT_EQ(irs::BoundType::Inclusive, range.options().range.min_type);
   EXPECT_EQ(irs::BoundType::Inclusive, range.options().range.max_type);
 }
@@ -171,10 +180,12 @@ TEST_F(LuceneParserTest, ImplicitOr) {
   ASSERT_EQ(2, root.size());
 
   const auto& term1 = GetFilter<irs::ByTerm>(0);
-  EXPECT_EQ("hello", irs::ViewCast<char>(irs::bytes_view{term1.options().term}));
+  EXPECT_EQ("hello",
+            irs::ViewCast<char>(irs::bytes_view{term1.options().term}));
 
   const auto& term2 = GetFilter<irs::ByTerm>(1);
-  EXPECT_EQ("world", irs::ViewCast<char>(irs::bytes_view{term2.options().term}));
+  EXPECT_EQ("world",
+            irs::ViewCast<char>(irs::bytes_view{term2.options().term}));
 }
 
 TEST_F(LuceneParserTest, ExplicitOr) {
@@ -182,10 +193,12 @@ TEST_F(LuceneParserTest, ExplicitOr) {
   ASSERT_EQ(2, root.size());
 
   const auto& term1 = GetFilter<irs::ByTerm>(0);
-  EXPECT_EQ("hello", irs::ViewCast<char>(irs::bytes_view{term1.options().term}));
+  EXPECT_EQ("hello",
+            irs::ViewCast<char>(irs::bytes_view{term1.options().term}));
 
   const auto& term2 = GetFilter<irs::ByTerm>(1);
-  EXPECT_EQ("world", irs::ViewCast<char>(irs::bytes_view{term2.options().term}));
+  EXPECT_EQ("world",
+            irs::ViewCast<char>(irs::bytes_view{term2.options().term}));
 }
 
 TEST_F(LuceneParserTest, AndOperator) {
@@ -199,12 +212,14 @@ TEST_F(LuceneParserTest, AndOperator) {
   auto it = and_filter.begin();
   const auto& term1 = sdb::basics::downCast<irs::ByTerm>(**it);
   EXPECT_EQ("content", term1.field());
-  EXPECT_EQ("hello", irs::ViewCast<char>(irs::bytes_view{term1.options().term}));
+  EXPECT_EQ("hello",
+            irs::ViewCast<char>(irs::bytes_view{term1.options().term}));
 
   ++it;
   const auto& term2 = sdb::basics::downCast<irs::ByTerm>(**it);
   EXPECT_EQ("content", term2.field());
-  EXPECT_EQ("world", irs::ViewCast<char>(irs::bytes_view{term2.options().term}));
+  EXPECT_EQ("world",
+            irs::ViewCast<char>(irs::bytes_view{term2.options().term}));
 }
 
 TEST_F(LuceneParserTest, ChainedAndOperator) {
@@ -258,7 +273,8 @@ TEST_F(LuceneParserTest, MixedPlusMinusOperators) {
   // Third: foobar
   ++it;
   const auto& term3 = sdb::basics::downCast<irs::ByTerm>(**it);
-  EXPECT_EQ("foobar", irs::ViewCast<char>(irs::bytes_view{term3.options().term}));
+  EXPECT_EQ("foobar",
+            irs::ViewCast<char>(irs::bytes_view{term3.options().term}));
 
   // Fourth: Not(foobaz)
   ++it;
@@ -267,7 +283,8 @@ TEST_F(LuceneParserTest, MixedPlusMinusOperators) {
   ASSERT_NE(nullptr, not2_or);
   ASSERT_EQ(1, not2_or->size());
   const auto& term4 = sdb::basics::downCast<irs::ByTerm>(**not2_or->begin());
-  EXPECT_EQ("foobaz", irs::ViewCast<char>(irs::bytes_view{term4.options().term}));
+  EXPECT_EQ("foobaz",
+            irs::ViewCast<char>(irs::bytes_view{term4.options().term}));
 }
 
 TEST_F(LuceneParserTest, MixedPlusMinusWithImplicitOr) {
@@ -286,7 +303,8 @@ TEST_F(LuceneParserTest, MixedPlusMinusWithImplicitOr) {
   const auto& term1 = sdb::basics::downCast<irs::ByTerm>(**it);
   EXPECT_EQ("foo", irs::ViewCast<char>(irs::bytes_view{term1.options().term}));
 
-  // Second: bar (implicit OR term, but added to And because required_and is active)
+  // Second: bar (implicit OR term, but added to And because required_and is
+  // active)
   ++it;
   const auto& term2 = sdb::basics::downCast<irs::ByTerm>(**it);
   EXPECT_EQ("bar", irs::ViewCast<char>(irs::bytes_view{term2.options().term}));
@@ -303,12 +321,14 @@ TEST_F(LuceneParserTest, MixedPlusMinusWithImplicitOr) {
   // Fourth: foobar
   ++it;
   const auto& term4 = sdb::basics::downCast<irs::ByTerm>(**it);
-  EXPECT_EQ("foobar", irs::ViewCast<char>(irs::bytes_view{term4.options().term}));
+  EXPECT_EQ("foobar",
+            irs::ViewCast<char>(irs::bytes_view{term4.options().term}));
 
   // Fifth: foobaz (implicit OR term, also in And)
   ++it;
   const auto& term5 = sdb::basics::downCast<irs::ByTerm>(**it);
-  EXPECT_EQ("foobaz", irs::ViewCast<char>(irs::bytes_view{term5.options().term}));
+  EXPECT_EQ("foobaz",
+            irs::ViewCast<char>(irs::bytes_view{term5.options().term}));
 }
 
 TEST_F(LuceneParserTest, DeepNestedGroups) {
@@ -402,10 +422,12 @@ TEST_F(LuceneParserTest, PlusMinusWithGroups) {
 
   auto g_it = group.begin();
   const auto& term_foo = sdb::basics::downCast<irs::ByTerm>(**g_it);
-  EXPECT_EQ("foo", irs::ViewCast<char>(irs::bytes_view{term_foo.options().term}));
+  EXPECT_EQ("foo",
+            irs::ViewCast<char>(irs::bytes_view{term_foo.options().term}));
   ++g_it;
   const auto& term_bar = sdb::basics::downCast<irs::ByTerm>(**g_it);
-  EXPECT_EQ("bar", irs::ViewCast<char>(irs::bytes_view{term_bar.options().term}));
+  EXPECT_EQ("bar",
+            irs::ViewCast<char>(irs::bytes_view{term_bar.options().term}));
 
   // Second: Not(baz)
   ++it;
@@ -414,7 +436,8 @@ TEST_F(LuceneParserTest, PlusMinusWithGroups) {
   ASSERT_NE(nullptr, not_or);
   ASSERT_EQ(1, not_or->size());
   const auto& term_baz = sdb::basics::downCast<irs::ByTerm>(**not_or->begin());
-  EXPECT_EQ("baz", irs::ViewCast<char>(irs::bytes_view{term_baz.options().term}));
+  EXPECT_EQ("baz",
+            irs::ViewCast<char>(irs::bytes_view{term_baz.options().term}));
 }
 
 TEST_F(LuceneParserTest, FieldWithPlusMinusGroups) {
@@ -434,11 +457,13 @@ TEST_F(LuceneParserTest, FieldWithPlusMinusGroups) {
   auto g_it = group.begin();
   const auto& term_hello = sdb::basics::downCast<irs::ByTerm>(**g_it);
   EXPECT_EQ("title", term_hello.field());
-  EXPECT_EQ("hello", irs::ViewCast<char>(irs::bytes_view{term_hello.options().term}));
+  EXPECT_EQ("hello",
+            irs::ViewCast<char>(irs::bytes_view{term_hello.options().term}));
   ++g_it;
   const auto& term_world = sdb::basics::downCast<irs::ByTerm>(**g_it);
   EXPECT_EQ("title", term_world.field());
-  EXPECT_EQ("world", irs::ViewCast<char>(irs::bytes_view{term_world.options().term}));
+  EXPECT_EQ("world",
+            irs::ViewCast<char>(irs::bytes_view{term_world.options().term}));
 
   // Second: Not(author:john)
   ++it;
@@ -448,7 +473,8 @@ TEST_F(LuceneParserTest, FieldWithPlusMinusGroups) {
   ASSERT_EQ(1, not_or->size());
   const auto& term_john = sdb::basics::downCast<irs::ByTerm>(**not_or->begin());
   EXPECT_EQ("author", term_john.field());
-  EXPECT_EQ("john", irs::ViewCast<char>(irs::bytes_view{term_john.options().term}));
+  EXPECT_EQ("john",
+            irs::ViewCast<char>(irs::bytes_view{term_john.options().term}));
 }
 
 TEST_F(LuceneParserTest, ComplexMixedQuery) {
@@ -604,12 +630,14 @@ TEST_F(LuceneParserTest, GroupedQuery) {
   auto it = sub_or.begin();
   const auto& term1 = sdb::basics::downCast<irs::ByTerm>(**it);
   EXPECT_EQ("content", term1.field());
-  EXPECT_EQ("hello", irs::ViewCast<char>(irs::bytes_view{term1.options().term}));
+  EXPECT_EQ("hello",
+            irs::ViewCast<char>(irs::bytes_view{term1.options().term}));
 
   ++it;
   const auto& term2 = sdb::basics::downCast<irs::ByTerm>(**it);
   EXPECT_EQ("content", term2.field());
-  EXPECT_EQ("world", irs::ViewCast<char>(irs::bytes_view{term2.options().term}));
+  EXPECT_EQ("world",
+            irs::ViewCast<char>(irs::bytes_view{term2.options().term}));
 }
 
 TEST_F(LuceneParserTest, FieldWithGroup) {
@@ -623,12 +651,14 @@ TEST_F(LuceneParserTest, FieldWithGroup) {
   auto it = sub_or.begin();
   const auto& term1 = sdb::basics::downCast<irs::ByTerm>(**it);
   EXPECT_EQ("title", term1.field());
-  EXPECT_EQ("hello", irs::ViewCast<char>(irs::bytes_view{term1.options().term}));
+  EXPECT_EQ("hello",
+            irs::ViewCast<char>(irs::bytes_view{term1.options().term}));
 
   ++it;
   const auto& term2 = sdb::basics::downCast<irs::ByTerm>(**it);
   EXPECT_EQ("title", term2.field());
-  EXPECT_EQ("world", irs::ViewCast<char>(irs::bytes_view{term2.options().term}));
+  EXPECT_EQ("world",
+            irs::ViewCast<char>(irs::bytes_view{term2.options().term}));
 }
 
 TEST_F(LuceneParserTest, NestedFieldQuery) {
@@ -637,11 +667,13 @@ TEST_F(LuceneParserTest, NestedFieldQuery) {
 
   const auto& term1 = GetFilter<irs::ByTerm>(0);
   EXPECT_EQ("title", term1.field());
-  EXPECT_EQ("hello", irs::ViewCast<char>(irs::bytes_view{term1.options().term}));
+  EXPECT_EQ("hello",
+            irs::ViewCast<char>(irs::bytes_view{term1.options().term}));
 
   const auto& term2 = GetFilter<irs::ByTerm>(1);
   EXPECT_EQ("author", term2.field());
-  EXPECT_EQ("world", irs::ViewCast<char>(irs::bytes_view{term2.options().term}));
+  EXPECT_EQ("world",
+            irs::ViewCast<char>(irs::bytes_view{term2.options().term}));
 }
 
 TEST_F(LuceneParserTest, FieldRestoresAfterGroup) {
@@ -685,7 +717,8 @@ TEST_F(LuceneParserTest, ComplexQuery) {
   ++it;
   const auto& fuzzy = sdb::basics::downCast<irs::ByEditDistance>(**it);
   EXPECT_EQ("content", fuzzy.field());
-  EXPECT_EQ("world", irs::ViewCast<char>(irs::bytes_view{fuzzy.options().term}));
+  EXPECT_EQ("world",
+            irs::ViewCast<char>(irs::bytes_view{fuzzy.options().term}));
   EXPECT_EQ(1, fuzzy.options().max_distance);
 }
 

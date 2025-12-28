@@ -25,12 +25,12 @@ static constexpr std::string_view kTokenizerOptions = R"({})";
 static constexpr std::string_view kIndexDir = "idx";
 static constexpr std::string_view kFormatName = "1_5simd";
 static constexpr size_t kSegmentMemMax = 1 << 28;  // 256M
-static constexpr size_t kBatchSize = 10000;
+static constexpr size_t kBatchSize = 100000;
 static constexpr size_t kIndexerThreads = 10;
-static constexpr size_t kCommitIntervalMs = 1000;
+static constexpr size_t kCommitIntervalMs = 0;
 static constexpr size_t kConsolidationIntervalMsec = 5000;
-static constexpr size_t kConsolidationThreads = 1;
-static constexpr bool kConsolidateAll = false;
+static constexpr size_t kConsolidationThreads = 0;
+static constexpr bool kConsolidateAll = true;
 
 constexpr auto kTextIndexFeatures =
   irs::IndexFeatures::Freq | irs::IndexFeatures::Pos | irs::IndexFeatures::Norm;
@@ -187,25 +187,28 @@ int main(int argc, const char* argv[]) {
   absl::CondVar consolidation_cv;
 
   // commiter thread
-  thread_pool.run([&consolidation_cv, &consolidation_mutex, &batch_provider,
-                   &writer] {
-    irs::SetThreadName(IR_NATIVE_STRING("committer"));
+  if (kCommitIntervalMs) {
+    thread_pool.run(
+      [&consolidation_cv, &consolidation_mutex, &batch_provider, &writer] {
+        irs::SetThreadName(IR_NATIVE_STRING("committer"));
 
-    while (!batch_provider.done.load()) {
-      {
-        std::cout << "[COMMIT]" << std::endl;
-        writer->Commit();
-      }
+        while (!batch_provider.done.load()) {
+          {
+            std::cout << "[COMMIT]" << std::endl;
+            writer->Commit();
+          }
 
-      // notify consolidation threads
-      if (kConsolidationThreads) {
-        absl::MutexLock lock{&consolidation_mutex};
-        consolidation_cv.notify_all();
-      }
+          // notify consolidation threads
+          if (kConsolidationThreads) {
+            absl::MutexLock lock{&consolidation_mutex};
+            consolidation_cv.notify_all();
+          }
 
-      std::this_thread::sleep_for(std::chrono::milliseconds(kCommitIntervalMs));
-    }
-  });
+          std::this_thread::sleep_for(
+            std::chrono::milliseconds(kCommitIntervalMs));
+        }
+      });
+  }
 
   // consolidation threads
   const irs::index_utils::ConsolidateTier consolidation_options;

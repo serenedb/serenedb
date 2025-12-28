@@ -155,29 +155,16 @@ std::tuple<Cursor::Process, Result> Cursor::ExecuteVelox(
   SDB_ASSERT(_runner);
   yaclib::Future<> wait;
 
-  std::exception_ptr sql_error;
-  auto r = basics::SafeCall([&] {
-    try {
-      batch = _runner.Next(wait);
-    } catch (const velox::VeloxUserError& e) {
-      if (!e.wrappedException()) {
-        throw e;
-      }
-
-      try {
-        std::rethrow_exception(e.wrappedException());
-      } catch (const SqlException& e) {
-        sql_error = std::current_exception();
-      }
+  try {
+    batch = _runner.Next(wait);
+  } catch (const velox::VeloxUserError& e) {
+    if (auto wrapped = e.wrappedException()) {
+      std::rethrow_exception(wrapped);
     }
-  });
-
-  if (sql_error) {
-    std::rethrow_exception(sql_error);
+    throw;
   }
 
   if (wait.Valid()) {
-    SDB_ASSERT(r.ok());
     SDB_ASSERT(!batch);
     std::move(wait).DetachInline(
       [user_task = _user_task](auto&&) { user_task(); });

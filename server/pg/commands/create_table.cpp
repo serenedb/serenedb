@@ -63,7 +63,7 @@ std::shared_ptr<ColumnExpr> MakeColumnExpr(ObjectId database_id,
   return column_expr;
 }
 
-enum NullInfo : uint8_t { kNotStated = 0, kNull = 1, kNotNull = 2 };
+enum class NullInfo : uint8_t { NotStated = 0, Null = 1, NotNull = 2 };
 
 // TODO: use ErrorPosition in ThrowSqlError
 yaclib::Future<Result> CreateTable(ExecContext& context,
@@ -98,7 +98,58 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
         ERR_CODE(ERRCODE_DUPLICATE_COLUMN), CURSOR_POS(location),
         ERR_MSG("column \"", column.name, "\" specified more than once"));
     }
-    request.columns.push_back(std::move(column));
+    request.columns.emplace_back(std::move(column));
+  };
+
+  // tries to behave like ChooseConstraintName pg source code function
+  auto choose_constraint_name = [&](std::string_view table,
+                                    std::string_view column,
+                                    std::string_view label) -> std::string {
+    std::string base_name;
+    if (column.empty()) {
+      base_name = absl::StrCat(table, "_", label);
+    } else {
+      base_name = absl::StrCat(table, "_", column, "_", label);
+    }
+
+    auto name_exists = [&](std::string_view candidate) {
+      return absl::c_any_of(
+        request.checkConstraints,
+        [&](const catalog::CheckConstraint& c) { return c.name == candidate; });
+    };
+
+    if (!name_exists(base_name)) {
+      return base_name;
+    }
+
+    for (size_t counter = 1;; ++counter) {
+      std::string candidate = absl::StrCat(base_name, counter);
+      if (!name_exists(candidate)) {
+        return candidate;
+      }
+    }
+  };
+
+  auto append_check_constraint = [&](const Constraint& constraint,
+                                     std::string_view column_name = {}) {
+    SDB_ASSERT(constraint.contype == CONSTR_CHECK);
+    std::string name;
+    if (constraint.conname) {
+      name = constraint.conname;
+    } else {
+      name = choose_constraint_name(table, column_name, "check");
+    }
+    request.checkConstraints.emplace_back(catalog::CheckConstraint{
+      .name = std::move(name),
+      .expr = MakeColumnExpr(db, constraint.raw_expr),
+    });
+  };
+
+  auto append_not_null_constraint = [&](std::string_view column_name) {
+    request.checkConstraints.emplace_back(catalog::CheckConstraint{
+      .name = choose_constraint_name(table, column_name, "not_null"),
+      .expr = MakeColumnExpr(db, absl::StrCat(column_name, " IS NOT NULL")),
+    });
   };
 
   auto append_pk = [&](const catalog::Column::Id column_id, int location) {
@@ -108,14 +159,17 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
                               "\" appears twice in primary key constraint"));
     }
     SDB_ASSERT(column_id < request.columns.size());
-    if (request.columns[column_id].generated_type ==
-        catalog::Column::GeneratedType::kVirtual) {
+    const auto& column = request.columns[column_id];
+    if (column.generated_type == catalog::Column::GeneratedType::kVirtual) {
       // pg 18 doesn't support either
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED), CURSOR_POS(location),
         ERR_MSG("primary keys on virtual generated columns are not supported"));
     }
-    request.pkColumns.push_back(column_id);
+
+    append_not_null_constraint(column.name);
+
+    request.pkColumns.emplace_back(column_id);
   };
 
   auto error_constraint_not_supported = [&](const Constraint& constraint) {
@@ -140,61 +194,15 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
               "\" of table \"", table, "\""));
   };
 
-  // tries to behave like ChooseConstraintName pg source code function
-  auto choose_constraint_name =
-    [&](const Constraint& constraint, std::string_view name1,
-        std::string_view name2, std::string_view label) -> std::string {
-    if (constraint.conname) {
-      return constraint.conname;
-    }
-
-    std::string base_name;
-    if (name2.empty()) {
-      base_name = absl::StrCat(name1, "_", label);
-    } else {
-      base_name = absl::StrCat(name1, "_", name2, "_", label);
-    }
-
-    auto name_exists = [&](std::string_view candidate) {
-      return absl::c_any_of(
-        request.checkConstraints,
-        [&](const catalog::CheckConstraint& c) { return c.name == candidate; });
-    };
-
-    if (!name_exists(base_name)) {
-      return base_name;
-    }
-
-    for (size_t counter = 1;; ++counter) {
-      std::string candidate = absl::StrCat(base_name, counter);
-      if (!name_exists(candidate)) {
-        return candidate;
-      }
-    }
-  };
-
-  auto append_check_constraint = [&](
-                                   const Constraint& constraint,
-                                   std::string_view column_name = {}) -> void {
-    SDB_ASSERT(constraint.contype == CONSTR_CHECK);
-    request.checkConstraints.push_back(catalog::CheckConstraint{
-      .name = choose_constraint_name(constraint, table, column_name, "check"),
-      .expr = MakeColumnExpr(db, constraint.raw_expr),
-    });
-  };
-
-  auto append_not_null_constraint = [&](const Constraint& constraint,
-                                        std::string_view column_name) -> void {
-    SDB_ASSERT(constraint.contype == CONSTR_NOTNULL);
-    request.checkConstraints.push_back(catalog::CheckConstraint{
-      .name =
-        choose_constraint_name(constraint, table, column_name, "not_null"),
-      .expr = MakeColumnExpr(db, absl::StrCat(column_name, " IS NOT NULL")),
-    });
-  };
-
   catalog::Column::Id next_column_id = 0;
   VisitNodes(stmt.tableElts, [&](const Node& node) {
+    if (IsA(&node, TableLikeClause)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        CURSOR_POS(ExprLocation(&node)),
+        ERR_MSG("CREATE TABLE ... (LIKE ...) is not supported yet"));
+    }
+
     if (IsA(&node, ColumnDef)) {
       const auto& col_def = *castNode(ColumnDef, &node);
       append_column(catalog::Column{.id = next_column_id++,
@@ -202,7 +210,7 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
                                     .name = col_def.colname},
                     ExprLocation(&col_def));
       auto& col = request.columns.back();
-      NullInfo null_info = NullInfo::kNotStated;
+      NullInfo null_info = NullInfo::NotStated;
       VisitNodes(col_def.constraints, [&](const Constraint& constraint) {
         if (constraint.is_no_inherit) {
           error_no_inherit_not_supported(constraint);
@@ -210,18 +218,17 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
 
         switch (constraint.contype) {
           case CONSTR_NULL:
-            if (null_info == NullInfo::kNotNull) {
+            if (null_info == NullInfo::NotNull) {
               error_null_conflict(constraint, col.name);
             }
-            null_info = NullInfo::kNull;
+            null_info = NullInfo::Null;
             break;
           case CONSTR_NOTNULL:
-            if (null_info == NullInfo::kNull) {
+            if (null_info == NullInfo::Null) {
               error_null_conflict(constraint, col.name);
             }
-
-            append_not_null_constraint(constraint, col.name);
-            null_info = NullInfo::kNotNull;
+            append_not_null_constraint(col.name);
+            null_info = NullInfo::NotNull;
             break;
           case CONSTR_DEFAULT: {
             switch (col.generated_type) {

@@ -108,7 +108,18 @@ class Executor {
     if (!filter) {
       return 0;
     }
-    return irs::ExecuteTopK(_reader, *filter, _scorers, k, _results);
+
+    if (k == 10) {
+      std::array<std::pair<float_t, uint32_t>, 20> results;
+      return irs::ExecuteTopKOptimized<10>(_reader, *filter, _scorers, k,
+                                           results);
+    } else if (k == 100) {
+      std::array<std::pair<float_t, uint32_t>, 200> results;
+      return irs::ExecuteTopKOptimized<100>(_reader, *filter, _scorers, k,
+                                            results);
+    } else {
+      return irs::ExecuteTopK(_reader, *filter, _scorers, k, _results);
+    }
   }
 
   size_t ExecuteTopK1(size_t k, std::string_view query) {

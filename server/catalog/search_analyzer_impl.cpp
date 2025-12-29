@@ -3,6 +3,7 @@
 #include <iresearch/analysis/analyzers.hpp>
 #include <iresearch/analysis/pipeline_tokenizer.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
+#include <iresearch/analysis/geo_analyzer.hpp>
 #include <iresearch/index/norm.hpp>
 
 #include "app/name_validator.h"
@@ -10,7 +11,7 @@
 #include "basics/logger/logger.h"
 #include "basics/static_strings.h"
 #include "catalog/analyzer.h"
-#include "catalog/geo_analyzer.h"
+
 #include "catalog/identifiers/object_id.h"
 #include "catalog/identity_analyzer.h"
 #include "catalog/mangling.h"
@@ -22,25 +23,20 @@
 
 namespace sdb::search {
 
-#ifdef SDB_CLUSTER
-std::tuple<FunctionValueType, FunctionValueType, AnalyzerImpl::StoreFunc,
-           char> extern GetAnalyzerMeta(const irs::analysis::Analyzer*
-                                          analyzer) noexcept;
-#else
 [[maybe_unused]] std::tuple<FunctionValueType, FunctionValueType,
                             AnalyzerImpl::StoreFunc, char>
 GetAnalyzerMeta(const irs::analysis::Analyzer* analyzer) noexcept {
   SDB_ASSERT(analyzer);
   const auto type = analyzer->type();
 
-  if (type == irs::Type<GeoVPackAnalyzer>::id()) {
+  if (type == irs::Type<irs::analysis::GeoJsonAnalyzer>::id()) {
     return {FunctionValueType::JsonCompound, FunctionValueType::String,
-            &GeoVPackAnalyzer::store, mangling::kAnalyzer};
+            &irs::analysis::GeoJsonAnalyzer::store, mangling::kAnalyzer};
   }
 
-  if (type == irs::Type<GeoPointAnalyzer>::id()) {
+  if (type == irs::Type<irs::analysis::GeoPointAnalyzer>::id()) {
     return {FunctionValueType::JsonCompound, FunctionValueType::String,
-            &GeoPointAnalyzer::store, mangling::kAnalyzer};
+            &irs::analysis::GeoPointAnalyzer::store, mangling::kAnalyzer};
   }
 
   if (type == irs::Type<wildcard::Analyzer>::id()) {
@@ -65,7 +61,6 @@ GetAnalyzerMeta(const irs::analysis::Analyzer* analyzer) noexcept {
   return {FunctionValueType::String, FunctionValueType::String, nullptr,
           mangling::kString};
 }
-#endif
 
 namespace {
 
@@ -82,8 +77,8 @@ bool Normalize(std::string& out, std::string_view type,
 }
 
 constexpr auto kGeoAnalyzers = frozen::make_set<std::string_view>({
-  GeoJsonAnalyzer::type_name(),
-  GeoPointAnalyzer::type_name(),
+  irs::analysis::GeoJsonAnalyzer::type_name(),
+  irs::analysis::GeoPointAnalyzer::type_name(),
 });
 
 }  // namespace

@@ -41,6 +41,7 @@
 #include "iresearch/analysis/stopwords_tokenizer.hpp"
 #include "iresearch/analysis/text_tokenizer.hpp"
 #include "iresearch/analysis/tokenizers.hpp"
+#include "iresearch/analysis/geo_analyzer.hpp"
 #include "iresearch/utils/vpack_utils.hpp"
 
 namespace irs::analysis {
@@ -266,6 +267,7 @@ void Init() {
   StemmingTokenizer::init();
   TextTokenizer::init();
   MultiDelimitedTokenizer::init();
+  GeoAnalyzer::init();
 }
 
 }  // namespace analyzers

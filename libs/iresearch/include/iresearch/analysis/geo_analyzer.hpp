@@ -32,12 +32,18 @@
 #include <iresearch/utils/attribute_helper.hpp>
 
 #include "basics/resource_manager.hpp"
-#include "catalog/geo.h"
 #include "geo/shape_container.h"
+#include "geo/coding.h"
 
-namespace sdb::search {
+namespace irs {
 
 struct GeoFilterOptionsBase;
+
+}
+
+namespace irs::analysis {
+
+
 
 class GeoAnalyzer : public irs::analysis::Analyzer,
                     private irs::util::Noncopyable {
@@ -54,7 +60,8 @@ class GeoAnalyzer : public irs::analysis::Analyzer,
 #ifdef SDB_GTEST
   const auto& options() const noexcept { return _indexer.options(); }
 #endif
-
+  static void init(); // for registration in a static build
+  
  protected:
   explicit GeoAnalyzer(const S2RegionTermIndexer::Options& options);
   void reset(std::vector<std::string>&& terms) noexcept;
@@ -80,7 +87,7 @@ class GeoAnalyzer : public irs::analysis::Analyzer,
 class GeoPointAnalyzer final : public GeoAnalyzer {
  public:
   struct Options {
-    GeoOptions options;
+    sdb::geo::GeoOptions options;
     std::vector<std::string> latitude;
     std::vector<std::string> longitude;
   };
@@ -133,14 +140,14 @@ class GeoJsonAnalyzer : public GeoAnalyzer {
   };
 
   enum class Coding : uint8_t {
-    S2Point = std::to_underlying(geo::coding::Options::S2Point),
-    S2LatLngF64 = std::to_underlying(geo::coding::Options::S2LatLngF64),
-    S2LatLngU32 = std::to_underlying(geo::coding::Options::S2LatLngU32),
+    S2Point = std::to_underlying(sdb::geo::coding::Options::S2Point),
+    S2LatLngF64 = std::to_underlying(sdb::geo::coding::Options::S2LatLngF64),
+    S2LatLngU32 = std::to_underlying(sdb::geo::coding::Options::S2LatLngU32),
     VPack,
   };
 
   struct Options {
-    GeoOptions options;
+    sdb::geo::GeoOptions options;
     Type type{Type::Shape};
     // TODO(mbkkt) adjust tests to change default to S2LatLngF64
     Coding coding{Coding::VPack};
@@ -149,6 +156,11 @@ class GeoJsonAnalyzer : public GeoAnalyzer {
   static constexpr std::string_view type_name() noexcept { return "geojson"; }
   static bool normalize(std::string_view args, std::string& out);
   static irs::analysis::Analyzer::ptr make(std::string_view args);
+  static irs::bytes_view store(irs::Tokenizer* ctx, vpack::Slice slice);
+
+  irs::TypeInfo::type_id type() const noexcept final {
+    return irs::Type<GeoJsonAnalyzer>::id();
+  }
 
 #ifdef SDB_GTEST
   auto shapeType() const noexcept { return _type; }
@@ -157,35 +169,18 @@ class GeoJsonAnalyzer : public GeoAnalyzer {
  protected:
   explicit GeoJsonAnalyzer(const Options& options);
 
-  bool resetImpl(std::string_view value, geo::coding::Options options,
+  bool ResetImpl(std::string_view value, sdb::geo::coding::Options options,
                  Encoder* encoder);
 
-  geo::ShapeContainer _shape;
+  virtual irs::bytes_view StoreImpl(irs::Tokenizer* ctx, vpack::Slice slice) = 0;
+
+  sdb::geo::ShapeContainer _shape;
   S2Point _centroid;
   std::vector<S2LatLng> _cache;
   Type _type;
 };
 
-/// Stores vpack.
-class GeoVPackAnalyzer final : public GeoJsonAnalyzer {
- public:
-  static irs::bytes_view store(irs::Tokenizer* ctx, vpack::Slice slice);
-
-  explicit GeoVPackAnalyzer(const Options& opts);
-
-  irs::TypeInfo::type_id type() const noexcept final {
-    return irs::Type<GeoVPackAnalyzer>::id();
-  }
-
-  bool reset(std::string_view value) final;
-
-  void prepare(GeoFilterOptionsBase& options) const final;
-
- private:
-  vpack::Builder _builder;
-};
-
 void ToVPack(vpack::Builder& builder, const GeoPointAnalyzer::Options& options);
 void ToVPack(vpack::Builder& builder, const GeoJsonAnalyzer::Options& options);
 
-}  // namespace sdb::search
+}  // namespace irs::analysis

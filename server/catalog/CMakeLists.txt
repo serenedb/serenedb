@@ -26,7 +26,6 @@ target_sources(
         role.cpp
         secondary_index.cpp
         # TODO search
-        geo.cpp
         identity_analyzer.cpp
         analyzer.cpp
         mangling.cpp

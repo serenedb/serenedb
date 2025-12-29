@@ -157,7 +157,13 @@ class RocksDBSnapshot final : public StorageSnapshot {
   mutable rocksdb::ManagedSnapshot _snapshot;
 };
 
+#ifdef SDB_CLUSTER
+#define ENGINE_VIRTUAL virtual
+#else
+#define ENGINE_VIRTUAL
+#endif
 class RocksDBEngineCatalog {
+
   friend class RocksDBFilePurgePreventer;
   friend class RocksDBFilePurgeEnabler;
 
@@ -169,7 +175,7 @@ class RocksDBEngineCatalog {
   RocksDBEngineCatalog(SerenedServer& server);
   RocksDBEngineCatalog(const RocksDBOptionFeature& options_provider,
                        metrics::MetricsFeature& metrics);
-  ~RocksDBEngineCatalog();
+  ENGINE_VIRTUAL ~RocksDBEngineCatalog();
 
   void prepare();
   void start();
@@ -233,7 +239,7 @@ class RocksDBEngineCatalog {
   Tick recoveryTick() noexcept;
 
   // TODO(Dronplane): drop virtual when cluster rocksdb engine removed
-  virtual Result createTableShard(const catalog::Table& collection, bool is_new,
+  ENGINE_VIRTUAL Result createTableShard(const catalog::Table& collection, bool is_new,
                           std::shared_ptr<TableShard>& physical);
 
   /// disallow purging of WAL files even if the archive gets too big

@@ -1379,7 +1379,7 @@ void SqlAnalyzer::MakeTableWrite(
         "presto_concat", std::move(concat_parts));
     };
 
-    auto cursorpos = MakeConst(static_cast<int32_t>(ErrorPosition(location)));
+    auto cursorpos = MakeConst<int32_t>((ErrorPosition(location)));
     auto detail = build_failing_row_detail();
 
     // make condition: if (check) -> ok; else -> fail
@@ -1390,8 +1390,7 @@ void SqlAnalyzer::MakeTableWrite(
                                   ExprKind::CheckConstraint);
 
       if (auto [not_null, column_name] = constraint.IsNotNull(); not_null) {
-        auto errcode =
-          MakeConst(static_cast<int32_t>(ERRCODE_NOT_NULL_VIOLATION));
+        auto errcode = MakeConst<int32_t>(ERRCODE_NOT_NULL_VIOLATION);
         auto errmsg = MakeConst(absl::StrCat(
           "null value in column \"", column_name, "\" of relation \"",
           object.table->name(), "\" violates not-null constraint"));
@@ -1405,7 +1404,7 @@ void SqlAnalyzer::MakeTableWrite(
           "if", std::vector<lp::ExprPtr>{std::move(expr), MakeConst(true),
                                          std::move(throwsql)});
       } else {
-        auto errcode = MakeConst(static_cast<int32_t>(ERRCODE_CHECK_VIOLATION));
+        auto errcode = MakeConst<int32_t>(ERRCODE_CHECK_VIOLATION);
         auto errmsg = MakeConst(absl::StrCat(
           "new row for relation \"", object.table->name(),
           "\" violates check constraint \"", constraint.name, "\""));
@@ -1440,12 +1439,7 @@ void SqlAnalyzer::MakeTableWrite(
 // but have different address to distinguish it from UNKNOWN().
 const velox::UnknownType kDefaultValueTypePlaceHolder{};
 const auto kDefaultValueTypePlaceHolderPtr =
-  MakePtrView<velox::UnknownType>(kDefaultValueTypePlaceHolder);
-const lp::CallExpr kDefaultValuePlaceHolder{
-  kDefaultValueTypePlaceHolderPtr, "presto_fail",
-  MakeConst("DEFAULT is not allowed in this context")};
-const auto kDefaultValuePlaceHolderPtr =
-  MakePtrView<lp::CallExpr>(kDefaultValuePlaceHolder);
+  MakePtrView(kDefaultValueTypePlaceHolder);
 
 void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
   if (stmt.returningList) {
@@ -3549,7 +3543,11 @@ lp::ExprPtr SqlAnalyzer::ProcessExprNodeImpl(State& state, const Node* expr) {
                         CURSOR_POS(ErrorPosition(ExprLocation(expr))),
                         ERR_MSG("DEFAULT is not allowed in this context"));
       }
-      return kDefaultValuePlaceHolderPtr;
+      return std::make_shared<lp::CallExpr>(
+        kDefaultValueTypePlaceHolderPtr, "pg_error",
+        MakeConst<int32_t>(ERRCODE_SYNTAX_ERROR),
+        MakeConst<int32_t>(ErrorPosition(ExprLocation(expr))),
+        MakeConst("DEFAULT is not allowed in this context"));
     case T_MultiAssignRef:
     case T_GroupingFunc:
     case T_NamedArgExpr:

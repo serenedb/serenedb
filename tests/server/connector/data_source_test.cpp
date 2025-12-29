@@ -113,7 +113,7 @@ class DataSourceTest : public ::testing::Test,
     {
       source.addSplit(std::make_shared<sdb::connector::SereneDBConnectorSplit>(
         "test_connector"));
-      velox::ContinueFuture future;
+      auto future = velox::ContinueFuture::makeEmpty();
 
       auto read = source.next(data->size(), future);
       ASSERT_TRUE(read.has_value());
@@ -141,7 +141,7 @@ class DataSourceTest : public ::testing::Test,
     {
       source.addSplit(std::make_shared<sdb::connector::SereneDBConnectorSplit>(
         "test_connector"));
-      velox::ContinueFuture future;
+      auto future = velox::ContinueFuture::makeEmpty();
       for (velox::vector_size_t i = 0; i < data->size(); ++i) {
         auto read = source.next(1, future);
         ASSERT_TRUE(read.has_value());
@@ -294,7 +294,7 @@ TEST_F(DataSourceTest, test_tableReadEmptyOutput) {
   {
     source.addSplit(std::make_shared<sdb::connector::SereneDBConnectorSplit>(
       "test_connector"));
-    velox::ContinueFuture future;
+    auto future = velox::ContinueFuture::makeEmpty();
 
     auto read = source.next(row_data->size(), future);
     ASSERT_TRUE(read.has_value());
@@ -312,7 +312,7 @@ TEST_F(DataSourceTest, test_tableReadEmptyOutput) {
   {
     source.addSplit(std::make_shared<sdb::connector::SereneDBConnectorSplit>(
       "test_connector"));
-    velox::ContinueFuture future;
+    auto future = velox::ContinueFuture::makeEmpty();
     for (velox::vector_size_t i = 0; i < row_data->size(); ++i) {
       auto read = source.next(1, future);
       ASSERT_TRUE(read.has_value());

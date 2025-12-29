@@ -472,7 +472,7 @@ void DescribeParameters(const std::vector<velox::TypePtr>& param_types,
 void PgSQLCommTaskBase::DescribePortal(const SqlPortal& portal) {
   SDB_ASSERT(portal.stmt);
   if (!portal.stmt->query && portal.stmt->NextRoot(_connection_ctx)) {
-    SendWarnings();
+    SendNotices();
   }
   SDB_ASSERT(portal.stmt->query);
   DescribeAnalyzedQuery(*portal.stmt, portal.bind_info.output_formats);
@@ -480,7 +480,7 @@ void PgSQLCommTaskBase::DescribePortal(const SqlPortal& portal) {
 
 void PgSQLCommTaskBase::DescribeStatement(SqlStatement& statement) {
   if (!statement.query && statement.NextRoot(_connection_ctx)) {
-    SendWarnings();
+    SendNotices();
   }
   DescribeParameters(statement.params.types, _send);
   SDB_ASSERT(statement.query);
@@ -584,7 +584,7 @@ void PgSQLCommTaskBase::RunSimpleQuery(std::string_view query_string) {
   }
   if (!_anonymous_statement.query &&
       _anonymous_statement.NextRoot(_connection_ctx)) {
-    SendWarnings();
+    SendNotices();
   }
   if (!_anonymous_statement.query) {
     // no query
@@ -608,7 +608,7 @@ SqlStatement PgSQLCommTaskBase::MakeStatement(std::string_view query_string) {
     .list = pg::Parse(*res.memory_context, *res.query_string),
     .root_idx = 0,
   };
-  SendWarnings();
+  SendNotices();
   return res;
 }
 
@@ -646,7 +646,7 @@ void PgSQLCommTaskBase::ExecuteQuery(std::string_view packet) {
   _current_query = portal->stmt->query_string->view();
 
   if (!portal->stmt->query && portal->stmt->NextRoot(_connection_ctx)) {
-    SendWarnings();
+    SendNotices();
   }
 
   ExecutePortal(*portal);
@@ -826,7 +826,7 @@ void PgSQLCommTaskBase::BindQuery(std::string_view packet) {
   }
 
   if (!statement->query && statement->NextRoot(_connection_ctx)) {
-    SendWarnings();
+    SendNotices();
   }
 
   _current_query = statement->query_string->view();
@@ -841,7 +841,7 @@ void PgSQLCommTaskBase::BindQuery(std::string_view packet) {
     portal_it->second = BindStatement(*statement, std::move(*bind_info));
   }
   portal_it = _portals.end();
-  SendWarnings();
+  SendNotices();
   _send.Write(ToBuffer(kBindComplete), true);
   _success_packet = true;
 }
@@ -956,7 +956,7 @@ auto PgSQLCommTaskBase::BindStatement(SqlStatement& stmt, BindInfo bind_info)
   portal.stmt = &stmt;
 
   if (!portal.stmt->query && portal.stmt->NextRoot(_connection_ctx)) {
-    SendWarnings();
+    SendNotices();
   }
   SDB_ASSERT(stmt.query);
   const auto& output_type = stmt.query->GetOutputType();
@@ -1046,7 +1046,7 @@ auto PgSQLCommTaskBase::ProcessQueryResult() -> ProcessState {
 
   velox::RowVectorPtr batch;
   const auto state = portal.cursor->Next(batch);
-  SendWarnings();
+  SendNotices();
   SendBatch(batch);
   batch.reset();
   if (state == query::Cursor::Process::More) {
@@ -1061,7 +1061,7 @@ auto PgSQLCommTaskBase::ProcessQueryResult() -> ProcessState {
   ReleaseCursor(portal);
   if (_current_packet_type == PQ_MSG_QUERY &&
       portal.stmt->NextRoot(_connection_ctx)) {
-    SendWarnings();
+    SendNotices();
     _feature.ScheduleProcessNext(weak_from_this());
     return ProcessState::DoneQuery;
   }
@@ -1174,11 +1174,13 @@ std::string_view PgSQLCommTaskBase::UserName() const noexcept {
   return {};
 }
 
-void PgSQLCommTaskBase::SendWarnings() {
-  // TODO(#334) We should handle warnings
-  // for (const auto& warn : _warnings.stealAll()) {
-  //   SendNotice(PqMsg_NoticeResponse, warn, _current_query);
-  // }
+void PgSQLCommTaskBase::SendNotices() {
+  if (!_connection_ctx) {
+    return;
+  }
+  for (const auto& notice : _connection_ctx->StealNotices()) {
+    SendNotice(PQ_MSG_NOTICE_RESPONSE, notice, _current_query);
+  }
 }
 
 void PgSQLCommTaskBase::SendParameterStatus(std::string_view name,
@@ -1206,7 +1208,7 @@ std::string_view PgSQLCommTaskBase::StartPacket() noexcept {
 }
 
 void PgSQLCommTaskBase::FinishPacket() noexcept try {
-  SendWarnings();
+  SendNotices();
   if (!_success_packet && IsCancelled()) {
     // TODO(mbkkt) flush is probably unnecessary here
     _send.Write(ToBuffer(kPacketCancelled), true);

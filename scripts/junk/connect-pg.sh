@@ -43,7 +43,7 @@ wait_for_postgres() {
     echo "Waiting for PostgreSQL to be ready..."
     local max_attempts=30
     local attempt=1
-    
+
     while [ $attempt -le $max_attempts ]; do
         if docker exec "$CONTAINER_NAME" pg_isready -U "$POSTGRES_USER" > /dev/null 2>&1; then
             echo "PostgreSQL is ready!"
@@ -53,7 +53,7 @@ wait_for_postgres() {
         sleep 2
         ((attempt++))
     done
-    
+
     echo "Failed to connect to PostgreSQL after $max_attempts attempts"
     return 1
 }
@@ -71,7 +71,7 @@ else
         echo "Container does not exist. Creating new container..."
         start_container
     fi
-    
+
     # Wait for PostgreSQL to be ready
     wait_for_postgres
 fi

@@ -1358,24 +1358,22 @@ void SqlAnalyzer::MakeTableWrite(
 
     auto build_failing_row_detail = [&]() -> lp::ExprPtr {
       std::vector<lp::ExprPtr> concat_parts;
-      concat_parts.push_back(MakeConst(
-        std::string_view("Failing row contains ("), velox::VARCHAR()));
+      concat_parts.emplace_back(
+        MakeConst("Failing row contains (", velox::VARCHAR()));
 
       for (size_t i = 0; i < column_exprs.size(); ++i) {
         if (i > 0) {
-          concat_parts.push_back(
-            MakeConst(std::string_view(", "), velox::VARCHAR()));
+          concat_parts.emplace_back(MakeConst(", ", velox::VARCHAR()));
         }
         auto str_expr = MakeCast(velox::VARCHAR(), column_exprs[i]);
         // show "null" instead of empty
         str_expr = ResolveVeloxFunctionAndInferArgsCommonType(
           "coalesce", {std::move(str_expr),
                        MakeConst(std::string_view("null"), velox::VARCHAR())});
-        concat_parts.push_back(std::move(str_expr));
+        concat_parts.emplace_back(std::move(str_expr));
       }
 
-      concat_parts.push_back(
-        MakeConst(std::string_view(")."), velox::VARCHAR()));
+      concat_parts.emplace_back(MakeConst(").", velox::VARCHAR()));
 
       return ResolveVeloxFunctionAndInferArgsCommonType(
         "presto_concat", std::move(concat_parts));

@@ -26,11 +26,8 @@
 
 #include "basics/down_cast.h"
 #include "basics/string_utils.h"
-<<<<<<< HEAD
 #include "pg/sql_exception.h"
 #include "pg/sql_utils.h"
-=======
->>>>>>> origin/mbkkt/fixes
 #include "query/config.h"
 #include "query/query.h"
 #include "utils.h"

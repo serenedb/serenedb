@@ -1391,31 +1391,40 @@ void SqlAnalyzer::MakeTableWrite(
       auto expr = ProcessExprNode(state, constraint.expr->GetExpr(),
                                   ExprKind::CheckConstraint);
 
-      // PostgreSQL: CHECK fails only if result = FALSE (not NULL)
-      expr = ResolveVeloxFunctionAndInferArgsCommonType(
-        "coalesce", {std::move(expr), MakeConst(true)});
-
-      lp::ExprPtr errcode;
-      lp::ExprPtr errmsg;
       if (auto [not_null, column_name] = constraint.IsNotNull(); not_null) {
-        errcode = MakeConst(static_cast<int32_t>(ERRCODE_NOT_NULL_VIOLATION));
-        errmsg = MakeConst(absl::StrCat(
+        auto errcode =
+          MakeConst(static_cast<int32_t>(ERRCODE_NOT_NULL_VIOLATION));
+        auto errmsg = MakeConst(absl::StrCat(
           "null value in column \"", column_name, "\" of relation \"",
           object.table->name(), "\" violates not-null constraint"));
+        auto throwsql = std::make_shared<lp::CallExpr>(
+          velox::UNKNOWN(), "pg_error",
+          std::vector<lp::ExprPtr>{std::move(errcode), cursorpos,
+                                   std::move(errmsg), detail});
+        // fun fact: in spark isnotnull works faster that isnull
+        // so we if (check) -> ok; else -> fail
+        expr = ResolveVeloxFunctionAndInferArgsCommonType(
+          "if", std::vector<lp::ExprPtr>{std::move(expr), MakeConst(true),
+                                         std::move(throwsql)});
       } else {
-        errcode = MakeConst(static_cast<int32_t>(ERRCODE_CHECK_VIOLATION));
-        errmsg = MakeConst(absl::StrCat(
+        auto errcode = MakeConst(static_cast<int32_t>(ERRCODE_CHECK_VIOLATION));
+        auto errmsg = MakeConst(absl::StrCat(
           "new row for relation \"", object.table->name(),
           "\" violates check constraint \"", constraint.name, "\""));
-      }
 
-      auto throwsql = std::make_shared<lp::CallExpr>(
-        velox::UNKNOWN(), "pg_error",
-        std::vector<lp::ExprPtr>{std::move(errcode), cursorpos,
-                                 std::move(errmsg), detail});
-      expr = ResolveVeloxFunctionAndInferArgsCommonType(
-        "if", std::vector<lp::ExprPtr>{std::move(expr), MakeConst(true),
-                                       std::move(throwsql)});
+        // PostgreSQL: CHECK fails only if result = FALSE (not NULL)
+        // we want to optimize this part and make if not fail -> ok; else ->
+        // fail instead of writing coalesce every time
+        auto throwsql = std::make_shared<lp::CallExpr>(
+          velox::UNKNOWN(), "pg_error",
+          std::vector<lp::ExprPtr>{std::move(errcode), cursorpos,
+                                   std::move(errmsg), detail});
+        expr = ResolveVeloxFunctionAndInferArgsCommonType("presto_not",
+                                                          {std::move(expr)});
+        expr = ResolveVeloxFunctionAndInferArgsCommonType(
+          "if", std::vector<lp::ExprPtr>{std::move(expr), std::move(throwsql),
+                                         MakeConst(true)});
+      }
 
       AndToLeft(check, std::move(expr));
     }
@@ -1871,7 +1880,7 @@ void SqlAnalyzer::ProcessCreateStmt(State& state, const CreateStmt& stmt) {
 
   velox::RowType dummy_output_type{std::move(column_names),
                                    std::move(column_types)};
-  dummy.lookup_columns = MakePtrView(&dummy_output_type);
+  dummy.lookup_columns = MakePtrView(dummy_output_type);
   auto forbid_nested_generated_column =
     [&](std::string_view name, const ColumnRef& ref) -> lp::ExprPtr {
     if (generated_columns.contains(name)) {

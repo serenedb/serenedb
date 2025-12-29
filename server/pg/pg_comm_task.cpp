@@ -169,11 +169,22 @@ PgSQLCommTaskBase::~PgSQLCommTaskBase() {
   }
 }
 
-void PgSQLCommTaskBase::Process() {
+template<typename Func>
+void PgSQLCommTaskBase::SafeCall(Func&& func) noexcept try {
+  func();
+} catch (const SqlException& e) {
+  SendNotice(PQ_MSG_ERROR_RESPONSE, e.error(), _current_query);
+} catch (const std::exception& e) {
+  SendError(e.what(), ERRCODE_INTERNAL_ERROR);
+} catch (...) {
+  SendError("Unhandled exception", ERRCODE_INTERNAL_ERROR);
+}
+
+void PgSQLCommTaskBase::ProcessFirstRoot() noexcept {
   std::lock_guard lock{_execution_mutex};
-  try {
-    SDB_ASSERT(_state != State::Processing);
-    const auto packet = StartPacket();
+  SDB_ASSERT(_state != State::Processing);
+  const auto packet = StartPacket();
+  SafeCall([&] {
     switch (_state) {
       case State::ClientHello:
         HandleClientHello(packet);
@@ -184,13 +195,34 @@ void PgSQLCommTaskBase::Process() {
       default:
         break;
     }
-  } catch (const SqlException& e) {
-    SendNotice(PQ_MSG_ERROR_RESPONSE, e.error(), _current_query);
-  } catch (const std::exception& e) {
-    SendError(e.what(), "42601");
-  } catch (...) {
-    SendError("Unhandled exception", "XX000");
+  });
+  if (_pop_packet) {
+    FinishPacket();
   }
+}
+
+void PgSQLCommTaskBase::ProcessNextRoot() noexcept {
+  std::lock_guard lock{_execution_mutex};
+  SDB_ASSERT(_current_portal);
+  SDB_ASSERT(!_pop_packet);
+  _pop_packet = true;
+  SafeCall([&] { ExecutePortal(*_current_portal); });
+  if (_pop_packet) {
+    FinishPacket();
+  }
+}
+
+void PgSQLCommTaskBase::ProcessWakeup() noexcept {
+  std::lock_guard lock{_execution_mutex};
+  SDB_ASSERT(!_pop_packet);
+  _pop_packet = true;
+  SafeCall([&] {
+    auto state = ProcessState::DonePacket;
+    do {
+      state = ProcessQueryResult();
+    } while (state == ProcessState::More);
+    _pop_packet = state == ProcessState::DonePacket;
+  });
   if (_pop_packet) {
     FinishPacket();
   }
@@ -237,7 +269,7 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
       // sending invalid schema name as SQLSTATE
       return SendError(
         absl::StrCat("Database ", DatabaseName(), " is not accessible"),
-        "3F000");
+        ERRCODE_INVALID_SCHEMA_NAME);
     }
 
     _connection_ctx = std::make_shared<ConnectionContext>(
@@ -317,9 +349,10 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
       _success_packet = true;
     } else if (auth.auth.auth_method == hba::UserAuth::Reject ||
                auth.auth.auth_method == hba::UserAuth::ImplicitReject) {
-      SendError("CHECK ERROR MESSAGE", "28000");
+      SendError("CHECK ERROR MESSAGE",
+                ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION);
     } else {
-      SendError("NO IMPLEMENTED", "28000");
+      SendError("NO IMPLEMENTED", ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION);
     }
   } else {
     SDB_WARN("xxxxx", Logger::REQUESTS, "Unknown packet:", protocol_ver,
@@ -360,7 +393,7 @@ void PgSQLCommTaskBase::HandleClientPacket(std::string_view packet) {
       return;
     default:
       SDB_LOG_PGSQL("Unknown packet type: ", std::string_view{&msg, 1});
-      return SendError("Malformed packet.", "08P01");
+      return SendError("Malformed packet.", ERRCODE_PROTOCOL_VIOLATION);
   }
 }
 
@@ -456,7 +489,7 @@ void PgSQLCommTaskBase::DescribeStatement(SqlStatement& statement) {
 
 void PgSQLCommTaskBase::DescribeQuery(std::string_view packet) {
   if (packet.size() < 2 || packet.back() != '\0') {
-    return SendError("Malformed Describe packet.", "08P01");
+    return SendError("Malformed Describe packet.", ERRCODE_PROTOCOL_VIOLATION);
   }
   std::string_view name{packet.data() + 1, packet.size() - 2};
   // TODO: not found error when empty
@@ -466,7 +499,7 @@ void PgSQLCommTaskBase::DescribeQuery(std::string_view packet) {
     } else {
       auto it = _portals.find(name);
       if (it == _portals.end()) {
-        return SendError("Invalid portal name", "34000");
+        return SendError("Invalid portal name", ERRCODE_INVALID_CURSOR_NAME);
       }
       DescribePortal(it->second);
     }
@@ -476,19 +509,19 @@ void PgSQLCommTaskBase::DescribeQuery(std::string_view packet) {
     } else {
       auto it = _statements.find(name);
       if (it == _statements.end()) {
-        return SendError("Invalid statement name", "26000");
+        return SendError("Invalid statement name", ERRCODE_INVALID_CURSOR_NAME);
       }
       DescribeStatement(it->second);
     }
   } else {
-    return SendError("Wrong Describe packet.", "08P01");
+    return SendError("Wrong Describe packet.", ERRCODE_PROTOCOL_VIOLATION);
   }
   _success_packet = true;
 }
 
 void PgSQLCommTaskBase::ExecuteClose(std::string_view packet) {
   if (packet.size() < 2 || packet.back() != '\0') {
-    return SendError("Malformed Close packet.", "08P01");
+    return SendError("Malformed Close packet.", ERRCODE_PROTOCOL_VIOLATION);
   }
   std::string_view name{packet.data() + 1, packet.size() - 2};
   // TODO: error if not found
@@ -525,7 +558,7 @@ void PgSQLCommTaskBase::ExecuteClose(std::string_view packet) {
       }
     }
   } else {
-    return SendError("Wrong Close packet.", "08P01");
+    return SendError("Wrong Close packet.", ERRCODE_PROTOCOL_VIOLATION);
   }
   _send.Write(ToBuffer(kCloseComplete), true);
   _success_packet = true;
@@ -538,37 +571,31 @@ void PgSQLCommTaskBase::RunSimpleQuery(std::string_view query_string) {
 
   // Note that a simple Query message also destroys the unnamed portal.
   _anonymous_portal.Reset(*this);
-  try {
-    _current_query = query_string;
-    // Note that a simple Query message also destroys the unnamed statement.
-    _anonymous_statement.Reset();
-    _anonymous_statement = MakeStatement(query_string);
-    _current_query = _anonymous_statement.query_string->view();
-    if (!_anonymous_statement.tree.list) {
-      // no query
-      _send.Write(ToBuffer(kEmptyResult), false);
-      _success_packet = true;
-      return;
-    }
-    if (!_anonymous_statement.query &&
-        _anonymous_statement.NextRoot(_connection_ctx)) {
-      SendWarnings();
-    }
-
-    if (_anonymous_statement.query) {
-      _anonymous_portal = BindStatement(_anonymous_statement, {});
-      DescribeAnalyzedQuery(_anonymous_statement,
-                            _anonymous_portal.bind_info.output_formats, false);
-      ExecutePortal(_anonymous_portal, 0);
-    } else if (!IsCancelled()) {
-      _send.Write(ToBuffer(kEmptyResult), false);
-      _success_packet = true;
-    }
-  } catch (const SqlException& e) {
-    SendNotice(PQ_MSG_ERROR_RESPONSE, e.error(), _current_query);
-  } catch (const std::exception& e) {
-    SendError(e.what(), "42601");
+  _current_query = query_string;
+  // Note that a simple Query message also destroys the unnamed statement.
+  _anonymous_statement.Reset();
+  _anonymous_statement = MakeStatement(query_string);
+  _current_query = _anonymous_statement.query_string->view();
+  if (!_anonymous_statement.tree.list) {
+    // no query
+    _send.Write(ToBuffer(kEmptyResult), false);
+    _success_packet = true;
+    return;
   }
+  if (!_anonymous_statement.query &&
+      _anonymous_statement.NextRoot(_connection_ctx)) {
+    SendWarnings();
+  }
+  if (!_anonymous_statement.query) {
+    // no query
+    _send.Write(ToBuffer(kEmptyResult), false);
+    _success_packet = true;
+    return;
+  }
+  _anonymous_portal = BindStatement(_anonymous_statement, {});
+  DescribeAnalyzedQuery(_anonymous_statement,
+                        _anonymous_portal.bind_info.output_formats, false);
+  ExecutePortal(_anonymous_portal);
 }
 
 SqlStatement PgSQLCommTaskBase::MakeStatement(std::string_view query_string) {
@@ -593,14 +620,15 @@ void PgSQLCommTaskBase::ExecuteQuery(std::string_view packet) {
   const auto name_end = packet.find('\0');
   if (name_end == std::string_view::npos ||
       name_end + sizeof(int32_t) >= packet.size()) {
-    return SendError("Malformed Execute packet.", "08P01");
+    return SendError("Malformed Execute packet.", ERRCODE_PROTOCOL_VIOLATION);
   }
 
-  auto limit = std::bit_cast<int32_t>(
-    absl::big_endian::Load32(packet.data() + name_end + 1));
-  if (limit < 0) {
-    limit = 0;
-  }
+  // TODO: handle limit, think about multiple queries
+  // auto limit = std::bit_cast<int32_t>(
+  //   absl::big_endian::Load32(packet.data() + name_end + 1));
+  // if (limit < 0) {
+  //   limit = 0;
+  // }
 
   auto* portal = name_end == 0 ? &_anonymous_portal : nullptr;
   if (!portal) {
@@ -612,22 +640,16 @@ void PgSQLCommTaskBase::ExecuteQuery(std::string_view packet) {
   // TODO: portal->stmt should be assert,
   // but we don't handle not having empty name portal
   if (!portal || !portal->stmt) {
-    return SendError("Invalid portal name", "34000");
+    return SendError("Invalid portal name", ERRCODE_INVALID_CURSOR_NAME);
   }
 
-  try {
-    _current_query = portal->stmt->query_string->view();
+  _current_query = portal->stmt->query_string->view();
 
-    if (!portal->stmt->query && portal->stmt->NextRoot(_connection_ctx)) {
-      SendWarnings();
-    }
-
-    ExecutePortal(*portal, static_cast<size_t>(limit));
-  } catch (const SqlException& e) {
-    SendNotice(PQ_MSG_ERROR_RESPONSE, e.error(), _current_query);
-  } catch (const std::exception& e) {
-    SendError(e.what(), "42601");
+  if (!portal->stmt->query && portal->stmt->NextRoot(_connection_ctx)) {
+    SendWarnings();
   }
+
+  ExecutePortal(*portal);
 }
 
 std::optional<std::vector<VarFormat>> PgSQLCommTaskBase::ParseBindFormats(
@@ -761,14 +783,14 @@ void PgSQLCommTaskBase::BindQuery(std::string_view packet) {
 
   const auto portal_end = packet.find('\0');
   if (portal_end == std::string_view::npos) {
-    return SendError("Malformed Bind packet.", "08P01");
+    return SendError("Malformed Bind packet.", ERRCODE_PROTOCOL_VIOLATION);
   }
   const std::string_view portal_name{packet.data(), portal_end};
   auto [portal_it, emplaced] = portal_name.empty()
                                  ? std::pair{_portals.end(), true}
                                  : _portals.try_emplace(portal_name);
   if (!emplaced) {
-    return SendError("Duplicate portal name", "42P03");
+    return SendError("Duplicate portal name", ERRCODE_DUPLICATE_CURSOR);
   }
   irs::Finally cleanup = [&]() noexcept {
     if (portal_it != _portals.end()) {
@@ -779,7 +801,7 @@ void PgSQLCommTaskBase::BindQuery(std::string_view packet) {
 
   const auto statement_end = packet.find('\0');
   if (statement_end == std::string_view::npos) {
-    return SendError("Malformed Bind packet.", "08P01");
+    return SendError("Malformed Bind packet.", ERRCODE_PROTOCOL_VIOLATION);
   }
   const std::string_view statement_name{packet.data(), statement_end};
   packet.remove_prefix(statement_end + 1);
@@ -787,17 +809,20 @@ void PgSQLCommTaskBase::BindQuery(std::string_view packet) {
   if (!statement) {
     auto statement_it = _statements.find(statement_name);
     if (statement_it == _statements.end()) {
-      return SendError("Invalid statement name", "26000");
+      return SendError("Invalid statement name",
+                       ERRCODE_INVALID_SQL_STATEMENT_NAME);
     }
     statement = &statement_it->second;
   }
   if (!statement->query_string) {
-    return SendError("Statement not completed", "03000");
+    return SendError("Statement not completed",
+                     ERRCODE_SQL_STATEMENT_NOT_YET_COMPLETE);
   }
 
   if (statement->RootCount() > 1) {
     return SendError(
-      "cannot insert multiple commands into a prepared statement", "42601");
+      "cannot insert multiple commands into a prepared statement",
+      ERRCODE_PROTOCOL_VIOLATION);
   }
 
   if (!statement->query && statement->NextRoot(_connection_ctx)) {
@@ -810,21 +835,15 @@ void PgSQLCommTaskBase::BindQuery(std::string_view packet) {
   if (!bind_info) {
     return;
   }
-  try {
-    if (portal_it == _portals.end()) {
-      _anonymous_portal = BindStatement(*statement, std::move(*bind_info));
-    } else {
-      portal_it->second = BindStatement(*statement, std::move(*bind_info));
-    }
-    portal_it = _portals.end();
-    SendWarnings();
-    _send.Write(ToBuffer(kBindComplete), true);
-    _success_packet = true;
-  } catch (const SqlException& e) {
-    SendNotice(PQ_MSG_ERROR_RESPONSE, e.error(), _current_query);
-  } catch (const std::exception& e) {
-    SendError(e.what(), "42601");
+  if (portal_it == _portals.end()) {
+    _anonymous_portal = BindStatement(*statement, std::move(*bind_info));
+  } else {
+    portal_it->second = BindStatement(*statement, std::move(*bind_info));
   }
+  portal_it = _portals.end();
+  SendWarnings();
+  _send.Write(ToBuffer(kBindComplete), true);
+  _success_packet = true;
 }
 
 void PgSQLCommTaskBase::ParseQuery(std::string_view packet) {
@@ -834,14 +853,14 @@ void PgSQLCommTaskBase::ParseQuery(std::string_view packet) {
 
   const auto statement_end = packet.find('\0');
   if (statement_end == std::string_view::npos) {
-    return SendError("Malformed Parse packet.", "08P01");
+    return SendError("Malformed Parse packet.", ERRCODE_PROTOCOL_VIOLATION);
   }
   std::string_view statement_name{packet.data(), statement_end};
   auto [it, emplaced] = statement_name.empty()
                           ? std::pair{_statements.end(), true}
                           : _statements.try_emplace(statement_name);
   if (!emplaced) {
-    return SendError("Duplicate statement name", "42P05");
+    return SendError("Duplicate statement name", ERRCODE_DUPLICATE_PSTATEMENT);
   }
   irs::Finally cleanup = [&]() noexcept {
     if (it != _statements.end()) {
@@ -852,20 +871,20 @@ void PgSQLCommTaskBase::ParseQuery(std::string_view packet) {
 
   const auto query_end = packet.find('\0');
   if (query_end == std::string_view::npos) {
-    return SendError("Malformed Parse packet.", "08P01");
+    return SendError("Malformed Parse packet.", ERRCODE_PROTOCOL_VIOLATION);
   }
   _current_query = {packet.data(), query_end};
   packet.remove_prefix(query_end + 1);
 
   if (packet.size() < sizeof(int16_t)) {
-    return SendError("Malformed Parse packet.", "08P01");
+    return SendError("Malformed Parse packet.", ERRCODE_PROTOCOL_VIOLATION);
   }
   ParamIndex num_params = absl::big_endian::Load16(packet.data());
   packet.remove_prefix(sizeof(int16_t));
 
   if (num_params > 0) {
     if (packet.size() < num_params * sizeof(int32_t)) {
-      return SendError("Malformed Parse packet.", "08P01");
+      return SendError("Malformed Parse packet.", ERRCODE_PROTOCOL_VIOLATION);
     }
     for (ParamIndex i = 0; i < num_params; ++i) {
       // TODO: use type OID from client if it's specified
@@ -875,34 +894,30 @@ void PgSQLCommTaskBase::ParseQuery(std::string_view packet) {
     }
   }
 
-  try {
-    size_t root_count = 0;
-    if (it == _statements.end()) {
-      _anonymous_statement = MakeStatement(_current_query);
-      root_count = _anonymous_statement.RootCount();
-      _current_query = _anonymous_statement.query_string->view();
-    } else {
-      it->second = MakeStatement(_current_query);
-      root_count = it->second.RootCount();
-      _current_query = it->second.query_string->view();
-    }
-
-    if (root_count > 1) {
-      return SendError(
-        "cannot insert multiple commands into a prepared statement", "42601");
-    }
-
-    it = _statements.end();
-    _send.Write(ToBuffer(kParseComplete), true);
-    _success_packet = true;
-  } catch (const SqlException& e) {
-    SendNotice(PQ_MSG_ERROR_RESPONSE, e.error(), _current_query);
-  } catch (const std::exception& e) {
-    SendError(e.what(), "42601");
+  size_t root_count = 0;
+  if (it == _statements.end()) {
+    _anonymous_statement = MakeStatement(_current_query);
+    root_count = _anonymous_statement.RootCount();
+    _current_query = _anonymous_statement.query_string->view();
+  } else {
+    it->second = MakeStatement(_current_query);
+    root_count = it->second.RootCount();
+    _current_query = it->second.query_string->view();
   }
+
+  if (root_count > 1) {
+    return SendError(
+      "cannot insert multiple commands into a prepared statement",
+      ERRCODE_PROTOCOL_VIOLATION);
+  }
+
+  it = _statements.end();
+  _send.Write(ToBuffer(kParseComplete), true);
+  _success_packet = true;
 }
 
-void PgSQLCommTaskBase::ExecutePortal(SqlPortal& portal, size_t limit) {
+void PgSQLCommTaskBase::ExecutePortal(SqlPortal& portal) {
+  SDB_ASSERT(_pop_packet);
   SDB_ASSERT(portal.stmt);
   if (IsCancelled()) {
     return;
@@ -910,32 +925,17 @@ void PgSQLCommTaskBase::ExecutePortal(SqlPortal& portal, size_t limit) {
   SDB_ASSERT(portal.stmt->query);
   auto cursor = portal.stmt->query->MakeCursor(
     [user_task = basics::downCast<PgSQLCommTaskBase>(shared_from_this())] {
-      user_task->WakeupHandler();
+      user_task->ProcessWakeup();
     });
   if (RegisterCursor(std::move(cursor), portal)) {
     SDB_ASSERT(&portal == _current_portal);
     // Throws if soft shutdown is ongoing!
-    _pop_packet = true;
+    // TODO(mbkkt) What to do if multiple queries in this packet?
     auto state = ProcessState::DonePacket;
     do {
       state = ProcessQueryResult();
     } while (state == ProcessState::More);
     _pop_packet = state == ProcessState::DonePacket;
-  }
-}
-
-void PgSQLCommTaskBase::NextRootPortal() {
-  std::lock_guard lock{_execution_mutex};
-  try {
-    // We don't need to hold cancellation mutex here
-    // as active portal is only changed during packet execution.
-    // But here we are just re-startin next root in simple query.
-    SDB_ASSERT(_current_portal);
-    ExecutePortal(*_current_portal, 0);
-  } catch (const SqlException& e) {
-    SendNotice(PQ_MSG_ERROR_RESPONSE, e.error(), _current_query);
-  } catch (const std::exception& e) {
-    SendError(e.what(), "42601");
   }
 }
 
@@ -983,26 +983,6 @@ auto PgSQLCommTaskBase::BindStatement(SqlStatement& stmt, BindInfo bind_info)
   }
 
   return portal;
-}
-
-void PgSQLCommTaskBase::WakeupHandler() noexcept {
-  std::lock_guard lock{_execution_mutex};
-  auto state = ProcessState::Wait;
-  irs::Finally cleanup = [&] noexcept {
-    if (state == ProcessState::DonePacket) {
-      FinishPacket();
-    }
-  };
-  try {
-    do {
-      state = ProcessState::DonePacket;
-      state = ProcessQueryResult();
-    } while (state == ProcessState::More);
-  } catch (const SqlException& e) {
-    SendNotice(PQ_MSG_ERROR_RESPONSE, e.error(), _current_query);
-  } catch (const std::exception& e) {
-    SendError(e.what(), "42601");
-  }
 }
 
 void PgSQLCommTaskBase::SendBatch(const velox::RowVectorPtr& batch) {
@@ -1065,46 +1045,27 @@ auto PgSQLCommTaskBase::ProcessQueryResult() -> ProcessState {
   SDB_ASSERT(portal.cursor);
 
   velox::RowVectorPtr batch;
-  const auto [state, r] = portal.cursor->Next(batch);
-
-  if (state == query::Cursor::Process::Wait) {
-    return ProcessState::Wait;
-  }
+  const auto state = portal.cursor->Next(batch);
   SendWarnings();
-  if (r.ok()) {
-    SendBatch(batch);
-  } else {
-    // TODO: Make SDB ERROR->SQLSTATE translation.
-    // System error here is just a placeholder
-    if (r.errorNumber() == ERROR_QUERY_USER_WARN) {
-      SendNotice(PQ_MSG_NOTICE_RESPONSE,
-                 pg::SqlErrorData{
-                   .errcode = ERRCODE_WARNING,
-                   .errmsg = std::string{r.errorMessage()},
-                 },
-                 {});
-    } else {
-      SendError(r.errorMessage(), "58000");
-    }
-  }
+  SendBatch(batch);
+  batch.reset();
   if (state == query::Cursor::Process::More) {
     return ProcessState::More;
+  }
+  if (state == query::Cursor::Process::Wait) {
+    return ProcessState::Wait;
   }
   SDB_ASSERT(state == query::Cursor::Process::Done);
   SendCommandComplete(portal.stmt->tree, portal.rows);
 
-  // In case of EXPLAIN statement
-  // batch should be cleaned before cursor,
-  // because cursor stores batch's memory pool
-  batch.reset();
   ReleaseCursor(portal);
   if (_current_packet_type == PQ_MSG_QUERY &&
       portal.stmt->NextRoot(_connection_ctx)) {
     SendWarnings();
-    _feature.ScheduleContinueProcessing(weak_from_this());
+    _feature.ScheduleProcessNext(weak_from_this());
     return ProcessState::DoneQuery;
   }
-  _success_packet = !r.fail();
+  _success_packet = true;
   return ProcessState::DonePacket;
 }
 
@@ -1234,8 +1195,8 @@ void PgSQLCommTaskBase::SendParameterStatus(std::string_view name,
   _send.Commit(false);
 }
 
-std::string_view PgSQLCommTaskBase::StartPacket() {
-  std::scoped_lock lock(_queue_mutex);
+std::string_view PgSQLCommTaskBase::StartPacket() noexcept {
+  std::lock_guard lock{_queue_mutex};
   SDB_ASSERT(!_queue.empty());
   _cancel_packet.store(false, std::memory_order_relaxed);
   _pop_packet = true;
@@ -1279,40 +1240,29 @@ void PgSQLCommTaskBase::FinishPacket() noexcept try {
   }
 
   if (!_queue.empty()) {
-    Reschedule();
+    _feature.ScheduleProcessFirst(weak_from_this());
   } else {
     SetIOTimeoutImpl();
   }
 } catch (...) {
-  SDB_FATAL("xxxxx", Logger::REQUESTS,
+  SDB_ERROR("xxxxx", Logger::REQUESTS,
             "<pgsql> connection closed due to exception in finalizing ",
             std::bit_cast<size_t>(this));
   Stop();
 }
 
-void PgSQLCommTaskBase::Reschedule() {
-  _feature.ScheduleProcessing(weak_from_this());
-}
-
 void PgSQLCommTaskBase::SendNotice(char type, const pg::SqlErrorData& what,
                                    std::string_view query) {
-  std::string sql_state;
-  sql_state.resize(pg::kSqlStateSize, '0');
+  char sql_state[pg::kSqlStateSize];
   pg::UnpackSqlState(sql_state, what.errcode);
-  SendNotice(type, what.errmsg, sql_state, what.errdetail, what.errhint, query,
-             what.cursorpos);
-}
-
-void PgSQLCommTaskBase::SendError(std::string_view message,
-                                  std::string_view sqlstate) {
-  SendNotice(PQ_MSG_ERROR_RESPONSE, message, sqlstate);
+  SendNotice(type, what.errmsg, {sql_state, pg::kSqlStateSize}, what.errdetail,
+             what.errhint, query, what.cursorpos);
 }
 
 void PgSQLCommTaskBase::SendError(std::string_view message, int errcode) {
-  std::string sql_state;
-  sql_state.resize(pg::kSqlStateSize, '0');
+  char sql_state[pg::kSqlStateSize];
   pg::UnpackSqlState(sql_state, errcode);
-  SendError(message, sql_state);
+  SendNotice(PQ_MSG_ERROR_RESPONSE, message, {sql_state, pg::kSqlStateSize});
 }
 
 void PgSQLCommTaskBase::SendNotice(char type, std::string_view message,
@@ -1464,10 +1414,10 @@ bool PgSQLCommTask<T>::ReadCallback(asio_ns::error_code ec) {
           }
           {
             std::string packet{_packet.data(), _pending_len};
-            std::scoped_lock lock{this->_queue_mutex};
+            std::lock_guard lock{this->_queue_mutex};
             this->_queue.emplace(std::move(packet));
             if (this->_queue.size() == 1 && !this->Stopped()) {
-              this->Reschedule();
+              this->_feature.ScheduleProcessFirst(this->weak_from_this());
             }
           }
           _packet.erase(0, _pending_len);
@@ -1494,12 +1444,6 @@ bool PgSQLCommTask<T>::ReadCallback(asio_ns::error_code ec) {
     }
   }
   return true;
-}
-
-template<rest::SocketType T>
-void PgSQLCommTask<T>::SetIOTimeout() {
-  std::scoped_lock lock(this->_queue_mutex);
-  SetIOTimeoutImpl();
 }
 
 template<rest::SocketType T>

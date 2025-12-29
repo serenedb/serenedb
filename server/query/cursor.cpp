@@ -25,19 +25,10 @@
 #include <velox/vector/VariantToVector.h>
 
 #include "basics/down_cast.h"
-#include "basics/logger/logger.h"
 #include "basics/string_utils.h"
-#include "pg/sql_utils.h"
 #include "query/config.h"
 #include "query/query.h"
 #include "utils.h"
-
-LIBPG_QUERY_INCLUDES_BEGIN
-#include "postgres.h"
-
-#include "nodes/parsenodes.h"
-#include "nodes/pg_list.h"
-LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::query {
 namespace {
@@ -61,15 +52,12 @@ void Cursor::RequestCancel() {
   }
 }
 
-std::pair<Cursor::Process, Result> Cursor::Next(velox::RowVectorPtr& batch) {
-  Process process = Process::Done;
-  Result result;
+Cursor::Process Cursor::Next(velox::RowVectorPtr& batch) {
   const auto& query_ctx = _query.GetContext();
   auto output_type = _query.GetOutputType();
 
   if (query_ctx.command_type.Has(CommandType::External)) {
-    std::tie(process, result) = ExecuteStmt();
-    return {std::move(process), std::move(result)};
+    return ExecuteStmt();
   }
 
   if (query_ctx.command_type.Has(CommandType::Show)) {
@@ -84,20 +72,21 @@ std::pair<Cursor::Process, Result> Cursor::Next(velox::RowVectorPtr& batch) {
     SDB_UNREACHABLE();
   }
 
+  Process process = Process::Done;
   if (query_ctx.command_type.Has(CommandType::Query)) {
-    std::tie(process, result) = ExecuteVelox(batch);
+    process = ExecuteVelox(batch);
   }
 
   if (!query_ctx.command_type.Has(CommandType::Explain)) {
-    return {std::move(process), std::move(result)};
+    return process;
   }
 
   batch = nullptr;
-  if (!result.ok() || process != Process::Done) {
-    return {std::move(process), std::move(result)};
+  if (process != Process::Done) {
+    return process;
   }
   std::vector<std::string> data;
-  bool clean_column_names =
+  const bool clean_column_names =
     !query_ctx.explain_params.Has(ExplainWith::Registers);
 
   auto post_process_plan = [&](std::string_view plan) {
@@ -145,43 +134,47 @@ std::pair<Cursor::Process, Result> Cursor::Next(velox::RowVectorPtr& batch) {
   }
 
   BuildBatch(batch, {std::move(data)});
-  return {Process::Done, {}};
+  return Process::Done;
 }
 
-std::tuple<Cursor::Process, Result> Cursor::ExecuteVelox(
-  velox::RowVectorPtr& batch) {
+Cursor::Process Cursor::ExecuteVelox(velox::RowVectorPtr& batch) {
   SDB_ASSERT(!batch);
   SDB_ASSERT(_runner);
   yaclib::Future<> wait;
-  auto r = basics::SafeCall([&] { batch = _runner.Next(wait); });
+  batch = _runner.Next(wait);
   if (wait.Valid()) {
-    SDB_ASSERT(r.ok());
     SDB_ASSERT(!batch);
     std::move(wait).DetachInline(
       [user_task = _user_task](auto&&) { user_task(); });
-    return {Process::Wait, std::move(r)};
+    return Process::Wait;
   }
   if (batch) {
-    return {Process::More, std::move(r)};
+    return Process::More;
   }
-  return {Process::Done, std::move(r)};
+  return Process::Done;
 }
 
-std::tuple<Cursor::Process, Result> Cursor::ExecuteStmt() {
+Cursor::Process Cursor::ExecuteStmt() {
   {
     std::lock_guard lock{_stmt_result_mutex};
     if (_stmt_result.State() != yaclib::ResultState::Empty) {
-      return {Process::Done, std::move(_stmt_result).Ok()};
+      auto r = std::move(_stmt_result).Ok();
+      if (!r.ok()) {
+        SDB_THROW(std::move(r));
+      }
+      return Process::Done;
     }
   }
   auto f = _query.GetExternalExecutor().Execute();
   if (!f.Valid()) {
-    return {Process::Done, Result{}};
+    return Process::Done;
   }
   if (f.Ready()) {
-    auto result = std::move(f).Touch();
-    SDB_ASSERT(result);
-    return {Process::Done, std::move(result).Ok()};
+    auto r = std::move(f).Touch().Ok();
+    if (!r.ok()) {
+      SDB_THROW(std::move(r));
+    }
+    return Process::Done;
   }
 
   std::move(f).DetachInline(
@@ -192,11 +185,10 @@ std::tuple<Cursor::Process, Result> Cursor::ExecuteStmt() {
       }
       user_task();
     });
-  return {Process::Wait, Result{}};
+  return Process::Wait;
 }
 
-std::tuple<Cursor::Process, Result> Cursor::ExecuteShowAll(
-  velox::RowVectorPtr& batch) {
+Cursor::Process Cursor::ExecuteShowAll(velox::RowVectorPtr& batch) {
   SDB_ASSERT(_query.GetOutputType()->equivalent(
     *velox::ROW({velox::VARCHAR(), velox::VARCHAR(), velox::VARCHAR()})));
   const auto& query_config = _query.GetContext().velox_query_ctx->queryConfig();
@@ -216,11 +208,10 @@ std::tuple<Cursor::Process, Result> Cursor::ExecuteShowAll(
                       std::move(values),
                       std::move(descriptions),
                     });
-  return {Process::Done, Result{}};
+  return Process::Done;
 }
 
-std::tuple<Cursor::Process, Result> Cursor::ExecuteShow(
-  velox::RowVectorPtr& batch) {
+Cursor::Process Cursor::ExecuteShow(velox::RowVectorPtr& batch) {
   SDB_ASSERT(
     _query.GetOutputType()->equivalent(*velox::ROW({velox::VARCHAR()})));
   const auto& config = _query.GetContext().velox_query_ctx->queryConfig();
@@ -233,34 +224,29 @@ std::tuple<Cursor::Process, Result> Cursor::ExecuteShow(
     if (point == "s") {
       auto column = GetFailurePointsDebugging();
       BuildBatch(batch, {std::move(column)});
-      return {Process::Done, Result{}};
+      return Process::Done;
     }
     if (!point.starts_with('_')) {
-      return {
-        Process::Done,
-        Result{ERROR_FAILED,
-               "failure point configuration parameter must start with '",
-               kFailPointPrefix, "_'"},
-      };
+      SDB_THROW(ERROR_FAILED,
+                "failure point configuration parameter must start with '",
+                kFailPointPrefix, "_'");
     }
     point.remove_prefix(1);
     std::vector<std::string> column{ShouldFailDebugging(point) ? "on" : "off"};
     BuildBatch(batch, {std::move(column)});
-    return {Process::Done, Result{}};
+    return Process::Done;
   }
 #endif
 
   auto value = config.get<std::string>(name);
   if (!value) {
-    return {
-      Process::Done,
-      Result{ERROR_FAILED, "unrecognized configuration parameter \"", name,
-             "\""},
-    };
+    // TODO(codeworse) PG error code?
+    SDB_THROW(ERROR_FAILED, "unrecognized configuration parameter \"", name,
+              "\"");
   }
   std::vector<std::string> column{*value};
   BuildBatch(batch, {std::move(column)});
-  return {Process::Done, Result{}};
+  return Process::Done;
 }
 
 void Cursor::BuildBatch(velox::RowVectorPtr& batch,

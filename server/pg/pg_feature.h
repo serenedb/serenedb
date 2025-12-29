@@ -44,18 +44,18 @@ class PostgresFeature final : public SerenedFeature {
   void UnregisterTask(uint64_t key);
   void CancelTaskPacket(uint64_t key);
 
-  void ScheduleProcessing(std::weak_ptr<rest::CommTask> weak) {
+  void ScheduleProcessFirst(std::weak_ptr<rest::CommTask> weak) {
     GetScheduler()->queue(RequestLane::ClientAql, [weak = std::move(weak)] {
       if (auto self = weak.lock()) {
-        basics::downCast<PgSQLCommTaskBase>(*self).Process();
+        basics::downCast<PgSQLCommTaskBase>(*self).ProcessFirstRoot();
       }
     });
   }
 
-  void ScheduleContinueProcessing(std::weak_ptr<rest::CommTask> weak) {
+  void ScheduleProcessNext(std::weak_ptr<rest::CommTask> weak) {
     GetScheduler()->queue(RequestLane::ClientAql, [weak = std::move(weak)] {
       if (auto self = weak.lock()) {
-        basics::downCast<PgSQLCommTaskBase>(*self).NextRootPortal();
+        basics::downCast<PgSQLCommTaskBase>(*self).ProcessNextRoot();
       }
     });
   }

@@ -111,15 +111,16 @@ class PgSQLCommTaskBase : public rest::CommTask {
 
   void HandleClientPacket(std::string_view packet);
   void HandleClientHello(std::string_view packet);
-  void SendNotices();
+
   void SendParameterStatus(std::string_view name, std::string_view value);
+
+  void SendNotices();
   void SendError(std::string_view message, int errcode);
+  void SendNotice(char type, const pg::SqlErrorData& error);
   void SendNotice(char type, std::string_view message,
                   std::string_view sqlstate, std::string_view error_detail = {},
                   std::string_view error_hint = {}, std::string_view query = {},
                   int cursor_pos = -1);
-  void SendNotice(char type, const pg::SqlErrorData& what,
-                  std::string_view query);
 
   void RunSimpleQuery(std::string_view query_string);
   void ParseQuery(std::string_view packet);

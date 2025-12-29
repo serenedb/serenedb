@@ -26,8 +26,6 @@
 
 #include "basics/down_cast.h"
 #include "basics/string_utils.h"
-#include "pg/sql_exception.h"
-#include "pg/sql_utils.h"
 #include "query/config.h"
 #include "query/query.h"
 #include "utils.h"

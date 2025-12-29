@@ -19,7 +19,9 @@
 #include <iresearch/utils/text_format.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <memory>
+#include <span>
 #include <string>
+#include <utility>
 
 #include "basics/assert.h"
 
@@ -109,82 +111,20 @@ class Executor {
       return 0;
     }
 
+    auto execute = [&]<size_t K> {
+      return irs::ExecuteTopK(
+        _reader, *filter, _scorers, k,
+        std::span<std::pair<irs::score_t, irs::doc_id_t>, K>{_results});
+    };
+
+    _results.resize(k * 2);
     if (k == 10) {
-      std::array<std::pair<float_t, uint32_t>, 20> results;
-      return irs::ExecuteTopKOptimized<10>(_reader, *filter, _scorers, k,
-                                           results);
+      return execute.template operator()<20>();
     } else if (k == 100) {
-      std::array<std::pair<float_t, uint32_t>, 200> results;
-      return irs::ExecuteTopKOptimized<100>(_reader, *filter, _scorers, k,
-                                            results);
+      return execute.template operator()<200>();
     } else {
-      return irs::ExecuteTopK(_reader, *filter, _scorers, k, _results);
+      return execute.template operator()<std::dynamic_extent>();
     }
-  }
-
-  size_t ExecuteTopK1(size_t k, std::string_view query) {
-    auto prepared = PrepareFilter(query);
-    if (!prepared) {
-      return 0;
-    }
-
-    _results.reserve(k);
-    size_t count = 0;
-
-    for (auto left = k; auto& segment : _reader) {
-      auto docs = prepared->execute(irs::ExecutionContext{
-        .segment = segment, .scorers = _scorers, .wand = _wand});
-      const auto* doc = irs::get<irs::DocAttr>(*docs);
-      const auto* score = irs::get<irs::ScoreAttr>(*docs);
-      auto* threshold = irs::GetMutable<irs::ScoreAttr>(docs.get());
-
-      if (!left && threshold) {
-        threshold->Min(_results.front().first);
-      }
-
-      for (float_t score_value; docs->next();) {
-        ++count;
-
-        (*score)(&score_value);
-
-        if (left) {
-          _results.emplace_back(score_value, doc->value);
-
-          if (0 == --left) {
-            absl::c_make_heap(_results,
-                              [](const auto& lhs, const auto& rhs) noexcept {
-                                return lhs.first > rhs.first;
-                              });
-
-            threshold->Min(_results.front().first);
-          }
-        } else if (_results.front().first < score_value) {
-          absl::c_pop_heap(_results,
-                           [](const auto& lhs, const auto& rhs) noexcept {
-                             return lhs.first > rhs.first;
-                           });
-
-          auto& [score, doc_id] = _results.back();
-          score = score_value;
-          doc_id = doc->value;
-
-          absl::c_push_heap(
-            _results,
-            [](const std::pair<float_t, irs::doc_id_t>& lhs,
-               const std::pair<float_t, irs::doc_id_t>& rhs) noexcept {
-              return lhs.first > rhs.first;
-            });
-
-          threshold->Min(_results.front().first);
-        }
-      }
-    }
-
-    absl::c_sort(_results, [](const auto& lhs, const auto& rhs) noexcept {
-      return lhs.first > rhs.first;
-    });
-
-    return count;
   }
 
   size_t ExecuteCount(std::string_view query) {

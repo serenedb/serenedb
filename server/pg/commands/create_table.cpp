@@ -227,6 +227,9 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
             if (null_info == NullInfo::Null) {
               error_null_conflict(constraint, col.name);
             }
+            if (null_info == NullInfo::NotNull) {
+              break;
+            }
             append_not_null_constraint(col.name);
             null_info = NullInfo::NotNull;
             break;
@@ -255,6 +258,7 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
           } break;
           case CONSTR_PRIMARY:  // create table (field integer primary key)
             append_pk(col.id, ExprLocation(&constraint));
+            null_info = NullInfo::NotNull;
             break;
           case CONSTR_CHECK:
             append_check_constraint(constraint, col.name);
@@ -302,6 +306,9 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
     switch (constraint.contype) {
       case CONSTR_PRIMARY: {
         // create table (field integer, primary key(field))
+
+        // fun fact: it's supposed to be checked wheter NULL constraint were
+        // set for the column, but postgres doesn't do it and neither do we
         VisitNodes(constraint.keys, [&](const String& key) {
           std::string_view name = key.sval;
 

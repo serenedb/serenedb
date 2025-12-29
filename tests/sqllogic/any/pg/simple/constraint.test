@@ -1,4 +1,71 @@
 statement error
+CREATE TABLE iamkay
+(
+  id INTEGER PRIMARY KEY NULL
+);
+----
+db error: ERROR: conflicting NULL/NOT NULL declarations for column "id" of table "iamkay"
+
+
+statement ok
+CREATE TABLE iamkay
+(
+  id INTEGER PRIMARY KEY NOT NULL NOT NULL NOT NULL NOT NULL NOT NULL,
+  lmao INTEGER NOT NULL NOT NULL NOT NULL
+);
+
+
+# check that there's only one not null check for every column
+onlyif serenedb
+query
+EXPLAIN (LOGICAL)
+INSERT INTO iamkay DEFAULT VALUES;
+----
+QUERY PLAN
+LOGICAL PLAN:
+- TableWrite INSERT: -> ROW<rows:BIGINT>
+    id := id
+    lmao := lmao
+  - Filter: AND(IF(spark_isnotnull(id), true, CAST(pg_error(33575106, 0, null value in column "id" of relation "iamkay" violates not-null constraint, presto_concat(Failing row contains (, COALESCE(CAST(id AS VARCHAR), null), , , COALESCE(CAST(lmao AS VARCHAR), null), ).)) AS BOOLEAN)), IF(spark_isnotnull(lmao), true, CAST(pg_error(33575106, 0, null value in column "lmao" of relation "iamkay" violates not-null constraint, presto_concat(Failing row contains (, COALESCE(CAST(id AS VARCHAR), null), , , COALESCE(CAST(lmao AS VARCHAR), null), ).)) AS BOOLEAN))) -> ROW<"id":INTEGER,"lmao":INTEGER>
+    - Project: -> ROW<"id":INTEGER,"lmao":INTEGER>
+        id := null
+        lmao := null
+      - Values: 1 rows -> ROW<>
+
+
+statement ok
+CREATE TABLE iamkay228
+(
+  kek INTEGER NOT NULL CHECK (kek > 1000 - 7)
+);
+
+
+statement error
+INSERT INTO iamkay228 DEFAULT VALUES;
+----
+db error: ERROR: null value in column "kek" of relation "iamkay228" violates not-null constraint
+DETAIL: Failing row contains (null).
+
+
+statement error
+INSERT INTO iamkay228 VALUES(1000 - 7);
+----
+db error: ERROR: new row for relation "iamkay228" violates check constraint "iamkay228_kek_check"
+DETAIL: Failing row contains (993).
+
+
+statement count 1
+INSERT INTO iamkay228 VALUES(1000 + 7);
+
+
+query
+SELECT * FROM iamkay228;
+----
+kek
+1007
+
+
+statement error
 CREATE TABLE arelav
 (
   id INTEGER NULL NOT NULL
@@ -179,10 +246,15 @@ DETAIL: Failing row contains (9, null, null).
 
 
 onlyif serenedb
+statement ok
+UPDATE clickclack SET age = 1000 - 7 WHERE name = 'deadinside';
+
+
+onlyif serenedb
 query
 SELECT * FROM clickclack
 ORDER BY 1, 2, 3, 4, 5;
 ----
 id name weight age grade
-9 deadinside 140 420 70
+9 deadinside 140 993 127
 10 zhme NULL 40 NULL

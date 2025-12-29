@@ -1303,7 +1303,7 @@ void SqlAnalyzer::MakeTableWrite(
   object.EnsureTable();
   const auto& table = object.table;
 
-  auto project_columns = [&]() {
+  auto project_columns = [&] {
     auto project_names = column_names |
                          std::views::transform([&](const std::string& name) {
                            return _id_generator.NextColumnName(name);
@@ -1356,7 +1356,7 @@ void SqlAnalyzer::MakeTableWrite(
     // constraints may depend on other columns (generated / default indeed)
     project_columns();
 
-    auto build_failing_row_detail = [&]() -> lp::ExprPtr {
+    auto build_failing_row_detail = [&] -> lp::ExprPtr {
       std::vector<lp::ExprPtr> concat_parts;
       concat_parts.emplace_back(
         MakeConst("Failing row contains (", velox::VARCHAR()));

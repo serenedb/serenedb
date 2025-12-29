@@ -120,7 +120,6 @@ set(IResearch_core_sources
     ./search/multiterm_query.cpp
     ./search/term_query.cpp
     ./search/boolean_filter.cpp
-    ./search/doc_collector.cpp
     ./search/boolean_query.cpp
     ./search/ngram_similarity_filter.cpp
     ./search/ngram_similarity_query.cpp

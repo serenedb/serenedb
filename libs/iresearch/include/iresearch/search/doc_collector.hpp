@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cmath>
+#include <limits>
+
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/search/filter.hpp"
@@ -10,7 +13,7 @@ namespace irs {
 
 template<size_t Extent = std::dynamic_extent>
 size_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
-                   const Scorers& scorers, size_t k,
+                   const Scorers& scorers, const WandContext& wand, size_t k,
                    std::span<std::pair<score_t, doc_id_t>, Extent> results) {
   SDB_ASSERT(k * 2 >= results.size());
 
@@ -26,10 +29,14 @@ size_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
   auto end = results.end();
 
   for (auto& segment : reader) {
-    auto docs = prepared->execute(
-      irs::ExecutionContext{.segment = segment, .scorers = scorers});
+    auto docs = prepared->execute({
+      .segment = segment,
+      .scorers = scorers,
+      .wand = wand,
+    });
     const auto* doc = irs::get<DocAttr>(*docs);
     const auto* score = irs::get<ScoreAttr>(*docs);
+    score->Min(min_threshold);
 
     for (float_t score_value; docs->next();) {
       ++count;
@@ -50,6 +57,7 @@ size_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
                          });
         begin = pivot;
         min_threshold = begin->first;
+        score->Min(min_threshold);
       }
     }
   }

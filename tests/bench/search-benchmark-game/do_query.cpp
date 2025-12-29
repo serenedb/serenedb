@@ -9,6 +9,7 @@
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/index_reader_options.hpp>
 #include <iresearch/search/doc_collector.hpp>
 #include <iresearch/search/filter.hpp>
 #include <iresearch/search/score.hpp>
@@ -102,18 +103,26 @@ class Executor {
         kTokenizerOptions)},
       _format{irs::formats::Get(kFormatName, false)},
       _dir{path},
-      _reader{
-        irs::DirectoryReader(_dir, _format, {.scorers = {&_scorer_ptr, 1}})} {}
+      _reader{irs::DirectoryReader(_dir, _format,
+                                   {
+                                     .scorers = {&_scorer_ptr, 1},
+                                   })} {}
 
-  size_t ExecuteTopK(size_t k, std::string_view query) {
+  size_t ExecuteTopK(size_t k, std::string_view query, bool full_count) {
     auto filter = ParseFilter(query);
     if (!filter) {
       return 0;
     }
 
     auto execute = [&]<size_t K> {
+      irs::WandContext wand;
+      if (!full_count) {
+        wand.index = 0;
+        wand.strict = true;
+      }
+
       return irs::ExecuteTopK(
-        _reader, *filter, _scorers, k,
+        _reader, *filter, _scorers, wand, k,
         std::span<std::pair<irs::score_t, irs::doc_id_t>, K>{_results});
     };
 
@@ -145,17 +154,17 @@ class Executor {
       case QueryType::Count:
         return ExecuteCount(query);
       case QueryType::Top10:
-        return ExecuteTopK(10, query) > 0;
+        return ExecuteTopK(10, query, false) > 0;
       case QueryType::Top100:
-        return ExecuteTopK(100, query) > 0;
+        return ExecuteTopK(100, query, false) > 0;
       case QueryType::Top1000:
-        return ExecuteTopK(1000, query) > 0;
+        return ExecuteTopK(1000, query, false) > 0;
       case QueryType::Top10Count:
-        return ExecuteTopK(10, query);
+        return ExecuteTopK(10, query, true);
       case QueryType::Top100Count:
-        return ExecuteTopK(100, query);
+        return ExecuteTopK(100, query, true);
       case QueryType::Top1000Count:
-        return ExecuteTopK(1000, query);
+        return ExecuteTopK(1000, query, true);
       default:
         return 0;
     }
@@ -180,6 +189,9 @@ class Executor {
     if (!r.ok()) {
       return {};
     }
+    if (root->size() == 1) {
+      return root->PopBack();
+    }
     return root;
   }
 
@@ -191,7 +203,6 @@ class Executor {
   irs::Format::ptr _format;
   irs::MMapDirectory _dir;
   irs::DirectoryReader _reader;
-  irs::WandContext _wand{.index = 0, .strict = true};
 };
 
 }  // namespace

@@ -23,41 +23,46 @@
 #include "basics/down_cast.h"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
+#include "pg/sql_exception_macro.h"
 
 namespace sdb::pg {
 
 yaclib::Future<Result> Transaction(ExecContext& context,
                                    const TransactionStmt& stmt) {
   auto& conn_ctx = basics::downCast<ConnectionContext>(context);
-  Result r;
   switch (stmt.kind) {
     case TRANS_STMT_BEGIN:
     case TRANS_STMT_START:
       if (!conn_ctx.InsideTransaction()) {
         return conn_ctx.Begin();
       } else {
-        r = {ERROR_QUERY_USER_WARN,
-             "there is already a transaction in progress"};
+        conn_ctx.AddNotice(SQL_ERROR_DATA(
+          ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
+          ERR_MSG("there is already a transaction in progress")));
       }
       break;
     case TRANS_STMT_COMMIT:
       if (conn_ctx.InsideTransaction()) {
         return conn_ctx.Commit();
       } else {
-        r = {ERROR_QUERY_USER_WARN, "there is no transaction in progress"};
+        conn_ctx.AddNotice(
+          SQL_ERROR_DATA(ERR_CODE(ERRCODE_NO_ACTIVE_SQL_TRANSACTION),
+                         ERR_MSG("there is no transaction in progress")));
       }
       break;
     case TRANS_STMT_ROLLBACK:
       if (conn_ctx.InsideTransaction()) {
         return conn_ctx.Rollback();
       } else {
-        r = {ERROR_QUERY_USER_WARN, "there is no transaction in progress"};
+        conn_ctx.AddNotice(
+          SQL_ERROR_DATA(ERR_CODE(ERRCODE_NO_ACTIVE_SQL_TRANSACTION),
+                         ERR_MSG("there is no transaction in progress")));
       }
       break;
     default:
       SDB_UNREACHABLE();
   }
-  return yaclib::MakeFuture(std::move(r));
+  return {};
 }
 
 }  // namespace sdb::pg

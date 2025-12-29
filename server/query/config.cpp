@@ -71,6 +71,11 @@ bool ValidateValue(VariableType type, std::string_view value) {
       return absl::EqualsIgnoreCase("hex", value) ||
              absl::EqualsIgnoreCase("escape", value);
     }
+    case VariableType::JoinOrderAlgorithm: {
+      return absl::EqualsIgnoreCase("cost", value) ||
+             absl::EqualsIgnoreCase("greedy", value) ||
+             absl::EqualsIgnoreCase("syntactic", value);
+    }
     default:
       SDB_UNREACHABLE();
   }

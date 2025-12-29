@@ -124,7 +124,10 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
     const axiom::connector::ConnectorSessionPtr& session,
     const std::string& column_name,
     std::vector<velox::common::Subfield> subfields) const final {
-    VELOX_CHECK(subfields.empty());
+    if (!subfields.empty()) {
+      SDB_THROW(ERROR_INTERNAL,
+                "SereneDBTableLayout: subfields are not supported");
+    }
     SDB_ASSERT(findColumn(column_name),
                "SereneDBTableLayout: can't find column handle for column ",
                column_name);
@@ -211,7 +214,7 @@ class RocksDBTable final : public axiom::connector::Table {
     return _layouts;
   }
 
-  uint64_t numRows() const final { return 1; }
+  uint64_t numRows() const final { return 1000; }
 
   std::vector<velox::connector::ColumnHandlePtr> rowIdHandles(
     axiom::connector::WriteKind kind) const final {
@@ -360,8 +363,8 @@ class SereneDBConnectorMetadata final
     auto serene_insert_handle =
       std::dynamic_pointer_cast<const SereneDBConnectorInsertTableHandle>(
         handle->veloxHandle());
-    VELOX_CHECK_NOT_NULL(serene_insert_handle,
-                         "Wrong type of insert table handle");
+    SDB_ENSURE(serene_insert_handle, ERROR_INTERNAL,
+               "Wrong type of insert table handle");
     const auto& transaction = serene_insert_handle->GetTransaction();
     SDB_ASSERT(transaction);
     const int64_t number_of_locked_primary_keys = transaction->GetNumKeys();
@@ -386,8 +389,8 @@ class SereneDBConnectorMetadata final
     auto serene_insert_handle =
       std::dynamic_pointer_cast<const SereneDBConnectorInsertTableHandle>(
         handle->veloxHandle());
-    VELOX_CHECK_NOT_NULL(serene_insert_handle,
-                         "Wrong type of insert table handle");
+    SDB_ENSURE(serene_insert_handle, ERROR_INTERNAL,
+               "Wrong type of insert table handle");
     SDB_ASSERT(session->config());
     auto& txn = basics::downCast<TxnState>(*session->config());
     if (serene_insert_handle->GetTransaction() && !txn.InsideTransaction()) {
@@ -438,9 +441,10 @@ class SereneDBConnector final : public velox::connector::Connector {
     std::vector<catalog::Column::Id> column_oids;
     if (output_type->size() > 0) {
       column_oids.reserve(output_type->size());
-      for (uint32_t i = 0; i < output_type->size(); ++i) {
-        auto handle = column_handles.find(output_type->nameOf(i));
-        VELOX_CHECK(handle != column_handles.end());
+      for (const auto& name : output_type->names()) {
+        auto handle = column_handles.find(name);
+        SDB_ENSURE(handle != column_handles.end(), ERROR_INTERNAL,
+                   "RocksDBDataSource: can't find column handle for ", name);
         column_oids.push_back(
           basics::downCast<const SereneDBColumnHandle>(handle->second)->Id());
       }
@@ -524,7 +528,7 @@ class SereneDBConnector final : public velox::connector::Connector {
             }
           }
           return std::make_unique<RocksDBDataSink>(
-            *(serene_insert_handle.GetTransaction()), _cf, table.type(),
+            *(serene_insert_handle.GetTransaction()), _cf,
             *connector_query_ctx->memoryPool(), object_key, pk_indices,
             column_oids, IsUpdate);
         });

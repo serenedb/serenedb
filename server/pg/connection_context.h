@@ -21,6 +21,7 @@
 #pragma once
 
 #include "catalog/identifiers/object_id.h"
+#include "pg/sql_error.h"
 #include "query/transaction.h"
 #include "utils/exec_context.h"
 
@@ -30,7 +31,17 @@ class ConnectionContext : public ExecContext, public TxnState {
  public:
   ConnectionContext(std::string_view user, std::string_view dbname,
                     ObjectId database_id);
+
   std::string GetCurrentSchema() const;
+
+  void AddNotice(pg::SqlErrorData notice) {
+    _notices.push_back(std::move(notice));
+  }
+
+  auto StealNotices() { return std::exchange(_notices, {}); }
+
+ private:
+  std::vector<pg::SqlErrorData> _notices;
 };
 
 }  // namespace sdb

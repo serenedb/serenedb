@@ -55,8 +55,6 @@
 
 namespace sdb::pg {
 
-
-
 PostgresFeature::PostgresFeature(SerenedServer& server)
   : SerenedFeature{server, name()} {
   setOptional(true);

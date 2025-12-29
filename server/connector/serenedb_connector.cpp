@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "serenedb_connector.hpp"
+
 #include "basics/static_strings.h"
 
 namespace sdb::connector {

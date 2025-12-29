@@ -262,7 +262,8 @@ class SereneDBPartitionHandle final : public axiom::connector::PartitionHandle {
 class SereneDBSplitSource final : public axiom::connector::SplitSource {
  public:
   std::vector<SplitAndGroup> getSplits(uint64_t /* targetBytes */) final {
-    auto split_source = std::make_shared<SereneDBConnectorSplit>(StaticStrings::kSereneDBConnector);
+    auto split_source = std::make_shared<SereneDBConnectorSplit>(
+      StaticStrings::kSereneDBConnector);
     return {SplitAndGroup{std::move(split_source)}, SplitAndGroup{}};
   }
 };

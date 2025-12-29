@@ -55,7 +55,7 @@
 
 namespace sdb::pg {
 
-static constexpr std::string kConnectorId = "serenedb";
+
 
 PostgresFeature::PostgresFeature(SerenedServer& server)
   : SerenedFeature{server, name()} {
@@ -193,12 +193,12 @@ void PostgresFeature::start() {
     SDB_ASSERT(cf);
 
     auto connector = std::make_shared<connector::SereneDBConnector>(
-      kConnectorId, nullptr, *engine.db(), *cf);
+      StaticStrings::kSereneDBConnector, nullptr, *engine.db(), *cf);
     velox::connector::registerConnector(std::move(connector));
     auto connector_metadata =
       std::make_shared<connector::SereneDBConnectorMetadata>();
-    axiom::connector::ConnectorMetadata::registerMetadata(kConnectorId,
-                                                          connector_metadata);
+    axiom::connector::ConnectorMetadata::registerMetadata(
+      StaticStrings::kSereneDBConnector, connector_metadata);
   }
 }
 

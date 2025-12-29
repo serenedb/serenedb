@@ -19,13 +19,14 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "serenedb_connector.hpp"
+#include "basics/static_strings.h"
 
 namespace sdb::connector {
 
 SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
   const axiom::connector::ConnectorSessionPtr& session,
   const axiom::connector::TableLayout& layout)
-  : velox::connector::ConnectorTableHandle{"serenedb"},
+  : velox::connector::ConnectorTableHandle{StaticStrings::kSereneDBConnector},
     _name{layout.name()},
     _table_id{basics::downCast<RocksDBTable>(layout.table()).TableId()} {
   const auto& column_map = layout.table().columnMap();
@@ -45,6 +46,21 @@ SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
                            ->Id();
   }
   _txn = ExtractTransaction(session);
+}
+
+uint64_t RocksDBTable::numRows() const {
+  uint64_t count = 0;
+  uint64_t size = 0;
+  SDB_ASSERT(!_column_handles.empty() && _column_handles.front());
+  auto [start, end] =
+    key_utils::CreateTableColumnRange(TableId(), _column_handles.front()->Id());
+  auto* db = GetServerEngine().db();
+  auto connector = std::dynamic_pointer_cast<SereneDBConnector>(
+    velox::connector::getConnector(StaticStrings::kSereneDBConnector));
+  auto* cf = &connector->GetColumnFamily();
+  db->GetApproximateMemTableStats(cf, rocksdb::Range{start, end}, &count,
+                                  &size);
+  return count;
 }
 
 }  // namespace sdb::connector

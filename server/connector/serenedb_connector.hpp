@@ -30,10 +30,13 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
+#include "connector/key_utils.hpp"
 #include "data_sink.hpp"
 #include "data_source.hpp"
 #include "query/transaction.h"
 #include "rocksdb/utilities/transaction_db.h"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#include "storage_engine/engine_feature.h"
 
 namespace sdb::connector {
 
@@ -214,7 +217,19 @@ class RocksDBTable final : public axiom::connector::Table {
     return _layouts;
   }
 
-  uint64_t numRows() const final { return 1000; }
+  uint64_t numRows() const final {
+    uint64_t count = 0;
+    uint64_t size = 0;
+    SDB_ASSERT(!_column_handles.empty() && _column_handles.front());
+    auto [start, end] = key_utils::CreateTableColumnRange(
+      TableId(), _column_handles.front()->Id());
+    auto* db = GetServerEngine().db();
+    auto* cf =
+      RocksDBColumnFamilyManager::get(RocksDBColumnFamilyManager::Family::Data);
+    db->GetApproximateMemTableStats(cf, rocksdb::Range{start, end}, &count,
+                                    &size);
+    return count;
+  }
 
   std::vector<velox::connector::ColumnHandlePtr> rowIdHandles(
     axiom::connector::WriteKind kind) const final {
@@ -551,6 +566,8 @@ class SereneDBConnector final : public velox::connector::Connector {
   }
 
   folly::Executor* ioExecutor() const final { return nullptr; }
+
+  rocksdb::ColumnFamilyHandle& GetColumnFamily() const noexcept { return _cf; }
 
  private:
   rocksdb::TransactionDB& _db;

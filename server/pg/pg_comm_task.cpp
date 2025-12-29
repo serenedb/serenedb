@@ -173,7 +173,7 @@ template<typename Func>
 void PgSQLCommTaskBase::SafeCall(Func&& func) noexcept try {
   func();
 } catch (const SqlException& e) {
-  SendNotice(PQ_MSG_ERROR_RESPONSE, e.error(), _current_query);
+  SendNotice(PQ_MSG_ERROR_RESPONSE, e.error());
 } catch (const std::exception& e) {
   SendError(e.what(), ERRCODE_INTERNAL_ERROR);
 } catch (...) {
@@ -1179,7 +1179,7 @@ void PgSQLCommTaskBase::SendNotices() {
     return;
   }
   for (const auto& notice : _connection_ctx->StealNotices()) {
-    SendNotice(PQ_MSG_NOTICE_RESPONSE, notice, _current_query);
+    SendNotice(PQ_MSG_NOTICE_RESPONSE, notice);
   }
 }
 
@@ -1253,12 +1253,11 @@ void PgSQLCommTaskBase::FinishPacket() noexcept try {
   Stop();
 }
 
-void PgSQLCommTaskBase::SendNotice(char type, const pg::SqlErrorData& what,
-                                   std::string_view query) {
+void PgSQLCommTaskBase::SendNotice(char type, const pg::SqlErrorData& what) {
   char sql_state[pg::kSqlStateSize];
   pg::UnpackSqlState(sql_state, what.errcode);
   SendNotice(type, what.errmsg, {sql_state, pg::kSqlStateSize}, what.errdetail,
-             what.errhint, query, what.cursorpos);
+             what.errhint, _current_query, what.cursorpos);
 }
 
 void PgSQLCommTaskBase::SendError(std::string_view message, int errcode) {

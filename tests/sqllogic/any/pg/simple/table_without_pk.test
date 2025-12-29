@@ -140,10 +140,9 @@ statement ok
 CREATE TABLE no_columns ();
 
 
-# TODO(mkornaukhov) fix sqllogictest-rs to process this case properly
-#query
-#SELECT * FROM no_columns;
-#----
+query
+SELECT * FROM no_columns;
+----
 
 
 query

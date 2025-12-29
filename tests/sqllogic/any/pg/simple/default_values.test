@@ -157,7 +157,7 @@ DETAIL: Column "grade" is a generated column.
 
 
 query
-SELECT * FROM clickclack;
+SELECT * FROM clickclack ORDER BY 1, 2, 3, 4;
 ----
 id weight age grade
 0 100 18 21
@@ -179,7 +179,7 @@ WHERE id = 1;
 
 
 query
-SELECT * FROM clickclack;
+SELECT * FROM clickclack ORDER BY 1, 2, 3, 4;
 ----
 id weight age grade
 0 100 18 21

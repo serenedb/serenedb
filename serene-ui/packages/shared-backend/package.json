@@ -1,0 +1,47 @@
+{
+    "name": "@serene-ui/shared-backend",
+    "version": "0.1.0",
+    "description": "Shared backend entities for Node.js/Express/Electron",
+    "main": "dist/index.js",
+    "module": "dist/index.mjs",
+    "types": "dist/index.d.ts",
+    "type": "module",
+    "files": [
+        "dist"
+    ],
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "default": "./dist/index.js"
+        }
+    },
+    "scripts": {
+        "build": "npm run clean && tsc -b && node scripts/copy-assets.mjs",
+        "dev": "tsc --watch",
+        "clean": "rimraf dist tsconfig.tsbuildinfo"
+    },
+    "dependencies": {
+        "@orpc/server": "^1.13.0",
+        "@serene-ui/shared-core": "*"
+    },
+    "peerDependencies": {
+        "better-sqlite3": "^12.2.0",
+        "class-transformer": "^0.5.1",
+        "class-validator": "^0.14.1",
+        "express": "^4.21.1",
+        "pg": "^8.16.3",
+        "pg-cursor": "^2.15.3",
+        "reflect-metadata": "^0.2.2",
+        "winston": "^3.15.0"
+    },
+    "devDependencies": {
+        "@types/better-sqlite3": "^7.6.13",
+        "@types/express": "^4.17.21",
+        "@types/node": "^20.0.0",
+        "@types/pg": "^8.15.5",
+        "@types/pg-cursor": "^2.7.2",
+        "rimraf": "^5.0.0",
+        "typescript": "^5.6.3"
+    },
+    "license": "Apache-2.0"
+}

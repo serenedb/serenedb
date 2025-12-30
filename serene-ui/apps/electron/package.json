@@ -1,0 +1,45 @@
+{
+    "name": "serene-ui-electron",
+    "productName": "SereneUI",
+    "version": "0.1.0",
+    "description": "SereneUI Electron application",
+    "main": ".webpack/main",
+    "scripts": {
+        "rebuild": "npx electron-rebuild -f -m ../../node_modules/better-sqlite3 -p ../../",
+        "start": "npm run rebuild && electron-forge start",
+        "package:prod": "npm run rebuild && cross-env ENV_MODE=production electron-forge package",
+        "package:dev": "npm run rebuild && cross-env ENV_MODE=development electron-forge package",
+        "make:prod": "npm run rebuild && cross-env ENV_MODE=production electron-forge make",
+        "make:dev": "npm run rebuild && cross-env ENV_MODE=development electron-forge make",
+        "publish": "cross-env ENV_MODE=production electron-forge publish"
+    },
+    "license": "Apache-2.0",
+    "dependencies": {
+        "@orpc/server": "^1.13.2"
+    },
+    "devDependencies": {
+        "@electron-forge/cli": "^7.10.2",
+        "@electron-forge/maker-deb": "^7.10.2",
+        "@electron-forge/maker-dmg": "^7.10.2",
+        "@electron-forge/maker-rpm": "^7.10.2",
+        "@electron-forge/maker-squirrel": "^7.10.2",
+        "@electron-forge/maker-zip": "^7.10.2",
+        "@electron-forge/plugin-auto-unpack-natives": "^7.10.2",
+        "@electron-forge/plugin-fuses": "^7.10.2",
+        "@electron-forge/plugin-webpack": "^7.10.2",
+        "@electron/fuses": "^1.8.0",
+        "@serene-ui/shared-backend": "*",
+        "@serene-ui/shared-core": "*",
+        "@types/react": "^19.2.6",
+        "@types/react-dom": "^19.2.3",
+        "@vercel/webpack-asset-relocator-loader": "^1.10.0",
+        "copy-webpack-plugin": "^13.0.1",
+        "cross-env": "^10.1.0",
+        "dotenv": "^17.2.3",
+        "electron": "38.2.0",
+        "electron-rebuild": "^3.2.9",
+        "electron-squirrel-startup": "^1.0.1",
+        "fork-ts-checker-webpack-plugin": "^9.1.0",
+        "ts-loader": "^9.5.4"
+    }
+}

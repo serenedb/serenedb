@@ -1,0 +1,10 @@
+{
+    "files": [],
+    "references": [
+        { "path": "packages/shared-core" },
+        { "path": "packages/shared-backend" },
+        { "path": "packages/shared-frontend" },
+        { "path": "apps/backend" },
+        { "path": "apps/web" },
+    ],
+}

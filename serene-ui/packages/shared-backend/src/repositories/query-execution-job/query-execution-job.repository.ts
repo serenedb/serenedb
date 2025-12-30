@@ -55,7 +55,7 @@ export const QueryExecutionJobRepository = {
     },
 
     update: (
-        id: string,
+        id: number,
         updates: Partial<QueryExecutionJobRow>,
     ): QueryExecutionJobRow | null => {
         if (!Object.keys(updates).length) return null;
@@ -72,7 +72,7 @@ export const QueryExecutionJobRepository = {
         return row ? rowToJob(row) : null;
     },
 
-    delete: (id: string): QueryExecutionJobRow | null => {
+    delete: (id: number): QueryExecutionJobRow | null => {
         const { sql: selectSql, values: selectValues } = buildSelect("jobs", {
             where: { id },
         });

@@ -73,7 +73,7 @@ export const GithubService = {
 
         if (!response.ok || responseData.error || !responseData.access_token) {
             return {
-                success: true,
+                success: false,
                 error: responseData.error || "unknown",
                 interval: responseData.interval,
             };

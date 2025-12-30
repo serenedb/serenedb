@@ -63,6 +63,7 @@ uint64_t RocksDBTable::numRows() const {
   auto* db = GetServerEngine().db();
   auto connector = std::dynamic_pointer_cast<SereneDBConnector>(
     velox::connector::getConnector(StaticStrings::kSereneDBConnector));
+  SDB_ASSERT(connector);
   auto* cf = &connector->GetColumnFamily();
   db->GetApproximateMemTableStats(cf, rocksdb::Range{start, end}, &count,
                                   &size);

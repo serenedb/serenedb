@@ -266,16 +266,6 @@ std::shared_ptr<const T> MakePtrView(const std::shared_ptr<const T>& ptr) {
   return MakePtrView(*ptr);
 }
 
-void AndToLeft(lp::ExprPtr& left, lp::ExprPtr right) {
-  if (!left) {
-    left = std::move(right);
-    return;
-  }
-  left = std::make_shared<lp::SpecialFormExpr>(
-    velox::BOOLEAN(), lp::SpecialForm::kAnd,
-    std::vector<lp::ExprPtr>{std::move(left), std::move(right)});
-}
-
 template<typename T>
 std::optional<T> TryGet(const A_Const& expr) {
   if (expr.isnull) {
@@ -898,6 +888,9 @@ class SqlAnalyzer {
 
   lp::ExprPtr ProcessAExpr(State& state, const A_Expr& expr);
 
+  lp::ExprPtr ProcessAExprIn(std::string_view name, lp::ExprPtr in_test,
+                             std::vector<lp::ExprPtr> in_list);
+
   lp::ExprPtr ProcessAConst(State& state, const A_Const& expr);
 
   lp::ExprPtr ProcessFuncCall(State& state, const FuncCall& expr);
@@ -985,6 +978,20 @@ class SqlAnalyzer {
   lp::ExprPtr MakeEquality(lp::ExprPtr left, lp::ExprPtr right) {
     return ResolveVeloxFunctionAndInferArgsCommonType(
       "presto_eq", {std::move(left), std::move(right)});
+  }
+
+  lp::ExprPtr MakeAnd(std::vector<lp::ExprPtr> args) {
+    if (args.size() == 1) {
+      return std::move(args.front());
+    }
+    return ResolveVeloxFunctionAndInferArgsCommonType("and", std::move(args));
+  }
+
+  lp::ExprPtr MakeOr(std::vector<lp::ExprPtr> args) {
+    if (args.size() == 1) {
+      return std::move(args.front());
+    }
+    return ResolveVeloxFunctionAndInferArgsCommonType("or", std::move(args));
   }
 
   ColumnRefHook GetTargetListNamingResolver(
@@ -1383,7 +1390,7 @@ void SqlAnalyzer::MakeTableWrite(
     auto detail = build_failing_row_detail();
 
     // make condition: if (check) -> ok; else -> fail
-    lp::ExprPtr check;
+    std::vector<lp::ExprPtr> checks;
     for (const auto& constraint : check_constraints) {
       SDB_ASSERT(constraint.expr);
       auto expr = ProcessExprNode(state, constraint.expr->GetExpr(),
@@ -1423,11 +1430,12 @@ void SqlAnalyzer::MakeTableWrite(
                                          MakeConst(true)});
       }
 
-      AndToLeft(check, std::move(expr));
+      checks.emplace_back(std::move(expr));
     }
 
-    state.root = std::make_shared<lp::FilterNode>(
-      _id_generator.NextPlanId(), std::move(state.root), std::move(check));
+    state.root = std::make_shared<lp::FilterNode>(_id_generator.NextPlanId(),
+                                                  std::move(state.root),
+                                                  MakeAnd(std::move(checks)));
   }
 
   state.root = std::make_shared<lp::TableWriteNode>(
@@ -3138,7 +3146,8 @@ SqlAnalyzer::JoinUsingReturn SqlAnalyzer::ProcessJoinUsingClause(
   std::vector<lp::ExprPtr> project_exprs;
   project_names.reserve(l_output->size() + r_output->size());
   project_exprs.reserve(l_output->size() + r_output->size());
-  lp::ExprPtr join_condition;
+  std::vector<lp::ExprPtr> join_conditions;
+  join_conditions.reserve(using_list.size());
   for (const auto using_column : using_list) {
     auto l_column_idx =
       resolve_using(l_resolver, l_output, using_column, kLeft);
@@ -3154,7 +3163,7 @@ SqlAnalyzer::JoinUsingReturn SqlAnalyzer::ProcessJoinUsingClause(
     SDB_ASSERT(emplaced);
 
     auto eq = MakeEquality(std::move(l_column_ref), std::move(r_column_ref));
-    AndToLeft(join_condition, std::move(eq));
+    join_conditions.emplace_back(std::move(eq));
   }
 
   // projects as pg [common (already in vector), other_left, other_right]
@@ -3198,8 +3207,8 @@ SqlAnalyzer::JoinUsingReturn SqlAnalyzer::ProcessJoinUsingClause(
     }
   }
 
-  return JoinUsingReturn(std::move(join_condition), std::move(project_names),
-                         std::move(project_exprs));
+  return JoinUsingReturn{MakeAnd(std::move(join_conditions)),
+                         std::move(project_names), std::move(project_exprs)};
 }
 
 State SqlAnalyzer::ProcessJoinExpr(State* parent, const JoinExpr* node) {
@@ -3879,6 +3888,30 @@ lp::ExprPtr SqlAnalyzer::MakeComparator(std::string_view op, lp::ExprPtr lhs,
                                           std::move(compare_body));
 }
 
+lp::ExprPtr SqlAnalyzer::ProcessAExprIn(std::string_view name,
+                                        lp::ExprPtr in_test,
+                                        std::vector<lp::ExprPtr> in_list) {
+  lp::ExprPtr res;
+  if (absl::c_all_of(
+        in_list, [](const lp::ExprPtr& arg) { return arg->isConstant(); })) {
+    in_list.insert(in_list.begin(), std::move(in_test));
+    res = ResolveVeloxFunctionAndInferArgsCommonType("in", std::move(in_list));
+  } else {
+    // special form In applies only constants
+    // TODO: maybe move this logic to axiom?
+    for (auto& arg : in_list) {
+      arg = MakeEquality(in_test, std::move(arg));
+    }
+    res = MakeOr(std::move(in_list));
+  }
+
+  if (name == "<>") {
+    return ResolveVeloxFunctionAndInferArgsCommonType("presto_not",
+                                                      {std::move(res)});
+  }
+  return res;
+}
+
 lp::ExprPtr SqlAnalyzer::ProcessAExpr(State& state, const A_Expr& expr) {
   std::string_view name = strVal(llast(expr.name));
   switch (expr.kind) {
@@ -3923,14 +3956,7 @@ lp::ExprPtr SqlAnalyzer::ProcessAExpr(State& state, const A_Expr& expr) {
     case AEXPR_IN: {
       auto lhs = ProcessExprNodeImpl(state, expr.lexpr);
       auto rhs = ProcessExprListImpl(state, castNode(List, expr.rexpr));
-      rhs.insert(rhs.begin(), std::move(lhs));
-      auto res =
-        ResolveVeloxFunctionAndInferArgsCommonType("in", std::move(rhs));
-      if (name == "<>") {
-        return ResolveVeloxFunctionAndInferArgsCommonType("presto_not",
-                                                          {std::move(res)});
-      }
-      return res;
+      return ProcessAExprIn(name, std::move(lhs), std::move(rhs));
     }
     case AEXPR_LIKE:
     case AEXPR_ILIKE: {

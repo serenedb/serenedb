@@ -154,11 +154,11 @@ class Executor {
       case QueryType::Count:
         return ExecuteCount(query);
       case QueryType::Top10:
-        return ExecuteTopK(10, query, false) > 0;
+        return ExecuteTopK(10, query, false);
       case QueryType::Top100:
-        return ExecuteTopK(100, query, false) > 0;
+        return ExecuteTopK(100, query, false);
       case QueryType::Top1000:
-        return ExecuteTopK(1000, query, false) > 0;
+        return ExecuteTopK(1000, query, false);
       case QueryType::Top10Count:
         return ExecuteTopK(10, query, true);
       case QueryType::Top100Count:

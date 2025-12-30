@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cmath>
-#include <limits>
 
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/index/index_reader_options.hpp"

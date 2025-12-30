@@ -20,14 +20,13 @@
 
 #include <absl/algorithm/container.h>
 
-#include <span>
-
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/doc_collector.hpp>
 #include <iresearch/search/score.hpp>
 #include <iresearch/search/scorers.hpp>
 #include <iresearch/search/term_filter.hpp>
+#include <span>
 
 #include "index/index_tests.hpp"
 #include "tests_shared.hpp"
@@ -37,7 +36,8 @@ namespace {
 using namespace tests;
 
 // Scorer that returns doc_id as score, optionally with modulo divisor.
-// When divisor is 0, returns doc_id directly. Otherwise returns doc_id % divisor.
+// When divisor is 0, returns doc_id directly. Otherwise returns doc_id %
+// divisor.
 struct DocIdScorer : irs::ScorerBase<void> {
   explicit DocIdScorer(irs::doc_id_t divisor = 0) noexcept : divisor{divisor} {}
 
@@ -110,8 +110,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_basic) {
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
     ASSERT_EQ(5, result_count);
-    ASSERT_TRUE(absl::c_is_sorted(
-      std::span{results}.first(result_count), kScoreDescending));
+    ASSERT_TRUE(absl::c_is_sorted(std::span{results}.first(result_count),
+                                  kScoreDescending));
     // With DocIdScorer, score equals doc_id
     for (size_t i = 0; i < result_count; ++i) {
       ASSERT_EQ(results[i].first, results[i].second);
@@ -146,8 +146,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_larger_k) {
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
     ASSERT_EQ(total_docs, result_count);
-    ASSERT_TRUE(absl::c_is_sorted(
-      std::span{results}.first(result_count), kScoreDescending));
+    ASSERT_TRUE(absl::c_is_sorted(std::span{results}.first(result_count),
+                                  kScoreDescending));
   }
 }
 
@@ -208,8 +208,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_all_filter) {
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
     ASSERT_EQ(10, result_count);
-    ASSERT_TRUE(absl::c_is_sorted(
-      std::span{results}.first(result_count), kScoreDescending));
+    ASSERT_TRUE(absl::c_is_sorted(std::span{results}.first(result_count),
+                                  kScoreDescending));
   }
 }
 
@@ -272,8 +272,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_multi_segment) {
     ASSERT_EQ(5, result_count);
     // Results should be sorted by score descending (may have equal scores
     // from different segments since doc_ids restart per segment)
-    ASSERT_TRUE(absl::c_is_sorted(
-      std::span{results}.first(result_count), kScoreDescending));
+    ASSERT_TRUE(absl::c_is_sorted(std::span{results}.first(result_count),
+                                  kScoreDescending));
   }
 }
 
@@ -305,8 +305,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_term_filter) {
     ASSERT_GT(count, 0);
     auto result_count = std::min(count, k);
     ASSERT_LE(result_count, 3);
-    ASSERT_TRUE(absl::c_is_sorted(
-      std::span{results}.first(result_count), kScoreDescending));
+    ASSERT_TRUE(absl::c_is_sorted(std::span{results}.first(result_count),
+                                  kScoreDescending));
   }
 }
 
@@ -347,8 +347,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_disjunction) {
     ASSERT_GT(count, 0);
     auto result_count = std::min(count, k);
     ASSERT_LE(result_count, 5);
-    ASSERT_TRUE(absl::c_is_sorted(
-      std::span{results}.first(result_count), kScoreDescending));
+    ASSERT_TRUE(absl::c_is_sorted(std::span{results}.first(result_count),
+                                  kScoreDescending));
   }
 }
 
@@ -412,8 +412,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_verifies_top_docs) {
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
     ASSERT_EQ(3, result_count);
-    ASSERT_TRUE(absl::c_is_sorted(
-      std::span{results}.first(result_count), kScoreDescending));
+    ASSERT_TRUE(absl::c_is_sorted(std::span{results}.first(result_count),
+                                  kScoreDescending));
 
     // With DocIdScorer, top 3 should be docs with highest doc_ids
     // Doc IDs start from 1, so for N docs, top 3 are N, N-1, N-2
@@ -453,8 +453,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_similar_scores) {
     auto result_count = std::min(count, k);
     ASSERT_EQ(5, result_count);
     // Results should still be sorted by score descending
-    ASSERT_TRUE(absl::c_is_sorted(
-      std::span{results}.first(result_count), kScoreDescending));
+    ASSERT_TRUE(absl::c_is_sorted(std::span{results}.first(result_count),
+                                  kScoreDescending));
     // All top results should have score 2 (the maximum score from mod 3)
     for (size_t i = 0; i < result_count; ++i) {
       ASSERT_EQ(2, results[i].first);
@@ -473,8 +473,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_similar_scores) {
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
     ASSERT_EQ(10, result_count);
-    ASSERT_TRUE(absl::c_is_sorted(
-      std::span{results}.first(result_count), kScoreDescending));
+    ASSERT_TRUE(absl::c_is_sorted(std::span{results}.first(result_count),
+                                  kScoreDescending));
     // Verify scores are valid (0, 1, or 2)
     for (size_t i = 0; i < result_count; ++i) {
       ASSERT_GE(results[i].first, 0);

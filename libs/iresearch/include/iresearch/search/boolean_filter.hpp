@@ -58,8 +58,9 @@ class BooleanFilter : public FilterWithBoost, public AllDocsProvider {
   size_t size() const { return _filters.size(); }
 
   Filter::ptr PopBack() {
-    if (_filters.empty())
+    if (_filters.empty()) {
       return nullptr;
+    }
     auto result = std::move(_filters.back());
     _filters.pop_back();
     return result;

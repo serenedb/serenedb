@@ -149,7 +149,7 @@ class RocksDBSnapshotBase : public StorageSnapshot {
   Tick tick() const noexcept final {
     const auto* snapshot = getSnapshot();
     SDB_ASSERT(snapshot);
-    return getSnapshot()->GetSequenceNumber();
+    return snapshot->GetSequenceNumber();
   }
 };
 

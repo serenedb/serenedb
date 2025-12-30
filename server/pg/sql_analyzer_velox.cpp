@@ -3947,11 +3947,11 @@ lp::ExprPtr SqlAnalyzer::ProcessAExpr(State& state, const A_Expr& expr) {
       if (lhs->type() == velox::UNKNOWN() ||
           rhs[0]->type() == velox::UNKNOWN() ||
           rhs[1]->type() == velox::UNKNOWN()) {
-        // this probably incorrect for non-deterministic lhs expressions
+        // this is probably incorrect for non-deterministic lhs expressions
         auto lhs_cmp = ResolveVeloxFunctionAndInferArgsCommonType(
           "presto_lte", {std::move(rhs[0]), lhs});
         auto rhs_cmp = ResolveVeloxFunctionAndInferArgsCommonType(
-          "presto_lte", {lhs, std::move(rhs[1])});
+          "presto_lte", {std::move(lhs), std::move(rhs[1])});
         res = ResolveVeloxFunctionAndInferArgsCommonType(
           "and", {std::move(lhs_cmp), std::move(rhs_cmp)});
       } else {

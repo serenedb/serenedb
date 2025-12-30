@@ -171,7 +171,15 @@ PgSQLCommTaskBase::~PgSQLCommTaskBase() {
 
 template<typename Func>
 void PgSQLCommTaskBase::SafeCall(Func&& func) noexcept try {
-  func();
+  try {
+    func();
+  } catch (const velox::VeloxException& e) {
+    if (e.wrappedException()) {
+      std::rethrow_exception(e.wrappedException());
+    }
+
+    SendError(e.what(), ERRCODE_INTERNAL_ERROR);
+  }
 } catch (const SqlException& e) {
   SendNotice(PQ_MSG_ERROR_RESPONSE, e.error());
 } catch (const std::exception& e) {

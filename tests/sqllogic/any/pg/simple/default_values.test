@@ -31,8 +31,8 @@ db error: ERROR: for a generated column, GENERATED ALWAYS must be specified
 
 statement error
 CREATE TABLE kil (
-    id INTEGER GENERATED ALWAYS AS (1) STORED,
-    id2 INTEGER GENERATED ALWAYS AS (id) STORED
+  id INTEGER GENERATED ALWAYS AS (1) STORED,
+  id2 INTEGER GENERATED ALWAYS AS (id) STORED
 );
 ----
 db error: ERROR: cannot use generated column "id" in column generation expression
@@ -157,7 +157,7 @@ DETAIL: Column "grade" is a generated column.
 
 
 query
-SELECT * FROM clickclack;
+SELECT * FROM clickclack ORDER BY 1, 2, 3, 4;
 ----
 id weight age grade
 0 100 18 21
@@ -172,12 +172,18 @@ SET weight = weight * 1000, age = age * 1000
 WHERE id = 1000;
 
 
+statement ok
+UPDATE clickclack
+SET weight = 22228
+WHERE id = 1;
+
+
 query
-SELECT * FROM clickclack;
+SELECT * FROM clickclack ORDER BY 1, 2, 3, 4;
 ----
 id weight age grade
 0 100 18 21
-1 130 54 31
+1 22228 54 4451
 2 54 130 23
 1000 100000 228000 42800
 

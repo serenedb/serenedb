@@ -45,6 +45,12 @@
 #include "general_server/state.h"
 #include "vpack/builder.h"
 
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+
+#include "nodes/nodeFuncs.h"
+LIBPG_QUERY_INCLUDES_END
+
 namespace sdb::catalog {
 namespace {
 
@@ -112,6 +118,28 @@ std::string Column::GeneratePKName(std::span<const std::string> column_names) {
   }
 
   return candidate;
+}
+
+std::pair<bool, std::string_view> CheckConstraint::IsNotNull() const noexcept {
+  SDB_ASSERT(expr);
+
+  const auto* node = expr->GetExpr();
+  if (!IsA(node, NullTest)) {
+    return {false, ""};
+  }
+  const auto& null_test = *castNode(NullTest, node);
+  if (null_test.nulltesttype != IS_NOT_NULL) {
+    return {false, ""};
+  }
+  const auto* arg = null_test.arg;
+  if (!IsA(arg, ColumnRef)) {
+    return {false, ""};
+  }
+  const auto& col_ref = *castNode(ColumnRef, arg);
+  if (list_length(col_ref.fields) != 1) {
+    return {false, ""};
+  }
+  return {true, strVal(linitial(col_ref.fields))};
 }
 
 Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,
@@ -386,6 +414,7 @@ Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,
   options.shardKeys = std::move(request.shardKeys);
   options.columns = std::move(request.columns);
   options.pkColumns = std::move(request.pkColumns);
+  options.checkConstraints = std::move(request.checkConstraints);
   options.avoidServers = std::move(request.avoidServers);
   if (request.shardingStrategy) {
     options.shardingStrategy = std::move(*request.shardingStrategy);

@@ -77,6 +77,7 @@ class Table : public SchemaObject {
   const auto& RowType() const noexcept { return _row_type; }
   const auto& Columns() const noexcept { return _columns; }
   const auto& PKColumns() const noexcept { return _pk_columns; }
+  const auto& CheckConstraints() const noexcept { return _check_constraints; }
   auto GetTableType() const noexcept { return _type; }
   auto& GetSchema() const noexcept { return _schema; }
   auto& sharding(this auto& self) noexcept { return self._sharding; }
@@ -120,6 +121,7 @@ class Table : public SchemaObject {
   std::vector<std::string> _shard_keys;
   std::vector<Column> _columns;
   std::vector<Column::Id> _pk_columns;
+  std::vector<CheckConstraint> _check_constraints;
   velox::RowTypePtr _pk_type;
   velox::RowTypePtr _row_type;
   const ObjectId _plan_id;

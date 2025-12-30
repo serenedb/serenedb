@@ -23,7 +23,7 @@ CREATE TABLE supplier (
 	s_suppkey			INTEGER, -- TODO: SERIAL
 	s_name				TEXT, -- TODO: CHAR(25)
 	s_address			TEXT, -- TODO: VARCHAR(40)
-	s_nationkey		INTEGER, -- TODO: NOT NULL
+	s_nationkey		INTEGER NOT NULL,
 	s_phone				TEXT, -- TODO: CHAR(15)
 	s_acctbal			INTEGER, -- TODO: DECIMAL,
 	s_comment			TEXT -- TODO: VARCHAR(101)
@@ -32,8 +32,8 @@ CREATE TABLE supplier (
 
 statement ok
 CREATE TABLE partsupp (
-	ps_partkey		INTEGER, -- TODO: NOT NULL
-	ps_suppkey		INTEGER, -- TODO: NOT NULL
+	ps_partkey		INTEGER NOT NULL,
+	ps_suppkey		INTEGER NOT NULL,
 	ps_availqty		INTEGER,
 	ps_supplycost	INTEGER, -- TODO: DECIMAL,
 	ps_comment		TEXT -- TODO: VARCHAR(199)
@@ -45,7 +45,7 @@ CREATE TABLE customer (
 	c_custkey			INTEGER, -- TODO: SERIAL
 	c_name				TEXT, -- TODO: VARCHAR(25)
 	c_address			TEXT, -- TODO: VARCHAR(40)
-	c_nationkey		INTEGER, -- TODO: NOT NULL
+	c_nationkey		INTEGER NOT NULL,
 	c_phone				TEXT, -- TODO: CHAR(15)
 	c_acctbal			INTEGER, -- TODO: DECIMAL,
 	c_mktsegment	TEXT, -- TODO: CHAR(10)
@@ -56,7 +56,7 @@ CREATE TABLE customer (
 statement ok
 CREATE TABLE orders (
 	o_orderkey			INTEGER, -- TODO: SERIAL
-	o_custkey				INTEGER, -- TODO: NOT NULL
+	o_custkey				INTEGER NOT NULL,
 	o_orderstatus		TEXT, -- TODO: CHAR(1)
 	o_totalprice		INTEGER, -- TODO: DECIMAL,
 	o_orderdate			DATE,
@@ -69,9 +69,9 @@ CREATE TABLE orders (
 
 statement ok
 CREATE TABLE lineitem (
-	l_orderkey			INTEGER, -- TODO: NOT NULL
-	l_partkey				INTEGER, -- TODO: NOT NULL
-	l_suppkey				INTEGER, -- TODO: NOT NULL
+	l_orderkey			INTEGER NOT NULL,
+	l_partkey				INTEGER NOT NULL,
+	l_suppkey				INTEGER NOT NULL,
 	l_linenumber		INTEGER,
 	l_quantity			INTEGER, -- TODO: DECIMAL,
 	l_extendedprice	INTEGER, -- TODO: DECIMAL,
@@ -92,7 +92,7 @@ statement ok
 CREATE TABLE nation (
 	n_nationkey		INTEGER, -- TODO: SERIAL
 	n_name				TEXT, -- TODO: CHAR(25)
-	n_regionkey		INTEGER, -- TODO: NOT NULL
+	n_regionkey		INTEGER NOT NULL,
 	n_comment			TEXT -- TODO: VARCHAR(152)
 );
 

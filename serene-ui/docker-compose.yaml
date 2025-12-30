@@ -1,0 +1,10 @@
+services:
+    serene-ui:
+        build:
+            context: .
+            dockerfile: Dockerfile
+        container_name: serene-ui
+        ports:
+            - "3000:3000"
+            - "6543:6543"
+        restart: unless-stopped

@@ -1,0 +1,1 @@
+export { FramesPage } from "./FramesPage";

@@ -1,0 +1,14 @@
+FROM public.ecr.aws/docker/library/node:22
+WORKDIR /test-app
+
+COPY . .
+
+RUN rm -f package-lock.json && npm install --include=peer --include=dev
+
+RUN npm run build
+
+RUN npx playwright install
+RUN npx playwright install-deps
+
+# Keep-Alive
+CMD ["tail", "-f", "/dev/null"]

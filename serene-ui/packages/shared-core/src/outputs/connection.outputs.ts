@@ -1,4 +1,3 @@
-import { SavedQuerySchema } from "src/schemas";
 import { ConnectionSchema } from "../schemas/connection";
 import z from "zod";
 

@@ -50,24 +50,15 @@ SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
 }
 
 uint64_t RocksDBTable::numRows() const {
-  uint64_t count = 0;
-  uint64_t size = 0;
   SDB_ASSERT(!_column_handles.empty() && _column_handles.front());
   const auto* column_handle = _column_handles.front().get();
   if (column_handle->Id() == catalog::Column::kGeneratedPKId) {
     SDB_ASSERT(_column_handles.size() >= 2);
     column_handle = _column_handles[1].get();
   }
-  auto [start, end] =
-    key_utils::CreateTableColumnRange(TableId(), column_handle->Id());
-  auto* db = GetServerEngine().db();
-  auto connector = std::dynamic_pointer_cast<SereneDBConnector>(
-    velox::connector::getConnector(StaticStrings::kSereneDBConnector));
-  SDB_ASSERT(connector);
-  auto* cf = &connector->GetColumnFamily();
-  db->GetApproximateMemTableStats(cf, rocksdb::Range{start, end}, &count,
-                                  &size);
-  return count;
+
+  return GetServerEngine().GetApproximateEntityCount(TableId(),
+                                                     column_handle->Id());
 }
 
 }  // namespace sdb::connector

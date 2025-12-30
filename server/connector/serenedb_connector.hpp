@@ -557,8 +557,6 @@ class SereneDBConnector final : public velox::connector::Connector {
 
   folly::Executor* ioExecutor() const final { return nullptr; }
 
-  rocksdb::ColumnFamilyHandle& GetColumnFamily() const noexcept { return _cf; }
-
  private:
   rocksdb::TransactionDB& _db;
   rocksdb::ColumnFamilyHandle& _cf;

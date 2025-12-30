@@ -950,6 +950,18 @@ Result RocksDBEngineCatalog::VisitSchemaObjects(
     RocksDBKeyBounds::SchemaObjects(entry, database_id, schema_id), visitor);
 }
 
+uint64_t RocksDBEngineCatalog::GetApproximateEntityCount(
+  ObjectId table_id, catalog::Column::Id column_id) const {
+  auto* cf =
+    RocksDBColumnFamilyManager::get(RocksDBColumnFamilyManager::Family::Data);
+  uint64_t count = 0;
+  uint64_t size = 0;
+  auto [begin, end] =
+    connector::key_utils::CreateTableColumnRange(table_id, column_id);
+  _db->GetApproximateMemTableStats(cf, {begin, end}, &count, &size);
+  return count;
+}
+
 Result RocksDBEngineCatalog::DeleteSchemaObject(
   ObjectId db_id, ObjectId schema_id, ObjectId object_id,
   std::string_view object_name, RocksDBEntryType entry, RocksDBLogType log) {

@@ -1,0 +1,51 @@
+name: Label Fork PRs
+
+on:
+  pull_request_target:
+    types: [opened]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check if PR is from fork
+        id: check
+        run: |
+          if [[ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]]; then
+            echo "is_fork=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_fork=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Add fork label
+        if: steps.check.outputs.is_fork == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.addLabels({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: ['from-fork', 'needs-security-review']
+            })
+
+      - name: Comment on fork PR
+        if: steps.check.outputs.is_fork == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `👋 Thank you for your contribution!
+              
+              This PR is from a fork and requires maintainer approval before CI workflows will run.
+              
+              A maintainer will review your changes and approve the workflow run if everything looks good.
+              
+              **Please do not modify any files in \`.github/workflows/\` as those changes will not be accepted from forks.**`
+            })

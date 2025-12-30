@@ -3943,9 +3943,22 @@ lp::ExprPtr SqlAnalyzer::ProcessAExpr(State& state, const A_Expr& expr) {
       auto lhs = ProcessExprNodeImpl(state, expr.lexpr);
       auto rhs = ProcessExprListImpl(state, castNode(List, expr.rexpr));
       SDB_ASSERT(rhs.size() == 2);
-      auto res = ResolveVeloxFunctionAndInferArgsCommonType(
-        "presto_between",
-        {std::move(lhs), std::move(rhs[0]), std::move(rhs[1])});
+      axiom::logical_plan::ExprPtr res;
+      if (lhs->type() == velox::UNKNOWN() ||
+          rhs[0]->type() == velox::UNKNOWN() ||
+          rhs[1]->type() == velox::UNKNOWN()) {
+        // this probably incorrect for non-deterministic lhs expressions
+        auto lhs_cmp = ResolveVeloxFunctionAndInferArgsCommonType(
+          "presto_lte", {std::move(rhs[0]), lhs});
+        auto rhs_cmp = ResolveVeloxFunctionAndInferArgsCommonType(
+          "presto_lte", {lhs, std::move(rhs[1])});
+        res = ResolveVeloxFunctionAndInferArgsCommonType(
+          "and", {std::move(lhs_cmp), std::move(rhs_cmp)});
+      } else {
+        res = ResolveVeloxFunctionAndInferArgsCommonType(
+          "presto_between",
+          {std::move(lhs), std::move(rhs[0]), std::move(rhs[1])});
+      }
       if (expr.kind == AEXPR_NOT_BETWEEN) {
         return ResolveVeloxFunctionAndInferArgsCommonType("presto_not",
                                                           {std::move(res)});

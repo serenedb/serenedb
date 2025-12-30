@@ -34,6 +34,7 @@
 #include "data_source.hpp"
 #include "query/transaction.h"
 #include "rocksdb/utilities/transaction_db.h"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 
 namespace sdb::connector {
 
@@ -81,11 +82,18 @@ class SereneDBConnectorTableHandle final
 
   const auto& GetTransaction() const noexcept { return _txn; }
 
+  void SetSnapshot(std::shared_ptr<RocksDBSnapshot> snapshot) const noexcept {
+    _snapshot = std::move(snapshot);
+  }
+
+  const auto& GetSnapshot() const noexcept { return _snapshot; }
+
  private:
   std::string _name;
   ObjectId _table_id;
   catalog::Column::Id _table_count_field;
   std::shared_ptr<rocksdb::Transaction> _txn;
+  mutable std::shared_ptr<RocksDBSnapshot> _snapshot;
 };
 
 class SereneDBColumn final : public axiom::connector::Column {
@@ -455,6 +463,16 @@ class SereneDBConnector final : public velox::connector::Connector {
     if (auto txn = serene_table_handle.GetTransaction()) {
       snapshot = txn->GetSnapshot();
     }
+
+    if (!snapshot) {
+      const auto& serene_snapshot = serene_table_handle.GetSnapshot();
+      if (!serene_snapshot) {
+        serene_table_handle.SetSnapshot(std::make_shared<RocksDBSnapshot>(_db));
+      }
+      SDB_ASSERT(serene_snapshot);
+      snapshot = serene_snapshot->getSnapshot();
+    }
+    SDB_ASSERT(snapshot);
     return std::make_unique<RocksDBDataSource>(
       *connector_query_ctx->memoryPool(), snapshot, _db, _cf, output_type,
       column_oids, object_key);

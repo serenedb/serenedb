@@ -22,7 +22,6 @@
 #pragma once
 
 #include <rocksdb/slice.h>
-#include <s2/s2point.h>
 #include <vpack/slice.h>
 
 #include "basics/assert.h"

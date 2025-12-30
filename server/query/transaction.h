@@ -63,13 +63,8 @@ class TxnState : public Config {
 
   const auto& GetTransaction() const { return _txn.GetTransaction(); }
 
-  const rocksdb::Snapshot* GetSnapshot() const;
-
  private:
   LazyTransaction _txn;
-
-  // Used for snapshots created outside of transactions
-  mutable std::shared_ptr<RocksDBSnapshot> _db_snapshot;
 };
 
 }  // namespace sdb

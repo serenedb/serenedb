@@ -76,16 +76,16 @@ class SereneDBConnectorTableHandle final
     return _table_count_field;
   }
 
-  const auto& GetTransaction() const noexcept { return _txn; }
-
-  const rocksdb::Snapshot* GetSnapshot() const noexcept { return _snapshot; }
+  const rocksdb::Snapshot* GetSnapshot() const noexcept {
+    SDB_ASSERT(_snapshot);
+    return _snapshot->getSnapshot();
+  }
 
  private:
   std::string _name;
   ObjectId _table_id;
   catalog::Column::Id _table_count_field;
-  std::shared_ptr<rocksdb::Transaction> _txn;
-  const rocksdb::Snapshot* _snapshot = nullptr;
+  std::shared_ptr<RocksDBSnapshotBase> _snapshot;
 };
 
 class SereneDBColumn final : public axiom::connector::Column {

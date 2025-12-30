@@ -89,15 +89,4 @@ yaclib::Future<Result> TxnState::Rollback() {
   return {};
 }
 
-const rocksdb::Snapshot* TxnState::GetSnapshot() const {
-  if (InsideTransaction()) {
-    return _txn.GetTransaction()->GetSnapshot();
-  }
-  if (!_db_snapshot) {
-    _db_snapshot = std::dynamic_pointer_cast<RocksDBSnapshot>(
-      GetServerEngine().currentSnapshot());
-  }
-  return _db_snapshot->getSnapshot();
-}
-
 }  // namespace sdb

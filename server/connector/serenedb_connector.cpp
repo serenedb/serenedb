@@ -19,6 +19,8 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "serenedb_connector.hpp"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#include "storage_engine/engine_feature.h"
 
 namespace sdb::connector {
 
@@ -45,8 +47,15 @@ SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
                            ->Id();
   }
   const auto& txn_state = ExtractTransactionState(session);
-  _txn = txn_state.GetTransaction();
-  _snapshot = txn_state.GetSnapshot();
+  const auto& txn = txn_state.GetTransaction();
+  if (txn_state.InsideTransaction()) {
+    SDB_ASSERT(txn);
+    const auto* snapshot = txn->GetSnapshot();
+    SDB_ASSERT(snapshot);
+    _snapshot = std::make_shared<RocksDBSnapshotView>(snapshot);
+  } else {
+    _snapshot = std::make_shared<RocksDBSnapshot>(*GetServerEngine().db());
+  }
 }
 
 }  // namespace sdb::connector

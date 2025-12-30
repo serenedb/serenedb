@@ -38,15 +38,11 @@
 
 namespace sdb::connector {
 
-inline std::shared_ptr<rocksdb::Transaction> ExtractTransaction(
+inline const TxnState& ExtractTransactionState(
   const axiom::connector::ConnectorSessionPtr& session) {
   SDB_ASSERT(session->config());
   auto& txn = basics::downCast<TxnState>(*session->config());
-
-  if (txn.InsideTransaction()) {
-    return txn.GetTransaction();
-  }
-  return nullptr;
+  return txn;
 }
 
 class SereneDBColumnHandle final : public velox::connector::ColumnHandle {
@@ -82,18 +78,14 @@ class SereneDBConnectorTableHandle final
 
   const auto& GetTransaction() const noexcept { return _txn; }
 
-  void SetSnapshot(std::shared_ptr<RocksDBSnapshot> snapshot) const noexcept {
-    _snapshot = std::move(snapshot);
-  }
-
-  const auto& GetSnapshot() const noexcept { return _snapshot; }
+  const rocksdb::Snapshot* GetSnapshot() const noexcept { return _snapshot; }
 
  private:
   std::string _name;
   ObjectId _table_id;
   catalog::Column::Id _table_count_field;
   std::shared_ptr<rocksdb::Transaction> _txn;
-  mutable std::shared_ptr<RocksDBSnapshot> _snapshot;
+  const rocksdb::Snapshot* _snapshot = nullptr;
 };
 
 class SereneDBColumn final : public axiom::connector::Column {
@@ -297,7 +289,8 @@ class SereneDBConnectorInsertTableHandle final
     const axiom::connector::ConnectorSessionPtr& session,
     const axiom::connector::TablePtr& table, axiom::connector::WriteKind kind)
     : _session{session}, _table{table}, _kind{kind} {
-    _txn = ExtractTransaction(session);
+    const auto& txn_state = ExtractTransactionState(session);
+    _txn = txn_state.GetTransaction();
   }
 
   bool supportsMultiThreading() const final { return false; }
@@ -459,20 +452,7 @@ class SereneDBConnector final : public velox::connector::Connector {
     } else {
       column_oids.push_back(serene_table_handle.GetCountField());
     }
-    const rocksdb::Snapshot* snapshot = nullptr;
-    if (auto txn = serene_table_handle.GetTransaction()) {
-      snapshot = txn->GetSnapshot();
-    }
-
-    if (!snapshot) {
-      const auto& serene_snapshot = serene_table_handle.GetSnapshot();
-      if (!serene_snapshot) {
-        serene_table_handle.SetSnapshot(std::make_shared<RocksDBSnapshot>(_db));
-      }
-      SDB_ASSERT(serene_snapshot);
-      snapshot = serene_snapshot->getSnapshot();
-    }
-    SDB_ASSERT(snapshot);
+    const rocksdb::Snapshot* snapshot = serene_table_handle.GetSnapshot();
     return std::make_unique<RocksDBDataSource>(
       *connector_query_ctx->memoryPool(), snapshot, _db, _cf, output_type,
       column_oids, object_key);

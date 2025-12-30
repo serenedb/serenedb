@@ -39,6 +39,9 @@ std::shared_ptr<rocksdb::Transaction> CreateTransaction(
 
 const std::shared_ptr<rocksdb::Transaction>&
 TxnState::LazyTransaction::GetTransaction() const {
+  // Check _initialized => (_txn != nullptr)
+  // transaction should be nullptr if not initialized
+  SDB_ASSERT(_initialized >= (_txn != nullptr));
   if (_initialized && !_txn) {
     auto* db = GetServerEngine().db();
     _txn = CreateTransaction(*db);
@@ -84,6 +87,17 @@ yaclib::Future<Result> TxnState::Rollback() {
   }
   _txn.Reset();
   return {};
+}
+
+const rocksdb::Snapshot* TxnState::GetSnapshot() const {
+  if (InsideTransaction()) {
+    return _txn.GetTransaction()->GetSnapshot();
+  }
+  if (!_db_snapshot) {
+    _db_snapshot = std::dynamic_pointer_cast<RocksDBSnapshot>(
+      GetServerEngine().currentSnapshot());
+  }
+  return _db_snapshot->getSnapshot();
 }
 
 }  // namespace sdb

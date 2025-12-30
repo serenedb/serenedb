@@ -26,6 +26,7 @@
 #include "basics/containers/flat_hash_map.h"
 #include "basics/result.h"
 #include "query/config.h"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 
 namespace sdb {
 
@@ -62,8 +63,13 @@ class TxnState : public Config {
 
   const auto& GetTransaction() const { return _txn.GetTransaction(); }
 
+  const rocksdb::Snapshot* GetSnapshot() const;
+
  private:
   LazyTransaction _txn;
+
+  // Used for snapshots created outside of transactions
+  mutable std::shared_ptr<RocksDBSnapshot> _db_snapshot;
 };
 
 }  // namespace sdb

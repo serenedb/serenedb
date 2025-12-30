@@ -36,10 +36,15 @@ const config: ForgeConfig = {
         asar: true,
         name: "SereneUI",
         icon: path.resolve(__dirname, "./assets/icons/app.icns"),
+        executableName: "serene-ui-electron",
     },
     rebuildConfig: {},
     makers: [
-        new MakerSquirrel({}),
+        new MakerSquirrel({
+            authors: "SereneDB",
+            description:
+                "A database client built for SereneDB and compatible with PostgreSQL",
+        }),
         new MakerZIP({}, ["darwin"]),
         new MakerDMG({ format: "ULFO" }),
         new MakerRpm({}),

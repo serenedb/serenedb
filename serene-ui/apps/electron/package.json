@@ -3,6 +3,7 @@
     "productName": "SereneUI",
     "version": "0.1.0",
     "description": "SereneUI Electron application",
+    "author": "SereneDB",
     "main": ".webpack/main",
     "scripts": {
         "rebuild": "npx electron-rebuild -f -m ../../node_modules/better-sqlite3 -p ../../",

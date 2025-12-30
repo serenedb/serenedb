@@ -30,12 +30,6 @@ export default defineConfig(({ mode }) => {
             fs: {
                 allow: ["../.."],
             },
-            proxy: {
-                "/rpc": {
-                    target: "http://0.0.0.0:3000",
-                    changeOrigin: true,
-                },
-            },
         },
     };
     return config;

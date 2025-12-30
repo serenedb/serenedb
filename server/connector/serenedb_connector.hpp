@@ -289,8 +289,7 @@ class SereneDBConnectorInsertTableHandle final
     const axiom::connector::ConnectorSessionPtr& session,
     const axiom::connector::TablePtr& table, axiom::connector::WriteKind kind)
     : _session{session}, _table{table}, _kind{kind} {
-    const auto& txn_state = ExtractTransactionState(session);
-    _txn = txn_state.GetTransaction();
+    _txn = ExtractTransactionState(session).GetTransaction();
   }
 
   bool supportsMultiThreading() const final { return false; }

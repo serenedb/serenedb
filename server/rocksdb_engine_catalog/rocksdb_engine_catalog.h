@@ -165,7 +165,7 @@ class RocksDBSnapshot final : public RocksDBSnapshotBase {
   mutable rocksdb::ManagedSnapshot _snapshot;
 };
 
-class RocksDBSnapshotView : public RocksDBSnapshotBase {
+class RocksDBSnapshotView final : public RocksDBSnapshotBase {
  public:
   explicit RocksDBSnapshotView(const rocksdb::Snapshot* snapshot)
     : _snapshot{snapshot} {}

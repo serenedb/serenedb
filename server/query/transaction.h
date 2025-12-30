@@ -26,7 +26,6 @@
 #include "basics/containers/flat_hash_map.h"
 #include "basics/result.h"
 #include "query/config.h"
-#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 
 namespace sdb {
 

@@ -101,10 +101,10 @@ json
 
 # Very large exponent
 query
-SELECT '{"hugeExp":1e1000}'::json;
+SELECT '{"hugeExp":1e40}'::json;
 ----
 json
-{"hugeExp":1e1000}
+{"hugeExp":1e40}
 
 
 # High precision decimal

@@ -30,13 +30,13 @@
 #define ERR_HINT(...) error.errhint = absl::StrCat(__VA_ARGS__)
 #define ERR_DETAIL(...) error.errdetail = absl::StrCat(__VA_ARGS__)
 
-#define SQL_ERROR_DATA(defaultErrcode, ...) \
-  [&]() {                                   \
-    sdb::pg::SqlErrorData error;            \
-    ERR_CODE(ERRCODE_INTERNAL_ERROR);       \
-    __VA_ARGS__;                            \
-    return error;                           \
+#define SQL_ERROR_DATA(...)           \
+  [&] {                               \
+    sdb::pg::SqlErrorData error;      \
+    ERR_CODE(ERRCODE_INTERNAL_ERROR); \
+    __VA_ARGS__;                      \
+    return error;                     \
   }()
 
 #define THROW_SQL_ERROR(...) \
-  THROW_SQL_ERROR_FROM_DATA(SQL_ERROR_DATA(ERRCODE_INTERNAL_ERROR, __VA_ARGS__))
+  THROW_SQL_ERROR_FROM_DATA(SQL_ERROR_DATA(__VA_ARGS__))

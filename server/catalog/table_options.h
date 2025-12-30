@@ -161,10 +161,20 @@ struct Column {
   GeneratedType generated_type = GeneratedType::kNone;
 };
 
+struct CheckConstraint {
+  std::string name;
+  std::shared_ptr<ColumnExpr> expr;
+
+  // returns whether this is a NOT NULL constraint; if so, the second value is
+  // the column name
+  std::pair<bool, std::string_view> IsNotNull() const noexcept;
+};
+
 struct CreateTableRequest {
   std::vector<std::string> shardKeys{std::string{StaticStrings::kKeyString}};
   std::vector<Column> columns;
   std::vector<Column::Id> pkColumns;
+  std::vector<CheckConstraint> checkConstraints;
   // TOOD(gnusi): we don't need it to be a part of collection slice
   std::vector<std::string> avoidServers;
   std::optional<std::string> distributeShardsLike;
@@ -190,6 +200,7 @@ struct TableOptions {
   std::vector<std::string> shardKeys{std::string{StaticStrings::kKeyString}};
   std::vector<Column> columns;
   std::vector<Column::Id> pkColumns;
+  std::vector<CheckConstraint> checkConstraints;
   std::string shardingStrategy = std::string{kDefaultSharding};
   std::string name;
   std::shared_ptr<ValidatorBase> schema;

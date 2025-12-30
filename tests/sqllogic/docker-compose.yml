@@ -27,7 +27,7 @@ services:
     image: rust:latest
     volumes:
       - "$SQLLOGIC_DIR:/sqllogic"
-      - "$SQLLOGIC_DIR/../../scripts:/scripts"
+      - "$WORKSPACE/third_party/sqllogictest-rs:/sqllogictest-rs"
     links:
       - postgres
       - serenedb-single

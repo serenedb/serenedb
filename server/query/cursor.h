@@ -41,16 +41,17 @@ class Cursor {
     More,
     Done,
   };
-  std::pair<Process, Result> Next(velox::RowVectorPtr& batch);
+  Process Next(velox::RowVectorPtr& batch);
+
   void RequestCancel();
 
   ~Cursor();
 
  private:
-  std::tuple<Process, Result> ExecuteVelox(velox::RowVectorPtr& batch);
-  std::tuple<Process, Result> ExecuteStmt();
-  std::tuple<Process, Result> ExecuteShow(velox::RowVectorPtr& batch);
-  std::tuple<Process, Result> ExecuteShowAll(velox::RowVectorPtr& batch);
+  Process ExecuteVelox(velox::RowVectorPtr& batch);
+  Process ExecuteStmt();
+  Process ExecuteShow(velox::RowVectorPtr& batch);
+  Process ExecuteShowAll(velox::RowVectorPtr& batch);
 
   friend class Query;
   Cursor(std::function<void()>&& user_task, const Query& query);

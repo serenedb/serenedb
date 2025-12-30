@@ -71,8 +71,9 @@ class PgSQLCommTaskBase : public rest::CommTask {
   PgSQLCommTaskBase(rest::GeneralServer& server, ConnectionInfo info);
   ~PgSQLCommTaskBase() override;
 
-  void Process();
-  void NextRootPortal();
+  void ProcessFirstRoot() noexcept;
+  void ProcessNextRoot() noexcept;
+  void ProcessWakeup() noexcept;
 
   virtual void SendAsync(message::SequenceView data) = 0;
 
@@ -101,26 +102,25 @@ class PgSQLCommTaskBase : public rest::CommTask {
     std::vector<SerializationFunction> columns_serializers;
   };
 
-  void Reschedule();
   virtual void SetIOTimeoutImpl() = 0;
 
-  std::string_view StartPacket();
+  std::string_view StartPacket() noexcept;
   // It's called when everything is done:
   // 1. after success way done or exception catched and sent related message
   void FinishPacket() noexcept;
 
   void HandleClientPacket(std::string_view packet);
   void HandleClientHello(std::string_view packet);
-  void SendWarnings();
+
   void SendParameterStatus(std::string_view name, std::string_view value);
-  void SendError(std::string_view message, std::string_view sqlstate);
+
+  void SendNotices();
   void SendError(std::string_view message, int errcode);
+  void SendNotice(char type, const pg::SqlErrorData& error);
   void SendNotice(char type, std::string_view message,
                   std::string_view sqlstate, std::string_view error_detail = {},
                   std::string_view error_hint = {}, std::string_view query = {},
                   int cursor_pos = -1);
-  void SendNotice(char type, const pg::SqlErrorData& what,
-                  std::string_view query);
 
   void RunSimpleQuery(std::string_view query_string);
   void ParseQuery(std::string_view packet);
@@ -132,7 +132,7 @@ class PgSQLCommTaskBase : public rest::CommTask {
   SqlPortal BindStatement(SqlStatement& stmt, BindInfo bind_info);
   void DescribePortal(const SqlPortal& portal);
   void DescribeStatement(SqlStatement& statement);
-  void DescribeAnalyzedQuery(const query::Query& query,
+  void DescribeAnalyzedQuery(const SqlStatement& statement,
                              const std::vector<VarFormat>& formats,
                              bool extended = true);
   std::optional<BindInfo> ParseBindVars(
@@ -140,7 +140,7 @@ class PgSQLCommTaskBase : public rest::CommTask {
     const std::vector<velox::TypePtr>& param_types);
   std::optional<std::vector<VarFormat>> ParseBindFormats(
     std::string_view& packet);
-  void ExecutePortal(SqlPortal& portal, size_t limit);
+  void ExecutePortal(SqlPortal& portal);
   bool RegisterCursor(std::unique_ptr<query::Cursor> cursor, SqlPortal& portal);
   void ReleaseCursor(SqlPortal& portal);
 
@@ -151,10 +151,12 @@ class PgSQLCommTaskBase : public rest::CommTask {
     DonePacket,
   };
 
-  void WakeupHandler() noexcept;
   ProcessState ProcessQueryResult();
   void SendBatch(const velox::RowVectorPtr& batch);
   void SendCommandComplete(const SqlTree& tree, uint64_t rows);
+
+  template<typename Func>
+  void SafeCall(Func&& func) noexcept;
 
   using PacketsQueue = std::queue<std::string>;
   PostgresFeature& _feature;
@@ -197,15 +199,21 @@ class PgSQLCommTask final : public GenericCommTask<T, PgSQLCommTaskBase> {
   }
   void Close(asio_ns::error_code err = {}) final {
     std::lock_guard lock{this->_queue_mutex};
-    Base::Close(err);
+    CloseImpl(err);
   }
+  void CloseImpl(asio_ns::error_code close_error);
   bool ReadCallback(asio_ns::error_code ec) final;
-  void SetIOTimeout() final;
+  void SetIOTimeout() final {
+    std::lock_guard lock{this->_queue_mutex};
+    SetIOTimeoutImpl();
+  }
   void SetIOTimeoutImpl() final;
   void TimeoutStop();
 
   std::string _packet;
   uint32_t _pending_len{0};
+  std::atomic_bool _send_should_close = false;
+  asio_ns::error_code _close_error;
 };
 
 }  // namespace sdb::pg

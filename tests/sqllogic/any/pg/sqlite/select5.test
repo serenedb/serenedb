@@ -2,11 +2,16 @@ show-column-names false
 flat-values true
 hash-threshold 8
 
+# TODO(mbkkt) Improve join order algorithm
+onlyif serenedb
+statement ok
+SET join_order_algorithm TO greedy;
+
 statement ok
 CREATE TABLE t1(
   a1 INTEGER PRIMARY KEY,
   b1 INTEGER,
-  x1 VARCHAR(40)
+  x1 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -43,7 +48,7 @@ statement ok
 CREATE TABLE t2(
   a2 INTEGER PRIMARY KEY,
   b2 INTEGER,
-  x2 VARCHAR(40)
+  x2 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -80,7 +85,7 @@ statement ok
 CREATE TABLE t3(
   a3 INTEGER PRIMARY KEY,
   b3 INTEGER,
-  x3 VARCHAR(40)
+  x3 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -117,7 +122,7 @@ statement ok
 CREATE TABLE t4(
   a4 INTEGER PRIMARY KEY,
   b4 INTEGER,
-  x4 VARCHAR(40)
+  x4 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -154,7 +159,7 @@ statement ok
 CREATE TABLE t5(
   a5 INTEGER PRIMARY KEY,
   b5 INTEGER,
-  x5 VARCHAR(40)
+  x5 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -191,7 +196,7 @@ statement ok
 CREATE TABLE t6(
   a6 INTEGER PRIMARY KEY,
   b6 INTEGER,
-  x6 VARCHAR(40)
+  x6 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -228,7 +233,7 @@ statement ok
 CREATE TABLE t7(
   a7 INTEGER PRIMARY KEY,
   b7 INTEGER,
-  x7 VARCHAR(40)
+  x7 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -265,7 +270,7 @@ statement ok
 CREATE TABLE t8(
   a8 INTEGER PRIMARY KEY,
   b8 INTEGER,
-  x8 VARCHAR(40)
+  x8 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -302,7 +307,7 @@ statement ok
 CREATE TABLE t9(
   a9 INTEGER PRIMARY KEY,
   b9 INTEGER,
-  x9 VARCHAR(40)
+  x9 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -339,7 +344,7 @@ statement ok
 CREATE TABLE t10(
   a10 INTEGER PRIMARY KEY,
   b10 INTEGER,
-  x10 VARCHAR(40)
+  x10 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -376,7 +381,7 @@ statement ok
 CREATE TABLE t11(
   a11 INTEGER PRIMARY KEY,
   b11 INTEGER,
-  x11 VARCHAR(40)
+  x11 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -413,7 +418,7 @@ statement ok
 CREATE TABLE t12(
   a12 INTEGER PRIMARY KEY,
   b12 INTEGER,
-  x12 VARCHAR(40)
+  x12 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -450,7 +455,7 @@ statement ok
 CREATE TABLE t13(
   a13 INTEGER PRIMARY KEY,
   b13 INTEGER,
-  x13 VARCHAR(40)
+  x13 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -487,7 +492,7 @@ statement ok
 CREATE TABLE t14(
   a14 INTEGER PRIMARY KEY,
   b14 INTEGER,
-  x14 VARCHAR(40)
+  x14 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -524,7 +529,7 @@ statement ok
 CREATE TABLE t15(
   a15 INTEGER PRIMARY KEY,
   b15 INTEGER,
-  x15 VARCHAR(40)
+  x15 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -561,7 +566,7 @@ statement ok
 CREATE TABLE t16(
   a16 INTEGER PRIMARY KEY,
   b16 INTEGER,
-  x16 VARCHAR(40)
+  x16 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -598,7 +603,7 @@ statement ok
 CREATE TABLE t17(
   a17 INTEGER PRIMARY KEY,
   b17 INTEGER,
-  x17 VARCHAR(40)
+  x17 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -635,7 +640,7 @@ statement ok
 CREATE TABLE t18(
   a18 INTEGER PRIMARY KEY,
   b18 INTEGER,
-  x18 VARCHAR(40)
+  x18 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -672,7 +677,7 @@ statement ok
 CREATE TABLE t19(
   a19 INTEGER PRIMARY KEY,
   b19 INTEGER,
-  x19 VARCHAR(40)
+  x19 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -709,7 +714,7 @@ statement ok
 CREATE TABLE t20(
   a20 INTEGER PRIMARY KEY,
   b20 INTEGER,
-  x20 VARCHAR(40)
+  x20 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -746,7 +751,7 @@ statement ok
 CREATE TABLE t21(
   a21 INTEGER PRIMARY KEY,
   b21 INTEGER,
-  x21 VARCHAR(40)
+  x21 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -783,7 +788,7 @@ statement ok
 CREATE TABLE t22(
   a22 INTEGER PRIMARY KEY,
   b22 INTEGER,
-  x22 VARCHAR(40)
+  x22 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -820,7 +825,7 @@ statement ok
 CREATE TABLE t23(
   a23 INTEGER PRIMARY KEY,
   b23 INTEGER,
-  x23 VARCHAR(40)
+  x23 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -857,7 +862,7 @@ statement ok
 CREATE TABLE t24(
   a24 INTEGER PRIMARY KEY,
   b24 INTEGER,
-  x24 VARCHAR(40)
+  x24 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -894,7 +899,7 @@ statement ok
 CREATE TABLE t25(
   a25 INTEGER PRIMARY KEY,
   b25 INTEGER,
-  x25 VARCHAR(40)
+  x25 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -931,7 +936,7 @@ statement ok
 CREATE TABLE t26(
   a26 INTEGER PRIMARY KEY,
   b26 INTEGER,
-  x26 VARCHAR(40)
+  x26 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -968,7 +973,7 @@ statement ok
 CREATE TABLE t27(
   a27 INTEGER PRIMARY KEY,
   b27 INTEGER,
-  x27 VARCHAR(40)
+  x27 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -1005,7 +1010,7 @@ statement ok
 CREATE TABLE t28(
   a28 INTEGER PRIMARY KEY,
   b28 INTEGER,
-  x28 VARCHAR(40)
+  x28 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -1042,7 +1047,7 @@ statement ok
 CREATE TABLE t29(
   a29 INTEGER PRIMARY KEY,
   b29 INTEGER,
-  x29 VARCHAR(40)
+  x29 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -1079,7 +1084,7 @@ statement ok
 CREATE TABLE t30(
   a30 INTEGER PRIMARY KEY,
   b30 INTEGER,
-  x30 VARCHAR(40)
+  x30 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -1116,7 +1121,7 @@ statement ok
 CREATE TABLE t31(
   a31 INTEGER PRIMARY KEY,
   b31 INTEGER,
-  x31 VARCHAR(40)
+  x31 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -1153,7 +1158,7 @@ statement ok
 CREATE TABLE t32(
   a32 INTEGER PRIMARY KEY,
   b32 INTEGER,
-  x32 VARCHAR(40)
+  x32 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -1190,7 +1195,7 @@ statement ok
 CREATE TABLE t33(
   a33 INTEGER PRIMARY KEY,
   b33 INTEGER,
-  x33 VARCHAR(40)
+  x33 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -1227,7 +1232,7 @@ statement ok
 CREATE TABLE t34(
   a34 INTEGER PRIMARY KEY,
   b34 INTEGER,
-  x34 VARCHAR(40)
+  x34 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -1264,7 +1269,7 @@ statement ok
 CREATE TABLE t35(
   a35 INTEGER PRIMARY KEY,
   b35 INTEGER,
-  x35 VARCHAR(40)
+  x35 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -1301,7 +1306,7 @@ statement ok
 CREATE TABLE t36(
   a36 INTEGER PRIMARY KEY,
   b36 INTEGER,
-  x36 VARCHAR(40)
+  x36 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -1338,7 +1343,7 @@ statement ok
 CREATE TABLE t37(
   a37 INTEGER PRIMARY KEY,
   b37 INTEGER,
-  x37 VARCHAR(40)
+  x37 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -1375,7 +1380,7 @@ statement ok
 CREATE TABLE t38(
   a38 INTEGER PRIMARY KEY,
   b38 INTEGER,
-  x38 VARCHAR(40)
+  x38 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -1412,7 +1417,7 @@ statement ok
 CREATE TABLE t39(
   a39 INTEGER PRIMARY KEY,
   b39 INTEGER,
-  x39 VARCHAR(40)
+  x39 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -1449,7 +1454,7 @@ statement ok
 CREATE TABLE t40(
   a40 INTEGER PRIMARY KEY,
   b40 INTEGER,
-  x40 VARCHAR(40)
+  x40 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -1486,7 +1491,7 @@ statement ok
 CREATE TABLE t41(
   a41 INTEGER PRIMARY KEY,
   b41 INTEGER,
-  x41 VARCHAR(40)
+  x41 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -1523,7 +1528,7 @@ statement ok
 CREATE TABLE t42(
   a42 INTEGER PRIMARY KEY,
   b42 INTEGER,
-  x42 VARCHAR(40)
+  x42 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -1560,7 +1565,7 @@ statement ok
 CREATE TABLE t43(
   a43 INTEGER PRIMARY KEY,
   b43 INTEGER,
-  x43 VARCHAR(40)
+  x43 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -1597,7 +1602,7 @@ statement ok
 CREATE TABLE t44(
   a44 INTEGER PRIMARY KEY,
   b44 INTEGER,
-  x44 VARCHAR(40)
+  x44 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -1634,7 +1639,7 @@ statement ok
 CREATE TABLE t45(
   a45 INTEGER PRIMARY KEY,
   b45 INTEGER,
-  x45 VARCHAR(40)
+  x45 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -1671,7 +1676,7 @@ statement ok
 CREATE TABLE t46(
   a46 INTEGER PRIMARY KEY,
   b46 INTEGER,
-  x46 VARCHAR(40)
+  x46 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -1708,7 +1713,7 @@ statement ok
 CREATE TABLE t47(
   a47 INTEGER PRIMARY KEY,
   b47 INTEGER,
-  x47 VARCHAR(40)
+  x47 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -1745,7 +1750,7 @@ statement ok
 CREATE TABLE t48(
   a48 INTEGER PRIMARY KEY,
   b48 INTEGER,
-  x48 VARCHAR(40)
+  x48 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -1782,7 +1787,7 @@ statement ok
 CREATE TABLE t49(
   a49 INTEGER PRIMARY KEY,
   b49 INTEGER,
-  x49 VARCHAR(40)
+  x49 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -1819,7 +1824,7 @@ statement ok
 CREATE TABLE t50(
   a50 INTEGER PRIMARY KEY,
   b50 INTEGER,
-  x50 VARCHAR(40)
+  x50 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -1856,7 +1861,7 @@ statement ok
 CREATE TABLE t51(
   a51 INTEGER PRIMARY KEY,
   b51 INTEGER,
-  x51 VARCHAR(40)
+  x51 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -1893,7 +1898,7 @@ statement ok
 CREATE TABLE t52(
   a52 INTEGER PRIMARY KEY,
   b52 INTEGER,
-  x52 VARCHAR(40)
+  x52 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -1930,7 +1935,7 @@ statement ok
 CREATE TABLE t53(
   a53 INTEGER PRIMARY KEY,
   b53 INTEGER,
-  x53 VARCHAR(40)
+  x53 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -1967,7 +1972,7 @@ statement ok
 CREATE TABLE t54(
   a54 INTEGER PRIMARY KEY,
   b54 INTEGER,
-  x54 VARCHAR(40)
+  x54 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -2004,7 +2009,7 @@ statement ok
 CREATE TABLE t55(
   a55 INTEGER PRIMARY KEY,
   b55 INTEGER,
-  x55 VARCHAR(40)
+  x55 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -2041,7 +2046,7 @@ statement ok
 CREATE TABLE t56(
   a56 INTEGER PRIMARY KEY,
   b56 INTEGER,
-  x56 VARCHAR(40)
+  x56 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -2078,7 +2083,7 @@ statement ok
 CREATE TABLE t57(
   a57 INTEGER PRIMARY KEY,
   b57 INTEGER,
-  x57 VARCHAR(40)
+  x57 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -2115,7 +2120,7 @@ statement ok
 CREATE TABLE t58(
   a58 INTEGER PRIMARY KEY,
   b58 INTEGER,
-  x58 VARCHAR(40)
+  x58 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -2152,7 +2157,7 @@ statement ok
 CREATE TABLE t59(
   a59 INTEGER PRIMARY KEY,
   b59 INTEGER,
-  x59 VARCHAR(40)
+  x59 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -2189,7 +2194,7 @@ statement ok
 CREATE TABLE t60(
   a60 INTEGER PRIMARY KEY,
   b60 INTEGER,
-  x60 VARCHAR(40)
+  x60 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -2226,7 +2231,7 @@ statement ok
 CREATE TABLE t61(
   a61 INTEGER PRIMARY KEY,
   b61 INTEGER,
-  x61 VARCHAR(40)
+  x61 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -2263,7 +2268,7 @@ statement ok
 CREATE TABLE t62(
   a62 INTEGER PRIMARY KEY,
   b62 INTEGER,
-  x62 VARCHAR(40)
+  x62 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -2300,7 +2305,7 @@ statement ok
 CREATE TABLE t63(
   a63 INTEGER PRIMARY KEY,
   b63 INTEGER,
-  x63 VARCHAR(40)
+  x63 VARCHAR -- VARCHAR(40)
 )
 
 statement ok
@@ -2337,7 +2342,7 @@ statement ok
 CREATE TABLE t64(
   a64 INTEGER PRIMARY KEY,
   b64 INTEGER,
-  x64 VARCHAR(40)
+  x64 VARCHAR -- VARCHAR(40)
 )
 
 statement ok

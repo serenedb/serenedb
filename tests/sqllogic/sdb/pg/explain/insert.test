@@ -23,13 +23,19 @@ EXPLAIN (LOGICAL, EXECUTION) INSERT INTO t VALUES ('text', 42);
 QUERY PLAN
 LOGICAL PLAN:
 - TableWrite INSERT: -> ROW<rows:BIGINT>
-    c1 := column1
-    c2 := column2
-  - Values: 1 rows -> ROW<"column1":VARCHAR,"column2":INTEGER>
+    c1 := c1
+    c2 := c2
+  - Filter: IF(spark_isnotnull(c1), true, CAST(pg_error(33575106, 0, null value in column "c1" of relation "t" violates not-null constraint, presto_concat(Failing row contains (, COALESCE(CAST(c1 AS VARCHAR), null), , , COALESCE(CAST(c2 AS VARCHAR), null), ).)) AS BOOLEAN)) -> ROW<"c1":VARCHAR,"c2":INTEGER>
+    - Project: -> ROW<"c1":VARCHAR,"c2":INTEGER>
+        c1 := column1
+        c2 := column2
+      - Values: 1 rows -> ROW<"column1":VARCHAR,"column2":INTEGER>
 EXECUTION PLAN:
 Fragment 0:  numWorkers=1:
--- TableWrite[1][serenedb(table=t, kind=INSERT)] -> rows:BIGINT
-  -- Values[0][1 rows in 1 vectors] -> "column1":VARCHAR, "column2":INTEGER
+-- TableWrite[3][serenedb(table=t, kind=INSERT)] -> rows:BIGINT
+  -- Project[2][expressions: (c1:VARCHAR, "column1"), (c2:INTEGER, "column2")] -> "c1":VARCHAR, "c2":INTEGER
+    -- Filter[0][expression: if(spark_isnotnull("column1"),true,cast(pg_error(33575106,0,null value in column "c1" of relation "t" violates not-null constraint,presto_concat(Failing row contains (,coalesce("column1",null),, ,coalesce(cast("column2" as VARCHAR),null),).)) as BOOLEAN))] -> "column1":VARCHAR, "column2":INTEGER
+      -- Values[1][1 rows in 1 vectors] -> "column1":VARCHAR, "column2":INTEGER
 
 
 query
@@ -38,14 +44,19 @@ EXPLAIN (LOGICAL, EXECUTION) INSERT INTO t VALUES ('text');
 QUERY PLAN
 LOGICAL PLAN:
 - TableWrite INSERT: -> ROW<rows:BIGINT>
-    c1 := column1
-    c2 := null
-  - Values: 1 rows -> ROW<"column1":VARCHAR>
+    c1 := c1
+    c2 := c2
+  - Filter: IF(spark_isnotnull(c1), true, CAST(pg_error(33575106, 0, null value in column "c1" of relation "t" violates not-null constraint, presto_concat(Failing row contains (, COALESCE(CAST(c1 AS VARCHAR), null), , , COALESCE(CAST(c2 AS VARCHAR), null), ).)) AS BOOLEAN)) -> ROW<"c1":VARCHAR,"c2":INTEGER>
+    - Project: -> ROW<"c1":VARCHAR,"c2":INTEGER>
+        c1 := column1
+        c2 := null
+      - Values: 1 rows -> ROW<"column1":VARCHAR>
 EXECUTION PLAN:
 Fragment 0:  numWorkers=1:
--- TableWrite[2][serenedb(table=t, kind=INSERT)] -> rows:BIGINT
-  -- Project[1][expressions: (column1:VARCHAR, "column1"), (dt1.__p7:INTEGER, null)] -> "column1":VARCHAR, "dt1.__p7":INTEGER
-    -- Values[0][1 rows in 1 vectors] -> "column1":VARCHAR
+-- TableWrite[3][serenedb(table=t, kind=INSERT)] -> rows:BIGINT
+  -- Project[2][expressions: (c1:VARCHAR, "column1"), (c2:INTEGER, null)] -> "c1":VARCHAR, "c2":INTEGER
+    -- Filter[0][expression: if(spark_isnotnull("column1"),true,cast(pg_error(33575106,0,null value in column "c1" of relation "t" violates not-null constraint,presto_concat(Failing row contains (,coalesce("column1",null),, ,null,).)) as BOOLEAN))] -> "column1":VARCHAR
+      -- Values[1][1 rows in 1 vectors] -> "column1":VARCHAR
 
 
 statement error

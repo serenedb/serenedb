@@ -256,13 +256,14 @@ lp::ExprPtr MakeConst(V v, velox::TypePtr type = nullptr) {
 }
 
 template<typename T>
-std::shared_ptr<const T> MakePtrView(const T* ptr) {
-  return std::shared_ptr<const T>(std::shared_ptr<const T>{}, ptr);
+std::shared_ptr<const T> MakePtrView(const T& val) {
+  return std::shared_ptr<const T>(std::shared_ptr<const T>{}, &val);
 }
 
 template<typename T>
 std::shared_ptr<const T> MakePtrView(const std::shared_ptr<const T>& ptr) {
-  return MakePtrView(ptr.get());
+  SDB_ASSERT(ptr);
+  return MakePtrView(*ptr);
 }
 
 void AndToLeft(lp::ExprPtr& left, lp::ExprPtr right) {
@@ -546,7 +547,7 @@ struct State {
   };
   containers::FlatHashMap<const FuncCall*, Column> aggregate_or_window;
   // str repr of groupby key -> Column
-  containers::FlatHashMap<std::string, Column> groupped_columns;
+  containers::FlatHashMap<std::string, Column> grouped_columns;
 
   // inside of the function refers to passed through parameters
   using FuncParamToExpr =
@@ -665,6 +666,19 @@ class TargetList {
     std::string_view alias;
   };
 
+  // Replace all entries with new ones (saving previous ambiguity info)
+  void ReplaceEntries(std::vector<Entry> entries) {
+    _entries = std::move(entries);
+    for (const auto& [expr, alias] : _entries) {
+      auto it = _alias_to_expr.find(alias);
+      SDB_ASSERT(it != _alias_to_expr.end());
+      if (IsAmbiguous(it->second)) {
+        continue;
+      }
+
+      it->second = expr;
+    }
+  }
   std::vector<Entry> GetEntries() && { return std::move(_entries); }
   const std::vector<Entry>& GetEntries() const& { return _entries; }
 
@@ -697,7 +711,8 @@ class SqlAnalyzer {
     axiom::connector::WriteKind write_kind, State& state,
     const Objects::ObjectData& object, std::vector<std::string> column_names,
     std::vector<lp::ExprPtr> column_exprs,
-    std::span<const catalog::Column* const> generated_columns);
+    std::span<const catalog::Column* const> generated_columns,
+    std::span<const catalog::CheckConstraint> check_constraints, int location);
 
   void ProcessSelectStmt(State& state, const SelectStmt& stmt);
   void ProcessInsertStmt(State& state, const InsertStmt& stmt);
@@ -748,6 +763,34 @@ class SqlAnalyzer {
 
   void ProcessFilterNode(State& state, const Node* node, ExprKind expr_kind);
 
+  void FillColumnsInfo(State& state, const velox::RowType& pk_type,
+                       const velox::RowType& row_type,
+                       std::vector<std::string>& column_names,
+                       std::vector<lp::ExprPtr>& column_exprs) {
+    const auto& output_type = state.root->outputType();
+
+    for (const auto& [name, type] :
+         std::ranges::views::zip(pk_type.names(), pk_type.children())) {
+      auto column = state.resolver.Resolve(output_type, name);
+      SDB_ASSERT(column.IsFound());
+      std::string resolved{column.GetColumnName()};
+      auto expr =
+        std::make_shared<lp::InputReferenceExpr>(type, std::move(resolved));
+      column_exprs.emplace_back(std::move(expr));
+      column_names.emplace_back(name);
+    }
+    if (pk_type.size() == 0) {
+      auto generated_pk_name =
+        catalog::Column::GeneratePKName(row_type.names());
+      auto column = state.resolver.Resolve(output_type, generated_pk_name);
+      std::string resolved{column.GetColumnName()};
+      auto expr = std::make_shared<lp::InputReferenceExpr>(velox::BIGINT(),
+                                                           std::move(resolved));
+      column_exprs.emplace_back(std::move(expr));
+      column_names.emplace_back(std::move(generated_pk_name));
+    }
+  }
+
   struct CollectedAggregates {
     std::vector<lp::AggregateExprPtr> aggregates;
     std::vector<std::string> names;
@@ -755,6 +798,7 @@ class SqlAnalyzer {
   CollectedAggregates CollectAggregateFunctions(State& state,
                                                 const List* target_list,
                                                 const List* orderby_list,
+                                                const List* distinct_clause,
                                                 const Node* having);
   struct CollectedWindows {
     std::vector<lp::WindowExprPtr> windows;
@@ -768,12 +812,10 @@ class SqlAnalyzer {
   // sometimes is used for lazy target list creation
   using TargetListGetter = absl::FunctionRef<const TargetList&()>;
 
-  std::vector<lp::ExprPtr> ProcessGroupByExprList(
-    State& state, TargetListGetter target_list_getter, const List* groupby);
-
   void ProcessGroupClause(State& state, const List* groupby,
                           const List* target_list, const List* sort_clause,
-                          Node* having_clause);
+                          const List* distinct_clause,
+                          const Node* having_clause);
 
   // something like a cache to avoid processing expressions twice
   TargetList ProcessTargetList(State& state, const List* target_list);
@@ -783,9 +825,27 @@ class SqlAnalyzer {
   void ProcessSortClause(State& state, const List* list,
                          const TargetList& target_list);
 
-  std::vector<lp::SortingField> ProcessOrderByList(
-    State& state, TargetListGetter target_list_getter, const List* list);
+  void ProcessDistinctOn(State& state, const List* distinct_clause,
+                         const List* sort_clause,
+                         const TargetList& target_list);
 
+  void ProcessDistinctAll(State& state, const List* sort_clause,
+                          TargetList& target_list);
+
+  enum class DistinctType : uint8_t {
+    None,
+    On,
+    All,
+  };
+  DistinctType ProcessDistinctClause(State& state, const List* distinct_clause,
+                                     const List* sort_clause,
+                                     TargetList& tlist);
+
+  // Processing ORDER BY in SELECT ... ORDER BY statement
+  std::vector<lp::SortingField> ProcessOrderByList(
+    State& state, const TargetList& target_list, const List* list);
+
+  // Processing any list of SortBy nodes
   std::vector<lp::SortingField> ProcessSortByList(State& state,
                                                   const List* list,
                                                   ExprKind expr_kind);
@@ -841,8 +901,6 @@ class SqlAnalyzer {
   lp::ExprPtr ProcessAConst(State& state, const A_Const& expr);
 
   lp::ExprPtr ProcessFuncCall(State& state, const FuncCall& expr);
-
-  lp::ExprPtr ProcessWindowFunc(State& state, const FuncCall& func_call);
 
   lp::AggregateExprPtr MaybeAggregateFuncCall(
     State& state, const catalog::Function& logical_function,
@@ -1055,7 +1113,7 @@ ColumnRefHook SqlAnalyzer::GetTargetListNamingResolver(
 }
 
 void ValidateAggrInputRefsImpl(State& state, const lp::ExprPtr& expr,
-                               AliasResolver& resolver) {
+                               AliasResolver& resolver, bool is_distinct) {
   SDB_ASSERT(state.has_aggregate || state.has_groupby);
 
   const auto& output = state.root->outputType();
@@ -1068,11 +1126,17 @@ void ValidateAggrInputRefsImpl(State& state, const lp::ExprPtr& expr,
     if (node.isInputReference()) {
       const auto& input = node.as<lp::InputReferenceExpr>();
       if (!is_grouped_column(input->name())) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_GROUPING_ERROR),
-                        ERR_MSG("column \"", ToAlias(input->name()),
-                                "\" must appear in the GROUP BY "
-                                "clause or be used in an aggregate "
-                                "function"));
+        if (is_distinct) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_GROUPING_ERROR),
+                          ERR_MSG("for SELECT DISTINCT, ORDER BY expressions "
+                                  "must appear in select list"));
+        } else {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_GROUPING_ERROR),
+                          ERR_MSG("column \"", ToAlias(input->name()),
+                                  "\" must appear in the GROUP BY "
+                                  "clause or be used in an aggregate "
+                                  "function"));
+        }
       }
     }
     return true;
@@ -1084,7 +1148,8 @@ void ValidateAggrInputRefsImpl(State& state, const lp::ExprPtr& expr,
 }
 
 template<typename T>
-void ValidateAggrInputRefs(State& state, std::span<T> exprs) {
+void ValidateAggrInputRefsImpl(State& state, std::span<const T> exprs,
+                               bool is_distinct) {
   if (!state.has_aggregate && !state.has_groupby) {
     return;
   }
@@ -1092,11 +1157,23 @@ void ValidateAggrInputRefs(State& state, std::span<T> exprs) {
   AliasResolver resolver;
   for (const auto& expr : exprs) {
     if constexpr (requires { expr.expression; }) {
-      ValidateAggrInputRefsImpl(state, expr.expression, resolver);
+      ValidateAggrInputRefsImpl(state, expr.expression, resolver, is_distinct);
+    } else if constexpr (requires { expr.expr; }) {
+      ValidateAggrInputRefsImpl(state, expr.expr, resolver, is_distinct);
     } else {
-      ValidateAggrInputRefsImpl(state, expr, resolver);
+      ValidateAggrInputRefsImpl(state, expr, resolver, is_distinct);
     }
   }
+}
+
+template<typename T>
+void ValidateAggrInputRefs(State& state, std::span<const T> exprs) {
+  ValidateAggrInputRefsImpl(state, exprs, false);
+}
+
+template<typename T>
+void ValidateDistinctInputRefs(State& state, std::span<const T> exprs) {
+  ValidateAggrInputRefsImpl(state, exprs, true);
 }
 
 void SqlAnalyzer::ProcessAlias(State& state, const Alias* alias) {
@@ -1152,8 +1229,7 @@ void SqlAnalyzer::ProcessAlias(State& state, const List* new_aliases,
   state.root = std::make_shared<lp::ProjectNode>(
     _id_generator.NextPlanId(), std::move(state.root), std::move(names),
     std::move(exprs));
-  state.resolver.CreateTable(
-    table, MakePtrView<velox::RowType>(state.root->outputType()));
+  state.resolver.CreateTable(table, MakePtrView(state.root->outputType()));
 }
 
 std::pair<std::string_view, query::QueryContext::OptionValue> ConvertToOption(
@@ -1222,27 +1298,49 @@ void SqlAnalyzer::MakeTableWrite(
   axiom::connector::WriteKind write_kind, State& state,
   const Objects::ObjectData& object, std::vector<std::string> column_names,
   std::vector<lp::ExprPtr> column_exprs,
-  std::span<const catalog::Column* const> generated_columns) {
+  std::span<const catalog::Column* const> generated_columns,
+  std::span<const catalog::CheckConstraint> check_constraints, int location) {
   object.EnsureTable();
   const auto& table = object.table;
 
-  if (!generated_columns.empty()) {
-    // generated columns may depend on other columns (default indeed)
-    auto projected_column_names =
-      column_names | std::views::transform([&](const std::string& name) {
-        return _id_generator.NextColumnName(name);
-      }) |
-      std::ranges::to<std::vector>();
+  auto project_columns = [&] {
+    auto project_names = column_names |
+                         std::views::transform([&](const std::string& name) {
+                           return _id_generator.NextColumnName(name);
+                         }) |
+                         std::ranges::to<std::vector>();
+    auto project_exprs = std::move(column_exprs);
+
+    for (const auto& [expr, name] :
+         std::views::zip(project_exprs, project_names)) {
+      column_exprs.emplace_back(
+        std::make_shared<lp::InputReferenceExpr>(expr->type(), name));
+    }
+
+    if (write_kind == axiom::connector::WriteKind::kUpdate) {
+      // for update we need all the columns from the table scan because
+      // they may depend on not only columns being updated
+      const auto& output_type = *state.root->outputType();
+      for (const auto& [type, name] :
+           std::views::zip(output_type.children(), output_type.names())) {
+        if (absl::c_contains(column_names, ToAlias(name))) {
+          continue;
+        }
+
+        project_names.emplace_back(name);
+        auto expr = std::make_shared<lp::InputReferenceExpr>(type, name);
+        project_exprs.push_back(std::move(expr));
+      }
+    }
+
     state.root = std::make_shared<lp::ProjectNode>(
       _id_generator.NextPlanId(), std::move(state.root),
-      std::move(projected_column_names), std::move(column_exprs));
+      std::move(project_names), std::move(project_exprs));
+  };
 
-    const auto& output = state.root->outputType();
-    for (const auto& [type, expr] :
-         std::views::zip(output->children(), output->names())) {
-      column_exprs.emplace_back(
-        std::make_shared<lp::InputReferenceExpr>(type, expr));
-    }
+  if (!generated_columns.empty()) {
+    // generated columns may depend on other columns (default indeed)
+    project_columns();
 
     for (const auto* column : generated_columns) {
       SDB_ASSERT(column);
@@ -1254,6 +1352,84 @@ void SqlAnalyzer::MakeTableWrite(
     }
   }
 
+  if (!check_constraints.empty()) {
+    // constraints may depend on other columns (generated / default indeed)
+    project_columns();
+
+    auto build_failing_row_detail = [&] -> lp::ExprPtr {
+      std::vector<lp::ExprPtr> concat_parts;
+      concat_parts.emplace_back(
+        MakeConst("Failing row contains (", velox::VARCHAR()));
+
+      for (size_t i = 0; i < column_exprs.size(); ++i) {
+        if (i > 0) {
+          concat_parts.emplace_back(MakeConst(", ", velox::VARCHAR()));
+        }
+        auto str_expr = MakeCast(velox::VARCHAR(), column_exprs[i]);
+        // show "null" instead of empty
+        str_expr = ResolveVeloxFunctionAndInferArgsCommonType(
+          "coalesce", {std::move(str_expr),
+                       MakeConst(std::string_view("null"), velox::VARCHAR())});
+        concat_parts.emplace_back(std::move(str_expr));
+      }
+
+      concat_parts.emplace_back(MakeConst(").", velox::VARCHAR()));
+
+      return ResolveVeloxFunctionAndInferArgsCommonType(
+        "presto_concat", std::move(concat_parts));
+    };
+
+    auto cursorpos = MakeConst<int32_t>((ErrorPosition(location)));
+    auto detail = build_failing_row_detail();
+
+    // make condition: if (check) -> ok; else -> fail
+    lp::ExprPtr check;
+    for (const auto& constraint : check_constraints) {
+      SDB_ASSERT(constraint.expr);
+      auto expr = ProcessExprNode(state, constraint.expr->GetExpr(),
+                                  ExprKind::CheckConstraint);
+
+      if (auto [not_null, column_name] = constraint.IsNotNull(); not_null) {
+        auto errcode = MakeConst<int32_t>(ERRCODE_NOT_NULL_VIOLATION);
+        auto errmsg = MakeConst(absl::StrCat(
+          "null value in column \"", column_name, "\" of relation \"",
+          object.table->name(), "\" violates not-null constraint"));
+        auto throwsql = std::make_shared<lp::CallExpr>(
+          velox::UNKNOWN(), "pg_error",
+          std::vector<lp::ExprPtr>{std::move(errcode), cursorpos,
+                                   std::move(errmsg), detail});
+        // fun fact: in spark isnotnull works faster that isnull
+        // so we if (check) -> ok; else -> fail
+        expr = ResolveVeloxFunctionAndInferArgsCommonType(
+          "if", std::vector<lp::ExprPtr>{std::move(expr), MakeConst(true),
+                                         std::move(throwsql)});
+      } else {
+        auto errcode = MakeConst<int32_t>(ERRCODE_CHECK_VIOLATION);
+        auto errmsg = MakeConst(absl::StrCat(
+          "new row for relation \"", object.table->name(),
+          "\" violates check constraint \"", constraint.name, "\""));
+
+        // PostgreSQL: CHECK fails only if result = FALSE (not NULL)
+        // we want to optimize this part and make if not fail -> ok; else ->
+        // fail instead of writing coalesce every time
+        auto throwsql = std::make_shared<lp::CallExpr>(
+          velox::UNKNOWN(), "pg_error",
+          std::vector<lp::ExprPtr>{std::move(errcode), cursorpos,
+                                   std::move(errmsg), detail});
+        expr = ResolveVeloxFunctionAndInferArgsCommonType("presto_not",
+                                                          {std::move(expr)});
+        expr = ResolveVeloxFunctionAndInferArgsCommonType(
+          "if", std::vector<lp::ExprPtr>{std::move(expr), std::move(throwsql),
+                                         MakeConst(true)});
+      }
+
+      AndToLeft(check, std::move(expr));
+    }
+
+    state.root = std::make_shared<lp::FilterNode>(
+      _id_generator.NextPlanId(), std::move(state.root), std::move(check));
+  }
+
   state.root = std::make_shared<lp::TableWriteNode>(
     _id_generator.NextPlanId(), std::move(state.root), table, write_kind,
     std::move(column_names), std::move(column_exprs));
@@ -1263,12 +1439,7 @@ void SqlAnalyzer::MakeTableWrite(
 // but have different address to distinguish it from UNKNOWN().
 const velox::UnknownType kDefaultValueTypePlaceHolder{};
 const auto kDefaultValueTypePlaceHolderPtr =
-  MakePtrView<velox::UnknownType>(&kDefaultValueTypePlaceHolder);
-const lp::CallExpr kDefaultValuePlaceHolder{
-  kDefaultValueTypePlaceHolderPtr, "presto_fail",
-  MakeConst("DEFAULT is not allowed in this context")};
-const auto kDefaultValuePlaceHolderPtr =
-  MakePtrView<lp::CallExpr>(&kDefaultValuePlaceHolder);
+  MakePtrView(kDefaultValueTypePlaceHolder);
 
 void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
   if (stmt.returningList) {
@@ -1398,7 +1569,8 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
 
   MakeTableWrite(axiom::connector::WriteKind::kInsert, state, *object,
                  std::move(column_names), std::move(column_exprs),
-                 std::move(generated_columns));
+                 std::move(generated_columns), table.CheckConstraints(),
+                 ExprLocation(&stmt));
 }
 
 void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
@@ -1444,29 +1616,7 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
   std::vector<lp::ExprPtr> column_exprs;
   column_names.reserve(pk_type.size() + list_length(stmt.targetList));
   column_exprs.reserve(pk_type.size() + list_length(stmt.targetList));
-
-  const auto& output_type = state.root->outputType();
-
-  for (const auto& [name, type] :
-       std::ranges::views::zip(pk_type.names(), pk_type.children())) {
-    auto column = state.resolver.Resolve(output_type, name);
-    SDB_ASSERT(column.IsFound());
-    std::string resolved{column.GetColumnName()};
-    auto expr =
-      std::make_shared<lp::InputReferenceExpr>(type, std::move(resolved));
-    column_exprs.emplace_back(std::move(expr));
-    column_names.emplace_back(name);
-  }
-  if (pk_type.size() == 0) {
-    auto generated_pk_name =
-      catalog::Column::GeneratePKName(table.RowType()->names());
-    auto column = state.resolver.Resolve(output_type, generated_pk_name);
-    std::string resolved{column.GetColumnName()};
-    auto expr = std::make_shared<lp::InputReferenceExpr>(velox::BIGINT(),
-                                                         std::move(resolved));
-    column_exprs.emplace_back(std::move(expr));
-    column_names.emplace_back(std::move(generated_pk_name));
-  }
+  FillColumnsInfo(state, pk_type, *table.RowType(), column_names, column_exprs);
 
   using NameToColumnMap =
     containers::FlatHashMap<std::string_view, const catalog::Column*>;
@@ -1527,7 +1677,8 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
 
   MakeTableWrite(axiom::connector::WriteKind::kUpdate, state, *object,
                  std::move(column_names), std::move(column_exprs),
-                 std::move(generated_columns));
+                 std::move(generated_columns), table.CheckConstraints(),
+                 ExprLocation(&stmt));
 }
 
 void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
@@ -1573,29 +1724,7 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
   std::vector<lp::ExprPtr> column_exprs;
   column_names.reserve(pk_type.size());
   column_exprs.reserve(pk_type.size());
-
-  const auto& output_type = state.root->outputType();
-  for (const auto& [name, type] :
-       std::ranges::views::zip(pk_type.names(), pk_type.children())) {
-    auto column = state.resolver.Resolve(output_type, name);
-    SDB_ASSERT(column.IsFound());
-    std::string resolved{column.GetColumnName()};
-    auto expr =
-      std::make_shared<lp::InputReferenceExpr>(type, std::move(resolved));
-    column_exprs.emplace_back(std::move(expr));
-    column_names.emplace_back(name);
-  }
-
-  if (pk_type.size() == 0) {
-    auto generated_pk_name =
-      catalog::Column::GeneratePKName(table.RowType()->names());
-    auto column = state.resolver.Resolve(output_type, generated_pk_name);
-    std::string resolved{column.GetColumnName()};
-    auto expr = std::make_shared<lp::InputReferenceExpr>(velox::BIGINT(),
-                                                         std::move(resolved));
-    column_exprs.emplace_back(std::move(expr));
-    column_names.emplace_back(std::move(generated_pk_name));
-  }
+  FillColumnsInfo(state, pk_type, *table.RowType(), column_names, column_exprs);
 
   object->EnsureTable();
 
@@ -1723,19 +1852,61 @@ void SqlAnalyzer::ProcessCreateStmt(State& state, const CreateStmt& stmt) {
   std::vector<velox::TypePtr> column_types;
   column_names.reserve(list_length(stmt.tableElts));
   column_types.reserve(list_length(stmt.tableElts));
+  containers::FlatHashSet<std::string_view> generated_columns;
   VisitNodes(stmt.tableElts, [&](const Node& node) {
     if (IsA(&node, ColumnDef)) {
       const auto& col_def = *castNode(ColumnDef, &node);
       column_names.emplace_back(_id_generator.NextColumnName(col_def.colname));
       column_types.emplace_back(NameToType(*col_def.typeName));
+      VisitNodes(col_def.constraints, [&](const Constraint& constraint) {
+        switch (constraint.contype) {
+          case CONSTR_GENERATED: {
+            generated_columns.emplace(col_def.colname);
+          } break;
+          default:
+            break;
+        }
+      });
     }
   });
 
   velox::RowType dummy_output_type{std::move(column_names),
                                    std::move(column_types)};
-  dummy.lookup_columns = MakePtrView<velox::RowType>(&dummy_output_type);
+  dummy.lookup_columns = MakePtrView(dummy_output_type);
+  auto forbid_nested_generated_column =
+    [&](std::string_view name, const ColumnRef& ref) -> lp::ExprPtr {
+    if (generated_columns.contains(name)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+        CURSOR_POS(ErrorPosition(ExprLocation(&ref))),
+        ERR_MSG("cannot use generated column \"", name,
+                "\" in column generation expression"),
+        ERR_DETAIL(
+          "A generated column cannot reference another generated column."));
+    }
+    return nullptr;
+  };
+
+  auto validate_check_constraint = [&](const Constraint& constraint) {
+    auto expr =
+      ProcessExprNode(dummy, constraint.raw_expr, ExprKind::CheckConstraint);
+    if (!expr->type()->isBoolean()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+        CURSOR_POS(ErrorPosition(ExprLocation(&constraint))),
+        ERR_MSG("check constraint expression must return type boolean, not ",
+                ToPgTypeString(expr->type())));
+    }
+  };
 
   VisitNodes(stmt.tableElts, [&](const Node& node) {
+    if (IsA(&node, TableLikeClause)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        CURSOR_POS(ExprLocation(&node)),
+        ERR_MSG("CREATE TABLE ... (LIKE ...) is not supported yet"));
+    }
+
     if (IsA(&node, ColumnDef)) {
       const auto& col_def = *castNode(ColumnDef, &node);
       VisitNodes(col_def.constraints, [&](const Constraint& constraint) {
@@ -1746,7 +1917,9 @@ void SqlAnalyzer::ProcessCreateStmt(State& state, const CreateStmt& stmt) {
             auto kind = constraint.contype == CONSTR_DEFAULT
                           ? ExprKind::ColumnDefault
                           : ExprKind::GeneratedColumn;
+            dummy.pre_columnref_hook = forbid_nested_generated_column;
             auto expr = ProcessExprNode(dummy, constraint.raw_expr, kind);
+            dummy.pre_columnref_hook = nullptr;
             if (expr->type() != column_type) {
               THROW_SQL_ERROR(
                 ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
@@ -1758,11 +1931,27 @@ void SqlAnalyzer::ProcessCreateStmt(State& state, const CreateStmt& stmt) {
                 ERR_HINT("You will need to rewrite or cast the expression."));
             }
           } break;
-
+          case CONSTR_CHECK:
+            validate_check_constraint(constraint);
+            break;
           default:
+            break;
         }
       });
+
+      return;
     }
+
+    SDB_ASSERT((IsA(&node, Constraint)));
+
+    const auto& constraint = *castNode(Constraint, &node);
+    switch (constraint.contype) {
+      case CONSTR_CHECK:
+        validate_check_constraint(constraint);
+        break;
+      default:
+        break;
+    };
   });
 }
 
@@ -1911,7 +2100,7 @@ void SqlAnalyzer::ProjectTargetList(State& state, TargetList target_list) {
     exprs.emplace_back(std::move(expr));
   }
 
-  ValidateAggrInputRefs(state, std::span{exprs});
+  ValidateAggrInputRefs(state, std::span<const lp::ExprPtr>{exprs});
   state.Project(_id_generator, std::move(names), std::move(exprs));
   // after the projection table scopes become invalid in PG
   state.resolver.ClearTables();
@@ -1928,19 +2117,23 @@ lp::SortOrder GetSortOrder(const SortBy& sort_by) {
 }
 
 std::vector<lp::SortingField> SqlAnalyzer::ProcessOrderByList(
-  State& state, TargetListGetter target_list_getter, const List* list) {
+  State& state, const TargetList& target_list, const List* list) {
   std::vector<lp::SortingField> fields;
   fields.reserve(list_length(list));
 
+  auto getter = [&] -> const TargetList& { return target_list; };
+  // for order by first we try to resolve columns in target list
+  state.pre_columnref_hook = GetTargetListNamingResolver(getter);
   VisitNodes(list, [&](const SortBy& sort_by) {
-    if (auto maybe_column_ref = MaybeOrdinalColumnRef(
-          *sort_by.node, target_list_getter, ExprKind::OrderBy)) {
+    if (auto maybe_column_ref =
+          MaybeOrdinalColumnRef(*sort_by.node, getter, ExprKind::OrderBy)) {
       fields.emplace_back(std::move(maybe_column_ref), GetSortOrder(sort_by));
       return;
     }
     auto expr = ProcessExprNode(state, sort_by.node, ExprKind::OrderBy);
     fields.emplace_back(std::move(expr), GetSortOrder(sort_by));
   });
+  state.pre_columnref_hook = nullptr;
 
   return fields;
 }
@@ -1960,15 +2153,11 @@ std::vector<lp::SortingField> SqlAnalyzer::ProcessSortByList(
 
 void SqlAnalyzer::ProcessSortClause(State& state, const List* list,
                                     const TargetList& target_list) {
-  auto getter = [&] -> const TargetList& { return target_list; };
-  // for order by first we try to resolve columns in target list
-  state.pre_columnref_hook = GetTargetListNamingResolver(getter);
-  auto fields = ProcessOrderByList(state, getter, list);
-  state.pre_columnref_hook = nullptr;
+  auto fields = ProcessOrderByList(state, target_list, list);
   if (fields.empty()) {
     return;
   }
-  ValidateAggrInputRefs(state, std::span{fields});
+  ValidateAggrInputRefs(state, std::span<const lp::SortingField>{fields});
   state.root = std::make_shared<lp::SortNode>(
     _id_generator.NextPlanId(), std::move(state.root), std::move(fields));
 }
@@ -2137,7 +2326,7 @@ TargetList SqlAnalyzer::ProcessTargetList(State& state, const List* tlist) {
       cref->fields,
       absl::Overload{
         [&](auto /* star */) {
-          if (output_type.children().empty()) {
+          if (output_type.children().empty() && !state.resolver.HasTables()) {
             THROW_SQL_ERROR(
               ERR_CODE(ERRCODE_UNDEFINED_TABLE),
               CURSOR_POS(ErrorPosition(ExprLocation(cref))),
@@ -2297,7 +2486,7 @@ std::string GroupByExprToName(const lp::Expr& aggr) {
 
 SqlAnalyzer::CollectedAggregates SqlAnalyzer::CollectAggregateFunctions(
   State& state, const List* target_list, const List* orderby_list,
-  const Node* having) {
+  const List* distinct_clause, const Node* having) {
   const auto saved_expr_kind = std::exchange(state.expr_kind, ExprKind::None);
   irs::Finally restore_state = [&] noexcept {
     state.expr_kind = saved_expr_kind;
@@ -2331,6 +2520,9 @@ SqlAnalyzer::CollectedAggregates SqlAnalyzer::CollectAggregateFunctions(
   visitor.VisitList(target_list, visit_func);
   visitor.VisitList(orderby_list, visit_func);
   visitor.Visit(having, visit_func);
+  if (!IsDistinctAll(distinct_clause)) {
+    visitor.VisitList(distinct_clause, visit_func);
+  }
 
   SDB_ASSERT(result.aggregates.size() == result.names.size());
   return result;
@@ -2383,7 +2575,8 @@ void SqlAnalyzer::ProjectTargetListWindows(State& state,
     return;
   }
 
-  ValidateAggrInputRefs(state, std::span{collected.windows});
+  ValidateAggrInputRefs(state,
+                        std::span<const lp::WindowExprPtr>{collected.windows});
   const auto& output_type = *state.root->outputType();
   size_t size = collected.windows.size() + output_type.size();
   std::vector<std::string> names;
@@ -2427,31 +2620,12 @@ lp::ExprPtr SqlAnalyzer::MaybeOrdinalColumnRef(
   return entries[idx].expr;
 }
 
-std::vector<lp::ExprPtr> SqlAnalyzer::ProcessGroupByExprList(
-  State& state, TargetListGetter target_list_getter, const List* groupby) {
-  std::vector<lp::ExprPtr> result;
-  result.reserve(list_length(groupby));
-
-  VisitNodes(groupby, [&](const Node& n) {
-    if (auto maybe_column_ref =
-          MaybeOrdinalColumnRef(n, target_list_getter, ExprKind::GroupBy)) {
-      result.emplace_back(std::move(maybe_column_ref));
-      return;
-    }
-
-    auto expr = ProcessExprNode(state, &n, ExprKind::GroupBy);
-    SDB_ASSERT(expr);
-    result.emplace_back(std::move(expr));
-  });
-
-  return result;
-}
-
 void SqlAnalyzer::ProcessGroupClause(State& state, const List* groupby,
                                      const List* tlist, const List* sort_clause,
-                                     Node* having_clause) {
-  auto collected =
-    CollectAggregateFunctions(state, tlist, sort_clause, having_clause);
+                                     const List* distinct_clause,
+                                     const Node* having_clause) {
+  auto collected = CollectAggregateFunctions(state, tlist, sort_clause,
+                                             distinct_clause, having_clause);
   state.has_groupby = list_length(groupby) > 0;
   state.has_aggregate = !collected.aggregates.empty();
 
@@ -2461,43 +2635,174 @@ void SqlAnalyzer::ProcessGroupClause(State& state, const List* groupby,
 
   std::optional<TargetList> target_list;
   auto getter = [&]() -> const TargetList& {
-    if (!target_list) {
+    if (!target_list) {  // lazy evaluation
       target_list = ProcessTargetList(state, tlist);
     }
     return *target_list;
   };
-  // we try to resolve columns in target list if they weren't found
-  // in root
-  state.post_columnref_hook = GetTargetListNamingResolver(getter);
-  auto grouping_keys = ProcessGroupByExprList(state, getter, groupby);
-  state.post_columnref_hook = nullptr;
+
+  auto get_expr = [&](const Node& n) -> lp::ExprPtr {
+    if (auto maybe_column_ref =
+          MaybeOrdinalColumnRef(n, getter, ExprKind::GroupBy)) {
+      return maybe_column_ref;
+    }
+    return ProcessExprNode(state, &n, ExprKind::GroupBy);
+  };
+
+  auto get_name = [&](const lp::Expr& expr) -> std::string {
+    if (expr.isInputReference()) {
+      // we want to keep an old name otherwise table scope will be invalid
+      return expr.as<lp::InputReferenceExpr>()->name();
+    }
+
+    return _id_generator.NextColumnName(
+      absl::StrCat("groupby_expr_", _id_generator.NextColumnId()));
+  };
 
   std::vector<std::string> output_names;
-  output_names.reserve(grouping_keys.size() + collected.aggregates.size());
-  for (size_t i = 0; i < grouping_keys.size(); ++i) {
-    std::string name;
-    if (grouping_keys[i]->isInputReference()) {
-      // we don't want to keep an old name otherwise table scope will be invalid
-      name = grouping_keys[i]->as<lp::InputReferenceExpr>()->name();
-    } else {
-      name = _id_generator.NextColumnName(
-        absl::StrCat("groupby_expr_", _id_generator.NextColumnId()));
+  std::vector<lp::ExprPtr> grouping_keys;
+  output_names.reserve(list_length(groupby) + collected.aggregates.size());
+  grouping_keys.reserve(list_length(groupby));
+  // try to resolve columns in target list if they weren't found in root
+  state.post_columnref_hook = GetTargetListNamingResolver(getter);
+  VisitNodes(groupby, [&](const Node& n) {
+    auto expr = get_expr(n);
+    auto name = get_name(*expr);
+
+    auto [_, emplaced] = state.grouped_columns.try_emplace(
+      GroupByExprToName(*expr), expr->type(), name);
+    if (!emplaced) {  // deduplicate grouping key
+      return;
     }
-    auto [_, emplaced] = state.groupped_columns.try_emplace(
-      GroupByExprToName(*grouping_keys[i]), grouping_keys[i]->type(), name);
-    SDB_ASSERT(emplaced);
+
+    grouping_keys.emplace_back(std::move(expr));
     output_names.emplace_back(std::move(name));
-  }
+  });
+  state.post_columnref_hook = nullptr;
+
   absl::c_move(collected.names, std::back_inserter(output_names));
 
   // this will help us to resolve columns after
-  // aggregation removed all the columns in the output_type
-  state.lookup_columns = MakePtrView<velox::RowType>(state.root->outputType());
+  // aggregation, which has removed all the columns in the output_type
+  state.lookup_columns = MakePtrView(state.root->outputType());
 
   state.root = std::make_shared<lp::AggregateNode>(
     _id_generator.NextPlanId(), std::move(state.root), std::move(grouping_keys),
     std::vector<lp::AggregateNode::GroupingSet>{},
     std::move(collected.aggregates), std::move(output_names));
+}
+
+void SqlAnalyzer::ProcessDistinctOn(State& state, const List* distinct_clause,
+                                    const List* sort_clause,
+                                    const TargetList& target_list) {
+  SDB_ASSERT(distinct_clause);
+  const size_t distinct_on_size = list_length(distinct_clause);
+
+  std::vector<std::string> output_names;
+  const auto& output = *state.root->outputType();
+  output_names.reserve(output.size() + distinct_on_size);
+
+  std::vector<lp::ExprPtr> grouping_keys;
+  std::vector<lp::AggregateExprPtr> aggregates;
+  grouping_keys.reserve(distinct_on_size);
+  aggregates.reserve(output.size());
+
+  size_t idx = 0;
+  static constexpr std::string_view kPrefix = "distinct_on_expr_";
+  VisitNodes(distinct_clause, [&](const Node& n) {
+    auto expr = ProcessExprNode(state, &n, ExprKind::DistinctOn);
+    std::string name;
+    if (expr->isInputReference()) {
+      // axiom ignores our renames for input refs in grouping keys
+      // so we take the name which will be replaced on
+      name = expr->as<lp::InputReferenceExpr>()->name();
+    } else {
+      name = _id_generator.NextColumnName(absl::StrCat(kPrefix, idx++));
+    }
+    grouping_keys.emplace_back(std::move(expr));
+    output_names.emplace_back(std::move(name));
+  });
+
+  auto sorting_fields = ProcessOrderByList(state, target_list, sort_clause);
+  for (const auto& [name, type] :
+       std::views::zip(output.names(), output.children())) {
+    if (absl::c_contains(output_names, name)) {
+      // for the names which were grouped we don't want to take first for them
+      // since it doesn't make sense. Also we don't need to think about it but
+      // even though we rename grouping keys => distinct_on_expr_* names, axiom
+      // doesn't use them for input refs and a conflict could occur.
+      continue;
+    }
+    output_names.emplace_back(name);
+    auto expr = std::make_shared<lp::InputReferenceExpr>(type, name);
+    auto aggr = std::make_shared<const lp::AggregateExpr>(
+      type, "spark_first", std::vector<lp::ExprPtr>{std::move(expr)}, nullptr,
+      sorting_fields, false);
+    aggregates.emplace_back(std::move(aggr));
+  }
+
+  state.root = std::make_shared<lp::AggregateNode>(
+    _id_generator.NextPlanId(), std::move(state.root), std::move(grouping_keys),
+    std::vector<lp::AggregateNode::GroupingSet>{}, std::move(aggregates),
+    std::move(output_names));
+}
+
+void SqlAnalyzer::ProcessDistinctAll(State& state, const List* sort_clause,
+                                     TargetList& target_list) {
+  auto entries = target_list.GetEntries();
+
+  std::vector<std::string> output_names;
+  output_names.reserve(entries.size());
+
+  std::vector<lp::ExprPtr> grouping_keys;
+  grouping_keys.reserve(entries.size());
+  for (auto& [expr, alias] : entries) {
+    output_names.emplace_back(_id_generator.NextColumnName(alias));
+    state.grouped_columns.try_emplace(GroupByExprToName(*expr), expr->type(),
+                                      output_names.back());
+    grouping_keys.emplace_back(std::move(expr));
+    expr = std::make_shared<lp::InputReferenceExpr>(
+      grouping_keys.back()->type(), output_names.back());
+  }
+
+  if (!state.lookup_columns) {
+    state.lookup_columns = MakePtrView(state.root->outputType());
+  } else {
+    // if we have an aggregation just inherit its lookup columns
+    SDB_ASSERT(state.has_aggregate);
+  }
+
+  state.has_groupby = true;
+  state.root = std::make_shared<lp::AggregateNode>(
+    _id_generator.NextPlanId(), std::move(state.root), std::move(grouping_keys),
+    std::vector<lp::AggregateNode::GroupingSet>{},
+    std::vector<lp::AggregateExprPtr>{}, std::move(output_names));
+
+  if (sort_clause) {
+    target_list.ReplaceEntries(std::move(entries));
+    auto fields = ProcessOrderByList(state, target_list, sort_clause);
+    SDB_ASSERT(!fields.empty());
+    ValidateDistinctInputRefs(state, std::span<const lp::SortingField>{fields});
+    state.root = std::make_shared<lp::SortNode>(
+      _id_generator.NextPlanId(), std::move(state.root), std::move(fields));
+  }
+}
+
+// TODO: maybe make a logical UniqueNode in axiom?
+SqlAnalyzer::DistinctType SqlAnalyzer::ProcessDistinctClause(
+  State& state, const List* distinct_clause, const List* sort_clause,
+  TargetList& target_list) {
+  if (!distinct_clause) {
+    return DistinctType::None;
+  }
+
+  if (IsDistinctAll(distinct_clause)) {
+    ProcessDistinctAll(state, sort_clause, target_list);
+    return DistinctType::All;
+  }
+
+  ProcessDistinctOn(state, distinct_clause, sort_clause, target_list);
+  return DistinctType::On;
 }
 
 void SqlAnalyzer::ProcessPipeline(State& state, const SelectStmt& stmt) {
@@ -2506,7 +2811,7 @@ void SqlAnalyzer::ProcessPipeline(State& state, const SelectStmt& stmt) {
   ProcessFilterNode(state, stmt.whereClause, ExprKind::Where);
 
   ProcessGroupClause(state, stmt.groupClause, stmt.targetList, stmt.sortClause,
-                     stmt.havingClause);
+                     stmt.distinctClause, stmt.havingClause);
   ProcessFilterNode(state, stmt.havingClause, ExprKind::Having);
 
   // PG OrderBy has access to items before target list
@@ -2515,6 +2820,12 @@ void SqlAnalyzer::ProcessPipeline(State& state, const SelectStmt& stmt) {
   // before order by - because sort and project nodes are mixed up.
   ProjectTargetListWindows(state, stmt.targetList);
   auto target_list = ProcessTargetList(state, stmt.targetList);
+  auto distinct_type = ProcessDistinctClause(state, stmt.distinctClause,
+                                             stmt.sortClause, target_list);
+  if (distinct_type == DistinctType::All) {
+    // code below is already processed in ProcessDistinctClause
+    return;
+  }
   ProcessSortClause(state, stmt.sortClause, target_list);
   ProjectTargetList(state, std::move(target_list));
 }
@@ -2641,8 +2952,8 @@ State SqlAnalyzer::ProcessView(State* parent, std::string_view view_name,
   if (node->alias) {
     ProcessAlias(state, node->alias);
   } else {
-    state.resolver.CreateTable(
-      view_name, MakePtrView<velox::RowType>(state.root->outputType()));
+    state.resolver.CreateTable(view_name,
+                               MakePtrView(state.root->outputType()));
   }
 
   return state;
@@ -2688,21 +2999,29 @@ State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
 
   object.EnsureTable();
 
-  if (load_implicit_pk) {
-    SDB_ASSERT(object.object);
-    if (table.PKColumns().empty()) {
-      auto generated_pk_name = catalog::Column::GeneratePKName(type->names());
+  if (table.Columns().empty()) {
+    auto state = parent->MakeChild();
+    auto dummy_row = std::make_shared<velox::RowVector>(
+      &_memory_pool, velox::ROW({}), velox::BufferPtr{}, 0,
+      std::vector<velox::VectorPtr>{});
+    state.root = std::make_shared<lp::ValuesNode>(
+      _id_generator.NextPlanId(), std::vector{std::move(dummy_row)});
+    state.resolver.CreateTable(table_alias,
+                               MakePtrView(state.root->outputType()));
+    return state;
+  }
 
-      column_names.emplace_back(
-        _id_generator.NextColumnName(generated_pk_name));
+  if (load_implicit_pk && table.PKColumns().empty()) {
+    auto generated_pk_name = catalog::Column::GeneratePKName(type->names());
 
-      std::vector types = type->children();
-      std::vector type_names = type->names();
+    column_names.emplace_back(_id_generator.NextColumnName(generated_pk_name));
 
-      types.push_back(velox::BIGINT());
-      type_names.emplace_back(std::move(generated_pk_name));
-      type = velox::ROW(std::move(type_names), std::move(types));
-    }
+    std::vector types = type->children();
+    std::vector type_names = type->names();
+
+    types.push_back(velox::BIGINT());
+    type_names.emplace_back(std::move(generated_pk_name));
+    type = velox::ROW(std::move(type_names), std::move(types));
   }
 
   auto state = parent->MakeChild();
@@ -2711,8 +3030,8 @@ State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
     velox::ROW(std::move(column_names), type->children()), object.table,
     type->names());
 
-  state.resolver.CreateTable(
-    table_alias, MakePtrView<velox::RowType>(state.root->outputType()));
+  state.resolver.CreateTable(table_alias,
+                             MakePtrView(state.root->outputType()));
   return state;
 }
 
@@ -2727,7 +3046,8 @@ State SqlAnalyzer::ProcessSystemTable(State* parent, std::string_view name,
   auto data = snapshot.GetData(std::move(column_names), _memory_pool);
   state.root = std::make_shared<lp::ValuesNode>(
     _id_generator.NextPlanId(), std::vector<velox::RowVectorPtr>{data});
-  state.resolver.CreateTable(table_alias, state.root->outputType());
+  state.resolver.CreateTable(table_alias,
+                             MakePtrView(state.root->outputType()));
   return state;
 }
 
@@ -3111,7 +3431,7 @@ void SqlAnalyzer::ProcessFilterNode(State& state, const Node* node,
                                     ExprKind expr_kind) {
   if (node) {
     auto condition = ProcessExprNode(state, node, expr_kind);
-    ValidateAggrInputRefs(state, std::span{&condition, 1});
+    ValidateAggrInputRefs(state, std::span<const lp::ExprPtr>{&condition, 1});
     state.root = std::make_shared<lp::FilterNode>(
       _id_generator.NextPlanId(), std::move(state.root), std::move(condition));
   }
@@ -3223,7 +3543,11 @@ lp::ExprPtr SqlAnalyzer::ProcessExprNodeImpl(State& state, const Node* expr) {
                         CURSOR_POS(ErrorPosition(ExprLocation(expr))),
                         ERR_MSG("DEFAULT is not allowed in this context"));
       }
-      return kDefaultValuePlaceHolderPtr;
+      return std::make_shared<lp::CallExpr>(
+        kDefaultValueTypePlaceHolderPtr, "pg_error",
+        MakeConst<int32_t>(ERRCODE_SYNTAX_ERROR),
+        MakeConst<int32_t>(ErrorPosition(ExprLocation(expr))),
+        MakeConst("DEFAULT is not allowed in this context"));
     case T_MultiAssignRef:
     case T_GroupingFunc:
     case T_NamedArgExpr:
@@ -3248,8 +3572,8 @@ lp::ExprPtr SqlAnalyzer::ProcessExprNodeImpl(State& state, const Node* expr) {
   }
 
   auto maybe_groupby = GroupByExprToName(*res);
-  if (auto it = state.groupped_columns.find(maybe_groupby);
-      it != state.groupped_columns.end()) {
+  if (auto it = state.grouped_columns.find(maybe_groupby);
+      it != state.grouped_columns.end()) {
     const auto& aggr = it->second;
     return std::make_shared<lp::InputReferenceExpr>(aggr.type, aggr.name);
   }
@@ -3357,25 +3681,21 @@ lp::ExprPtr SqlAnalyzer::ProcessJsonExtractOp(std::string_view type,
       // array index
       if (type == kJsonExtract) {
         res = ResolveVeloxFunctionAndInferArgsCommonType(
-          "pg_json_extract_path", {std::move(input), std::move(key)});
-        return MakeCast(velox::JSON(), std::move(res));
+          "pg_json_extract_index", {std::move(input), std::move(key)});
       } else {
         SDB_ASSERT(type == kJsonExtractText);
         res = ResolveVeloxFunctionAndInferArgsCommonType(
-          "pg_json_extract_path_text", {std::move(input), std::move(key)});
-        return res;
+          "pg_json_extract_index_text", {std::move(input), std::move(key)});
       }
     } else if (key->type() == velox::VARCHAR()) {
       // object field
       if (type == kJsonExtract) {
         res = ResolveVeloxFunctionAndInferArgsCommonType(
-          "pg_json_extract_path", {std::move(input), std::move(key)});
-        return MakeCast(velox::JSON(), std::move(res));
+          "pg_json_extract_field", {std::move(input), std::move(key)});
       } else {
         SDB_ASSERT(type == kJsonExtractText);
         res = ResolveVeloxFunctionAndInferArgsCommonType(
-          "pg_json_extract_path_text", {std::move(input), std::move(key)});
-        return res;
+          "pg_json_extract_field_text", {std::move(input), std::move(key)});
       }
     } else {
       THROW_SQL_ERROR(
@@ -3383,19 +3703,16 @@ lp::ExprPtr SqlAnalyzer::ProcessJsonExtractOp(std::string_view type,
         ERR_MSG("JSON key must be either string or integer type"));
     }
   } else {
-    // TODO(codeworse): path extraction
     if (type == kJsonExtractPath) {
       res = ResolveVeloxFunctionAndInferArgsCommonType(
         "pg_json_extract_path", {std::move(input), std::move(key)});
-      return MakeCast(velox::JSON(), std::move(res));
     } else {
       SDB_ASSERT(type == kJsonExtractPathText);
       res = ResolveVeloxFunctionAndInferArgsCommonType(
         "pg_json_extract_path_text", {std::move(input), std::move(key)});
-      return res;
     }
   }
-  SDB_UNREACHABLE();
+  return res;
 }
 
 lp::ExprPtr SqlAnalyzer::ProcessMatchOp(std::string_view type,
@@ -3882,6 +4199,11 @@ lp::WindowExprPtr SqlAnalyzer::MaybeWindowFuncCall(
         CURSOR_POS(ErrorPosition(ExprLocation(&func_call))),
         ERR_MSG("window functions are not allowed in generation column "
                 "expressions"));
+    case ExprKind::DistinctOn:
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        CURSOR_POS(ErrorPosition(ExprLocation(&func_call))),
+        ERR_MSG("window function calls are not supported in DISTINCT ON"));
     default:
       break;
   }
@@ -4061,7 +4383,8 @@ const containers::FlatHashMap<std::string_view, velox::TypePtr> kTypeCasts{
   {"text", velox::VARCHAR()},
   {"bytea", velox::VARBINARY()},
   {"json", velox::JSON()},
-  {"numeric", velox::DECIMAL(velox::LongDecimalType::kMaxPrecision, 0)},
+  {"numeric", velox::DECIMAL(velox::LongDecimalType::kMaxPrecision,
+                             velox::LongDecimalType::kMaxPrecision / 2)},
   {"timestamp", velox::TIMESTAMP()},
   {"timestamptz", velox::TIMESTAMP_WITH_TIME_ZONE()},
   {"date", velox::DATE()},
@@ -4570,7 +4893,11 @@ lp::ExprPtr SqlAnalyzer::ProcessSubLink(State& state, const SubLink& expr) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_SYNTAX_ERROR),
         CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
-        ERR_MSG("subqueries are not allowed in generation expressions"));
+        ERR_MSG("cannot use subquery in column generation expression"));
+    case ExprKind::DistinctOn:
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      CURSOR_POS(ErrorPosition(ExprLocation(&expr))),
+                      ERR_MSG("subquery are not supported in DISTINCT ON"));
     default:
       break;
   }
@@ -4670,6 +4997,16 @@ lp::ExprPtr SqlAnalyzer::ProcessTypeCast(State& state, const TypeCast& expr) {
 
   if (pg::IsInterval(arg->type()) && type == velox::VARCHAR()) {
     return std::make_shared<lp::CallExpr>(std::move(type), "pg_intervalout",
+                                          std::move(arg));
+  }
+
+  if (arg->type() == velox::VARCHAR() && type == velox::JSON()) {
+    return std::make_shared<lp::CallExpr>(std::move(type), "pg_jsonin",
+                                          std::move(arg));
+  }
+
+  if (arg->type() == velox::JSON() && type == velox::VARCHAR()) {
+    return std::make_shared<lp::CallExpr>(std::move(type), "pg_jsonout",
                                           std::move(arg));
   }
 
@@ -4794,11 +5131,19 @@ velox::TypePtr NameToType(const TypeName& type_name) {
   if (name == "numeric") {
     SDB_ASSERT(mods_size >= 1);
     const auto precision = TryGet<int>(type_name.typmods, 0);
-    const auto scale =
-      mods_size > 1 ? TryGet<int>(type_name.typmods, 1) : std::nullopt;
-    auto decimal =
-      velox::DECIMAL(precision.value_or(velox::LongDecimalType::kMaxPrecision),
-                     scale.value_or(0));
+    std::optional<int> scale = std::nullopt;
+    if (mods_size > 1) {
+      if (scale = TryGet<int>(type_name.typmods, 1); !scale) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                        ERR_MSG("invalid input syntax for type integer"));
+      }
+    }
+
+    if (!precision) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                      ERR_MSG("invalid input syntax for type integer"));
+    }
+    auto decimal = velox::DECIMAL(*precision, scale.value_or(0));
     return wrap_in_array(std::move(decimal));
   }
 

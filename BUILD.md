@@ -19,7 +19,7 @@ git submodule update --init --recursive --jobs=$(nproc)
 
 ## Build Prerequisites
 
-1) Compiler: clang-20 / clang++-20
+1) Compiler: clang-21 / clang++-21
 2) Build system: Ninja
 3) CMake >= 3.26
 
@@ -29,7 +29,7 @@ Use cmake with preset 'lldb' to build it in debug. Additional build presets are 
 
 ```
 # from the root of the repository
-cmake --preset lldb -DCMAKE_C_COMPILER=clang-20 -DCMAKE_CXX_COMPILER=clang++-20
+cmake --preset lldb -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21
 cd build/
 ninja
 ```

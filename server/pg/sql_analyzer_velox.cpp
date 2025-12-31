@@ -977,7 +977,7 @@ class SqlAnalyzer {
       "presto_eq", {std::move(left), std::move(right)});
   }
 
-  lp::ExprPtr add MakeAnd(std::vector<lp::ExprPtr> args) {
+  lp::ExprPtr MakeAnd(std::vector<lp::ExprPtr> args) {
     if (args.size() == 1) {
       return std::move(args.front());
     }

@@ -888,9 +888,6 @@ class SqlAnalyzer {
 
   lp::ExprPtr ProcessAExpr(State& state, const A_Expr& expr);
 
-  lp::ExprPtr ProcessAExprIn(std::string_view name, lp::ExprPtr in_test,
-                             std::vector<lp::ExprPtr> in_list);
-
   lp::ExprPtr ProcessAConst(State& state, const A_Const& expr);
 
   lp::ExprPtr ProcessFuncCall(State& state, const FuncCall& expr);
@@ -3888,30 +3885,6 @@ lp::ExprPtr SqlAnalyzer::MakeComparator(std::string_view op, lp::ExprPtr lhs,
                                           std::move(compare_body));
 }
 
-lp::ExprPtr SqlAnalyzer::ProcessAExprIn(std::string_view name,
-                                        lp::ExprPtr in_test,
-                                        std::vector<lp::ExprPtr> in_list) {
-  lp::ExprPtr res;
-  if (absl::c_all_of(
-        in_list, [](const lp::ExprPtr& arg) { return arg->isConstant(); })) {
-    in_list.insert(in_list.begin(), std::move(in_test));
-    res = ResolveVeloxFunctionAndInferArgsCommonType("in", std::move(in_list));
-  } else {
-    // special form In applies only constants
-    // TODO: maybe move this logic to axiom?
-    for (auto& arg : in_list) {
-      arg = MakeEquality(in_test, std::move(arg));
-    }
-    res = MakeOr(std::move(in_list));
-  }
-
-  if (name == "<>") {
-    return ResolveVeloxFunctionAndInferArgsCommonType("presto_not",
-                                                      {std::move(res)});
-  }
-  return res;
-}
-
 lp::ExprPtr SqlAnalyzer::ProcessAExpr(State& state, const A_Expr& expr) {
   std::string_view name = strVal(llast(expr.name));
   switch (expr.kind) {
@@ -3949,7 +3922,14 @@ lp::ExprPtr SqlAnalyzer::ProcessAExpr(State& state, const A_Expr& expr) {
     case AEXPR_IN: {
       auto lhs = ProcessExprNodeImpl(state, expr.lexpr);
       auto rhs = ProcessExprListImpl(state, castNode(List, expr.rexpr));
-      return ProcessAExprIn(name, std::move(lhs), std::move(rhs));
+      rhs.insert(rhs.begin(), std::move(lhs));
+      auto res =
+        ResolveVeloxFunctionAndInferArgsCommonType("in", std::move(rhs));
+      if (name == "<>") {
+        return ResolveVeloxFunctionAndInferArgsCommonType("presto_not",
+                                                          {std::move(res)});
+      }
+      return res;
     }
     case AEXPR_LIKE:
     case AEXPR_ILIKE: {
@@ -3962,14 +3942,13 @@ lp::ExprPtr SqlAnalyzer::ProcessAExpr(State& state, const A_Expr& expr) {
       auto lhs = ProcessExprNodeImpl(state, expr.lexpr);
       auto rhs = ProcessExprListImpl(state, castNode(List, expr.rexpr));
       SDB_ASSERT(rhs.size() == 2);
-      lp::ExprPtr res;
 
       // this is probably incorrect for non-deterministic lhs expressions
       auto lhs_cmp = ResolveVeloxFunctionAndInferArgsCommonType(
         "presto_lte", {std::move(rhs[0]), lhs});
       auto rhs_cmp = ResolveVeloxFunctionAndInferArgsCommonType(
         "presto_lte", {std::move(lhs), std::move(rhs[1])});
-      res = ResolveVeloxFunctionAndInferArgsCommonType(
+      auto res = ResolveVeloxFunctionAndInferArgsCommonType(
         "and", {std::move(lhs_cmp), std::move(rhs_cmp)});
 
       if (expr.kind == AEXPR_NOT_BETWEEN) {

@@ -34,7 +34,6 @@
 #include "data_source.hpp"
 #include "query/transaction.h"
 #include "rocksdb/utilities/transaction_db.h"
-#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 
 namespace sdb::connector {
 
@@ -76,7 +75,7 @@ class SereneDBConnectorTableHandle final
     return _table_count_field;
   }
 
-  const rocksdb::Snapshot* GetSnapshot() const noexcept { return _snapshot; }
+  const auto* GetSnapshot() const noexcept { return _snapshot; }
 
  private:
   std::string _name;

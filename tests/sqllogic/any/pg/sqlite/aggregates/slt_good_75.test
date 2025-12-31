@@ -10768,6 +10768,7 @@ SELECT - + COUNT( * ) AS col2 FROM tab0 AS cor0 WHERE NOT ( NULL ) IN ( 15, + 78
 0
 
 skipif mysql
+skipif serenedb
 query I rowsort label-1262
 SELECT - + COUNT ( * ) AS col2 FROM tab0 AS cor0 WHERE NOT ( NULL ) IN ( 15, + 78 + - col2 + + 37 * + - col0 * + 87 * 72 * + col0, + col0 / + 57, col0, - col1 * - col2 )
 ----

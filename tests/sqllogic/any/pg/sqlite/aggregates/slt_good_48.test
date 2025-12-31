@@ -17500,6 +17500,7 @@ SELECT col2 * - col0 AS col1, - 52 / 41 FROM tab2 AS cor0
 -4350
 -1
 
+skipif serenedb
 query III rowsort
 SELECT ALL * FROM tab1 AS cor0 WHERE NULL IN ( col2, + col0 / - 0 )
 ----

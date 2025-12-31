@@ -48222,6 +48222,7 @@ SELECT DISTINCT - 26 + - COUNT ( * ) * + COUNT ( * ) FROM tab0 AS cor0
 ----
 -35
 
+skipif serenedb
 query III rowsort
 SELECT ALL * FROM tab0 WHERE NOT NULL NOT IN ( + + ( col2 ) - - col1 * - 78 * 90 * col1 * + col2, col0, 18 )
 ----

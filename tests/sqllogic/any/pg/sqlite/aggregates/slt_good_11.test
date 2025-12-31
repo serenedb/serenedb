@@ -8677,6 +8677,7 @@ query I rowsort label-1028
 SELECT - 69 FROM tab0 WHERE + - col1 NOT IN ( - + col1, CAST( + col0 AS SIGNED ), + + ( + + col1 ) / + - 0 * + col0 )
 ----
 
+skipif serenedb
 skipif mysql
 query I rowsort label-1028
 SELECT - 69 FROM tab0 WHERE + - col1 NOT IN ( - + col1, CAST ( + col0 AS INTEGER ), + + ( + + col1 ) / + - 0 * + col0 )

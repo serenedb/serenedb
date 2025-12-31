@@ -977,7 +977,7 @@ class SqlAnalyzer {
       "presto_eq", {std::move(left), std::move(right)});
   }
 
-  lp::ExprPtr MakeAnd(std::vector<lp::ExprPtr> args) {
+  lp::ExprPtr add MakeAnd(std::vector<lp::ExprPtr> args) {
     if (args.size() == 1) {
       return std::move(args.front());
     }
@@ -3948,8 +3948,7 @@ lp::ExprPtr SqlAnalyzer::ProcessAExpr(State& state, const A_Expr& expr) {
         "presto_lte", {std::move(rhs[0]), lhs});
       auto rhs_cmp = ResolveVeloxFunctionAndInferArgsCommonType(
         "presto_lte", {std::move(lhs), std::move(rhs[1])});
-      auto res = ResolveVeloxFunctionAndInferArgsCommonType(
-        "and", {std::move(lhs_cmp), std::move(rhs_cmp)});
+      auto res = MakeAnd({std::move(lhs_cmp), std::move(rhs_cmp)});
 
       if (expr.kind == AEXPR_NOT_BETWEEN) {
         return ResolveVeloxFunctionAndInferArgsCommonType("presto_not",

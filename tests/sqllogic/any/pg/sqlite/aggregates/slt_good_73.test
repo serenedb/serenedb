@@ -84216,4 +84216,3 @@ query I rowsort label-9998
 SELECT DISTINCT - COUNT ( * ) - - + 26 AS col1 FROM tab0 AS cor0
 ----
 23
-

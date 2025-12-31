@@ -83726,4 +83726,3 @@ query I rowsort label-9998
 SELECT - + 72 * CAST ( - COUNT ( * ) AS INTEGER ) - ( + 69 ) FROM tab2 cor0
 ----
 147
-

@@ -83870,4 +83870,3 @@ SELECT DISTINCT * FROM tab0 WHERE NOT NULL < + - col2 - - + 39
 query I rowsort
 SELECT ALL + ( - - col0 ) FROM tab0 WHERE NULL >= - 96
 ----
-

@@ -84087,4 +84087,3 @@ SELECT 9 + COUNT ( * ) FROM tab2
 query I rowsort
 SELECT col0 AS col0 FROM tab2 WHERE ( - col2 * + 77 + + 79 * + col1 ) IS NULL
 ----
-

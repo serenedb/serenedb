@@ -83415,4 +83415,3 @@ SELECT ALL 54 - + - 31 + + + col0 AS col0 FROM tab0
 100
 172
 182
-

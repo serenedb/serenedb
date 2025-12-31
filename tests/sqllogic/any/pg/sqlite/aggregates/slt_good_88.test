@@ -84081,4 +84081,3 @@ SELECT - - 76 AS col1, col1 FROM tab1 AS cor0
 47
 76
 5
-

@@ -75144,4 +75144,3 @@ SELECT DISTINCT 24 FROM tab2 AS cor0 GROUP BY cor0.col0
 ----
 ?column?
 24
-

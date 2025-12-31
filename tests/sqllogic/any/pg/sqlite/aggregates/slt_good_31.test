@@ -84454,4 +84454,3 @@ query I rowsort label-9999
 SELECT - MAX( - 42 ) col0 FROM tab0 WHERE NOT + + 65 IS NULL
 ----
 42
-

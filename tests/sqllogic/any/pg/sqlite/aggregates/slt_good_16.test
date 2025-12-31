@@ -83778,4 +83778,3 @@ query I rowsort label-9998
 SELECT ALL COUNT ( + - col0 ) + MIN ( - ( - col1 ) ) * - + 42 FROM tab0
 ----
 -39
-

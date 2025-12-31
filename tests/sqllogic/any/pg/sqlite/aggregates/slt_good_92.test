@@ -83312,4 +83312,3 @@ query I rowsort label-9999
 SELECT + COUNT( DISTINCT col0 ) + - 0 col2 FROM tab0 AS cor0
 ----
 3
-

@@ -84202,4 +84202,3 @@ SELECT COUNT( * ) + ( COUNT( * ) ) DIV + ( - COUNT( * ) ) col0, 7 AS col2 FROM t
 ----
 2
 7
-

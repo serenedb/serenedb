@@ -84089,4 +84089,3 @@ SELECT - 88 + + 5, COUNT( * ) col0 FROM tab0
 ----
 -83
 3
-

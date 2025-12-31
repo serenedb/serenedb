@@ -84318,4 +84318,3 @@ query I rowsort label-9998
 SELECT ALL - COUNT ( * ) AS col2 FROM tab1 cor0 WHERE NOT - col2 < + col0
 ----
 0
-

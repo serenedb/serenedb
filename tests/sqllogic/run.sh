@@ -11,6 +11,7 @@ declare -A defaults=(
     [jobs]=$(nproc)
     [debug]=false
     [override]=false
+    [show_all_errors]=false
     [database]='serenedb'
     [host]='localhost'
 )
@@ -40,7 +41,7 @@ parse_options() {
         fi
 
         case "$key" in
-            single-port|cluster-port|jobs|protocol|test|junit|runner|debug|override|database|host)
+            single-port|cluster-port|jobs|protocol|test|junit|runner|debug|override|show-all-errors|database|host)
                 local var_name="${key//-/_}"  # Convert dashes to underscores
 
                 # For non-equal format (--option value), get the next argument
@@ -50,7 +51,7 @@ parse_options() {
                         shift
                     else
                         # Boolean flags get special treatment
-                        if [[ "$key" == "debug" || "$key" == "override" ]]; then
+                        if [[ "$key" == "debug" || "$key" == "override" || "$key" == "show-all-errors" ]]; then
                             value=true
                         else
                             value=""
@@ -59,7 +60,7 @@ parse_options() {
                 fi
 
                 # Apply default if value is empty (except for boolean flags)
-                if [[ -z "$value" && "$key" != "debug" && "$key" != "override" ]]; then
+                if [[ -z "$value" && "$key" != "debug" && "$key" != "override" && "$key" != "show-all-errors" ]]; then
                     value="${defaults[$var_name]}"
                 fi
 
@@ -106,6 +107,7 @@ echo "Runner: $runner"
 echo "Jobs: $jobs"
 echo "Debug: $debug"
 echo "Override: $override"
+echo "Show all errors: $show_all_errors"
 
 # Run tests based on parameters
 run_tests() {
@@ -123,6 +125,9 @@ run_tests() {
   if [[ "$override" == "true" ]]; then
     override_options="--override"
   fi
+  if [[ "$show_all_errors" == "true" ]]; then
+    show_all_errors_options="--show-all-errors"
+  fi
 
   # Execute the command and capture the exit code
   sqllogictest "$test" \
@@ -131,6 +136,7 @@ run_tests() {
     --label "$database" --label "$mode" --label "$engine-protocol" \
     --junit "$junit-$mode-$engine" \
     $override_options \
+    $show_all_errors_options \
     $timeout
   return $?
 }

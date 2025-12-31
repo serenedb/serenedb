@@ -84641,4 +84641,3 @@ query I rowsort
 SELECT + 7 FROM tab1, tab0 AS cor0, tab1 cor1
 ----
 27 values hashing to 4e72e9e33dacac757f48d0ce46094607
-

@@ -81160,4 +81160,3 @@ SELECT - col0 / + cor0.col1 FROM tab0 AS cor0
 0
 0
 0
-

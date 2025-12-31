@@ -84556,4 +84556,3 @@ SELECT ALL col0 + + col0 / col2 FROM tab1
 3
 65
 80
-

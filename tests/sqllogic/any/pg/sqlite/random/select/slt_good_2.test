@@ -79595,4 +79595,3 @@ SELECT ALL col1 + CAST ( col1 AS REAL ) + col0 AS col0 FROM tab1 AS cor0
 106
 55
 84
-

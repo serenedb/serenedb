@@ -83508,4 +83508,3 @@ SELECT ALL - col0 * - cor0.col0 + - ( + col2 ) + col1 AS col1 FROM tab2 AS cor0
 53
 6117
 6220
-

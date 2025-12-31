@@ -83809,4 +83809,3 @@ SELECT ALL - col1 / col0 col0 FROM tab2 cor0
 -4
 0
 0
-

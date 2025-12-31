@@ -84482,4 +84482,3 @@ SELECT + col0 / tab1.col1 + + ( 70 ) * + col0 FROM tab1
 210
 4486
 5606
-

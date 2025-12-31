@@ -83762,4 +83762,3 @@ SELECT ALL - + col1 + 40 FROM tab0 AS cor0
 -46
 -51
 -57
-

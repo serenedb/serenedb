@@ -83398,4 +83398,3 @@ SELECT - col0 / - col1 + col0 AS col2 FROM tab0
 24
 35
 89
-

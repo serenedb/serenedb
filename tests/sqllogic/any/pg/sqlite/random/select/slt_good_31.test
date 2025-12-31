@@ -83057,4 +83057,3 @@ query I rowsort
 SELECT ALL - 12 FROM tab0, tab0 AS cor0
 ----
 9 values hashing to e698dd57d3aac30af14ce35da434bb45
-

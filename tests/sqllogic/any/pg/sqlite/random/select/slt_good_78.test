@@ -83988,4 +83988,3 @@ SELECT ALL + - 16 * + col2 AS col2 FROM tab1 AS cor0
 -1536
 -864
 -912
-

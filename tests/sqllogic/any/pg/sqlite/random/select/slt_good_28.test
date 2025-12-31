@@ -82823,4 +82823,3 @@ SELECT DISTINCT - col1 - 55 AS col0 FROM tab2 AS cor0
 -114
 -72
 -86
-

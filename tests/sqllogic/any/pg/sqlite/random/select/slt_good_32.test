@@ -83004,4 +83004,3 @@ SELECT DISTINCT tab2.col1 * - ( tab2.col0 ) FROM tab2
 -1343
 -217
 -4602
-

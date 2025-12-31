@@ -81437,4 +81437,3 @@ SELECT ALL col2 + + cor0.col1 col2 FROM tab1 AS cor0
 109
 67
 80
-

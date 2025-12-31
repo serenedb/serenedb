@@ -81713,4 +81713,3 @@ SELECT col0 * + ( - col2 ) FROM tab2
 -189
 -2028
 -3002
-

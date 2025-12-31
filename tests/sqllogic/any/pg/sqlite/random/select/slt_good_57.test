@@ -84182,4 +84182,3 @@ SELECT 9 * + col2 + - col2 / - col1 + col1 FROM tab0 AS cor0
 106
 383
 829
-

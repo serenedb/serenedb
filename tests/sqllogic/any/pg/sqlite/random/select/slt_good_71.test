@@ -84026,4 +84026,3 @@ SELECT - 67 * 14 AS col2 FROM tab1 AS cor0
 -938
 -938
 -938
-

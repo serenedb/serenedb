@@ -85227,4 +85227,3 @@ SELECT - col0 * 87 AS col1 FROM tab2
 -609
 -6786
 -6873
-

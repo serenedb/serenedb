@@ -82698,4 +82698,3 @@ SELECT DISTINCT + cor0.col2 * + ( 14 + + col0 ) FROM tab2 AS cor0
 2392
 3534
 567
-

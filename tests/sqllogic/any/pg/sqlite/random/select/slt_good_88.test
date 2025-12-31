@@ -84233,4 +84233,3 @@ SELECT - col2 * + 34 FROM tab0 cor0
 -1122
 -2788
 -34
-

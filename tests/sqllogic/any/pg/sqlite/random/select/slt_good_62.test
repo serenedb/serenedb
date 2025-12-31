@@ -83196,4 +83196,3 @@ SELECT - + col1 / - col1 + - col2 * - col2 FROM tab1 AS cor0
 2917
 3250
 9217
-

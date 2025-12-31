@@ -83115,4 +83115,3 @@ query I rowsort
 SELECT - ( + 66 ) FROM tab1, tab1 AS cor0
 ----
 9 values hashing to a408108d423d7784b7d610cb779e515a
-

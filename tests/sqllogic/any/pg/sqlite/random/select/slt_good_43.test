@@ -82792,4 +82792,3 @@ SELECT DISTINCT 94 * + col0 * col1 + - col2 + cor0.col1 * - 43 AS col1 FROM tab2
 125473
 19038
 430025
-

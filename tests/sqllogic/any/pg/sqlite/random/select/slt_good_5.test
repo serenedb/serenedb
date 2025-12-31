@@ -80669,4 +80669,3 @@ SELECT DISTINCT col0 + col0 AS col2 FROM tab1 AS cor0
 128
 160
 6
-

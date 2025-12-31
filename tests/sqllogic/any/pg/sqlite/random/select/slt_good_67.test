@@ -83597,4 +83597,3 @@ SELECT - - col2 + + col0 + - col0 FROM tab0 AS cor0
 1
 33
 82
-

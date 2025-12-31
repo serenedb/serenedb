@@ -84740,4 +84740,3 @@ SELECT - col1 + - col2 + + 7 AS col2 FROM tab0 AS cor0
 -112
 -166
 -91
-

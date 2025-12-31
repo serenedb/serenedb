@@ -84859,4 +84859,3 @@ query I rowsort
 SELECT ALL 27 AS col1 FROM tab0, tab2 cor0
 ----
 9 values hashing to 701bf12d86392cb1585d9e4f3c72e9a8
-

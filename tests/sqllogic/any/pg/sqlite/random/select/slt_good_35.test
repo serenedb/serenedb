@@ -82991,4 +82991,3 @@ SELECT DISTINCT 88 + + 96 * - col1 AS col2 FROM tab2 AS cor0
 -1544
 -2888
 -5576
-

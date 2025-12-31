@@ -83647,4 +83647,3 @@ SELECT + col2 + + CAST ( 33 * - col1 AS INTEGER ) FROM tab2
 -1921
 -523
 -996
-

@@ -84492,4 +84492,3 @@ SELECT ALL - + col1 + - col2 / - col0 FROM tab2 AS cor0
 -17
 -28
 -59
-

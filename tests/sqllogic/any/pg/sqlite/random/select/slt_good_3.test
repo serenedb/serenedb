@@ -80024,4 +80024,3 @@ SELECT - col1 * ( - col2 * - cor0.col2 ) FROM tab2 AS cor0
 -22599
 -24548
 -39884
-

@@ -79049,4 +79049,3 @@ query I rowsort
 SELECT ALL - tab0.col1 FROM tab0, tab0 AS cor0
 ----
 9 values hashing to 58ed467a9a332e4d7bfaa9abdbbd063f
-

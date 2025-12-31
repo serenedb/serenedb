@@ -84885,4 +84885,3 @@ SELECT ALL - col2 + ( cor0.col0 + col0 ) * - col2 FROM tab0 AS cor0
 -14678
 -1617
 -71
-

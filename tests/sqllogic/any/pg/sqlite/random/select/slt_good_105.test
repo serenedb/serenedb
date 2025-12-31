@@ -84404,4 +84404,3 @@ SELECT col0 + + col0 * ( col0 ) * col0 AS col1 FROM tab1
 262208
 30
 512080
-

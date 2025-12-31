@@ -84657,4 +84657,3 @@ SELECT DISTINCT - col0 / + col0 + 90 + col0 FROM tab1 cor0
 153
 169
 92
-

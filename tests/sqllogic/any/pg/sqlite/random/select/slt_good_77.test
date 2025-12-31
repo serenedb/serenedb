@@ -84679,4 +84679,3 @@ SELECT DISTINCT col0 * - col0 + + 84 FROM tab1 AS cor0
 -4012
 -6316
 75
-

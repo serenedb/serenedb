@@ -82593,4 +82593,3 @@ SELECT ALL + 20 * - col0 AS col0 FROM tab0 cor0
 -1780
 -480
 -700
-

@@ -37,4 +37,3 @@ INSERT INTO tab2 VALUES(79,17,38)
 
 statement ok
 INSERT INTO tab2 VALUES(78,59,26)
-

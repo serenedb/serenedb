@@ -81955,4 +81955,3 @@ SELECT - ( col1 ) * + col0 + + col0 + col0 * - col1 AS col1 FROM tab1
 -1216
 -153
 -2000
-

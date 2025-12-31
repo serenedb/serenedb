@@ -84678,4 +84678,3 @@ SELECT ALL + col2 * - 97 col2 FROM tab2 AS cor0
 -2522
 -2619
 -3686
-

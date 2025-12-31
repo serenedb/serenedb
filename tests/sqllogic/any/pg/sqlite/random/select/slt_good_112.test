@@ -85043,4 +85043,3 @@ SELECT ALL - 87 * col1 AS col0 FROM tab2 AS cor0
 -1479
 -2697
 -5133
-

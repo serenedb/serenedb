@@ -82596,4 +82596,3 @@ SELECT ALL - col1 * cor0.col1 + + col1 col1 FROM tab0 cor0
 -7310
 -8190
 -9312
-

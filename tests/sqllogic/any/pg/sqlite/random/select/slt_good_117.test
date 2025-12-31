@@ -85347,4 +85347,3 @@ SELECT - col1 / 54 col0 FROM tab2
 -1
 0
 0
-

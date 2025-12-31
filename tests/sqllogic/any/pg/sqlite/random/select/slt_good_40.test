@@ -83023,4 +83023,3 @@ query I rowsort
 SELECT DISTINCT + - 81 AS col0 FROM tab1, tab2, tab1 cor0
 ----
 -81
-

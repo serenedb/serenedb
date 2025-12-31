@@ -84695,4 +84695,3 @@ SELECT + + 36 * col2 AS col2 FROM tab2 cor0
 1368
 936
 972
-

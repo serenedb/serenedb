@@ -81983,4 +81983,3 @@ query I rowsort label-9999
 SELECT DISTINCT + ( cor0.col0 ) + + CAST ( NULL AS REAL ) FROM tab2 AS cor0
 ----
 NULL
-

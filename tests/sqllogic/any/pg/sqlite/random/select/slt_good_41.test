@@ -83033,4 +83033,3 @@ SELECT ALL - col2 * + col2 + - col1 * + col1 col0 FROM tab2 AS cor0
 -1690
 -1733
 -4157
-

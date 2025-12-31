@@ -83997,4 +83997,3 @@ SELECT col0 * + col0 * + col2 FROM tab0 AS cor0
 1225
 19008
 649522
-

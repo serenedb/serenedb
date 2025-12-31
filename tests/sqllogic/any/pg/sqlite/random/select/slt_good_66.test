@@ -83847,4 +83847,3 @@ SELECT + col2 * col2 / - 88 + col0 - col2 FROM tab1 AS cor0
 -120
 -29
 -84
-

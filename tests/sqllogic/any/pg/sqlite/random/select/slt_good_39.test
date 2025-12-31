@@ -83359,4 +83359,3 @@ SELECT ALL - col1 * - col2 + 73 FROM tab0 cor0
 170
 2911
 7535
-

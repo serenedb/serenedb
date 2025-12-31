@@ -84489,4 +84489,3 @@ SELECT - - ( cor0.col0 ) + 24 * col1 FROM tab0 AS cor0
 2088
 2273
 2363
-

@@ -84333,4 +84333,3 @@ SELECT ALL + cor0.col0 * - 42 AS col2 FROM tab2 cor0
 -294
 -3276
 -3318
-

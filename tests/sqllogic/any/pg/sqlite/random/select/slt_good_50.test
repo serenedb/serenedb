@@ -84044,4 +84044,3 @@ SELECT - col0 + - 28 AS col2 FROM tab1 AS cor0
 -108
 -31
 -92
-

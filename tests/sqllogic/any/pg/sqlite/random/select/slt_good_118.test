@@ -85017,4 +85017,3 @@ SELECT - + col2 * col1 * col1 col2 FROM tab1 AS cor0
 -16224
 -36504
 -5700
-

@@ -83741,4 +83741,3 @@ query I rowsort
 SELECT tab1.col1 AS col0 FROM tab1, tab2, tab2 AS cor0
 ----
 27 values hashing to d671a064e2da709ca4cdfea317b8e892
-

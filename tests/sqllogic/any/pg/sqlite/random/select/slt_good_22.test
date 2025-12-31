@@ -82911,4 +82911,3 @@ SELECT + + ( col2 ) * + col1 FROM tab1 AS cor0
 1248
 1404
 570
-

@@ -84471,4 +84471,3 @@ SELECT + + ( 88 ) + - col2 * col0 AS col1 FROM tab1 AS cor0
 -3560
 -74
 -7592
-

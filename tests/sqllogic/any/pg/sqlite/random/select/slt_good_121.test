@@ -84697,4 +84697,3 @@ SELECT DISTINCT - cor0.col0 / + col1 + - col2 col2 FROM tab2 AS cor0
 ----
 -27
 -42
-

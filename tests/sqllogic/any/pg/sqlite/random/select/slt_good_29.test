@@ -82919,4 +82919,3 @@ query I rowsort
 SELECT - cor1.col0 FROM tab2, tab2 AS cor0, tab0 AS cor1
 ----
 27 values hashing to c3ebf1695ca74567bdc173dbe15186a8
-

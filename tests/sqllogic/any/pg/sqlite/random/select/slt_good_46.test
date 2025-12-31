@@ -83233,4 +83233,3 @@ SELECT - - 14 + col2 / - CAST ( NULL AS INTEGER ) + col0 FROM tab1 AS cor0
 NULL
 NULL
 NULL
-

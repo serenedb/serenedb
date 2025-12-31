@@ -84248,4 +84248,3 @@ SELECT + 28 * + col1 - col0 / 31 AS col1 FROM tab1 AS cor0
 278
 362
 728
-

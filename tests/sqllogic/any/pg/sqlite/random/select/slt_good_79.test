@@ -83978,4 +83978,3 @@ SELECT - cor0.col0 * + ( col1 ) + col0 * col1 AS col0 FROM tab1 AS cor0
 0
 0
 0
-

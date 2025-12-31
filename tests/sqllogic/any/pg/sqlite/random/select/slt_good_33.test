@@ -83138,4 +83138,3 @@ SELECT + 89 * col1 AS col1 FROM tab1
 1157
 2314
 890
-

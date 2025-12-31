@@ -80846,4 +80846,3 @@ SELECT + - col2 * col2 + - cor0.col2 FROM tab0 AS cor0
 -1122
 -2
 -6806
-

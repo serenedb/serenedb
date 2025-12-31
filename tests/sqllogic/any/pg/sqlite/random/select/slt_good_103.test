@@ -84545,4 +84545,3 @@ query I rowsort
 SELECT ALL 78 - - tab2.col1 AS col2 FROM tab2, tab0, tab0 cor0
 ----
 27 values hashing to 7b2409733fab6af3b8db4db12ff1defb
-

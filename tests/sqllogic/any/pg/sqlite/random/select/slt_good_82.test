@@ -84056,4 +84056,3 @@ query I rowsort
 SELECT - cor0.col1 FROM tab1 AS cor0 CROSS JOIN tab1 AS cor1
 ----
 9 values hashing to b234798d4706314ba14eaad539d0aa88
-

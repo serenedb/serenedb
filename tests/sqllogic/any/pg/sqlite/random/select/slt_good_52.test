@@ -83924,4 +83924,3 @@ SELECT DISTINCT col2 + ( col0 ) AS col1 FROM tab0 AS cor0
 171
 36
 57
-

@@ -83238,4 +83238,3 @@ SELECT - CAST ( NULL AS INTEGER ) * - col2 / + cor0.col2 + cor0.col0 + - col1 FR
 NULL
 NULL
 NULL
-

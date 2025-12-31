@@ -84200,4 +84200,3 @@ SELECT ALL col2 * - CAST ( + 77 AS REAL ) * + col1 FROM tab0 AS cor0
 -218526
 -574574
 -7469
-

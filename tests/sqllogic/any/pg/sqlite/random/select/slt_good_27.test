@@ -82653,4 +82653,3 @@ SELECT DISTINCT + ( + col1 ) * col2 * + ( - 54 ) + + col1 * + tab2.col1 * 25 FRO
 -21173
 -27659
 4189
-

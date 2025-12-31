@@ -81884,4 +81884,3 @@ SELECT ALL 65 * ( - col2 ) AS col2 FROM tab0 cor0
 -2145
 -5330
 -65
-

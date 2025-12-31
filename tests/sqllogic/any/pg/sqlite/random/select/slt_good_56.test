@@ -83186,4 +83186,3 @@ SELECT DISTINCT 46 - + col0 * cor0.col0 FROM tab1 AS cor0
 -4050
 -6354
 37
-

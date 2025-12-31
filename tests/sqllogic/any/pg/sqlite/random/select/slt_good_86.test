@@ -83846,4 +83846,3 @@ SELECT ALL col1 * col0 - cor0.col0 * + col1 AS col2 FROM tab2 cor0
 0
 0
 0
-

@@ -84192,4 +84192,3 @@ SELECT - col1 * 54 - col1 AS col2 FROM tab1 AS cor0
 -1430
 -550
 -715
-

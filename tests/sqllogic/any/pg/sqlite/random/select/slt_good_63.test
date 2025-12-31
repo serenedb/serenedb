@@ -83784,4 +83784,3 @@ SELECT ALL col2 * + ( - col0 ) + col2 / col1 - + cor0.col0 * col1 FROM tab1 AS c
 -238
 -4283
 -8713
-

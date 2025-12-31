@@ -80978,4 +80978,3 @@ query I rowsort
 SELECT DISTINCT + 96 FROM tab2, tab0, tab0 AS cor0
 ----
 96
-

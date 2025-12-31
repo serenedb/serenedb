@@ -84289,4 +84289,3 @@ SELECT + 64 + cor0.col1 FROM tab2 AS cor0
 123
 81
 95
-

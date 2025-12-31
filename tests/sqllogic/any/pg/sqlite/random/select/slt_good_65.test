@@ -84057,4 +84057,3 @@ query I rowsort
 SELECT - - 27 + 0 * cor0.col2 FROM tab2, tab1, tab0 AS cor0
 ----
 27 values hashing to 1a3cef5c33b8f87ffeded378fd207753
-

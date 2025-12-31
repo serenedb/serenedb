@@ -84312,4 +84312,3 @@ SELECT DISTINCT ( col1 ) * col2 col1 FROM tab1
 1248
 1404
 570
-

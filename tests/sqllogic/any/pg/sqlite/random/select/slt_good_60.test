@@ -83793,4 +83793,3 @@ SELECT DISTINCT - col1 * - col2 * - 54 + - col1 FROM tab2
 -34901
 -45229
 -82895
-

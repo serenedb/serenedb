@@ -84515,4 +84515,3 @@ SELECT DISTINCT - col0 + + cor0.col2 col2 FROM tab2 AS cor0
 -41
 -52
 20
-

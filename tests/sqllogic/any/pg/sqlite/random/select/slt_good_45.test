@@ -83097,4 +83097,3 @@ SELECT ( tab1.col2 ) * + col2 AS col0 FROM tab1
 2916
 3249
 9216
-

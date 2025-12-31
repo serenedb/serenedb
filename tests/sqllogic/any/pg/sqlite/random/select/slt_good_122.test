@@ -84997,4 +84997,3 @@ query I rowsort
 SELECT + ( ( cor0.col2 ) ) FROM tab0, tab1 AS cor0
 ----
 9 values hashing to 80ca0a1cc337a7714a8990a764cfdb17
-

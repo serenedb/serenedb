@@ -83259,4 +83259,3 @@ SELECT cor0.col1 / 59 FROM tab2 AS cor0
 0
 0
 1
-

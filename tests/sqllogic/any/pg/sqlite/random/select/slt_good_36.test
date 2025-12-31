@@ -83414,4 +83414,3 @@ SELECT DISTINCT + cor0.col2 FROM tab2, tab0, tab0 AS cor0
 1
 33
 82
-

@@ -84629,4 +84629,3 @@ SELECT - ( col2 + + ( col2 ) ) AS col1 FROM tab0
 -164
 -2
 -66
-

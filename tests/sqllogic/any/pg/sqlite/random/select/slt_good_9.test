@@ -81156,4 +81156,3 @@ SELECT - col1 * + ( - col1 ) AS col2 FROM tab1 AS cor0
 100
 169
 676
-

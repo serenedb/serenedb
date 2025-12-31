@@ -81804,4 +81804,3 @@ SELECT ALL + col0 + + 51 AS col1 FROM tab2
 129
 130
 58
-

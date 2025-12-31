@@ -83595,4 +83595,3 @@ SELECT - 53 + col1 + col2 / + col1 FROM tab2
 -22
 -34
 6
-

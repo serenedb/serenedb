@@ -84642,4 +84642,3 @@ SELECT 52 * + col2 + + 75 AS col2 FROM tab0 cor0
 127
 1791
 4339
-

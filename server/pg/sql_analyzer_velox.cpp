@@ -1232,10 +1232,10 @@ void SqlAnalyzer::ProcessAlias(State& state, const List* new_aliases,
   state.resolver.CreateTable(table, MakePtrView(state.root->outputType()));
 }
 
-std::pair<std::string_view, query::QueryContext::OptionValue> ConvertToOption(
+std::pair<std::string_view, VeloxQuery::OptionValue> ConvertToOption(
   const DefElem* option) {
   std::string_view name = option->defname;
-  query::QueryContext::OptionValue value;
+  VeloxQuery::OptionValue value;
   SDB_ASSERT(absl::c_none_of(name, absl::ascii_isupper));
   if (!option->arg) {
     return {std::string_view(name), true};
@@ -1259,10 +1259,10 @@ std::pair<std::string_view, query::QueryContext::OptionValue> ConvertToOption(
   return {std::string_view(name), value};
 }
 
-containers::FlatHashMap<std::string_view, query::QueryContext::OptionValue>
+containers::FlatHashMap<std::string_view, VeloxQuery::OptionValue>
 ConvertOptions(const List* options) {
   const size_t options_size = list_length(options);
-  containers::FlatHashMap<std::string_view, query::QueryContext::OptionValue>
+  containers::FlatHashMap<std::string_view, VeloxQuery::OptionValue>
     res;
   res.reserve(options_size);
   for (size_t i = 0; i < options_size; ++i) {

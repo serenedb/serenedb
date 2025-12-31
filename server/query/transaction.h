@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
+#include <folly/Lazy.h>
 #include <rocksdb/utilities/transaction_db.h>
 
 #include <yaclib/async/future.hpp>
@@ -26,6 +27,7 @@
 #include "basics/containers/flat_hash_map.h"
 #include "basics/result.h"
 #include "query/config.h"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 
 namespace sdb {
 
@@ -34,23 +36,7 @@ std::shared_ptr<rocksdb::Transaction> CreateTransaction(
 
 class TxnState : public Config {
  public:
-  class LazyTransaction {
-   public:
-    void SetTransaction() { _initialized = true; }
-
-    const std::shared_ptr<rocksdb::Transaction>& GetTransaction() const;
-
-    bool IsInitialized() const noexcept { return _initialized; }
-
-    void Reset() {
-      _txn.reset();
-      _initialized = false;
-    }
-
-   private:
-    mutable std::shared_ptr<rocksdb::Transaction> _txn;
-    bool _initialized = false;
-  };
+  TxnState();
 
   yaclib::Future<Result> Begin();
 
@@ -58,12 +44,38 @@ class TxnState : public Config {
 
   yaclib::Future<Result> Rollback();
 
-  bool InsideTransaction() const noexcept { return _txn.IsInitialized(); }
+  bool InsideTransaction() const noexcept { return _txn != nullptr; }
 
-  const auto& GetTransaction() const { return _txn.GetTransaction(); }
+  const auto& GetTransaction() const {
+    // Get is allowed only inside actual transaction
+    SDB_ASSERT(_txn);
+    return _txn;
+  }
+
+  const rocksdb::Snapshot* GetSnapshot() const {
+    if (_txn) {
+      return _txn->GetSnapshot();
+    } else {
+      if (!_lazy_snapshot()) {
+        return nullptr;
+      }
+      auto snapshot =
+        std::dynamic_pointer_cast<RocksDBSnapshot>(_lazy_snapshot());
+      SDB_ASSERT(snapshot);
+      return snapshot->getSnapshot();
+    }
+  }
+
+  // Used for simple queries without explicit transaction management
+  // Should be called at the end of a query
+  void ResetSnapshot() const noexcept { _lazy_snapshot.reset(); }
 
  private:
-  LazyTransaction _txn;
+  template<typename Sig>
+  using LazyWrapper = folly::detail::Lazy<absl::AnyInvocable<Sig>>;
+
+  std::shared_ptr<rocksdb::Transaction> _txn;
+  mutable LazyWrapper<std::shared_ptr<StorageSnapshot>()> _lazy_snapshot;
 };
 
 }  // namespace sdb

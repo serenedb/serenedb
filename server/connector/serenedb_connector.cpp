@@ -48,15 +48,8 @@ SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
                            ->Id();
   }
   const auto& txn_state = ExtractTransactionState(session);
-  const auto& txn = txn_state.GetTransaction();
-  if (txn_state.InsideTransaction()) {
-    SDB_ASSERT(txn);
-    const auto* snapshot = txn->GetSnapshot();
-    SDB_ASSERT(snapshot);
-    _snapshot = std::make_shared<RocksDBSnapshotView>(snapshot);
-  } else {
-    _snapshot = std::make_shared<RocksDBSnapshot>(*GetServerEngine().db());
-  }
+  _snapshot = txn_state.GetSnapshot();
+  
 }
 
 }  // namespace sdb::connector

@@ -143,37 +143,18 @@ class RocksDBFilePurgeEnabler {
   RocksDBEngineCatalog* _engine;
 };
 
-class RocksDBSnapshotBase : public StorageSnapshot {
- public:
-  virtual const rocksdb::Snapshot* getSnapshot() const = 0;
-  Tick tick() const noexcept final {
-    const auto* snapshot = getSnapshot();
-    SDB_ASSERT(snapshot);
-    return snapshot->GetSequenceNumber();
-  }
-};
-
-class RocksDBSnapshot final : public RocksDBSnapshotBase {
+class RocksDBSnapshot final : public StorageSnapshot {
  public:
   explicit RocksDBSnapshot(rocksdb::DB& db) : _snapshot(&db) {}
 
-  const rocksdb::Snapshot* getSnapshot() const final {
-    return _snapshot.snapshot();
+  Tick tick() const noexcept final {
+    return _snapshot.snapshot()->GetSequenceNumber();
   }
+
+  decltype(auto) getSnapshot() const { return _snapshot.snapshot(); }
 
  private:
   mutable rocksdb::ManagedSnapshot _snapshot;
-};
-
-class RocksDBSnapshotView final : public RocksDBSnapshotBase {
- public:
-  explicit RocksDBSnapshotView(const rocksdb::Snapshot* snapshot)
-    : _snapshot{snapshot} {}
-
-  const rocksdb::Snapshot* getSnapshot() const final { return _snapshot; }
-
- private:
-  const rocksdb::Snapshot* _snapshot;
 };
 
 class RocksDBEngineCatalog {

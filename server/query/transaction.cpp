@@ -37,25 +37,16 @@ std::shared_ptr<rocksdb::Transaction> CreateTransaction(
     db.BeginTransaction(write_options, txn_options)};
 }
 
-const std::shared_ptr<rocksdb::Transaction>&
-TxnState::LazyTransaction::GetTransaction() const {
-  // Check _initialized => (_txn != nullptr)
-  // transaction should be nullptr if not initialized
-  SDB_ASSERT(_initialized >= (_txn != nullptr));
-  if (_initialized && !_txn) {
-    auto* db = GetServerEngine().db();
-    _txn = CreateTransaction(*db);
+TxnState::TxnState()
+  : _lazy_snapshot{[] { return GetServerEngine().currentSnapshot(); }} {}
+
+yaclib::Future<Result> TxnState::Begin() {
+  if (!InsideTransaction()) {
+    _txn = CreateTransaction(*GetServerEngine().db());
     if (!_txn) {
       SDB_THROW(ERROR_INTERNAL, "Failed to create RocksDB transaction");
     }
     _txn->SetSnapshot();
-  }
-  return _txn;
-}
-
-yaclib::Future<Result> TxnState::Begin() {
-  if (!InsideTransaction()) {
-    _txn.SetTransaction();
   }
   return {};
 }
@@ -64,12 +55,12 @@ yaclib::Future<Result> TxnState::Commit() {
   if (!InsideTransaction()) {
     return {};
   }
-  auto status = _txn.GetTransaction()->Commit();
+  auto status = _txn->Commit();
   if (!status.ok()) {
     return yaclib::MakeFuture(Result{
       ERROR_INTERNAL, "Failed to commit transaction: ", status.ToString()});
   }
-  _txn.Reset();
+  _txn.reset();
   Config::CommitVariables();
   return {};
 }
@@ -79,13 +70,13 @@ yaclib::Future<Result> TxnState::Rollback() {
     return {};
   }
   Config::RollbackVariables();
-  auto status = _txn.GetTransaction()->Rollback();
+  auto status = _txn->Rollback();
   if (!status.ok()) {
     return yaclib::MakeFuture(
       Result{ERROR_INTERNAL,
              "Failed to rollback RocksDB transaction: ", status.ToString()});
   }
-  _txn.Reset();
+  _txn.reset();
   return {};
 }
 

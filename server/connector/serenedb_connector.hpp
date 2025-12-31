@@ -76,16 +76,13 @@ class SereneDBConnectorTableHandle final
     return _table_count_field;
   }
 
-  const rocksdb::Snapshot* GetSnapshot() const noexcept {
-    SDB_ASSERT(_snapshot);
-    return _snapshot->getSnapshot();
-  }
+  const rocksdb::Snapshot* GetSnapshot() const noexcept { return _snapshot; }
 
  private:
   std::string _name;
   ObjectId _table_id;
   catalog::Column::Id _table_count_field;
-  std::shared_ptr<RocksDBSnapshotBase> _snapshot;
+  const rocksdb::Snapshot* _snapshot;
 };
 
 class SereneDBColumn final : public axiom::connector::Column {
@@ -289,7 +286,10 @@ class SereneDBConnectorInsertTableHandle final
     const axiom::connector::ConnectorSessionPtr& session,
     const axiom::connector::TablePtr& table, axiom::connector::WriteKind kind)
     : _session{session}, _table{table}, _kind{kind} {
-    _txn = ExtractTransactionState(session).GetTransaction();
+    const auto& txn =ExtractTransactionState(session);
+    if (txn.InsideTransaction()) {
+      _txn = txn.GetTransaction();
+    }
   }
 
   bool supportsMultiThreading() const final { return false; }
@@ -369,8 +369,8 @@ class SereneDBConnectorMetadata final
     SDB_ASSERT(transaction);
     const int64_t number_of_locked_primary_keys = transaction->GetNumKeys();
     SDB_ASSERT(session->config());
-    auto& config = basics::downCast<TxnState>(*session->config());
-    if (!config.InsideTransaction()) {
+    auto& txn = basics::downCast<TxnState>(*session->config());
+    if (!txn.InsideTransaction()) {
       // Single statement transaction, we can commit here
       auto status = transaction->Commit();
       if (!status.ok()) {

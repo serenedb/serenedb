@@ -11,7 +11,7 @@ declare -A defaults=(
     [jobs]=$(nproc)
     [debug]=false
     [override]=false
-    [show_all_errors]=false
+    [show_all_errors]=true
     [database]='serenedb'
     [host]='localhost'
 )

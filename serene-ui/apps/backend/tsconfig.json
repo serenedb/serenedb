@@ -4,11 +4,11 @@
         "baseUrl": ".",
         "rootDir": "src",
         "outDir": "dist",
-        "noEmit": false,
+        "noEmit": false
     },
     "references": [
         { "path": "../../packages/shared-core" },
-        { "path": "../../packages/shared-backend" },
+        { "path": "../../packages/shared-backend" }
     ],
-    "include": ["src"],
+    "include": ["src"]
 }

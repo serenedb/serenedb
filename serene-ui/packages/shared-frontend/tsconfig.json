@@ -5,8 +5,8 @@
         "outDir": "dist",
         "rootDir": "src",
         "jsx": "react-jsx",
-        "resolveJsonModule": true,
+        "resolveJsonModule": true
     },
     "include": ["src", "src/**/*.json"],
-    "references": [],
+    "references": []
 }

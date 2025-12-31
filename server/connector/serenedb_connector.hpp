@@ -286,7 +286,7 @@ class SereneDBConnectorInsertTableHandle final
     const axiom::connector::ConnectorSessionPtr& session,
     const axiom::connector::TablePtr& table, axiom::connector::WriteKind kind)
     : _session{session}, _table{table}, _kind{kind} {
-    const auto& txn =ExtractTransactionState(session);
+    const auto& txn = ExtractTransactionState(session);
     if (txn.InsideTransaction()) {
       _txn = txn.GetTransaction();
     }

@@ -58,8 +58,7 @@ struct VeloxQuery {
   using OptionValue = std::variant<bool, int, std::string, double>;
   // logical plan info
   axiom::logical_plan::LogicalPlanNodePtr root;
-  containers::FlatHashMap<std::string_view, OptionValue>
-    options;
+  containers::FlatHashMap<std::string_view, OptionValue> options;
 
   const Node* pgsql_node = nullptr;
 

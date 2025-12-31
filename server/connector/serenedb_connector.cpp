@@ -49,7 +49,6 @@ SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
   }
   const auto& txn_state = ExtractTransactionState(session);
   _snapshot = txn_state.GetSnapshot();
-  
 }
 
 }  // namespace sdb::connector

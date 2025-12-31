@@ -1262,8 +1262,7 @@ std::pair<std::string_view, VeloxQuery::OptionValue> ConvertToOption(
 containers::FlatHashMap<std::string_view, VeloxQuery::OptionValue>
 ConvertOptions(const List* options) {
   const size_t options_size = list_length(options);
-  containers::FlatHashMap<std::string_view, VeloxQuery::OptionValue>
-    res;
+  containers::FlatHashMap<std::string_view, VeloxQuery::OptionValue> res;
   res.reserve(options_size);
   for (size_t i = 0; i < options_size; ++i) {
     res.insert(ConvertToOption(list_nth_node(DefElem, options, i)));

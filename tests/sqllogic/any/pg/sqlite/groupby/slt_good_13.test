@@ -68,7 +68,7 @@ SELECT ALL + cor0.col2 - + cor0.col2 FROM tab0 AS cor0 GROUP BY cor0.col2
 0
 0
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - 55 col0 FROM tab0 AS cor0 GROUP BY cor0.col1
@@ -423,7 +423,7 @@ SELECT - cor0.col1 - + cor0.col1 FROM tab0 AS cor0 GROUP BY cor0.col1
 -162
 0
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - 32 col2 FROM tab2 AS cor0 GROUP BY cor0.col2
@@ -522,7 +522,7 @@ SELECT ALL 37 FROM tab2 AS cor0 GROUP BY cor0.col0
 37
 37
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL + cor0.col1 * NULLIF ( + cor0.col1, + cor0.col1 ) + 82 - + 12 col2 FROM tab2 AS cor0 GROUP BY cor0.col1, col1
@@ -618,7 +618,7 @@ SELECT DISTINCT cor0.col1 - cor0.col1 FROM tab0 AS cor0 GROUP BY cor0.col2, cor0
 ?column?
 0
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT NULLIF ( + cor0.col2 * cor0.col1, - cor0.col1 ) + - 31 * cor0.col2 + - col1 col2 FROM tab0 cor0 GROUP BY cor0.col1, cor0.col2
@@ -640,7 +640,7 @@ SELECT DISTINCT 75 FROM tab2, tab0 AS cor0 GROUP BY cor0.col0
 ?column?
 75
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT cor0.col2 * cor0.col2 col0 FROM tab0 cor0 GROUP BY cor0.col2
@@ -774,7 +774,7 @@ SELECT + 30 FROM tab2 AS cor0 GROUP BY cor0.col0
 30
 30
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT cor0.col0 + + cor0.col1 col2 FROM tab1 cor0 GROUP BY cor0.col1, cor0.col0
@@ -917,7 +917,7 @@ SELECT 68 FROM tab2 AS cor0 GROUP BY cor0.col2
 68
 68
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT + 59 + + cor0.col2 col0 FROM tab1 AS cor0 GROUP BY cor0.col2
@@ -987,7 +987,7 @@ col0
 36
 36
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT + cor0.col1 col2 FROM tab2 AS cor0 GROUP BY cor0.col1
@@ -1011,7 +1011,7 @@ SELECT cor0.col1 / 66 FROM tab0 AS cor0 GROUP BY col1
 0
 1
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 95 col1 FROM tab1 AS cor0 GROUP BY cor0.col2, cor0.col1
@@ -1057,7 +1057,7 @@ col1
 82
 82
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL cor0.col2 + cor0.col2 * 33 col2 FROM tab2 cor0 GROUP BY cor0.col2
@@ -1204,7 +1204,7 @@ SELECT DISTINCT - 37 FROM tab1 cor0 GROUP BY cor0.col0
 ?column?
 -37
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL ( - cor0.col0 ) col0 FROM tab0 AS cor0 GROUP BY cor0.col1, cor0.col0
@@ -1334,7 +1334,7 @@ SELECT - cor0.col1 + 92 FROM tab2 AS cor0 GROUP BY cor0.col1
 33
 51
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT COALESCE ( + 59, - cor0.col0 * + cor0.col1 ) FROM tab0 AS cor0 GROUP BY cor0.col1
@@ -1521,7 +1521,7 @@ SELECT + 20 * - col0 FROM tab0 cor0 GROUP BY cor0.col0
 -520
 -860
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 75 col2 FROM tab1 AS cor0 GROUP BY col1
@@ -1544,7 +1544,7 @@ SELECT DISTINCT 57 AS col0 FROM tab2 cor0 GROUP BY col2
 col0
 57
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT + 64 col1 FROM tab1 AS cor0 GROUP BY cor0.col1
@@ -1626,7 +1626,7 @@ col0
 -73
 -73
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL 96 col0 FROM tab1 AS cor0 GROUP BY cor0.col0
@@ -1649,7 +1649,7 @@ col0
 2622
 276
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT + cor0.col2 * 37 + - cor0.col2 * 16 col1 FROM tab1 AS cor0 GROUP BY cor0.col1, cor0.col2
@@ -1685,7 +1685,7 @@ SELECT - 82 * cor0.col0 FROM tab1 AS cor0 GROUP BY cor0.col0
 -2296
 -6724
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 66 + - 80 * col2 col2 FROM tab0 AS cor0 GROUP BY cor0.col2
@@ -1770,7 +1770,7 @@ col0
 -11
 -11
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT - cor0.col1 col0 FROM tab1 AS cor0 GROUP BY col0, cor0.col1
@@ -1839,7 +1839,7 @@ col2
 -81
 -81
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL + + 98 col0 FROM tab1 GROUP BY col1
@@ -1887,7 +1887,7 @@ SELECT - 20 FROM tab0 AS cor0 GROUP BY cor0.col0, cor0.col1
 -20
 -20
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL cor0.col1 + + 58 * cor0.col1 col0 FROM tab1 AS cor0 GROUP BY cor0.col1
@@ -1935,7 +1935,7 @@ col2
 -29
 -29
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT + 39 col0 FROM tab1 AS cor0 GROUP BY cor0.col0
@@ -2256,7 +2256,7 @@ NULL
 NULL
 NULL
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT - ( - cor0.col1 ) col0 FROM tab0 AS cor0 GROUP BY cor0.col1, cor0.col2
@@ -2343,7 +2343,7 @@ col1
 32
 32
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT + cor0.col2 col0 FROM tab1 cor0 GROUP BY col2
@@ -2352,7 +2352,7 @@ SELECT + cor0.col2 col0 FROM tab1 cor0 GROUP BY col2
 71
 8
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - cor0.col0 col0 FROM tab1 AS cor0 GROUP BY cor0.col0
@@ -2401,7 +2401,7 @@ col0
 71
 8
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT + cor0.col1 * + col1 col2 FROM tab2 AS cor0 GROUP BY cor0.col2, col1
@@ -2439,7 +2439,7 @@ SELECT ALL ( 48 ) FROM tab2 AS cor0 GROUP BY col2
 48
 48
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT col2 + 54 * + cor0.col2 col1 FROM tab1 AS cor0 GROUP BY cor0.col2
@@ -2513,7 +2513,7 @@ col0
 -525
 -6190
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT + - cor0.col1 * cor0.col1 col1 FROM tab2, tab0 AS cor0 GROUP BY cor0.col1
@@ -2575,7 +2575,7 @@ SELECT - 24 + + cor0.col1 + 45 FROM tab1 AS cor0 GROUP BY cor0.col1
 65
 78
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL cor0.col0 * + 45 + 14 col1 FROM tab2, tab2 AS cor0 GROUP BY cor0.col0
@@ -2655,7 +2655,7 @@ SELECT cor0.col0 DIV cor0.col0 col0 FROM tab0 AS cor0 GROUP BY cor0.col0, cor0.c
 1
 
 skipif mysql
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort label-312
 SELECT cor0.col0 / cor0.col0 col0 FROM tab0 AS cor0 GROUP BY cor0.col0, cor0.col1, cor0.col2
@@ -2680,7 +2680,7 @@ SELECT ALL - 89 * cor0.col2 FROM tab0 AS cor0 GROUP BY cor0.col1, cor0.col2
 -3382
 -7031
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL + 58 col0 FROM tab1 AS cor0 GROUP BY cor0.col0
@@ -2857,7 +2857,7 @@ SELECT - cor0.col2 / - 70 FROM tab2 AS cor0 GROUP BY cor0.col2, cor0.col2
 1
 1
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 33 + + 18 + cor0.col0 col1 FROM tab2 AS cor0 GROUP BY col0
@@ -2898,7 +2898,7 @@ col2
 44
 44
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 16 col2 FROM tab1 AS cor0 GROUP BY col1
@@ -3005,14 +3005,14 @@ SELECT 56 FROM tab2 AS cor0 GROUP BY cor0.col0
 56
 56
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT COALESCE ( - 79, - cor0.col0 ) FROM tab2 cor0 GROUP BY cor0.col1
 ----
 -79
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL 85 col0 FROM tab1 AS cor0 GROUP BY cor0.col0
@@ -3035,7 +3035,7 @@ col2
 -17
 -71
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 11 + + cor0.col1 col1 FROM tab1 AS cor0 GROUP BY cor0.col1
@@ -3052,7 +3052,7 @@ SELECT ALL 58 FROM tab2 AS cor0 GROUP BY col1
 58
 58
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL - 14 col1 FROM tab1 cor0 GROUP BY cor0.col1
@@ -3271,7 +3271,7 @@ SELECT ALL cor0.col0 DIV 60 col1 FROM tab2 AS cor0 GROUP BY cor0.col0
 1
 
 skipif mysql
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort label-382
 SELECT ALL cor0.col0 / 60 col1 FROM tab2 AS cor0 GROUP BY cor0.col0
@@ -3280,7 +3280,7 @@ SELECT ALL cor0.col0 / 60 col1 FROM tab2 AS cor0 GROUP BY cor0.col0
 1
 1
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT + NULLIF ( cor0.col1, + cor0.col0 ) + + cor0.col1 * 44 col2 FROM tab0 AS cor0 GROUP BY cor0.col0, cor0.col1
@@ -3435,7 +3435,7 @@ SELECT cor0.col2 + + 96 FROM tab1 AS cor0 GROUP BY cor0.col2
 141
 167
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL 47 col0 FROM tab0 AS cor0 GROUP BY cor0.col2, cor0.col2
@@ -3482,7 +3482,7 @@ SELECT + cor0.col0 + 71 FROM tab1 AS cor0 GROUP BY cor0.col0
 93
 99
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT + 34 * cor0.col0 col1 FROM tab2 AS cor0 GROUP BY cor0.col1, cor0.col0
@@ -3557,7 +3557,7 @@ SELECT ALL + 81 FROM tab0 AS cor0 GROUP BY col2
 81
 81
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT + NULLIF ( + 29, - cor0.col0 ) + cor0.col0 col1 FROM tab1 AS cor0 GROUP BY col0
@@ -3692,7 +3692,7 @@ SELECT + CAST( + 82 AS SIGNED ) col0 FROM tab2 AS cor0 GROUP BY cor0.col2
 82
 
 skipif mysql
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort label-430
 SELECT + CAST ( + 82 AS INTEGER ) col0 FROM tab2 AS cor0 GROUP BY cor0.col2
@@ -3729,7 +3729,7 @@ SELECT DISTINCT + CAST ( 21 AS INTEGER ) FROM tab2 AS cor0 GROUP BY cor0.col2
 ?column?
 21
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT + 94 col2 FROM tab1 AS cor0 GROUP BY col1
@@ -3785,7 +3785,7 @@ SELECT ALL 2 * ( - cor0.col0 + cor0.col0 * cor0.col0 ) FROM tab2 AS cor0 GROUP B
 16744
 420
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT + 36 col2 FROM tab2, tab1 AS cor0 GROUP BY cor0.col2
@@ -3814,7 +3814,7 @@ SELECT ALL cor0.col1 - + ( - 55 ) FROM tab2 AS cor0 GROUP BY cor0.col1, cor0.col
 116
 96
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - 34 col2 FROM tab1 AS cor0 GROUP BY cor0.col0, cor0.col2, cor0.col2
@@ -3895,7 +3895,7 @@ col0
 2655
 2745
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 85 + - 52 col1 FROM tab1 AS cor0 GROUP BY cor0.col0, cor0.col1
@@ -3991,7 +3991,7 @@ col2
 86
 86
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT + 35 col1 FROM tab1 cor0 GROUP BY cor0.col2
@@ -4021,7 +4021,7 @@ NULL
 NULL
 
 skipif mysql
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort label-469
 SELECT ALL - cor0.col2 * CAST ( NULL AS INTEGER ) col2 FROM tab0 AS cor0 GROUP BY cor0.col2
@@ -4210,7 +4210,7 @@ SELECT DISTINCT 22 AS col0 FROM tab1 AS cor0 GROUP BY col2
 col0
 22
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL cor0.col1 col2 FROM tab1 AS cor0 GROUP BY col1
@@ -4302,7 +4302,7 @@ SELECT ALL + 99 FROM tab2 cor0 GROUP BY cor0.col2
 99
 99
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - 3 * cor0.col2 col1 FROM tab0 AS cor0 GROUP BY cor0.col2
@@ -4317,7 +4317,7 @@ SELECT DISTINCT + - 16 * 13 AS col0 FROM tab2, tab1 AS cor0 GROUP BY tab2.col2
 col0
 -208
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL cor0.col1 + cor0.col2 + cor0.col1 * + 85 col0 FROM tab0 AS cor0 GROUP BY cor0.col1, cor0.col2
@@ -4437,7 +4437,7 @@ SELECT ALL 69 FROM tab0 AS cor0 GROUP BY col2, cor0.col0
 69
 69
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT + 3 col1 FROM tab2 AS cor0 GROUP BY cor0.col0, cor0.col1
@@ -4592,7 +4592,7 @@ SELECT + 22 FROM tab0 AS cor0 GROUP BY cor0.col2
 22
 22
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT ( + 68 ) col1 FROM tab1 cor0 GROUP BY cor0.col1
@@ -4830,7 +4830,7 @@ SELECT + 7 FROM tab0 AS cor0 GROUP BY col2
 7
 7
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT + cor0.col2 + ( - cor0.col2 * - cor0.col2 ) col0 FROM tab2 AS cor0 GROUP BY cor0.col2
@@ -4925,7 +4925,7 @@ col0
 -1
 0
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT tab1.col2 + - 89 col2 FROM tab1 GROUP BY tab1.col2
@@ -4956,7 +4956,7 @@ col0
 63
 63
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL - COALESCE ( 55, cor0.col2 ) AS col0 FROM tab1 AS cor0 GROUP BY cor0.col1
@@ -4973,7 +4973,7 @@ SELECT cor0.col2 * cor0.col1 FROM tab0 cor0 GROUP BY cor0.col2, col1
 0
 1944
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - 14 + cor0.col1 col1 FROM tab1 cor0 GROUP BY cor0.col1, cor0.col0, cor0.col0
@@ -5081,7 +5081,7 @@ SELECT ALL + 56 FROM tab1, tab2 AS cor0 GROUP BY tab1.col0
 56
 56
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT 60 col1 FROM tab0 AS cor0 GROUP BY cor0.col0, cor0.col2
@@ -5121,7 +5121,7 @@ col2
 -18
 -18
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT cor0.col2 * - 97 * cor0.col1 col0 FROM tab0 AS cor0 GROUP BY cor0.col1, cor0.col2
@@ -5315,7 +5315,7 @@ col1
 127
 64
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL + 37 col1 FROM tab1 GROUP BY col0
@@ -5349,7 +5349,7 @@ SELECT ALL - cor0.col2 * cor0.col2 + 46 / 82 FROM tab2, tab2 AS cor0 GROUP BY co
 -6241
 -7569
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 9 * 55 col2 FROM tab1 AS cor0 GROUP BY cor0.col1
@@ -5397,7 +5397,7 @@ SELECT DISTINCT + cor0.col1 * 8 FROM tab2 AS cor0 GROUP BY col1
 472
 488
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT + 63 col0 FROM tab0 GROUP BY tab0.col2
@@ -5427,7 +5427,7 @@ col1
 5
 5
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL - 82 col0 FROM tab1 AS cor0 GROUP BY cor0.col2
@@ -5624,7 +5624,7 @@ SELECT DISTINCT + 63 FROM tab1 GROUP BY col2
 ?column?
 63
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL + ( cor0.col1 ) col0 FROM tab1 AS cor0 GROUP BY cor0.col1, cor0.col1
@@ -5869,7 +5869,7 @@ SELECT DISTINCT + 12 FROM tab0 cor0 GROUP BY cor0.col1
 ?column?
 12
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT cor0.col2 + cor0.col2 col2 FROM tab0 AS cor0 GROUP BY cor0.col1, cor0.col2
@@ -5886,7 +5886,7 @@ SELECT DISTINCT + tab0.col0 * + 51 FROM tab0 GROUP BY tab0.col0
 2193
 4233
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT tab2.col0 col2 FROM tab2 GROUP BY tab2.col0
@@ -6060,7 +6060,7 @@ SELECT DISTINCT cor0.col1 * 44 FROM tab2 AS cor0 GROUP BY cor0.col1, cor0.col2
 2596
 2684
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 68 * - cor0.col1 col0 FROM tab2, tab1 AS cor0 GROUP BY cor0.col1
@@ -6085,7 +6085,7 @@ col0
 36
 36
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - 27 col2 FROM tab1 AS cor0 GROUP BY cor0.col2, cor0.col2
@@ -6345,7 +6345,7 @@ SELECT ALL 78 FROM tab2 AS cor0 GROUP BY cor0.col2
 78
 78
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL + 26 col0 FROM tab2 cor0 GROUP BY cor0.col0
@@ -6510,7 +6510,7 @@ NULL
 NULL
 NULL
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL + cor0.col2 * cor0.col0 col2 FROM tab0 AS cor0 GROUP BY cor0.col0, cor0.col2
@@ -6655,7 +6655,7 @@ col2
 -55637
 -59475
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - 62 col1 FROM tab2, tab2 AS cor0, tab1 AS cor1 GROUP BY cor0.col2
@@ -7069,7 +7069,7 @@ SELECT ALL - tab1.col1 + - 90 * - 72 FROM tab1 GROUP BY col1
 6436
 6474
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT COALESCE ( - 48, cor0.col0 ) AS col1 FROM tab1 AS cor0 GROUP BY cor0.col2
@@ -7102,7 +7102,7 @@ SELECT 20 FROM tab1 AS cor0 GROUP BY col1
 20
 20
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL - cor0.col2 col1 FROM tab1 AS cor0 GROUP BY cor0.col2, cor0.col2
@@ -7111,7 +7111,7 @@ SELECT ALL - cor0.col2 col1 FROM tab1 AS cor0 GROUP BY cor0.col2, cor0.col2
 -71
 -8
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT 63 + + cor0.col0 * 26 col2 FROM tab2 AS cor0 GROUP BY cor0.col0
@@ -7320,7 +7320,7 @@ col1
 -83
 -83
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 36 col0 FROM tab2 cor0 GROUP BY cor0.col2, cor0.col1
@@ -7505,7 +7505,7 @@ SELECT ALL 82 + cor0.col2 FROM tab2 AS cor0 GROUP BY cor0.col2
 161
 169
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT + col2 - cor0.col2 * 87 col1 FROM tab0 AS cor0 GROUP BY cor0.col2
@@ -7615,7 +7615,7 @@ col0
 -4
 36
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL + 45 col2 FROM tab1 GROUP BY tab1.col2
@@ -7663,7 +7663,7 @@ SELECT ALL 79 FROM tab0 AS cor0 GROUP BY cor0.col0, cor0.col0
 79
 79
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT + COALESCE ( + 73, + cor0.col1, cor0.col2 ) * + 72 col0 FROM tab2 AS cor0 GROUP BY cor0.col2
@@ -7695,7 +7695,7 @@ SELECT ALL 11 FROM tab2 GROUP BY tab2.col2
 11
 11
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT tab0.col0 + + 29 col1 FROM tab0 GROUP BY tab0.col0
@@ -7734,7 +7734,7 @@ col0
 -19044
 -3105
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT + cor0.col0 * + cor0.col0 col2 FROM tab1 AS cor0 GROUP BY cor0.col0
@@ -7751,7 +7751,7 @@ SELECT + - 18 FROM tab0 GROUP BY col2
 -18
 -18
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL - 75 * 18 col1 FROM tab0 AS cor0 GROUP BY cor0.col0
@@ -7882,7 +7882,7 @@ SELECT DISTINCT 12 FROM tab1 AS cor0 GROUP BY cor0.col0
 ?column?
 12
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - 92 + + 24 col0 FROM tab1, tab1 AS cor0 GROUP BY cor0.col2
@@ -7964,7 +7964,7 @@ col1
 -73
 -73
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL + 0 col1 FROM tab2 AS cor0 GROUP BY cor0.col1
@@ -7973,7 +7973,7 @@ SELECT ALL + 0 col1 FROM tab2 AS cor0 GROUP BY cor0.col1
 0
 0
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - 66 col0 FROM tab2 AS cor0 GROUP BY cor0.col1, col0
@@ -8158,7 +8158,7 @@ SELECT - CAST ( - 33 AS INTEGER ) FROM tab0 AS cor0 GROUP BY cor0.col2
 33
 33
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL + cor0.col1 * cor0.col1 col2 FROM tab1 AS cor0 GROUP BY cor0.col1
@@ -8308,7 +8308,7 @@ SELECT ALL + 8 FROM tab2 GROUP BY tab2.col1
 8
 8
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL - - ( 40 ) * cor0.col2 col0 FROM tab0, tab2 cor0 GROUP BY cor0.col2
@@ -8350,7 +8350,7 @@ SELECT DISTINCT cor0.col2 * 32 * - cor0.col2 FROM tab0 AS cor0 GROUP BY cor0.col
 -199712
 -46208
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT + - 25 col2 FROM tab2, tab0 AS cor0 GROUP BY tab2.col0
@@ -8430,7 +8430,7 @@ SELECT ALL 32 FROM tab2 cor0 GROUP BY col1
 32
 32
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT - 17 col0 FROM tab1, tab2 AS cor0 GROUP BY cor0.col1
@@ -8545,7 +8545,7 @@ SELECT 65 FROM tab0 AS cor0 GROUP BY cor0.col1
 65
 65
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 91 + cor0.col1 col1 FROM tab2 AS cor0 GROUP BY cor0.col1
@@ -8676,7 +8676,7 @@ SELECT 19 + cor0.col2 FROM tab0 AS cor0 GROUP BY col2
 57
 98
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 47 col0 FROM tab1 AS cor0 GROUP BY cor0.col2, cor0.col1
@@ -8857,7 +8857,7 @@ SELECT DISTINCT - 9 AS col2 FROM tab0 cor0 GROUP BY cor0.col0
 col2
 -9
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL 75 col2 FROM tab2 cor0 GROUP BY cor0.col1, cor0.col2
@@ -8951,7 +8951,7 @@ SELECT - 4 FROM tab2 AS cor0 GROUP BY cor0.col1
 -4
 -4
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 13 col0 FROM tab2 AS cor0 GROUP BY cor0.col1
@@ -9105,7 +9105,7 @@ col1
 -59
 -61
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 68 col1 FROM tab2 AS cor0 GROUP BY cor0.col2, cor0.col1, cor0.col1
@@ -9152,7 +9152,7 @@ SELECT ( col2 ) * cor0.col1 FROM tab1 AS cor0 GROUP BY col2, cor0.col1
 3124
 48
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - COALESCE ( 27, cor0.col0 + - col2 ) * + 32 FROM tab0 AS cor0 GROUP BY col1
@@ -9160,7 +9160,7 @@ SELECT - COALESCE ( 27, cor0.col0 + - col2 ) * + 32 FROM tab0 AS cor0 GROUP BY c
 -864
 -864
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT - cor0.col2 col1 FROM tab1 AS cor0 GROUP BY cor0.col2
@@ -9198,7 +9198,7 @@ SELECT ALL + 67 FROM tab2 AS cor0 GROUP BY cor0.col2, cor0.col0
 67
 67
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT cor0.col2 - - 24 col0 FROM tab0 AS cor0 GROUP BY col0, cor0.col2
@@ -9326,7 +9326,7 @@ col2
 0
 1
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - cor0.col1 col1 FROM tab2, tab2 AS cor0 GROUP BY cor0.col1
@@ -9417,7 +9417,7 @@ col1
 62
 62
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT + 91 col2 FROM tab0 cor0 GROUP BY col0
@@ -9440,7 +9440,7 @@ SELECT - 8 FROM tab2 AS cor0 GROUP BY cor0.col2
 -8
 -8
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 71 * + 38 + + 21 col0 FROM tab2 AS cor0 GROUP BY cor0.col0
@@ -9480,7 +9480,7 @@ col2
 3127
 3233
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 30 col1 FROM tab1 AS cor0 GROUP BY cor0.col1
@@ -9506,7 +9506,7 @@ col0
 1
 1
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT + 18 col1 FROM tab2 GROUP BY tab2.col0
@@ -9542,7 +9542,7 @@ SELECT + 96 FROM tab0 AS cor0 GROUP BY col0
 96
 96
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 19 * - cor0.col1 col0 FROM tab1 AS cor0 GROUP BY cor0.col1
@@ -9676,7 +9676,7 @@ SELECT DISTINCT - 82 / - cor0.col2 FROM tab2 cor0 GROUP BY cor0.col0, cor0.col2
 0
 1
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT + 67 * cor0.col2 col2 FROM tab0 AS cor0 GROUP BY cor0.col2
@@ -9693,7 +9693,7 @@ SELECT DISTINCT col2 * cor0.col0 * cor0.col0 FROM tab2 AS cor0 GROUP BY cor0.col
 490912
 654199
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT + 82 col0 FROM tab0, tab2 AS cor0 GROUP BY cor0.col2
@@ -9762,7 +9762,7 @@ SELECT ALL - 92 FROM tab1 AS cor0 GROUP BY cor0.col2
 -92
 -92
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT - cor0.col2 + 18 col0 FROM tab2 AS cor0 GROUP BY cor0.col2
@@ -9848,7 +9848,7 @@ col2
 -71
 -8
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL 23 col1 FROM tab0 AS cor0 GROUP BY cor0.col2
@@ -9857,7 +9857,7 @@ SELECT ALL 23 col1 FROM tab0 AS cor0 GROUP BY cor0.col2
 23
 23
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 7 col1 FROM tab1 AS cor0 GROUP BY cor0.col1, cor0.col1
@@ -9882,7 +9882,7 @@ SELECT cor0.col2 * cor0.col2 FROM tab1 AS cor0 GROUP BY col2
 5041
 64
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT + 81 * cor0.col0 - cor0.col0 col0 FROM tab0 AS cor0 GROUP BY cor0.col0, cor0.col0, cor0.col0
@@ -9915,7 +9915,7 @@ col2
 96
 96
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 13 * 29 col0 FROM tab2 AS cor0 GROUP BY col1
@@ -9924,7 +9924,7 @@ SELECT 13 * 29 col0 FROM tab2 AS cor0 GROUP BY col1
 377
 377
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT + 58 - cor0.col1 col1 FROM tab1 AS cor0 GROUP BY cor0.col1
@@ -10096,7 +10096,7 @@ SELECT ALL + 5 FROM tab0 AS cor0 GROUP BY col0
 5
 5
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT COALESCE ( + 97, cor0.col2 ) + + cor0.col1 FROM tab0 AS cor0 GROUP BY cor0.col1
@@ -10120,7 +10120,7 @@ col2
 38
 79
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL - cor0.col2 col2 FROM tab0 AS cor0 GROUP BY cor0.col2
@@ -10316,7 +10316,7 @@ SELECT ALL - 20 FROM tab1 AS cor0 GROUP BY col0
 -20
 -20
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL + cor0.col1 + - cor0.col1 - 66 * - cor0.col0 col1 FROM tab1 AS cor0 GROUP BY cor0.col0, cor0.col1
@@ -10369,7 +10369,7 @@ SELECT DISTINCT 30 + 43 FROM tab1, tab1 AS cor0 GROUP BY cor0.col0
 ?column?
 73
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT + cor0.col1 * cor0.col1 - - 10 col1 FROM tab2 cor0 GROUP BY cor0.col2, cor0.col1
@@ -10456,7 +10456,7 @@ col1
 184
 30
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL + 98 col1 FROM tab0 cor0 GROUP BY cor0.col0
@@ -10593,7 +10593,7 @@ SELECT + 99 FROM tab2 AS cor0 GROUP BY cor0.col0
 99
 99
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 84 col0 FROM tab2 AS cor0 GROUP BY cor0.col2
@@ -10679,7 +10679,7 @@ SELECT + 76 FROM tab2 AS cor0 GROUP BY cor0.col1
 76
 76
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL - 61 col2 FROM tab1 AS cor0 GROUP BY cor0.col2
@@ -10688,7 +10688,7 @@ SELECT ALL - 61 col2 FROM tab1 AS cor0 GROUP BY cor0.col2
 -61
 -61
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL - NULLIF ( 31, cor0.col0 ) col2 FROM tab1 cor0 GROUP BY cor0.col0
@@ -10720,7 +10720,7 @@ SELECT col1 + 30 FROM tab0 AS cor0 GROUP BY cor0.col1
 111
 30
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL - 54 + cor0.col2 col2 FROM tab2 AS cor0 GROUP BY cor0.col1, cor0.col2
@@ -10761,7 +10761,7 @@ SELECT - 44 FROM tab1 AS cor0 GROUP BY col2, cor0.col0
 -44
 -44
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL 12 col0 FROM tab0 AS cor0 GROUP BY cor0.col2
@@ -10842,7 +10842,7 @@ col2
 -43
 -43
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - 0 col0 FROM tab0 AS cor0 GROUP BY cor0.col0
@@ -10851,7 +10851,7 @@ SELECT - 0 col0 FROM tab0 AS cor0 GROUP BY cor0.col0
 0
 0
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT 49 col2 FROM tab0 AS cor0 GROUP BY col1
@@ -10927,7 +10927,7 @@ SELECT DISTINCT 89 FROM tab1, tab0 AS cor0, tab1 AS cor1 GROUP BY cor0.col1
 ?column?
 89
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 81 col1 FROM tab1 AS cor0 GROUP BY cor0.col2
@@ -11001,7 +11001,7 @@ SELECT DISTINCT CAST ( NULL AS REAL ) + - col2 AS col2 FROM tab2 GROUP BY col2
 col2
 NULL
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT cor0.col0 col2 FROM tab0 cor0 GROUP BY cor0.col0
@@ -11158,7 +11158,7 @@ col1
 49
 49
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 52 - + cor0.col2 * - cor0.col2 col2 FROM tab2 AS cor0 GROUP BY cor0.col2
@@ -11199,7 +11199,7 @@ SELECT DISTINCT + + CAST( NULL AS SIGNED ) col0 FROM tab2, tab0 AS cor0 GROUP BY
 NULL
 
 skipif mysql
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort label-1325
 SELECT DISTINCT + + CAST ( NULL AS INTEGER ) col0 FROM tab2, tab0 AS cor0 GROUP BY tab2.col1
@@ -11235,7 +11235,7 @@ col0
 -710
 -80
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 57 + col2 col0 FROM tab2 cor0 GROUP BY cor0.col2
@@ -11298,7 +11298,7 @@ SELECT + 20 FROM tab0, tab2 cor0 GROUP BY cor0.col1
 20
 20
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - ( 55 ) col0 FROM tab0 AS cor0 GROUP BY cor0.col0
@@ -11307,7 +11307,7 @@ SELECT - ( 55 ) col0 FROM tab0 AS cor0 GROUP BY cor0.col0
 -55
 -55
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL + 91 col0 FROM tab2 AS cor0 GROUP BY cor0.col0
@@ -11331,7 +11331,7 @@ col1
 -741
 -78
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL 6 col2 FROM tab2 AS cor0 GROUP BY cor0.col0
@@ -11348,7 +11348,7 @@ col2
 68
 68
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT + + 55 col2 FROM tab1, tab0 AS cor0 GROUP BY cor0.col0
@@ -11365,7 +11365,7 @@ SELECT DISTINCT cor0.col1 * cor0.col1 * 52 FROM tab1 AS cor0 GROUP BY cor0.col1
 168948
 1872
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL - 54 col1 FROM tab1 GROUP BY tab1.col2
@@ -11545,7 +11545,7 @@ NULL
 NULL
 NULL
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 82 col2 FROM tab0 AS cor0 GROUP BY cor0.col2
@@ -11760,7 +11760,7 @@ col2
 57
 6
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 3 col1 FROM tab0, tab1 AS cor0 GROUP BY tab0.col1
@@ -11814,7 +11814,7 @@ SELECT 30 FROM tab1 AS cor0 GROUP BY cor0.col1
 30
 30
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT + COALESCE ( + 47, - cor0.col0 ) AS col2 FROM tab0 AS cor0 GROUP BY cor0.col2
@@ -12351,7 +12351,7 @@ SELECT cor0.col2 * - cor0.col2 FROM tab0 AS cor0 GROUP BY cor0.col1, cor0.col2, 
 -576
 -6241
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - 78 col0 FROM tab0 AS cor0 GROUP BY cor0.col2
@@ -12375,7 +12375,7 @@ SELECT 66 FROM tab0 AS cor0 GROUP BY cor0.col0
 66
 66
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT + 90 col2 FROM tab1 AS cor0 GROUP BY cor0.col2, col0
@@ -12415,7 +12415,7 @@ col2
 96
 96
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL + 55 col2 FROM tab2 AS cor0 GROUP BY cor0.col2
@@ -12448,7 +12448,7 @@ col1
 52416
 567931
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - 21 + - 5 col1 FROM tab2 GROUP BY tab2.col2
@@ -12511,7 +12511,7 @@ SELECT 51 FROM tab2 AS cor0 GROUP BY cor0.col0
 51
 51
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL + cor0.col0 * - 17 col1 FROM tab0 AS cor0 GROUP BY cor0.col0
@@ -12554,7 +12554,7 @@ col2
 -3021
 -4708
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT cor0.col2 * + cor0.col2 col1 FROM tab0 AS cor0 GROUP BY cor0.col0, cor0.col2
@@ -12618,7 +12618,7 @@ col0
 48
 48
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT 56 * - 68 col0 FROM tab1 AS cor0 GROUP BY cor0.col1
@@ -12845,7 +12845,7 @@ SELECT - tab0.col2 / - 14 FROM tab0 GROUP BY tab0.col2
 2
 5
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT 26 col0 FROM tab0 AS cor0 GROUP BY col1
@@ -12893,7 +12893,7 @@ col1
 70
 70
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL + cor0.col0 col1 FROM tab0 AS cor0 GROUP BY cor0.col0, cor0.col1
@@ -12971,7 +12971,7 @@ SELECT DISTINCT - 60 FROM tab0, tab0 AS cor0 GROUP BY cor0.col0
 ?column?
 -60
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT - 74 col2 FROM tab1 GROUP BY col1
@@ -13241,7 +13241,7 @@ SELECT 45 * + 2 FROM tab2 AS cor0 GROUP BY cor0.col0
 90
 90
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL - 48 col2 FROM tab1 GROUP BY col0
@@ -13396,7 +13396,7 @@ col0
 3
 4
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 48 col2 FROM tab1 cor0 GROUP BY cor0.col1
@@ -13405,7 +13405,7 @@ SELECT 48 col2 FROM tab1 cor0 GROUP BY cor0.col1
 48
 48
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT - - 55 col2 FROM tab2, tab1 AS cor0 GROUP BY cor0.col1
@@ -13724,7 +13724,7 @@ SELECT 55 FROM tab2 AS cor0 GROUP BY cor0.col0, cor0.col1
 55
 55
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL - 34 + cor0.col1 col1 FROM tab1 cor0 GROUP BY cor0.col1
@@ -13803,7 +13803,7 @@ SELECT DISTINCT ( 83 ) AS col0 FROM tab2 AS cor0 GROUP BY cor0.col1
 col0
 83
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT + COALESCE ( 60, tab0.col0 ) FROM tab0 GROUP BY tab0.col1
@@ -13831,7 +13831,7 @@ SELECT - 61 FROM tab0 AS cor0 GROUP BY col1
 -61
 -61
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - ( - cor0.col0 ) col0 FROM tab2 AS cor0 GROUP BY cor0.col0
@@ -13950,7 +13950,7 @@ SELECT + 54 * - cor0.col2 FROM tab2, tab2 AS cor0 GROUP BY cor0.col2
 -4266
 -4698
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL 48 col1 FROM tab2 AS cor0 GROUP BY cor0.col2, cor0.col1
@@ -14612,7 +14612,7 @@ SELECT 26 FROM tab1 AS cor0 GROUP BY cor0.col0
 26
 26
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL ( + col0 * col0 ) col0 FROM tab1 AS cor0 GROUP BY cor0.col0
@@ -14752,7 +14752,7 @@ SELECT DISTINCT col0 / cor0.col0 AS col1 FROM tab1 AS cor0 GROUP BY cor0.col0
 col1
 1
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT COALESCE ( + 81, cor0.col0 ) FROM tab2 AS cor0 GROUP BY cor0.col2
@@ -14941,7 +14941,7 @@ SELECT DISTINCT 16 FROM tab0 cor0 GROUP BY cor0.col2, col1
 ?column?
 16
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL + 15 col2 FROM tab2 AS cor0 GROUP BY cor0.col0
@@ -14965,7 +14965,7 @@ col0
 94
 94
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT + - 70 + tab0.col2 col1 FROM tab0 GROUP BY col2
@@ -15032,7 +15032,7 @@ SELECT DISTINCT + 25 / cor0.col2 AS col0 FROM tab2 AS cor0 GROUP BY cor0.col2
 col0
 0
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - ( 73 ) col0 FROM tab2 AS cor0 GROUP BY cor0.col2
@@ -15120,7 +15120,7 @@ SELECT + ( + col1 ) * - 29 FROM tab1 GROUP BY col1
 -1653
 -174
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 99 col0 FROM tab2 AS cor0 GROUP BY col2
@@ -15246,7 +15246,7 @@ col1
 33
 87
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT + 32 col1 FROM tab0, tab1 AS cor0, tab0 AS cor1 GROUP BY cor0.col1
@@ -15489,7 +15489,7 @@ SELECT DISTINCT + 56 AS col2 FROM tab0 AS cor0 GROUP BY cor0.col2
 col2
 56
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT 32 - cor0.col0 col2 FROM tab2 AS cor0 GROUP BY cor0.col0
@@ -15586,7 +15586,7 @@ NULL
 NULL
 NULL
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT + 1 col0 FROM tab1, tab0 AS cor0 GROUP BY tab1.col0
@@ -15742,7 +15742,7 @@ col2
 -43
 -83
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT + cor0.col0 + cor0.col0 col2 FROM tab1 AS cor0 GROUP BY cor0.col0
@@ -15751,7 +15751,7 @@ SELECT DISTINCT + cor0.col0 + cor0.col0 col2 FROM tab1 AS cor0 GROUP BY cor0.col
 44
 56
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL cor0.col1 * ( - cor0.col1 ) col2 FROM tab0 AS cor0 GROUP BY cor0.col0, cor0.col1
@@ -15865,7 +15865,7 @@ col1
 59
 61
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL 94 col0 FROM tab2 cor0 GROUP BY cor0.col2, cor0.col2
@@ -15936,7 +15936,7 @@ col0
 0
 0
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL 4 * 36 col2 FROM tab1 AS cor0 GROUP BY cor0.col2
@@ -16076,7 +16076,7 @@ SELECT DISTINCT + 70 AS col2 FROM tab2, tab1 AS cor0, tab0 AS cor1 GROUP BY cor1
 col2
 70
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT cor0.col2 + + col0 * - cor0.col2 col0 FROM tab0 cor0 GROUP BY cor0.col2, cor0.col0
@@ -16153,7 +16153,7 @@ SELECT DISTINCT + + tab1.col2 FROM tab1 GROUP BY tab1.col2
 71
 8
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL 21 * cor0.col1 col2 FROM tab0 AS cor0 GROUP BY col1
@@ -16161,7 +16161,7 @@ SELECT ALL 21 * cor0.col1 col2 FROM tab0 AS cor0 GROUP BY col1
 0
 1701
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT - 11 col2 FROM tab2 AS cor0 GROUP BY cor0.col0, cor0.col2, cor0.col0
@@ -16286,7 +16286,7 @@ col2
 -96
 -96
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - 75 col1 FROM tab2 AS cor0 GROUP BY cor0.col1
@@ -16319,7 +16319,7 @@ col2
 -96
 -96
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT + 62 col1 FROM tab0 AS cor0 GROUP BY cor0.col2
@@ -16492,7 +16492,7 @@ SELECT ALL + ( + 84 ) / + cor0.col2 FROM tab2, tab1 AS cor0, tab2 AS cor1 GROUP 
 1
 10
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT + 10 * cor0.col2 col2 FROM tab0 AS cor0 GROUP BY cor0.col2
@@ -16590,7 +16590,7 @@ SELECT 88 + - cor0.col2 + cor0.col2 FROM tab1 AS cor0 GROUP BY cor0.col2
 88
 88
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT + - 86 col2 FROM tab1, tab2 cor0 GROUP BY cor0.col2
@@ -16745,7 +16745,7 @@ SELECT ALL + CAST ( 38 AS INTEGER ) * - cor0.col0 + - cor0.col1 FROM tab1 AS cor
 -3160
 -842
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT + 94 col0 FROM tab0 AS cor0 GROUP BY cor0.col2
@@ -16762,7 +16762,7 @@ NULL
 NULL
 NULL
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT cor0.col2 + cor0.col2 col1 FROM tab1 AS cor0 GROUP BY col2
@@ -16966,7 +16966,7 @@ SELECT DISTINCT + 35 FROM tab2 cor0 GROUP BY cor0.col1
 ?column?
 35
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT + COALESCE ( 6, cor0.col2 ) + - cor0.col0 FROM tab2 AS cor0 GROUP BY cor0.col0
@@ -17008,7 +17008,7 @@ SELECT ALL - NULLIF ( - cor0.col0, cor0.col0 * col1 ) FROM tab1 AS cor0 GROUP BY
 28
 82
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL + 15 * COALESCE ( + 58, tab2.col0 ) FROM tab2 GROUP BY tab2.col2
@@ -17039,7 +17039,7 @@ SELECT DISTINCT - + cor0.col0 * + 31 FROM tab1, tab1 AS cor0 GROUP BY cor0.col0
 -682
 -868
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT 39 col2 FROM tab0 AS cor0 GROUP BY cor0.col2
@@ -17054,7 +17054,7 @@ col0
 9
 9
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL 46 col1 FROM tab1 AS cor0 GROUP BY cor0.col0
@@ -17110,7 +17110,7 @@ col1
 0
 4860
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT + ( col1 ) col1 FROM tab1 AS cor0 GROUP BY cor0.col1
@@ -17152,7 +17152,7 @@ SELECT DISTINCT + 8 * - tab1.col2 * tab1.col2 - + 39 / 10 FROM tab1 GROUP BY tab
 -40331
 -515
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL COALESCE ( + 5, + tab1.col1 ) AS col1 FROM tab1, tab0 AS cor0 GROUP BY cor0.col2
@@ -17370,7 +17370,7 @@ SELECT DISTINCT 7 * 7 AS col2 FROM tab0 cor0 GROUP BY cor0.col2
 col2
 49
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT + cor0.col2 col1 FROM tab0 AS cor0 GROUP BY cor0.col2, cor0.col2
@@ -17449,7 +17449,7 @@ SELECT DISTINCT 80 AS col2 FROM tab2 AS cor0 GROUP BY col0
 col2
 80
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL - 89 * - 70 col2 FROM tab0 GROUP BY tab0.col0
@@ -17489,7 +17489,7 @@ col0
 -95
 -95
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - 79 col1 FROM tab1 AS cor0 GROUP BY cor0.col2
@@ -17559,7 +17559,7 @@ col2
 0
 81
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT + 50 * + col2 - cor0.col2 col0 FROM tab1 AS cor0 GROUP BY cor0.col2
@@ -17784,7 +17784,7 @@ SELECT DISTINCT 56 * - 85 FROM tab1 AS cor0 GROUP BY cor0.col1
 ?column?
 -4760
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - 67 col2 FROM tab1 AS cor0 GROUP BY cor0.col0
@@ -17891,7 +17891,7 @@ SELECT ALL cor0.col1 + 15 * + 12 FROM tab0 AS cor0 GROUP BY cor0.col1
 180
 261
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT - - tab0.col0 col2 FROM tab0 GROUP BY col0
@@ -17988,7 +17988,7 @@ SELECT cor0.col2 + + cor0.col2 FROM tab2 AS cor0 GROUP BY cor0.col1, cor0.col2
 158
 174
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - 4 - - 49 col2 FROM tab1 AS cor0 GROUP BY cor0.col2, col0
@@ -18142,7 +18142,7 @@ SELECT + 37 FROM tab2, tab1 AS cor0 GROUP BY tab2.col2
 37
 37
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT + col1 col0 FROM tab0 AS cor0 GROUP BY cor0.col1
@@ -18166,7 +18166,7 @@ SELECT cor0.col0 - + ( - cor0.col0 ) FROM tab2 AS cor0 GROUP BY cor0.col0
 184
 30
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT 45 col0 FROM tab1 AS cor0 GROUP BY cor0.col2, cor0.col0
@@ -18292,7 +18292,7 @@ col1
 59
 61
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL 96 col1 FROM tab0 AS cor0 GROUP BY cor0.col2
@@ -18348,7 +18348,7 @@ col0
 57
 57
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - 4 * - cor0.col1 col0 FROM tab0 AS cor0 GROUP BY cor0.col0, cor0.col1
@@ -18419,7 +18419,7 @@ SELECT ALL + 70 FROM tab2 AS cor0 GROUP BY cor0.col1
 70
 70
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ( cor0.col1 ) col0 FROM tab1 AS cor0 GROUP BY col1
@@ -18485,7 +18485,7 @@ NULL
 NULL
 NULL
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL 20 col1 FROM tab0 GROUP BY tab0.col2
@@ -18784,7 +18784,7 @@ SELECT DISTINCT - cor0.col2 * + CAST ( NULL AS INTEGER ) FROM tab1, tab1 AS cor0
 ?column?
 NULL
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT - 67 * 35 col0 FROM tab2 AS cor0 GROUP BY col0
@@ -18805,14 +18805,14 @@ SELECT + 97 FROM tab2 AS cor0 GROUP BY cor0.col0
 97
 97
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT - 25 col1 FROM tab1 AS cor0 GROUP BY col0
 ----
 -25
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 66 col2 FROM tab2 AS cor0 GROUP BY cor0.col0
@@ -18903,7 +18903,7 @@ col1
 124
 43
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ( - 4 ) col0 FROM tab2, tab2 AS cor0, tab0 AS cor1 GROUP BY cor0.col2
@@ -18959,7 +18959,7 @@ NULL
 NULL
 
 skipif mysql
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort label-2249
 SELECT CAST ( NULL AS INTEGER ) col1 FROM tab0 AS cor0 GROUP BY cor0.col0, cor0.col2
@@ -19093,7 +19093,7 @@ SELECT + col0 * - 87 FROM tab0 GROUP BY col0
 -3741
 -7221
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 23 col2 FROM tab1, tab2 AS cor0 GROUP BY cor0.col1
@@ -19102,7 +19102,7 @@ SELECT 23 col2 FROM tab1, tab2 AS cor0 GROUP BY cor0.col1
 23
 23
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - + tab0.col1 * 70 col1 FROM tab0 GROUP BY tab0.col1
@@ -19118,7 +19118,7 @@ SELECT - 62 FROM tab2 AS cor0 GROUP BY cor0.col0
 -62
 -62
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL - 56 col2 FROM tab2 AS cor0 GROUP BY cor0.col1
@@ -19163,7 +19163,7 @@ col2
 -6715
 -7395
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT cor0.col0 col1 FROM tab1 cor0 GROUP BY cor0.col2, cor0.col0
@@ -19196,7 +19196,7 @@ col0
 -75
 -75
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - 84 * 62 col0 FROM tab0 cor0 GROUP BY cor0.col2
@@ -19331,7 +19331,7 @@ SELECT DISTINCT - cor0.col2 FROM tab0 AS cor0 GROUP BY cor0.col2, cor0.col0
 -38
 -79
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT cor0.col0 col0 FROM tab2, tab2 cor0 GROUP BY cor0.col0
@@ -19365,7 +19365,7 @@ SELECT ALL 24 / 74 FROM tab1 AS cor0 GROUP BY col0
 0
 0
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL + 28 col0 FROM tab0 AS cor0 GROUP BY cor0.col2
@@ -19461,7 +19461,7 @@ SELECT + ( 46 ) FROM tab1 cor0 GROUP BY col0
 46
 46
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT + 67 * cor0.col0 col2 FROM tab1 AS cor0 GROUP BY cor0.col0
@@ -19531,7 +19531,7 @@ col0
 94
 94
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT col1 + - ( 3 ) * + 32 col0 FROM tab2 AS cor0 GROUP BY col1
@@ -19548,7 +19548,7 @@ SELECT ( - 72 ) FROM tab0 AS cor0 GROUP BY cor0.col2
 -72
 -72
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT + cor0.col2 col2 FROM tab0 AS cor0 GROUP BY cor0.col0, cor0.col2
@@ -19557,7 +19557,7 @@ SELECT + cor0.col2 col2 FROM tab0 AS cor0 GROUP BY cor0.col0, cor0.col2
 38
 79
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT + cor0.col2 col0 FROM tab2 cor0 GROUP BY cor0.col2, cor0.col2
@@ -19738,7 +19738,7 @@ col0
 2654
 3213
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL - 13 col1 FROM tab1 cor0 GROUP BY cor0.col1
@@ -19747,7 +19747,7 @@ SELECT ALL - 13 col1 FROM tab1 cor0 GROUP BY cor0.col1
 -13
 -13
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT cor0.col1 col2 FROM tab2 AS cor0 GROUP BY cor0.col1, cor0.col1
@@ -19769,7 +19769,7 @@ SELECT DISTINCT + CAST ( NULL AS REAL ) AS col2 FROM tab2, tab1 AS cor0, tab2 co
 col2
 NULL
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT cor0.col2 * ( + cor0.col2 * + cor0.col2 ) col0 FROM tab1 AS cor0 GROUP BY cor0.col2
@@ -19815,7 +19815,7 @@ SELECT DISTINCT - col1 / col1 FROM tab2 AS cor0 GROUP BY cor0.col1, cor0.col1
 ?column?
 -1
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT + cor0.col0 col2 FROM tab0 AS cor0 GROUP BY cor0.col0
@@ -19862,7 +19862,7 @@ col2
 6241
 7569
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT 70 col1 FROM tab0 cor0 GROUP BY cor0.col2
@@ -19927,7 +19927,7 @@ SELECT DISTINCT + 40 FROM tab1 AS cor0 GROUP BY cor0.col1
 ?column?
 40
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL + ( + cor0.col1 ) + - cor0.col2 col1 FROM tab0 AS cor0 GROUP BY cor0.col2, cor0.col2, cor0.col1
@@ -20045,7 +20045,7 @@ col1
 37
 37
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT + 96 + + cor0.col2 col1 FROM tab0 AS cor0 CROSS JOIN tab2 AS cor1 GROUP BY cor0.col2
@@ -20182,7 +20182,7 @@ SELECT ALL cor0.col0 * + 32 FROM tab0 AS cor0 GROUP BY cor0.col0
 2656
 832
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL col2 col2 FROM tab0 AS cor0 GROUP BY cor0.col2
@@ -20191,7 +20191,7 @@ SELECT ALL col2 col2 FROM tab0 AS cor0 GROUP BY cor0.col2
 38
 79
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT + 43 col2 FROM tab2, tab1 AS cor0, tab0 AS cor1 GROUP BY cor1.col1
@@ -20455,7 +20455,7 @@ SELECT - 64 FROM tab1 GROUP BY tab1.col1
 -64
 -64
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL 40 * + tab0.col2 col2 FROM tab0, tab0 AS cor0 GROUP BY tab0.col2
@@ -20536,7 +20536,7 @@ col1
 59
 61
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT cor0.col0 + 33 + + 16 col1 FROM tab0 AS cor0 GROUP BY cor0.col2, col0
@@ -20577,7 +20577,7 @@ SELECT - 28 FROM tab0 cor0 GROUP BY cor0.col2
 -28
 -28
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL cor0.col0 * + cor0.col0 + 80 * cor0.col0 col0 FROM tab1 AS cor0 GROUP BY cor0.col0, cor0.col0, cor0.col0
@@ -21240,7 +21240,7 @@ SELECT ALL cor0.col1 * 7 FROM tab2 AS cor0 GROUP BY cor0.col1, cor0.col1
 413
 427
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL 50 * - cor0.col2 col2 FROM tab1 AS cor0 GROUP BY cor0.col2
@@ -21249,7 +21249,7 @@ SELECT ALL 50 * - cor0.col2 col2 FROM tab1 AS cor0 GROUP BY cor0.col2
 -3550
 -400
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 38 col1 FROM tab2 AS cor0 CROSS JOIN tab2 AS cor1 GROUP BY cor1.col1
@@ -21519,7 +21519,7 @@ SELECT DISTINCT - cor0.col2 * + CAST ( NULL AS INTEGER ) * cor0.col1 - cor0.col0
 col1
 NULL
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT + + tab2.col2 col1 FROM tab2 GROUP BY tab2.col2
@@ -21583,7 +21583,7 @@ NULL
 NULL
 NULL
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT + 98 col0 FROM tab1 AS cor0 GROUP BY cor0.col1
@@ -21623,7 +21623,7 @@ col0
 86925
 9150
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - 40 * + 40 col1 FROM tab2 GROUP BY tab2.col0
@@ -21640,7 +21640,7 @@ col1
 -28
 -82
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL 11 col1 FROM tab0 AS cor0 GROUP BY cor0.col2
@@ -21677,7 +21677,7 @@ SELECT DISTINCT 12 FROM tab2 AS cor0 GROUP BY cor0.col2
 ?column?
 12
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - 6 col0 FROM tab0 GROUP BY tab0.col0
@@ -21695,7 +21695,7 @@ SELECT 27 DIV + cor0.col0 col2 FROM tab1 AS cor0 GROUP BY col0
 1
 
 skipif mysql
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort label-2577
 SELECT 27 / + cor0.col0 col2 FROM tab1 AS cor0 GROUP BY col0
@@ -21717,7 +21717,7 @@ SELECT DISTINCT + ( + cor0.col2 ) / + cor0.col2 FROM tab2 AS cor0 GROUP BY cor0.
 ?column?
 1
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT cor0.col2 col0 FROM tab0 cor0 GROUP BY cor0.col0, cor0.col2, cor0.col0
@@ -21873,7 +21873,7 @@ SELECT 41 DIV - cor0.col1 col2 FROM tab1 AS cor0 GROUP BY col1
 0
 
 skipif mysql
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort label-2597
 SELECT 41 / - cor0.col1 col2 FROM tab1 AS cor0 GROUP BY col1
@@ -21890,7 +21890,7 @@ SELECT ALL 92 FROM tab1 AS cor0 GROUP BY cor0.col2
 92
 92
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT + + 11 * cor0.col2 col1 FROM tab1, tab0 AS cor0 GROUP BY cor0.col2
@@ -22101,7 +22101,7 @@ SELECT cor0.col1 DIV - 15 col0 FROM tab1 AS cor0 GROUP BY cor0.col1
 0
 
 skipif mysql
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort label-2624
 SELECT cor0.col1 / - 15 col0 FROM tab1 AS cor0 GROUP BY cor0.col1
@@ -22110,7 +22110,7 @@ SELECT cor0.col1 / - 15 col0 FROM tab1 AS cor0 GROUP BY cor0.col1
 -3
 0
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT 94 * + cor0.col0 * cor0.col0 col0 FROM tab2 AS cor0 GROUP BY cor0.col0
@@ -22243,7 +22243,7 @@ SELECT + ( 15 ) DIV cor0.col1 col0 FROM tab1 AS cor0 GROUP BY cor0.col1
 2
 
 skipif mysql
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort label-2641
 SELECT + ( 15 ) / cor0.col1 col0 FROM tab1 AS cor0 GROUP BY cor0.col1
@@ -22309,7 +22309,7 @@ SELECT ALL - 52 * - col0 FROM tab2 AS cor0 GROUP BY cor0.col2, cor0.col1, col0
 4784
 780
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT 9 col1 FROM tab1 AS cor0 GROUP BY col0, cor0.col1, cor0.col1
@@ -22685,7 +22685,7 @@ col1
 89
 89
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 67 col0 FROM tab1, tab2 AS cor0 GROUP BY cor0.col0
@@ -22818,7 +22818,7 @@ col0
 -94
 -94
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - 70 col1 FROM tab1 GROUP BY tab1.col1
@@ -22918,7 +22918,7 @@ SELECT 45 FROM tab2 cor0 GROUP BY cor0.col1
 45
 45
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - 73 col1 FROM tab2 cor0 GROUP BY cor0.col0, cor0.col1, cor0.col0
@@ -23031,7 +23031,7 @@ col1
 96
 96
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL + col2 * 32 col2 FROM tab2 AS cor0 GROUP BY cor0.col2
@@ -23117,7 +23117,7 @@ col1
 98
 98
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT 60 col1 FROM tab0 AS cor0 CROSS JOIN tab1 AS cor1 GROUP BY cor1.col2
@@ -23205,7 +23205,7 @@ SELECT DISTINCT CAST( col2 AS SIGNED ) + - 10 * cor0.col2 col2 FROM tab1 AS cor0
 -72
 
 skipif mysql
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort label-2757
 SELECT DISTINCT CAST ( col2 AS INTEGER ) + - 10 * cor0.col2 col2 FROM tab1 AS cor0 GROUP BY col2, cor0.col0
@@ -23344,7 +23344,7 @@ SELECT DISTINCT 38 FROM tab1 AS cor0 GROUP BY cor0.col0
 ?column?
 38
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL - 71 col1 FROM tab2 AS cor0 GROUP BY cor0.col2
@@ -23407,7 +23407,7 @@ SELECT NULLIF ( - 52, + cor0.col0 ) + cor0.col0 * - 18 * - 64 FROM tab2 AS cor0 
 105932
 17228
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 39 col1 FROM tab2 cor0 GROUP BY cor0.col1
@@ -23423,7 +23423,7 @@ SELECT DISTINCT - CAST( NULL AS SIGNED ) col0 FROM tab0 AS cor0 GROUP BY col1
 NULL
 
 skipif mysql
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort label-2784
 SELECT DISTINCT - CAST ( NULL AS INTEGER ) col0 FROM tab0 AS cor0 GROUP BY col1
@@ -23605,7 +23605,7 @@ SELECT + 0 FROM tab0 cor0 GROUP BY col2
 0
 0
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - cor0.col2 + cor0.col1 * - ( - 40 ) * col2 + - cor0.col1 * + 28 col0 FROM tab1 AS cor0 GROUP BY cor0.col2, cor0.col1
@@ -23839,7 +23839,7 @@ SELECT ALL + ( + cor0.col0 ) DIV - 83 col2 FROM tab2 AS cor0 GROUP BY cor0.col0,
 0
 
 skipif mysql
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort label-2832
 SELECT ALL + ( + cor0.col0 ) / - 83 col2 FROM tab2 AS cor0 GROUP BY cor0.col0, cor0.col2
@@ -23921,7 +23921,7 @@ NULL
 NULL
 
 skipif mysql
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort label-2841
 SELECT ALL tab1.col1 + - CAST ( NULL AS INTEGER ) col2 FROM tab1 GROUP BY tab1.col1
@@ -23938,7 +23938,7 @@ col2
 52
 52
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL 58 col2 FROM tab1 AS cor0 GROUP BY cor0.col0
@@ -24001,7 +24001,7 @@ col0
 -6
 -6
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 36 col0 FROM tab1 AS cor0 GROUP BY cor0.col0, cor0.col2, cor0.col0
@@ -24494,7 +24494,7 @@ SELECT DISTINCT + 3 FROM tab0, tab1 AS cor0 GROUP BY cor0.col1
 ?column?
 3
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 43 * cor0.col1 col1 FROM tab1 AS cor0 GROUP BY cor0.col2, cor0.col1
@@ -24622,7 +24622,7 @@ SELECT 82 FROM tab0 AS cor0 GROUP BY cor0.col2
 82
 82
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT + ( cor0.col1 ) col2 FROM tab2 AS cor0 GROUP BY cor0.col1
@@ -24694,7 +24694,7 @@ col0
 17
 17
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - + 28 col0 FROM tab1, tab2 AS cor0 GROUP BY cor0.col0
@@ -24719,7 +24719,7 @@ SELECT DISTINCT + cor0.col2 FROM tab2 AS cor0 GROUP BY cor0.col2, cor0.col2
 79
 87
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT 71 col0 FROM tab2 AS cor0 GROUP BY cor0.col2
@@ -24825,7 +24825,7 @@ col2
 56
 93
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT col0 * - 83 col0 FROM tab0 cor0 GROUP BY cor0.col0
@@ -24980,7 +24980,7 @@ SELECT DISTINCT 36 FROM tab2 AS cor0 GROUP BY cor0.col0
 ?column?
 36
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL + 22 col0 FROM tab1 AS cor0 GROUP BY cor0.col1
@@ -25155,7 +25155,7 @@ col2
 71
 71
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT cor0.col1 * + col1 col1 FROM tab2 cor0 GROUP BY cor0.col1
@@ -25178,7 +25178,7 @@ SELECT - 42 FROM tab1 cor0 GROUP BY cor0.col1
 -42
 -42
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT 28 col1 FROM tab2 cor0 GROUP BY cor0.col2
@@ -25401,7 +25401,7 @@ col0
 -48
 -48
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL cor0.col0 * col0 col0 FROM tab2 cor0 GROUP BY cor0.col0, col0
@@ -25432,7 +25432,7 @@ col1
 12
 12
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT + cor0.col2 col2 FROM tab0, tab0 AS cor0 GROUP BY cor0.col2
@@ -25497,7 +25497,7 @@ col0
 91
 92
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - col2 col2 FROM tab1 AS cor0 GROUP BY cor0.col2, cor0.col1, cor0.col0
@@ -25514,7 +25514,7 @@ col2
 5041
 64
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT 19 col1 FROM tab0 AS cor0 GROUP BY col2
@@ -25558,7 +25558,7 @@ SELECT DISTINCT - cor0.col2 + + cor0.col2 AS col0 FROM tab2 AS cor0 GROUP BY cor
 col0
 0
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT cor0.col2 col0 FROM tab0, tab1 cor0 GROUP BY cor0.col2
@@ -25589,7 +25589,7 @@ col2
 91
 92
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - ( + 84 ) col0 FROM tab2 AS cor0 GROUP BY cor0.col0
@@ -25646,7 +25646,7 @@ SELECT 31 FROM tab0 AS cor0 GROUP BY cor0.col2
 31
 31
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL + cor0.col1 col2 FROM tab2 AS cor0 GROUP BY cor0.col1
@@ -25723,7 +25723,7 @@ SELECT DISTINCT 50 AS col2 FROM tab1 AS cor0 GROUP BY cor0.col1
 col2
 50
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL + 33 col2 FROM tab2, tab2 cor0 GROUP BY cor0.col1
@@ -25732,7 +25732,7 @@ SELECT ALL + 33 col2 FROM tab2, tab2 cor0 GROUP BY cor0.col1
 33
 33
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - - 25 col0 FROM tab0 GROUP BY tab0.col1
@@ -25764,7 +25764,7 @@ SELECT + NULLIF ( 59, - 22 ) FROM tab1 AS cor0 GROUP BY cor0.col0
 59
 59
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT - cor0.col1 * - cor0.col1 * 68 col2 FROM tab1 AS cor0 GROUP BY cor0.col1
@@ -25898,7 +25898,7 @@ col1
 59
 61
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL - 71 col0 FROM tab0 AS cor0 GROUP BY cor0.col2, cor0.col1, cor0.col1
@@ -25955,7 +25955,7 @@ SELECT cor0.col1 * + CAST( + COALESCE ( + 7, cor0.col2 ) AS SIGNED ) AS col2 FRO
 567
 
 skipif mysql
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort label-3085
 SELECT cor0.col1 * + CAST ( + COALESCE ( + 7, cor0.col2 ) AS INTEGER ) AS col2 FROM tab0 AS cor0 GROUP BY cor0.col1
@@ -25971,7 +25971,7 @@ col0
 214
 235
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT - COALESCE ( - 6, cor0.col1, + cor0.col0 ) FROM tab0 AS cor0 GROUP BY cor0.col0
@@ -26001,7 +26001,7 @@ SELECT DISTINCT 62 * COALESCE ( - 12 * - col2, - cor0.col1, 84 * + cor0.col1 ) F
 58776
 64728
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL cor0.col2 * - COALESCE ( - 91, cor0.col1 * cor0.col1, + 73 ) FROM tab1 AS cor0 GROUP BY cor0.col2
@@ -26010,7 +26010,7 @@ SELECT ALL cor0.col2 * - COALESCE ( - 91, cor0.col1 * cor0.col1, + 73 ) FROM tab
 6461
 728
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT - cor0.col1 * COALESCE ( + 75, cor0.col1, - cor0.col2, col0 ) FROM tab1 AS cor0 GROUP BY cor0.col1
@@ -26027,7 +26027,7 @@ col1
 57
 6
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL - COALESCE ( 25, cor0.col0 ) + 12 FROM tab0 AS cor0 GROUP BY cor0.col2
@@ -26060,7 +26060,7 @@ SELECT DISTINCT + 43 * cor0.col1 + cor0.col1 * CAST( COALESCE ( 43, - col2 ) AS 
 6966
 
 skipif mysql
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort label-3097
 SELECT DISTINCT + 43 * cor0.col1 + cor0.col1 * CAST ( COALESCE ( 43, - col2 ) AS INTEGER ) AS col1 FROM tab0 AS cor0 GROUP BY cor0.col1
@@ -26076,7 +26076,7 @@ coalesce
 73
 73
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT COALESCE ( + 97, cor0.col0, + cor0.col0 ) * cor0.col1 * 54 FROM tab2 AS cor0 GROUP BY col1, cor0.col2
@@ -26085,7 +26085,7 @@ SELECT COALESCE ( + 97, cor0.col0, + cor0.col0 ) * cor0.col1 * 54 FROM tab2 AS c
 309042
 319518
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT - COALESCE ( 41, + cor0.col1 ) FROM tab1 AS cor0 CROSS JOIN tab0 AS cor1 GROUP BY cor1.col0, cor1.col1
@@ -26122,7 +26122,7 @@ SELECT DISTINCT - cor0.col0 * COALESCE ( + 24, - cor0.col0 + + cor0.col2 ) DIV c
 -24
 
 skipif mysql
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort label-3104
 SELECT DISTINCT - cor0.col0 * COALESCE ( + 24, - cor0.col0 + + cor0.col2 ) / cor0.col0 FROM tab2 AS cor0 GROUP BY cor0.col0, cor0.col0
@@ -26136,7 +26136,7 @@ col0
 36
 36
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT cor0.col0 + + COALESCE ( - cor0.col1, cor0.col0, - 46 * 52 ) col0 FROM tab0 cor0 GROUP BY cor0.col1, cor0.col0
@@ -26161,7 +26161,7 @@ col1
 0
 6966
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT + COALESCE ( NULLIF ( + cor0.col0, - cor0.col0 ) * 43, 52, cor0.col1 + cor0.col2 * cor0.col0 ) FROM tab2 AS cor0 GROUP BY cor0.col0
@@ -26219,7 +26219,7 @@ col2
 75
 75
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL - COALESCE ( 40, cor0.col0, + cor0.col1, cor0.col0 ) + + col2 FROM tab1 AS cor0 GROUP BY col2, cor0.col1
@@ -26236,7 +26236,7 @@ SELECT DISTINCT + COALESCE ( 42, cor0.col0 ) DIV + cor0.col2 AS col1 FROM tab0 A
 1
 
 skipif mysql
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort label-3116
 SELECT DISTINCT + COALESCE ( 42, cor0.col0 ) / + cor0.col2 AS col1 FROM tab0 AS cor0 GROUP BY cor0.col2
@@ -26252,7 +26252,7 @@ col0
 126
 128
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT COALESCE ( 19, cor0.col2 ) col0 FROM tab2, tab2 AS cor0, tab1 AS cor1 GROUP BY tab2.col2
@@ -26320,7 +26320,7 @@ col1
 -284284
 -4368
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT - COALESCE ( 80, + cor0.col2, + col0 ) - cor0.col0 AS col2 FROM tab2 AS cor0 GROUP BY cor0.col0
@@ -26329,7 +26329,7 @@ SELECT DISTINCT - COALESCE ( 80, + cor0.col2, + col0 ) - cor0.col0 AS col2 FROM 
 -172
 -95
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT COALESCE ( 16, cor0.col1 ) AS col1 FROM tab1 AS cor0 GROUP BY cor0.col2
@@ -26344,7 +26344,7 @@ col1
 52
 90
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT COALESCE ( - 79, - cor0.col0, cor0.col1 ) col0 FROM tab2 cor0 GROUP BY cor0.col1
@@ -26391,7 +26391,7 @@ SELECT DISTINCT COALESCE ( cor0.col0, + 5 ) + cor0.col1 FROM tab2 cor0 GROUP BY 
 150
 76
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL + COALESCE ( + 64, + col2 ) + + tab0.col0 FROM tab0 GROUP BY tab0.col0
@@ -26415,7 +26415,7 @@ col1
 71
 73
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL + COALESCE ( + 12, cor0.col1, cor0.col0, cor0.col0 ) FROM tab0 AS cor0 GROUP BY cor0.col0
@@ -26432,7 +26432,7 @@ col1
 53
 53
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT DISTINCT COALESCE ( + 99, - tab2.col2 ) AS col2 FROM tab2 GROUP BY col0
@@ -26465,7 +26465,7 @@ SELECT COALESCE ( - 83, + cor0.col1 ) DIV - col0 AS col0 FROM tab0 AS cor0 GROUP
 3
 
 skipif mysql
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort label-3139
 SELECT COALESCE ( - 83, + cor0.col1 ) / - col0 AS col0 FROM tab0 AS cor0 GROUP BY cor0.col0
@@ -26552,7 +26552,7 @@ col2
 16
 16
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL + cor0.col2 + 38 col2 FROM tab0 AS cor0 GROUP BY cor0.col2
@@ -26698,7 +26698,7 @@ SELECT ALL - 63 FROM tab0 AS cor0 GROUP BY cor0.col2
 -63
 -63
 
-skipif postgresql
+skipif postgres
 skipif serenedb
 query I rowsort
 SELECT ALL + + 54 col1 FROM tab1, tab2 AS cor0 GROUP BY cor0.col2

@@ -60667,6 +60667,7 @@ SELECT ALL - col2 + - + ( + - ( ( - col0 ) ) ) * - col0 + - + col2 FROM tab2 AS 
 8123
 8348
 
+skipif serenedb
 query I rowsort
 SELECT 78 FROM tab0 AS cor0 WHERE NOT NULL NOT IN ( + 83 * - ( + - col0 ), col1 * - + 38 * + - 66 * + col0 * - 17 / col1 ) GROUP BY col0
 ----

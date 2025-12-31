@@ -2777,7 +2777,7 @@ void SqlAnalyzer::ProcessDistinctAll(State& state, const List* sort_clause,
     state.lookup_columns = MakePtrView(state.root->outputType());
   } else {
     // if we have an aggregation just inherit its lookup columns
-    SDB_ASSERT(state.has_aggregate);
+    SDB_ASSERT(state.has_aggregate || state.has_groupby);
   }
 
   state.has_groupby = true;
@@ -3936,13 +3936,6 @@ lp::ExprPtr SqlAnalyzer::ProcessAExpr(State& state, const A_Expr& expr) {
     case AEXPR_NULLIF: {
       auto lhs = ProcessExprNodeImpl(state, expr.lexpr);
       auto rhs = ProcessExprNodeImpl(state, expr.rexpr);
-      // TODO: try to find common type
-      if (lhs->type() != rhs->type()) {
-        if (rhs->type()->kind() == velox::TypeKind::UNKNOWN) {
-          return lhs;
-        }
-        return MakeConst(velox::TypeKind::UNKNOWN);
-      }
       auto value = lhs;
       auto value_type = value->type();
       auto cmp = ResolveVeloxFunctionAndInferArgsCommonType(
@@ -3969,9 +3962,16 @@ lp::ExprPtr SqlAnalyzer::ProcessAExpr(State& state, const A_Expr& expr) {
       auto lhs = ProcessExprNodeImpl(state, expr.lexpr);
       auto rhs = ProcessExprListImpl(state, castNode(List, expr.rexpr));
       SDB_ASSERT(rhs.size() == 2);
-      auto res = ResolveVeloxFunctionAndInferArgsCommonType(
-        "presto_between",
-        {std::move(lhs), std::move(rhs[0]), std::move(rhs[1])});
+      lp::ExprPtr res;
+
+      // this is probably incorrect for non-deterministic lhs expressions
+      auto lhs_cmp = ResolveVeloxFunctionAndInferArgsCommonType(
+        "presto_lte", {std::move(rhs[0]), lhs});
+      auto rhs_cmp = ResolveVeloxFunctionAndInferArgsCommonType(
+        "presto_lte", {std::move(lhs), std::move(rhs[1])});
+      res = ResolveVeloxFunctionAndInferArgsCommonType(
+        "and", {std::move(lhs_cmp), std::move(rhs_cmp)});
+
       if (expr.kind == AEXPR_NOT_BETWEEN) {
         return ResolveVeloxFunctionAndInferArgsCommonType("presto_not",
                                                           {std::move(res)});

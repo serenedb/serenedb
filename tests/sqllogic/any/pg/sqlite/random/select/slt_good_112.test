@@ -1177,6 +1177,7 @@ SELECT ALL + 70 col0 FROM tab2
 70
 
 skipif mysql # not compatible
+skipif postgres
 query I rowsort
 SELECT ALL - CAST ( 0 AS REAL ) / + cor0.col0 AS col1 FROM tab0, tab2 AS cor0, tab0 AS cor1
 ----

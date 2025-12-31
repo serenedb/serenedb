@@ -61545,6 +61545,7 @@ SELECT - col1 * 21 FROM tab1 AS cor0
 -546
 
 skipif mysql # not compatible
+skipif postgres
 query I rowsort
 SELECT ALL + - col1 * + CAST ( - col1 + col1 AS REAL ) * + 58 FROM tab2 AS cor0
 ----

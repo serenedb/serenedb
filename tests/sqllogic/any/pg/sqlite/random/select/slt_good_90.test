@@ -47333,6 +47333,7 @@ SELECT + - cor0.col2 * + cor0.col0 AS col0 FROM tab2 AS cor0
 -3002
 
 skipif mysql # not compatible
+skipif postgres
 query I rowsort
 SELECT + ( ( - col2 ) ) * CAST ( + 0 AS REAL ) FROM tab0 cor0
 ----

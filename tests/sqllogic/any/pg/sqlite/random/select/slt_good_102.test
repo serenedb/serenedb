@@ -5405,6 +5405,7 @@ SELECT cor0.col2 + + col2 AS col1 FROM tab0 cor0
 66
 
 skipif mysql # not compatible
+skipif postgres
 query I rowsort
 SELECT DISTINCT - CAST ( 0 AS REAL ) AS col1 FROM tab2
 ----

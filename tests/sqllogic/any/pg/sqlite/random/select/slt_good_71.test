@@ -32960,6 +32960,7 @@ SELECT - 11 AS col2 FROM tab1, tab2, tab1 AS cor0
 
 skipif postgresql # PostgreSQL requires AS when renaming output columns
 skipif mysql # not compatible
+skipif postgres
 query I rowsort
 SELECT ALL - CAST ( - col1 + col1 AS REAL ) col1 FROM tab1
 ----

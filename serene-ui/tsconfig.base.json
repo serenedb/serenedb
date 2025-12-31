@@ -16,8 +16,8 @@
         "paths": {
             "@serene-ui/shared-core/*": ["packages/shared-core/src/*"],
             "@serene-ui/shared-backend/*": ["packages/shared-backend/src/*"],
-            "@serene-ui/shared-frontend/*": ["packages/shared-frontend/src/*"],
-        },
+            "@serene-ui/shared-frontend/*": ["packages/shared-frontend/src/*"]
+        }
     },
-    "compileOnSave": false,
+    "compileOnSave": false
 }

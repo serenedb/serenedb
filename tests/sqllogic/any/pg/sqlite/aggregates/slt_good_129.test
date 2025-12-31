@@ -245,15 +245,6 @@ SELECT DISTINCT COUNT( * ) * + COUNT( * ) + - COUNT( col0 ) + - + 35 col2, + 99 
 -29
 99
 
-skipif mysql
-skipif serenedb
-skipif postgresql
-query II rowsort label-21
-SELECT DISTINCT COUNT ( * ) * + COUNT ( * ) + - COUNT ( col0 ) + - + 35 col2, + 99 FROM tab1 AS cor0
-----
--29
-99
-
 query III rowsort
 SELECT * FROM tab1 cor0 WHERE NOT col2 * + 64 BETWEEN NULL AND NULL
 ----
@@ -618,27 +609,9 @@ SELECT ALL + - col1 + - col0 AS col1, 5 * + col1 AS col0 FROM tab1 AS cor0
 -90
 25
 
-skipif serenedb
-skipif postgresql
-query I rowsort
-SELECT - col2 + - 90 col0 FROM tab2 cor0
-----
--113
--130
--148
-
 onlyif mysql
 query II rowsort label-62
 SELECT - AVG ( ALL - col0 ) + - + CAST( NULL AS DECIMAL ) AS col2, - 48 col1 FROM tab1
-----
-NULL
--48
-
-skipif mysql
-skipif serenedb
-skipif postgresql
-query II rowsort label-62
-SELECT - AVG ( ALL - col0 ) + - + CAST ( NULL AS REAL ) AS col2, - 48 col1 FROM tab1
 ----
 NULL
 -48
@@ -716,15 +689,6 @@ SELECT + ( - col1 ) / + col2 FROM tab1 AS cor0
 0
 0
 
-skipif serenedb
-skipif postgresql
-query I rowsort
-SELECT col1 * col1 * - - col0 col0 FROM tab0 AS cor0
-----
-38367
-97
-98415
-
 onlyif mysql
 query II rowsort label-70
 SELECT - - 96, + CAST( NULL AS SIGNED ) * - CAST( NULL AS SIGNED ) AS col0 FROM tab1 AS cor0
@@ -779,14 +743,6 @@ SELECT DISTINCT - col2 + - - col1 * - - col2 FROM tab2
 onlyif mysql
 query I rowsort label-74
 SELECT DISTINCT 71 + - SUM( + 84 ) col2 FROM tab2
-----
--181
-
-skipif mysql
-skipif serenedb
-skipif postgresql
-query I rowsort label-74
-SELECT DISTINCT 71 + - SUM ( + 84 ) col2 FROM tab2
 ----
 -181
 
@@ -1033,14 +989,6 @@ SELECT 31 + MAX( DISTINCT 37 ) col0 FROM tab0 AS cor0
 ----
 68
 
-skipif mysql
-skipif serenedb
-skipif postgresql
-query I rowsort label-99
-SELECT 31 + MAX ( DISTINCT 37 ) col0 FROM tab0 AS cor0
-----
-68
-
 onlyif mysql
 query I rowsort label-100
 SELECT ALL - - MIN( ALL 29 ) * COUNT( * ) AS col0 FROM tab1 AS cor0
@@ -1227,15 +1175,6 @@ SELECT - SUM ( - - 32 ) AS col2 FROM tab0
 ----
 -96
 
-skipif serenedb
-skipif postgresql
-query I rowsort
-SELECT ALL + col2 + - ( - col2 ) * + col0 col0 FROM tab0
-----
-752
-880
-9702
-
 query I rowsort
 SELECT DISTINCT + col1 + 46 FROM tab2
 ----
@@ -1343,14 +1282,6 @@ SELECT DISTINCT - + COUNT( * ) DIV + - 24 - + 68 col2 FROM tab2 cor0
 ----
 -68
 
-skipif mysql
-skipif serenedb
-skipif postgresql
-query I rowsort label-128
-SELECT DISTINCT - + COUNT ( * ) / + - 24 - + 68 col2 FROM tab2 cor0
-----
--68
-
 query I rowsort
 SELECT DISTINCT - col0 * - 63 FROM tab0 AS cor0
 ----
@@ -1390,14 +1321,6 @@ SELECT DISTINCT + + CAST( - - 20 AS SIGNED ) * - + 67 col0 FROM tab2 AS cor0
 ----
 -1340
 
-skipif mysql
-skipif serenedb
-skipif postgresql
-query I rowsort label-133
-SELECT DISTINCT + + CAST ( - - 20 AS INTEGER ) * - + 67 col0 FROM tab2 AS cor0
-----
--1340
-
 onlyif mysql
 query I rowsort label-134
 SELECT ALL - CAST( + + 61 AS SIGNED ) + - 36 FROM tab1 AS cor0
@@ -1425,12 +1348,6 @@ SELECT ALL - 88 * - col0 * + - col2 AS col0 FROM tab1 AS cor0
 -430848
 -441320
 -544544
-
-skipif serenedb
-skipif postgresql
-query II rowsort
-SELECT - + 55 col1, - 84 AS col0 FROM tab2 WHERE NOT NULL IS NULL
-----
 
 onlyif mysql
 query I rowsort label-138
@@ -1686,15 +1603,6 @@ query III rowsort
 SELECT DISTINCT * FROM tab1 AS cor0 WHERE - col1 + - - col1 IN ( - - col2, col2, col2 + col0, - - 39 )
 ----
 
-skipif serenedb
-skipif postgresql
-query I rowsort
-SELECT ALL - - 82 col2 FROM tab1 AS cor0
-----
-82
-82
-82
-
 onlyif mysql
 query I rowsort label-164
 SELECT ALL + - MAX( ALL 91 ) AS col1 FROM tab2 AS cor0
@@ -1799,18 +1707,6 @@ SELECT ALL + col0, col2 * - ( 42 ) * - + 39 FROM tab2
 75
 95004
 
-skipif serenedb
-skipif postgresql
-query II rowsort
-SELECT col0 AS col0, 79 col2 FROM tab1
-----
-51
-79
-85
-79
-91
-79
-
 query III rowsort
 SELECT * FROM tab1 cor0 WHERE NOT NULL NOT BETWEEN NULL AND + col0
 ----
@@ -1892,18 +1788,6 @@ SELECT - col2 * - - 43 FROM tab0 AS cor0
 query III rowsort
 SELECT ALL * FROM tab1 AS cor0 WHERE + 77 IS NULL
 ----
-
-skipif serenedb
-skipif postgresql
-query II rowsort
-SELECT + 39 AS col2, col1 - 51 col2 FROM tab2
-----
-39
-0
-39
-16
-39
-26
 
 query I rowsort
 SELECT DISTINCT + col0 + - 13 + - col1 + col0 AS col1 FROM tab2
@@ -1993,15 +1877,6 @@ query II rowsort
 SELECT 41 + - col2, - 12 AS col2 FROM tab2 AS cor0 WHERE NOT ( NULL ) NOT BETWEEN NULL AND NULL
 ----
 
-skipif serenedb
-skipif postgresql
-query I rowsort
-SELECT - - 63 col2 FROM tab1 AS cor0
-----
-63
-63
-63
-
 onlyif mysql
 query I rowsort label-199
 SELECT DISTINCT - MIN( - 98 ) AS col2 FROM tab0 AS cor0
@@ -2013,13 +1888,6 @@ query I rowsort label-199
 SELECT DISTINCT - MIN ( - 98 ) AS col2 FROM tab0 AS cor0
 ----
 98
-
-skipif serenedb
-skipif postgresql
-query I rowsort
-SELECT DISTINCT - + 66 col0 FROM tab2 AS cor0
-----
--66
 
 query III rowsort
 SELECT * FROM tab0 WHERE NOT + 54 BETWEEN + 77 AND + - col1
@@ -2088,15 +1956,6 @@ SELECT DISTINCT - - 45 AS col2 FROM tab0 AS cor0
 onlyif mysql
 query II rowsort label-207
 SELECT 56 col1, - MIN( + - CAST( NULL AS SIGNED ) ) AS col2 FROM tab1
-----
-56
-NULL
-
-skipif mysql
-skipif serenedb
-skipif postgresql
-query II rowsort label-207
-SELECT 56 col1, - MIN ( + - CAST ( NULL AS INTEGER ) ) AS col2 FROM tab1
 ----
 56
 NULL
@@ -2564,15 +2423,6 @@ query III rowsort label-254
 SELECT * FROM tab0 AS cor0 WHERE NOT 64 * + CAST ( NULL AS INTEGER ) <= col2
 ----
 
-skipif serenedb
-skipif postgresql
-query I rowsort
-SELECT - - 61 col0 FROM tab2 AS cor0
-----
-61
-61
-61
-
 onlyif mysql
 query III rowsort label-256
 SELECT DISTINCT * FROM tab2 AS cor0 WHERE col0 * + CAST( NULL AS SIGNED ) <> 93
@@ -2586,16 +2436,6 @@ SELECT DISTINCT * FROM tab2 AS cor0 WHERE col0 * + CAST ( NULL AS INTEGER ) <> 9
 onlyif mysql
 query I rowsort label-257
 SELECT - 58 * + col2 + CAST( NULL AS SIGNED ) col1 FROM tab0
-----
-NULL
-NULL
-NULL
-
-skipif mysql
-skipif serenedb
-skipif postgresql
-query I rowsort label-257
-SELECT - 58 * + col2 + CAST ( NULL AS INTEGER ) col1 FROM tab0
 ----
 NULL
 NULL
@@ -2639,14 +2479,6 @@ SELECT MIN( - col2 ) col1 FROM tab0 AS cor0
 ----
 -99
 
-skipif mysql
-skipif serenedb
-skipif postgresql
-query I rowsort label-262
-SELECT MIN ( - col2 ) col1 FROM tab0 AS cor0
-----
--99
-
 query I rowsort
 SELECT ALL - + ( - 11 ) FROM tab0 cor0
 ----
@@ -2677,23 +2509,6 @@ query I rowsort label-267
 SELECT DISTINCT 14 * - SUM( ALL ( + col1 ) ) col1 FROM tab1
 ----
 -924
-
-skipif mysql
-skipif serenedb
-skipif postgresql
-query I rowsort label-267
-SELECT DISTINCT 14 * - SUM ( ALL ( + col1 ) ) col1 FROM tab1
-----
--924
-
-skipif serenedb
-skipif postgresql
-query I rowsort
-SELECT DISTINCT - 19 * col2 col0 FROM tab1
-----
--1121
--1292
--1824
 
 onlyif mysql
 query I rowsort label-269
@@ -2816,16 +2631,6 @@ NULL
 NULL
 NULL
 
-skipif mysql
-skipif serenedb
-skipif postgresql
-query I rowsort label-284
-SELECT + 6 / CAST ( NULL AS INTEGER ) col2 FROM tab1
-----
-NULL
-NULL
-NULL
-
 query III rowsort
 SELECT * FROM tab0 WHERE 88 * 50 NOT IN ( - ( + col0 ) )
 ----
@@ -2893,12 +2698,6 @@ query I rowsort label-291
 SELECT MIN ( DISTINCT 39 ) FROM tab0 AS cor0 WHERE NOT NULL <> NULL
 ----
 NULL
-
-skipif serenedb
-skipif postgresql
-query I rowsort
-SELECT ALL 87 col1 FROM tab0 AS cor0 WHERE + 44 * col0 IS NULL
-----
 
 query I rowsort
 SELECT col2 * col2 + ( 32 + col0 ) FROM tab2 AS cor0 WHERE NOT ( NULL ) < NULL
@@ -3000,15 +2799,6 @@ SELECT + MIN ( + 70 ) AS col1 FROM tab2
 ----
 70
 
-skipif serenedb
-skipif postgresql
-query I rowsort
-SELECT ALL - col0 * - + col1 col0 FROM tab0
-----
-1215
-1827
-97
-
 query III rowsort
 SELECT ALL * FROM tab2 WHERE NOT ( NULL ) <> - 49
 ----
@@ -3057,15 +2847,6 @@ query I rowsort
 SELECT DISTINCT ( 30 ) + 61 FROM tab0 AS cor0 CROSS JOIN tab2 AS cor1
 ----
 91
-
-skipif serenedb
-skipif postgresql
-query I rowsort
-SELECT ALL - col1 col1 FROM tab2 WHERE - col1 * - col1 IS NOT NULL
-----
--51
--67
--77
 
 onlyif mysql
 query I rowsort label-314
@@ -3188,16 +2969,6 @@ SELECT * FROM tab1 WHERE NOT - 49 - + - col0 >= - col1
 onlyif mysql
 query I rowsort label-328
 SELECT - 19 DIV + col1 col1 FROM tab1
-----
--1
--3
-0
-
-skipif mysql
-skipif serenedb
-skipif postgresql
-query I rowsort label-328
-SELECT - 19 / + col1 col1 FROM tab1
 ----
 -1
 -3
@@ -3462,14 +3233,6 @@ SELECT DISTINCT - COUNT( * ) * - COUNT( * ) - - MAX( DISTINCT + + col1 ) col0 FR
 ----
 86
 
-skipif mysql
-skipif serenedb
-skipif postgresql
-query I rowsort label-361
-SELECT DISTINCT - COUNT ( * ) * - COUNT ( * ) - - MAX ( DISTINCT + + col1 ) col0 FROM tab2 AS cor0
-----
-86
-
 query II rowsort
 SELECT - col1 AS col2, col1 FROM tab0
 ----
@@ -3609,14 +3372,6 @@ SELECT DISTINCT 49 + - COUNT( * ) col0 FROM tab1
 ----
 46
 
-skipif mysql
-skipif serenedb
-skipif postgresql
-query I rowsort label-380
-SELECT DISTINCT 49 + - COUNT ( * ) col0 FROM tab1
-----
-46
-
 query I rowsort
 SELECT DISTINCT col0 * - 4 AS col1 FROM tab0
 ----
@@ -3627,16 +3382,6 @@ SELECT DISTINCT col0 * - 4 AS col1 FROM tab0
 onlyif mysql
 query I rowsort label-382
 SELECT CAST( NULL AS SIGNED ) + + col0 col0 FROM tab1
-----
-NULL
-NULL
-NULL
-
-skipif mysql
-skipif serenedb
-skipif postgresql
-query I rowsort label-382
-SELECT CAST ( NULL AS INTEGER ) + + col0 col0 FROM tab1
 ----
 NULL
 NULL
@@ -3659,14 +3404,6 @@ SELECT + col0 * col1 + - col2 AS col2 FROM tab1 AS cor0
 onlyif mysql
 query I rowsort label-385
 SELECT + COUNT( DISTINCT + - col2 ) + - + 33 col1 FROM tab0 AS cor0
-----
--30
-
-skipif mysql
-skipif serenedb
-skipif postgresql
-query I rowsort label-385
-SELECT + COUNT ( DISTINCT + - col2 ) + - + 33 col1 FROM tab0 AS cor0
 ----
 -30
 
@@ -3731,19 +3468,6 @@ NULL
 NULL
 96
 
-skipif mysql
-skipif serenedb
-skipif postgresql
-query II rowsort label-391
-SELECT ALL - CAST ( NULL AS INTEGER ), 96 col2 FROM tab1 AS cor0
-----
-NULL
-96
-NULL
-96
-NULL
-96
-
 onlyif mysql
 query I rowsort label-392
 SELECT ALL CAST( + + col0 AS SIGNED ) AS col2 FROM tab1 AS cor0
@@ -3799,15 +3523,6 @@ query III rowsort label-396
 SELECT ALL * FROM tab2 AS cor0 WHERE NOT CAST ( NULL AS INTEGER ) * col0 * - col2 IS NULL
 ----
 
-skipif serenedb
-skipif postgresql
-query I rowsort
-SELECT ALL - 45 * + col2 * - 54 + + 74 col0 FROM tab2 AS cor0
-----
-141014
-55964
-97274
-
 query I rowsort
 SELECT DISTINCT + 25 * + 95 FROM tab1 AS cor0
 ----
@@ -3823,13 +3538,6 @@ SELECT DISTINCT col2 + + 64 FROM tab1 WHERE NOT col1 + + + col1 IS NULL
 onlyif mysql
 query I rowsort label-400
 SELECT col2 / + - col1 col2 FROM tab2 WHERE NOT NULL NOT BETWEEN + - CAST( NULL AS SIGNED ) AND + col1
-----
-
-skipif mysql
-skipif serenedb
-skipif postgresql
-query I rowsort label-400
-SELECT col2 / + - col1 col2 FROM tab2 WHERE NOT NULL NOT BETWEEN + - CAST ( NULL AS INTEGER ) AND + col1
 ----
 
 query I rowsort
@@ -4023,14 +3731,6 @@ SELECT - ( COUNT( - - 78 ) ) + COUNT( * ) + - + 59 col2 FROM tab2 AS cor0 WHERE 
 ----
 -59
 
-skipif mysql
-skipif serenedb
-skipif postgresql
-query I rowsort label-423
-SELECT - ( COUNT ( - - 78 ) ) + COUNT ( * ) + - + 59 col2 FROM tab2 AS cor0 WHERE col1 <= 89
-----
--59
-
 onlyif mysql
 query II rowsort label-424
 SELECT ALL + CAST( - 29 AS SIGNED ) + + - MIN( DISTINCT + 72 ) + + 70 AS col2, - 99 FROM tab0
@@ -4106,32 +3806,9 @@ SELECT - 83 * - 68 * - + COUNT( * ) col1 FROM tab0
 ----
 -16932
 
-skipif mysql
-skipif serenedb
-skipif postgresql
-query I rowsort label-431
-SELECT - 83 * - 68 * - + COUNT ( * ) col1 FROM tab0
-----
--16932
-
-skipif serenedb
-skipif postgresql
-query I rowsort
-SELECT DISTINCT ( 89 ) col0 FROM tab1
-----
-89
-
 onlyif mysql
 query I rowsort label-433
 SELECT ALL - COUNT( DISTINCT 53 ) col2 FROM tab1
-----
--1
-
-skipif mysql
-skipif serenedb
-skipif postgresql
-query I rowsort label-433
-SELECT ALL - COUNT ( DISTINCT 53 ) col2 FROM tab1
 ----
 -1
 
@@ -4144,15 +3821,6 @@ SELECT - col0 AS col1, 54 AS col0 FROM tab0 AS cor0
 54
 -97
 54
-
-skipif serenedb
-skipif postgresql
-query I rowsort
-SELECT - 99 col0 FROM tab2 AS cor0
-----
--99
--99
--99
 
 onlyif mysql
 query I rowsort label-436
@@ -4373,23 +4041,6 @@ SELECT DISTINCT SUM( DISTINCT - 40 ) col2 FROM tab2
 ----
 -40
 
-skipif mysql
-skipif serenedb
-skipif postgresql
-query I rowsort label-460
-SELECT DISTINCT SUM ( DISTINCT - 40 ) col2 FROM tab2
-----
--40
-
-skipif serenedb
-skipif postgresql
-query I rowsort
-SELECT DISTINCT col2 * - col0 col0 FROM tab0
-----
--705
--870
--9603
-
 query I rowsort
 SELECT col2 * col1 * 32 AS col2 FROM tab2
 ----
@@ -4548,15 +4199,6 @@ query I rowsort
 SELECT DISTINCT - 88 AS col0 FROM tab2 WHERE NULL BETWEEN NULL AND - 38 - + col2
 ----
 
-skipif serenedb
-skipif postgresql
-query I rowsort
-SELECT DISTINCT + col0 + 8 + - col0 * col0 col1 FROM tab2
-----
--2062
--4024
--5542
-
 onlyif mysql
 query I rowsort label-478
 SELECT ALL MIN( - 58 ) - CAST( NULL AS SIGNED ) * - COUNT( - - 49 ) * - + 44 AS col1 FROM tab0
@@ -4634,14 +4276,6 @@ SELECT - ( + - COUNT ( DISTINCT + 97 ) ) AS col0 FROM tab1 AS cor0 CROSS JOIN ta
 onlyif mysql
 query I rowsort label-486
 SELECT DISTINCT + MAX( ALL + + ( + col0 ) ) col1 FROM tab2 AS cor0
-----
-75
-
-skipif mysql
-skipif serenedb
-skipif postgresql
-query I rowsort label-486
-SELECT DISTINCT + MAX ( ALL + + ( + col0 ) ) col1 FROM tab2 AS cor0
 ----
 75
 
@@ -4780,28 +4414,9 @@ SELECT ALL + - col1 DIV - col2 col2 FROM tab0 AS cor0
 1
 2
 
-skipif mysql
-skipif serenedb
-skipif postgresql
-query I rowsort label-501
-SELECT ALL + - col1 / - col2 col2 FROM tab0 AS cor0
-----
-0
-1
-2
-
 query III rowsort
 SELECT * FROM tab0 AS cor0 WHERE - col1 + col2 * + - col2 IS NULL
 ----
-
-skipif serenedb
-skipif postgresql
-query I rowsort
-SELECT + - col1 + 49 col2 FROM tab0 AS cor0
-----
--32
-28
-48
 
 query I rowsort
 SELECT ALL + 47 * + - ( - - col2 ) + ( - + col1 ) AS col2 FROM tab0 AS cor0
@@ -4824,23 +4439,9 @@ SELECT - - ( col1 ) * col0 FROM tab0 cor0
 1827
 97
 
-skipif serenedb
-skipif postgresql
-query I rowsort
-SELECT col1 col2 FROM tab1 AS cor0 WHERE NULL IS NOT NULL
-----
-
 onlyif mysql
 query I rowsort label-508
 SELECT ALL - COUNT( - - ( + - col2 ) ) col0 FROM tab1 AS cor0
-----
--3
-
-skipif mysql
-skipif serenedb
-skipif postgresql
-query I rowsort label-508
-SELECT ALL - COUNT ( - - ( + - col2 ) ) col0 FROM tab1 AS cor0
 ----
 -3
 
@@ -5161,16 +4762,6 @@ NULL
 NULL
 NULL
 
-skipif mysql
-skipif serenedb
-skipif postgresql
-query I rowsort label-541
-SELECT CAST ( NULL AS REAL ) * + col0 col2 FROM tab2
-----
-NULL
-NULL
-NULL
-
 onlyif mysql
 query I rowsort label-542
 SELECT DISTINCT 27 + + - 29 + - CAST( - SUM( ALL + col1 ) AS SIGNED ) - 24 AS col0 FROM tab1
@@ -5195,15 +4786,6 @@ SELECT + MIN ( ALL - ( col2 ) ) * - 76 FROM tab2
 ----
 4408
 
-skipif serenedb
-skipif postgresql
-query I rowsort
-SELECT DISTINCT + 89 * ( col0 ) col0 FROM tab1
-----
-4539
-7565
-8099
-
 query III rowsort
 SELECT ALL * FROM tab2 AS cor0 WHERE NOT col1 + + col1 IS NOT NULL
 ----
@@ -5212,15 +4794,6 @@ query I rowsort
 SELECT DISTINCT + - 88 AS col0 FROM tab2 cor0
 ----
 -88
-
-skipif serenedb
-skipif postgresql
-query I rowsort
-SELECT ALL - - ( 7 ) col0 FROM tab1 AS cor0
-----
-7
-7
-7
 
 onlyif mysql
 query I rowsort label-548
@@ -5244,17 +4817,6 @@ SELECT - col1 * - col2 * - - 31 * - 45 * + + col1 AS col1 FROM tab2
 onlyif mysql
 query II rowsort label-550
 SELECT DISTINCT ( - ( col0 ) ) DIV - col1 col0, - 17 AS col2 FROM tab2
-----
-0
--17
-1
--17
-
-skipif mysql
-skipif serenedb
-skipif postgresql
-query II rowsort label-550
-SELECT DISTINCT ( - ( col0 ) ) / - col1 col0, - 17 AS col2 FROM tab2
 ----
 0
 -17
@@ -5336,14 +4898,6 @@ SELECT + col2 * + col0 AS col1 FROM tab2 AS cor0 WHERE NOT NULL IS NOT NULL
 onlyif mysql
 query I rowsort label-559
 SELECT + + MIN( ALL + 36 ) col0 FROM tab2 AS cor0
-----
-36
-
-skipif mysql
-skipif serenedb
-skipif postgresql
-query I rowsort label-559
-SELECT + + MIN ( ALL + 36 ) col0 FROM tab2 AS cor0
 ----
 36
 
@@ -5543,15 +5097,6 @@ SELECT DISTINCT CAST ( 1 AS INTEGER ) * - ( + CAST ( + ( + - col2 ) AS INTEGER )
 47
 99
 
-skipif serenedb
-skipif postgresql
-query I rowsort
-SELECT DISTINCT - - 20 - + + col0 + - ( + col0 ) col1 FROM tab2 WHERE NOT NULL IS NOT NULL
-----
--108
--130
--72
-
 query III rowsort
 SELECT * FROM tab2 WHERE NOT + + col0 - + + col1 IS NOT NULL
 ----
@@ -5655,15 +5200,6 @@ SELECT - + 99 FROM tab0 cor0
 onlyif mysql
 query II rowsort label-594
 SELECT COUNT( * ), 3 col1 FROM tab2 AS cor0
-----
-3
-3
-
-skipif mysql
-skipif serenedb
-skipif postgresql
-query II rowsort label-594
-SELECT COUNT ( * ), 3 col1 FROM tab2 AS cor0
 ----
 3
 3
@@ -5871,15 +5407,6 @@ SELECT col1 + - 19 + CAST ( + 82 AS INTEGER ) AS col1 FROM tab2
 114
 130
 140
-
-skipif serenedb
-skipif postgresql
-query I rowsort
-SELECT + ( 60 ) col2 FROM tab0 AS cor0
-----
-60
-60
-60
 
 onlyif mysql
 query I rowsort label-618
@@ -6090,27 +5617,6 @@ SELECT ALL + col1 + - col2 * - ( - 1 ) AS col2 FROM tab1 AS cor0
 -54
 -82
 
-skipif serenedb
-skipif postgresql
-query II rowsort
-SELECT - col0 col2, col2 AS col2 FROM tab2
-----
--46
-23
--64
-40
--75
-58
-
-skipif serenedb
-skipif postgresql
-query I rowsort
-SELECT ALL + 24 + col2 col0 FROM tab0
-----
-123
-34
-71
-
 query I rowsort
 SELECT 36 * - 58 FROM tab2 AS cor0 CROSS JOIN tab2 AS cor1
 ----
@@ -6119,15 +5625,6 @@ SELECT 36 * - 58 FROM tab2 AS cor0 CROSS JOIN tab2 AS cor1
 onlyif mysql
 query II rowsort label-642
 SELECT DISTINCT 14 AS col1, CAST( NULL AS DECIMAL ) col2 FROM tab0
-----
-14
-NULL
-
-skipif mysql
-skipif serenedb
-skipif postgresql
-query II rowsort label-642
-SELECT DISTINCT 14 AS col1, CAST ( NULL AS REAL ) col2 FROM tab0
 ----
 14
 NULL
@@ -6186,15 +5683,6 @@ SELECT ALL COUNT ( * ) * ( + 60 ) FROM tab2 AS cor0
 ----
 180
 
-skipif serenedb
-skipif postgresql
-query I rowsort
-SELECT - 45 * + col1 col0 FROM tab0 AS cor0
-----
--3645
--45
--945
-
 onlyif mysql
 query II rowsort label-650
 SELECT - COUNT( * ), - 0 AS col2 FROM tab1 AS cor0
@@ -6238,14 +5726,6 @@ SELECT ALL col0 * 30 * 39 FROM tab2
 onlyif mysql
 query I rowsort label-654
 SELECT DISTINCT - ( - MIN( - - col0 ) ) col2 FROM tab0
-----
-15
-
-skipif mysql
-skipif serenedb
-skipif postgresql
-query I rowsort label-654
-SELECT DISTINCT - ( - MIN ( - - col0 ) ) col2 FROM tab0
 ----
 15
 
@@ -6293,18 +5773,6 @@ query I rowsort
 SELECT DISTINCT + - 82 FROM tab0 AS cor0 WHERE NOT + col2 NOT BETWEEN + 86 / - + col2 * + col1 AND + - col0
 ----
 
-skipif serenedb
-skipif postgresql
-query II rowsort
-SELECT ALL col1 + - col2 col2, col1 AS col0 FROM tab1
-----
--21
-47
--54
-5
--82
-14
-
 onlyif mysql
 query I rowsort label-662
 SELECT 72 DIV ( col2 ) FROM tab2
@@ -6344,12 +5812,6 @@ SELECT ALL + - SUM ( - 84 ) - + 92 FROM tab0 AS cor0
 ----
 160
 
-skipif serenedb
-skipif postgresql
-query I rowsort
-SELECT 79 col0 FROM tab0 AS cor0 WHERE NULL IS NOT NULL
-----
-
 query I rowsort
 SELECT ALL - + col2 - - + col1 AS col0 FROM tab1 cor0
 ----
@@ -6376,14 +5838,6 @@ SELECT 74 + + 11 + col2 FROM tab0 AS cor0 WHERE NOT NULL IS NULL
 onlyif mysql
 query I rowsort label-670
 SELECT DISTINCT + + SUM( - col0 ) col1 FROM tab2 AS cor0
-----
--185
-
-skipif mysql
-skipif serenedb
-skipif postgresql
-query I rowsort label-670
-SELECT DISTINCT + + SUM ( - col0 ) col1 FROM tab2 AS cor0
 ----
 -185
 
@@ -6616,14 +6070,6 @@ SELECT + COUNT( DISTINCT + 14 ) + MIN( 46 ) col0 FROM tab2 WHERE - col1 + col0 I
 ----
 NULL
 
-skipif mysql
-skipif serenedb
-skipif postgresql
-query I rowsort label-693
-SELECT + COUNT ( DISTINCT + 14 ) + MIN ( 46 ) col0 FROM tab2 WHERE - col1 + col0 IN ( - col2 + 19 )
-----
-NULL
-
 query III rowsort
 SELECT ALL * FROM tab0 WHERE NOT col2 * col0 IN ( + col2 * col0 + - col0 )
 ----
@@ -6659,15 +6105,6 @@ SELECT * FROM tab0 WHERE - col1 * - col0 IS NOT NULL
 query I rowsort
 SELECT 7 + - col0 FROM tab2 WHERE NULL IS NOT NULL
 ----
-
-skipif serenedb
-skipif postgresql
-query I rowsort
-SELECT + 91 col0 FROM tab1
-----
-91
-91
-91
 
 query I rowsort
 SELECT 79 + + 77 AS col2 FROM tab2
@@ -6790,12 +6227,6 @@ SELECT DISTINCT + col0 / 4 - - col1 * col0 FROM tab1 AS cor0
 4299
 446
 726
-
-skipif serenedb
-skipif postgresql
-query I rowsort
-SELECT ALL - col2 col1 FROM tab2 AS cor0 WHERE NOT - col1 <> + col1
-----
 
 query I rowsort
 SELECT + col2 FROM tab1 AS cor0 WHERE ( col1 + - 98 * + col2 ) > NULL
@@ -6950,16 +6381,6 @@ SELECT ALL + CAST( + col0 AS SIGNED ) col0 FROM tab0
 87
 97
 
-skipif mysql
-skipif serenedb
-skipif postgresql
-query I rowsort label-733
-SELECT ALL + CAST ( + col0 AS INTEGER ) col0 FROM tab0
-----
-15
-87
-97
-
 onlyif mysql
 query I rowsort label-734
 SELECT ALL SUM( - ( - 66 ) ) FROM tab2 AS cor0 CROSS JOIN tab0 AS cor1
@@ -6975,15 +6396,6 @@ SELECT ALL SUM ( - ( - 66 ) ) FROM tab2 AS cor0 CROSS JOIN tab0 AS cor1
 query III rowsort
 SELECT * FROM tab1 WHERE NOT + 7 > ( - 71 * 95 - 84 )
 ----
-
-skipif serenedb
-skipif postgresql
-query I rowsort
-SELECT ALL + - col2 * - col0 * col0 * - col1 col0 FROM tab0 cor0
-----
--1589490
--856575
--931491
 
 onlyif mysql
 query I rowsort label-737
@@ -7012,24 +6424,6 @@ SELECT DISTINCT col0 * CAST ( 62 AS INTEGER ) * 18 - - col0 FROM tab2 AS cor0
 51382
 71488
 83775
-
-skipif serenedb
-skipif postgresql
-query I rowsort
-SELECT ALL + ( - col2 ) * - - col2 col1 FROM tab0 AS cor0
-----
--100
--2209
--9801
-
-skipif serenedb
-skipif postgresql
-query I rowsort
-SELECT - col0 * + + 83 * - - 69 col2 FROM tab1 AS cor0
-----
--292077
--486795
--521157
 
 onlyif mysql
 query I rowsort label-741
@@ -7066,12 +6460,6 @@ query I rowsort label-743
 SELECT DISTINCT COUNT ( DISTINCT col2 ) AS col1 FROM tab1 WHERE NOT ( 17 ) NOT BETWEEN 8 AND ( col0 ) * col2
 ----
 3
-
-skipif serenedb
-skipif postgresql
-query I rowsort
-SELECT ALL - - 85 + col0 col0 FROM tab1 WHERE NOT - 30 IS NOT NULL
-----
 
 onlyif mysql
 query III rowsort label-745
@@ -7466,14 +6854,6 @@ SELECT col2 AS col2 FROM tab1 WHERE ( NULL ) IS NOT NULL
 onlyif mysql
 query I rowsort label-787
 SELECT DISTINCT - col2 * + - CAST( NULL AS SIGNED ) / - - 66 col1 FROM tab2
-----
-NULL
-
-skipif mysql
-skipif serenedb
-skipif postgresql
-query I rowsort label-787
-SELECT DISTINCT - col2 * + - CAST ( NULL AS INTEGER ) / - - 66 col1 FROM tab2
 ----
 NULL
 

@@ -35,7 +35,7 @@ struct ByNGramSimilarityOptions {
 
   std::vector<bstring> ngrams;
   float_t threshold{1.F};
-#ifdef IRESEARCH_TEST
+#ifdef SDB_GTEST
   bool allow_phrase{true};
 #else
   static constexpr bool allow_phrase{true};

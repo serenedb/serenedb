@@ -2508,7 +2508,7 @@ void Wanderator<IteratorTraits, FieldTraits, WandExtent, Root>::ReadSkip::Init(
   skip_levels.resize(num_levels);
   skip_scores.resize(num_levels);
   max.leaf = skip_scores.back();
-#ifdef IRESEARCH_TEST
+#ifdef SDB_GTEST
   max.levels = std::span{skip_scores};
 #endif
 

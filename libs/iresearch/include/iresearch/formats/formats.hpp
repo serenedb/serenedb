@@ -268,7 +268,7 @@ struct ColumnOutput : DataOutput {
   // NOTE: doc_limits::invalid() < doc && doc < doc_limits::eof()
   virtual void Prepare(doc_id_t doc) = 0;
 
-#ifdef IRESEARCH_TEST
+#ifdef SDB_GTEST
   ColumnOutput& operator()(doc_id_t doc) {
     Prepare(doc);
     return *this;

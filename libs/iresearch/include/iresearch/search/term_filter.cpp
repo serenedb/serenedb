@@ -115,9 +115,9 @@ Filter::Query::ptr ByTerm::prepare(const PrepareContext& ctx,
     VisitImpl(segment, *reader, term, visitor);
   }
 
-#ifndef IRESEARCH_TEST  // TODO(mbkkt) adjust tests
+#ifndef SDB_GTEST  // TODO(mbkkt) adjust tests
   if (states.empty()) {
-    return Prepared::empty();
+    return Query::empty();
   }
 #endif
 

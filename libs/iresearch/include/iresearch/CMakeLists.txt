@@ -167,10 +167,6 @@ include_directories(SYSTEM ${IRESEARCH_EXTERNAL_INCLUDES})
 
 add_library(iresearch-static STATIC ${IResearch_core_sources})
 
-if(BUILD_IRS_TESTS)
-    target_compile_definitions(iresearch-static PUBLIC IRESEARCH_TEST)
-endif()
-
 target_include_directories(
     iresearch-static
     SYSTEM

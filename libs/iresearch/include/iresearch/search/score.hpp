@@ -53,7 +53,7 @@ struct ScoreAttr : Attribute, ScoreFunction {
   struct UpperBounds {
     score_t tail = std::numeric_limits<score_t>::max();
     score_t leaf = std::numeric_limits<score_t>::max();
-#ifdef IRESEARCH_TEST
+#ifdef SDB_GTEST
     std::span<const score_t> levels;  // levels.back() == leaf
 #endif
   } max;

@@ -149,8 +149,6 @@ if(USE_DTRACE)
     add_definitions("-DUSE_DTRACE=1")
 endif()
 
-option(BUILD_IRS_TESTS "Build iresearch tests" OFF)
-
 if(USE_COVERAGE STREQUAL "SourceBased")
     # add_definitions("-DUSE_COVERAGE=1")
     add_compile_options(-fprofile-instr-generate -fcoverage-mapping)

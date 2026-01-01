@@ -266,9 +266,9 @@ Filter::Query::ptr FixedPrepareCollect(const PrepareContext& ctx,
     phrase_terms.reserve(phrase_size);
   }
 
-#ifndef IRESEARCH_TEST  // TODO(mbkkt) adjust tests
+#ifndef SDB_GTEST  // TODO(mbkkt) adjust tests
   if (phrase_states.empty()) {
-    return Filter::Prepared::empty();
+    return Filter::Query::empty();
   }
 #endif
 
@@ -405,9 +405,9 @@ Filter::Query::ptr VariadicPrepareCollect(const PrepareContext& ctx,
     num_terms.resize(phrase_size);
   }
 
-#ifndef IRESEARCH_TEST  // TODO(mbkkt) adjust tests
+#ifndef SDB_GTEST  // TODO(mbkkt) adjust tests
   if (phrase_states.empty()) {
-    return Filter::Prepared::empty();
+    return Filter::Query::empty();
   }
 #endif
 

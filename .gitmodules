@@ -94,3 +94,6 @@
 [submodule "third_party/sqllogictest-rs"]
 	path = third_party/sqllogictest-rs
 	url = git@github.com:serenedb/sqllogictest-rs.git
+[submodule "third_party/boost"]
+	path = third_party/boost
+	url = git@github.com:serenedb/boost.git

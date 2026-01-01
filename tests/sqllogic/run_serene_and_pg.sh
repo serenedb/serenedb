@@ -13,6 +13,11 @@ echo "Running tests against SereneDB"
   --protocol both \
   --runner=/sqllogictest-rs || exit_code=$?
 
+if [[ $exit_code != 0 ]]; then
+  echo "SereneDB tests failed, skipping PostgreSQL tests"
+  exit $exit_code
+fi
+
 echo "Running tests against PostgreSQL"
 ./run.sh \
   --host postgres \

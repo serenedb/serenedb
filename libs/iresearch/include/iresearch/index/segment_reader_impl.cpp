@@ -45,20 +45,23 @@ class AllIterator : public DocIterator {
 
   doc_id_t value() const noexcept final { return _doc.value; }
 
-  bool next() noexcept final {
-    if (_doc.value < _max_doc) {
-      ++_doc.value;
-      return true;
-    } else {
-      _doc.value = doc_limits::eof();
-      return false;
-    }
+  doc_id_t advance() noexcept final {
+    _doc.value = _doc.value < _max_doc ? _doc.value + 1 : doc_limits::eof();
+    return _doc.value;
   }
 
   doc_id_t seek(doc_id_t target) noexcept final {
     _doc.value = target <= _max_doc ? target : doc_limits::eof();
-
     return _doc.value;
+  }
+
+  uint32_t count() final {
+    if (doc_limits::eof(_doc.value)) {
+      return 0;
+    }
+    const auto count = _max_doc - _doc.value;
+    _doc.value = doc_limits::eof();
+    return count;
   }
 
  private:
@@ -77,25 +80,24 @@ class MaskDocIterator : public DocIterator {
 
   doc_id_t value() const final { return _it->value(); }
 
-  bool next() final {
-    while (_it->next()) {
-      if (!_mask.contains(value())) {
-        return true;
+  doc_id_t advance() final {
+    while (true) {
+      const auto doc = _it->advance();
+      if (!_mask.contains(doc)) {
+        return doc;
       }
     }
-    return false;
   }
 
   doc_id_t seek(doc_id_t target) final {
     const auto doc = _it->seek(target);
-
     if (!_mask.contains(doc)) {
       return doc;
     }
-
-    next();
-    return value();
+    return advance();
   }
+
+  uint32_t count() final { return Count(*this); }
 
  private:
   const DocumentMask& _mask;  // excluded document ids
@@ -106,7 +108,11 @@ class MaskedDocIterator : public DocIterator {
  public:
   MaskedDocIterator(doc_id_t begin, doc_id_t end,
                     const DocumentMask& docs_mask) noexcept
-    : _docs_mask{docs_mask}, _end{end}, _next{begin} {}
+    : _docs_mask{docs_mask}, _end{end}, _next{begin} {
+    SDB_ASSERT(begin <= end);
+    SDB_ASSERT(doc_limits::valid(begin));
+    SDB_ASSERT(!doc_limits::eof(end));
+  }
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::Type<DocAttr>::id() == type ? &_current : nullptr;
@@ -114,24 +120,23 @@ class MaskedDocIterator : public DocIterator {
 
   doc_id_t value() const final { return _current.value; }
 
-  bool next() final {
+  doc_id_t advance() final {
     while (_next < _end) {
       _current.value = _next++;
-
       if (!_docs_mask.contains(_current.value)) {
-        return true;
+        return _current.value;
       }
     }
-
-    _current.value = doc_limits::eof();
-    return false;
+    return _current.value = doc_limits::eof();
   }
 
   doc_id_t seek(doc_id_t target) final {
+    SDB_ASSERT(_next <= target);
     _next = target;
-    next();
-    return value();
+    return advance();
   }
+
+  uint32_t count() final { return Count(*this); }
 
  private:
   const DocumentMask& _docs_mask;

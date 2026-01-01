@@ -165,9 +165,11 @@ class UnaryDisjunction : public CompoundDocIterator<Adapter> {
 
   doc_id_t value() const noexcept final { return _it.doc->value; }
 
-  bool next() final { return _it->next(); }
+  doc_id_t advance() final { return _it->advance(); }
 
   doc_id_t seek(doc_id_t target) final { return _it->seek(target); }
+
+  uint32_t count() final { return _it->count(); }
 
   void visit(void* ctx, IteratorVisitor<Adapter> visitor) final {
     SDB_ASSERT(ctx);
@@ -209,18 +211,18 @@ class BasicDisjunction : public CompoundDocIterator<Adapter>,
     return std::get<DocAttr>(_attrs).value;
   }
 
-  bool next() final {
+  doc_id_t advance() final {
     next_iterator_impl(_lhs);
     next_iterator_impl(_rhs);
 
     auto& doc_value = std::get<DocAttr>(_attrs).value;
-    return !doc_limits::eof(doc_value = std::min(_lhs.value(), _rhs.value()));
+    return doc_value = std::min(_lhs.value(), _rhs.value());
   }
 
   doc_id_t seek(doc_id_t target) final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
 
-    if (target <= doc_value) {
+    if (target <= doc_value) [[unlikely]] {
       return doc_value;
     }
 
@@ -230,6 +232,8 @@ class BasicDisjunction : public CompoundDocIterator<Adapter>,
 
     return doc_value = std::min(_lhs.value(), _rhs.value());
   }
+
+  uint32_t count() final { return DocIterator::Count(*this); }
 
   void visit(void* ctx, IteratorVisitor<Adapter> visitor) final {
     SDB_ASSERT(ctx);
@@ -308,7 +312,7 @@ class BasicDisjunction : public CompoundDocIterator<Adapter>,
     const auto value = it.value();
 
     if (doc_value == value) {
-      it->next();
+      it->advance();
     } else if (value < doc_value) {
       it->seek(doc_value + doc_id_t(!doc_limits::eof(doc_value)));
     }
@@ -391,11 +395,11 @@ class SmallDisjunction : public CompoundDocIterator<Adapter>,
     return true;
   }
 
-  bool next() final {
+  doc_id_t advance() final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
 
     if (doc_limits::eof(doc_value)) {
-      return false;
+      return doc_value;
     }
 
     doc_id_t min = doc_limits::eof();
@@ -404,8 +408,7 @@ class SmallDisjunction : public CompoundDocIterator<Adapter>,
       auto& it = *begin;
       if (!next_iterator_impl(it)) {
         if (!remove_iterator(begin)) {
-          doc_value = doc_limits::eof();
-          return false;
+          return doc_value = doc_limits::eof();
         }
       } else {
         min = std::min(min, it.value());
@@ -413,8 +416,7 @@ class SmallDisjunction : public CompoundDocIterator<Adapter>,
       }
     }
 
-    doc_value = min;
-    return true;
+    return doc_value = min;
   }
 
   doc_id_t seek(doc_id_t target) final {
@@ -449,6 +451,8 @@ class SmallDisjunction : public CompoundDocIterator<Adapter>,
 
     return doc_value = min;
   }
+
+  uint32_t count() final { return DocIterator::Count(*this); }
 
   void visit(void* ctx, IteratorVisitor<Adapter> visitor) final {
     SDB_ASSERT(ctx);
@@ -614,28 +618,27 @@ class Disjunction : public CompoundDocIterator<Adapter>,
     return std::get<DocAttr>(_attrs).value;
   }
 
-  bool next() final {
+  doc_id_t advance() final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
 
     if (doc_limits::eof(doc_value)) {
-      return false;
+      return doc_value;
     }
 
     while (lead().value() <= doc_value) {
-      const bool exhausted = lead().value() == doc_value
-                               ? !lead()->next()
-                               : doc_limits::eof(lead()->seek(doc_value + 1));
+      const auto target = lead().value() == doc_value
+                            ? lead()->advance()
+                            : lead()->seek(doc_value + 1);
+      const bool exhausted = doc_limits::eof(target);
 
       if (exhausted && !remove_lead()) {
-        doc_value = doc_limits::eof();
-        return false;
+        return doc_value = doc_limits::eof();
       }
 
       refresh_lead();
     }
 
-    doc_value = lead().value();
-    return true;
+    return doc_value = lead().value();
   }
 
   doc_id_t seek(doc_id_t target) final {
@@ -657,6 +660,8 @@ class Disjunction : public CompoundDocIterator<Adapter>,
 
     return doc_value = lead().value();
   }
+
+  uint32_t count() final { return DocIterator::Count(*this); }
 
   void visit(void* ctx, IteratorVisitor<Adapter> visitor) final {
     SDB_ASSERT(ctx);
@@ -900,7 +905,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
     return std::get<DocAttr>(_attrs).value;
   }
 
-  bool next() final {
+  doc_id_t advance() final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
 
     do {
@@ -912,8 +917,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
           }
 
           _match_count = 0;
-          doc_value = doc_limits::eof();
-          return false;
+          return doc_value = doc_limits::eof();
         }
 
         _cur = *_begin++;
@@ -941,7 +945,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
         _score_value = _score_buf.get(buf_offset);
       }
 
-      return true;
+      return doc_value;
     } while (traits_type::kMinMatch);
     SDB_UNREACHABLE();
   }
@@ -949,9 +953,11 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
   doc_id_t seek(doc_id_t target) final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
 
-    if (target <= doc_value) {
+    if (target <= doc_value) [[unlikely]] {
       return doc_value;
-    } else if (target < _max) {
+    }
+
+    if (target < _max) {
       const doc_id_t block_base = (_max - kWindow);
 
       target -= block_base;
@@ -963,86 +969,86 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
       SDB_ASSERT(_begin > std::begin(_mask) && _begin <= std::end(_mask));
       _cur = _begin[-1] & ((~UINT64_C(0)) << target % kBlockSize);
 
-      next();
-    } else {
-      doc_value = doc_limits::eof();
-
-      if constexpr (traits_type::kMinMatch) {
-        _match_count = 0;
-      }
-
-      visit_and_purge([this, target, &doc_value](auto& it) mutable {
-        IRS_IGNORE(this);
-        const auto value = it->seek(target);
-
-        if (doc_limits::eof(value)) {
-          // exhausted
-          return false;
-        }
-
-        // this is to circumvent bug in GCC 10.1 on ARM64
-        constexpr bool kMinMatch = traits_type::kMinMatch;
-
-        if (value < doc_value) {
-          doc_value = value;
-          if constexpr (kMinMatch) {
-            _match_count = 1;
-          }
-        } else {
-          if constexpr (kMinMatch) {
-            if (target == value) {
-              ++_match_count;
-            }
-          }
-        }
-
-        return true;
-      });
-
-      if (_itrs.empty()) {
-        doc_value = doc_limits::eof();
-        _match_count = 0;
-
-        return doc_limits::eof();
-      }
-
-      SDB_ASSERT(!doc_limits::eof(doc_value));
-      _cur = 0;
-      _begin = std::end(_mask);  // enforce "refill()" for upcoming "next()"
-      _max = doc_value;
-
-      if constexpr (traits_type::kSeekReadahead) {
-        _min = doc_value;
-        next();
-      } else {
-        _min = doc_value + 1;
-        _buf_offset = 0;
-
-        if constexpr (traits_type::kMinMatch) {
-          if (_match_count < _match_buf.min_match_count()) {
-            next();
-            return doc_value;
-          }
-        }
-
-        if constexpr (kHasScore<Merger>) {
-          std::memset(_score_buf.data(), 0, _score_buf.bucket_size());
-          for (auto& it : _itrs) {
-            SDB_ASSERT(it.score);
-            if (!it.score->IsDefault() && doc_value == it->value()) {
-              auto& merger = static_cast<Merger&>(*this);
-              (*it.score)(merger.temp());
-              merger(_score_buf.data(), merger.temp());
-            }
-          }
-
-          _score_value = _score_buf.data();
-        }
-      }
+      return advance();
     }
 
-    return doc_value;
+    doc_value = doc_limits::eof();
+
+    if constexpr (traits_type::kMinMatch) {
+      _match_count = 0;
+    }
+
+    visit_and_purge([this, target, &doc_value](auto& it) mutable {
+      IRS_IGNORE(this);
+      const auto value = it->seek(target);
+
+      if (doc_limits::eof(value)) {
+        // exhausted
+        return false;
+      }
+
+      // this is to circumvent bug in GCC 10.1 on ARM64
+      constexpr bool kMinMatch = traits_type::kMinMatch;
+
+      if (value < doc_value) {
+        doc_value = value;
+        if constexpr (kMinMatch) {
+          _match_count = 1;
+        }
+      } else {
+        if constexpr (kMinMatch) {
+          if (target == value) {
+            ++_match_count;
+          }
+        }
+      }
+
+      return true;
+    });
+
+    if (_itrs.empty()) {
+      doc_value = doc_limits::eof();
+      _match_count = 0;
+
+      return doc_limits::eof();
+    }
+
+    SDB_ASSERT(!doc_limits::eof(doc_value));
+    _cur = 0;
+    _begin = std::end(_mask);  // enforce "refill()" for upcoming "next()"
+    _max = doc_value;
+
+    if constexpr (traits_type::kSeekReadahead) {
+      _min = doc_value;
+      return advance();
+    } else {
+      _min = doc_value + 1;
+      _buf_offset = 0;
+
+      if constexpr (traits_type::kMinMatch) {
+        if (_match_count < _match_buf.min_match_count()) {
+          return advance();
+        }
+      }
+
+      if constexpr (kHasScore<Merger>) {
+        std::memset(_score_buf.data(), 0, _score_buf.bucket_size());
+        for (auto& it : _itrs) {
+          SDB_ASSERT(it.score);
+          if (!it.score->IsDefault() && doc_value == it->value()) {
+            auto& merger = static_cast<Merger&>(*this);
+            (*it.score)(merger.temp());
+            merger(_score_buf.data(), merger.temp());
+          }
+        }
+
+        _score_value = _score_buf.data();
+      }
+      return doc_value;
+    }
   }
+
+  uint32_t count() final { return DocIterator::Count(*this); }
 
  private:
   static constexpr doc_id_t kBlockSize = BitsRequired<uint64_t>();

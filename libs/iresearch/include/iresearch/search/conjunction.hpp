@@ -188,27 +188,21 @@ class Conjunction : public ConjunctionBase<DocIteratorImpl, Merger> {
 
   doc_id_t value() const final { return *_front_doc; }
 
-  bool next() override {
-    if (!_front->next()) [[unlikely]] {
-      return false;
-    }
-
-    return !doc_limits::eof(converge(*_front_doc));
-  }
+  doc_id_t advance() override { return converge(_front->advance()); }
 
   doc_id_t seek(doc_id_t target) override {
-    target = _front->seek(target);
-    if (doc_limits::eof(target)) [[unlikely]] {
-      return doc_limits::eof();
-    }
-
-    return converge(target);
+    return converge(_front->seek(target));
   }
+
+  uint32_t count() override { return DocIterator::Count(*this); }
 
  private:
   // tries to converge front_ and other iterators to the specified target.
   // if it impossible tries to find first convergence place
   doc_id_t converge(doc_id_t target) {
+    if (doc_limits::eof(target)) [[unlikely]] {
+      return doc_limits::eof();
+    }
     const auto begin = this->_itrs.begin() + 1;
     const auto end = this->_itrs.end();
   restart:
@@ -276,15 +270,7 @@ class BlockConjunction : public ConjunctionBase<DocIteratorImpl, Merger> {
 
   doc_id_t value() const final { return std::get<DocAttr>(_attrs).value; }
 
-  bool next() final { return !doc_limits::eof(seek(value() + 1)); }
-
-  doc_id_t shallow_seek(doc_id_t target) final {
-    target = ShallowSeekImpl(target);
-    if (doc_limits::eof(target)) [[unlikely]] {
-      return Seal();
-    }
-    return _leafs_doc;
-  }
+  doc_id_t advance() final { return seek(value() + 1); }
 
   doc_id_t seek(doc_id_t target) final {
     auto& doc = std::get<DocAttr>(_attrs).value;
@@ -349,6 +335,16 @@ class BlockConjunction : public ConjunctionBase<DocIteratorImpl, Merger> {
       return target;
     }
   }
+
+  doc_id_t shallow_seek(doc_id_t target) final {
+    target = ShallowSeekImpl(target);
+    if (doc_limits::eof(target)) [[unlikely]] {
+      return Seal();
+    }
+    return _leafs_doc;
+  }
+
+  uint32_t count() final { return DocIterator::Count(*this); }
 
  private:
   // TODO(mbkkt) Maybe optimize for 2?

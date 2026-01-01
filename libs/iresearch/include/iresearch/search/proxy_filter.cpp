@@ -51,7 +51,6 @@ class LazyFilterBitset : private util::Noncopyable {
     // TODO(mbkkt) use mask from segment manually to avoid virtual call
     _real_doc_itr = ctx.segment.mask(filter.execute(ctx));
 
-    _real_doc = irs::get<DocAttr>(*_real_doc_itr);
     _cost = CostAttr::extract(*_real_doc_itr);
 
     _set = std::allocator<WordT>{}.allocate(_words);
@@ -76,9 +75,12 @@ class LazyFilterBitset : private util::Noncopyable {
 
     const auto* const requested = _set + word_idx;
     if (requested >= _end) {
-      auto block_limit = ((word_idx + 1) * kBits) - 1;
-      while (_real_doc_itr->next()) {
-        auto doc_id = _real_doc->value;
+      const auto block_limit = ((word_idx + 1) * kBits) - 1;
+      while (true) {
+        const auto doc_id = _real_doc_itr->advance();
+        if (doc_limits::eof(doc_id)) {
+          break;
+        }
         SetBit(_set[doc_id / kBits], doc_id % kBits);
         if (doc_id >= block_limit) {
           break;  // we've filled requested word
@@ -96,7 +98,6 @@ class LazyFilterBitset : private util::Noncopyable {
   IResourceManager& _manager;
 
   DocIterator::ptr _real_doc_itr;
-  const DocAttr* _real_doc{nullptr};
   CostAttr::Type _cost;
 
   WordT* _set{nullptr};
@@ -121,7 +122,7 @@ class LazyFilterBitsetIterator : public DocIterator, private util::Noncopyable {
 
   doc_id_t value() const noexcept final { return _doc.value; }
 
-  bool next() final {
+  doc_id_t advance() final {
     while (!_word) {
       if (_bitset.Get(_word_idx, &_word)) {
         ++_word_idx;  // move only if ok. Or we could be overflowed!
@@ -130,15 +131,13 @@ class LazyFilterBitsetIterator : public DocIterator, private util::Noncopyable {
         continue;
       }
       _word = 0;
-      _doc.value = doc_limits::eof();
-      return false;
+      return _doc.value = doc_limits::eof();
     }
     const auto delta = std::countr_zero(_word);
     SDB_ASSERT(0 <= delta);
     SDB_ASSERT(delta < BitsRequired<LazyFilterBitset::WordT>());
     _word = (_word >> delta) >> 1;
-    _doc.value += 1 + delta;
-    return true;
+    return _doc.value += 1 + delta;
   }
 
   doc_id_t seek(doc_id_t target) final {
@@ -150,13 +149,17 @@ class LazyFilterBitsetIterator : public DocIterator, private util::Noncopyable {
       _doc.value = _base - 1 + bit_idx;
       ++_word_idx;  // mark this word as consumed
       // FIXME consider inlining to speedup
-      next();
-      return _doc.value;
+      return advance();
     } else {
       _doc.value = doc_limits::eof();
       _word = 0;
       return _doc.value;
     }
+  }
+
+  uint32_t count() final {
+    // TODO(mbkkt) custom implementation?
+    return Count(*this);
   }
 
   void Reset() noexcept {

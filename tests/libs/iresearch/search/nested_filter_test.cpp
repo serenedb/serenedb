@@ -43,33 +43,30 @@ struct ChildIterator : irs::DocIterator {
     EXPECT_NE(nullptr, _it);
   }
 
+  irs::Attribute* GetMutable(irs::TypeInfo::type_id id) noexcept final {
+    return _it->GetMutable(id);
+  }
+
   irs::doc_id_t value() const final { return _it->value(); }
 
-  bool next() final {
-    while (1) {
-      if (!_it->next()) {
-        return false;
-      }
-
-      if (!_parents.contains(_it->value())) {
-        return true;
+  irs::doc_id_t advance() final {
+    while (true) {
+      const auto doc = _it->advance();
+      if (irs::doc_limits::eof(doc) || !_parents.contains(doc)) {
+        return doc;
       }
     }
   }
 
   irs::doc_id_t seek(irs::doc_id_t target) final {
-    const auto doc = _it->seek(target);
-
-    if (!_parents.contains(doc)) {
+    if (const auto doc = value(); target <= doc) [[unlikely]] {
       return doc;
     }
-
-    next();
-    return value();
-  }
-
-  irs::Attribute* GetMutable(irs::TypeInfo::type_id id) noexcept final {
-    return _it->GetMutable(id);
+    const auto doc = _it->seek(target);
+    if (irs::doc_limits::eof(doc) || !_parents.contains(doc)) {
+      return doc;
+    }
+    return advance();
   }
 
  private:
@@ -85,19 +82,18 @@ class PrevDocWrapper : public irs::DocIterator {
                     nullptr);
   }
 
-  irs::doc_id_t value() const final { return _it->value(); }
-
-  irs::doc_id_t seek(irs::doc_id_t target) final { return _it->seek(target); }
-
-  bool next() final { return _it->next(); }
-
   irs::Attribute* GetMutable(irs::TypeInfo::type_id id) final {
     if (irs::Type<irs::PrevDocAttr>::id() == id) {
       return &_prev_doc;
     }
-
     return _it->GetMutable(id);
   }
+
+  irs::doc_id_t value() const final { return _it->value(); }
+
+  irs::doc_id_t advance() final { return _it->advance(); }
+
+  irs::doc_id_t seek(irs::doc_id_t target) final { return _it->seek(target); }
 
  private:
   DocIterator::ptr _it;

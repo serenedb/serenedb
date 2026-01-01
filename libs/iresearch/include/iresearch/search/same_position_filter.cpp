@@ -46,23 +46,27 @@ class SamePositionIterator : public Conjunction {
     SDB_ASSERT(!_pos.empty());
   }
 
-  bool next() final {
-    while (Conjunction::next()) {
-      if (FindSamePosition()) {
-        return true;
+  doc_id_t advance() final {
+    while (true) {
+      const auto doc = Conjunction::advance();
+      if (doc_limits::eof(doc) || FindSamePosition()) {
+        return doc;
       }
     }
-    return false;
   }
 
   doc_id_t seek(doc_id_t target) final {
+    if (const auto doc = this->value(); target <= doc) [[unlikely]] {
+      return doc;
+    }
     const auto doc = Conjunction::seek(target);
     if (doc_limits::eof(doc) || FindSamePosition()) {
       return doc;
     }
-    next();
-    return Conjunction::value();
+    return advance();
   }
+
+  uint32_t count() final { return DocIterator::Count(*this); }
 
  private:
   bool FindSamePosition() {

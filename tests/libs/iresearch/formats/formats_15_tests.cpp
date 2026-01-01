@@ -80,14 +80,13 @@ class FreqThresholdDocIterator : public irs::DocIterator {
 
   irs::doc_id_t value() const final { return _impl->value(); }
 
-  bool next() final {
+  irs::doc_id_t advance() final {
     while (_impl->next()) {
-      if (_freq && Less()) {
-        continue;
+      if (!_freq || !Less()) {
+        break;
       }
-      return true;
     }
-    return false;
+    return value();
   }
 
   irs::doc_id_t seek(irs::doc_id_t target) final {

@@ -89,13 +89,15 @@ class ScorerWrapper : public DocIterator {
 
   doc_id_t value() const final { return _it->value(); }
 
-  bool next() final { return _it->next(); }
+  doc_id_t advance() final { return _it->advance(); }
 
   doc_id_t seek(doc_id_t target) final { return _it->seek(target); }
 
   doc_id_t shallow_seek(doc_id_t target) final {
     return _it->shallow_seek(target);
   }
+
+  uint32_t count() final { return _it->count(); }
 
  private:
   DocIterator::ptr _it;
@@ -139,23 +141,20 @@ class ChildToParentJoin : public DocIterator, private Matcher {
     return std::get<AttributePtr<DocAttr>>(_attrs).ptr->value;
   }
 
-  bool next() final {
-    if (_parent->next()) [[likely]] {
-      return !doc_limits::eof(SeekInternal(value()));
-    }
-    return false;
+  doc_id_t advance() final {
+    const auto parent = _parent->advance();
+    return SeekInternal(parent);
   }
 
   doc_id_t seek(doc_id_t target) final {
-    if (const auto doc_value = value(); target <= doc_value) [[unlikely]] {
-      return doc_value;
+    if (const auto doc = value(); target <= doc) [[unlikely]] {
+      return doc;
     }
     const auto parent = _parent->seek(target);
-    if (doc_limits::eof(parent)) [[unlikely]] {
-      return doc_limits::eof();
-    }
     return SeekInternal(parent);
   }
+
+  uint32_t count() final { return Count(*this); }
 
  private:
   friend Matcher;
@@ -170,6 +169,9 @@ class ChildToParentJoin : public DocIterator, private Matcher {
   }
 
   doc_id_t SeekInternal(doc_id_t parent) {
+    if (doc_limits::eof(parent)) [[unlikely]] {
+      return doc_limits::eof();
+    }
     for (doc_id_t first_child = _child->seek(FirstChildApprox());
          (first_child = Matcher::Accept(first_child, parent));
          first_child = _child->seek(FirstChildApprox())) {
@@ -221,7 +223,7 @@ struct ScoreBuffer<NoopAggregator> {
 
 template<typename Merger, size_t Size>
 struct ScoreBuffer<Aggregator<Merger, Size>> {
-  static constexpr bool kIsDynamic = Size == std::numeric_limits<size_t>::max();
+  static constexpr bool kIsDynamic = Size == kBufferRuntimeSize;
 
   using BufferType =
     std::conditional_t<kIsDynamic, bstring, std::array<score_t, Size>>;
@@ -334,24 +336,28 @@ class PredMatcher : public Merger,
     auto& merger = static_cast<Merger&>(*this);
     auto& buf = static_cast<BufferType&>(*this);
 
-    const auto* child_doc = self._child_doc;
-
     if constexpr (kHasScore<Merger>) {
-      (*self._child_score)(buf.Data());
+      self._child_score->Score(buf.Data());
     }
 
-    while (_pred->next() && _pred_doc->value < parent) {
-      if (!child.next() || _pred_doc->value != child_doc->value) {
+    while (true) {
+      const auto pred_doc = _pred->advance();
+      if (parent <= pred_doc) {
+        return doc_limits::invalid();
+      }
+      SDB_ASSERT(!doc_limits::eof(pred_doc));
+
+      const auto child_doc = child.advance();
+      if (pred_doc != child_doc) {
         return parent + 1;
       }
+      SDB_ASSERT(!doc_limits::eof(child_doc));
 
       if constexpr (kHasScore<Merger>) {
         (*self._child_score)(merger.temp());
         merger(buf.Data(), merger.temp());
       }
     }
-
-    return 0;
   }
 
   ScoreFunction PrepareScore() noexcept {

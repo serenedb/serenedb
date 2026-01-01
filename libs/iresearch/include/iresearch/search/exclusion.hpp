@@ -45,49 +45,40 @@ class Exclusion : public DocIterator {
 
   doc_id_t value() const final { return _incl_doc->value; }
 
-  bool next() final {
-    if (!_incl->next()) {
-      return false;
-    }
-
-    return !doc_limits::eof(converge(_incl_doc->value));
+  doc_id_t advance() final {
+    const auto incl = _incl->advance();
+    return converge(incl);
   }
 
   doc_id_t seek(doc_id_t target) final {
-    if (!doc_limits::valid(target)) {
-      return _incl_doc->value;
+    if (const auto doc = value(); target <= doc) [[unlikely]] {
+      return doc;
     }
-
-    if (doc_limits::eof(target = _incl->seek(target))) {
-      return target;
-    }
-
-    return converge(target);
+    const auto incl = _incl->seek(target);
+    return converge(incl);
   }
 
+  uint32_t count() final { return Count(*this); }
+
  private:
-  // moves iterator to next not excluded
-  // document not less than "target"
-  doc_id_t converge(doc_id_t target) {
+  doc_id_t converge(doc_id_t incl) {
+    if (doc_limits::eof(incl)) [[unlikely]] {
+      return incl;
+    }
     auto excl = _excl_doc->value;
-
-    if (excl < target) {
-      excl = _excl->seek(target);
+    if (excl < incl) {
+      excl = _excl->seek(incl);
     }
-
-    for (; excl == target;) {
-      if (!_incl->next()) {
-        return _incl_doc->value;
+    while (excl == incl) {
+      incl = _incl->advance();
+      if (doc_limits::eof(incl)) {
+        return incl;
       }
-
-      target = _incl_doc->value;
-
-      if (excl < target) {
-        excl = _excl->seek(target);
+      if (excl < incl) {
+        excl = _excl->seek(incl);
       }
     }
-
-    return target;
+    return incl;
   }
 
   DocIterator::ptr _incl;

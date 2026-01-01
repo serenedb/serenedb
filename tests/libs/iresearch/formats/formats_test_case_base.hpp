@@ -146,14 +146,13 @@ class FormatTestCase : public IndexTestBase {
       }
     }
 
-    bool next() final {
+    irs::doc_id_t advance() final {
       if (!irs::doc_limits::valid(_doc.value)) {
         _callback(*this);
       }
 
       if (_next == _end) {
-        _doc.value = irs::doc_limits::eof();
-        return false;
+        return _doc.value = irs::doc_limits::eof();
       }
 
       std::tie(_doc.value, _freq.value) = *_next;
@@ -165,7 +164,7 @@ class FormatTestCase : public IndexTestBase {
       _pos.clear();
       ++_next;
 
-      return true;
+      return _doc.value;
     }
 
     irs::doc_id_t value() const final { return _doc.value; }

@@ -69,12 +69,11 @@ class BufferedColumnIterator : public ResettableDocIterator {
     return std::get<DocAttr>(_attrs).value;
   }
 
-  bool next() noexcept final {
+  doc_id_t advance() noexcept final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
 
     if (_next == _end) [[unlikely]] {
-      doc_value = doc_limits::eof();
-      return false;
+      return doc_value = doc_limits::eof();
     }
 
     auto& payload = std::get<irs::PayAttr>(_attrs);
@@ -84,7 +83,7 @@ class BufferedColumnIterator : public ResettableDocIterator {
 
     ++_next;
 
-    return true;
+    return doc_value;
   }
 
   doc_id_t seek(doc_id_t target) noexcept final {
@@ -103,8 +102,7 @@ class BufferedColumnIterator : public ResettableDocIterator {
     }
 
     _next = curr;
-    next();
-    return value();
+    return advance();
   }
 
   void reset() final {

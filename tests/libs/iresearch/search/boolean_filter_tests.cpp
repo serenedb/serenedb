@@ -133,15 +133,14 @@ class BasicDocIterator : public irs::DocIterator, irs::ScoreCtx {
 
   irs::doc_id_t value() const final { return _doc.value; }
 
-  bool next() final {
+  irs::doc_id_t advance() final {
     if (_first == _last) {
-      _doc.value = irs::doc_limits::eof();
-      return false;
+      return _doc.value = irs::doc_limits::eof();
     }
 
     _doc.value = *_first;
     ++_first;
-    return true;
+    return _doc.value;
   }
 
   irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
@@ -155,7 +154,7 @@ class BasicDocIterator : public irs::DocIterator, irs::ScoreCtx {
     }
 
     do {
-      next();
+      advance();
     } while (_doc.value < doc);
 
     return _doc.value;
@@ -1157,7 +1156,7 @@ struct Unestimated : public irs::FilterWithBoost {
       // prevent iterator to filter out
       return irs::doc_limits::invalid();
     }
-    bool next() final { return false; }
+    irs::doc_id_t advance() final { return irs::doc_limits::eof(); }
     irs::doc_id_t seek(irs::doc_id_t) final {
       // prevent iterator to filter out
       return irs::doc_limits::invalid();
@@ -1199,7 +1198,7 @@ struct Estimated : public irs::FilterWithBoost {
       // prevent iterator to filter out
       return irs::doc_limits::invalid();
     }
-    bool next() final { return false; }
+    irs::doc_id_t advance() final { return irs::doc_limits::eof(); }
     irs::doc_id_t seek(irs::doc_id_t) final {
       // prevent iterator to filter out
       return irs::doc_limits::invalid();
@@ -15301,7 +15300,8 @@ TEST(exclusion_test, seek) {
     ASSERT_EQ(included.size(), irs::CostAttr::extract(it));
 
     for (const auto& target : expected) {
-      ASSERT_EQ(target.expected, it.seek(target.target));
+      ASSERT_EQ(target.expected, it.seek(target.target))
+        << " for target " << target.target;
     }
   }
 

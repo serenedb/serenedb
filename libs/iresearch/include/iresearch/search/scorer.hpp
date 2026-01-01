@@ -274,7 +274,7 @@ class Scorers final : private util::Noncopyable {
   IndexFeatures features() const noexcept { return _features; }
 
  private:
-  using ScorerBuckets = sdb::containers::SmallVector<ScorerBucket, 2>;
+  using ScorerBuckets = sdb::containers::SmallVector<ScorerBucket, 1>;
 
   template<typename Iterator>
   static Scorers Prepare(Iterator begin, Iterator end);
@@ -429,12 +429,6 @@ auto ResolveMergeType(ScoreMergeType type, size_t num_buckets,
         return visitor(NoopAggregator{});
       case 1:
         return visitor(Aggregator<Merger, 1>{});
-      case 2:
-        return visitor(Aggregator<Merger, 2>{});
-      case 3:
-        return visitor(Aggregator<Merger, 3>{});
-      case 4:
-        return visitor(Aggregator<Merger, 4>{});
       default:
         return visitor(Aggregator<Merger, kBufferRuntimeSize>{num_buckets});
     }

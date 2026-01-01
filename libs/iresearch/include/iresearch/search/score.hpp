@@ -59,7 +59,7 @@ struct ScoreAttr : Attribute, ScoreFunction {
   } max;
 };
 
-using ScoreFunctions = sdb::containers::SmallVector<ScoreFunction, 2>;
+using ScoreFunctions = sdb::containers::SmallVector<ScoreFunction, 1>;
 
 // Prepare scorer for each of the bucket.
 ScoreFunctions PrepareScorers(std::span<const ScorerBucket> buckets,

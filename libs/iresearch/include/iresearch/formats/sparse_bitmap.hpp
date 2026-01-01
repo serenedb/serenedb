@@ -215,7 +215,7 @@ class SparseBitmapIterator : public ResettableDocIterator {
     return std::get<DocAttr>(_attrs).value;
   }
 
-  bool next() final { return !doc_limits::eof(seek(value() + 1)); }
+  doc_id_t advance() final { return seek(value() + 1); }
 
   doc_id_t seek(doc_id_t target) final;
 

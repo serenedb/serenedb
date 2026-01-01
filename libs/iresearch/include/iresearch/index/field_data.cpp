@@ -261,13 +261,12 @@ class DocIteratorImpl : public DocIterator {
     return std::get<DocAttr>(_attrs).value;
   }
 
-  bool next() final {
+  doc_id_t advance() final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
 
     if (_freq_in.eof()) {
       if (!_posting) {
-        doc_value = doc_limits::eof();
-        return false;
+        return doc_value = doc_limits::eof();
       }
 
       doc_value = _posting->doc;
@@ -304,7 +303,7 @@ class DocIteratorImpl : public DocIterator {
 
     _pos.Clear();
 
-    return true;
+    return doc_value;
   }
 
   doc_id_t seek(doc_id_t doc) final {
@@ -385,7 +384,7 @@ class SortingDocIteratorImpl : public DocIterator {
     return std::get<DocAttr>(_attrs).value;
   }
 
-  bool next() noexcept final {
+  doc_id_t advance() noexcept final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
 
     while (_it != _docs.end()) {
@@ -404,12 +403,11 @@ class SortingDocIteratorImpl : public DocIterator {
       }
 
       ++_it;
-      return true;
+      return doc_value;
     }
 
     _freq.value = 0;
-    doc_value = doc_limits::eof();
-    return false;
+    return doc_value = doc_limits::eof();
   }
 
   doc_id_t seek(doc_id_t doc) noexcept final {

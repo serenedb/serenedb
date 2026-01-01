@@ -491,24 +491,27 @@ class NGramSimilarityDocIterator : public DocIterator, private ScoreCtx {
     return std::get<AttributePtr<DocAttr>>(_attrs).ptr->value;
   }
 
-  bool next() final {
-    while (_approx.next()) {
-      if (_checker.Check(_approx.MatchCount(), value())) {
-        return true;
+  doc_id_t advance() final {
+    while (true) {
+      const auto doc = _approx.advance();
+      if (doc_limits::eof(doc) || _checker.Check(_approx.MatchCount(), doc)) {
+        return doc;
       }
     }
-    return false;
   }
 
   doc_id_t seek(doc_id_t target) final {
-    const auto prev = value();
-    const auto curr = _approx.seek(target);
-    if (prev == curr || _checker.Check(_approx.MatchCount(), curr)) {
-      return curr;
+    if (const auto doc = value(); target <= doc) [[unlikely]] {
+      return doc;
     }
-    next();
-    return value();
+    const auto doc = _approx.seek(target);
+    if (doc_limits::eof(doc) || _checker.Check(_approx.MatchCount(), doc)) {
+      return doc;
+    }
+    return advance();
   }
+
+  uint32_t count() final { return Count(*this); }
 
  private:
   using Attributes =

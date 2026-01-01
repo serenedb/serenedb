@@ -909,13 +909,6 @@ void PostingsWriterImpl<FormatTraits>::AddPosition(uint32_t pos) {
 template<typename FormatTraits>
 void PostingsWriterImpl<FormatTraits>::write(DocIterator& docs,
                                              TermMeta& base_meta) {
-  const auto* doc = irs::get<DocAttr>(docs);
-
-  if (!doc) [[unlikely]] {
-    SDB_ASSERT(false);
-    throw IllegalArgument{"'document' attribute is missing"};
-  }
-
   auto refresh = [this, no_freq = FreqAttr{}](auto& attrs) noexcept {
     _attrs.Reset(attrs);
     if (!_attrs.freq) {
@@ -940,10 +933,14 @@ void PostingsWriterImpl<FormatTraits>::write(DocIterator& docs,
   uint32_t docs_count = 0;
   uint32_t total_freq = 0;
 
-  while (docs.next()) {
-    SDB_ASSERT(doc_limits::valid(doc->value));
+  while (true) {
+    const auto doc = docs.advance();
+    SDB_ASSERT(doc_limits::valid(doc));
+    if (doc_limits::eof(doc)) {
+      break;
+    }
     SDB_ASSERT(_attrs.freq);
-    _attrs.doc.value = doc->value;
+    _attrs.doc.value = doc;
     _attrs.freq_value.value = _attrs.freq->value;
 
     if (doc_limits::valid(_doc.last) && _doc.Empty()) {
@@ -1787,7 +1784,7 @@ class SingleDocIterator
     return std::get<DocAttr>(_attrs).value;
   }
 
-  bool next() final {
+  doc_id_t advance() final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
 
     doc_value = _next;
@@ -1801,17 +1798,24 @@ class SingleDocIterator
       }
     }
 
-    return !doc_limits::eof(doc_value);
+    return doc_value;
   }
 
   doc_id_t seek(doc_id_t target) final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
-
     while (doc_value < target) {
-      next();
+      advance();
     }
-
     return doc_value;
+  }
+
+  uint32_t count() final {
+    auto& doc_value = std::get<DocAttr>(_attrs).value;
+    if (doc_limits::eof(doc_value)) {
+      return 0;
+    }
+    doc_value = doc_limits::eof();
+    return 1;
   }
 
   doc_id_t _next{doc_limits::eof()};
@@ -2018,13 +2022,12 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
     return std::get<DocAttr>(_attrs).value;
   }
 
-  bool next() final {
+  doc_id_t advance() final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
 
     if (this->_begin == std::end(this->_buf.docs)) {
       if (!this->_left) [[unlikely]] {
-        doc_value = doc_limits::eof();
-        return false;
+        return doc_value = doc_limits::eof();
       }
 
       this->Refill();
@@ -2047,10 +2050,19 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
       }
     }
 
-    return true;
+    return doc_value;
   }
 
- private:
+  uint32_t count() final {
+    if (this->_left == 0) [[unlikely]] {
+      return this->Count(*this);
+    }
+    auto& doc_value = std::get<DocAttr>(_attrs).value;
+    doc_value = doc_limits::eof();
+    this->_begin = std::end(this->_buf.docs);
+    return std::exchange(this->_left, 0);
+  }
+
   class ReadSkip : private WandExtent {
    public:
     explicit ReadSkip(WandExtent extent) : WandExtent{extent}, _skip_levels(1) {
@@ -2282,7 +2294,7 @@ doc_id_t DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::seek(
     std::get<Position>(_attrs).Notify(notify);
   }
   while (doc_value < target) {
-    next();
+    advance();
   }
 
   return doc_value;
@@ -2396,13 +2408,28 @@ class Wanderator : public DocIteratorBase<IteratorTraits, FieldTraits>,
     return irs::GetMutable(_attrs, type);
   }
 
-  doc_id_t seek(doc_id_t target) final;
-
   doc_id_t value() const noexcept final {
     return std::get<DocAttr>(_attrs).value;
   }
 
-  bool next() final { return !doc_limits::eof(seek(value() + 1)); }
+  doc_id_t advance() final { return seek(value() + 1); }
+
+  doc_id_t seek(doc_id_t target) final;
+
+  doc_id_t shallow_seek(doc_id_t target) final {
+    SeekToBlock(target);
+    return _skip.Reader().Next().doc;
+  }
+
+  uint32_t count() final {
+    if (this->_left == 0) [[unlikely]] {
+      return this->Count(*this);
+    }
+    auto& doc_value = std::get<DocAttr>(_attrs).value;
+    doc_value = doc_limits::eof();
+    this->_begin = std::end(this->_buf.docs);
+    return std::exchange(this->_left, 0);
+  }
 
   struct SkipScoreContext final : AttributeProvider {
     FreqAttr freq;
@@ -2466,11 +2493,6 @@ class Wanderator : public DocIteratorBase<IteratorTraits, FieldTraits>,
     uint8_t index;
     [[no_unique_address]] WandExtent extent;
   };
-
-  doc_id_t shallow_seek(doc_id_t target) final {
-    SeekToBlock(target);
-    return _skip.Reader().Next().doc;
-  }
 
   void SeekToBlock(doc_id_t target) {
     _skip.Reader().EnsureSorted();

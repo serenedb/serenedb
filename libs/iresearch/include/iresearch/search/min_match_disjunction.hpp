@@ -96,30 +96,29 @@ class MinMatchDisjunction : public DocIterator,
 
   doc_id_t value() const final { return std::get<DocAttr>(_attrs).value; }
 
-  bool next() final {
+  doc_id_t advance() final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
 
     if (doc_limits::eof(doc_value)) {
-      return false;
+      return doc_value;
     }
 
     while (CheckSize()) {
       // start next iteration. execute next for all lead iterators
       // and move them to head
       if (!PopLead()) {
-        doc_value = doc_limits::eof();
-        return false;
+        return doc_value = doc_limits::eof();
       }
 
       // make step for all head iterators less or equal current doc (doc_)
       while (Top().value() <= doc_value) {
-        const bool exhausted = Top().value() == doc_value
-                                 ? !Top()->next()
-                                 : doc_limits::eof(Top()->seek(doc_value + 1));
+        const auto target = Top().value() == doc_value
+                              ? Top()->advance()
+                              : Top()->seek(doc_value + 1);
+        const bool exhausted = doc_limits::eof(target);
 
         if (exhausted && !RemoveTop()) {
-          doc_value = doc_limits::eof();
-          return false;
+          return doc_value = doc_limits::eof();
         }
         RefreshTop();
       }
@@ -130,19 +129,18 @@ class MinMatchDisjunction : public DocIterator,
       do {
         AddLead();
         if (_lead >= _min_match_count) {
-          return !doc_limits::eof(doc_value = top);
+          return doc_value = top;
         }
       } while (top == Top().value());
     }
 
-    doc_value = doc_limits::eof();
-    return false;
+    return doc_value = doc_limits::eof();
   }
 
   doc_id_t seek(doc_id_t target) final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
 
-    if (target <= doc_value) {
+    if (target <= doc_value) [[unlikely]] {
       return doc_value;
     }
 
@@ -207,6 +205,8 @@ class MinMatchDisjunction : public DocIterator,
       }
     }
   }
+
+  uint32_t count() final { return Count(*this); }
 
   // Calculates total count of matched iterators. This value could be
   // greater than required min_match. All matched iterators points

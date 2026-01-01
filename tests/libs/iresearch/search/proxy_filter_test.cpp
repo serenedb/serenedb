@@ -43,30 +43,6 @@ class DoclistTestIterator : public DocIterator, private util::Noncopyable {
     Reset();
   }
 
-  bool next() final {
-    if (_resetted) {
-      _resetted = false;
-      _current = _begin;
-    }
-
-    if (_current != _end) {
-      _doc.value = *_current;
-      ++_current;
-      return true;
-    } else {
-      _doc.value = doc_limits::eof();
-      return false;
-    }
-  }
-
-  doc_id_t seek(doc_id_t target) final {
-    while (_doc.value < target && next()) {
-    }
-    return _doc.value;
-  }
-
-  doc_id_t value() const noexcept final { return _doc.value; }
-
   Attribute* GetMutable(irs::TypeInfo::type_id id) noexcept final {
     if (irs::Type<irs::DocAttr>::id() == id) {
       return &_doc;
@@ -75,6 +51,29 @@ class DoclistTestIterator : public DocIterator, private util::Noncopyable {
       return &_cost;
     }
     return nullptr;
+  }
+
+  doc_id_t value() const noexcept final { return _doc.value; }
+
+  doc_id_t advance() final {
+    if (_resetted) {
+      _resetted = false;
+      _current = _begin;
+    }
+
+    if (_current != _end) {
+      _doc.value = *_current;
+      ++_current;
+    } else {
+      _doc.value = doc_limits::eof();
+    }
+    return _doc.value;
+  }
+
+  doc_id_t seek(doc_id_t target) final {
+    while (_doc.value < target && next()) {
+    }
+    return _doc.value;
   }
 
   void Reset() noexcept {

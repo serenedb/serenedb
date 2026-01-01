@@ -47,7 +47,7 @@ class AllIterator : public DocIterator {
 
   bool next() noexcept final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
-    doc_value = doc_value <= _max_doc ? doc_value + 1 : doc_limits::eof();
+    doc_value = doc_value < _max_doc ? doc_value + 1 : doc_limits::eof();
     return !doc_limits::eof(doc_value);
   }
 

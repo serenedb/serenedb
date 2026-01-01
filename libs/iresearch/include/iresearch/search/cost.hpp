@@ -31,28 +31,28 @@ namespace irs {
 // Represents an estimated cost of the query execution.
 class CostAttr final : public Attribute {
  public:
-  using cost_t = uint64_t;                               // NOLINT
-  using cost_f = absl::AnyInvocable<cost_t() noexcept>;  // NOLINT
+  using Type = uint64_t;
+  using Func = absl::AnyInvocable<Type() noexcept>;
 
-  static_assert(std::is_nothrow_move_constructible_v<cost_f>);
-  static_assert(std::is_nothrow_move_assignable_v<cost_f>);
+  static_assert(std::is_nothrow_move_constructible_v<Func>);
+  static_assert(std::is_nothrow_move_assignable_v<Func>);
 
   static constexpr std::string_view type_name() noexcept { return "cost"; }
 
-  static constexpr cost_t kMax = std::numeric_limits<cost_t>::max();
+  static constexpr Type kMax = std::numeric_limits<Type>::max();
 
   CostAttr() = default;
 
-  explicit CostAttr(cost_t value) noexcept : _value{value} {}
+  explicit CostAttr(Type value) noexcept : _value{value} {}
 
-  explicit CostAttr(cost_f&& func) noexcept : _func{std::move(func)} {
+  explicit CostAttr(Func&& func) noexcept : _func{std::move(func)} {
     SDB_ASSERT(_func);
   }
 
   // Returns a value of the "cost" attribute in the specified "src"
   // collection, or "def" value if there is no "cost" attribute in "src".
   template<typename Provider>
-  static cost_t extract(const Provider& src, cost_t def = kMax) noexcept {
+  static Type extract(const Provider& src, Type def = kMax) noexcept {
     if (auto* attr = irs::get<irs::CostAttr>(src); attr) {
       return attr->estimate();
     } else {
@@ -61,20 +61,20 @@ class CostAttr final : public Attribute {
   }
 
   // Sets the estimation value.
-  void reset(cost_t value) noexcept {
+  void reset(Type value) noexcept {
     _value = value;
     _func = nullptr;
   }
 
   // Sets the estimation rule.
-  void reset(cost_f&& func) noexcept {
+  void reset(Func&& func) noexcept {
     _func = std::move(func);
     SDB_ASSERT(_func);
   }
 
   // Estimate the query according to the provided estimation function.
   // Return estimated cost.
-  cost_t estimate() const noexcept {
+  Type estimate() const noexcept {
     if (_func) [[unlikely]] {
       _value = _func();
       _func = nullptr;
@@ -83,8 +83,8 @@ class CostAttr final : public Attribute {
   }
 
  private:
-  mutable cost_f _func;  // evaluation function
-  mutable cost_t _value{0};
+  mutable Func _func;  // evaluation function
+  mutable Type _value{0};
 };
 
 }  // namespace irs

@@ -104,11 +104,7 @@ TEST(postings_tests, ctor) {
   Postings bh(writer);
   ASSERT_TRUE(bh.empty());
   ASSERT_EQ(0, bh.size());
-#if defined(_MSC_VER) && defined(SDB_DEV)
-  ASSERT_GT(memory.Counter(), 0);
-#else
   ASSERT_EQ(0, memory.Counter());
-#endif
 }
 
 TEST(postings_tests, insert_find) {
@@ -374,11 +370,7 @@ TEST(postings_tests, clear) {
   Postings bh(writer);
   ASSERT_TRUE(bh.empty());
   ASSERT_EQ(0, bh.size());
-#if defined(_MSC_VER) && defined(SDB_DEV)
-  ASSERT_GT(memory.Counter(), 0);
-#else
   ASSERT_EQ(0, memory.Counter());
-#endif
   [[maybe_unused]] auto res = bh.emplace(tests::detail::ToBytesView("string"));
   ASSERT_FALSE(bh.empty());
   ASSERT_EQ(1, bh.size());

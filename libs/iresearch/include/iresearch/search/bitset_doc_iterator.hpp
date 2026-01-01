@@ -36,13 +36,13 @@ class BitsetDocIterator : public DocIterator, private util::Noncopyable {
 
   BitsetDocIterator(const word_t* begin, const word_t* end) noexcept;
 
+  Attribute* GetMutable(TypeInfo::type_id id) noexcept override;
+  doc_id_t value() const noexcept final { return _doc.value; }
   bool next() noexcept final;
   doc_id_t seek(doc_id_t target) noexcept final;
-  doc_id_t value() const noexcept final { return _doc.value; }
-  Attribute* GetMutable(TypeInfo::type_id id) noexcept override;
 
  protected:
-  explicit BitsetDocIterator(CostAttr::cost_t cost) noexcept
+  explicit BitsetDocIterator(CostAttr::Type cost) noexcept
     : _cost(cost), _doc(doc_limits::invalid()), _begin(nullptr), _end(nullptr) {
     reset();
   }

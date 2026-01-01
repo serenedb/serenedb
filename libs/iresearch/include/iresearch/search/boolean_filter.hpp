@@ -57,14 +57,14 @@ class BooleanFilter : public FilterWithBoost, public AllDocsProvider {
   bool empty() const { return _filters.empty(); }
   size_t size() const { return _filters.size(); }
 
-  Prepared::ptr prepare(const PrepareContext& ctx) const override;
+  Query::ptr prepare(const PrepareContext& ctx) const override;
 
  protected:
   bool equals(const Filter& rhs) const noexcept final;
 
-  virtual Prepared::ptr PrepareBoolean(std::vector<const Filter*>& incl,
-                                       std::vector<const Filter*>& excl,
-                                       const PrepareContext& ctx) const = 0;
+  virtual Query::ptr PrepareBoolean(std::vector<const Filter*>& incl,
+                                    std::vector<const Filter*>& excl,
+                                    const PrepareContext& ctx) const = 0;
 
  private:
   void group_filters(AllDocsProvider::Ptr& all_docs_zero_boost,
@@ -81,9 +81,9 @@ class And final : public BooleanFilter {
   TypeInfo::type_id type() const noexcept final { return irs::Type<And>::id(); }
 
  protected:
-  Prepared::ptr PrepareBoolean(std::vector<const Filter*>& incl,
-                               std::vector<const Filter*>& excl,
-                               const PrepareContext& ctx) const final;
+  Query::ptr PrepareBoolean(std::vector<const Filter*>& incl,
+                            std::vector<const Filter*>& excl,
+                            const PrepareContext& ctx) const final;
 };
 
 // Represents disjunction
@@ -98,14 +98,14 @@ class Or final : public BooleanFilter {
     return *this;
   }
 
-  Prepared::ptr prepare(const PrepareContext& ctx) const final;
+  Query::ptr prepare(const PrepareContext& ctx) const final;
 
   TypeInfo::type_id type() const noexcept final { return irs::Type<Or>::id(); }
 
  protected:
-  Prepared::ptr PrepareBoolean(std::vector<const Filter*>& incl,
-                               std::vector<const Filter*>& excl,
-                               const PrepareContext& ctx) const final;
+  Query::ptr PrepareBoolean(std::vector<const Filter*>& incl,
+                            std::vector<const Filter*>& excl,
+                            const PrepareContext& ctx) const final;
 
  private:
   size_t _min_match_count{1};
@@ -131,7 +131,7 @@ class Not : public FilterWithType<Not>, public AllDocsProvider {
   void clear() { _filter.reset(); }
   bool empty() const { return nullptr == _filter; }
 
-  Prepared::ptr prepare(const PrepareContext& ctx) const final;
+  Query::ptr prepare(const PrepareContext& ctx) const final;
 
  protected:
   bool equals(const irs::Filter& rhs) const noexcept final;

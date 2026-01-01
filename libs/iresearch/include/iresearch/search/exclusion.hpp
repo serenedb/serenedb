@@ -39,6 +39,10 @@ class Exclusion : public DocIterator {
     SDB_ASSERT(_excl_doc);
   }
 
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+    return _incl->GetMutable(type);
+  }
+
   doc_id_t value() const final { return _incl_doc->value; }
 
   bool next() final {
@@ -46,7 +50,7 @@ class Exclusion : public DocIterator {
       return false;
     }
 
-    return !doc_limits::eof(next(_incl_doc->value));
+    return !doc_limits::eof(converge(_incl_doc->value));
   }
 
   doc_id_t seek(doc_id_t target) final {
@@ -58,17 +62,13 @@ class Exclusion : public DocIterator {
       return target;
     }
 
-    return next(target);
-  }
-
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return _incl->GetMutable(type);
+    return converge(target);
   }
 
  private:
   // moves iterator to next not excluded
   // document not less than "target"
-  doc_id_t next(doc_id_t target) {
+  doc_id_t converge(doc_id_t target) {
     auto excl = _excl_doc->value;
 
     if (excl < target) {

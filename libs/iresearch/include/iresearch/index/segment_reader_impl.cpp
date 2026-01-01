@@ -39,6 +39,12 @@ class AllIterator : public DocIterator {
   explicit AllIterator(doc_id_t docs_count) noexcept
     : _max_doc{doc_limits::min() + docs_count - 1} {}
 
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+    return irs::Type<DocAttr>::id() == type ? &_doc : nullptr;
+  }
+
+  doc_id_t value() const noexcept final { return _doc.value; }
+
   bool next() noexcept final {
     if (_doc.value < _max_doc) {
       ++_doc.value;
@@ -55,12 +61,6 @@ class AllIterator : public DocIterator {
     return _doc.value;
   }
 
-  doc_id_t value() const noexcept final { return _doc.value; }
-
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::Type<DocAttr>::id() == type ? &_doc : nullptr;
-  }
-
  private:
   DocAttr _doc;
   doc_id_t _max_doc;  // largest valid doc_id
@@ -71,13 +71,18 @@ class MaskDocIterator : public DocIterator {
   MaskDocIterator(DocIterator::ptr&& it, const DocumentMask& mask) noexcept
     : _mask{mask}, _it{std::move(it)} {}
 
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+    return _it->GetMutable(type);
+  }
+
+  doc_id_t value() const final { return _it->value(); }
+
   bool next() final {
     while (_it->next()) {
       if (!_mask.contains(value())) {
         return true;
       }
     }
-
     return false;
   }
 
@@ -89,14 +94,7 @@ class MaskDocIterator : public DocIterator {
     }
 
     next();
-
     return value();
-  }
-
-  doc_id_t value() const final { return _it->value(); }
-
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return _it->GetMutable(type);
   }
 
  private:
@@ -110,6 +108,12 @@ class MaskedDocIterator : public DocIterator {
                     const DocumentMask& docs_mask) noexcept
     : _docs_mask{docs_mask}, _end{end}, _next{begin} {}
 
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+    return irs::Type<DocAttr>::id() == type ? &_current : nullptr;
+  }
+
+  doc_id_t value() const final { return _current.value; }
+
   bool next() final {
     while (_next < _end) {
       _current.value = _next++;
@@ -120,22 +124,14 @@ class MaskedDocIterator : public DocIterator {
     }
 
     _current.value = doc_limits::eof();
-
     return false;
   }
 
   doc_id_t seek(doc_id_t target) final {
     _next = target;
     next();
-
     return value();
   }
-
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::Type<DocAttr>::id() == type ? &_current : nullptr;
-  }
-
-  doc_id_t value() const final { return _current.value; }
 
  private:
   const DocumentMask& _docs_mask;
@@ -150,7 +146,6 @@ FileRefs GetRefs(const Directory& dir, const SegmentMeta& meta) {
 
   auto& refs = dir.attributes().refs();
   for (auto& file : meta.files) {
-    // cppcheck-suppress useStlAlgorithm
     file_refs.emplace_back(refs.add(file));
   }
 

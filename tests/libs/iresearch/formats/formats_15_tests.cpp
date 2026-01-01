@@ -85,7 +85,6 @@ class FreqThresholdDocIterator : public irs::DocIterator {
       if (_freq && Less()) {
         continue;
       }
-
       return true;
     }
     return false;

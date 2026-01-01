@@ -300,11 +300,7 @@ TEST_P(BufferedColumnTestCase, Ctor) {
   ASSERT_EQ(0, col.Size());
   ASSERT_EQ(0, col.MemoryActive());
   ASSERT_GE(col.MemoryReserved(), 0);
-#if defined(_MSC_VER) && defined(SDB_DEV)
-  ASSERT_GT(memory.Counter(), 0);
-#else
   ASSERT_EQ(0, memory.Counter());
-#endif
 }
 
 TEST_P(BufferedColumnTestCase, FlushEmpty) {
@@ -315,11 +311,7 @@ TEST_P(BufferedColumnTestCase, FlushEmpty) {
   ASSERT_EQ(0, col.Size());
   ASSERT_EQ(0, col.MemoryActive());
   ASSERT_GE(col.MemoryReserved(), 0);
-#if defined(_MSC_VER) && defined(SDB_DEV)
-  ASSERT_GT(memory.cached_columns.Counter(), 0);
-#else
   ASSERT_EQ(0, memory.cached_columns.Counter());
-#endif
 
   irs::field_id column_id;
   irs::DocMap order;
@@ -415,11 +407,7 @@ TEST_P(BufferedColumnTestCase, InsertDuplicates) {
     ASSERT_GE(col.MemoryActive(), 0);
     ASSERT_GE(col.MemoryReserved(), 0);
     // SSO should do the trick without allocations
-#if defined(_MSC_VER) && defined(SDB_DEV)
-    ASSERT_GT(memory.cached_columns.Counter(), 0);
-#else
     ASSERT_EQ(0, memory.cached_columns.Counter());
-#endif
 
     std::tie(order, column_id) = col.Flush(*writer,
                                            irs::ColumnFinalizer{

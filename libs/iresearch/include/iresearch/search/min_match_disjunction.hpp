@@ -37,7 +37,7 @@ struct CostAdapter : ScoreAdapter<DocIteratorImpl> {
   CostAdapter(CostAdapter&&) noexcept = default;
   CostAdapter& operator=(CostAdapter&&) noexcept = default;
 
-  CostAttr::cost_t est{};
+  CostAttr::Type est{};
 };
 
 using CostAdapters = std::vector<CostAdapter<>>;
@@ -69,24 +69,23 @@ class MinMatchDisjunction : public DocIterator,
     SDB_ASSERT(_min_match_count >= 1 && _min_match_count <= _itrs.size());
 
     // sort subnodes in ascending order by their cost
-    std::sort(_itrs.begin(), _itrs.end(),
-              [](const auto& lhs, const auto& rhs) noexcept {
-                return lhs.est < rhs.est;
-              });
+    absl::c_sort(_itrs, [](const auto& lhs, const auto& rhs) noexcept {
+      return lhs.est < rhs.est;
+    });
 
     std::get<CostAttr>(_attrs).reset([this]() noexcept {
-      return std::accumulate(
-        _itrs.begin(), _itrs.end(), CostAttr::cost_t{0},
-        [](CostAttr::cost_t lhs, const auto& rhs) noexcept {
+      return absl::c_accumulate(
+        _itrs, CostAttr::Type{0},
+        [](CostAttr::Type lhs, const auto& rhs) noexcept {
           return lhs + rhs.est;
         });
     });
 
     // prepare external heap
     _heap.resize(_itrs.size());
-    std::iota(_heap.begin(), _heap.end(), size_t{0});
+    absl::c_iota(_heap, size_t{0});
 
-    if constexpr (kHasScoreV<Merger>) {
+    if constexpr (kHasScore<Merger>) {
       PrepareScore();
     }
   }
@@ -270,34 +269,30 @@ class MinMatchDisjunction : public DocIterator,
 
   template<typename Iterator>
   void Push(Iterator begin, Iterator end) noexcept {
-    // lambda here gives ~20% speedup on GCC
-    std::push_heap(begin, end,
-                   [this](const size_t lhs, const size_t rhs) noexcept {
-                     SDB_ASSERT(lhs < _itrs.size());
-                     SDB_ASSERT(rhs < _itrs.size());
-                     const auto& lhs_it = _itrs[lhs];
-                     const auto& rhs_it = _itrs[rhs];
-                     const auto lhs_doc = lhs_it.value();
-                     const auto rhs_doc = rhs_it.value();
-                     return (lhs_doc > rhs_doc ||
-                             (lhs_doc == rhs_doc && lhs_it.est > rhs_it.est));
-                   });
+    std::push_heap(begin, end, [&](const auto lhs, const auto rhs) noexcept {
+      SDB_ASSERT(lhs < _itrs.size());
+      SDB_ASSERT(rhs < _itrs.size());
+      const auto& lhs_it = _itrs[lhs];
+      const auto& rhs_it = _itrs[rhs];
+      const auto lhs_doc = lhs_it.value();
+      const auto rhs_doc = rhs_it.value();
+      return lhs_doc > rhs_doc ||
+             (lhs_doc == rhs_doc && lhs_it.est > rhs_it.est);
+    });
   }
 
   template<typename Iterator>
   void Pop(Iterator begin, Iterator end) noexcept {
-    // lambda here gives ~20% speedup on GCC
-    detail::pop_heap(begin, end,
-                     [this](const size_t lhs, const size_t rhs) noexcept {
-                       SDB_ASSERT(lhs < _itrs.size());
-                       SDB_ASSERT(rhs < _itrs.size());
-                       const auto& lhs_it = _itrs[lhs];
-                       const auto& rhs_it = _itrs[rhs];
-                       const auto lhs_doc = lhs_it.value();
-                       const auto rhs_doc = rhs_it.value();
-                       return (lhs_doc > rhs_doc ||
-                               (lhs_doc == rhs_doc && lhs_it.est > rhs_it.est));
-                     });
+    std::pop_heap(begin, end, [&](const auto lhs, const auto rhs) noexcept {
+      SDB_ASSERT(lhs < _itrs.size());
+      SDB_ASSERT(rhs < _itrs.size());
+      const auto& lhs_it = _itrs[lhs];
+      const auto& rhs_it = _itrs[rhs];
+      const auto lhs_doc = lhs_it.value();
+      const auto rhs_doc = rhs_it.value();
+      return lhs_doc > rhs_doc ||
+             (lhs_doc == rhs_doc && lhs_it.est > rhs_it.est);
+    });
   }
 
   // Performs a step for each iterator in lead group and pushes it to the head.

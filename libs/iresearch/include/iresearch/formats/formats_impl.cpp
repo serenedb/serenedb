@@ -798,7 +798,7 @@ class PostingsWriterImpl final : public PostingsWriterBase {
                          rm},
       _volatile_attributes{volatile_attributes} {}
 
-  void write(irs::DocIterator& docs, TermMeta& base_meta) final;
+  void write(DocIterator& docs, TermMeta& base_meta) final;
 
  private:
   void AddPosition(uint32_t pos);
@@ -907,7 +907,7 @@ void PostingsWriterImpl<FormatTraits>::AddPosition(uint32_t pos) {
 }
 
 template<typename FormatTraits>
-void PostingsWriterImpl<FormatTraits>::write(irs::DocIterator& docs,
+void PostingsWriterImpl<FormatTraits>::write(DocIterator& docs,
                                              TermMeta& base_meta) {
   const auto* doc = irs::get<DocAttr>(docs);
 
@@ -929,8 +929,7 @@ void PostingsWriterImpl<FormatTraits>::write(irs::DocIterator& docs,
     auto* subscription = irs::get<AttrProviderChangeAttr>(docs);
     SDB_ASSERT(subscription);
 
-    subscription->subscribe(
-      [refresh](AttributeProvider& attrs) { refresh(attrs); });
+    subscription->Subscribe(refresh);
   }
 
   auto& meta = static_cast<TermMetaImpl&>(base_meta);
@@ -1659,7 +1658,7 @@ using BufferType =
                      DataBuffer<IteratorTraits>>;
 
 template<typename IteratorTraits, typename FieldTraits>
-class DocIteratorBase : public irs::DocIterator {
+class DocIteratorBase : public DocIterator {
   static_assert((IteratorTraits::Features() & FieldTraits::Features()) ==
                 IteratorTraits::Features());
   void ReadTailBlock();
@@ -1747,7 +1746,7 @@ using AttributesT = std::conditional_t<
 
 template<typename IteratorTraits, typename FieldTraits>
 class SingleDocIterator
-  : public irs::DocIterator,
+  : public DocIterator,
     private std::conditional_t<IteratorTraits::Position(),
                                DataBuffer<IteratorTraits>, Empty> {
   static_assert((IteratorTraits::Features() & FieldTraits::Features()) ==
@@ -1765,15 +1764,15 @@ class SingleDocIterator
     Prepare(meta, pos_in, pay_in);
     auto func = factory(*this);
 
-    auto& doc = std::get<DocAttr>(_attrs);
-    doc.value = _next;
+    auto& doc_value = std::get<DocAttr>(_attrs).value;
+    doc_value = _next;
 
     auto& score = std::get<ScoreAttr>(_attrs);
     func(&score.max.leaf);
     score.max.tail = score.max.leaf;
     score = ScoreFunction::Constant(score.max.tail);
 
-    doc.value = doc_limits::invalid();
+    doc_value = doc_limits::invalid();
   }
 
   void Prepare(const TermMeta& meta, [[maybe_unused]] const IndexInput* pos_in,
@@ -1784,35 +1783,35 @@ class SingleDocIterator
     return irs::GetMutable(_attrs, type);
   }
 
-  doc_id_t seek(doc_id_t target) final {
-    auto& doc = std::get<DocAttr>(_attrs);
-
-    while (doc.value < target) {
-      next();
-    }
-
-    return doc.value;
-  }
-
   doc_id_t value() const noexcept final {
     return std::get<DocAttr>(_attrs).value;
   }
 
   bool next() final {
-    auto& doc = std::get<DocAttr>(_attrs);
+    auto& doc_value = std::get<DocAttr>(_attrs).value;
 
-    doc.value = _next;
+    doc_value = _next;
     _next = doc_limits::eof();
 
     if constexpr (IteratorTraits::Position()) {
-      if (!doc_limits::eof(doc.value)) {
+      if (!doc_limits::eof(doc_value)) {
         auto& pos = std::get<Position>(_attrs);
         pos.Notify(std::get<FreqAttr>(_attrs).value);
         pos.Clear();
       }
     }
 
-    return !doc_limits::eof(doc.value);
+    return !doc_limits::eof(doc_value);
+  }
+
+  doc_id_t seek(doc_id_t target) final {
+    auto& doc_value = std::get<DocAttr>(_attrs).value;
+
+    while (doc_value < target) {
+      next();
+    }
+
+    return doc_value;
   }
 
   doc_id_t _next{doc_limits::eof()};
@@ -1961,20 +1960,16 @@ void CommonReadWandData(WandExtent wextent, uint8_t index,
 // IteratorTraits defines requested features.
 // FieldTraits defines requested features.
 template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
-class DocIterator : public DocIteratorBase<IteratorTraits, FieldTraits> {
+class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
   using Attributes = AttributesT<IteratorTraits, FieldTraits>;
   using Position = PositionImpl<IteratorTraits, FieldTraits>;
 
  public:
-  // hide 'ptr' defined in irs::DocIterator
-  using Ptr = memory::managed_ptr<DocIterator>;
-
-  DocIterator(WandExtent extent)
+  DocIteratorImpl(WandExtent extent)
     : _skip{IteratorTraits::kBlockSize, PostingsWriterBase::kSkipN,
             ReadSkip{extent}} {
-    SDB_ASSERT(
-      std::all_of(std::begin(this->_buf.docs), std::end(this->_buf.docs),
-                  [](doc_id_t doc) { return !doc_limits::valid(doc); }));
+    SDB_ASSERT(absl::c_all_of(
+      this->_buf.docs, [](doc_id_t doc) { return !doc_limits::valid(doc); }));
   }
 
   void WandPrepare(const TermMeta& meta, const IndexInput* doc_in,
@@ -2104,8 +2099,8 @@ class DocIterator : public DocIteratorBase<IteratorTraits, FieldTraits> {
     size_t AdjustLevel(size_t level) const noexcept { return level; }
 
     void Reset(SkipState& state) noexcept {
-      SDB_ASSERT(std::is_sorted(
-        std::begin(_skip_levels), std::end(_skip_levels),
+      SDB_ASSERT(absl::c_is_sorted(
+        _skip_levels,
         [](const auto& lhs, const auto& rhs) { return lhs.doc > rhs.doc; }));
 
       _prev = &state;
@@ -2140,7 +2135,7 @@ class DocIterator : public DocIteratorBase<IteratorTraits, FieldTraits> {
 };
 
 template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
-void DocIterator<IteratorTraits, FieldTraits, WandExtent>::ReadSkip::Read(
+void DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::ReadSkip::Read(
   size_t level, IndexInput& in) {
   auto& next = _skip_levels[level];
 
@@ -2153,7 +2148,7 @@ void DocIterator<IteratorTraits, FieldTraits, WandExtent>::ReadSkip::Read(
 }
 
 template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
-void DocIterator<IteratorTraits, FieldTraits, WandExtent>::ReadSkip::Seal(
+void DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::ReadSkip::Seal(
   size_t level) {
   auto& next = _skip_levels[level];
 
@@ -2165,7 +2160,7 @@ void DocIterator<IteratorTraits, FieldTraits, WandExtent>::ReadSkip::Seal(
 }
 
 template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
-void DocIterator<IteratorTraits, FieldTraits, WandExtent>::Prepare(
+void DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
   const TermMeta& meta, const IndexInput* doc_in,
   [[maybe_unused]] const IndexInput* pos_in,
   [[maybe_unused]] const IndexInput* pay_in, uint8_t wand_index) {
@@ -2231,7 +2226,7 @@ void DocIterator<IteratorTraits, FieldTraits, WandExtent>::Prepare(
 }
 
 template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
-doc_id_t DocIterator<IteratorTraits, FieldTraits, WandExtent>::seek(
+doc_id_t DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::seek(
   doc_id_t target) {
   auto& doc_value = std::get<DocAttr>(_attrs).value;
 
@@ -2294,7 +2289,7 @@ doc_id_t DocIterator<IteratorTraits, FieldTraits, WandExtent>::seek(
 }
 
 template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
-void DocIterator<IteratorTraits, FieldTraits, WandExtent>::SeekToBlock(
+void DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::SeekToBlock(
   doc_id_t target) {
   // Ensured by caller
   SDB_ASSERT(_skip.Reader().UpperBound() < target);
@@ -2371,17 +2366,14 @@ class Wanderator : public DocIteratorBase<IteratorTraits, FieldTraits>,
   }
 
  public:
-  // Hide 'ptr' defined in irs::DocIterator
-  using Ptr = memory::managed_ptr<Wanderator>;
-
   Wanderator(const ScoreFunctionFactory& factory, const Scorer& scorer,
              WandExtent extent, uint8_t index, bool strict)
     : _skip{IteratorTraits::kBlockSize, PostingsWriterBase::kSkipN,
             ReadSkip{factory, scorer, index, extent}},
       _scorer{factory(*this)} {
-    SDB_ASSERT(
-      std::all_of(std::begin(this->_buf.docs), std::end(this->_buf.docs),
-                  [](doc_id_t doc) { return doc == doc_limits::invalid(); }));
+    SDB_ASSERT(absl::c_all_of(this->_buf.docs, [](doc_id_t doc) {
+      return doc == doc_limits::invalid();
+    }));
     std::get<irs::ScoreAttr>(_attrs).Reset(
       *this,
       [](ScoreCtx* ctx, score_t* res) noexcept {
@@ -2435,11 +2427,10 @@ class Wanderator : public DocIteratorBase<IteratorTraits, FieldTraits>,
     }
 
     void EnsureSorted() const noexcept {
-      SDB_ASSERT(std::is_sorted(
-        skip_levels.begin(), skip_levels.end(),
+      SDB_ASSERT(absl::c_is_sorted(
+        skip_levels,
         [](const auto& lhs, const auto& rhs) { return lhs.doc > rhs.doc; }));
-      SDB_ASSERT(std::is_sorted(skip_scores.begin(), skip_scores.end(),
-                                std::greater<>{}));
+      SDB_ASSERT(absl::c_is_sorted(skip_scores, std::greater<>{}));
     }
 
     void ReadMaxScore(irs::ScoreAttr::UpperBounds& max, IndexInput& input) {
@@ -3348,19 +3339,17 @@ class PostingsReaderImpl final : public PostingsReaderBase {
   PostingsReaderImpl() noexcept
     : PostingsReaderBase{FormatTraits::kBlockSize} {}
 
-  irs::DocIterator::ptr iterator(IndexFeatures field_features,
-                                 IndexFeatures required_features,
-                                 const TermMeta& meta,
-                                 uint8_t wand_count) final {
+  DocIterator::ptr iterator(IndexFeatures field_features,
+                            IndexFeatures required_features,
+                            const TermMeta& meta, uint8_t wand_count) final {
     if (meta.docs_count == 0) {
       SDB_ASSERT(false);
-      return irs::DocIterator::empty();
+      return DocIterator::empty();
     }
 
     return IteratorImpl(
       field_features, required_features,
-      [&]<typename IteratorTraits, typename FieldTraits>()
-        -> irs::DocIterator::ptr {
+      [&]<typename IteratorTraits, typename FieldTraits> -> DocIterator::ptr {
         if (meta.docs_count == 1) {
           auto it = memory::make_managed<
             SingleDocIterator<IteratorTraits, FieldTraits>>();
@@ -3369,9 +3358,9 @@ class PostingsReaderImpl final : public PostingsReaderBase {
         }
         return ResolveExtent<0>(
           wand_count,
-          [&]<typename Extent>(Extent&& extent) -> irs::DocIterator::ptr {
+          [&]<typename Extent>(Extent&& extent) -> DocIterator::ptr {
             auto it = memory::make_managed<
-              DocIterator<IteratorTraits, FieldTraits, Extent>>(
+              DocIteratorImpl<IteratorTraits, FieldTraits, Extent>>(
               std::forward<Extent>(extent));
             it->Prepare(meta, _doc_in.get(), _pos_in.get(), _pay_in.get());
             return it;
@@ -3379,11 +3368,11 @@ class PostingsReaderImpl final : public PostingsReaderBase {
       });
   }
 
-  irs::DocIterator::ptr wanderator(IndexFeatures field_features,
-                                   IndexFeatures required_features,
-                                   const TermMeta& meta,
-                                   const WanderatorOptions& options,
-                                   WandContext ctx, WandInfo info) final {
+  DocIterator::ptr wanderator(IndexFeatures field_features,
+                              IndexFeatures required_features,
+                              const TermMeta& meta,
+                              const WanderatorOptions& options, WandContext ctx,
+                              WandInfo info) final {
     auto it = MakeWanderator(field_features, required_features, meta, options,
                              ctx, info);
     if (it) {
@@ -3396,11 +3385,11 @@ class PostingsReaderImpl final : public PostingsReaderBase {
                   size_t* set, uint8_t wand_count) final;
 
  private:
-  irs::DocIterator::ptr MakeWanderator(IndexFeatures field_features,
-                                       IndexFeatures required_features,
-                                       const TermMeta& meta,
-                                       const WanderatorOptions& options,
-                                       WandContext ctx, WandInfo info) {
+  DocIterator::ptr MakeWanderator(IndexFeatures field_features,
+                                  IndexFeatures required_features,
+                                  const TermMeta& meta,
+                                  const WanderatorOptions& options,
+                                  WandContext ctx, WandInfo info) {
     if (meta.docs_count == 0 ||
         info.mapped_index == irs::WandContext::kDisable ||
         _scorers.size() <= ctx.index) {
@@ -3416,8 +3405,7 @@ class PostingsReaderImpl final : public PostingsReaderBase {
     }
     return IteratorImpl(
       field_features, required_features,
-      [&]<typename IteratorTraits, typename FieldTraits>()
-        -> irs::DocIterator::ptr {
+      [&]<typename IteratorTraits, typename FieldTraits> -> DocIterator::ptr {
         // No need to use wanderator for short lists
         if (meta.docs_count == 1) {
           auto it = memory::make_managed<
@@ -3427,13 +3415,13 @@ class PostingsReaderImpl final : public PostingsReaderBase {
         }
         return ResolveExtent<1>(
           info.count,
-          [&]<typename WandExtent>(WandExtent extent) -> irs::DocIterator::ptr {
+          [&]<typename WandExtent>(WandExtent extent) -> DocIterator::ptr {
             // TODO(mbkkt) Now we don't support wanderator without frequency
             if constexpr (IteratorTraits::Frequency()) {
               // No need to use wanderator for short lists
               if (meta.docs_count > FormatTraits::kBlockSize) {
                 return ResolveBool(
-                  ctx.root, [&]<bool Root>() -> irs::DocIterator::ptr {
+                  ctx.root, [&]<bool Root> -> DocIterator::ptr {
                     auto it = memory::make_managed<Wanderator<
                       IteratorTraits, FieldTraits, WandExtent, Root>>(
                       options.factory, scorer, extent, info.mapped_index,
@@ -3447,7 +3435,7 @@ class PostingsReaderImpl final : public PostingsReaderBase {
               }
             }
             auto it = memory::make_managed<
-              DocIterator<IteratorTraits, FieldTraits, WandExtent>>(extent);
+              DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>>(extent);
             it->WandPrepare(meta, _doc_in.get(), _pos_in.get(), _pay_in.get(),
                             options.factory, scorer, info.mapped_index);
             return it;
@@ -3456,17 +3444,17 @@ class PostingsReaderImpl final : public PostingsReaderBase {
   }
 
   template<typename FieldTraits, typename Factory>
-  irs::DocIterator::ptr IteratorImpl(IndexFeatures enabled, Factory&& factory);
+  DocIterator::ptr IteratorImpl(IndexFeatures enabled, Factory&& factory);
 
   template<typename Factory>
-  irs::DocIterator::ptr IteratorImpl(IndexFeatures field_features,
-                                     IndexFeatures required_features,
-                                     Factory&& factory);
+  DocIterator::ptr IteratorImpl(IndexFeatures field_features,
+                                IndexFeatures required_features,
+                                Factory&& factory);
 };
 
 template<typename FormatTraits>
 template<typename FieldTraits, typename Factory>
-irs::DocIterator::ptr PostingsReaderImpl<FormatTraits>::IteratorImpl(
+DocIterator::ptr PostingsReaderImpl<FormatTraits>::IteratorImpl(
   IndexFeatures enabled, Factory&& factory) {
   switch (ToIndex(enabled)) {
     case kPosOffsPay: {
@@ -3519,7 +3507,7 @@ irs::DocIterator::ptr PostingsReaderImpl<FormatTraits>::IteratorImpl(
 
 template<typename FormatTraits>
 template<typename Factory>
-irs::DocIterator::ptr PostingsReaderImpl<FormatTraits>::IteratorImpl(
+DocIterator::ptr PostingsReaderImpl<FormatTraits>::IteratorImpl(
   IndexFeatures field_features, IndexFeatures required_features,
   Factory&& factory) {
   // get enabled features as the intersection

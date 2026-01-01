@@ -60,7 +60,6 @@ struct WandWriter;
 
 using DocMap = ManagedVector<doc_id_t>;
 using DocMapView = std::span<const doc_id_t>;
-using callback_f = std::function<bool(DocIterator&)>;
 
 using ScoreFunctionFactory =
   std::function<ScoreFunction(const AttributeProvider&)>;

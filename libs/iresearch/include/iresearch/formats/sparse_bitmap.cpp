@@ -419,7 +419,6 @@ bool SparseBitmapIterator::initial_seek(SparseBitmapIterator* self,
   return true;
 }
 
-// cppcheck-suppress uninitMemberVarPrivate
 SparseBitmapIterator::SparseBitmapIterator(Ptr&& in, const Options& opts)
   : _in{std::move(in)},
     _seek_func{&SparseBitmapIterator::initial_seek},

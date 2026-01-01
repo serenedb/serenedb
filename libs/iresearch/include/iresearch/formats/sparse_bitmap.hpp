@@ -211,13 +211,13 @@ class SparseBitmapIterator : public ResettableDocIterator {
     return irs::GetMutable(_attrs, type);
   }
 
-  doc_id_t seek(doc_id_t target) final;
-
-  bool next() final { return !doc_limits::eof(seek(value() + 1)); }
-
   doc_id_t value() const noexcept final {
     return std::get<DocAttr>(_attrs).value;
   }
+
+  bool next() final { return !doc_limits::eof(seek(value() + 1)); }
+
+  doc_id_t seek(doc_id_t target) final;
 
   void reset() final;
 
@@ -260,7 +260,7 @@ class SparseBitmapIterator : public ResettableDocIterator {
     };
   };
 
-  using attributes =
+  using Attributes =
     std::tuple<DocAttr, ValueIndex, PrevDocAttr, CostAttr, ScoreAttr>;
 
   explicit SparseBitmapIterator(Ptr&& in, const Options& opts);
@@ -269,7 +269,7 @@ class SparseBitmapIterator : public ResettableDocIterator {
   void read_block_header();
 
   ContainerIteratorContext _ctx;
-  attributes _attrs;
+  Attributes _attrs;
   Ptr _in;
   std::unique_ptr<byte_type[]> _block_index_data;
   block_seek_f _seek_func;

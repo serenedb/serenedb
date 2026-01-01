@@ -24,6 +24,7 @@
 
 #include <memory>
 
+#include "basics/memory.hpp"
 #include "basics/misc.hpp"
 #include "basics/noncopyable.hpp"
 #include "basics/std.hpp"

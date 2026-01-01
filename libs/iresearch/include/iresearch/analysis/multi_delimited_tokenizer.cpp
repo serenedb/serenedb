@@ -150,7 +150,7 @@ class MultiDelimitedTokenizerGenericSingleChars final
   }
 
   auto FindNextDelim() {
-    return std::find_if(_data.begin(), _data.end(), [&](auto c) {
+    return absl::c_find_if(_data, [&](auto c) {
       if (c > SCHAR_MAX) {
         return false;
       }
@@ -397,9 +397,8 @@ Analyzer::ptr MakeSingleChar(MultiDelimitedTokenizer::Options&& opts) {
 }
 
 Analyzer::ptr MakeImpl(MultiDelimitedTokenizer::Options&& opts) {
-  const bool single_character_case =
-    std::all_of(opts.delimiters.begin(), opts.delimiters.end(),
-                [](const auto& delim) { return delim.size() == 1; });
+  const bool single_character_case = absl::c_all_of(
+    opts.delimiters, [](const auto& delim) { return delim.size() == 1; });
   if (single_character_case) {
     return MakeSingleChar<0>(std::move(opts));
   }

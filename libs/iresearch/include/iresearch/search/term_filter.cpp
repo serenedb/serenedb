@@ -92,8 +92,8 @@ void ByTerm::visit(const SubReader& segment, const TermReader& field,
   VisitImpl(segment, field, term, visitor);
 }
 
-Filter::Prepared::ptr ByTerm::prepare(const PrepareContext& ctx,
-                                      std::string_view field, bytes_view term) {
+Filter::Query::ptr ByTerm::prepare(const PrepareContext& ctx,
+                                   std::string_view field, bytes_view term) {
   TermQuery::States states{ctx.memory, ctx.index.size()};
   FieldCollectors field_stats{ctx.scorers};
   TermCollectors term_stats{ctx.scorers, 1};

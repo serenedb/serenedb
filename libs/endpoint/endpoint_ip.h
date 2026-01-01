@@ -47,7 +47,6 @@ class EndpointIp : public Endpoint {
 
  public:
   SocketWrapper connect(double, double) final;
-  // cppcheck-suppress virtualCallInConstructor; bogus
   void disconnect() final;
 
   int port() const override { return _port; }

@@ -28,7 +28,7 @@
 #include "tests_shared.hpp"
 
 static_assert("cost" == irs::Type<irs::CostAttr>::name());
-static_assert((std::numeric_limits<irs::CostAttr::cost_t>::max)() ==
+static_assert((std::numeric_limits<irs::CostAttr::Type>::max)() ==
               irs::CostAttr::kMax);
 
 TEST(cost_attribute_test, ctor) {
@@ -123,7 +123,7 @@ TEST(cost_attribute_test, extract) {
     irs::CostAttr* cost{};
   } attrs;
 
-  ASSERT_EQ(irs::CostAttr::cost_t(irs::CostAttr::kMax),
+  ASSERT_EQ(irs::CostAttr::Type(irs::CostAttr::kMax),
             irs::CostAttr::extract(attrs));
 
   ASSERT_EQ(5, irs::CostAttr::extract(attrs, 5));

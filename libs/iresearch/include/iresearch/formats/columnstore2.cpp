@@ -255,13 +255,12 @@ class RangeColumnIterator : public ResettableDocIterator,
 
   bool next() final {
     if (_min_doc <= _max_doc) {
-      std::get<DocAttr>(_attrs).value = _min_doc++;
       std::get<PayAttr>(_attrs).value = this->payload(value() - _min_base);
+      std::get<DocAttr>(_attrs).value = _min_doc++;
       return true;
     }
-
-    std::get<DocAttr>(_attrs).value = doc_limits::eof();
     std::get<PayAttr>(_attrs).value = {};
+    std::get<DocAttr>(_attrs).value = doc_limits::eof();
     return false;
   }
 
@@ -294,7 +293,7 @@ class BitmapColumnIterator : public ResettableDocIterator,
   template<typename... Args>
   BitmapColumnIterator(IndexInput::ptr&& bitmap_in,
                        const SparseBitmapIterator::Options& opts,
-                       CostAttr::cost_t cost, Args&&... args)
+                       CostAttr::Type cost, Args&&... args)
     : PayloadReader{std::forward<Args>(args)...},
       _bitmap{std::move(bitmap_in), opts, cost} {
     std::get<irs::CostAttr>(_attrs).reset(cost);
@@ -332,7 +331,6 @@ class BitmapColumnIterator : public ResettableDocIterator,
       std::get<PayAttr>(_attrs).value = this->payload(_bitmap.index());
       return true;
     }
-
     std::get<PayAttr>(_attrs).value = {};
     return false;
   }

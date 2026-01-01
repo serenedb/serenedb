@@ -201,11 +201,9 @@ bool MakeVPackConfig(const NormalizingTokenizer::OptionsT& options,
     builder->add(kLocaleParamName, locale_name);
 
     // case convert
-    const auto* case_value =
-      std::find_if(kCaseConvertMap.begin(), kCaseConvertMap.end(),
-                   [&options](const decltype(kCaseConvertMap)::value_type& v) {
-                     return v.second == options.case_convert;
-                   });
+    const auto case_value = absl::c_find_if(
+      kCaseConvertMap,
+      [&](const auto& v) { return v.second == options.case_convert; });
     if (case_value != kCaseConvertMap.end()) {
       builder->add(kCaseConvertParamName, case_value->first);
     } else {

@@ -55,8 +55,8 @@ class DoclistTestIterator : public DocIterator, private util::Noncopyable {
       return true;
     } else {
       _doc.value = doc_limits::eof();
+      return false;
     }
-    return false;
   }
 
   doc_id_t seek(doc_id_t target) final {
@@ -92,7 +92,7 @@ class DoclistTestIterator : public DocIterator, private util::Noncopyable {
   bool _resetted;
 };
 
-class DoclistTestQuery : public Filter::Prepared {
+class DoclistTestQuery : public Filter::Query {
  public:
   DoclistTestQuery(const std::vector<doc_id_t>& documents, score_t)
     : _documents(documents) {}
@@ -125,7 +125,7 @@ class DoclistTestFilter : public Filter {
 
   static void ResetPrepares() noexcept { gPrepares = 0; }
 
-  Filter::Prepared::ptr prepare(const PrepareContext& ctx) const final {
+  Filter::Query::ptr prepare(const PrepareContext& ctx) const final {
     ++gPrepares;
     return memory::make_tracked<DoclistTestQuery>(ctx.memory, *_documents,
                                                   ctx.boost);

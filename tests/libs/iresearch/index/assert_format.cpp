@@ -421,9 +421,9 @@ void IndexSegment::sort(const irs::Comparer& comparator) {
   }
 }
 
-class DocIterator : public irs::DocIterator {
+class DocIteratorImpl : public irs::DocIterator {
  public:
-  DocIterator(irs::IndexFeatures features, const tests::Term& data);
+  DocIteratorImpl(irs::IndexFeatures features, const tests::Term& data);
 
   irs::doc_id_t value() const final { return _doc.value; }
 
@@ -465,7 +465,7 @@ class DocIterator : public irs::DocIterator {
  private:
   class PosIterator final : public irs::PosAttr {
    public:
-    PosIterator(const DocIterator& owner, irs::IndexFeatures features)
+    PosIterator(const DocIteratorImpl& owner, irs::IndexFeatures features)
       : _owner(owner) {
       if (irs::IndexFeatures::None != (features & irs::IndexFeatures::Offs)) {
         _poffs = &_offs;
@@ -520,7 +520,7 @@ class DocIterator : public irs::DocIterator {
     irs::PayAttr _pay;
     irs::OffsAttr* _poffs{};
     irs::PayAttr* _ppay{};
-    const DocIterator& _owner;
+    const DocIteratorImpl& _owner;
   };
 
   const tests::Term& _data;
@@ -534,7 +534,8 @@ class DocIterator : public irs::DocIterator {
   std::set<Posting>::const_iterator _next;
 };
 
-DocIterator::DocIterator(irs::IndexFeatures features, const tests::Term& data)
+DocIteratorImpl::DocIteratorImpl(irs::IndexFeatures features,
+                                 const tests::Term& data)
   : _data(data), _pos(*this, features) {
   _next = _data.postings.begin();
 
@@ -628,8 +629,8 @@ class TermIterator : public irs::SeekTermIterator {
                                   : irs::SeekResult::NotFound;
   }
 
-  DocIterator::ptr postings(irs::IndexFeatures features) const final {
-    return irs::memory::make_managed<DocIterator>(
+  DocIteratorImpl::ptr postings(irs::IndexFeatures features) const final {
+    return irs::memory::make_managed<DocIteratorImpl>(
       _data.index_features & features, *_prev);
   }
 
@@ -1237,6 +1238,6 @@ namespace irs {
 
 // use base irs::position type for ancestors
 template<>
-struct Type<tests::DocIterator::PosIterator> : Type<irs::PosAttr> {};
+struct Type<tests::DocIteratorImpl::PosIterator> : Type<irs::PosAttr> {};
 
 }  // namespace irs

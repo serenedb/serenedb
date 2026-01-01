@@ -176,7 +176,6 @@ struct CustomFeature {
     }
 
     void write(const irs::FieldStats& stats, irs::doc_id_t doc,
-               // cppcheck-suppress constParameter
                irs::ColumnOutput& writer) final {
       ++hdr.count;
 

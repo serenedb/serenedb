@@ -108,17 +108,15 @@ size_t SegmentWriter::memory_reserved() const noexcept {
   auto column_cache_reserved =
     _columns.capacity() * sizeof(decltype(_columns)::value_type);
 
-  column_cache_reserved +=
-    std::accumulate(_columns.begin(), _columns.end(), size_t{0},
-                    [](size_t lhs, const StoredColumn& rhs) noexcept {
-                      return lhs + rhs.name.size();
-                    });
+  column_cache_reserved += absl::c_accumulate(
+    _columns, size_t{0}, [](size_t lhs, const StoredColumn& rhs) noexcept {
+      return lhs + rhs.name.size();
+    });
 
-  column_cache_reserved +=
-    std::accumulate(_cached_columns.begin(), _cached_columns.end(), size_t{0},
-                    [](size_t lhs, const CachedColumn& rhs) {
-                      return lhs + rhs.Stream().MemoryActive() + sizeof(rhs);
-                    });
+  column_cache_reserved += absl::c_accumulate(
+    _cached_columns, size_t{0}, [](size_t lhs, const CachedColumn& rhs) {
+      return lhs + rhs.Stream().MemoryActive() + sizeof(rhs);
+    });
 
   return sizeof(SegmentWriter) + _docs_context.capacity() * sizeof(DocContext) +
          _docs_mask.set.capacity() / BitsRequired<char>() +

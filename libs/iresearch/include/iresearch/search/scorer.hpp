@@ -386,7 +386,7 @@ template<>
 struct HasScoreHelper<NoopAggregator> : std::false_type {};
 
 template<typename Aggregator>
-inline constexpr bool kHasScoreV = HasScoreHelper<Aggregator>::value;
+inline constexpr bool kHasScore = HasScoreHelper<Aggregator>::value;
 
 struct SumMerger {
   void operator()(score_t* IRS_RESTRICT dst,

@@ -32,13 +32,13 @@
 
 namespace irs {
 
-Filter::Prepared::ptr ByNGramSimilarity::Prepare(
+Filter::Query::ptr ByNGramSimilarity::Prepare(
   const PrepareContext& ctx, std::string_view field_name,
   const std::vector<irs::bstring>& ngrams, float_t threshold,
   bool allow_phrase) {
   if (ngrams.empty() || field_name.empty()) {
     // empty field or terms or invalid threshold
-    return Prepared::empty();
+    return Query::empty();
   }
   const auto terms_count = ngrams.size();
 
@@ -122,7 +122,7 @@ Filter::Prepared::ptr ByNGramSimilarity::Prepare(
   }
 
   if (query_states.empty()) {
-    return Prepared::empty();
+    return Query::empty();
   }
 
   bstring stats(ctx.scorers.stats_size(), 0);

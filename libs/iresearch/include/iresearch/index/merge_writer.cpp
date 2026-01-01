@@ -138,21 +138,22 @@ class RemappingDocIterator : public DocIterator {
  public:
   RemappingDocIterator(DocIterator::ptr&& it, const DocMapF& mapper) noexcept
     : _it{std::move(it)}, _mapper{&mapper}, _src{irs::get<DocAttr>(*_it)} {
-    SDB_ASSERT(_it && _src);
-  }
-
-  bool next() final;
-
-  doc_id_t value() const noexcept final { return _doc.value; }
-
-  doc_id_t seek(doc_id_t target) final {
-    irs::seek(*this, target);
-    return value();
+    SDB_ASSERT(_it);
+    SDB_ASSERT(_src);
   }
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::Type<irs::DocAttr>::id() == type ? &_doc
                                                  : _it->GetMutable(type);
+  }
+
+  doc_id_t value() const noexcept final { return _doc.value; }
+
+  bool next() final;
+
+  doc_id_t seek(doc_id_t target) final {
+    irs::seek(*this, target);
+    return value();
   }
 
  private:
@@ -214,14 +215,14 @@ class CompoundDocIterator : public DocIterator {
                                                            : nullptr;
   }
 
+  doc_id_t value() const noexcept final { return _doc.value; }
+
   bool next() final;
 
   doc_id_t seek(doc_id_t target) final {
     irs::seek(*this, target);
     return value();
   }
-
-  doc_id_t value() const noexcept final { return _doc.value; }
 
  private:
   friend class SortingCompoundDocIterator;
@@ -296,14 +297,14 @@ class SortingCompoundDocIterator : public DocIterator {
     return _doc_it->GetMutable(type);
   }
 
+  doc_id_t value() const noexcept final { return _doc_it->value(); }
+
   bool next() final;
 
   doc_id_t seek(doc_id_t target) final {
     irs::seek(*this, target);
     return value();
   }
-
-  doc_id_t value() const noexcept final { return _doc_it->value(); }
 
  private:
   class Context {
@@ -338,8 +339,8 @@ bool SortingCompoundDocIterator::next() {
 
   auto& current_id = _doc_it->_doc.value;
   if (_doc_it->Aborted()) {
-    current_id = doc_limits::eof();
     _doc_it->_iterators.clear();
+    current_id = doc_limits::eof();
     return false;
   }
 
@@ -516,15 +517,20 @@ class CompoundTermIterator : public TermIterator {
   }
 
   const FieldMeta& Meta() const noexcept { return *_meta; }
+
   void Add(const TermReader& reader, const DocMapF& doc_map);
+
   Attribute* GetMutable(TypeInfo::type_id) noexcept final {
     // no way to merge attributes for the same term spread over multiple
     // iterators would require API change for attributes
     SDB_ASSERT(false);
     return nullptr;
   }
+
   bool next() final;
+
   DocIterator::ptr postings(IndexFeatures features) const final;
+
   void read() final {
     for (const auto itr_id : _term_iterator_mask) {
       auto& it = _term_iterators[itr_id].first;
@@ -945,7 +951,7 @@ std::optional<field_id> Columnstore::insert(SortingCompoundDocIterator& it,
   auto* callback = irs::get<AttrProviderChangeAttr>(it);
 
   if (callback) {
-    callback->subscribe([&payload](const AttributeProvider& attrs) {
+    callback->Subscribe([&payload](const AttributeProvider& attrs) {
       payload = irs::get<irs::PayAttr>(attrs);
     });
   } else {
@@ -1374,7 +1380,7 @@ bool WriteFields(Columnstore& cs, Iterator& feature_itr,
                          ColumnFinalizer{
                            [feature_writer = std::move(feature_writer)](
                              DataOutput& out) { feature_writer->finish(out); },
-                           []() { return std::string_view{}; },
+                           [] { return std::string_view{}; },
                          },
                          std::forward<T>(value_writer));
       };
@@ -1488,7 +1494,7 @@ void EnsureSorted(const auto& readers) {
 }
 #endif
 
-const MergeWriter::FlushProgress kProgressNoop = []() { return true; };
+const MergeWriter::FlushProgress kProgressNoop = [] { return true; };
 
 }  // namespace
 

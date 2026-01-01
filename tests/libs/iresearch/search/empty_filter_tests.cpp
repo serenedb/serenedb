@@ -38,7 +38,7 @@ TEST_P(EmptyFilterTestCase, empty) {
 
   auto rdr = open_reader();
 
-  std::vector<irs::CostAttr::cost_t> cost{0};
+  std::vector<irs::CostAttr::Type> cost{0};
 
   CheckQuery(irs::Empty{}, Docs{}, cost, rdr);
 }

@@ -43,7 +43,7 @@ SolrSynonymsTokenizer::SynonymsList SplitLine(const std::string_view line) {
     }
   }
 
-  std::sort(outputs.begin(), outputs.end());
+  absl::c_sort(outputs);
   outputs.erase(std::unique(outputs.begin(), outputs.end()), outputs.end());
 
   return outputs;

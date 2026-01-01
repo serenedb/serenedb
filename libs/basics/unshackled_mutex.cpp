@@ -26,7 +26,6 @@
 namespace sdb::basics {
 
 void UnshackledMutex::lock() noexcept {
-  // cppcheck-suppress throwInNoexceptFunction
   auto func = +[](const bool* locked) noexcept { return !*locked; };
   absl::MutexLock guard{&_mutex,
                         absl::Condition{func, &std::as_const(_locked)}};

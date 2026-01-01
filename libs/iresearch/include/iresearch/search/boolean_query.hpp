@@ -30,9 +30,9 @@
 namespace irs {
 
 // Base class for boolean queries
-class BooleanQuery : public Filter::Prepared {
+class BooleanQuery : public Filter::Query {
  public:
-  using queries_t = ManagedVector<Filter::Prepared::ptr>;
+  using queries_t = ManagedVector<Filter::Query::ptr>;
   using iterator = queries_t::const_iterator;
 
   DocIterator::ptr execute(const ExecutionContext& ctx) const final;

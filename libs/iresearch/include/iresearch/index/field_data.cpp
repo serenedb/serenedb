@@ -257,24 +257,20 @@ class DocIteratorImpl : public DocIterator {
     return irs::GetMutable(_attrs, type);
   }
 
-  doc_id_t seek(doc_id_t doc) final {
-    irs::seek(*this, doc);
-    return value();
-  }
-
   doc_id_t value() const noexcept final {
     return std::get<DocAttr>(_attrs).value;
   }
 
   bool next() final {
-    auto& doc = std::get<DocAttr>(_attrs);
+    auto& doc_value = std::get<DocAttr>(_attrs).value;
 
     if (_freq_in.eof()) {
       if (!_posting) {
+        doc_value = doc_limits::eof();
         return false;
       }
 
-      doc.value = _posting->doc;
+      doc_value = _posting->doc;
       _freq.value = _posting->freq;
 
       if (_has_cookie) {
@@ -294,21 +290,26 @@ class DocIteratorImpl : public DocIterator {
         }
 
         SDB_ASSERT(delta < doc_limits::eof());
-        doc.value += doc_id_t(delta);
+        doc_value += doc_id_t(delta);
 
         if (_has_cookie) {
           _cookie += ReadCookie(_freq_in);
         }
       } else {
-        doc.value += irs::vread<uint32_t>(_freq_in);
+        doc_value += irs::vread<uint32_t>(_freq_in);
       }
 
-      SDB_ASSERT(doc.value != _posting->doc);
+      SDB_ASSERT(doc_value != _posting->doc);
     }
 
     _pos.Clear();
 
     return true;
+  }
+
+  doc_id_t seek(doc_id_t doc) final {
+    irs::seek(*this, doc);
+    return value();
   }
 
  private:
@@ -325,7 +326,7 @@ class DocIteratorImpl : public DocIterator {
   bool _has_cookie{false};  // FIXME remove
 };
 
-class SortingDocIteratorImpl : public irs::DocIterator {
+class SortingDocIteratorImpl : public DocIterator {
  public:
   // reset field
   void Reset(const FieldData& field) {
@@ -380,18 +381,12 @@ class SortingDocIteratorImpl : public irs::DocIterator {
     return irs::GetMutable(_attrs, type);
   }
 
-  doc_id_t seek(doc_id_t doc) noexcept final {
-    irs::seek(*this, doc);
-    return value();
-  }
-
   doc_id_t value() const noexcept final {
     return std::get<DocAttr>(_attrs).value;
   }
 
   bool next() noexcept final {
-    // cppcheck-suppress shadowFunction
-    auto& value = std::get<DocAttr>(_attrs);
+    auto& doc_value = std::get<DocAttr>(_attrs).value;
 
     while (_it != _docs.end()) {
       if (doc_limits::eof(_it->doc)) {
@@ -401,7 +396,7 @@ class SortingDocIteratorImpl : public irs::DocIterator {
       }
 
       auto& doc = *_it;
-      value.value = doc.doc;
+      doc_value = doc.doc;
       _freq.value = doc.freq;
 
       if (doc.cookie) {  // we have proximity data
@@ -412,9 +407,14 @@ class SortingDocIteratorImpl : public irs::DocIterator {
       return true;
     }
 
-    value.value = doc_limits::eof();
     _freq.value = 0;
+    doc_value = doc_limits::eof();
     return false;
+  }
+
+  doc_id_t seek(doc_id_t doc) noexcept final {
+    irs::seek(*this, doc);
+    return value();
   }
 
  private:
@@ -473,10 +473,9 @@ class SortingDocIteratorImpl : public irs::DocIterator {
       _docs.emplace_back(new_doc, freq.value, it.Cookie());
     }
 
-    std::sort(_docs.begin(), _docs.end(),
-              [](const DocEntry& lhs, const DocEntry& rhs) noexcept {
-                return lhs.doc < rhs.doc;
-              });
+    absl::c_sort(_docs, [](const DocEntry& lhs, const DocEntry& rhs) noexcept {
+      return lhs.doc < rhs.doc;
+    });
   }
 
   void ResetAlreadySorted(DocIteratorImpl& it, const FreqAttr& freq) {
@@ -530,7 +529,7 @@ class TermIteratorImpl : public irs::TermIterator {
     // Does nothing now
   }
 
-  irs::DocIterator::ptr postings(IndexFeatures /*features*/) const final {
+  DocIterator::ptr postings(IndexFeatures /*features*/) const final {
     SDB_ASSERT(_it != _end);
 
     return (this->*kPostings[size_t(_field->prox_random_access())])(**_it);
@@ -550,9 +549,9 @@ class TermIteratorImpl : public irs::TermIterator {
 
  private:
   using PostingsF =
-    irs::DocIterator::ptr (TermIteratorImpl::*)(const Posting&) const;
+    DocIterator::ptr (TermIteratorImpl::*)(const Posting&) const;
 
-  irs::DocIterator::ptr Postings(const Posting& posting) const {
+  DocIterator::ptr Postings(const Posting& posting) const {
     SDB_ASSERT(!_doc_map);
 
     // where the term data starts
@@ -573,10 +572,10 @@ class TermIteratorImpl : public irs::TermIterator {
       prox_end);  // term's proximity // TODO: create on demand!!!
 
     _doc_itr.Reset(posting, freq, &prox);
-    return memory::to_managed<irs::DocIterator>(_doc_itr);
+    return memory::to_managed<DocIterator>(_doc_itr);
   }
 
-  irs::DocIterator::ptr SortPostings(const Posting& posting) const {
+  DocIterator::ptr SortPostings(const Posting& posting) const {
     // where the term data starts
     auto ptr = _field->_int_writer->parent().seek(posting.int_start);
     const auto freq_end = *ptr;
@@ -589,7 +588,7 @@ class TermIteratorImpl : public irs::TermIterator {
 
     _doc_itr.Reset(posting, freq, nullptr);
     _sorting_doc_itr.Reset(_doc_itr, _doc_map);
-    return memory::to_managed<irs::DocIterator>(_sorting_doc_itr);
+    return memory::to_managed<DocIterator>(_sorting_doc_itr);
   }
 
   static inline const PostingsF kPostings[2]{&TermIteratorImpl::Postings,
@@ -924,10 +923,8 @@ void FieldData::add_term_random_access(Posting& p, doc_id_t did,
       auto& last_start_cookie = *prox_stream_cookie;
 
       WriteCookie(doc_out, start_cookie - last_start_cookie);
-      // cppcheck-suppress selfAssignment
       last_start_cookie = start_cookie;  // update previous cookie
-      // cppcheck-suppress selfAssignment
-      start_cookie = end_cookie;  // update start cookie
+      start_cookie = end_cookie;         // update start cookie
 
       auto prox_out = GreedyWriter(*_byte_writer, end_cookie);
 
@@ -1109,10 +1106,10 @@ void FieldsData::flush(FieldWriter& fw, FlushState& state) {
 
   state.index_features = static_cast<IndexFeatures>(index_features);
 
-  std::sort(_sorted_fields.begin(), _sorted_fields.end(),
-            [](const FieldData* lhs, const FieldData* rhs) noexcept {
-              return lhs->meta().name < rhs->meta().name;
-            });
+  absl::c_sort(_sorted_fields,
+               [](const FieldData* lhs, const FieldData* rhs) noexcept {
+                 return lhs->meta().name < rhs->meta().name;
+               });
 
   TermReaderImpl terms(_sorted_postings, state.docmap);
 

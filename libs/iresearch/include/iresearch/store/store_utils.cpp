@@ -73,9 +73,8 @@ uint32_t BytesViewInput::Checksum(size_t offset) const {
 
 size_t RemappedBytesViewInput::src_to_internal(size_t t) const noexcept {
   SDB_ASSERT(!_mapping.empty());
-  auto it =
-    std::lower_bound(_mapping.begin(), _mapping.end(), t,
-                     [](const auto& l, const auto& r) { return l.first < r; });
+  auto it = absl::c_lower_bound(
+    _mapping, t, [](const auto& l, const auto& r) { return l.first < r; });
   if (it == _mapping.end()) {
     --it;
   } else if (it->first > t) {

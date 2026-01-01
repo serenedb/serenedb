@@ -52,9 +52,8 @@ bool BitsetDocIterator::next() noexcept {
         continue;
       }
 
-      _doc.value = doc_limits::eof();
       _word = 0;
-
+      _doc.value = doc_limits::eof();
       return false;
     }
 
@@ -63,13 +62,12 @@ bool BitsetDocIterator::next() noexcept {
     _doc.value = _base - 1;
   }
 
-  // FIXME remove conversion
-  const doc_id_t delta = doc_id_t(std::countr_zero(_word));
+  const auto delta = std::countr_zero(_word);
+  SDB_ASSERT(delta >= 0);
   SDB_ASSERT(delta < BitsRequired<word_t>());
 
   _word = (_word >> delta) >> 1;
   _doc.value += 1 + delta;
-
   return true;
 }
 
@@ -101,7 +99,6 @@ doc_id_t BitsetDocIterator::seek(doc_id_t target) noexcept {
 
   // FIXME consider inlining to speedup
   next();
-
   return _doc.value;
 }
 

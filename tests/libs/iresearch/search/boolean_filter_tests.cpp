@@ -226,7 +226,7 @@ struct SeekDoc {
 namespace detail {
 
 struct Boosted : public irs::FilterWithBoost {
-  struct Prepared : irs::Filter::Prepared {
+  struct Prepared : irs::Filter::Query {
     explicit Prepared(const BasicDocIterator::DocidsT& docs, irs::score_t boost)
       : docs{docs}, _boost{boost} {}
 
@@ -251,8 +251,7 @@ struct Boosted : public irs::FilterWithBoost {
     irs::score_t _boost;
   };
 
-  irs::Filter::Prepared::ptr prepare(
-    const irs::PrepareContext& ctx) const final {
+  irs::Filter::Query::ptr prepare(const irs::PrepareContext& ctx) const final {
     return irs::memory::make_managed<Boosted::Prepared>(docs,
                                                         ctx.boost * Boost());
   }
@@ -1150,7 +1149,10 @@ TEST(boolean_query_boost, or_filter) {
 namespace detail {
 
 struct Unestimated : public irs::FilterWithBoost {
-  struct DocIterator : irs::DocIterator {
+  struct DocIteratorImpl : irs::DocIterator {
+    irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
+      return type == irs::Type<irs::DocAttr>::id() ? &doc : nullptr;
+    }
     irs::doc_id_t value() const final {
       // prevent iterator to filter out
       return irs::doc_limits::invalid();
@@ -1160,16 +1162,13 @@ struct Unestimated : public irs::FilterWithBoost {
       // prevent iterator to filter out
       return irs::doc_limits::invalid();
     }
-    irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
-      return type == irs::Type<irs::DocAttr>::id() ? &doc : nullptr;
-    }
 
     irs::DocAttr doc;
   };
 
-  struct Prepared : public irs::Filter::Prepared {
+  struct Prepared : public irs::Filter::Query {
     irs::DocIterator::ptr execute(const irs::ExecutionContext&) const final {
-      return irs::memory::make_managed<Unestimated::DocIterator>();
+      return irs::memory::make_managed<Unestimated::DocIteratorImpl>();
     }
     void visit(const irs::SubReader&, irs::PreparedStateVisitor&,
                irs::score_t) const final {
@@ -1179,8 +1178,7 @@ struct Unestimated : public irs::FilterWithBoost {
     irs::score_t Boost() const noexcept final { return irs::kNoBoost; }
   };
 
-  Filter::Prepared::ptr prepare(
-    const irs::PrepareContext& /*ctx*/) const final {
+  Filter::Query::ptr prepare(const irs::PrepareContext& /*ctx*/) const final {
     return irs::memory::make_managed<Unestimated::Prepared>();
   }
 
@@ -1190,8 +1188,8 @@ struct Unestimated : public irs::FilterWithBoost {
 };
 
 struct Estimated : public irs::FilterWithBoost {
-  struct DocIterator : irs::DocIterator {
-    DocIterator(irs::CostAttr::cost_t est, bool* evaluated) {
+  struct DocIteratorImpl : irs::DocIterator {
+    DocIteratorImpl(irs::CostAttr::Type est, bool* evaluated) {
       cost.reset([est, evaluated]() noexcept {
         *evaluated = true;
         return est;
@@ -1218,12 +1216,13 @@ struct Estimated : public irs::FilterWithBoost {
     irs::CostAttr cost;
   };
 
-  struct Prepared : public irs::Filter::Prepared {
-    explicit Prepared(irs::CostAttr::cost_t est, bool* evaluated)
+  struct Prepared : public irs::Filter::Query {
+    explicit Prepared(irs::CostAttr::Type est, bool* evaluated)
       : evaluated(evaluated), est(est) {}
 
     irs::DocIterator::ptr execute(const irs::ExecutionContext&) const final {
-      return irs::memory::make_managed<Estimated::DocIterator>(est, evaluated);
+      return irs::memory::make_managed<Estimated::DocIteratorImpl>(est,
+                                                                   evaluated);
     }
 
     void visit(const irs::SubReader&, irs::PreparedStateVisitor&,
@@ -1234,11 +1233,10 @@ struct Estimated : public irs::FilterWithBoost {
     irs::score_t Boost() const noexcept final { return irs::kNoBoost; }
 
     bool* evaluated;
-    irs::CostAttr::cost_t est;
+    irs::CostAttr::Type est;
   };
 
-  Filter::Prepared::ptr prepare(
-    const irs::PrepareContext& /*ctx*/) const final {
+  Filter::Query::ptr prepare(const irs::PrepareContext& /*ctx*/) const final {
     return irs::memory::make_managed<Estimated::Prepared>(est, &evaluated);
   }
 
@@ -1247,7 +1245,7 @@ struct Estimated : public irs::FilterWithBoost {
   }
 
   mutable bool evaluated = false;
-  irs::CostAttr::cost_t est{};
+  irs::CostAttr::Type est{};
 };
 
 }  // namespace detail
@@ -2471,7 +2469,7 @@ TEST(small_disjunction_test, next) {
 
   // no iterators provided
   {
-    Disjunction it(Disjunction::doc_iterators_t{});
+    Disjunction it(Disjunction::DocIterators{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(0, irs::CostAttr::extract(it));
@@ -2832,7 +2830,7 @@ TEST(small_disjunction_test, seek) {
 
   // no iterators provided
   {
-    Disjunction it(Disjunction::doc_iterators_t{});
+    Disjunction it(Disjunction::DocIterators{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(0, irs::CostAttr::extract(it));
@@ -3517,7 +3515,7 @@ TEST(block_disjunction_test, check_attributes) {
       irs::DocIterator::ptr, irs::NoopAggregator,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
 
-    Disjunction it(Disjunction::doc_iterators_t{});
+    Disjunction it(Disjunction::DocIterators{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_NE(nullptr, doc);
     ASSERT_TRUE(irs::doc_limits::eof(doc->value));
@@ -3535,7 +3533,7 @@ TEST(block_disjunction_test, check_attributes) {
       irs::DocIterator::ptr, irs::NoopAggregator,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
 
-    Disjunction it(Disjunction::doc_iterators_t{});
+    Disjunction it(Disjunction::DocIterators{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_NE(nullptr, doc);
     ASSERT_TRUE(irs::doc_limits::eof(doc->value));
@@ -3556,7 +3554,7 @@ TEST(block_disjunction_test, check_attributes) {
       irs::DocIterator::ptr, irs::Aggregator<irs::SumMerger, 1>,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
 
-    Disjunction it(Disjunction::doc_iterators_t{}, size_t{});
+    Disjunction it(Disjunction::DocIterators{}, size_t{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_NE(nullptr, doc);
     ASSERT_TRUE(irs::doc_limits::eof(doc->value));
@@ -3577,7 +3575,7 @@ TEST(block_disjunction_test, check_attributes) {
       irs::DocIterator::ptr, irs::Aggregator<irs::SumMerger, 1>,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
 
-    Disjunction it(Disjunction::doc_iterators_t{}, size_t{});
+    Disjunction it(Disjunction::DocIterators{}, size_t{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_NE(nullptr, doc);
     ASSERT_TRUE(irs::doc_limits::eof(doc->value));
@@ -3872,7 +3870,7 @@ TEST(block_disjunction_test, next) {
 
   // no iterators provided
   {
-    Disjunction it(Disjunction::doc_iterators_t{});
+    Disjunction it(Disjunction::DocIterators{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(0, irs::CostAttr::extract(it));
@@ -4044,7 +4042,7 @@ TEST(block_disjunction_test, next) {
     std::vector<irs::doc_id_t> expected{};
     std::vector<irs::doc_id_t> result;
 
-    Disjunction::doc_iterators_t itrs;
+    Disjunction::DocIterators itrs;
     itrs.emplace_back(irs::DocIterator::empty());
     itrs.emplace_back(irs::DocIterator::empty());
     itrs.emplace_back(irs::DocIterator::empty());
@@ -4756,7 +4754,7 @@ TEST(block_disjunction_test, next_scored) {
       irs::DocIterator::ptr, irs::Aggregator<irs::SumMerger, 1>,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
 
-    Disjunction it(Disjunction::doc_iterators_t{}, size_t{});
+    Disjunction it(Disjunction::DocIterators{}, size_t{});
 
     auto& score = irs::ScoreAttr::get(it);
     ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
@@ -6555,7 +6553,7 @@ TEST(block_disjunction_test, min_match_next) {
 
   // no iterators provided
   {
-    Disjunction it(Disjunction::doc_iterators_t{});
+    Disjunction it(Disjunction::DocIterators{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(0, irs::CostAttr::extract(it));
@@ -7197,7 +7195,7 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
 
   // no iterators provided
   {
-    Disjunction it(Disjunction::doc_iterators_t{});
+    Disjunction it(Disjunction::DocIterators{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(0, irs::CostAttr::extract(it));
@@ -7383,7 +7381,7 @@ TEST(block_disjunction_test, seek_no_readahead) {
 
   // no iterators provided
   {
-    Disjunction it(Disjunction::doc_iterators_t{});
+    Disjunction it(Disjunction::DocIterators{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(0, irs::CostAttr::extract(it));
@@ -7755,7 +7753,7 @@ TEST(block_disjunction_test, seek_no_readahead) {
     std::vector<irs::doc_id_t> expected{};
     std::vector<irs::doc_id_t> result;
 
-    Disjunction::doc_iterators_t itrs;
+    Disjunction::DocIterators itrs;
     itrs.emplace_back(irs::DocIterator::empty());
     itrs.emplace_back(irs::DocIterator::empty());
     itrs.emplace_back(irs::DocIterator::empty());
@@ -8559,7 +8557,7 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       irs::DocIterator::ptr, irs::NoopAggregator,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
 
-    Disjunction it(Disjunction::doc_iterators_t{});
+    Disjunction it(Disjunction::DocIterators{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(0, irs::CostAttr::extract(it));
@@ -9311,7 +9309,7 @@ TEST(block_disjunction_test, min_match_seek_no_readahead) {
 
   // no iterators provided
   {
-    Disjunction it(Disjunction::doc_iterators_t{});
+    Disjunction it(Disjunction::DocIterators{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(0, irs::CostAttr::extract(it));
@@ -9794,7 +9792,7 @@ TEST(block_disjunction_test, seek_readahead) {
 
   // no iterators provided
   {
-    Disjunction it(Disjunction::doc_iterators_t{});
+    Disjunction it(Disjunction::DocIterators{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(0, irs::CostAttr::extract(it));
@@ -10218,7 +10216,7 @@ TEST(block_disjunction_test, min_match_seek_readahead) {
 
   // no iterators provided
   {
-    Disjunction it(Disjunction::doc_iterators_t{});
+    Disjunction it(Disjunction::DocIterators{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(0, irs::CostAttr::extract(it));
@@ -11497,7 +11495,7 @@ TEST(disjunction_test, next) {
 
   // no iterators provided
   {
-    Disjunction it(Disjunction::doc_iterators_t{});
+    Disjunction it(Disjunction::DocIterators{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(0, irs::CostAttr::extract(it));
@@ -11657,7 +11655,7 @@ TEST(disjunction_test, seek) {
 
   // no iterators provided
   {
-    Disjunction it(Disjunction::doc_iterators_t{});
+    Disjunction it(Disjunction::DocIterators{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(0, irs::CostAttr::extract(it));
@@ -16519,8 +16517,7 @@ TEST(And_test, prepare_empty_filter) {
   irs::And root;
   auto prepared = root.prepare({.index = irs::SubReader::empty()});
   ASSERT_NE(nullptr, prepared);
-  ASSERT_EQ(typeid(irs::Filter::Prepared::empty().get()),
-            typeid(prepared.get()));
+  ASSERT_EQ(typeid(irs::Filter::Query::empty().get()), typeid(prepared.get()));
 }
 
 TEST(And_test, optimize_single_node) {

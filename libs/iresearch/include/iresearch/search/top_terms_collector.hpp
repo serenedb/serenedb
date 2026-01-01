@@ -246,24 +246,21 @@ class TopTermsCollector : private util::Noncopyable {
   };
 
   void make_heap() noexcept {
-    std::make_heap(_heap.begin(), _heap.end(),
-                   [this](const auto lhs, const auto rhs) noexcept {
-                     return _comparer(rhs->second, lhs->second);
-                   });
+    absl::c_make_heap(_heap, [&](const auto lhs, const auto rhs) noexcept {
+      return _comparer(rhs->second, lhs->second);
+    });
   }
 
   void push() noexcept {
-    std::push_heap(_heap.begin(), _heap.end(),
-                   [this](const auto lhs, const auto rhs) noexcept {
-                     return _comparer(rhs->second, lhs->second);
-                   });
+    absl::c_push_heap(_heap, [&](const auto lhs, const auto rhs) noexcept {
+      return _comparer(rhs->second, lhs->second);
+    });
   }
 
   void pop() noexcept {
-    std::pop_heap(_heap.begin(), _heap.end(),
-                  [this](const auto lhs, const auto rhs) noexcept {
-                    return _comparer(rhs->second, lhs->second);
-                  });
+    absl::c_pop_heap(_heap, [&](const auto lhs, const auto rhs) noexcept {
+      return _comparer(rhs->second, lhs->second);
+    });
   }
 
   [[no_unique_address]] comparer_type _comparer;

@@ -69,6 +69,24 @@ class BufferedColumnIterator : public ResettableDocIterator {
     return std::get<DocAttr>(_attrs).value;
   }
 
+  bool next() noexcept final {
+    auto& doc_value = std::get<DocAttr>(_attrs).value;
+
+    if (_next == _end) [[unlikely]] {
+      doc_value = doc_limits::eof();
+      return false;
+    }
+
+    auto& payload = std::get<irs::PayAttr>(_attrs);
+
+    doc_value = _next->key;
+    payload.value = {_data.data() + _next->begin, _next->size};
+
+    ++_next;
+
+    return true;
+  }
+
   doc_id_t seek(doc_id_t target) noexcept final {
     // Currently the iterator is only used for access during the segment
     // flushing. We intentionally allow iterator to seek backwards.
@@ -89,24 +107,6 @@ class BufferedColumnIterator : public ResettableDocIterator {
     return value();
   }
 
-  bool next() noexcept final {
-    auto& doc = std::get<DocAttr>(_attrs);
-
-    if (_next == _end) [[unlikely]] {
-      doc.value = doc_limits::eof();
-      return false;
-    }
-
-    auto& payload = std::get<irs::PayAttr>(_attrs);
-
-    doc.value = _next->key;
-    payload.value = {_data.data() + _next->begin, _next->size};
-
-    ++_next;
-
-    return true;
-  }
-
   void reset() final {
     _next = _begin;
     std::get<irs::DocAttr>(_attrs).value = {};
@@ -114,9 +114,9 @@ class BufferedColumnIterator : public ResettableDocIterator {
   }
 
  private:
-  using attributes = std::tuple<DocAttr, CostAttr, irs::PayAttr>;
+  using Attributes = std::tuple<DocAttr, CostAttr, irs::PayAttr>;
 
-  attributes _attrs;
+  Attributes _attrs;
   const BufferedValue* _begin;
   const BufferedValue* _next;
   const BufferedValue* _end;

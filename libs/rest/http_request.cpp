@@ -278,7 +278,6 @@ void HttpRequest::setHeader(std::string key, std::string value) {
   auto it = _headers.try_emplace(std::move(key), std::move(value));
   if (!it.second) {
     auto old = it.first->first.size() + it.first->second.size();
-    // cppcheck-suppress accessMoved
     _headers[std::move(key)] = std::move(value);
     _memory_usage -= old;
   }
@@ -401,7 +400,6 @@ void HttpRequest::setCookie(std::string key, std::string value) {
   auto it = _cookies.try_emplace(std::move(key), std::move(value));
   if (!it.second) {
     auto old = it.first->first.size() + it.first->second.size();
-    // cppcheck-suppress accessMoved
     _cookies[std::move(key)] = std::move(value);
     _memory_usage -= old;
   }

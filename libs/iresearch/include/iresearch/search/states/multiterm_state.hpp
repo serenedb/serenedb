@@ -52,7 +52,7 @@ struct MultiTermState {
   }
 
   // Return total cost of execution
-  CostAttr::cost_t estimation() const noexcept {
+  CostAttr::Type estimation() const noexcept {
     return scored_states_estimation + unscored_states_estimation;
   }
 
@@ -68,10 +68,10 @@ struct MultiTermState {
   ManagedVector<UnscoredTermState> unscored_terms;
 
   // Estimated cost of scored states
-  CostAttr::cost_t scored_states_estimation{};
+  CostAttr::Type scored_states_estimation{};
 
   // Estimated cost of unscored states
-  CostAttr::cost_t unscored_states_estimation{};
+  CostAttr::Type unscored_states_estimation{};
 };
 
 }  // namespace irs

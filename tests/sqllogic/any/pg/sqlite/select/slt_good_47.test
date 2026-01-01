@@ -68008,14 +68008,23 @@ SELECT - - col2 - - col2 * col0 FROM tab0 AS cor0
 825
 
 skipif mysql # not compatible
-skipif serenedb
 skipif postgres
+skipif serenedb
 query I rowsort
 SELECT - col2 * col1 / CAST ( 64 AS REAL ) + col2 FROM tab0
 ----
 -11
 -34
 0
+
+onlyif postgres
+onlyif serenedb
+query I rowsort
+SELECT - col2 * col1 / CAST ( 64 AS REAL ) + col2 FROM tab0
+----
+-0.515625
+-11.34375
+-34.59375
 
 query I rowsort
 SELECT ALL + + tab2.col2 col0 FROM tab2, tab0, tab0 AS cor0

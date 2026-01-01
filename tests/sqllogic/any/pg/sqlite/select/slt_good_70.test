@@ -61550,14 +61550,23 @@ SELECT ALL + 17 AS col2 FROM tab2, tab0 AS cor0
 9 values hashing to 43298e43365fccb5146ea32003753c92
 
 skipif mysql # not compatible
-skipif serenedb
 skipif postgres
+skipif serenedb
 query I rowsort
 SELECT DISTINCT ( - col0 ) * - col1 / CAST ( 32 AS REAL ) FROM tab2 cor0
 ----
 143
 41
 6
+
+onlyif postgres
+onlyif serenedb
+query I rowsort
+SELECT DISTINCT ( - col0 ) * - col1 / CAST ( 32 AS REAL ) FROM tab2 cor0
+----
+143.8125
+41.96875
+6.78125
 
 query I rowsort
 SELECT ALL ( 72 ) - - col2 AS col0 FROM tab1 cor0

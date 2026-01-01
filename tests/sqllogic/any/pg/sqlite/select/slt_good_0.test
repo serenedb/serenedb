@@ -51207,14 +51207,23 @@ SELECT DISTINCT + - col0 AS col0 FROM tab1 AS cor0
 -80
 
 skipif mysql # not compatible
-skipif serenedb
 skipif postgres
+skipif serenedb
 query I rowsort
 SELECT + col0 / - CAST ( 32 AS REAL ) FROM tab2 AS cor0
 ----
 -2
 -2
 0
+
+onlyif postgres
+onlyif serenedb
+query I rowsort
+SELECT + col0 / - CAST ( 32 AS REAL ) FROM tab2 AS cor0
+----
+-0.21875
+-2.4375
+-2.46875
 
 onlyif mysql # use DIV operator for integer division
 query I rowsort label-6828

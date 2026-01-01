@@ -4926,13 +4926,22 @@ SELECT DISTINCT + - col0 * col0 + ( + col1 ) AS col0 FROM tab2 AS cor0
 -6224
 
 skipif mysql # not compatible
-skipif serenedb
 skipif postgres
+skipif serenedb
 query I rowsort
 SELECT ALL + + col2 / CAST ( + 2 AS REAL ) AS col0 FROM tab1 cor0
 ----
 27
 28
+48
+
+onlyif postgres
+onlyif serenedb
+query I rowsort
+SELECT ALL + + col2 / CAST ( + 2 AS REAL ) AS col0 FROM tab1 cor0
+----
+27
+28.5
 48
 
 query I rowsort

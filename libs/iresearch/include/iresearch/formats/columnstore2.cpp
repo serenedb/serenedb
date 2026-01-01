@@ -255,7 +255,7 @@ class RangeColumnIterator : public ResettableDocIterator,
 
   bool next() final {
     if (_min_doc <= _max_doc) {
-      std::get<PayAttr>(_attrs).value = this->payload(value() - _min_base);
+      std::get<PayAttr>(_attrs).value = this->payload(_min_doc - _min_base);
       std::get<DocAttr>(_attrs).value = _min_doc++;
       return true;
     }

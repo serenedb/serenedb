@@ -8,7 +8,7 @@ jobs:
   build:
     uses: ./.github/workflows/build-reusable.yml
     with:
-      LOCATION: 'parilka'
+      LOCATION: 'self-hosted'
       BRANCH: 'main'
       SDB_PRIVATE: true
       SDB_PRIVATE_BRANCH: 'main'

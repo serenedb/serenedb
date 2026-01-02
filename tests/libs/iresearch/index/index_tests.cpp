@@ -14611,7 +14611,7 @@ TEST_P(IndexTestCase14, hnsw_search_basic) {
 }
 
 static const auto kTestFormats =
-  ::testing::Values(tests::FormatInfo{"1_5"}, tests::FormatInfo{"1_5simd"});
+  ::testing::Values(tests::FormatInfo{"1_5avx"}, tests::FormatInfo{"1_5simd"});
 
 static const auto kTestDirs =
   ::testing::ValuesIn(tests::GetDirectories<tests::kTypesDefaultRot13>());

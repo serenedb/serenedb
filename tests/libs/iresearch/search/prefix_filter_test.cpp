@@ -375,7 +375,7 @@ static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 INSTANTIATE_TEST_SUITE_P(
   prefix_filter_test, PrefixFilterTestCase,
   ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                     ::testing::Values(tests::FormatInfo{"1_5"},
+                     ::testing::Values(tests::FormatInfo{"1_5avx"},
                                        tests::FormatInfo{"1_5simd"})),
   PrefixFilterTestCase::to_string);
 

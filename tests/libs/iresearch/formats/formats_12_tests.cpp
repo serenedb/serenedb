@@ -205,7 +205,7 @@ static constexpr auto kTestDirs =
   tests::GetDirectories<tests::kTypesAllRot13>();
 static const auto kTestValues = ::testing::Combine(
   ::testing::ValuesIn(kTestDirs),
-  ::testing::Values(tests::FormatInfo{"1_5"}, tests::FormatInfo{"1_5simd"}));
+  ::testing::Values(tests::FormatInfo{"1_5avx"}, tests::FormatInfo{"1_5simd"}));
 
 // 1.2 specific tests
 INSTANTIATE_TEST_SUITE_P(format_12_test, Format12TestCase, kTestValues,

@@ -15,6 +15,16 @@ on:
         required: true
         type: string
         default: 'main'
+      SDB_PRIVATE:
+        description: 'Use private branch switch'
+        required: true
+        type: boolean
+        default: false
+      SDB_PRIVATE_BRANCH:
+        description: 'Name of the private branch to use'
+        required: true
+        type: string
+        default: 'main'
       DOCKER_BUILD_IMAGES:
         description: 'Build images used in build steps'
         required: true
@@ -117,11 +127,6 @@ on:
         required: true
         type: boolean
         default: true
-      TEST_PACKAGES:
-        description: 'Test packages after build'
-        required: true
-        type: boolean
-        default: false
 
 jobs:
   build:
@@ -129,6 +134,8 @@ jobs:
     with:
       LOCATION: ${{ inputs.LOCATION }}
       BRANCH: ${{ inputs.BRANCH }}
+      SDB_PRIVATE: ${{ inputs.SDB_PRIVATE }}
+      SDB_PRIVATE_BRANCH: ${{ inputs.SDB_PRIVATE_BRANCH }}
       DOCKER_BUILD_IMAGES: ${{ inputs.DOCKER_BUILD_IMAGES }}
       DOCKER_SERENEDB_IMAGE: ${{ inputs.DOCKER_SERENEDB_IMAGE }}
       PUSH_IMAGES_2_REGISTRY: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
@@ -143,14 +150,10 @@ jobs:
       STATIC_EXECUTABLES: ${{ inputs.STATIC_EXECUTABLES }}
       ENSURE_VTUNE_SYMBOLS: ${{ inputs.ENSURE_VTUNE_SYMBOLS }}
       STRIP_TARBALL: ${{ inputs.STRIP_TARBALL }}
-      TEST_PACKAGES: ${{ inputs.TEST_PACKAGES }}
     secrets:
-      SDB_PRIVATE_BRANCH: ${{ secrets.SDB_PRIVATE_BRANCH }}
-      SDB_PRIVATE: ${{ secrets.SDB_PRIVATE }}
       TG_TOKEN: ${{ secrets.TG_TOKEN }}
       TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
       TG_THREAD_ID_BUILD: ${{ secrets.TG_THREAD_ID_BUILD }}
       TG_THREAD_ID_MAIN: ${{ secrets.TG_THREAD_ID_MAIN }}
       SDB_PRIVATE_REPO: ${{ secrets.SDB_PRIVATE_REPO }}
       PRIVATE_ENG_REPO: ${{ secrets.PRIVATE_ENG_REPO }}
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -2683,6 +2683,10 @@ doc_id_t Wanderator<IteratorTraits, FieldTraits, WandExtent, Root>::seek(
             auto& freq = std::get<FreqAttr>(_attrs);
             freq.value = this->_freq[-1];
             if constexpr (Root) {
+              // We can use approximation before actual score for bm11, bm15,
+              // tfidf(true/false) but only for term query, so I don't think
+              // it's really good idea. And I don't except big difference
+              // because in such case, compution is pretty cheap
               _scorer(&_score);
               if (_score <= threshold) {
                 continue;

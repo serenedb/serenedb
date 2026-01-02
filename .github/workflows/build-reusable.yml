@@ -7,7 +7,7 @@ on:
         description: 'Where the load is executed'
         required: true
         type: string
-        default: 'parilka'
+        default: 'self-hosted'
       BRANCH:
         description: 'SereneDB branch to test'
         required: true
@@ -94,6 +94,9 @@ on:
         type: boolean
         default: true
     secrets:
+      PAT_TOKEN:
+        required: true
+        description: 'Personal Access Token with repo access'
       TG_TOKEN:
         required: true
       TG_CHAT_ID:
@@ -135,6 +138,7 @@ jobs:
       STATIC_EXECUTABLES: ${{ inputs.STATIC_EXECUTABLES }}
       ENSURE_VTUNE_SYMBOLS: ${{ inputs.ENSURE_VTUNE_SYMBOLS }}
       STRIP_TARBALL: ${{ inputs.STRIP_TARBALL }}
+      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
       TG_TOKEN: ${{ secrets.TG_TOKEN }}
       TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
       TG_THREAD_ID_BUILD: ${{ secrets.TG_THREAD_ID_BUILD }}
@@ -149,7 +153,7 @@ jobs:
         with:
           repository: ${{ env.SDB_PRIVATE_REPO }}
           ref: ${{ env.SDB_PRIVATE_BRANCH }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ env.PAT_TOKEN }}
           path: private
           sparse-checkout: |
             ci/build_images.sh
@@ -163,7 +167,7 @@ jobs:
         with:
           repository: serenedb/serenedb
           ref: ${{ env.BRANCH }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ env.PAT_TOKEN }}
           fetch-depth: 1
           submodules: true
           path: .
@@ -174,7 +178,7 @@ jobs:
         with:
           repository: ${{ env.SDB_PRIVATE_REPO }}
           ref: ${{ env.SDB_PRIVATE_BRANCH }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ env.PAT_TOKEN }}
           fetch-depth: 1
           submodules: true
           path: private
@@ -185,7 +189,7 @@ jobs:
         with:
           repository: ${{ env.PRIVATE_ENG_REPO }}
           ref: main
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ env.PAT_TOKEN }}
           fetch-depth: 1
           submodules: true
           path: third_party/v8-build

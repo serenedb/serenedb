@@ -27,6 +27,7 @@ jobs:
       ENSURE_VTUNE_SYMBOLS: 'Off'
       STRIP_TARBALL: true
     secrets:
+      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
       TG_TOKEN: ${{ secrets.TG_TOKEN }}
       TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
       TG_THREAD_ID_BUILD: ${{ secrets.TG_THREAD_ID_BUILD }}

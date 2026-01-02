@@ -13,6 +13,16 @@ on:
         required: true
         type: string
         default: 'main'
+      SDB_PRIVATE:
+        description: 'Use private branch switch'
+        required: true
+        type: boolean
+        default: false
+      SDB_PRIVATE_BRANCH:
+        description: 'Name of the private branch to use'
+        required: true
+        type: string
+        default: 'main'
       DOCKER_BUILD_IMAGES:
         description: 'Build images used in build steps'
         required: true
@@ -83,16 +93,7 @@ on:
         required: true
         type: boolean
         default: true
-      TEST_PACKAGES:
-        description: 'Test packages after build'
-        required: true
-        type: boolean
-        default: false
     secrets:
-      SDB_PRIVATE_BRANCH:
-        required: true
-      SDB_PRIVATE:
-        required: true
       TG_TOKEN:
         required: true
       TG_CHAT_ID:
@@ -103,19 +104,21 @@ on:
         required: true
       SDB_PRIVATE_REPO:
         required: true
+        description: 'Path to the private repo'
       PRIVATE_ENG_REPO:
         required: true
-      GITHUB_TOKEN:
-        required: true
+        description: 'Path to private engine repo'
 
 jobs:
   build:
     name: Build SereneDB
     runs-on: ${{ inputs.LOCATION }}
     timeout-minutes: 180
-
+    
     env:
       BRANCH: ${{ inputs.BRANCH }}
+      SDB_PRIVATE: ${{ inputs.SDB_PRIVATE }}
+      SDB_PRIVATE_BRANCH: ${{ inputs.SDB_PRIVATE_BRANCH }}
       DOCKER_BUILD_IMAGES: ${{ inputs.DOCKER_BUILD_IMAGES }}
       DOCKER_SERENEDB_IMAGE: ${{ inputs.DOCKER_SERENEDB_IMAGE }}
       PUSH_IMAGES_2_REGISTRY: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
@@ -130,10 +133,6 @@ jobs:
       STATIC_EXECUTABLES: ${{ inputs.STATIC_EXECUTABLES }}
       ENSURE_VTUNE_SYMBOLS: ${{ inputs.ENSURE_VTUNE_SYMBOLS }}
       STRIP_TARBALL: ${{ inputs.STRIP_TARBALL }}
-      TEST_PACKAGES: ${{ inputs.TEST_PACKAGES }}
-
-      SDB_PRIVATE_BRANCH: ${{ secrets.SDB_PRIVATE_BRANCH }}
-      SDB_PRIVATE: ${{ secrets.SDB_PRIVATE }}
       TG_TOKEN: ${{ secrets.TG_TOKEN }}
       TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
       TG_THREAD_ID_BUILD: ${{ secrets.TG_THREAD_ID_BUILD }}
@@ -141,51 +140,48 @@ jobs:
       SDB_PRIVATE_REPO: ${{ secrets.SDB_PRIVATE_REPO }}
       PRIVATE_ENG_REPO: ${{ secrets.PRIVATE_ENG_REPO }}
 
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
     steps:
       - name: Checkout private repo (sparse - build images only)
-        if: ${{ always() }} # Cannot use secrets in if, will condition inside shell
-        run: |
-          if [ "$DOCKER_SERENEDB_IMAGE" != "true" ] && [ "$DEB_TAR_PACKAGES" != "true" ]; then
-            echo "Checking out private repo (sparse)..."
-            # Use actions/checkout with HTTPS and GITHUB_TOKEN
-            # But checkout action requires `uses:` so run pure git clone here instead:
-            git clone --depth 1 --filter=blob:none --sparse https://github.com/${SDB_PRIVATE_REPO}.git private
-            cd private
-            git sparse-checkout set ci/build_images.sh ci/build-alpine.Dockerfile ci/build-ubuntu.Dockerfile
-            git checkout $SDB_PRIVATE_BRANCH
-          else
-            echo "Skipping sparse clone"
-          fi
+        if: env.DOCKER_SERENEDB_IMAGE != 'true' && env.DEB_TAR_PACKAGES != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SDB_PRIVATE_REPO }}
+          ref: ${{ env.SDB_PRIVATE_BRANCH }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: private
+          sparse-checkout: |
+            ci/build_images.sh
+            ci/build-alpine.Dockerfile
+            ci/build-ubuntu.Dockerfile
+          sparse-checkout-cone-mode: false
 
       - name: Checkout SereneDB repo
-        if: ${{ inputs.DOCKER_SERENEDB_IMAGE || inputs.DEB_TAR_PACKAGES }}
+        if: env.DOCKER_SERENEDB_IMAGE == 'true' || env.DEB_TAR_PACKAGES == 'true'
         uses: actions/checkout@v4
         with:
           repository: serenedb/serenedb
-          ref: ${{ inputs.BRANCH }}
+          ref: ${{ env.BRANCH }}
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 1
           submodules: true
           path: .
 
-      - name: Checkout private repo (full)
-        if: ${{ inputs.DOCKER_SERENEDB_IMAGE || inputs.DEB_TAR_PACKAGES }}
+      - name: Checkout private repo
+        if: env.DOCKER_SERENEDB_IMAGE == 'true' || env.DEB_TAR_PACKAGES == 'true'
         uses: actions/checkout@v4
         with:
-          repository: ${{ secrets.SDB_PRIVATE_REPO }}
-          ref: ${{ secrets.SDB_PRIVATE_BRANCH }}
+          repository: ${{ env.SDB_PRIVATE_REPO }}
+          ref: ${{ env.SDB_PRIVATE_BRANCH }}
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 1
           submodules: true
           path: private
 
       - name: Checkout private engine repo
-        if: ${{ inputs.DOCKER_SERENEDB_IMAGE || inputs.DEB_TAR_PACKAGES }}
+        if: env.DOCKER_SERENEDB_IMAGE == 'true' || env.DEB_TAR_PACKAGES == 'true'
         uses: actions/checkout@v4
         with:
-          repository: ${{ secrets.PRIVATE_ENG_REPO }}
+          repository: ${{ env.PRIVATE_ENG_REPO }}
           ref: main
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 1
@@ -196,31 +192,31 @@ jobs:
         run: printenv | sort
 
       - name: Build Images
-        if: ${{ inputs.DOCKER_BUILD_IMAGES }}
+        if: env.DOCKER_BUILD_IMAGES == 'true'
         working-directory: ./private/ci
         run: ./build_images.sh
 
       - name: Build SereneDB & Packages
-        if: ${{ inputs.DOCKER_SERENEDB_IMAGE || inputs.DEB_TAR_PACKAGES }}
+        if: env.DOCKER_SERENEDB_IMAGE == 'true' || env.DEB_TAR_PACKAGES == 'true'
         run: |
           cat > ./docker.env << EOF
-          DEB_TAR_PACKAGES=$DEB_TAR_PACKAGES
-          BUILDMODE=$BUILDMODE
-          USE_DEBUG_INFO=$USE_DEBUG_INFO
-          SDB_DEV=$SDB_DEV
-          USE_IPO=$USE_IPO
-          SDB_ALLOC=$SDB_ALLOC
-          SDB_PRIVATE=$SDB_PRIVATE
-          ENSURE_VTUNE_SYMBOLS=$ENSURE_VTUNE_SYMBOLS
-          STRIP_TARBALL=$STRIP_TARBALL
-          STATIC_EXECUTABLES=$STATIC_EXECUTABLES
+          DEB_TAR_PACKAGES=${{ env.DEB_TAR_PACKAGES }}
+          BUILDMODE=${{ env.BUILDMODE }}
+          USE_DEBUG_INFO=${{ env.USE_DEBUG_INFO }}
+          SDB_DEV=${{ env.SDB_DEV }}
+          USE_IPO=${{ env.USE_IPO }}
+          SDB_ALLOC=${{ env.SDB_ALLOC }}
+          SDB_PRIVATE=${{ env.SDB_PRIVATE }}
+          ENSURE_VTUNE_SYMBOLS=${{ env.ENSURE_VTUNE_SYMBOLS }}
+          STRIP_TARBALL=${{ env.STRIP_TARBALL }}
+          STATIC_EXECUTABLES=${{ env.STATIC_EXECUTABLES }}
           RUNNER_ID=$(id -u):$(id -g)
           EOF
-
+          
           echo "=== Docker environment file ==="
           cat ./docker.env
           echo "==============================="
-
+          
           docker run --rm \
             --cap-add=SYS_PTRACE \
             --privileged \
@@ -228,32 +224,12 @@ jobs:
             --env-file ./docker.env \
             -v ${{ github.workspace }}:/serenedb \
             -v /mnt/data/.ccache:/.ccache \
-            $BUILD_IMAGE /serenedb/private/ci/build_packages.bash
+            ${{ env.BUILD_IMAGE }} /serenedb/private/ci/build_packages.bash
 
       - name: Build SereneDB Docker Image
-        if: ${{ inputs.DOCKER_SERENEDB_IMAGE }}
+        if: env.DOCKER_SERENEDB_IMAGE == 'true'
         working-directory: ./packages
         run: ./build_docker.bash
-
-      - name: Checkout release-test-automation
-        run: |
-          if [ "$SDB_PRIVATE" = "On" ] && [ "$DEB_TAR_PACKAGES" = "true" ] && [ "$TEST_PACKAGES" = "true" ]; then
-            echo "Checking out release-test-automation repo"
-            git clone --depth 1 --recurse-submodules https://github.com/serenedb/release-test-automation.git release-test-automation
-            cd release-test-automation
-            git checkout master
-          else
-            echo "Skipping release-test-automation checkout"
-          fi
-
-      - name: Test packages
-        run: |
-          if [ "$SDB_PRIVATE" = "On" ] && [ "$DEB_TAR_PACKAGES" = "true" ] && [ "$TEST_PACKAGES" = "true" ]; then
-            cd release-test-automation/jenkins/serenedb
-            RTA_DIR=${{ github.workspace }}/release-test-automation PACKAGE_DIR=${{ github.workspace }} ./test_packages.sh
-          else
-            echo "Skipping package tests"
-          fi
 
       - name: Upload DEB packages
         if: success()
@@ -273,30 +249,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
-      - name: Upload Allure results
-        if: always() && inputs.DEB_TAR_PACKAGES && inputs.TEST_PACKAGES
-        uses: actions/upload-artifact@v4
-        with:
-          name: allure-results
-          path: release-test-automation/allure-results
-          if-no-files-found: ignore
-
-      - name: Generate Allure Report
-        if: always() && inputs.DEB_TAR_PACKAGES && inputs.TEST_PACKAGES
-        uses: simple-elf/allure-report-action@v1.7
-        with:
-          allure_results: release-test-automation/allure-results
-          allure_history: allure-history
-          keep_reports: 20
-
-      - name: Publish Allure Report
-        if: always() && inputs.DEB_TAR_PACKAGES && inputs.TEST_PACKAGES
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_branch: gh-pages
-          publish_dir: allure-history
-
       - name: Docker cleanup
         if: always()
         run: |
@@ -306,26 +258,26 @@ jobs:
       - name: Send Telegram notification
         if: always()
         run: |
-          if [ "${{ job.status }}" = "success" ]; then
+          if [ "${{ job.status }}" == "success" ]; then
             EMOJI="✅"
             RESULT="SUCCESS"
           else
             EMOJI="💥"
             RESULT="FAILURE"
           fi
-
-          if [ "$BRANCH" = "main" ]; then
-            TOPIC_ID="$TG_THREAD_ID_MAIN"
+          
+          if [ "${{ env.BRANCH }}" == "main" ]; then
+            TOPIC_ID="${{ env.TG_THREAD_ID_MAIN }}"
           else
-            TOPIC_ID="$TG_THREAD_ID_BUILD"
+            TOPIC_ID="${{ env.TG_THREAD_ID_BUILD }}"
           fi
-
-          TEXT="$EMOJI @${{ github.actor }} $RESULT: BRANCH=$BRANCH ${{ github.workflow }} #${{ github.run_number }} ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-
-          curl --location --request POST "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
-            --form "text=$TEXT" \
-            --form "chat_id=$TG_CHAT_ID" \
-            --form "message_thread_id=$TOPIC_ID" || true
+          
+          TEXT="${EMOJI} @${{ github.actor }} ${RESULT}: BRANCH=${{ env.BRANCH }} ${{ github.workflow }} #${{ github.run_number }} ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          
+          curl --location --request POST "https://api.telegram.org/bot${{ env.TG_TOKEN }}/sendMessage" \
+            --form "text=${TEXT}" \
+            --form "chat_id=${{ env.TG_CHAT_ID }}" \
+            --form "message_thread_id=${TOPIC_ID}" || true
 
   cleanup:
     name: Cleanup

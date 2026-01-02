@@ -141,8 +141,7 @@ class Executor {
     auto prepared = PrepareFilter(query);
     for (auto& segment : _reader) {
       auto docs = prepared->execute(irs::ExecutionContext{.segment = segment});
-      for (; docs->next(); ++count) {
-      }
+      count += docs->count();
     }
     return count;
   }
@@ -171,7 +170,7 @@ class Executor {
   }
 
  private:
-  irs::Filter::Prepared::ptr PrepareFilter(std::string_view query) {
+  irs::Filter::Query::ptr PrepareFilter(std::string_view query) {
     auto filter = ParseFilter(query);
     if (!filter) {
       return {};

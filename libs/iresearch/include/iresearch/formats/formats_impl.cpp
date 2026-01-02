@@ -28,6 +28,9 @@
 #include "iresearch/types.hpp"
 extern "C" {
 #include <simdbitpacking.h>
+#ifdef __AVX2__
+#include <avxbitpacking.h>
+#endif
 }
 
 #include <limits>
@@ -87,49 +90,6 @@ std::vector<std::string> ReadStrings(IndexInput& in) {
 
   return strings;
 }
-
-struct FormatTraits {
-  using AlignType = uint32_t;
-
-  static constexpr uint32_t kBlockSize = 128;
-  static_assert(kBlockSize <= doc_limits::eof());
-
-  IRS_FORCE_INLINE static void PackBlock(const uint32_t* IRS_RESTRICT decoded,
-                                         uint32_t* IRS_RESTRICT encoded,
-                                         uint32_t bits) noexcept {
-    packed::PackBlock(decoded, encoded, bits);
-    packed::PackBlock(decoded + packed::kBlockSize32, encoded + bits, bits);
-    packed::PackBlock(decoded + 2 * packed::kBlockSize32, encoded + 2 * bits,
-                      bits);
-    packed::PackBlock(decoded + 3 * packed::kBlockSize32, encoded + 3 * bits,
-                      bits);
-  }
-
-  IRS_FORCE_INLINE static void UnpackBlock(uint32_t* IRS_RESTRICT decoded,
-                                           const uint32_t* IRS_RESTRICT encoded,
-                                           uint32_t bits) noexcept {
-    packed::UnpackBlock(encoded, decoded, bits);
-    packed::UnpackBlock(encoded + bits, decoded + packed::kBlockSize32, bits);
-    packed::UnpackBlock(encoded + 2 * bits, decoded + 2 * packed::kBlockSize32,
-                        bits);
-    packed::UnpackBlock(encoded + 3 * bits, decoded + 3 * packed::kBlockSize32,
-                        bits);
-  }
-
-  IRS_FORCE_INLINE static void write_block(IndexOutput& out, const uint32_t* in,
-                                           uint32_t* buf) {
-    bitpack::write_block32<kBlockSize>(PackBlock, out, in, buf);
-  }
-
-  IRS_FORCE_INLINE static void read_block(IndexInput& in, uint32_t* buf,
-                                          uint32_t* out) {
-    bitpack::read_block32<kBlockSize>(UnpackBlock, in, buf, out);
-  }
-
-  IRS_FORCE_INLINE static void skip_block(IndexInput& in) {
-    bitpack::skip_block32(in, kBlockSize);
-  }
-};
 
 template<typename T, typename M>
 std::string FileName(const M& meta);
@@ -843,9 +803,8 @@ void PostingsWriterImpl<FormatTraits>::BeginDocument() {
     _doc.Push(id, _attrs.freq_value.value);
 
     if (_doc.Full()) {
-      // FIXME do aligned?
-      DeltaEncode<FormatTraits::kBlockSize>(_doc.docs.data(), _doc.block_last);
-      FormatTraits::write_block(*_doc_out, _doc.docs.data(), _buf);
+      FormatTraits::write_block_delta(*_doc_out, _doc.docs.data(),
+                                      _doc.block_last, _buf);
       if (_features.HasFrequency()) {
         FormatTraits::write_block(*_doc_out, _doc.freqs.data(), _buf);
       }
@@ -3661,14 +3620,8 @@ size_t PostingsReaderImpl<FormatTraits>::BitUnion(
   return count;
 }
 
-class Format15 : public Format {
+class Format15Base : public Format {
  public:
-  using FormatTraits = FormatTraits;
-
-  static constexpr std::string_view type_name() noexcept { return "1_5"; }
-
-  static ptr make();
-
   IndexMetaWriter::ptr get_index_meta_writer() const final;
   IndexMetaReader::ptr get_index_meta_reader() const final;
 
@@ -3683,45 +3636,31 @@ class Format15 : public Format {
   ColumnstoreWriter::ptr get_columnstore_writer(
     bool consolidation, IResourceManager& resource_manager) const final;
   ColumnstoreReader::ptr get_columnstore_reader() const final;
-
-  irs::PostingsWriter::ptr get_postings_writer(
-    bool consolidation, IResourceManager& resource_manager) const override;
-  irs::PostingsReader::ptr get_postings_reader() const override;
-
-  TypeInfo::type_id type() const noexcept override {
-    return irs::Type<Format15>::id();
-  }
 };
 
-static const Format15 kFormaT15Instance;
-
-Format::ptr Format15::make() {
-  return {irs::Format::ptr(), &kFormaT15Instance};
-}
-
-IndexMetaWriter::ptr Format15::get_index_meta_writer() const {
+IndexMetaWriter::ptr Format15Base::get_index_meta_writer() const {
   return std::make_unique<IndexMetaWriterImpl>(IndexMetaWriterImpl::kFormatMax);
 }
 
-IndexMetaReader::ptr Format15::get_index_meta_reader() const {
+IndexMetaReader::ptr Format15Base::get_index_meta_reader() const {
   // can reuse stateless reader
   static IndexMetaReaderImpl gInstance;
   return memory::to_managed<IndexMetaReader>(gInstance);
 }
 
-SegmentMetaWriter::ptr Format15::get_segment_meta_writer() const {
+SegmentMetaWriter::ptr Format15Base::get_segment_meta_writer() const {
   // can reuse stateless writer
   static SegmentMetaWriterImpl gInstance{SegmentMetaWriterImpl::kFormatMax};
   return memory::to_managed<SegmentMetaWriter>(gInstance);
 }
 
-SegmentMetaReader::ptr Format15::get_segment_meta_reader() const {
+SegmentMetaReader::ptr Format15Base::get_segment_meta_reader() const {
   // can reuse stateless writer
   static SegmentMetaReaderImpl gInstance;
   return memory::to_managed<SegmentMetaReader>(gInstance);
 }
 
-FieldWriter::ptr Format15::get_field_writer(
+FieldWriter::ptr Format15Base::get_field_writer(
   bool consolidation, IResourceManager& resource_manager) const {
   return burst_trie::MakeWriter(
     burst_trie::Version::Min,
@@ -3729,49 +3668,51 @@ FieldWriter::ptr Format15::get_field_writer(
     resource_manager);
 }
 
-FieldReader::ptr Format15::get_field_reader(
+FieldReader::ptr Format15Base::get_field_reader(
   IResourceManager& resource_manager) const {
   return burst_trie::MakeReader(get_postings_reader(), resource_manager);
 }
 
-ColumnstoreWriter::ptr Format15::get_columnstore_writer(
+ColumnstoreWriter::ptr Format15Base::get_columnstore_writer(
   bool consolidation, IResourceManager& resource_manager) const {
   return columnstore2::MakeWriter(columnstore2::Version::Min, consolidation,
                                   resource_manager);
 }
 
-ColumnstoreReader::ptr Format15::get_columnstore_reader() const {
+ColumnstoreReader::ptr Format15Base::get_columnstore_reader() const {
   return columnstore2::MakeReader();
 }
 
-irs::PostingsWriter::ptr Format15::get_postings_writer(
-  bool consolidation, IResourceManager& resource_manager) const {
-  return std::make_unique<PostingsWriterImpl<FormatTraits>>(
-    PostingsFormat::Wand, consolidation, resource_manager);
-}
+struct FormatTraitsAvx {
+  using AlignType = __m256i;
 
-irs::PostingsReader::ptr Format15::get_postings_reader() const {
-  return std::make_unique<PostingsReaderImpl<FormatTraits>>();
-}
+  static constexpr std::string_view kName = "1_5avx";
 
-#ifdef IRESEARCH_SSE2
-
-struct FormatTraitsSse4 {
-  using AlignType = __m128i;
-
-  static constexpr uint32_t kBlockSize = SIMDBlockSize;
+  static constexpr uint32_t kBlockSize = AVXBlockSize;
   static_assert(kBlockSize <= doc_limits::eof());
 
   IRS_FORCE_INLINE static void PackBlock(const uint32_t* IRS_RESTRICT decoded,
                                          uint32_t* IRS_RESTRICT encoded,
                                          uint32_t bits) noexcept {
-    ::simdpackwithoutmask(decoded, reinterpret_cast<AlignType*>(encoded), bits);
+    ::avxpackwithoutmask(decoded, reinterpret_cast<AlignType*>(encoded), bits);
+  }
+
+  IRS_FORCE_INLINE static void PackBlockDelta(
+    const uint32_t* IRS_RESTRICT decoded, uint32_t* IRS_RESTRICT encoded,
+    uint32_t prev, uint32_t bits) noexcept {
+    ::avxpack(decoded, reinterpret_cast<AlignType*>(encoded), bits);
   }
 
   IRS_FORCE_INLINE static void UnpackBlock(uint32_t* IRS_RESTRICT decoded,
                                            const uint32_t* IRS_RESTRICT encoded,
                                            uint32_t bits) noexcept {
-    ::simdunpack(reinterpret_cast<const AlignType*>(encoded), decoded, bits);
+    ::avxunpack(reinterpret_cast<const AlignType*>(encoded), decoded, bits);
+  }
+
+  IRS_FORCE_INLINE static void write_block_delta(IndexOutput& out, uint32_t* in,
+                                                 uint32_t prev, uint32_t* buf) {
+    DeltaEncode<kBlockSize>(in, prev);
+    bitpack::write_block32<kBlockSize>(PackBlock, out, in, buf);
   }
 
   IRS_FORCE_INLINE static void write_block(IndexOutput& out, const uint32_t* in,
@@ -3789,48 +3730,83 @@ struct FormatTraitsSse4 {
   }
 };
 
-class Format15simd final : public Format15 {
- public:
-  using FormatTraits = FormatTraitsSse4;
+struct FormatTraitsSse4 {
+  using AlignType = __m128i;
 
-  static constexpr std::string_view type_name() noexcept { return "1_5simd"; }
+  static constexpr std::string_view kName = "1_5simd";
 
-  static ptr make();
+  static constexpr uint32_t kBlockSize = SIMDBlockSize;
+  static_assert(kBlockSize <= doc_limits::eof());
 
-  irs::PostingsWriter::ptr get_postings_writer(
-    bool consolidation, IResourceManager& resource_manager) const final;
-  irs::PostingsReader::ptr get_postings_reader() const final;
+  IRS_FORCE_INLINE static void PackBlock(const uint32_t* IRS_RESTRICT decoded,
+                                         uint32_t* IRS_RESTRICT encoded,
+                                         uint32_t bits) noexcept {
+    ::simdpackwithoutmask(decoded, reinterpret_cast<AlignType*>(encoded), bits);
+  }
 
-  TypeInfo::type_id type() const noexcept final {
-    return irs::Type<Format15simd>::id();
+  IRS_FORCE_INLINE static void UnpackBlock(uint32_t* IRS_RESTRICT decoded,
+                                           const uint32_t* IRS_RESTRICT encoded,
+                                           uint32_t bits) noexcept {
+    ::simdunpack(reinterpret_cast<const AlignType*>(encoded), decoded, bits);
+  }
+
+  IRS_FORCE_INLINE static void write_block_delta(IndexOutput& out, uint32_t* in,
+                                                 uint32_t prev, uint32_t* buf) {
+    DeltaEncode<kBlockSize>(in, prev);
+    bitpack::write_block32<kBlockSize>(PackBlock, out, in, buf);
+  }
+
+  IRS_FORCE_INLINE static void write_block(IndexOutput& out, const uint32_t* in,
+                                           uint32_t* buf) {
+    bitpack::write_block32<kBlockSize>(PackBlock, out, in, buf);
+  }
+
+  IRS_FORCE_INLINE static void read_block(IndexInput& in, uint32_t* buf,
+                                          uint32_t* out) {
+    bitpack::read_block32<kBlockSize>(UnpackBlock, in, buf, out);
+  }
+
+  IRS_FORCE_INLINE static void skip_block(IndexInput& in) {
+    bitpack::skip_block32(in, kBlockSize);
   }
 };
 
-static const Format15simd kFormaT15SimdInstance;
+template<typename F>
+class Format15Impl final : public Format15Base {
+ public:
+  using FormatTraits = F;
 
-Format::ptr Format15simd::make() {
-  return {irs::Format::ptr{}, &kFormaT15SimdInstance};
-}
+  static constexpr std::string_view type_name() noexcept {
+    return FormatTraits::kName;
+  }
 
-irs::PostingsWriter::ptr Format15simd::get_postings_writer(
-  bool consolidation, IResourceManager& resource_manager) const {
-  return std::make_unique<PostingsWriterImpl<FormatTraits>>(
-    PostingsFormat::WandSimd, consolidation, resource_manager);
-}
+  static ptr make() {
+    static const Format15Impl kInstance;
+    return {irs::Format::ptr{}, &kInstance};
+  }
 
-irs::PostingsReader::ptr Format15simd::get_postings_reader() const {
-  return std::make_unique<PostingsReaderImpl<FormatTraits>>();
-}
+  irs::PostingsWriter::ptr get_postings_writer(
+    bool consolidation, IResourceManager& resource_manager) const final {
+    return std::make_unique<PostingsWriterImpl<FormatTraits>>(
+      PostingsFormat::WandSimd, consolidation, resource_manager);
+  }
+  irs::PostingsReader::ptr get_postings_reader() const final {
+    return std::make_unique<PostingsReaderImpl<FormatTraits>>();
+  }
 
-#endif  // IRESEARCH_SSE2
+  TypeInfo::type_id type() const noexcept final {
+    return irs::Type<Format15Impl>::id();
+  }
+};
+
+using Format15simd = Format15Impl<FormatTraitsSse4>;
+using Format15avx = Format15Impl<FormatTraitsAvx>;
 
 }  // namespace
 
 void formats::Init() {
-  REGISTER_FORMAT(Format15);
-#ifdef IRESEARCH_SSE2
   REGISTER_FORMAT(Format15simd);
-#endif
+  REGISTER_FORMAT(Format15avx);
 }
 
 // use base irs::position type for ancestors

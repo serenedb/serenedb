@@ -1419,13 +1419,15 @@ DocIterator::ptr MakeDisjunction(WandContext ctx,
     }
   }
 
-  if (2 == size) {
-    // 2-way disjunction
-    using BasicDisjunction = typename RebindIterator<Disjunction>::Basic;
+  using BasicDisjunction = typename RebindIterator<Disjunction>::Basic;
+  if constexpr (!std::is_void_v<BasicDisjunction>) {
+    if (2 == size) {
+      // 2-way disjunction
 
-    return memory::make_managed<BasicDisjunction>(
-      std::move(itrs.front()), std::move(itrs.back()),
-      std::forward<Merger>(merger), std::forward<Args>(args)...);
+      return memory::make_managed<BasicDisjunction>(
+        std::move(itrs.front()), std::move(itrs.back()),
+        std::forward<Merger>(merger), std::forward<Args>(args)...);
+    }
   }
 
   using SmallDisjunction = typename RebindIterator<Disjunction>::Small;

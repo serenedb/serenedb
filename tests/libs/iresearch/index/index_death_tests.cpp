@@ -3377,7 +3377,7 @@ TEST(index_death_test_formats_15, fails_in_length) {
 }
 
 TEST(index_death_test_formats_15, open_reader) {
-  ::OpenReader("1_5", [](FailingDirectory& dir) {
+  ::OpenReader("1_5avx", [](FailingDirectory& dir) {
     // postings list (documents)
     dir.RegisterFailure(FailingDirectory::Failure::OPEN, "_1.doc");
     // columnstore index

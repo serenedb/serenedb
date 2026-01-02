@@ -535,8 +535,8 @@ void SparseBitmapIterator::seek_to_block(doc_id_t target) {
 
 doc_id_t SparseBitmapIterator::seek(doc_id_t target) {
   // FIXME
-  if (target <= value()) {
-    return value();
+  if (const auto doc = value(); target <= doc) [[unlikely]] {
+    return doc;
   }
 
   const doc_id_t target_block = target & 0xFFFF0000;

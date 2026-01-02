@@ -2007,16 +2007,13 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
   }
 
   void Prepare(const TermMeta& meta, const IndexInput* doc_in,
-               [[maybe_unused]] const IndexInput* pos_in,
-               [[maybe_unused]] const IndexInput* pay_in,
+               const IndexInput* pos_in, const IndexInput* pay_in,
                uint8_t wand_index = WandContext::kDisable);
 
  private:
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);
   }
-
-  doc_id_t seek(doc_id_t target) final;
 
   doc_id_t value() const noexcept final {
     return std::get<DocAttr>(_attrs).value;
@@ -2052,6 +2049,8 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
 
     return doc_value;
   }
+
+  doc_id_t seek(doc_id_t target) final;
 
   uint32_t count() final {
     if (this->_left == 0) [[unlikely]] {
@@ -2173,9 +2172,8 @@ void DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::ReadSkip::Seal(
 
 template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
 void DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
-  const TermMeta& meta, const IndexInput* doc_in,
-  [[maybe_unused]] const IndexInput* pos_in,
-  [[maybe_unused]] const IndexInput* pay_in, uint8_t wand_index) {
+  const TermMeta& meta, const IndexInput* doc_in, const IndexInput* pos_in,
+  const IndexInput* pay_in, uint8_t wand_index) {
   // Don't use DocIterator for singleton docs, must be ensured by the caller
   SDB_ASSERT(meta.docs_count > 1);
   SDB_ASSERT(this->_begin == std::end(this->_buf.docs));

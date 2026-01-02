@@ -41,6 +41,14 @@ struct MinMatchBuffer {
     return _match_count[i];
   }
 
+  uint32_t count() const noexcept {
+    uint32_t count = 0;
+    for (const auto match_count : _match_count) {
+      count += match_count >= _min_match_count;
+    }
+    return count;
+  }
+
   bool inc(size_t i) noexcept { return ++_match_count[i] < _min_match_count; }
 
   void clear() noexcept { std::memset(_match_count, 0, sizeof _match_count); }
@@ -53,11 +61,6 @@ struct MinMatchBuffer {
  private:
   size_t _min_match_count;
   uint32_t _match_count[Size];
-};
-
-template<>
-struct MinMatchBuffer<0> {
-  explicit MinMatchBuffer(size_t) noexcept {}
 };
 
 class ScoreBuffer {
@@ -909,9 +912,9 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
 
     do {
-      while (!_cur) {
+      while (_cur == 0) {
         if (_begin >= std::end(_mask)) {
-          if (refill()) {
+          if (Refill()) {
             SDB_ASSERT(_cur);
             break;
           }
@@ -978,8 +981,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
       _match_count = 0;
     }
 
-    visit_and_purge([this, target, &doc_value](auto& it) mutable {
-      IRS_IGNORE(this);
+    VisitAndPurge([&](auto& it) {
       const auto value = it->seek(target);
 
       if (doc_limits::eof(value)) {
@@ -987,19 +989,14 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
         return false;
       }
 
-      // this is to circumvent bug in GCC 10.1 on ARM64
-      constexpr bool kMinMatch = traits_type::kMinMatch;
-
       if (value < doc_value) {
         doc_value = value;
-        if constexpr (kMinMatch) {
+        if constexpr (traits_type::kMinMatch) {
           _match_count = 1;
         }
-      } else {
-        if constexpr (kMinMatch) {
-          if (target == value) {
-            ++_match_count;
-          }
+      } else if constexpr (traits_type::kMinMatch) {
+        if (target == value) {
+          ++_match_count;
         }
       }
 
@@ -1007,10 +1004,8 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
     });
 
     if (_itrs.empty()) {
-      doc_value = doc_limits::eof();
       _match_count = 0;
-
-      return doc_limits::eof();
+      return doc_value = doc_limits::eof();
     }
 
     SDB_ASSERT(!doc_limits::eof(doc_value));
@@ -1048,7 +1043,27 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
     }
   }
 
-  uint32_t count() final { return DocIterator::Count(*this); }
+  uint32_t count() final {
+    uint32_t count = 0;
+
+    while (_cur != 0 && next()) [[unlikely]] {
+      ++count;
+    }
+
+    while (Refill()) {
+      if constexpr (traits_type::kMinMatch) {
+        count += _match_buf.count();
+      } else {
+        for (const auto word : _mask) {
+          count += std::popcount(word);
+        }
+      }
+    }
+
+    _match_count = 0;
+    std::get<DocAttr>(_attrs).value = doc_limits::eof();
+    return count;
+  }
 
  private:
   static constexpr doc_id_t kBlockSize = BitsRequired<uint64_t>();
@@ -1067,7 +1082,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
                        detail::EmptyScoreBuffer>;
 
   using MinMatchBufferType =
-    detail::MinMatchBuffer<traits_type::kMinMatch ? kWindow : 0>;
+    utils::Need<traits_type::kMinMatch, detail::MinMatchBuffer<kWindow>>;
 
   using Attributes = std::tuple<DocAttr, ScoreAttr, CostAttr>;
 
@@ -1157,7 +1172,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
   }
 
   template<typename Visitor>
-  void visit_and_purge(Visitor visitor) {
+  void VisitAndPurge(Visitor visitor) {
     auto* begin = _itrs.data();
     auto* end = _itrs.data() + _itrs.size();
 
@@ -1192,7 +1207,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
     }
   }
 
-  void reset() noexcept {
+  void Reset() noexcept {
     std::memset(_mask, 0, sizeof _mask);
     if constexpr (kHasScore<Merger>) {
       _score_value = _score_buf.data();
@@ -1203,13 +1218,13 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
     }
   }
 
-  bool refill() {
+  bool Refill() {
     if (_itrs.empty()) {
       return false;
     }
 
     if constexpr (!traits_type::kMinMatch) {
-      reset();
+      Reset();
     }
 
     bool empty = true;
@@ -1218,14 +1233,14 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
       if constexpr (traits_type::kMinMatch) {
         // in min match case we need to clear
         // internal buffers on every iteration
-        reset();
+        Reset();
       }
 
       _doc_base = _min;
       _max = _min + kWindow;
       _min = doc_limits::eof();
 
-      visit_and_purge([this, &empty](auto& it) mutable {
+      VisitAndPurge([this, &empty](auto& it) mutable {
         // FIXME
         // for min match case we can skip the whole block if
         // we can't satisfy match_buf_.min_match_count() conditions, namely
@@ -1240,11 +1255,11 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
         if constexpr (kHasScore<Merger>) {
           SDB_ASSERT(Merger::size());
           if (!it.score->IsDefault()) {
-            return this->refill<true>(it, empty);
+            return this->Refill<true>(it, empty);
           }
         }
 
-        return this->refill<false>(it, empty);
+        return this->Refill<false>(it, empty);
       });
     } while (empty && !_itrs.empty());
 
@@ -1272,7 +1287,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
   }
 
   template<bool Score>
-  bool refill(adapter& it, bool& empty) {
+  bool Refill(adapter& it, bool& empty) {
     SDB_ASSERT(it.doc);
     const auto* doc = &it.doc->value;
 

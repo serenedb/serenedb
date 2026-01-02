@@ -66,7 +66,7 @@ class AllIterator : public DocIterator {
 
  private:
   DocAttr _doc;
-  doc_id_t _max_doc;  // largest valid doc_id
+  const doc_id_t _max_doc;  // largest valid doc_id
 };
 
 class MaskDocIterator : public DocIterator {
@@ -131,7 +131,9 @@ class MaskedDocIterator : public DocIterator {
   }
 
   doc_id_t seek(doc_id_t target) final {
-    SDB_ASSERT(_next <= target);
+    if (const auto doc = value(); target <= doc) [[unlikely]] {
+      return doc;
+    }
     _next = target;
     return advance();
   }

@@ -94,16 +94,7 @@ class ScoreBuffer {
 struct EmptyScoreBuffer {
   explicit EmptyScoreBuffer(size_t, size_t) noexcept {}
 
-  score_t* get(size_t) noexcept {
-    SDB_ASSERT(false);
-    return nullptr;
-  }
-
   score_t* data() noexcept { return nullptr; }
-
-  size_t size() const noexcept { return 0; }
-
-  size_t bucket_size() const noexcept { return 0; }
 };
 
 struct SubScoresCtx : SubScores {

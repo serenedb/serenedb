@@ -33,4 +33,3 @@ jobs:
       TG_THREAD_ID_BUILD: ${{ secrets.TG_THREAD_ID_BUILD }}
       TG_THREAD_ID_MAIN: ${{ secrets.TG_THREAD_ID_MAIN }}
       SDB_PRIVATE_REPO: ${{ secrets.SDB_PRIVATE_REPO }}
-      PRIVATE_ENG_REPO: ${{ secrets.PRIVATE_ENG_REPO }}

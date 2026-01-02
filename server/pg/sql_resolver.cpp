@@ -203,7 +203,7 @@ void ResolveRelations(ObjectId database,
                       std::span<const std::string> search_path,
                       Objects& objects, Disallowed& disallowed,
                       const Objects& query) {
-  for (auto& [name, old_data] : query.getRelations()) {
+  for (const auto& [name, old_data] : query.getRelations()) {
     auto& new_data = objects.ensureRelation(name.schema, name.relation);
     new_data = old_data;
     ResolveRelation(database, search_path, objects, disallowed, name, new_data);
@@ -214,7 +214,7 @@ void ResolveFunctions(ObjectId database,
                       std::span<const std::string> search_path,
                       Objects& objects, Disallowed& disallowed,
                       const Objects& query) {
-  for (auto& [name, old_data] : query.getFunctions()) {
+  for (const auto& [name, old_data] : query.getFunctions()) {
     auto& new_data = objects.ensureFunction(name.schema, name.relation);
     new_data = old_data;
     ResolveFunction(database, search_path, objects, disallowed, name, new_data);
@@ -225,21 +225,21 @@ void ResolveFunctions(ObjectId database,
 
 void Resolve(ObjectId database, Objects& objects, const Config& config) {
   SDB_ASSERT(!ServerState::instance()->IsDBServer());
-  Disallowed dummy;
+  Disallowed disallowed;
   auto search_path = config.Get<VariableType::PgSearchPath>("search_path");
 
   auto functions = std::move(objects.getFunctions());
   for (auto& [name, old_data] : functions) {
     auto& new_data = objects.ensureFunction(name.schema, name.relation);
     new_data = std::move(old_data);
-    ResolveFunction(database, search_path, objects, dummy, name, new_data);
+    ResolveFunction(database, search_path, objects, disallowed, name, new_data);
   }
 
   auto relations = std::move(objects.getRelations());
   for (auto& [name, old_data] : relations) {
     auto& new_data = objects.ensureRelation(name.schema, name.relation);
     new_data = std::move(old_data);
-    ResolveRelation(database, search_path, objects, dummy, name, new_data);
+    ResolveRelation(database, search_path, objects, disallowed, name, new_data);
   }
 }
 

@@ -9,6 +9,7 @@ on:
         type: choice
         options:
           - parilka
+          - self-hosted
         default: 'parilka'
       BRANCH:
         description: 'SereneDB branch to test'

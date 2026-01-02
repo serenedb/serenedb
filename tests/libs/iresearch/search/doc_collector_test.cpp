@@ -104,8 +104,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_basic) {
     constexpr size_t k = 5;
 
     std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
-    size_t count =
-      irs::ExecuteTopK(reader, filter, prepared_order, {}, k, std::span{results});
+    size_t count = irs::ExecuteTopK(reader, filter, prepared_order, {}, k,
+                                    std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
@@ -140,8 +140,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_larger_k) {
     constexpr size_t k = 1000;
 
     std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
-    size_t count =
-      irs::ExecuteTopK(reader, filter, prepared_order, {}, k, std::span{results});
+    size_t count = irs::ExecuteTopK(reader, filter, prepared_order, {}, k,
+                                    std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
@@ -173,8 +173,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_empty_results) {
     constexpr size_t k = 10;
 
     std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
-    size_t count =
-      irs::ExecuteTopK(reader, filter, prepared_order, {}, k, std::span{results});
+    size_t count = irs::ExecuteTopK(reader, filter, prepared_order, {}, k,
+                                    std::span{results});
 
     ASSERT_EQ(0, count);
     ASSERT_EQ(0, std::min(count, k));
@@ -202,8 +202,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_all_filter) {
     constexpr size_t k = 10;
 
     std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
-    size_t count =
-      irs::ExecuteTopK(reader, filter, prepared_order, {}, k, std::span{results});
+    size_t count = irs::ExecuteTopK(reader, filter, prepared_order, {}, k,
+                                    std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
@@ -264,8 +264,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_multi_segment) {
     constexpr size_t k = 5;
 
     std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
-    size_t count =
-      irs::ExecuteTopK(reader, filter, prepared_order, {}, k, std::span{results});
+    size_t count = irs::ExecuteTopK(reader, filter, prepared_order, {}, k,
+                                    std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
@@ -299,8 +299,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_term_filter) {
     constexpr size_t k = 3;
 
     std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
-    size_t count =
-      irs::ExecuteTopK(reader, filter, prepared_order, {}, k, std::span{results});
+    size_t count = irs::ExecuteTopK(reader, filter, prepared_order, {}, k,
+                                    std::span{results});
 
     ASSERT_GT(count, 0);
     auto result_count = std::min(count, k);
@@ -341,8 +341,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_disjunction) {
     constexpr size_t k = 5;
 
     std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
-    size_t count =
-      irs::ExecuteTopK(reader, filter, prepared_order, {}, k, std::span{results});
+    size_t count = irs::ExecuteTopK(reader, filter, prepared_order, {}, k,
+                                    std::span{results});
 
     ASSERT_GT(count, 0);
     auto result_count = std::min(count, k);
@@ -373,8 +373,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_k_equals_one) {
     constexpr size_t k = 1;
 
     std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
-    size_t count =
-      irs::ExecuteTopK(reader, filter, prepared_order, {}, k, std::span{results});
+    size_t count = irs::ExecuteTopK(reader, filter, prepared_order, {}, k,
+                                    std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
@@ -406,8 +406,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_verifies_top_docs) {
     constexpr size_t k = 3;
 
     std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
-    size_t count =
-      irs::ExecuteTopK(reader, filter, prepared_order, {}, k, std::span{results});
+    size_t count = irs::ExecuteTopK(reader, filter, prepared_order, {}, k,
+                                    std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
@@ -446,8 +446,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_similar_scores) {
     constexpr size_t k = 5;
 
     std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
-    size_t count =
-      irs::ExecuteTopK(reader, filter, prepared_order, {}, k, std::span{results});
+    size_t count = irs::ExecuteTopK(reader, filter, prepared_order, {}, k,
+                                    std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
@@ -467,8 +467,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_similar_scores) {
     constexpr size_t k = 10;
 
     std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
-    size_t count =
-      irs::ExecuteTopK(reader, filter, prepared_order, {}, k, std::span{results});
+    size_t count = irs::ExecuteTopK(reader, filter, prepared_order, {}, k,
+                                    std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
@@ -505,8 +505,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_all_same_score) {
     constexpr size_t k = 5;
 
     std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
-    size_t count =
-      irs::ExecuteTopK(reader, filter, prepared_order, {}, k, std::span{results});
+    size_t count = irs::ExecuteTopK(reader, filter, prepared_order, {}, k,
+                                    std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
@@ -522,7 +522,7 @@ static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(doc_collector_test, DocCollectorTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values("1_5")),
+                                            ::testing::Values("1_5avx")),
                          DocCollectorTestCase::to_string);
 
 }  // namespace

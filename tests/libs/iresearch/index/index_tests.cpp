@@ -13705,7 +13705,7 @@ TEST_P(IndexTestCase11, consolidate_old_format) {
   AssertSnapshotEquality(*writer);
   validate_codec(codec(), 2);
   // consolidate
-  auto old_codec = irs::formats::Get("1_5");
+  auto old_codec = irs::formats::Get("1_5avx");
   irs::index_utils::ConsolidateCount consolidate_all;
   ASSERT_TRUE(writer->Consolidate(irs::index_utils::MakePolicy(consolidate_all),
                                   old_codec));

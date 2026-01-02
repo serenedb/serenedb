@@ -157,7 +157,7 @@ class PrefixFilterTestCase : public tests::FilterTestCaseBase {
         irs::ColumnInfo{irs::Type<irs::compression::None>::get(), {}, false},
         irs::FeatureWriterFactory{}};
     };
-    if (codec()->type()().name().starts_with("1_5") && wand) {
+    if (codec()->type()().name().starts_with("1_5avx") && wand) {
       opts.reader_options.scorers = {&score, 1};
     }
     // add segment

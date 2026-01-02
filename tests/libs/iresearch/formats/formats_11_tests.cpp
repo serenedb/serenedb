@@ -43,7 +43,7 @@ TEST_P(Format11TestCase, open_10_with_11) {
 
   // write segment with format10
   {
-    auto codec = irs::formats::Get("1_5");
+    auto codec = irs::formats::Get("1_5avx");
     ASSERT_NE(nullptr, codec);
     auto writer = irs::IndexWriter::Make(dir(), codec, irs::kOmCreate);
     ASSERT_NE(nullptr, writer);
@@ -56,7 +56,7 @@ TEST_P(Format11TestCase, open_10_with_11) {
   }
 
   // check index
-  auto codec = irs::formats::Get("1_5");
+  auto codec = irs::formats::Get("1_5avx");
   ASSERT_NE(nullptr, codec);
   auto index = irs::DirectoryReader(dir(), codec);
   ASSERT_TRUE(index);
@@ -105,7 +105,7 @@ TEST_P(Format11TestCase, formats_11) {
 
   // write segment with format10
   {
-    auto codec = irs::formats::Get("1_5");
+    auto codec = irs::formats::Get("1_5avx");
     ASSERT_NE(nullptr, codec);
     auto writer = irs::IndexWriter::Make(dir(), codec, irs::kOmCreate);
     ASSERT_NE(nullptr, writer);
@@ -119,7 +119,7 @@ TEST_P(Format11TestCase, formats_11) {
 
   // write segment with format11
   {
-    auto codec = irs::formats::Get("1_5");
+    auto codec = irs::formats::Get("1_5avx");
     ASSERT_NE(nullptr, codec);
     auto writer = irs::IndexWriter::Make(dir(), codec, irs::kOmAppend);
     ASSERT_NE(nullptr, writer);

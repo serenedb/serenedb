@@ -146,7 +146,7 @@ class DoclistTestFilter : public Filter {
 class ProxyFilterTestCase : public ::testing::TestWithParam<size_t> {
  public:
   ProxyFilterTestCase() {
-    auto codec = irs::formats::Get("1_5");
+    auto codec = irs::formats::Get("1_5avx");
     auto writer = irs::IndexWriter::Make(_dir, codec, irs::kOmCreate);
     {  // make dummy document so we could have non-empty index
       auto ctx = writer->GetBatch();

@@ -48,6 +48,47 @@ void ResolveFunctions(ObjectId database,
                       Objects& objects, Disallowed& disallowed,
                       const Objects& query);
 
+enum class ObjectType {
+  Function = 0,
+  Relation = 1,
+};
+void ResolveObjectInSchemaPath(ObjectId database, ObjectType type,
+                               std::span<const std::string> search_path,
+                               const Objects::ObjectName& name,
+                               Objects::ObjectData& data) {
+  auto resolve_object = [&](std::string_view schema) {
+    SDB_ASSERT(!data.object);
+    if (schema == StaticStrings::kInformationSchema) {
+      // In case information_schema is in the search path
+      ResolveInformationSchema(database, name.relation, data);
+      return;
+    }
+
+    auto& instance = SerenedServer::Instance();
+    auto& catalog = instance.getFeature<catalog::CatalogFeature>().Global();
+    auto snapshot = catalog.GetSnapshot();
+    data.object = [&] -> std::shared_ptr<catalog::SchemaObject> {
+      switch (type) {
+        case ObjectType::Function:
+          return snapshot->GetFunction(database, schema, name.relation);
+        case ObjectType::Relation:
+          return snapshot->GetRelation(database, schema, name.relation);
+      }
+    }();
+  };
+
+  if (!name.schema.empty()) {
+    resolve_object(name.schema);
+  } else {
+    for (const auto& schema : search_path) {
+      resolve_object(schema);
+      if (data.object) {
+        break;
+      }
+    }
+  }
+}
+
 void ResolveFunction(ObjectId database,
                      std::span<const std::string> search_path, Objects& objects,
                      Disallowed& disallowed, const Objects::ObjectName& name,
@@ -71,30 +112,8 @@ void ResolveFunction(ObjectId database,
     }
   }
 
-  auto resolve_object = [&](std::string_view schema) {
-    SDB_ASSERT(!data.object);
-    if (schema == StaticStrings::kInformationSchema) {
-      // In case information_schema is in the search path
-      ResolveInformationSchema(database, name.relation, data);
-      return;
-    }
-
-    auto& instance = SerenedServer::Instance();
-    auto& catalog = instance.getFeature<catalog::CatalogFeature>().Global();
-    auto snapshot = catalog.GetSnapshot();
-    data.object = snapshot->GetFunction(database, schema, name.relation);
-  };
-
-  if (!name.schema.empty()) {
-    resolve_object(name.schema);
-  } else {
-    for (const auto& schema : search_path) {
-      resolve_object(schema);
-      if (data.object) {
-        break;
-      }
-    }
-  }
+  ResolveObjectInSchemaPath(database, ObjectType::Function, search_path, name,
+                            data);
 
   if (!data.object) {
     SDB_THROW(ERROR_SERVER_DATA_SOURCE_NOT_FOUND, "function \"",
@@ -154,30 +173,8 @@ void ResolveRelation(ObjectId database,
     return;
   }
 
-  auto resolve_object = [&](std::string_view schema) {
-    SDB_ASSERT(!data.object);
-    if (schema == StaticStrings::kInformationSchema) {
-      // In case information_schema is in the search path
-      ResolveInformationSchema(database, name.relation, data);
-      return;
-    }
-
-    auto& instance = SerenedServer::Instance();
-    auto& catalog = instance.getFeature<catalog::CatalogFeature>().Global();
-    auto snapshot = catalog.GetSnapshot();
-    data.object = snapshot->GetRelation(database, schema, name.relation);
-  };
-
-  if (!name.schema.empty()) {
-    resolve_object(name.schema);
-  } else {
-    for (const auto& schema : search_path) {
-      resolve_object(schema);
-      if (data.object) {
-        break;
-      }
-    }
-  }
+  ResolveObjectInSchemaPath(database, ObjectType::Relation, search_path, name,
+                            data);
 
   if (!data.object) {
     SDB_THROW(ERROR_SERVER_DATA_SOURCE_NOT_FOUND, "relation \"",

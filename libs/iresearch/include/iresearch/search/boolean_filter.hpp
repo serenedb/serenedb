@@ -66,7 +66,7 @@ class BooleanFilter : public FilterWithBoost, public AllDocsProvider {
     return result;
   }
 
-  Prepared::ptr prepare(const PrepareContext& ctx) const override;
+  Query::ptr prepare(const PrepareContext& ctx) const override;
 
  protected:
   bool equals(const Filter& rhs) const noexcept final;

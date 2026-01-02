@@ -105,7 +105,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_basic) {
 
     std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
     size_t count =
-      irs::ExecuteTopK(reader, filter, prepared_order, k, std::span{results});
+      irs::ExecuteTopK(reader, filter, prepared_order, {}, k, std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
@@ -141,7 +141,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_larger_k) {
 
     std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
     size_t count =
-      irs::ExecuteTopK(reader, filter, prepared_order, k, std::span{results});
+      irs::ExecuteTopK(reader, filter, prepared_order, {}, k, std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
@@ -174,7 +174,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_empty_results) {
 
     std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
     size_t count =
-      irs::ExecuteTopK(reader, filter, prepared_order, k, std::span{results});
+      irs::ExecuteTopK(reader, filter, prepared_order, {}, k, std::span{results});
 
     ASSERT_EQ(0, count);
     ASSERT_EQ(0, std::min(count, k));
@@ -203,7 +203,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_all_filter) {
 
     std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
     size_t count =
-      irs::ExecuteTopK(reader, filter, prepared_order, k, std::span{results});
+      irs::ExecuteTopK(reader, filter, prepared_order, {}, k, std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
@@ -265,7 +265,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_multi_segment) {
 
     std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
     size_t count =
-      irs::ExecuteTopK(reader, filter, prepared_order, k, std::span{results});
+      irs::ExecuteTopK(reader, filter, prepared_order, {}, k, std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
@@ -300,7 +300,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_term_filter) {
 
     std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
     size_t count =
-      irs::ExecuteTopK(reader, filter, prepared_order, k, std::span{results});
+      irs::ExecuteTopK(reader, filter, prepared_order, {}, k, std::span{results});
 
     ASSERT_GT(count, 0);
     auto result_count = std::min(count, k);
@@ -342,7 +342,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_disjunction) {
 
     std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
     size_t count =
-      irs::ExecuteTopK(reader, filter, prepared_order, k, std::span{results});
+      irs::ExecuteTopK(reader, filter, prepared_order, {}, k, std::span{results});
 
     ASSERT_GT(count, 0);
     auto result_count = std::min(count, k);
@@ -374,7 +374,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_k_equals_one) {
 
     std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
     size_t count =
-      irs::ExecuteTopK(reader, filter, prepared_order, k, std::span{results});
+      irs::ExecuteTopK(reader, filter, prepared_order, {}, k, std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
@@ -407,7 +407,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_verifies_top_docs) {
 
     std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
     size_t count =
-      irs::ExecuteTopK(reader, filter, prepared_order, k, std::span{results});
+      irs::ExecuteTopK(reader, filter, prepared_order, {}, k, std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
@@ -447,7 +447,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_similar_scores) {
 
     std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
     size_t count =
-      irs::ExecuteTopK(reader, filter, prepared_order, k, std::span{results});
+      irs::ExecuteTopK(reader, filter, prepared_order, {}, k, std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
@@ -468,7 +468,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_similar_scores) {
 
     std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
     size_t count =
-      irs::ExecuteTopK(reader, filter, prepared_order, k, std::span{results});
+      irs::ExecuteTopK(reader, filter, prepared_order, {}, k, std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
@@ -506,7 +506,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_all_same_score) {
 
     std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
     size_t count =
-      irs::ExecuteTopK(reader, filter, prepared_order, k, std::span{results});
+      irs::ExecuteTopK(reader, filter, prepared_order, {}, k, std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);

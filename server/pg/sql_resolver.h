@@ -33,9 +33,10 @@ void ResolveQueryView(ObjectId database,
                       Objects& objects, Disallowed& disallowed,
                       const Objects& query);
 
-void ResolveFunction(ObjectId database,
-                     std::span<const std::string> search_path, Objects& objects,
-                     Disallowed& disallowed, const Objects& query);
+void ResolveSqlFunction(ObjectId database,
+                        std::span<const std::string> search_path,
+                        Objects& objects, Disallowed& disallowed,
+                        const Objects& query);
 
 void Resolve(ObjectId database, Objects& objects, const Config& config);
 

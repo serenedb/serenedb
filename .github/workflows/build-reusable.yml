@@ -112,7 +112,9 @@ on:
 jobs:
   build:
     name: Build SereneDB
-    runs-on: ${{ inputs.LOCATION }}
+    runs-on:
+      - self-hosted
+      - ${{ inputs.LOCATION }}
     timeout-minutes: 180
 
     env:
@@ -282,7 +284,9 @@ jobs:
   cleanup:
     name: Cleanup
     needs: build
-    runs-on: ${{ inputs.LOCATION }}
+    runs-on:
+      - self-hosted
+      - ${{ inputs.LOCATION }}
     if: always()
     steps:
       - name: Final Docker cleanup

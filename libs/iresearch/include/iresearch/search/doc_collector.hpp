@@ -14,7 +14,7 @@ template<size_t Extent = std::dynamic_extent>
 size_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
                    const Scorers& scorers, const WandContext& wand, size_t k,
                    std::span<std::pair<score_t, doc_id_t>, Extent> results) {
-  SDB_ASSERT(k * 2 >= results.size());
+  SDB_ASSERT(k * 2 <= results.size());
 
   auto prepared = filter.prepare({
     .index = reader,

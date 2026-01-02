@@ -94,6 +94,7 @@ set(iresearch-tests_sources
     ./utils/string_tests.cpp
     # TODO(mbkkt) ./utils/simd_utils_test.cpp
     ./utils/bitset_tests.cpp
+    ./utils/avxintegratedbitpacking_test.cpp
     ./utils/math_utils_test.cpp
     ./utils/misc_test.cpp
     ./utils/std_test.cpp

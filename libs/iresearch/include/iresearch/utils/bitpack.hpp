@@ -180,5 +180,110 @@ void read_block32(UnpackFunc&& unpack, DataInput& in,
                            decoded);
 }
 
+template<typename Format>
+IRS_FORCE_INLINE void ReadBlockDelta32(DataInput& in, uint32_t prev,
+                                       uint32_t* IRS_RESTRICT encoded,
+                                       uint32_t* IRS_RESTRICT decoded) {
+  SDB_ASSERT(encoded);
+  SDB_ASSERT(decoded);
+
+  const uint32_t bits = in.ReadByte();
+  if (kAllEqual == bits) {
+    std::fill_n(decoded, Format::kBlockSize, prev + in.ReadV32());
+  } else {
+    const size_t required = packed::BytesRequired32(Format::kBlockSize, bits);
+    const auto* buf = in.ReadBuffer(required, BufferHint::NORMAL);
+
+    if (buf) {
+      return Format::UnpackBlockDelta(
+        decoded, reinterpret_cast<const uint32_t*>(buf), bits, prev);
+    }
+
+    [[maybe_unused]] const auto read =
+      in.ReadBytes(reinterpret_cast<byte_type*>(encoded), required);
+    SDB_ASSERT(read == required);
+
+    Format::UnpackBlockDelta(decoded, encoded, bits, prev);
+  }
+}
+
+template<typename Format>
+IRS_FORCE_INLINE void ReadBlock32(DataInput& in, uint32_t* IRS_RESTRICT encoded,
+                                  uint32_t* IRS_RESTRICT decoded) {
+  SDB_ASSERT(encoded);
+  SDB_ASSERT(decoded);
+
+  const uint32_t bits = in.ReadByte();
+  if (kAllEqual == bits) {
+    std::fill_n(decoded, Format::kBlockSize, in.ReadV32());
+  } else {
+    const size_t required = packed::BytesRequired32(Format::kBlockSize, bits);
+    const auto* buf = in.ReadBuffer(required, BufferHint::NORMAL);
+
+    if (buf) {
+      return Format::UnpackBlock(decoded,
+                                 reinterpret_cast<const uint32_t*>(buf), bits);
+    }
+
+    [[maybe_unused]] const auto read =
+      in.ReadBytes(reinterpret_cast<byte_type*>(encoded), required);
+    SDB_ASSERT(read == required);
+
+    Format::UnpackBlock(decoded, encoded, bits);
+  }
+}
+
+template<typename Format>
+IRS_FORCE_INLINE uint32_t WriteBlockDelta32(
+  DataOutput& out, uint32_t prev, const uint32_t* IRS_RESTRICT decoded,
+  uint32_t* IRS_RESTRICT encoded) {
+  SDB_ASSERT(decoded);
+  if (AllSame(decoded, Format::kBlockSize)) {
+    out.WriteByte(kAllEqual);
+    out.WriteV32((*decoded - prev));
+    return kAllEqual;
+  }
+
+  // TODO(mbkkt) memset looks unnecessary
+  std::memset(encoded, 0, sizeof(uint32_t) * Format::kBlockSize);
+
+  const uint32_t bits = Format::PackBlockDelta(decoded, encoded, prev);
+  const size_t buf_size = packed::BytesRequired32(Format::kBlockSize, bits);
+  SDB_ASSERT(buf_size);
+
+  // TODO(mbkkt) direct write api?
+  //  out.get_buffer(buf_size + 1, /*fallback=*/encoded)?
+  out.WriteByte(static_cast<byte_type>(bits & 0xFF));
+  out.WriteBytes(reinterpret_cast<byte_type*>(encoded), buf_size);
+
+  return bits;
+}
+
+template<typename Format>
+IRS_FORCE_INLINE uint32_t WriteBlock32(DataOutput& out,
+                                       const uint32_t* IRS_RESTRICT decoded,
+                                       uint32_t* IRS_RESTRICT encoded) {
+  SDB_ASSERT(decoded);
+  if (AllSame(decoded, Format::kBlockSize)) {
+    out.WriteByte(kAllEqual);
+    out.WriteV32((*decoded));
+    return kAllEqual;
+  }
+
+  // TODO(mbkkt) memset looks unnecessary
+  std::memset(encoded, 0, sizeof(uint32_t) * Format::kBlockSize);
+
+  const uint32_t bits = Format::PackBlock(decoded, encoded);
+  const size_t buf_size = packed::BytesRequired32(Format::kBlockSize, bits);
+  SDB_ASSERT(buf_size);
+
+  // TODO(mbkkt) direct write api?
+  //  out.get_buffer(buf_size + 1, /*fallback=*/encoded)?
+  out.WriteByte(static_cast<byte_type>(bits & 0xFF));
+  out.WriteBytes(reinterpret_cast<byte_type*>(encoded), buf_size);
+
+  return bits;
+}
+
 }  // namespace bitpack
 }  // namespace irs

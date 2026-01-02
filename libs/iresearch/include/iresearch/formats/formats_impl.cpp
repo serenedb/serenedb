@@ -2649,17 +2649,6 @@ doc_id_t Wanderator<IteratorTraits, FieldTraits, WandExtent, Root>::seek(
   while (true) {
     SeekToBlock(target);
 
-    // Tight block-skipping loop: skip blocks where max_score <= threshold
-    // without decoding them (similar to Tantivy's block_wand_single_scorer)
-    if constexpr (Root) {
-      const auto threshold = _skip.Reader().threshold;
-      while (this->_left && _skip.Reader().skip_scores.back() <= threshold) {
-        // Jump to the next block without decoding current one
-        target = _skip.Reader().Next().doc + 1;
-        SeekToBlock(target);
-      }
-    }
-
     if (this->_begin == std::end(this->_buf.docs)) {
       if (!this->_left) [[unlikely]] {
         return doc_value = doc_limits::eof();

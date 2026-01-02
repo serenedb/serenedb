@@ -173,7 +173,7 @@ jobs:
           path: .
 
       - name: Checkout private repo
-        if: env.DOCKER_SERENEDB_IMAGE == 'true' || env.DEB_TAR_PACKAGES == 'true'
+        if: env.SDB_PRIVATE == 'true'
         uses: actions/checkout@v4
         with:
           repository: ${{ env.SDB_PRIVATE_REPO }}

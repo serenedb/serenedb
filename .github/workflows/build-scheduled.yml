@@ -2,7 +2,7 @@ name: SereneDB Build (Scheduled)
 
 on:
   schedule:
-    - cron: '30 23 * * *' # daily at ~2AM to 4AM Moscow time
+    - cron: '30 23 * * *'
 
 jobs:
   build:
@@ -10,6 +10,8 @@ jobs:
     with:
       LOCATION: 'parilka'
       BRANCH: 'main'
+      SDB_PRIVATE: true
+      SDB_PRIVATE_BRANCH: 'main'
       DOCKER_BUILD_IMAGES: false
       DOCKER_SERENEDB_IMAGE: true
       PUSH_IMAGES_2_REGISTRY: true
@@ -24,14 +26,10 @@ jobs:
       STATIC_EXECUTABLES: 'On'
       ENSURE_VTUNE_SYMBOLS: 'Off'
       STRIP_TARBALL: true
-      TEST_PACKAGES: true
     secrets:
-      SDB_PRIVATE_BRANCH: ${{ secrets.SDB_PRIVATE_BRANCH }}
-      SDB_PRIVATE: ${{ secrets.SDB_PRIVATE }}
       TG_TOKEN: ${{ secrets.TG_TOKEN }}
       TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
       TG_THREAD_ID_BUILD: ${{ secrets.TG_THREAD_ID_BUILD }}
       TG_THREAD_ID_MAIN: ${{ secrets.TG_THREAD_ID_MAIN }}
       SDB_PRIVATE_REPO: ${{ secrets.SDB_PRIVATE_REPO }}
       PRIVATE_ENG_REPO: ${{ secrets.PRIVATE_ENG_REPO }}
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

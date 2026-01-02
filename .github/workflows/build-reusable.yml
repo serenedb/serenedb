@@ -114,7 +114,7 @@ jobs:
     name: Build SereneDB
     runs-on: ${{ inputs.LOCATION }}
     timeout-minutes: 180
-    
+
     env:
       BRANCH: ${{ inputs.BRANCH }}
       SDB_PRIVATE: ${{ inputs.SDB_PRIVATE }}
@@ -265,15 +265,15 @@ jobs:
             EMOJI="💥"
             RESULT="FAILURE"
           fi
-          
+
           if [ "${{ env.BRANCH }}" == "main" ]; then
             TOPIC_ID="${{ env.TG_THREAD_ID_MAIN }}"
           else
             TOPIC_ID="${{ env.TG_THREAD_ID_BUILD }}"
           fi
-          
+
           TEXT="${EMOJI} @${{ github.actor }} ${RESULT}: BRANCH=${{ env.BRANCH }} ${{ github.workflow }} #${{ github.run_number }} ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          
+
           curl --location --request POST "https://api.telegram.org/bot${{ env.TG_TOKEN }}/sendMessage" \
             --form "text=${TEXT}" \
             --form "chat_id=${{ env.TG_CHAT_ID }}" \

@@ -42,10 +42,10 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               body: `👋 Thank you for your contribution!
-              
+
               This PR is from a fork and requires maintainer approval before CI workflows will run.
-              
+
               A maintainer will review your changes and approve the workflow run if everything looks good.
-              
+
               **Please do not modify any files in \`.github/workflows/\` as those changes will not be accepted from forks.**`
             })

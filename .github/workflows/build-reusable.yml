@@ -212,11 +212,11 @@ jobs:
           STATIC_EXECUTABLES=${{ env.STATIC_EXECUTABLES }}
           RUNNER_ID=$(id -u):$(id -g)
           EOF
-          
+
           echo "=== Docker environment file ==="
           cat ./docker.env
           echo "==============================="
-          
+
           docker run --rm \
             --cap-add=SYS_PTRACE \
             --privileged \

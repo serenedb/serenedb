@@ -85,7 +85,8 @@ Result FunctionImpl::Init(ObjectId database, std::string_view name,
   r = basics::SafeCall([&] {
     pg::Objects objects;
     pg::Disallowed disallowed{pg::Objects::ObjectName{{}, name}};
-    pg::ResolveSqlFunction(database, search_path, objects, disallowed, _objects);
+    pg::ResolveSqlFunction(database, search_path, objects, disallowed,
+                           _objects);
   });
   if (!r.ok()) {
     return r;

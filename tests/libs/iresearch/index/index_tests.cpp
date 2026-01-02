@@ -219,6 +219,13 @@ irs::Format::ptr IndexTestBase::get_codec() const {
   return irs::formats::Get(info.codec);
 }
 
+irs::doc_id_t IndexTestBase::GetPostingsBlockSize() const {
+  if (get_codec()->type()().name().contains("avx")) {
+    return 256;
+  }
+  return 128;
+}
+
 void IndexTestBase::AssertSnapshotEquality(const irs::IndexWriter& writer) {
   tests::AssertSnapshotEquality(writer.GetSnapshot(), open_reader());
 }

@@ -236,7 +236,25 @@ class BasicDisjunction : public CompoundDocIterator<Adapter>,
     return doc_value = std::min(_lhs.value(), _rhs.value());
   }
 
-  uint32_t count() final { return DocIterator::Count(*this); }
+  uint32_t count() final {
+    uint32_t count = 0;
+    auto lhs_value = _lhs.value();
+    auto rhs_value = _rhs.value();
+    while (!doc_limits::eof(lhs_value) || !doc_limits::eof(rhs_value)) {
+      if (lhs_value < rhs_value) {
+        ++count;
+        lhs_value = _lhs->advance();
+      } else if (rhs_value < lhs_value) {
+        ++count;
+        rhs_value = _rhs->advance();
+      } else {
+        ++count;
+        lhs_value = _lhs->advance();
+        rhs_value = _rhs->advance();
+      }
+    }
+    return count;
+  }
 
   void visit(void* ctx, IteratorVisitor<Adapter> visitor) final {
     SDB_ASSERT(ctx);

@@ -1514,6 +1514,18 @@ TEST(boolean_query_estimation, and_filter) {
 TEST(basic_disjunction, next) {
   using Disjunction =
     irs::BasicDisjunction<irs::DocIterator::ptr, irs::NoopAggregator>;
+  auto make_basic_disjunction = [](std::span<const irs::doc_id_t> lhs,
+                                   std::span<const irs::doc_id_t> rhs) {
+    return Disjunction{
+      Disjunction::adapter(irs::memory::make_managed<detail::BasicDocIterator>(
+        lhs.begin(), lhs.end())),
+      Disjunction::adapter(irs::memory::make_managed<detail::BasicDocIterator>(
+        rhs.begin(), rhs.end()))};
+  };
+  auto compute_count = [&](std::span<const irs::doc_id_t> lhs,
+                           std::span<const irs::doc_id_t> rhs) {
+    return make_basic_disjunction(lhs, rhs).count();
+  };
   // simple case
   {
     std::vector<irs::doc_id_t> first{1, 2, 5, 7, 9, 11, 45};
@@ -1522,12 +1534,8 @@ TEST(basic_disjunction, next) {
     std::vector<irs::doc_id_t> result;
 
     {
-      Disjunction it(Disjunction::adapter(
-                       irs::memory::make_managed<detail::BasicDocIterator>(
-                         first.begin(), first.end())),
-                     Disjunction::adapter(
-                       irs::memory::make_managed<detail::BasicDocIterator>(
-                         last.begin(), last.end())));
+      auto it = make_basic_disjunction(first, last);
+      EXPECT_EQ(compute_count(first, last), expected.size());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -1552,12 +1560,8 @@ TEST(basic_disjunction, next) {
     std::vector<irs::doc_id_t> last{};
     std::vector<irs::doc_id_t> result;
     {
-      Disjunction it(Disjunction::adapter(
-                       irs::memory::make_managed<detail::BasicDocIterator>(
-                         first.begin(), first.end())),
-                     Disjunction::adapter(
-                       irs::memory::make_managed<detail::BasicDocIterator>(
-                         last.begin(), last.end())));
+      auto it = make_basic_disjunction(first, last);
+      EXPECT_EQ(compute_count(first, last), first.size());
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
       ASSERT_EQ(first.size() + last.size(), irs::CostAttr::extract(it));
@@ -1579,12 +1583,8 @@ TEST(basic_disjunction, next) {
     std::vector<irs::doc_id_t> last{1, 5, 6, 12, 29};
     std::vector<irs::doc_id_t> result;
     {
-      Disjunction it(Disjunction::adapter(
-                       irs::memory::make_managed<detail::BasicDocIterator>(
-                         first.begin(), first.end())),
-                     Disjunction::adapter(
-                       irs::memory::make_managed<detail::BasicDocIterator>(
-                         last.begin(), last.end())));
+      auto it = make_basic_disjunction(first, last);
+      EXPECT_EQ(compute_count(first, last), last.size());
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
       ASSERT_EQ(first.size() + last.size(), irs::CostAttr::extract(it));
@@ -1605,12 +1605,8 @@ TEST(basic_disjunction, next) {
     std::vector<irs::doc_id_t> last{1, 2, 5, 7, 9, 11, 45};
     std::vector<irs::doc_id_t> result;
     {
-      Disjunction it(Disjunction::adapter(
-                       irs::memory::make_managed<detail::BasicDocIterator>(
-                         first.begin(), first.end())),
-                     Disjunction::adapter(
-                       irs::memory::make_managed<detail::BasicDocIterator>(
-                         last.begin(), last.end())));
+      auto it = make_basic_disjunction(first, last);
+      EXPECT_EQ(compute_count(first, last), first.size());
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
       ASSERT_EQ(first.size() + last.size(), irs::CostAttr::extract(it));
@@ -1631,12 +1627,8 @@ TEST(basic_disjunction, next) {
     std::vector<irs::doc_id_t> last{};
     std::vector<irs::doc_id_t> result;
     {
-      Disjunction it(Disjunction::adapter(
-                       irs::memory::make_managed<detail::BasicDocIterator>(
-                         first.begin(), first.end())),
-                     Disjunction::adapter(
-                       irs::memory::make_managed<detail::BasicDocIterator>(
-                         last.begin(), last.end())));
+      auto it = make_basic_disjunction(first, last);
+      EXPECT_EQ(compute_count(first, last), first.size());
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
       ASSERT_EQ(first.size() + last.size(), irs::CostAttr::extract(it));
@@ -1658,12 +1650,8 @@ TEST(basic_disjunction, next) {
     std::vector<irs::doc_id_t> expected{};
     std::vector<irs::doc_id_t> result;
     {
-      Disjunction it(Disjunction::adapter(
-                       irs::memory::make_managed<detail::BasicDocIterator>(
-                         first.begin(), first.end())),
-                     Disjunction::adapter(
-                       irs::memory::make_managed<detail::BasicDocIterator>(
-                         last.begin(), last.end())));
+      auto it = make_basic_disjunction(first, last);
+      EXPECT_EQ(compute_count(first, last), expected.size());
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
       ASSERT_EQ(first.size() + last.size(), irs::CostAttr::extract(it));
@@ -3604,6 +3592,9 @@ TEST(block_disjunction_test, next) {
     std::vector<irs::doc_id_t> expected{1, 2, 5, 7, 9, 11, 45};
     std::vector<irs::doc_id_t> result;
     {
+      const auto actual_count =
+        Disjunction(detail::ExecuteAll<Disjunction::adapter>(docs)).count();
+      EXPECT_EQ(actual_count, expected.size());
       Disjunction it(detail::ExecuteAll<Disjunction::adapter>(docs));
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -3633,6 +3624,9 @@ TEST(block_disjunction_test, next) {
     std::vector<irs::doc_id_t> expected{1, 2, 5, 7, 9, 11, 45, 65, 78, 127};
     std::vector<irs::doc_id_t> result;
     {
+      const auto actual_count =
+        Disjunction(detail::ExecuteAll<Disjunction::adapter>(docs)).count();
+      EXPECT_EQ(actual_count, expected.size());
       Disjunction it(detail::ExecuteAll<Disjunction::adapter>(docs));
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -3661,6 +3655,9 @@ TEST(block_disjunction_test, next) {
                                         11, 1145, 111165, 1111178, 111111127};
     std::vector<irs::doc_id_t> result;
     {
+      const auto actual_count =
+        Disjunction(detail::ExecuteAll<Disjunction::adapter>(docs)).count();
+      EXPECT_EQ(actual_count, expected.size());
       Disjunction it(detail::ExecuteAll<Disjunction::adapter>(docs));
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
@@ -3689,6 +3686,9 @@ TEST(block_disjunction_test, next) {
     std::vector<irs::doc_id_t> expected{1, 2, 5, 6, 7, 9, 11, 12, 29, 45};
     std::vector<irs::doc_id_t> result;
     {
+      const auto actual_count =
+        Disjunction(detail::ExecuteAll<Disjunction::adapter>(docs)).count();
+      EXPECT_EQ(actual_count, expected.size());
       Disjunction it(detail::ExecuteAll<Disjunction::adapter>(docs));
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
@@ -3717,6 +3717,9 @@ TEST(block_disjunction_test, next) {
                                         12, 29, 45, 65, 78, 126, 127};
     std::vector<irs::doc_id_t> result;
     {
+      const auto actual_count =
+        Disjunction(detail::ExecuteAll<Disjunction::adapter>(docs)).count();
+      EXPECT_EQ(actual_count, expected.size());
       Disjunction it(detail::ExecuteAll<Disjunction::adapter>(docs));
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -3746,6 +3749,9 @@ TEST(block_disjunction_test, next) {
       1, 2, 5, 6, 7, 9, 11, 12, 29, 126, 1145, 111165, 1111178, 111111127};
     std::vector<irs::doc_id_t> result;
     {
+      const auto actual_count =
+        Disjunction(detail::ExecuteAll<Disjunction::adapter>(docs)).count();
+      EXPECT_EQ(actual_count, expected.size());
       Disjunction it(detail::ExecuteAll<Disjunction::adapter>(docs));
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
@@ -3776,6 +3782,9 @@ TEST(block_disjunction_test, next) {
       1, 2, 5, 7, 9, 11, 45, 1145, 111165, 1111178, 111111127, 1111111127};
     std::vector<irs::doc_id_t> result;
     {
+      const auto actual_count =
+        Disjunction(detail::ExecuteAll<Disjunction::adapter>(docs)).count();
+      EXPECT_EQ(actual_count, expected.size());
       Disjunction it(detail::ExecuteAll<Disjunction::adapter>(docs));
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
@@ -3802,6 +3811,9 @@ TEST(block_disjunction_test, next) {
                                                  {1, 2, 5, 7, 9, 11, 45}};
     std::vector<irs::doc_id_t> result;
     {
+      const auto actual_count =
+        Disjunction(detail::ExecuteAll<Disjunction::adapter>(docs)).count();
+      EXPECT_EQ(actual_count, docs[0].size());
       Disjunction it(detail::ExecuteAll<Disjunction::adapter>(docs));
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -3825,6 +3837,9 @@ TEST(block_disjunction_test, next) {
     std::vector<std::vector<irs::doc_id_t>> docs{{24}};
     std::vector<irs::doc_id_t> result;
     {
+      const auto actual_count =
+        Disjunction(detail::ExecuteAll<Disjunction::adapter>(docs)).count();
+      EXPECT_EQ(actual_count, docs[0].size());
       Disjunction it(detail::ExecuteAll<Disjunction::adapter>(docs));
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -3849,6 +3864,9 @@ TEST(block_disjunction_test, next) {
     std::vector<irs::doc_id_t> expected{};
     std::vector<irs::doc_id_t> result;
     {
+      const auto actual_count =
+        Disjunction(detail::ExecuteAll<Disjunction::adapter>(docs)).count();
+      EXPECT_EQ(actual_count, expected.size());
       Disjunction it(detail::ExecuteAll<Disjunction::adapter>(docs));
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -3887,6 +3905,9 @@ TEST(block_disjunction_test, next) {
     std::vector<irs::doc_id_t> expected{1, 2, 5, 6, 7, 9, 11, 12, 29, 45};
     std::vector<irs::doc_id_t> result;
     {
+      const auto actual_count =
+        Disjunction(detail::ExecuteAll<Disjunction::adapter>(docs)).count();
+      EXPECT_EQ(actual_count, expected.size());
       Disjunction it(detail::ExecuteAll<Disjunction::adapter>(docs));
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -3917,6 +3938,9 @@ TEST(block_disjunction_test, next) {
                                         29, 45, 79, 101, 141, 256, 1025, 1101};
     std::vector<irs::doc_id_t> result;
     {
+      const auto actual_count =
+        Disjunction(detail::ExecuteAll<Disjunction::adapter>(docs)).count();
+      EXPECT_EQ(actual_count, expected.size());
       Disjunction it(detail::ExecuteAll<Disjunction::adapter>(docs));
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -3941,6 +3965,9 @@ TEST(block_disjunction_test, next) {
     std::vector<irs::doc_id_t> expected{1, 2, 3};
     std::vector<irs::doc_id_t> result;
     {
+      const auto actual_count =
+        Disjunction(detail::ExecuteAll<Disjunction::adapter>(docs)).count();
+      EXPECT_EQ(actual_count, expected.size());
       Disjunction it(detail::ExecuteAll<Disjunction::adapter>(docs));
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -3967,6 +3994,9 @@ TEST(block_disjunction_test, next) {
 
     std::vector<irs::doc_id_t> result;
     {
+      const auto actual_count =
+        Disjunction(detail::ExecuteAll<Disjunction::adapter>(docs)).count();
+      EXPECT_EQ(actual_count, docs[0].size());
       Disjunction it(detail::ExecuteAll<Disjunction::adapter>(docs));
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -3993,6 +4023,9 @@ TEST(block_disjunction_test, next) {
 
     std::vector<irs::doc_id_t> result;
     {
+      const auto actual_count =
+        Disjunction(detail::ExecuteAll<Disjunction::adapter>(docs)).count();
+      EXPECT_EQ(actual_count, docs[0].size());
       Disjunction it(detail::ExecuteAll<Disjunction::adapter>(docs));
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -4018,6 +4051,9 @@ TEST(block_disjunction_test, next) {
     std::vector<irs::doc_id_t> expected{};
     std::vector<irs::doc_id_t> result;
     {
+      const auto actual_count =
+        Disjunction(detail::ExecuteAll<Disjunction::adapter>(docs)).count();
+      EXPECT_EQ(actual_count, expected.size());
       Disjunction it(detail::ExecuteAll<Disjunction::adapter>(docs));
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -11381,6 +11417,9 @@ TEST(disjunction_test, next) {
     std::vector<irs::doc_id_t> expected{1, 2, 5, 6, 7, 9, 11, 12, 29, 45};
     std::vector<irs::doc_id_t> result;
     {
+      const auto actual_count =
+        Disjunction(detail::ExecuteAll<Disjunction::adapter>(docs)).count();
+      EXPECT_EQ(actual_count, expected.size());
       Disjunction it(detail::ExecuteAll<Disjunction::adapter>(docs));
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -11511,6 +11550,9 @@ TEST(disjunction_test, next) {
     std::vector<irs::doc_id_t> expected{1, 2, 5, 6, 7, 9, 11, 12, 29, 45};
     std::vector<irs::doc_id_t> result;
     {
+      const auto actual_count =
+        Disjunction(detail::ExecuteAll<Disjunction::adapter>(docs)).count();
+      EXPECT_EQ(actual_count, expected.size());
       Disjunction it(detail::ExecuteAll<Disjunction::adapter>(docs));
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -11539,6 +11581,9 @@ TEST(disjunction_test, next) {
                                         29, 45, 79, 101, 141, 256, 1025, 1101};
     std::vector<irs::doc_id_t> result;
     {
+      const auto actual_count =
+        Disjunction(detail::ExecuteAll<Disjunction::adapter>(docs)).count();
+      EXPECT_EQ(actual_count, expected.size());
       Disjunction it(detail::ExecuteAll<Disjunction::adapter>(docs));
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -11607,6 +11652,9 @@ TEST(disjunction_test, next) {
 
     std::vector<irs::doc_id_t> result;
     {
+      const auto actual_count =
+        Disjunction(detail::ExecuteAll<Disjunction::adapter>(docs)).count();
+      EXPECT_EQ(actual_count, docs[0].size());
       Disjunction it(detail::ExecuteAll<Disjunction::adapter>(docs));
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));

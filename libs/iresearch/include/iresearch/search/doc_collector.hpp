@@ -35,7 +35,9 @@ size_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
     });
     const auto* doc = irs::get<DocAttr>(*docs);
     const auto* score = irs::get<ScoreAttr>(*docs);
-    score->Min(min_threshold);
+    if (score) {
+      score->Min(min_threshold);
+    }
 
     for (float_t score_value; docs->next();) {
       ++count;
@@ -100,7 +102,7 @@ size_t ExecuteTopKHeap(
     auto* threshold = irs::GetMutable<irs::ScoreAttr>(docs.get());
     SDB_ASSERT(threshold);
 
-    if (!left) {
+    if (!left && threshold) {
       threshold->Min(results.front().first);
     }
 

@@ -453,6 +453,6 @@ CREATE TABLE zhme (lmao INTEGER);
 
 
 query
-SELECT * FROM zhme, zhme();
+SELECT * FROM zhme as zhma, zhme();
 ----
 lmao zhme

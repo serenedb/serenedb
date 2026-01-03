@@ -40,7 +40,7 @@ namespace sdb::connector {
 inline const TxnState& ExtractTransactionState(
   const axiom::connector::ConnectorSessionPtr& session) {
   SDB_ASSERT(session->config());
-  auto& txn = basics::downCast<TxnState>(*session->config());
+  const auto& txn = basics::downCast<const TxnState>(*session->config());
   return txn;
 }
 
@@ -368,7 +368,7 @@ class SereneDBConnectorMetadata final
     SDB_ASSERT(transaction);
     const int64_t number_of_locked_primary_keys = transaction->GetNumKeys();
     SDB_ASSERT(session->config());
-    auto& txn = basics::downCast<TxnState>(*session->config());
+    const auto& txn = ExtractTransactionState(session);
     if (!txn.InsideTransaction()) {
       // Single statement transaction, we can commit here
       auto status = transaction->Commit();
@@ -391,7 +391,7 @@ class SereneDBConnectorMetadata final
     SDB_ENSURE(serene_insert_handle, ERROR_INTERNAL,
                "Wrong type of insert table handle");
     SDB_ASSERT(session->config());
-    auto& txn = basics::downCast<TxnState>(*session->config());
+    const auto& txn = ExtractTransactionState(session);
     if (serene_insert_handle->GetTransaction() && !txn.InsideTransaction()) {
       auto status = serene_insert_handle->GetTransaction()->Rollback();
       if (!status.ok()) {

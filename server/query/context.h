@@ -100,7 +100,7 @@ struct QueryContext {
       objects{objects} {}
 
   const auto& GetTxnState() const {
-    return basics::downCast<TxnState>(*velox_query_ctx->queryConfig().config());
+    return basics::downCast<const TxnState>(*velox_query_ctx->queryConfig().config());
   }
   std::shared_ptr<velox::core::QueryCtx> velox_query_ctx;
   // To allocate memory for VALUES clause processing.

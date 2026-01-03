@@ -55,15 +55,14 @@ class TxnState : public Config {
   const rocksdb::Snapshot* GetSnapshot() const {
     if (_txn) {
       return _txn->GetSnapshot();
-    } else {
-      if (!_lazy_snapshot()) {
-        return nullptr;
-      }
-      auto snapshot =
-        std::dynamic_pointer_cast<RocksDBSnapshot>(_lazy_snapshot());
-      SDB_ASSERT(snapshot);
-      return snapshot->getSnapshot();
     }
+    if (!_lazy_snapshot()) {
+      return nullptr;
+    }
+    auto snapshot =
+      std::dynamic_pointer_cast<RocksDBSnapshot>(_lazy_snapshot());
+    SDB_ASSERT(snapshot);
+    return snapshot->getSnapshot();
   }
 
   // Used for simple queries without explicit transaction management

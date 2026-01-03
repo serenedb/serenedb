@@ -24,8 +24,10 @@
 #include <iresearch/index/norm.hpp>
 #include <iresearch/search/bm25.hpp>
 #include <iresearch/search/boolean_filter.hpp>
+#include <iresearch/search/column_collector.hpp>
 #include <iresearch/search/filter.hpp>
 #include <iresearch/search/score.hpp>
+#include <iresearch/search/score_function.hpp>
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/tfidf.hpp>
 #include <iresearch/utils/index_utils.hpp>
@@ -174,48 +176,59 @@ std::vector<Doc> WandTestCase::Collect(const irs::DirectoryReader& index,
   sorted.reserve(limit);
 
   for (size_t left = limit, segment_id = 0; const auto& segment : index) {
+    irs::ColumnCollector collector;
     auto docs = query->execute(irs::ExecutionContext{
-      .segment = segment, .scorers = prepared, .wand = mode});
+      .segment = segment,
+      .scorers = prepared,
+      .wand = mode,
+    });
     EXPECT_NE(nullptr, docs);
 
     const auto* doc = irs::get<irs::DocAttr>(*docs);
     EXPECT_NE(nullptr, doc);
-    auto* score = irs::GetMutable<irs::ScoreAttr>(docs.get());
-    EXPECT_NE(nullptr, score);
+    irs::ScoreFunction score;
     if (wand_idx != irs::WandContext::kDisable && can_use_wand) {
-      EXPECT_NE(std::numeric_limits<irs::score_t>::max(), score->max.tail);
+      EXPECT_NE(std::numeric_limits<irs::score_t>::max(), score.max.tail);
+      score = docs->PrepareScore({
+        .scorer = scorers[wand_idx],
+        .segment = &segment,
+        .collector = &collector,
+      });
     } else {
-      EXPECT_EQ(std::numeric_limits<irs::score_t>::max(), score->max.tail);
+      EXPECT_EQ(std::numeric_limits<irs::score_t>::max(), score.max.tail);
     }
 
     if (!left) {
       EXPECT_TRUE(!sorted.empty());
       EXPECT_TRUE(std::is_heap(std::begin(sorted), std::end(sorted)));
-      score->Min(sorted.front().score);
+      score.Min(sorted.front().score);
     }
     std::vector<irs::score_t> scores(scorers.size());
     auto& score_value = *scores.data();
     while (docs->next()) {
-      (*score)(&score_value);
+      auto doc = docs->value();
+      collector.Collect({&doc, 1});
+      docs->CollectData(0);
+      score.Score(&score_value, 1);
 
       if (left) {
-        sorted.emplace_back(segment_id, doc->value, score_value);
+        sorted.emplace_back(segment_id, doc, score_value);
 
         if (0 == --left) {
           std::make_heap(std::begin(sorted), std::end(sorted));
-          score->Min(sorted.front().score);
+          score.Min(sorted.front().score);
         }
       } else if (sorted.front().score < score_value) {
         std::pop_heap(std::begin(sorted), std::end(sorted));
 
         auto& min_doc = sorted.back();
         min_doc.segment = segment_id;
-        min_doc.doc = doc->value;
+        min_doc.doc = doc;
         min_doc.score = score_value;
 
         std::push_heap(std::begin(sorted), std::end(sorted));
 
-        score->Min(sorted.front().score);
+        score.Min(sorted.front().score);
       }
     }
 

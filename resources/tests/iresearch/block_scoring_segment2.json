@@ -1,0 +1,982 @@
+[
+  {
+    "seq": 140,
+    "category": "tech",
+    "topic": "database",
+    "content": "index prefix key partial unique filtered",
+    "tags": "index,partial"
+  },
+  {
+    "seq": 141,
+    "category": "tech",
+    "topic": "search",
+    "content": "completion suggester context category weight prefix",
+    "tags": "search,completion"
+  },
+  {
+    "seq": 142,
+    "category": "tech",
+    "topic": "database",
+    "content": "hot standby streaming replication failover switchover",
+    "tags": "database,replication"
+  },
+  {
+    "seq": 143,
+    "category": "tech",
+    "topic": "search",
+    "content": "nested object parent child join relationship",
+    "tags": "search,nested"
+  },
+  {
+    "seq": 144,
+    "category": "tech",
+    "topic": "database",
+    "content": "expression index functional computed virtual column",
+    "tags": "index,expression"
+  },
+  {
+    "seq": 145,
+    "category": "science",
+    "topic": "physics",
+    "content": "work energy theorem kinetic potential conservation",
+    "tags": "physics,energy"
+  },
+  {
+    "seq": 146,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "rate law order rate constant temperature arrhenius",
+    "tags": "chemistry,kinetics"
+  },
+  {
+    "seq": 147,
+    "category": "science",
+    "topic": "biology",
+    "content": "genetic code codon amino acid translation ribosome",
+    "tags": "biology,genetic"
+  },
+  {
+    "seq": 148,
+    "category": "science",
+    "topic": "physics",
+    "content": "momentum impulse collision elastic inelastic conservation",
+    "tags": "physics,momentum"
+  },
+  {
+    "seq": 149,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "phase diagram triple point critical point melting",
+    "tags": "chemistry,phase"
+  },
+  {
+    "seq": 150,
+    "category": "tech",
+    "topic": "database",
+    "content": "index intersection combining multiple access path",
+    "tags": "index,intersection"
+  },
+  {
+    "seq": 151,
+    "category": "tech",
+    "topic": "search",
+    "content": "term suggester did you mean spelling correction",
+    "tags": "search,spelling"
+  },
+  {
+    "seq": 152,
+    "category": "tech",
+    "topic": "database",
+    "content": "query hint optimizer behavior force index",
+    "tags": "query,hint"
+  },
+  {
+    "seq": 153,
+    "category": "tech",
+    "topic": "search",
+    "content": "dense vector sparse vector hybrid search",
+    "tags": "search,hybrid"
+  },
+  {
+    "seq": 154,
+    "category": "tech",
+    "topic": "database",
+    "content": "table partition range list hash composite key",
+    "tags": "database,partition"
+  },
+  {
+    "seq": 155,
+    "category": "science",
+    "topic": "physics",
+    "content": "angular momentum torque rotation inertia moment",
+    "tags": "physics,angular"
+  },
+  {
+    "seq": 156,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "dilution concentration molarity molality mole fraction",
+    "tags": "chemistry,solution"
+  },
+  {
+    "seq": 157,
+    "category": "science",
+    "topic": "biology",
+    "content": "blood circulation heart artery vein capillary",
+    "tags": "biology,circulation"
+  },
+  {
+    "seq": 158,
+    "category": "science",
+    "topic": "physics",
+    "content": "center mass gravity equilibrium stability balance",
+    "tags": "physics,equilibrium"
+  },
+  {
+    "seq": 159,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "electron configuration aufbau hund pauli exclusion",
+    "tags": "chemistry,electron"
+  },
+  {
+    "seq": 160,
+    "category": "tech",
+    "topic": "database",
+    "content": "index selectivity cardinality density histogram distribution",
+    "tags": "index,selectivity"
+  },
+  {
+    "seq": 161,
+    "category": "tech",
+    "topic": "search",
+    "content": "function score decay linear exponential gaussian",
+    "tags": "search,function"
+  },
+  {
+    "seq": 162,
+    "category": "tech",
+    "topic": "database",
+    "content": "query cache result cache plan cache invalidation",
+    "tags": "database,cache"
+  },
+  {
+    "seq": 163,
+    "category": "tech",
+    "topic": "search",
+    "content": "aggregation pipeline group sum avg max min",
+    "tags": "search,aggregation"
+  },
+  {
+    "seq": 164,
+    "category": "tech",
+    "topic": "database",
+    "content": "index organized table cluster heap storage",
+    "tags": "index,organized"
+  },
+  {
+    "seq": 165,
+    "category": "science",
+    "topic": "physics",
+    "content": "simple harmonic motion spring pendulum period",
+    "tags": "physics,harmonic"
+  },
+  {
+    "seq": 166,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "lewis structure electron dot resonance formal charge",
+    "tags": "chemistry,lewis"
+  },
+  {
+    "seq": 167,
+    "category": "science",
+    "topic": "biology",
+    "content": "kidney nephron filtration reabsorption excretion urine",
+    "tags": "biology,kidney"
+  },
+  {
+    "seq": 168,
+    "category": "science",
+    "topic": "physics",
+    "content": "projectile motion trajectory range angle velocity",
+    "tags": "physics,projectile"
+  },
+  {
+    "seq": 169,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "vsepr theory molecular geometry bond angle shape",
+    "tags": "chemistry,vsepr"
+  },
+  {
+    "seq": 170,
+    "category": "tech",
+    "topic": "database",
+    "content": "full outer join left right inner cross",
+    "tags": "database,join"
+  },
+  {
+    "seq": 171,
+    "category": "tech",
+    "topic": "search",
+    "content": "rescoring second pass query boost context",
+    "tags": "search,rescore"
+  },
+  {
+    "seq": 172,
+    "category": "tech",
+    "topic": "database",
+    "content": "window function row number rank dense ntile",
+    "tags": "database,window"
+  },
+  {
+    "seq": 173,
+    "category": "tech",
+    "topic": "search",
+    "content": "minimum should match optional required terms",
+    "tags": "search,match"
+  },
+  {
+    "seq": 174,
+    "category": "tech",
+    "topic": "database",
+    "content": "recursive cte common table expression hierarchical",
+    "tags": "database,recursive"
+  },
+  {
+    "seq": 175,
+    "category": "science",
+    "topic": "physics",
+    "content": "friction static kinetic coefficient normal force",
+    "tags": "physics,friction"
+  },
+  {
+    "seq": 176,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "hydrogen bonding intermolecular force dipole london",
+    "tags": "chemistry,bonding"
+  },
+  {
+    "seq": 177,
+    "category": "science",
+    "topic": "biology",
+    "content": "liver detoxification bile glycogen metabolism storage",
+    "tags": "biology,liver"
+  },
+  {
+    "seq": 178,
+    "category": "science",
+    "topic": "physics",
+    "content": "uniform motion acceleration deceleration velocity displacement",
+    "tags": "physics,motion"
+  },
+  {
+    "seq": 179,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "periodic table group period trend atomic radius",
+    "tags": "chemistry,periodic"
+  },
+  {
+    "seq": 180,
+    "category": "tech",
+    "topic": "database",
+    "content": "bitmap index low cardinality gender status flag",
+    "tags": "index,bitmap"
+  },
+  {
+    "seq": 181,
+    "category": "tech",
+    "topic": "search",
+    "content": "more like this document similarity related content",
+    "tags": "search,similar"
+  },
+  {
+    "seq": 182,
+    "category": "tech",
+    "topic": "database",
+    "content": "lateral join cross apply subquery correlation",
+    "tags": "database,lateral"
+  },
+  {
+    "seq": 183,
+    "category": "tech",
+    "topic": "search",
+    "content": "constant score filter match all term boost",
+    "tags": "search,constant"
+  },
+  {
+    "seq": 184,
+    "category": "tech",
+    "topic": "database",
+    "content": "grouping sets rollup cube aggregation total",
+    "tags": "database,grouping"
+  },
+  {
+    "seq": 185,
+    "category": "science",
+    "topic": "physics",
+    "content": "buoyancy archimedes principle fluid displacement float",
+    "tags": "physics,buoyancy"
+  },
+  {
+    "seq": 186,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "electronegativity polarity dipole moment partial charge",
+    "tags": "chemistry,electronegativity"
+  },
+  {
+    "seq": 187,
+    "category": "science",
+    "topic": "biology",
+    "content": "digestion enzyme stomach intestine absorption nutrient",
+    "tags": "biology,digestion"
+  },
+  {
+    "seq": 188,
+    "category": "science",
+    "topic": "physics",
+    "content": "pressure pascal atmospheric hydrostatic gauge absolute",
+    "tags": "physics,pressure"
+  },
+  {
+    "seq": 189,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "stoichiometry limiting reagent excess yield percent",
+    "tags": "chemistry,stoichiometry"
+  },
+  {
+    "seq": 190,
+    "category": "tech",
+    "topic": "database",
+    "content": "spatial index rtree quadtree geometry point polygon",
+    "tags": "index,spatial"
+  },
+  {
+    "seq": 191,
+    "category": "tech",
+    "topic": "search",
+    "content": "span query near within order distance",
+    "tags": "search,span"
+  },
+  {
+    "seq": 192,
+    "category": "tech",
+    "topic": "database",
+    "content": "merge join hash join nested loop sort",
+    "tags": "database,join"
+  },
+  {
+    "seq": 193,
+    "category": "tech",
+    "topic": "search",
+    "content": "index time search time analysis chain",
+    "tags": "search,analysis"
+  },
+  {
+    "seq": 194,
+    "category": "tech",
+    "topic": "database",
+    "content": "semi join anti join exists not exists",
+    "tags": "database,semi"
+  },
+  {
+    "seq": 195,
+    "category": "science",
+    "topic": "physics",
+    "content": "bernoulli principle venturi effect fluid velocity",
+    "tags": "physics,bernoulli"
+  },
+  {
+    "seq": 196,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "molar mass atomic weight molecular formula empirical",
+    "tags": "chemistry,molar"
+  },
+  {
+    "seq": 197,
+    "category": "science",
+    "topic": "biology",
+    "content": "lung respiration alveoli gas exchange oxygen",
+    "tags": "biology,lung"
+  },
+  {
+    "seq": 198,
+    "category": "science",
+    "topic": "physics",
+    "content": "pascal law hydraulic press force multiplication",
+    "tags": "physics,hydraulic"
+  },
+  {
+    "seq": 199,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "combustion reaction fuel oxidizer heat flame",
+    "tags": "chemistry,combustion"
+  },
+  {
+    "seq": 200,
+    "category": "tech",
+    "topic": "database",
+    "content": "text search index gin trigram similarity pattern",
+    "tags": "index,text"
+  },
+  {
+    "seq": 201,
+    "category": "tech",
+    "topic": "search",
+    "content": "wand algorithm top k query optimization threshold",
+    "tags": "search,wand"
+  },
+  {
+    "seq": 202,
+    "category": "tech",
+    "topic": "database",
+    "content": "hash partition modulo distribute even load balance",
+    "tags": "database,hash"
+  },
+  {
+    "seq": 203,
+    "category": "tech",
+    "topic": "search",
+    "content": "block scoring batch document efficient memory",
+    "tags": "search,block"
+  },
+  {
+    "seq": 204,
+    "category": "tech",
+    "topic": "database",
+    "content": "range partition date time interval boundary prune",
+    "tags": "database,range"
+  },
+  {
+    "seq": 205,
+    "category": "science",
+    "topic": "physics",
+    "content": "hooke law spring constant elastic deformation",
+    "tags": "physics,hooke"
+  },
+  {
+    "seq": 206,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "gas law ideal real pressure volume temperature",
+    "tags": "chemistry,gas"
+  },
+  {
+    "seq": 207,
+    "category": "science",
+    "topic": "biology",
+    "content": "heart muscle cardiac contraction rhythm beat pump",
+    "tags": "biology,heart"
+  },
+  {
+    "seq": 208,
+    "category": "science",
+    "topic": "physics",
+    "content": "young modulus stress strain elastic material",
+    "tags": "physics,young"
+  },
+  {
+    "seq": 209,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "dalton law partial pressure mixture gas mole",
+    "tags": "chemistry,dalton"
+  },
+  {
+    "seq": 210,
+    "category": "tech",
+    "topic": "database",
+    "content": "columnar storage analytical query olap compression",
+    "tags": "database,columnar"
+  },
+  {
+    "seq": 211,
+    "category": "tech",
+    "topic": "search",
+    "content": "learning rank machine model feature extraction",
+    "tags": "search,learning"
+  },
+  {
+    "seq": 212,
+    "category": "tech",
+    "topic": "database",
+    "content": "time series database influx prometheus metrics",
+    "tags": "database,timeseries"
+  },
+  {
+    "seq": 213,
+    "category": "tech",
+    "topic": "search",
+    "content": "query understanding intent classification entity",
+    "tags": "search,understanding"
+  },
+  {
+    "seq": 214,
+    "category": "tech",
+    "topic": "database",
+    "content": "graph database traversal path finding cypher",
+    "tags": "database,graph"
+  },
+  {
+    "seq": 215,
+    "category": "science",
+    "topic": "physics",
+    "content": "wave particle duality quantum photon electron",
+    "tags": "physics,quantum"
+  },
+  {
+    "seq": 216,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "covalent bond sharing electron pair molecular",
+    "tags": "chemistry,covalent"
+  },
+  {
+    "seq": 217,
+    "category": "science",
+    "topic": "biology",
+    "content": "enzyme catalysis active site substrate specificity",
+    "tags": "biology,enzyme"
+  },
+  {
+    "seq": 218,
+    "category": "science",
+    "topic": "physics",
+    "content": "heisenberg uncertainty principle momentum position measurement",
+    "tags": "physics,uncertainty"
+  },
+  {
+    "seq": 219,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "ionic bond electron transfer metal nonmetal",
+    "tags": "chemistry,ionic"
+  },
+  {
+    "seq": 220,
+    "category": "tech",
+    "topic": "database",
+    "content": "document store mongodb couchdb json flexible",
+    "tags": "database,document"
+  },
+  {
+    "seq": 221,
+    "category": "tech",
+    "topic": "search",
+    "content": "dense retrieval neural embedding similarity search",
+    "tags": "search,dense"
+  },
+  {
+    "seq": 222,
+    "category": "tech",
+    "topic": "database",
+    "content": "key value store redis memcached cache fast",
+    "tags": "database,keyvalue"
+  },
+  {
+    "seq": 223,
+    "category": "tech",
+    "topic": "search",
+    "content": "sparse retrieval term matching bm25 tfidf",
+    "tags": "search,sparse"
+  },
+  {
+    "seq": 224,
+    "category": "tech",
+    "topic": "database",
+    "content": "wide column store cassandra hbase bigtable",
+    "tags": "database,widecolumn"
+  },
+  {
+    "seq": 225,
+    "category": "science",
+    "topic": "physics",
+    "content": "schrodinger equation wave function probability amplitude",
+    "tags": "physics,schrodinger"
+  },
+  {
+    "seq": 226,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "metallic bond electron sea delocalized conductivity",
+    "tags": "chemistry,metallic"
+  },
+  {
+    "seq": 227,
+    "category": "science",
+    "topic": "biology",
+    "content": "atp adenosine triphosphate energy currency cell",
+    "tags": "biology,atp"
+  },
+  {
+    "seq": 228,
+    "category": "science",
+    "topic": "physics",
+    "content": "pauli exclusion principle fermion spin quantum",
+    "tags": "physics,pauli"
+  },
+  {
+    "seq": 229,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "hydrogen bond dipole interaction water molecule",
+    "tags": "chemistry,hydrogen"
+  },
+  {
+    "seq": 230,
+    "category": "tech",
+    "topic": "database",
+    "content": "newsql distributed acid transaction scalability",
+    "tags": "database,newsql"
+  },
+  {
+    "seq": 231,
+    "category": "tech",
+    "topic": "search",
+    "content": "hybrid search combining dense sparse retrieval",
+    "tags": "search,hybrid"
+  },
+  {
+    "seq": 232,
+    "category": "tech",
+    "topic": "database",
+    "content": "multi model database polyglot persistence unified",
+    "tags": "database,multimodel"
+  },
+  {
+    "seq": 233,
+    "category": "tech",
+    "topic": "search",
+    "content": "re ranking cross encoder fine tuning model",
+    "tags": "search,reranking"
+  },
+  {
+    "seq": 234,
+    "category": "tech",
+    "topic": "database",
+    "content": "embedded database sqlite leveldb rocksdb local",
+    "tags": "database,embedded"
+  },
+  {
+    "seq": 235,
+    "category": "science",
+    "topic": "physics",
+    "content": "dirac equation relativistic quantum electron spin",
+    "tags": "physics,dirac"
+  },
+  {
+    "seq": 236,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "van der waals force dispersion attraction weak",
+    "tags": "chemistry,vanderwaals"
+  },
+  {
+    "seq": 237,
+    "category": "science",
+    "topic": "biology",
+    "content": "krebs cycle citric acid oxidation acetyl",
+    "tags": "biology,krebs"
+  },
+  {
+    "seq": 238,
+    "category": "science",
+    "topic": "physics",
+    "content": "born interpretation probability density wave squared",
+    "tags": "physics,born"
+  },
+  {
+    "seq": 239,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "dipole moment polarity electronegativity difference bond",
+    "tags": "chemistry,dipole"
+  },
+  {
+    "seq": 240,
+    "category": "tech",
+    "topic": "database",
+    "content": "object database persistence transparent oodb mapping",
+    "tags": "database,object"
+  },
+  {
+    "seq": 241,
+    "category": "tech",
+    "topic": "search",
+    "content": "query expansion synonym related term generation",
+    "tags": "search,expansion"
+  },
+  {
+    "seq": 242,
+    "category": "tech",
+    "topic": "database",
+    "content": "xml database xquery xpath native storage",
+    "tags": "database,xml"
+  },
+  {
+    "seq": 243,
+    "category": "tech",
+    "topic": "search",
+    "content": "pseudo relevance feedback automatic query refinement",
+    "tags": "search,feedback"
+  },
+  {
+    "seq": 244,
+    "category": "tech",
+    "topic": "database",
+    "content": "event sourcing cqrs append only log replay",
+    "tags": "database,eventsourcing"
+  },
+  {
+    "seq": 245,
+    "category": "science",
+    "topic": "physics",
+    "content": "tunnel effect barrier penetration quantum probability",
+    "tags": "physics,tunnel"
+  },
+  {
+    "seq": 246,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "resonance structure delocalization benzene hybrid",
+    "tags": "chemistry,resonance"
+  },
+  {
+    "seq": 247,
+    "category": "science",
+    "topic": "biology",
+    "content": "glycolysis glucose breakdown pyruvate energy production",
+    "tags": "biology,glycolysis"
+  },
+  {
+    "seq": 248,
+    "category": "science",
+    "topic": "physics",
+    "content": "compton scattering photon electron momentum transfer",
+    "tags": "physics,compton"
+  },
+  {
+    "seq": 249,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "formal charge lewis structure electron assignment",
+    "tags": "chemistry,formal"
+  },
+  {
+    "seq": 250,
+    "category": "tech",
+    "topic": "database",
+    "content": "vector database similarity embedding nearest neighbor",
+    "tags": "database,vector"
+  },
+  {
+    "seq": 251,
+    "category": "tech",
+    "topic": "search",
+    "content": "approximate nearest neighbor hnsw annoy faiss",
+    "tags": "search,ann"
+  },
+  {
+    "seq": 252,
+    "category": "tech",
+    "topic": "database",
+    "content": "lakehouse delta iceberg hudi unified analytics",
+    "tags": "database,lakehouse"
+  },
+  {
+    "seq": 253,
+    "category": "tech",
+    "topic": "search",
+    "content": "knowledge graph entity linking relation extraction",
+    "tags": "search,knowledge"
+  },
+  {
+    "seq": 254,
+    "category": "tech",
+    "topic": "database",
+    "content": "data mesh domain oriented decentralized ownership",
+    "tags": "database,datamesh"
+  },
+  {
+    "seq": 255,
+    "category": "science",
+    "topic": "physics",
+    "content": "zeeman effect magnetic field spectral splitting",
+    "tags": "physics,zeeman"
+  },
+  {
+    "seq": 256,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "bond order single double triple strength length",
+    "tags": "chemistry,bondorder"
+  },
+  {
+    "seq": 257,
+    "category": "science",
+    "topic": "biology",
+    "content": "electron transport chain oxidative phosphorylation proton",
+    "tags": "biology,electron"
+  },
+  {
+    "seq": 258,
+    "category": "science",
+    "topic": "physics",
+    "content": "stark effect electric field spectral perturbation",
+    "tags": "physics,stark"
+  },
+  {
+    "seq": 259,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "molecular polarity shape symmetry dipole vector",
+    "tags": "chemistry,polarity"
+  },
+  {
+    "seq": 260,
+    "category": "tech",
+    "topic": "database",
+    "content": "federated database virtual integration distributed query",
+    "tags": "database,federated"
+  },
+  {
+    "seq": 261,
+    "category": "tech",
+    "topic": "search",
+    "content": "multimodal search image text cross modal retrieval",
+    "tags": "search,multimodal"
+  },
+  {
+    "seq": 262,
+    "category": "tech",
+    "topic": "database",
+    "content": "data virtualization abstraction layer unified access",
+    "tags": "database,virtualization"
+  },
+  {
+    "seq": 263,
+    "category": "tech",
+    "topic": "search",
+    "content": "conversational search dialogue context understanding",
+    "tags": "search,conversational"
+  },
+  {
+    "seq": 264,
+    "category": "tech",
+    "topic": "database",
+    "content": "change data capture cdc streaming replication event",
+    "tags": "database,cdc"
+  },
+  {
+    "seq": 265,
+    "category": "science",
+    "topic": "physics",
+    "content": "lamb shift quantum electrodynamics vacuum fluctuation",
+    "tags": "physics,lamb"
+  },
+  {
+    "seq": 266,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "sigma bond overlap head on cylindrical symmetry",
+    "tags": "chemistry,sigma"
+  },
+  {
+    "seq": 267,
+    "category": "science",
+    "topic": "biology",
+    "content": "fermentation anaerobic glycolysis lactate ethanol yield",
+    "tags": "biology,fermentation"
+  },
+  {
+    "seq": 268,
+    "category": "science",
+    "topic": "physics",
+    "content": "casimir effect vacuum energy parallel plates force",
+    "tags": "physics,casimir"
+  },
+  {
+    "seq": 269,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "pi bond overlap sideways planar node parallel",
+    "tags": "chemistry,pi"
+  },
+  {
+    "seq": 270,
+    "category": "tech",
+    "topic": "database",
+    "content": "data catalog metadata discovery governance lineage",
+    "tags": "database,catalog"
+  },
+  {
+    "seq": 271,
+    "category": "tech",
+    "topic": "search",
+    "content": "semantic search meaning understanding context intent",
+    "tags": "search,semantic"
+  },
+  {
+    "seq": 272,
+    "category": "tech",
+    "topic": "database",
+    "content": "master data management mdm golden record single",
+    "tags": "database,mdm"
+  },
+  {
+    "seq": 273,
+    "category": "tech",
+    "topic": "search",
+    "content": "personalized search user profile history preference",
+    "tags": "search,personalized"
+  },
+  {
+    "seq": 274,
+    "category": "tech",
+    "topic": "database",
+    "content": "data quality profiling cleansing validation monitoring",
+    "tags": "database,quality"
+  },
+  {
+    "seq": 275,
+    "category": "science",
+    "topic": "physics",
+    "content": "hawking radiation black hole quantum evaporation",
+    "tags": "physics,hawking"
+  },
+  {
+    "seq": 276,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "delocalized electron conjugated system resonance stabilization",
+    "tags": "chemistry,delocalized"
+  },
+  {
+    "seq": 277,
+    "category": "science",
+    "topic": "biology",
+    "content": "pentose phosphate pathway nadph ribose synthesis",
+    "tags": "biology,pentose"
+  },
+  {
+    "seq": 278,
+    "category": "science",
+    "topic": "physics",
+    "content": "unruh effect acceleration temperature radiation observer",
+    "tags": "physics,unruh"
+  },
+  {
+    "seq": 279,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "hyperconjugation sigma orbital stabilization adjacent bond",
+    "tags": "chemistry,hyperconjugation"
+  }
+]

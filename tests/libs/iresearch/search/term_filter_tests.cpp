@@ -131,14 +131,17 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       ASSERT_TRUE(bool(doc));
       ASSERT_EQ(docs->value(), doc->value);
 
-      auto* scr = irs::get<irs::ScoreAttr>(*docs);
-      ASSERT_FALSE(!scr);
+      auto score = docs->PrepareScore({
+        .scorer = pord.buckets().front().bucket,
+        .segment = &*(rdr.begin()),
+      });
 
       // first hit
       {
         ASSERT_TRUE(docs->next());
+        docs->CollectData(0);
         irs::score_t score_value{};
-        (*scr)(&score_value);
+        score.Score(&score_value, 1);
         ASSERT_EQ(irs::score_t(0), score_value);
         ASSERT_EQ(docs->value(), doc->value);
       }
@@ -161,15 +164,17 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
         .scorers = pord,
       });
       auto docs = prep->execute({.segment = *(rdr.begin()), .scorers = pord});
-
-      auto* scr = irs::get<irs::ScoreAttr>(*docs);
-      ASSERT_FALSE(!scr);
+      auto score = docs->PrepareScore({
+        .scorer = pord.buckets().front().bucket,
+        .segment = &*(rdr.begin()),
+      });
 
       // first hit
       {
         ASSERT_TRUE(docs->next());
+        docs->CollectData(0);
         irs::score_t score_value{};
-        (*scr)(&score_value);
+        score.Score(&score_value, 1);
         ASSERT_EQ(irs::score_t(value), score_value);
       }
 
@@ -564,12 +569,15 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       });
       auto docs = prep->execute({.segment = *(rdr.begin()), .scorers = pord});
 
-      auto* scr = irs::get<irs::ScoreAttr>(*docs);
-      ASSERT_FALSE(!scr);
+      auto score = docs->PrepareScore({
+        .scorer = pord.buckets().front().bucket,
+        .segment = &*(rdr.begin()),
+      });
 
       while (docs->next()) {
+        docs->CollectData(0);
         irs::score_t score_value{};
-        (*scr)(&score_value);
+        score.Score(&score_value, 1);
         IRS_IGNORE(score_value);
         ASSERT_EQ(1, expected.erase(docs->value()));
       }

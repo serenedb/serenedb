@@ -32,11 +32,7 @@ TEST(scorers_tests, duplicate_register) {
       return irs::IndexFeatures::None;
     }
 
-    irs::ScoreFunction PrepareScorer(
-      const irs::ColumnProvider& /*segment*/,
-      const irs::FieldProperties& /*features*/, const irs::byte_type* /*stats*/,
-      const irs::AttributeProvider& /*doc_attrs*/,
-      irs::score_t /*boost*/) const final {
+    irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
       return {};
     }
 

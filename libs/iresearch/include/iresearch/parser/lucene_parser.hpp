@@ -46,7 +46,6 @@
 extern int yydebug;
 #endif
 /* "%code requires" blocks.  */
-#line 21 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
 
 #include <iresearch/search/filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
@@ -65,7 +64,6 @@ struct StringSpan {
     operator std::string_view() const { return {data, len}; }
 };
 
-#line 68 "libs/iresearch/include/iresearch/parser/lucene_parser.hpp"
 
 /* Token kinds.  */
 #ifndef YYTOKENTYPE
@@ -108,7 +106,6 @@ struct StringSpan {
 #if ! defined YYSTYPE && ! defined YYSTYPE_IS_DECLARED
 union YYSTYPE
 {
-#line 51 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
 
     StringSpan sv;
     int num;
@@ -116,7 +113,6 @@ union YYSTYPE
     irs::FilterWithBoost* filter;
     irs::BooleanFilter* parent;
 
-#line 119 "libs/iresearch/include/iresearch/parser/lucene_parser.hpp"
 
 };
 typedef union YYSTYPE YYSTYPE;
@@ -125,7 +121,6 @@ typedef union YYSTYPE YYSTYPE;
 #endif
 
 
-extern YYSTYPE yylval;
 
 
 int yyparse (sdb::ParserContext& ctx);

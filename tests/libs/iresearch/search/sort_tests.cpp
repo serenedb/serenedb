@@ -27,6 +27,7 @@
 #include <iresearch/index/field_meta.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/score.hpp>
+#include <iresearch/search/score_function.hpp>
 #include <iresearch/search/scorers.hpp>
 
 #include "basics/misc.hpp"
@@ -39,8 +40,6 @@ struct EmptyAttributeProvider : irs::AttributeProvider {
     return nullptr;
   }
 };
-
-EmptyAttributeProvider gEmptyAttributeProvider;
 
 template<size_t Size, size_t Align>
 struct AlignedValue {
@@ -56,15 +55,11 @@ class AlignedScorer final
     bool empty_scorer = true) noexcept
     : _empty_scorer(empty_scorer), _index_features(index_features) {}
 
-  irs::ScoreFunction PrepareScorer(const irs::ColumnProvider& /*segment*/,
-                                   const irs::FieldProperties& /*field*/,
-                                   const irs::byte_type* /*stats*/,
-                                   const irs::AttributeProvider& /*doc_attrs*/,
-                                   irs::score_t /*boost*/) const final {
+  irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
     if (_empty_scorer) {
-      return irs::ScoreFunction::Default(1);
+      return irs::ScoreFunction::Default();
     }
-    return irs::ScoreFunction::Default(0);
+    return irs::ScoreFunction::Default();
   }
 
   irs::IndexFeatures GetIndexFeatures() const final { return _index_features; }
@@ -112,18 +107,6 @@ TEST(sort_tests, prepare_order) {
       ++expected_offset;
     }
     ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-
-    irs::bstring stats_buf(prepared.stats_size(), 0);
-    irs::bstring score_buf(prepared.score_size(), 0);
-    auto scorers = irs::PrepareScorers(
-      prepared.buckets(), irs::SubReader::empty(), irs::EmptyTermReader(0),
-      stats_buf.c_str(), gEmptyAttributeProvider, irs::kNoBoost);
-    ASSERT_TRUE(1 == scorers.size());
-
-    irs::ScoreAttr score;
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    score = irs::CompileScorers(std::move(scorers));
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
   }
 
   {
@@ -158,13 +141,6 @@ TEST(sort_tests, prepare_order) {
 
     irs::bstring stats_buf(prepared.stats_size(), 0);
     irs::bstring score_buf(prepared.score_size(), 0);
-
-    irs::ScoreAttr score;
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    irs::CompileScore(score, prepared.buckets(), irs::SubReader::empty(),
-                      irs::EmptyTermReader(0), stats_buf.c_str(),
-                      gEmptyAttributeProvider, irs::kNoBoost);
-    ASSERT_NE(score.Func(), &irs::ScoreFunction::DefaultScore);
   }
 
   {
@@ -198,28 +174,6 @@ TEST(sort_tests, prepare_order) {
       ++expected_offset;
     }
     ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-
-    irs::bstring stats_buf(prepared.stats_size(), 0);
-    irs::bstring score_buf(prepared.score_size(), 1);
-    auto scorers = irs::PrepareScorers(
-      prepared.buckets(), irs::SubReader::empty(), irs::EmptyTermReader(0),
-      stats_buf.c_str(), gEmptyAttributeProvider, irs::kNoBoost);
-    ASSERT_TRUE(3 == scorers.size());
-    ASSERT_TRUE(scorers[0].IsDefault());
-    ASSERT_TRUE(scorers[1].IsDefault());
-    ASSERT_TRUE(scorers[2].IsDefault());
-
-    irs::ScoreAttr score;
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    score = irs::CompileScorers(std::move(scorers));
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-
-    score(reinterpret_cast<irs::score_t*>(score_buf.data()));
-
-    irs::bstring expected(prepared.score_size(), 0);
-    std::fill_n(expected.data(), sizeof(irs::score_t), 1);
-    EXPECT_EQ(irs::ViewCast<char>(irs::bytes_view{expected}),
-              irs::ViewCast<char>(irs::bytes_view{score_buf}));
   }
 
   {
@@ -252,29 +206,6 @@ TEST(sort_tests, prepare_order) {
       ++expected_offset;
     }
     ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-
-    irs::bstring stats_buf(prepared.stats_size(), 0);
-    irs::bstring score_buf(prepared.score_size(), 1);
-    auto scorers = irs::PrepareScorers(
-      prepared.buckets(), irs::SubReader::empty(), irs::EmptyTermReader(0),
-      stats_buf.c_str(), gEmptyAttributeProvider, irs::kNoBoost);
-    ASSERT_TRUE(3 == scorers.size());
-    ASSERT_TRUE(scorers[0].IsDefault());
-    ASSERT_TRUE(scorers[1].IsDefault());
-    ASSERT_TRUE(scorers[2].IsDefault());
-
-    irs::ScoreAttr score;
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    score = irs::CompileScorers(std::move(scorers));
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-
-    score(reinterpret_cast<irs::score_t*>(score_buf.data()));
-
-    irs::bstring expected(prepared.score_size(), 0);
-    std::fill_n(expected.data() + sizeof(irs::score_t), sizeof(irs::score_t),
-                1);
-    EXPECT_EQ(irs::ViewCast<char>(irs::bytes_view{expected}),
-              irs::ViewCast<char>(irs::bytes_view{score_buf}));
   }
 
   {
@@ -306,26 +237,6 @@ TEST(sort_tests, prepare_order) {
       ++expected_offset;
     }
     ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-
-    irs::bstring stats_buf(prepared.stats_size(), 0);
-    irs::bstring score_buf(prepared.score_size(), 1);
-    auto scorers = irs::PrepareScorers(
-      prepared.buckets(), irs::SubReader::empty(), irs::EmptyTermReader(0),
-      stats_buf.c_str(), gEmptyAttributeProvider, irs::kNoBoost);
-    ASSERT_TRUE(3 == scorers.size());
-    ASSERT_TRUE(scorers[0].IsDefault());
-    ASSERT_TRUE(scorers[1].IsDefault());
-    ASSERT_TRUE(scorers[2].IsDefault());
-
-    irs::ScoreAttr score;
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    score = irs::CompileScorers(std::move(scorers));
-    ASSERT_NE(&irs::ScoreFunction::DefaultScore, score.Func());
-
-    score(reinterpret_cast<irs::score_t*>(score_buf.data()));
-    irs::bstring expected(prepared.score_size(), 0);
-    EXPECT_EQ(irs::ViewCast<char>(irs::bytes_view{expected}),
-              irs::ViewCast<char>(irs::bytes_view{score_buf}));
   }
 
   {
@@ -357,20 +268,6 @@ TEST(sort_tests, prepare_order) {
       ++expected_offset;
     }
     ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-
-    irs::bstring stats_buf(prepared.stats_size(), 0);
-    irs::bstring score_buf(prepared.score_size(), 0);
-    auto scorers = irs::PrepareScorers(
-      prepared.buckets(), irs::SubReader::empty(), irs::EmptyTermReader(0),
-      stats_buf.c_str(), gEmptyAttributeProvider, irs::kNoBoost);
-    ASSERT_TRUE(2 == scorers.size());
-
-    irs::ScoreAttr score;
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    score = irs::CompileScorers(std::move(scorers));
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-
-    score(reinterpret_cast<irs::score_t*>(score_buf.data()));
   }
 
   {
@@ -405,20 +302,6 @@ TEST(sort_tests, prepare_order) {
       ++expected_offset;
     }
     ASSERT_EQ(expected_offset, expected_offsets.end());
-
-    irs::bstring stats_buf(prepared.stats_size(), 0);
-    irs::bstring score_buf(prepared.score_size(), 0);
-    auto scorers = irs::PrepareScorers(
-      prepared.buckets(), irs::SubReader::empty(), irs::EmptyTermReader(0),
-      stats_buf.c_str(), gEmptyAttributeProvider, irs::kNoBoost);
-    ASSERT_TRUE(3 == scorers.size());
-
-    irs::ScoreAttr score;
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    score = irs::CompileScorers(std::move(scorers));
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-
-    score(reinterpret_cast<irs::score_t*>(score_buf.data()));
   }
 
   {
@@ -451,20 +334,6 @@ TEST(sort_tests, prepare_order) {
       ++expected_offset;
     }
     ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-
-    irs::bstring stats_buf(prepared.stats_size(), 0);
-    irs::bstring score_buf(prepared.score_size(), 0);
-    auto scorers = irs::PrepareScorers(
-      prepared.buckets(), irs::SubReader::empty(), irs::EmptyTermReader(0),
-      stats_buf.c_str(), gEmptyAttributeProvider, irs::kNoBoost);
-    ASSERT_TRUE(3 == scorers.size());
-
-    irs::ScoreAttr score;
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    score = irs::CompileScorers(std::move(scorers));
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-
-    score(reinterpret_cast<irs::score_t*>(score_buf.data()));
   }
 
   {
@@ -510,18 +379,6 @@ TEST(sort_tests, prepare_order) {
       ++expected_offset;
     }
     ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-
-    irs::bstring stats_buf(prepared.stats_size(), 0);
-    irs::bstring score_buf(prepared.score_size(), 0);
-    auto scorers = irs::PrepareScorers(
-      prepared.buckets(), irs::SubReader::empty(), irs::EmptyTermReader(0),
-      stats_buf.c_str(), gEmptyAttributeProvider, irs::kNoBoost);
-    ASSERT_EQ(5, scorers.size());
-
-    irs::ScoreAttr score;
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    score = irs::CompileScorers(std::move(scorers));
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
   }
 
   {
@@ -561,18 +418,6 @@ TEST(sort_tests, prepare_order) {
       ++expected_offset;
     }
     ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-
-    irs::bstring stats_buf(prepared.stats_size(), 0);
-    irs::bstring score_buf(prepared.score_size(), 0);
-    auto scorers = irs::PrepareScorers(
-      prepared.buckets(), irs::SubReader::empty(), irs::EmptyTermReader(0),
-      stats_buf.c_str(), gEmptyAttributeProvider, irs::kNoBoost);
-    ASSERT_TRUE(5 == scorers.size());
-
-    irs::ScoreAttr score;
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    score = irs::CompileScorers(std::move(scorers));
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
   }
 
   {
@@ -613,18 +458,6 @@ TEST(sort_tests, prepare_order) {
       ++expected_offset;
     }
     ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-
-    irs::bstring stats_buf(prepared.stats_size(), 0);
-    irs::bstring score_buf(prepared.score_size(), 0);
-    auto scorers = irs::PrepareScorers(
-      prepared.buckets(), irs::SubReader::empty(), irs::EmptyTermReader(0),
-      stats_buf.c_str(), gEmptyAttributeProvider, irs::kNoBoost);
-    ASSERT_TRUE(5 == scorers.size());
-
-    irs::ScoreAttr score;
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    score = irs::CompileScorers(std::move(scorers));
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
   }
 
   {
@@ -664,18 +497,6 @@ TEST(sort_tests, prepare_order) {
       ++expected_offset;
     }
     ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-
-    irs::bstring stats_buf(prepared.stats_size(), 0);
-    irs::bstring score_buf(prepared.score_size(), 0);
-    auto scorers = irs::PrepareScorers(
-      prepared.buckets(), irs::SubReader::empty(), irs::EmptyTermReader(0),
-      stats_buf.c_str(), gEmptyAttributeProvider, irs::kNoBoost);
-    ASSERT_TRUE(5 == scorers.size());
-
-    irs::ScoreAttr score;
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    score = irs::CompileScorers(std::move(scorers));
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
   }
 
   {
@@ -715,18 +536,6 @@ TEST(sort_tests, prepare_order) {
       ++expected_offset;
     }
     ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-
-    irs::bstring stats_buf(prepared.stats_size(), 0);
-    irs::bstring score_buf(prepared.score_size(), 0);
-    auto scorers = irs::PrepareScorers(
-      prepared.buckets(), irs::SubReader::empty(), irs::EmptyTermReader(0),
-      stats_buf.c_str(), gEmptyAttributeProvider, irs::kNoBoost);
-    ASSERT_TRUE(5 == scorers.size());
-
-    irs::ScoreAttr score;
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    score = irs::CompileScorers(std::move(scorers));
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
   }
 
   {
@@ -766,20 +575,6 @@ TEST(sort_tests, prepare_order) {
       ++expected_offset;
     }
     ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-
-    irs::bstring stats_buf(prepared.stats_size(), 0);
-    irs::bstring score_buf(prepared.score_size(), 0);
-    auto scorers = irs::PrepareScorers(
-      prepared.buckets(), irs::SubReader::empty(), irs::EmptyTermReader(0),
-      stats_buf.c_str(), gEmptyAttributeProvider, irs::kNoBoost);
-    ASSERT_TRUE(5 == scorers.size());
-
-    irs::ScoreAttr score;
-    ASSERT_TRUE(score.Ctx() == nullptr);
-    ASSERT_TRUE(score.IsDefault());
-    score = irs::CompileScorers(std::move(scorers));
-    ASSERT_FALSE(score.Ctx() == nullptr);
-    ASSERT_FALSE(score.IsDefault());
   }
 }
 
@@ -787,29 +582,29 @@ TEST(ScoreFunctionTest, Noop) {
   irs::score_t value{42.f};
 
   {
-    auto func = irs::ScoreFunction::Default(0);
+    auto func = irs::ScoreFunction::Default();
     ASSERT_TRUE(func.IsDefault());
     ASSERT_TRUE(func.Ctx() == nullptr);
     func(&value);
-    ASSERT_EQ(42.f, value);
+    ASSERT_EQ(0.f, value);
   }
 
   {
-    auto func = irs::ScoreFunction::Constant(0.f, 0);
-    ASSERT_TRUE(func.IsDefault());
+    auto func = irs::ScoreFunction::Constant(0.f);
+    ASSERT_FALSE(func.IsDefault());
     ASSERT_TRUE(func.Ctx() == nullptr);
     func(&value);
-    ASSERT_EQ(42.f, value);
+    ASSERT_EQ(0.f, value);
   }
 }
 
 TEST(ScoreFunctionTest, Default) {
   std::array<irs::score_t, 7> values;
   std::fill_n(std::begin(values), values.size(), 42.f);
-  auto func = irs::ScoreFunction::Default(values.size());
+  auto func = irs::ScoreFunction::Default();
   ASSERT_TRUE(func.IsDefault());
-  ASSERT_FALSE(func.Ctx() == nullptr);
-  func(values.data());
+  ASSERT_TRUE(func.Ctx() == nullptr);
+  func.Score(values.data(), values.size());
   ASSERT_TRUE(std::all_of(std::begin(values), std::end(values),
                           [](auto v) { return 0.f == v; }));
 }
@@ -819,19 +614,19 @@ TEST(ScoreFunctionTest, Constant) {
   std::fill_n(std::begin(values), values.size(), 42.f);
 
   {
-    auto func = irs::ScoreFunction::Constant(43.f, values.size());
+    auto func = irs::ScoreFunction::Constant(43.f);
     ASSERT_FALSE(func.IsDefault());
     ASSERT_FALSE(func.Ctx() == nullptr);
-    func(values.data());
+    func.Score(values.data(), values.size());
     ASSERT_TRUE(std::all_of(std::begin(values), std::end(values),
                             [](auto v) { return 43.f == v; }));
   }
 
   {
-    auto func = irs::ScoreFunction::Constant(42.f, 1);
+    auto func = irs::ScoreFunction::Constant(42.f);
     ASSERT_FALSE(func.IsDefault());
     ASSERT_FALSE(func.Ctx() == nullptr);
-    func(values.data());
+    func.Score(values.data(), 1);
     ASSERT_EQ(42.f, values.front());
     ASSERT_TRUE(std::all_of(std::begin(values) + 1, std::end(values),
                             [](auto v) { return 43.f == v; }));
@@ -841,7 +636,7 @@ TEST(ScoreFunctionTest, Constant) {
     auto func = irs::ScoreFunction::Constant(43.f);
     ASSERT_FALSE(func.IsDefault());
     ASSERT_FALSE(func.Ctx() == nullptr);
-    func(values.data());
+    func.Score(values.data(), values.size());
     ASSERT_TRUE(std::all_of(std::begin(values), std::end(values),
                             [](auto v) { return 43.f == v; }));
   }
@@ -853,73 +648,62 @@ TEST(ScoreFunctionTest, construct) {
     Ctx() = default;
   };
 
+  auto score_func =
+    +[](irs::ScoreCtx* ctx, irs::score_t* res, size_t n) noexcept {
+      auto* buf = static_cast<Ctx*>(ctx)->buf;
+      buf[0] = 42;
+      std::fill_n(res, n, 42);
+    };
+
   {
     irs::ScoreFunction func;
     ASSERT_NE(nullptr, func.Func());
     ASSERT_EQ(nullptr, func.Ctx());
     irs::score_t tmp{1};
-    func(&tmp);  // noop by default
-    ASSERT_EQ(1.f, tmp);
+    func.Score(&tmp, 1);  // noop by default
+    ASSERT_EQ(0.f, tmp);
   }
 
   {
     Ctx ctx;
 
-    auto score_func =
-      +[](irs::ScoreCtx*, irs::score_t* res) noexcept { *res = 42; };
-
-    irs::ScoreFunction func(ctx, score_func);
+    irs::ScoreFunction func(&ctx, score_func);
     ASSERT_EQ(score_func, func.Func());
     ASSERT_EQ(&ctx, func.Ctx());
     irs::score_t tmp{1};
-    func(&tmp);
+    func.Score(&tmp, 1);
     ASSERT_EQ(42, tmp);
   }
 
   {
     Ctx ctx;
 
-    auto score_func =
-      +[](irs::ScoreCtx*, irs::score_t* res) noexcept { *res = 42; };
-
-    irs::ScoreFunction func(ctx, score_func);
+    irs::ScoreFunction func(&ctx, score_func);
     ASSERT_EQ(score_func, func.Func());
     ASSERT_EQ(&ctx, func.Ctx());
     irs::score_t tmp{1};
-    func(&tmp);
+    func.Score(&tmp, 1);
     ASSERT_EQ(42, tmp);
   }
 
   {
-    auto score_func = +[](irs::ScoreCtx* ctx, irs::score_t* res) noexcept {
-      auto* buf = static_cast<Ctx*>(ctx)->buf;
-      buf[0] = 42;
-      *res = 42;
-    };
-
-    auto func =
-      irs::ScoreFunction::Make<Ctx>(score_func, irs::ScoreFunction::DefaultMin);
+    auto func = irs::ScoreFunction::Make<Ctx>(score_func,
+                                              irs::ScoreFunction::NoopMin);
     ASSERT_EQ(score_func, func.Func());
     ASSERT_NE(nullptr, func.Ctx());
     irs::score_t tmp;
-    func(&tmp);
+    func.Score(&tmp, 1);
     ASSERT_EQ(42, static_cast<const Ctx*>(func.Ctx())->buf[0]);
     ASSERT_EQ(42, tmp);
   }
 
   {
-    auto score_func = +[](irs::ScoreCtx* ctx, irs::score_t* res) noexcept {
-      auto* buf = static_cast<struct Ctx*>(ctx)->buf;
-      buf[0] = 42;
-      *res = 42;
-    };
-
-    auto func =
-      irs::ScoreFunction::Make<Ctx>(score_func, irs::ScoreFunction::DefaultMin);
+    auto func = irs::ScoreFunction::Make<Ctx>(score_func,
+                                              irs::ScoreFunction::NoopMin);
     ASSERT_EQ(score_func, func.Func());
     ASSERT_NE(nullptr, func.Ctx());
     irs::score_t tmp;
-    func(&tmp);
+    func.Score(&tmp, 1);
     ASSERT_EQ(42, static_cast<const Ctx*>(func.Ctx())->buf[0]);
     ASSERT_EQ(42, tmp);
   }
@@ -931,70 +715,62 @@ TEST(ScoreFunctionTest, reset) {
     Ctx() = default;
   };
 
+  auto score_func =
+    +[](irs::ScoreCtx* ctx, irs::score_t* res, size_t n) noexcept {
+      auto* buf = static_cast<Ctx*>(ctx)->buf;
+      buf[0] = 42;
+      std::fill_n(res, n, 42);
+    };
+
   irs::ScoreFunction func;
 
   ASSERT_NE(nullptr, func.Func());
   ASSERT_EQ(nullptr, func.Ctx());
   {
     irs::score_t tmp{42.f};
-    func(&tmp);
-    ASSERT_EQ(42.f, tmp);
+    func.Score(&tmp, 1);
+    ASSERT_EQ(0.f, tmp);
   }
 
   {
     Ctx ctx;
-
-    auto score_func =
-      +[](irs::ScoreCtx*, irs::score_t* res) noexcept { *res = 42; };
 
     func.Reset(ctx, score_func);
 
     ASSERT_EQ(score_func, func.Func());
     ASSERT_EQ(&ctx, func.Ctx());
     irs::score_t tmp{1};
-    func(&tmp);
+    func.Score(&tmp, 1);
     ASSERT_EQ(42, tmp);
 
     func.Reset(ctx, score_func);
     ASSERT_EQ(score_func, func.Func());
     ASSERT_EQ(&ctx, func.Ctx());
     tmp = 1;
-    func(&tmp);
+    func.Score(&tmp, 1);
     ASSERT_EQ(42, tmp);
   }
 
   {
-    auto score_func = +[](irs::ScoreCtx* ctx, irs::score_t* res) noexcept {
-      auto* buf = static_cast<Ctx*>(ctx)->buf;
-      buf[0] = 42;
-      *res = 42;
-    };
-
-    func =
-      irs::ScoreFunction::Make<Ctx>(score_func, irs::ScoreFunction::DefaultMin);
+    func = irs::ScoreFunction::Make<Ctx>(score_func,
+                                         irs::ScoreFunction::NoopMin);
     ASSERT_EQ(score_func, func.Func());
     ASSERT_NE(nullptr, func.Ctx());
     irs::score_t tmp;
-    func(&tmp);
+    func.Score(&tmp, 1);
     ASSERT_EQ(42, static_cast<const Ctx*>(func.Ctx())->buf[0]);
     ASSERT_EQ(42, tmp);
   }
 
   {
-    auto score_func = +[](irs::ScoreCtx* ctx, irs::score_t* res) noexcept {
-      auto* buf = static_cast<Ctx*>(ctx)->buf;
-      buf[0] = 43;
-      *res = 43;
-    };
-
-    func =
-      irs::ScoreFunction::Make<Ctx>(score_func, irs::ScoreFunction::DefaultMin);
+    func = irs::ScoreFunction::Make<Ctx>(score_func,
+                                         irs::ScoreFunction::NoopMin);
     ASSERT_EQ(score_func, func.Func());
     ASSERT_NE(nullptr, func.Ctx());
     irs::score_t tmp;
-    func(&tmp);
-    ASSERT_EQ(43, static_cast<const Ctx*>(func.Ctx())->buf[0]);
-    ASSERT_EQ(43, tmp);
+    func.Score(&tmp, 1);
+    ASSERT_EQ(42, static_cast<const Ctx*>(func.Ctx())->buf[0]);
+    ASSERT_EQ(42, tmp);
   }
 }
 
@@ -1003,61 +779,58 @@ TEST(ScoreFunctionTest, move) {
     irs::score_t buf[1]{};
   };
 
+  auto score_func = +[](irs::ScoreCtx*, irs::score_t* res, size_t n) noexcept {
+    std::fill_n(res, n, 42);
+  };
   // move construction
   {
     Ctx ctx;
-
-    auto score_func =
-      +[](irs::ScoreCtx*, irs::score_t* res) noexcept { *res = 42; };
-
     float_t tmp{1};
-    irs::ScoreFunction func(ctx, score_func);
+
+    irs::ScoreFunction func(&ctx, score_func);
     ASSERT_EQ(&ctx, func.Ctx());
     ASSERT_EQ(score_func, func.Func());
-    func(&tmp);
+    func.Score(&tmp, 1);
     ASSERT_EQ(42, tmp);
     irs::ScoreFunction moved(std::move(func));
     ASSERT_EQ(&ctx, moved.Ctx());
     ASSERT_EQ(score_func, moved.Func());
     tmp = 1;
-    moved(&tmp);
+    moved.Score(&tmp, 1);
     ASSERT_EQ(42, tmp);
     ASSERT_EQ(nullptr, func.Ctx());
     ASSERT_NE(score_func, func.Func());
     tmp = 1;
-    func(&tmp);
-    ASSERT_EQ(1, tmp);
+    func.Score(&tmp, 1);
+    ASSERT_EQ(0, tmp);
   }
 
   // move assignment
   {
     Ctx ctx;
-
-    auto score_func =
-      +[](irs::ScoreCtx*, irs::score_t* res) noexcept { *res = 42; };
     float_t tmp{1};
 
     irs::ScoreFunction moved;
     ASSERT_EQ(nullptr, moved.Ctx());
     ASSERT_NE(score_func, moved.Func());
-    moved(&tmp);
-    ASSERT_EQ(1, tmp);
-    irs::ScoreFunction func(ctx, score_func);
+    moved.Score(&tmp, 1);
+    ASSERT_EQ(0, tmp);
+    irs::ScoreFunction func(&ctx, score_func);
     ASSERT_EQ(&ctx, func.Ctx());
     ASSERT_EQ(score_func, func.Func());
-    func(&tmp);
+    func.Score(&tmp, 1);
     ASSERT_EQ(42, tmp);
     moved = std::move(func);
     ASSERT_EQ(&ctx, moved.Ctx());
     ASSERT_EQ(score_func, moved.Func());
     tmp = 1;
-    moved(&tmp);
+    moved.Score(&tmp, 1);
     ASSERT_EQ(42, tmp);
     ASSERT_EQ(nullptr, func.Ctx());
     ASSERT_NE(score_func, func.Func());
     tmp = 1;
-    func(&tmp);
-    ASSERT_EQ(1, tmp);
+    func.Score(&tmp, 1);
+    ASSERT_EQ(0, tmp);
   }
 }
 
@@ -1067,19 +840,19 @@ TEST(ScoreFunctionTest, equality) {
     irs::score_t* ptr{};
   } ctx0, ctx1;
 
-  auto score_func0 = [](irs::ScoreCtx*, irs::score_t*) noexcept {};
-  auto score_func1 = [](irs::ScoreCtx*, irs::score_t*) noexcept {};
+  auto score_func0 = [](irs::ScoreCtx*, irs::score_t*, size_t) noexcept {};
+  auto score_func1 = [](irs::ScoreCtx*, irs::score_t*, size_t) noexcept {};
 
   irs::ScoreFunction func0;
-  irs::ScoreFunction func1(ctx0, score_func0);
-  irs::ScoreFunction func2(ctx1, score_func1);
-  irs::ScoreFunction func3(ctx0, score_func1);
-  irs::ScoreFunction func4(ctx1, score_func0);
+  irs::ScoreFunction func1(&ctx0, score_func0);
+  irs::ScoreFunction func2(&ctx1, score_func1);
+  irs::ScoreFunction func3(&ctx0, score_func1);
+  irs::ScoreFunction func4(&ctx1, score_func0);
 
   ASSERT_EQ(func0, irs::ScoreFunction());
   ASSERT_NE(func0, func1);
   ASSERT_NE(func2, func3);
   ASSERT_NE(func2, func4);
-  ASSERT_EQ(func1, irs::ScoreFunction(ctx0, score_func0));
-  ASSERT_EQ(func2, irs::ScoreFunction(ctx1, score_func1));
+  ASSERT_EQ(func1, irs::ScoreFunction(&ctx0, score_func0));
+  ASSERT_EQ(func2, irs::ScoreFunction(&ctx1, score_func1));
 }

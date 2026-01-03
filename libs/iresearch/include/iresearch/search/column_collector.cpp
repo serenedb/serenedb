@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2020 ArangoDB GmbH, Cologne, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -15,32 +15,29 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
-///
-/// @author Andrey Abramov
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
+#include "iresearch/search/column_collector.hpp"
 
-#include <iresearch/search/scorer.hpp>
-
-#include "iresearch/index/field_meta.hpp"
-#include "scorers.hpp"
+#include "iresearch/formats/formats.hpp"
+#include "iresearch/search/score_function.hpp"
 
 namespace irs {
 
-struct BoostScore final : ScorerBase<BoostScore, void> {
-  static constexpr std::string_view type_name() noexcept {
-    return "boost_score";
+const uint32_t* ColumnCollector::AddNorms(const ColumnReader* field) {
+  if (!field) {
+    return nullptr;
   }
-
-  static void init();
-
-  ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
-
-  IndexFeatures GetIndexFeatures() const noexcept final {
-    return IndexFeatures::None;
+  auto& it = _columns.try_emplace(field->id()).first->second;
+  if (!it.reader) {
+    it.reader = field->norms();
+    it.norms.resize(4 * kScoreBlock);  // TODO(gnusi): fix
   }
-};
+  if (!it.reader) {
+    return nullptr;
+  }
+  return it.norms.data();
+}
 
 }  // namespace irs

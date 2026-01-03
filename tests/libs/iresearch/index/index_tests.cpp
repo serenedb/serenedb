@@ -26,6 +26,7 @@
 #include <absl/random/random.h>
 #include <faiss/utils/distances.h>
 
+#include <iresearch/formats/formats.hpp>
 #include <iresearch/index/field_meta.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/norm.hpp>
@@ -13412,20 +13413,18 @@ TEST_P(IndexTestCase, ensure_no_empty_norms_written) {
     {
       EXPECT_TRUE(it->next());
       EXPECT_EQ(it->value(), 1);
-      irs::BytesViewInput in(payload->value);
-      EXPECT_EQ(irs::read<uint32_t>(in), 0);
+      EXPECT_EQ(irs::Norm::Read(payload->value), 0);
     }
+
     {
       EXPECT_TRUE(it->next());
       EXPECT_EQ(it->value(), 2);
-      irs::BytesViewInput in(payload->value);
-      EXPECT_EQ(irs::read<uint32_t>(in), 1);
+      EXPECT_EQ(irs::Norm::Read(payload->value), 1);
     }
     {
       EXPECT_TRUE(it->next());
       EXPECT_EQ(it->value(), 3);
-      irs::BytesViewInput in(payload->value);
-      EXPECT_EQ(irs::read<uint32_t>(in), 2);
+      EXPECT_EQ(irs::Norm::Read(payload->value), 2);
     }
     EXPECT_FALSE(it->next());
     EXPECT_FALSE(it->next());

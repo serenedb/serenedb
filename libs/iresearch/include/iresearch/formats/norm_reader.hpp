@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2020 ArangoDB GmbH, Cologne, Germany
+/// Copyright 2016 by EMC Corporation, All Rights Reserved
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -15,32 +15,28 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+/// Copyright holder is EMC Corporation
 ///
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
 
-#include <iresearch/search/scorer.hpp>
+#include <span>
 
-#include "iresearch/index/field_meta.hpp"
-#include "scorers.hpp"
+#include "basics/memory.hpp"
+#include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 
-struct BoostScore final : ScorerBase<BoostScore, void> {
-  static constexpr std::string_view type_name() noexcept {
-    return "boost_score";
-  }
+struct NormReader : public memory::Managed {
+  using ptr = memory::managed_ptr<NormReader>;
 
-  static void init();
+  virtual ~NormReader() = default;
 
-  ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
-
-  IndexFeatures GetIndexFeatures() const noexcept final {
-    return IndexFeatures::None;
-  }
+  virtual void Collect(std::span<doc_id_t> docs,
+                       std::span<uint32_t> values) = 0;
+  virtual bool Collect(doc_id_t docs, uint32_t* value) = 0;
 };
 
 }  // namespace irs

@@ -508,7 +508,6 @@ class DocIteratorImpl : public irs::DocIterator {
   irs::DocAttr _doc;
   irs::FreqAttr _freq;
   irs::CostAttr _cost;
-  irs::ScoreAttr _score;
   PosIterator _pos;
   std::set<Posting>::const_iterator _prev;
   std::set<Posting>::const_iterator _next;
@@ -523,7 +522,6 @@ DocIteratorImpl::DocIteratorImpl(irs::IndexFeatures features,
   _attrs[irs::Type<irs::CostAttr>::id()] = &_cost;
 
   _attrs[irs::Type<irs::DocAttr>::id()] = &_doc;
-  _attrs[irs::Type<irs::ScoreAttr>::id()] = &_score;
 
   if (irs::IndexFeatures::None != (features & irs::IndexFeatures::Freq)) {
     _attrs[irs::Type<irs::FreqAttr>::id()] = &_freq;
@@ -716,16 +714,16 @@ void AssertDocs(const irs::TermIterator& expected_term,
                 irs::SeekCookie::ptr actual_cookie,
                 irs::IndexFeatures requested_features) {
   AssertDocs(expected_term.postings(requested_features), [&] {
-    return actual_terms.Iterator(requested_features, *actual_cookie);
+    return actual_terms.Iterator(
+      requested_features,
+      {.cookie = actual_cookie.get(), .field = actual_terms.meta()});
   });
 
   AssertDocs(expected_term.postings(requested_features), [&] {
     return actual_terms.Iterator(
-      requested_features, *actual_cookie,
-      {{0, false}, [](uint32_t, const irs::AttributeProvider&) {
-         // FIXME(gnusi)
-         return irs::ScoreFunction::Default(1);
-       }});
+      requested_features,
+      {.cookie = actual_cookie.get(), .field = actual_terms.meta()},
+      {{0, false}});
   });
 
   // FIXME(gnusi): check BitUnion

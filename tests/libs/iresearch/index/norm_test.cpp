@@ -367,30 +367,14 @@ void NormTestCase::AssertNormColumn(
   auto* doc = irs::get<irs::DocAttr>(*values);
   ASSERT_NE(nullptr, doc);
 
-  irs::NormReaderContext ctx;
-  ASSERT_EQ(0, ctx.num_bytes);
-  ASSERT_EQ(nullptr, ctx.it);
-  ASSERT_EQ(nullptr, ctx.payload);
-  ASSERT_EQ(nullptr, ctx.doc);
-  ASSERT_TRUE(ctx.Reset(segment, meta.norm, *doc));
-  ASSERT_EQ(sizeof(T), ctx.num_bytes);
-  ASSERT_NE(nullptr, ctx.it);
-  ASSERT_NE(nullptr, ctx.payload);
-  ASSERT_EQ(irs::get<irs::PayAttr>(*ctx.it), ctx.payload);
-  ASSERT_EQ(doc, ctx.doc);
-
-  auto reader = irs::Norm::MakeReader<T>(std::move(ctx));
-
   for (auto expected_doc = std::begin(expected_docs); values->next();
        ++expected_doc) {
     ASSERT_EQ(expected_doc->first, values->value());
     ASSERT_EQ(expected_doc->first, doc->value);
     ASSERT_EQ(sizeof(T), payload->value.size());
 
-    auto* p = payload->value.data();
-    const auto value = irs::read<T>(p);
+    const auto value = irs::Norm::Read(payload->value);
     ASSERT_EQ(expected_doc->second, value);
-    ASSERT_EQ(value, reader());
   }
 }
 

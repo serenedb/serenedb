@@ -28,7 +28,6 @@
 #include "iresearch/search/boolean_query.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/terms_filter.hpp"
-#include "min_match_disjunction.hpp"
 #include "prepared_state_visitor.hpp"
 
 namespace irs {

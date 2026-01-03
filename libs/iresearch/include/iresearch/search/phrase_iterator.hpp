@@ -22,6 +22,13 @@
 
 #pragma once
 
+#include <iresearch/index/field_meta.hpp>
+#include <iresearch/search/column_collector.hpp>
+#include <iresearch/search/filter.hpp>
+#include <iresearch/search/score_function.hpp>
+#include <iresearch/search/scorer.hpp>
+
+#include "basics/empty.hpp"
 #include "disjunction.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/formats_impl.hpp"
@@ -363,11 +370,13 @@ class FixedPhraseFrequency {
  public:
   using TermPosition = FixedTermPosition<Offs>;
   using Positions = std::vector<TermPosition>;
-
   using ExecutionStrategy =
     std::conditional_t<HasIntervals,
                        IntervalPositionStrategy<typename Positions::iterator>,
                        SinglePositionStrategy<typename Positions::iterator>>;
+
+  static constexpr bool kOneShot = OneShot;
+  static constexpr bool kHasFreq = !OneShot;
 
   explicit FixedPhraseFrequency(std::vector<TermPosition>&& pos) noexcept
     : _pos{std::move(pos)} {
@@ -389,6 +398,8 @@ class FixedPhraseFrequency {
 
   // returns frequency of the phrase
   uint32_t EvaluateFreq() { return _phrase_freq.value = NextPosition(); }
+
+  uint32_t GetFreq() const noexcept { return _phrase_freq.value; }
 
  private:
   friend class PhrasePosition<FixedPhraseFrequency>;
@@ -510,11 +521,13 @@ class VariadicPhraseFrequency {
  public:
   using TermPosition = VariadicTermPosition<Adapter>;
   using Positions = std::vector<TermPosition>;
-
   using ExecutionSrategy =
     std::conditional_t<HasIntervals,
                        IntervalPositionStrategy<typename Positions::iterator>,
                        SinglePositionStrategy<typename Positions::iterator>>;
+
+  static constexpr bool kOneShot = OneShot;
+  static constexpr bool kHasFreq = !OneShot;
 
   explicit VariadicPhraseFrequency(std::vector<TermPosition>&& pos) noexcept
     : _pos{std::move(pos)}, _phrase_size{_pos.size()} {
@@ -557,6 +570,8 @@ class VariadicPhraseFrequency {
 
     return _phrase_freq.value;
   }
+
+  uint32_t GetFreq() const noexcept { return _phrase_freq.value; }
 
  private:
   friend class PhrasePosition<VariadicPhraseFrequency>;
@@ -765,6 +780,8 @@ class VariadicPhraseFrequencyOverlapped {
     return _phrase_freq.value;
   }
 
+  uint32_t GetFreq() const noexcept { return _phrase_freq.value; }
+
  private:
   struct SubMatchContext {
     PosAttr::value_t term_position{pos_limits::eof()};
@@ -897,7 +914,7 @@ class PhraseIterator : public DocIterator {
 
   template<typename Adapters>
   PhraseIterator(Adapters&& itrs, std::vector<TermPosition>&& pos)
-    : _approx{NoopAggregator{},
+    : _approx{ScoreMergeType::Noop,
               [](auto itrs) {
                 absl::c_sort(itrs,
                              [](const auto& lhs, const auto& rhs) noexcept {
@@ -913,17 +930,32 @@ class PhraseIterator : public DocIterator {
     // FIXME find a better estimation
     std::get<AttributePtr<CostAttr>>(_attrs) =
       irs::GetMutable<CostAttr>(&_approx);
+
+    if constexpr (Frequency::kHasFreq) {
+      _collected_freqs = std::make_unique<uint32_t[]>(kScoreBlock);
+      std::get<FreqBlockAttr>(_attrs).value = this->_collected_freqs.get();
+    }
   }
 
   template<typename Adapters>
   PhraseIterator(Adapters&& itrs, std::vector<TermPosition>&& pos,
-                 const SubReader& segment, const TermReader& field,
-                 const byte_type* stats, const Scorers& ord, score_t boost)
+                 const FieldProperties& field, const byte_type* stats,
+                 score_t boost)
     : PhraseIterator{std::forward<Adapters>(itrs), std::move(pos)} {
-    if (!ord.empty()) {
-      auto& score = std::get<ScoreAttr>(_attrs);
-      CompileScore(score, ord.buckets(), segment, field, stats, *this, boost);
-    }
+    _stats = stats;
+    _boost = boost;
+    _field = field;
+  }
+
+  ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
+    return ctx.scorer->PrepareScorer({
+      .segment = *ctx.segment,
+      .field = _field,
+      .doc_attrs = *this,
+      .collector = ctx.collector,
+      .stats = _stats,
+      .boost = _boost,
+    });
   }
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
@@ -933,6 +965,10 @@ class PhraseIterator : public DocIterator {
       } else {
         return nullptr;
       }
+    }
+
+    if (type == irs::Type<FreqBlockAttr>::id()) {
+      return &std::get<FreqBlockAttr>(_attrs);
     }
 
     auto* attr = _freq.GetMutable(type);
@@ -965,14 +1001,32 @@ class PhraseIterator : public DocIterator {
 
   uint32_t count() final { return Count(*this); }
 
+  uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
+                   std::span<doc_id_t, kScoreBlock> docs,
+                   std::span<score_t, kScoreBlock> scores) final {
+    return DocIterator::Collect(*this, scorer, columns, docs, scores);
+  }
+
+  void CollectData(uint16_t index) final {
+    if constexpr (!Frequency::kOneShot) {
+      _collected_freqs[index] = _freq.GetFreq();
+    }
+  }
+
  private:
   using Attributes =
-    std::tuple<AttributePtr<DocAttr>, AttributePtr<CostAttr>, ScoreAttr>;
+    std::tuple<AttributePtr<DocAttr>, AttributePtr<CostAttr>, FreqBlockAttr>;
+
+  const byte_type* _stats{};
+  score_t _boost{1.0f};
+  FieldProperties _field;
 
   // first approximation (conjunction over all words in a phrase)
   Conjunction _approx;
   Frequency _freq;
   Attributes _attrs;
+  [[no_unique_address]] utils::Need<
+    !Frequency::kOneShot, std::unique_ptr<uint32_t[]>> _collected_freqs;
 };
 
 }  // namespace irs

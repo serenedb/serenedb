@@ -24,6 +24,10 @@
 
 #include <absl/functional/overload.h>
 
+#include <cstdint>
+#include <iresearch/search/score_function.hpp>
+#include <limits>
+#include <span>
 #include <tuple>
 #include <utility>
 #include <variant>
@@ -37,11 +41,6 @@
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 #include "iresearch/utils/type_limits.hpp"
-
-namespace irs {
-template<template<typename> typename M>
-struct HasScoreHelper<M<NoopAggregator>> : std::false_type {};
-}  // namespace irs
 
 namespace {
 
@@ -71,35 +70,6 @@ bool IsValid(const ByNestedOptions::MatchType& match) noexcept {
     match);
 }
 
-class ScorerWrapper : public DocIterator {
- public:
-  explicit ScorerWrapper(DocIterator::ptr it, ScoreFunction&& score) noexcept
-    : _it{std::move(it)} {
-    SDB_ASSERT(_it);
-    _score = std::move(score);
-  }
-
-  Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
-    if (irs::Type<ScoreAttr>::id() == id) {
-      return &_score;
-    }
-
-    return _it->GetMutable(id);
-  }
-
-  doc_id_t value() const noexcept final { return _it->value(); }
-
-  doc_id_t advance() final { return _it->advance(); }
-
-  doc_id_t seek(doc_id_t target) final { return _it->seek(target); }
-
-  uint32_t count() final { return _it->count(); }
-
- private:
-  DocIterator::ptr _it;
-  ScoreAttr _score;
-};
-
 class NoneMatcher;
 
 template<typename Matcher>
@@ -123,10 +93,6 @@ class ChildToParentJoin : public DocIterator, private Matcher {
 
     std::get<AttributePtr<CostAttr>>(_attrs) =
       irs::GetMutable<CostAttr>(_child.get());
-
-    if constexpr (kHasScore<Matcher>) {
-      PrepareScore();
-    }
   }
 
   Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
@@ -152,11 +118,18 @@ class ChildToParentJoin : public DocIterator, private Matcher {
 
   uint32_t count() final { return Count(*this); }
 
+  ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final;
+
+  void CollectData(uint16_t index) final {
+    if constexpr (Matcher::kHasScore) {
+      Matcher::CollectDataImpl();
+    }
+  }
+
  private:
   friend Matcher;
 
-  using Attributes =
-    std::tuple<AttributePtr<DocAttr>, AttributePtr<CostAttr>, ScoreAttr>;
+  using Attributes = std::tuple<AttributePtr<DocAttr>, AttributePtr<CostAttr>>;
 
   // Returns min possible first child given the current parent.
   doc_id_t FirstChildApprox() const {
@@ -182,67 +155,45 @@ class ChildToParentJoin : public DocIterator, private Matcher {
     return value();
   }
 
-  void PrepareScore();
-
   DocIterator::ptr _parent;
   DocIterator::ptr _child;
   Attributes _attrs;
   const PrevDocAttr* _prev_parent{};
   const DocAttr* _child_doc{};
-  [[no_unique_address]] irs::utils::Need<kHasScore<Matcher>, const ScoreAttr*>
-    _child_score{};
 };
 
 template<typename Matcher>
-void ChildToParentJoin<Matcher>::PrepareScore() {
-  auto& score = std::get<ScoreAttr>(_attrs);
-  _child_score = irs::get<ScoreAttr>(*_child);
-
-  if (!std::is_same_v<Matcher, NoneMatcher> &&
-      (_child_doc == nullptr || _child_score == nullptr ||
-       _child_score->IsDefault())) {
-    SDB_ASSERT(Matcher::size());
-    score = ScoreFunction::Default(Matcher::size());
+ScoreFunction ChildToParentJoin<Matcher>::PrepareScore(
+  const PrepareScoreContext& ctx) {
+  if constexpr (std::is_same_v<Matcher, NoneMatcher>) {
+    return Matcher::PrepareMatcherScore();
+  } else if constexpr (!Matcher::kHasScore) {
+    return ScoreFunction::Default();
   } else {
-    static_assert(kHasScore<Matcher>);
-    score = static_cast<Matcher&>(*this).PrepareScore();
+    if (!ctx.scorer || !this->_child_doc) {
+      return ScoreFunction::Default();
+    }
+
+    auto child_ctx = ctx;
+    child_ctx.collector = &this->_scores.collector;
+    auto child_score = _child->PrepareScore(child_ctx);
+
+    if (child_score.IsDefault()) {
+      return ScoreFunction::Default();
+    }
+
+    this->_scores.child_score = std::move(child_score);
+    return Matcher::PrepareMatcherScore();
   }
 }
 
-template<typename Merger>
-struct ScoreBuffer;
-
-template<>
-struct ScoreBuffer<NoopAggregator> {
-  explicit ScoreBuffer(const NoopAggregator&) {}
-};
-
-template<typename Merger, size_t Size>
-struct ScoreBuffer<Aggregator<Merger, Size>> {
-  static constexpr bool kIsDynamic = Size == kBufferRuntimeSize;
-
-  using BufferType =
-    std::conditional_t<kIsDynamic, bstring, std::array<score_t, Size>>;
-
-  explicit ScoreBuffer(const Aggregator<Merger, Size>& merger) noexcept(
-    !kIsDynamic) {
-    if constexpr (kIsDynamic) {
-      buf.resize(merger.byte_size());
-    }
-  }
-
-  score_t* Data() noexcept { return reinterpret_cast<score_t*>(buf.data()); }
-
-  BufferType buf{};
-};
-
-class NoneMatcher : public NoopAggregator {
+class NoneMatcher {
  public:
   using JoinType = ChildToParentJoin<NoneMatcher>;
 
-  template<typename Merger>
-  NoneMatcher(Merger&& merger, score_t none_boost) noexcept
-    : _boost{none_boost}, _size{merger.size()} {}
+  static constexpr bool kHasScore = false;
+
+  NoneMatcher(score_t none_boost) noexcept : _boost{none_boost} {}
 
   constexpr doc_id_t Accept(const doc_id_t child,
                             const doc_id_t parent) const noexcept {
@@ -250,21 +201,108 @@ class NoneMatcher : public NoopAggregator {
     return child < parent ? parent + 1 : 0;
   }
 
-  ScoreFunction PrepareScore() const {
-    return ScoreFunction::Constant(_boost, _size);
+  ScoreFunction PrepareMatcherScore() const {
+    return ScoreFunction::Constant(_boost);
   }
 
  private:
   score_t _boost;
-  uint32_t _size;
 };
 
-template<typename Merger>
-class AnyMatcher : public Merger, private ScoreCtx {
- public:
-  using JoinType = ChildToParentJoin<AnyMatcher<Merger>>;
+template<ScoreMergeType MergeType>
+struct NestedScoreContext {
+  ScoreFunction child_score;
+  ColumnCollector collector;
+  std::array<score_t, kScoreBlock> parent_scores{};
+  std::array<score_t, kScoreBlock> child_temp;
+  std::array<doc_id_t, kScoreBlock> child_docs;
+  score_t current_parent_score = 0;
+  uint16_t child_idx = 0;
+  uint16_t parent_idx = 0;
 
-  explicit AnyMatcher(Merger&& merger) noexcept : Merger{std::move(merger)} {}
+  void CollectChild(auto& child_it) {
+    child_docs[child_idx] = child_it.value();
+    child_it.CollectData(child_idx++);
+    if (child_idx == kScoreBlock) {
+      FlushChildBatch();
+    }
+  }
+
+  void FinishParent() {
+    if (child_idx) {
+      FlushChildBatch();
+    }
+    parent_scores[parent_idx++] = current_parent_score;
+    current_parent_score = 0;
+  }
+
+  void DiscardParent() {
+    child_idx = 0;
+    current_parent_score = 0;
+  }
+
+  void FlushChildBatch() {
+    SDB_ASSERT(child_idx);
+    collector.Collect(std::span{child_docs.data(), child_idx});
+    child_score.Score(child_temp.data(), child_idx);
+    for (uint16_t i = 0; i < child_idx; ++i) {
+      Merge<MergeType>(current_parent_score, child_temp[i]);
+    }
+    child_idx = 0;
+  }
+
+  void Score(score_t* res, size_t n) {
+    std::memcpy(res, parent_scores.data(), n * sizeof(score_t));
+    parent_idx = 0;
+  }
+};
+
+template<ScoreMergeType MergeType>
+class MatcherBase : public ScoreCtx {
+ protected:
+  static constexpr auto kMergeType = MergeType;
+  static constexpr bool kHasScore = kMergeType != ScoreMergeType::Noop;
+
+  static ScoreFunction MakeNestedScore(ScoreCtx* ctx) {
+    static_assert(kHasScore);
+    return {ctx,
+            [](ScoreCtx* ctx, score_t* res, size_t n) noexcept {
+              SDB_ASSERT(ctx);
+              SDB_ASSERT(res);
+              auto& self = static_cast<MatcherBase&>(*ctx);
+              self._scores.Score(res, n);
+            },
+            ScoreFunction::NoopMin};
+  }
+
+  ScoreFunction PrepareMatcherScore() { return MakeNestedScore(this); }
+
+  void CollectChild(auto& it) {
+    if constexpr (kHasScore) {
+      _scores.CollectChild(it);
+    }
+  }
+
+  void FinishParent() {
+    if constexpr (kHasScore) {
+      _scores.FinishParent();
+    }
+  }
+
+  void DiscardParent() {
+    if constexpr (kHasScore) {
+      _scores.DiscardParent();
+    }
+  }
+
+  [[no_unique_address]] utils::Need<kHasScore, NestedScoreContext<MergeType>>
+    _scores;
+};
+
+template<ScoreMergeType MergeType>
+class AnyMatcher : protected MatcherBase<MergeType> {
+ public:
+  using JoinType = ChildToParentJoin<AnyMatcher<MergeType>>;
 
   constexpr doc_id_t Accept(const doc_id_t child,
                             const doc_id_t parent) const noexcept {
@@ -272,41 +310,34 @@ class AnyMatcher : public Merger, private ScoreCtx {
     return child < parent ? 0 : child;
   }
 
-  ScoreFunction PrepareScore() {
-    static_assert(kHasScore<Merger>);
+  void CollectDataImpl() {
+    if constexpr (MatcherBase<MergeType>::kHasScore) {
+      auto& self = static_cast<JoinType&>(*this);
+      auto& child = *self._child;
+      const auto parent_doc = self.value();
 
-    return {*this, [](ScoreCtx* ctx, score_t* res) noexcept {
-              SDB_ASSERT(ctx);
-              SDB_ASSERT(res);
-              auto& self = static_cast<JoinType&>(*ctx);
-              auto& merger = static_cast<Merger&>(self);
-
-              auto& child = *self._child;
-              const auto parent_doc = self.value();
-              const auto* child_doc = self._child_doc;
-              const auto& child_score = *self._child_score;
-
-              child_score(res);
-              while (child.next() && child_doc->value < parent_doc) {
-                child_score(merger.temp());
-                merger(res, merger.temp());
-              }
-            }};
+      child.Collect([&](doc_id_t doc) -> bool {
+        if (doc >= parent_doc) {
+          return false;
+        }
+        this->CollectChild(child);
+        return true;
+      });
+      this->FinishParent();
+    }
   }
 };
 
-template<typename Merger>
-class PredMatcher : public Merger,
-                    private ScoreBuffer<Merger>,
-                    private ScoreCtx {
+template<ScoreMergeType MergeType>
+class PredMatcher : protected MatcherBase<MergeType> {
  public:
-  using BufferType = ScoreBuffer<Merger>;
-  using JoinType = ChildToParentJoin<PredMatcher<Merger>>;
+  using JoinType = ChildToParentJoin<PredMatcher<MergeType>>;
 
-  PredMatcher(Merger&& merger, DocIterator::ptr&& pred) noexcept
-    : Merger{std::move(merger)},
-      BufferType{static_cast<const Merger&>(*this)},
-      _pred{std::move(pred)} {
+  static constexpr auto kMergeType = MergeType;
+  static constexpr bool kHasScore = kMergeType != ScoreMergeType::Noop;
+
+  explicit PredMatcher(DocIterator::ptr&& pred) noexcept
+    : _pred{std::move(pred)} {
     if (!_pred) [[unlikely]] {
       _pred = DocIterator::empty();
     }
@@ -329,12 +360,8 @@ class PredMatcher : public Merger,
     }
 
     auto& child = *self._child;
-    auto& merger = static_cast<Merger&>(*this);
-    auto& buf = static_cast<BufferType&>(*this);
 
-    if constexpr (kHasScore<Merger>) {
-      self._child_score->Score(buf.Data());
-    }
+    this->CollectChild(child);
 
     while (true) {
       const auto pred_doc = _pred->advance();
@@ -345,47 +372,31 @@ class PredMatcher : public Merger,
 
       const auto child_doc = child.advance();
       if (pred_doc != child_doc) {
+        this->DiscardParent();
         return parent + 1;
       }
       SDB_ASSERT(!doc_limits::eof(child_doc));
 
-      if constexpr (kHasScore<Merger>) {
-        (*self._child_score)(merger.temp());
-        merger(buf.Data(), merger.temp());
-      }
+      this->CollectChild(child);
     }
   }
 
-  ScoreFunction PrepareScore() noexcept {
-    static_assert(kHasScore<Merger>);
-
-    return {*this, [](ScoreCtx* ctx, score_t* res) noexcept {
-              SDB_ASSERT(ctx);
-              SDB_ASSERT(res);
-              auto& self = static_cast<PredMatcher&>(*ctx);
-              auto& merger = static_cast<Merger&>(self);
-              auto& buf = static_cast<ScoreBuffer<Merger>&>(self);
-              std::memcpy(res, buf.Data(), merger.byte_size());
-            }};
-  }
+  void CollectDataImpl() { this->FinishParent(); }
 
  private:
   DocIterator::ptr _pred;
   const DocAttr* _pred_doc;
 };
 
-template<typename Merger>
-class RangeMatcher : public Merger,
-                     private ScoreBuffer<Merger>,
-                     private ScoreCtx {
+template<ScoreMergeType MergeType>
+class RangeMatcher : protected MatcherBase<MergeType> {
  public:
-  using BufferType = ScoreBuffer<Merger>;
-  using JoinType = ChildToParentJoin<RangeMatcher<Merger>>;
+  using JoinType = ChildToParentJoin<RangeMatcher<MergeType>>;
 
-  RangeMatcher(Match match, Merger&& merger) noexcept
-    : Merger{std::move(merger)},
-      BufferType{static_cast<const Merger&>(*this)},
-      _match{match} {
+  static constexpr auto kMergeType = MergeType;
+  static constexpr bool kHasScore = kMergeType != ScoreMergeType::Noop;
+
+  RangeMatcher(Match match) noexcept : _match{match} {
     // This case is handled by MinMatcher
     SDB_ASSERT(_match != Match{0});
   }
@@ -398,58 +409,37 @@ class RangeMatcher : public Merger,
 
     if (first_child > parent) {
       if (min == 0) {
-        if constexpr (kHasScore<Merger>) {
-          // Reset score value as we are not able
-          // to find any childs
-          auto& merger = static_cast<Merger&>(*this);
-          auto& buf = static_cast<BufferType&>(*this);
-          std::memset(buf.Data(), 0, merger.byte_size());
-        }
         return 0;
       }
-
       return first_child;
     }
 
     auto& self = static_cast<JoinType&>(*this);
-    auto& merger = static_cast<Merger&>(*this);
-    auto& buf = static_cast<BufferType&>(*this);
-
     auto& child = *self._child;
-    const auto* child_doc = self._child_doc;
 
     // Already matched the first child
     doc_id_t count = 1;
 
-    if constexpr (kHasScore<Merger>) {
-      (*self._child_score)(buf.Data());
-    }
-    while (child.next() && child_doc->value < parent) {
+    this->CollectChild(child);
+
+    while (child.advance() < parent) {
       if (++count > max) {
+        this->DiscardParent();
         return parent + 1;
       }
 
-      if constexpr (kHasScore<Merger>) {
-        (*self._child_score)(merger.temp());
-        merger(buf.Data(), merger.temp());
-      }
+      this->CollectChild(child);
     }
 
-    return min <= count ? 0 : parent + 1;
+    if (min <= count) {
+      return 0;
+    }
+
+    this->DiscardParent();
+    return parent + 1;
   }
 
-  ScoreFunction PrepareScore() noexcept {
-    static_assert(kHasScore<Merger>);
-
-    return {*this, [](ScoreCtx* ctx, score_t* res) noexcept {
-              SDB_ASSERT(ctx);
-              SDB_ASSERT(res);
-              auto& self = static_cast<RangeMatcher&>(*ctx);
-              auto& merger = static_cast<Merger&>(self);
-              auto& buf = static_cast<ScoreBuffer<Merger>&>(self);
-              std::memcpy(res, buf.Data(), merger.byte_size());
-            }};
-  }
+  void CollectDataImpl() { this->FinishParent(); }
 
   const Match& Range() const noexcept { return _match; }
 
@@ -457,30 +447,20 @@ class RangeMatcher : public Merger,
   const Match _match;
 };
 
-template<typename Merger>
-class MinMatcher : public Merger,
-                   private ScoreBuffer<Merger>,
-                   private ScoreCtx {
+template<ScoreMergeType MergeType>
+class MinMatcher : protected MatcherBase<MergeType> {
  public:
-  using BufferType = ScoreBuffer<Merger>;
-  using JoinType = ChildToParentJoin<MinMatcher<Merger>>;
+  using JoinType = ChildToParentJoin<MinMatcher<MergeType>>;
 
-  MinMatcher(doc_id_t min, Merger&& merger) noexcept
-    : Merger{std::move(merger)},
-      BufferType{static_cast<const Merger&>(*this)},
-      _min{min} {}
+  static constexpr auto kMergeType = MergeType;
+  static constexpr bool kHasScore = kMergeType != ScoreMergeType::Noop;
+
+  MinMatcher(doc_id_t min) noexcept : _min{min} {}
 
   doc_id_t Accept(const doc_id_t first_child, const doc_id_t parent) {
     SDB_ASSERT(!doc_limits::eof(parent));
 
     if (0 == _min) {
-      if constexpr (kHasScore<Merger>) {
-        // Reset score value as we might not be able
-        // to find any childs
-        auto& merger = static_cast<Merger&>(*this);
-        auto& buf = static_cast<BufferType&>(*this);
-        std::memset(buf.Data(), 0, merger.byte_size());
-      }
       return 0;
     }
 
@@ -495,55 +475,37 @@ class MinMatcher : public Merger,
     }
 
     auto& self = static_cast<JoinType&>(*this);
-    auto& merger = static_cast<Merger&>(*this);
-    auto& buf = static_cast<BufferType&>(*this);
-
     auto& child = *self._child;
-    const auto* child_doc = self._child_doc;
 
-    if constexpr (kHasScore<Merger>) {
-      (*self._child_score)(buf.Data());
-    }
+    this->CollectChild(child);
 
-    while (child.next() && child_doc->value < parent) {
+    while (child.advance() < parent) {
+      this->CollectChild(child);
+
       if (!--count) {
         return 0;
       }
-
-      if constexpr (kHasScore<Merger>) {
-        (*self._child_score)(merger.temp());
-        merger(buf.Data(), merger.temp());
-      }
     }
 
-    return count ? parent + 1 : 0;
+    this->DiscardParent();
+    return parent + 1;
   }
 
-  ScoreFunction PrepareScore() noexcept {
-    static_assert(kHasScore<Merger>);
+  void CollectDataImpl() {
+    if constexpr (kHasScore) {
+      auto& self = static_cast<JoinType&>(*this);
+      auto& child = *self._child;
+      const auto parent_doc = self.value();
 
-    return {*this, [](ScoreCtx* ctx, score_t* res) noexcept {
-              SDB_ASSERT(ctx);
-              SDB_ASSERT(res);
-              auto& self = static_cast<JoinType&>(*ctx);
-              auto& merger = static_cast<Merger&>(self);
-              auto& buf = static_cast<BufferType&>(self);
-
-              auto& child = *self._child;
-              const auto parent_doc = self.value();
-              const auto* child_doc = self._child_doc;
-              const auto& child_score = *self._child_score;
-
-              while (child_doc->value < parent_doc) {
-                child_score(merger.temp());
-                merger(buf.Data(), merger.temp());
-                if (!child.next()) {
-                  break;
-                }
-              }
-
-              std::memcpy(res, buf.Data(), merger.byte_size());
-            }};
+      child.Collect([&](doc_id_t doc) {
+        if (doc >= parent_doc) {
+          return false;
+        }
+        this->CollectChild(child);
+        return true;
+      });
+      this->FinishParent();
+    }
   }
 
   Match Range() const noexcept { return Match{_min}; }
@@ -552,27 +514,26 @@ class MinMatcher : public Merger,
   const doc_id_t _min;
 };
 
-template<typename A, typename Visitor>
+template<ScoreMergeType MergeType, typename Visitor>
 auto ResolveMatchType(const SubReader& segment,
                       const ByNestedOptions::MatchType& match,
-                      score_t none_boost, A&& aggregator, Visitor&& visitor) {
+                      score_t none_boost, Visitor&& visitor) {
   return std::visit(
-    absl::Overload{
-      [&](Match v) {
-        if (v == kMatchNone) {
-          return visitor(NoneMatcher{std::forward<A>(aggregator), none_boost});
-        } else if (v == kMatchAny) {
-          return visitor(AnyMatcher<A>{std::forward<A>(aggregator)});
-        } else if (v.IsMinMatch()) {
-          SDB_ASSERT(doc_limits::eof(v.max));
-          return visitor(MinMatcher<A>{v.min, std::forward<A>(aggregator)});
-        } else {
-          return visitor(RangeMatcher<A>{v, std::forward<A>(aggregator)});
-        }
-      },
-      [&](const DocIteratorProvider& v) {
-        return visitor(PredMatcher<A>{std::forward<A>(aggregator), v(segment)});
-      }},
+    absl::Overload{[&](Match v) {
+                     if (v == kMatchNone) {
+                       return visitor(NoneMatcher{none_boost});
+                     } else if (v == kMatchAny) {
+                       return visitor(AnyMatcher<MergeType>{});
+                     } else if (v.IsMinMatch()) {
+                       SDB_ASSERT(doc_limits::eof(v.max));
+                       return visitor(MinMatcher<MergeType>{v.min});
+                     } else {
+                       return visitor(RangeMatcher<MergeType>{v});
+                     }
+                   },
+                   [&](const DocIteratorProvider& v) {
+                     return visitor(PredMatcher<MergeType>{v(segment)});
+                   }},
     match);
 }
 
@@ -647,33 +608,21 @@ DocIterator::ptr ByNestedQuery::execute(const ExecutionContext& ctx) const {
   }
 
   return ResolveMergeType(
-    _merge_type, ord.buckets().size(), [&]<typename A>(A&& aggregator) {
-      return ResolveMatchType(
-        rdr, _match, _none_boost, std::forward<A>(aggregator),
+    _merge_type, [&]<ScoreMergeType MergeType>() -> DocIterator::ptr {
+      return ResolveMatchType<MergeType>(
+        rdr, _match, _none_boost,
         [&]<typename M>(M&& matcher) -> DocIterator::ptr {
           if constexpr (std::is_same_v<NoneMatcher, M>) {
-            if (doc_limits::eof(child->value())) {  // Match all parents
-              if constexpr (!std::is_same_v<NoopAggregator, A>) {
-                auto func = ScoreFunction::Constant(
-                  _none_boost, static_cast<uint32_t>(ord.buckets().size()));
-                auto* score = irs::GetMutable<ScoreAttr>(parent.get());
-                if (!score) [[unlikely]] {
-                  return memory::make_managed<ScorerWrapper>(std::move(parent),
-                                                             std::move(func));
-                }
-                *score = std::move(func);
-              }
+            if (doc_limits::eof(child->value()) && ord.empty()) {
               return std::move(parent);
             }
-          } else if constexpr (std::is_same_v<MinMatcher<A>, M> ||
-                               std::is_same_v<RangeMatcher<A>, M>) {
-            // Unordered case for the range [0..EOF] is the equivalent to
-            // matching all parents
-            if constexpr (std::is_same_v<NoopAggregator, A>) {
-              if (Match{0} == matcher.Range() &&
-                  doc_limits::eof(child->value())) {
-                return std::move(parent);
-              }
+          } else if constexpr (std::is_same_v<MinMatcher<MergeType>, M> ||
+                               std::is_same_v<RangeMatcher<MergeType>, M>) {
+            // When min=0 and child has no matches, every parent matches
+            // with score 0 — return parent directly for efficiency
+            if (Match{0} == matcher.Range() &&
+                doc_limits::eof(child->value())) {
+              return std::move(parent);
             }
           } else {
             if (doc_limits::eof(child->value())) {

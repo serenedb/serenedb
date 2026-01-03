@@ -260,8 +260,7 @@ class SparseBitmapIterator : public ResettableDocIterator {
     };
   };
 
-  using Attributes =
-    std::tuple<DocAttr, ValueIndex, PrevDocAttr, CostAttr, ScoreAttr>;
+  using Attributes = std::tuple<DocAttr, ValueIndex, PrevDocAttr, CostAttr>;
 
   explicit SparseBitmapIterator(Ptr&& in, const Options& opts);
 

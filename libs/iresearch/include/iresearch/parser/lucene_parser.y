@@ -18,6 +18,9 @@
  Copyright holder is SereneDB GmbH, Berlin, Germany
 */
 
+%no-lines
+%define api.pure full
+
 %code requires {
 #include <iresearch/search/filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
@@ -38,13 +41,16 @@ struct StringSpan {
 }
 
 %{
-
 #include "parser.h"
 #include "basics/error.h"
 
-int yylex(void);
-void yyerror(sdb::ParserContext& ctx, const char *s);
+#pragma clang diagnostic ignored "-Wunused-but-set-variable"
 %}
+
+%code {
+int yylex(YYSTYPE* yylval);
+void yyerror(sdb::ParserContext& ctx, const char *s);
+}
 
 %parse-param { sdb::ParserContext& ctx }
 

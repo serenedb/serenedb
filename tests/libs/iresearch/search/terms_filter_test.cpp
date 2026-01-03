@@ -22,6 +22,7 @@
 
 #include <iresearch/index/field_meta.hpp>
 #include <iresearch/search/boost_scorer.hpp>
+#include <iresearch/search/scorer.hpp>
 #include <iresearch/search/terms_filter.hpp>
 
 #include "filter_test_case_base.hpp"
@@ -187,7 +188,7 @@ TEST_P(TermsFilterTestCase, simple_sequential_order) {
     const auto filter = MakeFilter(
       "prefix", {{"abcd", 1.f}, {"abcd", 1.f}, {"abc", 1.f}, {"abcy", 1.f}});
 
-    CheckQuery(filter, std::span{&impl, 1}, docs, rdr);
+    CheckQuery(tests::FilterWrapper{filter}, std::span{&impl, 1}, docs, rdr);
     ASSERT_EQ(1, collect_field_count);  // 1 fields in 1 segment
     ASSERT_EQ(3, collect_term_count);   // 3 different terms
     ASSERT_EQ(3, finish_count);         // 3 unque terms
@@ -469,10 +470,10 @@ TEST_P(TermsFilterTestCase, min_match) {
     }
     for (const auto doc : {4,  5,  6,  7,  19, 20, 21, 22, 25, 27, 28, 29,
                            30, 34, 38, 46, 52, 53, 57, 62, 65, 69, 70}) {
-      result[doc - 1].second = {static_cast<float_t>(doc)};
+      result[doc - 1].second = {1.f};
     }
     for (const auto doc : {21, 57}) {
-      result[doc - 1].second = {static_cast<float_t>(2 * doc)};
+      result[doc - 1].second = {2.f};
     }
 
     const Costs costs{25, 0, 0, 0};
@@ -504,25 +505,28 @@ TEST_P(TermsFilterTestCase, min_match) {
       return std::make_unique<tests::sort::CustomSort::TermCollector>(*scorer);
     };
     scorer->prepare_scorer =
-      [](const irs::ColumnProvider&, const irs::FieldProperties&,
-         const irs::byte_type*, const irs::AttributeProvider& attrs,
-         irs::score_t boost) -> irs::ScoreFunction {
+      [](const irs::ScoreContext& ctx) -> irs::ScoreFunction {
+      auto* doc = irs::get<tests::DocBlockAttr>(ctx.doc_attrs);
+      if (!doc) {
+        return irs::ScoreFunction::Constant(ctx.boost);
+      }
+
       struct ScoreCtx final : public irs::ScoreCtx {
-        ScoreCtx(const irs::DocAttr* doc, irs::score_t boost) noexcept
+        ScoreCtx(const tests::DocBlockAttr* doc, irs::score_t boost) noexcept
           : doc{doc}, boost{boost} {}
-        const irs::DocAttr* doc;
+        const tests::DocBlockAttr* doc;
         irs::score_t boost;
       };
 
-      auto* doc = irs::get<irs::DocAttr>(attrs);
-      EXPECT_NE(nullptr, doc);
-
       return irs::ScoreFunction::Make<ScoreCtx>(
-        [](irs::ScoreCtx* ctx, irs::score_t* res) noexcept {
+        [](irs::ScoreCtx* ctx, irs::score_t* res, size_t n) noexcept {
           auto* state = static_cast<ScoreCtx*>(ctx);
-          *res = static_cast<irs::score_t>(state->doc->value) * state->boost;
+          for (size_t i = 0; i < n; ++i) {
+            res[i] =
+              static_cast<irs::score_t>(state->doc->value[i]) * state->boost;
+          }
         },
-        irs::ScoreFunction::DefaultMin, doc, boost);
+        irs::ScoreFunction::NoopMin, doc, ctx.boost);
     };
 
     const auto filter =

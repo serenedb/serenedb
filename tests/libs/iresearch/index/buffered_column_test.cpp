@@ -89,7 +89,6 @@ void AssertIteratorNext(const irs::BufferedColumn& column,
                         std::span<const uint32_t> expected_values) {
   irs::BufferedColumnIterator it{column.Index(), column.Data()};
   ASSERT_EQ(expected_values.size(), irs::CostAttr::extract(it));
-  ASSERT_EQ(nullptr, irs::get<irs::ScoreAttr>(it));
   auto* doc = irs::get<irs::DocAttr>(it);
   ASSERT_NE(nullptr, doc);
   auto* payload = irs::get<irs::PayAttr>(it);
@@ -115,7 +114,6 @@ void AssertIteratorSeekStateful(const irs::BufferedColumn& column,
                                 std::span<const uint32_t> expected_values) {
   irs::BufferedColumnIterator it{column.Index(), column.Data()};
   ASSERT_EQ(expected_values.size(), irs::CostAttr::extract(it));
-  ASSERT_EQ(nullptr, irs::get<irs::ScoreAttr>(it));
   auto* doc = irs::get<irs::DocAttr>(it);
   ASSERT_NE(nullptr, doc);
   auto* payload = irs::get<irs::PayAttr>(it);

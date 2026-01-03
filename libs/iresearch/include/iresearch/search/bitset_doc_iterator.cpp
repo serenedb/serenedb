@@ -98,7 +98,7 @@ doc_id_t BitsetDocIterator::seek(doc_id_t target) {
   return advance();
 }
 
-uint32_t BitsetDocIterator::count() {
+uint32_t BitsetDocIterator::count() noexcept {
   uint32_t count = 0;
 
   while (_word != 0) [[unlikely]] {

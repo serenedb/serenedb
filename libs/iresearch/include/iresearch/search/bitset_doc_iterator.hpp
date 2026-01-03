@@ -40,7 +40,7 @@ class BitsetDocIterator : public DocIterator, private util::Noncopyable {
   doc_id_t value() const noexcept final { return _doc.value; }
   doc_id_t advance() final;
   doc_id_t seek(doc_id_t target) final;
-  uint32_t count() final;
+  uint32_t count() noexcept final;
 
  protected:
   explicit BitsetDocIterator(CostAttr::Type cost) noexcept

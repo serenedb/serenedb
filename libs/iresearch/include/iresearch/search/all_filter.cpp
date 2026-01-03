@@ -26,17 +26,23 @@
 
 namespace irs {
 
-// Compiled all_filter that returns all documents
 class AllQuery : public Filter::Query {
  public:
-  explicit AllQuery(bstring&& stats, score_t boost)
-    : _stats{std::move(stats)}, _boost{boost} {}
+  explicit AllQuery(score_t boost) : _boost{boost} {}
 
   DocIterator::ptr execute(const ExecutionContext& ctx) const final {
-    auto& rdr = ctx.segment;
+    auto it =
+      memory::make_managed<AllIterator>(ctx.segment.docs_count(), _boost);
 
-    return memory::make_managed<AllIterator>(rdr, _stats.c_str(), ctx.scorers,
-                                             rdr.docs_count(), _boost);
+    if (!ctx.scorers.empty()) {
+      it->PrepareScore({
+        .scorer = ctx.scorers.buckets().front().bucket,
+        .segment = &ctx.segment,
+        .collector = ctx.collector,
+      });
+    }
+
+    return it;
   }
 
   void visit(const SubReader&, PreparedStateVisitor&, score_t) const final {
@@ -46,21 +52,11 @@ class AllQuery : public Filter::Query {
   score_t Boost() const noexcept final { return _boost; }
 
  private:
-  bstring _stats;
   score_t _boost;
 };
 
 Filter::Query::ptr All::prepare(const PrepareContext& ctx) const {
-  // skip field-level/term-level statistics because there are no explicit
-  // fields/terms, but still collect index-level statistics
-  // i.e. all fields and terms implicitly match
-  bstring stats(ctx.scorers.stats_size(), 0);
-  auto* stats_buf = stats.data();
-
-  PrepareCollectors(ctx.scorers.buckets(), stats_buf);
-
-  return memory::make_tracked<AllQuery>(ctx.memory, std::move(stats),
-                                        ctx.boost * Boost());
+  return memory::make_tracked<AllQuery>(ctx.memory, ctx.boost * Boost());
 }
 
 }  // namespace irs

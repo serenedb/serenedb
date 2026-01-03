@@ -22,16 +22,28 @@
 
 #pragma once
 
+#include <iresearch/search/score_function.hpp>
+#include <iresearch/search/scorer.hpp>
+#include <memory>
+
+#include "basics/assert.h"
 #include "basics/memory.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/formats/seek_cookie.hpp"
 #include "iresearch/index/index_features.hpp"
+#include "iresearch/search/score.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/attributes.hpp"
 #include "iresearch/utils/iterator.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
+
+struct PrepareScoreContext {
+  const Scorer* scorer = nullptr;
+  const SubReader* segment = nullptr;
+  ColumnCollector* collector;
+};
 
 // An iterator providing sequential and random access to a posting list
 //
@@ -60,6 +72,13 @@ struct DocIterator : AttributeProvider {
   // (for more information see class description)
   virtual doc_id_t seek(doc_id_t target) = 0;
 
+  // TODO(gnusi): return "has more"
+  virtual uint32_t collect(std::span<doc_id_t> docs) {
+    return Collect(*this, docs);
+  }
+
+  virtual void CollectData(uint16_t index) = 0;
+
   // protected:
   // For any DocIterator we want to define block.
   // It's two bounds: (min...max]:
@@ -79,6 +98,14 @@ struct DocIterator : AttributeProvider {
 
   virtual uint32_t count() { return Count(*this); }
 
+  virtual std::pair<doc_id_t, bool> CollectBlock(doc_id_t min, doc_id_t max,
+                                                 ScoreMergeType merge_type,
+                                                 const ScoreFunction* score,
+                                                 uint64_t* IRS_RESTRICT mask,
+                                                 score_t* IRS_RESTRICT scores,
+                                                 uint32_t* IRS_RESTRICT matches,
+                                                 size_t min_match_count);
+
  protected:
   template<typename Iterator>
   static uint32_t Count(Iterator& it) {
@@ -87,6 +114,75 @@ struct DocIterator : AttributeProvider {
       ++count;
     }
     return count;
+  }
+
+  template<typename Iterator, size_t N = std::dynamic_extent>
+  static uint32_t Collect(Iterator& it, std::span<doc_id_t, N> docs) {
+    size_t i = 0;
+    for (; i < docs.size(); ++i) {
+      const auto doc = it.advance();
+      if (doc_limits::eof(doc)) {
+        break;
+      }
+      docs[i] = doc;
+      it.CollectData(i);
+    }
+    return i;
+  }
+
+  template<ScoreMergeType MergeType, bool TrackMatch, typename Iterator>
+  static std::pair<doc_id_t, bool> CollectBlockImpl(
+    Iterator& it, doc_id_t min, doc_id_t max,
+    [[maybe_unused]] const ScoreFunction* score, uint64_t* IRS_RESTRICT mask,
+    [[maybe_unused]] score_t* IRS_RESTRICT scores,
+    [[maybe_unused]] uint32_t* IRS_RESTRICT matches,
+    [[maybe_unused]] size_t min_match_count) {
+    [[maybe_unused]] std::array<score_t, kScoreBlock> score_buf;
+    [[maybe_unused]] std::array<uint16_t, kScoreBlock> score_hits;
+    [[maybe_unused]] uint16_t score_index = 0;
+    [[maybe_unused]] auto flush_score = [&](size_t n) {
+      SDB_ASSERT(n);
+      SDB_ASSERT(score);
+      score->Score(score_buf.data(), n);
+      Merge<MergeType>(scores, score_hits.data(), score_buf.data(), n);
+      score_index = 0;
+    };
+
+    bool empty = true;
+    auto value = it.value();
+    for (; value < max; value = it.advance()) {
+      const auto offset = value - min;
+
+      if constexpr (TrackMatch) {
+        SDB_ASSERT(matches);
+        const bool has_match = ++matches[offset] >= min_match_count;
+        SetBit(mask[offset / BitsRequired<uint64_t>()],
+               offset % BitsRequired<uint64_t>(), has_match);
+        empty &= !has_match;
+      } else {
+        SetBit(mask[offset / BitsRequired<uint64_t>()],
+               offset % BitsRequired<uint64_t>());
+        empty = false;
+      }
+
+      if constexpr (MergeType != ScoreMergeType::Noop) {
+        score_hits[score_index] = offset;
+        it.CollectData(score_index);
+        ++score_index;
+
+        if (score_index == kScoreBlock) {
+          flush_score(kScoreBlock);
+        }
+      }
+    }
+
+    if constexpr (MergeType != ScoreMergeType::Noop) {
+      if (score_index) {
+        flush_score(score_index);
+      }
+    }
+
+    return {value, empty};
   }
 };
 

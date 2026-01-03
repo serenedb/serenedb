@@ -19,15 +19,20 @@
 ///
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
+
 #pragma once
 
 #include <absl/algorithm/container.h>
 
+#include <iresearch/formats/seek_cookie.hpp>
+#include <iresearch/search/score_function.hpp>
 #include <limits>
+#include <memory>
 
 #include "basics/assert.h"
 #include "basics/bit_utils.hpp"
 #include "basics/containers/bitset.hpp"
+#include "basics/down_cast.h"
 #include "basics/logger/logger.h"
 #include "basics/memory.hpp"
 #include "basics/resource_manager.hpp"
@@ -45,8 +50,9 @@
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/cost.hpp"
-#include "iresearch/search/disjunction.hpp"
+#include "iresearch/search/make_disjunction.hpp"
 #include "iresearch/search/score.hpp"
+#include "iresearch/search/scorer.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/store/store_utils.hpp"
@@ -1215,10 +1221,36 @@ class DocIteratorBase : public DocIterator {
                 IteratorTraits::Features());
   void ReadTailBlock(doc_id_t prev_doc);
 
+ public:
+  void CollectData(uint16_t index) final {
+    if constexpr (IteratorTraits::Frequency()) {
+      SDB_ASSERT(_collected_freqs);
+      _collected_freqs[index] = this->_freqs[-1];  // TODO(gnusi): use attr
+    }
+  }
+
  protected:
+  void Init(const PostingCookie& cookie) noexcept {
+    _field = cookie.field;
+    _stats = cookie.stats;
+    _boost = cookie.boost;
+  }
+
+  void InitFreqBlock(FreqBlockAttr& freq_block) {
+    if constexpr (IteratorTraits::Frequency()) {
+      _collected_freqs = std::make_unique<uint32_t[]>(kScoreBlock);
+      freq_block.value = _collected_freqs.get();
+    }
+  }
+
   IRS_FORCE_INLINE void Refill(doc_id_t prev_doc);
 
+  FieldProperties _field;
+  const byte_type* _stats = nullptr;
+  score_t _boost = kNoBoost;
   uint32_t _enc_buf[IteratorTraits::kBlockSize];  // buffer for encoding
+  [[no_unique_address]] utils::Need<
+    IteratorTraits::Frequency(), std::unique_ptr<uint32_t[]>> _collected_freqs;
   [[no_unique_address]] utils::Need<
     IteratorTraits::Frequency(), uint32_t[IteratorTraits::kBlockSize]> _freqs;
   doc_id_t _docs[IteratorTraits::kBlockSize];
@@ -1283,11 +1315,12 @@ void DocIteratorBase<IteratorTraits, FieldTraits>::ReadTailBlock(
 template<typename IteratorTraits, typename FieldTraits>
 using AttributesImpl = std::conditional_t<
   IteratorTraits::Position(),
-  std::tuple<DocAttr, FreqAttr, ScoreAttr, CostAttr,
+  std::tuple<DocAttr, FreqAttr, FreqBlockAttr, ScoreAttr, CostAttr,
              PositionImpl<IteratorTraits, FieldTraits>>,
-  std::conditional_t<IteratorTraits::Frequency(),
-                     std::tuple<DocAttr, FreqAttr, ScoreAttr, CostAttr>,
-                     std::tuple<DocAttr, ScoreAttr, CostAttr>>>;
+  std::conditional_t<
+    IteratorTraits::Frequency(),
+    std::tuple<DocAttr, FreqAttr, FreqBlockAttr, ScoreAttr, CostAttr>,
+    std::tuple<DocAttr, ScoreAttr, CostAttr>>>;
 
 static_assert(kMaxScorers < WandContext::kDisable);
 
@@ -1358,7 +1391,7 @@ void CommonReadWandData(WandExtent wextent, uint8_t index,
   if (extent == 1) [[likely]] {
     const auto size = in.ReadByte();
     ctx.Read(in, size);
-    func(&score);
+    func.Score(&score, 1);
     return;
   }
 
@@ -1392,12 +1425,86 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
   using Attributes = AttributesImpl<IteratorTraits, FieldTraits>;
   using Position = PositionImpl<IteratorTraits, FieldTraits>;
 
+  static_assert(IteratorTraits::kBlockSize % kScoreBlock == 0,
+                "kBlockSize must be a multiple of kScoreBlock");
+
  public:
   DocIteratorImpl(WandExtent extent)
     : _skip{IteratorTraits::kBlockSize, PostingsWriterBase::kSkipN,
             ReadSkip{extent}} {}
 
-  void Prepare(const TermMeta& meta, const IndexInput* doc_in,
+  uint32_t collect(std::span<doc_id_t> docs) final {
+    // TODO(gnusi): optimize
+    return DocIterator::Collect(*this, docs);
+  }
+
+  const ScoreFunction& PrepareScore(const PrepareScoreContext& ctx) {
+    auto& score = std::get<irs::ScoreAttr>(_attrs);
+    score = ctx.scorer->PrepareScorer({
+      .segment = *ctx.segment,
+      .field = this->_field,
+      .doc_attrs = *this,
+      .collector = ctx.collector,
+      .stats = this->_stats,
+      .boost = this->_boost,
+    });
+    return score;
+  }
+
+  void WandPrepare(const PostingCookie& cookie, const IndexInput* doc_in,
+                   const IndexInput* pos_in, const IndexInput* pay_in,
+                   uint32_t meta_idx, const MakeScoreCallback& make_score,
+                   const Scorer& scorer, uint8_t wand_index) {
+    Prepare(cookie, doc_in, pos_in, pay_in, wand_index);
+
+    auto& meta = sdb::basics::downCast<CookieImpl>(*cookie.cookie).meta;
+    if (meta.docs_count > FieldTraits::kBlockSize) {
+      return;
+    }
+
+    if (meta.docs_count == 1) {
+      // Singleton doc case
+      auto func = make_score(meta_idx, *this);
+
+      auto& doc_value = std::get<DocAttr>(_attrs).value;
+      doc_value = *(std::end(this->_docs) - 1);
+      if constexpr (IteratorTraits::Frequency()) {
+        auto& freq_value = std::get<FreqAttr>(_attrs).value;
+        freq_value = *(std::end(this->_freqs) - 1);
+      }
+
+      auto& score = std::get<ScoreAttr>(_attrs);
+      func(&score.max.leaf);
+      score.max.tail = score.max.leaf;
+      score = ScoreFunction::Constant(score.max.tail);
+
+      doc_value = doc_limits::invalid();
+      return;
+    }
+
+    auto ctx = scorer.prepare_wand_source();
+    auto func = make_score(meta_idx, *ctx);
+
+    auto old_offset = std::numeric_limits<size_t>::max();
+    if (meta.docs_count == FieldTraits::kBlockSize) {
+      old_offset = this->_doc_in->Position();
+      FieldTraits::skip_block(*this->_doc_in);
+      if constexpr (FieldTraits::Frequency()) {
+        FieldTraits::skip_block(*this->_doc_in);
+      }
+    }
+
+    auto& score = std::get<ScoreAttr>(_attrs);
+    _skip.Reader().ReadMaxScore(wand_index, func, *ctx, *this->_doc_in,
+                                score.max.tail);
+    score.max.leaf = score.max.tail;
+
+    if (old_offset != std::numeric_limits<size_t>::max()) {
+      this->_doc_in->Seek(old_offset);
+    }
+  }
+
+  void Prepare(const PostingCookie& meta, const IndexInput* doc_in,
                const IndexInput* pos_in, const IndexInput* pay_in,
                uint8_t wand_index = WandContext::kDisable);
 
@@ -1413,16 +1520,17 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
 
   IRS_FORCE_INLINE doc_id_t seek(doc_id_t target) final;
 
+  IRS_FORCE_INLINE const ScoreAttr& score() const noexcept {
+    return std::get<ScoreAttr>(_attrs);
+  }
+
+ private:
   uint32_t count() final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
     doc_value = doc_limits::eof();
     const auto left_in_leaf = std::exchange(this->_left_in_leaf, 0);
     const auto left_in_list = std::exchange(this->_left_in_list, 0);
     return left_in_leaf + left_in_list;
-  }
-
-  IRS_FORCE_INLINE const ScoreAttr& score() const noexcept {
-    return std::get<ScoreAttr>(_attrs);
   }
 
  private:
@@ -1536,9 +1644,16 @@ void DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::ReadSkip::Seal(
 
 template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
 void DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
-  const TermMeta& meta, const IndexInput* doc_in, const IndexInput* pos_in,
-  const IndexInput* pay_in, uint8_t wand_index) {
-  auto& term_state = static_cast<const TermMetaImpl&>(meta);
+  const PostingCookie& cookie, const IndexInput* doc_in,
+  const IndexInput* pos_in, const IndexInput* pay_in, uint8_t wand_index) {
+  this->Init(cookie);
+
+  if constexpr (IteratorTraits::Frequency()) {
+    this->InitFreqBlock(std::get<FreqBlockAttr>(_attrs));
+  }
+
+  auto& term_state = sdb::basics::downCast<CookieImpl>(*cookie.cookie).meta;
+
   std::get<CostAttr>(_attrs).reset(term_state.docs_count);  // Estimate iterator
 
   if (term_state.docs_count > 1) {
@@ -2317,8 +2432,27 @@ struct PostingAdapter {
     return self().shallow_seek(target);
   }
 
+  IRS_FORCE_INLINE uint32_t collect(std::span<doc_id_t> docs) {
+    return self().collect(docs);
+  }
+
+  IRS_FORCE_INLINE void CollectData(uint16_t index) {
+    return self().CollectData(index);
+  }
+
   IRS_FORCE_INLINE const ScoreAttr& score() const noexcept {
     return self().score();
+  }
+
+  IRS_FORCE_INLINE auto CollectBlock(doc_id_t min, doc_id_t max,
+                                     ScoreMergeType merge_type,
+                                     const ScoreFunction* score,
+                                     uint64_t* IRS_RESTRICT mask,
+                                     score_t* IRS_RESTRICT scores,
+                                     uint32_t* IRS_RESTRICT matches,
+                                     size_t min_match_count) {
+    return self().CollectBlock(min, max, merge_type, score, mask, scores,
+                               matches, min_match_count);
   }
 
  private:
@@ -2397,10 +2531,9 @@ class PostingsReaderImpl final : public PostingsReaderBase {
 
   DocIterator::ptr Iterator(IndexFeatures field_features,
                             IndexFeatures required_features,
-                            std::span<const TermMeta* const> metas,
+                            std::span<const PostingCookie> metas,
                             const IteratorFieldOptions& options,
-                            size_t min_match, ScoreMergeType type,
-                            size_t num_buckets) const final;
+                            size_t min_match, ScoreMergeType type) const final;
 
  private:
   template<typename FieldTraits, typename Factory>
@@ -2574,13 +2707,14 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::IteratorImpl(
 template<typename FormatTraits>
 DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
   IndexFeatures field_features, IndexFeatures required_features,
-  std::span<const TermMeta* const> metas, const IteratorFieldOptions& options,
-  size_t min_match, ScoreMergeType type, size_t num_buckets) const {
+  std::span<const PostingCookie> metas, const IteratorFieldOptions& options,
+  size_t min_match, ScoreMergeType type) const {
   SDB_ASSERT(!metas.empty());
   SDB_ASSERT(1 <= min_match);
   SDB_ASSERT(min_match <= metas.size());
 
-  auto make_postings_iterator = [&](uint32_t meta_idx, const TermMeta& meta) {
+  auto make_postings_iterator = [&](uint32_t meta_idx,
+                                    const PostingCookie& cookie) {
     return IteratorImpl(
       field_features, required_features,
       [&]<typename IteratorTraits, typename FieldTraits> -> DocIterator::ptr {
@@ -2597,7 +2731,7 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
   };
 
   if (metas.size() == 1) {
-    auto it = make_postings_iterator(0, *metas[0]);
+    auto it = make_postings_iterator(0, metas[0]);
     if (!it) {
       return {};
     }
@@ -2608,8 +2742,8 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
   std::vector<DocIterator::ptr> iterators;
   iterators.reserve(metas.size());
   uint32_t meta_idx = 0;
-  for (const auto* meta : metas) {
-    if (auto it = make_postings_iterator(meta_idx, *meta)) {
+  for (const auto& meta : metas) {
+    if (auto it = make_postings_iterator(meta_idx, meta)) {
       iterators.emplace_back(std::move(it));
       options.compile_score(meta_idx, *iterators.back());
     } else if (min_match == metas.size()) {

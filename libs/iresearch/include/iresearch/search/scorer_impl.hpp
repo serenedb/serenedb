@@ -26,6 +26,7 @@
 #include <iterator>
 #include <type_traits>
 
+#include "basics/misc.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/formats.hpp"
@@ -95,22 +96,13 @@ struct MakeScoreFunctionImpl {
   static ScoreFunction Make(Args&&... args);
 };
 
-template<typename Ctx, typename... Args>
-ScoreFunction MakeScoreFunction(const FilterBoost* filter_boost,
+template<typename Ctx, bool SingleScore, typename... Args>
+ScoreFunction MakeScoreFunction(const score_t* filter_boost,
                                 Args&&... args) noexcept {
-  if (filter_boost) {
-    return MakeScoreFunctionImpl<Ctx>::template Make<true>(
+  return ResolveBool(filter_boost != nullptr, [&]<bool HasBoost> {
+    return MakeScoreFunctionImpl<Ctx>::template Make<HasBoost, SingleScore>(
       std::forward<Args>(args)..., filter_boost);
-  }
-  return MakeScoreFunctionImpl<Ctx>::template Make<false>(
-    std::forward<Args>(args)...);
+  });
 }
-
-enum class NormType {
-  // Norm values
-  Norm = 0,
-  // Norm values fit 1-byte
-  NormTiny,
-};
 
 }  // namespace irs

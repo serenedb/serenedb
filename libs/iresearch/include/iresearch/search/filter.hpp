@@ -26,6 +26,8 @@
 
 #include <functional>
 #include <iresearch/index/index_meta.hpp>
+#include <iresearch/index/index_reader.hpp>
+#include <iresearch/search/column_collector.hpp>
 
 #include "basics/down_cast.h"
 #include "iresearch/index/index_reader_options.hpp"
@@ -56,6 +58,7 @@ struct ExecutionContext {
   IResourceManager& memory = IResourceManager::gNoop;
   const Scorers& scorers = Scorers::kUnordered;
   const AttributeProvider* ctx = nullptr;
+  ColumnCollector* collector = nullptr;
   const DocumentMask* pending_docs_mask = nullptr;
   // If enabled, wand would use first scorer from scorers
   WandContext wand{};

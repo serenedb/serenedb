@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "basics/down_cast.h"
 #include "iresearch/formats/formats.hpp"
 
 namespace irs {
@@ -46,6 +47,31 @@ struct TermMetaImpl : TermMeta {
     doc_id_t e_single_doc;  // singleton document id delta
     uint64_t e_skip_start;  // pointer where skip data starts (after doc_start)
   };
+};
+
+struct CookieImpl final : SeekCookie {
+  CookieImpl() = default;
+  explicit CookieImpl(const TermMetaImpl& meta) noexcept : meta(meta) {}
+
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+    if (type == irs::Type<TermMeta>::id()) [[likely]] {
+      return &meta;
+    }
+
+    return nullptr;
+  }
+
+  bool IsEqual(const SeekCookie& rhs) const noexcept final {
+    const auto& rhs_meta = sdb::basics::downCast<CookieImpl>(rhs).meta;
+    return meta.doc_start == rhs_meta.doc_start &&
+           meta.pos_start == rhs_meta.pos_start;
+  }
+
+  size_t Hash() const noexcept final {
+    return absl::HashOf(meta.doc_start, meta.pos_start);
+  }
+
+  TermMetaImpl meta;
 };
 
 template<>

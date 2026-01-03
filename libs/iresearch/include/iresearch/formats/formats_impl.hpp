@@ -19,15 +19,22 @@
 ///
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
+
 #pragma once
 
 #include <absl/algorithm/container.h>
 
+#include <bit>
+#include <iresearch/formats/seek_cookie.hpp>
+#include <iresearch/index/iterators.hpp>
+#include <iresearch/search/score_function.hpp>
 #include <limits>
+#include <memory>
 
 #include "basics/assert.h"
 #include "basics/bit_utils.hpp"
 #include "basics/containers/bitset.hpp"
+#include "basics/down_cast.h"
 #include "basics/logger/logger.h"
 #include "basics/memory.hpp"
 #include "basics/resource_manager.hpp"
@@ -45,8 +52,9 @@
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/cost.hpp"
-#include "iresearch/search/disjunction.hpp"
+#include "iresearch/search/make_disjunction.hpp"
 #include "iresearch/search/score.hpp"
+#include "iresearch/search/scorer.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/store/store_utils.hpp"
@@ -1210,7 +1218,12 @@ class PostingIteratorBase : public DocIterator {
   virtual void Refill(doc_id_t prev_doc) = 0;
   virtual void SeekToBlock(doc_id_t target) = 0;
 
+  FieldProperties _field;
+  const byte_type* _stats = nullptr;
+  score_t _boost = kNoBoost;
   uint32_t _enc_buf[IteratorTraits::kBlockSize];  // buffer for encoding
+  [[no_unique_address]] utils::Need<
+    IteratorTraits::Frequency(), std::unique_ptr<uint32_t[]>> _collected_freqs;
   [[no_unique_address]] utils::Need<
     IteratorTraits::Frequency(), uint32_t[IteratorTraits::kBlockSize]> _freqs;
   doc_id_t _docs[IteratorTraits::kBlockSize];
@@ -1374,7 +1387,7 @@ void CommonReadWandData(WandExtent wextent, uint8_t index,
   if (extent == 1) [[likely]] {
     const auto size = in.ReadByte();
     ctx.Read(in, size);
-    func(&score);
+    func.Score(&score, 1);
     return;
   }
 
@@ -1411,13 +1424,41 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
   using Base = PostingIteratorBase<IteratorTraits>;
   using typename Base::Position;
 
+  static_assert(IteratorTraits::kBlockSize % kScoreBlock == 0,
+                "kBlockSize must be a multiple of kScoreBlock");
+
  public:
   PostingIteratorImpl(WandExtent extent)
     : Base{FieldTraits::Offset()},
       _skip{IteratorTraits::kBlockSize, PostingsWriterBase::kSkipN,
             ReadSkip{extent}} {}
 
-  void Prepare(const TermMeta& meta, const IndexInput* doc_in,
+  uint32_t collect(std::span<doc_id_t> docs) final {
+    // TODO(gnusi): optimize
+    return DocIterator::Collect(*this, docs);
+  }
+
+  const ScoreFunction& PrepareScore(const PrepareScoreContext& ctx) final {
+    auto& score = std::get<irs::ScoreAttr>(_attrs);
+    score = ctx.scorer->PrepareScorer({
+      .segment = *ctx.segment,
+      .field = this->_field,
+      .doc_attrs = *this,
+      .collector = ctx.collector,
+      .stats = this->_stats,
+      .boost = this->_boost,
+    });
+    return score;
+  }
+
+  void CollectData(uint16_t index) final {
+    if constexpr (IteratorTraits::Frequency()) {
+      SDB_ASSERT(this->_collected_freqs);
+      this->_collected_freqs[index] = std::get<FreqAttr>(_attrs).value;
+    }
+  }
+
+  void Prepare(const PostingCookie& meta, const IndexInput* doc_in,
                const IndexInput* pos_in, const IndexInput* pay_in,
                uint8_t wand_index = WandContext::kDisable);
 
@@ -1556,6 +1597,12 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
       }
     }
 
+    if constexpr (IteratorTraits::Frequency()) {
+      auto& freq_block = std::get<FreqBlockAttr>(_attrs);
+      this->_collected_freqs = std::make_unique<uint32_t[]>(kScoreBlock);
+      freq_block.value = this->_collected_freqs.get();
+    }
+
     this->_doc_in->Seek(term_state.doc_start);
     SDB_ASSERT(!this->_doc_in->IsEOF());
   } else {
@@ -1563,8 +1610,13 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
     auto* doc = std::end(this->_docs) - 1;
     *doc = doc_limits::min() + term_state.e_single_doc;
     if constexpr (IteratorTraits::Frequency()) {
+      this->_collected_freqs = std::make_unique<uint32_t[]>(1);
+
       auto* freq = std::end(this->_freqs) - 1;
       *freq = term_state.freq;
+
+      auto& freq_block = std::get<FreqBlockAttr>(_attrs);
+      freq_block.value = freq;
     }
     this->_left_in_list = 0;
     this->_left_in_leaf = 1;
@@ -2287,6 +2339,17 @@ struct PostingAdapter {
     return self().score();
   }
 
+  IRS_FORCE_INLINE const ScoreFunction& PrepareScore(
+    const PrepareScoreContext& ctx) const noexcept {
+    return self().PrepareScore(ctx);
+  }
+
+  IRS_FORCE_INLINE auto CollectBlock(doc_id_t min, doc_id_t max, uint64_t* mask,
+                                     CollectScoreContext score_ctx,
+                                     CollectMatchContext match_ctx) {
+    return self().CollectBlock(min, max, mask, score_ctx, match_ctx);
+  }
+
  private:
   IRS_FORCE_INLINE PostingImpl& self() const noexcept {
     return static_cast<PostingImpl&>(*_it);
@@ -2366,10 +2429,9 @@ class PostingsReaderImpl final : public PostingsReaderBase {
 
   DocIterator::ptr Iterator(IndexFeatures field_features,
                             IndexFeatures required_features,
-                            std::span<const TermMeta* const> metas,
+                            std::span<const PostingCookie> metas,
                             const IteratorFieldOptions& options,
-                            size_t min_match, ScoreMergeType type,
-                            size_t num_buckets) const final;
+                            size_t min_match, ScoreMergeType type) const final;
 
  private:
   template<typename FieldTraits, typename Factory>
@@ -2543,13 +2605,14 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::IteratorImpl(
 template<typename FormatTraits>
 DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
   IndexFeatures field_features, IndexFeatures required_features,
-  std::span<const TermMeta* const> metas, const IteratorFieldOptions& options,
-  size_t min_match, ScoreMergeType type, size_t num_buckets) const {
+  std::span<const PostingCookie> metas, const IteratorFieldOptions& options,
+  size_t min_match, ScoreMergeType type) const {
   SDB_ASSERT(!metas.empty());
   SDB_ASSERT(1 <= min_match);
   SDB_ASSERT(min_match <= metas.size());
 
-  auto make_postings_iterator = [&](uint32_t meta_idx, const TermMeta& meta) {
+  auto make_postings_iterator = [&](uint32_t meta_idx,
+                                    const PostingCookie& cookie) {
     return IteratorImpl(
       field_features, required_features,
       [&]<typename IteratorTraits, typename FieldTraits> -> DocIterator::ptr {
@@ -2559,28 +2622,22 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
             auto it = memory::make_managed<
               PostingIteratorImpl<IteratorTraits, FieldTraits, Extent>>(
               std::forward<Extent>(extent));
-            it->Prepare(meta, _doc_in.get(), _pos_in.get(), _pay_in.get());
+            it->Prepare(cookie, _doc_in.get(), _pos_in.get(), _pay_in.get());
             return it;
           });
       });
   };
 
   if (metas.size() == 1) {
-    auto it = make_postings_iterator(0, *metas[0]);
-    if (!it) {
-      return {};
-    }
-    options.compile_score(0, *it);
-    return it;
+    return make_postings_iterator(0, metas[0]);
   }
 
   std::vector<DocIterator::ptr> iterators;
   iterators.reserve(metas.size());
   uint32_t meta_idx = 0;
-  for (const auto* meta : metas) {
-    if (auto it = make_postings_iterator(meta_idx, *meta)) {
+  for (const auto& meta : metas) {
+    if (auto it = make_postings_iterator(meta_idx, meta)) {
       iterators.emplace_back(std::move(it));
-      options.compile_score(meta_idx, *iterators.back());
     } else if (min_match == metas.size()) {
       return {};
     }

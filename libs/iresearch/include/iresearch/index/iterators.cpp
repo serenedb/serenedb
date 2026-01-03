@@ -22,11 +22,14 @@
 
 #include "iresearch/index/iterators.hpp"
 
+#include "basics/misc.hpp"
 #include "basics/singleton.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/empty_term_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
+#include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/cost.hpp"
+#include "iresearch/search/scorer.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -47,6 +50,8 @@ struct EmptyDocIterator : ResettableDocIterator {
   }
   uint32_t count() noexcept final { return 0; }
   void reset() noexcept final {}
+
+  uint32_t collect(std::span<doc_id_t>) final { return 0; }
 
  private:
   CostAttr _cost{0};
@@ -163,6 +168,11 @@ FieldIterator::ptr FieldIterator::empty() noexcept {
 
 ColumnIterator::ptr ColumnIterator::empty() noexcept {
   return memory::to_managed<ColumnIterator>(gEmptyColumnIterator);
+}
+
+const ScoreFunction& DocIterator::PrepareScore(const PrepareScoreContext& ctx) {
+  static const ScoreFunction kNoop = ScoreFunction::Default();
+  return kNoop;
 }
 
 }  // namespace irs

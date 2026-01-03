@@ -26,6 +26,8 @@
 
 #include <functional>
 #include <iresearch/index/index_meta.hpp>
+#include <iresearch/index/index_reader.hpp>
+#include <iresearch/search/column_collector.hpp>
 
 #include "basics/down_cast.h"
 #include "iresearch/index/index_reader_options.hpp"

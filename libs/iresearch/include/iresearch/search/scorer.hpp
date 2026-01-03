@@ -22,8 +22,6 @@
 
 #pragma once
 
-#include <set>
-
 #include "basics/containers/small_vector.h"
 #include "basics/math_utils.hpp"
 #include "iresearch/index/field_meta.hpp"
@@ -41,6 +39,7 @@ class IndexOutput;
 struct SubReader;
 struct ColumnProvider;
 struct TermReader;
+class ColumnCollector;
 
 // Represents no boost value.
 inline constexpr score_t kNoBoost{1.f};
@@ -140,6 +139,15 @@ struct WandWriter {
   virtual byte_type SizeRoot(size_t level) = 0;
 };
 
+struct ScoreContext {
+  const ColumnProvider& segment;
+  const FieldProperties& field;
+  const AttributeProvider& doc_attrs;
+  ColumnCollector* collector = nullptr;
+  const byte_type* stats = nullptr;
+  score_t boost = kNoBoost;
+};
+
 // Base class for all scorers.
 // Stats are meant to be trivially constructible and will be
 // zero initialized before usage.
@@ -175,11 +183,10 @@ struct Scorer {
   virtual FieldCollector::ptr PrepareFieldCollector() const = 0;
 
   // Create a stateful scorer used for computation of document scores
-  virtual ScoreFunction PrepareScorer(const ColumnProvider& segment,
-                                      const FieldProperties& meta,
-                                      const byte_type* stats,
-                                      const AttributeProvider& doc_attrs,
-                                      score_t boost) const = 0;
+  virtual ScoreFunction PrepareScorer(const ScoreContext& ctx) const = 0;
+  virtual ScoreFunction PrepareSingleScorer(const ScoreContext& ctx) const {
+    return {};
+  }
 
   // Create an object to be used for collecting index statistics, one
   // instance per matched term.
@@ -308,125 +315,15 @@ Scorers Scorers::Prepare(Iterator begin, Iterator end) {
   return scorers;
 }
 
-inline constexpr uint32_t kBufferRuntimeSize = 0;
-
-struct NoopAggregator {
-  constexpr uint32_t size() const noexcept { return 0; }
-};
-
-template<uint32_t Size>
-struct ScoreBuffer {
-  static_assert(Size > 0);
-
-  ScoreBuffer(uint32_t = 0) noexcept {}
-
-  constexpr uint32_t size() const noexcept { return Size; }
-
-  constexpr score_t* temp() noexcept { return _buf.data(); }
-
- private:
-  std::array<score_t, Size> _buf;
-};
-
-template<>
-struct ScoreBuffer<kBufferRuntimeSize> {
- private:
-  using Alloc = memory::AllocatorArrayDeallocator<std::allocator<score_t>>;
-
- public:
-  explicit ScoreBuffer(size_t size) noexcept
-    : _buf{memory::AllocateUnique<score_t[]>(std::allocator<score_t>{}, size,
-                                             memory::kAllocateOnly)} {
-    SDB_ASSERT(size);
-  }
-
-  uint32_t size() const noexcept {
-    return static_cast<uint32_t>(_buf.get_deleter().size());
-  }
-
-  score_t* temp() noexcept { return _buf.get(); }
-
- private:
-  std::unique_ptr<score_t[], Alloc> _buf;
-};
-
-template<typename Merger, size_t Size>
-struct Aggregator : ScoreBuffer<Size> {
-  using Buffer = ScoreBuffer<Size>;
-
-  using Buffer::Buffer;
-
-  IRS_FORCE_INLINE size_t byte_size() const noexcept {
-    return static_cast<size_t>(this->size()) * sizeof(score_t);
-  }
-
-  IRS_FORCE_INLINE void Merge(score_t& dst, score_t src) const noexcept {
-    _merger(&dst, &src);
-  }
-
-  void operator()(score_t* dst, const score_t* src) const noexcept {
-    for (uint32_t i = 0; i != this->size(); ++i) {
-      _merger(dst, src);
-      ++dst;
-      ++src;
-    }
-  }
-
- private:
-  [[no_unique_address]] Merger _merger;
-};
-
-template<typename Aggregator>
-struct HasScoreHelper : std::true_type {};
-
-template<>
-struct HasScoreHelper<NoopAggregator> : std::false_type {};
-
-template<typename Aggregator>
-inline constexpr bool kHasScore = HasScoreHelper<Aggregator>::value;
-
-struct SumMerger {
-  void operator()(score_t* IRS_RESTRICT dst,
-                  const score_t* IRS_RESTRICT src) const noexcept {
-    *dst += *src;
-  }
-};
-
-// ScoreFunction::Default doesn't work if we will add MulMerger
-// And probably can work strange with Max/MinMerger
-
-struct MaxMerger {
-  void operator()(score_t* IRS_RESTRICT dst,
-                  const score_t* IRS_RESTRICT src) const noexcept {
-    const auto src_value = *src;
-
-    if (*dst < src_value) {
-      *dst = src_value;
-    }
-  }
-};
-
 template<typename Visitor>
-auto ResolveMergeType(ScoreMergeType type, size_t num_buckets,
-                      Visitor&& visitor) {
-  auto impl = [&]<typename Merger>() {
-    switch (num_buckets) {
-      case 0:
-        return visitor(NoopAggregator{});
-      case 1:
-        return visitor(Aggregator<Merger, 1>{});
-      default:
-        return visitor(Aggregator<Merger, kBufferRuntimeSize>{num_buckets});
-    }
-  };
-
+IRS_FORCE_INLINE auto ResolveMergeType(ScoreMergeType type, Visitor&& visitor) {
   switch (type) {
-    case ScoreMergeType::Noop:
-      return visitor(NoopAggregator{});
     case ScoreMergeType::Sum:
-      return impl.template operator()<SumMerger>();
+      return visitor.template operator()<ScoreMergeType::Sum>();
     case ScoreMergeType::Max:
-      return impl.template operator()<MaxMerger>();
+      return visitor.template operator()<ScoreMergeType::Max>();
+    case ScoreMergeType::Noop:
+      return visitor.template operator()<ScoreMergeType::Noop>();
   }
 }
 

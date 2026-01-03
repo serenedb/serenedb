@@ -20,12 +20,16 @@
 
 #include <absl/algorithm/container.h>
 
+#include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/doc_collector.hpp>
 #include <iresearch/search/score.hpp>
+#include <iresearch/search/score_function.hpp>
+#include <iresearch/search/scorer.hpp>
 #include <iresearch/search/scorers.hpp>
 #include <iresearch/search/term_filter.hpp>
+#include <iresearch/types.hpp>
 #include <span>
 
 #include "index/index_tests.hpp"
@@ -45,32 +49,34 @@ struct DocIdScorer : irs::ScorerBase<void> {
     return irs::IndexFeatures::None;
   }
 
-  irs::ScoreFunction PrepareScorer(const irs::ColumnProvider&,
-                                   const irs::FieldProperties&,
-                                   const irs::byte_type*,
-                                   const irs::AttributeProvider& attrs,
-                                   irs::score_t) const final {
+  irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
     struct ScorerContext final : irs::ScoreCtx {
-      ScorerContext(const irs::DocAttr* doc, irs::doc_id_t divisor) noexcept
-        : doc{doc}, divisor{divisor} {}
+      ScorerContext(const irs::FreqBlockAttr* freq,
+                    irs::doc_id_t divisor) noexcept
+        : freq{freq}, divisor{divisor} {}
 
-      const irs::DocAttr* doc;
+      const irs::FreqBlockAttr* freq;
       irs::doc_id_t divisor;
     };
 
-    auto* doc = irs::get<irs::DocAttr>(attrs);
-    EXPECT_NE(nullptr, doc);
+    auto* freq = irs::get<irs::FreqBlockAttr>(ctx.doc_attrs);
+    if (!freq) {
+      return irs::ScoreFunction::Default();
+    }
 
     return irs::ScoreFunction::Make<ScorerContext>(
-      [](irs::ScoreCtx* ctx, irs::score_t* res) noexcept {
+      [](irs::ScoreCtx* ctx, irs::score_t* res, size_t n) noexcept {
         ASSERT_NE(nullptr, res);
         ASSERT_NE(nullptr, ctx);
         const auto& state = *static_cast<ScorerContext*>(ctx);
-        *res = state.divisor == 0
-                 ? static_cast<irs::score_t>(state.doc->value)
-                 : static_cast<irs::score_t>(state.doc->value % state.divisor);
+        for (size_t i = 0; i < n; ++i) {
+          res[i] =
+            state.divisor == 0
+              ? static_cast<irs::score_t>(state.freq->value[i])
+              : static_cast<irs::score_t>(state.freq->value[i] % state.divisor);
+        }
       },
-      irs::ScoreFunction::DefaultMin, doc, divisor);
+      irs::ScoreFunction::NoopMin, freq, divisor);
   }
 
   irs::doc_id_t divisor;

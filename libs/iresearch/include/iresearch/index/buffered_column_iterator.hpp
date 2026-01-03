@@ -112,6 +112,10 @@ class BufferedColumnIterator : public ResettableDocIterator {
     std::get<PayAttr>(_attrs).value = {};
   }
 
+  uint32_t collect(std::span<doc_id_t> docs) final {
+    return Collect(*this, docs);
+  }
+
  private:
   using Attributes = std::tuple<DocAttr, CostAttr, PayAttr>;
 

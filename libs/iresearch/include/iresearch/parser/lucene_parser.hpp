@@ -36,8 +36,8 @@
    especially those whose name start with YY_ or yy_.  They are
    private implementation details that can be changed or removed.  */
 
-#ifndef YY_YY_LIBS_IRESEARCH_INCLUDE_IRESEARCH_PARSER_LUCENE_PARSER_HPP_INCLUDED
-# define YY_YY_LIBS_IRESEARCH_INCLUDE_IRESEARCH_PARSER_LUCENE_PARSER_HPP_INCLUDED
+#ifndef YY_YY_HOME_ABRAMA_PROJECTS_SERENEDB_LIBS_IRESEARCH_INCLUDE_IRESEARCH_PARSER_LUCENE_PARSER_HPP_INCLUDED
+# define YY_YY_HOME_ABRAMA_PROJECTS_SERENEDB_LIBS_IRESEARCH_INCLUDE_IRESEARCH_PARSER_LUCENE_PARSER_HPP_INCLUDED
 /* Debug traces.  */
 #ifndef YYDEBUG
 # define YYDEBUG 0
@@ -46,7 +46,6 @@
 extern int yydebug;
 #endif
 /* "%code requires" blocks.  */
-#line 21 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
 
 #include <iresearch/search/filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
@@ -65,7 +64,6 @@ struct StringSpan {
     operator std::string_view() const { return {data, len}; }
 };
 
-#line 68 "libs/iresearch/include/iresearch/parser/lucene_parser.hpp"
 
 /* Token kinds.  */
 #ifndef YYTOKENTYPE
@@ -108,7 +106,6 @@ struct StringSpan {
 #if ! defined YYSTYPE && ! defined YYSTYPE_IS_DECLARED
 union YYSTYPE
 {
-#line 51 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
 
     StringSpan sv;
     int num;
@@ -116,7 +113,6 @@ union YYSTYPE
     irs::FilterWithBoost* filter;
     irs::BooleanFilter* parent;
 
-#line 119 "libs/iresearch/include/iresearch/parser/lucene_parser.hpp"
 
 };
 typedef union YYSTYPE YYSTYPE;
@@ -125,10 +121,9 @@ typedef union YYSTYPE YYSTYPE;
 #endif
 
 
-extern YYSTYPE yylval;
 
 
 int yyparse (sdb::ParserContext& ctx);
 
 
-#endif /* !YY_YY_LIBS_IRESEARCH_INCLUDE_IRESEARCH_PARSER_LUCENE_PARSER_HPP_INCLUDED  */
+#endif /* !YY_YY_HOME_ABRAMA_PROJECTS_SERENEDB_LIBS_IRESEARCH_INCLUDE_IRESEARCH_PARSER_LUCENE_PARSER_HPP_INCLUDED  */

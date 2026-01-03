@@ -22,6 +22,7 @@
 
 #include <iresearch/index/field_meta.hpp>
 #include <iresearch/search/boost_scorer.hpp>
+#include <iresearch/search/scorer.hpp>
 #include <iresearch/search/terms_filter.hpp>
 
 #include "filter_test_case_base.hpp"
@@ -187,7 +188,7 @@ TEST_P(TermsFilterTestCase, simple_sequential_order) {
     const auto filter = MakeFilter(
       "prefix", {{"abcd", 1.f}, {"abcd", 1.f}, {"abc", 1.f}, {"abcy", 1.f}});
 
-    CheckQuery(filter, std::span{&impl, 1}, docs, rdr);
+    CheckQuery(tests::FilterWrapper{filter}, std::span{&impl, 1}, docs, rdr);
     ASSERT_EQ(1, collect_field_count);  // 1 fields in 1 segment
     ASSERT_EQ(3, collect_term_count);   // 3 different terms
     ASSERT_EQ(3, finish_count);         // 3 unque terms
@@ -504,31 +505,33 @@ TEST_P(TermsFilterTestCase, min_match) {
       return std::make_unique<tests::sort::CustomSort::TermCollector>(*scorer);
     };
     scorer->prepare_scorer =
-      [](const irs::ColumnProvider&, const irs::FieldProperties&,
-         const irs::byte_type*, const irs::AttributeProvider& attrs,
-         irs::score_t boost) -> irs::ScoreFunction {
+      [](const irs::ScoreContext& ctx) -> irs::ScoreFunction {
       struct ScoreCtx final : public irs::ScoreCtx {
-        ScoreCtx(const irs::DocAttr* doc, irs::score_t boost) noexcept
+        ScoreCtx(const tests::DocBlockAttr* doc, irs::score_t boost) noexcept
           : doc{doc}, boost{boost} {}
-        const irs::DocAttr* doc;
+        const tests::DocBlockAttr* doc;
         irs::score_t boost;
       };
 
-      auto* doc = irs::get<irs::DocAttr>(attrs);
+      auto* doc = irs::get<tests::DocBlockAttr>(ctx.doc_attrs);
       EXPECT_NE(nullptr, doc);
 
       return irs::ScoreFunction::Make<ScoreCtx>(
-        [](irs::ScoreCtx* ctx, irs::score_t* res) noexcept {
+        [](irs::ScoreCtx* ctx, irs::score_t* res, size_t n) noexcept {
           auto* state = static_cast<ScoreCtx*>(ctx);
-          *res = static_cast<irs::score_t>(state->doc->value) * state->boost;
+          for (size_t i = 0; i < n; ++i) {
+            res[i] =
+              static_cast<irs::score_t>(state->doc->value[i]) * state->boost;
+          }
         },
-        irs::ScoreFunction::DefaultMin, doc, boost);
+        irs::ScoreFunction::NoopMin, doc, ctx.boost);
     };
 
     const auto filter =
       MakeFilter("Fields", {{"BusinessEntityID", 1.f}, {"StartDate", 1.f}}, 0);
 
-    CheckQuery(filter, std::span{&impl, 1}, result, rdr[0]);
+    CheckQuery(tests::FilterWrapper{filter}, std::span{&impl, 1}, result,
+               rdr[0]);
     ASSERT_EQ(1, collect_field_count);  // 1 fields in 1 segment
     ASSERT_EQ(2, collect_term_count);   // 2 different terms
     ASSERT_EQ(3, finish_count);         // 3 unque terms

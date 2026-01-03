@@ -28,10 +28,8 @@
 
 #include "basics/errors.h"
 #include "basics/exceptions.h"
-#include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/store/data_output.hpp"
-#include "iresearch/utils/attribute_helper.hpp"
 
 namespace irs {
 

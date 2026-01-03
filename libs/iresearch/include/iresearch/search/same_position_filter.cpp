@@ -22,6 +22,8 @@
 
 #include "same_position_filter.hpp"
 
+#include <iresearch/search/scorer.hpp>
+
 #include "basics/misc.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
@@ -150,8 +152,8 @@ class SamePositionQuery : public Filter::Query {
         auto* score = irs::GetMutable<ScoreAttr>(docs.get());
         SDB_ASSERT(score);
 
-        CompileScore(*score, ord.buckets(), segment, *term_state.reader,
-                     term_stats->c_str(), *docs, _boost);
+        CompileScore(*score, ord.buckets(), ctx.segment, ctx.collector,
+                     *term_state.reader, term_stats->c_str(), *docs, _boost);
       }
 
       // add iterator
@@ -160,13 +162,12 @@ class SamePositionQuery : public Filter::Query {
       ++term_stats;
     }
 
-    return ResolveMergeType(ScoreMergeType::Sum, ord.buckets().size(),
-                            [&]<typename A>(A&& aggregator) {
-                              // TODO(mbkkt) Implement wand?
-                              return MakeConjunction<SamePositionIterator>(
-                                {}, std::move(aggregator), std::move(itrs),
-                                std::move(positions));
-                            });
+    return ResolveMergeType(
+      ScoreMergeType::Sum, [&]<ScoreMergeType MergeType> -> DocIterator::ptr {
+        return MakeConjunction<MergeType, SamePositionIterator>(
+          // TODO(mbkkt) Implement wand?
+          {}, std::move(itrs), std::move(positions));
+      });
   }
 
   score_t Boost() const noexcept final { return _boost; }

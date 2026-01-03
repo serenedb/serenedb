@@ -22,27 +22,15 @@
 
 #pragma once
 
-#include "iresearch/analysis/token_attributes.hpp"
+#include <absl/base/internal/endian.h>
+
+#include <cstdint>
+
+#include "iresearch/formats/formats.hpp"
 #include "iresearch/index/field_meta.hpp"
-#include "iresearch/index/index_reader.hpp"
-#include "iresearch/store/store_utils.hpp"
-#include "iresearch/utils/lz4compression.hpp"
+#include "iresearch/index/iterators.hpp"
 
 namespace irs {
-
-struct NormReaderContextBase {
-  bool Reset(const ColumnProvider& segment, field_id column,
-             const DocAttr& doc);
-  bool Valid() const noexcept { return doc != nullptr; }
-
-  bytes_view header;
-  DocIterator::ptr it;
-  const irs::PayAttr* payload{};
-  const DocAttr* doc{};
-};
-
-static_assert(std::is_nothrow_move_constructible_v<NormReaderContextBase>);
-static_assert(std::is_nothrow_move_assignable_v<NormReaderContextBase>);
 
 enum class NormVersion : uint8_t { Min = 0 };
 
@@ -96,6 +84,39 @@ class NormHeader final {
   NormEncoding _encoding;  // Number of bytes used for encoding
 };
 
+class Norm : public Attribute {
+ public:
+  using ValueType = uint32_t;
+
+  static constexpr std::string_view type_name() noexcept { return "norm"; }
+
+  static FeatureWriter::ptr MakeWriter(std::span<const bytes_view> payload);
+
+  static uint32_t Read(bytes_view payload) noexcept {
+    const auto* p = payload.data();
+    switch (payload.size()) {
+      case sizeof(uint8_t):
+        return *p;
+      case sizeof(uint16_t): {
+        return irs::read<uint16_t>(p);
+      }
+      case sizeof(uint32_t): {
+        return irs::read<uint32_t>(p);
+      }
+      [[unlikely]] default:
+        // we should investigate why we failed to find a norm value for doc
+        SDB_ASSERT(false);
+        return 1;
+    }
+  }
+
+  ValueType value = 0;
+  byte_type num_bytes = sizeof(ValueType);
+};
+
+static_assert(std::is_nothrow_move_constructible_v<Norm>);
+static_assert(std::is_nothrow_move_assignable_v<Norm>);
+
 template<typename T>
 class NormWriter : public FeatureWriter {
  public:
@@ -107,30 +128,12 @@ class NormWriter : public FeatureWriter {
   void write(const FieldStats& stats, doc_id_t doc,
              ColumnOutput& writer) final {
     _hdr.Reset(stats.len);
-
     writer.Prepare(doc);
     WriteValue(writer, stats.len);
   }
 
   void write(DataOutput& out, bytes_view payload) final {
-    uint32_t value;
-
-    switch (payload.size()) {
-      case sizeof(uint8_t): {
-        value = payload.front();
-      } break;
-      case sizeof(uint16_t): {
-        auto* p = payload.data();
-        value = irs::read<uint16_t>(p);
-      } break;
-      case sizeof(uint32_t): {
-        auto* p = payload.data();
-        value = irs::read<uint32_t>(p);
-      } break;
-      default:
-        return;
-    }
-
+    const uint32_t value = Norm::Read(payload);
     _hdr.Reset(value);
     WriteValue(out, value);
   }
@@ -140,7 +143,8 @@ class NormWriter : public FeatureWriter {
  private:
   static void WriteValue(DataOutput& out, uint32_t value) {
     if constexpr (sizeof(T) == sizeof(uint8_t)) {
-      out.WriteByte(static_cast<uint8_t>(value & 0xFF));
+      const auto v = static_cast<uint8_t>(value & 0xFF);
+      out.WriteByte(v);
     }
 
     if constexpr (sizeof(T) == sizeof(uint16_t)) {
@@ -154,74 +158,5 @@ class NormWriter : public FeatureWriter {
 
   NormHeader _hdr;
 };
-
-struct NormReaderContext : NormReaderContextBase {
-  bool Reset(const ColumnProvider& segment, field_id column,
-             const DocAttr& doc);
-  bool Valid() const noexcept {
-    return NormReaderContextBase::Valid() && num_bytes;
-  }
-
-  uint32_t num_bytes{};
-  uint32_t max_num_bytes{};
-};
-
-class Norm : public Attribute {
- public:
-  using ValueType = uint32_t;
-  using Context = NormReaderContext;
-
-  static constexpr std::string_view type_name() noexcept { return "norm"; }
-
-  static FeatureWriter::ptr MakeWriter(std::span<const bytes_view> payload);
-
-  template<typename T>
-  static auto MakeReader(Context&& ctx) {
-    static_assert(std::is_same_v<T, uint8_t> || std::is_same_v<T, uint16_t> ||
-                  std::is_same_v<T, uint32_t>);
-    SDB_ASSERT(ctx.num_bytes == sizeof(T));
-    SDB_ASSERT(ctx.it);
-    SDB_ASSERT(ctx.payload);
-    SDB_ASSERT(ctx.doc);
-
-    return [ctx = std::move(ctx)]() noexcept -> ValueType {
-      if (const doc_id_t doc = ctx.doc->value; doc == ctx.it->seek(doc))
-        [[likely]] {
-        SDB_ASSERT(sizeof(T) == ctx.payload->value.size());
-        const auto* value = ctx.payload->value.data();
-
-        if constexpr (std::is_same_v<T, uint8_t>) {
-          return *value;
-        } else {
-          return irs::read<T>(value);
-        }
-      }
-
-      // we should investigate why we failed to find a norm value for doc
-      SDB_ASSERT(false);
-
-      return 1;
-    };
-  }
-
-  template<typename Func>
-  static auto MakeReader(Context&& ctx, Func&& func) {
-    SDB_ASSERT(NormHeader::CheckNumBytes(ctx.num_bytes));
-
-    switch (ctx.num_bytes) {
-      case sizeof(uint8_t):
-        return func(MakeReader<uint8_t>(std::move(ctx)));
-      case sizeof(uint16_t):
-        return func(MakeReader<uint16_t>(std::move(ctx)));
-      default:
-        return func(MakeReader<uint32_t>(std::move(ctx)));
-    }
-  }
-
-  ValueType value{};
-};
-
-static_assert(std::is_nothrow_move_constructible_v<Norm>);
-static_assert(std::is_nothrow_move_assignable_v<Norm>);
 
 }  // namespace irs

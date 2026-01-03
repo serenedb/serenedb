@@ -100,17 +100,10 @@ ScoreFunction MakeScoreFunction(const FilterBoost* filter_boost,
                                 Args&&... args) noexcept {
   if (filter_boost) {
     return MakeScoreFunctionImpl<Ctx>::template Make<true>(
-      std::forward<Args>(args)..., filter_boost);
+      std::forward<Args>(args)..., &filter_boost->value);
   }
   return MakeScoreFunctionImpl<Ctx>::template Make<false>(
     std::forward<Args>(args)...);
 }
-
-enum class NormType {
-  // Norm values
-  Norm = 0,
-  // Norm values fit 1-byte
-  NormTiny,
-};
 
 }  // namespace irs

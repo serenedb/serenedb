@@ -34,8 +34,9 @@ namespace irs {
 
 class AllIterator : public DocIterator {
  public:
-  AllIterator(const SubReader& reader, const byte_type* query_stats,
-              const Scorers& order, uint64_t docs_count, score_t boost);
+  AllIterator(const ColumnProvider& reader, ColumnCollector* collector,
+              const byte_type* query_stats, const Scorers& order,
+              uint64_t docs_count, score_t boost);
 
   Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
     return irs::GetMutable(_attrs, id);

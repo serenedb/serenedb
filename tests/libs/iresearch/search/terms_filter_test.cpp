@@ -22,6 +22,7 @@
 
 #include <iresearch/index/field_meta.hpp>
 #include <iresearch/search/boost_scorer.hpp>
+#include <iresearch/search/scorer.hpp>
 #include <iresearch/search/terms_filter.hpp>
 
 #include "filter_test_case_base.hpp"
@@ -504,9 +505,7 @@ TEST_P(TermsFilterTestCase, min_match) {
       return std::make_unique<tests::sort::CustomSort::TermCollector>(*scorer);
     };
     scorer->prepare_scorer =
-      [](const irs::ColumnProvider&, const irs::FieldProperties&,
-         const irs::byte_type*, const irs::AttributeProvider& attrs,
-         irs::score_t boost) -> irs::ScoreFunction {
+      [](const irs::ScoreContext& ctx) -> irs::ScoreFunction {
       struct ScoreCtx final : public irs::ScoreCtx {
         ScoreCtx(const irs::DocAttr* doc, irs::score_t boost) noexcept
           : doc{doc}, boost{boost} {}
@@ -514,7 +513,7 @@ TEST_P(TermsFilterTestCase, min_match) {
         irs::score_t boost;
       };
 
-      auto* doc = irs::get<irs::DocAttr>(attrs);
+      auto* doc = irs::get<irs::DocAttr>(ctx.doc_attrs);
       EXPECT_NE(nullptr, doc);
 
       return irs::ScoreFunction::Make<ScoreCtx>(
@@ -522,7 +521,8 @@ TEST_P(TermsFilterTestCase, min_match) {
           auto* state = static_cast<ScoreCtx*>(ctx);
           *res = static_cast<irs::score_t>(state->doc->value) * state->boost;
         },
-        irs::ScoreFunction::DefaultMin, doc, boost);
+        irs::ScoreFunction::NoopCollect, irs::ScoreFunction::NoopMin, doc,
+        ctx.boost);
     };
 
     const auto filter =

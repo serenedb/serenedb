@@ -373,7 +373,7 @@ TEST_P(Columnstore2TestCase, sparse_mask_column) {
       ASSERT_EQ(column->size(), cost->estimate());
       auto* score = irs::get<irs::ScoreAttr>(*it);
       ASSERT_NE(nullptr, score);
-      ASSERT_TRUE(score->Func() == &irs::ScoreFunction::DefaultScore);
+      ASSERT_TRUE(score->Func() == &irs::ScoreFunction::NoopScore);
 
       for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; doc += 2) {
         ASSERT_EQ(doc, it->seek(doc));

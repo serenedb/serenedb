@@ -22,6 +22,9 @@
 
 #pragma once
 
+#include <iresearch/search/column_collector.hpp>
+#include <iresearch/search/filter.hpp>
+
 #include "disjunction.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/index_reader.hpp"
@@ -884,15 +887,13 @@ class PhraseIterator : public DocIterator {
   using TermPosition = typename Frequency::TermPosition;
 
   PhraseIterator(ScoreAdapters&& itrs, std::vector<TermPosition>&& pos)
-    : _approx{NoopAggregator{},
-              [](auto&& itrs) {
-                absl::c_sort(itrs,
-                             [](const auto& lhs, const auto& rhs) noexcept {
-                               return CostAttr::extract(lhs, CostAttr::kMax) <
-                                      CostAttr::extract(rhs, CostAttr::kMax);
-                             });
-                return std::move(itrs);
-              }(std::move(itrs))},
+    : _approx{[](auto&& itrs) {
+        absl::c_sort(itrs, [](const auto& lhs, const auto& rhs) noexcept {
+          return CostAttr::extract(lhs, CostAttr::kMax) <
+                 CostAttr::extract(rhs, CostAttr::kMax);
+        });
+        return std::move(itrs);
+      }(std::move(itrs))},
       _freq{std::move(pos)} {
     std::get<AttributePtr<DocAttr>>(_attrs) =
       irs::GetMutable<DocAttr>(&_approx);
@@ -904,12 +905,14 @@ class PhraseIterator : public DocIterator {
 
   PhraseIterator(ScoreAdapters&& itrs,
                  std::vector<typename Frequency::TermPosition>&& pos,
-                 const SubReader& segment, const TermReader& field,
-                 const byte_type* stats, const Scorers& ord, score_t boost)
+                 const ColumnProvider& segment, ColumnCollector* collector,
+                 const TermReader& field, const byte_type* stats,
+                 const Scorers& ord, score_t boost)
     : PhraseIterator{std::move(itrs), std::move(pos)} {
     if (!ord.empty()) {
       auto& score = std::get<ScoreAttr>(_attrs);
-      CompileScore(score, ord.buckets(), segment, field, stats, *this, boost);
+      CompileScore(score, ord.buckets(), segment, collector, field, stats,
+                   *this, boost);
     }
   }
 

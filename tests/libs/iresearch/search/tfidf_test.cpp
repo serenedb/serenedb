@@ -35,6 +35,7 @@
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/tfidf.hpp>
 #include <iresearch/utils/bytes_output.hpp>
+#include <iresearch/utils/lz4compression.hpp>
 #include <iresearch/utils/type_limits.hpp>
 
 #include "index/index_tests.hpp"
@@ -104,6 +105,7 @@ void TfidfTestCase::TestQueryNorms(irs::FeatureWriterFactory handler) {
 
   auto scorer = irs::TFIDF{true};
   auto prepared_order = irs::Scorers::Prepare(scorer);
+  irs::ColumnCollector collector;
 
   auto reader = irs::DirectoryReader(dir(), codec());
   auto& segment = *(reader.begin());
@@ -139,12 +141,15 @@ void TfidfTestCase::TestQueryNorms(irs::FeatureWriterFactory handler) {
       .memory = counter,
       .scorers = prepared_order,
     });
-    auto docs =
-      prepared_filter->execute({.segment = segment, .scorers = prepared_order});
+
+    collector.Clear();
+    auto docs = prepared_filter->execute(
+      {.segment = segment, .scorers = prepared_order, .collector = &collector});
     auto* score = irs::get<irs::ScoreAttr>(*docs);
     ASSERT_TRUE(bool(score));
 
     while (docs->next()) {
+      collector.Collect(docs->value());
       irs::score_t score_value{};
       (*score)(&score_value);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
@@ -193,13 +198,18 @@ void TfidfTestCase::TestQueryNorms(irs::FeatureWriterFactory handler) {
       .memory = counter,
       .scorers = prepared_order,
     });
-    auto docs =
-      prepared_filter->execute({.segment = segment, .scorers = prepared_order});
+
+    collector.Clear();
+    auto docs = prepared_filter->execute(
+      {.segment = segment, .scorers = prepared_order, .collector = &collector});
     auto* score = irs::get<irs::ScoreAttr>(*docs);
 
+    std::vector<float_t> scores;
     while (docs->next()) {
+      collector.Collect(docs->value());
       irs::score_t score_value{};
       (*score)(&score_value);
+      scores.emplace_back(score_value);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
       in.reset(actual_value->value);
 
@@ -269,11 +279,7 @@ TEST_P(TfidfTestCase, make_from_array) {
   {
     auto scorer = irs::scorers::Get(
       "tfidf", irs::Type<irs::text_format::Json>::get(), "[]");
-    ASSERT_NE(nullptr, scorer);
-    ASSERT_EQ(irs::Type<irs::TFIDF>::id(), scorer->type());
-    auto& tfidf = dynamic_cast<irs::TFIDF&>(*scorer);
-    ASSERT_EQ(irs::TFIDF::WITH_NORMS(), tfidf.normalize());
-    ASSERT_EQ(irs::TFIDF::BOOST_AS_SCORE(), tfidf.use_boost_as_score());
+    ASSERT_EQ(nullptr, scorer);
   }
 
   // `withNorms` argument
@@ -391,6 +397,7 @@ TEST_P(TfidfTestCase, test_phrase) {
   auto& segment = *(index.begin());
 
   MaxMemoryCounter counter;
+  irs::ColumnCollector collector;
 
   // "jumps high" with order
   {
@@ -416,8 +423,10 @@ TEST_P(TfidfTestCase, test_phrase) {
       .memory = counter,
       .scorers = prepared_order,
     });
-    auto docs =
-      prepared_filter->execute({.segment = segment, .scorers = prepared_order});
+
+    collector.Clear();
+    auto docs = prepared_filter->execute(
+      {.segment = segment, .scorers = prepared_order, .collector = &collector});
     auto* score = irs::get<irs::ScoreAttr>(*docs);
     ASSERT_TRUE(bool(score));
 
@@ -429,6 +438,7 @@ TEST_P(TfidfTestCase, test_phrase) {
     ASSERT_NE(nullptr, actual_value);
 
     while (docs->next()) {
+      collector.Collect(docs->value());
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
 
       irs::score_t score_value{};
@@ -484,8 +494,10 @@ TEST_P(TfidfTestCase, test_phrase) {
       .memory = counter,
       .scorers = prepared_order,
     });
-    auto docs =
-      prepared_filter->execute({.segment = segment, .scorers = prepared_order});
+
+    collector.Clear();
+    auto docs = prepared_filter->execute(
+      {.segment = segment, .scorers = prepared_order, .collector = &collector});
     auto* score = irs::get<irs::ScoreAttr>(*docs);
     ASSERT_TRUE(bool(score));
 
@@ -497,6 +509,7 @@ TEST_P(TfidfTestCase, test_phrase) {
     ASSERT_NE(nullptr, actual_value);
 
     while (docs->next()) {
+      collector.Collect(docs->value());
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
 
       irs::score_t score_value{};
@@ -544,6 +557,7 @@ TEST_P(TfidfTestCase, test_query) {
   ASSERT_NE(nullptr, column);
 
   MaxMemoryCounter counter;
+  irs::ColumnCollector collector;
 
   // by_term
   {
@@ -566,12 +580,15 @@ TEST_P(TfidfTestCase, test_query) {
       .memory = counter,
       .scorers = prepared_order,
     });
-    auto docs =
-      prepared_filter->execute({.segment = segment, .scorers = prepared_order});
+
+    collector.Clear();
+    auto docs = prepared_filter->execute(
+      {.segment = segment, .scorers = prepared_order, .collector = &collector});
     auto* score = irs::get<irs::ScoreAttr>(*docs);
     ASSERT_TRUE(bool(score));
 
     while (docs->next()) {
+      collector.Collect(docs->value());
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
       in.reset(actual_value->value);
 
@@ -667,12 +684,15 @@ TEST_P(TfidfTestCase, test_query) {
       ASSERT_NE(nullptr, values);
       auto* actual_value = irs::get<irs::PayAttr>(*values);
       ASSERT_NE(nullptr, actual_value);
-      auto docs = prepared_filter->execute(
-        {.segment = segment, .scorers = prepared_order});
+      collector.Clear();
+      auto docs = prepared_filter->execute({.segment = segment,
+                                            .scorers = prepared_order,
+                                            .collector = &collector});
       auto* score = irs::get<irs::ScoreAttr>(*docs);
       ASSERT_TRUE(bool(score));
 
       for (irs::score_t score_value{}; docs->next();) {
+        collector.Collect(docs->value());
         ASSERT_EQ(docs->value(), values->seek(docs->value()));
         in.reset(actual_value->value);
 
@@ -779,12 +799,15 @@ TEST_P(TfidfTestCase, test_query) {
       ASSERT_NE(nullptr, values);
       auto* actual_value = irs::get<irs::PayAttr>(*values);
       ASSERT_NE(nullptr, actual_value);
-      auto docs = prepared_filter->execute(
-        {.segment = segment, .scorers = prepared_order});
+      collector.Clear();
+      auto docs = prepared_filter->execute({.segment = segment,
+                                            .scorers = prepared_order,
+                                            .collector = &collector});
       auto* score = irs::get<irs::ScoreAttr>(*docs);
       ASSERT_TRUE(bool(score));
 
       while (docs->next()) {
+        collector.Collect(docs->value());
         ASSERT_EQ(docs->value(), values->seek(docs->value()));
         in.reset(actual_value->value);
 
@@ -883,12 +906,15 @@ TEST_P(TfidfTestCase, test_query) {
       ASSERT_NE(nullptr, values);
       auto* actual_value = irs::get<irs::PayAttr>(*values);
       ASSERT_NE(nullptr, actual_value);
-      auto docs = prepared_filter->execute(
-        {.segment = segment, .scorers = prepared_order});
+      collector.Clear();
+      auto docs = prepared_filter->execute({.segment = segment,
+                                            .scorers = prepared_order,
+                                            .collector = &collector});
       auto* score = irs::get<irs::ScoreAttr>(*docs);
       ASSERT_TRUE(bool(score));
 
       while (docs->next()) {
+        collector.Collect(docs->value());
         ASSERT_EQ(docs->value(), values->seek(docs->value()));
         in.reset(actual_value->value);
 
@@ -937,12 +963,14 @@ TEST_P(TfidfTestCase, test_query) {
       .memory = counter,
       .scorers = prepared_order,
     });
-    auto docs =
-      prepared_filter->execute({.segment = segment, .scorers = prepared_order});
+    collector.Clear();
+    auto docs = prepared_filter->execute(
+      {.segment = segment, .scorers = prepared_order, .collector = &collector});
     auto* score = irs::get<irs::ScoreAttr>(*docs);
     ASSERT_TRUE(bool(score));
 
     for (irs::score_t score_value{}; docs->next();) {
+      collector.Collect(docs->value());
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
       in.reset(actual_value->value);
 
@@ -990,12 +1018,14 @@ TEST_P(TfidfTestCase, test_query) {
       .memory = counter,
       .scorers = prepared_order,
     });
-    auto docs =
-      prepared_filter->execute({.segment = segment, .scorers = prepared_order});
+    collector.Clear();
+    auto docs = prepared_filter->execute(
+      {.segment = segment, .scorers = prepared_order, .collector = &collector});
     auto* score = irs::get<irs::ScoreAttr>(*docs);
     ASSERT_TRUE(bool(score));
 
     for (irs::score_t score_value{}; docs->next();) {
+      collector.Collect(docs->value());
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
       in.reset(actual_value->value);
 
@@ -1041,12 +1071,14 @@ TEST_P(TfidfTestCase, test_query) {
       .memory = counter,
       .scorers = prepared_order,
     });
-    auto docs =
-      prepared_filter->execute({.segment = segment, .scorers = prepared_order});
+    collector.Clear();
+    auto docs = prepared_filter->execute(
+      {.segment = segment, .scorers = prepared_order, .collector = &collector});
     auto* score = irs::get<irs::ScoreAttr>(*docs);
     ASSERT_TRUE(bool(score));
 
     for (irs::score_t score_value{}; docs->next();) {
+      collector.Collect(docs->value());
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
       in.reset(actual_value->value);
 
@@ -1092,12 +1124,14 @@ TEST_P(TfidfTestCase, test_query) {
       .memory = counter,
       .scorers = prepared_order,
     });
-    auto docs =
-      prepared_filter->execute({.segment = segment, .scorers = prepared_order});
+    collector.Clear();
+    auto docs = prepared_filter->execute(
+      {.segment = segment, .scorers = prepared_order, .collector = &collector});
     auto* score = irs::get<irs::ScoreAttr>(*docs);
     ASSERT_TRUE(bool(score));
 
     for (irs::score_t score_value{}; docs->next();) {
+      collector.Collect(docs->value());
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
       in.reset(actual_value->value);
 
@@ -1145,12 +1179,14 @@ TEST_P(TfidfTestCase, test_query) {
       .memory = counter,
       .scorers = prepared_order,
     });
-    auto docs =
-      prepared_filter->execute({.segment = segment, .scorers = prepared_order});
+    collector.Clear();
+    auto docs = prepared_filter->execute(
+      {.segment = segment, .scorers = prepared_order, .collector = &collector});
     auto* score = irs::get<irs::ScoreAttr>(*docs);
     ASSERT_TRUE(bool(score));
 
     for (irs::score_t score_value{}; docs->next();) {
+      collector.Collect(docs->value());
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
       in.reset(actual_value->value);
 
@@ -1187,14 +1223,16 @@ TEST_P(TfidfTestCase, test_query) {
       .memory = counter,
       .scorers = prepared_order,
     });
-    auto docs =
-      prepared_filter->execute({.segment = segment, .scorers = prepared_order});
+    collector.Clear();
+    auto docs = prepared_filter->execute(
+      {.segment = segment, .scorers = prepared_order, .collector = &collector});
     auto* score = irs::get<irs::ScoreAttr>(*docs);
     ASSERT_TRUE(bool(score));
     ASSERT_FALSE(score->Func() == &irs::ScoreFunction::DefaultScore);
 
     irs::doc_id_t doc = irs::doc_limits::min();
     while (docs->next()) {
+      collector.Collect(docs->value());
       ASSERT_EQ(doc, docs->value());
 
       irs::score_t score_value{};
@@ -1224,14 +1262,16 @@ TEST_P(TfidfTestCase, test_query) {
       .memory = counter,
       .scorers = prepared_order,
     });
-    auto docs =
-      prepared_filter->execute({.segment = segment, .scorers = prepared_order});
+    collector.Clear();
+    auto docs = prepared_filter->execute(
+      {.segment = segment, .scorers = prepared_order, .collector = &collector});
     auto* score = irs::get<irs::ScoreAttr>(*docs);
     ASSERT_TRUE(bool(score));
     ASSERT_TRUE(score->Func() == &irs::ScoreFunction::DefaultScore);
 
     irs::doc_id_t doc = irs::doc_limits::min();
     while (docs->next()) {
+      collector.Collect(docs->value());
       ASSERT_EQ(doc, docs->value());
 
       irs::score_t score_value{};
@@ -1261,14 +1301,16 @@ TEST_P(TfidfTestCase, test_query) {
       .memory = counter,
       .scorers = prepared_order,
     });
-    auto docs =
-      prepared_filter->execute({.segment = segment, .scorers = prepared_order});
+    collector.Clear();
+    auto docs = prepared_filter->execute(
+      {.segment = segment, .scorers = prepared_order, .collector = &collector});
     auto* score = irs::get<irs::ScoreAttr>(*docs);
     ASSERT_TRUE(bool(score));
     ASSERT_FALSE(score->Func() == &irs::ScoreFunction::DefaultScore);
 
     irs::doc_id_t doc = irs::doc_limits::min();
     while (docs->next()) {
+      collector.Collect(docs->value());
       ASSERT_EQ(doc, docs->value());
 
       irs::score_t score_value{};
@@ -1299,14 +1341,16 @@ TEST_P(TfidfTestCase, test_query) {
       .memory = counter,
       .scorers = prepared_order,
     });
-    auto docs =
-      prepared_filter->execute({.segment = segment, .scorers = prepared_order});
+    collector.Clear();
+    auto docs = prepared_filter->execute(
+      {.segment = segment, .scorers = prepared_order, .collector = &collector});
     auto* score = irs::get<irs::ScoreAttr>(*docs);
     ASSERT_TRUE(bool(score));
     ASSERT_TRUE(score->Func() == &irs::ScoreFunction::DefaultScore);
 
     irs::doc_id_t doc = irs::doc_limits::min();
     while (docs->next()) {
+      collector.Collect(docs->value());
       ASSERT_EQ(doc, docs->value());
 
       irs::score_t score_value{};
@@ -1538,6 +1582,7 @@ TEST_P(TfidfTestCase, test_order) {
   ASSERT_NE(nullptr, column);
 
   MaxMemoryCounter counter;
+  irs::ColumnCollector collector;
 
   {
     auto values = column->iterator(irs::ColumnHint::Normal);
@@ -1557,12 +1602,14 @@ TEST_P(TfidfTestCase, test_order) {
       .memory = counter,
       .scorers = prepared_order,
     });
-    auto docs =
-      prepared->execute({.segment = segment, .scorers = prepared_order});
+    collector.Clear();
+    auto docs = prepared->execute(
+      {.segment = segment, .scorers = prepared_order, .collector = &collector});
     auto* score = irs::get<irs::ScoreAttr>(*docs);
     ASSERT_TRUE(bool(score));
 
     for (irs::score_t score_value{}; docs->next();) {
+      collector.Collect(docs->value());
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
       in.reset(actual_value->value);
 

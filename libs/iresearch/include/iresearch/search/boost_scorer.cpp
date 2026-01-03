@@ -22,6 +22,9 @@
 
 #include "boost_scorer.hpp"
 
+#include <iresearch/search/score.hpp>
+#include <iresearch/search/score_function.hpp>
+
 #include "iresearch/index/field_meta.hpp"
 
 namespace irs {
@@ -31,36 +34,50 @@ Scorer::ptr MakeJson(std::string_view /*args*/) {
   return std::make_unique<BoostScore>();
 }
 
-struct VolatileBoostScoreCtx final : ScoreCtx {
-  VolatileBoostScoreCtx(const FilterBoost* volatile_boost,
-                        score_t boost) noexcept
-    : boost{boost}, volatile_boost{volatile_boost} {
+struct BoostScoreCtx : ScoreCtx {
+  size_t Next() noexcept {
+    SDB_ASSERT(size < kScoreWindow);
+    return size++;
+  }
+
+  size_t Flush() noexcept {
+    SDB_ASSERT(size < kScoreWindow);
+    return std::exchange(size, 0);
+  }
+
+  size_t size = 0;
+};
+
+struct VolatileBoostScoreCtx final : BoostScoreCtx {
+  VolatileBoostScoreCtx(const score_t* volatile_boost, score_t boost) noexcept
+    : const_boost{boost}, volatile_boost{volatile_boost} {
     SDB_ASSERT(volatile_boost);
   }
 
-  score_t boost;
-  const FilterBoost* volatile_boost;
+  score_t const_boost;
+  score_t boost[kScoreWindow];
+  const score_t* volatile_boost;
 };
 
 }  // namespace
 
-ScoreFunction BoostScore::PrepareScorer(const ColumnProvider& /*segment*/,
-                                        const FieldProperties& /*meta*/,
-                                        const byte_type* /*stats*/,
-                                        const AttributeProvider& attrs,
-                                        score_t boost) const {
-  const auto* volatile_boost = irs::get<irs::FilterBoost>(attrs);
+ScoreFunction BoostScore::PrepareScorer(const ScoreContext& ctx) const {
+  const auto* volatile_boost = irs::get<irs::FilterBoost>(ctx.doc_attrs);
 
   if (volatile_boost == nullptr) {
-    return ScoreFunction::Constant(boost);
+    return ScoreFunction::Constant(ctx.boost);
   }
 
   return ScoreFunction::Make<VolatileBoostScoreCtx>(
     [](ScoreCtx* ctx, score_t* res) noexcept {
       auto& state = *static_cast<VolatileBoostScoreCtx*>(ctx);
-      *res = state.volatile_boost->value * state.boost;
+      std::memcpy(res, state.boost, sizeof(score_t) * state.Flush());
     },
-    ScoreFunction::DefaultMin, volatile_boost, boost);
+    [](ScoreCtx* ctx) noexcept {
+      auto& state = *static_cast<VolatileBoostScoreCtx*>(ctx);
+      state.boost[state.Next()] = *state.volatile_boost;
+    },
+    ScoreFunction::NoopMin, &volatile_boost->value, ctx.boost);
 }
 
 void BoostScore::init() { REGISTER_SCORER_JSON(BoostScore, MakeJson); }

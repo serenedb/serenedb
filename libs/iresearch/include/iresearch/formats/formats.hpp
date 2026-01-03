@@ -27,6 +27,7 @@
 #include <set>
 #include <vector>
 
+#include "basics/memory.hpp"
 #include "iresearch/formats/hnsw_index.hpp"
 #include "iresearch/formats/seek_cookie.hpp"
 #include "iresearch/index/column_finalizer.hpp"

@@ -22,6 +22,8 @@
 
 #include <absl/algorithm/container.h>
 
+#include <iresearch/search/score_function.hpp>
+
 #include "basics/assert.h"
 #include "basics/resource_manager.hpp"
 #include "iresearch/store/data_input.hpp"
@@ -2349,7 +2351,7 @@ class Wanderator : public DocIteratorBase<IteratorTraits, FieldTraits>,
           self._scorer(res);
         }
       },
-      strict ? MinStrict : MinWeak);
+      ScoreFunction::NoopCollect, strict ? MinStrict : MinWeak);
   }
 
   void WandPrepare(const TermMeta& meta, const IndexInput* doc_in,

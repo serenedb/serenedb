@@ -22,6 +22,9 @@
 
 #pragma once
 
+#include <iresearch/search/score_function.hpp>
+#include <iresearch/search/scorer.hpp>
+
 #include "disjunction.hpp"
 
 namespace irs {
@@ -50,15 +53,17 @@ using CostAdapters = std::vector<CostAdapter>;
 // s |  ...      |
 // t |  [n] <-- end
 // -----------------------------------------------------------------------------
-template<typename Merger>
+template<ScoreMergeType MergeType>
 class MinMatchDisjunction : public DocIterator,
-                            protected Merger,
-                            protected ScoreCtx {
+                            public DisjunctionBase<MergeType> {
+  using Base = DisjunctionBase<MergeType>;
+
  public:
-  MinMatchDisjunction(CostAdapters&& itrs, size_t min_match_count,
-                      Merger&& merger = {})
-    : Merger{std::move(merger)},
-      _itrs{std::move(itrs)},
+  using Base::kHasScore;
+  using Base::kMergeType;
+
+  MinMatchDisjunction(CostAdapters&& itrs, size_t min_match_count)
+    : _itrs{std::move(itrs)},
       _min_match_count{std::clamp(min_match_count, size_t{1}, _itrs.size())},
       _lead{_itrs.size()} {
     SDB_ASSERT(!_itrs.empty());
@@ -81,9 +86,7 @@ class MinMatchDisjunction : public DocIterator,
     _heap.resize(_itrs.size());
     absl::c_iota(_heap, size_t{0});
 
-    if constexpr (kHasScore<Merger>) {
-      PrepareScore();
-    }
+    PrepareScore();
   }
 
   Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
@@ -217,27 +220,33 @@ class MinMatchDisjunction : public DocIterator,
   using Attributes = std::tuple<DocAttr, CostAttr, ScoreAttr>;
 
   void PrepareScore() {
-    SDB_ASSERT(Merger::size());
+    if constexpr (kHasScore) {
+      auto& score = std::get<ScoreAttr>(_attrs);
 
-    auto& score = std::get<ScoreAttr>(_attrs);
+      _scores.Reset(_itrs);
 
-    score.Reset(*this, [](ScoreCtx* ctx, score_t* res) noexcept {
-      auto& self = static_cast<MinMatchDisjunction&>(*ctx);
-      SDB_ASSERT(!self._heap.empty());
+      if (_scores.Empty()) {
+        score = ScoreFunction::Default();
+        return;
+      }
 
-      self.PushValidToLead();
+      score = this->DisjunctionScore(
+        this,
+        [](ScoreCtx* ctx) noexcept {
+          auto& self = static_cast<MinMatchDisjunction&>(*ctx);
+          SDB_ASSERT(!self._heap.empty());
 
-      // score lead iterators
-      std::memset(res, 0, static_cast<Merger&>(self).byte_size());
-      std::for_each(self.Lead(), self._heap.end(), [&self, res](size_t it) {
-        SDB_ASSERT(it < self._itrs.size());
-        if (auto& score = *self._itrs[it].score; !score.IsDefault()) {
-          auto& merger = static_cast<Merger&>(self);
-          score(merger.temp());
-          merger(res, merger.temp());
-        }
-      });
-    });
+          self.PushValidToLead();
+          std::for_each(self.Lead(), self._heap.end(), [&](size_t it) {
+            SDB_ASSERT(it < self._itrs.size());
+            if (auto& score = *self._itrs[it].score; !score.IsDefault()) {
+              score.Collect();
+            }
+          });
+          self._scores.Next();
+        },
+        ScoreFunction::NoopMin);
+    }
   }
 
   // Push all valid iterators to lead.
@@ -387,6 +396,8 @@ class MinMatchDisjunction : public DocIterator,
   size_t _min_match_count;  // minimum number of hits
   size_t _lead;             // number of iterators in lead group
   Attributes _attrs;
+  [[no_unique_address]] utils::Need<kHasScore, DisjunctionScoreContext<>>
+    _scores;
 };
 
 }  // namespace irs

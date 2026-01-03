@@ -23,6 +23,7 @@
 #include <iresearch/formats/wand_writer.hpp>
 #include <iresearch/index/field_meta.hpp>
 #include <iresearch/search/score.hpp>
+#include <iresearch/search/scorer.hpp>
 #include <limits>
 #include <random>
 
@@ -40,19 +41,17 @@ struct FreqScorer : irs::ScorerBase<void> {
     return irs::IndexFeatures::Freq;
   }
 
-  irs::ScoreFunction PrepareScorer(const irs::ColumnProvider&,
-                                   const irs::FieldProperties&,
-                                   const irs::byte_type*,
-                                   const irs::AttributeProvider& attrs,
-                                   irs::score_t) const final {
-    auto* freq = irs::get<irs::FreqAttr>(attrs);
+  irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
+    auto* freq = irs::get<irs::FreqAttr>(ctx.doc_attrs);
     EXPECT_NE(nullptr, freq);
 
     return irs::ScoreFunction{
       reinterpret_cast<irs::ScoreCtx&>(const_cast<irs::FreqAttr&>(*freq)),
       [](irs::ScoreCtx* ctx, irs::score_t* res) noexcept {
         *res = reinterpret_cast<irs::FreqAttr*>(ctx)->value;
-      }};
+      },
+      irs::ScoreFunction::NoopCollect,
+    };
   }
 
   irs::WandWriter::ptr prepare_wand_writer(size_t max_levels) const final {
@@ -390,8 +389,11 @@ irs::DocIterator::ptr Format15TestCase::GetWanderator(
   const irs::TermMeta& meta, uint32_t threshold, bool strict) {
   const irs::WanderatorOptions options{
     .factory = [&](const irs::AttributeProvider& attrs) {
-      return scorer.PrepareScorer(EmptyColumnProvider{}, irs::FieldProperties{},
-                                  nullptr, attrs, irs::kNoBoost);
+      return scorer.PrepareScorer({
+        .segment = EmptyColumnProvider{},
+        .field = irs::FieldProperties{},
+        .doc_attrs = attrs,
+      });
     }};
 
   const bool iterator_has_freq =

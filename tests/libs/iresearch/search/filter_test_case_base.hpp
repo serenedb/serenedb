@@ -25,10 +25,13 @@
 
 #include <basics/singleton.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/search/column_collector.hpp>
 #include <iresearch/search/cost.hpp>
 #include <iresearch/search/filter.hpp>
 #include <iresearch/search/filter_visitor.hpp>
 #include <iresearch/search/score.hpp>
+#include <iresearch/search/score_function.hpp>
+#include <iresearch/search/scorer.hpp>
 #include <iresearch/search/tfidf.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <variant>
@@ -51,18 +54,14 @@ struct Boost : public irs::ScorerBase<Boost, void> {
     return irs::IndexFeatures::None;
   }
 
-  irs::ScoreFunction PrepareScorer(const irs::ColumnProvider&,
-                                   const irs::FieldProperties& /*features*/,
-                                   const irs::byte_type* /*query_attrs*/,
-                                   const irs::AttributeProvider& /*doc_attrs*/,
-                                   irs::score_t boost) const final {
+  irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
     return irs::ScoreFunction::Make<Boost::ScoreCtx>(
       [](irs::ScoreCtx* ctx, irs::score_t* res) noexcept {
         const auto& state = *reinterpret_cast<ScoreCtx*>(ctx);
 
         *res = state.boost;
       },
-      irs::ScoreFunction::DefaultMin, boost);
+      irs::ScoreFunction::NoopCollect, irs::ScoreFunction::NoopMin, ctx.boost);
   }
 };
 
@@ -126,21 +125,11 @@ struct CustomSort : public irs::ScorerBase<CustomSort, void> {
   };
 
   struct Scorer final : public irs::ScoreCtx {
-    Scorer(const CustomSort& sort, const irs::ColumnProvider& segment_reader,
-           const irs::FieldProperties& term_reader,
-           const irs::byte_type* filter_node_attrs,
-           const irs::AttributeProvider& document_attrs)
-      : document_attrs(document_attrs),
-        filter_node_attrs(filter_node_attrs),
-        segment_reader(segment_reader),
-        sort(sort),
-        term_reader(term_reader) {}
+    Scorer(const CustomSort& sort, const irs::ScoreContext& ctx)
+      : ctx(ctx), sort(sort) {}
 
-    const irs::AttributeProvider& document_attrs;
-    const irs::byte_type* filter_node_attrs;
-    const irs::ColumnProvider& segment_reader;
+    irs::ScoreContext ctx;
     const CustomSort& sort;
-    const irs::FieldProperties& term_reader;
   };
 
   void collect(irs::byte_type* filter_attrs, const irs::FieldCollector* field,
@@ -162,14 +151,9 @@ struct CustomSort : public irs::ScorerBase<CustomSort, void> {
     return std::make_unique<FieldCollector>(*this);
   }
 
-  irs::ScoreFunction PrepareScorer(const irs::ColumnProvider& segment_reader,
-                                   const irs::FieldProperties& term_reader,
-                                   const irs::byte_type* filter_node_attrs,
-                                   const irs::AttributeProvider& document_attrs,
-                                   irs::score_t boost) const final {
+  irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
     if (prepare_scorer) {
-      return prepare_scorer(segment_reader, term_reader, filter_node_attrs,
-                            document_attrs, boost);
+      return prepare_scorer(ctx);
     }
 
     return irs::ScoreFunction::Make<CustomSort::Scorer>(
@@ -178,11 +162,10 @@ struct CustomSort : public irs::ScorerBase<CustomSort, void> {
 
         if (state.sort.scorer_score) {
           state.sort.scorer_score(
-            irs::get<irs::DocAttr>(state.document_attrs)->value, res);
+            irs::get<irs::DocAttr>(state.ctx.doc_attrs)->value, res);
         }
       },
-      irs::ScoreFunction::DefaultMin, *this, segment_reader, term_reader,
-      filter_node_attrs, document_attrs);
+      irs::ScoreFunction::NoopCollect, irs::ScoreFunction::NoopMin, *this, ctx);
   }
 
   irs::TermCollector::ptr PrepareTermCollector() const final {
@@ -202,9 +185,7 @@ struct CustomSort : public irs::ScorerBase<CustomSort, void> {
                      const irs::TermCollector*)>
     collectors_collect;
   std::function<irs::FieldCollector::ptr()> prepare_field_collector;
-  std::function<irs::ScoreFunction(
-    const irs::ColumnProvider&, const irs::FieldProperties&,
-    const irs::byte_type*, const irs::AttributeProvider&, irs::score_t)>
+  std::function<irs::ScoreFunction(const irs::ScoreContext& ctx)>
     prepare_scorer;
   std::function<irs::TermCollector::ptr()> prepare_term_collector;
   std::function<void(irs::doc_id_t, irs::score_t*)> scorer_score;
@@ -269,13 +250,9 @@ struct FrequencySort : public irs::ScorerBase<FrequencySort, StatsT> {
     return nullptr;  // do not need to collect stats
   }
 
-  irs::ScoreFunction PrepareScorer(const irs::ColumnProvider&,
-                                   const irs::FieldProperties&,
-                                   const irs::byte_type* stats_buf,
-                                   const irs::AttributeProvider& doc_attrs,
-                                   irs::score_t /*boost*/) const final {
-    auto* doc = irs::get<irs::DocAttr>(doc_attrs);
-    auto* stats = stats_cast(stats_buf);
+  irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
+    auto* doc = irs::get<irs::DocAttr>(ctx.doc_attrs);
+    auto* stats = stats_cast(ctx.stats);
     const irs::doc_id_t* docs_count = &stats->count;
     return irs::ScoreFunction::Make<FrequencySort::Scorer>(
       [](irs::ScoreCtx* ctx, irs::score_t* res) noexcept {
@@ -289,7 +266,8 @@ struct FrequencySort : public irs::ScorerBase<FrequencySort, StatsT> {
           *res = std::numeric_limits<irs::score_t>::infinity();
         }
       },
-      irs::ScoreFunction::DefaultMin, docs_count, doc);
+      irs::ScoreFunction::NoopCollect, irs::ScoreFunction::NoopMin, docs_count,
+      doc);
   }
 
   irs::TermCollector::ptr PrepareTermCollector() const final {
@@ -311,12 +289,8 @@ struct FrequencyScore : public irs::ScorerBase<FrequencyScore, StatsT> {
     return irs::IndexFeatures::None;
   }
 
-  irs::ScoreFunction PrepareScorer(const irs::ColumnProvider&,
-                                   const irs::FieldProperties&,
-                                   const irs::byte_type* /*stats_buf*/,
-                                   const irs::AttributeProvider& doc_attrs,
-                                   irs::score_t /*boost*/) const final {
-    auto* freq = irs::get<irs::FreqAttr>(doc_attrs);
+  irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
+    auto* freq = irs::get<irs::FreqAttr>(ctx.doc_attrs);
     return irs::ScoreFunction::Make<FrequencyScore::Scorer>(
       [](irs::ScoreCtx* ctx, irs::score_t* res) noexcept {
         const auto& state = *reinterpret_cast<Scorer*>(ctx);
@@ -326,7 +300,7 @@ struct FrequencyScore : public irs::ScorerBase<FrequencyScore, StatsT> {
           *res = 0;
         }
       },
-      irs::ScoreFunction::DefaultMin, freq);
+      irs::ScoreFunction::NoopCollect, irs::ScoreFunction::NoopMin, freq);
   }
 };
 

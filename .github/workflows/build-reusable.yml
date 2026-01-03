@@ -9,12 +9,12 @@ on:
         type: string
         default: 'self-hosted'
       BRANCH:
-        description: 'SereneDB branch to test'
+        description: 'SereneDB branch to checkout'
         required: true
         type: string
         default: 'main'
       SDB_PRIVATE:
-        description: 'Use private branch switch'
+        description: 'Make SereneDB with the private flag'
         required: true
         type: boolean
         default: false
@@ -24,17 +24,17 @@ on:
         type: string
         default: 'main'
       DOCKER_BUILD_IMAGES:
-        description: 'Build images used in build steps'
+        description: 'Produce SereneDB Build Images'
         required: true
         type: boolean
         default: false
       DOCKER_SERENEDB_IMAGE:
-        description: 'Build docker image with SereneDB'
+        description: 'Produce SereneDB Docker Images'
         required: true
         type: boolean
         default: false
       PUSH_IMAGES_2_REGISTRY:
-        description: 'Push images to Docker Registry'
+        description: 'Push images to Private Docker Registry'
         required: true
         type: boolean
         default: false
@@ -44,12 +44,12 @@ on:
         type: boolean
         default: false
       DOCKER_TAG:
-        description: 'Custom TAG for DOCKER_SERENEDB_IMAGE'
+        description: '(Optional) Custom TAG for DOCKER_SERENEDB_IMAGE'
         required: false
         type: string
         default: ''
       BUILD_IMAGE:
-        description: 'Build image to use'
+        description: 'Build image to use in this build'
         required: true
         type: string
         default: 'registry.serenedb.com:5000/serenedb-build-ubuntu:latest'
@@ -143,22 +143,7 @@ jobs:
       SDB_PRIVATE_REPO: ${{ secrets.SDB_PRIVATE_REPO }}
 
     steps:
-      - name: Checkout private repo (sparse - build images only)
-        if: inputs.DOCKER_SERENEDB_IMAGE != true && inputs.DEB_TAR_PACKAGES != true
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ env.SDB_PRIVATE_REPO }}
-          ref: ${{ env.SDB_PRIVATE_BRANCH }}
-          token: ${{ env.PAT_TOKEN }}
-          path: private
-          sparse-checkout: |
-            ci/build_images.sh
-            ci/build-alpine.Dockerfile
-            ci/build-ubuntu.Dockerfile
-          sparse-checkout-cone-mode: false
-
       - name: Checkout SereneDB repo
-        if: env.DOCKER_SERENEDB_IMAGE == 'true' || env.DEB_TAR_PACKAGES == 'true'
         uses: actions/checkout@v4
         with:
           repository: serenedb/serenedb
@@ -168,16 +153,16 @@ jobs:
           submodules: true
           path: .
 
-      - name: Checkout private repo
-        if: env.DOCKER_SERENEDB_IMAGE == 'true' || env.DEB_TAR_PACKAGES == 'true'
+      - name: Checkout private repo (sparse)
         uses: actions/checkout@v4
         with:
           repository: ${{ env.SDB_PRIVATE_REPO }}
           ref: ${{ env.SDB_PRIVATE_BRANCH }}
           token: ${{ env.PAT_TOKEN }}
-          fetch-depth: 1
-          submodules: true
           path: private
+          sparse-checkout: |
+            ci
+          sparse-checkout-cone-mode: true
 
       - name: Print environment
         run: printenv | sort
@@ -208,7 +193,7 @@ jobs:
           cat ./docker.env
           echo "==============================="
 
-          docker run --rm \
+          docker run --rm --tty \
             --cap-add=SYS_PTRACE \
             --privileged \
             --security-opt seccomp=unconfined \

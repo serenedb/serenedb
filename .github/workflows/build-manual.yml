@@ -12,12 +12,12 @@ on:
           - self-hosted
         default: 'self-hosted'
       BRANCH:
-        description: 'SereneDB branch to test'
+        description: 'SereneDB branch to checkout'
         required: true
         type: string
         default: 'main'
       SDB_PRIVATE:
-        description: 'Use private branch switch'
+        description: 'Make SereneDB with the private flag'
         required: true
         type: boolean
         default: false
@@ -27,17 +27,17 @@ on:
         type: string
         default: 'main'
       DOCKER_BUILD_IMAGES:
-        description: 'Build images used in build steps'
+        description: 'Produce SereneDB Build Images'
         required: true
         type: boolean
         default: false
       DOCKER_SERENEDB_IMAGE:
-        description: 'Build docker image with SereneDB'
+        description: 'Produce SereneDB Docker Images'
         required: true
         type: boolean
         default: false
       PUSH_IMAGES_2_REGISTRY:
-        description: 'Push images to Docker Registry'
+        description: 'Push images to Private Docker Registry'
         required: true
         type: boolean
         default: false
@@ -52,7 +52,7 @@ on:
         type: string
         default: ''
       BUILD_IMAGE:
-        description: 'Build image to use'
+        description: 'Build image to use in this build'
         required: true
         type: string
         default: 'registry.serenedb.com:5000/serenedb-build-ubuntu:latest'

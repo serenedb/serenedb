@@ -71,6 +71,7 @@ set(iresearch-tests_sources
     ./search/top_terms_collector_test.cpp
     ./search/proxy_filter_test.cpp
     ./search/doc_collector_test.cpp
+    ./search/block_scoring_test.cpp
     ./utils/async_utils_tests.cpp
     ./utils/automaton_test.cpp
     ./utils/bitvector_tests.cpp

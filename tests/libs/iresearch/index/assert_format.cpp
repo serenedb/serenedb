@@ -461,6 +461,8 @@ class DocIteratorImpl : public irs::DocIterator {
     return _doc.value;
   }
 
+  void CollectData() final {}
+
  private:
   class PosIterator final : public irs::PosAttr {
    public:
@@ -740,7 +742,7 @@ void AssertDocs(const irs::TermIterator& expected_term,
       requested_features, *actual_cookie,
       {{0, false}, [](uint32_t, const irs::AttributeProvider&) {
          // FIXME(gnusi)
-         return irs::ScoreFunction::Default(1);
+         return irs::ScoreFunction::Default();
        }});
   });
 

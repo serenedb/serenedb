@@ -27,6 +27,7 @@
 #include <set>
 #include <vector>
 
+#include "basics/memory.hpp"
 #include "iresearch/formats/hnsw_index.hpp"
 #include "iresearch/formats/seek_cookie.hpp"
 #include "iresearch/index/column_finalizer.hpp"
@@ -338,6 +339,15 @@ enum class ColumnHint : uint32_t {
 
 ENABLE_BITMASK_ENUM(ColumnHint);
 
+struct NormReader : public memory::Managed {
+  using ptr = memory::managed_ptr<NormReader>;
+
+  virtual ~NormReader() = default;
+
+  virtual void Collect(std::span<doc_id_t> docs,
+                       std::span<uint32_t> values) = 0;
+};
+
 struct ColumnReader : public memory::Managed {
   // Returns column id.
   virtual field_id id() const = 0;
@@ -353,6 +363,7 @@ struct ColumnReader : public memory::Managed {
   //  If the column implementation supports document payloads then it
   //  can be accessed via the 'payload' attribute.
   virtual ResettableDocIterator::ptr iterator(ColumnHint hint) const = 0;
+  virtual NormReader::ptr norms() const { return {}; }
 
   // Returns total number of columns.
   virtual doc_id_t size() const = 0;

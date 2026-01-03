@@ -1613,7 +1613,16 @@ template<typename IteratorTraits, typename FieldTraits>
 class DocIteratorBase : public DocIterator {
   static_assert((IteratorTraits::Features() & FieldTraits::Features()) ==
                 IteratorTraits::Features());
+
+ private:
   void ReadTailBlock(doc_id_t prev_doc);
+
+ public:
+  void CollectData() final {
+    if constexpr (IteratorTraits::Frequency()) {
+      _collected_freqs.PushBack(*_freq);
+    }
+  }
 
  protected:
   // returns current position in the document block 'docs_'
@@ -1625,6 +1634,8 @@ class DocIteratorBase : public DocIterator {
   void Refill(doc_id_t prev_doc);
 
   BufferType<IteratorTraits> _buf;
+  [[no_unique_address]] utils::Need<IteratorTraits::Frequency(),
+                                    FixedBuffer<uint32_t>> _collected_freqs;
   uint32_t _enc_buf[IteratorTraits::kBlockSize];  // buffer for encoding
   const doc_id_t* _begin{std::end(_buf.docs)};
   uint32_t* _freq{};  // pointer into docs_ to the frequency attribute value for
@@ -1694,11 +1705,12 @@ void DocIteratorBase<IteratorTraits, FieldTraits>::ReadTailBlock(
 template<typename IteratorTraits, typename FieldTraits>
 using AttributesImpl = std::conditional_t<
   IteratorTraits::Position(),
-  std::tuple<DocAttr, FreqAttr, ScoreAttr, CostAttr,
+  std::tuple<DocAttr, FreqAttr, FreqBlockAttr, ScoreAttr, CostAttr,
              PositionImpl<IteratorTraits, FieldTraits>>,
-  std::conditional_t<IteratorTraits::Frequency(),
-                     std::tuple<DocAttr, FreqAttr, ScoreAttr, CostAttr>,
-                     std::tuple<DocAttr, ScoreAttr, CostAttr>>>;
+  std::conditional_t<
+    IteratorTraits::Frequency(),
+    std::tuple<DocAttr, FreqAttr, FreqBlockAttr, ScoreAttr, CostAttr>,
+    std::tuple<DocAttr, ScoreAttr, CostAttr>>>;
 
 template<typename IteratorTraits, typename FieldTraits>
 class SingleDocIterator
@@ -1729,19 +1741,20 @@ class SingleDocIterator
     score = ScoreFunction::Constant(score.max.tail);
 
     doc_value = doc_limits::invalid();
+
+    if constexpr (IteratorTraits::Frequency()) {
+      std::get<FreqBlockAttr>(_attrs).value = &std::get<FreqAttr>(_attrs).value;
+    }
   }
 
   void Prepare(const TermMeta& meta, [[maybe_unused]] const IndexInput* pos_in,
                [[maybe_unused]] const IndexInput* pay_in);
 
- private:
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
+  uint32_t collect(std::span<doc_id_t> docs) final {
+    return Collect(*this, docs);
   }
 
-  doc_id_t value() const noexcept final {
-    return std::get<DocAttr>(_attrs).value;
-  }
+  void CollectData() final {}
 
   doc_id_t advance() final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
@@ -1758,6 +1771,15 @@ class SingleDocIterator
     }
 
     return doc_value;
+  }
+
+ private:
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+    return irs::GetMutable(_attrs, type);
+  }
+
+  doc_id_t value() const noexcept final {
+    return std::get<DocAttr>(_attrs).value;
   }
 
   doc_id_t seek(doc_id_t target) final {
@@ -1933,6 +1955,15 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
             ReadSkip{extent}} {
     SDB_ASSERT(absl::c_all_of(
       this->_buf.docs, [](doc_id_t doc) { return !doc_limits::valid(doc); }));
+
+    if constexpr (IteratorTraits::Frequency()) {
+      std::get<FreqBlockAttr>(_attrs).value = this->_collected_freqs.Data();
+    }
+  }
+
+  uint32_t collect(std::span<doc_id_t> docs) final {
+    // TODO(gnusi): optimize
+    return DocIterator::Collect(*this, docs);
   }
 
   void WandPrepare(const TermMeta& meta, const IndexInput* doc_in,
@@ -2002,6 +2033,15 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
     }
 
     return doc_value;
+  }
+
+ private:
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+    return irs::GetMutable(_attrs, type);
+  }
+
+  doc_id_t value() const noexcept final {
+    return std::get<DocAttr>(_attrs).value;
   }
 
   doc_id_t seek(doc_id_t target) final;
@@ -2340,11 +2380,15 @@ class Wanderator : public DocIteratorBase<IteratorTraits, FieldTraits>,
     }));
     std::get<ScoreAttr>(_attrs).Reset(
       *this,
-      [](ScoreCtx* ctx, score_t* res) noexcept {
+      [](ScoreCtx* ctx, score_t* res, size_t n) noexcept {
         auto& self = static_cast<Wanderator&>(*ctx);
-        self._scorer(res);
+        self._scorer.Score(res, n);
       },
       strict ? MinStrict : MinWeak);
+
+    if constexpr (IteratorTraits::Frequency()) {
+      std::get<FreqBlockAttr>(_attrs).value = this->_collected_freqs.Data();
+    }
   }
 
   void WandPrepare(const TermMeta& meta, const IndexInput* doc_in,

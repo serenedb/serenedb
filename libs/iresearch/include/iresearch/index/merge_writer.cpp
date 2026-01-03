@@ -154,6 +154,8 @@ class RemappingDocIterator : public DocIterator {
     return value();
   }
 
+  void CollectData() final {}
+
  private:
   DocIterator::ptr _it;
   const DocMapF* _mapper;
@@ -221,6 +223,8 @@ class CompoundDocIterator : public DocIterator {
     irs::seek(*this, target);
     return value();
   }
+
+  void CollectData() final {}
 
  private:
   friend class SortingCompoundDocIterator;
@@ -303,6 +307,8 @@ class SortingCompoundDocIterator : public DocIterator {
     irs::seek(*this, target);
     return value();
   }
+
+  void CollectData() final {}
 
  private:
   class Context {

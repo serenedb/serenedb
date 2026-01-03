@@ -18,11 +18,14 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/formats/formats_attributes.hpp>
 #include <iresearch/formats/wand_writer.hpp>
 #include <iresearch/index/field_meta.hpp>
 #include <iresearch/search/score.hpp>
+#include <iresearch/search/score_function.hpp>
+#include <iresearch/search/scorer.hpp>
 #include <limits>
 #include <random>
 
@@ -35,24 +38,26 @@ struct EmptyColumnProvider : irs::ColumnProvider {
   const irs::ColumnReader* column(irs::field_id) const final { return nullptr; }
 };
 
+struct FreqScorerContext : public irs::ScoreCtx {
+  FreqScorerContext(const auto* freq) : freq_source{freq} {}
+  const irs::FreqBlockAttr* freq_source;
+};
+
 struct FreqScorer : irs::ScorerBase<void> {
   irs::IndexFeatures GetIndexFeatures() const final {
     return irs::IndexFeatures::Freq;
   }
 
-  irs::ScoreFunction PrepareScorer(const irs::ColumnProvider&,
-                                   const irs::FieldProperties&,
-                                   const irs::byte_type*,
-                                   const irs::AttributeProvider& attrs,
-                                   irs::score_t) const final {
-    auto* freq = irs::get<irs::FreqAttr>(attrs);
+  irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
+    auto* freq = irs::get<irs::FreqBlockAttr>(ctx.doc_attrs);
     EXPECT_NE(nullptr, freq);
 
-    return irs::ScoreFunction{
-      reinterpret_cast<irs::ScoreCtx&>(const_cast<irs::FreqAttr&>(*freq)),
-      [](irs::ScoreCtx* ctx, irs::score_t* res) noexcept {
-        *res = reinterpret_cast<irs::FreqAttr*>(ctx)->value;
-      }};
+    return irs::ScoreFunction::Make<FreqScorerContext>(
+      [](irs::ScoreCtx* ctx, irs::score_t* res, size_t n) noexcept {
+        auto& state = static_cast<FreqScorerContext&>(*ctx);
+        std::memcpy(res, state.freq_source->value, sizeof(irs::score_t) * n);
+      },
+      irs::ScoreFunction::NoopMin, freq);
   }
 
   irs::WandWriter::ptr prepare_wand_writer(size_t max_levels) const final {
@@ -106,6 +111,8 @@ class FreqThresholdDocIterator : public irs::DocIterator {
 
     return value();
   }
+
+  void CollectData() final { _impl->CollectData(); }
 
  private:
   bool Less() {
@@ -389,8 +396,11 @@ irs::DocIterator::ptr Format15TestCase::GetWanderator(
   irs::IndexFeatures field_features, irs::IndexFeatures features,
   const irs::TermMeta& meta, uint32_t threshold, bool strict) {
   auto make_score = [&](uint32_t, const irs::AttributeProvider& attrs) {
-    return scorer.PrepareScorer(EmptyColumnProvider{}, irs::FieldProperties{},
-                                nullptr, attrs, irs::kNoBoost);
+    return scorer.PrepareScorer({
+      .segment = EmptyColumnProvider{},
+      .field = irs::FieldProperties{},
+      .doc_attrs = attrs,
+    });
   };
   const bool iterator_has_freq =
     irs::IndexFeatures::None != (features & irs::IndexFeatures::Freq);
@@ -439,18 +449,20 @@ void Format15TestCase::AssertBackwardsNext(irs::PostingsReader& reader,
     auto actual = GetWanderator(reader, scorer, field_features, features, meta,
                                 threshold, strict);
     AssertWanderator(actual, features, docs);
+    EmptyColumnProvider provider;
 
     auto score_function =
       irs::get<irs::FreqAttr>(*actual)
-        ? scorer.PrepareScorer(EmptyColumnProvider{}, irs::FieldProperties{},
-                               nullptr, *actual, irs::kNoBoost)
+        ? scorer.PrepareScorer({.segment = EmptyColumnProvider{},
+                                .field = irs::FieldProperties{},
+                                .doc_attrs = *actual})
         : irs::ScoreFunction::Constant(
             std::numeric_limits<irs::score_t>::max());
 
     auto actual_next = [&] {
       while (actual->next()) {
         irs::score_t actual_score{};
-        score_function.Score(&actual_score);
+        score_function.Score(&actual_score, 1);
         if (!is_less(actual_score, threshold)) {
           return true;
         }
@@ -465,7 +477,7 @@ void Format15TestCase::AssertBackwardsNext(irs::PostingsReader& reader,
       }
       do {
         irs::score_t actual_score{};
-        score_function.Score(&actual_score);
+        score_function.Score(&actual_score, 1);
         if (!is_less(actual_score, threshold)) {
           return doc;
         }
@@ -513,14 +525,15 @@ void Format15TestCase::AssertDocsRandom(irs::PostingsReader& reader,
 
   auto score_function =
     irs::get<irs::FreqAttr>(*actual)
-      ? scorer.PrepareScorer(EmptyColumnProvider{}, irs::FieldProperties{},
-                             nullptr, *actual, irs::kNoBoost)
+      ? scorer.PrepareScorer({.segment = EmptyColumnProvider{},
+                              .field = irs::FieldProperties{},
+                              .doc_attrs = *actual})
       : irs::ScoreFunction::Constant(std::numeric_limits<irs::score_t>::max());
 
   auto actual_next = [&] {
     while (actual->next()) {
       irs::score_t actual_score{};
-      score_function.Score(&actual_score);
+      score_function.Score(&actual_score, 1);
       if (!is_less(actual_score, threshold)) {
         return true;
       }
@@ -535,7 +548,7 @@ void Format15TestCase::AssertDocsRandom(irs::PostingsReader& reader,
     }
     do {
       irs::score_t actual_score{};
-      score_function.Score(&actual_score);
+      score_function.Score(&actual_score, 1);
       if (!is_less(actual_score, threshold)) {
         return doc;
       }
@@ -591,14 +604,15 @@ void Format15TestCase::AssertDocsSeq(irs::PostingsReader& reader,
 
   auto score_function =
     irs::get<irs::FreqAttr>(*actual)
-      ? scorer.PrepareScorer(EmptyColumnProvider{}, irs::FieldProperties{},
-                             nullptr, *actual, irs::kNoBoost)
+      ? scorer.PrepareScorer({.segment = EmptyColumnProvider{},
+                              .field = irs::FieldProperties{},
+                              .doc_attrs = *actual})
       : irs::ScoreFunction::Constant(std::numeric_limits<irs::score_t>::max());
 
   auto actual_next = [&] {
     while (actual->next()) {
       irs::score_t actual_score{};
-      score_function.Score(&actual_score);
+      score_function.Score(&actual_score, 1);
       if (!is_less(actual_score, threshold)) {
         return true;
       }
@@ -613,7 +627,7 @@ void Format15TestCase::AssertDocsSeq(irs::PostingsReader& reader,
     }
     do {
       irs::score_t actual_score{};
-      score_function.Score(&actual_score);
+      score_function.Score(&actual_score, 1);
       if (!is_less(actual_score, threshold)) {
         return doc;
       }

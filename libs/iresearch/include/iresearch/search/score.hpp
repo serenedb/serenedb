@@ -27,6 +27,8 @@
 
 namespace irs {
 
+static constexpr size_t kScoreWindow = 128;
+
 // Represents a score related for the particular document
 // min score set by document consumers
 // max score set by document producers
@@ -64,20 +66,113 @@ using ScoreFunctions = sdb::containers::SmallVector<ScoreFunction, 1>;
 // Prepare scorer for each of the bucket.
 ScoreFunctions PrepareScorers(std::span<const ScorerBucket> buckets,
                               const ColumnProvider& segment,
+                              ColumnCollector* collector,
                               const TermReader& field, const byte_type* stats,
-                              const AttributeProvider& doc, score_t boost);
+                              const AttributeProvider& doc, score_t boost,
+                              uint16_t score_block = 0);
 
 // Compiles a set of prepared scorers into a single score function.
 ScoreFunction CompileScorers(ScoreFunctions&& scorers);
 
 void CompileScore(ScoreAttr& score, std::span<const ScorerBucket> buckets,
-                  const ColumnProvider& segment, const TermReader& field,
-                  const byte_type* stats, const AttributeProvider& doc,
-                  score_t boost);
+                  const ColumnProvider& segment, ColumnCollector* collector,
+                  const TermReader& field, const byte_type* stats,
+                  const AttributeProvider& doc, score_t boost,
+                  uint16_t score_block);
 
 // Prepare empty collectors, i.e. call collect(...) on each of the
 // buckets without explicitly collecting field or term statistics,
 // e.g. for 'all' filter.
 void PrepareCollectors(std::span<const ScorerBucket> order, byte_type* stats);
+
+template<ScoreMergeType MergeType>
+void Merge(score_t& bucket, score_t arg) noexcept {
+  if constexpr (MergeType == ScoreMergeType::Sum) {
+    bucket += arg;
+  } else if constexpr (MergeType == ScoreMergeType::Min) {
+    bucket = std::min(bucket, arg);
+  } else if constexpr (MergeType == ScoreMergeType::Max) {
+    bucket = std::max(bucket, arg);
+  } else {
+    static_assert(false);
+  }
+}
+
+template<ScoreMergeType MergeType>
+void Merge(score_t* IRS_RESTRICT res, const score_t* IRS_RESTRICT args,
+           size_t n) noexcept {
+  for (size_t i = 0; i < n; ++i) {
+    Merge<MergeType>(res[i], args[i]);
+  }
+}
+
+template<ScoreMergeType MergeType, typename I>
+void Merge(score_t* IRS_RESTRICT res, const I* IRS_RESTRICT hits,
+           const score_t* IRS_RESTRICT args, size_t n) noexcept {
+  for (size_t i = 0; i < n; ++i) {
+    Merge<MergeType>(res[hits[i]], args[i]);
+  }
+}
+
+template<ScoreMergeType MergeType, size_t N>
+void Merge(score_t* res, std::span<score_t, N> args) noexcept {
+  Merge<MergeType>(res, args.data(), args.size());
+}
+
+template<ScoreMergeType MergeType, typename I, size_t N>
+void Merge(score_t* res, std::span<I, N> hits,
+           std::span<score_t, N> args) noexcept {
+  SDB_ASSERT(hits.size() <= args.size());
+  Merge<MergeType>(res, hits.data(), args.data(), hits.size());
+}
+
+template<typename T>
+struct Vector {
+  T* data = nullptr;
+  size_t size = 0;
+
+  void Reset(T* data) {
+    this->data = data;
+    size = 0;
+  }
+  void PushBack(T value) { data[size++] = value; }
+  void Clear() noexcept { size = 0; }
+  auto Span() const noexcept { return std::span{Data(), size}; };
+  auto Size() const noexcept { return size; }
+  auto Empty() const noexcept { return size == 0; }
+  auto Data() const noexcept { return data; }
+};
+
+template<typename T>
+class FixedBuffer {
+ public:
+  void Realloc(uint16_t size) {
+    _buf = std::make_unique<T[]>(size);
+    _capacity = size;
+  }
+  void Resize(uint16_t size) {
+    SDB_ASSERT(size <= _capacity);
+    _size = size;
+  }
+  size_t Capacity() const noexcept { return _capacity; }
+  void Clear() noexcept { _size = 0; }
+  void PushBack(T value) noexcept {
+    SDB_ASSERT(_size < _capacity);
+    _buf[_size++] = value;
+  }
+  auto& Back(this auto& self) noexcept {
+    SDB_ASSERT(self._size > 0);
+    return self._buf[self._size - 1];
+  }
+  size_t Size() const noexcept { return _size; }
+  auto Data() noexcept { return _buf.get(); }
+  auto begin(this auto& self) noexcept { return self._buf.get(); }
+  auto end(this auto& self) noexcept { return self.begin() + self.Size(); }
+
+ private:
+  std::unique_ptr<T[]> _buf;
+  uint32_t _size = 0;
+  uint32_t _capacity = 0;
+};
 
 }  // namespace irs

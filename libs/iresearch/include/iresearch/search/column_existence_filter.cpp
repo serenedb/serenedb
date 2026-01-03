@@ -22,6 +22,10 @@
 
 #include "column_existence_filter.hpp"
 
+#include <iresearch/search/column_collector.hpp>
+#include <iresearch/search/conjunction.hpp>
+#include <iresearch/search/scorer.hpp>
+
 #include "iresearch/formats/empty_term_reader.hpp"
 #include "iresearch/index/index_reader.hpp"  // for SubReader
 #include "iresearch/search/disjunction.hpp"
@@ -42,7 +46,8 @@ class ColumnExistenceQuery : public Filter::Query {
       return DocIterator::empty();
     }
 
-    return Iterator(segment, *column, ctx.scorers);
+    return Iterator(ctx.segment, ctx.collector, *column, ctx.scorers,
+                    ctx.score_block);
   }
 
   void visit(const SubReader&, PreparedStateVisitor&, score_t) const final {
@@ -52,9 +57,10 @@ class ColumnExistenceQuery : public Filter::Query {
   score_t Boost() const noexcept final { return _boost; }
 
  protected:
-  DocIterator::ptr Iterator(const SubReader& segment,
-                            const ColumnReader& column,
-                            const Scorers& ord) const {
+  DocIterator::ptr Iterator(const ColumnProvider& segment,
+                            ColumnCollector* collector,
+                            const ColumnReader& column, const Scorers& ord,
+                            uint16_t score_block) const {
     auto it = column.iterator(ColumnHint::Mask);
 
     if (!it) [[unlikely]] {
@@ -63,9 +69,9 @@ class ColumnExistenceQuery : public Filter::Query {
 
     if (!ord.empty()) {
       if (auto* score = irs::GetMutable<ScoreAttr>(it.get())) {
-        CompileScore(*score, ord.buckets(), segment,
+        CompileScore(*score, ord.buckets(), segment, collector,
                      EmptyTermReader(column.size()), _stats.c_str(), *it,
-                     _boost);
+                     _boost, score_block);
       }
     }
 
@@ -105,7 +111,8 @@ class ColumnPrefixExistenceQuery : public ColumnExistenceQuery {
     ScoreAdapters itrs;
     for (; column->name().starts_with(prefix); column = &it->value()) {
       if (_acceptor(column->name(), prefix)) {
-        itrs.emplace_back(Iterator(segment, *column, ord));
+        itrs.emplace_back(
+          Iterator(segment, ctx.collector, *column, ord, ctx.score_block));
       }
 
       if (!it->next()) {
@@ -114,11 +121,9 @@ class ColumnPrefixExistenceQuery : public ColumnExistenceQuery {
     }
 
     return ResolveMergeType(
-      ScoreMergeType::Sum, ord.buckets().size(),
-      [&]<typename A>(A&& aggregator) {
-        using Disjunction = DisjunctionIterator<ScoreAdapter, A>;
-        return MakeDisjunction<Disjunction>(ctx.wand, std::move(itrs),
-                                            std::move(aggregator));
+      ScoreMergeType::Sum, [&]<ScoreMergeType MergeType>() -> DocIterator::ptr {
+        using Disjunction = DisjunctionIterator<ScoreAdapter, MergeType>;
+        return irs::MakeDisjunction<Disjunction>(ctx.wand, std::move(itrs));
       });
   }
 

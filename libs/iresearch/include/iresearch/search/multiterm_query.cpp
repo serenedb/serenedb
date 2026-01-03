@@ -29,6 +29,7 @@
 #include "iresearch/search/disjunction.hpp"
 #include "iresearch/search/min_match_disjunction.hpp"
 #include "iresearch/search/prepared_state_visitor.hpp"
+#include "iresearch/search/scorer.hpp"
 
 namespace {
 

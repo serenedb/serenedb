@@ -22,55 +22,50 @@
 
 #include "iresearch/search/score_function.hpp"
 
-#include <absl/base/casts.h>
+#include <absl/algorithm/container.h>
+
+#include <bit>
+#include <iresearch/search/score.hpp>
+#include <iresearch/search/scorer.hpp>
 
 namespace irs {
 namespace {
 
-void Constant1(ScoreCtx* ctx, score_t* res) noexcept {
-  SDB_ASSERT(res != nullptr);
-  const auto boost = reinterpret_cast<uintptr_t>(ctx);
-  std::memcpy(res, &boost, sizeof(score_t));
-}
-
 struct ConstantCtx {
   score_t value;
-  uint32_t count;
+  uint32_t padding = 0;
 };
+static_assert(sizeof(ConstantCtx) == sizeof(ScoreCtx*));
 
-void ConstantN(ScoreCtx* ctx, score_t* res) noexcept {
-  SDB_ASSERT(res != nullptr);
-  const auto score_ctx = absl::bit_cast<ConstantCtx>(ctx);
-  std::fill_n(res, score_ctx.count, score_ctx.value);
+void ConstantScore(ScoreCtx* ctx, score_t* res, size_t n) noexcept {
+  SDB_ASSERT(res);
+  auto state = std::bit_cast<ConstantCtx>(ctx);
+  std::fill_n(res, n, state.value);
 }
 
 }  // namespace
 
-ScoreFunction ScoreFunction::Constant(score_t value) noexcept {
-  static_assert(sizeof(score_t) <= sizeof(uintptr_t));
-  uintptr_t boost = 0;
-  std::memcpy(&boost, &value, sizeof(score_t));
-  static_assert(sizeof(ScoreCtx*) == sizeof(uintptr_t));
-  return {reinterpret_cast<ScoreCtx*>(boost), Constant1, DefaultMin, Noop};
+void ScoreFunction::DefaultScore(ScoreCtx* ctx, score_t* res,
+                                 size_t n) noexcept {
+  SDB_ASSERT(res != nullptr);
+  std::memset(res, 0, sizeof(score_t) * n);
 }
 
-ScoreFunction ScoreFunction::Constant(score_t value, uint32_t count) noexcept {
-  if (0 == count) {
-    return {};
-  } else if (1 == count) {
-    return Constant(value);
-  } else {
-    return {absl::bit_cast<ScoreCtx*>(ConstantCtx{value, count}), ConstantN,
-            DefaultMin, Noop};
-  }
+ScoreFunction ScoreFunction::Constant(score_t value) noexcept {
+  ConstantCtx ctx{value};
+  return ScoreFunction{std::bit_cast<ScoreCtx*>(ctx), ConstantScore, NoopMin};
+}
+
+ScoreFunction ScoreFunction::Default() {
+  return ScoreFunction{nullptr, DefaultScore, NoopMin};
 }
 
 score_t ScoreFunction::Max() const noexcept {
-  if (_score == ScoreFunction::DefaultScore) {
+  if (_score == DefaultScore) {
     return 0.f;
-  } else if (_score == Constant1 || _score == ConstantN) {
+  } else if (_score == ConstantScore) {
     score_t score;
-    Score(&score);
+    Score(&score, 1);
     return score;
   }
   return std::numeric_limits<score_t>::max();

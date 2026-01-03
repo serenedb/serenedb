@@ -53,8 +53,7 @@ class EmptyTermReader final : public irs::TermReader {
   DocIterator::ptr Iterator(IndexFeatures features,
                             std::span<const SeekCookie* const> cookies,
                             const IteratorOptions& options, size_t min_match,
-                            ScoreMergeType type,
-                            size_t num_buckets) const final {
+                            ScoreMergeType type) const final {
     return DocIterator::empty();
   }
 

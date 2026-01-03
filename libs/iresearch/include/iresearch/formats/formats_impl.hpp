@@ -19,11 +19,14 @@
 ///
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
+
 #pragma once
 
 #include <absl/algorithm/container.h>
 
+#include <iresearch/search/score_function.hpp>
 #include <limits>
+#include <memory>
 
 #include "basics/assert.h"
 #include "basics/bit_utils.hpp"
@@ -45,8 +48,9 @@
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/cost.hpp"
-#include "iresearch/search/disjunction.hpp"
+#include "iresearch/search/make_disjunction.hpp"
 #include "iresearch/search/score.hpp"
+#include "iresearch/search/scorer.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/store/store_utils.hpp"
@@ -1215,10 +1219,29 @@ class DocIteratorBase : public DocIterator {
                 IteratorTraits::Features());
   void ReadTailBlock(doc_id_t prev_doc);
 
+ public:
+  void CollectData(uint16_t index) final {
+    if constexpr (IteratorTraits::Frequency()) {
+      SDB_ASSERT(_collected_freqs);
+      // TODO(gnusi)
+      //_collected_freqs[index] = this->_freq[-1];  // TODO(gnusi): use attr
+      // value
+    }
+  }
+
  protected:
+  void InitFreqBlock(FreqBlockAttr& freq_block) {
+    if constexpr (IteratorTraits::Frequency()) {
+      _collected_freqs = std::make_unique<uint32_t[]>(kScoreBlock);
+      freq_block.value = _collected_freqs.get();
+    }
+  }
+
   IRS_FORCE_INLINE void Refill(doc_id_t prev_doc);
 
   uint32_t _enc_buf[IteratorTraits::kBlockSize];  // buffer for encoding
+  [[no_unique_address]] utils::Need<
+    IteratorTraits::Frequency(), std::unique_ptr<uint32_t[]>> _collected_freqs;
   [[no_unique_address]] utils::Need<
     IteratorTraits::Frequency(), uint32_t[IteratorTraits::kBlockSize]> _freqs;
   doc_id_t _docs[IteratorTraits::kBlockSize];
@@ -1283,11 +1306,12 @@ void DocIteratorBase<IteratorTraits, FieldTraits>::ReadTailBlock(
 template<typename IteratorTraits, typename FieldTraits>
 using AttributesImpl = std::conditional_t<
   IteratorTraits::Position(),
-  std::tuple<DocAttr, FreqAttr, ScoreAttr, CostAttr,
+  std::tuple<DocAttr, FreqAttr, FreqBlockAttr, ScoreAttr, CostAttr,
              PositionImpl<IteratorTraits, FieldTraits>>,
-  std::conditional_t<IteratorTraits::Frequency(),
-                     std::tuple<DocAttr, FreqAttr, ScoreAttr, CostAttr>,
-                     std::tuple<DocAttr, ScoreAttr, CostAttr>>>;
+  std::conditional_t<
+    IteratorTraits::Frequency(),
+    std::tuple<DocAttr, FreqAttr, FreqBlockAttr, ScoreAttr, CostAttr>,
+    std::tuple<DocAttr, ScoreAttr, CostAttr>>>;
 
 static_assert(kMaxScorers < WandContext::kDisable);
 
@@ -1358,7 +1382,7 @@ void CommonReadWandData(WandExtent wextent, uint8_t index,
   if (extent == 1) [[likely]] {
     const auto size = in.ReadByte();
     ctx.Read(in, size);
-    func(&score);
+    func.Score(&score, 1);
     return;
   }
 
@@ -1392,10 +1416,18 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
   using Attributes = AttributesImpl<IteratorTraits, FieldTraits>;
   using Position = PositionImpl<IteratorTraits, FieldTraits>;
 
+  static_assert(IteratorTraits::kBlockSize % kScoreBlock == 0,
+                "kBlockSize must be a multiple of kScoreBlock");
+
  public:
   DocIteratorImpl(WandExtent extent)
     : _skip{IteratorTraits::kBlockSize, PostingsWriterBase::kSkipN,
             ReadSkip{extent}} {}
+
+  uint32_t collect(std::span<doc_id_t> docs) final {
+    // TODO(gnusi): optimize
+    return DocIterator::Collect(*this, docs);
+  }
 
   void WandPrepare(const TermMeta& meta, const IndexInput* doc_in,
                    const IndexInput* pos_in, const IndexInput* pay_in,
@@ -1464,16 +1496,17 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
 
   IRS_FORCE_INLINE doc_id_t seek(doc_id_t target) final;
 
+  IRS_FORCE_INLINE const ScoreAttr& score() const noexcept {
+    return std::get<ScoreAttr>(_attrs);
+  }
+
+ private:
   uint32_t count() final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
     doc_value = doc_limits::eof();
     const auto left_in_leaf = std::exchange(this->_left_in_leaf, 0);
     const auto left_in_list = std::exchange(this->_left_in_list, 0);
     return left_in_leaf + left_in_list;
-  }
-
-  IRS_FORCE_INLINE const ScoreAttr& score() const noexcept {
-    return std::get<ScoreAttr>(_attrs);
   }
 
  private:
@@ -1589,6 +1622,10 @@ template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
 void DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
   const TermMeta& meta, const IndexInput* doc_in, const IndexInput* pos_in,
   const IndexInput* pay_in, uint8_t wand_index) {
+  if constexpr (IteratorTraits::Frequency()) {
+    this->InitFreqBlock(std::get<FreqBlockAttr>(_attrs));
+  }
+
   auto& term_state = static_cast<const TermMetaImpl&>(meta);
   std::get<CostAttr>(_attrs).reset(term_state.docs_count);  // Estimate iterator
 
@@ -1836,9 +1873,9 @@ class Wanderator : public DocIteratorBase<IteratorTraits, FieldTraits>,
       _scorer{make_score(meta_idx, *this)} {
     std::get<ScoreAttr>(_attrs).Reset(
       *this,
-      [](ScoreCtx* ctx, score_t* res) noexcept {
+      [](ScoreCtx* ctx, score_t* res, size_t n) noexcept {
         auto& self = static_cast<Wanderator&>(*ctx);
-        self._scorer(res);
+        self._scorer.Score(res, n);
       },
       strict ? MinStrict : MinWeak);
   }
@@ -2037,6 +2074,10 @@ void Wanderator<IteratorTraits, FieldTraits, WandExtent>::WandPrepare(
   [[maybe_unused]] const IndexInput* pay_in) {
   // Don't use wanderator for short posting lists, must be ensured by the caller
   SDB_ASSERT(meta.docs_count > IteratorTraits::kBlockSize);
+
+  if constexpr (IteratorTraits::Frequency()) {
+    this->InitFreqBlock(std::get<FreqBlockAttr>(_attrs));
+  }
 
   auto& term_state = static_cast<const TermMetaImpl&>(meta);
   this->_left_in_list = term_state.docs_count;
@@ -2738,6 +2779,14 @@ struct PostingAdapter {
     return self().shallow_seek(target);
   }
 
+  IRS_FORCE_INLINE uint32_t collect(std::span<doc_id_t> docs) {
+    return self().collect(docs);
+  }
+
+  IRS_FORCE_INLINE void CollectData(uint16_t index) {
+    return self().CollectData(index);
+  }
+
   IRS_FORCE_INLINE const ScoreAttr& score() const noexcept {
     return self().score();
   }
@@ -2820,8 +2869,7 @@ class PostingsReaderImpl final : public PostingsReaderBase {
                             IndexFeatures required_features,
                             std::span<const TermMeta* const> metas,
                             const IteratorFieldOptions& options,
-                            size_t min_match, ScoreMergeType type,
-                            size_t num_buckets) const final;
+                            size_t min_match, ScoreMergeType type) const final;
 
  private:
   template<typename FieldTraits, typename Factory>
@@ -2996,7 +3044,7 @@ template<typename FormatTraits>
 DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
   IndexFeatures field_features, IndexFeatures required_features,
   std::span<const TermMeta* const> metas, const IteratorFieldOptions& options,
-  size_t min_match, ScoreMergeType type, size_t num_buckets) const {
+  size_t min_match, ScoreMergeType type) const {
   SDB_ASSERT(!metas.empty());
   SDB_ASSERT(1 <= min_match);
   SDB_ASSERT(min_match <= metas.size());
@@ -3088,10 +3136,10 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
     for (auto& it : iterators) {
       adapters.emplace_back(std::move(it));
     }
-    return ResolveMergeType(type, num_buckets, [&]<typename A>(A&& aggregator) {
-      using MinMatchIterator = MinMatchIterator<Adapter, A>;
-      return MakeWeakDisjunction<MinMatchIterator>(
-        options, std::move(adapters), min_match, std::move(aggregator));
+    return ResolveMergeType(type, [&]<ScoreMergeType MergeType>() {
+      using MinMatchIterator = MinMatchIterator<Adapter, MergeType>;
+      return MakeWeakDisjunction<MinMatchIterator>(options, std::move(adapters),
+                                                   min_match);
     });
   };
 

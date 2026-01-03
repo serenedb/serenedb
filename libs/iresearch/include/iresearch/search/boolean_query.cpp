@@ -30,7 +30,7 @@ namespace irs {
 namespace {
 
 template<bool Conjunction, typename It>
-irs::ScoreAdapters MakeScoreAdapters(const irs::ExecutionContext& ctx, It begin,
+irs::ScoreAdapters MakeScoreAdapters(const ExecutionContext& ctx, It begin,
                                      It end) {
   SDB_ASSERT(begin <= end);
   const size_t size = std::distance(begin, end);
@@ -64,58 +64,57 @@ irs::ScoreAdapters MakeScoreAdapters(const irs::ExecutionContext& ctx, It begin,
 
 // Returns disjunction iterator created from the specified queries
 template<typename QueryIterator, typename... Args>
-irs::DocIterator::ptr MakeDisjunction(const irs::ExecutionContext& ctx,
-                                      irs::ScoreMergeType merge_type,
-                                      QueryIterator begin, QueryIterator end,
-                                      Args&&... args) {
+DocIterator::ptr MakeDisjunction(const ExecutionContext& ctx,
+                                 irs::ScoreMergeType merge_type,
+                                 QueryIterator begin, QueryIterator end,
+                                 Args&&... args) {
   SDB_ASSERT(begin <= end);
   const size_t size = std::distance(begin, end);
   // check the size before the execution
   if (0 == size) {
     // empty or unreachable search criteria
-    return irs::DocIterator::empty();
+    return DocIterator::empty();
   }
 
   auto itrs = MakeScoreAdapters<false>(ctx, begin, end);
   if (itrs.empty()) {
-    return irs::DocIterator::empty();
+    return DocIterator::empty();
   }
 
   return irs::ResolveMergeType(
     merge_type, ctx.scorers.buckets().size(),
-    [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-      using DisjunctionT = irs::disjunction_iterator<irs::DocIterator::ptr, A>;
-
-      return irs::MakeDisjunction<DisjunctionT>(ctx.wand, std::move(itrs),
-                                                std::forward<A>(aggregator),
-                                                std::forward<Args>(args)...);
+    [&]<typename A>(A&& aggregator) -> DocIterator::ptr {
+      using Disjunction = DisjunctionIterator<DocIterator::ptr, A>;
+      return irs::MakeDisjunction<Disjunction>(ctx.wand, std::move(itrs),
+                                               std::forward<A>(aggregator),
+                                               std::forward<Args>(args)...);
     });
 }
 
 // Returns conjunction iterator created from the specified queries
 template<typename QueryIterator, typename... Args>
-irs::DocIterator::ptr MakeConjunction(const irs::ExecutionContext& ctx,
-                                      irs::ScoreMergeType merge_type,
-                                      QueryIterator begin, QueryIterator end,
-                                      Args&&... args) {
+DocIterator::ptr MakeConjunction(const ExecutionContext& ctx,
+                                 irs::ScoreMergeType merge_type,
+                                 QueryIterator begin, QueryIterator end,
+                                 Args&&... args) {
   SDB_ASSERT(begin <= end);
   const size_t size = std::distance(begin, end);
   // check size before the execution
   switch (size) {
     case 0:
-      return irs::DocIterator::empty();
+      return DocIterator::empty();
     case 1:
       return (*begin)->execute(ctx);
   }
 
   auto itrs = MakeScoreAdapters<true>(ctx, begin, end);
   if (itrs.empty()) {
-    return irs::DocIterator::empty();
+    return DocIterator::empty();
   }
 
   return irs::ResolveMergeType(
     merge_type, ctx.scorers.buckets().size(),
-    [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
+    [&]<typename A>(A&& aggregator) -> DocIterator::ptr {
       return irs::MakeConjunction(ctx.wand, std::forward<A>(aggregator),
                                   std::move(itrs), std::forward<Args>(args)...);
     });
@@ -230,16 +229,15 @@ DocIterator::ptr MinMatchQuery::execute(const ExecutionContext& ctx,
 
   auto itrs = MakeScoreAdapters<false>(ctx, begin, end);
   if (itrs.empty()) {
-    return irs::DocIterator::empty();
+    return DocIterator::empty();
   }
 
   return ResolveMergeType(merge_type(), ctx.scorers.buckets().size(),
                           [&]<typename A>(A&& aggregator) -> DocIterator::ptr {
                             // FIXME(gnusi): use FAST version
-                            using DisjunctionT =
-                              min_match_iterator<DocIterator::ptr, A>;
-
-                            return MakeWeakDisjunction<DisjunctionT, A>(
+                            using Disjunction =
+                              MinMatchIterator<DocIterator::ptr, A>;
+                            return MakeWeakDisjunction<Disjunction, A>(
                               ctx.wand, std::move(itrs), min_match_count,
                               std::forward<A>(aggregator));
                           });

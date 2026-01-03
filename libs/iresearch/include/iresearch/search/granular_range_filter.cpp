@@ -547,9 +547,9 @@ void SetGranularTerm(ByGranularRangeOptions::terms& boundary,
   }
 }
 
-Filter::Prepared::ptr ByGranularRange::prepare(const PrepareContext& ctx,
-                                               std::string_view field,
-                                               const options_type& options) {
+Filter::Query::ptr ByGranularRange::prepare(const PrepareContext& ctx,
+                                            std::string_view field,
+                                            const options_type& options) {
   const auto& rng = options.range;
 
   if (!rng.min.empty() && !rng.max.empty()) {
@@ -564,7 +564,7 @@ Filter::Prepared::ptr ByGranularRange::prepare(const PrepareContext& ctx,
       }
 
       // can't satisfy condition
-      return Prepared::empty();
+      return Query::empty();
     }
   }
 
@@ -587,7 +587,7 @@ Filter::Prepared::ptr ByGranularRange::prepare(const PrepareContext& ctx,
   }
 
   if (states.empty()) {
-    return Prepared::empty();
+    return Query::empty();
   }
 
   MultiTermQuery::Stats stats{{ctx.memory}};

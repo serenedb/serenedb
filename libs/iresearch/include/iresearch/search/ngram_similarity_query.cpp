@@ -110,10 +110,9 @@ class NGramApprox<true> : public Conjunction<CostAdapter<>, NoopAggregator> {
   NGramApprox(CostAdapters&& itrs, size_t min_match_count)
     : Base{NoopAggregator{},
            [](auto&& itrs) {
-             std::sort(itrs.begin(), itrs.end(),
-                       [](const auto& lhs, const auto& rhs) noexcept {
-                         return lhs.est < rhs.est;
-                       });
+             absl::c_sort(itrs, [](const auto& lhs, const auto& rhs) noexcept {
+               return lhs.est < rhs.est;
+             });
              return std::move(itrs);
            }(std::move(itrs))},
       _match_count{min_match_count} {}
@@ -303,7 +302,6 @@ bool SerialPositionsChecker<Base>::Check(size_t potential, doc_id_t doc) {
                   // times. Replace with new length through swap cache - to not
                   // spoil candidate for following positions of same ngram
                   swap_cache.emplace_back(current_pos,
-                                          // cppcheck-suppress accessMoved
                                           std::move(new_candidate));
                 }
               } else if (initial_found->second->scr == pos_iterator.scr &&
@@ -489,35 +487,31 @@ class NGramSimilarityDocIterator : public DocIterator, private ScoreCtx {
     return attr != nullptr ? attr : _checker.GetMutableAttr(type);
   }
 
-  bool next() final {
-    while (_approx.next()) {
-      if (_checker.Check(_approx.MatchCount(), value())) {
-        return true;
-      }
-    }
-    return false;
-  }
-
   doc_id_t value() const final {
     return std::get<AttributePtr<DocAttr>>(_attrs).ptr->value;
   }
 
-  doc_id_t seek(doc_id_t target) final {
-    auto* doc = std::get<AttributePtr<DocAttr>>(_attrs).ptr;
-
-    if (doc->value >= target) {
-      return doc->value;
+  doc_id_t advance() final {
+    while (true) {
+      const auto doc = _approx.advance();
+      if (doc_limits::eof(doc) || _checker.Check(_approx.MatchCount(), doc)) {
+        return doc;
+      }
     }
-    const auto doc_id = _approx.seek(target);
-
-    if (doc_limits::eof(doc_id) ||
-        _checker.Check(_approx.MatchCount(), doc->value)) {
-      return doc_id;
-    }
-
-    next();
-    return doc->value;
   }
+
+  doc_id_t seek(doc_id_t target) final {
+    if (const auto doc = value(); target <= doc) [[unlikely]] {
+      return doc;
+    }
+    const auto doc = _approx.seek(target);
+    if (doc_limits::eof(doc) || _checker.Check(_approx.MatchCount(), doc)) {
+      return doc;
+    }
+    return advance();
+  }
+
+  uint32_t count() final { return Count(*this); }
 
  private:
   using Attributes =
@@ -548,7 +542,7 @@ CostAdapters Execute(const NGramState& query_state,
       continue;
     }
 
-    if (auto docs = field->postings(*term_state, required_features); docs) {
+    if (auto docs = field->postings(*term_state, required_features)) {
       auto& it = itrs.emplace_back(std::move(docs));
 
       if (!it) [[unlikely]] {

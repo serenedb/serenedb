@@ -133,6 +133,20 @@ ORDER BY grade, name DESC;
 db error: ERROR: for SELECT DISTINCT, ORDER BY expressions must appear in select list
 
 
+onlyif serenedb # error is distinguished by grade / clickclack.grade
+query error
+SELECT DISTINCT grade
+FROM
+(
+  VALUES
+    ('babsky', 22 ), ('babsky', 20), ('babsky', 21), ('babsky', 21),
+    ('vedernikoff', 14), ('vedernikoff', 13), ('vedernikoff', 14)
+) as clickclack(name, grade)
+GROUP BY name;
+----
+db error: ERROR: column "grade" must appear in the GROUP BY clause or be used in an aggregate function
+
+
 query
 SELECT DISTINCT *, *
 FROM

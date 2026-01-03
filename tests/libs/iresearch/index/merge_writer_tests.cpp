@@ -2939,5 +2939,5 @@ INSTANTIATE_TEST_SUITE_P(
   merge_writer_test, MergeWriterTestCase,
   ::testing::Combine(
     ::testing::Values(&tests::Directory<&tests::MemoryDirectory>),
-    ::testing::Values("1_5", "1_5simd")),
+    ::testing::Values("1_5avx", "1_5simd")),
   &MergeWriterTestCase::to_string);

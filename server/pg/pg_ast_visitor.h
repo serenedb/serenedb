@@ -179,6 +179,9 @@ class AstVisitor {
         TraverseSortBy(castNode(SortBy, node));
         break;
 
+      case T_List:
+        TraverseList(castNode(List, node));
+        break;
       // doesn't contain child nodes
       case T_ColumnRef:
       case T_A_Const:

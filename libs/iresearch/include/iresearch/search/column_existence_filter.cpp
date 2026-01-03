@@ -29,7 +29,7 @@
 namespace irs {
 namespace {
 
-class ColumnExistenceQuery : public Filter::Prepared {
+class ColumnExistenceQuery : public Filter::Query {
  public:
   ColumnExistenceQuery(std::string_view field, bstring&& stats, score_t boost)
     : _field{field}, _stats{std::move(stats)}, _boost{boost} {}
@@ -86,7 +86,7 @@ class ColumnPrefixExistenceQuery : public ColumnExistenceQuery {
     SDB_ASSERT(_acceptor);
   }
 
-  irs::DocIterator::ptr execute(const ExecutionContext& ctx) const final {
+  DocIterator::ptr execute(const ExecutionContext& ctx) const final {
     using AdapterT = irs::ScoreAdapter<>;
 
     SDB_ASSERT(_acceptor);
@@ -99,7 +99,7 @@ class ColumnPrefixExistenceQuery : public ColumnExistenceQuery {
 
     if (!it->seek(prefix)) {
       // reached the end
-      return irs::DocIterator::empty();
+      return DocIterator::empty();
     }
 
     const auto* column = &it->value();
@@ -117,11 +117,10 @@ class ColumnPrefixExistenceQuery : public ColumnExistenceQuery {
 
     return ResolveMergeType(
       ScoreMergeType::Sum, ord.buckets().size(),
-      [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-        using DisjunctionT =
-          irs::disjunction_iterator<irs::DocIterator::ptr, A>;
-        return irs::MakeDisjunction<DisjunctionT>(ctx.wand, std::move(itrs),
-                                                  std::move(aggregator));
+      [&]<typename A>(A&& aggregator) -> DocIterator::ptr {
+        using Disjunction = DisjunctionIterator<DocIterator::ptr, A>;
+        return irs::MakeDisjunction<Disjunction>(ctx.wand, std::move(itrs),
+                                                 std::move(aggregator));
       });
   }
 
@@ -131,8 +130,7 @@ class ColumnPrefixExistenceQuery : public ColumnExistenceQuery {
 
 }  // namespace
 
-Filter::Prepared::ptr ByColumnExistence::prepare(
-  const PrepareContext& ctx) const {
+Filter::Query::ptr ByColumnExistence::prepare(const PrepareContext& ctx) const {
   // skip field-level/term-level statistics because there are no explicit
   // fields/terms, but still collect index-level statistics
   // i.e. all fields and terms implicitly match

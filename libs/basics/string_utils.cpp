@@ -209,7 +209,6 @@ std::string EscapeUnicode(std::string_view value, bool escape_slash) {
     return std::string(value);
   }
 
-  // cppcheck-suppress unsignedPositive
   if (len >= (SIZE_MAX - 1) / 6) {
     SDB_THROW(ERROR_OUT_OF_MEMORY);
   }
@@ -543,7 +542,6 @@ std::string UrlEncode(const char* src, const size_t len) {
 
   const char* end = src + len;
 
-  // cppcheck-suppress unsignedPositive
   if (len >= (SIZE_MAX - 1) / 3) {
     SDB_THROW(ERROR_OUT_OF_MEMORY);
   }
@@ -585,7 +583,6 @@ std::string UrlEncode(const char* src, const size_t len) {
 void EncodeUriComponent(std::string& result, const char* src, size_t len) {
   const char* end = src + len;
 
-  // cppcheck-suppress unsignedPositive
   if (result.size() + len >= (SIZE_MAX - 1) / 3) {
     SDB_THROW(ERROR_OUT_OF_MEMORY);
   }

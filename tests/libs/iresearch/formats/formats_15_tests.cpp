@@ -80,15 +80,13 @@ class FreqThresholdDocIterator : public irs::DocIterator {
 
   irs::doc_id_t value() const final { return _impl->value(); }
 
-  bool next() final {
+  irs::doc_id_t advance() final {
     while (_impl->next()) {
-      if (_freq && Less()) {
-        continue;
+      if (!_freq || !Less()) {
+        break;
       }
-
-      return true;
     }
-    return false;
+    return value();
   }
 
   irs::doc_id_t seek(irs::doc_id_t target) final {
@@ -233,7 +231,6 @@ void AssertSkipList(const SkipList& expected_freqs, irs::doc_id_t doc,
 
 class Format15TestCase : public tests::FormatTestCase {
  public:
-  static constexpr size_t kPostingsWriterBlockSize = 128;
   static constexpr auto kNone = irs::IndexFeatures::None;
   static constexpr auto kFreq = irs::IndexFeatures::Freq;
   static constexpr auto kPos =
@@ -519,7 +516,7 @@ void Format15TestCase::AssertDocsSeq(irs::PostingsReader& reader,
 
   if (!threshold_value->max.levels.empty()) {
     TestPostings tmp{docs, field_features};
-    skip_list = SkipList::Make(tmp, kPostingsWriterBlockSize, 8,
+    skip_list = SkipList::Make(tmp, GetPostingsBlockSize(), 8,
                                irs::doc_id_t(docs.size()));
   }
 
@@ -634,13 +631,13 @@ void Format15TestCase::AssertPostings(DocsView docs,
 
   // Seek to every document 127th document in a block
   AssertDocsRandom(*reader, scorer, docs, field_features, features, meta,
-                   threshold, strict, kPostingsWriterBlockSize - 1,
-                   kPostingsWriterBlockSize);
+                   threshold, strict, GetPostingsBlockSize() - 1,
+                   GetPostingsBlockSize());
 
   // Seek to every 128th document in a block
   AssertDocsRandom(*reader, scorer, docs, field_features, features, meta,
-                   threshold, strict, kPostingsWriterBlockSize,
-                   kPostingsWriterBlockSize);
+                   threshold, strict, GetPostingsBlockSize(),
+                   GetPostingsBlockSize());
 
   // Seek to every document
   AssertDocsRandom(*reader, scorer, docs, field_features, features, meta,
@@ -672,7 +669,7 @@ void Format15TestCase::AssertPostings(DocsView docs, uint32_t threshold) {
 }
 
 static const auto kTestFormats =
-  ::testing::Values(tests::FormatInfo{"1_5"}, tests::FormatInfo{"1_5simd"});
+  ::testing::Values(tests::FormatInfo{"1_5avx"}, tests::FormatInfo{"1_5simd"});
 
 static const auto kTestDirs =
   ::testing::ValuesIn(tests::GetDirectories<tests::kTypesAll>());
@@ -704,7 +701,7 @@ INSTANTIATE_TEST_SUITE_P(Format15Test, FormatTestCaseWithEncryption,
 TEST_P(Format15TestCase, SingletonPostingsThreshold0) {
   static constexpr size_t kCount = 1;
   static constexpr uint32_t kThreshold = 0;
-  static_assert(kCount < kPostingsWriterBlockSize);
+  ASSERT_TRUE(kCount < GetPostingsBlockSize());
 
   const auto docs = GenerateDocs(kCount, 50.f, 14.f, 1);
 
@@ -714,7 +711,7 @@ TEST_P(Format15TestCase, SingletonPostingsThreshold0) {
 TEST_P(Format15TestCase, ShortPostingsThreshold0) {
   static constexpr size_t kCount = 117;  // < postings_writer::BLOCK_SIZE
   static constexpr uint32_t kThreshold = 0;
-  static_assert(kCount < kPostingsWriterBlockSize);
+  ASSERT_TRUE(kCount < GetPostingsBlockSize());
 
   const auto docs = GenerateDocs(kCount, 50.f, 14.f, 1);
 
@@ -722,9 +719,8 @@ TEST_P(Format15TestCase, ShortPostingsThreshold0) {
 }
 
 TEST_P(Format15TestCase, BlockPostingsThreshold0) {
-  static constexpr size_t kCount = kPostingsWriterBlockSize;
   static constexpr uint32_t kThreshold = 0;
-  const auto docs = GenerateDocs(kCount, 50.f, 14.f, 1);
+  const auto docs = GenerateDocs(GetPostingsBlockSize(), 50.f, 14.f, 1);
 
   AssertPostings(docs, kThreshold);
 }
@@ -747,7 +743,7 @@ TEST_P(Format15TestCase, LongPostingsThreshold100) {
 
 TEST_P(Format15TestCase, MediumPostingsThreshold0) {
   static constexpr size_t kCount = 319;
-  static_assert(kCount > kPostingsWriterBlockSize);
+  ASSERT_TRUE(kCount > GetPostingsBlockSize());
   static constexpr uint32_t kThreshold = 0;
   const auto docs = GenerateDocs(kCount, 50.f, 13.f, 1);
 

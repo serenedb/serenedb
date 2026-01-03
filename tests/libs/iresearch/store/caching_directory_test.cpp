@@ -195,7 +195,7 @@ void CachingDirectoryTestCase<Directory>::TestCachingImpl(
   ASSERT_TRUE(is_cached("0"));
 
 // Rename
-#ifdef _MSC_VER
+#ifdef _WIN32
   constexpr bool kIsCachedAfterRename = false;
 #else
   constexpr bool kIsCachedAfterRename = true;

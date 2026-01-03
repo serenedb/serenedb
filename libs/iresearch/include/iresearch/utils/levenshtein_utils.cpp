@@ -115,7 +115,6 @@ class ParametricState {
   template<typename H>
   friend H AbslHashValue(H h, const ParametricState& state) {
     for (const auto& pos : state) {
-      // cppcheck-suppress unreadVariable
       auto value = (static_cast<uint64_t>(pos.offset) << 32) |
                    (static_cast<uint64_t>(pos.distance) << 1) |
                    static_cast<uint64_t>(pos.transpose);
@@ -215,7 +214,7 @@ void AddTransition(ParametricState& to, const ParametricState& from,
     AddElementaryTransitions(to, pos, chi, max_distance, with_transpositions);
   }
 
-  std::sort(to.begin(), to.end());
+  absl::c_sort(to);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -298,7 +297,7 @@ std::vector<Character> MakeAlphabet(bytes_view word, size_t& utf8_size) {
   utf8_utils::ToUTF32<false>(word, std::back_inserter(chars));
   utf8_size = chars.size();
 
-  std::sort(chars.begin(), chars.end());
+  absl::c_sort(chars);
   auto cbegin = chars.begin();
   auto cend = std::unique(cbegin, chars.end());  // no need to erase here
 

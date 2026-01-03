@@ -78,7 +78,6 @@ ErrorCode ExtractCurrentFile(unzFile uf, void* buffer, const size_t buffer_size,
   long system_error;
   int err;
 
-  // cppcheck-suppress *
   FILE* fout;
 
   filename_in_zip[0] = '\0';
@@ -170,7 +169,6 @@ ErrorCode ExtractCurrentFile(unzFile uf, void* buffer, const size_t buffer_size,
       auto res = SdbCreateRecursiveDirectory(tmp, system_error, error_message);
 
       // write back the original value
-      // cppcheck-suppress *
       *(filename_without_path - 1) = c;
 
       if (res != ERROR_OK) {

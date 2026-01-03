@@ -354,7 +354,7 @@ class IndexWriter : private util::Noncopyable {
 
       return _writer.valid();
     }
-#ifdef IRESEARCH_TEST
+#ifdef SDB_GTEST
     SegmentWriter& Writer() noexcept { return _writer; }
 #endif
 

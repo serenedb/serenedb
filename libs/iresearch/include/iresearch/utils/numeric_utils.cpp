@@ -27,7 +27,7 @@
 #include "basics/bit_utils.hpp"
 #include "basics/shared.hpp"
 
-#if defined(_MSC_VER)
+#if defined(_WIN32)
 #include <Winsock2.h>
 #pragma comment(lib, "Ws2_32.lib")
 #elif defined(__APPLE__)
@@ -79,14 +79,12 @@ struct encode_traits<uint32_t> {
 #ifndef FLOAT_T_IS_DOUBLE_T
 template<>
 struct encode_traits<float_t> : encode_traits<uint32_t> {
-  // cppcheck-suppress duplInheritedMember
   static constexpr byte_type TYPE_MAGIC = 0x20;
 };
 #endif
 
 template<>
 struct encode_traits<double_t> : encode_traits<uint64_t> {
-  // cppcheck-suppress duplInheritedMember
   static constexpr byte_type TYPE_MAGIC = 0xA0;
 };
 

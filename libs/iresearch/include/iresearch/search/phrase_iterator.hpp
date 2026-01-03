@@ -889,11 +889,11 @@ class PhraseIterator : public DocIterator {
   PhraseIterator(ScoreAdapters&& itrs, std::vector<TermPosition>&& pos)
     : _approx{NoopAggregator{},
               [](auto&& itrs) {
-                std::sort(itrs.begin(), itrs.end(),
-                          [](const auto& lhs, const auto& rhs) noexcept {
-                            return CostAttr::extract(lhs, CostAttr::kMax) <
-                                   CostAttr::extract(rhs, CostAttr::kMax);
-                          });
+                absl::c_sort(itrs,
+                             [](const auto& lhs, const auto& rhs) noexcept {
+                               return CostAttr::extract(lhs, CostAttr::kMax) <
+                                      CostAttr::extract(rhs, CostAttr::kMax);
+                             });
                 return std::move(itrs);
               }(std::move(itrs))},
       _freq{std::move(pos)} {
@@ -933,39 +933,36 @@ class PhraseIterator : public DocIterator {
     return std::get<AttributePtr<DocAttr>>(_attrs).ptr->value;
   }
 
-  bool next() final {
-    bool next = false;
-    while ((next = _approx.next()) && !_freq.EvaluateFreq()) {
+  doc_id_t advance() final {
+    while (true) {
+      const auto doc = _approx.advance();
+      if (doc_limits::eof(doc) || _freq.EvaluateFreq()) {
+        return doc;
+      }
     }
-
-    return next;
   }
 
   doc_id_t seek(doc_id_t target) final {
-    auto* pdoc = std::get<AttributePtr<DocAttr>>(_attrs).ptr;
-
-    // important to call freq_.EvaluateFreq() in order
-    // to set attribute values
-    const auto prev = pdoc->value;
-    const auto doc = _approx.seek(target);
-
-    if (prev == doc || _freq.EvaluateFreq()) {
+    if (const auto doc = value(); target <= doc) [[unlikely]] {
       return doc;
     }
-
-    next();
-
-    return pdoc->value;
+    const auto doc = _approx.seek(target);
+    if (doc_limits::eof(doc) || _freq.EvaluateFreq()) {
+      return doc;
+    }
+    return advance();
   }
 
+  uint32_t count() final { return Count(*this); }
+
  private:
-  using attributes =
+  using Attributes =
     std::tuple<AttributePtr<DocAttr>, AttributePtr<CostAttr>, ScoreAttr>;
 
   // first approximation (conjunction over all words in a phrase)
   Conjunction _approx;
   Frequency _freq;
-  attributes _attrs;
+  Attributes _attrs;
 };
 
 }  // namespace irs

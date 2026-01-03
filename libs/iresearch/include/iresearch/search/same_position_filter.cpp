@@ -46,25 +46,27 @@ class SamePositionIterator : public Conjunction {
     SDB_ASSERT(!_pos.empty());
   }
 
-  bool next() final {
-    while (Conjunction::next()) {
-      if (FindSamePosition()) {
-        return true;
+  doc_id_t advance() final {
+    while (true) {
+      const auto doc = Conjunction::advance();
+      if (doc_limits::eof(doc) || FindSamePosition()) {
+        return doc;
       }
     }
-    return false;
   }
 
   doc_id_t seek(doc_id_t target) final {
+    if (const auto doc = this->value(); target <= doc) [[unlikely]] {
+      return doc;
+    }
     const auto doc = Conjunction::seek(target);
-
     if (doc_limits::eof(doc) || FindSamePosition()) {
       return doc;
     }
-
-    next();
-    return this->value();
+    return advance();
   }
+
+  uint32_t count() final { return DocIterator::Count(*this); }
 
  private:
   bool FindSamePosition() {
@@ -90,7 +92,7 @@ class SamePositionIterator : public Conjunction {
   PositionsT _pos;
 };
 
-class SamePositionQuery : public Filter::Prepared {
+class SamePositionQuery : public Filter::Query {
  public:
   using TermsStatesT = ManagedVector<TermState>;
   using StatesT = StatesCache<TermsStatesT>;
@@ -160,7 +162,7 @@ class SamePositionQuery : public Filter::Prepared {
 
     return irs::ResolveMergeType(
       irs::ScoreMergeType::Sum, ord.buckets().size(),
-      [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
+      [&]<typename A>(A&& aggregator) -> DocIterator::ptr {
         return MakeConjunction<SamePositionIterator>(
           // TODO(mbkkt) Implement wand?
           {}, std::move(aggregator), std::move(itrs), std::move(positions));
@@ -177,13 +179,13 @@ class SamePositionQuery : public Filter::Prepared {
 
 }  // namespace
 
-Filter::Prepared::ptr BySamePosition::prepare(const PrepareContext& ctx) const {
+Filter::Query::ptr BySamePosition::prepare(const PrepareContext& ctx) const {
   auto& terms = options().terms;
   const auto size = terms.size();
 
   if (0 == size) {
     // empty field or phrase
-    return Filter::Prepared::empty();
+    return Filter::Query::empty();
   }
 
   // per segment query state

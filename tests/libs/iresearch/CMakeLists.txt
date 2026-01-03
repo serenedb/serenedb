@@ -42,6 +42,7 @@ set(iresearch-tests_sources
     ./index/buffered_column_test.cpp
     ./index/segment_writer_tests.cpp
     ./index/consolidation_policy_tests.cpp
+    ./parser/lucene_parser_test.cpp
     ./search/empty_filter_tests.cpp
     ./search/nested_filter_test.cpp
     ./search/granular_range_filter_tests.cpp
@@ -69,6 +70,7 @@ set(iresearch-tests_sources
     ./search/ngram_similarity_filter_tests.cpp
     ./search/top_terms_collector_test.cpp
     ./search/proxy_filter_test.cpp
+    ./search/doc_collector_test.cpp
     ./utils/async_utils_tests.cpp
     ./utils/automaton_test.cpp
     ./utils/bitvector_tests.cpp

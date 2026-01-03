@@ -57,7 +57,7 @@ class ByPhraseOptions {
   using phrase_type = std::deque<PhrasePartInfo>;
 
  public:
-  using filter_type = ByPhrase;
+  using FilterType = ByPhrase;
 
   // Appends phrase part of type "PhrasePart" at a specified offset
   // "offs" from the end of the phrase.
@@ -130,11 +130,10 @@ class ByPhraseOptions {
 
 class ByPhrase : public FilterWithField<ByPhraseOptions> {
  public:
-  static Prepared::ptr Prepare(const PrepareContext& ctx,
-                               std::string_view field,
-                               const ByPhraseOptions& options);
+  static Query::ptr Prepare(const PrepareContext& ctx, std::string_view field,
+                            const ByPhraseOptions& options);
 
-  Prepared::ptr prepare(const PrepareContext& ctx) const final {
+  Query::ptr prepare(const PrepareContext& ctx) const final {
     return Prepare(ctx.Boost(Boost()), field(), options());
   }
 };

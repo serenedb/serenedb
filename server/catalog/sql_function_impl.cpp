@@ -51,7 +51,7 @@ Result Parse(ObjectId database_id, std::string_view query, pg::Objects& objects,
     }
     stmt = list_nth_node(RawStmt, tree, 0);
     SDB_ASSERT(stmt);
-    SDB_ASSERT(objects.getObjects().empty());
+    SDB_ASSERT(objects.empty());
 
     if (!is_procedure && stmt->stmt->type != T_SelectStmt) {
       return {ERROR_BAD_PARAMETER,
@@ -85,7 +85,8 @@ Result FunctionImpl::Init(ObjectId database, std::string_view name,
   r = basics::SafeCall([&] {
     pg::Objects objects;
     pg::Disallowed disallowed{pg::Objects::ObjectName{{}, name}};
-    pg::ResolveFunction(database, search_path, objects, disallowed, _objects);
+    pg::ResolveSqlFunction(database, search_path, objects, disallowed,
+                           _objects);
   });
   if (!r.ok()) {
     return r;

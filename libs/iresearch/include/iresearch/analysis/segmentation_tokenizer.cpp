@@ -104,8 +104,8 @@ bool ParseVPackOptions(const vpack::Slice slice, Options& options) {
 bool MakeVPackConfig(const Options& options, vpack::Builder* builder) {
   vpack::ObjectBuilder object(builder);
   {
-    const auto* it = std::find_if(
-      kConvertMap.begin(), kConvertMap.end(),
+    const auto it = absl::c_find_if(
+      kConvertMap,
       [v = options.convert](const auto& m) { return m.second == v; });
     if (it != kConvertMap.end()) {
       builder->add(kConvertName, it->first);
@@ -118,8 +118,8 @@ bool MakeVPackConfig(const Options& options, vpack::Builder* builder) {
     }
   }
   {
-    const auto* it = std::find_if(
-      kAcceptMap.begin(), kAcceptMap.end(),
+    const auto it = absl::c_find_if(
+      kAcceptMap,
       [v = options.accept](const auto& m) { return m.second == v; });
     if (it != kAcceptMap.end()) {
       builder->add(kAcceptName, it->first);

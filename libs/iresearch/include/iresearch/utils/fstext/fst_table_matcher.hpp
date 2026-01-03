@@ -69,16 +69,15 @@ std::vector<typename F::Arc::Label> getStartLabels(const F& fst) {
 
     Label offset = 0;
 
-    std::for_each(std::begin(bits), std::end(bits),
-                  [&offset, &begin](size_t word) {
-                    for (size_t j = 0; j < irs::BitsRequired<size_t>(); ++j) {
-                      if (irs::CheckBit(word, j)) {
-                        *begin = offset + static_cast<Label>(j);
-                        ++begin;
-                      }
-                    }
-                    offset += irs::BitsRequired<size_t>();
-                  });
+    absl::c_for_each(bits, [&offset, &begin](size_t word) {
+      for (size_t j = 0; j < irs::BitsRequired<size_t>(); ++j) {
+        if (irs::CheckBit(word, j)) {
+          *begin = offset + static_cast<Label>(j);
+          ++begin;
+        }
+      }
+      offset += irs::BitsRequired<size_t>();
+    });
 
     return labels;
   } else {

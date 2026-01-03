@@ -266,16 +266,6 @@ std::shared_ptr<const T> MakePtrView(const std::shared_ptr<const T>& ptr) {
   return MakePtrView(*ptr);
 }
 
-void AndToLeft(lp::ExprPtr& left, lp::ExprPtr right) {
-  if (!left) {
-    left = std::move(right);
-    return;
-  }
-  left = std::make_shared<lp::SpecialFormExpr>(
-    velox::BOOLEAN(), lp::SpecialForm::kAnd,
-    std::vector<lp::ExprPtr>{std::move(left), std::move(right)});
-}
-
 template<typename T>
 std::optional<T> TryGet(const A_Const& expr) {
   if (expr.isnull) {
@@ -987,6 +977,20 @@ class SqlAnalyzer {
       "presto_eq", {std::move(left), std::move(right)});
   }
 
+  lp::ExprPtr MakeAnd(std::vector<lp::ExprPtr> args) {
+    if (args.size() == 1) {
+      return std::move(args.front());
+    }
+    return ResolveVeloxFunctionAndInferArgsCommonType("and", std::move(args));
+  }
+
+  lp::ExprPtr MakeOr(std::vector<lp::ExprPtr> args) {
+    if (args.size() == 1) {
+      return std::move(args.front());
+    }
+    return ResolveVeloxFunctionAndInferArgsCommonType("or", std::move(args));
+  }
+
   ColumnRefHook GetTargetListNamingResolver(
     TargetListGetter target_list_getter);
 
@@ -1076,7 +1080,7 @@ class SqlAnalyzer {
               ", language: ", magic_enum::enum_name(lang)));
   }
 
-  [[maybe_unused]] const Objects& _objects;
+  const Objects& _objects;
   const QueryString& _query_string;
   UniqueIdGenerator& _id_generator;
   vc::QueryCtx& _query_ctx;
@@ -1382,7 +1386,7 @@ void SqlAnalyzer::MakeTableWrite(
     auto detail = build_failing_row_detail();
 
     // make condition: if (check) -> ok; else -> fail
-    lp::ExprPtr check;
+    std::vector<lp::ExprPtr> checks;
     for (const auto& constraint : check_constraints) {
       SDB_ASSERT(constraint.expr);
       auto expr = ProcessExprNode(state, constraint.expr->GetExpr(),
@@ -1422,11 +1426,12 @@ void SqlAnalyzer::MakeTableWrite(
                                          MakeConst(true)});
       }
 
-      AndToLeft(check, std::move(expr));
+      checks.emplace_back(std::move(expr));
     }
 
-    state.root = std::make_shared<lp::FilterNode>(
-      _id_generator.NextPlanId(), std::move(state.root), std::move(check));
+    state.root = std::make_shared<lp::FilterNode>(_id_generator.NextPlanId(),
+                                                  std::move(state.root),
+                                                  MakeAnd(std::move(checks)));
   }
 
   state.root = std::make_shared<lp::TableWriteNode>(
@@ -1469,7 +1474,7 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
   const auto& relation = *stmt.relation;
   const auto schema_name = absl::NullSafeStringView(relation.schemaname);
   const std::string_view table_name = relation.relname;
-  auto object = _objects.getData(schema_name, table_name);
+  auto object = _objects.getRelation(schema_name, table_name);
   SDB_ASSERT(object);
   SDB_ASSERT(object->object);
   const auto& logical_object = *object->object;
@@ -1587,7 +1592,7 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
 
   const auto& relation = *stmt.relation;
   const auto schema_name = absl::NullSafeStringView(relation.schemaname);
-  auto object = _objects.getData(schema_name, relation.relname);
+  auto object = _objects.getRelation(schema_name, relation.relname);
   SDB_ASSERT(object);
   SDB_ASSERT(object->object);
   const auto& logical_object = *object->object;
@@ -1695,7 +1700,7 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
 
   const auto& relation = *stmt.relation;
   const auto schema_name = absl::NullSafeStringView(relation.schemaname);
-  auto object = _objects.getData(schema_name, relation.relname);
+  auto object = _objects.getRelation(schema_name, relation.relname);
   SDB_ASSERT(object);
   SDB_ASSERT(object->object);
   const auto& logical_object = *object->object;
@@ -1740,7 +1745,7 @@ void SqlAnalyzer::ProcessMergeStmt(State& state, const MergeStmt& stmt) {
 void SqlAnalyzer::ProcessCallStmt(State& state, const CallStmt& stmt) {
   const auto& func_call = *stmt.funccall;
   const auto [_, schema, name] = GetDbSchemaRelation(func_call.funcname);
-  auto* function = _objects.getData(schema, name);
+  auto* function = _objects.getFunction(schema, name);
   if (!function) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
                     CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
@@ -2495,7 +2500,7 @@ SqlAnalyzer::CollectedAggregates SqlAnalyzer::CollectAggregateFunctions(
   auto& func_to_aggr = state.aggregate_or_window;
   auto visit_func = [&](const FuncCall& func_call) {
     const auto [_, schema, func_name] = GetDbSchemaRelation(func_call.funcname);
-    const auto* func = _objects.getData(schema, func_name);
+    const auto* func = _objects.getFunction(schema, func_name);
     if (!func) {
       return;
     }
@@ -2539,7 +2544,7 @@ SqlAnalyzer::CollectedWindows SqlAnalyzer::CollectTargetListWindowFunctions(
   auto& func_to_window = state.aggregate_or_window;
   auto visit_func = [&](const FuncCall& func_call) {
     auto [_, schema, func_name] = GetDbSchemaRelation(func_call.funcname);
-    const auto* func = _objects.getData(schema, func_name);
+    const auto* func = _objects.getFunction(schema, func_name);
     if (!func) {
       return;
     }
@@ -2768,10 +2773,11 @@ void SqlAnalyzer::ProcessDistinctAll(State& state, const List* sort_clause,
     state.lookup_columns = MakePtrView(state.root->outputType());
   } else {
     // if we have an aggregation just inherit its lookup columns
-    SDB_ASSERT(state.has_aggregate);
+    SDB_ASSERT(state.has_aggregate || state.has_groupby);
   }
 
   state.has_groupby = true;
+  ValidateAggrInputRefs(state, std::span<const lp::ExprPtr>{grouping_keys});
   state.root = std::make_shared<lp::AggregateNode>(
     _id_generator.NextPlanId(), std::move(state.root), std::move(grouping_keys),
     std::vector<lp::AggregateNode::GroupingSet>{},
@@ -3057,7 +3063,7 @@ State SqlAnalyzer::ProcessRangeVar(State* parent, const RangeVar* node) {
   }
 
   const auto schema_name = absl::NullSafeStringView(node->schemaname);
-  auto object = _objects.getData(schema_name, name);
+  auto object = _objects.getRelation(schema_name, name);
   SDB_ASSERT(object);
   SDB_ASSERT(object->object);
   auto& logical_object = *object->object;
@@ -3137,7 +3143,8 @@ SqlAnalyzer::JoinUsingReturn SqlAnalyzer::ProcessJoinUsingClause(
   std::vector<lp::ExprPtr> project_exprs;
   project_names.reserve(l_output->size() + r_output->size());
   project_exprs.reserve(l_output->size() + r_output->size());
-  lp::ExprPtr join_condition;
+  std::vector<lp::ExprPtr> join_conditions;
+  join_conditions.reserve(using_list.size());
   for (const auto using_column : using_list) {
     auto l_column_idx =
       resolve_using(l_resolver, l_output, using_column, kLeft);
@@ -3153,7 +3160,7 @@ SqlAnalyzer::JoinUsingReturn SqlAnalyzer::ProcessJoinUsingClause(
     SDB_ASSERT(emplaced);
 
     auto eq = MakeEquality(std::move(l_column_ref), std::move(r_column_ref));
-    AndToLeft(join_condition, std::move(eq));
+    join_conditions.emplace_back(std::move(eq));
   }
 
   // projects as pg [common (already in vector), other_left, other_right]
@@ -3197,8 +3204,8 @@ SqlAnalyzer::JoinUsingReturn SqlAnalyzer::ProcessJoinUsingClause(
     }
   }
 
-  return JoinUsingReturn(std::move(join_condition), std::move(project_names),
-                         std::move(project_exprs));
+  return JoinUsingReturn{MakeAnd(std::move(join_conditions)),
+                         std::move(project_names), std::move(project_exprs)};
 }
 
 State SqlAnalyzer::ProcessJoinExpr(State* parent, const JoinExpr* node) {
@@ -3318,7 +3325,7 @@ State SqlAnalyzer::ProcessRangeFunction(State* parent,
 
         // TODO fix function resolve
         auto [_, schema, func_name] = GetDbSchemaRelation(func_call->funcname);
-        auto* function = _objects.getData(schema, func_name);
+        auto* function = _objects.getFunction(schema, func_name);
         if (!function) {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
@@ -3902,13 +3909,6 @@ lp::ExprPtr SqlAnalyzer::ProcessAExpr(State& state, const A_Expr& expr) {
     case AEXPR_NULLIF: {
       auto lhs = ProcessExprNodeImpl(state, expr.lexpr);
       auto rhs = ProcessExprNodeImpl(state, expr.rexpr);
-      // TODO: try to find common type
-      if (lhs->type() != rhs->type()) {
-        if (rhs->type()->kind() == velox::TypeKind::UNKNOWN) {
-          return lhs;
-        }
-        return MakeConst(velox::TypeKind::UNKNOWN);
-      }
       auto value = lhs;
       auto value_type = value->type();
       auto cmp = ResolveVeloxFunctionAndInferArgsCommonType(
@@ -3942,9 +3942,14 @@ lp::ExprPtr SqlAnalyzer::ProcessAExpr(State& state, const A_Expr& expr) {
       auto lhs = ProcessExprNodeImpl(state, expr.lexpr);
       auto rhs = ProcessExprListImpl(state, castNode(List, expr.rexpr));
       SDB_ASSERT(rhs.size() == 2);
-      auto res = ResolveVeloxFunctionAndInferArgsCommonType(
-        "presto_between",
-        {std::move(lhs), std::move(rhs[0]), std::move(rhs[1])});
+
+      // this is probably incorrect for non-deterministic lhs expressions
+      auto lhs_cmp = ResolveVeloxFunctionAndInferArgsCommonType(
+        "presto_lte", {std::move(rhs[0]), lhs});
+      auto rhs_cmp = ResolveVeloxFunctionAndInferArgsCommonType(
+        "presto_lte", {std::move(lhs), std::move(rhs[1])});
+      auto res = MakeAnd({std::move(lhs_cmp), std::move(rhs_cmp)});
+
       if (expr.kind == AEXPR_NOT_BETWEEN) {
         return ResolveVeloxFunctionAndInferArgsCommonType("presto_not",
                                                           {std::move(res)});
@@ -4062,7 +4067,7 @@ lp::ExprPtr SqlAnalyzer::ProcessAConst(State& state, const A_Const& expr) {
 
 lp::ExprPtr SqlAnalyzer::ProcessFuncCall(State& state, const FuncCall& expr) {
   auto [_, schema, name] = GetDbSchemaRelation(expr.funcname);
-  auto* function = _objects.getData(schema, name);
+  auto* function = _objects.getFunction(schema, name);
   if (!function) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
                     CURSOR_POS(ErrorPosition(ExprLocation(&expr))),

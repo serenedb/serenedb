@@ -49,7 +49,7 @@ Result ParseColumnExpr(ObjectId database_id, std::string_view query,
     memory_context = pg::CreateMemoryContext();
     expr = pg::ParseSingleExpression(*memory_context, query_string);
     SDB_ASSERT(expr);
-    SDB_ASSERT(objects.getObjects().empty());
+    SDB_ASSERT(objects.empty());
 
     auto database = catalog::GetDatabase(database_id);
     if (!database) {

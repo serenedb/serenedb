@@ -40,7 +40,7 @@ struct ByWildcardFilterOptions {
 
 // Options for wildcard filter
 struct ByWildcardOptions : ByWildcardFilterOptions {
-  using filter_type = ByWildcard;
+  using FilterType = ByWildcard;
   using filter_options = ByWildcardFilterOptions;
 
   // The maximum number of most frequent terms to consider for scoring
@@ -55,13 +55,12 @@ struct ByWildcardOptions : ByWildcardFilterOptions {
 // User-side wildcard filter
 class ByWildcard final : public FilterWithField<ByWildcardOptions> {
  public:
-  static Prepared::ptr prepare(const PrepareContext& ctx,
-                               std::string_view field, bytes_view term,
-                               size_t scored_terms_limit);
+  static Query::ptr prepare(const PrepareContext& ctx, std::string_view field,
+                            bytes_view term, size_t scored_terms_limit);
 
   static field_visitor visitor(bytes_view term);
 
-  Prepared::ptr prepare(const PrepareContext& ctx) const final {
+  Query::ptr prepare(const PrepareContext& ctx) const final {
     return prepare(ctx.Boost(Boost()), field(), options().term,
                    options().scored_terms_limit);
   }

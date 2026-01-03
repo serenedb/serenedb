@@ -470,7 +470,7 @@ ScoreFunction BM25::PrepareScorer(const ColumnProvider& segment,
 
   // No norms, pretend all fields have the same length 1.
   return prepare_norm_scorer(
-    MakeBM25NormAdapter<NormType::NormTiny>([]() { return 1U; }));
+    MakeBM25NormAdapter<NormType::NormTiny>([] { return 1U; }));
 }
 
 WandWriter::ptr BM25::prepare_wand_writer(size_t max_levels) const {

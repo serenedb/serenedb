@@ -92,7 +92,6 @@ void AcceptorUnixDomain::asyncAccept() {
     this->asyncAccept();
   };
 
-  // cppcheck-suppress accessMoved
   _acceptor.async_accept(socket, peer, std::move(handler));
 }
 

@@ -42,7 +42,7 @@ class ProxyFilter final : public Filter {
  public:
   using cache_ptr = std::shared_ptr<ProxyQueryCache>;
 
-  Prepared::ptr prepare(const PrepareContext& ctx) const final;
+  Query::ptr prepare(const PrepareContext& ctx) const final;
 
   template<typename Impl, typename Base = Impl, typename... Args>
   std::pair<Base&, cache_ptr> set_filter(IResourceManager& memory,

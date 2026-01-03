@@ -160,7 +160,7 @@ void HNSWIndexReader::Search(HNSWSearchContext& context) const {
   context.vt.visited.resize(_hnsw.levels.size(), 0);
   context.vt.advance();
   res.Begin(0, false);
-  _hnsw.search(dis, res, context.vt, &context.info.params);
+  _hnsw.search(dis, nullptr, res, context.vt, &context.info.params);
 }
 
 void HNSWIndexWriter::Add(const float* data, doc_id_t doc) {

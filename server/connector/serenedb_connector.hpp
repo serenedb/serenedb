@@ -378,7 +378,7 @@ class SereneDBConnectorMetadata final
       }
     }
 
-    return number_of_locked_primary_keys;
+    return yaclib::MakeFuture(number_of_locked_primary_keys);
   }
 
   velox::ContinueFuture abortWrite(
@@ -399,9 +399,9 @@ class SereneDBConnectorMetadata final
                   "Failed to rollback transaction: ", status.ToString());
       }
     }
-    return {};
+    return velox::ContinueFuture::make();
   } catch (...) {
-    return folly::exception_wrapper{folly::current_exception()};
+    return velox::ContinueFuture::make(std::current_exception());
   }
 
   bool dropTable(const axiom::connector::ConnectorSessionPtr& session,

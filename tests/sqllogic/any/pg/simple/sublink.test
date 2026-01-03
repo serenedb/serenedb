@@ -329,7 +329,7 @@ dt1: name:3, total:4
   joins:
     vt2 LEFT dt3 ON vt2.column1:2 = dt3.column1:5
   syntactic join order: 1, 4
-  filter: presto_eq(dt3.sum:8, __cast(vt2.column2:2))
+  filter: presto_eq(dt3.sum:8, __cast(vt2.column2:2 AS BIGINT))
 vt2: column1:2, column2:2
 dt3: column1:5, sum:8
   output:
@@ -348,7 +348,7 @@ dt1: name:3, total:4
   joins:
     vt2 LEFT dt3 ON vt2.column1:2 = dt3.column1:5
   syntactic join order: 1, 4
-  filter: presto_eq(dt3.sum:8, __cast(vt2.column2:2))
+  filter: presto_eq(dt3.sum:8, __cast(vt2.column2:2 AS BIGINT))
 vt2: column1:2, column2:2
 dt3: column1:5, sum:8
   output:
@@ -363,7 +363,7 @@ Project -> dt1.name:3, dt1.total:4
     dt1.name:3 := vt2.column1:2
     dt1.total:4 := vt2.column2:2
   Filter -> vt2.column1:2, vt2.column2:2, dt3.sum:8
-      presto_eq(dt3.sum:8, __cast(vt2.column2:2))
+      presto_eq(dt3.sum:8, __cast(vt2.column2:2 AS BIGINT))
     Join LEFT Hash -> vt2.column1:2, vt2.column2:2, dt3.sum:8
         vt2.column1:2 = dt3.column1:5
       Values -> vt2.column1:2, vt2.column2:2

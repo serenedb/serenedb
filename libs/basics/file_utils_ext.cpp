@@ -742,7 +742,6 @@ handle_t Open(const path_char_t* path, OpenMode mode, int advice) noexcept {
   // if ((mode & OpenMode::Direct) == OpenMode::Direct) {
   //  dwFlags |= FILE_FLAG_NO_BUFFERING;
   //}
-  // cppcheck-suppress unreadVariable
   HANDLE hFile = INVALID_HANDLE_VALUE;
   int try_count = CREATE_FILE_TRIES;
   do {

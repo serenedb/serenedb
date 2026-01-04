@@ -128,6 +128,7 @@ curl \
   --form "text=${MESSAGE}" \
   --form "chat_id=${TG_CHAT_ID}" \
   --form "message_thread_id=${THREAD_ID}" \
+  --form 'link_preview_options={"is_disabled":true}' \
   "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
   >/dev/null ||
   echo "WARNING: Failed to send Telegram notification"

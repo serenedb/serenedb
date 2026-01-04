@@ -1,7 +1,5 @@
 #!/bin/bash
 
-#TODO (malandin) $WORKSPACE has to be changed to GitHub Actions specific var
-
 [ -z "$SDB_DEV" ] && exit 1                # SDB_DEV="Off"
 [ -z "$USE_IPO" ] && exit 1                # USE_IPO="On"
 [ -z "$ENSURE_VTUNE_SYMBOLS" ] && exit 1   # ENSURE_VTUNE_SYMBOLS="Off"

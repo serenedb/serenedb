@@ -1,4 +1,4 @@
-name: SereneDB Build (Reusable)
+name: Images-and-Packages-Base
 
 on:
   workflow_call:
@@ -118,6 +118,7 @@ jobs:
     timeout-minutes: 180
 
     env:
+      WORKSPACE: ${{ github.workspace }} # Jenkins compatibility layer
       BRANCH: ${{ inputs.BRANCH }}
       SDB_PRIVATE: ${{ inputs.SDB_PRIVATE }}
       SDB_PRIVATE_BRANCH: ${{ inputs.SDB_PRIVATE_BRANCH }}
@@ -140,6 +141,7 @@ jobs:
       TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
       TG_THREAD_ID_BUILD: ${{ secrets.TG_THREAD_ID_BUILD }}
       TG_THREAD_ID_MAIN: ${{ secrets.TG_THREAD_ID_MAIN }}
+      TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
       SDB_PRIVATE_REPO: ${{ secrets.SDB_PRIVATE_REPO }}
 
     steps:
@@ -233,27 +235,13 @@ jobs:
 
       - name: Send Telegram notification
         if: always()
-        run: |
-          if [ "${{ job.status }}" == "success" ]; then
-            EMOJI="✅"
-            RESULT="SUCCESS"
-          else
-            EMOJI="💥"
-            RESULT="FAILURE"
-          fi
-
-          if [ "${{ env.BRANCH }}" == "main" ]; then
-            TOPIC_ID="${{ env.TG_THREAD_ID_MAIN }}"
-          else
-            TOPIC_ID="${{ env.TG_THREAD_ID_BUILD }}"
-          fi
-
-          TEXT="${EMOJI} @${{ github.actor }} ${RESULT}: BRANCH=${{ env.BRANCH }} ${{ github.workflow }} #${{ github.run_number }} ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-
-          curl --location --request POST "https://api.telegram.org/bot${{ env.TG_TOKEN }}/sendMessage" \
-            --form "text=${TEXT}" \
-            --form "chat_id=${{ env.TG_CHAT_ID }}" \
-            --form "message_thread_id=${TOPIC_ID}" || true
+        env:
+          JOB_STATUS: ${{ job.status }}
+          ACTOR: ${{ github.actor }}
+          WORKFLOW: ${{ github.workflow }}
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: ./scripts/notify_telegram.bash
 
   cleanup:
     name: Cleanup

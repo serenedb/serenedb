@@ -1,4 +1,4 @@
-name: SereneDB Build (Manual)
+name: Images-and-Packages-Manual
 
 on:
   workflow_dispatch:
@@ -157,4 +157,5 @@ jobs:
       TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
       TG_THREAD_ID_BUILD: ${{ secrets.TG_THREAD_ID_BUILD }}
       TG_THREAD_ID_MAIN: ${{ secrets.TG_THREAD_ID_MAIN }}
+      TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
       SDB_PRIVATE_REPO: ${{ secrets.SDB_PRIVATE_REPO }}

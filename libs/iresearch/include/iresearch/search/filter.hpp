@@ -63,11 +63,11 @@ struct ExecutionContext {
 class Filter {
  public:
   // Base class for all prepared(compiled) queries
-  class Prepared : public memory::Managed {
+  class Query : public memory::Managed {
    public:
-    using ptr = memory::managed_ptr<const Prepared>;
+    using ptr = memory::managed_ptr<const Query>;
 
-    static Prepared::ptr empty();
+    static Query::ptr empty();
 
     virtual DocIterator::ptr execute(const ExecutionContext& ctx) const = 0;
 
@@ -86,7 +86,7 @@ class Filter {
     return equals(rhs);
   }
 
-  virtual Prepared::ptr prepare(const PrepareContext& ctx) const = 0;
+  virtual Query::ptr prepare(const PrepareContext& ctx) const = 0;
 
   virtual TypeInfo::type_id type() const noexcept = 0;
 
@@ -114,7 +114,7 @@ class FilterWithBoost : public Filter {
 template<typename Type>
 class FilterWithType : public FilterWithBoost {
  public:
-  using filter_type = Type;
+  using FilterType = Type;
 
   TypeInfo::type_id type() const noexcept final {
     return irs::Type<Type>::id();
@@ -123,10 +123,10 @@ class FilterWithType : public FilterWithBoost {
 
 // Convenient base class filters with options
 template<typename Options>
-class FilterWithOptions : public FilterWithType<typename Options::filter_type> {
+class FilterWithOptions : public FilterWithType<typename Options::FilterType> {
  public:
   using options_type = Options;
-  using filter_type = typename options_type::filter_type;
+  using FilterType = typename options_type::FilterType;
 
   const options_type& options() const noexcept { return _options; }
   options_type* mutable_options() noexcept { return &_options; }
@@ -134,7 +134,7 @@ class FilterWithOptions : public FilterWithType<typename Options::filter_type> {
  protected:
   bool equals(const Filter& rhs) const noexcept override {
     return Filter::equals(rhs) &&
-           _options == sdb::basics::downCast<filter_type>(rhs)._options;
+           _options == sdb::basics::downCast<FilterType>(rhs)._options;
   }
 
  private:
@@ -146,7 +146,7 @@ template<typename Options>
 class FilterWithField : public FilterWithOptions<Options> {
  public:
   using options_type = typename FilterWithOptions<Options>::options_type;
-  using filter_type = typename options_type::filter_type;
+  using FilterType = typename options_type::FilterType;
 
   std::string_view field() const noexcept { return _field; }
   std::string* mutable_field() noexcept { return &_field; }
@@ -154,7 +154,7 @@ class FilterWithField : public FilterWithOptions<Options> {
  protected:
   bool equals(const Filter& rhs) const noexcept final {
     return FilterWithOptions<options_type>::equals(rhs) &&
-           _field == sdb::basics::downCast<filter_type>(rhs)._field;
+           _field == sdb::basics::downCast<FilterType>(rhs)._field;
   }
 
  private:
@@ -164,7 +164,7 @@ class FilterWithField : public FilterWithOptions<Options> {
 // Filter which returns no documents
 class Empty final : public FilterWithType<Empty> {
  public:
-  Prepared::ptr prepare(const PrepareContext& ctx) const final;
+  Query::ptr prepare(const PrepareContext& ctx) const final;
 };
 
 struct FilterVisitor;

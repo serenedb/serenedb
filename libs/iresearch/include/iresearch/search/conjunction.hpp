@@ -24,6 +24,7 @@
 
 #include "basics/empty.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/search/cost.hpp"
 #include "iresearch/search/score.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
@@ -174,7 +175,7 @@ class Conjunction : public ConjunctionBase<DocIteratorImpl, Merger> {
     std::get<AttributePtr<CostAttr>>(_attrs) =
       irs::GetMutable<CostAttr>(_front);
 
-    if constexpr (kHasScoreV<Merger>) {
+    if constexpr (kHasScore<Merger>) {
       auto& score = std::get<irs::ScoreAttr>(_attrs);
       this->PrepareScore(score, Base::Score2, Base::ScoreN,
                          ScoreFunction::DefaultMin);
@@ -187,27 +188,21 @@ class Conjunction : public ConjunctionBase<DocIteratorImpl, Merger> {
 
   doc_id_t value() const final { return *_front_doc; }
 
-  bool next() override {
-    if (!_front->next()) [[unlikely]] {
-      return false;
-    }
-
-    return !doc_limits::eof(converge(*_front_doc));
-  }
+  doc_id_t advance() override { return converge(_front->advance()); }
 
   doc_id_t seek(doc_id_t target) override {
-    target = _front->seek(target);
-    if (doc_limits::eof(target)) [[unlikely]] {
-      return doc_limits::eof();
-    }
-
-    return converge(target);
+    return converge(_front->seek(target));
   }
+
+  uint32_t count() override { return DocIterator::Count(*this); }
 
  private:
   // tries to converge front_ and other iterators to the specified target.
   // if it impossible tries to find first convergence place
   doc_id_t converge(doc_id_t target) {
+    if (doc_limits::eof(target)) [[unlikely]] {
+      return doc_limits::eof();
+    }
     const auto begin = this->_itrs.begin() + 1;
     const auto end = this->_itrs.end();
   restart:
@@ -245,10 +240,9 @@ class BlockConjunction : public ConjunctionBase<DocIteratorImpl, Merger> {
       _score{static_cast<Merger&>(*this).size()} {
     SDB_ASSERT(this->_itrs.size() >= 2);
     SDB_ASSERT(!this->_scores.empty());
-    std::sort(this->_scores.begin(), this->_scores.end(),
-              [](const auto* lhs, const auto* rhs) {
-                return lhs->max.tail > rhs->max.tail;
-              });
+    absl::c_sort(this->_scores, [](const auto* lhs, const auto* rhs) {
+      return lhs->max.tail > rhs->max.tail;
+    });
     std::get<AttributePtr<CostAttr>>(_attrs) =
       irs::GetMutable<CostAttr>(this->_itrs.front().it.get());
     auto& score = std::get<irs::ScoreAttr>(_attrs);
@@ -276,17 +270,9 @@ class BlockConjunction : public ConjunctionBase<DocIteratorImpl, Merger> {
 
   doc_id_t value() const final { return std::get<DocAttr>(_attrs).value; }
 
-  bool next() override { return !doc_limits::eof(seek(value() + 1)); }
+  doc_id_t advance() final { return seek(value() + 1); }
 
-  doc_id_t shallow_seek(doc_id_t target) final {
-    target = ShallowSeekImpl(target);
-    if (doc_limits::eof(target)) [[unlikely]] {
-      return Seal();
-    }
-    return _leafs_doc;
-  }
-
-  doc_id_t seek(doc_id_t target) override {
+  doc_id_t seek(doc_id_t target) final {
     auto& doc = std::get<DocAttr>(_attrs).value;
     if (target <= doc) [[unlikely]] {
       if constexpr (Root) {
@@ -349,6 +335,16 @@ class BlockConjunction : public ConjunctionBase<DocIteratorImpl, Merger> {
       return target;
     }
   }
+
+  doc_id_t shallow_seek(doc_id_t target) final {
+    target = ShallowSeekImpl(target);
+    if (doc_limits::eof(target)) [[unlikely]] {
+      return Seal();
+    }
+    return _leafs_doc;
+  }
+
+  uint32_t count() final { return DocIterator::Count(*this); }
 
  private:
   // TODO(mbkkt) Maybe optimize for 2?
@@ -454,13 +450,15 @@ DocIterator::ptr MakeConjunction(WandContext ctx, Merger&& merger,
   }
 
   // conjunction
-  std::sort(itrs.begin(), itrs.end(),
-            [](const auto& lhs, const auto& rhs) noexcept {
-              return CostAttr::extract(lhs, CostAttr::kMax) <
-                     CostAttr::extract(rhs, CostAttr::kMax);
-            });
+  absl::c_sort(itrs, [](const auto& lhs, const auto& rhs) noexcept {
+    return CostAttr::extract(lhs, CostAttr::kMax) <
+           CostAttr::extract(rhs, CostAttr::kMax);
+  });
   SubScores scores;
-  if constexpr (kHasScoreV<Merger>) {
+  using ConjunctionImpl = Conjunction<DocIteratorImpl, Merger>;
+  using WrappedConjunction = Wrapper<ConjunctionImpl>;
+  if constexpr (kHasScore<Merger> &&
+                std::is_same_v<ConjunctionImpl, WrappedConjunction>) {
     scores.scores.reserve(itrs.size());
     // TODO(mbkkt) Find better one
     static constexpr size_t kBlockConjunctionCostThreshold = 1;
@@ -483,7 +481,7 @@ DocIterator::ptr MakeConjunction(WandContext ctx, Merger&& merger,
     }
     use_block &= !scores.scores.empty();
     if (use_block) {
-      return ResolveBool(ctx.root, [&]<bool Root>() -> irs::DocIterator::ptr {
+      return ResolveBool(ctx.root, [&]<bool Root> -> DocIterator::ptr {
         return memory::make_managed<
           Wrapper<BlockConjunction<Root, DocIteratorImpl, Merger>>>(
           std::forward<Args>(args)..., std::forward<Merger>(merger),

@@ -118,7 +118,7 @@ class RawBlockVectorBase : private util::Noncopyable {
     return _buffers[i];
   }
 
-#ifdef IRESEARCH_TEST
+#ifdef SDB_GTEST
   void pop_buffer() noexcept {
     const auto& bucket = _buffers.back();
     _alloc.deallocate(bucket.data, bucket.size);

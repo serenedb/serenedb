@@ -51,7 +51,11 @@ static constexpr size_t kMaxU64B64StringSize = 11;
 
 template<typename Str>
 IRS_FORCE_INLINE void StrReserveAmortized(Str& str, size_t len) {
-  absl::strings_internal::STLStringReserveAmortized(&str, len);
+  const size_t cap = str.capacity();
+  if (len > cap) {
+    // Make sure to always grow by at least a factor of 2x.
+    str.reserve(std::max(len, 2 * cap));
+  }
 }
 
 template<typename Str>

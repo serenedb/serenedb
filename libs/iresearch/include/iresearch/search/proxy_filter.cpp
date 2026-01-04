@@ -39,7 +39,7 @@ class LazyFilterBitset : private util::Noncopyable {
  public:
   using WordT = size_t;
 
-  LazyFilterBitset(const ExecutionContext& ctx, const Filter::Prepared& filter)
+  LazyFilterBitset(const ExecutionContext& ctx, const Filter::Query& filter)
     : _manager{ctx.memory} {
     const size_t bits = ctx.segment.docs_count() + doc_limits::min();
     _words = bitset::bits_to_words(bits);
@@ -51,7 +51,6 @@ class LazyFilterBitset : private util::Noncopyable {
     // TODO(mbkkt) use mask from segment manually to avoid virtual call
     _real_doc_itr = ctx.segment.mask(filter.execute(ctx));
 
-    _real_doc = irs::get<DocAttr>(*_real_doc_itr);
     _cost = CostAttr::extract(*_real_doc_itr);
 
     _set = std::allocator<WordT>{}.allocate(_words);
@@ -74,11 +73,14 @@ class LazyFilterBitset : private util::Noncopyable {
       return false;
     }
 
-    WordT* requested = _set + word_idx;
+    const auto* const requested = _set + word_idx;
     if (requested >= _end) {
-      auto block_limit = ((word_idx + 1) * kBits) - 1;
-      while (_real_doc_itr->next()) {
-        auto doc_id = _real_doc->value;
+      const auto block_limit = ((word_idx + 1) * kBits) - 1;
+      while (true) {
+        const auto doc_id = _real_doc_itr->advance();
+        if (doc_limits::eof(doc_id)) {
+          break;
+        }
         SetBit(_set[doc_id / kBits], doc_id % kBits);
         if (doc_id >= block_limit) {
           break;  // we've filled requested word
@@ -90,14 +92,13 @@ class LazyFilterBitset : private util::Noncopyable {
     return true;
   }
 
-  CostAttr::cost_t GetCost() const noexcept { return _cost; }
+  CostAttr::Type GetCost() const noexcept { return _cost; }
 
  private:
   IResourceManager& _manager;
 
   DocIterator::ptr _real_doc_itr;
-  const DocAttr* _real_doc{nullptr};
-  CostAttr::cost_t _cost;
+  CostAttr::Type _cost;
 
   WordT* _set{nullptr};
   size_t _words{0};
@@ -112,7 +113,16 @@ class LazyFilterBitsetIterator : public DocIterator, private util::Noncopyable {
     Reset();
   }
 
-  bool next() final {
+  Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
+    if (Type<DocAttr>::id() == id) {
+      return &_doc;
+    }
+    return Type<CostAttr>::id() == id ? &_cost : nullptr;
+  }
+
+  doc_id_t value() const noexcept final { return _doc.value; }
+
+  doc_id_t advance() final {
     while (!_word) {
       if (_bitset.Get(_word_idx, &_word)) {
         ++_word_idx;  // move only if ok. Or we could be overflowed!
@@ -120,15 +130,14 @@ class LazyFilterBitsetIterator : public DocIterator, private util::Noncopyable {
         _doc.value = _base - 1;
         continue;
       }
-      _doc.value = doc_limits::eof();
       _word = 0;
-      return false;
+      return _doc.value = doc_limits::eof();
     }
-    const doc_id_t delta = doc_id_t(std::countr_zero(_word));
+    const auto delta = std::countr_zero(_word);
+    SDB_ASSERT(0 <= delta);
     SDB_ASSERT(delta < BitsRequired<LazyFilterBitset::WordT>());
     _word = (_word >> delta) >> 1;
-    _doc.value += 1 + delta;
-    return true;
+    return _doc.value += 1 + delta;
   }
 
   doc_id_t seek(doc_id_t target) final {
@@ -140,8 +149,7 @@ class LazyFilterBitsetIterator : public DocIterator, private util::Noncopyable {
       _doc.value = _base - 1 + bit_idx;
       ++_word_idx;  // mark this word as consumed
       // FIXME consider inlining to speedup
-      next();
-      return _doc.value;
+      return advance();
     } else {
       _doc.value = doc_limits::eof();
       _word = 0;
@@ -149,13 +157,9 @@ class LazyFilterBitsetIterator : public DocIterator, private util::Noncopyable {
     }
   }
 
-  doc_id_t value() const noexcept final { return _doc.value; }
-
-  Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
-    if (Type<DocAttr>::id() == id) {
-      return &_doc;
-    }
-    return Type<CostAttr>::id() == id ? &_cost : nullptr;
+  uint32_t count() final {
+    // TODO(mbkkt) custom implementation?
+    return Count(*this);
   }
 
   void Reset() noexcept {
@@ -183,7 +187,7 @@ struct ProxyQueryCache {
     std::pair<const SubReader* const, std::unique_ptr<LazyFilterBitset>>>;
 
   Filter::ptr real_filter;
-  Filter::Prepared::ptr real_filter_prepared;
+  Filter::Query::ptr real_filter_prepared;
   absl::Mutex readers_lock;
   absl::flat_hash_map<
     const SubReader*, std::unique_ptr<LazyFilterBitset>,
@@ -192,7 +196,7 @@ struct ProxyQueryCache {
     readers;
 };
 
-class ProxyQuery : public Filter::Prepared {
+class ProxyQuery : public Filter::Query {
  public:
   explicit ProxyQuery(ProxyFilter::cache_ptr cache) : _cache{cache} {
     SDB_ASSERT(_cache);
@@ -200,7 +204,7 @@ class ProxyQuery : public Filter::Prepared {
   }
 
   DocIterator::ptr execute(const ExecutionContext& ctx) const final {
-    auto* cache_bitset = [&]() -> LazyFilterBitset* {
+    auto* cache_bitset = [&] -> LazyFilterBitset* {
       absl::ReaderMutexLock lock{&_cache->readers_lock};
       auto it = _cache->readers.find(&ctx.segment);
       if (it != _cache->readers.end()) {
@@ -230,12 +234,12 @@ class ProxyQuery : public Filter::Prepared {
   ProxyFilter::cache_ptr _cache;
 };
 
-Filter::Prepared::ptr ProxyFilter::prepare(const PrepareContext& ctx) const {
+Filter::Query::ptr ProxyFilter::prepare(const PrepareContext& ctx) const {
   // Currently we do not support caching scores.
   // Proxy filter should not be used with scorers!
   SDB_ASSERT(ctx.scorers.empty());
   if (!_cache || !ctx.scorers.empty()) {
-    return Filter::Prepared::empty();
+    return Filter::Query::empty();
   }
   if (!_cache->real_filter_prepared) {
     _cache->real_filter_prepared = _cache->real_filter->prepare(ctx);

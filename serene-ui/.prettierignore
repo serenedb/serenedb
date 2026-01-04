@@ -1,0 +1,14 @@
+dist
+logs
+node_modules
+db.sqlite
+out
+.vite
+.vscode
+.idea
+.DS_Store
+tsconfig.build.tsbuildinfo
+slim.report.json
+LICENSE
+.webpack
+package-lock.json

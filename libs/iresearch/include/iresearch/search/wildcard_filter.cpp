@@ -39,15 +39,14 @@ bytes_view Unescape(bytes_view in, bstring& out) {
   out.reserve(in.size());
 
   bool copy = true;
-  std::copy_if(in.begin(), in.end(), std::back_inserter(out),
-               [&copy](byte_type c) {
-                 if (c == WildcardMatch::kEscape) {
-                   copy = !copy;
-                 } else {
-                   copy = true;
-                 }
-                 return copy;
-               });
+  absl::c_copy_if(in, std::back_inserter(out), [&copy](byte_type c) {
+    if (c == WildcardMatch::kEscape) {
+      copy = !copy;
+    } else {
+      copy = true;
+    }
+    return copy;
+  });
 
   return out;
 }
@@ -122,20 +121,19 @@ field_visitor ByWildcard::visitor(bytes_view term) {
     });
 }
 
-Filter::Prepared::ptr ByWildcard::prepare(const PrepareContext& ctx,
-                                          std::string_view field,
-                                          bytes_view term,
-                                          size_t scored_terms_limit) {
+Filter::Query::ptr ByWildcard::prepare(const PrepareContext& ctx,
+                                       std::string_view field, bytes_view term,
+                                       size_t scored_terms_limit) {
   bstring buf;
   return ExecuteWildcard(
     buf, term,
-    [&](bytes_view term) -> Prepared::ptr {
+    [&](bytes_view term) -> Query::ptr {
       return ByTerm::prepare(ctx, field, term);
     },
-    [&, scored_terms_limit](bytes_view term) -> Prepared::ptr {
+    [&, scored_terms_limit](bytes_view term) -> Query::ptr {
       return ByPrefix::prepare(ctx, field, term, scored_terms_limit);
     },
-    [&, scored_terms_limit](bytes_view term) -> Prepared::ptr {
+    [&, scored_terms_limit](bytes_view term) -> Query::ptr {
       return PrepareAutomatonFilter(ctx, field, FromWildcard(term),
                                     scored_terms_limit);
     });

@@ -192,9 +192,8 @@ bool MakeVPackConfig(const NGramTokenizerBase::Options& options,
     builder->add(kPreserveOriginalParamName, options.preserve_original);
 
     // stream type
-    const auto* stream_type_value = std::find_if(
-      kStreamTypeConvertMap.begin(), kStreamTypeConvertMap.end(),
-      [&options](const decltype(kStreamTypeConvertMap)::value_type& v) {
+    const auto stream_type_value =
+      absl::c_find_if(kStreamTypeConvertMap, [&options](const auto& v) {
         return v.second == options.stream_bytes_type;
       });
 

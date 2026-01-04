@@ -221,19 +221,17 @@ class LimitedSampleCollector : private util::Noncopyable {
   };
 
   void push() noexcept {
-    std::push_heap(_scored_states_heap.begin(), _scored_states_heap.end(),
-                   [this](const size_t lhs, const size_t rhs) noexcept {
-                     return _comparer(_scored_states[rhs].key,
-                                      _scored_states[lhs].key);
-                   });
+    absl::c_push_heap(
+      _scored_states_heap, [&](const size_t lhs, const size_t rhs) noexcept {
+        return _comparer(_scored_states[rhs].key, _scored_states[lhs].key);
+      });
   }
 
   void pop() noexcept {
-    std::pop_heap(_scored_states_heap.begin(), _scored_states_heap.end(),
-                  [this](const size_t lhs, const size_t rhs) noexcept {
-                    return _comparer(_scored_states[rhs].key,
-                                     _scored_states[lhs].key);
-                  });
+    absl::c_pop_heap(
+      _scored_states_heap, [&](const size_t lhs, const size_t rhs) noexcept {
+        return _comparer(_scored_states[rhs].key, _scored_states[lhs].key);
+      });
   }
 
   [[no_unique_address]] comparer_type _comparer;

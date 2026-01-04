@@ -1,0 +1,16 @@
+node_modules
+dist
+logs
+tsconfig.tsbuildinfo
+.vscode
+.idea
+.vite
+out
+apps/web/screenshots/diffs
+apps/web/screenshots/current
+.DS_Store
+db.sqlite
+slim.report.json
+.env
+.env.*
+package-lock.json

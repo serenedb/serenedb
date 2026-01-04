@@ -750,7 +750,7 @@ static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(term_filter_test, TermFilterTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values("1_5")),
+                                            ::testing::Values("1_5avx")),
                          TermFilterTestCase::to_string);
 
 }  // namespace

@@ -50,7 +50,7 @@ irs::Format::ptr GetCodec1() {
 
 TEST(directory_reader_test, open_empty_directory) {
   irs::MemoryDirectory dir;
-  auto codec = irs::formats::Get("1_5");
+  auto codec = irs::formats::Get("1_5avx");
   ASSERT_NE(nullptr, codec);
 
   // No index
@@ -59,7 +59,7 @@ TEST(directory_reader_test, open_empty_directory) {
 
 TEST(directory_reader_test, open_empty_index) {
   irs::MemoryDirectory dir;
-  auto codec = irs::formats::Get("1_5");
+  auto codec = irs::formats::Get("1_5avx");
   ASSERT_NE(nullptr, codec);
 
   // Create empty index
@@ -205,7 +205,7 @@ TEST(directory_reader_test, open) {
   const tests::Document* doc9 = gen.next();
 
   irs::MemoryDirectory dir;
-  auto codec_ptr = irs::formats::Get("1_5");
+  auto codec_ptr = irs::formats::Get("1_5avx");
   ASSERT_NE(nullptr, codec_ptr);
 
   // create index
@@ -353,7 +353,7 @@ TEST(directory_reader_test, open) {
 }
 
 TEST(segment_reader_test, segment_reader_has) {
-  auto codec = irs::formats::Get("1_5");
+  auto codec = irs::formats::Get("1_5avx");
   ASSERT_NE(nullptr, codec);
 
   std::string filename;
@@ -452,7 +452,7 @@ TEST(segment_reader_test, segment_reader_has) {
 
 TEST(segment_reader_test, open_invalid_segment) {
   irs::MemoryDirectory dir;
-  auto codec_ptr = irs::formats::Get("1_5");
+  auto codec_ptr = irs::formats::Get("1_5avx");
   ASSERT_NE(nullptr, codec_ptr);
 
   /* open invalid segment */
@@ -477,7 +477,7 @@ TEST(segment_reader_test, open) {
   const tests::Document* doc5 = gen.next();
 
   irs::MemoryDirectory dir;
-  auto codec_ptr = irs::formats::Get("1_5");
+  auto codec_ptr = irs::formats::Get("1_5avx");
   ASSERT_NE(nullptr, codec_ptr);
   irs::DirectoryReader writer_snapshot;
   {

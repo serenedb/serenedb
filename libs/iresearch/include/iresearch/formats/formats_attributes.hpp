@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/formats/formats.hpp"
 
 namespace irs {
 

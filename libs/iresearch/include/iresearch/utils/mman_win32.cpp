@@ -20,7 +20,7 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#if defined(_MSC_VER)
+#if defined(_WIN32)
 
 #include "mman_win32.hpp"
 
@@ -215,4 +215,4 @@ int munlock(const void* addr, size_t len) {
 
 int madvise(void*, size_t, int) { return 0; }
 
-#endif  // defined(_MSC_VER)
+#endif

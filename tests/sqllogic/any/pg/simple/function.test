@@ -438,3 +438,21 @@ END;
 ----
 db error: ERROR: return type mismatch in function declared to return record
 DETAIL: Final statement returns boolean instead of integer at column 2.
+
+
+statement ok
+CREATE FUNCTION zhme()
+RETURNS INTEGER
+AS $$
+    SELECT 1
+$$ LANGUAGE sql;
+
+
+statement ok
+CREATE TABLE zhme (lmao INTEGER);
+
+
+query
+SELECT * FROM zhme as zhma, zhme();
+----
+lmao zhme

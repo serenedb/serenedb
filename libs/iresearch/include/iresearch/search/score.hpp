@@ -53,13 +53,13 @@ struct ScoreAttr : Attribute, ScoreFunction {
   struct UpperBounds {
     score_t tail = std::numeric_limits<score_t>::max();
     score_t leaf = std::numeric_limits<score_t>::max();
-#ifdef IRESEARCH_TEST
+#ifdef SDB_GTEST
     std::span<const score_t> levels;  // levels.back() == leaf
 #endif
   } max;
 };
 
-using ScoreFunctions = sdb::containers::SmallVector<ScoreFunction, 2>;
+using ScoreFunctions = sdb::containers::SmallVector<ScoreFunction, 1>;
 
 // Prepare scorer for each of the bucket.
 ScoreFunctions PrepareScorers(std::span<const ScorerBucket> buckets,

@@ -485,7 +485,7 @@ struct Cookie final : SeekCookie {
 };
 
 const fst::FstReadOptions& FstReadOptions() {
-  static const auto kInstance = []() {
+  static const auto kInstance = [] {
     fst::FstReadOptions options;
     options.read_osymbols = false;  // we don't need output symbols
 

@@ -37,10 +37,9 @@ void Postings::get_sorted_postings(
     *p++ = &posting;
   }
 
-  std::sort(postings.begin(), postings.end(),
-            [](const auto lhs, const auto rhs) {
-              return MemcmpLess(lhs->term, rhs->term);
-            });
+  absl::c_sort(postings, [](const auto lhs, const auto rhs) {
+    return MemcmpLess(lhs->term, rhs->term);
+  });
 }
 
 Posting* Postings::emplace(bytes_view term) {

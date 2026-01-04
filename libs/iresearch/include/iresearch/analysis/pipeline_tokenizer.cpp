@@ -294,10 +294,9 @@ irs::PayAttr* FindPayload(std::span<const Analyzer::ptr> pipeline) {
 }
 
 bool AllHaveOffset(std::span<const Analyzer::ptr> pipeline) {
-  return std::all_of(pipeline.begin(), pipeline.end(),
-                     [](const Analyzer::ptr& v) {
-                       return nullptr != irs::get<irs::OffsAttr>(*v);
-                     });
+  return absl::c_all_of(pipeline, [](const Analyzer::ptr& v) {
+    return nullptr != irs::get<irs::OffsAttr>(*v);
+  });
 }
 
 }  // namespace

@@ -191,9 +191,11 @@ bool CollectTerms(const IndexReader& index, std::string_view field,
   return true;
 }
 
-Filter::Prepared::ptr PrepareLevenshteinFilter(
-  const PrepareContext& ctx, std::string_view field, bytes_view prefix,
-  bytes_view term, size_t terms_limit, const ParametricDescription& d) {
+Filter::Query::ptr PrepareLevenshteinFilter(const PrepareContext& ctx,
+                                            std::string_view field,
+                                            bytes_view prefix, bytes_view term,
+                                            size_t terms_limit,
+                                            const ParametricDescription& d) {
   FieldCollectors field_stats{ctx.scorers};
   TermCollectors term_stats{ctx.scorers, 1};
   MultiTermQuery::States states{ctx.memory, ctx.index.size()};
@@ -203,13 +205,13 @@ Filter::Prepared::ptr PrepareLevenshteinFilter(
     term_collector.stat_index(0);  // aggregate stats from different terms
 
     if (!CollectTerms(ctx.index, field, prefix, term, d, term_collector)) {
-      return Filter::Prepared::empty();
+      return Filter::Query::empty();
     }
   } else {
     TopTermsCollectorImpl term_collector(terms_limit, field_stats);
 
     if (!CollectTerms(ctx.index, field, prefix, term, d, term_collector)) {
-      return Filter::Prepared::empty();
+      return Filter::Query::empty();
     }
 
     AggregatedStatsVisitor aggregate_stats{states, term_stats};
@@ -236,10 +238,10 @@ field_visitor ByEditDistance::visitor(const ByEditDistanceAllOptions& opts) {
   return ExecuteLevenshtein(
     opts.max_distance, opts.provider, opts.with_transpositions, opts.prefix,
     opts.term,
-    []() -> field_visitor {
+    [] -> field_visitor {
       return [](const SubReader&, const TermReader&, FilterVisitor&) {};
     },
-    [&opts]() -> field_visitor {
+    [&opts] -> field_visitor {
       // must copy term as it may point to temporary string
       return [target = opts.prefix + opts.term](const SubReader& segment,
                                                 const TermReader& field,
@@ -279,14 +281,14 @@ field_visitor ByEditDistance::visitor(const ByEditDistanceAllOptions& opts) {
     });
 }
 
-Filter::Prepared::ptr ByEditDistance::prepare(
+Filter::Query::ptr ByEditDistance::prepare(
   const PrepareContext& ctx, std::string_view field, bytes_view term,
   size_t scored_terms_limit, uint8_t max_distance, options_type::pdp_f provider,
   bool with_transpositions, bytes_view prefix) {
   return ExecuteLevenshtein(
     max_distance, provider, with_transpositions, prefix, term,
-    []() -> Prepared::ptr { return Prepared::empty(); },
-    [&]() -> Prepared::ptr {
+    [] -> Query::ptr { return Query::empty(); },
+    [&] -> Query::ptr {
       if (!prefix.empty() && !term.empty()) {
         bstring target;
         target.reserve(prefix.size() + term.size());
@@ -299,7 +301,7 @@ Filter::Prepared::ptr ByEditDistance::prepare(
     },
     [&, scored_terms_limit](const ParametricDescription& d,
                             const bytes_view prefix,
-                            const bytes_view term) -> Prepared::ptr {
+                            const bytes_view term) -> Query::ptr {
       return PrepareLevenshteinFilter(ctx, field, prefix, term,
                                       scored_terms_limit, d);
     });

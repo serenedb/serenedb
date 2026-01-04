@@ -36,7 +36,7 @@ class VariadicPhraseQuery;
 
 // Prepared phrase query implementation
 template<typename State>
-class PhraseQuery : public Filter::Prepared {
+class PhraseQuery : public Filter::Query {
   static_assert(std::is_same_v<State, FixedPhraseState> ||
                 std::is_same_v<State, VariadicPhraseState>);
 
@@ -57,7 +57,7 @@ class PhraseQuery : public Filter::Prepared {
 
   void visit(const SubReader& segment, PreparedStateVisitor& visitor,
              score_t boost) const final {
-    if (auto state = states.find(segment); state) {
+    if (auto state = states.find(segment)) {
       boost *= boost;
       if constexpr (std::is_same_v<State, FixedPhraseState>) {
         visitor.Visit(sdb::basics::downCast<FixedPhraseQuery>(*this), *state,

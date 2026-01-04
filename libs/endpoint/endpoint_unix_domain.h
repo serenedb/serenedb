@@ -57,7 +57,6 @@ class EndpointUnixDomain final : public Endpoint {
   /// disconnect the endpoint
   //////////////////////////////////////////////////////////////////////////////
 
-  // cppcheck-suppress virtualCallInConstructor; bogus
   void disconnect() override;
 
   int domain() const override { return AF_UNIX; }

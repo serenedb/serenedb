@@ -206,10 +206,10 @@ void Utf8TransitionsBuilder::Finish(automaton& a, automaton::StateId from) {
   a.EmplaceArc(_rho_states[3], kRhoLabel, _rho_states[2]);
 }
 
-Filter::Prepared::ptr PrepareAutomatonFilter(const PrepareContext& ctx,
-                                             std::string_view field,
-                                             const automaton& acceptor,
-                                             size_t scored_terms_limit) {
+Filter::Query::ptr PrepareAutomatonFilter(const PrepareContext& ctx,
+                                          std::string_view field,
+                                          const automaton& acceptor,
+                                          size_t scored_terms_limit) {
   auto matcher = MakeAutomatonMatcher(acceptor);
 
   if (fst::kError == matcher.Properties(0)) {
@@ -220,7 +220,7 @@ Filter::Prepared::ptr PrepareAutomatonFilter(const PrepareContext& ctx,
                    matcher.GetFst().Properties(
                      automaton_table_matcher::kFstProperties, false)));
 
-    return Filter::Prepared::empty();
+    return Filter::Query::empty();
   }
 
   // object for collecting order stats

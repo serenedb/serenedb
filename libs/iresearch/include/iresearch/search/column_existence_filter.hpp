@@ -33,7 +33,7 @@ using ColumnAcceptor = bool (*)(std::string_view prefix, std::string_view name);
 
 // Options for column existence filter
 struct ByColumnExistenceOptions {
-  using filter_type = ByColumnExistence;
+  using FilterType = ByColumnExistence;
 
   // If set approves column matched the specified prefix
   ColumnAcceptor acceptor{};
@@ -47,7 +47,7 @@ struct ByColumnExistenceOptions {
 class ByColumnExistence final
   : public FilterWithField<ByColumnExistenceOptions> {
  public:
-  Prepared::ptr prepare(const PrepareContext& ctx) const final;
+  Query::ptr prepare(const PrepareContext& ctx) const final;
 };
 
 }  // namespace irs

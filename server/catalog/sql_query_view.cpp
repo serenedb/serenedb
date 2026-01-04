@@ -74,7 +74,7 @@ Result SqlQueryViewImpl::Parse(State& state, ObjectId database_id,
     }
     state.stmt = list_nth_node(RawStmt, tree, 0);
     SDB_ASSERT(state.stmt);
-    SDB_ASSERT(state.objects.getObjects().empty());
+    SDB_ASSERT(state.objects.empty());
 
     // TODO(gnusi): currently collector checks cross-database references and
     // need a name of the current database for this purpose. It looks like it'd

@@ -68,13 +68,13 @@ class MinHash {
     if (_left != 0) {
       _min_hashes.emplace_back(hash_value);
       if (--_left == 0) {
-        std::make_heap(std::begin(_min_hashes), std::end(_min_hashes));
+        absl::c_make_heap(_min_hashes);
       }
     } else {
-      std::pop_heap(std::begin(_min_hashes), std::end(_min_hashes));
+      absl::c_pop_heap(_min_hashes);
       _dedup.erase(_min_hashes.back());
       _min_hashes.back() = hash_value;
-      std::push_heap(std::begin(_min_hashes), std::end(_min_hashes));
+      absl::c_push_heap(_min_hashes);
     }
   }
 
@@ -94,11 +94,10 @@ class MinHash {
   // Return Jaccard coefficient of 2 MinHash signatures.
   // `rhs` members are meant to be unique.
   double Jaccard(std::span<const uint64_t> rhs) const noexcept {
-    const auto intersect =
-      std::accumulate(std::begin(rhs), std::end(rhs), uint64_t{0},
-                      [&](uint64_t acc, uint64_t hash_value) noexcept {
-                        return acc + uint64_t{_dedup.contains(hash_value)};
-                      });
+    const auto intersect = absl::c_accumulate(
+      rhs, uint64_t{0}, [&](uint64_t acc, uint64_t hash_value) noexcept {
+        return acc + uint64_t{_dedup.contains(hash_value)};
+      });
     const auto cardinality = Size() + rhs.size() - intersect;
 
     return cardinality

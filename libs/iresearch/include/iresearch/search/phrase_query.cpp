@@ -105,19 +105,17 @@ DocIterator::ptr FixedPhraseQuery::execute(const ExecutionContext& ctx) const {
     [](const auto& pos) { return pos.offs_max != pos.offs_min; });
   if (ord.empty()) {
     return ResolveBool(has_intervals,
-                       [&]<bool HasIntervals>() -> DocIterator::ptr {
+                       [&]<bool HasIntervals> -> DocIterator::ptr {
                          return memory::make_managed<
                            FixedPhraseIterator<true, false, HasIntervals>>(
                            std::move(itrs), std::move(positions));
                        });
   }
-  return ResolveBool(has_intervals,
-                     [&]<bool HasIntervals>() -> DocIterator::ptr {
-                       return memory::make_managed<
-                         FixedPhraseIterator<false, true, HasIntervals>>(
-                         std::move(itrs), std::move(positions), rdr,
-                         *phrase_state->reader, stats.c_str(), ord, boost);
-                     });
+  return ResolveBool(has_intervals, [&]<bool HasIntervals> -> DocIterator::ptr {
+    return memory::make_managed<FixedPhraseIterator<false, true, HasIntervals>>(
+      std::move(itrs), std::move(positions), rdr, *phrase_state->reader,
+      stats.c_str(), ord, boost);
+  });
 }
 
 DocIterator::ptr FixedPhraseQuery::ExecuteWithOffsets(
@@ -134,81 +132,80 @@ DocIterator::ptr FixedPhraseQuery::ExecuteWithOffsets(
     this->positions,
     [](const auto& pos) { return pos.offs_max != pos.offs_min; });
 
-  return ResolveBool(
-    has_intervals, [&]<bool HasIntervals>() -> DocIterator::ptr {
-      using FixedPhraseIterator = PhraseIterator<
-        Conjunction<ScoreAdapter<>, NoopAggregator>,
-        PhrasePosition<FixedPhraseFrequency<true, false, HasIntervals>>>;
+  return ResolveBool(has_intervals, [&]<bool HasIntervals> -> DocIterator::ptr {
+    using FixedPhraseIterator = PhraseIterator<
+      Conjunction<ScoreAdapter<>, NoopAggregator>,
+      PhrasePosition<FixedPhraseFrequency<true, false, HasIntervals>>>;
 
-      ScoreAdapters itrs;
-      itrs.reserve(phrase_state->terms.size());
+    ScoreAdapters itrs;
+    itrs.reserve(phrase_state->terms.size());
 
-      std::vector<typename FixedPhraseIterator::TermPosition> positions;
-      positions.reserve(phrase_state->terms.size());
+    std::vector<typename FixedPhraseIterator::TermPosition> positions;
+    positions.reserve(phrase_state->terms.size());
 
-      auto* reader = phrase_state->reader;
-      SDB_ASSERT(reader);
+    auto* reader = phrase_state->reader;
+    SDB_ASSERT(reader);
 
-      if (kRequireOffs != (reader->meta().index_features & kRequireOffs)) {
-        return DocIterator::empty();
+    if (kRequireOffs != (reader->meta().index_features & kRequireOffs)) {
+      return DocIterator::empty();
+    }
+
+    auto position = std::begin(this->positions);
+    SDB_ASSERT(!phrase_state->terms.empty());
+
+    auto term_state = std::begin(phrase_state->terms);
+
+    auto add_iterator = [&](IndexFeatures features) {
+      SDB_ASSERT(term_state->first);
+
+      // get postings using cached state
+      auto& docs =
+        itrs.emplace_back(reader->postings(*term_state->first, features));
+
+      if (!docs) [[unlikely]] {
+        return false;
       }
 
-      auto position = std::begin(this->positions);
-      SDB_ASSERT(!phrase_state->terms.empty());
+      auto* pos = irs::GetMutable<irs::PosAttr>(docs.it.get());
 
-      auto term_state = std::begin(phrase_state->terms);
-
-      auto add_iterator = [&](IndexFeatures features) {
-        SDB_ASSERT(term_state->first);
-
-        // get postings using cached state
-        auto& docs =
-          itrs.emplace_back(reader->postings(*term_state->first, features));
-
-        if (!docs) [[unlikely]] {
-          return false;
-        }
-
-        auto* pos = irs::GetMutable<irs::PosAttr>(docs.it.get());
-
-        if (!pos) {
-          return false;
-        }
-
-        positions.emplace_back(std::ref(*pos), *position);
-
-        if (IndexFeatures::Offs == (features & IndexFeatures::Offs)) {
-          if (!irs::get<irs::OffsAttr>(*pos)) {
-            return false;
-          }
-        }
-
-        ++position;
-        ++term_state;
-        return true;
-      };
-
-      if (!add_iterator(kRequireOffs)) {
-        return DocIterator::empty();
+      if (!pos) {
+        return false;
       }
 
-      if (term_state != std::end(phrase_state->terms)) {
-        auto back = std::prev(std::end(phrase_state->terms));
+      positions.emplace_back(std::ref(*pos), *position);
 
-        while (term_state != back) {
-          if (!add_iterator(kRequiredFeatures)) {
-            return DocIterator::empty();
-          }
+      if (IndexFeatures::Offs == (features & IndexFeatures::Offs)) {
+        if (!irs::get<irs::OffsAttr>(*pos)) {
+          return false;
         }
+      }
 
-        if (!add_iterator(kRequireOffs)) {
+      ++position;
+      ++term_state;
+      return true;
+    };
+
+    if (!add_iterator(kRequireOffs)) {
+      return DocIterator::empty();
+    }
+
+    if (term_state != std::end(phrase_state->terms)) {
+      auto back = std::prev(std::end(phrase_state->terms));
+
+      while (term_state != back) {
+        if (!add_iterator(kRequiredFeatures)) {
           return DocIterator::empty();
         }
       }
 
-      return memory::make_managed<FixedPhraseIterator>(std::move(itrs),
-                                                       std::move(positions));
-    });
+      if (!add_iterator(kRequireOffs)) {
+        return DocIterator::empty();
+      }
+    }
+
+    return memory::make_managed<FixedPhraseIterator>(std::move(itrs),
+                                                     std::move(positions));
+  });
 }
 
 DocIterator::ptr VariadicPhraseQuery::execute(
@@ -297,7 +294,7 @@ DocIterator::ptr VariadicPhraseQuery::execute(
 
   if (ord.empty()) {
     return ResolveBool(
-      has_intervals, [&]<bool HasIntervals>() -> DocIterator::ptr {
+      has_intervals, [&]<bool HasIntervals> -> DocIterator::ptr {
         return memory::make_managed<
           VariadicPhraseIterator<Adapter, false, true, false, HasIntervals>>(
           std::move(conj_itrs), std::move(positions));
@@ -306,20 +303,19 @@ DocIterator::ptr VariadicPhraseQuery::execute(
 
   if (phrase_state->volatile_boost) {
     return ResolveBool(
-      has_intervals, [&]<bool HasIntervals>() -> DocIterator::ptr {
+      has_intervals, [&]<bool HasIntervals> -> DocIterator::ptr {
         return memory::make_managed<
           VariadicPhraseIterator<Adapter, true, false, true, HasIntervals>>(
           std::move(conj_itrs), std::move(positions), rdr,
           *phrase_state->reader, stats.c_str(), ord, boost);
       });
   }
-  return ResolveBool(
-    has_intervals, [&]<bool HasIntervals>() -> DocIterator::ptr {
-      return memory::make_managed<
-        VariadicPhraseIterator<Adapter, false, false, true, HasIntervals>>(
-        std::move(conj_itrs), std::move(positions), rdr, *phrase_state->reader,
-        stats.c_str(), ord, boost);
-    });
+  return ResolveBool(has_intervals, [&]<bool HasIntervals> -> DocIterator::ptr {
+    return memory::make_managed<
+      VariadicPhraseIterator<Adapter, false, false, true, HasIntervals>>(
+      std::move(conj_itrs), std::move(positions), rdr, *phrase_state->reader,
+      stats.c_str(), ord, boost);
+  });
 }
 
 DocIterator::ptr VariadicPhraseQuery::ExecuteWithOffsets(
@@ -353,88 +349,87 @@ DocIterator::ptr VariadicPhraseQuery::ExecuteWithOffsets(
     this->positions,
     [](const auto& pos) { return pos.offs_max != pos.offs_min; });
 
-  return ResolveBool(
-    has_intervals, [&]<bool HasIntervals>() -> DocIterator::ptr {
-      using VariadicPhraseIterator =
-        PhraseIterator<Conjunction<ScoreAdapter<>, NoopAggregator>,
-                       PhrasePosition<VariadicPhraseFrequency<
-                         Adapter, false, true, false, HasIntervals>>>;
+  return ResolveBool(has_intervals, [&]<bool HasIntervals> -> DocIterator::ptr {
+    using VariadicPhraseIterator =
+      PhraseIterator<Conjunction<ScoreAdapter<>, NoopAggregator>,
+                     PhrasePosition<VariadicPhraseFrequency<
+                       Adapter, false, true, false, HasIntervals>>>;
 
-      std::vector<typename VariadicPhraseIterator::TermPosition> positions;
-      positions.resize(phrase_size);
+    std::vector<typename VariadicPhraseIterator::TermPosition> positions;
+    positions.resize(phrase_size);
 
-      auto position = std::begin(this->positions);
+    auto position = std::begin(this->positions);
 
-      auto term_state = std::begin(phrase_state->terms);
+    auto term_state = std::begin(phrase_state->terms);
 
-      size_t i = 0;
-      auto add_iterator = [&](IndexFeatures features) {
-        const auto num_terms = phrase_state->num_terms[i];
-        auto& pos = positions[i];
-        pos.second = *position;
+    size_t i = 0;
+    auto add_iterator = [&](IndexFeatures features) {
+      const auto num_terms = phrase_state->num_terms[i];
+      auto& pos = positions[i];
+      pos.second = *position;
 
-        std::vector<Adapter> disj_itrs;
-        disj_itrs.reserve(num_terms);
-        for (const auto end = term_state + num_terms; term_state != end;
-             ++term_state) {
-          SDB_ASSERT(term_state->first);
+      std::vector<Adapter> disj_itrs;
+      disj_itrs.reserve(num_terms);
+      for (const auto end = term_state + num_terms; term_state != end;
+           ++term_state) {
+        SDB_ASSERT(term_state->first);
 
-          auto it = reader->postings(*term_state->first, features);
+        auto it = reader->postings(*term_state->first, features);
 
-          if (!it) [[unlikely]] {
-            continue;
-          }
-
-          Adapter docs{std::move(it), term_state->second};
-
-          if (!docs.position) {
-            // positions not found
-            continue;
-          }
-
-          if (IndexFeatures::Offs == (features & IndexFeatures::Offs)) {
-            if (!irs::get<irs::OffsAttr>(*docs.position)) {
-              continue;
-            }
-          }
-
-          disj_itrs.emplace_back(std::move(docs));
+        if (!it) [[unlikely]] {
+          continue;
         }
 
-        if (disj_itrs.empty()) {
-          return false;
+        Adapter docs{std::move(it), term_state->second};
+
+        if (!docs.position) {
+          // positions not found
+          continue;
         }
 
-        // TODO(mbkkt) VariadicPhrase wand support
-        auto disj = MakeDisjunction<Disjunction>({}, std::move(disj_itrs),
-                                                 NoopAggregator{});
-        pos.first = sdb::basics::downCast<CompundDocIterator>(disj.get());
-        conj_itrs.emplace_back(std::move(disj));
-        ++position;
-        ++i;
-        return true;
-      };
+        if (IndexFeatures::Offs == (features & IndexFeatures::Offs)) {
+          if (!irs::get<irs::OffsAttr>(*docs.position)) {
+            continue;
+          }
+        }
+
+        disj_itrs.emplace_back(std::move(docs));
+      }
+
+      if (disj_itrs.empty()) {
+        return false;
+      }
+
+      // TODO(mbkkt) VariadicPhrase wand support
+      auto disj = MakeDisjunction<Disjunction>({}, std::move(disj_itrs),
+                                               NoopAggregator{});
+      pos.first = sdb::basics::downCast<CompundDocIterator>(disj.get());
+      conj_itrs.emplace_back(std::move(disj));
+      ++position;
+      ++i;
+      return true;
+    };
+
+    if (!add_iterator(kRequireOffs)) {
+      return DocIterator::empty();
+    }
+
+    if (i < phrase_size) {
+      for (auto size = phrase_size - 1; i < size;) {
+        if (!add_iterator(kRequiredFeatures)) {
+          return DocIterator::empty();
+        }
+      }
 
       if (!add_iterator(kRequireOffs)) {
         return DocIterator::empty();
       }
+    }
+    SDB_ASSERT(term_state == std::end(phrase_state->terms));
 
-      if (i < phrase_size) {
-        for (auto size = phrase_size - 1; i < size;) {
-          if (!add_iterator(kRequiredFeatures)) {
-            return DocIterator::empty();
-          }
-        }
-
-        if (!add_iterator(kRequireOffs)) {
-          return DocIterator::empty();
-        }
-      }
-      SDB_ASSERT(term_state == std::end(phrase_state->terms));
-
-      return memory::make_managed<VariadicPhraseIterator>(std::move(conj_itrs),
-                                                          std::move(positions));
-    });
+    return memory::make_managed<VariadicPhraseIterator>(std::move(conj_itrs),
+                                                        std::move(positions));
+  });
 }
 
 }  // namespace irs

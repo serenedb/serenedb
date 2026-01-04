@@ -1,0 +1,14 @@
+{
+    "extends": "../../tsconfig.base.json",
+    "compilerOptions": {
+        "baseUrl": ".",
+        "rootDir": "src",
+        "outDir": "dist",
+        "noEmit": false
+    },
+    "references": [
+        { "path": "../../packages/shared-core" },
+        { "path": "../../packages/shared-backend" }
+    ],
+    "include": ["src"]
+}

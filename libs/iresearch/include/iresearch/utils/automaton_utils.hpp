@@ -187,7 +187,7 @@ class Utf8TransitionsBuilder {
     // 'from' state is already a part of automaton
     _states[0].id = from;
 
-    std::fill(std::begin(_rho_states), std::end(_rho_states), rho_state);
+    absl::c_fill(_rho_states, rho_state);
 
     if (rho_state != fst::kNoStateId) {
       // create intermediate default states if necessary
@@ -456,9 +456,9 @@ inline automaton MakeAll() {
 /// @param bool query boost
 /// @returns compiled filter
 //////////////////////////////////////////////////////////////////////////////
-Filter::Prepared::ptr PrepareAutomatonFilter(const PrepareContext& ctx,
-                                             std::string_view field,
-                                             const automaton& acceptor,
-                                             size_t scored_terms_limit);
+Filter::Query::ptr PrepareAutomatonFilter(const PrepareContext& ctx,
+                                          std::string_view field,
+                                          const automaton& acceptor,
+                                          size_t scored_terms_limit);
 
 }  // namespace irs

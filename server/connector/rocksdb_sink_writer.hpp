@@ -39,8 +39,8 @@ class RocksDBSinkWriter {
 
   void Delete(std::string_view full_key);
 
-  bool Lock(std::string_view full_key) {
-    return _transaction.GetKeyLock(&_cf, full_key, false, true).ok();
+  rocksdb::Status Lock(std::string_view full_key) {
+    return _transaction.GetKeyLock(&_cf, full_key, false, true);
   }
 
 private:

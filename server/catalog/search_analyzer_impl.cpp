@@ -33,16 +33,6 @@ GetAnalyzerMeta(const irs::analysis::Analyzer* analyzer) noexcept {
   SDB_ASSERT(analyzer);
   const auto type = analyzer->type();
 
-  if (type == irs::Type<GeoVPackAnalyzer>::id()) {
-    return {FunctionValueType::JsonCompound, FunctionValueType::String,
-            &GeoVPackAnalyzer::store, mangling::kAnalyzer};
-  }
-
-  if (type == irs::Type<GeoPointAnalyzer>::id()) {
-    return {FunctionValueType::JsonCompound, FunctionValueType::String,
-            &GeoPointAnalyzer::store, mangling::kAnalyzer};
-  }
-
   if (type == irs::Type<wildcard::Analyzer>::id()) {
     return {FunctionValueType::String, FunctionValueType::String,
             &wildcard::Analyzer::store, mangling::kString};

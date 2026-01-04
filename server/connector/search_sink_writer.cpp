@@ -120,8 +120,7 @@ namespace sdb::connector {
 
 SearchSinkWriter::SearchSinkWriter(irs::IndexWriter::Transaction& trx)
   : _trx(trx) {
-  _pk_buffer.resize(sizeof(Column::Id));
-  _name_buffer.resize(sizeof(Column::Id));
+  basics::StrResize(_pk_buffer, sizeof(Column::Id));
   SetNameToBuffer(_pk_buffer, kPkFieldName);
 };
 
@@ -145,11 +144,10 @@ void SearchSinkWriter::Write(std::span<const rocksdb::Slice> cell_slices,
   SDB_ASSERT(_current_writer);
   SDB_ASSERT(_document);
   if (_emit_pk) {
-    _field.value =
-      irs::bytes_view(reinterpret_cast<const irs::byte_type*>(full_key.data()),
-                      full_key.size());
+    auto row_key = key_utils::ExtractRowKey(full_key);
+    _field.value = irs::ViewCast<irs::byte_type>(row_key);
     _field.name = _pk_buffer;
-    _field.SetStringValue(key_utils::ExtractRowKey(full_key));
+    _field.SetStringValue(row_key);
     VELOX_CHECK(_document->template Insert<irs::Action::INDEX | irs::Action::STORE>(_field),
                 "Failed to insert PK field into IResearch document");
     _field.name = _name_buffer;
@@ -162,8 +160,8 @@ void SearchSinkWriter::Write(std::span<const rocksdb::Slice> cell_slices,
 
 template<velox::TypeKind Kind>
 void SearchSinkWriter::SetupColumnWriter(sdb::catalog::Column::Id column_id) {
+  basics::StrResize(_name_buffer, sizeof(column_id));
   SetNameToBuffer(_name_buffer, column_id);
-  _field.name = _name_buffer;
   using T = typename velox::TypeTraits<Kind>::NativeType;
   if constexpr (Kind == velox::TypeKind::VARCHAR ||
                 Kind == velox::TypeKind::VARBINARY) {
@@ -180,6 +178,7 @@ void SearchSinkWriter::SetupColumnWriter(sdb::catalog::Column::Id column_id) {
               velox::TypeKindName::toName(Kind),
               " is not supported in search index");
   }
+  _field.name = _name_buffer;
 }
 
 void SearchSinkWriter::Init(size_t batch_size) {
@@ -205,7 +204,8 @@ void SearchSinkWriter::WriteNumericValue(
   std::span<const rocksdb::Slice> cell_slices, SearchSinkWriter::Field& field) {
   SDB_ASSERT(cell_slices.size() == 1);
   SDB_ASSERT(sizeof(T) == cell_slices[0].size());
-  field.SetNumericValue(*std::bit_cast<const T*>(cell_slices[0].data()));
+  // this is true as long as we match machine ending with storage ending
+  field.SetNumericValue(*reinterpret_cast<const T*>(cell_slices[0].data()));
 };
 
 void SearchSinkWriter::WriteBooleanValue(

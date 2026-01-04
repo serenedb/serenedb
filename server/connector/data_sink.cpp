@@ -98,9 +98,13 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
     key_utils::MakeColumnKey(
       input, _key_childs, row_idx, table_key,
       [&](std::string_view row_key) {
-        VELOX_CHECK(_data_writer.Lock(row_key),
-                    "Failed to acquire row lock for table {}",
-                    _object_key.id());
+        const auto status = _data_writer.Lock(row_key);
+        if (!status.ok()) {
+          const auto result = rocksutils::ConvertStatus(status);
+          SDB_THROW(result.errorNumber(),
+                    "Failed to acquire row lock for table ",
+                    _object_key.id(), " error: ", result.errorMessage());
+        }
       },
       key_buffer);
   }
@@ -1993,9 +1997,13 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
     key_utils::MakeColumnKey(
       input, _key_childs, row_idx, table_key,
       [&](std::string_view row_key) {
-        VELOX_CHECK(_data_writer.Lock(row_key),
-                    "Failed to acquire row lock for table {}",
-                    _object_key.id());
+        const auto status = _data_writer.Lock(row_key);
+        if (!status.ok()) {
+          const auto result = rocksutils::ConvertStatus(status);
+          SDB_THROW(result.errorNumber(),
+                    "Failed to acquire row lock for table ",
+                    _object_key.id(), " error: ", result.errorMessage());
+        }
       },
       key_buffer);
 

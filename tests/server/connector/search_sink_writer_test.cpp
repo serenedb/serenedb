@@ -21,6 +21,7 @@
 #include <velox/vector/tests/utils/VectorTestBase.h>
 
 #include <iresearch/analysis/analyzers.hpp>
+#include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/search/scorers.hpp>
 #include <iresearch/store/memory_directory.hpp>
@@ -35,6 +36,9 @@
 using namespace sdb::connector;
 
 namespace {
+
+static constexpr std::string_view kPkColumn =
+  std::string_view{"\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF", 8};
 
 class SearchSinkWriterTest : public ::testing::Test,
                              public velox::test::VectorTestBase {
@@ -90,10 +94,10 @@ TEST_F(SearchSinkWriterTest, InsertMultipleColumns) {
 
   const std::vector<sdb::catalog::Column::Id> col_id{1, 2, 3};
   const std::vector<std::string_view> pk{
-    {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk1", 20},
-    {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x2pk2", 20},
-    {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x3pk3", 20},
-    {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x4pk4", 20}};
+    {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk1", 19},
+    {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x2pk2", 19},
+    {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x3pk3", 19},
+    {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x4pk4", 19}};
   const std::vector<std::string_view> string_data{
     std::string_view{"\x0rrr", 4}, std::string_view{"\x0", 1},
     std::string_view{"abcdef", 6}, std::string_view{"\x0\x0", 2}};
@@ -130,24 +134,75 @@ TEST_F(SearchSinkWriterTest, InsertMultipleColumns) {
   ASSERT_EQ(4, reader.live_docs_count());
   {
     auto& segment = reader[0];
-    const auto* pk_column = segment.column(std::string_view{"\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF", 8});
+    const auto* pk_column = segment.column(kPkColumn);
     ASSERT_NE(nullptr, pk_column);
     auto pk_values = pk_column->iterator(irs::ColumnHint::Normal);
     ASSERT_NE(nullptr, pk_values);
-    
-    /*auto values = column->iterator(irs::ColumnHint::Normal);
+    auto values = pk_column->iterator(irs::ColumnHint::Normal);
     ASSERT_NE(nullptr, values);
-    auto* actual_value = irs::get<irs::PayAttr>(*values);
-    ASSERT_NE(nullptr, actual_value);
-    auto terms = segment.field("same");
-    ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator(irs::SeekMode::NORMAL);
-    ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
-    ASSERT_TRUE(docs_itr->next());
-    ASSERT_EQ(docs_itr->value(), values->seek(docs_itr->value()));
-    ASSERT_EQ("A", irs::ToString<std::string_view>(actual_value->value.data()));
-    ASSERT_FALSE(docs_itr->next());*/
+    auto* actual_pk_value = irs::get<irs::PayAttr>(*values);
+    ASSERT_NE(nullptr, actual_pk_value);
+    auto terms1 = segment.field(
+      std::string_view{"\x00\x00\x00\x00\x00\x00\x00\x01\x02", 9});
+    ASSERT_NE(nullptr, terms1);
+    auto terms2 = segment.field(
+      std::string_view{"\x00\x00\x00\x00\x00\x00\x00\x02\x03", 9});
+    ASSERT_NE(nullptr, terms2);
+
+    auto term_itr1 = terms1->iterator(irs::SeekMode::NORMAL);
+    while (term_itr1->next()) {
+      auto tv = term_itr1->value();
+      std::cout << tv.size() << std::endl;
+    }
+
+    irs::NumericTokenizer stream;
+    const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
+    ASSERT_TRUE(token);
+  
+    {
+      auto term_itr2 = terms2->iterator(irs::SeekMode::NORMAL);
+      stream.reset(0.);
+      ASSERT_TRUE(stream.next());
+      ASSERT_TRUE(term_itr2->seek(irs::ViewCast<irs::byte_type>(string_data[0].substr(1))));
+      auto docs_itr = term_itr2->postings(irs::IndexFeatures::None);
+      ASSERT_TRUE(docs_itr->next());
+      ASSERT_EQ(docs_itr->value(), values->seek(docs_itr->value()));
+      ASSERT_EQ("pk1", irs::ViewCast<char>(actual_pk_value->value));
+      ASSERT_FALSE(docs_itr->next());
+    }
+    {
+      auto term_itr2 = terms2->iterator(irs::SeekMode::NORMAL);
+      stream.reset(1.);
+      ASSERT_TRUE(stream.next());
+      ASSERT_TRUE(term_itr2->seek(irs::ViewCast<irs::byte_type>(string_data[1].substr(1))));
+      auto docs_itr = term_itr2->postings(irs::IndexFeatures::None);
+      ASSERT_TRUE(docs_itr->next());
+      ASSERT_EQ(docs_itr->value(), values->seek(docs_itr->value()));
+      ASSERT_EQ("pk2", irs::ViewCast<char>(actual_pk_value->value));
+      ASSERT_FALSE(docs_itr->next());
+    }
+    {
+      auto term_itr2 = terms2->iterator(irs::SeekMode::NORMAL);
+      stream.reset(2.);
+      ASSERT_TRUE(stream.next());
+      ASSERT_TRUE(term_itr2->seek(irs::ViewCast<irs::byte_type>(string_data[2])));
+      auto docs_itr = term_itr2->postings(irs::IndexFeatures::None);
+      ASSERT_TRUE(docs_itr->next());
+      ASSERT_EQ(docs_itr->value(), values->seek(docs_itr->value()));
+      ASSERT_EQ("pk3", irs::ViewCast<char>(actual_pk_value->value));
+      ASSERT_FALSE(docs_itr->next());
+    }
+    {
+      auto term_itr2 = terms2->iterator(irs::SeekMode::NORMAL);
+      stream.reset(3.);
+      ASSERT_TRUE(stream.next());
+      ASSERT_TRUE(term_itr2->seek(irs::ViewCast<irs::byte_type>(string_data[3].substr(1))));
+      auto docs_itr = term_itr2->postings(irs::IndexFeatures::None);
+      ASSERT_TRUE(docs_itr->next());
+      ASSERT_EQ(docs_itr->value(), values->seek(docs_itr->value()));
+      ASSERT_EQ("pk4", irs::ViewCast<char>(actual_pk_value->value));
+      ASSERT_FALSE(docs_itr->next());
+    }
   }
 }
 

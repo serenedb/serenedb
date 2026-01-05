@@ -108,6 +108,9 @@ on:
       SDB_CLUSTER_REPO:
         required: true
         description: 'Path to the cluster repo'
+      TG_USER_MAP:
+        required: false
+        description: 'JSON mapping of GitHub usernames to Telegram usernames'
 
 jobs:
   build:

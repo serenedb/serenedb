@@ -16,13 +16,13 @@ on:
         required: true
         type: string
         default: 'main'
-      SDB_PRIVATE:
-        description: 'Make SereneDB with the private flag'
+      SDB_CLUSTER:
+        description: 'Build SereneDB cluster'
         required: true
         type: boolean
         default: false
-      SDB_PRIVATE_BRANCH:
-        description: 'Name of the private branch to use'
+      SDB_CLUSTER_BRANCH:
+        description: 'Name of a cluster branch to use'
         required: true
         type: string
         default: 'main'
@@ -135,8 +135,8 @@ jobs:
     with:
       LOCATION: ${{ inputs.LOCATION }}
       BRANCH: ${{ inputs.BRANCH }}
-      SDB_PRIVATE: ${{ inputs.SDB_PRIVATE }}
-      SDB_PRIVATE_BRANCH: ${{ inputs.SDB_PRIVATE_BRANCH }}
+      SDB_CLUSTER: ${{ inputs.SDB_CLUSTER }}
+      SDB_CLUSTER_BRANCH: ${{ inputs.SDB_CLUSTER_BRANCH }}
       DOCKER_BUILD_IMAGES: ${{ inputs.DOCKER_BUILD_IMAGES }}
       DOCKER_SERENEDB_IMAGE: ${{ inputs.DOCKER_SERENEDB_IMAGE }}
       PUSH_IMAGES_2_REGISTRY: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
@@ -158,4 +158,4 @@ jobs:
       TG_THREAD_ID_BUILD: ${{ secrets.TG_THREAD_ID_BUILD }}
       TG_THREAD_ID_MAIN: ${{ secrets.TG_THREAD_ID_MAIN }}
       TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
-      SDB_PRIVATE_REPO: ${{ secrets.SDB_PRIVATE_REPO }}
+      SDB_CLUSTER_REPO: ${{ secrets.SDB_CLUSTER_REPO }}

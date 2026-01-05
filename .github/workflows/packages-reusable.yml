@@ -13,13 +13,13 @@ on:
         required: true
         type: string
         default: 'main'
-      SDB_PRIVATE:
-        description: 'Make SereneDB with the private flag'
+      SDB_CLUSTER:
+        description: 'Build SereneDB cluster'
         required: true
         type: boolean
         default: false
-      SDB_PRIVATE_BRANCH:
-        description: 'Name of the private branch to use'
+      SDB_CLUSTER_BRANCH:
+        description: 'Name of a cluster branch to use'
         required: true
         type: string
         default: 'main'
@@ -105,9 +105,9 @@ on:
         required: true
       TG_THREAD_ID_MAIN:
         required: true
-      SDB_PRIVATE_REPO:
+      SDB_CLUSTER_REPO:
         required: true
-        description: 'Path to the private repo'
+        description: 'Path to the cluster repo'
 
 jobs:
   build:
@@ -120,8 +120,8 @@ jobs:
     env:
       WORKSPACE: ${{ github.workspace }} # Jenkins compatibility layer
       BRANCH: ${{ inputs.BRANCH }}
-      SDB_PRIVATE: ${{ inputs.SDB_PRIVATE }}
-      SDB_PRIVATE_BRANCH: ${{ inputs.SDB_PRIVATE_BRANCH }}
+      SDB_CLUSTER: ${{ inputs.SDB_CLUSTER }}
+      SDB_CLUSTER_BRANCH: ${{ inputs.SDB_CLUSTER_BRANCH }}
       DOCKER_BUILD_IMAGES: ${{ inputs.DOCKER_BUILD_IMAGES }}
       DOCKER_SERENEDB_IMAGE: ${{ inputs.DOCKER_SERENEDB_IMAGE }}
       PUSH_IMAGES_2_REGISTRY: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
@@ -142,7 +142,7 @@ jobs:
       TG_THREAD_ID_BUILD: ${{ secrets.TG_THREAD_ID_BUILD }}
       TG_THREAD_ID_MAIN: ${{ secrets.TG_THREAD_ID_MAIN }}
       TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
-      SDB_PRIVATE_REPO: ${{ secrets.SDB_PRIVATE_REPO }}
+      SDB_CLUSTER_REPO: ${{ secrets.SDB_CLUSTER_REPO }}
 
     steps:
       - name: Checkout SereneDB repo
@@ -158,8 +158,8 @@ jobs:
       - name: Checkout private repo (sparse)
         uses: actions/checkout@v4
         with:
-          repository: ${{ env.SDB_PRIVATE_REPO }}
-          ref: ${{ env.SDB_PRIVATE_BRANCH }}
+          repository: ${{ env.SDB_CLUSTER_REPO }}
+          ref: ${{ env.SDB_CLUSTER_BRANCH }}
           token: ${{ env.PAT_TOKEN }}
           path: private
           sparse-checkout: |
@@ -184,7 +184,7 @@ jobs:
           SDB_DEV=${{ env.SDB_DEV }}
           USE_IPO=${{ env.USE_IPO }}
           SDB_ALLOC=${{ env.SDB_ALLOC }}
-          SDB_PRIVATE=${{ env.SDB_PRIVATE }}
+          SDB_CLUSTER=${{ env.SDB_CLUSTER }}
           ENSURE_VTUNE_SYMBOLS=${{ env.ENSURE_VTUNE_SYMBOLS }}
           STRIP_TARBALL=${{ env.STRIP_TARBALL }}
           STATIC_EXECUTABLES=${{ env.STATIC_EXECUTABLES }}

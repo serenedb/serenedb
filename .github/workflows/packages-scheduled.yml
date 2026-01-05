@@ -10,8 +10,8 @@ jobs:
     with:
       LOCATION: 'self-hosted'
       BRANCH: 'main'
-      SDB_PRIVATE: true
-      SDB_PRIVATE_BRANCH: 'main'
+      SDB_CLUSTER: true
+      SDB_CLUSTER_BRANCH: 'main'
       DOCKER_BUILD_IMAGES: false
       DOCKER_SERENEDB_IMAGE: true
       PUSH_IMAGES_2_REGISTRY: true
@@ -33,4 +33,4 @@ jobs:
       TG_THREAD_ID_BUILD: ${{ secrets.TG_THREAD_ID_BUILD }}
       TG_THREAD_ID_MAIN: ${{ secrets.TG_THREAD_ID_MAIN }}
       TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
-      SDB_PRIVATE_REPO: ${{ secrets.SDB_PRIVATE_REPO }}
+      SDB_CLUSTER_REPO: ${{ secrets.SDB_CLUSTER_REPO }}

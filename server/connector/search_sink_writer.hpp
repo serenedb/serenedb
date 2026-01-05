@@ -68,7 +68,8 @@ class SearchSinkWriter final : public SinkWriterBase {
     }
 
     void SetStringValue(std::string_view value);
-    void SetNumericValue(double value);
+    template<typename T>
+    void SetNumericValue(T value);
     void SetBooleanValue(bool value);
 
     sdb::search::AnalyzerImpl::CacheType::ptr analyzer;
@@ -77,16 +78,20 @@ class SearchSinkWriter final : public SinkWriterBase {
     irs::IndexFeatures index_features;
   };
 
-  using Writer = std::function<void(std::span<const rocksdb::Slice> cell_slices,
-                                    Field& field)>;
+  using Writer = std::function<void(std::string_view full_key,
+                                     std::span<const rocksdb::Slice> cell_slices,
+                                     Field& field)>;
 
-  static void WriteStringValue(std::span<const rocksdb::Slice> cell_slices,
+  static void WriteStringValue(std::string_view full_key,
+                               std::span<const rocksdb::Slice> cell_slices,
                                Field& field);
-  static void WriteBooleanValue(std::span<const rocksdb::Slice> cell_slices,
+  static void WriteBooleanValue(std::string_view full_key,
+                                std::span<const rocksdb::Slice> cell_slices,
                                 Field& field);
 
   template<typename T>
-  static void WriteNumericValue(std::span<const rocksdb::Slice> cell_slices,
+  static void WriteNumericValue(std::string_view full_key,
+                                std::span<const rocksdb::Slice> cell_slices,
                                 Field& field);
 
   template<velox::TypeKind Kind>
@@ -94,7 +99,6 @@ class SearchSinkWriter final : public SinkWriterBase {
 
   Field _field;
   std::string _name_buffer;
-  std::string _pk_buffer;
   irs::IndexWriter::Transaction& _trx;
   std::unique_ptr<irs::IndexWriter::Document> _document;
   Writer _current_writer;

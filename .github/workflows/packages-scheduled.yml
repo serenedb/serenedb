@@ -6,7 +6,7 @@ on:
 
 jobs:
   build:
-    uses: ./.github/workflows/build-reusable.yml
+    uses: ./.github/workflows/packages-reusable.yml
     with:
       LOCATION: 'self-hosted'
       BRANCH: 'main'

@@ -20,12 +20,14 @@
 
 #include "serenedb_connector.hpp"
 
+#include "basics/static_strings.h"
+
 namespace sdb::connector {
 
 SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
   const axiom::connector::ConnectorSessionPtr& session,
   const axiom::connector::TableLayout& layout)
-  : velox::connector::ConnectorTableHandle{"serenedb"},
+  : velox::connector::ConnectorTableHandle{StaticStrings::kSereneDBConnector},
     _name{layout.name()},
     _table_id{basics::downCast<RocksDBTable>(layout.table()).TableId()} {
   const auto& column_map = layout.table().columnMap();
@@ -45,6 +47,18 @@ SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
                            ->Id();
   }
   _txn = ExtractTransaction(session);
+}
+
+uint64_t RocksDBTable::numRows() const {
+  SDB_ASSERT(!_column_handles.empty() && _column_handles.front());
+  const auto* column_handle = _column_handles.front().get();
+  if (column_handle->Id() == catalog::Column::kGeneratedPKId) {
+    SDB_ASSERT(_column_handles.size() >= 2);
+    column_handle = _column_handles[1].get();
+  }
+
+  return GetServerEngine().GetApproximateEntityCount(TableId(),
+                                                     column_handle->Id());
 }
 
 }  // namespace sdb::connector

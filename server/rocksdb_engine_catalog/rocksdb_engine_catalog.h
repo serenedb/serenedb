@@ -416,6 +416,9 @@ class RocksDBEngineCatalog {
     ObjectId database_id, ObjectId schema_id, RocksDBEntryType entry,
     absl::FunctionRef<Result(rocksdb::Slice, vpack::Slice)> visitor);
 
+  uint64_t GetApproximateEntityCount(ObjectId table_id,
+                                     catalog::Column::Id column_id) const;
+
  private:
   bool UseRangeDelete(ObjectId id, uint64_t number_documents);
 

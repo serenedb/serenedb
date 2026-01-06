@@ -1,0 +1,31 @@
+statement ok
+CREATE TABLE t(id text);
+
+
+statement ok
+INSERT INTO t
+SELECT ((x * x + x + 1) % 1000)::text FROM generate_series(1, 1000) AS t(x);
+
+
+statement ok
+CREATE TABLE f(id text primary key, value int);
+
+
+statement ok
+INSERT INTO f VALUES ('3', 1), ('7', 2), ('13', 3);
+
+
+query ?
+EXPLAIN (ANALYZE) SELECT t.id, f.value FROM f JOIN t ON f.id = t.id;
+----
+QUERY PLAN
+EXECUTION PLAN WITH STATS:
+Fragment 0:  numWorkers=<slt:ignore>:
+-- Project[3][expressions: (id:VARCHAR, "id"), (value:INTEGER, "value")] -> "id":VARCHAR, "value":INTEGER
+   Output: <slt:ignore>, Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: <slt:ignore>, Peak memory: <slt:ignore>, Memory allocations: <slt:ignore>, Threads: <slt:ignore>, CPU breakdown: B/I/O/F (<slt:ignore>)
+  -- HashJoin[2][INNER id=id] -> "value":INTEGER, "id":VARCHAR
+     Output: <slt:ignore>, Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: <slt:ignore>, Peak memory: <slt:ignore>, Memory allocations: <slt:ignore>, CPU breakdown: B/I/O/F (<slt:ignore>)
+    -- TableScan[0][t] -> "id":VARCHAR
+       Input: <slt:ignore>, Output: <slt:ignore>, Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: <slt:ignore>, Peak memory: <slt:ignore>, Memory allocations: <slt:ignore>, Threads: <slt:ignore>, Splits: <slt:ignore>, CPU breakdown: B/I/O/F (<slt:ignore>)
+    -- TableScan[1][f] -> "id":VARCHAR, "value":INTEGER
+       Input: <slt:ignore>, Output: <slt:ignore>, Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: <slt:ignore>, Peak memory: <slt:ignore>, Memory allocations: <slt:ignore>, Threads: <slt:ignore>, Splits: <slt:ignore>, CPU breakdown: B/I/O/F (<slt:ignore>)

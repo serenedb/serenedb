@@ -22,6 +22,7 @@ set(SIMDCOMP_SRCS
   ${PROJECT_SOURCE_DIR}/src/simdbitpacking.c
   ${PROJECT_SOURCE_DIR}/src/avx512bitpacking.c
   ${PROJECT_SOURCE_DIR}/src/avxbitpacking.c
+  ${PROJECT_SOURCE_DIR}/src/avxdeltabitpacking.c
   ${PROJECT_SOURCE_DIR}/src/simdfor.c
   ${PROJECT_SOURCE_DIR}/src/simdintegratedbitpacking.c
   ${PROJECT_SOURCE_DIR}/src/simdpackedsearch.c

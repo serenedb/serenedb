@@ -160,13 +160,13 @@ class SamePositionQuery : public Filter::Query {
       ++term_stats;
     }
 
-    return irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, ord.buckets().size(),
-      [&]<typename A>(A&& aggregator) -> DocIterator::ptr {
-        return MakeConjunction<SamePositionIterator>(
-          // TODO(mbkkt) Implement wand?
-          {}, std::move(aggregator), std::move(itrs), std::move(positions));
-      });
+    return ResolveMergeType(ScoreMergeType::Sum, ord.buckets().size(),
+                            [&]<typename A>(A&& aggregator) {
+                              // TODO(mbkkt) Implement wand?
+                              return MakeConjunction<SamePositionIterator>(
+                                {}, std::move(aggregator), std::move(itrs),
+                                std::move(positions));
+                            });
   }
 
   score_t Boost() const noexcept final { return _boost; }

@@ -168,14 +168,13 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
 
   itrs.erase(it, std::end(itrs));
 
-  return ResolveMergeType(_merge_type, ord.buckets().size(),
-                          [&]<typename A>(A&& aggregator) -> DocIterator::ptr {
-                            using Disjunction =
-                              MinMatchIterator<DocIterator::ptr, A>;
-                            return MakeWeakDisjunction<Disjunction>(
-                              {}, std::move(itrs), _min_match,
-                              std::move(aggregator), state->estimation());
-                          });
+  return ResolveMergeType(
+    _merge_type, ord.buckets().size(), [&]<typename A>(A&& aggregator) {
+      using Disjunction = MinMatchIterator<ScoreAdapter, A>;
+      return MakeWeakDisjunction<Disjunction>({}, std::move(itrs), _min_match,
+                                              std::move(aggregator),
+                                              state->estimation());
+    });
 }
 
 }  // namespace irs

@@ -103,8 +103,8 @@ class NGramApprox : public MinMatchDisjunction<NoopAggregator> {
 };
 
 template<>
-class NGramApprox<true> : public Conjunction<CostAdapter<>, NoopAggregator> {
-  using Base = Conjunction<CostAdapter<>, NoopAggregator>;
+class NGramApprox<true> : public Conjunction<CostAdapter, NoopAggregator> {
+  using Base = Conjunction<CostAdapter, NoopAggregator>;
 
  public:
   NGramApprox(CostAdapters&& itrs, size_t min_match_count)

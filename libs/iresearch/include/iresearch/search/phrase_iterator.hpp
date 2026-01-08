@@ -459,12 +459,12 @@ class FixedPhraseFrequency {
 };
 
 // Adapter to use DocIterator with positions for disjunction
-struct VariadicPhraseAdapter : ScoreAdapter<> {
+struct VariadicPhraseAdapter : ScoreAdapter {
   VariadicPhraseAdapter() = default;
-  VariadicPhraseAdapter(DocIterator::ptr&& it, score_t boost) noexcept
-    : ScoreAdapter<>(std::move(it)),
-      position(irs::GetMutable<irs::PosAttr>(this->it.get())),
-      boost(boost) {}
+  VariadicPhraseAdapter(DocIterator::ptr it, score_t boost) noexcept
+    : ScoreAdapter(std::move(it)),
+      position{irs::GetMutable<irs::PosAttr>(this->it.get())},
+      boost{boost} {}
 
   irs::PosAttr* position{};
   score_t boost{kNoBoost};
@@ -490,8 +490,8 @@ static_assert(std::is_nothrow_move_assignable_v<VariadicPhraseOffsetAdapter>);
 
 template<typename Adapter>
 using VariadicTermPosition =
-  std::pair<CompoundDocIterator<Adapter>*,
-            TermInterval>;  // desired offset in the phrase
+  std::pair<CompoundDocIterator<Adapter>*, TermInterval>;
+// desired offset in the phrase
 
 // Helper for variadic phrase frequency evaluation for cases when
 // only one term may be at a single position in a phrase (e.g. synonyms)

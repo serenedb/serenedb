@@ -30,13 +30,14 @@
 #include "iresearch/utils/attribute_helper.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
+// Conjunction for DocIteratorImpl instead of ScoreAdapter
+// only because of ngram
 namespace irs {
 
-// Adapter to use DocIteratorImpl with conjunction and disjunction.
-template<typename DocIteratorImpl = DocIterator::ptr>
+// Adapter to use DocIterator::ptr with conjunction and disjunction.
 struct ScoreAdapter {
   ScoreAdapter() noexcept = default;
-  ScoreAdapter(DocIteratorImpl&& it) noexcept
+  ScoreAdapter(DocIterator::ptr it) noexcept
     : it{std::move(it)},
       doc{irs::get<irs::DocAttr>(*this->it)},
       score{&irs::ScoreAttr::get(*this->it)} {
@@ -56,19 +57,19 @@ struct ScoreAdapter {
     return it->GetMutable(type);
   }
 
-  operator DocIteratorImpl&&() && noexcept { return std::move(it); }
+  operator DocIterator::ptr&&() && noexcept { return std::move(it); }
 
   explicit operator bool() const noexcept { return it != nullptr; }
 
   // access iterator value without virtual call
   doc_id_t value() const noexcept { return doc->value; }
 
-  DocIteratorImpl it;
+  DocIterator::ptr it;
   const irs::DocAttr* doc{};
   const irs::ScoreAttr* score{};
 };
 
-using ScoreAdapters = std::vector<ScoreAdapter<>>;
+using ScoreAdapters = std::vector<ScoreAdapter>;
 
 // Helpers
 template<typename T>

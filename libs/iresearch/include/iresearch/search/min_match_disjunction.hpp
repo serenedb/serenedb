@@ -26,10 +26,9 @@
 
 namespace irs {
 
-template<typename DocIteratorImpl = DocIterator::ptr>
-struct CostAdapter : ScoreAdapter<DocIteratorImpl> {
-  explicit CostAdapter(DocIteratorImpl&& it) noexcept
-    : ScoreAdapter<DocIteratorImpl>{std::move(it)} {
+struct CostAdapter : ScoreAdapter {
+  explicit CostAdapter(DocIterator::ptr it) noexcept
+    : ScoreAdapter{std::move(it)} {
     // TODO(mbkkt) 0 instead of kMax?
     est = CostAttr::extract(*this->it, CostAttr::kMax);
   }
@@ -40,7 +39,7 @@ struct CostAdapter : ScoreAdapter<DocIteratorImpl> {
   CostAttr::Type est{};
 };
 
-using CostAdapters = std::vector<CostAdapter<>>;
+using CostAdapters = std::vector<CostAdapter>;
 
 // Heapsort-based "weak and" iterator
 // -----------------------------------------------------------------------------

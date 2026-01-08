@@ -651,8 +651,7 @@ DocIterator::ptr ByNestedQuery::execute(const ExecutionContext& ctx) const {
   }
 
   return ResolveMergeType(
-    _merge_type, ord.buckets().size(),
-    [&]<typename A>(A&& aggregator) -> DocIterator::ptr {
+    _merge_type, ord.buckets().size(), [&]<typename A>(A&& aggregator) {
       return ResolveMatchType(
         rdr, _match, _none_boost, std::forward<A>(aggregator),
         [&]<typename M>(M&& matcher) -> DocIterator::ptr {

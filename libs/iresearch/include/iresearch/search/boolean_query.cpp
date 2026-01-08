@@ -81,13 +81,12 @@ DocIterator::ptr MakeDisjunction(const ExecutionContext& ctx,
     return DocIterator::empty();
   }
 
-  return irs::ResolveMergeType(
-    merge_type, ctx.scorers.buckets().size(),
-    [&]<typename A>(A&& aggregator) -> DocIterator::ptr {
-      using Disjunction = DisjunctionIterator<DocIterator::ptr, A>;
-      return irs::MakeDisjunction<Disjunction>(ctx.wand, std::move(itrs),
-                                               std::forward<A>(aggregator),
-                                               std::forward<Args>(args)...);
+  return ResolveMergeType(
+    merge_type, ctx.scorers.buckets().size(), [&]<typename A>(A&& aggregator) {
+      using Disjunction = DisjunctionIterator<ScoreAdapter, A>;
+      return MakeDisjunction<Disjunction>(ctx.wand, std::move(itrs),
+                                          std::forward<A>(aggregator),
+                                          std::forward<Args>(args)...);
     });
 }
 
@@ -112,11 +111,10 @@ DocIterator::ptr MakeConjunction(const ExecutionContext& ctx,
     return DocIterator::empty();
   }
 
-  return irs::ResolveMergeType(
-    merge_type, ctx.scorers.buckets().size(),
-    [&]<typename A>(A&& aggregator) -> DocIterator::ptr {
-      return irs::MakeConjunction(ctx.wand, std::forward<A>(aggregator),
-                                  std::move(itrs), std::forward<Args>(args)...);
+  return ResolveMergeType(
+    merge_type, ctx.scorers.buckets().size(), [&]<typename A>(A&& aggregator) {
+      return MakeConjunction(ctx.wand, std::forward<A>(aggregator),
+                             std::move(itrs), std::forward<Args>(args)...);
     });
 }
 
@@ -233,10 +231,10 @@ DocIterator::ptr MinMatchQuery::execute(const ExecutionContext& ctx,
   }
 
   return ResolveMergeType(merge_type(), ctx.scorers.buckets().size(),
-                          [&]<typename A>(A&& aggregator) -> DocIterator::ptr {
+                          [&]<typename A>(A&& aggregator) {
                             // FIXME(gnusi): use FAST version
                             using Disjunction =
-                              MinMatchIterator<DocIterator::ptr, A>;
+                              MinMatchIterator<ScoreAdapter, A>;
                             return MakeWeakDisjunction<Disjunction, A>(
                               ctx.wand, std::move(itrs), min_match_count,
                               std::forward<A>(aggregator));

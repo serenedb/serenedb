@@ -41,7 +41,7 @@ class SearchSinkWriter final : public SinkWriterBase {
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key) override;
 
-  void SwitchColumn(velox::TypeKind kind,  sdb::catalog::Column::Id column_id) override;
+  void SwitchColumn(velox::TypeKind kind, bool have_nulls,  sdb::catalog::Column::Id column_id) override;
   void Finish() override;
 
   void DeleteRow(std::string_view row_key) override;
@@ -83,35 +83,44 @@ class SearchSinkWriter final : public SinkWriterBase {
     void PrepareForBooleanValue();
     void SetBooleanValue(bool value);
 
+    void PrepareForNullValue();
+    void SetNullValue();
+
     sdb::search::AnalyzerImpl::CacheType::ptr analyzer;
     std::string_view name;
     irs::bytes_view value;
     irs::IndexFeatures index_features;
   };
 
-  using Writer = std::function<void(std::string_view full_key,
+  using Writer = std::function<Field&(std::string_view full_key,
                                      std::span<const rocksdb::Slice> cell_slices,
-                                     Field& field)>;
-
-  static void WriteStringValue(std::string_view full_key,
+                                     Field& field, Field& null_field)>;
+  template<bool have_nulls>
+  static Field& WriteStringValue(std::string_view full_key,
                                std::span<const rocksdb::Slice> cell_slices,
-                               Field& field);
-  static void WriteBooleanValue(std::string_view full_key,
+                               Field& field, Field& null_field);
+  template<bool have_nulls>
+  static Field& WriteBooleanValue(std::string_view full_key,
                                 std::span<const rocksdb::Slice> cell_slices,
-                                Field& field);
+                                Field& field, Field& null_field);
 
-  template<typename T>
-  static void WriteNumericValue(std::string_view full_key,
+  static Field& WriteNullValue(std::string_view full_key,
+                             std::span<const rocksdb::Slice> cell_slices,
+                             Field& field, Field& null_field);
+
+  template<typename T, bool have_nulls>
+  static Field& WriteNumericValue(std::string_view full_key,
                                 std::span<const rocksdb::Slice> cell_slices,
-                                Field& field);
+                                Field& field, Field& null_field);
 
   template<velox::TypeKind Kind>
-  void SetupColumnWriter(sdb::catalog::Column::Id column_id);
+  void SetupColumnWriter(sdb::catalog::Column::Id column_id, bool have_nulls);
 
   Field _field;
   Field _pk_field;
-  // TODO(Dronplane): null_field if column may have nulls
+  Field _null_field;
   std::string _name_buffer;
+  std::string _null_name_buffer;
   irs::IndexWriter::Transaction& _trx;
   std::unique_ptr<irs::IndexWriter::Document> _document;
   Writer _current_writer;

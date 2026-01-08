@@ -45,8 +45,6 @@
 
 namespace {
 
-// TODO(Dronplane) unify with key?
-constexpr std::string_view kStringPrefix{"\0", 1};
 constexpr std::string_view kZeroLengthVector{"\0", 1};
 constexpr std::string_view kOneValueHeader{"\0\1", 2};
 

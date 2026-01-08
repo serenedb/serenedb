@@ -119,27 +119,27 @@ TEST_F(SearchSinkWriterTest, InsertDeleteMultipleColumns) {
     std::string_view{"\xb\x0\x0\x0\x0\x0\x0\x0", 8},
     std::string_view{"\xc\x0\x0\x0\x0\x0\x0\x0", 8}};
 
-  sink.SwitchColumn(velox::TypeKind::INTEGER, col_id[0]);
+  sink.SwitchColumn(velox::TypeKind::INTEGER, false, col_id[0]);
   sink.Write({rocksdb::Slice(integer_data[0])}, pk[0]);
   sink.Write({rocksdb::Slice(integer_data[1])}, pk[1]);
   sink.Write({rocksdb::Slice(integer_data[2])}, pk[2]);
   sink.Write({rocksdb::Slice(integer_data[3])}, pk[3]);
-  sink.SwitchColumn(velox::TypeKind::VARCHAR, col_id[1]);
+  sink.SwitchColumn(velox::TypeKind::VARCHAR, false, col_id[1]);
   sink.Write({rocksdb::Slice(string_data[0])}, pk[0]);
   sink.Write({rocksdb::Slice(string_data[1])}, pk[1]);
   sink.Write({rocksdb::Slice(string_data[2])}, pk[2]);
   sink.Write({rocksdb::Slice(string_data[3])}, pk[3]);
-  sink.SwitchColumn(velox::TypeKind::BOOLEAN, col_id[2]);
+  sink.SwitchColumn(velox::TypeKind::BOOLEAN, false, col_id[2]);
   sink.Write({rocksdb::Slice(boolean_data[0])}, pk[0]);
   sink.Write({rocksdb::Slice(boolean_data[1])}, pk[1]);
   sink.Write({rocksdb::Slice(boolean_data[2])}, pk[2]);
   sink.Write({rocksdb::Slice(boolean_data[3])}, pk[3]);
-  sink.SwitchColumn(velox::TypeKind::HUGEINT, col_id[3]);
+  sink.SwitchColumn(velox::TypeKind::HUGEINT, false, col_id[3]);
   sink.Write({rocksdb::Slice(huge_data[0])}, pk[0]);
   sink.Write({rocksdb::Slice(huge_data[1])}, pk[1]);
   sink.Write({rocksdb::Slice(huge_data[2])}, pk[2]);
   sink.Write({rocksdb::Slice(huge_data[3])}, pk[3]);
-  sink.SwitchColumn(velox::TypeKind::BIGINT, col_id[4]);
+  sink.SwitchColumn(velox::TypeKind::BIGINT, false, col_id[4]);
   sink.Write({rocksdb::Slice(big_data[0])}, pk[0]);
   sink.Write({rocksdb::Slice(big_data[1])}, pk[1]);
   sink.Write({rocksdb::Slice(big_data[2])}, pk[2]);
@@ -202,7 +202,6 @@ TEST_F(SearchSinkWriterTest, InsertDeleteMultipleColumns) {
     ASSERT_TRUE(big_term_itr->seek(num_token->value));
     auto big_postings =
       segment.mask(big_term_itr->postings(irs::IndexFeatures::None));
-
     bool_stream.reset(col3);
     ASSERT_TRUE(bool_stream.next());
     auto bool_term_itr = bool_terms->iterator(irs::SeekMode::NORMAL);
@@ -259,6 +258,178 @@ TEST_F(SearchSinkWriterTest, InsertDeleteMultipleColumns) {
 
     validate_row(reader[0], "pk1", 0, string_data[0].substr(1), false, 5, 9);
     validate_row(reader[0], "pk3", 2, string_data[2], true, 7, 11);
+  }
+}
+
+TEST_F(SearchSinkWriterTest, InsertNullsColumns) {
+  auto trx = _data_writer->GetBatch();
+
+  const std::vector<sdb::catalog::Column::Id> col_id{1, 2};
+  const std::vector<std::string_view> pk{
+    {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk1", 19},
+    {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x2pk2", 19},
+    {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x3pk3", 19},
+    {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x4pk4", 19}};
+
+  const std::vector<std::string_view> string_data{std::string_view{"foo", 3},
+                                                  std::string_view{"bar", 3}};
+
+  SearchSinkWriter sink{trx, nullptr};
+  sink.Init(4);
+
+  sink.SwitchColumn(velox::TypeKind::VARCHAR, true, col_id[0]);
+  sink.Write({rocksdb::Slice(string_data[0])}, pk[0]);
+  sink.Write({{}}, pk[1]);  // null
+  sink.Write({rocksdb::Slice(string_data[1])}, pk[2]);
+  sink.Write({{}}, pk[3]);  // null
+  sink.SwitchColumn(velox::TypeKind::UNKNOWN, true, col_id[1]);
+  sink.Write({{}}, pk[0]);  // null
+  sink.Write({{}}, pk[1]);  // null
+  sink.Write({{}}, pk[2]);  // null
+  sink.Write({{}}, pk[3]);  // null
+  sink.Finish();
+  ASSERT_TRUE(trx.Commit());
+  _data_writer->Commit();
+
+  auto reader = irs::DirectoryReader(_dir, _codec);
+  ASSERT_EQ(1, reader.size());
+  ASSERT_EQ(4, reader.docs_count());
+  ASSERT_EQ(4, reader.live_docs_count());
+  auto& segment = reader[0];
+  const auto* pk_column = segment.column(kPkColumn);
+  ASSERT_NE(nullptr, pk_column);
+  auto varchar_terms =
+    segment.field(std::string_view{"\x00\x00\x00\x00\x00\x00\x00\x01\x03", 9});
+  ASSERT_NE(nullptr, varchar_terms);
+  auto varchar_nulls =
+    segment.field(std::string_view{"\x00\x00\x00\x00\x00\x00\x00\x01\x00", 9});
+  ASSERT_NE(nullptr, varchar_nulls);
+  auto unknown_terms =
+    segment.field(std::string_view{"\x00\x00\x00\x00\x00\x00\x00\x02\x00", 9});
+  ASSERT_NE(nullptr, unknown_terms);
+
+  // Row 1   foo, NULL
+  {
+    auto pk_values_itr = pk_column->iterator(irs::ColumnHint::Normal);
+    ASSERT_NE(nullptr, pk_values_itr);
+    auto* actual_pk_value = irs::get<irs::PayAttr>(*pk_values_itr);
+    ASSERT_NE(nullptr, actual_pk_value);
+    auto varchar_terms_itr = varchar_terms->iterator(irs::SeekMode::NORMAL);
+    ASSERT_NE(nullptr, varchar_terms_itr);
+    ASSERT_TRUE(
+      varchar_terms_itr->seek(irs::ViewCast<irs::byte_type>(string_data[0])));
+    // We have some nulls so term should be present
+    auto varchar_nulls_itr = varchar_nulls->iterator(irs::SeekMode::NORMAL);
+    ASSERT_TRUE(varchar_nulls_itr->next());
+    auto varchar_postings =
+      varchar_terms_itr->postings(irs::IndexFeatures::None);
+    ASSERT_TRUE(varchar_postings->next());
+    ASSERT_EQ(varchar_postings->value(),
+              pk_values_itr->seek(varchar_postings->value()));
+    ASSERT_EQ("pk1", irs::ViewCast<char>(actual_pk_value->value));
+    auto varchar_nulls_postings =
+      varchar_nulls_itr->postings(irs::IndexFeatures::None);
+    ASSERT_TRUE(varchar_nulls_postings->seek(varchar_postings->value()));
+    // NULL is not in this row
+    ASSERT_NE(varchar_nulls_postings->value(), varchar_postings->value());
+    auto unknown_terms_itr = unknown_terms->iterator(irs::SeekMode::NORMAL);
+    ASSERT_TRUE(unknown_terms_itr->next());
+    auto unknown_postings =
+      unknown_terms_itr->postings(irs::IndexFeatures::None);
+    ASSERT_TRUE(unknown_postings->seek(varchar_postings->value()));
+    ASSERT_EQ(varchar_postings->value(), unknown_postings->value());
+    ASSERT_FALSE(varchar_postings->next());
+  }
+  // Row 2  NULL, NULL
+  {
+    auto pk_values_itr = pk_column->iterator(irs::ColumnHint::Normal);
+    ASSERT_NE(nullptr, pk_values_itr);
+    auto* actual_pk_value = irs::get<irs::PayAttr>(*pk_values_itr);
+    ASSERT_NE(nullptr, actual_pk_value);
+    // Find expected PK so we know document id for this row
+    irs::doc_id_t row_doc_id = irs::doc_limits::invalid();
+    while (pk_values_itr->next()) {
+      if (irs::ViewCast<char>(actual_pk_value->value) == "pk2") {
+        row_doc_id = pk_values_itr->value();
+        break;
+      }
+    }
+    ASSERT_TRUE(irs::doc_limits::valid(row_doc_id));
+    // We have some nulls so term should be present
+    auto varchar_nulls_itr = varchar_nulls->iterator(irs::SeekMode::NORMAL);
+    ASSERT_TRUE(varchar_nulls_itr->next());
+    auto varchar_nulls_postings =
+      varchar_nulls_itr->postings(irs::IndexFeatures::None);
+    ASSERT_TRUE(varchar_nulls_postings->seek(row_doc_id));
+    ASSERT_EQ(varchar_nulls_postings->value(), row_doc_id);
+    auto unknown_terms_itr = unknown_terms->iterator(irs::SeekMode::NORMAL);
+    ASSERT_TRUE(unknown_terms_itr->next());
+    auto unknown_postings =
+      unknown_terms_itr->postings(irs::IndexFeatures::None);
+    ASSERT_TRUE(unknown_postings->seek(row_doc_id));
+    ASSERT_EQ(unknown_postings->value(), row_doc_id);
+  }
+  // Row 3 bar, null
+  {
+    auto pk_values_itr = pk_column->iterator(irs::ColumnHint::Normal);
+    ASSERT_NE(nullptr, pk_values_itr);
+    auto* actual_pk_value = irs::get<irs::PayAttr>(*pk_values_itr);
+    ASSERT_NE(nullptr, actual_pk_value);
+    auto varchar_terms_itr = varchar_terms->iterator(irs::SeekMode::NORMAL);
+    ASSERT_NE(nullptr, varchar_terms_itr);
+    ASSERT_TRUE(
+      varchar_terms_itr->seek(irs::ViewCast<irs::byte_type>(string_data[1])));
+    // We have some nulls so term should be present
+    auto varchar_nulls_itr = varchar_nulls->iterator(irs::SeekMode::NORMAL);
+    ASSERT_TRUE(varchar_nulls_itr->next());
+    auto varchar_postings =
+      varchar_terms_itr->postings(irs::IndexFeatures::None);
+    ASSERT_TRUE(varchar_postings->next());
+    ASSERT_EQ(varchar_postings->value(),
+              pk_values_itr->seek(varchar_postings->value()));
+    ASSERT_EQ("pk3", irs::ViewCast<char>(actual_pk_value->value));
+    auto varchar_nulls_postings =
+      varchar_nulls_itr->postings(irs::IndexFeatures::None);
+    ASSERT_TRUE(varchar_nulls_postings->seek(varchar_postings->value()));
+    // NULL is not in this row
+    ASSERT_NE(varchar_nulls_postings->value(), varchar_postings->value());
+
+    auto unknown_terms_itr = unknown_terms->iterator(irs::SeekMode::NORMAL);
+    ASSERT_TRUE(unknown_terms_itr->next());
+    auto unknown_postings =
+      unknown_terms_itr->postings(irs::IndexFeatures::None);
+    ASSERT_TRUE(unknown_postings->seek(varchar_postings->value()));
+    ASSERT_EQ(varchar_postings->value(), unknown_postings->value());
+    ASSERT_FALSE(varchar_postings->next());
+  }
+  // Row 4  NULL, NULL
+  {
+    auto pk_values_itr = pk_column->iterator(irs::ColumnHint::Normal);
+    ASSERT_NE(nullptr, pk_values_itr);
+    auto* actual_pk_value = irs::get<irs::PayAttr>(*pk_values_itr);
+    ASSERT_NE(nullptr, actual_pk_value);
+    // Find expected PK so we know document id for this row
+    irs::doc_id_t row_doc_id = irs::doc_limits::invalid();
+    while (pk_values_itr->next()) {
+      if (irs::ViewCast<char>(actual_pk_value->value) == "pk4") {
+        row_doc_id = pk_values_itr->value();
+        break;
+      }
+    }
+    ASSERT_TRUE(irs::doc_limits::valid(row_doc_id));
+    // We have some nulls so term should be present
+    auto varchar_nulls_itr = varchar_nulls->iterator(irs::SeekMode::NORMAL);
+    ASSERT_TRUE(varchar_nulls_itr->next());
+    auto varchar_nulls_postings =
+      varchar_nulls_itr->postings(irs::IndexFeatures::None);
+    ASSERT_TRUE(varchar_nulls_postings->seek(row_doc_id));
+    ASSERT_EQ(varchar_nulls_postings->value(), row_doc_id);
+    auto unknown_terms_itr = unknown_terms->iterator(irs::SeekMode::NORMAL);
+    ASSERT_TRUE(unknown_terms_itr->next());
+    auto unknown_postings =
+      unknown_terms_itr->postings(irs::IndexFeatures::None);
+    ASSERT_TRUE(unknown_postings->seek(row_doc_id));
+    ASSERT_EQ(unknown_postings->value(), row_doc_id);
   }
 }
 

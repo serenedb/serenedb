@@ -30,7 +30,7 @@
 #include "iresearch/utils/attribute_helper.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
-// Conjunction for DocIteratorImpl instead of ScoreAdapter
+// Conjunction is template for Adapter instead of direct use of ScoreAdapter
 // only because of ngram
 namespace irs {
 
@@ -89,12 +89,14 @@ struct SubScores {
 //   V  [n] <-- end
 // -----------------------------------------------------------------------------
 // goto used instead of labeled cycles, with them we can achieve best perfomance
-template<typename DocIteratorImpl, typename Merger>
+template<typename Adapter, typename Merger>
 struct ConjunctionBase : public DocIterator,
                          protected Merger,
                          protected ScoreCtx {
  protected:
-  explicit ConjunctionBase(Merger&& merger, std::vector<DocIteratorImpl>&& itrs,
+  static_assert(std::is_base_of_v<ScoreAdapter, Adapter>);
+
+  explicit ConjunctionBase(Merger&& merger, std::vector<Adapter>&& itrs,
                            std::vector<irs::ScoreAttr*>&& scorers)
     : Merger{std::move(merger)},
       _itrs{std::move(itrs)},
@@ -151,18 +153,18 @@ struct ConjunctionBase : public DocIterator,
   auto end() const noexcept { return _itrs.end(); }
   size_t size() const noexcept { return _itrs.size(); }
 
-  std::vector<DocIteratorImpl> _itrs;
+  std::vector<Adapter> _itrs;
   std::vector<ScoreAttr*> _scores;
 };
 
-template<typename DocIteratorImpl, typename Merger>
-class Conjunction : public ConjunctionBase<DocIteratorImpl, Merger> {
-  using Base = ConjunctionBase<DocIteratorImpl, Merger>;
+template<typename Adapter, typename Merger>
+class Conjunction : public ConjunctionBase<Adapter, Merger> {
+  using Base = ConjunctionBase<Adapter, Merger>;
   using Attributes =
     std::tuple<AttributePtr<DocAttr>, AttributePtr<CostAttr>, ScoreAttr>;
 
  public:
-  explicit Conjunction(Merger&& merger, std::vector<DocIteratorImpl>&& itrs,
+  explicit Conjunction(Merger&& merger, std::vector<Adapter>&& itrs,
                        std::vector<irs::ScoreAttr*>&& scores = {})
     : Base{std::move(merger), std::move(itrs), std::move(scores)},
       _front{this->_itrs.front().it.get()} {
@@ -226,15 +228,14 @@ class Conjunction : public ConjunctionBase<DocIteratorImpl, Merger> {
   const doc_id_t* _front_doc{};
 };
 
-template<bool Root, typename DocIteratorImpl, typename Merger>
-class BlockConjunction : public ConjunctionBase<DocIteratorImpl, Merger> {
-  using Base = ConjunctionBase<DocIteratorImpl, Merger>;
+template<bool Root, typename Adapter, typename Merger>
+class BlockConjunction : public ConjunctionBase<Adapter, Merger> {
+  using Base = ConjunctionBase<Adapter, Merger>;
   using Attributes =
     std::tuple<DocAttr, AttributePtr<CostAttr>, irs::ScoreAttr>;
 
  public:
-  explicit BlockConjunction(Merger&& merger,
-                            std::vector<DocIteratorImpl>&& itrs,
+  explicit BlockConjunction(Merger&& merger, std::vector<Adapter>&& itrs,
                             SubScores&& scores, bool strict)
     : Base{std::move(merger), std::move(itrs), std::move(scores.scores)},
       _sum_scores{scores.sum_score},
@@ -438,10 +439,9 @@ class BlockConjunction : public ConjunctionBase<DocIteratorImpl, Merger> {
 
 // Returns conjunction iterator created from the specified sub iterators
 template<template<typename> typename Wrapper = EmptyWrapper, typename Merger,
-         typename DocIteratorImpl, typename... Args>
+         typename Adapter, typename... Args>
 DocIterator::ptr MakeConjunction(WandContext ctx, Merger&& merger,
-                                 std::vector<DocIteratorImpl>&& itrs,
-                                 Args&&... args) {
+                                 std::vector<Adapter>&& itrs, Args&&... args) {
   if (const auto size = itrs.size(); 0 == size) {
     // empty or unreachable search criteria
     return DocIterator::empty();
@@ -456,7 +456,7 @@ DocIterator::ptr MakeConjunction(WandContext ctx, Merger&& merger,
            CostAttr::extract(rhs, CostAttr::kMax);
   });
   SubScores scores;
-  using ConjunctionImpl = Conjunction<DocIteratorImpl, Merger>;
+  using ConjunctionImpl = Conjunction<Adapter, Merger>;
   using WrappedConjunction = Wrapper<ConjunctionImpl>;
   if constexpr (kHasScore<Merger> &&
                 std::is_same_v<ConjunctionImpl, WrappedConjunction>) {
@@ -484,7 +484,7 @@ DocIterator::ptr MakeConjunction(WandContext ctx, Merger&& merger,
     if (use_block) {
       return ResolveBool(ctx.root, [&]<bool Root> -> DocIterator::ptr {
         return memory::make_managed<
-          Wrapper<BlockConjunction<Root, DocIteratorImpl, Merger>>>(
+          Wrapper<BlockConjunction<Root, Adapter, Merger>>>(
           std::forward<Args>(args)..., std::forward<Merger>(merger),
           std::move(itrs), std::move(scores), ctx.strict);
       });
@@ -492,7 +492,7 @@ DocIterator::ptr MakeConjunction(WandContext ctx, Merger&& merger,
     // TODO(mbkkt) We still could set min producer and root scoring
   }
 
-  return memory::make_managed<Wrapper<Conjunction<DocIteratorImpl, Merger>>>(
+  return memory::make_managed<Wrapper<Conjunction<Adapter, Merger>>>(
     std::forward<Args>(args)..., std::forward<Merger>(merger), std::move(itrs),
     std::move(scores.scores));
 }

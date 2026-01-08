@@ -28,7 +28,7 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
-// Disjunction for DocIteratorImpl instead of ScoreAdapter
+// Disjunction is template for Adapter instead of direct use of ScoreAdapter
 // only because of variadic phrase
 namespace irs {
 namespace detail {
@@ -138,19 +138,21 @@ inline bool MakeSubScores(const auto& itrs, SubScoresCtx& scores) {
 
 }  // namespace detail
 
-template<typename DocIteratorImpl>
-using IteratorVisitor = bool (*)(void*, DocIteratorImpl&);
+template<typename Adapter>
+using IteratorVisitor = bool (*)(void*, Adapter&);
 
-template<typename DocIteratorImpl>
+template<typename Adapter>
 struct CompoundDocIterator : DocIterator {
-  virtual void visit(void* ctx, IteratorVisitor<DocIteratorImpl>) = 0;
+  static_assert(std::is_base_of_v<ScoreAdapter, Adapter>);
+
+  virtual void visit(void* ctx, IteratorVisitor<Adapter>) = 0;
 };
 
-// Wrapper around regular DocIterator to conform compound_doc_iterator API
-template<typename DocIteratorImpl>
-class UnaryDisjunction : public CompoundDocIterator<DocIteratorImpl> {
+// Wrapper around regular DocIterator to conform CompoundDocIterator API
+template<typename Adapter>
+class UnaryDisjunction : public CompoundDocIterator<Adapter> {
  public:
-  UnaryDisjunction(DocIteratorImpl it) : _it{std::move(it)} {}
+  UnaryDisjunction(Adapter it) : _it{std::move(it)} {}
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return _it->GetMutable(type);
@@ -164,24 +166,23 @@ class UnaryDisjunction : public CompoundDocIterator<DocIteratorImpl> {
 
   uint32_t count() final { return _it->count(); }
 
-  void visit(void* ctx, IteratorVisitor<DocIteratorImpl> visitor) final {
+  void visit(void* ctx, IteratorVisitor<Adapter> visitor) final {
     SDB_ASSERT(ctx);
     SDB_ASSERT(visitor);
     visitor(ctx, _it);
   }
 
  private:
-  DocIteratorImpl _it;
+  Adapter _it;
 };
 
 // Disjunction optimized for two iterators.
-template<typename DocIteratorImpl, typename Merger>
-class BasicDisjunction : public CompoundDocIterator<DocIteratorImpl>,
+template<typename Adapter, typename Merger>
+class BasicDisjunction : public CompoundDocIterator<Adapter>,
                          private Merger,
                          private ScoreCtx {
  public:
-  BasicDisjunction(DocIteratorImpl lhs, DocIteratorImpl rhs,
-                   Merger&& merger = Merger{})
+  BasicDisjunction(Adapter lhs, Adapter rhs, Merger&& merger = Merger{})
     : BasicDisjunction{std::move(lhs), std::move(rhs), std::move(merger),
                        [&] noexcept {
                          return CostAttr::extract(_lhs, 0) +
@@ -189,7 +190,7 @@ class BasicDisjunction : public CompoundDocIterator<DocIteratorImpl>,
                        },
                        ResolveOverloadTag{}} {}
 
-  BasicDisjunction(DocIteratorImpl lhs, DocIteratorImpl rhs, Merger&& merger,
+  BasicDisjunction(Adapter lhs, Adapter rhs, Merger&& merger,
                    CostAttr::Type est)
     : BasicDisjunction{std::move(lhs), std::move(rhs), std::move(merger), est,
                        ResolveOverloadTag{}} {}
@@ -245,7 +246,7 @@ class BasicDisjunction : public CompoundDocIterator<DocIteratorImpl>,
     return count;
   }
 
-  void visit(void* ctx, IteratorVisitor<DocIteratorImpl> visitor) final {
+  void visit(void* ctx, IteratorVisitor<Adapter> visitor) final {
     SDB_ASSERT(ctx);
     SDB_ASSERT(visitor);
 
@@ -267,7 +268,7 @@ class BasicDisjunction : public CompoundDocIterator<DocIteratorImpl>,
   struct ResolveOverloadTag {};
 
   template<typename Estimation>
-  BasicDisjunction(DocIteratorImpl lhs, DocIteratorImpl rhs, Merger&& merger,
+  BasicDisjunction(Adapter lhs, Adapter rhs, Merger&& merger,
                    Estimation&& estimation, ResolveOverloadTag)
     : Merger{std::move(merger)}, _lhs(std::move(lhs)), _rhs(std::move(rhs)) {
     std::get<CostAttr>(_attrs).reset(std::forward<Estimation>(estimation));
@@ -314,11 +315,11 @@ class BasicDisjunction : public CompoundDocIterator<DocIteratorImpl>,
     }
   }
 
-  bool seek_iterator_impl(DocIteratorImpl& it, doc_id_t target) {
+  bool seek_iterator_impl(Adapter& it, doc_id_t target) {
     return it.value() < target && target == it->seek(target);
   }
 
-  void next_iterator_impl(DocIteratorImpl& it) {
+  void next_iterator_impl(Adapter& it) {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
     const auto value = it.value();
 
@@ -329,7 +330,7 @@ class BasicDisjunction : public CompoundDocIterator<DocIteratorImpl>,
     }
   }
 
-  void score_iterator_impl(DocIteratorImpl& it, score_t* res) {
+  void score_iterator_impl(Adapter& it, score_t* res) {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
     auto value = it.value();
 
@@ -346,8 +347,8 @@ class BasicDisjunction : public CompoundDocIterator<DocIteratorImpl>,
 
   using Attributes = std::tuple<DocAttr, ScoreAttr, CostAttr>;
 
-  mutable DocIteratorImpl _lhs;
-  mutable DocIteratorImpl _rhs;
+  mutable Adapter _lhs;
+  mutable Adapter _rhs;
   Attributes _attrs;
 };
 
@@ -361,28 +362,27 @@ class BasicDisjunction : public CompoundDocIterator<DocIteratorImpl>,
 //   begin             |   scored               end
 //                     |   begin
 // ----------------------------------------------------------------------------
-template<typename DocIteratorImpl, typename Merger>
-class SmallDisjunction : public CompoundDocIterator<DocIteratorImpl>,
+template<typename Adapter, typename Merger>
+class SmallDisjunction : public CompoundDocIterator<Adapter>,
                          private Merger,
                          private ScoreCtx {
  public:
-  using DocIterators = std::vector<DocIteratorImpl>;
+  using Adapters = std::vector<Adapter>;
 
-  SmallDisjunction(DocIterators&& itrs, Merger&& merger, CostAttr::Type est)
+  SmallDisjunction(Adapters&& itrs, Merger&& merger, CostAttr::Type est)
     : SmallDisjunction{std::move(itrs), std::move(merger), est,
                        ResolveOverloadTag()} {}
 
-  explicit SmallDisjunction(DocIterators&& itrs, Merger&& merger = Merger{})
-    : SmallDisjunction{
-        std::move(itrs), std::move(merger),
-        [&] noexcept {
-          return std::accumulate(
-            _begin, _end, CostAttr::Type{0},
-            [](CostAttr::Type lhs, const DocIteratorImpl& rhs) noexcept {
-              return lhs + CostAttr::extract(rhs, 0);
-            });
-        },
-        ResolveOverloadTag()} {}
+  explicit SmallDisjunction(Adapters&& itrs, Merger&& merger = Merger{})
+    : SmallDisjunction{std::move(itrs), std::move(merger),
+                       [&] noexcept {
+                         return std::accumulate(
+                           _begin, _end, CostAttr::Type{0},
+                           [](CostAttr::Type lhs, const Adapter& rhs) noexcept {
+                             return lhs + CostAttr::extract(rhs, 0);
+                           });
+                       },
+                       ResolveOverloadTag()} {}
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);
@@ -392,7 +392,7 @@ class SmallDisjunction : public CompoundDocIterator<DocIteratorImpl>,
     return std::get<DocAttr>(_attrs).value;
   }
 
-  bool next_iterator_impl(DocIteratorImpl& it) {
+  bool next_iterator_impl(Adapter& it) {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
     const auto value = it.value();
 
@@ -464,7 +464,7 @@ class SmallDisjunction : public CompoundDocIterator<DocIteratorImpl>,
 
   uint32_t count() final { return DocIterator::Count(*this); }
 
-  void visit(void* ctx, IteratorVisitor<DocIteratorImpl> visitor) final {
+  void visit(void* ctx, IteratorVisitor<Adapter> visitor) final {
     SDB_ASSERT(ctx);
     SDB_ASSERT(visitor);
     auto& doc_value = std::get<DocAttr>(_attrs).value;
@@ -481,8 +481,8 @@ class SmallDisjunction : public CompoundDocIterator<DocIteratorImpl>,
   struct ResolveOverloadTag {};
 
   template<typename Estimation>
-  SmallDisjunction(DocIterators&& itrs, Merger&& merger,
-                   Estimation&& estimation, ResolveOverloadTag)
+  SmallDisjunction(Adapters&& itrs, Merger&& merger, Estimation&& estimation,
+                   ResolveOverloadTag)
     : Merger{std::move(merger)},
       _itrs(itrs.size()),
       _scored_begin(_itrs.begin()),
@@ -543,7 +543,7 @@ class SmallDisjunction : public CompoundDocIterator<DocIteratorImpl>,
     }
   }
 
-  bool remove_iterator(typename DocIterators::iterator it) {
+  bool remove_iterator(typename Adapters::iterator it) {
     if (it->score->IsDefault()) {
       std::swap(*it, *_begin);
       ++_begin;
@@ -571,10 +571,10 @@ class SmallDisjunction : public CompoundDocIterator<DocIteratorImpl>,
   }
 
   using Attributes = std::tuple<DocAttr, ScoreAttr, CostAttr>;
-  using Iterator = typename DocIterators::iterator;
+  using Iterator = typename Adapters::iterator;
 
   doc_id_t _last_hitched_doc{doc_limits::invalid()};
-  DocIterators _itrs;
+  Adapters _itrs;
   Iterator _scored_begin;  // beginning of scored doc iterator range
   Iterator _begin;         // beginning of unscored doc iterators range
   Iterator _end;           // end of scored doc iterator range
@@ -590,32 +590,31 @@ class SmallDisjunction : public CompoundDocIterator<DocIteratorImpl>,
 //   [n-1] <-- end
 //   [n]   <-- lead (accepted iterator)
 // ----------------------------------------------------------------------------
-template<typename DocIteratorImpl, typename Merger>
-class Disjunction : public CompoundDocIterator<DocIteratorImpl>,
+template<typename Adapter, typename Merger>
+class Disjunction : public CompoundDocIterator<Adapter>,
                     private Merger,
                     private ScoreCtx {
  public:
-  using DocIterators = std::vector<DocIteratorImpl>;
+  using Adapters = std::vector<Adapter>;
   using Heap = std::vector<size_t>;
   using Iterator = Heap::iterator;
 
   static constexpr size_t kSmallDisjunctionUpperBound = 5;
 
-  Disjunction(DocIterators&& itrs, Merger&& merger, CostAttr::Type est)
+  Disjunction(Adapters&& itrs, Merger&& merger, CostAttr::Type est)
     : Disjunction{std::move(itrs), std::move(merger), est,
                   ResolveOverloadTag()} {}
 
-  explicit Disjunction(DocIterators&& itrs, Merger&& merger = Merger{})
-    : Disjunction{
-        std::move(itrs), std::move(merger),
-        [&] noexcept {
-          return absl::c_accumulate(
-            _itrs, CostAttr::Type{0},
-            [](CostAttr::Type lhs, const DocIteratorImpl& rhs) noexcept {
-              return lhs + CostAttr::extract(rhs, 0);
-            });
-        },
-        ResolveOverloadTag{}} {}
+  explicit Disjunction(Adapters&& itrs, Merger&& merger = Merger{})
+    : Disjunction{std::move(itrs), std::move(merger),
+                  [&] noexcept {
+                    return absl::c_accumulate(
+                      _itrs, CostAttr::Type{0},
+                      [](CostAttr::Type lhs, const Adapter& rhs) noexcept {
+                        return lhs + CostAttr::extract(rhs, 0);
+                      });
+                  },
+                  ResolveOverloadTag{}} {}
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);
@@ -670,7 +669,7 @@ class Disjunction : public CompoundDocIterator<DocIteratorImpl>,
 
   uint32_t count() final { return DocIterator::Count(*this); }
 
-  void visit(void* ctx, IteratorVisitor<DocIteratorImpl> visitor) final {
+  void visit(void* ctx, IteratorVisitor<Adapter> visitor) final {
     SDB_ASSERT(ctx);
     SDB_ASSERT(visitor);
     if (_heap.empty()) {
@@ -700,7 +699,7 @@ class Disjunction : public CompoundDocIterator<DocIteratorImpl>,
   using Attributes = std::tuple<DocAttr, ScoreAttr, CostAttr>;
 
   template<typename Estimation>
-  Disjunction(DocIterators&& itrs, Merger&& merger, Estimation&& estimation,
+  Disjunction(Adapters&& itrs, Merger&& merger, Estimation&& estimation,
               ResolveOverloadTag)
     : Merger{std::move(merger)}, _itrs{std::move(itrs)} {
     // since we are using heap in order to determine next document,
@@ -796,13 +795,13 @@ class Disjunction : public CompoundDocIterator<DocIteratorImpl>,
     pop(begin, end);
   }
 
-  DocIteratorImpl& lead() noexcept {
+  Adapter& lead() noexcept {
     SDB_ASSERT(!_heap.empty());
     SDB_ASSERT(_heap.back() < _itrs.size());
     return _itrs[_heap.back()];
   }
 
-  DocIteratorImpl& top() noexcept {
+  Adapter& top() noexcept {
     SDB_ASSERT(!_heap.empty());
     SDB_ASSERT(_heap.front() < _itrs.size());
     return _itrs[_heap.front()];
@@ -831,7 +830,7 @@ class Disjunction : public CompoundDocIterator<DocIteratorImpl>,
     return {begin, end};
   }
 
-  DocIterators _itrs;
+  Adapters _itrs;
   Heap _heap;
   Attributes _attrs;
 };
@@ -865,40 +864,41 @@ struct BlockDisjunctionTraits {
 // It isn't optimized for conjunction case when the requested min match
 // count equals to a number of input iterators.
 // It's better to to use a dedicated "conjunction" iterator.
-template<typename DocIteratorImpl, typename Merger, typename Traits>
+template<typename Adapter, typename Merger, typename Traits>
 class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
  public:
-  using DocIterators = std::vector<DocIteratorImpl>;
+  static_assert(std::is_base_of_v<ScoreAdapter, Adapter>);
 
-  BlockDisjunction(DocIterators&& itrs, Merger&& merger, CostAttr::Type est)
+  using Adapters = std::vector<Adapter>;
+
+  BlockDisjunction(Adapters&& itrs, Merger&& merger, CostAttr::Type est)
     : BlockDisjunction{std::move(itrs), 1, std::move(merger),
                        detail::SubScoresCtx{}, est} {}
 
-  BlockDisjunction(DocIterators&& itrs, size_t min_match_count, Merger&& merger,
+  BlockDisjunction(Adapters&& itrs, size_t min_match_count, Merger&& merger,
                    detail::SubScoresCtx&& scores, CostAttr::Type est)
     : BlockDisjunction{std::move(itrs),   min_match_count,
                        std::move(merger), est,
                        std::move(scores), ResolveOverloadTag()} {}
 
-  explicit BlockDisjunction(DocIterators&& itrs, Merger&& merger = Merger{})
+  explicit BlockDisjunction(Adapters&& itrs, Merger&& merger = Merger{})
     : BlockDisjunction{std::move(itrs), 1, std::move(merger)} {}
 
-  BlockDisjunction(DocIterators&& itrs, size_t min_match_count,
+  BlockDisjunction(Adapters&& itrs, size_t min_match_count,
                    Merger&& merger = Merger{},
                    detail::SubScoresCtx&& scores = {})
-    : BlockDisjunction{
-        std::move(itrs),
-        min_match_count,
-        std::move(merger),
-        [this]() noexcept {
-          return absl::c_accumulate(
-            _itrs, CostAttr::Type{0},
-            [](CostAttr::Type lhs, const DocIteratorImpl& rhs) noexcept {
-              return lhs + CostAttr::extract(rhs, 0);
-            });
-        },
-        std::move(scores),
-        ResolveOverloadTag{}} {}
+    : BlockDisjunction{std::move(itrs),
+                       min_match_count,
+                       std::move(merger),
+                       [this]() noexcept {
+                         return absl::c_accumulate(
+                           _itrs, CostAttr::Type{0},
+                           [](CostAttr::Type lhs, const Adapter& rhs) noexcept {
+                             return lhs + CostAttr::extract(rhs, 0);
+                           });
+                       },
+                       std::move(scores),
+                       ResolveOverloadTag{}} {}
 
   size_t MatchCount() const noexcept { return _match_count; }
 
@@ -1091,7 +1091,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
   struct ResolveOverloadTag {};
 
   template<typename Estimation>
-  BlockDisjunction(DocIterators&& itrs, size_t min_match_count, Merger&& merger,
+  BlockDisjunction(Adapters&& itrs, size_t min_match_count, Merger&& merger,
                    Estimation&& estimation, detail::SubScoresCtx&& scores,
                    ResolveOverloadTag)
     : Merger{std::move(merger)},
@@ -1287,7 +1287,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
   }
 
   template<bool Score>
-  bool Refill(DocIteratorImpl& it, bool& empty) {
+  bool Refill(Adapter& it, bool& empty) {
     SDB_ASSERT(it.doc);
     const auto* doc = &it.doc->value;
 
@@ -1332,7 +1332,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
   }
 
   uint64_t _mask[kNumBlocks]{};
-  DocIterators _itrs;
+  Adapters _itrs;
   uint64_t* _begin{std::end(_mask)};
   uint64_t _cur{};
   doc_id_t _doc_base{doc_limits::invalid()};
@@ -1349,45 +1349,45 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
   const score_t* _score_value{_score_buf.data()};
 };
 
-template<typename DocIteratorImpl, typename Merger>
+template<typename Adapter, typename Merger>
 using DisjunctionIterator =
-  BlockDisjunction<DocIteratorImpl, Merger,
+  BlockDisjunction<Adapter, Merger,
                    BlockDisjunctionTraits<MatchType::Match, false>>;
 
-template<typename DocIteratorImpl, typename Merger>
+template<typename Adapter, typename Merger>
 using MinMatchIterator =
-  BlockDisjunction<DocIteratorImpl, Merger,
+  BlockDisjunction<Adapter, Merger,
                    BlockDisjunctionTraits<MatchType::MinMatch, false>>;
 
 template<typename T>
 struct RebindIterator;
 
-template<typename DocIteratorImpl, typename Merger>
-struct RebindIterator<Disjunction<DocIteratorImpl, Merger>> {
-  using Unary = UnaryDisjunction<DocIteratorImpl>;
-  using Basic = BasicDisjunction<DocIteratorImpl, Merger>;
-  using Small = SmallDisjunction<DocIteratorImpl, Merger>;
+template<typename Adapter, typename Merger>
+struct RebindIterator<Disjunction<Adapter, Merger>> {
+  using Unary = UnaryDisjunction<Adapter>;
+  using Basic = BasicDisjunction<Adapter, Merger>;
+  using Small = SmallDisjunction<Adapter, Merger>;
   using Wand = void;
 };
 
-template<typename DocIteratorImpl, typename Merger>
-struct RebindIterator<DisjunctionIterator<DocIteratorImpl, Merger>> {
+template<typename Adapter, typename Merger>
+struct RebindIterator<DisjunctionIterator<Adapter, Merger>> {
   using Unary = void;  // block disjunction doesn't support visitor
-  using Basic = BasicDisjunction<DocIteratorImpl, Merger>;
+  using Basic = BasicDisjunction<Adapter, Merger>;
   using Small = void;  // block disjunction always faster than small
-  using Wand = DisjunctionIterator<DocIteratorImpl, Merger>;
+  using Wand = DisjunctionIterator<Adapter, Merger>;
 };
 
-template<typename DocIteratorImpl, typename Merger>
-struct RebindIterator<MinMatchIterator<DocIteratorImpl, Merger>> {
-  using Disjunction = DisjunctionIterator<DocIteratorImpl, Merger>;
-  using Wand = MinMatchIterator<DocIteratorImpl, Merger>;
+template<typename Adapter, typename Merger>
+struct RebindIterator<MinMatchIterator<Adapter, Merger>> {
+  using Disjunction = DisjunctionIterator<Adapter, Merger>;
+  using Wand = MinMatchIterator<Adapter, Merger>;
 };
 
 // Returns disjunction iterator created from the specified sub iterators
 template<typename Disjunction, typename Merger, typename... Args>
 DocIterator::ptr MakeDisjunction(WandContext ctx,
-                                 typename Disjunction::DocIterators&& itrs,
+                                 typename Disjunction::Adapters&& itrs,
                                  Merger&& merger, Args&&... args) {
   const auto size = itrs.size();
 
@@ -1444,9 +1444,10 @@ DocIterator::ptr MakeDisjunction(WandContext ctx,
 
 // Returns weak conjunction iterator created from the specified sub iterators
 template<typename WeakConjunction, typename Merger, typename... Args>
-DocIterator::ptr MakeWeakDisjunction(
-  WandContext ctx, typename WeakConjunction::DocIterators&& itrs,
-  size_t min_match, Merger&& merger, Args&&... args) {
+DocIterator::ptr MakeWeakDisjunction(WandContext ctx,
+                                     typename WeakConjunction::Adapters&& itrs,
+                                     size_t min_match, Merger&& merger,
+                                     Args&&... args) {
   // This case must be handled by a caller, we're unable to process it here
   SDB_ASSERT(min_match > 0);
 

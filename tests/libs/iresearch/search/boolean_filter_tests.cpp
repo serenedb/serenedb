@@ -2455,7 +2455,7 @@ TEST(small_disjunction_test, next) {
 
   // no iterators provided
   {
-    Disjunction it(Disjunction::DocIterators{});
+    Disjunction it(Disjunction::Adapters{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(0, irs::CostAttr::extract(it));
@@ -2816,7 +2816,7 @@ TEST(small_disjunction_test, seek) {
 
   // no iterators provided
   {
-    Disjunction it(Disjunction::DocIterators{});
+    Disjunction it(Disjunction::Adapters{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(0, irs::CostAttr::extract(it));
@@ -3501,7 +3501,7 @@ TEST(block_disjunction_test, check_attributes) {
       irs::ScoreAdapter, irs::NoopAggregator,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
 
-    Disjunction it(Disjunction::DocIterators{});
+    Disjunction it(Disjunction::Adapters{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_NE(nullptr, doc);
     ASSERT_TRUE(irs::doc_limits::eof(doc->value));
@@ -3519,7 +3519,7 @@ TEST(block_disjunction_test, check_attributes) {
       irs::ScoreAdapter, irs::NoopAggregator,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
 
-    Disjunction it(Disjunction::DocIterators{});
+    Disjunction it(Disjunction::Adapters{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_NE(nullptr, doc);
     ASSERT_TRUE(irs::doc_limits::eof(doc->value));
@@ -3540,7 +3540,7 @@ TEST(block_disjunction_test, check_attributes) {
       irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
 
-    Disjunction it(Disjunction::DocIterators{}, size_t{});
+    Disjunction it(Disjunction::Adapters{}, size_t{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_NE(nullptr, doc);
     ASSERT_TRUE(irs::doc_limits::eof(doc->value));
@@ -3561,7 +3561,7 @@ TEST(block_disjunction_test, check_attributes) {
       irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
 
-    Disjunction it(Disjunction::DocIterators{}, size_t{});
+    Disjunction it(Disjunction::Adapters{}, size_t{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_NE(nullptr, doc);
     ASSERT_TRUE(irs::doc_limits::eof(doc->value));
@@ -3886,7 +3886,7 @@ TEST(block_disjunction_test, next) {
 
   // no iterators provided
   {
-    Disjunction it(Disjunction::DocIterators{});
+    Disjunction it(Disjunction::Adapters{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(0, irs::CostAttr::extract(it));
@@ -4076,7 +4076,7 @@ TEST(block_disjunction_test, next) {
     std::vector<irs::doc_id_t> expected{};
     std::vector<irs::doc_id_t> result;
 
-    Disjunction::DocIterators itrs;
+    Disjunction::Adapters itrs;
     itrs.emplace_back(irs::DocIterator::empty());
     itrs.emplace_back(irs::DocIterator::empty());
     itrs.emplace_back(irs::DocIterator::empty());
@@ -4788,7 +4788,7 @@ TEST(block_disjunction_test, next_scored) {
       irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
 
-    Disjunction it(Disjunction::DocIterators{}, size_t{});
+    Disjunction it(Disjunction::Adapters{}, size_t{});
 
     auto& score = irs::ScoreAttr::get(it);
     ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
@@ -6587,7 +6587,7 @@ TEST(block_disjunction_test, min_match_next) {
 
   // no iterators provided
   {
-    Disjunction it(Disjunction::DocIterators{});
+    Disjunction it(Disjunction::Adapters{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(0, irs::CostAttr::extract(it));
@@ -7229,7 +7229,7 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
 
   // no iterators provided
   {
-    Disjunction it(Disjunction::DocIterators{});
+    Disjunction it(Disjunction::Adapters{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(0, irs::CostAttr::extract(it));
@@ -7415,7 +7415,7 @@ TEST(block_disjunction_test, seek_no_readahead) {
 
   // no iterators provided
   {
-    Disjunction it(Disjunction::DocIterators{});
+    Disjunction it(Disjunction::Adapters{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(0, irs::CostAttr::extract(it));
@@ -7787,7 +7787,7 @@ TEST(block_disjunction_test, seek_no_readahead) {
     std::vector<irs::doc_id_t> expected{};
     std::vector<irs::doc_id_t> result;
 
-    Disjunction::DocIterators itrs;
+    Disjunction::Adapters itrs;
     itrs.emplace_back(irs::DocIterator::empty());
     itrs.emplace_back(irs::DocIterator::empty());
     itrs.emplace_back(irs::DocIterator::empty());
@@ -8591,7 +8591,7 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       irs::ScoreAdapter, irs::NoopAggregator,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
 
-    Disjunction it(Disjunction::DocIterators{});
+    Disjunction it(Disjunction::Adapters{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(0, irs::CostAttr::extract(it));
@@ -9343,7 +9343,7 @@ TEST(block_disjunction_test, min_match_seek_no_readahead) {
 
   // no iterators provided
   {
-    Disjunction it(Disjunction::DocIterators{});
+    Disjunction it(Disjunction::Adapters{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(0, irs::CostAttr::extract(it));
@@ -9826,7 +9826,7 @@ TEST(block_disjunction_test, seek_readahead) {
 
   // no iterators provided
   {
-    Disjunction it(Disjunction::DocIterators{});
+    Disjunction it(Disjunction::Adapters{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(0, irs::CostAttr::extract(it));
@@ -10250,7 +10250,7 @@ TEST(block_disjunction_test, min_match_seek_readahead) {
 
   // no iterators provided
   {
-    Disjunction it(Disjunction::DocIterators{});
+    Disjunction it(Disjunction::Adapters{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(0, irs::CostAttr::extract(it));
@@ -11531,7 +11531,7 @@ TEST(disjunction_test, next) {
 
   // no iterators provided
   {
-    Disjunction it(Disjunction::DocIterators{});
+    Disjunction it(Disjunction::Adapters{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(0, irs::CostAttr::extract(it));
@@ -11699,7 +11699,7 @@ TEST(disjunction_test, seek) {
 
   // no iterators provided
   {
-    Disjunction it(Disjunction::DocIterators{});
+    Disjunction it(Disjunction::Adapters{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(0, irs::CostAttr::extract(it));

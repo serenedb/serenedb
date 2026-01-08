@@ -28,6 +28,7 @@
 #include "iresearch/types.hpp"
 extern "C" {
 #include <simdbitpacking.h>
+#include <simdintegratedbitpacking.h>
 #ifdef __AVX2__
 #include <avxbitpacking.h>
 #endif
@@ -157,8 +158,8 @@ struct DocBuffer : SkipBuffer {
   uint32_t* skip_doc;
   std::span<doc_id_t>::iterator doc{docs.begin()};
   std::span<uint32_t>::iterator freq{freqs.begin()};
-  doc_id_t last{doc_limits::invalid()};    // last buffered document id
-  doc_id_t block_last{doc_limits::min()};  // last document id in a block
+  doc_id_t last{doc_limits::invalid()};        // last buffered document id
+  doc_id_t block_last{doc_limits::invalid()};  // last document id in a block
 };
 
 // Buffer for storing positions
@@ -572,7 +573,7 @@ void PostingsWriterBase::BeginTerm() {
   }
 
   _doc.last = doc_limits::invalid();
-  _doc.block_last = doc_limits::min();
+  _doc.block_last = doc_limits::invalid();
   _skip.Reset();
 }
 
@@ -1617,7 +1618,7 @@ template<typename IteratorTraits, typename FieldTraits>
 class DocIteratorBase : public DocIterator {
   static_assert((IteratorTraits::Features() & FieldTraits::Features()) ==
                 IteratorTraits::Features());
-  void ReadTailBlock();
+  void ReadTailBlock(doc_id_t prev_doc);
 
  protected:
   // returns current position in the document block 'docs_'
@@ -1626,7 +1627,7 @@ class DocIteratorBase : public DocIterator {
     return static_cast<doc_id_t>(_begin - _buf.docs);
   }
 
-  void Refill();
+  void Refill(doc_id_t prev_doc);
 
   BufferType<IteratorTraits> _buf;
   uint32_t _enc_buf[IteratorTraits::kBlockSize];  // buffer for encoding
@@ -1638,10 +1639,10 @@ class DocIteratorBase : public DocIterator {
 };
 
 template<typename IteratorTraits, typename FieldTraits>
-void DocIteratorBase<IteratorTraits, FieldTraits>::Refill() {
+void DocIteratorBase<IteratorTraits, FieldTraits>::Refill(doc_id_t prev_doc) {
   if (_left >= IteratorTraits::kBlockSize) [[likely]] {
     // read doc deltas
-    IteratorTraits::read_block(*_doc_in, _enc_buf, _buf.docs);
+    IteratorTraits::read_block_delta(*_doc_in, _enc_buf, _buf.docs, prev_doc);
 
     if constexpr (IteratorTraits::Frequency()) {
       IteratorTraits::read_block(*_doc_in, _enc_buf, _buf.freqs);
@@ -1657,12 +1658,13 @@ void DocIteratorBase<IteratorTraits, FieldTraits>::Refill() {
     }
     _left -= IteratorTraits::kBlockSize;
   } else {
-    ReadTailBlock();
+    ReadTailBlock(prev_doc);
   }
 }
 
 template<typename IteratorTraits, typename FieldTraits>
-void DocIteratorBase<IteratorTraits, FieldTraits>::ReadTailBlock() {
+void DocIteratorBase<IteratorTraits, FieldTraits>::ReadTailBlock(
+  doc_id_t prev_doc) {
   auto* doc = std::end(_buf.docs) - _left;
   _begin = doc;
 
@@ -1674,19 +1676,22 @@ void DocIteratorBase<IteratorTraits, FieldTraits>::ReadTailBlock() {
   while (doc < std::end(_buf.docs)) {
     if constexpr (FieldTraits::Frequency()) {
       if constexpr (IteratorTraits::Frequency()) {
-        if (ShiftUnpack32(_doc_in->ReadV32(), *doc++)) {
+        if (ShiftUnpack32(_doc_in->ReadV32(), *doc)) {
           *freq++ = 1;
         } else {
           *freq++ = _doc_in->ReadV32();
         }
       } else {
-        if (!ShiftUnpack32(_doc_in->ReadV32(), *doc++)) {
+        if (!ShiftUnpack32(_doc_in->ReadV32(), *doc)) {
           _doc_in->ReadV32();
         }
       }
     } else {
-      *doc++ = _doc_in->ReadV32();
+      *doc = _doc_in->ReadV32();
     }
+    const auto curr_doc = prev_doc + *doc;
+    *doc++ = curr_doc;
+    prev_doc = curr_doc;
   }
   _left = 0;
 }
@@ -1986,14 +1991,10 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
         return doc_value = doc_limits::eof();
       }
 
-      this->Refill();
-
-      // If this is the initial doc_id then
-      // set it to min() for proper delta value
-      doc_value += doc_id_t{!doc_limits::valid(doc_value)};
+      this->Refill(doc_value);
     }
 
-    doc_value += *this->_begin++;  // update document attribute
+    doc_value = *this->_begin++;  // update document attribute
 
     if constexpr (IteratorTraits::Frequency()) {
       auto& freq = std::get<FreqAttr>(_attrs);
@@ -2211,16 +2212,12 @@ doc_id_t DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::seek(
       return doc_value = doc_limits::eof();
     }
 
-    this->Refill();
-
-    // If this is the initial doc_id then
-    // set it to min() for proper delta value
-    doc_value += doc_id_t{!doc_limits::valid(doc_value)};
+    this->Refill(doc_value);
   }
 
   [[maybe_unused]] uint32_t notify{0};
   while (this->_begin != std::end(this->_buf.docs)) {
-    doc_value += *this->_begin++;
+    doc_value = *this->_begin++;
 
     if constexpr (!IteratorTraits::Position()) {
       if (doc_value >= target) {
@@ -2663,15 +2660,14 @@ doc_id_t Wanderator<IteratorTraits, FieldTraits, WandExtent, Root>::seek(
         state.doc_ptr = 0;
       }
 
-      doc_value += !doc_limits::valid(doc_value);
-      this->Refill();
+      this->Refill(doc_value);
     }
 
     [[maybe_unused]] uint32_t notify{0};
     [[maybe_unused]] const auto threshold = _skip.Reader().threshold;
 
     while (this->_begin != std::end(this->_buf.docs)) {
-      doc_value += *this->_begin++;
+      doc_value = *this->_begin++;
 
       if constexpr (!IteratorTraits::Position()) {
         if (doc_value >= target) {
@@ -3527,18 +3523,18 @@ void BitUnionImpl(IndexInput& doc_in, doc_id_t docs_count, uint32_t (&docs)[N],
   constexpr auto kBits{BitsRequired<std::remove_pointer_t<decltype(set)>>()};
   size_t num_blocks = docs_count / FieldTraits::kBlockSize;
 
-  doc_id_t doc = doc_limits::min();
+  auto prev_doc = doc_limits::invalid();
   while (num_blocks--) {
-    FieldTraits::read_block(doc_in, enc_buf, docs);
+    FieldTraits::read_block_delta(doc_in, enc_buf, docs, prev_doc);
     if constexpr (FieldTraits::Frequency()) {
       FieldTraits::skip_block(doc_in);
     }
 
     // FIXME optimize
-    for (const auto delta : docs) {
-      doc += delta;
+    for (const auto doc : docs) {
       irs::SetBit(set[doc / kBits], doc % kBits);
     }
+    prev_doc = docs[N - 1];
   }
 
   doc_id_t docs_left = docs_count % FieldTraits::kBlockSize;
@@ -3553,8 +3549,8 @@ void BitUnionImpl(IndexInput& doc_in, doc_id_t docs_count, uint32_t (&docs)[N],
       delta = doc_in.ReadV32();
     }
 
-    doc += delta;
-    irs::SetBit(set[doc / kBits], doc % kBits);
+    prev_doc += delta;
+    irs::SetBit(set[prev_doc / kBits], prev_doc % kBits);
   }
 }
 
@@ -3676,94 +3672,6 @@ ColumnstoreReader::ptr Format15Base::get_columnstore_reader() const {
   return columnstore2::MakeReader();
 }
 
-struct FormatTraitsAvx {
-  using AlignType = __m256i;
-
-  static constexpr std::string_view kName = "1_5avx";
-
-  static constexpr uint32_t kBlockSize = AVXBlockSize;
-  static_assert(kBlockSize <= doc_limits::eof());
-
-  IRS_FORCE_INLINE static void PackBlock(const uint32_t* IRS_RESTRICT decoded,
-                                         uint32_t* IRS_RESTRICT encoded,
-                                         uint32_t bits) noexcept {
-    ::avxpackwithoutmask(decoded, reinterpret_cast<AlignType*>(encoded), bits);
-  }
-
-  IRS_FORCE_INLINE static void PackBlockDelta(
-    const uint32_t* IRS_RESTRICT decoded, uint32_t* IRS_RESTRICT encoded,
-    uint32_t prev, uint32_t bits) noexcept {
-    ::avxpack(decoded, reinterpret_cast<AlignType*>(encoded), bits);
-  }
-
-  IRS_FORCE_INLINE static void UnpackBlock(uint32_t* IRS_RESTRICT decoded,
-                                           const uint32_t* IRS_RESTRICT encoded,
-                                           uint32_t bits) noexcept {
-    ::avxunpack(reinterpret_cast<const AlignType*>(encoded), decoded, bits);
-  }
-
-  IRS_FORCE_INLINE static void write_block_delta(IndexOutput& out, uint32_t* in,
-                                                 uint32_t prev, uint32_t* buf) {
-    DeltaEncode<kBlockSize>(in, prev);
-    bitpack::write_block32<kBlockSize>(PackBlock, out, in, buf);
-  }
-
-  IRS_FORCE_INLINE static void write_block(IndexOutput& out, const uint32_t* in,
-                                           uint32_t* buf) {
-    bitpack::write_block32<kBlockSize>(PackBlock, out, in, buf);
-  }
-
-  IRS_FORCE_INLINE static void read_block(IndexInput& in, uint32_t* buf,
-                                          uint32_t* out) {
-    bitpack::read_block32<kBlockSize>(UnpackBlock, in, buf, out);
-  }
-
-  IRS_FORCE_INLINE static void skip_block(IndexInput& in) {
-    bitpack::skip_block32(in, kBlockSize);
-  }
-};
-
-struct FormatTraitsSse4 {
-  using AlignType = __m128i;
-
-  static constexpr std::string_view kName = "1_5simd";
-
-  static constexpr uint32_t kBlockSize = SIMDBlockSize;
-  static_assert(kBlockSize <= doc_limits::eof());
-
-  IRS_FORCE_INLINE static void PackBlock(const uint32_t* IRS_RESTRICT decoded,
-                                         uint32_t* IRS_RESTRICT encoded,
-                                         uint32_t bits) noexcept {
-    ::simdpackwithoutmask(decoded, reinterpret_cast<AlignType*>(encoded), bits);
-  }
-
-  IRS_FORCE_INLINE static void UnpackBlock(uint32_t* IRS_RESTRICT decoded,
-                                           const uint32_t* IRS_RESTRICT encoded,
-                                           uint32_t bits) noexcept {
-    ::simdunpack(reinterpret_cast<const AlignType*>(encoded), decoded, bits);
-  }
-
-  IRS_FORCE_INLINE static void write_block_delta(IndexOutput& out, uint32_t* in,
-                                                 uint32_t prev, uint32_t* buf) {
-    DeltaEncode<kBlockSize>(in, prev);
-    bitpack::write_block32<kBlockSize>(PackBlock, out, in, buf);
-  }
-
-  IRS_FORCE_INLINE static void write_block(IndexOutput& out, const uint32_t* in,
-                                           uint32_t* buf) {
-    bitpack::write_block32<kBlockSize>(PackBlock, out, in, buf);
-  }
-
-  IRS_FORCE_INLINE static void read_block(IndexInput& in, uint32_t* buf,
-                                          uint32_t* out) {
-    bitpack::read_block32<kBlockSize>(UnpackBlock, in, buf, out);
-  }
-
-  IRS_FORCE_INLINE static void skip_block(IndexInput& in) {
-    bitpack::skip_block32(in, kBlockSize);
-  }
-};
-
 template<typename F>
 class Format15Impl final : public Format15Base {
  public:
@@ -3792,14 +3700,131 @@ class Format15Impl final : public Format15Base {
   }
 };
 
-using Format15simd = Format15Impl<FormatTraitsSse4>;
-using Format15avx = Format15Impl<FormatTraitsAvx>;
+#ifdef __AVX2__
+struct FormatTraitsAVX {
+  using AlignType = __m256i;
+
+  static constexpr std::string_view kName = "1_5avx";
+
+  static constexpr uint32_t kBlockSize = AVXBlockSize;
+  static_assert(kBlockSize <= doc_limits::eof());
+
+  IRS_FORCE_INLINE static void PackBlock(const uint32_t* IRS_RESTRICT decoded,
+                                         uint32_t* IRS_RESTRICT encoded,
+                                         uint32_t bits) noexcept {
+    ::avxpackwithoutmask(decoded, reinterpret_cast<AlignType*>(encoded), bits);
+  }
+
+  IRS_FORCE_INLINE static void UnpackBlockDelta(
+    uint32_t prev, uint32_t* IRS_RESTRICT decoded,
+    const uint32_t* IRS_RESTRICT encoded, uint32_t bits) noexcept {
+    ::avxunpack(reinterpret_cast<const AlignType*>(encoded), decoded, bits);
+    for (size_t i = 0; i < kBlockSize; ++i) {
+      decoded[i] += prev;
+      prev = decoded[i];
+    }
+  }
+
+  IRS_FORCE_INLINE static void UnpackBlock(uint32_t* IRS_RESTRICT decoded,
+                                           const uint32_t* IRS_RESTRICT encoded,
+                                           uint32_t bits) noexcept {
+    ::avxunpack(reinterpret_cast<const AlignType*>(encoded), decoded, bits);
+  }
+
+  IRS_FORCE_INLINE static void write_block_delta(IndexOutput& out, uint32_t* in,
+                                                 uint32_t prev, uint32_t* buf) {
+    DeltaEncode<kBlockSize>(in, prev);
+    bitpack::write_block32<kBlockSize>(PackBlock, out, in, buf);
+  }
+
+  IRS_FORCE_INLINE static void write_block(IndexOutput& out, const uint32_t* in,
+                                           uint32_t* buf) {
+    bitpack::write_block32<kBlockSize>(PackBlock, out, in, buf);
+  }
+
+  IRS_FORCE_INLINE static void read_block_delta(IndexInput& in, uint32_t* buf,
+                                                uint32_t* out, uint32_t prev) {
+    bitpack::read_block_delta32<kBlockSize>(UnpackBlockDelta, in, buf, out,
+                                            prev);
+  }
+
+  IRS_FORCE_INLINE static void read_block(IndexInput& in, uint32_t* buf,
+                                          uint32_t* out) {
+    bitpack::read_block32<kBlockSize>(UnpackBlock, in, buf, out);
+  }
+
+  IRS_FORCE_INLINE static void skip_block(IndexInput& in) {
+    bitpack::skip_block32(in, kBlockSize);
+  }
+};
+
+using Format15avx = Format15Impl<FormatTraitsAVX>;
+
+#endif
+
+struct FormatTraitsSSE {
+  using AlignType = __m128i;
+
+  static constexpr std::string_view kName = "1_5simd";
+
+  static constexpr uint32_t kBlockSize = SIMDBlockSize;
+  static_assert(kBlockSize <= doc_limits::eof());
+
+  IRS_FORCE_INLINE static void PackBlock(const uint32_t* IRS_RESTRICT decoded,
+                                         uint32_t* IRS_RESTRICT encoded,
+                                         uint32_t bits) noexcept {
+    ::simdpackwithoutmask(decoded, reinterpret_cast<AlignType*>(encoded), bits);
+  }
+
+  IRS_FORCE_INLINE static void UnpackBlockDelta(
+    uint32_t prev, uint32_t* IRS_RESTRICT decoded,
+    const uint32_t* IRS_RESTRICT encoded, uint32_t bits) noexcept {
+    ::simdunpackd1(prev, reinterpret_cast<const AlignType*>(encoded), decoded,
+                   bits);
+  }
+
+  IRS_FORCE_INLINE static void UnpackBlock(uint32_t* IRS_RESTRICT decoded,
+                                           const uint32_t* IRS_RESTRICT encoded,
+                                           uint32_t bits) noexcept {
+    ::simdunpack(reinterpret_cast<const AlignType*>(encoded), decoded, bits);
+  }
+
+  IRS_FORCE_INLINE static void write_block_delta(IndexOutput& out, uint32_t* in,
+                                                 uint32_t prev, uint32_t* buf) {
+    DeltaEncode<kBlockSize>(in, prev);
+    bitpack::write_block32<kBlockSize>(PackBlock, out, in, buf);
+  }
+
+  IRS_FORCE_INLINE static void write_block(IndexOutput& out, const uint32_t* in,
+                                           uint32_t* buf) {
+    bitpack::write_block32<kBlockSize>(PackBlock, out, in, buf);
+  }
+
+  IRS_FORCE_INLINE static void read_block_delta(IndexInput& in, uint32_t* buf,
+                                                uint32_t* out, uint32_t prev) {
+    bitpack::read_block_delta32<kBlockSize>(UnpackBlockDelta, in, buf, out,
+                                            prev);
+  }
+
+  IRS_FORCE_INLINE static void read_block(IndexInput& in, uint32_t* buf,
+                                          uint32_t* out) {
+    bitpack::read_block32<kBlockSize>(UnpackBlock, in, buf, out);
+  }
+
+  IRS_FORCE_INLINE static void skip_block(IndexInput& in) {
+    bitpack::skip_block32(in, kBlockSize);
+  }
+};
+
+using Format15sse = Format15Impl<FormatTraitsSSE>;
 
 }  // namespace
 
 void formats::Init() {
-  REGISTER_FORMAT(Format15simd);
+#ifdef __AVX2__
   REGISTER_FORMAT(Format15avx);
+#endif
+  REGISTER_FORMAT(Format15sse);
 }
 
 // use base irs::position type for ancestors

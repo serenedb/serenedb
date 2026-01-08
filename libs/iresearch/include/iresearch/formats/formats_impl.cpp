@@ -3523,18 +3523,18 @@ void BitUnionImpl(IndexInput& doc_in, doc_id_t docs_count, uint32_t (&docs)[N],
   constexpr auto kBits{BitsRequired<std::remove_pointer_t<decltype(set)>>()};
   size_t num_blocks = docs_count / FieldTraits::kBlockSize;
 
-  doc_id_t doc = doc_limits::min();
+  auto prev_doc = doc_limits::invalid();
   while (num_blocks--) {
-    FieldTraits::read_block(doc_in, enc_buf, docs);
+    FieldTraits::read_block_delta(doc_in, enc_buf, docs, prev_doc);
     if constexpr (FieldTraits::Frequency()) {
       FieldTraits::skip_block(doc_in);
     }
 
     // FIXME optimize
-    for (const auto delta : docs) {
-      doc += delta;
+    for (const auto doc : docs) {
       irs::SetBit(set[doc / kBits], doc % kBits);
     }
+    prev_doc = docs[N - 1];
   }
 
   doc_id_t docs_left = docs_count % FieldTraits::kBlockSize;
@@ -3549,8 +3549,8 @@ void BitUnionImpl(IndexInput& doc_in, doc_id_t docs_count, uint32_t (&docs)[N],
       delta = doc_in.ReadV32();
     }
 
-    doc += delta;
-    irs::SetBit(set[doc / kBits], doc % kBits);
+    prev_doc += delta;
+    irs::SetBit(set[prev_doc / kBits], prev_doc % kBits);
   }
 }
 

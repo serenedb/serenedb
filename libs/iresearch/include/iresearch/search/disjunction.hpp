@@ -1397,7 +1397,6 @@ DocIterator::ptr MakeDisjunction(WandContext ctx,
   }
 
   if (1 == size) {
-    // Single sub-query
     using UnaryDisjunction = typename RebindIterator<Disjunction>::Unary;
     if constexpr (std::is_void_v<UnaryDisjunction>) {
       return std::move(itrs.front());
@@ -1410,8 +1409,6 @@ DocIterator::ptr MakeDisjunction(WandContext ctx,
   using BasicDisjunction = typename RebindIterator<Disjunction>::Basic;
   if constexpr (!std::is_void_v<BasicDisjunction>) {
     if (2 == size) {
-      // 2-way disjunction
-
       return memory::make_managed<BasicDisjunction>(
         std::move(itrs.front()), std::move(itrs.back()),
         std::forward<Merger>(merger), std::forward<Args>(args)...);
@@ -1463,7 +1460,6 @@ DocIterator::ptr MakeWeakDisjunction(
   if (1 == min_match) {
     // Pure disjunction
     using Disjunction = typename RebindIterator<WeakConjunction>::Disjunction;
-
     return MakeDisjunction<Disjunction>(ctx, std::move(itrs),
                                         std::forward<Merger>(merger),
                                         std::forward<Args>(args)...);

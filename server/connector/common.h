@@ -22,7 +22,9 @@
 #include <cstdint>
 #include <string_view>
 
+#include "basics/fwd.h"
 #include "basics/bit_utils.hpp"
+#include <velox/common/memory/HashStringAllocator.h>
 
 namespace sdb::connector {
 
@@ -42,5 +44,11 @@ inline constexpr std::string_view kFalseValue{"\0", 1};
 static_assert(
   sizeof(ValueFlags) == 1,
   "ValueFlags should be one byte. If need more adjust writing/reading");
+
+template<typename T>
+using ManagedVector = std::vector<T, velox::memory::StlAllocator<T>>;
+
+using ManagedString = std::basic_string<char, std::char_traits<char>,
+                                        velox::memory::StlAllocator<char>>;
 
 }  // namespace sdb::connector

@@ -8,6 +8,7 @@ add_library(
     key_utils.cpp
     rocksdb_sink_writer.cpp
     search_sink_writer.cpp
+    search_remove_filter.cpp
 )
 
 target_link_libraries(

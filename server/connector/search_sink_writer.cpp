@@ -32,15 +32,13 @@
 #include "connector/common.h"
 #include "connector/key_utils.hpp"
 #include "velox/functions/prestosql/types/JsonType.h"
+#include "search_remove_filter.hpp"
 
 namespace {
 
 using namespace sdb::search;
 using namespace sdb::connector;
 using namespace sdb::catalog;
-
-constexpr std::string_view kPkFieldNameBuffer{
-  "\xff\xff\xff\xff\xff\xff\xff\xff", 8};
 
 constexpr size_t kDefaultPoolSize = 8;  // arbitrary value
 irs::UnboundedObjectPool<AnalyzerImpl::Builder> gStringStreamPool(
@@ -57,62 +55,15 @@ void SetNameToBuffer(std::string& name_buffer, Column::Id column_id) {
   absl::big_endian::Store(name_buffer.data(), column_id);
 }
 
-struct Field {
-  void SetStringValue(std::string_view value) {
-    index_features = irs::IndexFeatures::None;
-    analyzer = gStringStreamPool.emplace(AnalyzerImpl::StringStreamTag{});
-    auto& sstream = sdb::basics::downCast<irs::StringTokenizer>(*analyzer);
-    sstream.reset(value);
-  }
-
-  void SetNumericValue(double value) {
-    index_features = irs::IndexFeatures::None;
-    analyzer = gNumberStreamPool.emplace(AnalyzerImpl::NumberStreamTag{});
-    auto& nstream = sdb::basics::downCast<irs::NumericTokenizer>(*analyzer);
-    nstream.reset(value);
-  }
-
-  void SetBooleanValue(bool value) {
-    index_features = irs::IndexFeatures::None;
-    analyzer = gBoolStreamPool.emplace(AnalyzerImpl::BoolStreamTag{});
-    auto& nstream = sdb::basics::downCast<irs::NumericTokenizer>(*analyzer);
-    nstream.reset(value);
-  }
-
-  std::string_view Name() const noexcept {
-    SDB_ASSERT(!irs::IsNull(name));
-    return name;
-  }
-
-  irs::IndexFeatures GetIndexFeatures() const noexcept {
-    return index_features;
-  }
-
-  irs::Tokenizer& GetTokens() const noexcept {
-    SDB_ASSERT(analyzer);
-    return *analyzer;
-  }
-
-  bool Write(irs::DataOutput& out) const {
-    if (!irs::IsNull(value)) {
-      out.WriteBytes(value.data(), value.size());
-    }
-
-    return true;
-  }
-
-  AnalyzerImpl::CacheType::ptr analyzer;
-  std::string_view name;
-  irs::bytes_view value;
-  irs::IndexFeatures index_features;
-};
-
 }  // namespace
 
-namespace sdb::connector {
+namespace sdb::connector::search {
 
-SearchSinkWriter::SearchSinkWriter(irs::IndexWriter::Transaction& trx)
-  : _trx(trx) {};
+SearchSinkWriter::SearchSinkWriter(irs::IndexWriter::Transaction& trx, velox::memory::MemoryPool* removes_pool)
+  : _trx(trx), _removes_pool(removes_pool) {
+    _pk_field.PrepareForStringValue();
+    _pk_field.name = kPkFieldName;
+}
 
 void SearchSinkWriter::SwitchColumn(velox::TypeKind kind,
                                     sdb::catalog::Column::Id column_id) {
@@ -124,9 +75,6 @@ void SearchSinkWriter::SwitchColumn(velox::TypeKind kind,
   _document->NextFieldBatch();
 }
 
-void SearchSinkWriter::Delete(std::string_view full_key) {
-  VELOX_UNSUPPORTED("Iresearch delete Not implemented");
-}
 void SearchSinkWriter::Write(std::span<const rocksdb::Slice> cell_slices,
                              std::string_view full_key) {
   SDB_ASSERT(_current_writer);
@@ -137,6 +85,20 @@ void SearchSinkWriter::Write(std::span<const rocksdb::Slice> cell_slices,
   _document->NextDocument();
 }
 
+
+void SearchSinkWriter::DeleteRow(std::string_view row_key) {
+  SDB_ASSERT(_remove_filter);
+  _remove_filter->Add(row_key);
+}
+
+void SearchSinkWriter::Finish(){
+  _document.reset();
+  if (_remove_filter && !_remove_filter->Empty()) {
+    _trx.Remove(std::move(_remove_filter));
+  }
+  _remove_filter.reset();
+}
+
 template<velox::TypeKind Kind>
 void SearchSinkWriter::SetupColumnWriter(sdb::catalog::Column::Id column_id) {
   basics::StrResize(_name_buffer, sizeof(column_id));
@@ -145,12 +107,15 @@ void SearchSinkWriter::SetupColumnWriter(sdb::catalog::Column::Id column_id) {
   if constexpr (Kind == velox::TypeKind::VARCHAR ||
                 Kind == velox::TypeKind::VARBINARY) {
     mangling::MangleString(_name_buffer);
+    _field.PrepareForStringValue();
     _current_writer = &WriteStringValue;
   } else if constexpr (std::is_same_v<T, bool>) {
     mangling::MangleBool(_name_buffer);
+    _field.PrepareForBooleanValue();
     _current_writer = &WriteBooleanValue;
   } else if constexpr (std::is_integral_v<T> || std::is_floating_point_v<T>) {
     mangling::MangleNumeric(_name_buffer);
+    _field.PrepareForNumericValue();
     _current_writer = &WriteNumericValue<T>;
   } else {
     SDB_THROW(ERROR_NOT_IMPLEMENTED, "TypeKind ",
@@ -164,15 +129,12 @@ void SearchSinkWriter::SetupColumnWriter(sdb::catalog::Column::Id column_id) {
                         std::span<const rocksdb::Slice> cell_slices,
                         Field& field) {
       auto row_key = key_utils::ExtractRowKey(full_key);
-      field.value = irs::ViewCast<irs::byte_type>(row_key);
-      field.name = kPkFieldNameBuffer;
-      field.SetStringValue(row_key);
+      _pk_field.value = irs::ViewCast<irs::byte_type>(row_key);
+      _pk_field.SetStringValue(row_key);
       VELOX_CHECK(
         _document->template Insert<irs::Action::INDEX | irs::Action::STORE>(
-          _field),
+          _pk_field),
         "Failed to insert PK field into IResearch document");
-      field.name = _name_buffer;
-      field.value = {};
       data_writer(full_key, cell_slices, field);
     };
     _emit_pk = false;
@@ -180,10 +142,18 @@ void SearchSinkWriter::SetupColumnWriter(sdb::catalog::Column::Id column_id) {
 }
 
 void SearchSinkWriter::Init(size_t batch_size) {
-  _document = std::make_unique<irs::IndexWriter::Document>(
-    _trx.Insert(false, batch_size));
-  VELOX_CHECK(_document, "Failed to create IResearch document for insertion");
-  _emit_pk = true;
+  // For now  insert and delete are mutually exclusive operations
+  // But most likely we will need both for updates. So some additional
+  // flag will be needed in the constructor.
+  if (_removes_pool) {
+    _remove_filter =
+      std::make_shared<SearchRemoveFilter>(*_removes_pool, batch_size);
+  } else {
+    _document = std::make_unique<irs::IndexWriter::Document>(
+      _trx.Insert(false, batch_size));
+    VELOX_CHECK(_document, "Failed to create IResearch document for insertion");
+    _emit_pk = true;
+  }
 }
 
 void SearchSinkWriter::WriteStringValue(
@@ -217,17 +187,23 @@ void SearchSinkWriter::WriteBooleanValue(
   field.SetBooleanValue(cell_slices.front() == kTrueValue);
 }
 
-void SearchSinkWriter::Field::SetStringValue(std::string_view value) {
+void SearchSinkWriter::Field::PrepareForStringValue() {
   index_features = irs::IndexFeatures::None;
   analyzer = gStringStreamPool.emplace(AnalyzerImpl::StringStreamTag{});
+}
+
+void SearchSinkWriter::Field::SetStringValue(std::string_view value) {
   auto& sstream = sdb::basics::downCast<irs::StringTokenizer>(*analyzer);
   sstream.reset(value);
 }
 
-template<typename T>
-void SearchSinkWriter::Field::SetNumericValue(T value) {
+void SearchSinkWriter::Field::PrepareForNumericValue() {
   index_features = irs::IndexFeatures::None;
   analyzer = gNumberStreamPool.emplace(AnalyzerImpl::NumberStreamTag{});
+}
+
+template<typename T>
+void SearchSinkWriter::Field::SetNumericValue(T value) {
   auto& nstream = sdb::basics::downCast<irs::NumericTokenizer>(*analyzer);
   if constexpr (std::is_same_v<
                   T, velox::TypeTraits<velox::TypeKind::HUGEINT>::NativeType>) {
@@ -245,9 +221,12 @@ void SearchSinkWriter::Field::SetNumericValue(T value) {
   }
 }
 
-void SearchSinkWriter::Field::SetBooleanValue(bool value) {
+void SearchSinkWriter::Field::PrepareForBooleanValue() {
   index_features = irs::IndexFeatures::None;
   analyzer = gBoolStreamPool.emplace(AnalyzerImpl::BoolStreamTag{});
+}
+
+void SearchSinkWriter::Field::SetBooleanValue(bool value) {
   auto& bstream = sdb::basics::downCast<irs::BooleanTokenizer>(*analyzer);
   bstream.reset(value);
 }

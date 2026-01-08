@@ -46,7 +46,7 @@ void RocksDBSinkWriter::Write(std::span<const rocksdb::Slice> cell_slices,
   }
 }
 
-void RocksDBSinkWriter::Delete(std::string_view full_key) {
+void RocksDBDeleteSinkWriter::DeleteCell(std::string_view full_key) {
   rocksdb::Slice key_slice(full_key);
   rocksdb::Status status = _transaction.Delete(&_cf, key_slice);
   if (!status.ok()) {

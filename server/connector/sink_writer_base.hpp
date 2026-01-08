@@ -33,14 +33,15 @@ class SinkWriterBase {
   SinkWriterBase() = default;
   virtual ~SinkWriterBase() = default;
 
-  virtual void Init(size_t batch_size /*row type + column ids ?*/) {}
+  virtual void Init(size_t batch_size) {}
 
+
+  virtual void SwitchColumn(velox::TypeKind kind,  sdb::catalog::Column::Id column_id) {}
   virtual void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key) = 0;
 
-  virtual void Delete(std::string_view full_key) = 0;
-
-  virtual void SwitchColumn(velox::TypeKind kind,  sdb::catalog::Column::Id column_id) {}
+  virtual void DeleteRow(std::string_view row_key) = 0;
+  virtual void Delete(std::string_view row_key) = 0;
 
   virtual void Finish() {};
 };

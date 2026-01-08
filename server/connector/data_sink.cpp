@@ -34,7 +34,6 @@
 #include "basics/misc.hpp"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
-#include "common.h"
 #include "connector/primary_key.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "key_utils.hpp"
@@ -2009,7 +2008,7 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
 
     for (velox::column_index_t col_idx = 0; col_idx < num_columns; ++col_idx) {
       key_utils::SetupColumnForKey(key_buffer, _column_ids[col_idx]);
-      _data_writer.Delete(key_buffer);
+      _data_writer.DeleteCell(key_buffer);
     }
   }
 }

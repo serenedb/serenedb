@@ -26,26 +26,45 @@
 
 namespace sdb::connector {
 
-// This could be final subclass of SinkWriterBase but currently only used directly
-// inside DataSink so no need for virtual calls/default base members
-class RocksDBSinkWriter {
+class RocksDBSinkWriterBase {
  public:
-  RocksDBSinkWriter(rocksdb::Transaction& transaction,
-                    rocksdb::ColumnFamilyHandle& cf)
+  RocksDBSinkWriterBase(rocksdb::Transaction& transaction,
+                        rocksdb::ColumnFamilyHandle& cf)
       : _transaction(transaction), _cf(cf) {}
 
-  void Write(std::span<const rocksdb::Slice> cell_slices,
-             std::string_view full_key);
+  virtual ~RocksDBSinkWriterBase() = default;
 
-  void Delete(std::string_view full_key);
-
+  
   rocksdb::Status Lock(std::string_view full_key) {
     return _transaction.GetKeyLock(&_cf, full_key, false, true);
   }
 
-private:
+ protected:
   rocksdb::Transaction& _transaction;
   rocksdb::ColumnFamilyHandle& _cf;
+};
+
+// This could be final subclass of SinkWriterBase but currently only used directly
+// inside DataSink so no need for virtual calls/default base members
+class RocksDBSinkWriter : public RocksDBSinkWriterBase {
+ public:
+  RocksDBSinkWriter(rocksdb::Transaction& transaction,
+                    rocksdb::ColumnFamilyHandle& cf)
+      : RocksDBSinkWriterBase(transaction, cf) {}
+
+  void Write(std::span<const rocksdb::Slice> cell_slices,
+             std::string_view full_key);
+
+};
+
+class RocksDBDeleteSinkWriter : public RocksDBSinkWriterBase {
+ public:
+  RocksDBDeleteSinkWriter(rocksdb::Transaction& transaction,
+                          rocksdb::ColumnFamilyHandle& cf)
+      : RocksDBSinkWriterBase(transaction, cf) {}
+
+  
+  void DeleteCell(std::string_view full_key);
 };
 
 } //  namespace sdb::connector

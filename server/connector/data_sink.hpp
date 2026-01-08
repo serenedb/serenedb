@@ -29,6 +29,7 @@
 
 #include <vector>
 
+#include "common.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
 #include "primary_key.hpp"
@@ -41,9 +42,6 @@ namespace sdb::connector {
 
 class RocksDBDataSink : public velox::connector::DataSink {
  public:
-  // TODO(Dronplane) make this shared somewhere
-  template<typename T>
-  using ManagedVector = std::vector<T, velox::memory::StlAllocator<T>>;
 
   // writers
   // RocksDB writer + locker. 
@@ -226,7 +224,7 @@ class RocksDBDeleteDataSink : public velox::connector::DataSink {
   // we should store original type as data passed to appendData
   // contains only primary key columns but we need remove all.
   velox::RowTypePtr _row_type;
-  RocksDBSinkWriter _data_writer;
+  RocksDBDeleteSinkWriter _data_writer;
   ObjectId _object_key;
   std::vector<catalog::Column::Id> _column_ids;
   std::vector<velox::column_index_t> _key_childs;

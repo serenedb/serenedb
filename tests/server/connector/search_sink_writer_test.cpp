@@ -25,7 +25,7 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/search/scorers.hpp>
 #include <iresearch/store/memory_directory.hpp>
-//#include "iresearch/search/"
+// #include "iresearch/search/"
 
 #include "catalog/table_options.h"
 #include "connector/common.h"
@@ -34,7 +34,7 @@
 #include "gtest/gtest.h"
 #include "iresearch/utils/bytes_utils.hpp"
 
-using namespace sdb::connector;
+using namespace sdb::connector::search;
 
 namespace {
 
@@ -87,13 +87,13 @@ class SearchSinkWriterTest : public ::testing::Test,
   irs::IndexWriter::ptr _data_writer;
 };
 
-TEST_F(SearchSinkWriterTest, InsertMultipleColumns) {
+TEST_F(SearchSinkWriterTest, InsertDeleteMultipleColumns) {
   auto trx = _data_writer->GetBatch();
 
-  SearchSinkWriter sink{trx};
+  SearchSinkWriter sink{trx, nullptr};
   sink.Init(4);
 
-  const std::vector<sdb::catalog::Column::Id> col_id{1, 2, 3};
+  const std::vector<sdb::catalog::Column::Id> col_id{1, 2, 3, 4, 5};
   const std::vector<std::string_view> pk{
     {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk1", 19},
     {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x2pk2", 19},
@@ -108,6 +108,16 @@ TEST_F(SearchSinkWriterTest, InsertMultipleColumns) {
   const std::vector<std::string_view> boolean_data{
     std::string_view{"\x0", 1}, std::string_view{"\x1", 1},
     std::string_view{"\x1", 1}, std::string_view{"\x0", 1}};
+  const std::vector<std::string_view> huge_data{
+    std::string_view{"\x5\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0", 16},
+    std::string_view{"\x6\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0", 16},
+    std::string_view{"\x7\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0", 16},
+    std::string_view{"\x8\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0", 16}};
+  const std::vector<std::string_view> big_data{
+    std::string_view{"\x9\x0\x0\x0\x0\x0\x0\x0", 8},
+    std::string_view{"\xa\x0\x0\x0\x0\x0\x0\x0", 8},
+    std::string_view{"\xb\x0\x0\x0\x0\x0\x0\x0", 8},
+    std::string_view{"\xc\x0\x0\x0\x0\x0\x0\x0", 8}};
 
   sink.SwitchColumn(velox::TypeKind::INTEGER, col_id[0]);
   sink.Write({rocksdb::Slice(integer_data[0])}, pk[0]);
@@ -124,16 +134,23 @@ TEST_F(SearchSinkWriterTest, InsertMultipleColumns) {
   sink.Write({rocksdb::Slice(boolean_data[1])}, pk[1]);
   sink.Write({rocksdb::Slice(boolean_data[2])}, pk[2]);
   sink.Write({rocksdb::Slice(boolean_data[3])}, pk[3]);
+  sink.SwitchColumn(velox::TypeKind::HUGEINT, col_id[3]);
+  sink.Write({rocksdb::Slice(huge_data[0])}, pk[0]);
+  sink.Write({rocksdb::Slice(huge_data[1])}, pk[1]);
+  sink.Write({rocksdb::Slice(huge_data[2])}, pk[2]);
+  sink.Write({rocksdb::Slice(huge_data[3])}, pk[3]);
+  sink.SwitchColumn(velox::TypeKind::BIGINT, col_id[4]);
+  sink.Write({rocksdb::Slice(big_data[0])}, pk[0]);
+  sink.Write({rocksdb::Slice(big_data[1])}, pk[1]);
+  sink.Write({rocksdb::Slice(big_data[2])}, pk[2]);
+  sink.Write({rocksdb::Slice(big_data[3])}, pk[3]);
   sink.Finish();
   ASSERT_TRUE(trx.Commit());
   _data_writer->Commit();
 
-  auto reader = irs::DirectoryReader(_dir, _codec);
-  ASSERT_EQ(1, reader.size());
-  ASSERT_EQ(4, reader.docs_count());
-  ASSERT_EQ(4, reader.live_docs_count());
-  {
-    auto& segment = reader[0];
+  auto validate_row = [](const irs::SubReader& segment, std::string_view pk,
+                         int32_t col1, std::string_view col2, bool col3,
+                         __int128_t col4, int64_t col5) {
     const auto* pk_column = segment.column(kPkColumn);
     ASSERT_NE(nullptr, pk_column);
     auto pk_values_itr = pk_column->iterator(irs::ColumnHint::Normal);
@@ -149,44 +166,99 @@ TEST_F(SearchSinkWriterTest, InsertMultipleColumns) {
     auto bool_terms = segment.field(
       std::string_view{"\x00\x00\x00\x00\x00\x00\x00\x03\x01", 9});
     ASSERT_NE(nullptr, bool_terms);
+    auto huge_terms = segment.field(
+      std::string_view{"\x00\x00\x00\x00\x00\x00\x00\x04\x02", 9});
+    ASSERT_NE(nullptr, huge_terms);
+    auto big_terms = segment.field(
+      std::string_view{"\x00\x00\x00\x00\x00\x00\x00\x05\x02", 9});
+    ASSERT_NE(nullptr, big_terms);
+
     irs::NumericTokenizer num_stream;
     const auto* num_token = irs::get<irs::TermAttr>(num_stream);
     ASSERT_TRUE(num_token);
     irs::BooleanTokenizer bool_stream;
     const auto* bool_token = irs::get<irs::TermAttr>(bool_stream);
     ASSERT_TRUE(bool_token);
+    SCOPED_TRACE(absl::StrCat("validating pk=", pk));
+    auto varchar_term_itr = varchar_terms->iterator(irs::SeekMode::NORMAL);
+    ASSERT_TRUE(varchar_term_itr->seek(irs::ViewCast<irs::byte_type>(col2)));
+    auto varchar_postings =
+      segment.mask(varchar_term_itr->postings(irs::IndexFeatures::None));
+    num_stream.reset(col1);
+    ASSERT_TRUE(num_stream.next());
+    auto int32_term_itr = int32_terms->iterator(irs::SeekMode::NORMAL);
+    ASSERT_TRUE(int32_term_itr->seek(num_token->value));
+    auto int32_postings =
+      segment.mask(int32_term_itr->postings(irs::IndexFeatures::None));
+    num_stream.reset(static_cast<double>(col4));
+    ASSERT_TRUE(num_stream.next());
+    auto huge_term_itr = huge_terms->iterator(irs::SeekMode::NORMAL);
+    ASSERT_TRUE(huge_term_itr->seek(num_token->value));
+    auto huge_postings =
+      segment.mask(huge_term_itr->postings(irs::IndexFeatures::None));
+    num_stream.reset(col5);
+    ASSERT_TRUE(num_stream.next());
+    auto big_term_itr = big_terms->iterator(irs::SeekMode::NORMAL);
+    ASSERT_TRUE(big_term_itr->seek(num_token->value));
+    auto big_postings =
+      segment.mask(big_term_itr->postings(irs::IndexFeatures::None));
 
-    auto validate_row = [&] (std::string_view pk, int32_t col1, std::string_view col2, bool col3) {
-      SCOPED_TRACE(absl::StrCat("validating pk=", pk));
-      auto varchar_term_itr = varchar_terms->iterator(irs::SeekMode::NORMAL);
-      ASSERT_TRUE(varchar_term_itr->seek(irs::ViewCast<irs::byte_type>(col2)));
-      auto varchar_postings = varchar_term_itr->postings(irs::IndexFeatures::None);
-      num_stream.reset(col1);
-      ASSERT_TRUE(num_stream.next());
-      auto int32_term_itr = int32_terms->iterator(irs::SeekMode::NORMAL);
-      ASSERT_TRUE(int32_term_itr->seek(num_token->value));
-      auto int32_postings = int32_term_itr->postings(irs::IndexFeatures::None);
-      bool_stream.reset(col3);
-      ASSERT_TRUE(bool_stream.next());
-      auto bool_term_itr = bool_terms->iterator(irs::SeekMode::NORMAL);
-      ASSERT_TRUE(bool_term_itr->seek(bool_token->value));
-      auto bool_postings = bool_term_itr->postings(irs::IndexFeatures::None);
-      ASSERT_TRUE(int32_postings->next());
-      ASSERT_TRUE(varchar_postings->next());
-      ASSERT_EQ(int32_postings->value(), varchar_postings->value());
-      // Bools are not unique in each row so checking with seek that our row has expected value
-      ASSERT_TRUE(bool_postings->seek(int32_postings->value()));
-      ASSERT_EQ(int32_postings->value(), bool_postings->value());
-      ASSERT_EQ(varchar_postings->value(), pk_values_itr->seek(varchar_postings->value()));
-      ASSERT_EQ(pk, irs::ViewCast<char>(actual_pk_value->value));
-      ASSERT_FALSE(varchar_postings->next());
-      ASSERT_FALSE(int32_postings->next());
-    };
-    
-    validate_row("pk1", 0, string_data[0].substr(1), false);
-    validate_row("pk2", 1, string_data[1].substr(1), true);
-    validate_row("pk3", 2, string_data[2], true);
-    validate_row("pk4", 3, string_data[3].substr(1), false);
+    bool_stream.reset(col3);
+    ASSERT_TRUE(bool_stream.next());
+    auto bool_term_itr = bool_terms->iterator(irs::SeekMode::NORMAL);
+    ASSERT_TRUE(bool_term_itr->seek(bool_token->value));
+    auto bool_postings =
+      segment.mask(bool_term_itr->postings(irs::IndexFeatures::None));
+    ASSERT_TRUE(int32_postings->next());
+    ASSERT_TRUE(varchar_postings->next());
+    ASSERT_TRUE(huge_postings->next());
+    ASSERT_TRUE(big_postings->next());
+    ASSERT_EQ(big_postings->value(), varchar_postings->value());
+    ASSERT_EQ(huge_postings->value(), varchar_postings->value());
+    ASSERT_EQ(int32_postings->value(), varchar_postings->value());
+    // Bools are not unique in each row so checking with seek that our row has
+    // expected value
+    ASSERT_TRUE(bool_postings->seek(int32_postings->value()));
+    ASSERT_EQ(int32_postings->value(), bool_postings->value());
+    ASSERT_EQ(varchar_postings->value(),
+              pk_values_itr->seek(varchar_postings->value()));
+    ASSERT_EQ(pk, irs::ViewCast<char>(actual_pk_value->value));
+    ASSERT_FALSE(varchar_postings->next());
+    ASSERT_FALSE(int32_postings->next());
+    ASSERT_FALSE(huge_postings->next());
+    ASSERT_FALSE(big_postings->next());
+  };
+  {
+    auto reader = irs::DirectoryReader(_dir, _codec);
+    ASSERT_EQ(1, reader.size());
+    ASSERT_EQ(4, reader.docs_count());
+    ASSERT_EQ(4, reader.live_docs_count());
+
+    validate_row(reader[0], "pk1", 0, string_data[0].substr(1), false, 5, 9);
+    validate_row(reader[0], "pk2", 1, string_data[1].substr(1), true, 6, 10);
+    validate_row(reader[0], "pk3", 2, string_data[2], true, 7, 11);
+    validate_row(reader[0], "pk4", 3, string_data[3].substr(1), false, 8, 12);
+  }
+
+  // Delete rows
+  auto delete_trx = _data_writer->GetBatch();
+
+  SearchSinkWriter delete_sink{delete_trx, pool()};
+  delete_sink.Init(2);
+  delete_sink.DeleteRow("pk2");
+  delete_sink.DeleteRow("pk4");
+  delete_sink.Finish();
+  ASSERT_TRUE(delete_trx.Commit());
+  _data_writer->Commit();
+
+  {
+    auto reader = irs::DirectoryReader(_dir, _codec);
+    ASSERT_EQ(1, reader.size());
+    ASSERT_EQ(4, reader.docs_count());
+    ASSERT_EQ(2, reader.live_docs_count());
+
+    validate_row(reader[0], "pk1", 0, string_data[0].substr(1), false, 5, 9);
+    validate_row(reader[0], "pk3", 2, string_data[2], true, 7, 11);
   }
 }
 

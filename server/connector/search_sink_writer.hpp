@@ -26,22 +26,29 @@
 #include "catalog/search_analyzer_impl.h"
 #include "primary_key.hpp"
 #include "sink_writer_base.hpp"
+#include "search_remove_filter.hpp"
 
-namespace sdb::connector {
+namespace sdb::connector::search {
+
+class SearchRemoveFilterBase; 
 
 class SearchSinkWriter final : public SinkWriterBase {
  public:
-  SearchSinkWriter(irs::IndexWriter::Transaction& trx);
+  SearchSinkWriter(irs::IndexWriter::Transaction& trx, velox::memory::MemoryPool* removes_pool);
 
   void Init(size_t batch_size) override;
 
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key) override;
 
-  void Delete(std::string_view full_key) override;
-
   void SwitchColumn(velox::TypeKind kind,  sdb::catalog::Column::Id column_id) override;
-  void Finish() override { _document.reset(); }
+  void Finish() override;
+
+  void DeleteRow(std::string_view row_key) override;
+  void Delete(std::string_view) override
+  {
+    VELOX_UNSUPPORTED("SearchSinkWriter does not support Delete operation");
+  }
 
  private:
   struct Field {
@@ -66,10 +73,14 @@ class SearchSinkWriter final : public SinkWriterBase {
 
       return true;
     }
-
+    void PrepareForStringValue();
     void SetStringValue(std::string_view value);
+
+    void PrepareForNumericValue();
     template<typename T>
     void SetNumericValue(T value);
+
+    void PrepareForBooleanValue();
     void SetBooleanValue(bool value);
 
     sdb::search::AnalyzerImpl::CacheType::ptr analyzer;
@@ -98,11 +109,17 @@ class SearchSinkWriter final : public SinkWriterBase {
   void SetupColumnWriter(sdb::catalog::Column::Id column_id);
 
   Field _field;
+  Field _pk_field;
+  // TODO(Dronplane): null_field if column may have nulls
   std::string _name_buffer;
   irs::IndexWriter::Transaction& _trx;
   std::unique_ptr<irs::IndexWriter::Document> _document;
   Writer _current_writer;
   bool _emit_pk{true};
+  velox::memory::MemoryPool* _removes_pool;
+  std::shared_ptr<SearchRemoveFilterBase> _remove_filter;
 };
 
-}  // namespace sdb::connector
+
+
+}  // namespace sdb::connector::search

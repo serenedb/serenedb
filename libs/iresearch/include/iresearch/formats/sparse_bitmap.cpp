@@ -332,7 +332,7 @@ struct container_iterator<kBtDense, true> {
 
     if (std::get<ValueIndex>(self->_attrs).value != self->_index) {
       self->_seek_func = &container_iterator<kBtDense, false>::Seek<Access>;
-      std::get<irs::PrevDocAttr>(self->_attrs).reset(&SeekPrev<Access>, self);
+      std::get<PrevDocAttr>(self->_attrs).reset(&SeekPrev<Access>, self);
     }
 
     return res;

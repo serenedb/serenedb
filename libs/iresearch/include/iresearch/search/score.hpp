@@ -37,7 +37,7 @@ struct ScoreAttr : Attribute, ScoreFunction {
 
   template<typename Provider>
   static const ScoreAttr& get(const Provider& attrs) {
-    const auto* score = irs::get<irs::ScoreAttr>(attrs);
+    const auto* score = irs::get<ScoreAttr>(attrs);
     return score ? *score : kNoScore;
   }
 

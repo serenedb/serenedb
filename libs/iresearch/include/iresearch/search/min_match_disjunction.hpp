@@ -222,7 +222,7 @@ class MinMatchDisjunction : public DocIterator,
   void PrepareScore() {
     SDB_ASSERT(Merger::size());
 
-    auto& score = std::get<irs::ScoreAttr>(_attrs);
+    auto& score = std::get<ScoreAttr>(_attrs);
 
     score.Reset(*this, [](ScoreCtx* ctx, score_t* res) noexcept {
       auto& self = static_cast<MinMatchDisjunction&>(*ctx);

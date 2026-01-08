@@ -263,7 +263,7 @@ class FreqNormProducer {
     }
 
     if constexpr (kNorm) {
-      const auto* doc = irs::get<irs::DocAttr>(attrs);
+      const auto* doc = irs::get<DocAttr>(attrs);
 
       if (doc == nullptr) [[unlikely]] {
         return false;

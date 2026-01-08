@@ -145,7 +145,7 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
     }
 
     if (!no_score) {
-      auto* score = irs::GetMutable<irs::ScoreAttr>(docs.get());
+      auto* score = irs::GetMutable<ScoreAttr>(docs.get());
       SDB_ASSERT(score);
       SDB_ASSERT(entry.stat_offset < stats.size());
       auto* stat = stats[entry.stat_offset].c_str();

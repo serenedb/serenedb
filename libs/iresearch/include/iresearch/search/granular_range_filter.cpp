@@ -541,7 +541,7 @@ void SetGranularTerm(ByGranularRangeOptions::terms& boundary,
                      NumericTokenizer& term) {
   boundary.clear();
 
-  for (auto* term_attr = get<TermAttr>(term); term.next();) {
+  for (const auto* term_attr = irs::get<TermAttr>(term); term.next();) {
     SDB_ASSERT(term_attr);
     boundary.emplace_back(term_attr->value);
   }

@@ -143,7 +143,7 @@ void VisitImpl(const SubReader& segment, const TermReader& reader,
   }
 
   if (terms->next()) {
-    auto* payload = irs::get<irs::PayAttr>(*terms);
+    auto* payload = irs::get<PayAttr>(*terms);
 
     const byte_type* distance{&no_distance};
     if (payload && !payload->value.empty()) {

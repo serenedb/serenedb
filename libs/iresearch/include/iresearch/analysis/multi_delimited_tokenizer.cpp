@@ -60,7 +60,7 @@ class MultiDelimitedTokenizerBase : public MultiDelimitedTokenizer {
 
       auto& term = std::get<TermAttr>(_attrs);
       term.value = bytes_view(_data.data(), std::distance(_data.begin(), next));
-      auto& offset = std::get<irs::OffsAttr>(_attrs);
+      auto& offset = std::get<OffsAttr>(_attrs);
       offset.start = std::distance(_start, _data.data());
       offset.end = offset.start + term.value.size();
 

@@ -378,10 +378,10 @@ class PostingsWriterBase : public irs::PostingsWriter {
 
       freq = irs::get<FreqAttr>(attrs);
       if (freq) {
-        if (auto* p = irs::GetMutable<irs::PosAttr>(&attrs)) {
+        if (auto* p = irs::GetMutable<PosAttr>(&attrs)) {
           pos = p;
-          offs = irs::get<irs::OffsAttr>(*pos);
-          pay = irs::get<irs::PayAttr>(*pos);
+          offs = irs::get<OffsAttr>(*pos);
+          pay = irs::get<PayAttr>(*pos);
         }
       }
     }
@@ -1960,7 +1960,7 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
       }
     }
 
-    auto& score = std::get<irs::ScoreAttr>(_attrs);
+    auto& score = std::get<ScoreAttr>(_attrs);
     _skip.Reader().ReadMaxScore(wand_index, func, *ctx, *this->_doc_in,
                                 score.max.tail);
     score.max.leaf = score.max.tail;
@@ -2340,7 +2340,7 @@ class Wanderator : public DocIteratorBase<IteratorTraits, FieldTraits>,
     SDB_ASSERT(absl::c_all_of(this->_buf.docs, [](doc_id_t doc) {
       return doc == doc_limits::invalid();
     }));
-    std::get<irs::ScoreAttr>(_attrs).Reset(
+    std::get<ScoreAttr>(_attrs).Reset(
       *this,
       [](ScoreCtx* ctx, score_t* res) noexcept {
         auto& self = static_cast<Wanderator&>(*ctx);
@@ -2615,7 +2615,7 @@ void Wanderator<IteratorTraits, FieldTraits, WandExtent, Root>::WandPrepare(
 
   skip_in->Seek(term_state.doc_start + term_state.e_skip_start);
 
-  auto& max = std::get<irs::ScoreAttr>(_attrs).max;
+  auto& max = std::get<ScoreAttr>(_attrs).max;
   _skip.Reader().ReadMaxScore(max, *skip_in);
 
   _skip.Prepare(std::move(skip_in), term_state.docs_count);

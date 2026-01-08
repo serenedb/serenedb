@@ -381,9 +381,9 @@ class FixedPhraseFrequency {
   friend class PhrasePosition<FixedPhraseFrequency>;
 
   std::pair<const uint32_t*, const uint32_t*> GetOffsets() const noexcept {
-    auto start = irs::get<irs::OffsAttr>(_pos.front().first.get());
+    auto start = irs::get<OffsAttr>(_pos.front().first.get());
     SDB_ASSERT(start);
-    auto end = irs::get<irs::OffsAttr>(_pos.back().first.get());
+    auto end = irs::get<OffsAttr>(_pos.back().first.get());
     SDB_ASSERT(end);
     return {&start->start, &end->end};
   }
@@ -901,8 +901,8 @@ class PhraseIterator : public DocIterator {
       irs::GetMutable<DocAttr>(&_approx);
 
     // FIXME find a better estimation
-    std::get<AttributePtr<irs::CostAttr>>(_attrs) =
-      irs::GetMutable<irs::CostAttr>(&_approx);
+    std::get<AttributePtr<CostAttr>>(_attrs) =
+      irs::GetMutable<CostAttr>(&_approx);
   }
 
   PhraseIterator(ScoreAdapters&& itrs,
@@ -911,13 +911,13 @@ class PhraseIterator : public DocIterator {
                  const byte_type* stats, const Scorers& ord, score_t boost)
     : PhraseIterator{std::move(itrs), std::move(pos)} {
     if (!ord.empty()) {
-      auto& score = std::get<irs::ScoreAttr>(_attrs);
+      auto& score = std::get<ScoreAttr>(_attrs);
       CompileScore(score, ord.buckets(), segment, field, stats, *this, boost);
     }
   }
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    if (type == irs::Type<irs::PosAttr>::id()) {
+    if (type == irs::Type<PosAttr>::id()) {
       if constexpr (HasPosition<Frequency>::value) {
         return &_freq;
       } else {

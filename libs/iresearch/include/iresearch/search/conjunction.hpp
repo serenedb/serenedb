@@ -246,8 +246,8 @@ class BlockConjunction : public ConjunctionBase<Adapter, Merger> {
       return lhs->max.tail > rhs->max.tail;
     });
     std::get<AttributePtr<CostAttr>>(_attrs) =
-      irs::GetMutable<CostAttr>(this->_itrs.front().it.get());
-    auto& score = std::get<irs::ScoreAttr>(_attrs);
+      irs::GetMutable<CostAttr>(&this->_itrs.front());
+    auto& score = std::get<ScoreAttr>(_attrs);
     score.max.leaf = score.max.tail = _sum_scores;
     auto min = strict ? MinStrictN : MinWeakN;
     if constexpr (Root) {
@@ -266,9 +266,7 @@ class BlockConjunction : public ConjunctionBase<Adapter, Merger> {
     return irs::GetMutable(_attrs, type);
   }
 
-  IRS_FORCE_INLINE auto& score() {
-    return std::get<irs::ScoreAttr>(_attrs).max;
-  }
+  IRS_FORCE_INLINE auto& score() { return std::get<ScoreAttr>(_attrs).max; }
 
   doc_id_t value() const final { return std::get<DocAttr>(_attrs).value; }
 

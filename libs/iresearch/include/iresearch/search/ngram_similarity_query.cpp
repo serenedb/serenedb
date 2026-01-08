@@ -476,7 +476,7 @@ class NGramSimilarityDocIterator : public DocIterator, private ScoreCtx {
     : NGramSimilarityDocIterator{std::move(itrs), total_terms_count,
                                  min_match_count, !ord.empty()} {
     if (!ord.empty()) {
-      auto& score = std::get<irs::ScoreAttr>(_attrs);
+      auto& score = std::get<ScoreAttr>(_attrs);
       CompileScore(score, ord.buckets(), segment, field, stats, *this, boost);
     }
   }

@@ -62,7 +62,7 @@ class ColumnExistenceQuery : public Filter::Query {
     }
 
     if (!ord.empty()) {
-      if (auto* score = irs::GetMutable<irs::ScoreAttr>(it.get()); score) {
+      if (auto* score = irs::GetMutable<ScoreAttr>(it.get())) {
         CompileScore(*score, ord.buckets(), segment,
                      EmptyTermReader(column.size()), _stats.c_str(), *it,
                      _boost);

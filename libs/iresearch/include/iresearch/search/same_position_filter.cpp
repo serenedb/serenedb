@@ -147,7 +147,7 @@ class SamePositionQuery : public Filter::Query {
       positions.emplace_back(std::ref(*pos));
 
       if (!no_score) {
-        auto* score = irs::GetMutable<irs::ScoreAttr>(docs.get());
+        auto* score = irs::GetMutable<ScoreAttr>(docs.get());
         SDB_ASSERT(score);
 
         CompileScore(*score, ord.buckets(), segment, *term_state.reader,

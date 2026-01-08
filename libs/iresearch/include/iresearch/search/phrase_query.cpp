@@ -89,7 +89,7 @@ DocIterator::ptr FixedPhraseQuery::execute(const ExecutionContext& ctx) const {
       return DocIterator::empty();
     }
 
-    auto* pos = irs::GetMutable<irs::PosAttr>(docs.it.get());
+    auto* pos = irs::GetMutable<PosAttr>(&docs);
 
     if (!pos) {
       // positions not found
@@ -166,7 +166,7 @@ DocIterator::ptr FixedPhraseQuery::ExecuteWithOffsets(
         return false;
       }
 
-      auto* pos = irs::GetMutable<irs::PosAttr>(docs.it.get());
+      auto* pos = irs::GetMutable<PosAttr>(&docs);
 
       if (!pos) {
         return false;
@@ -175,7 +175,7 @@ DocIterator::ptr FixedPhraseQuery::ExecuteWithOffsets(
       positions.emplace_back(std::ref(*pos), *position);
 
       if (IndexFeatures::Offs == (features & IndexFeatures::Offs)) {
-        if (!irs::get<irs::OffsAttr>(*pos)) {
+        if (!irs::get<OffsAttr>(*pos)) {
           return false;
         }
       }
@@ -388,7 +388,7 @@ DocIterator::ptr VariadicPhraseQuery::ExecuteWithOffsets(
         }
 
         if (IndexFeatures::Offs == (features & IndexFeatures::Offs)) {
-          if (!irs::get<irs::OffsAttr>(*docs.position)) {
+          if (!irs::get<OffsAttr>(*docs.position)) {
             continue;
           }
         }

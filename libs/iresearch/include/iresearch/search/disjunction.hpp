@@ -283,7 +283,7 @@ class BasicDisjunction : public CompoundDocIterator<Adapter>,
     SDB_ASSERT(_lhs.score);
     SDB_ASSERT(_rhs.score);
 
-    auto& score = std::get<irs::ScoreAttr>(_attrs);
+    auto& score = std::get<ScoreAttr>(_attrs);
 
     const bool lhs_score_empty = _lhs.score->IsDefault();
     const bool rhs_score_empty = _rhs.score->IsDefault();
@@ -513,7 +513,7 @@ class SmallDisjunction : public CompoundDocIterator<Adapter>,
   void prepare_score() {
     SDB_ASSERT(Merger::size());
 
-    auto& score = std::get<irs::ScoreAttr>(_attrs);
+    auto& score = std::get<ScoreAttr>(_attrs);
 
     // prepare score
     if (_scored_begin != _end) {
@@ -724,7 +724,7 @@ class Disjunction : public CompoundDocIterator<Adapter>,
   void prepare_score() {
     SDB_ASSERT(Merger::size());
 
-    auto& score = std::get<irs::ScoreAttr>(_attrs);
+    auto& score = std::get<ScoreAttr>(_attrs);
 
     score.Reset(*this, [](ScoreCtx* ctx, score_t* res) noexcept {
       auto& self = *static_cast<Disjunction*>(ctx);
@@ -1109,7 +1109,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
 
     if constexpr (kHasScore<Merger>) {
       SDB_ASSERT(Merger::size());
-      auto& score = std::get<irs::ScoreAttr>(_attrs);
+      auto& score = std::get<ScoreAttr>(_attrs);
       auto min = ScoreFunction::DefaultMin;
       if (!_scores.scores.empty()) {
         score.max.leaf = score.max.tail = _scores.sum_score;
@@ -1118,7 +1118,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
           if (self._scores.Size() != self._itrs.size()) [[unlikely]] {
             self._scores.Clear();
             detail::MakeSubScores(self._itrs, self._scores);
-            auto& score = std::get<irs::ScoreAttr>(self._attrs);
+            auto& score = std::get<ScoreAttr>(self._attrs);
             // TODO(mbkkt) We cannot change tail now
             // Because it needs to recompute sum_score for our parent iterator
             score.max.leaf /* = score.max.tail */ = self._scores.sum_score;

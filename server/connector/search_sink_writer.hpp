@@ -25,28 +25,29 @@
 
 #include "catalog/search_analyzer_impl.h"
 #include "primary_key.hpp"
-#include "sink_writer_base.hpp"
 #include "search_remove_filter.hpp"
+#include "sink_writer_base.hpp"
 
 namespace sdb::connector::search {
 
-class SearchRemoveFilterBase; 
+class SearchRemoveFilterBase;
 
 class SearchSinkWriter final : public SinkWriterBase {
  public:
-  SearchSinkWriter(irs::IndexWriter::Transaction& trx, velox::memory::MemoryPool* removes_pool);
+  SearchSinkWriter(irs::IndexWriter::Transaction& trx,
+                   velox::memory::MemoryPool* removes_pool);
 
   void Init(size_t batch_size) override;
 
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key) override;
 
-  void SwitchColumn(velox::TypeKind kind, bool have_nulls,  sdb::catalog::Column::Id column_id) override;
+  void SwitchColumn(velox::TypeKind kind, bool have_nulls,
+                    sdb::catalog::Column::Id column_id) override;
   void Finish() override;
 
   void DeleteRow(std::string_view row_key) override;
-  void Delete(std::string_view) override
-  {
+  void Delete(std::string_view) override {
     VELOX_UNSUPPORTED("SearchSinkWriter does not support Delete operation");
   }
 
@@ -92,9 +93,9 @@ class SearchSinkWriter final : public SinkWriterBase {
     irs::IndexFeatures index_features;
   };
 
-  using Writer = std::function<Field&(std::string_view full_key,
-                                     std::span<const rocksdb::Slice> cell_slices,
-                                     Field& field)>;
+  using Writer = std::function<Field&(
+    std::string_view full_key, std::span<const rocksdb::Slice> cell_slices,
+    Field& field)>;
   static Field& WriteStringValue(std::string_view full_key,
                                  std::span<const rocksdb::Slice> cell_slices,
                                  Field& field);
@@ -122,7 +123,5 @@ class SearchSinkWriter final : public SinkWriterBase {
   velox::memory::MemoryPool* _removes_pool;
   std::shared_ptr<SearchRemoveFilterBase> _remove_filter;
 };
-
-
 
 }  // namespace sdb::connector::search

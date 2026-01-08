@@ -21,24 +21,23 @@
 #pragma once
 
 #include "basics/fwd.h"
+#include "catalog/table_options.h"
 #include "rocksdb/slice.h"
 #include "velox/type/Type.h"
-#include "catalog/table_options.h"
 
 namespace sdb::connector {
 
 class SinkWriterBase {
  public:
-
   SinkWriterBase() = default;
   virtual ~SinkWriterBase() = default;
 
   virtual void Init(size_t batch_size) {}
 
-
-  virtual void SwitchColumn(velox::TypeKind kind,  bool have_nulls,sdb::catalog::Column::Id column_id) {}
+  virtual void SwitchColumn(velox::TypeKind kind, bool have_nulls,
+                            sdb::catalog::Column::Id column_id) {}
   virtual void Write(std::span<const rocksdb::Slice> cell_slices,
-             std::string_view full_key) = 0;
+                     std::string_view full_key) = 0;
 
   virtual void DeleteRow(std::string_view row_key) = 0;
   virtual void Delete(std::string_view row_key) = 0;
@@ -46,4 +45,4 @@ class SinkWriterBase {
   virtual void Finish() {};
 };
 
-} // namespace sdb::connector
+}  // namespace sdb::connector

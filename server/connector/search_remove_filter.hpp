@@ -20,10 +20,11 @@
 
 #pragma once
 
+#include <velox/common/memory/MemoryPool.h>
+
 #include <basics/memory.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/search/filter.hpp>
-#include <velox/common/memory/MemoryPool.h>
 
 #include "common.h"
 
@@ -37,13 +38,14 @@ class SearchRemoveFilterBase : public irs::Filter,
                                public irs::Filter::Query,
                                public irs::DocIterator {
  public:
-
   SearchRemoveFilterBase(velox::memory::MemoryPool& memory_pool)
-      : _memory_pool{memory_pool}, _pks{{memory_pool}} {}
+    : _memory_pool{memory_pool}, _pks{{memory_pool}} {}
 
   bool Empty() const noexcept { return _pks.empty(); }
 
-  void Add(std::string_view pk) { _pks.emplace_back(ManagedString{pk, {_memory_pool}}); }
+  void Add(std::string_view pk) {
+    _pks.emplace_back(ManagedString{pk, {_memory_pool}});
+  }
 
  protected:
   irs::TypeInfo::type_id type() const noexcept final {
@@ -80,13 +82,15 @@ class SearchRemoveFilterBase : public irs::Filter,
   mutable size_t _pos{0};
   mutable irs::DocAttr _doc;
   mutable ManagedVector<ManagedString> _pks;
-
 };
 
 class SearchRemoveFilter : public SearchRemoveFilterBase {
  public:
-  explicit SearchRemoveFilter(velox::memory::MemoryPool& memory_pool, size_t batch_size)
-  : SearchRemoveFilterBase(memory_pool) { _pks.reserve(batch_size); }
+  explicit SearchRemoveFilter(velox::memory::MemoryPool& memory_pool,
+                              size_t batch_size)
+    : SearchRemoveFilterBase(memory_pool) {
+    _pks.reserve(batch_size);
+  }
 
   void reset() {
     _pos = 0;

@@ -99,8 +99,8 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
         if (!status.ok()) {
           const auto result = rocksutils::ConvertStatus(status);
           SDB_THROW(result.errorNumber(),
-                    "Failed to acquire row lock for table ",
-                    _object_key.id(), " error: ", result.errorMessage());
+                    "Failed to acquire row lock for table ", _object_key.id(),
+                    " error: ", result.errorMessage());
         }
       },
       key_buffer);
@@ -1998,8 +1998,8 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
         if (!status.ok()) {
           const auto result = rocksutils::ConvertStatus(status);
           SDB_THROW(result.errorNumber(),
-                    "Failed to acquire row lock for table ",
-                    _object_key.id(), " error: ", result.errorMessage());
+                    "Failed to acquire row lock for table ", _object_key.id(),
+                    " error: ", result.errorMessage());
         }
       },
       key_buffer);

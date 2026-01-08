@@ -72,7 +72,6 @@ inline void SetupColumnForKey(std::string& buf, catalog::Column::Id column_id) {
   absl::big_endian::Store(buf.data() + sizeof(ObjectId), column_id);
 }
 
-
 inline std::string_view ExtractRowKey(std::string_view full_key) {
   SDB_ASSERT(full_key.size() > sizeof(ObjectId) + sizeof(catalog::Column::Id));
   return full_key.substr(sizeof(ObjectId) + sizeof(catalog::Column::Id));

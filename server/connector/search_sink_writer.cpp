@@ -154,11 +154,11 @@ void SearchSinkWriter::SetupColumnWriter(sdb::catalog::Column::Id column_id,
                         std::string_view full_key,
                         std::span<const rocksdb::Slice> cell_slices,
                         Field& field) -> Field& {
-    if (cell_slices.size() == 1 && cell_slices.front().empty()) {
-      _null_field.SetNullValue();
-      return _null_field;
-    }
-    return data_writer(full_key, cell_slices, field);
+      if (cell_slices.size() == 1 && cell_slices.front().empty()) {
+        _null_field.SetNullValue();
+        return _null_field;
+      }
+      return data_writer(full_key, cell_slices, field);
     };
   }
   if (_emit_pk) {

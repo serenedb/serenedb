@@ -29,9 +29,9 @@
 
 #include <vector>
 
-#include "common.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
+#include "common.h"
 #include "primary_key.hpp"
 #include "rocksdb/utilities/transaction.h"
 #include "rocksdb/write_batch.h"
@@ -42,20 +42,19 @@ namespace sdb::connector {
 
 class RocksDBDataSink : public velox::connector::DataSink {
  public:
-
   // writers
-  // RocksDB writer + locker. 
+  // RocksDB writer + locker.
   // IResearch writer but column_id dependent
 
   // Writer simple -> only RocksDB
-  // Writer composite -> IResearch + RocksDB 
+  // Writer composite -> IResearch + RocksDB
 
   // Writer is template for DataSink so simple one has no virtual calls
 
-  // WriterBase  - interface write (slices + key + column_idx + kind). NextColumn. NextDocument is implicit after write.
-  // RocksDB is final. Stores RocksDB stuff
-  // Composite is final. 
-  // IResearch is final. Stores IResearch stuff
+  // WriterBase  - interface write (slices + key + column_idx + kind).
+  // NextColumn. NextDocument is implicit after write. RocksDB is final. Stores
+  // RocksDB stuff Composite is final. IResearch is final. Stores IResearch
+  // stuff
   RocksDBDataSink(rocksdb::Transaction& transaction,
                   rocksdb::ColumnFamilyHandle& cf,
                   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
@@ -185,7 +184,6 @@ class RocksDBDataSink : public velox::connector::DataSink {
                    const folly::Range<const velox::IndexRange*>& ranges,
                    velox::vector_size_t total_rows_number, bool whole_vector,
                    rocksdb::Slice wrapper_nulls, bool force_nulls);
-
 
   using SliceVector = ManagedVector<rocksdb::Slice>;
   using IndiciesVector = ManagedVector<velox::vector_size_t>;

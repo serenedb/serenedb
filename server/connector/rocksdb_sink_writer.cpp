@@ -19,12 +19,13 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "rocksdb_sink_writer.hpp"
+
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 
 namespace sdb::connector {
 
 void RocksDBSinkWriter::Write(std::span<const rocksdb::Slice> cell_slices,
-                               std::string_view full_key) {
+                              std::string_view full_key) {
   rocksdb::Slice key_slice(full_key);
   rocksdb::Status status;
   SDB_ASSERT(!cell_slices.empty());
@@ -54,4 +55,4 @@ void RocksDBDeleteSinkWriter::DeleteCell(std::string_view full_key) {
   }
 }
 
-} // namespace sdb::connector
+}  // namespace sdb::connector

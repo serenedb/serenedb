@@ -19,12 +19,13 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
+#include <velox/common/memory/HashStringAllocator.h>
+
 #include <cstdint>
 #include <string_view>
 
-#include "basics/fwd.h"
 #include "basics/bit_utils.hpp"
-#include <velox/common/memory/HashStringAllocator.h>
+#include "basics/fwd.h"
 
 namespace sdb::connector {
 

@@ -31,8 +31,8 @@
 #include "catalog/table_options.h"
 #include "connector/common.h"
 #include "connector/key_utils.hpp"
-#include "velox/functions/prestosql/types/JsonType.h"
 #include "search_remove_filter.hpp"
+#include "velox/functions/prestosql/types/JsonType.h"
 
 namespace {
 
@@ -59,20 +59,22 @@ void SetNameToBuffer(std::string& name_buffer, Column::Id column_id) {
 
 namespace sdb::connector::search {
 
-SearchSinkWriter::SearchSinkWriter(irs::IndexWriter::Transaction& trx, velox::memory::MemoryPool* removes_pool)
+SearchSinkWriter::SearchSinkWriter(irs::IndexWriter::Transaction& trx,
+                                   velox::memory::MemoryPool* removes_pool)
   : _trx(trx), _removes_pool(removes_pool) {
-    _pk_field.PrepareForStringValue();
-    _pk_field.name = kPkFieldName;
+  _pk_field.PrepareForStringValue();
+  _pk_field.name = kPkFieldName;
 }
 
-void SearchSinkWriter::SwitchColumn(velox::TypeKind kind,
-  bool have_nulls,
+void SearchSinkWriter::SwitchColumn(velox::TypeKind kind, bool have_nulls,
                                     sdb::catalog::Column::Id column_id) {
   if (kind == facebook::velox::TypeKind::UNKNOWN) {
-    // for UNKNOWN type we always have nulls so no need of separate nulls handling
+    // for UNKNOWN type we always have nulls so no need of separate nulls
+    // handling
     SetupColumnWriter<velox::TypeKind::UNKNOWN>(column_id, false);
   } else {
-    VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(SetupColumnWriter, kind, column_id, have_nulls);
+    VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(SetupColumnWriter, kind, column_id,
+                                       have_nulls);
   }
   SDB_ASSERT(_document);
   _document->NextFieldBatch();
@@ -82,19 +84,18 @@ void SearchSinkWriter::Write(std::span<const rocksdb::Slice> cell_slices,
                              std::string_view full_key) {
   SDB_ASSERT(_current_writer);
   SDB_ASSERT(_document);
-  auto& field = _current_writer(full_key, cell_slices, _field, _null_field);
-  VELOX_CHECK(_document->template Insert<irs::Action::INDEX>(field),
+  VELOX_CHECK(_document->template Insert<irs::Action::INDEX>(
+                _current_writer(full_key, cell_slices, _field)),
               "Failed to insert field into IResearch document");
   _document->NextDocument();
 }
-
 
 void SearchSinkWriter::DeleteRow(std::string_view row_key) {
   SDB_ASSERT(_remove_filter);
   _remove_filter->Add(row_key);
 }
 
-void SearchSinkWriter::Finish(){
+void SearchSinkWriter::Finish() {
   _document.reset();
   if (_remove_filter && !_remove_filter->Empty()) {
     _trx.Remove(std::move(_remove_filter));
@@ -103,7 +104,8 @@ void SearchSinkWriter::Finish(){
 }
 
 template<velox::TypeKind Kind>
-void SearchSinkWriter::SetupColumnWriter(sdb::catalog::Column::Id column_id, bool have_nulls) {
+void SearchSinkWriter::SetupColumnWriter(sdb::catalog::Column::Id column_id,
+                                         bool have_nulls) {
   basics::StrResize(_name_buffer, sizeof(column_id));
   SetNameToBuffer(_name_buffer, column_id);
   using T = typename velox::TypeTraits<Kind>::NativeType;
@@ -115,34 +117,55 @@ void SearchSinkWriter::SetupColumnWriter(sdb::catalog::Column::Id column_id, boo
     _null_field.name = _null_name_buffer;
     _null_field.PrepareForNullValue();
   }
-  irs::ResolveBool(have_nulls, [&]<bool HaveNulls>() {
-    if constexpr (Kind == velox::TypeKind::UNKNOWN) {
-      _current_writer = &WriteNullValue;
-    } else if constexpr (Kind == velox::TypeKind::VARCHAR ||
-                         Kind == velox::TypeKind::VARBINARY) {
-      mangling::MangleString(_name_buffer);
-      _field.PrepareForStringValue();
-      _current_writer = &WriteStringValue<HaveNulls>;
-    } else if constexpr (std::is_same_v<T, bool>) {
-      mangling::MangleBool(_name_buffer);
-      _field.PrepareForBooleanValue();
-      _current_writer = &WriteBooleanValue<HaveNulls>;
-    } else if constexpr (std::is_integral_v<T> || std::is_floating_point_v<T>) {
-      mangling::MangleNumeric(_name_buffer);
-      _field.PrepareForNumericValue();
-      _current_writer = &WriteNumericValue<T, HaveNulls>;
-    } else {
-      SDB_THROW(ERROR_NOT_IMPLEMENTED, "TypeKind ",
-                velox::TypeKindName::toName(Kind),
-                " is not supported in search index");
+
+  if constexpr (Kind == velox::TypeKind::UNKNOWN) {
+    // Unknown type always means null value no need to check again
+    have_nulls = false;
+    _current_writer = [&](std::string_view full_key,
+                          std::span<const rocksdb::Slice> cell_slices,
+                          Field&) -> Field& {
+      SDB_ASSERT(cell_slices.size() == 1);
+      SDB_ASSERT(cell_slices.front().empty());
+      _null_field.SetNullValue();
+      return _null_field;
+    };
+  } else if constexpr (Kind == velox::TypeKind::VARCHAR ||
+                       Kind == velox::TypeKind::VARBINARY) {
+    mangling::MangleString(_name_buffer);
+    _field.PrepareForStringValue();
+    _current_writer = &WriteStringValue;
+  } else if constexpr (std::is_same_v<T, bool>) {
+    mangling::MangleBool(_name_buffer);
+    _field.PrepareForBooleanValue();
+    _current_writer = &WriteBooleanValue;
+  } else if constexpr (std::is_integral_v<T> || std::is_floating_point_v<T>) {
+    mangling::MangleNumeric(_name_buffer);
+    _field.PrepareForNumericValue();
+    _current_writer = &WriteNumericValue<T>;
+  } else {
+    SDB_THROW(ERROR_NOT_IMPLEMENTED, "TypeKind ",
+              velox::TypeKindName::toName(Kind),
+              " is not supported in search index");
+  }
+  _field.name = _name_buffer;
+
+  if (have_nulls) {
+    _current_writer = [&, data_writer = std::move(_current_writer)](
+                        std::string_view full_key,
+                        std::span<const rocksdb::Slice> cell_slices,
+                        Field& field) -> Field& {
+    if (cell_slices.size() == 1 && cell_slices.front().empty()) {
+      _null_field.SetNullValue();
+      return _null_field;
     }
-    _field.name = _name_buffer;
-  });
+    return data_writer(full_key, cell_slices, field);
+    };
+  }
   if (_emit_pk) {
     _current_writer = [&, data_writer = std::move(_current_writer)](
                         std::string_view full_key,
                         std::span<const rocksdb::Slice> cell_slices,
-                        Field& field, Field& null_field) -> Field& {
+                        Field& field) -> Field& {
       auto row_key = key_utils::ExtractRowKey(full_key);
       _pk_field.value = irs::ViewCast<irs::byte_type>(row_key);
       _pk_field.SetStringValue(row_key);
@@ -151,7 +174,7 @@ void SearchSinkWriter::SetupColumnWriter(sdb::catalog::Column::Id column_id, boo
         _document->template Insert<irs::Action::INDEX | irs::Action::STORE>(
           _pk_field),
         "Failed to insert PK field into IResearch document");
-      return data_writer(full_key, cell_slices, field, null_field);
+      return data_writer(full_key, cell_slices, field);
     };
     _emit_pk = false;
   }
@@ -172,39 +195,34 @@ void SearchSinkWriter::Init(size_t batch_size) {
   }
 }
 
-template<bool HaveNulls>
 SearchSinkWriter::Field& SearchSinkWriter::WriteStringValue(
   std::string_view, std::span<const rocksdb::Slice> cell_slices,
-  SearchSinkWriter::Field& field, Field& null_field) {
+  SearchSinkWriter::Field& field) {
   SDB_ASSERT(!cell_slices.empty());
-  if constexpr (HaveNulls) {
-    if (cell_slices.size() == 1 && cell_slices.front().empty()) {
-      null_field.SetNullValue();
-      return null_field;
-    }
-  }
-  SDB_ASSERT(cell_slices.size() <= 2); // BUG!
-  if (cell_slices.front().data()[0] != '\0') {
+  // if string is prefixed during Insert - two slices will be present
+  // one if prefix, second is actual string data
+  // But if we are re-indexing from existing data (Update operation) - only one
+  // slice will be present
+  SDB_ASSERT(cell_slices.size() <= 2);
+  if (!cell_slices.front().starts_with(kStringPrefix)) {
     field.SetStringValue(
       {cell_slices.front().data(), cell_slices.front().size()});
   } else {
-    field.SetStringValue(
-      {cell_slices.front().data() + 1, cell_slices.front().size() - 1});
+    if (cell_slices.size() == 1) {
+      // re-indexing case
+      field.SetStringValue(
+        {cell_slices.front().data() + 1, cell_slices.front().size() - 1});
+    } else {
+      field.SetStringValue({cell_slices[1].data(), cell_slices[1].size()});
+    }
   }
   return field;
 }
 
-template<typename T, bool HaveNulls>
+template<typename T>
 SearchSinkWriter::Field& SearchSinkWriter::WriteNumericValue(
   std::string_view, std::span<const rocksdb::Slice> cell_slices,
-  SearchSinkWriter::Field& field, Field& null_field) {
-  SDB_ASSERT(!cell_slices.empty());
-  if constexpr (HaveNulls) {
-    if (cell_slices.size() == 1 && cell_slices.front().empty()) {
-      null_field.SetNullValue();
-      return null_field;
-    }
-  }
+  SearchSinkWriter::Field& field) {
   SDB_ASSERT(cell_slices.size() == 1);
   SDB_ASSERT(sizeof(T) == cell_slices[0].size());
   // this is true as long as we match machine ending with storage ending
@@ -212,30 +230,13 @@ SearchSinkWriter::Field& SearchSinkWriter::WriteNumericValue(
   return field;
 }
 
-template<bool HaveNulls>
 SearchSinkWriter::Field& SearchSinkWriter::WriteBooleanValue(
   std::string_view, std::span<const rocksdb::Slice> cell_slices,
-  SearchSinkWriter::Field& field, Field& null_field) {
-  SDB_ASSERT(!cell_slices.empty());
-  if constexpr (HaveNulls) {
-    if (cell_slices.size() == 1 && cell_slices.front().empty()) {
-      null_field.SetNullValue();
-      return null_field;
-    }
-  }
+  SearchSinkWriter::Field& field) {
   SDB_ASSERT(cell_slices.size() == 1);
   SDB_ASSERT(cell_slices[0].size() == 1);
   field.SetBooleanValue(cell_slices.front() == kTrueValue);
   return field;
-}
-
-SearchSinkWriter::Field& SearchSinkWriter::WriteNullValue(
-  std::string_view, std::span<const rocksdb::Slice> cell_slices,
-  SearchSinkWriter::Field&, Field& null_field) {
-  SDB_ASSERT(cell_slices.size() == 1);
-  SDB_ASSERT(cell_slices.front().empty());
-  null_field.SetNullValue();
-  return null_field;
 }
 
 void SearchSinkWriter::Field::PrepareForStringValue() {
@@ -292,4 +293,4 @@ void SearchSinkWriter::Field::SetNullValue() {
   nstream.reset();
 }
 
-} // namespace sdb::connector::search
+}  // namespace sdb::connector::search

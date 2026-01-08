@@ -94,24 +94,18 @@ class SearchSinkWriter final : public SinkWriterBase {
 
   using Writer = std::function<Field&(std::string_view full_key,
                                      std::span<const rocksdb::Slice> cell_slices,
-                                     Field& field, Field& null_field)>;
-  template<bool have_nulls>
+                                     Field& field)>;
   static Field& WriteStringValue(std::string_view full_key,
-                               std::span<const rocksdb::Slice> cell_slices,
-                               Field& field, Field& null_field);
-  template<bool have_nulls>
+                                 std::span<const rocksdb::Slice> cell_slices,
+                                 Field& field);
   static Field& WriteBooleanValue(std::string_view full_key,
-                                std::span<const rocksdb::Slice> cell_slices,
-                                Field& field, Field& null_field);
+                                  std::span<const rocksdb::Slice> cell_slices,
+                                  Field& field);
 
-  static Field& WriteNullValue(std::string_view full_key,
-                             std::span<const rocksdb::Slice> cell_slices,
-                             Field& field, Field& null_field);
-
-  template<typename T, bool have_nulls>
+  template<typename T>
   static Field& WriteNumericValue(std::string_view full_key,
-                                std::span<const rocksdb::Slice> cell_slices,
-                                Field& field, Field& null_field);
+                                  std::span<const rocksdb::Slice> cell_slices,
+                                  Field& field);
 
   template<velox::TypeKind Kind>
   void SetupColumnWriter(sdb::catalog::Column::Id column_id, bool have_nulls);

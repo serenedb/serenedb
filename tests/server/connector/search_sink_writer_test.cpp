@@ -433,4 +433,50 @@ TEST_F(SearchSinkWriterTest, InsertNullsColumns) {
   }
 }
 
+// corner case for string encoding in values
+TEST_F(SearchSinkWriterTest, InsertStringPrefix) {
+  auto trx = _data_writer->GetBatch();
+
+  SearchSinkWriter sink{trx, nullptr};
+  sink.Init(1);
+  const sdb::catalog::Column::Id col_id = 1;
+  const std::vector<std::string_view> pk{
+    {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk1", 19},
+    {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x2pk2", 19},
+    {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x3pk3", 19},
+    {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x4pk4", 19}};
+
+  sink.SwitchColumn(velox::TypeKind::VARCHAR, false, col_id);
+  sink.Write({rocksdb::Slice("\x0", 1), rocksdb::Slice("\x0foo", 4)}, pk[0]);
+
+  sink.Finish();
+  ASSERT_TRUE(trx.Commit());
+  _data_writer->Commit();
+  auto reader = irs::DirectoryReader(_dir, _codec);
+  ASSERT_EQ(1, reader.size());
+  ASSERT_EQ(1, reader.docs_count());
+  ASSERT_EQ(1, reader.live_docs_count());
+  auto& segment = reader[0];
+  const auto* pk_column = segment.column(kPkColumn);
+  ASSERT_NE(nullptr, pk_column);
+  auto pk_values_itr = pk_column->iterator(irs::ColumnHint::Normal);
+  ASSERT_NE(nullptr, pk_values_itr);
+  auto* actual_pk_value = irs::get<irs::PayAttr>(*pk_values_itr);
+  ASSERT_NE(nullptr, actual_pk_value);
+
+  auto varchar_terms =
+    segment.field(std::string_view{"\x00\x00\x00\x00\x00\x00\x00\x01\x03", 9});
+  ASSERT_NE(nullptr, varchar_terms);
+  auto varchar_terms_itr = varchar_terms->iterator(irs::SeekMode::NORMAL);
+  ASSERT_NE(nullptr, varchar_terms_itr);
+  ASSERT_TRUE(varchar_terms_itr->seek(
+    irs::ViewCast<irs::byte_type>(std::string_view{"\x0foo", 4})));
+
+  auto varchar_postings = varchar_terms_itr->postings(irs::IndexFeatures::None);
+  ASSERT_TRUE(varchar_postings->next());
+  ASSERT_EQ(varchar_postings->value(),
+            pk_values_itr->seek(varchar_postings->value()));
+  ASSERT_EQ("pk1", irs::ViewCast<char>(actual_pk_value->value));
+}
+
 }  // namespace

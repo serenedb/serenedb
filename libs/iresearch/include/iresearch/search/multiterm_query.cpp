@@ -129,7 +129,7 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
   const IndexFeatures features = ord.features();
   const std::span stats{_stats};
 
-  const bool has_unscored_terms = !state->unscored_terms.empty();
+  const bool has_unscored_terms = !state->unscored_states.empty();
 
   ScoreAdapters itrs(state->scored_states.size() + size_t(has_unscored_terms));
   auto it = std::begin(itrs);
@@ -161,7 +161,7 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
   if (has_unscored_terms) {
     SDB_ASSERT(it != std::end(itrs));
     *it = {memory::make_managed<::LazyBitsetIterator>(
-      segment, *state->reader, state->unscored_terms,
+      segment, *state->reader, state->unscored_states,
       state->unscored_states_estimation)};
     ++it;
   }

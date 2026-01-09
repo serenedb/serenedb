@@ -2668,8 +2668,9 @@ doc_id_t Wanderator<IteratorTraits, FieldTraits, WandExtent, Root>::seek(
     [[maybe_unused]] uint32_t notify = 0;
     [[maybe_unused]] const auto threshold = _skip.Reader().threshold;
 
+    uint32_t doc{};
     while (this->_begin != std::end(this->_buf.docs)) {
-      const auto doc = *this->_begin++;
+      doc = *this->_begin++;
 
       if constexpr (IteratorTraits::Position()) {
         notify += *this->_freq++;
@@ -2685,6 +2686,7 @@ doc_id_t Wanderator<IteratorTraits, FieldTraits, WandExtent, Root>::seek(
           auto& freq = std::get<FreqAttr>(_attrs);
           freq.value = this->_freq[-1];
         }
+        doc_value = doc;
 
         if constexpr (Root) {
           // We can use approximation before actual score for bm11, bm15,
@@ -2703,7 +2705,7 @@ doc_id_t Wanderator<IteratorTraits, FieldTraits, WandExtent, Root>::seek(
           pos.Clear();
         }
 
-        return doc_value = doc;
+        return doc;
       }
     }
 
@@ -2711,7 +2713,7 @@ doc_id_t Wanderator<IteratorTraits, FieldTraits, WandExtent, Root>::seek(
       if constexpr (IteratorTraits::Position()) {
         std::get<Position>(_attrs).Notify(notify);
       }
-      target = this->_begin[-1] + 1;
+      target = doc + 1;
     }
   } while (Root);
 

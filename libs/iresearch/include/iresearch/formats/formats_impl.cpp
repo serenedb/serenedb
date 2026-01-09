@@ -2226,7 +2226,7 @@ doc_id_t DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::seek(
       notify += *this->_freq++;
     }
 
-    if (target <= doc_value) {
+    if (target <= doc) {
       if constexpr (IteratorTraits::Frequency()) {
         if constexpr (!IteratorTraits::Position()) {
           this->_freq = this->_buf.freqs + this->RelativePos();
@@ -2675,7 +2675,7 @@ doc_id_t Wanderator<IteratorTraits, FieldTraits, WandExtent, Root>::seek(
         notify += *this->_freq++;
       }
 
-      if (target <= doc_value) {
+      if (target <= doc) {
         if constexpr (IteratorTraits::Frequency()) {
           if constexpr (!IteratorTraits::Position()) {
             this->_freq = this->_buf.freqs + this->RelativePos();
@@ -2711,7 +2711,7 @@ doc_id_t Wanderator<IteratorTraits, FieldTraits, WandExtent, Root>::seek(
       if constexpr (IteratorTraits::Position()) {
         std::get<Position>(_attrs).Notify(notify);
       }
-      target = doc_value + 1;
+      target = this->_begin[-1] + 1;
     }
   } while (Root);
 

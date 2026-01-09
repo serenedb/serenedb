@@ -2690,7 +2690,7 @@ doc_id_t Wanderator<IteratorTraits, FieldTraits, WandExtent, Root>::seek(
           // We can use approximation before actual score for bm11, bm15,
           // tfidf(true/false) but only for term query, so I don't think
           // it's really good idea. And I don't except big difference
-          // because in such case, compution is pretty cheap
+          // because in such case, computation is pretty cheap
           _scorer(&_score);
           if (_score <= threshold) {
             continue;

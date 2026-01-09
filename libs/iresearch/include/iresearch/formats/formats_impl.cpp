@@ -2649,12 +2649,12 @@ doc_id_t Wanderator<IteratorTraits, FieldTraits, WandExtent, Root>::seek(
     return doc_value;
   }
 
-  while (true) {
+  do {
     SeekToBlock(target);
 
-    if (this->_begin == std::end(this->_buf.docs)) {
-      if (!this->_left) [[unlikely]] {
-        return doc_value = doc_limits::eof();
+    if (this->_begin == std::end(this->_buf.docs)) [[unlikely]] {
+      if (this->_left == 0) [[unlikely]] {
+        break;
       }
 
       if (auto& state = _skip.Reader().State(); state.doc_ptr) {
@@ -2669,60 +2669,57 @@ doc_id_t Wanderator<IteratorTraits, FieldTraits, WandExtent, Root>::seek(
       this->Refill(doc_value);
     }
 
-    [[maybe_unused]] uint32_t notify{0};
+    [[maybe_unused]] uint32_t notify = 0;
     [[maybe_unused]] const auto threshold = _skip.Reader().threshold;
 
     while (this->_begin != std::end(this->_buf.docs)) {
-      doc_value = *this->_begin++;
+      const auto doc = *this->_begin++;
 
-      if constexpr (!IteratorTraits::Position()) {
-        if (doc_value >= target) {
-          if constexpr (IteratorTraits::Frequency()) {
+      if constexpr (IteratorTraits::Position()) {
+        notify += *this->_freq++;
+      }
+
+      if (target <= doc_value) {
+        if constexpr (IteratorTraits::Frequency()) {
+          if constexpr (!IteratorTraits::Position()) {
             this->_freq = this->_buf.freqs + this->RelativePos();
-            SDB_ASSERT((this->_freq - 1) >= this->_buf.freqs);
-            SDB_ASSERT((this->_freq - 1) < std::end(this->_buf.freqs));
-
-            auto& freq = std::get<FreqAttr>(_attrs);
-            freq.value = this->_freq[-1];
-            if constexpr (Root) {
-              // We can use approximation before actual score for bm11, bm15,
-              // tfidf(true/false) but only for term query, so I don't think
-              // it's really good idea. And I don't except big difference
-              // because in such case, compution is pretty cheap
-              _scorer(&_score);
-              if (_score <= threshold) {
-                continue;
-              }
-            }
           }
-          return doc_value;
+          SDB_ASSERT((this->_freq - 1) >= this->_buf.freqs);
+          SDB_ASSERT((this->_freq - 1) < std::end(this->_buf.freqs));
+          auto& freq = std::get<FreqAttr>(_attrs);
+          freq.value = this->_freq[-1];
         }
-      } else {
-        static_assert(IteratorTraits::Frequency());
-        auto& freq = std::get<FreqAttr>(_attrs);
-        freq.value = *this->_freq++;
-        notify += freq.value;
-        if (doc_value >= target) {
-          if constexpr (Root) {
-            _scorer(&_score);
-            if (_score <= threshold) {
-              continue;
-            }
+
+        if constexpr (Root) {
+          // We can use approximation before actual score for bm11, bm15,
+          // tfidf(true/false) but only for term query, so I don't think
+          // it's really good idea. And I don't except big difference
+          // because in such case, compution is pretty cheap
+          _scorer(&_score);
+          if (_score <= threshold) {
+            continue;
           }
+        }
+
+        if constexpr (IteratorTraits::Position()) {
           auto& pos = std::get<Position>(_attrs);
           pos.Notify(notify);
           pos.Clear();
-          return doc_value;
         }
+
+        return doc_value = doc;
       }
     }
 
-    if constexpr (IteratorTraits::Position()) {
-      std::get<Position>(_attrs).Notify(notify);
+    if constexpr (Root) {
+      if constexpr (IteratorTraits::Position()) {
+        std::get<Position>(_attrs).Notify(notify);
+      }
+      target = doc_value + 1;
     }
+  } while (Root);
 
-    target = doc_value + 1;
-  }
+  return doc_value = doc_limits::eof();
 }
 
 struct IndexMetaWriterImpl final : public IndexMetaWriter {

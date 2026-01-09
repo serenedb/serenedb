@@ -30,13 +30,10 @@ struct CostAdapter : ScoreAdapter {
   explicit CostAdapter(DocIterator::ptr it) noexcept
     : ScoreAdapter{std::move(it)} {
     // TODO(mbkkt) 0 instead of kMax?
-    est = CostAttr::extract(*this->it, CostAttr::kMax);
+    est = CostAttr::extract(*this, CostAttr::kMax);
   }
 
-  CostAdapter(CostAdapter&&) noexcept = default;
-  CostAdapter& operator=(CostAdapter&&) noexcept = default;
-
-  CostAttr::Type est{};
+  CostAttr::Type est;
 };
 
 using CostAdapters = std::vector<CostAdapter>;

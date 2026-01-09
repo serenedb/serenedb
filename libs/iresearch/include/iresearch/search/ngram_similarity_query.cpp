@@ -34,9 +34,9 @@ namespace {
 struct Position {
   template<typename Iterator>
   explicit Position(Iterator& itr) noexcept
-    : pos{&PosAttr::GetMutable(itr)},
+    : pos{&PosAttr::get(itr)},
       doc{irs::get<DocAttr>(itr)},
-      scr{&irs::ScoreAttr::get(itr)} {
+      scr{&ScoreAttr::get(itr)} {
     SDB_ASSERT(pos);
     SDB_ASSERT(doc);
     SDB_ASSERT(scr);

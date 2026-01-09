@@ -36,35 +36,35 @@ namespace irs {
 
 // Adapter to use DocIterator::ptr with conjunction and disjunction.
 struct ScoreAdapter {
-  ScoreAdapter() noexcept = default;
+  ScoreAdapter() = default;
+
   ScoreAdapter(DocIterator::ptr it) noexcept
-    : it{std::move(it)},
-      doc{irs::get<irs::DocAttr>(*this->it)},
-      score{&irs::ScoreAttr::get(*this->it)} {
+    : _it{std::move(it)},
+      doc{irs::get<DocAttr>(*this->_it)},
+      score{&ScoreAttr::get(*this->_it)} {
     SDB_ASSERT(doc);
   }
 
   ScoreAdapter(ScoreAdapter&&) noexcept = default;
   ScoreAdapter& operator=(ScoreAdapter&&) noexcept = default;
 
-  auto* operator->() const noexcept { return it.get(); }
-
-  const Attribute* get(TypeInfo::type_id type) const noexcept {
-    return it->get(type);
-  }
+  auto* operator->() const noexcept { return _it.get(); }
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept {
-    return it->GetMutable(type);
+    return _it->GetMutable(type);
   }
 
-  operator DocIterator::ptr&&() && noexcept { return std::move(it); }
+  operator DocIterator::ptr&&() && noexcept { return std::move(_it); }
 
-  explicit operator bool() const noexcept { return it != nullptr; }
+  explicit operator bool() const noexcept { return _it != nullptr; }
 
   // access iterator value without virtual call
   doc_id_t value() const noexcept { return doc->value; }
 
-  DocIterator::ptr it;
+ private:
+  DocIterator::ptr _it;
+
+ public:
   const irs::DocAttr* doc{};
   const irs::ScoreAttr* score{};
 };
@@ -167,19 +167,16 @@ class Conjunction : public ConjunctionBase<Adapter, Merger> {
   explicit Conjunction(Merger&& merger, std::vector<Adapter>&& itrs,
                        std::vector<irs::ScoreAttr*>&& scores = {})
     : Base{std::move(merger), std::move(itrs), std::move(scores)},
-      _front{this->_itrs.front().it.get()} {
+      _front{this->_itrs.front()} {
     SDB_ASSERT(!this->_itrs.empty());
     SDB_ASSERT(_front);
 
-    auto* front_doc = irs::GetMutable<DocAttr>(_front);
-    _front_doc = &front_doc->value;
-    std::get<AttributePtr<DocAttr>>(_attrs) = front_doc;
-
+    std::get<AttributePtr<DocAttr>>(_attrs) = irs::GetMutable<DocAttr>(&_front);
     std::get<AttributePtr<CostAttr>>(_attrs) =
-      irs::GetMutable<CostAttr>(_front);
+      irs::GetMutable<CostAttr>(&_front);
 
     if constexpr (kHasScore<Merger>) {
-      auto& score = std::get<irs::ScoreAttr>(_attrs);
+      auto& score = std::get<ScoreAttr>(_attrs);
       this->PrepareScore(score, Base::Score2, Base::ScoreN,
                          ScoreFunction::DefaultMin);
     }
@@ -189,7 +186,9 @@ class Conjunction : public ConjunctionBase<Adapter, Merger> {
     return irs::GetMutable(_attrs, type);
   }
 
-  doc_id_t value() const final { return *_front_doc; }
+  doc_id_t value() const final {
+    return std::get<AttributePtr<DocAttr>>(_attrs).ptr->value;
+  }
 
   doc_id_t advance() override { return converge(_front->advance()); }
 
@@ -224,8 +223,7 @@ class Conjunction : public ConjunctionBase<Adapter, Merger> {
   }
 
   Attributes _attrs;
-  DocIterator* _front;
-  const doc_id_t* _front_doc{};
+  Adapter& _front;
 };
 
 template<bool Root, typename Adapter, typename Merger>

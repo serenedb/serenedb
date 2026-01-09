@@ -461,32 +461,29 @@ class FixedPhraseFrequency {
 // Adapter to use DocIterator with positions for disjunction
 struct VariadicPhraseAdapter : ScoreAdapter {
   VariadicPhraseAdapter() = default;
-  VariadicPhraseAdapter(DocIterator::ptr it, score_t boost) noexcept
-    : ScoreAdapter(std::move(it)),
-      position{irs::GetMutable<irs::PosAttr>(this->it.get())},
-      boost{boost} {}
+
+  explicit VariadicPhraseAdapter(DocIterator::ptr it, score_t boost) noexcept
+    : ScoreAdapter{std::move(it)}, boost{boost} {
+    position = irs::GetMutable<PosAttr>(this);
+  }
 
   irs::PosAttr* position{};
   score_t boost{kNoBoost};
 };
 
-static_assert(std::is_nothrow_move_constructible_v<VariadicPhraseAdapter>);
-static_assert(std::is_nothrow_move_assignable_v<VariadicPhraseAdapter>);
-
-struct VariadicPhraseOffsetAdapter final : VariadicPhraseAdapter {
+struct VariadicPhraseOffsetAdapter : VariadicPhraseAdapter {
   VariadicPhraseOffsetAdapter() = default;
-  VariadicPhraseOffsetAdapter(DocIterator::ptr&& it, score_t boost) noexcept
-    : VariadicPhraseAdapter{std::move(it), boost},
-      offset{this->position ? irs::get<irs::OffsAttr>(*this->position)
-                            // FIXME(gnusi): use constant
-                            : nullptr} {}
+
+  explicit VariadicPhraseOffsetAdapter(DocIterator::ptr it,
+                                       score_t boost) noexcept
+    : VariadicPhraseAdapter{std::move(it), boost} {
+    offset = position ? irs::get<OffsAttr>(*position)
+                      // TODO(gnusi) use constant
+                      : nullptr;
+  }
 
   const irs::OffsAttr* offset{};
 };
-
-static_assert(
-  std::is_nothrow_move_constructible_v<VariadicPhraseOffsetAdapter>);
-static_assert(std::is_nothrow_move_assignable_v<VariadicPhraseOffsetAdapter>);
 
 template<typename Adapter>
 using VariadicTermPosition =

@@ -142,8 +142,7 @@ class RemappingDocIterator : public DocIterator {
   }
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::Type<DocAttr>::id() == type ? &_doc
-                                                 : _it->GetMutable(type);
+    return irs::Type<DocAttr>::id() == type ? &_doc : _it->GetMutable(type);
   }
 
   doc_id_t value() const noexcept final { return _doc.value; }

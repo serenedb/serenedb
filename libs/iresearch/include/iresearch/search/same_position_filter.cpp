@@ -38,10 +38,10 @@ namespace {
 template<typename Conjunction>
 class SamePositionIterator : public Conjunction {
  public:
-  typedef std::vector<PosAttr::ref> PositionsT;
+  using Positions = std::vector<PosAttr::ref>;
 
   template<typename... Args>
-  SamePositionIterator(PositionsT&& pos, Args&&... args)
+  SamePositionIterator(Positions&& pos, Args&&... args)
     : Conjunction{std::forward<Args>(args)...}, _pos(std::move(pos)) {
     SDB_ASSERT(!_pos.empty());
   }
@@ -89,7 +89,7 @@ class SamePositionIterator : public Conjunction {
     return true;
   }
 
-  PositionsT _pos;
+  Positions _pos;
 };
 
 class SamePositionQuery : public Filter::Query {

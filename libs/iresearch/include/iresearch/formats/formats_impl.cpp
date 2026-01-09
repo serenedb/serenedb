@@ -2217,43 +2217,37 @@ doc_id_t DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::seek(
     this->Refill(doc_value);
   }
 
-  [[maybe_unused]] uint32_t notify{0};
+  [[maybe_unused]] uint32_t notify = 0;
+
   while (this->_begin != std::end(this->_buf.docs)) {
-    doc_value = *this->_begin++;
+    const auto doc = *this->_begin++;
 
-    if constexpr (!IteratorTraits::Position()) {
-      if (doc_value >= target) {
-        if constexpr (IteratorTraits::Frequency()) {
+    if constexpr (IteratorTraits::Position()) {
+      notify += *this->_freq++;
+    }
+
+    if (target <= doc_value) {
+      if constexpr (IteratorTraits::Frequency()) {
+        if constexpr (!IteratorTraits::Position()) {
           this->_freq = this->_buf.freqs + this->RelativePos();
-          SDB_ASSERT((this->_freq - 1) >= this->_buf.freqs);
-          SDB_ASSERT((this->_freq - 1) < std::end(this->_buf.freqs));
-          std::get<FreqAttr>(_attrs).value = this->_freq[-1];
         }
-        return doc_value;
+        SDB_ASSERT((this->_freq - 1) >= this->_buf.freqs);
+        SDB_ASSERT((this->_freq - 1) < std::end(this->_buf.freqs));
+        auto& freq = std::get<FreqAttr>(_attrs);
+        freq.value = this->_freq[-1];
       }
-    } else {
-      SDB_ASSERT(IteratorTraits::Frequency());
-      auto& freq = std::get<FreqAttr>(_attrs);
-      auto& pos = std::get<Position>(_attrs);
-      freq.value = *this->_freq++;
-      notify += freq.value;
 
-      if (doc_value >= target) {
+      if constexpr (IteratorTraits::Position()) {
+        auto& pos = std::get<Position>(_attrs);
         pos.Notify(notify);
         pos.Clear();
-        return doc_value;
       }
+
+      return doc_value = doc;
     }
   }
 
-  if constexpr (IteratorTraits::Position()) {
-    std::get<Position>(_attrs).Notify(notify);
-  }
-  while (doc_value < target) {
-    advance();
-  }
-
-  return doc_value;
+  return doc_value = doc_limits::eof();
 }
 
 template<typename IteratorTraits, typename FieldTraits, typename WandExtent>

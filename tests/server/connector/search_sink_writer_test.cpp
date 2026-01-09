@@ -479,7 +479,70 @@ TEST_F(SearchSinkWriterTest, InsertStringPrefix) {
   ASSERT_EQ("pk1", irs::ViewCast<char>(actual_pk_value->value));
 }
 
-TEST_F(SearchSinkWriterTest, InsertDeleteInsert) {
+TEST_F(SearchSinkWriterTest, InsertDeleteInsertWithExisting) {
+  constexpr std::string_view kPk = {
+    "\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk1", 19};
+  constexpr std::string_view kPk2 = {
+    "\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk2", 19};
+  {
+    auto trx = _data_writer->GetBatch();
+    SearchSinkWriter sink{trx, nullptr};
+    sink.Init(2);
+    sink.SwitchColumn(velox::TypeKind::VARCHAR, false, 1);
+    sink.Write({rocksdb::Slice("value1", 6)}, kPk);
+    // second document to keep segment around
+    sink.Write({rocksdb::Slice("value9", 6)}, kPk2);
+    sink.Finish();
+    trx.Commit();
+    // That would be our "existing" segment
+   _data_writer->Commit();
+  }
+  {
+    auto delete_trx = _data_writer->GetBatch();
+    SearchSinkWriter delete_sink{delete_trx, pool()};
+    delete_sink.Init(1);
+    delete_sink.DeleteRow("pk1");
+    delete_sink.Finish();
+    ASSERT_TRUE(delete_trx.Commit());
+  }
+  {
+    auto trx = _data_writer->GetBatch();
+    SearchSinkWriter sink{trx, nullptr};
+    sink.Init(1);
+    sink.SwitchColumn(velox::TypeKind::VARCHAR, false, 1);
+    sink.Write({rocksdb::Slice("value2", 6)}, kPk);
+    sink.Finish();
+    trx.Commit();
+    // Intentionally do not commit data writer to force several same PKs in one
+    // writer commit
+  }
+  {
+    auto delete_trx = _data_writer->GetBatch();
+    SearchSinkWriter delete_sink{delete_trx, pool()};
+    delete_sink.Init(1);
+    delete_sink.DeleteRow("pk1");
+    delete_sink.Finish();
+    ASSERT_TRUE(delete_trx.Commit());
+    // still no data writer commit
+  }
+  {
+    auto trx = _data_writer->GetBatch();
+    SearchSinkWriter sink{trx, nullptr};
+    sink.Init(1);
+    sink.SwitchColumn(velox::TypeKind::VARCHAR, false, 1);
+    sink.Write({rocksdb::Slice("value3", 6)}, kPk);
+    sink.Finish();
+    trx.Commit();
+    // eventually commit. value3 would be visible
+    _data_writer->Commit();
+  }
+  auto reader = irs::DirectoryReader(_dir, _codec);
+  ASSERT_EQ(2, reader.size());
+  ASSERT_EQ(4, reader.docs_count());
+  ASSERT_EQ(2, reader.live_docs_count());
+}
+
+TEST_F(SearchSinkWriterTest, InsertDeleteInsertOnePending) {
   constexpr std::string_view kPk = {
     "\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk1", 19};
   {
@@ -539,7 +602,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsert) {
   ASSERT_EQ(1, reader.live_docs_count());
 }
 
-TEST_F(SearchSinkWriterTest, InsertDeleteInsertWithFlush) {
+TEST_F(SearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
   irs::MemoryDirectory dir;
   auto column_info_provider = [](const std::string_view&) {
     return irs::ColumnInfo{

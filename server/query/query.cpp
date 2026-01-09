@@ -240,6 +240,7 @@ void Query::CompileQuery() {
 
   // This is not really good for prepared statements, but it works for now
   auto result = optimization.toVeloxPlan(best->op);
+  std::cerr << result.plan->toString(true) << std::endl;
   _execution_plan = std::move(result.plan);
   _finish_write = std::move(result.finishWrite);
 }

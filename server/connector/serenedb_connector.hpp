@@ -21,8 +21,12 @@
 #pragma once
 
 #include <axiom/connectors/ConnectorMetadata.h>
+#include <velox/common/file/File.h>
 #include <velox/connectors/Connector.h>
+#include <velox/dwio/common/Options.h>
+#include <velox/dwio/common/ReaderFactory.h>
 #include <velox/type/Type.h>
+#include <velox/vector/DecodedVector.h>
 
 #include "basics/assert.h"
 #include "basics/fwd.h"
@@ -32,6 +36,7 @@
 #include "catalog/table_options.h"
 #include "data_sink.hpp"
 #include "data_source.hpp"
+#include "file_table.hpp"
 #include "query/transaction.h"
 #include "rocksdb/utilities/transaction_db.h"
 
@@ -143,6 +148,12 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
     std::vector<velox::core::TypedExprPtr> filters,
     std::vector<velox::core::TypedExprPtr>& rejected_filters) const final {
     rejected_filters = std::move(filters);
+    
+    if (const auto* read_file_table =
+          dynamic_cast<const ReadFileTable*>(&this->table())) {
+      return std::make_shared<FileTableHandle>(read_file_table->GetReader());
+    }
+
     SDB_ASSERT(!table().columnMap().empty(),
                "SereneDBConnectorTableHandle: need a column for count field");
     return std::make_shared<SereneDBConnectorTableHandle>(session, *this);
@@ -350,6 +361,15 @@ class SereneDBConnectorMetadata final
   axiom::connector::ConnectorWriteHandlePtr beginWrite(
     const axiom::connector::ConnectorSessionPtr& session,
     const axiom::connector::TablePtr& table, axiom::connector::WriteKind kind) {
+    if (kind == axiom::connector::WriteKind::kCopyTo) {
+      auto* write_file_table = dynamic_cast<const WriteFileTable*>(table.get());
+      SDB_ENSURE(
+        write_file_table, ERROR_INTERNAL,
+        "COPY TO requires WriteFileTable, but got different table type");
+      return std::make_shared<FileConnectorWriteHandle>(
+        write_file_table->GetWriter());
+    }
+
     return std::make_shared<SereneDBConnectorWriteHandle>(session, table, kind);
   }
 
@@ -357,6 +377,15 @@ class SereneDBConnectorMetadata final
     const axiom::connector::ConnectorSessionPtr& session,
     const axiom::connector::ConnectorWriteHandlePtr& handle,
     const std::vector<velox::RowVectorPtr>& write_results) final {
+    if (IsFileInsertTableHandle(handle)) {
+      velox::DecodedVector decoded;
+      SDB_ASSERT(write_results.size() == 1);
+      SDB_ASSERT(write_results[0]->size() == 1);
+      decoded.decode(*write_results[0]->childAt(0));
+      const int64_t total_rows = decoded.valueAt<int64_t>(0);
+      return yaclib::MakeFuture(total_rows);
+    }
+
     // TODO(Dronplane) if we have here transaction from upstream, we should not
     // commit here. But currently we don't have such case so transaction must be
     // local and stored in the insert handle.
@@ -386,6 +415,11 @@ class SereneDBConnectorMetadata final
     const axiom::connector::ConnectorSessionPtr& session,
     const axiom::connector::ConnectorWriteHandlePtr& handle) noexcept final
     try {
+    if (dynamic_cast<const FileInsertTableHandle*>(
+          handle->veloxHandle().get())) {
+      return velox::ContinueFuture::make();
+    }
+
     auto serene_insert_handle =
       std::dynamic_pointer_cast<const SereneDBConnectorInsertTableHandle>(
         handle->veloxHandle());
@@ -411,6 +445,12 @@ class SereneDBConnectorMetadata final
   }
 
  private:
+  bool IsFileInsertTableHandle(
+    const axiom::connector::ConnectorWriteHandlePtr& handle) const {
+    return dynamic_cast<const FileInsertTableHandle*>(
+             handle->veloxHandle().get()) != nullptr;
+  }
+
   SereneDBConnectorSplitManager _split_manager;
 };
 
@@ -433,6 +473,11 @@ class SereneDBConnector final : public velox::connector::Connector {
     const velox::connector::ConnectorTableHandlePtr& table_handle,
     const velox::connector::ColumnHandleMap& column_handles,
     velox::connector::ConnectorQueryCtx* connector_query_ctx) final {
+    if (auto* file_handle =
+          dynamic_cast<const FileTableHandle*>(table_handle.get())) {
+      return std::make_unique<FileDataSource>(file_handle->GetReader());
+    }
+
     const auto& serene_table_handle =
       basics::downCast<const SereneDBConnectorTableHandle>(*table_handle);
     const auto& object_key = serene_table_handle.TableId();
@@ -477,6 +522,11 @@ class SereneDBConnector final : public velox::connector::Connector {
       connector_insert_table_handle,
     velox::connector::ConnectorQueryCtx* connector_query_ctx,
     velox::connector::CommitStrategy commit_strategy) final {
+    if (auto* file_handle = dynamic_cast<const FileInsertTableHandle*>(
+          connector_insert_table_handle.get())) {
+      return std::make_unique<FileDataSink>(file_handle->GetWriter());
+    }
+
     const auto& serene_insert_handle =
       basics::downCast<const SereneDBConnectorInsertTableHandle>(
         *connector_insert_table_handle);

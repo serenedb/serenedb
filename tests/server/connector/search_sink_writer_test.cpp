@@ -479,4 +479,154 @@ TEST_F(SearchSinkWriterTest, InsertStringPrefix) {
   ASSERT_EQ("pk1", irs::ViewCast<char>(actual_pk_value->value));
 }
 
+TEST_F(SearchSinkWriterTest, InsertDeleteInsert) {
+  constexpr std::string_view kPk = {
+    "\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk1", 19};
+  {
+    auto trx = _data_writer->GetBatch();
+    SearchSinkWriter sink{trx, nullptr};
+    sink.Init(1);
+    sink.SwitchColumn(velox::TypeKind::VARCHAR, false, 1);
+    sink.Write({rocksdb::Slice("value1", 6)}, kPk);
+    sink.Finish();
+    trx.Commit();
+    // Intentionally do not commit data writer to force several same PKs in one
+    // writer commit
+  }
+  {
+    auto delete_trx = _data_writer->GetBatch();
+    SearchSinkWriter delete_sink{delete_trx, pool()};
+    delete_sink.Init(1);
+    delete_sink.DeleteRow("pk1");
+    delete_sink.Finish();
+    ASSERT_TRUE(delete_trx.Commit());
+    // still no data writer commit
+  }
+  {
+    auto trx = _data_writer->GetBatch();
+    SearchSinkWriter sink{trx, nullptr};
+    sink.Init(1);
+    sink.SwitchColumn(velox::TypeKind::VARCHAR, false, 1);
+    sink.Write({rocksdb::Slice("value2", 6)}, kPk);
+    sink.Finish();
+    trx.Commit();
+    // Intentionally do not commit data writer to force several same PKs in one
+    // writer commit
+  }
+  {
+    auto delete_trx = _data_writer->GetBatch();
+    SearchSinkWriter delete_sink{delete_trx, pool()};
+    delete_sink.Init(1);
+    delete_sink.DeleteRow("pk1");
+    delete_sink.Finish();
+    ASSERT_TRUE(delete_trx.Commit());
+    // still no data writer commit
+  }
+  {
+    auto trx = _data_writer->GetBatch();
+    SearchSinkWriter sink{trx, nullptr};
+    sink.Init(1);
+    sink.SwitchColumn(velox::TypeKind::VARCHAR, false, 1);
+    sink.Write({rocksdb::Slice("value3", 6)}, kPk);
+    sink.Finish();
+    trx.Commit();
+    // eventually commit. value3 would be visible
+    _data_writer->Commit();
+  }
+  auto reader = irs::DirectoryReader(_dir, _codec);
+  ASSERT_EQ(1, reader.size());
+  ASSERT_EQ(3, reader.docs_count());
+  ASSERT_EQ(1, reader.live_docs_count());
+}
+
+TEST_F(SearchSinkWriterTest, InsertDeleteInsertWithFlush) {
+  irs::MemoryDirectory dir;
+  auto column_info_provider = [](const std::string_view&) {
+    return irs::ColumnInfo{
+      .compression = irs::Type<irs::compression::None>::get(),
+      .options = {},
+      .encryption = false,
+      .track_prev_doc = false};
+  };
+
+  auto feature_provider = [](irs::IndexFeatures) {
+    return std::make_pair(
+      irs::ColumnInfo{.compression = irs::Type<irs::compression::None>::get(),
+                      .options = {},
+                      .encryption = false,
+                      .track_prev_doc = false},
+      irs::FeatureWriterFactory{});
+  };
+  irs::IndexWriterOptions options;
+  options.column_info = column_info_provider;
+  options.features = feature_provider;
+  options.segment_docs_max = 2;
+  // local block is needed as reader/writer should not outlive directory
+  {
+    auto limited_data_writer =
+      irs::IndexWriter::Make(dir, _codec, irs::kOmCreate, options);
+    constexpr std::string_view kPk = {
+      "\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk1", 19};
+    constexpr std::string_view kPk2 = {
+      "\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk2", 19};
+    {
+      auto trx = limited_data_writer->GetBatch();
+      SearchSinkWriter sink{trx, nullptr};
+      sink.Init(1);
+      sink.SwitchColumn(velox::TypeKind::VARCHAR, false, 1);
+      sink.Write({rocksdb::Slice("value1", 6)}, kPk);
+      sink.Finish();
+      trx.Commit();
+      // Intentionally do not commit data writer to force several same PKs in
+      // one writer commit
+    }
+    {
+      auto delete_trx = limited_data_writer->GetBatch();
+      SearchSinkWriter delete_sink{delete_trx, pool()};
+      delete_sink.Init(1);
+      delete_sink.DeleteRow("pk1");
+      delete_sink.Finish();
+      ASSERT_TRUE(delete_trx.Commit());
+      // still no data writer commit
+    }
+    {
+      auto trx = limited_data_writer->GetBatch();
+      SearchSinkWriter sink{trx, nullptr};
+      sink.Init(2);
+      sink.SwitchColumn(velox::TypeKind::VARCHAR, false, 1);
+      sink.Write({rocksdb::Slice("value2", 6)}, kPk);
+      // we need this doc to keep flushed segment from discarding as empty
+      sink.Write({rocksdb::Slice("value22", 7)}, kPk2);
+      sink.Finish();
+      trx.Commit();
+      // Intentionally do not commit data writer to force several same PKs in
+      // one writer commit
+    }
+    {
+      auto delete_trx = limited_data_writer->GetBatch();
+      SearchSinkWriter delete_sink{delete_trx, pool()};
+      delete_sink.Init(1);
+      delete_sink.DeleteRow("pk1");
+      delete_sink.Finish();
+      ASSERT_TRUE(delete_trx.Commit());
+      // still no data writer commit
+    }
+    {
+      auto trx = limited_data_writer->GetBatch();
+      SearchSinkWriter sink{trx, nullptr};
+      sink.Init(1);
+      sink.SwitchColumn(velox::TypeKind::VARCHAR, false, 1);
+      sink.Write({rocksdb::Slice("value3", 6)}, kPk);
+      sink.Finish();
+      trx.Commit();
+      // eventually commit. value3 would be visible
+      limited_data_writer->Commit();
+    }
+    auto reader = irs::DirectoryReader(dir, _codec);
+    ASSERT_EQ(2, reader.size());
+    ASSERT_EQ(4, reader.docs_count());
+    ASSERT_EQ(2, reader.live_docs_count());
+  }
+}
+
 }  // namespace

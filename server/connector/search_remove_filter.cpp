@@ -38,6 +38,19 @@ irs::DocIterator::ptr SearchRemoveFilterBase::execute(
 irs::doc_id_t SearchRemoveFilter::advance() {
   auto* docs_mask = _segment->docs_mask();
 
+  if (_pk_iterator) {
+    auto doc = irs::doc_limits::eof();
+    while (!irs::doc_limits::eof(doc = _pk_iterator->advance())) {
+      SDB_ASSERT(irs::doc_limits::valid(doc));
+      if (!docs_mask || !docs_mask->contains(doc)) {
+        _doc.value = doc;
+        return doc;
+      }
+    }
+    ++_pos;
+    _pk_iterator.reset();
+  }
+
   while (true) {
     if (_pos == _pks.size()) [[unlikely]] {
       _doc.value = irs::doc_limits::eof();
@@ -63,16 +76,23 @@ irs::doc_id_t SearchRemoveFilter::advance() {
     }
 
     auto doc = irs::doc_limits::eof();
-    auto docs = _pk_field->postings(*terms->cookie(), irs::IndexFeatures::None);
-    while (!irs::doc_limits::eof(doc = docs->advance())) {
+    _pk_iterator = _pk_field->postings(*terms->cookie(), irs::IndexFeatures::None);
+    while (!irs::doc_limits::eof(doc = _pk_iterator->advance())) {
       SDB_ASSERT(irs::doc_limits::valid(doc));
       if (!docs_mask || !docs_mask->contains(doc)) {
         break;
       }
     }
     // if PK found alive it should be the only one in the entire index.
-    pk = _pks.back();
-    _pks.pop_back();
+    // iterate all in this segment. But then discard PK. It could not be in other???
+    // what if some segments were flushed?
+    //pk = _pks.back();
+    //_pks.pop_back();
+    if (irs::doc_limits::eof(doc)) {
+      ++_pos;
+      _pk_iterator.reset();
+      continue;
+    }
     _doc.value = doc;
     return doc;
   }

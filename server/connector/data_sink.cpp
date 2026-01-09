@@ -2001,6 +2001,7 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
                     "Failed to acquire row lock for table ", _object_key.id(),
                     " error: ", result.errorMessage());
         }
+        // TODO: run row deletes here
       },
       key_buffer);
 

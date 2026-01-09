@@ -185,7 +185,7 @@ void SearchSinkWriter::SetupColumnWriter(sdb::catalog::Column::Id column_id,
       auto row_key = key_utils::ExtractRowKey(full_key);
       _pk_field.value = irs::ViewCast<irs::byte_type>(row_key);
       _pk_field.SetStringValue(row_key);
-      // Maybe just store PK without indexing?
+      // We need indexed PK for removes
       VELOX_CHECK(
         _document->template Insert<irs::Action::INDEX | irs::Action::STORE>(
           _pk_field),

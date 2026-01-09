@@ -82,6 +82,7 @@ class SearchRemoveFilterBase : public irs::Filter,
   mutable size_t _pos{0};
   mutable irs::DocAttr _doc;
   mutable ManagedVector<ManagedString> _pks;
+  mutable irs::DocIterator::ptr _pk_iterator;
 };
 
 class SearchRemoveFilter : public SearchRemoveFilterBase {

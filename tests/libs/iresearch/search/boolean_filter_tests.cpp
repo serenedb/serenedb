@@ -75,6 +75,7 @@ struct BasicSort : irs::ScorerBase<BasicSort, void> {
     explicit BasicScorer(size_t idx) noexcept : idx(idx) {}
 
     size_t idx;
+    size_t count = 0;
   };
 
   irs::IndexFeatures GetIndexFeatures() const final {
@@ -86,10 +87,15 @@ struct BasicSort : irs::ScorerBase<BasicSort, void> {
       [](irs::ScoreCtx* ctx, irs::score_t* res) noexcept {
         ASSERT_NE(nullptr, res);
         ASSERT_NE(nullptr, ctx);
-        const auto& state = *static_cast<BasicScorer*>(ctx);
-        *res = static_cast<uint32_t>(state.idx);
+        auto& state = *static_cast<BasicScorer*>(ctx);
+        std::fill_n(res, state.count, irs::score_t(state.idx));
+        state.count = 0;
       },
-      irs::ScoreFunction::NoopCollect, irs::ScoreFunction::NoopMin, idx);
+      [](irs::ScoreCtx* ctx) noexcept {
+        auto& state = *static_cast<BasicScorer*>(ctx);
+        ++state.count;
+      },
+      irs::ScoreFunction::NoopMin, idx);
   }
 
   size_t idx;

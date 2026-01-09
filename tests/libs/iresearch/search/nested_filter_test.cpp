@@ -110,6 +110,7 @@ struct DocIdScorer : irs::ScorerBase<void> {
       explicit ScorerContext(const irs::DocAttr* doc) noexcept : doc{doc} {}
 
       const irs::DocAttr* doc;
+      std::vector<irs::doc_id_t> docs;
     };
 
     auto* doc = irs::get<irs::DocAttr>(ctx.doc_attrs);
@@ -119,10 +120,17 @@ struct DocIdScorer : irs::ScorerBase<void> {
       [](irs::ScoreCtx* ctx, irs::score_t* res) noexcept {
         ASSERT_NE(nullptr, res);
         ASSERT_NE(nullptr, ctx);
-        const auto& state = *static_cast<ScorerContext*>(ctx);
-        *res = state.doc->value;
+        auto& state = *static_cast<ScorerContext*>(ctx);
+        for (size_t i = 0; i < state.docs.size(); ++i) {
+          res[i] = static_cast<irs::score_t>(state.docs[i]);
+        }
+        state.docs.clear();
       },
-      irs::ScoreFunction::NoopCollect, irs::ScoreFunction::NoopMin, doc);
+      [](irs::ScoreCtx* ctx) noexcept {
+        auto& state = *static_cast<ScorerContext*>(ctx);
+        state.docs.emplace_back(state.doc->value);
+      },
+      irs::ScoreFunction::NoopMin, doc);
   }
 };
 

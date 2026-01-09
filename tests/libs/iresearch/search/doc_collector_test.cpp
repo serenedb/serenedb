@@ -28,6 +28,7 @@
 #include <iresearch/search/scorer.hpp>
 #include <iresearch/search/scorers.hpp>
 #include <iresearch/search/term_filter.hpp>
+#include <iresearch/types.hpp>
 #include <span>
 
 #include "index/index_tests.hpp"
@@ -50,10 +51,11 @@ struct DocIdScorer : irs::ScorerBase<void> {
   irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
     struct ScorerContext final : irs::ScoreCtx {
       ScorerContext(const irs::DocAttr* doc, irs::doc_id_t divisor) noexcept
-        : doc{doc}, divisor{divisor} {}
+        : doc_source{doc}, divisor{divisor} {}
 
-      const irs::DocAttr* doc;
+      const irs::DocAttr* doc_source;
       irs::doc_id_t divisor;
+      std::vector<irs::doc_id_t> docs;
     };
 
     auto* doc = irs::get<irs::DocAttr>(ctx.doc_attrs);
@@ -64,12 +66,18 @@ struct DocIdScorer : irs::ScorerBase<void> {
         ASSERT_NE(nullptr, res);
         ASSERT_NE(nullptr, ctx);
         const auto& state = *static_cast<ScorerContext*>(ctx);
-        *res = state.divisor == 0
-                 ? static_cast<irs::score_t>(state.doc->value)
-                 : static_cast<irs::score_t>(state.doc->value % state.divisor);
+        size_t size = state.docs.size();
+        for (size_t i = 0; i < size; ++i) {
+          res[i] = state.divisor == 0
+                     ? static_cast<irs::score_t>(state.docs[i])
+                     : static_cast<irs::score_t>(state.docs[i] % state.divisor);
+        }
       },
-      irs::ScoreFunction::NoopCollect, irs::ScoreFunction::NoopMin, doc,
-      divisor);
+      [](irs::ScoreCtx* ctx) noexcept {
+        auto& state = *static_cast<ScorerContext*>(ctx);
+        state.docs.emplace_back(state.doc_source->value);
+      },
+      irs::ScoreFunction::NoopMin, doc, divisor);
   }
 
   irs::doc_id_t divisor;

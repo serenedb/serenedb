@@ -2207,11 +2207,10 @@ doc_id_t DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::seek(
     return doc_value;
   }
 
-  // Check whether it makes sense to use skip-list
-  if (_skip.Reader().UpperBound() < target) {
-    SeekToBlock(target);
+  SeekToBlock(target);
 
-    if (!this->_left) [[unlikely]] {
+  if (this->_begin == std::end(this->_buf.docs)) [[unlikely]] {
+    if (this->_left == 0) [[unlikely]] {
       return doc_value = doc_limits::eof();
     }
 
@@ -2260,25 +2259,28 @@ doc_id_t DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::seek(
 template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
 void DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::SeekToBlock(
   doc_id_t target) {
-  // Ensured by caller
-  SDB_ASSERT(_skip.Reader().UpperBound() < target);
+  if (target <= _skip.Reader().UpperBound()) [[likely]] {
+    return;
+  }
 
   SkipState last;  // Where block starts
   _skip.Reader().Reset(last);
 
   // Init skip writer in lazy fashion
-  if (!_docs_count) [[likely]] {
+  if (_docs_count == 0) [[likely]] {
   seek_after_initialization:
     SDB_ASSERT(_skip.NumLevels());
 
     this->_left = _skip.Seek(target);
-    this->_doc_in->Seek(last.doc_ptr);
     std::get<DocAttr>(_attrs).value = last.doc;
+
+    this->_begin = std::end(this->_buf.docs);
+
+    this->_doc_in->Seek(last.doc_ptr);
     if constexpr (IteratorTraits::Position()) {
       auto& pos = std::get<Position>(_attrs);
       pos.Prepare(last);  // Notify positions
     }
-
     return;
   }
 

@@ -26,6 +26,7 @@
 #include <iresearch/analysis/tokenizers.hpp>
 
 #include "basics/assert.h"
+#include "basics/endian.h"
 #include "basics/fwd.h"
 #include "catalog/mangling.h"
 #include "catalog/table_options.h"
@@ -84,9 +85,7 @@ void SearchSinkWriter::Write(std::span<const rocksdb::Slice> cell_slices,
                              std::string_view full_key) {
   SDB_ASSERT(_current_writer);
   SDB_ASSERT(_document);
-  VELOX_CHECK(_document->template Insert<irs::Action::INDEX>(
-                _current_writer(full_key, cell_slices, _field)),
-              "Failed to insert field into IResearch document");
+  _current_writer(full_key, cell_slices);
   _document->NextDocument();
 }
 
@@ -115,33 +114,63 @@ void SearchSinkWriter::SetupColumnWriter(sdb::catalog::Column::Id column_id,
     SetNameToBuffer(_null_name_buffer, column_id);
     mangling::MangleNull(_null_name_buffer);
     _null_field.name = _null_name_buffer;
-    _null_field.PrepareForNullValue();
+    if (!_null_field.analyzer) {
+      _null_field.PrepareForNullValue();
+    }
   }
 
-  if constexpr (Kind == velox::TypeKind::UNKNOWN) {
-    // Unknown type always means null value no need to check again
-    have_nulls = false;
-    _current_writer = [&](std::string_view full_key,
-                          std::span<const rocksdb::Slice> cell_slices,
-                          Field&) -> Field& {
-      SDB_ASSERT(cell_slices.size() == 1);
-      SDB_ASSERT(cell_slices.front().empty());
-      _null_field.SetNullValue();
-      return _null_field;
+  // Generic wrapper for handling nulls in column.
+  auto make_nullable_writer_func =
+    [&]<typename WriteFunc>(WriteFunc&& write_func) {
+      return
+        [&, write_func = std::forward<WriteFunc>(write_func)](
+          std::string_view full_key,
+          std::span<const rocksdb::Slice> cell_slices, Field& field) -> Field& {
+          if (cell_slices.size() == 1 && cell_slices.front().empty()) {
+            _null_field.SetNullValue();
+            return _null_field;
+          }
+          return write_func(full_key, cell_slices, field);
+        };
     };
+
+  if constexpr (Kind == velox::TypeKind::UNKNOWN) {
+    _current_writer = MakeIndexWriter(
+      [&](std::string_view full_key,
+          std::span<const rocksdb::Slice> cell_slices, Field&) -> Field& {
+        SDB_ASSERT(cell_slices.size() == 1);
+        SDB_ASSERT(cell_slices.front().empty());
+        _null_field.SetNullValue();
+        return _null_field;
+      });
   } else if constexpr (Kind == velox::TypeKind::VARCHAR ||
                        Kind == velox::TypeKind::VARBINARY) {
     mangling::MangleString(_name_buffer);
     _field.PrepareForStringValue();
-    _current_writer = &WriteStringValue;
+    if (have_nulls) {
+      _current_writer =
+        MakeIndexWriter(make_nullable_writer_func(&WriteStringValue));
+    } else {
+      _current_writer = MakeIndexWriter(&WriteStringValue);
+    }
   } else if constexpr (std::is_same_v<T, bool>) {
     mangling::MangleBool(_name_buffer);
     _field.PrepareForBooleanValue();
-    _current_writer = &WriteBooleanValue;
+    if (have_nulls) {
+      _current_writer =
+        MakeIndexWriter(make_nullable_writer_func(&WriteBooleanValue));
+    } else {
+      _current_writer = MakeIndexWriter(&WriteBooleanValue);
+    }
   } else if constexpr (std::is_integral_v<T> || std::is_floating_point_v<T>) {
     mangling::MangleNumeric(_name_buffer);
     _field.PrepareForNumericValue();
-    _current_writer = &WriteNumericValue<T>;
+    if (have_nulls) {
+      _current_writer =
+        MakeIndexWriter(make_nullable_writer_func(&WriteNumericValue<T>));
+    } else {
+      _current_writer = MakeIndexWriter(&WriteNumericValue<T>);
+    }
   } else {
     SDB_THROW(ERROR_NOT_IMPLEMENTED, "TypeKind ",
               velox::TypeKindName::toName(Kind),
@@ -149,23 +178,10 @@ void SearchSinkWriter::SetupColumnWriter(sdb::catalog::Column::Id column_id,
   }
   _field.name = _name_buffer;
 
-  if (have_nulls) {
-    _current_writer = [&, data_writer = std::move(_current_writer)](
-                        std::string_view full_key,
-                        std::span<const rocksdb::Slice> cell_slices,
-                        Field& field) -> Field& {
-      if (cell_slices.size() == 1 && cell_slices.front().empty()) {
-        _null_field.SetNullValue();
-        return _null_field;
-      }
-      return data_writer(full_key, cell_slices, field);
-    };
-  }
   if (_emit_pk) {
     _current_writer = [&, data_writer = std::move(_current_writer)](
                         std::string_view full_key,
-                        std::span<const rocksdb::Slice> cell_slices,
-                        Field& field) -> Field& {
+                        std::span<const rocksdb::Slice> cell_slices) {
       auto row_key = key_utils::ExtractRowKey(full_key);
       _pk_field.value = irs::ViewCast<irs::byte_type>(row_key);
       _pk_field.SetStringValue(row_key);
@@ -174,10 +190,22 @@ void SearchSinkWriter::SetupColumnWriter(sdb::catalog::Column::Id column_id,
         _document->template Insert<irs::Action::INDEX | irs::Action::STORE>(
           _pk_field),
         "Failed to insert PK field into IResearch document");
-      return data_writer(full_key, cell_slices, field);
+      data_writer(full_key, cell_slices);
     };
     _emit_pk = false;
   }
+}
+
+template<typename WriteFunc>
+SearchSinkWriter::Writer SearchSinkWriter::MakeIndexWriter(
+  WriteFunc&& write_func) {
+  return
+    [&, func = std::forward<WriteFunc>(write_func)](
+      std::string_view full_key, std::span<const rocksdb::Slice> cell_slices) {
+      VELOX_CHECK(_document->template Insert<irs::Action::INDEX>(
+                    &func(full_key, cell_slices, _field)),
+                  "Failed to insert field into IResearch document");
+    };
 }
 
 void SearchSinkWriter::Init(size_t batch_size) {
@@ -200,7 +228,7 @@ SearchSinkWriter::Field& SearchSinkWriter::WriteStringValue(
   SearchSinkWriter::Field& field) {
   SDB_ASSERT(!cell_slices.empty());
   // if string is prefixed during Insert - two slices will be present
-  // one if prefix, second is actual string data
+  // one is prefix, second is actual string data
   // But if we are re-indexing from existing data (Update operation) - only one
   // slice will be present
   SDB_ASSERT(cell_slices.size() <= 2);
@@ -226,6 +254,7 @@ SearchSinkWriter::Field& SearchSinkWriter::WriteNumericValue(
   SDB_ASSERT(cell_slices.size() == 1);
   SDB_ASSERT(sizeof(T) == cell_slices[0].size());
   // this is true as long as we match machine ending with storage ending
+  static_assert(basics::IsLittleEndian());
   field.SetNumericValue(*reinterpret_cast<const T*>(cell_slices[0].data()));
   return field;
 }

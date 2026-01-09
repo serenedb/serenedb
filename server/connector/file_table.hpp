@@ -69,16 +69,26 @@ class FileTable : public axiom::connector::Table {
 /// Table wrapper for COPY FROM operations (read from file)
 class ReadFileTable final : public FileTable {
  public:
-  explicit ReadFileTable(velox::RowTypePtr type, std::string_view file_path,
-                         std::shared_ptr<velox::dwio::common::Reader> reader)
-    : FileTable{std::move(type), file_path}, _reader{std::move(reader)} {}
+  explicit ReadFileTable(
+    velox::RowTypePtr type, std::string_view file_path,
+    std::shared_ptr<velox::dwio::common::Reader> reader,
+    std::shared_ptr<velox::dwio::common::RowReaderOptions> row_reader_options)
+    : FileTable{std::move(type), file_path},
+      _reader{std::move(reader)},
+      _row_reader_options{std::move(row_reader_options)} {}
 
   const std::shared_ptr<velox::dwio::common::Reader>& GetReader() const {
     return _reader;
   }
 
+  const std::shared_ptr<velox::dwio::common::RowReaderOptions>&
+  GetRowReaderOptions() const {
+    return _row_reader_options;
+  }
+
  private:
   std::shared_ptr<velox::dwio::common::Reader> _reader;
+  std::shared_ptr<velox::dwio::common::RowReaderOptions> _row_reader_options;
 };
 
 /// Table wrapper for COPY TO operations (write to file)
@@ -98,9 +108,13 @@ class WriteFileTable final : public FileTable {
 
 class FileTableHandle final : public velox::connector::ConnectorTableHandle {
  public:
-  explicit FileTableHandle(std::shared_ptr<velox::dwio::common::Reader> reader)
+  explicit FileTableHandle(
+    std::shared_ptr<velox::dwio::common::Reader> reader,
+    std::shared_ptr<velox::dwio::common::RowReaderOptions> row_reader_options =
+      nullptr)
     : velox::connector::ConnectorTableHandle{"serenedb"},
-      _reader{std::move(reader)} {}
+      _reader{std::move(reader)},
+      _row_reader_options{std::move(row_reader_options)} {}
 
   const std::string& name() const final {
     constexpr static std::string kName = "FileTableHandle";
@@ -112,8 +126,14 @@ class FileTableHandle final : public velox::connector::ConnectorTableHandle {
     return _reader;
   }
 
+  const std::shared_ptr<velox::dwio::common::RowReaderOptions>&
+  GetRowReaderOptions() const {
+    return _row_reader_options;
+  }
+
  private:
   std::shared_ptr<velox::dwio::common::Reader> _reader;
+  std::shared_ptr<velox::dwio::common::RowReaderOptions> _row_reader_options;
 };
 
 class FileInsertTableHandle final
@@ -145,6 +165,8 @@ class FileConnectorWriteHandle final
         velox::ROW("rows", velox::BIGINT())} {}
 };
 
+// TODO: maybe in data source / sink pass just options and create
+// readers/writers inside ?
 class FileDataSink final : public velox::connector::DataSink {
  public:
   explicit FileDataSink(std::shared_ptr<velox::dwio::common::Writer> writer);
@@ -169,7 +191,9 @@ class FileDataSink final : public velox::connector::DataSink {
 
 class FileDataSource final : public velox::connector::DataSource {
  public:
-  explicit FileDataSource(std::shared_ptr<velox::dwio::common::Reader> reader);
+  explicit FileDataSource(std::shared_ptr<velox::dwio::common::Reader> reader,
+                          std::shared_ptr<velox::dwio::common::RowReaderOptions>
+                            row_reader_options = nullptr);
 
   ~FileDataSource() override;
 
@@ -191,7 +215,7 @@ class FileDataSource final : public velox::connector::DataSource {
   std::shared_ptr<velox::dwio::common::Reader> _reader;
   std::unique_ptr<velox::dwio::common::RowReader> _row_reader;
   // We store RowReaderOptions to keep ScanSpec alive
-  velox::dwio::common::RowReaderOptions _row_reader_options;
+  std::shared_ptr<velox::dwio::common::RowReaderOptions> _row_reader_options;
 
   uint64_t _completed_rows = 0;
   uint64_t _completed_bytes = 0;

@@ -30,7 +30,9 @@ namespace sdb::connector {
 
 class FileDataSource final : public velox::connector::DataSource {
  public:
-  explicit FileDataSource(std::shared_ptr<velox::dwio::common::Reader> reader);
+  explicit FileDataSource(
+    std::shared_ptr<velox::dwio::common::Reader> reader,
+    std::shared_ptr<velox::dwio::common::RowReaderOptions> row_reader_options);
 
   ~FileDataSource() override;
 

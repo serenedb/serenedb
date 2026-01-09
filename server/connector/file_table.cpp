@@ -98,16 +98,20 @@ void FileDataSink::abort() {
 // FileDataSource implementation
 
 FileDataSource::FileDataSource(
-  std::shared_ptr<velox::dwio::common::Reader> reader)
-  : _reader(std::move(reader)) {
+  std::shared_ptr<velox::dwio::common::Reader> reader,
+  std::shared_ptr<velox::dwio::common::RowReaderOptions> row_reader_options)
+  : _reader(std::move(reader)),
+    _row_reader_options(std::move(row_reader_options)) {
+  SDB_ASSERT(_row_reader_options);
+
   auto row_type = _reader->rowType();
   auto spec = std::make_shared<velox::common::ScanSpec>("root");
   for (size_t i = 0; i < row_type->size(); ++i) {
     spec->addField(row_type->nameOf(i), i);
   }
+  _row_reader_options->setScanSpec(std::move(spec));
 
-  _row_reader_options.setScanSpec(std::move(spec));
-  _row_reader = _reader->createRowReader(_row_reader_options);
+  _row_reader = _reader->createRowReader(*_row_reader_options);
 }
 
 FileDataSource::~FileDataSource() = default;

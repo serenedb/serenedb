@@ -151,7 +151,8 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
     
     if (const auto* read_file_table =
           dynamic_cast<const ReadFileTable*>(&this->table())) {
-      return std::make_shared<FileTableHandle>(read_file_table->GetReader());
+      return std::make_shared<FileTableHandle>(read_file_table->GetReader(),
+                                               read_file_table->GetRowReaderOptions());
     }
 
     SDB_ASSERT(!table().columnMap().empty(),
@@ -475,7 +476,8 @@ class SereneDBConnector final : public velox::connector::Connector {
     velox::connector::ConnectorQueryCtx* connector_query_ctx) final {
     if (auto* file_handle =
           dynamic_cast<const FileTableHandle*>(table_handle.get())) {
-      return std::make_unique<FileDataSource>(file_handle->GetReader());
+      return std::make_unique<FileDataSource>(file_handle->GetReader(),
+                                              file_handle->GetRowReaderOptions());
     }
 
     const auto& serene_table_handle =

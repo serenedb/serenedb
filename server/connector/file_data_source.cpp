@@ -25,15 +25,19 @@
 namespace sdb::connector {
 
 FileDataSource::FileDataSource(
-  std::shared_ptr<velox::dwio::common::Reader> reader)
+  std::shared_ptr<velox::dwio::common::Reader> reader,
+  std::shared_ptr<velox::dwio::common::RowReaderOptions> row_reader_options)
   : _reader(std::move(reader)) {
-  auto row_type = _reader->rowType();
-  auto spec = std::make_shared<velox::common::ScanSpec>("root");
-  for (size_t i = 0; i < row_type->size(); ++i) {
-    spec->addField(row_type->nameOf(i), i);
+  if (row_reader_options) {
+    _row_reader_options = *row_reader_options;
+  } else {
+    auto row_type = _reader->rowType();
+    auto spec = std::make_shared<velox::common::ScanSpec>("root");
+    for (size_t i = 0; i < row_type->size(); ++i) {
+      spec->addField(row_type->nameOf(i), i);
+    }
+    _row_reader_options.setScanSpec(std::move(spec));
   }
-
-  _row_reader_options.setScanSpec(std::move(spec));
   _row_reader = _reader->createRowReader(_row_reader_options);
 }
 

@@ -85,14 +85,17 @@ void PrepareCollectors(std::span<const ScorerBucket> order, byte_type* stats);
 
 template<ScoreMergeType MergeType, size_t N>
 void Merge(score_t* res, std::span<score_t, N> args) {
-  if constexpr (MergeType == ScoreMergeType::Sum) {
-    *res = absl::c_accumulate(args, 0.f);
-  } else if constexpr (MergeType == ScoreMergeType::Min) {
-    *res = *absl::c_min_element(args);
-  } else if constexpr (MergeType == ScoreMergeType::Max) {
-    *res = *absl::c_max_element(args);
-  } else {
-    static_assert(false);
+  for (size_t i = 0; i < args.size(); ++i) {
+    auto& bucket = res[i];
+    if constexpr (MergeType == ScoreMergeType::Sum) {
+      bucket += args[i];
+    } else if constexpr (MergeType == ScoreMergeType::Min) {
+      bucket = std::min(bucket, args[i]);
+    } else if constexpr (MergeType == ScoreMergeType::Max) {
+      bucket = std::max(bucket, args[i]);
+    } else {
+      static_assert(false);
+    }
   }
 }
 

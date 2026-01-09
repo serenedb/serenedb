@@ -22,10 +22,11 @@
 
 #include "boost_scorer.hpp"
 
-#include <iresearch/search/score.hpp>
-#include <iresearch/search/score_function.hpp>
+#include <absl/container/inlined_vector.h>
 
 #include "iresearch/index/field_meta.hpp"
+#include "iresearch/search/score.hpp"
+#include "iresearch/search/score_function.hpp"
 
 namespace irs {
 namespace {
@@ -34,28 +35,14 @@ Scorer::ptr MakeJson(std::string_view /*args*/) {
   return std::make_unique<BoostScore>();
 }
 
-struct BoostScoreCtx : ScoreCtx {
-  size_t Next() noexcept {
-    SDB_ASSERT(size < kScoreWindow);
-    return size++;
-  }
-
-  size_t Flush() noexcept {
-    SDB_ASSERT(size < kScoreWindow);
-    return std::exchange(size, 0);
-  }
-
-  size_t size = 0;
-};
-
-struct VolatileBoostScoreCtx final : BoostScoreCtx {
+struct VolatileBoostScoreCtx final : ScoreCtx {
   VolatileBoostScoreCtx(const score_t* volatile_boost, score_t boost) noexcept
     : const_boost{boost}, volatile_boost{volatile_boost} {
     SDB_ASSERT(volatile_boost);
   }
 
   score_t const_boost;
-  score_t boost[kScoreWindow];
+  absl::InlinedVector<score_t, kScoreWindow> boost;
   const score_t* volatile_boost;
 };
 
@@ -71,11 +58,12 @@ ScoreFunction BoostScore::PrepareScorer(const ScoreContext& ctx) const {
   return ScoreFunction::Make<VolatileBoostScoreCtx>(
     [](ScoreCtx* ctx, score_t* res) noexcept {
       auto& state = *static_cast<VolatileBoostScoreCtx*>(ctx);
-      std::memcpy(res, state.boost, sizeof(score_t) * state.Flush());
+      std::memcpy(res, state.boost.data(),
+                  sizeof(score_t) * state.boost.size());
     },
     [](ScoreCtx* ctx) noexcept {
       auto& state = *static_cast<VolatileBoostScoreCtx*>(ctx);
-      state.boost[state.Next()] = *state.volatile_boost;
+      state.boost.emplace_back(*state.volatile_boost);
     },
     ScoreFunction::NoopMin, &volatile_boost->value, ctx.boost);
 }

@@ -22,6 +22,7 @@
 
 #include "bm25.hpp"
 
+#include <absl/container/inlined_vector.h>
 #include <vpack/common.h>
 #include <vpack/parser.h>
 #include <vpack/slice.h>
@@ -173,21 +174,13 @@ struct BM1Context : public irs::ScoreCtx {
              const score_t* fb = nullptr) noexcept
     : source_filter_boost{fb}, num{boost * (k + 1) * stats.idf} {}
 
-  size_t Next() noexcept {
-    SDB_ASSERT(size < kScoreWindow);
-    return size++;
-  }
-
-  size_t Flush() noexcept {
-    SDB_ASSERT(size < kScoreWindow);
-    return std::exchange(size, 0);
-  }
+  size_t Size() const noexcept { return filter_boost.size(); }
+  void Clear() noexcept { filter_boost.clear(); }
 
   const score_t* source_filter_boost;
-  size_t size = 0;
 
   float_t num;  // partially precomputed numerator : boost * (k + 1) * idf
-  score_t filter_boost[kScoreWindow];
+  absl::InlinedVector<score_t, kScoreWindow> filter_boost;
 };
 
 struct BM15Context : public BM1Context {
@@ -202,7 +195,7 @@ struct BM15Context : public BM1Context {
   const uint32_t* source_freq;  // document frequency
 
   float_t norm_const;  // 'k' factor
-  uint32_t freq[kScoreWindow];
+  absl::InlinedVector<uint32_t, kScoreWindow> freq;
 };
 
 struct BM25Context : public BM15Context {
@@ -218,7 +211,7 @@ struct BM25Context : public BM15Context {
   const float_t* norm_cache;
 
   float_t norm_length;  // precomputed 'k*b/avg_dl'
-  uint32_t norm[kScoreWindow];
+  absl::InlinedVector<uint32_t, kScoreWindow> norm;
 };
 
 }  // namespace
@@ -234,17 +227,16 @@ struct MakeScoreFunctionImpl<BM1Context> {
         [](irs::ScoreCtx* ctx, irs::score_t* res) noexcept {
           SDB_ASSERT(res);
           SDB_ASSERT(ctx);
-
-          auto& state = *static_cast<Ctx*>(ctx);
-          const size_t size = state.Flush();
+          auto& state = static_cast<Ctx&>(*ctx);
+          const size_t size = state.filter_boost.size();
           for (size_t i = 0; i < size; ++i) {
             res[i] = state.filter_boost[i] * state.num;
           }
+          state.filter_boost.clear();
         },
         [](irs::ScoreCtx* ctx) noexcept {
-          auto& state = *static_cast<Ctx*>(ctx);
-          const auto i = state.Next();
-          state.filter_boost[i] = *state.source_filter_boost;
+          auto& state = static_cast<Ctx&>(*ctx);
+          state.filter_boost.emplace_back(*state.source_filter_boost);
         },
         ScoreFunction::NoopMin, std::forward<Args>(args)...);
     } else {
@@ -267,13 +259,12 @@ struct MakeScoreFunctionImpl<BM15Context> {
 
         auto& state = *static_cast<Ctx*>(ctx);
 
-        const size_t size = state.Flush();
+        const size_t size = state.freq.size();
         for (size_t i = 0; i < size; ++i) {
           const float_t tf = static_cast<float_t>(state.freq[i]);
 
           float_t c0;
           if constexpr (HasFilterBoost) {
-            SDB_ASSERT(state.filter_boost);
             c0 = state.filter_boost[i] * state.num;
           } else {
             c0 = state.num;
@@ -284,14 +275,19 @@ struct MakeScoreFunctionImpl<BM15Context> {
 
           *res = c0 - c0 / (1.f + tf / c1);
         }
+
+        // TODO(gnusi): optimize clear
+        if constexpr (HasFilterBoost) {
+          state.filter_boost.clear();
+        }
+        state.freq.clear();
       },
       [](irs::ScoreCtx* ctx) noexcept {
         auto& state = *static_cast<Ctx*>(ctx);
-        const auto i = state.Next();
         if constexpr (HasFilterBoost) {
-          state.filter_boost[i] = *state.source_filter_boost;
+          state.filter_boost.emplace_back(*state.source_filter_boost);
         }
-        state.freq[i] = *state.source_freq;
+        state.freq.emplace_back(*state.source_freq);
       },
       ScoreFunction::NoopMin, std::forward<Args>(args)...);
   }
@@ -312,14 +308,13 @@ struct MakeScoreFunctionImpl<BM25ContextImpl<NormLength>> {
         SDB_ASSERT(ctx);
 
         auto& state = *static_cast<Ctx*>(ctx);
-        const auto size = state.Flush();
+        const auto size = state.freq.size();
         for (size_t i = 0; i < size; ++i) {
           auto tf = static_cast<float_t>(state.freq[i]);
 
           // FIXME(gnusi): we don't need c0 for WAND evaluation
           float_t c0;
           if constexpr (HasFilterBoost) {
-            SDB_ASSERT(state.filter_boost);
             c0 = state.filter_boost[i] * state.num;
           } else {
             c0 = state.num;
@@ -338,15 +333,21 @@ struct MakeScoreFunctionImpl<BM25ContextImpl<NormLength>> {
             *res = c0 - c0 * c1 / (c1 + tf);
           }
         }
+
+        // TODO(gnusi): optimize clear
+        if constexpr (HasFilterBoost) {
+          state.filter_boost.clear();
+        }
+        state.freq.clear();
+        state.norm.clear();
       },
       [](irs::ScoreCtx* ctx) noexcept {
         auto& state = *static_cast<Ctx*>(ctx);
-        const auto i = state.Next();
         if constexpr (HasFilterBoost) {
-          state.filter_boost[i] = *state.source_filter_boost;
+          state.filter_boost.emplace_back(*state.source_filter_boost);
         }
-        state.freq[i] = *state.source_freq;
-        state.norm[i] = *state.source_norm;
+        state.freq.emplace_back(*state.source_freq);
+        state.norm.emplace_back(*state.source_norm);
       },
       ScoreFunction::NoopMin, std::forward<Args>(args)...);
   }

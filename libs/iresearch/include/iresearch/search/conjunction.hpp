@@ -22,6 +22,8 @@
 
 #pragma once
 
+#include <absl/container/inlined_vector.h>
+
 #include "basics/empty.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/index_reader_options.hpp"
@@ -83,7 +85,7 @@ struct SubScores {
 };
 
 struct ConjunctionScoreContext {
-  void Reset(auto& iterators) {
+  ScoreFunction Reset(auto& iterators) {
     scorers.reserve(iterators.size());
     for (auto* scorer : scorers) {
       if (!scorer || scorer->IsDefault()) {
@@ -91,13 +93,34 @@ struct ConjunctionScoreContext {
       }
       scorers.emplace_back(scorer);
     }
-    args.resize(scorers.size());
   }
 
-  bool Empty() const noexcept { return args.empty(); }
+  bool Empty() const noexcept { return scorers.empty(); }
+
+  template<ScoreMergeType MergeType>
+  void Score(score_t* res) noexcept {
+    SDB_ASSERT(!scorers.empty());
+    scores.resize(size);
+
+    scorers[0]->Score(res);
+    for (size_t i = 1; i < size; ++i) {
+      scorers[i]->Score(scores.data());
+      Merge<MergeType>(res, std::span{scores});
+    }
+
+    size = 0;
+  }
+
+  void Collect() {
+    for (auto* scorer : scorers) {
+      scorer->Collect();
+    }
+    ++size;
+  }
 
   std::vector<ScoreFunction*> scorers;
-  std::vector<score_t> args;
+  absl::InlinedVector<score_t, kScoreWindow> scores;
+  uint32_t size = 0;
 };
 
 // Conjunction of N iterators
@@ -129,23 +152,21 @@ struct ConjunctionBase : public DocIterator, public ScoreCtx {
 
   void PrepareScore(irs::ScoreAttr& score, auto min) {
     if constexpr (kHasScore) {
+      _scores.Reset(_itrs);
+
+      if (_scores.Empty()) {
+        score = ScoreFunction::Default();
+        return;
+      }
+
       score = {*this,
                [](ScoreCtx* ctx, score_t* res) noexcept {
                  auto& self = *static_cast<ConjunctionBase*>(ctx);
-                 auto& [scorers, args] = self._scores;
-
-                 size_t size = scorers.size();
-                 for (size_t i = 0; i < size; ++i) {
-                   scorers[i]->Score(&args[i]);
-                 }
-
-                 Merge<MergeType>(res, std::span{args.data(), size});
+                 self._scores.template Score<MergeType>(res);
                },
                [](ScoreCtx* ctx) noexcept {
                  auto& self = *static_cast<ConjunctionBase*>(ctx);
-                 for (auto* scorer : self._scores.scorers) {
-                   scorer->Collect();
-                 }
+                 self._scores.Collect();
                },
                min};
     }

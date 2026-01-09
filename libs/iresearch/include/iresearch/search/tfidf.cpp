@@ -22,6 +22,7 @@
 
 #include "tfidf.hpp"
 
+#include <absl/container/inlined_vector.h>
 #include <vpack/common.h>
 #include <vpack/parser.h>
 #include <vpack/slice.h>
@@ -191,24 +192,13 @@ struct TFIDFContext : public ScoreCtx {
     SDB_ASSERT(freq);
   }
 
-  size_t Next() noexcept {
-    SDB_ASSERT(size < kScoreWindow);
-    return size++;
-  }
-
-  size_t Flush() noexcept {
-    SDB_ASSERT(size < kScoreWindow);
-    return std::exchange(size, 0);
-  }
-
   const uint32_t* source_freq;
   const score_t* source_filter_boost;
   const Norm* source_norm;
 
-  size_t size = 0;
-  uint32_t freq[kScoreWindow];
-  score_t filter_boost[kScoreWindow];
-  uint32_t norm[kScoreWindow];
+  absl::InlinedVector<uint32_t, kScoreWindow> freq;
+  absl::InlinedVector<score_t, kScoreWindow> filter_boost;
+  absl::InlinedVector<uint32_t, kScoreWindow> norm;
   float_t idf;  // precomputed : boost * idf
 };
 
@@ -230,7 +220,7 @@ struct MakeScoreFunctionImpl<TFIDFContextImpl<NormLength>> {
 
         auto& state = *static_cast<Ctx*>(ctx);
 
-        const auto size = state.Flush();
+        const auto size = state.freq.size();
         for (size_t i = 0; i < size; ++i) {
           float_t idf;
           if constexpr (HasFilterBoost) {
@@ -245,18 +235,26 @@ struct MakeScoreFunctionImpl<TFIDFContextImpl<NormLength>> {
             *res = Tfidf(state.freq[i], idf);
           }
         }
+
+        // TODO(gnusi): optimize clear
+        if constexpr (HasFilterBoost) {
+          state.filter_boost.clear();
+        }
+        if constexpr (NormLength != 0) {
+          state.norm.clear();
+        }
+        state.freq.clear();
       },
       [](ScoreCtx* ctx) noexcept {
         auto& state = *static_cast<Ctx*>(ctx);
-        const auto i = state.Next();
-        state.freq[i] = *state.source_freq;
+        state.freq.emplace_back(*state.source_freq);
         if constexpr (HasFilterBoost) {
           SDB_ASSERT(state.source_filter_boost);
-          state.filter_boost[i] = *state.source_filter_boost;
+          state.filter_boost.emplace_back(*state.source_filter_boost);
         }
         if constexpr (NormLength != 0) {
           SDB_ASSERT(state.source_norm);
-          state.norm[i] = state.source_norm->value;
+          state.norm.emplace_back(state.source_norm->value);
         }
       },
       ScoreFunction::NoopMin, std::forward<Args>(args)...);

@@ -1622,7 +1622,7 @@ class DocIteratorBase : public DocIterator {
 
  protected:
   // returns current position in the document block 'docs_'
-  doc_id_t RelativePos() noexcept {
+  IRS_FORCE_INLINE doc_id_t RelativePos() noexcept {
     SDB_ASSERT(_begin >= _buf.docs);
     return static_cast<doc_id_t>(_begin - _buf.docs);
   }
@@ -1697,7 +1697,7 @@ void DocIteratorBase<IteratorTraits, FieldTraits>::ReadTailBlock(
 }
 
 template<typename IteratorTraits, typename FieldTraits>
-using AttributesT = std::conditional_t<
+using AttributesImpl = std::conditional_t<
   IteratorTraits::Position(),
   std::tuple<DocAttr, FreqAttr, ScoreAttr, CostAttr,
              PositionImpl<IteratorTraits, FieldTraits>>,
@@ -1713,7 +1713,7 @@ class SingleDocIterator
   static_assert((IteratorTraits::Features() & FieldTraits::Features()) ==
                 IteratorTraits::Features());
 
-  using Attributes = AttributesT<IteratorTraits, FieldTraits>;
+  using Attributes = AttributesImpl<IteratorTraits, FieldTraits>;
   using Position = PositionImpl<IteratorTraits, FieldTraits>;
 
  public:
@@ -1929,7 +1929,7 @@ void CommonReadWandData(WandExtent wextent, uint8_t index,
 // FieldTraits defines requested features.
 template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
 class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
-  using Attributes = AttributesT<IteratorTraits, FieldTraits>;
+  using Attributes = AttributesImpl<IteratorTraits, FieldTraits>;
   using Position = PositionImpl<IteratorTraits, FieldTraits>;
 
  public:
@@ -1986,8 +1986,8 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
   doc_id_t advance() final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
 
-    if (this->_begin == std::end(this->_buf.docs)) {
-      if (!this->_left) [[unlikely]] {
+    if (this->_begin == std::end(this->_buf.docs)) [[unlikely]] {
+      if (this->_left == 0) [[unlikely]] {
         return doc_value = doc_limits::eof();
       }
 
@@ -2160,10 +2160,11 @@ void DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
   std::get<CostAttr>(_attrs).reset(term_state.docs_count);  // Estimate iterator
 
   SDB_ASSERT(!IteratorTraits::Frequency() || meta.freq);
-  if constexpr (IteratorTraits::Frequency() && IteratorTraits::Position()) {
+  if constexpr (IteratorTraits::Position()) {
+    static_assert(IteratorTraits::Frequency());
     const auto term_freq = meta.freq;
 
-    auto get_tail_start = [&]() noexcept {
+    const auto tail_start = [&] noexcept {
       if (term_freq < IteratorTraits::kBlockSize) {
         return term_state.pos_start;
       } else if (term_freq == IteratorTraits::kBlockSize) {
@@ -2171,15 +2172,17 @@ void DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
       } else {
         return term_state.pos_start + term_state.pos_end;
       }
-    };
+    }();
 
-    const DocState state{.pos_in = pos_in,
-                         .pay_in = pay_in,
-                         .term_state = &term_state,
-                         .freq = &std::get<FreqAttr>(_attrs).value,
-                         .enc_buf = this->_enc_buf,
-                         .tail_start = get_tail_start(),
-                         .tail_length = term_freq % IteratorTraits::kBlockSize};
+    const DocState state{
+      .pos_in = pos_in,
+      .pay_in = pay_in,
+      .term_state = &term_state,
+      .freq = &std::get<FreqAttr>(_attrs).value,
+      .enc_buf = this->_enc_buf,
+      .tail_start = tail_start,
+      .tail_length = term_freq % IteratorTraits::kBlockSize,
+    };
 
     std::get<Position>(_attrs).Prepare(state);
   }
@@ -2319,7 +2322,7 @@ class Wanderator : public DocIteratorBase<IteratorTraits, FieldTraits>,
                    private ScoreCtx {
   static_assert(IteratorTraits::Frequency());
 
-  using Attributes = AttributesT<IteratorTraits, FieldTraits>;
+  using Attributes = AttributesImpl<IteratorTraits, FieldTraits>;
   using Position = PositionImpl<IteratorTraits, FieldTraits>;
 
   static void MinStrict(ScoreCtx* ctx, score_t arg) noexcept {
@@ -2450,21 +2453,21 @@ class Wanderator : public DocIteratorBase<IteratorTraits, FieldTraits>,
 
   void SeekToBlock(doc_id_t target) {
     _skip.Reader().EnsureSorted();
-
-    // Check whether we have to use skip-list
-    if (_skip.Reader().IsLessThanUpperBound(target)) {
-      // Ensured by Prepare(...)
-      SDB_ASSERT(_skip.NumLevels());
-      // We could decide to make new skip before actual read block
-      // SDB_ASSERT(0 == skip_.Reader().State().doc_ptr);
-
-      this->_left = _skip.Seek(target);
-      auto& doc_value = std::get<DocAttr>(_attrs).value;
-      doc_value = _skip.Reader().State().doc;
-      std::get<ScoreAttr>(_attrs).max.leaf = _skip.Reader().skip_scores.back();
-      // Will trigger Refill in "next"
-      this->_begin = std::end(this->_buf.docs);
+    if (!_skip.Reader().IsLessThanUpperBound(target)) [[likely]] {
+      return;
     }
+
+    // Ensured by WandPrepare(...)
+    SDB_ASSERT(_skip.NumLevels());
+
+    this->_left = _skip.Seek(target);
+    std::get<DocAttr>(_attrs).value = _skip.Reader().State().doc;
+    std::get<ScoreAttr>(_attrs).max.leaf = _skip.Reader().skip_scores.back();
+
+    this->_begin = std::end(this->_buf.docs);
+
+    // We could decide to make new skip before actual read block
+    // SDB_ASSERT(0 == skip_.Reader().State().doc_ptr);
   }
 
   SkipReader<ReadSkip> _skip;
@@ -2580,10 +2583,11 @@ void Wanderator<IteratorTraits, FieldTraits, WandExtent, Root>::WandPrepare(
 
   SDB_ASSERT(!IteratorTraits::Frequency() || meta.freq);
 
-  if constexpr (IteratorTraits::Frequency() && IteratorTraits::Position()) {
+  if constexpr (IteratorTraits::Position()) {
+    static_assert(IteratorTraits::Frequency());
     const auto term_freq = meta.freq;
 
-    auto get_tail_start = [&]() noexcept {
+    const auto tail_start = [&] noexcept {
       if (term_freq < IteratorTraits::kBlockSize) {
         return term_state.pos_start;
       } else if (term_freq == IteratorTraits::kBlockSize) {
@@ -2591,15 +2595,17 @@ void Wanderator<IteratorTraits, FieldTraits, WandExtent, Root>::WandPrepare(
       } else {
         return term_state.pos_start + term_state.pos_end;
       }
-    };
+    }();
 
-    const DocState state{.pos_in = pos_in,
-                         .pay_in = pay_in,
-                         .term_state = &term_state,
-                         .freq = &std::get<FreqAttr>(_attrs).value,
-                         .enc_buf = this->_enc_buf,
-                         .tail_start = get_tail_start(),
-                         .tail_length = term_freq % IteratorTraits::kBlockSize};
+    const DocState state{
+      .pos_in = pos_in,
+      .pay_in = pay_in,
+      .term_state = &term_state,
+      .freq = &std::get<FreqAttr>(_attrs).value,
+      .enc_buf = this->_enc_buf,
+      .tail_start = tail_start,
+      .tail_length = term_freq % IteratorTraits::kBlockSize,
+    };
 
     std::get<Position>(_attrs).Prepare(state);
   }

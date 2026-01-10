@@ -55,8 +55,6 @@ FileTable::FileTable(velox::RowTypePtr type, std::string_view file_path)
   _layout_handles.emplace_back(std::move(layout));
 }
 
-// FileDataSink implementation
-
 FileDataSink::FileDataSink(std::shared_ptr<velox::dwio::common::Writer> writer)
   : _writer(std::move(writer)) {}
 
@@ -95,8 +93,6 @@ void FileDataSink::abort() {
   _closed = true;
 }
 
-// FileDataSource implementation
-
 FileDataSource::FileDataSource(
   std::shared_ptr<velox::dwio::common::Reader> reader,
   std::shared_ptr<velox::dwio::common::RowReaderOptions> row_reader_options)
@@ -106,9 +102,7 @@ FileDataSource::FileDataSource(
 
   auto row_type = _reader->rowType();
   auto spec = std::make_shared<velox::common::ScanSpec>("root");
-  for (size_t i = 0; i < row_type->size(); ++i) {
-    spec->addField(row_type->nameOf(i), i);
-  }
+  spec->addAllChildFields(*row_type);
   _row_reader_options->setScanSpec(std::move(spec));
 
   _row_reader = _reader->createRowReader(*_row_reader_options);

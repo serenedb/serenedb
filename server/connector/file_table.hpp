@@ -32,15 +32,12 @@
 
 namespace sdb::connector {
 
-/// Base class for file-based table operations (COPY TO/FROM)
-/// Delegates table interface to source RocksDB table
 class FileTable : public axiom::connector::Table {
  public:
   explicit FileTable(velox::RowTypePtr type, std::string_view file_path);
 
   virtual ~FileTable() = default;
 
-  // Delegate to source table
   const folly::F14FastMap<std::string, const axiom::connector::Column*>&
   columnMap() const final {
     return _columns_map;
@@ -66,7 +63,6 @@ class FileTable : public axiom::connector::Table {
   std::vector<std::unique_ptr<axiom::connector::TableLayout>> _layout_handles;
 };
 
-/// Table wrapper for COPY FROM operations (read from file)
 class ReadFileTable final : public FileTable {
  public:
   explicit ReadFileTable(
@@ -91,7 +87,6 @@ class ReadFileTable final : public FileTable {
   std::shared_ptr<velox::dwio::common::RowReaderOptions> _row_reader_options;
 };
 
-/// Table wrapper for COPY TO operations (write to file)
 class WriteFileTable final : public FileTable {
  public:
   explicit WriteFileTable(velox::RowTypePtr type, std::string_view file_path,

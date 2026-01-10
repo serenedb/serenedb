@@ -163,7 +163,7 @@ ColumnIterator::ptr ColumnIterator::empty() {
 
 uint32_t DocIterator::collect(std::span<doc_id_t> docs) {
   const auto* score = irs::get<ScoreAttr>(*this);
-  if (score->IsDefault()) {
+  if (score && score->IsDefault()) {
     score = nullptr;
   }
   return Collect(*this, docs, [&] {

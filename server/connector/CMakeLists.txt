@@ -6,6 +6,7 @@ add_library(
     data_source.cpp
     serenedb_connector.cpp
     key_utils.cpp
+    file_table.cpp
 )
 
 target_link_libraries(

@@ -94,6 +94,9 @@ set(SKIP_INSTALL_ALL ON CACHE BOOL "" FORCE)
 sdb_update_module(${GIT_EXECUTABLE} "zlib-ng" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 add_subdirectory(zlib-ng)
 
+# Create ZLIB::ZLIB alias for velox compatibility
+add_library(ZLIB::ZLIB ALIAS zlib)
+
 ################################################################################
 ## MINIZIP-NG
 ################################################################################
@@ -633,6 +636,24 @@ target_include_directories(folly PUBLIC ${OPENSSL_INCLUDE_DIR})
 target_link_libraries(folly PUBLIC ${OPENSSL_LIBRARIES})
 
 ################################################################################
+## protobuf
+################################################################################
+
+sdb_update_module(${GIT_EXECUTABLE} "protobuf" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+set(protobuf_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(protobuf_BUILD_CONFORMANCE OFF CACHE BOOL "" FORCE)
+set(protobuf_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(protobuf_BUILD_PROTOBUF_BINARIES ON CACHE BOOL "" FORCE)
+set(protobuf_BUILD_PROTOC_BINARIES ON CACHE BOOL "" FORCE)
+set(protobuf_BUILD_LIBPROTOC ON CACHE BOOL "" FORCE)
+set(protobuf_ABSL_PROVIDER "package" CACHE STRING "" FORCE)
+set(protobuf_INSTALL OFF CACHE BOOL "" FORCE)
+add_subdirectory(protobuf)
+set(Protobuf_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/protobuf/src)
+set(Protobuf_INCLUDE_DIRS ${Protobuf_INCLUDE_DIRS} PARENT_SCOPE)
+include_directories(${Protobuf_INCLUDE_DIRS})
+
+################################################################################
 ## velox
 ################################################################################
 if(SDB_GTEST)
@@ -652,7 +673,7 @@ set(VELOX_DEPENDENCY_SOURCE "BUNDLED" CACHE STRING "" FORCE)
 
 set(VELOX_ENABLE_EXEC ON CACHE BOOL "" FORCE)
 set(VELOX_ENABLE_AGGREGATES ON CACHE BOOL "" FORCE)
-set(VELOX_ENABLE_HIVE_CONNECTOR OFF CACHE BOOL "" FORCE)
+set(VELOX_ENABLE_HIVE_CONNECTOR on CACHE BOOL "" FORCE)
 set(VELOX_ENABLE_TPCH_CONNECTOR OFF CACHE BOOL "" FORCE)
 set(VELOX_ENABLE_TPCDS_CONNECTOR OFF CACHE BOOL "" FORCE)
 set(VELOX_ENABLE_PRESTO_FUNCTIONS ON CACHE BOOL "" FORCE)

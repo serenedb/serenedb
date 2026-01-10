@@ -26,6 +26,7 @@
 #include <velox/core/PlanNode.h>
 #include <velox/core/QueryCtx.h>
 
+#include "pg/pg_protocol_context.h"
 #include "pg/sql_utils.h"
 #include "query/query.h"
 #include "query/utils.h"
@@ -49,6 +50,14 @@ class UniqueIdGenerator {
     return absl::StrCat(alias, query::kColumnSeparator, NextColumnId());
   }
 
+  std::vector<std::string> NextColumnNames(
+    const std::vector<std::string>& aliases) {
+    return aliases | std::views::transform([&](const std::string& name) {
+             return NextColumnName(name);
+           }) |
+           std::ranges::to<std::vector>();
+  }
+
  private:
   uint64_t _next_plan_id = 1;
   uint64_t _next_column_id = 1;
@@ -69,7 +78,8 @@ class Objects;
 
 VeloxQuery AnalyzeVelox(const RawStmt& node, const QueryString& query_string,
                         const Objects& objects, UniqueIdGenerator& id_generator,
-                        query::QueryContext& query_ctx, pg::Params& params);
+                        query::QueryContext& query_ctx, pg::Params& params,
+                        PgProtocolContext& pg_protocol_ctx);
 
 velox::TypePtr NameToType(const TypeName& type_name);
 

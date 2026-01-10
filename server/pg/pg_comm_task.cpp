@@ -149,11 +149,6 @@ constexpr std::array<char, 47> kTimeoutTermination{PQ_MSG_ERROR_RESPONSE,
 
 // clang-format on
 
-template<size_t N>
-BufferView ToBuffer(const std::array<char, N>& data) {
-  return BufferView{data.data(), data.size()};
-}
-
 }  // namespace
 
 PgSQLCommTaskBase::PgSQLCommTaskBase(rest::GeneralServer& server,
@@ -281,7 +276,10 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
     }
 
     _connection_ctx = std::make_shared<ConnectionContext>(
-      UserName(), DatabaseName(), database->GetId());
+      UserName(), DatabaseName(), database->GetId(),
+      PgProtocolContext{
+        &_send,
+      });
 
     const auto& ci = GetConnectionInfo();
     [[maybe_unused]] hba::Client client{

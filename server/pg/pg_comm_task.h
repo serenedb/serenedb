@@ -64,7 +64,16 @@ inline constexpr std::string_view kZero{"", 1};
 
 inline constexpr std::string_view kAnonymObject{""};
 
+constexpr std::array<char, 5> kCopyDone{
+  'c', 0x00, 0x00, 0x00, 0x04,
+};
+
 using BufferView = std::string_view;
+
+template<size_t N>
+BufferView ToBuffer(const std::array<char, N>& data) {
+  return BufferView{data.data(), data.size()};
+}
 
 class PgSQLCommTaskBase : public rest::CommTask {
  public:

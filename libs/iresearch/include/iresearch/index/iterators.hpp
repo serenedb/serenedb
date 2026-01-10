@@ -50,7 +50,7 @@ struct DocIterator : AttributeProvider {
 
   [[nodiscard]] static DocIterator::ptr empty();
 
-  virtual doc_id_t value() const;
+  virtual doc_id_t value() const = 0;
 
   virtual doc_id_t advance() = 0;
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cmath>
+#include <cstddef>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/column_collector.hpp>
@@ -15,10 +16,10 @@
 namespace irs {
 
 template<size_t K = std::dynamic_extent>
-size_t ExecuteTopKWithCountBlock(const DirectoryReader& reader,
-                                 const Filter& filter, const Scorers& scorers,
-                                 size_t k, std::span<score_t, K> scores,
-                                 std::span<doc_id_t, K> docs) {
+size_t ExecuteTopKWithCount(const DirectoryReader& reader, const Filter& filter,
+                            const Scorers& scorers, size_t k,
+                            std::span<score_t, K> scores,
+                            std::span<doc_id_t, K> docs) {
   SDB_ASSERT(k * 2 <= docs.size());
 
   auto prepared = filter.prepare({
@@ -28,9 +29,10 @@ size_t ExecuteTopKWithCountBlock(const DirectoryReader& reader,
 
   // TODO(gnusi): we can evaluate count based on blocks count
   size_t count = 0;
+  size_t offset = 0;
+  const size_t size = docs.size();
   auto hits = std::views::zip(docs, scores);
-  auto begin = hits.begin();
-  auto pivot = begin + k;
+  auto pivot = hits.begin() + k;
   auto end = hits.end();
   auto score = scores.data();
 
@@ -53,39 +55,39 @@ size_t ExecuteTopKWithCountBlock(const DirectoryReader& reader,
     const auto* scorer = irs::get<ScoreAttr>(*it);
 
     while (true) {
-      const uint32_t block_size = it->collect(docs);
-      begin += block_size;
+      const uint32_t block_size =
+        it->collect(std::span{docs.begin() + offset, docs.end()});
+      if (block_size == 0) {
+        break;
+      }
+      scorer->Score(score + offset);
       count += block_size;
+      offset += block_size;
 
-      if (begin == end) {
-        scorer->Score(score);
+      if (offset == size) {
+        offset = 0;
         repivot();
-        begin = pivot;
-        score = scores.data();
+      } else {
+        offset = block_size;
       }
     }
-
-    if (begin != hits.begin()) {
-      scorer->Score(score);
-      score += (begin - hits.begin());
-    }
   }
 
-  if (begin > pivot) {
+  if (offset > k) {
     repivot();
-    begin = pivot;
+    offset = k;
   }
 
-  std::sort(hits.begin(), begin, cmp);
+  std::sort(hits.begin(), hits.begin() + offset, cmp);
 
   return count;
 }
 
 template<size_t K = std::dynamic_extent>
-size_t ExecuteTopKWithCount(const DirectoryReader& reader, const Filter& filter,
-                            const Scorers& scorers, size_t k,
-                            std::span<score_t, K> scores,
-                            std::span<doc_id_t, K> docs) {
+size_t ExecuteTopKWithCount1(const DirectoryReader& reader,
+                             const Filter& filter, const Scorers& scorers,
+                             size_t k, std::span<score_t, K> scores,
+                             std::span<doc_id_t, K> docs) {
   SDB_ASSERT(k * 2 <= docs.size());
 
   auto prepared = filter.prepare({

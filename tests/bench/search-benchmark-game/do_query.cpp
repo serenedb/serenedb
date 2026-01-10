@@ -115,9 +115,9 @@ class Executor {
     }
 
     auto execute = [&]<size_t K> {
-      return irs::ExecuteCountTopK(_reader, *filter, _scorers, k,
-                                   std::span<irs::score_t, K>{_scores},
-                                   std::span<irs::doc_id_t, K>{_hits});
+      return irs::ExecuteTopKWithCount(_reader, *filter, _scorers, k,
+                                       std::span<irs::score_t, K>{_scores},
+                                       std::span<irs::doc_id_t, K>{_hits});
     };
 
     _hits.resize(k * 2);

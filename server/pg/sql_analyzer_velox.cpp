@@ -1764,11 +1764,11 @@ class CopyOptionsParser {
   CopyOptionsParser(velox::RowTypePtr row_type, bool is_writer,
                     const char* query_string, std::string_view file_path,
                     const List* options, velox::memory::MemoryPool& memory_pool)
-    : _row_type(std::move(row_type)),
+    : _row_type{std::move(row_type)},
       _is_writer{is_writer},
       _query_string{query_string},
-      _file_path(file_path),
-      _memory_pool(memory_pool) {
+      _file_path{file_path},
+      _memory_pool{memory_pool} {
     _options.reserve(list_length(options));
     VisitNodes(options, [&](const DefElem& option) {
       auto [_, emplaced] = _options.try_emplace(option.defname, &option);
@@ -1861,7 +1861,13 @@ class CopyOptionsParser {
 
     std::string_view null = "\\N";
     if (const auto* option = EraseOption("null")) {
-      null = strVal(option->arg);  // TODO: make sure it's valid
+      auto maybe_null = TryGet<std::string_view>(option->arg);
+      if (!maybe_null) {
+        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
+                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        ERR_MSG("COPY null must be a string"));
+      }
+      null = *maybe_null;
     }
 
     uint8_t header = 0;

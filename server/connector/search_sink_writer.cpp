@@ -60,14 +60,15 @@ void SetNameToBuffer(std::string& name_buffer, Column::Id column_id) {
 
 namespace sdb::connector::search {
 
-SearchSinkInsertWriter::SearchSinkInsertWriter(irs::IndexWriter::Transaction& trx)
+SearchSinkInsertWriter::SearchSinkInsertWriter(
+  irs::IndexWriter::Transaction& trx)
   : _trx(trx) {
   _pk_field.PrepareForStringValue();
   _pk_field.name = kPkFieldName;
 }
 
 void SearchSinkInsertWriter::SwitchColumn(velox::TypeKind kind, bool have_nulls,
-                                    sdb::catalog::Column::Id column_id) {
+                                          sdb::catalog::Column::Id column_id) {
   if (kind == facebook::velox::TypeKind::UNKNOWN) {
     // for UNKNOWN type we always have nulls so no need of separate nulls
     // handling
@@ -81,20 +82,18 @@ void SearchSinkInsertWriter::SwitchColumn(velox::TypeKind kind, bool have_nulls,
 }
 
 void SearchSinkInsertWriter::Write(std::span<const rocksdb::Slice> cell_slices,
-                             std::string_view full_key) {
+                                   std::string_view full_key) {
   SDB_ASSERT(_current_writer);
   SDB_ASSERT(_document);
   _current_writer(full_key, cell_slices);
   _document->NextDocument();
 }
 
-void SearchSinkInsertWriter::Finish() {
-  _document.reset();
-}
+void SearchSinkInsertWriter::Finish() { _document.reset(); }
 
 template<velox::TypeKind Kind>
-void SearchSinkInsertWriter::SetupColumnWriter(sdb::catalog::Column::Id column_id,
-                                         bool have_nulls) {
+void SearchSinkInsertWriter::SetupColumnWriter(
+  sdb::catalog::Column::Id column_id, bool have_nulls) {
   basics::StrResize(_name_buffer, sizeof(column_id));
   SetNameToBuffer(_name_buffer, column_id);
   using T = typename velox::TypeTraits<Kind>::NativeType;
@@ -306,8 +305,8 @@ void SearchSinkInsertWriter::Field::SetNullValue() {
   nstream.reset();
 }
 
-SearchSinkDeleteWriter::SearchSinkDeleteWriter(irs::IndexWriter::Transaction& trx,
-                                   velox::memory::MemoryPool* removes_pool)
+SearchSinkDeleteWriter::SearchSinkDeleteWriter(
+  irs::IndexWriter::Transaction& trx, velox::memory::MemoryPool* removes_pool)
   : _trx(trx), _removes_pool(removes_pool) {}
 
 void SearchSinkDeleteWriter::DeleteRow(std::string_view row_key) {

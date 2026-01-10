@@ -56,7 +56,8 @@ class RocksDBSinkWriter : public RocksDBSinkWriterBase {
 };
 
 // This could be final subclass of SinkDeleteWriter but currently only used
-// directly inside DeleteDataSink so no need for virtual calls/default base members
+// directly inside DeleteDataSink so no need for virtual calls/default base
+// members
 class RocksDBDeleteSinkWriter : public RocksDBSinkWriterBase {
  public:
   RocksDBDeleteSinkWriter(rocksdb::Transaction& transaction,

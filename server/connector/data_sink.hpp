@@ -55,12 +55,13 @@ class RocksDBDataSink : public velox::connector::DataSink {
   // NextColumn. NextDocument is implicit after write. RocksDB is final. Stores
   // RocksDB stuff Composite is final. IResearch is final. Stores IResearch
   // stuff
-  RocksDBDataSink(rocksdb::Transaction& transaction,
-                  rocksdb::ColumnFamilyHandle& cf,
-                  velox::memory::MemoryPool& memory_pool, ObjectId object_key,
-                  std::span<const velox::column_index_t> key_childs,
-                  std::vector<catalog::Column::Id> column_ids,
-                  bool skip_primary_key_columns = false);
+  RocksDBDataSink(
+    rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
+    velox::memory::MemoryPool& memory_pool, ObjectId object_key,
+    std::span<const velox::column_index_t> key_childs,
+    std::vector<catalog::Column::Id> column_ids,
+    std::vector<std::unique_ptr<SinkInsertWriter>>&& index_writers,
+    bool skip_primary_key_columns = false);
 
   void appendData(velox::RowVectorPtr input) final;
   bool finish() final;
@@ -207,10 +208,11 @@ class RocksDBDataSink : public velox::connector::DataSink {
 
 class RocksDBDeleteDataSink : public velox::connector::DataSink {
  public:
-  RocksDBDeleteDataSink(rocksdb::Transaction& transaction,
-                        rocksdb::ColumnFamilyHandle& cf,
-                        velox::RowTypePtr row_type, ObjectId object_key,
-                        std::vector<catalog::Column::Id> column_ids);
+  RocksDBDeleteDataSink(
+    rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
+    velox::RowTypePtr row_type, ObjectId object_key,
+    std::vector<catalog::Column::Id> column_ids,
+    std::vector<std::unique_ptr<SinkDeleteWriter>>&& index_writers);
 
   void appendData(velox::RowVectorPtr input) final;
   bool finish() final;

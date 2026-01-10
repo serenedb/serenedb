@@ -39,7 +39,8 @@ class SinkInsertWriter {
   virtual void Write(std::span<const rocksdb::Slice> cell_slices,
                      std::string_view full_key) = 0;
 
-  virtual void Finish() {};
+  virtual void Finish() = 0;
+  virtual void Abort() = 0;
 };
 
 class SinkDeleteWriter {
@@ -51,8 +52,8 @@ class SinkDeleteWriter {
 
   virtual void DeleteRow(std::string_view row_key) = 0;
 
-  virtual void Finish() {};
+  virtual void Finish() = 0;
+  virtual void Abort() = 0;
 };
-
 
 }  // namespace sdb::connector

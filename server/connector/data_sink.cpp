@@ -56,8 +56,11 @@ RocksDBDataSink::RocksDBDataSink(
   rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
   std::span<const velox::column_index_t> key_childs,
-  std::vector<catalog::Column::Id> column_oids, bool skip_primary_key_columns)
+  std::vector<catalog::Column::Id> column_oids,
+  std::vector<std::unique_ptr<SinkInsertWriter>>&& index_writers,
+  bool skip_primary_key_columns)
   : _data_writer{transaction, cf},
+    _index_writers{std::move(index_writers)},
     _object_key{object_key},
     _column_ids{std::move(column_oids)},
     _memory_pool{memory_pool},
@@ -106,6 +109,10 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
       key_buffer);
   }
 
+  for (const auto& writer : _index_writers) {
+    writer->Init(num_rows);
+  }
+
   velox::IndexRange all_rows(0, num_rows);
   const auto num_columns = input->childrenSize();
   [[maybe_unused]] const auto& input_type = input->type()->asRow();
@@ -115,6 +122,10 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
     }
     _column_id = _column_ids[i];
     if (_column_id != catalog::Column::kGeneratedPKId) {
+      for (const auto& writer : _index_writers) {
+        writer->SwitchColumn(input_type.childAt(i)->kind(),
+                             input->childAt(i)->mayHaveNulls(), _column_id);
+      }
       WriteColumn(input->childAt(i), folly::Range{&all_rows, 1}, {});
     }
   }
@@ -1747,6 +1758,9 @@ void RocksDBDataSink::WriteArrayValue(const velox::BaseVector& input,
 
 void RocksDBDataSink::WriteRowSlices(std::string_view key) {
   _data_writer.Write(_row_slices, key);
+  for (const auto& writer : _index_writers) {
+    writer->Write(_row_slices, key);
+  }
 }
 
 void RocksDBDataSink::WriteNull(std::string_view key) {
@@ -1754,6 +1768,9 @@ void RocksDBDataSink::WriteNull(std::string_view key) {
   static rocksdb::Slice gNullSlice;
   static constexpr std::span<const rocksdb::Slice> kSlices{&gNullSlice, 1};
   _data_writer.Write(kSlices, key);
+  for (const auto& writer : _index_writers) {
+    writer->Write(kSlices, key);
+  }
 }
 
 template<velox::TypeKind Kind>
@@ -1946,7 +1963,12 @@ RocksDBDataSink::IndiciesVector RocksDBDataSink::GatherIndicies(
   return indicies;
 }
 
-bool RocksDBDataSink::finish() { return true; }
+bool RocksDBDataSink::finish() {
+  for (const auto& writer : _index_writers) {
+    writer->Finish();
+  }
+  return true;
+}
 
 std::vector<std::string> RocksDBDataSink::close() { return {}; }
 
@@ -1955,6 +1977,9 @@ void RocksDBDataSink::abort() {
   // be set.
   ResetForNewRow();
   // TODO(Dronplane) should we also shrink slice vector to save some memory?
+  for (const auto& writer : _index_writers) {
+    writer->Abort();
+  }
 }
 
 velox::connector::DataSink::Stats RocksDBDataSink::stats() const {
@@ -1965,9 +1990,11 @@ velox::connector::DataSink::Stats RocksDBDataSink::stats() const {
 RocksDBDeleteDataSink::RocksDBDeleteDataSink(
   rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
   velox::RowTypePtr row_type, ObjectId object_key,
-  std::vector<catalog::Column::Id> column_oids)
+  std::vector<catalog::Column::Id> column_oids,
+  std::vector<std::unique_ptr<SinkDeleteWriter>>&& index_writers)
   : _row_type{std::move(row_type)},
     _data_writer{transaction, cf},
+    _index_writers{std::move(index_writers)},
     _object_key{object_key},
     _column_ids{std::move(column_oids)} {
   SDB_ASSERT(_object_key.isSet(), "RocksDBDeleteDataSink: object key is empty");
@@ -1988,6 +2015,10 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
   const auto num_columns = _row_type->size();
   const auto num_rows = input->size();
 
+  for (const auto& writer : _index_writers) {
+    writer->Init(num_rows);
+  }
+
   _key_childs.resize(input->childrenSize());
   std::string key_buffer;
   for (velox::vector_size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
@@ -2001,7 +2032,11 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
                     "Failed to acquire row lock for table ", _object_key.id(),
                     " error: ", result.errorMessage());
         }
-        // TODO: run row deletes here
+        // For now all index writers work by row.
+        // Later by cell processing might be added below.
+        for (const auto& writer : _index_writers) {
+          writer->DeleteRow(row_key);
+        }
       },
       key_buffer);
 
@@ -2012,12 +2047,19 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
   }
 }
 
-bool RocksDBDeleteDataSink::finish() { return true; }
+bool RocksDBDeleteDataSink::finish() {
+  for (const auto& writer : _index_writers) {
+    writer->Finish();
+  }
+  return true;
+}
 
 std::vector<std::string> RocksDBDeleteDataSink::close() { return {}; }
 
 void RocksDBDeleteDataSink::abort() {
-  // TODO: implement
+  for (const auto& writer : _index_writers) {
+    writer->Abort();
+  }
 }
 
 velox::connector::DataSink::Stats RocksDBDeleteDataSink::stats() const {

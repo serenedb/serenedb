@@ -45,6 +45,11 @@ class SearchSinkInsertWriter final : public SinkInsertWriter {
                     sdb::catalog::Column::Id column_id) override;
   void Finish() override;
 
+  void Abort() override {
+    // We don't own the transaction so Abort should be called outside.
+    _document.reset();
+  }
+
  private:
   struct Field {
     std::string_view Name() const noexcept {
@@ -137,6 +142,8 @@ class SearchSinkDeleteWriter final : public SinkDeleteWriter {
   void Finish() override;
 
   void DeleteRow(std::string_view row_key) override;
+
+  void Abort() override { _remove_filter.reset(); }
 
  private:
   irs::IndexWriter::Transaction& _trx;

@@ -25,7 +25,6 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/search/scorers.hpp>
 #include <iresearch/store/memory_directory.hpp>
-// #include "iresearch/search/"
 
 #include "catalog/table_options.h"
 #include "connector/common.h"
@@ -243,7 +242,8 @@ TEST_F(SearchSinkWriterTest, InsertDeleteMultipleColumns) {
   auto delete_trx = _data_writer->GetBatch();
 
   {
-    // in local block to make sure remove filters ownership is properly transferred
+    // in local block to make sure remove filters ownership is properly
+    // transferred
     SearchSinkDeleteWriter delete_sink{delete_trx, pool()};
     delete_sink.Init(2);
     delete_sink.DeleteRow("pk2");

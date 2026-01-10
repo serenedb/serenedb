@@ -78,11 +78,11 @@ class SearchRemoveFilterBase : public irs::Filter,
   }
   velox::memory::MemoryPool& _memory_pool;
   mutable const irs::SubReader* _segment{};
+  mutable const irs::DocumentMask* _pending_doc_mask{};
   mutable const irs::TermReader* _pk_field{};
   mutable size_t _pos{0};
   mutable irs::DocAttr _doc;
   mutable ManagedVector<ManagedString> _pks;
-  mutable irs::DocIterator::ptr _pk_iterator;
 };
 
 class SearchRemoveFilter : public SearchRemoveFilterBase {

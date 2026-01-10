@@ -27,6 +27,7 @@ namespace sdb::connector::search {
 irs::DocIterator::ptr SearchRemoveFilterBase::execute(
   const irs::ExecutionContext& ctx) const {
   _segment = &ctx.segment;
+  _pending_doc_mask = ctx.pending_docs_mask;
   _pk_field = _segment->field(kPkFieldName);
   SDB_ASSERT(_pk_field);
   _pos = 0;
@@ -37,20 +38,6 @@ irs::DocIterator::ptr SearchRemoveFilterBase::execute(
 
 irs::doc_id_t SearchRemoveFilter::advance() {
   auto* docs_mask = _segment->docs_mask();
-
-  if (_pk_iterator) {
-    auto doc = irs::doc_limits::eof();
-    while (!irs::doc_limits::eof(doc = _pk_iterator->advance())) {
-      SDB_ASSERT(irs::doc_limits::valid(doc));
-      if (!docs_mask || !docs_mask->contains(doc)) {
-        _doc.value = doc;
-        return doc;
-      }
-    }
-    ++_pos;
-    _pk_iterator.reset();
-  }
-
   while (true) {
     if (_pos == _pks.size()) [[unlikely]] {
       _doc.value = irs::doc_limits::eof();
@@ -67,6 +54,19 @@ irs::doc_id_t SearchRemoveFilter::advance() {
     // of documents is arbitrary. So we need to check all of them.
     // In general we do not expect too many delete/insert of same PK
     // between consolidations. So postings list should be short.
+
+    // Also we might have Delete/Insert sequence in a single batch,
+    // So we must check pending docs mask as well in order to not fire on
+    // already deleted documents by queries in the same batch. Also Removals
+    // might be skipped during flushed segment processing due to ticks (e.g.
+    // remove arrved before insert) but that is not a problem. As if we reached
+    // "tick" limit we anyway should not find anymore valid targets.
+
+    // For segments with sorted field it should also work:
+    // E.G. if we have INSERT PK1 FIELD_SORTED_2 | DELETE PK1 | INSERT PK1
+    // FIELD_SORTED_1 Due to documents are sorted for storing after applying
+    // queries it will still see documents in insertion order.
+
     auto terms = _pk_field->iterator(irs::SeekMode::RandomOnly);
     if (!terms || !terms->seek(irs::bytes_view(
                     reinterpret_cast<irs::byte_type*>(pk.data()), pk.size()))) {
@@ -76,23 +76,26 @@ irs::doc_id_t SearchRemoveFilter::advance() {
     }
 
     auto doc = irs::doc_limits::eof();
-    _pk_iterator = _pk_field->postings(*terms->cookie(), irs::IndexFeatures::None);
-    while (!irs::doc_limits::eof(doc = _pk_iterator->advance())) {
+    auto pk_iterator =
+      _pk_field->postings(*terms->cookie(), irs::IndexFeatures::None);
+    while (!irs::doc_limits::eof(doc = pk_iterator->advance())) {
       SDB_ASSERT(irs::doc_limits::valid(doc));
-      if (!docs_mask || !docs_mask->contains(doc)) {
+      bool in_doc_mask = docs_mask && docs_mask->contains(doc);
+      bool in_pending_mask =
+        _pending_doc_mask && _pending_doc_mask->contains(doc);
+      if (!in_doc_mask && !in_pending_mask) {
         break;
       }
     }
-    // if PK found alive it should be the only one in the entire index.
-    // iterate all in this segment. But then discard PK. It could not be in other???
-    // what if some segments were flushed?
-    //pk = _pks.back();
-    //_pks.pop_back();
+
     if (irs::doc_limits::eof(doc)) {
       ++_pos;
-      _pk_iterator.reset();
       continue;
     }
+
+    // if PK found alive it should be the only one in the entire index.
+    pk = _pks.back();
+    _pks.pop_back();
     _doc.value = doc;
     return doc;
   }

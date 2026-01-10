@@ -495,7 +495,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertWithExisting) {
     sink.Finish();
     trx.Commit();
     // That would be our "existing" segment
-   _data_writer->Commit();
+    _data_writer->Commit();
   }
   {
     auto delete_trx = _data_writer->GetBatch();
@@ -540,6 +540,51 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertWithExisting) {
   ASSERT_EQ(2, reader.size());
   ASSERT_EQ(4, reader.docs_count());
   ASSERT_EQ(2, reader.live_docs_count());
+  {
+    auto& segment = reader[1];
+    const auto* pk_column = segment.column(kPkColumn);
+    ASSERT_NE(nullptr, pk_column);
+    auto varchar_terms = segment.field(
+      std::string_view{"\x00\x00\x00\x00\x00\x00\x00\x01\x03", 9});
+    ASSERT_NE(nullptr, varchar_terms);
+    auto itr = varchar_terms->iterator(irs::SeekMode::NORMAL);
+    ASSERT_TRUE(
+      itr->seek(irs::ViewCast<irs::byte_type>(std::string_view{"value3", 6})));
+    auto postings = segment.mask(itr->postings(irs::IndexFeatures::None));
+    ASSERT_TRUE(postings->next());
+    auto pk_itr = pk_column->iterator(irs::ColumnHint::Normal);
+    ASSERT_NE(nullptr, pk_itr);
+    auto* actual_pk_value = irs::get<irs::PayAttr>(*pk_itr);
+    ASSERT_NE(nullptr, actual_pk_value);
+    ASSERT_EQ(postings->value(), pk_itr->seek(postings->value()));
+    ASSERT_EQ("pk1", irs::ViewCast<char>(actual_pk_value->value));
+    ASSERT_FALSE(postings->next());
+  }
+  // check deleted
+  {
+    auto& segment = reader[1];
+    auto varchar_terms = segment.field(
+      std::string_view{"\x00\x00\x00\x00\x00\x00\x00\x01\x03", 9});
+    ASSERT_NE(nullptr, varchar_terms);
+
+    auto itr = varchar_terms->iterator(irs::SeekMode::NORMAL);
+    ASSERT_TRUE(
+      itr->seek(irs::ViewCast<irs::byte_type>(std::string_view{"value2", 6})));
+    auto postings = segment.mask(itr->postings(irs::IndexFeatures::None));
+    ASSERT_FALSE(postings->next());
+  }
+  {
+    auto& segment = reader[0];
+    auto varchar_terms = segment.field(
+      std::string_view{"\x00\x00\x00\x00\x00\x00\x00\x01\x03", 9});
+    ASSERT_NE(nullptr, varchar_terms);
+
+    auto itr = varchar_terms->iterator(irs::SeekMode::NORMAL);
+    ASSERT_TRUE(
+      itr->seek(irs::ViewCast<irs::byte_type>(std::string_view{"value1", 6})));
+    auto postings = segment.mask(itr->postings(irs::IndexFeatures::None));
+    ASSERT_FALSE(postings->next());
+  }
 }
 
 TEST_F(SearchSinkWriterTest, InsertDeleteInsertOnePending) {
@@ -600,6 +645,47 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertOnePending) {
   ASSERT_EQ(1, reader.size());
   ASSERT_EQ(3, reader.docs_count());
   ASSERT_EQ(1, reader.live_docs_count());
+  {
+    auto& segment = reader[0];
+    const auto* pk_column = segment.column(kPkColumn);
+    ASSERT_NE(nullptr, pk_column);
+    auto varchar_terms = segment.field(
+      std::string_view{"\x00\x00\x00\x00\x00\x00\x00\x01\x03", 9});
+    ASSERT_NE(nullptr, varchar_terms);
+    auto itr = varchar_terms->iterator(irs::SeekMode::NORMAL);
+    ASSERT_TRUE(
+      itr->seek(irs::ViewCast<irs::byte_type>(std::string_view{"value3", 6})));
+    auto postings = segment.mask(itr->postings(irs::IndexFeatures::None));
+    ASSERT_TRUE(postings->next());
+    auto pk_itr = pk_column->iterator(irs::ColumnHint::Normal);
+    ASSERT_NE(nullptr, pk_itr);
+    auto* actual_pk_value = irs::get<irs::PayAttr>(*pk_itr);
+    ASSERT_NE(nullptr, actual_pk_value);
+    ASSERT_EQ(postings->value(), pk_itr->seek(postings->value()));
+    ASSERT_EQ("pk1", irs::ViewCast<char>(actual_pk_value->value));
+    ASSERT_FALSE(postings->next());
+  }
+  // check deleted
+  {
+    auto& segment = reader[0];
+    auto varchar_terms = segment.field(
+      std::string_view{"\x00\x00\x00\x00\x00\x00\x00\x01\x03", 9});
+    ASSERT_NE(nullptr, varchar_terms);
+    {
+      auto itr = varchar_terms->iterator(irs::SeekMode::NORMAL);
+      ASSERT_TRUE(itr->seek(
+        irs::ViewCast<irs::byte_type>(std::string_view{"value2", 6})));
+      auto postings = segment.mask(itr->postings(irs::IndexFeatures::None));
+      ASSERT_FALSE(postings->next());
+    }
+    {
+      auto itr = varchar_terms->iterator(irs::SeekMode::NORMAL);
+      ASSERT_TRUE(itr->seek(
+        irs::ViewCast<irs::byte_type>(std::string_view{"value1", 6})));
+      auto postings = segment.mask(itr->postings(irs::IndexFeatures::None));
+      ASSERT_FALSE(postings->next());
+    }
+  }
 }
 
 TEST_F(SearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
@@ -632,12 +718,15 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
       "\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk1", 19};
     constexpr std::string_view kPk2 = {
       "\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk2", 19};
+    constexpr std::string_view kPk3 = {
+      "\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk3", 19};
     {
       auto trx = limited_data_writer->GetBatch();
       SearchSinkWriter sink{trx, nullptr};
-      sink.Init(1);
+      sink.Init(2);
       sink.SwitchColumn(velox::TypeKind::VARCHAR, false, 1);
       sink.Write({rocksdb::Slice("value1", 6)}, kPk);
+      sink.Write({rocksdb::Slice("value8", 6)}, kPk3);
       sink.Finish();
       trx.Commit();
       // Intentionally do not commit data writer to force several same PKs in
@@ -686,9 +775,136 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
       limited_data_writer->Commit();
     }
     auto reader = irs::DirectoryReader(dir, _codec);
-    ASSERT_EQ(2, reader.size());
-    ASSERT_EQ(4, reader.docs_count());
-    ASSERT_EQ(2, reader.live_docs_count());
+    ASSERT_EQ(3, reader.size());
+    ASSERT_EQ(5, reader.docs_count());
+    ASSERT_EQ(3, reader.live_docs_count());
+
+    {
+      auto& segment = reader[2];
+      const auto* pk_column = segment.column(kPkColumn);
+      ASSERT_NE(nullptr, pk_column);
+      auto varchar_terms = segment.field(
+        std::string_view{"\x00\x00\x00\x00\x00\x00\x00\x01\x03", 9});
+      ASSERT_NE(nullptr, varchar_terms);
+      auto itr = varchar_terms->iterator(irs::SeekMode::NORMAL);
+      ASSERT_TRUE(itr->seek(
+        irs::ViewCast<irs::byte_type>(std::string_view{"value3", 6})));
+      auto postings = segment.mask(itr->postings(irs::IndexFeatures::None));
+      ASSERT_TRUE(postings->next());
+      auto pk_itr = pk_column->iterator(irs::ColumnHint::Normal);
+      ASSERT_NE(nullptr, pk_itr);
+      auto* actual_pk_value = irs::get<irs::PayAttr>(*pk_itr);
+      ASSERT_NE(nullptr, actual_pk_value);
+      ASSERT_EQ(postings->value(), pk_itr->seek(postings->value()));
+      ASSERT_EQ("pk1", irs::ViewCast<char>(actual_pk_value->value));
+      ASSERT_FALSE(postings->next());
+    }
+    // check deleted
+    {
+      auto& segment = reader[0];
+      auto varchar_terms = segment.field(
+        std::string_view{"\x00\x00\x00\x00\x00\x00\x00\x01\x03", 9});
+      ASSERT_NE(nullptr, varchar_terms);
+      {
+        auto itr = varchar_terms->iterator(irs::SeekMode::NORMAL);
+        ASSERT_TRUE(itr->seek(
+          irs::ViewCast<irs::byte_type>(std::string_view{"value1", 6})));
+        auto postings = segment.mask(itr->postings(irs::IndexFeatures::None));
+        ASSERT_FALSE(postings->next());
+      }
+    }
+    {
+      auto& segment = reader[1];
+      auto varchar_terms = segment.field(
+        std::string_view{"\x00\x00\x00\x00\x00\x00\x00\x01\x03", 9});
+      ASSERT_NE(nullptr, varchar_terms);
+      {
+        auto itr = varchar_terms->iterator(irs::SeekMode::NORMAL);
+        ASSERT_TRUE(itr->seek(
+          irs::ViewCast<irs::byte_type>(std::string_view{"value2", 6})));
+        auto postings = segment.mask(itr->postings(irs::IndexFeatures::None));
+        ASSERT_FALSE(postings->next());
+      }
+    }
+  }
+}
+
+TEST_F(SearchSinkWriterTest, DeleteNotMissedWithExisting) {
+  constexpr std::string_view kPk = {
+    "\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk1", 19};
+  constexpr std::string_view kPk2 = {
+    "\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk2", 19};
+  {
+    auto trx = _data_writer->GetBatch();
+    SearchSinkWriter sink{trx, nullptr};
+    sink.Init(2);
+    sink.SwitchColumn(velox::TypeKind::VARCHAR, false, 1);
+    sink.Write({rocksdb::Slice("value1", 6)}, kPk);
+    // second document to keep segment around
+    sink.Write({rocksdb::Slice("value9", 6)}, kPk2);
+    sink.Finish();
+    trx.Commit();
+    // That would be our "existing" segment
+    _data_writer->Commit();
+  }
+  {
+    // this delete should not fire at value2 during new segment processing
+    // and successfully delete value1.
+    auto delete_trx = _data_writer->GetBatch();
+    SearchSinkWriter delete_sink{delete_trx, pool()};
+    delete_sink.Init(1);
+    delete_sink.DeleteRow("pk1");
+    delete_sink.Finish();
+    ASSERT_TRUE(delete_trx.Commit());
+  }
+  {
+    auto trx = _data_writer->GetBatch();
+    SearchSinkWriter sink{trx, nullptr};
+    sink.Init(1);
+    sink.SwitchColumn(velox::TypeKind::VARCHAR, false, 1);
+    sink.Write({rocksdb::Slice("value2", 6)}, kPk);
+    sink.Finish();
+    trx.Commit();
+    _data_writer->Commit();
+    // Intentionally do not commit data writer to force several same PKs in one
+    // writer commit
+  }
+  auto reader = irs::DirectoryReader(_dir, _codec);
+  ASSERT_EQ(2, reader.size());
+  ASSERT_EQ(3, reader.docs_count());
+  ASSERT_EQ(2, reader.live_docs_count());
+  {
+    auto& segment = reader[1];
+    const auto* pk_column = segment.column(kPkColumn);
+    ASSERT_NE(nullptr, pk_column);
+    auto varchar_terms = segment.field(
+      std::string_view{"\x00\x00\x00\x00\x00\x00\x00\x01\x03", 9});
+    ASSERT_NE(nullptr, varchar_terms);
+    auto itr = varchar_terms->iterator(irs::SeekMode::NORMAL);
+    ASSERT_TRUE(
+      itr->seek(irs::ViewCast<irs::byte_type>(std::string_view{"value2", 6})));
+    auto postings = segment.mask(itr->postings(irs::IndexFeatures::None));
+    ASSERT_TRUE(postings->next());
+    auto pk_itr = pk_column->iterator(irs::ColumnHint::Normal);
+    ASSERT_NE(nullptr, pk_itr);
+    auto* actual_pk_value = irs::get<irs::PayAttr>(*pk_itr);
+    ASSERT_NE(nullptr, actual_pk_value);
+    ASSERT_EQ(postings->value(), pk_itr->seek(postings->value()));
+    ASSERT_EQ("pk1", irs::ViewCast<char>(actual_pk_value->value));
+    ASSERT_FALSE(postings->next());
+  }
+  // check deleted
+  {
+    auto& segment = reader[0];
+    auto varchar_terms = segment.field(
+      std::string_view{"\x00\x00\x00\x00\x00\x00\x00\x01\x03", 9});
+    ASSERT_NE(nullptr, varchar_terms);
+
+    auto itr = varchar_terms->iterator(irs::SeekMode::NORMAL);
+    ASSERT_TRUE(
+      itr->seek(irs::ViewCast<irs::byte_type>(std::string_view{"value1", 6})));
+    auto postings = segment.mask(itr->postings(irs::IndexFeatures::None));
+    ASSERT_FALSE(postings->next());
   }
 }
 

@@ -97,12 +97,13 @@ class SearchSinkWriter final : public SinkWriterBase {
     std::string_view full_key, std::span<const rocksdb::Slice> cell_slices)>;
 
   // Write executors. For INDEX, INDEX and STORE, Sort etc.
-  // Could be more than one when we have index meta and different indexing options.
+  // Could be more than one when we have index meta and different indexing
+  // options.
   template<typename WriteFunc>
   Writer MakeIndexWriter(WriteFunc&& write_func);
 
-  // Actual value processors. It is set to write executor (see MakeIndexWriter) as
-  // a template. This methods are responsible for extracting value from
+  // Actual value processors. It is set to write executor (see MakeIndexWriter)
+  // as a template. This methods are responsible for extracting value from
   // rocksdb slices and setting it to Field structure accordingly.
   static Field& WriteStringValue(std::string_view full_key,
                                  std::span<const rocksdb::Slice> cell_slices,
@@ -117,11 +118,9 @@ class SearchSinkWriter final : public SinkWriterBase {
                                   Field& field);
 
   // Setup column writer according to type kind.
-  // Builds actual executor to avoid switch/case on each row whenever possible.                               
+  // Builds actual executor to avoid switch/case on each row whenever possible.
   template<velox::TypeKind Kind>
   void SetupColumnWriter(sdb::catalog::Column::Id column_id, bool have_nulls);
-
-
 
   Field _field;
   Field _pk_field;

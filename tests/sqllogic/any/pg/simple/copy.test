@@ -157,6 +157,11 @@ id name iq iamdegenereted
 3 babsky 993 1224
 
 
+query
+COPY varus TO STDOUT WITH (DELIMITER ';', FORMAT CSV, HEADER TRUE)
+----
+
+
 # copy into generated
 # copy to + match
 # wrong option

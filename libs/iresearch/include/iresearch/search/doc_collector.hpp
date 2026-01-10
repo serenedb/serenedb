@@ -55,8 +55,8 @@ size_t ExecuteTopKWithCount(const DirectoryReader& reader, const Filter& filter,
     const auto* scorer = irs::get<ScoreAttr>(*it);
 
     while (true) {
-      auto collect = docs.subspan(offset);
-      const uint32_t block_size = it->collect(collect);
+      auto collected = docs.subspan(offset);
+      const uint32_t block_size = it->collect(collected);
       if (block_size == 0) {
         break;
       }

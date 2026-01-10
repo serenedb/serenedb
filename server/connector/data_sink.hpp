@@ -193,7 +193,7 @@ class RocksDBDataSink : public velox::connector::DataSink {
     velox::vector_size_t total_rows_number);
 
   RocksDBSinkWriter _data_writer;
-  std::vector<std::unique_ptr<SinkWriterBase>> _index_writers;
+  std::vector<std::unique_ptr<SinkInsertWriter>> _index_writers;
   ObjectId _object_key;
   std::vector<velox::column_index_t> _key_childs;
   std::vector<catalog::Column::Id> _column_ids;
@@ -223,6 +223,7 @@ class RocksDBDeleteDataSink : public velox::connector::DataSink {
   // contains only primary key columns but we need remove all.
   velox::RowTypePtr _row_type;
   RocksDBDeleteSinkWriter _data_writer;
+  std::vector<std::unique_ptr<SinkDeleteWriter>> _index_writers;
   ObjectId _object_key;
   std::vector<catalog::Column::Id> _column_ids;
   std::vector<velox::column_index_t> _key_childs;

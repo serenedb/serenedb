@@ -49,20 +49,22 @@ irs::doc_id_t SearchRemoveFilter::advance() {
     auto& pk = _pks[_pos];
 
     // Remove all occurences of the PK in segment if any.
-    // There is only one alive PK in the entire index.
-    // But same value PKs might exist in deleted documents and this number
+    // There is only one alive PK in the entire index. In general
+    // that means we can remove pk from list once we found it.
+    // But there are some edge cases:
+    // 1. Same value PKs might exist in deleted documents and this number
     // of documents is arbitrary. So we need to check all of them.
     // In general we do not expect too many delete/insert of same PK
     // between consolidations. So postings list should be short.
 
-    // Also we might have Delete/Insert sequence in a single batch,
+    // 2. Also we might have Delete/Insert sequence in a single batch,
     // So we must check pending docs mask as well in order to not fire on
     // already deleted documents by queries in the same batch. Also Removals
     // might be skipped during flushed segment processing due to ticks (e.g.
     // remove arrved before insert) but that is not a problem. As if we reached
     // "tick" limit we anyway should not find anymore valid targets.
 
-    // For segments with sorted field it should also work:
+    // 3. For segments with sorted field it should also work:
     // E.G. if we have INSERT PK1 FIELD_SORTED_2 | DELETE PK1 | INSERT PK1
     // FIELD_SORTED_1 Due to documents are sorted for storing after applying
     // queries it will still see documents in insertion order.

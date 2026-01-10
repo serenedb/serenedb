@@ -27,10 +27,10 @@
 
 namespace sdb::connector {
 
-class SinkWriterBase {
+class SinkInsertWriter {
  public:
-  SinkWriterBase() = default;
-  virtual ~SinkWriterBase() = default;
+  SinkInsertWriter() = default;
+  virtual ~SinkInsertWriter() = default;
 
   virtual void Init(size_t batch_size) {}
 
@@ -39,10 +39,20 @@ class SinkWriterBase {
   virtual void Write(std::span<const rocksdb::Slice> cell_slices,
                      std::string_view full_key) = 0;
 
+  virtual void Finish() {};
+};
+
+class SinkDeleteWriter {
+ public:
+  SinkDeleteWriter() = default;
+  virtual ~SinkDeleteWriter() = default;
+
+  virtual void Init(size_t batch_size) {}
+
   virtual void DeleteRow(std::string_view row_key) = 0;
-  virtual void Delete(std::string_view row_key) = 0;
 
   virtual void Finish() {};
 };
+
 
 }  // namespace sdb::connector

@@ -60,14 +60,13 @@ void SetNameToBuffer(std::string& name_buffer, Column::Id column_id) {
 
 namespace sdb::connector::search {
 
-SearchSinkWriter::SearchSinkWriter(irs::IndexWriter::Transaction& trx,
-                                   velox::memory::MemoryPool* removes_pool)
-  : _trx(trx), _removes_pool(removes_pool) {
+SearchSinkInsertWriter::SearchSinkInsertWriter(irs::IndexWriter::Transaction& trx)
+  : _trx(trx) {
   _pk_field.PrepareForStringValue();
   _pk_field.name = kPkFieldName;
 }
 
-void SearchSinkWriter::SwitchColumn(velox::TypeKind kind, bool have_nulls,
+void SearchSinkInsertWriter::SwitchColumn(velox::TypeKind kind, bool have_nulls,
                                     sdb::catalog::Column::Id column_id) {
   if (kind == facebook::velox::TypeKind::UNKNOWN) {
     // for UNKNOWN type we always have nulls so no need of separate nulls
@@ -81,7 +80,7 @@ void SearchSinkWriter::SwitchColumn(velox::TypeKind kind, bool have_nulls,
   _document->NextFieldBatch();
 }
 
-void SearchSinkWriter::Write(std::span<const rocksdb::Slice> cell_slices,
+void SearchSinkInsertWriter::Write(std::span<const rocksdb::Slice> cell_slices,
                              std::string_view full_key) {
   SDB_ASSERT(_current_writer);
   SDB_ASSERT(_document);
@@ -89,21 +88,12 @@ void SearchSinkWriter::Write(std::span<const rocksdb::Slice> cell_slices,
   _document->NextDocument();
 }
 
-void SearchSinkWriter::DeleteRow(std::string_view row_key) {
-  SDB_ASSERT(_remove_filter);
-  _remove_filter->Add(row_key);
-}
-
-void SearchSinkWriter::Finish() {
+void SearchSinkInsertWriter::Finish() {
   _document.reset();
-  if (_remove_filter && !_remove_filter->Empty()) {
-    _trx.Remove(std::move(_remove_filter));
-  }
-  _remove_filter.reset();
 }
 
 template<velox::TypeKind Kind>
-void SearchSinkWriter::SetupColumnWriter(sdb::catalog::Column::Id column_id,
+void SearchSinkInsertWriter::SetupColumnWriter(sdb::catalog::Column::Id column_id,
                                          bool have_nulls) {
   basics::StrResize(_name_buffer, sizeof(column_id));
   SetNameToBuffer(_name_buffer, column_id);
@@ -197,7 +187,7 @@ void SearchSinkWriter::SetupColumnWriter(sdb::catalog::Column::Id column_id,
 }
 
 template<typename WriteFunc>
-SearchSinkWriter::Writer SearchSinkWriter::MakeIndexWriter(
+SearchSinkInsertWriter::Writer SearchSinkInsertWriter::MakeIndexWriter(
   WriteFunc&& write_func) {
   return
     [&, func = std::forward<WriteFunc>(write_func)](
@@ -208,24 +198,18 @@ SearchSinkWriter::Writer SearchSinkWriter::MakeIndexWriter(
     };
 }
 
-void SearchSinkWriter::Init(size_t batch_size) {
-  // For now  insert and delete are mutually exclusive operations
-  // But most likely we will need both for updates. So some additional
-  // flag will be needed in the constructor.
-  if (_removes_pool) {
-    _remove_filter =
-      std::make_shared<SearchRemoveFilter>(*_removes_pool, batch_size);
-  } else {
-    _document = std::make_unique<irs::IndexWriter::Document>(
-      _trx.Insert(false, batch_size));
-    VELOX_CHECK(_document, "Failed to create IResearch document for insertion");
-    _emit_pk = true;
-  }
+void SearchSinkInsertWriter::Init(size_t batch_size) {
+  SDB_ASSERT(batch_size > 0);
+  SDB_ASSERT(!_document);
+  _document = std::make_unique<irs::IndexWriter::Document>(
+    _trx.Insert(false, batch_size));
+  VELOX_CHECK(_document, "Failed to create IResearch document for insertion");
+  _emit_pk = true;
 }
 
-SearchSinkWriter::Field& SearchSinkWriter::WriteStringValue(
+SearchSinkInsertWriter::Field& SearchSinkInsertWriter::WriteStringValue(
   std::string_view, std::span<const rocksdb::Slice> cell_slices,
-  SearchSinkWriter::Field& field) {
+  SearchSinkInsertWriter::Field& field) {
   SDB_ASSERT(!cell_slices.empty());
   // if string is prefixed during Insert - two slices will be present
   // one is prefix, second is actual string data
@@ -248,9 +232,9 @@ SearchSinkWriter::Field& SearchSinkWriter::WriteStringValue(
 }
 
 template<typename T>
-SearchSinkWriter::Field& SearchSinkWriter::WriteNumericValue(
+SearchSinkInsertWriter::Field& SearchSinkInsertWriter::WriteNumericValue(
   std::string_view, std::span<const rocksdb::Slice> cell_slices,
-  SearchSinkWriter::Field& field) {
+  SearchSinkInsertWriter::Field& field) {
   SDB_ASSERT(cell_slices.size() == 1);
   SDB_ASSERT(sizeof(T) == cell_slices[0].size());
   // this is true as long as we match machine ending with storage ending
@@ -259,32 +243,32 @@ SearchSinkWriter::Field& SearchSinkWriter::WriteNumericValue(
   return field;
 }
 
-SearchSinkWriter::Field& SearchSinkWriter::WriteBooleanValue(
+SearchSinkInsertWriter::Field& SearchSinkInsertWriter::WriteBooleanValue(
   std::string_view, std::span<const rocksdb::Slice> cell_slices,
-  SearchSinkWriter::Field& field) {
+  SearchSinkInsertWriter::Field& field) {
   SDB_ASSERT(cell_slices.size() == 1);
   SDB_ASSERT(cell_slices[0].size() == 1);
   field.SetBooleanValue(cell_slices.front() == kTrueValue);
   return field;
 }
 
-void SearchSinkWriter::Field::PrepareForStringValue() {
+void SearchSinkInsertWriter::Field::PrepareForStringValue() {
   index_features = irs::IndexFeatures::None;
   analyzer = gStringStreamPool.emplace(AnalyzerImpl::StringStreamTag{});
 }
 
-void SearchSinkWriter::Field::SetStringValue(std::string_view value) {
+void SearchSinkInsertWriter::Field::SetStringValue(std::string_view value) {
   auto& sstream = sdb::basics::downCast<irs::StringTokenizer>(*analyzer);
   sstream.reset(value);
 }
 
-void SearchSinkWriter::Field::PrepareForNumericValue() {
+void SearchSinkInsertWriter::Field::PrepareForNumericValue() {
   index_features = irs::IndexFeatures::None;
   analyzer = gNumberStreamPool.emplace(AnalyzerImpl::NumberStreamTag{});
 }
 
 template<typename T>
-void SearchSinkWriter::Field::SetNumericValue(T value) {
+void SearchSinkInsertWriter::Field::SetNumericValue(T value) {
   auto& nstream = sdb::basics::downCast<irs::NumericTokenizer>(*analyzer);
   if constexpr (std::is_same_v<
                   T, velox::TypeTraits<velox::TypeKind::HUGEINT>::NativeType>) {
@@ -302,24 +286,48 @@ void SearchSinkWriter::Field::SetNumericValue(T value) {
   }
 }
 
-void SearchSinkWriter::Field::PrepareForBooleanValue() {
+void SearchSinkInsertWriter::Field::PrepareForBooleanValue() {
   index_features = irs::IndexFeatures::None;
   analyzer = gBoolStreamPool.emplace(AnalyzerImpl::BoolStreamTag{});
 }
 
-void SearchSinkWriter::Field::SetBooleanValue(bool value) {
+void SearchSinkInsertWriter::Field::SetBooleanValue(bool value) {
   auto& bstream = sdb::basics::downCast<irs::BooleanTokenizer>(*analyzer);
   bstream.reset(value);
 }
 
-void SearchSinkWriter::Field::PrepareForNullValue() {
+void SearchSinkInsertWriter::Field::PrepareForNullValue() {
   index_features = irs::IndexFeatures::None;
   analyzer = gNullStreamPool.emplace(AnalyzerImpl::NullStreamTag{});
 }
 
-void SearchSinkWriter::Field::SetNullValue() {
+void SearchSinkInsertWriter::Field::SetNullValue() {
   auto& nstream = sdb::basics::downCast<irs::NullTokenizer>(*analyzer);
   nstream.reset();
+}
+
+SearchSinkDeleteWriter::SearchSinkDeleteWriter(irs::IndexWriter::Transaction& trx,
+                                   velox::memory::MemoryPool* removes_pool)
+  : _trx(trx), _removes_pool(removes_pool) {}
+
+void SearchSinkDeleteWriter::DeleteRow(std::string_view row_key) {
+  SDB_ASSERT(_remove_filter);
+  _remove_filter->Add(row_key);
+}
+
+void SearchSinkDeleteWriter::Init(size_t batch_size) {
+  SDB_ASSERT(batch_size > 0);
+  SDB_ASSERT(!_remove_filter);
+  SDB_ASSERT(_removes_pool);
+  _remove_filter =
+    std::make_shared<SearchRemoveFilter>(*_removes_pool, batch_size);
+}
+
+void SearchSinkDeleteWriter::Finish() {
+  if (_remove_filter && !_remove_filter->Empty()) {
+    _trx.Remove(std::move(_remove_filter));
+  }
+  _remove_filter.reset();
 }
 
 }  // namespace sdb::connector::search

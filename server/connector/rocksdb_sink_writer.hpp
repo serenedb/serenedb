@@ -43,7 +43,7 @@ class RocksDBSinkWriterBase {
   rocksdb::ColumnFamilyHandle& _cf;
 };
 
-// This could be final subclass of SinkWriterBase but currently only used
+// This could be final subclass of SinkInsertWriter but currently only used
 // directly inside DataSink so no need for virtual calls/default base members
 class RocksDBSinkWriter : public RocksDBSinkWriterBase {
  public:
@@ -55,6 +55,8 @@ class RocksDBSinkWriter : public RocksDBSinkWriterBase {
              std::string_view full_key);
 };
 
+// This could be final subclass of SinkDeleteWriter but currently only used
+// directly inside DeleteDataSink so no need for virtual calls/default base members
 class RocksDBDeleteSinkWriter : public RocksDBSinkWriterBase {
  public:
   RocksDBDeleteSinkWriter(rocksdb::Transaction& transaction,

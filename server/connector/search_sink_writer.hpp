@@ -32,10 +32,9 @@ namespace sdb::connector::search {
 
 class SearchRemoveFilterBase;
 
-class SearchSinkWriter final : public SinkWriterBase {
+class SearchSinkInsertWriter final : public SinkInsertWriter {
  public:
-  SearchSinkWriter(irs::IndexWriter::Transaction& trx,
-                   velox::memory::MemoryPool* removes_pool);
+  SearchSinkInsertWriter(irs::IndexWriter::Transaction& trx);
 
   void Init(size_t batch_size) override;
 
@@ -45,11 +44,6 @@ class SearchSinkWriter final : public SinkWriterBase {
   void SwitchColumn(velox::TypeKind kind, bool have_nulls,
                     sdb::catalog::Column::Id column_id) override;
   void Finish() override;
-
-  void DeleteRow(std::string_view row_key) override;
-  void Delete(std::string_view) override {
-    VELOX_UNSUPPORTED("SearchSinkWriter does not support Delete operation");
-  }
 
  private:
   struct Field {
@@ -131,6 +125,21 @@ class SearchSinkWriter final : public SinkWriterBase {
   std::unique_ptr<irs::IndexWriter::Document> _document;
   Writer _current_writer;
   bool _emit_pk{true};
+};
+
+class SearchSinkDeleteWriter final : public SinkDeleteWriter {
+ public:
+  SearchSinkDeleteWriter(irs::IndexWriter::Transaction& trx,
+                         velox::memory::MemoryPool* removes_pool);
+
+  void Init(size_t batch_size) override;
+
+  void Finish() override;
+
+  void DeleteRow(std::string_view row_key) override;
+
+ private:
+  irs::IndexWriter::Transaction& _trx;
   velox::memory::MemoryPool* _removes_pool;
   std::shared_ptr<SearchRemoveFilterBase> _remove_filter;
 };

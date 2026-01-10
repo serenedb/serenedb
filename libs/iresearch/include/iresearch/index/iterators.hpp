@@ -26,6 +26,7 @@
 #include "basics/shared.hpp"
 #include "iresearch/formats/seek_cookie.hpp"
 #include "iresearch/index/index_features.hpp"
+#include "iresearch/search/score.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/attributes.hpp"
 #include "iresearch/utils/iterator.hpp"
@@ -49,7 +50,7 @@ struct DocIterator : AttributeProvider {
 
   [[nodiscard]] static DocIterator::ptr empty();
 
-  virtual doc_id_t value() const = 0;
+  virtual doc_id_t value() const;
 
   virtual doc_id_t advance() = 0;
 
@@ -59,6 +60,9 @@ struct DocIterator : AttributeProvider {
   // Position iterator at a specified target and returns current value
   // (for more information see class description)
   virtual doc_id_t seek(doc_id_t target) = 0;
+
+  // TODO(gnusi): return "has more"
+  virtual uint32_t collect(std::span<doc_id_t> docs);
 
   // protected:
   // For any DocIterator we want to define block.

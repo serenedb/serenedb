@@ -1942,6 +1942,26 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
       this->_buf.docs, [](doc_id_t doc) { return !doc_limits::valid(doc); }));
   }
 
+  uint32_t collect(std::span<doc_id_t> docs) final {
+    const ScoreFunction* score = nullptr;
+    if constexpr (FieldTraits::Frequency()) {
+      score = &std::get<ScoreAttr>(_attrs);
+    }
+
+    auto begin = docs.begin();
+    auto end = docs.end();
+    for (; begin != end; ++begin) {
+      *begin = advance();
+      if constexpr (FieldTraits::Frequency()) {
+        score->Collect();
+      }
+      if (doc_limits::eof(*begin)) {
+        break;
+      }
+    }
+    return begin - docs.begin();
+  }
+
   void WandPrepare(const TermMeta& meta, const IndexInput* doc_in,
                    const IndexInput* pos_in, const IndexInput* pay_in,
                    const ScoreFunctionFactory& factory, const Scorer& scorer,

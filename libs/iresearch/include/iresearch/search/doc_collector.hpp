@@ -15,10 +15,77 @@
 namespace irs {
 
 template<size_t K = std::dynamic_extent>
-size_t ExecuteCountTopK(const DirectoryReader& reader, const Filter& filter,
-                        const Scorers& scorers, size_t k,
-                        std::span<score_t, K> scores,
-                        std::span<doc_id_t, K> docs) {
+size_t ExecuteTopKWithCountBlock(const DirectoryReader& reader,
+                                 const Filter& filter, const Scorers& scorers,
+                                 size_t k, std::span<score_t, K> scores,
+                                 std::span<doc_id_t, K> docs) {
+  SDB_ASSERT(k * 2 <= docs.size());
+
+  auto prepared = filter.prepare({
+    .index = reader,
+    .scorers = scorers,
+  });
+
+  // TODO(gnusi): we can evaluate count based on blocks count
+  size_t count = 0;
+  auto hits = std::views::zip(docs, scores);
+  auto begin = hits.begin();
+  auto pivot = begin + k;
+  auto end = hits.end();
+  auto score = scores.data();
+
+  auto cmp = [](const auto& lhs, const auto& rhs) noexcept {
+    return std::get<1>(lhs) > std::get<1>(rhs);
+  };
+  auto repivot = [&] noexcept {
+    std::nth_element(hits.begin(), pivot, end, cmp);
+  };
+
+  ColumnCollector columns;
+  for (auto& segment : reader) {
+    columns.Clear();
+
+    auto it = prepared->execute({
+      .segment = segment,
+      .scorers = scorers,
+      .collector = &columns,
+    });
+    const auto* scorer = irs::get<ScoreAttr>(*it);
+
+    while (true) {
+      const uint32_t block_size = it->collect(docs);
+      begin += block_size;
+      count += block_size;
+
+      if (begin == end) {
+        scorer->Score(score);
+        repivot();
+        begin = pivot;
+        score = scores.data();
+      }
+    }
+
+    if (begin != hits.begin()) {
+      scorer->Score(score);
+      score += (begin - hits.begin());
+    }
+  }
+
+  if (begin > pivot) {
+    repivot();
+    begin = pivot;
+  }
+
+  std::sort(hits.begin(), begin, cmp);
+
+  return count;
+}
+
+template<size_t K = std::dynamic_extent>
+size_t ExecuteTopKWithCount(const DirectoryReader& reader, const Filter& filter,
+                            const Scorers& scorers, size_t k,
+                            std::span<score_t, K> scores,
+                            std::span<doc_id_t, K> docs) {
   SDB_ASSERT(k * 2 <= docs.size());
 
   auto prepared = filter.prepare({

@@ -273,7 +273,7 @@ struct MakeScoreFunctionImpl<BM15Context> {
           const float_t c1 = state.norm_const;
           SDB_ASSERT(c1 != 0.f);
 
-          *res = c0 - c0 / (1.f + tf / c1);
+          res[i] = c0 - c0 / (1.f + tf / c1);
         }
 
         // TODO(gnusi): optimize clear
@@ -324,13 +324,13 @@ struct MakeScoreFunctionImpl<BM25ContextImpl<NormLength>> {
             SDB_ASSERT((state.norm[i] & 0xFFU) != 0U);
             const float_t inv_c1 = state.norm_cache[state.norm[i] & 0xFFU];
 
-            *res = c0 - c0 / (1.f + tf * inv_c1);
+            res[i] = c0 - c0 / (1.f + tf * inv_c1);
           } else {
             const float_t c1 =
               state.norm_const +
               state.norm_length * static_cast<float_t>(state.norm[i]);
 
-            *res = c0 - c0 * c1 / (c1 + tf);
+            res[i] = c0 - c0 * c1 / (c1 + tf);
           }
         }
 

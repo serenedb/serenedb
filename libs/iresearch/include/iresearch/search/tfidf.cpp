@@ -230,9 +230,10 @@ struct MakeScoreFunctionImpl<TFIDFContextImpl<NormLength>> {
           }
 
           if constexpr (NormLength != 0) {
-            *res = Tfidf(state.freq[i], idf) * Rsqrt<NormLength>(state.norm[i]);
+            res[i] =
+              Tfidf(state.freq[i], idf) * Rsqrt<NormLength>(state.norm[i]);
           } else {
-            *res = Tfidf(state.freq[i], idf);
+            res[i] = Tfidf(state.freq[i], idf);
           }
         }
 

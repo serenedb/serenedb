@@ -26,14 +26,16 @@ size_t ExecuteCountTopK(const DirectoryReader& reader, const Filter& filter,
     .scorers = scorers,
   });
 
-  size_t block_count = 0;
+  // TODO(gnusi): we can evaluate count based on blocks count
+  size_t count = 0;
   auto hits = std::views::zip(docs, scores);
   auto begin = hits.begin();
   auto pivot = begin + k;
   auto end = hits.end();
+  auto score = scores.data();
 
   auto cmp = [](const auto& lhs, const auto& rhs) noexcept {
-    return std::get<score_t>(lhs) > std::get<score_t>(rhs);
+    return std::get<1>(lhs) > std::get<1>(rhs);
   };
   auto repivot = [&] noexcept {
     std::nth_element(hits.begin(), pivot, end, cmp);
@@ -48,26 +50,29 @@ size_t ExecuteCountTopK(const DirectoryReader& reader, const Filter& filter,
       .scorers = scorers,
       .collector = &columns,
     });
-    const auto* score = irs::get<ScoreAttr>(*docs);
+    const auto* scorer = irs::get<ScoreAttr>(*it);
 
     doc_id_t doc;
     while (!doc_limits::eof(doc = it->advance())) {
       columns.Collect(doc);
-      score->Collect();
+      scorer->Collect();
+      ++count;
 
-      *begin++ = doc;
+      std::get<0>(*begin++) = doc;
 
       if (begin == end) {
-        score->Score(scores.data());
+        scorer->Score(score);
         repivot();
         begin = pivot;
-        ++block_count;
+        score = scores.data();
       }
     }
-  }
 
-  const size_t count =
-    (block_count ? k * (1 + block_count) : 0) + (begin - hits.begin());
+    if (begin != hits.begin()) {
+      scorer->Score(score);
+      score += (begin - hits.begin());
+    }
+  }
 
   if (begin > pivot) {
     repivot();

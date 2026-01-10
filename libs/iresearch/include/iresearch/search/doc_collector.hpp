@@ -65,10 +65,8 @@ size_t ExecuteTopKWithCount(const DirectoryReader& reader, const Filter& filter,
       offset += block_size;
 
       if (offset == size) {
-        offset = 0;
+        offset = k;
         repivot();
-      } else {
-        offset = block_size;
       }
     }
   }

@@ -19,20 +19,21 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
-#include <iresearch/parser/parser.h>
 
-#include <iresearch/analysis/analyzer.hpp>
-#include <iresearch/analysis/delimited_tokenizer.hpp>
-#include <iresearch/analysis/tokenizers.hpp>
-#include <iresearch/search/bm25.hpp>
-#include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/doc_collector.hpp>
-#include <iresearch/search/scorers.hpp>
-#include <iresearch/search/tfidf.hpp>
-#include <iresearch/types.hpp>
+#include <optional>
 #include <span>
 
 #include "index/index_tests.hpp"
+#include "iresearch/analysis/analyzer.hpp"
+#include "iresearch/analysis/delimited_tokenizer.hpp"
+#include "iresearch/analysis/tokenizers.hpp"
+#include "iresearch/parser/parser.h"
+#include "iresearch/search/bm25.hpp"
+#include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/doc_collector.hpp"
+#include "iresearch/search/scorers.hpp"
+#include "iresearch/search/tfidf.hpp"
+#include "iresearch/types.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -115,6 +116,63 @@ void BlockScoringFieldFactory(tests::Document& doc, const std::string& name,
 
 class BlockScoringTestCase : public IndexTestBase {
  protected:
+  // Helper to check if doc ID is valid
+  static bool IsValidDoc(irs::doc_id_t doc) {
+    return !irs::doc_limits::eof(doc) && doc != irs::doc_limits::invalid();
+  }
+
+  // Helper to read string column value for a document
+  std::string ReadColumnValue(const irs::SubReader& segment,
+                              std::string_view column_name, irs::doc_id_t doc) {
+    if (!IsValidDoc(doc)) {
+      return {};
+    }
+    auto* column = segment.column(column_name);
+    if (!column) {
+      return {};
+    }
+    auto values = column->iterator(irs::ColumnHint::Normal);
+    if (!values) {
+      return {};
+    }
+    auto* payload = irs::get<irs::PayAttr>(*values);
+    if (!payload) {
+      return {};
+    }
+    if (doc != values->seek(doc)) {
+      return {};
+    }
+    return irs::ToString<std::string>(payload->value.data());
+  }
+
+  // Helper to read double column value for a document (for "seq" field)
+  std::optional<double> ReadDoubleColumn(const irs::SubReader& segment,
+                                         std::string_view column_name,
+                                         irs::doc_id_t doc) {
+    auto* column = segment.column(column_name);
+    if (!column) {
+      return std::nullopt;
+    }
+    auto values = column->iterator(irs::ColumnHint::Normal);
+    if (!values) {
+      return std::nullopt;
+    }
+    auto* payload = irs::get<irs::PayAttr>(*values);
+    if (!payload) {
+      return std::nullopt;
+    }
+    if (doc != values->seek(doc)) {
+      return std::nullopt;
+    }
+    // Double values are stored as 8 bytes
+    if (payload->value.size() < sizeof(double)) {
+      return std::nullopt;
+    }
+    double val;
+    std::memcpy(&val, payload->value.data(), sizeof(double));
+    return val;
+  }
+
   void WriteSegment(irs::IndexWriter& writer, auto& gens) {
     auto& index = const_cast<tests::index_t&>(this->index());
     for (auto& gen : gens) {
@@ -194,7 +252,7 @@ class BlockScoringTestCase : public IndexTestBase {
 };
 
 // Test TFIDF scorer with ByTerm filter using ExecuteTopKWithCount
-TEST_P(BlockScoringTestCase, tfidf_byterm_block_scoring) {
+TEST_P(BlockScoringTestCase, TfidfBytermBlockScoring) {
   // CreateLargeIndex();
   CreateMultiSegmentIndex();
 
@@ -233,14 +291,16 @@ TEST_P(BlockScoringTestCase, tfidf_byterm_block_scoring) {
   }
 }
 
-// Test TFIDF with topic field search (many matches)
-TEST_P(BlockScoringTestCase, tfidf_topic_search) {
+// Test TFIDF with topic field search (many matches) - verify actual values
+TEST_P(BlockScoringTestCase, TfidfTopicSearch) {
   CreateLargeIndex();
 
   auto scorer = irs::TFIDF{true};
   auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
+  ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
+  auto& segment = reader[0];
 
   // Search for "physics" in topic field (has many matches)
   auto filter = ParseQuery("topic:physics");
@@ -260,10 +320,19 @@ TEST_P(BlockScoringTestCase, tfidf_topic_search) {
   for (size_t i = 1; i < result_count; ++i) {
     EXPECT_GE(scores[i - 1], scores[i]);
   }
+
+  // Verify actual values - all returned docs should have topic="physics"
+  for (size_t i = 0; i < result_count; ++i) {
+    ASSERT_TRUE(IsValidDoc(docs[i])) << "Doc ID at position " << i
+                                     << " should be valid, got " << docs[i];
+    auto topic = ReadColumnValue(segment, "topic", docs[i]);
+    EXPECT_EQ("physics", topic)
+      << "Doc " << docs[i] << " should have topic='physics'";
+  }
 }
 
 // Test BM25 scorer with ByTerm filter using ExecuteTopKWithCount
-TEST_P(BlockScoringTestCase, bm25_byterm_block_scoring) {
+TEST_P(BlockScoringTestCase, Bm25BytermBlockScoring) {
   CreateLargeIndex();
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
@@ -292,14 +361,16 @@ TEST_P(BlockScoringTestCase, bm25_byterm_block_scoring) {
   }
 }
 
-// Test BM25 with chemistry topic (for document scoring)
-TEST_P(BlockScoringTestCase, bm25_chemistry_search) {
+// Test BM25 with chemistry topic (for document scoring) - verify actual values
+TEST_P(BlockScoringTestCase, Bm25ChemistrySearch) {
   CreateLargeIndex();
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
   auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
+  ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
+  auto& segment = reader[0];
 
   // Search for "chemistry" in topic field
   auto filter = ParseQuery("topic:chemistry");
@@ -323,16 +394,27 @@ TEST_P(BlockScoringTestCase, bm25_chemistry_search) {
   for (size_t i = 1; i < result_count; ++i) {
     EXPECT_GE(scores[i - 1], scores[i]);
   }
+
+  // Verify actual values - all returned docs should have topic="chemistry"
+  for (size_t i = 0; i < result_count; ++i) {
+    ASSERT_TRUE(IsValidDoc(docs[i])) << "Doc ID at position " << i
+                                     << " should be valid, got " << docs[i];
+    auto topic = ReadColumnValue(segment, "topic", docs[i]);
+    EXPECT_EQ("chemistry", topic)
+      << "Doc " << docs[i] << " should have topic='chemistry'";
+  }
 }
 
-// Test And filter with TFIDF using ExecuteTopKWithCount
-TEST_P(BlockScoringTestCase, tfidf_and_filter_block_scoring) {
+// Test And filter with TFIDF using ExecuteTopKWithCount - verify both conditions
+TEST_P(BlockScoringTestCase, TfidfAndFilterBlockScoring) {
   CreateLargeIndex();
 
   auto scorer = irs::TFIDF{true};
   auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
+  ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
+  auto& segment = reader[0];
 
   // Create AND filter using parser: category:tech AND topic:database
   auto filter = ParseQuery("+category:tech +topic:database");
@@ -352,16 +434,30 @@ TEST_P(BlockScoringTestCase, tfidf_and_filter_block_scoring) {
   for (size_t i = 1; i < result_count; ++i) {
     EXPECT_GE(scores[i - 1], scores[i]);
   }
+
+  // Verify actual values - all docs should match both conditions
+  for (size_t i = 0; i < result_count; ++i) {
+    ASSERT_TRUE(IsValidDoc(docs[i])) << "Doc ID at position " << i
+                                     << " should be valid, got " << docs[i];
+    auto category = ReadColumnValue(segment, "category", docs[i]);
+    auto topic = ReadColumnValue(segment, "topic", docs[i]);
+    EXPECT_EQ("tech", category)
+      << "Doc " << docs[i] << " should have category='tech'";
+    EXPECT_EQ("database", topic)
+      << "Doc " << docs[i] << " should have topic='database'";
+  }
 }
 
-// Test And filter with BM25 using ExecuteTopKWithCount
-TEST_P(BlockScoringTestCase, bm25_and_filter_block_scoring) {
+// Test And filter with BM25 using ExecuteTopKWithCount - verify both conditions
+TEST_P(BlockScoringTestCase, Bm25AndFilterBlockScoring) {
   CreateLargeIndex();
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
   auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
+  ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
+  auto& segment = reader[0];
 
   // Create AND filter using parser: category:science AND topic:physics
   auto filter = ParseQuery("+category:science +topic:physics");
@@ -380,16 +476,30 @@ TEST_P(BlockScoringTestCase, bm25_and_filter_block_scoring) {
   for (size_t i = 1; i < result_count; ++i) {
     EXPECT_GE(scores[i - 1], scores[i]);
   }
+
+  // Verify actual values - all docs should match both conditions
+  for (size_t i = 0; i < result_count; ++i) {
+    ASSERT_TRUE(IsValidDoc(docs[i])) << "Doc ID at position " << i
+                                     << " should be valid, got " << docs[i];
+    auto category = ReadColumnValue(segment, "category", docs[i]);
+    auto topic = ReadColumnValue(segment, "topic", docs[i]);
+    EXPECT_EQ("science", category)
+      << "Doc " << docs[i] << " should have category='science'";
+    EXPECT_EQ("physics", topic)
+      << "Doc " << docs[i] << " should have topic='physics'";
+  }
 }
 
-// Test block boundaries with small k
-TEST_P(BlockScoringTestCase, block_boundary_small_k) {
+// Test block boundaries with small k - verify values
+TEST_P(BlockScoringTestCase, BlockBoundarySmallK) {
   CreateLargeIndex();
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
   auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
+  ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
+  auto& segment = reader[0];
 
   // Use small k to force multiple block iterations
   auto filter = ParseQuery("category:tech");
@@ -411,16 +521,27 @@ TEST_P(BlockScoringTestCase, block_boundary_small_k) {
   for (size_t i = 1; i < result_count; ++i) {
     EXPECT_GE(scores[i - 1], scores[i]);
   }
+
+  // Verify all returned docs have category='tech'
+  for (size_t i = 0; i < result_count; ++i) {
+    ASSERT_TRUE(IsValidDoc(docs[i])) << "Doc ID at position " << i
+                                     << " should be valid, got " << docs[i];
+    auto category = ReadColumnValue(segment, "category", docs[i]);
+    EXPECT_EQ("tech", category)
+      << "Doc " << docs[i] << " should have category='tech'";
+  }
 }
 
-// Test block boundaries with larger k
-TEST_P(BlockScoringTestCase, block_boundary_large_k) {
+// Test block boundaries with larger k - verify values
+TEST_P(BlockScoringTestCase, BlockBoundaryLargeK) {
   CreateLargeIndex();
 
   auto scorer = irs::TFIDF{true};
   auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
+  ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
+  auto& segment = reader[0];
 
   // Use larger k
   auto filter = ParseQuery("category:science");
@@ -439,10 +560,19 @@ TEST_P(BlockScoringTestCase, block_boundary_large_k) {
   for (size_t i = 1; i < result_count; ++i) {
     EXPECT_GE(scores[i - 1], scores[i]);
   }
+
+  // Verify all returned docs have category='science'
+  for (size_t i = 0; i < result_count; ++i) {
+    ASSERT_TRUE(IsValidDoc(docs[i])) << "Doc ID at position " << i
+                                     << " should be valid, got " << docs[i];
+    auto category = ReadColumnValue(segment, "category", docs[i]);
+    EXPECT_EQ("science", category)
+      << "Doc " << docs[i] << " should have category='science'";
+  }
 }
 
 // Test TFIDF vs BM25 score comparison
-TEST_P(BlockScoringTestCase, tfidf_vs_bm25_comparison) {
+TEST_P(BlockScoringTestCase, TfidfVsBm25Comparison) {
   CreateLargeIndex();
 
   auto tfidf_scorer = irs::TFIDF{true};
@@ -484,14 +614,16 @@ TEST_P(BlockScoringTestCase, tfidf_vs_bm25_comparison) {
   }
 }
 
-// Test with k larger than matching documents
-TEST_P(BlockScoringTestCase, k_larger_than_matches) {
+// Test with k larger than matching documents - verify values
+TEST_P(BlockScoringTestCase, KLargerThanMatches) {
   CreateLargeIndex();
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
   auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
+  ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
+  auto& segment = reader[0];
 
   // Search for chemistry topic (fewer matches)
   auto filter = ParseQuery("topic:chemistry");
@@ -511,10 +643,19 @@ TEST_P(BlockScoringTestCase, k_larger_than_matches) {
   for (size_t i = 1; i < result_count; ++i) {
     EXPECT_GE(scores[i - 1], scores[i]);
   }
+
+  // Verify all returned docs have topic='chemistry'
+  for (size_t i = 0; i < result_count; ++i) {
+    ASSERT_TRUE(IsValidDoc(docs[i])) << "Doc ID at position " << i
+                                     << " should be valid, got " << docs[i];
+    auto topic = ReadColumnValue(segment, "topic", docs[i]);
+    EXPECT_EQ("chemistry", topic)
+      << "Doc " << docs[i] << " should have topic='chemistry'";
+  }
 }
 
 // Test empty result set
-TEST_P(BlockScoringTestCase, empty_result_set) {
+TEST_P(BlockScoringTestCase, EmptyResultSet) {
   CreateLargeIndex();
 
   auto scorer = irs::TFIDF{true};
@@ -536,17 +677,21 @@ TEST_P(BlockScoringTestCase, empty_result_set) {
   ASSERT_EQ(0, count);
 }
 
-// Test And filter with three clauses
-TEST_P(BlockScoringTestCase, and_filter_three_clauses) {
+// Test And filter with three clauses - verify all three conditions
+TEST_P(BlockScoringTestCase, AndFilterThreeClauses) {
   CreateLargeIndex();
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
   auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
+  ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
+  auto& segment = reader[0];
 
   // Create AND filter with three clauses using parser
-  auto filter = ParseQuery("+category:tech +topic:database +tags:index");
+  // Note: tags field stores full string (e.g., "search,index"), so we search
+  // for exact match
+  auto filter = ParseQuery("+category:tech +topic:database +tags:search,index");
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 10;
@@ -562,15 +707,31 @@ TEST_P(BlockScoringTestCase, and_filter_three_clauses) {
   for (size_t i = 1; i < result_count; ++i) {
     EXPECT_GE(scores[i - 1], scores[i]);
   }
+
+  // Verify actual values - all docs should match all three conditions
+  for (size_t i = 0; i < result_count; ++i) {
+    ASSERT_TRUE(IsValidDoc(docs[i])) << "Doc ID at position " << i
+                                     << " should be valid, got " << docs[i];
+    auto category = ReadColumnValue(segment, "category", docs[i]);
+    auto topic = ReadColumnValue(segment, "topic", docs[i]);
+    auto tags = ReadColumnValue(segment, "tags", docs[i]);
+    EXPECT_EQ("tech", category)
+      << "Doc " << docs[i] << " should have category='tech'";
+    EXPECT_EQ("database", topic)
+      << "Doc " << docs[i] << " should have topic='database'";
+    EXPECT_EQ("search,index", tags)
+      << "Doc " << docs[i] << " should have tags='search,index'";
+  }
 }
 
 // Test BM25 with different k and b parameters
-TEST_P(BlockScoringTestCase, bm25_parameter_variations) {
+TEST_P(BlockScoringTestCase, Bm25ParameterVariations) {
   CreateLargeIndex();
 
   auto reader = irs::DirectoryReader(dir(), codec());
 
-  auto filter = ParseQuery("content:database");
+  // Use topic field which has single-word indexed values
+  auto filter = ParseQuery("topic:database");
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 10;
@@ -632,12 +793,13 @@ TEST_P(BlockScoringTestCase, bm25_parameter_variations) {
 }
 
 // Test TFIDF with and without norms
-TEST_P(BlockScoringTestCase, tfidf_with_without_norms) {
+TEST_P(BlockScoringTestCase, TfidfWithWithoutNorms) {
   CreateLargeIndex();
 
   auto reader = irs::DirectoryReader(dir(), codec());
 
-  auto filter = ParseQuery("content:index");
+  // Use topic field which has single-word indexed values
+  auto filter = ParseQuery("topic:search");
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 10;
@@ -679,7 +841,7 @@ TEST_P(BlockScoringTestCase, tfidf_with_without_norms) {
 }
 
 // Multi-segment tests - TFIDF with ByTerm filter
-TEST_P(BlockScoringTestCase, multiseg_tfidf_byterm) {
+TEST_P(BlockScoringTestCase, MultisegTfidfByterm) {
   CreateMultiSegmentIndex();
 
   auto scorer = irs::TFIDF{true};
@@ -696,8 +858,8 @@ TEST_P(BlockScoringTestCase, multiseg_tfidf_byterm) {
   }
   ASSERT_EQ(420, total_docs) << "Expected 420 total documents";
 
-  // Use parser to create query for "database"
-  auto filter = ParseQuery("content:database");
+  // Use topic field which has single-word indexed values
+  auto filter = ParseQuery("topic:database");
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 15;
@@ -719,7 +881,7 @@ TEST_P(BlockScoringTestCase, multiseg_tfidf_byterm) {
 }
 
 // Multi-segment tests - BM25 with ByTerm filter
-TEST_P(BlockScoringTestCase, multiseg_bm25_byterm) {
+TEST_P(BlockScoringTestCase, MultisegBm25Byterm) {
   CreateMultiSegmentIndex();
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
@@ -751,7 +913,7 @@ TEST_P(BlockScoringTestCase, multiseg_bm25_byterm) {
 }
 
 // Multi-segment tests - And filter with TFIDF
-TEST_P(BlockScoringTestCase, multiseg_tfidf_and_filter) {
+TEST_P(BlockScoringTestCase, MultisegTfidfAndFilter) {
   CreateMultiSegmentIndex();
 
   auto scorer = irs::TFIDF{true};
@@ -780,7 +942,7 @@ TEST_P(BlockScoringTestCase, multiseg_tfidf_and_filter) {
 }
 
 // Multi-segment tests - And filter with BM25
-TEST_P(BlockScoringTestCase, multiseg_bm25_and_filter) {
+TEST_P(BlockScoringTestCase, MultisegBm25AndFilter) {
   CreateMultiSegmentIndex();
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
@@ -809,7 +971,7 @@ TEST_P(BlockScoringTestCase, multiseg_bm25_and_filter) {
 }
 
 // Multi-segment tests - small k forcing multiple blocks across segments
-TEST_P(BlockScoringTestCase, multiseg_small_k_block_boundaries) {
+TEST_P(BlockScoringTestCase, MultisegSmallKBlockBoundaries) {
   CreateMultiSegmentIndex();
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
@@ -818,8 +980,8 @@ TEST_P(BlockScoringTestCase, multiseg_small_k_block_boundaries) {
   auto reader = irs::DirectoryReader(dir(), codec());
   ASSERT_EQ(3, reader.size());
 
-  // Use parser for query - "index" appears frequently
-  auto filter = ParseQuery("content:index");
+  // Use category field - "tech" appears frequently
+  auto filter = ParseQuery("category:tech");
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 5;  // Small k to test block boundaries
@@ -841,8 +1003,8 @@ TEST_P(BlockScoringTestCase, multiseg_small_k_block_boundaries) {
   }
 }
 
-// Multi-segment tests - verify results with quantum query
-TEST_P(BlockScoringTestCase, multiseg_quantum_query) {
+// Multi-segment tests - verify results with physics query
+TEST_P(BlockScoringTestCase, MultisegQuantumQuery) {
   CreateMultiSegmentIndex();
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
@@ -851,7 +1013,8 @@ TEST_P(BlockScoringTestCase, multiseg_quantum_query) {
   auto reader = irs::DirectoryReader(dir(), codec());
   ASSERT_EQ(3, reader.size());
 
-  auto filter = ParseQuery("content:quantum");
+  // Use topic field which has single-word indexed values
+  auto filter = ParseQuery("topic:physics");
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 10;
@@ -876,7 +1039,7 @@ TEST_P(BlockScoringTestCase, multiseg_quantum_query) {
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
-INSTANTIATE_TEST_SUITE_P(block_scoring_test, BlockScoringTestCase,
+INSTANTIATE_TEST_SUITE_P(BlockScoringTest, BlockScoringTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs),
                                             ::testing::Values("1_5simd",
                                                               "1_5avx")),

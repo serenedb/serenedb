@@ -47,6 +47,7 @@ struct ScoreAdapter {
       doc{irs::get<DocAttr>(*this->_it)},
       score{&ScoreAttr::get(*this->_it)} {
     SDB_ASSERT(doc);
+    SDB_ASSERT(score);
   }
 
   ScoreAdapter(ScoreAdapter&&) noexcept = default;
@@ -85,13 +86,13 @@ struct SubScores {
 };
 
 struct ConjunctionScoreContext {
-  ScoreFunction Reset(auto& iterators) {
+  void Reset(auto& iterators) {
     scorers.reserve(iterators.size());
-    for (auto* scorer : scorers) {
-      if (!scorer || scorer->IsDefault()) {
+    for (auto& it : iterators) {
+      if (!it.score || it.score->IsDefault()) {
         continue;
       }
-      scorers.emplace_back(scorer);
+      scorers.emplace_back(it.score);
     }
   }
 
@@ -102,8 +103,10 @@ struct ConjunctionScoreContext {
     SDB_ASSERT(!scorers.empty());
     scores.resize(size);
 
+    const size_t count = scorers.size();
+
     scorers[0]->Score(res);
-    for (size_t i = 1; i < size; ++i) {
+    for (size_t i = 1; i < count; ++i) {
       scorers[i]->Score(scores.data());
       Merge<MergeType>(res, std::span{scores});
     }
@@ -118,7 +121,7 @@ struct ConjunctionScoreContext {
     ++size;
   }
 
-  std::vector<ScoreFunction*> scorers;
+  std::vector<const ScoreFunction*> scorers;
   absl::InlinedVector<score_t, kScoreWindow> scores;
   uint32_t size = 0;
 };
@@ -472,7 +475,7 @@ DocIterator::ptr MakeConjunction(WandContext ctx, std::vector<Adapter>&& itrs,
   SubScores scores;
   using ConjunctionImpl = Conjunction<Adapter, MergeType>;
   using WrappedConjunction = Wrapper<ConjunctionImpl>;
-  if constexpr (MergeType != ScoreMergeType::Noop &&
+  if constexpr (false && MergeType != ScoreMergeType::Noop &&
                 std::is_same_v<ConjunctionImpl, WrappedConjunction>) {
     scores.scores.reserve(itrs.size());
     // TODO(mbkkt) Find better one

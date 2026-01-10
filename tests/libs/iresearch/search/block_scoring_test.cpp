@@ -878,7 +878,8 @@ static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(block_scoring_test, BlockScoringTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values("1_5avx")),
+                                            ::testing::Values("1_5simd",
+                                                              "1_5avx")),
                          BlockScoringTestCase::to_string);
 
 }  // namespace

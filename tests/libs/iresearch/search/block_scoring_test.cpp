@@ -173,6 +173,38 @@ class BlockScoringTestCase : public IndexTestBase {
     return val;
   }
 
+  // Helper to verify a doc has expected value in any segment (for multi-seg)
+  bool VerifyDocValueInAnySegment(const irs::DirectoryReader& reader,
+                                  irs::doc_id_t doc,
+                                  std::string_view column_name,
+                                  std::string_view expected_value) {
+    if (!IsValidDoc(doc)) {
+      return false;
+    }
+    for (auto& segment : reader) {
+      auto value = ReadColumnValue(segment, column_name, doc);
+      if (value == expected_value) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Helper to verify scores are positive, descending, and doc IDs are valid
+  void VerifyScoresAndDocs(std::span<const irs::score_t> scores,
+                           std::span<const irs::doc_id_t> docs,
+                           size_t result_count) {
+    for (size_t i = 0; i < result_count; ++i) {
+      EXPECT_GT(scores[i], 0) << "Score at position " << i << " should be positive";
+      if (i > 0) {
+        EXPECT_GE(scores[i - 1], scores[i])
+          << "Scores should be in descending order at position " << i;
+      }
+      ASSERT_TRUE(IsValidDoc(docs[i])) << "Doc ID at position " << i
+                                       << " should be valid, got " << docs[i];
+    }
+  }
+
   void WriteSegment(irs::IndexWriter& writer, auto& gens) {
     auto& index = const_cast<tests::index_t&>(this->index());
     for (auto& gen : gens) {
@@ -281,14 +313,7 @@ TEST_P(BlockScoringTestCase, TfidfBytermBlockScoring) {
   auto result_count = std::min(count, kTopK);
   ASSERT_LE(result_count, kTopK);
 
-  // Verify scores are positive and in descending order
-  for (size_t i = 1; i < result_count; ++i) {
-    EXPECT_GE(scores[i - 1], scores[i])
-      << "Scores should be in descending order";
-  }
-  for (size_t i = 0; i < result_count; ++i) {
-    EXPECT_GT(scores[i], 0) << "TFIDF scores should be positive";
-  }
+  VerifyScoresAndDocs(scores, docs, result_count);
 }
 
 // Test TFIDF with topic field search (many matches) - verify actual values
@@ -316,15 +341,10 @@ TEST_P(BlockScoringTestCase, TfidfTopicSearch) {
   ASSERT_GT(count, 5) << "Expected multiple matches for 'physics' in topic";
   auto result_count = std::min(count, kTopK);
 
-  // Verify ordering
-  for (size_t i = 1; i < result_count; ++i) {
-    EXPECT_GE(scores[i - 1], scores[i]);
-  }
+  VerifyScoresAndDocs(scores, docs, result_count);
 
   // Verify actual values - all returned docs should have topic="physics"
   for (size_t i = 0; i < result_count; ++i) {
-    ASSERT_TRUE(IsValidDoc(docs[i])) << "Doc ID at position " << i
-                                     << " should be valid, got " << docs[i];
     auto topic = ReadColumnValue(segment, "topic", docs[i]);
     EXPECT_EQ("physics", topic)
       << "Doc " << docs[i] << " should have topic='physics'";
@@ -339,6 +359,8 @@ TEST_P(BlockScoringTestCase, Bm25BytermBlockScoring) {
   auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
+  ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
+  auto& segment = reader[0];
 
   // Test filter for "search" in topic field using parser
   auto filter = ParseQuery("topic:search");
@@ -354,10 +376,13 @@ TEST_P(BlockScoringTestCase, Bm25BytermBlockScoring) {
   ASSERT_GT(count, 0) << "Expected matches for 'search' in topic field";
   auto result_count = std::min(count, kTopK);
 
-  // Verify scores are in descending order
-  for (size_t i = 1; i < result_count; ++i) {
-    EXPECT_GE(scores[i - 1], scores[i])
-      << "BM25 scores should be in descending order";
+  VerifyScoresAndDocs(scores, docs, result_count);
+
+  // Verify actual values - all returned docs should have topic="search"
+  for (size_t i = 0; i < result_count; ++i) {
+    auto topic = ReadColumnValue(segment, "topic", docs[i]);
+    EXPECT_EQ("search", topic)
+      << "Doc " << docs[i] << " should have topic='search'";
   }
 }
 
@@ -386,19 +411,10 @@ TEST_P(BlockScoringTestCase, Bm25ChemistrySearch) {
   ASSERT_GT(count, 0);
   auto result_count = std::min(count, kTopK);
 
-  // BM25 should produce scores - verify they are valid
-  for (size_t i = 0; i < result_count; ++i) {
-    EXPECT_GT(scores[i], 0) << "BM25 scores should be positive";
-  }
-  // Verify descending order
-  for (size_t i = 1; i < result_count; ++i) {
-    EXPECT_GE(scores[i - 1], scores[i]);
-  }
+  VerifyScoresAndDocs(scores, docs, result_count);
 
   // Verify actual values - all returned docs should have topic="chemistry"
   for (size_t i = 0; i < result_count; ++i) {
-    ASSERT_TRUE(IsValidDoc(docs[i])) << "Doc ID at position " << i
-                                     << " should be valid, got " << docs[i];
     auto topic = ReadColumnValue(segment, "topic", docs[i]);
     EXPECT_EQ("chemistry", topic)
       << "Doc " << docs[i] << " should have topic='chemistry'";
@@ -430,15 +446,10 @@ TEST_P(BlockScoringTestCase, TfidfAndFilterBlockScoring) {
   ASSERT_GT(count, 0) << "Expected matches for tech AND database";
   auto result_count = std::min(count, kTopK);
 
-  // Verify scores are in descending order
-  for (size_t i = 1; i < result_count; ++i) {
-    EXPECT_GE(scores[i - 1], scores[i]);
-  }
+  VerifyScoresAndDocs(scores, docs, result_count);
 
   // Verify actual values - all docs should match both conditions
   for (size_t i = 0; i < result_count; ++i) {
-    ASSERT_TRUE(IsValidDoc(docs[i])) << "Doc ID at position " << i
-                                     << " should be valid, got " << docs[i];
     auto category = ReadColumnValue(segment, "category", docs[i]);
     auto topic = ReadColumnValue(segment, "topic", docs[i]);
     EXPECT_EQ("tech", category)
@@ -473,14 +484,10 @@ TEST_P(BlockScoringTestCase, Bm25AndFilterBlockScoring) {
   ASSERT_GT(count, 0) << "Expected matches for science AND physics";
   auto result_count = std::min(count, kTopK);
 
-  for (size_t i = 1; i < result_count; ++i) {
-    EXPECT_GE(scores[i - 1], scores[i]);
-  }
+  VerifyScoresAndDocs(scores, docs, result_count);
 
   // Verify actual values - all docs should match both conditions
   for (size_t i = 0; i < result_count; ++i) {
-    ASSERT_TRUE(IsValidDoc(docs[i])) << "Doc ID at position " << i
-                                     << " should be valid, got " << docs[i];
     auto category = ReadColumnValue(segment, "category", docs[i]);
     auto topic = ReadColumnValue(segment, "topic", docs[i]);
     EXPECT_EQ("science", category)
@@ -518,14 +525,10 @@ TEST_P(BlockScoringTestCase, BlockBoundarySmallK) {
   auto result_count = std::min(count, kTopK);
   ASSERT_EQ(kTopK, result_count);
 
-  for (size_t i = 1; i < result_count; ++i) {
-    EXPECT_GE(scores[i - 1], scores[i]);
-  }
+  VerifyScoresAndDocs(scores, docs, result_count);
 
   // Verify all returned docs have category='tech'
   for (size_t i = 0; i < result_count; ++i) {
-    ASSERT_TRUE(IsValidDoc(docs[i])) << "Doc ID at position " << i
-                                     << " should be valid, got " << docs[i];
     auto category = ReadColumnValue(segment, "category", docs[i]);
     EXPECT_EQ("tech", category)
       << "Doc " << docs[i] << " should have category='tech'";
@@ -557,14 +560,10 @@ TEST_P(BlockScoringTestCase, BlockBoundaryLargeK) {
   ASSERT_GT(count, 0);
   auto result_count = std::min(count, kTopK);
 
-  for (size_t i = 1; i < result_count; ++i) {
-    EXPECT_GE(scores[i - 1], scores[i]);
-  }
+  VerifyScoresAndDocs(scores, docs, result_count);
 
   // Verify all returned docs have category='science'
   for (size_t i = 0; i < result_count; ++i) {
-    ASSERT_TRUE(IsValidDoc(docs[i])) << "Doc ID at position " << i
-                                     << " should be valid, got " << docs[i];
     auto category = ReadColumnValue(segment, "category", docs[i]);
     EXPECT_EQ("science", category)
       << "Doc " << docs[i] << " should have category='science'";
@@ -581,6 +580,8 @@ TEST_P(BlockScoringTestCase, TfidfVsBm25Comparison) {
   auto bm25_order = irs::Scorers::Prepare(bm25_scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
+  ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
+  auto& segment = reader[0];
 
   auto filter = ParseQuery("topic:search");
   ASSERT_NE(nullptr, filter);
@@ -608,9 +609,19 @@ TEST_P(BlockScoringTestCase, TfidfVsBm25Comparison) {
   auto result_count = std::min(tfidf_count, kTopK);
 
   // Both should produce valid sorted results
-  for (size_t i = 1; i < result_count; ++i) {
-    EXPECT_GE(tfidf_scores[i - 1], tfidf_scores[i]);
-    EXPECT_GE(bm25_scores[i - 1], bm25_scores[i]);
+  VerifyScoresAndDocs(tfidf_scores, tfidf_docs, result_count);
+  VerifyScoresAndDocs(bm25_scores, bm25_docs, result_count);
+
+  // Verify actual values - all returned docs should have topic="search"
+  for (size_t i = 0; i < result_count; ++i) {
+    auto topic = ReadColumnValue(segment, "topic", tfidf_docs[i]);
+    EXPECT_EQ("search", topic)
+      << "TFIDF doc " << tfidf_docs[i] << " should have topic='search'";
+  }
+  for (size_t i = 0; i < result_count; ++i) {
+    auto topic = ReadColumnValue(segment, "topic", bm25_docs[i]);
+    EXPECT_EQ("search", topic)
+      << "BM25 doc " << bm25_docs[i] << " should have topic='search'";
   }
 }
 
@@ -640,14 +651,10 @@ TEST_P(BlockScoringTestCase, KLargerThanMatches) {
   ASSERT_LT(count, kTopK) << "Should have fewer chemistry docs than k";
   auto result_count = std::min(count, kTopK);
 
-  for (size_t i = 1; i < result_count; ++i) {
-    EXPECT_GE(scores[i - 1], scores[i]);
-  }
+  VerifyScoresAndDocs(scores, docs, result_count);
 
   // Verify all returned docs have topic='chemistry'
   for (size_t i = 0; i < result_count; ++i) {
-    ASSERT_TRUE(IsValidDoc(docs[i])) << "Doc ID at position " << i
-                                     << " should be valid, got " << docs[i];
     auto topic = ReadColumnValue(segment, "topic", docs[i]);
     EXPECT_EQ("chemistry", topic)
       << "Doc " << docs[i] << " should have topic='chemistry'";
@@ -704,14 +711,10 @@ TEST_P(BlockScoringTestCase, AndFilterThreeClauses) {
   // Some documents should match all three conditions
   auto result_count = std::min(count, kTopK);
 
-  for (size_t i = 1; i < result_count; ++i) {
-    EXPECT_GE(scores[i - 1], scores[i]);
-  }
+  VerifyScoresAndDocs(scores, docs, result_count);
 
   // Verify actual values - all docs should match all three conditions
   for (size_t i = 0; i < result_count; ++i) {
-    ASSERT_TRUE(IsValidDoc(docs[i])) << "Doc ID at position " << i
-                                     << " should be valid, got " << docs[i];
     auto category = ReadColumnValue(segment, "category", docs[i]);
     auto topic = ReadColumnValue(segment, "topic", docs[i]);
     auto tags = ReadColumnValue(segment, "tags", docs[i]);
@@ -729,6 +732,8 @@ TEST_P(BlockScoringTestCase, Bm25ParameterVariations) {
   CreateLargeIndex();
 
   auto reader = irs::DirectoryReader(dir(), codec());
+  ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
+  auto& segment = reader[0];
 
   // Use topic field which has single-word indexed values
   auto filter = ParseQuery("topic:database");
@@ -749,6 +754,16 @@ TEST_P(BlockScoringTestCase, Bm25ParameterVariations) {
                                 std::span{scores}, std::span{docs});
 
     ASSERT_GT(count, 0);
+    auto result_count = std::min(count, kTopK);
+
+    VerifyScoresAndDocs(scores, docs, result_count);
+
+    // Verify actual values
+    for (size_t i = 0; i < result_count; ++i) {
+      auto topic = ReadColumnValue(segment, "topic", docs[i]);
+      EXPECT_EQ("database", topic)
+        << "Doc " << docs[i] << " should have topic='database'";
+    }
   }
 
   // Test with BM15 (b=0)
@@ -766,8 +781,13 @@ TEST_P(BlockScoringTestCase, Bm25ParameterVariations) {
     ASSERT_GT(count, 0);
     auto result_count = std::min(count, kTopK);
 
-    for (size_t i = 1; i < result_count; ++i) {
-      EXPECT_GE(scores[i - 1], scores[i]);
+    VerifyScoresAndDocs(scores, docs, result_count);
+
+    // Verify actual values
+    for (size_t i = 0; i < result_count; ++i) {
+      auto topic = ReadColumnValue(segment, "topic", docs[i]);
+      EXPECT_EQ("database", topic)
+        << "Doc " << docs[i] << " should have topic='database'";
     }
   }
 
@@ -786,8 +806,13 @@ TEST_P(BlockScoringTestCase, Bm25ParameterVariations) {
     ASSERT_GT(count, 0);
     auto result_count = std::min(count, kTopK);
 
-    for (size_t i = 1; i < result_count; ++i) {
-      EXPECT_GE(scores[i - 1], scores[i]);
+    VerifyScoresAndDocs(scores, docs, result_count);
+
+    // Verify actual values
+    for (size_t i = 0; i < result_count; ++i) {
+      auto topic = ReadColumnValue(segment, "topic", docs[i]);
+      EXPECT_EQ("database", topic)
+        << "Doc " << docs[i] << " should have topic='database'";
     }
   }
 }
@@ -797,6 +822,8 @@ TEST_P(BlockScoringTestCase, TfidfWithWithoutNorms) {
   CreateLargeIndex();
 
   auto reader = irs::DirectoryReader(dir(), codec());
+  ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
+  auto& segment = reader[0];
 
   // Use topic field which has single-word indexed values
   auto filter = ParseQuery("topic:search");
@@ -817,6 +844,16 @@ TEST_P(BlockScoringTestCase, TfidfWithWithoutNorms) {
       std::span{docs_with_norms});
 
     ASSERT_GT(count, 0);
+    auto result_count = std::min(count, kTopK);
+
+    VerifyScoresAndDocs(scores_with_norms, docs_with_norms, result_count);
+
+    // Verify actual values
+    for (size_t i = 0; i < result_count; ++i) {
+      auto topic = ReadColumnValue(segment, "topic", docs_with_norms[i]);
+      EXPECT_EQ("search", topic)
+        << "Doc " << docs_with_norms[i] << " should have topic='search'";
+    }
   }
 
   // Test without norms
@@ -834,8 +871,13 @@ TEST_P(BlockScoringTestCase, TfidfWithWithoutNorms) {
     ASSERT_GT(count, 0);
     auto result_count = std::min(count, kTopK);
 
-    for (size_t i = 1; i < result_count; ++i) {
-      EXPECT_GE(scores_without_norms[i - 1], scores_without_norms[i]);
+    VerifyScoresAndDocs(scores_without_norms, docs_without_norms, result_count);
+
+    // Verify actual values
+    for (size_t i = 0; i < result_count; ++i) {
+      auto topic = ReadColumnValue(segment, "topic", docs_without_norms[i]);
+      EXPECT_EQ("search", topic)
+        << "Doc " << docs_without_norms[i] << " should have topic='search'";
     }
   }
 }
@@ -872,11 +914,11 @@ TEST_P(BlockScoringTestCase, MultisegTfidfByterm) {
   ASSERT_GT(count, 0);
   auto result_count = std::min(count, kTopK);
 
+  VerifyScoresAndDocs(scores, docs, result_count);
+
   for (size_t i = 0; i < result_count; ++i) {
-    EXPECT_GT(scores[i], 0) << "Scores should be positive";
-  }
-  for (size_t i = 1; i < result_count; ++i) {
-    EXPECT_GE(scores[i - 1], scores[i]) << "Scores should be descending";
+    EXPECT_TRUE(VerifyDocValueInAnySegment(reader, docs[i], "topic", "database"))
+      << "Doc " << docs[i] << " should have topic='database'";
   }
 }
 
@@ -904,11 +946,11 @@ TEST_P(BlockScoringTestCase, MultisegBm25Byterm) {
   ASSERT_GT(count, 0);
   auto result_count = std::min(count, kTopK);
 
+  VerifyScoresAndDocs(scores, docs, result_count);
+
   for (size_t i = 0; i < result_count; ++i) {
-    EXPECT_GT(scores[i], 0);
-  }
-  for (size_t i = 1; i < result_count; ++i) {
-    EXPECT_GE(scores[i - 1], scores[i]);
+    EXPECT_TRUE(VerifyDocValueInAnySegment(reader, docs[i], "topic", "search"))
+      << "Doc " << docs[i] << " should have topic='search'";
   }
 }
 
@@ -936,8 +978,14 @@ TEST_P(BlockScoringTestCase, MultisegTfidfAndFilter) {
   ASSERT_GT(count, 0) << "Expected matches for tech AND database";
   auto result_count = std::min(count, kTopK);
 
-  for (size_t i = 1; i < result_count; ++i) {
-    EXPECT_GE(scores[i - 1], scores[i]);
+  VerifyScoresAndDocs(scores, docs, result_count);
+
+  for (size_t i = 0; i < result_count; ++i) {
+    EXPECT_TRUE(VerifyDocValueInAnySegment(reader, docs[i], "category", "tech"))
+      << "Doc " << docs[i] << " should have category='tech'";
+    EXPECT_TRUE(
+      VerifyDocValueInAnySegment(reader, docs[i], "topic", "database"))
+      << "Doc " << docs[i] << " should have topic='database'";
   }
 }
 
@@ -965,8 +1013,14 @@ TEST_P(BlockScoringTestCase, MultisegBm25AndFilter) {
   ASSERT_GT(count, 0) << "Expected matches for science AND physics";
   auto result_count = std::min(count, kTopK);
 
-  for (size_t i = 1; i < result_count; ++i) {
-    EXPECT_GE(scores[i - 1], scores[i]);
+  VerifyScoresAndDocs(scores, docs, result_count);
+
+  for (size_t i = 0; i < result_count; ++i) {
+    EXPECT_TRUE(
+      VerifyDocValueInAnySegment(reader, docs[i], "category", "science"))
+      << "Doc " << docs[i] << " should have category='science'";
+    EXPECT_TRUE(VerifyDocValueInAnySegment(reader, docs[i], "topic", "physics"))
+      << "Doc " << docs[i] << " should have topic='physics'";
   }
 }
 
@@ -995,11 +1049,11 @@ TEST_P(BlockScoringTestCase, MultisegSmallKBlockBoundaries) {
   auto result_count = std::min(count, kTopK);
   ASSERT_EQ(kTopK, result_count);
 
+  VerifyScoresAndDocs(scores, docs, result_count);
+
   for (size_t i = 0; i < result_count; ++i) {
-    EXPECT_GT(scores[i], 0);
-  }
-  for (size_t i = 1; i < result_count; ++i) {
-    EXPECT_GE(scores[i - 1], scores[i]);
+    EXPECT_TRUE(VerifyDocValueInAnySegment(reader, docs[i], "category", "tech"))
+      << "Doc " << docs[i] << " should have category='tech'";
   }
 }
 
@@ -1027,13 +1081,11 @@ TEST_P(BlockScoringTestCase, MultisegQuantumQuery) {
   ASSERT_GT(count, 0);
   auto result_count = std::min(count, kTopK);
 
-  // Verify multi-segment results are valid
+  VerifyScoresAndDocs(scores, docs, result_count);
+
   for (size_t i = 0; i < result_count; ++i) {
-    EXPECT_GT(scores[i], 0) << "Multi-seg scores should be positive";
-  }
-  for (size_t i = 1; i < result_count; ++i) {
-    EXPECT_GE(scores[i - 1], scores[i])
-      << "Multi-seg scores should be descending";
+    EXPECT_TRUE(VerifyDocValueInAnySegment(reader, docs[i], "topic", "physics"))
+      << "Doc " << docs[i] << " should have topic='physics'";
   }
 }
 

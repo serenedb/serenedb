@@ -24,6 +24,7 @@
 
 #include <iresearch/search/column_collector.hpp>
 #include <iresearch/search/filter.hpp>
+#include <iresearch/search/score_function.hpp>
 
 #include "disjunction.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
@@ -353,11 +354,12 @@ class FixedPhraseFrequency {
  public:
   using TermPosition = FixedTermPosition;
   using Positions = std::vector<TermPosition>;
-
   using ExecutionStrategy =
     std::conditional_t<HasIntervals,
                        IntervalPositionStrategy<typename Positions::iterator>,
                        SinglePositionStrategy<typename Positions::iterator>>;
+
+  static constexpr bool kOneShot = OneShot;
 
   explicit FixedPhraseFrequency(std::vector<TermPosition>&& pos) noexcept
     : _pos{std::move(pos)} {
@@ -501,11 +503,12 @@ class VariadicPhraseFrequency {
  public:
   using TermPosition = VariadicTermPosition<Adapter>;
   using Positions = std::vector<TermPosition>;
-
   using ExecutionSrategy =
     std::conditional_t<HasIntervals,
                        IntervalPositionStrategy<typename Positions::iterator>,
                        SinglePositionStrategy<typename Positions::iterator>>;
+
+  static constexpr bool kOneShot = OneShot;
 
   explicit VariadicPhraseFrequency(std::vector<TermPosition>&& pos) noexcept
     : _pos{std::move(pos)}, _phrase_size{_pos.size()} {
@@ -954,6 +957,18 @@ class PhraseIterator : public DocIterator {
   }
 
   uint32_t count() final { return Count(*this); }
+
+  uint32_t collect(std::span<doc_id_t> docs) {
+    const ScoreFunction* score;
+    if constexpr (!Frequency::kOneShot) {
+      score = &std::get<ScoreAttr>(_attrs);
+    }
+    return Collect(*this, docs, [&] {
+      if constexpr (!Frequency::kOneShot) {
+        score->Collect();
+      }
+    });
+  }
 
  private:
   using Attributes =

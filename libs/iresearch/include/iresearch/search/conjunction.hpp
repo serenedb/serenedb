@@ -24,6 +24,8 @@
 
 #include <absl/container/inlined_vector.h>
 
+#include <iresearch/index/iterators.hpp>
+
 #include "basics/empty.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/index_reader_options.hpp"
@@ -210,13 +212,21 @@ class Conjunction : public ConjunctionBase<Adapter, MergeType> {
     return std::get<AttributePtr<DocAttr>>(_attrs).ptr->value;
   }
 
-  doc_id_t advance() override { return converge(_front->advance()); }
+  doc_id_t advance() final { return converge(_front->advance()); }
 
-  doc_id_t seek(doc_id_t target) override {
+  doc_id_t seek(doc_id_t target) final {
     return converge(_front->seek(target));
   }
 
-  uint32_t count() override { return DocIterator::Count(*this); }
+  uint32_t count() final { return DocIterator::Count(*this); }
+
+  uint32_t collect(std::span<doc_id_t> docs) final {
+    return DocIterator::Collect(*this, docs, [&] {
+      if constexpr (Base::kHasScore) {
+        this->_scores.Collect();
+      }
+    });
+  }
 
  private:
   // tries to converge front_ and other iterators to the specified target.

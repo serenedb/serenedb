@@ -163,20 +163,14 @@ ColumnIterator::ptr ColumnIterator::empty() {
 
 uint32_t DocIterator::collect(std::span<doc_id_t> docs) {
   const auto* score = irs::get<ScoreAttr>(*this);
-  const auto need_score = score && !score->IsDefault();
-
-  auto begin = docs.begin();
-  auto end = docs.end();
-  for (; begin != end; ++begin) {
-    *begin = advance();
-    if (need_score) {
+  if (score->IsDefault()) {
+    score = nullptr;
+  }
+  return Collect(*this, docs, [&] {
+    if (score) {
       score->Collect();
     }
-    if (doc_limits::eof(*begin)) {
-      break;
-    }
-  }
-  return begin - docs.begin();
+  });
 }
 
 }  // namespace irs

@@ -22,6 +22,9 @@
 
 #pragma once
 
+#include <iresearch/search/score_function.hpp>
+#include <memory>
+
 #include "basics/memory.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/formats/seek_cookie.hpp"
@@ -91,6 +94,21 @@ struct DocIterator : AttributeProvider {
       ++count;
     }
     return count;
+  }
+
+  template<typename Iterator, size_t N = std::dynamic_extent>
+  static uint32_t Collect(Iterator& it, std::span<doc_id_t> docs,
+                          auto collect_impl) {
+    auto begin = docs.begin();
+    auto end = docs.end();
+    for (; begin != end; ++begin) {
+      *begin = it.advance();
+      collect_impl();
+      if (doc_limits::eof(*begin)) {
+        break;
+      }
+    }
+    return begin - docs.begin();
   }
 };
 

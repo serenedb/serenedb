@@ -336,7 +336,9 @@ void RocksDBDataSink::WriteColumn(
       break;
     case velox::VectorEncoding::Simple::DICTIONARY:
     case velox::VectorEncoding::Simple::SEQUENCE:
-      WriteDictionaryColumn(input, ranges, original_idx);
+      // for dictionary we must force loading of wrapped lazy vector.
+      WriteDictionaryColumn(velox::BaseVector::loadedVectorShared(input),
+                            ranges, original_idx);
       break;
     case velox::VectorEncoding::Simple::BIASED:
       VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(WriteBiasedColumn, input->typeKind(),
@@ -385,6 +387,12 @@ void RocksDBDataSink::WriteVector(
     // shortcut for empty vector (just a header with zero length)
     _row_slices.push_back(kZeroLengthVector);
     return;
+  }
+
+  if (input->encoding() == velox::VectorEncoding::Simple::DICTIONARY) {
+    // Dictionary has an optimization to avoid loading wrapped lazy vector until
+    // explicitly asked. Here we need to call "mayHaveNulls" so trigger loading.
+    input->loadedVector();
   }
 
   irs::ResolveBool(

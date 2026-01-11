@@ -19,7 +19,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
-#include <folly/Lazy.h>
 #include <rocksdb/utilities/transaction_db.h>
 
 #include <yaclib/async/future.hpp>
@@ -78,6 +77,7 @@ class TxnState : public Config {
 
  private:
   void EnsureTransaction();
+  void EnsureSnapshot();
   void CreateLocalTransaction() const;
   void CreateLocalSnapshot() const;
 

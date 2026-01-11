@@ -123,21 +123,35 @@ TxnState::Transaction& TxnState::GetTransaction() {
   return txn;
 }
 
-const rocksdb::Snapshot* TxnState::GetSnapshot() {
+void TxnState::EnsureSnapshot() {
   switch (_state) {
-    case State::SNAPSHOT: {
+    case State::SNAPSHOT:
       if (!std::holds_alternative<Snapshot>(_data) ||
           !std::get<Snapshot>(_data)) {
         CreateLocalSnapshot();
       }
+      return;
+    case State::LOCAL:
+    case State::TRANSACTION:
+      return;
+    default:
+      SDB_UNREACHABLE();
+  }
+}
+
+const rocksdb::Snapshot* TxnState::GetSnapshot() {
+  EnsureSnapshot();
+  switch (_state) {
+    case State::SNAPSHOT: {
       auto& snapshot = std::get<Snapshot>(_data);
       SDB_ASSERT(snapshot);
+      SDB_ASSERT(std::dynamic_pointer_cast<RocksDBSnapshot>(snapshot));
       return std::dynamic_pointer_cast<RocksDBSnapshot>(snapshot)
         ->getSnapshot();
     }
     case State::LOCAL:
     case State::TRANSACTION: {
-      auto& txn = GetTransaction();
+      auto& txn = std::get<Transaction>(_data);
       SDB_ASSERT(txn);
       return txn->GetSnapshot();
     }

@@ -390,7 +390,7 @@ class SereneDBConnectorMetadata final
     SDB_ENSURE(serene_insert_handle, ERROR_INTERNAL,
                "Wrong type of insert table handle");
     SDB_ASSERT(session->config());
-    auto& txn = ExtractTransactionState(session);
+    auto& txn = serene_insert_handle->GetTxnState();
     if (serene_insert_handle->NeedToCommit()) {
       SDB_ASSERT(txn.GetTransaction());
       auto status = txn.Rollback();
@@ -451,6 +451,7 @@ class SereneDBConnector final : public velox::connector::Connector {
       column_oids.push_back(serene_table_handle.GetCountField());
     }
     const rocksdb::Snapshot* snapshot = serene_table_handle.GetSnapshot();
+    SDB_ASSERT(snapshot);
     return std::make_unique<RocksDBDataSource>(
       *connector_query_ctx->memoryPool(), snapshot, _db, _cf, output_type,
       column_oids, object_key);

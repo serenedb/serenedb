@@ -182,25 +182,59 @@ IRS_FORCE_INLINE float_t Rsqrt(uint32_t norm) noexcept {
 }
 
 struct TFIDFContext : public ScoreCtx {
-  TFIDFContext(const Norm* norm, score_t boost, TFIDFStats idf,
+  TFIDFContext(const uint32_t* norm, score_t boost, TFIDFStats idf,
                const uint32_t* freq,
                const score_t* filter_boost = nullptr) noexcept
     : source_freq{freq ? freq : &kEmptyFreq.value},
       source_filter_boost{filter_boost},
-      source_norm{std::move(norm)},
       idf{boost * idf.value} {
     SDB_ASSERT(freq);
   }
 
   const uint32_t* source_freq;
   const score_t* source_filter_boost;
-  const Norm* source_norm;
 
+  // TODO(gnusi): move to filter, leave only pointers
   absl::InlinedVector<uint32_t, kScoreWindow> freq;
   absl::InlinedVector<score_t, kScoreWindow> filter_boost;
-  absl::InlinedVector<uint32_t, kScoreWindow> norm;
+
+  const uint32_t* norm;
   float_t idf;  // precomputed : boost * idf
 };
+
+void TfIdf(score_t* IRS_RESTRICT res, size_t n,
+           const uint32_t* IRS_RESTRICT freq, float_t idf) noexcept {
+  for (size_t i = 0; i < n; ++i) {
+    res[i] = Tfidf(freq[i], idf);
+  }
+}
+
+void TfIdfBoost(score_t* IRS_RESTRICT res, size_t n,
+                const uint32_t* IRS_RESTRICT freq,
+                const score_t* IRS_RESTRICT boost, float_t idf) noexcept {
+  for (size_t i = 0; i < n; ++i) {
+    res[i] = Tfidf(freq[i], idf) * boost[i];
+  }
+}
+
+template<byte_type NormLength>
+void TfIdfNorms(score_t* IRS_RESTRICT res, size_t n,
+                const uint32_t* IRS_RESTRICT freq,
+                const uint32_t* IRS_RESTRICT norm, float_t idf) noexcept {
+  for (size_t i = 0; i < n; ++i) {
+    res[i] = Tfidf(freq[i], idf) * Rsqrt<NormLength>(norm[i]);
+  }
+}
+
+template<byte_type NormLength>
+void TfIdfNormsBoost(score_t* IRS_RESTRICT res, size_t n,
+                     const uint32_t* IRS_RESTRICT freq,
+                     const uint32_t* IRS_RESTRICT norm,
+                     const score_t* IRS_RESTRICT boost, float_t idf) noexcept {
+  for (size_t i = 0; i < n; ++i) {
+    res[i] = Tfidf(freq[i], idf) * Rsqrt<NormLength>(norm[i]) * boost[i];
+  }
+}
 
 }  // namespace
 
@@ -217,32 +251,25 @@ struct MakeScoreFunctionImpl<TFIDFContextImpl<NormLength>> {
       [](ScoreCtx* ctx, score_t* res) noexcept {
         SDB_ASSERT(res);
         SDB_ASSERT(ctx);
+        auto& state = static_cast<Ctx&>(*ctx);
 
-        auto& state = *static_cast<Ctx*>(ctx);
-
-        const auto size = state.freq.size();
-        for (size_t i = 0; i < size; ++i) {
-          float_t idf;
-          if constexpr (HasFilterBoost) {
-            idf = state.idf * state.filter_boost[i];
-          } else {
-            idf = state.idf;
-          }
-
-          if constexpr (NormLength != 0) {
-            res[i] =
-              Tfidf(state.freq[i], idf) * Rsqrt<NormLength>(state.norm[i]);
-          } else {
-            res[i] = Tfidf(state.freq[i], idf);
-          }
+        if constexpr (HasFilterBoost && NormLength != 0) {
+          TfIdfNormsBoost<NormLength>(res, state.freq.size(), state.freq.data(),
+                                      state.norm, state.filter_boost.data(),
+                                      state.idf);
+        } else if constexpr (HasFilterBoost) {
+          TfIdfBoost(res, state.freq.size(), state.freq.data(),
+                     state.filter_boost.data(), state.idf);
+        } else if constexpr (NormLength != 0) {
+          TfIdfNorms<NormLength>(res, state.freq.size(), state.freq.data(),
+                                 state.norm, state.idf);
+        } else {
+          TfIdf(res, state.freq.size(), state.freq.data(), state.idf);
         }
 
         // TODO(gnusi): optimize clear
         if constexpr (HasFilterBoost) {
           state.filter_boost.clear();
-        }
-        if constexpr (NormLength != 0) {
-          state.norm.clear();
         }
         state.freq.clear();
       },
@@ -252,10 +279,6 @@ struct MakeScoreFunctionImpl<TFIDFContextImpl<NormLength>> {
         if constexpr (HasFilterBoost) {
           SDB_ASSERT(state.source_filter_boost);
           state.filter_boost.emplace_back(*state.source_filter_boost);
-        }
-        if constexpr (NormLength != 0) {
-          SDB_ASSERT(state.source_norm);
-          state.norm.emplace_back(state.source_norm->value);
         }
       },
       ScoreFunction::NoopMin, std::forward<Args>(args)...);
@@ -295,10 +318,10 @@ ScoreFunction TFIDF::PrepareScorer(const ScoreContext& ctx) const {
   const auto* stats = stats_cast(ctx.stats);
   auto* filter_boost = irs::get<FilterBoost>(ctx.doc_attrs);
 
-  const Norm* norm = nullptr;
+  const uint32_t* norm = nullptr;
   if (_normalize) {
     // Check if norms are present in attributes
-    norm = irs::get<Norm>(ctx.doc_attrs);
+    norm = &irs::get<Norm>(ctx.doc_attrs)->value;
     if (!norm && ctx.collector) {
       // Fallback to reading from columnstore
       norm = ctx.collector->AddNorm(ctx.segment.column(ctx.field.norm));

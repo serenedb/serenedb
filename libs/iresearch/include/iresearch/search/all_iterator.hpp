@@ -68,6 +68,8 @@ class AllIterator : public DocIterator {
     return count;
   }
 
+  uint32_t collect(std::span<doc_id_t> docs) noexcept;
+
  private:
   using Attributes = std::tuple<DocAttr, CostAttr, ScoreAttr>;
 

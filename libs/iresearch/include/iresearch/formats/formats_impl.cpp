@@ -1943,6 +1943,7 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
   }
 
   uint32_t collect(std::span<doc_id_t> docs) final {
+    // TODO(gnusi): optimize
     const ScoreFunction* score;
     if constexpr (FieldTraits::Frequency()) {
       score = &std::get<ScoreAttr>(_attrs);

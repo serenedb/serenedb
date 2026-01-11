@@ -42,4 +42,16 @@ AllIterator::AllIterator(const ColumnProvider& reader,
   }
 }
 
+uint32_t AllIterator::collect(std::span<doc_id_t> docs) noexcept {
+  const auto* score = irs::get<ScoreAttr>(*this);
+  if (score && score->IsDefault()) {
+    score = nullptr;
+  }
+  return Collect(*this, docs, [&] {
+    if (score) {
+      score->Collect();
+    }
+  });
+}
+
 }  // namespace irs

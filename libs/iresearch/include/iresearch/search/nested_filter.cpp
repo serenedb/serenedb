@@ -153,6 +153,18 @@ class ChildToParentJoin : public DocIterator, private Matcher {
 
   uint32_t count() final { return Count(*this); }
 
+  uint32_t collect(std::span<doc_id_t> docs) noexcept {
+    const ScoreFunction* score;
+    if constexpr (Matcher::kHasScore) {
+      score = &std::get<ScoreAttr>(_attrs);
+    }
+    return Collect(*this, docs, [&] {
+      if constexpr (Matcher::kHasScore) {
+        score->Collect();
+      }
+    });
+  }
+
  private:
   friend Matcher;
 

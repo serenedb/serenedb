@@ -35,6 +35,7 @@
 #include <utility>
 
 #include "basics/down_cast.h"
+#include "basics/empty.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/wand_writer.hpp"
 #include "iresearch/index/field_meta.hpp"
@@ -203,16 +204,40 @@ struct BM25Context : public BM15Context {
               const uint32_t* freq, const uint32_t* norm,
               const score_t* filter_boost = nullptr) noexcept
     : BM15Context{k, boost, stats, freq, filter_boost},
-      source_norm{norm},
+      norm{norm},
       norm_cache{stats.norm_cache},
       norm_length{stats.norm_length} {}
 
-  const uint32_t* source_norm;
+  const uint32_t* norm;
   const float_t* norm_cache;
-
   float_t norm_length;  // precomputed 'k*b/avg_dl'
-  absl::InlinedVector<uint32_t, kScoreWindow> norm;
 };
+
+void BM1Boost(score_t* IRS_RESTRICT res, size_t n,
+              const score_t* IRS_RESTRICT boost, float_t num) noexcept {
+  for (size_t i = 0; i < n; ++i) {
+    res[i] = boost[i] * num;
+  }
+}
+
+void BM15(score_t* IRS_RESTRICT res, size_t n,
+          const uint32_t* IRS_RESTRICT freq, float_t c0, float_t c1) noexcept {
+  SDB_ASSERT(c1 != 0.f);
+  for (size_t i = 0; i < n; ++i) {
+    res[i] = c0 - c0 / (1.f + static_cast<float_t>(freq[i]) / c1);
+  }
+}
+
+void BM15Boost(score_t* IRS_RESTRICT res, size_t n,
+               const uint32_t* IRS_RESTRICT freq,
+               const score_t* IRS_RESTRICT boost, float_t num,
+               float_t c1) noexcept {
+  SDB_ASSERT(c1 != 0.f);
+  for (size_t i = 0; i < n; ++i) {
+    const auto c0 = boost[i] * num;
+    res[i] = c0 - c0 / (1.f + static_cast<float_t>(freq[i]) / c1);
+  }
+}
 
 }  // namespace
 
@@ -228,10 +253,8 @@ struct MakeScoreFunctionImpl<BM1Context> {
           SDB_ASSERT(res);
           SDB_ASSERT(ctx);
           auto& state = static_cast<Ctx&>(*ctx);
-          const size_t size = state.filter_boost.size();
-          for (size_t i = 0; i < size; ++i) {
-            res[i] = state.filter_boost[i] * state.num;
-          }
+          BM1Boost(res, state.filter_boost.size(), state.filter_boost.data(),
+                   state.num);
           state.filter_boost.clear();
         },
         [](irs::ScoreCtx* ctx) noexcept {
@@ -258,22 +281,12 @@ struct MakeScoreFunctionImpl<BM15Context> {
         SDB_ASSERT(ctx);
 
         auto& state = *static_cast<Ctx*>(ctx);
-
-        const size_t size = state.freq.size();
-        for (size_t i = 0; i < size; ++i) {
-          const float_t tf = static_cast<float_t>(state.freq[i]);
-
-          float_t c0;
-          if constexpr (HasFilterBoost) {
-            c0 = state.filter_boost[i] * state.num;
-          } else {
-            c0 = state.num;
-          }
-
-          const float_t c1 = state.norm_const;
-          SDB_ASSERT(c1 != 0.f);
-
-          res[i] = c0 - c0 / (1.f + tf / c1);
+        if constexpr (HasFilterBoost) {
+          BM15(res, state.freq.size(), state.freq.data(), state.num,
+               state.norm_const);
+        } else {
+          BM15Boost(res, state.freq.size(), state.freq.data(),
+                    state.filter_boost.data(), state.num, state.norm_const);
         }
 
         // TODO(gnusi): optimize clear
@@ -339,7 +352,6 @@ struct MakeScoreFunctionImpl<BM25ContextImpl<NormLength>> {
           state.filter_boost.clear();
         }
         state.freq.clear();
-        state.norm.clear();
       },
       [](irs::ScoreCtx* ctx) noexcept {
         auto& state = *static_cast<Ctx*>(ctx);
@@ -347,7 +359,6 @@ struct MakeScoreFunctionImpl<BM25ContextImpl<NormLength>> {
           state.filter_boost.emplace_back(*state.source_filter_boost);
         }
         state.freq.emplace_back(*state.source_freq);
-        state.norm.emplace_back(*state.source_norm);
       },
       ScoreFunction::NoopMin, std::forward<Args>(args)...);
   }

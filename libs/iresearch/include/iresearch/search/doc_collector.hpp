@@ -27,14 +27,12 @@ size_t ExecuteTopKWithCount(const DirectoryReader& reader, const Filter& filter,
     .scorers = scorers,
   });
 
-  // TODO(gnusi): we can evaluate count based on blocks count
   size_t count = 0;
   size_t offset = 0;
   const size_t size = docs.size();
   auto hits = std::views::zip(docs, scores);
   auto pivot = hits.begin() + k;
   auto end = hits.end();
-  auto score = scores.data();
 
   auto cmp = [](const auto& lhs, const auto& rhs) noexcept {
     return std::get<1>(lhs) > std::get<1>(rhs);
@@ -60,8 +58,8 @@ size_t ExecuteTopKWithCount(const DirectoryReader& reader, const Filter& filter,
       if (block_size == 0) {
         break;
       }
-      // columns.Collect(collect);
-      scorer->Score(score + offset);
+      columns.Collect(collected);
+      scorer->Score(scores.data() + offset);
       count += block_size;
       offset += block_size;
 

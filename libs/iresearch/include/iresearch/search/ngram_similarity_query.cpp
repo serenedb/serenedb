@@ -518,6 +518,18 @@ class NGramSimilarityDocIterator : public DocIterator, private ScoreCtx {
 
   uint32_t count() final { return Count(*this); }
 
+  uint32_t collect(std::span<doc_id_t> docs) {
+    const auto* score = irs::get<ScoreAttr>(*this);
+    if (score && score->IsDefault()) {
+      score = nullptr;
+    }
+    return Collect(*this, docs, [&] {
+      if (score) {
+        score->Collect();
+      }
+    });
+  }
+
  private:
   using Attributes =
     std::tuple<AttributePtr<DocAttr>, AttributePtr<CostAttr>, ScoreAttr>;

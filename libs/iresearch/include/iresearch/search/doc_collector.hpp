@@ -97,9 +97,9 @@ size_t ExecuteTopKHeap(
   for (auto left = k; auto& segment : reader) {
     auto docs = prepared->execute(irs::ExecutionContext{
       .segment = segment, .scorers = scorers, .wand = wand});
-    const auto* doc = irs::get<irs::DocAttr>(*docs);
-    const auto* score = irs::get<irs::ScoreAttr>(*docs);
-    auto* threshold = irs::GetMutable<irs::ScoreAttr>(docs.get());
+    const auto* doc = irs::get<DocAttr>(*docs);
+    const auto* score = irs::get<ScoreAttr>(*docs);
+    auto* threshold = irs::GetMutable<ScoreAttr>(docs.get());
     SDB_ASSERT(threshold);
 
     if (!left && threshold) {

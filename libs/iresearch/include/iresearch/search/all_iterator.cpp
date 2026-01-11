@@ -33,7 +33,7 @@ AllIterator::AllIterator(const SubReader& reader, const byte_type* query_stats,
   std::get<CostAttr>(_attrs).reset(_max_doc);
 
   if (!order.empty()) {
-    auto& score = std::get<irs::ScoreAttr>(_attrs);
+    auto& score = std::get<ScoreAttr>(_attrs);
     CompileScore(score, order.buckets(), reader,
                  irs::EmptyTermReader(docs_count), query_stats, *this, boost);
   }

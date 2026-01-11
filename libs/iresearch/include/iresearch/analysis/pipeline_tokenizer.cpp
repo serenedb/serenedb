@@ -285,7 +285,7 @@ bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
 
 irs::PayAttr* FindPayload(std::span<const Analyzer::ptr> pipeline) {
   for (auto it = pipeline.rbegin(); it != pipeline.rend(); ++it) {
-    auto* payload = irs::GetMutable<irs::PayAttr>(it->get());
+    auto* payload = irs::GetMutable<PayAttr>(it->get());
     if (payload) {
       return payload;
     }
@@ -295,7 +295,7 @@ irs::PayAttr* FindPayload(std::span<const Analyzer::ptr> pipeline) {
 
 bool AllHaveOffset(std::span<const Analyzer::ptr> pipeline) {
   return absl::c_all_of(pipeline, [](const Analyzer::ptr& v) {
-    return nullptr != irs::get<irs::OffsAttr>(*v);
+    return nullptr != irs::get<OffsAttr>(*v);
   });
 }
 
@@ -409,8 +409,8 @@ void PipelineTokenizer::init() {
 PipelineTokenizer::SubAnalyzerT::SubAnalyzerT(Analyzer::ptr a,
                                               bool track_offset)
   : term(irs::get<TermAttr>(*a)),
-    inc(irs::get<irs::IncAttr>(*a)),
-    offs(track_offset ? irs::get<irs::OffsAttr>(*a) : &kNoOffset),
+    inc(irs::get<IncAttr>(*a)),
+    offs(track_offset ? irs::get<OffsAttr>(*a) : &kNoOffset),
     _analyzer(std::move(a)) {
   SDB_ASSERT(inc);
   SDB_ASSERT(term);

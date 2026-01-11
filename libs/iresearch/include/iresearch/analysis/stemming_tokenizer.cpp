@@ -239,7 +239,7 @@ bool StemmingTokenizer::reset(std::string_view data) {
 
   term.value = {};  // reset
 
-  auto& offset = std::get<irs::OffsAttr>(_attrs);
+  auto& offset = std::get<OffsAttr>(_attrs);
   offset.start = 0;
   offset.end = static_cast<uint32_t>(data.size());
 

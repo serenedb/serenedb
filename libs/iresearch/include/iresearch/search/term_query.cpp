@@ -64,7 +64,7 @@ DocIterator::ptr TermQuery::execute(const ExecutionContext& ctx) const {
   SDB_ASSERT(docs);
 
   if (!ord_buckets.empty()) {
-    auto* score = irs::GetMutable<irs::ScoreAttr>(docs.get());
+    auto* score = irs::GetMutable<ScoreAttr>(docs.get());
     SDB_ASSERT(score);
     CompileScore(*score, ord_buckets, rdr, *state->reader, _stats.c_str(),
                  *docs, _boost);

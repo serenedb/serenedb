@@ -262,7 +262,7 @@ bool NearestNeighborsTokenizer::next() {
 }
 
 bool NearestNeighborsTokenizer::reset(std::string_view data) {
-  auto& offset = std::get<irs::OffsAttr>(_attrs);
+  auto& offset = std::get<OffsAttr>(_attrs);
   offset.start = 0;
   offset.end = static_cast<uint32_t>(data.size());
 

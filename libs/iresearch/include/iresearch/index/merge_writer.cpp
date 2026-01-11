@@ -142,8 +142,7 @@ class RemappingDocIterator : public DocIterator {
   }
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::Type<irs::DocAttr>::id() == type ? &_doc
-                                                 : _it->GetMutable(type);
+    return irs::Type<DocAttr>::id() == type ? &_doc : _it->GetMutable(type);
   }
 
   doc_id_t value() const noexcept final { return _doc.value; }
@@ -206,7 +205,7 @@ class CompoundDocIterator : public DocIterator {
   bool Aborted() const noexcept { return !static_cast<bool>(_progress); }
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    if (irs::Type<irs::DocAttr>::id() == type) {
+    if (irs::Type<DocAttr>::id() == type) {
       return &_doc;
     }
 
@@ -907,7 +906,7 @@ std::optional<field_id> Columnstore::insert(DocIteratorContainer& itrs,
   auto column = _writer->push_column(info, std::move(finalizer));
 
   auto write_column = [&column, &writer, this](auto& it) {
-    auto* payload = irs::get<irs::PayAttr>(it);
+    auto* payload = irs::get<PayAttr>(it);
 
     do {
       if (!_progress()) {
@@ -949,10 +948,10 @@ std::optional<field_id> Columnstore::insert(SortingCompoundDocIterator& it,
 
   if (callback) {
     callback->Subscribe([&payload](const AttributeProvider& attrs) {
-      payload = irs::get<irs::PayAttr>(attrs);
+      payload = irs::get<PayAttr>(attrs);
     });
   } else {
-    payload = irs::get<irs::PayAttr>(it);
+    payload = irs::get<PayAttr>(it);
   }
 
   if (it.next()) {
@@ -985,7 +984,7 @@ struct PrimarySortIteratorAdapter {
                                       DocIterator::ptr live_docs) noexcept
     : it{std::move(it)},
       doc{irs::get<DocAttr>(*this->it)},
-      payload{irs::get<irs::PayAttr>(*this->it)},
+      payload{irs::get<PayAttr>(*this->it)},
       live_docs{std::move(live_docs)},
       live_doc{this->live_docs ? irs::get<DocAttr>(*this->live_docs)
                                : nullptr} {

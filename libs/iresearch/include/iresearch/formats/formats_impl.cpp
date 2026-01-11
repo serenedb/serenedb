@@ -28,6 +28,7 @@
 #include "iresearch/types.hpp"
 extern "C" {
 #include <simdbitpacking.h>
+#include <simdintegratedbitpacking.h>
 #ifdef __AVX2__
 #include <avxbitpacking.h>
 #endif
@@ -157,8 +158,8 @@ struct DocBuffer : SkipBuffer {
   uint32_t* skip_doc;
   std::span<doc_id_t>::iterator doc{docs.begin()};
   std::span<uint32_t>::iterator freq{freqs.begin()};
-  doc_id_t last{doc_limits::invalid()};    // last buffered document id
-  doc_id_t block_last{doc_limits::min()};  // last document id in a block
+  doc_id_t last{doc_limits::invalid()};        // last buffered document id
+  doc_id_t block_last{doc_limits::invalid()};  // last document id in a block
 };
 
 // Buffer for storing positions
@@ -377,10 +378,10 @@ class PostingsWriterBase : public irs::PostingsWriter {
 
       freq = irs::get<FreqAttr>(attrs);
       if (freq) {
-        if (auto* p = irs::GetMutable<irs::PosAttr>(&attrs)) {
+        if (auto* p = irs::GetMutable<PosAttr>(&attrs)) {
           pos = p;
-          offs = irs::get<irs::OffsAttr>(*pos);
-          pay = irs::get<irs::PayAttr>(*pos);
+          offs = irs::get<OffsAttr>(*pos);
+          pay = irs::get<PayAttr>(*pos);
         }
       }
     }
@@ -572,7 +573,7 @@ void PostingsWriterBase::BeginTerm() {
   }
 
   _doc.last = doc_limits::invalid();
-  _doc.block_last = doc_limits::min();
+  _doc.block_last = doc_limits::invalid();
   _skip.Reset();
 }
 
@@ -1617,16 +1618,16 @@ template<typename IteratorTraits, typename FieldTraits>
 class DocIteratorBase : public DocIterator {
   static_assert((IteratorTraits::Features() & FieldTraits::Features()) ==
                 IteratorTraits::Features());
-  void ReadTailBlock();
+  void ReadTailBlock(doc_id_t prev_doc);
 
  protected:
   // returns current position in the document block 'docs_'
-  doc_id_t RelativePos() noexcept {
+  IRS_FORCE_INLINE doc_id_t RelativePos() noexcept {
     SDB_ASSERT(_begin >= _buf.docs);
     return static_cast<doc_id_t>(_begin - _buf.docs);
   }
 
-  void Refill();
+  void Refill(doc_id_t prev_doc);
 
   BufferType<IteratorTraits> _buf;
   uint32_t _enc_buf[IteratorTraits::kBlockSize];  // buffer for encoding
@@ -1638,10 +1639,10 @@ class DocIteratorBase : public DocIterator {
 };
 
 template<typename IteratorTraits, typename FieldTraits>
-void DocIteratorBase<IteratorTraits, FieldTraits>::Refill() {
+void DocIteratorBase<IteratorTraits, FieldTraits>::Refill(doc_id_t prev_doc) {
   if (_left >= IteratorTraits::kBlockSize) [[likely]] {
     // read doc deltas
-    IteratorTraits::read_block(*_doc_in, _enc_buf, _buf.docs);
+    IteratorTraits::read_block_delta(*_doc_in, _enc_buf, _buf.docs, prev_doc);
 
     if constexpr (IteratorTraits::Frequency()) {
       IteratorTraits::read_block(*_doc_in, _enc_buf, _buf.freqs);
@@ -1657,12 +1658,13 @@ void DocIteratorBase<IteratorTraits, FieldTraits>::Refill() {
     }
     _left -= IteratorTraits::kBlockSize;
   } else {
-    ReadTailBlock();
+    ReadTailBlock(prev_doc);
   }
 }
 
 template<typename IteratorTraits, typename FieldTraits>
-void DocIteratorBase<IteratorTraits, FieldTraits>::ReadTailBlock() {
+void DocIteratorBase<IteratorTraits, FieldTraits>::ReadTailBlock(
+  doc_id_t prev_doc) {
   auto* doc = std::end(_buf.docs) - _left;
   _begin = doc;
 
@@ -1674,25 +1676,28 @@ void DocIteratorBase<IteratorTraits, FieldTraits>::ReadTailBlock() {
   while (doc < std::end(_buf.docs)) {
     if constexpr (FieldTraits::Frequency()) {
       if constexpr (IteratorTraits::Frequency()) {
-        if (ShiftUnpack32(_doc_in->ReadV32(), *doc++)) {
+        if (ShiftUnpack32(_doc_in->ReadV32(), *doc)) {
           *freq++ = 1;
         } else {
           *freq++ = _doc_in->ReadV32();
         }
       } else {
-        if (!ShiftUnpack32(_doc_in->ReadV32(), *doc++)) {
+        if (!ShiftUnpack32(_doc_in->ReadV32(), *doc)) {
           _doc_in->ReadV32();
         }
       }
     } else {
-      *doc++ = _doc_in->ReadV32();
+      *doc = _doc_in->ReadV32();
     }
+    const auto curr_doc = prev_doc + *doc;
+    *doc++ = curr_doc;
+    prev_doc = curr_doc;
   }
   _left = 0;
 }
 
 template<typename IteratorTraits, typename FieldTraits>
-using AttributesT = std::conditional_t<
+using AttributesImpl = std::conditional_t<
   IteratorTraits::Position(),
   std::tuple<DocAttr, FreqAttr, ScoreAttr, CostAttr,
              PositionImpl<IteratorTraits, FieldTraits>>,
@@ -1708,7 +1713,7 @@ class SingleDocIterator
   static_assert((IteratorTraits::Features() & FieldTraits::Features()) ==
                 IteratorTraits::Features());
 
-  using Attributes = AttributesT<IteratorTraits, FieldTraits>;
+  using Attributes = AttributesImpl<IteratorTraits, FieldTraits>;
   using Position = PositionImpl<IteratorTraits, FieldTraits>;
 
  public:
@@ -1924,7 +1929,7 @@ void CommonReadWandData(WandExtent wextent, uint8_t index,
 // FieldTraits defines requested features.
 template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
 class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
-  using Attributes = AttributesT<IteratorTraits, FieldTraits>;
+  using Attributes = AttributesImpl<IteratorTraits, FieldTraits>;
   using Position = PositionImpl<IteratorTraits, FieldTraits>;
 
  public:
@@ -1955,7 +1960,7 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
       }
     }
 
-    auto& score = std::get<irs::ScoreAttr>(_attrs);
+    auto& score = std::get<ScoreAttr>(_attrs);
     _skip.Reader().ReadMaxScore(wand_index, func, *ctx, *this->_doc_in,
                                 score.max.tail);
     score.max.leaf = score.max.tail;
@@ -1981,19 +1986,15 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
   doc_id_t advance() final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
 
-    if (this->_begin == std::end(this->_buf.docs)) {
-      if (!this->_left) [[unlikely]] {
+    if (this->_begin == std::end(this->_buf.docs)) [[unlikely]] {
+      if (this->_left == 0) [[unlikely]] {
         return doc_value = doc_limits::eof();
       }
 
-      this->Refill();
-
-      // If this is the initial doc_id then
-      // set it to min() for proper delta value
-      doc_value += doc_id_t{!doc_limits::valid(doc_value)};
+      this->Refill(doc_value);
     }
 
-    doc_value += *this->_begin++;  // update document attribute
+    doc_value = *this->_begin++;  // update document attribute
 
     if constexpr (IteratorTraits::Frequency()) {
       auto& freq = std::get<FreqAttr>(_attrs);
@@ -2159,10 +2160,11 @@ void DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
   std::get<CostAttr>(_attrs).reset(term_state.docs_count);  // Estimate iterator
 
   SDB_ASSERT(!IteratorTraits::Frequency() || meta.freq);
-  if constexpr (IteratorTraits::Frequency() && IteratorTraits::Position()) {
+  if constexpr (IteratorTraits::Position()) {
+    static_assert(IteratorTraits::Frequency());
     const auto term_freq = meta.freq;
 
-    auto get_tail_start = [&]() noexcept {
+    const auto tail_start = [&] noexcept {
       if (term_freq < IteratorTraits::kBlockSize) {
         return term_state.pos_start;
       } else if (term_freq == IteratorTraits::kBlockSize) {
@@ -2170,15 +2172,17 @@ void DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
       } else {
         return term_state.pos_start + term_state.pos_end;
       }
-    };
+    }();
 
-    const DocState state{.pos_in = pos_in,
-                         .pay_in = pay_in,
-                         .term_state = &term_state,
-                         .freq = &std::get<FreqAttr>(_attrs).value,
-                         .enc_buf = this->_enc_buf,
-                         .tail_start = get_tail_start(),
-                         .tail_length = term_freq % IteratorTraits::kBlockSize};
+    const DocState state{
+      .pos_in = pos_in,
+      .pay_in = pay_in,
+      .term_state = &term_state,
+      .freq = &std::get<FreqAttr>(_attrs).value,
+      .enc_buf = this->_enc_buf,
+      .tail_start = tail_start,
+      .tail_length = term_freq % IteratorTraits::kBlockSize,
+    };
 
     std::get<Position>(_attrs).Prepare(state);
   }
@@ -2203,82 +2207,74 @@ doc_id_t DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::seek(
     return doc_value;
   }
 
-  // Check whether it makes sense to use skip-list
-  if (_skip.Reader().UpperBound() < target) {
-    SeekToBlock(target);
+  SeekToBlock(target);
 
-    if (!this->_left) [[unlikely]] {
+  if (this->_begin == std::end(this->_buf.docs)) [[unlikely]] {
+    if (this->_left == 0) [[unlikely]] {
       return doc_value = doc_limits::eof();
     }
 
-    this->Refill();
-
-    // If this is the initial doc_id then
-    // set it to min() for proper delta value
-    doc_value += doc_id_t{!doc_limits::valid(doc_value)};
+    this->Refill(doc_value);
   }
 
-  [[maybe_unused]] uint32_t notify{0};
+  [[maybe_unused]] uint32_t notify = 0;
+
   while (this->_begin != std::end(this->_buf.docs)) {
-    doc_value += *this->_begin++;
+    const auto doc = *this->_begin++;
 
-    if constexpr (!IteratorTraits::Position()) {
-      if (doc_value >= target) {
-        if constexpr (IteratorTraits::Frequency()) {
+    if constexpr (IteratorTraits::Position()) {
+      notify += *this->_freq++;
+    }
+
+    if (target <= doc) {
+      if constexpr (IteratorTraits::Frequency()) {
+        if constexpr (!IteratorTraits::Position()) {
           this->_freq = this->_buf.freqs + this->RelativePos();
-          SDB_ASSERT((this->_freq - 1) >= this->_buf.freqs);
-          SDB_ASSERT((this->_freq - 1) < std::end(this->_buf.freqs));
-          std::get<FreqAttr>(_attrs).value = this->_freq[-1];
         }
-        return doc_value;
+        SDB_ASSERT((this->_freq - 1) >= this->_buf.freqs);
+        SDB_ASSERT((this->_freq - 1) < std::end(this->_buf.freqs));
+        auto& freq = std::get<FreqAttr>(_attrs);
+        freq.value = this->_freq[-1];
       }
-    } else {
-      SDB_ASSERT(IteratorTraits::Frequency());
-      auto& freq = std::get<FreqAttr>(_attrs);
-      auto& pos = std::get<Position>(_attrs);
-      freq.value = *this->_freq++;
-      notify += freq.value;
 
-      if (doc_value >= target) {
+      if constexpr (IteratorTraits::Position()) {
+        auto& pos = std::get<Position>(_attrs);
         pos.Notify(notify);
         pos.Clear();
-        return doc_value;
       }
+
+      return doc_value = doc;
     }
   }
 
-  if constexpr (IteratorTraits::Position()) {
-    std::get<Position>(_attrs).Notify(notify);
-  }
-  while (doc_value < target) {
-    advance();
-  }
-
-  return doc_value;
+  return doc_value = doc_limits::eof();
 }
 
 template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
 void DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::SeekToBlock(
   doc_id_t target) {
-  // Ensured by caller
-  SDB_ASSERT(_skip.Reader().UpperBound() < target);
+  if (target <= _skip.Reader().UpperBound()) [[likely]] {
+    return;
+  }
 
   SkipState last;  // Where block starts
   _skip.Reader().Reset(last);
 
   // Init skip writer in lazy fashion
-  if (!_docs_count) [[likely]] {
+  if (_docs_count == 0) [[likely]] {
   seek_after_initialization:
     SDB_ASSERT(_skip.NumLevels());
 
     this->_left = _skip.Seek(target);
-    this->_doc_in->Seek(last.doc_ptr);
     std::get<DocAttr>(_attrs).value = last.doc;
+
+    this->_begin = std::end(this->_buf.docs);
+
+    this->_doc_in->Seek(last.doc_ptr);
     if constexpr (IteratorTraits::Position()) {
       auto& pos = std::get<Position>(_attrs);
       pos.Prepare(last);  // Notify positions
     }
-
     return;
   }
 
@@ -2322,7 +2318,7 @@ class Wanderator : public DocIteratorBase<IteratorTraits, FieldTraits>,
                    private ScoreCtx {
   static_assert(IteratorTraits::Frequency());
 
-  using Attributes = AttributesT<IteratorTraits, FieldTraits>;
+  using Attributes = AttributesImpl<IteratorTraits, FieldTraits>;
   using Position = PositionImpl<IteratorTraits, FieldTraits>;
 
   static void MinStrict(ScoreCtx* ctx, score_t arg) noexcept {
@@ -2343,7 +2339,7 @@ class Wanderator : public DocIteratorBase<IteratorTraits, FieldTraits>,
     SDB_ASSERT(absl::c_all_of(this->_buf.docs, [](doc_id_t doc) {
       return doc == doc_limits::invalid();
     }));
-    std::get<irs::ScoreAttr>(_attrs).Reset(
+    std::get<ScoreAttr>(_attrs).Reset(
       *this,
       [](ScoreCtx* ctx, score_t* res) noexcept {
         auto& self = static_cast<Wanderator&>(*ctx);
@@ -2453,21 +2449,21 @@ class Wanderator : public DocIteratorBase<IteratorTraits, FieldTraits>,
 
   void SeekToBlock(doc_id_t target) {
     _skip.Reader().EnsureSorted();
-
-    // Check whether we have to use skip-list
-    if (_skip.Reader().IsLessThanUpperBound(target)) {
-      // Ensured by Prepare(...)
-      SDB_ASSERT(_skip.NumLevels());
-      // We could decide to make new skip before actual read block
-      // SDB_ASSERT(0 == skip_.Reader().State().doc_ptr);
-
-      this->_left = _skip.Seek(target);
-      auto& doc_value = std::get<DocAttr>(_attrs).value;
-      doc_value = _skip.Reader().State().doc;
-      std::get<ScoreAttr>(_attrs).max.leaf = _skip.Reader().skip_scores.back();
-      // Will trigger Refill in "next"
-      this->_begin = std::end(this->_buf.docs);
+    if (!_skip.Reader().IsLessThanUpperBound(target)) [[likely]] {
+      return;
     }
+
+    // Ensured by WandPrepare(...)
+    SDB_ASSERT(_skip.NumLevels());
+
+    this->_left = _skip.Seek(target);
+    std::get<DocAttr>(_attrs).value = _skip.Reader().State().doc;
+    std::get<ScoreAttr>(_attrs).max.leaf = _skip.Reader().skip_scores.back();
+
+    this->_begin = std::end(this->_buf.docs);
+
+    // We could decide to make new skip before actual read block
+    // SDB_ASSERT(0 == skip_.Reader().State().doc_ptr);
   }
 
   SkipReader<ReadSkip> _skip;
@@ -2583,10 +2579,11 @@ void Wanderator<IteratorTraits, FieldTraits, WandExtent, Root>::WandPrepare(
 
   SDB_ASSERT(!IteratorTraits::Frequency() || meta.freq);
 
-  if constexpr (IteratorTraits::Frequency() && IteratorTraits::Position()) {
+  if constexpr (IteratorTraits::Position()) {
+    static_assert(IteratorTraits::Frequency());
     const auto term_freq = meta.freq;
 
-    auto get_tail_start = [&]() noexcept {
+    const auto tail_start = [&] noexcept {
       if (term_freq < IteratorTraits::kBlockSize) {
         return term_state.pos_start;
       } else if (term_freq == IteratorTraits::kBlockSize) {
@@ -2594,15 +2591,17 @@ void Wanderator<IteratorTraits, FieldTraits, WandExtent, Root>::WandPrepare(
       } else {
         return term_state.pos_start + term_state.pos_end;
       }
-    };
+    }();
 
-    const DocState state{.pos_in = pos_in,
-                         .pay_in = pay_in,
-                         .term_state = &term_state,
-                         .freq = &std::get<FreqAttr>(_attrs).value,
-                         .enc_buf = this->_enc_buf,
-                         .tail_start = get_tail_start(),
-                         .tail_length = term_freq % IteratorTraits::kBlockSize};
+    const DocState state{
+      .pos_in = pos_in,
+      .pay_in = pay_in,
+      .term_state = &term_state,
+      .freq = &std::get<FreqAttr>(_attrs).value,
+      .enc_buf = this->_enc_buf,
+      .tail_start = tail_start,
+      .tail_length = term_freq % IteratorTraits::kBlockSize,
+    };
 
     std::get<Position>(_attrs).Prepare(state);
   }
@@ -2618,7 +2617,7 @@ void Wanderator<IteratorTraits, FieldTraits, WandExtent, Root>::WandPrepare(
 
   skip_in->Seek(term_state.doc_start + term_state.e_skip_start);
 
-  auto& max = std::get<irs::ScoreAttr>(_attrs).max;
+  auto& max = std::get<ScoreAttr>(_attrs).max;
   _skip.Reader().ReadMaxScore(max, *skip_in);
 
   _skip.Prepare(std::move(skip_in), term_state.docs_count);
@@ -2646,12 +2645,12 @@ doc_id_t Wanderator<IteratorTraits, FieldTraits, WandExtent, Root>::seek(
     return doc_value;
   }
 
-  while (true) {
+  do {
     SeekToBlock(target);
 
-    if (this->_begin == std::end(this->_buf.docs)) {
-      if (!this->_left) [[unlikely]] {
-        return doc_value = doc_limits::eof();
+    if (this->_begin == std::end(this->_buf.docs)) [[unlikely]] {
+      if (this->_left == 0) [[unlikely]] {
+        break;
       }
 
       if (auto& state = _skip.Reader().State(); state.doc_ptr) {
@@ -2663,64 +2662,62 @@ doc_id_t Wanderator<IteratorTraits, FieldTraits, WandExtent, Root>::seek(
         state.doc_ptr = 0;
       }
 
-      doc_value += !doc_limits::valid(doc_value);
-      this->Refill();
+      this->Refill(doc_value);
     }
 
-    [[maybe_unused]] uint32_t notify{0};
+    [[maybe_unused]] uint32_t notify = 0;
     [[maybe_unused]] const auto threshold = _skip.Reader().threshold;
 
+    uint32_t doc{};
     while (this->_begin != std::end(this->_buf.docs)) {
-      doc_value += *this->_begin++;
+      doc = *this->_begin++;
 
-      if constexpr (!IteratorTraits::Position()) {
-        if (doc_value >= target) {
-          if constexpr (IteratorTraits::Frequency()) {
+      if constexpr (IteratorTraits::Position()) {
+        notify += *this->_freq++;
+      }
+
+      if (target <= doc) {
+        if constexpr (IteratorTraits::Frequency()) {
+          if constexpr (!IteratorTraits::Position()) {
             this->_freq = this->_buf.freqs + this->RelativePos();
-            SDB_ASSERT((this->_freq - 1) >= this->_buf.freqs);
-            SDB_ASSERT((this->_freq - 1) < std::end(this->_buf.freqs));
-
-            auto& freq = std::get<FreqAttr>(_attrs);
-            freq.value = this->_freq[-1];
-            if constexpr (Root) {
-              // We can use approximation before actual score for bm11, bm15,
-              // tfidf(true/false) but only for term query, so I don't think
-              // it's really good idea. And I don't except big difference
-              // because in such case, compution is pretty cheap
-              _scorer(&_score);
-              if (_score <= threshold) {
-                continue;
-              }
-            }
           }
-          return doc_value;
+          SDB_ASSERT((this->_freq - 1) >= this->_buf.freqs);
+          SDB_ASSERT((this->_freq - 1) < std::end(this->_buf.freqs));
+          auto& freq = std::get<FreqAttr>(_attrs);
+          freq.value = this->_freq[-1];
         }
-      } else {
-        static_assert(IteratorTraits::Frequency());
-        auto& freq = std::get<FreqAttr>(_attrs);
-        freq.value = *this->_freq++;
-        notify += freq.value;
-        if (doc_value >= target) {
-          if constexpr (Root) {
-            _scorer(&_score);
-            if (_score <= threshold) {
-              continue;
-            }
+        doc_value = doc;
+
+        if constexpr (Root) {
+          // We can use approximation before actual score for bm11, bm15,
+          // tfidf(true/false) but only for term query, so I don't think
+          // it's really good idea. And I don't except big difference
+          // because in such case, computation is pretty cheap
+          _scorer(&_score);
+          if (_score <= threshold) {
+            continue;
           }
+        }
+
+        if constexpr (IteratorTraits::Position()) {
           auto& pos = std::get<Position>(_attrs);
           pos.Notify(notify);
           pos.Clear();
-          return doc_value;
         }
+
+        return doc;
       }
     }
 
-    if constexpr (IteratorTraits::Position()) {
-      std::get<Position>(_attrs).Notify(notify);
+    if constexpr (Root) {
+      if constexpr (IteratorTraits::Position()) {
+        std::get<Position>(_attrs).Notify(notify);
+      }
+      target = doc + 1;
     }
+  } while (Root);
 
-    target = doc_value + 1;
-  }
+  return doc_value = doc_limits::eof();
 }
 
 struct IndexMetaWriterImpl final : public IndexMetaWriter {
@@ -3527,18 +3524,18 @@ void BitUnionImpl(IndexInput& doc_in, doc_id_t docs_count, uint32_t (&docs)[N],
   constexpr auto kBits{BitsRequired<std::remove_pointer_t<decltype(set)>>()};
   size_t num_blocks = docs_count / FieldTraits::kBlockSize;
 
-  doc_id_t doc = doc_limits::min();
+  auto prev_doc = doc_limits::invalid();
   while (num_blocks--) {
-    FieldTraits::read_block(doc_in, enc_buf, docs);
+    FieldTraits::read_block_delta(doc_in, enc_buf, docs, prev_doc);
     if constexpr (FieldTraits::Frequency()) {
       FieldTraits::skip_block(doc_in);
     }
 
     // FIXME optimize
-    for (const auto delta : docs) {
-      doc += delta;
+    for (const auto doc : docs) {
       irs::SetBit(set[doc / kBits], doc % kBits);
     }
+    prev_doc = docs[N - 1];
   }
 
   doc_id_t docs_left = docs_count % FieldTraits::kBlockSize;
@@ -3553,8 +3550,8 @@ void BitUnionImpl(IndexInput& doc_in, doc_id_t docs_count, uint32_t (&docs)[N],
       delta = doc_in.ReadV32();
     }
 
-    doc += delta;
-    irs::SetBit(set[doc / kBits], doc % kBits);
+    prev_doc += delta;
+    irs::SetBit(set[prev_doc / kBits], prev_doc % kBits);
   }
 }
 
@@ -3676,94 +3673,6 @@ ColumnstoreReader::ptr Format15Base::get_columnstore_reader() const {
   return columnstore2::MakeReader();
 }
 
-struct FormatTraitsAvx {
-  using AlignType = __m256i;
-
-  static constexpr std::string_view kName = "1_5avx";
-
-  static constexpr uint32_t kBlockSize = AVXBlockSize;
-  static_assert(kBlockSize <= doc_limits::eof());
-
-  IRS_FORCE_INLINE static void PackBlock(const uint32_t* IRS_RESTRICT decoded,
-                                         uint32_t* IRS_RESTRICT encoded,
-                                         uint32_t bits) noexcept {
-    ::avxpackwithoutmask(decoded, reinterpret_cast<AlignType*>(encoded), bits);
-  }
-
-  IRS_FORCE_INLINE static void PackBlockDelta(
-    const uint32_t* IRS_RESTRICT decoded, uint32_t* IRS_RESTRICT encoded,
-    uint32_t prev, uint32_t bits) noexcept {
-    ::avxpack(decoded, reinterpret_cast<AlignType*>(encoded), bits);
-  }
-
-  IRS_FORCE_INLINE static void UnpackBlock(uint32_t* IRS_RESTRICT decoded,
-                                           const uint32_t* IRS_RESTRICT encoded,
-                                           uint32_t bits) noexcept {
-    ::avxunpack(reinterpret_cast<const AlignType*>(encoded), decoded, bits);
-  }
-
-  IRS_FORCE_INLINE static void write_block_delta(IndexOutput& out, uint32_t* in,
-                                                 uint32_t prev, uint32_t* buf) {
-    DeltaEncode<kBlockSize>(in, prev);
-    bitpack::write_block32<kBlockSize>(PackBlock, out, in, buf);
-  }
-
-  IRS_FORCE_INLINE static void write_block(IndexOutput& out, const uint32_t* in,
-                                           uint32_t* buf) {
-    bitpack::write_block32<kBlockSize>(PackBlock, out, in, buf);
-  }
-
-  IRS_FORCE_INLINE static void read_block(IndexInput& in, uint32_t* buf,
-                                          uint32_t* out) {
-    bitpack::read_block32<kBlockSize>(UnpackBlock, in, buf, out);
-  }
-
-  IRS_FORCE_INLINE static void skip_block(IndexInput& in) {
-    bitpack::skip_block32(in, kBlockSize);
-  }
-};
-
-struct FormatTraitsSse4 {
-  using AlignType = __m128i;
-
-  static constexpr std::string_view kName = "1_5simd";
-
-  static constexpr uint32_t kBlockSize = SIMDBlockSize;
-  static_assert(kBlockSize <= doc_limits::eof());
-
-  IRS_FORCE_INLINE static void PackBlock(const uint32_t* IRS_RESTRICT decoded,
-                                         uint32_t* IRS_RESTRICT encoded,
-                                         uint32_t bits) noexcept {
-    ::simdpackwithoutmask(decoded, reinterpret_cast<AlignType*>(encoded), bits);
-  }
-
-  IRS_FORCE_INLINE static void UnpackBlock(uint32_t* IRS_RESTRICT decoded,
-                                           const uint32_t* IRS_RESTRICT encoded,
-                                           uint32_t bits) noexcept {
-    ::simdunpack(reinterpret_cast<const AlignType*>(encoded), decoded, bits);
-  }
-
-  IRS_FORCE_INLINE static void write_block_delta(IndexOutput& out, uint32_t* in,
-                                                 uint32_t prev, uint32_t* buf) {
-    DeltaEncode<kBlockSize>(in, prev);
-    bitpack::write_block32<kBlockSize>(PackBlock, out, in, buf);
-  }
-
-  IRS_FORCE_INLINE static void write_block(IndexOutput& out, const uint32_t* in,
-                                           uint32_t* buf) {
-    bitpack::write_block32<kBlockSize>(PackBlock, out, in, buf);
-  }
-
-  IRS_FORCE_INLINE static void read_block(IndexInput& in, uint32_t* buf,
-                                          uint32_t* out) {
-    bitpack::read_block32<kBlockSize>(UnpackBlock, in, buf, out);
-  }
-
-  IRS_FORCE_INLINE static void skip_block(IndexInput& in) {
-    bitpack::skip_block32(in, kBlockSize);
-  }
-};
-
 template<typename F>
 class Format15Impl final : public Format15Base {
  public:
@@ -3792,14 +3701,131 @@ class Format15Impl final : public Format15Base {
   }
 };
 
-using Format15simd = Format15Impl<FormatTraitsSse4>;
-using Format15avx = Format15Impl<FormatTraitsAvx>;
+#ifdef __AVX2__
+struct FormatTraitsAVX {
+  using AlignType = __m256i;
+
+  static constexpr std::string_view kName = "1_5avx";
+
+  static constexpr uint32_t kBlockSize = AVXBlockSize;
+  static_assert(kBlockSize <= doc_limits::eof());
+
+  IRS_FORCE_INLINE static void PackBlock(const uint32_t* IRS_RESTRICT decoded,
+                                         uint32_t* IRS_RESTRICT encoded,
+                                         uint32_t bits) noexcept {
+    ::avxpackwithoutmask(decoded, reinterpret_cast<AlignType*>(encoded), bits);
+  }
+
+  IRS_FORCE_INLINE static void UnpackBlockDelta(
+    uint32_t prev, uint32_t* IRS_RESTRICT decoded,
+    const uint32_t* IRS_RESTRICT encoded, uint32_t bits) noexcept {
+    ::avxunpack(reinterpret_cast<const AlignType*>(encoded), decoded, bits);
+    for (size_t i = 0; i < kBlockSize; ++i) {
+      decoded[i] += prev;
+      prev = decoded[i];
+    }
+  }
+
+  IRS_FORCE_INLINE static void UnpackBlock(uint32_t* IRS_RESTRICT decoded,
+                                           const uint32_t* IRS_RESTRICT encoded,
+                                           uint32_t bits) noexcept {
+    ::avxunpack(reinterpret_cast<const AlignType*>(encoded), decoded, bits);
+  }
+
+  IRS_FORCE_INLINE static void write_block_delta(IndexOutput& out, uint32_t* in,
+                                                 uint32_t prev, uint32_t* buf) {
+    DeltaEncode<kBlockSize>(in, prev);
+    bitpack::write_block32<kBlockSize>(PackBlock, out, in, buf);
+  }
+
+  IRS_FORCE_INLINE static void write_block(IndexOutput& out, const uint32_t* in,
+                                           uint32_t* buf) {
+    bitpack::write_block32<kBlockSize>(PackBlock, out, in, buf);
+  }
+
+  IRS_FORCE_INLINE static void read_block_delta(IndexInput& in, uint32_t* buf,
+                                                uint32_t* out, uint32_t prev) {
+    bitpack::read_block_delta32<kBlockSize>(UnpackBlockDelta, in, buf, out,
+                                            prev);
+  }
+
+  IRS_FORCE_INLINE static void read_block(IndexInput& in, uint32_t* buf,
+                                          uint32_t* out) {
+    bitpack::read_block32<kBlockSize>(UnpackBlock, in, buf, out);
+  }
+
+  IRS_FORCE_INLINE static void skip_block(IndexInput& in) {
+    bitpack::skip_block32(in, kBlockSize);
+  }
+};
+
+using Format15avx = Format15Impl<FormatTraitsAVX>;
+
+#endif
+
+struct FormatTraitsSSE {
+  using AlignType = __m128i;
+
+  static constexpr std::string_view kName = "1_5simd";
+
+  static constexpr uint32_t kBlockSize = SIMDBlockSize;
+  static_assert(kBlockSize <= doc_limits::eof());
+
+  IRS_FORCE_INLINE static void PackBlock(const uint32_t* IRS_RESTRICT decoded,
+                                         uint32_t* IRS_RESTRICT encoded,
+                                         uint32_t bits) noexcept {
+    ::simdpackwithoutmask(decoded, reinterpret_cast<AlignType*>(encoded), bits);
+  }
+
+  IRS_FORCE_INLINE static void UnpackBlockDelta(
+    uint32_t prev, uint32_t* IRS_RESTRICT decoded,
+    const uint32_t* IRS_RESTRICT encoded, uint32_t bits) noexcept {
+    ::simdunpackd1(prev, reinterpret_cast<const AlignType*>(encoded), decoded,
+                   bits);
+  }
+
+  IRS_FORCE_INLINE static void UnpackBlock(uint32_t* IRS_RESTRICT decoded,
+                                           const uint32_t* IRS_RESTRICT encoded,
+                                           uint32_t bits) noexcept {
+    ::simdunpack(reinterpret_cast<const AlignType*>(encoded), decoded, bits);
+  }
+
+  IRS_FORCE_INLINE static void write_block_delta(IndexOutput& out, uint32_t* in,
+                                                 uint32_t prev, uint32_t* buf) {
+    DeltaEncode<kBlockSize>(in, prev);
+    bitpack::write_block32<kBlockSize>(PackBlock, out, in, buf);
+  }
+
+  IRS_FORCE_INLINE static void write_block(IndexOutput& out, const uint32_t* in,
+                                           uint32_t* buf) {
+    bitpack::write_block32<kBlockSize>(PackBlock, out, in, buf);
+  }
+
+  IRS_FORCE_INLINE static void read_block_delta(IndexInput& in, uint32_t* buf,
+                                                uint32_t* out, uint32_t prev) {
+    bitpack::read_block_delta32<kBlockSize>(UnpackBlockDelta, in, buf, out,
+                                            prev);
+  }
+
+  IRS_FORCE_INLINE static void read_block(IndexInput& in, uint32_t* buf,
+                                          uint32_t* out) {
+    bitpack::read_block32<kBlockSize>(UnpackBlock, in, buf, out);
+  }
+
+  IRS_FORCE_INLINE static void skip_block(IndexInput& in) {
+    bitpack::skip_block32(in, kBlockSize);
+  }
+};
+
+using Format15sse = Format15Impl<FormatTraitsSSE>;
 
 }  // namespace
 
 void formats::Init() {
-  REGISTER_FORMAT(Format15simd);
+#ifdef __AVX2__
   REGISTER_FORMAT(Format15avx);
+#endif
+  REGISTER_FORMAT(Format15sse);
 }
 
 // use base irs::position type for ancestors

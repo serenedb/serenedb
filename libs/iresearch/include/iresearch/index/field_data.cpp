@@ -960,8 +960,8 @@ void FieldData::add_term_random_access(Posting& p, doc_id_t did,
 bool FieldData::invert(Tokenizer& stream, doc_id_t id) {
   SDB_ASSERT(id < doc_limits::eof());  // 0-based document id
 
-  const auto* term = get<TermAttr>(stream);
-  const auto* inc = get<IncAttr>(stream);
+  const auto* term = irs::get<TermAttr>(stream);
+  const auto* inc = irs::get<IncAttr>(stream);
   const OffsAttr* offs = nullptr;
   const PayAttr* pay = nullptr;
 
@@ -980,10 +980,10 @@ bool FieldData::invert(Tokenizer& stream, doc_id_t id) {
   }
 
   if (IndexFeatures::None != (_requested_features & IndexFeatures::Offs)) {
-    offs = get<OffsAttr>(stream);
+    offs = irs::get<OffsAttr>(stream);
 
     if (offs) {
-      pay = get<PayAttr>(stream);
+      pay = irs::get<PayAttr>(stream);
     }
   }
 

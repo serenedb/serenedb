@@ -53,7 +53,7 @@ class CostAttr final : public Attribute {
   // collection, or "def" value if there is no "cost" attribute in "src".
   template<typename Provider>
   static Type extract(const Provider& src, Type def = kMax) noexcept {
-    if (auto* attr = irs::get<irs::CostAttr>(src); attr) {
+    if (auto* attr = irs::get<CostAttr>(src); attr) {
       return attr->estimate();
     } else {
       return def;

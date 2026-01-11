@@ -100,8 +100,24 @@ doc_id_t BitsetDocIterator::seek(doc_id_t target) noexcept {
 }
 
 uint32_t BitsetDocIterator::count() noexcept {
-  // TODO(mbkkt) custom implementation?
-  return Count(*this);
+  uint32_t count = 0;
+
+  while (_word != 0) [[unlikely]] {
+    advance();
+    ++count;
+  }
+
+  while (true) {
+    if (_next >= _end) {
+      if (refill(&_begin, &_end)) {
+        reset();
+        continue;
+      }
+      _doc.value = doc_limits::eof();
+      return count;
+    }
+    count += std::popcount(*_next++);
+  }
 }
 
 }  // namespace irs

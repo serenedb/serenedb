@@ -1,12 +1,14 @@
 #!/bin/bash
 
-[ -z "$SDB_DEV" ] && exit 1  # SDB_DEV="Off"
-[ -z "$USE_IPO" ] && exit 1  # USE_IPO="On"
-[ -z "$ENSURE_VTUNE_SYMBOLS" ] && exit 1  # ENSURE_VTUNE_SYMBOLS="Off"
-[ -z "$PUSH_IMAGES_2_REGISTRY" ] && exit 1  # PUSH_IMAGES_2_REGISTRY="false"
+[ -z "$SDB_DEV" ] && exit 1                # SDB_DEV="Off"
+[ -z "$USE_IPO" ] && exit 1                # USE_IPO="On"
+[ -z "$ENSURE_VTUNE_SYMBOLS" ] && exit 1   # ENSURE_VTUNE_SYMBOLS="Off"
+[ -z "$PUSH_IMAGES_2_REGISTRY" ] && exit 1 # PUSH_IMAGES_2_REGISTRY="false"
 [ -z "$DOCKER_TAG" ] && source $WORKSPACE/packages/find_version.bash
 
-imagename=10.serenedb.com:5000/serenedb:${DOCKER_TAG}
+#TODO (malandin) imagename should not be hardcoded
+
+imagename=registry.serenedb.com:5000/serenedb:${DOCKER_TAG}
 # containerpath=$WORKSPACE/packages/docker
 
 rm -rf $WORKSPACE/package_all/docker

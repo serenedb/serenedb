@@ -1144,7 +1144,7 @@ void TermReaderBase::Prepare(burst_trie::Version version, IndexInput& in) {
 
 Attribute* TermReaderBase::GetMutable(TypeInfo::type_id type) noexcept {
   if (IndexFeatures::None != (_field.index_features & IndexFeatures::Freq) &&
-      irs::Type<irs::FreqAttr>::id() == type) {
+      irs::Type<FreqAttr>::id() == type) {
     return &_freq;
   }
 

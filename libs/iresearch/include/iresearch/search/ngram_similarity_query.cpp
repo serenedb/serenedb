@@ -34,9 +34,9 @@ namespace {
 struct Position {
   template<typename Iterator>
   explicit Position(Iterator& itr) noexcept
-    : pos{&PosAttr::GetMutable(itr)},
+    : pos{&PosAttr::get(itr)},
       doc{irs::get<DocAttr>(itr)},
-      scr{&irs::ScoreAttr::get(itr)} {
+      scr{&ScoreAttr::get(itr)} {
     SDB_ASSERT(pos);
     SDB_ASSERT(doc);
     SDB_ASSERT(scr);
@@ -103,8 +103,8 @@ class NGramApprox : public MinMatchDisjunction<NoopAggregator> {
 };
 
 template<>
-class NGramApprox<true> : public Conjunction<CostAdapter<>, NoopAggregator> {
-  using Base = Conjunction<CostAdapter<>, NoopAggregator>;
+class NGramApprox<true> : public Conjunction<CostAdapter, NoopAggregator> {
+  using Base = Conjunction<CostAdapter, NoopAggregator>;
 
  public:
   NGramApprox(CostAdapters&& itrs, size_t min_match_count)
@@ -476,7 +476,7 @@ class NGramSimilarityDocIterator : public DocIterator, private ScoreCtx {
     : NGramSimilarityDocIterator{std::move(itrs), total_terms_count,
                                  min_match_count, !ord.empty()} {
     if (!ord.empty()) {
-      auto& score = std::get<irs::ScoreAttr>(_attrs);
+      auto& score = std::get<ScoreAttr>(_attrs);
       CompileScore(score, ord.buckets(), segment, field, stats, *this, boost);
     }
   }

@@ -23,20 +23,35 @@
 #include "all_iterator.hpp"
 
 #include "iresearch/formats/empty_term_reader.hpp"
+#include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/column_collector.hpp"
 
 namespace irs {
 
-AllIterator::AllIterator(const SubReader& reader, const byte_type* query_stats,
-                         const Scorers& order, uint64_t docs_count,
-                         score_t boost)
+AllIterator::AllIterator(const ColumnProvider& reader,
+                         ColumnCollector* collector,
+                         const byte_type* query_stats, const Scorers& order,
+                         uint64_t docs_count, score_t boost)
   : _max_doc{doc_id_t(doc_limits::min() + docs_count - 1)} {
   std::get<CostAttr>(_attrs).reset(_max_doc);
 
   if (!order.empty()) {
     auto& score = std::get<ScoreAttr>(_attrs);
-    CompileScore(score, order.buckets(), reader,
+    CompileScore(score, order.buckets(), reader, collector,
                  irs::EmptyTermReader(docs_count), query_stats, *this, boost);
   }
+}
+
+uint32_t AllIterator::collect(std::span<doc_id_t> docs) noexcept {
+  const auto* score = irs::get<ScoreAttr>(*this);
+  if (score && score->IsDefault()) {
+    score = nullptr;
+  }
+  return Collect(*this, docs, [&] {
+    if (score) {
+      score->Collect();
+    }
+  });
 }
 
 }  // namespace irs

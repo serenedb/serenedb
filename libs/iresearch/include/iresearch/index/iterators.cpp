@@ -161,4 +161,16 @@ ColumnIterator::ptr ColumnIterator::empty() {
   return memory::to_managed<ColumnIterator>(gEmptyColumnIterator);
 }
 
+uint32_t DocIterator::collect(std::span<doc_id_t> docs) {
+  const auto* score = irs::get<ScoreAttr>(*this);
+  if (score && score->IsDefault()) {
+    score = nullptr;
+  }
+  return Collect(*this, docs, [&] {
+    if (score) {
+      score->Collect();
+    }
+  });
+}
+
 }  // namespace irs

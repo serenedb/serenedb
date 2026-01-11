@@ -22,6 +22,9 @@
 
 #include "same_position_filter.hpp"
 
+#include <iresearch/index/iterators.hpp>
+#include <iresearch/search/scorer.hpp>
+
 #include "basics/misc.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
@@ -36,19 +39,19 @@ namespace irs {
 namespace {
 
 template<typename Conjunction>
-class SamePositionIterator : public Conjunction {
+class SamePositionIterator : public DocIterator {
  public:
   using Positions = std::vector<PosAttr::ref>;
 
   template<typename... Args>
   SamePositionIterator(Positions&& pos, Args&&... args)
-    : Conjunction{std::forward<Args>(args)...}, _pos(std::move(pos)) {
+    : _approx{std::forward<Args>(args)...}, _pos(std::move(pos)) {
     SDB_ASSERT(!_pos.empty());
   }
 
   doc_id_t advance() final {
     while (true) {
-      const auto doc = Conjunction::advance();
+      const auto doc = _approx.advance();
       if (doc_limits::eof(doc) || FindSamePosition()) {
         return doc;
       }
@@ -59,7 +62,7 @@ class SamePositionIterator : public Conjunction {
     if (const auto doc = this->value(); target <= doc) [[unlikely]] {
       return doc;
     }
-    const auto doc = Conjunction::seek(target);
+    const auto doc = _approx.seek(target);
     if (doc_limits::eof(doc) || FindSamePosition()) {
       return doc;
     }
@@ -67,6 +70,12 @@ class SamePositionIterator : public Conjunction {
   }
 
   uint32_t count() final { return DocIterator::Count(*this); }
+
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+    return _approx.GetMutable(type);
+  }
+
+  doc_id_t value() const noexcept { return _approx.value(); }
 
  private:
   bool FindSamePosition() {
@@ -89,6 +98,7 @@ class SamePositionIterator : public Conjunction {
     return true;
   }
 
+  Conjunction _approx;
   Positions _pos;
 };
 
@@ -150,8 +160,8 @@ class SamePositionQuery : public Filter::Query {
         auto* score = irs::GetMutable<ScoreAttr>(docs.get());
         SDB_ASSERT(score);
 
-        CompileScore(*score, ord.buckets(), segment, *term_state.reader,
-                     term_stats->c_str(), *docs, _boost);
+        CompileScore(*score, ord.buckets(), ctx.segment, ctx.collector,
+                     *term_state.reader, term_stats->c_str(), *docs, _boost);
       }
 
       // add iterator
@@ -160,13 +170,12 @@ class SamePositionQuery : public Filter::Query {
       ++term_stats;
     }
 
-    return ResolveMergeType(ScoreMergeType::Sum, ord.buckets().size(),
-                            [&]<typename A>(A&& aggregator) {
-                              // TODO(mbkkt) Implement wand?
-                              return MakeConjunction<SamePositionIterator>(
-                                {}, std::move(aggregator), std::move(itrs),
-                                std::move(positions));
-                            });
+    return ResolveMergeType(
+      ScoreMergeType::Sum, [&]<ScoreMergeType MergeType> -> DocIterator::ptr {
+        return MakeConjunction<MergeType, SamePositionIterator>(
+          // TODO(mbkkt) Implement wand?
+          {}, std::move(itrs), std::move(positions));
+      });
   }
 
   score_t Boost() const noexcept final { return _boost; }

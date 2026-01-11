@@ -22,6 +22,8 @@
 
 #include <absl/algorithm/container.h>
 
+#include <iresearch/search/score_function.hpp>
+
 #include "basics/assert.h"
 #include "basics/resource_manager.hpp"
 #include "iresearch/store/data_input.hpp"
@@ -1940,6 +1942,19 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
       this->_buf.docs, [](doc_id_t doc) { return !doc_limits::valid(doc); }));
   }
 
+  uint32_t collect(std::span<doc_id_t> docs) final {
+    // TODO(gnusi): optimize
+    const ScoreFunction* score;
+    if constexpr (FieldTraits::Frequency()) {
+      score = &std::get<ScoreAttr>(_attrs);
+    }
+    return DocIterator::Collect(*this, docs, [&] {
+      if constexpr (FieldTraits::Frequency()) {
+        score->Collect();
+      }
+    });
+  }
+
   void WandPrepare(const TermMeta& meta, const IndexInput* doc_in,
                    const IndexInput* pos_in, const IndexInput* pay_in,
                    const ScoreFunctionFactory& factory, const Scorer& scorer,
@@ -1974,15 +1989,6 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
                const IndexInput* pos_in, const IndexInput* pay_in,
                uint8_t wand_index = WandContext::kDisable);
 
- private:
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
-  }
-
-  doc_id_t value() const noexcept final {
-    return std::get<DocAttr>(_attrs).value;
-  }
-
   doc_id_t advance() final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
 
@@ -2008,6 +2014,15 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
     }
 
     return doc_value;
+  }
+
+ private:
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+    return irs::GetMutable(_attrs, type);
+  }
+
+  doc_id_t value() const noexcept final {
+    return std::get<DocAttr>(_attrs).value;
   }
 
   doc_id_t seek(doc_id_t target) final;
@@ -2349,7 +2364,7 @@ class Wanderator : public DocIteratorBase<IteratorTraits, FieldTraits>,
           self._scorer(res);
         }
       },
-      strict ? MinStrict : MinWeak);
+      ScoreFunction::NoopCollect, strict ? MinStrict : MinWeak);
   }
 
   void WandPrepare(const TermMeta& meta, const IndexInput* doc_in,

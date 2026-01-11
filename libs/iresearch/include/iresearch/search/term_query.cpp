@@ -52,8 +52,12 @@ DocIterator::ptr TermQuery::execute(const ExecutionContext& ctx) const {
       docs = reader->wanderator(
         *state->cookie, ord.features(), {[&](const AttributeProvider& attrs) {
           return front.bucket->PrepareScorer(
-            rdr, state->reader->meta(), _stats.c_str() + front.stats_offset,
-            attrs, _boost);
+            {.segment = rdr,
+             .field = state->reader->meta(),
+             .doc_attrs = attrs,
+             .collector = ctx.collector,
+             .stats = _stats.c_str() + front.stats_offset,
+             .boost = _boost});
         }},
         ctx.wand);
     }
@@ -66,8 +70,8 @@ DocIterator::ptr TermQuery::execute(const ExecutionContext& ctx) const {
   if (!ord_buckets.empty()) {
     auto* score = irs::GetMutable<ScoreAttr>(docs.get());
     SDB_ASSERT(score);
-    CompileScore(*score, ord_buckets, rdr, *state->reader, _stats.c_str(),
-                 *docs, _boost);
+    CompileScore(*score, ord_buckets, rdr, ctx.collector, *state->reader,
+                 _stats.c_str(), *docs, _boost);
   }
 
   return docs;

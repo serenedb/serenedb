@@ -22,11 +22,17 @@
 
 #pragma once
 
+#include <absl/container/inlined_vector.h>
+
+#include <iresearch/index/iterators.hpp>
+
 #include "basics/empty.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/search/cost.hpp"
 #include "iresearch/search/score.hpp"
+#include "iresearch/search/score_function.hpp"
+#include "iresearch/search/scorer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -43,6 +49,7 @@ struct ScoreAdapter {
       doc{irs::get<DocAttr>(*this->_it)},
       score{&ScoreAttr::get(*this->_it)} {
     SDB_ASSERT(doc);
+    SDB_ASSERT(score);
   }
 
   ScoreAdapter(ScoreAdapter&&) noexcept = default;
@@ -80,6 +87,47 @@ struct SubScores {
   score_t sum_score = 0.f;
 };
 
+struct ConjunctionScoreContext {
+  void Reset(auto& iterators) {
+    scorers.reserve(iterators.size());
+    for (auto& it : iterators) {
+      if (!it.score || it.score->IsDefault()) {
+        continue;
+      }
+      scorers.emplace_back(it.score);
+    }
+  }
+
+  bool Empty() const noexcept { return scorers.empty(); }
+
+  template<ScoreMergeType MergeType>
+  void Score(score_t* res) noexcept {
+    SDB_ASSERT(!scorers.empty());
+    scores.resize(size);
+
+    const size_t count = scorers.size();
+
+    scorers[0]->Score(res);
+    for (size_t i = 1; i < count; ++i) {
+      scorers[i]->Score(scores.data());
+      Merge<MergeType>(res, std::span{scores});
+    }
+
+    size = 0;
+  }
+
+  void Collect() {
+    for (auto* scorer : scorers) {
+      scorer->Collect();
+    }
+    ++size;
+  }
+
+  std::vector<const ScoreFunction*> scorers;
+  absl::InlinedVector<score_t, kScoreWindow> scores;
+  uint32_t size = 0;
+};
+
 // Conjunction of N iterators
 // -----------------------------------------------------------------------------
 // c |  [0] <-- lead (the least cost iterator)
@@ -89,18 +137,17 @@ struct SubScores {
 //   V  [n] <-- end
 // -----------------------------------------------------------------------------
 // goto used instead of labeled cycles, with them we can achieve best perfomance
-template<typename Adapter, typename Merger>
-struct ConjunctionBase : public DocIterator,
-                         protected Merger,
-                         protected ScoreCtx {
+template<typename Adapter, ScoreMergeType MergeType>
+struct ConjunctionBase : public DocIterator, public ScoreCtx {
+ public:
+  static constexpr auto kMergeType = MergeType;
+  static constexpr bool kHasScore = kMergeType != ScoreMergeType::Noop;
+
  protected:
   static_assert(std::is_base_of_v<ScoreAdapter, Adapter>);
 
-  explicit ConjunctionBase(Merger&& merger, std::vector<Adapter>&& itrs,
-                           std::vector<irs::ScoreAttr*>&& scorers)
-    : Merger{std::move(merger)},
-      _itrs{std::move(itrs)},
-      _scores{std::move(scorers)} {
+  explicit ConjunctionBase(std::vector<Adapter>&& itrs)
+    : _itrs{std::move(itrs)} {
     SDB_ASSERT(
       absl::c_is_sorted(_itrs, [](const auto& lhs, const auto& rhs) noexcept {
         return CostAttr::extract(lhs, CostAttr::kMax) <
@@ -108,44 +155,25 @@ struct ConjunctionBase : public DocIterator,
       }));
   }
 
-  static void Score2(ScoreCtx* ctx, score_t* res) noexcept {
-    auto& self = static_cast<ConjunctionBase&>(*ctx);
-    auto& merger = static_cast<Merger&>(self);
-    (*self._scores.front())(res);
-    (*self._scores.back())(merger.temp());
-    merger(res, merger.temp());
-  }
+  void PrepareScore(irs::ScoreAttr& score, auto min) {
+    if constexpr (kHasScore) {
+      _scores.Reset(_itrs);
 
-  static void ScoreN(ScoreCtx* ctx, score_t* res) noexcept {
-    auto& self = static_cast<ConjunctionBase&>(*ctx);
-    auto& merger = static_cast<Merger&>(self);
-    auto it = self._scores.begin();
-    auto end = self._scores.end();
-    (**it)(res);
-    ++it;
-    do {
-      (**it)(merger.temp());
-      merger(res, merger.temp());
-      ++it;
-    } while (it != end);
-  }
+      if (_scores.Empty()) {
+        score = ScoreFunction::Default();
+        return;
+      }
 
-  void PrepareScore(irs::ScoreAttr& score, auto score_2, auto score_n,
-                    auto min) {
-    SDB_ASSERT(Merger::size());
-    switch (_scores.size()) {
-      case 0:
-        score = ScoreFunction::Default(Merger::size());
-        break;
-      case 1:
-        score = std::move(*_scores.front());
-        break;
-      case 2:
-        score.Reset(*this, score_2, min);
-        break;
-      default:
-        score.Reset(*this, score_n, min);
-        break;
+      score = {*this,
+               [](ScoreCtx* ctx, score_t* res) noexcept {
+                 auto& self = *static_cast<ConjunctionBase*>(ctx);
+                 self._scores.template Score<MergeType>(res);
+               },
+               [](ScoreCtx* ctx) noexcept {
+                 auto& self = *static_cast<ConjunctionBase*>(ctx);
+                 self._scores.Collect();
+               },
+               min};
     }
   }
 
@@ -154,20 +182,18 @@ struct ConjunctionBase : public DocIterator,
   size_t size() const noexcept { return _itrs.size(); }
 
   std::vector<Adapter> _itrs;
-  std::vector<ScoreAttr*> _scores;
+  [[no_unique_address]] utils::Need<kHasScore, ConjunctionScoreContext> _scores;
 };
 
-template<typename Adapter, typename Merger>
-class Conjunction : public ConjunctionBase<Adapter, Merger> {
-  using Base = ConjunctionBase<Adapter, Merger>;
+template<typename Adapter, ScoreMergeType MergeType>
+class Conjunction : public ConjunctionBase<Adapter, MergeType> {
+  using Base = ConjunctionBase<Adapter, MergeType>;
   using Attributes =
     std::tuple<AttributePtr<DocAttr>, AttributePtr<CostAttr>, ScoreAttr>;
 
  public:
-  explicit Conjunction(Merger&& merger, std::vector<Adapter>&& itrs,
-                       std::vector<irs::ScoreAttr*>&& scores = {})
-    : Base{std::move(merger), std::move(itrs), std::move(scores)},
-      _front{this->_itrs.front()} {
+  explicit Conjunction(std::vector<Adapter>&& itrs)
+    : Base{std::move(itrs)}, _front{this->_itrs.front()} {
     SDB_ASSERT(!this->_itrs.empty());
     SDB_ASSERT(_front);
 
@@ -175,11 +201,7 @@ class Conjunction : public ConjunctionBase<Adapter, Merger> {
     std::get<AttributePtr<CostAttr>>(_attrs) =
       irs::GetMutable<CostAttr>(&_front);
 
-    if constexpr (kHasScore<Merger>) {
-      auto& score = std::get<ScoreAttr>(_attrs);
-      this->PrepareScore(score, Base::Score2, Base::ScoreN,
-                         ScoreFunction::DefaultMin);
-    }
+    this->PrepareScore(std::get<ScoreAttr>(_attrs), ScoreFunction::NoopMin);
   }
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
@@ -190,13 +212,21 @@ class Conjunction : public ConjunctionBase<Adapter, Merger> {
     return std::get<AttributePtr<DocAttr>>(_attrs).ptr->value;
   }
 
-  doc_id_t advance() override { return converge(_front->advance()); }
+  doc_id_t advance() final { return converge(_front->advance()); }
 
-  doc_id_t seek(doc_id_t target) override {
+  doc_id_t seek(doc_id_t target) final {
     return converge(_front->seek(target));
   }
 
-  uint32_t count() override { return DocIterator::Count(*this); }
+  uint32_t count() final { return DocIterator::Count(*this); }
+
+  uint32_t collect(std::span<doc_id_t> docs) final {
+    return DocIterator::Collect(*this, docs, [&] {
+      if constexpr (Base::kHasScore) {
+        this->_scores.Collect();
+      }
+    });
+  }
 
  private:
   // tries to converge front_ and other iterators to the specified target.
@@ -226,38 +256,38 @@ class Conjunction : public ConjunctionBase<Adapter, Merger> {
   Adapter& _front;
 };
 
-template<bool Root, typename Adapter, typename Merger>
-class BlockConjunction : public ConjunctionBase<Adapter, Merger> {
-  using Base = ConjunctionBase<Adapter, Merger>;
+template<bool Root, typename Adapter, ScoreMergeType MergeType>
+class BlockConjunction : public ConjunctionBase<Adapter, MergeType> {
+  using Base = ConjunctionBase<Adapter, MergeType>;
   using Attributes =
     std::tuple<DocAttr, AttributePtr<CostAttr>, irs::ScoreAttr>;
 
  public:
-  explicit BlockConjunction(Merger&& merger, std::vector<Adapter>&& itrs,
-                            SubScores&& scores, bool strict)
-    : Base{std::move(merger), std::move(itrs), std::move(scores.scores)},
-      _sum_scores{scores.sum_score},
-      _score{static_cast<Merger&>(*this).size()} {
+  using Adapters = std::vector<Adapter>;
+
+  explicit BlockConjunction(Adapters&& itrs, SubScores&& scores, bool strict)
+    : Base{std::move(itrs)}, _sum_scores{scores.sum_score} {
     SDB_ASSERT(this->_itrs.size() >= 2);
-    SDB_ASSERT(!this->_scores.empty());
-    absl::c_sort(this->_scores, [](const auto* lhs, const auto* rhs) {
-      return lhs->max.tail > rhs->max.tail;
-    });
+    // SDB_ASSERT(!this->_scores.empty());
+    // absl::c_sort(this->_scores, [](const auto* lhs, const auto* rhs) {
+    //   return lhs->max.tail > rhs->max.tail;
+    // });
     std::get<AttributePtr<CostAttr>>(_attrs) =
       irs::GetMutable<CostAttr>(&this->_itrs.front());
     auto& score = std::get<ScoreAttr>(_attrs);
     score.max.leaf = score.max.tail = _sum_scores;
     auto min = strict ? MinStrictN : MinWeakN;
-    if constexpr (Root) {
-      auto score_root = [](ScoreCtx* ctx, score_t* res) noexcept {
-        auto& self = static_cast<BlockConjunction&>(*ctx);
-        std::memcpy(res, self._score.temp(),
-                    static_cast<Merger&>(self).byte_size());
-      };
-      this->PrepareScore(score, score_root, score_root, min);
-    } else {
-      this->PrepareScore(score, Base::Score2, Base::ScoreN, min);
-    }
+    // if constexpr (Root) {
+    //   auto score_root = [](ScoreCtx* ctx, score_t* res) noexcept {
+    //     auto& self = static_cast<BlockConjunction&>(*ctx);
+    //     std::memcpy(res, self._score.temp(),
+    //                 static_cast<Merger&>(self).byte_size());
+    //   };
+    //   this->PrepareScore(score, score_root, score_root, min);
+    // } else {
+    //   this->PrepareScore(score, min);
+    // }
+    this->PrepareScore(score, min);
   }
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
@@ -274,15 +304,14 @@ class BlockConjunction : public ConjunctionBase<Adapter, Merger> {
     auto& doc = std::get<DocAttr>(_attrs).value;
     if (target <= doc) [[unlikely]] {
       if constexpr (Root) {
-        if (_threshold < _score.temp()[0]) {
-          return doc;
-        }
+        // if (_threshold < _score.temp()[0]) {
+        //   return doc;
+        // }
         target = doc + !doc_limits::eof(doc);
       } else {
         return doc;
       }
     }
-    auto& merger = static_cast<Merger&>(*this);
   align_leafs:
     target = ShallowSeekImpl(target);
   align_docs:
@@ -312,26 +341,27 @@ class BlockConjunction : public ConjunctionBase<Adapter, Merger> {
     } while (it != end);
     doc = seek_target;
 
-    if constexpr (Root) {
-      auto begin = this->_scores.begin();
-      auto end = this->_scores.end();
+    // if constexpr (Root) {
+    // auto& merger = static_cast<Merger&>(*this);
+    //   auto begin = this->_scores.begin();
+    //   auto end = this->_scores.end();
 
-      (**begin)(_score.temp());
-      for (++begin; begin != end; ++begin) {
-        (**begin)(merger.temp());
-        merger(_score.temp(), merger.temp());
-      }
-      if (_threshold < _score.temp()[0]) {
-        return target;
-      }
-      ++target;
-      if (target > _leafs_doc) {
-        goto align_leafs;
-      }
-      goto align_docs;
-    } else {
-      return target;
-    }
+    //  (**begin)(_score.temp());
+    //  for (++begin; begin != end; ++begin) {
+    //    (**begin)(merger.temp());
+    //    merger(_score.temp(), merger.temp());
+    //  }
+    //  if (_threshold < _score.temp()[0]) {
+    //    return target;
+    //  }
+    //  ++target;
+    //  if (target > _leafs_doc) {
+    //    goto align_leafs;
+    //  }
+    //  goto align_docs;
+    //} else {
+    return target;
+    //}
   }
 
   doc_id_t shallow_seek(doc_id_t target) final {
@@ -347,13 +377,13 @@ class BlockConjunction : public ConjunctionBase<Adapter, Merger> {
  private:
   // TODO(mbkkt) Maybe optimize for 2?
   static void MinN(BlockConjunction& self, score_t arg) noexcept {
-    for (auto* score : self._scores) {
-      const auto others = self._sum_scores - score->max.tail;
-      if (arg <= others) {
-        return;
-      }
-      score->Min(arg - others);
-    }
+    // for (auto* score : self._scores) {
+    //   const auto others = self._sum_scores - score->max.tail;
+    //   if (arg <= others) {
+    //     return;
+    //   }
+    //   score->Min(arg - others);
+    // }
   }
 
   static void MinStrictN(ScoreCtx* ctx, score_t arg) noexcept {
@@ -380,7 +410,6 @@ class BlockConjunction : public ConjunctionBase<Adapter, Merger> {
 
   doc_id_t ShallowSeekImpl(doc_id_t target) {
     auto& doc = std::get<DocAttr>(_attrs).value;
-    auto& merger = static_cast<Merger&>(*this);
     if (target <= _leafs_doc) {
     score_check:
       if (_threshold < score().leaf) {
@@ -398,6 +427,7 @@ class BlockConjunction : public ConjunctionBase<Adapter, Merger> {
     auto min_leafs = doc;
     score_t sum_leafs_score = 0.f;
 
+    // auto& merger = static_cast<Merger&>(*this);
     for (auto& it : this->_itrs) {
       auto max_leaf = it->shallow_seek(target);
       auto min_leaf = it.doc->value;
@@ -415,7 +445,7 @@ class BlockConjunction : public ConjunctionBase<Adapter, Merger> {
         max_leafs = max_leaf;
       }
       SDB_ASSERT(min_leafs <= max_leafs);
-      merger.Merge(sum_leafs_score, it.score->max.leaf);
+      // merger.Merge(sum_leafs_score, it.score->max.leaf);
     }
 
     _leafs_doc = max_leafs;
@@ -430,14 +460,15 @@ class BlockConjunction : public ConjunctionBase<Adapter, Merger> {
   score_t _sum_scores;
   doc_id_t _leafs_doc{doc_limits::invalid()};
   score_t _threshold{};
-  typename Merger::Buffer _score;
+  // typename Merger::Buffer _score;
 };
 
 // Returns conjunction iterator created from the specified sub iterators
-template<template<typename> typename Wrapper = EmptyWrapper, typename Merger,
-         typename Adapter, typename... Args>
-DocIterator::ptr MakeConjunction(WandContext ctx, Merger&& merger,
-                                 std::vector<Adapter>&& itrs, Args&&... args) {
+template<ScoreMergeType MergeType,
+         template<typename> typename Wrapper = EmptyWrapper, typename Adapter,
+         typename... Args>
+DocIterator::ptr MakeConjunction(WandContext ctx, std::vector<Adapter>&& itrs,
+                                 Args&&... args) {
   if (const auto size = itrs.size(); 0 == size) {
     // empty or unreachable search criteria
     return DocIterator::empty();
@@ -452,9 +483,9 @@ DocIterator::ptr MakeConjunction(WandContext ctx, Merger&& merger,
            CostAttr::extract(rhs, CostAttr::kMax);
   });
   SubScores scores;
-  using ConjunctionImpl = Conjunction<Adapter, Merger>;
+  using ConjunctionImpl = Conjunction<Adapter, MergeType>;
   using WrappedConjunction = Wrapper<ConjunctionImpl>;
-  if constexpr (kHasScore<Merger> &&
+  if constexpr (false && MergeType != ScoreMergeType::Noop &&
                 std::is_same_v<ConjunctionImpl, WrappedConjunction>) {
     scores.scores.reserve(itrs.size());
     // TODO(mbkkt) Find better one
@@ -480,17 +511,17 @@ DocIterator::ptr MakeConjunction(WandContext ctx, Merger&& merger,
     if (use_block) {
       return ResolveBool(ctx.root, [&]<bool Root> -> DocIterator::ptr {
         return memory::make_managed<
-          Wrapper<BlockConjunction<Root, Adapter, Merger>>>(
-          std::forward<Args>(args)..., std::forward<Merger>(merger),
-          std::move(itrs), std::move(scores), ctx.strict);
+          Wrapper<BlockConjunction<Root, Adapter, MergeType>>>(
+          std::forward<Args>(args)..., std::move(itrs), std::move(scores),
+          ctx.strict);
       });
     }
     // TODO(mbkkt) We still could set min producer and root scoring
   }
 
-  return memory::make_managed<Wrapper<Conjunction<Adapter, Merger>>>(
-    std::forward<Args>(args)..., std::forward<Merger>(merger), std::move(itrs),
-    std::move(scores.scores));
+  return memory::make_managed<Wrapper<Conjunction<Adapter, MergeType>>>(
+    std::forward<Args>(args)...,
+    std::move(itrs) /*, std::move(scores.scores)*/);
 }
 
 }  // namespace irs

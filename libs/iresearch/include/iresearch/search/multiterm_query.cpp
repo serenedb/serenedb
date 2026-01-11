@@ -29,6 +29,7 @@
 #include "iresearch/search/disjunction.hpp"
 #include "iresearch/search/min_match_disjunction.hpp"
 #include "iresearch/search/prepared_state_visitor.hpp"
+#include "iresearch/search/scorer.hpp"
 
 namespace {
 
@@ -149,8 +150,8 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
       SDB_ASSERT(score);
       SDB_ASSERT(entry.stat_offset < stats.size());
       auto* stat = stats[entry.stat_offset].c_str();
-      CompileScore(*score, ord.buckets(), segment, *state->reader, stat, *docs,
-                   entry.boost * _boost);
+      CompileScore(*score, ord.buckets(), ctx.segment, ctx.collector,
+                   *state->reader, stat, *docs, entry.boost * _boost);
     }
 
     SDB_ASSERT(it != std::end(itrs));
@@ -168,13 +169,11 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
 
   itrs.erase(it, std::end(itrs));
 
-  return ResolveMergeType(
-    _merge_type, ord.buckets().size(), [&]<typename A>(A&& aggregator) {
-      using Disjunction = MinMatchIterator<ScoreAdapter, A>;
-      return MakeWeakDisjunction<Disjunction>({}, std::move(itrs), _min_match,
-                                              std::move(aggregator),
-                                              state->estimation());
-    });
+  return ResolveMergeType(_merge_type, [&]<ScoreMergeType MergeType> {
+    using Disjunction = MinMatchIterator<ScoreAdapter, MergeType>;
+    return MakeWeakDisjunction<Disjunction>({}, std::move(itrs), _min_match,
+                                            state->estimation());
+  });
 }
 
 }  // namespace irs

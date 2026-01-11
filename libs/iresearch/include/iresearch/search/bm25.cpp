@@ -22,24 +22,30 @@
 
 #include "bm25.hpp"
 
+#include <absl/container/inlined_vector.h>
 #include <vpack/common.h>
 #include <vpack/parser.h>
 #include <vpack/slice.h>
 #include <vpack/vpack.h>
 
 #include <cstdint>
+#include <exception>
+#include <iresearch/search/score.hpp>
+#include <iresearch/search/score_function.hpp>
+#include <utility>
 
 #include "basics/down_cast.h"
-#include "basics/math_utils.hpp"
-#include "basics/misc.hpp"
+#include "basics/empty.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/wand_writer.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/norm.hpp"
+#include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/scorer.hpp"
 #include "iresearch/search/scorer_impl.hpp"
-#include "iresearch/utils/type_limits.hpp"
-#include "scorer.hpp"
+#include "iresearch/utils/attribute_provider.hpp"
+#include "vpack/serializer.h"
 
 namespace irs {
 namespace {
@@ -81,73 +87,41 @@ struct BM25FieldCollector final : FieldCollector {
   }
 };
 
-irs::Scorer::ptr MakeFromObject(const vpack::Slice slice) {
-  SDB_ASSERT(slice.isObject());
+struct Params {
+  float_t k = BM25::K();
+  float_t b = BM25::B();
+};
 
-  float_t k{BM25::K()};
-  float_t b{BM25::B()};
-
-  auto get = [&](std::string_view key, float_t& coefficient) {
-    auto v = slice.get(key);
-    if (v.isNone()) {
-      return true;
-    }
-    if (!v.isNumber<float_t>()) {
-      SDB_ERROR(
-        "xxxxx", sdb::Logger::IRESEARCH,
-        absl::StrCat("Non-float value in '", key,
-                     "' while constructing bm25 scorer from VPack arguments"));
-      return false;
-    }
-    coefficient = v.getNumber<float_t>();
-    return true;
-  };
-  if (!get("k", k) || !get("b", b)) {
-    return nullptr;
+Scorer::ptr MakeFromObject(const vpack::Slice slice) {
+  Params params;
+  auto r = vpack::ReadObjectNothrow(slice, params,
+                                    {
+                                      .skip_unknown = true,
+                                      .strict = false,
+                                    });
+  if (!r.ok()) {
+    SDB_ERROR(
+      "xxxxx", sdb::Logger::IRESEARCH,
+      absl::StrCat("Error '", r.errorMessage(),
+                   "' while constructing bm25 scorer from VPack arguments"));
+    return {};
   }
 
-  return std::make_unique<BM25>(k, b);
+  return std::make_unique<BM25>(params.k, params.b);
 }
 
 Scorer::ptr MakeFromArray(const vpack::Slice slice) {
-  SDB_ASSERT(slice.isArray());
-
-  vpack::ArrayIterator array(slice);
-  vpack::ValueLength size = array.size();
-  if (size > 2) {
-    // wrong number of arguments
+  Params params;
+  auto r = vpack::ReadTupleNothrow(slice, params);
+  if (!r.ok()) {
     SDB_ERROR(
       "xxxxx", sdb::Logger::IRESEARCH,
-      "Wrong number of arguments while constructing bm25 scorer from VPack "
-      "arguments (must be <= 2)");
-    return nullptr;
+      absl::StrCat("Error '", r.errorMessage(),
+                   "' while constructing bm25 scorer from VPack arguments"));
+    return {};
   }
 
-  // default args
-  auto k = BM25::K();
-  auto b = BM25::B();
-  uint8_t i = 0;
-  for (auto arg_slice : array) {
-    if (!arg_slice.isNumber<decltype(k)>()) {
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                absl::StrCat("Non-float value at position '", i,
-                             "' while constructing bm25 scorer "
-                             "from VPack arguments"));
-      return nullptr;
-    }
-
-    switch (i) {
-      case 0:  // parse `k` coefficient
-        k = static_cast<float_t>(arg_slice.getNumber<decltype(k)>());
-        ++i;
-        break;
-      case 1:  // parse `b` coefficient
-        b = static_cast<float_t>(arg_slice.getNumber<decltype(b)>());
-        break;
-    }
-  }
-
-  return std::make_unique<BM25>(k, b);
+  return std::make_unique<BM25>(params.k, params.b);
 }
 
 Scorer::ptr MakeVPack(const vpack::Slice slice) {
@@ -197,60 +171,72 @@ Scorer::ptr MakeJson(std::string_view args) {
 }
 
 struct BM1Context : public irs::ScoreCtx {
-  BM1Context(float_t k, irs::score_t boost, const BM25Stats& stats,
-             const irs::FilterBoost* fb = nullptr) noexcept
-    : filter_boost{fb}, num{boost * (k + 1) * stats.idf} {}
+  BM1Context(float_t k, score_t boost, const BM25Stats& stats,
+             const score_t* fb = nullptr) noexcept
+    : source_filter_boost{fb}, num{boost * (k + 1) * stats.idf} {}
 
-  const irs::FilterBoost* filter_boost;
+  size_t Size() const noexcept { return filter_boost.size(); }
+  void Clear() noexcept { filter_boost.clear(); }
+
+  const score_t* source_filter_boost;
+
   float_t num;  // partially precomputed numerator : boost * (k + 1) * idf
+  absl::InlinedVector<score_t, kScoreWindow> filter_boost;
 };
 
 struct BM15Context : public BM1Context {
-  BM15Context(float_t k, irs::score_t boost, const BM25Stats& stats,
-              const FreqAttr* freq,
-              const irs::FilterBoost* fb = nullptr) noexcept
+  BM15Context(float_t k, score_t boost, const BM25Stats& stats,
+              const uint32_t* freq, const score_t* fb = nullptr) noexcept
     : BM1Context{k, boost, stats, fb},
-      freq{freq ? freq : &kEmptyFreq},
+      source_freq{freq ? freq : &kEmptyFreq.value},
       norm_const{stats.norm_const} {
-    SDB_ASSERT(this->freq);
+    SDB_ASSERT(this->source_freq);
   }
 
-  const FreqAttr* freq;  // document frequency
-  float_t norm_const;    // 'k' factor
+  const uint32_t* source_freq;  // document frequency
+
+  float_t norm_const;  // 'k' factor
+  absl::InlinedVector<uint32_t, kScoreWindow> freq;
 };
 
-template<typename Norm>
-struct BM25Context final : public BM15Context {
-  BM25Context(float_t k, irs::score_t boost, const BM25Stats& stats,
-              const FreqAttr* freq, Norm&& norm,
-              const irs::FilterBoost* filter_boost = nullptr) noexcept
+struct BM25Context : public BM15Context {
+  BM25Context(float_t k, score_t boost, const BM25Stats& stats,
+              const uint32_t* freq, const uint32_t* norm,
+              const score_t* filter_boost = nullptr) noexcept
     : BM15Context{k, boost, stats, freq, filter_boost},
-      norm{std::move(norm)},
-      norm_length{stats.norm_length},
-      norm_cache{stats.norm_cache} {}
+      norm{norm},
+      norm_cache{stats.norm_cache},
+      norm_length{stats.norm_length} {}
 
-  Norm norm;
-  float_t norm_length;  // precomputed 'k*b/avg_dl'
+  const uint32_t* norm;
   const float_t* norm_cache;
+  float_t norm_length;  // precomputed 'k*b/avg_dl'
 };
 
-template<typename Reader, NormType Type>
-struct BM25NormAdapter final {
-  static constexpr auto kType = Type;
-
-  explicit BM25NormAdapter(Reader&& reader) : reader{std::move(reader)} {}
-
-  IRS_FORCE_INLINE decltype(auto) operator()() {
-    // norms are stored |doc| as uint32_t
-    return reader();
+void BM1Boost(score_t* IRS_RESTRICT res, size_t n,
+              const score_t* IRS_RESTRICT boost, float_t num) noexcept {
+  for (size_t i = 0; i < n; ++i) {
+    res[i] = boost[i] * num;
   }
+}
 
-  [[no_unique_address]] Reader reader;
-};
+void BM15(score_t* IRS_RESTRICT res, size_t n,
+          const uint32_t* IRS_RESTRICT freq, float_t c0, float_t c1) noexcept {
+  SDB_ASSERT(c1 != 0.f);
+  for (size_t i = 0; i < n; ++i) {
+    res[i] = c0 - c0 / (1.f + static_cast<float_t>(freq[i]) / c1);
+  }
+}
 
-template<NormType Type, typename Reader>
-auto MakeBM25NormAdapter(Reader&& reader) {
-  return BM25NormAdapter<Reader, Type>(std::move(reader));
+void BM15Boost(score_t* IRS_RESTRICT res, size_t n,
+               const uint32_t* IRS_RESTRICT freq,
+               const score_t* IRS_RESTRICT boost, float_t num,
+               float_t c1) noexcept {
+  SDB_ASSERT(c1 != 0.f);
+  for (size_t i = 0; i < n; ++i) {
+    const auto c0 = boost[i] * num;
+    res[i] = c0 - c0 / (1.f + static_cast<float_t>(freq[i]) / c1);
+  }
 }
 
 }  // namespace
@@ -266,13 +252,16 @@ struct MakeScoreFunctionImpl<BM1Context> {
         [](irs::ScoreCtx* ctx, irs::score_t* res) noexcept {
           SDB_ASSERT(res);
           SDB_ASSERT(ctx);
-
-          auto& state = *static_cast<Ctx*>(ctx);
-
-          SDB_ASSERT(state.filter_boost);
-          *res = state.filter_boost->value * state.num;
+          auto& state = static_cast<Ctx&>(*ctx);
+          BM1Boost(res, state.filter_boost.size(), state.filter_boost.data(),
+                   state.num);
+          state.filter_boost.clear();
         },
-        ScoreFunction::DefaultMin, std::forward<Args>(args)...);
+        [](irs::ScoreCtx* ctx) noexcept {
+          auto& state = static_cast<Ctx&>(*ctx);
+          state.filter_boost.emplace_back(*state.source_filter_boost);
+        },
+        ScoreFunction::NoopMin, std::forward<Args>(args)...);
     } else {
       Ctx ctx{std::forward<Args>(args)...};
       return ScoreFunction::Constant(ctx.num);
@@ -292,65 +281,86 @@ struct MakeScoreFunctionImpl<BM15Context> {
         SDB_ASSERT(ctx);
 
         auto& state = *static_cast<Ctx*>(ctx);
-
-        const float_t tf = static_cast<float_t>(state.freq->value);
-
-        float_t c0;
         if constexpr (HasFilterBoost) {
-          SDB_ASSERT(state.filter_boost);
-          c0 = state.filter_boost->value * state.num;
+          BM15(res, state.freq.size(), state.freq.data(), state.num,
+               state.norm_const);
         } else {
-          c0 = state.num;
+          BM15Boost(res, state.freq.size(), state.freq.data(),
+                    state.filter_boost.data(), state.num, state.norm_const);
         }
 
-        const float_t c1 = state.norm_const;
-        SDB_ASSERT(c1 != 0.f);
-
-        *res = c0 - c0 / (1.f + tf / c1);
+        // TODO(gnusi): optimize clear
+        if constexpr (HasFilterBoost) {
+          state.filter_boost.clear();
+        }
+        state.freq.clear();
       },
-      ScoreFunction::DefaultMin, std::forward<Args>(args)...);
+      [](irs::ScoreCtx* ctx) noexcept {
+        auto& state = *static_cast<Ctx*>(ctx);
+        if constexpr (HasFilterBoost) {
+          state.filter_boost.emplace_back(*state.source_filter_boost);
+        }
+        state.freq.emplace_back(*state.source_freq);
+      },
+      ScoreFunction::NoopMin, std::forward<Args>(args)...);
   }
 };
 
-template<typename Norm>
-struct MakeScoreFunctionImpl<BM25Context<Norm>> {
-  using Ctx = BM25Context<Norm>;
+template<byte_type NormLength>
+struct BM25ContextImpl : BM25Context {};
+
+template<byte_type NormLength>
+struct MakeScoreFunctionImpl<BM25ContextImpl<NormLength>> {
+  using Ctx = BM25Context;
 
   template<bool HasFilterBoost, typename... Args>
   static auto Make(Args&&... args) {
     return ScoreFunction::Make<Ctx>(
-      [](irs::ScoreCtx* ctx, irs::score_t* res) noexcept {
+      [](ScoreCtx* ctx, score_t* res) noexcept {
         SDB_ASSERT(res);
         SDB_ASSERT(ctx);
 
         auto& state = *static_cast<Ctx*>(ctx);
+        const auto size = state.freq.size();
+        for (size_t i = 0; i < size; ++i) {
+          auto tf = static_cast<float_t>(state.freq[i]);
 
-        auto tf = static_cast<float_t>(state.freq->value);
+          // FIXME(gnusi): we don't need c0 for WAND evaluation
+          float_t c0;
+          if constexpr (HasFilterBoost) {
+            c0 = state.filter_boost[i] * state.num;
+          } else {
+            c0 = state.num;
+          }
 
-        // FIXME(gnusi): we don't need c0 for WAND evaluation
-        float_t c0;
+          if constexpr (NormLength == sizeof(byte_type)) {
+            SDB_ASSERT((state.norm[i] & 0xFFU) != 0U);
+            const float_t inv_c1 = state.norm_cache[state.norm[i] & 0xFFU];
+
+            res[i] = c0 - c0 / (1.f + tf * inv_c1);
+          } else {
+            const float_t c1 =
+              state.norm_const +
+              state.norm_length * static_cast<float_t>(state.norm[i]);
+
+            res[i] = c0 - c0 * c1 / (c1 + tf);
+          }
+        }
+
+        // TODO(gnusi): optimize clear
         if constexpr (HasFilterBoost) {
-          SDB_ASSERT(state.filter_boost);
-          c0 = state.filter_boost->value * state.num;
-        } else {
-          c0 = state.num;
+          state.filter_boost.clear();
         }
-
-        if constexpr (NormType::NormTiny == Norm::kType) {
-          static_assert(std::is_same_v<uint32_t, decltype(state.norm())>);
-          SDB_ASSERT((state.norm() & 0xFFU) != 0U);
-          const float_t inv_c1 = state.norm_cache[state.norm() & 0xFFU];
-
-          *res = c0 - c0 / (1.f + tf * inv_c1);
-        } else {
-          const float_t c1 =
-            state.norm_const +
-            state.norm_length * static_cast<float_t>(state.norm());
-
-          *res = c0 - c0 * c1 / (c1 + tf);
-        }
+        state.freq.clear();
       },
-      ScoreFunction::DefaultMin, std::forward<Args>(args)...);
+      [](irs::ScoreCtx* ctx) noexcept {
+        auto& state = *static_cast<Ctx*>(ctx);
+        if constexpr (HasFilterBoost) {
+          state.filter_boost.emplace_back(*state.source_filter_boost);
+        }
+        state.freq.emplace_back(*state.source_freq);
+      },
+      ScoreFunction::NoopMin, std::forward<Args>(args)...);
   }
 };
 
@@ -404,73 +414,55 @@ FieldCollector::ptr BM25::PrepareFieldCollector() const {
   return std::make_unique<BM25FieldCollector>();
 }
 
-ScoreFunction BM25::PrepareScorer(const ColumnProvider& segment,
-                                  const FieldProperties& meta,
-                                  const byte_type* query_stats,
-                                  const AttributeProvider& doc_attrs,
-                                  score_t boost) const {
-  auto* freq = irs::get<FreqAttr>(doc_attrs);
+ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
+  auto* freq = irs::get<FreqAttr>(ctx.doc_attrs);
 
   if (!freq) {
-    if (!_boost_as_score || 0.f == boost) {
-      return ScoreFunction::Default(1);
+    if (!_boost_as_score || 0.f == ctx.boost) {
+      return ScoreFunction::Default();
     }
 
     // if there is no frequency then all the scores
     // will be the same (e.g. filter irs::all)
-    return ScoreFunction::Constant(boost);
+    return ScoreFunction::Constant(ctx.boost);
   }
 
-  auto* stats = stats_cast(query_stats);
-  auto* filter_boost = irs::get<irs::FilterBoost>(doc_attrs);
+  auto* stats = stats_cast(ctx.stats);
+  auto* filter_boost = irs::get<irs::FilterBoost>(ctx.doc_attrs);
 
   if (IsBM1()) {
-    return MakeScoreFunction<BM1Context>(filter_boost, _k, boost, *stats);
+    return MakeScoreFunction<BM1Context>(filter_boost, _k, ctx.boost, *stats);
   }
 
   if (IsBM15()) {
-    return MakeScoreFunction<BM15Context>(filter_boost, _k, boost, *stats,
-                                          freq);
+    return MakeScoreFunction<BM15Context>(filter_boost, _k, ctx.boost, *stats,
+                                          &freq->value);
   }
-
-  auto prepare_norm_scorer = [&]<typename Norm>(Norm&& norm) -> ScoreFunction {
-    return MakeScoreFunction<BM25Context<Norm>>(filter_boost, _k, boost, *stats,
-                                                freq, std::move(norm));
-  };
 
   // Check if norms are present in attributes
-  if (auto* norm = irs::get<Norm>(doc_attrs); norm) {
-    return prepare_norm_scorer(MakeBM25NormAdapter<NormType::Norm>(
-      [norm]() noexcept { return norm->value; }));
+  auto* norm = irs::get<Norm>(ctx.doc_attrs);
+
+  if (!norm && ctx.collector) {
+    norm = ctx.collector->AddNorm(ctx.segment.column(ctx.field.norm));
   }
 
-  // Fallback to reading from columnstore
-  auto* doc = irs::get<DocAttr>(doc_attrs);
-
-  if (!doc) [[unlikely]] {
-    // We need 'document' attribute to be exposed.
-    return ScoreFunction::Default(1);
+  if (!norm) {
+    // No norms, pretend all fields have the same length 1.
+    static constexpr Norm kEmptyNorm{.value = 1U};
+    norm = &kEmptyNorm;
   }
 
-  if (field_limits::valid(meta.norm)) {
-    if (NormReaderContext ctx; ctx.Reset(segment, meta.norm, *doc)) {
-      if (ctx.max_num_bytes == sizeof(byte_type)) {
-        return Norm::MakeReader(std::move(ctx), [&](auto&& reader) {
-          return prepare_norm_scorer(
-            MakeBM25NormAdapter<NormType::NormTiny>(std::move(reader)));
-        });
-      }
+  auto make_scorer = [&]<size_t N> {
+    return MakeScoreFunction<BM25ContextImpl<N>>(filter_boost, _k, ctx.boost,
+                                                 *stats, &freq->value,
+                                                 norm ? &norm->value : nullptr);
+  };
 
-      return Norm::MakeReader(std::move(ctx), [&](auto&& reader) {
-        return prepare_norm_scorer(
-          MakeBM25NormAdapter<NormType::Norm>(std::move(reader)));
-      });
-    }
+  if (norm->num_bytes == sizeof(byte_type)) {
+    return make_scorer.template operator()<sizeof(byte_type)>();
   }
 
-  // No norms, pretend all fields have the same length 1.
-  return prepare_norm_scorer(
-    MakeBM25NormAdapter<NormType::NormTiny>([] { return 1U; }));
+  return make_scorer.template operator()<sizeof(uint32_t)>();
 }
 
 WandWriter::ptr BM25::prepare_wand_writer(size_t max_levels) const {

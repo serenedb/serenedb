@@ -739,7 +739,7 @@ void AssertDocs(const irs::TermIterator& expected_term,
     // FIXME(gnusi)
     const irs::WanderatorOptions options{
       .factory = [](const irs::AttributeProvider&) {
-        return irs::ScoreFunction::Default(1);
+        return irs::ScoreFunction::Default();
       }};
 
     return actual_terms.wanderator(*actual_cookie, requested_features, options,

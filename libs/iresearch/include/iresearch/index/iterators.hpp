@@ -22,10 +22,14 @@
 
 #pragma once
 
+#include <iresearch/search/score_function.hpp>
+#include <memory>
+
 #include "basics/memory.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/formats/seek_cookie.hpp"
 #include "iresearch/index/index_features.hpp"
+#include "iresearch/search/score.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/attributes.hpp"
 #include "iresearch/utils/iterator.hpp"
@@ -60,6 +64,9 @@ struct DocIterator : AttributeProvider {
   // (for more information see class description)
   virtual doc_id_t seek(doc_id_t target) = 0;
 
+  // TODO(gnusi): return "has more"
+  virtual uint32_t collect(std::span<doc_id_t> docs);
+
   // protected:
   // For any DocIterator we want to define block.
   // It's two bounds: (min...max]:
@@ -87,6 +94,21 @@ struct DocIterator : AttributeProvider {
       ++count;
     }
     return count;
+  }
+
+  template<typename Iterator, size_t N = std::dynamic_extent>
+  static uint32_t Collect(Iterator& it, std::span<doc_id_t> docs,
+                          auto collect_impl) {
+    auto begin = docs.begin();
+    auto end = docs.end();
+    for (; begin != end; ++begin) {
+      *begin = it.advance();
+      collect_impl();
+      if (doc_limits::eof(*begin)) {
+        break;
+      }
+    }
+    return begin - docs.begin();
   }
 };
 

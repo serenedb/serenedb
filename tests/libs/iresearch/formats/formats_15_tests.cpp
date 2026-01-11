@@ -18,11 +18,14 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/formats/formats_attributes.hpp>
 #include <iresearch/formats/wand_writer.hpp>
 #include <iresearch/index/field_meta.hpp>
 #include <iresearch/search/score.hpp>
+#include <iresearch/search/score_function.hpp>
+#include <iresearch/search/scorer.hpp>
 #include <limits>
 #include <random>
 
@@ -35,24 +38,33 @@ struct EmptyColumnProvider : irs::ColumnProvider {
   const irs::ColumnReader* column(irs::field_id) const final { return nullptr; }
 };
 
+struct FreqScorerContext : public irs::ScoreCtx {
+  FreqScorerContext(const auto* freq) : freq_source{freq} {}
+  const irs::FreqAttr* freq_source;
+  std::vector<irs::score_t> freqs;
+};
+
 struct FreqScorer : irs::ScorerBase<void> {
   irs::IndexFeatures GetIndexFeatures() const final {
     return irs::IndexFeatures::Freq;
   }
 
-  irs::ScoreFunction PrepareScorer(const irs::ColumnProvider&,
-                                   const irs::FieldProperties&,
-                                   const irs::byte_type*,
-                                   const irs::AttributeProvider& attrs,
-                                   irs::score_t) const final {
-    auto* freq = irs::get<irs::FreqAttr>(attrs);
+  irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
+    auto* freq = irs::get<irs::FreqAttr>(ctx.doc_attrs);
     EXPECT_NE(nullptr, freq);
 
-    return irs::ScoreFunction{
-      reinterpret_cast<irs::ScoreCtx&>(const_cast<irs::FreqAttr&>(*freq)),
+    return irs::ScoreFunction::Make<FreqScorerContext>(
       [](irs::ScoreCtx* ctx, irs::score_t* res) noexcept {
-        *res = reinterpret_cast<irs::FreqAttr*>(ctx)->value;
-      }};
+        auto& state = static_cast<FreqScorerContext&>(*ctx);
+        std::memcpy(res, state.freqs.data(),
+                    sizeof(irs::score_t) * state.freqs.size());
+        state.freqs.clear();
+      },
+      [](irs::ScoreCtx* ctx) noexcept {
+        auto& state = static_cast<FreqScorerContext&>(*ctx);
+        state.freqs.emplace_back(state.freq_source->value);
+      },
+      irs::ScoreFunction::NoopMin, freq);
   }
 
   irs::WandWriter::ptr prepare_wand_writer(size_t max_levels) const final {
@@ -390,8 +402,11 @@ irs::DocIterator::ptr Format15TestCase::GetWanderator(
   const irs::TermMeta& meta, uint32_t threshold, bool strict) {
   const irs::WanderatorOptions options{
     .factory = [&](const irs::AttributeProvider& attrs) {
-      return scorer.PrepareScorer(EmptyColumnProvider{}, irs::FieldProperties{},
-                                  nullptr, attrs, irs::kNoBoost);
+      return scorer.PrepareScorer({
+        .segment = EmptyColumnProvider{},
+        .field = irs::FieldProperties{},
+        .doc_attrs = attrs,
+      });
     }};
 
   const bool iterator_has_freq =

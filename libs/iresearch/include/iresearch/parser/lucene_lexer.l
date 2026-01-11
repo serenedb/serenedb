@@ -31,6 +31,7 @@ static YY_BUFFER_STATE current_buffer = nullptr;
 %option noyywrap
 %option nounput
 %option noinput
+%option bison-bridge
 
 DIGIT       [0-9]
 ALPHA       [a-zA-Z_]
@@ -60,24 +61,24 @@ ESCAPED     \\[+\-&|!(){}[\]^"~*?:\\/]
 "-"                         { return MINUS; }
 
 {DIGIT}+"."{DIGIT}+         {
-                              yylval.fnum = std::strtof(yytext, nullptr);
+                              yylval->fnum = std::strtof(yytext, nullptr);
                               return FLOAT;
                             }
 
 {DIGIT}+                    {
-                              yylval.num = std::atoi(yytext);
+                              yylval->num = std::atoi(yytext);
                               return NUMBER;
                             }
 
 \"([^\"\\]|\\.)*\"          {
                               /* Quoted phrase - point to content inside quotes */
-                              yylval.sv = {yytext + 1, static_cast<size_t>(yyleng - 2)};
+                              yylval->sv = {yytext + 1, static_cast<size_t>(yyleng - 2)};
                               return PHRASE;
                             }
 
 \/([^\/\\]|\\.)*\/          {
                               /* Regex pattern - point to content inside slashes */
-                              yylval.sv = {yytext + 1, static_cast<size_t>(yyleng - 2)};
+                              yylval->sv = {yytext + 1, static_cast<size_t>(yyleng - 2)};
                               return REGEX;
                             }
 
@@ -91,7 +92,7 @@ ESCAPED     \\[+\-&|!(){}[\]^"~*?:\\/]
                                       break;
                                   }
                               }
-                              yylval.sv = {yytext, static_cast<size_t>(yyleng)};
+                              yylval->sv = {yytext, static_cast<size_t>(yyleng)};
                               return has_inner_wild ? WILDCARD : PREFIX;
                             }
 
@@ -105,30 +106,30 @@ ESCAPED     \\[+\-&|!(){}[\]^"~*?:\\/]
                                       break;
                                   }
                               }
-                              yylval.sv = {yytext, static_cast<size_t>(yyleng)};
+                              yylval->sv = {yytext, static_cast<size_t>(yyleng)};
                               return has_inner_wild ? WILDCARD : SUFFIX;
                             }
 
 "*"                         {
                               /* Standalone star (for range bounds) */
-                              yylval.sv = {yytext, 1};
+                              yylval->sv = {yytext, 1};
                               return STAR;
                             }
 
 ({ALNUM}|{ESCAPED})*({WILDCHAR}({ALNUM}|{ESCAPED})*)+  {
                               /* General wildcard pattern with * or ? */
-                              yylval.sv = {yytext, static_cast<size_t>(yyleng)};
+                              yylval->sv = {yytext, static_cast<size_t>(yyleng)};
                               return WILDCARD;
                             }
 
 ({ALPHA}|{ESCAPED})({ALNUM}|{ESCAPED})*  {
-                              yylval.sv = {yytext, static_cast<size_t>(yyleng)};
+                              yylval->sv = {yytext, static_cast<size_t>(yyleng)};
                               return TERM;
                             }
 
 {DIGIT}+({ALNUM}|{ESCAPED})*  {
                               /* Terms starting with digits (like dates) */
-                              yylval.sv = {yytext, static_cast<size_t>(yyleng)};
+                              yylval->sv = {yytext, static_cast<size_t>(yyleng)};
                               return TERM;
                             }
 

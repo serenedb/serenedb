@@ -22,6 +22,10 @@
 
 #include "score.hpp"
 
+#include <iresearch/search/column_collector.hpp>
+#include <iresearch/search/score_function.hpp>
+#include <iresearch/search/scorer.hpp>
+
 #include "basics/shared.hpp"
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/field_meta.hpp"
@@ -32,11 +36,18 @@ const ScoreAttr ScoreAttr::kNoScore;
 
 ScoreFunctions PrepareScorers(std::span<const ScorerBucket> buckets,
                               const ColumnProvider& segment,
+                              ColumnCollector* collector,
                               const TermReader& field,
                               const byte_type* stats_buf,
                               const AttributeProvider& doc, score_t boost) {
   ScoreFunctions scorers;
   scorers.reserve(buckets.size());
+
+  ScoreContext ctx{.segment = segment,
+                   .field = field.meta(),
+                   .doc_attrs = doc,
+                   .collector = collector,
+                   .boost = boost};
 
   for (const auto& entry : buckets) {
     const auto& bucket = *entry.bucket;
@@ -45,8 +56,9 @@ ScoreFunctions PrepareScorers(std::span<const ScorerBucket> buckets,
       continue;
     }
 
-    auto scorer = bucket.PrepareScorer(
-      segment, field.meta(), stats_buf + entry.stats_offset, doc, boost);
+    ctx.stats = stats_buf + entry.stats_offset;
+
+    auto scorer = bucket.PrepareScorer(ctx);
 
     scorers.emplace_back(std::move(scorer));
   }
@@ -78,6 +90,7 @@ static ScoreFunction CompileScorers(ScoreFunction&& wand,
             other.Score(++res);
           }
         },
+        ScoreFunction::NoopCollect,
         [](ScoreCtx* ctx, score_t arg) noexcept {
           auto* scorers_ctx = static_cast<Ctx*>(ctx);
           scorers_ctx->wand.Min(arg);
@@ -112,7 +125,7 @@ ScoreFunction CompileScorers(ScoreFunctions&& scorers) {
             scorer(res++);
           }
         },
-        ScoreFunction::DefaultMin, std::move(scorers));
+        ScoreFunction::NoopCollect, ScoreFunction::NoopMin, std::move(scorers));
     }
   }
 }
@@ -127,13 +140,14 @@ void PrepareCollectors(std::span<const ScorerBucket> order,
 }
 
 void CompileScore(irs::ScoreAttr& score, std::span<const ScorerBucket> buckets,
-                  const ColumnProvider& segment, const TermReader& field,
-                  const byte_type* stats, const AttributeProvider& doc,
-                  score_t boost) {
+                  const ColumnProvider& segment, ColumnCollector* collector,
+                  const TermReader& field, const byte_type* stats,
+                  const AttributeProvider& doc, score_t boost) {
   SDB_ASSERT(!buckets.empty());
   // wanderator could have score for first bucket and score upper bounds.
   if (score.IsDefault()) {
-    auto scorers = PrepareScorers(buckets, segment, field, stats, doc, boost);
+    auto scorers =
+      PrepareScorers(buckets, segment, collector, field, stats, doc, boost);
     // wanderator could have score upper bounds.
     if (score.max.tail == std::numeric_limits<score_t>::max()) {
       score.max.leaf = score.max.tail =
@@ -141,8 +155,8 @@ void CompileScore(irs::ScoreAttr& score, std::span<const ScorerBucket> buckets,
     }
     score = CompileScorers(std::move(scorers));
   } else if (buckets.size() > 1) {
-    auto scorers =
-      PrepareScorers(buckets.subspan(1), segment, field, stats, doc, boost);
+    auto scorers = PrepareScorers(buckets.subspan(1), segment, collector, field,
+                                  stats, doc, boost);
     score = CompileScorers(std::move(score), std::move(scorers));
     SDB_ASSERT(score.max.tail != std::numeric_limits<score_t>::max());
   }

@@ -22,7 +22,11 @@
 
 #include "boost_scorer.hpp"
 
+#include <absl/container/inlined_vector.h>
+
 #include "iresearch/index/field_meta.hpp"
+#include "iresearch/search/score.hpp"
+#include "iresearch/search/score_function.hpp"
 
 namespace irs {
 namespace {
@@ -32,35 +36,36 @@ Scorer::ptr MakeJson(std::string_view /*args*/) {
 }
 
 struct VolatileBoostScoreCtx final : ScoreCtx {
-  VolatileBoostScoreCtx(const FilterBoost* volatile_boost,
-                        score_t boost) noexcept
-    : boost{boost}, volatile_boost{volatile_boost} {
+  VolatileBoostScoreCtx(const score_t* volatile_boost, score_t boost) noexcept
+    : const_boost{boost}, volatile_boost{volatile_boost} {
     SDB_ASSERT(volatile_boost);
   }
 
-  score_t boost;
-  const FilterBoost* volatile_boost;
+  score_t const_boost;
+  absl::InlinedVector<score_t, kScoreWindow> boost;
+  const score_t* volatile_boost;
 };
 
 }  // namespace
 
-ScoreFunction BoostScore::PrepareScorer(const ColumnProvider& /*segment*/,
-                                        const FieldProperties& /*meta*/,
-                                        const byte_type* /*stats*/,
-                                        const AttributeProvider& attrs,
-                                        score_t boost) const {
-  const auto* volatile_boost = irs::get<irs::FilterBoost>(attrs);
+ScoreFunction BoostScore::PrepareScorer(const ScoreContext& ctx) const {
+  const auto* volatile_boost = irs::get<irs::FilterBoost>(ctx.doc_attrs);
 
   if (volatile_boost == nullptr) {
-    return ScoreFunction::Constant(boost);
+    return ScoreFunction::Constant(ctx.boost);
   }
 
   return ScoreFunction::Make<VolatileBoostScoreCtx>(
     [](ScoreCtx* ctx, score_t* res) noexcept {
       auto& state = *static_cast<VolatileBoostScoreCtx*>(ctx);
-      *res = state.volatile_boost->value * state.boost;
+      std::memcpy(res, state.boost.data(),
+                  sizeof(score_t) * state.boost.size());
     },
-    ScoreFunction::DefaultMin, volatile_boost, boost);
+    [](ScoreCtx* ctx) noexcept {
+      auto& state = *static_cast<VolatileBoostScoreCtx*>(ctx);
+      state.boost.emplace_back(*state.volatile_boost);
+    },
+    ScoreFunction::NoopMin, &volatile_boost->value, ctx.boost);
 }
 
 void BoostScore::init() { REGISTER_SCORER_JSON(BoostScore, MakeJson); }

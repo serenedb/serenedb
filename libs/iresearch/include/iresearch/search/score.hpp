@@ -27,6 +27,8 @@
 
 namespace irs {
 
+static constexpr size_t kScoreWindow = 128;
+
 // Represents a score related for the particular document
 // min score set by document consumers
 // max score set by document producers
@@ -64,6 +66,7 @@ using ScoreFunctions = sdb::containers::SmallVector<ScoreFunction, 1>;
 // Prepare scorer for each of the bucket.
 ScoreFunctions PrepareScorers(std::span<const ScorerBucket> buckets,
                               const ColumnProvider& segment,
+                              ColumnCollector* collector,
                               const TermReader& field, const byte_type* stats,
                               const AttributeProvider& doc, score_t boost);
 
@@ -71,13 +74,45 @@ ScoreFunctions PrepareScorers(std::span<const ScorerBucket> buckets,
 ScoreFunction CompileScorers(ScoreFunctions&& scorers);
 
 void CompileScore(irs::ScoreAttr& score, std::span<const ScorerBucket> buckets,
-                  const ColumnProvider& segment, const TermReader& field,
-                  const byte_type* stats, const AttributeProvider& doc,
-                  score_t boost);
+                  const ColumnProvider& segment, ColumnCollector* collector,
+                  const TermReader& field, const byte_type* stats,
+                  const AttributeProvider& doc, score_t boost);
 
 // Prepare empty collectors, i.e. call collect(...) on each of the
 // buckets without explicitly collecting field or term statistics,
 // e.g. for 'all' filter.
 void PrepareCollectors(std::span<const ScorerBucket> order, byte_type* stats);
+
+template<ScoreMergeType MergeType, size_t N>
+void Merge(score_t* res, std::span<score_t, N> args) {
+  for (size_t i = 0; i < args.size(); ++i) {
+    auto& bucket = res[i];
+    if constexpr (MergeType == ScoreMergeType::Sum) {
+      bucket += args[i];
+    } else if constexpr (MergeType == ScoreMergeType::Min) {
+      bucket = std::min(bucket, args[i]);
+    } else if constexpr (MergeType == ScoreMergeType::Max) {
+      bucket = std::max(bucket, args[i]);
+    } else {
+      static_assert(false);
+    }
+  }
+}
+
+template<ScoreMergeType MergeType, typename I, size_t N>
+void Merge(score_t* res, std::span<I, N> hits, std::span<score_t, N> args) {
+  for (size_t i = 0; i < hits.size(); ++i) {
+    auto& bucket = res[hits[i]];
+    if constexpr (MergeType == ScoreMergeType::Sum) {
+      bucket += args[i];
+    } else if constexpr (MergeType == ScoreMergeType::Min) {
+      bucket = std::min(bucket, args[i]);
+    } else if constexpr (MergeType == ScoreMergeType::Max) {
+      bucket = std::max(bucket, args[i]);
+    } else {
+      static_assert(false);
+    }
+  }
+}
 
 }  // namespace irs

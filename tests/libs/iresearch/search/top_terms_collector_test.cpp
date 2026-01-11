@@ -27,6 +27,7 @@
 #include <iresearch/search/collectors.hpp>
 #include <iresearch/search/filter.hpp>
 #include <iresearch/search/multiterm_query.hpp>
+#include <iresearch/search/scorer.hpp>
 #include <iresearch/search/scorers.hpp>
 #include <iresearch/search/top_terms_collector.hpp>
 
@@ -116,12 +117,8 @@ struct Sort : irs::Scorer {
     return std::make_unique<TermCollector>();
   }
 
-  irs::ScoreFunction PrepareScorer(const irs::ColumnProvider& /*segment*/,
-                                   const irs::FieldProperties& /*field*/,
-                                   const irs::byte_type* /*stats*/,
-                                   const irs::AttributeProvider& /*doc_attrs*/,
-                                   irs::score_t /*boost*/) const final {
-    return irs::ScoreFunction::Default(1);
+  irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
+    return irs::ScoreFunction::Default();
   }
 
   std::pair<size_t, size_t> stats_size() const final { return {0, 0}; }

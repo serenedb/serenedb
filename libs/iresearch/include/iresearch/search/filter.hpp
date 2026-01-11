@@ -58,7 +58,7 @@ struct ExecutionContext {
   const AttributeProvider* ctx = nullptr;
   const DocumentMask* pending_docs_mask = nullptr;
   // If enabled, wand would use first scorer from scorers
-  WandContext wand;
+  WandContext wand{};
 };
 
 // Base class for all user-side filters

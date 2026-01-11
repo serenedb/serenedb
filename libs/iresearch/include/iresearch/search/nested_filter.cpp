@@ -120,10 +120,10 @@ class ChildToParentJoin : public DocIterator, private Matcher {
     SDB_ASSERT(_child);
 
     std::get<AttributePtr<DocAttr>>(_attrs) =
-      irs::GetMutable<irs::DocAttr>(_parent.get());
+      irs::GetMutable<DocAttr>(_parent.get());
     SDB_ASSERT(std::get<AttributePtr<DocAttr>>(_attrs).ptr);
 
-    _child_doc = irs::get<irs::DocAttr>(*_child);
+    _child_doc = irs::get<DocAttr>(*_child);
 
     std::get<AttributePtr<CostAttr>>(_attrs) =
       irs::GetMutable<CostAttr>(_child.get());
@@ -199,8 +199,8 @@ class ChildToParentJoin : public DocIterator, private Matcher {
 
 template<typename Matcher>
 void ChildToParentJoin<Matcher>::PrepareScore() {
-  auto& score = std::get<irs::ScoreAttr>(_attrs);
-  _child_score = irs::get<irs::ScoreAttr>(*_child);
+  auto& score = std::get<ScoreAttr>(_attrs);
+  _child_score = irs::get<ScoreAttr>(*_child);
 
   if (!std::is_same_v<Matcher, NoneMatcher> &&
       (_child_doc == nullptr || _child_score == nullptr ||
@@ -634,7 +634,7 @@ DocIterator::ptr ByNestedQuery::execute(const ExecutionContext& ctx) const {
     return DocIterator::empty();
   }
 
-  const auto* prev = irs::get<irs::PrevDocAttr>(*parent);
+  const auto* prev = irs::get<PrevDocAttr>(*parent);
 
   if (!prev || !*prev) [[unlikely]] {
     return DocIterator::empty();
@@ -651,8 +651,7 @@ DocIterator::ptr ByNestedQuery::execute(const ExecutionContext& ctx) const {
   }
 
   return ResolveMergeType(
-    _merge_type, ord.buckets().size(),
-    [&]<typename A>(A&& aggregator) -> DocIterator::ptr {
+    _merge_type, ord.buckets().size(), [&]<typename A>(A&& aggregator) {
       return ResolveMatchType(
         rdr, _match, _none_boost, std::forward<A>(aggregator),
         [&]<typename M>(M&& matcher) -> DocIterator::ptr {
@@ -661,7 +660,7 @@ DocIterator::ptr ByNestedQuery::execute(const ExecutionContext& ctx) const {
               if constexpr (!std::is_same_v<NoopAggregator, A>) {
                 auto func = ScoreFunction::Constant(
                   _none_boost, static_cast<uint32_t>(ord.buckets().size()));
-                auto* score = irs::GetMutable<irs::ScoreAttr>(parent.get());
+                auto* score = irs::GetMutable<ScoreAttr>(parent.get());
                 if (!score) [[unlikely]] {
                   return memory::make_managed<ScorerWrapper>(std::move(parent),
                                                              std::move(func));

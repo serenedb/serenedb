@@ -95,7 +95,7 @@ class PosAttr : public Attribute, public AttributeProvider {
   static PosAttr& empty() noexcept;
 
   template<typename Provider>
-  static PosAttr& GetMutable(Provider& attrs) {
+  static PosAttr& get(Provider& attrs) {
     auto* pos = irs::GetMutable<PosAttr>(&attrs);
     return pos ? *pos : empty();
   }

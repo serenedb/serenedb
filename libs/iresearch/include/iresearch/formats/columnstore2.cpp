@@ -294,7 +294,7 @@ class BitmapColumnIterator : public ResettableDocIterator,
                        CostAttr::Type cost, Args&&... args)
     : PayloadReader{std::forward<Args>(args)...},
       _bitmap{std::move(bitmap_in), opts, cost} {
-    std::get<irs::CostAttr>(_attrs).reset(cost);
+    std::get<CostAttr>(_attrs).reset(cost);
     std::get<AttributePtr<DocAttr>>(_attrs) =
       irs::GetMutable<DocAttr>(&_bitmap);
     std::get<AttributePtr<ScoreAttr>>(_attrs) =

@@ -54,7 +54,7 @@ struct BM25FieldCollector final : FieldCollector {
   void collect(const SubReader& /*segment*/,
                const TermReader& field) noexcept final {
     docs_with_field += field.docs_count();
-    if (auto* freq = get<FreqAttr>(field); freq != nullptr) {
+    if (const auto* freq = irs::get<FreqAttr>(field)) {
       total_term_freq += freq->value;
     }
   }

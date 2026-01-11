@@ -34,7 +34,7 @@ yaclib::Future<Result> Transaction(ExecContext& context,
     case TRANS_STMT_BEGIN:
     case TRANS_STMT_START:
       if (!conn_ctx.InsideTransaction()) {
-        return conn_ctx.Begin();
+        return yaclib::MakeFuture(conn_ctx.Begin());
       } else {
         conn_ctx.AddNotice(SQL_ERROR_DATA(
           ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
@@ -43,7 +43,7 @@ yaclib::Future<Result> Transaction(ExecContext& context,
       break;
     case TRANS_STMT_COMMIT:
       if (conn_ctx.InsideTransaction()) {
-        return conn_ctx.Commit();
+        return yaclib::MakeFuture(conn_ctx.Commit());
       } else {
         conn_ctx.AddNotice(
           SQL_ERROR_DATA(ERR_CODE(ERRCODE_NO_ACTIVE_SQL_TRANSACTION),
@@ -52,7 +52,7 @@ yaclib::Future<Result> Transaction(ExecContext& context,
       break;
     case TRANS_STMT_ROLLBACK:
       if (conn_ctx.InsideTransaction()) {
-        return conn_ctx.Rollback();
+        return yaclib::MakeFuture(conn_ctx.Rollback());
       } else {
         conn_ctx.AddNotice(
           SQL_ERROR_DATA(ERR_CODE(ERRCODE_NO_ACTIVE_SQL_TRANSACTION),

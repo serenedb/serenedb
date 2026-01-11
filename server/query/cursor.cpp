@@ -290,7 +290,10 @@ Cursor::~Cursor() {
   if (_query.HasExternal()) {
     std::ignore = _query.GetExternalExecutor().RequestCancel().Get();
   }
-  _query.GetContext().GetTxnState().ResetSnapshot();
+  if (_query.GetContext().txn->GetState() == TxnState::State::SNAPSHOT ||
+      _query.GetContext().txn->GetState() == TxnState::State::LOCAL) {
+    _query.GetContext().txn->ResetState();
+  }
 }
 
 }  // namespace sdb::query

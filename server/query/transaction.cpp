@@ -37,47 +37,118 @@ std::shared_ptr<rocksdb::Transaction> CreateTransaction(
     db.BeginTransaction(write_options, txn_options)};
 }
 
-TxnState::TxnState()
-  : _lazy_snapshot{[] { return GetServerEngine().currentSnapshot(); }} {}
-
-yaclib::Future<Result> TxnState::Begin() {
+Result TxnState::Begin() {
+  SDB_ASSERT(_state != State::SNAPSHOT);
   if (!InsideTransaction()) {
-    _txn = CreateTransaction(*GetServerEngine().db());
-    if (!_txn) {
-      SDB_THROW(ERROR_INTERNAL, "Failed to create RocksDB transaction");
+    auto txn = CreateTransaction(*GetServerEngine().db());
+    if (!txn) {
+      return {ERROR_INTERNAL, "Failed to create RocksDB transaction"};
     }
-    _txn->SetSnapshot();
+    txn->SetSnapshot();
+    _data.emplace<Transaction>(std::move(txn));
+    _state = State::TRANSACTION;
   }
+  SDB_ASSERT(InsideTransaction());
   return {};
 }
 
-yaclib::Future<Result> TxnState::Commit() {
+Result TxnState::Commit() {
+  SDB_ASSERT(_state != State::SNAPSHOT);
   if (!InsideTransaction()) {
     return {};
   }
-  auto status = _txn->Commit();
+  Transaction& txn = GetTransaction();
+  auto status = txn->Commit();
   if (!status.ok()) {
-    return yaclib::MakeFuture(Result{
-      ERROR_INTERNAL, "Failed to commit transaction: ", status.ToString()});
+    return {ERROR_INTERNAL,
+            "Failed to commit transaction: ", status.ToString()};
   }
-  _txn.reset();
+  _data = {};
+  _state = State::NONE;
   Config::CommitVariables();
   return {};
 }
 
-yaclib::Future<Result> TxnState::Rollback() {
+Result TxnState::Rollback() {
+  SDB_ASSERT(_state != State::SNAPSHOT);
   if (!InsideTransaction()) {
     return {};
   }
   Config::RollbackVariables();
-  auto status = _txn->Rollback();
+  auto& txn = GetTransaction();
+  auto status = txn->Rollback();
   if (!status.ok()) {
-    return yaclib::MakeFuture(
-      Result{ERROR_INTERNAL,
-             "Failed to rollback RocksDB transaction: ", status.ToString()});
+    return {ERROR_INTERNAL,
+            "Failed to rollback RocksDB transaction: ", status.ToString()};
   }
-  _txn.reset();
+  _state = State::NONE;
+  _data = {};
   return {};
+}
+
+void TxnState::CreateLocalTransaction() const {
+  auto txn = CreateTransaction(*GetServerEngine().db());
+  if (!txn) {
+    SDB_THROW(ERROR_INTERNAL, "Failed to create RocksDB transaction");
+  }
+  txn->SetSnapshot();
+  _data.emplace<Transaction>(std::move(txn));
+}
+
+void TxnState::CreateLocalSnapshot() const {
+  auto external_snapshot = GetServerEngine().currentSnapshot();
+  _data.emplace<Snapshot>(std::move(external_snapshot));
+}
+
+void TxnState::EnsureTransaction() {
+  switch (_state) {
+    case State::LOCAL:
+      if (!std::holds_alternative<Transaction>(_data) ||
+          !std::get<Transaction>(_data)) {
+        CreateLocalTransaction();
+      }
+      [[fallthrough]];
+    case State::TRANSACTION:
+      SDB_ASSERT(std::get<Transaction>(_data));
+      return;
+    default:
+      SDB_UNREACHABLE();
+  }
+}
+
+TxnState::Transaction& TxnState::GetTransaction() {
+  EnsureTransaction();
+  auto& txn = std::get<Transaction>(_data);
+  SDB_ASSERT(txn);
+  return txn;
+}
+
+const rocksdb::Snapshot* TxnState::GetSnapshot() {
+  switch (_state) {
+    case State::SNAPSHOT: {
+      if (!std::holds_alternative<Snapshot>(_data) ||
+          !std::get<Snapshot>(_data)) {
+        CreateLocalSnapshot();
+      }
+      auto& snapshot = std::get<Snapshot>(_data);
+      SDB_ASSERT(snapshot);
+      return std::dynamic_pointer_cast<RocksDBSnapshot>(snapshot)
+        ->getSnapshot();
+    }
+    case State::LOCAL:
+    case State::TRANSACTION: {
+      auto& txn = GetTransaction();
+      SDB_ASSERT(txn);
+      return txn->GetSnapshot();
+    }
+    default:
+      SDB_UNREACHABLE();
+  }
+}
+
+void TxnState::ResetState() noexcept {
+  _state = State::NONE;
+  _data = {};
 }
 
 }  // namespace sdb

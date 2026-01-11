@@ -36,45 +36,53 @@ std::shared_ptr<rocksdb::Transaction> CreateTransaction(
 
 class TxnState : public Config {
  public:
-  TxnState();
+  using Transaction = std::shared_ptr<rocksdb::Transaction>;
+  using Snapshot = std::shared_ptr<StorageSnapshot>;
 
-  yaclib::Future<Result> Begin();
+  enum class State {
+    NONE,
+    TRANSACTION,  // Explicit transaction
+    SNAPSHOT,     // Implicit read-only transaction
+    LOCAL,        // Implicit transaction for a simple query
+  };
 
-  yaclib::Future<Result> Commit();
+  State GetState() const noexcept { return _state; }
 
-  yaclib::Future<Result> Rollback();
+  Result Begin();
 
-  bool InsideTransaction() const noexcept { return _txn != nullptr; }
+  Result Commit();
 
-  const auto& GetTransaction() const {
-    // Get is allowed only inside actual transaction
-    SDB_ASSERT(_txn);
-    return _txn;
+  Result Rollback();
+
+  void SetLocalTransaction() noexcept {
+    SDB_ASSERT(_state != State::TRANSACTION);
+    _state = State::LOCAL;
   }
 
-  const rocksdb::Snapshot* GetSnapshot() const {
-    if (_txn) {
-      return _txn->GetSnapshot();
-    }
-    if (!_lazy_snapshot()) {
-      return nullptr;
-    }
-    auto snapshot =
-      std::dynamic_pointer_cast<RocksDBSnapshot>(_lazy_snapshot());
-    SDB_ASSERT(snapshot);
-    return snapshot->getSnapshot();
+  void SetSnapshotOnly() noexcept {
+    SDB_ASSERT(_state != State::TRANSACTION);
+    _state = State::SNAPSHOT;
   }
+
+  bool InsideTransaction() const noexcept {
+    return _state == State::TRANSACTION || _state == State::LOCAL;
+  }
+
+  Transaction& GetTransaction();
+
+  const rocksdb::Snapshot* GetSnapshot();
 
   // Used for simple queries without explicit transaction management
   // Should be called at the end of a query
-  void ResetSnapshot() const noexcept { _lazy_snapshot.reset(); }
+  void ResetState() noexcept;
 
  private:
-  template<typename Sig>
-  using LazyWrapper = folly::detail::Lazy<absl::AnyInvocable<Sig>>;
+  void EnsureTransaction();
+  void CreateLocalTransaction() const;
+  void CreateLocalSnapshot() const;
 
-  std::shared_ptr<rocksdb::Transaction> _txn;
-  mutable LazyWrapper<std::shared_ptr<StorageSnapshot>()> _lazy_snapshot;
+  State _state = State::NONE;
+  mutable std::variant<Transaction, Snapshot> _data;
 };
 
 }  // namespace sdb

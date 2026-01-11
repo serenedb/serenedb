@@ -1,0 +1,216 @@
+name: SereneDB-Build-Manual
+
+on:
+  workflow_dispatch:
+    inputs:
+      DEBUG_PRINT_ENV:
+        description: 'Whether to print environment variables'
+        type: boolean
+        required: false
+        default: false
+      LOCATION:
+        description: 'Where the load is executed'
+        type: choice
+        required: true
+        default: 'x86'
+        options:
+          - x86
+          - linux
+          - ranetka
+          - sushilka
+          - stiralka
+          - parilka
+          - agentone
+      BRANCH:
+        description: 'SereneDB branch to test'
+        type: string
+        required: true
+        default: 'main'
+      CLUSTER_BRANCH:
+        description: 'Cluster branch to test'
+        type: string
+        required: true
+        default: 'main'
+      VPACK_TESTS:
+        description: 'Run VPack unittests (C++)'
+        type: boolean
+        required: true
+        default: true
+      IRESEARCH_TESTS:
+        description: 'Run IResearch unittests (C++)'
+        type: boolean
+        required: true
+        default: true
+      UNIT_TESTS:
+        description: 'Run SereneDB unittests (C++)'
+        type: boolean
+        required: true
+        default: true
+      SQLLOGIC_TESTS:
+        description: 'Run sqllogic tests'
+        type: boolean
+        required: true
+        default: true
+      INTEGRATION_TESTS:
+        description: 'Run integration tests (JavaScript)'
+        type: boolean
+        required: true
+        default: false
+      BUILD_PACKAGES:
+        description: 'Build release packages'
+        type: boolean
+        required: true
+        default: true
+      FULL_SUITE:
+        description: 'Run full integration test suite'
+        type: boolean
+        required: true
+        default: false
+      SANITIZERS:
+        description: 'Sanitizer to use'
+        type: choice
+        required: true
+        default: ''
+        options:
+          - ''
+          - Undefined
+          - Address
+          - Thread
+          - Memory
+          - Leak
+          - AddressLight
+          - UndefinedAddress
+          - UndefinedAddressLight
+          - MemoryWithOrigins
+      USE_COVERAGE:
+        description: 'Coverage type'
+        type: choice
+        required: true
+        default: ''
+        options:
+          - ''
+          - SourceBased
+          - SourceBasedMCDC
+          - GCOV
+      SDB_CLUSTER:
+        description: 'Build cluster'
+        type: choice
+        required: true
+        default: 'Off'
+        options:
+          - 'Off'
+          - 'On'
+      SDB_ALLOC:
+        description: 'Enable custom memory allocator'
+        type: choice
+        required: true
+        default: 'JE'
+        options:
+          - JE
+          - TC
+          - SYS
+      SDB_DEV:
+        description: 'Development mode'
+        type: choice
+        required: true
+        default: 'On'
+        options:
+          - 'On'
+          - 'Off'
+      USE_IPO:
+        description: 'Use IPO'
+        type: choice
+        required: true
+        default: 'Off'
+        options:
+          - 'Off'
+          - 'On'
+      ENSURE_VTUNE_SYMBOLS:
+        description: 'Affects only server'
+        type: choice
+        required: true
+        default: 'Off'
+        options:
+          - 'Off'
+          - 'On'
+      BUILDMODE:
+        description: 'Build mode'
+        type: choice
+        required: true
+        default: 'RelWithDebInfo'
+        options:
+          - RelWithDebInfo
+          - Debug
+          - Release
+          - MinSizeRel
+          - None
+      USE_DEBUG_INFO:
+        description: 'Debug info level'
+        type: choice
+        required: true
+        default: 'COLUMNS'
+        options:
+          - COLUMNS
+          - SANITIZE
+          - PROFILE
+          - COVERAGE
+          - LLDB
+          - GDB
+          - FULL
+          - LINES
+          - NONE
+      BUILD_IMAGE:
+        description: 'Docker build image'
+        type: string
+        required: true
+        default: 'registry.serenedb.com:5000/serenedb-build-ubuntu:latest'
+      INTEGRATION_TESTS_COREDUMPS:
+        description: '0 - no coredumps; -1 - unlimited coredumps'
+        type: choice
+        required: true
+        default: '0'
+        options:
+          - '0'
+          - '-1'
+      EXTRA_ARTIFACTS:
+        description: 'Keep these artifacts additionally'
+        type: string
+        required: false
+        default: ''
+
+jobs:
+  call-reusable:
+    uses: ./.github/workflows/serenedb-build-reusable.yml
+    with:
+      DEBUG_PRINT_ENV: ${{ inputs.DEBUG_PRINT_ENV }}
+      LOCATION: ${{ inputs.LOCATION }}
+      BRANCH: ${{ inputs.BRANCH }}
+      CLUSTER_BRANCH: ${{ inputs.CLUSTER_BRANCH }}
+      VPACK_TESTS: ${{ inputs.VPACK_TESTS }}
+      IRESEARCH_TESTS: ${{ inputs.IRESEARCH_TESTS }}
+      UNIT_TESTS: ${{ inputs.UNIT_TESTS }}
+      SQLLOGIC_TESTS: ${{ inputs.SQLLOGIC_TESTS }}
+      INTEGRATION_TESTS: ${{ inputs.INTEGRATION_TESTS }}
+      BUILD_PACKAGES: ${{ inputs.BUILD_PACKAGES }}
+      FULL_SUITE: ${{ inputs.FULL_SUITE }}
+      SANITIZERS: ${{ inputs.SANITIZERS }}
+      USE_COVERAGE: ${{ inputs.USE_COVERAGE }}
+      SDB_CLUSTER: ${{ inputs.SDB_CLUSTER }}
+      SDB_ALLOC: ${{ inputs.SDB_ALLOC }}
+      SDB_DEV: ${{ inputs.SDB_DEV }}
+      USE_IPO: ${{ inputs.USE_IPO }}
+      ENSURE_VTUNE_SYMBOLS: ${{ inputs.ENSURE_VTUNE_SYMBOLS }}
+      BUILDMODE: ${{ inputs.BUILDMODE }}
+      USE_DEBUG_INFO: ${{ inputs.USE_DEBUG_INFO }}
+      BUILD_IMAGE: ${{ inputs.BUILD_IMAGE }}
+      INTEGRATION_TESTS_COREDUMPS: ${{ inputs.INTEGRATION_TESTS_COREDUMPS }}
+      EXTRA_ARTIFACTS: ${{ inputs.EXTRA_ARTIFACTS }}
+    secrets:
+      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+      SDB_CLUSTER_REPO: ${{ secrets.SDB_CLUSTER_REPO }}
+      TG_TOKEN: ${{ secrets.TG_TOKEN }}
+      TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+      TG_THREAD_ID_BUILD: ${{ secrets.TG_THREAD_ID_BUILD }}
+      TG_THREAD_ID_MAIN: ${{ secrets.TG_THREAD_ID_MAIN }}
+      TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
+

@@ -1,0 +1,393 @@
+name: SereneDB-Build-Base
+
+on:
+  workflow_call:
+    inputs:
+      DEBUG_PRINT_ENV:
+        description: 'Whether to print environment variables'
+        type: boolean
+        required: false
+        default: false
+      LOCATION:
+        description: 'Where the load is executed'
+        type: string
+        required: true
+        default: 'x86'
+      BRANCH:
+        description: 'SereneDB branch to test'
+        type: string
+        required: true
+        default: 'main'
+      CLUSTER_BRANCH:
+        description: 'Cluster branch to test'
+        type: string
+        required: true
+        default: 'main'
+      VPACK_TESTS:
+        description: 'Run VPack unittests (C++)'
+        type: boolean
+        required: true
+        default: true
+      IRESEARCH_TESTS:
+        description: 'Run IResearch unittests (C++)'
+        type: boolean
+        required: true
+        default: true
+      UNIT_TESTS:
+        description: 'Run SereneDB unittests (C++)'
+        type: boolean
+        required: true
+        default: true
+      SQLLOGIC_TESTS:
+        description: 'Run sqllogic tests'
+        type: boolean
+        required: true
+        default: true
+      INTEGRATION_TESTS:
+        description: 'Run integration tests (JavaScript)'
+        type: boolean
+        required: true
+        default: false
+      BUILD_PACKAGES:
+        description: 'Build release packages'
+        type: boolean
+        required: true
+        default: true
+      FULL_SUITE:
+        description: 'Run full integration test suite'
+        type: boolean
+        required: true
+        default: false
+      SANITIZERS:
+        description: 'Sanitizer to use'
+        type: string
+        required: true
+        default: ''
+      USE_COVERAGE:
+        description: 'Coverage type'
+        type: string
+        required: true
+        default: ''
+      SDB_CLUSTER:
+        description: 'Build cluster'
+        type: string
+        required: true
+        default: 'Off'
+      SDB_ALLOC:
+        description: 'Enable custom memory allocator'
+        type: string
+        required: true
+        default: 'JE'
+      SDB_DEV:
+        description: 'Development mode'
+        type: string
+        required: true
+        default: 'On'
+      USE_IPO:
+        description: 'Use IPO'
+        type: string
+        required: true
+        default: 'Off'
+      ENSURE_VTUNE_SYMBOLS:
+        description: 'Affects only server'
+        type: string
+        required: true
+        default: 'Off'
+      BUILDMODE:
+        description: 'Build mode'
+        type: string
+        required: true
+        default: 'RelWithDebInfo'
+      USE_DEBUG_INFO:
+        description: 'Debug info level'
+        type: string
+        required: true
+        default: 'COLUMNS'
+      BUILD_IMAGE:
+        description: 'Docker build image'
+        type: string
+        required: true
+        default: 'registry.serenedb.com:5000/serenedb-build-ubuntu:latest'
+      INTEGRATION_TESTS_COREDUMPS:
+        description: '0 - no coredumps; -1 - unlimited coredumps'
+        type: string
+        required: true
+        default: '0'
+      EXTRA_ARTIFACTS:
+        description: 'Keep these artifacts additionally'
+        type: string
+        required: false
+        default: ''
+    secrets:
+      PAT_TOKEN:
+        required: true
+      SDB_CLUSTER_REPO:
+        required: true
+      TG_TOKEN:
+        required: true
+      TG_CHAT_ID:
+        required: true
+      TG_THREAD_ID_BUILD:
+        required: true
+      TG_THREAD_ID_MAIN:
+        required: true
+      TG_USER_MAP:
+        required: true
+
+# Global environment for all jobs
+env:
+  # Build configuration
+  LOCATION: ${{ inputs.LOCATION }}
+  WORKFLOW: ${{ github.workflow }}
+  BRANCH: ${{ inputs.BRANCH }}
+  CLUSTER_BRANCH: ${{ inputs.CLUSTER_BRANCH }}
+  VPACK_TESTS: ${{ inputs.VPACK_TESTS }}
+  IRESEARCH_TESTS: ${{ inputs.IRESEARCH_TESTS }}
+  UNIT_TESTS: ${{ inputs.UNIT_TESTS }}
+  SQLLOGIC_TESTS: ${{ inputs.SQLLOGIC_TESTS }}
+  INTEGRATION_TESTS: ${{ inputs.INTEGRATION_TESTS }}
+  BUILD_PACKAGES: ${{ inputs.BUILD_PACKAGES }}
+  FULL_SUITE: ${{ inputs.FULL_SUITE }}
+  SANITIZERS: ${{ inputs.SANITIZERS }}
+  USE_COVERAGE: ${{ inputs.USE_COVERAGE }}
+  SDB_CLUSTER: ${{ inputs.SDB_CLUSTER }}
+  SDB_ALLOC: ${{ inputs.SDB_ALLOC }}
+  SDB_DEV: ${{ inputs.SDB_DEV }}
+  USE_IPO: ${{ inputs.USE_IPO }}
+  ENSURE_VTUNE_SYMBOLS: ${{ inputs.ENSURE_VTUNE_SYMBOLS }}
+  BUILDMODE: ${{ inputs.BUILDMODE }}
+  USE_DEBUG_INFO: ${{ inputs.USE_DEBUG_INFO }}
+  BUILD_IMAGE: ${{ inputs.BUILD_IMAGE }}
+  INTEGRATION_TESTS_COREDUMPS: ${{ inputs.INTEGRATION_TESTS_COREDUMPS }}
+  EXTRA_ARTIFACTS: ${{ inputs.EXTRA_ARTIFACTS }}
+
+jobs:
+  # ==================== CHECKOUT ====================
+  checkout:
+    name: Checkout
+    runs-on:
+      - self-hosted
+      - ${{ inputs.LOCATION }}
+    steps:
+      - name: Checkout SereneDB
+        uses: actions/checkout@v4
+        with:
+          repository: serenedb/serenedb
+          ref: ${{ inputs.BRANCH }}
+          token: ${{ secrets.PAT_TOKEN }}
+          fetch-depth: 1
+          submodules: true
+          clean: true
+
+      - name: Checkout Cluster
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.SDB_CLUSTER_REPO }}
+          ref: ${{ inputs.CLUSTER_BRANCH }}
+          token: ${{ secrets.PAT_TOKEN }}
+          path: private
+          fetch-depth: 1
+          submodules: true
+
+      - name: Print environment
+        if: inputs.DEBUG_PRINT_ENV == true
+        run: printenv
+
+      - name: Set sanitizer options
+        if: inputs.SANITIZERS != '' || inputs.USE_COVERAGE != ''
+        run: ./private/ci/steps/01-ci-set-sanitizer-options.bash
+
+      - name: Build Docker environment file
+        run: ./private/ci/steps/02-ci-build-docker-env-file.bash
+
+  # ==================== SERENEDB BUILD ====================
+  build-all:
+    name: Build All
+    needs: checkout
+    runs-on:
+      - self-hosted
+      - ${{ inputs.LOCATION }}
+    outputs:
+      build_status: ${{ steps.serenedb_build.outcome }}
+    steps:
+      - name: SereneDB build
+        id: serenedb_build
+        continue-on-error: true
+        run: ./private/ci/steps/03-ci-in-docker-build-targets.bash
+
+  # ==================== TESTS ====================
+  tests:
+    name: Tests
+    needs: build-all
+    if: needs.build-all.outputs.build_status != 'failure'
+    runs-on:
+      - self-hosted
+      - ${{ inputs.LOCATION }}
+    outputs:
+      tests_status: ${{ steps.run_tests.outcome || 'skipped' }}
+    steps:
+      - name: Skip tests
+        if: inputs.VPACK_TESTS == false && inputs.IRESEARCH_TESTS == false && inputs.UNIT_TESTS == false && inputs.SQLLOGIC_TESTS == false && inputs.INTEGRATION_TESTS == false
+        run: echo "All tests skipped because no test flags are set."
+
+      - name: Run tests in parallel
+        id: run_tests
+        if: inputs.VPACK_TESTS == true || inputs.IRESEARCH_TESTS == true || inputs.UNIT_TESTS == true || inputs.SQLLOGIC_TESTS == true || inputs.INTEGRATION_TESTS == true
+        continue-on-error: true
+        run: ./private/ci/steps/04-ci-run-tests-parallel.bash
+
+  # ==================== BUILD PACKAGES ====================
+  packages:
+    name: Packages
+    needs: [build-all, tests]
+    if: needs.build-all.outputs.build_status != 'failure'
+    runs-on:
+      - self-hosted
+      - ${{ inputs.LOCATION }}
+    outputs:
+      packages_status: ${{ steps.serenedb_packages.outcome || 'skipped' }}
+    steps:
+      - name: Skip packages
+        if: inputs.BUILD_PACKAGES == false
+        run: echo "Packaging skipped because BUILD_PACKAGES flag is not set."
+
+      - name: SereneDB Packages
+        id: serenedb_packages
+        if: inputs.BUILD_PACKAGES == true
+        continue-on-error: true
+        run: ./private/ci/steps/05-ci-in-docker-package.bash
+
+  # ==================== FINALIZE ====================
+  finalize:
+    name: Finalize
+    needs: [checkout, build-all, tests, packages]
+    if: always() && !cancelled()
+    runs-on:
+      - self-hosted
+      - ${{ inputs.LOCATION }}
+    steps:
+      # ==================== COVERAGE REPORT ====================
+      - name: Generate coverage report
+        id: coverage_report
+        if: inputs.USE_COVERAGE != ''
+        continue-on-error: true
+        run: ./private/ci/steps/06-ci-in-docker-generate-coverage-report.bash
+
+      # ==================== DETERMINE FINAL STATUS ====================
+      - name: Determine final job status
+        run: |
+          HAS_FAILURES=false
+
+          if [[ "${{ needs.build-all.outputs.build_status }}" == "failure" ]]; then
+            echo "Build failed"
+            HAS_FAILURES=true
+          fi
+
+          # Check if tests job ran and failed (not just skipped)
+          if [[ "${{ needs.tests.result }}" == "failure" ]]; then
+            echo "Tests job failed"
+            HAS_FAILURES=true
+          elif [[ "${{ needs.tests.outputs.tests_status }}" == "failure" ]]; then
+            echo "Tests failed"
+            HAS_FAILURES=true
+          fi
+
+          # Same pattern for packages
+          if [[ "${{ needs.packages.result }}" == "failure" ]]; then
+            echo "Packages job failed"
+            HAS_FAILURES=true
+          elif [[ "${{ needs.packages.outputs.packages_status }}" == "failure" ]]; then
+            echo "Packages failed"
+            HAS_FAILURES=true
+          fi
+
+          if [[ "${{ steps.coverage_report.outcome }}" == "failure" ]]; then
+            echo "Coverage report generation failed"
+            HAS_FAILURES=true
+          fi
+
+          echo "HAS_FAILURES=$HAS_FAILURES" >> $GITHUB_ENV
+
+      # ==================== ARTIFACTS ====================
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts-${{ github.run_number }}
+          path: |
+            binaries.tar.gz
+            build_description.txt
+            cmake*.log
+            make*.log
+            ccache*.log
+            check-log-ids.log
+            clang-format.log
+            clang-format.diff
+            vpack-tests.log
+            iresearch-tests.log
+            serenedb-tests*.log
+            fuerte-tests.log
+            tests.log
+            testfailures.txt
+            testreport-*.tar*
+            testRuns.html
+            testProtocol.txt
+            test.log
+            crashreport-*.tar*
+            sanitizers/**/*
+            build/coverage/**/*
+            logs/*
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Upload extra artifacts
+        if: inputs.EXTRA_ARTIFACTS != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: extra-artifacts-${{ github.run_number }}
+          path: ${{ inputs.EXTRA_ARTIFACTS }}
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ github.run_number }}
+          path: |
+            **/vpack-tests.xml
+            **/iresearch-tests.xml
+            **/serenedb-tests*.xml
+            **/fuerte-testsXml/*.xml
+            **/testrunXml/**/*.xml
+            **/tests/sqllogic/*.xml
+          if-no-files-found: ignore
+          retention-days: 30
+
+      # ==================== CLEANUP ====================
+      - name: Docker cleanup
+        if: always()
+        run: |
+          docker system prune -f || true
+          docker volume prune -f || true
+
+      # ==================== TELEGRAM NOTIFICATION ====================
+      - name: Send Telegram notification
+        if: always()
+        env:
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          TG_THREAD_ID_MAIN: ${{ secrets.TG_THREAD_ID_MAIN }}
+          TG_THREAD_ID_BUILD: ${{ secrets.TG_THREAD_ID_BUILD }}
+          TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
+          BRANCH: ${{ inputs.BRANCH }}
+          JOB_STATUS: ${{ env.HAS_FAILURES == 'true' && 'failure' || 'success' }}
+          ACTOR: ${{ github.actor }}
+          WORKFLOW: ${{ github.workflow }}
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: ./scripts/notify_telegram.bash
+
+      # ==================== FAIL JOB IF ANY STAGE FAILED ====================
+      - name: Fail job if any stage failed
+        if: env.HAS_FAILURES == 'true'
+        run: exit 1
+

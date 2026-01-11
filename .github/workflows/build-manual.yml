@@ -10,17 +10,12 @@ on:
         default: false
       LOCATION:
         description: 'Where the load is executed'
-        type: choice
         required: true
-        default: 'x86'
+        type: choice
         options:
-          - x86
-          - linux
-          - ranetka
-          - sushilka
-          - stiralka
           - parilka
-          - agentone
+          - self-hosted
+        default: 'self-hosted'
       BRANCH:
         description: 'SereneDB branch to test'
         type: string
@@ -180,7 +175,7 @@ on:
 
 jobs:
   call-reusable:
-    uses: ./.github/workflows/serenedb-build-reusable.yml
+    uses: ./.github/workflows/build-reusable.yml
     with:
       DEBUG_PRINT_ENV: ${{ inputs.DEBUG_PRINT_ENV }}
       LOCATION: ${{ inputs.LOCATION }}

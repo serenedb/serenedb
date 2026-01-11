@@ -2034,8 +2034,9 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
         }
         // For now all index writers work by row.
         // Later by cell processing might be added below.
+        auto encoded_pk = row_key.substr(sizeof(ObjectId));
         for (const auto& writer : _index_writers) {
-          writer->DeleteRow(row_key);
+          writer->DeleteRow(encoded_pk);
         }
       },
       key_buffer);

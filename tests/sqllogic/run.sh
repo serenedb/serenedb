@@ -161,7 +161,7 @@ run_tests() {
   if [[ -n "$skip_failed" ]]; then
     skip_failed_opt="--skip-failed"
   fi
-  
+
   # Execute the command and capture the exit code
   sqllogictest "$test" \
     --host "$host" --port "$port" --engine "$engine" \

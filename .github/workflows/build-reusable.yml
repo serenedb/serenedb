@@ -137,6 +137,7 @@ on:
 # Global environment for all jobs
 env:
   # Build configuration
+  WORKSPACE: ${{ github.workspace }} # Jenkins compatibility layer
   LOCATION: ${{ inputs.LOCATION }}
   WORKFLOW: ${{ github.workflow }}
   BRANCH: ${{ inputs.BRANCH }}

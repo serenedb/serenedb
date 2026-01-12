@@ -34,7 +34,7 @@ void RocksDBSinkWriter::Write(std::span<const rocksdb::Slice> cell_slices,
     // while gathering slice parts
     status = _transaction.Put(&_cf, key_slice, cell_slices.front());
   } else {
-    // TODO(Dronplane): Currenly RocksDB does intermediate merging
+    // TODO(Dronplane): Currently RocksDB does intermediate merging
     // all parts to a single string before actual inserting where it copies it
     // all again to the transaction buffer. Let's  propose a PR for them that
     // keeps SliceParts until they are copied to the transaction buffer.

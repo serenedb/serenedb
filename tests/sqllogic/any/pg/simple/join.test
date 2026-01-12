@@ -10,9 +10,9 @@ JOIN
 ) AS clickclack(iq, weight, name, job_title)
 USING (name);
 ----
-name iq grade title iq weight job_title
-vedernikoff 228 54 intern 228 154 boss
-babsky 54 154 boss 54 44 cleaner
+name	iq	grade	title	iq	weight	job_title
+vedernikoff	228	54	intern	228	154	boss
+babsky	54	154	boss	54	44	cleaner
 
 
 query
@@ -27,9 +27,9 @@ JOIN
 ) AS clickclack(iq, iamduplicate, name, iamduplicate)
 USING (iq, name);
 ----
-iq name grade title iamduplicate iamduplicate
-228 vedernikoff 54 intern 154 boss
-54 babsky 154 boss 44 cleaner
+iq	name	grade	title	iamduplicate	iamduplicate
+228	vedernikoff	54	intern	154	boss
+54	babsky	154	boss	44	cleaner
 
 
 query
@@ -100,9 +100,9 @@ NATURAL JOIN
     VALUES (228, 154, 'vedernikoff', 'boss'), (54, 44, 'babsky', 'cleaner')
 ) AS clickclack(iq, weight, name, job_title);
 ----
-iq grade name title iq weight name job_title iq iq iq name grade name grade title name job_title
-228 54 vedernikoff intern 228 154 vedernikoff boss 228 228 228 vedernikoff 54 vedernikoff 54 intern vedernikoff boss
-54 154 babsky boss 54 44 babsky cleaner 54 54 54 babsky 154 babsky 154 boss babsky cleaner
+iq	grade	name	title	iq	weight	name	job_title	iq	iq	iq	name	grade	name	grade	title	name	job_title
+228	54	vedernikoff	intern	228	154	vedernikoff	boss	228	228	228	vedernikoff	54	vedernikoff	54	intern	vedernikoff	boss
+54	154	babsky	boss	54	44	babsky	cleaner	54	54	54	babsky	154	babsky	154	boss	babsky	cleaner
 
 
 query
@@ -123,9 +123,9 @@ JOIN
 ) AS clickclack(iq, weight, name, job_title)
 USING (iq, name);
 ----
-iq grade name title iq weight name job_title iq iq iq name name name grade title weight job_title
-228 54 vedernikoff intern 228 154 vedernikoff boss 228 228 228 vedernikoff vedernikoff vedernikoff 54 intern 154 boss
-54 154 babsky boss 54 44 babsky cleaner 54 54 54 babsky babsky babsky 154 boss 44 cleaner
+iq	grade	name	title	iq	weight	name	job_title	iq	iq	iq	name	name	name	grade	title	weight	job_title
+228	54	vedernikoff	intern	228	154	vedernikoff	boss	228	228	228	vedernikoff	vedernikoff	vedernikoff	54	intern	154	boss
+54	154	babsky	boss	54	44	babsky	cleaner	54	54	54	babsky	babsky	babsky	154	boss	44	cleaner
 
 
 query

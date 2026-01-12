@@ -522,7 +522,8 @@ class SereneDBConnector final : public velox::connector::Connector {
           }
           return std::make_unique<RocksDBDataSink>(
             *(txn.GetTransaction()), _cf, *connector_query_ctx->memoryPool(),
-            object_key, pk_indices, column_oids, std::vector<std::unique_ptr<SinkInsertWriter>>{}, IsUpdate);
+            object_key, pk_indices, column_oids,
+            std::vector<std::unique_ptr<SinkInsertWriter>>{}, IsUpdate);
         });
     }
     if (serene_insert_handle.Kind() == axiom::connector::WriteKind::kDelete) {
@@ -535,7 +536,8 @@ class SereneDBConnector final : public velox::connector::Connector {
           basics::downCast<const SereneDBColumn>(handle->second)->Id());
       }
       return std::make_unique<RocksDBDeleteDataSink>(
-        *(txn.GetTransaction()), _cf, table.type(), object_key, column_oids, std::vector<std::unique_ptr<SinkDeleteWriter>>{});
+        *(txn.GetTransaction()), _cf, table.type(), object_key, column_oids,
+        std::vector<std::unique_ptr<SinkDeleteWriter>>{});
     }
 
     VELOX_UNSUPPORTED("Unsupported write kind");

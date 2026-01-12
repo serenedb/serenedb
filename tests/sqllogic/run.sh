@@ -136,11 +136,11 @@ run_tests() {
 
   # Build options dynamically
   local options=""
-  
+
   if [[ "$debug" != "true" ]]; then
     options+="--shutdown-timeout 60 "
   fi
-  
+
   # Boolean flags - map shell variable names to CLI flags
   declare -A flag_map=(
     [override]="--override"
@@ -148,7 +148,7 @@ run_tests() {
     [force_override]="--force-override"
     [show_all_errors]="--show-all-errors"
   )
-  
+
   for var_name in "${!flag_map[@]}"; do
     if [[ "${!var_name}" == "true" ]]; then
       options+="${flag_map[$var_name]} "

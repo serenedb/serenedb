@@ -362,9 +362,9 @@ class SereneDBConnectorMetadata final
     const auto serene_insert_handle =
       std::dynamic_pointer_cast<const SereneDBConnectorInsertTableHandle>(
         handle->veloxHandle());
-    auto& txn = serene_insert_handle->GetTxnState();
     SDB_ENSURE(serene_insert_handle, ERROR_INTERNAL,
                "Wrong type of insert table handle");
+    auto& txn = serene_insert_handle->GetTxnState();
     const auto& transaction = txn.GetTransaction();
     SDB_ASSERT(transaction);
     const int64_t number_of_locked_primary_keys = transaction->GetNumKeys();

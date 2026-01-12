@@ -168,6 +168,10 @@ void SearchSinkInsertWriter::SetupColumnWriter(
   _field.name = _name_buffer;
 
   if (_emit_pk) {
+    // TODO(Dronplane): if pk contains only one column and that column is also
+    // indexed we can avoid indexing this column twice. But then we need to get
+    // here info about this case and also search source should be ready to
+    // handle that.
     _current_writer = [&, data_writer = std::move(_current_writer)](
                         std::string_view full_key,
                         std::span<const rocksdb::Slice> cell_slices) {
@@ -306,7 +310,7 @@ void SearchSinkInsertWriter::Field::SetNullValue() {
 }
 
 SearchSinkDeleteWriter::SearchSinkDeleteWriter(
-  irs::IndexWriter::Transaction& trx, velox::memory::MemoryPool* removes_pool)
+  irs::IndexWriter::Transaction& trx, velox::memory::MemoryPool& removes_pool)
   : _trx(trx), _removes_pool(removes_pool) {}
 
 void SearchSinkDeleteWriter::DeleteRow(std::string_view row_key) {
@@ -317,9 +321,8 @@ void SearchSinkDeleteWriter::DeleteRow(std::string_view row_key) {
 void SearchSinkDeleteWriter::Init(size_t batch_size) {
   SDB_ASSERT(batch_size > 0);
   SDB_ASSERT(!_remove_filter);
-  SDB_ASSERT(_removes_pool);
   _remove_filter =
-    std::make_shared<SearchRemoveFilter>(*_removes_pool, batch_size);
+    std::make_shared<SearchRemoveFilter>(_removes_pool, batch_size);
 }
 
 void SearchSinkDeleteWriter::Finish() {

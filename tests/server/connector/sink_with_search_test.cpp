@@ -251,7 +251,7 @@ TEST_F(DataSinkWithSearchTest, test_InsertFlatStrings) {
       delete_writers;
     delete_writers.emplace_back(
       std::make_unique<sdb::connector::search::SearchSinkDeleteWriter>(
-        index_transaction, pool()));
+        index_transaction, *pool()));
 
     rocksdb::TransactionOptions trx_opts;
     trx_opts.skip_concurrency_control = true;

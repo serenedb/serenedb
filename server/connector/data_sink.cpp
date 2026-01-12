@@ -71,6 +71,9 @@ RocksDBDataSink::RocksDBDataSink(
   _key_childs.assign_range(key_childs);
   SDB_ASSERT(_object_key.isSet(), "RocksDBDataSink: object key is empty");
   SDB_ASSERT(!_column_ids.empty(), "RocksDBDataSink: no columns in a table");
+  if (_skip_primary_key_columns && !_index_writers.empty()) {
+    VELOX_UNSUPPORTED("Update with secondary indexes not yet supported");
+  }
 }
 
 // TODO(Dronplane)

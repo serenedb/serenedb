@@ -37,11 +37,11 @@
 
 namespace sdb::connector {
 
-inline TxnState& ExtractTransactionState(
+inline query::Transaction& ExtractTransaction(
   const axiom::connector::ConnectorSessionPtr& session) {
   SDB_ASSERT(session->config());
-  TxnState& txn = basics::downCast<TxnState>(*session->config());
-  return txn;
+  auto& transaction = basics::downCast<query::Transaction>(*session->config());
+  return transaction;
 }
 
 class SereneDBColumnHandle final : public velox::connector::ColumnHandle {
@@ -75,13 +75,13 @@ class SereneDBConnectorTableHandle final
     return _table_count_field;
   }
 
-  const auto* GetSnapshot() const noexcept { return _txn.GetSnapshot(); }
+  auto& GetTransaction() const noexcept { return _transaction; }
 
  private:
   std::string _name;
   ObjectId _table_id;
   catalog::Column::Id _table_count_field;
-  TxnState& _txn;
+  query::Transaction& _transaction;
 };
 
 class SereneDBColumn final : public axiom::connector::Column {
@@ -287,10 +287,8 @@ class SereneDBConnectorInsertTableHandle final
     : _session{session},
       _table{table},
       _kind{kind},
-      _txn{ExtractTransactionState(session)} {
-    if (_txn.GetState() != TxnState::State::TRANSACTION) {
-      _txn.SetLocalTransaction();
-    }
+      _transaction{ExtractTransaction(session)} {
+    _transaction.AddRocksDBWrite();
   }
 
   bool supportsMultiThreading() const final { return false; }
@@ -301,21 +299,15 @@ class SereneDBConnectorInsertTableHandle final
 
   const axiom::connector::TablePtr& Table() const noexcept { return _table; }
 
-  auto& GetTxnState() const { return _txn; }
-
-  bool NeedToCommit() const noexcept {
-    SDB_ASSERT(_txn.GetState() == TxnState::State::TRANSACTION ||
-               _txn.GetState() == TxnState::State::LOCAL);
-    return _txn.GetState() == TxnState::State::LOCAL;
-  }
-
   auto Kind() const noexcept { return _kind; }
+
+  auto& GetTransaction() const noexcept { return _transaction; }
 
  private:
   axiom::connector::ConnectorSessionPtr _session;
   axiom::connector::TablePtr _table;
   axiom::connector::WriteKind _kind;
-  TxnState& _txn;
+  query::Transaction& _transaction;
   std::vector<velox::connector::ColumnHandlePtr> _row_id_handles;
 };
 
@@ -364,19 +356,20 @@ class SereneDBConnectorMetadata final
         handle->veloxHandle());
     SDB_ENSURE(serene_insert_handle, ERROR_INTERNAL,
                "Wrong type of insert table handle");
-    auto& txn = serene_insert_handle->GetTxnState();
-    const auto& transaction = txn.GetTransaction();
-    SDB_ASSERT(transaction);
-    const int64_t number_of_locked_primary_keys = transaction->GetNumKeys();
-    if (serene_insert_handle->NeedToCommit()) {
-      // Single statement transaction, we can commit here
-      auto res = txn.Commit();
-      if (!res.ok()) {
-        SDB_THROW(ERROR_INTERNAL,
-                  "Failed to commit transaction: ", res.errorMessage());
-      }
+    auto& transaction = serene_insert_handle->GetTransaction();
+    auto* rocksdb_transaction = transaction.GetRocksDBTransaction();
+    if (!rocksdb_transaction) [[unlikely]] {
+      return yaclib::MakeFuture<int64_t>(0);
     }
 
+    int64_t number_of_locked_primary_keys = rocksdb_transaction->GetNumKeys();
+    if (!transaction.HasTransactionBegin()) {
+      auto r = transaction.Commit();
+      if (!r.ok()) {
+        SDB_THROW(ERROR_INTERNAL,
+                  "Failed to commit transaction: ", r.errorMessage());
+      }
+    }
     return yaclib::MakeFuture(number_of_locked_primary_keys);
   }
 
@@ -389,15 +382,16 @@ class SereneDBConnectorMetadata final
         handle->veloxHandle());
     SDB_ENSURE(serene_insert_handle, ERROR_INTERNAL,
                "Wrong type of insert table handle");
-    SDB_ASSERT(session->config());
-    auto& txn = serene_insert_handle->GetTxnState();
-    if (serene_insert_handle->NeedToCommit()) {
-      SDB_ASSERT(txn.GetTransaction());
-      auto status = txn.Rollback();
-      if (!status.ok()) {
-        SDB_THROW(ERROR_INTERNAL,
-                  "Failed to rollback transaction: ", status.errorMessage());
-      }
+    auto& transaction = serene_insert_handle->GetTransaction();
+    auto* rocksdb_transaction = transaction.GetRocksDBTransaction();
+    if (!rocksdb_transaction) [[unlikely]] {
+      return velox::ContinueFuture::make();
+    }
+    // TODO: should be rollback to last save point
+    auto r = transaction.Rollback();
+    if (!r.ok()) {
+      SDB_THROW(ERROR_INTERNAL,
+                "Failed to rollback transaction: ", r.errorMessage());
     }
     return velox::ContinueFuture::make();
   } catch (...) {
@@ -450,10 +444,10 @@ class SereneDBConnector final : public velox::connector::Connector {
     } else {
       column_oids.push_back(serene_table_handle.GetCountField());
     }
-    const rocksdb::Snapshot* snapshot = serene_table_handle.GetSnapshot();
-    SDB_ASSERT(snapshot);
+    auto& transaction = serene_table_handle.GetTransaction();
+    const auto& snapshot = transaction.EnsureRocksDBSnapshot();
     return std::make_unique<RocksDBDataSource>(
-      *connector_query_ctx->memoryPool(), snapshot, _db, _cf, output_type,
+      *connector_query_ctx->memoryPool(), &snapshot, _db, _cf, output_type,
       column_oids, object_key);
   }
 
@@ -477,8 +471,7 @@ class SereneDBConnector final : public velox::connector::Connector {
     auto& serene_insert_handle =
       basics::downCast<SereneDBConnectorInsertTableHandle>(
         *connector_insert_table_handle);
-    auto& txn = serene_insert_handle.GetTxnState();
-
+    auto& transaction = serene_insert_handle.GetTransaction();
     const auto& table =
       basics::downCast<const RocksDBTable>(*serene_insert_handle.Table());
     const auto& object_key = table.TableId();
@@ -520,11 +513,13 @@ class SereneDBConnector final : public velox::connector::Connector {
               pk_indices.push_back(input_type->getChildIdx(handle->name()));
             }
           }
+          auto& rocksdb_transaction = transaction.EnsureRocksDBTransaction();
           return std::make_unique<RocksDBDataSink>(
-            *(txn.GetTransaction()), _cf, *connector_query_ctx->memoryPool(),
+            rocksdb_transaction, _cf, *connector_query_ctx->memoryPool(),
             object_key, pk_indices, column_oids, IsUpdate);
         });
     }
+
     if (serene_insert_handle.Kind() == axiom::connector::WriteKind::kDelete) {
       column_oids.reserve(table.type()->size());
       for (auto& col : table.type()->names()) {
@@ -534,8 +529,9 @@ class SereneDBConnector final : public velox::connector::Connector {
         column_oids.push_back(
           basics::downCast<const SereneDBColumn>(handle->second)->Id());
       }
+      auto& rocksdb_transaction = transaction.EnsureRocksDBTransaction();
       return std::make_unique<RocksDBDeleteDataSink>(
-        *(txn.GetTransaction()), _cf, table.type(), object_key, column_oids);
+        rocksdb_transaction, _cf, table.type(), object_key, column_oids);
     }
 
     VELOX_UNSUPPORTED("Unsupported write kind");

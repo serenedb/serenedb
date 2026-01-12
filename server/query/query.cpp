@@ -124,15 +124,11 @@ void Query::CompileQuery() {
     _query_ctx.explain_params.Has(ExplainWith::FinalQueryGraph);
   const bool needs_physical =
     _query_ctx.explain_params.Has(ExplainWith::Physical);
-  const bool needs_execution_plan =
-    _query_ctx.explain_params.Has(ExplainWith::Execution);
   const bool needs_execution =
-    _query_ctx.explain_params.Has(ExplainWith::Stats) ||
-    _query_ctx.command_type.Has(CommandType::Query) ||
-    _query_ctx.command_type.Has(CommandType::External);
+    _query_ctx.explain_params.Has(ExplainWith::Execution);
 
   if (only_explain && !needs_initial_query_graph && !needs_final_query_graph &&
-      !needs_physical && !needs_execution_plan && !needs_execution) {
+      !needs_physical && !needs_execution) {
     return;
   }
 
@@ -192,7 +188,7 @@ void Query::CompileQuery() {
     .numDrivers =
       std::max<int>(config.Get<VariableType::U32>("execution_threads"), 1),
   };
-  axiom::Session session{"", _query_ctx.txn};
+  axiom::Session session{"", _query_ctx.transaction};
   std::shared_ptr<axiom::Session> session_ptr{std::shared_ptr<axiom::Session>{},
                                               &session};
   axiom::optimizer::Optimization optimization{
@@ -209,7 +205,7 @@ void Query::CompileQuery() {
     _initial_query_graph_plan =
       axiom::optimizer::DerivedTablePrinter::toText(*optimization.graph());
     if (only_explain && !needs_final_query_graph && !needs_physical &&
-        !needs_execution_plan && !needs_execution) {
+        !needs_execution) {
       return;
     }
   }
@@ -219,8 +215,7 @@ void Query::CompileQuery() {
   if (needs_final_query_graph) {
     _final_query_graph_plan =
       axiom::optimizer::DerivedTablePrinter::toText(*optimization.graph());
-    if (only_explain && !needs_physical && !needs_execution_plan &&
-        !needs_execution) {
+    if (only_explain && !needs_physical && !needs_execution) {
       return;
     }
   }
@@ -237,19 +232,14 @@ void Query::CompileQuery() {
       _physical_plan = axiom::optimizer::RelationOpPrinter::toText(
         *best->op, {.includeCost = include_cost});
     }
-    if (only_explain && !needs_execution_plan && !needs_execution) {
+    if (only_explain && !needs_execution) {
       return;
     }
   }
-  axiom::optimizer::PlanAndStats result;
-  if (needs_execution_plan || needs_execution) {
-    // This is not really good for prepared statements, but it works for now
-    result = optimization.toVeloxPlan(best->op);
-    _execution_plan = std::move(result.plan);
-  }
-  if (needs_execution) {
-    _finish_write = std::move(result.finishWrite);
-  }
+  // This is not really good for prepared statements, but it works for now
+  auto result = optimization.toVeloxPlan(best->op);
+  _execution_plan = std::move(result.plan);
+  _finish_write = std::move(result.finishWrite);
 }
 
 Query::Query(std::unique_ptr<ExternalExecutor> executor,
@@ -278,6 +268,7 @@ std::unique_ptr<Cursor> Query::MakeCursor(
   std::function<void()>&& user_task) const {
   std::unique_ptr<Cursor> ptr;
   ptr.reset(new Cursor{std::move(user_task), *this});
+  _finish_write = {};
   return ptr;
 }
 

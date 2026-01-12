@@ -26,6 +26,7 @@
 #include "basics/containers/flat_hash_map.h"
 #include "basics/result.h"
 #include "query/config.h"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 
 namespace sdb {
 
@@ -34,36 +35,54 @@ std::shared_ptr<rocksdb::Transaction> CreateTransaction(
 
 class TxnState : public Config {
  public:
-  class LazyTransaction {
-   public:
-    void SetTransaction() { _initialized = true; }
+  using Transaction = std::shared_ptr<rocksdb::Transaction>;
+  using Snapshot = std::shared_ptr<StorageSnapshot>;
 
-    const std::shared_ptr<rocksdb::Transaction>& GetTransaction() const;
-
-    bool IsInitialized() const noexcept { return _initialized; }
-
-    void Reset() {
-      _txn.reset();
-      _initialized = false;
-    }
-
-   private:
-    mutable std::shared_ptr<rocksdb::Transaction> _txn;
-    bool _initialized = false;
+  enum class State {
+    NONE,
+    TRANSACTION,  // Explicit transaction
+    SNAPSHOT,     // Implicit read-only transaction
+    LOCAL,        // Implicit transaction for a simple query
   };
 
-  yaclib::Future<Result> Begin();
+  State GetState() const noexcept { return _state; }
 
-  yaclib::Future<Result> Commit();
+  Result Begin();
 
-  yaclib::Future<Result> Rollback();
+  Result Commit();
 
-  bool InsideTransaction() const noexcept { return _txn.IsInitialized(); }
+  Result Rollback();
 
-  const auto& GetTransaction() const { return _txn.GetTransaction(); }
+  void SetLocalTransaction() noexcept {
+    SDB_ASSERT(_state != State::TRANSACTION);
+    _state = State::LOCAL;
+  }
+
+  void SetSnapshotOnly() noexcept {
+    SDB_ASSERT(_state != State::TRANSACTION);
+    _state = State::SNAPSHOT;
+  }
+
+  bool InsideTransaction() const noexcept {
+    return _state == State::TRANSACTION || _state == State::LOCAL;
+  }
+
+  Transaction& GetTransaction();
+
+  const rocksdb::Snapshot* GetSnapshot();
+
+  // Used for simple queries without explicit transaction management
+  // Should be called at the end of a query
+  void ResetState() noexcept;
 
  private:
-  LazyTransaction _txn;
+  void EnsureTransaction();
+  void EnsureSnapshot();
+  void CreateLocalTransaction() const;
+  void CreateLocalSnapshot() const;
+
+  State _state = State::NONE;
+  mutable std::variant<Transaction, Snapshot> _data;
 };
 
 }  // namespace sdb

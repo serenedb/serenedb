@@ -27,7 +27,11 @@ SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
   const axiom::connector::TableLayout& layout)
   : velox::connector::ConnectorTableHandle{"serenedb"},
     _name{layout.name()},
-    _table_id{basics::downCast<RocksDBTable>(layout.table()).TableId()} {
+    _table_id{basics::downCast<RocksDBTable>(layout.table()).TableId()},
+    _txn{ExtractTransactionState(session)} {
+  if (_txn.GetState() == TxnState::State::NONE) {
+    _txn.SetSnapshotOnly();
+  }
   const auto& column_map = layout.table().columnMap();
   SDB_ASSERT(!column_map.empty(),
              "Tables without columns must be processed in analyzer step");
@@ -44,7 +48,6 @@ SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
                            std::next(column_map.begin())->second)
                            ->Id();
   }
-  _txn = ExtractTransaction(session);
 }
 
 }  // namespace sdb::connector

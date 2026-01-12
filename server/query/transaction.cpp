@@ -115,9 +115,6 @@ void Transaction::CreateRocksDBTransaction() {
 }
 
 void Transaction::Destroy() noexcept {
-  if (_state == State::None) {
-    return;
-  }
   _state = State::None;
   _storage_snapshot.reset();
   _rocksdb_transaction.reset();

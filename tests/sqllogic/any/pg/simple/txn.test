@@ -108,14 +108,22 @@ statement ok
 BEGIN;
 
 
+statement ok
+INSERT INTO t VALUES (3, 0);
+
+
 connection client2
 statement ok
 BEGIN;
 
 
-statement ok
-INSERT INTO t VALUES (3, 0);
-
+connection client2
+query
+SELECT * FROM t;
+----
+key	value
+0	0
+1	0
 
 connection client2
 statement ok
@@ -150,3 +158,21 @@ key	value
 1	0
 3	0
 4	1
+
+
+statement count 4
+INSERT INTO t SELECT key + 100 as key, value as value FROM t;
+
+
+query
+SELECT * FROM t;
+----
+key	value
+0	0
+1	0
+3	0
+4	1
+100	0
+101	0
+103	0
+104	1

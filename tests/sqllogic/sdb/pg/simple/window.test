@@ -11,16 +11,16 @@ FROM
 ) AS university(mark, student)
 ORDER BY mark, student, rn;
 ----
-mark student rn
-1 vedernikoff 1
-2 vedernikoff 2
-2 vedernikoff 3
-3 vedernikoff 4
-3 vedernikoff 5
-3 vedernikoff 6
-10 malko 8
-10 malko 9
-10 nemov 7
+mark	student	rn
+1	vedernikoff	1
+2	vedernikoff	2
+2	vedernikoff	3
+3	vedernikoff	4
+3	vedernikoff	5
+3	vedernikoff	6
+10	malko	8
+10	malko	9
+10	nemov	7
 
 
 query
@@ -36,16 +36,16 @@ FROM
 ) AS university(mark, student)
 ORDER BY mark, student, ROW_NUMBER() OVER ();
 ----
-mark student row_number
-1 vedernikoff 1
-2 vedernikoff 2
-2 vedernikoff 3
-3 vedernikoff 4
-3 vedernikoff 5
-3 vedernikoff 6
-10 malko 8
-10 malko 9
-10 nemov 7
+mark	student	row_number
+1	vedernikoff	1
+2	vedernikoff	2
+2	vedernikoff	3
+3	vedernikoff	4
+3	vedernikoff	5
+3	vedernikoff	6
+10	malko	8
+10	malko	9
+10	nemov	7
 
 
 query
@@ -62,11 +62,11 @@ FROM
 GROUP BY 2 * mark + 228
 ORDER BY 2 * mark + 228, ROW_NUMBER() OVER (PARTITION BY 2 * mark + 228);
 ----
-?column? row_number
-230 1
-232 1
-234 1
-248 1
+?column?	row_number
+230	1
+232	1
+234	1
+248	1
 
 
 query
@@ -81,16 +81,16 @@ FROM
 ) AS university(rank, gang)
 ORDER BY rank;
 ----
-rank nonrank
-1 -100
-2 2
-3 2
-4 -3
-5 3
-6 3
-7 -10
-8 10
-9 10
+rank	nonrank
+1	-100
+2	2
+3	2
+4	-3
+5	3
+6	3
+7	-10
+8	10
+9	10
 
 
 query
@@ -109,16 +109,16 @@ FROM
 ) AS university(mark, student)
 ORDER BY mark, student;
 ----
-mark student row_num rank dense_rank
-1 vedernikoff 1 1 1
-2 vedernikoff 1 1 1
-2 vedernikoff 2 1 1
-3 vedernikoff 1 1 1
-3 vedernikoff 2 1 1
-3 vedernikoff 3 1 1
-10 malko 1 1 1
-10 malko 2 1 1
-10 nemov 3 3 2
+mark	student	row_num	rank	dense_rank
+1	vedernikoff	1	1	1
+2	vedernikoff	1	1	1
+2	vedernikoff	2	1	1
+3	vedernikoff	1	1	1
+3	vedernikoff	2	1	1
+3	vedernikoff	3	1	1
+10	malko	1	1	1
+10	malko	2	1	1
+10	nemov	3	3	2
 
 
 query
@@ -151,28 +151,28 @@ FROM
 ) AS university(mark, student)
 ORDER BY mark, student;
 ----
-id mark student rows_unbounded_preceding range_unbounded_preceding rows_unbounded_following range_unbounded_following rows_1_prec_1_foll rows_2_prec_current rows_current_2_foll avg_range_cumulative max_rows_cumulative min_range_remaining count_rows_cumulative count_range_cumulative
-1 1 vedernikoff 1 1 142 142 3 1 5 1 1 1 1 1
-2 2 vedernikoff 3 5 141 141 5 3 7 1.6666666666666667 2 2 2 3
-3 2 vedernikoff 5 5 139 141 7 5 8 1.6666666666666667 2 2 3 3
-4 3 vedernikoff 8 14 137 137 8 7 9 2.3333333333333335 3 3 4 6
-5 3 vedernikoff 11 14 134 137 9 8 10 2.3333333333333335 3 3 5 6
-6 3 vedernikoff 14 14 131 137 10 9 11 2.3333333333333335 3 3 6 6
-7 4 ivanov 18 22 128 128 11 10 13 2.75 4 4 7 8
-8 4 ivanov 22 22 124 128 13 11 15 2.75 4 4 8 8
-9 5 jenkins 27 27 120 120 15 13 18 3 5 5 9 9
-10 6 sidorov 33 33 115 115 18 15 20 3.3 6 6 10 10
-11 7 abramov 40 47 109 109 20 18 22 3.9166666666666665 7 7 11 12
-12 7 abramov 47 47 102 109 22 20 24 3.9166666666666665 7 7 12 12
-13 8 smirnov 55 55 95 95 24 22 27 4.230769230769231 8 8 13 13
-14 9 arelav 64 64 87 87 27 24 29 4.571428571428571 9 9 14 14
-16 10 malko 84 104 68 78 30 29 30 5.777777777777778 10 10 16 18
-17 10 malko 94 104 58 78 30 30 31 5.777777777777778 10 10 17 18
-15 10 nemov 74 104 78 78 29 27 30 5.777777777777778 10 10 15 18
-18 10 vasurin 104 104 48 78 31 30 33 5.777777777777778 10 10 18 18
-19 11 fedorov 115 115 38 38 33 31 38 6.052631578947368 11 11 19 19
-20 12 valakaz 127 127 27 27 38 33 27 6.35 12 12 20 20
-21 15 babsky 142 142 15 15 27 38 15 6.761904761904762 15 15 21 21
+id	mark	student	rows_unbounded_preceding	range_unbounded_preceding	rows_unbounded_following	range_unbounded_following	rows_1_prec_1_foll	rows_2_prec_current	rows_current_2_foll	avg_range_cumulative	max_rows_cumulative	min_range_remaining	count_rows_cumulative	count_range_cumulative
+1	1	vedernikoff	1	1	142	142	3	1	5	1	1	1	1	1
+2	2	vedernikoff	3	5	141	141	5	3	7	1.6666666666666667	2	2	2	3
+3	2	vedernikoff	5	5	139	141	7	5	8	1.6666666666666667	2	2	3	3
+4	3	vedernikoff	8	14	137	137	8	7	9	2.3333333333333335	3	3	4	6
+5	3	vedernikoff	11	14	134	137	9	8	10	2.3333333333333335	3	3	5	6
+6	3	vedernikoff	14	14	131	137	10	9	11	2.3333333333333335	3	3	6	6
+7	4	ivanov	18	22	128	128	11	10	13	2.75	4	4	7	8
+8	4	ivanov	22	22	124	128	13	11	15	2.75	4	4	8	8
+9	5	jenkins	27	27	120	120	15	13	18	3	5	5	9	9
+10	6	sidorov	33	33	115	115	18	15	20	3.3	6	6	10	10
+11	7	abramov	40	47	109	109	20	18	22	3.9166666666666665	7	7	11	12
+12	7	abramov	47	47	102	109	22	20	24	3.9166666666666665	7	7	12	12
+13	8	smirnov	55	55	95	95	24	22	27	4.230769230769231	8	8	13	13
+14	9	arelav	64	64	87	87	27	24	29	4.571428571428571	9	9	14	14
+16	10	malko	84	104	68	78	30	29	30	5.777777777777778	10	10	16	18
+17	10	malko	94	104	58	78	30	30	31	5.777777777777778	10	10	17	18
+15	10	nemov	74	104	78	78	29	27	30	5.777777777777778	10	10	15	18
+18	10	vasurin	104	104	48	78	31	30	33	5.777777777777778	10	10	18	18
+19	11	fedorov	115	115	38	38	33	31	38	6.052631578947368	11	11	19	19
+20	12	valakaz	127	127	27	27	38	33	27	6.35	12	12	20	20
+21	15	babsky	142	142	15	15	27	38	15	6.761904761904762	15	15	21	21
 
 
 query
@@ -190,12 +190,12 @@ FROM
 ORDER BY mark, student
 LIMIT 5;
 ----
-mark student rn rank_by_mark
-1 vedernikoff 1 1
-2 vedernikoff 3 2
-2 vedernikoff 2 2
-3 vedernikoff 5 4
-3 vedernikoff 4 4
+mark	student	rn	rank_by_mark
+1	vedernikoff	1	1
+2	vedernikoff	3	2
+2	vedernikoff	2	2
+3	vedernikoff	5	4
+3	vedernikoff	4	4
 
 
 query
@@ -216,11 +216,11 @@ FROM
 WHERE rn <= 4
 ORDER BY mark, student;
 ----
-mark student rn
-1 vedernikoff 1
-2 vedernikoff 2
-2 vedernikoff 3
-3 vedernikoff 4
+mark	student	rn
+1	vedernikoff	1
+2	vedernikoff	2
+2	vedernikoff	3
+3	vedernikoff	4
 
 
 query
@@ -242,13 +242,13 @@ FROM
 ) AS limited_data
 ORDER BY mark, student;
 ----
-mark student cumulative_sum
-1 vedernikoff 1
-2 vedernikoff 5
-2 vedernikoff 5
-3 vedernikoff 14
-3 vedernikoff 14
-3 vedernikoff 14
+mark	student	cumulative_sum
+1	vedernikoff	1
+2	vedernikoff	5
+2	vedernikoff	5
+3	vedernikoff	14
+3	vedernikoff	14
+3	vedernikoff	14
 
 
 query
@@ -269,12 +269,12 @@ INNER JOIN
 ON u1.mark <= u2.mark
 ORDER BY u1.mark, u2.mark;
 ----
-mark student mark2 student2 rn
-1 vedernikoff 2 vedernikoff 1
-1 vedernikoff 3 vedernikoff 2
-2 vedernikoff 2 vedernikoff 3
-2 vedernikoff 3 vedernikoff 4
-3 vedernikoff 3 vedernikoff 5
+mark	student	mark2	student2	rn
+1	vedernikoff	2	vedernikoff	1
+1	vedernikoff	3	vedernikoff	2
+2	vedernikoff	2	vedernikoff	3
+2	vedernikoff	3	vedernikoff	4
+3	vedernikoff	3	vedernikoff	5
 
 
 query
@@ -295,12 +295,12 @@ FROM
 ) AS limited_input
 ORDER BY mark, student;
 ----
-mark student rn_in_partition dense_rank_mark
-1 vedernikoff 1 1
-2 vedernikoff 1 2
-2 vedernikoff 2 2
-3 vedernikoff 1 3
-3 vedernikoff 2 3
+mark	student	rn_in_partition	dense_rank_mark
+1	vedernikoff	1	1
+2	vedernikoff	1	2
+2	vedernikoff	2	2
+3	vedernikoff	1	3
+3	vedernikoff	2	3
 
 
 query
@@ -323,11 +323,11 @@ WHERE running_avg > 1.5
 ORDER BY mark, student, running_avg
 LIMIT 4;
 ----
-mark student running_avg
-2 vedernikoff 1.6666666666666667
-3 vedernikoff 2
-3 vedernikoff 2.2
-3 vedernikoff 2.3333333333333335
+mark	student	running_avg
+2	vedernikoff	1.6666666666666667
+3	vedernikoff	2
+3	vedernikoff	2.2
+3	vedernikoff	2.3333333333333335
 
 
 query
@@ -349,7 +349,7 @@ ON u1.mark = u2.mark
 GROUP BY u1.mark
 ORDER BY u1.mark;
 ----
-mark join_count cumulative_joins
-1 1 1
-2 2 3
-3 1 4
+mark	join_count	cumulative_joins
+1	1	1
+2	2	3
+3	1	4

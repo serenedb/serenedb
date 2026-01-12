@@ -219,6 +219,13 @@ irs::Format::ptr IndexTestBase::get_codec() const {
   return irs::formats::Get(info.codec);
 }
 
+irs::doc_id_t IndexTestBase::GetPostingsBlockSize() const {
+  if (get_codec()->type()().name().contains("avx")) {
+    return 256;
+  }
+  return 128;
+}
+
 void IndexTestBase::AssertSnapshotEquality(const irs::IndexWriter& writer) {
   tests::AssertSnapshotEquality(writer.GetSnapshot(), open_reader());
 }
@@ -13705,7 +13712,7 @@ TEST_P(IndexTestCase11, consolidate_old_format) {
   AssertSnapshotEquality(*writer);
   validate_codec(codec(), 2);
   // consolidate
-  auto old_codec = irs::formats::Get("1_5");
+  auto old_codec = irs::formats::Get("1_5avx");
   irs::index_utils::ConsolidateCount consolidate_all;
   ASSERT_TRUE(writer->Consolidate(irs::index_utils::MakePolicy(consolidate_all),
                                   old_codec));
@@ -14611,7 +14618,7 @@ TEST_P(IndexTestCase14, hnsw_search_basic) {
 }
 
 static const auto kTestFormats =
-  ::testing::Values(tests::FormatInfo{"1_5"}, tests::FormatInfo{"1_5simd"});
+  ::testing::Values(tests::FormatInfo{"1_5avx"}, tests::FormatInfo{"1_5simd"});
 
 static const auto kTestDirs =
   ::testing::ValuesIn(tests::GetDirectories<tests::kTypesDefaultRot13>());

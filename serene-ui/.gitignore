@@ -13,3 +13,4 @@ db.sqlite
 slim.report.json
 .env
 .env.*
+package-lock.json

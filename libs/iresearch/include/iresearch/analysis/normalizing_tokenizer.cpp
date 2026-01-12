@@ -201,11 +201,9 @@ bool MakeVPackConfig(const NormalizingTokenizer::OptionsT& options,
     builder->add(kLocaleParamName, locale_name);
 
     // case convert
-    const auto* case_value =
-      std::find_if(kCaseConvertMap.begin(), kCaseConvertMap.end(),
-                   [&options](const decltype(kCaseConvertMap)::value_type& v) {
-                     return v.second == options.case_convert;
-                   });
+    const auto case_value = absl::c_find_if(
+      kCaseConvertMap,
+      [&](const auto& v) { return v.second == options.case_convert; });
     if (case_value != kCaseConvertMap.end()) {
       builder->add(kCaseConvertParamName, case_value->first);
     } else {
@@ -388,7 +386,7 @@ bool NormalizingTokenizer::reset(std::string_view data) {
   static_assert(sizeof(byte_type) == sizeof(char));
   std::get<TermAttr>(_attrs).value =
     ViewCast<byte_type>(std::string_view{_state->term_buf});
-  auto& offset = std::get<irs::OffsAttr>(_attrs);
+  auto& offset = std::get<OffsAttr>(_attrs);
   offset.start = 0;
   offset.end = static_cast<uint32_t>(data.size());
   _term_eof = false;

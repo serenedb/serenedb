@@ -72,7 +72,7 @@ struct ByEditDistanceAllOptions {
 /// @brief options for levenshtein filter
 ////////////////////////////////////////////////////////////////////////////////
 struct ByEditDistanceOptions : ByEditDistanceAllOptions {
-  using filter_type = ByEditDistance;
+  using FilterType = ByEditDistance;
 
   //////////////////////////////////////////////////////////////////////////////
   /// @brief maximum number of the most relevant terms to consider for scoring
@@ -92,15 +92,14 @@ struct ByEditDistanceOptions : ByEditDistanceAllOptions {
 ////////////////////////////////////////////////////////////////////////////////
 class ByEditDistance final : public FilterWithField<ByEditDistanceOptions> {
  public:
-  static Prepared::ptr prepare(const PrepareContext& ctx,
-                               std::string_view field, bytes_view term,
-                               size_t terms_limit, uint8_t max_distance,
-                               options_type::pdp_f provider,
-                               bool with_transpositions, bytes_view prefix);
+  static Query::ptr prepare(const PrepareContext& ctx, std::string_view field,
+                            bytes_view term, size_t terms_limit,
+                            uint8_t max_distance, options_type::pdp_f provider,
+                            bool with_transpositions, bytes_view prefix);
 
   static field_visitor visitor(const ByEditDistanceAllOptions& options);
 
-  Prepared::ptr prepare(const PrepareContext& ctx) const final {
+  Query::ptr prepare(const PrepareContext& ctx) const final {
     auto sub_ctx = ctx;
     sub_ctx.boost *= Boost();
     return prepare(sub_ctx, field(), options().term, options().max_terms,

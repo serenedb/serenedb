@@ -265,27 +265,21 @@ struct ScopeDrop : std::enable_shared_from_this<ScopeDrop> {
       return {};
     }
 
-    return yaclib::WhenAll<yaclib::FailPolicy::None, yaclib::OrderPolicy::Fifo>(
-             tasks.begin(), tasks.size())
-      .ThenInline(
-        [this](std::vector<yaclib::Result<Result>>&& results) -> Result {
-          const bool fatal = !catalog->GetSkipBackgroundErrors();
-          bool error = false;
-          for (auto& result : results) {
-            if (auto r = std::move(result).Ok(); !r.ok()) {
-              SDB_WARN("xxxxx", Logger::THREADS, "Failed dropping table in ",
-                       GetContext(), ", error: ", r.errorMessage());
-              error = true;
-            }
+    yaclib::Wait(tasks.begin(), tasks.size());
+    const bool fatal = !catalog->GetSkipBackgroundErrors();
+    bool error = false;
+    for (auto& task : tasks) {
+      if (auto r = std::move(task).Touch().Ok(); !r.ok()) {
+        SDB_WARN("xxxxx", Logger::THREADS, "Failed dropping table in ",
+                 GetContext(), ", error: ", r.errorMessage());
+        error = true;
+      }
 
-            if (error && fatal) {
-              return {ERROR_INTERNAL};
-            }
-          }
-          return {};
-        })
-      .Get()
-      .Ok();
+      if (error && fatal) {
+        return {ERROR_INTERNAL};
+      }
+    }
+    return {};
   }
 
   Result operator()() {

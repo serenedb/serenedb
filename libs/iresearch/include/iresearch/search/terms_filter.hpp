@@ -56,7 +56,7 @@ struct ByTermsOptions {
     }
   };
 
-  using filter_type = ByTerms;
+  using FilterType = ByTerms;
   using search_terms = std::set<SearchTerm>;
 
   search_terms terms;
@@ -77,11 +77,10 @@ class ByTerms final : public FilterWithField<ByTermsOptions>,
                     const ByTermsOptions::search_terms& terms,
                     FilterVisitor& visitor);
 
-  static Prepared::ptr Prepare(const PrepareContext& ctx,
-                               std::string_view field,
-                               const ByTermsOptions& options);
+  static Query::ptr Prepare(const PrepareContext& ctx, std::string_view field,
+                            const ByTermsOptions& options);
 
-  Prepared::ptr prepare(const PrepareContext& ctx) const final;
+  Query::ptr prepare(const PrepareContext& ctx) const final;
 };
 
 }  // namespace irs

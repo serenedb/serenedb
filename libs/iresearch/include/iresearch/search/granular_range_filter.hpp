@@ -38,7 +38,7 @@ struct FilterVisitor;
 /// @brief options for granular range filter
 ////////////////////////////////////////////////////////////////////////////////
 struct ByGranularRangeOptions {
-  using filter_type = ByGranularRange;
+  using FilterType = ByGranularRange;
 
   using terms = std::vector<bstring>;
   using range_type = SearchRange<terms>;
@@ -93,14 +93,13 @@ void SetGranularTerm(ByGranularRangeOptions::terms& boundary,
 //////////////////////////////////////////////////////////////////////////////
 class ByGranularRange : public FilterWithField<ByGranularRangeOptions> {
  public:
-  static Prepared::ptr prepare(const PrepareContext& ctx,
-                               std::string_view field,
-                               const options_type& options);
+  static Query::ptr prepare(const PrepareContext& ctx, std::string_view field,
+                            const options_type& options);
 
   static void visit(const SubReader& segment, const TermReader& reader,
                     const options_type& options, FilterVisitor& visitor);
 
-  Prepared::ptr prepare(const PrepareContext& ctx) const final {
+  Query::ptr prepare(const PrepareContext& ctx) const final {
     return prepare(ctx.Boost(Boost()), field(), options());
   }
 };

@@ -253,7 +253,6 @@ void SslServerFeature::verifySslOptions() {
   }
 
   // validate protocol
-  // cppcheck-suppress unsignedLessThanZero
   if (_ssl_protocol <= kSslUnknown || _ssl_protocol >= kSslLast) {
     SDB_FATAL("xxxxx", sdb::Logger::SSL,
               "invalid SSL protocol version specified. Please use a valid "

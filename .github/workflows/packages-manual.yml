@@ -1,0 +1,161 @@
+name: Images-and-Packages-Manual
+
+on:
+  workflow_dispatch:
+    inputs:
+      LOCATION:
+        description: 'Where the load is executed'
+        required: true
+        type: choice
+        options:
+          - parilka
+          - self-hosted
+        default: 'self-hosted'
+      BRANCH:
+        description: 'SereneDB branch to checkout'
+        required: true
+        type: string
+        default: 'main'
+      SDB_CLUSTER:
+        description: 'Build SereneDB cluster'
+        required: true
+        type: boolean
+        default: false
+      SDB_CLUSTER_BRANCH:
+        description: 'Name of a cluster branch to use'
+        required: true
+        type: string
+        default: 'main'
+      DOCKER_BUILD_IMAGES:
+        description: 'Produce SereneDB Build Images'
+        required: true
+        type: boolean
+        default: false
+      DOCKER_SERENEDB_IMAGE:
+        description: 'Produce SereneDB Docker Images'
+        required: true
+        type: boolean
+        default: false
+      PUSH_IMAGES_2_REGISTRY:
+        description: 'Push images to Private Docker Registry'
+        required: true
+        type: boolean
+        default: false
+      DEB_TAR_PACKAGES:
+        description: 'Build .deb & .tar.gz packages'
+        required: true
+        type: boolean
+        default: false
+      DOCKER_TAG:
+        description: '(Optional) Custom TAG for DOCKER_SERENEDB_IMAGE'
+        required: false
+        type: string
+        default: ''
+      BUILD_IMAGE:
+        description: 'Build image to use in this build'
+        required: true
+        type: string
+        default: 'registry.serenedb.com:5000/serenedb-build-ubuntu:latest'
+      BUILDMODE:
+        description: 'Build mode'
+        required: true
+        type: choice
+        options:
+          - RelWithDebInfo
+          - Debug
+          - Release
+          - MinSizeRel
+          - None
+        default: 'RelWithDebInfo'
+      USE_DEBUG_INFO:
+        description: 'Debug info mode'
+        required: true
+        type: choice
+        options:
+          - COLUMNS
+          - SANITIZE
+          - PROFILE
+          - COVERAGE
+          - LLDB
+          - GDB
+          - FULL
+          - LINES
+          - NONE
+        default: 'COLUMNS'
+      SDB_DEV:
+        description: 'SDB Dev mode'
+        required: true
+        type: choice
+        options:
+          - 'Off'
+          - 'On'
+        default: 'Off'
+      USE_IPO:
+        description: 'Use IPO'
+        required: true
+        type: choice
+        options:
+          - 'On'
+          - 'Off'
+        default: 'On'
+      SDB_ALLOC:
+        description: 'Enable custom memory allocator'
+        required: true
+        type: choice
+        options:
+          - JE
+          - TC
+          - SYS
+        default: 'JE'
+      STATIC_EXECUTABLES:
+        description: 'Static executables'
+        required: true
+        type: choice
+        options:
+          - 'On'
+          - 'Off'
+        default: 'On'
+      ENSURE_VTUNE_SYMBOLS:
+        description: 'VTune symbols (server only)'
+        required: true
+        type: choice
+        options:
+          - 'Off'
+          - 'On'
+        default: 'Off'
+      STRIP_TARBALL:
+        description: 'Strip tarball'
+        required: true
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-reusable.yml
+    with:
+      LOCATION: ${{ inputs.LOCATION }}
+      BRANCH: ${{ inputs.BRANCH }}
+      SDB_CLUSTER: ${{ inputs.SDB_CLUSTER }}
+      SDB_CLUSTER_BRANCH: ${{ inputs.SDB_CLUSTER_BRANCH }}
+      DOCKER_BUILD_IMAGES: ${{ inputs.DOCKER_BUILD_IMAGES }}
+      DOCKER_SERENEDB_IMAGE: ${{ inputs.DOCKER_SERENEDB_IMAGE }}
+      PUSH_IMAGES_2_REGISTRY: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
+      DEB_TAR_PACKAGES: ${{ inputs.DEB_TAR_PACKAGES }}
+      DOCKER_TAG: ${{ inputs.DOCKER_TAG }}
+      BUILD_IMAGE: ${{ inputs.BUILD_IMAGE }}
+      BUILDMODE: ${{ inputs.BUILDMODE }}
+      USE_DEBUG_INFO: ${{ inputs.USE_DEBUG_INFO }}
+      SDB_DEV: ${{ inputs.SDB_DEV }}
+      USE_IPO: ${{ inputs.USE_IPO }}
+      SDB_ALLOC: ${{ inputs.SDB_ALLOC }}
+      STATIC_EXECUTABLES: ${{ inputs.STATIC_EXECUTABLES }}
+      ENSURE_VTUNE_SYMBOLS: ${{ inputs.ENSURE_VTUNE_SYMBOLS }}
+      STRIP_TARBALL: ${{ inputs.STRIP_TARBALL }}
+    secrets:
+      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+      TG_TOKEN: ${{ secrets.TG_TOKEN }}
+      TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+      TG_THREAD_ID_BUILD: ${{ secrets.TG_THREAD_ID_BUILD }}
+      TG_THREAD_ID_MAIN: ${{ secrets.TG_THREAD_ID_MAIN }}
+      TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
+      SDB_CLUSTER_REPO: ${{ secrets.SDB_CLUSTER_REPO }}

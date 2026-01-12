@@ -161,7 +161,6 @@ ErrorCode SdbInetPton4(const char* src, unsigned char* dst) {
   }
 
   if (nullptr != dst) {
-    // cppcheck-suppress[uninitvar]
     memcpy(dst, tmp, sizeof(struct in_addr));
   }
 

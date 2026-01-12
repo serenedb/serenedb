@@ -271,7 +271,7 @@ bool DelimitedTokenizer::next() {
     return false;
   }
 
-  auto& offset = std::get<irs::OffsAttr>(_attrs);
+  auto& offset = std::get<OffsAttr>(_attrs);
 
   auto size = FindDelimiter(_data, _delim);
   auto next = std::max<size_t>(1, size + _delim.size());
@@ -300,7 +300,7 @@ bool DelimitedTokenizer::next() {
 bool DelimitedTokenizer::reset(std::string_view data) {
   _data = ViewCast<byte_type>(data);
 
-  auto& offset = std::get<irs::OffsAttr>(_attrs);
+  auto& offset = std::get<OffsAttr>(_attrs);
   offset.start = 0;
   // counterpart to computation in next() above
   offset.end = 0 - static_cast<uint32_t>(_delim.size());

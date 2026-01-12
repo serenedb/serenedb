@@ -42,17 +42,17 @@ struct MultiTermState {
   };
 
   explicit MultiTermState(IResourceManager& memory) noexcept
-    : scored_states{{memory}}, unscored_terms{{memory}} {}
+    : scored_states{{memory}}, unscored_states{{memory}} {}
 
   using UnscoredTermState = SeekCookie::ptr;
 
   // Return true if state is empty
   bool empty() const noexcept {
-    return scored_states.empty() && unscored_terms.empty();
+    return scored_states.empty() && unscored_states.empty();
   }
 
   // Return total cost of execution
-  CostAttr::cost_t estimation() const noexcept {
+  CostAttr::Type estimation() const noexcept {
     return scored_states_estimation + unscored_states_estimation;
   }
 
@@ -65,13 +65,13 @@ struct MultiTermState {
   // Matching terms that may have been skipped
   // while collecting statistics and should not be
   // scored by the disjunction.
-  ManagedVector<UnscoredTermState> unscored_terms;
+  ManagedVector<UnscoredTermState> unscored_states;
 
   // Estimated cost of scored states
-  CostAttr::cost_t scored_states_estimation{};
+  CostAttr::Type scored_states_estimation{};
 
   // Estimated cost of unscored states
-  CostAttr::cost_t unscored_states_estimation{};
+  CostAttr::Type unscored_states_estimation{};
 };
 
 }  // namespace irs

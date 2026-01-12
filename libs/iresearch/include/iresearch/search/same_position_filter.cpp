@@ -38,33 +38,35 @@ namespace {
 template<typename Conjunction>
 class SamePositionIterator : public Conjunction {
  public:
-  typedef std::vector<PosAttr::ref> PositionsT;
+  using Positions = std::vector<PosAttr::ref>;
 
   template<typename... Args>
-  SamePositionIterator(PositionsT&& pos, Args&&... args)
+  SamePositionIterator(Positions&& pos, Args&&... args)
     : Conjunction{std::forward<Args>(args)...}, _pos(std::move(pos)) {
     SDB_ASSERT(!_pos.empty());
   }
 
-  bool next() final {
-    while (Conjunction::next()) {
-      if (FindSamePosition()) {
-        return true;
+  doc_id_t advance() final {
+    while (true) {
+      const auto doc = Conjunction::advance();
+      if (doc_limits::eof(doc) || FindSamePosition()) {
+        return doc;
       }
     }
-    return false;
   }
 
   doc_id_t seek(doc_id_t target) final {
+    if (const auto doc = this->value(); target <= doc) [[unlikely]] {
+      return doc;
+    }
     const auto doc = Conjunction::seek(target);
-
     if (doc_limits::eof(doc) || FindSamePosition()) {
       return doc;
     }
-
-    next();
-    return this->value();
+    return advance();
   }
+
+  uint32_t count() final { return DocIterator::Count(*this); }
 
  private:
   bool FindSamePosition() {
@@ -87,10 +89,10 @@ class SamePositionIterator : public Conjunction {
     return true;
   }
 
-  PositionsT _pos;
+  Positions _pos;
 };
 
-class SamePositionQuery : public Filter::Prepared {
+class SamePositionQuery : public Filter::Query {
  public:
   using TermsStatesT = ManagedVector<TermState>;
   using StatesT = StatesCache<TermsStatesT>;
@@ -145,7 +147,7 @@ class SamePositionQuery : public Filter::Prepared {
       positions.emplace_back(std::ref(*pos));
 
       if (!no_score) {
-        auto* score = irs::GetMutable<irs::ScoreAttr>(docs.get());
+        auto* score = irs::GetMutable<ScoreAttr>(docs.get());
         SDB_ASSERT(score);
 
         CompileScore(*score, ord.buckets(), segment, *term_state.reader,
@@ -158,13 +160,13 @@ class SamePositionQuery : public Filter::Prepared {
       ++term_stats;
     }
 
-    return irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, ord.buckets().size(),
-      [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-        return MakeConjunction<SamePositionIterator>(
-          // TODO(mbkkt) Implement wand?
-          {}, std::move(aggregator), std::move(itrs), std::move(positions));
-      });
+    return ResolveMergeType(ScoreMergeType::Sum, ord.buckets().size(),
+                            [&]<typename A>(A&& aggregator) {
+                              // TODO(mbkkt) Implement wand?
+                              return MakeConjunction<SamePositionIterator>(
+                                {}, std::move(aggregator), std::move(itrs),
+                                std::move(positions));
+                            });
   }
 
   score_t Boost() const noexcept final { return _boost; }
@@ -177,13 +179,13 @@ class SamePositionQuery : public Filter::Prepared {
 
 }  // namespace
 
-Filter::Prepared::ptr BySamePosition::prepare(const PrepareContext& ctx) const {
+Filter::Query::ptr BySamePosition::prepare(const PrepareContext& ctx) const {
   auto& terms = options().terms;
   const auto size = terms.size();
 
   if (0 == size) {
     // empty field or phrase
-    return Filter::Prepared::empty();
+    return Filter::Query::empty();
   }
 
   // per segment query state

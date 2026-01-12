@@ -130,7 +130,7 @@ struct PrepareVisitor : util::Noncopyable {
                                    part.with_transpositions, part.prefix);
   }
 
-  Filter::Prepared::ptr operator()(const ByTermsOptions&) const { return {}; }
+  Filter::Query::ptr operator()(const ByTermsOptions&) const { return {}; }
 
   auto operator()(const ByRangeOptions& part) const {
     return ByRange::prepare(ctx, field, part.range, part.scored_terms_limit);
@@ -212,9 +212,9 @@ bool Valid(const TermReader* reader) noexcept {
                                 FixedPhraseQuery::kRequiredFeatures;
 }
 
-Filter::Prepared::ptr FixedPrepareCollect(const PrepareContext& ctx,
-                                          std::string_view field,
-                                          const ByPhraseOptions& options) {
+Filter::Query::ptr FixedPrepareCollect(const PrepareContext& ctx,
+                                       std::string_view field,
+                                       const ByPhraseOptions& options) {
   const auto phrase_size = options.size();
   const auto is_ord_empty = ctx.scorers.empty();
 
@@ -266,9 +266,9 @@ Filter::Prepared::ptr FixedPrepareCollect(const PrepareContext& ctx,
     phrase_terms.reserve(phrase_size);
   }
 
-#ifndef IRESEARCH_TEST  // TODO(mbkkt) adjust tests
+#ifndef SDB_GTEST  // TODO(mbkkt) adjust tests
   if (phrase_states.empty()) {
-    return Filter::Prepared::empty();
+    return Filter::Query::empty();
   }
 #endif
 
@@ -298,9 +298,9 @@ Filter::Prepared::ptr FixedPrepareCollect(const PrepareContext& ctx,
     std::move(stats), ctx.boost);
 }
 
-Filter::Prepared::ptr VariadicPrepareCollect(const PrepareContext& ctx,
-                                             std::string_view field,
-                                             const ByPhraseOptions& options) {
+Filter::Query::ptr VariadicPrepareCollect(const PrepareContext& ctx,
+                                          std::string_view field,
+                                          const ByPhraseOptions& options) {
   const auto phrase_size = options.size();
 
   // stats collectors
@@ -405,9 +405,9 @@ Filter::Prepared::ptr VariadicPrepareCollect(const PrepareContext& ctx,
     num_terms.resize(phrase_size);
   }
 
-#ifndef IRESEARCH_TEST  // TODO(mbkkt) adjust tests
+#ifndef SDB_GTEST  // TODO(mbkkt) adjust tests
   if (phrase_states.empty()) {
-    return Filter::Prepared::empty();
+    return Filter::Query::empty();
   }
 #endif
 
@@ -441,12 +441,12 @@ Filter::Prepared::ptr VariadicPrepareCollect(const PrepareContext& ctx,
 
 }  // namespace
 
-Filter::Prepared::ptr ByPhrase::Prepare(const PrepareContext& ctx,
-                                        std::string_view field,
-                                        const ByPhraseOptions& options) {
+Filter::Query::ptr ByPhrase::Prepare(const PrepareContext& ctx,
+                                     std::string_view field,
+                                     const ByPhraseOptions& options) {
   if (field.empty() || options.empty()) {
     // empty field or phrase
-    return Prepared::empty();
+    return Query::empty();
   }
 
   if (1 == options.size()) {

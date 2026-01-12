@@ -337,7 +337,7 @@ class FilterTestCaseBase : public IndexTestBase {
   using Docs = std::vector<irs::doc_id_t>;
   using ScoredDocs =
     std::vector<std::pair<irs::doc_id_t, std::vector<irs::score_t>>>;
-  using Costs = std::vector<irs::CostAttr::cost_t>;
+  using Costs = std::vector<irs::CostAttr::Type>;
 
   struct Seek {
     irs::doc_id_t target;
@@ -400,12 +400,12 @@ class FilterTestCaseBase : public IndexTestBase {
                          bool reverse = false);
 
  private:
-  static void GetQueryResult(const irs::Filter::Prepared::ptr& q,
+  static void GetQueryResult(const irs::Filter::Query::ptr& q,
                              const irs::IndexReader& index, Docs& result,
                              Costs& result_costs,
                              std::string_view source_location);
 
-  static void GetQueryResult(const irs::Filter::Prepared::ptr& q,
+  static void GetQueryResult(const irs::Filter::Query::ptr& q,
                              const irs::IndexReader& index,
                              const irs::Scorers& ord, ScoredDocs& result,
                              Costs& result_costs,

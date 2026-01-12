@@ -228,6 +228,15 @@ class RangeColumnIterator : public ResettableDocIterator,
     return std::get<DocAttr>(_attrs).value;
   }
 
+  doc_id_t advance() final {
+    if (_min_doc <= _max_doc) {
+      std::get<PayAttr>(_attrs).value = this->payload(_min_doc - _min_base);
+      return std::get<DocAttr>(_attrs).value = _min_doc++;
+    }
+    std::get<PayAttr>(_attrs).value = {};
+    return std::get<DocAttr>(_attrs).value = doc_limits::eof();
+  }
+
   doc_id_t seek(doc_id_t doc) final {
     if (_min_doc <= doc && doc <= _max_doc) [[likely]] {
       std::get<DocAttr>(_attrs).value = doc;
@@ -251,18 +260,6 @@ class RangeColumnIterator : public ResettableDocIterator,
     }
 
     return value();
-  }
-
-  bool next() final {
-    if (_min_doc <= _max_doc) {
-      std::get<DocAttr>(_attrs).value = _min_doc++;
-      std::get<PayAttr>(_attrs).value = this->payload(value() - _min_base);
-      return true;
-    }
-
-    std::get<DocAttr>(_attrs).value = doc_limits::eof();
-    std::get<PayAttr>(_attrs).value = {};
-    return false;
   }
 
   void reset() noexcept final {
@@ -294,10 +291,10 @@ class BitmapColumnIterator : public ResettableDocIterator,
   template<typename... Args>
   BitmapColumnIterator(IndexInput::ptr&& bitmap_in,
                        const SparseBitmapIterator::Options& opts,
-                       CostAttr::cost_t cost, Args&&... args)
+                       CostAttr::Type cost, Args&&... args)
     : PayloadReader{std::forward<Args>(args)...},
       _bitmap{std::move(bitmap_in), opts, cost} {
-    std::get<irs::CostAttr>(_attrs).reset(cost);
+    std::get<CostAttr>(_attrs).reset(cost);
     std::get<AttributePtr<DocAttr>>(_attrs) =
       irs::GetMutable<DocAttr>(&_bitmap);
     std::get<AttributePtr<ScoreAttr>>(_attrs) =
@@ -314,27 +311,20 @@ class BitmapColumnIterator : public ResettableDocIterator,
     return std::get<AttributePtr<DocAttr>>(_attrs).ptr->value;
   }
 
-  doc_id_t seek(doc_id_t doc) final {
-    SDB_ASSERT(doc_limits::valid(doc) || doc_limits::valid(value()));
-    doc = _bitmap.seek(doc);
-
-    if (!doc_limits::eof(doc)) {
-      std::get<PayAttr>(_attrs).value = this->payload(_bitmap.index());
-      return doc;
-    }
-
-    std::get<PayAttr>(_attrs).value = {};
-    return doc_limits::eof();
+  doc_id_t advance() final {
+    const auto doc = _bitmap.advance();
+    std::get<PayAttr>(_attrs).value =
+      doc_limits::eof(doc) ? bytes_view{} : this->payload(_bitmap.index());
+    return doc;
   }
 
-  bool next() final {
-    if (_bitmap.next()) {
-      std::get<PayAttr>(_attrs).value = this->payload(_bitmap.index());
-      return true;
-    }
-
-    std::get<PayAttr>(_attrs).value = {};
-    return false;
+  doc_id_t seek(doc_id_t doc) final {
+    // TODO(mbkkt) assert is strange
+    SDB_ASSERT(doc_limits::valid(doc) || doc_limits::valid(value()));
+    doc = _bitmap.seek(doc);
+    std::get<PayAttr>(_attrs).value =
+      doc_limits::eof(doc) ? bytes_view{} : this->payload(_bitmap.index());
+    return doc;
   }
 
   void reset() final { _bitmap.reset(); }
@@ -1516,8 +1506,8 @@ void Column::finish(IndexOutput& index_out) {
                                        .track_prev_doc = false,
                                        .use_block_index = false,
                                        .blocks = {}}};
-  if (it.next()) {
-    hdr.min = it.value();
+  if (const auto min = it.advance(); !doc_limits::eof(min)) {
+    hdr.min = min;
   }
 
   // FIXME(gnusi): how to deal with rollback() and docs_writer_.back()?

@@ -485,7 +485,7 @@ struct Cookie final : SeekCookie {
 };
 
 const fst::FstReadOptions& FstReadOptions() {
-  static const auto kInstance = []() {
+  static const auto kInstance = [] {
     fst::FstReadOptions options;
     options.read_osymbols = false;  // we don't need output symbols
 
@@ -1144,7 +1144,7 @@ void TermReaderBase::Prepare(burst_trie::Version version, IndexInput& in) {
 
 Attribute* TermReaderBase::GetMutable(TypeInfo::type_id type) noexcept {
   if (IndexFeatures::None != (_field.index_features & IndexFeatures::Freq) &&
-      irs::Type<irs::FreqAttr>::id() == type) {
+      irs::Type<FreqAttr>::id() == type) {
     return &_freq;
   }
 

@@ -25,7 +25,7 @@ export const ConnectionAuthPassword = () => {
                 <Input
                     onChange={handleInputChange}
                     value={currentConnection.password || ""}
-                    placeholder="postgres"
+                    placeholder=""
                     className="txtPassword"
                     id="password"
                     autoComplete={"off"}

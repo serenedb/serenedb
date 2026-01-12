@@ -181,6 +181,8 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
   const index_t& index() const { return _index; }
   index_t& index() { return _index; }
 
+  irs::doc_id_t GetPostingsBlockSize() const;
+
   void sort(const irs::Comparer& comparator) {
     for (auto& segment : _index) {
       segment.sort(comparator);

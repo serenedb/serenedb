@@ -80,19 +80,38 @@ class Objects : public irs::memory::Managed {
   using Map = containers::FlatHashMap<ObjectName, ObjectData>;
 
   template<typename S>
-  ObjectData& ensureData(S s, std::string_view relation) {
-    auto schema = ensureNotNull(s);
-    return _objects[ObjectName{schema, relation}];
+  ObjectData& ensureRelation(S s, std::string_view relation) {
+    return _relations[ObjectName{ensureNotNull(s), relation}];
   }
 
   template<typename S>
-  const ObjectData* getData(S s, std::string_view relation) const noexcept {
-    auto schema = ensureNotNull(s);
-    auto it = _objects.find(ObjectName{schema, relation});
-    return it != _objects.end() ? &it->second : nullptr;
+  ObjectData& ensureFunction(S s, std::string_view relation) {
+    return _functions[ObjectName{ensureNotNull(s), relation}];
   }
 
-  auto& getObjects(this auto& self) noexcept { return self._objects; }
+  template<typename S>
+  const ObjectData* getRelation(S s, std::string_view relation) const noexcept {
+    auto it = _relations.find(ObjectName{ensureNotNull(s), relation});
+    return it != _relations.end() ? &it->second : nullptr;
+  }
+
+  template<typename S>
+  const ObjectData* getFunction(S s, std::string_view relation) const noexcept {
+    auto it = _functions.find(ObjectName{ensureNotNull(s), relation});
+    return it != _functions.end() ? &it->second : nullptr;
+  }
+
+  auto& getRelations(this auto& self) noexcept { return self._relations; }
+  auto& getFunctions(this auto& self) noexcept { return self._functions; }
+
+  bool empty() const noexcept {
+    return _relations.empty() && _functions.empty();
+  }
+
+  void clear() noexcept {
+    _relations.clear();
+    _functions.clear();
+  }
 
  private:
   template<typename T>
@@ -105,7 +124,8 @@ class Objects : public irs::memory::Managed {
     }
   }
 
-  containers::FlatHashMap<ObjectName, ObjectData> _objects;
+  Map _relations;
+  Map _functions;
   containers::FlatHashSet<void*> _search_functions;
   containers::FlatHashMap<std::string_view, std::vector<void*>>
     _scope_to_search_functions;

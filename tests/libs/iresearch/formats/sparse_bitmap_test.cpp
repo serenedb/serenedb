@@ -112,7 +112,7 @@ template<size_t N, size_t K>
 void SparseBitmapTestCase::TestRwSeekRandomStateless(
   const RangeType (&ranges)[N], const SeekType (&seeks)[K]) {
   std::vector<irs::SparseBitmapWriter::Block> bitmap_index;
-  irs::CostAttr::cost_t count = 0;
+  irs::CostAttr::Type count = 0;
 
   {
     auto stream = dir().create("tmp");
@@ -320,7 +320,7 @@ void SparseBitmapTestCase::TestRwSeekRandom(const RangeType (&ranges)[N],
 template<size_t N>
 void SparseBitmapTestCase::TestRwNext(const RangeType (&ranges)[N]) {
   std::vector<irs::SparseBitmapWriter::Block> bitmap_index;
-  irs::CostAttr::cost_t count = 0;
+  irs::CostAttr::Type count = 0;
 
   {
     auto stream = dir().create("tmp");
@@ -439,7 +439,7 @@ void SparseBitmapTestCase::TestRwNext(const RangeType (&ranges)[N]) {
 template<size_t N>
 void SparseBitmapTestCase::TestRwSeek(const RangeType (&ranges)[N]) {
   std::vector<irs::SparseBitmapWriter::Block> bitmap_index;
-  irs::CostAttr::cost_t count = 0;
+  irs::CostAttr::Type count = 0;
 
   {
     auto stream = dir().create("tmp");
@@ -543,7 +543,7 @@ void SparseBitmapTestCase::TestRwSeek(const RangeType (&ranges)[N]) {
 template<size_t N>
 void SparseBitmapTestCase::TestRwSeekNext(const RangeType (&ranges)[N]) {
   std::vector<irs::SparseBitmapWriter::Block> bitmap_index;
-  irs::CostAttr::cost_t count = 0;
+  irs::CostAttr::Type count = 0;
 
   {
     auto stream = dir().create("tmp");
@@ -811,7 +811,7 @@ TEST_P(SparseBitmapTestCase, rw_sparse_blocks) {
     for (irs::doc_id_t expected_doc = irs::doc_limits::min() + 1;;) {
       irs::SparseBitmapIterator it{
         stream->Dup(), IteratorOptions(bitmap_index, true),
-        []() noexcept -> irs::CostAttr::cost_t { return 65536; }};
+        []() noexcept -> irs::CostAttr::Type { return 65536; }};
       auto* index = irs::get<irs::ValueIndex>(it);
       ASSERT_NE(nullptr, index);  // index value is unspecified for invalid docs
       auto* doc = irs::get<irs::DocAttr>(it);

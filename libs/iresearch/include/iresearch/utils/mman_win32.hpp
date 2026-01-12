@@ -22,7 +22,7 @@
 
 #pragma once
 
-#if defined(_MSC_VER)
+#if defined(_WIN32)
 
 #include <stdint.h>
 
@@ -74,4 +74,4 @@ int munlock(const void* addr, size_t len);
 int madvise(void* addr, size_t length, int advice);
 }
 
-#endif  // (_MSC_VER)
+#endif

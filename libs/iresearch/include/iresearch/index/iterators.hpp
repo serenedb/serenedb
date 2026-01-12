@@ -44,11 +44,17 @@ namespace irs {
 //   - `next()` must constantly return `false`
 //   - `seek()`, `shallow_seek()` to any value must return `doc_limits::eof()`
 //   - `value()` must return `doc_limits::eof()`
-struct DocIterator : Iterator<doc_id_t, AttributeProvider> {
+struct DocIterator : AttributeProvider {
   using ptr = memory::managed_ptr<DocIterator>;
 
-  // Return an empty iterator
   [[nodiscard]] static DocIterator::ptr empty();
+
+  virtual doc_id_t value() const = 0;
+
+  virtual doc_id_t advance() = 0;
+
+  // deprecated: use advance() instead
+  IRS_FORCE_INLINE bool next() { return !doc_limits::eof(advance()); }
 
   // Position iterator at a specified target and returns current value
   // (for more information see class description)
@@ -59,7 +65,7 @@ struct DocIterator : Iterator<doc_id_t, AttributeProvider> {
   // It's two bounds: (min...max]:
   // DocIterator always positioned to the some block.
   //
-  // DocIterator before seek/next/shallow_seek(any valid target)
+  // DocIterator before advance/seek/shallow_seek(any valid target)
   // positioned to the first block.
   // You could know about it max, with call shallow_seek(doc_limits::invalid());
   //
@@ -70,6 +76,18 @@ struct DocIterator : Iterator<doc_id_t, AttributeProvider> {
     seek(target);
     return doc_limits::eof();
   }
+
+  virtual uint32_t count() { return Count(*this); }
+
+ protected:
+  template<typename Iterator>
+  static uint32_t Count(Iterator& it) {
+    uint32_t count = 0;
+    while (it.next()) {
+      ++count;
+    }
+    return count;
+  }
 };
 
 // Same as `DocIterator` but also support `reset()` operation
@@ -77,6 +95,7 @@ struct ResettableDocIterator : DocIterator {
   using ptr = memory::managed_ptr<ResettableDocIterator>;
 
   [[nodiscard]] static ResettableDocIterator::ptr empty();
+
   // Reset iterator to initial state
   virtual void reset() = 0;
 };

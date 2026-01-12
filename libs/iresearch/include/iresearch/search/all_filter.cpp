@@ -27,7 +27,7 @@
 namespace irs {
 
 // Compiled all_filter that returns all documents
-class AllQuery : public Filter::Prepared {
+class AllQuery : public Filter::Query {
  public:
   explicit AllQuery(bstring&& stats, score_t boost)
     : _stats{std::move(stats)}, _boost{boost} {}
@@ -50,7 +50,7 @@ class AllQuery : public Filter::Prepared {
   score_t _boost;
 };
 
-Filter::Prepared::ptr All::prepare(const PrepareContext& ctx) const {
+Filter::Query::ptr All::prepare(const PrepareContext& ctx) const {
   // skip field-level/term-level statistics because there are no explicit
   // fields/terms, but still collect index-level statistics
   // i.e. all fields and terms implicitly match

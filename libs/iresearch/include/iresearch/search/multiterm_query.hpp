@@ -29,7 +29,7 @@
 namespace irs {
 
 // Compiled query suitable for filters with non adjacent set of terms.
-class MultiTermQuery : public Filter::Prepared {
+class MultiTermQuery : public Filter::Query {
  public:
   using States = StatesCache<MultiTermState>;
   // TODO(mbkkt) block_pool<byte>

@@ -221,7 +221,7 @@ TEST_P(DirectoryTestCase, lock_obtain_release) {
   }
 }
 
-#ifndef _MSC_VER
+#ifndef _WIN32
 TEST_P(DirectoryTestCase, create_many_files) {
   std::vector<IndexOutput::ptr> opened_files;
   std::vector<std::string> names;

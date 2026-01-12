@@ -8286,6 +8286,6 @@ static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 INSTANTIATE_TEST_SUITE_P(
   index_column_test, IndexColumnTestCase,
   ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                     ::testing::Values(tests::FormatInfo{"1_5"},
+                     ::testing::Values(tests::FormatInfo{"1_5avx"},
                                        tests::FormatInfo{"1_5simd"})),
   IndexColumnTestCase::to_string);

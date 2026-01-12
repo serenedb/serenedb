@@ -39,7 +39,6 @@ class [[nodiscard]] Result final {
   Result() noexcept = default;
   Result(bool /*avoidCastingErrors*/) = delete;
   Result(int /*avoidCastingErrors*/) = delete;
-  // cppcheck-suppress noExplicitConstructor
   /* implicit */ Result(ErrorCode error_number);
 
   Result(ErrorCode error_number, std::string&& error_message);

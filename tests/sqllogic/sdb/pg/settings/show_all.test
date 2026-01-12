@@ -2,8 +2,8 @@ query
 SHOW ALL;
 ----
 name	value	description
-execution_threads 0 Sets the number of threads used for query execution. If set to 0, serial execution (execution in connection thread) is used. Otherwise the execution is separated from connection thread and desired number of threads will be tried to be used.
-join_order_algorithm cost Sets the join algorithm to be used for query execution. Valid values are 'cost' (the default), 'greedy', and 'syntactic'.
+execution_threads	0	Sets the number of threads used for query execution. If set to 0, serial execution (execution in connection thread) is used. Otherwise the execution is separated from connection thread and desired number of threads will be tried to be used.
+join_order_algorithm	cost	Sets the join algorithm to be used for query execution. Valid values are 'cost' (the default), 'greedy', and 'syntactic'.
 search_path	"$user", public	Sets the schema search order for names that are not schema-qualified.
 extra_float_digits	1	Sets the number of digits displayed for floating-point values.
 bytea_output	hex	Sets the output format for values of type bytea. Valid values are 'hex' (the default) and 'escape' (the traditional PostgreSQL format).

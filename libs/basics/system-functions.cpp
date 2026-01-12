@@ -57,7 +57,6 @@ void GetGmtime(time_t tt, struct tm* tb) {
   struct tm* tp = gmtime(&tt);
 
   if (tp != nullptr) {
-    // cppcheck-suppress uninitvar
     memcpy(tb, tp, sizeof(struct tm));
   }
 #endif
@@ -77,7 +76,6 @@ double GetMicrotime() noexcept {
 
 std::string TimeString(char sep, char fin) {
   time_t tt = time(nullptr);
-  // cppcheck-suppress uninitvar
   struct tm tb;
   GetGmtime(tt, &tb);
   char buffer[32];

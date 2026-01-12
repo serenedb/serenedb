@@ -1225,7 +1225,7 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
 // Separate definition as MSVC parser fails to do conditional defines in macro
 // expansion
 const auto kNormTestCaseValues =
-  ::testing::Values(tests::FormatInfo{"1_5"}, tests::FormatInfo{"1_5simd"});
+  ::testing::Values(tests::FormatInfo{"1_5avx"}, tests::FormatInfo{"1_5simd"});
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 

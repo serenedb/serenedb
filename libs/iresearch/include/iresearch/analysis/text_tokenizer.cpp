@@ -681,11 +681,9 @@ bool MakeVPackConfig(const TextTokenizer::OptionsT& options,
     builder->add(kLocaleParamName, locale_name);
 
     // case convert
-    const auto* case_value =
-      std::find_if(kCaseConvertMap.begin(), kCaseConvertMap.end(),
-                   [&options](const decltype(kCaseConvertMap)::value_type& v) {
-                     return v.second == options.case_convert;
-                   });
+    const auto case_value = absl::c_find_if(
+      kCaseConvertMap,
+      [&options](const auto& v) { return v.second == options.case_convert; });
 
     if (case_value != kCaseConvertMap.end()) {
       builder->add(kCaseConvertParamName, case_value->first);
@@ -706,10 +704,9 @@ bool MakeVPackConfig(const TextTokenizer::OptionsT& options,
         // order of stopwords
         sorted_words.reserve(options.explicit_stopwords.size());
         for (const auto& stopword : options.explicit_stopwords) {
-          // cppcheck-suppress useStlAlgorithm
           sorted_words.emplace_back(stopword);
         }
-        std::sort(sorted_words.begin(), sorted_words.end());
+        absl::c_sort(sorted_words);
       }
       {
         vpack::ArrayBuilder array(builder, kStopwordsParamName.data());
@@ -982,7 +979,7 @@ bool TextTokenizer::next() {
   } else if (next_word()) {
     std::get<TermAttr>(_attrs).value = _state->term;
 
-    auto& offset = std::get<irs::OffsAttr>(_attrs);
+    auto& offset = std::get<OffsAttr>(_attrs);
     offset.start = _state->start;
     offset.end = _state->end;
 
@@ -1088,7 +1085,7 @@ bool TextTokenizer::next_ngram() {
     _term_buf.assign(_state->term.data(), size);
     std::get<TermAttr>(_attrs).value = _term_buf;
 
-    auto& offset = std::get<irs::OffsAttr>(_attrs);
+    auto& offset = std::get<OffsAttr>(_attrs);
     offset.start = _state->start;
     offset.end = _state->start + size;
 

@@ -176,20 +176,17 @@ void ReadWriteSpinLock::unlock() noexcept {
   if (isLockedWrite()) {
     unlockWrite();
   } else {
-    // cppcheck-suppress ignoredReturnValue
     SDB_ASSERT(isLockedRead());
     unlockRead();
   }
 }
 
 void ReadWriteSpinLock::unlockRead() noexcept {
-  // cppcheck-suppress ignoredReturnValue
   SDB_ASSERT(isLockedRead());
   _state.fetch_sub(::kReaderIncrement, std::memory_order_release);
 }
 
 void ReadWriteSpinLock::unlockWrite() noexcept {
-  // cppcheck-suppress ignoredReturnValue
   SDB_ASSERT(isLockedWrite());
   _state.fetch_sub(::kWriteLock, std::memory_order_release);
 }

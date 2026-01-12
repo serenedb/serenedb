@@ -109,10 +109,10 @@ void VisitImpl(const SubReader& segment, const TermReader& reader,
 
 }  // namespace
 
-Filter::Prepared::ptr ByRange::prepare(const PrepareContext& ctx,
-                                       std::string_view field,
-                                       const options_type::range_type& rng,
-                                       size_t scored_terms_limit) {
+Filter::Query::ptr ByRange::prepare(const PrepareContext& ctx,
+                                    std::string_view field,
+                                    const options_type::range_type& rng,
+                                    size_t scored_terms_limit) {
   // TODO: optimize unordered case
   //  - seek to min
   //  - get ordinal position of the term
@@ -127,7 +127,7 @@ Filter::Prepared::ptr ByRange::prepare(const PrepareContext& ctx,
     }
 
     // can't satisfy conditon
-    return Prepared::empty();
+    return Query::empty();
   }
 
   // object for collecting order stats

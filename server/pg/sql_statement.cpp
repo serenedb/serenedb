@@ -54,7 +54,7 @@ void* SqlTree::GetNextRoot() {
 
 void SqlStatement::Reset() noexcept {
   memory_context.reset();
-  objects.getObjects().clear();
+  objects.clear();
   query_string.reset();
   params.Reset();
   tree = {.list = nullptr, .root_idx = 0};
@@ -67,7 +67,7 @@ bool SqlStatement::ProcessNextRoot(
     return false;
   }
 
-  objects.getObjects().clear();
+  objects.clear();
 
   // TODO : split to Parse and Bind steps
   ParamIndex max_bind_param_idx = 0;

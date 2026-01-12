@@ -23,8 +23,7 @@
 #pragma once
 
 #include "basics/noncopyable.hpp"
-#include "basics/shared.hpp"
-#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/formats/formats.hpp"
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/scorer.hpp"
 

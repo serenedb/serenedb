@@ -11,7 +11,12 @@ echo "Running tests against SereneDB"
   --test "sdb/**/*.test" \
   --junit "tests-serenedb" \
   --protocol both \
-  --runner=/scripts/sqllogictest-rs || exit_code=$?
+  --runner=/sqllogictest-rs || exit_code=$?
+
+if [[ $exit_code != 0 ]]; then
+  echo "SereneDB tests failed, skipping PostgreSQL tests"
+  exit $exit_code
+fi
 
 echo "Running tests against PostgreSQL"
 ./run.sh \
@@ -21,6 +26,6 @@ echo "Running tests against PostgreSQL"
   --junit "tests-postgres" \
   --protocol both \
   --database postgres \
-  --runner=/scripts/sqllogictest-rs || exit_code=$?
+  --runner=/sqllogictest-rs || exit_code=$?
 
 exit $exit_code

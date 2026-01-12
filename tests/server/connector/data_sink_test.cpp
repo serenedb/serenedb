@@ -97,10 +97,9 @@ class DataSinkTest : public ::testing::Test,
       column_oids.push_back(static_cast<sdb::catalog::Column::Id>(i));
     }
     sdb::connector::primary_key::Create(*data, pk, written_row_keys);
-    sdb::connector::RocksDBDataSink sink(
-      *transaction, *_cf_handles.front(),
-      velox::RowTypePtr(velox::RowTypePtr{}, &data->type()->asRow()),
-      *pool_.get(), object_key, pk, column_oids, false);
+    sdb::connector::RocksDBDataSink sink(*transaction, *_cf_handles.front(),
+                                         *pool_.get(), object_key, pk,
+                                         column_oids, false);
     sink.appendData(data);
     while (!sink.finish()) {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -1890,6 +1889,19 @@ TEST_F(DataSinkTest, test_tableWriteConstantEmptyArrayValueVector) {
 TEST_F(DataSinkTest, test_tableWriteLazyMapValueVector) {
   auto keys = makeFlatVector<int32_t>({10, 20, 4545, 5, 6, 7, 8, 9});
   auto values = makeFlatVector<int32_t>({11, 21, 4540, 0, 2, 2, 3, 5});
+  auto maps =
+    wrapInLazyDictionary(makeMapVector({0, 3, 3, 5, 7}, keys, values));
+  auto structs = makeRowVector({maps});
+  auto data = makeArrayVector({0, 3, 3, 4}, structs);
+  MakeTestWriteImpl(data->type(), data);
+}
+
+TEST_F(DataSinkTest, test_tableWriteLazyDictionaryMapValueVector) {
+  auto keys = makeFlatVector<int32_t>({10, 20, 4545, 5, 6, 7, 8, 9});
+  auto indices = makeIndices({7, 6, 5, 4, 3, 2, 1, 0});
+  auto values = wrapInDictionary(
+    indices, wrapInLazyDictionary(
+               makeFlatVector<int32_t>({11, 21, 4540, 0, 2, 2, 3, 5})));
   auto maps =
     wrapInLazyDictionary(makeMapVector({0, 3, 3, 5, 7}, keys, values));
   auto structs = makeRowVector({maps});

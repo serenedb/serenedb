@@ -9,7 +9,7 @@ set(CMAKE_CXX_FLAGS
 include(ExternalProject)
 include(UpdateModule)
 
-sdb_update_module(${GIT_EXECUTABLE} "sqllogictest-rs" ${CMAKE_SOURCE_DIR}/scripts "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "sqllogictest-rs" ${CMAKE_SOURCE_DIR}/third_party "README.md")
 
 # TODO(mbkkt) make it submodule
 add_subdirectory(geographiclib-c)

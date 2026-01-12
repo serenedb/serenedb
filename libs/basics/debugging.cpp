@@ -75,7 +75,6 @@ void TerminateDebugging(std::string_view message) {
 
     auto f = [] noexcept {
       // intentionally crashes the program!
-      // cppcheck-suppress *
       throw std::runtime_error("Intentional test error");
     };
     f();

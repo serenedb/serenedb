@@ -48,7 +48,7 @@ TEST_P(AllFilterTestCase, all_sequential) {
 
   Docs docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
             17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32};
-  std::vector<irs::CostAttr::cost_t> cost{docs.size()};
+  std::vector<irs::CostAttr::Type> cost{docs.size()};
 
   CheckQuery(irs::All(), docs, cost, rdr);
 
@@ -188,7 +188,7 @@ static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(all_filter_test, AllFilterTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values("1_5")),
+                                            ::testing::Values("1_5avx")),
                          AllFilterTestCase::to_string);
 
 }  // namespace

@@ -7817,6 +7817,6 @@ static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 INSTANTIATE_TEST_SUITE_P(
   phrase_filter_test, PhraseFilterTestCase,
   ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                     ::testing::Values(tests::FormatInfo{"1_5"},
+                     ::testing::Values(tests::FormatInfo{"1_5avx"},
                                        tests::FormatInfo{"1_5simd"})),
   PhraseFilterTestCase::to_string);

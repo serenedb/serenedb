@@ -131,10 +131,10 @@ void ValidateTerms(
     for (auto docs_itr = segment.mask(term_itr->postings(index_features));
          docs_itr->next();) {  // FIXME
       ASSERT_EQ(1, itr->second.erase(docs_itr->value()));
-      ASSERT_TRUE(docs_itr->get(irs::Type<irs::DocAttr>::id()));
+      ASSERT_TRUE(irs::get<irs::DocAttr>(*docs_itr));
 
       if (frequency) {
-        ASSERT_TRUE(docs_itr->get(irs::Type<irs::FreqAttr>::id()));
+        ASSERT_TRUE(irs::get<irs::FreqAttr>(*docs_itr));
         ASSERT_EQ(*frequency, irs::get<irs::FreqAttr>(*docs_itr)->value);
       }
 
@@ -2939,5 +2939,5 @@ INSTANTIATE_TEST_SUITE_P(
   merge_writer_test, MergeWriterTestCase,
   ::testing::Combine(
     ::testing::Values(&tests::Directory<&tests::MemoryDirectory>),
-    ::testing::Values("1_5", "1_5simd")),
+    ::testing::Values("1_5avx", "1_5simd")),
   &MergeWriterTestCase::to_string);

@@ -653,33 +653,15 @@ template<VarFormat Format, bool InArray>
 void SerializeJson(SerializationContext context,
                    const velox::DecodedVector& decoded_vector,
                    velox::vector_size_t row) {
-  const auto value_quoted = decoded_vector.valueAt<velox::StringView>(row);
-
-  // By default, only unicode("\u") and slashes("\/") are unescaped.
-  // Should be true if you want to unescape conventional symbols
-  // ("\r", "\n", "\\"" etc)
-  bool fully_unescape = true;
-
-  SDB_ASSERT(value_quoted.size() >= 2);
-  SDB_ASSERT(*value_quoted.begin() == '"');
-  SDB_ASSERT(*(value_quoted.end() - 1) == '"');
-  auto value =
-    std::string_view(value_quoted.begin() + 1, value_quoted.end() - 1);
+  const auto str = decoded_vector.valueAt<velox::StringView>(row);
+  auto value = static_cast<std::string_view>(str);
   if constexpr (InArray && Format == VarFormat::Text) {
     if (ArrayItemNeedQuotesAndEscape(value)) {
-      value = static_cast<std::string_view>(value_quoted);
-      fully_unescape = false;
+      WriteArrayItemQuotedAndEscaped(value, context);
+      return;
     }
   }
-
-  const size_t value_size = value.size();
-  context.buffer->WriteContiguousData(value_size, [&](uint8_t* data) {
-    char* buf = reinterpret_cast<char*>(data);
-    const auto written = velox::unescapeForJsonFunctions(
-      value.data(), value_size, buf, fully_unescape);
-    SDB_ASSERT(written <= value_size);
-    return written;
-  });
+  context.buffer->WriteUncommitted(value);
 }
 
 SerializationFunction GetArraySerialization(const velox::TypePtr& type,

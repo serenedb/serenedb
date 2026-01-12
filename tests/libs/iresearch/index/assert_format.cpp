@@ -421,9 +421,9 @@ void IndexSegment::sort(const irs::Comparer& comparator) {
   }
 }
 
-class DocIterator : public irs::DocIterator {
+class DocIteratorImpl : public irs::DocIterator {
  public:
-  DocIterator(irs::IndexFeatures features, const tests::Term& data);
+  DocIteratorImpl(irs::IndexFeatures features, const tests::Term& data);
 
   irs::doc_id_t value() const final { return _doc.value; }
 
@@ -432,10 +432,9 @@ class DocIterator : public irs::DocIterator {
     return it == _attrs.end() ? nullptr : it->second;
   }
 
-  bool next() final {
+  irs::doc_id_t advance() final {
     if (_next == _data.postings.end()) {
-      _doc.value = irs::doc_limits::eof();
-      return false;
+      return _doc.value = irs::doc_limits::eof();
     }
 
     _prev = _next, ++_next;
@@ -443,7 +442,7 @@ class DocIterator : public irs::DocIterator {
     _freq.value = static_cast<uint32_t>(_prev->positions().size());
     _pos.Clear();
 
-    return true;
+    return _doc.value;
   }
 
   irs::doc_id_t seek(irs::doc_id_t id) final {
@@ -465,7 +464,7 @@ class DocIterator : public irs::DocIterator {
  private:
   class PosIterator final : public irs::PosAttr {
    public:
-    PosIterator(const DocIterator& owner, irs::IndexFeatures features)
+    PosIterator(const DocIteratorImpl& owner, irs::IndexFeatures features)
       : _owner(owner) {
       if (irs::IndexFeatures::None != (features & irs::IndexFeatures::Offs)) {
         _poffs = &_offs;
@@ -520,7 +519,7 @@ class DocIterator : public irs::DocIterator {
     irs::PayAttr _pay;
     irs::OffsAttr* _poffs{};
     irs::PayAttr* _ppay{};
-    const DocIterator& _owner;
+    const DocIteratorImpl& _owner;
   };
 
   const tests::Term& _data;
@@ -534,7 +533,8 @@ class DocIterator : public irs::DocIterator {
   std::set<Posting>::const_iterator _next;
 };
 
-DocIterator::DocIterator(irs::IndexFeatures features, const tests::Term& data)
+DocIteratorImpl::DocIteratorImpl(irs::IndexFeatures features,
+                                 const tests::Term& data)
   : _data(data), _pos(*this, features) {
   _next = _data.postings.begin();
 
@@ -628,8 +628,8 @@ class TermIterator : public irs::SeekTermIterator {
                                   : irs::SeekResult::NotFound;
   }
 
-  DocIterator::ptr postings(irs::IndexFeatures features) const final {
-    return irs::memory::make_managed<DocIterator>(
+  DocIteratorImpl::ptr postings(irs::IndexFeatures features) const final {
+    return irs::memory::make_managed<DocIteratorImpl>(
       _data.index_features & features, *_prev);
   }
 
@@ -1237,6 +1237,6 @@ namespace irs {
 
 // use base irs::position type for ancestors
 template<>
-struct Type<tests::DocIterator::PosIterator> : Type<irs::PosAttr> {};
+struct Type<tests::DocIteratorImpl::PosIterator> : Type<irs::PosAttr> {};
 
 }  // namespace irs

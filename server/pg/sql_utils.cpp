@@ -45,6 +45,11 @@ LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 
+bool IsDistinctAll(const List* distinct_clause) noexcept {
+  return list_length(distinct_clause) == 1 &&
+         list_nth(distinct_clause, 0) == nullptr;
+}
+
 int ExprLocation(const void* node) noexcept {
   return ::exprLocation(reinterpret_cast<const Node*>(node));
 }
@@ -180,11 +185,8 @@ bool IsExpr(const Node* node) {
   }
 }
 
-std::string DeparseStmt(Node* node) {
+static std::string DeparseStmtImpl(Node* node) {
   SDB_ASSERT(!IsExpr(node));
-
-  auto ctx = CreateMemoryContext();
-  auto scope = EnterMemoryContext(*ctx);
   StringInfoData buf;
   initStringInfo(&buf);
   RawStmt raw_stmt{
@@ -195,6 +197,14 @@ std::string DeparseStmt(Node* node) {
   return query_sql;
 }
 
+std::string DeparseStmt(Node* node) {
+  SDB_ASSERT(!IsExpr(node));
+
+  auto ctx = CreateMemoryContext();
+  auto scope = EnterMemoryContext(*ctx);
+  return DeparseStmtImpl(node);
+}
+
 std::string DeparseExpr(Node* expr) {
   SDB_ASSERT(IsExpr(expr));
 
@@ -203,13 +213,16 @@ std::string DeparseExpr(Node* expr) {
   dummy_res_target.location = -1;
   dummy_res_target.type = T_ResTarget;
 
+  auto ctx = CreateMemoryContext();
+  auto scope = EnterMemoryContext(*ctx);
+
   List* target_list = list_make1(&dummy_res_target);
 
   SelectStmt dummy_select{};
   dummy_select.targetList = target_list;
   dummy_select.type = T_SelectStmt;
 
-  auto deparsed = DeparseStmt(castNode(Node, &dummy_select));
+  auto deparsed = DeparseStmtImpl(castNode(Node, &dummy_select));
 
   static constexpr std::string_view kSelectPrefix = "SELECT ";
   SDB_ASSERT(deparsed.starts_with(kSelectPrefix));

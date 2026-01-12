@@ -1662,7 +1662,7 @@ TEST_P(Bm25TestCase, test_query_norms) {
 
 INSTANTIATE_TEST_SUITE_P(bm25_test, Bm25TestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values("1_5")),
+                                            ::testing::Values("1_5avx")),
                          Bm25TestCase::to_string);
 
 }  // namespace

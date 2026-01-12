@@ -58,7 +58,6 @@ class BooleanWeight {
   }
 
   constexpr BooleanWeight() noexcept = default;
-  // cppcheck-suppress noExplicitConstructor
   constexpr BooleanWeight(bool v, PayloadType payload = 0) noexcept
     : _v(static_cast<PayloadType>(v)), _p(payload) {}
 

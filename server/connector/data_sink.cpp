@@ -66,11 +66,10 @@ namespace sdb::connector {
 
 RocksDBDataSink::RocksDBDataSink(
   rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
-  const velox::RowTypePtr& row_type, velox::memory::MemoryPool& memory_pool,
-  ObjectId object_key, std::span<const velox::column_index_t> key_childs,
+  velox::memory::MemoryPool& memory_pool, ObjectId object_key,
+  std::span<const velox::column_index_t> key_childs,
   std::vector<catalog::Column::Id> column_oids, bool skip_primary_key_columns)
-  : _row_type{std::move(row_type)},
-    _transaction{transaction},
+  : _transaction{transaction},
     _cf{cf},
     _object_key{object_key},
     _column_ids{std::move(column_oids)},
@@ -109,9 +108,10 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
     key_utils::MakeColumnKey(
       input, _key_childs, row_idx, table_key,
       [&](std::string_view row_key) {
-        VELOX_CHECK(_transaction.GetKeyLock(&_cf, row_key, false, true).ok(),
-                    "Failed to acquire row lock for table {}",
-                    _object_key.id());
+        auto status = _transaction.GetKeyLock(&_cf, row_key, false, true);
+        if (!status.ok()) {
+          SDB_THROW(rocksutils::ConvertStatus(status));
+        }
       },
       key_buffer);
   }
@@ -120,16 +120,6 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
   const auto num_columns = input->childrenSize();
   [[maybe_unused]] const auto& input_type = input->type()->asRow();
   for (velox::column_index_t i = 0; i < num_columns; ++i) {
-    // Exclude only UNKNOWN from equivalency check as UNKNOWN is just a NULL and
-    // compatible with everything.
-    // Intentionally check UNKNOWN after equivalency to make compiler execute
-    // child lookup by name as it is also a necessary check.
-    // Even keys during UPDATE should be validated as it is important for
-    // RocksDB key generation
-    VELOX_DCHECK(_row_type->findChild(input_type.nameOf(i))
-                   ->equivalent(*input_type.childAt(i)) ||
-                 input_type.childAt(i)->kind() == velox::TypeKind::UNKNOWN);
-
     if (_skip_primary_key_columns && i < _key_childs.size()) {
       continue;
     }
@@ -346,7 +336,9 @@ void RocksDBDataSink::WriteColumn(
       break;
     case velox::VectorEncoding::Simple::DICTIONARY:
     case velox::VectorEncoding::Simple::SEQUENCE:
-      WriteDictionaryColumn(input, ranges, original_idx);
+      // for dictionary we must force loading of wrapped lazy vector.
+      WriteDictionaryColumn(velox::BaseVector::loadedVectorShared(input),
+                            ranges, original_idx);
       break;
     case velox::VectorEncoding::Simple::BIASED:
       VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(WriteBiasedColumn, input->typeKind(),
@@ -395,6 +387,12 @@ void RocksDBDataSink::WriteVector(
     // shortcut for empty vector (just a header with zero length)
     _row_slices.push_back(kZeroLengthVector);
     return;
+  }
+
+  if (input->encoding() == velox::VectorEncoding::Simple::DICTIONARY) {
+    // Dictionary has an optimization to avoid loading wrapped lazy vector until
+    // explicitly asked. Here we need to call "mayHaveNulls" so trigger loading.
+    input->loadedVector();
   }
 
   irs::ResolveBool(
@@ -2026,9 +2024,10 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
     key_utils::MakeColumnKey(
       input, _key_childs, row_idx, table_key,
       [&](std::string_view row_key) {
-        VELOX_CHECK(_transaction.GetKeyLock(&_cf, row_key, false, true).ok(),
-                    "Failed to acquire row lock for table {}",
-                    _object_key.id());
+        auto status = _transaction.GetKeyLock(&_cf, row_key, false, true);
+        if (!status.ok()) {
+          SDB_THROW(rocksutils::ConvertStatus(status));
+        }
       },
       key_buffer);
 

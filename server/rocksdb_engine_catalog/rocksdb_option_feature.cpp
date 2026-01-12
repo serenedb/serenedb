@@ -2066,7 +2066,8 @@ RocksDBOptionFeature::getColumnFamilyOptionsDefault(
   // EdgeIndex                   => Lookup
   switch (family) {
     case sdb::RocksDBColumnFamilyManager::Family::Data: {
-      result.prefix_extractor.reset(rocksdb::NewFixedPrefixTransform(
+      // TODO(mbkkt) make it fixed?
+      result.prefix_extractor.reset(rocksdb::NewCappedPrefixTransform(
         RocksDBKey::objectIdSize() + sizeof(catalog::Column::Id)));
 
       auto table_options = getTableOptions();

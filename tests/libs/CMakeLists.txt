@@ -10,7 +10,5 @@ configure_file(
     "${CMAKE_CURRENT_BINARY_DIR}/iresearch/tests_config.hpp"
 )
 
-if(BUILD_IRS_TESTS)
-    add_subdirectory(iresearch)
-    add_test(NAME iresearch-tests COMMAND iresearch-tests)
-endif()
+add_subdirectory(iresearch)
+add_test(NAME iresearch-tests COMMAND iresearch-tests)

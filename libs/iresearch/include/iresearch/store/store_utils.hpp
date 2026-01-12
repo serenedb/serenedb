@@ -286,9 +286,9 @@ class RemappedBytesViewInput : public BytesViewInput {
 
   explicit RemappedBytesViewInput(const bytes_view& data, mapping&& mapping)
     : BytesViewInput(data), _mapping{std::move(mapping)} {
-    std::sort(
-      _mapping.begin(), _mapping.end(),
-      [](const auto& lhs, const auto& rhs) { return lhs.first < rhs.first; });
+    absl::c_sort(_mapping, [](const auto& lhs, const auto& rhs) {
+      return lhs.first < rhs.first;
+    });
   }
 
   RemappedBytesViewInput(const RemappedBytesViewInput& other)

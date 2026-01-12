@@ -30,7 +30,7 @@
 #include "basics/application-exit.h"
 #include "basics/logger/log_level.h"
 
-#if !defined(_MSC_VER)
+#if !defined(_WIN32)
 #include <dlfcn.h>  // for RTLD_NEXT
 #endif
 
@@ -56,7 +56,7 @@
 #include "tests_config.hpp"
 #include "tests_shared.hpp"
 
-#ifdef _MSC_VER
+#ifdef _WIN32
 // +1 for \0 at end of string
 #define mkdtemp(templ)                                                    \
   0 == _mkdir(0 == _mktemp_s(templ, strlen(templ) + 1) ? templ : nullptr) \

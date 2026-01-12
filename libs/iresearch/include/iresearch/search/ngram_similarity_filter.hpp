@@ -31,11 +31,11 @@ class ByNGramSimilarity;
 
 // Options for ngram similarity filter
 struct ByNGramSimilarityOptions {
-  using filter_type = ByNGramSimilarity;
+  using FilterType = ByNGramSimilarity;
 
   std::vector<bstring> ngrams;
   float_t threshold{1.F};
-#ifdef IRESEARCH_TEST
+#ifdef SDB_GTEST
   bool allow_phrase{true};
 #else
   static constexpr bool allow_phrase{true};
@@ -48,12 +48,12 @@ struct ByNGramSimilarityOptions {
 
 class ByNGramSimilarity : public FilterWithField<ByNGramSimilarityOptions> {
  public:
-  static Prepared::ptr Prepare(const PrepareContext& ctx,
-                               std::string_view field_name,
-                               const std::vector<irs::bstring>& ngrams,
-                               float_t threshold, bool allow_phrase = true);
+  static Query::ptr Prepare(const PrepareContext& ctx,
+                            std::string_view field_name,
+                            const std::vector<irs::bstring>& ngrams,
+                            float_t threshold, bool allow_phrase = true);
 
-  Prepared::ptr prepare(const PrepareContext& ctx) const final {
+  Query::ptr prepare(const PrepareContext& ctx) const final {
     return Prepare(ctx.Boost(Boost()), field(), options().ngrams,
                    options().threshold, options().allow_phrase);
   }

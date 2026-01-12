@@ -1,0 +1,29 @@
+{
+    "name": "serene-ui-backend",
+    "version": "0.1.0",
+    "description": "SereneUI backend for docker version",
+    "main": "./dist/index.js",
+    "scripts": {
+        "build": "NODE_ENV=production node esbuild.config.mjs",
+        "dev": "NODE_ENV=development NODE_CONFIG_DIR=./src/config node esbuild.config.mjs &  NODE_ENV=development NODE_CONFIG_DIR=./src/config nodemon",
+        "start": "NODE_ENV=production NODE_CONFIG_DIR=./dist/config node dist/index.js",
+        "clean": "rimraf dist tsconfig.tsbuildinfo",
+        "test": "node --import tsx --test --test-force-exit tests/*.test.ts"
+    },
+    "files": [
+        "dist"
+    ],
+    "dependencies": {
+        "@orpc/server": "^1.13.1",
+        "@serene-ui/shared-backend": "*",
+        "@serene-ui/shared-core": "*",
+        "config": "^4.1.1"
+    },
+    "license": "Apache-2.0",
+    "devDependencies": {
+        "@types/config": "^3.3.5",
+        "esbuild": "^0.27.2",
+        "nodemon": "^3.1.11",
+        "tsx": "^4.21.0"
+    }
+}

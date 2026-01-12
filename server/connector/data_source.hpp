@@ -37,7 +37,7 @@ class RocksDBDataSource final : public velox::connector::DataSource {
                     // use just snapshot for now. But maybe we will need to have
                     // this class template (or use some wrapper) to work with
                     // WriteBatchWithindex or plain DB with snapshot
-                    rocksdb::Snapshot* snapshot, rocksdb::DB& db,
+                    const rocksdb::Snapshot* snapshot, rocksdb::DB& db,
                     rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
                     std::vector<catalog::Column::Id> column_ids,
                     ObjectId object_key);
@@ -83,7 +83,7 @@ class RocksDBDataSource final : public velox::connector::DataSource {
     const rocksdb::ReadOptions& read_options);
 
   velox::memory::MemoryPool& _memory_pool;
-  rocksdb::Snapshot* _snapshot;
+  const rocksdb::Snapshot* _snapshot;
   rocksdb::DB& _db;
   rocksdb::ColumnFamilyHandle& _cf;
   velox::RowTypePtr _row_type;

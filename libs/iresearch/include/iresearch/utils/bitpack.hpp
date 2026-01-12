@@ -180,5 +180,45 @@ void read_block32(UnpackFunc&& unpack, DataInput& in,
                            decoded);
 }
 
+template<typename UnpackFunc>
+IRS_FORCE_INLINE void read_block_delta_impl32(
+  UnpackFunc&& unpack, DataInput& in, uint32_t* IRS_RESTRICT encoded,
+  uint32_t size, uint32_t* IRS_RESTRICT decoded, uint32_t prev) {
+  SDB_ASSERT(size);
+  SDB_ASSERT(encoded);
+  SDB_ASSERT(decoded);
+
+  const uint32_t bits = in.ReadByte();
+  if (kAllEqual == bits) {
+    const auto value = in.ReadV32();
+    for (uint32_t i = 0; i < size; ++i) {
+      decoded[i] = prev + value * (i + 1);
+    }
+  } else {
+    const size_t required = packed::BytesRequired32(size, bits);
+
+    const auto* buf = in.ReadBuffer(required, BufferHint::NORMAL);
+
+    if (buf) {
+      unpack(prev, decoded, reinterpret_cast<const uint32_t*>(buf), bits);
+      return;
+    }
+
+    [[maybe_unused]] const auto read =
+      in.ReadBytes(reinterpret_cast<byte_type*>(encoded), required);
+    SDB_ASSERT(read == required);
+
+    unpack(prev, decoded, encoded, bits);
+  }
+}
+
+template<uint32_t Size, typename UnpackFunc>
+void read_block_delta32(UnpackFunc&& unpack, DataInput& in,
+                        uint32_t* IRS_RESTRICT encoded,
+                        uint32_t* IRS_RESTRICT decoded, uint32_t prev) {
+  return read_block_delta_impl32(std::forward<UnpackFunc>(unpack), in, encoded,
+                                 Size, decoded, prev);
+}
+
 }  // namespace bitpack
 }  // namespace irs

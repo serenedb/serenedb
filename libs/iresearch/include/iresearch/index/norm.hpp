@@ -105,7 +105,6 @@ class NormWriter : public FeatureWriter {
   explicit NormWriter() noexcept : _hdr{NormEncoding{sizeof(T)}} {}
 
   void write(const FieldStats& stats, doc_id_t doc,
-             // cppcheck-suppress constParameter
              ColumnOutput& writer) final {
     _hdr.Reset(stats.len);
 

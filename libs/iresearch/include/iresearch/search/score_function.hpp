@@ -126,7 +126,7 @@ class ScoreFunction : util::Noncopyable {
     return _ctx == rhs._ctx && _score == rhs._score && _min == rhs._min;
   }
 
-#ifdef IRESEARCH_TEST
+#ifdef SDB_GTEST
   [[nodiscard]] ScoreCtx* Ctx() const noexcept { return _ctx; }
   [[nodiscard]] score_f Func() const noexcept { return _score; }
 #endif

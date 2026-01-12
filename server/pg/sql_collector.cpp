@@ -83,6 +83,7 @@ class ObjectCollector {
   void CollectRangeFunction(const State& state, const RangeFunction& function);
 
   void CollectSortClause(const State& state, const List* sort_clause);
+  void CollectDistinctClause(const State& state, const List* distinct_clause);
   void CollectExprList(const State& state, const List* expr_list);
   void CollectValuesLists(const State& state, const List* values_lists);
 
@@ -168,7 +169,7 @@ void ObjectCollector::CollectFuncCall(const State& state,
     CollectExprNode(state, over->startOffset);
     CollectSortClause(state, over->orderClause);
   }
-  _objects.ensureData(name.schema, name.relation);
+  _objects.ensureFunction(name.schema, name.relation);
 }
 
 void ObjectCollector::CollectJsonObjectConstructor(
@@ -226,7 +227,7 @@ void ObjectCollector::CollectRangeVar(const State& state, const RangeVar* var) {
               " accessed instead of ", _database);
   }
 
-  _objects.ensureData(var->schemaname, relation);
+  _objects.ensureRelation(var->schemaname, relation);
 }
 
 void ObjectCollector::CollectRangeSubSelect(const State& state,
@@ -257,7 +258,7 @@ void ObjectCollector::CollectRangeFunction(const State& state,
                     "unsupported function call with aggregate options");
         }
         CollectExprList(state, n->args);
-        _objects.ensureData(name.schema, name.relation);
+        _objects.ensureFunction(name.schema, name.relation);
         return;
       } break;
       default:
@@ -371,6 +372,19 @@ void ObjectCollector::CollectExprList(const State& state,
              [&](const Node& expr) { CollectExprNode(state, &expr); });
 }
 
+void ObjectCollector::CollectDistinctClause(const State& state,
+                                            const List* distinct_clause) {
+  if (!distinct_clause) {
+    return;
+  }
+
+  if (IsDistinctAll(distinct_clause)) {
+    return;
+  }
+
+  CollectExprList(state, distinct_clause);
+}
+
 void ObjectCollector::CollectSortClause(const State& state,
                                         const List* sort_clause) {
   VisitNodes(sort_clause, [&](const SortBy& sort_by) {
@@ -447,7 +461,7 @@ void ObjectCollector::CollectSelectStmt(State& state, const SelectStmt* stmt) {
   CollectSelectStmt(state, stmt->larg);
   CollectSelectStmt(state, stmt->rarg);
 
-  CollectExprList(state, stmt->distinctClause);
+  CollectDistinctClause(state, stmt->distinctClause);
   CollectExprList(state, stmt->targetList);
 
   CollectExprNode(state, stmt->whereClause);

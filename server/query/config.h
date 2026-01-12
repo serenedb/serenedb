@@ -23,6 +23,7 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_split.h>
+#include <axiom/optimizer/OptimizerOptions.h>
 #include <frozen/unordered_map.h>
 #include <velox/common/config/IConfig.h>
 #include <velox/type/Type.h>
@@ -47,6 +48,7 @@ enum class VariableType {
   U64,
   F64,
   String,
+  JoinOrderAlgorithm,
   PgSearchPath,
   PgExtraFloatDigits,
   PgByteaOutput,
@@ -94,7 +96,10 @@ class Config : public velox::config::IConfig {
     // TODO(codeworse): consider to use std::string_view as return type to avoid
     // copy
     auto value_str = Get(key);
+    // We use this only for system variables, so value must exist
+    SDB_ASSERT(value_str);
     if constexpr (T == VariableType::PgSearchPath) {
+      SDB_ASSERT(key == "search_path");
       auto value = value_str.and_then([](std::string_view str) {
         auto arr = absl::StrSplit(str, ", ");
         std::vector<std::string> result;
@@ -107,14 +112,13 @@ class Config : public velox::config::IConfig {
       SDB_ASSERT(value);
       return *value;
     } else if constexpr (T == VariableType::PgExtraFloatDigits) {
-      SDB_ASSERT(value_str);
-      int8_t result{};
-      const bool succeed = absl::SimpleAtoi<int8_t>(*value_str, &result);
-      SDB_ASSERT(succeed, "extra_float_digits is not validated");
-
-      return result;
+      SDB_ASSERT(key == "extra_float_digits");
+      int8_t r = 0;
+      const bool ok = absl::SimpleAtoi<int8_t>(*value_str, &r);
+      SDB_ASSERT(ok, "extra_float_digits is not validated");
+      return r;
     } else if constexpr (T == VariableType::PgByteaOutput) {
-      SDB_ASSERT(value_str);
+      SDB_ASSERT(key == "bytea_output");
       if (absl::EqualsIgnoreCase("hex", *value_str)) {
         return ByteaOutput::Hex;
       } else {
@@ -122,6 +126,22 @@ class Config : public velox::config::IConfig {
                    "bytea_output is not validated");
         return ByteaOutput::Escape;
       }
+    } else if constexpr (T == VariableType::JoinOrderAlgorithm) {
+      SDB_ASSERT(key == "join_order_algorithm");
+      if (absl::EqualsIgnoreCase("cost", *value_str)) {
+        return axiom::optimizer::JoinOrder::kCost;
+      } else if (absl::EqualsIgnoreCase("greedy", *value_str)) {
+        return axiom::optimizer::JoinOrder::kGreedy;
+      } else {
+        SDB_ASSERT(absl::EqualsIgnoreCase("syntactic", *value_str),
+                   "join_order_algorithm is not validated");
+        return axiom::optimizer::JoinOrder::kSyntactic;
+      }
+    } else if constexpr (T == VariableType::U32) {
+      uint32_t r = 0;
+      const bool ok = absl::SimpleAtoi<uint32_t>(*value_str, &r);
+      SDB_ASSERT(ok, key, " is not validated");
+      return r;
     } else {
       SDB_THROW(ERROR_NOT_IMPLEMENTED);
     }
@@ -133,14 +153,6 @@ class Config : public velox::config::IConfig {
 
   void ResetAll();
 
-  void Begin();
-
-  void Commit();
-
-  void Abort();
-
-  bool InsideTransaction() const { return _inside_transaction; }
-
   std::unordered_map<std::string, std::string> rawConfigsCopy() const final;
 
   // Visit all the settings and call function f(setting_name, value,
@@ -149,6 +161,12 @@ class Config : public velox::config::IConfig {
     absl::FunctionRef<void(std::string_view, std::string_view,
                            std::string_view)>
       f) const;
+
+ protected:
+  // Used by TxnState(transaction state) to commit/rollback transaction
+  // variables
+  void CommitVariables();
+  void RollbackVariables() { _transaction.clear(); }
 
  private:
   std::optional<std::string> Get(std::string_view key) const;
@@ -161,8 +179,6 @@ class Config : public velox::config::IConfig {
 
   // Transaction variable
   containers::FlatHashMap<std::string_view, TxnVariable> _transaction;
-
-  bool _inside_transaction = false;
 };
 
 };  // namespace sdb

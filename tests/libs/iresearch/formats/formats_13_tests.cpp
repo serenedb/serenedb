@@ -39,7 +39,7 @@ TEST_P(Format13TestCase, open_10_with_13) {
 
   // write segment with format10
   {
-    auto codec = irs::formats::Get("1_5");
+    auto codec = irs::formats::Get("1_5avx");
     ASSERT_NE(nullptr, codec);
     auto writer = irs::IndexWriter::Make(dir(), codec, irs::kOmCreate);
     ASSERT_NE(nullptr, writer);
@@ -52,7 +52,7 @@ TEST_P(Format13TestCase, open_10_with_13) {
   }
 
   // check index
-  auto codec = irs::formats::Get("1_5");
+  auto codec = irs::formats::Get("1_5avx");
   ASSERT_NE(nullptr, codec);
   auto index = irs::DirectoryReader(dir(), codec);
   ASSERT_TRUE(index);
@@ -101,7 +101,7 @@ TEST_P(Format13TestCase, formats_13) {
 
   // write segment with format10
   {
-    auto codec = irs::formats::Get("1_5");
+    auto codec = irs::formats::Get("1_5avx");
     ASSERT_NE(nullptr, codec);
     auto writer = irs::IndexWriter::Make(dir(), codec, irs::kOmCreate);
     ASSERT_NE(nullptr, writer);
@@ -115,7 +115,7 @@ TEST_P(Format13TestCase, formats_13) {
 
   // write segment with format13
   {
-    auto codec = irs::formats::Get("1_5");
+    auto codec = irs::formats::Get("1_5avx");
     ASSERT_NE(nullptr, codec);
     auto writer = irs::IndexWriter::Make(dir(), codec, irs::kOmAppend);
     ASSERT_NE(nullptr, writer);
@@ -201,7 +201,7 @@ static constexpr auto kTestDirs =
   tests::GetDirectories<tests::kTypesAllRot13>();
 static const auto kTestValues = ::testing::Combine(
   ::testing::ValuesIn(kTestDirs),
-  ::testing::Values(tests::FormatInfo{"1_5"}, tests::FormatInfo{"1_5simd"}));
+  ::testing::Values(tests::FormatInfo{"1_5avx"}, tests::FormatInfo{"1_5simd"}));
 
 // 1.3 specific tests
 INSTANTIATE_TEST_SUITE_P(format_13_test, Format13TestCase, kTestValues,

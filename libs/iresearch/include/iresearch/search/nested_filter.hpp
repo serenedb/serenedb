@@ -56,7 +56,7 @@ using DocIteratorProvider = std::function<DocIterator::ptr(const SubReader&)>;
 
 // Options for ByNestedFilter filter
 struct ByNestedOptions {
-  using filter_type = ByNestedFilter;
+  using FilterType = ByNestedFilter;
 
   using MatchType = std::variant<Match, DocIteratorProvider>;
 
@@ -79,7 +79,7 @@ struct ByNestedOptions {
 
     return match.index() == rhs.match.index() &&
            std::visit(
-             [&]<typename T>(const T& v) noexcept -> bool {
+             [&]<typename T>(const T& v) {
                if constexpr (std::is_same_v<T, Match>) {
                  return v == std::get<T>(rhs.match);
                }
@@ -93,7 +93,7 @@ struct ByNestedOptions {
 // Filter is capable of finding parents by the corresponding child filter.
 class ByNestedFilter final : public FilterWithOptions<ByNestedOptions> {
  public:
-  Prepared::ptr prepare(const PrepareContext& ctx) const final;
+  Query::ptr prepare(const PrepareContext& ctx) const final;
 };
 
 }  // namespace irs

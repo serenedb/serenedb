@@ -521,6 +521,40 @@ struct ProcessEscapePattern {
     result = std::move(res);
   }
 };
+
+template<typename T>
+struct PgErrorFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  [[noreturn]] FOLLY_ALWAYS_INLINE void call(  // NOLINT
+    out_type<velox::UnknownValue>& /*result*/, const arg_type<int32_t>& errcode,
+    const arg_type<int32_t>& cursorpos,
+    const arg_type<velox::Varchar>& errmsg) {
+    THROW_SQL_ERROR(ERR_CODE(errcode), CURSOR_POS(cursorpos),
+                    ERR_MSG(std::string_view{errmsg}));
+  }
+
+  [[noreturn]] FOLLY_ALWAYS_INLINE void call(  // NOLINT
+    out_type<velox::UnknownValue>& /*result*/, const arg_type<int32_t>& errcode,
+    const arg_type<int32_t>& cursorpos, const arg_type<velox::Varchar>& errmsg,
+    const arg_type<velox::Varchar>& detail) {
+    THROW_SQL_ERROR(ERR_CODE(errcode), CURSOR_POS(cursorpos),
+                    ERR_MSG(std::string_view{errmsg}),
+                    ERR_DETAIL(std::string_view{detail}));
+  }
+
+  [[noreturn]] FOLLY_ALWAYS_INLINE void call(  // NOLINT
+    out_type<velox::UnknownValue>& /*result*/, const arg_type<int32_t>& errcode,
+    const arg_type<int32_t>& cursorpos, const arg_type<velox::Varchar>& errmsg,
+    const arg_type<velox::Varchar>& detail,
+    const arg_type<velox::Varchar>& hint) {
+    THROW_SQL_ERROR(ERR_CODE(errcode), CURSOR_POS(cursorpos),
+                    ERR_MSG(std::string_view{errmsg}),
+                    ERR_DETAIL(std::string_view{detail}),
+                    ERR_HINT(std::string_view{hint}));
+  }
+};
+
 }  // namespace
 
 void registerFunctions(const std::string& prefix) {
@@ -560,22 +594,45 @@ void registerFunctions(const std::string& prefix) {
                           velox::Varchar>({prefix + "like_escape"});
   velox::registerFunction<ProcessEscapePattern, velox::Varchar, velox::Varchar>(
     {prefix + "process_escape_pattern"});
-  velox::registerFunction<PgJsonExtractPathText, velox::Varchar, velox::Json,
-                          int64_t>({prefix + "json_extract_path_text"});
-  velox::registerFunction<PgJsonExtractPathText, velox::Varchar, velox::Json,
-                          velox::Varchar>({prefix + "json_extract_path_text"});
+
+  velox::registerFunction<PgJsonExtractIndex, velox::Json, velox::Json,
+                          int64_t>({prefix + "json_extract_index"});
+  velox::registerFunction<PgJsonExtractIndexText, velox::Varchar, velox::Json,
+                          int64_t>({prefix + "json_extract_index_text"});
+  velox::registerFunction<PgJsonExtractField, velox::Json, velox::Json,
+                          velox::Varchar>({prefix + "json_extract_field"});
+  velox::registerFunction<PgJsonExtractFieldText, velox::Varchar, velox::Json,
+                          velox::Varchar>({prefix + "json_extract_field_text"});
+
+  velox::registerFunction<PgJsonExtractPath, velox::Json, velox::Json,
+                          velox::Array<velox::Varchar>>(
+    {prefix + "json_extract_path"});
+  velox::registerFunction<PgJsonExtractPath, velox::Json, velox::Json,
+                          velox::Variadic<velox::Varchar>>(
+    {prefix + "json_extract_path"});
   velox::registerFunction<PgJsonExtractPathText, velox::Varchar, velox::Json,
                           velox::Array<velox::Varchar>>(
     {prefix + "json_extract_path_text"});
+  velox::registerFunction<PgJsonExtractPathText, velox::Varchar, velox::Json,
+                          velox::Variadic<velox::Varchar>>(
+    {prefix + "json_extract_path_text"});
 
-  velox::registerFunction<PgJsonExtractPath, velox::Varchar, velox::Json,
-                          int64_t>({prefix + "json_extract_path"});
-  velox::registerFunction<PgJsonExtractPath, velox::Varchar, velox::Json,
-                          velox::Varchar>({prefix + "json_extract_path"});
-  velox::registerFunction<PgJsonExtractPath, velox::Varchar, velox::Json,
-                          velox::Array<velox::Varchar>>(
-    {prefix + "json_extract_path"});
+  velox::registerFunction<PgJsonInFunction, velox::Json, velox::Varchar>(
+    {prefix + "jsonin"});
+  velox::registerFunction<PgJsonOutFunction, velox::Varchar, velox::Json>(
+    {prefix + "jsonout"});
 
+  // pg_error(errcode, cursorpos, message)
+  velox::registerFunction<PgErrorFunction, velox::UnknownValue, int32_t,
+                          int32_t, velox::Varchar>({prefix + "error"});
+  // pg_error(errcode, cursorpos, message, detail)
+  velox::registerFunction<PgErrorFunction, velox::UnknownValue, int32_t,
+                          int32_t, velox::Varchar, velox::Varchar>(
+    {prefix + "error"});
+  // pg_error(errcode, cursorpos, message, detail, hint)
+  velox::registerFunction<PgErrorFunction, velox::UnknownValue, int32_t,
+                          int32_t, velox::Varchar, velox::Varchar,
+                          velox::Varchar>({prefix + "error"});
   registerExtractFunctions(prefix);
 }
 

@@ -151,8 +151,37 @@ set(IResearch_core_sources
     ./utils/levenshtein_default_pdp.cpp
     ./utils/timer_utils.cpp
     ./utils/numeric_utils.cpp
+    ./parser/lucene_parser.cpp
+    ./parser/lucene_lexer.cpp
     ${IResearch_core_os_specific_sources}
     ${IResearch_core_optimized_sources}
+)
+
+find_package(FLEX)
+find_package(BISON)
+
+set_directory_properties(PROPERTIES CLEAN_NO_CUSTOM "On")
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_lexer.cpp
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMAND
+        ${FLEX_EXECUTABLE} -L
+        -o${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_lexer.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_lexer.l
+    MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_lexer.l
+    VERBATIM
+)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_parser.cpp
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMAND
+        ${CMAKE_SOURCE_DIR}/scripts/bison-c.sh ${BISON_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_parser.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_parser.y
+    MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_parser.y
+    VERBATIM
 )
 
 if(uring_FOUND)
@@ -168,10 +197,6 @@ set(IRESEARCH_EXTERNAL_INCLUDES
 include_directories(SYSTEM ${IRESEARCH_EXTERNAL_INCLUDES})
 
 add_library(iresearch-static STATIC ${IResearch_core_sources})
-
-if(BUILD_IRS_TESTS)
-    target_compile_definitions(iresearch-static PUBLIC IRESEARCH_TEST)
-endif()
 
 target_include_directories(
     iresearch-static

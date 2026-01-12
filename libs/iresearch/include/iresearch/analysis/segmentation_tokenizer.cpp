@@ -104,8 +104,8 @@ bool ParseVPackOptions(const vpack::Slice slice, Options& options) {
 bool MakeVPackConfig(const Options& options, vpack::Builder* builder) {
   vpack::ObjectBuilder object(builder);
   {
-    const auto* it = std::find_if(
-      kConvertMap.begin(), kConvertMap.end(),
+    const auto it = absl::c_find_if(
+      kConvertMap,
       [v = options.convert](const auto& m) { return m.second == v; });
     if (it != kConvertMap.end()) {
       builder->add(kConvertName, it->first);
@@ -118,8 +118,8 @@ bool MakeVPackConfig(const Options& options, vpack::Builder* builder) {
     }
   }
   {
-    const auto* it = std::find_if(
-      kAcceptMap.begin(), kAcceptMap.end(),
+    const auto it = absl::c_find_if(
+      kAcceptMap,
       [v = options.accept](const auto& m) { return m.second == v; });
     if (it != kAcceptMap.end()) {
       builder->add(kAcceptName, it->first);
@@ -294,12 +294,12 @@ class UnicodeAnalyzerImpl final : public SegmentationTokenizer {
     auto utf32 = as_utf32(data.begin(), data.end());
     _begin = utf32.begin();
     _end = utf32.end();
-    std::get<irs::OffsAttr>(_attrs).end = 0;
+    std::get<OffsAttr>(_attrs).end = 0;
     return true;
   }
 
   bool next() final {
-    auto& offset = std::get<irs::OffsAttr>(_attrs);
+    auto& offset = std::get<OffsAttr>(_attrs);
     while (true) {
       const auto begin = _begin;
       _begin = _separate(_begin, _end);

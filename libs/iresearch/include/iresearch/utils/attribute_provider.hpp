@@ -36,25 +36,19 @@ struct AttributeProvider : memory::Managed {
   // External users should prefer using const version.
   // External users should avoid modifying attributes treat that as UB.
   virtual Attribute* GetMutable(TypeInfo::type_id type) = 0;
-
-  // Const pointer to attribute of a specified type.
-  const Attribute* get(TypeInfo::type_id type) const {
-    return const_cast<AttributeProvider*>(this)->GetMutable(type);
-  }
 };
 
-// Convenient helper for getting immutable attribute of a specific type.
-template<typename T, typename Provider,
-         typename = std::enable_if_t<std::is_base_of_v<Attribute, T>>>
-inline const T* get(const Provider& attrs) {
-  return static_cast<const T*>(attrs.get(Type<T>::id()));
+// Convenient helper for getting mutable attribute of a specific type.
+template<typename T, typename Provider>
+inline T* GetMutable(Provider* absl_nonnull attrs) {
+  static_assert(std::is_base_of_v<Attribute, T>);
+  return static_cast<T*>(attrs->GetMutable(Type<T>::id()));
 }
 
-// Convenient helper for getting mutable attribute of a specific type.
-template<typename T, typename Provider,
-         typename = std::enable_if_t<std::is_base_of_v<Attribute, T>>>
-inline T* GetMutable(Provider* attrs) {
-  return static_cast<T*>(attrs->GetMutable(Type<T>::id()));
+// Convenient helper for getting immutable attribute of a specific type.
+template<typename T, typename Provider>
+inline const T* get(const Provider& attrs) {
+  return GetMutable<T>(const_cast<Provider*>(&attrs));
 }
 
 }  // namespace irs

@@ -27,7 +27,7 @@
 
 namespace tests {
 
-void FilterTestCaseBase::GetQueryResult(const irs::Filter::Prepared::ptr& q,
+void FilterTestCaseBase::GetQueryResult(const irs::Filter::Query::ptr& q,
                                         const irs::IndexReader& rdr,
                                         Docs& result, Costs& result_costs,
                                         std::string_view source_location) {
@@ -71,7 +71,7 @@ void FilterTestCaseBase::GetQueryResult(const irs::Filter::Prepared::ptr& q,
   }
 }
 
-void FilterTestCaseBase::GetQueryResult(const irs::Filter::Prepared::ptr& q,
+void FilterTestCaseBase::GetQueryResult(const irs::Filter::Query::ptr& q,
                                         const irs::IndexReader& rdr,
                                         const irs::Scorers& ord,
                                         ScoredDocs& result, Costs& result_costs,

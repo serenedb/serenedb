@@ -129,7 +129,7 @@ void FlushStats(std::ostream& out) {
     if (std::string::npos != (i = key_str.find(' ')) && key_str.find('(') > i) {
       key_str = key_str.substr(i + 1);
     }
-#elif defined(_MSC_VER)
+#elif defined(_WIN32)
     size_t i;
 
     if (std::string::npos != (i = key_str.find("__cdecl "))) {

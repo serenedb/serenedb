@@ -1,0 +1,30 @@
+name: Protect Workflow Files
+
+on:
+  pull_request_target:
+    paths:
+      - '.github/workflows/**'
+      - '.github/actions/**'
+
+jobs:
+  check-workflow-changes:
+    runs-on: ubuntu-latest  # Use GitHub-hosted runner for this check
+    steps:
+      - name: Check if PR is from fork
+        id: check-fork
+        run: |
+          if [[ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]]; then
+            echo "is_fork=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_fork=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Block workflow changes from forks
+        if: steps.check-fork.outputs.is_fork == 'true'
+        run: |
+          echo "::error::Workflow file changes from forks are not allowed. Please contact maintainers."
+          exit 1
+
+      - name: Workflow changes allowed
+        if: steps.check-fork.outputs.is_fork == 'false'
+        run: echo "Workflow changes from same repo are allowed."

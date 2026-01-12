@@ -1,3 +1,25 @@
+query error
+SELECT 'blob'::json;
+
+
+query error
+SELECT '[1e10blob]`::json;
+
+
+query error
+SELECT 'nothing'::json;
+
+
+query error
+SELECT '["a", "b", c]'::json;
+
+
+query
+SELECT 'true'::json, 'false'::json, 'null'::json;
+----
+json	json	json
+true	false	null
+
 query
 SELECT '[1, 2, 3]'::json -> 1;
 ----
@@ -100,3 +122,17 @@ SELECT concat('{"a": {"b": [ "foo" , "bar"]}}'::json #>> ARRAY['a', 'b', '1'], '
 ----
 concat
 barbar
+
+
+query
+SELECT json_extract_path_text('{"a": {"b": [1, 2, 3]}}'::json, 'a', 'b', '0');
+----
+json_extract_path_text
+1
+
+
+query
+SELECT json_extract_path('{"a": {"b": [1, 2, 3]}}'::json, 'a', 'b') -> -1;
+----
+?column?
+3

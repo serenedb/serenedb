@@ -32,9 +32,14 @@
 #include "key_utils.hpp"
 
 namespace sdb::connector {
+namespace {
+
+constexpr uint64_t kInitialVectorSize = 1;  // arbitrary value
+
+}  // namespace
 
 RocksDBDataSource::RocksDBDataSource(
-  velox::memory::MemoryPool& memory_pool, rocksdb::Snapshot* snapshot,
+  velox::memory::MemoryPool& memory_pool, const rocksdb::Snapshot* snapshot,
   rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
   std::vector<catalog::Column::Id> column_oids, ObjectId object_key)
   : velox::connector::DataSource{},
@@ -55,11 +60,12 @@ RocksDBDataSource::RocksDBDataSource(
 
 void RocksDBDataSource::addSplit(
   std::shared_ptr<velox::connector::ConnectorSplit> split) {
+  SDB_ENSURE(split, ERROR_INTERNAL, "RocksDBDataSource: split is null");
   if (_current_split) {
-    VELOX_FAIL("A split is already being processed");
+    SDB_THROW(ERROR_INTERNAL,
+              "RocksDBDataSource: a split is already being processed");
   }
-  _current_split = split;
-  VELOX_CHECK_NOT_NULL(_current_split, "Wrong type of split");
+  _current_split = std::move(split);
   _last_read_key.clear();
 }
 
@@ -114,7 +120,7 @@ std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
       size_t read_col_idx = col_idx;
       if (column_id == catalog::Column::kGeneratedPKId) {
         SDB_ASSERT(col_idx + 1 < num_columns,
-                   "Tables without columns are not supported");
+                   "Tables without columns must be processed in analyzer step");
         ++read_col_idx;
       }
 
@@ -203,7 +209,6 @@ velox::VectorPtr RocksDBDataSource::ReadScalarColumn(
   rocksdb::Iterator& it, uint64_t max_size, std::string_view column_key,
   std::string* last_key) {
   using T = typename velox::TypeTraits<Kind>::NativeType;
-  static constexpr uint64_t kInitialVectorSize = 1;  // arbitrary value
   auto result = velox::BaseVector::create<velox::FlatVector<T>>(
     velox::Type::create<Kind>(), kInitialVectorSize, &_memory_pool);
 
@@ -259,7 +264,6 @@ velox::VectorPtr RocksDBDataSource::ReadUnknownColumn(
 velox::VectorPtr RocksDBDataSource::ReadColumnFromKey(
   rocksdb::Iterator& it, uint64_t max_size, std::string_view column_key,
   size_t table_prefix_size, std::string* last_key) {
-  static constexpr uint64_t kInitialVectorSize = 1;  // arbitrary value
   auto result = velox::BaseVector::create<velox::FlatVector<int64_t>>(
     velox::BIGINT(), kInitialVectorSize, &_memory_pool);
 

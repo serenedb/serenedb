@@ -38,8 +38,6 @@ using tests::FormatTestCase;
 
 class Format10TestCase : public tests::FormatTestCase {
  protected:
-  static constexpr size_t kPostingsWriterBlockSize = 128;
-
   struct BasicAttributeProvider : irs::AttributeProvider {
     irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
       if (type == irs::Type<irs::FreqAttr>::id()) {
@@ -226,10 +224,10 @@ class Format10TestCase : public tests::FormatTestCase {
         }
 
         // seek to every document 127th document in a block
-        assert_docs(kPostingsWriterBlockSize - 1, kPostingsWriterBlockSize);
+        assert_docs(GetPostingsBlockSize() - 1, GetPostingsBlockSize());
 
         // seek to every 128th document in a block
-        assert_docs(kPostingsWriterBlockSize, kPostingsWriterBlockSize);
+        assert_docs(GetPostingsBlockSize(), GetPostingsBlockSize());
 
         // seek to every document
         assert_docs(0, 1);
@@ -884,7 +882,7 @@ TEST_P(Format10TestCase, postings_seek) {
   // singleton doc
   {
     constexpr size_t kCount = 1;
-    static_assert(kCount < kPostingsWriterBlockSize);
+    ASSERT_TRUE(kCount < GetPostingsBlockSize());
 
     const auto docs = generate_docs(kCount, 1);
 
@@ -899,7 +897,7 @@ TEST_P(Format10TestCase, postings_seek) {
   // short list (< postings_writer::BLOCK_SIZE)
   {
     constexpr size_t kCount = 117;
-    static_assert(kCount < kPostingsWriterBlockSize);
+    ASSERT_TRUE(kCount < GetPostingsBlockSize());
 
     const auto docs = generate_docs(kCount, 1);
 
@@ -913,7 +911,7 @@ TEST_P(Format10TestCase, postings_seek) {
 
   // equals to postings_writer::BLOCK_SIZE
   {
-    const auto docs = generate_docs(kPostingsWriterBlockSize, 1);
+    const auto docs = generate_docs(GetPostingsBlockSize(), 1);
 
     PostingsSeek(docs, kNone);
     PostingsSeek(docs, kFreq);
@@ -953,7 +951,7 @@ TEST_P(Format10TestCase, postings_seek) {
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 static const auto kTestValues = ::testing::Combine(
   ::testing::ValuesIn(kTestDirs),
-  ::testing::Values(tests::FormatInfo{"1_5"}, tests::FormatInfo{"1_5simd"}));
+  ::testing::Values(tests::FormatInfo{"1_5avx"}, tests::FormatInfo{"1_5simd"}));
 
 // 1.0 specific tests
 INSTANTIATE_TEST_SUITE_P(format_10_test, Format10TestCase, kTestValues,

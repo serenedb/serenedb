@@ -149,8 +149,6 @@ if(USE_DTRACE)
     add_definitions("-DUSE_DTRACE=1")
 endif()
 
-option(BUILD_IRS_TESTS "Build iresearch tests" OFF)
-
 if(USE_COVERAGE STREQUAL "SourceBased")
     # add_definitions("-DUSE_COVERAGE=1")
     add_compile_options(-fprofile-instr-generate -fcoverage-mapping)
@@ -376,6 +374,8 @@ if(SDB_DEV)
     add_definitions("-DSDB_DEV=1")
 
     # TODO(mbkkt) add_definitions("-D_FORTIFY_SOURCE=3")
+else()
+    add_definitions(-DNDEBUG)
 endif()
 
 if(SDB_GTEST)
@@ -433,12 +433,6 @@ if("${SDB_ALLOC}" MATCHES "JE")
 elseif("${SDB_ALLOC}" MATCHES "TC")
     add_definitions("-DSERENEDB_HAVE_TCMALLOC=1")
 endif()
-
-################################################################################
-## NDEBUG
-################################################################################
-
-add_definitions(-DNDEBUG)
 
 ################################################################################
 ## FLAGS

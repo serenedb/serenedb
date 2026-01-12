@@ -33,6 +33,8 @@ class ColumnExpr {
 
   Result Init(ObjectId database, Node* expr);
 
+  Result Init(ObjectId database, std::string query);
+
   static Result FromVPack(ObjectId database, vpack::Slice slice,
                           ColumnExpr& column_expr);
 
@@ -48,8 +50,6 @@ class ColumnExpr {
   const pg::Objects& GetObjects() const noexcept { return _objects; }
 
  private:
-  Result Init(ObjectId database, std::string query);
-
   std::string _query;
   pg::MemoryContextPtr _memory_context;
   const Node* _expr{nullptr};

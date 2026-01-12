@@ -49,16 +49,16 @@ bool BooleanFilter::equals(const Filter& rhs) const noexcept {
     return false;
   }
   const auto& typed_rhs = sdb::basics::downCast<BooleanFilter>(rhs);
-  return std::equal(
-    begin(), end(), typed_rhs.begin(), typed_rhs.end(),
-    [](const auto& lhs, const auto& rhs) { return *lhs == *rhs; });
+  return absl::c_equal(*this, typed_rhs, [](const auto& lhs, const auto& rhs) {
+    return *lhs == *rhs;
+  });
 }
 
-Filter::Prepared::ptr BooleanFilter::prepare(const PrepareContext& ctx) const {
+Filter::Query::ptr BooleanFilter::prepare(const PrepareContext& ctx) const {
   const auto size = _filters.size();
 
   if (size == 0) [[unlikely]] {
-    return Prepared::empty();
+    return Query::empty();
   }
 
   if (size == 1) {
@@ -137,14 +137,14 @@ void BooleanFilter::group_filters(AllDocsProvider::Ptr& all_docs_zero_boost,
   }
 }
 
-Filter::Prepared::ptr And::PrepareBoolean(std::vector<const Filter*>& incl,
-                                          std::vector<const Filter*>& excl,
-                                          const PrepareContext& ctx) const {
+Filter::Query::ptr And::PrepareBoolean(std::vector<const Filter*>& incl,
+                                       std::vector<const Filter*>& excl,
+                                       const PrepareContext& ctx) const {
   // optimization step
   //  if include group empty itself or has 'empty' -> this whole conjunction is
   //  empty
   if (incl.empty() || incl.back()->type() == irs::Type<Empty>::id()) {
-    return Prepared::empty();
+    return Query::empty();
   }
 
   PrepareContext sub_ctx = ctx;
@@ -209,7 +209,7 @@ Filter::Prepared::ptr And::PrepareBoolean(std::vector<const Filter*>& incl,
   return q;
 }
 
-Filter::Prepared::ptr Or::prepare(const PrepareContext& ctx) const {
+Filter::Query::ptr Or::prepare(const PrepareContext& ctx) const {
   if (0 == _min_match_count) {  // only explicit 0 min match counts!
     // all conditions are satisfied
     return MakeAllDocsFilter(kNoBoost)->prepare(ctx.Boost(Boost()));
@@ -218,9 +218,9 @@ Filter::Prepared::ptr Or::prepare(const PrepareContext& ctx) const {
   return BooleanFilter::prepare(ctx);
 }
 
-Filter::Prepared::ptr Or::PrepareBoolean(std::vector<const Filter*>& incl,
-                                         std::vector<const Filter*>& excl,
-                                         const PrepareContext& ctx) const {
+Filter::Query::ptr Or::PrepareBoolean(std::vector<const Filter*>& incl,
+                                      std::vector<const Filter*>& excl,
+                                      const PrepareContext& ctx) const {
   const PrepareContext sub_ctx = ctx.Boost(Boost());
 
   if (0 == _min_match_count) {  // only explicit 0 min match counts!
@@ -233,7 +233,7 @@ Filter::Prepared::ptr Or::PrepareBoolean(std::vector<const Filter*>& incl,
   }
 
   if (incl.empty()) {
-    return Prepared::empty();
+    return Query::empty();
   }
 
   // single node case
@@ -288,7 +288,7 @@ Filter::Prepared::ptr Or::PrepareBoolean(std::vector<const Filter*>& incl,
   if (adjusted_min_match > incl.size()) {
     // can't satisfy 'min_match_count' conditions
     // having only 'incl.size()' queries
-    return Prepared::empty();
+    return Query::empty();
   }
 
   if (1 == incl.size() && excl.empty()) {
@@ -311,11 +311,11 @@ Filter::Prepared::ptr Or::PrepareBoolean(std::vector<const Filter*>& incl,
   return q;
 }
 
-Filter::Prepared::ptr Not::prepare(const PrepareContext& ctx) const {
+Filter::Query::ptr Not::prepare(const PrepareContext& ctx) const {
   const auto res = OptimizeNot(*this);
 
   if (!res.first) {
-    return Prepared::empty();
+    return Query::empty();
   }
 
   const PrepareContext sub_ctx = ctx.Boost(Boost());

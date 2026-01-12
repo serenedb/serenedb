@@ -104,15 +104,15 @@ void ByTerms::visit(const SubReader& segment, const TermReader& field,
   VisitImpl(segment, field, terms, visitor);
 }
 
-Filter::Prepared::ptr ByTerms::Prepare(const PrepareContext& ctx,
-                                       std::string_view field,
-                                       const ByTermsOptions& options) {
+Filter::Query::ptr ByTerms::Prepare(const PrepareContext& ctx,
+                                    std::string_view field,
+                                    const ByTermsOptions& options) {
   const auto& [terms, min_match, merge_type] = options;
   const size_t size = terms.size();
 
   if (0 == size || min_match > size) {
     // Empty or unreachable search criteria
-    return Prepared::empty();
+    return Query::empty();
   }
   SDB_ASSERT(min_match != 0);
 
@@ -137,7 +137,7 @@ Filter::Prepared::ptr ByTerms::Prepare(const PrepareContext& ctx,
   }
 
   if (states.empty()) {
-    return Prepared::empty();
+    return Query::empty();
   }
 
   MultiTermQuery::Stats stats{{ctx.memory}};
@@ -153,7 +153,7 @@ Filter::Prepared::ptr ByTerms::Prepare(const PrepareContext& ctx,
                                               merge_type, min_match);
 }
 
-Filter::Prepared::ptr ByTerms::prepare(const PrepareContext& ctx) const {
+Filter::Query::ptr ByTerms::prepare(const PrepareContext& ctx) const {
   if (options().terms.empty() || options().min_match != 0) {
     return Prepare(ctx.Boost(Boost()), field(), options());
   }

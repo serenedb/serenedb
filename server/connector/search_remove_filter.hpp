@@ -30,10 +30,10 @@
 
 namespace sdb::connector::search {
 
+// this matches generated PK column id but it is not stored so should be fine.
 constexpr inline std::string_view kPkFieldName{
   "\xff\xff\xff\xff\xff\xff\xff\xff", 8};
 
-// store all pks as copies
 class SearchRemoveFilterBase : public irs::Filter,
                                public irs::Filter::Query,
                                public irs::DocIterator {
@@ -82,6 +82,8 @@ class SearchRemoveFilterBase : public irs::Filter,
   mutable const irs::TermReader* _pk_field{};
   mutable size_t _pos{0};
   mutable irs::DocAttr _doc;
+  // We need to store Pk copies as they would be applied on writer commit and
+  // should stay alive until that.
   mutable ManagedVector<ManagedString> _pks;
 };
 

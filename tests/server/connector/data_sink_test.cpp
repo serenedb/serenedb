@@ -1896,6 +1896,19 @@ TEST_F(DataSinkTest, test_tableWriteLazyMapValueVector) {
   MakeTestWriteImpl(data->type(), data);
 }
 
+TEST_F(DataSinkTest, test_tableWriteLazyDictionaryMapValueVector) {
+  auto keys = makeFlatVector<int32_t>({10, 20, 4545, 5, 6, 7, 8, 9});
+  auto indices = makeIndices({7, 6, 5, 4, 3, 2, 1, 0});
+  auto values = wrapInDictionary(
+    indices, wrapInLazyDictionary(
+               makeFlatVector<int32_t>({11, 21, 4540, 0, 2, 2, 3, 5})));
+  auto maps =
+    wrapInLazyDictionary(makeMapVector({0, 3, 3, 5, 7}, keys, values));
+  auto structs = makeRowVector({maps});
+  auto data = makeArrayVector({0, 3, 3, 4}, structs);
+  MakeTestWriteImpl(data->type(), data);
+}
+
 TEST_F(DataSinkTest, test_tableWriteLazyValue) {
   auto data = makeRowVector({wrapInLazyDictionary(
     makeFlatVector<int32_t>({10, 20, 4545, 5, 6, 7, 8, 9}))});

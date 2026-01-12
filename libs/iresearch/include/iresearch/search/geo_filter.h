@@ -63,7 +63,7 @@ enum class GeoFilterType : uint8_t {
 class GeoFilter;
 
 struct GeoFilterOptions : GeoFilterOptionsBase {
-  using filter_type = GeoFilter;
+  using FilterType = GeoFilter;
 
   bool operator==(const GeoFilterOptions& rhs) const noexcept {
     return type == rhs.type && shape.equals(rhs.shape);
@@ -75,13 +75,13 @@ struct GeoFilterOptions : GeoFilterOptionsBase {
 
 class GeoFilter final : public FilterWithField<GeoFilterOptions> {
  public:
-  Prepared::ptr prepare(const PrepareContext& ctx) const final;
+  Query::ptr prepare(const PrepareContext& ctx) const final;
 };
 
 class GeoDistanceFilter;
 
 struct GeoDistanceFilterOptions : GeoFilterOptionsBase {
-  using filter_type = GeoDistanceFilter;
+  using FilterType = GeoDistanceFilter;
 
   bool operator==(const GeoDistanceFilterOptions& rhs) const noexcept {
     return origin == rhs.origin && range == rhs.range;
@@ -94,7 +94,7 @@ struct GeoDistanceFilterOptions : GeoFilterOptionsBase {
 class GeoDistanceFilter final
   : public FilterWithField<GeoDistanceFilterOptions> {
  public:
-  Prepared::ptr prepare(const PrepareContext& ctx) const final;
+  Query::ptr prepare(const PrepareContext& ctx) const final;
 };
 
 }  // namespace irs

@@ -367,7 +367,7 @@ TEST(GeoFilterTest, query) {
 
   auto execute_query = [&reader](
                          const irs::Filter& q,
-                         const std::vector<irs::CostAttr::cost_t>& costs) {
+                         const std::vector<irs::CostAttr::Type>& costs) {
     std::set<std::string> actual_results;
 
     struct MaxMemoryCounter final : irs::IResourceManager {

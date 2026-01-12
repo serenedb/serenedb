@@ -49,10 +49,10 @@ using namespace sdb::geo;
 constexpr auto kSingletonCapEps = 2 * std::numeric_limits<double>::epsilon();
 
 using Disjunction =
-  irs::disjunction_iterator<irs::DocIterator::ptr, irs::NoopAggregator>;
+  irs::DisjunctionIterator<irs::ScoreAdapter, irs::NoopAggregator>;
 
 // Return a filter matching all documents with a given geo field
-irs::Filter::Prepared::ptr MatchAll(const irs::PrepareContext& ctx,
+irs::Filter::Query::ptr MatchAll(const irs::PrepareContext& ctx,
                                     std::string_view field) {
   // Return everything we've stored
   irs::ByColumnExistence filter;
@@ -76,7 +76,7 @@ struct S2PointParser;
 template<typename Parser, typename Acceptor>
 class GeoIterator : public irs::DocIterator {
   // Two phase iterator is heavier than a usual disjunction
-  static constexpr irs::CostAttr::cost_t kExtraCost = 2;
+  static constexpr irs::CostAttr::Type kExtraCost = 2;
 
  public:
   GeoIterator(DocIterator::ptr&& approx, DocIterator::ptr&& column_it,
@@ -113,13 +113,14 @@ class GeoIterator : public irs::DocIterator {
     return std::get<irs::AttributePtr<irs::DocAttr>>(_attrs).ptr->value;
   }
 
-  bool next() final {
-    while (_approx->next()) {
+  irs::doc_id_t advance() final {
+    irs::doc_id_t value;
+    while (!irs::doc_limits::eof(value = _approx->advance())) {
       if (Accept()) {
-        return true;
+        return value;
       }
     }
-    return false;
+    return irs::doc_limits::eof();
   }
 
   irs::doc_id_t seek(irs::doc_id_t target) final {
@@ -134,9 +135,8 @@ class GeoIterator : public irs::DocIterator {
     }
 
     if (!Accept()) {
-      next();
+      return advance();
     }
-
     return doc->value;
   }
 
@@ -167,7 +167,7 @@ class GeoIterator : public irs::DocIterator {
 };
 
 template<typename Parser, typename Acceptor>
-irs::DocIterator::ptr MakeIterator(typename Disjunction::doc_iterators_t&& itrs,
+irs::DocIterator::ptr MakeIterator(typename Disjunction::Adapters&& itrs,
                                    irs::DocIterator::ptr&& column_it,
                                    const irs::SubReader& reader,
                                    const irs::TermReader& field,
@@ -206,7 +206,7 @@ using GeoStates = irs::StatesCache<GeoState>;
 
 // Compiled GeoFilter
 template<typename Parser, typename Acceptor>
-class GeoQuery : public irs::Filter::Prepared {
+class GeoQuery : public irs::Filter::Query {
  public:
   GeoQuery(GeoStates&& states, irs::bstring&& stats, Parser&& parser,
            Acceptor&& acceptor, irs::score_t boost) noexcept
@@ -229,7 +229,7 @@ class GeoQuery : public irs::Filter::Prepared {
     auto* field = state->reader;
     SDB_ASSERT(field);
 
-    typename Disjunction::doc_iterators_t itrs;
+    typename Disjunction::Adapters itrs;
     itrs.reserve(state->states.size());
 
     for (auto& entry : state->states) {
@@ -335,7 +335,7 @@ struct GeoDistanceAcceptor {
 };
 
 template<typename Options, typename Acceptor>
-irs::Filter::Prepared::ptr MakeQuery(irs::IResourceManager& manager,
+irs::Filter::Query::ptr MakeQuery(irs::IResourceManager& manager,
                                      GeoStates&& states, irs::bstring&& stats,
                                      irs::score_t boost, const Options& options,
                                      Acceptor&& acceptor) {
@@ -355,7 +355,7 @@ irs::Filter::Prepared::ptr MakeQuery(irs::IResourceManager& manager,
         std::forward<Acceptor>(acceptor), boost);
   }
   SDB_ASSERT(false);
-  return irs::Filter::Prepared::empty();
+  return irs::Filter::Query::empty();
 }
 
 std::pair<GeoStates, irs::bstring> PrepareStates(
@@ -429,7 +429,7 @@ std::pair<S2Cap, bool> GetBound(irs::BoundType type, S2Point origin,
           irs::BoundType::Inclusive == type};
 }
 
-irs::Filter::Prepared::ptr PrepareOpenInterval(
+irs::Filter::Query::ptr PrepareOpenInterval(
   const irs::PrepareContext& ctx, std::string_view field,
   const GeoDistanceFilterOptions& options, bool greater) {
   const auto& range = options.range;
@@ -458,7 +458,7 @@ irs::Filter::Prepared::ptr PrepareOpenInterval(
         bound = greater ? S2Cap::Full() : FromPoint(origin);
 
         if (!bound.is_valid()) {
-          return irs::Filter::Prepared::empty();
+          return irs::Filter::Query::empty();
         }
 
         incl = true;
@@ -494,7 +494,7 @@ irs::Filter::Prepared::ptr PrepareOpenInterval(
     std::tie(bound, incl) = GetBound(type, origin, dist);
 
     if (!bound.is_valid()) {
-      return irs::Filter::Prepared::empty();
+      return irs::Filter::Query::empty();
     }
 
     if (greater) {
@@ -509,7 +509,7 @@ irs::Filter::Prepared::ptr PrepareOpenInterval(
   }
 
   if (bound.is_empty()) {
-    return irs::Filter::Prepared::empty();
+    return irs::Filter::Query::empty();
   }
 
   S2RegionTermIndexer indexer(options.options);
@@ -517,7 +517,7 @@ irs::Filter::Prepared::ptr PrepareOpenInterval(
   const auto geo_terms = indexer.GetQueryTerms(bound, options.prefix);
 
   if (geo_terms.empty()) {
-    return irs::Filter::Prepared::empty();
+    return irs::Filter::Query::empty();
   }
 
   auto [states, stats] = PrepareStates(ctx, geo_terms, field);
@@ -531,7 +531,7 @@ irs::Filter::Prepared::ptr PrepareOpenInterval(
   }
 }
 
-irs::Filter::Prepared::ptr PrepareInterval(
+irs::Filter::Query::ptr PrepareInterval(
   const irs::PrepareContext& ctx, std::string_view field,
   const GeoDistanceFilterOptions& options) {
   const auto& range = options.range;
@@ -539,7 +539,7 @@ irs::Filter::Prepared::ptr PrepareInterval(
   SDB_ASSERT(irs::BoundType::Unbounded != range.max_type);
 
   if (range.max < 0.) {
-    return irs::Filter::Prepared::empty();
+    return irs::Filter::Query::empty();
   } else if (range.min < 0.) {
     return PrepareOpenInterval(ctx, field, options, false);
   }
@@ -549,10 +549,10 @@ irs::Filter::Prepared::ptr PrepareInterval(
 
   if (irs::math::ApproxEquals(range.min, range.max)) {
     if (!min_incl || !max_incl) {
-      return irs::Filter::Prepared::empty();
+      return irs::Filter::Query::empty();
     }
   } else if (range.min > range.max) {
-    return irs::Filter::Prepared::empty();
+    return irs::Filter::Query::empty();
   }
 
   const auto& origin = options.origin;
@@ -565,7 +565,7 @@ irs::Filter::Prepared::ptr PrepareInterval(
     const auto geo_terms = indexer.GetQueryTerms(origin, options.prefix);
 
     if (geo_terms.empty()) {
-      return irs::Filter::Prepared::empty();
+      return irs::Filter::Query::empty();
     }
 
     auto [states, stats] = PrepareStates(ctx, geo_terms, field);
@@ -581,7 +581,7 @@ irs::Filter::Prepared::ptr PrepareInterval(
   auto max_bound = FromPoint(origin, range.max);
 
   if (!min_bound.is_valid() || !max_bound.is_valid()) {
-    return irs::Filter::Prepared::empty();
+    return irs::Filter::Query::empty();
   }
 
   S2RegionTermIndexer indexer(options.options);
@@ -596,7 +596,7 @@ irs::Filter::Prepared::ptr PrepareInterval(
     indexer.GetQueryTermsForCanonicalCovering(ring, options.prefix);
 
   if (geo_terms.empty()) {
-    return irs::Filter::Prepared::empty();
+    return irs::Filter::Query::empty();
   }
 
   auto [states, stats] = PrepareStates(ctx, geo_terms, field);
@@ -620,17 +620,17 @@ irs::Filter::Prepared::ptr PrepareInterval(
         GeoDistanceRangeAcceptor<true, true>{min_bound, max_bound});
     default:
       SDB_ASSERT(false);
-      return irs::Filter::Prepared::empty();
+      return irs::Filter::Query::empty();
   }
 }
 
 }  // namespace
 
-irs::Filter::Prepared::ptr GeoFilter::prepare(
+irs::Filter::Query::ptr GeoFilter::prepare(
   const irs::PrepareContext& ctx) const {
   auto& shape = const_cast<ShapeContainer&>(options().shape);
   if (shape.empty()) {
-    return irs::Filter::Prepared::empty();
+    return irs::Filter::Query::empty();
   }
 
   const auto& options = this->options();
@@ -646,7 +646,7 @@ irs::Filter::Prepared::ptr GeoFilter::prepare(
   }
 
   if (geo_terms.empty()) {
-    return irs::Filter::Prepared::empty();
+    return irs::Filter::Query::empty();
   }
 
   auto [states, stats] = PrepareStates(ctx, geo_terms, field());
@@ -677,10 +677,10 @@ irs::Filter::Prepared::ptr GeoFilter::prepare(
         });
   }
   SDB_ASSERT(false);
-  return irs::Filter::Prepared::empty();
+  return irs::Filter::Query::empty();
 }
 
-irs::Filter::Prepared::ptr GeoDistanceFilter::prepare(
+irs::Filter::Query::ptr GeoDistanceFilter::prepare(
   const irs::PrepareContext& ctx) const {
   const auto& options = this->options();
   const auto& range = options.range;

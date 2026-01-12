@@ -321,6 +321,7 @@ TEST(GeoDistanceFilterTest, boost) {
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(-41.69642, 77.91159).ToPoint();
     q.mutable_options()->range.min = 5000.;
+    q.mutable_options()->options.set_max_cells(50);
     q.mutable_options()->range.min_type = irs::BoundType::Inclusive;
     *q.mutable_field() = "field";
 
@@ -333,8 +334,10 @@ TEST(GeoDistanceFilterTest, boost) {
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(-41.69642, 77.91159).ToPoint();
     q.mutable_options()->range.min = 5000.;
+    q.mutable_options()->options.set_max_cells(150);
+    q.mutable_options()->options.set_min_level(15);
     q.mutable_options()->range.min_type = irs::BoundType::Inclusive;
-    q.mutable_options()->range.max = 6000.;
+    q.mutable_options()->range.max = 5500.;
     q.mutable_options()->range.max_type = irs::BoundType::Inclusive;
     *q.mutable_field() = "field";
 
@@ -348,6 +351,7 @@ TEST(GeoDistanceFilterTest, boost) {
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(-41.69642, 77.91159).ToPoint();
     q.mutable_options()->range.min = 5000.;
+    q.mutable_options()->options.set_max_cells(50);
     q.mutable_options()->range.min_type = irs::BoundType::Inclusive;
     *q.mutable_field() = "field";
     q.boost(boost);
@@ -361,6 +365,8 @@ TEST(GeoDistanceFilterTest, boost) {
     GeoDistanceFilter q;
     q.mutable_options()->origin =
       S2LatLng::FromDegrees(-41.69642, 77.91159).ToPoint();
+    q.mutable_options()->options.set_max_cells(50);
+    q.mutable_options()->options.set_min_level(15);
     q.mutable_options()->range.min = 5000.;
     q.mutable_options()->range.min_type = irs::BoundType::Inclusive;
     q.mutable_options()->range.max = 6000.;
@@ -447,7 +453,7 @@ TEST(GeoDistanceFilterTest, query) {
 
   auto execute_query = [&reader](
                          const irs::Filter& q,
-                         const std::vector<irs::CostAttr::cost_t>& costs,
+                         const std::vector<irs::CostAttr::Type>& costs,
                          size_t at_least = 0) {
     std::set<std::string> actual_results;
 

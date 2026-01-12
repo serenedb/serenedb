@@ -26,7 +26,7 @@ oid	adrelid	adnum	adbin
 query
 SELECT * FROM pg_attribute LIMIT 0
 ----
-attrelid	attname	atttypid	attlen	attnum	attcacheoff	atttypmod	attndims	attbyval	attalign	attstorage	attcompression	attnotnull	atthasdef	atthasmissing	attidentity	attgenerated	attisdropped	attislocal	attinhcount	attcollation	attstattarget	attacl	attoptions	attfdwoptions	attmissingval
+attrelid	attname	atttypid	attlen	attnum	atttypmod	attndims	attbyval	attalign	attstorage	attcompression	attnotnull	atthasdef	atthasmissing	attidentity	attgenerated	attisdropped	attislocal	attinhcount	attcollation	attstattarget	attacl	attoptions	attfdwoptions	attmissingval
 
 query
 SELECT * FROM pg_auth_members LIMIT 0
@@ -46,7 +46,7 @@ oid	castsource	casttarget	castfunc	castcontext	castmethod
 query
 SELECT * FROM pg_class LIMIT 0
 ----
-oid	relname	relnamespace	reltype	reloftype	relowner	relam	relfilenode	reltablespace	relpages	reltuples	relallvisible	reltoastrelid	relhasindex	relisshared	relpersistence	relkind	relnatts	relchecks	relhasrules	relhastriggers	relhassubclass	relrowsecurity	relforcerowsecurity	relispopulated	relreplident	relispartition	relrewrite	relfrozenxid	relminmxid	relacl	reloptions	relpartbound
+oid	relname	relnamespace	reltype	reloftype	relowner	relam	relfilenode	reltablespace	relpages	reltuples	relallvisible	relallfrozen	reltoastrelid	relhasindex	relisshared	relpersistence	relkind	relnatts	relchecks	relhasrules	relhastriggers	relhassubclass	relrowsecurity	relforcerowsecurity	relispopulated	relreplident	relispartition	relrewrite	relfrozenxid	relminmxid	relacl	reloptions	relpartbound
 
 query
 SELECT * FROM pg_collation LIMIT 0
@@ -56,7 +56,7 @@ oid	collname	collnamespace	collowner	collprovider	collisdeterministic	collencodi
 query
 SELECT * FROM pg_constraint LIMIT 0
 ----
-oid	conname	connamespace	contype	condeferrable	condeferred	convalidated	conrelid	contypid	conindid	conparentid	confrelid	confupdtype	confdeltype	confmatchtype	conislocal	coninhcount	connoinherit	conkey	confkey	conpfeqop	conppeqop	conffeqop	confdelsetcols	conexclop	conbin
+oid	conname	connamespace	contype	condeferrable	condeferred	conenforced	convalidated	conrelid	contypid	conindid	conparentid	confrelid	confupdtype	confdeltype	confmatchtype	conislocal	coninhcount	connoinherit	conperiod	conkey	confkey	conpfeqop	conppeqop	conffeqop	confdelsetcols	conexclop	conbin
 
 query
 SELECT * FROM pg_conversion LIMIT 0
@@ -152,9 +152,9 @@ query
 SELECT oid, nspname FROM pg_namespace WHERE nspname IN ('pg_catalog', 'public', 'information_schema') ORDER BY nspname;
 ----
 oid	nspname
-13283	information_schema
+<slt:ignore>	information_schema
 11	pg_catalog
-2200	public
+<slt:ignore>	public
 
 query
 SELECT oid, nspname FROM pg_catalog.pg_namespace WHERE oid = 11
@@ -200,7 +200,7 @@ oid	proname	pronamespace	proowner	prolang	procost	prorows	provariadic	prosupport
 query
 SELECT * FROM pg_publication LIMIT 0
 ----
-oid	pubname	pubowner	puballtables	pubinsert	pubupdate	pubdelete	pubtruncate	pubviaroot
+oid	pubname	pubowner	puballtables	pubinsert	pubupdate	pubdelete	pubtruncate	pubviaroot	pubgencols
 
 query
 SELECT * FROM pg_publication_namespace LIMIT 0

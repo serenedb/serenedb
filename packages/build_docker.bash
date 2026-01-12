@@ -6,7 +6,7 @@
 [ -z "$PUSH_IMAGES_2_REGISTRY" ] && exit 1 # PUSH_IMAGES_2_REGISTRY="false"
 [ -z "$DOCKER_TAG" ] && source $WORKSPACE/packages/find_version.bash
 
-#TODO (malandin) imagename should not be hardcoded
+#TODO: (malandin) imagename should not be hardcoded
 
 imagename=registry.serenedb.com:5000/serenedb:${DOCKER_TAG}
 # containerpath=$WORKSPACE/packages/docker

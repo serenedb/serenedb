@@ -1776,11 +1776,11 @@ void RocksDBDataSink::WriteRowSlices(std::string_view key) {
 
 void RocksDBDataSink::WriteNull(std::string_view key) {
   // empty slice denotes NULL value
-  static rocksdb::Slice gNullSlice;
-  static constexpr std::span<const rocksdb::Slice> kSlices{&gNullSlice, 1};
-  _data_writer.Write(kSlices, key);
+  rocksdb::Slice null_slice;
+  std::span<const rocksdb::Slice> null_slices{&null_slice, 1};
+  _data_writer.Write(null_slices, key);
   for (const auto& writer : _index_writers) {
-    writer->Write(kSlices, key);
+    writer->Write(null_slices, key);
   }
 }
 

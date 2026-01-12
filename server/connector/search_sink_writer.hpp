@@ -127,7 +127,7 @@ class SearchSinkInsertWriter final : public SinkInsertWriter {
   std::string _name_buffer;
   std::string _null_name_buffer;
   irs::IndexWriter::Transaction& _trx;
-  std::unique_ptr<irs::IndexWriter::Document> _document;
+  std::optional<irs::IndexWriter::Document> _document;
   Writer _current_writer;
   bool _emit_pk{true};
 };

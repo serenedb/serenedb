@@ -77,14 +77,14 @@ void SearchSinkInsertWriter::SwitchColumn(velox::TypeKind kind, bool have_nulls,
     VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(SetupColumnWriter, kind, column_id,
                                        have_nulls);
   }
-  SDB_ASSERT(_document);
+  SDB_ASSERT(_document.has_value());
   _document->NextFieldBatch();
 }
 
 void SearchSinkInsertWriter::Write(std::span<const rocksdb::Slice> cell_slices,
                                    std::string_view full_key) {
   SDB_ASSERT(_current_writer);
-  SDB_ASSERT(_document);
+  SDB_ASSERT(_document.has_value());
   _current_writer(full_key, cell_slices);
   _document->NextDocument();
 }
@@ -203,10 +203,8 @@ SearchSinkInsertWriter::Writer SearchSinkInsertWriter::MakeIndexWriter(
 
 void SearchSinkInsertWriter::Init(size_t batch_size) {
   SDB_ASSERT(batch_size > 0);
-  SDB_ASSERT(!_document);
-  _document = std::make_unique<irs::IndexWriter::Document>(
-    _trx.Insert(false, batch_size));
-  VELOX_CHECK(_document, "Failed to create IResearch document for insertion");
+  SDB_ASSERT(!_document.has_value());
+  _document.emplace(_trx.Insert(false, batch_size));
   _emit_pk = true;
 }
 
@@ -242,7 +240,7 @@ SearchSinkInsertWriter::Field& SearchSinkInsertWriter::WriteNumericValue(
   SDB_ASSERT(sizeof(T) == cell_slices[0].size());
   // this is true as long as we match machine ending with storage ending
   static_assert(basics::IsLittleEndian());
-  field.SetNumericValue(*reinterpret_cast<const T*>(cell_slices[0].data()));
+  field.SetNumericValue(absl::little_endian::Load<T>(cell_slices[0].data()));
   return field;
 }
 

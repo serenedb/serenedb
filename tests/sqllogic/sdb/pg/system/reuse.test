@@ -3,8 +3,13 @@ select * from pg_namespace as t1, pg_namespace as t2;
 ----
 oid	nspname	nspowner	nspacl	oid	nspname	nspowner	nspacl
 11	pg_catalog	NULL	NULL	11	pg_catalog	NULL	NULL
+11	pg_catalog	NULL	NULL	<slt:ignore>	information_schema	NULL	NULL
 11	pg_catalog	NULL	NULL	<slt:ignore>	public	NULL	NULL
+<slt:ignore>	information_schema	NULL	NULL	11	pg_catalog	NULL	NULL
+<slt:ignore>	information_schema	NULL	NULL	<slt:ignore>	information_schema	NULL	NULL
+<slt:ignore>	information_schema	NULL	NULL	<slt:ignore>	public	NULL	NULL
 <slt:ignore>	public	NULL	NULL	11	pg_catalog	NULL	NULL
+<slt:ignore>	public	NULL	NULL	<slt:ignore>	information_schema	NULL	NULL
 <slt:ignore>	public	NULL	NULL	<slt:ignore>	public	NULL	NULL
 
 
@@ -13,8 +18,13 @@ select * from pg_namespace as t1(a, b, c, d), pg_namespace as t2(x, y, z, w);
 ----
 a	b	c	d	x	y	z	w
 11	pg_catalog	NULL	NULL	11	pg_catalog	NULL	NULL
+11	pg_catalog	NULL	NULL	<slt:ignore>	information_schema	NULL	NULL
 11	pg_catalog	NULL	NULL	<slt:ignore>	public	NULL	NULL
+<slt:ignore>	information_schema	NULL	NULL	11	pg_catalog	NULL	NULL
+<slt:ignore>	information_schema	NULL	NULL	<slt:ignore>	information_schema	NULL	NULL
+<slt:ignore>	information_schema	NULL	NULL	<slt:ignore>	public	NULL	NULL
 <slt:ignore>	public	NULL	NULL	11	pg_catalog	NULL	NULL
+<slt:ignore>	public	NULL	NULL	<slt:ignore>	information_schema	NULL	NULL
 <slt:ignore>	public	NULL	NULL	<slt:ignore>	public	NULL	NULL
 
 
@@ -23,6 +33,11 @@ select * from pg_namespace as t1(x, y, z, w), pg_namespace as t2(x, y, z, w);
 ----
 x	y	z	w	x	y	z	w
 11	pg_catalog	NULL	NULL	11	pg_catalog	NULL	NULL
+11	pg_catalog	NULL	NULL	<slt:ignore>	information_schema	NULL	NULL
 11	pg_catalog	NULL	NULL	<slt:ignore>	public	NULL	NULL
+<slt:ignore>	information_schema	NULL	NULL	11	pg_catalog	NULL	NULL
+<slt:ignore>	information_schema	NULL	NULL	<slt:ignore>	information_schema	NULL	NULL
+<slt:ignore>	information_schema	NULL	NULL	<slt:ignore>	public	NULL	NULL
 <slt:ignore>	public	NULL	NULL	11	pg_catalog	NULL	NULL
+<slt:ignore>	public	NULL	NULL	<slt:ignore>	information_schema	NULL	NULL
 <slt:ignore>	public	NULL	NULL	<slt:ignore>	public	NULL	NULL

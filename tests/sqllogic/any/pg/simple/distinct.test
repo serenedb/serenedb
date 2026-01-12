@@ -8,12 +8,12 @@ FROM
 ) as clickclack(name, grade)
 ORDER BY name, grade DESC;
 ----
-name grade
-babsky 22
-babsky 21
-babsky 20
-vedernikoff 14
-vedernikoff 13
+name	grade
+babsky	22
+babsky	21
+babsky	20
+vedernikoff	14
+vedernikoff	13
 
 
 query
@@ -99,11 +99,11 @@ FROM
 ) as tindex(name, grade, iq)
 ORDER BY clickclack.name DESC;
 ----
-name name
-vedernikoff babsky
-vedernikoff vedernikoff
-babsky babsky
-babsky vedernikoff
+name	name
+vedernikoff	babsky
+vedernikoff	vedernikoff
+babsky	babsky
+babsky	vedernikoff
 
 
 query error
@@ -157,12 +157,12 @@ FROM
 ) as clickclack(name, grade)
 ORDER BY name, grade DESC;
 ----
-name grade name grade
-babsky 22 babsky 22
-babsky 21 babsky 21
-babsky 20 babsky 20
-vedernikoff 14 vedernikoff 14
-vedernikoff 13 vedernikoff 13
+name	grade	name	grade
+babsky	22	babsky	22
+babsky	21	babsky	21
+babsky	20	babsky	20
+vedernikoff	14	vedernikoff	14
+vedernikoff	13	vedernikoff	13
 
 
 query
@@ -234,9 +234,9 @@ FROM
 ) as clickclack(name, grade)
 ORDER BY name, grade DESC;
 ----
-name grade
-babsky 22
-vedernikoff 14
+name	grade
+babsky	22
+vedernikoff	14
 
 
 query
@@ -249,12 +249,12 @@ FROM
 ) as clickclack(name, grade)
 ORDER BY name, grade DESC;
 ----
-name grade name grade
-babsky 22 babsky 22
-babsky 21 babsky 21
-babsky 20 babsky 20
-vedernikoff 14 vedernikoff 14
-vedernikoff 13 vedernikoff 13
+name	grade	name	grade
+babsky	22	babsky	22
+babsky	21	babsky	21
+babsky	20	babsky	20
+vedernikoff	14	vedernikoff	14
+vedernikoff	13	vedernikoff	13
 
 
 query
@@ -304,12 +304,12 @@ FROM
 ) as clickclack(name, grade)
 ORDER BY not_grade, grade, not_name, name;
 ----
-not_grade not_name
-13 vedernikoff
-14 vedernikoff
-20 babsky
-21 babsky
-22 babsky
+not_grade	not_name
+13	vedernikoff
+14	vedernikoff
+20	babsky
+21	babsky
+22	babsky
 
 
 query
@@ -323,13 +323,13 @@ FROM
 GROUP BY name, grade
 ORDER BY name, grade;
 ----
-name sum
-babsky 17
-babsky1 17
-babsky2 17
-babsky3 17
-vedernikoff 17
-vedernikoff 121
+name	sum
+babsky	17
+babsky1	17
+babsky2	17
+babsky3	17
+vedernikoff	17
+vedernikoff	121
 
 
 query

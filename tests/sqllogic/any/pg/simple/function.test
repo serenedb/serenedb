@@ -75,8 +75,8 @@ $$ LANGUAGE sql;
 query
 SELECT * FROM simple_boy_old_pg();
 ----
-name sername
-hello world
+name	sername
+hello	world
 
 
 statement ok
@@ -114,8 +114,8 @@ END;
 query
 SELECT * FROM simple_boy_new_pg();
 ----
-name sername
-hello world
+name	sername
+hello	world
 
 
 statement ok
@@ -146,8 +146,8 @@ SELECT * FROM
   clickclack_review as cr2,
   clickclack_review as cr3;
 ----
-?column? ?column? ?column?
-had done nothing, got money had done nothing, got money had done nothing, got money
+?column?	?column?	?column?
+had done nothing, got money	had done nothing, got money	had done nothing, got money
 
 
 statement ok
@@ -180,7 +180,7 @@ SELECT * FROM
   clickclack_employee() as ce1,
   clickclack_employee() as ce2;
 ----
-namenino gradenino namenino gradenino
+namenino	gradenino	namenino	gradenino
 arelav	16	arelav	16
 arelav	16	billinman	51
 arelav	16	vedernikoff	14
@@ -231,8 +231,8 @@ $$ LANGUAGE sql;
 query
 SELECT * FROM employee_with_grade_bt_old_pg(1000 - 7 - 993 + 10 + 6)
 ----
-name grade
-billinman 51
+name	grade
+billinman	51
 
 
 statement ok
@@ -257,8 +257,8 @@ END;
 query
 SELECT * FROM employee_with_grade_bt_new_pg(1000 - 7 - 993 + 10 + 6)
 ----
-name grade
-billinman 51
+name	grade
+billinman	51
 
 
 statement ok
@@ -455,4 +455,4 @@ CREATE TABLE zhme (lmao INTEGER);
 query
 SELECT * FROM zhme as zhma, zhme();
 ----
-lmao zhme
+lmao	zhme

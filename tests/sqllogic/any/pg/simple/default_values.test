@@ -85,12 +85,12 @@ INSERT INTO tindex (id, name, weight, pencil_size) VALUES (4, NULL, NULL, NULL);
 query
 SELECT *, pencil_size IS NULL FROM tindex;
 ----
-id name weight pencil_size ?column?
-0 babsk 993 NULL t
-1 vedernikoff 54 1 f
-2 babsk 993 3 f
-3 babsk 993 1 f
-4 NULL NULL NULL t
+id	name	weight	pencil_size	?column?
+0	babsk	993	NULL	t
+1	vedernikoff	54	1	f
+2	babsk	993	3	f
+3	babsk	993	1	f
+4	NULL	NULL	NULL	t
 
 
 statement ok
@@ -101,12 +101,12 @@ SET pencil_size = DEFAULT, weight = DEFAULT;
 query
 SELECT *, pencil_size IS NULL FROM tindex;
 ----
-id name weight pencil_size ?column?
-0 babsk 993 NULL t
-1 vedernikoff 993 NULL t
-2 babsk 993 NULL t
-3 babsk 993 NULL t
-4 NULL 993 NULL t
+id	name	weight	pencil_size	?column?
+0	babsk	993	NULL	t
+1	vedernikoff	993	NULL	t
+2	babsk	993	NULL	t
+3	babsk	993	NULL	t
+4	NULL	993	NULL	t
 
 
 statement error
@@ -159,11 +159,11 @@ DETAIL: Column "grade" is a generated column.
 query
 SELECT * FROM clickclack ORDER BY 1, 2, 3, 4;
 ----
-id weight age grade
-0 100 18 21
-1 130 54 31
-2 54 130 23
-1000 100 228 42
+id	weight	age	grade
+0	100	18	21
+1	130	54	31
+2	54	130	23
+1000	100	228	42
 
 
 statement ok
@@ -181,11 +181,11 @@ WHERE id = 1;
 query
 SELECT * FROM clickclack ORDER BY 1, 2, 3, 4;
 ----
-id weight age grade
-0 100 18 21
-1 22228 54 4451
-2 54 130 23
-1000 100000 228000 42800
+id	weight	age	grade
+0	100	18	21
+1	22228	54	4451
+2	54	130	23
+1000	100000	228000	42800
 
 
 statement error

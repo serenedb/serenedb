@@ -1760,8 +1760,6 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
     std::move(column_exprs));
 }
 
-constexpr std::string_view kConnectionTransferMarker = "<pg-protocol>";
-
 class CopyOptionsParser {
  public:
   CopyOptionsParser(velox::RowTypePtr row_type, bool is_writer,
@@ -1893,10 +1891,11 @@ class CopyOptionsParser {
           "force_null", "on_error", "reject_limit", "encoding",
           "log_verbosity"}) {
       if (const auto* option = EraseOption(option_name)) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                        ERR_MSG("COPY option \"", option_name,
-                                "\" is not supported yet for TEXT format"));
+        THROW_SQL_ERROR(
+          CURSOR_POS(ErrorPosition(ExprLocation(option))),
+          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+          ERR_MSG("COPY option \"", option_name, "\" is not supported yet for ",
+                  is_csv ? "CSV" : "TEXT", " format"));
       }
     }
 
@@ -1979,10 +1978,9 @@ class CopyOptionsParser {
 
   // local filesystem / S3 / hdfs etc.
   void ParseDataSource() {
-    // TODO: parse here options for different data sources
     if (_is_writer) {
       std::unique_ptr<velox::WriteFile> file_write;
-      if (_file_path == kConnectionTransferMarker) {
+      if (_file_path.empty()) {  // copy to stdout
         SDB_ASSERT(_pg_protocol_ctx.buffer);
         file_write = std::make_unique<CopyOutWriteFile>(
           *_pg_protocol_ctx.buffer, _row_type->size());
@@ -1995,7 +1993,7 @@ class CopyOptionsParser {
                                               std::string{_file_path});
     } else {
       std::unique_ptr<velox::ReadFile> file_read;
-      if (_file_path == kConnectionTransferMarker) {
+      if (_file_path.empty()) {  // copy from stdin
         SDB_ASSERT(_pg_protocol_ctx.buffer);
         file_read = std::make_unique<CopyInReadFile>(*_pg_protocol_ctx.buffer,
                                                      _row_type->size());
@@ -2081,8 +2079,7 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
                     ERR_MSG("COPY with PROGRAM is not supported"));
   }
 
-  auto get_object = [&]
-    -> std::tuple<const Objects::ObjectData*, std::string_view, std::string> {
+  auto get_object = [&] {
     SDB_ASSERT(stmt.relation);
     const auto& relation = *stmt.relation;
     std::string_view relation_name = relation.relname;
@@ -2109,12 +2106,7 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
     return object->table;
   };
 
-  std::string_view file_path;
-  if (stmt.filename) {
-    file_path = stmt.filename;
-  } else {
-    file_path = kConnectionTransferMarker;
-  }
+  auto file_path = absl::NullSafeStringView(stmt.filename);
   auto create_options_parser = [&](const velox::RowTypePtr& type) {
     // _memory_pool is a leaf node, _parent_memory_pool is not a leaf.
     // it's a demand of the velox to a writer / reader.
@@ -2618,8 +2610,6 @@ void SqlAnalyzer::ProjectTargetList(State& state, TargetList target_list) {
 
   ValidateAggrInputRefs(state, std::span<const lp::ExprPtr>{exprs});
   state.Project(_id_generator, std::move(names), std::move(exprs));
-  // after the projection table scopes become invalid in PG
-  state.resolver.ClearTables();
 }
 
 lp::SortOrder GetSortOrder(const SortBy& sort_by) {
@@ -3322,6 +3312,11 @@ SqlAnalyzer::DistinctType SqlAnalyzer::ProcessDistinctClause(
 }
 
 void SqlAnalyzer::ProcessPipeline(State& state, const SelectStmt& stmt) {
+  irs::Finally _ = [&] noexcept {
+    // we can't refer to child's scope in pg
+    state.resolver.ClearTables();
+  };
+  
   ProcessFromList(state, stmt.fromClause);
   EnsureRoot(state);
   ProcessFilterNode(state, stmt.whereClause, ExprKind::Where);
@@ -5583,8 +5578,6 @@ lp::ExprPtr SqlAnalyzer::ProcessAIndirection(State& state,
 
 VeloxQuery SqlAnalyzer::ProcessRoot(State& state, const Node& node) {
   auto command_type = ProcessStmt(state, node);
-  if (state.root)
-    std::cerr << state.root->toString() << std::endl;
   return {
     .root = std::move(state.root),
     .options = ConvertOptions(state.options),

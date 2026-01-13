@@ -55,23 +55,23 @@ statement count 2
 DELETE FROM clickclack;
 
 
-# statement count 1
-# COPY (SELECT * FROM tindex ORDER BY 1 DESC LIMIT 1) TO '/tmp/quit_low_salary.csv';
-# 
-# 
-# statement count 1
-# COPY clickclack FROM '/tmp/quit_low_salary.csv';
-# 
-# 
-# query
-# SELECT * FROM clickclack;
-# ----
-# id name
-# 3 babsky
-# 
-# 
-# statement count 1
-# DELETE FROM clickclack;
+statement count 1
+COPY (SELECT * FROM tindex ORDER BY 1 DESC LIMIT 1) TO '/tmp/quit_low_salary.csv';
+
+
+statement count 1
+COPY clickclack FROM '/tmp/quit_low_salary.csv';
+
+
+query
+SELECT * FROM clickclack;
+----
+id name
+3 babsky
+
+
+statement count 1
+DELETE FROM clickclack;
 
 
 statement ok
@@ -157,11 +157,14 @@ id name iq iamdegenereted
 3 babsky 993 1224
 
 
-query
-COPY varus TO STDOUT WITH (DELIMITER ';', FORMAT CSV, HEADER TRUE)
+statement error
+COPY varus(iamdegenereted) FROM '/tmp/lmao';
 ----
+db error: ERROR: column "iamdegenereted" is a generated column.
+DETAIL: Generated columns cannot be used in COPY.
 
 
-# copy into generated
-# copy to + match
-# wrong option
+statement error
+COPY varus(name, id) FROM '/tmp/lmao' WITH (LABUDABUDABDAB rick);
+----
+db error: ERROR: option "labudabudabdab" not recognized

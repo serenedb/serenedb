@@ -131,13 +131,15 @@ if [[ ! -d "$path" ]]; then
     exit 1
 fi
 
+# Create datadir if it doesn't exist
+mkdir -p "$datadir"
+
 if [[ ! -d "$datadir" ]]; then
     echo "Error: data directory not found: $datadir" >&2
     exit 1
 fi
 
-# Create datadir if it doesn't exist
-mkdir -p "$datadir"
+
 
 # Display configuration
 echo "=== Recovery Test Configuration ==="

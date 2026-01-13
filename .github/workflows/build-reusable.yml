@@ -134,10 +134,8 @@ on:
       TG_USER_MAP:
         required: true
 
-# Global environment for all jobs
 env:
-  # Build configuration
-  WORKSPACE: ${{ github.workspace }} # Jenkins compatibility layer
+  WORKSPACE: ${{ github.workspace }}
   LOCATION: ${{ inputs.LOCATION }}
   WORKFLOW: ${{ github.workflow }}
   BRANCH: ${{ inputs.BRANCH }}
@@ -163,13 +161,13 @@ env:
   EXTRA_ARTIFACTS: ${{ inputs.EXTRA_ARTIFACTS }}
 
 jobs:
-  # ==================== CHECKOUT ====================
-  checkout:
-    name: Checkout
+  build-test-package:
+    name: Build, Test & Package
     runs-on:
       - self-hosted
       - ${{ inputs.LOCATION }}
     steps:
+      # ==================== CHECKOUT ====================
       - name: Checkout SereneDB
         uses: actions/checkout@v4
         with:
@@ -201,32 +199,13 @@ jobs:
       - name: Build Docker environment file
         run: ./private/ci/steps/02-ci-build-docker-env-file.bash
 
-  # ==================== SERENEDB BUILD ====================
-  build-all:
-    name: Build All
-    needs: checkout
-    runs-on:
-      - self-hosted
-      - ${{ inputs.LOCATION }}
-    outputs:
-      build_status: ${{ steps.serenedb_build.outcome }}
-    steps:
+      # ==================== BUILD ====================
       - name: SereneDB build
         id: serenedb_build
         run: ./private/ci/steps/03-ci-in-docker-build-targets.bash
 
-  # ==================== TESTS ====================
-  tests:
-    name: Tests
-    needs: build-all
-    if: needs.build-all.outputs.build_status != 'failure'
-    runs-on:
-      - self-hosted
-      - ${{ inputs.LOCATION }}
-    outputs:
-      tests_status: ${{ steps.run_tests.outcome || 'skipped' }}
-    steps:
-      - name: Skip tests
+      # ==================== TESTS ====================
+      - name: Skip tests (info)
         if: inputs.VPACK_TESTS == false && inputs.IRESEARCH_TESTS == false && inputs.UNIT_TESTS == false && inputs.SQLLOGIC_TESTS == false && inputs.INTEGRATION_TESTS == false
         run: echo "All tests skipped because no test flags are set."
 
@@ -235,18 +214,8 @@ jobs:
         if: inputs.VPACK_TESTS == true || inputs.IRESEARCH_TESTS == true || inputs.UNIT_TESTS == true || inputs.SQLLOGIC_TESTS == true || inputs.INTEGRATION_TESTS == true
         run: ./private/ci/steps/04-ci-run-tests-parallel.bash
 
-  # ==================== BUILD PACKAGES ====================
-  packages:
-    name: Packages
-    needs: [build-all, tests]
-    if: needs.build-all.outputs.build_status != 'failure'
-    runs-on:
-      - self-hosted
-      - ${{ inputs.LOCATION }}
-    outputs:
-      packages_status: ${{ steps.serenedb_packages.outcome || 'skipped' }}
-    steps:
-      - name: Skip packages
+      # ==================== PACKAGES ====================
+      - name: Skip packages (info)
         if: inputs.BUILD_PACKAGES == false
         run: echo "Packaging skipped because BUILD_PACKAGES flag is not set."
 
@@ -255,46 +224,30 @@ jobs:
         if: inputs.BUILD_PACKAGES == true
         run: ./private/ci/steps/05-ci-in-docker-package.bash
 
-  # ==================== FINALIZE ====================
-  finalize:
-    name: Finalize
-    needs: [checkout, build-all, tests, packages]
-    if: always() && !cancelled()
-    runs-on:
-      - self-hosted
-      - ${{ inputs.LOCATION }}
-    steps:
       # ==================== COVERAGE REPORT ====================
       - name: Generate coverage report
         id: coverage_report
         if: inputs.USE_COVERAGE != ''
-        continue-on-error: true
         run: ./private/ci/steps/06-ci-in-docker-generate-coverage-report.bash
 
       # ==================== DETERMINE FINAL STATUS ====================
       - name: Determine final job status
+        id: final_status
+        if: always() && !cancelled()
         run: |
           HAS_FAILURES=false
 
-          if [[ "${{ needs.build-all.outputs.build_status }}" == "failure" ]]; then
+          if [[ "${{ steps.serenedb_build.outcome }}" == "failure" ]]; then
             echo "Build failed"
             HAS_FAILURES=true
           fi
 
-          # Check if tests job ran and failed (not just skipped)
-          if [[ "${{ needs.tests.result }}" == "failure" ]]; then
-            echo "Tests job failed"
-            HAS_FAILURES=true
-          elif [[ "${{ needs.tests.outputs.tests_status }}" == "failure" ]]; then
+          if [[ "${{ steps.run_tests.outcome }}" == "failure" ]]; then
             echo "Tests failed"
             HAS_FAILURES=true
           fi
 
-          # Same pattern for packages
-          if [[ "${{ needs.packages.result }}" == "failure" ]]; then
-            echo "Packages job failed"
-            HAS_FAILURES=true
-          elif [[ "${{ needs.packages.outputs.packages_status }}" == "failure" ]]; then
+          if [[ "${{ steps.serenedb_packages.outcome }}" == "failure" ]]; then
             echo "Packages failed"
             HAS_FAILURES=true
           fi
@@ -308,6 +261,7 @@ jobs:
 
       # ==================== ARTIFACTS ====================
       - name: Upload build artifacts
+        if: always() && !cancelled()
         uses: actions/upload-artifact@v4
         with:
           name: build-artifacts-${{ github.run_number }}
@@ -338,7 +292,7 @@ jobs:
           retention-days: 30
 
       - name: Upload extra artifacts
-        if: inputs.EXTRA_ARTIFACTS != ''
+        if: always() && !cancelled() && inputs.EXTRA_ARTIFACTS != ''
         uses: actions/upload-artifact@v4
         with:
           name: extra-artifacts-${{ github.run_number }}
@@ -347,6 +301,7 @@ jobs:
           retention-days: 30
 
       - name: Upload test results
+        if: always() && !cancelled()
         uses: actions/upload-artifact@v4
         with:
           name: test-results-${{ github.run_number }}
@@ -362,14 +317,14 @@ jobs:
 
       # ==================== CLEANUP ====================
       - name: Docker cleanup
-        if: always()
+        if: always() && !cancelled()
         run: |
           docker system prune -f || true
           docker volume prune -f || true
 
       # ==================== TELEGRAM NOTIFICATION ====================
       - name: Send Telegram notification
-        if: always()
+        if: always() && !cancelled()
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
@@ -386,6 +341,5 @@ jobs:
 
       # ==================== FAIL JOB IF ANY STAGE FAILED ====================
       - name: Fail job if any stage failed
-        if: env.HAS_FAILURES == 'true'
+        if: always() && !cancelled() && env.HAS_FAILURES == 'true'
         run: exit 1
-

@@ -1,0 +1,28 @@
+
+# ==== SETUP ====
+statement ok
+CREATE TABLE IF NOT EXISTS t(key INT PRIMARY KEY, value INT);
+RESET sdb_faults;
+
+
+# ==== BEFORE FAILURE ====
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO t VALUES (0, 0);
+
+
+statement ok
+COMMIT;
+
+
+# ==== TRIGGER FAILURE ====
+statement ok
+SET sdb_fault_crash_on_packet TO DEFAULT;
+
+
+# Next sent packet will trigger cracsh
+query error
+SELECT 1;

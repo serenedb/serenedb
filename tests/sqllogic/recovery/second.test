@@ -1,0 +1,6 @@
+# ==== RECOVERED ====
+query
+select * from t;
+----
+key	value
+0	0

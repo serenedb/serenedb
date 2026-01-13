@@ -21,7 +21,7 @@
 #pragma once
 
 #include "catalog/identifiers/object_id.h"
-#include "pg/pg_protocol_context.h"
+#include "basics/message_buffer.h"
 #include "pg/sql_error.h"
 #include "query/transaction.h"
 #include "utils/exec_context.h"
@@ -32,12 +32,12 @@ class ConnectionContext : public ExecContext, public TxnState {
  public:
   ConnectionContext(std::string_view user, std::string_view dbname,
                     ObjectId database_id,
-                    pg::PgProtocolContext pg_protocol_ctx);
+                    message::Buffer* send_buffer);
 
   std::string GetCurrentSchema() const;
 
-  pg::PgProtocolContext& GetPgProtocolContext() {
-    return _pg_protocol_ctx;
+  message::Buffer* GetSendBuffer() {
+    return _send_buffer;
   }
 
   void AddNotice(pg::SqlErrorData notice) {
@@ -48,7 +48,7 @@ class ConnectionContext : public ExecContext, public TxnState {
 
  private:
   std::vector<pg::SqlErrorData> _notices;
-  pg::PgProtocolContext _pg_protocol_ctx;
+  message::Buffer* _send_buffer;
 };
 
 }  // namespace sdb

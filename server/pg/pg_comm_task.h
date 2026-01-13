@@ -64,7 +64,7 @@ inline constexpr std::string_view kZero{"", 1};
 
 inline constexpr std::string_view kAnonymObject{""};
 
-constexpr std::array<char, 5> kCopyDone{
+inline constexpr std::array<char, 5> kCopyDone{
   'c', 0x00, 0x00, 0x00, 0x04,
 };
 

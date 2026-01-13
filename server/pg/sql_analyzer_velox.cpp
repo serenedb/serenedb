@@ -731,7 +731,7 @@ class SqlAnalyzer {
   explicit SqlAnalyzer(const QueryString& query_sting, const Objects& objects,
                        UniqueIdGenerator& id_generator,
                        query::QueryContext& query_ctx, pg::Params& params,
-                       PgProtocolContext& pg_protocol_ctx) noexcept
+                       message::Buffer* send_buffer) noexcept
     : _objects{objects},
       _query_string{query_sting},
       _id_generator{id_generator},
@@ -739,7 +739,7 @@ class SqlAnalyzer {
       _memory_pool{*query_ctx.query_memory_pool},
       _parent_memory_pool{*query_ctx.velox_query_ctx->pool()},
       _params{params},
-      _pg_protocol_ctx{pg_protocol_ctx} {}
+      _send_buffer{send_buffer} {}
 
   VeloxQuery ProcessRoot(State& state, const Node& node);
 
@@ -1141,7 +1141,7 @@ class SqlAnalyzer {
 
   pg::Params& _params;
   containers::FlatHashMap<const lp::Expr*, ParamIndex> _param_to_idx;
-  PgProtocolContext& _pg_protocol_ctx;
+  message::Buffer* _send_buffer;
 };
 
 ColumnRefHook SqlAnalyzer::GetTargetListNamingResolver(
@@ -1765,13 +1765,13 @@ class CopyOptionsParser {
   CopyOptionsParser(velox::RowTypePtr row_type, bool is_writer,
                     const char* query_string, std::string_view file_path,
                     const List* options, velox::memory::MemoryPool& memory_pool,
-                    PgProtocolContext& pg_protocol_ctx)
+                    message::Buffer* send_buffer)
     : _row_type{std::move(row_type)},
       _is_writer{is_writer},
       _query_string{query_string},
       _file_path{file_path},
       _memory_pool{memory_pool},
-      _pg_protocol_ctx{pg_protocol_ctx} {
+      _send_buffer{send_buffer} {
     _options.reserve(list_length(options));
     VisitNodes(options, [&](const DefElem& option) {
       auto [_, emplaced] = _options.try_emplace(option.defname, &option);
@@ -1800,11 +1800,11 @@ class CopyOptionsParser {
     ParseDataSource();
 
     const containers::FlatHashMap<std::string_view, std::function<void()>>
-      format2parser{{"csv", [this]() { ParseText(true); }},
-                    {"text", [this]() { ParseText(false); }},
-                    {"parquet", [this]() { ParseParquet(); }},
-                    {"dwrf", [this]() { ParseDwrf(); }},
-                    {"orc", [this]() { ParseOrc(); }}};
+      format2parser{{"csv", [&] { ParseText(true); }},
+                    {"text", [&] { ParseText(false); }},
+                    {"parquet", [&] { ParseParquet(); }},
+                    {"dwrf", [&] { ParseDwrf(); }},
+                    {"orc", [&] { ParseOrc(); }}};
 
     std::string_view format = "text";
     if (const auto* option = EraseOption("format")) {
@@ -1981,9 +1981,9 @@ class CopyOptionsParser {
     if (_is_writer) {
       std::unique_ptr<velox::WriteFile> file_write;
       if (_file_path.empty()) {  // copy to stdout
-        SDB_ASSERT(_pg_protocol_ctx.buffer);
-        file_write = std::make_unique<CopyOutWriteFile>(
-          *_pg_protocol_ctx.buffer, _row_type->size());
+        SDB_ASSERT(_send_buffer);
+        file_write =
+          std::make_unique<CopyOutWriteFile>(*_send_buffer, _row_type->size());
       } else {
         file_write =
           std::make_unique<velox::LocalWriteFile>(_file_path, false, false);
@@ -1994,9 +1994,9 @@ class CopyOptionsParser {
     } else {
       std::unique_ptr<velox::ReadFile> file_read;
       if (_file_path.empty()) {  // copy from stdin
-        SDB_ASSERT(_pg_protocol_ctx.buffer);
-        file_read = std::make_unique<CopyInReadFile>(*_pg_protocol_ctx.buffer,
-                                                     _row_type->size());
+        SDB_ASSERT(_send_buffer);
+        file_read =
+          std::make_unique<CopyInReadFile>(*_send_buffer, _row_type->size());
       } else {
         file_read = std::make_unique<velox::LocalReadFile>(_file_path);
       }
@@ -2016,7 +2016,7 @@ class CopyOptionsParser {
   CopyOptions _options;
   std::string_view _file_path;
   velox::memory::MemoryPool& _memory_pool;
-  PgProtocolContext& _pg_protocol_ctx;
+  message::Buffer* _send_buffer;
 
   std::shared_ptr<Writer> _writer;
   std::unique_ptr<WriteFileSink> _sink;  // local / S3 / hdfs etc.
@@ -2116,7 +2116,7 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
                              file_path,
                              stmt.options,
                              stmt.is_from ? _memory_pool : _parent_memory_pool,
-                             _pg_protocol_ctx};
+                             _send_buffer};
   };
 
   auto get_column_exprs = [&](const std::vector<std::string>& column_names) {
@@ -3316,7 +3316,7 @@ void SqlAnalyzer::ProcessPipeline(State& state, const SelectStmt& stmt) {
     // we can't refer to child's scope in pg
     state.resolver.ClearTables();
   };
-  
+
   ProcessFromList(state, stmt.fromClause);
   EnsureRoot(state);
   ProcessFilterNode(state, stmt.whereClause, ExprKind::Where);
@@ -5591,9 +5591,9 @@ VeloxQuery SqlAnalyzer::ProcessRoot(State& state, const Node& node) {
 VeloxQuery AnalyzeVelox(const RawStmt& node, const QueryString& query_string,
                         const Objects& objects, UniqueIdGenerator& id_generator,
                         query::QueryContext& query_ctx, pg::Params& params,
-                        pg::PgProtocolContext& pg_protocol_ctx) {
+                        message::Buffer* send_buffer) {
   SqlAnalyzer analyzer{query_string, objects, id_generator,
-                       query_ctx,    params,  pg_protocol_ctx};
+                       query_ctx,    params,  send_buffer};
   State state;
   auto query = analyzer.ProcessRoot(state, *node.stmt);
 

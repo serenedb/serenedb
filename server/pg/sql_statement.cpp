@@ -93,7 +93,7 @@ bool SqlStatement::ProcessNextRoot(
 
   auto query_desc =
     pg::AnalyzeVelox(*raw_stmt, *query_string, objects, id_generator, query_ctx,
-                     params, connection_ctx->GetPgProtocolContext());
+                     params, connection_ctx->GetSendBuffer());
 
   if (query_desc.type == pg::SqlCommandType::Show) {
     SDB_ASSERT(query_desc.pgsql_node);

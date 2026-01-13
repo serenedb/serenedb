@@ -56,7 +56,9 @@ FileTable::FileTable(velox::RowTypePtr type, std::string_view file_path)
 }
 
 FileDataSink::FileDataSink(std::shared_ptr<velox::dwio::common::Writer> writer)
-  : _writer(std::move(writer)) {}
+  : _writer(std::move(writer)) {
+  SDB_ASSERT(_writer);
+}
 
 void FileDataSink::appendData(velox::RowVectorPtr input) {
   _writer->write(input);
@@ -64,9 +66,6 @@ void FileDataSink::appendData(velox::RowVectorPtr input) {
 }
 
 bool FileDataSink::finish() {
-  if (!_writer) {
-    return true;
-  }
   _writer->flush();
   return true;
 }
@@ -105,8 +104,6 @@ FileDataSource::FileDataSource(
 
   _row_reader = _reader->createRowReader(*_row_reader_options);
 }
-
-FileDataSource::~FileDataSource() = default;
 
 std::optional<velox::RowVectorPtr> FileDataSource::next(
   uint64_t size, velox::ContinueFuture& future) {

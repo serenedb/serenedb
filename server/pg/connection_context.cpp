@@ -30,9 +30,9 @@ namespace sdb {
 ConnectionContext::ConnectionContext(std::string_view user,
                                      std::string_view dbname,
                                      ObjectId database_id,
-                                     pg::PgProtocolContext pg_protocol_ctx)
+                                     message::Buffer* send_buffer)
   : ExecContext{user, dbname, database_id},
-    _pg_protocol_ctx(std::move(pg_protocol_ctx)) {}
+    _send_buffer(send_buffer) {}
 
 std::string ConnectionContext::GetCurrentSchema() const {
   auto database_id = ExecContext::GetDatabaseId();

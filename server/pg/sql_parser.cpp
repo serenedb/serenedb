@@ -165,7 +165,7 @@ Node* ParseSingleExpression(MemoryContextData& ctx,
 pg::SqlStatement ParseSystemView(std::string_view query) {
   static auto gConnCtx = std::make_shared<ConnectionContext>(
     ExecContext::superuser().user(), StaticStrings::kSystemDatabase,
-    id::kSystemDB, PgProtocolContext{});
+    id::kSystemDB, nullptr);
 
   pg::SqlStatement res;
   res.query_string = std::make_shared<QueryString>(query);

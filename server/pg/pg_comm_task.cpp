@@ -276,10 +276,7 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
     }
 
     _connection_ctx = std::make_shared<ConnectionContext>(
-      UserName(), DatabaseName(), database->GetId(),
-      PgProtocolContext{
-        &_send,
-      });
+      UserName(), DatabaseName(), database->GetId(), &_send);
 
     const auto& ci = GetConnectionInfo();
     [[maybe_unused]] hba::Client client{

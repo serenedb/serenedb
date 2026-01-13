@@ -112,11 +112,11 @@ class FileTableHandle final : public velox::connector::ConnectorTableHandle {
       _row_reader_options{std::move(row_reader_options)} {}
 
   const std::string& name() const final {
-    constexpr static std::string kName = "FileTableHandle";
+    static constexpr std::string kName = "FileTableHandle";
     return kName;
   }
   bool supportsIndexLookup() const final { return false; }
-
+  
   const std::shared_ptr<velox::dwio::common::Reader>& GetReader() const {
     return _reader;
   }

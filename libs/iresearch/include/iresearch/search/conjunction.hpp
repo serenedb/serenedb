@@ -226,7 +226,7 @@ class Conjunction : public ConjunctionBase<Adapter, Merger> {
   Adapter& _front;
 };
 
-template<bool Root, typename Adapter, typename Merger>
+template<typename Adapter, typename Merger>
 class BlockConjunction : public ConjunctionBase<Adapter, Merger> {
   using Base = ConjunctionBase<Adapter, Merger>;
   using Attributes =
@@ -248,16 +248,7 @@ class BlockConjunction : public ConjunctionBase<Adapter, Merger> {
     auto& score = std::get<ScoreAttr>(_attrs);
     score.max.leaf = score.max.tail = _sum_scores;
     auto min = strict ? MinStrictN : MinWeakN;
-    if constexpr (Root) {
-      auto score_root = [](ScoreCtx* ctx, score_t* res) noexcept {
-        auto& self = static_cast<BlockConjunction&>(*ctx);
-        std::memcpy(res, self._score.temp(),
-                    static_cast<Merger&>(self).byte_size());
-      };
-      this->PrepareScore(score, score_root, score_root, min);
-    } else {
-      this->PrepareScore(score, Base::Score2, Base::ScoreN, min);
-    }
+    this->PrepareScore(score, Base::Score2, Base::ScoreN, min);
   }
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
@@ -273,14 +264,7 @@ class BlockConjunction : public ConjunctionBase<Adapter, Merger> {
   doc_id_t seek(doc_id_t target) final {
     auto& doc = std::get<DocAttr>(_attrs).value;
     if (target <= doc) [[unlikely]] {
-      if constexpr (Root) {
-        if (_threshold < _score.temp()[0]) {
-          return doc;
-        }
-        target = doc + !doc_limits::eof(doc);
-      } else {
-        return doc;
-      }
+      return doc;
     }
     auto& merger = static_cast<Merger&>(*this);
   align_leafs:
@@ -312,26 +296,7 @@ class BlockConjunction : public ConjunctionBase<Adapter, Merger> {
     } while (it != end);
     doc = seek_target;
 
-    if constexpr (Root) {
-      auto begin = this->_scores.begin();
-      auto end = this->_scores.end();
-
-      (**begin)(_score.temp());
-      for (++begin; begin != end; ++begin) {
-        (**begin)(merger.temp());
-        merger(_score.temp(), merger.temp());
-      }
-      if (_threshold < _score.temp()[0]) {
-        return target;
-      }
-      ++target;
-      if (target > _leafs_doc) {
-        goto align_leafs;
-      }
-      goto align_docs;
-    } else {
-      return target;
-    }
+    return target;
   }
 
   doc_id_t shallow_seek(doc_id_t target) final {
@@ -478,12 +443,9 @@ DocIterator::ptr MakeConjunction(WandContext ctx, Merger&& merger,
     }
     use_block &= !scores.scores.empty();
     if (use_block) {
-      return ResolveBool(ctx.root, [&]<bool Root> -> DocIterator::ptr {
-        return memory::make_managed<
-          Wrapper<BlockConjunction<Root, Adapter, Merger>>>(
-          std::forward<Args>(args)..., std::forward<Merger>(merger),
-          std::move(itrs), std::move(scores), ctx.strict);
-      });
+      return memory::make_managed<Wrapper<BlockConjunction<Adapter, Merger>>>(
+        std::forward<Args>(args)..., std::forward<Merger>(merger),
+        std::move(itrs), std::move(scores), ctx.strict);
     }
     // TODO(mbkkt) We still could set min producer and root scoring
   }

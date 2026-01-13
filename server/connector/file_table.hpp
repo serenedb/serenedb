@@ -166,17 +166,15 @@ class FileDataSink final : public velox::connector::DataSink {
  public:
   explicit FileDataSink(std::shared_ptr<velox::dwio::common::Writer> writer);
 
-  ~FileDataSink() override;
+  void appendData(velox::RowVectorPtr input) final;
 
-  void appendData(velox::RowVectorPtr input) override;
+  bool finish() final;
 
-  bool finish() override;
+  std::vector<std::string> close() final;
 
-  std::vector<std::string> close() override;
+  void abort() final;
 
-  void abort() override;
-
-  velox::connector::DataSink::Stats stats() const override { return _stats; }
+  velox::connector::DataSink::Stats stats() const final { return _stats; }
 
  private:
   std::shared_ptr<velox::dwio::common::Writer> _writer;
@@ -186,25 +184,23 @@ class FileDataSink final : public velox::connector::DataSink {
 
 class FileDataSource final : public velox::connector::DataSource {
  public:
-  explicit FileDataSource(std::shared_ptr<velox::dwio::common::Reader> reader,
-                          std::shared_ptr<velox::dwio::common::RowReaderOptions>
-                            row_reader_options = nullptr);
+  FileDataSource(
+    std::shared_ptr<velox::dwio::common::Reader> reader,
+    std::shared_ptr<velox::dwio::common::RowReaderOptions> row_reader_options);
 
-  ~FileDataSource() override;
+  void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final {
+  }
 
-  void addSplit(
-    std::shared_ptr<velox::connector::ConnectorSplit> split) override {}
-
-  std::optional<velox::RowVectorPtr> next(
-    uint64_t size, velox::ContinueFuture& future) override;
+  std::optional<velox::RowVectorPtr> next(uint64_t size,
+                                          velox::ContinueFuture& future) final;
 
   void addDynamicFilter(
     velox::column_index_t output_channel,
-    const std::shared_ptr<velox::common::Filter>& filter) override {}
+    const std::shared_ptr<velox::common::Filter>& filter) final {}
 
-  uint64_t getCompletedBytes() override { return _completed_bytes; }
+  uint64_t getCompletedBytes() final { return _completed_bytes; }
 
-  uint64_t getCompletedRows() override { return _completed_rows; }
+  uint64_t getCompletedRows() final { return _completed_rows; }
 
  private:
   std::shared_ptr<velox::dwio::common::Reader> _reader;

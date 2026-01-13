@@ -44,13 +44,13 @@ CopyOutWriteFile::CopyOutWriteFile(message::Buffer& buffer,
     absl::big_endian::Store32(ptr, length);
     ptr += 4;
 
-    *ptr++ = static_cast<uint8_t>(VarFormat::Text);  // text format
+    *ptr++ = static_cast<uint8_t>(VarFormat::Text);
 
     absl::big_endian::Store16(ptr, column_count);
     ptr += 2;
 
     for (int16_t i = 0; i < column_count; ++i) {
-      absl::big_endian::Store16(ptr, 0);
+      absl::big_endian::Store16(ptr, static_cast<uint8_t>(VarFormat::Text));
       ptr += 2;
     }
 
@@ -83,7 +83,6 @@ void CopyOutWriteFile::close() {
 
 uint64_t CopyOutWriteFile::size() const { return _size; }
 
-// CopyInReadFile implementation
 CopyInReadFile::CopyInReadFile(message::Buffer& buffer,
                                const size_t column_count)
   : _buffer{buffer} {
@@ -134,7 +133,7 @@ uint64_t CopyInReadFile::preadv(
   throw std::runtime_error("preadv not supported for COPY FROM STDIN");
 }
 
-uint64_t CopyInReadFile::size() const { return 0; }
+uint64_t CopyInReadFile::size() const { return 123123; }
 
 uint64_t CopyInReadFile::memoryUsage() const { return 0; }
 

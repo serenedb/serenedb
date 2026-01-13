@@ -58,8 +58,6 @@ FileTable::FileTable(velox::RowTypePtr type, std::string_view file_path)
 FileDataSink::FileDataSink(std::shared_ptr<velox::dwio::common::Writer> writer)
   : _writer(std::move(writer)) {}
 
-FileDataSink::~FileDataSink() = default;
-
 void FileDataSink::appendData(velox::RowVectorPtr input) {
   _writer->write(input);
   _stats.numWrittenBytes += input->estimateFlatSize();

@@ -32,10 +32,10 @@ class CopyOutWriteFile final : public velox::WriteFile {
  public:
   CopyOutWriteFile(message::Buffer& buffer, const size_t column_count);
 
-  void append(std::string_view data) override;
-  void flush() override;
-  void close() override;
-  uint64_t size() const override;
+  void append(std::string_view data) final;
+  void flush() final;
+  void close() final;
+  uint64_t size() const final;
 
  private:
   message::Buffer& _buffer;
@@ -49,21 +49,21 @@ class CopyInReadFile final : public velox::ReadFile {
 
   std::string_view pread(
     uint64_t offset, uint64_t length, void* buf,
-    const velox::FileStorageContext& fileStorageContext = {}) const override;
+    const velox::FileStorageContext& fileStorageContext = {}) const final;
 
   std::string pread(
     uint64_t offset, uint64_t length,
-    const velox::FileStorageContext& fileStorageContext = {}) const override;
+    const velox::FileStorageContext& fileStorageContext = {}) const final;
 
   uint64_t preadv(
     uint64_t offset, const std::vector<folly::Range<char*>>& buffers,
-    const velox::FileStorageContext& fileStorageContext = {}) const override;
+    const velox::FileStorageContext& fileStorageContext = {}) const final;
 
-  uint64_t size() const override;
-  uint64_t memoryUsage() const override;
-  bool shouldCoalesce() const override;
-  std::string getName() const override;
-  uint64_t getNaturalReadSize() const override;
+  uint64_t size() const final;
+  uint64_t memoryUsage() const final;
+  bool shouldCoalesce() const final;
+  std::string getName() const final;
+  uint64_t getNaturalReadSize() const final;
 
  private:
   message::Buffer& _buffer;

@@ -213,7 +213,6 @@ jobs:
     steps:
       - name: SereneDB build
         id: serenedb_build
-        continue-on-error: true
         run: ./private/ci/steps/03-ci-in-docker-build-targets.bash
 
   # ==================== TESTS ====================
@@ -234,7 +233,6 @@ jobs:
       - name: Run tests in parallel
         id: run_tests
         if: inputs.VPACK_TESTS == true || inputs.IRESEARCH_TESTS == true || inputs.UNIT_TESTS == true || inputs.SQLLOGIC_TESTS == true || inputs.INTEGRATION_TESTS == true
-        continue-on-error: true
         run: ./private/ci/steps/04-ci-run-tests-parallel.bash
 
   # ==================== BUILD PACKAGES ====================
@@ -255,7 +253,6 @@ jobs:
       - name: SereneDB Packages
         id: serenedb_packages
         if: inputs.BUILD_PACKAGES == true
-        continue-on-error: true
         run: ./private/ci/steps/05-ci-in-docker-package.bash
 
   # ==================== FINALIZE ====================

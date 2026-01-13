@@ -40,7 +40,8 @@ class RocksDBDataSource final : public velox::connector::DataSource {
                     const rocksdb::Snapshot* snapshot, rocksdb::DB& db,
                     rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
                     std::vector<catalog::Column::Id> column_ids,
-                    catalog::Column::Id present_column_id, ObjectId object_key);
+                    catalog::Column::Id effective_column_id,
+                    ObjectId object_key);
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
   std::optional<velox::RowVectorPtr> next(uint64_t size,

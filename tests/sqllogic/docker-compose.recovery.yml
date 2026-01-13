@@ -1,0 +1,24 @@
+services:
+  serenedb-single:
+    image: "$BUILD_IMAGE"
+    restart: on-failure
+    volumes:
+      - "$WORKSPACE:/serenedb"
+      - "$WORKSPACE/logs:/var/log/serenedb"
+    # It assumes that sanitizers and coverage dirs are created.
+    # Executable 'serened' switches to 'serenedb' user. If required dirs are not created,
+    # /serenedb dir owner is 'root' and it's impossible for 'serenedb' user to create directory there.
+    command: sh -c 'if ! id serenedb >/dev/null 2>&1; then useradd serenedb && chown -R serenedb:serenedb /serenedb/sanitizers /serenedb/build/coverage; fi && exec /serenedb/build/bin/serened /tmp/serenedb_datadir --server.endpoint pgsql+tcp://0.0.0.0:7777 --server.endpoint tcp://0.0.0.0:8529 --server.authentication 0'
+    env_file:
+      - "$WORKSPACE/docker.env"
+
+  tests:
+    image: rust:latest
+    volumes:
+      - "$SQLLOGIC_DIR:/sqllogic"
+      - "$WORKSPACE/third_party/sqllogictest-rs:/sqllogictest-rs"
+    links:
+      - serenedb-single
+    depends_on:
+      - serenedb-single
+    command: sh -c 'exec sqllogic/run_recovery.sh'

@@ -13,7 +13,6 @@ BEGIN;
 statement ok
 INSERT INTO t VALUES (0, 0);
 
-
 statement ok
 COMMIT;
 
@@ -26,3 +25,11 @@ SET sdb_fault_crash_on_packet TO DEFAULT;
 # Next sent packet will trigger cracsh
 query error
 SELECT 1;
+
+# ==== TRY TO RECONNECT ====
+connection new
+query ok retry 10 backoff 500ms
+select * from t;
+----
+key	value
+0	0

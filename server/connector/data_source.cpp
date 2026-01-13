@@ -41,7 +41,8 @@ constexpr uint64_t kInitialVectorSize = 1;  // arbitrary value
 RocksDBDataSource::RocksDBDataSource(
   velox::memory::MemoryPool& memory_pool, const rocksdb::Snapshot* snapshot,
   rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
-  std::vector<catalog::Column::Id> column_oids, ObjectId object_key)
+  std::vector<catalog::Column::Id> column_oids,
+  catalog::Column::Id effective_column_id, ObjectId object_key)
   : velox::connector::DataSource{},
     _memory_pool{memory_pool},
     _snapshot{snapshot},
@@ -49,6 +50,7 @@ RocksDBDataSource::RocksDBDataSource(
     _cf{cf},
     _row_type{std::move(row_type)},
     _column_ids(std::move(column_oids)),
+    _effective_column_id(std::move(effective_column_id)),
     _object_key{object_key} {
   SDB_ASSERT(_row_type, "RocksDBDataSource: row type is null");
   SDB_ASSERT(_object_key.isSet(), "RocksDBDataSource: object key is empty");
@@ -117,14 +119,15 @@ std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
       basics::StrResize(key, table_prefix_size);
       const auto column_id = _column_ids[col_idx];
 
-      size_t read_col_idx = col_idx;
+      auto read_column_id = _column_ids[col_idx];
       if (column_id == catalog::Column::kGeneratedPKId) {
-        SDB_ASSERT(col_idx + 1 < num_columns,
-                   "Tables without columns must be processed in analyzer step");
-        ++read_col_idx;
+        SDB_ASSERT(
+          _effective_column_id != catalog::Column::kGeneratedPKId,
+          "RocksDBDataSource: generated PK column is not an effective one");
+        read_column_id = _effective_column_id;
       }
 
-      key_utils::AppendColumnKey(key, _column_ids[read_col_idx]);
+      key_utils::AppendColumnKey(key, read_column_id);
       auto it = CreateColumnIterator(key, read_options);
       if (!it) {
         // no rows found. This should happen only for the first column.

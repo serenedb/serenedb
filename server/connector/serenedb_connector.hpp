@@ -71,8 +71,8 @@ class SereneDBConnectorTableHandle final
 
   ObjectId TableId() const noexcept { return _table_id; }
 
-  const catalog::Column::Id& GetCountField() const noexcept {
-    return _table_count_field;
+  const catalog::Column::Id& GetEffectiveColumnId() const noexcept {
+    return _effective_column_id;
   }
 
   auto& GetTransaction() const noexcept { return _transaction; }
@@ -80,7 +80,7 @@ class SereneDBConnectorTableHandle final
  private:
   std::string _name;
   ObjectId _table_id;
-  catalog::Column::Id _table_count_field;
+  catalog::Column::Id _effective_column_id;
   query::Transaction& _transaction;
 };
 
@@ -442,13 +442,13 @@ class SereneDBConnector final : public velox::connector::Connector {
           basics::downCast<const SereneDBColumnHandle>(handle->second)->Id());
       }
     } else {
-      column_oids.push_back(serene_table_handle.GetCountField());
+      column_oids.push_back(serene_table_handle.GetEffectiveColumnId());
     }
     auto& transaction = serene_table_handle.GetTransaction();
     const auto& snapshot = transaction.EnsureRocksDBSnapshot();
     return std::make_unique<RocksDBDataSource>(
       *connector_query_ctx->memoryPool(), &snapshot, _db, _cf, output_type,
-      column_oids, object_key);
+      column_oids, serene_table_handle.GetEffectiveColumnId(), object_key);
   }
 
   std::shared_ptr<velox::connector::IndexSource> createIndexSource(

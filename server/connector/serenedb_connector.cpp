@@ -33,17 +33,17 @@ SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
   SDB_ASSERT(!column_map.empty(),
              "Tables without columns must be processed in analyzer step");
 
-  // TODO(Dronplane): measure the performance! Maybe it worth select smallest
-  // possible field as count field not just first
-  _table_count_field =
+  // TODO(Dronplane): measure the performance! Maybe it's worth selecting the
+  // smallest possible field as the effective column, not just the first
+  _effective_column_id =
     basics::downCast<const SereneDBColumn>(column_map.begin()->second)->Id();
-  if (_table_count_field == catalog::Column::kGeneratedPKId) {
+  if (_effective_column_id == catalog::Column::kGeneratedPKId) {
     // Iterating over generated primary key gives 0 rows,
     // use another one
     SDB_ASSERT(column_map.size() >= 2);
-    _table_count_field = basics::downCast<const SereneDBColumn>(
-                           std::next(column_map.begin())->second)
-                           ->Id();
+    _effective_column_id = basics::downCast<const SereneDBColumn>(
+                             std::next(column_map.begin())->second)
+                             ->Id();
   }
   _transaction.AddRocksDBRead();
 }

@@ -59,7 +59,8 @@ class RocksDBDataSinkBase : public velox::connector::DataSink {
   void PrepareKeyBuffers(const velox::RowVectorPtr& input);
   template<bool SkipPrimaryKeyColumns>
   void WriteColumns(const velox::RowVectorPtr& input,
-                    folly::Range<const velox::IndexRange*> ranges);
+                    folly::Range<const velox::IndexRange*> ranges,
+                    std::span<const velox::vector_size_t> original_idx);
 
   // VERTICAL encoding methods
   void WriteColumn(const velox::VectorPtr& input,

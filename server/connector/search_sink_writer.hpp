@@ -32,25 +32,27 @@ namespace sdb::connector::search {
 
 class SearchRemoveFilterBase;
 
-class SearchSinkInsertWriter final : public SinkInsertWriter {
+// BaseImpl (WriteImpl, finish impl)
+
+class SearchSinkInsertBaseImpl {
  public:
-  SearchSinkInsertWriter(irs::IndexWriter::Transaction& trx);
+  SearchSinkInsertBaseImpl(irs::IndexWriter::Transaction& trx);
 
-  void Init(size_t batch_size) override;
+  void InitImpl(size_t batch_size);
 
-  void Write(std::span<const rocksdb::Slice> cell_slices,
-             std::string_view full_key) override;
+  void WriteImpl(std::span<const rocksdb::Slice> cell_slices,
+                 std::string_view full_key);
 
-  bool SwitchColumn(velox::TypeKind kind, bool have_nulls,
-                    sdb::catalog::Column::Id column_id) override;
-  void Finish() override;
+  bool SwitchColumnImpl(velox::TypeKind kind, bool have_nulls,
+                        sdb::catalog::Column::Id column_id);
+  void FinishImpl();
 
-  void Abort() override {
+  void AbortImpl() {
     // We don't own the transaction so Abort should be called outside.
     _document.reset();
   }
 
- private:
+ protected:
   struct Field {
     std::string_view Name() const noexcept {
       SDB_ASSERT(!irs::IsNull(name));
@@ -132,23 +134,106 @@ class SearchSinkInsertWriter final : public SinkInsertWriter {
   bool _emit_pk{true};
 };
 
-class SearchSinkDeleteWriter final : public SinkDeleteWriter {
+class SearchSinkDeleteBaseImpl {
  public:
-  SearchSinkDeleteWriter(irs::IndexWriter::Transaction& trx,
-                         velox::memory::MemoryPool& removes_pool);
+  SearchSinkDeleteBaseImpl(irs::IndexWriter::Transaction& trx,
+                           velox::memory::MemoryPool& removes_pool);
 
-  void Init(size_t batch_size) override;
+  void InitImpl(size_t batch_size);
 
-  void Finish() override;
+  void FinishImpl();
 
-  void DeleteRow(std::string_view row_key) override;
+  void DeleteRowImpl(std::string_view row_key);
 
-  void Abort() override { _remove_filter.reset(); }
+  void AbortImpl() { _remove_filter.reset(); }
 
  private:
   irs::IndexWriter::Transaction& _trx;
   velox::memory::MemoryPool& _removes_pool;
   std::shared_ptr<SearchRemoveFilterBase> _remove_filter;
+};
+
+class SearchSinkInsertWriter final : public SinkInsertWriter,
+                                     public SearchSinkInsertBaseImpl {
+ public:
+  SearchSinkInsertWriter(irs::IndexWriter::Transaction& trx)
+    : SearchSinkInsertBaseImpl(trx) {}
+
+  void Init(size_t batch_size) override { InitImpl(batch_size); }
+
+  bool SwitchColumn(velox::TypeKind kind, bool have_nulls,
+                    sdb::catalog::Column::Id column_id) override {
+    return SwitchColumnImpl(kind, have_nulls, column_id);
+  }
+
+  void Write(std::span<const rocksdb::Slice> cell_slices,
+             std::string_view full_key) override {
+    WriteImpl(cell_slices, full_key);
+  }
+
+  void Finish() override { FinishImpl(); }
+
+  void Abort() override { AbortImpl(); }
+};
+
+class SearchSinkDeleteWriter final : public SinkDeleteWriter,
+                                     public SearchSinkDeleteBaseImpl {
+ public:
+  SearchSinkDeleteWriter(irs::IndexWriter::Transaction& trx,
+                         velox::memory::MemoryPool& removes_pool)
+    : SearchSinkDeleteBaseImpl(trx, removes_pool) {}
+
+  void Init(size_t batch_size) override { InitImpl(batch_size); }
+
+  void DeleteRow(std::string_view row_key) override { DeleteRowImpl(row_key); }
+
+  void Finish() override { FinishImpl(); }
+
+  void Abort() override { AbortImpl(); }
+};
+
+class SearchSinkUpdateWriter final : public SinkUpdateWriter,
+                                     public SearchSinkInsertBaseImpl,
+                                     public SearchSinkDeleteBaseImpl {
+ public:
+  SearchSinkUpdateWriter(irs::IndexWriter::Transaction& trx,
+                         velox::memory::MemoryPool& removes_pool)
+    : SearchSinkInsertBaseImpl(trx),
+      SearchSinkDeleteBaseImpl(trx, removes_pool) {}
+
+  void Init(size_t batch_size) override {
+    SearchSinkInsertBaseImpl::InitImpl(batch_size);
+    SearchSinkDeleteBaseImpl::InitImpl(batch_size);
+  }
+
+  bool SwitchColumn(velox::TypeKind kind, bool have_nulls,
+                    sdb::catalog::Column::Id column_id) override {
+    return SwitchColumnImpl(kind, have_nulls, column_id);
+  }
+
+  void Write(std::span<const rocksdb::Slice> cell_slices,
+             std::string_view full_key) override {
+    WriteImpl(cell_slices, full_key);
+  }
+
+  void Finish() override {
+    // Deletes should go first to not affect inserts (that are our updated
+    // values)
+    SearchSinkDeleteBaseImpl::FinishImpl();
+    SearchSinkInsertBaseImpl::FinishImpl();
+  }
+
+  void Abort() override {
+    SearchSinkInsertBaseImpl::AbortImpl();
+    SearchSinkDeleteBaseImpl::AbortImpl();
+  }
+
+  void DeleteRow(std::string_view row_key) override { DeleteRowImpl(row_key); }
+
+  bool IsIndexed(sdb::catalog::Column::Id column_id) const noexcept override {
+    // TODO(Dronplane): implement proper check when we have metadata
+    return true;
+  }
 };
 
 }  // namespace sdb::connector::search

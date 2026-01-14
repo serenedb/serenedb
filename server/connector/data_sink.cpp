@@ -65,7 +65,7 @@ RocksDBInsertDataSink::RocksDBInsertDataSink(
 void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
   PrepareKeyBuffers(input);
   velox::IndexRange all_rows(0, input->size());
-  WriteColumns<false>(input, folly::Range{&all_rows, 1});
+  WriteColumns<false>(input, folly::Range{&all_rows, 1}, {});
 }
 
 RocksDBUpdateDataSink::RocksDBUpdateDataSink(
@@ -108,6 +108,7 @@ RocksDBUpdateDataSink::RocksDBUpdateDataSink(
 void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
   PrepareKeyBuffers(input);
   std::vector<velox::IndexRange> rows_range;
+  std::vector<velox::vector_size_t> rows_idxs;
   // TODO(Dronplane) same condition in ctor. Maybe make it inline method?
   if (_index_writers.empty()) {
     rows_range.push_back(
@@ -115,14 +116,12 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
   } else {
     // for same purpose as columns in ctor we sort the keys
     const auto num_rows = input->size();
-    std::vector<size_t> rows_idxs;
     rows_idxs.resize(num_rows);
     absl::c_iota(rows_idxs, 0);
     std::sort(rows_idxs.begin(), rows_idxs.end(),
-              [&](size_t left, size_t right) {
+              [&](velox::vector_size_t left, velox::vector_size_t right) {
                 return _keys_buffers[left] < _keys_buffers[right];
               });
-
     // we must match order of keys in rewritten columns
     rows_range.reserve(num_rows);
     for (auto row_idx : rows_idxs) {
@@ -132,7 +131,8 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
 
     // Index update implies delete + re-insert.
     // For deletes order makes no sense
-    for (const auto& row_key : _keys_buffers) {
+    for (const auto& key : _keys_buffers) {
+      auto row_key = key_utils::ExtractRowKey(key);
       for (const auto& writer : _index_writers) {
         writer->DeleteRow(row_key);
       }
@@ -173,8 +173,8 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
       }
     }
   }
-  WriteColumns<false>(input,
-                      folly::Range{rows_range.data(), rows_range.size()});
+  WriteColumns<false>(input, folly::Range{rows_range.data(), rows_range.size()},
+                      rows_idxs);
 }
 
 template<typename SubWriterType>
@@ -245,7 +245,8 @@ template<typename SubWriterType>
 template<bool SkipPrimaryKeyColumns>
 void RocksDBDataSinkBase<SubWriterType>::WriteColumns(
   const velox::RowVectorPtr& input,
-  folly::Range<const velox::IndexRange*> ranges) {
+  folly::Range<const velox::IndexRange*> ranges,
+  std::span<const velox::vector_size_t> original_idx) {
   const auto num_columns = input->childrenSize();
   const auto& input_type = input->type()->asRow();
   for (velox::column_index_t i = 0; i < num_columns; ++i) {
@@ -265,7 +266,7 @@ void RocksDBDataSinkBase<SubWriterType>::WriteColumns(
       for (const auto& writer : _index_writers) {
         writer->SwitchColumn(kind, have_nulls, _column_id);
       }
-      WriteColumn(child, ranges, {});
+      WriteColumn(child, ranges, original_idx);
     }
   }
 }

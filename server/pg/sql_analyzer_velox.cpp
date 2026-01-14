@@ -186,6 +186,10 @@ const containers::FlatHashMap<std::string_view, lp::SpecialForm> kSpecialForms{
   {"in", lp::SpecialForm::kIn},
 };
 
+const Node& ToNode(const void* node) {
+  return *reinterpret_cast<const Node*>(node);
+}
+
 velox::TypePtr ResolveFunction(const std::string& function_name,
                                const std::vector<velox::TypePtr>& arg_types,
                                std::vector<velox::TypePtr>* arg_coercions) {
@@ -747,17 +751,10 @@ class SqlAnalyzer {
  private:
   SqlCommandType ProcessStmt(State& state, const Node& node);
 
-  void MakeInsertTableWrite(State& state, const Node& stmt,
-                            const Objects::ObjectData& table_object,
-                            std::vector<std::string> column_names,
-                            std::vector<lp::ExprPtr> column_exprs);
-
-  void MakeTableWrite(axiom::connector::WriteKind write_kind, State& state,
+  void MakeTableWrite(State& state, const Node& stmt,
                       const Objects::ObjectData& object,
                       std::vector<std::string> column_names,
-                      std::vector<lp::ExprPtr> column_exprs,
-                      std::span<const catalog::Column* const> generated_columns,
-                      int location);
+                      std::vector<lp::ExprPtr> column_exprs);
 
   void ProcessCopyStmt(State& state, const CopyStmt& stmt);
 
@@ -1353,11 +1350,54 @@ void SqlAnalyzer::ProcessSelectStmt(State& state, const SelectStmt& stmt) {
   // TODO: ProcessFinalProject
 }
 
-void SqlAnalyzer::MakeTableWrite(
-  axiom::connector::WriteKind write_kind, State& state,
-  const Objects::ObjectData& object, std::vector<std::string> column_names,
-  std::vector<lp::ExprPtr> column_exprs,
-  std::span<const catalog::Column* const> generated_columns, int location) {
+void SqlAnalyzer::MakeTableWrite(State& state, const Node& stmt,
+                                 const Objects::ObjectData& object,
+                                 std::vector<std::string> column_names,
+                                 std::vector<lp::ExprPtr> column_exprs) {
+  std::vector<const catalog::Column*> generated_columns;
+  const auto& table = basics::downCast<catalog::Table>(*object.object);
+  for (const auto& column : table.Columns()) {
+    if (absl::c_linear_search(column_names, column.name)) {
+      if (!column.IsGenerated()) {
+        continue;
+      }
+
+      switch (stmt.type) {
+        case T_UpdateStmt:
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_GENERATED_ALWAYS),
+            CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
+            ERR_MSG("column \"", column.name,
+                    "\" can only be updated to DEFAULT"),
+            ERR_DETAIL("Column \"", column.name, "\" is a generated column."));
+        case T_InsertStmt:
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_GENERATED_ALWAYS),
+            CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
+            ERR_MSG("cannot insert a non-DEFAULT value into column \"",
+                    column.name, "\""),
+            ERR_DETAIL("Column \"", column.name, "\" is a generated column."));
+        case T_CopyStmt:
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_GENERATED_ALWAYS),
+            CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
+            ERR_MSG("column \"", column.name, "\" is a generated column."),
+            ERR_DETAIL("Generated columns cannot be used in COPY."));
+        default:
+          SDB_ASSERT(false);
+      }
+    }
+
+    if (column.IsGenerated()) {
+      SDB_ASSERT(column.expr);
+      generated_columns.emplace_back(&column);
+    } else if (stmt.type == T_InsertStmt || stmt.type == T_CopyStmt) {
+      // set default value for not mentioned columns
+      column_names.emplace_back(column.name);
+      column_exprs.emplace_back(GetDefaultValue(state, column));
+    }
+  }
+
   auto project_columns = [&] {
     auto project_names = _id_generator.NextColumnNames(column_names);
     auto project_exprs = std::move(column_exprs);
@@ -1368,7 +1408,7 @@ void SqlAnalyzer::MakeTableWrite(
         std::make_shared<lp::InputReferenceExpr>(expr->type(), name));
     }
 
-    if (write_kind == axiom::connector::WriteKind::kUpdate) {
+    if (stmt.type == T_UpdateStmt) {
       // for update we need all the columns from the table scan because
       // they may depend on not only columns being updated
       const auto& output_type = *state.root->outputType();
@@ -1434,7 +1474,7 @@ void SqlAnalyzer::MakeTableWrite(
         "presto_concat", std::move(concat_parts));
     };
 
-    auto cursorpos = MakeConst<int32_t>((ErrorPosition(location)));
+    auto cursorpos = MakeConst<int32_t>((ErrorPosition(ExprLocation(&stmt))));
     auto detail = build_failing_row_detail();
 
     // make condition: if (check) -> ok; else -> fail
@@ -1485,6 +1525,19 @@ void SqlAnalyzer::MakeTableWrite(
                                                   std::move(state.root),
                                                   MakeAnd(std::move(checks)));
   }
+
+  auto write_kind = [&] {
+    switch (stmt.type) {
+      using enum axiom::connector::WriteKind;
+      case T_CopyStmt:
+      case T_InsertStmt:
+        return kInsert;
+      case T_UpdateStmt:
+        return kUpdate;
+      default:
+        SDB_ASSERT(false);
+    }
+  }();
 
   state.root = std::make_shared<lp::TableWriteNode>(
     _id_generator.NextPlanId(), std::move(state.root), axiom_table, write_kind,
@@ -1601,8 +1654,8 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
     column_exprs.push_back(std::move(raw_expr));
   }
 
-  MakeInsertTableWrite(state, *castNode(Node, &stmt), *object,
-                       std::move(column_names), std::move(column_exprs));
+  MakeTableWrite(state, ToNode(&stmt), *object, std::move(column_names),
+                 std::move(column_exprs));
 }
 
 void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
@@ -1703,9 +1756,8 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
     generated_columns.emplace_back(&column);
   }
 
-  MakeTableWrite(axiom::connector::WriteKind::kUpdate, state, *object,
-                 std::move(column_names), std::move(column_exprs),
-                 std::move(generated_columns), ExprLocation(&stmt));
+  MakeTableWrite(state, ToNode(&stmt), *object, std::move(column_names),
+                 std::move(column_exprs));
 }
 
 void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
@@ -2021,52 +2073,6 @@ class CopyOptionsParser {
   std::shared_ptr<velox::dwio::common::RowReaderOptions> _row_reader_options;
 };
 
-void SqlAnalyzer::MakeInsertTableWrite(State& state, const Node& stmt,
-                                       const Objects::ObjectData& table_object,
-                                       std::vector<std::string> column_names,
-                                       std::vector<lp::ExprPtr> column_exprs) {
-  // set default value for not mentioned columns
-  std::vector<const catalog::Column*> generated_columns;
-  const auto& table = basics::downCast<catalog::Table>(*table_object.object);
-  for (const auto& column : table.Columns()) {
-    if (!absl::c_linear_search(column_names, column.name)) {
-      if (column.IsGenerated()) {
-        SDB_ASSERT(column.expr);
-        generated_columns.emplace_back(&column);
-        continue;
-      }
-
-      column_names.emplace_back(column.name);
-      column_exprs.emplace_back(GetDefaultValue(state, column));
-
-    } else if (column.IsGenerated()) {
-      std::string err_msg;
-      std::string err_detail;
-      if (stmt.type == T_InsertStmt) {
-        err_msg =
-          absl::StrCat("cannot insert a non-DEFAULT value into column \"",
-                       column.name, "\"");
-        err_detail =
-          absl::StrCat("Column \"", column.name, "\" is a generated column.");
-      } else {
-        SDB_ASSERT(stmt.type == T_CopyStmt);
-        err_msg =
-          absl::StrCat("column \"", column.name, "\" is a generated column.");
-        err_detail = "Generated columns cannot be used in COPY.";
-      }
-
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_GENERATED_ALWAYS),
-                      CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
-                      ERR_MSG(std::move(err_msg)),
-                      ERR_DETAIL(std::move(err_detail)));
-    }
-  }
-
-  MakeTableWrite(axiom::connector::WriteKind::kInsert, state, table_object,
-                 std::move(column_names), std::move(column_exprs),
-                 std::move(generated_columns), ExprLocation(&stmt));
-}
-
 void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
   if (stmt.is_program) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -2179,8 +2185,8 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
     auto [object, schemaname, relname] = get_object();
     auto column_names = file_table_type->names();
     auto column_exprs = get_column_exprs(column_names);
-    MakeInsertTableWrite(state, *castNode(Node, &stmt), *object,
-                         std::move(column_names), std::move(column_exprs));
+    MakeTableWrite(state, ToNode(&stmt), *object, std::move(column_names),
+                   std::move(column_exprs));
   } else {
     velox::RowTypePtr table_type;
     std::vector<std::string> column_names;

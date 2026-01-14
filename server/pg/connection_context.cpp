@@ -33,8 +33,8 @@ ConnectionContext::ConnectionContext(std::string_view user,
                                      message::Buffer* send_buffer,
                                      pg::CopyMessagesQueue* copy_queue)
   : ExecContext{user, dbname, database_id},
-    _send_buffer(send_buffer),
-    _copy_queue(copy_queue) {}
+    _send_buffer{send_buffer},
+    _copy_queue{copy_queue} {}
 
 std::string ConnectionContext::GetCurrentSchema() const {
   auto database_id = ExecContext::GetDatabaseId();

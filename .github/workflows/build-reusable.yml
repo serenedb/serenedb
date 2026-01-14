@@ -29,9 +29,9 @@ on:
         required: true
         default: false
       DEB_TAR_PACKAGES:
-        description: 'Package .deb and .targz'
+        description: 'Package .deb and .tar.gz'
         type: boolean
-        required: true
+        required: false
         default: false
       SDB_CLUSTER:
         description: 'Build cluster'

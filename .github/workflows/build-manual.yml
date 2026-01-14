@@ -3,15 +3,10 @@ name: SereneDB-Build-Manual
 on:
   workflow_dispatch:
     inputs:
-      DEBUG_PRINT_ENV:
-        description: 'Whether to print environment variables'
-        type: boolean
-        required: false
-        default: false
       LOCATION:
         description: 'Where the load is executed'
-        required: true
         type: choice
+        required: true
         options:
           - parilka
           - self-hosted
@@ -26,18 +21,36 @@ on:
         type: string
         required: true
         default: 'main'
+      BUILD_IMAGE:
+        description: 'Docker build image'
+        type: string
+        required: true
+        default: 'registry.serenedb.com:5000/serenedb-build-ubuntu:latest'
+      BUILD_PACKAGES:
+        description: 'Build release packages'
+        type: boolean
+        required: true
+        default: true
+      SDB_CLUSTER:
+        description: 'Build cluster'
+        type: choice
+        required: true
+        default: 'Off'
+        options:
+          - 'Off'
+          - 'On'
       VPACK_TESTS:
-        description: 'Run VPack unittests (C++)'
+        description: 'Run VPack unittests'
         type: boolean
         required: true
         default: true
       IRESEARCH_TESTS:
-        description: 'Run IResearch unittests (C++)'
+        description: 'Run IResearch unittests'
         type: boolean
         required: true
         default: true
       UNIT_TESTS:
-        description: 'Run SereneDB unittests (C++)'
+        description: 'Run SereneDB unittests'
         type: boolean
         required: true
         default: true
@@ -47,24 +60,27 @@ on:
         required: true
         default: true
       INTEGRATION_TESTS:
-        description: 'Run integration tests (JavaScript)'
+        description: 'Run integration tests'
         type: boolean
         required: true
         default: false
-      BUILD_PACKAGES:
-        description: 'Build release packages'
-        type: boolean
-        required: true
-        default: true
       FULL_SUITE:
         description: 'Run full integration test suite'
         type: boolean
         required: true
         default: false
-      SANITIZERS:
-        description: 'Sanitizer to use'
+      INTEGRATION_TESTS_COREDUMPS:
+        description: '0 - no coredumps; -1 - unlimited coredumps'
         type: choice
         required: true
+        default: '0'
+        options:
+          - '0'
+          - '-1'
+      SANITIZERS:
+        description: 'Sanitizer to use'
+        type: string
+        required: false
         default: ''
         options:
           - ''
@@ -79,22 +95,14 @@ on:
           - MemoryWithOrigins
       USE_COVERAGE:
         description: 'Coverage type'
-        type: choice
-        required: true
+        type: string
+        required: false
         default: ''
         options:
           - ''
           - SourceBased
           - SourceBasedMCDC
           - GCOV
-      SDB_CLUSTER:
-        description: 'Build cluster'
-        type: choice
-        required: true
-        default: 'Off'
-        options:
-          - 'Off'
-          - 'On'
       SDB_ALLOC:
         description: 'Enable custom memory allocator'
         type: choice
@@ -154,24 +162,16 @@ on:
           - FULL
           - LINES
           - NONE
-      BUILD_IMAGE:
-        description: 'Docker build image'
-        type: string
-        required: true
-        default: 'registry.serenedb.com:5000/serenedb-build-ubuntu:latest'
-      INTEGRATION_TESTS_COREDUMPS:
-        description: '0 - no coredumps; -1 - unlimited coredumps'
-        type: choice
-        required: true
-        default: '0'
-        options:
-          - '0'
-          - '-1'
       EXTRA_ARTIFACTS:
         description: 'Keep these artifacts additionally'
         type: string
         required: false
         default: ''
+      DEBUG_PRINT_ENV:
+        description: 'Whether to print environment variables'
+        type: boolean
+        required: false
+        default: false
 
 jobs:
   call-reusable:

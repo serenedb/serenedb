@@ -7,7 +7,7 @@ on:
         description: 'Where the load is executed'
         type: string
         required: true
-        default: 'x86'
+        default: 'self-hosted'
       BRANCH:
         description: 'SereneDB branch to test'
         type: string

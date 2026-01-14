@@ -17,6 +17,8 @@ services:
     volumes:
       - "$SQLLOGIC_DIR:/sqllogic"
       - "$WORKSPACE/third_party/sqllogictest-rs:/sqllogictest-rs"
+    environment:
+      - SERENED_PORT=7777
     links:
       - serenedb-single
     depends_on:

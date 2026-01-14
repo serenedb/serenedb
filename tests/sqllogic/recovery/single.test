@@ -13,6 +13,7 @@ BEGIN;
 statement ok
 INSERT INTO t VALUES (0, 0);
 
+
 statement ok
 COMMIT;
 
@@ -22,9 +23,10 @@ statement ok
 SET sdb_fault_crash_on_packet TO DEFAULT;
 
 
-# Next sent packet will trigger cracsh
-query error
+# Next sent packet will trigger serened crash, so connection will be closed
+query error connection closed
 SELECT 1;
+
 
 # ==== TRY TO RECONNECT ====
 connection new
@@ -33,3 +35,7 @@ select * from t;
 ----
 key	value
 0	0
+
+
+statement ok
+DROP TABLE IF EXISTS t;

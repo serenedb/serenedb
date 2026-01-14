@@ -148,11 +148,12 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
     std::vector<velox::core::TypedExprPtr> filters,
     std::vector<velox::core::TypedExprPtr>& rejected_filters) const final {
     rejected_filters = std::move(filters);
-    
+
     if (const auto* read_file_table =
           dynamic_cast<const ReadFileTable*>(&this->table())) {
-      return std::make_shared<FileTableHandle>(read_file_table->GetReader(),
-                                               read_file_table->GetRowReaderOptions());
+      return std::make_shared<FileTableHandle>(
+        read_file_table->GetSource(), read_file_table->GetReaderOptions(),
+        read_file_table->GetRowReaderOptions());
     }
 
     SDB_ASSERT(!table().columnMap().empty(),
@@ -362,13 +363,11 @@ class SereneDBConnectorMetadata final
   axiom::connector::ConnectorWriteHandlePtr beginWrite(
     const axiom::connector::ConnectorSessionPtr& session,
     const axiom::connector::TablePtr& table, axiom::connector::WriteKind kind) {
-    if (kind == axiom::connector::WriteKind::kCopyTo) {
-      auto* write_file_table = dynamic_cast<const WriteFileTable*>(table.get());
-      SDB_ENSURE(
-        write_file_table, ERROR_INTERNAL,
-        "COPY TO requires WriteFileTable, but got different table type");
+    if (const auto* write_file_table =
+          dynamic_cast<const WriteFileTable*>(table.get())) {
+      SDB_ASSERT(kind == axiom::connector::WriteKind::kInsert);
       return std::make_shared<FileConnectorWriteHandle>(
-        write_file_table->GetWriter());
+        write_file_table->GetSink(), write_file_table->GetWriterOptions());
     }
 
     return std::make_shared<SereneDBConnectorWriteHandle>(session, table, kind);
@@ -378,7 +377,8 @@ class SereneDBConnectorMetadata final
     const axiom::connector::ConnectorSessionPtr& session,
     const axiom::connector::ConnectorWriteHandlePtr& handle,
     const std::vector<velox::RowVectorPtr>& write_results) final {
-    if (IsFileInsertTableHandle(handle)) {
+    if (dynamic_cast<const FileInsertTableHandle*>(
+          handle->veloxHandle().get()) != nullptr) {
       velox::DecodedVector decoded;
       SDB_ASSERT(write_results.size() == 1);
       SDB_ASSERT(write_results[0]->size() == 1);
@@ -446,12 +446,6 @@ class SereneDBConnectorMetadata final
   }
 
  private:
-  bool IsFileInsertTableHandle(
-    const axiom::connector::ConnectorWriteHandlePtr& handle) const {
-    return dynamic_cast<const FileInsertTableHandle*>(
-             handle->veloxHandle().get()) != nullptr;
-  }
-
   SereneDBConnectorSplitManager _split_manager;
 };
 
@@ -474,10 +468,11 @@ class SereneDBConnector final : public velox::connector::Connector {
     const velox::connector::ConnectorTableHandlePtr& table_handle,
     const velox::connector::ColumnHandleMap& column_handles,
     velox::connector::ConnectorQueryCtx* connector_query_ctx) final {
-    if (auto* file_handle =
+    if (const auto* file_handle =
           dynamic_cast<const FileTableHandle*>(table_handle.get())) {
-      return std::make_unique<FileDataSource>(file_handle->GetReader(),
-                                              file_handle->GetRowReaderOptions());
+      return std::make_unique<FileDataSource>(
+        file_handle->GetSource(), file_handle->GetReaderOptions(),
+        file_handle->GetRowReaderOptions(), *connector_query_ctx->memoryPool());
     }
 
     const auto& serene_table_handle =
@@ -524,9 +519,11 @@ class SereneDBConnector final : public velox::connector::Connector {
       connector_insert_table_handle,
     velox::connector::ConnectorQueryCtx* connector_query_ctx,
     velox::connector::CommitStrategy commit_strategy) final {
-    if (auto* file_handle = dynamic_cast<const FileInsertTableHandle*>(
+    if (const auto* file_handle = dynamic_cast<const FileInsertTableHandle*>(
           connector_insert_table_handle.get())) {
-      return std::make_unique<FileDataSink>(file_handle->GetWriter());
+      return std::make_unique<FileDataSink>(file_handle->GetSink(),
+                                            file_handle->GetWriterOptions(),
+                                            *connector_query_ctx->connectorMemoryPool());
     }
 
     const auto& serene_insert_handle =

@@ -276,7 +276,7 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
     }
 
     _connection_ctx = std::make_shared<ConnectionContext>(
-      UserName(), DatabaseName(), database->GetId(), &_send);
+      UserName(), DatabaseName(), database->GetId(), &_send, &_copy_queue);
 
     const auto& ci = GetConnectionInfo();
     [[maybe_unused]] hba::Client client{
@@ -1132,6 +1132,7 @@ void PgSQLCommTaskBase::CancelPacket() {
   if (_current_portal && _current_portal->cursor) {
     _current_portal->cursor->RequestCancel();
   }
+  _copy_queue.Abort();
 }
 
 void PgSQLCommTaskBase::ReleaseCursor(SqlPortal& portal) {
@@ -1418,10 +1419,17 @@ bool PgSQLCommTask<T>::ReadCallback(asio_ns::error_code ec) {
           }
           {
             std::string packet{_packet.data(), _pending_len};
-            std::lock_guard lock{this->_queue_mutex};
-            this->_queue.emplace(std::move(packet));
-            if (this->_queue.size() == 1 && !this->Stopped()) {
-              this->_feature.ScheduleProcessFirst(this->weak_from_this());
+            // TODO: error if there's no copy in progress
+            if (packet.starts_with(PQ_MSG_COPY_DATA)) {
+              this->_copy_queue.AppendCopyDataMsg(std::move(packet));
+            } else if (packet.starts_with(PQ_MSG_COPY_DONE)) {
+              this->_copy_queue.AppendCopyDoneMsg();
+            } else {
+              std::lock_guard lock{this->_queue_mutex};
+              this->_queue.emplace(std::move(packet));
+              if (this->_queue.size() == 1 && !this->Stopped()) {
+                this->_feature.ScheduleProcessFirst(this->weak_from_this());
+              }
             }
           }
           _packet.erase(0, _pending_len);

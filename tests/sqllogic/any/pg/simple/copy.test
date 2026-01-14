@@ -168,3 +168,27 @@ statement error
 COPY varus(name, id) FROM '/tmp/lmao' WITH (LABUDABUDABDAB rick);
 ----
 db error: ERROR: option "labudabudabdab" not recognized
+
+
+statement count 100000
+COPY 
+(
+  SELECT * 
+  FROM 
+    generate_series(1, 10) as iq, 
+    generate_series(1, 100) as pencil_size, 
+    generate_series(1, 100) as weight
+) TO '/tmp/arelav' WITH (FORMAT CSV, HEADER 1);
+
+
+statement ok
+CREATE TABLE arelav 
+(
+  lmao INTEGER,
+  kek INTEGER,
+  kal INTEGER
+);
+
+
+statement count 100000
+COPY arelav FROM '/tmp/arelav' WITH (FORMAT CSV, HEADER 1);

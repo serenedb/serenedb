@@ -731,15 +731,16 @@ class SqlAnalyzer {
   explicit SqlAnalyzer(const QueryString& query_sting, const Objects& objects,
                        UniqueIdGenerator& id_generator,
                        query::QueryContext& query_ctx, pg::Params& params,
-                       message::Buffer* send_buffer) noexcept
+                       message::Buffer* send_buffer,
+                       CopyMessagesQueue* copy_queue) noexcept
     : _objects{objects},
       _query_string{query_sting},
       _id_generator{id_generator},
       _query_ctx{*query_ctx.velox_query_ctx},
       _memory_pool{*query_ctx.query_memory_pool},
-      _parent_memory_pool{*query_ctx.velox_query_ctx->pool()},
       _params{params},
-      _send_buffer{send_buffer} {}
+      _send_buffer{send_buffer},
+      _copy_queue{copy_queue} {}
 
   VeloxQuery ProcessRoot(State& state, const Node& node);
 
@@ -1137,11 +1138,11 @@ class SqlAnalyzer {
   UniqueIdGenerator& _id_generator;
   vc::QueryCtx& _query_ctx;
   velox::memory::MemoryPool& _memory_pool;
-  velox::memory::MemoryPool& _parent_memory_pool;
 
   pg::Params& _params;
   containers::FlatHashMap<const lp::Expr*, ParamIndex> _param_to_idx;
   message::Buffer* _send_buffer;
+  CopyMessagesQueue* _copy_queue;
 };
 
 ColumnRefHook SqlAnalyzer::GetTargetListNamingResolver(
@@ -1764,14 +1765,14 @@ class CopyOptionsParser {
  public:
   CopyOptionsParser(velox::RowTypePtr row_type, bool is_writer,
                     const char* query_string, std::string_view file_path,
-                    const List* options, velox::memory::MemoryPool& memory_pool,
-                    message::Buffer* send_buffer)
+                    const List* options, message::Buffer* send_buffer,
+                    CopyMessagesQueue* copy_queue)
     : _row_type{std::move(row_type)},
       _is_writer{is_writer},
       _query_string{query_string},
       _file_path{file_path},
-      _memory_pool{memory_pool},
-      _send_buffer{send_buffer} {
+      _send_buffer{send_buffer},
+      _copy_queue{copy_queue} {
     _options.reserve(list_length(options));
     VisitNodes(options, [&](const DefElem& option) {
       auto [_, emplaced] = _options.try_emplace(option.defname, &option);
@@ -1787,12 +1788,13 @@ class CopyOptionsParser {
 
   auto GetWriter() && {
     SDB_ASSERT(_is_writer);
-    return std::move(_writer);
+    return std::tuple{std::move(_sink), std::move(_writer_options)};
   }
 
   auto GetReader() && {
     SDB_ASSERT(!_is_writer);
-    return std::pair{std::move(_reader), std::move(_row_reader_options)};
+    return std::tuple{std::move(_source), std::move(_reader_options),
+                      std::move(_row_reader_options)};
   }
 
  private:
@@ -1905,17 +1907,17 @@ class CopyOptionsParser {
       SDB_ASSERT(_sink);
       auto text_options = std::make_shared<velox::text::WriterOptions>();
       text_options->headerLineCount = header;
-      text_options->memoryPool = &_memory_pool;
-      _writer = std::make_unique<velox::text::TextWriter>(
-        std::move(_row_type), std::move(_sink), std::move(text_options),
-        std::move(serde_options));
+      text_options->serDeOptions = std::move(serde_options);
+      text_options->schema = std::move(_row_type);
+      text_options->fileFormat = FileFormat::TEXT;
+      _writer_options = std::move(text_options);
     } else {
       SDB_ASSERT(_source);
-      velox::text::ReaderOptions text_options{&_memory_pool};
-      text_options.setSerDeOptions(std::move(serde_options));
-      text_options.setFileSchema(std::move(_row_type));
-      _reader = std::make_unique<velox::text::TextReader>(text_options,
-                                                          std::move(_source));
+      auto text_options = std::make_shared<velox::text::ReaderOptions>(nullptr);
+      text_options->setSerDeOptions(std::move(serde_options));
+      text_options->setFileSchema(std::move(_row_type));
+      text_options->setFileFormat(FileFormat::TEXT);
+      _reader_options = std::move(text_options);
       _row_reader_options->setSkipRows(header);
     }
   }
@@ -1940,17 +1942,15 @@ class CopyOptionsParser {
       const auto& writer_factory = getWriterFactory(format);
       auto* default_opts = writer_factory->createWriterOptions().release();
       std::shared_ptr<WriterOptions> options{default_opts};
-      options->memoryPool = &_memory_pool;
       options->schema = std::move(_row_type);
-      _writer =
-        writer_factory->createWriter(std::move(_sink), std::move(options));
+      options->fileFormat = format;
+      _writer_options = std::move(options);
     } else {
-      const auto& reader_factory = getReaderFactory(format);
-      velox::dwio::common::ReaderOptions options{&_memory_pool};
-      options.setFileFormat(format);
-      options.setFileSchema(std::move(_row_type));
-      _reader =
-        reader_factory->createReader(std::move(_source), std::move(options));
+      auto options =
+        std::make_shared<velox::dwio::common::ReaderOptions>(nullptr);
+      options->setFileFormat(format);
+      options->setFileSchema(std::move(_row_type));
+      _reader_options = std::move(options);
     }
   }
 
@@ -1979,30 +1979,25 @@ class CopyOptionsParser {
   // local filesystem / S3 / hdfs etc.
   void ParseDataSource() {
     if (_is_writer) {
-      std::unique_ptr<velox::WriteFile> file_write;
       if (_file_path.empty()) {  // copy to stdout
         SDB_ASSERT(_send_buffer);
-        file_write =
+        SDB_ASSERT(_copy_queue);
+        _sink =
           std::make_unique<CopyOutWriteFile>(*_send_buffer, _row_type->size());
       } else {
-        file_write =
+        _sink =
           std::make_unique<velox::LocalWriteFile>(_file_path, false, false);
       }
-
-      _sink = std::make_unique<WriteFileSink>(std::move(file_write),
-                                              std::string{_file_path});
     } else {
-      std::unique_ptr<velox::ReadFile> file_read;
       if (_file_path.empty()) {  // copy from stdin
         SDB_ASSERT(_send_buffer);
-        file_read =
-          std::make_unique<CopyInReadFile>(*_send_buffer, _row_type->size());
+        SDB_ASSERT(_copy_queue);
+        _source = std::make_shared<CopyInReadFile>(*_send_buffer, *_copy_queue,
+                                                   _row_type->size());
       } else {
-        file_read = std::make_unique<velox::LocalReadFile>(_file_path);
+        _source = std::make_shared<velox::LocalReadFile>(_file_path);
       }
 
-      _source =
-        std::make_unique<BufferedInput>(std::move(file_read), _memory_pool);
       _row_reader_options =
         std::make_shared<velox::dwio::common::RowReaderOptions>();
     }
@@ -2015,14 +2010,14 @@ class CopyOptionsParser {
   const char* _query_string;
   CopyOptions _options;
   std::string_view _file_path;
-  velox::memory::MemoryPool& _memory_pool;
   message::Buffer* _send_buffer;
+  CopyMessagesQueue* _copy_queue;
 
-  std::shared_ptr<Writer> _writer;
-  std::unique_ptr<WriteFileSink> _sink;  // local / S3 / hdfs etc.
+  std::unique_ptr<velox::WriteFile> _sink;  // local / S3 / hdfs etc.
+  std::shared_ptr<velox::dwio::common::WriterOptions> _writer_options;
 
-  std::shared_ptr<Reader> _reader;
-  std::unique_ptr<BufferedInput> _source;  // local / S3 / hdfs etc.
+  std::shared_ptr<velox::ReadFile> _source;  // local / S3 / hdfs etc.
+  std::shared_ptr<velox::dwio::common::ReaderOptions> _reader_options;
   std::shared_ptr<velox::dwio::common::RowReaderOptions> _row_reader_options;
 };
 
@@ -2085,8 +2080,7 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
     std::string_view relation_name = relation.relname;
     const auto schema_name = absl::NullSafeStringView(relation.schemaname);
     auto object = _objects.getData(schema_name, relation_name);
-    return std::tuple<const Objects::ObjectData*, std::string_view,
-                      std::string>{object, schema_name, relation_name};
+    return std::tuple{object, schema_name, relation_name};
   };
 
   auto get_table = [&](const Objects::ObjectData* object) {
@@ -2108,15 +2102,9 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
 
   auto file_path = absl::NullSafeStringView(stmt.filename);
   auto create_options_parser = [&](const velox::RowTypePtr& type) {
-    // _memory_pool is a leaf node, _parent_memory_pool is not a leaf.
-    // it's a demand of the velox to a writer / reader.
-    return CopyOptionsParser{type,
-                             !stmt.is_from,
-                             _query_string.data(),
-                             file_path,
-                             stmt.options,
-                             stmt.is_from ? _memory_pool : _parent_memory_pool,
-                             _send_buffer};
+    return CopyOptionsParser{type,       !stmt.is_from, _query_string.data(),
+                             file_path,  stmt.options,  _send_buffer,
+                             _copy_queue};
   };
 
   auto get_column_exprs = [&](const std::vector<std::string>& column_names) {
@@ -2177,9 +2165,11 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
     auto names = _id_generator.NextColumnNames(file_table_type->names());
     auto file_output_type = ROW(std::move(names), file_table_type->children());
     auto parser = create_options_parser(file_output_type);
-    auto [reader, row_reader_options] = std::move(parser).GetReader();
+    auto [source, reader_options, row_reader_options] =
+      std::move(parser).GetReader();
     auto read_file_table = std::make_shared<sdb::connector::ReadFileTable>(
-      file_table_type, file_path, std::move(reader),
+      file_table_type, file_path.empty() ? "stdin" : file_path,
+      std::move(source), std::move(reader_options),
       std::move(row_reader_options));
     state.root = std::make_shared<lp::TableScanNode>(
       _id_generator.NextPlanId(), std::move(file_output_type),
@@ -2227,12 +2217,14 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
     }
 
     auto parser = create_options_parser(table_type);
+    auto [sink, writer_options] = std::move(parser).GetWriter();
     auto write_file_table = std::make_shared<sdb::connector::WriteFileTable>(
-      std::move(table_type), file_path, std::move(parser).GetWriter());
+      std::move(table_type), file_path.empty() ? "stdout" : file_path,
+      std::move(sink), std::move(writer_options));
 
     state.root = std::make_shared<lp::TableWriteNode>(
       _id_generator.NextPlanId(), std::move(state.root),
-      std::move(write_file_table), axiom::connector::WriteKind::kCopyTo,
+      std::move(write_file_table), axiom::connector::WriteKind::kInsert,
       std::move(column_names), std::move(column_exprs));
   }
 }
@@ -5591,9 +5583,10 @@ VeloxQuery SqlAnalyzer::ProcessRoot(State& state, const Node& node) {
 VeloxQuery AnalyzeVelox(const RawStmt& node, const QueryString& query_string,
                         const Objects& objects, UniqueIdGenerator& id_generator,
                         query::QueryContext& query_ctx, pg::Params& params,
-                        message::Buffer* send_buffer) {
-  SqlAnalyzer analyzer{query_string, objects, id_generator,
-                       query_ctx,    params,  send_buffer};
+                        message::Buffer* send_buffer,
+                        CopyMessagesQueue* copy_queue) {
+  SqlAnalyzer analyzer{query_string, objects,     id_generator, query_ctx,
+                       params,       send_buffer, copy_queue};
   State state;
   auto query = analyzer.ProcessRoot(state, *node.stmt);
 

@@ -25,6 +25,7 @@
 
 #include "basics/fwd.h"
 #include "basics/message_buffer.h"
+#include "pg/copy_messages_queue.h"
 
 namespace sdb::pg {
 
@@ -40,23 +41,15 @@ class CopyOutWriteFile final : public velox::WriteFile {
  private:
   message::Buffer& _buffer;
   uint64_t _size = 0;
-  bool _closed = false;
 };
 
 class CopyInReadFile final : public velox::ReadFile {
  public:
-  CopyInReadFile(message::Buffer& buffer, size_t column_count);
+  CopyInReadFile(message::Buffer& buffer, CopyMessagesQueue& copy_queue,
+                 size_t column_count);
 
   std::string_view pread(
     uint64_t offset, uint64_t length, void* buf,
-    const velox::FileStorageContext& fileStorageContext = {}) const final;
-
-  std::string pread(
-    uint64_t offset, uint64_t length,
-    const velox::FileStorageContext& fileStorageContext = {}) const final;
-
-  uint64_t preadv(
-    uint64_t offset, const std::vector<folly::Range<char*>>& buffers,
     const velox::FileStorageContext& fileStorageContext = {}) const final;
 
   uint64_t size() const final;
@@ -66,7 +59,10 @@ class CopyInReadFile final : public velox::ReadFile {
   uint64_t getNaturalReadSize() const final;
 
  private:
+  uint64_t ReadInternal(char* pos, uint64_t length) const;
+
   message::Buffer& _buffer;
+  CopyMessagesQueue& _copy_queue;
 };
 
 }  // namespace sdb::pg

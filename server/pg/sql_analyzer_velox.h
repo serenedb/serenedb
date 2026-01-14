@@ -26,6 +26,7 @@
 #include <velox/core/PlanNode.h>
 #include <velox/core/QueryCtx.h>
 
+#include "pg/copy_messages_queue.h"
 #include "pg/sql_utils.h"
 #include "query/query.h"
 #include "query/utils.h"
@@ -82,7 +83,8 @@ class Objects;
 VeloxQuery AnalyzeVelox(const RawStmt& node, const QueryString& query_string,
                         const Objects& objects, UniqueIdGenerator& id_generator,
                         query::QueryContext& query_ctx, pg::Params& params,
-                        message::Buffer* send_buffer);
+                        message::Buffer* send_buffer,
+                        CopyMessagesQueue* copy_queue);
 
 velox::TypePtr NameToType(const TypeName& type_name);
 

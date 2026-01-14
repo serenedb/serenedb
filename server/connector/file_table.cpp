@@ -24,7 +24,7 @@
 #include <velox/connectors/Connector.h>
 #include <velox/connectors/hive/HiveConnectorUtil.h>
 #include <velox/dwio/common/FileSink.h>
-#include <velox/dwio/common/Writer.h>
+#include <velox/dwio/common/ReaderFactory.h>
 #include <velox/dwio/common/WriterFactory.h>
 
 #include "serenedb_connector.hpp"
@@ -55,8 +55,17 @@ FileTable::FileTable(velox::RowTypePtr type, std::string_view file_path)
   _layout_handles.emplace_back(std::move(layout));
 }
 
-FileDataSink::FileDataSink(std::shared_ptr<velox::dwio::common::Writer> writer)
-  : _writer(std::move(writer)) {
+FileDataSink::FileDataSink(
+  std::unique_ptr<velox::WriteFile> sink,
+  std::shared_ptr<velox::dwio::common::WriterOptions> options,
+  velox::memory::MemoryPool& memory_pool) {
+  auto write_sink = std::make_unique<velox::dwio::common::WriteFileSink>(
+    std::move(sink), "serenedb_sink");
+  const auto& writer_factory =
+    velox::dwio::common::getWriterFactory(options->fileFormat);
+  options->memoryPool = &memory_pool;
+  _writer =
+    writer_factory->createWriter(std::move(write_sink), std::move(options));
   SDB_ASSERT(_writer);
 }
 
@@ -91,11 +100,19 @@ void FileDataSink::abort() {
 }
 
 FileDataSource::FileDataSource(
-  std::shared_ptr<velox::dwio::common::Reader> reader,
-  std::shared_ptr<velox::dwio::common::RowReaderOptions> row_reader_options)
-  : _reader(std::move(reader)),
-    _row_reader_options(std::move(row_reader_options)) {
+  std::shared_ptr<velox::ReadFile> source,
+  std::shared_ptr<velox::dwio::common::ReaderOptions> options,
+  std::shared_ptr<velox::dwio::common::RowReaderOptions> row_reader_options,
+  velox::memory::MemoryPool& memory_pool)
+  : _row_reader_options(std::move(row_reader_options)) {
   SDB_ASSERT(_row_reader_options);
+
+  const auto& reader_factory =
+    velox::dwio::common::getReaderFactory(options->fileFormat());
+  auto input = std::make_unique<velox::dwio::common::BufferedInput>(
+    std::move(source), memory_pool);
+  options->setMemoryPool(memory_pool);
+  _reader = reader_factory->createReader(std::move(input), *options);
 
   auto row_type = _reader->rowType();
   auto spec = std::make_shared<velox::common::ScanSpec>("root");

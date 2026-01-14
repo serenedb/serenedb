@@ -20,8 +20,9 @@
 
 #pragma once
 
-#include "catalog/identifiers/object_id.h"
 #include "basics/message_buffer.h"
+#include "catalog/identifiers/object_id.h"
+#include "pg/copy_messages_queue.h"
 #include "pg/sql_error.h"
 #include "query/transaction.h"
 #include "utils/exec_context.h"
@@ -31,14 +32,14 @@ namespace sdb {
 class ConnectionContext : public ExecContext, public TxnState {
  public:
   ConnectionContext(std::string_view user, std::string_view dbname,
-                    ObjectId database_id,
-                    message::Buffer* send_buffer);
+                    ObjectId database_id, message::Buffer* send_buffer,
+                    pg::CopyMessagesQueue* copy_queue);
 
   std::string GetCurrentSchema() const;
 
-  message::Buffer* GetSendBuffer() {
-    return _send_buffer;
-  }
+  message::Buffer* GetSendBuffer() { return _send_buffer; }
+
+  pg::CopyMessagesQueue* GetCopyQueue() { return _copy_queue; }
 
   void AddNotice(pg::SqlErrorData notice) {
     _notices.push_back(std::move(notice));
@@ -49,6 +50,7 @@ class ConnectionContext : public ExecContext, public TxnState {
  private:
   std::vector<pg::SqlErrorData> _notices;
   message::Buffer* _send_buffer;
+  pg::CopyMessagesQueue* _copy_queue;
 };
 
 }  // namespace sdb

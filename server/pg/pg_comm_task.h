@@ -33,6 +33,7 @@
 #include "general_server/comm_task.h"
 #include "general_server/generic_comm_task.h"
 #include "pg/connection_context.h"
+#include "pg/copy_messages_queue.h"
 #include "pg/hba.h"
 #include "pg/serialize.h"
 #include "pg/sql_analyzer_velox.h"
@@ -169,6 +170,7 @@ class PgSQLCommTaskBase : public rest::CommTask {
 
   using PacketsQueue = std::queue<std::string>;
   PostgresFeature& _feature;
+  CopyMessagesQueue _copy_queue;
   PacketsQueue _queue;
   mutable absl::Mutex _queue_mutex;
   absl::Mutex _execution_mutex;

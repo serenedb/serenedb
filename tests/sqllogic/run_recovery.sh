@@ -1,7 +1,5 @@
 #!/bin/bash
 
-SERENED_PORT=${SERENED_PORT:-7777}
-
 cd sqllogic
 
 declare -a test_files=()
@@ -23,7 +21,7 @@ for test_file in "${test_files[@]}"; do
 
   ./run.sh \
     --host serenedb-single \
-    --single-port "$SERENED_PORT" \
+    --single-port 7777 \
     --test "$test_file" \
     --junit "tests-serenedb-recovery" \
     --protocol simple \

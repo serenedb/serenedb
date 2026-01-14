@@ -24,10 +24,15 @@ on:
         required: true
         default: 'registry.serenedb.com:5000/serenedb-build-ubuntu:latest'
       BUILD_PACKAGES:
-        description: 'Build release packages'
+        description: 'Package serened binary'
         type: boolean
         required: true
-        default: true
+        default: false
+      DEB_TAR_PACKAGES:
+        description: 'Package .deb and .targz'
+        type: boolean
+        required: true
+        default: false
       SDB_CLUSTER:
         description: 'Build cluster'
         type: string

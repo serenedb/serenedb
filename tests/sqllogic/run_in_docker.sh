@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Docker Compose runner for sqllogic tests
-# Usage: 
+# Usage:
 #   ./run_in_docker.sh                    # Uses default 'sqllogic' kind
 #   ./run_in_docker.sh recovery           # Uses 'recovery' kind
 #   TEST_KIND=recovery ./run_in_docker.sh # Uses env variable

@@ -20,7 +20,7 @@ final_exit_code=0
 
 for test_file in "${test_files[@]}"; do
   echo "Running recovery test: $test_file"
-  
+
   ./run.sh \
     --host serenedb-single \
     --single-port "$SERENED_PORT" \
@@ -28,9 +28,9 @@ for test_file in "${test_files[@]}"; do
     --junit "tests-serenedb-recovery" \
     --protocol simple \
     --runner=/sqllogictest-rs
-  
+
   exit_code=$?
-  
+
   if [[ $exit_code != 0 ]]; then
     echo "SereneDB recovery test failed: $test_file"
     final_exit_code=$exit_code

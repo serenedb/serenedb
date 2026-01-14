@@ -11,7 +11,7 @@ services:
     command: >
         sh -c '
           if ! id serenedb >/dev/null 2>&1; then
-            useradd serenedb && 
+            useradd serenedb &&
             chown -R serenedb:serenedb /serenedb/sanitizers /serenedb/build/coverage
           fi &&
           exec /serenedb/build/bin/serened /tmp/serenedb_datadir \

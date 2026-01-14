@@ -123,7 +123,7 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
                 return _keys_buffers[left] < _keys_buffers[right];
               });
 
-    // we must match order of rewritten columns
+    // we must match order of keys in rewritten columns
     rows_range.reserve(num_rows);
     for (auto row_idx : rows_idxs) {
       rows_range.push_back(
@@ -141,6 +141,8 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
     // Now we need to re-insert unchanged columns. We do not need to re-encode
     // the values. We can just read from storage what we already have and write
     // it back.
+    // TODO(Dronplane) similar code will be needed in case of PK update but with
+    // "new" keys
     auto rewrite_it = _data_writer.CreateIterator();
     for (const auto& idx : _rewrite_columns_idxs) {
       const auto& column_id = _all_column_ids[idx];

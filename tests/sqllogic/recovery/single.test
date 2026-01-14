@@ -36,6 +36,6 @@ select * from t;
 key	value
 0	0
 
-
+connection new
 statement ok
 DROP TABLE IF EXISTS t;

@@ -8,9 +8,21 @@ services:
     # It assumes that sanitizers and coverage dirs are created.
     # Executable 'serened' switches to 'serenedb' user. If required dirs are not created,
     # /serenedb dir owner is 'root' and it's impossible for 'serenedb' user to create directory there.
-    command: sh -c 'if ! id serenedb >/dev/null 2>&1; then useradd serenedb && chown -R serenedb:serenedb /serenedb/sanitizers /serenedb/build/coverage; fi && exec /serenedb/build/bin/serened /tmp/serenedb_datadir --server.endpoint pgsql+tcp://0.0.0.0:7777 --server.endpoint tcp://0.0.0.0:8529 --server.authentication 0'
+    command: >
+        sh -c '
+          if ! id serenedb >/dev/null 2>&1; then
+            useradd serenedb && 
+            chown -R serenedb:serenedb /serenedb/sanitizers /serenedb/build/coverage
+          fi &&
+          exec /serenedb/build/bin/serened /tmp/serenedb_datadir \
+            --server.endpoint pgsql+tcp://0.0.0.0:7777 \
+            --server.endpoint tcp://0.0.0.0:8529 \
+            --server.authentication 0
+        '
     env_file:
       - "$WORKSPACE/docker.env"
+    networks:
+      - test-network
 
   tests:
     image: rust:latest
@@ -19,8 +31,12 @@ services:
       - "$WORKSPACE/third_party/sqllogictest-rs:/sqllogictest-rs"
     environment:
       - SERENED_PORT=7777
-    links:
-      - serenedb-single
     depends_on:
       - serenedb-single
     command: sh -c 'exec sqllogic/run_recovery.sh'
+    networks:
+      - test-network
+
+networks:
+  test-network:
+    driver: bridge

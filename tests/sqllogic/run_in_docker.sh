@@ -6,13 +6,7 @@
 #   ./run_in_docker.sh recovery           # Uses 'recovery' kind
 #   TEST_KIND=recovery ./run_in_docker.sh # Uses env variable
 
-# - Think about run_* scripts renaming. Or even rewrite into python???
-
-
-# Determine test kind
 TEST_KIND=${1:-${TEST_KIND:-sqllogic}}
-
-# Map test kind to compose file
 COMPOSE_FILE="docker-compose.$TEST_KIND.yml"
 
 if test -z "$SQLLOGIC_DIR"; then

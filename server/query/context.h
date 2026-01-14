@@ -27,8 +27,10 @@
 #include <utility>
 
 #include "basics/fwd.h"
+#include "general_server/scheduler.h"
 #include "pg/sql_collector.h"
 #include "query/config.h"
+#include "query/transaction.h"
 
 namespace sdb::query {
 
@@ -85,15 +87,20 @@ enum class ExplainWith : uint64_t {
 };
 
 struct QueryContext {
-  using OptionValue = std::variant<bool, int, std::string, double>;
-
-  explicit QueryContext(std::shared_ptr<velox::core::QueryCtx> velox_query_ctx,
+  explicit QueryContext(const std::shared_ptr<Transaction>& transaction,
                         const pg::Objects& objects)
-    : velox_query_ctx{std::move(velox_query_ctx)},
+    : transaction{transaction},
+      velox_query_ctx{velox::core::QueryCtx::create(
+        transaction->Get<VariableType::U32>("execution_threads") == 0
+          ? nullptr
+          : &GetScheduler()->GetCPUExecutor(),
+        velox::core::QueryConfig{velox::core::QueryConfig::ConfigTag{},
+                                 transaction})},
       query_memory_pool{
         this->velox_query_ctx->pool()->addLeafChild("query_memory_pool")},
       objects{objects} {}
 
+  std::shared_ptr<Transaction> transaction;
   std::shared_ptr<velox::core::QueryCtx> velox_query_ctx;
   // To allocate memory for VALUES clause processing.
   std::shared_ptr<velox::memory::MemoryPool> query_memory_pool;

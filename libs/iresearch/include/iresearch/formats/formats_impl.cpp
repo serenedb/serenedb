@@ -2312,8 +2312,7 @@ void DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::SeekToBlock(
 // WAND iterator over posting list.
 // IteratorTraits defines requested features.
 // FieldTraits defines requested features.
-template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
-         bool Root>
+template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
 class Wanderator : public DocIteratorBase<IteratorTraits, FieldTraits>,
                    private ScoreCtx {
   static_assert(IteratorTraits::Frequency());
@@ -2343,11 +2342,7 @@ class Wanderator : public DocIteratorBase<IteratorTraits, FieldTraits>,
       *this,
       [](ScoreCtx* ctx, score_t* res) noexcept {
         auto& self = static_cast<Wanderator&>(*ctx);
-        if constexpr (Root) {
-          *res = self._score;
-        } else {
-          self._scorer(res);
-        }
+        self._scorer(res);
       },
       strict ? MinStrict : MinWeak);
   }
@@ -2472,9 +2467,8 @@ class Wanderator : public DocIteratorBase<IteratorTraits, FieldTraits>,
   score_t _score{};
 };
 
-template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
-         bool Root>
-void Wanderator<IteratorTraits, FieldTraits, WandExtent, Root>::ReadSkip::Init(
+template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
+void Wanderator<IteratorTraits, FieldTraits, WandExtent>::ReadSkip::Init(
   const TermMetaImpl& term_state, size_t num_levels,
   irs::ScoreAttr::UpperBounds& max) {
   // Don't use wanderator for short posting lists, must be ensured by the caller
@@ -2492,9 +2486,8 @@ void Wanderator<IteratorTraits, FieldTraits, WandExtent, Root>::ReadSkip::Init(
   CopyState<IteratorTraits>(top, term_state);
 }
 
-template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
-         bool Root>
-void Wanderator<IteratorTraits, FieldTraits, WandExtent, Root>::ReadSkip::Read(
+template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
+void Wanderator<IteratorTraits, FieldTraits, WandExtent>::ReadSkip::Read(
   size_t level, IndexInput& in) {
   auto& last = prev_skip;
   auto& next = skip_levels[level];
@@ -2520,10 +2513,10 @@ void Wanderator<IteratorTraits, FieldTraits, WandExtent, Root>::ReadSkip::Read(
   // }
 }
 
-template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
-         bool Root>
-size_t Wanderator<IteratorTraits, FieldTraits, WandExtent,
-                  Root>::ReadSkip::AdjustLevel(size_t level) const noexcept {
+template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
+size_t
+Wanderator<IteratorTraits, FieldTraits, WandExtent>::ReadSkip::AdjustLevel(
+  size_t level) const noexcept {
   while (level && skip_levels[level].doc >= skip_levels[level - 1].doc) {
     SDB_ASSERT(skip_levels[level - 1].doc != doc_limits::eof());
     --level;
@@ -2531,9 +2524,8 @@ size_t Wanderator<IteratorTraits, FieldTraits, WandExtent,
   return level;
 }
 
-template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
-         bool Root>
-void Wanderator<IteratorTraits, FieldTraits, WandExtent, Root>::ReadSkip::Seal(
+template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
+void Wanderator<IteratorTraits, FieldTraits, WandExtent>::ReadSkip::Seal(
   size_t level) {
   auto& last = prev_skip;
   auto& next = skip_levels[level];
@@ -2546,9 +2538,8 @@ void Wanderator<IteratorTraits, FieldTraits, WandExtent, Root>::ReadSkip::Seal(
   skip_scores[level] = std::numeric_limits<score_t>::max();
 }
 
-template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
-         bool Root>
-void Wanderator<IteratorTraits, FieldTraits, WandExtent, Root>::WandPrepare(
+template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
+void Wanderator<IteratorTraits, FieldTraits, WandExtent>::WandPrepare(
   const TermMeta& meta, const IndexInput* doc_in,
   [[maybe_unused]] const IndexInput* pos_in,
   [[maybe_unused]] const IndexInput* pay_in) {
@@ -2635,9 +2626,8 @@ void Wanderator<IteratorTraits, FieldTraits, WandExtent, Root>::WandPrepare(
   }
 }
 
-template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
-         bool Root>
-doc_id_t Wanderator<IteratorTraits, FieldTraits, WandExtent, Root>::seek(
+template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
+doc_id_t Wanderator<IteratorTraits, FieldTraits, WandExtent>::seek(
   doc_id_t target) {
   auto& doc_value = std::get<DocAttr>(_attrs).value;
 
@@ -2645,77 +2635,54 @@ doc_id_t Wanderator<IteratorTraits, FieldTraits, WandExtent, Root>::seek(
     return doc_value;
   }
 
-  do {
-    SeekToBlock(target);
+  SeekToBlock(target);
 
-    if (this->_begin == std::end(this->_buf.docs)) [[unlikely]] {
-      if (this->_left == 0) [[unlikely]] {
-        break;
-      }
-
-      if (auto& state = _skip.Reader().State(); state.doc_ptr) {
-        this->_doc_in->Seek(state.doc_ptr);
-        if constexpr (IteratorTraits::Position()) {
-          auto& pos = std::get<Position>(_attrs);
-          pos.Prepare(state);  // Notify positions
-        }
-        state.doc_ptr = 0;
-      }
-
-      this->Refill(doc_value);
+  if (this->_begin == std::end(this->_buf.docs)) [[unlikely]] {
+    if (this->_left == 0) [[unlikely]] {
+      return doc_value = doc_limits::eof();
     }
 
-    [[maybe_unused]] uint32_t notify = 0;
-    [[maybe_unused]] const auto threshold = _skip.Reader().threshold;
+    if (auto& state = _skip.Reader().State(); state.doc_ptr) {
+      this->_doc_in->Seek(state.doc_ptr);
+      if constexpr (IteratorTraits::Position()) {
+        auto& pos = std::get<Position>(_attrs);
+        pos.Prepare(state);  // Notify positions
+      }
+      state.doc_ptr = 0;
+    }
 
-    uint32_t doc{};
-    while (this->_begin != std::end(this->_buf.docs)) {
-      doc = *this->_begin++;
+    this->Refill(doc_value);
+  }
+
+  [[maybe_unused]] uint32_t notify = 0;
+
+  while (this->_begin != std::end(this->_buf.docs)) {
+    const auto doc = *this->_begin++;
+
+    if constexpr (IteratorTraits::Position()) {
+      notify += *this->_freq++;
+    }
+
+    if (target <= doc) {
+      if constexpr (IteratorTraits::Frequency()) {
+        if constexpr (!IteratorTraits::Position()) {
+          this->_freq = this->_buf.freqs + this->RelativePos();
+        }
+        SDB_ASSERT((this->_freq - 1) >= this->_buf.freqs);
+        SDB_ASSERT((this->_freq - 1) < std::end(this->_buf.freqs));
+        auto& freq = std::get<FreqAttr>(_attrs);
+        freq.value = this->_freq[-1];
+      }
 
       if constexpr (IteratorTraits::Position()) {
-        notify += *this->_freq++;
+        auto& pos = std::get<Position>(_attrs);
+        pos.Notify(notify);
+        pos.Clear();
       }
 
-      if (target <= doc) {
-        if constexpr (IteratorTraits::Frequency()) {
-          if constexpr (!IteratorTraits::Position()) {
-            this->_freq = this->_buf.freqs + this->RelativePos();
-          }
-          SDB_ASSERT((this->_freq - 1) >= this->_buf.freqs);
-          SDB_ASSERT((this->_freq - 1) < std::end(this->_buf.freqs));
-          auto& freq = std::get<FreqAttr>(_attrs);
-          freq.value = this->_freq[-1];
-        }
-        doc_value = doc;
-
-        if constexpr (Root) {
-          // We can use approximation before actual score for bm11, bm15,
-          // tfidf(true/false) but only for term query, so I don't think
-          // it's really good idea. And I don't except big difference
-          // because in such case, computation is pretty cheap
-          _scorer(&_score);
-          if (_score <= threshold) {
-            continue;
-          }
-        }
-
-        if constexpr (IteratorTraits::Position()) {
-          auto& pos = std::get<Position>(_attrs);
-          pos.Notify(notify);
-          pos.Clear();
-        }
-
-        return doc;
-      }
+      return doc_value = doc;
     }
-
-    if constexpr (Root) {
-      if constexpr (IteratorTraits::Position()) {
-        std::get<Position>(_attrs).Notify(notify);
-      }
-      target = doc + 1;
-    }
-  } while (Root);
+  }
 
   return doc_value = doc_limits::eof();
 }
@@ -3396,18 +3363,15 @@ class PostingsReaderImpl final : public PostingsReaderBase {
             if constexpr (IteratorTraits::Frequency()) {
               // No need to use wanderator for short lists
               if (meta.docs_count > FormatTraits::kBlockSize) {
-                return ResolveBool(
-                  ctx.root, [&]<bool Root> -> DocIterator::ptr {
-                    auto it = memory::make_managed<Wanderator<
-                      IteratorTraits, FieldTraits, WandExtent, Root>>(
-                      options.factory, scorer, extent, info.mapped_index,
-                      ctx.strict);
+                auto it = memory::make_managed<
+                  Wanderator<IteratorTraits, FieldTraits, WandExtent>>(
+                  options.factory, scorer, extent, info.mapped_index,
+                  ctx.strict);
 
-                    it->WandPrepare(meta, _doc_in.get(), _pos_in.get(),
-                                    _pay_in.get());
+                it->WandPrepare(meta, _doc_in.get(), _pos_in.get(),
+                                _pay_in.get());
 
-                    return it;
-                  });
+                return it;
               }
             }
             auto it = memory::make_managed<

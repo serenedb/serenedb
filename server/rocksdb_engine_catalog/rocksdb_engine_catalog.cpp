@@ -3096,7 +3096,7 @@ bool RocksDBEngineCatalog::checkExistingDB(
 
 std::shared_ptr<StorageSnapshot> RocksDBEngineCatalog::currentSnapshot() {
   if (_db) [[likely]] {
-    return std::make_shared<RocksDBSnapshot>(*_db);
+    return std::make_shared<StorageSnapshot>(*_db);
   } else {
     return nullptr;
   }

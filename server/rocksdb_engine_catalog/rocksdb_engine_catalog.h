@@ -86,16 +86,6 @@ class RestHandlerFactory;
 
 class RocksDBEngineCatalog;
 
-class StorageSnapshot {
- public:
-  StorageSnapshot() = default;
-  StorageSnapshot(const StorageSnapshot&) = delete;
-  StorageSnapshot& operator=(const StorageSnapshot&) = delete;
-  virtual ~StorageSnapshot() = default;
-
-  virtual Tick tick() const noexcept = 0;
-};
-
 using WriteProperties = absl::FunctionRef<vpack::Slice(bool internal)>;
 
 /// helper class to make file-purging thread-safe
@@ -143,15 +133,11 @@ class RocksDBFilePurgeEnabler {
   RocksDBEngineCatalog* _engine;
 };
 
-class RocksDBSnapshot final : public StorageSnapshot {
+class StorageSnapshot {
  public:
-  explicit RocksDBSnapshot(rocksdb::DB& db) : _snapshot(&db) {}
+  explicit StorageSnapshot(rocksdb::DB& db) : _snapshot{&db} {}
 
-  Tick tick() const noexcept final {
-    return _snapshot.snapshot()->GetSequenceNumber();
-  }
-
-  decltype(auto) getSnapshot() const { return _snapshot.snapshot(); }
+  const rocksdb::Snapshot* GetSnapshot() const { return _snapshot.snapshot(); }
 
  private:
   mutable rocksdb::ManagedSnapshot _snapshot;

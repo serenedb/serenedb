@@ -20,70 +20,105 @@
 
 #include "query/transaction.h"
 
-#include <yaclib/async/make.hpp>
-
-#include "query/config.h"
-#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "storage_engine/engine_feature.h"
 
-namespace sdb {
+namespace sdb::query {
 
-std::shared_ptr<rocksdb::Transaction> CreateTransaction(
-  rocksdb::TransactionDB& db) {
+Result Transaction::Begin() {
+  SDB_ASSERT(!HasTransactionBegin());
+  CreateRocksDBTransaction();
+  _state |= State::HasTransactionBegin;
+  return {};
+}
+
+Result Transaction::Commit() {
+  SDB_ASSERT(_rocksdb_transaction);
+  auto status = _rocksdb_transaction->Commit();
+  if (!status.ok()) {
+    return {ERROR_INTERNAL,
+            "Failed to commit RocksDB transaction: ", status.ToString()};
+  }
+  CommitVariables();
+  Destroy();
+  return {};
+}
+
+Result Transaction::Rollback() {
+  SDB_ASSERT(_rocksdb_transaction);
+  auto status = _rocksdb_transaction->Rollback();
+  if (!status.ok()) {
+    return {ERROR_INTERNAL,
+            "Failed to rollback RocksDB transaction: ", status.ToString()};
+  }
+  RollbackVariables();
+  Destroy();
+  return {};
+}
+
+void Transaction::AddRocksDBRead() noexcept { _state |= State::HasRocksDBRead; }
+
+void Transaction::AddRocksDBWrite() noexcept {
+  _state |= State::HasRocksDBWrite;
+}
+
+bool Transaction::HasTransactionBegin() const noexcept {
+  return (_state & State::HasTransactionBegin) != State::None;
+}
+
+rocksdb::Transaction* Transaction::GetRocksDBTransaction() const noexcept {
+  SDB_ASSERT((_state & State::HasRocksDBWrite) != State::None);
+  return _rocksdb_transaction.get();
+}
+
+const rocksdb::Snapshot& Transaction::EnsureRocksDBSnapshot() {
+  SDB_ASSERT((_state & State::HasRocksDBRead) != State::None);
+  if (!_rocksdb_snapshot) {
+    if ((_state & State::HasRocksDBWrite) != State::None) {
+      CreateRocksDBTransaction();
+    } else {
+      CreateStorageSnapshot();
+    }
+  }
+  return *_rocksdb_snapshot;
+}
+
+rocksdb::Transaction& Transaction::EnsureRocksDBTransaction() {
+  SDB_ASSERT((_state & State::HasRocksDBWrite) != State::None);
+  if (!_rocksdb_transaction) {
+    CreateRocksDBTransaction();
+  }
+  return *_rocksdb_transaction;
+}
+
+void Transaction::CreateStorageSnapshot() {
+  SDB_ASSERT(!_rocksdb_snapshot);
+  SDB_ASSERT(!_storage_snapshot);
+  _storage_snapshot = GetServerEngine().currentSnapshot();
+  SDB_ASSERT(_storage_snapshot != nullptr);
+  _rocksdb_snapshot = _storage_snapshot->GetSnapshot();
+  SDB_ASSERT(_rocksdb_snapshot != nullptr);
+}
+
+void Transaction::CreateRocksDBTransaction() {
+  SDB_ASSERT(!_rocksdb_snapshot);
+  SDB_ASSERT(!_rocksdb_transaction);
+  auto* db = GetServerEngine().db();
+  SDB_ASSERT(db != nullptr);
   rocksdb::WriteOptions write_options;
   rocksdb::TransactionOptions txn_options;
   txn_options.skip_concurrency_control = true;
-  return std::shared_ptr<rocksdb::Transaction>{
-    db.BeginTransaction(write_options, txn_options)};
+  _rocksdb_transaction.reset(db->BeginTransaction(write_options, txn_options));
+  SDB_ASSERT(_rocksdb_transaction != nullptr);
+  _rocksdb_transaction->SetSnapshot();
+  _rocksdb_snapshot = _rocksdb_transaction->GetSnapshot();
+  SDB_ASSERT(_rocksdb_snapshot != nullptr);
 }
 
-const std::shared_ptr<rocksdb::Transaction>&
-TxnState::LazyTransaction::GetTransaction() const {
-  if (_initialized && !_txn) {
-    auto* db = GetServerEngine().db();
-    _txn = CreateTransaction(*db);
-    if (!_txn) {
-      SDB_THROW(ERROR_INTERNAL, "Failed to create RocksDB transaction");
-    }
-    _txn->SetSnapshot();
-  }
-  return _txn;
+void Transaction::Destroy() noexcept {
+  _state = State::None;
+  _storage_snapshot.reset();
+  _rocksdb_transaction.reset();
+  _rocksdb_snapshot = nullptr;
 }
 
-yaclib::Future<Result> TxnState::Begin() {
-  if (!InsideTransaction()) {
-    _txn.SetTransaction();
-  }
-  return {};
-}
-
-yaclib::Future<Result> TxnState::Commit() {
-  if (!InsideTransaction()) {
-    return {};
-  }
-  auto status = _txn.GetTransaction()->Commit();
-  if (!status.ok()) {
-    return yaclib::MakeFuture(Result{
-      ERROR_INTERNAL, "Failed to commit transaction: ", status.ToString()});
-  }
-  _txn.Reset();
-  Config::CommitVariables();
-  return {};
-}
-
-yaclib::Future<Result> TxnState::Rollback() {
-  if (!InsideTransaction()) {
-    return {};
-  }
-  Config::RollbackVariables();
-  auto status = _txn.GetTransaction()->Rollback();
-  if (!status.ok()) {
-    return yaclib::MakeFuture(
-      Result{ERROR_INTERNAL,
-             "Failed to rollback RocksDB transaction: ", status.ToString()});
-  }
-  _txn.Reset();
-  return {};
-}
-
-}  // namespace sdb
+}  // namespace sdb::query

@@ -188,8 +188,7 @@ void Query::CompileQuery() {
     .numDrivers =
       std::max<int>(config.Get<VariableType::U32>("execution_threads"), 1),
   };
-  axiom::Session session{"",
-                         _query_ctx.velox_query_ctx->queryConfig().config()};
+  axiom::Session session{"", _query_ctx.transaction};
   std::shared_ptr<axiom::Session> session_ptr{std::shared_ptr<axiom::Session>{},
                                               &session};
   axiom::optimizer::Optimization optimization{
@@ -237,7 +236,6 @@ void Query::CompileQuery() {
       return;
     }
   }
-
   // This is not really good for prepared statements, but it works for now
   auto result = optimization.toVeloxPlan(best->op);
   _execution_plan = std::move(result.plan);
@@ -249,6 +247,7 @@ Query::Query(std::unique_ptr<ExternalExecutor> executor,
   : _query_ctx{query_ctx}, _executor{std::move(executor)} {}
 
 std::string Query::GetLogicalPlan() const {
+  SDB_ASSERT(_logical_plan);
   return axiom::logical_plan::PlanPrinter::toText(*_logical_plan);
 }
 
@@ -256,6 +255,7 @@ Query::Query(velox::RowTypePtr output_type, const QueryContext& query_ctx)
   : _query_ctx{query_ctx}, _output_type{std::move(output_type)} {}
 
 std::string Query::GetExecutionPlan() const {
+  SDB_ASSERT(_execution_plan);
   return _execution_plan->toString(true);
 }
 
@@ -268,6 +268,7 @@ std::unique_ptr<Cursor> Query::MakeCursor(
   std::function<void()>&& user_task) const {
   std::unique_ptr<Cursor> ptr;
   ptr.reset(new Cursor{std::move(user_task), *this});
+  _finish_write = {};
   return ptr;
 }
 

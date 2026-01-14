@@ -19,51 +19,58 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
-#include <rocksdb/utilities/transaction_db.h>
+
+#include <rocksdb/snapshot.h>
+#include <rocksdb/utilities/transaction.h>
 
 #include <yaclib/async/future.hpp>
 
-#include "basics/containers/flat_hash_map.h"
+#include "basics/bit_utils.hpp"
 #include "basics/result.h"
 #include "query/config.h"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 
-namespace sdb {
+namespace sdb::query {
 
-std::shared_ptr<rocksdb::Transaction> CreateTransaction(
-  rocksdb::TransactionDB& db);
-
-class TxnState : public Config {
+class Transaction : public Config {
  public:
-  class LazyTransaction {
-   public:
-    void SetTransaction() { _initialized = true; }
-
-    const std::shared_ptr<rocksdb::Transaction>& GetTransaction() const;
-
-    bool IsInitialized() const noexcept { return _initialized; }
-
-    void Reset() {
-      _txn.reset();
-      _initialized = false;
-    }
-
-   private:
-    mutable std::shared_ptr<rocksdb::Transaction> _txn;
-    bool _initialized = false;
+  enum class State : uint8_t {
+    None = 0,
+    HasRocksDBRead = 1 << 0,
+    HasRocksDBWrite = 1 << 1,
+    HasTransactionBegin = 1 << 2,
   };
 
-  yaclib::Future<Result> Begin();
+  Result Begin();
 
-  yaclib::Future<Result> Commit();
+  Result Commit();
 
-  yaclib::Future<Result> Rollback();
+  Result Rollback();
 
-  bool InsideTransaction() const noexcept { return _txn.IsInitialized(); }
+  void AddRocksDBRead() noexcept;
 
-  const auto& GetTransaction() const { return _txn.GetTransaction(); }
+  void AddRocksDBWrite() noexcept;
+
+  bool HasTransactionBegin() const noexcept;
+
+  rocksdb::Transaction* GetRocksDBTransaction() const noexcept;
+
+  rocksdb::Transaction& EnsureRocksDBTransaction();
+
+  const rocksdb::Snapshot& EnsureRocksDBSnapshot();
+
+  void Destroy() noexcept;
 
  private:
-  LazyTransaction _txn;
+  void CreateStorageSnapshot();
+  void CreateRocksDBTransaction();
+
+  State _state = State::None;
+  std::shared_ptr<StorageSnapshot> _storage_snapshot;
+  std::unique_ptr<rocksdb::Transaction> _rocksdb_transaction;
+  const rocksdb::Snapshot* _rocksdb_snapshot = nullptr;
 };
 
-}  // namespace sdb
+ENABLE_BITMASK_ENUM(Transaction::State);
+
+}  // namespace sdb::query

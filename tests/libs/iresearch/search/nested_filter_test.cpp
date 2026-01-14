@@ -1205,10 +1205,10 @@ TEST_P(NestedFilterTestCase, JoinNone3) {
   // Bitset iterator doesn't provide score, check that wrapper works correctly
   opts.parent = [word = irs::bitset::word_t{}](
                   const irs::SubReader&) mutable -> irs::DocIterator::ptr {
-    irs::SetBit<6>(word);
-    irs::SetBit<8>(word);
-    irs::SetBit<13>(word);
-    irs::SetBit<20>(word);
+    irs::SetBit(word, 6);
+    irs::SetBit(word, 8);
+    irs::SetBit(word, 13);
+    irs::SetBit(word, 20);
     return irs::memory::make_managed<PrevDocWrapper>(
       irs::memory::make_managed<irs::BitsetDocIterator>(&word, &word + 1));
   };

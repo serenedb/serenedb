@@ -133,7 +133,7 @@ class SamePositionQuery : public Filter::Query {
       SDB_ASSERT(reader);
 
       // get postings
-      auto docs = reader->postings(*term_state.cookie, features);
+      auto docs = reader->MakeIterator(features, *term_state.cookie);
       SDB_ASSERT(docs);
 
       // get needed postings attributes

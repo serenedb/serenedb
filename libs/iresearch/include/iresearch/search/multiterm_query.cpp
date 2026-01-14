@@ -138,7 +138,7 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
   const bool no_score = ord.empty();
   for (auto& entry : state->scored_states) {
     SDB_ASSERT(entry.cookie);
-    auto docs = reader->postings(*entry.cookie, features);
+    auto docs = reader->MakeIterator(features, *entry.cookie);
 
     if (!docs) [[unlikely]] {
       continue;

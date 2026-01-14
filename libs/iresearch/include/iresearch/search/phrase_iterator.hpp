@@ -467,7 +467,7 @@ struct VariadicPhraseAdapter : ScoreAdapter {
     position = irs::GetMutable<PosAttr>(this);
   }
 
-  irs::PosAttr* position{};
+  PosAttr* position{};
   score_t boost{kNoBoost};
 };
 
@@ -482,7 +482,7 @@ struct VariadicPhraseOffsetAdapter : VariadicPhraseAdapter {
                       : nullptr;
   }
 
-  const irs::OffsAttr* offset{};
+  const OffsAttr* offset{};
 };
 
 template<typename Adapter>

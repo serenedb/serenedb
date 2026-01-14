@@ -316,6 +316,10 @@ jobs:
           retention-days: 30
 
       # ==================== CLEANUP ====================
+      - name: Update file ownership
+        if: always() && !cancelled()
+        run: ./private/ci/steps/07-ci-in-docker-update-file-ownership.bash
+
       - name: Docker cleanup
         if: always() && !cancelled()
         run: |

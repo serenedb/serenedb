@@ -34,13 +34,24 @@ class SinkInsertWriter {
 
   virtual void Init(size_t batch_size) {}
 
-  virtual void SwitchColumn(velox::TypeKind kind, bool have_nulls,
-                            sdb::catalog::Column::Id column_id) {}
+  // returns true if writer is interested in this column
+  virtual bool SwitchColumn(velox::TypeKind kind, bool have_nulls,
+                            sdb::catalog::Column::Id column_id) {
+    return false;
+  }
   virtual void Write(std::span<const rocksdb::Slice> cell_slices,
                      std::string_view full_key) = 0;
 
   virtual void Finish() = 0;
   virtual void Abort() = 0;
+};
+
+class SinkUpdateWriter : public SinkInsertWriter {
+ public:
+  SinkUpdateWriter() = default;
+
+  virtual bool IsIndexed(sdb::catalog::Column::Id column_id) const noexcept = 0;
+  virtual void DeleteRow(std::string_view row_key) = 0;
 };
 
 class SinkDeleteWriter {

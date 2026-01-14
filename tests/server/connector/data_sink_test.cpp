@@ -97,9 +97,9 @@ class DataSinkTest : public ::testing::Test,
       column_oids.push_back(static_cast<sdb::catalog::Column::Id>(i));
     }
     sdb::connector::primary_key::Create(*data, pk, written_row_keys);
-    sdb::connector::RocksDBDataSink sink(*transaction, *_cf_handles.front(),
-                                         *pool_.get(), object_key, pk,
-                                         column_oids, {}, false);
+    sdb::connector::RocksDBInsertDataSink sink(
+      *transaction, *_cf_handles.front(), *pool_.get(), object_key, pk,
+      column_oids, {});
     sink.appendData(data);
     while (!sink.finish()) {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));

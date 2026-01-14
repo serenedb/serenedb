@@ -41,7 +41,7 @@ class SearchSinkInsertWriter final : public SinkInsertWriter {
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key) override;
 
-  void SwitchColumn(velox::TypeKind kind, bool have_nulls,
+  bool SwitchColumn(velox::TypeKind kind, bool have_nulls,
                     sdb::catalog::Column::Id column_id) override;
   void Finish() override;
 

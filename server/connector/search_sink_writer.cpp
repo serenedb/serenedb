@@ -67,7 +67,7 @@ SearchSinkInsertWriter::SearchSinkInsertWriter(
   _pk_field.name = kPkFieldName;
 }
 
-void SearchSinkInsertWriter::SwitchColumn(velox::TypeKind kind, bool have_nulls,
+bool SearchSinkInsertWriter::SwitchColumn(velox::TypeKind kind, bool have_nulls,
                                           sdb::catalog::Column::Id column_id) {
   if (kind == facebook::velox::TypeKind::UNKNOWN) {
     // for UNKNOWN type we always have nulls so no need of separate nulls
@@ -79,6 +79,7 @@ void SearchSinkInsertWriter::SwitchColumn(velox::TypeKind kind, bool have_nulls,
   }
   SDB_ASSERT(_document.has_value());
   _document->NextFieldBatch();
+  return true;
 }
 
 void SearchSinkInsertWriter::Write(std::span<const rocksdb::Slice> cell_slices,

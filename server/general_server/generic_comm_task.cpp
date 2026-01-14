@@ -79,6 +79,10 @@ void GenericCommTask<SocketType, Base>::Close(asio_ns::error_code ec) {
 
 template<rest::SocketType SocketType, typename Base>
 void GenericCommTask<SocketType, Base>::AsyncReadSome() try {
+  if (!_protocol || Stopped()) {
+    return;
+  }
+  
   asio_ns::error_code ec;
   // first try a sync read for performance
   if (rest::AsioSocket<SocketType>::supportsMixedIO()) {

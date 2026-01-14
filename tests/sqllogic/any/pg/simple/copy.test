@@ -1,3 +1,6 @@
+hash-threshold 1337
+
+
 statement ok
 CREATE TABLE tindex
 (
@@ -192,3 +195,9 @@ CREATE TABLE arelav
 
 statement count 100000
 COPY arelav FROM '/tmp/arelav' WITH (FORMAT CSV, HEADER 1);
+
+
+query
+SELECT * FROM arelav ORDER BY 1, 2, 3;
+----
+300003 values hashing to 568009c5b2055554ab4bd827ebe85b75

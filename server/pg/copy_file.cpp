@@ -118,8 +118,9 @@ uint64_t CopyInReadFile::ReadInternal(char* pos, uint64_t length) const {
   if (msg.IsDone()) {
     return 0;
   }
+  // TODO: error malformed packet if data.size() < 5
   std::string_view data{msg.data};
-  data.remove_prefix(5);  // Skip message type and length)
+  data.remove_prefix(5);  // Skip message type and length
   std::memcpy(pos, data.data(), data.size());
   return data.size();
 }

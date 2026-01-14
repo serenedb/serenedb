@@ -21,12 +21,6 @@
 #include "pg_feature.h"
 
 #include <axiom/optimizer/FunctionRegistry.h>
-#include <velox/common/file/FileSystems.h>
-#include <velox/dwio/dwrf/RegisterDwrfReader.h>
-#include <velox/dwio/dwrf/RegisterDwrfWriter.h>
-#include <velox/dwio/orc/reader/OrcReader.h>
-#include <velox/dwio/parquet/RegisterParquetReader.h>
-#include <velox/dwio/parquet/RegisterParquetWriter.h>
 #include <velox/dwio/text/RegisterTextReader.h>
 #include <velox/dwio/text/RegisterTextWriter.h>
 #include <velox/functions/prestosql/aggregates/RegisterAggregateFunctions.h>
@@ -163,15 +157,8 @@ void PostgresFeature::prepare() {
 
   velox::Type::registerSerDe();
 
-  velox::filesystems::registerLocalFileSystem();
-
   velox::text::registerTextReaderFactory();
   velox::text::registerTextWriterFactory();
-  velox::parquet::registerParquetReaderFactory();
-  velox::parquet::registerParquetWriterFactory();
-  velox::dwrf::registerDwrfReaderFactory();
-  velox::dwrf::registerDwrfWriterFactory();
-  velox::orc::registerOrcReaderFactory();
 
   // TODO(mbkkt) velox::registerGeometryType();
   velox::registerHyperLogLogType();

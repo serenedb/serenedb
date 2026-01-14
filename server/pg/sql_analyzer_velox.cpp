@@ -1384,7 +1384,7 @@ void SqlAnalyzer::MakeTableWrite(State& state, const Node& stmt,
             ERR_MSG("column \"", column.name, "\" is a generated column."),
             ERR_DETAIL("Generated columns cannot be used in COPY."));
         default:
-          SDB_ASSERT(false);
+          SDB_UNREACHABLE();
       }
     }
 
@@ -1535,7 +1535,7 @@ void SqlAnalyzer::MakeTableWrite(State& state, const Node& stmt,
       case T_UpdateStmt:
         return kUpdate;
       default:
-        SDB_ASSERT(false);
+        SDB_UNREACHABLE();
     }
   }();
 
@@ -1620,11 +1620,10 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
                     ERR_MSG("INSERT has more expressions than target columns"),
                     CURSOR_POS(ErrorPosition(ExprLocation(&stmt))));
   }
-  containers::FlatHashSet<std::string_view> unique_aliases;
-  unique_aliases.reserve(input_type.size());
+
   for (uint32_t i = 0; i < input_type.size(); ++i) {
     if (input_type.childAt(i) == kDefaultValueTypePlaceHolderPtr) {
-      continue;  // will be handled in the loop below
+      continue;  // will be handled in the MakeTableWrite
     }
     if (stmt.cols) {
       const std::string_view name = strVal(list_nth(stmt.cols, i));
@@ -1634,8 +1633,7 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
                         ERR_MSG("column \"", name, "\" of relation \"",
                                 table_name, "\" does not exist"));
       }
-      auto [_, emplaced] = unique_aliases.emplace(name);
-      if (!emplaced) {
+      if (absl::c_contains(column_names, name)) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_DUPLICATE_COLUMN),
           CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
@@ -1738,23 +1736,6 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
     }
     column_exprs.emplace_back(std::move(expr));
   });
-
-  std::vector<const catalog::Column*> generated_columns;
-  for (const auto& column : table.Columns()) {
-    if (!column.IsGenerated()) {
-      continue;
-    }
-
-    if (absl::c_linear_search(column_names, column.name)) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_GENERATED_ALWAYS),
-        CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
-        ERR_MSG("column \"", column.name, "\" can only be updated to DEFAULT"),
-        ERR_DETAIL("Column \"", column.name, "\" is a generated column."));
-    }
-
-    generated_columns.emplace_back(&column);
-  }
 
   MakeTableWrite(state, ToNode(&stmt), *object, std::move(column_names),
                  std::move(column_exprs));

@@ -192,6 +192,7 @@ jobs:
       SQLLOGIC_TESTS: ${{ inputs.SQLLOGIC_TESTS }}
       INTEGRATION_TESTS: ${{ inputs.INTEGRATION_TESTS }}
       BUILD_PACKAGES: ${{ inputs.BUILD_PACKAGES }}
+      DEB_TAR_PACKAGES: ${{ inputs.DEB_TAR_PACKAGES }} 
       FULL_SUITE: ${{ inputs.FULL_SUITE }}
       SANITIZERS: ${{ inputs.SANITIZERS }}
       USE_COVERAGE: ${{ inputs.USE_COVERAGE }}

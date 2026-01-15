@@ -36,7 +36,7 @@ class CopyOutWriteFile final : public velox::WriteFile {
   void append(std::string_view data) final;
   void flush() final;
   void close() final;
-  uint64_t size() const final;
+  uint64_t size() const final { return _size; }
 
  private:
   message::Buffer& _buffer;
@@ -52,17 +52,19 @@ class CopyInReadFile final : public velox::ReadFile {
     uint64_t offset, uint64_t length, void* buf,
     const velox::FileStorageContext& fileStorageContext = {}) const final;
 
-  uint64_t size() const final;
-  uint64_t memoryUsage() const final;
-  bool shouldCoalesce() const final;
-  std::string getName() const final;
-  uint64_t getNaturalReadSize() const final;
+  uint64_t size() const final { return std::numeric_limits<uint64_t>::max(); }
+  uint64_t memoryUsage() const final { return 0; }
+  bool shouldCoalesce() const final { return false; }
+  std::string getName() const final { return "CopyInReadFile"; }
+  uint64_t getNaturalReadSize() const final { return 8196; }
+
+  ~CopyInReadFile() override { _copy_queue.CloseListening(); }
 
  private:
-  uint64_t ReadInternal(char* pos, uint64_t length) const;
-
   message::Buffer& _buffer;
   CopyMessagesQueue& _copy_queue;
+  mutable CopyMessagesQueueIterator _copy_queue_it;
+  mutable uint64_t _prev_offset = 0;
 };
 
 }  // namespace sdb::pg

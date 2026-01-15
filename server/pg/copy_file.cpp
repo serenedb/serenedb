@@ -80,12 +80,10 @@ void CopyOutWriteFile::flush() { _buffer.Commit(true); }
 
 void CopyOutWriteFile::close() { _buffer.Write(ToBuffer(kCopyDone), true); }
 
-uint64_t CopyOutWriteFile::size() const { return _size; }
-
 CopyInReadFile::CopyInReadFile(message::Buffer& buffer,
                                CopyMessagesQueue& copy_queue,
                                const size_t column_count)
-  : _buffer{buffer}, _copy_queue{copy_queue} {
+  : _buffer{buffer}, _copy_queue{copy_queue}, _copy_queue_it{copy_queue} {
   const size_t message_size = sizeof(uint8_t) + sizeof(int32_t) +
                               sizeof(uint8_t) + sizeof(int16_t) +
                               (column_count * sizeof(int16_t));
@@ -110,43 +108,17 @@ CopyInReadFile::CopyInReadFile(message::Buffer& buffer,
     data = data.subspan(2);
   }
 
+  _copy_queue.StartListening();
   _buffer.Commit(true);
 }
 
-uint64_t CopyInReadFile::ReadInternal(char* pos, uint64_t length) const {
-  auto msg = _copy_queue.GetMsg();
-  if (msg.IsDone()) {
-    return 0;
-  }
-  // TODO: error malformed packet if data.size() < 5
-  SDB_ASSERT(msg.data.size() >= 5);
-  std::string_view data{msg.data};
-  data.remove_prefix(5);  // Skip message type and length
-  std::memcpy(pos, data.data(), data.size());
-  return data.size();
-}
-
 std::string_view CopyInReadFile::pread(
-  uint64_t /*offset*/, uint64_t length, void* buf,
+  uint64_t offset, uint64_t length, void* buf,
   const velox::FileStorageContext& /*fileStorageContext*/) const {
-  const auto bytes_read = ReadInternal(static_cast<char*>(buf), length);
+  SDB_ASSERT(offset >= _prev_offset, "CopyIn does not support seeking back");
+  _prev_offset = offset;
+  const auto bytes_read = _copy_queue_it.Next(static_cast<char*>(buf), length);
   return {static_cast<char*>(buf), bytes_read};
-}
-
-uint64_t CopyInReadFile::size() const {
-  return std::numeric_limits<uint64_t>::max();
-}
-
-uint64_t CopyInReadFile::memoryUsage() const { return 0; }
-
-bool CopyInReadFile::shouldCoalesce() const { return false; }
-
-std::string CopyInReadFile::getName() const { return "CopyInReadFile"; }
-
-uint64_t CopyInReadFile::getNaturalReadSize() const {
-  // 8192 is a common default buffer size for the copydata packet in psql,
-  // subtracting 5 bytes for message type and length
-  return 8192 - 5;
 }
 
 }  // namespace sdb::pg

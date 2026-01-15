@@ -155,6 +155,7 @@ PgSQLCommTaskBase::PgSQLCommTaskBase(rest::GeneralServer& server,
                                      ConnectionInfo info)
   : rest::CommTask(server, std::move(info)),
     _feature{server.server().getFeature<PostgresFeature>()},
+    _copy_queue{_queue_mutex},
     _send{64, 4096, 4096,
           [this](message::SequenceView data) { this->SendAsync(data); }} {}
 
@@ -1127,12 +1128,12 @@ void PgSQLCommTaskBase::ParseClientParameters(std::string_view data) {
 }
 
 void PgSQLCommTaskBase::CancelPacket() {
-  std::lock_guard lock{_queue_mutex};
+  std::unique_lock lock{_queue_mutex};
   _cancel_packet.store(true, std::memory_order_relaxed);
   if (_current_portal && _current_portal->cursor) {
     _current_portal->cursor->RequestCancel();
   }
-  _copy_queue.Abort();
+  _copy_queue.Abort(lock);
 }
 
 void PgSQLCommTaskBase::ReleaseCursor(SqlPortal& portal) {

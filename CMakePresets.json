@@ -13,6 +13,7 @@
         "CMAKE_SHARED_LINKER_FLAGS": "-fuse-ld=lld",
         "AUTO_UPDATE_MODULES": "On",
         "USE_DEBUG_INFO": "LLDB",
+        "SDB_SANITIZE": "",
         "SDB_FAULT_INJECTION": "On",
         "SDB_GTEST": "On",
         "SDB_IOURING": "On",
@@ -56,7 +57,6 @@
         "SDB_DEV": "Off",
         "SDB_USE_FMT": "On",
         "SDB_FAULT_INJECTION": "Off",
-        "BUILD_IRS_TESTS": "Off",
         "SDB_GTEST": "Off",
         "SDB_ALLOC": "JE"
       }

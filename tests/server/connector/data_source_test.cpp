@@ -103,11 +103,14 @@ class DataSourceTest : public ::testing::Test,
     for (velox::vector_size_t i = 0; i < data->type()->asRow().size(); ++i) {
       column_ids.emplace_back(i);
     }
+    SDB_ASSERT(!column_ids.empty());
+    auto effective_column_id = column_ids[0];
+
     sdb::connector::RocksDBDataSource source(
       *pool_.get(), nullptr, *_db, *_cf_handles.front(),
       std::shared_ptr<const velox::RowType>(
         std::shared_ptr<const velox::RowType>{nullptr}, &data->type()->asRow()),
-      column_ids, object_key);
+      column_ids, effective_column_id, object_key);
 
     // read as single batch
     {
@@ -288,7 +291,7 @@ TEST_F(DataSourceTest, test_tableReadEmptyOutput) {
   MakeRocksDBWrite(row_data, kObjectKey);
   sdb::connector::RocksDBDataSource source(*pool_.get(), nullptr, *_db,
                                            *_cf_handles.front(), row_type_empty,
-                                           {0}, kObjectKey);
+                                           {0}, 0, kObjectKey);
 
   // read as single batch
   {

@@ -28,6 +28,7 @@
 #include "basics/string_utils.h"
 #include "query/config.h"
 #include "query/query.h"
+#include "query/transaction.h"
 #include "utils.h"
 
 namespace sdb::query {
@@ -48,7 +49,7 @@ void Cursor::RequestCancel() {
     SDB_ASSERT(!_query.HasExternal());
     _runner.RequestCancel();
   } else if (_query.HasExternal()) {
-    std::ignore = _query.GetExternalExecutor().RequestCancel();
+    _query.GetExternalExecutor().RequestCancel().Detach();
   }
 }
 
@@ -288,6 +289,10 @@ Cursor::Cursor(std::function<void()>&& user_task, const Query& query)
 Cursor::~Cursor() {
   if (_query.HasExternal()) {
     std::ignore = _query.GetExternalExecutor().RequestCancel().Get();
+  }
+  // TODO: it doesn't look as correct place to do this
+  if (!_query.GetContext().transaction->HasTransactionBegin()) {
+    _query.GetContext().transaction->Destroy();
   }
 }
 

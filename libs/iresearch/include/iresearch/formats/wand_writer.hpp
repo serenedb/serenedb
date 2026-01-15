@@ -40,8 +40,8 @@ class WandWriterImpl final : public WandWriter {
 
  public:
   template<typename... Args>
-  WandWriterImpl(size_t max_levels, const Scorer& scorer, Args&&... args)
-    : _levels{max_levels + 1}, _producer{scorer, std::forward<Args>(args)...} {
+  WandWriterImpl(size_t max_levels, Args&&... args)
+    : _levels{max_levels + 1}, _producer{std::forward<Args>(args)...} {
     SDB_ASSERT(max_levels != 0);
   }
 
@@ -98,43 +98,6 @@ class WandWriterImpl final : public WandWriter {
   [[no_unique_address]] Producer _producer;
 };
 
-template<bool NeedScore>
-struct WandScorer {
-  explicit WandScorer(const Scorer& /*scorer*/) noexcept {}
-
-  constexpr bool Prepare(const ColumnProvider& /*reader*/,
-                         const FieldProperties& /*meta*/,
-                         const AttributeProvider& /*attrs*/) noexcept {
-    return true;
-  }
-};
-
-template<>
-struct WandScorer<true> {
-  explicit WandScorer(const Scorer& scorer) : _scorer{scorer} {
-    // TODO(mbkkt) alignment could be incorrect here
-    _stats.resize(scorer.stats_size().first);
-    scorer.collect(_stats.data(), nullptr, nullptr);
-  }
-
-  bool Prepare(const ColumnProvider& reader, const FieldProperties& meta,
-               const AttributeProvider& attrs) {
-    _func = _scorer.PrepareScorer(reader, meta, _stats.data(), attrs, kNoBoost);
-    return !_func.IsDefault();
-  }
-
-  score_t GetScore() const noexcept {
-    score_t score{};
-    _func(&score);
-    return score;
-  }
-
- private:
-  const Scorer& _scorer;
-  ScoreFunction _func;
-  sdb::containers::SmallVector<byte_type, 16> _stats;
-};
-
 enum WandTag : uint32_t {
   // What will be written?
   kWandTagFreq = 0U,
@@ -148,13 +111,10 @@ enum WandTag : uint32_t {
   kWandTagDivNorm = 1U << 3U,
   // Produce best freq, norm for BM25 with specified b -- (0...1)
   kWandTagBM25 = 1U << 4U,
-  // Produce max score
-  kWandTagMaxScore = 1U << 5U,
 };
 
 template<uint32_t Tag>
 class FreqNormProducer {
-  static constexpr bool kMaxScore = (Tag & kWandTagMaxScore) != 0;
   static constexpr bool kBm25 = (Tag & kWandTagBM25) != 0;
   static constexpr bool kDivNorm = (Tag & kWandTagDivNorm) != 0;
   static constexpr bool kMinNorm = (Tag & kWandTagMinNorm) != 0;
@@ -200,7 +160,6 @@ class FreqNormProducer {
 
  public:
   struct Entry {
-    [[no_unique_address]] utils::Need<kMaxScore, score_t> score{0.f};
     uint32_t freq{1};
     [[no_unique_address]] utils::Need<kNorm, uint32_t> norm{
       std::numeric_limits<uint32_t>::max()};
@@ -217,12 +176,6 @@ class FreqNormProducer {
       }
     } else if constexpr (kDivNorm) {
       ProduceDivNorm(from.freq, from.norm, to);
-    } else if constexpr (kMaxScore) {
-      if (from.score > to.score) {
-        to.score = from.score;
-        to.freq = from.freq;
-        to.norm = from.norm;
-      }
     }
   }
 
@@ -251,8 +204,7 @@ class FreqNormProducer {
     return size;
   }
 
-  explicit FreqNormProducer(const Scorer& scorer, score_t b = 0.f)
-    : _scorer{scorer}, _b{b} {}
+  explicit FreqNormProducer(score_t b = 0.f) : _b{b} {}
 
   bool Prepare(const ColumnProvider& reader, const FieldProperties& meta,
                const AttributeProvider& attrs) {
@@ -263,7 +215,7 @@ class FreqNormProducer {
     }
 
     if constexpr (kNorm) {
-      const auto* doc = irs::get<irs::DocAttr>(attrs);
+      const auto* doc = irs::get<DocAttr>(attrs);
 
       if (doc == nullptr) [[unlikely]] {
         return false;
@@ -283,7 +235,7 @@ class FreqNormProducer {
       });
     }
 
-    return _scorer.Prepare(reader, meta, attrs);
+    return true;
   }
 
   IRS_FORCE_INLINE void Produce(Entry& to) noexcept {
@@ -302,15 +254,6 @@ class FreqNormProducer {
         const auto norm = _norm();
         to.norm = norm < to.norm ? norm : to.norm;
         to.norm = to.norm < to.freq ? to.freq : to.norm;
-      }
-    } else if constexpr (kMaxScore) {
-      const auto score = _scorer.GetScore();
-      if (score > to.score) {
-        to.score = score;
-        to.freq = _freq->value;
-        if constexpr (kNorm) {
-          to.norm = _norm();
-        }
       }
     }
   }
@@ -347,7 +290,6 @@ class FreqNormProducer {
   const irs::FreqAttr* _freq{};
   [[no_unique_address]]
   utils::Need<kNorm, absl::AnyInvocable<uint32_t() noexcept>> _norm;
-  [[no_unique_address]] WandScorer<kMaxScore> _scorer;
   [[no_unique_address]] utils::Need<kBm25, score_t> _b;
 };
 

@@ -58,8 +58,8 @@ class BufferedColumnIterator : public ResettableDocIterator {
       _end = &kEmpty;
     }
     std::get<CostAttr>(_attrs).reset(values.size());
-    std::get<irs::PayAttr>(_attrs).value = {};
-    std::get<irs::DocAttr>(_attrs).value = {};
+    std::get<PayAttr>(_attrs).value = {};
+    std::get<DocAttr>(_attrs).value = {};
   }
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);
@@ -69,22 +69,21 @@ class BufferedColumnIterator : public ResettableDocIterator {
     return std::get<DocAttr>(_attrs).value;
   }
 
-  bool next() noexcept final {
+  doc_id_t advance() noexcept final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
 
     if (_next == _end) [[unlikely]] {
-      doc_value = doc_limits::eof();
-      return false;
+      return doc_value = doc_limits::eof();
     }
 
-    auto& payload = std::get<irs::PayAttr>(_attrs);
+    auto& payload = std::get<PayAttr>(_attrs);
 
     doc_value = _next->key;
     payload.value = {_data.data() + _next->begin, _next->size};
 
     ++_next;
 
-    return true;
+    return doc_value;
   }
 
   doc_id_t seek(doc_id_t target) noexcept final {
@@ -103,14 +102,13 @@ class BufferedColumnIterator : public ResettableDocIterator {
     }
 
     _next = curr;
-    next();
-    return value();
+    return advance();
   }
 
   void reset() final {
     _next = _begin;
-    std::get<irs::DocAttr>(_attrs).value = {};
-    std::get<irs::PayAttr>(_attrs).value = {};
+    std::get<DocAttr>(_attrs).value = {};
+    std::get<PayAttr>(_attrs).value = {};
   }
 
  private:

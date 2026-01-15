@@ -166,7 +166,7 @@ query
 SELECT '  spaces  '::bytea;
 ----
 bytea
-  spaces
+  spaces  
 
 
 # Bytea representing binary data - DEADBEEF

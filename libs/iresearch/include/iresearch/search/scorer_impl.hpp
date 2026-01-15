@@ -28,6 +28,7 @@
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/error/error.hpp"
+#include "iresearch/formats/formats.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/utils/string.hpp"
 
@@ -63,7 +64,7 @@ struct TermCollectorImpl final : TermCollector {
 
   void collect(const SubReader& /*segment*/, const TermReader& /*field*/,
                const AttributeProvider& term_attrs) final {
-    auto* meta = get<TermMeta>(term_attrs);
+    const auto* meta = irs::get<TermMeta>(term_attrs);
 
     if (meta) {
       docs_with_term += meta->docs_count;

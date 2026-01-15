@@ -56,7 +56,7 @@ struct ExecutionContext {
   const Scorers& scorers = Scorers::kUnordered;
   const AttributeProvider* ctx = nullptr;
   // If enabled, wand would use first scorer from scorers
-  WandContext wand;
+  WandContext wand{};
 };
 
 // Base class for all user-side filters

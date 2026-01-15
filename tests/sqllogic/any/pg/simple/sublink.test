@@ -70,8 +70,8 @@ WHERE
   )
 ORDER BY hero.name;
 ----
-name description total_money
-deadinside Sad Guy 200
+name	description	total_money
+deadinside	Sad Guy	200
 
 
 query
@@ -121,7 +121,7 @@ WHERE EXISTS(
   WHERE outer_skuf.name = name
 );
 ----
-name iq
+name	iq
 
 
 query
@@ -140,9 +140,9 @@ WHERE networth.name IN (
   SELECT name FROM networth WHERE name IN ('pudge', 'deadinside')
 );
 ----
-name total_money
-pudge 150
-deadinside 200
+name	total_money
+pudge	150
+deadinside	200
 
 
 query
@@ -168,9 +168,9 @@ WHERE networth.name IN (
   SELECT name FROM guys WHERE name = networth.name
 );
 ----
-name total_money
-deadinside 200
-makak 175
+name	total_money
+deadinside	200
+makak	175
 
 
 query
@@ -182,7 +182,7 @@ WHERE EXISTS(
   SELECT 'vedernikoff is my best friend' WHERE false
 );
 ----
-iq1 column2
+iq1	column2
 
 
 query
@@ -194,10 +194,10 @@ WHERE EXISTS(
   SELECT 'i wanna be fired' WHERE true
 );
 ----
-iq1 iq2
-123 69
-123 69
-123 69
+iq1	iq2
+123	69
+123	69
+123	69
 
 
 query
@@ -213,10 +213,10 @@ WHERE NOT EXISTS(
   WHERE iq1 + iq2 + iq = 3 * iq1 + iq
 );
 ----
-iq1 iq2
-228 69
-228 69
-228 69
+iq1	iq2
+228	69
+228	69
+228	69
 
 
 query
@@ -259,8 +259,8 @@ WHERE salkobaki1.column1 + salkobaki2.column2 IN (
   SELECT column1 FROM salkobaki1
 );
 ----
-column1 column2 column3 column1 column2 column3
-1 2 lmao 1 2 lmao
+column1	column2	column3	column1	column2	column3
+1	2	lmao	1	2	lmao
 
 
 query
@@ -290,8 +290,8 @@ WHERE
   )
 ORDER BY hero.name;
 ----
-name description total_money
-deadinside Sad Guy 200
+name	description	total_money
+deadinside	Sad Guy	200
 
 
 onlyif serenedb
@@ -400,8 +400,8 @@ WHERE total = (
   WHERE m2.name = m.name
 );
 ----
-name total
-pudge 150
+name	total
+pudge	150
 
 # query -- there's no node in axiom
 # SELECT *
@@ -458,10 +458,10 @@ WHERE EXISTS (
   ) AS kek(whoever, whatever)
 );
 ----
-kostya vedernikoff
-clickclack 666
-deadinside 993
-pudge 228
+kostya	vedernikoff
+clickclack	666
+deadinside	993
+pudge	228
 
 
 # query -- doesn't work in axiom
@@ -495,10 +495,10 @@ insert into t values (1), (2), (3);
 query
 select z, (select count(*) from t t2(y) where z = y) from t t1(z);
 ----
-z count
-1 1
-2 1
-3 1
+z	count
+1	1
+2	1
+3	1
 
 
 statement ok

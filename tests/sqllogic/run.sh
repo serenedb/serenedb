@@ -1,5 +1,16 @@
 #!/bin/bash
 
+# Boolean flags configuration
+declare -a BOOLEAN_FLAGS=(debug override force-override format  show-all-errors)
+
+is_boolean_flag() {
+    local key="$1"
+    for flag in "${BOOLEAN_FLAGS[@]}"; do
+        [[ "$key" == "$flag" ]] && return 0
+    done
+    return 1
+}
+
 # Default values
 declare -A defaults=(
     [single_port]=''
@@ -11,7 +22,10 @@ declare -A defaults=(
     [jobs]=$(nproc)
     [debug]=false
     [override]=false
-    [show_all_errors]=true
+    [force_override]=false
+    [format]=false
+    [show_all_errors]=false
+    [skip_failed]=''
     [database]='serenedb'
     [host]='localhost'
 )
@@ -41,7 +55,7 @@ parse_options() {
         fi
 
         case "$key" in
-            single-port|cluster-port|jobs|protocol|test|junit|runner|debug|override|show-all-errors|database|host)
+            single-port|cluster-port|jobs|protocol|test|junit|runner|debug|override|format|force-override|show-all-errors|skip-failed|database|host)
                 local var_name="${key//-/_}"  # Convert dashes to underscores
 
                 # For non-equal format (--option value), get the next argument
@@ -51,7 +65,7 @@ parse_options() {
                         shift
                     else
                         # Boolean flags get special treatment
-                        if [[ "$key" == "debug" || "$key" == "override" || "$key" == "show-all-errors" ]]; then
+                        if is_boolean_flag "$key"; then
                             value=true
                         else
                             value=""
@@ -60,7 +74,7 @@ parse_options() {
                 fi
 
                 # Apply default if value is empty (except for boolean flags)
-                if [[ -z "$value" && "$key" != "debug" && "$key" != "override" && "$key" != "show-all-errors" ]]; then
+                if [[ -z "$value" ]] && ! is_boolean_flag "$key"; then
                     value="${defaults[$var_name]}"
                 fi
 
@@ -107,7 +121,10 @@ echo "Runner: $runner"
 echo "Jobs: $jobs"
 echo "Debug: $debug"
 echo "Override: $override"
+echo "Force override: $force_override"
+echo "Format: $format"
 echo "Show all errors: $show_all_errors"
+echo "Skip failed: $skip_failed"
 
 # Run tests based on parameters
 run_tests() {
@@ -119,14 +136,30 @@ run_tests() {
   echo "Running tests in $mode mode on port $port with $engine"
   echo
 
+  # Build options dynamically
+  local options=""
+
   if [[ "$debug" != "true" ]]; then
-    timeout="--shutdown-timeout 60"
+    options+="--shutdown-timeout 60 "
   fi
-  if [[ "$override" == "true" ]]; then
-    override_options="--override"
-  fi
-  if [[ "$show_all_errors" == "true" ]]; then
-    show_all_errors_options="--show-all-errors"
+
+  # Boolean flags - map shell variable names to CLI flags
+  declare -A flag_map=(
+    [override]="--override"
+    [format]="--format"
+    [force_override]="--force-override"
+    [show_all_errors]="--show-all-errors"
+  )
+
+  for var_name in "${!flag_map[@]}"; do
+    if [[ "${!var_name}" == "true" ]]; then
+      options+="${flag_map[$var_name]} "
+    fi
+  done
+
+  local skip_failed_opt=""
+  if [[ -n "$skip_failed" ]]; then
+    skip_failed_opt="--skip-failed"
   fi
 
   # Execute the command and capture the exit code
@@ -135,9 +168,8 @@ run_tests() {
     --jobs "$jobs" \
     --label "$database" --label "$mode" --label "$engine-protocol" \
     --junit "$junit-$mode-$engine" \
-    $override_options \
-    $show_all_errors_options \
-    $timeout
+    $options \
+    $skip_failed_opt ${skip_failed:+"$skip_failed"}
   return $?
 }
 

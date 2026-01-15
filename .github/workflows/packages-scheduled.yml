@@ -1,0 +1,36 @@
+name: Images-and-Packages-Cron
+
+on:
+  schedule:
+    - cron: '30 23 * * *'
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-reusable.yml
+    with:
+      LOCATION: 'self-hosted'
+      BRANCH: 'main'
+      SDB_CLUSTER: true
+      SDB_CLUSTER_BRANCH: 'main'
+      DOCKER_BUILD_IMAGES: false
+      DOCKER_SERENEDB_IMAGE: true
+      PUSH_IMAGES_2_REGISTRY: true
+      DEB_TAR_PACKAGES: true
+      DOCKER_TAG: ''
+      BUILD_IMAGE: 'registry.serenedb.com:5000/serenedb-build-ubuntu:latest'
+      BUILDMODE: 'Release'
+      USE_DEBUG_INFO: 'COLUMNS'
+      SDB_DEV: 'Off'
+      USE_IPO: 'On'
+      SDB_ALLOC: 'JE'
+      STATIC_EXECUTABLES: 'On'
+      ENSURE_VTUNE_SYMBOLS: 'Off'
+      STRIP_TARBALL: true
+    secrets:
+      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+      TG_TOKEN: ${{ secrets.TG_TOKEN }}
+      TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+      TG_THREAD_ID_BUILD: ${{ secrets.TG_THREAD_ID_BUILD }}
+      TG_THREAD_ID_MAIN: ${{ secrets.TG_THREAD_ID_MAIN }}
+      TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
+      SDB_CLUSTER_REPO: ${{ secrets.SDB_CLUSTER_REPO }}

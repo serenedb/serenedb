@@ -40,6 +40,7 @@ class RocksDBDataSource final : public velox::connector::DataSource {
                     const rocksdb::Snapshot* snapshot, rocksdb::DB& db,
                     rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
                     std::vector<catalog::Column::Id> column_ids,
+                    catalog::Column::Id effective_column_id,
                     ObjectId object_key);
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
@@ -88,6 +89,14 @@ class RocksDBDataSource final : public velox::connector::DataSource {
   rocksdb::ColumnFamilyHandle& _cf;
   velox::RowTypePtr _row_type;
   std::vector<catalog::Column::Id> _column_ids;
+  // Column ID to use for iteration when the requested column is stored in the
+  // key (e.g., kGeneratedPKId). This points to a column whose values are stored
+  // in RocksDB as *values*, not inside *keys*. It's convenient to store it here
+  // for scans where we need only columns that are stored as parts of the key.
+  // Tables with only such columns are tables without columns at all *for now*,
+  // this case is handled in SqlAnalyzer code, such scans are replaced with
+  // empty Values node.
+  catalog::Column::Id _effective_column_id;
   std::shared_ptr<velox::connector::ConnectorSplit> _current_split;
   ObjectId _object_key;
   std::string _last_read_key;

@@ -136,7 +136,7 @@ bool WordnetSynonymsTokenizer::next() {
 }
 
 bool WordnetSynonymsTokenizer::reset(const std::string_view data) {
-  auto& offset = std::get<irs::OffsAttr>(_attrs);
+  auto& offset = std::get<OffsAttr>(_attrs);
   offset.start = 0;
   offset.end = data.size();
 

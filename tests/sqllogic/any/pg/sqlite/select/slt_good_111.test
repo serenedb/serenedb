@@ -36222,17 +36222,6 @@ SELECT + ( - cor0.col1 ) * 11 * col1 + col2 col1 FROM tab2 AS cor0
 -38265
 
 skipif mysql # not compatible
-skipif postgres
-skipif serenedb
-query I rowsort
-SELECT + 82 + - ( + col0 ) / CAST ( col0 + + col0 AS REAL ) FROM tab2
-----
-81
-81
-81
-
-onlyif postgres
-onlyif serenedb
 query I rowsort
 SELECT + 82 + - ( + col0 ) / CAST ( col0 + + col0 AS REAL ) FROM tab2
 ----

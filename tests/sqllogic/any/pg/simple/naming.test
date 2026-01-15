@@ -946,11 +946,11 @@ FROM
 ON length(lhs.word) = length(rhs.word)
 ORDER BY lhs.word, rhs.word;
 ----
-word word
-deadinside clickclack
-deadinside deadinside
-vladgalaka clickclack
-vladgalaka deadinside
+word	word
+deadinside	clickclack
+deadinside	deadinside
+vladgalaka	clickclack
+vladgalaka	deadinside
 
 
 query ???? rowsort
@@ -975,15 +975,15 @@ FROM
 ) AS kek
 WHERE lol.vedernikoff != 993 AND lol.kostya != 'deadinside';
 ----
-kostya vedernikoff extra_col another_col
-abugubugu 777 another 888
-abugubugu 777 another 888
-abugubugu 777 extra 555
-abugubugu 777 extra 555
-ivansolo2003 1337 another 888
-ivansolo2003 1337 another 888
-ivansolo2003 1337 extra 555
-ivansolo2003 1337 extra 555
+kostya	vedernikoff	extra_col	another_col
+abugubugu	777	another	888
+abugubugu	777	another	888
+abugubugu	777	extra	555
+abugubugu	777	extra	555
+ivansolo2003	1337	another	888
+ivansolo2003	1337	another	888
+ivansolo2003	1337	extra	555
+ivansolo2003	1337	extra	555
 
 
 query
@@ -1016,8 +1016,8 @@ JOIN
 )
 ON a.id = d.id AND b.id = c.id;
 ----
-id id id id id
-1 1 1 1 1
+id	id	id	id	id
+1	1	1	1	1
 
 
 query
@@ -1043,8 +1043,8 @@ JOIN
 ) as vedernikoff(iq, digsize)
 ON a.id = vedernikoff.id AND b.id = vedernikoff.id;
 ----
-id id iq digsize id
-1 1 1 1 1
+id	id	iq	digsize	id
+1	1	1	1	1
 
 
 query
@@ -1087,8 +1087,8 @@ SELECT * FROM
 kostya,
 vedernikoff;
 ----
-iq pencil_size pencil_size iq
-1337 4 4 228
+iq	pencil_size	pencil_size	iq
+1337	4	4	228
 
 
 query
@@ -1098,8 +1098,8 @@ WITH vedernikoff as
 )
 SELECT * FROM vedernikoff as kirkuch, vedernikoff as danpuz;
 ----
-iq iq
-228 228
+iq	iq
+228	228
 
 
 query
@@ -1130,12 +1130,12 @@ FROM
 GROUP BY 1, 2
 ORDER BY 2, 1;
 ----
-iq kostya
-15 0
-403 2
-100 13
--2 17
-3 24
+iq	kostya
+15	0
+403	2
+100	13
+-2	17
+3	24
 
 
 query
@@ -1146,8 +1146,8 @@ FROM
 ) AS lol(iq, iq, iq)
 ORDER BY 1;
 ----
-iq iq iq
--2 17 babsky
-3 24 androed
-100 13 zhidky
-403 2 myasnig
+iq	iq	iq
+-2	17	babsky
+3	24	androed
+100	13	zhidky
+403	2	myasnig

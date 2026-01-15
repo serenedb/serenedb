@@ -54,7 +54,7 @@ struct BM25FieldCollector final : FieldCollector {
   void collect(const SubReader& /*segment*/,
                const TermReader& field) noexcept final {
     docs_with_field += field.docs_count();
-    if (auto* freq = get<FreqAttr>(field); freq != nullptr) {
+    if (const auto* freq = irs::get<FreqAttr>(field)) {
       total_term_freq += freq->value;
     }
   }
@@ -478,7 +478,7 @@ WandWriter::ptr BM25::prepare_wand_writer(size_t max_levels) const {
     return {};
   }
   if (IsBM15()) {
-    return std::make_unique<FreqNormWriter<kWandTagMaxFreq>>(max_levels, *this);
+    return std::make_unique<FreqNormWriter<kWandTagMaxFreq>>(max_levels);
   }
   if (IsBM11()) {
     // idf * (k + 1) * tf / (k * (1 - b + b * dl / avg_dl) + tf)
@@ -490,10 +490,10 @@ WandWriter::ptr BM25::prepare_wand_writer(size_t max_levels) const {
     // x / (k * ((1 - b) / dl + b / avg_dl) + x)
     // b == 1
     // x / (k / avg_dl + x)
-    return std::make_unique<FreqNormWriter<kWandTagDivNorm>>(max_levels, *this);
+    return std::make_unique<FreqNormWriter<kWandTagDivNorm>>(max_levels);
   }
   // Approximation that suited for any BM25
-  return std::make_unique<FreqNormWriter<kWandTagBM25>>(max_levels, *this, _b);
+  return std::make_unique<FreqNormWriter<kWandTagBM25>>(max_levels, _b);
 }
 
 WandSource::ptr BM25::prepare_wand_source() const {

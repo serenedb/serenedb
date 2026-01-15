@@ -1,96 +1,99 @@
-[submodule "third_party/abseil-cpp"]
-	path = third_party/abseil-cpp
-	url = git@github.com:serenedb/abseil-cpp.git
-[submodule "third_party/axiom"]
-	path = third_party/axiom
-	url = git@github.com:serenedb/axiom.git
-[submodule "third_party/benchmark"]
-	path = third_party/benchmark
-	url = git@github.com:serenedb/benchmark.git
-[submodule "third_party/date"]
-	path = third_party/date
-	url = git@github.com:serenedb/date.git
-[submodule "third_party/double-conversion"]
-	path = third_party/double-conversion
-	url = git@github.com:serenedb/double-conversion.git
-[submodule "third_party/faiss"]
-	path = third_party/faiss
-	url = https://github.com/serenedb/faiss.git
-[submodule "third_party/fast_float"]
-	path = third_party/fast_float
-	url = git@github.com:serenedb/fast_float.git
-[submodule "third_party/fmt"]
-	path = third_party/fmt
-	url = git@github.com:serenedb/fmt.git
-[submodule "third_party/folly"]
-	path = third_party/folly
-	url = git@github.com:serenedb/folly.git
-[submodule "third_party/googletest"]
-	path = third_party/googletest
-	url = git@github.com:serenedb/googletest.git
 [submodule "third_party/icu"]
 	path = third_party/icu
 	url = git@github.com:serenedb/icu.git
-[submodule "third_party/immer"]
-	path = third_party/immer
-	url = git@github.com:serenedb/immer.git
-[submodule "third_party/libpg_query"]
-	path = third_party/libpg_query
-	url = git@github.com:serenedb/libpg_query.git
-[submodule "third_party/liburing"]
-	path = third_party/liburing
-	url = git@github.com:serenedb/liburing.git
-[submodule "third_party/llvm-project"]
-	path = third_party/llvm-project
-	url = git@github.com:serenedb/llvm-project.git
-[submodule "third_party/lz4"]
-	path = third_party/lz4
-	url = git@github.com:serenedb/lz4.git
-[submodule "third_party/minizip-ng"]
-	path = third_party/minizip-ng
-	url = git@github.com:serenedb/minizip-ng.git
-[submodule "third_party/nghttp2/nghttp2-lib"]
-	path = third_party/nghttp2/nghttp2-lib
-	url = git@github.com:serenedb/nghttp2.git
-[submodule "third_party/nuraft"]
-	path = third_party/nuraft
-	url = git@github.com:serenedb/nuraft.git
-[submodule "third_party/openssl"]
-	path = third_party/openssl
-	url = git@github.com:serenedb/openssl.git
-[submodule "third_party/re2"]
-	path = third_party/re2
-	url = git@github.com:serenedb/re2.git
-[submodule "third_party/rocksdb"]
-	path = third_party/rocksdb
-	url = git@github.com:serenedb/rocksdb.git
-[submodule "third_party/s2geometry"]
-	path = third_party/s2geometry
-	url = git@github.com:serenedb/s2geometry.git
-[submodule "third_party/simdjson"]
-	path = third_party/simdjson
-	url = git@github.com:serenedb/simdjson.git
-[submodule "third_party/tcmalloc"]
-	path = third_party/tcmalloc
-	url = git@github.com:serenedb/tcmalloc.git
-[submodule "third_party/tests/rapidjson"]
-	path = third_party/tests/rapidjson
-	url = git@github.com:serenedb/rapidjson.git
+[submodule "third_party/boost"]
+	path = third_party/boost
+	url = git@github.com:serenedb/boost.git
 [submodule "third_party/velox"]
 	path = third_party/velox
 	url = git@github.com:serenedb/velox.git
+[submodule "third_party/openssl"]
+	path = third_party/openssl
+	url = git@github.com:serenedb/openssl.git
+[submodule "third_party/llvm-project"]
+	path = third_party/llvm-project
+	url = git@github.com:serenedb/llvm-project.git
+[submodule "third_party/rocksdb"]
+	path = third_party/rocksdb
+	url = git@github.com:serenedb/rocksdb.git
+[submodule "third_party/libpg_query"]
+	path = third_party/libpg_query
+	url = git@github.com:serenedb/libpg_query.git
+[submodule "third_party/folly"]
+	path = third_party/folly
+	url = git@github.com:serenedb/folly.git
+[submodule "third_party/simdjson"]
+	path = third_party/simdjson
+	url = git@github.com:serenedb/simdjson.git
+[submodule "third_party/double-conversion"]
+	path = third_party/double-conversion
+	url = git@github.com:serenedb/double-conversion.git
 [submodule "third_party/wasm-micro-runtime"]
 	path = third_party/wasm-micro-runtime
 	url = https://github.com/bytecodealliance/wasm-micro-runtime.git
-[submodule "third_party/xsimd"]
-	path = third_party/xsimd
-	url = git@github.com:serenedb/xsimd.git
-[submodule "third_party/yaclib"]
-	path = third_party/yaclib
-	url = https://github.com/YACLib/YACLib.git
+[submodule "third_party/abseil-cpp"]
+	path = third_party/abseil-cpp
+	url = git@github.com:serenedb/abseil-cpp.git
+[submodule "third_party/faiss"]
+	path = third_party/faiss
+	url = https://github.com/serenedb/faiss.git
+[submodule "third_party/s2geometry"]
+	path = third_party/s2geometry
+	url = git@github.com:serenedb/s2geometry.git
 [submodule "third_party/zlib-ng"]
 	path = third_party/zlib-ng
 	url = git@github.com:serenedb/zlib-ng.git
+[submodule "third_party/nghttp2/nghttp2-lib"]
+	path = third_party/nghttp2/nghttp2-lib
+	url = git@github.com:serenedb/nghttp2.git
+[submodule "third_party/immer"]
+	path = third_party/immer
+	url = git@github.com:serenedb/immer.git
+[submodule "third_party/tcmalloc"]
+	path = third_party/tcmalloc
+	url = git@github.com:serenedb/tcmalloc.git
+[submodule "third_party/googletest"]
+	path = third_party/googletest
+	url = git@github.com:serenedb/googletest.git
+[submodule "third_party/axiom"]
+	path = third_party/axiom
+	url = git@github.com:serenedb/axiom.git
+[submodule "third_party/fmt"]
+	path = third_party/fmt
+	url = git@github.com:serenedb/fmt.git
+[submodule "third_party/liburing"]
+	path = third_party/liburing
+	url = git@github.com:serenedb/liburing.git
+[submodule "third_party/tests/rapidjson"]
+	path = third_party/tests/rapidjson
+	url = git@github.com:serenedb/rapidjson.git
+[submodule "third_party/xsimd"]
+	path = third_party/xsimd
+	url = git@github.com:serenedb/xsimd.git
+[submodule "third_party/minizip-ng"]
+	path = third_party/minizip-ng
+	url = git@github.com:serenedb/minizip-ng.git
+[submodule "third_party/lz4"]
+	path = third_party/lz4
+	url = git@github.com:serenedb/lz4.git
+[submodule "third_party/date"]
+	path = third_party/date
+	url = git@github.com:serenedb/date.git
+[submodule "third_party/yaclib"]
+	path = third_party/yaclib
+	url = https://github.com/YACLib/YACLib.git
+[submodule "third_party/re2"]
+	path = third_party/re2
+	url = git@github.com:serenedb/re2.git
+[submodule "third_party/nuraft"]
+	path = third_party/nuraft
+	url = git@github.com:serenedb/nuraft.git
+[submodule "third_party/benchmark"]
+	path = third_party/benchmark
+	url = git@github.com:serenedb/benchmark.git
+[submodule "third_party/fast_float"]
+	path = third_party/fast_float
+	url = git@github.com:serenedb/fast_float.git
 [submodule "third_party/sqllogictest-rs"]
 	path = third_party/sqllogictest-rs
 	url = git@github.com:serenedb/sqllogictest-rs.git

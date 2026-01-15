@@ -76,7 +76,7 @@ class LimitedSampleCollector : private util::Noncopyable {
     if (!_scored_terms_limit) {
       // state will not be scored
 
-      _state.state->unscored_terms.emplace_back(_state.terms->cookie());
+      _state.state->unscored_states.emplace_back(_state.terms->cookie());
       _state.state->unscored_states_estimation += *_state.docs_count;
       return;  // nothing to collect (optimization)
     }
@@ -86,7 +86,13 @@ class LimitedSampleCollector : private util::Noncopyable {
       _scored_states_heap.emplace_back(_scored_states.size());
       _scored_states.emplace_back(key, _state);
 
-      push();
+      if (_scored_states.size() == _scored_terms_limit) [[unlikely]] {
+        absl::c_make_heap(_scored_states_heap, [&](const size_t lhs,
+                                                   const size_t rhs) noexcept {
+          return _comparer(_scored_states[rhs].key, _scored_states[lhs].key);
+        });
+      }
+
       return;
     }
 
@@ -99,7 +105,8 @@ class LimitedSampleCollector : private util::Noncopyable {
 
       SDB_ASSERT(min_state.cookie);
       // state will not be scored
-      min_state.state->unscored_terms.emplace_back(std::move(min_state.cookie));
+      min_state.state->unscored_states.emplace_back(
+        std::move(min_state.cookie));
       min_state.state->unscored_states_estimation += min_state.docs_count;
 
       // update min state
@@ -113,7 +120,7 @@ class LimitedSampleCollector : private util::Noncopyable {
       push();
     } else {
       // state will not be scored
-      _state.state->unscored_terms.emplace_back(_state.terms->cookie());
+      _state.state->unscored_states.emplace_back(_state.terms->cookie());
       _state.state->unscored_states_estimation += *_state.docs_count;
     }
   }

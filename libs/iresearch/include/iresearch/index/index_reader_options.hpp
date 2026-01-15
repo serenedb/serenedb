@@ -53,7 +53,6 @@ struct WandContext {
   // Optimization is turned off by default.
   uint8_t index = kDisable;
   bool strict = false;
-  mutable bool root = true;
 };
 
 struct IndexReaderOptions {

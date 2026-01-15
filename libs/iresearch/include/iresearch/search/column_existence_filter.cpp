@@ -62,7 +62,7 @@ class ColumnExistenceQuery : public Filter::Query {
     }
 
     if (!ord.empty()) {
-      if (auto* score = irs::GetMutable<irs::ScoreAttr>(it.get()); score) {
+      if (auto* score = irs::GetMutable<ScoreAttr>(it.get())) {
         CompileScore(*score, ord.buckets(), segment,
                      EmptyTermReader(column.size()), _stats.c_str(), *it,
                      _boost);
@@ -87,8 +87,6 @@ class ColumnPrefixExistenceQuery : public ColumnExistenceQuery {
   }
 
   DocIterator::ptr execute(const ExecutionContext& ctx) const final {
-    using AdapterT = irs::ScoreAdapter<>;
-
     SDB_ASSERT(_acceptor);
 
     auto& segment = ctx.segment;
@@ -104,7 +102,7 @@ class ColumnPrefixExistenceQuery : public ColumnExistenceQuery {
 
     const auto* column = &it->value();
 
-    std::vector<AdapterT> itrs;
+    ScoreAdapters itrs;
     for (; column->name().starts_with(prefix); column = &it->value()) {
       if (_acceptor(column->name(), prefix)) {
         itrs.emplace_back(Iterator(segment, *column, ord));
@@ -117,10 +115,10 @@ class ColumnPrefixExistenceQuery : public ColumnExistenceQuery {
 
     return ResolveMergeType(
       ScoreMergeType::Sum, ord.buckets().size(),
-      [&]<typename A>(A&& aggregator) -> DocIterator::ptr {
-        using Disjunction = DisjunctionIterator<DocIterator::ptr, A>;
-        return irs::MakeDisjunction<Disjunction>(ctx.wand, std::move(itrs),
-                                                 std::move(aggregator));
+      [&]<typename A>(A&& aggregator) {
+        using Disjunction = DisjunctionIterator<ScoreAdapter, A>;
+        return MakeDisjunction<Disjunction>(ctx.wand, std::move(itrs),
+                                            std::move(aggregator));
       });
   }
 

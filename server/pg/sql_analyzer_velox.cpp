@@ -1130,7 +1130,7 @@ class SqlAnalyzer {
               ", language: ", magic_enum::enum_name(lang)));
   }
 
-  [[maybe_unused]] const Objects& _objects;
+  const Objects& _objects;
   const QueryString& _query_string;
   UniqueIdGenerator& _id_generator;
   vc::QueryCtx& _query_ctx;
@@ -1288,10 +1288,10 @@ void SqlAnalyzer::ProcessAlias(State& state, const List* new_aliases,
   state.resolver.CreateTable(table, MakePtrView(state.root->outputType()));
 }
 
-std::pair<std::string_view, query::QueryContext::OptionValue> ConvertToOption(
+std::pair<std::string_view, VeloxQuery::OptionValue> ConvertToOption(
   const DefElem* option) {
   std::string_view name = option->defname;
-  query::QueryContext::OptionValue value;
+  VeloxQuery::OptionValue value;
   SDB_ASSERT(absl::c_none_of(name, absl::ascii_isupper));
   if (!option->arg) {
     return {std::string_view(name), true};
@@ -1315,11 +1315,10 @@ std::pair<std::string_view, query::QueryContext::OptionValue> ConvertToOption(
   return {std::string_view(name), value};
 }
 
-containers::FlatHashMap<std::string_view, query::QueryContext::OptionValue>
+containers::FlatHashMap<std::string_view, VeloxQuery::OptionValue>
 ConvertOptions(const List* options) {
   const size_t options_size = list_length(options);
-  containers::FlatHashMap<std::string_view, query::QueryContext::OptionValue>
-    res;
+  containers::FlatHashMap<std::string_view, VeloxQuery::OptionValue> res;
   res.reserve(options_size);
   for (size_t i = 0; i < options_size; ++i) {
     res.insert(ConvertToOption(list_nth_node(DefElem, options, i)));
@@ -1587,7 +1586,7 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
   const auto& relation = *stmt.relation;
   const auto schema_name = absl::NullSafeStringView(relation.schemaname);
   const std::string_view table_name = relation.relname;
-  auto object = _objects.getData(schema_name, table_name);
+  auto object = _objects.getRelation(schema_name, table_name);
   SDB_ASSERT(object);
   SDB_ASSERT(object->object);
   const auto& logical_object = *object->object;
@@ -1671,7 +1670,7 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
 
   const auto& relation = *stmt.relation;
   const auto schema_name = absl::NullSafeStringView(relation.schemaname);
-  auto object = _objects.getData(schema_name, relation.relname);
+  auto object = _objects.getRelation(schema_name, relation.relname);
   SDB_ASSERT(object);
   SDB_ASSERT(object->object);
   const auto& logical_object = *object->object;
@@ -1756,7 +1755,7 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
 
   const auto& relation = *stmt.relation;
   const auto schema_name = absl::NullSafeStringView(relation.schemaname);
-  auto object = _objects.getData(schema_name, relation.relname);
+  auto object = _objects.getRelation(schema_name, relation.relname);
   SDB_ASSERT(object);
   SDB_ASSERT(object->object);
   const auto& logical_object = *object->object;
@@ -2223,7 +2222,7 @@ void SqlAnalyzer::ProcessMergeStmt(State& state, const MergeStmt& stmt) {
 void SqlAnalyzer::ProcessCallStmt(State& state, const CallStmt& stmt) {
   const auto& func_call = *stmt.funccall;
   const auto [_, schema, name] = GetDbSchemaRelation(func_call.funcname);
-  auto* function = _objects.getData(schema, name);
+  auto* function = _objects.getFunction(schema, name);
   if (!function) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
                     CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
@@ -2981,7 +2980,7 @@ SqlAnalyzer::CollectedAggregates SqlAnalyzer::CollectAggregateFunctions(
   auto& func_to_aggr = state.aggregate_or_window;
   auto visit_func = [&](const FuncCall& func_call) {
     const auto [_, schema, func_name] = GetDbSchemaRelation(func_call.funcname);
-    const auto* func = _objects.getData(schema, func_name);
+    const auto* func = _objects.getFunction(schema, func_name);
     if (!func) {
       return;
     }
@@ -3025,7 +3024,7 @@ SqlAnalyzer::CollectedWindows SqlAnalyzer::CollectTargetListWindowFunctions(
   auto& func_to_window = state.aggregate_or_window;
   auto visit_func = [&](const FuncCall& func_call) {
     auto [_, schema, func_name] = GetDbSchemaRelation(func_call.funcname);
-    const auto* func = _objects.getData(schema, func_name);
+    const auto* func = _objects.getFunction(schema, func_name);
     if (!func) {
       return;
     }
@@ -3258,6 +3257,7 @@ void SqlAnalyzer::ProcessDistinctAll(State& state, const List* sort_clause,
   }
 
   state.has_groupby = true;
+  ValidateAggrInputRefs(state, std::span<const lp::ExprPtr>{grouping_keys});
   state.root = std::make_shared<lp::AggregateNode>(
     _id_generator.NextPlanId(), std::move(state.root), std::move(grouping_keys),
     std::vector<lp::AggregateNode::GroupingSet>{},
@@ -3542,7 +3542,7 @@ State SqlAnalyzer::ProcessRangeVar(State* parent, const RangeVar* node) {
   }
 
   const auto schema_name = absl::NullSafeStringView(node->schemaname);
-  auto object = _objects.getData(schema_name, name);
+  auto object = _objects.getRelation(schema_name, name);
   SDB_ASSERT(object);
   SDB_ASSERT(object->object);
   auto& logical_object = *object->object;
@@ -3804,7 +3804,7 @@ State SqlAnalyzer::ProcessRangeFunction(State* parent,
 
         // TODO fix function resolve
         auto [_, schema, func_name] = GetDbSchemaRelation(func_call->funcname);
-        auto* function = _objects.getData(schema, func_name);
+        auto* function = _objects.getFunction(schema, func_name);
         if (!function) {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
@@ -4546,7 +4546,7 @@ lp::ExprPtr SqlAnalyzer::ProcessAConst(State& state, const A_Const& expr) {
 
 lp::ExprPtr SqlAnalyzer::ProcessFuncCall(State& state, const FuncCall& expr) {
   auto [_, schema, name] = GetDbSchemaRelation(expr.funcname);
-  auto* function = _objects.getData(schema, name);
+  auto* function = _objects.getFunction(schema, name);
   if (!function) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
                     CURSOR_POS(ErrorPosition(ExprLocation(&expr))),

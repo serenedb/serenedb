@@ -170,7 +170,7 @@ void ObjectCollector::CollectFuncCall(const State& state,
     CollectExprNode(state, over->startOffset);
     CollectSortClause(state, over->orderClause);
   }
-  _objects.ensureData(name.schema, name.relation);
+  _objects.ensureFunction(name.schema, name.relation);
 }
 
 void ObjectCollector::CollectJsonObjectConstructor(
@@ -228,7 +228,7 @@ void ObjectCollector::CollectRangeVar(const State& state, const RangeVar* var) {
               " accessed instead of ", _database);
   }
 
-  _objects.ensureData(var->schemaname, relation);
+  _objects.ensureRelation(var->schemaname, relation);
 }
 
 void ObjectCollector::CollectRangeSubSelect(const State& state,
@@ -259,7 +259,7 @@ void ObjectCollector::CollectRangeFunction(const State& state,
                     "unsupported function call with aggregate options");
         }
         CollectExprList(state, n->args);
-        _objects.ensureData(name.schema, name.relation);
+        _objects.ensureFunction(name.schema, name.relation);
         return;
       } break;
       default:

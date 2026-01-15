@@ -37,7 +37,7 @@ bool BooleanTokenizer::next() noexcept {
 bool StringTokenizer::next() noexcept {
   const bool valid = _valid;
   std::get<TermAttr>(_attrs).value = _value;
-  auto& offset = std::get<irs::OffsAttr>(_attrs);
+  auto& offset = std::get<OffsAttr>(_attrs);
   offset.start = 0;
   offset.end = static_cast<uint32_t>(_value.size());
   _valid = false;

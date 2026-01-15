@@ -568,4 +568,4 @@ TEST_P(BufferedColumnTestCase, Sort) {
 }
 
 INSTANTIATE_TEST_SUITE_P(BufferedColumnTest, BufferedColumnTestCase,
-                         ::testing::Values("1_5"));
+                         ::testing::Values("1_5avx"));

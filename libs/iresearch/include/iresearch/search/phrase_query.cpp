@@ -34,14 +34,14 @@ constexpr IndexFeatures kRequireOffs =
 
 template<bool OneShot, bool HasFreq, bool HasIntervals>
 using FixedPhraseIterator =
-  PhraseIterator<Conjunction<ScoreAdapter<>, NoopAggregator>,
+  PhraseIterator<Conjunction<ScoreAdapter, NoopAggregator>,
                  FixedPhraseFrequency<OneShot, HasFreq, HasIntervals>>;
 
 // FIXME add proper handling of overlapped case
 template<typename Adapter, bool VolatileBoost, bool OneShot, bool HasFreq,
          bool HasIntervals>
 using VariadicPhraseIterator =
-  PhraseIterator<Conjunction<ScoreAdapter<>, NoopAggregator>,
+  PhraseIterator<Conjunction<ScoreAdapter, NoopAggregator>,
                  VariadicPhraseFrequency<Adapter, VolatileBoost, OneShot,
                                          HasFreq, HasIntervals>>;
 
@@ -89,7 +89,7 @@ DocIterator::ptr FixedPhraseQuery::execute(const ExecutionContext& ctx) const {
       return DocIterator::empty();
     }
 
-    auto* pos = irs::GetMutable<irs::PosAttr>(docs.it.get());
+    auto* pos = irs::GetMutable<PosAttr>(&docs);
 
     if (!pos) {
       // positions not found
@@ -134,7 +134,7 @@ DocIterator::ptr FixedPhraseQuery::ExecuteWithOffsets(
 
   return ResolveBool(has_intervals, [&]<bool HasIntervals> -> DocIterator::ptr {
     using FixedPhraseIterator = PhraseIterator<
-      Conjunction<ScoreAdapter<>, NoopAggregator>,
+      Conjunction<ScoreAdapter, NoopAggregator>,
       PhrasePosition<FixedPhraseFrequency<true, false, HasIntervals>>>;
 
     ScoreAdapters itrs;
@@ -166,7 +166,7 @@ DocIterator::ptr FixedPhraseQuery::ExecuteWithOffsets(
         return false;
       }
 
-      auto* pos = irs::GetMutable<irs::PosAttr>(docs.it.get());
+      auto* pos = irs::GetMutable<PosAttr>(&docs);
 
       if (!pos) {
         return false;
@@ -175,7 +175,7 @@ DocIterator::ptr FixedPhraseQuery::ExecuteWithOffsets(
       positions.emplace_back(std::ref(*pos), *position);
 
       if (IndexFeatures::Offs == (features & IndexFeatures::Offs)) {
-        if (!irs::get<irs::OffsAttr>(*pos)) {
+        if (!irs::get<OffsAttr>(*pos)) {
           return false;
         }
       }
@@ -212,7 +212,7 @@ DocIterator::ptr VariadicPhraseQuery::execute(
   const ExecutionContext& ctx) const {
   using Adapter = VariadicPhraseAdapter;
   using CompoundDocIterator = irs::CompoundDocIterator<Adapter>;
-  using Disjunction = Disjunction<DocIterator::ptr, NoopAggregator, Adapter>;
+  using Disjunction = Disjunction<VariadicPhraseAdapter, NoopAggregator>;
   auto& rdr = ctx.segment;
 
   // get phrase state for the specified reader
@@ -322,7 +322,7 @@ DocIterator::ptr VariadicPhraseQuery::ExecuteWithOffsets(
   const irs::SubReader& rdr) const {
   using Adapter = VariadicPhraseOffsetAdapter;
   using CompundDocIterator = irs::CompoundDocIterator<Adapter>;
-  using Disjunction = Disjunction<DocIterator::ptr, NoopAggregator, Adapter>;
+  using Disjunction = Disjunction<Adapter, NoopAggregator>;
 
   // get phrase state for the specified reader
   auto phrase_state = states.find(rdr);
@@ -351,7 +351,7 @@ DocIterator::ptr VariadicPhraseQuery::ExecuteWithOffsets(
 
   return ResolveBool(has_intervals, [&]<bool HasIntervals> -> DocIterator::ptr {
     using VariadicPhraseIterator =
-      PhraseIterator<Conjunction<ScoreAdapter<>, NoopAggregator>,
+      PhraseIterator<Conjunction<ScoreAdapter, NoopAggregator>,
                      PhrasePosition<VariadicPhraseFrequency<
                        Adapter, false, true, false, HasIntervals>>>;
 
@@ -388,7 +388,7 @@ DocIterator::ptr VariadicPhraseQuery::ExecuteWithOffsets(
         }
 
         if (IndexFeatures::Offs == (features & IndexFeatures::Offs)) {
-          if (!irs::get<irs::OffsAttr>(*docs.position)) {
+          if (!irs::get<OffsAttr>(*docs.position)) {
             continue;
           }
         }

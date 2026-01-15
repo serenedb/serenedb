@@ -28,6 +28,8 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
+// Disjunction is template for Adapter instead of direct use of ScoreAdapter
+// only because of variadic phrase
 namespace irs {
 namespace detail {
 
@@ -39,6 +41,14 @@ struct MinMatchBuffer {
   uint32_t match_count(size_t i) const noexcept {
     SDB_ASSERT(i < Size);
     return _match_count[i];
+  }
+
+  uint32_t count() const noexcept {
+    uint32_t count = 0;
+    for (const auto match_count : _match_count) {
+      count += match_count >= _min_match_count;
+    }
+    return count;
   }
 
   bool inc(size_t i) noexcept { return ++_match_count[i] < _min_match_count; }
@@ -53,11 +63,6 @@ struct MinMatchBuffer {
  private:
   size_t _min_match_count;
   uint32_t _match_count[Size];
-};
-
-template<>
-struct MinMatchBuffer<0> {
-  explicit MinMatchBuffer(size_t) noexcept {}
 };
 
 class ScoreBuffer {
@@ -91,16 +96,7 @@ class ScoreBuffer {
 struct EmptyScoreBuffer {
   explicit EmptyScoreBuffer(size_t, size_t) noexcept {}
 
-  score_t* get(size_t) noexcept {
-    SDB_ASSERT(false);
-    return nullptr;
-  }
-
   score_t* data() noexcept { return nullptr; }
-
-  size_t size() const noexcept { return 0; }
-
-  size_t bucket_size() const noexcept { return 0; }
 };
 
 struct SubScoresCtx : SubScores {
@@ -147,17 +143,16 @@ using IteratorVisitor = bool (*)(void*, Adapter&);
 
 template<typename Adapter>
 struct CompoundDocIterator : DocIterator {
+  static_assert(std::is_base_of_v<ScoreAdapter, Adapter>);
+
   virtual void visit(void* ctx, IteratorVisitor<Adapter>) = 0;
 };
 
-// Wrapper around regular DocIterator to conform compound_doc_iterator API
-template<typename DocIteratorImpl,
-         typename Adapter = ScoreAdapter<DocIteratorImpl>>
+// Wrapper around regular DocIterator to conform CompoundDocIterator API
+template<typename Adapter>
 class UnaryDisjunction : public CompoundDocIterator<Adapter> {
  public:
-  using doc_iterator_t = Adapter;
-
-  UnaryDisjunction(doc_iterator_t&& it) : _it(std::move(it)) {}
+  UnaryDisjunction(Adapter it) : _it{std::move(it)} {}
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return _it->GetMutable(type);
@@ -165,9 +160,11 @@ class UnaryDisjunction : public CompoundDocIterator<Adapter> {
 
   doc_id_t value() const noexcept final { return _it.doc->value; }
 
-  bool next() final { return _it->next(); }
+  doc_id_t advance() final { return _it->advance(); }
 
   doc_id_t seek(doc_id_t target) final { return _it->seek(target); }
+
+  uint32_t count() final { return _it->count(); }
 
   void visit(void* ctx, IteratorVisitor<Adapter> visitor) final {
     SDB_ASSERT(ctx);
@@ -176,27 +173,24 @@ class UnaryDisjunction : public CompoundDocIterator<Adapter> {
   }
 
  private:
-  doc_iterator_t _it;
+  Adapter _it;
 };
 
 // Disjunction optimized for two iterators.
-template<typename DocIteratorImpl, typename Merger,
-         typename Adapter = ScoreAdapter<DocIteratorImpl>>
+template<typename Adapter, typename Merger>
 class BasicDisjunction : public CompoundDocIterator<Adapter>,
                          private Merger,
                          private ScoreCtx {
  public:
-  using adapter = Adapter;
-
-  BasicDisjunction(adapter&& lhs, adapter&& rhs, Merger&& merger = Merger{})
+  BasicDisjunction(Adapter lhs, Adapter rhs, Merger&& merger = Merger{})
     : BasicDisjunction{std::move(lhs), std::move(rhs), std::move(merger),
-                       [this]() noexcept {
+                       [&] noexcept {
                          return CostAttr::extract(_lhs, 0) +
                                 CostAttr::extract(_rhs, 0);
                        },
                        ResolveOverloadTag{}} {}
 
-  BasicDisjunction(adapter&& lhs, adapter&& rhs, Merger&& merger,
+  BasicDisjunction(Adapter lhs, Adapter rhs, Merger&& merger,
                    CostAttr::Type est)
     : BasicDisjunction{std::move(lhs), std::move(rhs), std::move(merger), est,
                        ResolveOverloadTag{}} {}
@@ -209,18 +203,18 @@ class BasicDisjunction : public CompoundDocIterator<Adapter>,
     return std::get<DocAttr>(_attrs).value;
   }
 
-  bool next() final {
+  doc_id_t advance() final {
     next_iterator_impl(_lhs);
     next_iterator_impl(_rhs);
 
     auto& doc_value = std::get<DocAttr>(_attrs).value;
-    return !doc_limits::eof(doc_value = std::min(_lhs.value(), _rhs.value()));
+    return doc_value = std::min(_lhs.value(), _rhs.value());
   }
 
   doc_id_t seek(doc_id_t target) final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
 
-    if (target <= doc_value) {
+    if (target <= doc_value) [[unlikely]] {
       return doc_value;
     }
 
@@ -229,6 +223,27 @@ class BasicDisjunction : public CompoundDocIterator<Adapter>,
     }
 
     return doc_value = std::min(_lhs.value(), _rhs.value());
+  }
+
+  uint32_t count() final {
+    uint32_t count = -1;
+    auto lhs_value = _lhs.value();
+    auto rhs_value = _rhs.value();
+    while (!doc_limits::eof(lhs_value) || !doc_limits::eof(rhs_value)) {
+      if (lhs_value < rhs_value) {
+        lhs_value = _lhs->advance();
+      } else if (rhs_value < lhs_value) {
+        rhs_value = _rhs->advance();
+      } else {
+        lhs_value = _lhs->advance();
+        rhs_value = _rhs->advance();
+      }
+      ++count;
+    }
+    if (count == -1) {
+      return 0;
+    }
+    return count;
   }
 
   void visit(void* ctx, IteratorVisitor<Adapter> visitor) final {
@@ -253,7 +268,7 @@ class BasicDisjunction : public CompoundDocIterator<Adapter>,
   struct ResolveOverloadTag {};
 
   template<typename Estimation>
-  BasicDisjunction(adapter&& lhs, adapter&& rhs, Merger&& merger,
+  BasicDisjunction(Adapter lhs, Adapter rhs, Merger&& merger,
                    Estimation&& estimation, ResolveOverloadTag)
     : Merger{std::move(merger)}, _lhs(std::move(lhs)), _rhs(std::move(rhs)) {
     std::get<CostAttr>(_attrs).reset(std::forward<Estimation>(estimation));
@@ -265,9 +280,10 @@ class BasicDisjunction : public CompoundDocIterator<Adapter>,
 
   void prepare_score(bool /*wand*/, bool /*strict*/) {
     SDB_ASSERT(Merger::size());
-    SDB_ASSERT(_lhs.score && _rhs.score);  // must be ensure by the adapter
+    SDB_ASSERT(_lhs.score);
+    SDB_ASSERT(_rhs.score);
 
-    auto& score = std::get<irs::ScoreAttr>(_attrs);
+    auto& score = std::get<ScoreAttr>(_attrs);
 
     const bool lhs_score_empty = _lhs.score->IsDefault();
     const bool rhs_score_empty = _rhs.score->IsDefault();
@@ -299,22 +315,22 @@ class BasicDisjunction : public CompoundDocIterator<Adapter>,
     }
   }
 
-  bool seek_iterator_impl(adapter& it, doc_id_t target) {
+  bool seek_iterator_impl(Adapter& it, doc_id_t target) {
     return it.value() < target && target == it->seek(target);
   }
 
-  void next_iterator_impl(adapter& it) {
+  void next_iterator_impl(Adapter& it) {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
     const auto value = it.value();
 
     if (doc_value == value) {
-      it->next();
+      it->advance();
     } else if (value < doc_value) {
       it->seek(doc_value + doc_id_t(!doc_limits::eof(doc_value)));
     }
   }
 
-  void score_iterator_impl(adapter& it, score_t* res) {
+  void score_iterator_impl(Adapter& it, score_t* res) {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
     auto value = it.value();
 
@@ -331,8 +347,8 @@ class BasicDisjunction : public CompoundDocIterator<Adapter>,
 
   using Attributes = std::tuple<DocAttr, ScoreAttr, CostAttr>;
 
-  mutable adapter _lhs;
-  mutable adapter _rhs;
+  mutable Adapter _lhs;
+  mutable Adapter _rhs;
   Attributes _attrs;
 };
 
@@ -346,25 +362,23 @@ class BasicDisjunction : public CompoundDocIterator<Adapter>,
 //   begin             |   scored               end
 //                     |   begin
 // ----------------------------------------------------------------------------
-template<typename DocIteratorImpl, typename Merger,
-         typename Adapter = ScoreAdapter<DocIteratorImpl>>
+template<typename Adapter, typename Merger>
 class SmallDisjunction : public CompoundDocIterator<Adapter>,
                          private Merger,
                          private ScoreCtx {
  public:
-  using adapter = Adapter;
-  using DocIterators = std::vector<adapter>;
+  using Adapters = std::vector<Adapter>;
 
-  SmallDisjunction(DocIterators&& itrs, Merger&& merger, CostAttr::Type est)
+  SmallDisjunction(Adapters&& itrs, Merger&& merger, CostAttr::Type est)
     : SmallDisjunction{std::move(itrs), std::move(merger), est,
                        ResolveOverloadTag()} {}
 
-  explicit SmallDisjunction(DocIterators&& itrs, Merger&& merger = Merger{})
+  explicit SmallDisjunction(Adapters&& itrs, Merger&& merger = Merger{})
     : SmallDisjunction{std::move(itrs), std::move(merger),
-                       [this]() noexcept {
+                       [&] noexcept {
                          return std::accumulate(
-                           _begin, _end, CostAttr::Type(0),
-                           [](CostAttr::Type lhs, const adapter& rhs) noexcept {
+                           _begin, _end, CostAttr::Type{0},
+                           [](CostAttr::Type lhs, const Adapter& rhs) noexcept {
                              return lhs + CostAttr::extract(rhs, 0);
                            });
                        },
@@ -378,7 +392,7 @@ class SmallDisjunction : public CompoundDocIterator<Adapter>,
     return std::get<DocAttr>(_attrs).value;
   }
 
-  bool next_iterator_impl(adapter& it) {
+  bool next_iterator_impl(Adapter& it) {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
     const auto value = it.value();
 
@@ -391,11 +405,11 @@ class SmallDisjunction : public CompoundDocIterator<Adapter>,
     return true;
   }
 
-  bool next() final {
+  doc_id_t advance() final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
 
     if (doc_limits::eof(doc_value)) {
-      return false;
+      return doc_value;
     }
 
     doc_id_t min = doc_limits::eof();
@@ -404,8 +418,7 @@ class SmallDisjunction : public CompoundDocIterator<Adapter>,
       auto& it = *begin;
       if (!next_iterator_impl(it)) {
         if (!remove_iterator(begin)) {
-          doc_value = doc_limits::eof();
-          return false;
+          return doc_value = doc_limits::eof();
         }
       } else {
         min = std::min(min, it.value());
@@ -413,8 +426,7 @@ class SmallDisjunction : public CompoundDocIterator<Adapter>,
       }
     }
 
-    doc_value = min;
-    return true;
+    return doc_value = min;
   }
 
   doc_id_t seek(doc_id_t target) final {
@@ -450,6 +462,8 @@ class SmallDisjunction : public CompoundDocIterator<Adapter>,
     return doc_value = min;
   }
 
+  uint32_t count() final { return DocIterator::Count(*this); }
+
   void visit(void* ctx, IteratorVisitor<Adapter> visitor) final {
     SDB_ASSERT(ctx);
     SDB_ASSERT(visitor);
@@ -467,8 +481,8 @@ class SmallDisjunction : public CompoundDocIterator<Adapter>,
   struct ResolveOverloadTag {};
 
   template<typename Estimation>
-  SmallDisjunction(DocIterators&& itrs, Merger&& merger,
-                   Estimation&& estimation, ResolveOverloadTag)
+  SmallDisjunction(Adapters&& itrs, Merger&& merger, Estimation&& estimation,
+                   ResolveOverloadTag)
     : Merger{std::move(merger)},
       _itrs(itrs.size()),
       _scored_begin(_itrs.begin()),
@@ -499,7 +513,7 @@ class SmallDisjunction : public CompoundDocIterator<Adapter>,
   void prepare_score() {
     SDB_ASSERT(Merger::size());
 
-    auto& score = std::get<irs::ScoreAttr>(_attrs);
+    auto& score = std::get<ScoreAttr>(_attrs);
 
     // prepare score
     if (_scored_begin != _end) {
@@ -529,7 +543,7 @@ class SmallDisjunction : public CompoundDocIterator<Adapter>,
     }
   }
 
-  bool remove_iterator(typename DocIterators::iterator it) {
+  bool remove_iterator(typename Adapters::iterator it) {
     if (it->score->IsDefault()) {
       std::swap(*it, *_begin);
       ++_begin;
@@ -557,10 +571,10 @@ class SmallDisjunction : public CompoundDocIterator<Adapter>,
   }
 
   using Attributes = std::tuple<DocAttr, ScoreAttr, CostAttr>;
-  using Iterator = typename DocIterators::iterator;
+  using Iterator = typename Adapters::iterator;
 
   doc_id_t _last_hitched_doc{doc_limits::invalid()};
-  DocIterators _itrs;
+  Adapters _itrs;
   Iterator _scored_begin;  // beginning of scored doc iterator range
   Iterator _begin;         // beginning of unscored doc iterators range
   Iterator _end;           // end of scored doc iterator range
@@ -576,31 +590,27 @@ class SmallDisjunction : public CompoundDocIterator<Adapter>,
 //   [n-1] <-- end
 //   [n]   <-- lead (accepted iterator)
 // ----------------------------------------------------------------------------
-template<typename DocIteratorImpl, typename Merger,
-         typename Adapter = ScoreAdapter<DocIteratorImpl>,
-         bool EnableUnary = false>
+template<typename Adapter, typename Merger>
 class Disjunction : public CompoundDocIterator<Adapter>,
                     private Merger,
                     private ScoreCtx {
  public:
-  using adapter = Adapter;
-  using DocIterators = std::vector<adapter>;
-  using heap_container = std::vector<size_t>;
-  using heap_iterator = heap_container::iterator;
+  using Adapters = std::vector<Adapter>;
+  using Heap = std::vector<size_t>;
+  using Iterator = Heap::iterator;
 
-  static constexpr bool kEnableUnary = EnableUnary;
   static constexpr size_t kSmallDisjunctionUpperBound = 5;
 
-  Disjunction(DocIterators&& itrs, Merger&& merger, CostAttr::Type est)
+  Disjunction(Adapters&& itrs, Merger&& merger, CostAttr::Type est)
     : Disjunction{std::move(itrs), std::move(merger), est,
                   ResolveOverloadTag()} {}
 
-  explicit Disjunction(DocIterators&& itrs, Merger&& merger = Merger{})
+  explicit Disjunction(Adapters&& itrs, Merger&& merger = Merger{})
     : Disjunction{std::move(itrs), std::move(merger),
-                  [this]() noexcept {
+                  [&] noexcept {
                     return absl::c_accumulate(
-                      _itrs, CostAttr::Type(0),
-                      [](CostAttr::Type lhs, const adapter& rhs) noexcept {
+                      _itrs, CostAttr::Type{0},
+                      [](CostAttr::Type lhs, const Adapter& rhs) noexcept {
                         return lhs + CostAttr::extract(rhs, 0);
                       });
                   },
@@ -614,28 +624,27 @@ class Disjunction : public CompoundDocIterator<Adapter>,
     return std::get<DocAttr>(_attrs).value;
   }
 
-  bool next() final {
+  doc_id_t advance() final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
 
     if (doc_limits::eof(doc_value)) {
-      return false;
+      return doc_value;
     }
 
     while (lead().value() <= doc_value) {
-      const bool exhausted = lead().value() == doc_value
-                               ? !lead()->next()
-                               : doc_limits::eof(lead()->seek(doc_value + 1));
+      const auto target = lead().value() == doc_value
+                            ? lead()->advance()
+                            : lead()->seek(doc_value + 1);
+      const bool exhausted = doc_limits::eof(target);
 
       if (exhausted && !remove_lead()) {
-        doc_value = doc_limits::eof();
-        return false;
+        return doc_value = doc_limits::eof();
       }
 
       refresh_lead();
     }
 
-    doc_value = lead().value();
-    return true;
+    return doc_value = lead().value();
   }
 
   doc_id_t seek(doc_id_t target) final {
@@ -657,6 +666,8 @@ class Disjunction : public CompoundDocIterator<Adapter>,
 
     return doc_value = lead().value();
   }
+
+  uint32_t count() final { return DocIterator::Count(*this); }
 
   void visit(void* ctx, IteratorVisitor<Adapter> visitor) final {
     SDB_ASSERT(ctx);
@@ -688,7 +699,7 @@ class Disjunction : public CompoundDocIterator<Adapter>,
   using Attributes = std::tuple<DocAttr, ScoreAttr, CostAttr>;
 
   template<typename Estimation>
-  Disjunction(DocIterators&& itrs, Merger&& merger, Estimation&& estimation,
+  Disjunction(Adapters&& itrs, Merger&& merger, Estimation&& estimation,
               ResolveOverloadTag)
     : Merger{std::move(merger)}, _itrs{std::move(itrs)} {
     // since we are using heap in order to determine next document,
@@ -713,7 +724,7 @@ class Disjunction : public CompoundDocIterator<Adapter>,
   void prepare_score() {
     SDB_ASSERT(Merger::size());
 
-    auto& score = std::get<irs::ScoreAttr>(_attrs);
+    auto& score = std::get<ScoreAttr>(_attrs);
 
     score.Reset(*this, [](ScoreCtx* ctx, score_t* res) noexcept {
       auto& self = *static_cast<Disjunction*>(ctx);
@@ -784,19 +795,19 @@ class Disjunction : public CompoundDocIterator<Adapter>,
     pop(begin, end);
   }
 
-  adapter& lead() noexcept {
+  Adapter& lead() noexcept {
     SDB_ASSERT(!_heap.empty());
     SDB_ASSERT(_heap.back() < _itrs.size());
     return _itrs[_heap.back()];
   }
 
-  adapter& top() noexcept {
+  Adapter& top() noexcept {
     SDB_ASSERT(!_heap.empty());
     SDB_ASSERT(_heap.front() < _itrs.size());
     return _itrs[_heap.front()];
   }
 
-  std::pair<heap_iterator, heap_iterator> hitch_all_iterators() {
+  std::pair<Iterator, Iterator> hitch_all_iterators() {
     // hitch all iterators in head to the lead (current doc_)
     SDB_ASSERT(!_heap.empty());
     auto begin = _heap.begin(), end = _heap.end() - 1;
@@ -819,8 +830,8 @@ class Disjunction : public CompoundDocIterator<Adapter>,
     return {begin, end};
   }
 
-  DocIterators _itrs;
-  heap_container _heap;
+  Adapters _itrs;
+  Heap _heap;
   Attributes _attrs;
 };
 
@@ -853,28 +864,27 @@ struct BlockDisjunctionTraits {
 // It isn't optimized for conjunction case when the requested min match
 // count equals to a number of input iterators.
 // It's better to to use a dedicated "conjunction" iterator.
-template<typename DocIteratorImpl, typename Merger, typename Traits,
-         typename Adapter = ScoreAdapter<DocIteratorImpl>>
+template<typename Adapter, typename Merger, typename Traits>
 class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
  public:
-  using traits_type = Traits;
-  using adapter = Adapter;
-  using DocIterators = std::vector<adapter>;
+  static_assert(std::is_base_of_v<ScoreAdapter, Adapter>);
 
-  BlockDisjunction(DocIterators&& itrs, Merger&& merger, CostAttr::Type est)
+  using Adapters = std::vector<Adapter>;
+
+  BlockDisjunction(Adapters&& itrs, Merger&& merger, CostAttr::Type est)
     : BlockDisjunction{std::move(itrs), 1, std::move(merger),
                        detail::SubScoresCtx{}, est} {}
 
-  BlockDisjunction(DocIterators&& itrs, size_t min_match_count, Merger&& merger,
+  BlockDisjunction(Adapters&& itrs, size_t min_match_count, Merger&& merger,
                    detail::SubScoresCtx&& scores, CostAttr::Type est)
     : BlockDisjunction{std::move(itrs),   min_match_count,
                        std::move(merger), est,
                        std::move(scores), ResolveOverloadTag()} {}
 
-  explicit BlockDisjunction(DocIterators&& itrs, Merger&& merger = Merger{})
+  explicit BlockDisjunction(Adapters&& itrs, Merger&& merger = Merger{})
     : BlockDisjunction{std::move(itrs), 1, std::move(merger)} {}
 
-  BlockDisjunction(DocIterators&& itrs, size_t min_match_count,
+  BlockDisjunction(Adapters&& itrs, size_t min_match_count,
                    Merger&& merger = Merger{},
                    detail::SubScoresCtx&& scores = {})
     : BlockDisjunction{std::move(itrs),
@@ -883,12 +893,12 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
                        [this]() noexcept {
                          return absl::c_accumulate(
                            _itrs, CostAttr::Type{0},
-                           [](CostAttr::Type lhs, const adapter& rhs) noexcept {
+                           [](CostAttr::Type lhs, const Adapter& rhs) noexcept {
                              return lhs + CostAttr::extract(rhs, 0);
                            });
                        },
                        std::move(scores),
-                       ResolveOverloadTag()} {}
+                       ResolveOverloadTag{}} {}
 
   size_t MatchCount() const noexcept { return _match_count; }
 
@@ -900,25 +910,24 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
     return std::get<DocAttr>(_attrs).value;
   }
 
-  bool next() final {
+  doc_id_t advance() final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
 
     do {
-      while (!_cur) {
+      while (_cur == 0) {
         if (_begin >= std::end(_mask)) {
-          if (refill()) {
+          if (Refill()) {
             SDB_ASSERT(_cur);
             break;
           }
 
           _match_count = 0;
-          doc_value = doc_limits::eof();
-          return false;
+          return doc_value = doc_limits::eof();
         }
 
         _cur = *_begin++;
         _doc_base += BitsRequired<uint64_t>();
-        if constexpr (traits_type::kMinMatch || kHasScore<Merger>) {
+        if constexpr (Traits::kMinMatch || kHasScore<Merger>) {
           _buf_offset += BitsRequired<uint64_t>();
         }
       }
@@ -928,7 +937,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
 
       [[maybe_unused]] const size_t buf_offset = _buf_offset + offset;
 
-      if constexpr (traits_type::kMinMatch) {
+      if constexpr (Traits::kMinMatch) {
         _match_count = _match_buf.match_count(buf_offset);
 
         if (_match_count < _match_buf.min_match_count()) {
@@ -941,17 +950,19 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
         _score_value = _score_buf.get(buf_offset);
       }
 
-      return true;
-    } while (traits_type::kMinMatch);
+      return doc_value;
+    } while (Traits::kMinMatch);
     SDB_UNREACHABLE();
   }
 
   doc_id_t seek(doc_id_t target) final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
 
-    if (target <= doc_value) {
+    if (target <= doc_value) [[unlikely]] {
       return doc_value;
-    } else if (target < _max) {
+    }
+
+    if (target < _max) {
       const doc_id_t block_base = (_max - kWindow);
 
       target -= block_base;
@@ -963,92 +974,104 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
       SDB_ASSERT(_begin > std::begin(_mask) && _begin <= std::end(_mask));
       _cur = _begin[-1] & ((~UINT64_C(0)) << target % kBlockSize);
 
-      next();
+      return advance();
+    }
+
+    doc_value = doc_limits::eof();
+
+    if constexpr (Traits::kMinMatch) {
+      _match_count = 0;
+    }
+
+    VisitAndPurge([&](auto& it) {
+      const auto value = it->seek(target);
+
+      if (doc_limits::eof(value)) {
+        // exhausted
+        return false;
+      }
+
+      if (value < doc_value) {
+        doc_value = value;
+        if constexpr (Traits::kMinMatch) {
+          _match_count = 1;
+        }
+      } else if constexpr (Traits::kMinMatch) {
+        if (target == value) {
+          ++_match_count;
+        }
+      }
+
+      return true;
+    });
+
+    if (_itrs.empty()) {
+      _match_count = 0;
+      return doc_value = doc_limits::eof();
+    }
+
+    SDB_ASSERT(!doc_limits::eof(doc_value));
+    _cur = 0;
+    _begin = std::end(_mask);  // enforce "refill()" for upcoming "next()"
+    _max = doc_value;
+
+    if constexpr (Traits::kSeekReadahead) {
+      _min = doc_value;
+      return advance();
     } else {
-      doc_value = doc_limits::eof();
+      _min = doc_value + 1;
+      _buf_offset = 0;
 
-      if constexpr (traits_type::kMinMatch) {
-        _match_count = 0;
+      if constexpr (Traits::kMinMatch) {
+        if (_match_count < _match_buf.min_match_count()) {
+          return advance();
+        }
       }
 
-      visit_and_purge([this, target, &doc_value](auto& it) mutable {
-        IRS_IGNORE(this);
-        const auto value = it->seek(target);
-
-        if (doc_limits::eof(value)) {
-          // exhausted
-          return false;
-        }
-
-        // this is to circumvent bug in GCC 10.1 on ARM64
-        constexpr bool kMinMatch = traits_type::kMinMatch;
-
-        if (value < doc_value) {
-          doc_value = value;
-          if constexpr (kMinMatch) {
-            _match_count = 1;
-          }
-        } else {
-          if constexpr (kMinMatch) {
-            if (target == value) {
-              ++_match_count;
-            }
+      if constexpr (kHasScore<Merger>) {
+        std::memset(_score_buf.data(), 0, _score_buf.bucket_size());
+        for (auto& it : _itrs) {
+          SDB_ASSERT(it.score);
+          if (!it.score->IsDefault() && doc_value == it->value()) {
+            auto& merger = static_cast<Merger&>(*this);
+            (*it.score)(merger.temp());
+            merger(_score_buf.data(), merger.temp());
           }
         }
 
-        return true;
-      });
-
-      if (_itrs.empty()) {
-        doc_value = doc_limits::eof();
-        _match_count = 0;
-
-        return doc_limits::eof();
+        _score_value = _score_buf.data();
       }
+      return doc_value;
+    }
+  }
 
-      SDB_ASSERT(!doc_limits::eof(doc_value));
-      _cur = 0;
-      _begin = std::end(_mask);  // enforce "refill()" for upcoming "next()"
-      _max = doc_value;
+  uint32_t count() final {
+    uint32_t count = 0;
 
-      if constexpr (traits_type::kSeekReadahead) {
-        _min = doc_value;
-        next();
+    while (_cur != 0 && next()) [[unlikely]] {
+      ++count;
+    }
+
+    while (Refill()) {
+      if constexpr (Traits::kMinMatch) {
+        count += _match_buf.count();
       } else {
-        _min = doc_value + 1;
-        _buf_offset = 0;
-
-        if constexpr (traits_type::kMinMatch) {
-          if (_match_count < _match_buf.min_match_count()) {
-            next();
-            return doc_value;
-          }
-        }
-
-        if constexpr (kHasScore<Merger>) {
-          std::memset(_score_buf.data(), 0, _score_buf.bucket_size());
-          for (auto& it : _itrs) {
-            SDB_ASSERT(it.score);
-            if (!it.score->IsDefault() && doc_value == it->value()) {
-              auto& merger = static_cast<Merger&>(*this);
-              (*it.score)(merger.temp());
-              merger(_score_buf.data(), merger.temp());
-            }
-          }
-
-          _score_value = _score_buf.data();
+        for (const auto word : _mask) {
+          count += std::popcount(word);
         }
       }
     }
 
-    return doc_value;
+    _match_count = 0;
+    std::get<DocAttr>(_attrs).value = doc_limits::eof();
+    return count;
   }
 
  private:
   static constexpr doc_id_t kBlockSize = BitsRequired<uint64_t>();
 
   static constexpr doc_id_t kNumBlocks =
-    static_cast<doc_id_t>(std::max(size_t(1), traits_type::kNumBlocks));
+    static_cast<doc_id_t>(std::max(size_t(1), Traits::kNumBlocks));
 
   static constexpr doc_id_t kWindow = kBlockSize * kNumBlocks;
 
@@ -1061,21 +1084,20 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
                        detail::EmptyScoreBuffer>;
 
   using MinMatchBufferType =
-    detail::MinMatchBuffer<traits_type::kMinMatch ? kWindow : 0>;
+    utils::Need<Traits::kMinMatch, detail::MinMatchBuffer<kWindow>>;
 
   using Attributes = std::tuple<DocAttr, ScoreAttr, CostAttr>;
 
   struct ResolveOverloadTag {};
 
   template<typename Estimation>
-  BlockDisjunction(DocIterators&& itrs, size_t min_match_count, Merger&& merger,
+  BlockDisjunction(Adapters&& itrs, size_t min_match_count, Merger&& merger,
                    Estimation&& estimation, detail::SubScoresCtx&& scores,
                    ResolveOverloadTag)
     : Merger{std::move(merger)},
       _itrs(std::move(itrs)),
-      _match_count(_itrs.empty()
-                     ? size_t(0)
-                     : static_cast<size_t>(!traits_type::kMinMatch)),
+      _match_count(_itrs.empty() ? size_t(0)
+                                 : static_cast<size_t>(!Traits::kMinMatch)),
       _score_buf(Merger::size(), kWindow),
       _match_buf(min_match_count),
       _scores(std::move(scores)) {
@@ -1087,7 +1109,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
 
     if constexpr (kHasScore<Merger>) {
       SDB_ASSERT(Merger::size());
-      auto& score = std::get<irs::ScoreAttr>(_attrs);
+      auto& score = std::get<ScoreAttr>(_attrs);
       auto min = ScoreFunction::DefaultMin;
       if (!_scores.scores.empty()) {
         score.max.leaf = score.max.tail = _scores.sum_score;
@@ -1096,7 +1118,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
           if (self._scores.Size() != self._itrs.size()) [[unlikely]] {
             self._scores.Clear();
             detail::MakeSubScores(self._itrs, self._scores);
-            auto& score = std::get<irs::ScoreAttr>(self._attrs);
+            auto& score = std::get<ScoreAttr>(self._attrs);
             // TODO(mbkkt) We cannot change tail now
             // Because it needs to recompute sum_score for our parent iterator
             score.max.leaf /* = score.max.tail */ = self._scores.sum_score;
@@ -1107,7 +1129,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
           [[maybe_unused]] score_t sum = 0.f;
           while (it != end) {
             auto next = end;
-            if constexpr (traits_type::kMinMatch) {
+            if constexpr (Traits::kMinMatch) {
               if (arg > sum) {  // TODO(mbkkt) strict wand: >=
                 ++min_match;
                 next = it + 1;
@@ -1122,7 +1144,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
             }
             it = next;
           }
-          if constexpr (traits_type::kMinMatch) {
+          if constexpr (Traits::kMinMatch) {
             self._match_buf.min_match_count(min_match);
           }
         };
@@ -1138,10 +1160,10 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
         min);
     }
 
-    if (traits_type::kMinMatch && min_match_count > 1) {
+    if (Traits::kMinMatch && min_match_count > 1) {
       // sort subnodes in ascending order by their cost
       // FIXME(gnusi) don't use extract
-      absl::c_sort(_itrs, [](const adapter& lhs, const adapter& rhs) noexcept {
+      absl::c_sort(_itrs, [](const auto& lhs, const auto& rhs) noexcept {
         return CostAttr::extract(lhs, 0) < CostAttr::extract(rhs, 0);
       });
 
@@ -1151,7 +1173,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
   }
 
   template<typename Visitor>
-  void visit_and_purge(Visitor visitor) {
+  void VisitAndPurge(Visitor visitor) {
     auto* begin = _itrs.data();
     auto* end = _itrs.data() + _itrs.size();
 
@@ -1162,7 +1184,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
         irstd::SwapRemove(_itrs, begin);
         --end;
 
-        if constexpr (traits_type::kMinMatchEarlyPruning) {
+        if constexpr (Traits::kMinMatchEarlyPruning) {
           // we don't need precise match count
           if (_itrs.size() < _match_buf.min_match_count()) {
             // can't fulfill min match requirement anymore
@@ -1175,8 +1197,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
       }
     }
 
-    if constexpr (traits_type::kMinMatch &&
-                  !traits_type::kMinMatchEarlyPruning) {
+    if constexpr (Traits::kMinMatch && !Traits::kMinMatchEarlyPruning) {
       // we need precise match count, so can't break earlier
       if (_itrs.size() < _match_buf.min_match_count()) {
         // can't fulfill min match requirement anymore
@@ -1186,44 +1207,44 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
     }
   }
 
-  void reset() noexcept {
+  void Reset() noexcept {
     std::memset(_mask, 0, sizeof _mask);
     if constexpr (kHasScore<Merger>) {
       _score_value = _score_buf.data();
       std::memset(_score_buf.data(), 0, _score_buf.size());
     }
-    if constexpr (traits_type::kMinMatch) {
+    if constexpr (Traits::kMinMatch) {
       _match_buf.clear();
     }
   }
 
-  bool refill() {
+  bool Refill() {
     if (_itrs.empty()) {
       return false;
     }
 
-    if constexpr (!traits_type::kMinMatch) {
-      reset();
+    if constexpr (!Traits::kMinMatch) {
+      Reset();
     }
 
     bool empty = true;
 
     do {
-      if constexpr (traits_type::kMinMatch) {
+      if constexpr (Traits::kMinMatch) {
         // in min match case we need to clear
         // internal buffers on every iteration
-        reset();
+        Reset();
       }
 
       _doc_base = _min;
       _max = _min + kWindow;
       _min = doc_limits::eof();
 
-      visit_and_purge([this, &empty](auto& it) mutable {
+      VisitAndPurge([this, &empty](auto& it) mutable {
         // FIXME
         // for min match case we can skip the whole block if
         // we can't satisfy match_buf_.min_match_count() conditions, namely
-        // if constexpr (traits_type::kMinMatch) {
+        // if constexpr (Traits::kMinMatch) {
         //  if (empty && (&it + (match_buf_.min_match_count() -
         //  match_buf_.max_match_count()) < (itrs_.data() + itrs_.size()))) {
         //    // skip current block
@@ -1234,11 +1255,11 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
         if constexpr (kHasScore<Merger>) {
           SDB_ASSERT(Merger::size());
           if (!it.score->IsDefault()) {
-            return this->refill<true>(it, empty);
+            return this->Refill<true>(it, empty);
           }
         }
 
-        return this->refill<false>(it, empty);
+        return this->Refill<false>(it, empty);
       });
     } while (empty && !_itrs.empty());
 
@@ -1250,13 +1271,13 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
 
     _cur = *_mask;
     _begin = _mask + 1;
-    if constexpr (traits_type::kMinMatch || kHasScore<Merger>) {
+    if constexpr (Traits::kMinMatch || kHasScore<Merger>) {
       _buf_offset = 0;
     }
     while (!_cur) {
       _cur = *_begin++;
       _doc_base += BitsRequired<uint64_t>();
-      if constexpr (traits_type::kMinMatch || kHasScore<Merger>) {
+      if constexpr (Traits::kMinMatch || kHasScore<Merger>) {
         _buf_offset += BitsRequired<uint64_t>();
       }
     }
@@ -1266,7 +1287,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
   }
 
   template<bool Score>
-  bool refill(adapter& it, bool& empty) {
+  bool Refill(Adapter& it, bool& empty) {
     SDB_ASSERT(it.doc);
     const auto* doc = &it.doc->value;
 
@@ -1297,7 +1318,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
         merger(_score_buf.get(offset), merger.temp());
       }
 
-      if constexpr (traits_type::kMinMatch) {
+      if constexpr (Traits::kMinMatch) {
         empty &= _match_buf.inc(offset);
       } else {
         empty = false;
@@ -1311,7 +1332,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
   }
 
   uint64_t _mask[kNumBlocks]{};
-  DocIterators _itrs;
+  Adapters _itrs;
   uint64_t* _begin{std::end(_mask)};
   uint64_t _cur{};
   doc_id_t _doc_base{doc_limits::invalid()};
@@ -1328,47 +1349,45 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
   const score_t* _score_value{_score_buf.data()};
 };
 
-template<typename DocIteratorImpl, typename Merger,
-         typename Adapter = ScoreAdapter<DocIteratorImpl>>
+template<typename Adapter, typename Merger>
 using DisjunctionIterator =
-  BlockDisjunction<DocIteratorImpl, Merger,
-                   BlockDisjunctionTraits<MatchType::Match, false>, Adapter>;
+  BlockDisjunction<Adapter, Merger,
+                   BlockDisjunctionTraits<MatchType::Match, false>>;
 
-template<typename DocIteratorImpl, typename Merger,
-         typename Adapter = ScoreAdapter<DocIteratorImpl>>
+template<typename Adapter, typename Merger>
 using MinMatchIterator =
-  BlockDisjunction<DocIteratorImpl, Merger,
-                   BlockDisjunctionTraits<MatchType::MinMatch, false>, Adapter>;
+  BlockDisjunction<Adapter, Merger,
+                   BlockDisjunctionTraits<MatchType::MinMatch, false>>;
 
 template<typename T>
 struct RebindIterator;
 
-template<typename DocIteratorImpl, typename Merger, typename Adapter>
-struct RebindIterator<Disjunction<DocIteratorImpl, Merger, Adapter>> {
-  using Unary = UnaryDisjunction<DocIteratorImpl, Adapter>;
-  using Basic = BasicDisjunction<DocIteratorImpl, Merger, Adapter>;
-  using Small = SmallDisjunction<DocIteratorImpl, Merger, Adapter>;
+template<typename Adapter, typename Merger>
+struct RebindIterator<Disjunction<Adapter, Merger>> {
+  using Unary = UnaryDisjunction<Adapter>;
+  using Basic = BasicDisjunction<Adapter, Merger>;
+  using Small = SmallDisjunction<Adapter, Merger>;
   using Wand = void;
 };
 
-template<typename DocIteratorImpl, typename Merger, typename Adapter>
-struct RebindIterator<DisjunctionIterator<DocIteratorImpl, Merger, Adapter>> {
+template<typename Adapter, typename Merger>
+struct RebindIterator<DisjunctionIterator<Adapter, Merger>> {
   using Unary = void;  // block disjunction doesn't support visitor
-  using Basic = BasicDisjunction<DocIteratorImpl, Merger, Adapter>;
+  using Basic = BasicDisjunction<Adapter, Merger>;
   using Small = void;  // block disjunction always faster than small
-  using Wand = DisjunctionIterator<DocIteratorImpl, Merger, Adapter>;
+  using Wand = DisjunctionIterator<Adapter, Merger>;
 };
 
-template<typename DocIteratorImpl, typename Merger, typename Adapter>
-struct RebindIterator<MinMatchIterator<DocIteratorImpl, Merger, Adapter>> {
-  using Disjunction = DisjunctionIterator<DocIteratorImpl, Merger, Adapter>;
-  using Wand = MinMatchIterator<DocIteratorImpl, Merger, Adapter>;
+template<typename Adapter, typename Merger>
+struct RebindIterator<MinMatchIterator<Adapter, Merger>> {
+  using Disjunction = DisjunctionIterator<Adapter, Merger>;
+  using Wand = MinMatchIterator<Adapter, Merger>;
 };
 
 // Returns disjunction iterator created from the specified sub iterators
 template<typename Disjunction, typename Merger, typename... Args>
 DocIterator::ptr MakeDisjunction(WandContext ctx,
-                                 typename Disjunction::DocIterators&& itrs,
+                                 typename Disjunction::Adapters&& itrs,
                                  Merger&& merger, Args&&... args) {
   const auto size = itrs.size();
 
@@ -1378,7 +1397,6 @@ DocIterator::ptr MakeDisjunction(WandContext ctx,
   }
 
   if (1 == size) {
-    // Single sub-query
     using UnaryDisjunction = typename RebindIterator<Disjunction>::Unary;
     if constexpr (std::is_void_v<UnaryDisjunction>) {
       return std::move(itrs.front());
@@ -1388,13 +1406,13 @@ DocIterator::ptr MakeDisjunction(WandContext ctx,
     }
   }
 
-  if (2 == size) {
-    // 2-way disjunction
-    using BasicDisjunction = typename RebindIterator<Disjunction>::Basic;
-
-    return memory::make_managed<BasicDisjunction>(
-      std::move(itrs.front()), std::move(itrs.back()),
-      std::forward<Merger>(merger), std::forward<Args>(args)...);
+  using BasicDisjunction = typename RebindIterator<Disjunction>::Basic;
+  if constexpr (!std::is_void_v<BasicDisjunction>) {
+    if (2 == size) {
+      return memory::make_managed<BasicDisjunction>(
+        std::move(itrs.front()), std::move(itrs.back()),
+        std::forward<Merger>(merger), std::forward<Args>(args)...);
+    }
   }
 
   using SmallDisjunction = typename RebindIterator<Disjunction>::Small;
@@ -1426,9 +1444,10 @@ DocIterator::ptr MakeDisjunction(WandContext ctx,
 
 // Returns weak conjunction iterator created from the specified sub iterators
 template<typename WeakConjunction, typename Merger, typename... Args>
-DocIterator::ptr MakeWeakDisjunction(
-  WandContext ctx, typename WeakConjunction::DocIterators&& itrs,
-  size_t min_match, Merger&& merger, Args&&... args) {
+DocIterator::ptr MakeWeakDisjunction(WandContext ctx,
+                                     typename WeakConjunction::Adapters&& itrs,
+                                     size_t min_match, Merger&& merger,
+                                     Args&&... args) {
   // This case must be handled by a caller, we're unable to process it here
   SDB_ASSERT(min_match > 0);
 
@@ -1442,7 +1461,6 @@ DocIterator::ptr MakeWeakDisjunction(
   if (1 == min_match) {
     // Pure disjunction
     using Disjunction = typename RebindIterator<WeakConjunction>::Disjunction;
-
     return MakeDisjunction<Disjunction>(ctx, std::move(itrs),
                                         std::forward<Merger>(merger),
                                         std::forward<Args>(args)...);

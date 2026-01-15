@@ -2792,7 +2792,7 @@ TEST_P(SortedIndexTestCase,
 }
 
 const auto kSortedIndexTestCaseValues =
-  ::testing::Values(tests::FormatInfo{"1_5"}, tests::FormatInfo{"1_5simd"});
+  ::testing::Values(tests::FormatInfo{"1_5avx"}, tests::FormatInfo{"1_5simd"});
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
@@ -3161,7 +3161,8 @@ INSTANTIATE_TEST_SUITE_P(
   SortedIndexStressTest, SortedIndexStressTestCase,
   ::testing::Combine(
     ::testing::Values(&tests::Directory<&tests::MemoryDirectory>),
-    ::testing::Values(tests::FormatInfo{"1_5"}, tests::FormatInfo{"1_5simd"})),
+    ::testing::Values(tests::FormatInfo{"1_5avx"},
+                      tests::FormatInfo{"1_5simd"})),
   SortedIndexStressTestCase::to_string);
 
 }  // namespace

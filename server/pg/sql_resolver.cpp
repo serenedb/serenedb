@@ -43,20 +43,61 @@ void ResolveInformationSchema(ObjectId database, std::string_view relation,
   // TODO(codeworse): add views and functions from information_schema
 }
 
-void ResolveEntity(ObjectId database, std::span<const std::string> search_path,
-                   Objects& objects, Disallowed& disallowed,
-                   const Objects& query, std::string_view entity_name);
+void ResolveFunctions(ObjectId database,
+                      std::span<const std::string> search_path,
+                      Objects& objects, Disallowed& disallowed,
+                      const Objects& query);
 
-void ResolveObject(ObjectId database, std::span<const std::string> search_path,
-                   Objects& objects, Disallowed& disallowed,
-                   const Objects::ObjectName& name, Objects::ObjectData& data) {
+enum class ObjectType {
+  Function = 0,
+  Relation = 1,
+};
+void ResolveObjectInSchemaPath(ObjectId database, ObjectType type,
+                               std::span<const std::string> search_path,
+                               const Objects::ObjectName& name,
+                               Objects::ObjectData& data) {
+  auto resolve_object = [&](std::string_view schema) {
+    SDB_ASSERT(!data.object);
+    if (schema == StaticStrings::kInformationSchema) {
+      // In case information_schema is in the search path
+      ResolveInformationSchema(database, name.relation, data);
+      return;
+    }
+
+    auto& instance = SerenedServer::Instance();
+    auto& catalog = instance.getFeature<catalog::CatalogFeature>().Global();
+    auto snapshot = catalog.GetSnapshot();
+    data.object = [&] -> std::shared_ptr<catalog::SchemaObject> {
+      switch (type) {
+        case ObjectType::Function:
+          return snapshot->GetFunction(database, schema, name.relation);
+        case ObjectType::Relation:
+          return snapshot->GetRelation(database, schema, name.relation);
+      }
+    }();
+  };
+
+  if (!name.schema.empty()) {
+    resolve_object(name.schema);
+  } else {
+    for (const auto& schema : search_path) {
+      resolve_object(schema);
+      if (data.object) {
+        break;
+      }
+    }
+  }
+}
+
+void ResolveFunction(ObjectId database,
+                     std::span<const std::string> search_path, Objects& objects,
+                     Disallowed& disallowed, const Objects::ObjectName& name,
+                     Objects::ObjectData& data) {
   if (data.object) {
     return;
   }
-  if (const auto* table = pg::GetTable(name.relation)) {
-    data.object = table->CreateSnapshot(database);
-    return;
-  }
+
+  // system functions
   if (const auto func = pg::GetFunction(name.relation)) {
     data.object = std::move(func);
     return;
@@ -71,47 +112,51 @@ void ResolveObject(ObjectId database, std::span<const std::string> search_path,
     }
   }
 
-  if (const auto view = pg::GetView(name.relation)) {
-    data.object = std::move(view);
-  } else {
-    auto& catalog =
-      SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-    auto snapshot = catalog.GetSnapshot();
+  ResolveObjectInSchemaPath(database, ObjectType::Function, search_path, name,
+                            data);
 
-    std::string_view key = name.relation;
+  if (!data.object) {
+    SDB_THROW(ERROR_SERVER_DATA_SOURCE_NOT_FOUND, "function \"",
+              name.FullName(), "\" does not exist");
+  }
 
-    auto resolve_object = [&](std::string_view schema) {
-      SDB_ASSERT(!data.object);
-      if (schema == StaticStrings::kInformationSchema) {
-        // In case information_schema is in the search path
-        ResolveInformationSchema(database, name.relation, data);
-        return;
-      }
+  SDB_ASSERT(data.object->GetType() == catalog::ObjectType::Function);
+  auto& func = basics::downCast<catalog::Function>(*data.object);
+  if (func.Options().language == catalog::FunctionLanguage::SQL) {
+    bool changed = disallowed.emplace(name).second;
+    SDB_ASSERT(changed);
+    ResolveSqlFunction(database, search_path, objects, disallowed,
+                       func.SqlFunction().GetObjects());
+    changed = disallowed.erase(name) != 0;
+    SDB_ASSERT(changed);
+  }
+}
 
-      if (auto object = snapshot->GetRelation(database, schema, key)) {
-        data.object = object;
-      } else {
-        data.object = snapshot->GetFunction(database, schema, key);
-      }
-    };
+// view, table
+void ResolveRelation(ObjectId database,
+                     std::span<const std::string> search_path, Objects& objects,
+                     Disallowed& disallowed, const Objects::ObjectName& name,
+                     Objects::ObjectData& data) {
+  if (data.object) {
+    return;
+  }
 
-    if (!name.schema.empty()) {
-      resolve_object(name.schema);
-    } else {
-      for (const auto& schema : search_path) {
-        resolve_object(schema);
-        if (data.object) {
-          break;
-        }
-      }
-    }
-    if (!data.object) {
-      SDB_THROW(ERROR_SERVER_DATA_SOURCE_NOT_FOUND, "relation \"",
-                name.FullName(), "\" does not exist");
+  // system tables
+  if (const auto* table = pg::GetTable(name.relation)) {
+    data.object = table->CreateSnapshot(database);
+    return;
+  }
+
+  if (name.schema == StaticStrings::kInformationSchema) {
+    // information_schema must be explicitly defined
+    // (except the case it is in the search path)
+    ResolveInformationSchema(database, name.relation, data);
+    if (data.object) {
+      return;
     }
   }
 
-  if (data.object->GetType() == catalog::ObjectType::View) {
+  auto resolve_view = [&] {
     bool changed = disallowed.emplace(name).second;
     SDB_ASSERT(changed);
     auto state = basics::downCast<SqlQueryView>(*data.object).GetState();
@@ -119,67 +164,111 @@ void ResolveObject(ObjectId database, std::span<const std::string> search_path,
                      state->objects);
     changed = disallowed.erase(name) != 0;
     SDB_ASSERT(changed);
-  } else if (data.object->GetType() == catalog::ObjectType::Function) {
-    auto& func = basics::downCast<catalog::Function>(*data.object);
-    if (func.Options().language == catalog::FunctionLanguage::SQL) {
-      bool changed = disallowed.emplace(name).second;
-      SDB_ASSERT(changed);
-      ResolveFunction(database, search_path, objects, disallowed,
-                      func.SqlFunction().GetObjects());
-      changed = disallowed.erase(name) != 0;
-      SDB_ASSERT(changed);
-    }
-  } else if (data.object->GetType() == catalog::ObjectType::Table) {
+  };
+
+  // system views
+  if (const auto view = pg::GetView(name.relation)) {
+    data.object = std::move(view);
+    resolve_view();
+    return;
+  }
+
+  ResolveObjectInSchemaPath(database, ObjectType::Relation, search_path, name,
+                            data);
+
+  if (!data.object) {
+    SDB_THROW(ERROR_SERVER_DATA_SOURCE_NOT_FOUND, "relation \"",
+              name.FullName(), "\" does not exist");
+  }
+
+  if (data.object->GetType() == catalog::ObjectType::Table) {
     auto table = basics::downCast<catalog::Table>(*data.object);
     for (const auto& column : table.Columns()) {
       if (const auto& default_value = column.expr) {
         const auto& default_value_objects = default_value->GetObjects();
-        ResolveEntity(database, search_path, objects, disallowed,
-                      default_value_objects, "default_value");
+        SDB_ASSERT(default_value_objects.getRelations().empty());
+        ResolveFunctions(database, search_path, objects, disallowed,
+                         default_value_objects);
       }
     }
+  } else if (data.object->GetType() == catalog::ObjectType::View) {
+    resolve_view();
   }
 }
 
-void ResolveEntity(ObjectId database, std::span<const std::string> search_path,
-                   Objects& objects, Disallowed& disallowed,
-                   const Objects& query, std::string_view entity_name) {
-  for (const auto& [name, old_data] : query.getObjects()) {
-    if (disallowed.contains(name)) {
-      SDB_THROW(ERROR_BAD_PARAMETER, entity_name,
-                " doesn't support recursive references");
-    }
-    auto& new_data = objects.ensureData(name.schema, name.relation);
+void ResolveRelations(ObjectId database,
+                      std::span<const std::string> search_path,
+                      Objects& objects, Disallowed& disallowed,
+                      const Objects& query) {
+  for (const auto& [name, old_data] : query.getRelations()) {
+    auto& new_data = objects.ensureRelation(name.schema, name.relation);
     new_data = old_data;
-    ResolveObject(database, search_path, objects, disallowed, name, new_data);
+    ResolveRelation(database, search_path, objects, disallowed, name, new_data);
+  }
+}
+
+void ResolveFunctions(ObjectId database,
+                      std::span<const std::string> search_path,
+                      Objects& objects, Disallowed& disallowed,
+                      const Objects& query) {
+  for (const auto& [name, old_data] : query.getFunctions()) {
+    auto& new_data = objects.ensureFunction(name.schema, name.relation);
+    new_data = old_data;
+    ResolveFunction(database, search_path, objects, disallowed, name, new_data);
   }
 }
 
 }  // namespace
 
+void Resolve(ObjectId database, Objects& objects, const Config& config) {
+  SDB_ASSERT(!ServerState::instance()->IsDBServer());
+  Disallowed disallowed;
+  auto search_path = config.Get<VariableType::PgSearchPath>("search_path");
+
+  auto functions = std::move(objects.getFunctions());
+  for (auto& [name, old_data] : functions) {
+    auto& new_data = objects.ensureFunction(name.schema, name.relation);
+    new_data = std::move(old_data);
+    ResolveFunction(database, search_path, objects, disallowed, name, new_data);
+  }
+
+  auto relations = std::move(objects.getRelations());
+  for (auto& [name, old_data] : relations) {
+    auto& new_data = objects.ensureRelation(name.schema, name.relation);
+    new_data = std::move(old_data);
+    ResolveRelation(database, search_path, objects, disallowed, name, new_data);
+  }
+}
+
 void ResolveQueryView(ObjectId database,
                       std::span<const std::string> search_path,
                       Objects& objects, Disallowed& disallowed,
                       const Objects& query) {
-  ResolveEntity(database, search_path, objects, disallowed, query, "view");
+  for (const auto& [name, old_data] : query.getRelations()) {
+    if (disallowed.contains(name)) {
+      SDB_THROW(ERROR_BAD_PARAMETER,
+                "view doesn't support recursive references");
+    }
+    auto& new_data = objects.ensureRelation(name.schema, name.relation);
+    new_data = old_data;
+    ResolveRelation(database, search_path, objects, disallowed, name, new_data);
+  }
+  ResolveFunctions(database, search_path, objects, disallowed, query);
 }
 
-void ResolveFunction(ObjectId database,
-                     std::span<const std::string> search_path, Objects& objects,
-                     Disallowed& disallowed, const Objects& query) {
-  ResolveEntity(database, search_path, objects, disallowed, query, "function");
-}
-
-void Resolve(ObjectId database, Objects& objects, const Config& config) {
-  SDB_ASSERT(!ServerState::instance()->IsDBServer());
-  Disallowed disallowed;
-  auto query = std::move(objects.getObjects());
-  auto search_path = config.Get<VariableType::PgSearchPath>("search_path");
-
-  for (auto& [name, old_data] : query) {
-    auto& new_data = objects.ensureData(name.schema, name.relation);
-    new_data = std::move(old_data);
-    ResolveObject(database, search_path, objects, disallowed, name, new_data);
+void ResolveSqlFunction(ObjectId database,
+                        std::span<const std::string> search_path,
+                        Objects& objects, Disallowed& disallowed,
+                        const Objects& query) {
+  ResolveRelations(database, search_path, objects, disallowed, query);
+  for (const auto& [name, old_data] : query.getFunctions()) {
+    if (disallowed.contains(name)) {
+      SDB_THROW(ERROR_BAD_PARAMETER,
+                "function doesn't support recursive references");
+    }
+    auto& new_data = objects.ensureFunction(name.schema, name.relation);
+    new_data = old_data;
+    ResolveFunction(database, search_path, objects, disallowed, name, new_data);
   }
 }
 

@@ -129,7 +129,7 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
   const IndexFeatures features = ord.features();
   const std::span stats{_stats};
 
-  const bool has_unscored_terms = !state->unscored_terms.empty();
+  const bool has_unscored_terms = !state->unscored_states.empty();
 
   ScoreAdapters itrs(state->scored_states.size() + size_t(has_unscored_terms));
   auto it = std::begin(itrs);
@@ -145,7 +145,7 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
     }
 
     if (!no_score) {
-      auto* score = irs::GetMutable<irs::ScoreAttr>(docs.get());
+      auto* score = irs::GetMutable<ScoreAttr>(docs.get());
       SDB_ASSERT(score);
       SDB_ASSERT(entry.stat_offset < stats.size());
       auto* stat = stats[entry.stat_offset].c_str();
@@ -161,21 +161,20 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
   if (has_unscored_terms) {
     SDB_ASSERT(it != std::end(itrs));
     *it = {memory::make_managed<::LazyBitsetIterator>(
-      segment, *state->reader, state->unscored_terms,
+      segment, *state->reader, state->unscored_states,
       state->unscored_states_estimation)};
     ++it;
   }
 
   itrs.erase(it, std::end(itrs));
 
-  return ResolveMergeType(_merge_type, ord.buckets().size(),
-                          [&]<typename A>(A&& aggregator) -> DocIterator::ptr {
-                            using Disjunction =
-                              MinMatchIterator<DocIterator::ptr, A>;
-                            return MakeWeakDisjunction<Disjunction>(
-                              {}, std::move(itrs), _min_match,
-                              std::move(aggregator), state->estimation());
-                          });
+  return ResolveMergeType(
+    _merge_type, ord.buckets().size(), [&]<typename A>(A&& aggregator) {
+      using Disjunction = MinMatchIterator<ScoreAdapter, A>;
+      return MakeWeakDisjunction<Disjunction>({}, std::move(itrs), _min_match,
+                                              std::move(aggregator),
+                                              state->estimation());
+    });
 }
 
 }  // namespace irs

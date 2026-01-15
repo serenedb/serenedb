@@ -26,21 +26,17 @@
 
 namespace irs {
 
-template<typename DocIteratorImpl = DocIterator::ptr>
-struct CostAdapter : ScoreAdapter<DocIteratorImpl> {
-  explicit CostAdapter(DocIteratorImpl&& it) noexcept
-    : ScoreAdapter<DocIteratorImpl>{std::move(it)} {
+struct CostAdapter : ScoreAdapter {
+  explicit CostAdapter(DocIterator::ptr it) noexcept
+    : ScoreAdapter{std::move(it)} {
     // TODO(mbkkt) 0 instead of kMax?
-    est = CostAttr::extract(*this->it, CostAttr::kMax);
+    est = CostAttr::extract(*this, CostAttr::kMax);
   }
 
-  CostAdapter(CostAdapter&&) noexcept = default;
-  CostAdapter& operator=(CostAdapter&&) noexcept = default;
-
-  CostAttr::Type est{};
+  CostAttr::Type est;
 };
 
-using CostAdapters = std::vector<CostAdapter<>>;
+using CostAdapters = std::vector<CostAdapter>;
 
 // Heapsort-based "weak and" iterator
 // -----------------------------------------------------------------------------
@@ -96,30 +92,29 @@ class MinMatchDisjunction : public DocIterator,
 
   doc_id_t value() const final { return std::get<DocAttr>(_attrs).value; }
 
-  bool next() final {
+  doc_id_t advance() final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
 
     if (doc_limits::eof(doc_value)) {
-      return false;
+      return doc_value;
     }
 
     while (CheckSize()) {
       // start next iteration. execute next for all lead iterators
       // and move them to head
       if (!PopLead()) {
-        doc_value = doc_limits::eof();
-        return false;
+        return doc_value = doc_limits::eof();
       }
 
       // make step for all head iterators less or equal current doc (doc_)
       while (Top().value() <= doc_value) {
-        const bool exhausted = Top().value() == doc_value
-                                 ? !Top()->next()
-                                 : doc_limits::eof(Top()->seek(doc_value + 1));
+        const auto target = Top().value() == doc_value
+                              ? Top()->advance()
+                              : Top()->seek(doc_value + 1);
+        const bool exhausted = doc_limits::eof(target);
 
         if (exhausted && !RemoveTop()) {
-          doc_value = doc_limits::eof();
-          return false;
+          return doc_value = doc_limits::eof();
         }
         RefreshTop();
       }
@@ -130,19 +125,18 @@ class MinMatchDisjunction : public DocIterator,
       do {
         AddLead();
         if (_lead >= _min_match_count) {
-          return !doc_limits::eof(doc_value = top);
+          return doc_value = top;
         }
       } while (top == Top().value());
     }
 
-    doc_value = doc_limits::eof();
-    return false;
+    return doc_value = doc_limits::eof();
   }
 
   doc_id_t seek(doc_id_t target) final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
 
-    if (target <= doc_value) {
+    if (target <= doc_value) [[unlikely]] {
       return doc_value;
     }
 
@@ -208,6 +202,8 @@ class MinMatchDisjunction : public DocIterator,
     }
   }
 
+  uint32_t count() final { return Count(*this); }
+
   // Calculates total count of matched iterators. This value could be
   // greater than required min_match. All matched iterators points
   // to current matched document after this call.
@@ -223,7 +219,7 @@ class MinMatchDisjunction : public DocIterator,
   void PrepareScore() {
     SDB_ASSERT(Merger::size());
 
-    auto& score = std::get<irs::ScoreAttr>(_attrs);
+    auto& score = std::get<ScoreAttr>(_attrs);
 
     score.Reset(*this, [](ScoreCtx* ctx, score_t* res) noexcept {
       auto& self = static_cast<MinMatchDisjunction&>(*ctx);

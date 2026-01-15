@@ -979,7 +979,7 @@ bool TextTokenizer::next() {
   } else if (next_word()) {
     std::get<TermAttr>(_attrs).value = _state->term;
 
-    auto& offset = std::get<irs::OffsAttr>(_attrs);
+    auto& offset = std::get<OffsAttr>(_attrs);
     offset.start = _state->start;
     offset.end = _state->end;
 
@@ -1085,7 +1085,7 @@ bool TextTokenizer::next_ngram() {
     _term_buf.assign(_state->term.data(), size);
     std::get<TermAttr>(_attrs).value = _term_buf;
 
-    auto& offset = std::get<irs::OffsAttr>(_attrs);
+    auto& offset = std::get<OffsAttr>(_attrs);
     offset.start = _state->start;
     offset.end = _state->start + size;
 

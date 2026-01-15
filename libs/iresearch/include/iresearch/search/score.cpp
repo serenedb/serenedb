@@ -54,36 +54,12 @@ ScoreFunctions PrepareScorers(std::span<const ScorerBucket> buckets,
   return scorers;
 }
 
-// TODO(mbkkt) Do we really need to optimize >= 2 scorers case?
-
 static ScoreFunction CompileScorers(ScoreFunction&& wand,
                                     ScoreFunctions&& tail) {
   SDB_ASSERT(!tail.empty());
   switch (tail.size()) {
     case 0:
       return std::move(wand);
-    case 1: {
-      struct Ctx final : ScoreCtx {
-        Ctx(ScoreFunction&& wand, ScoreFunction&& tail) noexcept
-          : wand{std::move(wand)}, tail{std::move(tail)} {}
-
-        ScoreFunction wand;
-        ScoreFunction tail;
-      };
-
-      return ScoreFunction::Make<Ctx>(
-        [](ScoreCtx* ctx, score_t* res) noexcept {
-          auto* scorers_ctx = static_cast<Ctx*>(ctx);
-          SDB_ASSERT(res != nullptr);
-          scorers_ctx->wand.Score(res);
-          scorers_ctx->tail.Score(res + 1);
-        },
-        [](ScoreCtx* ctx, score_t arg) noexcept {
-          auto* scorers_ctx = static_cast<Ctx*>(ctx);
-          scorers_ctx->wand.Min(arg);
-        },
-        std::move(wand), std::move(tail.front()));
-    }
     default: {
       struct Ctx final : ScoreCtx {
         explicit Ctx(ScoreFunction&& wand, ScoreFunctions&& tail) noexcept
@@ -120,25 +96,6 @@ ScoreFunction CompileScorers(ScoreFunctions&& scorers) {
       // The most important and frequent case when only
       // one scorer is provided.
       return std::move(scorers.front());
-    }
-    case 2: {
-      struct Ctx final : ScoreCtx {
-        Ctx(ScoreFunction&& func0, ScoreFunction&& func1) noexcept
-          : func0{std::move(func0)}, func1{std::move(func1)} {}
-
-        ScoreFunction func0;
-        ScoreFunction func1;
-      };
-
-      return ScoreFunction::Make<Ctx>(
-        [](ScoreCtx* ctx, score_t* res) noexcept {
-          SDB_ASSERT(res != nullptr);
-          auto* scorers_ctx = static_cast<Ctx*>(ctx);
-          scorers_ctx->func0(res);
-          scorers_ctx->func1(res + 1);
-        },
-        ScoreFunction::DefaultMin, std::move(scorers.front()),
-        std::move(scorers.back()));
     }
     default: {
       struct Ctx final : ScoreCtx {

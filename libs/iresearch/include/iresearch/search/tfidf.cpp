@@ -351,9 +351,9 @@ WandWriter::ptr TFIDF::prepare_wand_writer(size_t max_levels) const {
     // idf * sqrt(tf) / sqrt(dl)
     // sqrt(tf) / sqrt(dl)
     // tf / dl
-    return std::make_unique<FreqNormWriter<kWandTagDivNorm>>(max_levels, *this);
+    return std::make_unique<FreqNormWriter<kWandTagDivNorm>>(max_levels);
   }
-  return std::make_unique<FreqNormWriter<kWandTagMaxFreq>>(max_levels, *this);
+  return std::make_unique<FreqNormWriter<kWandTagMaxFreq>>(max_levels);
 }
 
 WandSource::ptr TFIDF::prepare_wand_source() const {

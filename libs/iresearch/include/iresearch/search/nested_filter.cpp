@@ -89,13 +89,15 @@ class ScorerWrapper : public DocIterator {
 
   doc_id_t value() const final { return _it->value(); }
 
-  bool next() final { return _it->next(); }
+  doc_id_t advance() final { return _it->advance(); }
 
   doc_id_t seek(doc_id_t target) final { return _it->seek(target); }
 
   doc_id_t shallow_seek(doc_id_t target) final {
     return _it->shallow_seek(target);
   }
+
+  uint32_t count() final { return _it->count(); }
 
  private:
   DocIterator::ptr _it;
@@ -118,10 +120,10 @@ class ChildToParentJoin : public DocIterator, private Matcher {
     SDB_ASSERT(_child);
 
     std::get<AttributePtr<DocAttr>>(_attrs) =
-      irs::GetMutable<irs::DocAttr>(_parent.get());
+      irs::GetMutable<DocAttr>(_parent.get());
     SDB_ASSERT(std::get<AttributePtr<DocAttr>>(_attrs).ptr);
 
-    _child_doc = irs::get<irs::DocAttr>(*_child);
+    _child_doc = irs::get<DocAttr>(*_child);
 
     std::get<AttributePtr<CostAttr>>(_attrs) =
       irs::GetMutable<CostAttr>(_child.get());
@@ -139,23 +141,20 @@ class ChildToParentJoin : public DocIterator, private Matcher {
     return std::get<AttributePtr<DocAttr>>(_attrs).ptr->value;
   }
 
-  bool next() final {
-    if (_parent->next()) [[likely]] {
-      return !doc_limits::eof(SeekInternal(value()));
-    }
-    return false;
+  doc_id_t advance() final {
+    const auto parent = _parent->advance();
+    return SeekInternal(parent);
   }
 
   doc_id_t seek(doc_id_t target) final {
-    if (const auto doc_value = value(); target <= doc_value) [[unlikely]] {
-      return doc_value;
+    if (const auto doc = value(); target <= doc) [[unlikely]] {
+      return doc;
     }
     const auto parent = _parent->seek(target);
-    if (doc_limits::eof(parent)) [[unlikely]] {
-      return doc_limits::eof();
-    }
     return SeekInternal(parent);
   }
+
+  uint32_t count() final { return Count(*this); }
 
  private:
   friend Matcher;
@@ -170,6 +169,9 @@ class ChildToParentJoin : public DocIterator, private Matcher {
   }
 
   doc_id_t SeekInternal(doc_id_t parent) {
+    if (doc_limits::eof(parent)) [[unlikely]] {
+      return doc_limits::eof();
+    }
     for (doc_id_t first_child = _child->seek(FirstChildApprox());
          (first_child = Matcher::Accept(first_child, parent));
          first_child = _child->seek(FirstChildApprox())) {
@@ -197,8 +199,8 @@ class ChildToParentJoin : public DocIterator, private Matcher {
 
 template<typename Matcher>
 void ChildToParentJoin<Matcher>::PrepareScore() {
-  auto& score = std::get<irs::ScoreAttr>(_attrs);
-  _child_score = irs::get<irs::ScoreAttr>(*_child);
+  auto& score = std::get<ScoreAttr>(_attrs);
+  _child_score = irs::get<ScoreAttr>(*_child);
 
   if (!std::is_same_v<Matcher, NoneMatcher> &&
       (_child_doc == nullptr || _child_score == nullptr ||
@@ -221,7 +223,7 @@ struct ScoreBuffer<NoopAggregator> {
 
 template<typename Merger, size_t Size>
 struct ScoreBuffer<Aggregator<Merger, Size>> {
-  static constexpr bool kIsDynamic = Size == std::numeric_limits<size_t>::max();
+  static constexpr bool kIsDynamic = Size == kBufferRuntimeSize;
 
   using BufferType =
     std::conditional_t<kIsDynamic, bstring, std::array<score_t, Size>>;
@@ -334,24 +336,28 @@ class PredMatcher : public Merger,
     auto& merger = static_cast<Merger&>(*this);
     auto& buf = static_cast<BufferType&>(*this);
 
-    const auto* child_doc = self._child_doc;
-
     if constexpr (kHasScore<Merger>) {
-      (*self._child_score)(buf.Data());
+      self._child_score->Score(buf.Data());
     }
 
-    while (_pred->next() && _pred_doc->value < parent) {
-      if (!child.next() || _pred_doc->value != child_doc->value) {
+    while (true) {
+      const auto pred_doc = _pred->advance();
+      if (parent <= pred_doc) {
+        return doc_limits::invalid();
+      }
+      SDB_ASSERT(!doc_limits::eof(pred_doc));
+
+      const auto child_doc = child.advance();
+      if (pred_doc != child_doc) {
         return parent + 1;
       }
+      SDB_ASSERT(!doc_limits::eof(child_doc));
 
       if constexpr (kHasScore<Merger>) {
         (*self._child_score)(merger.temp());
         merger(buf.Data(), merger.temp());
       }
     }
-
-    return 0;
   }
 
   ScoreFunction PrepareScore() noexcept {
@@ -628,7 +634,7 @@ DocIterator::ptr ByNestedQuery::execute(const ExecutionContext& ctx) const {
     return DocIterator::empty();
   }
 
-  const auto* prev = irs::get<irs::PrevDocAttr>(*parent);
+  const auto* prev = irs::get<PrevDocAttr>(*parent);
 
   if (!prev || !*prev) [[unlikely]] {
     return DocIterator::empty();
@@ -645,8 +651,7 @@ DocIterator::ptr ByNestedQuery::execute(const ExecutionContext& ctx) const {
   }
 
   return ResolveMergeType(
-    _merge_type, ord.buckets().size(),
-    [&]<typename A>(A&& aggregator) -> DocIterator::ptr {
+    _merge_type, ord.buckets().size(), [&]<typename A>(A&& aggregator) {
       return ResolveMatchType(
         rdr, _match, _none_boost, std::forward<A>(aggregator),
         [&]<typename M>(M&& matcher) -> DocIterator::ptr {
@@ -655,7 +660,7 @@ DocIterator::ptr ByNestedQuery::execute(const ExecutionContext& ctx) const {
               if constexpr (!std::is_same_v<NoopAggregator, A>) {
                 auto func = ScoreFunction::Constant(
                   _none_boost, static_cast<uint32_t>(ord.buckets().size()));
-                auto* score = irs::GetMutable<irs::ScoreAttr>(parent.get());
+                auto* score = irs::GetMutable<ScoreAttr>(parent.get());
                 if (!score) [[unlikely]] {
                   return memory::make_managed<ScorerWrapper>(std::move(parent),
                                                              std::move(func));

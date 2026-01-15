@@ -29,7 +29,7 @@
 
 namespace sdb {
 
-class ConnectionContext : public ExecContext, public TxnState {
+class ConnectionContext : public ExecContext, public query::Transaction {
  public:
   ConnectionContext(std::string_view user, std::string_view dbname,
                     ObjectId database_id, message::Buffer* send_buffer,

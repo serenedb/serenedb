@@ -294,12 +294,12 @@ class UnicodeAnalyzerImpl final : public SegmentationTokenizer {
     auto utf32 = as_utf32(data.begin(), data.end());
     _begin = utf32.begin();
     _end = utf32.end();
-    std::get<irs::OffsAttr>(_attrs).end = 0;
+    std::get<OffsAttr>(_attrs).end = 0;
     return true;
   }
 
   bool next() final {
-    auto& offset = std::get<irs::OffsAttr>(_attrs);
+    auto& offset = std::get<OffsAttr>(_attrs);
     while (true) {
       const auto begin = _begin;
       _begin = _separate(_begin, _end);

@@ -339,7 +339,7 @@ TEST(index_death_test_formats_15, index_meta_write_fail_1st_phase) {
     });
   const auto* doc1 = gen.next();
 
-  auto codec = irs::formats::Get("1_5");
+  auto codec = irs::formats::Get("1_5avx");
   ASSERT_NE(nullptr, codec);
 
   {
@@ -455,7 +455,7 @@ TEST(index_death_test_formats_15, index_commit_fail_sync_1st_phase) {
     });
   const auto* doc1 = gen.next();
 
-  auto codec = irs::formats::Get("1_5");
+  auto codec = irs::formats::Get("1_5avx");
   ASSERT_NE(nullptr, codec);
 
   {
@@ -597,7 +597,7 @@ TEST(index_death_test_formats_15, index_meta_write_failure_2nd_phase) {
     });
   const auto* doc1 = gen.next();
 
-  auto codec = irs::formats::Get("1_5");
+  auto codec = irs::formats::Get("1_5avx");
   ASSERT_NE(nullptr, codec);
 
   {
@@ -707,7 +707,7 @@ TEST(index_death_test_formats_15,
   const auto* doc1 = gen.next();
   const auto* doc2 = gen.next();
 
-  auto codec = irs::formats::Get("1_5");
+  auto codec = irs::formats::Get("1_5avx");
   ASSERT_NE(nullptr, codec);
 
   {
@@ -974,7 +974,7 @@ TEST(index_death_test_formats_15,
   const auto* doc2 = gen.next();
   auto query_doc2 = MakeByTerm("name", "B");
 
-  auto codec = irs::formats::Get("1_5");
+  auto codec = irs::formats::Get("1_5avx");
   ASSERT_NE(nullptr, codec);
 
   {
@@ -1118,7 +1118,7 @@ TEST(index_death_test_formats_15,
   const auto* doc2 = gen.next();
   auto query_doc2 = MakeByTerm("name", "B");
 
-  auto codec = irs::formats::Get("1_5");
+  auto codec = irs::formats::Get("1_5avx");
   ASSERT_NE(nullptr, codec);
 
   {
@@ -1273,7 +1273,7 @@ TEST(index_death_test_formats_15,
     });
   const auto* doc1 = gen.next();
 
-  auto codec = irs::formats::Get("1_5");
+  auto codec = irs::formats::Get("1_5avx");
   ASSERT_NE(nullptr, codec);
 
   {
@@ -1400,7 +1400,7 @@ TEST(index_death_test_formats_15,
   const auto* doc1 = gen.next();
   const auto* doc2 = gen.next();
 
-  auto codec = irs::formats::Get("1_5");
+  auto codec = irs::formats::Get("1_5avx");
   ASSERT_NE(nullptr, codec);
 
   {
@@ -1529,7 +1529,7 @@ TEST(index_death_test_formats_15,
   const auto* doc3 = gen.next();
   const auto* doc4 = gen.next();
 
-  auto codec = irs::formats::Get("1_5");
+  auto codec = irs::formats::Get("1_5avx");
   ASSERT_NE(nullptr, codec);
 
   {
@@ -1722,7 +1722,7 @@ TEST(index_death_test_formats_15,
   const auto* doc2 = gen.next();
   const auto* doc3 = gen.next();
 
-  auto codec = irs::formats::Get("1_5");
+  auto codec = irs::formats::Get("1_5avx");
   ASSERT_NE(nullptr, codec);
 
   // segment meta creation failure
@@ -2019,7 +2019,7 @@ TEST(index_death_test_formats_15, segment_components_write_fail_consolidation) {
   const auto* doc1 = gen.next();
   const auto* doc2 = gen.next();
 
-  auto codec = irs::formats::Get("1_5");
+  auto codec = irs::formats::Get("1_5avx");
   ASSERT_NE(nullptr, codec);
 
   {
@@ -2141,7 +2141,7 @@ TEST(index_death_test_formats_15, segment_components_sync_fail_consolidation) {
   const auto* doc1 = gen.next();
   const auto* doc2 = gen.next();
 
-  auto codec = irs::formats::Get("1_5");
+  auto codec = irs::formats::Get("1_5avx");
   ASSERT_NE(nullptr, codec);
 
   {
@@ -2266,7 +2266,7 @@ TEST(index_death_test_formats_15, segment_components_fail_import) {
                               &tests::PayloadedJsonFieldFactory);
   const auto* doc1 = gen.next();
 
-  auto codec = irs::formats::Get("1_5");
+  auto codec = irs::formats::Get("1_5avx");
   ASSERT_NE(nullptr, codec);
 
   // create source segment
@@ -2566,7 +2566,7 @@ TEST(index_death_test_formats_15,
   const auto* doc2 = gen.next();
   const auto* doc3 = gen.next();
 
-  auto codec = irs::formats::Get("1_5");
+  auto codec = irs::formats::Get("1_5avx");
   ASSERT_NE(nullptr, codec);
 
   size_t i{};
@@ -2737,7 +2737,7 @@ TEST(index_death_test_formats_15,
   const auto* doc1 = gen.next();
   const auto* doc2 = gen.next();
 
-  auto codec = irs::formats::Get("1_5");
+  auto codec = irs::formats::Get("1_5avx");
   ASSERT_NE(nullptr, codec);
 
   // columnstore creation failure
@@ -2839,7 +2839,7 @@ TEST(index_death_test_formats_15,
   const auto* doc1 = gen.next();
   const auto* doc2 = gen.next();
 
-  auto codec = irs::formats::Get("1_5");
+  auto codec = irs::formats::Get("1_5avx");
   ASSERT_NE(nullptr, codec);
 
   // columnstore creation + sync failures
@@ -2902,7 +2902,7 @@ TEST(index_death_test_formats_15, fails_in_consolidate_with_removals) {
   const auto* doc1 = gen.next();
   const auto* doc2 = gen.next();
 
-  auto codec = irs::formats::Get("1_5");
+  auto codec = irs::formats::Get("1_5avx");
   ASSERT_NE(nullptr, codec);
 
   constexpr irs::IndexFeatures kAllFeatures =
@@ -3076,7 +3076,7 @@ TEST(index_death_test_formats_15, fails_in_exists) {
   const auto* doc3 = gen.next();
   const auto* doc4 = gen.next();
 
-  auto codec = irs::formats::Get("1_5");
+  auto codec = irs::formats::Get("1_5avx");
   ASSERT_NE(nullptr, codec);
 
   {
@@ -3196,7 +3196,7 @@ TEST(index_death_test_formats_15, fails_in_length) {
   const auto* doc3 = gen.next();
   const auto* doc4 = gen.next();
 
-  auto codec = irs::formats::Get("1_5");
+  auto codec = irs::formats::Get("1_5avx");
   ASSERT_NE(nullptr, codec);
 
   {
@@ -3377,7 +3377,7 @@ TEST(index_death_test_formats_15, fails_in_length) {
 }
 
 TEST(index_death_test_formats_15, open_reader) {
-  ::OpenReader("1_5", [](FailingDirectory& dir) {
+  ::OpenReader("1_5avx", [](FailingDirectory& dir) {
     // postings list (documents)
     dir.RegisterFailure(FailingDirectory::Failure::OPEN, "_1.doc");
     // columnstore index
@@ -3410,7 +3410,7 @@ TEST(index_death_test_formats_15, columnstore_reopen_fail) {
   const auto* doc2 = gen.next();
   auto query_doc2 = MakeByTerm("name", "B");
 
-  auto codec = irs::formats::Get("1_5");
+  auto codec = irs::formats::Get("1_5avx");
   ASSERT_NE(nullptr, codec);
 
   // create source segment
@@ -3515,7 +3515,7 @@ TEST(index_death_test_formats_15, fails_in_dup) {
   const auto* doc3 = gen.next();
   const auto* doc4 = gen.next();
 
-  auto codec = irs::formats::Get("1_5");
+  auto codec = irs::formats::Get("1_5avx");
   ASSERT_NE(nullptr, codec);
 
   // create source segment
@@ -3636,7 +3636,7 @@ TEST(index_death_test_formats_15, postings_reopen_fail) {
   const auto* doc2 = gen.next();
   auto query_doc2 = MakeByTerm("name", "B");
 
-  auto codec = irs::formats::Get("1_5");
+  auto codec = irs::formats::Get("1_5avx");
   ASSERT_NE(nullptr, codec);
 
   // create source segment

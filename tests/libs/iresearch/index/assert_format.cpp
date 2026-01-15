@@ -432,10 +432,9 @@ class DocIteratorImpl : public irs::DocIterator {
     return it == _attrs.end() ? nullptr : it->second;
   }
 
-  bool next() final {
+  irs::doc_id_t advance() final {
     if (_next == _data.postings.end()) {
-      _doc.value = irs::doc_limits::eof();
-      return false;
+      return _doc.value = irs::doc_limits::eof();
     }
 
     _prev = _next, ++_next;
@@ -443,7 +442,7 @@ class DocIteratorImpl : public irs::DocIterator {
     _freq.value = static_cast<uint32_t>(_prev->positions().size());
     _pos.Clear();
 
-    return true;
+    return _doc.value;
   }
 
   irs::doc_id_t seek(irs::doc_id_t id) final {

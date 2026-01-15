@@ -36,13 +36,6 @@ irs::ScoreAdapters MakeScoreAdapters(const ExecutionContext& ctx, It begin,
   const size_t size = std::distance(begin, end);
   irs::ScoreAdapters itrs;
   itrs.reserve(size);
-  if (Conjunction || size > 1) {
-    ctx.wand.root = false;
-    // TODO(mbkkt) ctx.wand.strict = true;
-    // We couldn't do this for few reasons:
-    // 1. It's small chance that we will use just term iterator (or + eof)
-    // 2. I'm not sure about precision
-  }
   do {
     auto docs = (*begin)->execute(ctx);
     ++begin;
@@ -59,6 +52,9 @@ irs::ScoreAdapters MakeScoreAdapters(const ExecutionContext& ctx, It begin,
     itrs.emplace_back(std::move(docs));
   } while (begin != end);
 
+  // if (Conjunction || itrs.size() > 1) {
+  //   TODO(mbkkt) ctx.wand.strict = true;
+  // }
   return itrs;
 }
 
@@ -81,13 +77,12 @@ DocIterator::ptr MakeDisjunction(const ExecutionContext& ctx,
     return DocIterator::empty();
   }
 
-  return irs::ResolveMergeType(
-    merge_type, ctx.scorers.buckets().size(),
-    [&]<typename A>(A&& aggregator) -> DocIterator::ptr {
-      using Disjunction = DisjunctionIterator<DocIterator::ptr, A>;
-      return irs::MakeDisjunction<Disjunction>(ctx.wand, std::move(itrs),
-                                               std::forward<A>(aggregator),
-                                               std::forward<Args>(args)...);
+  return ResolveMergeType(
+    merge_type, ctx.scorers.buckets().size(), [&]<typename A>(A&& aggregator) {
+      using Disjunction = DisjunctionIterator<ScoreAdapter, A>;
+      return MakeDisjunction<Disjunction>(ctx.wand, std::move(itrs),
+                                          std::forward<A>(aggregator),
+                                          std::forward<Args>(args)...);
     });
 }
 
@@ -112,11 +107,10 @@ DocIterator::ptr MakeConjunction(const ExecutionContext& ctx,
     return DocIterator::empty();
   }
 
-  return irs::ResolveMergeType(
-    merge_type, ctx.scorers.buckets().size(),
-    [&]<typename A>(A&& aggregator) -> DocIterator::ptr {
-      return irs::MakeConjunction(ctx.wand, std::forward<A>(aggregator),
-                                  std::move(itrs), std::forward<Args>(args)...);
+  return ResolveMergeType(
+    merge_type, ctx.scorers.buckets().size(), [&]<typename A>(A&& aggregator) {
+      return MakeConjunction(ctx.wand, std::forward<A>(aggregator),
+                             std::move(itrs), std::forward<Args>(args)...);
     });
 }
 
@@ -233,10 +227,10 @@ DocIterator::ptr MinMatchQuery::execute(const ExecutionContext& ctx,
   }
 
   return ResolveMergeType(merge_type(), ctx.scorers.buckets().size(),
-                          [&]<typename A>(A&& aggregator) -> DocIterator::ptr {
+                          [&]<typename A>(A&& aggregator) {
                             // FIXME(gnusi): use FAST version
                             using Disjunction =
-                              MinMatchIterator<DocIterator::ptr, A>;
+                              MinMatchIterator<ScoreAdapter, A>;
                             return MakeWeakDisjunction<Disjunction, A>(
                               ctx.wand, std::move(itrs), min_match_count,
                               std::forward<A>(aggregator));

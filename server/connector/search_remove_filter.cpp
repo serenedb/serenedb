@@ -80,9 +80,8 @@ irs::doc_id_t SearchRemoveFilter::advance() {
     };
 
     auto doc = irs::doc_limits::eof();
-    auto found = _pk_field->read_documents(
-      irs::bytes_view(reinterpret_cast<irs::byte_type*>(pk.data()), pk.size()),
-      std::span(&doc, 1), acceptor, static_cast<void*>(&_doc_masks));
+    auto found = _pk_field->read_documents(pk, std::span(&doc, 1), acceptor,
+                                           static_cast<void*>(&_doc_masks));
 
     if (!found) {
       ++_pos;

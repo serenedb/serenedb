@@ -39,12 +39,14 @@ class SearchRemoveFilterBase : public irs::Filter,
                                public irs::DocIterator {
  public:
   SearchRemoveFilterBase(velox::memory::MemoryPool& memory_pool)
-    : _memory_pool{memory_pool}, _pks{{memory_pool}} {}
+    : _memory_pool{memory_pool}, _bytes_allocator{&memory_pool}, _pks{{memory_pool}} {}
 
   bool Empty() const noexcept { return _pks.empty(); }
 
   void Add(std::string_view pk) {
-    _pks.emplace_back(ManagedString{pk, {_memory_pool}});
+    irs::bytes_view bytes {reinterpret_cast<irs::byte_type*>(_bytes_allocator.allocate(pk.size())->begin()), pk.size()};
+    std::memcpy(const_cast<irs::byte_type*>(bytes.data()), pk.data(), pk.size());
+    _pks.emplace_back(std::move(bytes));
   }
 
  protected:
@@ -84,7 +86,8 @@ class SearchRemoveFilterBase : public irs::Filter,
   mutable irs::DocAttr _doc;
   // We need to store Pk copies as they would be applied on writer commit and
   // should stay alive until that.
-  mutable ManagedVector<ManagedString> _pks;
+  velox::HashStringAllocator _bytes_allocator;
+  mutable ManagedVector<irs::bytes_view> _pks;
 };
 
 class SearchRemoveFilter : public SearchRemoveFilterBase {

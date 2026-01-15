@@ -51,7 +51,4 @@ static_assert(
 template<typename T>
 using ManagedVector = std::vector<T, velox::memory::StlAllocator<T>>;
 
-using ManagedString = std::basic_string<char, std::char_traits<char>,
-                                        velox::memory::StlAllocator<char>>;
-
 }  // namespace sdb::connector

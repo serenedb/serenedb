@@ -49,17 +49,17 @@ DocIterator::ptr TermQuery::execute(const ExecutionContext& ctx) const {
   if (ctx.wand.Enabled() && !ord_buckets.empty()) {
     const auto& front = ord_buckets.front();
     if (front.bucket != nullptr) {
-      docs = reader->MakeIterator(
-        ord.features(), *state->cookie,
-        {ctx.wand, [&](const AttributeProvider& attrs) {
-           return front.bucket->PrepareScorer(
-             rdr, state->reader->meta(), _stats.c_str() + front.stats_offset,
-             attrs, _boost);
-         }});
+      docs = reader->Iterator(ord.features(), *state->cookie,
+                              {ctx.wand, [&](const AttributeProvider& attrs) {
+                                 return front.bucket->PrepareScorer(
+                                   rdr, state->reader->meta(),
+                                   _stats.c_str() + front.stats_offset, attrs,
+                                   _boost);
+                               }});
     }
   }
   if (!docs) {
-    docs = reader->MakeIterator(ord.features(), *state->cookie);
+    docs = reader->Iterator(ord.features(), *state->cookie);
   }
   SDB_ASSERT(docs);
 

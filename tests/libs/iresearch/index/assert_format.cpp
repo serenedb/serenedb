@@ -732,11 +732,11 @@ void AssertDocs(const irs::TermIterator& expected_term,
                 irs::SeekCookie::ptr actual_cookie,
                 irs::IndexFeatures requested_features) {
   AssertDocs(expected_term.postings(requested_features), [&] {
-    return actual_terms.MakeIterator(requested_features, *actual_cookie);
+    return actual_terms.Iterator(requested_features, *actual_cookie);
   });
 
   AssertDocs(expected_term.postings(requested_features), [&] {
-    return actual_terms.MakeIterator(
+    return actual_terms.Iterator(
       requested_features, *actual_cookie,
       {{0, false}, [](const irs::AttributeProvider&) {
          // FIXME(gnusi)

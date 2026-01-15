@@ -556,10 +556,12 @@ TEST_P(NestedFilterTestCase, JoinAll0) {
       std::set{6U, 13U, 15U, 20U});
   };
 
-  CheckQuery(filter, Docs{13, 20}, Costs{11}, reader, SOURCE_LOCATION);
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
+  {
+    CheckQuery(filter, Docs{13, 20}, Costs{11}, reader, SOURCE_LOCATION);
+    EXPECT_EQ(counter.current, 0);
+    EXPECT_GT(counter.max, 0);
+    counter.Reset();
+  }
 
   {
     opts.merge_type = irs::ScoreMergeType::Max;
@@ -574,10 +576,10 @@ TEST_P(NestedFilterTestCase, JoinAll0) {
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
+    EXPECT_EQ(counter.current, 0);
+    EXPECT_GT(counter.max, 0);
+    counter.Reset();
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   if constexpr (false) {
     // opts.merge_type = irs::ScoreMergeType::Min;
@@ -592,10 +594,10 @@ TEST_P(NestedFilterTestCase, JoinAll0) {
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
+    EXPECT_EQ(counter.current, 0);
+    EXPECT_GT(counter.max, 0);
+    counter.Reset();
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   {
     opts.merge_type = irs::ScoreMergeType::Noop;
@@ -610,10 +612,10 @@ TEST_P(NestedFilterTestCase, JoinAll0) {
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
+    EXPECT_EQ(counter.current, 0);
+    EXPECT_GT(counter.max, 0);
+    counter.Reset();
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 }
 
 TEST_P(NestedFilterTestCase, JoinMin0) {

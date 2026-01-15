@@ -185,7 +185,7 @@ class Format10TestCase : public tests::FormatTestCase {
           TestPostings expected_postings{docs, field.index_features};
 
           auto actual =
-            reader->MakeIterator(field.index_features, features, read_meta, 0);
+            reader->Iterator(field.index_features, features, read_meta, 0);
           ASSERT_FALSE(irs::doc_limits::valid(actual->value()));
 
           TestPostings expected(docs, field.index_features);
@@ -215,8 +215,8 @@ class Format10TestCase : public tests::FormatTestCase {
 
         // next + seek to eof
         {
-          auto it = reader->MakeIterator(
-            field.index_features, irs::IndexFeatures::None, read_meta, 0);
+          auto it = reader->Iterator(field.index_features,
+                                     irs::IndexFeatures::None, read_meta, 0);
           ASSERT_FALSE(irs::doc_limits::valid(it->value()));
           ASSERT_TRUE(it->next());
           ASSERT_EQ(docs.front().first, it->value());
@@ -239,8 +239,8 @@ class Format10TestCase : public tests::FormatTestCase {
         {
           for (auto doc = docs.rbegin(), end = docs.rend(); doc != end; ++doc) {
             TestPostings expected(docs, field.index_features);
-            auto it = reader->MakeIterator(field.index_features, features,
-                                           read_meta, 0);
+            auto it =
+              reader->Iterator(field.index_features, features, read_meta, 0);
             ASSERT_FALSE(irs::doc_limits::valid(it->value()));
             ASSERT_EQ(doc->first, it->seek(doc->first));
 
@@ -260,8 +260,8 @@ class Format10TestCase : public tests::FormatTestCase {
 
         // seek to irs::doc_limits::invalid()
         {
-          auto it = reader->MakeIterator(
-            field.index_features, irs::IndexFeatures::None, read_meta, 0);
+          auto it = reader->Iterator(field.index_features,
+                                     irs::IndexFeatures::None, read_meta, 0);
           ASSERT_FALSE(irs::doc_limits::valid(it->value()));
           ASSERT_FALSE(
             irs::doc_limits::valid(it->seek(irs::doc_limits::invalid())));
@@ -271,8 +271,8 @@ class Format10TestCase : public tests::FormatTestCase {
 
         // seek to irs::doc_limits::eof()
         {
-          auto it = reader->MakeIterator(
-            field.index_features, irs::IndexFeatures::None, read_meta, 0);
+          auto it = reader->Iterator(field.index_features,
+                                     irs::IndexFeatures::None, read_meta, 0);
           ASSERT_FALSE(irs::doc_limits::valid(it->value()));
           ASSERT_TRUE(irs::doc_limits::eof(it->seek(irs::doc_limits::eof())));
           ASSERT_FALSE(it->next());
@@ -401,8 +401,8 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       }
 
       // read documents
-      auto it = reader->MakeIterator(field.index_features,
-                                     irs::IndexFeatures::None, read_meta, 0);
+      auto it = reader->Iterator(field.index_features, irs::IndexFeatures::None,
+                                 read_meta, 0);
       for (size_t i = 0; it->next();) {
         ASSERT_EQ(docs0[i++].first, it->value());
       }
@@ -425,8 +425,8 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       }
 
       // read documents
-      auto it = reader->MakeIterator(field.index_features,
-                                     irs::IndexFeatures::None, read_meta, 0);
+      auto it = reader->Iterator(field.index_features, irs::IndexFeatures::None,
+                                 read_meta, 0);
       for (size_t i = 0; it->next();) {
         ASSERT_EQ(docs1[i++].first, it->value());
       }
@@ -538,8 +538,8 @@ TEST_P(Format10TestCase, postings_read_write) {
       }
 
       // read documents
-      auto it = reader->MakeIterator(field.index_features,
-                                     irs::IndexFeatures::None, read_meta, 0);
+      auto it = reader->Iterator(field.index_features, irs::IndexFeatures::None,
+                                 read_meta, 0);
       for (size_t i = 0; it->next();) {
         ASSERT_EQ(docs0[i++].first, it->value());
       }
@@ -561,8 +561,8 @@ TEST_P(Format10TestCase, postings_read_write) {
       }
 
       // read documents
-      auto it = reader->MakeIterator(field.index_features,
-                                     irs::IndexFeatures::None, read_meta, 0);
+      auto it = reader->Iterator(field.index_features, irs::IndexFeatures::None,
+                                 read_meta, 0);
       for (size_t i = 0; it->next();) {
         ASSERT_EQ(docs1[i++].first, it->value());
       }

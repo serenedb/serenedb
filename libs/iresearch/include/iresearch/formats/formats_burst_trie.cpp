@@ -1776,8 +1776,8 @@ class TermIteratorBase : public SeekTermIterator {
     if (it) {
       it->LoadData(field_meta, meta, *_postings);
     }
-    return _postings->MakeIterator(field_meta.index_features, features, meta,
-                                   _field->WandCount());
+    return _postings->Iterator(field_meta.index_features, features, meta,
+                               _field->WandCount());
   }
 
   void Copy(const byte_type* suffix, size_t prefix_size, size_t suffix_size) {
@@ -2217,8 +2217,8 @@ class SingleTermIterator : public SeekTermIterator {
   void read() final { /*NOOP*/ }
 
   DocIterator::ptr postings(IndexFeatures features) const final {
-    return _postings->MakeIterator(_field->meta().index_features, features,
-                                   _meta, _field->WandCount());
+    return _postings->Iterator(_field->meta().index_features, features, _meta,
+                               _field->WandCount());
   }
 
   const TermMetaImpl& Meta() const noexcept { return _meta; }
@@ -2859,11 +2859,11 @@ class FieldReaderImpl final : public FieldReader {
         _owner->_terms_in_cipher.get(), *_fst, matcher);
     }
 
-    DocIterator::ptr MakeIterator(IndexFeatures features,
-                                  std::span<const SeekCookie* const> cookies,
-                                  const WandOptions& options, size_t min_match,
-                                  ScoreMergeType type,
-                                  size_t num_buckets) const final {
+    DocIterator::ptr Iterator(IndexFeatures features,
+                              std::span<const SeekCookie* const> cookies,
+                              const WandOptions& options, size_t min_match,
+                              ScoreMergeType type,
+                              size_t num_buckets) const final {
       SDB_ASSERT(_owner);
       SDB_ASSERT(_owner->_pr);
       SDB_ASSERT(!cookies.empty());
@@ -2874,7 +2874,7 @@ class FieldReaderImpl final : public FieldReader {
                                      WandCount()};
 
       if (cookies.size() == 1) {
-        return _owner->_pr->MakeIterator(
+        return _owner->_pr->Iterator(
           meta().index_features, features,
           sdb::basics::downCast<::Cookie>(*cookies[0]).meta, field_options,
           type, num_buckets);
@@ -2885,9 +2885,8 @@ class FieldReaderImpl final : public FieldReader {
       for (size_t i = 0; i < cookies.size(); ++i) {
         metas.emplace_back(&sdb::basics::downCast<::Cookie>(*cookies[i]).meta);
       }
-      return _owner->_pr->MakeIterator(meta().index_features, features, metas,
-                                       field_options, min_match, type,
-                                       num_buckets);
+      return _owner->_pr->Iterator(meta().index_features, features, metas,
+                                   field_options, min_match, type, num_buckets);
     }
 
    private:

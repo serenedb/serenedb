@@ -542,7 +542,7 @@ CostAdapters Execute(const NGramState& query_state,
       continue;
     }
 
-    if (auto docs = field->MakeIterator(required_features, *term_state)) {
+    if (auto docs = field->Iterator(required_features, *term_state)) {
       auto& it = itrs.emplace_back(std::move(docs));
 
       if (!it) [[unlikely]] {

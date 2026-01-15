@@ -179,22 +179,22 @@ struct PostingsReader {
                           const term_provider_f& provider, size_t* set,
                           uint8_t wand_count) = 0;
 
-  virtual DocIterator::ptr MakeIterator(IndexFeatures field_features,
-                                        IndexFeatures required_features,
-                                        std::span<const TermMeta* const> metas,
-                                        const WandFieldOptions& options,
-                                        size_t min_match, ScoreMergeType type,
-                                        size_t num_buckets) const = 0;
+  virtual DocIterator::ptr Iterator(IndexFeatures field_features,
+                                    IndexFeatures required_features,
+                                    std::span<const TermMeta* const> metas,
+                                    const WandFieldOptions& options,
+                                    size_t min_match, ScoreMergeType type,
+                                    size_t num_buckets) const = 0;
 
-  DocIterator::ptr MakeIterator(IndexFeatures field_features,
-                                IndexFeatures required_features,
-                                const TermMeta& meta,
-                                const WandFieldOptions& options,
-                                ScoreMergeType type = ScoreMergeType::Noop,
-                                size_t num_buckets = 0) const {
+  DocIterator::ptr Iterator(IndexFeatures field_features,
+                            IndexFeatures required_features,
+                            const TermMeta& meta,
+                            const WandFieldOptions& options,
+                            ScoreMergeType type = ScoreMergeType::Noop,
+                            size_t num_buckets = 0) const {
     const auto* meta_ptr = &meta;
-    return MakeIterator(field_features, required_features, {&meta_ptr, 1},
-                        options, 1, type, num_buckets);
+    return Iterator(field_features, required_features, {&meta_ptr, 1}, options,
+                    1, type, num_buckets);
   }
 };
 
@@ -236,17 +236,17 @@ struct TermReader : public AttributeProvider {
   virtual size_t BitUnion(const cookie_provider& provider,
                           size_t* bitset) const = 0;
 
-  virtual DocIterator::ptr MakeIterator(
-    IndexFeatures features, std::span<const SeekCookie* const> cookies,
-    const WandOptions& options = {}, size_t min_match = 1,
-    ScoreMergeType type = ScoreMergeType::Noop,
-    size_t num_buckets = 0) const = 0;
+  virtual DocIterator::ptr Iterator(IndexFeatures features,
+                                    std::span<const SeekCookie* const> cookies,
+                                    const WandOptions& options = {},
+                                    size_t min_match = 1,
+                                    ScoreMergeType type = ScoreMergeType::Noop,
+                                    size_t num_buckets = 0) const = 0;
 
-  DocIterator::ptr MakeIterator(IndexFeatures features,
-                                const SeekCookie& cookie,
-                                const WandOptions& options = {}) const {
+  DocIterator::ptr Iterator(IndexFeatures features, const SeekCookie& cookie,
+                            const WandOptions& options = {}) const {
     const auto* cookie_ptr = &cookie;
-    return MakeIterator(features, {&cookie_ptr, 1}, options);
+    return Iterator(features, {&cookie_ptr, 1}, options);
   }
 
   // Returns field metadata.
@@ -464,6 +464,9 @@ struct ReaderState {
   ScorersView scorers;
 };
 
+void FormatBlock128Init();
+void FormatBlock256Init();
+
 namespace formats {
 // Checks whether a format with the specified name is registered.
 bool Exists(std::string_view name, bool load_library = true);
@@ -475,7 +478,12 @@ Format::ptr Get(std::string_view name, bool load_library = true) noexcept;
 
 // For static lib reference all known formats in lib
 // no explicit call of fn is required, existence of fn is sufficient.
-void Init();
+inline void Init() {
+#ifdef __AVX2__
+  FormatBlock256Init();
+#endif
+  FormatBlock128Init();
+}
 
 // Load all formats from plugins directory.
 void LoadAll(std::string_view path);

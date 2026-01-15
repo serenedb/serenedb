@@ -83,7 +83,7 @@ DocIterator::ptr FixedPhraseQuery::execute(const ExecutionContext& ctx) const {
 
     // get postings using cached state
     auto& docs =
-      itrs.emplace_back(reader->MakeIterator(features, *term_state.first));
+      itrs.emplace_back(reader->Iterator(features, *term_state.first));
 
     if (!docs) [[unlikely]] {
       return DocIterator::empty();
@@ -160,7 +160,7 @@ DocIterator::ptr FixedPhraseQuery::ExecuteWithOffsets(
 
       // get postings using cached state
       auto& docs =
-        itrs.emplace_back(reader->MakeIterator(features, *term_state->first));
+        itrs.emplace_back(reader->Iterator(features, *term_state->first));
 
       if (!docs) [[unlikely]] {
         return false;
@@ -259,7 +259,7 @@ DocIterator::ptr VariadicPhraseQuery::execute(
          ++term_state) {
       SDB_ASSERT(term_state->first);
 
-      auto it = reader->MakeIterator(features, *term_state->first);
+      auto it = reader->Iterator(features, *term_state->first);
 
       if (!it) [[unlikely]] {
         continue;
@@ -374,7 +374,7 @@ DocIterator::ptr VariadicPhraseQuery::ExecuteWithOffsets(
            ++term_state) {
         SDB_ASSERT(term_state->first);
 
-        auto it = reader->MakeIterator(features, *term_state->first);
+        auto it = reader->Iterator(features, *term_state->first);
 
         if (!it) [[unlikely]] {
           continue;

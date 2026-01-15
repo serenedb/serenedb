@@ -405,7 +405,7 @@ irs::DocIterator::ptr Format15TestCase::GetWanderator(
     options.mapped_index = 0;
   }
 
-  auto actual = reader.MakeIterator(field_features, features, meta, options);
+  auto actual = reader.Iterator(field_features, features, meta, options);
   EXPECT_NE(nullptr, actual);
 
   auto* score = irs::GetMutable<irs::ScoreAttr>(actual.get());

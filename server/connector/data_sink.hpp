@@ -190,6 +190,7 @@ class RocksDBDataSink : public velox::connector::DataSink {
   velox::HashStringAllocator _bytes_allocator;
   catalog::Column::Id _column_id;
   bool _skip_primary_key_columns;
+  bool _updating_pk;
 };
 
 class RocksDBDeleteDataSink : public velox::connector::DataSink {

@@ -79,6 +79,12 @@ RocksDBDataSink::RocksDBDataSink(
     _bytes_allocator{&memory_pool},
     _skip_primary_key_columns{skip_primary_key_columns} {
   _key_childs.assign_range(key_childs);
+  // FIXME: Maybe some better check? For example, check same in 'appendData()',
+  // or that none of input->type() children names starts with 'upd_\0'
+  _updating_pk =
+    _column_ids.size() > containers::FlatHashSet<catalog::Column::Id>(
+                           _column_ids.begin(), _column_ids.end())
+                           .size();
   SDB_ASSERT(_object_key.isSet(), "RocksDBDataSink: object key is empty");
   SDB_ASSERT(!_column_ids.empty(), "RocksDBDataSink: no columns in a table");
 }
@@ -100,8 +106,13 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
   // TODO(Dronplane) implement updating PK fields
   const std::string table_key = key_utils::PrepareTableKey(_object_key);
   const auto num_rows = input->size();
+  const auto num_columns = input->childrenSize();
   _keys_buffers.clear();
   _keys_buffers.reserve(num_rows);
+
+  // TODO review from performance point of view, it's not considered yet
+
+  primary_key::Keys new_key_buffers{_keys_buffers.get_allocator()};
 
   for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
     auto& key_buffer = _keys_buffers.emplace_back();
@@ -114,10 +125,49 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
         }
       },
       key_buffer);
+    if (_updating_pk) {
+      // Lock for new PK
+      // oid | col_id | pk
+      std::string new_row_key = table_key;
+      key_utils::AppendColumnKey(new_row_key, catalog::Column::Id{});
+      auto new_key_childs = _key_childs;
+      for (auto& new_key_child : new_key_childs) {
+        auto it =
+          std::find(_column_ids.rbegin(), _column_ids.rend(), new_key_child);
+        SDB_ASSERT(it != _column_ids.rend());
+        auto idx = std::distance(it, _column_ids.rend()) - 1;
+        new_key_child = idx;
+      }
+
+      primary_key::Create(*input, new_key_childs, row_idx, new_row_key);
+      auto status = _transaction.GetKeyLock(&_cf, new_row_key, false, true);
+      if (!status.ok()) {
+        SDB_THROW(rocksutils::ConvertStatus(status));
+      }
+
+      new_key_buffers.emplace_back(std::move(new_row_key));
+    }
+  }
+
+  // Delete all old value
+  // FIXME: delete in previous loop? I suppose better take all locks first
+  if (_updating_pk) {
+    for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+      auto& key_buffer = _keys_buffers[row_idx];
+      for (velox::column_index_t col_idx = 0; col_idx < num_columns;
+           ++col_idx) {
+        key_utils::SetupColumnForKey(key_buffer, _column_ids[col_idx]);
+        auto status = _transaction.Delete(&_cf, rocksdb::Slice(key_buffer));
+        if (!status.ok()) {
+          SDB_THROW(rocksutils::ConvertStatus(status));
+        }
+      }
+    }
+
+    _keys_buffers = std::move(new_key_buffers);
   }
 
   velox::IndexRange all_rows(0, num_rows);
-  const auto num_columns = input->childrenSize();
   [[maybe_unused]] const auto& input_type = input->type()->asRow();
   for (velox::column_index_t i = 0; i < num_columns; ++i) {
     if (_skip_primary_key_columns && i < _key_childs.size()) {

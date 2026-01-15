@@ -480,9 +480,10 @@ class SereneDBConnector final : public velox::connector::Connector {
         serene_insert_handle.Kind() == axiom::connector::WriteKind::kUpdate) {
       column_oids.reserve(input_type->size());
       for (auto& col : input_type->names()) {
-        auto handle = table.columnMap().find(col);
+        std::string_view real_name = catalog::Column::ExtractColumnName(col);
+        auto handle = table.columnMap().find(real_name);
         SDB_ASSERT(handle != table.columnMap().end(),
-                   "RocksDBDataSink: can't find column handle for ", col);
+                   "RocksDBDataSink: can't find column handle for ", real_name);
         column_oids.push_back(
           basics::downCast<const SereneDBColumn>(handle->second)->Id());
       }

@@ -275,7 +275,10 @@ TEST_F(DataSinkWithSearchTest, test_InsertDeleteFlatStrings) {
     [&](velox::BaseVector* left, velox::BaseVector* right,
         std::span<std::pair<velox::vector_size_t, velox::vector_size_t>> idxs) {
       for (const auto& idx : idxs) {
-        ASSERT_TRUE(left->equalValueAt(right, idx.first, idx.second));
+        ASSERT_TRUE(left->equalValueAt(right, idx.first, idx.second))
+          << "at left index " << idx.first << " and right index " << idx.second
+          << "\nLeft value: " << left->toString(idx.first)
+          << "\nRight value: " << right->toString(idx.second);
       }
     };
 
@@ -293,7 +296,7 @@ TEST_F(DataSinkWithSearchTest, test_InsertDeleteFlatStrings) {
   }
   {
     RocksDBDataSource source(*pool_.get(), nullptr, *_db, *_cf_handles.front(),
-                             velox::ROW(names, types), all_column_oids,
+                             velox::ROW(names, types), all_column_oids, 0,
                              kObjectKey);
     source.addSplit(std::make_shared<sdb::connector::SereneDBConnectorSplit>(
       "test_connector"));
@@ -349,7 +352,7 @@ TEST_F(DataSinkWithSearchTest, test_InsertDeleteFlatStrings) {
 
   {
     RocksDBDataSource source(*pool_.get(), nullptr, *_db, *_cf_handles.front(),
-                             velox::ROW(names, types), all_column_oids,
+                             velox::ROW(names, types), all_column_oids, 0,
                              kObjectKey);
     source.addSplit(std::make_shared<sdb::connector::SereneDBConnectorSplit>(
       "test_connector"));
@@ -450,7 +453,7 @@ TEST_F(DataSinkWithSearchTest, test_InsertOneUpdateFlatStrings) {
   }
   {
     RocksDBDataSource source(*pool_.get(), nullptr, *_db, *_cf_handles.front(),
-                             velox::ROW(names, types), all_column_oids,
+                             velox::ROW(names, types), all_column_oids, 0,
                              kObjectKey);
     source.addSplit(std::make_shared<sdb::connector::SereneDBConnectorSplit>(
       "test_connector"));
@@ -491,7 +494,7 @@ TEST_F(DataSinkWithSearchTest, test_InsertOneUpdateFlatStrings) {
   }
   {
     RocksDBDataSource source(*pool_.get(), nullptr, *_db, *_cf_handles.front(),
-                             velox::ROW(names, types), all_column_oids,
+                             velox::ROW(names, types), all_column_oids, 0,
                              kObjectKey);
     source.addSplit(std::make_shared<sdb::connector::SereneDBConnectorSplit>(
       "test_connector"));
@@ -605,7 +608,7 @@ TEST_F(DataSinkWithSearchTest, test_InsertAllExceptPKUpdateFlatStrings) {
   }
   {
     RocksDBDataSource source(*pool_.get(), nullptr, *_db, *_cf_handles.front(),
-                             velox::ROW(names, types), all_column_oids,
+                             velox::ROW(names, types), all_column_oids, 0,
                              kObjectKey);
     source.addSplit(std::make_shared<sdb::connector::SereneDBConnectorSplit>(
       "test_connector"));
@@ -656,7 +659,7 @@ TEST_F(DataSinkWithSearchTest, test_InsertAllExceptPKUpdateFlatStrings) {
   }
   {
     RocksDBDataSource source(*pool_.get(), nullptr, *_db, *_cf_handles.front(),
-                             velox::ROW(names, types), all_column_oids,
+                             velox::ROW(names, types), all_column_oids, 0,
                              kObjectKey);
     source.addSplit(std::make_shared<sdb::connector::SereneDBConnectorSplit>(
       "test_connector"));

@@ -19,7 +19,7 @@ query
 SELECT '  spaces  '::varchar;
 ----
 varchar
-  spaces
+  spaces  
 
 
 # Varchar with special characters

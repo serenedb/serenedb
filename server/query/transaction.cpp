@@ -20,149 +20,105 @@
 
 #include "query/transaction.h"
 
-#include <yaclib/async/make.hpp>
-
-#include "query/config.h"
-#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "storage_engine/engine_feature.h"
 
-namespace sdb {
+namespace sdb::query {
 
-std::shared_ptr<rocksdb::Transaction> CreateTransaction(
-  rocksdb::TransactionDB& db) {
-  rocksdb::WriteOptions write_options;
-  rocksdb::TransactionOptions txn_options;
-  txn_options.skip_concurrency_control = true;
-  return std::shared_ptr<rocksdb::Transaction>{
-    db.BeginTransaction(write_options, txn_options)};
-}
-
-Result TxnState::Begin() {
-  SDB_ASSERT(_state != State::SNAPSHOT);
-  if (!InsideTransaction()) {
-    auto txn = CreateTransaction(*GetServerEngine().db());
-    if (!txn) {
-      return {ERROR_INTERNAL, "Failed to create RocksDB transaction"};
-    }
-    txn->SetSnapshot();
-    _data.emplace<Transaction>(std::move(txn));
-    _state = State::TRANSACTION;
-  }
-  SDB_ASSERT(InsideTransaction());
+Result Transaction::Begin() {
+  SDB_ASSERT(!HasTransactionBegin());
+  CreateRocksDBTransaction();
+  _state |= State::HasTransactionBegin;
   return {};
 }
 
-Result TxnState::Commit() {
-  SDB_ASSERT(_state != State::SNAPSHOT);
-  if (!InsideTransaction()) {
-    return {};
-  }
-  Transaction& txn = GetTransaction();
-  auto status = txn->Commit();
+Result Transaction::Commit() {
+  SDB_ASSERT(_rocksdb_transaction);
+  auto status = _rocksdb_transaction->Commit();
   if (!status.ok()) {
     return {ERROR_INTERNAL,
-            "Failed to commit transaction: ", status.ToString()};
+            "Failed to commit RocksDB transaction: ", status.ToString()};
   }
-  _data = {};
-  _state = State::NONE;
-  Config::CommitVariables();
+  CommitVariables();
+  Destroy();
   return {};
 }
 
-Result TxnState::Rollback() {
-  SDB_ASSERT(_state != State::SNAPSHOT);
-  if (!InsideTransaction()) {
-    return {};
-  }
-  Config::RollbackVariables();
-  auto& txn = GetTransaction();
-  auto status = txn->Rollback();
+Result Transaction::Rollback() {
+  SDB_ASSERT(_rocksdb_transaction);
+  auto status = _rocksdb_transaction->Rollback();
   if (!status.ok()) {
     return {ERROR_INTERNAL,
             "Failed to rollback RocksDB transaction: ", status.ToString()};
   }
-  _state = State::NONE;
-  _data = {};
+  RollbackVariables();
+  Destroy();
   return {};
 }
 
-void TxnState::CreateLocalTransaction() const {
-  auto txn = CreateTransaction(*GetServerEngine().db());
-  if (!txn) {
-    SDB_THROW(ERROR_INTERNAL, "Failed to create RocksDB transaction");
-  }
-  txn->SetSnapshot();
-  _data.emplace<Transaction>(std::move(txn));
+void Transaction::AddRocksDBRead() noexcept { _state |= State::HasRocksDBRead; }
+
+void Transaction::AddRocksDBWrite() noexcept {
+  _state |= State::HasRocksDBWrite;
 }
 
-void TxnState::CreateLocalSnapshot() const {
-  auto external_snapshot = GetServerEngine().currentSnapshot();
-  _data.emplace<Snapshot>(std::move(external_snapshot));
+bool Transaction::HasTransactionBegin() const noexcept {
+  return (_state & State::HasTransactionBegin) != State::None;
 }
 
-void TxnState::EnsureTransaction() {
-  switch (_state) {
-    case State::LOCAL:
-      if (!std::holds_alternative<Transaction>(_data) ||
-          !std::get<Transaction>(_data)) {
-        CreateLocalTransaction();
-      }
-      [[fallthrough]];
-    case State::TRANSACTION:
-      SDB_ASSERT(std::get<Transaction>(_data));
-      return;
-    default:
-      SDB_UNREACHABLE();
-  }
+rocksdb::Transaction* Transaction::GetRocksDBTransaction() const noexcept {
+  SDB_ASSERT((_state & State::HasRocksDBWrite) != State::None);
+  return _rocksdb_transaction.get();
 }
 
-TxnState::Transaction& TxnState::GetTransaction() {
-  EnsureTransaction();
-  auto& txn = std::get<Transaction>(_data);
-  SDB_ASSERT(txn);
-  return txn;
-}
-
-void TxnState::EnsureSnapshot() {
-  switch (_state) {
-    case State::SNAPSHOT:
-      if (!std::holds_alternative<Snapshot>(_data) ||
-          !std::get<Snapshot>(_data)) {
-        CreateLocalSnapshot();
-      }
-      return;
-    case State::LOCAL:
-    case State::TRANSACTION:
-      return;
-    default:
-      SDB_UNREACHABLE();
-  }
-}
-
-const rocksdb::Snapshot* TxnState::GetSnapshot() {
-  EnsureSnapshot();
-  switch (_state) {
-    case State::SNAPSHOT: {
-      auto& snapshot = std::get<Snapshot>(_data);
-      SDB_ASSERT(snapshot);
-      SDB_ASSERT(std::dynamic_pointer_cast<RocksDBSnapshot>(snapshot));
-      return std::dynamic_pointer_cast<RocksDBSnapshot>(snapshot)
-        ->getSnapshot();
+const rocksdb::Snapshot& Transaction::EnsureRocksDBSnapshot() {
+  SDB_ASSERT((_state & State::HasRocksDBRead) != State::None);
+  if (!_rocksdb_snapshot) {
+    if ((_state & State::HasRocksDBWrite) != State::None) {
+      CreateRocksDBTransaction();
+    } else {
+      CreateStorageSnapshot();
     }
-    case State::LOCAL:
-    case State::TRANSACTION: {
-      auto& txn = std::get<Transaction>(_data);
-      SDB_ASSERT(txn);
-      return txn->GetSnapshot();
-    }
-    default:
-      SDB_UNREACHABLE();
   }
+  return *_rocksdb_snapshot;
 }
 
-void TxnState::ResetState() noexcept {
-  _state = State::NONE;
-  _data = {};
+rocksdb::Transaction& Transaction::EnsureRocksDBTransaction() {
+  SDB_ASSERT((_state & State::HasRocksDBWrite) != State::None);
+  if (!_rocksdb_transaction) {
+    CreateRocksDBTransaction();
+  }
+  return *_rocksdb_transaction;
 }
 
-}  // namespace sdb
+void Transaction::CreateStorageSnapshot() {
+  SDB_ASSERT(!_rocksdb_snapshot);
+  SDB_ASSERT(!_storage_snapshot);
+  _storage_snapshot = GetServerEngine().currentSnapshot();
+  SDB_ASSERT(_storage_snapshot != nullptr);
+  _rocksdb_snapshot = _storage_snapshot->GetSnapshot();
+  SDB_ASSERT(_rocksdb_snapshot != nullptr);
+}
+
+void Transaction::CreateRocksDBTransaction() {
+  SDB_ASSERT(!_rocksdb_snapshot);
+  SDB_ASSERT(!_rocksdb_transaction);
+  auto* db = GetServerEngine().db();
+  SDB_ASSERT(db != nullptr);
+  rocksdb::WriteOptions write_options;
+  rocksdb::TransactionOptions txn_options;
+  txn_options.skip_concurrency_control = true;
+  _rocksdb_transaction.reset(db->BeginTransaction(write_options, txn_options));
+  SDB_ASSERT(_rocksdb_transaction != nullptr);
+  _rocksdb_transaction->SetSnapshot();
+  _rocksdb_snapshot = _rocksdb_transaction->GetSnapshot();
+  SDB_ASSERT(_rocksdb_snapshot != nullptr);
+}
+
+void Transaction::Destroy() noexcept {
+  _state = State::None;
+  _storage_snapshot.reset();
+  _rocksdb_transaction.reset();
+  _rocksdb_snapshot = nullptr;
+}
+
+}  // namespace sdb::query

@@ -87,20 +87,20 @@ enum class ExplainWith : uint64_t {
 };
 
 struct QueryContext {
-  explicit QueryContext(const std::shared_ptr<TxnState>& txn_state,
+  explicit QueryContext(const std::shared_ptr<Transaction>& transaction,
                         const pg::Objects& objects)
-    : txn{txn_state},
+    : transaction{transaction},
       velox_query_ctx{velox::core::QueryCtx::create(
-        txn_state->Get<VariableType::U32>("execution_threads") == 0
+        transaction->Get<VariableType::U32>("execution_threads") == 0
           ? nullptr
           : &GetScheduler()->GetCPUExecutor(),
         velox::core::QueryConfig{velox::core::QueryConfig::ConfigTag{},
-                                 txn_state})},
+                                 transaction})},
       query_memory_pool{
         this->velox_query_ctx->pool()->addLeafChild("query_memory_pool")},
       objects{objects} {}
 
-  std::shared_ptr<TxnState> txn;
+  std::shared_ptr<Transaction> transaction;
   std::shared_ptr<velox::core::QueryCtx> velox_query_ctx;
   // To allocate memory for VALUES clause processing.
   std::shared_ptr<velox::memory::MemoryPool> query_memory_pool;

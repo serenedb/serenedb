@@ -290,9 +290,9 @@ Cursor::~Cursor() {
   if (_query.HasExternal()) {
     std::ignore = _query.GetExternalExecutor().RequestCancel().Get();
   }
-  if (_query.GetContext().txn->GetState() == TxnState::State::SNAPSHOT ||
-      _query.GetContext().txn->GetState() == TxnState::State::LOCAL) {
-    _query.GetContext().txn->ResetState();
+  // TODO: it doesn't look as correct place to do this
+  if (!_query.GetContext().transaction->HasTransactionBegin()) {
+    _query.GetContext().transaction->Destroy();
   }
 }
 

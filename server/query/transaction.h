@@ -19,33 +19,27 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
-#include <rocksdb/utilities/transaction_db.h>
+
+#include <rocksdb/snapshot.h>
+#include <rocksdb/utilities/transaction.h>
 
 #include <yaclib/async/future.hpp>
 
-#include "basics/containers/flat_hash_map.h"
+#include "basics/bit_utils.hpp"
 #include "basics/result.h"
 #include "query/config.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 
-namespace sdb {
+namespace sdb::query {
 
-std::shared_ptr<rocksdb::Transaction> CreateTransaction(
-  rocksdb::TransactionDB& db);
-
-class TxnState : public Config {
+class Transaction : public Config {
  public:
-  using Transaction = std::shared_ptr<rocksdb::Transaction>;
-  using Snapshot = std::shared_ptr<StorageSnapshot>;
-
-  enum class State {
-    NONE,
-    TRANSACTION,  // Explicit transaction
-    SNAPSHOT,     // Implicit read-only transaction
-    LOCAL,        // Implicit transaction for a simple query
+  enum class State : uint8_t {
+    None = 0,
+    HasRocksDBRead = 1 << 0,
+    HasRocksDBWrite = 1 << 1,
+    HasTransactionBegin = 1 << 2,
   };
-
-  State GetState() const noexcept { return _state; }
 
   Result Begin();
 
@@ -53,36 +47,30 @@ class TxnState : public Config {
 
   Result Rollback();
 
-  void SetLocalTransaction() noexcept {
-    SDB_ASSERT(_state != State::TRANSACTION);
-    _state = State::LOCAL;
-  }
+  void AddRocksDBRead() noexcept;
 
-  void SetSnapshotOnly() noexcept {
-    SDB_ASSERT(_state != State::TRANSACTION);
-    _state = State::SNAPSHOT;
-  }
+  void AddRocksDBWrite() noexcept;
 
-  bool InsideTransaction() const noexcept {
-    return _state == State::TRANSACTION || _state == State::LOCAL;
-  }
+  bool HasTransactionBegin() const noexcept;
 
-  Transaction& GetTransaction();
+  rocksdb::Transaction* GetRocksDBTransaction() const noexcept;
 
-  const rocksdb::Snapshot* GetSnapshot();
+  rocksdb::Transaction& EnsureRocksDBTransaction();
 
-  // Used for simple queries without explicit transaction management
-  // Should be called at the end of a query
-  void ResetState() noexcept;
+  const rocksdb::Snapshot& EnsureRocksDBSnapshot();
+
+  void Destroy() noexcept;
 
  private:
-  void EnsureTransaction();
-  void EnsureSnapshot();
-  void CreateLocalTransaction() const;
-  void CreateLocalSnapshot() const;
+  void CreateStorageSnapshot();
+  void CreateRocksDBTransaction();
 
-  State _state = State::NONE;
-  mutable std::variant<Transaction, Snapshot> _data;
+  State _state = State::None;
+  std::shared_ptr<StorageSnapshot> _storage_snapshot;
+  std::unique_ptr<rocksdb::Transaction> _rocksdb_transaction;
+  const rocksdb::Snapshot* _rocksdb_snapshot = nullptr;
 };
 
-}  // namespace sdb
+ENABLE_BITMASK_ENUM(Transaction::State);
+
+}  // namespace sdb::query

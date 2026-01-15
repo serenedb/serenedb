@@ -85,7 +85,7 @@ RocksDBUpdateDataSink::RocksDBUpdateDataSink(
              "RocksDBUpdateDataSink: full column ids size does not match table "
              "row type size");
   if (!_index_writers.empty()) {
-    // TODO(Dronplane) same would be needed in caae of PK update!
+    // TODO(Dronplane) same would be needed in case of PK update!
 
     // We do not filter rewrite columns not interested to writers as we might
     // need them later for PK update

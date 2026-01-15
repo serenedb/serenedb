@@ -69,14 +69,6 @@ irs::doc_id_t SearchRemoveFilter::advance() {
     // FIELD_SORTED_1 Due to documents are sorted for storing after applying
     // queries it will still see documents in insertion order.
 
-    auto terms = _pk_field->iterator(irs::SeekMode::RandomOnly);
-    if (!terms || !terms->seek(irs::bytes_view(
-                    reinterpret_cast<irs::byte_type*>(pk.data()), pk.size()))) {
-      // PK not found in this segment
-      ++_pos;
-      continue;
-    }
-
     auto acceptor = [](irs::doc_id_t doc, void* ctx) {
       auto* masks = static_cast<std::array<const irs::DocumentMask*, 2>*>(ctx);
       for (const auto* mask : *masks) {
@@ -88,9 +80,9 @@ irs::doc_id_t SearchRemoveFilter::advance() {
     };
 
     auto doc = irs::doc_limits::eof();
-    auto found =
-      _pk_field->read_documents(terms->value(), std::span(&doc, 1), acceptor,
-                                static_cast<void*>(&_doc_masks));
+    auto found = _pk_field->read_documents(
+      irs::bytes_view(reinterpret_cast<irs::byte_type*>(pk.data()), pk.size()),
+      std::span(&doc, 1), acceptor, static_cast<void*>(&_doc_masks));
 
     if (!found) {
       ++_pos;

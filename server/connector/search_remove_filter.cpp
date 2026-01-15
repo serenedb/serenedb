@@ -27,7 +27,8 @@ namespace sdb::connector::search {
 irs::DocIterator::ptr SearchRemoveFilterBase::execute(
   const irs::ExecutionContext& ctx) const {
   _segment = &ctx.segment;
-  _pending_doc_mask = ctx.pending_docs_mask;
+  _doc_masks[0] = ctx.segment.docs_mask();
+  _doc_masks[1] = ctx.pending_docs_mask;
   _pk_field = _segment->field(kPkFieldName);
   SDB_ASSERT(_pk_field);
   _pos = 0;
@@ -37,7 +38,6 @@ irs::DocIterator::ptr SearchRemoveFilterBase::execute(
 }
 
 irs::doc_id_t SearchRemoveFilter::advance() {
-  auto* docs_mask = _segment->docs_mask();
   while (true) {
     if (_pos == _pks.size()) [[unlikely]] {
       _doc.value = irs::doc_limits::eof();
@@ -77,24 +77,26 @@ irs::doc_id_t SearchRemoveFilter::advance() {
       continue;
     }
 
-    auto doc = irs::doc_limits::eof();
-    auto pk_iterator =
-      _pk_field->postings(*terms->cookie(), irs::IndexFeatures::None);
-    while (!irs::doc_limits::eof(doc = pk_iterator->advance())) {
-      SDB_ASSERT(irs::doc_limits::valid(doc));
-      bool in_doc_mask = docs_mask && docs_mask->contains(doc);
-      bool in_pending_mask =
-        _pending_doc_mask && _pending_doc_mask->contains(doc);
-      if (!in_doc_mask && !in_pending_mask) {
-        break;
+    auto acceptor = [](irs::doc_id_t doc, void* ctx) {
+      auto* masks = static_cast<std::array<const irs::DocumentMask*, 2>*>(ctx);
+      for (const auto* mask : *masks) {
+        if (mask && mask->contains(doc)) {
+          return false;
+        }
       }
-    }
+      return true;
+    };
 
-    if (irs::doc_limits::eof(doc)) {
+    auto doc = irs::doc_limits::eof();
+    auto found =
+      _pk_field->read_documents(terms->value(), std::span(&doc, 1), acceptor,
+                                static_cast<void*>(&_doc_masks));
+
+    if (!found) {
       ++_pos;
       continue;
     }
-
+    SDB_ASSERT(!irs::doc_limits::eof(doc));
     // if PK found alive it should be the only one in the entire index.
     pk = _pks.back();
     _pks.pop_back();

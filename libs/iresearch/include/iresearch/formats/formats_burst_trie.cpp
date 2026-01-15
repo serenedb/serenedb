@@ -2769,8 +2769,9 @@ class FieldReader final : public irs::FieldReader {
       return it.Meta();
     }
 
-    size_t read_documents(bytes_view term,
-                          std::span<doc_id_t> docs) const final {
+    size_t read_documents(bytes_view term, std::span<doc_id_t> docs,
+                          Acceptor acceptor = nullptr,
+                          void* ctx = nullptr) const final {
       // Order is important here!
       if (max() < term || term < min() || docs.empty()) {
         return 0;
@@ -2786,7 +2787,7 @@ class FieldReader final : public irs::FieldReader {
 
       if (const auto& meta = it.Meta(); meta.docs_count == 1) {
         docs.front() = doc_limits::min() + meta.e_single_doc;
-        return 1;
+        return acceptor ? ((*acceptor)(docs.front(), ctx)) : 1;
       }
 
       auto docs_it = it.postings(IndexFeatures::None);
@@ -2804,9 +2805,17 @@ class FieldReader final : public irs::FieldReader {
       }
 
       auto begin = docs.begin();
-
-      for (auto end = docs.end(); begin != end && docs_it->next(); ++begin) {
-        *begin = doc->value;
+      if (acceptor) {
+        for (auto end = docs.end(); begin != end && docs_it->next();) {
+          const auto doc_id = doc->value;
+          if ((*acceptor)(doc_id, ctx)) {
+            *begin++ = doc_id;
+          }
+        }
+      } else {
+        for (auto end = docs.end(); begin != end && docs_it->next(); ++begin) {
+          *begin = doc->value;
+        }
       }
 
       return std::distance(docs.begin(), begin);

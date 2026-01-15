@@ -195,6 +195,7 @@ enum class SeekMode : uint32_t {
 struct TermReader : public AttributeProvider {
   using ptr = std::unique_ptr<TermReader>;
   using cookie_provider = std::function<const SeekCookie*()>;
+  using Acceptor = bool (*)(doc_id_t, void*);
 
   // `mode` argument defines seek mode for term iterator
   // Returns an iterator over terms for a field.
@@ -202,8 +203,9 @@ struct TermReader : public AttributeProvider {
 
   // Read 'count' number of documents containing 'term' to 'docs'
   // Returns number of read documents
-  virtual size_t read_documents(bytes_view term,
-                                std::span<doc_id_t> docs) const = 0;
+  virtual size_t read_documents(bytes_view term, std::span<doc_id_t> docs,
+                                Acceptor acceptor = nullptr,
+                                void* ctx = nullptr) const = 0;
 
   // Returns term metadata for a given 'term'
   virtual TermMeta term(bytes_view term) const = 0;

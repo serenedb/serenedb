@@ -4809,6 +4809,29 @@ TEST_P(IndexTestCase, read_documents) {
                             [](auto v) { return v == 0; }));
   }
 
+  // singleton term declined by acceptor
+  {
+    std::array<irs::doc_id_t, 10> docs{};
+    auto* field = segment.field("name");
+    ASSERT_NE(nullptr, field);
+    const auto term = irs::ViewCast<irs::byte_type>("A"sv);
+    auto acceptor = [](irs::doc_id_t, void*) { return false; };
+    const auto size = field->read_documents(term, docs, acceptor);
+    ASSERT_EQ(0, size);
+  }
+
+  // singleton term approved by acceptor
+  {
+    std::array<irs::doc_id_t, 10> docs{};
+    auto* field = segment.field("name");
+    ASSERT_NE(nullptr, field);
+    const auto term = irs::ViewCast<irs::byte_type>("A"sv);
+    auto acceptor = [](irs::doc_id_t, void*) { return true; };
+    const auto size = field->read_documents(term, docs, acceptor);
+    ASSERT_EQ(1, size);
+    ASSERT_EQ(1, docs.front());
+  }
+
   // singleton term
   {
     std::array<irs::doc_id_t, 10> docs{};
@@ -4864,6 +4887,24 @@ TEST_P(IndexTestCase, read_documents) {
     ASSERT_EQ(0, size);
     ASSERT_TRUE(
       std::all_of(docs.begin(), docs.end(), [](auto v) { return v == 0; }));
+  }
+
+  // regular term acceptor filtered
+  {
+    std::array<irs::doc_id_t, 10> docs{};
+    auto* field = segment.field("duplicated");
+    ASSERT_NE(nullptr, field);
+    const auto term = irs::ViewCast<irs::byte_type>("abcd"sv);
+    auto acceptor = [](irs::doc_id_t id, void*) { return id != 1; };
+    const auto size = field->read_documents(term, docs, acceptor);
+    ASSERT_EQ(5, size);
+    ASSERT_EQ(5, docs[0]);
+    ASSERT_EQ(11, docs[1]);
+    ASSERT_EQ(21, docs[2]);
+    ASSERT_EQ(27, docs[3]);
+    ASSERT_EQ(31, docs[4]);
+    ASSERT_TRUE(std::all_of(std::next(docs.begin(), size), docs.end(),
+                            [](auto v) { return v == 0; }));
   }
 
   {

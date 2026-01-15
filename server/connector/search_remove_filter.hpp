@@ -78,7 +78,7 @@ class SearchRemoveFilterBase : public irs::Filter,
   }
   velox::memory::MemoryPool& _memory_pool;
   mutable const irs::SubReader* _segment{};
-  mutable const irs::DocumentMask* _pending_doc_mask{};
+  mutable std::array<const irs::DocumentMask*, 2> _doc_masks = {};
   mutable const irs::TermReader* _pk_field{};
   mutable size_t _pos{0};
   mutable irs::DocAttr _doc;

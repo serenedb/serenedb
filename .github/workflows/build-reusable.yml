@@ -210,24 +210,24 @@ jobs:
         run: ./private/ci/steps/03-ci-in-docker-build-targets.bash
 
       # ==================== TESTS ====================
-      - name: Skip tests (info)
-        if: inputs.VPACK_TESTS == false && inputs.IRESEARCH_TESTS == false && inputs.UNIT_TESTS == false && inputs.SQLLOGIC_TESTS == false && inputs.INTEGRATION_TESTS == false
-        run: echo "All tests skipped because no test flags are set."
-
       - name: Run tests in parallel
         id: run_tests
-        if: inputs.VPACK_TESTS == true || inputs.IRESEARCH_TESTS == true || inputs.UNIT_TESTS == true || inputs.SQLLOGIC_TESTS == true || inputs.INTEGRATION_TESTS == true
-        run: ./private/ci/steps/04-ci-run-tests-parallel.bash
+        run: |
+          if [[ "${{ inputs.VPACK_TESTS }}" == "true" || "${{ inputs.IRESEARCH_TESTS }}" == "true" || "${{ inputs.UNIT_TESTS }}" == "true" || "${{ inputs.SQLLOGIC_TESTS }}" == "true" || "${{ inputs.INTEGRATION_TESTS }}" == "true" ]]; then
+            ./private/ci/steps/04-ci-run-tests-parallel.bash
+          else
+            echo "All tests skipped because no test flags are set."
+          fi
 
       # ==================== PACKAGES ====================
-      - name: Skip packages (info)
-        if: inputs.BUILD_PACKAGES == false
-        run: echo "Packaging skipped because BUILD_PACKAGES flag is not set."
-
       - name: SereneDB Packages
         id: serenedb_packages
-        if: inputs.BUILD_PACKAGES == true
-        run: ./private/ci/steps/05-ci-in-docker-package.bash
+        run: |
+          if [[ "${{ inputs.BUILD_PACKAGES }}" == "true" ]]; then
+            ./private/ci/steps/05-ci-in-docker-package.bash
+          else
+            echo "Packaging skipped because BUILD_PACKAGES flag is not set."
+          fi
 
       # ==================== COVERAGE REPORT ====================
       - name: Generate coverage report

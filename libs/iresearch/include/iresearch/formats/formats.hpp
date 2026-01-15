@@ -64,9 +64,13 @@ using DocMapView = std::span<const doc_id_t>;
 using ScoreFunctionFactory =
   absl::FunctionRef<ScoreFunction(const AttributeProvider&)>;
 
-struct WandOptions : WandContext {
+using CookieCallback =
+  absl::FunctionRef<void(uint32_t cookie_idx, AttributeProvider& cookie_attrs)>;
+
+struct IteratorOptions : WandContext {
   ScoreFunctionFactory factory =
     +[](const AttributeProvider&) noexcept { return ScoreFunction{}; };
+  CookieCallback callback = +[](uint32_t, AttributeProvider&) noexcept {};
 };
 
 struct SegmentWriterOptions {
@@ -137,12 +141,12 @@ struct FieldWriter {
   virtual void end() = 0;
 };
 
-struct WandFieldOptions : WandOptions {
+struct WandFieldOptions : IteratorOptions {
   WandFieldOptions(uint8_t count) : count{count} {}
 
-  WandFieldOptions(const WandOptions& options, uint8_t mapped_index,
+  WandFieldOptions(const IteratorOptions& options, uint8_t mapped_index,
                    uint8_t count)
-    : WandOptions{options}, mapped_index{mapped_index}, count{count} {}
+    : IteratorOptions{options}, mapped_index{mapped_index}, count{count} {}
 
   bool Enabled() const noexcept { return mapped_index != kDisable; }
 
@@ -238,13 +242,13 @@ struct TermReader : public AttributeProvider {
 
   virtual DocIterator::ptr Iterator(IndexFeatures features,
                                     std::span<const SeekCookie* const> cookies,
-                                    const WandOptions& options = {},
+                                    const IteratorOptions& options = {},
                                     size_t min_match = 1,
                                     ScoreMergeType type = ScoreMergeType::Noop,
                                     size_t num_buckets = 0) const = 0;
 
   DocIterator::ptr Iterator(IndexFeatures features, const SeekCookie& cookie,
-                            const WandOptions& options = {}) const {
+                            const IteratorOptions& options = {}) const {
     const auto* cookie_ptr = &cookie;
     return Iterator(features, {&cookie_ptr, 1}, options);
   }

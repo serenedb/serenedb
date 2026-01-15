@@ -130,6 +130,35 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
   const std::span stats{_stats};
 
   const bool has_unscored_terms = !state->unscored_states.empty();
+  if (!has_unscored_terms) {
+    std::vector<const SeekCookie*> cookies;
+    cookies.reserve(state->scored_states.size());
+    for (auto& entry : state->scored_states) {
+      SDB_ASSERT(entry.cookie);
+      cookies.push_back(entry.cookie.get());
+    }
+    IteratorOptions options{ctx.wand};
+    auto cookie_callback = [&](uint32_t cookie_idx,
+                               AttributeProvider& cookie_attrs) {
+      auto* score = irs::GetMutable<ScoreAttr>(&cookie_attrs);
+      SDB_ASSERT(score);
+      SDB_ASSERT(state->scored_states[cookie_idx].stat_offset < stats.size());
+      auto* stat = stats[state->scored_states[cookie_idx].stat_offset].c_str();
+      CompileScore(*score, ord.buckets(), segment, *state->reader, stat,
+                   cookie_attrs,
+                   state->scored_states[cookie_idx].boost * _boost);
+    };
+
+    if (!ord.empty()) {
+      options.callback = cookie_callback;
+    }
+    auto it = reader->Iterator(features, cookies, options, _min_match,
+                               _merge_type, ord.buckets().size());
+    if (it) {
+      return it;
+    }
+    return DocIterator::empty();
+  }
 
   ScoreAdapters itrs(state->scored_states.size() + size_t(has_unscored_terms));
   auto it = std::begin(itrs);

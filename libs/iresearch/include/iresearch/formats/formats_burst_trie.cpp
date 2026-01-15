@@ -2861,7 +2861,7 @@ class FieldReaderImpl final : public FieldReader {
 
     DocIterator::ptr Iterator(IndexFeatures features,
                               std::span<const SeekCookie* const> cookies,
-                              const WandOptions& options, size_t min_match,
+                              const IteratorOptions& options, size_t min_match,
                               ScoreMergeType type,
                               size_t num_buckets) const final {
       SDB_ASSERT(_owner);

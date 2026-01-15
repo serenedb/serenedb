@@ -3612,12 +3612,15 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
 
   std::vector<DocIterator::ptr> iterators;
   iterators.reserve(metas.size());
+  uint32_t index = 0;
   for (const auto* meta : metas) {
     if (auto it = make_postings_iterator(*meta)) {
       iterators.emplace_back(std::move(it));
+      options.callback(index, *iterators.back());
     } else if (min_match == metas.size()) {
       return {};
     }
+    ++index;
   }
 
   if (iterators.size() < min_match) {

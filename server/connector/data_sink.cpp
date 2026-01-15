@@ -66,11 +66,13 @@ namespace sdb::connector {
 
 RocksDBDataSink::RocksDBDataSink(
   rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
+  std::atomic<size_t>& num_of_rows_affected,
   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
   std::span<const velox::column_index_t> key_childs,
   std::vector<catalog::Column::Id> column_oids, bool skip_primary_key_columns)
   : _transaction{transaction},
     _cf{cf},
+    _num_of_rows_affected(num_of_rows_affected),
     _object_key{object_key},
     _column_ids{std::move(column_oids)},
     _memory_pool{memory_pool},
@@ -178,6 +180,7 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
       WriteColumn(input->childAt(i), folly::Range{&all_rows, 1}, {});
     }
   }
+  _num_of_rows_affected.fetch_add(num_rows, std::memory_order_relaxed);
 }
 
 // Stores column backed by Flat vector.
@@ -2043,11 +2046,12 @@ velox::connector::DataSink::Stats RocksDBDataSink::stats() const {
 
 RocksDBDeleteDataSink::RocksDBDeleteDataSink(
   rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
-  velox::RowTypePtr row_type, ObjectId object_key,
-  std::vector<catalog::Column::Id> column_oids)
-  : _row_type{std::move(row_type)},
-    _transaction{transaction},
+  std::atomic<size_t>& num_of_rows_affected, velox::RowTypePtr row_type,
+  ObjectId object_key, std::vector<catalog::Column::Id> column_oids)
+  : _transaction{transaction},
     _cf{cf},
+    _num_of_rows_affected(num_of_rows_affected),
+    _row_type{std::move(row_type)},
     _object_key{object_key},
     _column_ids{std::move(column_oids)} {
   SDB_ASSERT(_object_key.isSet(), "RocksDBDeleteDataSink: object key is empty");
@@ -2089,6 +2093,7 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
       }
     }
   }
+  _num_of_rows_affected.fetch_add(num_rows, std::memory_order_relaxed);
 }
 
 bool RocksDBDeleteDataSink::finish() { return true; }

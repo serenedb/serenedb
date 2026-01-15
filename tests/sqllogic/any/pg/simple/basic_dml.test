@@ -44,8 +44,7 @@ SELECT * FROM basic_dml_test;
 key_column	column2	flag_col
 b	555	1
 
-# TODO statement count 1
-statement ok
+statement count 1
 UPDATE basic_dml_test SET key_column = 'c', flag_col = 0 WHERE column2 = 555
 
 statement error multiple assignments to same column "key_column"

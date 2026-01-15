@@ -41,6 +41,7 @@ class RocksDBDataSink : public velox::connector::DataSink {
  public:
   RocksDBDataSink(rocksdb::Transaction& transaction,
                   rocksdb::ColumnFamilyHandle& cf,
+                  std::atomic<size_t>& num_of_rows_affected,
                   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
                   std::span<const velox::column_index_t> key_childs,
                   std::vector<catalog::Column::Id> column_ids,
@@ -181,6 +182,7 @@ class RocksDBDataSink : public velox::connector::DataSink {
 
   rocksdb::Transaction& _transaction;
   rocksdb::ColumnFamilyHandle& _cf;
+  std::atomic<size_t>& _num_of_rows_affected;
   ObjectId _object_key;
   std::vector<velox::column_index_t> _key_childs;
   std::vector<catalog::Column::Id> _column_ids;
@@ -197,6 +199,7 @@ class RocksDBDeleteDataSink : public velox::connector::DataSink {
  public:
   RocksDBDeleteDataSink(rocksdb::Transaction& transaction,
                         rocksdb::ColumnFamilyHandle& cf,
+                        std::atomic<size_t>& num_of_rows_affected,
                         velox::RowTypePtr row_type, ObjectId object_key,
                         std::vector<catalog::Column::Id> column_ids);
 
@@ -209,9 +212,10 @@ class RocksDBDeleteDataSink : public velox::connector::DataSink {
  private:
   // we should store original type as data passed to appendData
   // contains only primary key columns but we need remove all.
-  velox::RowTypePtr _row_type;
   rocksdb::Transaction& _transaction;
   rocksdb::ColumnFamilyHandle& _cf;
+  std::atomic<size_t>& _num_of_rows_affected;
+  velox::RowTypePtr _row_type;
   ObjectId _object_key;
   std::vector<catalog::Column::Id> _column_ids;
   std::vector<velox::column_index_t> _key_childs;

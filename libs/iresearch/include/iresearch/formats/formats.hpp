@@ -197,16 +197,13 @@ struct TermReader : public AttributeProvider {
   using cookie_provider = std::function<const SeekCookie*()>;
   using Acceptor = absl::FunctionRef<bool(doc_id_t)>;
 
-  static bool AllAcceptor(doc_id_t) noexcept { return true; }
-
   // `mode` argument defines seek mode for term iterator
   // Returns an iterator over terms for a field.
   virtual SeekTermIterator::ptr iterator(SeekMode mode) const = 0;
 
   // Read 'count' number of documents containing 'term' to 'docs'
   // Returns number of read documents
-  virtual size_t read_documents(bytes_view term, std::span<doc_id_t> docs,
-                                Acceptor acceptor = AllAcceptor) const = 0;
+  virtual void read_documents(bytes_view term, Acceptor acceptor) const = 0;
 
   // Returns term metadata for a given 'term'
   virtual TermMeta term(bytes_view term) const = 0;

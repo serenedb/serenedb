@@ -69,19 +69,24 @@ irs::doc_id_t SearchRemoveFilter::advance() {
     // FIELD_SORTED_1 Due to documents are sorted for storing after applying
     // queries it will still see documents in insertion order.
 
-    auto acceptor = [&](irs::doc_id_t doc) {
-      return !((_segment_mask && _segment_mask->contains(doc)) ||
-               (_pending_mask && _pending_mask->contains(doc)));
+    auto doc = irs::doc_limits::eof();
+    auto acceptor = [&](irs::doc_id_t found_doc) {
+      if ((_segment_mask && _segment_mask->contains(found_doc)) ||
+          (_pending_mask && _pending_mask->contains(found_doc))) {
+        return true;  // skip deleted
+      }
+      // found alive document with this PK
+      doc = found_doc;
+      return false;
     };
 
-    auto doc = irs::doc_limits::eof();
-    auto found = _pk_field->read_documents(pk, std::span(&doc, 1), acceptor);
+    _pk_field->read_documents(pk, acceptor);
 
-    if (!found) {
+    if (irs::doc_limits::eof(doc)) {
       ++_pos;
       continue;
     }
-    SDB_ASSERT(!irs::doc_limits::eof(doc));
+
     // if PK found alive it should be the only one in the entire index.
     pk = _pks.back();
     _pks.pop_back();

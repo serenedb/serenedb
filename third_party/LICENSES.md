@@ -57,6 +57,7 @@
 * [libpg_query](https://github.com/pganalyze/libpg_query)
 * [re2](https://github.com/google/re2)
 * [protobuf](https://github.com/protocolbuffers/protobuf)
+* [snappy](https://github.com/google/snappy)
 * [zstd](https://github.com/facebook/zstd) (BSD + GPLv2 dual license)
 
 ### Other licenses

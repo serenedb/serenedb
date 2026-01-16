@@ -356,7 +356,7 @@ find_package(LZ4 REQUIRED)
 find_package(SNOWBALL REQUIRED)
 
 # Create lz4::lz4 alias for velox compatibility
-add_library(lz4::lz4 ALIAS lz4)
+add_library(lz4::lz4 ALIAS lz4_static)
 add_library(stemmer::stemmer ALIAS stemmer-static)
 
 ################################################################################

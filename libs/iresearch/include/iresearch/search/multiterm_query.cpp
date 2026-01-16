@@ -135,12 +135,16 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
   const bool has_unscored_terms = !state->unscored_states.empty();
 
   IteratorOptions options{ctx.wand};
+  uint32_t current_cookie_idx = 0;
 
   auto make_score = [&](uint32_t cookie_idx,
                         const AttributeProvider& cookie_attrs) {
-    SDB_ASSERT(state->scored_states[cookie_idx].stat_offset < stats.size());
-    auto* stat = stats[state->scored_states[cookie_idx].stat_offset].c_str();
-    const auto boost = state->scored_states[cookie_idx].boost * _boost;
+    SDB_ASSERT(cookie_idx < state->scored_states.size());
+    cookie_idx = current_cookie_idx + cookie_idx;
+    auto& entry = state->scored_states[cookie_idx];
+    SDB_ASSERT(entry.stat_offset < stats.size());
+    auto* stat = stats[entry.stat_offset].c_str();
+    const auto boost = entry.boost * _boost;
     return ord.buckets().front().bucket->PrepareScorer(
       segment, state->reader->meta(), stat, cookie_attrs, boost);
   };
@@ -152,9 +156,12 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
                            AttributeProvider& cookie_attrs) {
     auto* score = irs::GetMutable<ScoreAttr>(&cookie_attrs);
     SDB_ASSERT(score);
-    SDB_ASSERT(state->scored_states[cookie_idx].stat_offset < stats.size());
-    auto* stat = stats[state->scored_states[cookie_idx].stat_offset].c_str();
-    const auto boost = state->scored_states[cookie_idx].boost * _boost;
+    cookie_idx = current_cookie_idx + cookie_idx;
+    SDB_ASSERT(cookie_idx < state->scored_states.size());
+    auto& entry = state->scored_states[cookie_idx];
+    SDB_ASSERT(entry.stat_offset < stats.size());
+    auto* stat = stats[entry.stat_offset].c_str();
+    const auto boost = entry.boost * _boost;
     CompileScore(*score, ord.buckets(), segment, *state->reader, stat,
                  cookie_attrs, boost);
   };
@@ -181,6 +188,7 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
   for (auto& entry : state->scored_states) {
     SDB_ASSERT(entry.cookie);
     auto docs = reader->Iterator(features, *entry.cookie, options);
+    ++current_cookie_idx;
     if (!docs) [[unlikely]] {
       continue;
     }

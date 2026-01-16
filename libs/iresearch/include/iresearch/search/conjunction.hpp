@@ -111,35 +111,37 @@ auto ToScores(auto& itrs) noexcept {
          std::views::transform([](auto& it) { return &it.score(); });
 }
 
-struct ConjunctionScoreState : ScoreCtx {
+class ConjunctionScoreState : public ScoreCtx {
+ public:
   template<ScoreMergeType MergeType>
   ScoreFunction PrepareScore(auto& itrs, auto min, uint16_t score_block = 256) {
-    sources.reserve(itrs.size());
-    sources.append_range(ToScores(itrs));
+    _sources.reserve(itrs.size());
+    _sources.append_range(ToScores(itrs));
 
-    if (sources.empty()) {
+    if (_sources.empty()) {
       return ScoreFunction::Default();
     }
 
-    scores = std::make_unique<score_t[]>(score_block);
+    _scores = std::make_unique<score_t[]>(score_block);
 
     return {this,
             [](ScoreCtx* ctx, score_t* res, size_t n) noexcept {
               auto& self = *static_cast<ConjunctionScoreState*>(ctx);
-              auto source = self.sources.begin();
-              auto end = self.sources.end();
+              auto source = self._sources.begin();
+              auto end = self._sources.end();
 
               (*source)->Score(res, n);
               for (++source; source != end; ++source) {
-                (*source)->Score(self.scores.get(), n);
-                Merge<MergeType>(res, self.scores.get(), n);
+                (*source)->Score(self._scores.get(), n);
+                Merge<MergeType>(res, self._scores.get(), n);
               }
             },
             min};
   }
 
-  std::vector<const ScoreFunction*> sources;
-  std::unique_ptr<score_t[]> scores;
+ protected:
+  std::vector<const ScoreFunction*> _sources;
+  std::unique_ptr<score_t[]> _scores;
 };
 
 // Conjunction of N iterators

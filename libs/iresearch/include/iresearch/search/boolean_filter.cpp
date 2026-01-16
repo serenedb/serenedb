@@ -74,7 +74,7 @@ Filter::Query::ptr BooleanFilter::PrepareImpl(const PrepareContext& ctx,
     }
   }
 
-  if (absl::c_all_of(*this, [&](const auto& filter) {
+  if (min_match != 0 && absl::c_all_of(*this, [&](const auto& filter) {
         if (filter->type() != irs::Type<ByTerm>::id()) {
           return false;
         }
@@ -86,19 +86,24 @@ Filter::Query::ptr BooleanFilter::PrepareImpl(const PrepareContext& ctx,
     auto& first_term_filter = sdb::basics::downCast<ByTerm>(*_filters.front());
     ByTermsOptions options;
     options.merge_type = _merge_type;
-    uint32_t count_same_terms = 0;
+    bool has_duplicates = false;
     for (const auto& filter : *this) {
       auto& term_filter = sdb::basics::downCast<ByTerm>(*filter);
-      count_same_terms +=
-        options.terms.emplace(term_filter.options().term, term_filter.Boost())
-            .second
-          ? 0
-          : 1;
+      auto it =
+        options.terms.emplace(term_filter.options().term, term_filter.Boost());
+      if (!it.second) {
+        const_cast<score_t&>(it.first->boost) *= term_filter.Boost();
+        has_duplicates = true;
+      }
     }
-    if (min_match != 1) {
-      options.min_match = min_match - count_same_terms;
+    if (!has_duplicates || min_match == 1 ||
+        min_match == std::numeric_limits<uint32_t>::max()) {
+      options.min_match = min_match == std::numeric_limits<uint32_t>::max()
+                            ? options.terms.size()
+                            : min_match;
+      return ByTerms::Prepare(ctx.Boost(Boost()), first_term_filter.field(),
+                              options);
     }
-    return ByTerms::Prepare(ctx, first_term_filter.field(), options);
   }
 
   // determine incl/excl parts
@@ -240,7 +245,7 @@ Filter::Query::ptr And::PrepareBoolean(std::vector<const Filter*>& incl,
 }
 
 Filter::Query::ptr And::prepare(const PrepareContext& ctx) const {
-  return BooleanFilter::PrepareImpl(ctx, _filters.size());
+  return BooleanFilter::PrepareImpl(ctx, std::numeric_limits<uint32_t>::max());
 }
 
 Filter::Query::ptr Or::prepare(const PrepareContext& ctx) const {

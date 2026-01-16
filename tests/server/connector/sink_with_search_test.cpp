@@ -179,7 +179,7 @@ class DataSinkWithSearchTest : public ::testing::Test,
       index_writers;
     index_writers.emplace_back(
       std::make_unique<sdb::connector::search::SearchSinkUpdateWriter>(
-        index_transaction, *pool()));
+        index_transaction));
     sdb::connector::RocksDBUpdateDataSink sink(
       *data_transaction, *_cf_handles.front(), *pool_.get(), object_key, pk,
       data_column_oids, table_row_type, all_column_oids,
@@ -319,7 +319,7 @@ TEST_F(DataSinkWithSearchTest, test_InsertDeleteFlatStrings) {
       delete_writers;
     delete_writers.emplace_back(
       std::make_unique<sdb::connector::search::SearchSinkDeleteWriter>(
-        index_transaction, *pool()));
+        index_transaction));
 
     rocksdb::TransactionOptions trx_opts;
     trx_opts.skip_concurrency_control = true;

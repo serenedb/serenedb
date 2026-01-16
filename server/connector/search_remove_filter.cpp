@@ -27,8 +27,8 @@ namespace sdb::connector::search {
 irs::DocIterator::ptr SearchRemoveFilterBase::execute(
   const irs::ExecutionContext& ctx) const {
   _segment = &ctx.segment;
-  _doc_masks[0] = ctx.segment.docs_mask();
-  _doc_masks[1] = ctx.pending_docs_mask;
+  _segment_mask = ctx.segment.docs_mask();
+  _pending_mask = ctx.pending_docs_mask;
   _pk_field = _segment->field(kPkFieldName);
   SDB_ASSERT(_pk_field);
   _pos = 0;
@@ -69,19 +69,13 @@ irs::doc_id_t SearchRemoveFilter::advance() {
     // FIELD_SORTED_1 Due to documents are sorted for storing after applying
     // queries it will still see documents in insertion order.
 
-    auto acceptor = [](irs::doc_id_t doc, void* ctx) {
-      auto* masks = static_cast<std::array<const irs::DocumentMask*, 2>*>(ctx);
-      for (const auto* mask : *masks) {
-        if (mask && mask->contains(doc)) {
-          return false;
-        }
-      }
-      return true;
+    auto acceptor = [&](irs::doc_id_t doc) {
+      return !((_segment_mask && _segment_mask->contains(doc)) ||
+               (_pending_mask && _pending_mask->contains(doc)));
     };
 
     auto doc = irs::doc_limits::eof();
-    auto found = _pk_field->read_documents(pk, std::span(&doc, 1), acceptor,
-                                           static_cast<void*>(&_doc_masks));
+    auto found = _pk_field->read_documents(pk, std::span(&doc, 1), acceptor);
 
     if (!found) {
       ++_pos;

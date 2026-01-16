@@ -47,8 +47,7 @@ class EmptyTermReader final : public irs::TermReader {
   }
 
   size_t read_documents(bytes_view, std::span<doc_id_t>,
-                        Acceptor acceptor = nullptr,
-                        void* ctx = nullptr) const noexcept final {
+                        Acceptor acceptor = AllAcceptor) const noexcept final {
     return 0;
   }
 

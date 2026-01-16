@@ -309,8 +309,8 @@ void SearchSinkInsertBaseImpl::Field::SetNullValue() {
 }
 
 SearchSinkDeleteBaseImpl::SearchSinkDeleteBaseImpl(
-  irs::IndexWriter::Transaction& trx, velox::memory::MemoryPool& removes_pool)
-  : _trx(trx), _removes_pool(removes_pool) {}
+  irs::IndexWriter::Transaction& trx)
+  : _trx(trx) {}
 
 void SearchSinkDeleteBaseImpl::DeleteRowImpl(std::string_view row_key) {
   SDB_ASSERT(_remove_filter);
@@ -320,8 +320,7 @@ void SearchSinkDeleteBaseImpl::DeleteRowImpl(std::string_view row_key) {
 void SearchSinkDeleteBaseImpl::InitImpl(size_t batch_size) {
   SDB_ASSERT(batch_size > 0);
   SDB_ASSERT(!_remove_filter);
-  _remove_filter =
-    std::make_shared<SearchRemoveFilter>(_removes_pool, batch_size);
+  _remove_filter = std::make_shared<SearchRemoveFilter>(batch_size);
 }
 
 void SearchSinkDeleteBaseImpl::FinishImpl() {

@@ -244,7 +244,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteMultipleColumns) {
   {
     // in local block to make sure remove filters ownership is properly
     // transferred
-    SearchSinkDeleteWriter delete_sink{delete_trx, *pool()};
+    SearchSinkDeleteWriter delete_sink{delete_trx};
     delete_sink.Init(2);
     delete_sink.DeleteRow("pk2");
     delete_sink.DeleteRow("pk4");
@@ -502,7 +502,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertWithExisting) {
   }
   {
     auto delete_trx = _data_writer->GetBatch();
-    SearchSinkDeleteWriter delete_sink{delete_trx, *pool()};
+    SearchSinkDeleteWriter delete_sink{delete_trx};
     delete_sink.Init(1);
     delete_sink.DeleteRow("pk1");
     delete_sink.Finish();
@@ -521,7 +521,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertWithExisting) {
   }
   {
     auto delete_trx = _data_writer->GetBatch();
-    SearchSinkDeleteWriter delete_sink{delete_trx, *pool()};
+    SearchSinkDeleteWriter delete_sink{delete_trx};
     delete_sink.Init(1);
     delete_sink.DeleteRow("pk1");
     delete_sink.Finish();
@@ -606,7 +606,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertOnePending) {
   }
   {
     auto delete_trx = _data_writer->GetBatch();
-    SearchSinkDeleteWriter delete_sink{delete_trx, *pool()};
+    SearchSinkDeleteWriter delete_sink{delete_trx};
     delete_sink.Init(1);
     delete_sink.DeleteRow("pk1");
     delete_sink.Finish();
@@ -626,7 +626,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertOnePending) {
   }
   {
     auto delete_trx = _data_writer->GetBatch();
-    SearchSinkDeleteWriter delete_sink{delete_trx, *pool()};
+    SearchSinkDeleteWriter delete_sink{delete_trx};
     delete_sink.Init(1);
     delete_sink.DeleteRow("pk1");
     delete_sink.Finish();
@@ -738,7 +738,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
     }
     {
       auto delete_trx = limited_data_writer->GetBatch();
-      SearchSinkDeleteWriter delete_sink{delete_trx, *pool()};
+      SearchSinkDeleteWriter delete_sink{delete_trx};
       delete_sink.Init(1);
       delete_sink.DeleteRow("pk1");
       delete_sink.Finish();
@@ -760,7 +760,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
     }
     {
       auto delete_trx = limited_data_writer->GetBatch();
-      SearchSinkDeleteWriter delete_sink{delete_trx, *pool()};
+      SearchSinkDeleteWriter delete_sink{delete_trx};
       delete_sink.Init(1);
       delete_sink.DeleteRow("pk1");
       delete_sink.Finish();
@@ -855,7 +855,7 @@ TEST_F(SearchSinkWriterTest, DeleteNotMissedWithExisting) {
     // this delete should not fire at value2 during new segment processing
     // and successfully delete value1.
     auto delete_trx = _data_writer->GetBatch();
-    SearchSinkDeleteWriter delete_sink{delete_trx, *pool()};
+    SearchSinkDeleteWriter delete_sink{delete_trx};
     delete_sink.Init(1);
     delete_sink.DeleteRow("pk1");
     delete_sink.Finish();

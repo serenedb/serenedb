@@ -4815,21 +4815,9 @@ TEST_P(IndexTestCase, read_documents) {
     auto* field = segment.field("name");
     ASSERT_NE(nullptr, field);
     const auto term = irs::ViewCast<irs::byte_type>("A"sv);
-    auto acceptor = [](irs::doc_id_t, void*) { return false; };
+    auto acceptor = [](irs::doc_id_t) { return false; };
     const auto size = field->read_documents(term, docs, acceptor);
     ASSERT_EQ(0, size);
-  }
-
-  // singleton term approved by acceptor
-  {
-    std::array<irs::doc_id_t, 10> docs{};
-    auto* field = segment.field("name");
-    ASSERT_NE(nullptr, field);
-    const auto term = irs::ViewCast<irs::byte_type>("A"sv);
-    auto acceptor = [](irs::doc_id_t, void*) { return true; };
-    const auto size = field->read_documents(term, docs, acceptor);
-    ASSERT_EQ(1, size);
-    ASSERT_EQ(1, docs.front());
   }
 
   // singleton term
@@ -4895,7 +4883,7 @@ TEST_P(IndexTestCase, read_documents) {
     auto* field = segment.field("duplicated");
     ASSERT_NE(nullptr, field);
     const auto term = irs::ViewCast<irs::byte_type>("abcd"sv);
-    auto acceptor = [](irs::doc_id_t id, void*) { return id != 1; };
+    auto acceptor = [](irs::doc_id_t id) { return id != 1; };
     const auto size = field->read_documents(term, docs, acceptor);
     ASSERT_EQ(5, size);
     ASSERT_EQ(5, docs[0]);

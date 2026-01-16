@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <velox/common/memory/MemoryPool.h>
-
 #include <basics/memory.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/search/filter.hpp>
@@ -38,15 +36,11 @@ class SearchRemoveFilterBase : public irs::Filter,
                                public irs::Filter::Query,
                                public irs::DocIterator {
  public:
-  SearchRemoveFilterBase(velox::memory::MemoryPool& memory_pool)
-    : _memory_pool{memory_pool}, _bytes_allocator{&memory_pool}, _pks{{memory_pool}} {}
-
   bool Empty() const noexcept { return _pks.empty(); }
 
   void Add(std::string_view pk) {
-    irs::bytes_view bytes {reinterpret_cast<irs::byte_type*>(_bytes_allocator.allocate(pk.size())->begin()), pk.size()};
-    std::memcpy(const_cast<irs::byte_type*>(bytes.data()), pk.data(), pk.size());
-    _pks.emplace_back(std::move(bytes));
+    _pks.emplace_back(reinterpret_cast<const irs::byte_type*>(pk.data()),
+                      pk.size());
   }
 
  protected:
@@ -78,25 +72,22 @@ class SearchRemoveFilterBase : public irs::Filter,
     SDB_ASSERT(false);
     return _doc.value = irs::doc_limits::eof();
   }
-  velox::memory::MemoryPool& _memory_pool;
   mutable const irs::SubReader* _segment{};
-  mutable std::array<const irs::DocumentMask*, 2> _doc_masks = {};
+  mutable const irs::DocumentMask* _pending_mask{};
+  mutable const irs::DocumentMask* _segment_mask{};
   mutable const irs::TermReader* _pk_field{};
   mutable size_t _pos{0};
   mutable irs::DocAttr _doc;
-  // We need to store Pk copies as they would be applied on writer commit and
-  // should stay alive until that.
-  velox::HashStringAllocator _bytes_allocator;
-  mutable ManagedVector<irs::bytes_view> _pks;
+  // TODO(Dronplane) use persistent velox memory pool for proper memory
+  // accounting currently available query velox memory pool is discarded after
+  // query execution but this allocations must survive until IndexWriter Commit.
+  // See Issue cluster #37
+  mutable std::vector<irs::bstring> _pks;
 };
 
 class SearchRemoveFilter : public SearchRemoveFilterBase {
  public:
-  explicit SearchRemoveFilter(velox::memory::MemoryPool& memory_pool,
-                              size_t batch_size)
-    : SearchRemoveFilterBase(memory_pool) {
-    _pks.reserve(batch_size);
-  }
+  explicit SearchRemoveFilter(size_t batch_size) { _pks.reserve(batch_size); }
 
   void reset() {
     _pos = 0;

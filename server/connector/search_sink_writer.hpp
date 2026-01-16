@@ -136,8 +136,7 @@ class SearchSinkInsertBaseImpl {
 
 class SearchSinkDeleteBaseImpl {
  public:
-  SearchSinkDeleteBaseImpl(irs::IndexWriter::Transaction& trx,
-                           velox::memory::MemoryPool& removes_pool);
+  SearchSinkDeleteBaseImpl(irs::IndexWriter::Transaction& trx);
 
   void InitImpl(size_t batch_size);
 
@@ -149,7 +148,6 @@ class SearchSinkDeleteBaseImpl {
 
  private:
   irs::IndexWriter::Transaction& _trx;
-  velox::memory::MemoryPool& _removes_pool;
   std::shared_ptr<SearchRemoveFilterBase> _remove_filter;
 };
 
@@ -179,9 +177,8 @@ class SearchSinkInsertWriter final : public SinkInsertWriter,
 class SearchSinkDeleteWriter final : public SinkDeleteWriter,
                                      public SearchSinkDeleteBaseImpl {
  public:
-  SearchSinkDeleteWriter(irs::IndexWriter::Transaction& trx,
-                         velox::memory::MemoryPool& removes_pool)
-    : SearchSinkDeleteBaseImpl(trx, removes_pool) {}
+  SearchSinkDeleteWriter(irs::IndexWriter::Transaction& trx)
+    : SearchSinkDeleteBaseImpl(trx) {}
 
   void Init(size_t batch_size) final { InitImpl(batch_size); }
 
@@ -196,10 +193,8 @@ class SearchSinkUpdateWriter final : public SinkUpdateWriter,
                                      public SearchSinkInsertBaseImpl,
                                      public SearchSinkDeleteBaseImpl {
  public:
-  SearchSinkUpdateWriter(irs::IndexWriter::Transaction& trx,
-                         velox::memory::MemoryPool& removes_pool)
-    : SearchSinkInsertBaseImpl(trx),
-      SearchSinkDeleteBaseImpl(trx, removes_pool) {}
+  SearchSinkUpdateWriter(irs::IndexWriter::Transaction& trx)
+    : SearchSinkInsertBaseImpl(trx), SearchSinkDeleteBaseImpl(trx) {}
 
   void Init(size_t batch_size) final {
     SearchSinkInsertBaseImpl::InitImpl(batch_size);

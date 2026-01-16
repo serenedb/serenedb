@@ -664,6 +664,7 @@ add_subdirectory(snappy)
 
 # Create Snappy::snappy alias for velox compatibility
 add_library(Snappy::snappy ALIAS snappy)
+add_library(Snappy::snappy-static ALIAS snappy)
 
 ################################################################################
 ## PROTOBUF

@@ -40,10 +40,13 @@ namespace sdb::connector {
 class RocksDBDataSink : public velox::connector::DataSink {
  public:
   RocksDBDataSink(rocksdb::Transaction& transaction,
+                  const rocksdb::Snapshot& snapshot, rocksdb::DB& db,
                   rocksdb::ColumnFamilyHandle& cf,
+                  std::atomic<size_t>& num_of_rows_affected,
                   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
                   std::span<const velox::column_index_t> key_childs,
                   std::vector<catalog::Column::Id> column_ids,
+                  std::vector<catalog::Column::Id> all_column_ids,
                   bool skip_primary_key_columns = false);
 
   void appendData(velox::RowVectorPtr input) final;
@@ -180,22 +183,28 @@ class RocksDBDataSink : public velox::connector::DataSink {
     velox::vector_size_t total_rows_number);
 
   rocksdb::Transaction& _transaction;
+  const rocksdb::Snapshot& _snapshot;
+  rocksdb::DB& _db;
   rocksdb::ColumnFamilyHandle& _cf;
+  std::atomic<size_t>& _num_of_rows_affected;
   ObjectId _object_key;
   std::vector<velox::column_index_t> _key_childs;
   std::vector<catalog::Column::Id> _column_ids;
+  std::vector<catalog::Column::Id> _all_column_ids;
   velox::memory::MemoryPool& _memory_pool;
   SliceVector _row_slices;
   primary_key::Keys _keys_buffers;
   velox::HashStringAllocator _bytes_allocator;
   catalog::Column::Id _column_id;
   bool _skip_primary_key_columns;
+  bool _updating_pk;
 };
 
 class RocksDBDeleteDataSink : public velox::connector::DataSink {
  public:
   RocksDBDeleteDataSink(rocksdb::Transaction& transaction,
                         rocksdb::ColumnFamilyHandle& cf,
+                        std::atomic<size_t>& num_of_rows_affected,
                         velox::RowTypePtr row_type, ObjectId object_key,
                         std::vector<catalog::Column::Id> column_ids);
 
@@ -208,9 +217,10 @@ class RocksDBDeleteDataSink : public velox::connector::DataSink {
  private:
   // we should store original type as data passed to appendData
   // contains only primary key columns but we need remove all.
-  velox::RowTypePtr _row_type;
   rocksdb::Transaction& _transaction;
   rocksdb::ColumnFamilyHandle& _cf;
+  std::atomic<size_t>& _num_of_rows_affected;
+  velox::RowTypePtr _row_type;
   ObjectId _object_key;
   std::vector<catalog::Column::Id> _column_ids;
   std::vector<velox::column_index_t> _key_childs;

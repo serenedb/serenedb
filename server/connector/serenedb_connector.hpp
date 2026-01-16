@@ -289,6 +289,7 @@ class SereneDBConnectorInsertTableHandle final
       _kind{kind},
       _transaction{ExtractTransaction(session)} {
     _transaction.AddRocksDBWrite();
+    _transaction.AddRocksDBRead();  // for update of primary keys
   }
 
   bool supportsMultiThreading() const final { return false; }
@@ -303,12 +304,17 @@ class SereneDBConnectorInsertTableHandle final
 
   auto& GetTransaction() const noexcept { return _transaction; }
 
+  std::atomic<size_t>& GetNumOfRowsAffected() const noexcept {
+    return _num_of_rows_affected;
+  }
+
  private:
   axiom::connector::ConnectorSessionPtr _session;
   axiom::connector::TablePtr _table;
   axiom::connector::WriteKind _kind;
   query::Transaction& _transaction;
   std::vector<velox::connector::ColumnHandlePtr> _row_id_handles;
+  mutable std::atomic<size_t> _num_of_rows_affected = 0;
 };
 
 // Store transaction/etc here
@@ -362,7 +368,9 @@ class SereneDBConnectorMetadata final
       return yaclib::MakeFuture<int64_t>(0);
     }
 
-    int64_t number_of_locked_primary_keys = rocksdb_transaction->GetNumKeys();
+    int64_t number_of_locked_primary_keys =
+      serene_insert_handle->GetNumOfRowsAffected().load(
+        std::memory_order_relaxed);
     if (!transaction.HasTransactionBegin()) {
       auto r = transaction.Commit();
       if (!r.ok()) {
@@ -471,7 +479,7 @@ class SereneDBConnector final : public velox::connector::Connector {
     auto& serene_insert_handle =
       basics::downCast<SereneDBConnectorInsertTableHandle>(
         *connector_insert_table_handle);
-    auto& transaction = serene_insert_handle.GetTransaction();
+    query::Transaction& transaction = serene_insert_handle.GetTransaction();
     const auto& table =
       basics::downCast<const RocksDBTable>(*serene_insert_handle.Table());
     const auto& object_key = table.TableId();
@@ -480,9 +488,10 @@ class SereneDBConnector final : public velox::connector::Connector {
         serene_insert_handle.Kind() == axiom::connector::WriteKind::kUpdate) {
       column_oids.reserve(input_type->size());
       for (auto& col : input_type->names()) {
-        auto handle = table.columnMap().find(col);
+        std::string_view real_name = catalog::Column::ExtractColumnName(col);
+        auto handle = table.columnMap().find(real_name);
         SDB_ASSERT(handle != table.columnMap().end(),
-                   "RocksDBDataSink: can't find column handle for ", col);
+                   "RocksDBDataSink: can't find column handle for ", real_name);
         column_oids.push_back(
           basics::downCast<const SereneDBColumn>(handle->second)->Id());
       }
@@ -513,10 +522,24 @@ class SereneDBConnector final : public velox::connector::Connector {
               pk_indices.push_back(input_type->getChildIdx(handle->name()));
             }
           }
+
+          std::vector<catalog::Column::Id> all_col_oids;
+          all_col_oids.reserve(table.type()->size());
+          for (auto& col : table.type()->names()) {
+            auto handle = table.columnMap().find(col);
+            SDB_ASSERT(handle != table.columnMap().end(),
+                       "RocksDBDataSink: can't find column handle for ", col);
+            all_col_oids.push_back(
+              basics::downCast<const SereneDBColumn>(handle->second)->Id());
+          }
+
           auto& rocksdb_transaction = transaction.EnsureRocksDBTransaction();
+          const auto& snapshot = transaction.EnsureRocksDBSnapshot();
           return std::make_unique<RocksDBDataSink>(
-            rocksdb_transaction, _cf, *connector_query_ctx->memoryPool(),
-            object_key, pk_indices, column_oids, IsUpdate);
+            rocksdb_transaction, snapshot, _db, _cf,
+            serene_insert_handle.GetNumOfRowsAffected(),
+            *connector_query_ctx->memoryPool(), object_key, pk_indices,
+            column_oids, all_col_oids, IsUpdate);
         });
     }
 
@@ -531,7 +554,8 @@ class SereneDBConnector final : public velox::connector::Connector {
       }
       auto& rocksdb_transaction = transaction.EnsureRocksDBTransaction();
       return std::make_unique<RocksDBDeleteDataSink>(
-        rocksdb_transaction, _cf, table.type(), object_key, column_oids);
+        rocksdb_transaction, _cf, serene_insert_handle.GetNumOfRowsAffected(),
+        table.type(), object_key, column_oids);
     }
 
     VELOX_UNSUPPORTED("Unsupported write kind");

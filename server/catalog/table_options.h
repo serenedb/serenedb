@@ -151,6 +151,8 @@ struct Column {
   static constexpr Id kGeneratedPKId = kMaxRealId + 1;
 
   static std::string GeneratePKName(std::span<const std::string> column_names);
+  static std::string GenerateUpdateName(std::string_view original_name);
+  static std::string_view ExtractColumnName(std::string_view row_child_name);
 
   Id id;
   velox::TypePtr type;

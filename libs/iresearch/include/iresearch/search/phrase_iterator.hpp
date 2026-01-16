@@ -920,8 +920,11 @@ class PhraseIterator : public DocIterator {
                  const Scorers& ord, score_t boost, uint16_t score_block)
     : PhraseIterator{std::move(itrs), std::move(pos)} {
     if (!ord.empty()) {
-      _collected_freqs.Realloc(score_block);
-      std::get<FreqBlockAttr>(_attrs).value = _collected_freqs.Data();
+      if constexpr (!Frequency::kOneShot) {
+        _collected_freqs =
+          std::make_unique<uint32_t[]>(256);  // TODO(gnusi): block size
+        std::get<FreqBlockAttr>(_attrs).value = _collected_freqs.get();
+      }
 
       auto& score = std::get<ScoreAttr>(_attrs);
       CompileScore(score, ord.buckets(), segment, collector, field, stats,
@@ -980,9 +983,9 @@ class PhraseIterator : public DocIterator {
     return Collect(*this, docs);
   }
 
-  void CollectData() final {
+  void CollectData(uint16_t index) final {
     if constexpr (!Frequency::kOneShot) {
-      _collected_freqs.PushBack(_freq.GetFreq());
+      _collected_freqs[index] = _freq.GetFreq();
     }
   }
 
@@ -994,8 +997,8 @@ class PhraseIterator : public DocIterator {
   Conjunction _approx;
   Frequency _freq;
   Attributes _attrs;
-  [[no_unique_address]] utils::Need<!Frequency::kOneShot, FixedBuffer<uint32_t>>
-    _collected_freqs;
+  [[no_unique_address]] utils::Need<
+    !Frequency::kOneShot, std::unique_ptr<uint32_t[]>> _collected_freqs;
 };
 
 }  // namespace irs

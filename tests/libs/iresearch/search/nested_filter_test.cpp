@@ -53,7 +53,7 @@ class DocIteratorWrapper : public irs::DocIterator {
 
   irs::doc_id_t seek(irs::doc_id_t target) final { return _it->seek(target); }
 
-  void CollectData() final { _docs.emplace_back(value()); }
+  void CollectData(uint16_t index) final { _docs.emplace_back(value()); }
 
   irs::Attribute* GetMutable(irs::TypeInfo::type_id id) noexcept final {
     if (irs::Type<DocBlockAttr>::id() == id) {
@@ -133,7 +133,7 @@ struct ChildIterator : irs::DocIterator {
     return advance();
   }
 
-  void CollectData() final { _it->CollectData(); }
+  void CollectData(uint16_t index) final { _it->CollectData(index); }
 
  private:
   irs::DocIterator::ptr _it;
@@ -161,7 +161,7 @@ class PrevDocWrapper : public irs::DocIterator {
 
   irs::doc_id_t seek(irs::doc_id_t target) final { return _it->seek(target); }
 
-  void CollectData() final { _it->CollectData(); }
+  void CollectData(uint16_t index) final { _it->CollectData(index); }
 
  private:
   DocIterator::ptr _it;

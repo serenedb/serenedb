@@ -42,7 +42,7 @@ class BitsetDocIterator : public DocIterator, private util::Noncopyable {
   doc_id_t seek(doc_id_t target) noexcept final;
   uint32_t count() noexcept final;
   uint32_t collect(std::span<doc_id_t> docs) noexcept final;
-  void CollectData() final {}
+  void CollectData(uint16_t index) final {}
 
  protected:
   explicit BitsetDocIterator(CostAttr::Type cost) noexcept

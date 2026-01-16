@@ -82,7 +82,7 @@ class DoclistTestIterator : public DocIterator, private util::Noncopyable {
     _doc.value = doc_limits::invalid();
   }
 
-  void CollectData() final {}
+  void CollectData(uint16_t index) final {}
 
  private:
   std::vector<doc_id_t>::const_iterator _begin;

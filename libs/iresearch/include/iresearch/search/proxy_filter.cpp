@@ -166,7 +166,7 @@ class LazyFilterBitsetIterator : public DocIterator, private util::Noncopyable {
     return Collect(*this, docs);
   }
 
-  void CollectData() final {}
+  void CollectData(uint16_t index) final {}
 
   void Reset() noexcept {
     _word_idx = 0;

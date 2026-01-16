@@ -69,7 +69,7 @@ class AllIterator : public DocIterator {
   }
 
   uint32_t collect(std::span<doc_id_t> docs) final;
-  void CollectData() final {}
+  void CollectData(uint16_t index) final {}
 
  private:
   using Attributes = std::tuple<DocAttr, CostAttr, ScoreAttr>;

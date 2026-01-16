@@ -174,7 +174,7 @@ class FormatTestCase : public IndexTestBase {
       return value();
     }
 
-    void CollectData() final {}
+    void CollectData(uint16_t index) final {}
 
     irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
       const auto it = _attrs.find(type);

@@ -461,7 +461,7 @@ class DocIteratorImpl : public irs::DocIterator {
     return _doc.value;
   }
 
-  void CollectData() final {}
+  void CollectData(uint16_t index) final {}
 
  private:
   class PosIterator final : public irs::PosAttr {

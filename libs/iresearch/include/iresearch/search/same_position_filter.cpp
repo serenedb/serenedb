@@ -81,7 +81,7 @@ class SamePositionIterator : public DocIterator {
     return Collect(*this, docs);
   }
 
-  void CollectData() final {}
+  void CollectData(uint16_t index) final {}
 
  private:
   bool FindSamePosition() {

@@ -25,6 +25,7 @@
 
 #include <iresearch/search/scorer.hpp>
 #include <limits>
+#include <memory>
 
 #include "basics/assert.h"
 #include "basics/bit_utils.hpp"
@@ -1615,15 +1616,23 @@ class DocIteratorBase : public DocIterator {
   static_assert((IteratorTraits::Features() & FieldTraits::Features()) ==
                 IteratorTraits::Features());
 
- private:
-  void ReadTailBlock(doc_id_t prev_doc);
-
  public:
-  void CollectData() final {
+  void InitFreqBlock(FreqBlockAttr& freq_block) {
     if constexpr (IteratorTraits::Frequency()) {
-      _collected_freqs.PushBack(*_freq);
+      _collected_freqs =
+        std::make_unique<uint32_t[]>(256);  // TODO(gnusi): block size
+      freq_block.value = _collected_freqs.get();
     }
   }
+
+  void CollectData(uint16_t index) final {
+    if constexpr (IteratorTraits::Frequency()) {
+      _collected_freqs[index] = *_freq;
+    }
+  }
+
+ private:
+  void ReadTailBlock(doc_id_t prev_doc);
 
  protected:
   // returns current position in the document block 'docs_'
@@ -1635,8 +1644,8 @@ class DocIteratorBase : public DocIterator {
   void Refill(doc_id_t prev_doc);
 
   BufferType<IteratorTraits> _buf;
-  [[no_unique_address]] utils::Need<IteratorTraits::Frequency(),
-                                    FixedBuffer<uint32_t>> _collected_freqs;
+  [[no_unique_address]] utils::Need<
+    IteratorTraits::Frequency(), std::unique_ptr<uint32_t[]>> _collected_freqs;
   uint32_t _enc_buf[IteratorTraits::kBlockSize];  // buffer for encoding
   const doc_id_t* _begin{std::end(_buf.docs)};
   uint32_t* _freq{};  // pointer into docs_ to the frequency attribute value for
@@ -1755,7 +1764,7 @@ class SingleDocIterator
     return Collect(*this, docs);
   }
 
-  void CollectData() final {}
+  void CollectData(uint16_t index) final {}
 
   doc_id_t advance() final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
@@ -1956,9 +1965,8 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
             ReadSkip{extent}} {
     SDB_ASSERT(absl::c_all_of(
       this->_buf.docs, [](doc_id_t doc) { return !doc_limits::valid(doc); }));
-
     if constexpr (IteratorTraits::Frequency()) {
-      std::get<FreqBlockAttr>(_attrs).value = this->_collected_freqs.Data();
+      this->InitFreqBlock(std::get<FreqBlockAttr>(_attrs));
     }
   }
 
@@ -2378,9 +2386,8 @@ class Wanderator : public DocIteratorBase<IteratorTraits, FieldTraits>,
         self._scorer.Score(res, n);
       },
       strict ? MinStrict : MinWeak);
-
     if constexpr (IteratorTraits::Frequency()) {
-      std::get<FreqBlockAttr>(_attrs).value = this->_collected_freqs.Data();
+      this->InitFreqBlock(std::get<FreqBlockAttr>(_attrs));
     }
   }
 
@@ -3291,7 +3298,9 @@ struct PostingAdapter {
     return self().collect(docs);
   }
 
-  IRS_FORCE_INLINE void CollectData() { return self().CollectData(); }
+  IRS_FORCE_INLINE void CollectData(uint16_t index) {
+    return self().CollectData(index);
+  }
 
   IRS_FORCE_INLINE const ScoreAttr& score() const noexcept {
     return self().score();

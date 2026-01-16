@@ -162,7 +162,7 @@ class BasicDocIterator : public irs::DocIterator, public irs::ScoreCtx {
     return _doc.value;
   }
 
-  void CollectData() final {}
+  void CollectData(uint16_t index) final {}
 
  private:
   std::map<irs::TypeInfo::type_id, irs::Attribute*> _attrs;
@@ -1165,7 +1165,7 @@ struct Unestimated : public irs::FilterWithBoost {
       // prevent iterator to filter out
       return irs::doc_limits::invalid();
     }
-    void CollectData() final {}
+    void CollectData(uint16_t index) final {}
 
     irs::DocAttr doc;
   };
@@ -1215,7 +1215,7 @@ struct Estimated : public irs::FilterWithBoost {
 
       return type == irs::Type<irs::DocAttr>::id() ? &doc : nullptr;
     }
-    void CollectData() final {}
+    void CollectData(uint16_t index) final {}
 
     irs::DocAttr doc;
     irs::CostAttr cost;

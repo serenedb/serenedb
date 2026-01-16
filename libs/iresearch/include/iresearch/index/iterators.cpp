@@ -46,7 +46,7 @@ struct EmptyDocIterator : ResettableDocIterator {
   doc_id_t shallow_seek(doc_id_t /*target*/) final { return doc_limits::eof(); }
   uint32_t count() final { return 0; }
   void reset() final {}
-  void CollectData() final {}
+  void CollectData(uint16_t index) final {}
   uint32_t collect(std::span<doc_id_t>) final { return 0; }
 
  private:

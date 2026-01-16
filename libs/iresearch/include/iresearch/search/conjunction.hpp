@@ -82,7 +82,9 @@ struct ScoreAdapter {
     return _it->collect(docs);
   }
 
-  IRS_FORCE_INLINE void CollectData() { return _it->CollectData(); }
+  IRS_FORCE_INLINE void CollectData(uint16_t index) {
+    return _it->CollectData(index);
+  }
 
   IRS_FORCE_INLINE const ScoreAttr& score() const noexcept { return *_score; }
 
@@ -148,10 +150,10 @@ struct ConjunctionBase : public DocIterator, public ScoreCtx {
   static constexpr auto kMergeType = MergeType;
   static constexpr bool kHasScore = kMergeType != ScoreMergeType::Noop;
 
-  void CollectData() final {
+  void CollectData(uint16_t index) final {
     if constexpr (kHasScore) {
       for (auto& it : _itrs) {
-        it.CollectData();
+        it.CollectData(index);
       }
     }
   }

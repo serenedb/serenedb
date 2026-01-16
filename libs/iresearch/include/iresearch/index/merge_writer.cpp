@@ -154,7 +154,7 @@ class RemappingDocIterator : public DocIterator {
     return value();
   }
 
-  void CollectData() final {}
+  void CollectData(uint16_t index) final {}
 
  private:
   DocIterator::ptr _it;
@@ -224,7 +224,7 @@ class CompoundDocIterator : public DocIterator {
     return value();
   }
 
-  void CollectData() final {}
+  void CollectData(uint16_t index) final {}
 
  private:
   friend class SortingCompoundDocIterator;
@@ -308,7 +308,7 @@ class SortingCompoundDocIterator : public DocIterator {
     return value();
   }
 
-  void CollectData() final {}
+  void CollectData(uint16_t index) final {}
 
  private:
   class Context {

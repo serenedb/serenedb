@@ -60,7 +60,7 @@ class Exclusion : public DocIterator {
 
   uint32_t count() final { return Count(*this); }
 
-  void CollectData() final {}
+  void CollectData(uint16_t index) final {}
 
   uint32_t collect(std::span<doc_id_t> docs) final {
     return DocIterator::Collect(*this, docs);

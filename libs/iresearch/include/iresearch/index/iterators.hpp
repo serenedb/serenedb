@@ -67,7 +67,7 @@ struct DocIterator : AttributeProvider {
   // TODO(gnusi): return "has more"
   virtual uint32_t collect(std::span<doc_id_t> docs);
 
-  virtual void CollectData() = 0;
+  virtual void CollectData(uint16_t index) = 0;
 
   // protected:
   // For any DocIterator we want to define block.
@@ -108,7 +108,7 @@ struct DocIterator : AttributeProvider {
         break;
       }
       *begin = doc;
-      it.CollectData();
+      it.CollectData(0);  // TODO(gnusi): fix
     }
     return begin - docs.begin();
   }

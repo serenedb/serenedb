@@ -165,7 +165,7 @@ class UnaryDisjunction : public CompoundDocIterator<Adapter> {
     visitor(ctx, _it);
   }
 
-  void CollectData() final { _it.CollectData(); }
+  void CollectData(uint16_t index) final { _it.CollectData(index); }
 
   uint32_t collect(std::span<doc_id_t> docs) final { return _it.collect(docs); }
 
@@ -346,7 +346,7 @@ class BasicDisjunction : public CompoundDocIterator<Adapter>,
     return DocIterator::Collect(*this, docs);
   }
 
-  void CollectData() final {
+  void CollectData(uint16_t index) final {
     if constexpr (Base::kHasScore) {
       auto try_collect = [&](size_t i) {
         if (!_itrs[i].score().IsDefault()) {
@@ -553,7 +553,7 @@ class SmallDisjunction : public CompoundDocIterator<Adapter>,
     }
   }
 
-  void CollectData() final {
+  void CollectData(uint16_t index) final {
     if constexpr (kHasScore) {
       const auto doc = std::get<DocAttr>(_attrs).value;
 
@@ -566,7 +566,7 @@ class SmallDisjunction : public CompoundDocIterator<Adapter>,
         }
 
         if (value == doc) {
-          (*begin).CollectData();
+          (*begin).CollectData(index);
           this->_scores.Collect(i++);
         }
       }
@@ -752,7 +752,7 @@ class Disjunction : public CompoundDocIterator<Adapter>,
     return DocIterator::Collect(*this, docs);
   }
 
-  void CollectData() final {
+  void CollectData(uint16_t index) final {
     if constexpr (kHasScore) {
       SDB_ASSERT(!_heap.empty());
 
@@ -769,7 +769,7 @@ class Disjunction : public CompoundDocIterator<Adapter>,
           [&](size_t it) {
             SDB_ASSERT(it < _itrs.size());
             if (auto& score = _itrs[it].score(); !score.IsDefault()) {
-              _itrs[it].CollectData();
+              _itrs[it].CollectData(index);
               this->_scores.Collect(it);  // TODO(gnusi): fix index
             }
           });
@@ -1107,7 +1107,7 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
       if constexpr (kHasScore) {
         for (auto& it : _itrs) {
           if (!it.score().IsDefault() && doc_value == it.value()) {
-            it.CollectData();
+            it.CollectData(0);  // TODO(gnusi): fix index
             // TODO(gnusi): fix score, we must do something with collect/score
             // function
           }
@@ -1139,7 +1139,7 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
     return count;
   }
 
-  void CollectData() final {
+  void CollectData(uint16_t index) final {
     if constexpr (kHasScore) {
       _score_buf.CollectResult(static_cast<uint16_t>(_buf_offset));
     }
@@ -1387,7 +1387,7 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
       SetBit(_mask[offset / kBlockSize], offset % kBlockSize);
 
       if constexpr (Score) {
-        it.CollectData();
+        it.CollectData(0);  // TODO(gnusi): fix index
         _score_buf.CollectHit(offset);
       }
 

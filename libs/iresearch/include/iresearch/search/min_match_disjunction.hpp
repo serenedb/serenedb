@@ -211,7 +211,7 @@ class MinMatchDisjunction : public DocIterator,
     return Collect(*this, docs);
   }
 
-  void CollectData() final {
+  void CollectData(uint16_t index) final {
     if constexpr (kHasScore) {
       SDB_ASSERT(!_heap.empty());
 
@@ -219,7 +219,7 @@ class MinMatchDisjunction : public DocIterator,
       std::for_each(Lead(), _heap.end(), [&](size_t it) {
         SDB_ASSERT(it < _itrs.size());
         if (auto& score = _itrs[it].score(); !score.IsDefault()) {
-          _itrs[it].CollectData();
+          _itrs[it].CollectData(index);
         }
       });
       _scores.Next();

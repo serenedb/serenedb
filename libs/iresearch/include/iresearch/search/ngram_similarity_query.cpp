@@ -485,8 +485,8 @@ class NGramSimilarityDocIterator : public DocIterator, private ScoreCtx {
     : NGramSimilarityDocIterator{std::move(itrs), total_terms_count,
                                  min_match_count, !ord.empty()} {
     if (!ord.empty()) {
-      _collected_boost.Realloc(256);  // TODO: score_block
-      std::get<BoostBlockAttr>(_attrs).value = _collected_boost.Data();
+      _collected_boost = std::make_unique<score_t[]>(256);  // TODO: score_block
+      std::get<BoostBlockAttr>(_attrs).value = _collected_boost.get();
 
       auto& score = std::get<ScoreAttr>(_attrs);
       CompileScore(score, ord.buckets(), segment, collector, field, stats,
@@ -526,10 +526,10 @@ class NGramSimilarityDocIterator : public DocIterator, private ScoreCtx {
 
   uint32_t count() final { return Count(*this); }
 
-  void CollectData() final {
+  void CollectData(uint16_t index) final {
     auto boost_block = std::get<BoostBlockAttr>(_attrs).value;
     if (boost_block) {
-      _collected_boost.PushBack(_checker.GetFilterBoost());
+      _collected_boost[index] = _checker.GetFilterBoost();
     }
   }
 
@@ -544,7 +544,7 @@ class NGramSimilarityDocIterator : public DocIterator, private ScoreCtx {
   Checker _checker;
   Approx _approx;
   Attributes _attrs;
-  FixedBuffer<score_t> _collected_boost;
+  std::unique_ptr<score_t[]> _collected_boost;
 };
 
 CostAdapters Execute(const NGramState& query_state,

@@ -102,7 +102,7 @@ class ScorerWrapper : public DocIterator {
     return _it->collect(docs);
   }
 
-  void CollectData() final { _it->CollectData(); }
+  void CollectData(uint16_t index) final { _it->CollectData(index); }
 
  private:
   DocIterator::ptr _it;
@@ -165,7 +165,7 @@ class ChildToParentJoin : public DocIterator, private Matcher {
     return Collect(*this, docs);
   }
 
-  void CollectData() final {
+  void CollectData(uint16_t index) final {
     if constexpr (Matcher::kHasScore) {
       Matcher::CollectDataImpl();
     }
@@ -345,7 +345,7 @@ class MatcherBase : public ScoreCtx {
 
   void CollectChild(auto& it) {
     if constexpr (kHasScore) {
-      it.CollectData();
+      it.CollectData(0);  // TODO(gnusi): fix index
       _scores.CollectChild();
     }
   }

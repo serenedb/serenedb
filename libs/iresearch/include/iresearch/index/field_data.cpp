@@ -311,7 +311,7 @@ class DocIteratorImpl : public DocIterator {
     return value();
   }
 
-  void CollectData() final {}
+  void CollectData(uint16_t index) final {}
 
  private:
   using Attributes =
@@ -417,7 +417,7 @@ class SortingDocIteratorImpl : public DocIterator {
     return value();
   }
 
-  void CollectData() final {}
+  void CollectData(uint16_t index) final {}
 
  private:
   using Attributes =

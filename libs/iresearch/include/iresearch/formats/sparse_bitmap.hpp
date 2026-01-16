@@ -219,7 +219,7 @@ class SparseBitmapIterator : public ResettableDocIterator {
 
   doc_id_t seek(doc_id_t target) final;
 
-  void CollectData() final {}
+  void CollectData(uint16_t index) final {}
 
   uint32_t collect(std::span<doc_id_t> docs) final {
     return Collect(*this, docs);

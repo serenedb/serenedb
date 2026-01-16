@@ -278,7 +278,7 @@ class RangeColumnIterator : public ResettableDocIterator,
 
   bytes_view GetPayload() noexcept { return std::get<PayAttr>(_attrs).value; }
 
-  void CollectData() final {}
+  void CollectData(uint16_t index) final {}
 
   uint32_t collect(std::span<doc_id_t> docs) final {
     return Collect(*this, docs);
@@ -346,7 +346,7 @@ class BitmapColumnIterator : public ResettableDocIterator,
 
   void reset() final { _bitmap.reset(); }
 
-  void CollectData() final {}
+  void CollectData(uint16_t index) final {}
 
   uint32_t collect(std::span<doc_id_t> docs) final {
     return Collect(*this, docs);

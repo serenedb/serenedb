@@ -3607,7 +3607,12 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
   };
 
   if (metas.size() == 1) {
-    return make_postings_iterator(*metas[0]);
+    auto it = make_postings_iterator(*metas[0]);
+    if (!it) {
+      return {};
+    }
+    options.callback(0, *it);
+    return it;
   }
 
   std::vector<DocIterator::ptr> iterators;

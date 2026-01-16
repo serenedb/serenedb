@@ -163,7 +163,7 @@ id	name	iq	iamdegenereted
 statement error
 COPY varus(iamdegenereted) FROM '/tmp/lmao';
 ----
-db error: ERROR: column "iamdegenereted" is a generated column.
+db error: ERROR: column "iamdegenereted" is a generated column
 DETAIL: Generated columns cannot be used in COPY.
 
 

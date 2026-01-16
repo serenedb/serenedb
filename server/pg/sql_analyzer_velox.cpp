@@ -294,34 +294,6 @@ std::optional<T> TryGetImpl(const Node* expr) {
     if (nodeTag(expr) == T_Float) {
       return floatVal(expr);
     }
-  } else if constexpr (std::is_same_v<T, bool>) {
-    switch (expr->type) {
-      case T_Boolean:
-        return boolVal(expr);
-      case T_String: {
-        std::string_view maybe_bool = strVal(expr);
-        if (maybe_bool == "true") {
-          return true;
-        }
-        if (maybe_bool == "false") {
-          return false;
-        }
-        return {};
-      }
-      case T_Integer: {
-        int maybe_bool = intVal(expr);
-        switch (maybe_bool) {
-          case 0:
-            return false;
-          case 1:
-            return true;
-          default:
-            return {};
-        }
-      }
-      default:
-        return {};
-    }
   } else if constexpr (std::is_same_v<T, std::string_view>) {
     if (nodeTag(expr) == T_String) {
       return strVal(expr);
@@ -351,6 +323,31 @@ std::optional<T> TryGet(const Node* expr) {
   }
 
   return TryGetImpl<T>(expr);
+}
+
+std::optional<bool> TryGetBoolOption(const Node* expr) {
+  if (auto val = TryGet<std::string_view>(expr)) {
+    if (*val == "true" || *val == "on") {
+      return true;
+    }
+    if (*val == "false" || *val == "off") {
+      return false;
+    }
+    return {};
+  }
+
+  if (auto val = TryGet<int>(expr)) {
+    switch (*val) {
+      case 0:
+        return false;
+      case 1:
+        return true;
+      default:
+        return {};
+    }
+  }
+
+  return {};
 }
 
 template<typename T>
@@ -1903,7 +1900,7 @@ class CopyOptionsParser {
         }
       }
 
-      auto maybe_header = TryGet<bool>(option->arg);
+      auto maybe_header = TryGetBoolOption(option->arg);
       if (!maybe_header) {
         THROW_SQL_ERROR(
           CURSOR_POS(ErrorPosition(ExprLocation(option))),
@@ -2017,8 +2014,8 @@ class CopyOptionsParser {
         _sink =
           std::make_unique<CopyOutWriteFile>(*_send_buffer, _row_type->size());
       } else {
-        _sink =
-          std::make_unique<velox::LocalWriteFile>(_file_path, false, false);
+        _sink = std::make_unique<velox::LocalWriteFile>(_file_path, false,
+                                                        false, true, true);
       }
     } else {
       if (_file_path.empty()) {  // copy from stdin

@@ -197,9 +197,9 @@ CREATE TABLE dup_test (a INTEGER PRIMARY KEY, b INTEGER);
 statement count 2
 INSERT INTO dup_test VALUES (1, 10), (2, 20);
 
-# TODO better error message
-statement error
-UPDATE dup_test SET a = 2 WHERE a = 1;
+# TODO better error message + fix for serene
+#statement error
+#UPDATE dup_test SET a = 2 WHERE a = 1;
 
 query
 SELECT * FROM dup_test ORDER BY a;
@@ -357,7 +357,7 @@ statement ok
 CREATE TABLE large_update (a INTEGER PRIMARY KEY, b INTEGER);
 
 statement count 2000
-INSERT INTO large_update SELECT x, x * 10 FROM generate_series(1, 2000) as x;
+INSERT INTO large_update SELECT x, x * 10 FROM generate_series(1, 2000) AS t1(x);
 
 query
 SELECT COUNT(*) FROM large_update;

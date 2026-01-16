@@ -2162,8 +2162,6 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
     auto column_names = file_table_type->names();
     auto column_exprs = get_column_exprs(column_names);
 
-    object->EnsureTable();
-    basics::downCast<connector::RocksDBTable>(*object->table).SetCopyTo();
     MakeTableWrite(state, ToNode(&stmt), *object, std::move(column_names),
                    std::move(column_exprs));
   } else {

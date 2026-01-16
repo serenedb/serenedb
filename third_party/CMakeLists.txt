@@ -355,6 +355,7 @@ set(SNOWBALL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/snowball")
 find_package(LZ4 REQUIRED)
 find_package(SNOWBALL REQUIRED)
 
+add_library(lz4::lz4 ALIAS lz4)
 add_library(stemmer::stemmer ALIAS stemmer-static)
 
 ################################################################################
@@ -636,7 +637,36 @@ target_include_directories(folly PUBLIC ${OPENSSL_INCLUDE_DIR})
 target_link_libraries(folly PUBLIC ${OPENSSL_LIBRARIES})
 
 ################################################################################
-## protobuf
+## ZSTD
+################################################################################
+
+sdb_update_module(${GIT_EXECUTABLE} "zstd" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(ZSTD_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(ZSTD_INSTALL OFF CACHE BOOL "" FORCE)
+
+add_subdirectory(zstd/build/cmake)
+
+# Create zstd::zstd alias for velox compatibility
+add_library(zstd::zstd ALIAS libzstd_static)
+
+################################################################################
+## SNAPPY
+################################################################################
+
+sdb_update_module(${GIT_EXECUTABLE} "snappy" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+set(SNAPPY_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(SNAPPY_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
+set(SNAPPY_INSTALL OFF CACHE BOOL "" FORCE)
+
+add_subdirectory(snappy)
+
+# Create Snappy::snappy alias for velox compatibility
+add_library(Snappy::snappy ALIAS snappy)
+
+################################################################################
+## PROTOBUF
 ################################################################################
 
 sdb_update_module(${GIT_EXECUTABLE} "protobuf" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
@@ -692,7 +722,6 @@ set(VELOX_ENABLE_ARROW OFF CACHE BOOL "" FORCE)
 set(VELOX_ENABLE_GEO OFF CACHE BOOL "" FORCE)
 set(VELOX_ENABLE_REMOTE_FUNCTIONS OFF CACHE BOOL "" FORCE)
 set(VELOX_ENABLE_CCACHE OFF CACHE BOOL "" FORCE)
-set(VELOX_ENABLE_COMPRESSION_LZ4 OFF CACHE BOOL "" FORCE)
 set(VELOX_ENABLE_FAISS OFF CACHE BOOL "" FORCE)
 
 set(VELOX_SIMDJSON_SKIPUTF8VALIDATION OFF CACHE BOOL "" FORCE)

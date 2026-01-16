@@ -2065,7 +2065,7 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
     const auto& relation = *stmt.relation;
     std::string_view relation_name = relation.relname;
     const auto schema_name = absl::NullSafeStringView(relation.schemaname);
-    auto object = _objects.getData(schema_name, relation_name);
+    auto object = _objects.getRelation(schema_name, relation_name);
     return std::tuple{object, schema_name, relation_name};
   };
 

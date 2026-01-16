@@ -2161,6 +2161,9 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
     auto [object, schemaname, relname] = get_object();
     auto column_names = file_table_type->names();
     auto column_exprs = get_column_exprs(column_names);
+
+    object->EnsureTable();
+    basics::downCast<connector::RocksDBTable>(*object->table).SetCopyTo();
     MakeTableWrite(state, ToNode(&stmt), *object, std::move(column_names),
                    std::move(column_exprs));
   } else {
@@ -3487,7 +3490,13 @@ State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
 
   if (table.Columns().empty()) {
     auto state = parent->MakeChild();
-    EnsureRoot(state);
+    auto dummy_row = std::make_shared<velox::RowVector>(
+      &_memory_pool, velox::ROW({}), velox::BufferPtr{}, 0,
+      std::vector<velox::VectorPtr>{});
+    state.root = std::make_shared<lp::ValuesNode>(
+      _id_generator.NextPlanId(), std::vector{std::move(dummy_row)});
+    state.resolver.CreateTable(table_alias,
+                               MakePtrView(state.root->outputType()));
     return state;
   }
 

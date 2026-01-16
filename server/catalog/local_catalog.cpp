@@ -1169,6 +1169,14 @@ Result LocalCatalog::DropIndex(ObjectId database_id, std::string_view schema,
   });
 }
 
+Result LocalCatalog::SyncTableNumRows(const Table& c,
+                                      const TableShard& physical) {
+  absl::MutexLock lock{&_mutex};
+  return Apply(_snapshot, [&](auto& clone) {
+    return _engine->SyncTableNumRows(c, physical);
+  });
+}
+
 Result LocalCatalog::CreateView(ObjectId database_id, std::string_view schema,
                                 std::shared_ptr<View> view, bool replace) {
   auto writer = MakePropertiesWriter();

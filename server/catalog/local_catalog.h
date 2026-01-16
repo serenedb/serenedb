@@ -102,6 +102,8 @@ class LocalCatalog final : public LogicalCatalog,
                    std::string_view name, AsyncResult* async_result) final;
   Result DropIndex(ObjectId database_id, std::string_view schema,
                    std::string_view name) final;
+
+  Result SyncTableNumRows(const Table& c, const TableShard& physical) final;
   std::shared_ptr<Snapshot> GetSnapshot() const noexcept final;
 
   void RegisterTableDrop(TableTombstone tombstone) final;

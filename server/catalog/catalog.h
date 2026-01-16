@@ -224,6 +224,9 @@ struct LogicalCatalog {
   virtual Result DropIndex(ObjectId database_id, std::string_view schema,
                            std::string_view name) = 0;
 
+  virtual Result SyncTableNumRows(const Table& c,
+                                  const TableShard& physical) = 0;
+
   virtual void RegisterTableDrop(TableTombstone tombstone) = 0;
   virtual void RegisterScopeDrop(ObjectId database_id, ObjectId schema_id) = 0;
 
@@ -285,5 +288,6 @@ class CatalogFeature final : public SerenedFeature {
 ResultOr<std::shared_ptr<Database>> GetDatabase(ObjectId database_id);
 ResultOr<std::shared_ptr<Database>> GetDatabase(std::string_view name);
 std::shared_ptr<TableShard> GetTableShard(ObjectId id);
+LogicalCatalog& GetCatalog();
 
 }  // namespace sdb::catalog

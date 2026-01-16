@@ -212,6 +212,7 @@ struct TableOptions {
   std::optional<ObjectId> planDb;    // TODO(gnusi): remove
   ForeignId from;
   ForeignId to;
+  uint64_t num_rows = 0;
   vpack::Slice indexes = vpack::Slice::emptyArraySlice();
   uint32_t numberOfShards = 1;
   uint32_t replicationFactor = 1;
@@ -233,6 +234,7 @@ struct TableMeta {
   ObjectId from;
   ObjectId to;
   std::string name;  // TODO(gnusi): remove
+  uint64_t num_rows = 0;
 
   auto GetTarget(EdgeDirection dir) const noexcept {
     SDB_ASSERT(dir == EdgeDirection::Out || dir == EdgeDirection::In);

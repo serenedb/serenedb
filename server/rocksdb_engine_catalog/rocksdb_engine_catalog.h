@@ -282,6 +282,8 @@ class RocksDBEngineCatalog {
 
   Result DropRole(const catalog::Role& role);
 
+  Result SyncTableNumRows(const catalog::Table& c, const TableShard& physical);
+
   yaclib::Future<Result> compactAll(bool change_level,
                                     bool compact_bottom_most_level);
 
@@ -401,9 +403,6 @@ class RocksDBEngineCatalog {
   Result VisitSchemaObjects(
     ObjectId database_id, ObjectId schema_id, RocksDBEntryType entry,
     absl::FunctionRef<Result(rocksdb::Slice, vpack::Slice)> visitor);
-
-  uint64_t GetApproximateEntityCount(ObjectId table_id,
-                                     catalog::Column::Id column_id) const;
 
  private:
   bool UseRangeDelete(ObjectId id, uint64_t number_documents);

@@ -21,6 +21,8 @@
 #include "serenedb_connector.hpp"
 
 #include "basics/static_strings.h"
+#include "catalog/catalog.h"
+#include "storage_engine/table_shard.h"
 
 namespace sdb::connector {
 
@@ -58,8 +60,9 @@ uint64_t RocksDBTable::numRows() const {
     column_handle = _column_handles[1].get();
   }
 
-  return GetServerEngine().GetApproximateEntityCount(TableId(),
-                                                     column_handle->Id());
+  auto table_shard = catalog::GetTableShard(_table_id);
+  SDB_ASSERT(table_shard);
+  return table_shard->GetNumRows();
 }
 
 }  // namespace sdb::connector

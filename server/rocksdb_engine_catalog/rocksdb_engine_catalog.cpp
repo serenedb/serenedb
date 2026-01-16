@@ -366,6 +366,8 @@ vpack::Slice GetTableProperties(vpack::Builder& builder,
   } else {
     collection.WriteProperties(builder);
   }
+  uint64_t num_rows = physical.GetNumRows();
+  builder.add("num_rows", num_rows);
 
   builder.add(StaticStrings::kIndexes);
   physical.getAllIndexesInternal(builder);
@@ -948,18 +950,6 @@ Result RocksDBEngineCatalog::VisitSchemaObjects(
   absl::FunctionRef<Result(rocksdb::Slice key, vpack::Slice)> visitor) {
   return VisitObjectsImpl(
     RocksDBKeyBounds::SchemaObjects(entry, database_id, schema_id), visitor);
-}
-
-uint64_t RocksDBEngineCatalog::GetApproximateEntityCount(
-  ObjectId table_id, catalog::Column::Id column_id) const {
-  auto* cf =
-    RocksDBColumnFamilyManager::get(RocksDBColumnFamilyManager::Family::Data);
-  uint64_t count = 0;
-  uint64_t size = 0;
-  auto [begin, end] =
-    connector::key_utils::CreateTableColumnRange(table_id, column_id);
-  _db->GetApproximateMemTableStats(cf, {begin, end}, &count, &size);
-  return count;
 }
 
 Result RocksDBEngineCatalog::DeleteSchemaObject(
@@ -1906,6 +1896,34 @@ Result RocksDBEngineCatalog::DropSchema(ObjectId db, ObjectId id) {
       return key;
     },
     [] { return std::string_view{}; });
+}
+
+Result RocksDBEngineCatalog::SyncTableNumRows(const catalog::Table& c,
+                                              const TableShard& physical) {
+  const auto db_id = c.GetDatabaseId();
+  const auto cid = c.GetId();
+  vpack::Builder b;
+  return WriteDefinition(
+    _db->GetRootDB(),
+    [&] {
+      RocksDBKeyWithBuffer key;
+      key.constructSchemaObject(RocksDBEntryType::Collection, db_id,
+                                c.GetSchemaId(), cid);
+      return key;
+    },
+    [&] {
+      return RocksDBValue::Object(RocksDBEntryType::Collection,
+                                  GetTableProperties(b, c, physical, true));
+    },
+    [&] {
+      const wal::SchemaObjectPut entry{
+        .database_id = db_id,
+        .schema_id = c.GetSchemaId(),
+        .object_id = cid,
+        .data = b.slice(),
+      };
+      return wal::Write(RocksDBLogType::TableChange, entry);
+    });
 }
 
 Result RocksDBEngineCatalog::ChangeView(ObjectId db, ObjectId schema_id,

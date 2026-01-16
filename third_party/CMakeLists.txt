@@ -354,7 +354,6 @@ add_library(lz4::lz4 ALIAS lz4)
 
 # Set variables for Velox's Findlz4.cmake
 set(LZ4_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lz4/lib" CACHE PATH "" FORCE)
-set(LZ4_LIBRARY "${CMAKE_CURRENT_BINARY_DIR}/lz4/build/cmake/liblz4.a" CACHE FILEPATH "" FORCE)
 set(lz4_FOUND TRUE CACHE BOOL "" FORCE)
 
 set(SNOWBALL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/snowball")

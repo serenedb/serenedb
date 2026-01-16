@@ -348,8 +348,13 @@ if(NOT PERL_FOUND)
 endif()
 
 sdb_update_module(${GIT_EXECUTABLE} "lz4" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-set(LZ4_BUILD_CLI OFF CACHE BOOL "" FORCE)
-add_subdirectory(lz4/build/cmake)
+set(LZ4_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/lz4")
+set(LZ4_INCLUDE_DIR "${LZ4_ROOT}/lib")
+set(SNOWBALL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/snowball")
+
+find_package(LZ4 REQUIRED)
+find_package(SNOWBALL REQUIRED)
+
 add_library(lz4::lz4 ALIAS lz4)
 
 set(SNOWBALL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/snowball")

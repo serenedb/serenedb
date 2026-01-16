@@ -1918,9 +1918,8 @@ class CopyOptionsParser {
     serde_options.nullString = null;
 
     for (const auto& option_name :
-         {"default", "quote", "escape", "force_quote", "force_not_null",
-          "force_null", "on_error", "reject_limit", "encoding",
-          "log_verbosity"}) {
+         {"default", "quote", "force_quote", "force_not_null", "force_null",
+          "on_error", "reject_limit", "encoding", "log_verbosity"}) {
       if (const auto* option = EraseOption(option_name)) {
         THROW_SQL_ERROR(
           CURSOR_POS(ErrorPosition(ExprLocation(option))),

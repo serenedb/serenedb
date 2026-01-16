@@ -3639,7 +3639,7 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
     return ResolveMergeType(type, num_buckets, [&]<typename A>(A&& aggregator) {
       using MinMatchIterator = MinMatchIterator<Adapter, A>;
       return MakeWeakDisjunction<MinMatchIterator>(
-        options, std::move(adapters), min_match, std::move(aggregator), 0U);
+        options, std::move(adapters), min_match, std::move(aggregator));
     });
   };
 

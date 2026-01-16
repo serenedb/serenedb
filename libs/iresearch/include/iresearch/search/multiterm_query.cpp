@@ -117,7 +117,8 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
   // get term state for the specified reader
   auto state = _states.find(segment);
 
-  if (!state) {
+  if (!state ||
+      (state->scored_states.empty() && state->unscored_states.empty())) {
     // invalid state
     return DocIterator::empty();
   }
@@ -129,6 +130,8 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
   const IndexFeatures features = ord.features();
   const std::span stats{_stats};
 
+  // add an iterator for each of the scored states
+  const bool no_score = ord.empty();
   const bool has_unscored_terms = !state->unscored_states.empty();
   if (!has_unscored_terms) {
     std::vector<const SeekCookie*> cookies;
@@ -137,7 +140,8 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
       SDB_ASSERT(entry.cookie);
       cookies.push_back(entry.cookie.get());
     }
-    IteratorOptions options{ctx.wand};
+    // TODO(mbkkt) wand
+    IteratorOptions options;
     auto cookie_callback = [&](uint32_t cookie_idx,
                                AttributeProvider& cookie_attrs) {
       auto* score = irs::GetMutable<ScoreAttr>(&cookie_attrs);
@@ -149,7 +153,7 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
                    state->scored_states[cookie_idx].boost * _boost);
     };
 
-    if (!ord.empty()) {
+    if (!no_score) {
       options.callback = cookie_callback;
     }
     auto it = reader->Iterator(features, cookies, options, _min_match,
@@ -163,8 +167,6 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
   ScoreAdapters itrs(state->scored_states.size() + size_t(has_unscored_terms));
   auto it = std::begin(itrs);
 
-  // add an iterator for each of the scored states
-  const bool no_score = ord.empty();
   for (auto& entry : state->scored_states) {
     SDB_ASSERT(entry.cookie);
     auto docs = reader->Iterator(features, *entry.cookie);

@@ -352,10 +352,6 @@ set(LZ4_BUILD_CLI OFF CACHE BOOL "" FORCE)
 add_subdirectory(lz4/build/cmake)
 add_library(lz4::lz4 ALIAS lz4)
 
-# Set variables for Velox's Findlz4.cmake
-set(LZ4_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lz4/lib" CACHE PATH "" FORCE)
-set(lz4_FOUND TRUE CACHE BOOL "" FORCE)
-
 set(SNOWBALL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/snowball")
 find_package(SNOWBALL REQUIRED)
 add_library(stemmer::stemmer ALIAS stemmer-static)

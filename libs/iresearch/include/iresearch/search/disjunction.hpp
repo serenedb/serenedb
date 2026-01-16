@@ -461,11 +461,11 @@ class SmallDisjunction : public CompoundDocIterator<Adapter>,
     SDB_ASSERT(visitor);
     auto& doc_value = std::get<DocAttr>(_attrs).value;
     hitch_all_iterators();
-    std::for_each(_begin, _end, [&](auto& it) {
-      if (it.value() == doc_value && !visitor(ctx, it)) {
+    for (auto it = _begin; it != _end; ++it) {
+      if (it->value() == doc_value && !visitor(ctx, *it)) {
         return;
       }
-    });
+    }
   }
 
  private:

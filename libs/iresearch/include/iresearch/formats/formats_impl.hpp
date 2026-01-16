@@ -1715,10 +1715,10 @@ class SingleDocIterator
   SingleDocIterator() = default;
 
   void WandPrepare(const TermMeta& meta, const IndexInput* pos_in,
-                   const IndexInput* pay_in,
-                   const ScoreFunctionFactory& factory) {
+                   const IndexInput* pay_in, uint32_t meta_idx,
+                   const MakeScoreCallback& make_score) {
     Prepare(meta, pos_in, pay_in);
-    auto func = factory(*this);
+    auto func = make_score(meta_idx, *this);
 
     auto& doc_value = std::get<DocAttr>(_attrs).value;
     doc_value = _next;
@@ -1937,14 +1937,14 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
 
   void WandPrepare(const TermMeta& meta, const IndexInput* doc_in,
                    const IndexInput* pos_in, const IndexInput* pay_in,
-                   const ScoreFunctionFactory& factory, const Scorer& scorer,
-                   uint8_t wand_index) {
+                   uint32_t meta_idx, const MakeScoreCallback& make_score,
+                   const Scorer& scorer, uint8_t wand_index) {
     Prepare(meta, doc_in, pos_in, pay_in, wand_index);
     if (meta.docs_count > FieldTraits::kBlockSize) {
       return;
     }
     auto ctx = scorer.prepare_wand_source();
-    auto func = factory(*ctx);
+    auto func = make_score(meta_idx, *ctx);
 
     auto old_offset = std::numeric_limits<size_t>::max();
     if (meta.docs_count == FieldTraits::kBlockSize) {
@@ -2329,11 +2329,12 @@ class Wanderator : public DocIteratorBase<IteratorTraits, FieldTraits>,
   }
 
  public:
-  Wanderator(const ScoreFunctionFactory& factory, const Scorer& scorer,
-             WandExtent extent, uint8_t index, bool strict)
+  Wanderator(uint32_t meta_idx, const MakeScoreCallback& make_score,
+             const Scorer& scorer, WandExtent extent, uint8_t index,
+             bool strict)
     : _skip{IteratorTraits::kBlockSize, PostingsWriterBase::kSkipN,
-            ReadSkip{factory, scorer, index, extent}},
-      _scorer{factory(*this)} {
+            ReadSkip{meta_idx, make_score, scorer, index, extent}},
+      _scorer{make_score(meta_idx, *this)} {
     SDB_ASSERT(absl::c_all_of(this->_buf.docs, [](doc_id_t doc) {
       return doc == doc_limits::invalid();
     }));
@@ -2395,10 +2396,10 @@ class Wanderator : public DocIteratorBase<IteratorTraits, FieldTraits>,
 
   class ReadSkip {
    public:
-    ReadSkip(const ScoreFunctionFactory& factory, const Scorer& scorer,
-             uint8_t index, WandExtent extent)
+    ReadSkip(uint32_t meta_idx, const MakeScoreCallback& factory,
+             const Scorer& scorer, uint8_t index, WandExtent extent)
       : ctx{scorer.prepare_wand_source()},
-        func{factory(*ctx)},
+        func{factory(meta_idx, *ctx)},
         index{index},
         extent{extent} {
       SDB_ASSERT(extent.GetExtent() > 0);
@@ -3335,8 +3336,8 @@ class PostingsReaderImpl final : public PostingsReaderBase {
   DocIterator::ptr Iterator(IndexFeatures field_features,
                             IndexFeatures required_features,
                             std::span<const TermMeta* const> metas,
-                            const WandFieldOptions& options, size_t min_match,
-                            ScoreMergeType type,
+                            const IteratorFieldOptions& options,
+                            size_t min_match, ScoreMergeType type,
                             size_t num_buckets) const final;
 
  private:
@@ -3535,7 +3536,7 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::IteratorImpl(
 template<typename FormatTraits>
 DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
   IndexFeatures field_features, IndexFeatures required_features,
-  std::span<const TermMeta* const> metas, const WandFieldOptions& options,
+  std::span<const TermMeta* const> metas, const IteratorFieldOptions& options,
   size_t min_match, ScoreMergeType type, size_t num_buckets) const {
   SDB_ASSERT(!metas.empty());
   SDB_ASSERT(1 <= min_match);
@@ -3545,7 +3546,7 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
   // In such case we can avoid wrapping into doc iterator first
   // And also avoid case when we are unable devirtualize min match
   uint8_t iterator_types = 0;
-  auto make_postings_iterator = [&](const TermMeta& meta) {
+  auto make_postings_iterator = [&](uint32_t meta_idx, const TermMeta& meta) {
     return IteratorImpl(
       field_features, required_features,
       [&]<typename IteratorTraits, typename FieldTraits> -> DocIterator::ptr {
@@ -3576,7 +3577,8 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
         if (meta.docs_count == 1) {
           auto it = memory::make_managed<
             SingleDocIterator<IteratorTraits, FieldTraits>>();
-          it->WandPrepare(meta, _pos_in.get(), _pay_in.get(), options.factory);
+          it->WandPrepare(meta, _pos_in.get(), _pay_in.get(), meta_idx,
+                          options.make_score);
           iterator_types |= 1 << 0;
           return it;
         }
@@ -3588,8 +3590,8 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
               if (meta.docs_count > FormatTraits::kBlockSize) {
                 auto it = memory::make_managed<
                   Wanderator<IteratorTraits, FieldTraits, Extent>>(
-                  options.factory, scorer, extent, options.mapped_index,
-                  options.strict);
+                  meta_idx, options.make_score, scorer, extent,
+                  options.mapped_index, options.strict);
                 it->WandPrepare(meta, _doc_in.get(), _pos_in.get(),
                                 _pay_in.get());
                 iterator_types |= 1 << 1;
@@ -3599,7 +3601,8 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
             auto it = memory::make_managed<
               DocIteratorImpl<IteratorTraits, FieldTraits, Extent>>(extent);
             it->WandPrepare(meta, _doc_in.get(), _pos_in.get(), _pay_in.get(),
-                            options.factory, scorer, options.mapped_index);
+                            meta_idx, options.make_score, scorer,
+                            options.mapped_index);
             iterator_types |= 1 << 2;
             return it;
           });
@@ -3607,25 +3610,25 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
   };
 
   if (metas.size() == 1) {
-    auto it = make_postings_iterator(*metas[0]);
+    auto it = make_postings_iterator(0, *metas[0]);
     if (!it) {
       return {};
     }
-    options.callback(0, *it);
+    options.compile_score(0, *it);
     return it;
   }
 
   std::vector<DocIterator::ptr> iterators;
   iterators.reserve(metas.size());
-  uint32_t index = 0;
+  uint32_t meta_idx = 0;
   for (const auto* meta : metas) {
-    if (auto it = make_postings_iterator(*meta)) {
+    if (auto it = make_postings_iterator(meta_idx, *meta)) {
       iterators.emplace_back(std::move(it));
-      options.callback(index, *iterators.back());
+      options.compile_score(meta_idx, *iterators.back());
     } else if (min_match == metas.size()) {
       return {};
     }
-    ++index;
+    ++meta_idx;
   }
 
   if (iterators.size() < min_match) {

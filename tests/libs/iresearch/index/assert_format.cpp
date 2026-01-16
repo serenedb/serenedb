@@ -738,7 +738,7 @@ void AssertDocs(const irs::TermIterator& expected_term,
   AssertDocs(expected_term.postings(requested_features), [&] {
     return actual_terms.Iterator(
       requested_features, *actual_cookie,
-      {{0, false}, [](const irs::AttributeProvider&) {
+      {{0, false}, [](uint32_t, const irs::AttributeProvider&) {
          // FIXME(gnusi)
          return irs::ScoreFunction::Default(1);
        }});

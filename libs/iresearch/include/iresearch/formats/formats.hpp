@@ -61,16 +61,19 @@ struct WandWriter;
 using DocMap = ManagedVector<doc_id_t>;
 using DocMapView = std::span<const doc_id_t>;
 
-using ScoreFunctionFactory =
-  absl::FunctionRef<ScoreFunction(const AttributeProvider&)>;
+using MakeScoreCallback =
+  absl::FunctionRef<ScoreFunction(uint32_t, const AttributeProvider&)>;
 
-using CookieCallback =
-  absl::FunctionRef<void(uint32_t cookie_idx, AttributeProvider& cookie_attrs)>;
+using CompileScoreCallback =
+  absl::FunctionRef<void(uint32_t, AttributeProvider&)>;
 
 struct IteratorOptions : WandContext {
-  ScoreFunctionFactory factory =
-    +[](const AttributeProvider&) noexcept { return ScoreFunction{}; };
-  CookieCallback callback = +[](uint32_t, AttributeProvider&) noexcept {};
+  MakeScoreCallback make_score =
+    +[](uint32_t, const AttributeProvider&) noexcept {
+      return ScoreFunction{};
+    };
+  CompileScoreCallback compile_score =
+    +[](uint32_t, AttributeProvider&) noexcept {};
 };
 
 struct SegmentWriterOptions {
@@ -141,11 +144,11 @@ struct FieldWriter {
   virtual void end() = 0;
 };
 
-struct WandFieldOptions : IteratorOptions {
-  WandFieldOptions(uint8_t count) : count{count} {}
+struct IteratorFieldOptions : IteratorOptions {
+  IteratorFieldOptions(uint8_t count) : count{count} {}
 
-  WandFieldOptions(const IteratorOptions& options, uint8_t mapped_index,
-                   uint8_t count)
+  IteratorFieldOptions(const IteratorOptions& options, uint8_t mapped_index,
+                       uint8_t count)
     : IteratorOptions{options}, mapped_index{mapped_index}, count{count} {}
 
   bool Enabled() const noexcept { return mapped_index != kDisable; }
@@ -186,14 +189,14 @@ struct PostingsReader {
   virtual DocIterator::ptr Iterator(IndexFeatures field_features,
                                     IndexFeatures required_features,
                                     std::span<const TermMeta* const> metas,
-                                    const WandFieldOptions& options,
+                                    const IteratorFieldOptions& options,
                                     size_t min_match, ScoreMergeType type,
                                     size_t num_buckets) const = 0;
 
   DocIterator::ptr Iterator(IndexFeatures field_features,
                             IndexFeatures required_features,
                             const TermMeta& meta,
-                            const WandFieldOptions& options,
+                            const IteratorFieldOptions& options,
                             ScoreMergeType type = ScoreMergeType::Noop,
                             size_t num_buckets = 0) const {
     const auto* meta_ptr = &meta;

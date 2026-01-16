@@ -2870,8 +2870,8 @@ class FieldReaderImpl final : public FieldReader {
       SDB_ASSERT(1 <= min_match);
       SDB_ASSERT(min_match <= cookies.size());
 
-      WandFieldOptions field_options{options, WandIndex(options.index),
-                                     WandCount()};
+      IteratorFieldOptions field_options{options, WandIndex(options.index),
+                                         WandCount()};
 
       if (cookies.size() == 1) {
         return _owner->_pr->Iterator(

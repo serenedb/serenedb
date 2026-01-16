@@ -388,7 +388,7 @@ irs::DocIterator::ptr Format15TestCase::GetWanderator(
   irs::PostingsReader& reader, irs::Scorer& scorer,
   irs::IndexFeatures field_features, irs::IndexFeatures features,
   const irs::TermMeta& meta, uint32_t threshold, bool strict) {
-  auto factory = [&](const irs::AttributeProvider& attrs) {
+  auto make_score = [&](uint32_t, const irs::AttributeProvider& attrs) {
     return scorer.PrepareScorer(EmptyColumnProvider{}, irs::FieldProperties{},
                                 nullptr, attrs, irs::kNoBoost);
   };
@@ -397,8 +397,8 @@ irs::DocIterator::ptr Format15TestCase::GetWanderator(
   const bool field_has_freq =
     irs::IndexFeatures::None != (field_features & irs::IndexFeatures::Freq);
   EXPECT_EQ((field_features & features), features);
-  irs::WandFieldOptions options(field_has_freq ? 1 : 0);
-  options.factory = factory;
+  irs::IteratorFieldOptions options(field_has_freq ? 1 : 0);
+  options.make_score = make_score;
   if (iterator_has_freq) {
     options.index = 0;
     options.strict = strict;

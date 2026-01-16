@@ -355,10 +355,8 @@ set(SNOWBALL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/snowball")
 find_package(LZ4 REQUIRED)
 find_package(SNOWBALL REQUIRED)
 
+# Create lz4::lz4 alias for velox compatibility
 add_library(lz4::lz4 ALIAS lz4)
-
-set(SNOWBALL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/snowball")
-find_package(SNOWBALL REQUIRED)
 add_library(stemmer::stemmer ALIAS stemmer-static)
 
 ################################################################################

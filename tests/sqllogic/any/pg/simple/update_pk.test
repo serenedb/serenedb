@@ -35,6 +35,9 @@ a	b
 100	10
 200	200
 
+statement error multiple assignments to same column "a"
+UPDATE single_pk SET a = 42, a = 100500 WHERE b = 10;
+
 statement ok
 DROP TABLE single_pk;
 

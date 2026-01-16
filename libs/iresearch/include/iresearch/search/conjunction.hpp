@@ -25,6 +25,7 @@
 #include <absl/container/inlined_vector.h>
 
 #include <iresearch/index/iterators.hpp>
+#include <ranges>
 
 #include "basics/empty.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
@@ -96,7 +97,6 @@ struct ScoreAdapter {
 
 using ScoreAdapters = std::vector<ScoreAdapter>;
 
-// Helpers
 template<typename T>
 using EmptyWrapper = T;
 
@@ -105,34 +105,41 @@ struct SubScores {
   score_t sum_score = 0.f;
 };
 
-struct ConjunctionScoreContext {
-  void Reset(auto& iterators) {
-    sources.reserve(iterators.size());
-    for (auto& it : iterators) {
-      if (it.score().IsDefault()) {
-        continue;
-      }
-      sources.emplace_back(&it.score());
-    }
-    scores.Resize(kScoreWindow);  // TODO(gnusi): score block
-  }
+auto ToScores(auto& itrs) noexcept {
+  return itrs |
+         std::views::filter([](auto& it) { return !it.score().IsDefault(); }) |
+         std::views::transform([](auto& it) { return &it.score(); });
+}
 
-  bool Empty() const noexcept { return sources.empty(); }
-
+struct ConjunctionScoreState : ScoreCtx {
   template<ScoreMergeType MergeType>
-  void Score(score_t* res, size_t n) noexcept {
-    SDB_ASSERT(!sources.empty());
-    const size_t count = sources.size();
+  ScoreFunction PrepareScore(auto& itrs, auto min, uint16_t score_block = 256) {
+    sources.reserve(itrs.size());
+    sources.append_range(ToScores(itrs));
 
-    sources[0]->Score(res, n);
-    for (size_t i = 1; i < count; ++i) {
-      sources[i]->Score(scores.Data(), n);
-      Merge<MergeType>(res, scores.Data(), scores.Size());
+    if (sources.empty()) {
+      return ScoreFunction::Default();
     }
+
+    scores = std::make_unique<score_t[]>(score_block);
+
+    return {this,
+            [](ScoreCtx* ctx, score_t* res, size_t n) noexcept {
+              auto& self = *static_cast<ConjunctionScoreState*>(ctx);
+              auto source = self.sources.begin();
+              auto end = self.sources.end();
+
+              (*source)->Score(res, n);
+              for (++source; source != end; ++source) {
+                (*source)->Score(self.scores.get(), n);
+                Merge<MergeType>(res, self.scores.get(), n);
+              }
+            },
+            min};
   }
 
   std::vector<const ScoreFunction*> sources;
-  FixedBuffer<score_t> scores;
+  std::unique_ptr<score_t[]> scores;
 };
 
 // Conjunction of N iterators
@@ -145,7 +152,7 @@ struct ConjunctionScoreContext {
 // -----------------------------------------------------------------------------
 // goto used instead of labeled cycles, with them we can achieve best perfomance
 template<typename Adapter, ScoreMergeType MergeType>
-struct ConjunctionBase : public DocIterator, public ScoreCtx {
+struct ConjunctionBase : public DocIterator {
  public:
   static constexpr auto kMergeType = MergeType;
   static constexpr bool kHasScore = kMergeType != ScoreMergeType::Noop;
@@ -168,21 +175,9 @@ struct ConjunctionBase : public DocIterator, public ScoreCtx {
       }));
   }
 
-  void PrepareScore(irs::ScoreAttr& score, auto min) {
+  void PrepareScore(ScoreAttr& score, auto min) {
     if constexpr (kHasScore) {
-      _scores.Reset(_itrs);
-
-      if (_scores.Empty()) {
-        score = ScoreFunction::Default();
-        return;
-      }
-
-      score = {this,
-               [](ScoreCtx* ctx, score_t* res, size_t n) noexcept {
-                 auto& self = *static_cast<ConjunctionBase*>(ctx);
-                 self._scores.template Score<MergeType>(res, n);
-               },
-               min};
+      score = _scores.template PrepareScore<MergeType>(_itrs, min);
     }
   }
 
@@ -191,7 +186,7 @@ struct ConjunctionBase : public DocIterator, public ScoreCtx {
   size_t size() const noexcept { return _itrs.size(); }
 
   std::vector<Adapter> _itrs;
-  [[no_unique_address]] utils::Need<kHasScore, ConjunctionScoreContext> _scores;
+  [[no_unique_address]] utils::Need<kHasScore, ConjunctionScoreState> _scores;
 };
 
 template<typename Adapter, ScoreMergeType MergeType>

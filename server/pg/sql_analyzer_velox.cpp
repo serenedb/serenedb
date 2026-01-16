@@ -1727,7 +1727,7 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
       }
 
       column_exprs.emplace_back(std::move(expr));
-      column_names.emplace_back(new_name);
+      column_names.emplace_back(std::move(new_name));
     }
   }
 

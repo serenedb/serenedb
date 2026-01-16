@@ -38,6 +38,8 @@ b	555	1
 statement count 1
 DELETE FROM basic_dml_test  WHERE key_column = 'a'
 
+# TODO remove update pk from here
+
 query
 SELECT * FROM basic_dml_test;
 ----

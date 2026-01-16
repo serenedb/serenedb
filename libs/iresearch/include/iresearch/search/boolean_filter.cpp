@@ -86,10 +86,17 @@ Filter::Query::ptr BooleanFilter::PrepareImpl(const PrepareContext& ctx,
     auto& first_term_filter = sdb::basics::downCast<ByTerm>(*_filters.front());
     ByTermsOptions options;
     options.merge_type = _merge_type;
-    options.min_match = min_match;
+    uint32_t count_same_terms = 0;
     for (const auto& filter : *this) {
       auto& term_filter = sdb::basics::downCast<ByTerm>(*filter);
-      options.terms.emplace(term_filter.options().term, term_filter.Boost());
+      count_same_terms +=
+        options.terms.emplace(term_filter.options().term, term_filter.Boost())
+            .second
+          ? 0
+          : 1;
+    }
+    if (min_match != 1) {
+      options.min_match = min_match - count_same_terms;
     }
     return ByTerms::Prepare(ctx, first_term_filter.field(), options);
   }

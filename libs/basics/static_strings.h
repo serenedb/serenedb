@@ -230,6 +230,7 @@ class StaticStrings {
   static constexpr std::string_view kDistributeShardsLike =
     "distributeShardsLike";
   static const std::string kIndexes;
+  static const std::string kStats;
   static const std::string kKeyOptions;
   static const std::string kNumberOfShards;
   static const std::string kObjectId;

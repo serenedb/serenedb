@@ -30,13 +30,10 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
-#include "connector/key_utils.hpp"
 #include "data_sink.hpp"
 #include "data_source.hpp"
 #include "query/transaction.h"
 #include "rocksdb/utilities/transaction_db.h"
-#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "storage_engine/engine_feature.h"
 
 namespace sdb::connector {
 

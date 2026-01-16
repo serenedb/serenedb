@@ -366,7 +366,7 @@ vpack::Slice GetTableProperties(vpack::Builder& builder,
   } else {
     collection.WriteProperties(builder);
   }
-  builder.add("stats");
+  builder.add(StaticStrings::kStats);
   vpack::WriteObject(builder, physical.GetTableStats());
 
   builder.add(StaticStrings::kIndexes);

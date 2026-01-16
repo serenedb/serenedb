@@ -216,6 +216,7 @@ const std::string StaticStrings::kParsedBody("parsedBody");
 // collection attributes
 const std::string StaticStrings::kAllowUserKeys("allowUserKeys");
 const std::string StaticStrings::kIndexes("indexes");
+const std::string StaticStrings::kStats("stats");
 const std::string StaticStrings::kKeyOptions("keyOptions");
 const std::string StaticStrings::kNumberOfShards("numberOfShards");
 const std::string StaticStrings::kObjectId("objectId");

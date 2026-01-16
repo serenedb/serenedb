@@ -289,6 +289,7 @@ class SereneDBConnectorInsertTableHandle final
       _kind{kind},
       _transaction{ExtractTransaction(session)} {
     _transaction.AddRocksDBWrite();
+    _transaction.AddRocksDBRead();  // for update of primary keys
   }
 
   bool supportsMultiThreading() const final { return false; }
@@ -521,12 +522,24 @@ class SereneDBConnector final : public velox::connector::Connector {
               pk_indices.push_back(input_type->getChildIdx(handle->name()));
             }
           }
+
+          std::vector<catalog::Column::Id> all_col_oids;
+          all_col_oids.reserve(table.type()->size());
+          for (auto& col : table.type()->names()) {
+            auto handle = table.columnMap().find(col);
+            SDB_ASSERT(handle != table.columnMap().end(),
+                       "RocksDBDataSink: can't find column handle for ", col);
+            all_col_oids.push_back(
+              basics::downCast<const SereneDBColumn>(handle->second)->Id());
+          }
+
           auto& rocksdb_transaction = transaction.EnsureRocksDBTransaction();
+          const auto& snapshot = transaction.EnsureRocksDBSnapshot();
           return std::make_unique<RocksDBDataSink>(
-            rocksdb_transaction, _cf,
+            rocksdb_transaction, snapshot, _db, _cf,
             serene_insert_handle.GetNumOfRowsAffected(),
             *connector_query_ctx->memoryPool(), object_key, pk_indices,
-            column_oids, IsUpdate);
+            column_oids, all_col_oids, IsUpdate);
         });
     }
 

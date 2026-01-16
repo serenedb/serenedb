@@ -1650,7 +1650,6 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
     }) |
     std::ranges::to<NameToColumnMap>();
 
-  bool is_updating_pk = false;
   containers::FlatHashSet<std::string_view> target_column_names;
 
   VisitNodes(stmt.targetList, [&](const ResTarget& target) {
@@ -1659,8 +1658,11 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
                 "Indirection in UPDATE target list is not implemented yet");
     }
 
+    std::string name;
     if (pk_column_names.contains(target.name)) {
-      is_updating_pk = true;
+      name = catalog::Column::GenerateUpdateName(target.name);
+    } else {
+      name = target.name;
     }
 
     if (auto pair = target_column_names.emplace(target.name); !pair.second) {
@@ -1670,15 +1672,14 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
         ERR_MSG("multiple assignments to same column \"", target.name, "\""));
     }
 
-    column_names.emplace_back(target.name);
+    column_names.emplace_back(std::move(name));
     auto expr = ProcessExprNode(state, target.val, ExprKind::UpdateSource);
-    auto it = name_to_column.find(column_names.back());
+    auto it = name_to_column.find(target.name);
     if (it == name_to_column.end()) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
-        CURSOR_POS(ErrorPosition(ExprLocation(&target))),
-        ERR_MSG("column \"", column_names.back(), "\" of relation \"",
-                table_name, "\" does not exist"));
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                      CURSOR_POS(ErrorPosition(ExprLocation(&target))),
+                      ERR_MSG("column \"", target.name, "\" of relation \"",
+                              table_name, "\" does not exist"));
     }
     SDB_ASSERT(it->second);
     const auto& column = *(it->second);
@@ -1694,42 +1695,6 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
     }
     column_exprs.emplace_back(std::move(expr));
   });
-
-  if (is_updating_pk) {
-    containers::FlatHashMap<std::string, lp::ExprPtr> targets_exprs;
-    targets_exprs.reserve(column_names.size() - pk_type.size());
-    for (size_t i = pk_type.size(); i < column_names.size(); ++i) {
-      targets_exprs.emplace(column_names[i], column_exprs[i]);
-    }
-
-    column_names.resize(pk_type.size());
-    column_exprs.resize(pk_type.size());
-
-    for (const auto& [name, type] : std::ranges::views::zip(
-           table.RowType()->names(), table.RowType()->children())) {
-      auto column = state.resolver.Resolve(state.root->outputType(), name);
-      SDB_ASSERT(column.IsFound());
-      std::string resolved{column.GetColumnName()};
-
-      lp::ExprPtr expr;
-      if (auto it = targets_exprs.find(name); it != targets_exprs.end()) {
-        expr = it->second;
-      } else {
-        expr =
-          std::make_shared<lp::InputReferenceExpr>(type, std::move(resolved));
-      }
-
-      std::string new_name;
-      if (pk_column_names.contains(name)) {
-        new_name = catalog::Column::GenerateUpdateName(name);
-      } else {
-        new_name = name;
-      }
-
-      column_exprs.emplace_back(std::move(expr));
-      column_names.emplace_back(std::move(new_name));
-    }
-  }
 
   std::vector<const catalog::Column*> generated_columns;
   for (const auto& column : table.Columns()) {

@@ -96,7 +96,7 @@ void RocksDBSyncThread::SyncStats() {
     for (auto& schema : snapshot->GetSchemas(db->GetId())) {
       catalog::VisitTables(*snapshot, db->GetId(), schema->GetName(),
                            [&](auto& table, auto& shard) mutable {
-                             auto r = _engine.SyncTableNumRows(*table, *shard);
+                             auto r = _engine.SyncTableStats(*table, *shard);
                              if (!r.ok()) {
                                SDB_WARN("xxxxx", Logger::ENGINES,
                                         "unable to update stats for table '",

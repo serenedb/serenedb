@@ -366,8 +366,8 @@ vpack::Slice GetTableProperties(vpack::Builder& builder,
   } else {
     collection.WriteProperties(builder);
   }
-  uint64_t num_rows = physical.GetNumRows();
-  builder.add("num_rows", num_rows);
+  builder.add("stats");
+  vpack::WriteObject(builder, physical.GetTableStats());
 
   builder.add(StaticStrings::kIndexes);
   physical.getAllIndexesInternal(builder);
@@ -1898,8 +1898,8 @@ Result RocksDBEngineCatalog::DropSchema(ObjectId db, ObjectId id) {
     [] { return std::string_view{}; });
 }
 
-Result RocksDBEngineCatalog::SyncTableNumRows(const catalog::Table& c,
-                                              const TableShard& physical) {
+Result RocksDBEngineCatalog::SyncTableStats(const catalog::Table& c,
+                                            const TableShard& physical) {
   const auto db_id = c.GetDatabaseId();
   const auto cid = c.GetId();
   vpack::Builder b;

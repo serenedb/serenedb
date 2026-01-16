@@ -159,8 +159,8 @@ class TableShard {
     _num_rows.fetch_sub(count, std::memory_order_relaxed);
   }
 
-  uint64_t GetNumRows() const {
-    return _num_rows.load(std::memory_order_relaxed);
+  catalog::TableStats GetTableStats() const {
+    return {.num_rows = _num_rows.load(std::memory_order_relaxed)};
   }
 
   // TODO(gnusi): remove

@@ -70,7 +70,7 @@ catalog::TableMeta MakeTableMeta(const catalog::Table& c) {
 
 TableShard::TableShard(catalog::TableMeta collection_meta)
   : _collection_meta{std::move(collection_meta)},
-    _num_rows{collection_meta.num_rows} {}
+    _num_rows{collection_meta.stats.num_rows} {}
 
 /// fetches current index selectivity estimates
 /// if allowUpdate is true, will potentially make a cluster-internal roundtrip

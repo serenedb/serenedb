@@ -62,7 +62,7 @@ uint64_t RocksDBTable::numRows() const {
 
   auto table_shard = catalog::GetTableShard(_table_id);
   SDB_ASSERT(table_shard);
-  return table_shard->GetNumRows();
+  return table_shard->GetTableStats().num_rows;
 }
 
 }  // namespace sdb::connector

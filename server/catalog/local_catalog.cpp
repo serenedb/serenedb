@@ -1001,6 +1001,8 @@ Result LocalCatalog::RegisterTable(ObjectId database_id,
                                    std::string_view schema,
                                    CreateTableOptions options) {
   auto table = std::make_shared<Table>(std::move(options), database_id);
+  SDB_INFO("catalog", Logger::ENGINES, "Registering table ", table->GetName(),
+           " num_rows: ", options.stats.num_rows);
 
   absl::MutexLock lock{&_mutex};
   return _snapshot->RegisterObject(
@@ -1169,11 +1171,11 @@ Result LocalCatalog::DropIndex(ObjectId database_id, std::string_view schema,
   });
 }
 
-Result LocalCatalog::SyncTableNumRows(const Table& c,
-                                      const TableShard& physical) {
+Result LocalCatalog::SyncTableStats(const Table& c,
+                                    const TableShard& physical) {
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
-    return _engine->SyncTableNumRows(c, physical);
+    return _engine->SyncTableStats(c, physical);
   });
 }
 

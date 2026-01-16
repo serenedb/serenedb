@@ -89,8 +89,6 @@ template<ScoreMergeType MergeType>
 void Merge(score_t& bucket, score_t arg) noexcept {
   if constexpr (MergeType == ScoreMergeType::Sum) {
     bucket += arg;
-  } else if constexpr (MergeType == ScoreMergeType::Min) {
-    bucket = std::min(bucket, arg);
   } else if constexpr (MergeType == ScoreMergeType::Max) {
     bucket = std::max(bucket, arg);
   } else {

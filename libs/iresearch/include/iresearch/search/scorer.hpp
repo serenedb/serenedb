@@ -320,8 +320,6 @@ auto ResolveMergeType(ScoreMergeType type, Visitor&& visitor) {
       return visitor.template operator()<ScoreMergeType::Sum>();
     case ScoreMergeType::Max:
       return visitor.template operator()<ScoreMergeType::Max>();
-    case ScoreMergeType::Min:
-      return visitor.template operator()<ScoreMergeType::Min>();
     case ScoreMergeType::Noop:
       return visitor.template operator()<ScoreMergeType::Noop>();
   }

@@ -23,6 +23,7 @@
 
 #include <absl/algorithm/container.h>
 
+#include <iresearch/search/scorer.hpp>
 #include <limits>
 
 #include "basics/assert.h"
@@ -1590,7 +1591,7 @@ struct PositionImpl<IteratorTraits, FieldTraits, false> : Attribute {
   void Clear() noexcept {}
 };
 
-struct Empty {};
+struct Dummy {};
 
 // Buffer type containing only document buffer
 template<typename IteratorTraits>
@@ -1716,7 +1717,7 @@ template<typename IteratorTraits, typename FieldTraits>
 class SingleDocIterator
   : public DocIterator,
     private std::conditional_t<IteratorTraits::Position(),
-                               DataBuffer<IteratorTraits>, Empty> {
+                               DataBuffer<IteratorTraits>, Dummy> {
   static_assert((IteratorTraits::Features() & FieldTraits::Features()) ==
                 IteratorTraits::Features());
 
@@ -2035,17 +2036,13 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
     return doc_value;
   }
 
- private:
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
-  }
-
-  doc_id_t value() const noexcept final {
-    return std::get<DocAttr>(_attrs).value;
-  }
-
   doc_id_t seek(doc_id_t target) final;
 
+  const ScoreAttr& score() const noexcept {
+    return std::get<ScoreAttr>(_attrs);
+  }
+
+ private:
   uint32_t count() final {
     if (this->_left == 0) [[unlikely]] {
       return this->Count(*this);
@@ -2054,10 +2051,6 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
     doc_value = doc_limits::eof();
     this->_begin = std::end(this->_buf.docs);
     return std::exchange(this->_left, 0);
-  }
-
-  const ScoreAttr& score() const noexcept {
-    return std::get<ScoreAttr>(_attrs);
   }
 
  private:
@@ -3294,6 +3287,12 @@ struct PostingAdapter {
 
   IRS_FORCE_INLINE uint32_t count() { return self().count(); }
 
+  IRS_FORCE_INLINE uint32_t collect(std::span<doc_id_t> docs) {
+    return self().collect(docs);
+  }
+
+  IRS_FORCE_INLINE void CollectData() { return self().CollectData(); }
+
   IRS_FORCE_INLINE const ScoreAttr& score() const noexcept {
     return self().score();
   }
@@ -3381,8 +3380,7 @@ class PostingsReaderImpl final : public PostingsReaderBase {
                             IndexFeatures required_features,
                             std::span<const TermMeta* const> metas,
                             const IteratorFieldOptions& options,
-                            size_t min_match, ScoreMergeType type,
-                            size_t num_buckets) const final;
+                            size_t min_match, ScoreMergeType type) const final;
 
  private:
   template<typename FieldTraits, typename Factory>
@@ -3581,7 +3579,7 @@ template<typename FormatTraits>
 DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
   IndexFeatures field_features, IndexFeatures required_features,
   std::span<const TermMeta* const> metas, const IteratorFieldOptions& options,
-  size_t min_match, ScoreMergeType type, size_t num_buckets) const {
+  size_t min_match, ScoreMergeType type) const {
   SDB_ASSERT(!metas.empty());
   SDB_ASSERT(1 <= min_match);
   SDB_ASSERT(min_match <= metas.size());
@@ -3688,10 +3686,10 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
     for (auto& it : iterators) {
       adapters.emplace_back(std::move(it));
     }
-    return ResolveMergeType(type, num_buckets, [&]<typename A>(A&& aggregator) {
-      using MinMatchIterator = MinMatchIterator<Adapter, A>;
-      return MakeWeakDisjunction<MinMatchIterator>(
-        options, std::move(adapters), min_match, std::move(aggregator));
+    return ResolveMergeType(type, [&]<ScoreMergeType MergeType>() {
+      using MinMatchIterator = MinMatchIterator<Adapter, MergeType>;
+      return MakeWeakDisjunction<MinMatchIterator>(options, std::move(adapters),
+                                                   min_match);
     });
   };
 

@@ -218,8 +218,8 @@ class MinMatchDisjunction : public DocIterator,
       PushValidToLead();
       std::for_each(Lead(), _heap.end(), [&](size_t it) {
         SDB_ASSERT(it < _itrs.size());
-        if (auto& score = *_itrs[it].score; !score.IsDefault()) {
-          _itrs[it]->CollectData();
+        if (auto& score = _itrs[it].score(); !score.IsDefault()) {
+          _itrs[it].CollectData();
         }
       });
       _scores.Next();

@@ -78,6 +78,12 @@ struct ScoreAdapter {
 
   IRS_FORCE_INLINE uint32_t count() { return _it->count(); }
 
+  IRS_FORCE_INLINE uint32_t collect(std::span<doc_id_t> docs) {
+    return _it->collect(docs);
+  }
+
+  IRS_FORCE_INLINE void CollectData() { return _it->CollectData(); }
+
   IRS_FORCE_INLINE const ScoreAttr& score() const noexcept { return *_score; }
 
  private:
@@ -101,10 +107,10 @@ struct ConjunctionScoreContext {
   void Reset(auto& iterators) {
     sources.reserve(iterators.size());
     for (auto& it : iterators) {
-      if (!it.score || it.score->IsDefault()) {
+      if (it.score().IsDefault()) {
         continue;
       }
-      sources.emplace_back(it.score);
+      sources.emplace_back(&it.score());
     }
     scores.Resize(kScoreWindow);  // TODO(gnusi): score block
   }
@@ -145,14 +151,12 @@ struct ConjunctionBase : public DocIterator, public ScoreCtx {
   void CollectData() final {
     if constexpr (kHasScore) {
       for (auto& it : _itrs) {
-        it->CollectData();
+        it.CollectData();
       }
     }
   }
 
  protected:
-  static_assert(std::is_base_of_v<ScoreAdapter, Adapter>);
-
   explicit ConjunctionBase(std::vector<Adapter>&& itrs)
     : _itrs{std::move(itrs)} {
     SDB_ASSERT(
@@ -211,7 +215,7 @@ class Conjunction : public ConjunctionBase<Adapter, MergeType> {
     return irs::GetMutable(_attrs, type);
   }
 
-  doc_id_t value() const final {
+  doc_id_t value() const {
     return std::get<AttributePtr<DocAttr>>(_attrs).ptr->value;
   }
 

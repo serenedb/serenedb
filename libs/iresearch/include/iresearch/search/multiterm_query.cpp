@@ -146,9 +146,16 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
     SDB_ASSERT(entry.stat_offset < stats.size());
     auto* stat = stats[entry.stat_offset].c_str();
     const auto boost = entry.boost * _boost;
-    return ord.buckets().front().bucket->PrepareScorer(
-      segment, state->reader->meta(), stat, cookie_attrs, boost);
+    return ord.buckets().front().bucket->PrepareScorer({
+      .segment = segment,
+      .field = state->reader->meta(),
+      .doc_attrs = cookie_attrs,
+      .collector = ctx.collector,
+      .stats = stat,
+      .boost = boost,
+    });
   };
+
   if (!no_score && options.Enabled() && ord.buckets().front().bucket) {
     options.make_score = make_score;
   }
@@ -163,8 +170,8 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
     SDB_ASSERT(entry.stat_offset < stats.size());
     auto* stat = stats[entry.stat_offset].c_str();
     const auto boost = entry.boost * _boost;
-    CompileScore(*score, ord.buckets(), segment, *state->reader, stat,
-                 cookie_attrs, boost);
+    CompileScore(*score, ord.buckets(), segment, ctx.collector, *state->reader,
+                 stat, cookie_attrs, boost, ctx.score_block);
   };
   if (!no_score) {
     options.compile_score = compile_score;
@@ -178,8 +185,8 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
       cookies.push_back(entry.cookie.get());
     }
 
-    auto docs = reader->Iterator(features, cookies, options, _min_match,
-                                 _merge_type, ord.buckets().size());
+    auto docs =
+      reader->Iterator(features, cookies, options, _min_match, _merge_type);
     return docs ? std::move(docs) : DocIterator::empty();
   }
 
@@ -211,13 +218,11 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
 
   itrs.erase(it, std::end(itrs));
 
-  return ResolveMergeType(
-    _merge_type, ord.buckets().size(), [&]<typename A>(A&& aggregator) {
-      using Disjunction = MinMatchIterator<ScoreAdapter, A>;
-      return MakeWeakDisjunction<Disjunction>(ctx.wand, std::move(itrs),
-                                              _min_match, std::move(aggregator),
-                                              state->estimation());
-    });
+  return ResolveMergeType(_merge_type, [&]<ScoreMergeType MergeType>() {
+    using Disjunction = MinMatchIterator<ScoreAdapter, MergeType>;
+    return MakeWeakDisjunction<Disjunction>(ctx.wand, std::move(itrs),
+                                            _min_match, state->estimation());
+  });
 }
 
 }  // namespace irs

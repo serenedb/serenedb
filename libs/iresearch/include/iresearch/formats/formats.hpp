@@ -191,18 +191,17 @@ struct PostingsReader {
                                     IndexFeatures required_features,
                                     std::span<const TermMeta* const> metas,
                                     const IteratorFieldOptions& options,
-                                    size_t min_match, ScoreMergeType type,
-                                    size_t num_buckets) const = 0;
+                                    size_t min_match,
+                                    ScoreMergeType type) const = 0;
 
   DocIterator::ptr Iterator(IndexFeatures field_features,
                             IndexFeatures required_features,
                             const TermMeta& meta,
                             const IteratorFieldOptions& options,
-                            ScoreMergeType type = ScoreMergeType::Noop,
-                            size_t num_buckets = 0) const {
+                            ScoreMergeType type = ScoreMergeType::Noop) const {
     const auto* meta_ptr = &meta;
     return Iterator(field_features, required_features, {&meta_ptr, 1}, options,
-                    1, type, num_buckets);
+                    1, type);
   }
 };
 
@@ -244,12 +243,10 @@ struct TermReader : public AttributeProvider {
   virtual size_t BitUnion(const cookie_provider& provider,
                           size_t* bitset) const = 0;
 
-  virtual DocIterator::ptr Iterator(IndexFeatures features,
-                                    std::span<const SeekCookie* const> cookies,
-                                    const IteratorOptions& options = {},
-                                    size_t min_match = 1,
-                                    ScoreMergeType type = ScoreMergeType::Noop,
-                                    size_t num_buckets = 0) const = 0;
+  virtual DocIterator::ptr Iterator(
+    IndexFeatures features, std::span<const SeekCookie* const> cookies,
+    const IteratorOptions& options = {}, size_t min_match = 1,
+    ScoreMergeType type = ScoreMergeType::Noop) const = 0;
 
   DocIterator::ptr Iterator(IndexFeatures features, const SeekCookie& cookie,
                             const IteratorOptions& options = {}) const {

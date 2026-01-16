@@ -165,11 +165,9 @@ class UnaryDisjunction : public CompoundDocIterator<Adapter> {
     visitor(ctx, _it);
   }
 
-  void CollectData() final { _it->CollectData(); }
+  void CollectData() final { _it.CollectData(); }
 
-  uint32_t collect(std::span<doc_id_t> docs) final {
-    return _it->collect(docs);
-  }
+  uint32_t collect(std::span<doc_id_t> docs) final { return _it.collect(docs); }
 
  private:
   Adapter _it;
@@ -218,9 +216,8 @@ struct DisjunctionScoreContext {
     SDB_ASSERT(hits.empty());
     sources.reserve(itrs.size());
     for (auto& it : itrs) {
-      SDB_ASSERT(it.score);
-      if (!it.score->IsDefault()) {
-        sources.emplace_back(it.score);
+      if (!it.score().IsDefault()) {
+        sources.emplace_back(&it.score());
       }
     }
     const uint16_t block_size = 256;
@@ -352,7 +349,7 @@ class BasicDisjunction : public CompoundDocIterator<Adapter>,
   void CollectData() final {
     if constexpr (Base::kHasScore) {
       auto try_collect = [&](size_t i) {
-        if (_itrs[i].score) {
+        if (!_itrs[i].score().IsDefault()) {
           CollectIterator(i, [&](auto&) { this->_scores.Collect(i); });
         };
       };
@@ -377,31 +374,25 @@ class BasicDisjunction : public CompoundDocIterator<Adapter>,
   void PrepareScore(bool /*wand*/, bool /*strict*/) {
     if constexpr (Base::kHasScore) {
       auto& score = std::get<irs::ScoreAttr>(_attrs);
-      auto check_score = [&](size_t i) {
-        if (_itrs[0].score->IsDefault()) {
-          _itrs[0].score = nullptr;
-        }
-      };
-      check_score(0);
-      check_score(1);
 
-      if (!_itrs[0].score && !_itrs[1].score) {
+      if (_itrs[0].score().IsDefault() && _itrs[1].score().IsDefault()) {
         SDB_ASSERT(score.IsDefault());
         score = ScoreFunction::Default();
-      } else if (_itrs[0].score && _itrs[1].score) {
+      } else if (!_itrs[0].score().IsDefault() &&
+                 !_itrs[1].score().IsDefault()) {
         this->_scores.Reset(_itrs);
         SDB_ASSERT(!this->_scores.Empty());
         score = this->DisjunctionScore(this, ScoreFunction::NoopMin);
       } else {
-        const auto& it = _itrs[_itrs[0].score ? 0 : 1];
-        SDB_ASSERT(it.score);
-        score.Reset(*it.score->Ctx(), it.score->Func(), ScoreFunction::NoopMin);
+        const auto& it = _itrs[_itrs[0].score().IsDefault() ? 1 : 0];
+        score.Reset(*it.score().Ctx(), it.score().Func(),
+                    ScoreFunction::NoopMin);
       }
     }
   }
 
   bool SeekImpl(Adapter& it, doc_id_t target) {
-    return it.value() < target && target == it->seek(target);
+    return it.value() < target && target == it.seek(target);
   }
 
   void NextImpl(Adapter& it) {
@@ -571,11 +562,11 @@ class SmallDisjunction : public CompoundDocIterator<Adapter>,
         auto value = begin->value();
 
         if (value < doc) {
-          value = (*begin)->seek(doc);
+          value = (*begin).seek(doc);
         }
 
         if (value == doc) {
-          (*begin)->CollectData();
+          (*begin).CollectData();
           this->_scores.Collect(i++);
         }
       }
@@ -777,8 +768,8 @@ class Disjunction : public CompoundDocIterator<Adapter>,
           },
           [&](size_t it) {
             SDB_ASSERT(it < _itrs.size());
-            if (auto& score = *_itrs[it].score; !score.IsDefault()) {
-              _itrs[it]->CollectData();
+            if (auto& score = _itrs[it].score(); !score.IsDefault()) {
+              _itrs[it].CollectData();
               this->_scores.Collect(it);  // TODO(gnusi): fix index
             }
           });
@@ -1115,9 +1106,8 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
 
       if constexpr (kHasScore) {
         for (auto& it : _itrs) {
-          SDB_ASSERT(it.score);
-          if (!it.score->IsDefault() && doc_value == it->value()) {
-            it->CollectData();
+          if (!it.score().IsDefault() && doc_value == it.value()) {
+            it.CollectData();
             // TODO(gnusi): fix score, we must do something with collect/score
             // function
           }
@@ -1341,7 +1331,7 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
 
         if constexpr (kHasScore) {
           if (!it.score().IsDefault()) {
-            _score_buf.stream.Reset(*it.score);
+            _score_buf.stream.Reset(it.score());
             const auto r = this->Refill<true>(it, empty);
             _score_buf.stream.Finish();
             return r;
@@ -1397,7 +1387,7 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
       SetBit(_mask[offset / kBlockSize], offset % kBlockSize);
 
       if constexpr (Score) {
-        it->CollectData();
+        it.CollectData();
         _score_buf.CollectHit(offset);
       }
 

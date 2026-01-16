@@ -753,14 +753,14 @@ class SqlAnalyzer {
 
   void ProcessFilterNode(State& state, const Node* node, ExprKind expr_kind);
 
-  void FillColumnsInfo(State& state, const velox::RowType& required_type,
+  void FillColumnsInfo(State& state, const velox::RowType& pk_type,
                        const velox::RowType& row_type,
                        std::vector<std::string>& column_names,
                        std::vector<lp::ExprPtr>& column_exprs) {
     const auto& output_type = state.root->outputType();
 
-    for (const auto& [name, type] : std::ranges::views::zip(
-           required_type.names(), required_type.children())) {
+    for (const auto& [name, type] :
+         std::ranges::views::zip(pk_type.names(), pk_type.children())) {
       auto column = state.resolver.Resolve(output_type, name);
       SDB_ASSERT(column.IsFound());
       std::string resolved{column.GetColumnName()};
@@ -769,7 +769,7 @@ class SqlAnalyzer {
       column_exprs.emplace_back(std::move(expr));
       column_names.emplace_back(name);
     }
-    if (required_type.size() == 0) {
+    if (pk_type.size() == 0) {
       auto generated_pk_name =
         catalog::Column::GeneratePKName(row_type.names());
       auto column = state.resolver.Resolve(output_type, generated_pk_name);
@@ -1614,19 +1614,6 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
 
   ProcessFilterNode(state, stmt.whereClause, ExprKind::Where);
 
-  // Not optimal for now is OK, required to be **semantically** correct
-  // 1. Decide whether updating pk or not.
-  // 2. If yes, then
-  //    - We should rewrite **all** columns of affected rows. Names and exprs
-  //    should look like:
-  //      [pk_1, pk_2, ..., col_1, col_2, ...], where
-  //      pk_i  -- old values of pk-s
-  //      col_i -- if in target list -> new value, otherwise -> column ref. If
-  //      it's a pk, it should use special name.
-  // 3. Else -- as before
-
-  // TODO performance
-
   const auto& table = basics::downCast<catalog::Table>(logical_object);
   const auto& pk_type = *table.PKType();
   std::vector<std::string> column_names;
@@ -1651,29 +1638,19 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
     std::ranges::to<NameToColumnMap>();
 
   containers::FlatHashSet<std::string_view> target_column_names;
-
   VisitNodes(stmt.targetList, [&](const ResTarget& target) {
     if (target.indirection) {
       SDB_THROW(ERROR_NOT_IMPLEMENTED,
                 "Indirection in UPDATE target list is not implemented yet");
     }
 
-    std::string name;
-    if (pk_column_names.contains(target.name)) {
-      name = catalog::Column::GenerateUpdateName(target.name);
-    } else {
-      name = target.name;
-    }
-
-    if (auto pair = target_column_names.emplace(target.name); !pair.second) {
+    if (!target_column_names.emplace(target.name).second) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_SYNTAX_ERROR),
         CURSOR_POS(ErrorPosition(ExprLocation(&target))),
         ERR_MSG("multiple assignments to same column \"", target.name, "\""));
     }
 
-    column_names.emplace_back(std::move(name));
-    auto expr = ProcessExprNode(state, target.val, ExprKind::UpdateSource);
     auto it = name_to_column.find(target.name);
     if (it == name_to_column.end()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
@@ -1681,8 +1658,15 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
                       ERR_MSG("column \"", target.name, "\" of relation \"",
                               table_name, "\" does not exist"));
     }
+
     SDB_ASSERT(it->second);
     const auto& column = *(it->second);
+    column_names.emplace_back(
+      pk_column_names.contains(target.name)
+        ? catalog::Column::GenerateUpdateName(target.name)
+        : std::string(target.name));
+
+    auto expr = ProcessExprNode(state, target.val, ExprKind::UpdateSource);
     if (expr->type() == kDefaultValueTypePlaceHolderPtr) {
       if (column.expr) {
         expr = ProcessExprNodeImpl(state, column.expr->GetExpr());

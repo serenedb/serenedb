@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 #include <velox/type/Type.h>
@@ -147,12 +148,25 @@ struct Column {
 
   static constexpr Id kMaxRealId =
     std::numeric_limits<uint64_t>::max() - 1'000'000;
-
   static constexpr Id kGeneratedPKId = kMaxRealId + 1;
 
+  static constexpr auto GetUpdateNamePrefix() {
+    using namespace std::string_view_literals;
+    return "upd_\0"sv;
+  }
+
+  static std::string GenerateUpdateName(std::string_view original_name) {
+    return absl::StrCat(GetUpdateNamePrefix(), original_name);
+  }
+
+  static std::string_view ExtractColumnName(std::string_view row_child_name) {
+    if (absl::StartsWith(row_child_name, GetUpdateNamePrefix())) {
+      return row_child_name.substr(GetUpdateNamePrefix().size());
+    }
+    return row_child_name;
+  }
+
   static std::string GeneratePKName(std::span<const std::string> column_names);
-  static std::string GenerateUpdateName(std::string_view original_name);
-  static std::string_view ExtractColumnName(std::string_view row_child_name);
 
   Id id;
   velox::TypePtr type;

@@ -21,7 +21,6 @@
 #include "table_options.h"
 
 #include <absl/algorithm/container.h>
-#include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
 #include <vpack/collection.h>
 #include <vpack/slice.h>
@@ -119,21 +118,6 @@ std::string Column::GeneratePKName(std::span<const std::string> column_names) {
   }
 
   return candidate;
-}
-
-std::string Column::GenerateUpdateName(std::string_view original_name) {
-  using namespace std::string_view_literals;
-  static constexpr std::string_view kUpdPrefix = "upd_\0"sv;
-  return absl::StrCat(kUpdPrefix, original_name);
-}
-
-std::string_view Column::ExtractColumnName(std::string_view row_child_name) {
-  using namespace std::string_view_literals;
-  static constexpr std::string_view kUpdPrefix = "upd_\0"sv;
-  if (absl::StartsWith(row_child_name, kUpdPrefix)) {
-    return row_child_name.substr(kUpdPrefix.size());
-  }
-  return row_child_name;
 }
 
 std::pair<bool, std::string_view> CheckConstraint::IsNotNull() const noexcept {

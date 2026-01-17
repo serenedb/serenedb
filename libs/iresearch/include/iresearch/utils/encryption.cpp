@@ -40,7 +40,7 @@ bool Encrypt(std::string_view filename, IndexOutput& out, Encryption* enc,
 
   if (header.empty()) {
     // no encryption
-    irs::WriteStr(out, header);
+    WriteStr(out, header);
     return false;
   }
 
@@ -52,7 +52,7 @@ bool Encrypt(std::string_view filename, IndexOutput& out, Encryption* enc,
   }
 
   // header is encrypted here
-  irs::WriteStr(out, header);
+  WriteStr(out, header);
 
   cipher = enc->create_stream(filename, header.data());
 

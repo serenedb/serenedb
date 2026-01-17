@@ -71,7 +71,7 @@ struct PayAttr final : Attribute {
 struct DocAttr : Attribute {
   static constexpr std::string_view type_name() noexcept { return "document"; }
 
-  explicit DocAttr(irs::doc_id_t doc = irs::doc_limits::invalid()) noexcept
+  explicit DocAttr(doc_id_t doc = doc_limits::invalid()) noexcept
     : value{doc} {}
 
   doc_id_t value;

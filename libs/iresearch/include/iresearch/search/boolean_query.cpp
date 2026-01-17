@@ -30,11 +30,10 @@ namespace irs {
 namespace {
 
 template<bool Conjunction, typename It>
-irs::ScoreAdapters MakeScoreAdapters(const ExecutionContext& ctx, It begin,
-                                     It end) {
+ScoreAdapters MakeScoreAdapters(const ExecutionContext& ctx, It begin, It end) {
   SDB_ASSERT(begin <= end);
   const size_t size = std::distance(begin, end);
-  irs::ScoreAdapters itrs;
+  ScoreAdapters itrs;
   itrs.reserve(size);
   do {
     auto docs = (*begin)->execute(ctx);

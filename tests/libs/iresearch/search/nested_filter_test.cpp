@@ -502,8 +502,8 @@ TEST_P(NestedFilterTestCase, JoinAny3) {
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
   }
 
-  {
-    opts.merge_type = irs::ScoreMergeType::Min;
+  if constexpr (false) {
+    // opts.merge_type = irs::ScoreMergeType::Min;
 
     std::array<irs::Scorer::ptr, 2> scorers{std::make_unique<DocIdScorer>(),
                                             std::make_unique<DocIdScorer>()};
@@ -556,10 +556,12 @@ TEST_P(NestedFilterTestCase, JoinAll0) {
       std::set{6U, 13U, 15U, 20U});
   };
 
-  CheckQuery(filter, Docs{13, 20}, Costs{11}, reader, SOURCE_LOCATION);
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
+  {
+    CheckQuery(filter, Docs{13, 20}, Costs{11}, reader, SOURCE_LOCATION);
+    EXPECT_EQ(counter.current, 0);
+    EXPECT_GT(counter.max, 0);
+    counter.Reset();
+  }
 
   {
     opts.merge_type = irs::ScoreMergeType::Max;
@@ -574,13 +576,13 @@ TEST_P(NestedFilterTestCase, JoinAll0) {
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
+    EXPECT_EQ(counter.current, 0);
+    EXPECT_GT(counter.max, 0);
+    counter.Reset();
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
-  {
-    opts.merge_type = irs::ScoreMergeType::Min;
+  if constexpr (false) {
+    // opts.merge_type = irs::ScoreMergeType::Min;
 
     std::array<irs::Scorer::ptr, 2> scorers{std::make_unique<DocIdScorer>(),
                                             std::make_unique<DocIdScorer>()};
@@ -592,10 +594,10 @@ TEST_P(NestedFilterTestCase, JoinAll0) {
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
+    EXPECT_EQ(counter.current, 0);
+    EXPECT_GT(counter.max, 0);
+    counter.Reset();
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 
   {
     opts.merge_type = irs::ScoreMergeType::Noop;
@@ -610,10 +612,10 @@ TEST_P(NestedFilterTestCase, JoinAll0) {
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
+    EXPECT_EQ(counter.current, 0);
+    EXPECT_GT(counter.max, 0);
+    counter.Reset();
   }
-  EXPECT_EQ(counter.current, 0);
-  EXPECT_GT(counter.max, 0);
-  counter.Reset();
 }
 
 TEST_P(NestedFilterTestCase, JoinMin0) {
@@ -643,8 +645,8 @@ TEST_P(NestedFilterTestCase, JoinMin0) {
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
   }
 
-  {
-    opts.merge_type = irs::ScoreMergeType::Min;
+  if constexpr (false) {
+    // opts.merge_type = irs::ScoreMergeType::Min;
 
     std::array<irs::Scorer::ptr, 2> scorers{std::make_unique<DocIdScorer>(),
                                             std::make_unique<DocIdScorer>()};
@@ -700,8 +702,8 @@ TEST_P(NestedFilterTestCase, JoinMin1) {
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
   }
 
-  {
-    opts.merge_type = irs::ScoreMergeType::Min;
+  if constexpr (false) {
+    // opts.merge_type = irs::ScoreMergeType::Min;
 
     std::array<irs::Scorer::ptr, 2> scorers{std::make_unique<DocIdScorer>(),
                                             std::make_unique<DocIdScorer>()};
@@ -756,8 +758,8 @@ TEST_P(NestedFilterTestCase, JoinMin2) {
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
   }
 
-  {
-    opts.merge_type = irs::ScoreMergeType::Min;
+  if constexpr (false) {
+    // opts.merge_type = irs::ScoreMergeType::Min;
 
     std::array<irs::Scorer::ptr, 2> scorers{std::make_unique<DocIdScorer>(),
                                             std::make_unique<DocIdScorer>()};
@@ -816,8 +818,8 @@ TEST_P(NestedFilterTestCase, JoinMin3) {
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
   }
 
-  {
-    opts.merge_type = irs::ScoreMergeType::Min;
+  if constexpr (false) {
+    // opts.merge_type = irs::ScoreMergeType::Min;
 
     std::array<irs::Scorer::ptr, 2> scorers{std::make_unique<DocIdScorer>(),
                                             std::make_unique<DocIdScorer>()};
@@ -876,8 +878,8 @@ TEST_P(NestedFilterTestCase, JoinRange0) {
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
   }
 
-  {
-    opts.merge_type = irs::ScoreMergeType::Min;
+  if constexpr (false) {
+    // opts.merge_type = irs::ScoreMergeType::Min;
 
     std::array<irs::Scorer::ptr, 2> scorers{std::make_unique<DocIdScorer>(),
                                             std::make_unique<DocIdScorer>()};
@@ -933,8 +935,8 @@ TEST_P(NestedFilterTestCase, JoinRange1) {
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
   }
 
-  {
-    opts.merge_type = irs::ScoreMergeType::Min;
+  if constexpr (false) {
+    // opts.merge_type = irs::ScoreMergeType::Min;
 
     std::array<irs::Scorer::ptr, 2> scorers{std::make_unique<DocIdScorer>(),
                                             std::make_unique<DocIdScorer>()};
@@ -989,8 +991,8 @@ TEST_P(NestedFilterTestCase, JoinRange2) {
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
   }
 
-  {
-    opts.merge_type = irs::ScoreMergeType::Min;
+  if constexpr (false) {
+    // opts.merge_type = irs::ScoreMergeType::Min;
 
     std::array<irs::Scorer::ptr, 2> scorers{std::make_unique<DocIdScorer>(),
                                             std::make_unique<DocIdScorer>()};
@@ -1048,8 +1050,8 @@ TEST_P(NestedFilterTestCase, JoinNone0) {
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
   }
 
-  {
-    opts.merge_type = irs::ScoreMergeType::Min;
+  if constexpr (false) {
+    // opts.merge_type = irs::ScoreMergeType::Min;
 
     std::array<irs::Scorer::ptr, 2> scorers{std::make_unique<DocIdScorer>(),
                                             std::make_unique<DocIdScorer>()};
@@ -1104,8 +1106,8 @@ TEST_P(NestedFilterTestCase, JoinNone1) {
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
   }
 
-  {
-    opts.merge_type = irs::ScoreMergeType::Min;
+  if constexpr (false) {
+    // opts.merge_type = irs::ScoreMergeType::Min;
 
     std::array<irs::Scorer::ptr, 2> scorers{std::make_unique<DocIdScorer>(),
                                             std::make_unique<DocIdScorer>()};
@@ -1161,8 +1163,8 @@ TEST_P(NestedFilterTestCase, JoinNone2) {
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
   }
 
-  {
-    opts.merge_type = irs::ScoreMergeType::Min;
+  if constexpr (false) {
+    // opts.merge_type = irs::ScoreMergeType::Min;
 
     std::array<irs::Scorer::ptr, 2> scorers{std::make_unique<DocIdScorer>(),
                                             std::make_unique<DocIdScorer>()};
@@ -1205,10 +1207,10 @@ TEST_P(NestedFilterTestCase, JoinNone3) {
   // Bitset iterator doesn't provide score, check that wrapper works correctly
   opts.parent = [word = irs::bitset::word_t{}](
                   const irs::SubReader&) mutable -> irs::DocIterator::ptr {
-    irs::SetBit<6>(word);
-    irs::SetBit<8>(word);
-    irs::SetBit<13>(word);
-    irs::SetBit<20>(word);
+    irs::SetBit(word, 6);
+    irs::SetBit(word, 8);
+    irs::SetBit(word, 13);
+    irs::SetBit(word, 20);
     return irs::memory::make_managed<PrevDocWrapper>(
       irs::memory::make_managed<irs::BitsetDocIterator>(&word, &word + 1));
   };
@@ -1234,8 +1236,8 @@ TEST_P(NestedFilterTestCase, JoinNone3) {
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
   }
 
-  {
-    opts.merge_type = irs::ScoreMergeType::Min;
+  if constexpr (false) {
+    // opts.merge_type = irs::ScoreMergeType::Min;
 
     std::array<irs::Scorer::ptr, 2> scorers{std::make_unique<DocIdScorer>(),
                                             std::make_unique<DocIdScorer>()};

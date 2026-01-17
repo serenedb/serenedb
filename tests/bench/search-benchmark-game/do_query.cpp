@@ -223,8 +223,9 @@ int main(int argc, const char* argv[]) {
     const auto count = executor.ExecuteQuery(ParseQuery(data));
     if (!count) {
       std::cout << magic_enum::enum_name(QueryType::Unsupported) << "\n";
+    } else {
+      std::cout << count << "\n";
     }
-    std::cout << count << "\n";
   }
   return 0;
 }

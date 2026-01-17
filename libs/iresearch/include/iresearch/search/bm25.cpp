@@ -198,17 +198,16 @@ Scorer::ptr MakeJson(std::string_view args) {
 
 struct BM1Context : public irs::ScoreCtx {
   BM1Context(float_t k, irs::score_t boost, const BM25Stats& stats,
-             const irs::FilterBoost* fb = nullptr) noexcept
+             const FilterBoost* fb = nullptr) noexcept
     : filter_boost{fb}, num{boost * (k + 1) * stats.idf} {}
 
-  const irs::FilterBoost* filter_boost;
+  const FilterBoost* filter_boost;
   float_t num;  // partially precomputed numerator : boost * (k + 1) * idf
 };
 
 struct BM15Context : public BM1Context {
   BM15Context(float_t k, irs::score_t boost, const BM25Stats& stats,
-              const FreqAttr* freq,
-              const irs::FilterBoost* fb = nullptr) noexcept
+              const FreqAttr* freq, const FilterBoost* fb = nullptr) noexcept
     : BM1Context{k, boost, stats, fb},
       freq{freq ? freq : &kEmptyFreq},
       norm_const{stats.norm_const} {
@@ -223,7 +222,7 @@ template<typename Norm>
 struct BM25Context final : public BM15Context {
   BM25Context(float_t k, irs::score_t boost, const BM25Stats& stats,
               const FreqAttr* freq, Norm&& norm,
-              const irs::FilterBoost* filter_boost = nullptr) noexcept
+              const FilterBoost* filter_boost = nullptr) noexcept
     : BM15Context{k, boost, stats, freq, filter_boost},
       norm{std::move(norm)},
       norm_length{stats.norm_length},
@@ -422,7 +421,7 @@ ScoreFunction BM25::PrepareScorer(const ColumnProvider& segment,
   }
 
   auto* stats = stats_cast(query_stats);
-  auto* filter_boost = irs::get<irs::FilterBoost>(doc_attrs);
+  auto* filter_boost = irs::get<FilterBoost>(doc_attrs);
 
   if (IsBM1()) {
     return MakeScoreFunction<BM1Context>(filter_boost, _k, boost, *stats);

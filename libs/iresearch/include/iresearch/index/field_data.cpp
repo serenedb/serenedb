@@ -69,7 +69,7 @@ void WriteOffset(Posting& p, Stream& out, IndexFeatures& features,
 }
 
 template<typename Stream>
-void WriteProx(Stream& out, uint32_t prox, const irs::PayAttr* pay,
+void WriteProx(Stream& out, uint32_t prox, const PayAttr* pay,
                IndexFeatures& features) {
   if (!pay || pay->value.empty()) {
     WriteVarint<uint32_t>(ShiftPack32(prox, false), out);
@@ -125,7 +125,7 @@ IRS_FORCE_INLINE byte_block_pool::sliced_greedy_inserter GreedyWriter(
 }
 
 template<typename Reader>
-class PosIteratorImpl final : public irs::PosAttr {
+class PosIteratorImpl final : public PosAttr {
  public:
   PosIteratorImpl() : _prox_in(kEmptyPool) {}
 

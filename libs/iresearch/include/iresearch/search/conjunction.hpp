@@ -39,34 +39,45 @@ struct ScoreAdapter {
   ScoreAdapter() = default;
 
   ScoreAdapter(DocIterator::ptr it) noexcept
-    : _it{std::move(it)},
-      doc{irs::get<DocAttr>(*this->_it)},
-      score{&ScoreAttr::get(*this->_it)} {
+    : _it{std::move(it)}, _score{&ScoreAttr::get(*this->_it)} {
+    const auto* doc = irs::get<DocAttr>(*this->_it);
     SDB_ASSERT(doc);
+    _doc = &doc->value;
   }
 
   ScoreAdapter(ScoreAdapter&&) noexcept = default;
   ScoreAdapter& operator=(ScoreAdapter&&) noexcept = default;
 
-  auto* operator->() const noexcept { return _it.get(); }
+  IRS_FORCE_INLINE operator DocIterator::ptr&&() && noexcept {
+    return std::move(_it);
+  }
 
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept {
+  IRS_FORCE_INLINE explicit operator bool() const noexcept {
+    return _it != nullptr;
+  }
+
+  IRS_FORCE_INLINE Attribute* GetMutable(TypeInfo::type_id type) noexcept {
     return _it->GetMutable(type);
   }
 
-  operator DocIterator::ptr&&() && noexcept { return std::move(_it); }
+  IRS_FORCE_INLINE doc_id_t value() const noexcept { return *_doc; }
 
-  explicit operator bool() const noexcept { return _it != nullptr; }
+  IRS_FORCE_INLINE doc_id_t advance() { return _it->advance(); }
 
-  // access iterator value without virtual call
-  doc_id_t value() const noexcept { return doc->value; }
+  IRS_FORCE_INLINE doc_id_t seek(doc_id_t target) { return _it->seek(target); }
+
+  IRS_FORCE_INLINE doc_id_t shallow_seek(doc_id_t target) {
+    return _it->shallow_seek(target);
+  }
+
+  IRS_FORCE_INLINE uint32_t count() { return _it->count(); }
+
+  IRS_FORCE_INLINE const ScoreAttr& score() const noexcept { return *_score; }
 
  private:
   DocIterator::ptr _it;
-
- public:
-  const irs::DocAttr* doc{};
-  const irs::ScoreAttr* score{};
+  const doc_id_t* _doc{};
+  const ScoreAttr* _score{};
 };
 
 using ScoreAdapters = std::vector<ScoreAdapter>;
@@ -76,7 +87,7 @@ template<typename T>
 using EmptyWrapper = T;
 
 struct SubScores {
-  std::vector<irs::ScoreAttr*> scores;
+  std::vector<const ScoreAttr*> scores;
   score_t sum_score = 0.f;
 };
 
@@ -94,10 +105,8 @@ struct ConjunctionBase : public DocIterator,
                          protected Merger,
                          protected ScoreCtx {
  protected:
-  static_assert(std::is_base_of_v<ScoreAdapter, Adapter>);
-
   explicit ConjunctionBase(Merger&& merger, std::vector<Adapter>&& itrs,
-                           std::vector<irs::ScoreAttr*>&& scorers)
+                           std::vector<const ScoreAttr*>&& scorers)
     : Merger{std::move(merger)},
       _itrs{std::move(itrs)},
       _scores{std::move(scorers)} {
@@ -130,15 +139,14 @@ struct ConjunctionBase : public DocIterator,
     } while (it != end);
   }
 
-  void PrepareScore(irs::ScoreAttr& score, auto score_2, auto score_n,
-                    auto min) {
+  void PrepareScore(ScoreAttr& score, auto score_2, auto score_n, auto min) {
     SDB_ASSERT(Merger::size());
     switch (_scores.size()) {
       case 0:
         score = ScoreFunction::Default(Merger::size());
         break;
       case 1:
-        score = std::move(*_scores.front());
+        score = std::move(*const_cast<ScoreAttr*>(_scores.front()));
         break;
       case 2:
         score.Reset(*this, score_2, min);
@@ -154,7 +162,7 @@ struct ConjunctionBase : public DocIterator,
   size_t size() const noexcept { return _itrs.size(); }
 
   std::vector<Adapter> _itrs;
-  std::vector<ScoreAttr*> _scores;
+  std::vector<const ScoreAttr*> _scores;
 };
 
 template<typename Adapter, typename Merger>
@@ -165,7 +173,7 @@ class Conjunction : public ConjunctionBase<Adapter, Merger> {
 
  public:
   explicit Conjunction(Merger&& merger, std::vector<Adapter>&& itrs,
-                       std::vector<irs::ScoreAttr*>&& scores = {})
+                       std::vector<const ScoreAttr*>&& scores = {})
     : Base{std::move(merger), std::move(itrs), std::move(scores)},
       _front{this->_itrs.front()} {
     SDB_ASSERT(!this->_itrs.empty());
@@ -190,10 +198,10 @@ class Conjunction : public ConjunctionBase<Adapter, Merger> {
     return std::get<AttributePtr<DocAttr>>(_attrs).ptr->value;
   }
 
-  doc_id_t advance() override { return converge(_front->advance()); }
+  doc_id_t advance() override { return converge(_front.advance()); }
 
   doc_id_t seek(doc_id_t target) override {
-    return converge(_front->seek(target));
+    return converge(_front.seek(target));
   }
 
   uint32_t count() override { return DocIterator::Count(*this); }
@@ -210,9 +218,9 @@ class Conjunction : public ConjunctionBase<Adapter, Merger> {
   restart:
     SDB_ASSERT(!doc_limits::eof(target));
     for (auto it = begin; it != end; ++it) {
-      const auto doc = (*it)->seek(target);
+      const auto doc = it->seek(target);
       if (target < doc) {
-        target = _front->seek(doc);
+        target = _front.seek(doc);
         if (!doc_limits::eof(target)) [[likely]] {
           goto restart;
         }
@@ -229,8 +237,7 @@ class Conjunction : public ConjunctionBase<Adapter, Merger> {
 template<typename Adapter, typename Merger>
 class BlockConjunction : public ConjunctionBase<Adapter, Merger> {
   using Base = ConjunctionBase<Adapter, Merger>;
-  using Attributes =
-    std::tuple<DocAttr, AttributePtr<CostAttr>, irs::ScoreAttr>;
+  using Attributes = std::tuple<DocAttr, AttributePtr<CostAttr>, ScoreAttr>;
 
  public:
   explicit BlockConjunction(Merger&& merger, std::vector<Adapter>&& itrs,
@@ -274,7 +281,7 @@ class BlockConjunction : public ConjunctionBase<Adapter, Merger> {
       return Seal();
     }
     auto it = this->_itrs.begin();
-    const auto seek_target = (*it)->seek(target);
+    const auto seek_target = it->seek(target);
     if (seek_target > _leafs_doc) {
       target = seek_target;
       goto align_leafs;
@@ -285,7 +292,7 @@ class BlockConjunction : public ConjunctionBase<Adapter, Merger> {
     ++it;
     const auto end = this->_itrs.end();
     do {
-      target = (*it)->seek(seek_target);
+      target = it->seek(seek_target);
       if (target != seek_target) {
         if (target > _leafs_doc) {
           goto align_leafs;
@@ -364,8 +371,8 @@ class BlockConjunction : public ConjunctionBase<Adapter, Merger> {
     score_t sum_leafs_score = 0.f;
 
     for (auto& it : this->_itrs) {
-      auto max_leaf = it->shallow_seek(target);
-      auto min_leaf = it.doc->value;
+      auto max_leaf = it.shallow_seek(target);
+      auto min_leaf = it.value();
       SDB_ASSERT(min_leaf <= max_leaf);
       if (target < min_leaf) {
         target = min_leaf;
@@ -380,7 +387,7 @@ class BlockConjunction : public ConjunctionBase<Adapter, Merger> {
         max_leafs = max_leaf;
       }
       SDB_ASSERT(min_leafs <= max_leafs);
-      merger.Merge(sum_leafs_score, it.score->max.leaf);
+      merger.Merge(sum_leafs_score, it.score().max.leaf);
     }
 
     _leafs_doc = max_leafs;
@@ -428,14 +435,12 @@ DocIterator::ptr MakeConjunction(WandContext ctx, Merger&& merger,
       ctx.Enabled() && CostAttr::extract(itrs.front(), CostAttr::kMax) >
                          kBlockConjunctionCostThreshold;
     for (auto& it : itrs) {
-      // FIXME(gnusi): remove const cast
-      auto* score = const_cast<irs::ScoreAttr*>(it.score);
-      SDB_ASSERT(score);  // ensured by ScoreAdapter
-      if (score->IsDefault()) {
+      const auto& score = it.score();
+      if (score.IsDefault()) {
         continue;
       }
-      scores.scores.emplace_back(score);
-      const auto tail = score->max.tail;
+      scores.scores.emplace_back(&score);
+      const auto tail = score.max.tail;
       use_block &= tail != std::numeric_limits<score_t>::max();
       if (use_block) {
         scores.sum_score += tail;

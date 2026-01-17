@@ -69,7 +69,7 @@ TEST(bit_utils_test, zig_zag_64) {
 TEST(bit_utils_test, set_check_bit) {
   using namespace irs;
 
-  int v = 3422;
+  unsigned v = 3422;
 
   for (unsigned i = 0; i < sizeof(v) * 8; ++i) {
     EXPECT_EQ(static_cast<bool>((v >> i) & 1), CheckBit(v, i));
@@ -81,32 +81,32 @@ TEST(bit_utils_test, set_check_bit) {
 
   byte_type b = 76;
 
-  EXPECT_FALSE(CheckBit<0>(b));
-  EXPECT_FALSE(CheckBit<1>(b));
-  EXPECT_TRUE(CheckBit<2>(b));
-  EXPECT_TRUE(CheckBit<3>(b));
-  EXPECT_FALSE(CheckBit<4>(b));
-  EXPECT_FALSE(CheckBit<5>(b));
-  EXPECT_TRUE(CheckBit<6>(b));
-  EXPECT_FALSE(CheckBit<7>(b));
+  EXPECT_FALSE(CheckBit(b, 0));
+  EXPECT_FALSE(CheckBit(b, 1));
+  EXPECT_TRUE(CheckBit(b, 2));
+  EXPECT_TRUE(CheckBit(b, 3));
+  EXPECT_FALSE(CheckBit(b, 4));
+  EXPECT_FALSE(CheckBit(b, 5));
+  EXPECT_TRUE(CheckBit(b, 6));
+  EXPECT_FALSE(CheckBit(b, 7));
 
   byte_type b_orig = b;
-  SetBit<0>(!CheckBit<0>(b), b);
-  SetBit<0>(!CheckBit<0>(b), b);
-  SetBit<1>(!CheckBit<1>(b), b);
-  SetBit<1>(!CheckBit<1>(b), b);
-  SetBit<2>(!CheckBit<2>(b), b);
-  SetBit<2>(!CheckBit<2>(b), b);
-  SetBit<3>(!CheckBit<3>(b), b);
-  SetBit<3>(!CheckBit<3>(b), b);
-  SetBit<4>(!CheckBit<4>(b), b);
-  SetBit<4>(!CheckBit<4>(b), b);
-  SetBit<5>(!CheckBit<5>(b), b);
-  SetBit<5>(!CheckBit<5>(b), b);
-  SetBit<6>(!CheckBit<6>(b), b);
-  SetBit<6>(!CheckBit<6>(b), b);
-  SetBit<7>(!CheckBit<7>(b), b);
-  SetBit<7>(!CheckBit<7>(b), b);
+  SetBit(b, 0, !CheckBit(b, 0));
+  SetBit(b, 0, !CheckBit(b, 0));
+  SetBit(b, 1, !CheckBit(b, 1));
+  SetBit(b, 1, !CheckBit(b, 1));
+  SetBit(b, 2, !CheckBit(b, 2));
+  SetBit(b, 2, !CheckBit(b, 2));
+  SetBit(b, 3, !CheckBit(b, 3));
+  SetBit(b, 3, !CheckBit(b, 3));
+  SetBit(b, 4, !CheckBit(b, 4));
+  SetBit(b, 4, !CheckBit(b, 4));
+  SetBit(b, 5, !CheckBit(b, 5));
+  SetBit(b, 5, !CheckBit(b, 5));
+  SetBit(b, 6, !CheckBit(b, 6));
+  SetBit(b, 6, !CheckBit(b, 6));
+  SetBit(b, 7, !CheckBit(b, 7));
+  SetBit(b, 7, !CheckBit(b, 7));
   EXPECT_EQ(b_orig, b);
 }
 
@@ -115,32 +115,32 @@ TEST(bit_utils_test, test_unset_bit) {
   {
     irs::byte_type b = 0x6c;
 
-    EXPECT_FALSE(irs::CheckBit<0>(b));
-    EXPECT_FALSE(irs::CheckBit<1>(b));
-    EXPECT_TRUE(irs::CheckBit<2>(b));
-    EXPECT_TRUE(irs::CheckBit<3>(b));
-    EXPECT_FALSE(irs::CheckBit<4>(b));
-    EXPECT_TRUE(irs::CheckBit<5>(b));
-    EXPECT_TRUE(irs::CheckBit<6>(b));
-    EXPECT_FALSE(irs::CheckBit<7>(b));
+    EXPECT_FALSE(irs::CheckBit(b, 0));
+    EXPECT_FALSE(irs::CheckBit(b, 1));
+    EXPECT_TRUE(irs::CheckBit(b, 2));
+    EXPECT_TRUE(irs::CheckBit(b, 3));
+    EXPECT_FALSE(irs::CheckBit(b, 4));
+    EXPECT_TRUE(irs::CheckBit(b, 5));
+    EXPECT_TRUE(irs::CheckBit(b, 6));
+    EXPECT_FALSE(irs::CheckBit(b, 7));
 
-    irs::UnsetBit<0>(true, b);
-    irs::UnsetBit<1>(false, b);
-    irs::UnsetBit<2>(true, b);
-    irs::UnsetBit<3>(false, b);
-    irs::UnsetBit<4>(true, b);
-    irs::UnsetBit<5>(false, b);
-    irs::UnsetBit<6>(true, b);
-    irs::UnsetBit<7>(false, b);
+    irs::UnsetBit(b, 0, true);
+    irs::UnsetBit(b, 1, false);
+    irs::UnsetBit(b, 2, true);
+    irs::UnsetBit(b, 3, false);
+    irs::UnsetBit(b, 4, true);
+    irs::UnsetBit(b, 5, false);
+    irs::UnsetBit(b, 6, true);
+    irs::UnsetBit(b, 7, false);
 
-    EXPECT_FALSE(irs::CheckBit<0>(b));
-    EXPECT_FALSE(irs::CheckBit<1>(b));
-    EXPECT_FALSE(irs::CheckBit<2>(b));
-    EXPECT_TRUE(irs::CheckBit<3>(b));
-    EXPECT_FALSE(irs::CheckBit<4>(b));
-    EXPECT_TRUE(irs::CheckBit<5>(b));
-    EXPECT_FALSE(irs::CheckBit<6>(b));
-    EXPECT_FALSE(irs::CheckBit<7>(b));
+    EXPECT_FALSE(irs::CheckBit(b, 0));
+    EXPECT_FALSE(irs::CheckBit(b, 1));
+    EXPECT_FALSE(irs::CheckBit(b, 2));
+    EXPECT_TRUE(irs::CheckBit(b, 3));
+    EXPECT_FALSE(irs::CheckBit(b, 4));
+    EXPECT_TRUE(irs::CheckBit(b, 5));
+    EXPECT_FALSE(irs::CheckBit(b, 6));
+    EXPECT_FALSE(irs::CheckBit(b, 7));
   }
 
   // test runtime

@@ -9,6 +9,7 @@ add_library(
     rocksdb_sink_writer.cpp
     search_sink_writer.cpp
     search_remove_filter.cpp
+    file_table.cpp
 )
 
 target_link_libraries(

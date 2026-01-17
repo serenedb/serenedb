@@ -1377,7 +1377,7 @@ void SqlAnalyzer::MakeTableWrite(State& state, const Node& stmt,
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_GENERATED_ALWAYS),
             CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
-            ERR_MSG("column \"", column.name, "\" is a generated column."),
+            ERR_MSG("column \"", column.name, "\" is a generated column"),
             ERR_DETAIL("Generated columns cannot be used in COPY."));
         default:
           SDB_UNREACHABLE();

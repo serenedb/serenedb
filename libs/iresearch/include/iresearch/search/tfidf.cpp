@@ -204,7 +204,7 @@ struct TFIDFContext final : public ScoreCtx {
   TFIDFContext& operator=(const TFIDFContext&) = delete;
 
   const FreqAttr& freq;
-  const irs::FilterBoost* filter_boost;
+  const FilterBoost* filter_boost;
   float_t idf;  // precomputed : boost * idf
   [[no_unique_address]] Norm norm;
 };
@@ -293,7 +293,7 @@ ScoreFunction TFIDF::PrepareScorer(const ColumnProvider& segment,
   }
 
   const auto* stats = stats_cast(stats_buf);
-  auto* filter_boost = irs::get<irs::FilterBoost>(doc_attrs);
+  auto* filter_boost = irs::get<FilterBoost>(doc_attrs);
 
   // add norm attribute if requested
   if (_normalize) {

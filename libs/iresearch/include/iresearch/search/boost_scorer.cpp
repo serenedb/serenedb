@@ -49,7 +49,7 @@ ScoreFunction BoostScore::PrepareScorer(const ColumnProvider& /*segment*/,
                                         const byte_type* /*stats*/,
                                         const AttributeProvider& attrs,
                                         score_t boost) const {
-  const auto* volatile_boost = irs::get<irs::FilterBoost>(attrs);
+  const auto* volatile_boost = irs::get<FilterBoost>(attrs);
 
   if (volatile_boost == nullptr) {
     return ScoreFunction::Constant(boost);

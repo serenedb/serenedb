@@ -52,14 +52,11 @@ class EmptyTermReader final : public irs::TermReader {
 
   TermMeta term(bytes_view) const noexcept final { return {}; }
 
-  DocIterator::ptr postings(const SeekCookie&,
-                            IndexFeatures) const noexcept final {
-    return DocIterator::empty();
-  }
-
-  DocIterator::ptr wanderator(const SeekCookie&, IndexFeatures,
-                              const WanderatorOptions&,
-                              WandContext) const noexcept final {
+  DocIterator::ptr Iterator(IndexFeatures features,
+                            std::span<const SeekCookie* const> cookies,
+                            const IteratorOptions& options, size_t min_match,
+                            ScoreMergeType type,
+                            size_t num_buckets) const final {
     return DocIterator::empty();
   }
 

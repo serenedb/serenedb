@@ -109,8 +109,8 @@ class MinMatchDisjunction : public DocIterator,
       // make step for all head iterators less or equal current doc (doc_)
       while (Top().value() <= doc_value) {
         const auto target = Top().value() == doc_value
-                              ? Top()->advance()
-                              : Top()->seek(doc_value + 1);
+                              ? Top().advance()
+                              : Top().seek(doc_value + 1);
         const bool exhausted = doc_limits::eof(target);
 
         if (exhausted && !RemoveTop()) {
@@ -144,7 +144,7 @@ class MinMatchDisjunction : public DocIterator,
     // move one to head if it doesn't hit the target
     for (auto it = Lead(), end = _heap.end(); it != end;) {
       SDB_ASSERT(*it < _itrs.size());
-      const auto doc = _itrs[*it]->seek(target);
+      const auto doc = _itrs[*it].seek(target);
 
       if (doc_limits::eof(doc)) {
         --_lead;
@@ -174,7 +174,7 @@ class MinMatchDisjunction : public DocIterator,
     // main search loop
     for (;; target = Top().value()) {
       while (Top().value() <= target) {
-        const auto doc = Top()->seek(target);
+        const auto doc = Top().seek(target);
 
         if (doc_limits::eof(doc)) {
           // iterator exhausted
@@ -231,7 +231,7 @@ class MinMatchDisjunction : public DocIterator,
       std::memset(res, 0, static_cast<Merger&>(self).byte_size());
       std::for_each(self.Lead(), self._heap.end(), [&self, res](size_t it) {
         SDB_ASSERT(it < self._itrs.size());
-        if (auto& score = *self._itrs[it].score; !score.IsDefault()) {
+        if (auto& score = self._itrs[it].score(); !score.IsDefault()) {
           auto& merger = static_cast<Merger&>(self);
           score(merger.temp());
           merger(res, merger.temp());
@@ -252,7 +252,7 @@ class MinMatchDisjunction : public DocIterator,
         AddLead();
         --lead;
       } else {
-        if (doc_limits::eof(Top()->seek(doc_value))) {
+        if (doc_limits::eof(Top().seek(doc_value))) {
           // iterator exhausted
           RemoveTop();
           lead = Lead();
@@ -297,7 +297,7 @@ class MinMatchDisjunction : public DocIterator,
   bool PopLead() {
     for (auto it = Lead(), end = _heap.end(); it != end;) {
       SDB_ASSERT(*it < _itrs.size());
-      if (!_itrs[*it]->next()) {
+      if (doc_limits::eof(_itrs[*it].advance())) {
         --_lead;
 
         // remove iterator

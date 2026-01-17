@@ -40,7 +40,7 @@ constexpr std::string_view kPipelineParamName = "pipeline";
 constexpr std::string_view kTypeParamName = "type";
 constexpr std::string_view kPropertiesParamName = "properties";
 
-constexpr irs::OffsAttr kNoOffset;
+constexpr OffsAttr kNoOffset;
 using OptionsNormalize = std::vector<std::pair<std::string, std::string>>;
 
 template<typename T>
@@ -283,7 +283,7 @@ bool NormalizeJsonConfig(std::string_view args, std::string& definition) {
   return false;
 }
 
-irs::PayAttr* FindPayload(std::span<const Analyzer::ptr> pipeline) {
+PayAttr* FindPayload(std::span<const Analyzer::ptr> pipeline) {
   for (auto it = pipeline.rbegin(); it != pipeline.rend(); ++it) {
     auto* payload = irs::GetMutable<PayAttr>(it->get());
     if (payload) {

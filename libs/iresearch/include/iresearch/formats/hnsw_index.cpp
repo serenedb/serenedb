@@ -106,7 +106,7 @@ const float* ColumnDistanceBase::LoadData(faiss::idx_t id,
 }
 
 ColumnSearchDistance::ColumnSearchDistance(ResettableDocIterator::ptr&& it,
-                                           irs::HNSWInfo info)
+                                           HNSWInfo info)
   : ColumnDistanceBase{std::move(info)}, _it{std::move(it)} {}
 
 float ColumnSearchDistance::operator()(faiss::idx_t id) {

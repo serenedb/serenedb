@@ -19,27 +19,18 @@
 ///
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
+#pragma once
 
 #include <absl/algorithm/container.h>
 
-#include "basics/assert.h"
-#include "basics/resource_manager.hpp"
-#include "iresearch/store/data_input.hpp"
-#include "iresearch/types.hpp"
-extern "C" {
-#include <simdbitpacking.h>
-#include <simdintegratedbitpacking.h>
-#ifdef __AVX2__
-#include <avxbitpacking.h>
-#endif
-}
-
 #include <limits>
 
+#include "basics/assert.h"
 #include "basics/bit_utils.hpp"
 #include "basics/containers/bitset.hpp"
 #include "basics/logger/logger.h"
 #include "basics/memory.hpp"
+#include "basics/resource_manager.hpp"
 #include "basics/shared.hpp"
 #include "columnstore2.hpp"
 #include "format_utils.hpp"
@@ -47,28 +38,30 @@ extern "C" {
 #include "formats_attributes.hpp"
 #include "formats_burst_trie.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/formats/skip_list.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/cost.hpp"
+#include "iresearch/search/disjunction.hpp"
 #include "iresearch/search/score.hpp"
+#include "iresearch/store/data_input.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/store/store_utils.hpp"
+#include "iresearch/types.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 #include "iresearch/utils/bitpack.hpp"
 #include "iresearch/utils/type_limits.hpp"
-#include "skip_list.hpp"
 
 namespace irs {
-namespace {
 
-constexpr IndexFeatures kPos = IndexFeatures::Freq | IndexFeatures::Pos;
-constexpr IndexFeatures kPosOffs = kPos | IndexFeatures::Offs;
-constexpr IndexFeatures kPosPay = kPos | IndexFeatures::Pay;
+inline constexpr IndexFeatures kPos = IndexFeatures::Freq | IndexFeatures::Pos;
+inline constexpr IndexFeatures kPosOffs = kPos | IndexFeatures::Offs;
+inline constexpr IndexFeatures kPosPay = kPos | IndexFeatures::Pay;
 
-void WriteStrings(IndexOutput& out, const auto& strings) {
+inline void WriteStrings(IndexOutput& out, const auto& strings) {
   SDB_ASSERT(strings.size() < std::numeric_limits<uint32_t>::max());
 
   out.WriteV32(static_cast<uint32_t>(strings.size()));
@@ -77,7 +70,7 @@ void WriteStrings(IndexOutput& out, const auto& strings) {
   }
 }
 
-std::vector<std::string> ReadStrings(IndexInput& in) {
+inline std::vector<std::string> ReadStrings(IndexInput& in) {
   const size_t size = in.ReadV32();
 
   if (size > std::numeric_limits<uint32_t>::max()) [[unlikely]] {
@@ -95,9 +88,9 @@ std::vector<std::string> ReadStrings(IndexInput& in) {
 template<typename T, typename M>
 std::string FileName(const M& meta);
 
-void PrepareOutput(std::string& str, IndexOutput::ptr& out,
-                   const FlushState& state, std::string_view ext,
-                   std::string_view format, const int32_t version) {
+inline void PrepareOutput(std::string& str, IndexOutput::ptr& out,
+                          const FlushState& state, std::string_view ext,
+                          std::string_view format, const int32_t version) {
   SDB_ASSERT(!out);
   irs::FileName(str, state.name, ext);
   out = state.dir->create(str);
@@ -109,10 +102,10 @@ void PrepareOutput(std::string& str, IndexOutput::ptr& out,
   format_utils::WriteHeader(*out, format, version);
 }
 
-void PrepareInput(std::string& str, IndexInput::ptr& in, IOAdvice advice,
-                  const ReaderState& state, std::string_view ext,
-                  std::string_view format, const int32_t min_ver,
-                  const int32_t max_ver) {
+inline void PrepareInput(std::string& str, IndexInput::ptr& in, IOAdvice advice,
+                         const ReaderState& state, std::string_view ext,
+                         std::string_view format, const int32_t min_ver,
+                         const int32_t max_ver) {
   SDB_ASSERT(!in);
   irs::FileName(str, state.meta->name, ext);
   in = state.dir->open(str, advice);
@@ -228,10 +221,9 @@ struct PayBuffer : SkipBuffer {
   uint32_t last{};           // last start offset
 };
 
-std::vector<irs::WandWriter::ptr> PrepareWandWriters(ScorersView scorers,
-                                                     size_t max_levels) {
-  std::vector<irs::WandWriter::ptr> writers(
-    std::min(scorers.size(), kMaxScorers));
+inline std::vector<WandWriter::ptr> PrepareWandWriters(ScorersView scorers,
+                                                       size_t max_levels) {
+  std::vector<WandWriter::ptr> writers(std::min(scorers.size(), kMaxScorers));
   auto scorer = scorers.begin();
   for (auto& writer : writers) {
     writer = (*scorer)->prepare_wand_writer(max_levels);
@@ -262,7 +254,7 @@ enum class PostingsFormat : int32_t {
 //  |       block#0       | |      block#1        | |vInts|
 //  d d d d d d d d d d d d d d d d d d d d d d d d d d d d (posting list)
 //                          ^                       ^       (level 0 skip point)
-class PostingsWriterBase : public irs::PostingsWriter {
+class PostingsWriterBase : public PostingsWriter {
  public:
   static constexpr uint32_t kMaxSkipLevels = 9;
   static constexpr uint32_t kSkipN = 8;
@@ -351,8 +343,8 @@ class PostingsWriterBase : public irs::PostingsWriter {
   };
 
   struct Attributes final : AttributeProvider {
-    irs::DocAttr doc;
-    irs::FreqAttr freq_value;
+    DocAttr doc;
+    FreqAttr freq_value;
 
     const FreqAttr* freq{};
     PosAttr* pos{};
@@ -372,7 +364,7 @@ class PostingsWriterBase : public irs::PostingsWriter {
     }
 
     void Reset(AttributeProvider& attrs) noexcept {
-      pos = &irs::PosAttr::empty();
+      pos = &PosAttr::empty();
       offs = nullptr;
       pay = nullptr;
 
@@ -412,15 +404,15 @@ class PostingsWriterBase : public irs::PostingsWriter {
   uint32_t* _buf;             // Buffer for encoding
   Attributes _attrs;          // Set of attributes
   const ColumnProvider* _columns{};
-  std::vector<irs::WandWriter::ptr> _writers;    // List of wand writers
-  std::vector<irs::WandWriter*> _valid_writers;  // Valid wand writers
+  std::vector<WandWriter::ptr> _writers;    // List of wand writers
+  std::vector<WandWriter*> _valid_writers;  // Valid wand writers
   uint64_t _writers_mask{};
   Features _features;  // Features supported by current field
   const PostingsFormat _postings_format_version;
   const TermsFormat _terms_format_version;
 };
 
-void PostingsWriterBase::PrepareWriters(const FieldProperties& meta) {
+inline void PostingsWriterBase::PrepareWriters(const FieldProperties& meta) {
   _writers_mask = 0;
   _valid_writers.clear();
 
@@ -434,14 +426,15 @@ void PostingsWriterBase::PrepareWriters(const FieldProperties& meta) {
   for (size_t i = 0; auto& writer : _writers) {
     const bool valid = writer && writer->Prepare(*_columns, meta, _attrs);
     if (valid) {
-      irs::SetBit(_writers_mask, i);
+      SetBit(_writers_mask, i);
       _valid_writers.emplace_back(writer.get());
     }
     ++i;
   }
 }
 
-void PostingsWriterBase::WriteSkip(size_t level, MemoryIndexOutput& out) const {
+inline void PostingsWriterBase::WriteSkip(size_t level,
+                                          MemoryIndexOutput& out) const {
   const doc_id_t doc_delta = _doc.block_last;  //- doc_.skip_doc[level];
   const uint64_t doc_ptr = _doc_out->Position();
 
@@ -474,7 +467,8 @@ void PostingsWriterBase::WriteSkip(size_t level, MemoryIndexOutput& out) const {
   }
 }
 
-void PostingsWriterBase::prepare(IndexOutput& out, const FlushState& state) {
+inline void PostingsWriterBase::prepare(IndexOutput& out,
+                                        const FlushState& state) {
   SDB_ASSERT(state.dir);
   SDB_ASSERT(!IsNull(state.name));
 
@@ -514,7 +508,8 @@ void PostingsWriterBase::prepare(IndexOutput& out, const FlushState& state) {
   _docs.reset(doc_limits::min() + state.doc_count);
 }
 
-void PostingsWriterBase::encode(BufferedOutput& out, const TermMeta& state) {
+inline void PostingsWriterBase::encode(BufferedOutput& out,
+                                       const TermMeta& state) {
   const auto& meta = static_cast<const TermMetaImpl&>(state);
 
   out.WriteV32(meta.docs_count);
@@ -543,7 +538,7 @@ void PostingsWriterBase::encode(BufferedOutput& out, const TermMeta& state) {
   _last_state = meta;
 }
 
-void PostingsWriterBase::end() {
+inline void PostingsWriterBase::end() {
   format_utils::WriteFooter(*_doc_out);
   _doc_out.reset();  // ensure stream is closed
 
@@ -558,7 +553,7 @@ void PostingsWriterBase::end() {
   }
 }
 
-void PostingsWriterBase::BeginTerm() {
+inline void PostingsWriterBase::BeginTerm() {
   _doc.start = _doc_out->Position();
   std::fill_n(_doc.skip_ptr, kMaxSkipLevels, _doc.start);
   if (_features.HasPosition()) {
@@ -577,7 +572,7 @@ void PostingsWriterBase::BeginTerm() {
   _skip.Reset();
 }
 
-void PostingsWriterBase::EndDocument() {
+inline void PostingsWriterBase::EndDocument() {
   if (_doc.Full()) {
     _doc.block_last = _doc.last;
     _doc.end = _doc_out->Position();
@@ -599,7 +594,7 @@ void PostingsWriterBase::EndDocument() {
   }
 }
 
-void PostingsWriterBase::EndTerm(TermMetaImpl& meta) {
+inline void PostingsWriterBase::EndTerm(TermMetaImpl& meta) {
   if (meta.docs_count == 0) {
     return;  // no documents to write
   }
@@ -911,7 +906,7 @@ void PostingsWriterImpl<FormatTraits>::write(DocIterator& docs,
         // composite wand writer?
         ApplyWriters([&](auto& writer) {
           const uint8_t size = writer.Size(level);
-          SDB_ASSERT(size <= irs::WandWriter::kMaxSize);
+          SDB_ASSERT(size <= WandWriter::kMaxSize);
           out.WriteByte(size);
         });
         ApplyWriters([&](auto& writer) { writer.Write(level, out); });
@@ -1473,7 +1468,7 @@ struct PositionBase<IteratorTraits, FieldTraits, false, false> {
 
 template<typename IteratorTraits, typename FieldTraits,
          bool Pos = IteratorTraits::Position()>
-class PositionImpl final : public irs::PosAttr,
+class PositionImpl final : public PosAttr,
                            private PositionBase<IteratorTraits, FieldTraits> {
  public:
   using Impl = PositionBase<IteratorTraits, FieldTraits>;
@@ -1494,7 +1489,7 @@ class PositionImpl final : public irs::PosAttr,
         this->buf_pos = 0;
       }
       _value += this->pos_deltas[this->buf_pos];
-      SDB_ASSERT(irs::pos_limits::valid(_value));
+      SDB_ASSERT(pos_limits::valid(_value));
       this->ReadAttributes();
 
       ++this->buf_pos;
@@ -1525,7 +1520,7 @@ class PositionImpl final : public irs::PosAttr,
       this->buf_pos = 0;
     }
     _value += this->pos_deltas[this->buf_pos];
-    SDB_ASSERT(irs::pos_limits::valid(_value));
+    SDB_ASSERT(pos_limits::valid(_value));
     this->ReadAttributes();
 
     ++this->buf_pos;
@@ -1586,7 +1581,7 @@ class PositionImpl final : public irs::PosAttr,
 template<typename IteratorTraits, typename FieldTraits>
 struct PositionImpl<IteratorTraits, FieldTraits, false> : Attribute {
   static constexpr std::string_view type_name() noexcept {
-    return irs::PosAttr::type_name();
+    return PosAttr::type_name();
   }
 
   void Prepare(const DocState&) noexcept {}
@@ -1720,10 +1715,10 @@ class SingleDocIterator
   SingleDocIterator() = default;
 
   void WandPrepare(const TermMeta& meta, const IndexInput* pos_in,
-                   const IndexInput* pay_in,
-                   const ScoreFunctionFactory& factory) {
+                   const IndexInput* pay_in, uint32_t meta_idx,
+                   const MakeScoreCallback& make_score) {
     Prepare(meta, pos_in, pay_in);
-    auto func = factory(*this);
+    auto func = make_score(meta_idx, *this);
 
     auto& doc_value = std::get<DocAttr>(_attrs).value;
     doc_value = _next;
@@ -1942,14 +1937,14 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
 
   void WandPrepare(const TermMeta& meta, const IndexInput* doc_in,
                    const IndexInput* pos_in, const IndexInput* pay_in,
-                   const ScoreFunctionFactory& factory, const Scorer& scorer,
-                   uint8_t wand_index) {
+                   uint32_t meta_idx, const MakeScoreCallback& make_score,
+                   const Scorer& scorer, uint8_t wand_index) {
     Prepare(meta, doc_in, pos_in, pay_in, wand_index);
     if (meta.docs_count > FieldTraits::kBlockSize) {
       return;
     }
     auto ctx = scorer.prepare_wand_source();
-    auto func = factory(*ctx);
+    auto func = make_score(meta_idx, *ctx);
 
     auto old_offset = std::numeric_limits<size_t>::max();
     if (meta.docs_count == FieldTraits::kBlockSize) {
@@ -1974,7 +1969,6 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
                const IndexInput* pos_in, const IndexInput* pay_in,
                uint8_t wand_index = WandContext::kDisable);
 
- private:
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);
   }
@@ -2022,6 +2016,11 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
     return std::exchange(this->_left, 0);
   }
 
+  const ScoreAttr& score() const noexcept {
+    return std::get<ScoreAttr>(_attrs);
+  }
+
+ private:
   class ReadSkip : private WandExtent {
    public:
     explicit ReadSkip(WandExtent extent) : WandExtent{extent}, _skip_levels(1) {
@@ -2330,11 +2329,12 @@ class Wanderator : public DocIteratorBase<IteratorTraits, FieldTraits>,
   }
 
  public:
-  Wanderator(const ScoreFunctionFactory& factory, const Scorer& scorer,
-             WandExtent extent, uint8_t index, bool strict)
+  Wanderator(uint32_t meta_idx, const MakeScoreCallback& make_score,
+             const Scorer& scorer, WandExtent extent, uint8_t index,
+             bool strict)
     : _skip{IteratorTraits::kBlockSize, PostingsWriterBase::kSkipN,
-            ReadSkip{factory, scorer, index, extent}},
-      _scorer{factory(*this)} {
+            ReadSkip{meta_idx, make_score, scorer, index, extent}},
+      _scorer{make_score(meta_idx, *this)} {
     SDB_ASSERT(absl::c_all_of(this->_buf.docs, [](doc_id_t doc) {
       return doc == doc_limits::invalid();
     }));
@@ -2351,7 +2351,6 @@ class Wanderator : public DocIteratorBase<IteratorTraits, FieldTraits>,
                    [[maybe_unused]] const IndexInput* pos_in,
                    [[maybe_unused]] const IndexInput* pay_in);
 
- private:
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);
   }
@@ -2379,6 +2378,11 @@ class Wanderator : public DocIteratorBase<IteratorTraits, FieldTraits>,
     return std::exchange(this->_left, 0);
   }
 
+  const ScoreAttr& score() const noexcept {
+    return std::get<ScoreAttr>(_attrs);
+  }
+
+ private:
   struct SkipScoreContext final : AttributeProvider {
     FreqAttr freq;
 
@@ -2392,10 +2396,10 @@ class Wanderator : public DocIteratorBase<IteratorTraits, FieldTraits>,
 
   class ReadSkip {
    public:
-    ReadSkip(const ScoreFunctionFactory& factory, const Scorer& scorer,
-             uint8_t index, WandExtent extent)
+    ReadSkip(uint32_t meta_idx, const MakeScoreCallback& factory,
+             const Scorer& scorer, uint8_t index, WandExtent extent)
       : ctx{scorer.prepare_wand_source()},
-        func{factory(*ctx)},
+        func{factory(meta_idx, *ctx)},
         index{index},
         extent{extent} {
       SDB_ASSERT(extent.GetExtent() > 0);
@@ -2408,12 +2412,12 @@ class Wanderator : public DocIteratorBase<IteratorTraits, FieldTraits>,
       SDB_ASSERT(absl::c_is_sorted(skip_scores, std::greater<>{}));
     }
 
-    void ReadMaxScore(irs::ScoreAttr::UpperBounds& max, IndexInput& input) {
+    void ReadMaxScore(ScoreAttr::UpperBounds& max, IndexInput& input) {
       CommonReadWandData(extent, index, func, *ctx, input, max.tail);
       max.leaf = max.tail;
     }
     void Init(const TermMetaImpl& state, size_t num_levels,
-              irs::ScoreAttr::UpperBounds& max);
+              ScoreAttr::UpperBounds& max);
     bool IsLess(size_t level, doc_id_t target) const noexcept {
       return skip_levels[level].doc < target || skip_scores[level] <= threshold;
     }
@@ -2456,9 +2460,6 @@ class Wanderator : public DocIteratorBase<IteratorTraits, FieldTraits>,
     std::get<ScoreAttr>(_attrs).max.leaf = _skip.Reader().skip_scores.back();
 
     this->_begin = std::end(this->_buf.docs);
-
-    // We could decide to make new skip before actual read block
-    // SDB_ASSERT(0 == skip_.Reader().State().doc_ptr);
   }
 
   SkipReader<ReadSkip> _skip;
@@ -2470,7 +2471,7 @@ class Wanderator : public DocIteratorBase<IteratorTraits, FieldTraits>,
 template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
 void Wanderator<IteratorTraits, FieldTraits, WandExtent>::ReadSkip::Init(
   const TermMetaImpl& term_state, size_t num_levels,
-  irs::ScoreAttr::UpperBounds& max) {
+  ScoreAttr::UpperBounds& max) {
   // Don't use wanderator for short posting lists, must be ensured by the caller
   SDB_ASSERT(term_state.docs_count > IteratorTraits::kBlockSize);
 
@@ -2642,13 +2643,11 @@ doc_id_t Wanderator<IteratorTraits, FieldTraits, WandExtent>::seek(
       return doc_value = doc_limits::eof();
     }
 
-    if (auto& state = _skip.Reader().State(); state.doc_ptr) {
-      this->_doc_in->Seek(state.doc_ptr);
-      if constexpr (IteratorTraits::Position()) {
-        auto& pos = std::get<Position>(_attrs);
-        pos.Prepare(state);  // Notify positions
-      }
-      state.doc_ptr = 0;
+    auto& state = _skip.Reader().State();
+    this->_doc_in->Seek(state.doc_ptr);
+    if constexpr (IteratorTraits::Position()) {
+      auto& pos = std::get<Position>(_attrs);
+      pos.Prepare(state);  // Notify positions
     }
 
     this->Refill(doc_value);
@@ -2727,9 +2726,9 @@ struct IndexMetaWriterImpl final : public IndexMetaWriter {
   int32_t _version;
 };
 
-bool IndexMetaWriterImpl::prepare(Directory& dir, IndexMeta& meta,
-                                  std::string& pending_filename,
-                                  std::string& filename) {
+inline bool IndexMetaWriterImpl::prepare(Directory& dir, IndexMeta& meta,
+                                         std::string& pending_filename,
+                                         std::string& filename) {
   if (index_gen_limits::valid(_pending_gen)) {
     // prepare() was already called with no corresponding call to commit()
     return false;
@@ -2764,7 +2763,7 @@ bool IndexMetaWriterImpl::prepare(Directory& dir, IndexMeta& meta,
       out->WriteByte(flags);
 
       if (flags == kHasPayload) {
-        irs::WriteStr(*out, payload);
+        WriteStr(*out, payload);
       }
     } else {
       // Earlier versions don't support payload.
@@ -2781,7 +2780,7 @@ bool IndexMetaWriterImpl::prepare(Directory& dir, IndexMeta& meta,
   return true;
 }
 
-bool IndexMetaWriterImpl::commit() {
+inline bool IndexMetaWriterImpl::commit() {
   if (!index_gen_limits::valid(_pending_gen)) {
     return false;
   }
@@ -2804,7 +2803,7 @@ bool IndexMetaWriterImpl::commit() {
   return true;
 }
 
-void IndexMetaWriterImpl::rollback() noexcept {
+inline void IndexMetaWriterImpl::rollback() noexcept {
   if (!index_gen_limits::valid(_pending_gen)) {
     return;
   }
@@ -2836,7 +2835,7 @@ void IndexMetaWriterImpl::rollback() noexcept {
   _pending_gen = index_gen_limits::invalid();
 }
 
-uint64_t ParseGeneration(std::string_view file) noexcept {
+inline uint64_t ParseGeneration(std::string_view file) noexcept {
   if (file.starts_with(IndexMetaWriterImpl::kFormatPrefix)) {
     constexpr size_t kPrefixLength = IndexMetaWriterImpl::kFormatPrefix.size();
 
@@ -2855,8 +2854,8 @@ struct IndexMetaReaderImpl : public IndexMetaReader {
             std::string_view filename) final;
 };
 
-bool IndexMetaReaderImpl::last_segments_file(const Directory& dir,
-                                             std::string& out) const {
+inline bool IndexMetaReaderImpl::last_segments_file(const Directory& dir,
+                                                    std::string& out) const {
   uint64_t max_gen = index_gen_limits::invalid();
   Directory::visitor_f visitor = [&out, &max_gen](std::string_view name) {
     const uint64_t gen = ParseGeneration(name);
@@ -2872,16 +2871,15 @@ bool IndexMetaReaderImpl::last_segments_file(const Directory& dir,
   return index_gen_limits::valid(max_gen);
 }
 
-void IndexMetaReaderImpl::read(const Directory& dir, IndexMeta& meta,
-                               std::string_view filename) {
+inline void IndexMetaReaderImpl::read(const Directory& dir, IndexMeta& meta,
+                                      std::string_view filename) {
   std::string meta_file;
   if (IsNull(filename)) {
     meta_file = IndexMetaWriterImpl::FileName(meta.gen);
     filename = meta_file;
   }
 
-  auto in =
-    dir.open(filename, irs::IOAdvice::SEQUENTIAL | irs::IOAdvice::READONCE);
+  auto in = dir.open(filename, IOAdvice::SEQUENTIAL | IOAdvice::READONCE);
 
   if (!in) {
     throw IoError{absl::StrCat("Failed to open file, path: ", filename)};
@@ -2917,7 +2915,7 @@ void IndexMetaReaderImpl::read(const Directory& dir, IndexMeta& meta,
     has_payload = (in->ReadByte() & IndexMetaWriterImpl::kHasPayload);
 
     if (has_payload) {
-      payload = irs::ReadString<bstring>(*in);
+      payload = ReadString<bstring>(*in);
     }
   }
 
@@ -2933,7 +2931,7 @@ void IndexMetaReaderImpl::read(const Directory& dir, IndexMeta& meta,
   }
 }
 
-uint64_t WriteDocumentMask(IndexOutput& out, const auto& docs_mask) {
+inline uint64_t WriteDocumentMask(IndexOutput& out, const auto& docs_mask) {
   // TODO(gnusi): better format
   uint32_t mask_size = docs_mask ? static_cast<uint32_t>(docs_mask->size()) : 0;
   SDB_ASSERT(mask_size < doc_limits::eof());
@@ -2951,8 +2949,8 @@ uint64_t WriteDocumentMask(IndexOutput& out, const auto& docs_mask) {
   return out.Position() - pos;
 }
 
-std::pair<const std::shared_ptr<DocumentMask>, uint64_t> ReadDocumentMask(
-  IndexInput& in, IResourceManager& rm) {
+inline std::pair<const std::shared_ptr<DocumentMask>, uint64_t>
+ReadDocumentMask(IndexInput& in, IResourceManager& rm) {
   auto count = in.ReadV32();
 
   if (!count) {
@@ -2992,13 +2990,14 @@ struct SegmentMetaWriterImpl : public SegmentMetaWriter {
 };
 
 template<>
-std::string FileName<SegmentMetaWriter, SegmentMeta>(const SegmentMeta& meta) {
+inline std::string FileName<SegmentMetaWriter, SegmentMeta>(
+  const SegmentMeta& meta) {
   return irs::FileName(meta.name, meta.version,
                        SegmentMetaWriterImpl::kFormatExt);
 }
 
-void SegmentMetaWriterImpl::write(Directory& dir, std::string& meta_file,
-                                  SegmentMeta& meta) {
+inline void SegmentMetaWriterImpl::write(Directory& dir, std::string& meta_file,
+                                         SegmentMeta& meta) {
   if (meta.docs_count < meta.live_docs_count ||
       meta.docs_count - meta.live_docs_count != RemovalCount(meta))
     [[unlikely]] {
@@ -3007,7 +3006,7 @@ void SegmentMetaWriterImpl::write(Directory& dir, std::string& meta_file,
                                   ", live_docs_count=", meta.live_docs_count)};
   }
 
-  meta_file = FileName<irs::SegmentMetaWriter>(meta);
+  meta_file = FileName<SegmentMetaWriter>(meta);
   auto out = dir.create(meta_file);
 
   if (!out) [[unlikely]] {
@@ -3042,14 +3041,13 @@ struct SegmentMetaReaderImpl : public SegmentMetaReader {
             std::string_view filename = {}) final;  // null == use meta
 };
 
-void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
-                                 std::string_view filename) {
+inline void SegmentMetaReaderImpl::read(const Directory& dir, SegmentMeta& meta,
+                                        std::string_view filename) {
   const std::string meta_file = IsNull(filename)
                                   ? FileName<SegmentMetaWriter>(meta)
                                   : std::string{filename};
 
-  auto in =
-    dir.open(meta_file, irs::IOAdvice::SEQUENTIAL | irs::IOAdvice::READONCE);
+  auto in = dir.open(meta_file, IOAdvice::SEQUENTIAL | IOAdvice::READONCE);
 
   if (!in) [[unlikely]] {
     throw IoError{absl::StrCat("Failed to open file, path: ", meta_file)};
@@ -3147,12 +3145,13 @@ class PostingsReaderBase : public PostingsReader {
   size_t _block_size;
 };
 
-void PostingsReaderBase::prepare(IndexInput& in, const ReaderState& state,
-                                 IndexFeatures features) {
+inline void PostingsReaderBase::prepare(IndexInput& in,
+                                        const ReaderState& state,
+                                        IndexFeatures features) {
   std::string buf;
 
   // prepare document input
-  PrepareInput(buf, _doc_in, irs::IOAdvice::RANDOM, state,
+  PrepareInput(buf, _doc_in, IOAdvice::RANDOM, state,
                PostingsWriterBase::kDocExt, PostingsWriterBase::kDocFormatName,
                static_cast<int32_t>(PostingsFormat::Min),
                static_cast<int32_t>(PostingsFormat::Max));
@@ -3166,7 +3165,7 @@ void PostingsReaderBase::prepare(IndexInput& in, const ReaderState& state,
 
   if (IndexFeatures::None != (features & IndexFeatures::Pos)) {
     /* prepare positions input */
-    PrepareInput(buf, _pos_in, irs::IOAdvice::RANDOM, state,
+    PrepareInput(buf, _pos_in, IOAdvice::RANDOM, state,
                  PostingsWriterBase::kPosExt,
                  PostingsWriterBase::kPosFormatName,
                  static_cast<int32_t>(PostingsFormat::Min),
@@ -3182,7 +3181,7 @@ void PostingsReaderBase::prepare(IndexInput& in, const ReaderState& state,
     if (IndexFeatures::None !=
         (features & (IndexFeatures::Pay | IndexFeatures::Offs))) {
       // prepare positions input
-      PrepareInput(buf, _pay_in, irs::IOAdvice::RANDOM, state,
+      PrepareInput(buf, _pay_in, IOAdvice::RANDOM, state,
                    PostingsWriterBase::kPayExt,
                    PostingsWriterBase::kPayFormatName,
                    static_cast<int32_t>(PostingsFormat::Min),
@@ -3215,8 +3214,57 @@ void PostingsReaderBase::prepare(IndexInput& in, const ReaderState& state,
     state.scorers.subspan(0, std::min(state.scorers.size(), kMaxScorers));
 }
 
-size_t PostingsReaderBase::decode(const byte_type* in, IndexFeatures features,
-                                  TermMeta& state) {
+template<typename PostingImpl>
+struct PostingAdapter {
+  PostingAdapter(DocIterator::ptr it) noexcept : _it{std::move(it)} {
+    SDB_ASSERT(_it);
+    SDB_ASSERT(dynamic_cast<PostingImpl*>(_it.get()));
+  }
+
+  PostingAdapter(PostingAdapter&&) noexcept = default;
+  PostingAdapter& operator=(PostingAdapter&&) noexcept = default;
+
+  IRS_FORCE_INLINE operator DocIterator::ptr&&() && noexcept {
+    return std::move(_it);
+  }
+
+  IRS_FORCE_INLINE explicit operator bool() const noexcept {
+    return _it != nullptr;
+  }
+
+  IRS_FORCE_INLINE Attribute* GetMutable(TypeInfo::type_id type) noexcept {
+    return self().GetMutable(type);
+  }
+
+  IRS_FORCE_INLINE doc_id_t value() const noexcept { return self().value(); }
+
+  IRS_FORCE_INLINE doc_id_t advance() { return self().advance(); }
+
+  IRS_FORCE_INLINE doc_id_t seek(doc_id_t target) {
+    return self().seek(target);
+  }
+
+  IRS_FORCE_INLINE doc_id_t shallow_seek(doc_id_t target) {
+    return self().shallow_seek(target);
+  }
+
+  IRS_FORCE_INLINE uint32_t count() { return self().count(); }
+
+  IRS_FORCE_INLINE const ScoreAttr& score() const noexcept {
+    return self().score();
+  }
+
+ private:
+  IRS_FORCE_INLINE PostingImpl& self() const noexcept {
+    return static_cast<PostingImpl&>(*_it);
+  }
+
+  DocIterator::ptr _it;
+};
+
+inline size_t PostingsReaderBase::decode(const byte_type* in,
+                                         IndexFeatures features,
+                                         TermMeta& state) {
   auto& term_meta = static_cast<TermMetaImpl&>(state);
 
   const bool has_freq = IndexFeatures::None != (features & IndexFeatures::Freq);
@@ -3282,115 +3330,118 @@ class PostingsReaderImpl final : public PostingsReaderBase {
   PostingsReaderImpl() noexcept
     : PostingsReaderBase{FormatTraits::kBlockSize} {}
 
-  DocIterator::ptr iterator(IndexFeatures field_features,
-                            IndexFeatures required_features,
-                            const TermMeta& meta, uint8_t wand_count) final {
-    if (meta.docs_count == 0) {
-      SDB_ASSERT(false);
-      return DocIterator::empty();
-    }
-
-    return IteratorImpl(
-      field_features, required_features,
-      [&]<typename IteratorTraits, typename FieldTraits> -> DocIterator::ptr {
-        if (meta.docs_count == 1) {
-          auto it = memory::make_managed<
-            SingleDocIterator<IteratorTraits, FieldTraits>>();
-          it->Prepare(meta, _pos_in.get(), _pay_in.get());
-          return it;
-        }
-        return ResolveExtent<0>(
-          wand_count,
-          [&]<typename Extent>(Extent&& extent) -> DocIterator::ptr {
-            auto it = memory::make_managed<
-              DocIteratorImpl<IteratorTraits, FieldTraits, Extent>>(
-              std::forward<Extent>(extent));
-            it->Prepare(meta, _doc_in.get(), _pos_in.get(), _pay_in.get());
-            return it;
-          });
-      });
-  }
-
-  DocIterator::ptr wanderator(IndexFeatures field_features,
-                              IndexFeatures required_features,
-                              const TermMeta& meta,
-                              const WanderatorOptions& options, WandContext ctx,
-                              WandInfo info) final {
-    auto it = MakeWanderator(field_features, required_features, meta, options,
-                             ctx, info);
-    if (it) {
-      return it;
-    }
-    return iterator(field_features, required_features, meta, info.count);
-  }
-
   size_t BitUnion(IndexFeatures field, const term_provider_f& provider,
                   size_t* set, uint8_t wand_count) final;
 
+  DocIterator::ptr Iterator(IndexFeatures field_features,
+                            IndexFeatures required_features,
+                            std::span<const TermMeta* const> metas,
+                            const IteratorFieldOptions& options,
+                            size_t min_match, ScoreMergeType type,
+                            size_t num_buckets) const final;
+
  private:
-  DocIterator::ptr MakeWanderator(IndexFeatures field_features,
-                                  IndexFeatures required_features,
-                                  const TermMeta& meta,
-                                  const WanderatorOptions& options,
-                                  WandContext ctx, WandInfo info) {
-    if (meta.docs_count == 0 ||
-        info.mapped_index == irs::WandContext::kDisable ||
-        _scorers.size() <= ctx.index) {
-      return {};
-    }
-    SDB_ASSERT(info.count != 0);
-    const auto& scorer = *_scorers[ctx.index];
-    const auto scorer_features = scorer.GetIndexFeatures();
-    // TODO(mbkkt) Should we also check against required_features?
-    //  Or we should to do required_features |= scorer_features;
-    if (scorer_features != (field_features & scorer_features)) {
-      return {};
-    }
-    return IteratorImpl(
-      field_features, required_features,
-      [&]<typename IteratorTraits, typename FieldTraits> -> DocIterator::ptr {
-        // No need to use wanderator for short lists
-        if (meta.docs_count == 1) {
-          auto it = memory::make_managed<
-            SingleDocIterator<IteratorTraits, FieldTraits>>();
-          it->WandPrepare(meta, _pos_in.get(), _pay_in.get(), options.factory);
-          return it;
-        }
-        return ResolveExtent<1>(
-          info.count,
-          [&]<typename WandExtent>(WandExtent extent) -> DocIterator::ptr {
-            // TODO(mbkkt) Now we don't support wanderator without frequency
-            if constexpr (IteratorTraits::Frequency()) {
-              // No need to use wanderator for short lists
-              if (meta.docs_count > FormatTraits::kBlockSize) {
-                auto it = memory::make_managed<
-                  Wanderator<IteratorTraits, FieldTraits, WandExtent>>(
-                  options.factory, scorer, extent, info.mapped_index,
-                  ctx.strict);
-
-                it->WandPrepare(meta, _doc_in.get(), _pos_in.get(),
-                                _pay_in.get());
-
-                return it;
-              }
-            }
-            auto it = memory::make_managed<
-              DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>>(extent);
-            it->WandPrepare(meta, _doc_in.get(), _pos_in.get(), _pay_in.get(),
-                            options.factory, scorer, info.mapped_index);
-            return it;
-          });
-      });
-  }
-
   template<typename FieldTraits, typename Factory>
-  DocIterator::ptr IteratorImpl(IndexFeatures enabled, Factory&& factory);
+  static DocIterator::ptr IteratorImpl(IndexFeatures enabled,
+                                       Factory&& factory);
 
   template<typename Factory>
-  DocIterator::ptr IteratorImpl(IndexFeatures field_features,
-                                IndexFeatures required_features,
-                                Factory&& factory);
+  static DocIterator::ptr IteratorImpl(IndexFeatures field_features,
+                                       IndexFeatures required_features,
+                                       Factory&& factory);
 };
+
+template<typename FieldTraits, size_t N>
+void BitUnionImpl(IndexInput& doc_in, doc_id_t docs_count, uint32_t (&docs)[N],
+                  uint32_t (&enc_buf)[N], size_t* set) {
+  constexpr auto kBits{BitsRequired<std::remove_pointer_t<decltype(set)>>()};
+  size_t num_blocks = docs_count / FieldTraits::kBlockSize;
+
+  auto prev_doc = doc_limits::invalid();
+  while (num_blocks--) {
+    FieldTraits::read_block_delta(doc_in, enc_buf, docs, prev_doc);
+    if constexpr (FieldTraits::Frequency()) {
+      FieldTraits::skip_block(doc_in);
+    }
+
+    // FIXME optimize
+    for (const auto doc : docs) {
+      SetBit(set[doc / kBits], doc % kBits);
+    }
+    prev_doc = docs[N - 1];
+  }
+
+  doc_id_t docs_left = docs_count % FieldTraits::kBlockSize;
+
+  while (docs_left--) {
+    doc_id_t delta;
+    if constexpr (FieldTraits::Frequency()) {
+      if (!ShiftUnpack32(doc_in.ReadV32(), delta)) {
+        doc_in.ReadV32();
+      }
+    } else {
+      delta = doc_in.ReadV32();
+    }
+
+    prev_doc += delta;
+    SetBit(set[prev_doc / kBits], prev_doc % kBits);
+  }
+}
+
+template<typename FormatTraits>
+size_t PostingsReaderImpl<FormatTraits>::BitUnion(
+  const IndexFeatures field_features, const term_provider_f& provider,
+  size_t* set, uint8_t wand_count) {
+  constexpr auto kBits{BitsRequired<std::remove_pointer_t<decltype(set)>>()};
+  uint32_t enc_buf[FormatTraits::kBlockSize];
+  uint32_t docs[FormatTraits::kBlockSize];
+  const bool has_freq =
+    IndexFeatures::None != (field_features & IndexFeatures::Freq);
+
+  SDB_ASSERT(_doc_in);
+  auto doc_in = _doc_in->Reopen();  // reopen thread-safe stream
+
+  if (!doc_in) {
+    // implementation returned wrong pointer
+    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+              "Failed to reopen document input");
+
+    throw IoError("failed to reopen document input");
+  }
+
+  size_t count = 0;
+  while (const TermMeta* meta = provider()) {
+    auto& term_state = static_cast<const TermMetaImpl&>(*meta);
+
+    if (term_state.docs_count > 1) {
+      doc_in->Seek(term_state.doc_start);
+      SDB_ASSERT(!doc_in->IsEOF());
+      if (term_state.docs_count < FormatTraits::kBlockSize) {
+        CommonSkipWandData(DynamicExtent{wand_count}, *doc_in);
+      }
+      SDB_ASSERT(!doc_in->IsEOF());
+
+      if (has_freq) {
+        using FieldTraits = IteratorTraits<true, false, false, false>;
+        BitUnionImpl<FieldTraits>(*doc_in, term_state.docs_count, docs, enc_buf,
+                                  set);
+      } else {
+        using FieldTraits = IteratorTraits<false, false, false, false>;
+        BitUnionImpl<FieldTraits>(*doc_in, term_state.docs_count, docs, enc_buf,
+                                  set);
+      }
+
+      count += term_state.docs_count;
+    } else {
+      const doc_id_t doc = doc_limits::min() + term_state.e_single_doc;
+      SetBit(set[doc / kBits], doc % kBits);
+
+      ++count;
+    }
+  }
+
+  return count;
+}
 
 template<typename FormatTraits>
 template<typename FieldTraits, typename Factory>
@@ -3482,163 +3533,199 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::IteratorImpl(
   }
 }
 
-template<typename FieldTraits, size_t N>
-void BitUnionImpl(IndexInput& doc_in, doc_id_t docs_count, uint32_t (&docs)[N],
-                  uint32_t (&enc_buf)[N], size_t* set) {
-  constexpr auto kBits{BitsRequired<std::remove_pointer_t<decltype(set)>>()};
-  size_t num_blocks = docs_count / FieldTraits::kBlockSize;
-
-  auto prev_doc = doc_limits::invalid();
-  while (num_blocks--) {
-    FieldTraits::read_block_delta(doc_in, enc_buf, docs, prev_doc);
-    if constexpr (FieldTraits::Frequency()) {
-      FieldTraits::skip_block(doc_in);
-    }
-
-    // FIXME optimize
-    for (const auto doc : docs) {
-      irs::SetBit(set[doc / kBits], doc % kBits);
-    }
-    prev_doc = docs[N - 1];
-  }
-
-  doc_id_t docs_left = docs_count % FieldTraits::kBlockSize;
-
-  while (docs_left--) {
-    doc_id_t delta;
-    if constexpr (FieldTraits::Frequency()) {
-      if (!ShiftUnpack32(doc_in.ReadV32(), delta)) {
-        doc_in.ReadV32();
-      }
-    } else {
-      delta = doc_in.ReadV32();
-    }
-
-    prev_doc += delta;
-    irs::SetBit(set[prev_doc / kBits], prev_doc % kBits);
-  }
-}
-
 template<typename FormatTraits>
-size_t PostingsReaderImpl<FormatTraits>::BitUnion(
-  const IndexFeatures field_features, const term_provider_f& provider,
-  size_t* set, uint8_t wand_count) {
-  constexpr auto kBits{BitsRequired<std::remove_pointer_t<decltype(set)>>()};
-  uint32_t enc_buf[FormatTraits::kBlockSize];
-  uint32_t docs[FormatTraits::kBlockSize];
-  const bool has_freq =
-    IndexFeatures::None != (field_features & IndexFeatures::Freq);
+DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
+  IndexFeatures field_features, IndexFeatures required_features,
+  std::span<const TermMeta* const> metas, const IteratorFieldOptions& options,
+  size_t min_match, ScoreMergeType type, size_t num_buckets) const {
+  SDB_ASSERT(!metas.empty());
+  SDB_ASSERT(1 <= min_match);
+  SDB_ASSERT(min_match <= metas.size());
 
-  SDB_ASSERT(_doc_in);
-  auto doc_in = _doc_in->Reopen();  // reopen thread-safe stream
+  // TODO(mbkkt) avoid different iterator types
+  // In such case we can avoid wrapping into doc iterator first
+  // And also avoid case when we are unable devirtualize min match
+  uint8_t iterator_types = 0;
+  auto make_postings_iterator = [&](uint32_t meta_idx, const TermMeta& meta) {
+    return IteratorImpl(
+      field_features, required_features,
+      [&]<typename IteratorTraits, typename FieldTraits> -> DocIterator::ptr {
+        if (!options.Enabled()) {
+          if (meta.docs_count == 1) {
+            auto it = memory::make_managed<
+              SingleDocIterator<IteratorTraits, FieldTraits>>();
+            it->Prepare(meta, _pos_in.get(), _pay_in.get());
+            iterator_types |= 1 << 0;
+            return it;
+          }
+          return ResolveExtent<0>(
+            options.count,
+            [&]<typename Extent>(Extent&& extent) -> DocIterator::ptr {
+              auto it = memory::make_managed<
+                DocIteratorImpl<IteratorTraits, FieldTraits, Extent>>(
+                std::forward<Extent>(extent));
+              it->Prepare(meta, _doc_in.get(), _pos_in.get(), _pay_in.get());
+              iterator_types |= 1 << 2;
+              return it;
+            });
+        }
+        SDB_ASSERT(options.index < _scorers.size());
+        const auto& scorer = *_scorers[options.index];
+        [[maybe_unused]] const auto scorer_features = scorer.GetIndexFeatures();
+        SDB_ASSERT(scorer_features == (field_features & scorer_features));
+        // No need to use wanderator for short lists
+        if (meta.docs_count == 1) {
+          auto it = memory::make_managed<
+            SingleDocIterator<IteratorTraits, FieldTraits>>();
+          it->WandPrepare(meta, _pos_in.get(), _pay_in.get(), meta_idx,
+                          options.make_score);
+          iterator_types |= 1 << 0;
+          return it;
+        }
+        return ResolveExtent<1>(
+          options.count,
+          [&]<typename Extent>(Extent extent) -> DocIterator::ptr {
+            if constexpr (IteratorTraits::Frequency()) {
+              // No need to use wanderator for short lists
+              if (meta.docs_count > FormatTraits::kBlockSize) {
+                auto it = memory::make_managed<
+                  Wanderator<IteratorTraits, FieldTraits, Extent>>(
+                  meta_idx, options.make_score, scorer, extent,
+                  options.mapped_index, options.strict);
+                it->WandPrepare(meta, _doc_in.get(), _pos_in.get(),
+                                _pay_in.get());
+                iterator_types |= 1 << 1;
+                return it;
+              }
+            }
+            auto it = memory::make_managed<
+              DocIteratorImpl<IteratorTraits, FieldTraits, Extent>>(extent);
+            it->WandPrepare(meta, _doc_in.get(), _pos_in.get(), _pay_in.get(),
+                            meta_idx, options.make_score, scorer,
+                            options.mapped_index);
+            iterator_types |= 1 << 2;
+            return it;
+          });
+      });
+  };
 
-  if (!doc_in) {
-    // implementation returned wrong pointer
-    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              "Failed to reopen document input");
-
-    throw IoError("failed to reopen document input");
-  }
-
-  size_t count = 0;
-  while (const TermMeta* meta = provider()) {
-    auto& term_state = static_cast<const TermMetaImpl&>(*meta);
-
-    if (term_state.docs_count > 1) {
-      doc_in->Seek(term_state.doc_start);
-      SDB_ASSERT(!doc_in->IsEOF());
-      if (term_state.docs_count < FormatTraits::kBlockSize) {
-        CommonSkipWandData(DynamicExtent{wand_count}, *doc_in);
-      }
-      SDB_ASSERT(!doc_in->IsEOF());
-
-      if (has_freq) {
-        using FieldTraitsT = IteratorTraits<true, false, false, false>;
-        BitUnionImpl<FieldTraitsT>(*doc_in, term_state.docs_count, docs,
-                                   enc_buf, set);
-      } else {
-        using FieldTraitsT = IteratorTraits<false, false, false, false>;
-        BitUnionImpl<FieldTraitsT>(*doc_in, term_state.docs_count, docs,
-                                   enc_buf, set);
-      }
-
-      count += term_state.docs_count;
-    } else {
-      const doc_id_t doc = doc_limits::min() + term_state.e_single_doc;
-      irs::SetBit(set[doc / kBits], doc % kBits);
-
-      ++count;
+  if (metas.size() == 1) {
+    auto it = make_postings_iterator(0, *metas[0]);
+    if (!it) {
+      return {};
     }
+    options.compile_score(0, *it);
+    return it;
   }
 
-  return count;
+  std::vector<DocIterator::ptr> iterators;
+  iterators.reserve(metas.size());
+  uint32_t meta_idx = 0;
+  for (const auto* meta : metas) {
+    if (auto it = make_postings_iterator(meta_idx, *meta)) {
+      iterators.emplace_back(std::move(it));
+      options.compile_score(meta_idx, *iterators.back());
+    } else if (min_match == metas.size()) {
+      return {};
+    }
+    ++meta_idx;
+  }
+
+  if (iterators.size() < min_match) {
+    return {};
+  }
+  if (iterators.size() == 1) {
+    return std::move(iterators[0]);
+  }
+
+  auto make_min_match = [&]<typename Adapter> {
+    std::vector<Adapter> adapters;
+    adapters.reserve(iterators.size());
+    for (auto& it : iterators) {
+      adapters.emplace_back(std::move(it));
+    }
+    return ResolveMergeType(type, num_buckets, [&]<typename A>(A&& aggregator) {
+      using MinMatchIterator = MinMatchIterator<Adapter, A>;
+      return MakeWeakDisjunction<MinMatchIterator>(
+        options, std::move(adapters), min_match, std::move(aggregator));
+    });
+  };
+
+  if (std::popcount(iterator_types) != 1 || (iterator_types & (1 << 0))) {
+    // DocIterator and SingleDocIterator case
+    return make_min_match.template operator()<ScoreAdapter>();
+  }
+
+  return IteratorImpl(
+    field_features, required_features,
+    [&]<typename IteratorTraits, typename FieldTraits> -> DocIterator::ptr {
+      if constexpr (IteratorTraits::Frequency()) {
+        if (iterator_types & (1 << 1)) {
+          // Wanderator case
+          return ResolveExtent<1>(
+            options.count, [&]<typename Extent>(Extent&&) {
+              using Adapter =
+                PostingAdapter<Wanderator<IteratorTraits, FieldTraits, Extent>>;
+              return make_min_match.template operator()<Adapter>();
+            });
+        }
+      }
+      // DocIteratorImpl case
+      return ResolveExtent<0>(options.count, [&]<typename Extent>(Extent&&) {
+        using Adapter =
+          PostingAdapter<DocIteratorImpl<IteratorTraits, FieldTraits, Extent>>;
+        return make_min_match.template operator()<Adapter>();
+      });
+    });
 }
 
-class Format15Base : public Format {
+class FormatBase : public Format {
  public:
-  IndexMetaWriter::ptr get_index_meta_writer() const final;
-  IndexMetaReader::ptr get_index_meta_reader() const final;
+  IndexMetaWriter::ptr get_index_meta_writer() const final {
+    return std::make_unique<IndexMetaWriterImpl>(
+      IndexMetaWriterImpl::kFormatMax);
+  }
+  IndexMetaReader::ptr get_index_meta_reader() const final {
+    // can reuse stateless reader
+    static IndexMetaReaderImpl gInstance;
+    return memory::to_managed<IndexMetaReader>(gInstance);
+  }
 
-  SegmentMetaWriter::ptr get_segment_meta_writer() const final;
-  SegmentMetaReader::ptr get_segment_meta_reader() const final;
+  SegmentMetaWriter::ptr get_segment_meta_writer() const final {
+    // can reuse stateless writer
+    static SegmentMetaWriterImpl gInstance{SegmentMetaWriterImpl::kFormatMax};
+    return memory::to_managed<SegmentMetaWriter>(gInstance);
+  }
+  SegmentMetaReader::ptr get_segment_meta_reader() const final {
+    // can reuse stateless writer
+    static SegmentMetaReaderImpl gInstance;
+    return memory::to_managed<SegmentMetaReader>(gInstance);
+  }
 
   FieldWriter::ptr get_field_writer(
-    bool consolidation, IResourceManager& resource_manager) const final;
+    bool consolidation, IResourceManager& resource_manager) const final {
+    return burst_trie::MakeWriter(
+      burst_trie::Version::Min,
+      get_postings_writer(consolidation, resource_manager), consolidation,
+      resource_manager);
+  }
   FieldReader::ptr get_field_reader(
-    IResourceManager& resource_manager) const final;
+    IResourceManager& resource_manager) const final {
+    return burst_trie::MakeReader(get_postings_reader(), resource_manager);
+  }
 
   ColumnstoreWriter::ptr get_columnstore_writer(
-    bool consolidation, IResourceManager& resource_manager) const final;
-  ColumnstoreReader::ptr get_columnstore_reader() const final;
+    bool consolidation, IResourceManager& resource_manager) const final {
+    return columnstore2::MakeWriter(columnstore2::Version::Min, consolidation,
+                                    resource_manager);
+  }
+  ColumnstoreReader::ptr get_columnstore_reader() const final {
+    return columnstore2::MakeReader();
+  }
 };
 
-IndexMetaWriter::ptr Format15Base::get_index_meta_writer() const {
-  return std::make_unique<IndexMetaWriterImpl>(IndexMetaWriterImpl::kFormatMax);
-}
-
-IndexMetaReader::ptr Format15Base::get_index_meta_reader() const {
-  // can reuse stateless reader
-  static IndexMetaReaderImpl gInstance;
-  return memory::to_managed<IndexMetaReader>(gInstance);
-}
-
-SegmentMetaWriter::ptr Format15Base::get_segment_meta_writer() const {
-  // can reuse stateless writer
-  static SegmentMetaWriterImpl gInstance{SegmentMetaWriterImpl::kFormatMax};
-  return memory::to_managed<SegmentMetaWriter>(gInstance);
-}
-
-SegmentMetaReader::ptr Format15Base::get_segment_meta_reader() const {
-  // can reuse stateless writer
-  static SegmentMetaReaderImpl gInstance;
-  return memory::to_managed<SegmentMetaReader>(gInstance);
-}
-
-FieldWriter::ptr Format15Base::get_field_writer(
-  bool consolidation, IResourceManager& resource_manager) const {
-  return burst_trie::MakeWriter(
-    burst_trie::Version::Min,
-    get_postings_writer(consolidation, resource_manager), consolidation,
-    resource_manager);
-}
-
-FieldReader::ptr Format15Base::get_field_reader(
-  IResourceManager& resource_manager) const {
-  return burst_trie::MakeReader(get_postings_reader(), resource_manager);
-}
-
-ColumnstoreWriter::ptr Format15Base::get_columnstore_writer(
-  bool consolidation, IResourceManager& resource_manager) const {
-  return columnstore2::MakeWriter(columnstore2::Version::Min, consolidation,
-                                  resource_manager);
-}
-
-ColumnstoreReader::ptr Format15Base::get_columnstore_reader() const {
-  return columnstore2::MakeReader();
-}
-
 template<typename F>
-class Format15Impl final : public Format15Base {
+class FormatImpl final : public FormatBase {
  public:
   using FormatTraits = F;
 
@@ -3647,150 +3734,23 @@ class Format15Impl final : public Format15Base {
   }
 
   static ptr make() {
-    static const Format15Impl kInstance;
-    return {irs::Format::ptr{}, &kInstance};
+    static const FormatImpl kInstance;
+    return {Format::ptr{}, &kInstance};
   }
 
-  irs::PostingsWriter::ptr get_postings_writer(
+  PostingsWriter::ptr get_postings_writer(
     bool consolidation, IResourceManager& resource_manager) const final {
     return std::make_unique<PostingsWriterImpl<FormatTraits>>(
       PostingsFormat::WandSimd, consolidation, resource_manager);
   }
-  irs::PostingsReader::ptr get_postings_reader() const final {
+  PostingsReader::ptr get_postings_reader() const final {
     return std::make_unique<PostingsReaderImpl<FormatTraits>>();
   }
 
   TypeInfo::type_id type() const noexcept final {
-    return irs::Type<Format15Impl>::id();
+    return irs::Type<FormatImpl>::id();
   }
 };
-
-#ifdef __AVX2__
-struct FormatTraitsAVX {
-  using AlignType = __m256i;
-
-  static constexpr std::string_view kName = "1_5avx";
-
-  static constexpr uint32_t kBlockSize = AVXBlockSize;
-  static_assert(kBlockSize <= doc_limits::eof());
-
-  IRS_FORCE_INLINE static void PackBlock(const uint32_t* IRS_RESTRICT decoded,
-                                         uint32_t* IRS_RESTRICT encoded,
-                                         uint32_t bits) noexcept {
-    ::avxpackwithoutmask(decoded, reinterpret_cast<AlignType*>(encoded), bits);
-  }
-
-  IRS_FORCE_INLINE static void UnpackBlockDelta(
-    uint32_t prev, uint32_t* IRS_RESTRICT decoded,
-    const uint32_t* IRS_RESTRICT encoded, uint32_t bits) noexcept {
-    ::avxunpack(reinterpret_cast<const AlignType*>(encoded), decoded, bits);
-    for (size_t i = 0; i < kBlockSize; ++i) {
-      decoded[i] += prev;
-      prev = decoded[i];
-    }
-  }
-
-  IRS_FORCE_INLINE static void UnpackBlock(uint32_t* IRS_RESTRICT decoded,
-                                           const uint32_t* IRS_RESTRICT encoded,
-                                           uint32_t bits) noexcept {
-    ::avxunpack(reinterpret_cast<const AlignType*>(encoded), decoded, bits);
-  }
-
-  IRS_FORCE_INLINE static void write_block_delta(IndexOutput& out, uint32_t* in,
-                                                 uint32_t prev, uint32_t* buf) {
-    DeltaEncode<kBlockSize>(in, prev);
-    bitpack::write_block32<kBlockSize>(PackBlock, out, in, buf);
-  }
-
-  IRS_FORCE_INLINE static void write_block(IndexOutput& out, const uint32_t* in,
-                                           uint32_t* buf) {
-    bitpack::write_block32<kBlockSize>(PackBlock, out, in, buf);
-  }
-
-  IRS_FORCE_INLINE static void read_block_delta(IndexInput& in, uint32_t* buf,
-                                                uint32_t* out, uint32_t prev) {
-    bitpack::read_block_delta32<kBlockSize>(UnpackBlockDelta, in, buf, out,
-                                            prev);
-  }
-
-  IRS_FORCE_INLINE static void read_block(IndexInput& in, uint32_t* buf,
-                                          uint32_t* out) {
-    bitpack::read_block32<kBlockSize>(UnpackBlock, in, buf, out);
-  }
-
-  IRS_FORCE_INLINE static void skip_block(IndexInput& in) {
-    bitpack::skip_block32(in, kBlockSize);
-  }
-};
-
-using Format15avx = Format15Impl<FormatTraitsAVX>;
-
-#endif
-
-struct FormatTraitsSSE {
-  using AlignType = __m128i;
-
-  static constexpr std::string_view kName = "1_5simd";
-
-  static constexpr uint32_t kBlockSize = SIMDBlockSize;
-  static_assert(kBlockSize <= doc_limits::eof());
-
-  IRS_FORCE_INLINE static void PackBlock(const uint32_t* IRS_RESTRICT decoded,
-                                         uint32_t* IRS_RESTRICT encoded,
-                                         uint32_t bits) noexcept {
-    ::simdpackwithoutmask(decoded, reinterpret_cast<AlignType*>(encoded), bits);
-  }
-
-  IRS_FORCE_INLINE static void UnpackBlockDelta(
-    uint32_t prev, uint32_t* IRS_RESTRICT decoded,
-    const uint32_t* IRS_RESTRICT encoded, uint32_t bits) noexcept {
-    ::simdunpackd1(prev, reinterpret_cast<const AlignType*>(encoded), decoded,
-                   bits);
-  }
-
-  IRS_FORCE_INLINE static void UnpackBlock(uint32_t* IRS_RESTRICT decoded,
-                                           const uint32_t* IRS_RESTRICT encoded,
-                                           uint32_t bits) noexcept {
-    ::simdunpack(reinterpret_cast<const AlignType*>(encoded), decoded, bits);
-  }
-
-  IRS_FORCE_INLINE static void write_block_delta(IndexOutput& out, uint32_t* in,
-                                                 uint32_t prev, uint32_t* buf) {
-    DeltaEncode<kBlockSize>(in, prev);
-    bitpack::write_block32<kBlockSize>(PackBlock, out, in, buf);
-  }
-
-  IRS_FORCE_INLINE static void write_block(IndexOutput& out, const uint32_t* in,
-                                           uint32_t* buf) {
-    bitpack::write_block32<kBlockSize>(PackBlock, out, in, buf);
-  }
-
-  IRS_FORCE_INLINE static void read_block_delta(IndexInput& in, uint32_t* buf,
-                                                uint32_t* out, uint32_t prev) {
-    bitpack::read_block_delta32<kBlockSize>(UnpackBlockDelta, in, buf, out,
-                                            prev);
-  }
-
-  IRS_FORCE_INLINE static void read_block(IndexInput& in, uint32_t* buf,
-                                          uint32_t* out) {
-    bitpack::read_block32<kBlockSize>(UnpackBlock, in, buf, out);
-  }
-
-  IRS_FORCE_INLINE static void skip_block(IndexInput& in) {
-    bitpack::skip_block32(in, kBlockSize);
-  }
-};
-
-using Format15sse = Format15Impl<FormatTraitsSSE>;
-
-}  // namespace
-
-void formats::Init() {
-#ifdef __AVX2__
-  REGISTER_FORMAT(Format15avx);
-#endif
-  REGISTER_FORMAT(Format15sse);
-}
 
 // use base irs::position type for ancestors
 template<typename IteratorTraits, typename FieldTraits, bool Pos>

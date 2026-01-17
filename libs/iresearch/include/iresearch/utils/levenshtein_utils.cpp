@@ -169,7 +169,7 @@ class ParametricStates {
 void AddElementaryTransitions(ParametricState& state, const Position& pos,
                               const uint64_t chi, const uint8_t max_distance,
                               const bool with_transpositions) {
-  if (irs::CheckBit<0>(chi)) {
+  if (CheckBit(chi, 0)) {
     // Situation 1: [i+1,e] subsumes { [i,e+1], [i+1,e+1], [i+1,e] }
     state.Emplace(pos.offset + 1, pos.distance, false);
 
@@ -187,13 +187,13 @@ void AddElementaryTransitions(ParametricState& state, const Position& pos,
 
     // Situation 2, [i+j,e+j-1] - elements X[i+1:i+j-1] are deleted
     for (size_t j = 1, max = max_distance + 1 - pos.distance; j < max; ++j) {
-      if (irs::CheckBit(chi, j)) {
+      if (CheckBit(chi, j)) {
         state.Emplace(static_cast<uint32_t>(pos.offset + 1 + j),
                       pos.distance + j, false);
       }
     }
 
-    if (with_transpositions && irs::CheckBit<1>(chi)) {
+    if (with_transpositions && CheckBit(chi, 1)) {
       state.Emplace(pos.offset, pos.distance + 1, true);
     }
   }
@@ -209,7 +209,7 @@ void AddTransition(ParametricState& to, const ParametricState& from,
                    const bool with_transpositions) {
   to.Clear();
   for (const auto& pos : from) {
-    SDB_ASSERT(pos.offset < irs::BitsRequired<decltype(cv)>());
+    SDB_ASSERT(pos.offset < BitsRequired<decltype(cv)>());
     const auto chi = cv >> pos.offset;
     AddElementaryTransitions(to, pos, chi, max_distance, with_transpositions);
   }
@@ -515,7 +515,7 @@ automaton MakeLevenshteinAutomaton(const ParametricDescription& description,
     const byte_type* next = utf8_utils::Next(begin, end);
     to = a.AddState();
     auto dist = std::distance(begin, next);
-    irs::Utf8EmplaceArc(a, start_state, bytes_view(begin, dist), to);
+    Utf8EmplaceArc(a, start_state, bytes_view(begin, dist), to);
     start_state = to;
     begin = next;
   }

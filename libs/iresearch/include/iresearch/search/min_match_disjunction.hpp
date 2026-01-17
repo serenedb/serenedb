@@ -55,7 +55,7 @@ using CostAdapters = std::vector<CostAdapter>;
 // -----------------------------------------------------------------------------
 template<ScoreMergeType MergeType>
 class MinMatchDisjunction : public DocIterator,
-                            public DisjunctionBase<MergeType> {
+                            private DisjunctionBase<MergeType> {
   using Base = DisjunctionBase<MergeType>;
 
  public:
@@ -86,7 +86,10 @@ class MinMatchDisjunction : public DocIterator,
     _heap.resize(_itrs.size());
     absl::c_iota(_heap, size_t{0});
 
-    PrepareScore();
+    if constexpr (kHasScore) {
+      this->PrepareScore(std::get<irs::ScoreAttr>(_attrs), std::span{_itrs},
+                         ScoreFunction::NoopMin);
+    }
   }
 
   Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
@@ -222,7 +225,6 @@ class MinMatchDisjunction : public DocIterator,
           _itrs[it].CollectData(index);
         }
       });
-      _scores.Next();
     }
   }
 
@@ -237,21 +239,6 @@ class MinMatchDisjunction : public DocIterator,
 
  private:
   using Attributes = std::tuple<DocAttr, CostAttr, ScoreAttr>;
-
-  void PrepareScore() {
-    if constexpr (kHasScore) {
-      auto& score = std::get<ScoreAttr>(_attrs);
-
-      _scores.Reset(_itrs);
-
-      if (_scores.Empty()) {
-        score = ScoreFunction::Default();
-        return;
-      }
-
-      score = this->DisjunctionScore(this, ScoreFunction::NoopMin);
-    }
-  }
 
   // Push all valid iterators to lead.
   void PushValidToLead() {
@@ -400,7 +387,6 @@ class MinMatchDisjunction : public DocIterator,
   size_t _min_match_count;  // minimum number of hits
   size_t _lead;             // number of iterators in lead group
   Attributes _attrs;
-  [[no_unique_address]] utils::Need<kHasScore, DisjunctionScoreContext> _scores;
 };
 
 }  // namespace irs

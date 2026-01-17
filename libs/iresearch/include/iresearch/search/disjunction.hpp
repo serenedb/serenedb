@@ -33,6 +33,7 @@
 #include <iresearch/search/scorer.hpp>
 #include <iresearch/utils/attribute_provider.hpp>
 #include <limits>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -173,88 +174,84 @@ class UnaryDisjunction : public CompoundDocIterator<Adapter> {
   Adapter _it;
 };
 
-struct DisjunctionScoreContext {
-  FixedBuffer<uint16_t> hits_buf;
-  FixedBuffer<score_t> scores;
-
-  std::vector<const ScoreFunction*> sources;
-  std::vector<Vector<uint16_t>> hits;
-  uint16_t index = 0;
-
-  bool Empty() const { return sources.empty(); }
-  size_t Size() const noexcept { return sources.size(); }
-
-  template<ScoreMergeType MergeType>
-  void Score(score_t* res, size_t n) noexcept {
-    for (const auto& [hit, source] : std::views::zip(hits, sources)) {
-      const auto hits = hit.Size();
-      if (hits == 0) {
-        continue;
-      }
-
-      // TODO(gnusi): we can score directly into res if hits == n and it's a
-      // first iterator
-      source->Score(scores.Data(), hits);
-      if (hits == n) {
-        Merge<MergeType>(res, scores.Data(), hits);
-      } else {
-        Merge<MergeType>(res, hit.Data(), scores.Data(), hits);
-      }
-      hit.Clear();
-    }
-    index = 0;
+class DisjunctionScoreState : public ScoreCtx {
+ public:
+  void Collect(size_t i, uint16_t index) noexcept {
+    SDB_ASSERT(i < _hits.size());
+    _hits[i].PushBack(index);
   }
 
-  void Next() noexcept { ++index; }
-
-  void Collect(size_t i) noexcept {
-    SDB_ASSERT(i < Size());
-    hits[i].PushBack(index);
-  }
-
-  void Reset(const auto& itrs) {
-    SDB_ASSERT(hits.empty());
-    sources.reserve(itrs.size());
-    for (auto& it : itrs) {
-      if (!it.score().IsDefault()) {
-        sources.emplace_back(&it.score());
-      }
+  // TODO(gnusi): score block
+  template<ScoreMergeType MergeType, typename A, size_t N>
+  ScoreFunction PrepareScore(std::span<A, N> itrs, auto min,
+                             uint16_t score_block = 256) {
+    _sources.reserve(itrs.size());
+    _sources.append_range(ToScores(itrs));
+    if (_sources.empty()) {
+      return ScoreFunction::Default();
     }
-    const uint16_t block_size = 256;
-    hits_buf.Realloc(sources.size() * block_size);
-    scores.Realloc(block_size);
-    hits.resize(sources.size());
-    auto p = hits_buf.Data();
-    for (auto& hit : hits) {
+
+    _buf = std::make_unique<uint16_t[]>(_sources.size() * score_block);
+    _scores = std::make_unique<score_t[]>(score_block);
+
+    _hits.resize(_sources.size());
+    auto p = _buf.get();
+    for (auto& hit : _hits) {
       hit.Reset(p);
-      p += block_size;
+      p += score_block;
     }
-    index = 0;
+
+    return {this,
+            [](ScoreCtx* ctx, score_t* res, size_t n) noexcept {
+              auto& self = static_cast<DisjunctionScoreState&>(*ctx);
+              for (const auto& [hit, source] :
+                   std::views::zip(self._hits, self._sources)) {
+                const auto hits = hit.Size();
+                if (hits == 0) {
+                  continue;
+                }
+
+                // TODO(gnusi): we can score directly into res if hits == n and
+                // it's a first iterator
+                source->Score(self._scores.get(), hits);
+                if (hits == n) {
+                  Merge<MergeType>(res, self._scores.get(), hits);
+                } else {
+                  Merge<MergeType>(res, hit.Data(), self._scores.get(), hits);
+                }
+                hit.Clear();
+              }
+            },
+            min};
   }
+
+ private:
+  std::vector<const ScoreFunction*> _sources;
+  std::vector<Vector<uint16_t>> _hits;
+  std::unique_ptr<uint16_t[]> _buf;
+  std::unique_ptr<score_t[]> _scores;
 };
 
 template<ScoreMergeType MergeType>
-class DisjunctionBase : public ScoreCtx {
+class DisjunctionBase {
  public:
   static constexpr auto kMergeType = MergeType;
   static constexpr bool kHasScore = kMergeType != ScoreMergeType::Noop;
 
  protected:
-  static ScoreFunction DisjunctionScore(ScoreCtx* ctx, auto min) {
-    return {ctx,
-            [](ScoreCtx* ctx, score_t* res, size_t n) noexcept {
-              auto& scores = static_cast<DisjunctionBase&>(*ctx)._scores;
-              scores.template Score<kMergeType>(res, n);
-            },
-            min};
+  template<typename A, size_t N>
+  void PrepareScore(ScoreAttr& score, std::span<A, N> itrs, auto min) {
+    if constexpr (kHasScore) {
+      score = _scores.template PrepareScore<MergeType>(itrs, min);
+    }
   }
 
-  [[no_unique_address]] utils::Need<kHasScore, DisjunctionScoreContext> _scores;
+  [[no_unique_address]] utils::Need<kHasScore, DisjunctionScoreState> _scores;
 };
 
 template<typename Adapter, ScoreMergeType MergeType>
 class BasicDisjunction : public CompoundDocIterator<Adapter>,
-                         public DisjunctionBase<MergeType> {
+                         private DisjunctionBase<MergeType> {
   using Base = DisjunctionBase<MergeType>;
 
  public:
@@ -350,12 +347,11 @@ class BasicDisjunction : public CompoundDocIterator<Adapter>,
     if constexpr (Base::kHasScore) {
       auto try_collect = [&](size_t i) {
         if (!_itrs[i].score().IsDefault()) {
-          CollectIterator(i, [&](auto&) { this->_scores.Collect(i); });
+          CollectIterator(i, [&](auto&) { this->_scores.Collect(i, index); });
         };
       };
       try_collect(0);
       try_collect(1);
-      this->_scores.Next();
     }
   }
 
@@ -380,9 +376,7 @@ class BasicDisjunction : public CompoundDocIterator<Adapter>,
         score = ScoreFunction::Default();
       } else if (!_itrs[0].score().IsDefault() &&
                  !_itrs[1].score().IsDefault()) {
-        this->_scores.Reset(_itrs);
-        SDB_ASSERT(!this->_scores.Empty());
-        score = this->DisjunctionScore(this, ScoreFunction::NoopMin);
+        Base::PrepareScore(score, std::span{_itrs}, ScoreFunction::NoopMin);
       } else {
         const auto& it = _itrs[_itrs[0].score().IsDefault() ? 1 : 0];
         score.Reset(*it.score().Ctx(), it.score().Func(),
@@ -567,11 +561,9 @@ class SmallDisjunction : public CompoundDocIterator<Adapter>,
 
         if (value == doc) {
           (*begin).CollectData(index);
-          this->_scores.Collect(i++);
+          this->_scores.Collect(i++, index);
         }
       }
-
-      this->_scores.Next();
     }
   }
 
@@ -601,20 +593,10 @@ class SmallDisjunction : public CompoundDocIterator<Adapter>,
       }
     }
 
-    PrepareScore();
-  }
-
-  void PrepareScore() {
     if constexpr (kHasScore) {
-      this->_scores.Reset(std::span{_scored_begin, _end});
-
-      auto& score = std::get<ScoreAttr>(_attrs);
-      if (this->_scores.Empty()) {
-        score = ScoreFunction::Default();
-        return;
-      }
-
-      score = this->DisjunctionScore(this, ScoreFunction::NoopMin);
+      this->PrepareScore(std::get<ScoreAttr>(_attrs),
+                         std::span{_scored_begin, _end},
+                         ScoreFunction::NoopMin);
     }
   }
 
@@ -770,11 +752,10 @@ class Disjunction : public CompoundDocIterator<Adapter>,
             SDB_ASSERT(it < _itrs.size());
             if (auto& score = _itrs[it].score(); !score.IsDefault()) {
               _itrs[it].CollectData(index);
-              this->_scores.Collect(it);  // TODO(gnusi): fix index
+              this->_scores.Collect(it, index);  // TODO(gnusi): fix index
             }
           });
       }
-      this->_scores.Next();
     }
   }
 
@@ -824,20 +805,9 @@ class Disjunction : public CompoundDocIterator<Adapter>,
     _heap.resize(_itrs.size());
     absl::c_iota(_heap, size_t{0});
 
-    PrepareScore();
-  }
-
-  void PrepareScore() {
     if constexpr (kHasScore) {
-      auto& score = std::get<irs::ScoreAttr>(_attrs);
-
-      this->_scores.Reset(_itrs);
-      if (this->_scores.Empty()) {
-        score = ScoreFunction::Default();
-        return;
-      }
-
-      score = this->DisjunctionScore(this, ScoreFunction::NoopMin);
+      this->PrepareScore(std::get<irs::ScoreAttr>(_attrs), std::span{_itrs},
+                         ScoreFunction::NoopMin);
     }
   }
 

@@ -388,30 +388,24 @@ irs::DocIterator::ptr Format15TestCase::GetWanderator(
   irs::PostingsReader& reader, irs::Scorer& scorer,
   irs::IndexFeatures field_features, irs::IndexFeatures features,
   const irs::TermMeta& meta, uint32_t threshold, bool strict) {
-  const irs::WanderatorOptions options{
-    .factory = [&](const irs::AttributeProvider& attrs) {
-      return scorer.PrepareScorer(EmptyColumnProvider{}, irs::FieldProperties{},
-                                  nullptr, attrs, irs::kNoBoost);
-    }};
-
+  auto make_score = [&](uint32_t, const irs::AttributeProvider& attrs) {
+    return scorer.PrepareScorer(EmptyColumnProvider{}, irs::FieldProperties{},
+                                nullptr, attrs, irs::kNoBoost);
+  };
   const bool iterator_has_freq =
     irs::IndexFeatures::None != (features & irs::IndexFeatures::Freq);
   const bool field_has_freq =
     irs::IndexFeatures::None != (field_features & irs::IndexFeatures::Freq);
-  irs::WandContext ctx{};
-  irs::WandInfo info{};
   EXPECT_EQ((field_features & features), features);
-  if (field_has_freq) {
-    info.count = 1;
-  }
+  irs::IteratorFieldOptions options(field_has_freq ? 1 : 0);
+  options.make_score = make_score;
   if (iterator_has_freq) {
-    ctx.index = 0;
-    ctx.strict = strict;
-    info.mapped_index = 0;
+    options.index = 0;
+    options.strict = strict;
+    options.mapped_index = 0;
   }
 
-  auto actual =
-    reader.wanderator(field_features, features, meta, options, ctx, info);
+  auto actual = reader.Iterator(field_features, features, meta, options);
   EXPECT_NE(nullptr, actual);
 
   auto* score = irs::GetMutable<irs::ScoreAttr>(actual.get());

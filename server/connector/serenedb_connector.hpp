@@ -21,8 +21,12 @@
 #pragma once
 
 #include <axiom/connectors/ConnectorMetadata.h>
+#include <velox/common/file/File.h>
 #include <velox/connectors/Connector.h>
+#include <velox/dwio/common/Options.h>
+#include <velox/dwio/common/ReaderFactory.h>
 #include <velox/type/Type.h>
+#include <velox/vector/DecodedVector.h>
 
 #include "basics/assert.h"
 #include "basics/fwd.h"
@@ -32,6 +36,7 @@
 #include "catalog/table_options.h"
 #include "data_sink.hpp"
 #include "data_source.hpp"
+#include "file_table.hpp"
 #include "query/transaction.h"
 #include "rocksdb/utilities/transaction_db.h"
 
@@ -88,9 +93,9 @@ class SereneDBColumn final : public axiom::connector::Column {
  public:
   explicit SereneDBColumn(std::string_view name, velox::TypePtr type,
                           catalog::Column::Id id)
-    : Column{std::string{name}, type}, _id{id} {}
+    : Column{std::string{name}, type, false}, _id{id} {}
 
-  const catalog::Column::Id& Id() const noexcept { return _id; }
+  catalog::Column::Id Id() const noexcept { return _id; }
 
  private:
   catalog::Column::Id _id;
@@ -139,6 +144,14 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
     std::vector<velox::core::TypedExprPtr> filters,
     std::vector<velox::core::TypedExprPtr>& rejected_filters) const final {
     rejected_filters = std::move(filters);
+
+    if (const auto* read_file_table =
+          dynamic_cast<const ReadFileTable*>(&this->table())) {
+      return std::make_shared<FileTableHandle>(
+        read_file_table->GetSource(), read_file_table->GetReaderOptions(),
+        read_file_table->GetRowReaderOptions());
+    }
+
     SDB_ASSERT(!table().columnMap().empty(),
                "SereneDBConnectorTableHandle: need a column for count field");
     return std::make_shared<SereneDBConnectorTableHandle>(session, *this);
@@ -146,18 +159,41 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
 };
 
 class RocksDBTable final : public axiom::connector::Table {
- public:
-  explicit RocksDBTable(const catalog::Table& collection)
-    : Table{std::string{collection.GetName()}, collection.RowType()},
-      _pk_type(collection.PKType()),
-      _table_id(collection.GetId()) {
-    _column_map.reserve(collection.RowType()->size());
-    _column_handles.reserve(collection.RowType()->size());
+  struct Init {
+    const catalog::Table& collection;
+    velox::RowTypePtr pk_type;
+    std::vector<std::unique_ptr<const axiom::connector::Column>> column_handles;
 
-    std::vector<const axiom::connector::Column*> columns;
+    explicit Init(const catalog::Table& collection)
+      : collection{collection}, pk_type{collection.PKType()} {
+      column_handles.reserve(collection.RowType()->size());
+
+      for (const auto& catalog_column : collection.Columns()) {
+        auto serenedb_column = std::make_unique<SereneDBColumn>(
+          catalog_column.name, catalog_column.type, catalog_column.id);
+        column_handles.push_back(std::move(serenedb_column));
+      }
+
+      if (pk_type->children().empty()) {
+        const auto generated_pk_name =
+          catalog::Column::GeneratePKName(collection.RowType()->names());
+
+        auto serenedb_column = std::make_unique<SereneDBColumn>(
+          generated_pk_name, velox::BIGINT(), catalog::Column::kGeneratedPKId);
+        column_handles.push_back(std::move(serenedb_column));
+
+        pk_type = velox::ROW(std::move(generated_pk_name), velox::BIGINT());
+      }
+    }
+  };
+
+  explicit RocksDBTable(Init&& init)
+    : Table{std::string{init.collection.GetName()},
+            std::move(init.column_handles)},
+      _pk_type{std::move(init.pk_type)},
+      _table_id{init.collection.GetId()} {
     std::vector<const axiom::connector::Column*> order_columns;
     std::vector<axiom::connector::SortOrder> sort_order;
-    columns.reserve(collection.RowType()->size());
     order_columns.reserve(_pk_type->size());
     // TODO(mbkkt) We want something like null order doesn't matter, because in
     // primary key nulls are not allowed. For now we just set nulls last,
@@ -165,45 +201,23 @@ class RocksDBTable final : public axiom::connector::Table {
     sort_order.resize(
       std::max(1U, _pk_type->size()),
       axiom::connector::SortOrder{.isAscending = true, .isNullsFirst = false});
-    for (const auto& catalog_column : collection.Columns()) {
-      auto serenedb_column = std::make_unique<SereneDBColumn>(
-        catalog_column.name, catalog_column.type, catalog_column.id);
-      columns.push_back(serenedb_column.get());
-      _column_map.emplace(catalog_column.name, serenedb_column.get());
-      _column_handles.push_back(std::move(serenedb_column));
-    }
     for (const auto& name : _pk_type->names()) {
       const auto* column = findColumn(name);
       SDB_ASSERT(column, "RocksDBTable: can't find PK column ", name);
       order_columns.push_back(column);
     }
 
-    if (_pk_type->children().empty()) {
-      const auto generated_pk_name =
-        catalog::Column::GeneratePKName(collection.RowType()->names());
-
-      auto serenedb_column = std::make_unique<SereneDBColumn>(
-        generated_pk_name, velox::BIGINT(), catalog::Column::kGeneratedPKId);
-      columns.push_back(serenedb_column.get());
-
-      _column_map.emplace(generated_pk_name, serenedb_column.get());
-      order_columns.push_back(serenedb_column.get());
-      _column_handles.push_back(std::move(serenedb_column));
-      _pk_type = velox::ROW({std::move(generated_pk_name)}, {velox::BIGINT()});
-    }
-
     auto connector = velox::connector::getConnector("serenedb");
     auto layout = std::make_unique<SereneDBTableLayout>(
-      name(), *this, *connector, std::move(columns), std::move(order_columns),
+      name(), *this, *connector, allColumns(), std::move(order_columns),
       std::move(sort_order));
     _layouts.push_back(layout.get());
     _layout_handles.push_back(std::move(layout));
   }
 
-  const folly::F14FastMap<std::string, const axiom::connector::Column*>&
-  columnMap() const final {
-    return _column_map;
-  }
+ public:
+  explicit RocksDBTable(const catalog::Table& collection)
+    : RocksDBTable{Init{collection}} {}
 
   const std::vector<const axiom::connector::TableLayout*>& layouts()
     const final {
@@ -216,7 +230,8 @@ class RocksDBTable final : public axiom::connector::Table {
     axiom::connector::WriteKind kind) const final {
     SDB_ASSERT(_pk_type);
     if (kind == axiom::connector::WriteKind::kInsert &&
-        _column_handles.back()->Id() == catalog::Column::kGeneratedPKId) {
+        basics::downCast<const SereneDBColumn>(allColumns().back())->Id() ==
+          catalog::Column::kGeneratedPKId) {
       return {};
     }
 
@@ -224,8 +239,7 @@ class RocksDBTable final : public axiom::connector::Table {
     handles.reserve(_pk_type->size());
     for (const auto& name : _pk_type->names()) {
       handles.push_back(std::make_shared<SereneDBColumnHandle>(
-        name,
-        basics::downCast<const SereneDBColumn>(_column_map.at(name))->Id()));
+        name, basics::downCast<const SereneDBColumn>(findColumn(name))->Id()));
     }
     return handles;
   }
@@ -235,9 +249,7 @@ class RocksDBTable final : public axiom::connector::Table {
   const velox::RowTypePtr& PKType() const noexcept { return _pk_type; }
 
  private:
-  std::vector<std::unique_ptr<SereneDBColumn>> _column_handles;
   std::vector<std::unique_ptr<SereneDBTableLayout>> _layout_handles;
-  folly::F14FastMap<std::string, const axiom::connector::Column*> _column_map;
   std::vector<const axiom::connector::TableLayout*> _layouts;
   velox::RowTypePtr _pk_type;
   ObjectId _table_id;
@@ -344,6 +356,13 @@ class SereneDBConnectorMetadata final
   axiom::connector::ConnectorWriteHandlePtr beginWrite(
     const axiom::connector::ConnectorSessionPtr& session,
     const axiom::connector::TablePtr& table, axiom::connector::WriteKind kind) {
+    if (const auto* write_file_table =
+          dynamic_cast<const WriteFileTable*>(table.get())) {
+      SDB_ASSERT(kind == axiom::connector::WriteKind::kInsert);
+      return std::make_shared<FileConnectorWriteHandle>(
+        write_file_table->GetSink(), write_file_table->GetWriterOptions());
+    }
+
     return std::make_shared<SereneDBConnectorWriteHandle>(session, table, kind);
   }
 
@@ -351,6 +370,16 @@ class SereneDBConnectorMetadata final
     const axiom::connector::ConnectorSessionPtr& session,
     const axiom::connector::ConnectorWriteHandlePtr& handle,
     const std::vector<velox::RowVectorPtr>& write_results) final {
+    if (dynamic_cast<const FileInsertTableHandle*>(
+          handle->veloxHandle().get()) != nullptr) {
+      velox::DecodedVector decoded;
+      SDB_ASSERT(write_results.size() == 1);
+      SDB_ASSERT(write_results[0]->size() == 1);
+      decoded.decode(*write_results[0]->childAt(0));
+      const int64_t total_rows = decoded.valueAt<int64_t>(0);
+      return yaclib::MakeFuture(total_rows);
+    }
+
     const auto serene_insert_handle =
       std::dynamic_pointer_cast<const SereneDBConnectorInsertTableHandle>(
         handle->veloxHandle());
@@ -377,6 +406,11 @@ class SereneDBConnectorMetadata final
     const axiom::connector::ConnectorSessionPtr& session,
     const axiom::connector::ConnectorWriteHandlePtr& handle) noexcept final
     try {
+    if (dynamic_cast<const FileInsertTableHandle*>(
+          handle->veloxHandle().get())) {
+      return velox::ContinueFuture::make();
+    }
+
     auto serene_insert_handle =
       std::dynamic_pointer_cast<const SereneDBConnectorInsertTableHandle>(
         handle->veloxHandle());
@@ -426,6 +460,13 @@ class SereneDBConnector final : public velox::connector::Connector {
     const velox::connector::ConnectorTableHandlePtr& table_handle,
     const velox::connector::ColumnHandleMap& column_handles,
     velox::connector::ConnectorQueryCtx* connector_query_ctx) final {
+    if (const auto* file_handle =
+          dynamic_cast<const FileTableHandle*>(table_handle.get())) {
+      return std::make_unique<FileDataSource>(
+        file_handle->GetSource(), file_handle->GetReaderOptions(),
+        file_handle->GetRowReaderOptions(), *connector_query_ctx->memoryPool());
+    }
+
     const auto& serene_table_handle =
       basics::downCast<const SereneDBConnectorTableHandle>(*table_handle);
     const auto& object_key = serene_table_handle.TableId();
@@ -468,6 +509,13 @@ class SereneDBConnector final : public velox::connector::Connector {
       connector_insert_table_handle,
     velox::connector::ConnectorQueryCtx* connector_query_ctx,
     velox::connector::CommitStrategy commit_strategy) final {
+    if (const auto* file_handle = dynamic_cast<const FileInsertTableHandle*>(
+          connector_insert_table_handle.get())) {
+      return std::make_unique<FileDataSink>(
+        file_handle->GetSink(), file_handle->GetWriterOptions(),
+        *connector_query_ctx->connectorMemoryPool());
+    }
+
     auto& serene_insert_handle =
       basics::downCast<SereneDBConnectorInsertTableHandle>(
         *connector_insert_table_handle);
@@ -499,8 +547,8 @@ class SereneDBConnector final : public velox::connector::Connector {
             pk_indices.resize(table.PKType()->size());
             std::iota(pk_indices.begin(), pk_indices.end(), 0);
 #ifdef SDB_DEV
-            // SQL Analyzer should put PK columns at the start and with correct
-            // order
+            // SQL Analyzer should put PK columns at the start and with
+            // correct order
             const auto& pk_handles =
               table.rowIdHandles(serene_insert_handle.Kind());
             SDB_ASSERT(pk_indices.size() == pk_handles.size());

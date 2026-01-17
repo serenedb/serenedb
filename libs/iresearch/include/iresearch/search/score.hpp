@@ -70,7 +70,7 @@ ScoreFunctions PrepareScorers(std::span<const ScorerBucket> buckets,
 // Compiles a set of prepared scorers into a single score function.
 ScoreFunction CompileScorers(ScoreFunctions&& scorers);
 
-void CompileScore(irs::ScoreAttr& score, std::span<const ScorerBucket> buckets,
+void CompileScore(ScoreAttr& score, std::span<const ScorerBucket> buckets,
                   const ColumnProvider& segment, const TermReader& field,
                   const byte_type* stats, const AttributeProvider& doc,
                   score_t boost);

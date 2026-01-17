@@ -30,7 +30,7 @@
 namespace irs {
 
 class BufferedColumnIterator : public ResettableDocIterator {
-  static constexpr BufferedValue kEmpty{irs::doc_limits::eof(), 0, 0};
+  static constexpr BufferedValue kEmpty{doc_limits::eof(), 0, 0};
 
  public:
   BufferedColumnIterator(std::span<const BufferedValue> values,
@@ -112,7 +112,7 @@ class BufferedColumnIterator : public ResettableDocIterator {
   }
 
  private:
-  using Attributes = std::tuple<DocAttr, CostAttr, irs::PayAttr>;
+  using Attributes = std::tuple<DocAttr, CostAttr, PayAttr>;
 
   Attributes _attrs;
   const BufferedValue* _begin;

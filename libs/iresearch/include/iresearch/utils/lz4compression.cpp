@@ -99,7 +99,7 @@ bytes_view Lz4::Lz4Decompressor::decompress(const byte_type* src,
 }
 
 Compressor::ptr Lz4::compressor(const Options& opts) {
-  const auto acceleration = irs::Acceleration(opts.hint);
+  const auto acceleration = Acceleration(opts.hint);
 
   if (0 == acceleration) {
     return memory::to_managed<Lz4Compressor>(gLZ4BasicCompressor);

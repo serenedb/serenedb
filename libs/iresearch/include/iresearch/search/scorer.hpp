@@ -229,9 +229,6 @@ enum class ScoreMergeType {
 
   // Find max amongst multiple scores
   Max,
-
-  // Find min amongst multiple scores
-  Min,
 };
 
 struct ScorerBucket {
@@ -409,17 +406,6 @@ struct MaxMerger {
   }
 };
 
-struct MinMerger {
-  void operator()(score_t* IRS_RESTRICT dst,
-                  const score_t* IRS_RESTRICT src) const noexcept {
-    const auto& src_value = *src;
-
-    if (src_value < *dst) {
-      *dst = src_value;
-    }
-  }
-};
-
 template<typename Visitor>
 auto ResolveMergeType(ScoreMergeType type, size_t num_buckets,
                       Visitor&& visitor) {
@@ -441,8 +427,6 @@ auto ResolveMergeType(ScoreMergeType type, size_t num_buckets,
       return impl.template operator()<SumMerger>();
     case ScoreMergeType::Max:
       return impl.template operator()<MaxMerger>();
-    case ScoreMergeType::Min:
-      return impl.template operator()<MinMerger>();
   }
 }
 

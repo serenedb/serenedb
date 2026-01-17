@@ -538,16 +538,13 @@ CostAdapters Execute(const NGramState& query_state,
   itrs.reserve(query_state.terms.size());
 
   for (const auto& term_state : query_state.terms) {
-    if (term_state == nullptr) [[unlikely]] {
+    if (!term_state) [[unlikely]] {
       continue;
     }
 
-    if (auto docs = field->postings(*term_state, required_features)) {
-      auto& it = itrs.emplace_back(std::move(docs));
-
-      if (!it) [[unlikely]] {
-        itrs.pop_back();
-      }
+    if (auto docs = field->Iterator(required_features, *term_state))
+      [[likely]] {
+      itrs.emplace_back(std::move(docs));
     }
   }
 

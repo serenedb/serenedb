@@ -66,7 +66,7 @@ class BooleanFilter : public FilterWithBoost, public AllDocsProvider {
     return result;
   }
 
-  Query::ptr prepare(const PrepareContext& ctx) const override;
+  Query::ptr PrepareImpl(const PrepareContext& ctx, uint32_t min_match) const;
 
  protected:
   bool equals(const Filter& rhs) const noexcept final;
@@ -75,18 +75,19 @@ class BooleanFilter : public FilterWithBoost, public AllDocsProvider {
                                     std::vector<const Filter*>& excl,
                                     const PrepareContext& ctx) const = 0;
 
- private:
-  void group_filters(AllDocsProvider::Ptr& all_docs_zero_boost,
-                     std::vector<const Filter*>& incl,
-                     std::vector<const Filter*>& excl) const;
+  void GroupFilters(AllDocsProvider::Ptr& all_docs_zero_boost,
+                    std::vector<const Filter*>& incl,
+                    std::vector<const Filter*>& excl) const;
 
   std::vector<Filter::ptr> _filters;
-  ScoreMergeType _merge_type{ScoreMergeType::Sum};
+  ScoreMergeType _merge_type = ScoreMergeType::Sum;
 };
 
 // Represents conjunction
 class And final : public BooleanFilter {
  public:
+  Query::ptr prepare(const PrepareContext& ctx) const final;
+
   TypeInfo::type_id type() const noexcept final { return irs::Type<And>::id(); }
 
  protected:
@@ -117,7 +118,7 @@ class Or final : public BooleanFilter {
                             const PrepareContext& ctx) const final;
 
  private:
-  size_t _min_match_count{1};
+  uint32_t _min_match_count{1};
 };
 
 // Represents negation

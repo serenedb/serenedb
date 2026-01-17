@@ -997,7 +997,7 @@ struct PrimarySortIteratorAdapter {
 
   DocIterator::ptr it;
   const DocAttr* doc;
-  const irs::PayAttr* payload;
+  const PayAttr* payload;
   DocIterator::ptr live_docs;
   const DocAttr* live_doc;
   doc_id_t min{};

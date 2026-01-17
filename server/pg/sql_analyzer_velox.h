@@ -26,9 +26,14 @@
 #include <velox/core/PlanNode.h>
 #include <velox/core/QueryCtx.h>
 
+#include "pg/copy_messages_queue.h"
 #include "pg/sql_utils.h"
 #include "query/query.h"
 #include "query/utils.h"
+
+namespace sdb::message {
+class Buffer;
+}
 
 namespace sdb::pg {
 
@@ -47,6 +52,14 @@ class UniqueIdGenerator {
   std::string NextColumnName(std::string_view alias) {
     SDB_ASSERT(!alias.empty());
     return absl::StrCat(alias, query::kColumnSeparator, NextColumnId());
+  }
+
+  std::vector<std::string> NextColumnNames(
+    std::span<const std::string> aliases) {
+    return aliases | std::views::transform([&](const std::string& name) {
+             return NextColumnName(name);
+           }) |
+           std::ranges::to<std::vector>();
   }
 
  private:
@@ -69,7 +82,9 @@ class Objects;
 
 VeloxQuery AnalyzeVelox(const RawStmt& node, const QueryString& query_string,
                         const Objects& objects, UniqueIdGenerator& id_generator,
-                        query::QueryContext& query_ctx, pg::Params& params);
+                        query::QueryContext& query_ctx, pg::Params& params,
+                        message::Buffer* send_buffer,
+                        CopyMessagesQueue* copy_queue);
 
 velox::TypePtr NameToType(const TypeName& type_name);
 

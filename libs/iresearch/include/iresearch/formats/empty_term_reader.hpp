@@ -46,9 +46,7 @@ class EmptyTermReader final : public irs::TermReader {
     return 0;
   }
 
-  size_t read_documents(bytes_view, std::span<doc_id_t>) const noexcept final {
-    return 0;
-  }
+  void read_documents(bytes_view, Acceptor acceptor) const noexcept final {}
 
   TermMeta term(bytes_view) const noexcept final { return {}; }
 

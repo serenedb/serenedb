@@ -25,6 +25,7 @@
 #include <absl/container/node_hash_map.h>
 
 #include <functional>
+#include <iresearch/index/index_meta.hpp>
 
 #include "basics/down_cast.h"
 #include "iresearch/index/index_reader_options.hpp"
@@ -55,6 +56,7 @@ struct ExecutionContext {
   IResourceManager& memory = IResourceManager::gNoop;
   const Scorers& scorers = Scorers::kUnordered;
   const AttributeProvider* ctx = nullptr;
+  const DocumentMask* pending_docs_mask = nullptr;
   // If enabled, wand would use first scorer from scorers
   WandContext wand{};
 };

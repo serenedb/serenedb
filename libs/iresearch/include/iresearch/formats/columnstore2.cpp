@@ -23,6 +23,7 @@
 #include "columnstore2.hpp"
 
 #include <absl/cleanup/cleanup.h>
+#include <immintrin.h>
 
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/formats/formats.hpp>
@@ -549,6 +550,31 @@ auto ColumnBase::MakeIterator(ValueReader&& reader, IndexInput::ptr&& index_in,
       std::move(reader)));
   }
 }
+
+template<NormEncoding Encoding>
+class DirectFixedNormReader : public NormReader {
+ public:
+  DirectFixedNormReader(doc_id_t base, const byte_type* origin) noexcept
+    : _doc_base{base}, _origin{origin} {}
+
+  void Collect(std::span<doc_id_t> docs,
+               std::span<uint32_t> values) noexcept final {
+    SDB_ASSERT(docs.size() == values.size());
+
+    const size_t size = docs.size();
+    for (size_t i = 0; i < size; ++i) {
+      const auto doc = docs[i];
+      SDB_ASSERT(doc >= _doc_base);
+      const auto index = doc - _doc_base;
+      const auto begin = _origin + std::to_underlying(Encoding) * index;
+      values[i] = Norm::Read<Encoding>({begin, std::to_underlying(Encoding)});
+    }
+  }
+
+ private:
+  doc_id_t _doc_base;
+  const byte_type* const _origin;
+};
 
 template<typename Factory>
 NormReader::ptr ColumnBase::MakeNormReader(Factory&& f) const {

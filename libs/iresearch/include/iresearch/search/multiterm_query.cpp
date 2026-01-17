@@ -136,6 +136,7 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
   const bool has_unscored_terms = !state->unscored_states.empty();
 
   IteratorOptions options{ctx.wand};
+  options.score_block = ctx.score_block;
   uint32_t current_cookie_idx = 0;
 
   auto make_score = [&](uint32_t cookie_idx,

@@ -162,6 +162,7 @@ RocksDBValue::RocksDBValue(RocksDBEntryType type, vpack::Slice data)
     case RocksDBEntryType::Index:
     case RocksDBEntryType::IndexTombstone:
     case RocksDBEntryType::Role:
+    case RocksDBEntryType::CounterValue:
     case RocksDBEntryType::KeyGeneratorValue:
     case RocksDBEntryType::ReplicationApplierConfig: {
       size_t byte_size = static_cast<size_t>(data.byteSize());

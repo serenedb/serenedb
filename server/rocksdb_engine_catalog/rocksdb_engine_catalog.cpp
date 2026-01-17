@@ -366,8 +366,6 @@ vpack::Slice GetTableProperties(vpack::Builder& builder,
   } else {
     collection.WriteProperties(builder);
   }
-  builder.add(StaticStrings::kStats);
-  vpack::WriteObject(builder, physical.GetTableStats());
 
   builder.add(StaticStrings::kIndexes);
   physical.getAllIndexesInternal(builder);
@@ -1584,7 +1582,28 @@ Result RocksDBEngineCatalog::MarkDeleted(const catalog::Table& c,
 Result RocksDBEngineCatalog::createTableShard(
   const catalog::Table& collection, bool is_new,
   std::shared_ptr<TableShard>& physical) {
-  physical = std::make_shared<TableShard>(MakeTableMeta(collection));
+  auto meta = MakeTableMeta(collection);
+  if (!is_new) {
+    // Load Table stats
+    RocksDBKeyWithBuffer key;
+    key.constructSchemaObject(RocksDBEntryType::CounterValue,
+                              collection.GetDatabaseId(),
+                              collection.GetSchemaId(), collection.GetId());
+    std::string value;
+    _db->Get(
+      rocksdb::ReadOptions{},
+      RocksDBColumnFamilyManager::get(RocksDBColumnFamilyManager::Family::Data),
+      key.string(), &value);
+    catalog::TableStats stats;
+    if (auto r = vpack::ReadObjectNothrow<catalog::TableStats>(
+          vpack::Slice{reinterpret_cast<const uint8_t*>(value.data())}, stats,
+          {.skip_unknown = false, .strict = true});
+        !r.ok()) {
+      return r;
+    }
+    meta.stats = std::move(stats);
+  }
+  physical = std::make_shared<TableShard>(meta);
   return {};
 }
 
@@ -1903,27 +1922,17 @@ Result RocksDBEngineCatalog::SyncTableStats(const catalog::Table& c,
   const auto db_id = c.GetDatabaseId();
   const auto cid = c.GetId();
   vpack::Builder b;
-  return WriteDefinition(
-    _db->GetRootDB(),
-    [&] {
-      RocksDBKeyWithBuffer key;
-      key.constructSchemaObject(RocksDBEntryType::Collection, db_id,
-                                c.GetSchemaId(), cid);
-      return key;
-    },
-    [&] {
-      return RocksDBValue::Object(RocksDBEntryType::Collection,
-                                  GetTableProperties(b, c, physical, true));
-    },
-    [&] {
-      const wal::SchemaObjectPut entry{
-        .database_id = db_id,
-        .schema_id = c.GetSchemaId(),
-        .object_id = cid,
-        .data = b.slice(),
-      };
-      return wal::Write(RocksDBLogType::TableChange, entry);
-    });
+  b.openObject();
+  physical.GetTableStatsVPack(b);
+  b.close();
+  auto value = RocksDBValue::Object(RocksDBEntryType::CounterValue, b.slice());
+  RocksDBKeyWithBuffer key;
+  key.constructSchemaObject(RocksDBEntryType::CounterValue, db_id,
+                            c.GetSchemaId(), cid);
+  auto* cf =
+    RocksDBColumnFamilyManager::get(RocksDBColumnFamilyManager::Family::Data);
+  return rocksutils::ConvertStatus(
+    _db->Put(rocksdb::WriteOptions{}, cf, key.string(), value.string()));
 }
 
 Result RocksDBEngineCatalog::ChangeView(ObjectId db, ObjectId schema_id,

@@ -30,6 +30,10 @@
 #include "catalog/object.h"
 #include "pg/pg_types.h"
 
+namespace sdb::query {
+class Transaction;
+}  // namespace sdb::query
+
 struct RawStmt;
 struct List;
 struct Node;
@@ -75,18 +79,23 @@ class Objects : public irs::memory::Managed {
     // This probably requires changing axiom::connector::Table.
     void EnsureTable() const;
     mutable std::shared_ptr<axiom::connector::Table> table;
+    query::Transaction* transaction = nullptr;
   };
 
   using Map = containers::FlatHashMap<ObjectName, ObjectData>;
 
   template<typename S>
   ObjectData& ensureRelation(S s, std::string_view relation) {
-    return _relations[ObjectName{ensureNotNull(s), relation}];
+    auto& data = _relations[ObjectName{ensureNotNull(s), relation}];
+    data.transaction = _transaction;
+    return data;
   }
 
   template<typename S>
   ObjectData& ensureFunction(S s, std::string_view relation) {
-    return _functions[ObjectName{ensureNotNull(s), relation}];
+    auto& data = _functions[ObjectName{ensureNotNull(s), relation}];
+    data.transaction = _transaction;
+    return data;
   }
 
   template<typename S>
@@ -111,6 +120,11 @@ class Objects : public irs::memory::Managed {
   void clear() noexcept {
     _relations.clear();
     _functions.clear();
+    _transaction = nullptr;
+  }
+
+  void ResetTransactionState(query::Transaction& transaction) {
+    _transaction = &transaction;
   }
 
  private:
@@ -124,6 +138,7 @@ class Objects : public irs::memory::Managed {
     }
   }
 
+  query::Transaction* _transaction = nullptr;
   Map _relations;
   Map _functions;
   containers::FlatHashSet<void*> _search_functions;

@@ -27,6 +27,7 @@
 #include "basics/assert.h"
 #include "basics/fwd.h"
 #include "basics/misc.hpp"
+#include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
@@ -34,6 +35,7 @@
 #include "data_source.hpp"
 #include "query/transaction.h"
 #include "rocksdb/utilities/transaction_db.h"
+#include "storage_engine/table_shard.h"
 
 namespace sdb::connector {
 
@@ -147,10 +149,12 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
 
 class RocksDBTable final : public axiom::connector::Table {
  public:
-  explicit RocksDBTable(const catalog::Table& collection)
+  explicit RocksDBTable(const catalog::Table& collection,
+                        query::Transaction& transaction)
     : Table{std::string{collection.GetName()}, collection.RowType()},
       _pk_type(collection.PKType()),
-      _table_id(collection.GetId()) {
+      _table_id(collection.GetId()),
+      _stats{transaction.GetTableStats(_table_id)} {
     _column_map.reserve(collection.RowType()->size());
     _column_handles.reserve(collection.RowType()->size());
 
@@ -211,7 +215,7 @@ class RocksDBTable final : public axiom::connector::Table {
     return _layouts;
   }
 
-  uint64_t numRows() const final;
+  uint64_t numRows() const final { return _stats.num_rows; }
 
   std::vector<velox::connector::ColumnHandlePtr> rowIdHandles(
     axiom::connector::WriteKind kind) const final {
@@ -242,6 +246,7 @@ class RocksDBTable final : public axiom::connector::Table {
   std::vector<const axiom::connector::TableLayout*> _layouts;
   velox::RowTypePtr _pk_type;
   ObjectId _table_id;
+  catalog::TableStats _stats;
 };
 
 class SereneDBConnectorSplit final : public velox::connector::ConnectorSplit {

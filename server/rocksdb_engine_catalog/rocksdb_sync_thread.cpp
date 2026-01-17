@@ -26,11 +26,9 @@
 
 #include "app/app_server.h"
 #include "basics/logger/logger.h"
-#include "catalog/catalog.h"
 #include "rest_server/serened_single.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
-#include "storage_engine/table_shard.h"
 
 using namespace sdb;
 
@@ -50,8 +48,6 @@ Result RocksDBSyncThread::syncWal() {
   // note the following line in RocksDB documentation (rocksdb/db.h):
   // > Currently only works if allow_mmap_writes = false in Options.
   SDB_ASSERT(!_engine.rocksDBOptions().allow_mmap_writes);
-
-  SyncStats();
 
   auto db = _engine.db()->GetBaseDB();
 
@@ -89,28 +85,8 @@ Result RocksDBSyncThread::sync(rocksdb::DB* db) {
   return {};
 }
 
-void RocksDBSyncThread::SyncStats() {
-  SDB_TRACE("xxxxx", Logger::ENGINES, "syncing RocksDB table statistics");
-  auto snapshot = catalog::GetCatalog().GetSnapshot();
-  for (auto& db : snapshot->GetDatabases()) {
-    for (auto& schema : snapshot->GetSchemas(db->GetId())) {
-      catalog::VisitTables(*snapshot, db->GetId(), schema->GetName(),
-                           [&](auto& table, auto& shard) mutable {
-                             auto r = _engine.SyncTableStats(*table, *shard);
-                             if (!r.ok()) {
-                               SDB_WARN("xxxxx", Logger::ENGINES,
-                                        "unable to update stats for table '",
-                                        table->GetName(),
-                                        "': ", r.errorMessage());
-                             }
-                           });
-    }
-  }
-}
-
 void RocksDBSyncThread::beginShutdown() {
   Thread::beginShutdown();
-  SyncStats();
 
   // wake up the thread that may be waiting in run()
   absl::MutexLock guard{&_condition.mutex};

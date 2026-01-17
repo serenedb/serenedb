@@ -20,6 +20,8 @@
 
 #include "query/transaction.h"
 
+#include "basics/errors.h"
+#include "catalog/catalog.h"
 #include "storage_engine/engine_feature.h"
 
 namespace sdb::query {
@@ -119,6 +121,15 @@ void Transaction::Destroy() noexcept {
   _storage_snapshot.reset();
   _rocksdb_transaction.reset();
   _rocksdb_snapshot = nullptr;
+}
+
+catalog::TableStats Transaction::GetTableStats(ObjectId table_id) const {
+  auto table_shard = catalog::GetTableShard(table_id);
+  if (!table_shard) {
+    SDB_THROW(ERROR_BAD_PARAMETER,
+              "Table shard not found for table id: ", table_id);
+  }
+  return table_shard->GetTableStats();
 }
 
 }  // namespace sdb::query

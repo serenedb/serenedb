@@ -23,6 +23,7 @@
 #include <velox/core/QueryConfig.h>
 
 #include "app/app_server.h"
+#include "basics/down_cast.h"
 #include "basics/logger/logger.h"
 #include "general_server/state.h"
 #include "pg/executor.h"
@@ -68,6 +69,8 @@ bool SqlStatement::ProcessNextRoot(
   }
 
   objects.clear();
+  objects.ResetTransactionState(
+    basics::downCast<query::Transaction>(*connection_ctx));
 
   // TODO : split to Parse and Bind steps
   ParamIndex max_bind_param_idx = 0;

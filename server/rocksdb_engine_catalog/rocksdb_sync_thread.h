@@ -58,8 +58,6 @@ class RocksDBSyncThread final : public Thread {
   static Result sync(rocksdb::DB* db);
 
  private:
-  void SyncStats();
-
   void run() final;
 
   RocksDBEngineCatalog& _engine;

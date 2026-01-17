@@ -163,6 +163,10 @@ class TableShard {
     return {.num_rows = _num_rows.load(std::memory_order_relaxed)};
   }
 
+  void GetTableStatsVPack(vpack::Builder& builder) const {
+    vpack::WriteObject(builder, vpack::Embedded{GetTableStats()});
+  }
+
   // TODO(gnusi): remove
   void getAllIndexesInternal(vpack::Builder& result) const {
     getIndexesVPack(result, [](const Index*, IndexSerialization& flags) {

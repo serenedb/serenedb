@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include "pg/executor_request.h"
 #include "query/external_executor.h"
 #include "utils/exec_context.h"
 
@@ -29,14 +30,17 @@ namespace sdb::pg {
 
 class Executor final : public query::ExternalExecutor {
  public:
-  explicit Executor(std::shared_ptr<ExecContext> context, const Node& node);
+  explicit Executor(std::shared_ptr<ExecContext> context,
+                    std::shared_ptr<ExecutorRequest> req);
 
   yaclib::Future<Result> Execute() final;
   yaclib::Future<> RequestCancel() final;
 
  private:
+  yaclib::Future<Result> ExecuteGenericDDLRequest();
+
   std::shared_ptr<ExecContext> _context;
-  const Node& _node;
+  std::shared_ptr<ExecutorRequest> _req;
 };
 
 }  // namespace sdb::pg

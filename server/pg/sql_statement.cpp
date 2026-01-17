@@ -100,10 +100,10 @@ bool SqlStatement::ProcessNextRoot(
     return true;
   }
 
-  if (query_desc.pgsql_node) {
-    SDB_ASSERT(query_desc.pgsql_node);
+  if (query_desc.request) {
+    SDB_ASSERT(query_desc.request);
     auto executor =
-      std::make_unique<Executor>(connection_ctx, *query_desc.pgsql_node);
+      std::make_unique<Executor>(connection_ctx, *query_desc.request);
     query_ctx.command_type.Add(query::CommandType::External);
     query = query::Query::CreateExternal(std::move(executor), query_ctx);
     return true;

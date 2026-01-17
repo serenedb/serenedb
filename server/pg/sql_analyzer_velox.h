@@ -27,6 +27,7 @@
 #include <velox/core/QueryCtx.h>
 
 #include "pg/copy_messages_queue.h"
+#include "pg/executor_request.h"
 #include "pg/sql_utils.h"
 #include "query/query.h"
 #include "query/utils.h"
@@ -73,7 +74,7 @@ struct VeloxQuery {
   axiom::logical_plan::LogicalPlanNodePtr root;
   containers::FlatHashMap<std::string_view, OptionValue> options;
 
-  const Node* pgsql_node = nullptr;
+  std::shared_ptr<ExecutorRequest> request;
 
   SqlCommandType type = SqlCommandType::Unknown;
 };

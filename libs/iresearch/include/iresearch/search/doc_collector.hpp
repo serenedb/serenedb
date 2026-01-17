@@ -1,5 +1,7 @@
 #pragma once
 
+#include <miniselect/median_of_ninthers.h>
+
 #include <cmath>
 #include <cstddef>
 #include <iresearch/index/index_reader.hpp>
@@ -131,10 +133,11 @@ size_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
       ++begin;
 
       if (begin == end) {
-        std::nth_element(results.begin(), pivot, end,
-                         [](const auto& lhs, const auto& rhs) noexcept {
-                           return lhs.first > rhs.first;
-                         });
+        miniselect::median_of_ninthers_select(
+          results.begin(), pivot, end,
+          [](const auto& lhs, const auto& rhs) noexcept {
+            return lhs.first > rhs.first;
+          });
         begin = pivot;
         min_threshold = begin->first;
         score->Min(min_threshold);

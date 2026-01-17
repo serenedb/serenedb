@@ -97,3 +97,6 @@
 [submodule "third_party/sqllogictest-rs"]
 	path = third_party/sqllogictest-rs
 	url = git@github.com:serenedb/sqllogictest-rs.git
+[submodule "third_party/miniselect"]
+	path = third_party/miniselect
+	url = git@github.com:danlark1/miniselect.git

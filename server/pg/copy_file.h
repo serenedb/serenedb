@@ -48,9 +48,8 @@ class CopyInReadFile final : public velox::ReadFile {
   CopyInReadFile(message::Buffer& buffer, CopyMessagesQueue& copy_queue,
                  size_t column_count);
 
-  std::string_view pread(
-    uint64_t offset, uint64_t length, void* buf,
-    const velox::FileStorageContext& fileStorageContext = {}) const final;
+  std::string_view pread(uint64_t offset, uint64_t length, void* buf,
+                         const velox::FileIoContext& context = {}) const final;
 
   uint64_t size() const final { return std::numeric_limits<uint64_t>::max(); }
   uint64_t memoryUsage() const final { return 0; }
@@ -58,7 +57,7 @@ class CopyInReadFile final : public velox::ReadFile {
   std::string getName() const final { return "CopyInReadFile"; }
   uint64_t getNaturalReadSize() const final { return 8196; }
 
-  ~CopyInReadFile() override { _copy_queue.CloseListening(); }
+  ~CopyInReadFile() final { _copy_queue.CloseListening(); }
 
  private:
   message::Buffer& _buffer;

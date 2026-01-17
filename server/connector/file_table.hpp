@@ -40,11 +40,6 @@ class FileTable : public axiom::connector::Table {
 
   virtual ~FileTable() = default;
 
-  const folly::F14FastMap<std::string, const axiom::connector::Column*>&
-  columnMap() const final {
-    return _columns_map;
-  }
-
   const std::vector<const axiom::connector::TableLayout*>& layouts()
     const final {
     return _layouts;
@@ -58,9 +53,6 @@ class FileTable : public axiom::connector::Table {
   }
 
  protected:
-  std::vector<std::unique_ptr<axiom::connector::Column>> _columns;
-  folly::F14FastMap<std::string, const axiom::connector::Column*> _columns_map;
-
   std::vector<const axiom::connector::TableLayout*> _layouts;
   std::vector<std::unique_ptr<axiom::connector::TableLayout>> _layout_handles;
 };

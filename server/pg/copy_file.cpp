@@ -82,7 +82,7 @@ void CopyOutWriteFile::close() { _buffer.Write(ToBuffer(kCopyDone), true); }
 
 CopyInReadFile::CopyInReadFile(message::Buffer& buffer,
                                CopyMessagesQueue& copy_queue,
-                               const size_t column_count)
+                               size_t column_count)
   : _buffer{buffer}, _copy_queue{copy_queue}, _copy_queue_it{copy_queue} {
   const size_t message_size = sizeof(uint8_t) + sizeof(int32_t) +
                               sizeof(uint8_t) + sizeof(int16_t) +
@@ -114,7 +114,7 @@ CopyInReadFile::CopyInReadFile(message::Buffer& buffer,
 
 std::string_view CopyInReadFile::pread(
   uint64_t offset, uint64_t length, void* buf,
-  const velox::FileStorageContext& /*fileStorageContext*/) const {
+  const velox::FileIoContext& /*context*/) const {
   SDB_ASSERT(offset >= _prev_offset, "CopyIn does not support seeking back");
   _prev_offset = offset;
   const auto bytes_read = _copy_queue_it.Next(static_cast<char*>(buf), length);

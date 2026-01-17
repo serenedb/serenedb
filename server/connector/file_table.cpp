@@ -31,24 +31,22 @@
 
 namespace sdb::connector {
 
-FileTable::FileTable(velox::RowTypePtr type, std::string_view file_path)
-  : Table{std::string{file_path}, std::move(type)} {
-  const auto& table_type = this->type();
-  std::vector<const axiom::connector::Column*> columns;
-  columns.reserve(table_type->size());
-  _columns.reserve(table_type->size());
-  _columns_map.reserve(table_type->size());
-  catalog::Column::Id id = 0;
-  for (const auto& [type, name] :
-       std::ranges::views::zip(table_type->children(), table_type->names())) {
-    _columns.emplace_back(std::make_unique<SereneDBColumn>(name, type, id++));
-    _columns_map.emplace(name, _columns.back().get());
-    columns.emplace_back(_columns.back().get());
-  }
-
+FileTable::FileTable(velox::RowTypePtr table_type, std::string_view file_path)
+  : Table{std::string{file_path}, [&] {
+            std::vector<std::unique_ptr<const axiom::connector::Column>>
+              column_handles;
+            column_handles.reserve(table_type->size());
+            catalog::Column::Id id = 0;
+            for (const auto& [type, name] : std::ranges::views::zip(
+                   table_type->children(), table_type->names())) {
+              column_handles.emplace_back(
+                std::make_unique<SereneDBColumn>(name, type, id++));
+            }
+            return column_handles;
+          }()} {
   auto connector = velox::connector::getConnector("serenedb");
   auto layout = std::make_unique<SereneDBTableLayout>(
-    name(), *this, *connector, std::move(columns),
+    name(), *this, *connector, allColumns(),
     std::vector<const axiom::connector::Column*>{},
     std::vector<axiom::connector::SortOrder>{});
   _layouts.emplace_back(layout.get());

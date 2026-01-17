@@ -99,8 +99,9 @@ doc_id_t BitsetDocIterator::seek(doc_id_t target) noexcept {
   return advance();
 }
 
-uint32_t BitsetDocIterator::collect(std::span<doc_id_t> docs) noexcept {
-  return Collect(*this, docs);
+uint32_t BitsetDocIterator::collect(std::span<doc_id_t> docs,
+                                    size_t offset) noexcept {
+  return Collect(*this, docs, offset);
 }
 
 uint32_t BitsetDocIterator::count() noexcept {

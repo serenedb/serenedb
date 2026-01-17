@@ -53,11 +53,11 @@ size_t ExecuteTopKWithCount(const DirectoryReader& reader, const Filter& filter,
     const auto* scorer = irs::get<ScoreAttr>(*it);
 
     while (true) {
-      auto collected = docs.subspan(offset);
-      const uint32_t block_size = it->collect(collected);
+      const uint32_t block_size = it->collect(docs, offset);
       if (block_size == 0) {
         break;
       }
+      auto collected = docs.subspan(offset);
       columns.Collect(collected);
       scorer->Score(scores.data() + offset, collected.size());
       count += block_size;

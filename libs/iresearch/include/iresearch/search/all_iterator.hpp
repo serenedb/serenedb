@@ -68,7 +68,7 @@ class AllIterator : public DocIterator {
     return count;
   }
 
-  uint32_t collect(std::span<doc_id_t> docs) final;
+  uint32_t collect(std::span<doc_id_t> docs, size_t offset) final;
   void CollectData(uint16_t index) final {}
 
  private:

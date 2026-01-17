@@ -44,8 +44,8 @@ AllIterator::AllIterator(const ColumnProvider& reader,
   }
 }
 
-uint32_t AllIterator::collect(std::span<doc_id_t> docs) {
-  return Collect(*this, docs);
+uint32_t AllIterator::collect(std::span<doc_id_t> docs, size_t offset) {
+  return Collect(*this, docs, offset);
 }
 
 }  // namespace irs

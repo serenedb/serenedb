@@ -22,6 +22,8 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -168,7 +170,9 @@ class UnaryDisjunction : public CompoundDocIterator<Adapter> {
 
   void CollectData(uint16_t index) final { _it.CollectData(index); }
 
-  uint32_t collect(std::span<doc_id_t> docs) final { return _it.collect(docs); }
+  uint32_t collect(std::span<doc_id_t> docs, size_t offset) final {
+    return _it.collect(docs, offset);
+  }
 
  private:
   Adapter _it;
@@ -339,8 +343,8 @@ class BasicDisjunction : public CompoundDocIterator<Adapter>,
     }
   }
 
-  uint32_t collect(std::span<doc_id_t> docs) final {
-    return DocIterator::Collect(*this, docs);
+  uint32_t collect(std::span<doc_id_t> docs, size_t offset) final {
+    return DocIterator::Collect(*this, docs, offset);
   }
 
   void CollectData(uint16_t index) final {
@@ -600,8 +604,8 @@ class SmallDisjunction : public CompoundDocIterator<Adapter>,
     }
   }
 
-  uint32_t collect(std::span<doc_id_t> docs) final {
-    return DocIterator::Collect(*this, docs);
+  uint32_t collect(std::span<doc_id_t> docs, size_t offset) final {
+    return DocIterator::Collect(*this, docs, offset);
   }
 
   bool remove_iterator(typename Adapters::iterator it) {
@@ -730,8 +734,8 @@ class Disjunction : public CompoundDocIterator<Adapter>,
 
   uint32_t count() final { return DocIterator::Count(*this); }
 
-  uint32_t collect(std::span<doc_id_t> docs) final {
-    return DocIterator::Collect(*this, docs);
+  uint32_t collect(std::span<doc_id_t> docs, size_t offset) final {
+    return DocIterator::Collect(*this, docs, offset);
   }
 
   void CollectData(uint16_t index) final {
@@ -1076,10 +1080,11 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
 
       if constexpr (kHasScore) {
         for (auto& it : _itrs) {
+          // TODO(gnusi): we have to set a new score/collect function to support
+          // seek
           if (!it.score().IsDefault() && doc_value == it.value()) {
-            it.CollectData(0);  // TODO(gnusi): fix index
-            // TODO(gnusi): fix score, we must do something with collect/score
-            // function
+            it.CollectData(_score_buf.stream.Index());
+            _score_buf.stream.CollectData(0);  // TODO(gnusi): fix index
           }
         }
       }
@@ -1111,7 +1116,8 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
 
   void CollectData(uint16_t index) final {
     if constexpr (kHasScore) {
-      _score_buf.CollectResult(static_cast<uint16_t>(_buf_offset));
+      SDB_ASSERT(_buf_offset < std::numeric_limits<uint16_t>::max());
+      _score_buf.CollectData(static_cast<uint16_t>(_buf_offset), index);
     }
   }
 
@@ -1135,8 +1141,8 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
     self._score_buf.Flush(res, n);
   }
 
-  uint32_t collect(std::span<doc_id_t> docs) final {
-    return DocIterator::Collect(*this, docs);
+  uint32_t collect(std::span<doc_id_t> docs, size_t offset) final {
+    return DocIterator::Collect(*this, docs, offset);
   }
 
   template<typename Estimation>
@@ -1155,55 +1161,7 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
     }
 
     if constexpr (kHasScore) {
-      auto& score = std::get<ScoreAttr>(_attrs);
-      auto min = ScoreFunction::NoopMin;
-      if (!_scores.scores.empty()) {
-        score.max.leaf = score.max.tail = _scores.sum_score;
-        min = [](ScoreCtx* ctx, score_t arg) noexcept {
-          auto& self = static_cast<BlockDisjunction&>(*ctx);
-          if (self._scores.Size() != self._itrs.size()) [[unlikely]] {
-            self._scores.Clear();
-            detail::MakeSubScores(self._itrs, self._scores);
-            auto& score = std::get<ScoreAttr>(self._attrs);
-            // TODO(mbkkt) We cannot change tail now
-            // Because it needs to recompute sum_score for our parent iterator
-            score.max.leaf /* = score.max.tail */ = self._scores.sum_score;
-          }
-          auto it = self._scores.scores.begin();
-          auto end = self._scores.scores.end();
-          [[maybe_unused]] size_t min_match = 0;
-          [[maybe_unused]] score_t sum = 0.f;
-          while (it != end) {
-            auto next = end;
-            if constexpr (Traits::kMinMatch) {
-              if (arg > sum) {  // TODO(mbkkt) strict wand: >=
-                ++min_match;
-                next = it + 1;
-              }
-              sum += (*it)->max.tail;
-            }
-            const auto others = self._scores.sum_score - (*it)->max.tail;
-            if (arg > others) {
-              // For common usage `arg - others <= (*it)->max.tail` -- is true
-              (*it)->Min(arg - others);
-              next = it + 1;
-            }
-            it = next;
-          }
-          if constexpr (Traits::kMinMatch) {
-            self._match_buf.min_match_count(min_match);
-          }
-        };
-      }
-
-      _score_buf.Reset();
-      // TODO(gnusi): check if empty
-
-      // if (_score_buf.Empty()) {
-      //   score = ScoreFunction::Default();
-      // } else {
-      score.Reset(*this, ScoreN, min);
-      //}
+      PrepareScore();
     }
 
     if (Traits::kMinMatch && min_match_count > 1) {
@@ -1273,7 +1231,7 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
 
     if constexpr (kHasScore) {
       // TODO(gnusi): can we avoid that?
-      _score_buf.Clear();
+      _score_buf.stream.ClearWindow();
     }
 
     do {
@@ -1301,7 +1259,7 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
 
         if constexpr (kHasScore) {
           if (!it.score().IsDefault()) {
-            _score_buf.stream.Reset(it.score());
+            _score_buf.stream.SetScore(it.score());
             const auto r = this->Refill<true>(it, empty);
             _score_buf.stream.Finish();
             return r;
@@ -1357,8 +1315,8 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
       SetBit(_mask[offset / kBlockSize], offset % kBlockSize);
 
       if constexpr (Score) {
-        it.CollectData(0);  // TODO(gnusi): fix index
-        _score_buf.CollectHit(offset);
+        it.CollectData(_score_buf.stream.Index());
+        _score_buf.stream.CollectData(offset);
       }
 
       if constexpr (Traits::kMinMatch) {
@@ -1371,73 +1329,130 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
     return false;  // exhausted
   }
 
-  struct ScoreStream {
+  static_assert(kWindow <= std::numeric_limits<uint16_t>::max());
+
+  class ScoreStream {
+   public:
     void Init(uint16_t score_block) {
-      hits.Realloc(score_block);
-      current_scores.Realloc(score_block);
+      _hits.Realloc(score_block);
+      _scores.Realloc(score_block);
     }
 
-    void Collect(uint16_t hit) {
-      hits.PushBack(hit);
+    uint16_t Index() const noexcept {
+      return static_cast<uint16_t>(_hits.Size());
+    }
 
-      if (hits.Size() == hits.Capacity()) {
+    void CollectData(uint16_t hit) {
+      _hits.PushBack(hit);
+
+      if (_hits.Size() == _hits.Capacity()) {
         Flush();
       }
+    }
+
+    void ClearWindow() noexcept {
+      std::memset(_score_window.data(), 0, sizeof(score_t) * kWindow);
     }
 
     void Finish() {
-      if (hits.Size()) {
+      if (_hits.Size()) {
         Flush();
       }
     }
 
-    void Reset(const ScoreFunction& score) noexcept {
-      this->score = &score;
-      SDB_ASSERT(hits.Size() == 0);
+    auto GetScore(uint16_t index) noexcept { return _scores.Data()[index]; }
+
+    auto GetHits() noexcept { return std::span{_hits.Data(), _hits.Size()}; }
+
+    void SetScore(const ScoreFunction& score) noexcept {
+      _score = &score;
+      SDB_ASSERT(_hits.Size() == 0);
     }
 
     void Flush() {
-      SDB_ASSERT(hits.Size());
+      SDB_ASSERT(_hits.Size());
 
-      score->Score(current_scores.Data(), hits.Size());
+      _score->Score(_scores.Data(), _hits.Size());
       // TODO(gnusi): can optimize if dense
-      Merge<MergeType>(scores.data(), hits.Data(), current_scores.Data(),
-                       hits.Size());
-      hits.Clear();
+      Merge<MergeType>(_score_window.data(), _hits.Data(), _scores.Data(),
+                       _hits.Size());
+      _hits.Clear();
     }
 
+   private:
+    std::array<score_t, kWindow> _score_window;
+    FixedBuffer<uint16_t> _hits;
+    FixedBuffer<score_t> _scores;
+    const ScoreFunction* _score = nullptr;
+  };
+
+  struct ScoreState : ScoreCtx {
     // TODO(gnuis): it's big allocate on heap?
-    std::array<score_t, kWindow> scores;
-    const ScoreFunction* score = nullptr;
-    FixedBuffer<uint16_t> hits;
-    FixedBuffer<score_t> current_scores;
-  };
-
-  struct DisjunctionScoreBlock {
-    static_assert(kWindow <= std::numeric_limits<uint16_t>::max());
-
     ScoreStream stream;
-    FixedBuffer<score_t> result;
+    std::unique_ptr<score_t[]> result;
 
-    void Reset() {
-      stream.Init(256);  // TODO(gnusi): score block
+    void CollectData(uint16_t offset, uint16_t index) noexcept {
+      result[index] = stream.GetScore(offset);
     }
-    void Clear() noexcept {
-      std::memset(stream.scores.data(), 0, sizeof(score_t) * kWindow);
-    }
-    void CollectHit(uint16_t hit) noexcept {
-      SDB_ASSERT(hit < kWindow);
-      stream.Collect(hit);
-    }
-    void CollectResult(uint16_t offset) noexcept {
-      SDB_ASSERT(offset < kWindow);
-      result.PushBack(stream.scores[offset]);
-    }
-    void Flush(score_t* res, size_t n) noexcept {
-      std::memcpy(res, result.Data(), n * sizeof(score_t));
-      result.Clear();
+
+    // TODO(gnusi): score block
+    ScoreFunction PrepareScore(auto min, uint16_t score_block = 256) {
+      result = std::make_unique<score_t[]>(score_block);
+      stream.Init(score_block);
+
+      return {this,
+              [](ScoreCtx* ctx, score_t* res, size_t n) noexcept {
+                auto& self = static_cast<ScoreState&>(*ctx);
+                std::memcpy(res, self.result.get(), n * sizeof(score_t));
+              },
+              min};
     }
   };
+
+  ScoreFunction PrepareScore() {
+    auto& score = std::get<ScoreAttr>(_attrs);
+    auto min = ScoreFunction::NoopMin;
+    if (!_scores.scores.empty()) {
+      score.max.leaf = score.max.tail = _scores.sum_score;
+      min = [](ScoreCtx* ctx, score_t arg) noexcept {
+        auto& self = static_cast<BlockDisjunction&>(*ctx);
+        if (self._scores.Size() != self._itrs.size()) [[unlikely]] {
+          self._scores.Clear();
+          detail::MakeSubScores(self._itrs, self._scores);
+          auto& score = std::get<ScoreAttr>(self._attrs);
+          // TODO(mbkkt) We cannot change tail now
+          // Because it needs to recompute sum_score for our parent iterator
+          score.max.leaf /* = score.max.tail */ = self._scores.sum_score;
+        }
+        auto it = self._scores.scores.begin();
+        auto end = self._scores.scores.end();
+        [[maybe_unused]] size_t min_match = 0;
+        [[maybe_unused]] score_t sum = 0.f;
+        while (it != end) {
+          auto next = end;
+          if constexpr (Traits::kMinMatch) {
+            if (arg > sum) {  // TODO(mbkkt) strict wand: >=
+              ++min_match;
+              next = it + 1;
+            }
+            sum += (*it)->max.tail;
+          }
+          const auto others = self._scores.sum_score - (*it)->max.tail;
+          if (arg > others) {
+            // For common usage `arg - others <= (*it)->max.tail` -- is true
+            (*it)->Min(arg - others);
+            next = it + 1;
+          }
+          it = next;
+        }
+        if constexpr (Traits::kMinMatch) {
+          self._match_buf.min_match_count(min_match);
+        }
+      };
+
+      score = _score_buf.PrepareScore(min);
+    }
+  }
 
   uint64_t _mask[kNumBlocks]{};
   Adapters _itrs;
@@ -1449,8 +1464,7 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
   Attributes _attrs;
   size_t _match_count;
   size_t _buf_offset{};  // offset within a buffer
-  [[no_unique_address]] utils::Need<kHasScore, DisjunctionScoreBlock>
-    _score_buf;
+  [[no_unique_address]] utils::Need<kHasScore, ScoreState> _score_buf;
   [[no_unique_address]] utils::Need<Traits::kMinMatch,
                                     detail::MinMatchBuffer<kWindow>> _match_buf;
   // TODO(mbkkt) We don't need scores_ for not wand,

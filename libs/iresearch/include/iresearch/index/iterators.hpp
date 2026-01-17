@@ -25,6 +25,7 @@
 #include <iresearch/search/score_function.hpp>
 #include <memory>
 
+#include "basics/assert.h"
 #include "basics/memory.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/formats/seek_cookie.hpp"
@@ -65,7 +66,7 @@ struct DocIterator : AttributeProvider {
   virtual doc_id_t seek(doc_id_t target) = 0;
 
   // TODO(gnusi): return "has more"
-  virtual uint32_t collect(std::span<doc_id_t> docs);
+  virtual uint32_t collect(std::span<doc_id_t> docs, size_t offset);
 
   virtual void CollectData(uint16_t index) = 0;
 
@@ -99,18 +100,19 @@ struct DocIterator : AttributeProvider {
   }
 
   template<typename Iterator, size_t N = std::dynamic_extent>
-  static uint32_t Collect(Iterator& it, std::span<doc_id_t, N> docs) {
-    auto begin = docs.begin();
-    auto end = docs.end();
-    for (; begin != end; ++begin) {
+  static uint32_t Collect(Iterator& it, std::span<doc_id_t, N> docs,
+                          size_t offset) {
+    SDB_ASSERT(offset < docs.size());
+    size_t i = offset;
+    for (const size_t size = docs.size(); i < size; ++i) {
       const auto doc = it.advance();
       if (doc_limits::eof(doc)) {
         break;
       }
-      *begin = doc;
-      it.CollectData(0);  // TODO(gnusi): fix
+      docs[i] = doc;
+      it.CollectData(i);
     }
-    return begin - docs.begin();
+    return i - offset;
   }
 };
 

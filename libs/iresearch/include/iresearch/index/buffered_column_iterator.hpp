@@ -113,8 +113,8 @@ class BufferedColumnIterator : public ResettableDocIterator {
 
   void CollectData(uint16_t index) final {}
 
-  uint32_t collect(std::span<doc_id_t> docs) final {
-    return Collect(*this, docs);
+  uint32_t collect(std::span<doc_id_t> docs, size_t offset) final {
+    return Collect(*this, docs, offset);
   }
 
  private:

@@ -162,8 +162,8 @@ class LazyFilterBitsetIterator : public DocIterator, private util::Noncopyable {
     return Count(*this);
   }
 
-  uint32_t collect(std::span<doc_id_t> docs) final {
-    return Collect(*this, docs);
+  uint32_t collect(std::span<doc_id_t> docs, size_t offset) final {
+    return Collect(*this, docs, offset);
   }
 
   void CollectData(uint16_t index) final {}

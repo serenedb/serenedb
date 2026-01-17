@@ -1760,8 +1760,8 @@ class SingleDocIterator
   void Prepare(const TermMeta& meta, [[maybe_unused]] const IndexInput* pos_in,
                [[maybe_unused]] const IndexInput* pay_in);
 
-  uint32_t collect(std::span<doc_id_t> docs) final {
-    return Collect(*this, docs);
+  uint32_t collect(std::span<doc_id_t> docs, size_t offset) final {
+    return Collect(*this, docs, offset);
   }
 
   void CollectData(uint16_t index) final {}
@@ -1970,9 +1970,9 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
     }
   }
 
-  uint32_t collect(std::span<doc_id_t> docs) final {
+  uint32_t collect(std::span<doc_id_t> docs, size_t offset) final {
     // TODO(gnusi): optimize
-    return DocIterator::Collect(*this, docs);
+    return DocIterator::Collect(*this, docs, offset);
   }
 
   void WandPrepare(const TermMeta& meta, const IndexInput* doc_in,
@@ -3294,8 +3294,8 @@ struct PostingAdapter {
 
   IRS_FORCE_INLINE uint32_t count() { return self().count(); }
 
-  IRS_FORCE_INLINE uint32_t collect(std::span<doc_id_t> docs) {
-    return self().collect(docs);
+  IRS_FORCE_INLINE uint32_t collect(std::span<doc_id_t> docs, size_t offset) {
+    return self().collect(docs, offset);
   }
 
   IRS_FORCE_INLINE void CollectData(uint16_t index) {

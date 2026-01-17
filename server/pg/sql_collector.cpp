@@ -567,9 +567,8 @@ void ObjectCollector::CollectStmt(const State* parent, const Node* node) {
 void Objects::ObjectData::EnsureTable() const {
   if (!table) {
     SDB_ASSERT(object);
-    SDB_ASSERT(transaction);
     table = std::make_shared<connector::RocksDBTable>(
-      basics::downCast<catalog::Table>(*object), *transaction);
+      basics::downCast<catalog::Table>(*object), transaction);
   }
 }
 

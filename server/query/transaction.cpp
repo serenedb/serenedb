@@ -122,6 +122,7 @@ void Transaction::Destroy() noexcept {
 }
 
 catalog::TableStats Transaction::GetTableStats(ObjectId table_id) const {
+  // TODO(codeworse): manage catalog snapshot in transaction
   auto table_shard = catalog::GetTableShard(table_id);
   if (!table_shard) {
     SDB_THROW(ERROR_BAD_PARAMETER,

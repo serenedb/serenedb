@@ -150,11 +150,12 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
 class RocksDBTable final : public axiom::connector::Table {
  public:
   explicit RocksDBTable(const catalog::Table& collection,
-                        query::Transaction& transaction)
+                        query::Transaction* transaction)
     : Table{std::string{collection.GetName()}, collection.RowType()},
       _pk_type(collection.PKType()),
       _table_id(collection.GetId()),
-      _stats{transaction.GetTableStats(_table_id)} {
+      _stats{transaction ? transaction->GetTableStats(_table_id)
+                         : catalog::TableStats{}} {
     _column_map.reserve(collection.RowType()->size());
     _column_handles.reserve(collection.RowType()->size());
 

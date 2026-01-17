@@ -25,6 +25,7 @@
 #include <string_view>
 #include <type_traits>
 
+#include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/memory.hpp"
 #include "catalog/object.h"

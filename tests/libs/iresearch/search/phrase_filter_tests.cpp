@@ -7169,7 +7169,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_EQ(2, freq_seek->value);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
-    disj_score->Score(&score_val);
+    disj_score->Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq_seek->value);
 
     ASSERT_FALSE(docs->next());
@@ -7276,7 +7276,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_EQ(3, freq_seek->value);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
-    disj_score->Score(&score_val);
+    disj_score->Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq_seek->value);
 
     ASSERT_FALSE(docs->next());

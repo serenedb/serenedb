@@ -42,49 +42,39 @@ struct ScoreCtx {
 
 // Convenient wrapper around score_ctx, score_f and min_f.
 class ScoreFunction : util::Noncopyable {
-  using score_f = void (*)(ScoreCtx* ctx, score_t* res) noexcept;
-  using min_f = void (*)(ScoreCtx* ctx, score_t min) noexcept;
-
-  using deleter_f = void (*)(ScoreCtx* ctx) noexcept;
-  static void Noop(ScoreCtx* /*ctx*/) noexcept {}
+  using ScoreF = void (*)(ScoreCtx* ctx, score_t* res, size_t n) noexcept;
+  using MinF = void (*)(ScoreCtx* ctx, score_t min) noexcept;
+  using DeleterF = void (*)(ScoreCtx* ctx) noexcept;
+  static void NoopDelete(ScoreCtx* /*ctx*/) noexcept {}
 
  public:
-  // TODO(mbkkt) Default score probably should do nothing instead of set 0
-  static void DefaultScore(ScoreCtx* ctx, score_t* res) noexcept {
-    SDB_ASSERT(res != nullptr);
-    const auto size = reinterpret_cast<size_t>(ctx);
-    std::memset(res, 0, size);
-  }
-  static void DefaultMin(ScoreCtx* /*ctx*/, score_t /*min*/) noexcept {}
+  static void DefaultScore(ScoreCtx* ctx, score_t* res, size_t n) noexcept;
+  static void NoopScore(ScoreCtx* /*ctx*/, score_t* /*res*/,
+                        size_t n) noexcept {}
+  static void NoopMin(ScoreCtx* /*ctx*/, score_t /*min*/) noexcept {}
+  static void NoopCollect(ScoreCtx* /*ctx*/) noexcept {}
 
-  // Returns default scoring function setting `size` score buckets to 0.
-  static ScoreFunction Default(size_t count) noexcept {
-    static_assert(sizeof(ScoreCtx*) == sizeof(size_t));
-    // write byte size instead of count to avoid multiply in DefaultScore call
-    count *= sizeof(score_t);
-    return {reinterpret_cast<ScoreCtx*>(count), DefaultScore, DefaultMin, Noop};
+  static ScoreFunction Noop() noexcept {
+    return {nullptr, NoopScore, NoopMin, NoopDelete};
   }
-
-  // Returns scoring function setting a single score bucket to `value`.
+  static ScoreFunction Default();
   static ScoreFunction Constant(score_t value) noexcept;
-  // Returns scoring function setting `size` score buckets to `value`.
-  static ScoreFunction Constant(score_t value, uint32_t count) noexcept;
 
   template<typename T, typename... Args>
-  static auto Make(score_f score, min_f min, Args&&... args) {
+  static auto Make(ScoreF score, MinF min, Args&&... args) {
     return ScoreFunction{
       new T{std::forward<Args>(args)...}, score, min,
       [](ScoreCtx* ctx) noexcept { delete static_cast<T*>(ctx); }};
   }
 
   ScoreFunction() noexcept = default;
-  ScoreFunction(ScoreCtx& ctx, score_f score, min_f min = DefaultMin) noexcept
-    : ScoreFunction{&ctx, score, min, Noop} {}
+  ScoreFunction(ScoreCtx* ctx, ScoreF score, MinF min = NoopMin) noexcept
+    : ScoreFunction{ctx, score, min, NoopDelete} {}
   ScoreFunction(ScoreFunction&& rhs) noexcept
     : ScoreFunction{std::exchange(rhs._ctx, nullptr),
-                    std::exchange(rhs._score, DefaultScore),
-                    std::exchange(rhs._min, DefaultMin),
-                    std::exchange(rhs._deleter, Noop)} {}
+                    std::exchange(rhs._score, NoopScore),
+                    std::exchange(rhs._min, NoopMin),
+                    std::exchange(rhs._deleter, NoopDelete)} {}
   ScoreFunction& operator=(ScoreFunction&& rhs) noexcept {
     if (this != &rhs) [[likely]] {
       std::swap(_ctx, rhs._ctx);
@@ -96,20 +86,23 @@ class ScoreFunction : util::Noncopyable {
   }
   ~ScoreFunction() noexcept { _deleter(_ctx); }
 
-  void Reset(ScoreCtx& ctx, score_f score, min_f min = DefaultMin) noexcept {
-    SDB_ASSERT(&ctx != _ctx || _deleter == Noop);
+  void Reset(ScoreCtx& ctx, ScoreF score, MinF min = NoopMin) noexcept {
+    SDB_ASSERT(&ctx != _ctx || _deleter == NoopDelete);
     _deleter(_ctx);
     _ctx = &ctx;
     _score = score;
     _min = min;
-    _deleter = Noop;
+    _deleter = NoopDelete;
   }
 
-  bool IsDefault() const noexcept { return _score == DefaultScore; }
+  bool IsDefault() const noexcept {
+    // TOOD(gnusi): use only one
+    return _score == NoopScore || _score == DefaultScore;
+  }
 
-  IRS_FORCE_INLINE void Score(score_t* res) const noexcept {
+  IRS_FORCE_INLINE void Score(score_t* res, size_t n) const noexcept {
     SDB_ASSERT(_score != nullptr);
-    _score(_ctx, res);
+    _score(_ctx, res, n);
   }
 
   IRS_FORCE_INLINE void Min(score_t arg) const noexcept {
@@ -120,26 +113,26 @@ class ScoreFunction : util::Noncopyable {
   score_t Max() const noexcept;
 
   // TODO(mbkkt) Remove it, use Score
-  IRS_FORCE_INLINE void operator()(score_t* res) const noexcept { Score(res); }
+  IRS_FORCE_INLINE void operator()(score_t* res) const noexcept {
+    Score(res, 1);
+  }
 
   bool operator==(const ScoreFunction& rhs) const noexcept {
     return _ctx == rhs._ctx && _score == rhs._score && _min == rhs._min;
   }
 
-#ifdef SDB_GTEST
-  [[nodiscard]] ScoreCtx* Ctx() const noexcept { return _ctx; }
-  [[nodiscard]] score_f Func() const noexcept { return _score; }
-#endif
+  [[nodiscard]] auto* Ctx() const noexcept { return _ctx; }
+  [[nodiscard]] auto Func() const noexcept { return _score; }
 
  private:
-  ScoreFunction(ScoreCtx* ctx, score_f score, min_f min,
-                deleter_f deleter) noexcept
+  ScoreFunction(ScoreCtx* ctx, ScoreF score, MinF min,
+                DeleterF deleter) noexcept
     : _ctx{ctx}, _score{score}, _min{min}, _deleter{deleter} {}
 
-  ScoreCtx* _ctx{nullptr};
-  score_f _score{DefaultScore};
-  min_f _min{DefaultMin};
-  deleter_f _deleter{Noop};
+  ScoreCtx* _ctx = nullptr;
+  ScoreF _score = NoopScore;
+  MinF _min = NoopMin;
+  DeleterF _deleter = NoopDelete;
 };
 
 }  // namespace irs

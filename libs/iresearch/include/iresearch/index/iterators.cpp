@@ -46,6 +46,8 @@ struct EmptyDocIterator : ResettableDocIterator {
   doc_id_t shallow_seek(doc_id_t /*target*/) final { return doc_limits::eof(); }
   uint32_t count() final { return 0; }
   void reset() final {}
+  void CollectData(uint16_t index) final {}
+  uint32_t collect(std::span<doc_id_t>, size_t) final { return 0; }
 
  private:
   CostAttr _cost{0};
@@ -159,6 +161,10 @@ FieldIterator::ptr FieldIterator::empty() {
 
 ColumnIterator::ptr ColumnIterator::empty() {
   return memory::to_managed<ColumnIterator>(gEmptyColumnIterator);
+}
+
+uint32_t DocIterator::collect(std::span<doc_id_t> docs, size_t offset) {
+  return Collect(*this, docs, offset);
 }
 
 }  // namespace irs

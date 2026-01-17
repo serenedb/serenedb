@@ -26,15 +26,79 @@
 #include <iresearch/search/bitset_doc_iterator.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/column_existence_filter.hpp>
+#include <iresearch/search/filter.hpp>
 #include <iresearch/search/granular_range_filter.hpp>
 #include <iresearch/search/nested_filter.hpp>
 #include <iresearch/search/prev_doc.hpp>
 #include <iresearch/search/term_filter.hpp>
+#include <iresearch/utils/attribute_provider.hpp>
 
 #include "search/filter_test_case_base.hpp"
 #include "tests_shared.hpp"
 
 namespace {
+
+struct DocBlockAttr : public irs::Attribute {
+  const irs::doc_id_t* value = nullptr;
+};
+
+class DocIteratorWrapper : public irs::DocIterator {
+ public:
+  explicit DocIteratorWrapper(irs::DocIterator::ptr it, size_t buf_size)
+    : _it(std::move(it)), _docs(buf_size) {}
+
+  irs::doc_id_t value() const final { return _it->value(); }
+
+  irs::doc_id_t advance() final { return _it->advance(); }
+
+  irs::doc_id_t seek(irs::doc_id_t target) final { return _it->seek(target); }
+
+  void CollectData(uint16_t index) final { _docs.emplace_back(value()); }
+
+  irs::Attribute* GetMutable(irs::TypeInfo::type_id id) noexcept final {
+    if (irs::Type<DocBlockAttr>::id() == id) {
+      return &_doc_block_attr;
+    }
+    return _it->GetMutable(id);
+  }
+
+ private:
+  irs::DocIterator::ptr _it;
+  std::vector<irs::doc_id_t> _docs;
+  DocBlockAttr _doc_block_attr{.value = _docs.data()};
+};
+
+class QueryWrapper : public irs::Filter::Query {
+ public:
+  explicit QueryWrapper(Query::ptr query) : _query(std::move(query)) {}
+
+  irs::DocIterator::ptr execute(const irs::ExecutionContext& ctx) const final {
+    return irs::memory::make_managed<DocIteratorWrapper>(_query->execute(ctx),
+                                                         ctx.score_block);
+  }
+
+  void visit(const irs::SubReader& segment, irs::PreparedStateVisitor& visitor,
+             irs::score_t boost) const {
+    _query->visit(segment, visitor, boost);
+  }
+
+  irs::score_t Boost() const noexcept { return _query->Boost(); }
+
+ private:
+  Query::ptr _query;
+};
+
+class FilterWrapper : public irs::FilterWithType<FilterWrapper> {
+ public:
+  explicit FilterWrapper(const irs::Filter& filter) : _filter(filter) {}
+
+  Query::ptr prepare(const irs::PrepareContext& ctx) const final {
+    return _filter.prepare(ctx);
+  }
+
+ private:
+  const irs::Filter& _filter;
+};
 
 struct ChildIterator : irs::DocIterator {
  public:
@@ -69,6 +133,8 @@ struct ChildIterator : irs::DocIterator {
     return advance();
   }
 
+  void CollectData(uint16_t index) final { _it->CollectData(index); }
+
  private:
   irs::DocIterator::ptr _it;
   std::set<irs::doc_id_t> _parents;
@@ -95,38 +161,38 @@ class PrevDocWrapper : public irs::DocIterator {
 
   irs::doc_id_t seek(irs::doc_id_t target) final { return _it->seek(target); }
 
+  void CollectData(uint16_t index) final { _it->CollectData(index); }
+
  private:
   DocIterator::ptr _it;
   irs::PrevDocAttr _prev_doc;
 };
 
-struct DocIdScorer : irs::ScorerBase<void> {
+struct DocIdScorer : public irs::ScorerBase<void> {
   irs::IndexFeatures GetIndexFeatures() const final {
     return irs::IndexFeatures::None;
   }
 
-  irs::ScoreFunction PrepareScorer(const irs::ColumnProvider&,
-                                   const irs::FieldProperties&,
-                                   const irs::byte_type*,
-                                   const irs::AttributeProvider& attrs,
-                                   irs::score_t) const final {
+  irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
     struct ScorerContext final : irs::ScoreCtx {
-      explicit ScorerContext(const irs::DocAttr* doc) noexcept : doc{doc} {}
+      explicit ScorerContext(const DocBlockAttr* doc) noexcept : doc{doc} {}
 
-      const irs::DocAttr* doc;
+      const DocBlockAttr* doc;
     };
 
-    auto* doc = irs::get<irs::DocAttr>(attrs);
+    auto* doc = irs::get<DocBlockAttr>(ctx.doc_attrs);
     EXPECT_NE(nullptr, doc);
 
     return irs::ScoreFunction::Make<ScorerContext>(
-      [](irs::ScoreCtx* ctx, irs::score_t* res) noexcept {
+      [](irs::ScoreCtx* ctx, irs::score_t* res, size_t n) noexcept {
         ASSERT_NE(nullptr, res);
         ASSERT_NE(nullptr, ctx);
-        const auto& state = *static_cast<ScorerContext*>(ctx);
-        *res = state.doc->value;
+        auto& state = *static_cast<ScorerContext*>(ctx);
+        for (size_t i = 0; i < n; ++i) {
+          res[i] = static_cast<irs::score_t>(state.doc->value[i]);
+        }
       },
-      irs::ScoreFunction::DefaultMin, doc);
+      irs::ScoreFunction::NoopMin, doc);
   }
 };
 
@@ -1219,7 +1285,8 @@ TEST_P(NestedFilterTestCase, JoinNone3) {
   opts.match = irs::kMatchNone;
   filter.boost(0.5f);
 
-  CheckQuery(filter, Docs{6, 8, 13, 20}, Costs{4}, reader, SOURCE_LOCATION);
+  CheckQuery(FilterWrapper{filter}, Docs{6, 8, 13, 20}, Costs{4}, reader,
+             SOURCE_LOCATION);
 
   {
     opts.merge_type = irs::ScoreMergeType::Max;
@@ -1233,7 +1300,8 @@ TEST_P(NestedFilterTestCase, JoinNone3) {
       {Next{}, irs::doc_limits::eof()},
     };
 
-    CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
+    CheckQuery(FilterWrapper{filter}, scorers, {tests}, reader,
+               SOURCE_LOCATION);
   }
 
   if constexpr (false) {
@@ -1248,7 +1316,8 @@ TEST_P(NestedFilterTestCase, JoinNone3) {
       {Next{}, irs::doc_limits::eof()},
     };
 
-    CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
+    CheckQuery(FilterWrapper{filter}, scorers, {tests}, reader,
+               SOURCE_LOCATION);
   }
 
   {
@@ -1265,7 +1334,8 @@ TEST_P(NestedFilterTestCase, JoinNone3) {
       {Next{}, irs::doc_limits::eof()},
     };
 
-    CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
+    CheckQuery(FilterWrapper{filter}, scorers, {tests}, reader,
+               SOURCE_LOCATION);
   }
 }
 

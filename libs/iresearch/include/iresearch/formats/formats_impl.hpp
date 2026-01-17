@@ -23,7 +23,9 @@
 
 #include <absl/algorithm/container.h>
 
+#include <iresearch/search/scorer.hpp>
 #include <limits>
+#include <memory>
 
 #include "basics/assert.h"
 #include "basics/bit_utils.hpp"
@@ -1590,7 +1592,7 @@ struct PositionImpl<IteratorTraits, FieldTraits, false> : Attribute {
   void Clear() noexcept {}
 };
 
-struct Empty {};
+struct Dummy {};
 
 // Buffer type containing only document buffer
 template<typename IteratorTraits>
@@ -1613,6 +1615,23 @@ template<typename IteratorTraits, typename FieldTraits>
 class DocIteratorBase : public DocIterator {
   static_assert((IteratorTraits::Features() & FieldTraits::Features()) ==
                 IteratorTraits::Features());
+
+ public:
+  void InitFreqBlock(FreqBlockAttr& freq_block, uint16_t score_block) {
+    if constexpr (IteratorTraits::Frequency()) {
+      SDB_ASSERT(score_block);
+      _collected_freqs = std::make_unique<uint32_t[]>(score_block);
+      freq_block.value = _collected_freqs.get();
+    }
+  }
+
+  void CollectData(uint16_t index) final {
+    if constexpr (IteratorTraits::Frequency()) {
+      _collected_freqs[index] = *_freq;
+    }
+  }
+
+ private:
   void ReadTailBlock(doc_id_t prev_doc);
 
  protected:
@@ -1625,6 +1644,8 @@ class DocIteratorBase : public DocIterator {
   void Refill(doc_id_t prev_doc);
 
   BufferType<IteratorTraits> _buf;
+  [[no_unique_address]] utils::Need<
+    IteratorTraits::Frequency(), std::unique_ptr<uint32_t[]>> _collected_freqs;
   uint32_t _enc_buf[IteratorTraits::kBlockSize];  // buffer for encoding
   const doc_id_t* _begin{std::end(_buf.docs)};
   uint32_t* _freq{};  // pointer into docs_ to the frequency attribute value for
@@ -1694,17 +1715,18 @@ void DocIteratorBase<IteratorTraits, FieldTraits>::ReadTailBlock(
 template<typename IteratorTraits, typename FieldTraits>
 using AttributesImpl = std::conditional_t<
   IteratorTraits::Position(),
-  std::tuple<DocAttr, FreqAttr, ScoreAttr, CostAttr,
+  std::tuple<DocAttr, FreqAttr, FreqBlockAttr, ScoreAttr, CostAttr,
              PositionImpl<IteratorTraits, FieldTraits>>,
-  std::conditional_t<IteratorTraits::Frequency(),
-                     std::tuple<DocAttr, FreqAttr, ScoreAttr, CostAttr>,
-                     std::tuple<DocAttr, ScoreAttr, CostAttr>>>;
+  std::conditional_t<
+    IteratorTraits::Frequency(),
+    std::tuple<DocAttr, FreqAttr, FreqBlockAttr, ScoreAttr, CostAttr>,
+    std::tuple<DocAttr, ScoreAttr, CostAttr>>>;
 
 template<typename IteratorTraits, typename FieldTraits>
 class SingleDocIterator
   : public DocIterator,
     private std::conditional_t<IteratorTraits::Position(),
-                               DataBuffer<IteratorTraits>, Empty> {
+                               DataBuffer<IteratorTraits>, Dummy> {
   static_assert((IteratorTraits::Features() & FieldTraits::Features()) ==
                 IteratorTraits::Features());
 
@@ -1729,19 +1751,20 @@ class SingleDocIterator
     score = ScoreFunction::Constant(score.max.tail);
 
     doc_value = doc_limits::invalid();
+
+    if constexpr (IteratorTraits::Frequency()) {
+      std::get<FreqBlockAttr>(_attrs).value = &std::get<FreqAttr>(_attrs).value;
+    }
   }
 
   void Prepare(const TermMeta& meta, [[maybe_unused]] const IndexInput* pos_in,
                [[maybe_unused]] const IndexInput* pay_in);
 
- private:
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
+  uint32_t collect(std::span<doc_id_t> docs, size_t offset) final {
+    return Collect(*this, docs, offset);
   }
 
-  doc_id_t value() const noexcept final {
-    return std::get<DocAttr>(_attrs).value;
-  }
+  void CollectData(uint16_t index) final {}
 
   doc_id_t advance() final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
@@ -1758,6 +1781,15 @@ class SingleDocIterator
     }
 
     return doc_value;
+  }
+
+ private:
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+    return irs::GetMutable(_attrs, type);
+  }
+
+  doc_id_t value() const noexcept final {
+    return std::get<DocAttr>(_attrs).value;
   }
 
   doc_id_t seek(doc_id_t target) final {
@@ -1935,11 +1967,17 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
       this->_buf.docs, [](doc_id_t doc) { return !doc_limits::valid(doc); }));
   }
 
+  uint32_t collect(std::span<doc_id_t> docs, size_t offset) final {
+    // TODO(gnusi): optimize
+    return DocIterator::Collect(*this, docs, offset);
+  }
+
   void WandPrepare(const TermMeta& meta, const IndexInput* doc_in,
                    const IndexInput* pos_in, const IndexInput* pay_in,
                    uint32_t meta_idx, const MakeScoreCallback& make_score,
-                   const Scorer& scorer, uint8_t wand_index) {
-    Prepare(meta, doc_in, pos_in, pay_in, wand_index);
+                   const Scorer& scorer, uint16_t score_block,
+                   uint8_t wand_index) {
+    Prepare(meta, doc_in, pos_in, pay_in, score_block, wand_index);
     if (meta.docs_count > FieldTraits::kBlockSize) {
       return;
     }
@@ -1967,6 +2005,7 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
 
   void Prepare(const TermMeta& meta, const IndexInput* doc_in,
                const IndexInput* pos_in, const IndexInput* pay_in,
+               uint16_t score_block,
                uint8_t wand_index = WandContext::kDisable);
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
@@ -2006,6 +2045,11 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
 
   doc_id_t seek(doc_id_t target) final;
 
+  const ScoreAttr& score() const noexcept {
+    return std::get<ScoreAttr>(_attrs);
+  }
+
+ private:
   uint32_t count() final {
     if (this->_left == 0) [[unlikely]] {
       return this->Count(*this);
@@ -2014,10 +2058,6 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
     doc_value = doc_limits::eof();
     this->_begin = std::end(this->_buf.docs);
     return std::exchange(this->_left, 0);
-  }
-
-  const ScoreAttr& score() const noexcept {
-    return std::get<ScoreAttr>(_attrs);
   }
 
  private:
@@ -2132,10 +2172,14 @@ void DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::ReadSkip::Seal(
 template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
 void DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
   const TermMeta& meta, const IndexInput* doc_in, const IndexInput* pos_in,
-  const IndexInput* pay_in, uint8_t wand_index) {
+  const IndexInput* pay_in, uint16_t score_block, uint8_t wand_index) {
   // Don't use DocIterator for singleton docs, must be ensured by the caller
   SDB_ASSERT(meta.docs_count > 1);
   SDB_ASSERT(this->_begin == std::end(this->_buf.docs));
+
+  if constexpr (IteratorTraits::Frequency()) {
+    this->InitFreqBlock(std::get<FreqBlockAttr>(_attrs), score_block);
+  }
 
   auto& term_state = static_cast<const TermMetaImpl&>(meta);
   this->_left = term_state.docs_count;
@@ -2340,16 +2384,17 @@ class Wanderator : public DocIteratorBase<IteratorTraits, FieldTraits>,
     }));
     std::get<ScoreAttr>(_attrs).Reset(
       *this,
-      [](ScoreCtx* ctx, score_t* res) noexcept {
+      [](ScoreCtx* ctx, score_t* res, size_t n) noexcept {
         auto& self = static_cast<Wanderator&>(*ctx);
-        self._scorer(res);
+        self._scorer.Score(res, n);
       },
       strict ? MinStrict : MinWeak);
   }
 
   void WandPrepare(const TermMeta& meta, const IndexInput* doc_in,
                    [[maybe_unused]] const IndexInput* pos_in,
-                   [[maybe_unused]] const IndexInput* pay_in);
+                   [[maybe_unused]] const IndexInput* pay_in,
+                   uint16_t score_block);
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);
@@ -2543,10 +2588,14 @@ template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
 void Wanderator<IteratorTraits, FieldTraits, WandExtent>::WandPrepare(
   const TermMeta& meta, const IndexInput* doc_in,
   [[maybe_unused]] const IndexInput* pos_in,
-  [[maybe_unused]] const IndexInput* pay_in) {
+  [[maybe_unused]] const IndexInput* pay_in, uint16_t score_block) {
   // Don't use wanderator for short posting lists, must be ensured by the caller
   SDB_ASSERT(meta.docs_count > IteratorTraits::kBlockSize);
   SDB_ASSERT(this->_begin == std::end(this->_buf.docs));
+
+  if constexpr (IteratorTraits::Frequency()) {
+    this->InitFreqBlock(std::get<FreqBlockAttr>(_attrs), score_block);
+  }
 
   auto& term_state = static_cast<const TermMetaImpl&>(meta);
   this->_left = term_state.docs_count;
@@ -3250,6 +3299,14 @@ struct PostingAdapter {
 
   IRS_FORCE_INLINE uint32_t count() { return self().count(); }
 
+  IRS_FORCE_INLINE uint32_t collect(std::span<doc_id_t> docs, size_t offset) {
+    return self().collect(docs, offset);
+  }
+
+  IRS_FORCE_INLINE void CollectData(uint16_t index) {
+    return self().CollectData(index);
+  }
+
   IRS_FORCE_INLINE const ScoreAttr& score() const noexcept {
     return self().score();
   }
@@ -3337,8 +3394,7 @@ class PostingsReaderImpl final : public PostingsReaderBase {
                             IndexFeatures required_features,
                             std::span<const TermMeta* const> metas,
                             const IteratorFieldOptions& options,
-                            size_t min_match, ScoreMergeType type,
-                            size_t num_buckets) const final;
+                            size_t min_match, ScoreMergeType type) const final;
 
  private:
   template<typename FieldTraits, typename Factory>
@@ -3537,7 +3593,7 @@ template<typename FormatTraits>
 DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
   IndexFeatures field_features, IndexFeatures required_features,
   std::span<const TermMeta* const> metas, const IteratorFieldOptions& options,
-  size_t min_match, ScoreMergeType type, size_t num_buckets) const {
+  size_t min_match, ScoreMergeType type) const {
   SDB_ASSERT(!metas.empty());
   SDB_ASSERT(1 <= min_match);
   SDB_ASSERT(min_match <= metas.size());
@@ -3564,7 +3620,8 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
               auto it = memory::make_managed<
                 DocIteratorImpl<IteratorTraits, FieldTraits, Extent>>(
                 std::forward<Extent>(extent));
-              it->Prepare(meta, _doc_in.get(), _pos_in.get(), _pay_in.get());
+              it->Prepare(meta, _doc_in.get(), _pos_in.get(), _pay_in.get(),
+                          options.score_block);
               iterator_types |= 1 << 2;
               return it;
             });
@@ -3593,7 +3650,7 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
                   meta_idx, options.make_score, scorer, extent,
                   options.mapped_index, options.strict);
                 it->WandPrepare(meta, _doc_in.get(), _pos_in.get(),
-                                _pay_in.get());
+                                _pay_in.get(), options.score_block);
                 iterator_types |= 1 << 1;
                 return it;
               }
@@ -3602,7 +3659,7 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
               DocIteratorImpl<IteratorTraits, FieldTraits, Extent>>(extent);
             it->WandPrepare(meta, _doc_in.get(), _pos_in.get(), _pay_in.get(),
                             meta_idx, options.make_score, scorer,
-                            options.mapped_index);
+                            options.mapped_index, options.score_block);
             iterator_types |= 1 << 2;
             return it;
           });
@@ -3644,10 +3701,10 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
     for (auto& it : iterators) {
       adapters.emplace_back(std::move(it));
     }
-    return ResolveMergeType(type, num_buckets, [&]<typename A>(A&& aggregator) {
-      using MinMatchIterator = MinMatchIterator<Adapter, A>;
+    return ResolveMergeType(type, [&]<ScoreMergeType MergeType>() {
+      using MinMatchIterator = MinMatchIterator<Adapter, MergeType>;
       return MakeWeakDisjunction<MinMatchIterator>(
-        options, std::move(adapters), min_match, std::move(aggregator));
+        options, std::move(adapters), min_match, options.score_block);
     });
   };
 

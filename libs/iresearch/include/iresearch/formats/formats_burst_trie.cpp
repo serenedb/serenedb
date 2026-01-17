@@ -2862,8 +2862,7 @@ class FieldReaderImpl final : public FieldReader {
     DocIterator::ptr Iterator(IndexFeatures features,
                               std::span<const SeekCookie* const> cookies,
                               const IteratorOptions& options, size_t min_match,
-                              ScoreMergeType type,
-                              size_t num_buckets) const final {
+                              ScoreMergeType type) const final {
       SDB_ASSERT(_owner);
       SDB_ASSERT(_owner->_pr);
       SDB_ASSERT(!cookies.empty());
@@ -2877,7 +2876,7 @@ class FieldReaderImpl final : public FieldReader {
         return _owner->_pr->Iterator(
           meta().index_features, features,
           sdb::basics::downCast<::Cookie>(*cookies[0]).meta, field_options,
-          type, num_buckets);
+          type);
       }
 
       std::vector<const TermMeta*> metas;
@@ -2886,7 +2885,7 @@ class FieldReaderImpl final : public FieldReader {
         metas.emplace_back(&sdb::basics::downCast<::Cookie>(*cookies[i]).meta);
       }
       return _owner->_pr->Iterator(meta().index_features, features, metas,
-                                   field_options, min_match, type, num_buckets);
+                                   field_options, min_match, type);
     }
 
    private:

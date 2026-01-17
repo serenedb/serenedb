@@ -22,6 +22,9 @@
 
 #pragma once
 
+#include <iresearch/search/score_function.hpp>
+#include <iresearch/search/scorer.hpp>
+
 #include "disjunction.hpp"
 
 namespace irs {
@@ -50,15 +53,18 @@ using CostAdapters = std::vector<CostAdapter>;
 // s |  ...      |
 // t |  [n] <-- end
 // -----------------------------------------------------------------------------
-template<typename Merger>
+template<ScoreMergeType MergeType>
 class MinMatchDisjunction : public DocIterator,
-                            protected Merger,
-                            protected ScoreCtx {
+                            private DisjunctionBase<MergeType> {
+  using Base = DisjunctionBase<MergeType>;
+
  public:
+  using Base::kHasScore;
+  using Base::kMergeType;
+
   MinMatchDisjunction(CostAdapters&& itrs, size_t min_match_count,
-                      Merger&& merger = {})
-    : Merger{std::move(merger)},
-      _itrs{std::move(itrs)},
+                      uint16_t score_block = 0)
+    : _itrs{std::move(itrs)},
       _min_match_count{std::clamp(min_match_count, size_t{1}, _itrs.size())},
       _lead{_itrs.size()} {
     SDB_ASSERT(!_itrs.empty());
@@ -81,8 +87,9 @@ class MinMatchDisjunction : public DocIterator,
     _heap.resize(_itrs.size());
     absl::c_iota(_heap, size_t{0});
 
-    if constexpr (kHasScore<Merger>) {
-      PrepareScore();
+    if constexpr (kHasScore) {
+      this->PrepareScore(std::get<irs::ScoreAttr>(_attrs), std::span{_itrs},
+                         score_block, ScoreFunction::NoopMin);
     }
   }
 
@@ -204,6 +211,24 @@ class MinMatchDisjunction : public DocIterator,
 
   uint32_t count() final { return Count(*this); }
 
+  uint32_t collect(std::span<doc_id_t> docs, size_t offset) final {
+    return Collect(*this, docs, offset);
+  }
+
+  void CollectData(uint16_t index) final {
+    if constexpr (kHasScore) {
+      SDB_ASSERT(!_heap.empty());
+
+      PushValidToLead();
+      std::for_each(Lead(), _heap.end(), [&](size_t it) {
+        SDB_ASSERT(it < _itrs.size());
+        if (auto& score = _itrs[it].score(); !score.IsDefault()) {
+          _itrs[it].CollectData(index);
+        }
+      });
+    }
+  }
+
   // Calculates total count of matched iterators. This value could be
   // greater than required min_match. All matched iterators points
   // to current matched document after this call.
@@ -215,30 +240,6 @@ class MinMatchDisjunction : public DocIterator,
 
  private:
   using Attributes = std::tuple<DocAttr, CostAttr, ScoreAttr>;
-
-  void PrepareScore() {
-    SDB_ASSERT(Merger::size());
-
-    auto& score = std::get<ScoreAttr>(_attrs);
-
-    score.Reset(*this, [](ScoreCtx* ctx, score_t* res) noexcept {
-      auto& self = static_cast<MinMatchDisjunction&>(*ctx);
-      SDB_ASSERT(!self._heap.empty());
-
-      self.PushValidToLead();
-
-      // score lead iterators
-      std::memset(res, 0, static_cast<Merger&>(self).byte_size());
-      std::for_each(self.Lead(), self._heap.end(), [&self, res](size_t it) {
-        SDB_ASSERT(it < self._itrs.size());
-        if (auto& score = self._itrs[it].score(); !score.IsDefault()) {
-          auto& merger = static_cast<Merger&>(self);
-          score(merger.temp());
-          merger(res, merger.temp());
-        }
-      });
-    });
-  }
 
   // Push all valid iterators to lead.
   void PushValidToLead() {

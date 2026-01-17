@@ -2,6 +2,7 @@
 
 #include <miniselect/median_of_ninthers.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <iresearch/index/index_reader.hpp>
@@ -40,7 +41,7 @@ size_t ExecuteTopKWithCount(const DirectoryReader& reader, const Filter& filter,
     return std::get<1>(lhs) > std::get<1>(rhs);
   };
   auto repivot = [&] noexcept {
-    miniselect::median_of_ninthers_select(hits.begin(), pivot, end, cmp);
+    std::nth_element(hits.begin(), pivot, end, cmp);
   };
 
   const uint16_t score_block = 2 * static_cast<uint16_t>(k);
@@ -133,11 +134,10 @@ size_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
       ++begin;
 
       if (begin == end) {
-        miniselect::median_of_ninthers_select(
-          results.begin(), pivot, end,
-          [](const auto& lhs, const auto& rhs) noexcept {
-            return lhs.first > rhs.first;
-          });
+        std::nth_element(results.begin(), pivot, end,
+                         [](const auto& lhs, const auto& rhs) noexcept {
+                           return lhs.first > rhs.first;
+                         });
         begin = pivot;
         min_threshold = begin->first;
         score->Min(min_threshold);

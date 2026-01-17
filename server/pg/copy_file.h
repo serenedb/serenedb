@@ -1,0 +1,69 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+#include <velox/common/file/File.h>
+#include <velox/type/Type.h>
+
+#include "basics/fwd.h"
+#include "basics/message_buffer.h"
+#include "pg/copy_messages_queue.h"
+
+namespace sdb::pg {
+
+class CopyOutWriteFile final : public velox::WriteFile {
+ public:
+  CopyOutWriteFile(message::Buffer& buffer, const size_t column_count);
+
+  void append(std::string_view data) final;
+  void flush() final;
+  void close() final;
+  uint64_t size() const final { return _size; }
+
+ private:
+  message::Buffer& _buffer;
+  uint64_t _size = 0;
+};
+
+class CopyInReadFile final : public velox::ReadFile {
+ public:
+  CopyInReadFile(message::Buffer& buffer, CopyMessagesQueue& copy_queue,
+                 size_t column_count);
+
+  std::string_view pread(uint64_t offset, uint64_t length, void* buf,
+                         const velox::FileIoContext& context = {}) const final;
+
+  uint64_t size() const final { return std::numeric_limits<uint64_t>::max(); }
+  uint64_t memoryUsage() const final { return 0; }
+  bool shouldCoalesce() const final { return false; }
+  std::string getName() const final { return "CopyInReadFile"; }
+  uint64_t getNaturalReadSize() const final { return 8196; }
+
+  ~CopyInReadFile() final { _copy_queue.CloseListening(); }
+
+ private:
+  message::Buffer& _buffer;
+  CopyMessagesQueue& _copy_queue;
+  mutable CopyMessagesQueueIterator _copy_queue_it;
+  mutable uint64_t _prev_offset = 0;
+};
+
+}  // namespace sdb::pg

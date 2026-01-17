@@ -484,8 +484,8 @@ class NGramSimilarityDocIterator : public DocIterator, private ScoreCtx {
                              const Scorers& ord = Scorers::kUnordered)
     : NGramSimilarityDocIterator{std::move(itrs), total_terms_count,
                                  min_match_count, !ord.empty()} {
-    if (!ord.empty()) {
-      _collected_boost = std::make_unique<score_t[]>(256);  // TODO: score_block
+    if (!ord.empty() && score_block) {
+      _collected_boost = std::make_unique<score_t[]>(score_block);
       std::get<BoostBlockAttr>(_attrs).value = _collected_boost.get();
 
       auto& score = std::get<ScoreAttr>(_attrs);

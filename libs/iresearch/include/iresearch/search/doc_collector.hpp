@@ -41,7 +41,9 @@ size_t ExecuteTopKWithCount(const DirectoryReader& reader, const Filter& filter,
     std::nth_element(hits.begin(), pivot, end, cmp);
   };
 
-  ColumnCollector columns{2 * k};
+  const uint16_t score_block = 2 * static_cast<uint16_t>(k);
+  SDB_ASSERT(score_block <= std::numeric_limits<uint16_t>::max());
+  ColumnCollector columns{score_block};
   for (auto& segment : reader) {
     columns.Clear();
 
@@ -49,15 +51,16 @@ size_t ExecuteTopKWithCount(const DirectoryReader& reader, const Filter& filter,
       .segment = segment,
       .scorers = scorers,
       .collector = &columns,
+      .score_block = score_block,
     });
     const auto* scorer = irs::get<ScoreAttr>(*it);
 
     while (true) {
-      const uint32_t block_size = it->collect(docs, offset);
+      auto collected = docs.subspan(offset);
+      const uint32_t block_size = it->collect(collected, 0);
       if (block_size == 0) {
         break;
       }
-      auto collected = docs.subspan(offset);
       columns.Collect(collected);
       scorer->Score(scores.data() + offset, collected.size());
       count += block_size;

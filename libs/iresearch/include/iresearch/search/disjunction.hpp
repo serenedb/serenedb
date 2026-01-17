@@ -185,10 +185,15 @@ class DisjunctionScoreState : public ScoreCtx {
     _hits[i].PushBack(index);
   }
 
-  // TODO(gnusi): score block
+  uint16_t Index(size_t i) const noexcept {
+    SDB_ASSERT(i < _hits.size());
+    return static_cast<uint16_t>(_hits[i].Size());
+  }
+
   template<ScoreMergeType MergeType, typename A, size_t N>
-  ScoreFunction PrepareScore(std::span<A, N> itrs, auto min,
-                             uint16_t score_block = 256) {
+  ScoreFunction PrepareScore(std::span<A, N> itrs, uint16_t score_block,
+                             auto min) {
+    SDB_ASSERT(score_block);
     _sources.reserve(itrs.size());
     _sources.append_range(ToScores(itrs));
     if (_sources.empty()) {
@@ -244,9 +249,10 @@ class DisjunctionBase {
 
  protected:
   template<typename A, size_t N>
-  void PrepareScore(ScoreAttr& score, std::span<A, N> itrs, auto min) {
+  void PrepareScore(ScoreAttr& score, std::span<A, N> itrs,
+                    uint16_t score_block, auto min) {
     if constexpr (kHasScore) {
-      score = _scores.template PrepareScore<MergeType>(itrs, min);
+      score = _scores.template PrepareScore<MergeType>(itrs, score_block, min);
     }
   }
 
@@ -263,16 +269,17 @@ class BasicDisjunction : public CompoundDocIterator<Adapter>,
   using Base::kHasScore;
   using Base::kMergeType;
 
-  BasicDisjunction(adapter&& lhs, adapter&& rhs)
+  BasicDisjunction(adapter&& lhs, adapter&& rhs, uint16_t score_block = 0)
     : BasicDisjunction{std::move(lhs), std::move(rhs),
                        [this] noexcept {
                          return CostAttr::extract(_itrs[0], 0) +
                                 CostAttr::extract(_itrs[1], 0);
                        },
-                       ResolveOverloadTag{}} {}
+                       score_block, ResolveOverloadTag{}} {}
 
-  BasicDisjunction(Adapter lhs, Adapter rhs, CostAttr::Type est)
-    : BasicDisjunction{std::move(lhs), std::move(rhs), est,
+  BasicDisjunction(Adapter lhs, Adapter rhs, CostAttr::Type est,
+                   uint16_t score_block)
+    : BasicDisjunction{std::move(lhs), std::move(rhs), est, score_block,
                        ResolveOverloadTag{}} {}
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
@@ -349,13 +356,8 @@ class BasicDisjunction : public CompoundDocIterator<Adapter>,
 
   void CollectData(uint16_t index) final {
     if constexpr (Base::kHasScore) {
-      auto try_collect = [&](size_t i) {
-        if (!_itrs[i].score().IsDefault()) {
-          CollectIterator(i, [&](auto&) { this->_scores.Collect(i, index); });
-        };
-      };
-      try_collect(0);
-      try_collect(1);
+      CollectIterator(0, index);
+      CollectIterator(1, index);
     }
   }
 
@@ -364,14 +366,14 @@ class BasicDisjunction : public CompoundDocIterator<Adapter>,
 
   template<typename Estimation>
   BasicDisjunction(Adapter lhs, Adapter rhs, Estimation&& estimation,
-                   ResolveOverloadTag)
+                   uint16_t score_block, ResolveOverloadTag)
     : _itrs{std::move(lhs), std::move(rhs)} {
     std::get<CostAttr>(_attrs).reset(std::forward<Estimation>(estimation));
 
-    PrepareScore(false, false);
+    PrepareScore(false, false, score_block);
   }
 
-  void PrepareScore(bool /*wand*/, bool /*strict*/) {
+  void PrepareScore(bool /*wand*/, bool /*strict*/, uint16_t score_block) {
     if constexpr (Base::kHasScore) {
       auto& score = std::get<irs::ScoreAttr>(_attrs);
 
@@ -380,7 +382,8 @@ class BasicDisjunction : public CompoundDocIterator<Adapter>,
         score = ScoreFunction::Default();
       } else if (!_itrs[0].score().IsDefault() &&
                  !_itrs[1].score().IsDefault()) {
-        Base::PrepareScore(score, std::span{_itrs}, ScoreFunction::NoopMin);
+        Base::PrepareScore(score, std::span{_itrs}, score_block,
+                           ScoreFunction::NoopMin);
       } else {
         const auto& it = _itrs[_itrs[0].score().IsDefault() ? 1 : 0];
         score.Reset(*it.score().Ctx(), it.score().Func(),
@@ -404,10 +407,14 @@ class BasicDisjunction : public CompoundDocIterator<Adapter>,
     }
   }
 
-  template<typename Func>
-  void CollectIterator(size_t i, Func&& f) {
+  void CollectIterator(size_t i, uint16_t index) {
+    static_assert(Base::kHasScore);
     SDB_ASSERT(i < _itrs.size());
     auto& it = _itrs[i];
+    if (it.score().IsDefault()) {
+      return;
+    }
+
     auto& doc_value = std::get<DocAttr>(_attrs).value;
     auto value = it.value();
 
@@ -416,7 +423,8 @@ class BasicDisjunction : public CompoundDocIterator<Adapter>,
     }
 
     if (value == doc_value) {
-      f(it);
+      it.CollectData(this->_scores.Index(i));
+      this->_scores.Collect(i, index);
     }
   }
 
@@ -445,10 +453,11 @@ class SmallDisjunction : public CompoundDocIterator<Adapter>,
   static constexpr auto kMergeType = MergeType;
   static constexpr bool kHasScore = kMergeType != ScoreMergeType::Noop;
 
-  SmallDisjunction(Adapters&& itrs, CostAttr::Type est)
-    : SmallDisjunction{std::move(itrs), est, ResolveOverloadTag()} {}
+  SmallDisjunction(Adapters&& itrs, CostAttr::Type est, uint16_t score_block)
+    : SmallDisjunction{std::move(itrs), est, score_block,
+                       ResolveOverloadTag()} {}
 
-  explicit SmallDisjunction(Adapters&& itrs)
+  explicit SmallDisjunction(Adapters&& itrs, uint16_t score_block = 0)
     : SmallDisjunction{std::move(itrs),
                        [&] noexcept {
                          return std::accumulate(
@@ -457,7 +466,7 @@ class SmallDisjunction : public CompoundDocIterator<Adapter>,
                              return lhs + CostAttr::extract(rhs, 0);
                            });
                        },
-                       ResolveOverloadTag()} {}
+                       score_block, ResolveOverloadTag()} {}
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);
@@ -575,7 +584,8 @@ class SmallDisjunction : public CompoundDocIterator<Adapter>,
   struct ResolveOverloadTag {};
 
   template<typename Estimation>
-  SmallDisjunction(Adapters&& itrs, Estimation&& estimation, ResolveOverloadTag)
+  SmallDisjunction(Adapters&& itrs, Estimation&& estimation,
+                   uint16_t score_block, ResolveOverloadTag)
     : _itrs(itrs.size()),
       _scored_begin(_itrs.begin()),
       _begin(_scored_begin),
@@ -599,7 +609,7 @@ class SmallDisjunction : public CompoundDocIterator<Adapter>,
 
     if constexpr (kHasScore) {
       this->PrepareScore(std::get<ScoreAttr>(_attrs),
-                         std::span{_scored_begin, _end},
+                         std::span{_scored_begin, _end}, score_block,
                          ScoreFunction::NoopMin);
     }
   }
@@ -667,10 +677,10 @@ class Disjunction : public CompoundDocIterator<Adapter>,
   static constexpr bool kHasScore = kMergeType != ScoreMergeType::Noop;
   static constexpr size_t kSmallDisjunctionUpperBound = 5;
 
-  Disjunction(Adapters&& itrs, CostAttr::Type est)
-    : Disjunction{std::move(itrs), est, ResolveOverloadTag()} {}
+  Disjunction(Adapters&& itrs, CostAttr::Type est, uint16_t score_block)
+    : Disjunction{std::move(itrs), est, score_block, ResolveOverloadTag()} {}
 
-  explicit Disjunction(Adapters&& itrs)
+  explicit Disjunction(Adapters&& itrs, uint16_t score_block = 0)
     : Disjunction{std::move(itrs),
                   [&] noexcept {
                     return absl::c_accumulate(
@@ -679,7 +689,7 @@ class Disjunction : public CompoundDocIterator<Adapter>,
                         return lhs + CostAttr::extract(rhs, 0);
                       });
                   },
-                  ResolveOverloadTag{}} {}
+                  score_block, ResolveOverloadTag{}} {}
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);
@@ -793,7 +803,8 @@ class Disjunction : public CompoundDocIterator<Adapter>,
   using Attributes = std::tuple<DocAttr, ScoreAttr, CostAttr>;
 
   template<typename Estimation>
-  Disjunction(Adapters&& itrs, Estimation&& estimation, ResolveOverloadTag)
+  Disjunction(Adapters&& itrs, Estimation&& estimation, uint16_t score_block,
+              ResolveOverloadTag)
     : _itrs{std::move(itrs)} {
     // since we are using heap in order to determine next document,
     // in order to avoid useless make_heap call we expect that all
@@ -811,7 +822,7 @@ class Disjunction : public CompoundDocIterator<Adapter>,
 
     if constexpr (kHasScore) {
       this->PrepareScore(std::get<irs::ScoreAttr>(_attrs), std::span{_itrs},
-                         ScoreFunction::NoopMin);
+                         score_block, ScoreFunction::NoopMin);
     }
   }
 
@@ -930,20 +941,24 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
   static constexpr auto kMergeType = MergeType;
   static constexpr bool kHasScore = kMergeType != ScoreMergeType::Noop;
 
-  BlockDisjunction(Adapters&& itrs, CostAttr::Type est)
-    : BlockDisjunction{std::move(itrs), 1, detail::SubScoresCtx{}, est} {}
+  BlockDisjunction(Adapters&& itrs, CostAttr::Type est, uint16_t score_block)
+    : BlockDisjunction{std::move(itrs), 1, detail::SubScoresCtx{}, est,
+                       score_block} {}
 
   BlockDisjunction(Adapters&& itrs, size_t min_match_count,
-                   detail::SubScoresCtx&& scores, CostAttr::Type est)
-    : BlockDisjunction{std::move(itrs), min_match_count, est, std::move(scores),
-                       ResolveOverloadTag{}} {}
+                   detail::SubScoresCtx&& scores, CostAttr::Type est,
+                   uint16_t score_block)
+    : BlockDisjunction{
+        std::move(itrs),   min_match_count, est,
+        std::move(scores), score_block,     ResolveOverloadTag{}} {}
 
-  explicit BlockDisjunction(Adapters&& itrs)
-    : BlockDisjunction{std::move(itrs), 1, {}} {}
+  explicit BlockDisjunction(Adapters&& itrs, uint16_t score_block = 0)
+    : BlockDisjunction{std::move(itrs), 1, {}, score_block} {}
 
   BlockDisjunction(Adapters&& itrs, size_t min_match_count,
-                   detail::SubScoresCtx&& scores)
-    : BlockDisjunction{std::move(itrs), min_match_count,
+                   detail::SubScoresCtx&& scores, uint16_t score_block)
+    : BlockDisjunction{std::move(itrs),
+                       min_match_count,
                        [&] noexcept {
                          return absl::c_accumulate(
                            _itrs, CostAttr::Type{0},
@@ -951,7 +966,9 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
                              return lhs + CostAttr::extract(rhs, 0);
                            });
                        },
-                       std::move(scores), ResolveOverloadTag{}} {}
+                       std::move(scores),
+                       score_block,
+                       ResolveOverloadTag{}} {}
 
   size_t MatchCount() const noexcept { return _match_count; }
 
@@ -1136,11 +1153,6 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
 
   struct ResolveOverloadTag {};
 
-  static void ScoreN(ScoreCtx* ctx, score_t* res, size_t n) noexcept {
-    auto& self = static_cast<BlockDisjunction&>(*ctx);
-    self._score_buf.Flush(res, n);
-  }
-
   uint32_t collect(std::span<doc_id_t> docs, size_t offset) final {
     return DocIterator::Collect(*this, docs, offset);
   }
@@ -1148,7 +1160,7 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
   template<typename Estimation>
   BlockDisjunction(Adapters&& itrs, size_t min_match_count,
                    Estimation&& estimation, detail::SubScoresCtx&& scores,
-                   ResolveOverloadTag)
+                   uint16_t score_block, ResolveOverloadTag)
     : _itrs(std::move(itrs)),
       _match_count(_itrs.empty() ? size_t(0)
                                  : static_cast<size_t>(!Traits::kMinMatch)),
@@ -1161,7 +1173,7 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
     }
 
     if constexpr (kHasScore) {
-      PrepareScore();
+      this->PrepareScore(score_block);
     }
 
     if (Traits::kMinMatch && min_match_count > 1) {
@@ -1395,21 +1407,21 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
       result[index] = stream.GetScore(offset);
     }
 
-    // TODO(gnusi): score block
-    ScoreFunction PrepareScore(auto min, uint16_t score_block = 256) {
+    ScoreFunction PrepareScore(ScoreCtx* ctx, uint16_t score_block, auto min) {
       result = std::make_unique<score_t[]>(score_block);
       stream.Init(score_block);
 
       return {this,
               [](ScoreCtx* ctx, score_t* res, size_t n) noexcept {
-                auto& self = static_cast<ScoreState&>(*ctx);
-                std::memcpy(res, self.result.get(), n * sizeof(score_t));
+                auto& self = static_cast<BlockDisjunction&>(*ctx);
+                std::memcpy(res, self._score_buf.result.get(),
+                            n * sizeof(score_t));
               },
               min};
     }
   };
 
-  ScoreFunction PrepareScore() {
+  ScoreFunction PrepareScore(uint16_t score_block) {
     auto& score = std::get<ScoreAttr>(_attrs);
     auto min = ScoreFunction::NoopMin;
     if (!_scores.scores.empty()) {
@@ -1450,7 +1462,7 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
         }
       };
 
-      score = _score_buf.PrepareScore(min);
+      score = _score_buf.PrepareScore(this, score_block, min);
     }
   }
 
@@ -1569,7 +1581,8 @@ DocIterator::ptr MakeDisjunction(WandContext ctx,
 template<typename WeakConjunction, typename... Args>
 DocIterator::ptr MakeWeakDisjunction(WandContext ctx,
                                      typename WeakConjunction::Adapters&& itrs,
-                                     size_t min_match, Args&&... args) {
+                                     size_t min_match, uint16_t score_block,
+                                     Args&&... args) {
   // This case must be handled by a caller, we're unable to process it here
   SDB_ASSERT(min_match > 0);
 
@@ -1583,13 +1596,14 @@ DocIterator::ptr MakeWeakDisjunction(WandContext ctx,
   if (1 == min_match) {
     // Pure disjunction
     using Disjunction = typename RebindIterator<WeakConjunction>::Disjunction;
-    return MakeDisjunction<Disjunction>(ctx, std::move(itrs),
+    return MakeDisjunction<Disjunction>(ctx, std::move(itrs), score_block,
                                         std::forward<Args>(args)...);
   }
 
   if (min_match == size) {
     // Pure conjunction
-    return MakeConjunction<WeakConjunction::kMergeType>(ctx, std::move(itrs));
+    return MakeConjunction<WeakConjunction::kMergeType>(ctx, std::move(itrs),
+                                                        score_block);
   }
 
   if (ctx.Enabled()) {
@@ -1599,14 +1613,14 @@ DocIterator::ptr MakeWeakDisjunction(WandContext ctx,
       // TODO(mbkkt) block wand/maxscore optimization
       using Wand = typename RebindIterator<WeakConjunction>::Wand;
       return memory::make_managed<Wand>(std::move(itrs), min_match,
-                                        std::move(scores),
+                                        std::move(scores), score_block,
                                         std::forward<Args>(args)...);
     }
   }
 
-  return memory::make_managed<WeakConjunction>(std::move(itrs), min_match,
-                                               detail::SubScoresCtx{},
-                                               std::forward<Args>(args)...);
+  return memory::make_managed<WeakConjunction>(
+    std::move(itrs), min_match, detail::SubScoresCtx{}, score_block,
+    std::forward<Args>(args)...);
 }
 
 }  // namespace irs

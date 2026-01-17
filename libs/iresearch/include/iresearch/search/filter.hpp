@@ -58,7 +58,7 @@ struct ExecutionContext {
   const Scorers& scorers = Scorers::kUnordered;
   const AttributeProvider* ctx = nullptr;
   ColumnCollector* collector = nullptr;
-  uint16_t score_block = kScoreWindow;
+  uint16_t score_block = 0;
   // If enabled, wand would use first scorer from scorers
   WandContext wand{};
 };

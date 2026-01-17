@@ -27,8 +27,6 @@
 
 namespace irs {
 
-static constexpr size_t kScoreWindow = 128;
-
 // Represents a score related for the particular document
 // min score set by document consumers
 // max score set by document producers
@@ -108,7 +106,9 @@ template<ScoreMergeType MergeType, typename I>
 void Merge(score_t* IRS_RESTRICT res, const I* IRS_RESTRICT hits,
            const score_t* IRS_RESTRICT args, size_t n) noexcept {
   for (size_t i = 0; i < n; ++i) {
-    Merge<MergeType>(res[hits[i]], args[i]);
+    const auto bucket_index = hits[i];
+    SDB_ASSERT(bucket_index < n);
+    Merge<MergeType>(res[bucket_index], args[i]);
   }
 }
 

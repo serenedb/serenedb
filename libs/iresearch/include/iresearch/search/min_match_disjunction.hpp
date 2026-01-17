@@ -62,7 +62,8 @@ class MinMatchDisjunction : public DocIterator,
   using Base::kHasScore;
   using Base::kMergeType;
 
-  MinMatchDisjunction(CostAdapters&& itrs, size_t min_match_count)
+  MinMatchDisjunction(CostAdapters&& itrs, size_t min_match_count,
+                      uint16_t score_block = 0)
     : _itrs{std::move(itrs)},
       _min_match_count{std::clamp(min_match_count, size_t{1}, _itrs.size())},
       _lead{_itrs.size()} {
@@ -88,7 +89,7 @@ class MinMatchDisjunction : public DocIterator,
 
     if constexpr (kHasScore) {
       this->PrepareScore(std::get<irs::ScoreAttr>(_attrs), std::span{_itrs},
-                         ScoreFunction::NoopMin);
+                         score_block, ScoreFunction::NoopMin);
     }
   }
 

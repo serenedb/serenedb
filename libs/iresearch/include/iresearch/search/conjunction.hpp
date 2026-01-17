@@ -24,6 +24,7 @@
 
 #include <absl/container/inlined_vector.h>
 
+#include <cstdint>
 #include <iresearch/index/iterators.hpp>
 #include <ranges>
 
@@ -114,7 +115,8 @@ auto ToScores(auto& itrs) noexcept {
 class ConjunctionScoreState : public ScoreCtx {
  public:
   template<ScoreMergeType MergeType>
-  ScoreFunction PrepareScore(auto& itrs, auto min, uint16_t score_block = 256) {
+  ScoreFunction PrepareScore(auto& itrs, uint16_t score_block, auto min) {
+    SDB_ASSERT(score_block);
     _sources.reserve(itrs.size());
     _sources.append_range(ToScores(itrs));
 
@@ -177,9 +179,9 @@ struct ConjunctionBase : public DocIterator {
       }));
   }
 
-  void PrepareScore(ScoreAttr& score, auto min) {
+  void PrepareScore(ScoreAttr& score, uint16_t score_block, auto min) {
     if constexpr (kHasScore) {
-      score = _scores.template PrepareScore<MergeType>(_itrs, min);
+      score = _scores.template PrepareScore<MergeType>(_itrs, score_block, min);
     }
   }
 
@@ -198,7 +200,7 @@ class Conjunction : public ConjunctionBase<Adapter, MergeType> {
     std::tuple<AttributePtr<DocAttr>, AttributePtr<CostAttr>, ScoreAttr>;
 
  public:
-  explicit Conjunction(std::vector<Adapter>&& itrs)
+  explicit Conjunction(std::vector<Adapter>&& itrs, uint16_t score_block = 0)
     : Base{std::move(itrs)}, _front{this->_itrs.front()} {
     SDB_ASSERT(!this->_itrs.empty());
     SDB_ASSERT(_front);
@@ -207,7 +209,8 @@ class Conjunction : public ConjunctionBase<Adapter, MergeType> {
     std::get<AttributePtr<CostAttr>>(_attrs) =
       irs::GetMutable<CostAttr>(&_front);
 
-    this->PrepareScore(std::get<ScoreAttr>(_attrs), ScoreFunction::NoopMin);
+    this->PrepareScore(std::get<ScoreAttr>(_attrs), score_block,
+                       ScoreFunction::NoopMin);
   }
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
@@ -264,7 +267,8 @@ class BlockConjunction : public ConjunctionBase<Adapter, MergeType> {
  public:
   using Adapters = std::vector<Adapter>;
 
-  explicit BlockConjunction(Adapters&& itrs, SubScores&& scores, bool strict)
+  explicit BlockConjunction(Adapters&& itrs, SubScores&& scores, bool strict,
+                            uint16_t score_block)
     : Base{std::move(itrs)}, _sum_scores{scores.sum_score} {
     SDB_ASSERT(this->_itrs.size() >= 2);
     SDB_ASSERT(!this->_scores.scorers.empty());
@@ -276,7 +280,7 @@ class BlockConjunction : public ConjunctionBase<Adapter, MergeType> {
     auto& score = std::get<ScoreAttr>(_attrs);
     score.max.leaf = score.max.tail = _sum_scores;
     auto min = strict ? MinStrictN : MinWeakN;
-    this->PrepareScore(score, min);
+    this->PrepareScore(score, score_block, min);
   }
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
@@ -432,7 +436,7 @@ template<ScoreMergeType MergeType,
          template<typename> typename Wrapper = EmptyWrapper, typename Adapter,
          typename... Args>
 DocIterator::ptr MakeConjunction(WandContext ctx, std::vector<Adapter>&& itrs,
-                                 Args&&... args) {
+                                 uint16_t score_block = 0, Args&&... args) {
   if (const auto size = itrs.size(); 0 == size) {
     // empty or unreachable search criteria
     return DocIterator::empty();
@@ -474,14 +478,14 @@ DocIterator::ptr MakeConjunction(WandContext ctx, std::vector<Adapter>&& itrs,
       return memory::make_managed<
         Wrapper<BlockConjunction<Adapter, MergeType>>>(
         std::forward<Args>(args)..., std::move(itrs), std::move(scores),
-        ctx.strict);
+        ctx.strict, score_block);
     }
     // TODO(mbkkt) We still could set min producer and root scoring
   }
 
   return memory::make_managed<Wrapper<Conjunction<Adapter, MergeType>>>(
-    std::forward<Args>(args)...,
-    std::move(itrs) /*, std::move(scores.scores)*/);
+    std::forward<Args>(args)..., std::move(itrs),
+    score_block /*, std::move(scores.scores)*/);
 }
 
 }  // namespace irs

@@ -47,6 +47,7 @@ DocIterator::ptr TermQuery::execute(const ExecutionContext& ctx) const {
   DocIterator::ptr docs;
   auto ord_buckets = ord.buckets();
   IteratorOptions options{ctx.wand};
+  options.score_block = ctx.score_block;
 
   auto make_score = [&](uint32_t cookie_idx,
                         const AttributeProvider& cookie_attrs) {

@@ -82,6 +82,7 @@ DocIterator::ptr MakeDisjunction(const ExecutionContext& ctx,
     merge_type, [&]<ScoreMergeType MergeType>() -> DocIterator::ptr {
       using Disjunction = DisjunctionIterator<ScoreAdapter, MergeType>;
       return irs::MakeDisjunction<Disjunction>(ctx.wand, std::move(itrs),
+                                               ctx.score_block,
                                                std::forward<Args>(args)...);
     });
 }
@@ -109,6 +110,7 @@ DocIterator::ptr MakeConjunction(const ExecutionContext& ctx,
   return irs::ResolveMergeType(
     merge_type, [&]<ScoreMergeType MergeType>() -> DocIterator::ptr {
       return irs::MakeConjunction<MergeType>(ctx.wand, std::move(itrs),
+                                             ctx.score_block,
                                              std::forward<Args>(args)...);
     });
 }
@@ -229,7 +231,7 @@ DocIterator::ptr MinMatchQuery::execute(const ExecutionContext& ctx,
     // FIXME(gnusi): use FAST version
     using Disjunction = MinMatchIterator<ScoreAdapter, MergeType>;
     return MakeWeakDisjunction<Disjunction>(ctx.wand, std::move(itrs),
-                                            min_match_count);
+                                            min_match_count, ctx.score_block);
   });
 }
 

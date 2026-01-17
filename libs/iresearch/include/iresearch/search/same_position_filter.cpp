@@ -178,7 +178,7 @@ class SamePositionQuery : public Filter::Query {
       ScoreMergeType::Sum, [&]<ScoreMergeType MergeType> -> DocIterator::ptr {
         return MakeConjunction<MergeType, SamePositionIterator>(
           // TODO(mbkkt) Implement wand?
-          {}, std::move(itrs), std::move(positions));
+          {}, std::move(itrs), ctx.score_block, std::move(positions));
       });
   }
 

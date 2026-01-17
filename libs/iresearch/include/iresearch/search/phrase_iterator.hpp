@@ -921,8 +921,7 @@ class PhraseIterator : public DocIterator {
     : PhraseIterator{std::move(itrs), std::move(pos)} {
     if (!ord.empty()) {
       if constexpr (!Frequency::kOneShot) {
-        _collected_freqs =
-          std::make_unique<uint32_t[]>(256);  // TODO(gnusi): block size
+        _collected_freqs = std::make_unique<uint32_t[]>(score_block);
         std::get<FreqBlockAttr>(_attrs).value = _collected_freqs.get();
       }
 

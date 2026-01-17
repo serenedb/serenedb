@@ -1050,7 +1050,7 @@ class SqlAnalyzer {
   int ErrorPosition(int location) {
     // TODO(pasha): We should change _query_string when we going into a
     // function/procedure/view body
-    return ::sdb::pg::ErrorPosition(_query_string.data(), location);
+    return ::sdb::pg::ErrorPosition(_query_string.view(), location);
   }
 
   int ListElementErrorPosition(int default_location, const List* args_list,
@@ -1793,7 +1793,7 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
 class CopyOptionsParser {
  public:
   CopyOptionsParser(velox::RowTypePtr row_type, bool is_writer,
-                    const char* query_string, std::string_view file_path,
+                    std::string_view query_string, std::string_view file_path,
                     const List* options, message::Buffer* send_buffer,
                     CopyMessagesQueue* copy_queue)
     : _row_type{std::move(row_type)},
@@ -2035,7 +2035,7 @@ class CopyOptionsParser {
 
   velox::RowTypePtr _row_type;
   bool _is_writer;
-  const char* _query_string;
+  std::string_view _query_string;
   CopyOptions _options;
   std::string_view _file_path;
   message::Buffer* _send_buffer;
@@ -2084,7 +2084,7 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
 
   auto file_path = absl::NullSafeStringView(stmt.filename);
   auto create_options_parser = [&](const velox::RowTypePtr& type) {
-    return CopyOptionsParser{type,       !stmt.is_from, _query_string.data(),
+    return CopyOptionsParser{type,       !stmt.is_from, _query_string.view(),
                              file_path,  stmt.options,  _send_buffer,
                              _copy_queue};
   };

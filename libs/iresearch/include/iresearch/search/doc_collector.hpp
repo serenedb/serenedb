@@ -40,7 +40,7 @@ size_t ExecuteTopKWithCount(const DirectoryReader& reader, const Filter& filter,
     return std::get<1>(lhs) > std::get<1>(rhs);
   };
   auto repivot = [&] noexcept {
-    std::nth_element(hits.begin(), pivot, end, cmp);
+    miniselect::median_of_ninthers_select(hits.begin(), pivot, end, cmp);
   };
 
   const uint16_t score_block = 2 * static_cast<uint16_t>(k);

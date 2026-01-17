@@ -1597,7 +1597,7 @@ Result RocksDBEngineCatalog::createTableShard(
     catalog::TableStats stats;
     if (auto r = vpack::ReadObjectNothrow<catalog::TableStats>(
           vpack::Slice{reinterpret_cast<const uint8_t*>(value.data())}, stats,
-          {.skip_unknown = false, .strict = true});
+          {.skip_unknown = false});
         !r.ok()) {
       return r;
     }

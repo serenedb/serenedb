@@ -20,8 +20,6 @@
 
 #include "query/transaction.h"
 
-#include "basics/errors.h"
-#include "catalog/catalog.h"
 #include "storage_engine/engine_feature.h"
 
 namespace sdb::query {

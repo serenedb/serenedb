@@ -23,6 +23,7 @@
 #include "columnstore2.hpp"
 
 #include <absl/cleanup/cleanup.h>
+#include <absl/functional/overload.h>
 #include <immintrin.h>
 
 #include <iresearch/analysis/token_attributes.hpp>
@@ -186,7 +187,7 @@ void WriteBlocksDense(IndexOutput& out,
 // Iterator over a specified contiguous range of documents
 template<typename PayloadReaderImpl>
 class RangeColumnIterator : public ResettableDocIterator,
-                            private PayloadReaderImpl {
+                            public PayloadReaderImpl {
  private:
   using PayloadReader = PayloadReaderImpl;
 
@@ -495,6 +496,9 @@ class ColumnBase : public ColumnReader, private util::Noncopyable {
   template<typename Factory>
   NormReader::ptr MakeNormReader(Factory&& f) const;
 
+  template<typename F>
+  auto ResolveNormHeader(F&&) const;
+
  private:
   template<typename ValueReader, typename Func>
   auto MakeIterator(ValueReader&& reader, IndexInput::ptr&& in, ColumnHint hint,
@@ -508,6 +512,26 @@ class ColumnBase : public ColumnReader, private util::Noncopyable {
   std::optional<std::string> _name;
   std::unique_ptr<HNSWIndexReader> _hnsw_index;
 };
+
+template<typename F>
+auto ColumnBase::ResolveNormHeader(F&& f) const {
+  auto header = NormHeader::Read(payload());
+
+  if (!header) [[unlikely]] {
+    return f.template operator()<void>();
+  }
+
+  switch (header->Encoding()) {
+    case NormEncoding::Byte:
+      return f.template operator()<NormEncoding::Byte>();
+    case NormEncoding::Short:
+      return f.template operator()<NormEncoding::Short>();
+    case NormEncoding::Int:
+      return f.template operator()<NormEncoding::Int>();
+  }
+
+  SDB_UNREACHABLE();
+}
 
 template<NormEncoding Encoding, typename Iterator>
 class NormReaderImpl : public NormReader {
@@ -578,33 +602,20 @@ class DirectFixedNormReader : public NormReader {
 
 template<typename Factory>
 NormReader::ptr ColumnBase::MakeNormReader(Factory&& f) const {
-  auto header = NormHeader::Read(payload());
-
-  if (!header) [[unlikely]] {
-    // TODO(gnusi): return empty?
-    return {};
-  }
-
-  auto make_iterator = [&]<NormEncoding Encoding> {
-    return MakeIterator(
-      std::forward<Factory>(f),
-      []<typename Iterator>(Iterator it) -> NormReader::ptr {
-        return memory::make_managed<NormReaderImpl<Encoding, Iterator>>(
-          std::move(it));
-      },
-      ColumnHint::Normal);
-  };
-
-  switch (header->Encoding()) {
-    case NormEncoding::Byte:
-      return make_iterator.template operator()<NormEncoding::Byte>();
-    case NormEncoding::Short:
-      return make_iterator.template operator()<NormEncoding::Short>();
-    case NormEncoding::Int:
-      return make_iterator.template operator()<NormEncoding::Int>();
-  }
-
-  SDB_UNREACHABLE();
+  return ResolveNormHeader(absl::Overload{
+    [&]<NormEncoding Encoding> {
+      return MakeIterator(
+        std::forward<Factory>(f),
+        []<typename Iterator>(Iterator it) -> NormReader::ptr {
+          return memory::make_managed<NormReaderImpl<Encoding, Iterator>>(
+            std::move(it));
+        },
+        ColumnHint::Normal);
+    },
+    []<typename T> {
+      // TODO(gnusi): return empty?
+      return NormReader::ptr{};
+    }});
 }
 
 template<typename Factory, typename Callback>
@@ -658,6 +669,9 @@ struct NoopValueReader {
 };
 
 class ValueDirectReader {
+ public:
+  const byte_type* GetData() const noexcept { return _data; }
+
  protected:
   explicit ValueDirectReader(const byte_type* data) noexcept : _data{data} {
     SDB_ASSERT(data);
@@ -865,7 +879,7 @@ class DenseFixedLengthColumn : public ColumnBase {
 
  private:
   template<typename ValueReader>
-  class PayloadReader : private ValueReader {
+  class PayloadReader : public ValueReader {
    public:
     template<typename... Args>
     PayloadReader(uint64_t data, uint64_t len, Args&&... args)
@@ -929,7 +943,27 @@ ResettableDocIterator::ptr DenseFixedLengthColumn::iterator(
 }
 
 NormReader::ptr DenseFixedLengthColumn::norms() const {
-  return MakeNormReader(Factory{this});
+  return ResolveNormHeader(absl::Overload{
+    [&]<NormEncoding Encoding> {
+      return MakeIterator(
+        Factory{this},
+        [&]<typename Iterator>(Iterator it) -> NormReader::ptr {
+          if constexpr (std::is_same_v<typename Iterator::element_type,
+                                       RangeColumnIterator<
+                                         PayloadReader<ValueDirectReader>>>) {
+            return memory::make_managed<DirectFixedNormReader<Encoding>>(
+              Header().min, it->GetData());
+          } else {
+            return memory::make_managed<NormReaderImpl<Encoding, Iterator>>(
+              std::move(it));
+          }
+        },
+        ColumnHint::Normal);
+    },
+    []<typename T> {
+      // TODO(gnusi): return empty?
+      return NormReader::ptr{};
+    }});
 }
 
 class FixedLengthColumn : public ColumnBase {

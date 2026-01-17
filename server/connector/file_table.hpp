@@ -38,8 +38,6 @@ class FileTable : public axiom::connector::Table {
  public:
   explicit FileTable(velox::RowTypePtr type, std::string_view file_path);
 
-  virtual ~FileTable() = default;
-
   const std::vector<const axiom::connector::TableLayout*>& layouts()
     const final {
     return _layouts;

@@ -686,7 +686,6 @@ set(protobuf_BUILD_LIBPROTOC ON CACHE BOOL "" FORCE)
 set(protobuf_BUILD_LIBUPB ON CACHE BOOL "" FORCE)
 add_subdirectory(protobuf)
 set(Protobuf_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/protobuf/src)
-set(Protobuf_INCLUDE_DIRS ${Protobuf_INCLUDE_DIRS} PARENT_SCOPE)
 include_directories(${Protobuf_INCLUDE_DIRS})
 
 ################################################################################

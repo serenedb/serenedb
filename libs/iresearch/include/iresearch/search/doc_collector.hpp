@@ -60,7 +60,7 @@ size_t ExecuteTopKWithCount(const DirectoryReader& reader, const Filter& filter,
 
     while (true) {
       auto collected = docs.subspan(offset);
-      const uint32_t block_size = it->collect(collected, 0);
+      const uint32_t block_size = it->collect(collected);
       if (block_size == 0) {
         break;
       }

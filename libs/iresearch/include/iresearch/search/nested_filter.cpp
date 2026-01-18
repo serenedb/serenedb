@@ -98,8 +98,8 @@ class ScorerWrapper : public DocIterator {
 
   uint32_t count() final { return _it->count(); }
 
-  uint32_t collect(std::span<doc_id_t> docs, size_t offset) final {
-    return _it->collect(docs, offset);
+  uint32_t collect(std::span<doc_id_t> docs) final {
+    return _it->collect(docs);
   }
 
   void CollectData(uint16_t index) final { _it->CollectData(index); }
@@ -161,8 +161,8 @@ class ChildToParentJoin : public DocIterator, private Matcher {
 
   uint32_t count() final { return Count(*this); }
 
-  uint32_t collect(std::span<doc_id_t> docs, size_t offset) final {
-    return Collect(*this, docs, offset);
+  uint32_t collect(std::span<doc_id_t> docs) final {
+    return Collect(*this, docs);
   }
 
   void CollectData(uint16_t index) final {

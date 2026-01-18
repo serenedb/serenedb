@@ -533,8 +533,8 @@ class NGramSimilarityDocIterator : public DocIterator, private ScoreCtx {
     }
   }
 
-  uint32_t collect(std::span<doc_id_t> docs, size_t offset) final {
-    return Collect(*this, docs, offset);
+  uint32_t collect(std::span<doc_id_t> docs) final {
+    return Collect(*this, docs);
   }
 
  private:

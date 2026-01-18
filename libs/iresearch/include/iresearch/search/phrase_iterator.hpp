@@ -978,8 +978,8 @@ class PhraseIterator : public DocIterator {
 
   uint32_t count() final { return Count(*this); }
 
-  uint32_t collect(std::span<doc_id_t> docs, size_t offset) final {
-    return Collect(*this, docs, offset);
+  uint32_t collect(std::span<doc_id_t> docs) final {
+    return Collect(*this, docs);
   }
 
   void CollectData(uint16_t index) final {

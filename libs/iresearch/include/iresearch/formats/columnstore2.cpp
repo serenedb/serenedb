@@ -282,8 +282,8 @@ class RangeColumnIterator : public ResettableDocIterator,
 
   void CollectData(uint16_t index) final {}
 
-  uint32_t collect(std::span<doc_id_t> docs, size_t offset) final {
-    return Collect(*this, docs, offset);
+  uint32_t collect(std::span<doc_id_t> docs) final {
+    return Collect(*this, docs);
   }
 
  private:
@@ -350,8 +350,8 @@ class BitmapColumnIterator : public ResettableDocIterator,
 
   void CollectData(uint16_t index) final {}
 
-  uint32_t collect(std::span<doc_id_t> docs, size_t offset) final {
-    return Collect(*this, docs, offset);
+  uint32_t collect(std::span<doc_id_t> docs) final {
+    return Collect(*this, docs);
   }
 
  private:

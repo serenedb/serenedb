@@ -66,7 +66,7 @@ struct DocIterator : AttributeProvider {
   virtual doc_id_t seek(doc_id_t target) = 0;
 
   // TODO(gnusi): return "has more"
-  virtual uint32_t collect(std::span<doc_id_t> docs, size_t offset);
+  virtual uint32_t collect(std::span<doc_id_t> docs);
 
   virtual void CollectData(uint16_t index) = 0;
 
@@ -100,11 +100,9 @@ struct DocIterator : AttributeProvider {
   }
 
   template<typename Iterator, size_t N = std::dynamic_extent>
-  static uint32_t Collect(Iterator& it, std::span<doc_id_t, N> docs,
-                          size_t offset) {
-    SDB_ASSERT(offset < docs.size());
-    size_t i = offset;
-    for (const size_t size = docs.size(); i < size; ++i) {
+  static uint32_t Collect(Iterator& it, std::span<doc_id_t, N> docs) {
+    size_t i = 0;
+    for (; i < docs.size(); ++i) {
       const auto doc = it.advance();
       if (doc_limits::eof(doc)) {
         break;
@@ -112,7 +110,7 @@ struct DocIterator : AttributeProvider {
       docs[i] = doc;
       it.CollectData(i);
     }
-    return i - offset;
+    return i;
   }
 };
 

@@ -66,9 +66,9 @@ class AllIterator : public DocIterator {
 
   void CollectData(uint16_t index) final {}
 
-  uint32_t collect(std::span<doc_id_t> docs, size_t offset) final {
+  uint32_t collect(std::span<doc_id_t> docs) final {
     // TODO(gnusi): optimize
-    return Collect(*this, docs, offset);
+    return Collect(*this, docs);
   };
 
  private:
@@ -108,8 +108,8 @@ class MaskDocIterator : public DocIterator {
 
   void CollectData(uint16_t index) final {}
 
-  uint32_t collect(std::span<doc_id_t> docs, size_t offset) final {
-    return Collect(*this, docs, offset);
+  uint32_t collect(std::span<doc_id_t> docs) final {
+    return Collect(*this, docs);
   }
 
  private:
@@ -155,8 +155,8 @@ class MaskedDocIterator : public DocIterator {
 
   void CollectData(uint16_t index) final {}
 
-  uint32_t collect(std::span<doc_id_t> docs, size_t offset) final {
-    return Collect(*this, docs, offset);
+  uint32_t collect(std::span<doc_id_t> docs) final {
+    return Collect(*this, docs);
   }
 
  private:

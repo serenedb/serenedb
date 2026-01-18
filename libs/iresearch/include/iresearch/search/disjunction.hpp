@@ -170,9 +170,7 @@ class UnaryDisjunction : public CompoundDocIterator<Adapter> {
 
   void CollectData(uint16_t index) final { _it.CollectData(index); }
 
-  uint32_t collect(std::span<doc_id_t> docs, size_t offset) final {
-    return _it.collect(docs, offset);
-  }
+  uint32_t collect(std::span<doc_id_t> docs) final { return _it.collect(docs); }
 
  private:
   Adapter _it;
@@ -350,8 +348,8 @@ class BasicDisjunction : public CompoundDocIterator<Adapter>,
     }
   }
 
-  uint32_t collect(std::span<doc_id_t> docs, size_t offset) final {
-    return DocIterator::Collect(*this, docs, offset);
+  uint32_t collect(std::span<doc_id_t> docs) final {
+    return DocIterator::Collect(*this, docs);
   }
 
   void CollectData(uint16_t index) final {
@@ -614,8 +612,8 @@ class SmallDisjunction : public CompoundDocIterator<Adapter>,
     }
   }
 
-  uint32_t collect(std::span<doc_id_t> docs, size_t offset) final {
-    return DocIterator::Collect(*this, docs, offset);
+  uint32_t collect(std::span<doc_id_t> docs) final {
+    return DocIterator::Collect(*this, docs);
   }
 
   bool remove_iterator(typename Adapters::iterator it) {
@@ -744,8 +742,8 @@ class Disjunction : public CompoundDocIterator<Adapter>,
 
   uint32_t count() final { return DocIterator::Count(*this); }
 
-  uint32_t collect(std::span<doc_id_t> docs, size_t offset) final {
-    return DocIterator::Collect(*this, docs, offset);
+  uint32_t collect(std::span<doc_id_t> docs) final {
+    return DocIterator::Collect(*this, docs);
   }
 
   void CollectData(uint16_t index) final {
@@ -1153,8 +1151,8 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
 
   struct ResolveOverloadTag {};
 
-  uint32_t collect(std::span<doc_id_t> docs, size_t offset) final {
-    return DocIterator::Collect(*this, docs, offset);
+  uint32_t collect(std::span<doc_id_t> docs) final {
+    return DocIterator::Collect(*this, docs);
   }
 
   template<typename Estimation>

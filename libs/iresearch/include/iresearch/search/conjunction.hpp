@@ -80,8 +80,8 @@ struct ScoreAdapter {
 
   IRS_FORCE_INLINE uint32_t count() { return _it->count(); }
 
-  IRS_FORCE_INLINE uint32_t collect(std::span<doc_id_t> docs, size_t offset) {
-    return _it->collect(docs, offset);
+  IRS_FORCE_INLINE uint32_t collect(std::span<doc_id_t> docs) {
+    return _it->collect(docs);
   }
 
   IRS_FORCE_INLINE void CollectData(uint16_t index) {
@@ -227,8 +227,8 @@ class Conjunction : public ConjunctionBase<Adapter, MergeType> {
 
   uint32_t count() final { return DocIterator::Count(*this); }
 
-  uint32_t collect(std::span<doc_id_t> docs, size_t offset) final {
-    return DocIterator::Collect(*this, docs, offset);
+  uint32_t collect(std::span<doc_id_t> docs) final {
+    return DocIterator::Collect(*this, docs);
   }
 
  private:
@@ -340,8 +340,8 @@ class BlockConjunction : public ConjunctionBase<Adapter, MergeType> {
 
   uint32_t count() final { return DocIterator::Count(*this); }
 
-  uint32_t collect(std::span<doc_id_t> docs, size_t offset) final {
-    return DocIterator::Collect(*this, docs, offset);
+  uint32_t collect(std::span<doc_id_t> docs) final {
+    return DocIterator::Collect(*this, docs);
   }
 
  private:

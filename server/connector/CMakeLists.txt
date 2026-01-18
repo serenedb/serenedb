@@ -7,6 +7,7 @@ add_library(
     serenedb_connector.cpp
     key_utils.cpp
     rocksdb_sink_writer.cpp
+    sst_sink_writer.cpp
     search_sink_writer.cpp
     search_remove_filter.cpp
     file_table.cpp

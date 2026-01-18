@@ -28,6 +28,10 @@
 #include <velox/type/Type.h>
 #include <velox/vector/DecodedVector.h>
 
+#include <chrono>
+#include <filesystem>
+#include <random>
+
 #include "basics/assert.h"
 #include "basics/fwd.h"
 #include "basics/misc.hpp"
@@ -39,6 +43,7 @@
 #include "file_table.hpp"
 #include "query/transaction.h"
 #include "rocksdb/utilities/transaction_db.h"
+#include "sst_sink_writer.hpp"
 
 namespace sdb::connector {
 
@@ -534,6 +539,24 @@ class SereneDBConnector final : public velox::connector::Connector {
         column_oids.push_back(
           basics::downCast<const SereneDBColumn>(handle->second)->Id());
       }
+
+      // TODO before pr: fix this
+      if constexpr (true) {
+        if (serene_insert_handle.Kind() ==
+            axiom::connector::WriteKind::kInsert) {
+          const auto& pk_handles =
+            table.rowIdHandles(serene_insert_handle.Kind());
+          std::vector<velox::column_index_t> pk_indices;
+          pk_indices.reserve(pk_handles.size());
+          for (const auto& handle : pk_handles) {
+            pk_indices.push_back(input_type->getChildIdx(handle->name()));
+          }
+          return std::make_unique<SSTInsertDataSink>(
+            *_db.GetBaseDB(), _cf, *connector_query_ctx->memoryPool(),
+            object_key, pk_indices, column_oids);
+        }
+      }
+
       auto& rocksdb_transaction = transaction.EnsureRocksDBTransaction();
       return irs::ResolveBool(
         serene_insert_handle.Kind() == axiom::connector::WriteKind::kUpdate,

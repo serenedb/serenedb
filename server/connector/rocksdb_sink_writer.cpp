@@ -24,7 +24,8 @@
 
 namespace sdb::connector {
 
-void RocksDBSinkWriter::Write(std::span<const rocksdb::Slice> cell_slices,
+void RocksDBSinkWriter::Write(size_t /*column_idx*/,
+                              std::span<const rocksdb::Slice> cell_slices,
                               std::string_view full_key) {
   rocksdb::Slice key_slice(full_key);
   rocksdb::Status status;

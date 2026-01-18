@@ -107,7 +107,6 @@ void Merge(score_t* IRS_RESTRICT res, const I* IRS_RESTRICT hits,
            const score_t* IRS_RESTRICT args, size_t n) noexcept {
   for (size_t i = 0; i < n; ++i) {
     const auto bucket_index = hits[i];
-    SDB_ASSERT(bucket_index < n);
     Merge<MergeType>(res[bucket_index], args[i]);
   }
 }

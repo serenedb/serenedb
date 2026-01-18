@@ -1397,7 +1397,7 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
     const ScoreFunction* _score = nullptr;
   };
 
-  struct ScoreState : ScoreCtx {
+  struct ScoreState {
     // TODO(gnuis): it's big allocate on heap?
     ScoreStream stream;
     std::unique_ptr<score_t[]> result;
@@ -1410,7 +1410,7 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
       result = std::make_unique<score_t[]>(score_block);
       stream.Init(score_block);
 
-      return {this,
+      return {ctx,
               [](ScoreCtx* ctx, score_t* res, size_t n) noexcept {
                 auto& self = static_cast<BlockDisjunction&>(*ctx);
                 std::memcpy(res, self._score_buf.result.get(),

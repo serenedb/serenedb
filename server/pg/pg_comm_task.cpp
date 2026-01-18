@@ -149,17 +149,13 @@ constexpr std::array<char, 47> kTimeoutTermination{PQ_MSG_ERROR_RESPONSE,
 
 // clang-format on
 
-template<size_t N>
-BufferView ToBuffer(const std::array<char, N>& data) {
-  return BufferView{data.data(), data.size()};
-}
-
 }  // namespace
 
 PgSQLCommTaskBase::PgSQLCommTaskBase(rest::GeneralServer& server,
                                      ConnectionInfo info)
   : rest::CommTask(server, std::move(info)),
     _feature{server.server().getFeature<PostgresFeature>()},
+    _copy_queue{_queue_mutex},
     _send{64, 4096, 4096,
           [this](message::SequenceView data) { this->SendAsync(data); }} {}
 
@@ -281,7 +277,7 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
     }
 
     _connection_ctx = std::make_shared<ConnectionContext>(
-      UserName(), DatabaseName(), database->GetId());
+      UserName(), DatabaseName(), database->GetId(), &_send, &_copy_queue);
 
     const auto& ci = GetConnectionInfo();
     [[maybe_unused]] hba::Client client{
@@ -1132,11 +1128,12 @@ void PgSQLCommTaskBase::ParseClientParameters(std::string_view data) {
 }
 
 void PgSQLCommTaskBase::CancelPacket() {
-  std::lock_guard lock{_queue_mutex};
+  std::unique_lock lock{_queue_mutex};
   _cancel_packet.store(true, std::memory_order_relaxed);
   if (_current_portal && _current_portal->cursor) {
     _current_portal->cursor->RequestCancel();
   }
+  _copy_queue.Abort(lock);
 }
 
 void PgSQLCommTaskBase::ReleaseCursor(SqlPortal& portal) {
@@ -1423,10 +1420,17 @@ bool PgSQLCommTask<T>::ReadCallback(asio_ns::error_code ec) {
           }
           {
             std::string packet{_packet.data(), _pending_len};
-            std::lock_guard lock{this->_queue_mutex};
-            this->_queue.emplace(std::move(packet));
-            if (this->_queue.size() == 1 && !this->Stopped()) {
-              this->_feature.ScheduleProcessFirst(this->weak_from_this());
+            // TODO: error if there's no copy in progress
+            if (packet.starts_with(PQ_MSG_COPY_DATA)) {
+              this->_copy_queue.AppendCopyDataMsg(std::move(packet));
+            } else if (packet.starts_with(PQ_MSG_COPY_DONE)) {
+              this->_copy_queue.AppendCopyDoneMsg();
+            } else {
+              std::lock_guard lock{this->_queue_mutex};
+              this->_queue.emplace(std::move(packet));
+              if (this->_queue.size() == 1 && !this->Stopped()) {
+                this->_feature.ScheduleProcessFirst(this->weak_from_this());
+              }
             }
           }
           _packet.erase(0, _pending_len);

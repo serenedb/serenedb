@@ -21,6 +21,8 @@
 #include "pg_feature.h"
 
 #include <axiom/optimizer/FunctionRegistry.h>
+#include <velox/dwio/text/RegisterTextReader.h>
+#include <velox/dwio/text/RegisterTextWriter.h>
 #include <velox/functions/prestosql/aggregates/RegisterAggregateFunctions.h>
 #include <velox/functions/prestosql/registration/RegistrationFunctions.h>
 #include <velox/functions/prestosql/types/HyperLogLogRegistration.h>
@@ -152,6 +154,9 @@ void PostgresFeature::prepare() {
     velox::memory::MemoryManager::Options{});
 
   velox::Type::registerSerDe();
+
+  velox::text::registerTextReaderFactory();
+  velox::text::registerTextWriterFactory();
 
   // TODO(mbkkt) velox::registerGeometryType();
   velox::registerHyperLogLogType();

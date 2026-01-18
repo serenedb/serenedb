@@ -8,6 +8,7 @@ target_sources(
         pg_feature.cpp
         sql_statement.cpp
         connection_context.cpp
+        copy_file.cpp
         pg_types.cpp
         serialize.cpp
         system_catalog.cpp

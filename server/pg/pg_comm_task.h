@@ -33,6 +33,7 @@
 #include "general_server/comm_task.h"
 #include "general_server/generic_comm_task.h"
 #include "pg/connection_context.h"
+#include "pg/copy_messages_queue.h"
 #include "pg/hba.h"
 #include "pg/serialize.h"
 #include "pg/sql_analyzer_velox.h"
@@ -64,7 +65,16 @@ inline constexpr std::string_view kZero{"", 1};
 
 inline constexpr std::string_view kAnonymObject{""};
 
+inline constexpr std::array<char, 5> kCopyDone{
+  'c', 0x00, 0x00, 0x00, 0x04,
+};
+
 using BufferView = std::string_view;
+
+template<size_t N>
+BufferView ToBuffer(const std::array<char, N>& data) {
+  return BufferView{data.data(), data.size()};
+}
 
 class PgSQLCommTaskBase : public rest::CommTask {
  public:
@@ -160,6 +170,7 @@ class PgSQLCommTaskBase : public rest::CommTask {
 
   using PacketsQueue = std::queue<std::string>;
   PostgresFeature& _feature;
+  CopyMessagesQueue _copy_queue;
   PacketsQueue _queue;
   mutable absl::Mutex _queue_mutex;
   absl::Mutex _execution_mutex;

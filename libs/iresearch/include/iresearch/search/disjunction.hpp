@@ -289,11 +289,11 @@ class BasicDisjunction : public CompoundDocIterator<Adapter>,
   }
 
   doc_id_t advance() final {
-    NextImpl(_itrs[0]);
-    NextImpl(_itrs[1]);
+    const doc_id_t lhs_doc = NextImpl(0);
+    const doc_id_t rhs_doc = NextImpl(1);
 
     auto& doc_value = std::get<DocAttr>(_attrs).value;
-    return doc_value = std::min(_itrs[0].value(), _itrs[1].value());
+    return doc_value = std::min(lhs_doc, rhs_doc);
   }
 
   doc_id_t seek(doc_id_t target) final {
@@ -394,14 +394,15 @@ class BasicDisjunction : public CompoundDocIterator<Adapter>,
     return it.value() < target && target == it.seek(target);
   }
 
-  void NextImpl(Adapter& it) {
+  doc_id_t NextImpl(size_t i) {
+    auto& it = _itrs[i];
     auto& doc_value = std::get<DocAttr>(_attrs).value;
     const auto value = it.value();
 
     if (doc_value == value) {
-      it.advance();
+      return it.advance();
     } else if (value < doc_value) {
-      it.seek(doc_value + doc_id_t(!doc_limits::eof(doc_value)));
+      return it.seek(doc_value + doc_id_t(!doc_limits::eof(doc_value)));
     }
   }
 

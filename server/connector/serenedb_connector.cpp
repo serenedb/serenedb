@@ -20,6 +20,7 @@
 
 #include "serenedb_connector.hpp"
 
+#include "basics/assert.h"
 #include "basics/static_strings.h"
 
 namespace sdb::connector {
@@ -30,7 +31,9 @@ SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
   : velox::connector::ConnectorTableHandle{StaticStrings::kSereneDBConnector},
     _name{layout.name()},
     _table_id{basics::downCast<RocksDBTable>(layout.table()).TableId()},
-    _transaction{ExtractTransaction(session)} {
+    _transaction{
+      &basics::downCast<RocksDBTable>(layout.table()).GetTransaction()} {
+  SDB_ASSERT(_transaction);
   const auto& column_map = layout.table().columnMap();
   SDB_ASSERT(!column_map.empty(),
              "Tables without columns must be processed in analyzer step");
@@ -47,7 +50,7 @@ SereneDBConnectorTableHandle::SereneDBConnectorTableHandle(
                              std::next(column_map.begin())->second)
                              ->Id();
   }
-  _transaction.AddRocksDBRead();
+  _transaction->AddRocksDBRead();
 }
 
 }  // namespace sdb::connector

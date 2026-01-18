@@ -69,8 +69,6 @@ bool SqlStatement::ProcessNextRoot(
   }
 
   objects.clear();
-  objects.ResetTransactionState(
-    basics::downCast<query::Transaction>(*connection_ctx));
 
   // TODO : split to Parse and Bind steps
   ParamIndex max_bind_param_idx = 0;

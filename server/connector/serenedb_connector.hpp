@@ -24,6 +24,8 @@
 #include <velox/connectors/Connector.h>
 #include <velox/type/Type.h>
 
+#include <memory>
+
 #include "basics/assert.h"
 #include "basics/fwd.h"
 #include "basics/misc.hpp"
@@ -38,13 +40,6 @@
 #include "storage_engine/table_shard.h"
 
 namespace sdb::connector {
-
-inline query::Transaction& ExtractTransaction(
-  const axiom::connector::ConnectorSessionPtr& session) {
-  SDB_ASSERT(session->config());
-  auto& transaction = basics::downCast<query::Transaction>(*session->config());
-  return transaction;
-}
 
 class SereneDBColumnHandle final : public velox::connector::ColumnHandle {
  public:
@@ -77,13 +72,13 @@ class SereneDBConnectorTableHandle final
     return _effective_column_id;
   }
 
-  auto& GetTransaction() const noexcept { return _transaction; }
+  auto& GetTransaction() const noexcept { return *_transaction; }
 
  private:
   std::string _name;
   ObjectId _table_id;
   catalog::Column::Id _effective_column_id;
-  query::Transaction& _transaction;
+  query::Transaction* _transaction;
 };
 
 class SereneDBColumn final : public axiom::connector::Column {
@@ -150,12 +145,12 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
 class RocksDBTable final : public axiom::connector::Table {
  public:
   explicit RocksDBTable(const catalog::Table& collection,
-                        query::Transaction* transaction)
+                        query::Transaction& transaction)
     : Table{std::string{collection.GetName()}, collection.RowType()},
       _pk_type(collection.PKType()),
       _table_id(collection.GetId()),
-      _stats{transaction ? transaction->GetTableStats(_table_id)
-                         : catalog::TableStats{}} {
+      _transaction{transaction},
+      _stats{transaction.GetTableStats(_table_id)} {
     _column_map.reserve(collection.RowType()->size());
     _column_handles.reserve(collection.RowType()->size());
 
@@ -240,6 +235,8 @@ class RocksDBTable final : public axiom::connector::Table {
 
   const velox::RowTypePtr& PKType() const noexcept { return _pk_type; }
 
+  query::Transaction& GetTransaction() const noexcept { return _transaction; }
+
  private:
   std::vector<std::unique_ptr<SereneDBColumn>> _column_handles;
   std::vector<std::unique_ptr<SereneDBTableLayout>> _layout_handles;
@@ -247,6 +244,7 @@ class RocksDBTable final : public axiom::connector::Table {
   std::vector<const axiom::connector::TableLayout*> _layouts;
   velox::RowTypePtr _pk_type;
   ObjectId _table_id;
+  query::Transaction& _transaction;
   catalog::TableStats _stats;
 };
 
@@ -292,11 +290,8 @@ class SereneDBConnectorInsertTableHandle final
   explicit SereneDBConnectorInsertTableHandle(
     const axiom::connector::ConnectorSessionPtr& session,
     const axiom::connector::TablePtr& table, axiom::connector::WriteKind kind)
-    : _session{session},
-      _table{table},
-      _kind{kind},
-      _transaction{ExtractTransaction(session)} {
-    _transaction.AddRocksDBWrite();
+    : _session{session}, _table{table}, _kind{kind} {
+    GetTransaction().AddRocksDBWrite();
   }
 
   bool supportsMultiThreading() const final { return false; }
@@ -309,13 +304,16 @@ class SereneDBConnectorInsertTableHandle final
 
   auto Kind() const noexcept { return _kind; }
 
-  auto& GetTransaction() const noexcept { return _transaction; }
+  query::Transaction& GetTransaction() const noexcept {
+    auto& rocksdb_table = basics::downCast<const RocksDBTable>(*_table);
+    auto& transaction = rocksdb_table.GetTransaction();
+    return transaction;
+  }
 
  private:
   axiom::connector::ConnectorSessionPtr _session;
   axiom::connector::TablePtr _table;
   axiom::connector::WriteKind _kind;
-  query::Transaction& _transaction;
   std::vector<velox::connector::ColumnHandlePtr> _row_id_handles;
 };
 

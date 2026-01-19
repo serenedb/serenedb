@@ -497,11 +497,11 @@ class SereneDBConnector final : public velox::connector::Connector {
       }
       return irs::ResolveBool(
         serene_insert_handle.Kind() == axiom::connector::WriteKind::kUpdate,
-        [&]<bool IsUpdate>() {
+        [&]<bool IsUpdate>() -> std::unique_ptr<velox::connector::DataSink> {
           std::vector<velox::column_index_t> pk_indices;
           if constexpr (IsUpdate) {
             pk_indices.resize(table.PKType()->size());
-            std::iota(pk_indices.begin(), pk_indices.end(), 0);
+            absl::c_iota(pk_indices, 0);
 #ifdef SDB_DEV
             // SQL Analyzer should put PK columns at the start and with correct
             // order
@@ -535,11 +535,19 @@ class SereneDBConnector final : public velox::connector::Connector {
 
           auto& rocksdb_transaction = transaction.EnsureRocksDBTransaction();
           const auto& snapshot = transaction.EnsureRocksDBSnapshot();
-          return std::make_unique<RocksDBDataSink>(
-            rocksdb_transaction, snapshot, _db, _cf,
-            serene_insert_handle.GetNumOfRowsAffected(),
-            *connector_query_ctx->memoryPool(), object_key, pk_indices,
-            column_oids, all_col_oids, IsUpdate);
+          if constexpr (IsUpdate) {
+            return std::make_unique<RocksDBUpdateDataSink>(
+              rocksdb_transaction, snapshot, _db, _cf,
+              serene_insert_handle.GetNumOfRowsAffected(),
+              *connector_query_ctx->memoryPool(), object_key, pk_indices,
+              column_oids, all_col_oids);
+          } else {
+            return std::make_unique<RocksDBInsertDataSink>(
+              rocksdb_transaction, _cf,
+              serene_insert_handle.GetNumOfRowsAffected(),
+              *connector_query_ctx->memoryPool(), object_key, pk_indices,
+              column_oids);
+          }
         });
     }
 

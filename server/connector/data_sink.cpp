@@ -64,56 +64,94 @@ void WriteNull(rocksdb::Transaction& trx, rocksdb::ColumnFamilyHandle& cf,
 
 namespace sdb::connector {
 
-RocksDBDataSink::RocksDBDataSink(
+RocksDBDataSinkBase::RocksDBDataSinkBase(
+  rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
+  std::atomic<size_t>& num_of_rows_affected,
+  velox::memory::MemoryPool& memory_pool, ObjectId object_key,
+  std::span<const velox::column_index_t> key_childs,
+  std::vector<catalog::Column::Id> column_oids)
+  : _transaction{transaction},
+    _cf{cf},
+    _num_of_rows_affected(num_of_rows_affected),
+    _object_key{object_key},
+    _column_ids{std::move(column_oids)},
+    _memory_pool{memory_pool},
+    _row_slices{memory_pool},
+    _keys_buffers{memory_pool},
+    _bytes_allocator{&memory_pool} {
+  _key_childs.assign_range(key_childs);
+  SDB_ASSERT(_object_key.isSet(), "RocksDBDataSink: object key is empty");
+  SDB_ASSERT(!_column_ids.empty(), "RocksDBDataSink: no columns in a table");
+}
+
+RocksDBInsertDataSink::RocksDBInsertDataSink(
+  rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
+  std::atomic<size_t>& num_of_rows_affected,
+  velox::memory::MemoryPool& memory_pool, ObjectId object_key,
+  std::span<const velox::column_index_t> key_childs,
+  std::vector<catalog::Column::Id> column_oids)
+  : RocksDBDataSinkBase{transaction,           cf,         num_of_rows_affected,
+                        memory_pool,           object_key, key_childs,
+                        std::move(column_oids)} {}
+
+RocksDBUpdateDataSink::RocksDBUpdateDataSink(
   rocksdb::Transaction& transaction, const rocksdb::Snapshot& snapshot,
   rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
   std::atomic<size_t>& num_of_rows_affected,
   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
   std::span<const velox::column_index_t> key_childs,
   std::vector<catalog::Column::Id> column_oids,
-  std::vector<catalog::Column::Id> all_column_oids,
-  bool skip_primary_key_columns)
-  : _transaction{transaction},
+  std::vector<catalog::Column::Id> all_column_oids)
+  : RocksDBDataSinkBase{transaction,           cf,         num_of_rows_affected,
+                        memory_pool,           object_key, key_childs,
+                        std::move(column_oids)},
     _snapshot{snapshot},
     _db{db},
-    _cf{cf},
-    _num_of_rows_affected(num_of_rows_affected),
-    _object_key{object_key},
-    _column_ids{std::move(column_oids)},
     _all_column_ids{std::move(all_column_oids)},
-    _memory_pool{memory_pool},
-    _row_slices{memory_pool},
-    _keys_buffers{memory_pool},
-    _bytes_allocator{&memory_pool},
-    _skip_primary_key_columns{skip_primary_key_columns} {
-  _key_childs.assign_range(key_childs);
-  // FIXME: Maybe some better check? For example, check same in 'appendData()',
-  // or that none of input->type() children names starts with 'upd_\0'
+    _updated_keys_buffers{memory_pool} {
+  // Columns ids of updating primary keys meet twice
   _updating_pk =
     _column_ids.size() > containers::FlatHashSet<catalog::Column::Id>(
                            _column_ids.begin(), _column_ids.end())
                            .size();
-  SDB_ASSERT(_object_key.isSet(), "RocksDBDataSink: object key is empty");
-  SDB_ASSERT(!_column_ids.empty(), "RocksDBDataSink: no columns in a table");
   if (_updating_pk) {
-    // Sort keys for seek-forward only iteration
-    std::string l_key;
-    std::string r_key;
+    // Calculate which columns are being updated (non-PK columns)
+    _updated_column_ids.insert(_column_ids.begin() + _key_childs.size(),
+                               _column_ids.end());
+
+    // Sort all column IDs for seek-forward only iteration
+    std::string lhs_key;
+    std::string rhs_key;
     absl::c_sort(_all_column_ids,
                  [&](catalog::Column::Id lhs, catalog::Column::Id rhs) {
-                   l_key.clear();
-                   r_key.clear();
-                   rocksutils::Append(l_key, lhs);
-                   rocksutils::Append(r_key, rhs);
-                   return l_key < r_key;
+                   lhs_key.clear();
+                   rhs_key.clear();
+                   rocksutils::Append(lhs_key, lhs);
+                   rocksutils::Append(rhs_key, rhs);
+                   return lhs_key < rhs_key;
                  });
+
+    containers::FlatHashMap<catalog::Column::Id, size_t> column_id_to_index;
+    column_id_to_index.reserve(_column_ids.size());
+    for (size_t i = 0; i < _column_ids.size(); ++i) {
+      column_id_to_index[_column_ids[i]] = i;
+    }
+
+    // Map old PK indices to updated PK positions in input
+    _updated_key_childs.reserve(_key_childs.size());
+    for (auto old_pk_index : _key_childs) {
+      auto pk_column_id = _column_ids[old_pk_index];
+      auto updated_pos_it = column_id_to_index.find(pk_column_id);
+      SDB_ASSERT(updated_pos_it != column_id_to_index.end());
+      _updated_key_childs.push_back(updated_pos_it->second);
+    }
   }
 }
 
 // TODO(Dronplane)
 // Looks like it is possible to inspect input vector and create vector of
 // writers and avoid switch/case for kinds and encodings on each row.
-void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
+void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
   static_assert(basics::IsLittleEndian());
   SDB_ASSERT(input->encoding() == velox::VectorEncoding::Simple::ROW);
   SDB_ASSERT(input->type()->size() == _column_ids.size(),
@@ -128,14 +166,49 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
   _keys_buffers.clear();
   _keys_buffers.reserve(num_rows);
 
-  primary_key::Keys new_key_buffers{_keys_buffers.get_allocator()};
-  auto new_key_childs = _key_childs;
-  for (auto& new_key_child : new_key_childs) {
-    auto it =
-      std::find(_column_ids.rbegin(), _column_ids.rend(), new_key_child);
-    SDB_ASSERT(it != _column_ids.rend());
-    auto idx = std::distance(it, _column_ids.rend()) - 1;
-    new_key_child = idx;
+  auto lock_row = [&](std::string_view row_key) {
+    auto status = _transaction.GetKeyLock(&_cf, row_key, false, true);
+    if (!status.ok()) {
+      SDB_THROW(rocksutils::ConvertStatus(status));
+    }
+  };
+
+  for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+    key_utils::MakeColumnKey(input, _key_childs, row_idx, table_key, lock_row,
+                             _keys_buffers.emplace_back());
+  }
+
+  velox::IndexRange all_rows(0, num_rows);
+  for (velox::column_index_t i = 0; i < num_columns; ++i) {
+    _column_id = _column_ids[i];
+    if (_column_id != catalog::Column::kGeneratedPKId) {
+      WriteColumn(input->childAt(i), folly::Range{&all_rows, 1}, {});
+    }
+  }
+  _num_of_rows_affected.fetch_add(num_rows, std::memory_order_relaxed);
+}
+
+// TODO(Dronplane)
+// Looks like it is possible to inspect input vector and create vector of
+// writers and avoid switch/case for kinds and encodings on each row.
+void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
+  static_assert(basics::IsLittleEndian());
+  SDB_ASSERT(input->encoding() == velox::VectorEncoding::Simple::ROW);
+  SDB_ASSERT(input->type()->size() == _column_ids.size(),
+             "RocksDBDataSink: column oids size ", _column_ids.size(),
+             " doesn't match input type size ", input->type()->size());
+  SDB_ASSERT(input->type()->kind() == velox::TypeKind::ROW);
+
+  const std::string table_key = key_utils::PrepareTableKey(_object_key);
+  const auto num_rows = input->size();
+  const auto num_columns = input->childrenSize();
+
+  _keys_buffers.clear();
+  _keys_buffers.reserve(num_rows);
+
+  if (_updating_pk) {
+    _updated_keys_buffers.clear();
+    _updated_keys_buffers.reserve(num_rows);
   }
 
   auto lock_row = [&](std::string_view row_key) {
@@ -151,18 +224,14 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
 
     // Prepare new keys
     if (_updating_pk) {
-      key_utils::MakeColumnKey(input, new_key_childs, row_idx, table_key,
-                               lock_row, new_key_buffers.emplace_back());
+      key_utils::MakeColumnKey(input, _updated_key_childs, row_idx, table_key,
+                               lock_row, _updated_keys_buffers.emplace_back());
     }
   }
 
   // Delete all old value
   if (_updating_pk) {
-    rocksdb::ReadOptions read_options;
-    read_options.async_io = num_rows > 1;
-    read_options.snapshot = &_snapshot;
-
-    // We want to iterate with only forward seeking, so sort for that
+    // We want to iterate with only forward seeking, so sort goes for that
     std::vector<size_t> row_order(num_rows);
     absl::c_iota(row_order, 0);
     absl::c_sort(row_order, [&](size_t l_ind, size_t r_ind) {
@@ -180,8 +249,12 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
     containers::FlatHashSet<catalog::Column::Id> updated_columns(
       _column_ids.begin() + _key_childs.size(), _column_ids.end());
 
+    rocksdb::ReadOptions read_options;
+    read_options.async_io = num_rows > 1;
+    read_options.snapshot = &_snapshot;
     auto it =
       std::unique_ptr<rocksdb::Iterator>(_db.NewIterator(read_options, &_cf));
+
     for (auto col_id : _all_column_ids) {
       for (auto row_idx : row_order) {
         auto& old_key = _keys_buffers[row_idx];
@@ -195,27 +268,24 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
         if (!status.ok()) {
           SDB_THROW(rocksutils::ConvertStatus(status));
         }
-        if (updated_columns.contains(col_id)) {
+        if (_updated_column_ids.contains(col_id)) {
           continue;
         }
 
-        auto& new_key = new_key_buffers[row_idx];
-        key_utils::SetupColumnForKey(new_key, col_id);
-        status = _transaction.Put(&_cf, new_key, it->value());
+        auto& updated_key = _updated_keys_buffers[row_idx];
+        key_utils::SetupColumnForKey(updated_key, col_id);
+        status = _transaction.Put(&_cf, updated_key, it->value());
         if (!status.ok()) {
           SDB_THROW(rocksutils::ConvertStatus(status));
         }
       }
     }
 
-    _keys_buffers = std::move(new_key_buffers);
+    std::swap(_keys_buffers, _updated_keys_buffers);
   }
 
   velox::IndexRange all_rows(0, num_rows);
-  for (velox::column_index_t i = 0; i < num_columns; ++i) {
-    if (_skip_primary_key_columns && i < _key_childs.size()) {
-      continue;
-    }
+  for (velox::column_index_t i = _key_childs.size(); i < num_columns; ++i) {
     _column_id = _column_ids[i];
     if (_column_id != catalog::Column::kGeneratedPKId) {
       WriteColumn(input->childAt(i), folly::Range{&all_rows, 1}, {});
@@ -230,7 +300,7 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
 // rocksdb key setting. Vector ranges are iterated and each element is stored in
 // rocksdb as a single value.
 template<velox::TypeKind Kind>
-void RocksDBDataSink::WriteFlatColumn(
+void RocksDBDataSinkBase::WriteFlatColumn(
   const velox::BaseVector& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   std::span<const velox::vector_size_t> original_idx) {
@@ -263,7 +333,7 @@ void RocksDBDataSink::WriteFlatColumn(
 }
 
 template<velox::TypeKind Kind>
-void RocksDBDataSink::WriteBiasedColumn(
+void RocksDBDataSinkBase::WriteBiasedColumn(
   const velox::BaseVector& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   std::span<const velox::vector_size_t> original_idx) {
@@ -301,7 +371,7 @@ void RocksDBDataSink::WriteBiasedColumn(
 // We write only nulls decided by dictionary itself.
 // For actual writing we just decode indexes and
 // call write on the wrapped column
-void RocksDBDataSink::WriteDictionaryColumn(
+void RocksDBDataSinkBase::WriteDictionaryColumn(
   const velox::VectorPtr& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   std::span<const velox::vector_size_t> original_idx) {
@@ -344,7 +414,7 @@ void RocksDBDataSink::WriteDictionaryColumn(
 }
 
 template<velox::VectorEncoding::Simple Encoding>
-void RocksDBDataSink::WriteComplexColumn(
+void RocksDBDataSinkBase::WriteComplexColumn(
   const velox::BaseVector& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   std::span<const velox::vector_size_t> original_idx) {
@@ -380,7 +450,7 @@ void RocksDBDataSink::WriteComplexColumn(
 }
 
 template<velox::TypeKind Kind>
-void RocksDBDataSink::WriteConstantColumn(
+void RocksDBDataSinkBase::WriteConstantColumn(
   const velox::BaseVector& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   std::span<const velox::vector_size_t> original_idx) {
@@ -401,7 +471,7 @@ void RocksDBDataSink::WriteConstantColumn(
 }
 
 template<>
-void RocksDBDataSink::WriteConstantColumn<velox::TypeKind::OPAQUE>(
+void RocksDBDataSinkBase::WriteConstantColumn<velox::TypeKind::OPAQUE>(
   const velox::BaseVector&, const folly::Range<const velox::IndexRange*>&,
   std::span<const velox::vector_size_t>) {
   SDB_THROW(ERROR_NOT_IMPLEMENTED,
@@ -410,7 +480,7 @@ void RocksDBDataSink::WriteConstantColumn<velox::TypeKind::OPAQUE>(
 
 // Main writing method. Used to dispatch actual writes depending on column kind
 // and encoding. See corresponding methods for description of storage formats.
-void RocksDBDataSink::WriteColumn(
+void RocksDBDataSinkBase::WriteColumn(
   const velox::VectorPtr& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   std::span<const velox::vector_size_t> original_idx) {
@@ -468,7 +538,7 @@ void RocksDBDataSink::WriteColumn(
 // Writes a vector as a single value. Actual format depends on kind and
 // encoding. Method is like WriteColumn main dispatching method but for writing
 // vectors as cell value.
-void RocksDBDataSink::WriteVector(
+void RocksDBDataSinkBase::WriteVector(
   const velox::VectorPtr& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   rocksdb::Slice wrapper_nulls, bool force_nulls) {
@@ -566,7 +636,7 @@ void RocksDBDataSink::WriteVector(
 // with some nulls.
 // clang-format on
 template<bool ForceNulls, velox::TypeKind Kind>
-void RocksDBDataSink::WriteConstantVector(
+void RocksDBDataSinkBase::WriteConstantVector(
   const velox::BaseVector& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   rocksdb::Slice wrapper_nulls) {
@@ -615,7 +685,7 @@ void RocksDBDataSink::WriteConstantVector(
 // [size of keys vector in bytes]
 // clang-format on
 template<bool HaveNulls>
-void RocksDBDataSink::WriteMapVector(
+void RocksDBDataSinkBase::WriteMapVector(
   const velox::BaseVector& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   rocksdb::Slice wrapper_nulls, bool force_nulls) {
@@ -755,7 +825,7 @@ void RocksDBDataSink::WriteMapVector(
 // each key has value vector and in_maps bitmap (possibly with zero length).
 // clang-format on
 template<bool HaveNulls>
-void RocksDBDataSink::WriteFlatMapVector(
+void RocksDBDataSinkBase::WriteFlatMapVector(
   const velox::BaseVector& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   rocksdb::Slice wrapper_nulls, bool force_nulls) {
@@ -950,7 +1020,7 @@ void RocksDBDataSink::WriteFlatMapVector(
 //   - [elements length data]
 // clang-format on
 template<bool HaveNulls>
-void RocksDBDataSink::WriteRowVector(
+void RocksDBDataSinkBase::WriteRowVector(
   const velox::BaseVector& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   rocksdb::Slice wrapper_nulls, bool force_nulls) {
@@ -1027,7 +1097,7 @@ void RocksDBDataSink::WriteRowVector(
 //   - 1 byte flags. Marks if there is nulls mask.
 // clang-format on
 template<bool HaveNulls>
-void RocksDBDataSink::WriteArrayVector(
+void RocksDBDataSinkBase::WriteArrayVector(
   const velox::BaseVector& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   rocksdb::Slice wrapper_nulls, bool force_nulls) {
@@ -1164,7 +1234,7 @@ void RocksDBDataSink::WriteArrayVector(
 // stored as bitset and we built a new bitset for reqired range.
 // clang-format on
 template<bool HaveNulls, velox::TypeKind Kind>
-void RocksDBDataSink::WriteFlatVector(
+void RocksDBDataSinkBase::WriteFlatVector(
   const velox::BaseVector& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   rocksdb::Slice wrapper_nulls, bool force_nulls) {
@@ -1404,7 +1474,7 @@ void RocksDBDataSink::WriteFlatVector(
 }
 
 template<bool HaveNulls, velox::TypeKind Kind>
-void RocksDBDataSink::WriteBiasedVector(
+void RocksDBDataSinkBase::WriteBiasedVector(
   const velox::BaseVector& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   rocksdb::Slice wrapper_nulls, bool force_nulls) {
@@ -1507,7 +1577,7 @@ void RocksDBDataSink::WriteBiasedVector(
 // Writes dictionary encoded vector. Vector is stored as unwrapped vector.
 // Indexes are decoded. Nulls are combined.
 template<bool HaveNulls>
-void RocksDBDataSink::WriteDictionaryVector(
+void RocksDBDataSinkBase::WriteDictionaryVector(
   const velox::VectorPtr& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   rocksdb::Slice wrapper_nulls) {
@@ -1585,8 +1655,8 @@ void RocksDBDataSink::WriteDictionaryVector(
 // containing single element designated by idx but we do not want to write
 // overhead related to storing vector header/nulls bitmap etc. if we are sure
 // we need only one value.
-void RocksDBDataSink::WriteValue(const velox::VectorPtr& input,
-                                 velox::vector_size_t idx) {
+void RocksDBDataSinkBase::WriteValue(const velox::VectorPtr& input,
+                                     velox::vector_size_t idx) {
   SDB_ASSERT(idx < input->size());
   if (input->isNullAt(idx)) {
     // TODO(Dronplane): we can avoid storing more than one empty slices in
@@ -1638,8 +1708,8 @@ void RocksDBDataSink::WriteValue(const velox::VectorPtr& input,
 }
 
 template<velox::TypeKind Kind>
-void RocksDBDataSink::WriteBiasedValue(const velox::BaseVector& input,
-                                       velox::vector_size_t idx) {
+void RocksDBDataSinkBase::WriteBiasedValue(const velox::BaseVector& input,
+                                           velox::vector_size_t idx) {
   SDB_ASSERT(idx < input.size());
   SDB_ASSERT(!input.isNullAt(idx));
   SDB_ASSERT(input.encoding() == velox::VectorEncoding::Simple::BIASED);
@@ -1661,8 +1731,8 @@ void RocksDBDataSink::WriteBiasedValue(const velox::BaseVector& input,
 }
 
 template<velox::TypeKind Kind>
-void RocksDBDataSink::WriteFlatValueWrapper(const velox::BaseVector& input,
-                                            velox::vector_size_t idx) {
+void RocksDBDataSinkBase::WriteFlatValueWrapper(const velox::BaseVector& input,
+                                                velox::vector_size_t idx) {
   using T = typename velox::TypeTraits<Kind>::NativeType;
   auto* flat_vector = input.asFlatVector<T>();
   SDB_ASSERT(flat_vector);
@@ -1670,8 +1740,8 @@ void RocksDBDataSink::WriteFlatValueWrapper(const velox::BaseVector& input,
 }
 
 template<typename T>
-void RocksDBDataSink::WriteFlatValue(const velox::FlatVector<T>& input,
-                                     velox::vector_size_t idx) {
+void RocksDBDataSinkBase::WriteFlatValue(const velox::FlatVector<T>& input,
+                                         velox::vector_size_t idx) {
   SDB_ASSERT(idx < input.size());
   SDB_ASSERT(!input.isNullAt(idx));
   if constexpr (std::is_same_v<T, bool>) {
@@ -1688,8 +1758,8 @@ void RocksDBDataSink::WriteFlatValue(const velox::FlatVector<T>& input,
 // values data is raw data of struct fields in order determined by childs order
 // in type. Particular values format is determined by value kind. Null value has
 // 0 length.
-void RocksDBDataSink::WriteRowValue(const velox::BaseVector& input,
-                                    velox::vector_size_t idx) {
+void RocksDBDataSinkBase::WriteRowValue(const velox::BaseVector& input,
+                                        velox::vector_size_t idx) {
   SDB_ASSERT(idx < input.size());
   SDB_ASSERT(!input.isNullAt(idx));
   const auto* row_vec = input.as<velox::RowVector>();
@@ -1737,8 +1807,8 @@ void RocksDBDataSink::WriteRowValue(const velox::BaseVector& input,
 // the value and read each vector in parallel. And then combine original map.
 // key/value vectors might have its own null mask.
 // This is stored as part of the corresponding vector.
-void RocksDBDataSink::WriteMapValue(const velox::BaseVector& input,
-                                    velox::vector_size_t idx) {
+void RocksDBDataSinkBase::WriteMapValue(const velox::BaseVector& input,
+                                        velox::vector_size_t idx) {
   SDB_ASSERT(idx < input.size());
   SDB_ASSERT(!input.isNullAt(idx));
   SDB_ASSERT(input.encoding() == velox::VectorEncoding::Simple::MAP);
@@ -1778,8 +1848,8 @@ void RocksDBDataSink::WriteMapValue(const velox::BaseVector& input,
 // Flat Map is written as vector of keys (only present in current cell)
 // and corresponding values for each key.
 // Format is: [flags] [length array size] [length array] [keys vector] [values]
-void RocksDBDataSink::WriteFlatMapValue(const velox::BaseVector& input,
-                                        velox::vector_size_t idx) {
+void RocksDBDataSinkBase::WriteFlatMapValue(const velox::BaseVector& input,
+                                            velox::vector_size_t idx) {
   SDB_ASSERT(idx < input.size());
   SDB_ASSERT(!input.isNullAt(idx));
   SDB_ASSERT(input.encoding() == velox::VectorEncoding::Simple::FLAT_MAP);
@@ -1842,8 +1912,8 @@ void RocksDBDataSink::WriteFlatMapValue(const velox::BaseVector& input,
 
 // Array is just a vector. So write corresponding elements vector part as a
 // value.
-void RocksDBDataSink::WriteArrayValue(const velox::BaseVector& input,
-                                      velox::vector_size_t idx) {
+void RocksDBDataSinkBase::WriteArrayValue(const velox::BaseVector& input,
+                                          velox::vector_size_t idx) {
   SDB_ASSERT(idx < input.size());
   SDB_ASSERT(!input.isNullAt(idx));
   const auto* array_vector = input.as<velox::ArrayVector>();
@@ -1857,7 +1927,7 @@ void RocksDBDataSink::WriteArrayValue(const velox::BaseVector& input,
   WriteVector(array_vector->elements(), elements_range, {}, false);
 }
 
-void RocksDBDataSink::WriteRowSlices(std::string_view key) {
+void RocksDBDataSinkBase::WriteRowSlices(std::string_view key) {
   rocksdb::Slice key_slice(key);
   rocksdb::Status status;
   SDB_ASSERT(!_row_slices.empty());
@@ -1880,7 +1950,7 @@ void RocksDBDataSink::WriteRowSlices(std::string_view key) {
 }
 
 template<velox::TypeKind Kind>
-void RocksDBDataSink::WriteConstantValue(const velox::BaseVector& input) {
+void RocksDBDataSinkBase::WriteConstantValue(const velox::BaseVector& input) {
   using T = typename velox::KindToFlatVector<Kind>::WrapperType;
   auto const_vector = input.as<velox::ConstantVector<T>>();
   SDB_ASSERT(const_vector);
@@ -1913,7 +1983,7 @@ void RocksDBDataSink::WriteConstantValue(const velox::BaseVector& input) {
 // the beginning. So reader should always skip first 0x00 byte if any. That will
 // make empty string distinguishable from NULL.
 template<typename T>
-void RocksDBDataSink::WritePrimitive(const T& value) {
+void RocksDBDataSinkBase::WritePrimitive(const T& value) {
   static_assert(
     !std::is_same_v<T, void>,
     "Velox complex types that has void as NativeType should not get here");
@@ -1945,7 +2015,7 @@ void RocksDBDataSink::WritePrimitive(const T& value) {
   }
 }
 
-const std::string& RocksDBDataSink::SetupRowKey(
+const std::string& RocksDBDataSinkBase::SetupRowKey(
   velox::vector_size_t idx,
   std::span<const velox::vector_size_t> original_idx) {
   SDB_ASSERT(original_idx.empty() ||
@@ -1959,7 +2029,7 @@ const std::string& RocksDBDataSink::SetupRowKey(
   return row_key;
 }
 
-void RocksDBDataSink::ResetForNewRow() noexcept {
+void RocksDBDataSinkBase::ResetForNewRow() noexcept {
   _row_slices.clear();
   // memory reclaim is relatively expensive so do it only when we have
   // accumulated some noticable amount of memory.
@@ -1970,7 +2040,7 @@ void RocksDBDataSink::ResetForNewRow() noexcept {
   }
 }
 
-void RocksDBDataSink::GatherNulls(
+void RocksDBDataSinkBase::GatherNulls(
   const velox::BaseVector& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   velox::vector_size_t total_rows_number, bool whole_vector,
@@ -2034,7 +2104,7 @@ void RocksDBDataSink::GatherNulls(
   }
 }
 
-RocksDBDataSink::IndiciesVector RocksDBDataSink::GatherIndicies(
+RocksDBDataSinkBase::IndiciesVector RocksDBDataSinkBase::GatherIndicies(
   const folly::Range<const velox::IndexRange*>& ranges,
   velox::vector_size_t total_rows_number) {
   IndiciesVector indicies(_memory_pool);
@@ -2069,18 +2139,18 @@ RocksDBDataSink::IndiciesVector RocksDBDataSink::GatherIndicies(
   return indicies;
 }
 
-bool RocksDBDataSink::finish() { return true; }
+bool RocksDBDataSinkBase::finish() { return true; }
 
-std::vector<std::string> RocksDBDataSink::close() { return {}; }
+std::vector<std::string> RocksDBDataSinkBase::close() { return {}; }
 
-void RocksDBDataSink::abort() {
+void RocksDBDataSinkBase::abort() {
   // Transaction itself should be contolled outside and needed SavePoint should
   // be set.
   ResetForNewRow();
   // TODO(Dronplane) should we also shrink slice vector to save some memory?
 }
 
-velox::connector::DataSink::Stats RocksDBDataSink::stats() const {
+velox::connector::DataSink::Stats RocksDBDataSinkBase::stats() const {
   // TODO(Dronplane) implement
   return {};
 }

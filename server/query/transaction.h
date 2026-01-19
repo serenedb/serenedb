@@ -26,6 +26,7 @@
 #include <yaclib/async/future.hpp>
 
 #include "basics/bit_utils.hpp"
+#include "basics/containers/flat_hash_map.h"
 #include "basics/result.h"
 #include "catalog/catalog.h"
 #include "query/config.h"
@@ -49,6 +50,11 @@ class Transaction : public Config {
 
   Result Rollback();
 
+  void ModifyTableStats(ObjectId table_id,
+                        catalog::TableStats::Diff diff) noexcept {
+    _table_stats_diffs[table_id].Add(diff);
+  }
+
   void AddRocksDBRead() noexcept;
 
   void AddRocksDBWrite() noexcept;
@@ -68,11 +74,14 @@ class Transaction : public Config {
  private:
   void CreateStorageSnapshot();
   void CreateRocksDBTransaction();
+  void ApplyTableStatsDiffs();
 
   State _state = State::None;
   std::shared_ptr<StorageSnapshot> _storage_snapshot;
   std::unique_ptr<rocksdb::Transaction> _rocksdb_transaction;
   const rocksdb::Snapshot* _rocksdb_snapshot = nullptr;
+  containers::FlatHashMap<ObjectId, catalog::TableStats::Diff>
+    _table_stats_diffs;
 };
 
 ENABLE_BITMASK_ENUM(Transaction::State);

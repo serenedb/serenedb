@@ -38,6 +38,7 @@ Result Transaction::Commit() {
     return {ERROR_INTERNAL,
             "Failed to commit RocksDB transaction: ", status.ToString()};
   }
+  ApplyTableStatsDiffs();
   CommitVariables();
   Destroy();
   return {};
@@ -129,6 +130,17 @@ catalog::TableStats Transaction::GetTableStats(ObjectId table_id) const {
               "Table shard not found for table id: ", table_id);
   }
   return table_shard->GetTableStats();
+}
+
+void Transaction::ApplyTableStatsDiffs() {
+  for (const auto& [table_id, diff] : _table_stats_diffs) {
+    auto table_shard = catalog::GetTableShard(table_id);
+    SDB_ASSERT(table_shard);
+    if (table_shard) {
+      table_shard->ApplyTableStatsDiff(diff);
+    }
+  }
+  _table_stats_diffs.clear();
 }
 
 }  // namespace sdb::query

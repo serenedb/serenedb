@@ -32,17 +32,13 @@
 #include "basics/endian.h"
 #include "basics/exceptions.h"
 #include "basics/misc.hpp"
-#include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
 #include "common.h"
 #include "connector/primary_key.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "key_utils.hpp"
-#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
-#include "storage_engine/engine_feature.h"
-#include "storage_engine/table_shard.h"
 
 #if __has_feature(memory_sanitizer)
 #define DATA_SINK_USE_MEMORY_SANITIZER

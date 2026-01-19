@@ -397,24 +397,27 @@ class SereneDBConnectorMetadata final
     }
 
     int64_t number_of_locked_primary_keys = rocksdb_transaction->GetNumKeys();
+    if (serene_insert_handle->Kind() == axiom::connector::WriteKind::kInsert ||
+        serene_insert_handle->Kind() == axiom::connector::WriteKind::kDelete) {
+      auto& rocksdb_table =
+        basics::downCast<const RocksDBTable>(*serene_insert_handle->Table());
+      // TODO(codeworse) : Not quite correct, should be updated
+      int64_t delta_num_rows =
+        serene_insert_handle->Kind() == axiom::connector::WriteKind::kInsert
+          ? number_of_locked_primary_keys
+          : -number_of_locked_primary_keys;
+      transaction.ModifyTableStats(rocksdb_table.TableId(),
+                                   {.delta_num_rows = delta_num_rows});
+    }
+
     if (!transaction.HasTransactionBegin()) {
       auto r = transaction.Commit();
       if (!r.ok()) {
         SDB_THROW(ERROR_INTERNAL,
                   "Failed to commit transaction: ", r.errorMessage());
       }
-      auto shard = catalog::GetTableShard(
-        basics::downCast<const RocksDBTable>(*serene_insert_handle->Table())
-          .TableId());
-      SDB_ASSERT(shard);
-      if (serene_insert_handle->Kind() ==
-          axiom::connector::WriteKind::kInsert) {
-        shard->IncreaseRows(number_of_locked_primary_keys);
-      } else if (serene_insert_handle->Kind() ==
-                 axiom::connector::WriteKind::kDelete) {
-        shard->DecreaseRows(number_of_locked_primary_keys);
-      }
     }
+
     return yaclib::MakeFuture(number_of_locked_primary_keys);
   }
 

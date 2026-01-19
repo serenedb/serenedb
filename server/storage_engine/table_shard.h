@@ -151,12 +151,8 @@ class TableShard {
     vpack::Builder&,
     const std::function<bool(const Index*, IndexSerialization&)>& filter) const;
 
-  void IncreaseRows(uint64_t count) {
-    _num_rows.fetch_add(count, std::memory_order_relaxed);
-  }
-
-  void DecreaseRows(uint64_t count) {
-    _num_rows.fetch_sub(count, std::memory_order_relaxed);
+  void ApplyTableStatsDiff(catalog::TableStats::Diff diff) noexcept {
+    _num_rows.fetch_add(diff.delta_num_rows, std::memory_order_relaxed);
   }
 
   catalog::TableStats GetTableStats() const {

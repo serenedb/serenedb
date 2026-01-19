@@ -64,36 +64,16 @@ on:
         type: string
         required: true
         default: 'Off'
-      VPACK_TESTS:
-        description: 'Run VPack unittests'
+      RUN_TESTS:
+        description: 'Enable test execution'
         type: boolean
-        required: true
+        required: false
         default: true
-      IRESEARCH_TESTS:
-        description: 'Run IResearch unittests'
-        type: boolean
-        required: true
-        default: true
-      UNIT_TESTS:
-        description: 'Run SereneDB unittests'
-        type: boolean
-        required: true
-        default: true
-      SQLLOGIC_TESTS:
-        description: 'Run sqllogic tests'
-        type: boolean
-        required: true
-        default: true
-      INTEGRATION_TESTS:
-        description: 'Run integration tests'
-        type: boolean
-        required: true
-        default: false
-      FULL_SUITE:
-        description: 'Run full integration test suite'
-        type: boolean
-        required: true
-        default: false
+      TEST_CONFIG:
+        description: 'JSON config for tests'
+        type: string
+        required: false
+        default: '{"VPACK_TESTS":true,"IRESEARCH_TESTS":true,"UNIT_TESTS":true,"SQLLOGIC_TESTS":true,"INTEGRATION_TESTS":false,"FULL_SUITE":false}'
       INTEGRATION_TESTS_COREDUMPS:
         description: '0 - no coredumps; -1 - unlimited coredumps'
         type: string
@@ -171,35 +151,39 @@ on:
         required: true
 
 env:
-  BRANCH: ${{ inputs.BRANCH }}
-  BUILDMODE: ${{ inputs.BUILDMODE }}
-  BUILD_IMAGE: ${{ inputs.BUILD_IMAGE }}
-  BUILD_PACKAGES: ${{ inputs.BUILD_PACKAGES }}
-  CLUSTER_BRANCH: ${{ inputs.CLUSTER_BRANCH }}
-  DEB_TAR_PACKAGES: ${{ inputs.DEB_TAR_PACKAGES }} 
-  DOCKER_EXTRA_TAGS: ${{ inputs.DOCKER_EXTRA_TAGS }}
-  DOCKER_SERENEDB_IMAGE: ${{ inputs.DOCKER_SERENEDB_IMAGE }} 
-  ENSURE_VTUNE_SYMBOLS: ${{ inputs.ENSURE_VTUNE_SYMBOLS }}
-  EXTRA_ARTIFACTS: ${{ inputs.EXTRA_ARTIFACTS }}
-  FULL_SUITE: ${{ inputs.FULL_SUITE }}
-  INTEGRATION_TESTS: ${{ inputs.INTEGRATION_TESTS }}
-  INTEGRATION_TESTS_COREDUMPS: ${{ inputs.INTEGRATION_TESTS_COREDUMPS }}
-  IRESEARCH_TESTS: ${{ inputs.IRESEARCH_TESTS }}
-  LOCATION: ${{ inputs.LOCATION }}
-  PUSH_IMAGES_2_REGISTRY: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
+  # workflow environment
+  FULL_SUITE: ${{ fromJSON(inputs.TEST_CONFIG).FULL_SUITE }}
+  INTEGRATION_TESTS: ${{ fromJSON(inputs.TEST_CONFIG).INTEGRATION_TESTS }}
+  IRESEARCH_TESTS: ${{ fromJSON(inputs.TEST_CONFIG).IRESEARCH_TESTS }}
+  SQLLOGIC_TESTS: ${{ fromJSON(inputs.TEST_CONFIG).SQLLOGIC_TESTS }}
+  UNIT_TESTS: ${{ fromJSON(inputs.TEST_CONFIG).UNIT_TESTS }}
+  VPACK_TESTS: ${{ fromJSON(inputs.TEST_CONFIG).VPACK_TESTS }}
+  # scripts environment
   SANITIZERS: ${{ inputs.SANITIZERS }}
-  SDB_ALLOC: ${{ inputs.SDB_ALLOC }}
-  SDB_CLUSTER: ${{ inputs.SDB_CLUSTER }}
-  SDB_DEV: ${{ inputs.SDB_DEV }}
-  SQLLOGIC_TESTS: ${{ inputs.SQLLOGIC_TESTS }}
-  STRIP_TARBALL: ${{ inputs.STRIP_TARBALL }}
-  UNIT_TESTS: ${{ inputs.UNIT_TESTS }}
   USE_COVERAGE: ${{ inputs.USE_COVERAGE }}
+  BUILDMODE: ${{ inputs.BUILDMODE }}
   USE_DEBUG_INFO: ${{ inputs.USE_DEBUG_INFO }}
+  SDB_DEV: ${{ inputs.SDB_DEV }}
+  SDB_CLUSTER: ${{ inputs.SDB_CLUSTER }}
   USE_IPO: ${{ inputs.USE_IPO }}
-  VPACK_TESTS: ${{ inputs.VPACK_TESTS }}
-  WORKFLOW: ${{ github.workflow }}
+  SDB_ALLOC: ${{ inputs.SDB_ALLOC }}
+  ENSURE_VTUNE_SYMBOLS: ${{ inputs.ENSURE_VTUNE_SYMBOLS }}
+  INTEGRATION_TESTS_COREDUMPS: ${{ inputs.INTEGRATION_TESTS_COREDUMPS }}
+  DEB_TAR_PACKAGES: ${{ inputs.DEB_TAR_PACKAGES }} 
+  BUILD_IMAGE: ${{ inputs.BUILD_IMAGE }}
   WORKSPACE: ${{ github.workspace }}
+  DOCKER_EXTRA_TAGS: ${{ inputs.DOCKER_EXTRA_TAGS }}
+
+  #BRANCH: ${{ inputs.BRANCH }}
+  #BUILD_PACKAGES: ${{ inputs.BUILD_PACKAGES }}
+  #CLUSTER_BRANCH: ${{ inputs.CLUSTER_BRANCH }}
+  #DOCKER_SERENEDB_IMAGE: ${{ inputs.DOCKER_SERENEDB_IMAGE }} 
+  #EXTRA_ARTIFACTS: ${{ inputs.EXTRA_ARTIFACTS }}
+  #LOCATION: ${{ inputs.LOCATION }}
+  #PUSH_IMAGES_2_REGISTRY: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
+  #RUN_TESTS: ${{ inputs.RUN_TESTS }}
+  #STRIP_TARBALL: ${{ inputs.STRIP_TARBALL }}
+  #WORKFLOW: ${{ github.workflow }}
 
 jobs:
   build-test-package:
@@ -251,10 +235,10 @@ jobs:
         id: run_tests
         if: steps.serenedb_build.outcome == 'success'
         run: |
-          if [[ "${{ inputs.VPACK_TESTS }}" == "true" || "${{ inputs.IRESEARCH_TESTS }}" == "true" || "${{ inputs.UNIT_TESTS }}" == "true" || "${{ inputs.SQLLOGIC_TESTS }}" == "true" || "${{ inputs.INTEGRATION_TESTS }}" == "true" ]]; then
+          if [[ "${{ env.RUN_TESTS }}" == "true" && ("${{ env.VPACK_TESTS }}" == "true" || "${{ env.IRESEARCH_TESTS }}" == "true" || "${{ env.UNIT_TESTS }}" == "true" || "${{ env.SQLLOGIC_TESTS }}" == "true" || "${{ env.INTEGRATION_TESTS }}" == "true") ]]; then
             ./private/ci/steps/04-ci-run-tests-parallel.bash
           else
-            echo "All tests skipped because no test flags are set."
+              echo "Tests skipped because no test flags are set in TEST_CONFIG or RUN_TESTS is disabled."
           fi
 
       # ==================== PACKAGES ====================

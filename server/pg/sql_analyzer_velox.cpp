@@ -2000,9 +2000,10 @@ class CopyOptionsParser {
       text_options->setFileSchema(std::move(_row_type));
       text_options->setFileFormat(FileFormat::TEXT);
       text_options->setRejectLimit(reject_limit);
-      text_options->setErrorHandler([&](const velox::text::RowError& err) {
+      auto handler = [table_name = _table_name,
+                      on_error](const velox::text::RowError& err) {
         std::string errmsg;
-        if (err.rejectedRows > err.rejectLimit) {
+        if (on_error == "ignore" && err.rejectedRows > err.rejectLimit) {
           errmsg =
             absl::StrCat("skipped more than REJECT_LIMIT (", err.rejectLimit,
                          ") rows due to data type incompatibility");
@@ -2012,12 +2013,19 @@ class CopyOptionsParser {
                                 err.value, "\"");
         }
 
-        SDB_ASSERT(!_table_name.empty());
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT), ERR_MSG(errmsg),
-          ERR_CONTEXT("COPY ", _table_name, ", line ", err.rowNumber,
-                      ", column ", err.columnName, ": \"", err.value, "\""));
-      });
+        SDB_ASSERT(!table_name.empty());
+        try {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT), ERR_MSG(errmsg),
+            ERR_CONTEXT("COPY ", table_name, ", line ", err.rowNumber,
+                        ", column ", ToAlias(err.columnName), ": \"", err.value,
+                        "\""));
+        } catch (const SqlException& e) {
+          throw velox::VeloxUserError(std::current_exception(), e.what(),
+                                      false);
+        }
+      };
+      text_options->setErrorHandler(std::move(handler));
       _reader_options = std::move(text_options);
       _row_reader_options->setSkipRows(header);
     }

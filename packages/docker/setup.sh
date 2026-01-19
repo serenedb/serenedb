@@ -1,32 +1,58 @@
 #!/bin/sh
-#getent group serenedb > /dev/null || addgroup -S serenedb
-#getent passwd serenedb > /dev/null || adduser -S -G serenedb -D -h /usr/share/serenedb -H -s /bin/false -g "SereneDB Application User" serenedb
+# =============================================================================
+# SereneDB Docker Setup Script
+# Runs during image build to configure the environment
+# =============================================================================
+set -e
+
+echo "=== SereneDB Docker Setup ==="
+
+# Create required directories
+echo "Creating directories..."
 
 install -o root -g root -m 755 -d /var/lib/serenedb
-# Note that the log dir is 777 such that any user can log there.
 install -o root -g root -m 777 -d /var/log/serenedb
+mkdir -p /docker-entrypoint-initdb.d
 
-mkdir /docker-entrypoint-initdb.d/
+# Patch configuration for container environment
+echo "Patching configuration..."
 
-# Bind to all endpoints (in the container):
-sed -i -e 's~^endpoint.*8529$~endpoint = tcp://0.0.0.0:8529~' /etc/serenedb/serened.conf
-# Remove the uid setting in the config file, since we want to be able
-# to run as an arbitrary user:
-sed -i \
-    -e 's!^\(file\s*=\s*\).*!\1 -!' \
-    -e 's~^uid = .*$~~' \
-    /etc/serenedb/serened.conf
+CONFIG_FILE="/etc/serenedb/serened.conf"
+
+if [ -f "$CONFIG_FILE" ]; then
+  # Bind to all interfaces (required for container networking)
+  sed -i -e 's~^endpoint.*8529$~endpoint = tcp://0.0.0.0:8529~' "$CONFIG_FILE"
+
+  # Log to stdout instead of file (Docker best practice)
+  sed -i -e 's!^$file\s*=\s*$.*!\1 -!' "$CONFIG_FILE"
+
+  # Remove uid setting (allow running as arbitrary user)
+  sed -i -e 's~^uid = .*$~~' "$CONFIG_FILE"
+else
+  echo "WARNING: Config file not found: $CONFIG_FILE"
+fi
+
+# Install rclone for backup functionality
+echo "Installing rclone..."
+
+RCLONE_VERSION="1.70.1"
+RCLONE_ARCH="linux-amd64"
+RCLONE_URL="https://github.com/rclone/rclone/releases/download/v${RCLONE_VERSION}/rclone-v${RCLONE_VERSION}-${RCLONE_ARCH}.zip"
 
 apt-get update
-apt-get upgrade -y
 apt-get install -y --no-install-recommends wget unzip
 
-wget --no-check-certificate https://github.com/rclone/rclone/releases/download/v1.70.1/rclone-v1.70.1-linux-amd64.zip
-unzip rclone-v1.70.1-linux-amd64.zip
-mv rclone-v1.70.1-linux-amd64/rclone /usr/sbin
-rm -rf rclone-v1.70.1-linux-amd64*
+wget --no-check-certificate -q "$RCLONE_URL" -O /tmp/rclone.zip
+unzip -q /tmp/rclone.zip -d /tmp
+mv "/tmp/rclone-v${RCLONE_VERSION}-${RCLONE_ARCH}/rclone" /usr/sbin/
+chmod +x /usr/sbin/rclone
 
-apt-get autopurge -y wget unzip
-apt-get autopurge -y
-apt-get autoclean
+# Cleanup
+echo "Cleaning up..."
+
+rm -rf /tmp/rclone*
+apt-get purge -y --auto-remove wget unzip
 apt-get clean
+rm -rf /var/lib/apt/lists/*
+
+echo "=== Setup complete ==="

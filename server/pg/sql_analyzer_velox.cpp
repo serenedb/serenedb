@@ -2081,7 +2081,7 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
                 magic_enum::enum_name(logical_object.GetType())));
     }
 
-    object->EnsureTable();
+    object->EnsureTable(_transaction);
     return object->table;
   };
 

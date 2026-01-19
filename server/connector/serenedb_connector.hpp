@@ -215,8 +215,9 @@ class RocksDBTable final : public axiom::connector::Table {
   }
 
  public:
-  explicit RocksDBTable(const catalog::Table& collection)
-    : RocksDBTable{Init{collection}} {}
+  explicit RocksDBTable(const catalog::Table& collection,
+                        query::Transaction& transaction)
+    : RocksDBTable{Init{collection}, transaction} {}
 
   const std::vector<const axiom::connector::TableLayout*>& layouts()
     const final {

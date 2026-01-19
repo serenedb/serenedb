@@ -16,8 +16,7 @@ declare -A defaults=(
     [single_port]=''
     [cluster_port]=''
     [protocol]='simple' # simple|extended|both TODO(mbkkt) make both
-    [size]='all' # small|medium|large|all
-    [test]=''
+    [test]='./tests/sqllogic/sdb/*/*/*.test*'
     [junit]='./out/sqllogic-tests'
     [runner]='./third_party/sqllogictest-rs'
     [jobs]=$(nproc)
@@ -56,7 +55,7 @@ parse_options() {
         fi
 
         case "$key" in
-            single-port|cluster-port|jobs|protocol|size|test|junit|runner|debug|override|format|force-override|show-all-errors|skip-failed|database|host)
+            single-port|cluster-port|jobs|protocol|test|junit|runner|debug|override|format|force-override|show-all-errors|skip-failed|database|host)
                 local var_name="${key//-/_}"  # Convert dashes to underscores
 
                 # For non-equal format (--option value), get the next argument
@@ -110,38 +109,12 @@ for var_name in "${!defaults[@]}"; do
     fi
 done
 
-if [[ -z "$test" ]]; then
-    case "$size" in
-        small)
-            test='./tests/sqllogic/sdb/**/*.test'
-            exclude='--exclude *medium* --exclude *large*'
-            ;;
-        medium)
-            test='./tests/sqllogic/sdb/**/*.test.medium ./tests/sqllogic/sdb/**/*medium*/**/*.test*'
-            exclude=''
-            ;;
-        large)
-            test='./tests/sqllogic/sdb/**/*.test.large ./tests/sqllogic/sdb/**/*large*/**/*.test*'
-            exclude=''
-            ;;
-        all)
-            test='./tests/sqllogic/sdb/**/*.test*'
-            exclude=''
-            ;;
-        *)
-            echo "Invalid size. Must be 'small', 'medium', 'large', or 'all'"
-            exit 1
-            ;;
-    esac
-fi
-
 # Display the values (for demonstration)
 echo "Database: $database"
 echo "Host: $host"
 echo "Single Port: $single_port"
 echo "Cluster Port: $cluster_port"
 echo "Protocol: $protocol"
-echo "Size: $size"
 echo "Test Path: $test"
 echo "JUnit Path: $junit"
 echo "Runner: $runner"
@@ -190,13 +163,12 @@ run_tests() {
   fi
 
   # Execute the command and capture the exit code
-  sqllogictest $test \
+  sqllogictest "$test" \
     --host "$host" --port "$port" --engine "$engine" \
     --jobs "$jobs" \
     --label "$database" --label "$mode" --label "$engine-protocol" \
     --junit "$junit-$mode-$engine" \
     $options \
-    $exclude \
     $skip_failed_opt ${skip_failed:+"$skip_failed"}
   return $?
 }

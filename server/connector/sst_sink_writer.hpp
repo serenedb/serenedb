@@ -22,8 +22,8 @@
 
 #include <memory>
 #include <span>
-#include <unordered_set>
 
+#include "catalog/table_options.h"
 #include "rocksdb/db.h"
 #include "rocksdb/sst_file_writer.h"
 
@@ -32,7 +32,7 @@ namespace sdb::connector {
 class SSTSinkWriter {
  public:
   SSTSinkWriter(rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
-                size_t column_count);
+                std::span<catalog::Column::Id> column_oids);
 
   rocksdb::Status Lock(std::string_view full_key) {
     return rocksdb::Status::OK();

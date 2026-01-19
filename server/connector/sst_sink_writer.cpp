@@ -28,6 +28,7 @@
 
 #include "basics/assert.h"
 #include "rocksdb/options.h"
+#include "rocksdb/table.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 
 namespace sdb::connector {
@@ -51,13 +52,20 @@ std::string GenerateSSTFilePath() {
 }
 
 SSTSinkWriter::SSTSinkWriter(rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
-                             size_t column_count)
+                             std::span<catalog::Column::Id> column_oids)
   : _db{&db}, _cf{&cf} {
-  _writers.reserve(column_count);
-  // TODO before PR: fix this column_count - 1 (generated)
-  for (size_t i = 0; i < column_count - 1; ++i) {
-    _writers.push_back(std::make_unique<rocksdb::SstFileWriter>(
-      rocksdb::EnvOptions{}, _db->GetOptions(_cf)));
+  _writers.resize(column_oids.size());
+
+  auto options = _db->GetOptions(_cf);
+  options.PrepareForBulkLoad();
+
+  for (size_t i = 0; i < _writers.size(); ++i) {
+    if (column_oids[i] == catalog::Column::kGeneratedPKId) {
+      continue;
+    }
+
+    _writers.push_back(
+      std::make_unique<rocksdb::SstFileWriter>(rocksdb::EnvOptions{}, options));
     auto status = _writers[i]->Open(GenerateSSTFilePath());
     if (!status.ok()) {
       SDB_THROW(rocksutils::ConvertStatus(status));
@@ -70,12 +78,14 @@ void SSTSinkWriter::Write(size_t column_idx,
                           std::string_view full_key) {
   SDB_ASSERT(!cell_slices.empty());
   SDB_ASSERT(column_idx < _writers.size());
+  SDB_ASSERT(_writers[column_idx]);
 
   rocksdb::Slice key_slice{full_key};
   rocksdb::Status status;
 
+  auto& writer = *_writers[column_idx];
   if (cell_slices.size() == 1) {
-    status = _writers[column_idx]->Put(key_slice, cell_slices.front());
+    status = writer.Put(key_slice, cell_slices.front());
   } else {
     std::string merged_value;
     size_t total_size = 0;
@@ -86,7 +96,7 @@ void SSTSinkWriter::Write(size_t column_idx,
     for (const auto& slice : cell_slices) {
       merged_value.append(slice.data(), slice.size());
     }
-    status = _writers[column_idx]->Put(key_slice, merged_value);
+    status = writer.Put(key_slice, merged_value);
   }
 
   if (!status.ok()) {
@@ -97,7 +107,12 @@ void SSTSinkWriter::Write(size_t column_idx,
 void SSTSinkWriter::Finish() {
   std::vector<std::string> sst_files;
   sst_files.reserve(_writers.size());
+
   for (auto& writer : _writers) {
+    if (!writer) {
+      continue;
+    }
+
     rocksdb::ExternalSstFileInfo file_info;
     auto status = writer->Finish(&file_info);
     if (!status.ok()) {

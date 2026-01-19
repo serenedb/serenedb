@@ -1926,7 +1926,8 @@ void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteArrayValue(
 }
 
 template<typename DataWriterType, typename SubWriterType>
-void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteRowSlices(std::string_view key) {
+void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteRowSlices(
+  std::string_view key) {
   _data_writer.Write(_column_idx, _row_slices, key);
   for (const auto& writer : _index_writers) {
     writer->Write(_row_slices, key);
@@ -1934,7 +1935,8 @@ void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteRowSlices(std::str
 }
 
 template<typename DataWriterType, typename SubWriterType>
-void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteNull(std::string_view key) {
+void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteNull(
+  std::string_view key) {
   // empty slice denotes NULL value
   rocksdb::Slice null_slice;
   std::span<const rocksdb::Slice> null_slices{&null_slice, 1};
@@ -1981,7 +1983,8 @@ void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteConstantValue(
 // make empty string distinguishable from NULL.
 template<typename DataWriterType, typename SubWriterType>
 template<typename T>
-void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WritePrimitive(const T& value) {
+void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WritePrimitive(
+  const T& value) {
   static_assert(
     !std::is_same_v<T, void>,
     "Velox complex types that has void as NativeType should not get here");
@@ -2014,7 +2017,8 @@ void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WritePrimitive(const T&
 }
 
 template<typename DataWriterType, typename SubWriterType>
-const std::string& RocksDBDataSinkBase<DataWriterType, SubWriterType>::SetupRowKey(
+const std::string&
+RocksDBDataSinkBase<DataWriterType, SubWriterType>::SetupRowKey(
   velox::vector_size_t idx,
   std::span<const velox::vector_size_t> original_idx) {
   SDB_ASSERT(original_idx.empty() ||
@@ -2029,7 +2033,8 @@ const std::string& RocksDBDataSinkBase<DataWriterType, SubWriterType>::SetupRowK
 }
 
 template<typename DataWriterType, typename SubWriterType>
-void RocksDBDataSinkBase<DataWriterType, SubWriterType>::ResetForNewRow() noexcept {
+void RocksDBDataSinkBase<DataWriterType,
+                         SubWriterType>::ResetForNewRow() noexcept {
   _row_slices.clear();
   // memory reclaim is relatively expensive so do it only when we have
   // accumulated some noticable amount of memory.
@@ -2151,7 +2156,8 @@ bool RocksDBDataSinkBase<DataWriterType, SubWriterType>::finish() {
 }
 
 template<typename DataWriterType, typename SubWriterType>
-std::vector<std::string> RocksDBDataSinkBase<DataWriterType, SubWriterType>::close() {
+std::vector<std::string>
+RocksDBDataSinkBase<DataWriterType, SubWriterType>::close() {
   return {};
 }
 
@@ -2167,8 +2173,8 @@ void RocksDBDataSinkBase<DataWriterType, SubWriterType>::abort() {
 }
 
 template<typename DataWriterType, typename SubWriterType>
-velox::connector::DataSink::Stats RocksDBDataSinkBase<DataWriterType, SubWriterType>::stats()
-  const {
+velox::connector::DataSink::Stats
+RocksDBDataSinkBase<DataWriterType, SubWriterType>::stats() const {
   // TODO(Dronplane) implement
   return {};
 }
@@ -2260,8 +2266,8 @@ SSTInsertDataSink::SSTInsertDataSink(
   std::span<const velox::column_index_t> key_childs,
   std::vector<catalog::Column::Id> column_oids)
   : RocksDBDataSinkBase<SSTSinkWriter, SinkInsertWriter>(
-      SSTSinkWriter{db, cf, column_oids.size()}, memory_pool, object_key,
-      key_childs, std::move(column_oids),
+      SSTSinkWriter{db, cf, column_oids}, memory_pool, object_key, key_childs,
+      std::move(column_oids),
       std::vector<std::unique_ptr<SinkInsertWriter>>{}) {}
 
 void SSTInsertDataSink::appendData(velox::RowVectorPtr input) {

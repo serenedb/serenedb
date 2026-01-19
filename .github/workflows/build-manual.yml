@@ -11,26 +11,16 @@ on:
           - parilka
           - self-hosted
         default: 'self-hosted'
-      BUILD_SERENEDB:
-        description: 'Build SereneDB'
-        type: boolean
-        required: true
-        default: true
       BRANCH:
         description: 'SereneDB branch to test'
         type: string
         required: true
         default: 'main'
-      CLUSTER_BRANCH:
-        description: 'Cluster branch to test'
+      BUILD_CONFIG:
+        description: 'JSON config for build settings'
         type: string
-        required: true
-        default: 'main'
-      BUILD_IMAGE:
-        description: 'Docker build image'
-        type: string
-        required: true
-        default: 'registry.serenedb.com:5000/serenedb-build-ubuntu:latest'
+        required: false
+        default: '{"BUILD_SERENEDB":"true","CLUSTER_BRANCH":"main","BUILD_IMAGE":"registry.serenedb.com:5000/serenedb-build-ubuntu:latest","SDB_CLUSTER":"Off","DEBUG_PRINT_ENV":"false"}'
       BUILD_PACKAGES:
         description: 'Package serened binary'
         type: boolean
@@ -61,24 +51,16 @@ on:
         required: true
         type: boolean
         default: false
-      SDB_CLUSTER:
-        description: 'Build cluster'
-        type: choice
-        required: true
-        default: 'Off'
-        options:
-          - 'Off'
-          - 'On'
       RUN_TESTS:
         description: 'Enable test execution'
         type: boolean
-        required: true
+        required: false
         default: true
       TEST_CONFIG:
         description: 'JSON config for tests'
         type: string
         required: false
-        default: '{"VPACK_TESTS":true,"IRESEARCH_TESTS":true,"UNIT_TESTS":true,"SQLLOGIC_TESTS":true,"INTEGRATION_TESTS":false,"FULL_SUITE":false}'
+        default: '{"VPACK_TESTS":"true","IRESEARCH_TESTS":"true","UNIT_TESTS":"true","SQLLOGIC_TESTS":"true","INTEGRATION_TESTS":"false","FULL_SUITE":"false"}'
       INTEGRATION_TESTS_COREDUMPS:
         description: '0 - no coredumps; -1 - unlimited coredumps'
         type: choice
@@ -182,49 +164,38 @@ on:
         required: true
         type: boolean
         default: false
-      DEBUG_PRINT_ENV:
-        description: 'Whether to print environment variables'
-        type: boolean
-        required: false
-        default: false
 
 jobs:
   call-reusable:
     uses: ./.github/workflows/build-reusable.yml
     with:
-      # workflow environment
-      FULL_SUITE: ${{ fromJSON(inputs.TEST_CONFIG).FULL_SUITE }}
-      INTEGRATION_TESTS: ${{ fromJSON(inputs.TEST_CONFIG).INTEGRATION_TESTS }}
-      IRESEARCH_TESTS: ${{ fromJSON(inputs.TEST_CONFIG).IRESEARCH_TESTS }}
-      SQLLOGIC_TESTS: ${{ fromJSON(inputs.TEST_CONFIG).SQLLOGIC_TESTS }}
-      UNIT_TESTS: ${{ fromJSON(inputs.TEST_CONFIG).UNIT_TESTS }}
-      VPACK_TESTS: ${{ fromJSON(inputs.TEST_CONFIG).VPACK_TESTS }}
-      # scripts environment
+      # General environment
+      BRANCH: ${{ inputs.BRANCH }}
+      LOCATION: ${{ inputs.LOCATION }}
+      BUILD_PACKAGES: ${{ inputs.BUILD_PACKAGES }}
+      DOCKER_SERENEDB_IMAGE: ${{ inputs.DOCKER_SERENEDB_IMAGE }} 
+      EXTRA_ARTIFACTS: ${{ inputs.EXTRA_ARTIFACTS }}
+      PUSH_IMAGES_2_REGISTRY: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
+      RUN_TESTS: ${{ inputs.RUN_TESTS }}
+      STRIP_TARBALL: ${{ inputs.STRIP_TARBALL }}
+      DOCKER_BUILD_IMAGES: ${{ inputs.DOCKER_BUILD_IMAGES }} 
+      # Build config environment
+      BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
+      # Test config environment
+      TEST_CONFIG: ${{ inputs.TEST_CONFIG }}
+      # Scripts environment
       SANITIZERS: ${{ inputs.SANITIZERS }}
       USE_COVERAGE: ${{ inputs.USE_COVERAGE }}
       BUILDMODE: ${{ inputs.BUILDMODE }}
       USE_DEBUG_INFO: ${{ inputs.USE_DEBUG_INFO }}
       SDB_DEV: ${{ inputs.SDB_DEV }}
-      SDB_CLUSTER: ${{ inputs.SDB_CLUSTER }}
       USE_IPO: ${{ inputs.USE_IPO }}
       SDB_ALLOC: ${{ inputs.SDB_ALLOC }}
       ENSURE_VTUNE_SYMBOLS: ${{ inputs.ENSURE_VTUNE_SYMBOLS }}
       INTEGRATION_TESTS_COREDUMPS: ${{ inputs.INTEGRATION_TESTS_COREDUMPS }}
-      DEB_TAR_PACKAGES: ${{ inputs.DEB_TAR_PACKAGES }} 
-      BUILD_IMAGE: ${{ inputs.BUILD_IMAGE }}
-      WORKSPACE: ${{ github.workspace }}
+      DEB_TAR_PACKAGES: ${{ inputs.DEB_TAR_PACKAGES }}
       DOCKER_EXTRA_TAGS: ${{ inputs.DOCKER_EXTRA_TAGS }}
 
-      #BRANCH: ${{ inputs.BRANCH }}
-      #BUILD_PACKAGES: ${{ inputs.BUILD_PACKAGES }}
-      #CLUSTER_BRANCH: ${{ inputs.CLUSTER_BRANCH }}
-      #DOCKER_SERENEDB_IMAGE: ${{ inputs.DOCKER_SERENEDB_IMAGE }} 
-      #EXTRA_ARTIFACTS: ${{ inputs.EXTRA_ARTIFACTS }}
-      #LOCATION: ${{ inputs.LOCATION }}
-      #PUSH_IMAGES_2_REGISTRY: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
-      #RUN_TESTS: ${{ inputs.RUN_TESTS }}
-      #STRIP_TARBALL: ${{ inputs.STRIP_TARBALL }}
-      #WORKFLOW: ${{ github.workflow }}
     secrets:
       PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
       SDB_CLUSTER_REPO: ${{ secrets.SDB_CLUSTER_REPO }}

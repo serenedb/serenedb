@@ -8,26 +8,16 @@ on:
         type: string
         required: true
         default: 'self-hosted'
-      BUILD_SERENEDB:
-        description: 'Build SereneDB'
-        type: boolean
-        required: true
-        default: true
       BRANCH:
         description: 'SereneDB branch to test'
         type: string
         required: true
         default: 'main'
-      CLUSTER_BRANCH:
-        description: 'Cluster branch to test'
+      BUILD_CONFIG:
+        description: 'JSON config for build settings'
         type: string
-        required: true
-        default: 'main'
-      BUILD_IMAGE:
-        description: 'Docker build image'
-        type: string
-        required: true
-        default: 'registry.serenedb.com:5000/serenedb-build-ubuntu:latest'
+        required: false
+        default: '{"BUILD_SERENEDB":"true","CLUSTER_BRANCH":"main","BUILD_IMAGE":"registry.serenedb.com:5000/serenedb-build-ubuntu:latest","SDB_CLUSTER":"Off","DEBUG_PRINT_ENV":"false"}'
       BUILD_PACKAGES:
         description: 'Package serened binary'
         type: boolean
@@ -59,11 +49,6 @@ on:
         required: true
         type: boolean
         default: false
-      SDB_CLUSTER:
-        description: 'Build cluster'
-        type: string
-        required: true
-        default: 'Off'
       RUN_TESTS:
         description: 'Enable test execution'
         type: boolean
@@ -73,7 +58,7 @@ on:
         description: 'JSON config for tests'
         type: string
         required: false
-        default: '{"VPACK_TESTS":true,"IRESEARCH_TESTS":true,"UNIT_TESTS":true,"SQLLOGIC_TESTS":true,"INTEGRATION_TESTS":false,"FULL_SUITE":false}'
+        default: '{"VPACK_TESTS":"true","IRESEARCH_TESTS":"true","UNIT_TESTS":"true","SQLLOGIC_TESTS":"true","INTEGRATION_TESTS":"false","FULL_SUITE":"false"}'
       INTEGRATION_TESTS_COREDUMPS:
         description: '0 - no coredumps; -1 - unlimited coredumps'
         type: string
@@ -129,11 +114,6 @@ on:
         required: true
         type: boolean
         default: false
-      DEBUG_PRINT_ENV:
-        description: 'Whether to print environment variables'
-        type: boolean
-        required: false
-        default: false
     secrets:
       PAT_TOKEN:
         required: true
@@ -151,26 +131,30 @@ on:
         required: true
 
 env:
-  # workflow environment
+  # Build config environment (from BUILD_CONFIG JSON)
+  BUILD_SERENEDB: ${{ fromJSON(inputs.BUILD_CONFIG).BUILD_SERENEDB }}
+  CLUSTER_BRANCH: ${{ fromJSON(inputs.BUILD_CONFIG).CLUSTER_BRANCH }}
+  BUILD_IMAGE: ${{ fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE }}
+  SDB_CLUSTER: ${{ fromJSON(inputs.BUILD_CONFIG).SDB_CLUSTER }}
+  DEBUG_PRINT_ENV: ${{ fromJSON(inputs.BUILD_CONFIG).DEBUG_PRINT_ENV }}
+  # Test config environment (from TEST_CONFIG JSON)
   FULL_SUITE: ${{ fromJSON(inputs.TEST_CONFIG).FULL_SUITE }}
   INTEGRATION_TESTS: ${{ fromJSON(inputs.TEST_CONFIG).INTEGRATION_TESTS }}
   IRESEARCH_TESTS: ${{ fromJSON(inputs.TEST_CONFIG).IRESEARCH_TESTS }}
   SQLLOGIC_TESTS: ${{ fromJSON(inputs.TEST_CONFIG).SQLLOGIC_TESTS }}
   UNIT_TESTS: ${{ fromJSON(inputs.TEST_CONFIG).UNIT_TESTS }}
   VPACK_TESTS: ${{ fromJSON(inputs.TEST_CONFIG).VPACK_TESTS }}
-  # scripts environment
+  # Scripts environment
   SANITIZERS: ${{ inputs.SANITIZERS }}
   USE_COVERAGE: ${{ inputs.USE_COVERAGE }}
   BUILDMODE: ${{ inputs.BUILDMODE }}
   USE_DEBUG_INFO: ${{ inputs.USE_DEBUG_INFO }}
   SDB_DEV: ${{ inputs.SDB_DEV }}
-  SDB_CLUSTER: ${{ inputs.SDB_CLUSTER }}
   USE_IPO: ${{ inputs.USE_IPO }}
   SDB_ALLOC: ${{ inputs.SDB_ALLOC }}
   ENSURE_VTUNE_SYMBOLS: ${{ inputs.ENSURE_VTUNE_SYMBOLS }}
   INTEGRATION_TESTS_COREDUMPS: ${{ inputs.INTEGRATION_TESTS_COREDUMPS }}
-  DEB_TAR_PACKAGES: ${{ inputs.DEB_TAR_PACKAGES }} 
-  BUILD_IMAGE: ${{ inputs.BUILD_IMAGE }}
+  DEB_TAR_PACKAGES: ${{ inputs.DEB_TAR_PACKAGES }}
   WORKSPACE: ${{ github.workspace }}
   DOCKER_EXTRA_TAGS: ${{ inputs.DOCKER_EXTRA_TAGS }}
 
@@ -207,14 +191,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ secrets.SDB_CLUSTER_REPO }}
-          ref: ${{ inputs.CLUSTER_BRANCH }}
+          ref: ${{ env.CLUSTER_BRANCH }}
           token: ${{ secrets.PAT_TOKEN }}
           path: private
           fetch-depth: 1
           submodules: true
 
       - name: Print environment
-        if: inputs.DEBUG_PRINT_ENV == true
+        if: env.DEBUG_PRINT_ENV == 'true'
         run: printenv
 
       - name: Set sanitizer options
@@ -227,7 +211,7 @@ jobs:
       # ==================== BUILD ====================
       - name: SereneDB build
         id: serenedb_build
-        if: inputs.BUILD_SERENEDB == true
+        if: env.BUILD_SERENEDB == 'true'
         run: ./private/ci/steps/03-ci-in-docker-build-targets.bash
 
       # ==================== TESTS ====================
@@ -261,14 +245,14 @@ jobs:
       # ==================== BUILD DOCKER IMAGES ====================
       - name: Build Docker Images
         id: build_docker_images
-        if: steps.serenedb_packages.outcome == 'success' && inputs.DOCKER_SERENEDB_IMAGE == true
+        if: steps.serenedb_packages.outcome == 'success' && inputs.DOCKER_SERENEDB_IMAGE == 'true'
         working-directory: ./packages
         run: ./build_docker.bash
 
       # ==================== PRODUCE BUILD IMAGES ====================
       - name: Produce Build Images
         id: produce_build_images
-        if: inputs.DOCKER_BUILD_IMAGES == true
+        if: inputs.DOCKER_BUILD_IMAGES == 'true'
         working-directory: ./private/ci
         run: ./build_images.sh
 

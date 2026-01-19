@@ -4,6 +4,15 @@
 
 #include <atomic>
 #include <format>
+#include <filesystem>
+
+template <>
+struct std::formatter<std::filesystem::path> : formatter<std::string> {
+  template<typename FormatContext>
+  auto format(const std::filesystem::path& v, FormatContext& ctx) const {
+    return formatter<std::string>::format(v.string(), ctx);
+  }
+};
 
 template<typename T>
 struct std::formatter<std::atomic<T>> : formatter<T> {

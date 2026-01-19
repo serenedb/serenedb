@@ -126,7 +126,7 @@ void PrepareCollectors(std::span<const ScorerBucket> order,
   }
 }
 
-void CompileScore(irs::ScoreAttr& score, std::span<const ScorerBucket> buckets,
+void CompileScore(ScoreAttr& score, std::span<const ScorerBucket> buckets,
                   const ColumnProvider& segment, const TermReader& field,
                   const byte_type* stats, const AttributeProvider& doc,
                   score_t boost) {

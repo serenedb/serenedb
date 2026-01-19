@@ -731,19 +731,17 @@ void AssertDocs(const irs::TermIterator& expected_term,
                 const irs::TermReader& actual_terms,
                 irs::SeekCookie::ptr actual_cookie,
                 irs::IndexFeatures requested_features) {
-  AssertDocs(expected_term.postings(requested_features), [&]() {
-    return actual_terms.postings(*actual_cookie, requested_features);
+  AssertDocs(expected_term.postings(requested_features), [&] {
+    return actual_terms.Iterator(requested_features, *actual_cookie);
   });
 
-  AssertDocs(expected_term.postings(requested_features), [&]() {
-    // FIXME(gnusi)
-    const irs::WanderatorOptions options{
-      .factory = [](const irs::AttributeProvider&) {
-        return irs::ScoreFunction::Default(1);
-      }};
-
-    return actual_terms.wanderator(*actual_cookie, requested_features, options,
-                                   {.index = 0, .strict = false});
+  AssertDocs(expected_term.postings(requested_features), [&] {
+    return actual_terms.Iterator(
+      requested_features, *actual_cookie,
+      {{0, false}, [](uint32_t, const irs::AttributeProvider&) {
+         // FIXME(gnusi)
+         return irs::ScoreFunction::Default(1);
+       }});
   });
 
   // FIXME(gnusi): check BitUnion

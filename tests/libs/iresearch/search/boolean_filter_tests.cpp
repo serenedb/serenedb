@@ -11426,7 +11426,7 @@ TEST(disjunction_test, next) {
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       size_t heap{0};
       auto visitor = [](void* ptr, irs::ScoreAdapter& iter) {
-        EXPECT_FALSE(irs::doc_limits::eof(iter.doc->value));
+        EXPECT_FALSE(irs::doc_limits::eof(iter.value()));
         auto pval = static_cast<uint32_t*>(ptr);
         *pval = *pval + 1;
         return true;

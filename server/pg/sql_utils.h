@@ -115,7 +115,7 @@ void UnpackSqlState(T& buf, int sql_state) {
   }
 }
 
-int ErrorPosition(const char* source_text, int location);
+int ErrorPosition(std::string_view source_text, int location);
 
 std::tuple<std::string_view, std::string_view, std::string_view>
 GetDbSchemaRelation(const List* names);

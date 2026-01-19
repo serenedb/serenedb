@@ -81,24 +81,19 @@ DocIterator::ptr FixedPhraseQuery::execute(const ExecutionContext& ctx) const {
   for (const auto& term_state : phrase_state->terms) {
     SDB_ASSERT(term_state.first);
 
-    // get postings using cached state
     auto& docs =
-      itrs.emplace_back(reader->postings(*term_state.first, features));
-
+      itrs.emplace_back(reader->Iterator(features, *term_state.first));
     if (!docs) [[unlikely]] {
+      // postings not found
       return DocIterator::empty();
     }
 
     auto* pos = irs::GetMutable<PosAttr>(&docs);
-
-    if (!pos) {
+    if (!pos) [[unlikely]] {
       // positions not found
       return DocIterator::empty();
     }
-
-    positions.emplace_back(std::ref(*pos), *position);
-
-    ++position;
+    positions.emplace_back(std::ref(*pos), *position++);
   }
   const bool has_intervals = absl::c_any_of(
     this->positions,
@@ -158,29 +153,22 @@ DocIterator::ptr FixedPhraseQuery::ExecuteWithOffsets(
     auto add_iterator = [&](IndexFeatures features) {
       SDB_ASSERT(term_state->first);
 
-      // get postings using cached state
       auto& docs =
-        itrs.emplace_back(reader->postings(*term_state->first, features));
-
+        itrs.emplace_back(reader->Iterator(features, *term_state->first));
       if (!docs) [[unlikely]] {
         return false;
       }
 
       auto* pos = irs::GetMutable<PosAttr>(&docs);
-
-      if (!pos) {
+      if (!pos) [[unlikely]] {
         return false;
       }
-
-      positions.emplace_back(std::ref(*pos), *position);
-
-      if (IndexFeatures::Offs == (features & IndexFeatures::Offs)) {
-        if (!irs::get<OffsAttr>(*pos)) {
-          return false;
-        }
+      if (IndexFeatures::Offs == (features & IndexFeatures::Offs) &&
+          !irs::get<OffsAttr>(*pos)) [[unlikely]] {
+        return false;
       }
+      positions.emplace_back(std::ref(*pos), *position++);
 
-      ++position;
       ++term_state;
       return true;
     };
@@ -259,16 +247,13 @@ DocIterator::ptr VariadicPhraseQuery::execute(
          ++term_state) {
       SDB_ASSERT(term_state->first);
 
-      auto it = reader->postings(*term_state->first, features);
-
+      auto it = reader->Iterator(features, *term_state->first);
       if (!it) [[unlikely]] {
         continue;
       }
 
       Adapter docs{std::move(it), term_state->second};
-
-      if (!docs.position) {
-        // positions not found
+      if (!docs.position) [[unlikely]] {
         continue;
       }
 
@@ -374,23 +359,18 @@ DocIterator::ptr VariadicPhraseQuery::ExecuteWithOffsets(
            ++term_state) {
         SDB_ASSERT(term_state->first);
 
-        auto it = reader->postings(*term_state->first, features);
-
+        auto it = reader->Iterator(features, *term_state->first);
         if (!it) [[unlikely]] {
           continue;
         }
 
         Adapter docs{std::move(it), term_state->second};
-
-        if (!docs.position) {
-          // positions not found
+        if (!docs.position) [[unlikely]] {
           continue;
         }
-
-        if (IndexFeatures::Offs == (features & IndexFeatures::Offs)) {
-          if (!irs::get<OffsAttr>(*docs.position)) {
-            continue;
-          }
+        if (IndexFeatures::Offs == (features & IndexFeatures::Offs) &&
+            !irs::get<OffsAttr>(*docs.position)) [[unlikely]] {
+          continue;
         }
 
         disj_itrs.emplace_back(std::move(docs));

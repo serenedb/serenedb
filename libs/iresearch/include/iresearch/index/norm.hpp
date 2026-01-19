@@ -37,7 +37,7 @@ struct NormReaderContextBase {
 
   bytes_view header;
   DocIterator::ptr it;
-  const irs::PayAttr* payload{};
+  const PayAttr* payload{};
   const DocAttr* doc{};
 };
 

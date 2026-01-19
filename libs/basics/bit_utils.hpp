@@ -25,83 +25,61 @@
 #include <cstddef>
 #include <utility>
 
+#include "basics/shared.hpp"
+
 namespace irs {
 
 template<typename T>
-inline constexpr uint32_t BitsRequired() noexcept {
+consteval uint32_t BitsRequired() noexcept {
   return sizeof(T) * 8U;
 }
 
 template<typename T>
-inline constexpr size_t BitsRequired(size_t n) noexcept {
+IRS_FORCE_INLINE constexpr size_t BitsRequired(size_t n) noexcept {
   return BitsRequired<T>() * n;
 }
 
 template<typename T>
-inline constexpr void SetBit(T& value, size_t bit) noexcept {
+IRS_FORCE_INLINE constexpr void SetBit(T& value, size_t bit) noexcept {
+  static_assert(std::is_unsigned_v<T>);
   value |= (T(1) << bit);
 }
 
-template<unsigned Bit, typename T>
-inline constexpr void SetBit(T& value) noexcept {
-  value |= (T(1) << (Bit));
-}
-
 template<typename T>
-inline constexpr void UnsetBit(T& value, size_t bit) noexcept {
+IRS_FORCE_INLINE constexpr void UnsetBit(T& value, size_t bit) noexcept {
+  static_assert(std::is_unsigned_v<T>);
   value &= ~(T(1) << bit);
 }
 
-template<unsigned Bit, typename T>
-inline constexpr void UnsetBit(T& value) noexcept {
-  value &= ~(T(1) << (Bit));
-}
-
-template<unsigned Bit, typename T>
-inline constexpr void SetBit(bool set, T& value) noexcept {
-  set ? SetBit<Bit>(value) : UnsetBit<Bit>(value);
-}
-
 template<typename T>
-inline constexpr void SetBit(T& value, size_t bit, bool set) noexcept {
+IRS_FORCE_INLINE constexpr void SetBit(T& value, size_t bit,
+                                       bool set) noexcept {
   set ? SetBit(value, bit) : UnsetBit(value, bit);
 }
 
-template<unsigned Bit, typename T>
-inline constexpr void UnsetBit(bool unset, T& value) noexcept {
-  if (unset) {
-    UnsetBit<Bit>(value);
-  }
-}
-
 template<typename T>
-inline constexpr void UnsetBit(T& value, size_t bit, bool unset) noexcept {
+IRS_FORCE_INLINE constexpr void UnsetBit(T& value, size_t bit,
+                                         bool unset) noexcept {
   if (unset) {
     UnsetBit(value, bit);
   }
 }
 
-template<unsigned Bit, typename T>
-inline constexpr bool CheckBit(T value) noexcept {
-  return (value & (T(1) << (Bit))) != 0;
-}
-
 template<typename T>
-inline constexpr bool CheckBit(T value, size_t bit) noexcept {
+IRS_FORCE_INLINE constexpr bool CheckBit(T value, size_t bit) noexcept {
+  static_assert(std::is_unsigned_v<T>);
   return (value & (T(1) << bit)) != 0;
 }
 
 template<unsigned Offset, typename T>
-inline constexpr T Rol(T value) noexcept {
+IRS_FORCE_INLINE constexpr T Rol(T value) noexcept {
   static_assert(Offset >= 0 && Offset <= sizeof(T) * 8, "Offset out of range");
-
   return (value << Offset) | (value >> (sizeof(T) * 8 - Offset));
 }
 
 template<unsigned Offset, typename T>
-inline constexpr T Ror(T value) noexcept {
+IRS_FORCE_INLINE constexpr T Ror(T value) noexcept {
   static_assert(Offset >= 0 && Offset <= sizeof(T) * 8, "Offset out of range");
-
   return (value >> Offset) | (value << (sizeof(T) * 8 - Offset));
 }
 

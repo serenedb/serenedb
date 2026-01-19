@@ -411,6 +411,8 @@ void SerializePrimitiveType(SerializationContext context,
       const auto time_us = absl::ToInt64Microseconds(time - kGapUs);
       absl::big_endian::Store64(context.buffer->GetContiguousData(8), time_us);
     }
+  } else if constexpr (Kind == velox::TypeKind::REAL) {
+    SerializeFloat<float, Format>(context, decoded_vector, row);
   }
 }
 

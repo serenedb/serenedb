@@ -299,7 +299,7 @@ a	b
 statement ok
 DROP TABLE where_non_pk;
 
-# Test 15: Update PK with three-column composite key
+# Update PK with three-column composite key
 statement ok
 CREATE TABLE triple_pk (a INTEGER, b INTEGER, c INTEGER, d VARCHAR, PRIMARY KEY(a, b, c));
 

@@ -150,9 +150,6 @@ RocksDBUpdateDataSink::RocksDBUpdateDataSink(
 void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
   static_assert(basics::IsLittleEndian());
   SDB_ASSERT(input->encoding() == velox::VectorEncoding::Simple::ROW);
-  // UPDATE with PK columns changing has PK columns at the
-  // beginning and same columns again as write data. So here we validate
-  // column oids size against input type, not row type size.
   SDB_ASSERT(input->type()->size() == _column_ids.size(),
              "RocksDBDataSink: column oids size ", _column_ids.size(),
              " doesn't match input type size ", input->type()->size());

@@ -575,10 +575,11 @@ class SereneDBConnector final : public velox::connector::Connector {
           if constexpr (IsUpdate) {
             const auto& snapshot = transaction.EnsureRocksDBSnapshot();
 
+            auto sorted_column_oids = column_oids;
+            absl::c_sort(sorted_column_oids);
             const bool updating_pk =
-              column_oids.size() > containers::FlatHashSet<catalog::Column::Id>(
-                                     column_oids.begin(), column_oids.end())
-                                     .size();
+              absl::c_adjacent_find(sorted_column_oids) !=
+              sorted_column_oids.end();
 
             std::vector<catalog::Column::Id> all_column_oids;
             if (updating_pk) {

@@ -132,9 +132,6 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
       WriteColumn(input->childAt(i), folly::Range{&all_rows, 1}, {});
     }
   }
-  auto table_shard = catalog::GetTableShard(_object_key);
-  SDB_ASSERT(table_shard);
-  table_shard->IncreaseRows(num_rows);
 }
 
 // Stores column backed by Flat vector.
@@ -2046,9 +2043,6 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
       }
     }
   }
-  auto table_shard = catalog::GetTableShard(_object_key);
-  SDB_ASSERT(table_shard);
-  table_shard->DecreaseRows(num_rows);
 }
 
 bool RocksDBDeleteDataSink::finish() { return true; }

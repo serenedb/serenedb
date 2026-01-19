@@ -403,6 +403,17 @@ class SereneDBConnectorMetadata final
         SDB_THROW(ERROR_INTERNAL,
                   "Failed to commit transaction: ", r.errorMessage());
       }
+      auto shard = catalog::GetTableShard(
+        basics::downCast<const RocksDBTable>(*serene_insert_handle->Table())
+          .TableId());
+      SDB_ASSERT(shard);
+      if (serene_insert_handle->Kind() ==
+          axiom::connector::WriteKind::kInsert) {
+        shard->IncreaseRows(number_of_locked_primary_keys);
+      } else if (serene_insert_handle->Kind() ==
+                 axiom::connector::WriteKind::kDelete) {
+        shard->DecreaseRows(number_of_locked_primary_keys);
+      }
     }
     return yaclib::MakeFuture(number_of_locked_primary_keys);
   }

@@ -1171,10 +1171,9 @@ Result LocalCatalog::DropIndex(ObjectId database_id, std::string_view schema,
 
 Result LocalCatalog::SyncTableStats(const Table& c,
                                     const TableShard& physical) {
-  absl::MutexLock lock{&_mutex};
-  return Apply(_snapshot, [&](auto& clone) {
-    return _engine->SyncTableStats(c, physical);
-  });
+  auto shard = _snapshot->GetTableShard(physical.GetId());
+  SDB_ASSERT(shard);
+  return _engine->SyncTableStats(c, *shard);
 }
 
 Result LocalCatalog::CreateView(ObjectId database_id, std::string_view schema,

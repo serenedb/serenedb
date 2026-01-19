@@ -23,7 +23,6 @@
 #include <velox/core/QueryConfig.h>
 
 #include "app/app_server.h"
-#include "basics/down_cast.h"
 #include "basics/logger/logger.h"
 #include "general_server/state.h"
 #include "pg/executor.h"

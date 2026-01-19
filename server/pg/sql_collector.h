@@ -86,14 +86,12 @@ class Objects : public irs::memory::Managed {
 
   template<typename S>
   ObjectData& ensureRelation(S s, std::string_view relation) {
-    auto& data = _relations[ObjectName{ensureNotNull(s), relation}];
-    return data;
+    return _relations[ObjectName{ensureNotNull(s), relation}];
   }
 
   template<typename S>
   ObjectData& ensureFunction(S s, std::string_view relation) {
-    auto& data = _functions[ObjectName{ensureNotNull(s), relation}];
-    return data;
+    return _functions[ObjectName{ensureNotNull(s), relation}];
   }
 
   template<typename S>

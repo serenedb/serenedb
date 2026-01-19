@@ -77,13 +77,13 @@ class SereneDBConnectorTableHandle final
     return _effective_column_id;
   }
 
-  auto& GetTransaction() const noexcept { return *_transaction; }
+  auto& GetTransaction() const noexcept { return _transaction; }
 
  private:
   std::string _name;
   ObjectId _table_id;
   catalog::Column::Id _effective_column_id;
-  query::Transaction* _transaction;
+  query::Transaction& _transaction;
 };
 
 class SereneDBColumn final : public axiom::connector::Column {
@@ -301,7 +301,10 @@ class SereneDBConnectorInsertTableHandle final
   explicit SereneDBConnectorInsertTableHandle(
     const axiom::connector::ConnectorSessionPtr& session,
     const axiom::connector::TablePtr& table, axiom::connector::WriteKind kind)
-    : _session{session}, _table{table}, _kind{kind} {
+    : _session{session},
+      _table{table},
+      _kind{kind},
+      _transaction{basics::downCast<RocksDBTable>(*table).GetTransaction()} {
     GetTransaction().AddRocksDBWrite();
   }
 
@@ -315,16 +318,13 @@ class SereneDBConnectorInsertTableHandle final
 
   auto Kind() const noexcept { return _kind; }
 
-  query::Transaction& GetTransaction() const noexcept {
-    auto& rocksdb_table = basics::downCast<const RocksDBTable>(*_table);
-    auto& transaction = rocksdb_table.GetTransaction();
-    return transaction;
-  }
+  query::Transaction& GetTransaction() const noexcept { return _transaction; }
 
  private:
   axiom::connector::ConnectorSessionPtr _session;
   axiom::connector::TablePtr _table;
   axiom::connector::WriteKind _kind;
+  query::Transaction& _transaction;
   std::vector<velox::connector::ColumnHandlePtr> _row_id_handles;
 };
 
@@ -417,7 +417,6 @@ class SereneDBConnectorMetadata final
                   "Failed to commit transaction: ", r.errorMessage());
       }
     }
-
     return yaclib::MakeFuture(number_of_locked_primary_keys);
   }
 

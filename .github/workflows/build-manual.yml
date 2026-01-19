@@ -11,6 +11,11 @@ on:
           - parilka
           - self-hosted
         default: 'self-hosted'
+      BUILD_SERENEDB:
+        description: 'Build SereneDB'
+        type: boolean
+        required: true
+        default: true
       BRANCH:
         description: 'SereneDB branch to test'
         type: string
@@ -35,6 +40,26 @@ on:
         description: 'Package .deb and .tar.gz'
         type: boolean
         required: false
+        default: false
+      STRIP_TARBALL:
+        description: 'Strip tarball'
+        required: true
+        type: boolean
+        default: true
+      DOCKER_SERENEDB_IMAGE:
+        description: 'Produce SereneDB Docker Images'
+        required: true
+        type: boolean
+        default: false
+      DOCKER_EXTRA_TAGS:
+        description: '(Optional) Custom TAGS for DOCKER_SERENEDB_IMAGE'
+        required: false
+        type: string
+        default: ''
+      PUSH_IMAGES_2_REGISTRY:
+        description: 'Push images to Private Docker Registry'
+        required: true
+        type: boolean
         default: false
       SDB_CLUSTER:
         description: 'Build cluster'
@@ -172,6 +197,11 @@ on:
         type: string
         required: false
         default: ''
+      DOCKER_BUILD_IMAGES:
+        description: 'Produce SereneDB Build Images'
+        required: true
+        type: boolean
+        default: false
       DEBUG_PRINT_ENV:
         description: 'Whether to print environment variables'
         type: boolean
@@ -182,30 +212,35 @@ jobs:
   call-reusable:
     uses: ./.github/workflows/build-reusable.yml
     with:
-      DEBUG_PRINT_ENV: ${{ inputs.DEBUG_PRINT_ENV }}
-      LOCATION: ${{ inputs.LOCATION }}
       BRANCH: ${{ inputs.BRANCH }}
-      CLUSTER_BRANCH: ${{ inputs.CLUSTER_BRANCH }}
-      VPACK_TESTS: ${{ inputs.VPACK_TESTS }}
-      IRESEARCH_TESTS: ${{ inputs.IRESEARCH_TESTS }}
-      UNIT_TESTS: ${{ inputs.UNIT_TESTS }}
-      SQLLOGIC_TESTS: ${{ inputs.SQLLOGIC_TESTS }}
-      INTEGRATION_TESTS: ${{ inputs.INTEGRATION_TESTS }}
-      BUILD_PACKAGES: ${{ inputs.BUILD_PACKAGES }}
-      DEB_TAR_PACKAGES: ${{ inputs.DEB_TAR_PACKAGES }} 
-      FULL_SUITE: ${{ inputs.FULL_SUITE }}
-      SANITIZERS: ${{ inputs.SANITIZERS }}
-      USE_COVERAGE: ${{ inputs.USE_COVERAGE }}
-      SDB_CLUSTER: ${{ inputs.SDB_CLUSTER }}
-      SDB_ALLOC: ${{ inputs.SDB_ALLOC }}
-      SDB_DEV: ${{ inputs.SDB_DEV }}
-      USE_IPO: ${{ inputs.USE_IPO }}
-      ENSURE_VTUNE_SYMBOLS: ${{ inputs.ENSURE_VTUNE_SYMBOLS }}
       BUILDMODE: ${{ inputs.BUILDMODE }}
-      USE_DEBUG_INFO: ${{ inputs.USE_DEBUG_INFO }}
       BUILD_IMAGE: ${{ inputs.BUILD_IMAGE }}
-      INTEGRATION_TESTS_COREDUMPS: ${{ inputs.INTEGRATION_TESTS_COREDUMPS }}
+      BUILD_PACKAGES: ${{ inputs.BUILD_PACKAGES }}
+      CLUSTER_BRANCH: ${{ inputs.CLUSTER_BRANCH }}
+      DEB_TAR_PACKAGES: ${{ inputs.DEB_TAR_PACKAGES }} 
+      DOCKER_EXTRA_TAGS: ${{ inputs.DOCKER_EXTRA_TAGS }}
+      DOCKER_SERENEDB_IMAGE: ${{ inputs.DOCKER_SERENEDB_IMAGE }} 
+      ENSURE_VTUNE_SYMBOLS: ${{ inputs.ENSURE_VTUNE_SYMBOLS }}
       EXTRA_ARTIFACTS: ${{ inputs.EXTRA_ARTIFACTS }}
+      FULL_SUITE: ${{ inputs.FULL_SUITE }}
+      INTEGRATION_TESTS: ${{ inputs.INTEGRATION_TESTS }}
+      INTEGRATION_TESTS_COREDUMPS: ${{ inputs.INTEGRATION_TESTS_COREDUMPS }}
+      IRESEARCH_TESTS: ${{ inputs.IRESEARCH_TESTS }}
+      LOCATION: ${{ inputs.LOCATION }}
+      PUSH_IMAGES_2_REGISTRY: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
+      SANITIZERS: ${{ inputs.SANITIZERS }}
+      SDB_ALLOC: ${{ inputs.SDB_ALLOC }}
+      SDB_CLUSTER: ${{ inputs.SDB_CLUSTER }}
+      SDB_DEV: ${{ inputs.SDB_DEV }}
+      SQLLOGIC_TESTS: ${{ inputs.SQLLOGIC_TESTS }}
+      STRIP_TARBALL: ${{ inputs.STRIP_TARBALL }}
+      UNIT_TESTS: ${{ inputs.UNIT_TESTS }}
+      USE_COVERAGE: ${{ inputs.USE_COVERAGE }}
+      USE_DEBUG_INFO: ${{ inputs.USE_DEBUG_INFO }}
+      USE_IPO: ${{ inputs.USE_IPO }}
+      VPACK_TESTS: ${{ inputs.VPACK_TESTS }}
+      WORKFLOW: ${{ github.workflow }}
+      WORKSPACE: ${{ github.workspace }}
     secrets:
       PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
       SDB_CLUSTER_REPO: ${{ secrets.SDB_CLUSTER_REPO }}

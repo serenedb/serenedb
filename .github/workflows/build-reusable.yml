@@ -8,6 +8,11 @@ on:
         type: string
         required: true
         default: 'self-hosted'
+      BUILD_SERENEDB:
+        description: 'Build SereneDB'
+        type: boolean
+        required: true
+        default: true
       BRANCH:
         description: 'SereneDB branch to test'
         type: string
@@ -32,6 +37,27 @@ on:
         description: 'Package .deb and .tar.gz'
         type: boolean
         required: false
+        default: false
+      STRIP_TARBALL:
+        description: 'Strip tarball'
+        required: true
+        type: boolean
+        default: true
+      # TODO: Add or update step uploading artifacts
+      DOCKER_SERENEDB_IMAGE:
+        description: 'Produce SereneDB Docker Images'
+        required: true
+        type: boolean
+        default: false
+      DOCKER_EXTRA_TAGS:
+        description: '(Optional) Custom TAGS for DOCKER_SERENEDB_IMAGE'
+        required: false
+        type: string
+        default: ''
+      PUSH_IMAGES_2_REGISTRY:
+        description: 'Push images to Private Docker Registry'
+        required: true
+        type: boolean
         default: false
       SDB_CLUSTER:
         description: 'Build cluster'
@@ -118,6 +144,11 @@ on:
         type: string
         required: false
         default: ''
+      DOCKER_BUILD_IMAGES:
+        description: 'Produce SereneDB Build Images'
+        required: true
+        type: boolean
+        default: false
       DEBUG_PRINT_ENV:
         description: 'Whether to print environment variables'
         type: boolean
@@ -140,31 +171,35 @@ on:
         required: true
 
 env:
-  WORKSPACE: ${{ github.workspace }}
-  LOCATION: ${{ inputs.LOCATION }}
-  WORKFLOW: ${{ github.workflow }}
   BRANCH: ${{ inputs.BRANCH }}
-  CLUSTER_BRANCH: ${{ inputs.CLUSTER_BRANCH }}
-  VPACK_TESTS: ${{ inputs.VPACK_TESTS }}
-  IRESEARCH_TESTS: ${{ inputs.IRESEARCH_TESTS }}
-  UNIT_TESTS: ${{ inputs.UNIT_TESTS }}
-  SQLLOGIC_TESTS: ${{ inputs.SQLLOGIC_TESTS }}
-  INTEGRATION_TESTS: ${{ inputs.INTEGRATION_TESTS }}
-  BUILD_PACKAGES: ${{ inputs.BUILD_PACKAGES }}
-  DEB_TAR_PACKAGES: ${{ inputs.DEB_TAR_PACKAGES }} 
-  FULL_SUITE: ${{ inputs.FULL_SUITE }}
-  SANITIZERS: ${{ inputs.SANITIZERS }}
-  USE_COVERAGE: ${{ inputs.USE_COVERAGE }}
-  SDB_CLUSTER: ${{ inputs.SDB_CLUSTER }}
-  SDB_ALLOC: ${{ inputs.SDB_ALLOC }}
-  SDB_DEV: ${{ inputs.SDB_DEV }}
-  USE_IPO: ${{ inputs.USE_IPO }}
-  ENSURE_VTUNE_SYMBOLS: ${{ inputs.ENSURE_VTUNE_SYMBOLS }}
   BUILDMODE: ${{ inputs.BUILDMODE }}
-  USE_DEBUG_INFO: ${{ inputs.USE_DEBUG_INFO }}
   BUILD_IMAGE: ${{ inputs.BUILD_IMAGE }}
-  INTEGRATION_TESTS_COREDUMPS: ${{ inputs.INTEGRATION_TESTS_COREDUMPS }}
+  BUILD_PACKAGES: ${{ inputs.BUILD_PACKAGES }}
+  CLUSTER_BRANCH: ${{ inputs.CLUSTER_BRANCH }}
+  DEB_TAR_PACKAGES: ${{ inputs.DEB_TAR_PACKAGES }} 
+  DOCKER_EXTRA_TAGS: ${{ inputs.DOCKER_EXTRA_TAGS }}
+  DOCKER_SERENEDB_IMAGE: ${{ inputs.DOCKER_SERENEDB_IMAGE }} 
+  ENSURE_VTUNE_SYMBOLS: ${{ inputs.ENSURE_VTUNE_SYMBOLS }}
   EXTRA_ARTIFACTS: ${{ inputs.EXTRA_ARTIFACTS }}
+  FULL_SUITE: ${{ inputs.FULL_SUITE }}
+  INTEGRATION_TESTS: ${{ inputs.INTEGRATION_TESTS }}
+  INTEGRATION_TESTS_COREDUMPS: ${{ inputs.INTEGRATION_TESTS_COREDUMPS }}
+  IRESEARCH_TESTS: ${{ inputs.IRESEARCH_TESTS }}
+  LOCATION: ${{ inputs.LOCATION }}
+  PUSH_IMAGES_2_REGISTRY: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
+  SANITIZERS: ${{ inputs.SANITIZERS }}
+  SDB_ALLOC: ${{ inputs.SDB_ALLOC }}
+  SDB_CLUSTER: ${{ inputs.SDB_CLUSTER }}
+  SDB_DEV: ${{ inputs.SDB_DEV }}
+  SQLLOGIC_TESTS: ${{ inputs.SQLLOGIC_TESTS }}
+  STRIP_TARBALL: ${{ inputs.STRIP_TARBALL }}
+  UNIT_TESTS: ${{ inputs.UNIT_TESTS }}
+  USE_COVERAGE: ${{ inputs.USE_COVERAGE }}
+  USE_DEBUG_INFO: ${{ inputs.USE_DEBUG_INFO }}
+  USE_IPO: ${{ inputs.USE_IPO }}
+  VPACK_TESTS: ${{ inputs.VPACK_TESTS }}
+  WORKFLOW: ${{ github.workflow }}
+  WORKSPACE: ${{ github.workspace }}
 
 jobs:
   build-test-package:
@@ -208,11 +243,13 @@ jobs:
       # ==================== BUILD ====================
       - name: SereneDB build
         id: serenedb_build
+        if: inputs.BUILD_SERENEDB == true
         run: ./private/ci/steps/03-ci-in-docker-build-targets.bash
 
       # ==================== TESTS ====================
       - name: Run tests in parallel
         id: run_tests
+        if: steps.serenedb_build.outcome == 'success'
         run: |
           if [[ "${{ inputs.VPACK_TESTS }}" == "true" || "${{ inputs.IRESEARCH_TESTS }}" == "true" || "${{ inputs.UNIT_TESTS }}" == "true" || "${{ inputs.SQLLOGIC_TESTS }}" == "true" || "${{ inputs.INTEGRATION_TESTS }}" == "true" ]]; then
             ./private/ci/steps/04-ci-run-tests-parallel.bash
@@ -223,6 +260,7 @@ jobs:
       # ==================== PACKAGES ====================
       - name: SereneDB Packages
         id: serenedb_packages
+        if: steps.serenedb_build.outcome == 'success'
         run: |
           if [[ "${{ inputs.BUILD_PACKAGES }}" == "true" ]]; then
             ./private/ci/steps/05-ci-in-docker-package.bash
@@ -235,6 +273,20 @@ jobs:
         id: coverage_report
         if: inputs.USE_COVERAGE != ''
         run: ./private/ci/steps/06-ci-in-docker-generate-coverage-report.bash
+
+      # ==================== BUILD DOCKER IMAGES ====================
+      - name: Build Docker Images
+        id: build_docker_images
+        if: steps.serenedb_packages.outcome == 'success' && inputs.DOCKER_SERENEDB_IMAGE == true
+        working-directory: ./packages
+        run: ./build_docker.bash
+
+      # ==================== PRODUCE BUILD IMAGES ====================
+      - name: Produce Build Images
+        id: produce_build_images
+        if: inputs.DOCKER_BUILD_IMAGES == true
+        working-directory: ./private/ci
+        run: ./build_images.sh
 
       # ==================== DETERMINE FINAL STATUS ====================
       - name: Determine final job status
@@ -260,6 +312,16 @@ jobs:
 
           if [[ "${{ steps.coverage_report.outcome }}" == "failure" ]]; then
             echo "Coverage report generation failed"
+            HAS_FAILURES=true
+          fi
+
+          if [[ "${{ steps.build_docker_images.outcome }}" == "failure" ]]; then
+            echo "Build Docker Images failed"
+            HAS_FAILURES=true
+          fi
+
+          if [[ "${{ steps.produce_build_images.outcome }}" == "failure" ]]; then
+            echo "Produce Build Images failed"
             HAS_FAILURES=true
           fi
 

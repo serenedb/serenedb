@@ -1,4 +1,4 @@
-hash-threshold 1337
+hash-threshold 100
 
 
 statement ok
@@ -201,3 +201,50 @@ query
 SELECT * FROM arelav ORDER BY 1, 2, 3;
 ----
 300003 values hashing to 568009c5b2055554ab4bd827ebe85b75
+
+
+statement count 100
+COPY 
+  (SELECT x, y::text FROM generate_series(1, 10) as g1(x), generate_series(1, 10) as g2(y)) 
+TO 
+  '/tmp/deadinside.tsv'
+WITH (HEADER TRUE);
+
+
+statement ok
+CREATE TABLE donsimon
+(
+  vv INTEGER,
+  marmishka TEXT
+);
+
+
+statement count 100
+COPY donsimon FROM '/tmp/deadinside.tsv' (ON_ERROR IGNORE, REJECT_LIMIT 1);
+
+
+query
+SELECT * FROM donsimon ORDER BY 1, 2;
+----
+202 values hashing to 023b58aa7a21f0c2699ccde3252f77b1
+
+
+statement error
+COPY donsimon FROM '/tmp/deadinside.tsv' (ON_ERROR IGNORE, REJECT_LIMIT -1);
+----
+db error: ERROR: REJECT_LIMIT (-1) must be greater than zero
+
+
+statement error
+COPY donsimon FROM '/tmp/deadinside.tsv' (ON_ERROR labudadadab);
+----
+db error: ERROR: COPY ON_ERROR "labudadadab" not recognized
+
+
+statement count 10
+COPY (SELECT * FROM generate_series(1, 10)) TO '/tmp/deadinside.tsv';
+
+
+statement error
+COPY donsimon FROM '/tmp/deadinside.tsv' (ON_ERROR IGNORE, REJECT_LIMIT 9);
+----

@@ -32,6 +32,7 @@ struct SqlErrorData {
   std::string errmsg;
   std::string errdetail;
   std::string errhint;
+  std::string context;
 };
 
 }  // namespace sdb::pg

@@ -129,7 +129,8 @@ class PgSQLCommTaskBase : public rest::CommTask {
   void SendNotice(char type, const pg::SqlErrorData& error);
   void SendNotice(char type, std::string_view message,
                   std::string_view sqlstate, std::string_view error_detail = {},
-                  std::string_view error_hint = {}, std::string_view query = {},
+                  std::string_view error_hint = {},
+                  std::string_view context = {}, std::string_view query = {},
                   int cursor_pos = -1);
 
   void RunSimpleQuery(std::string_view query_string);

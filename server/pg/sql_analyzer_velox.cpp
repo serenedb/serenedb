@@ -81,6 +81,7 @@
 #include "query/types.h"
 #include "utils/query_string.h"
 #include "velox/dwio/common/Options.h"
+#include "velox/dwio/text/reader/TextReader.h"
 #include "velox/dwio/text/writer/TextWriter.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
@@ -1795,13 +1796,14 @@ class CopyOptionsParser {
   CopyOptionsParser(velox::RowTypePtr row_type, bool is_writer,
                     std::string_view query_string, std::string_view file_path,
                     const List* options, message::Buffer* send_buffer,
-                    CopyMessagesQueue* copy_queue)
+                    CopyMessagesQueue* copy_queue, std::string_view table_name)
     : _row_type{std::move(row_type)},
       _is_writer{is_writer},
       _query_string{query_string},
       _file_path{file_path},
       _send_buffer{send_buffer},
-      _copy_queue{copy_queue} {
+      _copy_queue{copy_queue},
+      _table_name{table_name} {
     _options.reserve(list_length(options));
     VisitNodes(options, [&](const DefElem& option) {
       auto [_, emplaced] = _options.try_emplace(option.defname, &option);
@@ -1917,9 +1919,61 @@ class CopyOptionsParser {
       escape, false};
     serde_options.nullString = null;
 
+    uint64_t reject_limit = 0;
+    std::string_view on_error = "stop";
+    if (const auto* option = EraseOption("on_error")) {
+      if (_is_writer) {
+        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
+                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        ERR_MSG("COPY ON_ERROR cannot be used with COPY TO"));
+      }
+
+      auto maybe_on_error = TryGet<std::string_view>(option->arg);
+      if (!maybe_on_error) {
+        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
+                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        ERR_MSG("COPY ON_ERROR \"", DeparseExpr(option->arg),
+                                "\" not recognized"));
+      }
+      if (*maybe_on_error == "stop") {
+        reject_limit = 0;
+      } else if (*maybe_on_error == "ignore") {
+        reject_limit = std::numeric_limits<uint64_t>::max();
+      } else {
+        THROW_SQL_ERROR(
+          CURSOR_POS(ErrorPosition(ExprLocation(option))),
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("COPY ON_ERROR \"", *maybe_on_error, "\" not recognized"));
+      }
+      on_error = *maybe_on_error;
+    }
+
+    if (const auto* option = EraseOption("reject_limit")) {
+      if (on_error != "ignore") {
+        THROW_SQL_ERROR(
+          CURSOR_POS(ErrorPosition(ExprLocation(option))),
+          ERR_CODE(ERRCODE_SYNTAX_ERROR),
+          ERR_MSG("COPY REJECT_LIMIT requires ON_ERROR to be set to IGNORE"));
+      }
+      auto maybe_reject_limit = TryGet<int>(option->arg);
+      if (!maybe_reject_limit) {
+        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
+                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        ERR_MSG("invalid input syntax for type bigint: \"",
+                                DeparseExpr(option->arg), "\""));
+      }
+      if (*maybe_reject_limit <= 0) {
+        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
+                        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("REJECT_LIMIT (", *maybe_reject_limit,
+                                ") must be greater than zero"));
+      }
+      reject_limit = *maybe_reject_limit;
+    }
+
     for (const auto& option_name :
          {"default", "quote", "force_quote", "force_not_null", "force_null",
-          "on_error", "reject_limit", "encoding", "log_verbosity"}) {
+          "encoding", "log_verbosity"}) {
       if (const auto* option = EraseOption(option_name)) {
         THROW_SQL_ERROR(
           CURSOR_POS(ErrorPosition(ExprLocation(option))),
@@ -1945,6 +1999,25 @@ class CopyOptionsParser {
       text_options->setSerDeOptions(std::move(serde_options));
       text_options->setFileSchema(std::move(_row_type));
       text_options->setFileFormat(FileFormat::TEXT);
+      text_options->setRejectLimit(reject_limit);
+      text_options->setErrorHandler([&](const velox::text::RowError& err) {
+        std::string errmsg;
+        if (err.rejectedRows > err.rejectLimit) {
+          errmsg =
+            absl::StrCat("skipped more than REJECT_LIMIT (", err.rejectLimit,
+                         ") rows due to data type incompatibility");
+        } else {
+          errmsg = absl::StrCat("invalid input syntax for type ",
+                                ToPgTypeString(err.columnType), ": \"",
+                                err.value, "\"");
+        }
+
+        SDB_ASSERT(!_table_name.empty());
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT), ERR_MSG(errmsg),
+          ERR_CONTEXT("COPY ", _table_name, ", line ", err.rowNumber,
+                      ", column ", err.columnName, ": \"", err.value, "\""));
+      });
       _reader_options = std::move(text_options);
       _row_reader_options->setSkipRows(header);
     }
@@ -2040,6 +2113,7 @@ class CopyOptionsParser {
   std::string_view _file_path;
   message::Buffer* _send_buffer;
   CopyMessagesQueue* _copy_queue;
+  std::string_view _table_name;
 
   std::unique_ptr<velox::WriteFile> _sink;  // local / S3 / hdfs etc.
   std::shared_ptr<velox::dwio::common::WriterOptions> _writer_options;
@@ -2082,13 +2156,6 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
     return object->table;
   };
 
-  auto file_path = absl::NullSafeStringView(stmt.filename);
-  auto create_options_parser = [&](const velox::RowTypePtr& type) {
-    return CopyOptionsParser{type,       !stmt.is_from, _query_string.view(),
-                             file_path,  stmt.options,  _send_buffer,
-                             _copy_queue};
-  };
-
   auto get_column_exprs = [&](const std::vector<std::string>& column_names) {
     std::vector<lp::ExprPtr> column_exprs;
     column_exprs.reserve(column_names.size());
@@ -2106,10 +2173,14 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
     return column_exprs;
   };
 
+  std::string_view table_name;
   velox::RowTypePtr file_table_type;
   if (stmt.relation) {
     auto [object, schemaname, relname] = get_object();
     auto table = get_table(object);
+    // table_name will be used in execution to report errors
+    // it's a view to an object which lives longer than PG tree
+    table_name = table->name();
     const auto& table_type = *table->type();
 
     std::vector<std::string> names;
@@ -2142,6 +2213,13 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
 
     file_table_type = ROW(std::move(names), std::move(types));
   }
+
+  auto file_path = absl::NullSafeStringView(stmt.filename);
+  auto create_options_parser = [&](const velox::RowTypePtr& type) {
+    return CopyOptionsParser{type,        !stmt.is_from, _query_string.view(),
+                             file_path,   stmt.options,  _send_buffer,
+                             _copy_queue, table_name};
+  };
 
   if (stmt.is_from) {
     auto names = _id_generator.NextColumnNames(file_table_type->names());

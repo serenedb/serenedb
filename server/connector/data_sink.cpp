@@ -101,21 +101,17 @@ RocksDBUpdateDataSink::RocksDBUpdateDataSink(
   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
   std::span<const velox::column_index_t> key_childs,
   std::vector<catalog::Column::Id> column_oids,
-  std::vector<catalog::Column::Id> all_column_oids)
+  std::vector<catalog::Column::Id> all_column_oids, bool updating_pk)
   : RocksDBDataSinkBase{transaction,           cf,         num_of_rows_affected,
                         memory_pool,           object_key, key_childs,
                         std::move(column_oids)},
     _snapshot{snapshot},
     _db{db},
     _all_column_ids{std::move(all_column_oids)},
-    _updated_keys_buffers{memory_pool} {
-  // Columns ids of updating primary keys meet twice
-  _updating_pk =
-    _column_ids.size() > containers::FlatHashSet<catalog::Column::Id>(
-                           _column_ids.begin(), _column_ids.end())
-                           .size();
+    _updated_keys_buffers{memory_pool},
+    _updating_pk{updating_pk} {
   if (_updating_pk) {
-    // Calculate which columns are being updated (non-PK columns)
+    // Calculate which columns are being updated (without prefixed PK)
     _updated_column_ids.insert(_column_ids.begin() + _key_childs.size(),
                                _column_ids.end());
 
@@ -154,6 +150,9 @@ RocksDBUpdateDataSink::RocksDBUpdateDataSink(
 void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
   static_assert(basics::IsLittleEndian());
   SDB_ASSERT(input->encoding() == velox::VectorEncoding::Simple::ROW);
+  // UPDATE with PK columns changing has PK columns at the
+  // beginning and same columns again as write data. So here we validate
+  // column oids size against input type, not row type size.
   SDB_ASSERT(input->type()->size() == _column_ids.size(),
              "RocksDBDataSink: column oids size ", _column_ids.size(),
              " doesn't match input type size ", input->type()->size());

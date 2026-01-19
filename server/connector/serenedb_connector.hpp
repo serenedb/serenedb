@@ -527,7 +527,7 @@ class SereneDBConnector final : public velox::connector::Connector {
     auto& serene_insert_handle =
       basics::downCast<SereneDBConnectorInsertTableHandle>(
         *connector_insert_table_handle);
-    query::Transaction& transaction = serene_insert_handle.GetTransaction();
+    auto& transaction = serene_insert_handle.GetTransaction();
     const auto& table =
       basics::downCast<const RocksDBTable>(*serene_insert_handle.Table());
     const auto& object_key = table.TableId();
@@ -570,25 +570,34 @@ class SereneDBConnector final : public velox::connector::Connector {
               pk_indices.push_back(input_type->getChildIdx(handle->name()));
             }
           }
-
-          std::vector<catalog::Column::Id> all_col_oids;
-          all_col_oids.reserve(table.type()->size());
-          for (auto& col : table.type()->names()) {
-            auto handle = table.columnMap().find(col);
-            SDB_ASSERT(handle != table.columnMap().end(),
-                       "RocksDBDataSink: can't find column handle for ", col);
-            all_col_oids.push_back(
-              basics::downCast<const SereneDBColumn>(handle->second)->Id());
-          }
-
           auto& rocksdb_transaction = transaction.EnsureRocksDBTransaction();
-          const auto& snapshot = transaction.EnsureRocksDBSnapshot();
+
           if constexpr (IsUpdate) {
+            const auto& snapshot = transaction.EnsureRocksDBSnapshot();
+
+            const bool updating_pk =
+              column_oids.size() > containers::FlatHashSet<catalog::Column::Id>(
+                                     column_oids.begin(), column_oids.end())
+                                     .size();
+
+            std::vector<catalog::Column::Id> all_column_oids;
+            if (updating_pk) {
+              all_column_oids.reserve(table.type()->size());
+              for (auto& col : table.type()->names()) {
+                auto handle = table.columnMap().find(col);
+                SDB_ASSERT(handle != table.columnMap().end(),
+                           "RocksDBDataSink: can't find column handle for ",
+                           col);
+                all_column_oids.push_back(
+                  basics::downCast<const SereneDBColumn>(handle->second)->Id());
+              }
+            }
+
             return std::make_unique<RocksDBUpdateDataSink>(
               rocksdb_transaction, snapshot, _db, _cf,
               serene_insert_handle.GetNumOfRowsAffected(),
               *connector_query_ctx->memoryPool(), object_key, pk_indices,
-              column_oids, all_col_oids);
+              column_oids, all_column_oids, updating_pk);
           } else {
             return std::make_unique<RocksDBInsertDataSink>(
               rocksdb_transaction, _cf,

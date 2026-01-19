@@ -216,7 +216,8 @@ class RocksDBUpdateDataSink : public RocksDBDataSinkBase {
                         ObjectId object_key,
                         std::span<const velox::column_index_t> key_childs,
                         std::vector<catalog::Column::Id> column_ids,
-                        std::vector<catalog::Column::Id> all_column_ids);
+                        std::vector<catalog::Column::Id> all_column_ids,
+                        bool updating_pk);
 
   void appendData(velox::RowVectorPtr input) final;
 

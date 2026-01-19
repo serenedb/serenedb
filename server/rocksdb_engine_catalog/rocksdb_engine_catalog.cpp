@@ -1583,6 +1583,7 @@ Result RocksDBEngineCatalog::createTableShard(
   const catalog::Table& collection, bool is_new,
   std::shared_ptr<TableShard>& physical) {
   auto meta = MakeTableMeta(collection);
+  catalog::TableStats stats;
   if (!is_new) {
     // Load Table stats
     RocksDBKeyWithBuffer key;
@@ -1594,16 +1595,14 @@ Result RocksDBEngineCatalog::createTableShard(
       rocksdb::ReadOptions{},
       RocksDBColumnFamilyManager::get(RocksDBColumnFamilyManager::Family::Data),
       key.string(), &value);
-    catalog::TableStats stats;
     if (auto r = vpack::ReadObjectNothrow<catalog::TableStats>(
           vpack::Slice{reinterpret_cast<const uint8_t*>(value.data())}, stats,
           {.skip_unknown = false});
         !r.ok()) {
       return r;
     }
-    meta.stats = std::move(stats);
   }
-  physical = std::make_shared<TableShard>(meta);
+  physical = std::make_shared<TableShard>(meta, stats);
   return {};
 }
 

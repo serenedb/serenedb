@@ -10,6 +10,10 @@ statement ok
 INSERT INTO t VALUES ('a'), ('b'), ('c');
 
 
+statement onlyif postgres
+ANALYZE t;
+
+
 query
 SELECT relname, reltuples FROM pg_class WHERE relname = 't';
 ----
@@ -30,6 +34,10 @@ t	6
 
 statement ok
 DELETE FROM t WHERE r = 'aa';
+
+
+statement onlyif postgres
+ANALYZE t;
 
 
 query

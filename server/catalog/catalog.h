@@ -224,8 +224,6 @@ struct LogicalCatalog {
   virtual Result DropIndex(ObjectId database_id, std::string_view schema,
                            std::string_view name) = 0;
 
-  virtual Result SyncTableStats(const Table& c, const TableShard& physical) = 0;
-
   virtual void RegisterTableDrop(TableTombstone tombstone) = 0;
   virtual void RegisterScopeDrop(ObjectId database_id, ObjectId schema_id) = 0;
 

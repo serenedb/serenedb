@@ -200,9 +200,10 @@ CREATE TABLE dup_test (a INTEGER PRIMARY KEY, b INTEGER);
 statement count 2
 INSERT INTO dup_test VALUES (1, 10), (2, 20);
 
-# TODO better error message + fix for serene
-#statement error
-#UPDATE dup_test SET a = 2 WHERE a = 1;
+# TODO(mkornaukhov) implement unique constaint for SereneDB
+skipif serenedb
+statement error duplicate key value violates unique constraint "dup_test_pkey"
+UPDATE dup_test SET a = 2 WHERE a = 1;
 
 query
 SELECT * FROM dup_test ORDER BY a;
@@ -264,7 +265,7 @@ CREATE TABLE null_pk_test (a INTEGER PRIMARY KEY, b INTEGER);
 statement count 1
 INSERT INTO null_pk_test VALUES (1, 10);
 
-# TODO better error message
+# TODO(mkornaukhov) proper error message for not null constraint
 statement error
 UPDATE null_pk_test SET a = NULL WHERE a = 1;
 

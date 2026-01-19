@@ -27,6 +27,9 @@ using namespace sdb;
 const std::string StaticStrings::kEmpty;
 const std::string StaticStrings::kN1800("1800");
 
+// SereneDB connector name
+const std::string StaticStrings::kSereneDBConnector("serenedb");
+
 // index lookup strings
 const std::string StaticStrings::kIndexEq("eq");
 const std::string StaticStrings::kIndexIn("in");
@@ -213,6 +216,7 @@ const std::string StaticStrings::kParsedBody("parsedBody");
 // collection attributes
 const std::string StaticStrings::kAllowUserKeys("allowUserKeys");
 const std::string StaticStrings::kIndexes("indexes");
+const std::string StaticStrings::kStats("stats");
 const std::string StaticStrings::kKeyOptions("keyOptions");
 const std::string StaticStrings::kNumberOfShards("numberOfShards");
 const std::string StaticStrings::kObjectId("objectId");

@@ -32,13 +32,17 @@
 #include "basics/endian.h"
 #include "basics/exceptions.h"
 #include "basics/misc.hpp"
+#include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
 #include "common.h"
 #include "connector/primary_key.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "key_utils.hpp"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
+#include "storage_engine/engine_feature.h"
+#include "storage_engine/table_shard.h"
 
 #if __has_feature(memory_sanitizer)
 #define DATA_SINK_USE_MEMORY_SANITIZER
@@ -128,6 +132,9 @@ void RocksDBDataSink::appendData(velox::RowVectorPtr input) {
       WriteColumn(input->childAt(i), folly::Range{&all_rows, 1}, {});
     }
   }
+  auto table_shard = catalog::GetTableShard(_object_key);
+  SDB_ASSERT(table_shard);
+  table_shard->IncreaseRows(num_rows);
 }
 
 // Stores column backed by Flat vector.
@@ -2039,6 +2046,9 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
       }
     }
   }
+  auto table_shard = catalog::GetTableShard(_object_key);
+  SDB_ASSERT(table_shard);
+  table_shard->DecreaseRows(num_rows);
 }
 
 bool RocksDBDeleteDataSink::finish() { return true; }

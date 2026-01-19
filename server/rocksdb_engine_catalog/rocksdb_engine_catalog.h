@@ -282,6 +282,8 @@ class RocksDBEngineCatalog {
 
   Result DropRole(const catalog::Role& role);
 
+  Result SyncTableStats(const catalog::Table& c, const TableShard& physical);
+
   yaclib::Future<Result> compactAll(bool change_level,
                                     bool compact_bottom_most_level);
 

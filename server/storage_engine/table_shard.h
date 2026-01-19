@@ -151,6 +151,22 @@ class TableShard {
     vpack::Builder&,
     const std::function<bool(const Index*, IndexSerialization&)>& filter) const;
 
+  void IncreaseRows(uint64_t count) {
+    _num_rows.fetch_add(count, std::memory_order_relaxed);
+  }
+
+  void DecreaseRows(uint64_t count) {
+    _num_rows.fetch_sub(count, std::memory_order_relaxed);
+  }
+
+  catalog::TableStats GetTableStats() const {
+    return {.num_rows = _num_rows.load(std::memory_order_relaxed)};
+  }
+
+  void GetTableStatsVPack(vpack::Builder& builder) const {
+    vpack::WriteObject(builder, vpack::Embedded{GetTableStats()});
+  }
+
   // TODO(gnusi): remove
   void getAllIndexesInternal(vpack::Builder& result) const {
     getIndexesVPack(result, [](const Index*, IndexSerialization& flags) {
@@ -327,6 +343,9 @@ class TableShard {
   mutable std::atomic<std::thread::id> _indexes_lock_write_owner;
   IndexContainerType _indexes;
   std::atomic_bool _deleted = false;  // TODO(gnusi): remove
+
+  // TODO(codeworse): this probably won't work in case of distributed setup
+  std::atomic_uint64_t _num_rows{0};
 };
 
 bool IsLeadingShard(const TableShard& c) noexcept;

@@ -121,4 +121,14 @@ void Transaction::Destroy() noexcept {
   _rocksdb_snapshot = nullptr;
 }
 
+catalog::TableStats Transaction::GetTableStats(ObjectId table_id) const {
+  // TODO(codeworse): manage catalog snapshot in transaction
+  auto table_shard = catalog::GetTableShard(table_id);
+  if (!table_shard) {
+    SDB_THROW(ERROR_BAD_PARAMETER,
+              "Table shard not found for table id: ", table_id);
+  }
+  return table_shard->GetTableStats();
+}
+
 }  // namespace sdb::query

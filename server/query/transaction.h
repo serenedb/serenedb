@@ -27,8 +27,10 @@
 
 #include "basics/bit_utils.hpp"
 #include "basics/result.h"
+#include "catalog/catalog.h"
 #include "query/config.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#include "storage_engine/table_shard.h"
 
 namespace sdb::query {
 
@@ -60,6 +62,8 @@ class Transaction : public Config {
   const rocksdb::Snapshot& EnsureRocksDBSnapshot();
 
   void Destroy() noexcept;
+
+  catalog::TableStats GetTableStats(ObjectId table_id) const;
 
  private:
   void CreateStorageSnapshot();

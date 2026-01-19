@@ -37,6 +37,7 @@ class StaticStrings {
     "https://www.gnu.org/licenses/gpl.html";
 
   static constexpr std::string_view kRocksDbEngineRoot = "engine_rocksdb";
+  static const std::string kSereneDBConnector;
 
   // constants
   static const std::string kEmpty;
@@ -229,6 +230,7 @@ class StaticStrings {
   static constexpr std::string_view kDistributeShardsLike =
     "distributeShardsLike";
   static const std::string kIndexes;
+  static const std::string kStats;
   static const std::string kKeyOptions;
   static const std::string kNumberOfShards;
   static const std::string kObjectId;

@@ -2009,10 +2009,8 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
     if (_skip.Reader().UpperBound() < target) [[unlikely]] {
       SeekToBlock(target);
     }
-
-    const auto leaf_min = _skip.Reader().State().doc + 1;
     const auto leaf_max = _skip.Reader().Next().doc;
-    return {leaf_min, leaf_max};
+    return {value(), leaf_max};
   }
 
   doc_id_t seek_in_leaf(doc_id_t target) final {

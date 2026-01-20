@@ -1,7 +1,4 @@
 #include "geo/coding.h"
-#include "geo/shape_container.h"
-#include "geo_json.h"
-#include "basics/result.h"
 
 #include <s2/s2latlng.h>
 #include <s2/s2point.h>
@@ -13,94 +10,101 @@
 #include "basics/errors.h"
 #include "basics/exceptions.h"
 #include "basics/logger/logger.h"
-
+#include "basics/result.h"
+#include "geo/shape_container.h"
+#include "geo_json.h"
 
 namespace sdb::geo {
 
 namespace {
 
-constexpr auto kMax = static_cast<double>(uint64_t{1} << 32);
-constexpr auto kMax2 = static_cast<double>(uint64_t{1} << 31);
-constexpr auto kMaxPi = kMax / M_PI;
-constexpr auto kMax2Pi = kMax2 / M_PI;
-constexpr auto kPiMax = M_PI / kMax;
-constexpr auto k2PiMax = M_PI / kMax2;
+static_assert(std::endian::native == std::endian::little,
+              "Only Little-Ended encoding is currently supported");
 
-template<bool EncodeBack>
-void TranslateLatLngToU32Impl(std::conditional_t<EncodeBack, S2LatLng&, const S2LatLng&> lat_lng, uint32_t& lat_encoded,
-                          uint32_t& lng_encoded) noexcept {
-  SDB_ASSERT(lat_lng.is_valid());
+constexpr auto kMaxVal = static_cast<double>(uint64_t{1} << 32);
+constexpr auto kMaxVal2 = static_cast<double>(uint64_t{1} << 31);
+constexpr auto kMaxValPi = kMaxVal / M_PI;
+constexpr auto kMaxVal2Pi = kMaxVal2 / M_PI;
+constexpr auto kPiMaxVal = M_PI / kMaxVal;
+constexpr auto k2PiMaxVal = M_PI / kMaxVal2;
 
-  const auto lat = (lat_lng.lat().radians() + M_PI_2) * kMaxPi;
-  SDB_ASSERT(lat <= kMax, lat);
-  lat_encoded = static_cast<uint32_t>(lat + 0.5);
-  const auto lat_decoded = static_cast<double>(lat_encoded) * kPiMax - M_PI_2;
+template<bool WriteBack>
+void ConvertLatLngToU32(
+  std::conditional_t<WriteBack, S2LatLng&, const S2LatLng&> ll,
+  uint32_t& out_lat, uint32_t& out_lng) noexcept {
+  SDB_ASSERT(ll.is_valid());
 
-  const auto lng = (lat_lng.lng().radians() + M_PI) * kMax2Pi;
-  SDB_ASSERT(lng <= kMax, lng);
-  lng_encoded = static_cast<uint32_t>(lng + 0.5);
-  const auto lng_decoded = static_cast<double>(lng_encoded) * k2PiMax - M_PI;
+  const auto latVal = (ll.lat().radians() + M_PI_2) * kMaxValPi;
+  SDB_ASSERT(latVal <= kMaxVal, latVal);
+  out_lat = static_cast<uint32_t>(latVal + 0.5);
+  const auto latRestored = static_cast<double>(out_lat) * kPiMaxVal - M_PI_2;
 
-  if constexpr (EncodeBack) {
-    lat_lng = S2LatLng::FromRadians(lat_decoded, lng_decoded);
-    SDB_ASSERT(lat_lng.is_valid());
+  const auto lngVal = (ll.lng().radians() + M_PI) * kMaxVal2Pi;
+  SDB_ASSERT(lngVal <= kMaxVal, lngVal);
+  out_lng = static_cast<uint32_t>(lngVal + 0.5);
+  const auto lngRestored = static_cast<double>(out_lng) * k2PiMaxVal - M_PI;
+
+  if constexpr (WriteBack) {
+    ll = S2LatLng::FromRadians(latRestored, lngRestored);
+    SDB_ASSERT(ll.is_valid());
   }
 }
 
-void GetLatLngAsU32(const S2LatLng& lat_lng, uint32_t& lat_encoded,
-                          uint32_t& lng_encoded) noexcept {
-  TranslateLatLngToU32Impl<false>(lat_lng, lat_encoded, lng_encoded);
+void ExtractLatLngAsU32(const S2LatLng& ll, uint32_t& out_lat,
+                        uint32_t& out_lng) noexcept {
+  ConvertLatLngToU32<false>(ll, out_lat, out_lng);
 }
 
-void EncodeLatLngU32(Encoder& encoder, const S2LatLng& lat_lng) noexcept {
-  uint32_t lat_encoded, lng_encoded;
-  GetLatLngAsU32(lat_lng, lat_encoded, lng_encoded);
+void WriteLatLngU32(Encoder& enc, const S2LatLng& ll) noexcept {
+  uint32_t lat_out, lng_out;
+  ExtractLatLngAsU32(ll, lat_out, lng_out);
 
-  SDB_ASSERT(encoder.avail() >= 2 * sizeof(uint32_t));
-  encoder.put32(lat_encoded);
-  encoder.put32(lng_encoded);
+  SDB_ASSERT(enc.avail() >= 2 * sizeof(uint32_t));
+  enc.put32(lat_out);
+  enc.put32(lng_out);
 }
 
-void EncodeLatLngF64(Encoder& encoder, const S2LatLng& lat_lng) noexcept {
-  SDB_ASSERT(lat_lng.is_valid());
+void WriteLatLngF64(Encoder& enc, const S2LatLng& ll) noexcept {
+  SDB_ASSERT(ll.is_valid());
 
-  SDB_ASSERT(encoder.avail() >= 2 * sizeof(double));
-  encoder.putdouble(lat_lng.lat().radians());
-  encoder.putdouble(lat_lng.lng().radians());
+  SDB_ASSERT(enc.avail() >= 2 * sizeof(double));
+  enc.putdouble(ll.lat().radians());
+  enc.putdouble(ll.lng().radians());
 }
 
-void PointFromLatLng(double lat, double lng, S2Point& point) noexcept {
-  const auto lat_lng = S2LatLng::FromRadians(lat, lng);
-  SDB_ASSERT(lat_lng.is_valid());
-  point = lat_lng.ToPoint();
-  SDB_ASSERT(S2::IsUnitLength(point));
+void CreatePointFromLatLng(double lat_rad, double lng_rad,
+                           S2Point& out) noexcept {
+  const auto ll = S2LatLng::FromRadians(lat_rad, lng_rad);
+  SDB_ASSERT(ll.is_valid());
+  out = ll.ToPoint();
+  SDB_ASSERT(S2::IsUnitLength(out));
 }
 
-void DecodeFromLatLngU32(Decoder& decoder, S2Point& point) noexcept {
-  SDB_ASSERT(decoder.avail() >= 2 * sizeof(uint32_t));
-  const auto lat_encoded = decoder.get32();
-  const auto lng_encoded = decoder.get32();
+void ReadLatLngU32ToPoint(Decoder& dec, S2Point& out) noexcept {
+  SDB_ASSERT(dec.avail() >= 2 * sizeof(uint32_t));
+  const auto lat_in = dec.get32();
+  const auto lng_in = dec.get32();
 
-  const auto lat_decoded = static_cast<double>(lat_encoded) * kPiMax - M_PI_2;
-  const auto lng_decoded = static_cast<double>(lng_encoded) * k2PiMax - M_PI;
+  const auto lat_restored = static_cast<double>(lat_in) * kPiMaxVal - M_PI_2;
+  const auto lng_restored = static_cast<double>(lng_in) * k2PiMaxVal - M_PI;
 
-  PointFromLatLng(lat_decoded, lng_decoded, point);
+  CreatePointFromLatLng(lat_restored, lng_restored, out);
 }
 
-void DecodeFromLatLngF64(Decoder& decoder, S2Point& point) noexcept {
-  SDB_ASSERT(decoder.avail() >= 2 * sizeof(double));
-  const auto lat = decoder.getdouble();
-  const auto lng = decoder.getdouble();
+void ReadLatLngF64ToPoint(Decoder& dec, S2Point& out) noexcept {
+  SDB_ASSERT(dec.avail() >= 2 * sizeof(double));
+  const auto lat_rad = dec.getdouble();
+  const auto lng_rad = dec.getdouble();
 
-  PointFromLatLng(lat, lng, point);
+  CreatePointFromLatLng(lat_rad, lng_rad, out);
 }
 
-void DecodeFromPoint(Decoder& decoder, S2Point& point) {
-  SDB_ASSERT(decoder.avail() >= 3 * sizeof(double));
-  point[0] = decoder.getdouble();
-  point[1] = decoder.getdouble();
-  point[2] = decoder.getdouble();
-  SDB_ASSERT(S2::IsUnitLength(point));
+void ReadRawPoint(Decoder& dec, S2Point& out) {
+  SDB_ASSERT(dec.avail() >= 3 * sizeof(double));
+  out[0] = dec.getdouble();
+  out[1] = dec.getdouble();
+  out[2] = dec.getdouble();
+  SDB_ASSERT(S2::IsUnitLength(out));
 }
 
 }  // namespace
@@ -116,28 +120,28 @@ bool ParseShape(vpack::Slice vpack, ShapeContainer& region,
                                                              /*geoJson=*/true,
                                                              options, encoder);
   } else if constexpr (P == Parsing::OnlyPoint) {
-    auto parse_point = [&] {
-      S2LatLng lat_lng;
-      r = geo::json::ParsePoint(vpack, lat_lng);
+    auto handle_point = [&] {
+      S2LatLng ll;
+      r = geo::json::ParsePoint(vpack, ll);
       if (r.ok() && encoder != nullptr) {
         SDB_ASSERT(options != geo::coding::Options::Invalid);
         SDB_ASSERT(encoder->avail() >= sizeof(uint8_t));
-        // We store type, because ParseCoordinates store it
-        encoder->put8(0);  // In store to column we will remove it
+        // to match what ParseCoordinates stores
+        encoder->put8(0);
         if (geo::coding::IsOptionsS2(options)) {
-          auto point = lat_lng.ToPoint();
-          geo::EncodePoint(*encoder, point);
-          return point;
+          auto pt = ll.ToPoint();
+          geo::EncodePoint(*encoder, pt);
+          return pt;
         } else {
-          geo::EncodeLatLng(*encoder, lat_lng, options);
+          geo::EncodeLatLng(*encoder, ll, options);
         }
       } else if (r.ok() && options == geo::coding::Options::S2LatLngU32) {
-        geo::ToLatLngU32(lat_lng);
+        geo::ToLatLngU32(ll);
       }
-      return lat_lng.ToPoint();
+      return ll.ToPoint();
     };
     if (r.ok()) {
-      region.reset(parse_point(), options);
+      region.reset(handle_point(), options);
     }
   } else {
     r = geo::json::ParseRegion<P != Parsing::FromIndex>(vpack, region, cache,
@@ -153,179 +157,155 @@ bool ParseShape(vpack::Slice vpack, ShapeContainer& region,
 
 using namespace coding;
 
-void CheckEndian() noexcept {
-  if constexpr (std::endian::native == std::endian::big) {
-    SDB_FATAL("xxxxx", Logger::FIXME,
-              "geo coding is not implemented for big-endian architectures");
-  }
+void ToLatLngU32(S2LatLng& ll) noexcept {
+  uint32_t lat_out, lng_out;
+  ConvertLatLngToU32<true>(ll, lat_out, lng_out);
 }
 
-void ToLatLngU32(S2LatLng& lat_lng) noexcept {
-  uint32_t lat_encoded, lng_encoded;
-  TranslateLatLngToU32Impl<true>(lat_lng, lat_encoded, lng_encoded);
-}
-
-void EncodeLatLng(Encoder& encoder, S2LatLng& lat_lng,
-                  Options options) noexcept {
-  if (options == Options::S2LatLngU32) {
-    EncodeLatLngU32(encoder, lat_lng);
+void EncodeLatLng(Encoder& enc, S2LatLng& ll, Options opts) noexcept {
+  if (opts == Options::S2LatLngU32) {
+    WriteLatLngU32(enc, ll);
   } else {
-    SDB_ASSERT(options == Options::S2LatLngF64);
-    EncodeLatLngF64(encoder, lat_lng);
+    SDB_ASSERT(opts == Options::S2LatLngF64);
+    WriteLatLngF64(enc, ll);
   }
 }
 
-void EncodePoint(Encoder& encoder, const S2Point& point) noexcept {
+void EncodePoint(Encoder& enc, const S2Point& pt) noexcept {
   static_assert(sizeof(S2Point) == 3 * sizeof(double));
-  SDB_ASSERT(encoder.avail() >= sizeof(S2Point));
-  SDB_ASSERT(S2::IsUnitLength(point));
-  encoder.putn(&point, sizeof(S2Point));
+  SDB_ASSERT(enc.avail() >= sizeof(S2Point));
+  SDB_ASSERT(S2::IsUnitLength(pt));
+  enc.putn(&pt, sizeof(S2Point));
 }
 
-void ToLatLngU32(std::span<S2LatLng> vertices) noexcept {
-  for (auto& lat_lng : vertices) {
-    ToLatLngU32(lat_lng);
+void ToLatLngU32(std::span<S2LatLng> verts) noexcept {
+  for (auto& ll : verts) {
+    ToLatLngU32(ll);
   }
 }
 
-void EncodeVertices(Encoder& encoder, std::span<const S2Point> vertices) {
-  encoder.Ensure(vertices.size() * sizeof(S2Point));
-  for (const auto& point : vertices) {
-    EncodePoint(encoder, point);
+void EncodeVertices(Encoder& enc, std::span<const S2Point> verts) {
+  enc.Ensure(verts.size() * sizeof(S2Point));
+  for (const auto& pt : verts) {
+    EncodePoint(enc, pt);
   }
 }
 
-void EncodeVertices(Encoder& encoder, std::span<S2LatLng> vertices,
-                    Options options) {
-  SDB_ASSERT(!IsOptionsS2(options));
-  auto encode = [&](auto&& encode_point, size_t sizeof_point) {
-    encoder.Ensure(vertices.size() * sizeof_point);
-    for (auto& lat_lng : vertices) {
-      encode_point(encoder, lat_lng);
+void EncodeVertices(Encoder& enc, std::span<S2LatLng> verts, Options opts) {
+  SDB_ASSERT(!IsOptionsS2(opts));
+  auto write = [&](auto&& write_fn, size_t elem_size) {
+    enc.Ensure(verts.size() * elem_size);
+    for (auto& ll : verts) {
+      write_fn(enc, ll);
     }
   };
-  if (options == Options::S2LatLngU32) {
-    encode(EncodeLatLngU32, 2 * sizeof(uint32_t));
+  if (opts == Options::S2LatLngU32) {
+    write(WriteLatLngU32, 2 * sizeof(uint32_t));
   } else {
-    SDB_ASSERT(options == Options::S2LatLngF64);
-    encode(EncodeLatLngF64, 2 * sizeof(double));
+    SDB_ASSERT(opts == Options::S2LatLngF64);
+    write(WriteLatLngF64, 2 * sizeof(double));
   }
 }
 
-bool DecodeVertices(Decoder& decoder, std::span<S2Point> vertices,
-                    uint8_t tag) {
-  auto decode = [&](auto&& decode_point, size_t sizeof_point) {
-    if (decoder.avail() < vertices.size() * sizeof_point) {
+bool DecodeVertices(Decoder& dec, std::span<S2Point> verts, uint8_t tag) {
+  auto read = [&](auto&& read_fn, size_t elem_size) {
+    if (dec.avail() < verts.size() * elem_size) {
       return false;
     }
-    for (auto& vertex : vertices) {
-      decode_point(decoder, vertex);
+    for (auto& v : verts) {
+      read_fn(dec, v);
     }
     return true;
   };
   switch (ToPoint(tag)) {
     case std::to_underlying(Options::S2LatLngU32):
-      return decode(DecodeFromLatLngU32, 2 * sizeof(uint32_t));
+      return read(ReadLatLngU32ToPoint, 2 * sizeof(uint32_t));
     case std::to_underlying(Options::S2LatLngF64):
-      return decode(DecodeFromLatLngF64, 2 * sizeof(double));
+      return read(ReadLatLngF64ToPoint, 2 * sizeof(double));
     case std::to_underlying(Options::S2Point):
-      return decode(DecodeFromPoint, 3 * sizeof(double));
+      return read(ReadRawPoint, 3 * sizeof(double));
     default:
       return false;
   }
 }
 
-bool DecodePoint(Decoder& decoder, S2Point& point, uint8_t* tag) {
-  CheckEndian();
-  if (decoder.avail() == 2 * sizeof(uint32_t)) {
+bool DecodePoint(Decoder& dec, S2Point& pt, uint8_t* tag) {
+  if (dec.avail() == 2 * sizeof(uint32_t)) {
     *tag = ToTag<Type::Point, Options::S2LatLngU32>();
-    DecodeFromLatLngU32(decoder, point);
-  } else if (decoder.avail() == 2 * sizeof(double)) {
+    ReadLatLngU32ToPoint(dec, pt);
+  } else if (dec.avail() == 2 * sizeof(double)) {
     *tag = ToTag<Type::Point, Options::S2LatLngF64>();
-    DecodeFromLatLngF64(decoder, point);
-  } else if (decoder.avail() == 3 * sizeof(double)) {
+    ReadLatLngF64ToPoint(dec, pt);
+  } else if (dec.avail() == 3 * sizeof(double)) {
     *tag = ToTag<Type::Point, Options::S2Point>();
-    DecodeFromPoint(decoder, point);
+    ReadRawPoint(dec, pt);
   } else {
     return false;
   }
   return true;
 }
 
-bool DecodePoint(Decoder& decoder, S2Point& point,
-                 [[maybe_unused]] uint8_t tag) {
-  // We can use if format will change to detect point type
-  // without relying on decoder.avail()
-  [[maybe_unused]] uint8_t from = 0xFF;
-  const bool r = DecodePoint(decoder, point, &from);
-  SDB_ASSERT(tag == from);
-  return r;
+bool DecodePoint(Decoder& dec, S2Point& pt, [[maybe_unused]] uint8_t tag) {
+  // TODO: Maybe we can detect point type without relying on decoder.avail()?
+  [[maybe_unused]] uint8_t detected = 0xFF;
+  const bool ok = DecodePoint(dec, pt, &detected);
+  SDB_ASSERT(tag == detected);
+  return ok;
 }
 
-void EncodePolyline(Encoder& encoder, const S2Polyline& polyline,
-                    Options options) {
-  SDB_ASSERT(IsOptionsS2(options));
-  SDB_ASSERT(options != Options::S2PointShapeCompact ||
-               options != Options::S2PointRegionCompact,
-             "All vertices should be serialized at once.");
+void EncodePolyline(Encoder& enc, const S2Polyline& polyline, Options opts) {
+  SDB_ASSERT(IsOptionsS2(opts));
+  SDB_ASSERT(opts != Options::S2PointShapeCompact ||
+               opts != Options::S2PointRegionCompact,
+             "Unexpected option for EncodePolyline");
 
-  SDB_ASSERT(encoder.avail() >= sizeof(uint8_t) + Varint::kMax64);
-  encoder.put8(ToTag(Type::Polyline, options));
-  const auto vertices = polyline.vertices_span();
-  encoder.put_varint64(vertices.size());
-  EncodeVertices(encoder, vertices);
+  SDB_ASSERT(enc.avail() >= sizeof(uint8_t) + Varint::kMax64);
+  enc.put8(ToTag(Type::Polyline, opts));
+  const auto verts = polyline.vertices_span();
+  enc.put_varint64(verts.size());
+  EncodeVertices(enc, verts);
 }
 
-bool DecodePolyline(Decoder& decoder, S2Polyline& polyline, uint8_t tag,
+bool DecodePolyline(Decoder& dec, S2Polyline& polyline, uint8_t tag,
                     std::vector<S2Point>& cache) {
-  uint64_t size = 0;
-  if (!decoder.get_varint64(&size)) {
+  uint64_t cnt = 0;
+  if (!dec.get_varint64(&cnt)) {
     return false;
   }
-  cache.resize(size);
-  if (!DecodeVertices(decoder, cache, tag)) {
+  cache.resize(cnt);
+  if (!DecodeVertices(dec, cache, tag)) {
     return false;
   }
   polyline.Init(cache);
   return true;
 }
 
-/// num_loops <= 1:
-///   varint(loop[0]_num_vertices << 1 | 0)
-///   loop[0]_vertices_data
-/// else:
-///   varint(num_loops << 1 | 1)
-///     varint(loop[i]_num_vertices)
-///     loop[i]_vertices_data
+void EncodePolygon(Encoder& enc, const S2Polygon& polygon, Options opts) {
+  SDB_ASSERT(IsOptionsS2(opts));
+  SDB_ASSERT(opts != Options::S2PointRegionCompact ||
+               opts != Options::S2PointShapeCompact,
+             "Unexpected option for EncodePolygon");
 
-void EncodePolygon(Encoder& encoder, const S2Polygon& polygon,
-                   Options options) {
-  SDB_ASSERT(IsOptionsS2(options));
-  SDB_ASSERT(options != Options::S2PointRegionCompact ||
-               options != Options::S2PointShapeCompact,
-             "All vertices should be serialized at once.");
-
-  SDB_ASSERT(encoder.avail() >= sizeof(uint8_t) + Varint::kMax64);
-  encoder.put8(ToTag(Type::Polygon, options));
-  switch (const auto num_loops = static_cast<uint64_t>(polygon.num_loops())) {
+  SDB_ASSERT(enc.avail() >= sizeof(uint8_t) + Varint::kMax64);
+  enc.put8(ToTag(Type::Polygon, opts));
+  switch (const auto loop_cnt = static_cast<uint64_t>(polygon.num_loops())) {
     case 0: {
-      encoder.put_varint64(0);
+      enc.put_varint64(0);
     } break;
     case 1: {
-      const auto vertices = polygon.loop(0)->vertices_span();
-      SDB_ASSERT(!vertices.empty());
-      encoder.put_varint64(vertices.size() * 2);
-      EncodeVertices(encoder, vertices);
+      const auto verts = polygon.loop(0)->vertices_span();
+      SDB_ASSERT(!verts.empty());
+      enc.put_varint64(verts.size() * 2);
+      EncodeVertices(enc, verts);
     } break;
     default: {
-      encoder.Ensure((1 + num_loops) * Varint::kMax64 +
-                     static_cast<size_t>(polygon.num_vertices()) *
-                       ToSize(options));
-      encoder.put_varint64(num_loops * 2 + 1);
-      for (uint64_t i = 0; i != num_loops; ++i) {
-        auto vertices = polygon.loop(static_cast<int>(i))->vertices_span();
-        encoder.put_varint64(vertices.size());
-        EncodeVertices(encoder, vertices);
+      enc.Ensure((1 + loop_cnt) * Varint::kMax64 +
+                 static_cast<size_t>(polygon.num_vertices()) * ToSize(opts));
+      enc.put_varint64(loop_cnt * 2 + 1);
+      for (uint64_t idx = 0; idx != loop_cnt; ++idx) {
+        auto verts = polygon.loop(static_cast<int>(idx))->vertices_span();
+        enc.put_varint64(verts.size());
+        EncodeVertices(enc, verts);
       }
     } break;
   }
@@ -370,15 +350,51 @@ bool DecodePolygon(Decoder& decoder, S2Polygon& polygon, uint8_t tag,
 
 void PointToVPack(vpack::Builder& builder, S2LatLng point) {
   SDB_ASSERT(point.is_valid());
-  // false because with false it's smaller
-  // in general we want only doubles, but format requires it should be array
-  // so we generate most smaller vpack array
+  // false to generate smallest possible vpack array
   builder.openArray(false);
   builder.add(point.lng().degrees());
   builder.add(point.lat().degrees());
   builder.close();
   SDB_ASSERT(builder.slice().isArray());
   SDB_ASSERT(builder.slice().head() == 0x02);
+}
+
+sdb::Result GeoOptions::Validate() const noexcept {
+  auto check_bounds = [&]<typename T>(auto name, auto min, auto max,
+                                      const T& value) -> Result {
+    static_assert(std::is_arithmetic_v<T>, "Check supports only numerics");
+    if (value < min || max < value) {
+      return Result{
+        ERROR_BAD_PARAMETER,
+        absl::StrCat("'", name, "' out of bounds: [", min, "..", max, "].")};
+    }
+    return {};
+  };
+
+#define DO_CHECK_BOUNDS(field, min_val, max_val)       \
+  res = check_bounds(#field, min_val, max_val, field); \
+  if (!res.ok()) {                                     \
+    return res;                                        \
+  }
+
+  constexpr int32_t kMinCells = 0;
+  constexpr int32_t kMaxCells = std::numeric_limits<int32_t>::max();
+  constexpr int32_t kMinLevel = 0;
+  constexpr int32_t kMaxLevel = S2CellId::kMaxLevel;
+  constexpr int32_t kMinLevelMod = 1;
+  constexpr int32_t kMaxLevelMod = 3;
+
+  sdb::Result res;
+  DO_CHECK_BOUNDS(max_cells, kMinCells, kMaxCells)
+  DO_CHECK_BOUNDS(min_level, kMinLevel, kMaxLevel)
+  DO_CHECK_BOUNDS(max_level, kMinLevel, kMaxLevel)
+  DO_CHECK_BOUNDS(level_mod, kMinLevelMod, kMaxLevelMod)
+  if (min_level > max_level) {
+    return {
+      ERROR_BAD_PARAMETER,
+      absl::StrCat("'min_level' should be less than or equal to 'max_level'.")};
+  }
+  return {};
 }
 
 template bool ParseShape<Parsing::FromIndex>(vpack::Slice slice,

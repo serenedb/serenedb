@@ -18,8 +18,6 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "tests_shared.hpp"
-#include "search_fields.h"
 #include <vpack/iterator.h>
 #include <vpack/parser.h>
 
@@ -31,11 +29,12 @@
 #include <iresearch/store/memory_directory.hpp>
 #include <set>
 
-#include "s2/s2point_region.h"
-#include "s2/s2polygon.h"
 #include "iresearch/search/geo_filter.h"
 #include "iresearch/utils/vpack_utils.hpp"
-
+#include "s2/s2point_region.h"
+#include "s2/s2polygon.h"
+#include "search_fields.h"
+#include "tests_shared.hpp"
 
 namespace {
 
@@ -451,10 +450,9 @@ TEST(GeoDistanceFilterTest, query) {
   ASSERT_EQ(docs->slice().length(), reader->docs_count());
   ASSERT_EQ(docs->slice().length(), reader->live_docs_count());
 
-  auto execute_query = [&reader](
-                         const irs::Filter& q,
-                         const std::vector<irs::CostAttr::Type>& costs,
-                         size_t at_least = 0) {
+  auto execute_query = [&reader](const irs::Filter& q,
+                                 const std::vector<irs::CostAttr::Type>& costs,
+                                 size_t at_least = 0) {
     std::set<std::string> actual_results;
 
     struct MaxMemoryCounter final : irs::IResourceManager {

@@ -21,6 +21,8 @@
 
 #pragma once
 
+#include <s2/s2region_term_indexer.h>
+
 #include <iresearch/search/filter.hpp>
 #include <iresearch/search/search_range.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -28,7 +30,6 @@
 #include "basics/assert.h"
 #include "geo/coding.h"
 #include "geo/shape_container.h"
-#include <s2/s2region_term_indexer.h>
 
 namespace irs {
 
@@ -47,16 +48,15 @@ struct GeoFilterOptionsBase {
   std::string prefix;
   S2RegionTermIndexer::Options options;
   StoredType stored{StoredType::VPack};
-  // Default value should be S2Point for bad written test
   sdb::geo::coding::Options coding{sdb::geo::coding::Options::Invalid};
 };
 
 enum class GeoFilterType : uint8_t {
-  // Check if a given shape intersects indexed data
+  // Shape intersects indexed data
   Intersects = 0,
-  // Check if a given shape fully contains indexed data
+  // Shape fully contains indexed data
   Contains,
-  // Check if a given shape is fully contained within indexed data
+  // Shape is fully contained within indexed data
   IsContained,
 };
 

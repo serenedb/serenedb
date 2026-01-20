@@ -18,8 +18,6 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "tests_shared.hpp"
-#include "search_fields.h"
 #include <vpack/iterator.h>
 #include <vpack/parser.h>
 
@@ -30,11 +28,12 @@
 #include <iresearch/store/memory_directory.hpp>
 #include <set>
 
+#include "geo/geo_json.h"
+#include "iresearch/search/geo_filter.h"
 #include "s2/s2point_region.h"
 #include "s2/s2polygon.h"
-#include "iresearch/search/geo_filter.h"
-#include "geo/geo_json.h"
-
+#include "search_fields.h"
+#include "tests_shared.hpp"
 
 namespace {
 
@@ -484,8 +483,7 @@ TEST(GeoFilterTest, query) {
     q.mutable_options()->type = GeoFilterType::Intersects;
     ASSERT_TRUE(
       json::ParseRegion(json->slice(), q.mutable_options()->shape).ok());
-    ASSERT_EQ(ShapeContainer::Type::S2Point,
-              q.mutable_options()->shape.type());
+    ASSERT_EQ(ShapeContainer::Type::S2Point, q.mutable_options()->shape.type());
     *q.mutable_field() = "geometry";
 
     ASSERT_EQ(expected, execute_query(q, {2, 0}));
@@ -584,8 +582,7 @@ TEST(GeoFilterTest, query) {
     ShapeContainer point;
     std::vector<S2LatLng> cache;
     ASSERT_TRUE(ParseShape<Parsing::GeoJson>(
-      shape_json->slice(), shape, cache, coding::Options::Invalid,
-      nullptr));
+      shape_json->slice(), shape, cache, coding::Options::Invalid, nullptr));
     std::set<std::string> expected;
     for (auto doc : vpack::ArrayIterator(docs->slice())) {
       auto geo = doc.get("geometry");
@@ -630,8 +627,7 @@ TEST(GeoFilterTest, query) {
     ShapeContainer point;
     std::vector<S2LatLng> cache;
     ASSERT_TRUE(ParseShape<Parsing::GeoJson>(
-      shape_json->slice(), shape, cache, coding::Options::Invalid,
-      nullptr));
+      shape_json->slice(), shape, cache, coding::Options::Invalid, nullptr));
     std::set<std::string> expected;
     for (auto doc : vpack::ArrayIterator(docs->slice())) {
       auto geo = doc.get("geometry");

@@ -32,8 +32,8 @@
 #include <iresearch/utils/attribute_helper.hpp>
 
 #include "basics/resource_manager.hpp"
-#include "geo/shape_container.h"
 #include "geo/coding.h"
+#include "geo/shape_container.h"
 
 namespace irs {
 
@@ -42,8 +42,6 @@ struct GeoFilterOptionsBase;
 }
 
 namespace irs::analysis {
-
-
 
 class GeoAnalyzer : public irs::analysis::Analyzer,
                     private irs::util::Noncopyable {
@@ -60,8 +58,8 @@ class GeoAnalyzer : public irs::analysis::Analyzer,
 #ifdef SDB_GTEST
   const auto& options() const noexcept { return _indexer.options(); }
 #endif
-  static void init(); // for registration in a static build
-  
+  static void init();  // for registration in a static build
+
  protected:
   explicit GeoAnalyzer(const S2RegionTermIndexer::Options& options);
   void reset(std::vector<std::string>&& terms) noexcept;
@@ -172,15 +170,13 @@ class GeoJsonAnalyzer : public GeoAnalyzer {
   bool ResetImpl(std::string_view value, sdb::geo::coding::Options options,
                  Encoder* encoder);
 
-  virtual irs::bytes_view StoreImpl(irs::Tokenizer* ctx, vpack::Slice slice) = 0;
+  virtual irs::bytes_view StoreImpl(irs::Tokenizer* ctx,
+                                    vpack::Slice slice) = 0;
 
   sdb::geo::ShapeContainer _shape;
   S2Point _centroid;
   std::vector<S2LatLng> _cache;
   Type _type;
 };
-
-void ToVPack(vpack::Builder& builder, const GeoPointAnalyzer::Options& options);
-void ToVPack(vpack::Builder& builder, const GeoJsonAnalyzer::Options& options);
 
 }  // namespace irs::analysis

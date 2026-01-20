@@ -21,12 +21,13 @@
 
 #pragma once
 
-#include <s2/s2shape.h>
 #include <s2/s2region_term_indexer.h>
+#include <s2/s2shape.h>
 
 #include <cstdint>
 #include <span>
 #include <vector>
+
 #include "vpack/builder.h"
 #include "vpack/slice.h"
 
@@ -38,7 +39,7 @@ namespace sdb::geo {
 class ShapeContainer;
 
 namespace coding {
-// Numbers here used for serialization, you cannot change it!
+// Numbers persistent to store! Do not change!
 
 enum class Type : uint8_t {
   Point = 0,
@@ -46,7 +47,6 @@ enum class Type : uint8_t {
   Polygon = 2,
   MultiPoint = 3,
   MultiPolyline = 4,
-  // GeometryCollection = 5, TODO(mbkkt) implement it?
 };
 
 enum class Options : uint8_t {
@@ -110,7 +110,6 @@ constexpr size_t ToSize(Options options) noexcept {
 
 }  // namespace coding
 
-void CheckEndian() noexcept;
 void ToLatLngU32(S2LatLng& lat_lng) noexcept;
 void EncodeLatLng(Encoder& encoder, S2LatLng& lat_lng,
                   coding::Options options) noexcept;
@@ -135,26 +134,15 @@ void EncodePolygon(Encoder& encoder, const S2Polygon& polygon,
 bool DecodePolygon(Decoder& decoder, S2Polygon& polygon, uint8_t tag,
                    std::vector<S2Point>& cache);
 
-
 struct GeoOptions {
-  static constexpr int32_t kMinCells = 0;  // TODO(mbkkt) It's looks incorrect
-  static constexpr int32_t kMaxCells = std::numeric_limits<int32_t>::max();
-  static constexpr int32_t kMinLevel = 0;  // TODO(mbkkt) Is it correct?
-  static constexpr int32_t kMaxLevel = S2CellId::kMaxLevel;
-  static constexpr int32_t kMinLevelMod = 1;
-  static constexpr int32_t kMaxLevelMod = 3;
-
-  static constexpr int32_t kDefaultMaxCells = 20;
-  static constexpr int32_t kDefaultMinLevel = 4;
-  static constexpr int32_t kDefaultMaxLevel = 23;  // ~1m
-  static constexpr int8_t kDefaultLevelMod = 1;
-
   // TODO(mbkkt) different maxCells can be set on every insertion/querying
-  int32_t max_cells{kDefaultMaxCells};
-  int32_t min_level{kDefaultMinLevel};
-  int32_t max_level{kDefaultMaxLevel};
-  int8_t level_mod{kDefaultLevelMod};
+  int32_t max_cells{20};
+  int32_t min_level{4};
+  int32_t max_level{23};  // ~1m
+  int8_t level_mod{1};
   bool optimize_for_space{false};
+
+  sdb::Result Validate() const noexcept;
 };
 
 inline S2RegionTermIndexer::Options S2Options(const GeoOptions& opts,

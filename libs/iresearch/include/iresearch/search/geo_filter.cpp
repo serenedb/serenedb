@@ -53,7 +53,7 @@ using Disjunction =
 
 // Return a filter matching all documents with a given geo field
 irs::Filter::Query::ptr MatchAll(const irs::PrepareContext& ctx,
-                                    std::string_view field) {
+                                 std::string_view field) {
   // Return everything we've stored
   irs::ByColumnExistence filter;
   *filter.mutable_field() = field;
@@ -148,7 +148,7 @@ class GeoIterator : public irs::DocIterator {
     if (doc->value != _column_it->seek(doc->value) ||
         _stored_value->value.empty()) {
       SDB_DEBUG("xxxxx", sdb::Logger::IRESEARCH,
-                "failed to find stored geo value, doc='", doc->value, "'");
+                "Missing stored geo value, doc='", doc->value, "'");
       return false;
     }
     return _parser(_stored_value->value, _shape) && _acceptor(_shape);
@@ -167,14 +167,11 @@ class GeoIterator : public irs::DocIterator {
 };
 
 template<typename Parser, typename Acceptor>
-irs::DocIterator::ptr MakeIterator(typename Disjunction::Adapters&& itrs,
-                                   irs::DocIterator::ptr&& column_it,
-                                   const irs::SubReader& reader,
-                                   const irs::TermReader& field,
-                                   const irs::byte_type* query_stats,
-                                   const irs::Scorers& order,
-                                   irs::score_t boost, Parser& parser,
-                                   Acceptor& acceptor) {
+irs::DocIterator::ptr MakeIterator(
+  typename Disjunction::Adapters&& itrs, irs::DocIterator::ptr&& column_it,
+  const irs::SubReader& reader, const irs::TermReader& field,
+  const irs::byte_type* query_stats, const irs::Scorers& order,
+  irs::score_t boost, Parser& parser, Acceptor& acceptor) {
   if (itrs.empty() || !column_it) [[unlikely]] {
     return irs::DocIterator::empty();
   }
@@ -217,12 +214,10 @@ class GeoQuery : public irs::Filter::Query {
       _boost{boost} {}
 
   irs::DocIterator::ptr execute(const irs::ExecutionContext& ctx) const final {
-    // get term state for the specified reader
     auto& segment = ctx.segment;
     const auto* state = _states.find(segment);
 
     if (!state) {
-      // invalid state
       return irs::DocIterator::empty();
     }
 
@@ -252,9 +247,7 @@ class GeoQuery : public irs::Filter::Query {
   }
 
   void visit(const irs::SubReader&, irs::PreparedStateVisitor&,
-             irs::score_t) const final {
-    // NOOP
-  }
+             irs::score_t) const final {}
 
   irs::score_t Boost() const noexcept final { return _boost; }
 
@@ -269,8 +262,8 @@ class GeoQuery : public irs::Filter::Query {
 struct VPackParser {
   bool operator()(irs::bytes_view value, ShapeContainer& shape) const {
     SDB_ASSERT(!value.empty());
-    return ParseShape<Parsing::FromIndex>(
-      view_to_slice(value), shape, _cache, coding::Options::Invalid, nullptr);
+    return ParseShape<Parsing::FromIndex>(view_to_slice(value), shape, _cache,
+                                          coding::Options::Invalid, nullptr);
   }
 
  private:
@@ -301,9 +294,9 @@ struct S2PointParser {
     auto r = DecodePoint(decoder, point, &tag);
     SDB_ASSERT(r);
     SDB_ASSERT(decoder.avail() == 0);
-    sdb::basics::downCast<S2PointRegion>(*shape.region()) = S2PointRegion{point};
-    shape.setCoding(
-      static_cast<coding::Options>(coding::ToPoint(tag)));
+    sdb::basics::downCast<S2PointRegion>(*shape.region()) =
+      S2PointRegion{point};
+    shape.setCoding(static_cast<coding::Options>(coding::ToPoint(tag)));
     return r;
   }
 };
@@ -336,9 +329,9 @@ struct GeoDistanceAcceptor {
 
 template<typename Options, typename Acceptor>
 irs::Filter::Query::ptr MakeQuery(irs::IResourceManager& manager,
-                                     GeoStates&& states, irs::bstring&& stats,
-                                     irs::score_t boost, const Options& options,
-                                     Acceptor&& acceptor) {
+                                  GeoStates&& states, irs::bstring&& stats,
+                                  irs::score_t boost, const Options& options,
+                                  Acceptor&& acceptor) {
   switch (options.stored) {
     case StoredType::VPack:
       return irs::memory::make_tracked<GeoQuery<VPackParser, Acceptor>>(
@@ -440,11 +433,8 @@ irs::Filter::Query::ptr PrepareOpenInterval(
             : std::forward_as_tuple(range.max, range.max_type);
 
   S2Cap bound;
-  // the actual initialization value does not matter. the proper
-  // value for incl will be set below. the initialization is here
-  // just to please the compiler, which may otherwise warn about
-  // uninitialized values
-  bool incl = false;
+
+  bool incl;
 
   if (dist < 0.) {
     bound = greater ? S2Cap::Full() : S2Cap::Empty();
@@ -570,11 +560,11 @@ irs::Filter::Query::ptr PrepareInterval(
 
     auto [states, stats] = PrepareStates(ctx, geo_terms, field);
 
-    return MakeQuery(
-      ctx.memory, std::move(states), std::move(stats), ctx.boost, options,
-      [bound = FromPoint(origin)](const ShapeContainer& shape) {
-        return bound.InteriorContains(shape.centroid());
-      });
+    return MakeQuery(ctx.memory, std::move(states), std::move(stats), ctx.boost,
+                     options,
+                     [bound = FromPoint(origin)](const ShapeContainer& shape) {
+                       return bound.InteriorContains(shape.centroid());
+                     });
   }
 
   auto min_bound = FromPoint(origin, range.min);
@@ -657,22 +647,19 @@ irs::Filter::Query::ptr GeoFilter::prepare(
     case GeoFilterType::Intersects:
       return MakeQuery(
         ctx.memory, std::move(states), std::move(stats), boost, options,
-        [filter_shape =
-           std::move(shape)](const ShapeContainer& indexed_shape) {
+        [filter_shape = std::move(shape)](const ShapeContainer& indexed_shape) {
           return filter_shape.intersects(indexed_shape);
         });
     case GeoFilterType::Contains:
       return MakeQuery(
         ctx.memory, std::move(states), std::move(stats), boost, options,
-        [filter_shape =
-           std::move(shape)](const ShapeContainer& indexed_shape) {
+        [filter_shape = std::move(shape)](const ShapeContainer& indexed_shape) {
           return filter_shape.contains(indexed_shape);
         });
     case GeoFilterType::IsContained:
       return MakeQuery(
         ctx.memory, std::move(states), std::move(stats), boost, options,
-        [filter_shape =
-           std::move(shape)](const ShapeContainer& indexed_shape) {
+        [filter_shape = std::move(shape)](const ShapeContainer& indexed_shape) {
           return indexed_shape.contains(filter_shape);
         });
   }
@@ -699,4 +686,4 @@ irs::Filter::Query::ptr GeoDistanceFilter::prepare(
   }
 }
 
-}  // namespace irs::analysis
+}  // namespace irs

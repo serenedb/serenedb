@@ -876,15 +876,15 @@ TEST_P(SparseBitmapTestCase, rw_sparse_blocks) {
     ASSERT_NE(nullptr, cost);
     ASSERT_EQ(0, cost->estimate());
 
-    ASSERT_TRUE(irs::doc_limits::eof(it.seek(irs::doc_limits::eof())));
-    ASSERT_TRUE(irs::doc_limits::eof(it_no_index.seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(it.seek(irs::doc_limits::kEOF)));
+    ASSERT_TRUE(irs::doc_limits::eof(it_no_index.seek(irs::doc_limits::kEOF)));
   }
 }
 
 TEST_P(SparseBitmapTestCase, rw_mixed_seek_random) {
   {
     constexpr SeekType kSeeks[]{
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0}};
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0}};
 
     TestRwSeekRandom(kMixed, kSeeks);
   }
@@ -905,9 +905,9 @@ TEST_P(SparseBitmapTestCase, rw_mixed_seek_random) {
       {328199, 328200, 71817},
       {328284, 328412, 71901},
       {458778, 458778, 77076},
-      {460563, irs::doc_limits::eof(), 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
+      {460563, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
     };
 
     TestRwSeekRandom(kMixed, kSeeks);
@@ -929,9 +929,9 @@ TEST_P(SparseBitmapTestCase, rw_mixed_seek_random) {
       {328200, 328200, 71817},
       {328284, 328412, 71901},
       {458778, 458778, 77076},
-      {460563, irs::doc_limits::eof(), 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
+      {460563, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
     };
 
     TestRwSeekRandomStateless(kMixed, kSeeks);
@@ -947,7 +947,7 @@ TEST_P(SparseBitmapTestCase, rw_dense_seek_next) { TestRwSeekNext(kDense); }
 TEST_P(SparseBitmapTestCase, rw_dense_seek_random) {
   {
     constexpr SeekType kSeeks[]{
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0}};
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0}};
 
     TestRwSeekRandom(kDense, kSeeks);
   }
@@ -960,9 +960,9 @@ TEST_P(SparseBitmapTestCase, rw_dense_seek_random) {
       {328410, 328412, 6365},
       {329490, 329490, 7442},
       {333585, 333585, 11537},
-      {333586, irs::doc_limits::eof(), 0},
-      {333587, irs::doc_limits::eof(), 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
+      {333586, irs::doc_limits::kEOF, 0},
+      {333587, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
     };
 
     TestRwSeekRandom(kDense, kSeeks);
@@ -976,9 +976,9 @@ TEST_P(SparseBitmapTestCase, rw_dense_seek_random) {
       {328410, 328412, 6365},
       {329490, 329490, 7442},
       {333585, 333585, 11537},
-      {333586, irs::doc_limits::eof(), 0},
-      {333587, irs::doc_limits::eof(), 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
+      {333586, irs::doc_limits::kEOF, 0},
+      {333587, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
     };
 
     TestRwSeekRandomStateless(kDense, kSeeks);
@@ -994,7 +994,7 @@ TEST_P(SparseBitmapTestCase, rw_sparse_seek_next) { TestRwSeekNext(kSparse); }
 TEST_P(SparseBitmapTestCase, rw_sparse_seek_random) {
   {
     constexpr SeekType kSeeks[]{
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0}};
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0}};
 
     TestRwSeekRandom(kSparse, kSeeks);
   }
@@ -1007,8 +1007,8 @@ TEST_P(SparseBitmapTestCase, rw_sparse_seek_random) {
       {328007, 328007, 1588},
       {328107, 328107, 1688},
       {328283, 328283, 1864},
-      {329489, irs::doc_limits::eof(), 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
+      {329489, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
     };
 
     TestRwSeekRandom(kSparse, kSeeks);
@@ -1022,8 +1022,8 @@ TEST_P(SparseBitmapTestCase, rw_sparse_seek_random) {
       {328007, 328007, 1588},
       {328107, 328107, 1688},
       {328283, 328283, 1864},
-      {329489, irs::doc_limits::eof(), 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
+      {329489, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
     };
 
     TestRwSeekRandomStateless(kSparse, kSeeks);
@@ -1039,7 +1039,7 @@ TEST_P(SparseBitmapTestCase, rw_all_seek_next) { TestRwSeekNext(kAll); }
 TEST_P(SparseBitmapTestCase, rw_all_seek_random) {
   {
     constexpr SeekType kSeeks[]{
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0}};
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0}};
 
     TestRwSeekRandom(kAll, kSeeks);
   }
@@ -1053,8 +1053,8 @@ TEST_P(SparseBitmapTestCase, rw_all_seek_random) {
       {196612, 196612, 65540},
       {196611, 196612, 65540},
       {262143, 262143, 131071},
-      {262144, irs::doc_limits::eof(), 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
+      {262144, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
     };
 
     TestRwSeekRandom(kAll, kSeeks);
@@ -1069,8 +1069,8 @@ TEST_P(SparseBitmapTestCase, rw_all_seek_random) {
       {196612, 196612, 65540},
       {196612, 196612, 65540},
       {262143, 262143, 131071},
-      {262144, irs::doc_limits::eof(), 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
+      {262144, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
     };
 
     TestRwSeekRandomStateless(kAll, kSeeks);

@@ -406,7 +406,7 @@ TEST_P(SortedIndexTestCase, simple_sequential) {
 
     for (auto& column_name : kColumnNames) {
       struct Doc {
-        irs::doc_id_t id{irs::doc_limits::eof()};
+        irs::doc_id_t id{irs::doc_limits::kEOF};
         irs::bstring order;
         irs::bstring value;
       };
@@ -661,7 +661,7 @@ TEST_P(SortedIndexTestCase, simple_sequential_consolidate) {
 
       for (auto& column_name : kColumnNames) {
         struct Doc {
-          irs::doc_id_t id{irs::doc_limits::eof()};
+          irs::doc_id_t id{irs::doc_limits::kEOF};
           irs::bstring order;
           irs::bstring value;
         };
@@ -836,7 +836,7 @@ TEST_P(SortedIndexTestCase, simple_sequential_consolidate) {
 
     for (auto& column_name : kColumnNames) {
       struct Doc {
-        irs::doc_id_t id{irs::doc_limits::eof()};
+        irs::doc_id_t id{irs::doc_limits::kEOF};
         irs::bstring order;
         irs::bstring value;
       };
@@ -1005,7 +1005,7 @@ TEST_P(SortedIndexTestCase, simple_sequential_already_sorted) {
 
     for (auto& column_name : kColumnNames) {
       struct Doc {
-        irs::doc_id_t id{irs::doc_limits::eof()};
+        irs::doc_id_t id{irs::doc_limits::kEOF};
         irs::bstring order;
         irs::bstring value;
       };

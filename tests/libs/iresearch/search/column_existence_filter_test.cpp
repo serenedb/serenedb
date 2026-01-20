@@ -310,7 +310,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       auto* doc = irs::get<irs::DocAttr>(*filter_it);
       ASSERT_TRUE(bool(doc));
 
-      ASSERT_EQ(irs::doc_limits::eof(), filter_it->value());
+      ASSERT_EQ(irs::doc_limits::kEOF, filter_it->value());
       ASSERT_FALSE(filter_it->next());
     }
     EXPECT_EQ(counter.current, 0);
@@ -560,7 +560,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       auto* doc = irs::get<irs::DocAttr>(*filter_it);
       ASSERT_TRUE(bool(doc));
 
-      ASSERT_EQ(irs::doc_limits::eof(), filter_it->value());
+      ASSERT_EQ(irs::doc_limits::kEOF, filter_it->value());
       ASSERT_FALSE(filter_it->next());
     }
     EXPECT_EQ(counter.current, 0);
@@ -818,7 +818,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       auto* doc = irs::get<irs::DocAttr>(*filter_it);
       ASSERT_TRUE(bool(doc));
 
-      ASSERT_EQ(irs::doc_limits::eof(), filter_it->value());
+      ASSERT_EQ(irs::doc_limits::kEOF, filter_it->value());
       ASSERT_FALSE(filter_it->next());
     }
     EXPECT_EQ(counter.current, 0);

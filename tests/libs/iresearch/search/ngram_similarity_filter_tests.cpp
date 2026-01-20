@@ -1460,9 +1460,9 @@ TEST_P(NGramSimilarityFilterTestCase, seek_next) {
         ++expected_it;
       }
     }
-    ASSERT_EQ(irs::doc_limits::eof(), docs->value());
+    ASSERT_EQ(irs::doc_limits::kEOF, docs->value());
     ASSERT_FALSE(docs->next());
-    ASSERT_EQ(irs::doc_limits::eof(), docs->value());
+    ASSERT_EQ(irs::doc_limits::kEOF, docs->value());
   }
   ASSERT_EQ(expected_it, std::end(expected));
   prepared_filter.reset();
@@ -1511,7 +1511,7 @@ TEST_P(NGramSimilarityFilterTestCase, seek) {
         ASSERT_EQ(doc->value, docs->value());
         ++seek_it;
       }
-      if (actual_seeked == irs::doc_limits::eof()) {
+      if (actual_seeked == irs::doc_limits::kEOF) {
         // go try next subreader
         break;
       }

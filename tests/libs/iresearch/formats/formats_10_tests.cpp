@@ -269,12 +269,12 @@ class Format10TestCase : public tests::FormatTestCase {
           ASSERT_EQ(docs.front().first, it->value());
         }
 
-        // seek to irs::doc_limits::eof()
+        // seek to irs::doc_limits::kEOF
         {
           auto it = reader->Iterator(field.index_features,
                                      irs::IndexFeatures::None, read_meta, 0);
           ASSERT_FALSE(irs::doc_limits::valid(it->value()));
-          ASSERT_TRUE(irs::doc_limits::eof(it->seek(irs::doc_limits::eof())));
+          ASSERT_TRUE(irs::doc_limits::eof(it->seek(irs::doc_limits::kEOF)));
           ASSERT_FALSE(it->next());
           ASSERT_TRUE(irs::doc_limits::eof(it->value()));
         }

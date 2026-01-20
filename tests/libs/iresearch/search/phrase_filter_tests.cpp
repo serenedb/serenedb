@@ -2536,7 +2536,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "qui* brown fox"
@@ -2591,7 +2591,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "qui% brown fox"
@@ -2646,7 +2646,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "q%ck brown fox"
@@ -2694,7 +2694,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "quick brown fox" simple term max_distance = 0
@@ -2745,7 +2745,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "quck brown fox"
@@ -2794,7 +2794,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "[x0, x1] x0 x2
@@ -2892,7 +2892,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "quick bro% fox"
@@ -2947,7 +2947,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "quick b%w_ fox"
@@ -2995,7 +2995,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "quick brkln fox"
@@ -3046,7 +3046,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "x1 [x0, x1] x2"
@@ -3146,7 +3146,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "quick brown fo%"
@@ -3201,7 +3201,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "quick brown f_x"
@@ -3249,7 +3249,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "quick brown fxo"
@@ -3301,7 +3301,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "x1 x0 [x1, x2]"
@@ -3409,7 +3409,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "qui% bro% fox"
@@ -3474,7 +3474,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "qui% b%o__ fox"
@@ -3527,7 +3527,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "qui bro fox"
@@ -3584,7 +3584,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "[x0, x1] [x0, x1] x2"
@@ -3695,7 +3695,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "qui% brown fo%"
@@ -3760,7 +3760,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "q_i% brown f%x"
@@ -3813,7 +3813,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "[x0, x1] x0 [x1, x2]"
@@ -3911,7 +3911,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "quick bro* fo*"
@@ -3974,7 +3974,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "quick bro% fo%"
@@ -4037,7 +4037,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "quick b_o% f_%"
@@ -4100,7 +4100,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "x1 [x0, x1] [x1, x2]"
@@ -4229,7 +4229,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "qui% bro% fo%"
@@ -4377,7 +4377,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "q%ic_ br_wn _%x"
@@ -4426,7 +4426,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "quick|quilt|hhh brown|brother fox"
@@ -4493,7 +4493,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "[x0, x1] [x0, x1] [x1, x2]"
@@ -4642,7 +4642,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 }
 
@@ -4695,7 +4695,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "fo* ... quick"
@@ -4738,7 +4738,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "f_x ... quick"
@@ -4779,7 +4779,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "fpx ... quick"
@@ -4821,7 +4821,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "fox ... qui*"
@@ -4862,7 +4862,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "fox ... qui%ck"
@@ -4903,7 +4903,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "fo* ... qui*"
@@ -4944,7 +4944,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "f%x ... qui%ck"
@@ -4985,7 +4985,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "fx ... quik"
@@ -5030,7 +5030,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "fx ... quik"
@@ -5092,7 +5092,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // =============================
@@ -5146,7 +5146,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // =============================
@@ -5238,7 +5238,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // ByTermsOptions "fox|that" with scorer
@@ -5610,7 +5610,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "fox quick"
@@ -5649,7 +5649,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "fox* quick*"
@@ -5688,7 +5688,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "fo* ... quick" with phrase offset
@@ -5731,7 +5731,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "f_x ... quick" with phrase offset
@@ -5774,7 +5774,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "fox ... qui*" with phrase offset
@@ -5817,7 +5817,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "fox ... qui%k" with phrase offset
@@ -5860,7 +5860,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "fo* ... qui*" with phrase offset
@@ -5903,7 +5903,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "fo% ... qui%" with phrase offset
@@ -5946,7 +5946,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "fo% ... quik" with phrase offset
@@ -5990,7 +5990,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "fox ... ... ... ... ... ... ... ... ... ... quick"
@@ -6111,7 +6111,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "as in the past we are looking forward"
@@ -6158,7 +6158,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "as in % past we ___ looking forward"
@@ -6209,7 +6209,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "as in the past we are looking forward" with order
@@ -6273,7 +6273,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "as in the p_st we are look* forward" with order
@@ -6337,7 +6337,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // fox quick
@@ -6378,7 +6378,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // fox quick with order
@@ -6426,7 +6426,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // wildcard_filter "zo\\_%"
@@ -6716,7 +6716,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "fox ... quick ... brown"
@@ -6769,7 +6769,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   // "pox ... quick ... brown" check for proper accounting of interval
@@ -6835,7 +6835,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   {
@@ -6952,7 +6952,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
     ASSERT_FALSE(disj_docs->next());
   }
 
@@ -6997,7 +6997,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
   }
 
   {
@@ -7174,7 +7174,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
     ASSERT_FALSE(disj_docs->next());
   }
 
@@ -7281,7 +7281,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
 
     ASSERT_FALSE(docs->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(docs_seek->seek(irs::doc_limits::kEOF)));
     ASSERT_FALSE(disj_docs->next());
   }
 

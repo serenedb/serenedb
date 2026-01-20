@@ -135,7 +135,7 @@ class BasicDocIterator : public irs::DocIterator, irs::ScoreCtx {
 
   irs::doc_id_t advance() final {
     if (_first == _last) {
-      return _doc.value = irs::doc_limits::eof();
+      return _doc.value = irs::doc_limits::kEOF;
     }
 
     _doc.value = *_first;
@@ -1156,7 +1156,7 @@ struct Unestimated : public irs::FilterWithBoost {
       // prevent iterator to filter out
       return irs::doc_limits::invalid();
     }
-    irs::doc_id_t advance() final { return irs::doc_limits::eof(); }
+    irs::doc_id_t advance() final { return irs::doc_limits::kEOF; }
     irs::doc_id_t seek(irs::doc_id_t) final {
       // prevent iterator to filter out
       return irs::doc_limits::invalid();
@@ -1198,7 +1198,7 @@ struct Estimated : public irs::FilterWithBoost {
       // prevent iterator to filter out
       return irs::doc_limits::invalid();
     }
-    irs::doc_id_t advance() final { return irs::doc_limits::eof(); }
+    irs::doc_id_t advance() final { return irs::doc_limits::kEOF; }
     irs::doc_id_t seek(irs::doc_id_t) final {
       // prevent iterator to filter out
       return irs::doc_limits::invalid();
@@ -1685,7 +1685,7 @@ TEST(basic_disjunction_test, seek) {
       {8, 12},
       {13, 29},
       {45, 45},
-      {57, irs::doc_limits::eof()}};
+      {57, irs::doc_limits::kEOF}};
 
     Disjunction it(
       irs::ScoreAdapter(irs::memory::make_managed<detail::BasicDocIterator>(
@@ -1708,8 +1708,8 @@ TEST(basic_disjunction_test, seek) {
     std::vector<irs::doc_id_t> last{};
     std::vector<detail::SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid()},
-      {6, irs::doc_limits::eof()},
-      {irs::doc_limits::invalid(), irs::doc_limits::eof()}};
+      {6, irs::doc_limits::kEOF},
+      {irs::doc_limits::invalid(), irs::doc_limits::kEOF}};
 
     Disjunction it(
       irs::ScoreAdapter(irs::memory::make_managed<detail::BasicDocIterator>(
@@ -1732,12 +1732,12 @@ TEST(basic_disjunction_test, seek) {
     std::vector<irs::doc_id_t> last{1, 5, 6, 12, 29};
     std::vector<detail::SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid()},
-      {irs::doc_limits::eof(), irs::doc_limits::eof()},
-      {9, irs::doc_limits::eof()},
-      {12, irs::doc_limits::eof()},
-      {13, irs::doc_limits::eof()},
-      {45, irs::doc_limits::eof()},
-      {57, irs::doc_limits::eof()}};
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF},
+      {9, irs::doc_limits::kEOF},
+      {12, irs::doc_limits::kEOF},
+      {13, irs::doc_limits::kEOF},
+      {45, irs::doc_limits::kEOF},
+      {57, irs::doc_limits::kEOF}};
 
     Disjunction it(
       irs::ScoreAdapter(irs::memory::make_managed<detail::BasicDocIterator>(
@@ -1764,7 +1764,7 @@ TEST(basic_disjunction_test, seek) {
       {12, 12},
       {irs::doc_limits::invalid(), 12},
       {45, 45},
-      {57, irs::doc_limits::eof()}};
+      {57, irs::doc_limits::kEOF}};
 
     Disjunction it(
       irs::ScoreAdapter(irs::memory::make_managed<detail::BasicDocIterator>(
@@ -1816,9 +1816,9 @@ TEST(basic_disjunction_test, seek_next) {
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 }
 
@@ -1878,9 +1878,9 @@ TEST(basic_disjunction_test, scored_seek_next) {
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // disjunction with order, aggregate scores
@@ -1950,9 +1950,9 @@ TEST(basic_disjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(1, tmp);  // 1
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // disjunction with order, max score
@@ -2022,9 +2022,9 @@ TEST(basic_disjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(1, tmp);  // std::max(1)
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // disjunction with order, iterators without order, aggregation
@@ -2090,9 +2090,9 @@ TEST(basic_disjunction_test, scored_seek_next) {
     ASSERT_EQ(45, it.value());
     ASSERT_EQ(0, tmp);
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // disjunction with order, iterators without order, max
@@ -2157,9 +2157,9 @@ TEST(basic_disjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(0, tmp);
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // disjunction with order, first iterator with order, aggregation
@@ -2227,9 +2227,9 @@ TEST(basic_disjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(1, tmp);
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // disjunction with order, first iterator with order, max
@@ -2298,9 +2298,9 @@ TEST(basic_disjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(1, tmp);
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // disjunction with order, last iterator with order, aggregation
@@ -2368,9 +2368,9 @@ TEST(basic_disjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(0, tmp);
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // disjunction with order, last iterator with order, max
@@ -2438,9 +2438,9 @@ TEST(basic_disjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(0, tmp);
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 }
 
@@ -2734,7 +2734,7 @@ TEST(small_disjunction_test, seek) {
       {8, 12},
       {13, 29},
       {45, 45},
-      {57, irs::doc_limits::eof()}};
+      {57, irs::doc_limits::kEOF}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -2752,8 +2752,8 @@ TEST(small_disjunction_test, seek) {
 
     std::vector<detail::SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid()},
-      {6, irs::doc_limits::eof()},
-      {irs::doc_limits::invalid(), irs::doc_limits::eof()}};
+      {6, irs::doc_limits::kEOF},
+      {irs::doc_limits::invalid(), irs::doc_limits::kEOF}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -2773,12 +2773,12 @@ TEST(small_disjunction_test, seek) {
 
     std::vector<detail::SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid()},
-      {irs::doc_limits::eof(), irs::doc_limits::eof()},
-      {9, irs::doc_limits::eof()},
-      {12, irs::doc_limits::eof()},
-      {13, irs::doc_limits::eof()},
-      {45, irs::doc_limits::eof()},
-      {57, irs::doc_limits::eof()}};
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF},
+      {9, irs::doc_limits::kEOF},
+      {12, irs::doc_limits::kEOF},
+      {13, irs::doc_limits::kEOF},
+      {45, irs::doc_limits::kEOF},
+      {57, irs::doc_limits::kEOF}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -2801,7 +2801,7 @@ TEST(small_disjunction_test, seek) {
       {12, 12},
       {irs::doc_limits::invalid(), 12},
       {45, 45},
-      {57, irs::doc_limits::eof()}};
+      {57, irs::doc_limits::kEOF}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -2821,7 +2821,7 @@ TEST(small_disjunction_test, seek) {
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(0, irs::CostAttr::extract(it));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-    ASSERT_EQ(irs::doc_limits::eof(), it.seek(42));
+    ASSERT_EQ(irs::doc_limits::kEOF, it.seek(42));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
 
@@ -3001,9 +3001,9 @@ TEST(small_disjunction_test, seek_next) {
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 }
 
@@ -3060,9 +3060,9 @@ TEST(small_disjunction_test, scored_seek_next) {
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // disjunction with score, sub-iterators with scores AGGREGATED score
@@ -3133,9 +3133,9 @@ TEST(small_disjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(1, tmp);  // 1
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // disjunction with score, sub-iterators with scores, MAX score
@@ -3206,9 +3206,9 @@ TEST(small_disjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(1, tmp);  // std::max(1)
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // disjunction with score, sub-iterators partially with scores, aggregation
@@ -3278,9 +3278,9 @@ TEST(small_disjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(1, tmp);  // 1
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // disjunction with score, sub-iterators partially with scores, max scores
@@ -3350,9 +3350,9 @@ TEST(small_disjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(1, tmp);  // std::max(1)
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // disjunction with score, sub-iterators partially without scores, aggregation
@@ -3418,9 +3418,9 @@ TEST(small_disjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(0, tmp);  // 1
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // disjunction with score, sub-iterators partially without scores, max
@@ -3486,9 +3486,9 @@ TEST(small_disjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(0, tmp);
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 }
 
@@ -7420,7 +7420,7 @@ TEST(block_disjunction_test, seek_no_readahead) {
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(0, irs::CostAttr::extract(it));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-    ASSERT_EQ(irs::doc_limits::eof(), it.seek(42));
+    ASSERT_EQ(irs::doc_limits::kEOF, it.seek(42));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
 
@@ -7440,9 +7440,9 @@ TEST(block_disjunction_test, seek_no_readahead) {
       {8, 12, 1},
       {13, 29, 1},
       {45, 45, 1},
-      {57, irs::doc_limits::eof(), 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
+      {57, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
     };
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
@@ -7477,8 +7477,8 @@ TEST(block_disjunction_test, seek_no_readahead) {
       {45, 45, 1},
       {57, 65, 1},
       {126, 127, 1},
-      {128, irs::doc_limits::eof(), 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
+      {128, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
     };
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
@@ -7518,7 +7518,7 @@ TEST(block_disjunction_test, seek_no_readahead) {
       {1111177, 1111178, 1},
       {1111178, 1111178, 1},
       {111111127, 111111127, 1},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
     };
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
@@ -7549,7 +7549,7 @@ TEST(block_disjunction_test, seek_no_readahead) {
       {8, 12, 1},
       {13, 29, 1},
       {45, 45, 1},
-      {57, irs::doc_limits::eof(), 0}};
+      {57, irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -7570,8 +7570,8 @@ TEST(block_disjunction_test, seek_no_readahead) {
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 1},
-      {6, irs::doc_limits::eof(), 0},
-      {irs::doc_limits::invalid(), irs::doc_limits::eof(), 0}};
+      {6, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::invalid(), irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -7593,12 +7593,12 @@ TEST(block_disjunction_test, seek_no_readahead) {
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 1},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
-      {9, irs::doc_limits::eof(), 0},
-      {12, irs::doc_limits::eof(), 0},
-      {13, irs::doc_limits::eof(), 0},
-      {45, irs::doc_limits::eof(), 0},
-      {57, irs::doc_limits::eof(), 0}};
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
+      {9, irs::doc_limits::kEOF, 0},
+      {12, irs::doc_limits::kEOF, 0},
+      {13, irs::doc_limits::kEOF, 0},
+      {45, irs::doc_limits::kEOF, 0},
+      {57, irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -7623,7 +7623,7 @@ TEST(block_disjunction_test, seek_no_readahead) {
       {12, 12, 1},
       {irs::doc_limits::invalid(), 12, 1},
       {45, 45, 1},
-      {57, irs::doc_limits::eof(), 0}};
+      {57, irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -7653,7 +7653,7 @@ TEST(block_disjunction_test, seek_no_readahead) {
       {45, 45, 1},
       {44, 45, 1},
       {irs::doc_limits::invalid(), 45, 1},
-      {57, irs::doc_limits::eof(), 0}};
+      {57, irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -7687,7 +7687,7 @@ TEST(block_disjunction_test, seek_no_readahead) {
       {513, 1025, 1},
       {2, 1025, 1},
       {irs::doc_limits::invalid(), 1025, 1},
-      {2001, irs::doc_limits::eof(), 0}};
+      {2001, irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -7707,8 +7707,8 @@ TEST(block_disjunction_test, seek_no_readahead) {
     std::vector<std::vector<irs::doc_id_t>> docs{{}, {}, {}, {}};
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 1},
-      {6, irs::doc_limits::eof(), 0},
-      {irs::doc_limits::invalid(), irs::doc_limits::eof(), 0}};
+      {6, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::invalid(), irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -7733,12 +7733,12 @@ TEST(block_disjunction_test, seek_no_readahead) {
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 1},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
-      {9, irs::doc_limits::eof(), 0},
-      {12, irs::doc_limits::eof(), 0},
-      {13, irs::doc_limits::eof(), 0},
-      {45, irs::doc_limits::eof(), 0},
-      {57, irs::doc_limits::eof(), 0}};
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
+      {9, irs::doc_limits::kEOF, 0},
+      {12, irs::doc_limits::kEOF, 0},
+      {13, irs::doc_limits::kEOF, 0},
+      {45, irs::doc_limits::kEOF, 0},
+      {57, irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -7767,7 +7767,7 @@ TEST(block_disjunction_test, seek_no_readahead) {
       {12, 12, 1},
       {irs::doc_limits::invalid(), 12, 1},
       {45, 45, 1},
-      {1201, irs::doc_limits::eof(), 0}};
+      {1201, irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -7796,7 +7796,7 @@ TEST(block_disjunction_test, seek_no_readahead) {
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(0, irs::CostAttr::extract(it));
     ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-    ASSERT_EQ(irs::doc_limits::eof(), it.seek(1));
+    ASSERT_EQ(irs::doc_limits::kEOF, it.seek(1));
     ASSERT_EQ(0, it.MatchCount());
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     ASSERT_FALSE(it.next());
@@ -7842,7 +7842,7 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(0, irs::CostAttr::extract(it));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-    ASSERT_EQ(irs::doc_limits::eof(), it.seek(42));
+    ASSERT_EQ(irs::doc_limits::kEOF, it.seek(42));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
 
@@ -7865,9 +7865,9 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       {8, 12, 1, 0},
       {13, 29, 1, 0},
       {45, 45, 1, 0},
-      {57, irs::doc_limits::eof(), 0, 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0, 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0, 0},
+      {57, irs::doc_limits::kEOF, 0, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0, 0},
     };
 
     auto it_ptr = irs::ResolveMergeType(
@@ -7929,8 +7929,8 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       {45, 45, 1, 4},
       {57, 65, 1, 4},
       {126, 127, 1, 4},
-      {128, irs::doc_limits::eof(), 0, 4},  // stay at previous score
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0, 4},
+      {128, irs::doc_limits::kEOF, 0, 4},  // stay at previous score
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0, 4},
     };
 
     auto it_ptr = irs::ResolveMergeType(
@@ -7999,7 +7999,7 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       {1111177, 1111178, 1, 4},
       {1111178, 1111178, 1, 4},
       {111111127, 111111127, 1, 4},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0,
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0,
        4},  // stay at previous score
     };
 
@@ -8062,7 +8062,7 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       {8, 12, 1, 2},
       {13, 29, 1, 2},
       {45, 45, 1, 4},
-      {57, irs::doc_limits::eof(), 0, 4}  // stay at previous score
+      {57, irs::doc_limits::kEOF, 0, 4}  // stay at previous score
     };
 
     auto it_ptr = irs::ResolveMergeType(
@@ -8113,8 +8113,8 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 1, 0},
-      {6, irs::doc_limits::eof(), 0, 0},
-      {irs::doc_limits::invalid(), irs::doc_limits::eof(), 0, 0}};
+      {6, irs::doc_limits::kEOF, 0, 0},
+      {irs::doc_limits::invalid(), irs::doc_limits::kEOF, 0, 0}};
 
     auto it_ptr = irs::ResolveMergeType(
       irs::ScoreMergeType::Sum, 1,
@@ -8168,12 +8168,12 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 1, 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0, 0},
-      {9, irs::doc_limits::eof(), 0, 0},
-      {12, irs::doc_limits::eof(), 0, 0},
-      {13, irs::doc_limits::eof(), 0, 0},
-      {45, irs::doc_limits::eof(), 0, 0},
-      {57, irs::doc_limits::eof(), 0, 0}};
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0, 0},
+      {9, irs::doc_limits::kEOF, 0, 0},
+      {12, irs::doc_limits::kEOF, 0, 0},
+      {13, irs::doc_limits::kEOF, 0, 0},
+      {45, irs::doc_limits::kEOF, 0, 0},
+      {57, irs::doc_limits::kEOF, 0, 0}};
 
     auto it_ptr = irs::ResolveMergeType(
       irs::ScoreMergeType::Sum, 1,
@@ -8230,7 +8230,7 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       {12, 12, 1, 2},
       {irs::doc_limits::invalid(), 12, 1, 2},
       {45, 45, 1, 4},
-      {57, irs::doc_limits::eof(), 0, 4}};
+      {57, irs::doc_limits::kEOF, 0, 4}};
 
     auto it_ptr = irs::ResolveMergeType(
       irs::ScoreMergeType::Sum, 1,
@@ -8293,7 +8293,7 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       {45, 45, 1, 4},
       {44, 45, 1, 4},
       {irs::doc_limits::invalid(), 45, 1, 4},
-      {57, irs::doc_limits::eof(), 0, 4}};
+      {57, irs::doc_limits::kEOF, 0, 4}};
 
     auto it_ptr = irs::ResolveMergeType(
       irs::ScoreMergeType::Sum, 1,
@@ -8361,7 +8361,7 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       {513, 1025, 1, 8},
       {2, 1025, 1, 8},
       {irs::doc_limits::invalid(), 1025, 1, 8},
-      {2001, irs::doc_limits::eof(), 0, 8}};
+      {2001, irs::doc_limits::kEOF, 0, 8}};
 
     auto it_ptr = irs::ResolveMergeType(
       irs::ScoreMergeType::Sum, 1,
@@ -8416,8 +8416,8 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 1, 0},
-      {6, irs::doc_limits::eof(), 0, 0},
-      {irs::doc_limits::invalid(), irs::doc_limits::eof(), 0, 0}};
+      {6, irs::doc_limits::kEOF, 0, 0},
+      {irs::doc_limits::invalid(), irs::doc_limits::kEOF, 0, 0}};
 
     auto it_ptr = irs::ResolveMergeType(
       irs::ScoreMergeType::Sum, 1,
@@ -8475,12 +8475,12 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 1, 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0, 0},
-      {9, irs::doc_limits::eof(), 0, 0},
-      {12, irs::doc_limits::eof(), 0, 0},
-      {13, irs::doc_limits::eof(), 0, 0},
-      {45, irs::doc_limits::eof(), 0, 0},
-      {57, irs::doc_limits::eof(), 0, 0}};
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0, 0},
+      {9, irs::doc_limits::kEOF, 0, 0},
+      {12, irs::doc_limits::kEOF, 0, 0},
+      {13, irs::doc_limits::kEOF, 0, 0},
+      {45, irs::doc_limits::kEOF, 0, 0},
+      {57, irs::doc_limits::kEOF, 0, 0}};
 
     auto it_ptr = irs::ResolveMergeType(
       irs::ScoreMergeType::Max, 1,
@@ -8537,7 +8537,7 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       {12, 12, 1, 0},
       {irs::doc_limits::invalid(), 12, 1, 0},
       {45, 45, 1, 0},
-      {1201, irs::doc_limits::eof(), 0, 0}};
+      {1201, irs::doc_limits::kEOF, 0, 0}};
 
     auto it_ptr = irs::ResolveMergeType(
       irs::ScoreMergeType::Sum, 0,
@@ -8596,7 +8596,7 @@ TEST(block_disjunction_test, seek_scored_readahead) {
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(0, irs::CostAttr::extract(it));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-    ASSERT_EQ(irs::doc_limits::eof(), it.seek(42));
+    ASSERT_EQ(irs::doc_limits::kEOF, it.seek(42));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
 
@@ -8619,9 +8619,9 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       {8, 12, 1, 0},
       {13, 29, 1, 0},
       {45, 45, 1, 0},
-      {57, irs::doc_limits::eof(), 0, 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0, 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0, 0},
+      {57, irs::doc_limits::kEOF, 0, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0, 0},
     };
 
     auto it_ptr = irs::ResolveMergeType(
@@ -8683,8 +8683,8 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       {45, 45, 1, 4},
       {57, 65, 1, 4},
       {126, 127, 1, 4},
-      {128, irs::doc_limits::eof(), 0, 4},  // stay at previous score
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0, 4},
+      {128, irs::doc_limits::kEOF, 0, 4},  // stay at previous score
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0, 4},
     };
 
     auto it_ptr = irs::ResolveMergeType(
@@ -8753,7 +8753,7 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       {1111177, 1111178, 1, 4},
       {1111178, 1111178, 1, 4},
       {111111127, 111111127, 1, 4},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0,
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0,
        4},  // stay at previous score
     };
 
@@ -8816,7 +8816,7 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       {8, 12, 1, 2},
       {13, 29, 1, 2},
       {45, 45, 1, 4},
-      {57, irs::doc_limits::eof(), 0, 4}  // stay at previous score
+      {57, irs::doc_limits::kEOF, 0, 4}  // stay at previous score
     };
 
     auto it_ptr = irs::ResolveMergeType(
@@ -8867,8 +8867,8 @@ TEST(block_disjunction_test, seek_scored_readahead) {
     docs.emplace_back(std::vector<irs::doc_id_t>{}, order(sort2));
 
     std::vector<SeekDoc> expected{
-      {6, irs::doc_limits::eof(), 0, 0},
-      {irs::doc_limits::invalid(), irs::doc_limits::eof(), 0, 0}};
+      {6, irs::doc_limits::kEOF, 0, 0},
+      {irs::doc_limits::invalid(), irs::doc_limits::kEOF, 0, 0}};
 
     auto it_ptr = irs::ResolveMergeType(
       irs::ScoreMergeType::Sum, 1,
@@ -8921,12 +8921,12 @@ TEST(block_disjunction_test, seek_scored_readahead) {
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 1, 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0, 0},
-      {9, irs::doc_limits::eof(), 0, 0},
-      {12, irs::doc_limits::eof(), 0, 0},
-      {13, irs::doc_limits::eof(), 0, 0},
-      {45, irs::doc_limits::eof(), 0, 0},
-      {57, irs::doc_limits::eof(), 0, 0}};
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0, 0},
+      {9, irs::doc_limits::kEOF, 0, 0},
+      {12, irs::doc_limits::kEOF, 0, 0},
+      {13, irs::doc_limits::kEOF, 0, 0},
+      {45, irs::doc_limits::kEOF, 0, 0},
+      {57, irs::doc_limits::kEOF, 0, 0}};
 
     auto it_ptr = irs::ResolveMergeType(
       irs::ScoreMergeType::Sum, 1,
@@ -8981,7 +8981,7 @@ TEST(block_disjunction_test, seek_scored_readahead) {
                                   {12, 12, 1, 2},
                                   {irs::doc_limits::invalid(), 12, 1, 2},
                                   {45, 45, 1, 4},
-                                  {57, irs::doc_limits::eof(), 0, 4}};
+                                  {57, irs::doc_limits::kEOF, 0, 4}};
 
     auto it_ptr = irs::ResolveMergeType(
       irs::ScoreMergeType::Max, 1,
@@ -9044,7 +9044,7 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       {45, 45, 1, 4},
       {44, 45, 1, 4},
       {irs::doc_limits::invalid(), 45, 1, 4},
-      {57, irs::doc_limits::eof(), 0, 4}};
+      {57, irs::doc_limits::kEOF, 0, 4}};
 
     auto it_ptr = irs::ResolveMergeType(
       irs::ScoreMergeType::Sum, 1,
@@ -9112,7 +9112,7 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       {513, 1025, 1, 8},
       {2, 1025, 1, 8},
       {irs::doc_limits::invalid(), 1025, 1, 8},
-      {2001, irs::doc_limits::eof(), 0, 8}};
+      {2001, irs::doc_limits::kEOF, 0, 8}};
 
     auto it_ptr = irs::ResolveMergeType(
       irs::ScoreMergeType::Sum, 1,
@@ -9167,8 +9167,8 @@ TEST(block_disjunction_test, seek_scored_readahead) {
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 1, 0},
-      {6, irs::doc_limits::eof(), 0, 0},
-      {irs::doc_limits::invalid(), irs::doc_limits::eof(), 0, 0}};
+      {6, irs::doc_limits::kEOF, 0, 0},
+      {irs::doc_limits::invalid(), irs::doc_limits::kEOF, 0, 0}};
 
     auto it_ptr = irs::ResolveMergeType(
       irs::ScoreMergeType::Sum, 1,
@@ -9226,12 +9226,12 @@ TEST(block_disjunction_test, seek_scored_readahead) {
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 1, 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0, 0},
-      {9, irs::doc_limits::eof(), 0, 0},
-      {12, irs::doc_limits::eof(), 0, 0},
-      {13, irs::doc_limits::eof(), 0, 0},
-      {45, irs::doc_limits::eof(), 0, 0},
-      {57, irs::doc_limits::eof(), 0, 0}};
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0, 0},
+      {9, irs::doc_limits::kEOF, 0, 0},
+      {12, irs::doc_limits::kEOF, 0, 0},
+      {13, irs::doc_limits::kEOF, 0, 0},
+      {45, irs::doc_limits::kEOF, 0, 0},
+      {57, irs::doc_limits::kEOF, 0, 0}};
 
     auto it_ptr = irs::ResolveMergeType(
       irs::ScoreMergeType::Max, 1,
@@ -9288,7 +9288,7 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       {12, 12, 1, 0},
       {irs::doc_limits::invalid(), 12, 1, 0},
       {45, 45, 1, 0},
-      {1201, irs::doc_limits::eof(), 0, 0}};
+      {1201, irs::doc_limits::kEOF, 0, 0}};
 
     auto it_ptr = irs::ResolveMergeType(
       irs::ScoreMergeType::Sum, 0,
@@ -9348,7 +9348,7 @@ TEST(block_disjunction_test, min_match_seek_no_readahead) {
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(0, irs::CostAttr::extract(it));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-    ASSERT_EQ(irs::doc_limits::eof(), it.seek(42));
+    ASSERT_EQ(irs::doc_limits::kEOF, it.seek(42));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
 
@@ -9368,9 +9368,9 @@ TEST(block_disjunction_test, min_match_seek_no_readahead) {
       {8, 12, 1},
       {13, 29, 1},
       {45, 45, 1},
-      {57, irs::doc_limits::eof(), 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
+      {57, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
     };
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
@@ -9394,17 +9394,17 @@ TEST(block_disjunction_test, min_match_seek_no_readahead) {
     };
 
     std::vector<SeekDoc> expected{
-      {1, irs::doc_limits::eof(), 0},
-      {9, irs::doc_limits::eof(), 0},
-      {8, irs::doc_limits::eof(), 0},
-      {irs::doc_limits::invalid(), irs::doc_limits::eof(), 0},
-      {12, irs::doc_limits::eof(), 0},
-      {8, irs::doc_limits::eof(), 0},
-      {13, irs::doc_limits::eof(), 0},
-      {45, irs::doc_limits::eof(), 0},
-      {57, irs::doc_limits::eof(), 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
+      {1, irs::doc_limits::kEOF, 0},
+      {9, irs::doc_limits::kEOF, 0},
+      {8, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::invalid(), irs::doc_limits::kEOF, 0},
+      {12, irs::doc_limits::kEOF, 0},
+      {8, irs::doc_limits::kEOF, 0},
+      {13, irs::doc_limits::kEOF, 0},
+      {45, irs::doc_limits::kEOF, 0},
+      {57, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
     };
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 2U);
@@ -9429,17 +9429,17 @@ TEST(block_disjunction_test, min_match_seek_no_readahead) {
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 0},
-      {1, irs::doc_limits::eof(), 0},
-      {9, irs::doc_limits::eof(), 0},
-      {8, irs::doc_limits::eof(), 0},
-      {irs::doc_limits::invalid(), irs::doc_limits::eof(), 0},
-      {12, irs::doc_limits::eof(), 0},
-      {8, irs::doc_limits::eof(), 0},
-      {13, irs::doc_limits::eof(), 0},
-      {45, irs::doc_limits::eof(), 0},
-      {57, irs::doc_limits::eof(), 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
+      {1, irs::doc_limits::kEOF, 0},
+      {9, irs::doc_limits::kEOF, 0},
+      {8, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::invalid(), irs::doc_limits::kEOF, 0},
+      {12, irs::doc_limits::kEOF, 0},
+      {8, irs::doc_limits::kEOF, 0},
+      {13, irs::doc_limits::kEOF, 0},
+      {45, irs::doc_limits::kEOF, 0},
+      {57, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
     };
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 2U);
@@ -9474,8 +9474,8 @@ TEST(block_disjunction_test, min_match_seek_no_readahead) {
       {45, 45, 1},
       {57, 65, 1},
       {126, 127, 1},
-      {128, irs::doc_limits::eof(), 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
+      {128, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
     };
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
@@ -9515,7 +9515,7 @@ TEST(block_disjunction_test, min_match_seek_no_readahead) {
       {1111177, 1111178, 1},
       {1111178, 1111178, 1},
       {111111127, 111111127, 1},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
     };
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
@@ -9546,7 +9546,7 @@ TEST(block_disjunction_test, min_match_seek_no_readahead) {
       {8, 12, 1},
       {13, 29, 1},
       {45, 45, 1},
-      {57, irs::doc_limits::eof(), 0}};
+      {57, irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -9567,8 +9567,8 @@ TEST(block_disjunction_test, min_match_seek_no_readahead) {
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 0},
-      {6, irs::doc_limits::eof(), 0},
-      {irs::doc_limits::invalid(), irs::doc_limits::eof(), 0}};
+      {6, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::invalid(), irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -9590,12 +9590,12 @@ TEST(block_disjunction_test, min_match_seek_no_readahead) {
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
-      {9, irs::doc_limits::eof(), 0},
-      {12, irs::doc_limits::eof(), 0},
-      {13, irs::doc_limits::eof(), 0},
-      {45, irs::doc_limits::eof(), 0},
-      {57, irs::doc_limits::eof(), 0}};
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
+      {9, irs::doc_limits::kEOF, 0},
+      {12, irs::doc_limits::kEOF, 0},
+      {13, irs::doc_limits::kEOF, 0},
+      {45, irs::doc_limits::kEOF, 0},
+      {57, irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -9620,7 +9620,7 @@ TEST(block_disjunction_test, min_match_seek_no_readahead) {
       {12, 12, 1},
       {irs::doc_limits::invalid(), 12, 1},
       {45, 45, 1},
-      {57, irs::doc_limits::eof(), 0}};
+      {57, irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -9650,7 +9650,7 @@ TEST(block_disjunction_test, min_match_seek_no_readahead) {
       {45, 45, 1},
       {44, 45, 1},
       {irs::doc_limits::invalid(), 45, 1},
-      {57, irs::doc_limits::eof(), 0}};
+      {57, irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -9684,7 +9684,7 @@ TEST(block_disjunction_test, min_match_seek_no_readahead) {
       {513, 1025, 1},
       {2, 1025, 1},
       {irs::doc_limits::invalid(), 1025, 1},
-      {2001, irs::doc_limits::eof(), 0}};
+      {2001, irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -9704,8 +9704,8 @@ TEST(block_disjunction_test, min_match_seek_no_readahead) {
     std::vector<std::vector<irs::doc_id_t>> docs{{}, {}, {}, {}};
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 0},
-      {6, irs::doc_limits::eof(), 0},
-      {irs::doc_limits::invalid(), irs::doc_limits::eof(), 0}};
+      {6, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::invalid(), irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -9730,12 +9730,12 @@ TEST(block_disjunction_test, min_match_seek_no_readahead) {
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
-      {9, irs::doc_limits::eof(), 0},
-      {12, irs::doc_limits::eof(), 0},
-      {13, irs::doc_limits::eof(), 0},
-      {45, irs::doc_limits::eof(), 0},
-      {57, irs::doc_limits::eof(), 0}};
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
+      {9, irs::doc_limits::kEOF, 0},
+      {12, irs::doc_limits::kEOF, 0},
+      {13, irs::doc_limits::kEOF, 0},
+      {45, irs::doc_limits::kEOF, 0},
+      {57, irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -9765,7 +9765,7 @@ TEST(block_disjunction_test, min_match_seek_no_readahead) {
       {12, 12, 1},
       {irs::doc_limits::invalid(), 12, 1},
       {45, 45, 1},
-      {1201, irs::doc_limits::eof(), 0}};
+      {1201, irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -9792,7 +9792,7 @@ TEST(block_disjunction_test, min_match_seek_no_readahead) {
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 0},
       {5, 5, 3},
       {7, 8, 3},
-      {9, irs::doc_limits::eof(), 0},
+      {9, irs::doc_limits::kEOF, 0},
     };
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 3U);
@@ -9831,7 +9831,7 @@ TEST(block_disjunction_test, seek_readahead) {
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(0, irs::CostAttr::extract(it));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-    ASSERT_EQ(irs::doc_limits::eof(), it.seek(42));
+    ASSERT_EQ(irs::doc_limits::kEOF, it.seek(42));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
 
@@ -9851,9 +9851,9 @@ TEST(block_disjunction_test, seek_readahead) {
       {8, 12, 1},
       {13, 29, 1},
       {45, 45, 1},
-      {57, irs::doc_limits::eof(), 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
+      {57, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
     };
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
@@ -9888,8 +9888,8 @@ TEST(block_disjunction_test, seek_readahead) {
       {45, 45, 1},
       {57, 65, 1},
       {126, 127, 1},
-      {128, irs::doc_limits::eof(), 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
+      {128, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
     };
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
@@ -9929,7 +9929,7 @@ TEST(block_disjunction_test, seek_readahead) {
       {1111177, 1111178, 1},
       {1111178, 1111178, 1},
       {111111127, 111111127, 1},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
     };
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
@@ -9960,7 +9960,7 @@ TEST(block_disjunction_test, seek_readahead) {
       {8, 12, 1},
       {13, 29, 1},
       {45, 45, 1},
-      {57, irs::doc_limits::eof(), 0}};
+      {57, irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -9981,8 +9981,8 @@ TEST(block_disjunction_test, seek_readahead) {
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 0},
-      {6, irs::doc_limits::eof(), 0},
-      {irs::doc_limits::invalid(), irs::doc_limits::eof(), 0}};
+      {6, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::invalid(), irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -10003,8 +10003,8 @@ TEST(block_disjunction_test, seek_readahead) {
     std::vector<std::vector<irs::doc_id_t>> docs{{}, {}};
 
     std::vector<SeekDoc> expected{
-      {6, irs::doc_limits::eof(), 0},
-      {irs::doc_limits::invalid(), irs::doc_limits::eof(), 0}};
+      {6, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::invalid(), irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -10025,12 +10025,12 @@ TEST(block_disjunction_test, seek_readahead) {
                                                  {1, 5, 6, 12, 29}};
 
     std::vector<SeekDoc> expected{
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
-      {9, irs::doc_limits::eof(), 0},
-      {12, irs::doc_limits::eof(), 0},
-      {13, irs::doc_limits::eof(), 0},
-      {45, irs::doc_limits::eof(), 0},
-      {57, irs::doc_limits::eof(), 0}};
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
+      {9, irs::doc_limits::kEOF, 0},
+      {12, irs::doc_limits::kEOF, 0},
+      {13, irs::doc_limits::kEOF, 0},
+      {45, irs::doc_limits::kEOF, 0},
+      {57, irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -10055,7 +10055,7 @@ TEST(block_disjunction_test, seek_readahead) {
       {12, 12, 1},
       {irs::doc_limits::invalid(), 12, 1},
       {45, 45, 1},
-      {57, irs::doc_limits::eof(), 0}};
+      {57, irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -10083,7 +10083,7 @@ TEST(block_disjunction_test, seek_readahead) {
                                   {45, 45, 1},
                                   {44, 45, 1},
                                   {irs::doc_limits::invalid(), 45, 1},
-                                  {57, irs::doc_limits::eof(), 0}};
+                                  {57, irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -10117,7 +10117,7 @@ TEST(block_disjunction_test, seek_readahead) {
       {513, 1025, 1},
       {2, 1025, 1},
       {irs::doc_limits::invalid(), 1025, 1},
-      {2001, irs::doc_limits::eof(), 0}};
+      {2001, irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -10135,8 +10135,8 @@ TEST(block_disjunction_test, seek_readahead) {
   {
     std::vector<std::vector<irs::doc_id_t>> docs{{}, {}, {}, {}};
     std::vector<SeekDoc> expected{
-      {6, irs::doc_limits::eof(), 0},
-      {irs::doc_limits::invalid(), irs::doc_limits::eof(), 0}};
+      {6, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::invalid(), irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -10160,12 +10160,12 @@ TEST(block_disjunction_test, seek_readahead) {
       {11, 79, 101, 141, 1025, 1101}};
 
     std::vector<SeekDoc> expected{
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
-      {9, irs::doc_limits::eof(), 0},
-      {12, irs::doc_limits::eof(), 0},
-      {13, irs::doc_limits::eof(), 0},
-      {45, irs::doc_limits::eof(), 0},
-      {57, irs::doc_limits::eof(), 0}};
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
+      {9, irs::doc_limits::kEOF, 0},
+      {12, irs::doc_limits::kEOF, 0},
+      {13, irs::doc_limits::kEOF, 0},
+      {45, irs::doc_limits::kEOF, 0},
+      {57, irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -10190,7 +10190,7 @@ TEST(block_disjunction_test, seek_readahead) {
 
     std::vector<SeekDoc> expected{
       {9, 9, 1},   {12, 12, 1},     {irs::doc_limits::invalid(), 12, 1},
-      {45, 45, 1}, {1024, 1025, 1}, {1201, irs::doc_limits::eof(), 0}};
+      {45, 45, 1}, {1024, 1025, 1}, {1201, irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -10217,7 +10217,7 @@ TEST(block_disjunction_test, seek_readahead) {
                                   {12, 12, 1},
                                   {irs::doc_limits::invalid(), 12, 1},
                                   {45, 45, 1},
-                                  {1201, irs::doc_limits::eof(), 0}};
+                                  {1201, irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -10255,7 +10255,7 @@ TEST(block_disjunction_test, min_match_seek_readahead) {
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(0, irs::CostAttr::extract(it));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-    ASSERT_EQ(irs::doc_limits::eof(), it.seek(42));
+    ASSERT_EQ(irs::doc_limits::kEOF, it.seek(42));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
 
@@ -10275,9 +10275,9 @@ TEST(block_disjunction_test, min_match_seek_readahead) {
       {8, 12, 1},
       {13, 29, 1},
       {45, 45, 1},
-      {57, irs::doc_limits::eof(), 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
+      {57, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
     };
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
@@ -10301,17 +10301,17 @@ TEST(block_disjunction_test, min_match_seek_readahead) {
     };
 
     std::vector<SeekDoc> expected{
-      {1, irs::doc_limits::eof(), 0},
-      {9, irs::doc_limits::eof(), 0},
-      {8, irs::doc_limits::eof(), 0},
-      {irs::doc_limits::invalid(), irs::doc_limits::eof(), 0},
-      {12, irs::doc_limits::eof(), 0},
-      {8, irs::doc_limits::eof(), 0},
-      {13, irs::doc_limits::eof(), 0},
-      {45, irs::doc_limits::eof(), 0},
-      {57, irs::doc_limits::eof(), 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
+      {1, irs::doc_limits::kEOF, 0},
+      {9, irs::doc_limits::kEOF, 0},
+      {8, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::invalid(), irs::doc_limits::kEOF, 0},
+      {12, irs::doc_limits::kEOF, 0},
+      {8, irs::doc_limits::kEOF, 0},
+      {13, irs::doc_limits::kEOF, 0},
+      {45, irs::doc_limits::kEOF, 0},
+      {57, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
     };
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 2U);
@@ -10336,17 +10336,17 @@ TEST(block_disjunction_test, min_match_seek_readahead) {
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 0},
-      {1, irs::doc_limits::eof(), 0},
-      {9, irs::doc_limits::eof(), 0},
-      {8, irs::doc_limits::eof(), 0},
-      {irs::doc_limits::invalid(), irs::doc_limits::eof(), 0},
-      {12, irs::doc_limits::eof(), 0},
-      {8, irs::doc_limits::eof(), 0},
-      {13, irs::doc_limits::eof(), 0},
-      {45, irs::doc_limits::eof(), 0},
-      {57, irs::doc_limits::eof(), 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
+      {1, irs::doc_limits::kEOF, 0},
+      {9, irs::doc_limits::kEOF, 0},
+      {8, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::invalid(), irs::doc_limits::kEOF, 0},
+      {12, irs::doc_limits::kEOF, 0},
+      {8, irs::doc_limits::kEOF, 0},
+      {13, irs::doc_limits::kEOF, 0},
+      {45, irs::doc_limits::kEOF, 0},
+      {57, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
     };
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 2U);
@@ -10381,8 +10381,8 @@ TEST(block_disjunction_test, min_match_seek_readahead) {
       {45, 45, 1},
       {57, 65, 1},
       {126, 127, 1},
-      {128, irs::doc_limits::eof(), 0},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
+      {128, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
     };
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
@@ -10422,7 +10422,7 @@ TEST(block_disjunction_test, min_match_seek_readahead) {
       {1111177, 1111178, 1},
       {1111178, 1111178, 1},
       {111111127, 111111127, 1},
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
     };
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
@@ -10453,7 +10453,7 @@ TEST(block_disjunction_test, min_match_seek_readahead) {
       {8, 12, 1},
       {13, 29, 1},
       {45, 45, 1},
-      {57, irs::doc_limits::eof(), 0}};
+      {57, irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -10474,8 +10474,8 @@ TEST(block_disjunction_test, min_match_seek_readahead) {
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 0},
-      {6, irs::doc_limits::eof(), 0},
-      {irs::doc_limits::invalid(), irs::doc_limits::eof(), 0}};
+      {6, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::invalid(), irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -10496,12 +10496,12 @@ TEST(block_disjunction_test, min_match_seek_readahead) {
                                                  {1, 5, 6, 12, 29}};
 
     std::vector<SeekDoc> expected{
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
-      {9, irs::doc_limits::eof(), 0},
-      {12, irs::doc_limits::eof(), 0},
-      {13, irs::doc_limits::eof(), 0},
-      {45, irs::doc_limits::eof(), 0},
-      {57, irs::doc_limits::eof(), 0}};
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
+      {9, irs::doc_limits::kEOF, 0},
+      {12, irs::doc_limits::kEOF, 0},
+      {13, irs::doc_limits::kEOF, 0},
+      {45, irs::doc_limits::kEOF, 0},
+      {57, irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -10526,7 +10526,7 @@ TEST(block_disjunction_test, min_match_seek_readahead) {
       {12, 12, 1},
       {irs::doc_limits::invalid(), 12, 1},
       {45, 45, 1},
-      {57, irs::doc_limits::eof(), 0}};
+      {57, irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -10556,7 +10556,7 @@ TEST(block_disjunction_test, min_match_seek_readahead) {
       {45, 45, 1},
       {44, 45, 1},
       {irs::doc_limits::invalid(), 45, 1},
-      {57, irs::doc_limits::eof(), 0}};
+      {57, irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -10590,7 +10590,7 @@ TEST(block_disjunction_test, min_match_seek_readahead) {
       {513, 1025, 1},
       {2, 1025, 1},
       {irs::doc_limits::invalid(), 1025, 1},
-      {2001, irs::doc_limits::eof(), 0}};
+      {2001, irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -10610,8 +10610,8 @@ TEST(block_disjunction_test, min_match_seek_readahead) {
     std::vector<std::vector<irs::doc_id_t>> docs{{}, {}, {}, {}};
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 0},
-      {6, irs::doc_limits::eof(), 0},
-      {irs::doc_limits::invalid(), irs::doc_limits::eof(), 0}};
+      {6, irs::doc_limits::kEOF, 0},
+      {irs::doc_limits::invalid(), irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -10635,12 +10635,12 @@ TEST(block_disjunction_test, min_match_seek_readahead) {
       {11, 79, 101, 141, 1025, 1101}};
 
     std::vector<SeekDoc> expected{
-      {irs::doc_limits::eof(), irs::doc_limits::eof(), 0},
-      {9, irs::doc_limits::eof(), 0},
-      {12, irs::doc_limits::eof(), 0},
-      {13, irs::doc_limits::eof(), 0},
-      {45, irs::doc_limits::eof(), 0},
-      {57, irs::doc_limits::eof(), 0}};
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF, 0},
+      {9, irs::doc_limits::kEOF, 0},
+      {12, irs::doc_limits::kEOF, 0},
+      {13, irs::doc_limits::kEOF, 0},
+      {45, irs::doc_limits::kEOF, 0},
+      {57, irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -10670,7 +10670,7 @@ TEST(block_disjunction_test, min_match_seek_readahead) {
       {12, 12, 1},
       {irs::doc_limits::invalid(), 12, 1},
       {45, 45, 1},
-      {1201, irs::doc_limits::eof(), 0}};
+      {1201, irs::doc_limits::kEOF, 0}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -10697,7 +10697,7 @@ TEST(block_disjunction_test, min_match_seek_readahead) {
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 0},
       {5, 5, 3},
       {7, 8, 3},
-      {9, irs::doc_limits::eof(), 0},
+      {9, irs::doc_limits::kEOF, 0},
     };
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 3U);
@@ -10749,9 +10749,9 @@ TEST(block_disjunction_test, seek_next_no_readahead) {
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   {
@@ -10778,9 +10778,9 @@ TEST(block_disjunction_test, seek_next_no_readahead) {
     ASSERT_EQ(256, it.value());
     ASSERT_EQ(1145, it.seek(1144));
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 }
 
@@ -10824,9 +10824,9 @@ TEST(block_disjunction_test, next_seek_no_readahead) {
     ASSERT_EQ(84, it.seek(83));
     ASSERT_EQ(84, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 }
 
@@ -10865,9 +10865,9 @@ TEST(block_disjunction_test, seek_next_no_readahead_two_blocks) {
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   {
@@ -10894,9 +10894,9 @@ TEST(block_disjunction_test, seek_next_no_readahead_two_blocks) {
     ASSERT_EQ(170, it.value());
     ASSERT_EQ(1145, it.seek(1144));
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 }
 
@@ -10956,9 +10956,9 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // disjunction with score, sub-iterators with scores, aggregate
@@ -11031,9 +11031,9 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     score(&tmp);
     ASSERT_EQ(1, tmp);  // 1
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // disjunction with score, sub-iterators with scores, max
@@ -11106,9 +11106,9 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     score(&tmp);
     ASSERT_EQ(1, tmp);  // std::max(1)
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // disjunction with score, sub-iterators with scores partially, aggregate
@@ -11180,9 +11180,9 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     score(&tmp);
     ASSERT_EQ(1, tmp);  // 1
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // disjunction with score, sub-iterators with scores partially, max
@@ -11254,9 +11254,9 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     score(&tmp);
     ASSERT_EQ(1, tmp);  // std::max(1)
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // disjunction with score, sub-iterators without scores, aggregate
@@ -11324,9 +11324,9 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     score(&tmp);
     ASSERT_EQ(0, tmp);  // 1
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // disjunction with score, sub-iterators without scores, max
@@ -11394,9 +11394,9 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     score(&tmp);
     ASSERT_EQ(0, tmp);
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 }
 
@@ -11704,7 +11704,7 @@ TEST(disjunction_test, seek) {
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(0, irs::CostAttr::extract(it));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-    ASSERT_EQ(irs::doc_limits::eof(), it.seek(42));
+    ASSERT_EQ(irs::doc_limits::kEOF, it.seek(42));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }
 
@@ -11723,7 +11723,7 @@ TEST(disjunction_test, seek) {
       {8, 12},
       {13, 29},
       {45, 45},
-      {57, irs::doc_limits::eof()}};
+      {57, irs::doc_limits::kEOF}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -11741,8 +11741,8 @@ TEST(disjunction_test, seek) {
 
     std::vector<detail::SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid()},
-      {6, irs::doc_limits::eof()},
-      {irs::doc_limits::invalid(), irs::doc_limits::eof()}};
+      {6, irs::doc_limits::kEOF},
+      {irs::doc_limits::invalid(), irs::doc_limits::kEOF}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -11762,12 +11762,12 @@ TEST(disjunction_test, seek) {
 
     std::vector<detail::SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid()},
-      {irs::doc_limits::eof(), irs::doc_limits::eof()},
-      {9, irs::doc_limits::eof()},
-      {12, irs::doc_limits::eof()},
-      {13, irs::doc_limits::eof()},
-      {45, irs::doc_limits::eof()},
-      {57, irs::doc_limits::eof()}};
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF},
+      {9, irs::doc_limits::kEOF},
+      {12, irs::doc_limits::kEOF},
+      {13, irs::doc_limits::kEOF},
+      {45, irs::doc_limits::kEOF},
+      {57, irs::doc_limits::kEOF}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -11790,7 +11790,7 @@ TEST(disjunction_test, seek) {
       {12, 12},
       {irs::doc_limits::invalid(), 12},
       {45, 45},
-      {57, irs::doc_limits::eof()}};
+      {57, irs::doc_limits::kEOF}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -11818,7 +11818,7 @@ TEST(disjunction_test, seek) {
       {45, 45},
       {44, 45},
       {irs::doc_limits::invalid(), 45},
-      {57, irs::doc_limits::eof()}};
+      {57, irs::doc_limits::kEOF}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -11850,7 +11850,7 @@ TEST(disjunction_test, seek) {
       {513, 1025},
       {2, 1025},
       {irs::doc_limits::invalid(), 1025},
-      {2001, irs::doc_limits::eof()}};
+      {2001, irs::doc_limits::kEOF}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -11867,8 +11867,8 @@ TEST(disjunction_test, seek) {
     std::vector<std::vector<irs::doc_id_t>> docs{{}, {}, {}, {}};
     std::vector<detail::SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid()},
-      {6, irs::doc_limits::eof()},
-      {irs::doc_limits::invalid(), irs::doc_limits::eof()}};
+      {6, irs::doc_limits::kEOF},
+      {irs::doc_limits::invalid(), irs::doc_limits::kEOF}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -11891,12 +11891,12 @@ TEST(disjunction_test, seek) {
 
     std::vector<detail::SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid()},
-      {irs::doc_limits::eof(), irs::doc_limits::eof()},
-      {9, irs::doc_limits::eof()},
-      {12, irs::doc_limits::eof()},
-      {13, irs::doc_limits::eof()},
-      {45, irs::doc_limits::eof()},
-      {57, irs::doc_limits::eof()}};
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF},
+      {9, irs::doc_limits::kEOF},
+      {12, irs::doc_limits::kEOF},
+      {13, irs::doc_limits::kEOF},
+      {45, irs::doc_limits::kEOF},
+      {57, irs::doc_limits::kEOF}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -11923,7 +11923,7 @@ TEST(disjunction_test, seek) {
       {12, 12},
       {irs::doc_limits::invalid(), 12},
       {45, 45},
-      {1201, irs::doc_limits::eof()}};
+      {1201, irs::doc_limits::kEOF}};
 
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -11969,9 +11969,9 @@ TEST(disjunction_test, seek_next) {
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 }
 
@@ -12028,9 +12028,9 @@ TEST(disjunction_test, scored_seek_next) {
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // disjunction with score, sub-iterators with scores, aggregate
@@ -12100,9 +12100,9 @@ TEST(disjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(1, tmp);  // 1
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // disjunction with score, sub-iterators with scores, max
@@ -12172,9 +12172,9 @@ TEST(disjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(1, tmp);  // std::max(1)
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // disjunction with score, sub-iterators with scores partially, aggregate
@@ -12243,9 +12243,9 @@ TEST(disjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(1, tmp);  // 1
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // disjunction with score, sub-iterators with scores partially, max
@@ -12314,9 +12314,9 @@ TEST(disjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(1, tmp);  // std::max(1)
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // disjunction with score, sub-iterators without scores, aggregate
@@ -12381,9 +12381,9 @@ TEST(disjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(0, tmp);  // 1
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // disjunction with score, sub-iterators without scores, max
@@ -12448,9 +12448,9 @@ TEST(disjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(0, tmp);
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 }
 
@@ -13073,7 +13073,7 @@ TEST(min_match_disjunction_test, seek) {
         {11, 12},
         {13, 29},
         {45, 45},
-        {57, irs::doc_limits::eof()}};
+        {57, irs::doc_limits::kEOF}};
 
       Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs),
                      min_match_count);
@@ -13096,7 +13096,7 @@ TEST(min_match_disjunction_test, seek) {
         {13, 29},
         {irs::doc_limits::invalid(), 29},
         {45, 45},
-        {57, irs::doc_limits::eof()}};
+        {57, irs::doc_limits::kEOF}};
 
       Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs),
                      min_match_count);
@@ -13117,7 +13117,7 @@ TEST(min_match_disjunction_test, seek) {
         {7, 12},
         {irs::doc_limits::invalid(), 12},
         {29, 29},
-        {45, irs::doc_limits::eof()}};
+        {45, irs::doc_limits::kEOF}};
 
       Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs),
                      min_match_count);
@@ -13134,7 +13134,7 @@ TEST(min_match_disjunction_test, seek) {
       std::vector<detail::SeekDoc> expected{
         {irs::doc_limits::invalid(), irs::doc_limits::invalid()},
         {1, 1},
-        {6, irs::doc_limits::eof()}};
+        {6, irs::doc_limits::kEOF}};
 
       Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs),
                      min_match_count);
@@ -13151,7 +13151,7 @@ TEST(min_match_disjunction_test, seek) {
       std::vector<detail::SeekDoc> expected{
         {irs::doc_limits::invalid(), irs::doc_limits::invalid()},
         {1, 1},
-        {6, irs::doc_limits::eof()}};
+        {6, irs::doc_limits::kEOF}};
 
       Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs),
                      min_match_count);
@@ -13185,7 +13185,7 @@ TEST(min_match_disjunction_test, seek) {
         {irs::doc_limits::invalid(), 45},
         {80, 101},
         {513, 1025},
-        {2001, irs::doc_limits::eof()}};
+        {2001, irs::doc_limits::kEOF}};
 
       Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs),
                      min_match_count);
@@ -13209,7 +13209,7 @@ TEST(min_match_disjunction_test, seek) {
         {irs::doc_limits::invalid(), 45},
         {80, 101},
         {513, 1025},
-        {2001, irs::doc_limits::eof()}};
+        {2001, irs::doc_limits::kEOF}};
 
       Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs),
                      min_match_count);
@@ -13230,7 +13230,7 @@ TEST(min_match_disjunction_test, seek) {
         {13, 79},
         {irs::doc_limits::invalid(), 79},
         {101, 101},
-        {513, irs::doc_limits::eof()}};
+        {513, irs::doc_limits::kEOF}};
 
       Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs),
                      min_match_count);
@@ -13247,7 +13247,7 @@ TEST(min_match_disjunction_test, seek) {
       std::vector<detail::SeekDoc> expected{
         {irs::doc_limits::invalid(), irs::doc_limits::invalid()},
         {1, 1},
-        {6, irs::doc_limits::eof()}};
+        {6, irs::doc_limits::kEOF}};
 
       Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs),
                      min_match_count);
@@ -13264,8 +13264,8 @@ TEST(min_match_disjunction_test, seek) {
       const size_t min_match_count = std::numeric_limits<size_t>::max();
       std::vector<detail::SeekDoc> expected{
         {irs::doc_limits::invalid(), irs::doc_limits::invalid()},
-        {1, irs::doc_limits::eof()},
-        {6, irs::doc_limits::eof()}};
+        {1, irs::doc_limits::kEOF},
+        {6, irs::doc_limits::kEOF}};
 
       Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs),
                      min_match_count);
@@ -13284,8 +13284,8 @@ TEST(min_match_disjunction_test, seek) {
 
     std::vector<detail::SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid()},
-      {6, irs::doc_limits::eof()},
-      {irs::doc_limits::invalid(), irs::doc_limits::eof()}};
+      {6, irs::doc_limits::kEOF},
+      {irs::doc_limits::invalid(), irs::doc_limits::kEOF}};
 
     {
       Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs), 0U);
@@ -13327,13 +13327,13 @@ TEST(min_match_disjunction_test, seek) {
 
     std::vector<detail::SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid()},
-      {irs::doc_limits::eof(), irs::doc_limits::eof()},
-      {9, irs::doc_limits::eof()},
-      {irs::doc_limits::invalid(), irs::doc_limits::eof()},
-      {12, irs::doc_limits::eof()},
-      {13, irs::doc_limits::eof()},
-      {45, irs::doc_limits::eof()},
-      {57, irs::doc_limits::eof()}};
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF},
+      {9, irs::doc_limits::kEOF},
+      {irs::doc_limits::invalid(), irs::doc_limits::kEOF},
+      {12, irs::doc_limits::kEOF},
+      {13, irs::doc_limits::kEOF},
+      {45, irs::doc_limits::kEOF},
+      {57, irs::doc_limits::kEOF}};
 
     {
       Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs), 0U);
@@ -13391,7 +13391,7 @@ TEST(min_match_disjunction_test, seek) {
         {irs::doc_limits::invalid(), 12},
         {45, 45},
         {44, 45},
-        {1201, irs::doc_limits::eof()}};
+        {1201, irs::doc_limits::kEOF}};
 
       {
         Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs), 0U);
@@ -13417,7 +13417,7 @@ TEST(min_match_disjunction_test, seek) {
         {irs::doc_limits::invalid(), irs::doc_limits::invalid()},
         {6, 6},
         {irs::doc_limits::invalid(), 6},
-        {12, irs::doc_limits::eof()}};
+        {12, irs::doc_limits::kEOF}};
 
       {
         Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs), 2U);
@@ -13432,8 +13432,8 @@ TEST(min_match_disjunction_test, seek) {
     {
       std::vector<detail::SeekDoc> expected{
         {irs::doc_limits::invalid(), irs::doc_limits::invalid()},
-        {6, irs::doc_limits::eof()},
-        {irs::doc_limits::invalid(), irs::doc_limits::eof()},
+        {6, irs::doc_limits::kEOF},
+        {irs::doc_limits::invalid(), irs::doc_limits::kEOF},
       };
 
       {
@@ -13450,8 +13450,8 @@ TEST(min_match_disjunction_test, seek) {
     {
       std::vector<detail::SeekDoc> expected{
         {irs::doc_limits::invalid(), irs::doc_limits::invalid()},
-        {6, irs::doc_limits::eof()},
-        {irs::doc_limits::invalid(), irs::doc_limits::eof()},
+        {6, irs::doc_limits::kEOF},
+        {irs::doc_limits::invalid(), irs::doc_limits::kEOF},
       };
 
       {
@@ -13509,11 +13509,11 @@ TEST(min_match_disjunction_test, seek_next) {
     ASSERT_EQ(it.value(), doc->value);
     ASSERT_FALSE(it.next());
     ASSERT_EQ(it.value(), doc->value);
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_EQ(it.value(), doc->value);
     ASSERT_FALSE(it.next());
     ASSERT_EQ(it.value(), doc->value);
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_EQ(it.value(), doc->value);
   }
 }
@@ -13599,9 +13599,9 @@ TEST(min_match_disjunction_test, scored_seek_next) {
     ASSERT_EQ(9, it.value());
     ASSERT_EQ(29, it.seek(27));
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // disjunction with score, sub-iterators with scores, aggregate
@@ -13669,9 +13669,9 @@ TEST(min_match_disjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(6, tmp);  // 2+4
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // disjunction with score, sub-iterators with scores, max
@@ -13739,9 +13739,9 @@ TEST(min_match_disjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(4, tmp);  // std::max(2,4)
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // disjunction with score, sub-iterators with scores partially, aggregate
@@ -13808,9 +13808,9 @@ TEST(min_match_disjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(4, tmp);  // 2+4
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // disjunction with score, sub-iterators with scores partially, max
@@ -13880,9 +13880,9 @@ TEST(min_match_disjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(4, tmp);
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // disjunction with score, sub-iterators without scores, aggregate
@@ -13946,9 +13946,9 @@ TEST(min_match_disjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(0, tmp);  // 2+4
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // disjunction with score, sub-iterators without scores, max
@@ -14012,9 +14012,9 @@ TEST(min_match_disjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(0, tmp);
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 }
 
@@ -14268,7 +14268,7 @@ TEST(conjunction_test, seek) {
       {46, 99},
       {68, 99},
       {256, 256},
-      {257, irs::doc_limits::eof()}};
+      {257, irs::doc_limits::kEOF}};
 
     auto it_ptr = irs::MakeConjunction(
       {}, irs::NoopAggregator{}, detail::ExecuteAll<DocIteratorImpl>(docs));
@@ -14301,7 +14301,7 @@ TEST(conjunction_test, seek) {
       {46, 99},
       {irs::doc_limits::invalid(), 99},
       {256, 256},
-      {257, irs::doc_limits::eof()}};
+      {257, irs::doc_limits::kEOF}};
 
     auto it_ptr = irs::MakeConjunction(
       {}, irs::NoopAggregator{}, detail::ExecuteAll<DocIteratorImpl>(docs));
@@ -14320,8 +14320,8 @@ TEST(conjunction_test, seek) {
     std::vector<std::vector<irs::doc_id_t>> docs{{}, {}, {}, {}};
     std::vector<detail::SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid()},
-      {6, irs::doc_limits::eof()},
-      {irs::doc_limits::invalid(), irs::doc_limits::eof()}};
+      {6, irs::doc_limits::kEOF},
+      {irs::doc_limits::invalid(), irs::doc_limits::kEOF}};
 
     auto it_ptr = irs::MakeConjunction(
       {}, irs::NoopAggregator{}, detail::ExecuteAll<DocIteratorImpl>(docs));
@@ -14346,12 +14346,12 @@ TEST(conjunction_test, seek) {
 
     std::vector<detail::SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid()},
-      {irs::doc_limits::eof(), irs::doc_limits::eof()},
-      {9, irs::doc_limits::eof()},
-      {12, irs::doc_limits::eof()},
-      {13, irs::doc_limits::eof()},
-      {45, irs::doc_limits::eof()},
-      {57, irs::doc_limits::eof()}};
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF},
+      {9, irs::doc_limits::kEOF},
+      {12, irs::doc_limits::kEOF},
+      {13, irs::doc_limits::kEOF},
+      {45, irs::doc_limits::kEOF},
+      {57, irs::doc_limits::kEOF}};
 
     auto it_ptr = irs::MakeConjunction(
       {}, irs::NoopAggregator{}, detail::ExecuteAll<DocIteratorImpl>(docs));
@@ -14380,7 +14380,7 @@ TEST(conjunction_test, seek) {
       {45, 45},
       {irs::doc_limits::invalid(), 45},
       {99, 99},
-      {257, irs::doc_limits::eof()}};
+      {257, irs::doc_limits::kEOF}};
 
     auto it_ptr = irs::MakeConjunction(
       {}, irs::NoopAggregator{}, detail::ExecuteAll<DocIteratorImpl>(docs));
@@ -14430,9 +14430,9 @@ TEST(conjunction_test, seek_next) {
     ASSERT_EQ(8, it.value());
     ASSERT_EQ(14, it.seek(14));
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 }
 
@@ -14496,9 +14496,9 @@ TEST(conjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(7, tmp);  // 1+2+4
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // conjunction without score, sub-iterators with scores
@@ -14547,9 +14547,9 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_EQ(8, it.value());
     ASSERT_EQ(14, it.seek(14));
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // conjunction with 4 sub-iterators with score, sub-iterators with scores,
@@ -14615,9 +14615,9 @@ TEST(conjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(12, tmp);  // 1+2+4+5
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // conjunction with score, sub-iterators with scores, max
@@ -14679,9 +14679,9 @@ TEST(conjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(4, tmp);  // std::max(1,2,4)
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // conjunction with score, sub-iterators with scores, aggregation
@@ -14743,9 +14743,9 @@ TEST(conjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(7, tmp);  // 1+2+4
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // conjunction with score, sub-iterators with scores, max
@@ -14807,9 +14807,9 @@ TEST(conjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(4, tmp);  // std::max(1,2,4)
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // conjunction with score, 1 sub-iterator with scores, aggregation
@@ -14869,9 +14869,9 @@ TEST(conjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(1, tmp);  // 1
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // conjunction with score, 1 sub-iterators with scores, max
@@ -14931,9 +14931,9 @@ TEST(conjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(1, tmp);
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // conjunction with score, 2 sub-iterators with scores, aggregation
@@ -14994,9 +14994,9 @@ TEST(conjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(5, tmp);  // 1+2+4
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // conjunction with score, 2 sub-iterators with scores, max
@@ -15057,9 +15057,9 @@ TEST(conjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(4, tmp);  // std::max(1,2,4)
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // conjunction with score, sub-iterators without scores, aggregation
@@ -15117,9 +15117,9 @@ TEST(conjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(0, tmp);  // 1+2+4
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 
   // conjunction with score, sub-iterators without scores, max
@@ -15177,9 +15177,9 @@ TEST(conjunction_test, scored_seek_next) {
     score(&tmp);
     ASSERT_EQ(0, tmp);
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 }
 
@@ -15336,7 +15336,7 @@ TEST(exclusion_test, seek) {
       {9, 9},
       {45, 45},
       {43, 45},
-      {57, irs::doc_limits::eof()}};
+      {57, irs::doc_limits::kEOF}};
     irs::Exclusion it(irs::memory::make_managed<detail::BasicDocIterator>(
                         included.begin(), included.end()),
                       irs::memory::make_managed<detail::BasicDocIterator>(
@@ -15355,8 +15355,8 @@ TEST(exclusion_test, seek) {
     std::vector<irs::doc_id_t> excluded{};
     std::vector<detail::SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid()},
-      {6, irs::doc_limits::eof()},
-      {irs::doc_limits::invalid(), irs::doc_limits::eof()}};
+      {6, irs::doc_limits::kEOF},
+      {irs::doc_limits::invalid(), irs::doc_limits::kEOF}};
     irs::Exclusion it(irs::memory::make_managed<detail::BasicDocIterator>(
                         included.begin(), included.end()),
                       irs::memory::make_managed<detail::BasicDocIterator>(
@@ -15375,12 +15375,12 @@ TEST(exclusion_test, seek) {
     std::vector<irs::doc_id_t> excluded{1, 5, 6, 12, 29};
     std::vector<detail::SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid()},
-      {irs::doc_limits::eof(), irs::doc_limits::eof()},
-      {9, irs::doc_limits::eof()},
-      {12, irs::doc_limits::eof()},
-      {13, irs::doc_limits::eof()},
-      {45, irs::doc_limits::eof()},
-      {57, irs::doc_limits::eof()}};
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF},
+      {9, irs::doc_limits::kEOF},
+      {12, irs::doc_limits::kEOF},
+      {13, irs::doc_limits::kEOF},
+      {45, irs::doc_limits::kEOF},
+      {57, irs::doc_limits::kEOF}};
     irs::Exclusion it(irs::memory::make_managed<detail::BasicDocIterator>(
                         included.begin(), included.end()),
                       irs::memory::make_managed<detail::BasicDocIterator>(
@@ -15403,7 +15403,7 @@ TEST(exclusion_test, seek) {
       {11, 11},
       {irs::doc_limits::invalid(), 11},
       {45, 45},
-      {57, irs::doc_limits::eof()}};
+      {57, irs::doc_limits::kEOF}};
     irs::Exclusion it(irs::memory::make_managed<detail::BasicDocIterator>(
                         included.begin(), included.end()),
                       irs::memory::make_managed<detail::BasicDocIterator>(

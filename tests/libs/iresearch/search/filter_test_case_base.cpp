@@ -67,7 +67,7 @@ void FilterTestCaseBase::GetQueryResult(const irs::Filter::Query::ptr& q,
 
     // seek to eof
     ASSERT_TRUE(irs::doc_limits::eof(
-      q->execute({.segment = sub})->seek(irs::doc_limits::eof())));
+      q->execute({.segment = sub})->seek(irs::doc_limits::kEOF)));
   }
 }
 
@@ -130,7 +130,7 @@ void FilterTestCaseBase::GetQueryResult(const irs::Filter::Query::ptr& q,
 
     // seek to eof
     ASSERT_TRUE(irs::doc_limits::eof(
-      q->execute({.segment = sub})->seek(irs::doc_limits::eof())));
+      q->execute({.segment = sub})->seek(irs::doc_limits::kEOF)));
   }
 }
 

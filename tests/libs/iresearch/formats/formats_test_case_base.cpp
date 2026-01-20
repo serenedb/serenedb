@@ -1404,7 +1404,7 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
       ASSERT_TRUE(!actual_value || irs::IsNull(actual_value->value));
       ASSERT_EQ(9, values->seek(9));
       ASSERT_TRUE(!actual_value || irs::IsNull(actual_value->value));
-      ASSERT_TRUE(irs::doc_limits::eof(values->seek(irs::doc_limits::eof())));
+      ASSERT_TRUE(irs::doc_limits::eof(values->seek(irs::doc_limits::kEOF)));
       ASSERT_TRUE(!actual_value || irs::IsNull(actual_value->value));
     }
 
@@ -1430,9 +1430,9 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
         {4, 4},
         {5, 8},
         {9, 9},
-        {10, irs::doc_limits::eof()},
-        {6, irs::doc_limits::eof()},
-        {10, irs::doc_limits::eof()}};
+        {10, irs::doc_limits::kEOF},
+        {6, irs::doc_limits::kEOF},
+        {10, irs::doc_limits::kEOF}};
 
       for (auto& pair : expected_values) {
         const auto value_to_find = pair.first;
@@ -1447,7 +1447,7 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
       }
 
       ASSERT_FALSE(it->next());
-      ASSERT_EQ(irs::doc_limits::eof(), it->value());
+      ASSERT_EQ(irs::doc_limits::kEOF, it->value());
       if (payload) {
         // if attribute is present, payload value has
         // to be always empty for mask column
@@ -1484,7 +1484,7 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
 
       ASSERT_FALSE(it->next());
       ASSERT_EQ(i, expected_values.size());
-      ASSERT_EQ(irs::doc_limits::eof(), it->value());
+      ASSERT_EQ(irs::doc_limits::kEOF, it->value());
       if (payload) {
         // if attribute is present, payload value has
         // to be always empty for mask column
@@ -1530,7 +1530,7 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
 
       ASSERT_FALSE(it->next());
       ASSERT_EQ(i, expected_values.size());
-      ASSERT_EQ(irs::doc_limits::eof(), it->value());
+      ASSERT_EQ(irs::doc_limits::kEOF, it->value());
       if (payload) {
         // if attribute is present, payload value has
         // to be always empty for mask column
@@ -1558,7 +1558,7 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
       ASSERT_TRUE(!actual_value || irs::IsNull(actual_value->value));
       ASSERT_EQ(9, values->seek(9));
       ASSERT_TRUE(!actual_value || irs::IsNull(actual_value->value));
-      ASSERT_TRUE(irs::doc_limits::eof(values->seek(irs::doc_limits::eof())));
+      ASSERT_TRUE(irs::doc_limits::eof(values->seek(irs::doc_limits::kEOF)));
       ASSERT_TRUE(!actual_value || irs::IsNull(actual_value->value));
     }
 
@@ -1591,7 +1591,7 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
 
       ASSERT_FALSE(it->next());
       ASSERT_EQ(i, expected_values.size());
-      ASSERT_EQ(irs::doc_limits::eof(), it->value());
+      ASSERT_EQ(irs::doc_limits::kEOF, it->value());
       if (payload) {
         // if attribute is present, payload value has
         // to be always empty for mask column
@@ -2380,7 +2380,7 @@ TEST_P(FormatTestCase, columns_rw_typed) {
       ASSERT_FALSE(it->next());
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_FALSE(!payload);
-      ASSERT_EQ(irs::doc_limits::eof(), it->value());
+      ASSERT_EQ(irs::doc_limits::kEOF, it->value());
       ASSERT_EQ(irs::bytes_view{}, payload->value);
     }
   }
@@ -2453,7 +2453,7 @@ TEST_P(FormatTestCase, columns_rw_typed) {
       ASSERT_FALSE(it->next());
       auto* payload = irs::get<irs::PayAttr>(*it);
       ASSERT_FALSE(!payload);
-      ASSERT_EQ(irs::doc_limits::eof(), it->value());
+      ASSERT_EQ(irs::doc_limits::kEOF, it->value());
       ASSERT_EQ(irs::bytes_view{}, payload->value);
     }
   }
@@ -3082,7 +3082,7 @@ TEST_P(FormatTestCase, columns_rw) {
 
       ASSERT_FALSE(it->next());
       ASSERT_EQ(i, expected_values.size());
-      ASSERT_EQ(irs::doc_limits::eof(), it->value());
+      ASSERT_EQ(irs::doc_limits::kEOF, it->value());
       ASSERT_EQ(irs::bytes_view{}, payload->value);
     }
 
@@ -3115,7 +3115,7 @@ TEST_P(FormatTestCase, columns_rw) {
       }
 
       ASSERT_FALSE(it->next());
-      ASSERT_EQ(irs::doc_limits::eof(), it->value());
+      ASSERT_EQ(irs::doc_limits::kEOF, it->value());
       ASSERT_EQ(irs::bytes_view{}, payload->value);
     }
 
@@ -3152,7 +3152,7 @@ TEST_P(FormatTestCase, columns_rw) {
       }
       ASSERT_FALSE(it->next());
       ASSERT_EQ(i, expected_values.size());
-      ASSERT_EQ(irs::doc_limits::eof(), it->value());
+      ASSERT_EQ(irs::doc_limits::kEOF, it->value());
       ASSERT_EQ(irs::bytes_view{}, payload->value);
     }
 
@@ -3193,7 +3193,7 @@ TEST_P(FormatTestCase, columns_rw) {
       }
 
       ASSERT_FALSE(it->next());
-      ASSERT_EQ(irs::doc_limits::eof(), it->value());
+      ASSERT_EQ(irs::doc_limits::kEOF, it->value());
       ASSERT_EQ(irs::bytes_view{}, payload->value);
     }
 
@@ -3249,13 +3249,13 @@ TEST_P(FormatTestCase, columns_rw) {
       ASSERT_NE(nullptr, it);
 
       ASSERT_TRUE(!irs::get<irs::PayAttr>(*it));
-      ASSERT_EQ(irs::doc_limits::eof(), it->value());
+      ASSERT_EQ(irs::doc_limits::kEOF, it->value());
 
       ASSERT_FALSE(it->next());
-      ASSERT_EQ(irs::doc_limits::eof(), it->value());
+      ASSERT_EQ(irs::doc_limits::kEOF, it->value());
 
       ASSERT_FALSE(it->next());
-      ASSERT_EQ(irs::doc_limits::eof(), it->value());
+      ASSERT_EQ(irs::doc_limits::kEOF, it->value());
     }
 
     // visit field2 values (field after an the field)
@@ -3316,7 +3316,7 @@ TEST_P(FormatTestCase, columns_rw) {
 
       ASSERT_FALSE(it->next());
       ASSERT_EQ(i, expected_values.size());
-      ASSERT_EQ(irs::doc_limits::eof(), it->value());
+      ASSERT_EQ(irs::doc_limits::kEOF, it->value());
       ASSERT_EQ(irs::bytes_view{}, payload->value);
     }
 
@@ -3347,7 +3347,7 @@ TEST_P(FormatTestCase, columns_rw) {
       }
 
       ASSERT_FALSE(it->next());
-      ASSERT_EQ(irs::doc_limits::eof(), it->value());
+      ASSERT_EQ(irs::doc_limits::kEOF, it->value());
       ASSERT_EQ(irs::bytes_view{}, payload->value);
     }
   }
@@ -3389,7 +3389,7 @@ TEST_P(FormatTestCase, columns_rw) {
 
       ASSERT_FALSE(it->next());
       ASSERT_EQ(i, expected_values.size());
-      ASSERT_EQ(irs::doc_limits::eof(), it->value());
+      ASSERT_EQ(irs::doc_limits::kEOF, it->value());
       ASSERT_EQ(irs::bytes_view{}, payload->value);
     }
 
@@ -3420,11 +3420,11 @@ TEST_P(FormatTestCase, columns_rw) {
         ASSERT_EQ(expected_value, actual_str_value);
       }
 
-      ASSERT_EQ(irs::doc_limits::eof(), it->seek(13));
+      ASSERT_EQ(irs::doc_limits::kEOF, it->seek(13));
       ASSERT_EQ(irs::bytes_view{}, payload->value);
 
       ASSERT_FALSE(it->next());
-      ASSERT_EQ(irs::doc_limits::eof(), it->value());
+      ASSERT_EQ(irs::doc_limits::kEOF, it->value());
       ASSERT_EQ(irs::bytes_view{}, payload->value);
     }
 
@@ -3471,7 +3471,7 @@ TEST_P(FormatTestCase, columns_rw) {
 
       ASSERT_FALSE(it->next());
       ASSERT_EQ(i, expected_values.size());
-      ASSERT_EQ(irs::doc_limits::eof(), it->value());
+      ASSERT_EQ(irs::doc_limits::kEOF, it->value());
       ASSERT_EQ(irs::bytes_view{}, payload->value);
     }
   }

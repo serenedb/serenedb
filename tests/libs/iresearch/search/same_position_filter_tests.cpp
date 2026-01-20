@@ -259,7 +259,7 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
         ASSERT_EQ(docs->value(), doc->value);
       }
       ASSERT_FALSE(docs->next());
-      ASSERT_EQ(irs::doc_limits::eof(), docs->value());
+      ASSERT_EQ(irs::doc_limits::kEOF, docs->value());
     }
 
     // check document with first position
@@ -314,7 +314,7 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
         in.reset(actual_value->value);
         ASSERT_EQ(27, irs::ReadZV64(in));
         ASSERT_FALSE(docs->next());
-        ASSERT_EQ(irs::doc_limits::eof(), docs->value());
+        ASSERT_EQ(irs::doc_limits::kEOF, docs->value());
       }
 
       // seek
@@ -343,7 +343,7 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
         ASSERT_EQ((irs::doc_limits::min)() + 27,
                   docs->seek(27));  // seek to same position
         ASSERT_FALSE(docs->next());
-        ASSERT_EQ(irs::doc_limits::eof(), docs->value());
+        ASSERT_EQ(irs::doc_limits::kEOF, docs->value());
       }
     }
 
@@ -380,7 +380,7 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
         in.reset(actual_value->value);
         ASSERT_EQ(91, irs::ReadZV64(in));
         ASSERT_FALSE(docs->next());
-        ASSERT_EQ(irs::doc_limits::eof(), docs->value());
+        ASSERT_EQ(irs::doc_limits::kEOF, docs->value());
       }
 
       // seek
@@ -404,7 +404,7 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
         ASSERT_EQ((irs::doc_limits::min)() + 91,
                   docs->seek(27));  // seek to same position
         ASSERT_FALSE(docs->next());
-        ASSERT_EQ(irs::doc_limits::eof(), docs->value());
+        ASSERT_EQ(irs::doc_limits::kEOF, docs->value());
       }
     }
 
@@ -483,7 +483,7 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
         in.reset(actual_value->value);
         ASSERT_EQ(89, irs::ReadZV64(in));
         ASSERT_FALSE(docs->next());
-        ASSERT_EQ(irs::doc_limits::eof(), docs->value());
+        ASSERT_EQ(irs::doc_limits::kEOF, docs->value());
       }
 
       // seek + next
@@ -528,7 +528,7 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
         in.reset(actual_value->value);
         ASSERT_EQ(89, irs::ReadZV64(in));
         ASSERT_FALSE(docs->next());
-        ASSERT_EQ(irs::doc_limits::eof(), docs->value());
+        ASSERT_EQ(irs::doc_limits::kEOF, docs->value());
       }
 
       // seek to the end
@@ -538,9 +538,9 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
         ASSERT_TRUE(bool(doc));
         ASSERT_EQ(docs->value(), doc->value);
         ASSERT_EQ(irs::doc_limits::invalid(), docs->value());
-        ASSERT_EQ(irs::doc_limits::eof(), docs->seek(irs::doc_limits::eof()));
+        ASSERT_EQ(irs::doc_limits::kEOF, docs->seek(irs::doc_limits::kEOF));
         ASSERT_FALSE(docs->next());
-        ASSERT_EQ(irs::doc_limits::eof(), docs->value());
+        ASSERT_EQ(irs::doc_limits::kEOF, docs->value());
       }
     }
   }

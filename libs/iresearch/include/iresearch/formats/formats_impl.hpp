@@ -1592,8 +1592,6 @@ struct PositionImpl<IteratorTraits, FieldTraits, false> : Attribute {
   void Clear() noexcept {}
 };
 
-struct Empty {};
-
 // Buffer type containing only document buffer
 template<typename IteratorTraits>
 struct DataBuffer {
@@ -1703,10 +1701,9 @@ using AttributesImpl = std::conditional_t<
                      std::tuple<DocAttr, ScoreAttr, CostAttr>>>;
 
 template<typename IteratorTraits, typename FieldTraits>
-class SingleDocIterator
-  : public DocIterator,
-    private std::conditional_t<IteratorTraits::Position(),
-                               DataBuffer<IteratorTraits>, Empty> {
+class SingleDocIterator : public DocIterator,
+                          private utils::Need<IteratorTraits::Position(),
+                                              DataBuffer<IteratorTraits>> {
   static_assert((IteratorTraits::Features() & FieldTraits::Features()) ==
                 IteratorTraits::Features());
 

@@ -434,7 +434,7 @@ class DocIteratorImpl : public irs::DocIterator {
 
   irs::doc_id_t advance() final {
     if (_next == _data.postings.end()) {
-      return _doc.value = irs::doc_limits::eof();
+      return _doc.value = irs::doc_limits::kEOF;
     }
 
     _prev = _next, ++_next;
@@ -450,7 +450,7 @@ class DocIteratorImpl : public irs::DocIterator {
 
     if (it == _data.postings.end()) {
       _prev = _next = it;
-      return irs::doc_limits::eof();
+      return irs::doc_limits::kEOF;
     }
 
     _prev = it;

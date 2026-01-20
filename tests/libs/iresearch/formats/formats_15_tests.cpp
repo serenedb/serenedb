@@ -97,7 +97,7 @@ class FreqThresholdDocIterator : public irs::DocIterator {
     target = _impl->seek(target);
 
     if (irs::doc_limits::eof(target)) {
-      return irs::doc_limits::eof();
+      return irs::doc_limits::kEOF;
     }
 
     if (_freq && Less()) {
@@ -202,7 +202,7 @@ SkipList SkipList::Make(irs::DocIterator& it, irs::doc_id_t skip_0,
     }
 
     for (auto& [step, level] : skip_list) {
-      level.back() = {irs::doc_limits::eof(),
+      level.back() = {irs::doc_limits::kEOF,
                       std::numeric_limits<irs::score_t>::max()};
     }
   }
@@ -709,12 +709,12 @@ void Format15TestCase::AssertCornerCases(irs::PostingsReader& reader,
     ASSERT_EQ(docs.front().first, it->value());
   }
 
-  // Seek to irs::doc_limits::eof()
+  // Seek to irs::doc_limits::kEOF
   {
     auto it =
       GetWanderator(reader, scorer, field_features, features, meta, 0, strict);
     ASSERT_FALSE(irs::doc_limits::valid(it->value()));
-    ASSERT_TRUE(irs::doc_limits::eof(it->seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(it->seek(irs::doc_limits::kEOF)));
     ASSERT_FALSE(it->next());
     ASSERT_TRUE(irs::doc_limits::eof(it->value()));
   }

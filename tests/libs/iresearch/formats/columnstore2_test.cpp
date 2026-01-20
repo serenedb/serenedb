@@ -1851,7 +1851,7 @@ TEST_P(Columnstore2TestCase, dense_mask_column) {
       AssertPrevDoc(*it, *prev_it);
       ASSERT_TRUE(irs::IsNull(payload->value));
       ASSERT_TRUE(irs::doc_limits::eof(it->seek(kMax + 1)));
-      ASSERT_TRUE(irs::doc_limits::eof(it->seek(irs::doc_limits::eof())));
+      ASSERT_TRUE(irs::doc_limits::eof(it->seek(irs::doc_limits::kEOF)));
     }
   }
 }

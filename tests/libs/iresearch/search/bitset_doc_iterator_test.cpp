@@ -88,11 +88,11 @@ TEST(bitset_iterator_test, next) {
 
     ASSERT_FALSE(it.next());
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-    ASSERT_EQ(irs::doc_limits::eof(), doc->value);
+    ASSERT_EQ(irs::doc_limits::kEOF, doc->value);
 
     ASSERT_FALSE(it.next());
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-    ASSERT_EQ(irs::doc_limits::eof(), doc->value);
+    ASSERT_EQ(irs::doc_limits::kEOF, doc->value);
   }
 
   // dense bitset
@@ -259,10 +259,10 @@ TEST(bitset_iterator_test, next) {
     ASSERT_EQ(185, it.value());
     ASSERT_FALSE(it.next());
     ASSERT_EQ(it.value(), doc->value);
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
     ASSERT_FALSE(it.next());
     ASSERT_EQ(it.value(), doc->value);
-    ASSERT_EQ(irs::doc_limits::eof(), it.value());
+    ASSERT_EQ(irs::doc_limits::kEOF, it.value());
   }
 }
 
@@ -372,7 +372,7 @@ TEST(bitset_iterator_test, seek) {
     ASSERT_EQ(size, cost->estimate());
     ASSERT_FALSE(irs::get<irs::ScoreAttr>(it));
 
-    ASSERT_EQ(irs::doc_limits::eof(), it.seek(size));
+    ASSERT_EQ(irs::doc_limits::kEOF, it.seek(size));
 
     for (ptrdiff_t expected_doc = size - 1; expected_doc >= 0; --expected_doc) {
       ASSERT_EQ(expected_doc, it.seek(expected_doc));
@@ -402,7 +402,7 @@ TEST(bitset_iterator_test, seek) {
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(it.value(), doc->value);
 
-    ASSERT_EQ(irs::doc_limits::eof(), it.seek(size));
+    ASSERT_EQ(irs::doc_limits::kEOF, it.seek(size));
     ASSERT_EQ(it.value(), doc->value);
   }
 
@@ -445,7 +445,7 @@ TEST(bitset_iterator_test, seek) {
     ASSERT_TRUE(bool(doc));
 
     ASSERT_EQ(it.value(), doc->value);
-    ASSERT_EQ(irs::doc_limits::eof(), it.seek(irs::doc_limits::eof()));
+    ASSERT_EQ(irs::doc_limits::kEOF, it.seek(irs::doc_limits::kEOF));
     ASSERT_EQ(it.value(), doc->value);
   }
 
@@ -527,7 +527,7 @@ TEST(bitset_iterator_test, seek) {
     ASSERT_EQ(size / 2, cost->estimate());
     ASSERT_FALSE(irs::get<irs::ScoreAttr>(it));
 
-    ASSERT_EQ(irs::doc_limits::eof(), it.seek(size));
+    ASSERT_EQ(irs::doc_limits::kEOF, it.seek(size));
 
     for (ptrdiff_t i = size - 1; i >= 0; i -= 2) {
       ASSERT_EQ(i, it.seek(i));
@@ -564,8 +564,8 @@ TEST(bitset_iterator_test, seek) {
       {64, 64},
       {68, 68},
       {78, 78},
-      {irs::doc_limits::eof(), 128},
-      {irs::doc_limits::eof(), irs::doc_limits::eof()}};
+      {irs::doc_limits::kEOF, 128},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF}};
 
     for (auto& seek : seeks) {
       ASSERT_EQ(seek.first, it.seek(seek.second));
@@ -596,8 +596,8 @@ TEST(bitset_iterator_test, seek) {
       {71, 70},
       {74, 72},
       {126, 125},
-      {irs::doc_limits::eof(), 128},
-      {irs::doc_limits::eof(), irs::doc_limits::eof()}};
+      {irs::doc_limits::kEOF, 128},
+      {irs::doc_limits::kEOF, irs::doc_limits::kEOF}};
 
     for (auto& seek : seeks) {
       ASSERT_EQ(seek.first, it.seek(seek.second));
@@ -625,7 +625,7 @@ TEST(bitset_iterator_test, seek) {
     ASSERT_TRUE(bool(doc));
 
     std::vector<std::pair<irs::doc_id_t, irs::doc_id_t>> seeks{
-      {irs::doc_limits::eof(), 187}};
+      {irs::doc_limits::kEOF, 187}};
 
     for (auto& seek : seeks) {
       ASSERT_EQ(seek.first, it.seek(seek.second));
@@ -652,7 +652,7 @@ TEST(bitset_iterator_test, seek) {
     ASSERT_TRUE(bool(doc));
 
     std::vector<std::pair<irs::doc_id_t, irs::doc_id_t>> seeks{
-      {186, 186}, {irs::doc_limits::eof(), 187}};
+      {186, 186}, {irs::doc_limits::kEOF, 187}};
 
     for (auto& seek : seeks) {
       ASSERT_EQ(seek.first, it.seek(seek.second));
@@ -683,7 +683,7 @@ TEST(bitset_iterator_test, seek) {
     ASSERT_EQ(it.value(), doc->value);
     ASSERT_EQ(186, it.seek(186));
     ASSERT_EQ(it.value(), doc->value);
-    ASSERT_EQ(irs::doc_limits::eof(), it.seek(187));
+    ASSERT_EQ(irs::doc_limits::kEOF, it.seek(187));
     ASSERT_EQ(it.value(), doc->value);
   }
 
@@ -706,7 +706,7 @@ TEST(bitset_iterator_test, seek) {
     ASSERT_TRUE(bool(doc));
 
     ASSERT_EQ(185, it.seek(2));
-    ASSERT_EQ(irs::doc_limits::eof(), it.seek(187));
+    ASSERT_EQ(irs::doc_limits::kEOF, it.seek(187));
     ASSERT_EQ(it.value(), doc->value);
   }
 }
@@ -773,7 +773,7 @@ TEST(bitset_iterator_test, seek_next) {
     ASSERT_EQ(size, cost->estimate());
     ASSERT_FALSE(irs::get<irs::ScoreAttr>(it));
 
-    ASSERT_EQ(irs::doc_limits::eof(), it.seek(size));
+    ASSERT_EQ(irs::doc_limits::kEOF, it.seek(size));
 
     const size_t steps = 5;
     for (ptrdiff_t expected_doc = size - 1; expected_doc >= 0; --expected_doc) {
@@ -852,7 +852,7 @@ TEST(bitset_iterator_test, seek_next) {
     ASSERT_EQ(size / 2, cost->estimate());
     ASSERT_FALSE(irs::get<irs::ScoreAttr>(it));
 
-    ASSERT_EQ(irs::doc_limits::eof(), it.seek(size));
+    ASSERT_EQ(irs::doc_limits::kEOF, it.seek(size));
 
     size_t steps = 5;
     for (ptrdiff_t i = size - 1; i >= 0; i -= 2) {

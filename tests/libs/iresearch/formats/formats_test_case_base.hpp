@@ -152,7 +152,7 @@ class FormatTestCase : public IndexTestBase {
       }
 
       if (_next == _end) {
-        return _doc.value = irs::doc_limits::eof();
+        return _doc.value = irs::doc_limits::kEOF;
       }
 
       std::tie(_doc.value, _freq.value) = *_next;

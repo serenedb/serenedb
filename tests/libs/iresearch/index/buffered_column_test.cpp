@@ -173,7 +173,7 @@ void AssertIteratorCornerCases(const irs::BufferedColumn& column,
       ASSERT_FALSE(it.next());
     }
     ASSERT_EQ(
-      expected_values.empty() ? irs::doc_limits::eof() : expected_values.size(),
+      expected_values.empty() ? irs::doc_limits::kEOF : expected_values.size(),
       it.seek(expected_values.size()));
     ASSERT_FALSE(it.next());
   }
@@ -200,15 +200,15 @@ void AssertIteratorCornerCases(const irs::BufferedColumn& column,
     if (!expected_values.empty()) {
       ASSERT_EQ(value, 1);
     } else {
-      ASSERT_EQ(value, irs::doc_limits::eof());
+      ASSERT_EQ(value, irs::doc_limits::kEOF);
     }
   }
 
-  // Seek to irs::doc_limits::eof()
+  // Seek to irs::doc_limits::kEOF
   {
     irs::BufferedColumnIterator it{column.Index(), column.Data()};
     ASSERT_FALSE(irs::doc_limits::valid(it.value()));
-    ASSERT_TRUE(irs::doc_limits::eof(it.seek(irs::doc_limits::eof())));
+    ASSERT_TRUE(irs::doc_limits::eof(it.seek(irs::doc_limits::kEOF)));
     ASSERT_FALSE(it.next());
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
   }

@@ -1203,7 +1203,7 @@ TEST_P(TfidfTestCase, test_query) {
       ++doc;
       ASSERT_EQ(1.5f, score_value);
     }
-    ASSERT_EQ(irs::doc_limits::eof(), docs->value());
+    ASSERT_EQ(irs::doc_limits::kEOF, docs->value());
   }
   EXPECT_EQ(counter.current, 0);
   EXPECT_GT(counter.max, 0);
@@ -1240,7 +1240,7 @@ TEST_P(TfidfTestCase, test_query) {
       ++doc;
       ASSERT_EQ(0.f, score_value);
     }
-    ASSERT_EQ(irs::doc_limits::eof(), docs->value());
+    ASSERT_EQ(irs::doc_limits::kEOF, docs->value());
   }
   EXPECT_EQ(counter.current, 0);
   EXPECT_GT(counter.max, 0);
@@ -1277,7 +1277,7 @@ TEST_P(TfidfTestCase, test_query) {
       ++doc;
       ASSERT_EQ(1.f, score_value);
     }
-    ASSERT_EQ(irs::doc_limits::eof(), docs->value());
+    ASSERT_EQ(irs::doc_limits::kEOF, docs->value());
   }
   EXPECT_EQ(counter.current, 0);
   EXPECT_GT(counter.max, 0);
@@ -1315,7 +1315,7 @@ TEST_P(TfidfTestCase, test_query) {
       ++doc;
       ASSERT_EQ(0.f, score_value);
     }
-    ASSERT_EQ(irs::doc_limits::eof(), docs->value());
+    ASSERT_EQ(irs::doc_limits::kEOF, docs->value());
   }
   EXPECT_EQ(counter.current, 0);
   EXPECT_GT(counter.max, 0);

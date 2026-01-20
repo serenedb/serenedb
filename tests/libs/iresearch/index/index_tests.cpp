@@ -13403,7 +13403,7 @@ class IndexTestCase14 : public IndexTestCase {
       -> irs::FeatureWriter::ptr {
       ++call_stats.num_factory_calls;
 
-      irs::doc_id_t min_doc{irs::doc_limits::eof()};
+      irs::doc_id_t min_doc{irs::doc_limits::kEOF};
       for (auto header : headers) {
         auto* p = header.data();
         min_doc = std::min(irs::read<irs::doc_id_t>(p), min_doc);

@@ -323,7 +323,7 @@ void OpenReader(std::string_view format,
   ASSERT_TRUE(live_docs->next());
   ASSERT_EQ(1, live_docs->value());
   ASSERT_FALSE(live_docs->next());
-  ASSERT_EQ(irs::doc_limits::eof(), live_docs->value());
+  ASSERT_EQ(irs::doc_limits::kEOF, live_docs->value());
 }
 
 }  // namespace
@@ -3500,7 +3500,7 @@ TEST(index_death_test_formats_15, columnstore_reopen_fail) {
   ASSERT_TRUE(live_docs->next());
   ASSERT_EQ(1, live_docs->value());
   ASSERT_FALSE(live_docs->next());
-  ASSERT_EQ(irs::doc_limits::eof(), live_docs->value());
+  ASSERT_EQ(irs::doc_limits::kEOF, live_docs->value());
 }
 
 TEST(index_death_test_formats_15, fails_in_dup) {
@@ -3785,5 +3785,5 @@ TEST(index_death_test_formats_15, postings_reopen_fail) {
   ASSERT_TRUE(live_docs->next());
   ASSERT_EQ(1, live_docs->value());
   ASSERT_FALSE(live_docs->next());
-  ASSERT_EQ(irs::doc_limits::eof(), live_docs->value());
+  ASSERT_EQ(irs::doc_limits::kEOF, live_docs->value());
 }

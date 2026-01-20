@@ -78,7 +78,7 @@ class PrevDocWrapper : public irs::DocIterator {
  public:
   explicit PrevDocWrapper(DocIterator::ptr&& it) noexcept : _it{std::move(it)} {
     // Actual implementation doesn't matter
-    _prev_doc.reset([](const void*) { return irs::doc_limits::eof(); },
+    _prev_doc.reset([](const void*) { return irs::doc_limits::kEOF; },
                     nullptr);
   }
 
@@ -211,7 +211,7 @@ auto MakeOptions(std::string_view parent, std::string_view child,
 
 TEST(NestedFilterTest, CheckMatch) {
   static_assert(irs::Match{0, 0} == irs::kMatchNone);
-  static_assert(irs::Match{1, irs::doc_limits::eof()} == irs::kMatchAny &&
+  static_assert(irs::Match{1, irs::doc_limits::kEOF} == irs::kMatchAny &&
                 irs::kMatchAny.IsMinMatch());
 }
 
@@ -427,16 +427,16 @@ TEST_P(NestedFilterTestCase, JoinAny1) {
       {Next{}, 6, {2.f, 2.f}},
       {Next{}, 13, {9.f, 9.f}},
       {Next{}, 20, {14.f, 14.f}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
   }
 
   {
-    const Tests tests = {{Seek{21}, irs::doc_limits::eof()},
-                         {Next{}, irs::doc_limits::eof()},
-                         {Next{}, irs::doc_limits::eof()}};
+    const Tests tests = {{Seek{21}, irs::doc_limits::kEOF},
+                         {Next{}, irs::doc_limits::kEOF},
+                         {Next{}, irs::doc_limits::kEOF}};
     CheckQuery(filter, {}, {tests}, reader, SOURCE_LOCATION);
   }
 
@@ -447,9 +447,9 @@ TEST_P(NestedFilterTestCase, JoinAny1) {
       {Seek{2}, 6},
       {Next{}, 13},
       {Next{}, 20},
-      {Next{}, irs::doc_limits::eof()},
-      {Seek{2}, irs::doc_limits::eof()},
-      {Next{}, irs::doc_limits::eof()}};
+      {Next{}, irs::doc_limits::kEOF},
+      {Seek{2}, irs::doc_limits::kEOF},
+      {Next{}, irs::doc_limits::kEOF}};
     CheckQuery(filter, {}, {tests}, reader, SOURCE_LOCATION);
   }
 
@@ -457,7 +457,7 @@ TEST_P(NestedFilterTestCase, JoinAny1) {
     const Tests tests = {{Seek{6}, 6},
                          {Next{}, 13},
                          {Next{}, 20},
-                         {Next{}, irs::doc_limits::eof()}};
+                         {Next{}, irs::doc_limits::kEOF}};
 
     CheckQuery(filter, {}, {tests}, reader, SOURCE_LOCATION);
   }
@@ -496,7 +496,7 @@ TEST_P(NestedFilterTestCase, JoinAny3) {
       {Next{}, 6, {3.f, 3.f}},
       {Next{}, 13, {12.f, 12.f}},
       {Next{}, 20, {19.f, 19.f}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -512,7 +512,7 @@ TEST_P(NestedFilterTestCase, JoinAny3) {
       {Next{}, 6, {2.f, 2.f}},
       {Next{}, 13, {9.f, 9.f}},
       {Next{}, 20, {14.f, 14.f}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -528,7 +528,7 @@ TEST_P(NestedFilterTestCase, JoinAny3) {
       {Next{}, 6, {}},
       {Next{}, 13, {}},
       {Next{}, 20, {}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -572,7 +572,7 @@ TEST_P(NestedFilterTestCase, JoinAll0) {
     const Tests tests = {
       {Next{}, 13, {12.f, 12.f}},
       {Next{}, 20, {19.f, 19.f}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -590,7 +590,7 @@ TEST_P(NestedFilterTestCase, JoinAll0) {
     const Tests tests = {
       {Next{}, 13, {9.f, 9.f}},
       {Next{}, 20, {14.f, 14.f}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -608,7 +608,7 @@ TEST_P(NestedFilterTestCase, JoinAll0) {
     const Tests tests = {
       {Next{}, 13, {}},
       {Next{}, 20, {}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -639,7 +639,7 @@ TEST_P(NestedFilterTestCase, JoinMin0) {
     const Tests tests = {
       {Next{}, 13, {12.f, 12.f}},
       {Next{}, 20, {19.f, 19.f}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -654,7 +654,7 @@ TEST_P(NestedFilterTestCase, JoinMin0) {
     const Tests tests = {
       {Next{}, 13, {9.f, 9.f}},
       {Next{}, 20, {14.f, 14.f}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -669,7 +669,7 @@ TEST_P(NestedFilterTestCase, JoinMin0) {
     const Tests tests = {
       {Next{}, 13, {}},
       {Next{}, 20, {}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -696,7 +696,7 @@ TEST_P(NestedFilterTestCase, JoinMin1) {
 
     const Tests tests = {
       {Next{}, 6, {5.f, 5.f}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -710,7 +710,7 @@ TEST_P(NestedFilterTestCase, JoinMin1) {
 
     const Tests tests = {
       {Next{}, 6, {1.f, 1.f}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -724,7 +724,7 @@ TEST_P(NestedFilterTestCase, JoinMin1) {
 
     const Tests tests = {
       {Next{}, 6, {}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -752,7 +752,7 @@ TEST_P(NestedFilterTestCase, JoinMin2) {
     const Tests tests = {
       {Next{}, 6, {5.f, 5.f}},          {Next{}, 8, {0.f, 0.f}},
       {Next{}, 13, {0.f, 0.f}},         {Next{}, 20, {0.f, 0.f}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -767,7 +767,7 @@ TEST_P(NestedFilterTestCase, JoinMin2) {
     const Tests tests = {
       {Next{}, 6, {0.f, 0.f}},          {Next{}, 8, {0.f, 0.f}},
       {Next{}, 13, {0.f, 0.f}},         {Next{}, 20, {0.f, 0.f}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -784,7 +784,7 @@ TEST_P(NestedFilterTestCase, JoinMin2) {
       {Next{}, 8, {}},
       {Next{}, 13, {}},
       {Next{}, 20, {}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -812,7 +812,7 @@ TEST_P(NestedFilterTestCase, JoinMin3) {
     const Tests tests = {
       {Next{}, 6, {0.f, 0.f}},          {Next{}, 8, {0.f, 0.f}},
       {Next{}, 13, {0.f, 0.f}},         {Next{}, 20, {0.f, 0.f}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -827,7 +827,7 @@ TEST_P(NestedFilterTestCase, JoinMin3) {
     const Tests tests = {
       {Next{}, 6, {0.f, 0.f}},          {Next{}, 8, {0.f, 0.f}},
       {Next{}, 13, {0.f, 0.f}},         {Next{}, 20, {0.f, 0.f}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -844,7 +844,7 @@ TEST_P(NestedFilterTestCase, JoinMin3) {
       {Next{}, 8, {}},
       {Next{}, 13, {}},
       {Next{}, 20, {}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -872,7 +872,7 @@ TEST_P(NestedFilterTestCase, JoinRange0) {
     const Tests tests = {
       {Next{}, 13, {12.f, 12.f}},
       {Next{}, 20, {19.f, 19.f}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -887,7 +887,7 @@ TEST_P(NestedFilterTestCase, JoinRange0) {
     const Tests tests = {
       {Next{}, 13, {9.f, 9.f}},
       {Next{}, 20, {14.f, 14.f}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -902,7 +902,7 @@ TEST_P(NestedFilterTestCase, JoinRange0) {
     const Tests tests = {
       {Next{}, 13, {}},
       {Next{}, 20, {}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -929,7 +929,7 @@ TEST_P(NestedFilterTestCase, JoinRange1) {
 
     const Tests tests = {
       {Next{}, 6, {5.f, 5.f}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -943,7 +943,7 @@ TEST_P(NestedFilterTestCase, JoinRange1) {
 
     const Tests tests = {
       {Next{}, 6, {1.f, 1.f}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -957,7 +957,7 @@ TEST_P(NestedFilterTestCase, JoinRange1) {
 
     const Tests tests = {
       {Next{}, 6, {}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -985,7 +985,7 @@ TEST_P(NestedFilterTestCase, JoinRange2) {
     const Tests tests = {
       {Next{}, 6, {3.f, 3.f}},          {Next{}, 8, {0.f, 0.f}},
       {Next{}, 13, {12.f, 12.f}},       {Next{}, 20, {19.f, 19.f}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -1000,7 +1000,7 @@ TEST_P(NestedFilterTestCase, JoinRange2) {
     const Tests tests = {
       {Next{}, 6, {2.f, 2.f}},          {Next{}, 8, {0.f, 0.f}},
       {Next{}, 13, {9.f, 9.f}},         {Next{}, 20, {14.f, 14.f}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -1017,7 +1017,7 @@ TEST_P(NestedFilterTestCase, JoinRange2) {
       {Next{}, 8, {}},
       {Next{}, 13, {}},
       {Next{}, 20, {}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -1044,7 +1044,7 @@ TEST_P(NestedFilterTestCase, JoinNone0) {
 
     const Tests tests = {
       {Next{}, 8, {1.f, 1.f}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -1058,7 +1058,7 @@ TEST_P(NestedFilterTestCase, JoinNone0) {
 
     const Tests tests = {
       {Next{}, 8, {1.f, 1.f}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -1072,7 +1072,7 @@ TEST_P(NestedFilterTestCase, JoinNone0) {
 
     const Tests tests = {
       {Next{}, 8, {}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -1100,7 +1100,7 @@ TEST_P(NestedFilterTestCase, JoinNone1) {
 
     const Tests tests = {
       {Next{}, 8, {0.5f, 0.5f}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -1114,7 +1114,7 @@ TEST_P(NestedFilterTestCase, JoinNone1) {
 
     const Tests tests = {
       {Next{}, 8, {0.5f, 0.5f}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -1128,7 +1128,7 @@ TEST_P(NestedFilterTestCase, JoinNone1) {
 
     const Tests tests = {
       {Next{}, 8, {}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -1157,7 +1157,7 @@ TEST_P(NestedFilterTestCase, JoinNone2) {
     const Tests tests = {
       {Next{}, 6, {1.f, 1.f}},          {Next{}, 8, {1.f, 1.f}},
       {Next{}, 13, {1.f, 1.f}},         {Next{}, 20, {1.f, 1.f}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -1172,7 +1172,7 @@ TEST_P(NestedFilterTestCase, JoinNone2) {
     const Tests tests = {
       {Next{}, 6, {1.f, 1.f}},          {Next{}, 8, {1.f, 1.f}},
       {Next{}, 13, {1.f, 1.f}},         {Next{}, 20, {1.f, 1.f}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -1189,7 +1189,7 @@ TEST_P(NestedFilterTestCase, JoinNone2) {
       {Next{}, 8, {}},
       {Next{}, 13, {}},
       {Next{}, 20, {}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -1230,7 +1230,7 @@ TEST_P(NestedFilterTestCase, JoinNone3) {
     const Tests tests = {
       {Next{}, 6, {0.5f, 0.5f}},        {Next{}, 8, {0.5f, 0.5f}},
       {Next{}, 13, {0.5f, 0.5f}},       {Next{}, 20, {0.5f, 0.5f}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -1245,7 +1245,7 @@ TEST_P(NestedFilterTestCase, JoinNone3) {
     const Tests tests = {
       {Next{}, 6, {0.5f, 0.5f}},        {Next{}, 8, {0.5f, 0.5f}},
       {Next{}, 13, {0.5f, 0.5f}},       {Next{}, 20, {0.5f, 0.5f}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
@@ -1262,7 +1262,7 @@ TEST_P(NestedFilterTestCase, JoinNone3) {
       {Next{}, 8, {}},
       {Next{}, 13, {}},
       {Next{}, 20, {}},
-      {Next{}, irs::doc_limits::eof()},
+      {Next{}, irs::doc_limits::kEOF},
     };
 
     CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);

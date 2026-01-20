@@ -2058,8 +2058,8 @@ class CopyOptionsParser {
       } else {
         THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
                         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                        ERR_MSG("COPY LOG_VERBOSITY \"",
-                                DeparseExpr(option->arg), "\" not recognized"));
+                        ERR_MSG("COPY LOG_VERBOSITY \"", *maybe_verbosity,
+                                "\" not recognized"));
       }
     }
 

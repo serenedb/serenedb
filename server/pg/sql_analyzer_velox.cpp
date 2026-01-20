@@ -1804,7 +1804,7 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
 
 class CopyRowRejector {
  public:
-  enum class LogVerbosity { Verbose = 0, Default = 1, Silent = 2 };
+  enum class LogVerbosity { Silent = 0, Default = 1, Verbose = 2 };
 
   CopyRowRejector(LogVerbosity verbosity, message::Buffer& send,
                   std::string_view table_name, uint64_t reject_limit)
@@ -1846,7 +1846,7 @@ class CopyRowRejector {
       return;
     }
 
-    if (_rejected != 0 && _verbosity <= LogVerbosity::Default) {
+    if (_rejected != 0 && _verbosity >= LogVerbosity::Default) {
       auto msg = absl::StrCat(_rejected,
                               " rows were skipped due to data type "
                               "incompatibility");

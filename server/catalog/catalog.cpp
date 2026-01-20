@@ -454,11 +454,15 @@ ResultOr<std::shared_ptr<Database>> GetDatabase(std::string_view name) {
 }
 
 std::shared_ptr<TableShard> GetTableShard(ObjectId id) {
+  auto& catalog = GetCatalog();
+  return catalog.GetSnapshot()->GetTableShard(id);
+}
+
+LogicalCatalog& GetCatalog() {
   auto& catalogs =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
-  auto& catalog = ServerState::instance()->IsCoordinator() ? catalogs.Global()
-                                                           : catalogs.Local();
-  return catalog.GetSnapshot()->GetTableShard(id);
+  return ServerState::instance()->IsCoordinator() ? catalogs.Global()
+                                                  : catalogs.Local();
 }
 
 }  // namespace sdb::catalog

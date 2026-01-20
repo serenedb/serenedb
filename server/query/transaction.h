@@ -26,9 +26,12 @@
 #include <yaclib/async/future.hpp>
 
 #include "basics/bit_utils.hpp"
+#include "basics/containers/flat_hash_map.h"
 #include "basics/result.h"
+#include "catalog/catalog.h"
 #include "query/config.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#include "storage_engine/table_shard.h"
 
 namespace sdb::query {
 
@@ -47,6 +50,10 @@ class Transaction : public Config {
 
   Result Rollback();
 
+  void UpdateNumRows(ObjectId table_id, int64_t delta) noexcept {
+    _table_rows_deltas[table_id] += delta;
+  }
+
   void AddRocksDBRead() noexcept;
 
   void AddRocksDBWrite() noexcept;
@@ -61,14 +68,18 @@ class Transaction : public Config {
 
   void Destroy() noexcept;
 
+  catalog::TableStats GetTableStats(ObjectId table_id) const;
+
  private:
   void CreateStorageSnapshot();
   void CreateRocksDBTransaction();
+  void ApplyTableStatsDiffs();
 
   State _state = State::None;
   std::shared_ptr<StorageSnapshot> _storage_snapshot;
   std::unique_ptr<rocksdb::Transaction> _rocksdb_transaction;
   const rocksdb::Snapshot* _rocksdb_snapshot = nullptr;
+  containers::FlatHashMap<ObjectId, int64_t> _table_rows_deltas;
 };
 
 ENABLE_BITMASK_ENUM(Transaction::State);

@@ -291,5 +291,6 @@ class CatalogFeature final : public SerenedFeature {
 ResultOr<std::shared_ptr<Database>> GetDatabase(ObjectId database_id);
 ResultOr<std::shared_ptr<Database>> GetDatabase(std::string_view name);
 std::shared_ptr<TableShard> GetTableShard(ObjectId id);
+LogicalCatalog& GetCatalog();
 
 }  // namespace sdb::catalog

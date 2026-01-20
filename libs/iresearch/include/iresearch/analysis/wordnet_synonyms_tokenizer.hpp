@@ -45,7 +45,7 @@ class WordnetSynonymsTokenizer final
   static sdb::ResultOr<SynonymsMap> Parse(std::string_view input);
 
   explicit WordnetSynonymsTokenizer(SynonymsMap&& mapping);
-  Attribute* GetMutable(TypeInfo::type_id type) final {
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);
   }
   bool next() final;

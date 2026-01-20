@@ -535,7 +535,7 @@ class CompoundTermIterator : public TermIterator {
     }
   }
 
-  bytes_view value() const final {
+  bytes_view value() const noexcept final {
     if (!_has_min_term) [[unlikely]] {
       _has_min_term = true;
       _min_term = _current_term;

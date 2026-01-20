@@ -1014,7 +1014,7 @@ struct PositionBase<IteratorTraits, FieldTraits, true, true>
   : public PositionBase<IteratorTraits, FieldTraits, false, false> {
   using Base = PositionBase<IteratorTraits, FieldTraits, false, false>;
 
-  irs::Attribute* Attribute(TypeInfo::type_id type) noexcept {
+  Attribute* Attribute(TypeInfo::type_id type) noexcept {
     if (irs::Type<PayAttr>::id() == type) {
       return &pay;
     }
@@ -1148,7 +1148,7 @@ struct PositionBase<IteratorTraits, FieldTraits, false, true>
   : public PositionBase<IteratorTraits, FieldTraits, false, false> {
   using Base = PositionBase<IteratorTraits, FieldTraits, false, false>;
 
-  irs::Attribute* Attribute(TypeInfo::type_id type) noexcept {
+  Attribute* Attribute(TypeInfo::type_id type) noexcept {
     return irs::Type<PayAttr>::id() == type ? &pay : nullptr;
   }
 
@@ -1270,7 +1270,7 @@ struct PositionBase<IteratorTraits, FieldTraits, true, false>
   : public PositionBase<IteratorTraits, FieldTraits, false, false> {
   using Base = PositionBase<IteratorTraits, FieldTraits, false, false>;
 
-  irs::Attribute* Attribute(TypeInfo::type_id type) noexcept {
+  Attribute* Attribute(TypeInfo::type_id type) noexcept {
     return irs::Type<OffsAttr>::id() == type ? &offs : nullptr;
   }
 
@@ -1372,7 +1372,7 @@ struct PositionBase<IteratorTraits, FieldTraits, false, false> {
     IteratorTraits::skip_block(in);
   }
 
-  irs::Attribute* Attribute(TypeInfo::type_id) noexcept {
+  Attribute* Attribute(TypeInfo::type_id) noexcept {
     // implementation has no additional attributes
     return nullptr;
   }
@@ -1473,7 +1473,7 @@ class PositionImpl final : public PosAttr,
  public:
   using Impl = PositionBase<IteratorTraits, FieldTraits>;
 
-  irs::Attribute* GetMutable(TypeInfo::type_id type) final {
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return Impl::Attribute(type);
   }
 
@@ -1589,8 +1589,6 @@ struct PositionImpl<IteratorTraits, FieldTraits, false> : Attribute {
   void Notify(uint32_t) noexcept {}
   void Clear() noexcept {}
 };
-
-struct Empty {};
 
 // Buffer type containing only document buffer
 template<typename IteratorTraits>

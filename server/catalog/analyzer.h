@@ -48,7 +48,7 @@ class Analyzer final : public irs::analysis::TypedAnalyzer<Analyzer>,
 
   explicit Analyzer(Options&& options) noexcept;
 
-  irs::Attribute* GetMutable(irs::TypeInfo::type_id type) final;
+  irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final;
 
   bool reset(std::string_view data) final;
 

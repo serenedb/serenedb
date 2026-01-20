@@ -384,7 +384,7 @@ class SortingDocIteratorImpl : public DocIterator {
     return std::get<DocAttr>(_attrs).value;
   }
 
-  doc_id_t advance() noexcept final {
+  doc_id_t advance() final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
 
     while (_it != _docs.end()) {
@@ -410,7 +410,7 @@ class SortingDocIteratorImpl : public DocIterator {
     return doc_value = doc_limits::eof();
   }
 
-  doc_id_t seek(doc_id_t doc) noexcept final {
+  doc_id_t seek(doc_id_t doc) final {
     irs::seek(*this, doc);
     return value();
   }

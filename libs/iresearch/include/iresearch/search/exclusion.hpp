@@ -43,7 +43,7 @@ class Exclusion : public DocIterator {
     return _incl->GetMutable(type);
   }
 
-  doc_id_t value() const final { return _incl_doc->value; }
+  doc_id_t value() const noexcept final { return _incl_doc->value; }
 
   doc_id_t advance() final {
     const auto incl = _incl->advance();

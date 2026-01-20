@@ -42,7 +42,7 @@ class MockTermReader final : public irs::BasicTermReader {
       _max_term(max_term) {}
 
  private:
-  irs::Attribute* GetMutable(irs::TypeInfo::type_id /*type*/) final {
+  irs::Attribute* GetMutable(irs::TypeInfo::type_id /*type*/) noexcept final {
     return nullptr;
   }
   irs::TermIterator::ptr iterator() const final {
@@ -167,7 +167,7 @@ class FormatTestCase : public IndexTestBase {
       return _doc.value;
     }
 
-    irs::doc_id_t value() const final { return _doc.value; }
+    irs::doc_id_t value() const noexcept final { return _doc.value; }
 
     irs::doc_id_t seek(irs::doc_id_t target) final {
       irs::seek(*this, target);
@@ -222,7 +222,7 @@ class FormatTestCase : public IndexTestBase {
       return true;
     }
 
-    irs::bytes_view value() const final { return _val; }
+    irs::bytes_view value() const noexcept final { return _val; }
 
     irs::DocIterator::ptr postings(
       irs::IndexFeatures /*features*/) const final {

@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "basics/empty.hpp"
 #include "basics/std.hpp"
 #include "basics/system-compiler.h"
 #include "conjunction.hpp"

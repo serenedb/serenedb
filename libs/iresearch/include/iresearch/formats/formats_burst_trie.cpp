@@ -462,7 +462,7 @@ inline int32_t PrepareInput(std::string& str, IndexInput::ptr& in,
 struct Cookie final : SeekCookie {
   explicit Cookie(const TermMetaImpl& meta) noexcept : meta(meta) {}
 
-  Attribute* GetMutable(TypeInfo::type_id type) final {
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     if (type == irs::Type<TermMeta>::id()) [[likely]] {
       return &meta;
     }
@@ -2194,7 +2194,7 @@ class SingleTermIterator : public SeekTermIterator {
     SDB_ASSERT(_terms_in);
   }
 
-  Attribute* GetMutable(TypeInfo::type_id type) final {
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     if (type == irs::Type<TermMeta>::id()) {
       return &_meta;
     }
@@ -2202,7 +2202,7 @@ class SingleTermIterator : public SeekTermIterator {
     return type == irs::Type<TermAttr>::id() ? &_value : nullptr;
   }
 
-  bytes_view value() const final { return _value.value; }
+  bytes_view value() const noexcept final { return _value.value; }
 
   bool next() final { throw NotSupported(); }
 

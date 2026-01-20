@@ -2008,6 +2008,72 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
 
   doc_id_t seek(doc_id_t target) final;
 
+  DocIterator::Leaf seek_to_leaf(doc_id_t target) final {
+    SeekToBlock(target);
+
+    const auto min_in_leaf = _skip.Reader().State().doc + 1;
+    const auto max_in_leaf = _skip.Reader().Next().doc;
+    return {min_in_leaf, max_in_leaf};
+  }
+
+  doc_id_t seek_in_leaf(doc_id_t target) final {
+    auto& doc_value = std::get<DocAttr>(_attrs).value;
+
+    SDB_ASSERT(_skip.Reader().State().doc <= doc_value);
+    SDB_ASSERT(doc_value < target);
+    SDB_ASSERT(target <= _skip.Reader().Next().doc);
+
+    if (this->_begin == std::end(this->_buf.docs)) [[unlikely]] {
+      if (this->_left == 0) [[unlikely]] {
+        return doc_value = doc_limits::kEOF;
+      }
+
+      if (this->_left >= IteratorTraits::kBlockSize) [[likely]] {
+        auto& state = _skip.Reader().State();
+        this->_doc_in->Seek(state.doc_ptr);
+        if constexpr (IteratorTraits::Position()) {
+          auto& pos = std::get<Position>(_attrs);
+          pos.Prepare(state);  // Notify positions
+        }
+      }
+
+      this->Refill(doc_value);
+    }
+
+    [[maybe_unused]] uint32_t notify = 0;
+
+    while (this->_begin != std::end(this->_buf.docs)) {
+      const auto doc = *this->_begin++;
+
+      if constexpr (IteratorTraits::Position()) {
+        notify += *this->_freq++;
+      }
+
+      if (target <= doc) {
+        if constexpr (IteratorTraits::Frequency()) {
+          if constexpr (!IteratorTraits::Position()) {
+            this->_freq = this->_buf.freqs + this->RelativePos();
+          }
+          SDB_ASSERT((this->_freq - 1) >= this->_buf.freqs);
+          SDB_ASSERT((this->_freq - 1) < std::end(this->_buf.freqs));
+          auto& freq = std::get<FreqAttr>(_attrs);
+          freq.value = this->_freq[-1];
+        }
+
+        if constexpr (IteratorTraits::Position()) {
+          auto& pos = std::get<Position>(_attrs);
+          pos.Notify(notify);
+          pos.Clear();
+        }
+
+        return doc_value = doc;
+      }
+    }
+
+    const auto max_in_leaf = _skip.Reader().Next().doc;
+    return max_in_leaf + 1;
+  }
+
   uint32_t count() final {
     if (this->_left == 0) [[unlikely]] {
       return this->Count(*this);
@@ -2061,22 +2127,12 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
 
     void MoveDown(size_t level) noexcept {
       auto& next = _skip_levels[level];
-      // Move to the more granular level
-      SDB_ASSERT(_prev);
-      CopyState<IteratorTraits>(next, *_prev);
+      CopyState<IteratorTraits>(next, _prev);
     }
 
     void Read(size_t level, IndexInput& in);
     void Seal(size_t level);
     size_t AdjustLevel(size_t level) const noexcept { return level; }
-
-    void Reset(SkipState& state) noexcept {
-      SDB_ASSERT(absl::c_is_sorted(
-        _skip_levels,
-        [](const auto& lhs, const auto& rhs) { return lhs.doc > rhs.doc; }));
-
-      _prev = &state;
-    }
 
     doc_id_t UpperBound() const noexcept {
       SDB_ASSERT(!_skip_levels.empty());
@@ -2087,6 +2143,9 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
       CommonSkipWandData(static_cast<WandExtent>(*this), in);
     }
 
+    SkipState& State() noexcept { return _prev; }
+    SkipState& Next() noexcept { return _skip_levels.back(); }
+
    private:
     void Enable() noexcept {
       SDB_ASSERT(!_skip_levels.empty());
@@ -2095,7 +2154,7 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
     }
 
     std::vector<SkipState> _skip_levels;
-    SkipState* _prev{};  // Pointer to skip context used by skip reader
+    SkipState _prev;
   };
 
   void SeekToBlock(doc_id_t target);
@@ -2112,7 +2171,7 @@ void DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::ReadSkip::Read(
   auto& next = _skip_levels[level];
 
   // Store previous step on the same level
-  CopyState<IteratorTraits>(*_prev, next);
+  CopyState<IteratorTraits>(_prev, next);
 
   ReadState<FieldTraits>(next, in);
 
@@ -2125,7 +2184,7 @@ void DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::ReadSkip::Seal(
   auto& next = _skip_levels[level];
 
   // Store previous step on the same level
-  CopyState<IteratorTraits>(*_prev, next);
+  CopyState<IteratorTraits>(_prev, next);
 
   // Stream exhausted
   next.doc = doc_limits::kEOF;
@@ -2215,6 +2274,15 @@ doc_id_t DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::seek(
       return doc_value = doc_limits::kEOF;
     }
 
+    if (this->_left >= IteratorTraits::kBlockSize) [[unlikely]] {
+      auto& state = _skip.Reader().State();
+      this->_doc_in->Seek(state.doc_ptr);
+      if constexpr (IteratorTraits::Position()) {
+        auto& pos = std::get<Position>(_attrs);
+        pos.Prepare(state);  // Notify positions
+      }
+    }
+
     this->Refill(doc_value);
   }
 
@@ -2258,24 +2326,15 @@ void DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::SeekToBlock(
     return;
   }
 
-  SkipState last;  // Where block starts
-  _skip.Reader().Reset(last);
-
   // Init skip writer in lazy fashion
   if (_docs_count == 0) [[likely]] {
   seek_after_initialization:
     SDB_ASSERT(_skip.NumLevels());
 
     this->_left = _skip.Seek(target);
-    std::get<DocAttr>(_attrs).value = last.doc;
+    std::get<DocAttr>(_attrs).value = _skip.Reader().State().doc;
 
     this->_begin = std::end(this->_buf.docs);
-
-    this->_doc_in->Seek(last.doc_ptr);
-    if constexpr (IteratorTraits::Position()) {
-      auto& pos = std::get<Position>(_attrs);
-      pos.Prepare(last);  // Notify positions
-    }
     return;
   }
 
@@ -2364,11 +2423,6 @@ class Wanderator : public DocIteratorBase<IteratorTraits, FieldTraits>,
   doc_id_t advance() final { return seek(value() + 1); }
 
   doc_id_t seek(doc_id_t target) final;
-
-  doc_id_t shallow_seek(doc_id_t target) final {
-    SeekToBlock(target);
-    return _skip.Reader().Next().doc;
-  }
 
   uint32_t count() final {
     if (this->_left == 0) [[unlikely]] {
@@ -3246,8 +3300,12 @@ struct PostingAdapter {
     return self().seek(target);
   }
 
-  IRS_FORCE_INLINE doc_id_t shallow_seek(doc_id_t target) {
-    return self().shallow_seek(target);
+  IRS_FORCE_INLINE auto seek_to_leaf(doc_id_t target) {
+    return self().seek_to_leaf(target);
+  }
+
+  IRS_FORCE_INLINE doc_id_t seek_in_leaf(doc_id_t target) {
+    return self().seek_in_leaf(target);
   }
 
   IRS_FORCE_INLINE uint32_t count() { return self().count(); }

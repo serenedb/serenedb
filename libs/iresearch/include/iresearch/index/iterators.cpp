@@ -40,16 +40,21 @@ struct EmptyDocIterator : ResettableDocIterator {
     }
     return Type<CostAttr>::id() == id ? &_cost : nullptr;
   }
-  doc_id_t value() const final { return doc_limits::eof(); }
-  doc_id_t advance() final { return doc_limits::eof(); }
-  doc_id_t seek(doc_id_t /*target*/) final { return doc_limits::eof(); }
-  doc_id_t shallow_seek(doc_id_t /*target*/) final { return doc_limits::eof(); }
+  doc_id_t value() const final { return doc_limits::kEOF; }
+  doc_id_t advance() final { return doc_limits::kEOF; }
+  doc_id_t seek(doc_id_t /*target*/) final { return doc_limits::kEOF; }
+
+  Leaf seek_to_leaf(doc_id_t target) final {
+    return {doc_limits::kEOF, doc_limits::kEOF};
+  }
+  doc_id_t seek_in_leaf(doc_id_t target) { return doc_limits::kEOF; }
+
   uint32_t count() final { return 0; }
   void reset() final {}
 
  private:
   CostAttr _cost{0};
-  DocAttr _doc{doc_limits::eof()};
+  DocAttr _doc{doc_limits::kEOF};
 };
 
 EmptyDocIterator gEmptyDocIterator;

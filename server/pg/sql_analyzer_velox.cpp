@@ -1802,18 +1802,69 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
     std::move(column_exprs));
 }
 
-class CopyLogger {
+class CopyRowRejector {
  public:
   enum class Verbosity { Verbose = 0, Default = 1, Silent = 2 };
 
-  CopyLogger(Verbosity verbosity, message::Buffer& send,
-             std::string_view table_name)
-    : _send{send}, _table_name{table_name}, _verbosity{verbosity} {}
+  CopyRowRejector(Verbosity verbosity, message::Buffer& send,
+                  std::string_view table_name, uint64_t reject_limit)
+    : _send{send},
+      _table_name{table_name},
+      _verbosity{verbosity},
+      _reject_limit{reject_limit} {
+    SDB_ASSERT(!_table_name.empty());
+  }
+
+  void Process(const RejectedRow& row) {
+    ++_rejected;
+
+    if (_rejected <= _reject_limit) {
+      NoticeRejected(row);
+      return;
+    }
+
+    std::string errmsg;
+    if (_reject_limit != 0) {
+      NoticeRejected(row);
+      errmsg = absl::StrCat("skipped more than REJECT_LIMIT (", _reject_limit,
+                            ") rows due to data type incompatibility");
+    } else {
+      errmsg =
+        absl::StrCat("invalid input syntax for type ",
+                     ToPgTypeString(row.columnType), ": \"", row.value, "\"");
+    }
+
+    _report_summary = false;
+    auto context =
+      absl::StrCat("COPY ", _table_name, ", line ", row.rowNumber, ", column ",
+                   ToAlias(row.columnName), ": \"", row.value, "\"");
+    ThrowCopyErr(std::move(errmsg), std::move(context));
+  }
+
+  ~CopyRowRejector() {
+    if (!_report_summary) {
+      return;
+    }
+
+    if (_rejected != 0 && _verbosity <= Verbosity::Default) {
+      auto msg = absl::StrCat(_rejected,
+                              " rows were skipped due to data type "
+                              "incompatibility");
+      WriteNotice(msg);
+    }
+  }
+
+ private:
+  void ThrowCopyErr(std::string errmsg, std::string context) {
+    SqlErrorData err{.errcode = ERRCODE_BAD_COPY_FILE_FORMAT,
+                     .errmsg = std::move(errmsg),
+                     .context = std::move(context)};
+    SqlException exception{std::move(err), std::source_location::current()};
+    throw velox::VeloxUserError{std::make_exception_ptr(std::move(exception)),
+                                "", false};
+  }
 
   void NoticeRejected(const velox::text::RejectedRow& row) {
-    SDB_ASSERT(_skipped_rows + 1 == row.rejectedRows);
-    _skipped_rows = row.rejectedRows;
-
     if (_verbosity == Verbosity::Verbose) {
       auto msg =
         absl::StrCat("skipping row due to data type incompatibility at ",
@@ -1823,22 +1874,6 @@ class CopyLogger {
     }
   }
 
-  void DoNotReportSummary() { _report_summary = false; }
-
-  ~CopyLogger() {
-    if (!_report_summary) {
-      return;
-    }
-
-    if (_verbosity <= Verbosity::Default && _skipped_rows != 0) {
-      auto msg = absl::StrCat(_skipped_rows,
-                              " rows were skipped due to data type "
-                              "incompatibility");
-      WriteNotice(msg);
-    }
-  }
-
- private:
   void WriteNotice(std::string_view message) {
     const auto uncommitted_size = _send.GetUncommittedSize();
     auto* prefix_data = _send.GetContiguousData(5);
@@ -1854,9 +1889,10 @@ class CopyLogger {
 
   message::Buffer& _send;
   std::string_view _table_name;
-  uint64_t _skipped_rows = 0;
+  uint64_t _rejected = 0;
   bool _report_summary = true;
   Verbosity _verbosity;
+  const uint64_t _reject_limit;
 };
 
 class CopyOptionsParser {
@@ -2039,7 +2075,7 @@ class CopyOptionsParser {
       reject_limit = *maybe_reject_limit;
     }
 
-    auto log_verbosity = CopyLogger::Verbosity::Default;
+    auto log_verbosity = CopyRowRejector::Verbosity::Default;
     if (const auto* option = EraseOption("log_verbosity")) {
       auto maybe_verbosity = TryGet<std::string_view>(option->arg);
       if (!maybe_verbosity) {
@@ -2050,11 +2086,11 @@ class CopyOptionsParser {
       }
 
       if (*maybe_verbosity == "verbose") {
-        log_verbosity = CopyLogger::Verbosity::Verbose;
+        log_verbosity = CopyRowRejector::Verbosity::Verbose;
       } else if (*maybe_verbosity == "default") {
-        log_verbosity = CopyLogger::Verbosity::Default;
+        log_verbosity = CopyRowRejector::Verbosity::Default;
       } else if (*maybe_verbosity == "silent") {
-        log_verbosity = CopyLogger::Verbosity::Silent;
+        log_verbosity = CopyRowRejector::Verbosity::Silent;
       } else {
         THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
                         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -2093,37 +2129,13 @@ class CopyOptionsParser {
       text_options->setSerDeOptions(std::move(serde_options));
       text_options->setFileSchema(std::move(_row_type));
       text_options->setFileFormat(FileFormat::TEXT);
-      text_options->setRejectLimit(reject_limit);
 
       SDB_ASSERT(_send_buffer);
-      auto handler =
-        [copy_logger = CopyLogger{log_verbosity, *_send_buffer, _table_name},
-         table_name = _table_name](const RejectedRow& row) mutable {
-          if (!row.isError()) {
-            copy_logger.NoticeRejected(row);
-            return;
-          }
-
-          std::string errmsg;
-          if (row.rejectLimit != 0) {
-            copy_logger.NoticeRejected(row);
-            errmsg =
-              absl::StrCat("skipped more than REJECT_LIMIT (", row.rejectLimit,
-                           ") rows due to data type incompatibility");
-          } else {
-            errmsg = absl::StrCat("invalid input syntax for type ",
-                                  ToPgTypeString(row.columnType), ": \"",
-                                  row.value, "\"");
-          }
-
-          SDB_ASSERT(!table_name.empty());
-          copy_logger.DoNotReportSummary();
-          THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT), ERR_MSG(errmsg),
-            ERR_CONTEXT("COPY ", table_name, ", line ", row.rowNumber,
-                        ", column ", ToAlias(row.columnName), ": \"", row.value,
-                        "\""));
-        };
+      auto handler = [copy_logger = CopyRowRejector{
+                        log_verbosity, *_send_buffer, _table_name,
+                        reject_limit}](const RejectedRow& row) mutable {
+        copy_logger.Process(row);
+      };
       text_options->setOnRowReject(std::move(handler));
       _reader_options = std::move(text_options);
       _row_reader_options->setSkipRows(header);

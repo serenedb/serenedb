@@ -50,6 +50,12 @@ class PostgresFeature;
 
 }  // namespace pg
 
+namespace search {
+
+class SearchFeature;
+
+}  // namespace search
+
 class LoggerFeature;
 class ServerOptionsFeature;
 class SslServerFeature;
@@ -129,7 +135,8 @@ using SerenedFeaturesList = type::List<
   BootstrapFeature,
   ShutdownFeature,
   SoftShutdownFeature,
-  TimeZoneFeature>;
+  TimeZoneFeature,
+  search::SearchFeature>;
 // clang-format on
 
 struct SerenedFeatures : SerenedFeaturesList {};

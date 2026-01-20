@@ -66,7 +66,9 @@
 #include "general_server/state.h"
 #include "rest_server/serened.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#include "search/data_store.h"
 #include "storage_engine/engine_feature.h"
+#include "storage_engine/search_feature.h"
 #include "utils/exec_context.h"
 #include "utils/operation_options.h"
 #include "utils/query_cache.h"
@@ -394,6 +396,17 @@ class SnapshotImpl : public Snapshot {
     return it == _table_shards.end() ? nullptr : *it;
   }
 
+  std::vector<std::shared_ptr<search::DataStore>> GetSearchDataStores()
+    const final {
+    return {_search_datastores.begin(), _search_datastores.end()};
+  }
+
+  std::shared_ptr<search::DataStore> GetSearchDataStore(
+    ObjectId id) const final {
+    auto it = _search_datastores.find(id);
+    return it == _search_datastores.end() ? nullptr : *it;
+  }
+
   std::shared_ptr<Object> GetObject(ObjectId id) const final {
     auto it = _objects_by_id.find(id);
     return it == _objects_by_id.end() ? nullptr : *it;
@@ -401,6 +414,11 @@ class SnapshotImpl : public Snapshot {
 
   void AddTableShard(std::shared_ptr<TableShard> physical) {
     const auto is_new = _table_shards.emplace(std::move(physical)).second;
+    SDB_ENSURE(is_new, ERROR_INTERNAL);
+  }
+
+  void AddSearchDataStore(std::shared_ptr<search::DataStore> datastore) {
+    const auto is_new = _search_datastores.emplace(std::move(datastore)).second;
     SDB_ENSURE(is_new, ERROR_INTERNAL);
   }
 
@@ -963,11 +981,13 @@ class SnapshotImpl : public Snapshot {
   ObjectSetByName<Database> _databases_by_name;
   ObjectSetById<Object> _objects_by_id;
   ObjectSetById<TableShard> _table_shards;
+  ObjectSetById<search::DataStore> _search_datastores;
 };
 
 LocalCatalog::LocalCatalog(bool skip_background_errors)
   : _snapshot(std::make_shared<SnapshotImpl>()),
     _engine{&GetServerEngine()},
+    _search_feature{&search::GetSearchFeature()},
     _skip_background_errors{skip_background_errors} {}
 
 Result LocalCatalog::RegisterRole(std::shared_ptr<Role> role) {
@@ -1143,12 +1163,19 @@ Result LocalCatalog::CreateIndex(ObjectId database_id, std::string_view schema,
   }
 
   return Apply(_snapshot, [&](auto& clone) {
-    return clone->RegisterObject(database_id, schema, std::move(*index), false,
-                                 [&](auto& object) -> Result {
-                                   auto& index =
-                                     basics::downCast<Index>(*object);
-                                   return _engine->CreateIndex(index);
-                                 });
+    return clone->RegisterObject(
+      database_id, schema, std::move(*index), false,
+      [&](auto& object) -> Result {
+        auto& index = basics::downCast<Index>(*object);
+        return _search_feature->CreateDataStore(index)
+          .and_then([&](std::shared_ptr<search::DataStore>&& datastore)
+                      -> ResultOr<std::shared_ptr<search::DataStore>> {
+            clone->AddSearchDataStore(std::move(datastore));
+            return std::unexpected<Result>{std::in_place,
+                                           _engine->CreateIndex(index)};
+          })
+          .error();
+      });
   });
 }
 

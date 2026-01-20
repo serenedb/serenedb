@@ -42,6 +42,7 @@
 #include "catalog/table_options.h"
 #include "catalog/types.h"
 #include "catalog/view.h"
+#include "search/data_store.h"
 
 namespace sdb::catalog {
 
@@ -104,6 +105,11 @@ struct Snapshot {
 
   virtual std::shared_ptr<TableShard> GetTableShard(ObjectId id) const = 0;
   virtual std::vector<std::shared_ptr<TableShard>> GetTableShards() const = 0;
+
+  virtual std::shared_ptr<search::DataStore> GetSearchDataStore(
+    ObjectId id) const = 0;
+  virtual std::vector<std::shared_ptr<search::DataStore>> GetSearchDataStores()
+    const = 0;
 
   template<typename T>
   std::shared_ptr<T> GetObject(ObjectId id) const {

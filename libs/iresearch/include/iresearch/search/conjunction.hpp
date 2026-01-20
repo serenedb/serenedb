@@ -208,8 +208,6 @@ class Conjunction : public ConjunctionBase<Adapter, Merger> {
     return converge(_front.seek(target));
   }
 
-  uint32_t count() override { return DocIterator::Count(*this); }
-
  private:
   // tries to converge front_ and other iterators to the specified target.
   // if it impossible tries to find first convergence place

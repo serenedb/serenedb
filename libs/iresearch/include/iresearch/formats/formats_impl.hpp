@@ -2006,7 +2006,9 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
   doc_id_t seek(doc_id_t target) final;
 
   DocIterator::Leaf seek_to_leaf(doc_id_t target) final {
-    SeekToBlock(target);
+    if (_skip.Reader().UpperBound() < target) [[unlikely]] {
+      SeekToBlock(target);
+    }
 
     const auto leaf_min = _skip.Reader().State().doc + 1;
     const auto leaf_max = _skip.Reader().Next().doc;
@@ -2267,7 +2269,9 @@ doc_id_t DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::seek(
     return doc_value;
   }
 
-  SeekToBlock(target);
+  if (_skip.Reader().UpperBound() < target) [[unlikely]] {
+    SeekToBlock(target);
+  }
 
   if (this->_begin == std::end(this->_buf.docs)) [[unlikely]] {
     if (this->_left == 0) [[unlikely]] {
@@ -2322,10 +2326,6 @@ doc_id_t DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::seek(
 template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
 void DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::SeekToBlock(
   doc_id_t target) {
-  if (target <= _skip.Reader().UpperBound()) [[likely]] {
-    return;
-  }
-
   // Init skip writer in lazy fashion
   if (_docs_count == 0) [[likely]] {
   seek_after_initialization:

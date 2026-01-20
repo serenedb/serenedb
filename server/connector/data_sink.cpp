@@ -142,16 +142,16 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
   _store_keys_buffers.clear();
   _store_keys_buffers.reserve(num_rows);
 
-  auto lock_row = [&](std::string_view row_key) {
-    auto status = _transaction.GetKeyLock(&_cf, row_key, false, true);
-    if (!status.ok()) {
-      SDB_THROW(rocksutils::ConvertStatus(status));
-    }
-  };
-
   for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-    key_utils::MakeColumnKey(input, _key_childs, row_idx, table_key, lock_row,
-                             _store_keys_buffers.emplace_back());
+    key_utils::MakeColumnKey(
+      input, _key_childs, row_idx, table_key,
+      [&](std::string_view row_key) {
+        auto status = _transaction.GetKeyLock(&_cf, row_key, false, true);
+        if (!status.ok()) {
+          SDB_THROW(rocksutils::ConvertStatus(status));
+        }
+      },
+      _store_keys_buffers.emplace_back());
   }
 
   velox::IndexRange all_rows(0, num_rows);
@@ -240,7 +240,7 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
     std::unique_ptr<rocksdb::Iterator>(_db.NewIterator(read_options, &_cf));
 
   for (auto column_id : _all_column_ids) {
-    // Delete values written with old keys
+    // Delete values written with old keys and setup column id in buffers
     for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
       auto& old_key = _old_keys_buffers[row_idx];
       key_utils::SetupColumnForKey(old_key, column_id);

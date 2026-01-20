@@ -158,10 +158,6 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
   }
 };
 
-// TODO move bool 'updating_pk' to rocksdb table
-// and implement method that will calculate number of affected rows with
-// dividing by 2 for update with PK
-
 class RocksDBTable final : public axiom::connector::Table {
   struct Init {
     const catalog::Table& collection;
@@ -592,8 +588,6 @@ class SereneDBConnector final : public velox::connector::Connector {
           auto& rocksdb_transaction = transaction.EnsureRocksDBTransaction();
 
           if constexpr (IsUpdate) {
-            // todo use pointer to snapshot
-            // ensure snapshot only for update pk
             const rocksdb::Snapshot* snapshot = nullptr;
             std::vector<catalog::Column::Id> all_column_oids;
             if (table.IsUsedForUpdatePK()) {

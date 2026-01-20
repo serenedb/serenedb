@@ -46,6 +46,8 @@ struct IndexTombstone {
 
 struct TableTombstone {
   ObjectId table;
+  ObjectId old_schema;
+  ObjectId old_database;
   uint64_t number_documents = kRead;
   std::vector<IndexTombstone> indexes;
 };

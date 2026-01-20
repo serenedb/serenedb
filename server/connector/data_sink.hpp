@@ -41,7 +41,6 @@ class RocksDBDataSinkBase : public velox::connector::DataSink {
  protected:
   RocksDBDataSinkBase(rocksdb::Transaction& transaction,
                       rocksdb::ColumnFamilyHandle& cf,
-                      std::atomic<size_t>& num_of_rows_affected,
                       velox::memory::MemoryPool& memory_pool,
                       ObjectId object_key,
                       std::span<const velox::column_index_t> key_childs,
@@ -182,13 +181,12 @@ class RocksDBDataSinkBase : public velox::connector::DataSink {
 
   rocksdb::Transaction& _transaction;
   rocksdb::ColumnFamilyHandle& _cf;
-  std::atomic<size_t>& _num_of_rows_affected;
   ObjectId _object_key;
   std::vector<velox::column_index_t> _key_childs;
   std::vector<catalog::Column::Id> _column_ids;
   velox::memory::MemoryPool& _memory_pool;
   SliceVector _row_slices;
-  primary_key::Keys _keys_buffers;
+  primary_key::Keys _store_keys_buffers;
   velox::HashStringAllocator _bytes_allocator;
   catalog::Column::Id _column_id;
 };
@@ -197,7 +195,6 @@ class RocksDBInsertDataSink : public RocksDBDataSinkBase {
  public:
   RocksDBInsertDataSink(rocksdb::Transaction& transaction,
                         rocksdb::ColumnFamilyHandle& cf,
-                        std::atomic<size_t>& num_of_rows_affected,
                         velox::memory::MemoryPool& memory_pool,
                         ObjectId object_key,
                         std::span<const velox::column_index_t> key_childs,
@@ -209,33 +206,43 @@ class RocksDBInsertDataSink : public RocksDBDataSinkBase {
 class RocksDBUpdateDataSink : public RocksDBDataSinkBase {
  public:
   RocksDBUpdateDataSink(rocksdb::Transaction& transaction,
-                        const rocksdb::Snapshot& snapshot, rocksdb::DB& db,
+                        const rocksdb::Snapshot* snapshot, rocksdb::DB& db,
                         rocksdb::ColumnFamilyHandle& cf,
-                        std::atomic<size_t>& num_of_rows_affected,
                         velox::memory::MemoryPool& memory_pool,
                         ObjectId object_key,
                         std::span<const velox::column_index_t> key_childs,
                         std::vector<catalog::Column::Id> column_ids,
                         std::vector<catalog::Column::Id> all_column_ids,
-                        bool updating_pk);
+                        bool update_pk);
 
   void appendData(velox::RowVectorPtr input) final;
 
  private:
-  const rocksdb::Snapshot& _snapshot;
+  bool IsUpdatedColumn(catalog::Column::Id column_id) const {
+    SDB_ASSERT(_update_pk, "Used only when updating PK");
+    auto it = _column_id_to_input_idx.find(column_id);
+    if (it == _column_id_to_input_idx.end()) {
+      // Not in input
+      return false;
+    }
+
+    // First '_key_childs' children are old PK
+    return it->second >= _key_childs.size();
+  }
+
+  const rocksdb::Snapshot* _snapshot;
   rocksdb::DB& _db;
   std::vector<catalog::Column::Id> _all_column_ids;
-  containers::FlatHashSet<catalog::Column::Id> _updated_column_ids;
   std::vector<velox::column_index_t> _updated_key_childs;
-  primary_key::Keys _updated_keys_buffers;
-  bool _updating_pk{};
+  primary_key::Keys _old_keys_buffers;
+  containers::FlatHashMap<catalog::Column::Id, size_t> _column_id_to_input_idx;
+  bool _update_pk{};
 };
 
 class RocksDBDeleteDataSink : public velox::connector::DataSink {
  public:
   RocksDBDeleteDataSink(rocksdb::Transaction& transaction,
                         rocksdb::ColumnFamilyHandle& cf,
-                        std::atomic<size_t>& num_of_rows_affected,
                         velox::RowTypePtr row_type, ObjectId object_key,
                         std::vector<catalog::Column::Id> column_ids);
 
@@ -250,7 +257,6 @@ class RocksDBDeleteDataSink : public velox::connector::DataSink {
   // contains only primary key columns but we need remove all.
   rocksdb::Transaction& _transaction;
   rocksdb::ColumnFamilyHandle& _cf;
-  std::atomic<size_t>& _num_of_rows_affected;
   velox::RowTypePtr _row_type;
   ObjectId _object_key;
   std::vector<catalog::Column::Id> _column_ids;

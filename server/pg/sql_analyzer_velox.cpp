@@ -1713,6 +1713,7 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
     std::ranges::to<NameToColumnMap>();
 
   containers::FlatHashSet<std::string_view> target_column_names;
+  bool update_pk = false;
   VisitNodes(stmt.targetList, [&](const ResTarget& target) {
     if (target.indirection) {
       SDB_THROW(ERROR_NOT_IMPLEMENTED,
@@ -1736,10 +1737,13 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
 
     SDB_ASSERT(it->second);
     const auto& column = *(it->second);
-    column_names.emplace_back(
-      pk_column_names.contains(target.name)
-        ? catalog::Column::GenerateUpdateName(target.name)
-        : std::string(target.name));
+    if (pk_column_names.contains(target.name)) {
+      update_pk = true;
+      column_names.emplace_back(
+        catalog::Column::GenerateUpdateName(target.name));
+    } else {
+      column_names.emplace_back(target.name);
+    }
 
     auto expr = ProcessExprNode(state, target.val, ExprKind::UpdateSource);
     if (expr->type() == kDefaultValueTypePlaceHolderPtr) {
@@ -1753,6 +1757,8 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
 
   MakeTableWrite(state, ToNode(&stmt), *object, std::move(column_names),
                  std::move(column_exprs));
+  basics::downCast<connector::RocksDBTable>(object->table)
+    ->SetUsedForUpdatePK(update_pk);
 }
 
 void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {

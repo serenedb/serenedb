@@ -47,6 +47,7 @@
 #include "catalog/validators.h"
 #include "pg/sql_collector.h"
 #include "pg/sql_utils.h"
+#include "query/utils.h"
 #include "utils/velox_vpack.h"
 
 namespace sdb::catalog {
@@ -150,9 +151,18 @@ struct Column {
     std::numeric_limits<uint64_t>::max() - 1'000'000;
   static constexpr Id kGeneratedPKId = kMaxRealId + 1;
 
-  static constexpr auto GetUpdateNamePrefix() {
-    using namespace std::string_view_literals;
-    return "upd_\0"sv;
+  static constexpr std::string_view GetUpdateNamePrefix() {
+    static constexpr std::array kPrefix = []() constexpr {
+      using namespace std::string_view_literals;
+      static constexpr std::string_view kUpdPrefix = "upd"sv;
+      std::array<char, kUpdPrefix.size() + query::kReservedSymbol.size()> arr;
+      for (auto i = 0; i < kUpdPrefix.size(); ++i)
+        arr[i] = kUpdPrefix[i];
+      for (auto i = 0; i < query::kReservedSymbol.size(); ++i)
+        arr[i + kUpdPrefix.size()] = query::kReservedSymbol[i];
+      return arr;
+    }();
+    return std::string_view{kPrefix.data(), kPrefix.size()};
   }
 
   static std::string GenerateUpdateName(std::string_view original_name) {

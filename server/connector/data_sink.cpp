@@ -66,18 +66,16 @@ namespace sdb::connector {
 
 RocksDBDataSinkBase::RocksDBDataSinkBase(
   rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
-  std::atomic<size_t>& num_of_rows_affected,
   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
   std::span<const velox::column_index_t> key_childs,
   std::vector<catalog::Column::Id> column_oids)
   : _transaction{transaction},
     _cf{cf},
-    _num_of_rows_affected(num_of_rows_affected),
     _object_key{object_key},
     _column_ids{std::move(column_oids)},
     _memory_pool{memory_pool},
     _row_slices{memory_pool},
-    _keys_buffers{memory_pool},
+    _store_keys_buffers{memory_pool},
     _bytes_allocator{&memory_pool} {
   _key_childs.assign_range(key_childs);
   SDB_ASSERT(_object_key.isSet(), "RocksDBDataSink: object key is empty");
@@ -86,59 +84,41 @@ RocksDBDataSinkBase::RocksDBDataSinkBase(
 
 RocksDBInsertDataSink::RocksDBInsertDataSink(
   rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
-  std::atomic<size_t>& num_of_rows_affected,
   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
   std::span<const velox::column_index_t> key_childs,
   std::vector<catalog::Column::Id> column_oids)
-  : RocksDBDataSinkBase{transaction,           cf,         num_of_rows_affected,
-                        memory_pool,           object_key, key_childs,
-                        std::move(column_oids)} {}
+  : RocksDBDataSinkBase{transaction, cf,         memory_pool,
+                        object_key,  key_childs, std::move(column_oids)} {}
 
 RocksDBUpdateDataSink::RocksDBUpdateDataSink(
-  rocksdb::Transaction& transaction, const rocksdb::Snapshot& snapshot,
+  rocksdb::Transaction& transaction, const rocksdb::Snapshot* snapshot,
   rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
-  std::atomic<size_t>& num_of_rows_affected,
   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
   std::span<const velox::column_index_t> key_childs,
   std::vector<catalog::Column::Id> column_oids,
-  std::vector<catalog::Column::Id> all_column_oids, bool updating_pk)
-  : RocksDBDataSinkBase{transaction,           cf,         num_of_rows_affected,
-                        memory_pool,           object_key, key_childs,
-                        std::move(column_oids)},
+  std::vector<catalog::Column::Id> all_column_oids, bool update_pk)
+  : RocksDBDataSinkBase{transaction, cf,         memory_pool,
+                        object_key,  key_childs, std::move(column_oids)},
     _snapshot{snapshot},
     _db{db},
     _all_column_ids{std::move(all_column_oids)},
-    _updated_keys_buffers{memory_pool},
-    _updating_pk{updating_pk} {
-  if (_updating_pk) {
-    // Calculate which columns are being updated (without prefixed PK)
-    _updated_column_ids.insert(_column_ids.begin() + _key_childs.size(),
-                               _column_ids.end());
-
+    _old_keys_buffers{memory_pool},
+    _update_pk{update_pk} {
+  if (_update_pk) {
     // Sort all column IDs for seek-forward only iteration
-    std::string lhs_key;
-    std::string rhs_key;
-    absl::c_sort(_all_column_ids,
-                 [&](catalog::Column::Id lhs, catalog::Column::Id rhs) {
-                   lhs_key.clear();
-                   rhs_key.clear();
-                   rocksutils::Append(lhs_key, lhs);
-                   rocksutils::Append(rhs_key, rhs);
-                   return lhs_key < rhs_key;
-                 });
+    absl::c_sort(_all_column_ids);
 
-    containers::FlatHashMap<catalog::Column::Id, size_t> column_id_to_index;
-    column_id_to_index.reserve(_column_ids.size());
+    _column_id_to_input_idx.reserve(_column_ids.size());
     for (size_t i = 0; i < _column_ids.size(); ++i) {
-      column_id_to_index[_column_ids[i]] = i;
+      _column_id_to_input_idx[_column_ids[i]] = i;
     }
 
     // Map old PK indices to updated PK positions in input
     _updated_key_childs.reserve(_key_childs.size());
     for (auto old_pk_index : _key_childs) {
       auto pk_column_id = _column_ids[old_pk_index];
-      auto updated_pos_it = column_id_to_index.find(pk_column_id);
-      SDB_ASSERT(updated_pos_it != column_id_to_index.end());
+      auto updated_pos_it = _column_id_to_input_idx.find(pk_column_id);
+      SDB_ASSERT(updated_pos_it != _column_id_to_input_idx.end());
       _updated_key_childs.push_back(updated_pos_it->second);
     }
   }
@@ -159,8 +139,8 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
   const auto num_rows = input->size();
   const auto num_columns = input->childrenSize();
 
-  _keys_buffers.clear();
-  _keys_buffers.reserve(num_rows);
+  _store_keys_buffers.clear();
+  _store_keys_buffers.reserve(num_rows);
 
   auto lock_row = [&](std::string_view row_key) {
     auto status = _transaction.GetKeyLock(&_cf, row_key, false, true);
@@ -171,7 +151,7 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
 
   for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
     key_utils::MakeColumnKey(input, _key_childs, row_idx, table_key, lock_row,
-                             _keys_buffers.emplace_back());
+                             _store_keys_buffers.emplace_back());
   }
 
   velox::IndexRange all_rows(0, num_rows);
@@ -181,7 +161,6 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
       WriteColumn(input->childAt(i), folly::Range{&all_rows, 1}, {});
     }
   }
-  _num_of_rows_affected.fetch_add(num_rows, std::memory_order_relaxed);
 }
 
 // TODO(Dronplane)
@@ -199,12 +178,12 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
   const auto num_rows = input->size();
   const auto num_columns = input->childrenSize();
 
-  _keys_buffers.clear();
-  _keys_buffers.reserve(num_rows);
+  _store_keys_buffers.clear();
+  _store_keys_buffers.reserve(num_rows);
 
-  if (_updating_pk) {
-    _updated_keys_buffers.clear();
-    _updated_keys_buffers.reserve(num_rows);
+  if (_update_pk) {
+    _old_keys_buffers.clear();
+    _old_keys_buffers.reserve(num_rows);
   }
 
   auto lock_row = [&](std::string_view row_key) {
@@ -214,80 +193,85 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
     }
   };
 
-  for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-    key_utils::MakeColumnKey(input, _key_childs, row_idx, table_key, lock_row,
-                             _keys_buffers.emplace_back());
+  const velox::IndexRange all_rows(0, num_rows);
 
-    // Prepare new keys
-    if (_updating_pk) {
-      key_utils::MakeColumnKey(input, _updated_key_childs, row_idx, table_key,
-                               lock_row, _updated_keys_buffers.emplace_back());
+  if (!_update_pk) {
+    // Take locks and prepare buffers
+    for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+      key_utils::MakeColumnKey(input, _key_childs, row_idx, table_key, lock_row,
+                               _store_keys_buffers.emplace_back());
     }
+
+    // Write updated values
+    for (velox::column_index_t i = _key_childs.size(); i < num_columns; ++i) {
+      _column_id = _column_ids[i];
+      if (_column_id != catalog::Column::kGeneratedPKId) {
+        WriteColumn(input->childAt(i), folly::Range{&all_rows, 1}, {});
+      }
+    }
+    return;
   }
 
-  // Delete all old value
-  if (_updating_pk) {
-    // We want to iterate with only forward seeking, so sort goes for that
-    std::vector<size_t> row_order(num_rows);
-    absl::c_iota(row_order, 0);
-    absl::c_sort(row_order, [&](size_t l_ind, size_t r_ind) {
-      auto l_pk =
-        std::string_view{_keys_buffers[l_ind].begin() + sizeof(ObjectId) +
-                           sizeof(catalog::Column::Id),
-                         _keys_buffers[l_ind].end()};
-      auto r_pk =
-        std::string_view{_keys_buffers[r_ind].begin() + sizeof(ObjectId) +
-                           sizeof(catalog::Column::Id),
-                         _keys_buffers[r_ind].end()};
-      return l_pk < r_pk;
-    });
+  // Take locks and prepare buffers for both new and old primary keys
+  for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+    key_utils::MakeColumnKey(input, _updated_key_childs, row_idx, table_key,
+                             lock_row, _store_keys_buffers.emplace_back());
 
-    containers::FlatHashSet<catalog::Column::Id> updated_columns(
-      _column_ids.begin() + _key_childs.size(), _column_ids.end());
+    key_utils::MakeColumnKey(input, _key_childs, row_idx, table_key, lock_row,
+                             _old_keys_buffers.emplace_back());
+  }
 
-    rocksdb::ReadOptions read_options;
-    read_options.async_io = num_rows > 1;
-    read_options.snapshot = &_snapshot;
-    auto it =
-      std::unique_ptr<rocksdb::Iterator>(_db.NewIterator(read_options, &_cf));
+  // Rewrite on sorting if you can prove and explain why check is failed
+  SDB_ENSURE(
+    absl::c_is_sorted(
+      _old_keys_buffers,
+      [&](std::string_view lhs, std::string_view rhs) {
+        return lhs.substr(sizeof(ObjectId) + sizeof(catalog::Column::Id)) <
+               rhs.substr(sizeof(ObjectId) + sizeof(catalog::Column::Id));
+      }),
+    ERROR_INTERNAL,
+    "RocksDBUpdateDataSink: rows are expected to be sorted in case of "
+    "updating primary key");
 
-    for (auto col_id : _all_column_ids) {
-      for (auto row_idx : row_order) {
-        auto& old_key = _keys_buffers[row_idx];
-        key_utils::SetupColumnForKey(old_key, col_id);
-        it->Seek(old_key);
-        SDB_ASSERT(it->Valid() && it->key() == old_key,
+  rocksdb::ReadOptions read_options;
+  read_options.async_io = num_rows > 1;
+  read_options.snapshot = _snapshot;
+  auto it =
+    std::unique_ptr<rocksdb::Iterator>(_db.NewIterator(read_options, &_cf));
+
+  for (auto column_id : _all_column_ids) {
+    // Delete values written with old keys
+    for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+      auto& old_key = _old_keys_buffers[row_idx];
+      key_utils::SetupColumnForKey(old_key, column_id);
+
+      auto status = _transaction.Delete(&_cf, rocksdb::Slice{old_key});
+      if (!status.ok()) {
+        SDB_THROW(rocksutils::ConvertStatus(status));
+      }
+      key_utils::SetupColumnForKey(_store_keys_buffers[row_idx], column_id);
+    }
+
+    // Write with new keys
+    if (IsUpdatedColumn(column_id)) {
+      _column_id = column_id;
+      WriteColumn(input->childAt(_column_id_to_input_idx[column_id]),
+                  folly::Range{&all_rows, 1}, {});
+    } else {
+      for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+        it->Seek(_old_keys_buffers[row_idx]);
+        SDB_ASSERT(it->Valid() && it->key() == _old_keys_buffers[row_idx],
                    "RocksDBDataSink: internal error, wrong key setup or order "
                    "for PK update");
 
-        auto status = _transaction.Delete(&_cf, rocksdb::Slice{old_key});
-        if (!status.ok()) {
-          SDB_THROW(rocksutils::ConvertStatus(status));
-        }
-        if (_updated_column_ids.contains(col_id)) {
-          continue;
-        }
-
-        auto& updated_key = _updated_keys_buffers[row_idx];
-        key_utils::SetupColumnForKey(updated_key, col_id);
-        status = _transaction.Put(&_cf, updated_key, it->value());
+        auto status =
+          _transaction.Put(&_cf, _store_keys_buffers[row_idx], it->value());
         if (!status.ok()) {
           SDB_THROW(rocksutils::ConvertStatus(status));
         }
       }
     }
-
-    std::swap(_keys_buffers, _updated_keys_buffers);
   }
-
-  velox::IndexRange all_rows(0, num_rows);
-  for (velox::column_index_t i = _key_childs.size(); i < num_columns; ++i) {
-    _column_id = _column_ids[i];
-    if (_column_id != catalog::Column::kGeneratedPKId) {
-      WriteColumn(input->childAt(i), folly::Range{&all_rows, 1}, {});
-    }
-  }
-  _num_of_rows_affected.fetch_add(num_rows, std::memory_order_relaxed);
 }
 
 // Stores column backed by Flat vector.
@@ -2017,9 +2001,9 @@ const std::string& RocksDBDataSinkBase::SetupRowKey(
   SDB_ASSERT(original_idx.empty() ||
              original_idx.size() > static_cast<size_t>(idx));
   const auto row_id = original_idx.empty() ? idx : original_idx[idx];
-  SDB_ASSERT(static_cast<size_t>(row_id) < _keys_buffers.size());
+  SDB_ASSERT(static_cast<size_t>(row_id) < _store_keys_buffers.size());
 
-  auto& row_key = _keys_buffers[row_id];
+  auto& row_key = _store_keys_buffers[row_id];
   key_utils::SetupColumnForKey(row_key, _column_id);
 
   return row_key;
@@ -2153,11 +2137,10 @@ velox::connector::DataSink::Stats RocksDBDataSinkBase::stats() const {
 
 RocksDBDeleteDataSink::RocksDBDeleteDataSink(
   rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
-  std::atomic<size_t>& num_of_rows_affected, velox::RowTypePtr row_type,
-  ObjectId object_key, std::vector<catalog::Column::Id> column_oids)
+  velox::RowTypePtr row_type, ObjectId object_key,
+  std::vector<catalog::Column::Id> column_oids)
   : _transaction{transaction},
     _cf{cf},
-    _num_of_rows_affected(num_of_rows_affected),
     _row_type{std::move(row_type)},
     _object_key{object_key},
     _column_ids{std::move(column_oids)} {
@@ -2200,7 +2183,6 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
       }
     }
   }
-  _num_of_rows_affected.fetch_add(num_rows, std::memory_order_relaxed);
 }
 
 bool RocksDBDeleteDataSink::finish() { return true; }

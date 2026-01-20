@@ -72,18 +72,6 @@ inline void SetupColumnForKey(std::string& buf, catalog::Column::Id column_id) {
   absl::big_endian::Store(buf.data() + sizeof(ObjectId), column_id);
 }
 
-// Takes buffer in format
-// 'object_id | reserved for column_id | pk'
-// and fills pk
-inline void SetupPKForKey(const velox::RowVectorPtr& input,
-                          const std::vector<velox::column_index_t>& pk_columns,
-                          velox::vector_size_t row_idx, std::string& buf) {
-  SDB_ASSERT(buf.size() >= sizeof(ObjectId) + sizeof(catalog::Column::Id));
-  buf.resize(sizeof(ObjectId) + sizeof(catalog::Column::Id));
-  primary_key::Create(*input, pk_columns, row_idx,
-                      buf);  // Or just store 2 arrays?
-}
-
 // creates range covering all rows of all columns of the table
 std::pair<std::string, std::string> CreateTableRange(ObjectId id);
 

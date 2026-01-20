@@ -133,14 +133,14 @@ catalog::TableStats Transaction::GetTableStats(ObjectId table_id) const {
 }
 
 void Transaction::ApplyTableStatsDiffs() {
-  for (const auto& [table_id, diff] : _table_stats_diffs) {
+  for (const auto& [table_id, delta] : _table_rows_deltas) {
     auto table_shard = catalog::GetTableShard(table_id);
     SDB_ASSERT(table_shard);
     if (table_shard) {
-      table_shard->ApplyTableStatsDiff(diff);
+      table_shard->UpdateNumRows(delta);
     }
   }
-  _table_stats_diffs.clear();
+  _table_rows_deltas.clear();
 }
 
 }  // namespace sdb::query

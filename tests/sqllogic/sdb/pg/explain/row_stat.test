@@ -2,7 +2,7 @@ statement ok
 CREATE TABLE t(id text);
 
 
-statement ok
+statement count 1000
 INSERT INTO t
 SELECT ((x * x + x + 1) % 1000)::text FROM generate_series(1, 1000) AS t(x);
 
@@ -11,11 +11,11 @@ statement ok
 CREATE TABLE f(id text primary key, value int);
 
 
-statement ok
+statement count 3
 INSERT INTO f VALUES ('3', 1), ('7', 2), ('13', 3);
 
 
-query ?
+query
 EXPLAIN (ANALYZE) SELECT t.id, f.value FROM f JOIN t ON f.id = t.id;
 ----
 QUERY PLAN

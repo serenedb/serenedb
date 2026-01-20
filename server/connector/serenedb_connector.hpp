@@ -405,8 +405,7 @@ class SereneDBConnectorMetadata final
         serene_insert_handle->Kind() == axiom::connector::WriteKind::kInsert
           ? number_of_locked_primary_keys
           : -number_of_locked_primary_keys;
-      transaction.ModifyTableStats(rocksdb_table.TableId(),
-                                   {.delta_num_rows = delta_num_rows});
+      transaction.UpdateNumRows(rocksdb_table.TableId(), delta_num_rows);
     }
 
     if (!transaction.HasTransactionBegin()) {

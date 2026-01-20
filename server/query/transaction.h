@@ -50,9 +50,8 @@ class Transaction : public Config {
 
   Result Rollback();
 
-  void ModifyTableStats(ObjectId table_id,
-                        catalog::TableStats::Diff diff) noexcept {
-    _table_stats_diffs[table_id].Add(diff);
+  void UpdateNumRows(ObjectId table_id, int64_t delta) noexcept {
+    _table_rows_deltas[table_id] += delta;
   }
 
   void AddRocksDBRead() noexcept;
@@ -80,8 +79,7 @@ class Transaction : public Config {
   std::shared_ptr<StorageSnapshot> _storage_snapshot;
   std::unique_ptr<rocksdb::Transaction> _rocksdb_transaction;
   const rocksdb::Snapshot* _rocksdb_snapshot = nullptr;
-  containers::FlatHashMap<ObjectId, catalog::TableStats::Diff>
-    _table_stats_diffs;
+  containers::FlatHashMap<ObjectId, int64_t> _table_rows_deltas;
 };
 
 ENABLE_BITMASK_ENUM(Transaction::State);

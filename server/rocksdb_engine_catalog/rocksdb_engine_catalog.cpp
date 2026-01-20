@@ -1587,17 +1587,16 @@ Result RocksDBEngineCatalog::createTableShard(
   if (!is_new) {
     // Load Table stats
     RocksDBKeyWithBuffer key;
-    key.constructSchemaObject(RocksDBEntryType::CounterValue,
+    key.constructSchemaObject(RocksDBEntryType::Stats,
                               collection.GetDatabaseId(),
                               collection.GetSchemaId(), collection.GetId());
     std::string value;
-    _db->Get(
-      rocksdb::ReadOptions{},
-      RocksDBColumnFamilyManager::get(RocksDBColumnFamilyManager::Family::Data),
-      key.string(), &value);
-    if (auto r = vpack::ReadObjectNothrow<catalog::TableStats>(
-          vpack::Slice{reinterpret_cast<const uint8_t*>(value.data())}, stats,
-          {.skip_unknown = false});
+    _db->Get(rocksdb::ReadOptions{},
+             RocksDBColumnFamilyManager::get(
+               RocksDBColumnFamilyManager::Family::Definitions),
+             key.string(), &value);
+    auto slice = vpack::Slice{reinterpret_cast<const uint8_t*>(value.data())};
+    if (auto r = vpack::ReadTupleNothrow<catalog::TableStats>(slice, stats);
         !r.ok()) {
       return r;
     }
@@ -1921,15 +1920,13 @@ Result RocksDBEngineCatalog::SyncTableStats(const catalog::Table& c,
   const auto db_id = c.GetDatabaseId();
   const auto cid = c.GetId();
   vpack::Builder b;
-  b.openObject();
   physical.GetTableStatsVPack(b);
-  b.close();
-  auto value = RocksDBValue::Object(RocksDBEntryType::CounterValue, b.slice());
+  auto value = RocksDBValue::Object(RocksDBEntryType::Stats, b.slice());
   RocksDBKeyWithBuffer key;
-  key.constructSchemaObject(RocksDBEntryType::CounterValue, db_id,
-                            c.GetSchemaId(), cid);
-  auto* cf =
-    RocksDBColumnFamilyManager::get(RocksDBColumnFamilyManager::Family::Data);
+  key.constructSchemaObject(RocksDBEntryType::Stats, db_id, c.GetSchemaId(),
+                            cid);
+  auto* cf = RocksDBColumnFamilyManager::get(
+    RocksDBColumnFamilyManager::Family::Definitions);
   return rocksutils::ConvertStatus(
     _db->Put(rocksdb::WriteOptions{}, cf, key.string(), value.string()));
 }

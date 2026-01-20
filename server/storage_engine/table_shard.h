@@ -151,8 +151,8 @@ class TableShard {
     vpack::Builder&,
     const std::function<bool(const Index*, IndexSerialization&)>& filter) const;
 
-  void ApplyTableStatsDiff(catalog::TableStats::Diff diff) noexcept {
-    _num_rows.fetch_add(diff.delta_num_rows, std::memory_order_relaxed);
+  void UpdateNumRows(int64_t delta) {
+    _num_rows.fetch_add(delta, std::memory_order_relaxed);
   }
 
   catalog::TableStats GetTableStats() const {
@@ -160,7 +160,7 @@ class TableShard {
   }
 
   void GetTableStatsVPack(vpack::Builder& builder) const {
-    vpack::WriteObject(builder, vpack::Embedded{GetTableStats()});
+    vpack::WriteTuple(builder, GetTableStats());
   }
 
   // TODO(gnusi): remove

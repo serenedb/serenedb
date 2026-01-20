@@ -89,11 +89,11 @@ SELECT relname, reloptions FROM pg_class WHERE reloptions <> ARRAY[]::varchar[];
 relname	reloptions
 
 
-statement ok
+statement count 3
 INSERT INTO t VALUES ('a'), ('b'), ('c');
 
 
-statement ok
+statement count 3
 INSERT INTO t VALUES ('a'), ('b'), ('c');
 
 
@@ -104,7 +104,7 @@ relname	reltuples
 t	6
 
 
-statement ok
+statement count 2
 UPDATE t SET r = 'aa' WHERE r = 'a';
 
 
@@ -115,7 +115,7 @@ relname	reltuples
 t	6
 
 
-statement ok
+statement count 2
 DELETE FROM t WHERE r = 'aa';
 
 

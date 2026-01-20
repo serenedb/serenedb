@@ -197,14 +197,6 @@ struct CreateTableRequest {
 };
 
 struct TableStats {
-  struct Diff {
-    int64_t delta_num_rows = 0;
-    Diff& Add(const Diff& other) {
-      delta_num_rows += other.delta_num_rows;
-      return *this;
-    }
-  };
-
   uint64_t num_rows = 0;
 };
 

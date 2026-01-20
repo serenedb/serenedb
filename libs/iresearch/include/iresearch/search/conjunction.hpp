@@ -273,7 +273,6 @@ class BlockConjunctionNoScore
       }
       return doc_value = target;
     }
-    target = _leafs_max + 1;
   align_to_leaf:
     if (doc_limits::eof(target)) {
       return doc_value = doc_limits::kEOF;

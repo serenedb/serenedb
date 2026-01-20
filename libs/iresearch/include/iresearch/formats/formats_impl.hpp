@@ -2008,16 +2008,19 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
   DocIterator::Leaf seek_to_leaf(doc_id_t target) final {
     SeekToBlock(target);
 
-    const auto min_in_leaf = _skip.Reader().State().doc + 1;
-    const auto max_in_leaf = _skip.Reader().Next().doc;
-    return {min_in_leaf, max_in_leaf};
+    const auto leaf_min = _skip.Reader().State().doc + 1;
+    const auto leaf_max = _skip.Reader().Next().doc;
+    return {leaf_min, leaf_max};
   }
 
   doc_id_t seek_in_leaf(doc_id_t target) final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
-
     SDB_ASSERT(_skip.Reader().State().doc <= doc_value);
-    SDB_ASSERT(doc_value < target);
+    SDB_ASSERT(doc_value <= _skip.Reader().Next().doc);
+
+    if (target <= doc_value) [[unlikely]] {
+      return doc_value;
+    }
     SDB_ASSERT(target <= _skip.Reader().Next().doc);
 
     if (this->_begin == std::end(this->_buf.docs)) [[unlikely]] {
@@ -2067,8 +2070,8 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
       }
     }
 
-    const auto max_in_leaf = _skip.Reader().Next().doc;
-    return max_in_leaf + 1;
+    const auto leaf_max = _skip.Reader().Next().doc;
+    return leaf_max + 1;
   }
 
   uint32_t count() final {

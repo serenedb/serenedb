@@ -401,7 +401,6 @@ class SereneDBConnectorMetadata final
         serene_insert_handle->Kind() == axiom::connector::WriteKind::kDelete) {
       auto& rocksdb_table =
         basics::downCast<const RocksDBTable>(*serene_insert_handle->Table());
-      // TODO(codeworse) : Not quite correct, should be updated
       int64_t delta_num_rows =
         serene_insert_handle->Kind() == axiom::connector::WriteKind::kInsert
           ? number_of_locked_primary_keys

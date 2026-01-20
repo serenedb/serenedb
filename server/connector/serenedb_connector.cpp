@@ -20,7 +20,6 @@
 
 #include "serenedb_connector.hpp"
 
-#include "basics/assert.h"
 #include "basics/static_strings.h"
 
 namespace sdb::connector {

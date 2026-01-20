@@ -309,7 +309,8 @@ class TableShard {
     return *_followers;
   }
 
-  explicit TableShard(catalog::TableMeta collection, catalog::TableStats stats);
+  explicit TableShard(catalog::TableMeta collection,
+                      const catalog::TableStats& stats);
 
  protected:
   // callback that is called directly before the index is dropped.

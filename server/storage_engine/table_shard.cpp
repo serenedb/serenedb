@@ -69,7 +69,7 @@ catalog::TableMeta MakeTableMeta(const catalog::Table& c) {
 }
 
 TableShard::TableShard(catalog::TableMeta collection_meta,
-                       catalog::TableStats stats)
+                       const catalog::TableStats& stats)
   : _collection_meta{std::move(collection_meta)}, _num_rows{stats.num_rows} {}
 
 /// fetches current index selectivity estimates

@@ -80,6 +80,7 @@
 #include "pg/sql_statement.h"
 #include "pg/sql_utils.h"
 #include "query/context.h"
+#include "query/transaction.h"
 #include "query/types.h"
 #include "utils/query_string.h"
 #include "velox/dwio/common/Options.h"
@@ -760,6 +761,7 @@ class SqlAnalyzer {
       _query_ctx{*query_ctx.velox_query_ctx},
       _memory_pool{*query_ctx.query_memory_pool},
       _params{params},
+      _transaction{*query_ctx.transaction},
       _send_buffer{send_buffer},
       _copy_queue{copy_queue} {}
 
@@ -1155,6 +1157,7 @@ class SqlAnalyzer {
 
   pg::Params& _params;
   containers::FlatHashMap<const lp::Expr*, ParamIndex> _param_to_idx;
+  query::Transaction& _transaction;
   message::Buffer* _send_buffer;
   CopyMessagesQueue* _copy_queue;
 };
@@ -1459,7 +1462,7 @@ void SqlAnalyzer::MakeTableWrite(State& state, const Node& stmt,
     }
   }
 
-  object.EnsureTable();
+  object.EnsureTable(_transaction);
   const auto& axiom_table = object.table;
   const auto& catalog_table = basics::downCast<catalog::Table>(*object.object);
   const auto& check_constraints = catalog_table.CheckConstraints();
@@ -1794,7 +1797,7 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
   column_exprs.reserve(pk_type.size());
   FillColumnsInfo(state, pk_type, *table.RowType(), column_names, column_exprs);
 
-  object->EnsureTable();
+  object->EnsureTable(_transaction);
 
   state.root = std::make_shared<lp::TableWriteNode>(
     _id_generator.NextPlanId(), std::move(state.root), object->table,
@@ -3671,7 +3674,7 @@ State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
 
   auto [table_alias, column_names] = ProcessTableColumns(parent, node, type);
 
-  object.EnsureTable();
+  object.EnsureTable(_transaction);
 
   if (table.Columns().empty()) {
     auto state = parent->MakeChild();

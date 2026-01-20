@@ -198,6 +198,10 @@ struct CreateTableRequest {
   bool waitForSync = false;
 };
 
+struct TableStats {
+  uint64_t num_rows = 0;
+};
+
 struct TableOptions {
   std::vector<std::string> shardKeys{std::string{StaticStrings::kKeyString}};
   std::vector<Column> columns;

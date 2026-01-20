@@ -282,6 +282,8 @@ class RocksDBEngineCatalog {
 
   Result DropRole(const catalog::Role& role);
 
+  Result SyncTableStats(const catalog::Table& c, const TableShard& physical);
+
   yaclib::Future<Result> compactAll(bool change_level,
                                     bool compact_bottom_most_level);
 
@@ -607,6 +609,6 @@ struct DocCount {
 
 Result DeleteIndexEstimate(rocksdb::DB* db, uint64_t object_id);
 DocCount LoadCollectionCount(rocksdb::DB* db, uint64_t object_id);
-Result DeleteTableMeta(rocksdb::DB*, uint64_t object_id);
+Result DeleteTableMeta(rocksdb::DB*, const TableTombstone& tombstone);
 
 }  // namespace sdb

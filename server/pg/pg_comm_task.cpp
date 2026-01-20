@@ -365,6 +365,9 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
 }
 
 void PgSQLCommTaskBase::HandleClientPacket(std::string_view packet) {
+  // Crash injection for recovery testing
+  SDB_IF_FAILURE("crash_on_packet") { exit(1); }
+
   // 1 byte type + 4 byte length
   SDB_ASSERT(packet.size() >= 5);
   SDB_ASSERT(_state == State::Idle);

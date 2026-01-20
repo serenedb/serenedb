@@ -1582,7 +1582,26 @@ Result RocksDBEngineCatalog::MarkDeleted(const catalog::Table& c,
 Result RocksDBEngineCatalog::createTableShard(
   const catalog::Table& collection, bool is_new,
   std::shared_ptr<TableShard>& physical) {
-  physical = std::make_shared<TableShard>(MakeTableMeta(collection));
+  auto meta = MakeTableMeta(collection);
+  catalog::TableStats stats;
+  if (!is_new) {
+    // Load Table stats
+    RocksDBKeyWithBuffer key;
+    key.constructSchemaObject(RocksDBEntryType::Stats,
+                              collection.GetDatabaseId(),
+                              collection.GetSchemaId(), collection.GetId());
+    std::string value;
+    _db->Get(rocksdb::ReadOptions{},
+             RocksDBColumnFamilyManager::get(
+               RocksDBColumnFamilyManager::Family::Definitions),
+             key.string(), &value);
+    auto slice = vpack::Slice{reinterpret_cast<const uint8_t*>(value.data())};
+    if (auto r = vpack::ReadTupleNothrow<catalog::TableStats>(slice, stats);
+        !r.ok()) {
+      return r;
+    }
+  }
+  physical = std::make_shared<TableShard>(meta, stats);
   return {};
 }
 
@@ -1694,7 +1713,7 @@ Result RocksDBEngineCatalog::DropTable(const TableTombstone& tombstone) {
   rocksdb::DB* db = _db->GetRootDB();
 
   // Unregister collection metadata
-  auto r = DeleteTableMeta(db, tombstone.table.id());
+  auto r = DeleteTableMeta(db, tombstone);
   if (!r.ok()) {
     SDB_ERROR("xxxxx", Logger::ENGINES, "error removing collection meta-data: ",
               r.errorMessage());  // continue regardless
@@ -1894,6 +1913,25 @@ Result RocksDBEngineCatalog::DropSchema(ObjectId db, ObjectId id) {
       return key;
     },
     [] { return std::string_view{}; });
+}
+
+Result RocksDBEngineCatalog::SyncTableStats(const catalog::Table& c,
+                                            const TableShard& physical) {
+  const auto db_id = c.GetDatabaseId();
+  const auto cid = c.GetId();
+  vpack::Builder b;
+  physical.GetTableStatsVPack(b);
+  auto value = RocksDBValue::Object(RocksDBEntryType::Stats, b.slice());
+  RocksDBKeyWithBuffer key;
+  key.constructSchemaObject(RocksDBEntryType::Stats, db_id, c.GetSchemaId(),
+                            cid);
+  auto* cf = RocksDBColumnFamilyManager::get(
+    RocksDBColumnFamilyManager::Family::Definitions);
+
+  // TODO(codeworse): probably should use Merge instead of Put, since in case of
+  // concurrent delete operation it may re-create deleted entry.
+  return rocksutils::ConvertStatus(
+    _db->Put(rocksdb::WriteOptions{}, cf, key.string(), value.string()));
 }
 
 Result RocksDBEngineCatalog::ChangeView(ObjectId db, ObjectId schema_id,
@@ -3111,26 +3149,30 @@ void RocksDBEngineCatalog::addCacheMetrics(
   }
 }
 
-Result DeleteTableMeta(rocksdb::DB* db, uint64_t object_id) {
+Result DeleteTableMeta(rocksdb::DB* db, const TableTombstone& tombstone) {
   rocksdb::ColumnFamilyHandle* const cf = RocksDBColumnFamilyManager::get(
     RocksDBColumnFamilyManager::Family::Definitions);
   rocksdb::WriteOptions wo;
+  ObjectId old_database = tombstone.old_database;
+  ObjectId old_schema = tombstone.old_schema;
+  ObjectId table = tombstone.table;
 
   // Step 1. delete the document count
   RocksDBKeyWithBuffer key;
-  key.constructCounterValue(object_id);
+  key.constructCounterValue(table.id());
   rocksdb::Status s = db->Delete(wo, cf, key.string());
   if (!s.ok()) {
     SDB_ERROR("xxxxx", Logger::ENGINES,
               "could not delete counter value for collection with objectId '",
-              object_id, "': ", s.ToString());
+              table.id(), "': ", s.ToString());
     // try to remove the key generator value regardless
   } else {
     SDB_TRACE("xxxxx", Logger::ENGINES,
-              "deleted counter for collection with objectId '", object_id, "'");
+              "deleted counter for collection with objectId '", table.id(),
+              "'");
   }
 
-  key.constructKeyGeneratorValue(object_id);
+  key.constructKeyGeneratorValue(table.id());
   s = db->Delete(wo, cf, key.string());
   if (!s.ok() && !s.IsNotFound()) {
     SDB_ERROR("xxxxx", Logger::ENGINES,
@@ -3138,11 +3180,21 @@ Result DeleteTableMeta(rocksdb::DB* db, uint64_t object_id) {
     return rocksutils::ConvertStatus(s);
   }
 
-  key.constructRevisionTreeValue(object_id);
+  key.constructRevisionTreeValue(table.id());
   s = db->Delete(wo, cf, key.string());
   if (!s.ok() && !s.IsNotFound()) {
     SDB_ERROR("xxxxx", Logger::ENGINES,
               "could not delete revision tree value: ", s.ToString());
+    return rocksutils::ConvertStatus(s);
+  }
+
+  // Delete table stats
+  key.constructSchemaObject(RocksDBEntryType::Stats, old_database, old_schema,
+                            table);
+  s = db->Delete(wo, cf, key.string());
+  if (!s.ok() && !s.IsNotFound()) {
+    SDB_ERROR("xxxxx", Logger::ENGINES,
+              "could not delete table stats: ", s.ToString());
     return rocksutils::ConvertStatus(s);
   }
 

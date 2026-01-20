@@ -128,6 +128,8 @@ AsyncResult QueueTask(std::shared_ptr<T> task) {
 TableTombstone MakeTableTombstone(const TableShard& physical) {
   TableTombstone result{
     .table = physical.GetMeta().id,
+    .old_schema = physical.GetMeta().schema,
+    .old_database = physical.GetMeta().database,
     .number_documents = physical.approxNumberDocuments(),
   };
 

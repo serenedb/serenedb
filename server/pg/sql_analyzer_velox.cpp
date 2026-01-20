@@ -1804,9 +1804,9 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
 
 class CopyRowRejector {
  public:
-  enum class Verbosity { Verbose = 0, Default = 1, Silent = 2 };
+  enum class LogVerbosity { Verbose = 0, Default = 1, Silent = 2 };
 
-  CopyRowRejector(Verbosity verbosity, message::Buffer& send,
+  CopyRowRejector(LogVerbosity verbosity, message::Buffer& send,
                   std::string_view table_name, uint64_t reject_limit)
     : _send{send},
       _table_name{table_name},
@@ -1846,7 +1846,7 @@ class CopyRowRejector {
       return;
     }
 
-    if (_rejected != 0 && _verbosity <= Verbosity::Default) {
+    if (_rejected != 0 && _verbosity <= LogVerbosity::Default) {
       auto msg = absl::StrCat(_rejected,
                               " rows were skipped due to data type "
                               "incompatibility");
@@ -1865,7 +1865,7 @@ class CopyRowRejector {
   }
 
   void NoticeRejected(const velox::text::RejectedRow& row) {
-    if (_verbosity == Verbosity::Verbose) {
+    if (_verbosity == LogVerbosity::Verbose) {
       auto msg =
         absl::StrCat("skipping row due to data type incompatibility at ",
                      "line ", row.rowNumber, " for column \"",
@@ -1891,7 +1891,7 @@ class CopyRowRejector {
   std::string_view _table_name;
   uint64_t _rejected = 0;
   bool _report_summary = true;
-  Verbosity _verbosity;
+  LogVerbosity _verbosity;
   const uint64_t _reject_limit;
 };
 
@@ -2075,7 +2075,7 @@ class CopyOptionsParser {
       reject_limit = *maybe_reject_limit;
     }
 
-    auto log_verbosity = CopyRowRejector::Verbosity::Default;
+    auto log_verbosity = CopyRowRejector::LogVerbosity::Default;
     if (const auto* option = EraseOption("log_verbosity")) {
       auto maybe_verbosity = TryGet<std::string_view>(option->arg);
       if (!maybe_verbosity) {
@@ -2086,11 +2086,11 @@ class CopyOptionsParser {
       }
 
       if (*maybe_verbosity == "verbose") {
-        log_verbosity = CopyRowRejector::Verbosity::Verbose;
+        log_verbosity = CopyRowRejector::LogVerbosity::Verbose;
       } else if (*maybe_verbosity == "default") {
-        log_verbosity = CopyRowRejector::Verbosity::Default;
+        log_verbosity = CopyRowRejector::LogVerbosity::Default;
       } else if (*maybe_verbosity == "silent") {
-        log_verbosity = CopyRowRejector::Verbosity::Silent;
+        log_verbosity = CopyRowRejector::LogVerbosity::Silent;
       } else {
         THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
                         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

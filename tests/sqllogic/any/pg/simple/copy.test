@@ -242,9 +242,65 @@ db error: ERROR: COPY ON_ERROR "labudadadab" not recognized
 
 
 statement count 10
-COPY (SELECT * FROM generate_series(1, 10)) TO '/tmp/deadinside.tsv';
+COPY (SELECT * FROM generate_series(2, 11)) TO '/tmp/deadinside.tsv';
+
+
+statement ok
+CREATE TABLE biksalen(kek BOOLEAN);
 
 
 statement error
-COPY donsimon FROM '/tmp/deadinside.tsv' (ON_ERROR IGNORE, REJECT_LIMIT 9);
+COPY biksalen FROM '/tmp/deadinside.tsv' (ON_ERROR IGNORE, REJECT_LIMIT 9);
 ----
+db error: ERROR: skipped more than REJECT_LIMIT (9) rows due to data type incompatibility
+
+
+statement count 0
+COPY biksalen FROM '/tmp/deadinside.tsv' (ON_ERROR IGNORE, REJECT_LIMIT 10);
+
+
+statement count 0
+COPY biksalen FROM '/tmp/deadinside.tsv' (ON_ERROR IGNORE);
+
+
+statement ok
+COPY (SELECT * FROM generate_series(2, 11)) TO '/tmp/deadinside.tsv' WITH (HEADER TRUE);
+
+
+statement error
+COPY biksalen FROM '/tmp/deadinside.tsv' (ON_ERROR STOP);
+----
+db error: ERROR: invalid input syntax for type boolean: "generate_series"
+
+
+statement error
+COPY biksalen FROM '/tmp/deadinside.tsv';
+----
+db error: ERROR: invalid input syntax for type boolean: "generate_series"
+
+
+statement error
+COPY biksalen FROM '/tmp/deadinside.tsv' WITH (HEADER ON);
+----
+db error: ERROR: invalid input syntax for type boolean: "2"
+
+
+# header check also check that generated key is not inserted
+statement ok
+CREATE TABLE header_eater (header1 TEXT, header2 TEXT);
+
+
+statement count 1
+COPY (SELECT 1 as header, 2 as header) TO '/tmp/headers.tsv' WITH (HEADER ON)
+
+
+statement count 2
+COPY header_eater FROM '/tmp/headers.tsv';
+
+
+query
+SELECT * FROM header_eater;
+----
+header1 header2
+header  header
+1       2

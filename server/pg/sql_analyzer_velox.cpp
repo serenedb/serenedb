@@ -20,6 +20,7 @@
 
 #include "pg/sql_analyzer_velox.h"
 
+#include <absl/base/internal/endian.h>
 #include <absl/functional/overload.h>
 #include <absl/strings/str_join.h>
 #include <absl/strings/str_replace.h>
@@ -73,6 +74,7 @@
 #include "pg/copy_file.h"
 #include "pg/pg_ast_visitor.h"
 #include "pg/pg_list_utils.h"
+#include "pg/protocol.h"
 #include "pg/sql_collector.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_statement.h"
@@ -186,6 +188,16 @@ const containers::FlatHashMap<std::string_view, lp::SpecialForm> kSpecialForms{
   {"row_constructor", kSpecialFormPlaceholder},
   {"in", lp::SpecialForm::kIn},
 };
+
+using NameToColumnMap =
+  std::unordered_map<std::string_view, const catalog::Column*>;
+NameToColumnMap GetNameToColumn(std::span<const catalog::Column> columns) {
+  return columns | std::views::transform([](const catalog::Column& column) {
+           return std::pair<std::string_view, const catalog::Column*>{
+             column.name, &column};
+         }) |
+         std::ranges::to<NameToColumnMap>();
+}
 
 const Node& ToNode(const void* node) {
   return *reinterpret_cast<const Node*>(node);
@@ -366,6 +378,13 @@ std::optional<T> TryGet(const List* list, size_t i) {
 
 std::string_view ToAlias(std::string_view name) {
   return name.substr(0, name.find_last_of(query::kColumnSeparator));
+}
+
+std::vector<std::string> ToAliases(std::span<const std::string> names) {
+  return names | std::views::transform([](const auto& name) {
+           return std::string{ToAlias(name)};
+         }) |
+         std::ranges::to<std::vector>();
 }
 
 std::string ToPgTypeString(const velox::Type& type) {
@@ -1698,15 +1717,7 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
   column_exprs.reserve(pk_type.size() + list_length(stmt.targetList));
   FillColumnsInfo(state, pk_type, *table.RowType(), column_names, column_exprs);
 
-  using NameToColumnMap =
-    containers::FlatHashMap<std::string_view, const catalog::Column*>;
-  auto name_to_column =
-    table.Columns() | std::views::transform([](const catalog::Column& column) {
-      return std::pair<std::string_view, const catalog::Column*>{column.name,
-                                                                 &column};
-    }) |
-    std::ranges::to<NameToColumnMap>();
-
+  auto name_to_column = GetNameToColumn(table.Columns());
   VisitNodes(stmt.targetList, [&](const ResTarget& target) {
     if (target.indirection) {
       SDB_THROW(ERROR_NOT_IMPLEMENTED,
@@ -1790,6 +1801,63 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
     axiom::connector::WriteKind::kDelete, std::move(column_names),
     std::move(column_exprs));
 }
+
+class CopyLogger {
+ public:
+  enum class Verbosity { Verbose = 0, Default = 1, Silent = 2 };
+
+  CopyLogger(Verbosity verbosity, message::Buffer& send,
+             std::string_view table_name)
+    : _send{send}, _table_name{table_name}, _verbosity{verbosity} {}
+
+  void NoticeRejected(const velox::text::RejectedRow& row) {
+    SDB_ASSERT(_skipped_rows + 1 == row.rejectedRows);
+    _skipped_rows = row.rejectedRows;
+
+    if (_verbosity == Verbosity::Verbose) {
+      auto msg =
+        absl::StrCat("skipping row due to data type incompatibility at ",
+                     "line ", row.rowNumber, " for column \"",
+                     ToAlias(row.columnName), "\": \"", row.value, "\"");
+      WriteNotice(msg);
+    }
+  }
+
+  void DoNotReportSummary() { _report_summary = false; }
+
+  ~CopyLogger() {
+    if (!_report_summary) {
+      return;
+    }
+
+    if (_verbosity <= Verbosity::Default && _skipped_rows != 0) {
+      auto msg = absl::StrCat(_skipped_rows,
+                              " rows were skipped due to data type "
+                              "incompatibility");
+      WriteNotice(msg);
+    }
+  }
+
+ private:
+  void WriteNotice(std::string_view message) {
+    const auto uncommitted_size = _send.GetUncommittedSize();
+    auto* prefix_data = _send.GetContiguousData(5);
+    _send.WriteUncommitted(std::string_view{"SNOTICE\0VNOTICE\0C", 17});
+    _send.WriteUncommitted({"\0M", 2});
+    _send.WriteUncommitted(message);
+    _send.WriteUncommitted({"\0", 2});
+    prefix_data[0] = PQ_MSG_NOTICE_RESPONSE;
+    absl::big_endian::Store32(
+      prefix_data + 1, _send.GetUncommittedSize() - uncommitted_size - 1);
+    _send.Commit(true);
+  }
+
+  message::Buffer& _send;
+  std::string_view _table_name;
+  uint64_t _skipped_rows = 0;
+  bool _report_summary = true;
+  Verbosity _verbosity;
+};
 
 class CopyOptionsParser {
  public:
@@ -1971,9 +2039,33 @@ class CopyOptionsParser {
       reject_limit = *maybe_reject_limit;
     }
 
+    auto log_verbosity = CopyLogger::Verbosity::Default;
+    if (const auto* option = EraseOption("log_verbosity")) {
+      auto maybe_verbosity = TryGet<std::string_view>(option->arg);
+      if (!maybe_verbosity) {
+        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
+                        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("COPY LOG_VERBOSITY \"",
+                                DeparseExpr(option->arg), "\" not recognized"));
+      }
+
+      if (*maybe_verbosity == "verbose") {
+        log_verbosity = CopyLogger::Verbosity::Verbose;
+      } else if (*maybe_verbosity == "default") {
+        log_verbosity = CopyLogger::Verbosity::Default;
+      } else if (*maybe_verbosity == "silent") {
+        log_verbosity = CopyLogger::Verbosity::Silent;
+      } else {
+        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
+                        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("COPY LOG_VERBOSITY \"",
+                                DeparseExpr(option->arg), "\" not recognized"));
+      }
+    }
+
     for (const auto& option_name :
          {"default", "quote", "force_quote", "force_not_null", "force_null",
-          "encoding", "log_verbosity"}) {
+          "encoding"}) {
       if (const auto* option = EraseOption(option_name)) {
         THROW_SQL_ERROR(
           CURSOR_POS(ErrorPosition(ExprLocation(option))),
@@ -1988,7 +2080,9 @@ class CopyOptionsParser {
     if (_is_writer) {
       SDB_ASSERT(_sink);
       auto text_options = std::make_shared<velox::text::WriterOptions>();
-      text_options->headerLineCount = header;
+      if (header) {
+        text_options->header = ToAliases(_row_type->names());
+      }
       text_options->serDeOptions = std::move(serde_options);
       text_options->schema = std::move(_row_type);
       text_options->fileFormat = FileFormat::TEXT;
@@ -2000,32 +2094,37 @@ class CopyOptionsParser {
       text_options->setFileSchema(std::move(_row_type));
       text_options->setFileFormat(FileFormat::TEXT);
       text_options->setRejectLimit(reject_limit);
-      auto handler = [table_name = _table_name,
-                      on_error](const velox::text::RowError& err) {
-        std::string errmsg;
-        if (on_error == "ignore" && err.rejectedRows > err.rejectLimit) {
-          errmsg =
-            absl::StrCat("skipped more than REJECT_LIMIT (", err.rejectLimit,
-                         ") rows due to data type incompatibility");
-        } else {
-          errmsg = absl::StrCat("invalid input syntax for type ",
-                                ToPgTypeString(err.columnType), ": \"",
-                                err.value, "\"");
-        }
 
-        SDB_ASSERT(!table_name.empty());
-        try {
+      SDB_ASSERT(_send_buffer);
+      auto handler =
+        [copy_logger = CopyLogger{log_verbosity, *_send_buffer, _table_name},
+         table_name = _table_name](const RejectedRow& row) mutable {
+          if (!row.isError()) {
+            copy_logger.NoticeRejected(row);
+            return;
+          }
+
+          std::string errmsg;
+          if (row.rejectLimit != 0) {
+            copy_logger.NoticeRejected(row);
+            errmsg =
+              absl::StrCat("skipped more than REJECT_LIMIT (", row.rejectLimit,
+                           ") rows due to data type incompatibility");
+          } else {
+            errmsg = absl::StrCat("invalid input syntax for type ",
+                                  ToPgTypeString(row.columnType), ": \"",
+                                  row.value, "\"");
+          }
+
+          SDB_ASSERT(!table_name.empty());
+          copy_logger.DoNotReportSummary();
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT), ERR_MSG(errmsg),
-            ERR_CONTEXT("COPY ", table_name, ", line ", err.rowNumber,
-                        ", column ", ToAlias(err.columnName), ": \"", err.value,
+            ERR_CONTEXT("COPY ", table_name, ", line ", row.rowNumber,
+                        ", column ", ToAlias(row.columnName), ": \"", row.value,
                         "\""));
-        } catch (const SqlException& e) {
-          throw velox::VeloxUserError(std::current_exception(), e.what(),
-                                      false);
-        }
-      };
-      text_options->setErrorHandler(std::move(handler));
+        };
+      text_options->setOnRowReject(std::move(handler));
       _reader_options = std::move(text_options);
       _row_reader_options->setSkipRows(header);
     }
@@ -2147,23 +2246,6 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
     return std::tuple{object, schema_name, relation_name};
   };
 
-  auto get_table = [&](const Objects::ObjectData* object) {
-    SDB_ASSERT(object);
-    SDB_ASSERT(object->object);
-    const auto& logical_object = *object->object;
-
-    if (logical_object.GetType() != catalog::ObjectType::Table) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERROR_SERVER_OBJECT_TYPE_MISMATCH),
-        CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
-        ERR_MSG("COPY is only applicable for tables, but the object is: ",
-                magic_enum::enum_name(logical_object.GetType())));
-    }
-
-    object->EnsureTable();
-    return object->table;
-  };
-
   auto get_column_exprs = [&](const std::vector<std::string>& column_names) {
     std::vector<lp::ExprPtr> column_exprs;
     column_exprs.reserve(column_names.size());
@@ -2185,11 +2267,8 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
   velox::RowTypePtr file_table_type;
   if (stmt.relation) {
     auto [object, schemaname, relname] = get_object();
-    auto table = get_table(object);
-    // table_name will be used in execution to report errors
-    // it's a view to an object which lives longer than PG tree
-    table_name = table->name();
-    const auto& table_type = *table->type();
+    const auto& table = basics::downCast<catalog::Table>(*object->object);
+    table_name = table.GetName();
 
     std::vector<std::string> names;
     std::vector<velox::TypePtr> types;
@@ -2197,9 +2276,10 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
     if (attlist_length > 0) {
       names.reserve(attlist_length);
       types.reserve(attlist_length);
+      auto name_to_column = GetNameToColumn(table.Columns());
       for (const auto& column_name : PgStrListWrapper{stmt.attlist}) {
-        auto maybe_idx = table_type.getChildIdxIfExists(column_name);
-        if (!maybe_idx) {
+        auto it = name_to_column.find(column_name);
+        if (it == name_to_column.end() || it->second->IsGeneratedPK()) {
           THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
                           CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
                           ERR_MSG("column \"", column_name, "\" of relation \"",
@@ -2212,11 +2292,20 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
             ERR_MSG("column \"", column_name, "\" specified more than once"));
         }
         names.emplace_back(column_name);
-        types.emplace_back(table_type.childAt(*maybe_idx));
+        types.emplace_back(it->second->type);
       }
     } else {
-      names = table_type.names();
-      types = table_type.children();
+      const auto& columns = table.Columns();
+      names.reserve(columns.size());
+      types.reserve(columns.size());
+      for (const auto& column : columns) {
+        if (column.IsGeneratedPK()) {
+          continue;
+        }
+
+        names.emplace_back(column.name);
+        types.emplace_back(column.type);
+      }
     }
 
     file_table_type = ROW(std::move(names), std::move(types));

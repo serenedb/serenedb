@@ -150,6 +150,8 @@ struct Column {
 
   static constexpr Id kGeneratedPKId = kMaxRealId + 1;
 
+  bool IsGeneratedPK() const { return id == kGeneratedPKId; }
+
   static std::string GeneratePKName(std::span<const std::string> column_names);
 
   Id id;

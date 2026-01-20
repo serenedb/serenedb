@@ -1865,7 +1865,7 @@ class CopyRowRejector {
   }
 
   void NoticeRejected(const velox::text::RejectedRow& row) {
-    if (_verbosity == LogVerbosity::Verbose) {
+    if (_verbosity >= LogVerbosity::Verbose) {
       auto msg =
         absl::StrCat("skipping row due to data type incompatibility at ",
                      "line ", row.rowNumber, " for column \"",

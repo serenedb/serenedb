@@ -35,6 +35,30 @@ a	b
 100	10
 200	200
 
+onlyif serenedb
+query
+EXPLAIN(LOGICAL, EXECUTION) UPDATE single_pk SET a = 200, b = 200 WHERE a = 2;
+----
+QUERY PLAN
+LOGICAL PLAN:
+- TableWrite UPDATE: -> ROW<rows:BIGINT>
+    a := a
+    upd$a := upd$a
+    b := b
+  - Filter: IF(spark_isnotnull(a), true, CAST(pg_error(33575106, 0, null value in column "a" of relation "single_pk" violates not-null constraint, presto_concat(Failing row contains (, COALESCE(CAST(a AS VARCHAR), null), , , COALESCE(CAST(upd$a AS VARCHAR), null), , , COALESCE(CAST(b AS VARCHAR), null), ).)) AS BOOLEAN)) -> ROW<"a":INTEGER,"upd$a":INTEGER,"b":INTEGER>
+    - Project: -> ROW<"a":INTEGER,"upd$a":INTEGER,"b":INTEGER>
+        a := a
+        upd$a := 200
+        b := 200
+      - Filter: presto_eq(a, 2) -> ROW<"a":INTEGER,"b":INTEGER>
+        - TableScan: single_pk -> ROW<"a":INTEGER,"b":INTEGER>
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- TableWrite[3][serenedb(table=single_pk, kind=UPDATE)] -> rows:BIGINT
+  -- Project[2][expressions: (a:INTEGER, "a"), (upd$a:INTEGER, 200), (b:INTEGER, 200)] -> "a":INTEGER, "upd$a":INTEGER, "b":INTEGER
+    -- Filter[1][expression: and(presto_eq("a",2),if(spark_isnotnull("a"),true,cast(pg_error(33575106,0,null value in column "a" of relation "single_pk" violates not-null constraint,presto_concat(Failing row contains (,coalesce(cast("a" as VARCHAR),null),, ,200,, ,200,).)) as BOOLEAN)))] -> "a":INTEGER
+      -- TableScan[0][single_pk] -> "a":INTEGER
+
 statement error multiple assignments to same column "a"
 UPDATE single_pk SET a = 42, a = 100500 WHERE b = 10;
 

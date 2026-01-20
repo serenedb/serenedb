@@ -16,8 +16,8 @@ on:
         type: string
         required: true
         default: 'main'
-      BUILD_CONFIG:
-        description: 'JSON config for build settings'
+      JOB_CONFIG:
+        description: 'JSON config for job settings'
         type: string
         required: false
         default: '{"BUILD_SERENEDB":"true","CLUSTER_BRANCH":"main","BUILD_IMAGE":"registry.serenedb.com:5000/serenedb-build-ubuntu:latest","SDB_CLUSTER":"Off","DEBUG_PRINT_ENV":"false"}'
@@ -35,7 +35,7 @@ on:
         description: 'Strip tarball'
         required: true
         type: boolean
-        default: true
+        default: false
       DOCKER_SERENEDB_IMAGE:
         description: 'Produce SereneDB Docker Images'
         required: true
@@ -55,105 +55,17 @@ on:
         description: 'Enable test execution'
         type: boolean
         required: false
-        default: true
+        default: false
       TEST_CONFIG:
         description: 'JSON config for tests'
         type: string
         required: false
-        default: '{"VPACK_TESTS":"true","IRESEARCH_TESTS":"true","UNIT_TESTS":"true","SQLLOGIC_TESTS":"true","INTEGRATION_TESTS":"false","FULL_SUITE":"false"}'
-      INTEGRATION_TESTS_COREDUMPS:
-        description: '0 - no coredumps; -1 - unlimited coredumps'
-        type: choice
-        required: true
-        default: '0'
-        options:
-          - '0'
-          - '-1'
-      SANITIZERS:
-        description: 'Sanitizer to use'
+        default: '{"VPACK_TESTS":"true","IRESEARCH_TESTS":"true","UNIT_TESTS":"true","SQLLOGIC_TESTS":"true"}'
+      BUILD_CONFIG:
+        description: '{"_schema":{"SANITIZERS":["","Undefined","Address","Thread","Memory","Leak","AddressLight","UndefinedAddress","UndefinedAddressLight","MemoryWithOrigins"],"USE_COVERAGE":["","SourceBased","SourceBasedMCDC","GCOV"],"SDB_ALLOC":["JE","TC","SYS"],"SDB_DEV":["On","Off"],"USE_IPO":["Off","On"],"ENSURE_VTUNE_SYMBOLS":["Off","On"],"BUILDMODE":["RelWithDebInfo","Debug","Release","MinSizeRel","None"],"USE_DEBUG_INFO":["COLUMNS","SANITIZE","PROFILE","COVERAGE","LLDB","GDB","FULL","LINES","NONE"]}}'
         type: string
         required: false
-        default: ''
-        options:
-          - ''
-          - Undefined
-          - Address
-          - Thread
-          - Memory
-          - Leak
-          - AddressLight
-          - UndefinedAddress
-          - UndefinedAddressLight
-          - MemoryWithOrigins
-      USE_COVERAGE:
-        description: 'Coverage type'
-        type: string
-        required: false
-        default: ''
-        options:
-          - ''
-          - SourceBased
-          - SourceBasedMCDC
-          - GCOV
-      SDB_ALLOC:
-        description: 'Enable custom memory allocator'
-        type: choice
-        required: true
-        default: 'JE'
-        options:
-          - JE
-          - TC
-          - SYS
-      SDB_DEV:
-        description: 'Development mode'
-        type: choice
-        required: true
-        default: 'On'
-        options:
-          - 'On'
-          - 'Off'
-      USE_IPO:
-        description: 'Use IPO'
-        type: choice
-        required: true
-        default: 'Off'
-        options:
-          - 'Off'
-          - 'On'
-      ENSURE_VTUNE_SYMBOLS:
-        description: 'Affects only server'
-        type: choice
-        required: true
-        default: 'Off'
-        options:
-          - 'Off'
-          - 'On'
-      BUILDMODE:
-        description: 'Build mode'
-        type: choice
-        required: true
-        default: 'RelWithDebInfo'
-        options:
-          - RelWithDebInfo
-          - Debug
-          - Release
-          - MinSizeRel
-          - None
-      USE_DEBUG_INFO:
-        description: 'Debug info level'
-        type: choice
-        required: true
-        default: 'COLUMNS'
-        options:
-          - COLUMNS
-          - SANITIZE
-          - PROFILE
-          - COVERAGE
-          - LLDB
-          - GDB
-          - FULL
-          - LINES
-          - NONE
+        default: '{"SANITIZERS":"","USE_COVERAGE":"","SDB_ALLOC":"JE","SDB_DEV":"On","USE_IPO":"Off","ENSURE_VTUNE_SYMBOLS":"Off","BUILDMODE":"RelWithDebInfo","USE_DEBUG_INFO":"COLUMNS"}'
       EXTRA_ARTIFACTS:
         description: 'Keep these artifacts additionally'
         type: string
@@ -179,20 +91,13 @@ jobs:
       RUN_TESTS: ${{ inputs.RUN_TESTS }}
       STRIP_TARBALL: ${{ inputs.STRIP_TARBALL }}
       DOCKER_BUILD_IMAGES: ${{ inputs.DOCKER_BUILD_IMAGES }} 
+      # Job config environment
+      JOB_CONFIG: ${{ inputs.JOB_CONFIG }}
       # Build config environment
       BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
       # Test config environment
       TEST_CONFIG: ${{ inputs.TEST_CONFIG }}
       # Scripts environment
-      SANITIZERS: ${{ inputs.SANITIZERS }}
-      USE_COVERAGE: ${{ inputs.USE_COVERAGE }}
-      BUILDMODE: ${{ inputs.BUILDMODE }}
-      USE_DEBUG_INFO: ${{ inputs.USE_DEBUG_INFO }}
-      SDB_DEV: ${{ inputs.SDB_DEV }}
-      USE_IPO: ${{ inputs.USE_IPO }}
-      SDB_ALLOC: ${{ inputs.SDB_ALLOC }}
-      ENSURE_VTUNE_SYMBOLS: ${{ inputs.ENSURE_VTUNE_SYMBOLS }}
-      INTEGRATION_TESTS_COREDUMPS: ${{ inputs.INTEGRATION_TESTS_COREDUMPS }}
       DEB_TAR_PACKAGES: ${{ inputs.DEB_TAR_PACKAGES }}
       DOCKER_EXTRA_TAGS: ${{ inputs.DOCKER_EXTRA_TAGS }}
 

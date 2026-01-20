@@ -13,8 +13,8 @@ on:
         type: string
         required: true
         default: 'main'
-      BUILD_CONFIG:
-        description: 'JSON config for build settings'
+      JOB_CONFIG:
+        description: 'JSON config for job settings'
         type: string
         required: false
         default: '{"BUILD_SERENEDB":"true","CLUSTER_BRANCH":"main","BUILD_IMAGE":"registry.serenedb.com:5000/serenedb-build-ubuntu:latest","SDB_CLUSTER":"Off","DEBUG_PRINT_ENV":"false"}'
@@ -32,7 +32,7 @@ on:
         description: 'Strip tarball'
         required: true
         type: boolean
-        default: true
+        default: false
       # TODO: Add or update step uploading artifacts
       DOCKER_SERENEDB_IMAGE:
         description: 'Produce SereneDB Docker Images'
@@ -58,52 +58,12 @@ on:
         description: 'JSON config for tests'
         type: string
         required: false
-        default: '{"VPACK_TESTS":"true","IRESEARCH_TESTS":"true","UNIT_TESTS":"true","SQLLOGIC_TESTS":"true","INTEGRATION_TESTS":"false","FULL_SUITE":"false"}'
-      INTEGRATION_TESTS_COREDUMPS:
-        description: '0 - no coredumps; -1 - unlimited coredumps'
-        type: string
-        required: true
-        default: '0'
-      SANITIZERS:
-        description: 'Sanitizer to use'
+        default: '{"VPACK_TESTS":"true","IRESEARCH_TESTS":"true","UNIT_TESTS":"true","SQLLOGIC_TESTS":"true"}'
+      BUILD_CONFIG:
+        description: '{"_schema":{"SANITIZERS":["","Undefined","Address","Thread","Memory","Leak","AddressLight","UndefinedAddress","UndefinedAddressLight","MemoryWithOrigins"],"USE_COVERAGE":["","SourceBased","SourceBasedMCDC","GCOV"],"SDB_ALLOC":["JE","TC","SYS"],"SDB_DEV":["On","Off"],"USE_IPO":["Off","On"],"ENSURE_VTUNE_SYMBOLS":["Off","On"],"BUILDMODE":["RelWithDebInfo","Debug","Release","MinSizeRel","None"],"USE_DEBUG_INFO":["COLUMNS","SANITIZE","PROFILE","COVERAGE","LLDB","GDB","FULL","LINES","NONE"]}}'
         type: string
         required: false
-        default: ''
-      USE_COVERAGE:
-        description: 'Coverage type'
-        type: string
-        required: false
-        default: ''
-      SDB_ALLOC:
-        description: 'Enable custom memory allocator'
-        type: string
-        required: true
-        default: 'JE'
-      SDB_DEV:
-        description: 'Development mode'
-        type: string
-        required: true
-        default: 'On'
-      USE_IPO:
-        description: 'Use IPO'
-        type: string
-        required: true
-        default: 'Off'
-      ENSURE_VTUNE_SYMBOLS:
-        description: 'Affects only server'
-        type: string
-        required: true
-        default: 'Off'
-      BUILDMODE:
-        description: 'Build mode'
-        type: string
-        required: true
-        default: 'RelWithDebInfo'
-      USE_DEBUG_INFO:
-        description: 'Debug info level'
-        type: string
-        required: true
-        default: 'COLUMNS'
+        default: '{"SANITIZERS":"","USE_COVERAGE":"","SDB_ALLOC":"JE","SDB_DEV":"On","USE_IPO":"Off","ENSURE_VTUNE_SYMBOLS":"Off","BUILDMODE":"RelWithDebInfo","USE_DEBUG_INFO":"COLUMNS"}'
       EXTRA_ARTIFACTS:
         description: 'Keep these artifacts additionally'
         type: string
@@ -131,41 +91,41 @@ on:
         required: true
 
 env:
-  # Build config environment (from BUILD_CONFIG JSON)
-  BUILD_SERENEDB: ${{ fromJSON(inputs.BUILD_CONFIG).BUILD_SERENEDB }}
-  CLUSTER_BRANCH: ${{ fromJSON(inputs.BUILD_CONFIG).CLUSTER_BRANCH }}
-  BUILD_IMAGE: ${{ fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE }}
-  SDB_CLUSTER: ${{ fromJSON(inputs.BUILD_CONFIG).SDB_CLUSTER }}
-  DEBUG_PRINT_ENV: ${{ fromJSON(inputs.BUILD_CONFIG).DEBUG_PRINT_ENV }}
+  # Job config environment (from JOB_CONFIG JSON)
+  BUILD_SERENEDB: ${{ fromJSON(inputs.JOB_CONFIG).BUILD_SERENEDB }}
+  CLUSTER_BRANCH: ${{ fromJSON(inputs.JOB_CONFIG).CLUSTER_BRANCH }}
+  BUILD_IMAGE: ${{ fromJSON(inputs.JOB_CONFIG).BUILD_IMAGE }}
+  SDB_CLUSTER: ${{ fromJSON(inputs.JOB_CONFIG).SDB_CLUSTER }}
+  DEBUG_PRINT_ENV: ${{ fromJSON(inputs.JOB_CONFIG).DEBUG_PRINT_ENV }}
   # Test config environment (from TEST_CONFIG JSON)
   FULL_SUITE: ${{ fromJSON(inputs.TEST_CONFIG).FULL_SUITE }}
-  INTEGRATION_TESTS: ${{ fromJSON(inputs.TEST_CONFIG).INTEGRATION_TESTS }}
   IRESEARCH_TESTS: ${{ fromJSON(inputs.TEST_CONFIG).IRESEARCH_TESTS }}
   SQLLOGIC_TESTS: ${{ fromJSON(inputs.TEST_CONFIG).SQLLOGIC_TESTS }}
   UNIT_TESTS: ${{ fromJSON(inputs.TEST_CONFIG).UNIT_TESTS }}
   VPACK_TESTS: ${{ fromJSON(inputs.TEST_CONFIG).VPACK_TESTS }}
-  # Scripts environment
-  SANITIZERS: ${{ inputs.SANITIZERS }}
-  USE_COVERAGE: ${{ inputs.USE_COVERAGE }}
-  BUILDMODE: ${{ inputs.BUILDMODE }}
-  USE_DEBUG_INFO: ${{ inputs.USE_DEBUG_INFO }}
-  SDB_DEV: ${{ inputs.SDB_DEV }}
-  USE_IPO: ${{ inputs.USE_IPO }}
-  SDB_ALLOC: ${{ inputs.SDB_ALLOC }}
-  ENSURE_VTUNE_SYMBOLS: ${{ inputs.ENSURE_VTUNE_SYMBOLS }}
-  INTEGRATION_TESTS_COREDUMPS: ${{ inputs.INTEGRATION_TESTS_COREDUMPS }}
-  DEB_TAR_PACKAGES: ${{ inputs.DEB_TAR_PACKAGES }}
+  # Build config environment (from BUILD_CONFIG JSON)
+  SANITIZERS: ${{ fromJSON(inputs.BUILD_CONFIG).SANITIZERS }}
+  USE_COVERAGE: ${{ fromJSON(inputs.BUILD_CONFIG).USE_COVERAGE }}
+  BUILDMODE: ${{ fromJSON(inputs.BUILD_CONFIG).BUILDMODE }}
+  USE_DEBUG_INFO: ${{ fromJSON(inputs.BUILD_CONFIG).USE_DEBUG_INFO }}
+  SDB_DEV: ${{ fromJSON(inputs.BUILD_CONFIG).SDB_DEV }}
+  USE_IPO: ${{ fromJSON(inputs.BUILD_CONFIG).USE_IPO }}
+  SDB_ALLOC: ${{ fromJSON(inputs.BUILD_CONFIG).SDB_ALLOC }}
+  ENSURE_VTUNE_SYMBOLS: ${{ fromJSON(inputs.BUILD_CONFIG).ENSURE_VTUNE_SYMBOLS }}
+  
   WORKSPACE: ${{ github.workspace }}
   DOCKER_EXTRA_TAGS: ${{ inputs.DOCKER_EXTRA_TAGS }}
+  DEB_TAR_PACKAGES: ${{ inputs.DEB_TAR_PACKAGES }}
+  DOCKER_SERENEDB_IMAGE: ${{ inputs.DOCKER_SERENEDB_IMAGE }} 
+  DOCKER_BUILD_IMAGES: ${{ inputs.DOCKER_BUILD_IMAGES }}
 
+  #RUN_TESTS: ${{ inputs.RUN_TESTS }}
   #BRANCH: ${{ inputs.BRANCH }}
   #BUILD_PACKAGES: ${{ inputs.BUILD_PACKAGES }}
   #CLUSTER_BRANCH: ${{ inputs.CLUSTER_BRANCH }}
-  #DOCKER_SERENEDB_IMAGE: ${{ inputs.DOCKER_SERENEDB_IMAGE }} 
   #EXTRA_ARTIFACTS: ${{ inputs.EXTRA_ARTIFACTS }}
   #LOCATION: ${{ inputs.LOCATION }}
   #PUSH_IMAGES_2_REGISTRY: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
-  #RUN_TESTS: ${{ inputs.RUN_TESTS }}
   #STRIP_TARBALL: ${{ inputs.STRIP_TARBALL }}
   #WORKFLOW: ${{ github.workflow }}
 
@@ -177,6 +137,9 @@ jobs:
       - ${{ inputs.LOCATION }}
     steps:
       # ==================== CHECKOUT ====================
+      - name: Fix Git Safe Directory
+        run: git config --global --add safe.directory '*'
+
       - name: Checkout SereneDB
         uses: actions/checkout@v4
         with:
@@ -219,7 +182,7 @@ jobs:
         id: run_tests
         if: steps.serenedb_build.outcome == 'success'
         run: |
-          if [[ "${{ env.RUN_TESTS }}" == "true" && ("${{ env.VPACK_TESTS }}" == "true" || "${{ env.IRESEARCH_TESTS }}" == "true" || "${{ env.UNIT_TESTS }}" == "true" || "${{ env.SQLLOGIC_TESTS }}" == "true" || "${{ env.INTEGRATION_TESTS }}" == "true") ]]; then
+          if [[ "${{ inputs.RUN_TESTS }}" == "true" && ("${{ env.VPACK_TESTS }}" == "true" || "${{ env.IRESEARCH_TESTS }}" == "true" || "${{ env.UNIT_TESTS }}" == "true" || "${{ env.SQLLOGIC_TESTS }}" == "true") ]]; then
             ./private/ci/steps/04-ci-run-tests-parallel.bash
           else
               echo "Tests skipped because no test flags are set in TEST_CONFIG or RUN_TESTS is disabled."
@@ -245,14 +208,14 @@ jobs:
       # ==================== BUILD DOCKER IMAGES ====================
       - name: Build Docker Images
         id: build_docker_images
-        if: steps.serenedb_packages.outcome == 'success' && inputs.DOCKER_SERENEDB_IMAGE == 'true'
+        if: steps.serenedb_packages.outcome == 'success' && env.DOCKER_SERENEDB_IMAGE == 'true'
         working-directory: ./packages
         run: ./build_docker.bash
 
       # ==================== PRODUCE BUILD IMAGES ====================
       - name: Produce Build Images
         id: produce_build_images
-        if: inputs.DOCKER_BUILD_IMAGES == 'true'
+        if: env.DOCKER_BUILD_IMAGES == 'true'
         working-directory: ./private/ci
         run: ./build_images.sh
 
@@ -353,7 +316,7 @@ jobs:
 
       # ==================== CLEANUP ====================
       - name: Update file ownership
-        if: always() && !cancelled()
+        if: always()
         run: ./private/ci/steps/07-ci-in-docker-update-file-ownership.bash
 
       - name: Docker cleanup

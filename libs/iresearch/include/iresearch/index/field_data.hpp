@@ -93,9 +93,9 @@ class CachedColumn final : public ColumnReader {
 
   ResettableDocIterator::ptr iterator(ColumnHint hint) const final;
 
-  doc_id_t size() const final {
-    SDB_ASSERT(_stream.Size() < doc_limits::eof());
-    return static_cast<doc_id_t>(_stream.Size());
+  uint32_t size() const final {
+    SDB_ASSERT(_stream.Size() < doc_limits::kMaxCount);
+    return static_cast<uint32_t>(_stream.Size());
   }
 
  private:

@@ -95,8 +95,8 @@ class SegmentWriter final : public ColumnProvider, util::Noncopyable {
   template<Action A, typename Field>
   bool insert(Field&& field) {
     // user should check return of begin() != eof()
-    SDB_ASSERT(LastDocId() < doc_limits::eof());
-    doc_id_t doc = LastDocId();
+    const auto doc = LastDocId();
+    SDB_ASSERT(!doc_limits::eof(doc));
     return insert<A>(std::forward<Field>(field), doc);
   }
 
@@ -105,8 +105,8 @@ class SegmentWriter final : public ColumnProvider, util::Noncopyable {
     if (!_valid) [[unlikely]] {
       return false;
     }
+    SDB_ASSERT(_batch_first_doc_id <= doc);
     SDB_ASSERT(doc <= LastDocId());
-    SDB_ASSERT(doc >= _batch_first_doc_id);
     if constexpr (Action::INDEX == A) {
       return index(std::forward<Field>(field), doc);
     } else if constexpr (Action::STORE == A) {
@@ -166,7 +166,7 @@ class SegmentWriter final : public ColumnProvider, util::Noncopyable {
   void reset(const SegmentMeta& meta);
 
   doc_id_t LastDocId() const noexcept {
-    SDB_ASSERT(buffered_docs() <= doc_limits::eof());
+    SDB_ASSERT(buffered_docs() < doc_limits::kMaxCount);
     return doc_limits::min() + static_cast<doc_id_t>(buffered_docs()) - 1;
   }
 
@@ -247,7 +247,7 @@ class SegmentWriter final : public ColumnProvider, util::Noncopyable {
 
   template<typename Writer>
   bool store_sorted(const doc_id_t doc, Writer& writer) {
-    SDB_ASSERT(doc < doc_limits::eof());
+    SDB_ASSERT(!doc_limits::eof(doc));
 
     if (!_fields.comparator()) [[unlikely]] {
       // can't store sorted field without a comparator
@@ -270,7 +270,7 @@ class SegmentWriter final : public ColumnProvider, util::Noncopyable {
   template<typename Writer>
   bool store(const hashed_string_view& name, const doc_id_t doc,
              Writer& writer) {
-    SDB_ASSERT(doc < doc_limits::eof());
+    SDB_ASSERT(!doc_limits::eof(doc));
 
     auto& out = stream(name, doc);
 
@@ -361,7 +361,7 @@ class SegmentWriter final : public ColumnProvider, util::Noncopyable {
   FieldWriter::ptr _field_writer;
   const ColumnInfoProvider* _column_info;
   ColumnstoreWriter::ptr _col_writer;
-  doc_id_t _batch_first_doc_id = doc_limits::eof();
+  doc_id_t _batch_first_doc_id = doc_limits::kEOF;
   bool _initialized = false;
   bool _valid = true;
 };

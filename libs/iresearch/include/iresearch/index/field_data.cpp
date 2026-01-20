@@ -266,7 +266,7 @@ class DocIteratorImpl : public DocIterator {
 
     if (_freq_in.eof()) {
       if (!_posting) {
-        return doc_value = doc_limits::eof();
+        return doc_value = doc_limits::kEOF;
       }
 
       doc_value = _posting->doc;
@@ -288,7 +288,7 @@ class DocIteratorImpl : public DocIterator {
           _freq.value = irs::vread<uint32_t>(_freq_in);
         }
 
-        SDB_ASSERT(delta < doc_limits::eof());
+        SDB_ASSERT(delta < doc_limits::kEOF);
         doc_value += doc_id_t(delta);
 
         if (_has_cookie) {
@@ -407,7 +407,7 @@ class SortingDocIteratorImpl : public DocIterator {
     }
 
     _freq.value = 0;
-    return doc_value = doc_limits::eof();
+    return doc_value = doc_limits::kEOF;
   }
 
   doc_id_t seek(doc_id_t doc) noexcept final {
@@ -424,7 +424,7 @@ class SortingDocIteratorImpl : public DocIterator {
     DocEntry(doc_id_t doc, uint32_t freq, uint64_t cookie) noexcept
       : doc(doc), freq(freq), cookie(cookie) {}
 
-    doc_id_t doc{doc_limits::eof()};  // doc_id
+    doc_id_t doc = doc_limits::kEOF;  // doc_id
     uint32_t freq;                    // freq
     uint64_t cookie;                  // prox_cookie
   };
@@ -958,8 +958,6 @@ void FieldData::add_term_random_access(Posting& p, doc_id_t did,
 }
 
 bool FieldData::invert(Tokenizer& stream, doc_id_t id) {
-  SDB_ASSERT(id < doc_limits::eof());  // 0-based document id
-
   const auto* term = irs::get<TermAttr>(stream);
   const auto* inc = irs::get<IncAttr>(stream);
   const OffsAttr* offs = nullptr;

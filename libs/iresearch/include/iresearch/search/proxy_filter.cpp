@@ -131,7 +131,7 @@ class LazyFilterBitsetIterator : public DocIterator, private util::Noncopyable {
         continue;
       }
       _word = 0;
-      return _doc.value = doc_limits::eof();
+      return _doc.value = doc_limits::kEOF;
     }
     const auto delta = std::countr_zero(_word);
     SDB_ASSERT(0 <= delta);
@@ -151,7 +151,7 @@ class LazyFilterBitsetIterator : public DocIterator, private util::Noncopyable {
       // FIXME consider inlining to speedup
       return advance();
     } else {
-      _doc.value = doc_limits::eof();
+      _doc.value = doc_limits::kEOF;
       _word = 0;
       return _doc.value;
     }

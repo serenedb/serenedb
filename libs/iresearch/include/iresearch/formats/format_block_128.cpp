@@ -37,7 +37,6 @@ struct FormatTraits128 {
   static constexpr std::string_view kName = "1_5simd";
 
   static constexpr uint32_t kBlockSize = SIMDBlockSize;
-  static_assert(kBlockSize <= doc_limits::eof());
 
   IRS_FORCE_INLINE static void PackBlock(const uint32_t* IRS_RESTRICT decoded,
                                          uint32_t* IRS_RESTRICT encoded,

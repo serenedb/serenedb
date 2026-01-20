@@ -30,7 +30,7 @@
 namespace irs {
 
 class BufferedColumnIterator : public ResettableDocIterator {
-  static constexpr BufferedValue kEmpty{doc_limits::eof(), 0, 0};
+  static constexpr BufferedValue kEmpty{doc_limits::kEOF, 0, 0};
 
  public:
   BufferedColumnIterator(std::span<const BufferedValue> values,
@@ -73,7 +73,7 @@ class BufferedColumnIterator : public ResettableDocIterator {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
 
     if (_next == _end) [[unlikely]] {
-      return doc_value = doc_limits::eof();
+      return doc_value = doc_limits::kEOF;
     }
 
     auto& payload = std::get<PayAttr>(_attrs);

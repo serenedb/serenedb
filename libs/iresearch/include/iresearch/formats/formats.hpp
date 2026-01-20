@@ -355,7 +355,7 @@ struct ColumnReader : public memory::Managed {
   virtual ResettableDocIterator::ptr iterator(ColumnHint hint) const = 0;
 
   // Returns total number of columns.
-  virtual doc_id_t size() const = 0;
+  virtual uint32_t size() const = 0;
 
   virtual void Search(HNSWSearchContext& context) const {
     SDB_THROW(sdb::ERROR_INTERNAL,

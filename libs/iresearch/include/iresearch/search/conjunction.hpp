@@ -211,7 +211,7 @@ class Conjunction : public ConjunctionBase<Adapter, Merger> {
   // if it impossible tries to find first convergence place
   doc_id_t converge(doc_id_t target) {
     if (doc_limits::eof(target)) [[unlikely]] {
-      return doc_limits::eof();
+      return doc_limits::kEOF;
     }
     const auto begin = this->_itrs.begin() + 1;
     const auto end = this->_itrs.end();

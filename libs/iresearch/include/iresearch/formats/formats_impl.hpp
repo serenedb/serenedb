@@ -303,9 +303,11 @@ class PostingsWriterBase : public PostingsWriter {
 
   FieldStats end_field() noexcept final {
     const auto count = _docs.count();
-    SDB_ASSERT(count < doc_limits::eof());
-    return {.wand_mask = _writers_mask,
-            .docs_count = static_cast<doc_id_t>(count)};
+    SDB_ASSERT(count < doc_limits::kMaxCount);
+    return {
+      .wand_mask = _writers_mask,
+      .docs_count = static_cast<doc_id_t>(count),
+    };
   }
 
   void begin_block() final {
@@ -1747,7 +1749,7 @@ class SingleDocIterator
     auto& doc_value = std::get<DocAttr>(_attrs).value;
 
     doc_value = _next;
-    _next = doc_limits::eof();
+    _next = doc_limits::kEOF;
 
     if constexpr (IteratorTraits::Position()) {
       if (!doc_limits::eof(doc_value)) {
@@ -1773,11 +1775,11 @@ class SingleDocIterator
     if (doc_limits::eof(doc_value)) {
       return 0;
     }
-    doc_value = doc_limits::eof();
+    doc_value = doc_limits::kEOF;
     return 1;
   }
 
-  doc_id_t _next{doc_limits::eof()};
+  doc_id_t _next = doc_limits::kEOF;
   Attributes _attrs;
 };
 
@@ -1982,7 +1984,7 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
 
     if (this->_begin == std::end(this->_buf.docs)) [[unlikely]] {
       if (this->_left == 0) [[unlikely]] {
-        return doc_value = doc_limits::eof();
+        return doc_value = doc_limits::kEOF;
       }
 
       this->Refill(doc_value);
@@ -2011,7 +2013,7 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
       return this->Count(*this);
     }
     auto& doc_value = std::get<DocAttr>(_attrs).value;
-    doc_value = doc_limits::eof();
+    doc_value = doc_limits::kEOF;
     this->_begin = std::end(this->_buf.docs);
     return std::exchange(this->_left, 0);
   }
@@ -2036,7 +2038,7 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
     void Disable() noexcept {
       SDB_ASSERT(!_skip_levels.empty());
       SDB_ASSERT(!doc_limits::valid(_skip_levels.back().doc));
-      _skip_levels.back().doc = doc_limits::eof();
+      _skip_levels.back().doc = doc_limits::kEOF;
     }
 
     void Enable(const TermMetaImpl& state) noexcept {
@@ -2126,7 +2128,7 @@ void DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::ReadSkip::Seal(
   CopyState<IteratorTraits>(*_prev, next);
 
   // Stream exhausted
-  next.doc = doc_limits::eof();
+  next.doc = doc_limits::kEOF;
 }
 
 template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
@@ -2210,7 +2212,7 @@ doc_id_t DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::seek(
 
   if (this->_begin == std::end(this->_buf.docs)) [[unlikely]] {
     if (this->_left == 0) [[unlikely]] {
-      return doc_value = doc_limits::eof();
+      return doc_value = doc_limits::kEOF;
     }
 
     this->Refill(doc_value);
@@ -2246,7 +2248,7 @@ doc_id_t DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::seek(
     }
   }
 
-  return doc_value = doc_limits::eof();
+  return doc_value = doc_limits::kEOF;
 }
 
 template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
@@ -2373,7 +2375,7 @@ class Wanderator : public DocIteratorBase<IteratorTraits, FieldTraits>,
       return this->Count(*this);
     }
     auto& doc_value = std::get<DocAttr>(_attrs).value;
-    doc_value = doc_limits::eof();
+    doc_value = doc_limits::kEOF;
     this->_begin = std::end(this->_buf.docs);
     return std::exchange(this->_left, 0);
   }
@@ -2519,7 +2521,7 @@ size_t
 Wanderator<IteratorTraits, FieldTraits, WandExtent>::ReadSkip::AdjustLevel(
   size_t level) const noexcept {
   while (level && skip_levels[level].doc >= skip_levels[level - 1].doc) {
-    SDB_ASSERT(skip_levels[level - 1].doc != doc_limits::eof());
+    SDB_ASSERT(!doc_limits::eof(skip_levels[level - 1].doc));
     --level;
   }
   return level;
@@ -2535,7 +2537,7 @@ void Wanderator<IteratorTraits, FieldTraits, WandExtent>::ReadSkip::Seal(
   CopyState<IteratorTraits>(last, next);
 
   // Stream exhausted
-  next.doc = doc_limits::eof();
+  next.doc = doc_limits::kEOF;
   skip_scores[level] = std::numeric_limits<score_t>::max();
 }
 
@@ -2640,7 +2642,7 @@ doc_id_t Wanderator<IteratorTraits, FieldTraits, WandExtent>::seek(
 
   if (this->_begin == std::end(this->_buf.docs)) [[unlikely]] {
     if (this->_left == 0) [[unlikely]] {
-      return doc_value = doc_limits::eof();
+      return doc_value = doc_limits::kEOF;
     }
 
     auto& state = _skip.Reader().State();
@@ -2683,7 +2685,7 @@ doc_id_t Wanderator<IteratorTraits, FieldTraits, WandExtent>::seek(
     }
   }
 
-  return doc_value = doc_limits::eof();
+  return doc_value = doc_limits::kEOF;
 }
 
 struct IndexMetaWriterImpl final : public IndexMetaWriter {
@@ -2933,8 +2935,8 @@ inline void IndexMetaReaderImpl::read(const Directory& dir, IndexMeta& meta,
 
 inline uint64_t WriteDocumentMask(IndexOutput& out, const auto& docs_mask) {
   // TODO(gnusi): better format
-  uint32_t mask_size = docs_mask ? static_cast<uint32_t>(docs_mask->size()) : 0;
-  SDB_ASSERT(mask_size < doc_limits::eof());
+  uint32_t mask_size = docs_mask ? docs_mask->size() : 0;
+  SDB_ASSERT(mask_size < doc_limits::kMaxCount);
 
   if (!mask_size) {
     out.WriteV32(0);

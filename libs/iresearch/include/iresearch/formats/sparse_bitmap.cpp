@@ -97,8 +97,8 @@ void SparseBitmapWriter::finish() {
   }
 
   // create a sentinel block to issue doc_limits::eof() automatically
-  _block = doc_limits::eof() / kBlockSize;
-  set(doc_limits::eof() % kBlockSize);
+  _block = doc_limits::kEOF / kBlockSize;
+  set(doc_limits::kEOF % kBlockSize);
   do_flush(1);
 }
 

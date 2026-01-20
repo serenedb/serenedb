@@ -34,7 +34,7 @@ class ByNestedFilter;
 
 struct Match {
   constexpr explicit Match(doc_id_t value) noexcept
-    : Match{value, doc_limits::eof()} {}
+    : Match{value, doc_limits::kEOF} {}
 
   constexpr Match(doc_id_t min, doc_id_t max) noexcept : min(min), max(max) {}
 

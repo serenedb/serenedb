@@ -112,7 +112,7 @@ std::pair<DocMap, field_id> BufferedColumn::Flush(ColumnstoreWriter& writer,
   SDB_ASSERT(_index.size() <= docs_count);
   SDB_ASSERT(_index.empty() || _index.back().key <= docs_count);
 
-  Prepare(doc_limits::eof());  // Insert last pending value
+  Prepare(doc_limits::kEOF);  // Insert last pending value
 
   if (_index.empty()) [[unlikely]] {
     return {DocMap{_index.get_allocator()}, field_limits::invalid()};
@@ -199,9 +199,9 @@ void BufferedColumn::FlushSparse(ColumnOutput& writer, DocMapView docmap) {
 field_id BufferedColumn::Flush(ColumnstoreWriter& writer,
                                ColumnFinalizer finalizer, DocMapView docmap,
                                BufferedValues& buffer) {
-  SDB_ASSERT(docmap.size() < irs::doc_limits::eof());
+  SDB_ASSERT(docmap.size() < doc_limits::kMaxCount);
 
-  Prepare(doc_limits::eof());  // Insert last pending value
+  Prepare(doc_limits::kEOF);  // Insert last pending value
 
   if (_index.empty()) [[unlikely]] {
     return field_limits::invalid();

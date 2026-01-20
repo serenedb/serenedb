@@ -363,7 +363,7 @@ class IndexWriter : private util::Noncopyable {
 
     SegmentWriter& _writer;
     QueryContext* _query;
-    doc_id_t _doc_id{irs::doc_limits::eof()};
+    doc_id_t _doc_id = irs::doc_limits::kEOF;
   };
   static_assert(std::is_nothrow_move_constructible_v<Document>);
 

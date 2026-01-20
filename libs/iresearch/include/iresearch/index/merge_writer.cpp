@@ -164,7 +164,7 @@ doc_id_t RemappingDocIterator::advance() {
   while (true) {
     const auto it_value = _it->advance();
     if (doc_limits::eof(it_value)) {
-      return _doc.value = doc_limits::eof();
+      return _doc.value = doc_limits::kEOF;
     }
 
     _doc.value = (*_mapper)(it_value);
@@ -237,7 +237,7 @@ doc_id_t CompoundDocIterator::advance() {
 
   if (Aborted()) {
     _iterators.clear();
-    return _doc.value = doc_limits::eof();
+    return _doc.value = doc_limits::kEOF;
   }
 
   for (bool notify = !doc_limits::valid(_doc.value);
@@ -270,7 +270,7 @@ doc_id_t CompoundDocIterator::advance() {
     it.reset();
   }
 
-  return _doc.value = doc_limits::eof();
+  return _doc.value = doc_limits::kEOF;
 }
 
 // Iterator over sorted doc_ids for a term over all readers
@@ -338,7 +338,7 @@ doc_id_t SortingCompoundDocIterator::advance() {
   auto& current_id = _doc_it->_doc.value;
   if (_doc_it->Aborted()) {
     _doc_it->_iterators.clear();
-    return current_id = doc_limits::eof();
+    return current_id = doc_limits::kEOF;
   }
 
   while (_merge_it.Next()) {
@@ -358,7 +358,7 @@ doc_id_t SortingCompoundDocIterator::advance() {
     }
   }
 
-  return current_id = doc_limits::eof();
+  return current_id = doc_limits::kEOF;
 }
 
 class DocIteratorContainer {
@@ -1453,7 +1453,7 @@ doc_id_t ComputeDocIds(DocIdMapT& doc_id_map, const SubReader& reader,
   // assume not a lot of space wasted if doc_limits::min() > 0
   try {
     doc_id_map.resize(reader.docs_count() + doc_limits::min(),
-                      doc_limits::eof());
+                      doc_limits::kEOF);
   } catch (...) {
     SDB_ERROR(
       "xxxxx", sdb::Logger::IRESEARCH,
@@ -1498,7 +1498,7 @@ MergeWriter::ReaderCtx::ReaderCtx(const SubReader* reader,
                                   IResourceManager& rm) noexcept
   : reader{reader},
     doc_id_map{{rm}},
-    doc_map{[](doc_id_t) noexcept { return doc_limits::eof(); }} {
+    doc_map{[](doc_id_t) noexcept { return doc_limits::kEOF; }} {
   SDB_ASSERT(this->reader);
 }
 
@@ -1549,7 +1549,7 @@ bool MergeWriter::FlushUnsorted(TrackingDirectory& dir, SegmentMeta& segment,
       base_id = ComputeDocIds(doc_id_map, reader, base_id);
 
       reader_ctx.doc_map = [&doc_id_map](doc_id_t doc) noexcept {
-        return doc >= doc_id_map.size() ? doc_limits::eof() : doc_id_map[doc];
+        return doc >= doc_id_map.size() ? doc_limits::kEOF : doc_id_map[doc];
       };
     }
 
@@ -1671,8 +1671,7 @@ bool MergeWriter::FlushSorted(TrackingDirectory& dir, SegmentMeta& segment,
 
     auto& reader = *reader_ctx.reader;
 
-    if (reader.docs_count() > doc_limits::eof() - doc_limits::min()) {
-      // Can't merge segment holding more than 'doc_limits::eof()-1' docs
+    if (reader.docs_count() >= doc_limits::kMaxCount) {
       return false;
     }
 
@@ -1700,7 +1699,7 @@ bool MergeWriter::FlushSorted(TrackingDirectory& dir, SegmentMeta& segment,
 
     try {
       doc_id_map.resize(reader.docs_count() + doc_limits::min(),
-                        doc_limits::eof());
+                        doc_limits::kEOF);
     } catch (...) {
       SDB_ERROR(
         "xxxxx", sdb::Logger::IRESEARCH,
@@ -1713,13 +1712,12 @@ bool MergeWriter::FlushSorted(TrackingDirectory& dir, SegmentMeta& segment,
 
     reader_ctx.doc_map = [doc_id_map =
                             std::span{doc_id_map}](size_t doc) noexcept {
-      SDB_ASSERT(doc_id_map[0] == doc_limits::eof());
+      SDB_ASSERT(doc_id_map[0] == doc_limits::kEOF);
       return doc_id_map[doc * static_cast<size_t>(doc < doc_id_map.size())];
     };
   }
 
-  if (segment.docs_count >= doc_limits::eof()) {
-    // Can't merge segments holding more than 'doc_limits::eof()-1' docs
+  if (segment.docs_count >= doc_limits::kMaxCount) {
     return false;
   }
 

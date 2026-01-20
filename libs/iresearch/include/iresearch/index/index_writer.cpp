@@ -77,7 +77,7 @@ struct FlushedSegmentContext {
                         const ResourceManagementOptions& rm)
     : reader{std::move(reader)}, segment{segment}, flushed{flushed} {
     SDB_ASSERT(this->reader != nullptr);
-    if (flushed.docs_mask.count != doc_limits::eof()) {
+    if (flushed.docs_mask.count < doc_limits::kMaxCount) {
       SDB_ASSERT(flushed.document_mask.empty());
       Init(rm);
     }
@@ -171,12 +171,12 @@ struct FlushedSegmentContext {
     flushed.document_mask = std::move(document_mask);
     flushed.docs_mask.set = {};
     // set count to invalid
-    flushed.docs_mask.count = doc_limits::eof();
+    flushed.docs_mask.count = doc_limits::kEOF;
   }
 
   static doc_id_t Translate(const auto& map, auto from) noexcept {
-    SDB_ASSERT(doc_limits::invalid() < from);
-    SDB_ASSERT(from <= doc_limits::eof());
+    SDB_ASSERT(doc_limits::valid(from));
+    SDB_ASSERT(!doc_limits::eof(from));
     if (map.empty()) {
       return static_cast<doc_id_t>(from);
     }
@@ -930,7 +930,7 @@ void IndexWriter::SegmentContext::Flush() {
     SDB_ASSERT(committed_buffered_docs == 0);
     return;  // Skip flushing an empty writer
   }
-  SDB_ASSERT(writer->buffered_docs() <= doc_limits::eof());
+  SDB_ASSERT(writer->buffered_docs() < doc_limits::kMaxCount);
 
   Finally reset_writer = [&]() noexcept {
     writer->reset();
@@ -1042,8 +1042,8 @@ void IndexWriter::SegmentContext::Rollback() noexcept {
   for (auto doc_id = buffered_docs - 1 + doc_limits::min(),
             doc_id_rend = committed_buffered_docs - 1 + doc_limits::min();
        doc_id > doc_id_rend; --doc_id) {
-    SDB_ASSERT(doc_limits::invalid() < doc_id);
-    SDB_ASSERT(doc_id <= doc_limits::eof());
+    SDB_ASSERT(doc_limits::valid(doc_id));
+    SDB_ASSERT(!doc_limits::eof(doc_id));
     writer->remove(static_cast<doc_id_t>(doc_id));
   }
 

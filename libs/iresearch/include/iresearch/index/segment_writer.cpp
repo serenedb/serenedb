@@ -63,7 +63,7 @@ SegmentWriter::StoredColumn::StoredColumn(
 }
 
 doc_id_t SegmentWriter::begin(DocContext ctx, doc_id_t batch_size) {
-  SDB_ASSERT(LastDocId() < doc_limits::eof());
+  SDB_ASSERT(!doc_limits::eof(LastDocId()));
   _valid = true;
   SDB_ASSERT(batch_size > 0);
   ResetNorms();
@@ -270,7 +270,7 @@ void SegmentWriter::reset() noexcept {
   _docs_context.clear();
   _docs_mask.set.clear();
   _docs_mask.count = 0;
-  _batch_first_doc_id = doc_limits::eof();
+  _batch_first_doc_id = doc_limits::kEOF;
   _fields.reset();
   _columns.clear();
   _column_ids.clear();

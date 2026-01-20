@@ -404,13 +404,13 @@ class SmallDisjunction : public CompoundDocIterator<Adapter>,
       return doc_value;
     }
 
-    doc_id_t min = doc_limits::eof();
+    doc_id_t min = doc_limits::kEOF;
 
     for (auto begin = _begin; begin != _end;) {
       auto& it = *begin;
       if (!next_iterator_impl(it)) {
         if (!remove_iterator(begin)) {
-          return doc_value = doc_limits::eof();
+          return doc_value = doc_limits::kEOF;
         }
       } else {
         min = std::min(min, it.value());
@@ -428,7 +428,7 @@ class SmallDisjunction : public CompoundDocIterator<Adapter>,
       return doc_value;
     }
 
-    doc_id_t min = doc_limits::eof();
+    doc_id_t min = doc_limits::kEOF;
 
     for (auto begin = _begin; begin != _end;) {
       auto& it = *begin;
@@ -441,7 +441,7 @@ class SmallDisjunction : public CompoundDocIterator<Adapter>,
         } else if (doc_limits::eof(value)) {
           if (!remove_iterator(begin)) {
             // exhausted
-            return doc_value = doc_limits::eof();
+            return doc_value = doc_limits::kEOF;
           }
           continue;  // don't need to increment 'begin' here
         }
@@ -482,7 +482,7 @@ class SmallDisjunction : public CompoundDocIterator<Adapter>,
     std::get<CostAttr>(_attrs).reset(std::forward<Estimation>(estimation));
 
     if (_itrs.empty()) {
-      std::get<DocAttr>(_attrs).value = doc_limits::eof();
+      std::get<DocAttr>(_attrs).value = doc_limits::kEOF;
     }
 
     auto rbegin = _itrs.rbegin();
@@ -629,7 +629,7 @@ class Disjunction : public CompoundDocIterator<Adapter>,
       const bool exhausted = doc_limits::eof(target);
 
       if (exhausted && !remove_lead()) {
-        return doc_value = doc_limits::eof();
+        return doc_value = doc_limits::kEOF;
       }
 
       refresh_lead();
@@ -649,7 +649,7 @@ class Disjunction : public CompoundDocIterator<Adapter>,
       const auto value = lead().seek(target);
 
       if (doc_limits::eof(value) && !remove_lead()) {
-        return doc_value = doc_limits::eof();
+        return doc_value = doc_limits::kEOF;
       } else if (value != target) {
         refresh_lead();
       }
@@ -700,7 +700,7 @@ class Disjunction : public CompoundDocIterator<Adapter>,
     std::get<CostAttr>(_attrs).reset(std::forward<Estimation>(estimation));
 
     if (_itrs.empty()) {
-      std::get<DocAttr>(_attrs).value = doc_limits::eof();
+      std::get<DocAttr>(_attrs).value = doc_limits::kEOF;
     }
 
     // prepare external heap
@@ -911,7 +911,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
           }
 
           _match_count = 0;
-          return doc_value = doc_limits::eof();
+          return doc_value = doc_limits::kEOF;
         }
 
         _cur = *_begin++;
@@ -966,7 +966,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
       return advance();
     }
 
-    doc_value = doc_limits::eof();
+    doc_value = doc_limits::kEOF;
 
     if constexpr (Traits::kMinMatch) {
       _match_count = 0;
@@ -996,7 +996,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
 
     if (_itrs.empty()) {
       _match_count = 0;
-      return doc_value = doc_limits::eof();
+      return doc_value = doc_limits::kEOF;
     }
 
     SDB_ASSERT(!doc_limits::eof(doc_value));
@@ -1051,7 +1051,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
     }
 
     _match_count = 0;
-    std::get<DocAttr>(_attrs).value = doc_limits::eof();
+    std::get<DocAttr>(_attrs).value = doc_limits::kEOF;
     return count;
   }
 
@@ -1092,7 +1092,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
     std::get<CostAttr>(_attrs).reset(std::forward<Estimation>(estimation));
 
     if (_itrs.empty()) {
-      std::get<DocAttr>(_attrs).value = doc_limits::eof();
+      std::get<DocAttr>(_attrs).value = doc_limits::kEOF;
     }
 
     if constexpr (kHasScore<Merger>) {
@@ -1226,7 +1226,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
 
       _doc_base = _min;
       _max = _min + kWindow;
-      _min = doc_limits::eof();
+      _min = doc_limits::kEOF;
 
       VisitAndPurge([this, &empty](auto& it) mutable {
         // FIXME

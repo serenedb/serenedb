@@ -103,7 +103,7 @@ class MinMatchDisjunction : public DocIterator,
       // start next iteration. execute next for all lead iterators
       // and move them to head
       if (!PopLead()) {
-        return doc_value = doc_limits::eof();
+        return doc_value = doc_limits::kEOF;
       }
 
       // make step for all head iterators less or equal current doc (doc_)
@@ -114,7 +114,7 @@ class MinMatchDisjunction : public DocIterator,
         const bool exhausted = doc_limits::eof(target);
 
         if (exhausted && !RemoveTop()) {
-          return doc_value = doc_limits::eof();
+          return doc_value = doc_limits::kEOF;
         }
         RefreshTop();
       }
@@ -130,7 +130,7 @@ class MinMatchDisjunction : public DocIterator,
       } while (top == Top().value());
     }
 
-    return doc_value = doc_limits::eof();
+    return doc_value = doc_limits::kEOF;
   }
 
   doc_id_t seek(doc_id_t target) final {
@@ -151,7 +151,7 @@ class MinMatchDisjunction : public DocIterator,
 
         // iterator exhausted
         if (!RemoveLead(it)) {
-          return doc_value = doc_limits::eof();
+          return doc_value = doc_limits::kEOF;
         }
 
         it = Lead();
@@ -179,7 +179,7 @@ class MinMatchDisjunction : public DocIterator,
         if (doc_limits::eof(doc)) {
           // iterator exhausted
           if (!RemoveTop()) {
-            return doc_value = doc_limits::eof();
+            return doc_value = doc_limits::kEOF;
           }
         } else if (doc == target) {
           // valid iterator, doc == target
@@ -197,7 +197,7 @@ class MinMatchDisjunction : public DocIterator,
       // start next iteration. execute next for all lead iterators
       // and move them to head
       if (!PopLead()) {
-        return doc_value = doc_limits::eof();
+        return doc_value = doc_limits::kEOF;
       }
     }
   }

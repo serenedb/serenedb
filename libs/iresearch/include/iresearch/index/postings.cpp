@@ -66,7 +66,7 @@ Posting* Postings::emplace(bytes_view term) {
     _writer.seek(next_block_start);
   }
 
-  SDB_ASSERT(size() < doc_limits::eof());  // not larger then the static flag
+  SDB_ASSERT(size() < doc_limits::kMaxCount);
   SDB_ASSERT(_terms.size() == _postings.size());
 
   const hashed_bytes_view hashed_term{term};

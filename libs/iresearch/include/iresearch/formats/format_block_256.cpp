@@ -38,7 +38,6 @@ struct FormatTraits256 {
   static constexpr std::string_view kName = "1_5avx";
 
   static constexpr uint32_t kBlockSize = AVXBlockSize;
-  static_assert(kBlockSize <= doc_limits::eof());
 
   IRS_FORCE_INLINE static void PackBlock(const uint32_t* IRS_RESTRICT decoded,
                                          uint32_t* IRS_RESTRICT encoded,

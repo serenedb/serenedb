@@ -46,12 +46,12 @@ class AllIterator : public DocIterator {
   doc_id_t value() const noexcept final { return _doc.value; }
 
   doc_id_t advance() noexcept final {
-    _doc.value = _doc.value < _max_doc ? _doc.value + 1 : doc_limits::eof();
+    _doc.value = _doc.value < _max_doc ? _doc.value + 1 : doc_limits::kEOF;
     return _doc.value;
   }
 
   doc_id_t seek(doc_id_t target) noexcept final {
-    _doc.value = target <= _max_doc ? target : doc_limits::eof();
+    _doc.value = target <= _max_doc ? target : doc_limits::kEOF;
     return _doc.value;
   }
 
@@ -60,7 +60,7 @@ class AllIterator : public DocIterator {
       return 0;
     }
     const auto count = _max_doc - _doc.value;
-    _doc.value = doc_limits::eof();
+    _doc.value = doc_limits::kEOF;
     return count;
   }
 
@@ -127,7 +127,7 @@ class MaskedDocIterator : public DocIterator {
         return _current.value;
       }
     }
-    return _current.value = doc_limits::eof();
+    return _current.value = doc_limits::kEOF;
   }
 
   doc_id_t seek(doc_id_t target) final {

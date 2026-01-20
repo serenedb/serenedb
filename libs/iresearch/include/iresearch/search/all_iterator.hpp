@@ -47,13 +47,13 @@ class AllIterator : public DocIterator {
 
   doc_id_t advance() noexcept final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
-    doc_value = doc_value < _max_doc ? doc_value + 1 : doc_limits::eof();
+    doc_value = doc_value < _max_doc ? doc_value + 1 : doc_limits::kEOF;
     return doc_value;
   }
 
   doc_id_t seek(doc_id_t target) noexcept final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
-    doc_value = target <= _max_doc ? target : doc_limits::eof();
+    doc_value = target <= _max_doc ? target : doc_limits::kEOF;
     return doc_value;
   }
 
@@ -63,7 +63,7 @@ class AllIterator : public DocIterator {
       return 0;
     }
     const auto count = _max_doc - doc_value;
-    doc_value = doc_limits::eof();
+    doc_value = doc_limits::kEOF;
     return count;
   }
 

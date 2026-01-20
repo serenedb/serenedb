@@ -41,10 +41,12 @@ namespace doc_limits {
 constexpr doc_id_t eof() noexcept {
   return std::numeric_limits<doc_id_t>::max();
 }
-constexpr bool eof(doc_id_t id) noexcept { return eof() == id; }
+inline constexpr doc_id_t kEOF = std::numeric_limits<doc_id_t>::max() - 2;
+constexpr bool eof(auto id) noexcept { return kEOF <= id; }
 constexpr doc_id_t invalid() noexcept { return 0; }
-constexpr doc_id_t(min)() noexcept { return 1; }
+constexpr doc_id_t min() noexcept { return 1; }
 constexpr bool valid(doc_id_t id) noexcept { return invalid() != id; }
+inline constexpr doc_id_t kMaxCount = kEOF - min();
 
 }  // namespace doc_limits
 namespace field_limits {

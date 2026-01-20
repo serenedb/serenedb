@@ -30,7 +30,7 @@ namespace irs {
 BitsetDocIterator::BitsetDocIterator(const word_t* begin,
                                      const word_t* end) noexcept
   : _cost(math::Popcount(begin, end)),
-    _doc(_cost.estimate() ? doc_limits::invalid() : doc_limits::eof()),
+    _doc(_cost.estimate() ? doc_limits::invalid() : doc_limits::kEOF),
     _begin(begin),
     _end(end) {
   reset();
@@ -53,7 +53,7 @@ doc_id_t BitsetDocIterator::advance() noexcept {
       }
 
       _word = 0;
-      return _doc.value = doc_limits::eof();
+      return _doc.value = doc_limits::kEOF;
     }
 
     _word = *_next++;
@@ -81,7 +81,7 @@ doc_id_t BitsetDocIterator::seek(doc_id_t target) noexcept {
         continue;
       }
 
-      _doc.value = doc_limits::eof();
+      _doc.value = doc_limits::kEOF;
       _word = 0;
 
       return _doc.value;
@@ -113,7 +113,7 @@ uint32_t BitsetDocIterator::count() noexcept {
         reset();
         continue;
       }
-      _doc.value = doc_limits::eof();
+      _doc.value = doc_limits::kEOF;
       return count;
     }
     count += std::popcount(*_next++);

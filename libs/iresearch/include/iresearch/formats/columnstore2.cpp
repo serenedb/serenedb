@@ -234,7 +234,7 @@ class RangeColumnIterator : public ResettableDocIterator,
       return std::get<DocAttr>(_attrs).value = _min_doc++;
     }
     std::get<PayAttr>(_attrs).value = {};
-    return std::get<DocAttr>(_attrs).value = doc_limits::eof();
+    return std::get<DocAttr>(_attrs).value = doc_limits::kEOF;
   }
 
   doc_id_t seek(doc_id_t doc) final {
@@ -253,10 +253,10 @@ class RangeColumnIterator : public ResettableDocIterator,
 
     if (value() < doc) {
       _max_doc = doc_limits::invalid();
-      _min_doc = doc_limits::eof();
-      std::get<DocAttr>(_attrs).value = doc_limits::eof();
+      _min_doc = doc_limits::kEOF;
+      std::get<DocAttr>(_attrs).value = doc_limits::kEOF;
       std::get<PayAttr>(_attrs).value = {};
-      return doc_limits::eof();
+      return doc_limits::kEOF;
     }
 
     return value();
@@ -1330,8 +1330,8 @@ bool Less(std::string_view lhs, std::string_view rhs) noexcept {
 }  // namespace
 
 void Column::Prepare(doc_id_t key) {
-  SDB_ASSERT(doc_limits::invalid() < key);
-  SDB_ASSERT(key < doc_limits::eof());
+  SDB_ASSERT(doc_limits::valid(key));
+  SDB_ASSERT(!doc_limits::eof(key));
 #ifdef SDB_DEV
   SDB_ASSERT(!_sealed);
 #endif

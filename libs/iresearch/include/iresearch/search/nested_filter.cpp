@@ -170,7 +170,7 @@ class ChildToParentJoin : public DocIterator, private Matcher {
 
   doc_id_t SeekInternal(doc_id_t parent) {
     if (doc_limits::eof(parent)) [[unlikely]] {
-      return doc_limits::eof();
+      return doc_limits::kEOF;
     }
     for (doc_id_t first_child = _child->seek(FirstChildApprox());
          (first_child = Matcher::Accept(first_child, parent));
@@ -179,7 +179,7 @@ class ChildToParentJoin : public DocIterator, private Matcher {
 
       if (doc_limits::eof(parent) ||
           (parent == first_child && !_parent->next())) {  // Skip parent docs
-        return doc_limits::eof();
+        return doc_limits::kEOF;
       }
     }
 

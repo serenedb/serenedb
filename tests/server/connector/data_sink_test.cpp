@@ -97,15 +97,13 @@ class DataSinkTest : public ::testing::Test,
       column_oids.push_back(static_cast<sdb::catalog::Column::Id>(i));
     }
     sdb::connector::primary_key::Create(*data, pk, written_row_keys);
-    std::atomic<size_t> rows_affected{};
     sdb::connector::RocksDBInsertDataSink sink(
-      *transaction, *_cf_handles.front(), rows_affected, *pool_.get(),
-      object_key, pk, column_oids);
+      *transaction, *_cf_handles.front(), *pool_.get(), object_key, pk,
+      column_oids);
     sink.appendData(data);
     while (!sink.finish()) {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
-    ASSERT_EQ(data->size(), rows_affected.load(std::memory_order_relaxed));
   }
 
   void MakeRocksDBWrite(std::vector<std::string> names,
@@ -2485,19 +2483,15 @@ TEST_F(DataSinkTest, test_deleteDataSink) {
   std::unique_ptr<rocksdb::Transaction> transaction{
     _db->BeginTransaction(wo, trx_opts, nullptr)};
   ASSERT_NE(transaction, nullptr);
-  std::atomic<size_t> rows_affected{};
 
   sdb::connector::RocksDBDeleteDataSink delete_sink(
-    *transaction, *_cf_handles.front(), rows_affected, row_type, object_key,
-    {0, 1, 2, 3});
+    *transaction, *_cf_handles.front(), row_type, object_key, {0, 1, 2, 3});
 
   delete_sink.appendData(row_data);
   ASSERT_TRUE(delete_sink.finish());
 
   auto close_result = delete_sink.close();
   ASSERT_TRUE(transaction->Commit().ok());
-
-  ASSERT_EQ(row_data->size(), rows_affected.load(std::memory_order_relaxed));
 
   std::unique_ptr<rocksdb::Iterator> it_after{
     _db->NewIterator(read_options, _cf_handles.front())};
@@ -2552,26 +2546,19 @@ TEST_F(DataSinkTest, test_deleteDataSinkPartial) {
     _db->BeginTransaction(wo, trx_opts, nullptr)};
   ASSERT_NE(transaction2, nullptr);
 
-  std::atomic<size_t> rows_affected{};
-
   sdb::connector::RocksDBDeleteDataSink delete_sink(
-    *transaction, *_cf_handles.front(), rows_affected, row_type, object_key,
-    column_ids);
+    *transaction, *_cf_handles.front(), row_type, object_key, column_ids);
 
   delete_sink.appendData(row_data);
   ASSERT_TRUE(delete_sink.finish());
 
   // check for conflict
   {
-    std::atomic<size_t> rows_affected{};
-
     sdb::connector::RocksDBDeleteDataSink delete_sink2(
-      *transaction2, *_cf_handles.front(), rows_affected, row_type, object_key,
-      column_ids);
+      *transaction2, *_cf_handles.front(), row_type, object_key, column_ids);
     ASSERT_ANY_THROW(delete_sink2.appendData(row_data));
     // should be empty
     ASSERT_TRUE(transaction2->Commit().ok());
-    ASSERT_EQ(rows_affected.load(std::memory_order_relaxed), 0);
     std::unique_ptr<rocksdb::Iterator> it_after{
       _db->NewIterator(read_options, _cf_handles.front())};
     int count_after = 0;
@@ -2616,15 +2603,13 @@ TEST_F(DataSinkTest, test_insertDeleteConflict) {
   rocksdb::WriteOptions wo;
   std::unique_ptr<rocksdb::Transaction> transaction_delete{
     _db->BeginTransaction(wo, trx_opts, nullptr)};
-  std::atomic<size_t> rows_affected{};
 
   sdb::connector::RocksDBDeleteDataSink delete_sink(
-    *transaction_delete, *_cf_handles.front(), rows_affected, row_type,
-    kObjectKey, column_ids);
+    *transaction_delete, *_cf_handles.front(), row_type, kObjectKey,
+    column_ids);
   auto delete_data = makeRowVector({makeFlatVector<int32_t>({15, 6, 7, 10})});
   ASSERT_ANY_THROW(delete_sink.appendData(delete_data));
   // should be empty
-  ASSERT_EQ(0, rows_affected.load(std::memory_order_relaxed));
   ASSERT_TRUE(transaction_delete->Commit().ok());
   ASSERT_TRUE(transaction->Commit().ok());
   // insert should be fully written

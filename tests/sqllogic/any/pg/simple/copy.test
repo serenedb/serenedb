@@ -301,6 +301,6 @@ COPY header_eater FROM '/tmp/headers.tsv';
 query
 SELECT * FROM header_eater;
 ----
-header1 header2
-header  header
-1       2
+header1	header2
+header	header
+1	2

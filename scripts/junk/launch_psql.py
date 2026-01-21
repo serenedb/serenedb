@@ -12,7 +12,7 @@ class PSQLExecutor:
         self.database = database
         self.user = user
         self.port = port
-        
+
     def execute_update(self, sql: str, timeout: int = 30) -> Tuple[int, str, float]:
         """
         Execute SQL command and return (exit_code, output, duration)
@@ -26,9 +26,9 @@ class PSQLExecutor:
             '-c', sql,
             '-v', 'ON_ERROR_STOP=1'
         ]
-        
+
         start_time = time.time()
-        
+
         try:
             result = subprocess.run(
                 cmd,
@@ -37,16 +37,16 @@ class PSQLExecutor:
                 timeout=timeout,
                 check=False
             )
-            
+
             duration = time.time() - start_time
             output = result.stdout
-            
+
             # Include stderr in output if there's an error
             if result.stderr:
                 output += f"\nSTDERR: {result.stderr}"
-                
+
             return result.returncode, output.strip(), duration
-            
+
         except subprocess.TimeoutExpired:
             duration = time.time() - start_time
             return 124, f"Timeout after {timeout} seconds", duration
@@ -65,63 +65,63 @@ def main():
         'iterations': 100,
         'timeout': 30
     }
-    
+
     executor = PSQLExecutor(
         host=config['host'],
         database=config['database'],
         user=config['user'],
         port=config['port']
     )
-    
+
     # Log file
     log_filename = f"psql_execution_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-    
+
     print(f"Starting {config['iterations']} iterations")
     print(f"Database: {config['host']}:{config['port']}/{config['database']}")
     print(f"SQL: {config['sql']}")
     print("=" * 50)
-    
+
     with open(log_filename, 'w') as log_file:
         # Write header to log
         log_file.write(f"Execution started at: {datetime.now()}\n")
         log_file.write(f"Configuration: {config}\n")
         log_file.write("=" * 50 + "\n\n")
-        
+
         success_count = 0
         error_count = 0
-        
+
         for i in range(1, config['iterations'] + 1):
             print(f"\n=== Iteration {i}/{config['iterations']} ===")
             log_file.write(f"\n=== Iteration {i}/{config['iterations']} ===\n")
-            
+
             exit_code, output, duration = executor.execute_update(
-                config['sql'], 
+                config['sql'],
                 config['timeout']
             )
-            
+
             # Print and log results
             result_line = f"Duration: {duration:.3f}s, Exit Code: {exit_code}"
             print(result_line)
             print("Output:", output)
-            
+
             log_file.write(f"Start time: {datetime.now()}\n")
             log_file.write(f"{result_line}\n")
             log_file.write(f"Output:\n{output}\n")
-            
+
             # Count results
             if exit_code == 0:
                 success_count += 1
             else:
                 error_count += 1
-            
+
             # Optional: Add delay between iterations
             # time.sleep(0.1)
-            
+
             # Break on persistent non-timeout errors
             if exit_code not in (0, 124) and error_count >= 3:
                 print(f"\nToo many errors ({error_count}). Stopping...")
                 break
-        
+
         # Summary
         summary = f"""
 {'=' * 50}

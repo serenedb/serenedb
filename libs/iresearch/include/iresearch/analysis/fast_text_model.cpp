@@ -36,9 +36,9 @@ ModelPtr CreateModel(std::string_view key) {
   }
   absl::WriterMutexLock lock{&gMutex};
   ModelPtr model = {new Model{key}, [](Model* p) noexcept {
-             DropModel(p->key());
-             delete p;
-           }};
+                      DropModel(p->key());
+                      delete p;
+                    }};
   gCache.insert_or_assign(model->key(), model);
   return model;
 }

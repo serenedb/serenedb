@@ -240,17 +240,18 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
     std::unique_ptr<rocksdb::Iterator>(_db.NewIterator(read_options, &_cf));
 
   bool is_range = true;
-  auto seek_to_key = [&](std::string_view key) {
+  auto seek_to_key = [&](std::string_view key, bool seek_allowed_for_range) {
     if (!it->Valid()) [[unlikely]] {
       it->Seek(key);
       return;
     }
+
     if (is_range) {
       it->Next();
       if (it->key() == key) {
         return;
       }
-      is_range = false;
+      is_range = seek_allowed_for_range;
     }
 
     it->Seek(key);
@@ -276,7 +277,7 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
                   folly::Range{&all_rows, 1}, {});
     } else {
       for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-        seek_to_key(_old_keys_buffers[row_idx]);
+        seek_to_key(_old_keys_buffers[row_idx], row_idx == 0);
         SDB_ASSERT(it->Valid() && it->key() == _old_keys_buffers[row_idx],
                    "RocksDBDataSink: internal error, wrong key setup or order "
                    "for PK update");

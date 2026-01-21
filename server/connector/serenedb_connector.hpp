@@ -248,6 +248,10 @@ class RocksDBTable final : public axiom::connector::Table {
 
   const velox::RowTypePtr& PKType() const noexcept { return _pk_type; }
 
+  bool IsUsedForUpdatePK() const noexcept { return _update_pk; }
+
+  void SetUsedForUpdatePK(bool value = true) { _update_pk = value; }
+
   query::Transaction& GetTransaction() const noexcept { return _transaction; }
 
  private:
@@ -257,6 +261,7 @@ class RocksDBTable final : public axiom::connector::Table {
   ObjectId _table_id;
   query::Transaction& _transaction;
   catalog::TableStats _stats;
+  bool _update_pk{};
 };
 
 class SereneDBConnectorSplit final : public velox::connector::ConnectorSplit {
@@ -304,8 +309,12 @@ class SereneDBConnectorInsertTableHandle final
     : _session{session},
       _table{table},
       _kind{kind},
-      _transaction{basics::downCast<RocksDBTable>(*table).GetTransaction()} {
+      _transaction{basics::downCast<RocksDBTable>(*table).GetTransaction()},
+      _update_pk{basics::downCast<RocksDBTable>(*table).IsUsedForUpdatePK()} {
     GetTransaction().AddRocksDBWrite();
+    if (_update_pk) {
+      GetTransaction().AddRocksDBRead();
+    }
   }
 
   bool supportsMultiThreading() const final { return false; }
@@ -320,12 +329,25 @@ class SereneDBConnectorInsertTableHandle final
 
   query::Transaction& GetTransaction() const noexcept { return _transaction; }
 
+  size_t NumberOfRowsAffected() const noexcept {
+    const auto keys_affected =
+      _transaction.EnsureRocksDBTransaction().GetNumKeys();
+    if (_update_pk) {
+      // Each affected rows has associated removed key and inserted one.
+      // Update of PK is implemented as delete with old key + insert with new
+      // key
+      return keys_affected / 2;
+    }
+    return keys_affected;
+  }
+
  private:
   axiom::connector::ConnectorSessionPtr _session;
   axiom::connector::TablePtr _table;
   axiom::connector::WriteKind _kind;
   query::Transaction& _transaction;
   std::vector<velox::connector::ColumnHandlePtr> _row_id_handles;
+  bool _update_pk{};
 };
 
 // Store transaction/etc here
@@ -396,7 +418,8 @@ class SereneDBConnectorMetadata final
       return yaclib::MakeFuture<int64_t>(0);
     }
 
-    int64_t number_of_locked_primary_keys = rocksdb_transaction->GetNumKeys();
+    int64_t number_of_locked_primary_keys =
+      serene_insert_handle->NumberOfRowsAffected();
     if (serene_insert_handle->Kind() == axiom::connector::WriteKind::kInsert ||
         serene_insert_handle->Kind() == axiom::connector::WriteKind::kDelete) {
       auto& rocksdb_table =
@@ -544,19 +567,20 @@ class SereneDBConnector final : public velox::connector::Connector {
         serene_insert_handle.Kind() == axiom::connector::WriteKind::kUpdate) {
       column_oids.reserve(input_type->size());
       for (auto& col : input_type->names()) {
-        auto handle = table.columnMap().find(col);
+        std::string_view real_name = catalog::Column::ExtractColumnName(col);
+        auto handle = table.columnMap().find(real_name);
         SDB_ASSERT(handle != table.columnMap().end(),
-                   "RocksDBDataSink: can't find column handle for ", col);
+                   "RocksDBDataSink: can't find column handle for ", real_name);
         column_oids.push_back(
           basics::downCast<const SereneDBColumn>(handle->second)->Id());
       }
       return irs::ResolveBool(
         serene_insert_handle.Kind() == axiom::connector::WriteKind::kUpdate,
-        [&]<bool IsUpdate>() {
+        [&]<bool IsUpdate>() -> std::unique_ptr<velox::connector::DataSink> {
           std::vector<velox::column_index_t> pk_indices;
           if constexpr (IsUpdate) {
             pk_indices.resize(table.PKType()->size());
-            std::iota(pk_indices.begin(), pk_indices.end(), 0);
+            absl::c_iota(pk_indices, 0);
 #ifdef SDB_DEV
             // SQL Analyzer should put PK columns at the start and with
             // correct order
@@ -578,9 +602,33 @@ class SereneDBConnector final : public velox::connector::Connector {
             }
           }
           auto& rocksdb_transaction = transaction.EnsureRocksDBTransaction();
-          return std::make_unique<RocksDBDataSink>(
-            rocksdb_transaction, _cf, *connector_query_ctx->memoryPool(),
-            object_key, pk_indices, column_oids, IsUpdate);
+
+          if constexpr (IsUpdate) {
+            const rocksdb::Snapshot* snapshot = nullptr;
+            std::vector<catalog::Column::Id> all_column_oids;
+            if (table.IsUsedForUpdatePK()) {
+              snapshot = &transaction.EnsureRocksDBSnapshot();
+
+              all_column_oids.reserve(table.type()->size());
+              for (auto& col : table.type()->names()) {
+                auto handle = table.columnMap().find(col);
+                SDB_ASSERT(handle != table.columnMap().end(),
+                           "RocksDBDataSink: can't find column handle for ",
+                           col);
+                all_column_oids.push_back(
+                  basics::downCast<const SereneDBColumn>(handle->second)->Id());
+              }
+            }
+
+            return std::make_unique<RocksDBUpdateDataSink>(
+              rocksdb_transaction, snapshot, _db, _cf,
+              *connector_query_ctx->memoryPool(), object_key, pk_indices,
+              column_oids, all_column_oids, table.IsUsedForUpdatePK());
+          } else {
+            return std::make_unique<RocksDBInsertDataSink>(
+              rocksdb_transaction, _cf, *connector_query_ctx->memoryPool(),
+              object_key, pk_indices, column_oids);
+          }
         });
     }
 

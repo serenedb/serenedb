@@ -1720,6 +1720,14 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
   column_exprs.reserve(pk_type.size() + list_length(stmt.targetList));
   FillColumnsInfo(state, pk_type, *table.RowType(), column_names, column_exprs);
 
+  containers::FlatHashSet<std::string_view> pk_column_names;
+  pk_column_names.reserve(column_names.size());
+  for (std::string_view pk_column_name : column_names) {
+    pk_column_names.insert(pk_column_name);
+  }
+
+  containers::FlatHashSet<std::string_view> target_column_names;
+  bool update_pk = false;
   auto name_to_column = GetNameToColumn(table.Columns());
   VisitNodes(stmt.targetList, [&](const ResTarget& target) {
     if (target.indirection) {
@@ -1727,18 +1735,32 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
                 "Indirection in UPDATE target list is not implemented yet");
     }
 
-    column_names.emplace_back(target.name);
-    auto expr = ProcessExprNode(state, target.val, ExprKind::UpdateSource);
-    auto it = name_to_column.find(column_names.back());
-    if (it == name_to_column.end()) {
+    if (!target_column_names.emplace(target.name).second) {
       THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+        ERR_CODE(ERRCODE_SYNTAX_ERROR),
         CURSOR_POS(ErrorPosition(ExprLocation(&target))),
-        ERR_MSG("column \"", column_names.back(), "\" of relation \"",
-                table_name, "\" does not exist"));
+        ERR_MSG("multiple assignments to same column \"", target.name, "\""));
     }
+
+    auto it = name_to_column.find(target.name);
+    if (it == name_to_column.end()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+                      CURSOR_POS(ErrorPosition(ExprLocation(&target))),
+                      ERR_MSG("column \"", target.name, "\" of relation \"",
+                              table_name, "\" does not exist"));
+    }
+
     SDB_ASSERT(it->second);
     const auto& column = *(it->second);
+    if (pk_column_names.contains(target.name)) {
+      update_pk = true;
+      column_names.emplace_back(
+        catalog::Column::GenerateUpdateName(target.name));
+    } else {
+      column_names.emplace_back(target.name);
+    }
+
+    auto expr = ProcessExprNode(state, target.val, ExprKind::UpdateSource);
     if (expr->type() == kDefaultValueTypePlaceHolderPtr) {
       expr = GetDefaultValue(state, column);
     }
@@ -1750,6 +1772,8 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
 
   MakeTableWrite(state, ToNode(&stmt), *object, std::move(column_names),
                  std::move(column_exprs));
+  basics::downCast<connector::RocksDBTable>(object->table)
+    ->SetUsedForUpdatePK(update_pk);
 }
 
 void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {

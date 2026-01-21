@@ -413,7 +413,7 @@ void PgSQLCommTaskBase::DescribeAnalyzedQuery(
   const auto* pg_node = castNode(RawStmt, statement.tree.GetRoot());
   SDB_ASSERT(pg_node);
 
-  // We want **don't** want to describe columns in the following cases:
+  // We **don't** want to describe columns in the following cases:
   // 1. Query is CALL some_procedure()
   // 2. Query is without logical plan and doesn't have columns at all,
   //    for example CREATE and DROP). But query may be without logical plan, but

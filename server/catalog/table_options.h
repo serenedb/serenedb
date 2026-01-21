@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 #include <velox/type/Type.h>
@@ -46,6 +47,7 @@
 #include "catalog/validators.h"
 #include "pg/sql_collector.h"
 #include "pg/sql_utils.h"
+#include "query/utils.h"
 #include "utils/velox_vpack.h"
 
 namespace sdb::catalog {
@@ -147,8 +149,24 @@ struct Column {
 
   static constexpr Id kMaxRealId =
     std::numeric_limits<uint64_t>::max() - 1'000'000;
-
   static constexpr Id kGeneratedPKId = kMaxRealId + 1;
+
+  static constexpr std::string_view GetUpdateNamePrefix() {
+    static constexpr std::string_view kUpdatePrefix = "upd$";
+    static_assert(kUpdatePrefix.ends_with(query::kReservedSymbol));
+    return kUpdatePrefix;
+  }
+
+  static std::string GenerateUpdateName(std::string_view original_name) {
+    return absl::StrCat(GetUpdateNamePrefix(), original_name);
+  }
+
+  static std::string_view ExtractColumnName(std::string_view row_child_name) {
+    if (absl::StartsWith(row_child_name, GetUpdateNamePrefix())) {
+      return row_child_name.substr(GetUpdateNamePrefix().size());
+    }
+    return row_child_name;
+  }
 
   bool IsGeneratedPK() const { return id == kGeneratedPKId; }
 

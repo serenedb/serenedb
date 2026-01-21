@@ -40,6 +40,7 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
   GetIndex(&PgClass::relname),
   GetIndex(&PgClass::relnamespace),
   GetIndex(&PgClass::reltablespace),
+  GetIndex(&PgClass::reltuples),
   GetIndex(&PgClass::relkind),
   GetIndex(&PgClass::reloptions),
 });
@@ -72,8 +73,16 @@ void RetrieveObjects(ObjectId database_id,
         .relname = object->GetName(),
         .relnamespace = object->GetSchemaId().id(),
         .reltablespace = 0,
+        .reltuples = -1,
         .relkind = relkind,
       };
+
+      if (relkind == PgClass::Relkind::OrdinaryTable) {
+        auto shard = catalog::GetTableShard(object->GetId());
+        SDB_ASSERT(shard);
+        auto stats = shard->GetTableStats();
+        row.reltuples = static_cast<float>(stats.num_rows);
+      }
 
       // TODO(codeworse): fill other fields
       values.push_back(std::move(row));
@@ -105,6 +114,7 @@ std::vector<velox::VectorPtr> SystemTableSnapshot<PgClass>::GetTableData(
         .relname = table.Name(),
         .relnamespace = schema_oid,
         .reltablespace = 0,
+        .reltuples = -1,  // TODO(codeworse): add numRows for system tables
         .relkind = PgClass::Relkind::OrdinaryTable,
       };
       // TODO(codeworse): fill other fields

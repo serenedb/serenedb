@@ -30,6 +30,7 @@
 #include "connector/serenedb_connector.hpp"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_exception_macro.h"
+#include "query/transaction.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
@@ -573,11 +574,11 @@ void ObjectCollector::CollectStmt(const State* parent, const Node* node) {
 
 }  // namespace
 
-void Objects::ObjectData::EnsureTable() const {
+void Objects::ObjectData::EnsureTable(query::Transaction& transaction) const {
   if (!table) {
     SDB_ASSERT(object);
     table = std::make_shared<connector::RocksDBTable>(
-      basics::downCast<catalog::Table>(*object));
+      basics::downCast<catalog::Table>(*object), transaction);
   }
 }
 

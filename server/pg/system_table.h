@@ -67,6 +67,8 @@ auto GetField(const Field& field) {
   } else if constexpr (std::is_same_v<Field, int64_t> ||
                        std::is_same_v<Field, uint64_t>) {
     return static_cast<int64_t>(field);
+  } else if constexpr (std::is_same_v<Field, float>) {
+    return field;
   } else {
     return velox::UnknownValue{};
   }

@@ -38,6 +38,7 @@ Result Transaction::Commit() {
     return {ERROR_INTERNAL,
             "Failed to commit RocksDB transaction: ", status.ToString()};
   }
+  ApplyTableStatsDiffs();
   CommitVariables();
   Destroy();
   return {};
@@ -119,6 +120,27 @@ void Transaction::Destroy() noexcept {
   _storage_snapshot.reset();
   _rocksdb_transaction.reset();
   _rocksdb_snapshot = nullptr;
+}
+
+catalog::TableStats Transaction::GetTableStats(ObjectId table_id) const {
+  // TODO(codeworse): manage catalog snapshot in transaction
+  auto table_shard = catalog::GetTableShard(table_id);
+  if (!table_shard) {
+    SDB_THROW(ERROR_BAD_PARAMETER,
+              "Table shard not found for table id: ", table_id);
+  }
+  return table_shard->GetTableStats();
+}
+
+void Transaction::ApplyTableStatsDiffs() {
+  for (const auto& [table_id, delta] : _table_rows_deltas) {
+    auto table_shard = catalog::GetTableShard(table_id);
+    SDB_ASSERT(table_shard);
+    if (table_shard) {
+      table_shard->UpdateNumRows(delta);
+    }
+  }
+  _table_rows_deltas.clear();
 }
 
 }  // namespace sdb::query

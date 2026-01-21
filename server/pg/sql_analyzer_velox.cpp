@@ -20,6 +20,7 @@
 
 #include "pg/sql_analyzer_velox.h"
 
+#include <absl/base/internal/endian.h>
 #include <absl/functional/overload.h>
 #include <absl/strings/str_join.h>
 #include <absl/strings/str_replace.h>
@@ -73,14 +74,17 @@
 #include "pg/copy_file.h"
 #include "pg/pg_ast_visitor.h"
 #include "pg/pg_list_utils.h"
+#include "pg/protocol.h"
 #include "pg/sql_collector.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_statement.h"
 #include "pg/sql_utils.h"
 #include "query/context.h"
+#include "query/transaction.h"
 #include "query/types.h"
 #include "utils/query_string.h"
 #include "velox/dwio/common/Options.h"
+#include "velox/dwio/text/reader/TextReader.h"
 #include "velox/dwio/text/writer/TextWriter.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
@@ -185,6 +189,16 @@ const containers::FlatHashMap<std::string_view, lp::SpecialForm> kSpecialForms{
   {"row_constructor", kSpecialFormPlaceholder},
   {"in", lp::SpecialForm::kIn},
 };
+
+using NameToColumnMap =
+  std::unordered_map<std::string_view, const catalog::Column*>;
+NameToColumnMap GetNameToColumn(std::span<const catalog::Column> columns) {
+  return columns | std::views::transform([](const catalog::Column& column) {
+           return std::pair<std::string_view, const catalog::Column*>{
+             column.name, &column};
+         }) |
+         std::ranges::to<NameToColumnMap>();
+}
 
 const Node& ToNode(const void* node) {
   return *reinterpret_cast<const Node*>(node);
@@ -365,6 +379,13 @@ std::optional<T> TryGet(const List* list, size_t i) {
 
 std::string_view ToAlias(std::string_view name) {
   return name.substr(0, name.find_last_of(query::kColumnSeparator));
+}
+
+std::vector<std::string> ToAliases(std::span<const std::string> names) {
+  return names | std::views::transform([](const auto& name) {
+           return std::string{ToAlias(name)};
+         }) |
+         std::ranges::to<std::vector>();
 }
 
 std::string ToPgTypeString(const velox::Type& type) {
@@ -740,6 +761,7 @@ class SqlAnalyzer {
       _query_ctx{*query_ctx.velox_query_ctx},
       _memory_pool{*query_ctx.query_memory_pool},
       _params{params},
+      _transaction{*query_ctx.transaction},
       _send_buffer{send_buffer},
       _copy_queue{copy_queue} {}
 
@@ -1135,6 +1157,7 @@ class SqlAnalyzer {
 
   pg::Params& _params;
   containers::FlatHashMap<const lp::Expr*, ParamIndex> _param_to_idx;
+  query::Transaction& _transaction;
   message::Buffer* _send_buffer;
   CopyMessagesQueue* _copy_queue;
 };
@@ -1439,7 +1462,7 @@ void SqlAnalyzer::MakeTableWrite(State& state, const Node& stmt,
     }
   }
 
-  object.EnsureTable();
+  object.EnsureTable(_transaction);
   const auto& axiom_table = object.table;
   const auto& catalog_table = basics::downCast<catalog::Table>(*object.object);
   const auto& check_constraints = catalog_table.CheckConstraints();
@@ -1703,17 +1726,9 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
     pk_column_names.insert(pk_column_name);
   }
 
-  using NameToColumnMap =
-    containers::FlatHashMap<std::string_view, const catalog::Column*>;
-  auto name_to_column =
-    table.Columns() | std::views::transform([](const catalog::Column& column) {
-      return std::pair<std::string_view, const catalog::Column*>{column.name,
-                                                                 &column};
-    }) |
-    std::ranges::to<NameToColumnMap>();
-
   containers::FlatHashSet<std::string_view> target_column_names;
   bool update_pk = false;
+  auto name_to_column = GetNameToColumn(table.Columns());
   VisitNodes(stmt.targetList, [&](const ResTarget& target) {
     if (target.indirection) {
       SDB_THROW(ERROR_NOT_IMPLEMENTED,
@@ -1806,7 +1821,7 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
   column_exprs.reserve(pk_type.size());
   FillColumnsInfo(state, pk_type, *table.RowType(), column_names, column_exprs);
 
-  object->EnsureTable();
+  object->EnsureTable(_transaction);
 
   state.root = std::make_shared<lp::TableWriteNode>(
     _id_generator.NextPlanId(), std::move(state.root), object->table,
@@ -1814,18 +1829,112 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
     std::move(column_exprs));
 }
 
+class CopyRowRejector {
+ public:
+  enum class LogVerbosity { Silent = 0, Default = 1, Verbose = 2 };
+
+  CopyRowRejector(LogVerbosity verbosity, message::Buffer& send,
+                  std::string_view table_name, uint64_t reject_limit)
+    : _send{send},
+      _table_name{table_name},
+      _verbosity{verbosity},
+      _reject_limit{reject_limit} {
+    SDB_ASSERT(!_table_name.empty());
+  }
+
+  void Process(const RejectedRow& row) {
+    ++_rejected;
+
+    if (_rejected <= _reject_limit) {
+      NoticeRejected(row);
+      return;
+    }
+
+    std::string errmsg;
+    if (_reject_limit != 0) {
+      NoticeRejected(row);
+      errmsg = absl::StrCat("skipped more than REJECT_LIMIT (", _reject_limit,
+                            ") rows due to data type incompatibility");
+    } else {
+      errmsg =
+        absl::StrCat("invalid input syntax for type ",
+                     ToPgTypeString(row.columnType), ": \"", row.value, "\"");
+    }
+
+    _report_summary = false;
+    auto context =
+      absl::StrCat("COPY ", _table_name, ", line ", row.rowNumber, ", column ",
+                   ToAlias(row.columnName), ": \"", row.value, "\"");
+    ThrowCopyErr(std::move(errmsg), std::move(context));
+  }
+
+  ~CopyRowRejector() {
+    if (!_report_summary) {
+      return;
+    }
+
+    if (_rejected != 0 && _verbosity >= LogVerbosity::Default) {
+      auto msg = absl::StrCat(_rejected,
+                              " rows were skipped due to data type "
+                              "incompatibility");
+      WriteNotice(msg);
+    }
+  }
+
+ private:
+  void ThrowCopyErr(std::string errmsg, std::string context) {
+    SqlErrorData err{.errcode = ERRCODE_BAD_COPY_FILE_FORMAT,
+                     .errmsg = std::move(errmsg),
+                     .context = std::move(context)};
+    SqlException exception{std::move(err), std::source_location::current()};
+    throw velox::VeloxUserError{std::make_exception_ptr(std::move(exception)),
+                                "", false};
+  }
+
+  void NoticeRejected(const velox::text::RejectedRow& row) {
+    if (_verbosity >= LogVerbosity::Verbose) {
+      auto msg =
+        absl::StrCat("skipping row due to data type incompatibility at ",
+                     "line ", row.rowNumber, " for column \"",
+                     ToAlias(row.columnName), "\": \"", row.value, "\"");
+      WriteNotice(msg);
+    }
+  }
+
+  void WriteNotice(std::string_view message) {
+    const auto uncommitted_size = _send.GetUncommittedSize();
+    auto* prefix_data = _send.GetContiguousData(5);
+    _send.WriteUncommitted(std::string_view{"SNOTICE\0VNOTICE\0C", 17});
+    _send.WriteUncommitted({"\0M", 2});
+    _send.WriteUncommitted(message);
+    _send.WriteUncommitted({"\0", 2});
+    prefix_data[0] = PQ_MSG_NOTICE_RESPONSE;
+    absl::big_endian::Store32(
+      prefix_data + 1, _send.GetUncommittedSize() - uncommitted_size - 1);
+    _send.Commit(true);
+  }
+
+  message::Buffer& _send;
+  std::string_view _table_name;
+  uint64_t _rejected = 0;
+  bool _report_summary = true;
+  LogVerbosity _verbosity;
+  const uint64_t _reject_limit;
+};
+
 class CopyOptionsParser {
  public:
   CopyOptionsParser(velox::RowTypePtr row_type, bool is_writer,
                     std::string_view query_string, std::string_view file_path,
                     const List* options, message::Buffer* send_buffer,
-                    CopyMessagesQueue* copy_queue)
+                    CopyMessagesQueue* copy_queue, std::string_view table_name)
     : _row_type{std::move(row_type)},
       _is_writer{is_writer},
       _query_string{query_string},
       _file_path{file_path},
       _send_buffer{send_buffer},
-      _copy_queue{copy_queue} {
+      _copy_queue{copy_queue},
+      _table_name{table_name} {
     _options.reserve(list_length(options));
     VisitNodes(options, [&](const DefElem& option) {
       auto [_, emplaced] = _options.try_emplace(option.defname, &option);
@@ -1941,9 +2050,85 @@ class CopyOptionsParser {
       escape, false};
     serde_options.nullString = null;
 
+    uint64_t reject_limit = 0;
+    std::string_view on_error = "stop";
+    if (const auto* option = EraseOption("on_error")) {
+      if (_is_writer) {
+        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
+                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        ERR_MSG("COPY ON_ERROR cannot be used with COPY TO"));
+      }
+
+      auto maybe_on_error = TryGet<std::string_view>(option->arg);
+      if (!maybe_on_error) {
+        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
+                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        ERR_MSG("COPY ON_ERROR \"", DeparseExpr(option->arg),
+                                "\" not recognized"));
+      }
+      if (*maybe_on_error == "stop") {
+        reject_limit = 0;
+      } else if (*maybe_on_error == "ignore") {
+        reject_limit = std::numeric_limits<uint64_t>::max();
+      } else {
+        THROW_SQL_ERROR(
+          CURSOR_POS(ErrorPosition(ExprLocation(option))),
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("COPY ON_ERROR \"", *maybe_on_error, "\" not recognized"));
+      }
+      on_error = *maybe_on_error;
+    }
+
+    if (const auto* option = EraseOption("reject_limit")) {
+      if (on_error != "ignore") {
+        THROW_SQL_ERROR(
+          CURSOR_POS(ErrorPosition(ExprLocation(option))),
+          ERR_CODE(ERRCODE_SYNTAX_ERROR),
+          ERR_MSG("COPY REJECT_LIMIT requires ON_ERROR to be set to IGNORE"));
+      }
+      auto maybe_reject_limit = TryGet<int>(option->arg);
+      if (!maybe_reject_limit) {
+        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
+                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        ERR_MSG("invalid input syntax for type bigint: \"",
+                                DeparseExpr(option->arg), "\""));
+      }
+      if (*maybe_reject_limit <= 0) {
+        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
+                        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("REJECT_LIMIT (", *maybe_reject_limit,
+                                ") must be greater than zero"));
+      }
+      reject_limit = *maybe_reject_limit;
+    }
+
+    auto log_verbosity = CopyRowRejector::LogVerbosity::Default;
+    if (const auto* option = EraseOption("log_verbosity")) {
+      auto maybe_verbosity = TryGet<std::string_view>(option->arg);
+      if (!maybe_verbosity) {
+        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
+                        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("COPY LOG_VERBOSITY \"",
+                                DeparseExpr(option->arg), "\" not recognized"));
+      }
+
+      if (*maybe_verbosity == "verbose") {
+        log_verbosity = CopyRowRejector::LogVerbosity::Verbose;
+      } else if (*maybe_verbosity == "default") {
+        log_verbosity = CopyRowRejector::LogVerbosity::Default;
+      } else if (*maybe_verbosity == "silent") {
+        log_verbosity = CopyRowRejector::LogVerbosity::Silent;
+      } else {
+        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
+                        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("COPY LOG_VERBOSITY \"", *maybe_verbosity,
+                                "\" not recognized"));
+      }
+    }
+
     for (const auto& option_name :
          {"default", "quote", "force_quote", "force_not_null", "force_null",
-          "on_error", "reject_limit", "encoding", "log_verbosity"}) {
+          "encoding"}) {
       if (const auto* option = EraseOption(option_name)) {
         THROW_SQL_ERROR(
           CURSOR_POS(ErrorPosition(ExprLocation(option))),
@@ -1958,7 +2143,9 @@ class CopyOptionsParser {
     if (_is_writer) {
       SDB_ASSERT(_sink);
       auto text_options = std::make_shared<velox::text::WriterOptions>();
-      text_options->headerLineCount = header;
+      if (header) {
+        text_options->header = ToAliases(_row_type->names());
+      }
       text_options->serDeOptions = std::move(serde_options);
       text_options->schema = std::move(_row_type);
       text_options->fileFormat = FileFormat::TEXT;
@@ -1969,6 +2156,14 @@ class CopyOptionsParser {
       text_options->setSerDeOptions(std::move(serde_options));
       text_options->setFileSchema(std::move(_row_type));
       text_options->setFileFormat(FileFormat::TEXT);
+
+      SDB_ASSERT(_send_buffer);
+      auto handler = [copy_logger = CopyRowRejector{
+                        log_verbosity, *_send_buffer, _table_name,
+                        reject_limit}](const RejectedRow& row) mutable {
+        copy_logger.Process(row);
+      };
+      text_options->setOnRowReject(std::move(handler));
       _reader_options = std::move(text_options);
       _row_reader_options->setSkipRows(header);
     }
@@ -2064,6 +2259,7 @@ class CopyOptionsParser {
   std::string_view _file_path;
   message::Buffer* _send_buffer;
   CopyMessagesQueue* _copy_queue;
+  std::string_view _table_name;
 
   std::unique_ptr<velox::WriteFile> _sink;  // local / S3 / hdfs etc.
   std::shared_ptr<velox::dwio::common::WriterOptions> _writer_options;
@@ -2089,30 +2285,6 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
     return std::tuple{object, schema_name, relation_name};
   };
 
-  auto get_table = [&](const Objects::ObjectData* object) {
-    SDB_ASSERT(object);
-    SDB_ASSERT(object->object);
-    const auto& logical_object = *object->object;
-
-    if (logical_object.GetType() != catalog::ObjectType::Table) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERROR_SERVER_OBJECT_TYPE_MISMATCH),
-        CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
-        ERR_MSG("COPY is only applicable for tables, but the object is: ",
-                magic_enum::enum_name(logical_object.GetType())));
-    }
-
-    object->EnsureTable();
-    return object->table;
-  };
-
-  auto file_path = absl::NullSafeStringView(stmt.filename);
-  auto create_options_parser = [&](const velox::RowTypePtr& type) {
-    return CopyOptionsParser{type,       !stmt.is_from, _query_string.view(),
-                             file_path,  stmt.options,  _send_buffer,
-                             _copy_queue};
-  };
-
   auto get_column_exprs = [&](const std::vector<std::string>& column_names) {
     std::vector<lp::ExprPtr> column_exprs;
     column_exprs.reserve(column_names.size());
@@ -2130,11 +2302,12 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
     return column_exprs;
   };
 
+  std::string_view table_name;
   velox::RowTypePtr file_table_type;
   if (stmt.relation) {
     auto [object, schemaname, relname] = get_object();
-    auto table = get_table(object);
-    const auto& table_type = *table->type();
+    const auto& table = basics::downCast<catalog::Table>(*object->object);
+    table_name = table.GetName();
 
     std::vector<std::string> names;
     std::vector<velox::TypePtr> types;
@@ -2142,9 +2315,10 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
     if (attlist_length > 0) {
       names.reserve(attlist_length);
       types.reserve(attlist_length);
+      auto name_to_column = GetNameToColumn(table.Columns());
       for (const auto& column_name : PgStrListWrapper{stmt.attlist}) {
-        auto maybe_idx = table_type.getChildIdxIfExists(column_name);
-        if (!maybe_idx) {
+        auto it = name_to_column.find(column_name);
+        if (it == name_to_column.end() || it->second->IsGeneratedPK()) {
           THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
                           CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
                           ERR_MSG("column \"", column_name, "\" of relation \"",
@@ -2157,15 +2331,31 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
             ERR_MSG("column \"", column_name, "\" specified more than once"));
         }
         names.emplace_back(column_name);
-        types.emplace_back(table_type.childAt(*maybe_idx));
+        types.emplace_back(it->second->type);
       }
     } else {
-      names = table_type.names();
-      types = table_type.children();
+      const auto& columns = table.Columns();
+      names.reserve(columns.size());
+      types.reserve(columns.size());
+      for (const auto& column : columns) {
+        if (column.IsGeneratedPK()) {
+          continue;
+        }
+
+        names.emplace_back(column.name);
+        types.emplace_back(column.type);
+      }
     }
 
     file_table_type = ROW(std::move(names), std::move(types));
   }
+
+  auto file_path = absl::NullSafeStringView(stmt.filename);
+  auto create_options_parser = [&](const velox::RowTypePtr& type) {
+    return CopyOptionsParser{type,        !stmt.is_from, _query_string.view(),
+                             file_path,   stmt.options,  _send_buffer,
+                             _copy_queue, table_name};
+  };
 
   if (stmt.is_from) {
     auto names = _id_generator.NextColumnNames(file_table_type->names());
@@ -3508,7 +3698,7 @@ State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
 
   auto [table_alias, column_names] = ProcessTableColumns(parent, node, type);
 
-  object.EnsureTable();
+  object.EnsureTable(_transaction);
 
   if (table.Columns().empty()) {
     auto state = parent->MakeChild();

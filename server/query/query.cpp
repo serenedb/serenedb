@@ -188,7 +188,7 @@ void Query::CompileQuery() {
     .numDrivers =
       std::max<int>(config.Get<VariableType::U32>("execution_threads"), 1),
   };
-  axiom::Session session{"", _query_ctx.transaction};
+  axiom::Session session{""};
   std::shared_ptr<axiom::Session> session_ptr{std::shared_ptr<axiom::Session>{},
                                               &session};
   axiom::optimizer::Optimization optimization{

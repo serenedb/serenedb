@@ -178,6 +178,8 @@ struct Column {
     return row_child_name;
   }
 
+  bool IsGeneratedPK() const { return id == kGeneratedPKId; }
+
   static std::string GeneratePKName(std::span<const std::string> column_names);
 
   Id id;
@@ -222,6 +224,10 @@ struct CreateTableRequest {
   std::string_view id;  // TODO(gnusi): make ObjectId
   int type = std::to_underlying(TableType::Document);
   bool waitForSync = false;
+};
+
+struct TableStats {
+  uint64_t num_rows = 0;
 };
 
 struct TableOptions {

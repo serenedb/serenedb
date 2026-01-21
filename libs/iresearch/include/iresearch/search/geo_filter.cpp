@@ -290,8 +290,7 @@ struct S2PointParser {
     SDB_ASSERT(shape.type() == ShapeContainer::Type::S2Point);
     Decoder decoder{value.data(), value.size()};
     S2Point point;
-    uint8_t tag = 0;
-    auto r = DecodePoint(decoder, point, &tag);
+    const auto [r, tag] = DecodePoint(decoder, point);
     SDB_ASSERT(r);
     SDB_ASSERT(decoder.avail() == 0);
     sdb::basics::downCast<S2PointRegion>(*shape.region()) =

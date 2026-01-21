@@ -57,8 +57,8 @@ void ConvertLatLngToU32(
 
 void WriteLatLngF64(Encoder& enc, const S2LatLng& ll) noexcept {
   SDB_ASSERT(ll.is_valid());
-
   SDB_ASSERT(enc.avail() >= 2 * sizeof(double));
+
   enc.putdouble(ll.lat().radians());
   enc.putdouble(ll.lng().radians());
 }
@@ -82,6 +82,7 @@ void CreatePointFromLatLng(double lat_rad, double lng_rad,
 
 void ReadLatLngU32ToPoint(Decoder& dec, S2Point& out) noexcept {
   SDB_ASSERT(dec.avail() >= 2 * sizeof(uint32_t));
+
   const auto lat_in = dec.get32();
   const auto lng_in = dec.get32();
 
@@ -101,6 +102,7 @@ void ReadLatLngF64ToPoint(Decoder& dec, S2Point& out) noexcept {
 
 void ReadRawPoint(Decoder& dec, S2Point& out) {
   SDB_ASSERT(dec.avail() >= 3 * sizeof(double));
+
   out[0] = dec.getdouble();
   out[1] = dec.getdouble();
   out[2] = dec.getdouble();
@@ -114,6 +116,7 @@ bool ParseShape(vpack::Slice vpack, ShapeContainer& region,
                 std::vector<S2LatLng>& cache, coding::Options options,
                 Encoder* encoder) {
   SDB_ASSERT(encoder == nullptr || encoder->length() == 0);
+
   Result r;
   if (vpack.isArray()) {
     r = geo::json::ParseCoordinates<P != Parsing::FromIndex>(vpack, region,
@@ -173,6 +176,7 @@ void EncodePoint(Encoder& enc, const S2Point& pt) noexcept {
   static_assert(sizeof(S2Point) == 3 * sizeof(double));
   SDB_ASSERT(enc.avail() >= sizeof(S2Point));
   SDB_ASSERT(S2::IsUnitLength(pt));
+
   enc.putn(&pt, sizeof(S2Point));
 }
 
@@ -187,6 +191,7 @@ void EncodeVertices(Encoder& enc, std::span<const S2Point> verts) {
 
 void EncodeVertices(Encoder& enc, std::span<S2LatLng> verts, Options opts) {
   SDB_ASSERT(!IsOptionsS2(opts));
+
   auto write = [&](auto&& write_fn, size_t elem_size) {
     enc.Ensure(verts.size() * elem_size);
     absl::c_for_each(verts, [&](auto& ll) { write_fn(enc, ll); });
@@ -244,8 +249,8 @@ void EncodePolyline(Encoder& enc, const S2Polyline& polyline, Options opts) {
   SDB_ASSERT(IsOptionsS2(opts));
   SDB_ASSERT(opts != Options::S2PointShapeCompact ||
              opts != Options::S2PointRegionCompact);
-
   SDB_ASSERT(enc.avail() >= sizeof(uint8_t) + Varint::kMax64);
+
   enc.put8(ToTag(Type::Polyline, opts));
   const auto verts = polyline.vertices_span();
   enc.put_varint64(verts.size());
@@ -270,8 +275,8 @@ void EncodePolygon(Encoder& enc, const S2Polygon& polygon, Options opts) {
   SDB_ASSERT(IsOptionsS2(opts));
   SDB_ASSERT(opts != Options::S2PointRegionCompact ||
              opts != Options::S2PointShapeCompact);
-
   SDB_ASSERT(enc.avail() >= Varint::kMax64 + sizeof(uint8_t));
+
   enc.put8(ToTag(Type::Polygon, opts));
 
   const auto loop_cnt = static_cast<size_t>(polygon.num_loops());

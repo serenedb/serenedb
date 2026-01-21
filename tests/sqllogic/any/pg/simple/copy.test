@@ -1,5 +1,6 @@
-hash-threshold 1337
+hash-threshold 100
 
+control substitution on
 
 statement ok
 CREATE TABLE tindex
@@ -22,11 +23,11 @@ INSERT INTO tindex VALUES (1, 'vedernikoff'), (2, 'pavelvi'), (3, 'babsky');
 
 
 statement count 3
-COPY tindex TO '/tmp/quit_low_salary.csv';
+COPY tindex TO '/tmp/${__DATABASE__}_quit_low_salary.csv';
 
 
 statement count 3
-COPY clickclack FROM '/tmp/quit_low_salary.csv';
+COPY clickclack FROM '/tmp/${__DATABASE__}_quit_low_salary.csv';
 
 
 query
@@ -43,7 +44,7 @@ DELETE FROM clickclack;
 
 
 statement count 2
-COPY clickclack FROM '/tmp/quit_low_salary.csv' WHERE id != 2;
+COPY clickclack FROM '/tmp/${__DATABASE__}_quit_low_salary.csv' WHERE id != 2;
 
 
 query
@@ -59,11 +60,11 @@ DELETE FROM clickclack;
 
 
 statement count 1
-COPY (SELECT * FROM tindex ORDER BY 1 DESC LIMIT 1) TO '/tmp/quit_low_salary.csv';
+COPY (SELECT * FROM tindex ORDER BY 1 DESC LIMIT 1) TO '/tmp/${__DATABASE__}_quit_low_salary.csv';
 
 
 statement count 1
-COPY clickclack FROM '/tmp/quit_low_salary.csv';
+COPY clickclack FROM '/tmp/${__DATABASE__}_quit_low_salary.csv';
 
 
 query
@@ -86,11 +87,11 @@ CREATE TABLE reversed
 
 
 statement count 3
-COPY tindex TO '/tmp/lmao' WITH (FORMAT CSV, HEADER TRUE);
+COPY tindex TO '/tmp/${__DATABASE__}_lmao' WITH (FORMAT CSV, HEADER TRUE);
 
 
 statement count 3
-COPY reversed(id, name) FROM '/tmp/lmao' WITH (FORMAT CSV, HEADER TRUE);
+COPY reversed(id, name) FROM '/tmp/${__DATABASE__}_lmao' WITH (FORMAT CSV, HEADER TRUE);
 
 
 query
@@ -107,11 +108,11 @@ DELETE FROM reversed;
 
 
 statement count 3
-COPY tindex(name, id) TO '/tmp/lmao';
+COPY tindex(name, id) TO '/tmp/${__DATABASE__}_lmao';
 
 
 statement count 3
-COPY reversed FROM '/tmp/lmao';
+COPY reversed FROM '/tmp/${__DATABASE__}_lmao';
 
 
 query
@@ -134,15 +135,15 @@ CREATE TABLE varus
 
 
 statement count 3
-COPY varus(name, id) FROM '/tmp/lmao';
+COPY varus(name, id) FROM '/tmp/${__DATABASE__}_lmao';
 
 
 statement count 3
-COPY varus(name, id) FROM '/tmp/lmao';
+COPY varus(name, id) FROM '/tmp/${__DATABASE__}_lmao';
 
 
 statement count 3
-COPY varus(name, id) FROM '/tmp/lmao';
+COPY varus(name, id) FROM '/tmp/${__DATABASE__}_lmao';
 
 
 query
@@ -161,14 +162,14 @@ id	name	iq	iamdegenereted
 
 
 statement error
-COPY varus(iamdegenereted) FROM '/tmp/lmao';
+COPY varus(iamdegenereted) FROM '/tmp/${__DATABASE__}_lmao';
 ----
 db error: ERROR: column "iamdegenereted" is a generated column
 DETAIL: Generated columns cannot be used in COPY.
 
 
 statement error
-COPY varus(name, id) FROM '/tmp/lmao' WITH (LABUDABUDABDAB rick);
+COPY varus(name, id) FROM '/tmp/${__DATABASE__}_lmao' WITH (LABUDABUDABDAB rick);
 ----
 db error: ERROR: option "labudabudabdab" not recognized
 
@@ -181,7 +182,7 @@ COPY
     generate_series(1, 10) as iq, 
     generate_series(1, 100) as pencil_size, 
     generate_series(1, 100) as weight
-) TO '/tmp/arelav' WITH (FORMAT CSV, HEADER 1);
+) TO '/tmp/${__DATABASE__}_arelav' WITH (FORMAT CSV, HEADER 1);
 
 
 statement ok
@@ -194,10 +195,113 @@ CREATE TABLE arelav
 
 
 statement count 100000
-COPY arelav FROM '/tmp/arelav' WITH (FORMAT CSV, HEADER 1);
+COPY arelav FROM '/tmp/${__DATABASE__}_arelav' WITH (FORMAT CSV, HEADER 1);
 
 
 query
 SELECT * FROM arelav ORDER BY 1, 2, 3;
 ----
 300003 values hashing to 568009c5b2055554ab4bd827ebe85b75
+
+
+statement count 100
+COPY 
+  (SELECT x, y::text FROM generate_series(1, 10) as g1(x), generate_series(1, 10) as g2(y)) 
+TO 
+  '/tmp/${__DATABASE__}_deadinside.tsv'
+WITH (HEADER TRUE);
+
+
+statement ok
+CREATE TABLE donsimon
+(
+  vv INTEGER,
+  marmishka TEXT
+);
+
+
+statement count 100
+COPY donsimon FROM '/tmp/${__DATABASE__}_deadinside.tsv' (ON_ERROR IGNORE, REJECT_LIMIT 1);
+
+
+query
+SELECT * FROM donsimon ORDER BY 1, 2;
+----
+202 values hashing to 023b58aa7a21f0c2699ccde3252f77b1
+
+
+statement error
+COPY donsimon FROM '/tmp/${__DATABASE__}_deadinside.tsv' (ON_ERROR IGNORE, REJECT_LIMIT -1);
+----
+db error: ERROR: REJECT_LIMIT (-1) must be greater than zero
+
+
+statement error
+COPY donsimon FROM '/tmp/${__DATABASE__}_deadinside.tsv' (ON_ERROR labudadadab);
+----
+db error: ERROR: COPY ON_ERROR "labudadadab" not recognized
+
+
+statement count 10
+COPY (SELECT * FROM generate_series(2, 11)) TO '/tmp/${__DATABASE__}_deadinside.tsv';
+
+
+statement ok
+CREATE TABLE biksalen(kek BOOLEAN);
+
+
+statement error
+COPY biksalen FROM '/tmp/${__DATABASE__}_deadinside.tsv' (ON_ERROR IGNORE, REJECT_LIMIT 9);
+----
+db error: ERROR: skipped more than REJECT_LIMIT (9) rows due to data type incompatibility
+
+
+statement count 0
+COPY biksalen FROM '/tmp/${__DATABASE__}_deadinside.tsv' (ON_ERROR IGNORE, REJECT_LIMIT 10);
+
+
+statement count 0
+COPY biksalen FROM '/tmp/${__DATABASE__}_deadinside.tsv' (ON_ERROR IGNORE);
+
+
+statement ok
+COPY (SELECT * FROM generate_series(2, 11)) TO '/tmp/${__DATABASE__}_deadinside.tsv' WITH (HEADER TRUE);
+
+
+statement error
+COPY biksalen FROM '/tmp/${__DATABASE__}_deadinside.tsv' (ON_ERROR STOP);
+----
+db error: ERROR: invalid input syntax for type boolean: "generate_series"
+
+
+statement error
+COPY biksalen FROM '/tmp/${__DATABASE__}_deadinside.tsv';
+----
+db error: ERROR: invalid input syntax for type boolean: "generate_series"
+
+
+statement error
+COPY biksalen FROM '/tmp/${__DATABASE__}_deadinside.tsv' WITH (HEADER ON);
+----
+db error: ERROR: invalid input syntax for type boolean: "2"
+
+
+# header check also check that generated key is not inserted
+statement ok
+CREATE TABLE header_eater (header1 TEXT, header2 TEXT);
+
+
+statement count 1
+COPY (SELECT 1 as header, 2 as header) TO '/tmp/${__DATABASE__}_headers.tsv' WITH (HEADER ON)
+
+
+statement count 2
+COPY header_eater FROM '/tmp/${__DATABASE__}_headers.tsv';
+ 
+
+query
+SELECT * FROM header_eater;
+----
+header1	header2
+header	header
+1	2

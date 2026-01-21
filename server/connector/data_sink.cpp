@@ -52,131 +52,6 @@ constexpr std::string_view kOneValueHeader{"\0\1", 2};
 
 namespace sdb::connector {
 
-RocksDBInsertDataSink::RocksDBInsertDataSink(
-  rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
-  velox::memory::MemoryPool& memory_pool, ObjectId object_key,
-  std::span<const velox::column_index_t> key_childs,
-  std::vector<catalog::Column::Id> column_oids,
-  std::vector<std::unique_ptr<SinkInsertWriter>>&& index_writers)
-  : RocksDBDataSinkBase<SinkInsertWriter>(
-      transaction, cf, memory_pool, object_key, key_childs,
-      std::move(column_oids), std::move(index_writers)) {}
-
-void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
-  PrepareKeyBuffers(input);
-  velox::IndexRange all_rows(0, input->size());
-  WriteColumns<false>(input, folly::Range{&all_rows, 1}, {});
-}
-
-RocksDBUpdateDataSink::RocksDBUpdateDataSink(
-  rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
-  velox::memory::MemoryPool& memory_pool, ObjectId object_key,
-  std::span<const velox::column_index_t> key_childs,
-  std::vector<catalog::Column::Id> update_column_oids,
-  velox::RowTypePtr table_row_type,
-  std::vector<catalog::Column::Id> all_column_ids,
-  std::vector<std::unique_ptr<SinkUpdateWriter>>&& index_writers)
-  : RocksDBDataSinkBase<SinkUpdateWriter>(
-      transaction, cf, memory_pool, object_key, key_childs,
-      std::move(update_column_oids), std::move(index_writers)),
-    _table_row_type(std::move(table_row_type)),
-    _all_column_ids(std::move(all_column_ids)) {
-  SDB_ASSERT(_all_column_ids.size() == _table_row_type->size(),
-             "RocksDBUpdateDataSink: full column ids size does not match table "
-             "row type size");
-  if (!_index_writers.empty()) {
-    // TODO(Dronplane) same would be needed in case of PK update!
-
-    // We do not filter rewrite columns not interested to writers as we might
-    // need them later for PK update
-    for (size_t i = 0; i < _all_column_ids.size(); ++i) {
-      if (!absl::c_contains(_column_ids, _all_column_ids[i])) {
-        _rewrite_columns_idxs.push_back(i);
-      }
-    }
-
-    // Sort columns ascending to match rocksdb storage order.
-    // This allows us to use single iterator pass for all columns and with only
-    // forward seeks
-    std::sort(_rewrite_columns_idxs.begin(), _rewrite_columns_idxs.end(),
-              [&](size_t left, size_t right) {
-                return _all_column_ids[left] < _all_column_ids[right];
-              });
-  }
-}
-
-void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
-  PrepareKeyBuffers(input);
-  std::vector<velox::IndexRange> rows_range;
-  std::vector<velox::vector_size_t> rows_idxs;
-  // TODO(Dronplane) same condition in ctor. Maybe make it inline method?
-  if (_index_writers.empty()) {
-    rows_range.push_back(
-      velox::IndexRange{0, static_cast<velox::vector_size_t>(input->size())});
-  } else {
-    // for same purpose as columns in ctor we sort the keys
-    const auto num_rows = input->size();
-    rows_idxs.resize(num_rows);
-    absl::c_iota(rows_idxs, 0);
-    std::sort(rows_idxs.begin(), rows_idxs.end(),
-              [&](velox::vector_size_t left, velox::vector_size_t right) {
-                return _keys_buffers[left] < _keys_buffers[right];
-              });
-    // we must match order of keys in rewritten columns
-    rows_range.reserve(num_rows);
-    for (auto row_idx : rows_idxs) {
-      rows_range.push_back(
-        velox::IndexRange{static_cast<velox::vector_size_t>(row_idx), 1});
-    }
-
-    // Index update implies delete + re-insert.
-    // For deletes order makes no sense
-    for (const auto& key : _keys_buffers) {
-      auto row_key = key_utils::ExtractRowKey(key);
-      for (const auto& writer : _index_writers) {
-        writer->DeleteRow(row_key);
-      }
-    }
-
-    // Now we need to re-insert unchanged columns. We do not need to re-encode
-    // the values. We can just read from storage what we already have and write
-    // it back.
-    // TODO(Dronplane) similar code will be needed in case of PK update but with
-    // "new" keys
-    auto rewrite_it = _data_writer.CreateIterator();
-    for (const auto& idx : _rewrite_columns_idxs) {
-      const auto& column_id = _all_column_ids[idx];
-      auto kind = _table_row_type->childAt(idx)->kind();
-      bool any_interested = false;
-      for (const auto& writer : _index_writers) {
-        // TODO(Dronplane) can we here detect if written column have had any
-        // nulls? true for now to be on the safe side
-        any_interested |= writer->SwitchColumn(kind, true, column_id);
-      }
-      if (!any_interested) {
-        continue;
-      }
-      for (auto row_idx : rows_idxs) {
-        key_utils::SetupColumnForKey(_keys_buffers[row_idx], column_id);
-        const auto& key = _keys_buffers[row_idx];
-        rewrite_it->Seek(key);
-        SDB_ENSURE(rewrite_it->Valid(), ERROR_INTERNAL,
-                   "RocksDBDataSink: failed to seek to key for column ",
-                   column_id);
-        SDB_ENSURE(rewrite_it->key() == key, ERROR_INTERNAL,
-                   "RocksDBDataSink: seeked key mismatch for column ",
-                   column_id);
-        const rocksdb::Slice value_slice = rewrite_it->value();
-        for (const auto& writer : _index_writers) {
-          writer->Write({value_slice}, key);
-        }
-      }
-    }
-  }
-  WriteColumns<false>(input, folly::Range{rows_range.data(), rows_range.size()},
-                      rows_idxs);
-}
-
 template<typename SubWriterType>
 RocksDBDataSinkBase<SubWriterType>::RocksDBDataSinkBase(
   rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
@@ -190,7 +65,7 @@ RocksDBDataSinkBase<SubWriterType>::RocksDBDataSinkBase(
     _column_ids{std::move(column_oids)},
     _memory_pool{memory_pool},
     _row_slices{memory_pool},
-    _keys_buffers{memory_pool},
+    _store_keys_buffers{memory_pool},
     _bytes_allocator{&memory_pool} {
   _key_childs.assign_range(key_childs);
   SDB_ASSERT(_object_key.isSet(), "RocksDBDataSinkBase: object key is empty");
@@ -200,26 +75,69 @@ RocksDBDataSinkBase<SubWriterType>::RocksDBDataSinkBase(
   static_assert(basics::IsLittleEndian());
 }
 
-template<typename SubWriterType>
-void RocksDBDataSinkBase<SubWriterType>::PrepareKeyBuffers(
-  const velox::RowVectorPtr& input) {
+RocksDBInsertDataSink::RocksDBInsertDataSink(
+  rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
+  velox::memory::MemoryPool& memory_pool, ObjectId object_key,
+  std::span<const velox::column_index_t> key_childs,
+  std::vector<catalog::Column::Id> column_oids,
+  std::vector<std::unique_ptr<SinkInsertWriter>>&& index_writers)
+  : RocksDBDataSinkBase<SinkInsertWriter>{transaction, cf,         memory_pool,
+                        object_key,  key_childs, std::move(column_oids), std::move(index_writers)} {}
+
+RocksDBUpdateDataSink::RocksDBUpdateDataSink(
+  rocksdb::Transaction& transaction, const rocksdb::Snapshot* snapshot,
+  rocksdb::ColumnFamilyHandle& cf,
+  velox::memory::MemoryPool& memory_pool, ObjectId object_key,
+  std::span<const velox::column_index_t> key_childs,
+  std::vector<catalog::Column::Id> column_oids,
+  std::vector<catalog::Column::Id> all_column_oids, bool update_pk, velox::RowTypePtr table_row_type, std::vector<std::unique_ptr<SinkUpdateWriter>>&& index_writers)
+  : RocksDBDataSinkBase<SinkUpdateWriter>{transaction, cf,         memory_pool,
+                        object_key,  key_childs, std::move(column_oids),  std::move(index_writers)},
+    _snapshot{snapshot},
+    _table_row_type(table_row_type),
+    _all_column_ids{std::move(all_column_oids)},
+    _old_keys_buffers{memory_pool},
+    _update_pk{update_pk} {
+  if (_update_pk) {
+    // Sort all column IDs for seek-forward only iteration
+    absl::c_sort(_all_column_ids);
+
+    _column_id_to_input_idx.reserve(_column_ids.size());
+    for (size_t i = 0; i < _column_ids.size(); ++i) {
+      _column_id_to_input_idx[_column_ids[i]] = i;
+    }
+
+    // Map old PK indices to updated PK positions in input
+    _updated_key_childs.reserve(_key_childs.size());
+    for (auto old_pk_index : _key_childs) {
+      auto pk_column_id = _column_ids[old_pk_index];
+      auto updated_pos_it = _column_id_to_input_idx.find(pk_column_id);
+      SDB_ASSERT(updated_pos_it != _column_id_to_input_idx.end());
+      _updated_key_childs.push_back(updated_pos_it->second);
+    }
+  }
+}
+
+// TODO(Dronplane)
+// Looks like it is possible to inspect input vector and create vector of
+// writers and avoid switch/case for kinds and encodings on each row.
+void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
+  static_assert(basics::IsLittleEndian());
   SDB_ASSERT(input->encoding() == velox::VectorEncoding::Simple::ROW);
-  // UPDATE with PK columns changing would have PK columns at the
-  // beginning and same columns again as write data. So here we validate
-  // column oids size against input type not row type size.
   SDB_ASSERT(input->type()->size() == _column_ids.size(),
              "RocksDBDataSink: column oids size ", _column_ids.size(),
              " doesn't match input type size ", input->type()->size());
   SDB_ASSERT(input->type()->kind() == velox::TypeKind::ROW);
 
-  // TODO(Dronplane) implement updating PK fields
   const std::string table_key = key_utils::PrepareTableKey(_object_key);
   const auto num_rows = input->size();
-  _keys_buffers.clear();
-  _keys_buffers.reserve(num_rows);
+  const auto num_columns = input->childrenSize();
+  const auto& input_type = input->type()->asRow();
+
+  _store_keys_buffers.clear();
+  _store_keys_buffers.reserve(num_rows);
 
   for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-    auto& key_buffer = _keys_buffers.emplace_back();
     key_utils::MakeColumnKey(
       input, _key_childs, row_idx, table_key,
       [&](std::string_view row_key) {
@@ -231,30 +149,14 @@ void RocksDBDataSinkBase<SubWriterType>::PrepareKeyBuffers(
                     " error: ", result.errorMessage());
         }
       },
-      key_buffer);
+      _store_keys_buffers.emplace_back());
   }
   for (const auto& writer : _index_writers) {
     writer->Init(num_rows);
   }
-}
 
-// TODO(Dronplane)
-// Looks like it is possible to inspect input vector and create vector of
-// writers and avoid switch/case for kinds and encodings on each row.
-template<typename SubWriterType>
-template<bool SkipPrimaryKeyColumns>
-void RocksDBDataSinkBase<SubWriterType>::WriteColumns(
-  const velox::RowVectorPtr& input,
-  folly::Range<const velox::IndexRange*> ranges,
-  std::span<const velox::vector_size_t> original_idx) {
-  const auto num_columns = input->childrenSize();
-  const auto& input_type = input->type()->asRow();
+  velox::IndexRange all_rows(0, num_rows);
   for (velox::column_index_t i = 0; i < num_columns; ++i) {
-    if constexpr (SkipPrimaryKeyColumns) {
-      if (i < _key_childs.size()) {
-        continue;
-      }
-    }
     _column_id = _column_ids[i];
     if (_column_id != catalog::Column::kGeneratedPKId) {
       const auto& child = input->childAt(i);
@@ -266,7 +168,118 @@ void RocksDBDataSinkBase<SubWriterType>::WriteColumns(
       for (const auto& writer : _index_writers) {
         writer->SwitchColumn(kind, have_nulls, _column_id);
       }
-      WriteColumn(child, ranges, original_idx);
+      WriteColumn(child, folly::Range(&all_rows, 1), {});
+    }
+  }
+}
+
+// TODO(Dronplane)
+// Looks like it is possible to inspect input vector and create vector of
+// writers and avoid switch/case for kinds and encodings on each row.
+void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
+  static_assert(basics::IsLittleEndian());
+  SDB_ASSERT(input->encoding() == velox::VectorEncoding::Simple::ROW);
+  SDB_ASSERT(input->type()->size() == _column_ids.size(),
+             "RocksDBDataSink: column oids size ", _column_ids.size(),
+             " doesn't match input type size ", input->type()->size());
+  SDB_ASSERT(input->type()->kind() == velox::TypeKind::ROW);
+
+  const std::string table_key = key_utils::PrepareTableKey(_object_key);
+  const auto num_rows = input->size();
+  const auto num_columns = input->childrenSize();
+
+  _store_keys_buffers.clear();
+  _store_keys_buffers.reserve(num_rows);
+
+  if (_update_pk) {
+    _old_keys_buffers.clear();
+    _old_keys_buffers.reserve(num_rows);
+  }
+
+  auto lock_row = [&](std::string_view row_key) {
+    auto status = _transaction.GetKeyLock(&_cf, row_key, false, true);
+    if (!status.ok()) {
+      SDB_THROW(rocksutils::ConvertStatus(status));
+    }
+  };
+
+  const velox::IndexRange all_rows(0, num_rows);
+
+  if (!_update_pk) {
+    // Take locks and prepare buffers
+    for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+      key_utils::MakeColumnKey(input, _key_childs, row_idx, table_key, lock_row,
+                               _store_keys_buffers.emplace_back());
+    }
+
+    // Write updated values
+    for (velox::column_index_t i = _key_childs.size(); i < num_columns; ++i) {
+      _column_id = _column_ids[i];
+      if (_column_id != catalog::Column::kGeneratedPKId) {
+        WriteColumn(input->childAt(i), folly::Range{&all_rows, 1}, {});
+      }
+    }
+    return;
+  }
+
+  // Take locks and prepare buffers for both new and old primary keys
+  for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+    key_utils::MakeColumnKey(input, _updated_key_childs, row_idx, table_key,
+                             lock_row, _store_keys_buffers.emplace_back());
+
+    key_utils::MakeColumnKey(input, _key_childs, row_idx, table_key, lock_row,
+                             _old_keys_buffers.emplace_back());
+  }
+
+  // Rewrite on sorting if you can prove and explain why check is failed
+  SDB_ENSURE(
+    absl::c_is_sorted(
+      _old_keys_buffers,
+      [&](std::string_view lhs, std::string_view rhs) {
+        return lhs.substr(sizeof(ObjectId) + sizeof(catalog::Column::Id)) <
+               rhs.substr(sizeof(ObjectId) + sizeof(catalog::Column::Id));
+      }),
+    ERROR_INTERNAL,
+    "RocksDBUpdateDataSink: rows are expected to be sorted in case of "
+    "updating primary key");
+
+  rocksdb::ReadOptions read_options;
+  read_options.async_io = num_rows > 1;
+  read_options.snapshot = _snapshot;
+  auto it =
+    std::unique_ptr<rocksdb::Iterator>(_db.NewIterator(read_options, &_cf));
+
+  for (auto column_id : _all_column_ids) {
+    // Delete values written with old keys and setup column id in buffers
+    for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+      auto& old_key = _old_keys_buffers[row_idx];
+      key_utils::SetupColumnForKey(old_key, column_id);
+
+      auto status = _transaction.Delete(&_cf, rocksdb::Slice{old_key});
+      if (!status.ok()) {
+        SDB_THROW(rocksutils::ConvertStatus(status));
+      }
+      key_utils::SetupColumnForKey(_store_keys_buffers[row_idx], column_id);
+    }
+
+    // Write with new keys
+    if (IsUpdatedColumn(column_id)) {
+      _column_id = column_id;
+      WriteColumn(input->childAt(_column_id_to_input_idx[column_id]),
+                  folly::Range{&all_rows, 1}, {});
+    } else {
+      for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+        it->Seek(_old_keys_buffers[row_idx]);
+        SDB_ASSERT(it->Valid() && it->key() == _old_keys_buffers[row_idx],
+                   "RocksDBDataSink: internal error, wrong key setup or order "
+                   "for PK update");
+
+        auto status =
+          _transaction.Put(&_cf, _store_keys_buffers[row_idx], it->value());
+        if (!status.ok()) {
+          SDB_THROW(rocksutils::ConvertStatus(status));
+        }
+      }
     }
   }
 }
@@ -2020,9 +2033,9 @@ const std::string& RocksDBDataSinkBase<SubWriterType>::SetupRowKey(
   SDB_ASSERT(original_idx.empty() ||
              original_idx.size() > static_cast<size_t>(idx));
   const auto row_id = original_idx.empty() ? idx : original_idx[idx];
-  SDB_ASSERT(static_cast<size_t>(row_id) < _keys_buffers.size());
+  SDB_ASSERT(static_cast<size_t>(row_id) < _store_keys_buffers.size());
 
-  auto& row_key = _keys_buffers[row_id];
+  auto& row_key = _store_keys_buffers[row_id];
   key_utils::SetupColumnForKey(row_key, _column_id);
 
   return row_key;

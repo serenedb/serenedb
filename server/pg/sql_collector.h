@@ -25,10 +25,15 @@
 #include <string_view>
 #include <type_traits>
 
+#include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/memory.hpp"
 #include "catalog/object.h"
 #include "pg/pg_types.h"
+
+namespace sdb::query {
+class Transaction;
+}  // namespace sdb::query
 
 struct RawStmt;
 struct List;
@@ -73,7 +78,7 @@ class Objects : public irs::memory::Managed {
     // TODO(mbkkt) Maybe remove this and instead make catalog::Table be able
     // to implement connector::Table without allocation.
     // This probably requires changing axiom::connector::Table.
-    void EnsureTable() const;
+    void EnsureTable(query::Transaction& transaction) const;
     mutable std::shared_ptr<axiom::connector::Table> table;
   };
 

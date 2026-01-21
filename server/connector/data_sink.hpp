@@ -42,14 +42,16 @@ namespace sdb::connector {
 
 template<typename SubWriterType>
 class RocksDBDataSinkBase : public velox::connector::DataSink {
- public:
-  RocksDBDataSinkBase(
-    rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
-    velox::memory::MemoryPool& memory_pool, ObjectId object_key,
-    std::span<const velox::column_index_t> key_childs,
-    std::vector<catalog::Column::Id> column_ids,
-    std::vector<std::unique_ptr<SubWriterType>>&& index_writers);
+ protected:
+  RocksDBDataSinkBase(rocksdb::Transaction& transaction,
+                      rocksdb::ColumnFamilyHandle& cf,
+                      velox::memory::MemoryPool& memory_pool,
+                      ObjectId object_key,
+                      std::span<const velox::column_index_t> key_childs,
+                      std::vector<catalog::Column::Id> column_ids,
+                      std::vector<std::unique_ptr<SubWriterType>>&& index_writers);
 
+ public:
   bool finish() final;
   std::vector<std::string> close() final;
   void abort() final;
@@ -192,7 +194,7 @@ class RocksDBDataSinkBase : public velox::connector::DataSink {
   std::vector<catalog::Column::Id> _column_ids;
   velox::memory::MemoryPool& _memory_pool;
   SliceVector _row_slices;
-  primary_key::Keys _keys_buffers;
+  primary_key::Keys _store_keys_buffers;
   velox::HashStringAllocator _bytes_allocator;
   catalog::Column::Id _column_id;
 };
@@ -200,34 +202,56 @@ class RocksDBDataSinkBase : public velox::connector::DataSink {
 class RocksDBInsertDataSink final
   : public RocksDBDataSinkBase<SinkInsertWriter> {
  public:
-  RocksDBInsertDataSink(
-    rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
-    velox::memory::MemoryPool& memory_pool, ObjectId object_key,
-    std::span<const velox::column_index_t> key_childs,
-    std::vector<catalog::Column::Id> column_oids,
-    std::vector<std::unique_ptr<SinkInsertWriter>>&& index_writers);
+  RocksDBInsertDataSink(rocksdb::Transaction& transaction,
+                        rocksdb::ColumnFamilyHandle& cf,
+                        velox::memory::MemoryPool& memory_pool,
+                        ObjectId object_key,
+                        std::span<const velox::column_index_t> key_childs,
+                        std::vector<catalog::Column::Id> column_ids,
+                        std::vector<std::unique_ptr<SinkInsertWriter>>&& index_writers);
 
   void appendData(velox::RowVectorPtr input) final;
 };
 
 class RocksDBUpdateDataSink final
   : public RocksDBDataSinkBase<SinkUpdateWriter> {
- public:
-  RocksDBUpdateDataSink(
-    rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
-    velox::memory::MemoryPool& memory_pool, ObjectId object_key,
-    std::span<const velox::column_index_t> key_childs,
-    std::vector<catalog::Column::Id> update_column_oids,
-    velox::RowTypePtr table_row_type,
-    std::vector<catalog::Column::Id> all_column_ids,
-    std::vector<std::unique_ptr<SinkUpdateWriter>>&& index_writers);
+
+  RocksDBUpdateDataSink(rocksdb::Transaction& transaction,
+                        const rocksdb::Snapshot* snapshot, rocksdb::DB& db,
+                        rocksdb::ColumnFamilyHandle& cf,
+                        velox::memory::MemoryPool& memory_pool,
+                        ObjectId object_key,
+                        std::span<const velox::column_index_t> key_childs,
+                        std::vector<catalog::Column::Id> column_ids,
+                        std::vector<catalog::Column::Id> all_column_ids,
+                        bool update_pk,
+                        velox::RowTypePtr table_row_type,
+                        std::vector<std::unique_ptr<SinkUpdateWriter>>&& index_writers);
 
   void appendData(velox::RowVectorPtr input) final;
 
  private:
+
+  bool IsUpdatedColumn(catalog::Column::Id column_id) const {
+    SDB_ASSERT(_update_pk, "Used only when updating PK");
+    auto it = _column_id_to_input_idx.find(column_id);
+    if (it == _column_id_to_input_idx.end()) {
+      // Not in input
+      return false;
+    }
+
+    // First '_key_childs' children are old PK
+    return it->second >= _key_childs.size();
+  }
+
+  // to writer const rocksdb::Snapshot* _snapshot;
+  // To writter rocksdb::DB& _db;
   velox::RowTypePtr _table_row_type;
   std::vector<catalog::Column::Id> _all_column_ids;
-  std::vector<size_t> _rewrite_columns_idxs;
+  std::vector<velox::column_index_t> _updated_key_childs;
+  primary_key::Keys _old_keys_buffers;
+  containers::FlatHashMap<catalog::Column::Id, size_t> _column_id_to_input_idx;
+  bool _update_pk{};
 };
 
 class RocksDBDeleteDataSink : public velox::connector::DataSink {

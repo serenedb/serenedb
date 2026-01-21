@@ -121,7 +121,7 @@ void EncodeVertices(Encoder& encode, std::span<S2LatLng> vertices,
                     coding::Options options);
 bool DecodeVertices(Decoder& decoder, std::span<S2Point> vertices, uint8_t tag);
 
-bool DecodePoint(Decoder& decoder, S2Point& point, uint8_t* tag);
+std::pair<bool, uint8_t> DecodePoint(Decoder& dec, S2Point& pt);
 bool DecodePoint(Decoder& decoder, S2Point& point, uint8_t tag);
 
 void EncodePolyline(Encoder& encoder, const S2Polyline& polyline,

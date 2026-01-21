@@ -24,6 +24,7 @@
 #include <absl/strings/escaping.h>
 
 #include <iresearch/analysis/classification_tokenizer.hpp>
+#include <iresearch/analysis/fast_text_model.hpp>
 #include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/formats/formats.hpp>
@@ -47,7 +48,6 @@
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/data_store.h"
 #include "search/execution_pool.h"
-#include "search/fast_text_model.h"
 #include "search/resource_manager.h"
 #include "storage_engine/search_feature.h"
 

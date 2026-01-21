@@ -242,7 +242,8 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
   bool is_range = true;
   auto seek_to_key = [&](std::string_view key) {
     if (!it->Valid()) [[unlikely]] {
-      it->SeekToFirst();
+      it->Seek(key);
+      return;
     }
     if (is_range) {
       it->Next();

@@ -54,16 +54,6 @@ class RocksDBSinkWriter : public RocksDBSinkWriterBase {
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key);
   std::unique_ptr<rocksdb::Iterator> CreateIterator();
-};
-
-// This could be final subclass of SinkDeleteWriter but currently only used
-// directly inside DeleteDataSink so no need for virtual calls/default base
-// members
-class RocksDBDeleteSinkWriter : public RocksDBSinkWriterBase {
- public:
-  RocksDBDeleteSinkWriter(rocksdb::Transaction& transaction,
-                          rocksdb::ColumnFamilyHandle& cf)
-    : RocksDBSinkWriterBase(transaction, cf) {}
 
   void DeleteCell(std::string_view full_key);
 };

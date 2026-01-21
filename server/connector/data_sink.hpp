@@ -215,9 +215,9 @@ class RocksDBInsertDataSink final
 
 class RocksDBUpdateDataSink final
   : public RocksDBDataSinkBase<SinkUpdateWriter> {
-
+public:
   RocksDBUpdateDataSink(rocksdb::Transaction& transaction,
-                        const rocksdb::Snapshot* snapshot, rocksdb::DB& db,
+                        const rocksdb::Snapshot* snapshot,
                         rocksdb::ColumnFamilyHandle& cf,
                         velox::memory::MemoryPool& memory_pool,
                         ObjectId object_key,
@@ -244,8 +244,8 @@ class RocksDBUpdateDataSink final
     return it->second >= _key_childs.size();
   }
 
-  // to writer const rocksdb::Snapshot* _snapshot;
-  // To writter rocksdb::DB& _db;
+  // to writer const
+  const rocksdb::Snapshot* _snapshot;
   velox::RowTypePtr _table_row_type;
   std::vector<catalog::Column::Id> _all_column_ids;
   std::vector<velox::column_index_t> _updated_key_childs;
@@ -272,7 +272,7 @@ class RocksDBDeleteDataSink : public velox::connector::DataSink {
   // we should store original type as data passed to appendData
   // contains only primary key columns but we need remove all.
   velox::RowTypePtr _row_type;
-  RocksDBDeleteSinkWriter _data_writer;
+  RocksDBSinkWriter _data_writer;
   std::vector<std::unique_ptr<SinkDeleteWriter>> _index_writers;
   ObjectId _object_key;
   std::vector<catalog::Column::Id> _column_ids;

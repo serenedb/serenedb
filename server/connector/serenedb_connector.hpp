@@ -634,9 +634,9 @@ class SereneDBConnector final : public velox::connector::Connector {
             }
             
             return std::make_unique<RocksDBUpdateDataSink>(
-              rocksdb_transaction, snapshot, _db, _cf,
+              rocksdb_transaction, snapshot, _cf,
               *connector_query_ctx->memoryPool(), object_key, pk_indices,
-              column_oids, all_column_oids, table.IsUsedForUpdatePK(), std::vector<std::unique_ptr<SinkUpdateWriter>>{});
+              column_oids, all_column_oids, table.IsUsedForUpdatePK(), table.type(), std::vector<std::unique_ptr<SinkUpdateWriter>>{});
           } else {
             return std::make_unique<RocksDBInsertDataSink>(
               rocksdb_transaction, _cf, *connector_query_ctx->memoryPool(),

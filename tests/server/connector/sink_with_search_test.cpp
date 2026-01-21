@@ -181,8 +181,8 @@ class DataSinkWithSearchTest : public ::testing::Test,
       std::make_unique<sdb::connector::search::SearchSinkUpdateWriter>(
         index_transaction));
     sdb::connector::RocksDBUpdateDataSink sink(
-      *data_transaction, *_cf_handles.front(), *pool_.get(), object_key, pk,
-      data_column_oids, table_row_type, all_column_oids,
+      *data_transaction, nullptr, *_cf_handles.front(), *pool_.get(), object_key, pk,
+      data_column_oids, all_column_oids, false, table_row_type,
       std::move(index_writers));
     sink.appendData(data);
     while (!sink.finish()) {

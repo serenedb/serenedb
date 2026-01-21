@@ -1598,7 +1598,10 @@ Result RocksDBEngineCatalog::createTableShard(
     auto slice = vpack::Slice{reinterpret_cast<const uint8_t*>(value.data())};
     if (auto r = vpack::ReadTupleNothrow<catalog::TableStats>(slice, stats);
         !r.ok()) {
-      return r;
+      // TODO(codeworse): load num_rows from rocksdb sst tables as a fallback
+      SDB_WARN("xxxxx", Logger::ENGINES, "unable to read stats for collection ",
+               collection.GetDatabaseId(), ".", collection.GetSchemaId(), ".",
+               collection.GetId(), ": ", r.errorMessage());
     }
   }
   physical = std::make_shared<TableShard>(meta, stats);

@@ -125,12 +125,12 @@ log "Checking prerequisites..."
 
 # Check for tarball
 TARBALL="${TARBALL_DIR}/install.tar.gz"
-if [ ! -f "$TARBALL" ]; then
+if [ ! -f "$TARBALL" ] && [ ! -L "$TARBALL" ]; then
   # Try alternative location
   TARBALL="${PROJECT_ROOT}/package_all/install.tar.gz"
 fi
 
-if [ ! -f "$TARBALL" ]; then
+if [ ! -f "$TARBALL" ] && [ ! -L "$TARBALL" ]; then
   error "install.tar.gz not found. Run build_targz.bash first."
 fi
 

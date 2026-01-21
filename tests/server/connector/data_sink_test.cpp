@@ -2603,7 +2603,6 @@ TEST_F(DataSinkTest, test_insertDeleteConflict) {
   rocksdb::WriteOptions wo;
   std::unique_ptr<rocksdb::Transaction> transaction_delete{
     _db->BeginTransaction(wo, trx_opts, nullptr)};
-
   sdb::connector::RocksDBDeleteDataSink delete_sink(
     *transaction_delete, *_cf_handles.front(), row_type, kObjectKey,
     column_ids);

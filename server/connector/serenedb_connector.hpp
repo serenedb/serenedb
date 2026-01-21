@@ -313,7 +313,7 @@ class SereneDBConnectorInsertTableHandle final
       _update_pk{basics::downCast<RocksDBTable>(*table).IsUsedForUpdatePK()} {
     GetTransaction().AddRocksDBWrite();
     if (_update_pk) {
-      GetTransaction().AddRocksDBRead();  // for update of primary keys
+      GetTransaction().AddRocksDBRead();
     }
   }
 

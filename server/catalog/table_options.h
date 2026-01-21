@@ -152,19 +152,9 @@ struct Column {
   static constexpr Id kGeneratedPKId = kMaxRealId + 1;
 
   static constexpr std::string_view GetUpdateNamePrefix() {
-    // Replace with std::views::concat(kUpdPrefix, query::kReservedSymbol) when
-    // it becomes available
-    static constexpr std::array kPrefix = []() constexpr {
-      using namespace std::string_view_literals;
-      static constexpr std::string_view kUpdPrefix = "upd"sv;
-      std::array<char, kUpdPrefix.size() + query::kReservedSymbol.size()> arr;
-      for (auto i = 0; i < kUpdPrefix.size(); ++i)
-        arr[i] = kUpdPrefix[i];
-      for (auto i = 0; i < query::kReservedSymbol.size(); ++i)
-        arr[i + kUpdPrefix.size()] = query::kReservedSymbol[i];
-      return arr;
-    }();
-    return std::string_view{kPrefix.data(), kPrefix.size()};
+    static constexpr std::string_view kUpdatePrefix = "upd$";
+    static_assert(kUpdatePrefix.ends_with(query::kReservedSymbol));
+    return kUpdatePrefix;
   }
 
   static std::string GenerateUpdateName(std::string_view original_name) {

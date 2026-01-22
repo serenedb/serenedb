@@ -34,12 +34,14 @@
 #include "primary_key.hpp"
 #include "rocksdb/utilities/transaction.h"
 #include "rocksdb/write_batch.h"
+#include "rocksdb_engine_catalog/rocksdb_utils.h"
 
 namespace sdb::connector {
 
 class RocksDBDataSinkBase : public velox::connector::DataSink {
  protected:
   RocksDBDataSinkBase(rocksdb::Transaction& transaction,
+                      const rocksdb::Snapshot* snapshot, rocksdb::DB& db,
                       rocksdb::ColumnFamilyHandle& cf,
                       velox::memory::MemoryPool& memory_pool,
                       ObjectId object_key,
@@ -180,6 +182,8 @@ class RocksDBDataSinkBase : public velox::connector::DataSink {
     velox::vector_size_t total_rows_number);
 
   rocksdb::Transaction& _transaction;
+  const rocksdb::Snapshot* _snapshot;
+  rocksdb::DB& _db;
   rocksdb::ColumnFamilyHandle& _cf;
   ObjectId _object_key;
   std::vector<velox::column_index_t> _key_childs;
@@ -189,11 +193,43 @@ class RocksDBDataSinkBase : public velox::connector::DataSink {
   primary_key::Keys _store_keys_buffers;
   velox::HashStringAllocator _bytes_allocator;
   catalog::Column::Id _column_id;
+
+  // For conflict detection
+
+  // TODO rewrite it
+  // - Add 'Next()' attempts, useful in case of bulk insert + incremental pk.
+  //   This one may require to store bool as a field?
+  // - Separate iterator: over existing vs lookup?
+  void LookupNextKey(std::string_view key) {
+    // Incorrect when many batches
+    // We should create _it per batch looks like
+    if (!_it) [[unlikely]] {
+      rocksdb::ReadOptions read_options;
+      read_options.async_io = true;  // OK?
+      read_options.snapshot = _snapshot;
+      _it =
+        std::unique_ptr<rocksdb::Iterator>(_db.NewIterator(read_options, &_cf));
+      _it->Seek(key);
+
+      return;
+    }
+
+    if (!_it->Valid()) {
+      // Reached the end, more seeks are not needed
+      return;
+    }
+
+    _it->Seek(key);
+  }
+
+  std::vector<size_t> _columns_order;  // or column_index_t?
+  std::unique_ptr<rocksdb::Iterator> _it;
 };
 
 class RocksDBInsertDataSink : public RocksDBDataSinkBase {
  public:
   RocksDBInsertDataSink(rocksdb::Transaction& transaction,
+                        const rocksdb::Snapshot* snapshot, rocksdb::DB& db,
                         rocksdb::ColumnFamilyHandle& cf,
                         velox::memory::MemoryPool& memory_pool,
                         ObjectId object_key,
@@ -230,8 +266,6 @@ class RocksDBUpdateDataSink : public RocksDBDataSinkBase {
     return it->second >= _key_childs.size();
   }
 
-  const rocksdb::Snapshot* _snapshot;
-  rocksdb::DB& _db;
   std::vector<catalog::Column::Id> _all_column_ids;
   std::vector<velox::column_index_t> _updated_key_childs;
   primary_key::Keys _old_keys_buffers;

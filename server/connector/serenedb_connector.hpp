@@ -312,7 +312,7 @@ class SereneDBConnectorInsertTableHandle final
       _transaction{basics::downCast<RocksDBTable>(*table).GetTransaction()},
       _update_pk{basics::downCast<RocksDBTable>(*table).IsUsedForUpdatePK()} {
     GetTransaction().AddRocksDBWrite();
-    if (_update_pk) {
+    if (_update_pk || kind == axiom::connector::WriteKind::kInsert) {
       GetTransaction().AddRocksDBRead();
     }
   }
@@ -626,8 +626,9 @@ class SereneDBConnector final : public velox::connector::Connector {
               column_oids, all_column_oids, table.IsUsedForUpdatePK());
           } else {
             return std::make_unique<RocksDBInsertDataSink>(
-              rocksdb_transaction, _cf, *connector_query_ctx->memoryPool(),
-              object_key, pk_indices, column_oids);
+              rocksdb_transaction, &transaction.EnsureRocksDBSnapshot(), _db,
+              _cf, *connector_query_ctx->memoryPool(), object_key, pk_indices,
+              column_oids);
           }
         });
     }

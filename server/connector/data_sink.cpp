@@ -65,11 +65,14 @@ void WriteNull(rocksdb::Transaction& trx, rocksdb::ColumnFamilyHandle& cf,
 namespace sdb::connector {
 
 RocksDBDataSinkBase::RocksDBDataSinkBase(
-  rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
+  rocksdb::Transaction& transaction, const rocksdb::Snapshot* snapshot,
+  rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
   std::span<const velox::column_index_t> key_childs,
   std::vector<catalog::Column::Id> column_oids)
   : _transaction{transaction},
+    _snapshot{snapshot},
+    _db{db},
     _cf{cf},
     _object_key{object_key},
     _column_ids{std::move(column_oids)},
@@ -80,15 +83,22 @@ RocksDBDataSinkBase::RocksDBDataSinkBase(
   _key_childs.assign_range(key_childs);
   SDB_ASSERT(_object_key.isSet(), "RocksDBDataSink: object key is empty");
   SDB_ASSERT(!_column_ids.empty(), "RocksDBDataSink: no columns in a table");
+  _columns_order.resize(_column_ids.size());
+  absl::c_iota(_columns_order, 0);
+  absl::c_sort(_columns_order, [&](auto lhs, auto rhs) {
+    return _column_ids[lhs] < _column_ids[rhs];
+  });
 }
 
 RocksDBInsertDataSink::RocksDBInsertDataSink(
-  rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
+  rocksdb::Transaction& transaction, const rocksdb::Snapshot* snapshot,
+  rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
   std::span<const velox::column_index_t> key_childs,
   std::vector<catalog::Column::Id> column_oids)
-  : RocksDBDataSinkBase{transaction, cf,         memory_pool,
-                        object_key,  key_childs, std::move(column_oids)} {}
+  : RocksDBDataSinkBase{
+      transaction, snapshot,   db,         cf,
+      memory_pool, object_key, key_childs, std::move(column_oids)} {}
 
 RocksDBUpdateDataSink::RocksDBUpdateDataSink(
   rocksdb::Transaction& transaction, const rocksdb::Snapshot* snapshot,
@@ -97,10 +107,10 @@ RocksDBUpdateDataSink::RocksDBUpdateDataSink(
   std::span<const velox::column_index_t> key_childs,
   std::vector<catalog::Column::Id> column_oids,
   std::vector<catalog::Column::Id> all_column_oids, bool update_pk)
-  : RocksDBDataSinkBase{transaction, cf,         memory_pool,
-                        object_key,  key_childs, std::move(column_oids)},
-    _snapshot{snapshot},
-    _db{db},
+  : RocksDBDataSinkBase{transaction, snapshot,
+                        db,          cf,
+                        memory_pool, object_key,
+                        key_childs,  std::move(column_oids)},
     _all_column_ids{std::move(all_column_oids)},
     _old_keys_buffers{memory_pool},
     _update_pk{update_pk} {
@@ -137,7 +147,7 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
 
   const std::string table_key = key_utils::PrepareTableKey(_object_key);
   const auto num_rows = input->size();
-  const auto num_columns = input->childrenSize();
+  [[maybe_unused]] const auto num_columns = input->childrenSize();
 
   _store_keys_buffers.clear();
   _store_keys_buffers.reserve(num_rows);
@@ -154,8 +164,17 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
       _store_keys_buffers.emplace_back());
   }
 
+  std::vector<size_t> row_order(num_rows);
+  absl::c_iota(row_order, 0);
+  absl::c_sort(row_order, [&](size_t lhs, size_t rhs) {
+    return _store_keys_buffers[lhs].substr(sizeof(ObjectId) +
+                                           sizeof(catalog::Column::Id)) <
+           _store_keys_buffers[rhs].substr(sizeof(ObjectId) +
+                                           sizeof(catalog::Column::Id));
+  });
+
   velox::IndexRange all_rows(0, num_rows);
-  for (velox::column_index_t i = 0; i < num_columns; ++i) {
+  for (auto i : _columns_order) {
     _column_id = _column_ids[i];
     if (_column_id != catalog::Column::kGeneratedPKId) {
       WriteColumn(input->childAt(i), folly::Range{&all_rows, 1}, {});
@@ -1923,6 +1942,26 @@ void RocksDBDataSinkBase::WriteRowSlices(std::string_view key) {
   rocksdb::Slice key_slice(key);
   rocksdb::Status status;
   SDB_ASSERT(!_row_slices.empty());
+
+  // TODO check here that key_slice is not present
+  LookupNextKey(key);
+  if (!_it->status().ok()) {
+    SDB_THROW(rocksutils::ConvertStatus(_it->status()));
+  }
+
+  if (_it->Valid() && _it->key() == key_slice) {
+    // Key is found, but we expect it shouldn't
+
+    // TODO
+    // It shouldn't be SQL error as data sink should know anything about SQL(?)
+    // So, it should has some special mark that will be checked in server/pg
+    // code and such a code should transform exception that is thrown from here
+    // into SQL-like error
+    SDB_THROW(ERROR_NOT_IMPLEMENTED,
+              "RocksDBDataSink: failed uniqueness on primary key. Correct "
+              "error handling is not implemented yet");
+  }
+
   if (_row_slices.size() == 1) {
     // Optimizing single slice case - rocksdb does not do additional copying
     // while gathering slice parts

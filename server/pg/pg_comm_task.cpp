@@ -413,7 +413,7 @@ void PgSQLCommTaskBase::DescribeAnalyzedQuery(
   const auto* pg_node = castNode(RawStmt, statement.tree.GetRoot());
   SDB_ASSERT(pg_node);
 
-  // We want **don't** want to describe columns in the following cases:
+  // We **don't** want to describe columns in the following cases:
   // 1. Query is CALL some_procedure()
   // 2. Query is without logical plan and doesn't have columns at all,
   //    for example CREATE and DROP). But query may be without logical plan, but
@@ -1265,7 +1265,7 @@ void PgSQLCommTaskBase::SendNotice(char type, const pg::SqlErrorData& what) {
   char sql_state[pg::kSqlStateSize];
   pg::UnpackSqlState(sql_state, what.errcode);
   SendNotice(type, what.errmsg, {sql_state, pg::kSqlStateSize}, what.errdetail,
-             what.errhint, _current_query, what.cursorpos);
+             what.errhint, what.context, _current_query, what.cursorpos);
 }
 
 void PgSQLCommTaskBase::SendError(std::string_view message, int errcode) {
@@ -1278,8 +1278,9 @@ void PgSQLCommTaskBase::SendNotice(char type, std::string_view message,
                                    std::string_view sqlstate,
                                    std::string_view error_detail /*= {} */,
                                    std::string_view error_hint /*= {} */,
+                                   std::string_view context /*= {} */,
                                    std::string_view query /* = {} */,
-                                   int cursor_pos /* = 0 */) {
+                                   int cursor_pos /* = -1 */) {
   SDB_ASSERT(type == PQ_MSG_ERROR_RESPONSE || type == PQ_MSG_NOTICE_RESPONSE);
   const auto uncommitted_size = _send.GetUncommittedSize();
   auto* prefix_data = _send.GetContiguousData(5);
@@ -1298,6 +1299,10 @@ void PgSQLCommTaskBase::SendNotice(char type, std::string_view message,
   if (error_hint.size()) {
     _send.WriteUncommitted({"\0H", 2});
     _send.WriteUncommitted(error_hint);
+  }
+  if (context.size()) {
+    _send.WriteUncommitted({"\0W", 2});
+    _send.WriteUncommitted(context);
   }
   if (query.size() > 1) {
     _send.WriteUncommitted({"\0q", 2});

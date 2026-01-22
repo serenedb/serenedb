@@ -2767,11 +2767,10 @@ class FieldReaderImpl final : public FieldReader {
       return it.Meta();
     }
 
-    size_t read_documents(bytes_view term,
-                          std::span<doc_id_t> docs) const final {
+    void read_documents(bytes_view term, Acceptor acceptor) const final {
       // Order is important here!
-      if (max() < term || term < min() || docs.empty()) {
-        return 0;
+      if (max() < term || term < min()) {
+        return;
       }
 
       SingleTermIterator<FST> it{*this, *_owner->_pr,
@@ -2779,35 +2778,28 @@ class FieldReaderImpl final : public FieldReader {
                                  _owner->_terms_in_cipher.get(), *_fst};
 
       if (!it.seek(term)) {
-        return 0;
+        return;
       }
 
       if (const auto& meta = it.Meta(); meta.docs_count == 1) {
-        docs.front() = doc_limits::min() + meta.e_single_doc;
-        return 1;
+        acceptor(doc_limits::min() + meta.e_single_doc);
+        return;
       }
 
       auto docs_it = it.postings(IndexFeatures::None);
 
       if (!docs_it) [[unlikely]] {
         SDB_ASSERT(false);
-        return 0;
+        return;
       }
 
-      const auto* doc = irs::get<DocAttr>(*docs_it);
-
-      if (!doc) [[unlikely]] {
-        SDB_ASSERT(false);
-        return 0;
+      doc_id_t d;
+      while (!doc_limits::eof(d = docs_it->advance())) {
+        SDB_ASSERT(doc_limits::valid(d));
+        if (!acceptor(d)) {
+          break;
+        }
       }
-
-      auto begin = docs.begin();
-
-      for (auto end = docs.end(); begin != end && docs_it->next(); ++begin) {
-        *begin = doc->value;
-      }
-
-      return std::distance(docs.begin(), begin);
     }
 
     size_t BitUnion(const cookie_provider& provider, size_t* set) const final {

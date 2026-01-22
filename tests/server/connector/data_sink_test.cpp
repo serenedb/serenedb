@@ -99,7 +99,7 @@ class DataSinkTest : public ::testing::Test,
     sdb::connector::primary_key::Create(*data, pk, written_row_keys);
     sdb::connector::RocksDBInsertDataSink sink(
       *transaction, *_cf_handles.front(), *pool_.get(), object_key, pk,
-      column_oids);
+      column_oids, {});
     sink.appendData(data);
     while (!sink.finish()) {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -2485,7 +2485,7 @@ TEST_F(DataSinkTest, test_deleteDataSink) {
   ASSERT_NE(transaction, nullptr);
 
   sdb::connector::RocksDBDeleteDataSink delete_sink(
-    *transaction, *_cf_handles.front(), row_type, object_key, {0, 1, 2, 3});
+    *transaction, *_cf_handles.front(), row_type, object_key, {0, 1, 2, 3}, {});
 
   delete_sink.appendData(row_data);
   ASSERT_TRUE(delete_sink.finish());
@@ -2547,7 +2547,7 @@ TEST_F(DataSinkTest, test_deleteDataSinkPartial) {
   ASSERT_NE(transaction2, nullptr);
 
   sdb::connector::RocksDBDeleteDataSink delete_sink(
-    *transaction, *_cf_handles.front(), row_type, object_key, column_ids);
+    *transaction, *_cf_handles.front(), row_type, object_key, column_ids, {});
 
   delete_sink.appendData(row_data);
   ASSERT_TRUE(delete_sink.finish());
@@ -2555,7 +2555,8 @@ TEST_F(DataSinkTest, test_deleteDataSinkPartial) {
   // check for conflict
   {
     sdb::connector::RocksDBDeleteDataSink delete_sink2(
-      *transaction2, *_cf_handles.front(), row_type, object_key, column_ids);
+      *transaction2, *_cf_handles.front(), row_type, object_key, column_ids,
+      {});
     ASSERT_ANY_THROW(delete_sink2.appendData(row_data));
     // should be empty
     ASSERT_TRUE(transaction2->Commit().ok());
@@ -2604,8 +2605,8 @@ TEST_F(DataSinkTest, test_insertDeleteConflict) {
   std::unique_ptr<rocksdb::Transaction> transaction_delete{
     _db->BeginTransaction(wo, trx_opts, nullptr)};
   sdb::connector::RocksDBDeleteDataSink delete_sink(
-    *transaction_delete, *_cf_handles.front(), row_type, kObjectKey,
-    column_ids);
+    *transaction_delete, *_cf_handles.front(), row_type, kObjectKey, column_ids,
+    {});
   auto delete_data = makeRowVector({makeFlatVector<int32_t>({15, 6, 7, 10})});
   ASSERT_ANY_THROW(delete_sink.appendData(delete_data));
   // should be empty

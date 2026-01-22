@@ -19,10 +19,13 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
+#include <velox/common/memory/HashStringAllocator.h>
+
 #include <cstdint>
 #include <string_view>
 
 #include "basics/bit_utils.hpp"
+#include "basics/fwd.h"
 
 namespace sdb::connector {
 
@@ -36,11 +39,16 @@ enum class ValueFlags : uint8_t {
 
 ENABLE_BITMASK_ENUM(ValueFlags);
 
+// TODO(Dronplane) unify with key?
+inline constexpr std::string_view kStringPrefix{"\0", 1};
 inline constexpr std::string_view kTrueValue{"\1", 1};
 inline constexpr std::string_view kFalseValue{"\0", 1};
 
 static_assert(
   sizeof(ValueFlags) == 1,
   "ValueFlags should be one byte. If need more adjust writing/reading");
+
+template<typename T>
+using ManagedVector = std::vector<T, velox::memory::StlAllocator<T>>;
 
 }  // namespace sdb::connector

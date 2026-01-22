@@ -34,6 +34,7 @@
 #include "connector/data_source.hpp"
 #include "connector/key_utils.hpp"
 #include "connector/primary_key.hpp"
+#include "connector/search_remove_filter.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "connector/serenedb_connector.hpp"
 #include "gtest/gtest.h"
@@ -45,8 +46,6 @@ using namespace sdb::connector;
 namespace {
 
 constexpr sdb::ObjectId kObjectKey{123456};
-static constexpr std::string_view kPkColumn =
-  std::string_view{"\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF", 8};
 
 class DataSinkWithSearchTest : public ::testing::Test,
                                public velox::test::VectorTestBase {
@@ -164,7 +163,8 @@ class DataSinkWithSearchTest : public ::testing::Test,
       auto docs =
         segment.mask(prepared->execute({.segment = segment, .scorers = {}}));
       while (docs->next()) {
-        const auto* pk_column = segment.column(kPkColumn);
+        const auto* pk_column =
+          segment.column(sdb::connector::search::kPkFieldName);
         ASSERT_NE(nullptr, pk_column);
         auto pk_values_itr = pk_column->iterator(irs::ColumnHint::Normal);
         ASSERT_NE(nullptr, pk_values_itr);

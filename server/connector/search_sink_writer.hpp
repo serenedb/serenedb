@@ -44,7 +44,7 @@ class SearchSinkInsertBaseImpl {
                  std::string_view full_key);
 
   bool SwitchColumnImpl(velox::TypeKind kind, bool have_nulls,
-                        sdb::catalog::Column::Id column_id);
+                        catalog::Column::Id column_id);
   void FinishImpl();
 
   void AbortImpl() {
@@ -121,7 +121,7 @@ class SearchSinkInsertBaseImpl {
   // Setup column writer according to type kind.
   // Builds actual executor to avoid switch/case on each row whenever possible.
   template<velox::TypeKind Kind>
-  void SetupColumnWriter(sdb::catalog::Column::Id column_id, bool have_nulls);
+  void SetupColumnWriter(catalog::Column::Id column_id, bool have_nulls);
 
   Field _field;
   Field _pk_field;
@@ -160,7 +160,7 @@ class SearchSinkInsertWriter final : public SinkInsertWriter,
   void Init(size_t batch_size) final { InitImpl(batch_size); }
 
   bool SwitchColumn(velox::TypeKind kind, bool have_nulls,
-                    sdb::catalog::Column::Id column_id) final {
+                    catalog::Column::Id column_id) final {
     return SwitchColumnImpl(kind, have_nulls, column_id);
   }
 
@@ -202,7 +202,7 @@ class SearchSinkUpdateWriter final : public SinkUpdateWriter,
   }
 
   bool SwitchColumn(velox::TypeKind kind, bool have_nulls,
-                    sdb::catalog::Column::Id column_id) final {
+                    catalog::Column::Id column_id) final {
     return SwitchColumnImpl(kind, have_nulls, column_id);
   }
 
@@ -225,7 +225,7 @@ class SearchSinkUpdateWriter final : public SinkUpdateWriter,
 
   void DeleteRow(std::string_view row_key) final { DeleteRowImpl(row_key); }
 
-  bool IsIndexed(sdb::catalog::Column::Id column_id) const noexcept final {
+  bool IsIndexed(catalog::Column::Id column_id) const noexcept final {
     // TODO(Dronplane): implement proper check when we have metadata
     return true;
   }

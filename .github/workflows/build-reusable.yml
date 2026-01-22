@@ -105,7 +105,7 @@ jobs:
           case "${{ inputs.PRESET }}" in
             asan)
               echo "ENABLE_GTEST_BUILD=true" >> $GITHUB_ENV
-              echo "ENABLE_TEST_BUILD=true" >> $GITHUB_ENV
+              echo "ENABLE_TESTS_BUILD=true" >> $GITHUB_ENV
               echo "ENABLE_RELEASE_BUILD=false" >> $GITHUB_ENV
               echo "DEB_TAR_PACKAGES=false" >> $GITHUB_ENV
               echo "SANITIZERS=UndefinedAddress" >> $GITHUB_ENV
@@ -113,7 +113,7 @@ jobs:
               ;;
             tsan)
               echo "ENABLE_GTEST_BUILD=true" >> $GITHUB_ENV
-              echo "ENABLE_TEST_BUILD=true" >> $GITHUB_ENV
+              echo "ENABLE_TESTS_BUILD=true" >> $GITHUB_ENV
               echo "ENABLE_RELEASE_BUILD=false" >> $GITHUB_ENV
               echo "DEB_TAR_PACKAGES=false" >> $GITHUB_ENV
               echo "SANITIZERS=Thread" >> $GITHUB_ENV
@@ -121,7 +121,7 @@ jobs:
               ;;
             build)
               echo "ENABLE_GTEST_BUILD=true" >> $GITHUB_ENV
-              echo "ENABLE_TEST_BUILD=true" >> $GITHUB_ENV
+              echo "ENABLE_TESTS_BUILD=true" >> $GITHUB_ENV
               echo "ENABLE_RELEASE_BUILD=true" >> $GITHUB_ENV
               echo "DEB_TAR_PACKAGES=false" >> $GITHUB_ENV
               echo "SANITIZERS=" >> $GITHUB_ENV
@@ -129,7 +129,7 @@ jobs:
               ;;
             release)
               echo "ENABLE_GTEST_BUILD=true" >> $GITHUB_ENV
-              echo "ENABLE_TEST_BUILD=true" >> $GITHUB_ENV
+              echo "ENABLE_TESTS_BUILD=true" >> $GITHUB_ENV
               echo "ENABLE_RELEASE_BUILD=true" >> $GITHUB_ENV
               echo "DEB_TAR_PACKAGES=true" >> $GITHUB_ENV
               echo "SANITIZERS=" >> $GITHUB_ENV
@@ -161,8 +161,9 @@ jobs:
           ref: ${{ env.CLUSTER_BRANCH }}
           token: ${{ secrets.PAT_TOKEN }}
           path: private
-          fetch-depth: 1
-          submodules: true
+          sparse-checkout: |
+            ci
+          sparse-checkout-cone-mode: true
 
       - name: Print environment
         if: env.DEBUG_PRINT_ENV == 'true'

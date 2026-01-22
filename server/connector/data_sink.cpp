@@ -234,6 +234,22 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
   const velox::IndexRange all_rows(0, num_rows);
   const folly::Range all_rows_range{&all_rows, 1};
 
+  auto ensure_input_sorted = [&] {
+    // Rewrite on sorting if you can prove and explain why check is failed
+    // Maybe JOIN as  UPDATE .. FROM t1 JOIN t2. .... will break this
+    // assumption or search index with primary sort in case used as source!
+    SDB_ENSURE(
+      absl::c_is_sorted(
+        _store_keys_buffers,
+        [&](std::string_view lhs, std::string_view rhs) {
+          return lhs.substr(sizeof(ObjectId) + sizeof(catalog::Column::Id)) <
+                 rhs.substr(sizeof(ObjectId) + sizeof(catalog::Column::Id));
+        }),
+      ERROR_INTERNAL,
+      "RocksDBUpdateDataSink: rows are expected to be sorted in case of "
+      "updating indexes");
+  };
+
   if (!_update_pk) {
     // Take locks and prepare buffers
     for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
@@ -242,44 +258,12 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
                                _store_keys_buffers.emplace_back());
     }
     if (!_index_writers.empty()) {
-      // Rewrite on sorting if you can prove and explain why check is failed
-      // Maybe JOIN as  UPDATE .. FROM t1 JOIN t2. .... will break this
-      // assumption or search index with primary sort in case used as source!
-      SDB_ENSURE(
-        absl::c_is_sorted(
-          _store_keys_buffers,
-          [&](std::string_view lhs, std::string_view rhs) {
-            return lhs.substr(sizeof(ObjectId) + sizeof(catalog::Column::Id)) <
-                   rhs.substr(sizeof(ObjectId) + sizeof(catalog::Column::Id));
-          }),
-        ERROR_INTERNAL,
-        "RocksDBUpdateDataSink: rows are expected to be sorted in case of "
-        "updating indexes");
+      ensure_input_sorted();
       auto it = _data_writer.CreateIterator();
-
       for (auto column_id : _all_column_ids) {
         if (!IsUpdatedColumn(column_id)) {
-          SDB_ASSERT(_column_id_to_kind.contains(column_id));
-          const auto kind = _column_id_to_kind[column_id];
-          for (const auto& writer : _index_writers) {
-            // TODO (Dronplane) determine nullable or not from metadata?
-            writer->SwitchColumn(kind, true, column_id);
-          }
-
-          for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-            key_utils::SetupColumnForKey(_store_keys_buffers[row_idx],
-                                         column_id);
-            it->Seek(_store_keys_buffers[row_idx]);
-            SDB_ASSERT(
-              it->Valid() && it->key() == _store_keys_buffers[row_idx],
-              "RocksDBDataSink: internal error, wrong key setup or order "
-              "for PK update");
-            auto value_slice = it->value();
-            _data_writer.Write({&value_slice, 1}, _store_keys_buffers[row_idx]);
-            for (const auto& writer : _index_writers) {
-              writer->Write({&value_slice, 1}, _store_keys_buffers[row_idx]);
-            }
-          }
+          RewriteColumn(*it, column_id, _store_keys_buffers,
+                        _store_keys_buffers);
         }
       }
     }
@@ -300,52 +284,49 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
                              lock_old_row, _old_keys_buffers.emplace_back());
   }
 
-  // Rewrite on sorting if you can prove and explain why check is failed
-  // Maybe JOIN as  UPDATE .. FROM t1 JOIN t2. .... will break this assumption!
-  SDB_ENSURE(
-    absl::c_is_sorted(
-      _old_keys_buffers,
-      [&](std::string_view lhs, std::string_view rhs) {
-        return lhs.substr(sizeof(ObjectId) + sizeof(catalog::Column::Id)) <
-               rhs.substr(sizeof(ObjectId) + sizeof(catalog::Column::Id));
-      }),
-    ERROR_INTERNAL,
-    "RocksDBUpdateDataSink: rows are expected to be sorted in case of "
-    "updating primary key");
-
+  ensure_input_sorted();
   auto it = _data_writer.CreateIterator();
-
   for (auto column_id : _all_column_ids) {
-    // Delete values written with old keys and setup column id in buffers
+    // Delete values written with old keys
     for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
       auto& old_key = _old_keys_buffers[row_idx];
       key_utils::SetupColumnForKey(old_key, column_id);
       _data_writer.DeleteCell(old_key);
-
-      key_utils::SetupColumnForKey(_store_keys_buffers[row_idx], column_id);
     }
 
     // Write with new keys
     if (IsUpdatedColumn(column_id)) {
-      WriteInputColumn(column_id, _column_id_to_input_idx[column_id], *input, all_rows_range);
+      WriteInputColumn(column_id, _column_id_to_input_idx[column_id], *input,
+                       all_rows_range);
     } else {
-      SDB_ASSERT(_column_id_to_kind.contains(_column_id));
-      const auto kind = _column_id_to_kind[_column_id];
-      for (const auto& writer : _index_writers) {
-        // TODO (Dronplane) determine nullable or not from metadata?
-        writer->SwitchColumn(kind, true, _column_id);
-      }
-      for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-        it->Seek(_old_keys_buffers[row_idx]);
-        SDB_ASSERT(it->Valid() && it->key() == _old_keys_buffers[row_idx],
-                   "RocksDBDataSink: internal error, wrong key setup or order "
-                   "for PK update");
-        auto value_slice = it->value();
-        _data_writer.Write({&value_slice, 1}, _store_keys_buffers[row_idx]);
-        for (const auto& writer : _index_writers) {
-          writer->Write({&value_slice, 1}, _store_keys_buffers[row_idx]);
-        }
-      }
+      RewriteColumn(*it, column_id, _old_keys_buffers, _store_keys_buffers);
+    }
+  }
+}
+
+void RocksDBUpdateDataSink::RewriteColumn(rocksdb::Iterator& it,
+                                          catalog::Column::Id column_id,
+                                          const primary_key::Keys& old_keys,
+                                          primary_key::Keys& new_keys) {
+  SDB_ASSERT(_column_id_to_kind.contains(column_id));
+  const auto kind = _column_id_to_kind[column_id];
+  for (const auto& writer : _index_writers) {
+    // TODO (Dronplane) determine nullable or not from metadata?
+    writer->SwitchColumn(kind, true, column_id);
+  }
+  const auto num_rows = new_keys.size();
+  SDB_ASSERT(old_keys.size() == new_keys.size());
+  for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+    key_utils::SetupColumnForKey(new_keys[row_idx], column_id);
+    it.Seek(old_keys[row_idx]);
+    SDB_ASSERT(it.Valid() && it.key() == old_keys[row_idx],
+               "RocksDBDataSink: internal error, wrong key setup or order "
+               "for PK update");
+    auto value_slice = it.value();
+    const auto& new_key = new_keys[row_idx];
+    _data_writer.Write({&value_slice, 1}, new_key);
+    for (const auto& writer : _index_writers) {
+      writer->Write({&value_slice, 1}, new_key);
     }
   }
 }
@@ -353,7 +334,8 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
 template<typename SubWriterType>
 void RocksDBDataSinkBase<SubWriterType>::WriteInputColumn(
   catalog::Column::Id column_id, velox::vector_size_t idx,
-  velox::RowVector& input, const folly::Range<const velox::IndexRange*>& range) {
+  velox::RowVector& input,
+  const folly::Range<const velox::IndexRange*>& range) {
   _column_id = column_id;
   const auto& child = input.childAt(idx);
   const auto kind = child->typeKind();

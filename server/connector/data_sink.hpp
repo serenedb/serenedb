@@ -229,6 +229,10 @@ class RocksDBUpdateDataSink final
   void appendData(velox::RowVectorPtr input) final;
 
  private:
+  void RewriteColumn(rocksdb::Iterator& it, catalog::Column::Id column_id,
+                     const primary_key::Keys& old_keys,
+                     primary_key::Keys& new_keys);
+
   bool IsUpdatedColumn(catalog::Column::Id column_id) const {
     SDB_ASSERT(_update_pk || !_index_writers.empty(),
                "Used only when updating PK or indexes");

@@ -248,7 +248,7 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
         }),
       ERROR_INTERNAL,
       "RocksDBUpdateDataSink: rows are expected to be sorted in case of "
-      "updating indexes");
+      "updating");
   };
 
   if (!_update_pk) {
@@ -288,19 +288,24 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
   ensure_input_sorted(_old_keys_buffers);
   auto it = _data_writer.CreateIterator();
   for (auto column_id : _all_column_ids) {
-    // Delete values written with old keys
     for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
       auto& old_key = _old_keys_buffers[row_idx];
+      // we can not move this into RewriteColumn as there is not always
+      // rewritten columns. And we can not delete keys right now - we will need
+      // them for rewrite
       key_utils::SetupColumnForKey(old_key, column_id);
-      _data_writer.DeleteCell(old_key);
     }
-
     // Write with new keys
     if (IsUpdatedColumn(column_id)) {
       WriteInputColumn(column_id, _column_id_to_input_idx[column_id], *input,
                        all_rows_range);
     } else {
       RewriteColumn(*it, column_id, _old_keys_buffers, _store_keys_buffers);
+    }
+    // Delete values written with old keys
+    for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+      auto& old_key = _old_keys_buffers[row_idx];
+      _data_writer.DeleteCell(old_key);
     }
   }
 }

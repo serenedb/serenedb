@@ -237,12 +237,14 @@ class DataSinkWithSearchTest : public ::testing::Test,
     std::vector<sdb::catalog::Column::Id> all_column_oids,
     sdb::ObjectId object_key, const std::vector<velox::column_index_t>& pk,
     std::unique_ptr<rocksdb::Transaction>& data_transaction,
-    irs::IndexWriter::Transaction& index_transaction) {
+    irs::IndexWriter::Transaction& index_transaction, bool update_pk) {
     rocksdb::TransactionOptions trx_opts;
     trx_opts.skip_concurrency_control = true;
     trx_opts.lock_timeout = 100;
     rocksdb::WriteOptions wo;
     data_transaction.reset(_db->BeginTransaction(wo, trx_opts, nullptr));
+    data_transaction->SetSnapshot();
+    ASSERT_NE(nullptr, data_transaction->GetSnapshot());
     index_transaction = _data_writer->GetBatch();
     ASSERT_NE(data_transaction, nullptr);
     std::vector<std::unique_ptr<sdb::connector::SinkUpdateWriter>>
@@ -252,8 +254,7 @@ class DataSinkWithSearchTest : public ::testing::Test,
         index_transaction));
     sdb::connector::RocksDBUpdateDataSink sink(
       *data_transaction, *_cf_handles.front(), *pool_.get(), object_key, pk,
-      data_column_oids, all_column_oids,
-      data_column_oids.size() > all_column_oids.size(), table_row_type,
+      data_column_oids, all_column_oids, update_pk, table_row_type,
       std::move(index_writers));
     sink.appendData(data);
     while (!sink.finish()) {
@@ -261,17 +262,18 @@ class DataSinkWithSearchTest : public ::testing::Test,
     }
   }
 
-  void MakeRocksDBUpdate(
-    std::vector<velox::VectorPtr> data,
-    std::vector<sdb::catalog::Column::Id> column_oids,
-    velox::RowTypePtr table_row_type,
-    std::vector<sdb::catalog::Column::Id> all_column_oids) {
+  void MakeRocksDBUpdate(std::vector<velox::VectorPtr> data,
+                         std::vector<sdb::catalog::Column::Id> column_oids,
+                         velox::RowTypePtr table_row_type,
+                         std::vector<sdb::catalog::Column::Id> all_column_oids,
+                         bool update_pk) {
     auto row_data = makeRowVector(data);
     std::unique_ptr<rocksdb::Transaction> transaction;
     irs::IndexWriter::Transaction index_transaction;
     std::vector<velox::column_index_t> pk = {0};
     PrepareRocksDBUpdate(row_data, column_oids, table_row_type, all_column_oids,
-                         kObjectKey, pk, transaction, index_transaction);
+                         kObjectKey, pk, transaction, index_transaction,
+                         update_pk);
     ASSERT_TRUE(index_transaction.Valid());
     ASSERT_TRUE(transaction->Commit().ok());
     ASSERT_TRUE(index_transaction.Commit());
@@ -447,7 +449,7 @@ TEST_F(DataSinkWithSearchTest, test_InsertOneUpdateFlatStrings) {
   }
   {
     MakeRocksDBUpdate(update_data, {0, 1}, velox::ROW(names, types),
-                      all_column_oids);
+                      all_column_oids, false);
   }
   {
     auto reader = irs::DirectoryReader(_dir, _codec);
@@ -548,7 +550,7 @@ TEST_F(DataSinkWithSearchTest, test_InsertAllExceptPKUpdateFlatStrings) {
     VerifyRocksDB(read.value()->childAt(2).get(), data[2].get(), idxs);
   }
   MakeRocksDBUpdate(update_data, {0, 1, 2}, velox::ROW(names, types),
-                    all_column_oids);
+                    all_column_oids, false);
   ASSERT_EQ(GetTotalRocksDBKeys(), 12) << "Should have 12 keys after update";
 
   {
@@ -653,7 +655,7 @@ TEST_F(DataSinkWithSearchTest, test_InsertAllUpdateFlatStrings) {
     VerifyRocksDB(read.value()->childAt(2).get(), data[2].get(), idxs);
   }
   MakeRocksDBUpdate(update_data, {0, 0, 1, 2}, velox::ROW(names, types),
-                    all_column_oids);
+                    all_column_oids, true);
   sdb::connector::primary_key::Keys updated_row_keys{*pool_.get()};
   sdb::connector::primary_key::Create(*makeRowVector(update_data), {1},
                                       updated_row_keys);
@@ -703,6 +705,110 @@ TEST_F(DataSinkWithSearchTest, test_InsertAllUpdateFlatStrings) {
     VerifyRocksDB(read.value()->childAt(0).get(), update_data[1].get(), idxs2);
     VerifyRocksDB(read.value()->childAt(1).get(), update_data[2].get(), idxs2);
     VerifyRocksDB(read.value()->childAt(2).get(), update_data[3].get(), idxs2);
+  }
+}
+
+TEST_F(DataSinkWithSearchTest,
+       test_InsertAllUpdateFlatStringsUnsortedNewPKNotAll) {
+  std::vector<sdb::catalog::Column::Id> all_column_oids = {0, 1, 2};
+  std::vector<std::string> names = {"id", "value", "description"};
+  std::vector<velox::TypePtr> types = {velox::INTEGER(), velox::VARCHAR(),
+                                       velox::VARCHAR()};
+
+  std::vector<velox::VectorPtr> data = {
+    makeFlatVector<int32_t>({9001, 42, 1, 100}),
+    makeFlatVector<velox::StringView>({"9001", "42", "1", "3"}),
+    makeFlatVector<velox::StringView>({"value1", "value2", "value3", "33"})};
+  std::vector<velox::VectorPtr> update_data = {
+    makeFlatVector<int32_t>({42}), makeFlatVector<int32_t>({101}),
+    makeFlatVector<velox::StringView>({"32"})};
+
+  sdb::ObjectId object_key;
+  sdb::connector::primary_key::Keys written_row_keys{*pool_.get()};
+  MakeRocksDBWrite(names, data, all_column_oids, object_key, written_row_keys);
+  ASSERT_EQ(GetTotalRocksDBKeys(), 12) << "Should have 12 keys after insert";
+  {
+    auto reader = irs::DirectoryReader(_dir, _codec);
+    ASSERT_EQ(1, reader.size());
+    ASSERT_EQ(4, reader.docs_count());
+    ASSERT_EQ(4, reader.live_docs_count());
+    VerifyRow(written_row_keys[0], std::string_view{"value1", 6},
+              std::string_view{"9001", 4}, reader);
+    VerifyRow(written_row_keys[1], std::string_view{"value2", 6},
+              std::string_view{"42", 2}, reader);
+    VerifyRow(written_row_keys[2], std::string_view{"value3", 6},
+              std::string_view{"1", 1}, reader);
+    VerifyRow(written_row_keys[3], std::string_view{"33", 2},
+              std::string_view{"3", 1}, reader);
+  }
+  {
+    RocksDBDataSource source(*pool_.get(), nullptr, *_db, *_cf_handles.front(),
+                             velox::ROW(names, types), all_column_oids, 0,
+                             kObjectKey);
+    source.addSplit(std::make_shared<sdb::connector::SereneDBConnectorSplit>(
+      "test_connector"));
+    auto future = velox::ContinueFuture::makeEmpty();
+
+    auto read = source.next(data[0]->size(), future);
+    ASSERT_TRUE(read.has_value());
+    ASSERT_TRUE(read.value() != nullptr);
+    ASSERT_TRUE(future.isReady());
+    ASSERT_EQ(read.value()->size(), 4);
+    std::vector<std::pair<velox::vector_size_t, velox::vector_size_t>> idxs = {
+      {0, 2}, {1, 1}, {2, 3}, {3, 0}};
+    VerifyRocksDB(read.value()->childAt(0).get(), data[0].get(), idxs);
+    VerifyRocksDB(read.value()->childAt(1).get(), data[1].get(), idxs);
+    VerifyRocksDB(read.value()->childAt(2).get(), data[2].get(), idxs);
+  }
+  MakeRocksDBUpdate(update_data, {0, 0, 2}, velox::ROW(names, types),
+                    all_column_oids, true);
+  sdb::connector::primary_key::Keys updated_row_keys{*pool_.get()};
+  sdb::connector::primary_key::Create(*makeRowVector(update_data), {1},
+                                      updated_row_keys);
+  ASSERT_EQ(GetTotalRocksDBKeys(), 12) << "Should have 12 keys after update";
+  {
+    auto reader = irs::DirectoryReader(_dir, _codec);
+    ASSERT_EQ(2, reader.size());
+    ASSERT_EQ(5, reader.docs_count());
+    ASSERT_EQ(4, reader.live_docs_count());
+    VerifyRow(written_row_keys[0], std::string_view{"value1", 6},
+              std::string_view{"9001", 4}, reader, true);
+    VerifyRow(written_row_keys[1], std::string_view{"value2", 6},
+              std::string_view{"42", 2}, reader, false);
+    VerifyRow(written_row_keys[2], std::string_view{"value3", 6},
+              std::string_view{"1", 1}, reader, true);
+    VerifyRow(written_row_keys[3], std::string_view{"33", 2},
+              std::string_view{"3", 1}, reader, true);
+    VerifyRow(updated_row_keys[0], std::string_view{"32", 2},
+              std::string_view{"42", 2}, reader, true);
+  }
+  {
+    RocksDBDataSource source(*pool_.get(), nullptr, *_db, *_cf_handles.front(),
+                             velox::ROW(names, types), all_column_oids, 0,
+                             kObjectKey);
+    source.addSplit(std::make_shared<sdb::connector::SereneDBConnectorSplit>(
+      "test_connector"));
+    auto future = velox::ContinueFuture::makeEmpty();
+
+    auto read = source.next(data[0]->size(), future);
+    ASSERT_TRUE(read.has_value());
+    ASSERT_TRUE(read.value() != nullptr);
+    ASSERT_TRUE(future.isReady());
+    ASSERT_EQ(read.value()->size(), 4);
+    // Not updated row
+    std::vector<std::pair<velox::vector_size_t, velox::vector_size_t>> idxs = {
+      {0, 2}, {1, 3}, {3, 0}};
+    VerifyRocksDB(read.value()->childAt(0).get(), data[0].get(), idxs);
+    VerifyRocksDB(read.value()->childAt(1).get(), data[1].get(), idxs);
+    VerifyRocksDB(read.value()->childAt(2).get(), data[2].get(), idxs);
+    std::vector<std::pair<velox::vector_size_t, velox::vector_size_t>> idxs1 = {
+      {2, 1}};
+    VerifyRocksDB(read.value()->childAt(1).get(), data[1].get(), idxs1);
+    // Updated rows
+    std::vector<std::pair<velox::vector_size_t, velox::vector_size_t>> idxs2 = {
+      {2, 0}};
+    VerifyRocksDB(read.value()->childAt(0).get(), update_data[1].get(), idxs2);
+    VerifyRocksDB(read.value()->childAt(2).get(), update_data[2].get(), idxs2);
   }
 }
 

@@ -38,4 +38,5 @@ echo "Created: ${NAME}.tar.gz ($(du -h "${NAME}.tar.gz" | cut -f1))"
 
 # Create symlink for follow-up docker image production step
 mkdir -p "${PROJECT_ROOT}/packages/tarball"
-ln -sf "${PROJECT_ROOT}/${NAME}.tar.gz" "${PROJECT_ROOT}/packages/tarball/install.tar.gz"
+cd "${PROJECT_ROOT}/packages/tarball"
+ln -sf "../../${NAME}.tar.gz" "install.tar.gz"

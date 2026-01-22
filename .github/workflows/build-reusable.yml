@@ -1,8 +1,15 @@
 name: SereneDB-Build-Base
+# TODO: how to strip keeping the debug symbols?
+# TODO: Add or update step uploading artifacts
 
 on:
   workflow_call:
     inputs:
+      PRESET:
+        description: 'Build preset'
+        type: string
+        required: true
+        default: 'build'
       LOCATION:
         description: 'Where the load is executed'
         type: string
@@ -17,23 +24,7 @@ on:
         description: 'JSON config for job settings'
         type: string
         required: false
-        default: '{"BUILD_SERENEDB":"true","CLUSTER_BRANCH":"main","BUILD_IMAGE":"registry.serenedb.com:5000/serenedb-build-ubuntu:latest","SDB_CLUSTER":"Off","DEBUG_PRINT_ENV":"false"}'
-      BUILD_PACKAGES:
-        description: 'Package serened binary'
-        type: boolean
-        required: true
-        default: false
-      DEB_TAR_PACKAGES:
-        description: 'Package .deb and .tar.gz'
-        type: boolean
-        required: false
-        default: false
-      STRIP_TARBALL:
-        description: 'Strip tarball'
-        required: true
-        type: boolean
-        default: false
-      # TODO: Add or update step uploading artifacts
+        default: '{"CLUSTER_BRANCH":"main","BUILD_IMAGE":"registry.serenedb.com:5000/serenedb-build-ubuntu:latest","SDB_CLUSTER":"Off","DEBUG_PRINT_ENV":"false"}'
       DOCKER_SERENEDB_IMAGE:
         description: 'Produce SereneDB Docker Images'
         required: true
@@ -49,21 +40,6 @@ on:
         required: true
         type: boolean
         default: false
-      RUN_TESTS:
-        description: 'Enable test execution'
-        type: boolean
-        required: false
-        default: true
-      TEST_CONFIG:
-        description: 'JSON config for tests'
-        type: string
-        required: false
-        default: '{"VPACK_TESTS":"true","IRESEARCH_TESTS":"true","UNIT_TESTS":"true","SQLLOGIC_TESTS":"true"}'
-      BUILD_CONFIG:
-        description: '{"_schema":{"SANITIZERS":["","Undefined","Address","Thread","Memory","Leak","AddressLight","UndefinedAddress","UndefinedAddressLight","MemoryWithOrigins"],"USE_COVERAGE":["","SourceBased","SourceBasedMCDC","GCOV"],"SDB_ALLOC":["JE","TC","SYS"],"SDB_DEV":["On","Off"],"USE_IPO":["Off","On"],"ENSURE_VTUNE_SYMBOLS":["Off","On"],"BUILDMODE":["RelWithDebInfo","Debug","Release","MinSizeRel","None"],"USE_DEBUG_INFO":["COLUMNS","SANITIZE","PROFILE","COVERAGE","LLDB","GDB","FULL","LINES","NONE"]}}'
-        type: string
-        required: false
-        default: '{"SANITIZERS":"","USE_COVERAGE":"","SDB_ALLOC":"JE","SDB_DEV":"On","USE_IPO":"Off","ENSURE_VTUNE_SYMBOLS":"Off","BUILDMODE":"RelWithDebInfo","USE_DEBUG_INFO":"COLUMNS"}'
       EXTRA_ARTIFACTS:
         description: 'Keep these artifacts additionally'
         type: string
@@ -74,6 +50,11 @@ on:
         required: true
         type: boolean
         default: false
+      BUILD_CONFIG:
+        description: 'Backup JSON configuration for builds'
+        type: string
+        required: false
+        default: '{}'
     secrets:
       PAT_TOKEN:
         required: true
@@ -91,37 +72,18 @@ on:
         required: true
 
 env:
+  WORKSPACE: ${{ github.workspace }}
+  BUILD_CONFIG: ${{ inputs.build_config || '{}' }}
+  DOCKER_EXTRA_TAGS: ${{ inputs.DOCKER_EXTRA_TAGS }}
+  DOCKER_SERENEDB_IMAGE: ${{ inputs.DOCKER_SERENEDB_IMAGE }} 
+  DOCKER_BUILD_IMAGES: ${{ inputs.DOCKER_BUILD_IMAGES }}
   # Job config environment (from JOB_CONFIG JSON)
-  BUILD_SERENEDB: ${{ fromJSON(inputs.JOB_CONFIG).BUILD_SERENEDB }}
   CLUSTER_BRANCH: ${{ fromJSON(inputs.JOB_CONFIG).CLUSTER_BRANCH }}
   BUILD_IMAGE: ${{ fromJSON(inputs.JOB_CONFIG).BUILD_IMAGE }}
   SDB_CLUSTER: ${{ fromJSON(inputs.JOB_CONFIG).SDB_CLUSTER }}
   DEBUG_PRINT_ENV: ${{ fromJSON(inputs.JOB_CONFIG).DEBUG_PRINT_ENV }}
-  # Test config environment (from TEST_CONFIG JSON)
-  FULL_SUITE: ${{ fromJSON(inputs.TEST_CONFIG).FULL_SUITE }}
-  IRESEARCH_TESTS: ${{ fromJSON(inputs.TEST_CONFIG).IRESEARCH_TESTS }}
-  SQLLOGIC_TESTS: ${{ fromJSON(inputs.TEST_CONFIG).SQLLOGIC_TESTS }}
-  UNIT_TESTS: ${{ fromJSON(inputs.TEST_CONFIG).UNIT_TESTS }}
-  VPACK_TESTS: ${{ fromJSON(inputs.TEST_CONFIG).VPACK_TESTS }}
-  # Build config environment (from BUILD_CONFIG JSON)
-  SANITIZERS: ${{ fromJSON(inputs.BUILD_CONFIG).SANITIZERS }}
-  USE_COVERAGE: ${{ fromJSON(inputs.BUILD_CONFIG).USE_COVERAGE }}
-  BUILDMODE: ${{ fromJSON(inputs.BUILD_CONFIG).BUILDMODE }}
-  USE_DEBUG_INFO: ${{ fromJSON(inputs.BUILD_CONFIG).USE_DEBUG_INFO }}
-  SDB_DEV: ${{ fromJSON(inputs.BUILD_CONFIG).SDB_DEV }}
-  USE_IPO: ${{ fromJSON(inputs.BUILD_CONFIG).USE_IPO }}
-  SDB_ALLOC: ${{ fromJSON(inputs.BUILD_CONFIG).SDB_ALLOC }}
-  ENSURE_VTUNE_SYMBOLS: ${{ fromJSON(inputs.BUILD_CONFIG).ENSURE_VTUNE_SYMBOLS }}
-  
-  WORKSPACE: ${{ github.workspace }}
-  DOCKER_EXTRA_TAGS: ${{ inputs.DOCKER_EXTRA_TAGS }}
-  DEB_TAR_PACKAGES: ${{ inputs.DEB_TAR_PACKAGES }}
-  DOCKER_SERENEDB_IMAGE: ${{ inputs.DOCKER_SERENEDB_IMAGE }} 
-  DOCKER_BUILD_IMAGES: ${{ inputs.DOCKER_BUILD_IMAGES }}
 
-  #RUN_TESTS: ${{ inputs.RUN_TESTS }}
   #BRANCH: ${{ inputs.BRANCH }}
-  #BUILD_PACKAGES: ${{ inputs.BUILD_PACKAGES }}
   #CLUSTER_BRANCH: ${{ inputs.CLUSTER_BRANCH }}
   #EXTRA_ARTIFACTS: ${{ inputs.EXTRA_ARTIFACTS }}
   #LOCATION: ${{ inputs.LOCATION }}
@@ -135,10 +97,52 @@ jobs:
     runs-on:
       - self-hosted
       - ${{ inputs.LOCATION }}
+
     steps:
       # ==================== CHECKOUT ====================
-      - name: Fix Git Safe Directory
-        run: git config --global --add safe.directory '*'
+      - name: Load preset & fix git
+        run: |
+          case "${{ inputs.PRESET }}" in
+            asan)
+              echo "ENABLE_GTEST_BUILD=true" >> $GITHUB_ENV
+              echo "ENABLE_TEST_BUILD=true" >> $GITHUB_ENV
+              echo "ENABLE_RELEASE_BUILD=false" >> $GITHUB_ENV
+              echo "DEB_TAR_PACKAGES=false" >> $GITHUB_ENV
+              echo "SANITIZERS=UndefinedAddress" >> $GITHUB_ENV
+              echo "USE_COVERAGE=SourceBased" >> $GITHUB_ENV
+              ;;
+            tsan)
+              echo "ENABLE_GTEST_BUILD=true" >> $GITHUB_ENV
+              echo "ENABLE_TEST_BUILD=true" >> $GITHUB_ENV
+              echo "ENABLE_RELEASE_BUILD=false" >> $GITHUB_ENV
+              echo "DEB_TAR_PACKAGES=false" >> $GITHUB_ENV
+              echo "SANITIZERS=Thread" >> $GITHUB_ENV
+              echo "USE_COVERAGE=SourceBased" >> $GITHUB_ENV
+              ;;
+            build)
+              echo "ENABLE_GTEST_BUILD=true" >> $GITHUB_ENV
+              echo "ENABLE_TEST_BUILD=true" >> $GITHUB_ENV
+              echo "ENABLE_RELEASE_BUILD=true" >> $GITHUB_ENV
+              echo "DEB_TAR_PACKAGES=false" >> $GITHUB_ENV
+              echo "SANITIZERS=" >> $GITHUB_ENV
+              echo "USE_COVERAGE=" >> $GITHUB_ENV
+              ;;
+            release)
+              echo "ENABLE_GTEST_BUILD=true" >> $GITHUB_ENV
+              echo "ENABLE_TEST_BUILD=true" >> $GITHUB_ENV
+              echo "ENABLE_RELEASE_BUILD=true" >> $GITHUB_ENV
+              echo "DEB_TAR_PACKAGES=true" >> $GITHUB_ENV
+              echo "SANITIZERS=" >> $GITHUB_ENV
+              echo "USE_COVERAGE=" >> $GITHUB_ENV
+              ;;
+          esac
+          
+          BUILD_CONFIG='${{ inputs.BUILD_CONFIG }}'
+          if [[ -n "$BUILD_CONFIG" && "$BUILD_CONFIG" != "{}" ]]; then
+            echo "$BUILD_CONFIG" | docker run --rm -i ghcr.io/jqlang/jq:1.8.1 -r 'to_entries | .[] | "\(.key)=\(.value)"' >> $GITHUB_ENV
+          fi
+          
+          git config --global --add safe.directory '*'
 
       - name: Checkout SereneDB
         uses: actions/checkout@v4
@@ -172,37 +176,28 @@ jobs:
         run: ./private/ci/steps/02-ci-build-docker-env-file.bash
 
       # ==================== BUILD ====================
+      # if selected, DOCKER_BUILD_IMAGES owns the build 
       - name: SereneDB build
         id: serenedb_build
-        if: env.BUILD_SERENEDB == 'true'
+        if: env.DOCKER_BUILD_IMAGES != 'true'
         run: ./private/ci/steps/03-ci-in-docker-build-targets.bash
 
       # ==================== TESTS ====================
       - name: Run tests in parallel
         id: run_tests
         if: steps.serenedb_build.outcome == 'success'
-        run: |
-          if [[ "${{ inputs.RUN_TESTS }}" == "true" && ("${{ env.VPACK_TESTS }}" == "true" || "${{ env.IRESEARCH_TESTS }}" == "true" || "${{ env.UNIT_TESTS }}" == "true" || "${{ env.SQLLOGIC_TESTS }}" == "true") ]]; then
-            ./private/ci/steps/04-ci-run-tests-parallel.bash
-          else
-              echo "Tests skipped because no test flags are set in TEST_CONFIG or RUN_TESTS is disabled."
-          fi
+        run: ./private/ci/steps/04-ci-run-tests-parallel.bash
 
       # ==================== PACKAGES ====================
       - name: SereneDB Packages
         id: serenedb_packages
         if: steps.serenedb_build.outcome == 'success'
-        run: |
-          if [[ "${{ inputs.BUILD_PACKAGES }}" == "true" ]]; then
-            ./private/ci/steps/05-ci-in-docker-package.bash
-          else
-            echo "Packaging skipped because BUILD_PACKAGES flag is not set."
-          fi
+        run: ./private/ci/steps/05-ci-in-docker-package.bash
 
       # ==================== COVERAGE REPORT ====================
       - name: Generate coverage report
         id: coverage_report
-        if: inputs.USE_COVERAGE != ''
+        if: steps.serenedb_build.outcome == 'success' && inputs.USE_COVERAGE != ''
         run: ./private/ci/steps/06-ci-in-docker-generate-coverage-report.bash
 
       # ==================== BUILD DOCKER IMAGES ====================

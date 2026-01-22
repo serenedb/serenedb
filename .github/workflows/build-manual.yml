@@ -3,6 +3,16 @@ name: SereneDB-Build-Manual
 on:
   workflow_dispatch:
     inputs:
+      PRESET:
+        description: 'Build preset'
+        type: choice
+        required: true
+        default: 'build'
+        options:
+          - asan
+          - tsan
+          - build
+          - release
       LOCATION:
         description: 'Where the load is executed'
         type: choice
@@ -20,22 +30,7 @@ on:
         description: 'JSON config for job settings'
         type: string
         required: false
-        default: '{"BUILD_SERENEDB":"true","CLUSTER_BRANCH":"main","BUILD_IMAGE":"registry.serenedb.com:5000/serenedb-build-ubuntu:latest","SDB_CLUSTER":"Off","DEBUG_PRINT_ENV":"false"}'
-      BUILD_PACKAGES:
-        description: 'Package serened binary'
-        type: boolean
-        required: true
-        default: false
-      DEB_TAR_PACKAGES:
-        description: 'Package .deb and .tar.gz'
-        type: boolean
-        required: false
-        default: false
-      STRIP_TARBALL:
-        description: 'Strip tarball'
-        required: true
-        type: boolean
-        default: false
+        default: '{"CLUSTER_BRANCH":"main","BUILD_IMAGE":"registry.serenedb.com:5000/serenedb-build-ubuntu:latest","SDB_CLUSTER":"Off","DEBUG_PRINT_ENV":"false"}'
       DOCKER_SERENEDB_IMAGE:
         description: 'Produce SereneDB Docker Images'
         required: true
@@ -51,21 +46,6 @@ on:
         required: true
         type: boolean
         default: false
-      RUN_TESTS:
-        description: 'Enable test execution'
-        type: boolean
-        required: false
-        default: false
-      TEST_CONFIG:
-        description: 'JSON config for tests'
-        type: string
-        required: false
-        default: '{"VPACK_TESTS":"true","IRESEARCH_TESTS":"true","UNIT_TESTS":"true","SQLLOGIC_TESTS":"true"}'
-      BUILD_CONFIG:
-        description: '{"_schema":{"SANITIZERS":["","Undefined","Address","Thread","Memory","Leak","AddressLight","UndefinedAddress","UndefinedAddressLight","MemoryWithOrigins"],"USE_COVERAGE":["","SourceBased","SourceBasedMCDC","GCOV"],"SDB_ALLOC":["JE","TC","SYS"],"SDB_DEV":["On","Off"],"USE_IPO":["Off","On"],"ENSURE_VTUNE_SYMBOLS":["Off","On"],"BUILDMODE":["RelWithDebInfo","Debug","Release","MinSizeRel","None"],"USE_DEBUG_INFO":["COLUMNS","SANITIZE","PROFILE","COVERAGE","LLDB","GDB","FULL","LINES","NONE"]}}'
-        type: string
-        required: false
-        default: '{"SANITIZERS":"","USE_COVERAGE":"","SDB_ALLOC":"JE","SDB_DEV":"On","USE_IPO":"Off","ENSURE_VTUNE_SYMBOLS":"Off","BUILDMODE":"RelWithDebInfo","USE_DEBUG_INFO":"COLUMNS"}'
       EXTRA_ARTIFACTS:
         description: 'Keep these artifacts additionally'
         type: string
@@ -76,6 +56,11 @@ on:
         required: true
         type: boolean
         default: false
+#      BUILD_CONFIG:
+#        description: 'Backup JSON configuration for builds'
+#        type: string
+#        required: false
+#        default: '{}'
 
 jobs:
   call-reusable:
@@ -83,30 +68,17 @@ jobs:
     with:
       # General environment
       BRANCH: ${{ inputs.BRANCH }}
+      PRESET: ${{ inputs.PRESET }}
       LOCATION: ${{ inputs.LOCATION }}
-      BUILD_PACKAGES: ${{ inputs.BUILD_PACKAGES }}
       DOCKER_SERENEDB_IMAGE: ${{ inputs.DOCKER_SERENEDB_IMAGE }} 
-      EXTRA_ARTIFACTS: ${{ inputs.EXTRA_ARTIFACTS }}
       PUSH_IMAGES_2_REGISTRY: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
-      RUN_TESTS: ${{ inputs.RUN_TESTS }}
-      STRIP_TARBALL: ${{ inputs.STRIP_TARBALL }}
+      DOCKER_EXTRA_TAGS: ${{ inputs.DOCKER_EXTRA_TAGS }}
+      EXTRA_ARTIFACTS: ${{ inputs.EXTRA_ARTIFACTS }}
       DOCKER_BUILD_IMAGES: ${{ inputs.DOCKER_BUILD_IMAGES }} 
       # Job config environment
       JOB_CONFIG: ${{ inputs.JOB_CONFIG }}
       # Build config environment
-      BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
-      # Test config environment
-      TEST_CONFIG: ${{ inputs.TEST_CONFIG }}
+      #BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
       # Scripts environment
-      DEB_TAR_PACKAGES: ${{ inputs.DEB_TAR_PACKAGES }}
-      DOCKER_EXTRA_TAGS: ${{ inputs.DOCKER_EXTRA_TAGS }}
 
-    secrets:
-      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
-      SDB_CLUSTER_REPO: ${{ secrets.SDB_CLUSTER_REPO }}
-      TG_TOKEN: ${{ secrets.TG_TOKEN }}
-      TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-      TG_THREAD_ID_BUILD: ${{ secrets.TG_THREAD_ID_BUILD }}
-      TG_THREAD_ID_MAIN: ${{ secrets.TG_THREAD_ID_MAIN }}
-      TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
-
+    secrets: inherit

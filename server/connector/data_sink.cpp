@@ -308,6 +308,18 @@ void RocksDBUpdateDataSink::RewriteColumn(rocksdb::Iterator& it,
                                           catalog::Column::Id column_id,
                                           const primary_key::Keys& old_keys,
                                           primary_key::Keys& new_keys) {
+  bool is_range = false;
+  auto seek_to_key = [&](std::string_view key) {
+    if (is_range) {
+      it.Next();
+      if (it.key() == key) {
+        return;
+      }
+      is_range = false;
+    }
+    it.Seek(key);
+  };
+
   SDB_ASSERT(_column_id_to_kind.contains(column_id));
   const auto kind = _column_id_to_kind[column_id];
   for (const auto& writer : _index_writers) {
@@ -318,7 +330,7 @@ void RocksDBUpdateDataSink::RewriteColumn(rocksdb::Iterator& it,
   SDB_ASSERT(old_keys.size() == new_keys.size());
   for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
     key_utils::SetupColumnForKey(new_keys[row_idx], column_id);
-    it.Seek(old_keys[row_idx]);
+    seek_to_key(old_keys[row_idx]);
     SDB_ASSERT(it.Valid() && it.key() == old_keys[row_idx],
                "RocksDBDataSink: internal error, wrong key setup or order "
                "for PK update");

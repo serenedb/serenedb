@@ -1934,7 +1934,7 @@ class CopyOptionsParser {
     if (_is_writer) {
       SDB_ASSERT(_sink);
       auto text_options = std::make_shared<velox::text::WriterOptions>();
-      text_options->headerLineCount = header;
+      // text_options->headerLineCount = header;
       text_options->serDeOptions = std::move(serde_options);
       text_options->schema = std::move(_row_type);
       text_options->fileFormat = FileFormat::TEXT;
@@ -1967,9 +1967,8 @@ class CopyOptionsParser {
 
   void CreateDefaultWriterReader(FileFormat format) {
     if (_is_writer) {
-      const auto& writer_factory = getWriterFactory(format);
-      auto* default_opts = writer_factory->createWriterOptions().release();
-      std::shared_ptr<WriterOptions> options{default_opts};
+      const auto& factory = getWriterFactory(format);
+      std::shared_ptr<WriterOptions> options{factory->createWriterOptions()};
       options->schema = std::move(_row_type);
       options->fileFormat = format;
       _writer_options = std::move(options);

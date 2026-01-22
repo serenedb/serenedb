@@ -43,13 +43,12 @@ namespace sdb::connector {
 template<typename SubWriterType>
 class RocksDBDataSinkBase : public velox::connector::DataSink {
  protected:
-  RocksDBDataSinkBase(rocksdb::Transaction& transaction,
-                      rocksdb::ColumnFamilyHandle& cf,
-                      velox::memory::MemoryPool& memory_pool,
-                      ObjectId object_key,
-                      std::span<const velox::column_index_t> key_childs,
-                      std::vector<catalog::Column::Id> column_ids,
-                      std::vector<std::unique_ptr<SubWriterType>>&& index_writers);
+  RocksDBDataSinkBase(
+    rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
+    velox::memory::MemoryPool& memory_pool, ObjectId object_key,
+    std::span<const velox::column_index_t> key_childs,
+    std::vector<catalog::Column::Id> column_ids,
+    std::vector<std::unique_ptr<SubWriterType>>&& index_writers);
 
  public:
   bool finish() final;
@@ -202,38 +201,34 @@ class RocksDBDataSinkBase : public velox::connector::DataSink {
 class RocksDBInsertDataSink final
   : public RocksDBDataSinkBase<SinkInsertWriter> {
  public:
-  RocksDBInsertDataSink(rocksdb::Transaction& transaction,
-                        rocksdb::ColumnFamilyHandle& cf,
-                        velox::memory::MemoryPool& memory_pool,
-                        ObjectId object_key,
-                        std::span<const velox::column_index_t> key_childs,
-                        std::vector<catalog::Column::Id> column_ids,
-                        std::vector<std::unique_ptr<SinkInsertWriter>>&& index_writers);
+  RocksDBInsertDataSink(
+    rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
+    velox::memory::MemoryPool& memory_pool, ObjectId object_key,
+    std::span<const velox::column_index_t> key_childs,
+    std::vector<catalog::Column::Id> column_ids,
+    std::vector<std::unique_ptr<SinkInsertWriter>>&& index_writers);
 
   void appendData(velox::RowVectorPtr input) final;
 };
 
 class RocksDBUpdateDataSink final
   : public RocksDBDataSinkBase<SinkUpdateWriter> {
-public:
-  RocksDBUpdateDataSink(rocksdb::Transaction& transaction,
-                        const rocksdb::Snapshot* snapshot,
-                        rocksdb::ColumnFamilyHandle& cf,
-                        velox::memory::MemoryPool& memory_pool,
-                        ObjectId object_key,
-                        std::span<const velox::column_index_t> key_childs,
-                        std::vector<catalog::Column::Id> column_ids,
-                        std::vector<catalog::Column::Id> all_column_ids,
-                        bool update_pk,
-                        velox::RowTypePtr table_row_type,
-                        std::vector<std::unique_ptr<SinkUpdateWriter>>&& index_writers);
+ public:
+  RocksDBUpdateDataSink(
+    rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
+    velox::memory::MemoryPool& memory_pool, ObjectId object_key,
+    std::span<const velox::column_index_t> key_childs,
+    std::vector<catalog::Column::Id> column_ids,
+    std::vector<catalog::Column::Id> all_column_ids, bool update_pk,
+    velox::RowTypePtr table_row_type,
+    std::vector<std::unique_ptr<SinkUpdateWriter>>&& index_writers);
 
   void appendData(velox::RowVectorPtr input) final;
 
  private:
-
   bool IsUpdatedColumn(catalog::Column::Id column_id) const {
-    SDB_ASSERT(_update_pk, "Used only when updating PK");
+    SDB_ASSERT(_update_pk || !_index_writers.empty(),
+               "Used only when updating PK or indexes");
     auto it = _column_id_to_input_idx.find(column_id);
     if (it == _column_id_to_input_idx.end()) {
       // Not in input
@@ -245,12 +240,13 @@ public:
   }
 
   // to writer const
-  const rocksdb::Snapshot* _snapshot;
   velox::RowTypePtr _table_row_type;
   std::vector<catalog::Column::Id> _all_column_ids;
   std::vector<velox::column_index_t> _updated_key_childs;
   primary_key::Keys _old_keys_buffers;
   containers::FlatHashMap<catalog::Column::Id, size_t> _column_id_to_input_idx;
+  containers::FlatHashMap<catalog::Column::Id, velox::TypeKind>
+    _column_id_to_kind;
   bool _update_pk{};
 };
 

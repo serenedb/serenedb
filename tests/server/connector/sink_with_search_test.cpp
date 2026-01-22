@@ -113,6 +113,76 @@ class DataSinkWithSearchTest : public ::testing::Test,
     _data_writer.reset();
   }
 
+  size_t GetTotalRocksDBKeys() {
+    rocksdb::ReadOptions read_options;
+    std::unique_ptr<rocksdb::Iterator> it{
+      _db->NewIterator(read_options, _cf_handles.front())};
+    size_t count = 0;
+    for (it->SeekToFirst(); it->Valid(); it->Next()) {
+      count++;
+    }
+    return count;
+  }
+
+  void VerifyRocksDB(
+    velox::BaseVector* left, velox::BaseVector* right,
+    std::span<std::pair<velox::vector_size_t, velox::vector_size_t>> idxs) {
+    for (const auto& idx : idxs) {
+      ASSERT_TRUE(left->equalValueAt(right, idx.first, idx.second))
+        << "at left index " << idx.first << " and right index " << idx.second
+        << "\nLeft value: " << left->toString(idx.first)
+        << "\nRight value: " << right->toString(idx.second);
+    }
+  }
+
+  void VerifyRow(std::string_view pk_value,
+                 std::string_view expected_description,
+                 std::string_view expected_value, irs::IndexReader& reader,
+                 bool must_exist = true) {
+    SCOPED_TRACE(testing::Message("Failed SEARCH FOR  desciprtion ")
+                 << expected_description << " AND value " << expected_value
+                 << " must_exists " << must_exist);
+    irs::And and_filter;
+    {
+      auto& term_filter = and_filter.add<irs::ByTerm>();
+      *term_filter.mutable_field() =
+        std::string{"\x00\x00\x00\x00\x00\x00\x00\x01\x03", 9};
+      term_filter.mutable_options()->term =
+        irs::ViewCast<irs::byte_type>(expected_value);
+    }
+    {
+      auto& term_filter = and_filter.add<irs::ByTerm>();
+      *term_filter.mutable_field() =
+        std::string{"\x00\x00\x00\x00\x00\x00\x00\x02\x03", 9};
+      term_filter.mutable_options()->term =
+        irs::ViewCast<irs::byte_type>(expected_description);
+    }
+
+    auto prepared = and_filter.prepare({.index = reader});
+    size_t count = 0;
+    for (auto& segment : reader) {
+      auto docs =
+        segment.mask(prepared->execute({.segment = segment, .scorers = {}}));
+      while (docs->next()) {
+        const auto* pk_column = segment.column(kPkColumn);
+        ASSERT_NE(nullptr, pk_column);
+        auto pk_values_itr = pk_column->iterator(irs::ColumnHint::Normal);
+        ASSERT_NE(nullptr, pk_values_itr);
+        auto* actual_pk_value = irs::get<irs::PayAttr>(*pk_values_itr);
+        ASSERT_NE(nullptr, actual_pk_value);
+        auto pk_seeked = pk_values_itr->seek(docs->value());
+        ASSERT_EQ(docs->value(), pk_seeked);
+        ASSERT_EQ(pk_value, irs::ViewCast<char>(actual_pk_value->value));
+        ++count;
+      }
+    }
+    if (must_exist) {
+      ASSERT_EQ(count, 1);
+    } else {
+      ASSERT_EQ(count, 0);
+    }
+  }
+
   void PrepareRocksDBWrite(
     const velox::RowVectorPtr& data,
     std::vector<sdb::catalog::Column::Id> all_column_oids,
@@ -181,8 +251,9 @@ class DataSinkWithSearchTest : public ::testing::Test,
       std::make_unique<sdb::connector::search::SearchSinkUpdateWriter>(
         index_transaction));
     sdb::connector::RocksDBUpdateDataSink sink(
-      *data_transaction, nullptr, *_cf_handles.front(), *pool_.get(), object_key, pk,
-      data_column_oids, all_column_oids, false, table_row_type,
+      *data_transaction, *_cf_handles.front(), *pool_.get(), object_key, pk,
+      data_column_oids, all_column_oids,
+      data_column_oids.size() > all_column_oids.size(), table_row_type,
       std::move(index_writers));
     sink.appendData(data);
     while (!sink.finish()) {
@@ -224,75 +295,25 @@ TEST_F(DataSinkWithSearchTest, test_InsertDeleteFlatStrings) {
                                        velox::VARCHAR()};
 
   std::vector<velox::VectorPtr> data = {
-    makeFlatVector<int32_t>({9001, 42, 1}),
-    makeFlatVector<velox::StringView>({"9001", "42", "1"}),
-    makeFlatVector<velox::StringView>({"value1", "value2", "value3"})};
+    makeFlatVector<int32_t>({1, 42, 9001}),
+    makeFlatVector<velox::StringView>({"1", "42", "9001"}),
+    makeFlatVector<velox::StringView>({"value3", "value2", "value1"})};
 
   sdb::ObjectId object_key;
   sdb::connector::primary_key::Keys written_row_keys{*pool_.get()};
   MakeRocksDBWrite(names, data, all_column_oids, object_key, written_row_keys);
-  auto verify_row = [](std::string_view pk_value,
-                       std::string_view expected_description,
-                       std::string_view expected_value,
-                       irs::IndexReader& reader, bool must_exist = true) {
-    irs::And and_filter;
-    {
-      auto& term_filter = and_filter.add<irs::ByTerm>();
-      *term_filter.mutable_field() =
-        std::string{"\x00\x00\x00\x00\x00\x00\x00\x02\x03", 9};
-      term_filter.mutable_options()->term =
-        irs::ViewCast<irs::byte_type>(expected_description);
-    }
-    {
-      auto& term_filter = and_filter.add<irs::ByTerm>();
-      *term_filter.mutable_field() =
-        std::string{"\x00\x00\x00\x00\x00\x00\x00\x01\x03", 9};
-      term_filter.mutable_options()->term =
-        irs::ViewCast<irs::byte_type>(expected_value);
-    }
-
-    auto prepared = and_filter.prepare({.index = reader});
-    auto docs =
-      reader[0].mask(prepared->execute({.segment = reader[0], .scorers = {}}));
-    if (!must_exist) {
-      ASSERT_FALSE(docs->next());
-      return;
-    }
-    ASSERT_TRUE(docs->next());
-    const auto* pk_column = reader[0].column(kPkColumn);
-    ASSERT_NE(nullptr, pk_column);
-    auto pk_values_itr = pk_column->iterator(irs::ColumnHint::Normal);
-    ASSERT_NE(nullptr, pk_values_itr);
-    auto* actual_pk_value = irs::get<irs::PayAttr>(*pk_values_itr);
-    ASSERT_NE(nullptr, actual_pk_value);
-    auto pk_seeked = pk_values_itr->seek(docs->value());
-    ASSERT_EQ(docs->value(), pk_seeked);
-    ASSERT_EQ(pk_value, irs::ViewCast<char>(actual_pk_value->value));
-    ASSERT_FALSE(docs->next());
-  };
-
-  auto verify_rocksdb =
-    [&](velox::BaseVector* left, velox::BaseVector* right,
-        std::span<std::pair<velox::vector_size_t, velox::vector_size_t>> idxs) {
-      for (const auto& idx : idxs) {
-        ASSERT_TRUE(left->equalValueAt(right, idx.first, idx.second))
-          << "at left index " << idx.first << " and right index " << idx.second
-          << "\nLeft value: " << left->toString(idx.first)
-          << "\nRight value: " << right->toString(idx.second);
-      }
-    };
 
   {
     auto reader = irs::DirectoryReader(_dir, _codec);
     ASSERT_EQ(1, reader.size());
     ASSERT_EQ(3, reader.docs_count());
     ASSERT_EQ(3, reader.live_docs_count());
-    verify_row(written_row_keys[0], std::string_view{"value1", 6},
-               std::string_view{"9001", 4}, reader);
-    verify_row(written_row_keys[1], std::string_view{"value2", 6},
-               std::string_view{"42", 2}, reader);
-    verify_row(written_row_keys[2], std::string_view{"value3", 6},
-               std::string_view{"1", 1}, reader);
+    VerifyRow(written_row_keys[0], std::string_view{"value3", 6},
+              std::string_view{"1", 1}, reader);
+    VerifyRow(written_row_keys[1], std::string_view{"value2", 6},
+              std::string_view{"42", 2}, reader);
+    VerifyRow(written_row_keys[2], std::string_view{"value1", 6},
+              std::string_view{"9001", 4}, reader);
   }
   {
     RocksDBDataSource source(*pool_.get(), nullptr, *_db, *_cf_handles.front(),
@@ -308,10 +329,11 @@ TEST_F(DataSinkWithSearchTest, test_InsertDeleteFlatStrings) {
     ASSERT_TRUE(future.isReady());
     ASSERT_EQ(read.value()->size(), 3);
     std::vector<std::pair<velox::vector_size_t, velox::vector_size_t>> idxs = {
-      {0, 2}, {1, 1}, {2, 0}};
-    verify_rocksdb(read.value()->childAt(0).get(), data[0].get(), idxs);
-    verify_rocksdb(read.value()->childAt(1).get(), data[1].get(), idxs);
-    verify_rocksdb(read.value()->childAt(2).get(), data[2].get(), idxs);
+      {0, 0}, {1, 1}, {2, 2}};
+    VerifyRocksDB(read.value()->childAt(0).get(), data[0].get(), idxs);
+    VerifyRocksDB(read.value()->childAt(1).get(), data[1].get(), idxs);
+    VerifyRocksDB(read.value()->childAt(2).get(), data[2].get(), idxs);
+    ASSERT_EQ(GetTotalRocksDBKeys(), 9);
   }
   {
     auto index_transaction = _data_writer->GetBatch();
@@ -342,12 +364,12 @@ TEST_F(DataSinkWithSearchTest, test_InsertDeleteFlatStrings) {
     ASSERT_EQ(1, reader.size());
     ASSERT_EQ(3, reader.docs_count());
     ASSERT_EQ(1, reader.live_docs_count());
-    verify_row(written_row_keys[0], std::string_view{"value1", 6},
-               std::string_view{"9001", 4}, reader, false);
-    verify_row(written_row_keys[1], std::string_view{"value2", 6},
-               std::string_view{"42", 2}, reader, true);
-    verify_row(written_row_keys[2], std::string_view{"value3", 6},
-               std::string_view{"1", 1}, reader, false);
+    VerifyRow(written_row_keys[0], std::string_view{"value3", 6},
+              std::string_view{"1", 1}, reader, false);
+    VerifyRow(written_row_keys[1], std::string_view{"value2", 6},
+              std::string_view{"42", 2}, reader, true);
+    VerifyRow(written_row_keys[2], std::string_view{"value1", 6},
+              std::string_view{"9001", 4}, reader, false);
   }
 
   {
@@ -365,9 +387,10 @@ TEST_F(DataSinkWithSearchTest, test_InsertDeleteFlatStrings) {
     ASSERT_EQ(read.value()->size(), 1);
     std::vector<std::pair<velox::vector_size_t, velox::vector_size_t>> idxs = {
       {0, 1}};
-    verify_rocksdb(read.value()->childAt(0).get(), data[0].get(), idxs);
-    verify_rocksdb(read.value()->childAt(1).get(), data[1].get(), idxs);
-    verify_rocksdb(read.value()->childAt(2).get(), data[2].get(), idxs);
+    VerifyRocksDB(read.value()->childAt(0).get(), data[0].get(), idxs);
+    VerifyRocksDB(read.value()->childAt(1).get(), data[1].get(), idxs);
+    VerifyRocksDB(read.value()->childAt(2).get(), data[2].get(), idxs);
+    ASSERT_EQ(GetTotalRocksDBKeys(), 3);
   }
 }
 
@@ -378,78 +401,29 @@ TEST_F(DataSinkWithSearchTest, test_InsertOneUpdateFlatStrings) {
                                        velox::VARCHAR()};
 
   std::vector<velox::VectorPtr> data = {
-    makeFlatVector<int32_t>({9001, 42, 1, 100}),
-    makeFlatVector<velox::StringView>({"9001", "42", "1", "3"}),
-    makeFlatVector<velox::StringView>({"value1", "value2", "value3", "33"})};
+    makeFlatVector<int32_t>({1, 42, 100, 9001}),
+    makeFlatVector<velox::StringView>({"1", "42", "100", "9001"}),
+    makeFlatVector<velox::StringView>(
+      {"value1", "value2", "value3", "value4"})};
   std::vector<velox::VectorPtr> update_data = {
-    makeFlatVector<int32_t>({9001, 1}),
-    makeFlatVector<velox::StringView>({"9001_updated", "1_updated"})};
+    makeFlatVector<int32_t>({1, 9001}),
+    makeFlatVector<velox::StringView>({"1_updated", "9001_updated"})};
   sdb::ObjectId object_key;
   sdb::connector::primary_key::Keys written_row_keys{*pool_.get()};
   MakeRocksDBWrite(names, data, all_column_oids, object_key, written_row_keys);
-  auto verify_row = [](std::string_view pk_value,
-                       std::string_view expected_description,
-                       std::string_view expected_value,
-                       irs::IndexReader& reader, bool must_exist = true) {
-    irs::And and_filter;
-    {
-      auto& term_filter = and_filter.add<irs::ByTerm>();
-      *term_filter.mutable_field() =
-        std::string{"\x00\x00\x00\x00\x00\x00\x00\x02\x03", 9};
-      term_filter.mutable_options()->term =
-        irs::ViewCast<irs::byte_type>(expected_description);
-    }
-    {
-      auto& term_filter = and_filter.add<irs::ByTerm>();
-      *term_filter.mutable_field() =
-        std::string{"\x00\x00\x00\x00\x00\x00\x00\x01\x03", 9};
-      term_filter.mutable_options()->term =
-        irs::ViewCast<irs::byte_type>(expected_value);
-    }
-
-    auto prepared = and_filter.prepare({.index = reader});
-    size_t count = 0;
-    for (auto& segment : reader) {
-      auto docs =
-        segment.mask(prepared->execute({.segment = segment, .scorers = {}}));
-      while (docs->next()) {
-        const auto* pk_column = segment.column(kPkColumn);
-        ASSERT_NE(nullptr, pk_column);
-        auto pk_values_itr = pk_column->iterator(irs::ColumnHint::Normal);
-        ASSERT_NE(nullptr, pk_values_itr);
-        auto* actual_pk_value = irs::get<irs::PayAttr>(*pk_values_itr);
-        ASSERT_NE(nullptr, actual_pk_value);
-        auto pk_seeked = pk_values_itr->seek(docs->value());
-        ASSERT_EQ(docs->value(), pk_seeked);
-        ASSERT_EQ(pk_value, irs::ViewCast<char>(actual_pk_value->value));
-        ++count;
-      }
-    }
-    ASSERT_EQ(count > 0, must_exist);
-  };
-  auto verify_rocksdb =
-    [&](velox::BaseVector* left, velox::BaseVector* right,
-        std::span<std::pair<velox::vector_size_t, velox::vector_size_t>> idxs) {
-      for (const auto& idx : idxs) {
-        ASSERT_TRUE(left->equalValueAt(right, idx.first, idx.second))
-          << "at left index " << idx.first << " and right index " << idx.second
-          << "\nLeft value: " << left->toString(idx.first)
-          << "\nRight value: " << right->toString(idx.second);
-      }
-    };
   {
     auto reader = irs::DirectoryReader(_dir, _codec);
     ASSERT_EQ(1, reader.size());
     ASSERT_EQ(4, reader.docs_count());
     ASSERT_EQ(4, reader.live_docs_count());
-    verify_row(written_row_keys[0], std::string_view{"value1", 6},
-               std::string_view{"9001", 4}, reader);
-    verify_row(written_row_keys[1], std::string_view{"value2", 6},
-               std::string_view{"42", 2}, reader);
-    verify_row(written_row_keys[2], std::string_view{"value3", 6},
-               std::string_view{"1", 1}, reader);
-    verify_row(written_row_keys[3], std::string_view{"33", 2},
-               std::string_view{"3", 1}, reader);
+    VerifyRow(written_row_keys[0], std::string_view{"value1", 6},
+              std::string_view{"1", 1}, reader);
+    VerifyRow(written_row_keys[1], std::string_view{"value2", 6},
+              std::string_view{"42", 2}, reader);
+    VerifyRow(written_row_keys[2], std::string_view{"value3", 6},
+              std::string_view{"100", 3}, reader);
+    VerifyRow(written_row_keys[3], std::string_view{"value4", 6},
+              std::string_view{"9001", 4}, reader);
   }
   {
     RocksDBDataSource source(*pool_.get(), nullptr, *_db, *_cf_handles.front(),
@@ -465,10 +439,11 @@ TEST_F(DataSinkWithSearchTest, test_InsertOneUpdateFlatStrings) {
     ASSERT_TRUE(future.isReady());
     ASSERT_EQ(read.value()->size(), 4);
     std::vector<std::pair<velox::vector_size_t, velox::vector_size_t>> idxs = {
-      {0, 2}, {1, 1}, {2, 3}, {3, 0}};
-    verify_rocksdb(read.value()->childAt(0).get(), data[0].get(), idxs);
-    verify_rocksdb(read.value()->childAt(1).get(), data[1].get(), idxs);
-    verify_rocksdb(read.value()->childAt(2).get(), data[2].get(), idxs);
+      {0, 0}, {1, 1}, {2, 2}, {3, 3}};
+    VerifyRocksDB(read.value()->childAt(0).get(), data[0].get(), idxs);
+    VerifyRocksDB(read.value()->childAt(1).get(), data[1].get(), idxs);
+    VerifyRocksDB(read.value()->childAt(2).get(), data[2].get(), idxs);
+    ASSERT_EQ(GetTotalRocksDBKeys(), 12);
   }
   {
     MakeRocksDBUpdate(update_data, {0, 1}, velox::ROW(names, types),
@@ -479,18 +454,18 @@ TEST_F(DataSinkWithSearchTest, test_InsertOneUpdateFlatStrings) {
     ASSERT_EQ(2, reader.size());
     ASSERT_EQ(6, reader.docs_count());
     ASSERT_EQ(4, reader.live_docs_count());
-    verify_row(written_row_keys[0], std::string_view{"value1", 6},
-               std::string_view{"9001", 4}, reader, false);
-    verify_row(written_row_keys[0], std::string_view{"value1", 6},
-               std::string_view{"9001_updated", 12}, reader, true);
-    verify_row(written_row_keys[1], std::string_view{"value2", 6},
-               std::string_view{"42", 2}, reader, true);
-    verify_row(written_row_keys[2], std::string_view{"value3", 6},
-               std::string_view{"1", 1}, reader, false);
-    verify_row(written_row_keys[2], std::string_view{"value3", 6},
-               std::string_view{"1_updated", 9}, reader, true);
-    verify_row(written_row_keys[3], std::string_view{"33", 2},
-               std::string_view{"3", 1}, reader, true);
+    VerifyRow(written_row_keys[0], std::string_view{"value1", 6},
+              std::string_view{"1", 1}, reader, false);
+    VerifyRow(written_row_keys[0], std::string_view{"value1", 6},
+              std::string_view{"1_updated", 9}, reader, true);
+    VerifyRow(written_row_keys[1], std::string_view{"value2", 6},
+              std::string_view{"42", 2}, reader, true);
+    VerifyRow(written_row_keys[2], std::string_view{"value3", 6},
+              std::string_view{"100", 3}, reader, true);
+    VerifyRow(written_row_keys[3], std::string_view{"value4", 6},
+              std::string_view{"9001", 4}, reader, false);
+    VerifyRow(written_row_keys[3], std::string_view{"value4", 6},
+              std::string_view{"9001_updated", 12}, reader, true);
   }
   {
     RocksDBDataSource source(*pool_.get(), nullptr, *_db, *_cf_handles.front(),
@@ -506,17 +481,18 @@ TEST_F(DataSinkWithSearchTest, test_InsertOneUpdateFlatStrings) {
     ASSERT_TRUE(future.isReady());
     ASSERT_EQ(read.value()->size(), 4);
     std::vector<std::pair<velox::vector_size_t, velox::vector_size_t>> idxs = {
-      {1, 1}, {2, 3}};
-    verify_rocksdb(read.value()->childAt(0).get(), data[0].get(), idxs);
-    verify_rocksdb(read.value()->childAt(1).get(), data[1].get(), idxs);
-    verify_rocksdb(read.value()->childAt(2).get(), data[2].get(), idxs);
+      {1, 1}, {2, 2}};
+    VerifyRocksDB(read.value()->childAt(0).get(), data[0].get(), idxs);
+    VerifyRocksDB(read.value()->childAt(1).get(), data[1].get(), idxs);
+    VerifyRocksDB(read.value()->childAt(2).get(), data[2].get(), idxs);
     std::vector<std::pair<velox::vector_size_t, velox::vector_size_t>> idxs2 = {
-      {0, 1}, {3, 0}};
-    verify_rocksdb(read.value()->childAt(0).get(), update_data[0].get(), idxs2);
-    verify_rocksdb(read.value()->childAt(1).get(), update_data[1].get(), idxs2);
+      {0, 0}, {3, 1}};
+    VerifyRocksDB(read.value()->childAt(0).get(), update_data[0].get(), idxs2);
+    VerifyRocksDB(read.value()->childAt(1).get(), update_data[1].get(), idxs2);
     std::vector<std::pair<velox::vector_size_t, velox::vector_size_t>> idxs3 = {
-      {0, 2}, {3, 0}};
-    verify_rocksdb(read.value()->childAt(2).get(), data[2].get(), idxs3);
+      {0, 0}, {3, 3}};
+    VerifyRocksDB(read.value()->childAt(2).get(), data[2].get(), idxs3);
+    ASSERT_EQ(GetTotalRocksDBKeys(), 12);
   }
 }
 
@@ -531,80 +507,26 @@ TEST_F(DataSinkWithSearchTest, test_InsertAllExceptPKUpdateFlatStrings) {
     makeFlatVector<velox::StringView>({"9001", "42", "1", "3"}),
     makeFlatVector<velox::StringView>({"value1", "value2", "value3", "33"})};
   std::vector<velox::VectorPtr> update_data = {
-    makeFlatVector<int32_t>({9001, 1, 100}),
-    makeFlatVector<velox::StringView>({"9001_updated", "1_updated", "4"}),
-    makeFlatVector<velox::StringView>({"value9", "value8", "32"})};
+    makeFlatVector<int32_t>({1, 100, 9001}),
+    makeFlatVector<velox::StringView>({"1_updated", "4", "9001_updated"}),
+    makeFlatVector<velox::StringView>({"value8", "32", "value9"})};
 
   sdb::ObjectId object_key;
   sdb::connector::primary_key::Keys written_row_keys{*pool_.get()};
   MakeRocksDBWrite(names, data, all_column_oids, object_key, written_row_keys);
-  auto verify_row = [](std::string_view pk_value,
-                       std::string_view expected_description,
-                       std::string_view expected_value,
-                       irs::IndexReader& reader, bool must_exist = true) {
-    irs::And and_filter;
-    {
-      auto& term_filter = and_filter.add<irs::ByTerm>();
-      *term_filter.mutable_field() =
-        std::string{"\x00\x00\x00\x00\x00\x00\x00\x02\x03", 9};
-      term_filter.mutable_options()->term =
-        irs::ViewCast<irs::byte_type>(expected_description);
-    }
-    {
-      auto& term_filter = and_filter.add<irs::ByTerm>();
-      *term_filter.mutable_field() =
-        std::string{"\x00\x00\x00\x00\x00\x00\x00\x01\x03", 9};
-      term_filter.mutable_options()->term =
-        irs::ViewCast<irs::byte_type>(expected_value);
-    }
-
-    auto prepared = and_filter.prepare({.index = reader});
-    size_t count = 0;
-    for (auto& segment : reader) {
-      auto docs =
-        segment.mask(prepared->execute({.segment = segment, .scorers = {}}));
-      while (docs->next()) {
-        const auto* pk_column = segment.column(kPkColumn);
-        ASSERT_NE(nullptr, pk_column);
-        auto pk_values_itr = pk_column->iterator(irs::ColumnHint::Normal);
-        ASSERT_NE(nullptr, pk_values_itr);
-        auto* actual_pk_value = irs::get<irs::PayAttr>(*pk_values_itr);
-        ASSERT_NE(nullptr, actual_pk_value);
-        auto pk_seeked = pk_values_itr->seek(docs->value());
-        ASSERT_EQ(docs->value(), pk_seeked);
-        ASSERT_EQ(pk_value, irs::ViewCast<char>(actual_pk_value->value));
-        ++count;
-      }
-    }
-    if (must_exist) {
-      ASSERT_EQ(count, 1);
-    } else {
-      ASSERT_EQ(count, 0);
-    }
-  };
-  auto verify_rocksdb =
-    [&](velox::BaseVector* left, velox::BaseVector* right,
-        std::span<std::pair<velox::vector_size_t, velox::vector_size_t>> idxs) {
-      for (const auto& idx : idxs) {
-        ASSERT_TRUE(left->equalValueAt(right, idx.first, idx.second))
-          << "at left index " << idx.first << " and right index " << idx.second
-          << "\nLeft value: " << left->toString(idx.first)
-          << "\nRight value: " << right->toString(idx.second);
-      }
-    };
   {
     auto reader = irs::DirectoryReader(_dir, _codec);
     ASSERT_EQ(1, reader.size());
     ASSERT_EQ(4, reader.docs_count());
     ASSERT_EQ(4, reader.live_docs_count());
-    verify_row(written_row_keys[0], std::string_view{"value1", 6},
-               std::string_view{"9001", 4}, reader);
-    verify_row(written_row_keys[1], std::string_view{"value2", 6},
-               std::string_view{"42", 2}, reader);
-    verify_row(written_row_keys[2], std::string_view{"value3", 6},
-               std::string_view{"1", 1}, reader);
-    verify_row(written_row_keys[3], std::string_view{"33", 2},
-               std::string_view{"3", 1}, reader);
+    VerifyRow(written_row_keys[0], std::string_view{"value1", 6},
+              std::string_view{"9001", 4}, reader);
+    VerifyRow(written_row_keys[1], std::string_view{"value2", 6},
+              std::string_view{"42", 2}, reader);
+    VerifyRow(written_row_keys[2], std::string_view{"value3", 6},
+              std::string_view{"1", 1}, reader);
+    VerifyRow(written_row_keys[3], std::string_view{"33", 2},
+              std::string_view{"3", 1}, reader);
   }
   {
     RocksDBDataSource source(*pool_.get(), nullptr, *_db, *_cf_handles.front(),
@@ -621,41 +543,33 @@ TEST_F(DataSinkWithSearchTest, test_InsertAllExceptPKUpdateFlatStrings) {
     ASSERT_EQ(read.value()->size(), 4);
     std::vector<std::pair<velox::vector_size_t, velox::vector_size_t>> idxs = {
       {0, 2}, {1, 1}, {2, 3}, {3, 0}};
-    verify_rocksdb(read.value()->childAt(0).get(), data[0].get(), idxs);
-    verify_rocksdb(read.value()->childAt(1).get(), data[1].get(), idxs);
-    verify_rocksdb(read.value()->childAt(2).get(), data[2].get(), idxs);
+    VerifyRocksDB(read.value()->childAt(0).get(), data[0].get(), idxs);
+    VerifyRocksDB(read.value()->childAt(1).get(), data[1].get(), idxs);
+    VerifyRocksDB(read.value()->childAt(2).get(), data[2].get(), idxs);
   }
   MakeRocksDBUpdate(update_data, {0, 1, 2}, velox::ROW(names, types),
                     all_column_oids);
-  {
-    rocksdb::ReadOptions read_options;
-    std::unique_ptr<rocksdb::Iterator> it{
-      _db->NewIterator(read_options, _cf_handles.front())};
-    int count_initial = 0;
-    for (it->SeekToFirst(); it->Valid(); it->Next()) {
-      count_initial++;
-    }
-    ASSERT_EQ(count_initial, 12) << "Should have 12 keys after update";
-  }
+  ASSERT_EQ(GetTotalRocksDBKeys(), 12) << "Should have 12 keys after update";
+
   {
     auto reader = irs::DirectoryReader(_dir, _codec);
     ASSERT_EQ(2, reader.size());
     ASSERT_EQ(7, reader.docs_count());
     ASSERT_EQ(4, reader.live_docs_count());
-    verify_row(written_row_keys[0], std::string_view{"value1", 6},
-               std::string_view{"9001", 4}, reader, false);
-    verify_row(written_row_keys[0], std::string_view{"value9", 6},
-               std::string_view{"9001_updated", 12}, reader, true);
-    verify_row(written_row_keys[1], std::string_view{"value2", 6},
-               std::string_view{"42", 2}, reader, true);
-    verify_row(written_row_keys[2], std::string_view{"value3", 6},
-               std::string_view{"1", 1}, reader, false);
-    verify_row(written_row_keys[2], std::string_view{"value8", 6},
-               std::string_view{"1_updated", 9}, reader, true);
-    verify_row(written_row_keys[3], std::string_view{"33", 2},
-               std::string_view{"3", 1}, reader, false);
-    verify_row(written_row_keys[3], std::string_view{"32", 2},
-               std::string_view{"4", 1}, reader, true);
+    VerifyRow(written_row_keys[0], std::string_view{"value1", 6},
+              std::string_view{"9001", 4}, reader, false);
+    VerifyRow(written_row_keys[0], std::string_view{"value9", 6},
+              std::string_view{"9001_updated", 12}, reader, true);
+    VerifyRow(written_row_keys[1], std::string_view{"value2", 6},
+              std::string_view{"42", 2}, reader, true);
+    VerifyRow(written_row_keys[2], std::string_view{"value3", 6},
+              std::string_view{"1", 1}, reader, false);
+    VerifyRow(written_row_keys[2], std::string_view{"value8", 6},
+              std::string_view{"1_updated", 9}, reader, true);
+    VerifyRow(written_row_keys[3], std::string_view{"33", 2},
+              std::string_view{"3", 1}, reader, false);
+    VerifyRow(written_row_keys[3], std::string_view{"32", 2},
+              std::string_view{"4", 1}, reader, true);
   }
   {
     RocksDBDataSource source(*pool_.get(), nullptr, *_db, *_cf_handles.front(),
@@ -673,15 +587,122 @@ TEST_F(DataSinkWithSearchTest, test_InsertAllExceptPKUpdateFlatStrings) {
     // Not updated row
     std::vector<std::pair<velox::vector_size_t, velox::vector_size_t>> idxs = {
       {1, 1}};
-    verify_rocksdb(read.value()->childAt(0).get(), data[0].get(), idxs);
-    verify_rocksdb(read.value()->childAt(1).get(), data[1].get(), idxs);
-    verify_rocksdb(read.value()->childAt(2).get(), data[2].get(), idxs);
+    VerifyRocksDB(read.value()->childAt(0).get(), data[0].get(), idxs);
+    VerifyRocksDB(read.value()->childAt(1).get(), data[1].get(), idxs);
+    VerifyRocksDB(read.value()->childAt(2).get(), data[2].get(), idxs);
     // Updated rows
     std::vector<std::pair<velox::vector_size_t, velox::vector_size_t>> idxs2 = {
-      {0, 1}, {2, 2}, {3, 0}};
-    verify_rocksdb(read.value()->childAt(0).get(), update_data[0].get(), idxs2);
-    verify_rocksdb(read.value()->childAt(1).get(), update_data[1].get(), idxs2);
-    verify_rocksdb(read.value()->childAt(2).get(), update_data[2].get(), idxs2);
+      {0, 0}, {2, 1}, {3, 2}};
+    VerifyRocksDB(read.value()->childAt(0).get(), update_data[0].get(), idxs2);
+    VerifyRocksDB(read.value()->childAt(1).get(), update_data[1].get(), idxs2);
+    VerifyRocksDB(read.value()->childAt(2).get(), update_data[2].get(), idxs2);
+  }
+}
+
+TEST_F(DataSinkWithSearchTest, test_InsertAllUpdateFlatStrings) {
+  std::vector<sdb::catalog::Column::Id> all_column_oids = {0, 1, 2};
+  std::vector<std::string> names = {"id", "value", "description"};
+  std::vector<velox::TypePtr> types = {velox::INTEGER(), velox::VARCHAR(),
+                                       velox::VARCHAR()};
+
+  std::vector<velox::VectorPtr> data = {
+    makeFlatVector<int32_t>({9001, 42, 1, 100}),
+    makeFlatVector<velox::StringView>({"9001", "42", "1", "3"}),
+    makeFlatVector<velox::StringView>({"value1", "value2", "value3", "33"})};
+  std::vector<velox::VectorPtr> update_data = {
+    makeFlatVector<int32_t>({1, 100, 9001}),
+    makeFlatVector<int32_t>({2, 101, 9002}),
+    makeFlatVector<velox::StringView>({"1_updated", "4", "9001_updated"}),
+    makeFlatVector<velox::StringView>({"value8", "32", "value9"})};
+
+  sdb::ObjectId object_key;
+  sdb::connector::primary_key::Keys written_row_keys{*pool_.get()};
+  MakeRocksDBWrite(names, data, all_column_oids, object_key, written_row_keys);
+  ASSERT_EQ(GetTotalRocksDBKeys(), 12) << "Should have 12 keys after insert";
+  {
+    auto reader = irs::DirectoryReader(_dir, _codec);
+    ASSERT_EQ(1, reader.size());
+    ASSERT_EQ(4, reader.docs_count());
+    ASSERT_EQ(4, reader.live_docs_count());
+    VerifyRow(written_row_keys[0], std::string_view{"value1", 6},
+              std::string_view{"9001", 4}, reader);
+    VerifyRow(written_row_keys[1], std::string_view{"value2", 6},
+              std::string_view{"42", 2}, reader);
+    VerifyRow(written_row_keys[2], std::string_view{"value3", 6},
+              std::string_view{"1", 1}, reader);
+    VerifyRow(written_row_keys[3], std::string_view{"33", 2},
+              std::string_view{"3", 1}, reader);
+  }
+  {
+    RocksDBDataSource source(*pool_.get(), nullptr, *_db, *_cf_handles.front(),
+                             velox::ROW(names, types), all_column_oids, 0,
+                             kObjectKey);
+    source.addSplit(std::make_shared<sdb::connector::SereneDBConnectorSplit>(
+      "test_connector"));
+    auto future = velox::ContinueFuture::makeEmpty();
+
+    auto read = source.next(data[0]->size(), future);
+    ASSERT_TRUE(read.has_value());
+    ASSERT_TRUE(read.value() != nullptr);
+    ASSERT_TRUE(future.isReady());
+    ASSERT_EQ(read.value()->size(), 4);
+    std::vector<std::pair<velox::vector_size_t, velox::vector_size_t>> idxs = {
+      {0, 2}, {1, 1}, {2, 3}, {3, 0}};
+    VerifyRocksDB(read.value()->childAt(0).get(), data[0].get(), idxs);
+    VerifyRocksDB(read.value()->childAt(1).get(), data[1].get(), idxs);
+    VerifyRocksDB(read.value()->childAt(2).get(), data[2].get(), idxs);
+  }
+  MakeRocksDBUpdate(update_data, {0, 0, 1, 2}, velox::ROW(names, types),
+                    all_column_oids);
+  sdb::connector::primary_key::Keys updated_row_keys{*pool_.get()};
+  sdb::connector::primary_key::Create(*makeRowVector(update_data), {1},
+                                      updated_row_keys);
+  ASSERT_EQ(GetTotalRocksDBKeys(), 12) << "Should have 12 keys after update";
+  {
+    auto reader = irs::DirectoryReader(_dir, _codec);
+    ASSERT_EQ(2, reader.size());
+    ASSERT_EQ(7, reader.docs_count());
+    ASSERT_EQ(4, reader.live_docs_count());
+    VerifyRow(written_row_keys[0], std::string_view{"value1", 6},
+              std::string_view{"9001", 4}, reader, false);
+    VerifyRow(updated_row_keys[2], std::string_view{"value9", 6},
+              std::string_view{"9001_updated", 12}, reader, true);
+    VerifyRow(written_row_keys[1], std::string_view{"value2", 6},
+              std::string_view{"42", 2}, reader, true);
+    VerifyRow(written_row_keys[2], std::string_view{"value3", 6},
+              std::string_view{"1", 1}, reader, false);
+    VerifyRow(updated_row_keys[0], std::string_view{"value8", 6},
+              std::string_view{"1_updated", 9}, reader, true);
+    VerifyRow(written_row_keys[3], std::string_view{"33", 2},
+              std::string_view{"3", 1}, reader, false);
+    VerifyRow(updated_row_keys[1], std::string_view{"32", 2},
+              std::string_view{"4", 1}, reader, true);
+  }
+  {
+    RocksDBDataSource source(*pool_.get(), nullptr, *_db, *_cf_handles.front(),
+                             velox::ROW(names, types), all_column_oids, 0,
+                             kObjectKey);
+    source.addSplit(std::make_shared<sdb::connector::SereneDBConnectorSplit>(
+      "test_connector"));
+    auto future = velox::ContinueFuture::makeEmpty();
+
+    auto read = source.next(data[0]->size(), future);
+    ASSERT_TRUE(read.has_value());
+    ASSERT_TRUE(read.value() != nullptr);
+    ASSERT_TRUE(future.isReady());
+    ASSERT_EQ(read.value()->size(), 4);
+    // Not updated row
+    std::vector<std::pair<velox::vector_size_t, velox::vector_size_t>> idxs = {
+      {1, 1}};
+    VerifyRocksDB(read.value()->childAt(0).get(), data[0].get(), idxs);
+    VerifyRocksDB(read.value()->childAt(1).get(), data[1].get(), idxs);
+    VerifyRocksDB(read.value()->childAt(2).get(), data[2].get(), idxs);
+    // Updated rows
+    std::vector<std::pair<velox::vector_size_t, velox::vector_size_t>> idxs2 = {
+      {0, 0}, {2, 1}, {3, 2}};
+    VerifyRocksDB(read.value()->childAt(0).get(), update_data[1].get(), idxs2);
+    VerifyRocksDB(read.value()->childAt(1).get(), update_data[2].get(), idxs2);
+    VerifyRocksDB(read.value()->childAt(2).get(), update_data[3].get(), idxs2);
   }
 }
 

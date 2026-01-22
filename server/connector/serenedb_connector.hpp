@@ -617,11 +617,8 @@ class SereneDBConnector final : public velox::connector::Connector {
           auto& rocksdb_transaction = transaction.EnsureRocksDBTransaction();
 
           if constexpr (IsUpdate) {
-            const rocksdb::Snapshot* snapshot = nullptr;
             std::vector<catalog::Column::Id> all_column_oids;
             if (table.IsUsedForUpdatePK()) {
-              snapshot = &transaction.EnsureRocksDBSnapshot();
-
               all_column_oids.reserve(table.type()->size());
               for (auto& col : table.type()->names()) {
                 auto handle = table.columnMap().find(col);
@@ -632,15 +629,17 @@ class SereneDBConnector final : public velox::connector::Connector {
                   basics::downCast<const SereneDBColumn>(handle->second)->Id());
               }
             }
-            
+
             return std::make_unique<RocksDBUpdateDataSink>(
-              rocksdb_transaction, snapshot, _cf,
-              *connector_query_ctx->memoryPool(), object_key, pk_indices,
-              column_oids, all_column_oids, table.IsUsedForUpdatePK(), table.type(), std::vector<std::unique_ptr<SinkUpdateWriter>>{});
+              rocksdb_transaction, _cf, *connector_query_ctx->memoryPool(),
+              object_key, pk_indices, column_oids, all_column_oids,
+              table.IsUsedForUpdatePK(), table.type(),
+              std::vector<std::unique_ptr<SinkUpdateWriter>>{});
           } else {
             return std::make_unique<RocksDBInsertDataSink>(
               rocksdb_transaction, _cf, *connector_query_ctx->memoryPool(),
-              object_key, pk_indices, column_oids, std::vector<std::unique_ptr<SinkInsertWriter>>{});
+              object_key, pk_indices, column_oids,
+              std::vector<std::unique_ptr<SinkInsertWriter>>{});
           }
         });
     }

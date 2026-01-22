@@ -479,7 +479,6 @@ double ShapeContainer::area(const Ellipsoid& e) const {
 }
 
 void ShapeContainer::Encode(Encoder& encoder, coding::Options options) const {
-  CheckEndian();
   SDB_ASSERT(coding::IsOptionsS2(options));
   SDB_ASSERT(encoder.avail() >= sizeof(uint8_t));
   switch (_type) {
@@ -524,7 +523,6 @@ void ShapeContainer::decodeImpl(Decoder& decoder) {
 }
 
 bool ShapeContainer::Decode(Decoder& decoder, std::vector<S2Point>& cache) {
-  CheckEndian();
   if (decoder.avail() < sizeof(uint8_t)) {
     return false;
   }

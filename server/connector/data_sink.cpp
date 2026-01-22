@@ -240,20 +240,14 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
     std::unique_ptr<rocksdb::Iterator>(_db.NewIterator(read_options, &_cf));
 
   bool is_range = true;
-  auto seek_to_key = [&](std::string_view key, bool seek_allowed_for_range) {
-    if (!it->Valid()) [[unlikely]] {
-      it->Seek(key);
-      return;
-    }
-
-    if (is_range) {
+  auto seek_to_key = [&](std::string_view key, bool use_seek) {
+    if (is_range && !use_seek) {
       it->Next();
       if (it->key() == key) {
         return;
       }
-      is_range = seek_allowed_for_range;
+      is_range = false;
     }
-
     it->Seek(key);
   };
 

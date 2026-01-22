@@ -104,7 +104,6 @@ RocksDBUpdateDataSink::RocksDBUpdateDataSink(
                                           key_childs,
                                           std::move(column_ids),
                                           std::move(index_writers)},
-    _table_row_type(table_row_type),
     _all_column_ids{std::move(all_column_ids)},
     _old_keys_buffers{memory_pool},
     _update_pk{update_pk} {
@@ -113,7 +112,7 @@ RocksDBUpdateDataSink::RocksDBUpdateDataSink(
     // column ids
     _column_id_to_kind.reserve(_all_column_ids.size());
     velox::vector_size_t idx = 0;
-    for (const auto& child : _table_row_type->children()) {
+    for (const auto& child : table_row_type->children()) {
       _column_id_to_kind.emplace(_all_column_ids[idx++], child->kind());
     }
     // Sort all column IDs for seek-forward only iteration
@@ -149,7 +148,6 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
   const std::string table_key = key_utils::PrepareTableKey(_object_key);
   const auto num_rows = input->size();
   const auto num_columns = input->childrenSize();
-  const auto& input_type = input->type()->asRow();
 
   _store_keys_buffers.clear();
   _store_keys_buffers.reserve(num_rows);
@@ -173,19 +171,10 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
   }
 
   velox::IndexRange all_rows(0, num_rows);
+  const folly::Range all_rows_range{&all_rows, 1};
   for (velox::column_index_t i = 0; i < num_columns; ++i) {
-    _column_id = _column_ids[i];
-    if (_column_id != catalog::Column::kGeneratedPKId) {
-      const auto& child = input->childAt(i);
-      const auto kind = input_type.childAt(i)->kind();
-      if (velox::VectorEncoding::isDictionary(child->encoding())) {
-        child->loadedVector();
-      }
-      const auto have_nulls = child->mayHaveNulls();
-      for (const auto& writer : _index_writers) {
-        writer->SwitchColumn(kind, have_nulls, _column_id);
-      }
-      WriteColumn(child, folly::Range(&all_rows, 1), {});
+    if (_column_ids[i] != catalog::Column::kGeneratedPKId) {
+      WriteInputColumn(_column_ids[i], i, *input, all_rows_range);
     }
   }
 }
@@ -222,7 +211,7 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
     }
     if constexpr (DoDelete) {
       // For now all index writers work by row.
-      // Later by cell processing might be added below.
+      // Later by cell processing might be added.
       auto encoded_pk = row_key.substr(sizeof(ObjectId));
       for (const auto& writer : _index_writers) {
         writer->DeleteRow(encoded_pk);
@@ -243,6 +232,7 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
   }
 
   const velox::IndexRange all_rows(0, num_rows);
+  const folly::Range all_rows_range{&all_rows, 1};
 
   if (!_update_pk) {
     // Take locks and prepare buffers
@@ -254,7 +244,7 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
     if (!_index_writers.empty()) {
       // Rewrite on sorting if you can prove and explain why check is failed
       // Maybe JOIN as  UPDATE .. FROM t1 JOIN t2. .... will break this
-      // assumption!
+      // assumption or search index with primary sort in case used as source!
       SDB_ENSURE(
         absl::c_is_sorted(
           _store_keys_buffers,
@@ -296,17 +286,7 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
 
     // Write updated values
     for (velox::column_index_t i = _key_childs.size(); i < num_columns; ++i) {
-      _column_id = _column_ids[i];
-      const auto& child = input->childAt(i);
-      const auto kind = child->typeKind();
-      if (velox::VectorEncoding::isDictionary(child->encoding())) {
-        child->loadedVector();
-      }
-      const auto have_nulls = child->mayHaveNulls();
-      for (const auto& writer : _index_writers) {
-        writer->SwitchColumn(kind, have_nulls, _column_id);
-      }
-      WriteColumn(child, folly::Range(&all_rows, 1), {});
+      WriteInputColumn(_column_ids[i], i, *input, all_rows_range);
     }
     return;
   }
@@ -347,17 +327,7 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
 
     // Write with new keys
     if (IsUpdatedColumn(column_id)) {
-      _column_id = column_id;
-      const auto& child = input->childAt(_column_id_to_input_idx[column_id]);
-      const auto kind = child->typeKind();
-      if (velox::VectorEncoding::isDictionary(child->encoding())) {
-        child->loadedVector();
-      }
-      const auto have_nulls = child->mayHaveNulls();
-      for (const auto& writer : _index_writers) {
-        writer->SwitchColumn(kind, have_nulls, _column_id);
-      }
-      WriteColumn(child, folly::Range{&all_rows, 1}, {});
+      WriteInputColumn(column_id, _column_id_to_input_idx[column_id], *input, all_rows_range);
     } else {
       SDB_ASSERT(_column_id_to_kind.contains(_column_id));
       const auto kind = _column_id_to_kind[_column_id];
@@ -378,6 +348,23 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
       }
     }
   }
+}
+
+template<typename SubWriterType>
+void RocksDBDataSinkBase<SubWriterType>::WriteInputColumn(
+  catalog::Column::Id column_id, velox::vector_size_t idx,
+  velox::RowVector& input, const folly::Range<const velox::IndexRange*>& range) {
+  _column_id = column_id;
+  const auto& child = input.childAt(idx);
+  const auto kind = child->typeKind();
+  if (velox::VectorEncoding::isDictionary(child->encoding())) {
+    child->loadedVector();
+  }
+  const auto have_nulls = child->mayHaveNulls();
+  for (const auto& writer : _index_writers) {
+    writer->SwitchColumn(kind, have_nulls, _column_id);
+  }
+  WriteColumn(child, range, {});
 }
 
 // Stores column backed by Flat vector.

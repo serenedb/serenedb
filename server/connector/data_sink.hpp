@@ -57,7 +57,10 @@ class RocksDBDataSinkBase : public velox::connector::DataSink {
   Stats stats() const final;
 
  protected:
-  void PrepareKeyBuffers(const velox::RowVectorPtr& input);
+  void WriteInputColumn(catalog::Column::Id column_id, velox::vector_size_t idx,
+                        velox::RowVector& vector,
+                        const folly::Range<const velox::IndexRange*>& range);
+
   template<bool SkipPrimaryKeyColumns>
   void WriteColumns(const velox::RowVectorPtr& input,
                     folly::Range<const velox::IndexRange*> ranges,
@@ -239,8 +242,6 @@ class RocksDBUpdateDataSink final
     return it->second >= _key_childs.size();
   }
 
-  // to writer const
-  velox::RowTypePtr _table_row_type;
   std::vector<catalog::Column::Id> _all_column_ids;
   std::vector<velox::column_index_t> _updated_key_childs;
   primary_key::Keys _old_keys_buffers;

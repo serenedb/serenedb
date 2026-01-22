@@ -124,12 +124,13 @@ RocksDBUpdateDataSink::RocksDBUpdateDataSink(
     }
 
     // Map old PK indices to updated PK positions in input
+    // we need to find last mention of desired column_id
+    // as first is old key and we need to find new values.
     _updated_key_childs.reserve(_key_childs.size());
     for (auto old_pk_index : _key_childs) {
       auto pk_column_id = _column_ids[old_pk_index];
       auto updated_pos_it = _column_id_to_input_idx.find(pk_column_id);
       SDB_ASSERT(updated_pos_it != _column_id_to_input_idx.end());
-      // check updated_pos_it->second === old_pk_index ?
       _updated_key_childs.push_back(updated_pos_it->second);
     }
   }
@@ -234,13 +235,13 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
   const velox::IndexRange all_rows(0, num_rows);
   const folly::Range all_rows_range{&all_rows, 1};
 
-  auto ensure_input_sorted = [&] {
+  auto ensure_input_sorted = [](const auto& keys) {
     // Rewrite on sorting if you can prove and explain why check is failed
     // Maybe JOIN as  UPDATE .. FROM t1 JOIN t2. .... will break this
     // assumption or search index with primary sort in case used as source!
     SDB_ENSURE(
       absl::c_is_sorted(
-        _store_keys_buffers,
+        keys,
         [&](std::string_view lhs, std::string_view rhs) {
           return lhs.substr(sizeof(ObjectId) + sizeof(catalog::Column::Id)) <
                  rhs.substr(sizeof(ObjectId) + sizeof(catalog::Column::Id));
@@ -258,7 +259,7 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
                                _store_keys_buffers.emplace_back());
     }
     if (!_index_writers.empty()) {
-      ensure_input_sorted();
+      ensure_input_sorted(_store_keys_buffers);
       auto it = _data_writer.CreateIterator();
       for (auto column_id : _all_column_ids) {
         if (!IsUpdatedColumn(column_id)) {
@@ -284,7 +285,7 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
                              lock_old_row, _old_keys_buffers.emplace_back());
   }
 
-  ensure_input_sorted();
+  ensure_input_sorted(_old_keys_buffers);
   auto it = _data_writer.CreateIterator();
   for (auto column_id : _all_column_ids) {
     // Delete values written with old keys

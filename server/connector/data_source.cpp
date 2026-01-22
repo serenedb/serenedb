@@ -32,6 +32,68 @@
 #include "key_utils.hpp"
 
 namespace sdb::connector {
+
+/////////////////////////////////////////////////////////////////////////////
+class Materializer {
+
+protected:
+    velox::RowVectorPtr ReadRows(velox::RowTypePtr type, );
+
+    template<velox::TypeKind Kind, bool StoreLast>
+    velox::VectorPtr ReadColumn(rocksdb::Iterator& iterator, uint64_t max_size,
+                                          std::string_view column_key, std::string_view start_key, std::optional<std::string>& last_key);
+
+    template<velox::TypeKind Kind>
+    velox::VectorPtr ReadColumn(rocksdb::Iterator& iterator, std::string_view column_key, std::span<std::string_view> row_keys);
+private:
+
+    template<typename Decoder, bool StoreLast>
+    static uint64_t IterateColumn(rocksdb::Iterator& it,
+                                              uint64_t max_size,
+                                              std::string_view column_key,
+                                              const Decoder& func,
+                                              std::optional<std::string>& last_key) {
+      uint64_t vector_size = 0;
+
+      while (it.Valid() && max_size > vector_size &&
+             it.key().starts_with(column_key)) {
+        if constexpr (StoreLast) {
+          last_key = it.key().ToStringView().substr(column_key.size());
+        }
+        func(vector_size, it.key().ToStringView(), it.value().ToStringView());
+        ++vector_size;
+        it.Next();
+      }
+      return vector_size;
+    }
+
+    template<typename Decoder>
+    static uint64_t IterateColumnKeys(rocksdb::Iterator& it,
+                                              std::string_view column_key,
+                                              std::span<std::string_view> row_keys,
+                                              const Decoder& func) {
+      std::string buffer(column_key);
+
+      auto cur = row_keys.begin();
+      uint64_t vector_size = 0;
+             
+      while (cur != row_keys.end()) {
+        buffer.resize(column_key.size());
+        buffer.append(*cur);         
+        it.Seek(rocksdb::Slice{buffer});
+        if (!it.Valid() || !it.key().starts_with(column_key)) {
+          break;
+        }
+        func(vector_size, it.key().ToStringView(), it.value().ToStringView());
+        ++vector_size;
+        ++cur;
+      }
+      return vector_size;
+    }
+};
+/////////////////////////////////////////////////////////////////////////////
+
+
 namespace {
 
 constexpr uint64_t kInitialVectorSize = 1;  // arbitrary value

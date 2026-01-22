@@ -26,6 +26,7 @@
 #include "app/app_server.h"
 #include "basics/logger/logger.h"
 #include "basics/system-functions.h"
+#include "catalog/catalog.h"
 #include "metrics/gauge_builder.h"
 #include "metrics/metrics_feature.h"
 #include "rest_server/flush_feature.h"
@@ -37,6 +38,7 @@
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #endif
 #include "rocksdb_engine_catalog/rocksdb_settings_manager.h"
+#include "storage_engine/table_shard.h"
 
 #ifdef SDB_CLUSTER
 #include "replication/replication_clients.h"
@@ -63,10 +65,30 @@ RocksDBBackgroundThread::~RocksDBBackgroundThread() { shutdown(); }
 
 void RocksDBBackgroundThread::beginShutdown() {
   Thread::beginShutdown();
+  SyncStats();
 
   // wake up the thread that may be waiting in run()
   absl::MutexLock guard{&_condition.mutex};
   _condition.cv.notify_all();
+}
+
+void RocksDBBackgroundThread::SyncStats() {
+  SDB_TRACE("xxxxx", Logger::ENGINES, "syncing RocksDB settings statistics");
+  auto snapshot = catalog::GetCatalog().GetSnapshot();
+  for (auto& db : snapshot->GetDatabases()) {
+    for (auto& schema : snapshot->GetSchemas(db->GetId())) {
+      catalog::VisitTables(*snapshot, db->GetId(), schema->GetName(),
+                           [&](auto& table, auto& shard) mutable {
+                             auto r = _engine.SyncTableStats(*table, *shard);
+                             if (!r.ok()) {
+                               SDB_WARN("xxxxx", Logger::ENGINES,
+                                        "unable to update settings for table '",
+                                        table->GetName(),
+                                        "': ", r.errorMessage());
+                             }
+                           });
+    }
+  }
 }
 
 void RocksDBBackgroundThread::run() {
@@ -117,6 +139,7 @@ void RocksDBBackgroundThread::run() {
 
           double start = utilities::GetMicrotime();
           auto sync_res = _engine.settingsManager()->sync(force_sync);
+          SyncStats();
           double end = utilities::GetMicrotime();
 
           if (!sync_res) {

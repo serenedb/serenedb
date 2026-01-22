@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Boolean flags configuration
-declare -a BOOLEAN_FLAGS=(debug override force-override format  show-all-errors)
+declare -a BOOLEAN_FLAGS=(debug override force-override format show-all-errors fast)
 
 is_boolean_flag() {
     local key="$1"
@@ -16,7 +16,7 @@ declare -A defaults=(
     [single_port]=''
     [cluster_port]=''
     [protocol]='simple' # simple|extended|both TODO(mbkkt) make both
-    [test]='./tests/sqllogic/sdb/*/*/*.test*'
+    [test]='./tests/sqllogic/sdb/**/*.test*'
     [junit]='./out/sqllogic-tests'
     [runner]='./third_party/sqllogictest-rs'
     [jobs]=$(nproc)
@@ -25,6 +25,8 @@ declare -A defaults=(
     [force_override]=false
     [format]=false
     [show_all_errors]=false
+    [fast]=false
+    [skip_failed]=''
     [database]='serenedb'
     [host]='localhost'
 )
@@ -54,7 +56,7 @@ parse_options() {
         fi
 
         case "$key" in
-            single-port|cluster-port|jobs|protocol|test|junit|runner|debug|override|format|force-override|show-all-errors|database|host)
+            single-port|cluster-port|jobs|protocol|test|junit|runner|debug|override|format|force-override|show-all-errors|fast|skip-failed|database|host)
                 local var_name="${key//-/_}"  # Convert dashes to underscores
 
                 # For non-equal format (--option value), get the next argument
@@ -123,6 +125,12 @@ echo "Override: $override"
 echo "Force override: $force_override"
 echo "Format: $format"
 echo "Show all errors: $show_all_errors"
+echo "Fast: $fast"
+echo "Skip failed: $skip_failed"
+
+if [[ "$fast" == "true" ]]; then
+  test='./tests/sqllogic/sdb/**/*.test'
+fi
 
 # Run tests based on parameters
 run_tests() {
@@ -155,13 +163,19 @@ run_tests() {
     fi
   done
 
+  local skip_failed_opt=""
+  if [[ -n "$skip_failed" ]]; then
+    skip_failed_opt="--skip-failed"
+  fi
+
   # Execute the command and capture the exit code
   sqllogictest "$test" \
     --host "$host" --port "$port" --engine "$engine" \
     --jobs "$jobs" \
     --label "$database" --label "$mode" --label "$engine-protocol" \
     --junit "$junit-$mode-$engine" \
-    $options
+    $options \
+    $skip_failed_opt ${skip_failed:+"$skip_failed"}
   return $?
 }
 

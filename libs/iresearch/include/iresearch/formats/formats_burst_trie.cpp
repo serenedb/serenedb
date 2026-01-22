@@ -360,12 +360,12 @@ struct BlockMeta {
 
   // block has terms
   static bool Terms(uint8_t mask) noexcept {
-    return CheckBit<std::to_underlying(EntryType::Term)>(mask);
+    return CheckBit(mask, std::to_underlying(EntryType::Term));
   }
 
   // block has sub-blocks
   static bool Blocks(uint8_t mask) noexcept {
-    return CheckBit<std::to_underlying(EntryType::Block)>(mask);
+    return CheckBit(mask, std::to_underlying(EntryType::Block));
   }
 
   static void Type(uint8_t& mask, EntryType type) noexcept {
@@ -374,16 +374,16 @@ struct BlockMeta {
 
   // block is floor block
   static bool Floor(uint8_t mask) noexcept {
-    return CheckBit<std::to_underlying(EntryType::Invalid)>(mask);
+    return CheckBit(mask, std::to_underlying(EntryType::Invalid));
   }
   static void Floor(uint8_t& mask, bool b) noexcept {
-    SetBit<std::to_underlying(EntryType::Invalid)>(b, mask);
+    SetBit(mask, std::to_underlying(EntryType::Invalid), b);
   }
 
   // resets block meta
   static void Reset(uint8_t mask) noexcept {
-    UnsetBit<std::to_underlying(EntryType::Term)>(mask);
-    UnsetBit<std::to_underlying(EntryType::Block)>(mask);
+    UnsetBit(mask, std::to_underlying(EntryType::Term));
+    UnsetBit(mask, std::to_underlying(EntryType::Block));
   }
 };
 
@@ -439,7 +439,7 @@ inline void PrepareOutput(std::string& str, IndexOutput::ptr& out,
 }
 
 inline int32_t PrepareInput(std::string& str, IndexInput::ptr& in,
-                            irs::IOAdvice advice, const ReaderState& state,
+                            IOAdvice advice, const ReaderState& state,
                             std::string_view ext, std::string_view format,
                             const int32_t min_ver, const int32_t max_ver,
                             int64_t* checksum = nullptr) {
@@ -470,7 +470,7 @@ struct Cookie final : SeekCookie {
     return nullptr;
   }
 
-  bool IsEqual(const irs::SeekCookie& rhs) const noexcept final {
+  bool IsEqual(const SeekCookie& rhs) const noexcept final {
     // We intentionally don't check `rhs` cookie type.
     const auto& rhs_meta = sdb::basics::downCast<Cookie>(rhs).meta;
     return meta.doc_start == rhs_meta.doc_start &&
@@ -562,14 +562,14 @@ void MergeBlocks(Blocks& blocks, OutputBuffer& buffer) {
 class FstBuffer : public vector_byte_fst {
  public:
   // Fst builder stats
-  struct FstStats : irs::FstStats {
+  struct FstStatsImpl : FstStats {
     size_t total_weight_size{};
 
     void operator()(const byte_weight& w) noexcept {
       total_weight_size += w.Size();
     }
 
-    [[maybe_unused]] bool operator==(const FstStats& rhs) const noexcept {
+    [[maybe_unused]] bool operator==(const FstStatsImpl& rhs) const noexcept {
       return num_states == rhs.num_states && num_arcs == rhs.num_arcs &&
              total_weight_size == rhs.total_weight_size;
     }
@@ -578,9 +578,9 @@ class FstBuffer : public vector_byte_fst {
   FstBuffer(IResourceManager& rm)
     : vector_byte_fst{ManagedTypedAllocator<byte_arc>{rm}} {}
 
-  using FstByteBuilder = FstBuilder<byte_type, vector_byte_fst, FstStats>;
+  using FstByteBuilder = FstBuilder<byte_type, vector_byte_fst, FstStatsImpl>;
 
-  FstStats Reset(const Block::BlockIndex& index) {
+  FstStatsImpl Reset(const Block::BlockIndex& index) {
     _builder.reset();
 
     index.Visit([&](Block::PrefixedOutput& output) {
@@ -595,7 +595,7 @@ class FstBuffer : public vector_byte_fst {
   FstByteBuilder _builder{*this};
 };
 
-class FieldWriter final : public irs::FieldWriter {
+class FieldWriterImpl final : public FieldWriter {
  public:
   static constexpr uint32_t kDefaultMinBlockSize = 25;
   static constexpr uint32_t kDefaultMaxBlockSize = 48;
@@ -606,15 +606,15 @@ class FieldWriter final : public irs::FieldWriter {
     "block_tree_terms_index";
   static constexpr std::string_view kTermsIndexExt = "ti";
 
-  FieldWriter(irs::PostingsWriter::ptr&& pw, bool consolidation,
-              IResourceManager& rm,
-              burst_trie::Version version = burst_trie::Version::Max,
-              uint32_t min_block_size = kDefaultMinBlockSize,
-              uint32_t max_block_size = kDefaultMaxBlockSize);
+  FieldWriterImpl(PostingsWriter::ptr&& pw, bool consolidation,
+                  IResourceManager& rm,
+                  burst_trie::Version version = burst_trie::Version::Max,
+                  uint32_t min_block_size = kDefaultMinBlockSize,
+                  uint32_t max_block_size = kDefaultMaxBlockSize);
 
-  ~FieldWriter() final;
+  ~FieldWriterImpl() final;
 
-  void prepare(const irs::FlushState& state) final;
+  void prepare(const FlushState& state) final;
 
   void end() final;
 
@@ -664,8 +664,8 @@ class FieldWriter final : public irs::FieldWriter {
   const bool _consolidation;
 };
 
-void FieldWriter::WriteBlock(size_t prefix, size_t begin, size_t end,
-                             uint8_t meta, uint16_t label) {
+void FieldWriterImpl::WriteBlock(size_t prefix, size_t begin, size_t end,
+                                 uint8_t meta, uint16_t label) {
   SDB_ASSERT(end > begin);
 
   // begin of the block
@@ -754,7 +754,7 @@ void FieldWriter::WriteBlock(size_t prefix, size_t begin, size_t end,
                        _consolidation);
 }
 
-void FieldWriter::WriteBlocks(size_t prefix, size_t count) {
+void FieldWriterImpl::WriteBlocks(size_t prefix, size_t count) {
   // only root node able to write whole stack
   SDB_ASSERT(prefix || count == _stack.size());
   SDB_ASSERT(_blocks.empty());
@@ -824,7 +824,7 @@ void FieldWriter::WriteBlocks(size_t prefix, size_t count) {
   }
 }
 
-void FieldWriter::Push(bytes_view term) {
+void FieldWriterImpl::Push(bytes_view term) {
   const bytes_view last = _last_term;
   const size_t limit = std::min(last.size(), term.size());
 
@@ -848,9 +848,11 @@ void FieldWriter::Push(bytes_view term) {
   _last_term.Assign(term, _consolidation);
 }
 
-FieldWriter::FieldWriter(irs::PostingsWriter::ptr&& pw, bool consolidation,
-                         IResourceManager& rm, burst_trie::Version version,
-                         uint32_t min_block_size, uint32_t max_block_size)
+FieldWriterImpl::FieldWriterImpl(PostingsWriter::ptr&& pw, bool consolidation,
+                                 IResourceManager& rm,
+                                 burst_trie::Version version,
+                                 uint32_t min_block_size,
+                                 uint32_t max_block_size)
   : _output_buffer{rm, 32},
     _blocks{ManagedTypedAllocator<Entry>{rm}},
     _suffix{rm},
@@ -871,9 +873,9 @@ FieldWriter::FieldWriter(irs::PostingsWriter::ptr&& pw, bool consolidation,
              _version <= burst_trie::Version::Max);
 }
 
-FieldWriter::~FieldWriter() { delete _fst_buf; }
+FieldWriterImpl::~FieldWriterImpl() { delete _fst_buf; }
 
-void FieldWriter::prepare(const FlushState& state) {
+void FieldWriterImpl::prepare(const FlushState& state) {
   SDB_ASSERT(state.dir);
 
   // reset writer state
@@ -894,7 +896,7 @@ void FieldWriter::prepare(const FlushState& state) {
 
   // encrypt term dictionary
   [[maybe_unused]] const auto encrypt =
-    irs::Encrypt(filename, *_terms_out, enc, enc_header, _terms_out_cipher);
+    Encrypt(filename, *_terms_out, enc, enc_header, _terms_out_cipher);
   SDB_ASSERT(!encrypt ||
              (_terms_out_cipher && _terms_out_cipher->block_size()));
 
@@ -903,13 +905,13 @@ void FieldWriter::prepare(const FlushState& state) {
                 static_cast<int32_t>(_version));
 
   // encrypt term index
-  if (irs::Encrypt(filename, *_index_out, enc, enc_header, _index_out_cipher)) {
+  if (Encrypt(filename, *_index_out, enc, enc_header, _index_out_cipher)) {
     SDB_ASSERT(_index_out_cipher && _index_out_cipher->block_size());
 
     const auto blocks_in_buffer = math::DivCeil64(
       kDefaultEncryptionBufferSize, _index_out_cipher->block_size());
 
-    _index_out = irs::IndexOutput::ptr{new EncryptedOutput{
+    _index_out = IndexOutput::ptr{new EncryptedOutput{
       std::move(_index_out), *_index_out_cipher, blocks_in_buffer}};
   }
 
@@ -922,7 +924,7 @@ void FieldWriter::prepare(const FlushState& state) {
   _stats.Reset();
 }
 
-void FieldWriter::write(const BasicTermReader& reader) {
+void FieldWriterImpl::write(const BasicTermReader& reader) {
   const auto props = reader.properties();
   const auto index_features = props.index_features;
   BeginField(props);
@@ -962,7 +964,7 @@ void FieldWriter::write(const BasicTermReader& reader) {
            sum_tfreq, term_count);
 }
 
-void FieldWriter::BeginField(const FieldProperties& meta) {
+void FieldWriterImpl::BeginField(const FieldProperties& meta) {
   SDB_ASSERT(_terms_out);
   SDB_ASSERT(_index_out);
 
@@ -972,10 +974,10 @@ void FieldWriter::BeginField(const FieldProperties& meta) {
   _pw->begin_field(meta);
 }
 
-void FieldWriter::EndField(std::string_view name, FieldProperties props,
-                           bytes_view min_term, bytes_view max_term,
-                           uint64_t total_doc_freq, uint64_t total_term_freq,
-                           uint64_t term_count) {
+void FieldWriterImpl::EndField(std::string_view name, FieldProperties props,
+                               bytes_view min_term, bytes_view max_term,
+                               uint64_t total_doc_freq,
+                               uint64_t total_term_freq, uint64_t term_count) {
   SDB_ASSERT(_terms_out);
   SDB_ASSERT(_index_out);
 
@@ -1018,7 +1020,7 @@ void FieldWriter::EndField(std::string_view name, FieldProperties props,
 
 #ifdef SDB_DEV
   // ensure evaluated stats are correct
-  struct FstBuffer::FstStats stats{};
+  struct FstBuffer::FstStatsImpl stats{};
   for (fst::StateIterator<vector_byte_fst> states(fst); !states.Done();
        states.Next()) {
     const auto stateid = states.Value();
@@ -1037,14 +1039,14 @@ void FieldWriter::EndField(std::string_view name, FieldProperties props,
   const bool ok = immutable_byte_fst::Write(fst, *_index_out, fst_stats);
 
   if (!ok) [[unlikely]] {
-    throw irs::IndexError{
+    throw IndexError{
       absl::StrCat("Failed to write term index for field: ", name)};
   }
 
   ++_fields_count;
 }
 
-void FieldWriter::end() {
+void FieldWriterImpl::end() {
   _output_buffer.Reset();
 
   SDB_ASSERT(_terms_out);
@@ -1067,7 +1069,7 @@ void FieldWriter::end() {
   _index_out.reset();  // ensure stream is closed
 }
 
-class TermReaderBase : public irs::TermReader, private util::Noncopyable {
+class TermReaderBase : public TermReader, private util::Noncopyable {
  public:
   TermReaderBase() = default;
   TermReaderBase(TermReaderBase&& rhs) = default;
@@ -1251,8 +1253,7 @@ class BlockIterator : util::Noncopyable {
   void ScanToBlock(uint64_t ptr);
 
   // read attributes
-  void LoadData(const FieldMeta& meta, TermMetaImpl& state,
-                irs::PostingsReader& pr);
+  void LoadData(const FieldMeta& meta, TermMetaImpl& state, PostingsReader& pr);
 
  private:
   struct DataBlock : util::Noncopyable {
@@ -1370,7 +1371,7 @@ BlockIterator::BlockIterator(byte_weight&& header, size_t prefix) noexcept
   _header.AssertBlockBoundaries();
 }
 
-void BlockIterator::Load(IndexInput& in, irs::Encryption::Stream* cipher) {
+void BlockIterator::Load(IndexInput& in, Encryption::Stream* cipher) {
   if (!_dirty) {
     return;
   }
@@ -1698,7 +1699,7 @@ void BlockIterator::ScanToBlock(uint64_t start) {
 }
 
 void BlockIterator::LoadData(const FieldMeta& meta, TermMetaImpl& state,
-                             irs::PostingsReader& pr) {
+                             PostingsReader& pr) {
   SDB_ASSERT(EntryType::Term == _cur_type);
 
   if (_cur_stats_ent >= _term_count) {
@@ -1742,8 +1743,7 @@ void BlockIterator::Reset() {
 class TermIteratorBase : public SeekTermIterator {
  public:
   TermIteratorBase(const TermReaderBase& field, PostingsReader& postings,
-                   irs::Encryption::Stream* terms_cipher,
-                   PayAttr* pay = nullptr)
+                   Encryption::Stream* terms_cipher, PayAttr* pay = nullptr)
     : _field{&field}, _postings{&postings}, _terms_cipher{terms_cipher} {
     std::get<AttributePtr<PayAttr>>(_attrs) = pay;
   }
@@ -1760,9 +1760,7 @@ class TermIteratorBase : public SeekTermIterator {
     return std::get<TermAttr>(_attrs).value;
   }
 
-  irs::Encryption::Stream* TermsCipher() const noexcept {
-    return _terms_cipher;
-  }
+  Encryption::Stream* TermsCipher() const noexcept { return _terms_cipher; }
 
  protected:
   using Attributes = std::tuple<TermMetaImpl, TermAttr, AttributePtr<PayAttr>>;
@@ -1778,7 +1776,7 @@ class TermIteratorBase : public SeekTermIterator {
     if (it) {
       it->LoadData(field_meta, meta, *_postings);
     }
-    return _postings->iterator(field_meta.index_features, features, meta,
+    return _postings->Iterator(field_meta.index_features, features, meta,
                                _field->WandCount());
   }
 
@@ -1793,7 +1791,7 @@ class TermIteratorBase : public SeekTermIterator {
   mutable Attributes _attrs;
   const TermReaderBase* _field;
   PostingsReader* _postings;
-  irs::Encryption::Stream* _terms_cipher;
+  Encryption::Stream* _terms_cipher;
   bstring _term_buf;
   byte_weight _weight;  // aggregated fst output
 };
@@ -1803,14 +1801,14 @@ template<typename FST>
 using ExplicitMatcher = fst::explicit_matcher<fst::SortedMatcher<FST>>;
 
 template<typename FST>
-class TermIterator : public TermIteratorBase {
+class TermIteratorImpl : public TermIteratorBase {
  public:
   using WeightT = typename FST::Weight;
   using StateidT = typename FST::StateId;
 
-  TermIterator(const TermReaderBase& field, PostingsReader& postings,
-               const IndexInput& terms_in,
-               irs::Encryption::Stream* terms_cipher, const FST& fst)
+  TermIteratorImpl(const TermReaderBase& field, PostingsReader& postings,
+                   const IndexInput& terms_in, Encryption::Stream* terms_cipher,
+                   const FST& fst)
     : TermIteratorBase{field, postings, terms_cipher, nullptr},
       _terms_in_source{&terms_in},
       _fst{&fst},
@@ -1920,7 +1918,7 @@ class TermIterator : public TermIteratorBase {
 };
 
 template<typename FST>
-bool TermIterator<FST>::next() {
+bool TermIteratorImpl<FST>::next() {
   // iterator at the beginning or seek to cached state was called
   if (!_cur_block) {
     if (value().empty()) {
@@ -1985,9 +1983,9 @@ bool TermIterator<FST>::next() {
 }
 
 template<typename FST>
-ptrdiff_t TermIterator<FST>::SeekCached(size_t& prefix, StateidT& state,
-                                        size_t& block, byte_weight& weight,
-                                        bytes_view target) {
+ptrdiff_t TermIteratorImpl<FST>::SeekCached(size_t& prefix, StateidT& state,
+                                            size_t& block, byte_weight& weight,
+                                            bytes_view target) {
   SDB_ASSERT(!_block_stack.empty());
   const auto term = value();
   const byte_type* pterm = term.data();
@@ -2031,7 +2029,7 @@ ptrdiff_t TermIterator<FST>::SeekCached(size_t& prefix, StateidT& state,
 }
 
 template<typename FST>
-bool TermIterator<FST>::SeekToBlock(bytes_view term, size_t& prefix) {
+bool TermIteratorImpl<FST>::SeekToBlock(bytes_view term, size_t& prefix) {
   SDB_ASSERT(_fst->GetImpl());
   auto& fst = *_fst->GetImpl();
 
@@ -2116,7 +2114,7 @@ bool TermIterator<FST>::SeekToBlock(bytes_view term, size_t& prefix) {
 }
 
 template<typename FST>
-SeekResult TermIterator<FST>::SeekEqual(bytes_view term, bool exact) {
+SeekResult TermIteratorImpl<FST>::SeekEqual(bytes_view term, bool exact) {
   [[maybe_unused]] size_t prefix;
   if (SeekToBlock(term, prefix)) {
     SDB_ASSERT(EntryType::Term == _cur_block->Type());
@@ -2146,7 +2144,7 @@ SeekResult TermIterator<FST>::SeekEqual(bytes_view term, bool exact) {
 }
 
 template<typename FST>
-SeekResult TermIterator<FST>::seek_ge(bytes_view term) {
+SeekResult TermIteratorImpl<FST>::seek_ge(bytes_view term) {
   switch (SeekEqual(term, false)) {
     case SeekResult::Found:
       SDB_ASSERT(EntryType::Term == _cur_block->Type());
@@ -2186,7 +2184,7 @@ class SingleTermIterator : public SeekTermIterator {
   explicit SingleTermIterator(const TermReaderBase& field,
                               PostingsReader& postings,
                               IndexInput::ptr&& terms_in,
-                              irs::Encryption::Stream* terms_cipher,
+                              Encryption::Stream* terms_cipher,
                               const FST& fst) noexcept
     : _terms_in{std::move(terms_in)},
       _cipher{terms_cipher},
@@ -2219,7 +2217,7 @@ class SingleTermIterator : public SeekTermIterator {
   void read() final { /*NOOP*/ }
 
   DocIterator::ptr postings(IndexFeatures features) const final {
-    return _postings->iterator(_field->meta().index_features, features, _meta,
+    return _postings->Iterator(_field->meta().index_features, features, _meta,
                                _field->WandCount());
   }
 
@@ -2231,7 +2229,7 @@ class SingleTermIterator : public SeekTermIterator {
   TermMetaImpl _meta;
   TermAttr _value;
   IndexInput::ptr _terms_in;
-  irs::Encryption::Stream* _cipher;
+  Encryption::Stream* _cipher;
   PostingsReader* _postings;
   const TermReaderBase* _field;
   const FST* _fst;
@@ -2355,7 +2353,7 @@ class AutomatonTermIterator : public TermIteratorBase {
  public:
   AutomatonTermIterator(const TermReaderBase& field, PostingsReader& postings,
                         IndexInput::ptr&& terms_in,
-                        irs::Encryption::Stream* terms_cipher, const FST& fst,
+                        Encryption::Stream* terms_cipher, const FST& fst,
                         automaton_table_matcher& matcher)
     : TermIteratorBase{field, postings, terms_cipher, &_payload},
       _terms_in{std::move(terms_in)},
@@ -2693,9 +2691,9 @@ bool AutomatonTermIterator<FST>::next() {
   }
 }
 
-class FieldReader final : public irs::FieldReader {
+class FieldReaderImpl final : public FieldReader {
  public:
-  explicit FieldReader(irs::PostingsReader::ptr&& pr, IResourceManager& rm);
+  explicit FieldReaderImpl(PostingsReader::ptr&& pr, IResourceManager& rm);
 
   uint64_t CountMappedMemory() const final {
     uint64_t bytes = 0;
@@ -2710,17 +2708,17 @@ class FieldReader final : public irs::FieldReader {
 
   void prepare(const ReaderState& state) final;
 
-  const irs::TermReader* field(std::string_view field) const final;
-  irs::FieldIterator::ptr iterator() const final;
+  const TermReader* field(std::string_view field) const final;
+  FieldIterator::ptr iterator() const final;
   size_t size() const noexcept final { return _name_to_field.size(); }
 
  private:
   template<typename FST>
-  class TermReader final : public TermReaderBase {
+  class TermReaderImpl final : public TermReaderBase {
    public:
-    explicit TermReader(FieldReader& owner) noexcept : _owner(&owner) {}
-    TermReader(TermReader&& rhs) = default;
-    TermReader& operator=(TermReader&& rhs) = delete;
+    explicit TermReaderImpl(FieldReaderImpl& owner) noexcept : _owner(&owner) {}
+    TermReaderImpl(TermReaderImpl&& rhs) = default;
+    TermReaderImpl& operator=(TermReaderImpl&& rhs) = delete;
 
     void Prepare(burst_trie::Version version, IndexInput& in) final {
       TermReaderBase::Prepare(version, in);
@@ -2755,7 +2753,7 @@ class FieldReader final : public irs::FieldReader {
           _owner->_terms_in_cipher.get(), *_fst);
       }
 
-      return memory::make_managed<TermIterator<FST>>(
+      return memory::make_managed<TermIteratorImpl<FST>>(
         *this, *_owner->_pr, *_owner->_terms_in, _owner->_terms_in_cipher.get(),
         *_fst);
     }
@@ -2861,45 +2859,58 @@ class FieldReader final : public irs::FieldReader {
         _owner->_terms_in_cipher.get(), *_fst, matcher);
     }
 
-    DocIterator::ptr postings(const SeekCookie& cookie,
-                              IndexFeatures features) const final {
-      return _owner->_pr->iterator(meta().index_features, features,
-                                   sdb::basics::downCast<::Cookie>(cookie).meta,
-                                   WandCount());
-    }
+    DocIterator::ptr Iterator(IndexFeatures features,
+                              std::span<const SeekCookie* const> cookies,
+                              const IteratorOptions& options, size_t min_match,
+                              ScoreMergeType type,
+                              size_t num_buckets) const final {
+      SDB_ASSERT(_owner);
+      SDB_ASSERT(_owner->_pr);
+      SDB_ASSERT(!cookies.empty());
+      SDB_ASSERT(1 <= min_match);
+      SDB_ASSERT(min_match <= cookies.size());
 
-    DocIterator::ptr wanderator(const SeekCookie& cookie,
-                                IndexFeatures features,
-                                const WanderatorOptions& options,
-                                WandContext ctx) const final {
-      return _owner->_pr->wanderator(
-        meta().index_features, features,
-        sdb::basics::downCast<::Cookie>(cookie).meta, options, ctx,
-        {.mapped_index = WandIndex(ctx.index), .count = WandCount()});
+      IteratorFieldOptions field_options{options, WandIndex(options.index),
+                                         WandCount()};
+
+      if (cookies.size() == 1) {
+        return _owner->_pr->Iterator(
+          meta().index_features, features,
+          sdb::basics::downCast<::Cookie>(*cookies[0]).meta, field_options,
+          type, num_buckets);
+      }
+
+      std::vector<const TermMeta*> metas;
+      metas.reserve(cookies.size());
+      for (size_t i = 0; i < cookies.size(); ++i) {
+        metas.emplace_back(&sdb::basics::downCast<::Cookie>(*cookies[i]).meta);
+      }
+      return _owner->_pr->Iterator(meta().index_features, features, metas,
+                                   field_options, min_match, type, num_buckets);
     }
 
    private:
-    FieldReader* _owner;
+    FieldReaderImpl* _owner;
     std::unique_ptr<FST> _fst;
   };
 
-  using ImmutableFstReader = TermReader<immutable_byte_fst>;
-  using ImmutableFstReaders = std::vector<TermReader<immutable_byte_fst>>;
+  using ImmutableFstReader = TermReaderImpl<immutable_byte_fst>;
+  using ImmutableFstReaders = std::vector<TermReaderImpl<immutable_byte_fst>>;
 
   ImmutableFstReaders _fields;
-  absl::flat_hash_map<hashed_string_view, irs::TermReader*> _name_to_field;
-  irs::PostingsReader::ptr _pr;
+  absl::flat_hash_map<hashed_string_view, TermReader*> _name_to_field;
+  PostingsReader::ptr _pr;
   Encryption::Stream::ptr _terms_in_cipher;
   IndexInput::ptr _terms_in;
   IResourceManager& _resource_manager;
 };
 
-FieldReader::FieldReader(PostingsReader::ptr&& pr, IResourceManager& rm)
+FieldReaderImpl::FieldReaderImpl(PostingsReader::ptr&& pr, IResourceManager& rm)
   : _pr{std::move(pr)}, _resource_manager{rm} {
   SDB_ASSERT(_pr);
 }
 
-void FieldReader::prepare(const ReaderState& state) {
+void FieldReaderImpl::prepare(const ReaderState& state) {
   SDB_ASSERT(state.dir);
   SDB_ASSERT(state.meta);
 
@@ -2909,8 +2920,8 @@ void FieldReader::prepare(const ReaderState& state) {
   int64_t checksum = 0;
   std::string filename;
   const auto term_index_version = burst_trie::Version(PrepareInput(
-    filename, index_in, irs::IOAdvice::SEQUENTIAL | irs::IOAdvice::READONCE,
-    state, FieldWriter::kTermsIndexExt, FieldWriter::kFormatTermsIndex,
+    filename, index_in, IOAdvice::SEQUENTIAL | IOAdvice::READONCE, state,
+    FieldWriterImpl::kTermsIndexExt, FieldWriterImpl::kFormatTermsIndex,
     static_cast<int32_t>(burst_trie::Version::Min),
     static_cast<int32_t>(burst_trie::Version::Max), &checksum));
 
@@ -2935,7 +2946,7 @@ void FieldReader::prepare(const ReaderState& state) {
   auto* enc = state.dir->attributes().encryption();
   Encryption::Stream::ptr index_in_cipher;
 
-  if (irs::Decrypt(filename, *index_in, enc, index_in_cipher)) {
+  if (Decrypt(filename, *index_in, enc, index_in_cipher)) {
     SDB_ASSERT(index_in_cipher && index_in_cipher->block_size());
 
     const auto blocks_in_buffer = math::DivCeil64(
@@ -2978,10 +2989,11 @@ void FieldReader::prepare(const ReaderState& state) {
   //-----------------------------------------------------------------
 
   // check term header
-  const auto term_dict_version = burst_trie::Version(PrepareInput(
-    filename, _terms_in, irs::IOAdvice::RANDOM, state, FieldWriter::kTermsExt,
-    FieldWriter::kFormatTerms, static_cast<int32_t>(burst_trie::Version::Min),
-    static_cast<int32_t>(burst_trie::Version::Max)));
+  const auto term_dict_version = burst_trie::Version(
+    PrepareInput(filename, _terms_in, IOAdvice::RANDOM, state,
+                 FieldWriterImpl::kTermsExt, FieldWriterImpl::kFormatTerms,
+                 static_cast<int32_t>(burst_trie::Version::Min),
+                 static_cast<int32_t>(burst_trie::Version::Max)));
 
   if (term_index_version != term_dict_version) {
     throw IndexError(absl::StrCat("Term index version '", term_index_version,
@@ -2990,7 +3002,7 @@ void FieldReader::prepare(const ReaderState& state) {
                                   meta.name, "'"));
   }
 
-  if (irs::Decrypt(filename, *_terms_in, enc, _terms_in_cipher)) {
+  if (Decrypt(filename, *_terms_in, enc, _terms_in_cipher)) {
     SDB_ASSERT(_terms_in_cipher && _terms_in_cipher->block_size());
   }
 
@@ -3005,14 +3017,14 @@ void FieldReader::prepare(const ReaderState& state) {
   format_utils::ReadChecksum(*_terms_in);
 }
 
-const irs::TermReader* FieldReader::field(std::string_view field) const {
+const TermReader* FieldReaderImpl::field(std::string_view field) const {
   auto it = _name_to_field.find(hashed_string_view{field});
   return it == _name_to_field.end() ? nullptr : it->second;
 }
 
-irs::FieldIterator::ptr FieldReader::iterator() const {
+FieldIterator::ptr FieldReaderImpl::iterator() const {
   struct Less {
-    bool operator()(const irs::TermReader& lhs,
+    bool operator()(const TermReader& lhs,
                     std::string_view rhs) const noexcept {
       return lhs.meta().name < rhs;
     }
@@ -3022,7 +3034,7 @@ irs::FieldIterator::ptr FieldReader::iterator() const {
 
   using IteratorT =
     IteratorAdaptor<std::string_view, ReaderType, decltype(_fields.data()),
-                    irs::FieldIterator, Less>;
+                    FieldIterator, Less>;
 
   return memory::make_managed<IteratorT>(_fields.data(),
                                          _fields.data() + _fields.size());
@@ -3166,13 +3178,14 @@ FieldWriter::ptr MakeWriter(Version version, PostingsWriter::ptr&& writer,
                             bool consolidation,
                             IResourceManager& resource_manager) {
   // Here we can parametrize field_writer via version20::TermMeta
-  return std::make_unique<::FieldWriter>(std::move(writer), consolidation,
-                                         resource_manager, version);
+  return std::make_unique<::FieldWriterImpl>(std::move(writer), consolidation,
+                                             resource_manager, version);
 }
 
 FieldReader::ptr MakeReader(PostingsReader::ptr&& reader,
                             IResourceManager& resource_manager) {
-  return std::make_shared<::FieldReader>(std::move(reader), resource_manager);
+  return std::make_shared<::FieldReaderImpl>(std::move(reader),
+                                             resource_manager);
 }
 
 }  // namespace burst_trie

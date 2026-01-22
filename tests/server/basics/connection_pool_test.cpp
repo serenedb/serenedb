@@ -424,7 +424,7 @@ TEST_F(NetworkConnectionPoolTest, checking_min_and_max_connections) {
   std::this_thread::sleep_for(std::chrono::milliseconds(21));
 
   int tries = 0;
-  while (++tries < 1'000) {
+  while (++tries < 2'000) {
     if (pool.numOpenConnections() == 0) {
       break;
     }

@@ -36,9 +36,7 @@ struct ByTermOptions {
 
   bstring term;
 
-  bool operator==(const ByTermOptions& rhs) const noexcept {
-    return term == rhs.term;
-  }
+  bool operator==(const ByTermOptions& rhs) const noexcept = default;
 };
 
 // User-side term filter

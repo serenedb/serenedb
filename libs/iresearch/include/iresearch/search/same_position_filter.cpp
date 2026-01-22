@@ -132,15 +132,13 @@ class SamePositionQuery : public Filter::Query {
       auto* reader = term_state.reader;
       SDB_ASSERT(reader);
 
-      // get postings
-      auto docs = reader->postings(*term_state.cookie, features);
-      SDB_ASSERT(docs);
+      auto docs = reader->Iterator(features, *term_state.cookie);
+      if (!docs) {
+        return DocIterator::empty();
+      }
 
-      // get needed postings attributes
       auto* pos = irs::GetMutable<PosAttr>(docs.get());
-
       if (!pos) {
-        // positions not found
         return DocIterator::empty();
       }
 
@@ -154,7 +152,6 @@ class SamePositionQuery : public Filter::Query {
                      term_stats->c_str(), *docs, _boost);
       }
 
-      // add iterator
       itrs.emplace_back(std::move(docs));
 
       ++term_stats;

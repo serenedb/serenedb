@@ -82,17 +82,11 @@ bool SqlStatement::ProcessNextRoot(
   pg::Resolve(connection_ctx->GetDatabaseId(), objects, *connection_ctx);
   SDB_ASSERT(memory_context);
 
-  query::QueryContext query_ctx{
-    velox::core::QueryCtx::create(
-      connection_ctx->Get<VariableType::U32>("execution_threads") == 0
-        ? nullptr
-        : &GetScheduler()->GetCPUExecutor(),
-      velox::core::QueryConfig{velox::core::QueryConfig::ConfigTag{},
-                               connection_ctx}),
-    objects};
+  query::QueryContext query_ctx{connection_ctx, objects};
 
-  auto query_desc = pg::AnalyzeVelox(*raw_stmt, *query_string, objects,
-                                     id_generator, query_ctx, params);
+  auto query_desc = pg::AnalyzeVelox(
+    *raw_stmt, *query_string, objects, id_generator, query_ctx, params,
+    connection_ctx->GetSendBuffer(), connection_ctx->GetCopyQueue());
 
   if (query_desc.type == pg::SqlCommandType::Show) {
     SDB_ASSERT(query_desc.pgsql_node);

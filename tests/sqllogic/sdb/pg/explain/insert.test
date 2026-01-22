@@ -65,6 +65,12 @@ INSERT INTO t (c2, c2) VALUES (1, 4);
 db error: ERROR: column "c2" specified more than once
 
 
+query
+SELECT * FROM t;
+----
+c1	c2
+
+
 statement count 1
 WITH
 babsky as (select 1 as pencil),

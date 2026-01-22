@@ -30,19 +30,11 @@ namespace irs {
 namespace {
 
 template<bool Conjunction, typename It>
-irs::ScoreAdapters MakeScoreAdapters(const ExecutionContext& ctx, It begin,
-                                     It end) {
+ScoreAdapters MakeScoreAdapters(const ExecutionContext& ctx, It begin, It end) {
   SDB_ASSERT(begin <= end);
   const size_t size = std::distance(begin, end);
-  irs::ScoreAdapters itrs;
+  ScoreAdapters itrs;
   itrs.reserve(size);
-  if (Conjunction || size > 1) {
-    ctx.wand.root = false;
-    // TODO(mbkkt) ctx.wand.strict = true;
-    // We couldn't do this for few reasons:
-    // 1. It's small chance that we will use just term iterator (or + eof)
-    // 2. I'm not sure about precision
-  }
   do {
     auto docs = (*begin)->execute(ctx);
     ++begin;
@@ -59,6 +51,9 @@ irs::ScoreAdapters MakeScoreAdapters(const ExecutionContext& ctx, It begin,
     itrs.emplace_back(std::move(docs));
   } while (begin != end);
 
+  // if (Conjunction || itrs.size() > 1) {
+  //   TODO(mbkkt) ctx.wand.strict = true;
+  // }
   return itrs;
 }
 

@@ -204,7 +204,7 @@ struct TFIDFContext final : public ScoreCtx {
   TFIDFContext& operator=(const TFIDFContext&) = delete;
 
   const FreqAttr& freq;
-  const irs::FilterBoost* filter_boost;
+  const FilterBoost* filter_boost;
   float_t idf;  // precomputed : boost * idf
   [[no_unique_address]] Norm norm;
 };
@@ -293,7 +293,7 @@ ScoreFunction TFIDF::PrepareScorer(const ColumnProvider& segment,
   }
 
   const auto* stats = stats_cast(stats_buf);
-  auto* filter_boost = irs::get<irs::FilterBoost>(doc_attrs);
+  auto* filter_boost = irs::get<FilterBoost>(doc_attrs);
 
   // add norm attribute if requested
   if (_normalize) {
@@ -351,9 +351,9 @@ WandWriter::ptr TFIDF::prepare_wand_writer(size_t max_levels) const {
     // idf * sqrt(tf) / sqrt(dl)
     // sqrt(tf) / sqrt(dl)
     // tf / dl
-    return std::make_unique<FreqNormWriter<kWandTagDivNorm>>(max_levels, *this);
+    return std::make_unique<FreqNormWriter<kWandTagDivNorm>>(max_levels);
   }
-  return std::make_unique<FreqNormWriter<kWandTagMaxFreq>>(max_levels, *this);
+  return std::make_unique<FreqNormWriter<kWandTagMaxFreq>>(max_levels);
 }
 
 WandSource::ptr TFIDF::prepare_wand_source() const {

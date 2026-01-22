@@ -88,6 +88,10 @@ RocksDBDataSinkBase::RocksDBDataSinkBase(
   absl::c_sort(_columns_order, [&](auto lhs, auto rhs) {
     return _column_ids[lhs] < _column_ids[rhs];
   });
+  rocksdb::ReadOptions read_options;
+  read_options.async_io = true;  // OK?
+  read_options.snapshot = _snapshot;
+  _it = std::unique_ptr<rocksdb::Iterator>(_db.NewIterator(read_options, &_cf));
 }
 
 RocksDBInsertDataSink::RocksDBInsertDataSink(
@@ -164,7 +168,7 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
       _store_keys_buffers.emplace_back());
   }
 
-  std::vector<size_t> row_order(num_rows);
+  std::vector<velox::vector_size_t> row_order(num_rows);
   absl::c_iota(row_order, 0);
   absl::c_sort(row_order, [&](size_t lhs, size_t rhs) {
     return _store_keys_buffers[lhs].substr(sizeof(ObjectId) +
@@ -173,11 +177,18 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
                                            sizeof(catalog::Column::Id));
   });
 
+  // TODO make as a field, it does not depend on input
+  std::string buffer = table_key;
+  buffer.reserve(sizeof(ObjectId) + sizeof(catalog::Column::Id));
+  key_utils::AppendColumnKey(buffer, _column_ids[_columns_order[0]]);
+
   velox::IndexRange all_rows(0, num_rows);
+  ResetIter(buffer);
   for (auto i : _columns_order) {
     _column_id = _column_ids[i];
+    SetUseSeek();
     if (_column_id != catalog::Column::kGeneratedPKId) {
-      WriteColumn(input->childAt(i), folly::Range{&all_rows, 1}, {});
+      WriteColumn(input->childAt(i), folly::Range{&all_rows, 1}, row_order);
     }
   }
 }
@@ -1943,7 +1954,6 @@ void RocksDBDataSinkBase::WriteRowSlices(std::string_view key) {
   rocksdb::Status status;
   SDB_ASSERT(!_row_slices.empty());
 
-  // TODO check here that key_slice is not present
   LookupNextKey(key);
   if (!_it->status().ok()) {
     SDB_THROW(rocksutils::ConvertStatus(_it->status()));
@@ -1953,10 +1963,10 @@ void RocksDBDataSinkBase::WriteRowSlices(std::string_view key) {
     // Key is found, but we expect it shouldn't
 
     // TODO
-    // It shouldn't be SQL error as data sink should know anything about SQL(?)
-    // So, it should has some special mark that will be checked in server/pg
-    // code and such a code should transform exception that is thrown from here
-    // into SQL-like error
+    // It shouldn't be SQL error as data sink should know anything about
+    // SQL(?) So, it should has some special mark that will be checked in
+    // server/pg code and such a code should transform exception that is
+    // thrown from here into SQL-like error
     SDB_THROW(ERROR_NOT_IMPLEMENTED,
               "RocksDBDataSink: failed uniqueness on primary key. Correct "
               "error handling is not implemented yet");

@@ -203,27 +203,38 @@ class RocksDBDataSinkBase : public velox::connector::DataSink {
   void LookupNextKey(std::string_view key) {
     // Incorrect when many batches
     // We should create _it per batch looks like
-    if (!_it) [[unlikely]] {
-      rocksdb::ReadOptions read_options;
-      read_options.async_io = true;  // OK?
-      read_options.snapshot = _snapshot;
-      _it =
-        std::unique_ptr<rocksdb::Iterator>(_db.NewIterator(read_options, &_cf));
-      _it->Seek(key);
+    SDB_ASSERT(_it);
 
+    if (!_it->Valid()) [[unlikely]] {
+      // Reached the end, more seeks are not needed
+      // Happends once per batch
       return;
     }
 
-    if (!_it->Valid()) {
-      // Reached the end, more seeks are not needed
-      return;
+    if (!_use_seek) {
+      _it->Next();
+      auto cmp_res =
+        std::string_view{_it->key().data(), _it->key().size()} <=> key;
+      if (cmp_res == std::strong_ordering::equal) {
+        return;
+      }
+      if (cmp_res == std::strong_ordering::greater) {
+        _use_seek = false;
+        return;
+      }
+      _use_seek = false;
     }
 
     _it->Seek(key);
   }
 
+  void ResetIter(std::string_view prefix) { _it->Seek(prefix); }
+
+  void SetUseSeek() { _use_seek = true; }
+
   std::vector<size_t> _columns_order;  // or column_index_t?
   std::unique_ptr<rocksdb::Iterator> _it;
+  bool _use_seek = true;
 };
 
 class RocksDBInsertDataSink : public RocksDBDataSinkBase {

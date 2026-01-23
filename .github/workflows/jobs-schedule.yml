@@ -1,10 +1,10 @@
-name: SereneDB-Build-Cron
+name: Jobs Schedule
 
 on:
   schedule:
-    # Daily coverage build - every day at 08:00-11:00 Moscow time (05:00-08:00 UTC)
+    # Daily coverage build - every day at 05:00-08:00 UTC
     - cron: '0 5 * * *'
-    # Monday - MemoryWithOrigins sanitizer at 04:00-08:00 Moscow (01:00-05:00 UTC)
+    # Monday - MemoryWithOrigins sanitizer at 01:00-05:00 UTC
     - cron: '0 1 * * 1'
     # Tuesday - Address sanitizer
     - cron: '0 1 * * 2'

@@ -49,12 +49,8 @@ namespace search {
 
 class SearchThreadPools;
 class ResourceMutex;
-class SearchRocksDBRecoveryHelper;
 class DataStore;
 
-struct SearchExecutionPool;
-
-// there are 2 thread groups for execution of asynchronous maintenance jobs.
 enum class ThreadGroup : uint8_t {
   Commit = 0,
   Consolidation,
@@ -62,13 +58,13 @@ enum class ThreadGroup : uint8_t {
 
 void CleanupDatabase(ObjectId database_id);
 
-SearchFeature& GetSearchFeature();
+SearchEngine& GetSearchEngine();
 
-class SearchFeature final : public SerenedFeature {
+class SearchEngine final : public SerenedFeature {
  public:
   static constexpr std::string_view name() noexcept { return "Search"; }
 
-  explicit SearchFeature(Server& server);
+  explicit SearchEngine(Server& server);
 
   void collectOptions(std::shared_ptr<options::ProgramOptions>) final;
   void prepare() final;
@@ -77,11 +73,10 @@ class SearchFeature final : public SerenedFeature {
   void unprepare() final;
   void validateOptions(std::shared_ptr<options::ProgramOptions>) final;
 
-  auto& getSearchPool() noexcept { return _search_execution_pool; }
   std::tuple<size_t, size_t, size_t> stats(ThreadGroup id) const;
+  std::pair<size_t, size_t> limits(ThreadGroup id) const;
   bool queue(ThreadGroup id, absl::Duration delay,
              absl::AnyInvocable<void()>&& fn);
-  std::pair<size_t, size_t> limits(ThreadGroup id) const;
   void trackOutOfSyncLink() noexcept;
   void untrackOutOfSyncLink() noexcept;
 
@@ -91,26 +86,6 @@ class SearchFeature final : public SerenedFeature {
   ResultOr<std::shared_ptr<DataStore>> CreateDataStore(
     const catalog::Index& index);
   Result DropDataStore(ObjectId database_id, ObjectId index_id);
-  /*
-    // schedule an asynchronous task for execution
-    // id thread group to handle the execution
-    // fn the function to execute
-    // delay how log to sleep before the execution
-
-    irs::IResourceManager& getCachedColumnsManager() const noexcept {
-      return _columns_cache_memory_used;
-    }
-    bool columnsCacheOnlyLeaders() const noexcept;
-  #ifdef SDB_GTEST
-    int64_t columnsCacheUsage() const noexcept;
-    void setCacheUsageLimit(uint64_t limit) noexcept;
-
-    void setColumnsCacheOnlyOnLeader(bool b) noexcept {
-      _columns_cache_only_leader = b;
-    }
-  #endif
-  */
-  uint32_t defaultParallelism() const noexcept { return _default_parallelism; }
 
 #ifdef SDB_GTEST
   void setDefaultParallelism(uint32_t v) noexcept { _default_parallelism = v; }
@@ -119,38 +94,22 @@ class SearchFeature final : public SerenedFeature {
   std::filesystem::path GetPersistedPath(ObjectId database_id) const;
 
  private:
-  // void RegisterRecoveryHelper();
-  // void registerIndexFactory();
-
   DatabasePathFeature& _dir_feature;
 
   std::shared_ptr<SearchThreadPools> _thread_pools;
 
-  // whether or not to fail queries on links/indexes that are marked as
-  // out of sync
   bool _fail_queries_on_out_of_sync{false};
 
-  // names/ids of links/indexes to *NOT* recover. all entries should
-  // be in format "collection-name/index-name" or "collection/index-id".
-  // the pseudo-entry "all" skips recovering data for all links/indexes
-  // found during recovery.
   std::vector<std::string> _skip_recovery_items;
 
-  // number of links/indexes currently out of sync
   metrics::Gauge<uint64_t>& _out_of_sync_links;
-
-  irs::IResourceManager& _columns_cache_memory_used;
-  bool _columns_cache_only_leader{false};
 
   uint32_t _consolidation_threads{0};
   uint32_t _commit_threads{0};
   uint32_t _search_execution_threads_limit{0};
   uint32_t _default_parallelism{1};
 
-  // helper object, only useful during WAL recovery
-  std::shared_ptr<SearchRocksDBRecoveryHelper> _recovery_helper;
 
-  SearchExecutionPool& _search_execution_pool;
 };
 
 }  // namespace search

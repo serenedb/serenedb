@@ -27,12 +27,16 @@
 #include "pg/sql_utils.h"
 #include "utils/exec_context.h"
 
-LIBPG_QUERY_INCLUDES_BEGIN
-#include "postgres.h"
-
-#include "nodes/parsenodes.h"
-#include "nodes/pg_list.h"
-LIBPG_QUERY_INCLUDES_END
+struct CreatedbStmt;
+struct CreateSchemaStmt;
+struct DropdbStmt;
+struct CreateStmt;
+struct IndexStmt;
+struct ViewStmt;
+struct DropStmt;
+struct TransactionStmt;
+struct VariableSetStmt;
+struct CreateFunctionStmt;
 
 namespace sdb::pg {
 

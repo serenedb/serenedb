@@ -116,7 +116,7 @@ class LocalCatalog final : public LogicalCatalog,
   mutable absl::Mutex _mutex;
   std::shared_ptr<SnapshotImpl> _snapshot;
   RocksDBEngineCatalog* _engine;
-  search::SearchFeature* _search_feature;
+  search::SearchEngine* _search_engine;
   bool _skip_background_errors;
 };
 

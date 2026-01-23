@@ -19,7 +19,7 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "search_feature.h"
+#include "search_engine.h"
 
 #include <absl/strings/escaping.h>
 
@@ -47,9 +47,7 @@
 #include "rest_server/database_path_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/data_store.h"
-#include "search/execution_pool.h"
-#include "search/resource_manager.h"
-#include "storage_engine/search_feature.h"
+#include "storage_engine/search_engine.h"
 
 using namespace std::chrono_literals;
 
@@ -70,12 +68,6 @@ REGISTER_ANALYZER_VPACK(wildcard::Analyzer, wildcard::Analyzer::make,
 DECLARE_GAUGE(serenedb_search_num_out_of_sync_links, uint64_t,
               "Number of inverted indexes currently out of sync");
 
-DECLARE_GAUGE(
-  serenedb_search_execution_threads_demand, SearchExecutionPool,
-  "Number of search parallel execution threads requested by queries.");
-
-DECLARE_GAUGE(serenedb_search_columns_cache_size, LimitedResourceManager,
-              "Search columns cache usage in bytes");
 
 const std::string kCommitThreadsParam("--search.commit-threads");
 const std::string kConsolidationThreadsParam("--search.consolidation-threads");
@@ -98,36 +90,6 @@ uint32_t ComputeThreadsCount(uint32_t threads, uint32_t threads_limit,
     std::min(threads_limit ? threads_limit : kMaxThreads,
              threads ? threads : uint32_t(number_of_cores::GetValue()) / div));
 }
-/*
-Result TransactionDataSourceRegistrationCallback(
-  catalog::SchemaObject& data_source, transaction::Methods& trx) {
-  if (catalog::ObjectType::View != data_source.GetType()) {
-    return {};  // not a view
-  }
-  // TODO FIXME find a better way to look up a LogicalView
-  auto* view = basics::downCast<catalog::View>(&data_source);
-  if (!view) {
-    SDB_WARN("xxxxx", Logger::SEARCH,
-             "failure to get LogicalView while processing a TransactionState "
-             "by SearchFeature for name '",
-             data_source.GetName(), "'");
-
-    return {ERROR_INTERNAL};
-  }
-
-  SDB_ENSURE(view->GetViewType() == catalog::ViewType::ViewSearch,
-             ERROR_INTERNAL);
-  auto& impl = basics::downCast<SearchView>(*view);
-  return {impl.apply(trx) ? ERROR_OK : ERROR_INTERNAL};
-}
-
-void RegisterTransactionDataSourceRegistrationCallback() {
-  if (ServerState::instance()->IsSingle()) {
-    transaction::Methods::addDataSourceRegistrationCallback(
-      &TransactionDataSourceRegistrationCallback);
-  }
-}
-*/
 
 std::filesystem::path GetPersistedPath(
   const DatabasePathFeature& db_path_feature, ObjectId database_id) {
@@ -153,14 +115,8 @@ class SearchThreadPools {
   }
 
   void Stop() noexcept {
-    try {
-      _commit_threads_pool.stop(true);
-    } catch (...) {
-    }
-    try {
-      _consolidation_threads_pool.stop(true);
-    } catch (...) {
-    }
+    _commit_threads_pool.stop(true);
+    _consolidation_threads_pool.stop(true);
   }
 
  private:
@@ -168,23 +124,19 @@ class SearchThreadPools {
   ThreadPool _consolidation_threads_pool;
 };
 
-SearchFeature::SearchFeature(Server& server)
+SearchEngine::SearchEngine(Server& server)
   : SerenedFeature{server, name()},
     _dir_feature{server.getFeature<DatabasePathFeature>()},
     _thread_pools(std::make_shared<SearchThreadPools>()),
     _out_of_sync_links(server.getFeature<metrics::MetricsFeature>().add(
-      serenedb_search_num_out_of_sync_links{})),
-    _columns_cache_memory_used(server.getFeature<metrics::MetricsFeature>().add(
-      serenedb_search_columns_cache_size{})),
-    _search_execution_pool(server.getFeature<metrics::MetricsFeature>().add(
-      serenedb_search_execution_threads_demand{})) {
+      serenedb_search_num_out_of_sync_links{})) {
   setOptional(true);
-  static_assert(Server::isCreatedAfter<SearchFeature, DatabasePathFeature>());
+  static_assert(Server::isCreatedAfter<SearchEngine, DatabasePathFeature>());
   static_assert(
-    Server::isCreatedAfter<SearchFeature, metrics::MetricsFeature>());
+    Server::isCreatedAfter<SearchEngine, metrics::MetricsFeature>());
 }
 
-void SearchFeature::collectOptions(
+void SearchEngine::collectOptions(
   std::shared_ptr<options::ProgramOptions> options) {
   options->addSection("search", absl::StrCat(name(), " feature"));
 
@@ -238,21 +190,6 @@ out-of-sync links/indexes fail with the error 'collection/view is out of sync'
 If set to `false`, queries on out-of-sync links/indexes are answered normally,
 but the returned data may be incomplete.)");
 
-  auto& manager =
-    basics::downCast<LimitedResourceManager>(_columns_cache_memory_used);
-  options->addOption(kCacheLimit,
-                     "The limit (in bytes) for Search columns cache "
-                     "(0 = no caching).",
-                     new options::UInt64Parameter(&manager.limit),
-                     options::MakeDefaultFlags(
-                       options::Flags::DefaultNoComponents,
-                       options::Flags::OnSingle, options::Flags::OnDBServer));
-  options->addOption(
-    kCacheOnlyLeader, "Cache Search columns only for leader shards.",
-    new options::BooleanParameter(&_columns_cache_only_leader),
-    options::MakeDefaultFlags(options::Flags::DefaultNoComponents,
-                              options::Flags::OnDBServer));
-
   options->addOption(
     kSearchThreadsLimit,
     "The maximum number of threads that can be used to process "
@@ -270,7 +207,7 @@ but the returned data may be incomplete.)");
                               options::Flags::OnSingle));
 }
 
-void SearchFeature::validateOptions(
+void SearchEngine::validateOptions(
   std::shared_ptr<options::ProgramOptions> options) {
   // validate all entries in _skip_recovery_items for formal correctness
   auto check_format = [](const auto& item) {
@@ -309,11 +246,11 @@ void SearchFeature::validateOptions(
   }
 }
 
-SearchFeature& GetSearchFeature() {
-  return SerenedServer::Instance().getFeature<SearchFeature>();
+SearchEngine& GetSearchEngine() {
+  return SerenedServer::Instance().getFeature<SearchEngine>();
 }
 
-void SearchFeature::prepare() {
+void SearchEngine::prepare() {
   SDB_ASSERT(isEnabled());
 
   ::irs::analysis::ClassificationTokenizer::set_model_provider(
@@ -340,7 +277,7 @@ void SearchFeature::prepare() {
              stats(ThreadGroup::Consolidation));
 }
 
-void SearchFeature::start() {
+void SearchEngine::start() {
   SDB_ASSERT(isEnabled());
 
   // here can be registered upgrade tasks if needed
@@ -354,7 +291,6 @@ void SearchFeature::start() {
       .start(_commit_threads, IR_NATIVE_STRING("search:commit"));
     _thread_pools->Get(ThreadGroup::Consolidation)
       .start(_consolidation_threads, IR_NATIVE_STRING("search:compact"));
-    _search_execution_pool.setLimit(_search_execution_threads_limit);
 
     SDB_INFO("xxxxx", Logger::SEARCH, "Search maintenance: [", _commit_threads,
              "..", _commit_threads, "] commit thread(s), [",
@@ -363,20 +299,15 @@ void SearchFeature::start() {
              "limit: ",
              _search_execution_threads_limit);
 
-    auto& manager =
-      basics::downCast<LimitedResourceManager>(_columns_cache_memory_used);
-    SDB_INFO("xxxxx", Logger::SEARCH,
-             "Search columns cache limit: ", manager.limit);
   }
 }
 
-void SearchFeature::stop() {
+void SearchEngine::stop() {
   SDB_ASSERT(isEnabled());
   _thread_pools->Stop();
-  _search_execution_pool.stop();
 }
 
-void SearchFeature::unprepare() { SDB_ASSERT(isEnabled()); }
+void SearchEngine::unprepare() { SDB_ASSERT(isEnabled()); }
 
 void CleanupDatabase(ObjectId database_id) {
   const auto& feature =
@@ -391,7 +322,7 @@ void CleanupDatabase(ObjectId database_id) {
   }
 }
 
-bool SearchFeature::queue(ThreadGroup id, absl::Duration delay,
+bool SearchEngine::queue(ThreadGroup id, absl::Duration delay,
                           absl::AnyInvocable<void()>&& fn) {
   auto r = basics::SafeCall([&]() {
     return _thread_pools->Get(id).run(std::move(fn), delay)
@@ -413,76 +344,36 @@ bool SearchFeature::queue(ThreadGroup id, absl::Duration delay,
   return false;
 }
 
-std::tuple<size_t, size_t, size_t> SearchFeature::stats(ThreadGroup id) const {
+std::tuple<size_t, size_t, size_t> SearchEngine::stats(ThreadGroup id) const {
   return _thread_pools->Get(id).stats();
 }
 
-std::pair<size_t, size_t> SearchFeature::limits(ThreadGroup id) const {
+std::pair<size_t, size_t> SearchEngine::limits(ThreadGroup id) const {
   auto threads = _thread_pools->Get(id).threads();
   return {threads, threads};
 }
 
-void SearchFeature::trackOutOfSyncLink() noexcept { ++_out_of_sync_links; }
+void SearchEngine::trackOutOfSyncLink() noexcept { ++_out_of_sync_links; }
 
-void SearchFeature::untrackOutOfSyncLink() noexcept {
+void SearchEngine::untrackOutOfSyncLink() noexcept {
   uint64_t previous = _out_of_sync_links.fetch_sub(1);
   SDB_ASSERT(previous > 0);
 }
 
-bool SearchFeature::failQueriesOnOutOfSync() const noexcept {
+bool SearchEngine::failQueriesOnOutOfSync() const noexcept {
   SDB_IF_FAILURE("Search::FailQueriesOnOutOfSync") {
     // here to test --search.fail-queries-on-out-of-sync
     return true;
   }
   return _fail_queries_on_out_of_sync;
 }
-/*
-void SearchFeature::RegisterRecoveryHelper() {
-  if (!_skip_recovery_items.empty()) {
-    SDB_WARN("xxxxx", Logger::SEARCH,
-             "search recovery explicitly disabled via the '", kSkipRecovery,
-             "' startup option for the following links/indexes: ",
-             absl::StrJoin(_skip_recovery_items, ", "),
-             ". all affected links/indexes that are touched during "
-             "recovery will be marked as out of sync and should be recreated "
-             "manually when the recovery is finished.");
-  }
 
-  _recovery_helper =
-    std::make_shared<SearchRocksDBRecoveryHelper>(_skip_recovery_items);
-  auto res = RocksDBEngine::RegisterRecoveryHelper(_recovery_helper);
-
-  if (res.fail()) {
-    SDB_THROW(res.errorNumber(), "failed to register RocksDB recovery helper: ",
-              res.errorMessage());
-  }
-}
-#ifdef SDB_GTEST
-int64_t SearchFeature::columnsCacheUsage() const noexcept {
-  auto& manager =
-    basics::downCast<LimitedResourceManager>(_columns_cache_memory_used);
-  return manager.load();
-}
-void SearchFeature::setCacheUsageLimit(uint64_t limit) noexcept {
-  auto& manager =
-    basics::downCast<LimitedResourceManager>(_columns_cache_memory_used);
-  manager.limit = limit;
-}
-#endif
-
-bool SearchFeature::columnsCacheOnlyLeaders() const noexcept {
-  SDB_ASSERT(ServerState::instance()->IsDBServer() ||
-             !_columns_cache_only_leader);
-  return _columns_cache_only_leader;
-}
-*/
-
-std::filesystem::path SearchFeature::GetPersistedPath(
+std::filesystem::path SearchEngine::GetPersistedPath(
   ObjectId database_id) const {
   return ::sdb::search::GetPersistedPath(_dir_feature, database_id);
 }
 
-ResultOr<std::shared_ptr<DataStore>> SearchFeature::CreateDataStore(
+ResultOr<std::shared_ptr<DataStore>> SearchEngine::CreateDataStore(
   const catalog::Index& index) {
   DataStoreOptions options;
   options.path = GetPersistedPath(index.GetDatabaseId());
@@ -500,7 +391,7 @@ ResultOr<std::shared_ptr<DataStore>> SearchFeature::CreateDataStore(
   return std::make_shared<DataStore>(options);
 }
 
-Result SearchFeature::DropDataStore(ObjectId database_id, ObjectId index_id) {
+Result SearchEngine::DropDataStore(ObjectId database_id, ObjectId index_id) {
   return {ERROR_NOT_IMPLEMENTED};
 }
 

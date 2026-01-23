@@ -7,5 +7,5 @@ target_sources(
         indexes_snapshot.cpp
         wal_access.cpp
         hints.cpp
-        search_feature.cpp
+        search_engine.cpp
 )

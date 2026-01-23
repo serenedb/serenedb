@@ -68,7 +68,7 @@
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/data_store.h"
 #include "storage_engine/engine_feature.h"
-#include "storage_engine/search_feature.h"
+#include "storage_engine/search_engine.h"
 #include "utils/exec_context.h"
 #include "utils/operation_options.h"
 #include "utils/query_cache.h"
@@ -80,7 +80,7 @@
 #ifdef SDB_CLUSTER
 #include "aql/query_registry_feature.h"
 #include "replication/replication_feature.h"
-#include "search/search_feature.h"
+#include "search/search_engine.h"
 #include "transaction/cluster_utils.h"
 #endif
 
@@ -989,7 +989,7 @@ class SnapshotImpl : public Snapshot {
 LocalCatalog::LocalCatalog(bool skip_background_errors)
   : _snapshot(std::make_shared<SnapshotImpl>()),
     _engine{&GetServerEngine()},
-    _search_feature{&search::GetSearchFeature()},
+    _search_engine{&search::GetSearchEngine()},
     _skip_background_errors{skip_background_errors} {}
 
 Result LocalCatalog::RegisterRole(std::shared_ptr<Role> role) {
@@ -1169,7 +1169,7 @@ Result LocalCatalog::CreateIndex(ObjectId database_id, std::string_view schema,
       database_id, schema, std::move(*index), false,
       [&](auto& object) -> Result {
         auto& index = basics::downCast<Index>(*object);
-        return _search_feature->CreateDataStore(index)
+        return _search_engine->CreateDataStore(index)
           .and_then([&](std::shared_ptr<search::DataStore>&& datastore)
                       -> ResultOr<std::shared_ptr<search::DataStore>> {
             clone->AddSearchDataStore(std::move(datastore));

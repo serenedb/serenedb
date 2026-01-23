@@ -20,6 +20,8 @@
 
 #include "pg/functions/json.h"
 
+#include "basics/errors.h"
+
 namespace sdb::pg {
 
 simdjson::simdjson_result<simdjson::ondemand::value> JsonParser::GetByIndex(
@@ -51,13 +53,11 @@ simdjson::ondemand::document JsonParser::GetJsonDocument() {
   simdjson::ondemand::document doc;
   auto ec = _parser.iterate(_padded_input).get(doc);
   if (ec != simdjson::SUCCESS) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("Invalid JSON input: ", simdjson::error_message(ec)));
+    SDB_THROW(ERROR_BAD_PARAMETER,
+              "Invalid JSON input: ", simdjson::error_message(ec));
   }
   if (doc.type().error()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("Invalid JSON input: tape error"));
+    SDB_THROW(ERROR_BAD_PARAMETER, "Invalid JSON input: tape error");
   }
   return doc;
 }

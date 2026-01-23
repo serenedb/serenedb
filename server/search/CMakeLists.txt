@@ -1,4 +1,1 @@
-target_sources(
-    sereneserver
-    PRIVATE data_store.cpp execution_pool.cpp execution_pool.cpp
-)
+target_sources(sereneserver PRIVATE data_store.cpp task.cpp data_store_meta.cpp)

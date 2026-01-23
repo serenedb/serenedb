@@ -254,6 +254,14 @@ class RocksDBTable final : public axiom::connector::Table {
 
   query::Transaction& GetTransaction() const noexcept { return _transaction; }
 
+  catalog::WriteConflictPolicy GetConflictPolicy() const noexcept {
+    return _conflict_policy;
+  }
+
+  void SetConflictPolicy(catalog::WriteConflictPolicy conflict_policy) {
+    _conflict_policy = conflict_policy;
+  }
+
  private:
   std::vector<std::unique_ptr<SereneDBTableLayout>> _layout_handles;
   std::vector<const axiom::connector::TableLayout*> _layouts;
@@ -261,6 +269,8 @@ class RocksDBTable final : public axiom::connector::Table {
   ObjectId _table_id;
   query::Transaction& _transaction;
   catalog::TableStats _stats;
+  catalog::WriteConflictPolicy _conflict_policy{
+    catalog::WriteConflictPolicy::Error};
   bool _update_pk{};
 };
 
@@ -634,11 +644,12 @@ class SereneDBConnector final : public velox::connector::Connector {
               rocksdb_transaction, _cf, *connector_query_ctx->memoryPool(),
               object_key, pk_indices, column_oids, all_column_oids,
               table.IsUsedForUpdatePK(), table.type(),
+              table.GetConflictPolicy(),
               std::vector<std::unique_ptr<SinkUpdateWriter>>{});
           } else {
             return std::make_unique<RocksDBInsertDataSink>(
               rocksdb_transaction, _cf, *connector_query_ctx->memoryPool(),
-              object_key, pk_indices, column_oids,
+              object_key, pk_indices, column_oids, table.GetConflictPolicy(),
               std::vector<std::unique_ptr<SinkInsertWriter>>{});
           }
         });

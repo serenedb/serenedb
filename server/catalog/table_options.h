@@ -52,6 +52,18 @@
 
 namespace sdb::catalog {
 
+// TODO: where better to place it?
+
+// Default policy is Error
+// - if DO NOTHING in request, than policy is KeepOld
+// - if variable is set up, than policy is according to var
+
+enum class WriteConflictPolicy : uint8_t {
+  Update,
+  KeepOld,
+  Error,
+};
+
 struct ObjectInternal {
   ObjectId database_id;
 };

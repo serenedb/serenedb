@@ -22,6 +22,7 @@
 
 #include <span>
 
+#include "catalog/table_options.h"
 #include "rocksdb/utilities/transaction.h"
 
 namespace sdb::connector {
@@ -29,8 +30,9 @@ namespace sdb::connector {
 class RocksDBSinkWriterBase {
  public:
   RocksDBSinkWriterBase(rocksdb::Transaction& transaction,
-                        rocksdb::ColumnFamilyHandle& cf)
-    : _transaction(transaction), _cf(cf) {}
+                        rocksdb::ColumnFamilyHandle& cf,
+                        catalog::WriteConflictPolicy conflict_policy)
+    : _transaction{transaction}, _cf{cf}, _conflict_policy{conflict_policy} {}
 
   virtual ~RocksDBSinkWriterBase() = default;
 
@@ -41,6 +43,7 @@ class RocksDBSinkWriterBase {
  protected:
   rocksdb::Transaction& _transaction;
   rocksdb::ColumnFamilyHandle& _cf;
+  catalog::WriteConflictPolicy _conflict_policy;
 };
 
 // This could be final subclass of SinkInsertWriter but currently only used
@@ -48,8 +51,9 @@ class RocksDBSinkWriterBase {
 class RocksDBSinkWriter : public RocksDBSinkWriterBase {
  public:
   RocksDBSinkWriter(rocksdb::Transaction& transaction,
-                    rocksdb::ColumnFamilyHandle& cf)
-    : RocksDBSinkWriterBase(transaction, cf) {}
+                    rocksdb::ColumnFamilyHandle& cf,
+                    catalog::WriteConflictPolicy conflict_policy)
+    : RocksDBSinkWriterBase{transaction, cf, conflict_policy} {}
 
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key);

@@ -29,6 +29,38 @@ void RocksDBSinkWriter::Write(std::span<const rocksdb::Slice> cell_slices,
   rocksdb::Slice key_slice(full_key);
   rocksdb::Status status;
   SDB_ASSERT(!cell_slices.empty());
+
+  // TODO make as field
+  rocksdb::PinnableSlice ps;
+  rocksdb::ReadOptions read_options;
+  read_options.async_io = true;
+  read_options.snapshot = _transaction.GetSnapshot();
+  auto s = _transaction.Get(read_options, &_cf, key_slice, &ps);
+
+  if (s.ok()) {
+    // Key is found. It's conflict.
+
+    switch (_conflict_policy) {
+      case catalog::WriteConflictPolicy::Update:
+        // just do nothing
+        // TODO: what about number of affected rows in response?
+        break;
+      case catalog::WriteConflictPolicy::KeepOld:
+        return;
+      case catalog::WriteConflictPolicy::Error:
+        SDB_THROW(ERROR_SERVER_UNIQUE_CONSTRAINT_VIOLATED,
+                  "TODO: make sql error");
+        break;
+      default:
+        SDB_UNREACHABLE();
+    }
+  } else {
+    // Else block required because of Update case
+    if (!s.IsNotFound()) {
+      SDB_THROW(rocksutils::ConvertStatus(status));
+    }
+  }
+
   if (cell_slices.size() == 1) {
     // Optimizing single slice case - rocksdb does not do additional copying
     // while gathering slice parts

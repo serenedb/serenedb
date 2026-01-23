@@ -94,7 +94,7 @@ DataStore::Stats DataStore::UpdateStatsUnsafe(
   stats.numSegments = segments.size();
   stats.numDocs = reader->docs_count();
   stats.numLiveDocs = reader->live_docs_count();
-  stats.numFiles = 1 + stats.numSegments;  // +1 for segments file
+  stats.numFiles = 1 + stats.numSegments;
   for (const auto& segment : segments) {
     const auto& meta = segment.meta;
     stats.indexSize += meta.byte_size;
@@ -145,7 +145,6 @@ DataStore::ResultWithTime DataStore::CommitUnsafe(
                        .count();
 
   SDB_IF_FAILURE("Search::FailOnCommit") {
-    // intentionally mark the commit as failed
     result.reset(ERROR_DEBUG);
   }
 
@@ -153,9 +152,6 @@ DataStore::ResultWithTime DataStore::CommitUnsafe(
     try {
       MarkOutOfSyncUnsafe();
     } catch (const std::exception& e) {
-      // We couldn't persist the outOfSync flag,
-      // but we can't mark the data store as "not outOfSync" again.
-      // Not much we can do except logging.
       SDB_WARN("xxxxx", Logger::SEARCH,
                "failed to store 'outOfSync' flag for Search index '", GetId(),
                "': ", e.what());
@@ -216,15 +212,10 @@ Result DataStore::CommitUnsafeImpl(bool wait,
     auto reader = _writer->GetSnapshot();
     SDB_ASSERT(reader != nullptr);
     std::move(commit_guard).Cancel();
-    // auto& subscription =
-    //   basics::downCast<LowerBoundSubscription>(*_flush_subscription);
     if (!were_changes) {
       SDB_TRACE("xxxxx", Logger::SEARCH, "Commit for Search index '", GetId(),
                 "' is no changes, tick ", before_commit, "'");
       _last_committed_tick = before_commit;
-      // no changes, can release the latest tick before commit
-      // subscription.tick(_last_committed_tick);
-      // TODO(mbkkt) make_shared can throw!
       StoreDataSnapshot(std::make_shared<DataSnapshot>(
         std::move(reader), std::move(engine_snapshot)));
       return {};
@@ -240,8 +231,6 @@ Result DataStore::CommitUnsafeImpl(bool wait,
     auto data = std::make_shared<DataSnapshot>(std::move(reader),
                                                std::move(engine_snapshot));
     StoreDataSnapshot(data);
-
-    // subscription.tick(_last_committed_tick);
 
     UpdateStatsUnsafe(std::move(data));
 
@@ -285,7 +274,7 @@ DataStore::ResultWithTime DataStore::ConsolidateUnsafe(
 Result DataStore::ConsolidateUnsafeImpl(
   const DataStoreMeta::ConsolidationPolicy& policy,
   const irs::MergeWriter::FlushProgress& progress, bool& empty_consolidation) {
-  empty_consolidation = false;  // TODO Why?
+  empty_consolidation = false;
 
   if (!policy.policy()) {
     return {
@@ -332,10 +321,6 @@ bool DataStore::SetOutOfSync() noexcept {
 }
 
 void DataStore::MarkOutOfSyncUnsafe() {
-  // Only once per link:
-  // 1. increase metric for number of OutOfSync links
-  // 2. persist OutOfSync flag in RocksDB
-  // note: if this fails, it will throw an exception
   SDB_ASSERT(_search != nullptr);
   _search->trackOutOfSyncLink();
 
@@ -345,7 +330,6 @@ void DataStore::MarkOutOfSyncUnsafe() {
   auto c = snapshot->GetObject<catalog::Table>(GetId());
   auto shard = snapshot->GetTableShard(GetId());
   if (!c) {
-    // already deleted
     return;
   }
 
@@ -353,8 +337,6 @@ void DataStore::MarkOutOfSyncUnsafe() {
 }
 
 bool DataStore::IsOutOfSync() const noexcept {
-  // The OutOfSync flag is expected to be set either
-  // during the recovery phase, or when a commit goes wrong
   return _error.load(std::memory_order_relaxed) == Error::OutOfSync;
 }
 

@@ -57,10 +57,6 @@ REGISTER_ANALYZER_VPACK(IdentityAnalyzer, IdentityAnalyzer::make,
                         IdentityAnalyzer::normalize);
 REGISTER_ANALYZER_JSON(IdentityAnalyzer, IdentityAnalyzer::make_json,
                        IdentityAnalyzer::normalize_json);
-// REGISTER_ANALYZER_VPACK(GeoPointAnalyzer, GeoPointAnalyzer::make,
-//                         GeoPointAnalyzer::normalize);
-// REGISTER_ANALYZER_VPACK(GeoJsonAnalyzer, GeoJsonAnalyzer::make,
-//                         GeoJsonAnalyzer::normalize);
 REGISTER_ANALYZER_VPACK(wildcard::Analyzer, wildcard::Analyzer::make,
                         wildcard::Analyzer::normalize);
 
@@ -79,9 +75,8 @@ const std::string kSearchDefaultParallelism("--search.default-parallelism");
 uint32_t ComputeThreadsCount(uint32_t threads, uint32_t threads_limit,
                              uint32_t div) noexcept {
   SDB_ASSERT(div);
-  // arbitrary limit on the upper bound of threads in pool
   constexpr uint32_t kMaxThreads = 8;
-  constexpr uint32_t kMinThreads = 1;  // at least one thread is required
+  constexpr uint32_t kMinThreads = 1;
 
   return std::max(
     kMinThreads,
@@ -158,8 +153,7 @@ choose a sensible number based on the number of cores in the system.)");
 number based on the number of cores in the system.)");
 
   options->addOption(
-    kSkipRecovery,  // TODO: Move parts of the descriptions to
-                    // longDescription?
+    kSkipRecovery,
     "Skip the data recovery for the specified View link or inverted "
     "index on startup. The value for this option needs to have the "
     "format '<collection-name>/<index-id>' or "
@@ -207,7 +201,6 @@ but the returned data may be incomplete.)");
 
 void SearchEngine::validateOptions(
   std::shared_ptr<options::ProgramOptions> options) {
-  // validate all entries in _skip_recovery_items for formal correctness
   auto check_format = [](const auto& item) {
     auto r = item.find('/');
     if (r == std::string_view::npos) {
@@ -261,14 +254,6 @@ void SearchEngine::prepare() {
   irs::scorers::Init();
   irs::compression::Init();
 
-  // RegisterTransactionDataSourceRegistrationCallback();
-  // RegisterRecoveryHelper();
-
-  // RegisterFilters();
-  // RegisterScorers();
-  // RegisterFunctions();
-
-  // ensure no tasks are scheduled and no threads are started
   SDB_ASSERT(std::make_tuple(size_t(0), size_t(0), size_t(0)) ==
              stats(ThreadGroup::Commit));
   SDB_ASSERT(std::make_tuple(size_t(0), size_t(0), size_t(0)) ==
@@ -277,8 +262,6 @@ void SearchEngine::prepare() {
 
 void SearchEngine::start() {
   SDB_ASSERT(isEnabled());
-
-  // here can be registered upgrade tasks if needed
 
   if (ServerState::instance()->IsDBServer() ||
       ServerState::instance()->IsSingle()) {
@@ -358,10 +341,7 @@ void SearchEngine::untrackOutOfSyncLink() noexcept {
 }
 
 bool SearchEngine::failQueriesOnOutOfSync() const noexcept {
-  SDB_IF_FAILURE("Search::FailQueriesOnOutOfSync") {
-    // here to test --search.fail-queries-on-out-of-sync
-    return true;
-  }
+  SDB_IF_FAILURE("Search::FailQueriesOnOutOfSync") { return true; }
   return _fail_queries_on_out_of_sync;
 }
 

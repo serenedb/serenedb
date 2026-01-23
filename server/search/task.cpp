@@ -98,7 +98,6 @@ void CommitTask::operator()() {
   }
 
   SDB_IF_FAILURE("SearchCommitTask::commitUnsafe") { SDB_THROW(ERROR_DEBUG); }
-  // run commit ('_async_self' locked by async task)
   auto [res, timeMs] = _data_store->CommitUnsafe(false, nullptr, commit_res);
 
   if (res.ok()) {
@@ -112,7 +111,7 @@ void CommitTask::operator()() {
              res.errorMessage());
   }
   if (_cleanup_interval_step &&
-      ++_cleanup_interval_count >= _cleanup_interval_step) {  // if enabled
+      ++_cleanup_interval_count >= _cleanup_interval_step) {
     _cleanup_interval_count = 0;
     SDB_IF_FAILURE("SearchCommitTask::cleanupUnsafe") {
       SDB_THROW(ERROR_DEBUG);

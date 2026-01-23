@@ -25,12 +25,12 @@ mkdir -p "$WORKSPACE/sanitizers"
 mkdir -p "$WORKSPACE/${BUILD_DIR:=build}/coverage"
 
 if test -z "$BUILD_IMAGE"; then
-    export BUILD_IMAGE=10.serenedb.com:5000/serenedb-build-ubuntu:latest
+  export BUILD_IMAGE=registry.serenedb.com:5000/serenedb-build-ubuntu:latest
 fi
 
 cd $SQLLOGIC_DIR
 # can be useful to run from container: docker compose run tests bash
-docker compose up --attach tests --exit-code-from tests --remove-orphans
+BUILD_DIR=${BUILD_DIR:=build} docker compose up --attach tests --exit-code-from tests --remove-orphans
 test_exit_code=$?
 if ! test "${test_exit_code}" -eq "0"; then
   echo "SQL logic tests failed!"

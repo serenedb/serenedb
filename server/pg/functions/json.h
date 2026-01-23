@@ -31,10 +31,15 @@
 #include <iterator>
 #include <utility>
 
-#include "basics/exceptions.h"
 #include "basics/fwd.h"
 #include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
+
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+
+#include "utils/errcodes.h"
+LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 namespace {
@@ -332,8 +337,9 @@ struct PgJsonInFunction {
     simdjson::ondemand::document doc;
     auto ec = parser.iterate(padded_input).get(doc);
     if (ec != simdjson::SUCCESS || !ValidateJson(doc)) {
-      SDB_THROW(ERROR_BAD_PARAMETER,
-                "Invalid input syntax for type json: ", input_view);
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_JSON_TEXT),
+        ERR_MSG("Invalid input syntax for type json: ", input_view));
     } else {
       result.setNoCopy(input);
     }

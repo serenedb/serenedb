@@ -24,14 +24,9 @@
 #include <absl/strings/str_cat.h>
 
 #include "basics/system-compiler.h"
+#include "nodes/nodes.h"
+#include "nodes/value.h"
 #include "sql_exception_macro.h"
-
-LIBPG_QUERY_INCLUDES_BEGIN
-#include "postgres.h"
-
-#include "nodes/parsenodes.h"
-#include "nodes/pg_list.h"
-LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 

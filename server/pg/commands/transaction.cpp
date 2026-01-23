@@ -24,12 +24,6 @@
 #include "pg/commands.h"
 #include "pg/connection_context.h"
 #include "pg/sql_exception_macro.h"
-LIBPG_QUERY_INCLUDES_BEGIN
-#include "postgres.h"
-
-#include "nodes/parsenodes.h"
-#include "nodes/pg_list.h"
-LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 

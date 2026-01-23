@@ -23,8 +23,14 @@
 #include "basics/containers/flat_hash_set.h"
 #include "sql_exception.h"
 
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+
+#include "nodes/parsenodes.h"
+#include "nodes/pg_list.h"
+LIBPG_QUERY_INCLUDES_END
+
 struct DefElem;
-union ListCell;
 
 namespace sdb::pg {
 
@@ -42,7 +48,7 @@ using Setter = void (*)(DefElem& node, T& obj);
 
 template<typename T>
 struct GetSetters;
-/*
+
 template<typename T>
 void ProcessOptions(List* options, T& value) {
   if (!options) {
@@ -75,6 +81,5 @@ void ProcessOptions(List* options, T& value) {
     (*func)(*option, value);
   }
 }
-*/
 
 }  // namespace sdb::pg

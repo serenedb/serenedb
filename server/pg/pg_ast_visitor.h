@@ -26,6 +26,14 @@
 #include "pg/pg_list_utils.h"
 #include "pg/sql_utils.h"
 
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+
+#include "nodes/nodes.h"
+#include "nodes/parsenodes.h"
+#include "nodes/pg_list.h"
+LIBPG_QUERY_INCLUDES_END
+
 namespace sdb::pg {
 
 template<typename TargetType>

@@ -144,9 +144,7 @@ DataStore::ResultWithTime DataStore::CommitUnsafe(
                        std::chrono::steady_clock::now() - begin)
                        .count();
 
-  SDB_IF_FAILURE("Search::FailOnCommit") {
-    result.reset(ERROR_DEBUG);
-  }
+  SDB_IF_FAILURE("Search::FailOnCommit") { result.reset(ERROR_DEBUG); }
 
   if (result.fail() && SetOutOfSync()) {
     try {

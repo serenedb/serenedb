@@ -187,7 +187,7 @@ class DataStore : public std::enable_shared_from_this<DataStore> {
   DataStoreMeta _meta;
   absl::Mutex _mutex;
   absl::Mutex _commit_mutex;
-  
+
   uint64_t _last_committed_tick{0};
   bool _is_creation{true};
 

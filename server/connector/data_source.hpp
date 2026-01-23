@@ -34,8 +34,10 @@ class SereneDBConnectorSplit;
 class RocksDBDataSource final : public velox::connector::DataSource {
  public:
   RocksDBDataSource(velox::memory::MemoryPool& memory_pool,
-                    rocksdb::Transaction* transaction,
-                    const rocksdb::Snapshot* snapshot, rocksdb::DB* db,
+                    // use just snapshot for now. But maybe we will need to have
+                    // this class template (or use some wrapper) to work with
+                    // WriteBatchWithindex or plain DB with snapshot
+                    const rocksdb::Snapshot* snapshot, rocksdb::DB& db,
                     rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
                     std::vector<catalog::Column::Id> column_ids,
                     catalog::Column::Id effective_column_id,
@@ -82,13 +84,8 @@ class RocksDBDataSource final : public velox::connector::DataSource {
     const rocksdb::ReadOptions& read_options);
 
   velox::memory::MemoryPool& _memory_pool;
-
-  // Reading source.
-  // Should be set either transaction (read own writes) or snapshot + db
-  rocksdb::Transaction* _transaction;
   const rocksdb::Snapshot* _snapshot;
-  rocksdb::DB* _db;
-
+  rocksdb::DB& _db;
   rocksdb::ColumnFamilyHandle& _cf;
   velox::RowTypePtr _row_type;
   std::vector<catalog::Column::Id> _column_ids;

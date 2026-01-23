@@ -30,16 +30,26 @@ void RocksDBSinkWriter::Write(std::span<const rocksdb::Slice> cell_slices,
   rocksdb::Status status;
   SDB_ASSERT(!cell_slices.empty());
 
-  // TODO make as field
-  rocksdb::PinnableSlice ps;
-  rocksdb::ReadOptions read_options;
-  read_options.async_io = true;
-  read_options.snapshot = _transaction.GetSnapshot();
-  auto s = _transaction.Get(read_options, &_cf, key_slice, &ps);
+  bool conflict;
 
-  if (s.ok()) {
+  if (_use_mask) {
+    conflict = _row_mask[_row_id++];
+  } else {
+    // TODO make as field
+    rocksdb::PinnableSlice ps;
+    rocksdb::ReadOptions read_options;
+    read_options.async_io = true;
+    read_options.snapshot = _transaction.GetSnapshot();
+    auto s = _transaction.Get(read_options, &_cf, key_slice, &ps);
+    conflict = s.ok();
+    if (!s.ok() && !s.IsNotFound()) {
+      SDB_THROW(rocksutils::ConvertStatus(status));
+    }
+    _row_mask[_row_id++] = conflict;
+  }
+
+  if (conflict) {
     // Key is found. It's conflict.
-
     switch (_conflict_policy) {
       case catalog::WriteConflictPolicy::Update:
         // just do nothing
@@ -53,11 +63,6 @@ void RocksDBSinkWriter::Write(std::span<const rocksdb::Slice> cell_slices,
         break;
       default:
         SDB_UNREACHABLE();
-    }
-  } else {
-    // Else block required because of Update case
-    if (!s.IsNotFound()) {
-      SDB_THROW(rocksutils::ConvertStatus(status));
     }
   }
 

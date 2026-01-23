@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <boost/dynamic_bitset.hpp>
 #include <span>
 
 #include "catalog/table_options.h"
@@ -40,10 +41,17 @@ class RocksDBSinkWriterBase {
     return _transaction.GetKeyLock(&_cf, full_key, false, true);
   }
 
+  void UseMaskOnConflict(bool value) { _use_mask = value; }
+  void ResizeMask(size_t num_rows) { _row_mask.resize(num_rows, false); }
+  void ResetRowId() { _row_id = 0; }
+
  protected:
   rocksdb::Transaction& _transaction;
   rocksdb::ColumnFamilyHandle& _cf;
   catalog::WriteConflictPolicy _conflict_policy;
+  boost::dynamic_bitset<> _row_mask;
+  bool _use_mask{false};
+  size_t _row_id = 0;
 };
 
 // This could be final subclass of SinkInsertWriter but currently only used

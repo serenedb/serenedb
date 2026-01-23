@@ -174,9 +174,12 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
     writer->Init(num_rows);
   }
 
+  _data_writer.ResizeMask(num_rows);
   velox::IndexRange all_rows(0, num_rows);
   const folly::Range all_rows_range{&all_rows, 1};
   for (velox::column_index_t i = 0; i < num_columns; ++i) {
+    _data_writer.UseMaskOnConflict(i > 0);
+    _data_writer.ResetRowId();
     if (_column_ids[i] != catalog::Column::kGeneratedPKId) {
       WriteInputColumn(_column_ids[i], i, *input, all_rows_range);
     }

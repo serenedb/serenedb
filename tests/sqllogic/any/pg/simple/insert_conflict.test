@@ -76,6 +76,3 @@ a	b
 
 statement ok
 DROP TABLE t2;
-
-
-# TODO test for serenedb only sdb_write_conflict_policy

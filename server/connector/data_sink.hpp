@@ -229,6 +229,7 @@ class RocksDBUpdateDataSink final
   void appendData(velox::RowVectorPtr input) final;
 
  private:
+  template<bool RewriteData>
   void RewriteColumn(rocksdb::Iterator& it, catalog::Column::Id column_id,
                      const primary_key::Keys& old_keys,
                      primary_key::Keys& new_keys);

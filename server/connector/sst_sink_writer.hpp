@@ -20,44 +20,38 @@
 
 #pragma once
 
+#include <memory>
 #include <span>
 
-#include "rocksdb/utilities/transaction.h"
+#include "catalog/table_options.h"
+#include "rocksdb/db.h"
+#include "rocksdb/sst_file_writer.h"
 
 namespace sdb::connector {
 
-class RocksDBSinkWriterBase {
+class SSTSinkWriter {
  public:
-  RocksDBSinkWriterBase(rocksdb::Transaction& transaction,
-                        rocksdb::ColumnFamilyHandle& cf)
-    : _transaction(transaction), _cf(cf) {}
-
-  virtual ~RocksDBSinkWriterBase() = default;
+  SSTSinkWriter(rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
+                std::span<catalog::Column::Id> column_oids);
 
   rocksdb::Status Lock(std::string_view full_key) {
-    return _transaction.GetKeyLock(&_cf, full_key, false, true);
+    return rocksdb::Status::OK();
   }
 
- protected:
-  rocksdb::Transaction& _transaction;
-  rocksdb::ColumnFamilyHandle& _cf;
-};
-
-// This could be final subclass of SinkInsertWriter but currently only used
-// directly inside DataSink so no need for virtual calls/default base members
-class RocksDBSinkWriter : public RocksDBSinkWriterBase {
- public:
-  RocksDBSinkWriter(rocksdb::Transaction& transaction,
-                    rocksdb::ColumnFamilyHandle& cf)
-    : RocksDBSinkWriterBase(transaction, cf) {}
-
-  void SetColumnIndex(size_t /*column_idx*/) {}
+  void SetColumnIndex(size_t column_idx) { _column_idx = column_idx; }
 
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key);
-  std::unique_ptr<rocksdb::Iterator> CreateIterator();
 
-  void DeleteCell(std::string_view full_key);
+  void Finish();
+
+  void Abort();
+
+ private:
+  rocksdb::DB* _db;
+  rocksdb::ColumnFamilyHandle* _cf;
+  std::vector<std::unique_ptr<rocksdb::SstFileWriter>> _writers;
+  size_t _column_idx{0};
 };
 
-}  //  namespace sdb::connector
+}  // namespace sdb::connector

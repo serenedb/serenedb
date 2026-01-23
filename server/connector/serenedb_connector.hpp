@@ -636,10 +636,10 @@ class SereneDBConnector final : public velox::connector::Connector {
               table.IsUsedForUpdatePK(), table.type(),
               std::vector<std::unique_ptr<SinkUpdateWriter>>{});
           } else {
-            return std::make_unique<RocksDBInsertDataSink>(
-              rocksdb_transaction, _cf, *connector_query_ctx->memoryPool(),
-              object_key, pk_indices, column_oids,
-              std::vector<std::unique_ptr<SinkInsertWriter>>{});
+            // TODO: temporary hardcode for SST insert
+            return std::make_unique<SSTInsertDataSink>(
+              _db, _cf, *connector_query_ctx->memoryPool(), object_key,
+              pk_indices, column_oids);
           }
         });
     }

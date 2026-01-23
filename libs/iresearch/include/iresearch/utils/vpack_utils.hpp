@@ -47,4 +47,25 @@ inline std::string slice_to_string(
   return str;
 }
 
+inline std::string_view slice_to_string_view(vpack::Slice slice) {
+  if (slice.isNull()) {
+    return {};
+  }
+  SDB_ASSERT(slice.isString());
+  return slice.stringView();
+}
+
+template<typename Chr>
+auto slice_to_view(vpack::Slice s) {
+  static_assert(sizeof(Chr) == sizeof(uint8_t));
+  return irs::basic_string_view{s.startAs<Chr>(), s.byteSize()};
+}
+
+template<typename Chr>
+auto view_to_slice(irs::basic_string_view<Chr> s) {
+  static_assert(sizeof(Chr) == sizeof(uint8_t));
+  SDB_ASSERT(s.data());
+  return vpack::Slice{reinterpret_cast<const uint8_t*>(s.data())};
+}
+
 }  // namespace irs

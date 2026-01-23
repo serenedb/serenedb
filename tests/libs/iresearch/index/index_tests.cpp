@@ -4787,10 +4787,17 @@ TEST_P(IndexTestCase, read_documents) {
   // no term
   {
     std::array<irs::doc_id_t, 10> docs{};
+    auto begin = docs.begin();
+    auto end = docs.end();
     auto* field = segment.field("name");
     ASSERT_NE(nullptr, field);
     const auto term = irs::ViewCast<irs::byte_type>("invalid"sv);
-    const auto size = field->read_documents(term, docs);
+    auto acceptor = [&](irs::doc_id_t doc) {
+      *begin++ = doc;
+      return begin != end;
+    };
+    field->read_documents(term, acceptor);
+    const auto size = std::distance(docs.begin(), begin);
     ASSERT_EQ(0, size);
     ASSERT_TRUE(
       std::all_of(docs.begin(), docs.end(), [](auto v) { return v == 0; }));
@@ -4799,23 +4806,51 @@ TEST_P(IndexTestCase, read_documents) {
   // singleton term
   {
     std::array<irs::doc_id_t, 10> docs{};
+    auto begin = docs.begin();
+    auto end = docs.end();
     auto* field = segment.field("name");
     ASSERT_NE(nullptr, field);
     const auto term = irs::ViewCast<irs::byte_type>("A"sv);
-    const auto size = field->read_documents(term, docs);
+    auto acceptor = [&](irs::doc_id_t doc) {
+      *begin++ = doc;
+      return begin != end;
+    };
+    field->read_documents(term, acceptor);
+    const auto size = std::distance(docs.begin(), begin);
     ASSERT_EQ(1, size);
     ASSERT_EQ(1, docs.front());
     ASSERT_TRUE(std::all_of(std::next(docs.begin(), size), docs.end(),
                             [](auto v) { return v == 0; }));
   }
 
+  // singleton term declined by acceptor
+  {
+    size_t calls = 0;
+    auto* field = segment.field("name");
+    ASSERT_NE(nullptr, field);
+    const auto term = irs::ViewCast<irs::byte_type>("A"sv);
+    auto acceptor = [&](irs::doc_id_t doc) {
+      calls++;
+      return false;
+    };
+    field->read_documents(term, acceptor);
+    ASSERT_EQ(1, calls);
+  }
+
   // singleton term
   {
     std::array<irs::doc_id_t, 10> docs{};
+    auto begin = docs.begin();
+    auto end = docs.end();
     auto* field = segment.field("name");
     ASSERT_NE(nullptr, field);
     const auto term = irs::ViewCast<irs::byte_type>("C"sv);
-    const auto size = field->read_documents(term, docs);
+    auto acceptor = [&](irs::doc_id_t doc) {
+      *begin++ = doc;
+      return begin != end;
+    };
+    field->read_documents(term, acceptor);
+    const auto size = std::distance(docs.begin(), begin);
     ASSERT_EQ(1, size);
     ASSERT_EQ(3, docs.front());
     ASSERT_TRUE(std::all_of(std::next(docs.begin(), size), docs.end(),
@@ -4825,10 +4860,17 @@ TEST_P(IndexTestCase, read_documents) {
   // regular term
   {
     std::array<irs::doc_id_t, 10> docs{};
+    auto begin = docs.begin();
+    auto end = docs.end();
     auto* field = segment.field("duplicated");
     ASSERT_NE(nullptr, field);
     const auto term = irs::ViewCast<irs::byte_type>("abcd"sv);
-    const auto size = field->read_documents(term, docs);
+    auto acceptor = [&](irs::doc_id_t doc) {
+      *begin++ = doc;
+      return begin != end;
+    };
+    field->read_documents(term, acceptor);
+    const auto size = std::distance(docs.begin(), begin);
     ASSERT_EQ(6, size);
     ASSERT_EQ(1, docs[0]);
     ASSERT_EQ(5, docs[1]);
@@ -4843,10 +4885,17 @@ TEST_P(IndexTestCase, read_documents) {
   // regular term, less requested
   {
     std::array<irs::doc_id_t, 3> docs{};
+    auto begin = docs.begin();
+    auto end = docs.end();
     auto* field = segment.field("duplicated");
     ASSERT_NE(nullptr, field);
     const auto term = irs::ViewCast<irs::byte_type>("abcd"sv);
-    const auto size = field->read_documents(term, docs);
+    auto acceptor = [&](irs::doc_id_t doc) {
+      *begin++ = doc;
+      return begin != end;
+    };
+    field->read_documents(term, acceptor);
+    const auto size = std::distance(docs.begin(), begin);
     ASSERT_EQ(3, size);
     ASSERT_EQ(1, docs[0]);
     ASSERT_EQ(5, docs[1]);
@@ -4855,23 +4904,43 @@ TEST_P(IndexTestCase, read_documents) {
 
   // regular term, nothing requested
   {
-    std::array<irs::doc_id_t, 10> docs{};
+    size_t calls = 0;
     auto* field = segment.field("duplicated");
     ASSERT_NE(nullptr, field);
     const auto term = irs::ViewCast<irs::byte_type>("abcd"sv);
-    const auto size =
-      field->read_documents(term, std::span{docs.data(), size_t{0}});
-    ASSERT_EQ(0, size);
-    ASSERT_TRUE(
-      std::all_of(docs.begin(), docs.end(), [](auto v) { return v == 0; }));
+    auto acceptor = [&](irs::doc_id_t doc) {
+      calls++;
+      return false;
+    };
+    field->read_documents(term, acceptor);
+    // no calls after false returned
+    ASSERT_EQ(1, calls);
   }
 
+  // regular term acceptor filtered
   {
+    std::array<irs::doc_id_t, 10> docs{};
+    auto begin = docs.begin();
+    auto end = docs.end();
     auto* field = segment.field("duplicated");
     ASSERT_NE(nullptr, field);
     const auto term = irs::ViewCast<irs::byte_type>("abcd"sv);
-    const auto size = field->read_documents(term, {});
-    ASSERT_EQ(0, size);
+    auto acceptor = [&](irs::doc_id_t doc) {
+      if (doc != 1) {
+        *begin++ = doc;
+      }
+      return begin != end;
+    };
+    field->read_documents(term, acceptor);
+    const auto size = std::distance(docs.begin(), begin);
+    ASSERT_EQ(5, size);
+    ASSERT_EQ(5, docs[0]);
+    ASSERT_EQ(11, docs[1]);
+    ASSERT_EQ(21, docs[2]);
+    ASSERT_EQ(27, docs[3]);
+    ASSERT_EQ(31, docs[4]);
+    ASSERT_TRUE(std::all_of(std::next(docs.begin(), size), docs.end(),
+                            [](auto v) { return v == 0; }));
   }
 }
 

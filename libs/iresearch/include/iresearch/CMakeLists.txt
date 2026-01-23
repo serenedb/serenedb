@@ -70,6 +70,7 @@ set(IResearch_core_sources
     ./analysis/solr_synonyms_tokenizer.cpp
     ./analysis/wordnet_synonyms_tokenizer.cpp
     ./analysis/fast_text_model.cpp
+    ./analysis/geo_analyzer.cpp
     ./error/error.cpp
     ./formats/columnstore2.cpp
     ./formats/formats.cpp
@@ -125,6 +126,7 @@ set(IResearch_core_sources
     ./search/boolean_query.cpp
     ./search/ngram_similarity_filter.cpp
     ./search/ngram_similarity_query.cpp
+    ./search/geo_filter.cpp
     ./search/proxy_filter.cpp
     ./search/tfidf.cpp
     ./search/bm25.cpp
@@ -230,6 +232,7 @@ target_link_libraries(
     PUBLIC ${SIMD_LIBRARY_STATIC}
     PUBLIC ${FAISS_LIB}
     PUBLIC re2
+    PUBLIC serene_geo
     PRIVATE lz4_static
     PRIVATE text
     PRIVATE stemmer-static

@@ -22,6 +22,12 @@
 
 #include "pg/commands.h"
 #include "yaclib/async/make.hpp"
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+
+#include "nodes/nodes.h"
+#include "nodes/parsenodes.h"
+LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
 

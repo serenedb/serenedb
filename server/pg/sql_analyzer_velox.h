@@ -87,5 +87,6 @@ VeloxQuery AnalyzeVelox(const RawStmt& node, const QueryString& query_string,
                         CopyMessagesQueue* copy_queue);
 
 velox::TypePtr NameToType(const TypeName& type_name);
-
+catalog::FunctionSignature ToSignature(const List* pg_parameters,
+                                       const TypeName* pg_return_type);
 }  // namespace sdb::pg

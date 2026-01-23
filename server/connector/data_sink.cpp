@@ -263,7 +263,8 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
       auto it = _data_writer.CreateIterator();
       for (auto column_id : _all_column_ids) {
         if (!IsUpdatedColumn(column_id)) {
-          RewriteColumn(*it, column_id, _store_keys_buffers,
+          // Do now rewrite data in rocksdb - only index parts
+          RewriteColumn<false>(*it, column_id, _store_keys_buffers,
                         _store_keys_buffers);
         }
       }
@@ -300,7 +301,7 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
       WriteInputColumn(column_id, _column_id_to_input_idx[column_id], *input,
                        all_rows_range);
     } else {
-      RewriteColumn(*it, column_id, _old_keys_buffers, _store_keys_buffers);
+      RewriteColumn<true>(*it, column_id, _old_keys_buffers, _store_keys_buffers);
     }
     // Delete values written with old keys
     for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
@@ -310,6 +311,7 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
   }
 }
 
+template <bool RewriteData>
 void RocksDBUpdateDataSink::RewriteColumn(rocksdb::Iterator& it,
                                           catalog::Column::Id column_id,
                                           const primary_key::Keys& old_keys,
@@ -342,7 +344,9 @@ void RocksDBUpdateDataSink::RewriteColumn(rocksdb::Iterator& it,
                "for PK update");
     auto value_slice = it.value();
     const auto& new_key = new_keys[row_idx];
-    _data_writer.Write({&value_slice, 1}, new_key);
+    if constexpr (RewriteData) {
+      _data_writer.Write({&value_slice, 1}, new_key);
+    }
     for (const auto& writer : _index_writers) {
       writer->Write({&value_slice, 1}, new_key);
     }

@@ -451,3 +451,53 @@ a	b
 
 statement ok
 DROP TABLE update_all;
+
+# Insert + Update in the same transaction
+
+statement ok
+CREATE TABLE update_trans (a INTEGER PRIMARY KEY, b INTEGER);
+
+statement count 3
+INSERT INTO update_trans VALUES (1, 10), (2, 20), (3, 30);
+
+statement ok
+BEGIN;
+
+statement count 1
+INSERT INTO update_trans VALUES (4, 40);
+
+query
+SELECT * FROM update_trans ORDER BY a;
+----
+a b
+1 10
+2 20
+3 30
+4 40
+
+statement count 1
+UPDATE update_trans SET a = 5 WHERE a = 4;
+
+query
+SELECT * FROM update_trans ORDER BY a;
+----
+a b
+1 10
+2 20
+3 30
+5 40
+
+statement ok
+COMMIT;
+
+query
+SELECT * FROM update_trans ORDER BY a;
+----
+a b
+1 10
+2 20
+3 30
+5 40
+
+statement ok
+DROP TABLE update_trans;

@@ -39,12 +39,14 @@ constexpr uint64_t kInitialVectorSize = 1;  // arbitrary value
 }  // namespace
 
 RocksDBDataSource::RocksDBDataSource(
-  velox::memory::MemoryPool& memory_pool, const rocksdb::Snapshot* snapshot,
-  rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
+  velox::memory::MemoryPool& memory_pool, rocksdb::Transaction* transaction,
+  const rocksdb::Snapshot* snapshot, rocksdb::DB* db,
+  rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
   std::vector<catalog::Column::Id> column_oids,
   catalog::Column::Id effective_column_id, ObjectId object_key)
   : velox::connector::DataSource{},
     _memory_pool{memory_pool},
+    _transaction{transaction},
     _snapshot{snapshot},
     _db{db},
     _cf{cf},
@@ -58,6 +60,8 @@ RocksDBDataSource::RocksDBDataSource(
              "RocksDBDataSource: at least one column must be requested");
   SDB_ASSERT(_row_type->size() == 0 || _row_type->size() == _column_ids.size(),
              "RocksDBDataSource: number of columns does not match row type");
+  SDB_ASSERT((_db == nullptr) != (_transaction == nullptr),
+             "RocksDBDataSource: Only one should be set - transaction or db");
 }
 
 void RocksDBDataSource::addSplit(
@@ -73,8 +77,9 @@ void RocksDBDataSource::addSplit(
 
 std::unique_ptr<rocksdb::Iterator> RocksDBDataSource::CreateColumnIterator(
   const std::string_view column_key, const rocksdb::ReadOptions& read_options) {
-  auto it =
-    std::unique_ptr<rocksdb::Iterator>(_db.NewIterator(read_options, &_cf));
+  auto it = std::unique_ptr<rocksdb::Iterator>(
+    _db ? _db->NewIterator(read_options, &_cf)
+        : _transaction->GetIterator(read_options, &_cf));
   it->Seek(column_key + _last_read_key);
   if (!_last_read_key.empty()) {
     SDB_ASSERT(

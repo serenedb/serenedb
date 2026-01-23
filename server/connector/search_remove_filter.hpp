@@ -28,9 +28,8 @@
 
 namespace sdb::connector::search {
 
-// this matches generated PK column id but it is not stored so should be fine.
-constexpr inline std::string_view kPkFieldName{
-  "\xff\xff\xff\xff\xff\xff\xff\xff", 8};
+// something that never match user created fields id.
+constexpr inline std::string_view kPkFieldName{"\x00", 1};
 
 class SearchRemoveFilterBase : public irs::Filter,
                                public irs::Filter::Query,
@@ -85,7 +84,7 @@ class SearchRemoveFilterBase : public irs::Filter,
   mutable std::vector<irs::bstring> _pks;
 };
 
-class SearchRemoveFilter : public SearchRemoveFilterBase {
+class SearchRemoveFilter final : public SearchRemoveFilterBase {
  public:
   explicit SearchRemoveFilter(size_t batch_size) { _pks.reserve(batch_size); }
 
@@ -94,7 +93,7 @@ class SearchRemoveFilter : public SearchRemoveFilterBase {
     _pks.clear();
   }
 
-  irs::doc_id_t advance() override;
+  irs::doc_id_t advance() final;
 };
 
 }  // namespace sdb::connector::search

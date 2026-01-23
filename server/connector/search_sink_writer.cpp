@@ -35,11 +35,11 @@
 #include "search_remove_filter.hpp"
 #include "velox/functions/prestosql/types/JsonType.h"
 
+namespace sdb::connector::search {
+
 namespace {
 
 using namespace sdb::search;
-using namespace sdb::connector;
-using namespace sdb::catalog;
 
 constexpr size_t kDefaultPoolSize = 8;  // arbitrary value
 irs::UnboundedObjectPool<AnalyzerImpl::Builder> gStringStreamPool(
@@ -51,14 +51,12 @@ irs::UnboundedObjectPool<AnalyzerImpl::Builder> gBoolStreamPool(
 irs::UnboundedObjectPool<AnalyzerImpl::Builder> gNullStreamPool(
   kDefaultPoolSize);
 
-void SetNameToBuffer(std::string& name_buffer, Column::Id column_id) {
+void SetNameToBuffer(std::string& name_buffer, catalog::Column::Id column_id) {
   SDB_ASSERT(name_buffer.size() >= sizeof(column_id));
   absl::big_endian::Store(name_buffer.data(), column_id);
 }
 
 }  // namespace
-
-namespace sdb::connector::search {
 
 SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
   irs::IndexWriter::Transaction& trx)
@@ -67,8 +65,9 @@ SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
   _pk_field.name = kPkFieldName;
 }
 
-bool SearchSinkInsertBaseImpl::SwitchColumnImpl(
-  velox::TypeKind kind, bool have_nulls, sdb::catalog::Column::Id column_id) {
+bool SearchSinkInsertBaseImpl::SwitchColumnImpl(velox::TypeKind kind,
+                                                bool have_nulls,
+                                                catalog::Column::Id column_id) {
   if (kind == facebook::velox::TypeKind::UNKNOWN) {
     // for UNKNOWN type we always have nulls so no need of separate nulls
     // handling
@@ -93,8 +92,8 @@ void SearchSinkInsertBaseImpl::WriteImpl(
 void SearchSinkInsertBaseImpl::FinishImpl() { _document.reset(); }
 
 template<velox::TypeKind Kind>
-void SearchSinkInsertBaseImpl::SetupColumnWriter(
-  sdb::catalog::Column::Id column_id, bool have_nulls) {
+void SearchSinkInsertBaseImpl::SetupColumnWriter(catalog::Column::Id column_id,
+                                                 bool have_nulls) {
   basics::StrResize(_name_buffer, sizeof(column_id));
   SetNameToBuffer(_name_buffer, column_id);
   using T = typename velox::TypeTraits<Kind>::NativeType;

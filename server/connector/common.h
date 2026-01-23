@@ -40,7 +40,7 @@ enum class ValueFlags : uint8_t {
 ENABLE_BITMASK_ENUM(ValueFlags);
 
 // TODO(Dronplane) unify with key?
-constexpr std::string_view kStringPrefix{"\0", 1};
+inline constexpr std::string_view kStringPrefix{"\0", 1};
 inline constexpr std::string_view kTrueValue{"\1", 1};
 inline constexpr std::string_view kFalseValue{"\0", 1};
 

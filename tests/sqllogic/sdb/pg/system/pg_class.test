@@ -87,3 +87,40 @@ query
 SELECT relname, reloptions FROM pg_class WHERE reloptions <> ARRAY[]::varchar[];
 ----
 relname	reloptions
+
+
+statement count 3
+INSERT INTO t VALUES ('a'), ('b'), ('c');
+
+
+statement count 3
+INSERT INTO t VALUES ('a'), ('b'), ('c');
+
+
+query
+SELECT relname, reltuples FROM pg_class WHERE relname = 't';
+----
+relname	reltuples
+t	6
+
+
+statement count 2
+UPDATE t SET r = 'aa' WHERE r = 'a';
+
+
+query
+SELECT relname, reltuples FROM pg_class WHERE relname = 't';
+----
+relname	reltuples
+t	6
+
+
+statement count 2
+DELETE FROM t WHERE r = 'aa';
+
+
+query
+SELECT relname, reltuples FROM pg_class WHERE relname = 't';
+----
+relname	reltuples
+t	4

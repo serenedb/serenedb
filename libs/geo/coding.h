@@ -21,18 +21,25 @@
 
 #pragma once
 
+#include <s2/s2region_term_indexer.h>
 #include <s2/s2shape.h>
 
 #include <cstdint>
 #include <span>
 #include <vector>
 
+#include "vpack/builder.h"
+#include "vpack/slice.h"
+
 class S2Polyline;
 class S2Polygon;
 
 namespace sdb::geo {
+
+class ShapeContainer;
+
 namespace coding {
-// Numbers here used for serialization, you cannot change it!
+// Numbers persistent to store! Do not change!
 
 enum class Type : uint8_t {
   Point = 0,
@@ -40,7 +47,6 @@ enum class Type : uint8_t {
   Polygon = 2,
   MultiPoint = 3,
   MultiPolyline = 4,
-  // GeometryCollection = 5, TODO(mbkkt) implement it?
 };
 
 enum class Options : uint8_t {
@@ -104,7 +110,6 @@ constexpr size_t ToSize(Options options) noexcept {
 
 }  // namespace coding
 
-void CheckEndian() noexcept;
 void ToLatLngU32(S2LatLng& lat_lng) noexcept;
 void EncodeLatLng(Encoder& encoder, S2LatLng& lat_lng,
                   coding::Options options) noexcept;
@@ -116,7 +121,7 @@ void EncodeVertices(Encoder& encode, std::span<S2LatLng> vertices,
                     coding::Options options);
 bool DecodeVertices(Decoder& decoder, std::span<S2Point> vertices, uint8_t tag);
 
-bool DecodePoint(Decoder& decoder, S2Point& point, uint8_t* tag);
+std::pair<bool, uint8_t> DecodePoint(Decoder& dec, S2Point& pt);
 bool DecodePoint(Decoder& decoder, S2Point& point, uint8_t tag);
 
 void EncodePolyline(Encoder& encoder, const S2Polyline& polyline,
@@ -128,5 +133,42 @@ void EncodePolygon(Encoder& encoder, const S2Polygon& polygon,
                    coding::Options options);
 bool DecodePolygon(Decoder& decoder, S2Polygon& polygon, uint8_t tag,
                    std::vector<S2Point>& cache);
+
+struct GeoOptions {
+  // TODO(mbkkt) different maxCells can be set on every insertion/querying
+  int32_t max_cells{20};
+  int32_t min_level{4};
+  int32_t max_level{23};  // ~1m
+  int8_t level_mod{1};
+  bool optimize_for_space{false};
+
+  sdb::Result Validate() const noexcept;
+};
+
+inline S2RegionTermIndexer::Options S2Options(const GeoOptions& opts,
+                                              bool points_only) {
+  S2RegionTermIndexer::Options s2opts;
+  s2opts.set_max_cells(opts.max_cells);
+  s2opts.set_min_level(opts.min_level);
+  s2opts.set_max_level(opts.max_level);
+  s2opts.set_level_mod(opts.level_mod);
+  s2opts.set_optimize_for_space(opts.optimize_for_space);
+  s2opts.set_index_contains_points_only(points_only);
+
+  return s2opts;
+}
+
+enum class Parsing : uint8_t {
+  FromIndex = 0,
+  OnlyPoint,
+  GeoJson,
+};
+
+template<Parsing P>
+bool ParseShape(vpack::Slice vpack, ShapeContainer& region,
+                std::vector<S2LatLng>& cache, coding::Options options,
+                Encoder* encoder);
+
+void PointToVPack(vpack::Builder& builder, S2LatLng point);
 
 }  // namespace sdb::geo

@@ -2793,14 +2793,12 @@ class FieldReaderImpl final : public FieldReader {
         return;
       }
 
-      const auto* doc = irs::get<DocAttr>(*docs_it);
-
-      if (!doc) [[unlikely]] {
-        SDB_ASSERT(false);
-        return;
-      }
-
-      while (docs_it->next() && acceptor(doc->value)) {
+      doc_id_t d;
+      while (!doc_limits::eof(d = docs_it->advance())) {
+        SDB_ASSERT(doc_limits::valid(d));
+        if (!acceptor(d)) {
+          break;
+        }
       }
     }
 

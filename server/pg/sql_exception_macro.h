@@ -29,6 +29,7 @@
 #define ERR_MSG(...) error.errmsg = absl::StrCat(__VA_ARGS__)
 #define ERR_HINT(...) error.errhint = absl::StrCat(__VA_ARGS__)
 #define ERR_DETAIL(...) error.errdetail = absl::StrCat(__VA_ARGS__)
+#define ERR_CONTEXT(...) error.context = absl::StrCat(__VA_ARGS__)
 
 #define SQL_ERROR_DATA(...)           \
   [&] {                               \

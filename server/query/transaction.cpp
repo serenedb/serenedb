@@ -67,7 +67,8 @@ bool Transaction::HasTransactionBegin() const noexcept {
 }
 
 rocksdb::Transaction* Transaction::GetRocksDBTransaction() const noexcept {
-  SDB_ASSERT((_state & State::HasRocksDBWrite) != State::None);
+  SDB_ASSERT((_state & (State::HasRocksDBWrite | State::HasTransactionBegin)) !=
+             State::None);
   return _rocksdb_transaction.get();
 }
 
@@ -84,7 +85,8 @@ const rocksdb::Snapshot& Transaction::EnsureRocksDBSnapshot() {
 }
 
 rocksdb::Transaction& Transaction::EnsureRocksDBTransaction() {
-  SDB_ASSERT((_state & State::HasRocksDBWrite) != State::None);
+  SDB_ASSERT((_state & (State::HasRocksDBWrite | State::HasTransactionBegin)) !=
+             State::None);
   if (!_rocksdb_transaction) {
     CreateRocksDBTransaction();
   }

@@ -4,6 +4,8 @@
 
 #include <iresearch/store/fs_directory.hpp>
 
+#include "basics/assert.h"
+#include "catalog/catalog.h"
 #include "metrics/gauge.h"
 #include "metrics/guard.h"
 #include "search/task.h"
@@ -240,6 +242,103 @@ Result DataStore::CommitUnsafeImpl(bool wait,
                          GetId().id(), "'")};
   }
   return {};
+}
+
+DataStore::ResultWithTime DataStore::ConsolidateUnsafe(
+  const DataStoreMeta::ConsolidationPolicy& policy,
+  const irs::MergeWriter::FlushProgress& progress, bool& empty_consolidation) {
+  auto begin = std::chrono::steady_clock::now();
+  auto result = ConsolidateUnsafeImpl(policy, progress, empty_consolidation);
+  uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                       std::chrono::steady_clock::now() - begin)
+                       .count();
+  if (bool ok = result.ok(); ok && _avg_consolidation_time_ms != nullptr) {
+    _avg_consolidation_time_ms->store(
+      ComputeAvg(_consolidation_time_num, time_ms), std::memory_order_relaxed);
+  } else if (!ok && _num_failed_consolidations != nullptr) {
+    _num_failed_consolidations->fetch_add(1, std::memory_order_relaxed);
+  }
+  return {std::move(result), time_ms};
+}
+
+Result DataStore::ConsolidateUnsafeImpl(
+  const DataStoreMeta::ConsolidationPolicy& policy,
+  const irs::MergeWriter::FlushProgress& progress, bool& empty_consolidation) {
+  empty_consolidation = false;  // TODO Why?
+
+  if (!policy.policy()) {
+    return {
+      ERROR_BAD_PARAMETER,
+      absl::StrCat(
+        "unset consolidation policy while executing consolidation policy '",
+        policy.properties().toString(), "' on Search index '",
+        GetIndexId().id(), "'")};
+  }
+
+  try {
+    const auto res = _writer->Consolidate(policy.policy(), nullptr, progress);
+    if (!res) {
+      return {ERROR_INTERNAL,
+              absl::StrCat("failure while executing consolidation policy '",
+                           policy.properties().toString(),
+                           "' on Search index '", GetIndexId().id(), "'")};
+    }
+
+    empty_consolidation = (res.size == 0);
+  } catch (const std::exception& e) {
+    return {
+      ERROR_INTERNAL,
+      absl::StrCat("caught exception while executing consolidation policy '",
+                   policy.properties().toString(), "' on Search index '",
+                   GetIndexId().id(), "': ", e.what())};
+  } catch (...) {
+    return {
+      ERROR_INTERNAL,
+      absl::StrCat("caught exception while executing consolidation policy '",
+                   policy.properties().toString(), "' on Search index '",
+                   GetIndexId().id(), "'")};
+  }
+  return {};
+}
+
+bool DataStore::SetOutOfSync() noexcept {
+  SDB_ASSERT(!ServerState::instance()->IsCoordinator());
+  auto error = _error.load(std::memory_order_relaxed);
+  return error == Error::NoError &&
+         _error.compare_exchange_strong(error, Error::OutOfSync,
+                                        std::memory_order_relaxed,
+                                        std::memory_order_relaxed);
+}
+
+void DataStore::MarkOutOfSyncUnsafe() {
+  // Only once per link:
+  // 1. increase metric for number of OutOfSync links
+  // 2. persist OutOfSync flag in RocksDB
+  // note: if this fails, it will throw an exception
+  SDB_ASSERT(_search != nullptr);
+  _search->trackOutOfSyncLink();
+
+  auto& catalog =
+    SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
+  auto snapshot = catalog.Local().GetSnapshot();
+  auto c = snapshot->GetObject<catalog::Table>(GetId());
+  auto shard = snapshot->GetTableShard(GetId());
+  if (!c) {
+    // already deleted
+    return;
+  }
+
+  _engine->ChangeTable(*c, *shard);
+}
+
+bool DataStore::IsOutOfSync() const noexcept {
+  // The OutOfSync flag is expected to be set either
+  // during the recovery phase, or when a commit goes wrong
+  return _error.load(std::memory_order_relaxed) == Error::OutOfSync;
+}
+
+bool DataStore::FailQueriesOnOutOfSync() const noexcept {
+  return _search->failQueriesOnOutOfSync();
 }
 
 }  // namespace sdb::search

@@ -112,12 +112,12 @@ class ScoreFunction : util::Noncopyable {
     _score(_ctx, res);
   }
 
-  IRS_FORCE_INLINE void Min(score_t arg) const noexcept {
+  IRS_FORCE_INLINE void MinScore(score_t arg) const noexcept {
     SDB_ASSERT(_min != nullptr);
     _min(_ctx, arg);
   }
 
-  score_t Max() const noexcept;
+  score_t MaxScore() const noexcept;
 
   // TODO(mbkkt) Remove it, use Score
   IRS_FORCE_INLINE void operator()(score_t* res) const noexcept { Score(res); }

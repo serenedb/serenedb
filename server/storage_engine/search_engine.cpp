@@ -36,7 +36,6 @@
 #include "basics/logger/logger.h"
 #include "basics/number_of_cores.h"
 #include "catalog/analyzer.h"
-#include "catalog/geo_analyzer.h"
 #include "catalog/identity_analyzer.h"
 #include "catalog/index.h"
 #include "catalog/search_common.h"
@@ -67,7 +66,6 @@ REGISTER_ANALYZER_VPACK(wildcard::Analyzer, wildcard::Analyzer::make,
 
 DECLARE_GAUGE(serenedb_search_num_out_of_sync_links, uint64_t,
               "Number of inverted indexes currently out of sync");
-
 
 const std::string kCommitThreadsParam("--search.commit-threads");
 const std::string kConsolidationThreadsParam("--search.consolidation-threads");
@@ -298,7 +296,6 @@ void SearchEngine::start() {
              "] consolidation thread(s). Search execution parallel threads "
              "limit: ",
              _search_execution_threads_limit);
-
   }
 }
 
@@ -323,7 +320,7 @@ void CleanupDatabase(ObjectId database_id) {
 }
 
 bool SearchEngine::queue(ThreadGroup id, absl::Duration delay,
-                          absl::AnyInvocable<void()>&& fn) {
+                         absl::AnyInvocable<void()>&& fn) {
   auto r = basics::SafeCall([&]() {
     return _thread_pools->Get(id).run(std::move(fn), delay)
              ? Result{}

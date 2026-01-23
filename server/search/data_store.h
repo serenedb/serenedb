@@ -42,7 +42,9 @@ enum class CommitResult {
 
 struct DataSnapshot {
   DataSnapshot(irs::DirectoryReader&& index,
-               std::shared_ptr<StorageSnapshot> rocksdb_snapshot);
+               std::shared_ptr<StorageSnapshot> rocksdb_snapshot)
+    : reader{std::move(index)}, snapshot{std::move(rocksdb_snapshot)} {}
+
   [[nodiscard]] auto GetSequenceNumber() const noexcept {
     return snapshot->GetSnapshot()->GetSequenceNumber();
   }
@@ -114,7 +116,7 @@ class DataStore : public std::enable_shared_from_this<DataStore> {
 
   ResultWithTime ConsolidateUnsafe(
     const DataStoreMeta::ConsolidationPolicy& policy,
-    const irs::MergeWriter::FlushProgress& progress, bool empty_consolidation);
+    const irs::MergeWriter::FlushProgress& progress, bool& empty_consolidation);
 
   ResultWithTime CleanupUnsafe();
   Stats UpdateStatsUnsafe(DataSnapshotPtr data) const;
@@ -150,10 +152,11 @@ class DataStore : public std::enable_shared_from_this<DataStore> {
                           CommitResult& res);
   Result ConsolidateUnsafeImpl(const DataStoreMeta::ConsolidationPolicy& policy,
                                const irs::MergeWriter::FlushProgress& progress,
-                               bool empty_consolidation);
+                               bool& empty_consolidation);
   Result CleanupUnsafeImpl();
 
   RocksDBEngineCatalog* _engine;
+  SearchEngine* _search;
   IndexId _id;
   std::shared_ptr<ThreadPoolState> _state;
   DataSnapshotPtr _snapshot;
@@ -182,5 +185,15 @@ class DataStore : public std::enable_shared_from_this<DataStore> {
   std::atomic_uint64_t _consolidation_time_num{0};
   metrics::Gauge<uint64_t>* _avg_consolidation_time_ms{nullptr};
   metrics::Guard<Stats>* _metric_stats{nullptr};
+
+  enum class Error : uint8_t {
+    // data store has no issues
+    NoError = 0,
+    // data store is out of sync
+    OutOfSync = 1,
+    // data store is failed (currently not used)
+    Failed = 2,
+  };
+  std::atomic<Error> _error{Error::NoError};
 };
 }  // namespace sdb::search

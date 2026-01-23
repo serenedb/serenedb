@@ -108,8 +108,6 @@ class SearchEngine final : public SerenedFeature {
   uint32_t _commit_threads{0};
   uint32_t _search_execution_threads_limit{0};
   uint32_t _default_parallelism{1};
-
-
 };
 
 }  // namespace search

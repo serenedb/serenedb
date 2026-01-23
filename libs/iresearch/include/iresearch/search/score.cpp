@@ -80,7 +80,7 @@ static ScoreFunction CompileScorers(ScoreFunction&& wand,
         },
         [](ScoreCtx* ctx, score_t arg) noexcept {
           auto* scorers_ctx = static_cast<Ctx*>(ctx);
-          scorers_ctx->wand.Min(arg);
+          scorers_ctx->wand.MinScore(arg);
         },
         std::move(wand), std::move(tail));
     }
@@ -137,7 +137,7 @@ void CompileScore(ScoreAttr& score, std::span<const ScorerBucket> buckets,
     // wanderator could have score upper bounds.
     if (score.max.tail == std::numeric_limits<score_t>::max()) {
       score.max.leaf = score.max.tail =
-        scorers.empty() ? 0.f : scorers.front().Max();
+        scorers.empty() ? 0.f : scorers.front().MaxScore();
     }
     score = CompileScorers(std::move(scorers));
   } else if (buckets.size() > 1) {

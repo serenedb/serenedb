@@ -189,7 +189,7 @@ std::vector<Doc> WandTestCase::Collect(const irs::DirectoryReader& index,
     if (!left) {
       EXPECT_TRUE(!sorted.empty());
       EXPECT_TRUE(std::is_heap(std::begin(sorted), std::end(sorted)));
-      score->Min(sorted.front().score);
+      score->MinScore(sorted.front().score);
     }
     std::vector<irs::score_t> scores(scorers.size());
     auto& score_value = *scores.data();
@@ -201,7 +201,7 @@ std::vector<Doc> WandTestCase::Collect(const irs::DirectoryReader& index,
 
         if (0 == --left) {
           std::make_heap(std::begin(sorted), std::end(sorted));
-          score->Min(sorted.front().score);
+          score->MinScore(sorted.front().score);
         }
       } else if (sorted.front().score < score_value) {
         std::pop_heap(std::begin(sorted), std::end(sorted));
@@ -213,7 +213,7 @@ std::vector<Doc> WandTestCase::Collect(const irs::DirectoryReader& index,
 
         std::push_heap(std::begin(sorted), std::end(sorted));
 
-        score->Min(sorted.front().score);
+        score->MinScore(sorted.front().score);
       }
     }
 

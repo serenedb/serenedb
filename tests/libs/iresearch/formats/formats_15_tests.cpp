@@ -370,12 +370,13 @@ Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
 
 void Format15TestCase::AssertWanderator(irs::DocIterator::ptr& actual,
                                         irs::IndexFeatures features,
-                                        DocsView /*docs*/) {
+                                        DocsView docs) {
   ASSERT_NE(nullptr, actual);
 
   auto* threshold_value = irs::GetMutable<irs::ScoreAttr>(actual.get());
   ASSERT_NE(threshold_value, nullptr);
-  if (irs::IndexFeatures::None == (features & irs::IndexFeatures::Freq)) {
+  if (irs::IndexFeatures::None == (features & irs::IndexFeatures::Freq) ||
+      docs.size() == 1) {
     ASSERT_EQ(std::numeric_limits<irs::score_t>::max(),
               threshold_value->max.tail);
   } else {

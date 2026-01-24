@@ -25,7 +25,7 @@
 
 #include "catalog/table_options.h"
 #include "rocksdb/db.h"
-#include "rocksdb/sst_file_writer.h"
+#include "rocksdb/fast_sst_file_writer.h"
 
 namespace sdb::connector {
 

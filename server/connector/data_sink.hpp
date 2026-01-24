@@ -267,6 +267,9 @@ class SSTInsertDataSink final
 
   void appendData(velox::RowVectorPtr input) final;
   bool finish() final;
+
+private:
+  uint64_t _num_rows = 0;
 };
 
 class RocksDBDeleteDataSink : public velox::connector::DataSink {

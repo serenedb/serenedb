@@ -22,7 +22,6 @@
 
 #include <filesystem>
 #include <format>
-#include <iostream>
 #include <random>
 #include <string>
 
@@ -33,7 +32,6 @@
 
 namespace sdb::connector {
 
-//  TODO before PR: do smthing with that
 std::string GenerateSSTFilePath() {
   auto now = std::chrono::system_clock::now();
   auto timestamp =
@@ -64,6 +62,7 @@ SSTSinkWriter::SSTSinkWriter(rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
   options.table_factory.reset(
     rocksdb::NewBlockBasedTableFactory(table_options));
   options.compression = rocksdb::kNoCompression;
+  options.compression_per_level.clear();
 
   for (size_t i = 0; i < _writers.size(); ++i) {
     if (column_oids[i] == catalog::Column::kGeneratedPKId) {
@@ -136,6 +135,8 @@ void SSTSinkWriter::Finish() {
   }
 }
 
-void SSTSinkWriter::Abort() {}
+void SSTSinkWriter::Abort() {
+  // TODO: implement 
+}
 
 }  // namespace sdb::connector

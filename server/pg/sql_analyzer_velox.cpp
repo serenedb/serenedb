@@ -328,6 +328,10 @@ std::optional<T> TryGetImpl(const Node* expr) {
 
 template<typename T>
 std::optional<T> TryGet(const Node* expr) {
+  if (!expr) {
+    return {};
+  }
+
   if (nodeTag(expr) == T_A_Const) {
     const auto& a_const = *castNode(A_Const, expr);
     if (a_const.isnull) {
@@ -623,7 +627,6 @@ struct State {
 
   containers::FlatHashMap<std::string_view, CTE> ctes;
   const Node* pgsql_node = nullptr;
-  const List* options = nullptr;  // list of DefElem
 
   void Project(UniqueIdGenerator& id_generator, std::vector<std::string> names,
                std::vector<lp::ExprPtr> exprs) {
@@ -747,6 +750,42 @@ class TargetList {
   std::vector<Entry> _entries;
   containers::FlatHashMap<std::string_view, lp::ExprPtr> _alias_to_expr;
 };
+
+std::pair<std::string_view, VeloxQuery::OptionValue> ConvertToOption(
+  const DefElem* option) {
+  std::string_view name = option->defname;
+  VeloxQuery::OptionValue value;
+  SDB_ASSERT(absl::c_none_of(name, absl::ascii_isupper));
+  if (!option->arg) {
+    return std::pair{name, true};
+  }
+  SDB_ASSERT(option->arg);
+  switch (option->arg->type) {
+    case NodeTag::T_Integer:
+      value = intVal(option->arg);
+    case NodeTag::T_Boolean:
+      value = boolVal(option->arg);
+    case NodeTag::T_String:
+      value = strVal(option->arg);
+    case NodeTag::T_Float:
+      value = floatVal(option->arg);
+    default:
+      SDB_ASSERT(false);
+  }
+  return std::pair{name, std::move(value)};
+}
+
+using NameToOption =
+  containers::FlatHashMap<std::string_view, VeloxQuery::OptionValue>;
+NameToOption ConvertOptions(const List* options) {
+  const size_t options_size = list_length(options);
+  NameToOption res;
+  res.reserve(options_size);
+  for (size_t i = 0; i < options_size; ++i) {
+    res.insert(ConvertToOption(list_nth_node(DefElem, options, i)));
+  }
+  return res;
+}
 
 class SqlAnalyzer {
  public:
@@ -1154,7 +1193,7 @@ class SqlAnalyzer {
   UniqueIdGenerator& _id_generator;
   vc::QueryCtx& _query_ctx;
   velox::memory::MemoryPool& _memory_pool;
-
+  NameToOption _options;
   pg::Params& _params;
   containers::FlatHashMap<const lp::Expr*, ParamIndex> _param_to_idx;
   query::Transaction& _transaction;
@@ -1306,44 +1345,6 @@ void SqlAnalyzer::ProcessAlias(State& state, const List* new_aliases,
     _id_generator.NextPlanId(), std::move(state.root), std::move(names),
     std::move(exprs));
   state.resolver.CreateTable(table, MakePtrView(state.root->outputType()));
-}
-
-std::pair<std::string_view, VeloxQuery::OptionValue> ConvertToOption(
-  const DefElem* option) {
-  std::string_view name = option->defname;
-  VeloxQuery::OptionValue value;
-  SDB_ASSERT(absl::c_none_of(name, absl::ascii_isupper));
-  if (!option->arg) {
-    return {std::string_view(name), true};
-  }
-  switch (option->arg->type) {
-    case NodeTag::T_Integer:
-      value = intVal(option->arg);
-      break;
-    case NodeTag::T_Boolean:
-      value = boolVal(option->arg);
-      break;
-    case NodeTag::T_String:
-      value = strVal(option->arg);
-      break;
-    case NodeTag::T_Float:
-      value = floatVal(option->arg);
-      break;
-    default:
-      SDB_ASSERT(false);
-  }
-  return {std::string_view(name), value};
-}
-
-containers::FlatHashMap<std::string_view, VeloxQuery::OptionValue>
-ConvertOptions(const List* options) {
-  const size_t options_size = list_length(options);
-  containers::FlatHashMap<std::string_view, VeloxQuery::OptionValue> res;
-  res.reserve(options_size);
-  for (size_t i = 0; i < options_size; ++i) {
-    res.insert(ConvertToOption(list_nth_node(DefElem, options, i)));
-  }
-  return res;
 }
 
 void SqlAnalyzer::ProcessSelectStmt(State& state, const SelectStmt& stmt) {
@@ -1543,6 +1544,29 @@ void SqlAnalyzer::MakeTableWrite(State& state, const Node& stmt,
     state.root = std::make_shared<lp::FilterNode>(_id_generator.NextPlanId(),
                                                   std::move(state.root),
                                                   MakeAnd(std::move(checks)));
+  }
+
+  const auto& pk_cols = table.PKColumns();
+  if (stmt.type == T_CopyStmt && !pk_cols.empty()) {
+    basics::downCast<connector::RocksDBTable>(axiom_table)->SetBulkInsert();
+
+    const auto& pk = *catalog_table.PKType();
+    std::vector<lp::SortingField> sorted_by;
+    sorted_by.reserve(pk.size());
+    for (const auto& [name, type] :
+         std::views::zip(pk.names(), pk.children())) {
+      auto column = state.resolver.Resolve(state.root->outputType(), name);
+      SDB_ASSERT(column.IsFound());
+      std::string resolved{column.GetColumnName()};
+      auto expr =
+        std::make_shared<lp::InputReferenceExpr>(type, std::move(resolved));
+      sorted_by.emplace_back(std::move(expr), lp::SortOrder::kAscNullsFirst);
+    }
+
+    // tmp solution:
+    // for bulk insert we use SST which requires sorted data by key
+    state.root = std::make_shared<lp::SortNode>(
+      _id_generator.NextPlanId(), std::move(state.root), std::move(sorted_by));
   }
 
   auto write_kind = [&] {
@@ -1927,7 +1951,8 @@ class CopyOptionsParser {
   CopyOptionsParser(velox::RowTypePtr row_type, bool is_writer,
                     std::string_view query_string, std::string_view file_path,
                     const List* options, message::Buffer* send_buffer,
-                    CopyMessagesQueue* copy_queue, std::string_view table_name)
+                    CopyMessagesQueue* copy_queue, std::string_view table_name,
+                    NameToOption& explain_options)
     : _row_type{std::move(row_type)},
       _is_writer{is_writer},
       _query_string{query_string},
@@ -1937,7 +1962,21 @@ class CopyOptionsParser {
       _table_name{table_name} {
     _options.reserve(list_length(options));
     VisitNodes(options, [&](const DefElem& option) {
-      auto [_, emplaced] = _options.try_emplace(option.defname, &option);
+      std::string_view option_name = option.defname;
+      // pg grammar doesn't allow EXPLAIN COPY, so we do such hack here
+      if (option_name == "explain") {
+        auto maybe_explain = TryGet<std::string_view>(option.arg);
+        if (!maybe_explain) {
+          THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(&option))),
+                          ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                          ERR_MSG("invalid value for parameter \"explain\": \"",
+                                  DeparseExpr(option.arg), "\""));
+        }
+        explain_options.emplace(*maybe_explain, true);
+        return;
+      }
+
+      auto [_, emplaced] = _options.try_emplace(option_name, &option);
       if (!emplaced) {
         THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(&option))),
                         ERR_CODE(ERRCODE_SYNTAX_ERROR),
@@ -2043,11 +2082,7 @@ class CopyOptionsParser {
       header = *maybe_header;
     }
 
-    SerDeOptions serde_options{
-      delim,
-      '\2',  // collection delimiter (not used for flat TEXT)
-      '\3',  // map key delimiter (not used for flat TEXT)
-      escape, false};
+    SerDeOptions serde_options{delim, '\2', '\3', escape, false};
     serde_options.nullString = null;
 
     uint64_t reject_limit = 0;
@@ -2158,10 +2193,10 @@ class CopyOptionsParser {
       text_options->setFileFormat(FileFormat::TEXT);
 
       SDB_ASSERT(_send_buffer);
-      auto handler = [copy_logger = CopyRowRejector{
-                        log_verbosity, *_send_buffer, _table_name,
-                        reject_limit}](const RejectedRow& row) mutable {
-        copy_logger.Process(row);
+      auto handler = [rejector = CopyRowRejector{log_verbosity, *_send_buffer,
+                                                 _table_name, reject_limit}](
+                       const RejectedRow& row) mutable {
+        rejector.Process(row);
       };
       text_options->setOnRowReject(std::move(handler));
       _reader_options = std::move(text_options);
@@ -2212,6 +2247,12 @@ class CopyOptionsParser {
     }
     const auto* option = it->second;
     _options.erase(it);
+    SDB_ASSERT(option);
+    if (!option->arg) {
+      THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(&option))),
+                      ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                      ERR_MSG(name, " requires a parameter"));
+    }
     return option;
   }
 
@@ -2282,7 +2323,8 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
     std::string_view relation_name = relation.relname;
     const auto schema_name = absl::NullSafeStringView(relation.schemaname);
     auto object = _objects.getRelation(schema_name, relation_name);
-    return std::tuple{object, schema_name, relation_name};
+    SDB_ASSERT(object);
+    return std::tuple{*object, schema_name, relation_name};
   };
 
   auto get_column_exprs = [&](const std::vector<std::string>& column_names) {
@@ -2306,7 +2348,7 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
   velox::RowTypePtr file_table_type;
   if (stmt.relation) {
     auto [object, schemaname, relname] = get_object();
-    const auto& table = basics::downCast<catalog::Table>(*object->object);
+    const auto& table = basics::downCast<catalog::Table>(*object.object);
     table_name = table.GetName();
 
     std::vector<std::string> names;
@@ -2354,7 +2396,7 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
   auto create_options_parser = [&](const velox::RowTypePtr& type) {
     return CopyOptionsParser{type,        !stmt.is_from, _query_string.view(),
                              file_path,   stmt.options,  _send_buffer,
-                             _copy_queue, table_name};
+                             _copy_queue, table_name,    _options};
   };
 
   if (stmt.is_from) {
@@ -2376,7 +2418,7 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
     auto column_names = file_table_type->names();
     auto column_exprs = get_column_exprs(column_names);
 
-    MakeTableWrite(state, ToNode(&stmt), *object, std::move(column_names),
+    MakeTableWrite(state, ToNode(&stmt), object, std::move(column_names),
                    std::move(column_exprs));
   } else {
     velox::RowTypePtr table_type;
@@ -2385,8 +2427,8 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
     if (stmt.relation) {
       SDB_ASSERT(!stmt.query);
       auto [object, schemaname, relname] = get_object();
-      auto table_state = ProcessTable(&state, schemaname, relname, *object,
-                                      stmt.relation, false);
+      auto table_state =
+        ProcessTable(&state, schemaname, relname, object, stmt.relation, false);
       state.root = std::move(table_state.root);
 
       table_type = std::move(file_table_type);
@@ -2681,7 +2723,7 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node) {
     }
     case T_ExplainStmt: {
       const auto& stmt = *castNode(ExplainStmt, &node);
-      state.options = stmt.options;
+      _options = ConvertOptions(stmt.options);
       ProcessStmt(state, *stmt.query);
       return SqlCommandType::Explain;
     }
@@ -2727,7 +2769,7 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node) {
     case T_CopyStmt: {
       const auto& stmt = *castNode(CopyStmt, &node);
       ProcessCopyStmt(state, stmt);
-      return stmt.is_from ? SqlCommandType::Insert : SqlCommandType::Select;
+      return _options.empty() ? SqlCommandType::Copy : SqlCommandType::Explain;
     }
     case T_VariableShowStmt: {
       state.pgsql_node = &node;
@@ -5776,7 +5818,7 @@ VeloxQuery SqlAnalyzer::ProcessRoot(State& state, const Node& node) {
   auto command_type = ProcessStmt(state, node);
   return {
     .root = std::move(state.root),
-    .options = ConvertOptions(state.options),
+    .options = std::move(_options),
     .pgsql_node = state.pgsql_node,
     .type = command_type,
   };

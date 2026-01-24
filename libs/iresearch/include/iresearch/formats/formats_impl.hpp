@@ -1816,9 +1816,30 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
                    uint32_t meta_idx, const MakeScoreCallback& make_score,
                    const Scorer& scorer, uint8_t wand_index) {
     Prepare(meta, doc_in, pos_in, pay_in, wand_index);
-    if (meta.docs_count > FieldTraits::kBlockSize || meta.docs_count == 1) {
+    if (meta.docs_count > FieldTraits::kBlockSize) {
       return;
     }
+
+    if (meta.docs_count == 1) {
+      // Singleton doc case
+      auto func = make_score(meta_idx, *this);
+
+      auto& doc_value = std::get<DocAttr>(_attrs).value;
+      doc_value = *this->_begin;
+      if constexpr (IteratorTraits::Frequency()) {
+        auto& freq_value = std::get<FreqAttr>(_attrs).value;
+        freq_value = *this->_freq;
+      }
+
+      auto& score = std::get<ScoreAttr>(_attrs);
+      func(&score.max.leaf);
+      score.max.tail = score.max.leaf;
+      score = ScoreFunction::Constant(score.max.tail);
+
+      doc_value = doc_limits::invalid();
+      return;
+    }
+
     auto ctx = scorer.prepare_wand_source();
     auto func = make_score(meta_idx, *ctx);
 

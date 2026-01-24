@@ -375,8 +375,7 @@ void Format15TestCase::AssertWanderator(irs::DocIterator::ptr& actual,
 
   auto* threshold_value = irs::GetMutable<irs::ScoreAttr>(actual.get());
   ASSERT_NE(threshold_value, nullptr);
-  if (irs::IndexFeatures::None == (features & irs::IndexFeatures::Freq) ||
-      docs.size() == 1) {
+  if (irs::IndexFeatures::None == (features & irs::IndexFeatures::Freq)) {
     ASSERT_EQ(std::numeric_limits<irs::score_t>::max(),
               threshold_value->max.tail);
   } else {

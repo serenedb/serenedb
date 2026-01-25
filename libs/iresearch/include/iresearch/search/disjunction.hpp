@@ -1225,10 +1225,11 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
       }
 
       _doc_base = _min;
+      SDB_ASSERT(_min <= doc_limits::eof() - kWindow);  // TODO(gnusi): ensure
       _max = _min + kWindow;
       _min = doc_limits::eof();
 
-      VisitAndPurge([this, &empty](auto& it) mutable {
+      VisitAndPurge([&](auto& it) mutable {
         // FIXME
         // for min match case we can skip the whole block if
         // we can't satisfy match_buf_.min_match_count() conditions, namely
@@ -1240,14 +1241,44 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
         //  }
         //}
 
+        // disjunction is 1 step next behind, that may happen:
+        // - before the very first next()
+        // - after seek() in case of 'kSeekReadahead == false'
+        if (it.value() < _doc_base) {
+          it.advance();
+        }
+
+        auto update_min = [&](doc_id_t doc) {
+          _min = std::min(doc, _min);
+          return !doc_limits::eof(doc);
+        };
+
+        auto track_match = [&](size_t offset) {
+          if constexpr (Traits::kMinMatch) {
+            empty &= _match_buf.inc(offset);
+          } else {
+            empty = false;
+          }
+        };
+
         if constexpr (kHasScore<Merger>) {
           SDB_ASSERT(Merger::size());
           if (!it.score().IsDefault()) {
-            return this->Refill<true>(it, empty);
+            return update_min(
+              Refill(it, _mask, _doc_base, _max, [&](size_t offset) {
+                if constexpr (kHasScore<Merger>) {
+                  auto& merger = static_cast<Merger&>(*this);
+                  it.score().Score(merger.temp());
+                  merger(_score_buf.get(offset), merger.temp());
+                }
+
+                track_match(offset);
+              }));
           }
         }
 
-        return this->Refill<false>(it, empty);
+        return update_min(
+          Refill(it, _mask, _doc_base, _max, std::move(track_match)));
       });
     } while (empty && !_itrs.empty());
 
@@ -1274,42 +1305,18 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
     return true;
   }
 
-  template<bool Score>
-  bool Refill(Adapter& it, bool& empty) {
+  template<typename Func>
+  static doc_id_t Refill(Adapter& it, uint64_t* mask, doc_id_t min,
+                         doc_id_t max, Func&& callback) {
     auto value = it.value();
+    for (; value < max; value = it.advance()) {
+      const auto offset = value - min;
 
-    // disjunction is 1 step next behind, that may happen:
-    // - before the very first next()
-    // - after seek() in case of 'kSeekReadahead == false'
-    if (value < _doc_base) {
-      value = it.advance();
+      SetBit(mask[offset / kBlockSize], offset % kBlockSize);
+
+      callback(offset);
     }
-
-    while (!doc_limits::eof(value)) {
-      if (value >= _max) {
-        _min = std::min(value, _min);
-        return true;
-      }
-
-      const auto offset = value - _doc_base;
-
-      SetBit(_mask[offset / kBlockSize], offset % kBlockSize);
-
-      if constexpr (Score) {
-        auto& merger = static_cast<Merger&>(*this);
-        it.score().Score(merger.temp());
-        merger(_score_buf.get(offset), merger.temp());
-      }
-
-      if constexpr (Traits::kMinMatch) {
-        empty &= _match_buf.inc(offset);
-      } else {
-        empty = false;
-      }
-
-      value = it.advance();
-    }
-    return false;  // exhausted
+    return value;
   }
 
   uint64_t _mask[kNumBlocks]{};

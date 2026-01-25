@@ -9,7 +9,7 @@
 #   --version VERSION    Set version (default: from find_version.bash)
 #   --tag TAG            Additional tag (can be repeated)
 #   --push               Push to registry after build
-#   --registry URL       Registry URL (default: docker.io)
+#   --registry URL       Registry URL (default: registry.serenedb.com:5000)
 #   --no-cache           Build without cache
 #   --platform PLATFORM  Target platform (default: linux/amd64)
 #   --help               Show this help
@@ -18,11 +18,12 @@
 #   DOCKER_REGISTRY      Registry URL
 #   DOCKER_USERNAME      Registry username (for push)
 #   DOCKER_PASSWORD      Registry password (for push)
-#   SERENEDB_VERSION     Version override
+#   DOCKER_TAG           Docker tag override (from find_version.bash)
+#   DOCKER_DISTRO        Distribution variant (e.g., ubuntu, alpine)
 #
 # Examples:
 #   ./build_docker.bash
-#   ./build_docker.bash --version 1.0.0 --push
+#   ./build_docker.bash --push
 #   ./build_docker.bash --tag latest --tag stable --push
 # =============================================================================
 set -e
@@ -41,6 +42,7 @@ PLATFORM="linux/amd64"
 PUSH_IMAGES_2_REGISTRY=false
 NO_CACHE=""
 DOCKER_EXTRA_TAGS=()
+DOCKER_TAG_OVERRIDE=""
 
 # -----------------------------------------------------------------------------
 # Functions
@@ -59,13 +61,20 @@ show_help() {
   exit 0
 }
 
-get_version() {
-  if [ -n "$SERENEDB_VERSION" ]; then
-    echo "$SERENEDB_VERSION"
-  elif [ -f "${SCRIPT_DIR}/find_version.bash" ]; then
-    bash "${SCRIPT_DIR}/find_version.bash"
+get_version_and_tag() {
+  # Source find_version.bash to populate all version variables
+  if [ -f "${SCRIPT_DIR}/find_version.bash" ]; then
+    # Source it in a subshell and capture the variables we need
+    local version_output
+    version_output=$(bash -c "source '${SCRIPT_DIR}/find_version.bash' >/dev/null 2>&1 && echo \"\$DOCKER_TAG\"")
+
+    if [ -z "$version_output" ]; then
+      error "Failed to determine version from find_version.bash"
+    fi
+
+    echo "$version_output"
   else
-    error "Cannot determine version. Set SERENEDB_VERSION or create find_version.bash"
+    error "find_version.bash not found at ${SCRIPT_DIR}/find_version.bash"
   fi
 }
 
@@ -75,7 +84,7 @@ get_version() {
 while [[ $# -gt 0 ]]; do
   case $1 in
   --version)
-    SERENEDB_VERSION="$2"
+    DOCKER_TAG_OVERRIDE="$2"
     shift 2
     ;;
   --tag)
@@ -107,8 +116,22 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Setup
-VERSION=$(get_version)
+# -----------------------------------------------------------------------------
+# Determine version and Docker tag
+# -----------------------------------------------------------------------------
+if [ -n "$DOCKER_TAG_OVERRIDE" ]; then
+  VERSION="$DOCKER_TAG_OVERRIDE"
+  log "Using version override: ${VERSION}"
+elif [ -n "$DOCKER_TAG" ]; then
+  # DOCKER_TAG already set in environment
+  VERSION="$DOCKER_TAG"
+  log "Using DOCKER_TAG from environment: ${VERSION}"
+else
+  # Get from find_version.bash
+  VERSION=$(get_version_and_tag)
+  log "Using version from find_version.bash: ${VERSION}"
+fi
+
 FULL_IMAGE_NAME="${REGISTRY}/${IMAGE_NAME}"
 BUILD_DIR=$(mktemp -d)
 
@@ -178,7 +201,7 @@ log ""
 log "=== Testing Image ==="
 
 # Quick smoke test
-if docker run --rm "${FULL_IMAGE_NAME}:${VERSION}" --version; then
+if docker run --rm "${FULL_IMAGE_NAME}:${VERSION}" --version 2>/dev/null; then
   log "  ✓ Version check passed"
 else
   log "  ✗ Version check failed (continuing anyway)"
@@ -190,7 +213,8 @@ if [ "$PUSH_IMAGES_2_REGISTRY" = true ]; then
   log "=== Pushing to Registry ==="
 
   # Login if credentials provided
-  if [ -n "$DOCKER_USERNAME" ] && [ -n "$DOCKER_PASSWORD" ]; then
+  if [ -n "${DOCKER_USERNAME:-}" ] && [ -n "${DOCKER_PASSWORD:-}" ]; then
+    log "Logging in to ${REGISTRY}..."
     echo "$DOCKER_PASSWORD" | docker login "$REGISTRY" -u "$DOCKER_USERNAME" --password-stdin
   fi
 

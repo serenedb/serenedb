@@ -16,8 +16,15 @@ RUN apt-get update \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Add application files from tarball
-ADD install.tar.gz /
+# Copy tarball, extract with strip to temp location, then merge to root
+COPY install.tar.gz /tmp/
+RUN mkdir -p /tmp/serenedb-extract \
+    && tar -xzf /tmp/install.tar.gz -C /tmp/serenedb-extract --strip-components=1 \
+    && cd /tmp/serenedb-extract \
+    && if [ -d sbin ]; then cp -f sbin/* usr/sbin/; rm -rf sbin; fi \
+    && if [ -d bin ]; then cp -f bin/* usr/bin/; rm -rf bin; fi \
+    && cp -a . / \
+    && rm -rf /tmp/*
 
 # Setup script (creates directories, patches config, installs rclone)
 COPY setup.sh /tmp/setup.sh

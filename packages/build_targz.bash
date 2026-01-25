@@ -31,8 +31,25 @@ if [[ "${STRIP_TARBALL:-true}" == "true" ]]; then
   find install/usr -type f -executable -exec strip --strip-all {} \; 2>/dev/null || true
 fi
 
-# Packaging
-tar -czvf "${NAME}.tar.gz" --transform="s|^install/usr|${NAME}|" install/usr/
+# Create bin directory with symlinks to usr/sbin
+mkdir -p install/bin
+cd install/bin
+ln -sf ../usr/sbin/serened serened
+ln -sf ../usr/sbin/serene-init-database serene-init-database
+ln -sf ../usr/sbin/serene-secure-installation serene-secure-installation
+cd "$PROJECT_ROOT"
+
+# Packaging - Transform usr/etc and usr/var to top level
+tar -czvf "${NAME}.tar.gz" \
+  --transform="s|^install/usr/etc|${NAME}/etc|" \
+  --transform="s|^install/usr/var|${NAME}/var|" \
+  --transform="s|^install/usr|${NAME}/usr|" \
+  --transform="s|^install/bin|${NAME}/bin|" \
+  install/usr/ \
+  install/bin/
+
+# Cleanup
+rm -rf install/bin/
 
 echo "Created: ${NAME}.tar.gz ($(du -h "${NAME}.tar.gz" | cut -f1))"
 

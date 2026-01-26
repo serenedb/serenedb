@@ -30,8 +30,8 @@ void RocksDBSinkWriter::ConfigureReadOptions() {
 }
 
 bool RocksDBSinkWriter::CheckConflict(const rocksdb::Slice& key_slice) {
-  if (_use_mask) {
-    return _row_mask[_row_id++];
+  if (_use_conflict_mask) {
+    return _row_conflict_mask[_row_id++];
   }
 
   ConfigureReadOptions();
@@ -45,7 +45,7 @@ bool RocksDBSinkWriter::CheckConflict(const rocksdb::Slice& key_slice) {
     SDB_THROW(rocksutils::ConvertStatus(status));
   }
 
-  _row_mask[_row_id++] = conflict;
+  _row_conflict_mask[_row_id++] = conflict;
   return conflict;
 }
 
@@ -91,11 +91,9 @@ void RocksDBSinkWriter::Write(std::span<const rocksdb::Slice> cell_slices,
 }
 
 std::unique_ptr<rocksdb::Iterator> RocksDBSinkWriter::CreateIterator() {
-  rocksdb::ReadOptions read_options;
-  read_options.async_io = true;
-  read_options.snapshot = _transaction.GetSnapshot();
+  ConfigureReadOptions();
   return std::unique_ptr<rocksdb::Iterator>{
-    _transaction.GetIterator(read_options, &_cf)};
+    _transaction.GetIterator(_read_options, &_cf)};
 }
 
 void RocksDBSinkWriter::DeleteCell(std::string_view full_key) {

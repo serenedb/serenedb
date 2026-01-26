@@ -62,8 +62,10 @@ class RocksDBSinkWriter : public RocksDBSinkWriterBase {
 
   void DeleteCell(std::string_view full_key);
 
-  void UseMaskOnConflict(bool value) { _use_mask = value; }
-  void ResizeMask(size_t num_rows) { _row_mask.resize(num_rows, false); }
+  void UseConflictMask(bool value) { _use_conflict_mask = value; }
+  void ResizeConflictMask(size_t num_rows) {
+    _row_conflict_mask.resize(num_rows, false);
+  }
   void ResetRowId() { _row_id = 0; }
 
  private:
@@ -71,8 +73,8 @@ class RocksDBSinkWriter : public RocksDBSinkWriterBase {
   bool CheckConflict(const rocksdb::Slice& key_slice);
 
   WriteConflictPolicy _conflict_policy;
-  boost::dynamic_bitset<> _row_mask;
-  bool _use_mask{false};
+  boost::dynamic_bitset<> _row_conflict_mask;
+  bool _use_conflict_mask{false};
   size_t _row_id = 0;
 
   rocksdb::ReadOptions _read_options;

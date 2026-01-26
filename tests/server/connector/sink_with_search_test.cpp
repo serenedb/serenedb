@@ -205,7 +205,8 @@ class DataSinkWithSearchTest : public ::testing::Test,
     sdb::connector::primary_key::Create(*data, pk, written_row_keys);
     sdb::connector::RocksDBInsertDataSink sink(
       *data_transaction, *_cf_handles.front(), *pool_.get(), object_key, pk,
-      all_column_oids, std::move(index_writers));
+      all_column_oids, sdb::WriteConflictPolicy::Update,
+      std::move(index_writers));
     sink.appendData(data);
     while (!sink.finish()) {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));

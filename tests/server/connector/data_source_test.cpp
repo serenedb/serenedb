@@ -87,7 +87,7 @@ class DataSourceTest : public ::testing::Test,
     ASSERT_NE(transaction, nullptr);
     sdb::connector::RocksDBInsertDataSink sink(
       *transaction, *_cf_handles.front(), *pool_.get(), object_key, pk,
-      column_ids, {});
+      std::move(column_ids), sdb::WriteConflictPolicy::Update, {});
     sink.appendData(data);
     while (!sink.finish()) {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));

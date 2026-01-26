@@ -34,6 +34,7 @@
 #include "rest_server/serened_single.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/task.h"
+#include "storage_engine/engine_feature.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::search {
@@ -55,7 +56,7 @@ uint64_t ComputeAvg(std::atomic<uint64_t>& time_num, uint64_t new_time) {
 
 DataStore::DataStore(const catalog::Index& index,
                      const DataStoreOptions& options)
-  : _engine{SerenedServer::Instance().getFeature<RocksDBEngineCatalog>()},
+  : _engine{GetServerEngine()},
     _search{SerenedServer::Instance().getFeature<SearchEngine>()},
     _options{options} {
   const auto db_id = index.GetDatabaseId();

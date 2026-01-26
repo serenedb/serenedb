@@ -409,7 +409,7 @@ irs::DocIterator::ptr Format15TestCase::GetWanderator(
   EXPECT_NE(nullptr, actual);
 
   auto* score = irs::GetMutable<irs::ScoreAttr>(actual.get());
-  score->MinScore(threshold);
+  score->Min(threshold);
 
   return actual;
 }

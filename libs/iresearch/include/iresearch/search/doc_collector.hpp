@@ -36,7 +36,7 @@ size_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
     const auto* doc = irs::get<DocAttr>(*docs);
     const auto* score = irs::get<ScoreAttr>(*docs);
     if (score) {
-      score->MinScore(min_threshold);
+      score->Min(min_threshold);
     }
 
     for (float_t score_value; docs->next();) {
@@ -58,7 +58,7 @@ size_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
                          });
         begin = pivot;
         min_threshold = begin->first;
-        score->MinScore(min_threshold);
+        score->Min(min_threshold);
       }
     }
   }
@@ -103,7 +103,7 @@ size_t ExecuteTopKHeap(
     SDB_ASSERT(threshold);
 
     if (!left && threshold) {
-      threshold->MinScore(results.front().first);
+      threshold->Min(results.front().first);
     }
 
     for (float_t score_value; docs->next();) {
@@ -121,7 +121,7 @@ size_t ExecuteTopKHeap(
                               return lhs.first > rhs.first;
                             });
 
-          threshold->MinScore(results.front().first);
+          threshold->Min(results.front().first);
         }
       } else if (results.front().first < score_value) {
         absl::c_pop_heap(results,
@@ -139,7 +139,7 @@ size_t ExecuteTopKHeap(
             return lhs.first > rhs.first;
           });
 
-        threshold->MinScore(results.front().first);
+        threshold->Min(results.front().first);
       }
     }
   }

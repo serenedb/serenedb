@@ -989,7 +989,6 @@ class SnapshotImpl : public Snapshot {
 LocalCatalog::LocalCatalog(bool skip_background_errors)
   : _snapshot(std::make_shared<SnapshotImpl>()),
     _engine{&GetServerEngine()},
-    _search_engine{&search::GetSearchEngine()},
     _skip_background_errors{skip_background_errors} {}
 
 Result LocalCatalog::RegisterRole(std::shared_ptr<Role> role) {

@@ -65,7 +65,7 @@ ScoreFunction ScoreFunction::Constant(score_t value, uint32_t count) noexcept {
   }
 }
 
-score_t ScoreFunction::MaxScore() const noexcept {
+score_t ScoreFunction::Max() const noexcept {
   if (_score == ScoreFunction::DefaultScore) {
     return 0.f;
   } else if (_score == Constant1 || _score == ConstantN) {

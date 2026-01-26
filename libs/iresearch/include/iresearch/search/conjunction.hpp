@@ -324,7 +324,7 @@ class BlockConjunction : public ConjunctionBase<Adapter, Merger> {
       if (arg <= others) {
         return;
       }
-      score->MinScore(arg - others);
+      score->Min(arg - others);
     }
   }
 

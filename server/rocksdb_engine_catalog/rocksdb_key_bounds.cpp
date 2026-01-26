@@ -184,6 +184,7 @@ rocksdb::ColumnFamilyHandle* RocksDBKeyBounds::columnFamily() const {
     case RocksDBEntryType::IndexTombstone:
     case RocksDBEntryType::Index:
     case RocksDBEntryType::Stats:
+    case sdb::RocksDBEntryType::IndexPhysical:
       return RocksDBColumnFamilyManager::get(
         RocksDBColumnFamilyManager::Family::Definitions);
   }

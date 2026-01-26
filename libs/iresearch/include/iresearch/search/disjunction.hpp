@@ -1127,7 +1127,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
             const auto others = self._scores.sum_score - (*it)->max.tail;
             if (arg > others) {
               // For common usage `arg - others <= (*it)->max.tail` -- is true
-              (*it)->MinScore(arg - others);
+              (*it)->Min(arg - others);
               next = it + 1;
             }
             it = next;

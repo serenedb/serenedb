@@ -1602,7 +1602,7 @@ class DocIteratorBase : public DocIterator {
   uint32_t _enc_buf[IteratorTraits::kBlockSize];  // buffer for encoding
   [[no_unique_address]] utils::Need<
     IteratorTraits::Frequency(), uint32_t[IteratorTraits::kBlockSize]> _freqs;
-  doc_id_t _docs[IteratorTraits::kBlockSize]{};
+  doc_id_t _docs[IteratorTraits::kBlockSize];
   doc_id_t _max_in_leaf = doc_limits::invalid();
   uint32_t _left_in_leaf = 0;
   uint32_t _left_in_list = 0;
@@ -1776,10 +1776,7 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
  public:
   DocIteratorImpl(WandExtent extent)
     : _skip{IteratorTraits::kBlockSize, PostingsWriterBase::kSkipN,
-            ReadSkip{extent}} {
-    SDB_ASSERT(absl::c_all_of(
-      this->_docs, [](doc_id_t doc) { return !doc_limits::valid(doc); }));
-  }
+            ReadSkip{extent}} {}
 
   void WandPrepare(const TermMeta& meta, const IndexInput* doc_in,
                    const IndexInput* pos_in, const IndexInput* pay_in,
@@ -2221,8 +2218,6 @@ class Wanderator : public DocIteratorBase<IteratorTraits, FieldTraits>,
     : _skip{IteratorTraits::kBlockSize, PostingsWriterBase::kSkipN,
             ReadSkip{meta_idx, make_score, scorer, index, extent}},
       _scorer{make_score(meta_idx, *this)} {
-    SDB_ASSERT(absl::c_all_of(
-      this->_docs, [](doc_id_t doc) { return doc == doc_limits::invalid(); }));
     std::get<ScoreAttr>(_attrs).Reset(
       *this,
       [](ScoreCtx* ctx, score_t* res) noexcept {

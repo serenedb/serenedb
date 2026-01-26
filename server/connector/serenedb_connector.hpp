@@ -254,11 +254,11 @@ class RocksDBTable final : public axiom::connector::Table {
 
   query::Transaction& GetTransaction() const noexcept { return _transaction; }
 
-  catalog::WriteConflictPolicy GetConflictPolicy() const noexcept {
+  WriteConflictPolicy GetConflictPolicy() const noexcept {
     return _conflict_policy;
   }
 
-  void SetConflictPolicy(catalog::WriteConflictPolicy conflict_policy) {
+  void SetConflictPolicy(WriteConflictPolicy conflict_policy) {
     _conflict_policy = conflict_policy;
   }
 
@@ -269,8 +269,7 @@ class RocksDBTable final : public axiom::connector::Table {
   ObjectId _table_id;
   query::Transaction& _transaction;
   catalog::TableStats _stats;
-  catalog::WriteConflictPolicy _conflict_policy{
-    catalog::WriteConflictPolicy::Error};
+  WriteConflictPolicy _conflict_policy{WriteConflictPolicy::Error};
   bool _update_pk{};
 };
 

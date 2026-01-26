@@ -131,14 +131,14 @@ class Config : public velox::config::IConfig {
     } else if constexpr (T == VariableType::SdbWriteConflictPolicy) {
       SDB_ASSERT(key == "sdb_write_conflict_policy");
       if (absl::EqualsIgnoreCase("error", *value_str)) {
-        return catalog::WriteConflictPolicy::Error;
+        return WriteConflictPolicy::Error;
       }
       if (absl::EqualsIgnoreCase("keep_old", *value_str)) {
-        return catalog::WriteConflictPolicy::KeepOld;
+        return WriteConflictPolicy::KeepOld;
       }
       SDB_ASSERT(absl::EqualsIgnoreCase("update", *value_str),
                  "sdb_write_conflict_policy is not validated");
-      return catalog::WriteConflictPolicy::Update;
+      return WriteConflictPolicy::Update;
     } else if constexpr (T == VariableType::JoinOrderAlgorithm) {
       SDB_ASSERT(key == "join_order_algorithm");
       if (absl::EqualsIgnoreCase("cost", *value_str)) {

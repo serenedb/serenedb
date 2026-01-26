@@ -23,7 +23,7 @@
 #include <boost/dynamic_bitset.hpp>
 #include <span>
 
-#include "catalog/table_options.h"
+#include "catalog/types.h"
 #include "rocksdb/slice.h"
 #include "rocksdb/utilities/transaction.h"
 
@@ -50,10 +50,9 @@ class RocksDBSinkWriterBase {
 // directly inside DataSink so no need for virtual calls/default base members
 class RocksDBSinkWriter : public RocksDBSinkWriterBase {
  public:
-  RocksDBSinkWriter(rocksdb::Transaction& transaction,
-                    rocksdb::ColumnFamilyHandle& cf,
-                    catalog::WriteConflictPolicy conflict_policy =
-                      catalog::WriteConflictPolicy::Error)
+  RocksDBSinkWriter(
+    rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
+    WriteConflictPolicy conflict_policy = WriteConflictPolicy::Error)
     : RocksDBSinkWriterBase{transaction, cf},
       _conflict_policy{conflict_policy} {}
 
@@ -71,7 +70,7 @@ class RocksDBSinkWriter : public RocksDBSinkWriterBase {
   void ConfigureReadOptions();
   bool CheckConflict(const rocksdb::Slice& key_slice);
 
-  catalog::WriteConflictPolicy _conflict_policy;
+  WriteConflictPolicy _conflict_policy;
   boost::dynamic_bitset<> _row_mask;
   bool _use_mask{false};
   size_t _row_id = 0;

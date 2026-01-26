@@ -1604,7 +1604,7 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
     }
 
     SDB_ASSERT(stmt.onConflictClause->action == ONCONFLICT_NOTHING, "Wtf?");
-    conflict_policy = catalog::WriteConflictPolicy::KeepOld;
+    conflict_policy = WriteConflictPolicy::KeepOld;
   }
   if (stmt.override != OVERRIDING_NOT_SET) {
     SDB_THROW(ERROR_NOT_IMPLEMENTED,

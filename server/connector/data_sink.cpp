@@ -58,7 +58,7 @@ RocksDBDataSinkBase<SubWriterType>::RocksDBDataSinkBase(
   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
   std::span<const velox::column_index_t> key_childs,
   std::vector<catalog::Column::Id> column_ids,
-  catalog::WriteConflictPolicy conflict_policy,
+  WriteConflictPolicy conflict_policy,
   std::vector<std::unique_ptr<SubWriterType>>&& index_writers)
   : _data_writer{transaction, cf, conflict_policy},
     _index_writers{std::move(index_writers)},
@@ -81,7 +81,7 @@ RocksDBInsertDataSink::RocksDBInsertDataSink(
   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
   std::span<const velox::column_index_t> key_childs,
   std::vector<catalog::Column::Id> column_ids,
-  catalog::WriteConflictPolicy conflict_policy,
+  WriteConflictPolicy conflict_policy,
   std::vector<std::unique_ptr<SinkInsertWriter>>&& index_writers)
   : RocksDBDataSinkBase<SinkInsertWriter>{
       transaction,     cf,
@@ -95,8 +95,7 @@ RocksDBUpdateDataSink::RocksDBUpdateDataSink(
   std::span<const velox::column_index_t> key_childs,
   std::vector<catalog::Column::Id> column_ids,
   std::vector<catalog::Column::Id> all_column_ids, bool update_pk,
-  velox::RowTypePtr table_row_type,
-  catalog::WriteConflictPolicy conflict_policy,
+  velox::RowTypePtr table_row_type, WriteConflictPolicy conflict_policy,
 
   std::vector<std::unique_ptr<SinkUpdateWriter>>&& index_writers)
   : RocksDBDataSinkBase<SinkUpdateWriter>{transaction,

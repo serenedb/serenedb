@@ -58,11 +58,11 @@ void RocksDBSinkWriter::Write(std::span<const rocksdb::Slice> cell_slices,
 
   if (conflict) {
     switch (_conflict_policy) {
-      case catalog::WriteConflictPolicy::Update:
+      case WriteConflictPolicy::Update:
         break;
-      case catalog::WriteConflictPolicy::KeepOld:
+      case WriteConflictPolicy::KeepOld:
         return;
-      case catalog::WriteConflictPolicy::Error:
+      case WriteConflictPolicy::Error:
         SDB_THROW(ERROR_SERVER_UNIQUE_CONSTRAINT_VIOLATED,
                   "TODO: make sql error");
         break;

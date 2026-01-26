@@ -1,6 +1,5 @@
 name: SereneDB-Build-Base
 # TODO: how to strip keeping the debug symbols?
-# TODO: Add or update step uploading artifacts
 
 on:
   workflow_call:
@@ -256,7 +255,7 @@ jobs:
 
       # ==================== ARTIFACTS ====================
       - name: Upload build artifacts
-        if: always() && !cancelled()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: build-artifacts-${{ github.run_number }}
@@ -285,6 +284,16 @@ jobs:
             logs/*
           if-no-files-found: ignore
           retention-days: 30
+
+      - name: Archive package artifacts
+        if: steps.serenedb_packages.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ github.run_number }}
+          path: |
+            *.deb
+            *.tar.gz
+          if-no-files-found: ignore
 
       - name: Upload extra artifacts
         if: always() && !cancelled() && inputs.EXTRA_ARTIFACTS != ''

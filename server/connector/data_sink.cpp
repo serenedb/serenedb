@@ -2281,9 +2281,7 @@ RocksDBDeleteDataSink::RocksDBDeleteDataSink(
   std::vector<catalog::Column::Id> column_oids,
   std::vector<std::unique_ptr<SinkDeleteWriter>>&& index_writers)
   : _row_type{std::move(row_type)},
-    _data_writer{
-      transaction, cf,
-      catalog::WriteConflictPolicy::Error},  // maybe any, should not be used
+    _data_writer{transaction, cf},
     _index_writers{std::move(index_writers)},
     _object_key{object_key},
     _column_ids{std::move(column_oids)} {

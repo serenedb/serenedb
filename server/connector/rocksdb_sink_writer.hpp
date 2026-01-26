@@ -24,6 +24,7 @@
 #include <span>
 
 #include "catalog/table_options.h"
+#include "rocksdb/slice.h"
 #include "rocksdb/utilities/transaction.h"
 
 namespace sdb::connector {
@@ -31,9 +32,8 @@ namespace sdb::connector {
 class RocksDBSinkWriterBase {
  public:
   RocksDBSinkWriterBase(rocksdb::Transaction& transaction,
-                        rocksdb::ColumnFamilyHandle& cf,
-                        catalog::WriteConflictPolicy conflict_policy)
-    : _transaction{transaction}, _cf{cf}, _conflict_policy{conflict_policy} {}
+                        rocksdb::ColumnFamilyHandle& cf)
+    : _transaction{transaction}, _cf{cf} {}
 
   virtual ~RocksDBSinkWriterBase() = default;
 
@@ -41,17 +41,9 @@ class RocksDBSinkWriterBase {
     return _transaction.GetKeyLock(&_cf, full_key, false, true);
   }
 
-  void UseMaskOnConflict(bool value) { _use_mask = value; }
-  void ResizeMask(size_t num_rows) { _row_mask.resize(num_rows, false); }
-  void ResetRowId() { _row_id = 0; }
-
  protected:
   rocksdb::Transaction& _transaction;
   rocksdb::ColumnFamilyHandle& _cf;
-  catalog::WriteConflictPolicy _conflict_policy;
-  boost::dynamic_bitset<> _row_mask;
-  bool _use_mask{false};
-  size_t _row_id = 0;
 };
 
 // This could be final subclass of SinkInsertWriter but currently only used
@@ -60,14 +52,32 @@ class RocksDBSinkWriter : public RocksDBSinkWriterBase {
  public:
   RocksDBSinkWriter(rocksdb::Transaction& transaction,
                     rocksdb::ColumnFamilyHandle& cf,
-                    catalog::WriteConflictPolicy conflict_policy)
-    : RocksDBSinkWriterBase{transaction, cf, conflict_policy} {}
+                    catalog::WriteConflictPolicy conflict_policy =
+                      catalog::WriteConflictPolicy::Error)
+    : RocksDBSinkWriterBase{transaction, cf},
+      _conflict_policy{conflict_policy} {}
 
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key);
   std::unique_ptr<rocksdb::Iterator> CreateIterator();
 
   void DeleteCell(std::string_view full_key);
+
+  void UseMaskOnConflict(bool value) { _use_mask = value; }
+  void ResizeMask(size_t num_rows) { _row_mask.resize(num_rows, false); }
+  void ResetRowId() { _row_id = 0; }
+
+ private:
+  void ConfigureReadOptions();
+  bool CheckConflict(const rocksdb::Slice& key_slice);
+
+  catalog::WriteConflictPolicy _conflict_policy;
+  boost::dynamic_bitset<> _row_mask;
+  bool _use_mask{false};
+  size_t _row_id = 0;
+
+  rocksdb::ReadOptions _read_options;
+  rocksdb::PinnableSlice _pinnable_slice;
 };
 
 }  //  namespace sdb::connector

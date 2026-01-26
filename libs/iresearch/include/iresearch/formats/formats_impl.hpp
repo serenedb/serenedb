@@ -1590,23 +1590,6 @@ struct PositionImpl<IteratorTraits, FieldTraits, false> : Attribute {
   void Clear() noexcept {}
 };
 
-// Buffer type containing only document buffer
-template<typename IteratorTraits>
-struct DataBuffer {
-  doc_id_t docs[IteratorTraits::kBlockSize]{};
-};
-
-// Buffer type containing both document and fequency buffers
-template<typename IteratorTraits>
-struct FreqBuffer : DataBuffer<IteratorTraits> {
-  uint32_t freqs[IteratorTraits::kBlockSize];
-};
-
-template<typename IteratorTraits>
-using BufferType =
-  std::conditional_t<IteratorTraits::Frequency(), FreqBuffer<IteratorTraits>,
-                     DataBuffer<IteratorTraits>>;
-
 template<typename IteratorTraits, typename FieldTraits>
 class DocIteratorBase : public DocIterator {
   static_assert((IteratorTraits::Features() & FieldTraits::Features()) ==
@@ -1616,8 +1599,10 @@ class DocIteratorBase : public DocIterator {
  protected:
   void Refill(doc_id_t prev_doc);
 
-  BufferType<IteratorTraits> _buf;
   uint32_t _enc_buf[IteratorTraits::kBlockSize];  // buffer for encoding
+  [[no_unique_address]] utils::Need<
+    IteratorTraits::Frequency(), uint32_t[IteratorTraits::kBlockSize]> _freqs;
+  doc_id_t _docs[IteratorTraits::kBlockSize]{};
   doc_id_t _max_in_leaf = doc_limits::invalid();
   uint32_t _left_in_leaf = 0;
   uint32_t _left_in_list = 0;
@@ -1627,13 +1612,13 @@ class DocIteratorBase : public DocIterator {
 template<typename IteratorTraits, typename FieldTraits>
 void DocIteratorBase<IteratorTraits, FieldTraits>::Refill(doc_id_t prev_doc) {
   if (_left_in_list >= IteratorTraits::kBlockSize) [[likely]] {
-    IteratorTraits::read_block_delta(*_doc_in, _enc_buf, _buf.docs, prev_doc);
+    IteratorTraits::read_block_delta(*_doc_in, _enc_buf, _docs, prev_doc);
     if constexpr (IteratorTraits::Frequency()) {
-      IteratorTraits::read_block(*_doc_in, _enc_buf, _buf.freqs);
+      IteratorTraits::read_block(*_doc_in, _enc_buf, _freqs);
     } else if constexpr (FieldTraits::Frequency()) {
       IteratorTraits::skip_block(*_doc_in);
     }
-    _max_in_leaf = *(std::end(_buf.docs) - 1);
+    _max_in_leaf = *(std::end(_docs) - 1);
     _left_in_leaf = IteratorTraits::kBlockSize;
     _left_in_list -= IteratorTraits::kBlockSize;
   } else {
@@ -1644,14 +1629,14 @@ void DocIteratorBase<IteratorTraits, FieldTraits>::Refill(doc_id_t prev_doc) {
 template<typename IteratorTraits, typename FieldTraits>
 void DocIteratorBase<IteratorTraits, FieldTraits>::ReadTailBlock(
   doc_id_t prev_doc) {
-  auto* doc = std::end(_buf.docs) - _left_in_list;
+  auto* doc = std::end(_docs) - _left_in_list;
 
   [[maybe_unused]] uint32_t* freq;
   if constexpr (IteratorTraits::Frequency()) {
-    freq = std::end(_buf.freqs) - _left_in_list;
+    freq = std::end(_freqs) - _left_in_list;
   }
 
-  while (doc < std::end(_buf.docs)) {
+  while (doc < std::end(_docs)) {
     if constexpr (FieldTraits::Frequency()) {
       if constexpr (IteratorTraits::Frequency()) {
         if (ShiftUnpack32(_doc_in->ReadV32(), *doc)) {
@@ -1671,7 +1656,7 @@ void DocIteratorBase<IteratorTraits, FieldTraits>::ReadTailBlock(
     *doc++ = curr_doc;
     prev_doc = curr_doc;
   }
-  _max_in_leaf = *(std::end(_buf.docs) - 1);
+  _max_in_leaf = *(std::end(_docs) - 1);
   _left_in_leaf = _left_in_list;
   _left_in_list = 0;
 }
@@ -1793,7 +1778,7 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
     : _skip{IteratorTraits::kBlockSize, PostingsWriterBase::kSkipN,
             ReadSkip{extent}} {
     SDB_ASSERT(absl::c_all_of(
-      this->_buf.docs, [](doc_id_t doc) { return !doc_limits::valid(doc); }));
+      this->_docs, [](doc_id_t doc) { return !doc_limits::valid(doc); }));
   }
 
   void WandPrepare(const TermMeta& meta, const IndexInput* doc_in,
@@ -1810,10 +1795,10 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
       auto func = make_score(meta_idx, *this);
 
       auto& doc_value = std::get<DocAttr>(_attrs).value;
-      doc_value = *(std::end(this->_buf.docs) - 1);
+      doc_value = *(std::end(this->_docs) - 1);
       if constexpr (IteratorTraits::Frequency()) {
         auto& freq_value = std::get<FreqAttr>(_attrs).value;
-        freq_value = *(std::end(this->_buf.freqs) - 1);
+        freq_value = *(std::end(this->_freqs) - 1);
       }
 
       auto& score = std::get<ScoreAttr>(_attrs);
@@ -1870,11 +1855,11 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
       this->Refill(doc_value);
     }
 
-    doc_value = *(std::end(this->_buf.docs) - this->_left_in_leaf);
+    doc_value = *(std::end(this->_docs) - this->_left_in_leaf);
 
     if constexpr (IteratorTraits::Frequency()) {
       auto& freq_value = std::get<FreqAttr>(_attrs).value;
-      freq_value = *(std::end(this->_buf.freqs) - this->_left_in_leaf);
+      freq_value = *(std::end(this->_freqs) - this->_left_in_leaf);
 
       if constexpr (IteratorTraits::Position()) {
         auto& pos = std::get<Position>(_attrs);
@@ -2036,10 +2021,10 @@ void DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
     SDB_ASSERT(!this->_doc_in->IsEOF());
   } else {
     SDB_ASSERT(term_state.docs_count == 1);
-    auto* doc = std::end(this->_buf.docs) - 1;
+    auto* doc = std::end(this->_docs) - 1;
     *doc = doc_limits::min() + term_state.e_single_doc;
     if constexpr (IteratorTraits::Frequency()) {
-      auto* freq = std::end(this->_buf.freqs) - 1;
+      auto* freq = std::end(this->_freqs) - 1;
       *freq = term_state.freq;
     }
     this->_left_in_list = 0;
@@ -2121,10 +2106,10 @@ doc_id_t DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::seek(
   [[maybe_unused]] uint32_t notify = 0;
 
   while (this->_left_in_leaf != 0) {
-    const auto doc = *(std::end(this->_buf.docs) - this->_left_in_leaf);
+    const auto doc = *(std::end(this->_docs) - this->_left_in_leaf);
 
     if constexpr (IteratorTraits::Position()) {
-      notify += *(std::end(this->_buf.freqs) - this->_left_in_leaf);
+      notify += *(std::end(this->_freqs) - this->_left_in_leaf);
     }
 
     --this->_left_in_leaf;
@@ -2132,7 +2117,7 @@ doc_id_t DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::seek(
     if (target <= doc) {
       if constexpr (IteratorTraits::Frequency()) {
         auto& freq_value = std::get<FreqAttr>(_attrs).value;
-        freq_value = *(std::end(this->_buf.freqs) - (this->_left_in_leaf + 1));
+        freq_value = *(std::end(this->_freqs) - (this->_left_in_leaf + 1));
       }
 
       if constexpr (IteratorTraits::Position()) {
@@ -2236,9 +2221,8 @@ class Wanderator : public DocIteratorBase<IteratorTraits, FieldTraits>,
     : _skip{IteratorTraits::kBlockSize, PostingsWriterBase::kSkipN,
             ReadSkip{meta_idx, make_score, scorer, index, extent}},
       _scorer{make_score(meta_idx, *this)} {
-    SDB_ASSERT(absl::c_all_of(this->_buf.docs, [](doc_id_t doc) {
-      return doc == doc_limits::invalid();
-    }));
+    SDB_ASSERT(absl::c_all_of(
+      this->_docs, [](doc_id_t doc) { return doc == doc_limits::invalid(); }));
     std::get<ScoreAttr>(_attrs).Reset(
       *this,
       [](ScoreCtx* ctx, score_t* res) noexcept {
@@ -2555,10 +2539,10 @@ doc_id_t Wanderator<IteratorTraits, FieldTraits, WandExtent>::seek(
   [[maybe_unused]] uint32_t notify = 0;
 
   while (this->_left_in_leaf != 0) {
-    const auto doc = *(std::end(this->_buf.docs) - this->_left_in_leaf);
+    const auto doc = *(std::end(this->_docs) - this->_left_in_leaf);
 
     if constexpr (IteratorTraits::Position()) {
-      notify += *(std::end(this->_buf.freqs) - this->_left_in_leaf);
+      notify += *(std::end(this->_freqs) - this->_left_in_leaf);
     }
 
     --this->_left_in_leaf;
@@ -2566,7 +2550,7 @@ doc_id_t Wanderator<IteratorTraits, FieldTraits, WandExtent>::seek(
     if (target <= doc) {
       if constexpr (IteratorTraits::Frequency()) {
         auto& freq_value = std::get<FreqAttr>(_attrs).value;
-        freq_value = *(std::end(this->_buf.freqs) - (this->_left_in_leaf + 1));
+        freq_value = *(std::end(this->_freqs) - (this->_left_in_leaf + 1));
       }
 
       if constexpr (IteratorTraits::Position()) {

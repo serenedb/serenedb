@@ -24,26 +24,33 @@
 #include <span>
 
 #include "catalog/types.h"
+#include "connector/primary_key.hpp"
 #include "rocksdb/slice.h"
 #include "rocksdb/utilities/transaction.h"
+#include "rocksdb_engine_catalog/rocksdb_utils.h"
 
 namespace sdb::connector {
 
 class RocksDBSinkWriterBase {
  public:
-  RocksDBSinkWriterBase(rocksdb::Transaction& transaction,
-                        rocksdb::ColumnFamilyHandle& cf)
-    : _transaction{transaction}, _cf{cf} {}
+  RocksDBSinkWriterBase(
+    rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
+    WriteConflictPolicy conflict_policy = WriteConflictPolicy::Error)
+    : _transaction{transaction}, _cf{cf}, _conflict_policy{conflict_policy} {}
 
   virtual ~RocksDBSinkWriterBase() = default;
 
   rocksdb::Status Lock(std::string_view full_key) {
-    return _transaction.GetKeyLock(&_cf, full_key, false, true);
+    if (_conflict_policy == WriteConflictPolicy::KeepOld) {
+      return _transaction.GetKeyLock(&_cf, full_key, false, true);
+    }
+    return _transaction.GetKeyLockOnce(&_cf, full_key, false, true);
   }
 
  protected:
   rocksdb::Transaction& _transaction;
   rocksdb::ColumnFamilyHandle& _cf;
+  WriteConflictPolicy _conflict_policy;
 };
 
 // This could be final subclass of SinkInsertWriter but currently only used
@@ -53,29 +60,62 @@ class RocksDBSinkWriter : public RocksDBSinkWriterBase {
   RocksDBSinkWriter(
     rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
     WriteConflictPolicy conflict_policy = WriteConflictPolicy::Error)
-    : RocksDBSinkWriterBase{transaction, cf},
-      _conflict_policy{conflict_policy} {}
-
+    : RocksDBSinkWriterBase{transaction, cf, conflict_policy} {}
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key);
   std::unique_ptr<rocksdb::Iterator> CreateIterator();
 
   void DeleteCell(std::string_view full_key);
 
-  void UseConflictMask(bool value) { _use_conflict_mask = value; }
-  void ResizeConflictMask(size_t num_rows) {
-    _row_conflict_mask.resize(num_rows, false);
+  // Handles write conflicts
+  // Returns number of skipped rows
+  size_t HandleConflicts(primary_key::Keys& keys) {
+    // TODO multiget?
+
+    if (_conflict_policy == WriteConflictPolicy::Update) {
+      // Optimize out reading
+      return 0;
+    }
+
+    ConfigureReadOptions();
+    _pinnable_slice.Reset();
+    size_t skipped_cnt = 0;
+    for (auto& key : keys) {
+      auto status =
+        _transaction.Get(_read_options, &_cf, key, &_pinnable_slice);
+
+      if (!status.ok() && !status.IsNotFound()) {
+        SDB_THROW(rocksutils::ConvertStatus(status));
+      }
+
+      const bool conflict = status.ok();
+
+      if (conflict) {
+        switch (_conflict_policy) {
+          case WriteConflictPolicy::Update:
+            SDB_ASSERT(false,
+                       "WriteConflictPolicy::Update should be handled earlier "
+                       "for optimiztion reason");
+            break;
+          case WriteConflictPolicy::KeepOld:
+            // Mark key: it should be skipped
+            key.clear();
+            skipped_cnt++;
+            break;
+          case WriteConflictPolicy::Error:
+            SDB_THROW(ERROR_SERVER_UNIQUE_CONSTRAINT_VIOLATED,
+                      "TODO: make sql error");
+            break;
+          default:
+            SDB_UNREACHABLE();
+        }
+      }
+    }
+    return skipped_cnt;
   }
-  void ResetRowId() { _row_id = 0; }
 
  private:
   void ConfigureReadOptions();
-  bool CheckConflict(const rocksdb::Slice& key_slice);
-
-  WriteConflictPolicy _conflict_policy;
-  boost::dynamic_bitset<> _row_conflict_mask;
-  bool _use_conflict_mask{false};
-  size_t _row_id = 0;
 
   rocksdb::ReadOptions _read_options;
   rocksdb::PinnableSlice _pinnable_slice;

@@ -172,7 +172,7 @@ class RocksDBDataSinkBase : public velox::connector::DataSink {
   void WriteRowSlices(std::string_view key);
   void WriteNull(std::string_view key);
 
-  const std::string& SetupRowKey(
+  std::string* SetupRowKey(
     velox::vector_size_t idx,
     std::span<const velox::vector_size_t> original_idx);
 

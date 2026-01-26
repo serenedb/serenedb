@@ -167,12 +167,31 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
         }
       },
       _store_keys_buffers.emplace_back());
-  }
-  for (const auto& writer : _index_writers) {
-    writer->Init(num_rows);
+
+    // For early conflict check
+    key_utils::SetupColumnForKey(_store_keys_buffers.back(),
+                                 _column_ids.front());
   }
 
-  _data_writer.ResizeConflictMask(num_rows);
+  const auto skipped_rows = _data_writer.HandleConflicts(_store_keys_buffers);
+
+  // TODO:
+  // compactification?
+  // pros: get rid of key check shit
+  // cons: need to modify 'input'
+
+  SDB_ASSERT(skipped_rows <= num_rows);
+
+  if (skipped_rows == num_rows) {
+    // All rows are skipped, nothing to do
+    return;
+  }
+
+  for (const auto& writer : _index_writers) {
+    writer->Init(num_rows - skipped_rows);
+  }
+
+  // _data_writer.ResizeConflictMask(num_rows);
   velox::IndexRange all_rows(0, num_rows);
   const folly::Range all_rows_range{&all_rows, 1};
   for (velox::column_index_t i = 0; i < num_columns; ++i) {
@@ -182,8 +201,8 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
                  "one in the input vectors");
       continue;
     }
-    _data_writer.UseConflictMask(i > 0);
-    _data_writer.ResetRowId();
+    // _data_writer.UseConflictMask(i > 0);
+    // _data_writer.ResetRowId();
     WriteInputColumn(_column_ids[i], i, *input, all_rows_range);
   }
 }
@@ -404,16 +423,19 @@ void RocksDBDataSinkBase<SubWriterType>::WriteFlatColumn(
     for (const auto& range : ranges) {
       const auto range_end = range.begin + range.size;
       for (velox::vector_size_t idx = range.begin; idx < range_end; ++idx) {
-        const auto& key = SetupRowKey(row_id++, original_idx);
+        auto* key = SetupRowKey(row_id++, original_idx);
+        if (key == nullptr) {
+          continue;
+        }
         if constexpr (MayHaveNulls) {
           if (flat_vector->isNullAt(idx)) {
-            WriteNull(key);
+            WriteNull(*key);
             continue;
           }
         }
         ResetForNewRow();
         WriteFlatValue(*flat_vector, idx);
-        WriteRowSlices(key);
+        WriteRowSlices(*key);
       }
     }
   });
@@ -434,17 +456,20 @@ void RocksDBDataSinkBase<SubWriterType>::WriteBiasedColumn(
       for (const auto& range : ranges) {
         const auto range_end = range.begin + range.size;
         for (velox::vector_size_t idx = range.begin; idx < range_end; ++idx) {
-          const auto& key = SetupRowKey(row_id++, original_idx);
+          auto* key = SetupRowKey(row_id++, original_idx);
+          if (key == nullptr) {
+            continue;
+          }
           if constexpr (MayHaveNulls) {
             if (bias_vector->isNullAt(idx)) {
-              WriteNull(key);
+              WriteNull(*key);
               continue;
             }
           }
           ResetForNewRow();
           auto tmp = bias_vector->valueAtFast(idx);
           WritePrimitive(tmp);
-          WriteRowSlices(key);
+          WriteRowSlices(*key);
         }
       }
     });
@@ -488,7 +513,11 @@ void RocksDBDataSinkBase<SubWriterType>::WriteDictionaryColumn(
                       original_idx.subspan(current, sub_ranges.size()));
           sub_ranges.clear();
         }
-        WriteNull(SetupRowKey(row_id++, original_idx));
+        auto* key = SetupRowKey(row_id++, original_idx);
+        if (key == nullptr) {
+          continue;
+        }
+        WriteNull(*key);
         current = row_id;
         continue;
       }
@@ -513,9 +542,12 @@ void RocksDBDataSinkBase<SubWriterType>::WriteComplexColumn(
     int32_t begin = ranges[i].begin;
     int32_t end = begin + ranges[i].size;
     for (int32_t offset = begin; offset < end; ++offset) {
-      const auto& key = SetupRowKey(row_id++, original_idx);
+      auto* key = SetupRowKey(row_id++, original_idx);
+      if (key == nullptr) {
+        continue;
+      }
       if (input.isNullAt(offset)) {
-        WriteNull(key);
+        WriteNull(*key);
       } else {
         ResetForNewRow();
         static_assert(
@@ -533,7 +565,7 @@ void RocksDBDataSinkBase<SubWriterType>::WriteComplexColumn(
         } else {
           WriteFlatMapValue(input, offset);
         }
-        WriteRowSlices(key);
+        WriteRowSlices(*key);
       }
     }
   }
@@ -560,8 +592,11 @@ void RocksDBDataSinkBase<SubWriterType>::WriteConstantColumn(
     for (const auto& range : ranges) {
       const auto end = range.begin + range.size;
       for (int32_t offset = range.begin; offset < end; ++offset) {
-        const auto& key = SetupRowKey(row_id++, original_idx);
-        WriteRowSlices(key);
+        auto* key = SetupRowKey(row_id++, original_idx);
+        if (key == nullptr) {
+          continue;
+        }
+        WriteRowSlices(*key);
       }
     }
   }
@@ -2123,7 +2158,7 @@ void RocksDBDataSinkBase<SubWriterType>::WritePrimitive(const T& value) {
 }
 
 template<typename SubWriterType>
-const std::string& RocksDBDataSinkBase<SubWriterType>::SetupRowKey(
+std::string* RocksDBDataSinkBase<SubWriterType>::SetupRowKey(
   velox::vector_size_t idx,
   std::span<const velox::vector_size_t> original_idx) {
   SDB_ASSERT(original_idx.empty() ||
@@ -2132,9 +2167,12 @@ const std::string& RocksDBDataSinkBase<SubWriterType>::SetupRowKey(
   SDB_ASSERT(static_cast<size_t>(row_id) < _store_keys_buffers.size());
 
   auto& row_key = _store_keys_buffers[row_id];
+  if (row_key.empty()) {
+    return nullptr;
+  }
   key_utils::SetupColumnForKey(row_key, _column_id);
 
-  return row_key;
+  return &row_key;
 }
 
 template<typename SubWriterType>

@@ -29,54 +29,11 @@ void RocksDBSinkWriter::ConfigureReadOptions() {
   _read_options.snapshot = _transaction.GetSnapshot();
 }
 
-bool RocksDBSinkWriter::CheckConflict(const rocksdb::Slice& key_slice) {
-  if (_use_conflict_mask) {
-    return _row_conflict_mask[_row_id++];
-  }
-
-  if (_conflict_policy == WriteConflictPolicy::Update) {
-    // If our policy is to update values,
-    // than we can optimize out reading old values.
-    return false;
-  }
-
-  ConfigureReadOptions();
-  _pinnable_slice.Reset();
-
-  auto status =
-    _transaction.Get(_read_options, &_cf, key_slice, &_pinnable_slice);
-  bool conflict = status.ok();
-
-  if (!status.ok() && !status.IsNotFound()) {
-    SDB_THROW(rocksutils::ConvertStatus(status));
-  }
-
-  _row_conflict_mask[_row_id++] = conflict;
-  return conflict;
-}
-
 void RocksDBSinkWriter::Write(std::span<const rocksdb::Slice> cell_slices,
                               std::string_view full_key) {
   SDB_ASSERT(!cell_slices.empty());
 
   rocksdb::Slice key_slice(full_key);
-  bool conflict = CheckConflict(key_slice);
-
-  if (conflict) {
-    switch (_conflict_policy) {
-      case WriteConflictPolicy::Update:
-        break;
-      case WriteConflictPolicy::KeepOld:
-        return;
-      case WriteConflictPolicy::Error:
-        SDB_THROW(ERROR_SERVER_UNIQUE_CONSTRAINT_VIOLATED,
-                  "TODO: make sql error");
-        break;
-      default:
-        SDB_UNREACHABLE();
-    }
-  }
-
   rocksdb::Status status;
   if (cell_slices.size() == 1) {
     // Optimizing single slice case - rocksdb does not do additional copying

@@ -68,7 +68,7 @@ a	b
 1	10
 2	200
 
-# TODO it should be statement count 1
+# TODO it should be statement count 1 because of keep_old
 statement ok
 INSERT INTO t1 VALUES (3, 300), (3, 300);
 

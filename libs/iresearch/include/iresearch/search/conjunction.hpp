@@ -191,7 +191,7 @@ class Conjunction : public ConjunctionBase<Adapter, Merger> {
     return irs::GetMutable(_attrs, type);
   }
 
-  doc_id_t value() const noexcept final {
+  IRS_FORCE_INLINE doc_id_t value() const noexcept final {
     return std::get<AttributePtr<DocAttr>>(_attrs).ptr->value;
   }
 

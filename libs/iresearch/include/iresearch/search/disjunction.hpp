@@ -890,13 +890,13 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
                        std::move(scores),
                        ResolveOverloadTag{}} {}
 
-  size_t MatchCount() const noexcept { return _match_count; }
+  IRS_FORCE_INLINE size_t MatchCount() const noexcept { return _match_count; }
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);
   }
 
-  doc_id_t value() const noexcept final {
+  IRS_FORCE_INLINE doc_id_t value() const noexcept final {
     return std::get<DocAttr>(_attrs).value;
   }
 

@@ -1700,130 +1700,6 @@ using AttributesImpl = std::conditional_t<
                      std::tuple<DocAttr, FreqAttr, ScoreAttr, CostAttr>,
                      std::tuple<DocAttr, ScoreAttr, CostAttr>>>;
 
-template<typename IteratorTraits, typename FieldTraits>
-class SingleDocIterator
-  : public DocIterator,
-    private std::conditional_t<IteratorTraits::Position(),
-                               DataBuffer<IteratorTraits>, Empty> {
-  static_assert((IteratorTraits::Features() & FieldTraits::Features()) ==
-                IteratorTraits::Features());
-
-  using Attributes = AttributesImpl<IteratorTraits, FieldTraits>;
-  using Position = PositionImpl<IteratorTraits, FieldTraits>;
-
- public:
-  SingleDocIterator() = default;
-
-  void WandPrepare(const TermMeta& meta, const IndexInput* pos_in,
-                   const IndexInput* pay_in, uint32_t meta_idx,
-                   const MakeScoreCallback& make_score) {
-    Prepare(meta, pos_in, pay_in);
-    auto func = make_score(meta_idx, *this);
-
-    auto& doc_value = std::get<DocAttr>(_attrs).value;
-    doc_value = _next;
-
-    auto& score = std::get<ScoreAttr>(_attrs);
-    func(&score.max.leaf);
-    score.max.tail = score.max.leaf;
-    score = ScoreFunction::Constant(score.max.tail);
-
-    doc_value = doc_limits::invalid();
-  }
-
-  void Prepare(const TermMeta& meta, [[maybe_unused]] const IndexInput* pos_in,
-               [[maybe_unused]] const IndexInput* pay_in);
-
- private:
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
-  }
-
-  doc_id_t value() const noexcept final {
-    return std::get<DocAttr>(_attrs).value;
-  }
-
-  doc_id_t advance() final {
-    auto& doc_value = std::get<DocAttr>(_attrs).value;
-
-    doc_value = _next;
-    _next = doc_limits::eof();
-
-    if constexpr (IteratorTraits::Position()) {
-      if (!doc_limits::eof(doc_value)) {
-        auto& pos = std::get<Position>(_attrs);
-        pos.Notify(std::get<FreqAttr>(_attrs).value);
-        pos.Clear();
-      }
-    }
-
-    return doc_value;
-  }
-
-  doc_id_t seek(doc_id_t target) final {
-    auto& doc_value = std::get<DocAttr>(_attrs).value;
-    while (doc_value < target) {
-      advance();
-    }
-    return doc_value;
-  }
-
-  uint32_t count() final {
-    auto& doc_value = std::get<DocAttr>(_attrs).value;
-    if (doc_limits::eof(doc_value)) {
-      return 0;
-    }
-    doc_value = doc_limits::eof();
-    return 1;
-  }
-
-  doc_id_t _next{doc_limits::eof()};
-  Attributes _attrs;
-};
-
-template<typename IteratorTraits, typename FieldTraits>
-void SingleDocIterator<IteratorTraits, FieldTraits>::Prepare(
-  const TermMeta& meta, [[maybe_unused]] const IndexInput* pos_in,
-  [[maybe_unused]] const IndexInput* pay_in) {
-  // use single_doc_iterator for singleton docs only,
-  // must be ensured by the caller
-  SDB_ASSERT(meta.docs_count == 1);
-
-  const auto& term_state = static_cast<const TermMetaImpl&>(meta);
-  _next = doc_limits::min() + term_state.e_single_doc;
-  std::get<CostAttr>(_attrs).reset(1);  // estimate iterator
-
-  if constexpr (IteratorTraits::Frequency()) {
-    const auto term_freq = meta.freq;
-
-    SDB_ASSERT(term_freq);
-    std::get<FreqAttr>(_attrs).value = term_freq;
-
-    if constexpr (IteratorTraits::Position()) {
-      auto get_tail_start = [&]() noexcept {
-        if (term_freq < IteratorTraits::kBlockSize) {
-          return term_state.pos_start;
-        } else if (term_freq == IteratorTraits::kBlockSize) {
-          return address_limits::invalid();
-        } else {
-          return term_state.pos_start + term_state.pos_end;
-        }
-      };
-
-      const DocState state{
-        .pos_in = pos_in,
-        .pay_in = pay_in,
-        .term_state = &term_state,
-        .freq = &std::get<FreqAttr>(_attrs).value,
-        .enc_buf = this->docs,
-        .tail_start = get_tail_start(),
-        .tail_length = term_freq % IteratorTraits::kBlockSize};
-
-      std::get<Position>(_attrs).Prepare(state);
-    }
-  }
-}
-
 static_assert(kMaxScorers < WandContext::kDisable);
 
 template<uint8_t Value>
@@ -1943,6 +1819,27 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
     if (meta.docs_count > FieldTraits::kBlockSize) {
       return;
     }
+
+    if (meta.docs_count == 1) {
+      // Singleton doc case
+      auto func = make_score(meta_idx, *this);
+
+      auto& doc_value = std::get<DocAttr>(_attrs).value;
+      doc_value = *this->_begin;
+      if constexpr (IteratorTraits::Frequency()) {
+        auto& freq_value = std::get<FreqAttr>(_attrs).value;
+        freq_value = *this->_freq;
+      }
+
+      auto& score = std::get<ScoreAttr>(_attrs);
+      func(&score.max.leaf);
+      score.max.tail = score.max.leaf;
+      score = ScoreFunction::Constant(score.max.tail);
+
+      doc_value = doc_limits::invalid();
+      return;
+    }
+
     auto ctx = scorer.prepare_wand_source();
     auto func = make_score(meta_idx, *ctx);
 
@@ -2133,35 +2030,42 @@ template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
 void DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
   const TermMeta& meta, const IndexInput* doc_in, const IndexInput* pos_in,
   const IndexInput* pay_in, uint8_t wand_index) {
-  // Don't use DocIterator for singleton docs, must be ensured by the caller
-  SDB_ASSERT(meta.docs_count > 1);
   SDB_ASSERT(this->_begin == std::end(this->_buf.docs));
 
   auto& term_state = static_cast<const TermMetaImpl&>(meta);
-  this->_left = term_state.docs_count;
-
-  // Init document stream
-  if (!this->_doc_in) {
-    this->_doc_in = doc_in->Reopen();  // Reopen thread-safe stream
-
-    if (!this->_doc_in) {
-      // Implementation returned wrong pointer
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                "Failed to reopen document input");
-
-      throw IoError("failed to reopen document input");
-    }
-  }
-
-  this->_doc_in->Seek(term_state.doc_start);
-  SDB_ASSERT(!this->_doc_in->IsEOF());
-
   std::get<CostAttr>(_attrs).reset(term_state.docs_count);  // Estimate iterator
 
-  SDB_ASSERT(!IteratorTraits::Frequency() || meta.freq);
+  if (term_state.docs_count > 1) {
+    this->_left = term_state.docs_count;
+
+    if (!this->_doc_in) {
+      this->_doc_in = doc_in->Reopen();  // Reopen thread-safe stream
+
+      if (!this->_doc_in) {
+        SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+                  "Failed to reopen document input");
+        throw IoError("failed to reopen document input");
+      }
+    }
+
+    this->_doc_in->Seek(term_state.doc_start);
+    SDB_ASSERT(!this->_doc_in->IsEOF());
+  } else {
+    SDB_ASSERT(term_state.docs_count == 1);
+    auto* doc = std::end(this->_buf.docs) - 1;
+    *doc = doc_limits::min() + term_state.e_single_doc;
+    this->_begin = doc;
+    if constexpr (IteratorTraits::Frequency()) {
+      this->_freq = std::end(this->_buf.freqs) - 1;
+      *this->_freq = term_state.freq;
+    }
+    this->_left = 0;
+  }
+
+  SDB_ASSERT(!IteratorTraits::Frequency() || term_state.freq);
   if constexpr (IteratorTraits::Position()) {
     static_assert(IteratorTraits::Frequency());
-    const auto term_freq = meta.freq;
+    const auto term_freq = term_state.freq;
 
     const auto tail_start = [&] noexcept {
       if (term_freq < IteratorTraits::kBlockSize) {
@@ -2191,7 +2095,8 @@ void DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
     _skip.Reader().Enable(term_state);
     _skip_offs = term_state.doc_start + term_state.e_skip_start;
     _docs_count = term_state.docs_count;
-  } else if (term_state.docs_count != IteratorTraits::kBlockSize &&
+  } else if (term_state.docs_count > 1 &&
+             term_state.docs_count != IteratorTraits::kBlockSize &&
              wand_index == WandContext::kDisable) {
     _skip.Reader().SkipWandData(*this->_doc_in);
   }
@@ -3551,13 +3456,6 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
       field_features, required_features,
       [&]<typename IteratorTraits, typename FieldTraits> -> DocIterator::ptr {
         if (!options.Enabled()) {
-          if (meta.docs_count == 1) {
-            auto it = memory::make_managed<
-              SingleDocIterator<IteratorTraits, FieldTraits>>();
-            it->Prepare(meta, _pos_in.get(), _pay_in.get());
-            iterator_types |= 1 << 0;
-            return it;
-          }
           return ResolveExtent<0>(
             options.count,
             [&]<typename Extent>(Extent&& extent) -> DocIterator::ptr {
@@ -3574,14 +3472,6 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
         [[maybe_unused]] const auto scorer_features = scorer.GetIndexFeatures();
         SDB_ASSERT(scorer_features == (field_features & scorer_features));
         // No need to use wanderator for short lists
-        if (meta.docs_count == 1) {
-          auto it = memory::make_managed<
-            SingleDocIterator<IteratorTraits, FieldTraits>>();
-          it->WandPrepare(meta, _pos_in.get(), _pay_in.get(), meta_idx,
-                          options.make_score);
-          iterator_types |= 1 << 0;
-          return it;
-        }
         return ResolveExtent<1>(
           options.count,
           [&]<typename Extent>(Extent extent) -> DocIterator::ptr {
@@ -3651,8 +3541,8 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
     });
   };
 
-  if (std::popcount(iterator_types) != 1 || (iterator_types & (1 << 0))) {
-    // DocIterator and SingleDocIterator case
+  if (std::popcount(iterator_types) != 1) {
+    // DocIterator
     return make_min_match.template operator()<ScoreAdapter>();
   }
 

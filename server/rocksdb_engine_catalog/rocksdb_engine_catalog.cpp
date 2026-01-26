@@ -111,6 +111,7 @@
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 #include "rocksdb_engine_catalog/rocksdb_value.h"
 #include "rocksdb_engine_catalog/rocksdb_wal_access.h"
+#include "search/data_store.h"
 #include "storage_engine/table_shard.h"
 #include "vpack/serializer.h"
 #include "vpack/slice.h"
@@ -1506,6 +1507,17 @@ Result RocksDBEngineCatalog::CreateIndex(const catalog::Index& index) {
     },
     [&] { return RocksDBValue::Object(RocksDBEntryType::Index, b.slice()); },
     [&] { return std::string_view{}; });
+}
+
+ResultOr<std::shared_ptr<search::DataStore>>
+RocksDBEngineCatalog::CreateDataStore(const catalog::Index& index,
+                                      bool is_new) {
+  search::DataStoreOptions options;
+
+  if (!is_new) {
+    // Read DataStore options
+  }
+  return {std::make_shared<search::DataStore>(index, options)};
 }
 
 Result RocksDBEngineCatalog::MarkDeleted(const catalog::Index& index,

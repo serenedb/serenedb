@@ -38,7 +38,7 @@ concept IndexTaskType = requires {
 
 class Task {
  public:
-  Task(IndexId id, std::shared_ptr<DataStore> data_store,
+  Task(ObjectId id, std::shared_ptr<DataStore> data_store,
        std::shared_ptr<ThreadPoolState> state)
     : _id{id},
       _data_store{std::move(data_store)},
@@ -51,7 +51,7 @@ class Task {
   }
 
  protected:
-  IndexId _id;
+  ObjectId _id;
   std::shared_ptr<DataStore> _data_store;
   std::shared_ptr<ThreadPoolState> _state;
   [[maybe_unused]] SearchEngine* _engine;
@@ -63,7 +63,7 @@ class CommitTask : public Task {
     return ThreadGroup::Commit;
   }
   static constexpr std::string_view TaskName() noexcept { return "Commit"; }
-  CommitTask(IndexId id, std::shared_ptr<DataStore> data_store,
+  CommitTask(ObjectId id, std::shared_ptr<DataStore> data_store,
              std::shared_ptr<ThreadPoolState> state)
     : Task{id, std::move(data_store), std::move(state)} {}
 
@@ -85,7 +85,7 @@ class ConsolidationTask : public Task {
   static constexpr std::string_view TaskName() noexcept {
     return "Consolidate";
   }
-  ConsolidationTask(IndexId id, std::shared_ptr<DataStore> data_store,
+  ConsolidationTask(ObjectId id, std::shared_ptr<DataStore> data_store,
                     std::shared_ptr<ThreadPoolState> state,
                     std::function<bool()>&& flush_progress)
     : Task{id, std::move(data_store), std::move(state)},

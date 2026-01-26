@@ -37,21 +37,17 @@ namespace sdb::search {
 
 class DataStore;
 
+struct DataStoreOptions {
+  irs::IndexWriterOptions writer_options;
+  irs::IndexReaderOptions reader_options;
+};
+
 struct ThreadPoolState {
   std::atomic_size_t pending_commits{0};
   std::atomic_size_t non_empty_commits{0};
   std::atomic_size_t pending_consolidations{0};
   std::atomic_size_t noop_consolidation_count{0};
   std::atomic_size_t noop_commit_count{0};
-};
-
-struct DataStoreOptions {
-  ObjectId database_id;
-  ObjectId id;
-  std::filesystem::path path;
-  irs::Format::ptr codec;
-  irs::IndexWriterOptions writer_options;
-  irs::IndexReaderOptions reader_options;
 };
 
 enum class CommitResult {
@@ -128,7 +124,12 @@ class DataStore : public std::enable_shared_from_this<DataStore> {
     uint64_t time_ms;
   };
 
-  DataStore(const DataStoreOptions& options);
+  DataStore(const catalog::Index& table, const DataStoreOptions& options);
+
+  irs::IndexWriter::Transaction GetTransaction() {
+    SDB_ASSERT(_writer);
+    return _writer->GetBatch();
+  }
 
   ResultOr<CommitResult> Commit(bool wait = false);
   ResultWithTime CommitUnsafe(bool wait,
@@ -145,8 +146,7 @@ class DataStore : public std::enable_shared_from_this<DataStore> {
   void ScheduleCommit(absl::Duration delay);
   void ScheduleConsolidation(absl::Duration delay);
 
-  ObjectId GetId() const noexcept { return _options.id; }
-  IndexId GetIndexId() const noexcept { return _id; }
+  ObjectId GetId() const noexcept { return _id; }
 
   void StatsToVPack(vpack::Builder& builder);
   Stats GetStats() const;
@@ -176,12 +176,13 @@ class DataStore : public std::enable_shared_from_this<DataStore> {
                                bool& empty_consolidation);
   Result CleanupUnsafeImpl();
 
-  RocksDBEngineCatalog* _engine;
-  SearchEngine* _search;
-  IndexId _id;
+  RocksDBEngineCatalog& _engine;
+  SearchEngine& _search;
+  ObjectId _id;
   std::shared_ptr<ThreadPoolState> _state;
   DataSnapshotPtr _snapshot;
-  std::unique_ptr<irs::IndexWriter> _writer;
+  std::shared_ptr<irs::IndexWriter> _writer;
+  std::shared_ptr<irs::IndexReader> _reader;
   DataStoreOptions _options;
   std::unique_ptr<irs::Directory> _dir;
   DataStoreMeta _meta;

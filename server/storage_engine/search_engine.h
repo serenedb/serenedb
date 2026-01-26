@@ -49,7 +49,6 @@ namespace search {
 
 class SearchThreadPools;
 class ResourceMutex;
-class DataStore;
 
 enum class ThreadGroup : uint8_t {
   Commit = 0,
@@ -81,11 +80,6 @@ class SearchEngine final : public SerenedFeature {
   void untrackOutOfSyncLink() noexcept;
 
   bool failQueriesOnOutOfSync() const noexcept;
-
-  // Managing search::DataStore
-  ResultOr<std::shared_ptr<DataStore>> CreateDataStore(
-    const catalog::Index& index);
-  Result DropDataStore(ObjectId database_id, ObjectId index_id);
 
 #ifdef SDB_GTEST
   void setDefaultParallelism(uint32_t v) noexcept { _default_parallelism = v; }

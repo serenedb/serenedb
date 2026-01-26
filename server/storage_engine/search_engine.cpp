@@ -350,26 +350,4 @@ std::filesystem::path SearchEngine::GetPersistedPath(
   return ::sdb::search::GetPersistedPath(_dir_feature, database_id);
 }
 
-ResultOr<std::shared_ptr<DataStore>> SearchEngine::CreateDataStore(
-  const catalog::Index& index) {
-  DataStoreOptions options;
-  options.path = GetPersistedPath(index.GetDatabaseId());
-  options.path /= absl::StrCat(index.GetId());
-  // TODO(codeworse): setup format option properly
-  options.codec = irs::formats::Get(search::GetFormat(LinkVersion::Max));
-  if (!options.codec) {
-    return std::unexpected<Result>{
-      std::in_place,
-      ERROR_INTERNAL,
-      absl::StrCat("failed to get default codec for index '", index.GetName(),
-                   "'"),
-    };
-  }
-  return std::make_shared<DataStore>(options);
-}
-
-Result SearchEngine::DropDataStore(ObjectId database_id, ObjectId index_id) {
-  return {ERROR_NOT_IMPLEMENTED};
-}
-
 }  // namespace sdb::search

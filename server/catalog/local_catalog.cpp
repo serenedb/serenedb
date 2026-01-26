@@ -1143,9 +1143,11 @@ Result LocalCatalog::RegisterIndex(ObjectId database_id,
   }
 
   absl::MutexLock lock{&_mutex};
-  return _snapshot->RegisterObject(database_id, schema, std::move(*index),
-                                   false,
-                                   [&](auto& object) -> Result { return {}; });
+  return _snapshot->RegisterObject(
+    database_id, schema, std::move(*index), false, [&](auto& object) -> Result {
+      auto& index = basics::downCast<Index>(*object);
+      return _engine->CreateDataStore(index, false).error_or(Result{});
+    });
 }
 
 Result LocalCatalog::CreateIndex(ObjectId database_id, std::string_view schema,
@@ -1169,7 +1171,9 @@ Result LocalCatalog::CreateIndex(ObjectId database_id, std::string_view schema,
       database_id, schema, std::move(*index), false,
       [&](auto& object) -> Result {
         auto& index = basics::downCast<Index>(*object);
-        return _search_engine->CreateDataStore(index)
+        // create DataStore and write to RocksDB -> Add DataStore to snapshot ->
+        // Write Index to RocksDB
+        return _engine->CreateDataStore(index, true)
           .and_then([&](std::shared_ptr<search::DataStore>&& datastore)
                       -> ResultOr<std::shared_ptr<search::DataStore>> {
             clone->AddSearchDataStore(std::move(datastore));

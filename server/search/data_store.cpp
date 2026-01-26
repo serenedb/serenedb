@@ -23,12 +23,16 @@
 
 #include <absl/cleanup/cleanup.h>
 
+#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/index_writer.hpp>
 #include <iresearch/store/fs_directory.hpp>
 
 #include "basics/assert.h"
 #include "catalog/catalog.h"
 #include "metrics/gauge.h"
 #include "metrics/guard.h"
+#include "rest_server/serened_single.h"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/task.h"
 #include "storage_engine/search_engine.h"
 
@@ -49,9 +53,25 @@ uint64_t ComputeAvg(std::atomic<uint64_t>& time_num, uint64_t new_time) {
 }
 }  // namespace
 
-DataStore::DataStore(const DataStoreOptions& options)
-  : _options(options),
-    _dir{std::make_unique<irs::FSDirectory>(_options.path)} {}
+DataStore::DataStore(const catalog::Index& index,
+                     const DataStoreOptions& options)
+  : _engine{SerenedServer::Instance().getFeature<RocksDBEngineCatalog>()},
+    _search{SerenedServer::Instance().getFeature<SearchEngine>()},
+    _options{options} {
+  const auto db_id = index.GetDatabaseId();
+  const auto schema_id = index.GetSchemaId();
+  const auto index_id = index.GetId();
+  SDB_ASSERT(index_id.isSet());
+  std::filesystem::path path = _search.GetPersistedPath(db_id);
+  path /= absl::StrCat(schema_id);
+  path /= absl::StrCat(index_id);
+  _dir = std::make_unique<irs::FSDirectory>(path);
+  auto codec = irs::formats::Get("default");
+  _writer = irs::IndexWriter::Make(*_dir, codec, irs::OpenMode::kOmCreate,
+                                   _options.writer_options);
+  _reader = std::make_shared<irs::DirectoryReader>(*_dir, codec,
+                                                   _options.reader_options);
+}
 
 Snapshot DataStore::GetSnapshot() const {
   if (FailQueriesOnOutOfSync() && IsOutOfSync()) {
@@ -64,7 +84,7 @@ Snapshot DataStore::GetSnapshot() const {
 }
 
 void DataStore::ScheduleCommit(absl::Duration delay) {
-  CommitTask task{GetIndexId(), shared_from_this(), _state};
+  CommitTask task{GetId(), shared_from_this(), _state};
 
   _state->pending_commits.fetch_add(1, std::memory_order_release);
   task.Schedule(delay);
@@ -72,7 +92,7 @@ void DataStore::ScheduleCommit(absl::Duration delay) {
 
 void DataStore::ScheduleConsolidation(absl::Duration delay) {
   ConsolidationTask task{
-    GetIndexId(), shared_from_this(), _state,
+    GetId(), shared_from_this(), _state,
     [self = shared_from_this()] { return /* TODO */ true; }};
 
   _state->pending_consolidations.fetch_add(1, std::memory_order_release);
@@ -188,7 +208,7 @@ Result DataStore::CommitUnsafeImpl(bool wait,
       commit_lock.lock();
     }
 
-    auto engine_snapshot = _engine->currentSnapshot();
+    auto engine_snapshot = _engine.currentSnapshot();
     if (!engine_snapshot) [[unlikely]] {
       return {ERROR_INTERNAL,
               absl::StrCat("Failed to get engine snapshot while committing "
@@ -279,8 +299,8 @@ Result DataStore::ConsolidateUnsafeImpl(
       ERROR_BAD_PARAMETER,
       absl::StrCat(
         "unset consolidation policy while executing consolidation policy '",
-        policy.properties().toString(), "' on Search index '",
-        GetIndexId().id(), "'")};
+        policy.properties().toString(), "' on Search index '", GetId().id(),
+        "'")};
   }
 
   try {
@@ -289,7 +309,7 @@ Result DataStore::ConsolidateUnsafeImpl(
       return {ERROR_INTERNAL,
               absl::StrCat("failure while executing consolidation policy '",
                            policy.properties().toString(),
-                           "' on Search index '", GetIndexId().id(), "'")};
+                           "' on Search index '", GetId().id(), "'")};
     }
 
     empty_consolidation = (res.size == 0);
@@ -298,13 +318,13 @@ Result DataStore::ConsolidateUnsafeImpl(
       ERROR_INTERNAL,
       absl::StrCat("caught exception while executing consolidation policy '",
                    policy.properties().toString(), "' on Search index '",
-                   GetIndexId().id(), "': ", e.what())};
+                   GetId().id(), "': ", e.what())};
   } catch (...) {
     return {
       ERROR_INTERNAL,
       absl::StrCat("caught exception while executing consolidation policy '",
                    policy.properties().toString(), "' on Search index '",
-                   GetIndexId().id(), "'")};
+                   GetId().id(), "'")};
   }
   return {};
 }
@@ -319,8 +339,7 @@ bool DataStore::SetOutOfSync() noexcept {
 }
 
 void DataStore::MarkOutOfSyncUnsafe() {
-  SDB_ASSERT(_search != nullptr);
-  _search->trackOutOfSyncLink();
+  _search.trackOutOfSyncLink();
 
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
@@ -331,7 +350,7 @@ void DataStore::MarkOutOfSyncUnsafe() {
     return;
   }
 
-  _engine->ChangeTable(*c, *shard);
+  _engine.ChangeTable(*c, *shard);
 }
 
 bool DataStore::IsOutOfSync() const noexcept {
@@ -339,7 +358,7 @@ bool DataStore::IsOutOfSync() const noexcept {
 }
 
 bool DataStore::FailQueriesOnOutOfSync() const noexcept {
-  return _search->failQueriesOnOutOfSync();
+  return _search.failQueriesOnOutOfSync();
 }
 
 }  // namespace sdb::search

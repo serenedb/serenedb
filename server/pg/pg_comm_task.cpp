@@ -151,8 +151,9 @@ constexpr std::array<char, 47> kTimeoutTermination{PQ_MSG_ERROR_RESPONSE,
 
 std::optional<sdb::SqlException> TryAsSqlError(const basics::Exception& e) {
   if (e.code() == ERROR_SERVER_UNIQUE_CONSTRAINT_VIOLATED) {
-    return CONSTRUCT_SQL_ERROR(ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
-                               ERR_MSG(e.message()));
+    return CONSTRUCT_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
+      ERR_MSG("duplicate key value violates unique constraint"));
   }
   return {};
 }
@@ -179,9 +180,8 @@ void PgSQLCommTaskBase::SafeCall(Func&& func) noexcept try {
     func();
   } catch (const velox::VeloxException& e) {
     if (e.wrappedException()) {
-      std::rethrow_exception(e.wrappedException());  // Wrong? Should catch it!
+      std::rethrow_exception(e.wrappedException());
     }
-    SDB_PRINT("[mkornaukhov] wrapped = ", (bool)e.wrappedException());
     SendError(e.what(), ERRCODE_INTERNAL_ERROR);
   }
 } catch (const SqlException& e) {

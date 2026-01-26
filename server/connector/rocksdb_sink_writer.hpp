@@ -41,7 +41,8 @@ class RocksDBSinkWriterBase {
 
   rocksdb::Status Lock(std::string_view full_key) {
     const bool reentrant = _conflict_policy == WriteConflictPolicy::DoNothing;
-    return _transaction.GetKeyLock(&_cf, full_key, false, true, reentrant);
+    return _transaction.GetKeyLock(&_cf, full_key, /*read_only*/ false,
+                                   /*exclusive*/ true, reentrant);
   }
 
  protected:
@@ -99,7 +100,7 @@ class RocksDBSinkWriter : public RocksDBSinkWriterBase {
             break;
           case WriteConflictPolicy::EmitError:
             SDB_THROW(ERROR_SERVER_UNIQUE_CONSTRAINT_VIOLATED,
-                      "duplicate key value violates unique constraint");
+                      "Primary key already exists");
             break;
           default:
             SDB_UNREACHABLE();

@@ -168,18 +168,12 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
       },
       _store_keys_buffers.emplace_back());
 
-    // For early conflict check
+    // For early conflict detection
     key_utils::SetupColumnForKey(_store_keys_buffers.back(),
                                  _column_ids.front());
   }
 
   const auto skipped_rows = _data_writer.HandleConflicts(_store_keys_buffers);
-
-  // TODO:
-  // compactification?
-  // pros: get rid of key check shit
-  // cons: need to modify 'input'
-
   SDB_ASSERT(skipped_rows <= num_rows);
 
   if (skipped_rows == num_rows) {

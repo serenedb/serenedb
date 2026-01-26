@@ -2097,6 +2097,17 @@ doc_id_t DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::seek(
   }
 
   if (this->_max_in_leaf < target) [[unlikely]] {
+    if (target - this->_max_in_leaf <= IteratorTraits::kBlockSize) {
+      if constexpr (!IteratorTraits::Position()) {
+        this->_left_in_leaf = 0;
+        doc_value = this->_max_in_leaf;
+      }
+      while (true) {
+        if (auto doc = advance(); target <= doc) {
+          return doc;
+        }
+      }
+    }
     SeekToBlock(target);
 
     if (this->_left_in_list == 0) [[unlikely]] {

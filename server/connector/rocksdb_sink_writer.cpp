@@ -34,6 +34,12 @@ bool RocksDBSinkWriter::CheckConflict(const rocksdb::Slice& key_slice) {
     return _row_conflict_mask[_row_id++];
   }
 
+  if (_conflict_policy == WriteConflictPolicy::Update) {
+    // If our policy is to update values,
+    // than we can optimize out reading old values.
+    return false;
+  }
+
   ConfigureReadOptions();
   _pinnable_slice.Reset();
 

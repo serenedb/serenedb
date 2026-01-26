@@ -95,8 +95,7 @@ RocksDBUpdateDataSink::RocksDBUpdateDataSink(
   std::span<const velox::column_index_t> key_childs,
   std::vector<catalog::Column::Id> column_ids,
   std::vector<catalog::Column::Id> all_column_ids, bool update_pk,
-  velox::RowTypePtr table_row_type, WriteConflictPolicy conflict_policy,
-
+  velox::RowTypePtr table_row_type,
   std::vector<std::unique_ptr<SinkUpdateWriter>>&& index_writers)
   : RocksDBDataSinkBase<SinkUpdateWriter>{transaction,
                                           cf,
@@ -104,7 +103,7 @@ RocksDBUpdateDataSink::RocksDBUpdateDataSink(
                                           object_key,
                                           key_childs,
                                           std::move(column_ids),
-                                          conflict_policy,
+                                          WriteConflictPolicy::Update,
                                           std::move(index_writers)},
     _all_column_ids{std::move(all_column_ids)},
     _old_keys_buffers{memory_pool},

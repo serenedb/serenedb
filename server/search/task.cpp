@@ -136,7 +136,6 @@ void ConsolidationTask::operator()() {
   }
   if (absl::ZeroDuration() == _consolidation_interval_msec ||
       !_consolidation_policy.policy()) {
-
     SDB_DEBUG("xxxxx", Logger::SEARCH,
               "consolidation is disabled for the index '", _id.id(),
               "', runId '", size_t(&run_id), "'");

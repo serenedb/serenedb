@@ -35,42 +35,28 @@ void CommitTask::Finalize(DataStore& data_store, CommitResult& commit_res) {
   constexpr size_t kMaxPendingConsolidations = 3;
 
   if (commit_res != CommitResult::NoChanges) {
-    _state->pending_commits.fetch_add(1, std::memory_order_release);
-    Schedule(_commit_interval_msec);
-
     if (commit_res == CommitResult::Done) {
-      _state->noop_commit_count.store(0, std::memory_order_release);
-      _state->noop_consolidation_count.store(0, std::memory_order_release);
-
       if (_state->pending_consolidations.load(std::memory_order_acquire) <
             kMaxPendingConsolidations &&
           _state->non_empty_commits.fetch_add(1, std::memory_order_acq_rel) >=
             kMaxNonEmptyCommits) {
-        _data_store->ScheduleConsolidation(_consolidation_interval_msec);
+        data_store.ScheduleConsolidation(_consolidation_interval_msec);
         _state->non_empty_commits.store(0, std::memory_order_release);
       }
     }
   } else {
     _state->non_empty_commits.store(0, std::memory_order_release);
     _state->noop_commit_count.fetch_add(1, std::memory_order_release);
-
-    for (auto count = _state->pending_commits.load(std::memory_order_acquire);
-         count < 1;) {
-      if (_state->pending_commits.compare_exchange_weak(
-            count, 1, std::memory_order_acq_rel)) {
-        Schedule(_commit_interval_msec);
-        break;
-      }
-    }
   }
 }
 void CommitTask::operator()() {
   const char run_id = 0;
+  const auto& data_store = _transaction.GetDataStore();
   _state->pending_commits.fetch_add(1, std::memory_order_release);
   auto commit_res = CommitResult::Undefined;
-  absl::Cleanup reschedule = [&commit_res, this] noexcept {
+  absl::Cleanup reschedule = [&commit_res, &data_store, this] noexcept {
     try {
-      Finalize(*_data_store, commit_res);
+      Finalize(*data_store, commit_res);
     } catch (const std::exception& exp) {
       SDB_ERROR("xxxxx", Logger::SEARCH,
                 "failed to call finalize: ", exp.what());
@@ -81,8 +67,8 @@ void CommitTask::operator()() {
       SDB_THROW(ERROR_DEBUG);
     }
 
-    absl::ReaderMutexLock lock{&_data_store->GetMutex()};
-    auto& meta = _data_store->GetMeta();
+    absl::ReaderMutexLock lock{&data_store->GetMutex()};
+    auto& meta = data_store->GetMeta();
 
     _commit_interval_msec = absl::Milliseconds(meta.commit_interval_msec);
     _consolidation_interval_msec =
@@ -98,7 +84,7 @@ void CommitTask::operator()() {
   }
 
   SDB_IF_FAILURE("SearchCommitTask::commitUnsafe") { SDB_THROW(ERROR_DEBUG); }
-  auto [res, timeMs] = _data_store->CommitUnsafe(false, nullptr, commit_res);
+  auto [res, timeMs] = _transaction.Commit();
 
   if (res.ok()) {
     SDB_TRACE("xxxxx", Logger::SEARCH, "successful sync of Search index '",
@@ -106,7 +92,7 @@ void CommitTask::operator()() {
               "ms");
   } else {
     SDB_WARN("xxxxx", Logger::SEARCH, "error after running for ", timeMs,
-             "ms while committing Search index '", _data_store->GetId(),
+             "ms while committing Search index '", data_store->GetId(),
              "', run id '", size_t(&run_id), "': ", res.errorNumber(), " ",
              res.errorMessage());
   }
@@ -117,7 +103,7 @@ void CommitTask::operator()() {
       SDB_THROW(ERROR_DEBUG);
     }
 
-    auto [res, timeMs] = _data_store->CleanupUnsafe();
+    auto [res, timeMs] = data_store->CleanupUnsafe();
 
     if (res.ok()) {
       SDB_TRACE("xxxxx", Logger::SEARCH, "successful cleanup of Search index '",
@@ -136,22 +122,6 @@ void ConsolidationTask::operator()() {
   const char run_id = 0;
   _state->pending_consolidations.fetch_sub(1, std::memory_order_release);
 
-  absl::Cleanup reschedule = [this]() noexcept {
-    try {
-      for (auto count =
-             _state->pending_consolidations.load(std::memory_order_acquire);
-           count < 1;) {
-        if (_state->pending_consolidations.compare_exchange_weak(
-              count, count + 1, std::memory_order_acq_rel)) {
-          Schedule(_consolidation_interval_msec);
-          break;
-        }
-      }
-    } catch (const std::exception& ex) {
-      SDB_ERROR("xxxxx", Logger::SEARCH, "failed to reschedule: ", ex.what());
-    }
-  };
-
   {
     SDB_IF_FAILURE("SearchConsolidationTask::lockDataStore") {
       SDB_THROW(ERROR_DEBUG);
@@ -166,7 +136,6 @@ void ConsolidationTask::operator()() {
   }
   if (absl::ZeroDuration() == _consolidation_interval_msec ||
       !_consolidation_policy.policy()) {
-    std::move(reschedule).Cancel();
 
     SDB_DEBUG("xxxxx", Logger::SEARCH,
               "consolidation is disabled for the index '", _id.id(),
@@ -180,7 +149,6 @@ void ConsolidationTask::operator()() {
       _state->noop_consolidation_count.load(std::memory_order_acquire) <
         kMaxNoopConsolidations) {
     _state->pending_consolidations.fetch_add(1, std::memory_order_release);
-    Schedule(_consolidation_interval_msec);
   }
   SDB_IF_FAILURE("SearchConsolidationTask::consolidateUnsafe") {
     SDB_THROW(ERROR_DEBUG);

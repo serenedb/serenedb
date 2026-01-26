@@ -23,11 +23,13 @@
 
 #include <absl/cleanup/cleanup.h>
 
+#include <chrono>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/store/fs_directory.hpp>
 
 #include "basics/assert.h"
+#include "basics/errors.h"
 #include "catalog/catalog.h"
 #include "metrics/gauge.h"
 #include "metrics/guard.h"
@@ -53,6 +55,15 @@ uint64_t ComputeAvg(std::atomic<uint64_t>& time_num, uint64_t new_time) {
   return (old_time + new_time) / (old_num + 1);
 }
 }  // namespace
+
+DataStore::ResultWithTime DataStore::Transaction::Commit() {
+  auto begin = std::chrono::steady_clock::now();
+  auto res = _transaction.Commit();
+  auto end = std::chrono::steady_clock::now();
+  uint64_t duration =
+    std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count();
+  return {res ? Result{} : Result{ERROR_FAILED}, duration};
+}
 
 DataStore::DataStore(const catalog::Index& index,
                      const DataStoreOptions& options)
@@ -83,10 +94,10 @@ Snapshot DataStore::GetSnapshot() const {
 }
 
 void DataStore::ScheduleCommit(absl::Duration delay) {
-  CommitTask task{GetId(), shared_from_this(), _state};
+  CommitTask task{GetId(), GetTransaction(), _state};
 
   _state->pending_commits.fetch_add(1, std::memory_order_release);
-  task.Schedule(delay);
+  std::move(task).Schedule(delay);
 }
 
 void DataStore::ScheduleConsolidation(absl::Duration delay) {
@@ -95,7 +106,7 @@ void DataStore::ScheduleConsolidation(absl::Duration delay) {
     [self = shared_from_this()] { return /* TODO */ true; }};
 
   _state->pending_consolidations.fetch_add(1, std::memory_order_release);
-  task.Schedule(delay);
+  std::move(task).Schedule(delay);
 }
 
 DataStore::Stats DataStore::UpdateStatsUnsafe(

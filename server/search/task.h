@@ -38,21 +38,18 @@ concept IndexTaskType = requires {
 
 class Task {
  public:
-  Task(ObjectId id, std::shared_ptr<DataStore> data_store,
-       std::shared_ptr<ThreadPoolState> state)
+  Task(ObjectId id, std::shared_ptr<ThreadPoolState> state)
     : _id{id},
-      _data_store{std::move(data_store)},
       _state{std::move(state)},
       _engine{&SerenedServer::Instance().getFeature<SearchEngine>()} {}
 
   template<IndexTaskType Self>
-  void Schedule(this const Self& self, absl::Duration delay) {
-    self._engine->queue(Self::ThreadGroup(), delay, self);
+  void Schedule(this Self&& self, absl::Duration delay) {
+    self._engine->queue(Self::ThreadGroup(), delay, std::move(self));
   }
 
  protected:
   ObjectId _id;
-  std::shared_ptr<DataStore> _data_store;
   std::shared_ptr<ThreadPoolState> _state;
   [[maybe_unused]] SearchEngine* _engine;
 };
@@ -63,14 +60,15 @@ class CommitTask : public Task {
     return ThreadGroup::Commit;
   }
   static constexpr std::string_view TaskName() noexcept { return "Commit"; }
-  CommitTask(ObjectId id, std::shared_ptr<DataStore> data_store,
+  CommitTask(ObjectId id, DataStore::Transaction transaction,
              std::shared_ptr<ThreadPoolState> state)
-    : Task{id, std::move(data_store), std::move(state)} {}
+    : Task{id, std::move(state)}, _transaction{std::move(transaction)} {}
 
   void operator()();
   void Finalize(DataStore& data_store, CommitResult& commit_res);
 
  private:
+  DataStore::Transaction _transaction;
   size_t _cleanup_interval_count;
   absl::Duration _commit_interval_msec;
   absl::Duration _consolidation_interval_msec;
@@ -88,11 +86,13 @@ class ConsolidationTask : public Task {
   ConsolidationTask(ObjectId id, std::shared_ptr<DataStore> data_store,
                     std::shared_ptr<ThreadPoolState> state,
                     std::function<bool()>&& flush_progress)
-    : Task{id, std::move(data_store), std::move(state)},
+    : Task{id, std::move(state)},
+      _data_store{std::move(data_store)},
       _progress{std::move(flush_progress)} {}
   void operator()();
 
  private:
+  std::shared_ptr<DataStore> _data_store;
   irs::MergeWriter::FlushProgress _progress;
   DataStoreMeta::ConsolidationPolicy _consolidation_policy;
   absl::Duration _consolidation_interval_msec;

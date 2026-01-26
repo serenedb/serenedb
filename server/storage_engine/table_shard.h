@@ -42,6 +42,7 @@
 #include "catalog/identifiers/transaction_id.h"
 #include "catalog/table_options.h"
 #include "catalog/types.h"
+#include "search/data_store.h"
 #include "storage_engine/replication_iterator.h"
 // consider just forward declaration
 #include "utils/coro_helper.h"
@@ -95,62 +96,6 @@ class TableShard {
 
   void drop();
 
-  /// recalculate counts for collection in case of failure, blocking
-  virtual yaclib::Future<uint64_t> recalculateCounts();
-
-  /// whether or not the collection contains any documents. this
-  /// function is allowed to return true even if there are no documents
-  virtual bool hasDocuments();
-
-  /// fetches current index selectivity estimates
-  /// if allowUpdate is true, will potentially make a cluster-internal
-  /// roundtrip to fetch current values!
-  virtual IndexEstMap clusterIndexEstimates(bool allow_updating,
-                                            TransactionId tid);
-
-  /// flushes the current index selectivity estimates
-  virtual void flushClusterIndexEstimates();
-
-  virtual void prepareIndexes(catalog::Table& logical_collection,
-                              vpack::Slice indexes_slice);
-
-  /// determines order of index execution on collection
-  struct IndexOrder {
-    bool operator()(const std::shared_ptr<Index>& left,
-                    const std::shared_ptr<Index>& right) const;
-  };
-
-  using IndexContainerType = std::set<std::shared_ptr<Index>, IndexOrder>;
-  /// find index by definition
-  static std::shared_ptr<Index> findIndex(vpack::Slice info,
-                                          const IndexContainerType& indexes);
-  /// Find index by definition
-  std::shared_ptr<Index> lookupIndex(vpack::Slice info) const;
-
-  /// Find index by iid
-  std::shared_ptr<Index> lookupIndex(IndexId idx_id) const;
-
-  /// Find index by name
-  std::shared_ptr<Index> lookupIndex(std::string_view idx_name) const;
-
-  /// get list of all indexes. this includes in-progress indexes and thus
-  /// should be used with care
-  std::vector<std::shared_ptr<Index>> getAllIndexes() const;
-
-  /// get a list of "ready" indexes, that means all indexes which are
-  /// not "in progress" anymore
-  std::vector<std::shared_ptr<Index>> getReadyIndexes() const;
-
-  /// get a snapshot of all indexes of the collection, with the read
-  /// lock on the list of indexes being held while the snapshot is active
-  IndexesSnapshot getIndexesSnapshot();
-
-  virtual Index* primaryIndex() const;
-
-  void getIndexesVPack(
-    vpack::Builder&,
-    const std::function<bool(const Index*, IndexSerialization&)>& filter) const;
-
   void UpdateNumRows(int64_t delta) {
     _num_rows.fetch_add(delta, std::memory_order_relaxed);
   }
@@ -163,29 +108,15 @@ class TableShard {
     vpack::WriteTuple(builder, GetTableStats());
   }
 
-  // TODO(gnusi): remove
-  void getAllIndexesInternal(vpack::Builder& result) const {
-    getIndexesVPack(result, [](const Index*, IndexSerialization& flags) {
-      flags = IndexSerialization::Internals;
-      return true;
-    });
+  auto GetDataStores() const { return _data_stores; }
+
+  void AddDataStore(const std::shared_ptr<search::DataStore>& data_store) {
+    _data_stores.push_back(data_store);
   }
 
   /// return the figures for a collection
   virtual yaclib::Future<OperationResult> figures(
     bool details, const OperationOptions& options);
-
-  /// create or restore an index
-  /// restore utilize specified ID, assume index has to be created
-  virtual yaclib::Future<std::shared_ptr<Index>> createIndex(
-    catalog::Table& logical_collection, vpack::Slice info, bool restore,
-    bool& created,
-    std::shared_ptr<std::function<sdb::Result(double)>> = nullptr) {
-    SDB_ASSERT(false);
-    return {};
-  }
-
-  virtual Result dropIndex(const catalog::Table& c, IndexId iid);
 
 #ifdef SDB_CLUSTER
   virtual std::unique_ptr<DocumentIterator> getAllIterator(
@@ -313,20 +244,6 @@ class TableShard {
                       const catalog::TableStats& stats);
 
  protected:
-  // callback that is called directly before the index is dropped.
-  // the write-lock on all indexes is still held. not called during
-  // reocvery!
-  virtual Result duringDropIndex(const catalog::Table& c,
-                                 std::shared_ptr<Index> idx);
-
-  // callback that is called directly after the index has been dropped.
-  // no locks are held anymore.
-  virtual Result afterDropIndex(std::shared_ptr<Index> idx);
-
-  // callback that is called while adding a new index. called under
-  // indexes write-lock
-  virtual void duringAddIndex(std::shared_ptr<Index> idx);
-
   /// Inject figures that are specific to StorageEngine
   virtual void figuresSpecific(bool details, vpack::Builder&) {}
 
@@ -335,11 +252,8 @@ class TableShard {
   // TODO(gnusi): refactor/move to different place
   std::shared_ptr<FollowerInfo> _followers;
 
-  mutable basics::ReadWriteLock _indexes_lock;
-  // current thread owning '_indexes_lock'
-  mutable std::atomic<std::thread::id> _indexes_lock_write_owner;
-  IndexContainerType _indexes;
   std::atomic_bool _deleted = false;  // TODO(gnusi): remove
+  std::vector<std::shared_ptr<search::DataStore>> _data_stores;
 
   // TODO(codeworse): this probably won't work in case of distributed setup
   std::atomic_uint64_t _num_rows{0};

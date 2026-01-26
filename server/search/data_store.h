@@ -26,6 +26,7 @@
 
 #include <atomic>
 #include <filesystem>
+#include <iresearch/index/index_writer.hpp>
 #include <memory>
 
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
@@ -124,12 +125,23 @@ class DataStore : public std::enable_shared_from_this<DataStore> {
     uint64_t time_ms;
   };
 
+  class Transaction {
+   public:
+    Transaction(std::shared_ptr<DataStore> data_store)
+      : _data_store(data_store),
+        _transaction(data_store->_writer->GetBatch()) {}
+    auto& GetIndexWriterTransaction() { return _transaction; }
+    const auto& GetDataStore() const { return _data_store; }
+    ResultWithTime Commit();
+
+   private:
+    std::shared_ptr<DataStore> _data_store;
+    irs::IndexWriter::Transaction _transaction;
+  };
+
   DataStore(const catalog::Index& table, const DataStoreOptions& options);
 
-  irs::IndexWriter::Transaction GetTransaction() {
-    SDB_ASSERT(_writer);
-    return _writer->GetBatch();
-  }
+  auto GetTransaction() { return Transaction{shared_from_this()}; }
 
   ResultOr<CommitResult> Commit(bool wait = false);
   ResultWithTime CommitUnsafe(bool wait,
@@ -182,7 +194,6 @@ class DataStore : public std::enable_shared_from_this<DataStore> {
   std::shared_ptr<ThreadPoolState> _state;
   DataSnapshotPtr _snapshot;
   std::shared_ptr<irs::IndexWriter> _writer;
-  std::shared_ptr<irs::IndexReader> _reader;
   DataStoreOptions _options;
   std::unique_ptr<irs::Directory> _dir;
   DataStoreMeta _meta;

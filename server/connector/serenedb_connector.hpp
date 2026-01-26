@@ -28,20 +28,28 @@
 #include <velox/type/Type.h>
 #include <velox/vector/DecodedVector.h>
 
+#include <iresearch/index/index_writer.hpp>
 #include <memory>
+#include <ranges>
 
 #include "basics/assert.h"
+#include "basics/down_cast.h"
 #include "basics/fwd.h"
 #include "basics/misc.hpp"
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
+#include "connector/search_sink_writer.hpp"
+#include "connector/sink_writer_base.hpp"
 #include "data_sink.hpp"
 #include "data_source.hpp"
 #include "file_table.hpp"
 #include "query/transaction.h"
+#include "rest_server/serened_single.h"
 #include "rocksdb/utilities/transaction_db.h"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#include "storage_engine/engine_feature.h"
 #include "storage_engine/table_shard.h"
 
 namespace sdb::connector {
@@ -315,6 +323,15 @@ class SereneDBConnectorInsertTableHandle final
     if (_update_pk) {
       GetTransaction().AddRocksDBRead();
     }
+    auto& rocksdb_table = basics::downCast<RocksDBTable>(*_table);
+    _data_store_transactions = catalog::GetCatalog()
+                                 .GetSnapshot()
+                                 ->GetTableShard(rocksdb_table.TableId())
+                                 ->GetDataStores() |
+                               std::views::transform([](auto& data_store) {
+                                 return data_store->GetTransaction();
+                               }) |
+                               std::ranges::to<std::vector>();
   }
 
   bool supportsMultiThreading() const final { return false; }
@@ -328,6 +345,11 @@ class SereneDBConnectorInsertTableHandle final
   auto Kind() const noexcept { return _kind; }
 
   query::Transaction& GetTransaction() const noexcept { return _transaction; }
+
+  std::span<::sdb::search::DataStore::Transaction> GetDataStoreTransactions()
+    const noexcept {
+    return _data_store_transactions;
+  }
 
   size_t NumberOfRowsAffected() const noexcept {
     const auto keys_affected =
@@ -346,6 +368,8 @@ class SereneDBConnectorInsertTableHandle final
   axiom::connector::TablePtr _table;
   axiom::connector::WriteKind _kind;
   query::Transaction& _transaction;
+  mutable std::vector<::sdb::search::DataStore::Transaction>
+    _data_store_transactions;
   std::vector<velox::connector::ColumnHandlePtr> _row_id_handles;
   bool _update_pk{};
 };
@@ -562,6 +586,8 @@ class SereneDBConnector final : public velox::connector::Connector {
     const auto& table =
       basics::downCast<const RocksDBTable>(*serene_insert_handle.Table());
     const auto& object_key = table.TableId();
+    std::span<::sdb::search::DataStore::Transaction> data_store_transactions =
+      serene_insert_handle.GetDataStoreTransactions();
     std::vector<catalog::Column::Id> column_oids;
     if (serene_insert_handle.Kind() == axiom::connector::WriteKind::kInsert ||
         serene_insert_handle.Kind() == axiom::connector::WriteKind::kUpdate) {
@@ -630,16 +656,32 @@ class SereneDBConnector final : public velox::connector::Connector {
               }
             }
 
+            auto search_sinks =
+              data_store_transactions |
+              std::views::transform(
+                [](auto& transaction) -> std::unique_ptr<SinkUpdateWriter> {
+                  return std::make_unique<search::SearchSinkUpdateWriter>(
+                    transaction.GetIndexWriterTransaction());
+                }) |
+              std::ranges::to<std::vector>();
+
             return std::make_unique<RocksDBUpdateDataSink>(
               rocksdb_transaction, _cf, *connector_query_ctx->memoryPool(),
               object_key, pk_indices, column_oids, all_column_oids,
-              table.IsUsedForUpdatePK(), table.type(),
-              std::vector<std::unique_ptr<SinkUpdateWriter>>{});
+              table.IsUsedForUpdatePK(), table.type(), std::move(search_sinks));
           } else {
+            auto search_sinks =
+              data_store_transactions |
+              std::views::transform(
+                [](auto& transaction) -> std::unique_ptr<SinkInsertWriter> {
+                  return std::make_unique<search::SearchSinkInsertWriter>(
+                    transaction.GetIndexWriterTransaction());
+                }) |
+              std::ranges::to<std::vector>();
+
             return std::make_unique<RocksDBInsertDataSink>(
               rocksdb_transaction, _cf, *connector_query_ctx->memoryPool(),
-              object_key, pk_indices, column_oids,
-              std::vector<std::unique_ptr<SinkInsertWriter>>{});
+              object_key, pk_indices, column_oids, std::move(search_sinks));
           }
         });
     }

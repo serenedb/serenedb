@@ -369,7 +369,6 @@ vpack::Slice GetTableProperties(vpack::Builder& builder,
   }
 
   builder.add(StaticStrings::kIndexes);
-  physical.getAllIndexesInternal(builder);
 
   builder.close();
   return builder.slice();

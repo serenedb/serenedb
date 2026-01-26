@@ -398,17 +398,6 @@ class SnapshotImpl : public Snapshot {
     return it == _table_shards.end() ? nullptr : *it;
   }
 
-  std::vector<std::shared_ptr<search::DataStore>> GetSearchDataStores()
-    const final {
-    return {_search_datastores.begin(), _search_datastores.end()};
-  }
-
-  std::shared_ptr<search::DataStore> GetSearchDataStore(
-    ObjectId id) const final {
-    auto it = _search_datastores.find(id);
-    return it == _search_datastores.end() ? nullptr : *it;
-  }
-
   std::shared_ptr<Object> GetObject(ObjectId id) const final {
     auto it = _objects_by_id.find(id);
     return it == _objects_by_id.end() ? nullptr : *it;
@@ -1036,7 +1025,6 @@ Result LocalCatalog::RegisterTable(ObjectId database_id,
 
       // TODO(gnusi): this might throw, but indexes will become a separate
       // objects soon anyway
-      physical->prepareIndexes(table, options.indexes);
       _snapshot->AddTableShard(std::move(physical));
 
       return {};
@@ -1151,7 +1139,8 @@ Result LocalCatalog::RegisterIndex(ObjectId database_id,
 
 Result LocalCatalog::CreateIndex(ObjectId database_id, std::string_view schema,
                                  std::string_view relation_name,
-                                 IndexFactory index_factory) {
+                                 IndexFactory index_factory,
+                                 IndexPhysicalFactory physical_factory) {
   absl::MutexLock lock{&_mutex};
 
   auto relation = _snapshot->GetRelation(database_id, schema, relation_name);
@@ -1172,7 +1161,7 @@ Result LocalCatalog::CreateIndex(ObjectId database_id, std::string_view schema,
         auto& index = basics::downCast<Index>(*object);
         // create DataStore and write to RocksDB -> Add DataStore to snapshot ->
         // Write Index to RocksDB
-        return _engine->CreateDataStore(index, true)
+        return physical_factory(*_engine, index, true)
           .and_then([&](std::shared_ptr<search::DataStore>&& datastore)
                       -> ResultOr<std::shared_ptr<search::DataStore>> {
             clone->AddSearchDataStore(std::move(datastore));
@@ -1253,7 +1242,6 @@ Result LocalCatalog::CreateTable(
           return r;
         }
 
-        physical->prepareIndexes(table, options.indexes);
         clone->AddTableShard(physical);
         _engine->createTable(table, *physical);
 

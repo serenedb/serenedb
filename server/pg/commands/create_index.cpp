@@ -37,6 +37,9 @@
 #include "pg/connection_context.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_utils.h"
+#include "rest_server/serened_single.h"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#include "search/data_store.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
@@ -135,12 +138,21 @@ yaclib::Future<Result> CreateIndex(ExecContext& context,
   options.type = *index_type;
 
   auto r = catalog.CreateIndex(
-    db, schema, relation_name, [&](const catalog::SchemaObject* relation) {
+    db, schema, relation_name,
+    [&](const catalog::SchemaObject* relation) {
       SDB_ASSERT(relation);
       options.relation_id = relation->GetId();
 
       return MakeIndex(std::move(options), *relation,
                        PgListWrapper<IndexElem>{stmt.indexParams});
+    },
+    [&](RocksDBEngineCatalog& engine, const catalog::Index& index,
+        bool is_new) {
+      if (!is_new) {
+        // TODO(codeworse): load index data
+      }
+      // TODO(codeworse): insert table data(obj_id + row_type)
+      return engine.CreateDataStore(index, is_new);
     });
 
   if (r.is(ERROR_SERVER_DUPLICATE_NAME) && stmt.if_not_exists) {

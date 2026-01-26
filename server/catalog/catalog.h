@@ -42,6 +42,7 @@
 #include "catalog/table_options.h"
 #include "catalog/types.h"
 #include "catalog/view.h"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/data_store.h"
 
 namespace sdb::catalog {
@@ -106,11 +107,6 @@ struct Snapshot {
   virtual std::shared_ptr<TableShard> GetTableShard(ObjectId id) const = 0;
   virtual std::vector<std::shared_ptr<TableShard>> GetTableShards() const = 0;
 
-  virtual std::shared_ptr<search::DataStore> GetSearchDataStore(
-    ObjectId id) const = 0;
-  virtual std::vector<std::shared_ptr<search::DataStore>> GetSearchDataStores()
-    const = 0;
-
   template<typename T>
   std::shared_ptr<T> GetObject(ObjectId id) const {
     auto obj = GetObject(id);
@@ -164,6 +160,10 @@ inline auto GetViews(const Snapshot& snapshot, ObjectId database_id,
 using IndexFactory =
   absl::FunctionRef<ResultOr<std::shared_ptr<Index>>(const SchemaObject*)>;
 
+using IndexPhysicalFactory =
+  absl::FunctionRef<ResultOr<std::shared_ptr<search::DataStore>>(
+    RocksDBEngineCatalog& engine, const catalog::Index&, bool)>;
+
 struct LogicalCatalog {
   virtual ~LogicalCatalog() = default;
 
@@ -197,7 +197,8 @@ struct LogicalCatalog {
                              CreateTableOperationOptions operation_options) = 0;
   virtual Result CreateIndex(ObjectId database_id, std::string_view schema,
                              std::string_view relation,
-                             IndexFactory index_factory) = 0;
+                             IndexFactory index_factory,
+                             IndexPhysicalFactory physical_factory) = 0;
 
   virtual Result RenameTable(ObjectId database_id, std::string_view schema,
                              std::string_view name,

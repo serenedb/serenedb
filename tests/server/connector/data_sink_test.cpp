@@ -99,7 +99,7 @@ class DataSinkTest : public ::testing::Test,
     sdb::connector::primary_key::Create(*data, pk, written_row_keys);
     sdb::connector::RocksDBInsertDataSink sink(
       *transaction, *_cf_handles.front(), *pool_.get(), object_key, pk,
-      std::move(column_oids), sdb::WriteConflictPolicy::Update, {});
+      std::move(column_oids), sdb::WriteConflictPolicy::Replace, {});
     sink.appendData(data);
     while (!sink.finish()) {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));

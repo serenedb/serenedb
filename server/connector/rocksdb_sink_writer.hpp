@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <boost/dynamic_bitset.hpp>
 #include <span>
 
 #include "catalog/types.h"
@@ -35,16 +34,14 @@ class RocksDBSinkWriterBase {
  public:
   RocksDBSinkWriterBase(
     rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
-    WriteConflictPolicy conflict_policy = WriteConflictPolicy::Error)
+    WriteConflictPolicy conflict_policy = WriteConflictPolicy::EmitError)
     : _transaction{transaction}, _cf{cf}, _conflict_policy{conflict_policy} {}
 
   virtual ~RocksDBSinkWriterBase() = default;
 
   rocksdb::Status Lock(std::string_view full_key) {
-    if (_conflict_policy == WriteConflictPolicy::KeepOld) {
-      return _transaction.GetKeyLock(&_cf, full_key, false, true);
-    }
-    return _transaction.GetKeyLockOnce(&_cf, full_key, false, true);
+    const bool reentrant = _conflict_policy == WriteConflictPolicy::DoNothing;
+    return _transaction.GetKeyLock(&_cf, full_key, false, true, reentrant);
   }
 
  protected:
@@ -59,7 +56,7 @@ class RocksDBSinkWriter : public RocksDBSinkWriterBase {
  public:
   RocksDBSinkWriter(
     rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
-    WriteConflictPolicy conflict_policy = WriteConflictPolicy::Error)
+    WriteConflictPolicy conflict_policy = WriteConflictPolicy::EmitError)
     : RocksDBSinkWriterBase{transaction, cf, conflict_policy} {}
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key);
@@ -70,9 +67,7 @@ class RocksDBSinkWriter : public RocksDBSinkWriterBase {
   // Handles write conflicts
   // Returns number of skipped rows
   size_t HandleConflicts(primary_key::Keys& keys) {
-    // TODO multiget?
-
-    if (_conflict_policy == WriteConflictPolicy::Update) {
+    if (_conflict_policy == WriteConflictPolicy::Replace) {
       // Optimize out reading
       return 0;
     }
@@ -92,19 +87,19 @@ class RocksDBSinkWriter : public RocksDBSinkWriterBase {
 
       if (conflict) {
         switch (_conflict_policy) {
-          case WriteConflictPolicy::Update:
+          case WriteConflictPolicy::Replace:
             SDB_ASSERT(false,
                        "WriteConflictPolicy::Update should be handled earlier "
                        "for optimiztion reason");
             break;
-          case WriteConflictPolicy::KeepOld:
+          case WriteConflictPolicy::DoNothing:
             // Mark key: it should be skipped
             key.clear();
             skipped_cnt++;
             break;
-          case WriteConflictPolicy::Error:
+          case WriteConflictPolicy::EmitError:
             SDB_THROW(ERROR_SERVER_UNIQUE_CONSTRAINT_VIOLATED,
-                      "TODO: make sql error");
+                      "duplicate key value violates unique constraint");
             break;
           default:
             SDB_UNREACHABLE();

@@ -130,15 +130,15 @@ class Config : public velox::config::IConfig {
       }
     } else if constexpr (T == VariableType::SdbWriteConflictPolicy) {
       SDB_ASSERT(key == "sdb_write_conflict_policy");
-      if (absl::EqualsIgnoreCase("error", *value_str)) {
-        return WriteConflictPolicy::Error;
+      if (absl::EqualsIgnoreCase("emit_error", *value_str)) {
+        return WriteConflictPolicy::EmitError;
       }
-      if (absl::EqualsIgnoreCase("keep_old", *value_str)) {
-        return WriteConflictPolicy::KeepOld;
+      if (absl::EqualsIgnoreCase("do_nothing", *value_str)) {
+        return WriteConflictPolicy::DoNothing;
       }
-      SDB_ASSERT(absl::EqualsIgnoreCase("update", *value_str),
+      SDB_ASSERT(absl::EqualsIgnoreCase("replace", *value_str),
                  "sdb_write_conflict_policy is not validated");
-      return WriteConflictPolicy::Update;
+      return WriteConflictPolicy::Replace;
     } else if constexpr (T == VariableType::JoinOrderAlgorithm) {
       SDB_ASSERT(key == "join_order_algorithm");
       if (absl::EqualsIgnoreCase("cost", *value_str)) {

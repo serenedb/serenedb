@@ -269,8 +269,8 @@ class RocksDBTable final : public axiom::connector::Table {
   ObjectId _table_id;
   query::Transaction& _transaction;
   catalog::TableStats _stats;
-  WriteConflictPolicy _conflict_policy{WriteConflictPolicy::Error};
-  bool _update_pk{};
+  WriteConflictPolicy _conflict_policy = WriteConflictPolicy::EmitError;
+  bool _update_pk = false;
 };
 
 class SereneDBConnectorSplit final : public velox::connector::ConnectorSplit {

@@ -66,9 +66,9 @@ enum class IndexSerialization : uint8_t {
 };
 
 enum class WriteConflictPolicy : uint8_t {
-  Update,
-  KeepOld,
-  Error,
+  Replace,
+  DoNothing,
+  EmitError,
 };
 
 using IndexEstMap = containers::FlatHashMap<std::string, double>;

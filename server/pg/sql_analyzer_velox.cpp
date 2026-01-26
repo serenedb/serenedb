@@ -1590,7 +1590,7 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
       SDB_THROW(ERROR_NOT_IMPLEMENTED,
                 "ON CONFLICT DO UPDATE SET action is not implemented yet");
     }
-    if (list_head(stmt.onConflictClause->targetList) != nullptr) {
+    if (stmt.onConflictClause->targetList != nullptr) {
       SDB_THROW(ERROR_NOT_IMPLEMENTED,
                 "ON CONFLICT with target list is not implemented yet");
     }
@@ -1603,8 +1603,8 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
                 "ON CONFLICT WHERE clause is not implemented yet");
     }
 
-    SDB_ASSERT(stmt.onConflictClause->action == ONCONFLICT_NOTHING, "Wtf?");
-    conflict_policy = WriteConflictPolicy::KeepOld;
+    SDB_ASSERT(stmt.onConflictClause->action == ONCONFLICT_NOTHING);
+    conflict_policy = WriteConflictPolicy::DoNothing;
   }
   if (stmt.override != OVERRIDING_NOT_SET) {
     SDB_THROW(ERROR_NOT_IMPLEMENTED,

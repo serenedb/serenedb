@@ -103,7 +103,7 @@ RocksDBUpdateDataSink::RocksDBUpdateDataSink(
                                           object_key,
                                           key_childs,
                                           std::move(column_ids),
-                                          WriteConflictPolicy::Update,
+                                          WriteConflictPolicy::Replace,
                                           std::move(index_writers)},
     _all_column_ids{std::move(all_column_ids)},
     _old_keys_buffers{memory_pool},

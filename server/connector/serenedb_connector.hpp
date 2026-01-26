@@ -144,9 +144,8 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
 
     if (const auto* read_file_table =
           dynamic_cast<const ReadFileTable*>(&this->table())) {
-      return std::make_shared<FileTableHandle>(
-        read_file_table->GetSource(), read_file_table->GetReaderOptions(),
-        read_file_table->GetRowReaderOptions());
+      return std::make_shared<FileTableHandle>(read_file_table->GetSource(),
+                                               read_file_table->GetOptions());
     }
 
     SDB_ASSERT(!table().columnMap().empty(),
@@ -392,7 +391,7 @@ class SereneDBConnectorMetadata final
           dynamic_cast<const WriteFileTable*>(table.get())) {
       SDB_ASSERT(kind == axiom::connector::WriteKind::kInsert);
       return std::make_shared<FileConnectorWriteHandle>(
-        write_file_table->GetSink(), write_file_table->GetWriterOptions());
+        write_file_table->GetSink(), write_file_table->GetOptions());
     }
 
     return std::make_shared<SereneDBConnectorWriteHandle>(session, table, kind);
@@ -514,8 +513,8 @@ class SereneDBConnector final : public velox::connector::Connector {
     if (const auto* file_handle =
           dynamic_cast<const FileTableHandle*>(table_handle.get())) {
       return std::make_unique<FileDataSource>(
-        file_handle->GetSource(), file_handle->GetReaderOptions(),
-        file_handle->GetRowReaderOptions(), *connector_query_ctx->memoryPool());
+        file_handle->GetSource(), file_handle->GetOptions(),
+        *connector_query_ctx->memoryPool());
     }
 
     const auto& serene_table_handle =
@@ -563,7 +562,7 @@ class SereneDBConnector final : public velox::connector::Connector {
     if (const auto* file_handle = dynamic_cast<const FileInsertTableHandle*>(
           connector_insert_table_handle.get())) {
       return std::make_unique<FileDataSink>(
-        file_handle->GetSink(), file_handle->GetWriterOptions(),
+        file_handle->GetSink(), file_handle->GetOptions(),
         *connector_query_ctx->connectorMemoryPool());
     }
 

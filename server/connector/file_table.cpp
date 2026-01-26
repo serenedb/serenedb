@@ -53,17 +53,16 @@ FileTable::FileTable(velox::RowTypePtr table_type, std::string_view file_path)
   _layout_handles.emplace_back(std::move(layout));
 }
 
-FileDataSink::FileDataSink(
-  std::unique_ptr<velox::WriteFile> sink,
-  std::shared_ptr<velox::dwio::common::WriterOptions> options,
-  velox::memory::MemoryPool& memory_pool) {
+FileDataSink::FileDataSink(std::unique_ptr<velox::WriteFile> sink,
+                           std::shared_ptr<WriterOptions> options,
+                           velox::memory::MemoryPool& memory_pool) {
   auto write_sink = std::make_unique<velox::dwio::common::WriteFileSink>(
     std::move(sink), "serenedb_sink");
   const auto& writer_factory =
-    velox::dwio::common::getWriterFactory(options->fileFormat);
-  options->memoryPool = &memory_pool;
-  _writer =
-    writer_factory->createWriter(std::move(write_sink), std::move(options));
+    velox::dwio::common::getWriterFactory(options->dwio->fileFormat);
+  options->dwio->memoryPool = &memory_pool;
+  _writer = writer_factory->createWriter(std::move(write_sink),
+                                         std::move(options->dwio));
   SDB_ASSERT(_writer);
 }
 
@@ -97,20 +96,19 @@ void FileDataSink::abort() {
   _closed = true;
 }
 
-FileDataSource::FileDataSource(
-  std::shared_ptr<velox::ReadFile> source,
-  std::shared_ptr<velox::dwio::common::ReaderOptions> options,
-  std::shared_ptr<velox::dwio::common::RowReaderOptions> row_reader_options,
-  velox::memory::MemoryPool& memory_pool)
-  : _row_reader_options(std::move(row_reader_options)) {
+FileDataSource::FileDataSource(std::shared_ptr<velox::ReadFile> source,
+                               std::shared_ptr<ReaderOptions> options,
+                               velox::memory::MemoryPool& memory_pool)
+  : _row_reader_options{options->row_reader},
+    _report_callback{options->report_callback} {
   SDB_ASSERT(_row_reader_options);
 
   const auto& reader_factory =
-    velox::dwio::common::getReaderFactory(options->fileFormat());
+    velox::dwio::common::getReaderFactory(options->dwio->fileFormat());
   auto input = std::make_unique<velox::dwio::common::BufferedInput>(
     std::move(source), memory_pool);
-  options->setMemoryPool(memory_pool);
-  _reader = reader_factory->createReader(std::move(input), *options);
+  options->dwio->setMemoryPool(memory_pool);
+  _reader = reader_factory->createReader(std::move(input), *options->dwio);
 
   auto row_type = _reader->rowType();
   auto spec = std::make_shared<velox::common::ScanSpec>("root");
@@ -128,6 +126,16 @@ std::optional<velox::RowVectorPtr> FileDataSource::next(
     return nullptr;
   }
   _completed_rows += rows_read;
+  if (_report_callback) {
+    const auto now = std::chrono::high_resolution_clock::now();
+    auto seconds_since_last_report =
+      std::chrono::duration_cast<std::chrono::seconds>(now - _last_report_time)
+        .count();
+    if (seconds_since_last_report >= 10) {
+      _report_callback(_completed_rows);
+      _last_report_time = now;
+    }
+  }
   return std::dynamic_pointer_cast<velox::RowVector>(batch);
 }
 

@@ -44,9 +44,8 @@ std::string GenerateSSTFilePath() {
   uint32_t random_suffix = dis(gen);
 
   auto temp_dir = std::filesystem::temp_directory_path();
-  return (temp_dir /
-          std::format("serenedb_sst_{}_{}.sst", timestamp, random_suffix))
-    .string();
+  return temp_dir / "arelav" /
+         std::format("serenedb_sst_{}_{}.sst", timestamp, random_suffix);
 }
 
 SSTSinkWriter::SSTSinkWriter(rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
@@ -71,6 +70,9 @@ SSTSinkWriter::SSTSinkWriter(rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
 
     _writers[i] =
       std::make_unique<rocksdb::SstFileWriter>(rocksdb::EnvOptions{}, options);
+    std::cerr << "Opening SST file for column " << column_oids[i]
+              << " at path: " << std::endl;
+    std::cerr << GenerateSSTFilePath() << std::endl;
     auto status = _writers[i]->Open(GenerateSSTFilePath());
     if (!status.ok()) {
       SDB_THROW(rocksutils::ConvertStatus(status));
@@ -136,7 +138,7 @@ void SSTSinkWriter::Finish() {
 }
 
 void SSTSinkWriter::Abort() {
-  // TODO: implement 
+  // TODO: implement
 }
 
 }  // namespace sdb::connector

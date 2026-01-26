@@ -1546,10 +1546,11 @@ void SqlAnalyzer::MakeTableWrite(State& state, const Node& stmt,
                                                   MakeAnd(std::move(checks)));
   }
 
-  const auto& pk_cols = table.PKColumns();
-  if (stmt.type == T_CopyStmt && !pk_cols.empty()) {
+  if (stmt.type == T_CopyStmt) {
     basics::downCast<connector::RocksDBTable>(axiom_table)->SetBulkInsert();
 
+    // tmp solution:
+    // for bulk insert we use SST which requires sorted data by key
     const auto& pk = *catalog_table.PKType();
     std::vector<lp::SortingField> sorted_by;
     sorted_by.reserve(pk.size());
@@ -1563,10 +1564,11 @@ void SqlAnalyzer::MakeTableWrite(State& state, const Node& stmt,
       sorted_by.emplace_back(std::move(expr), lp::SortOrder::kAscNullsFirst);
     }
 
-    // tmp solution:
-    // for bulk insert we use SST which requires sorted data by key
-    state.root = std::make_shared<lp::SortNode>(
-      _id_generator.NextPlanId(), std::move(state.root), std::move(sorted_by));
+    if (!sorted_by.empty()) {
+      state.root = std::make_shared<lp::SortNode>(_id_generator.NextPlanId(),
+                                                  std::move(state.root),
+                                                  std::move(sorted_by));
+    }
   }
 
   auto write_kind = [&] {
@@ -1853,6 +1855,19 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
     std::move(column_exprs));
 }
 
+void WriteNotice(message::Buffer& send, std::string_view message) {
+  const auto uncommitted_size = send.GetUncommittedSize();
+  auto* prefix_data = send.GetContiguousData(5);
+  send.WriteUncommitted(std::string_view{"SNOTICE\0VNOTICE\0C", 17});
+  send.WriteUncommitted({"\0M", 2});
+  send.WriteUncommitted(message);
+  send.WriteUncommitted({"\0", 2});
+  prefix_data[0] = PQ_MSG_NOTICE_RESPONSE;
+  absl::big_endian::Store32(prefix_data + 1,
+                            send.GetUncommittedSize() - uncommitted_size - 1);
+  send.Commit(true);
+}
+
 class CopyRowRejector {
  public:
   enum class LogVerbosity { Silent = 0, Default = 1, Verbose = 2 };
@@ -1901,7 +1916,7 @@ class CopyRowRejector {
       auto msg = absl::StrCat(_rejected,
                               " rows were skipped due to data type "
                               "incompatibility");
-      WriteNotice(msg);
+      WriteNotice(_send, msg);
     }
   }
 
@@ -1921,21 +1936,8 @@ class CopyRowRejector {
         absl::StrCat("skipping row due to data type incompatibility at ",
                      "line ", row.rowNumber, " for column \"",
                      ToAlias(row.columnName), "\": \"", row.value, "\"");
-      WriteNotice(msg);
+      WriteNotice(_send, msg);
     }
-  }
-
-  void WriteNotice(std::string_view message) {
-    const auto uncommitted_size = _send.GetUncommittedSize();
-    auto* prefix_data = _send.GetContiguousData(5);
-    _send.WriteUncommitted(std::string_view{"SNOTICE\0VNOTICE\0C", 17});
-    _send.WriteUncommitted({"\0M", 2});
-    _send.WriteUncommitted(message);
-    _send.WriteUncommitted({"\0", 2});
-    prefix_data[0] = PQ_MSG_NOTICE_RESPONSE;
-    absl::big_endian::Store32(
-      prefix_data + 1, _send.GetUncommittedSize() - uncommitted_size - 1);
-    _send.Commit(true);
   }
 
   message::Buffer& _send;
@@ -1950,7 +1952,7 @@ class CopyOptionsParser {
  public:
   CopyOptionsParser(velox::RowTypePtr row_type, bool is_writer,
                     std::string_view query_string, std::string_view file_path,
-                    const List* options, message::Buffer* send_buffer,
+                    const List* options, message::Buffer& send_buffer,
                     CopyMessagesQueue* copy_queue, std::string_view table_name,
                     NameToOption& explain_options)
     : _row_type{std::move(row_type)},
@@ -1994,8 +1996,7 @@ class CopyOptionsParser {
 
   auto GetReader() && {
     SDB_ASSERT(!_is_writer);
-    return std::tuple{std::move(_source), std::move(_reader_options),
-                      std::move(_row_reader_options)};
+    return std::tuple{std::move(_source), std::move(_reader_options)};
   }
 
  private:
@@ -2023,6 +2024,30 @@ class CopyOptionsParser {
     auto it = format2parser.find(format);
     SDB_ASSERT(it != format2parser.end());
     it->second();
+
+    bool show_progress = false;
+    if (const auto* option = EraseOption("progress")) {
+      auto maybe_progress = TryGetBoolOption(option->arg);
+      if (!maybe_progress) {
+        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
+                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        ERR_MSG("invalid value for parameter \"progress\": \"",
+                                DeparseExpr(option->arg), "\""));
+      }
+      show_progress = *maybe_progress;
+    }
+
+    if (!_is_writer) {  // TODO: make same for writer
+      if (show_progress) {
+        _reader_options->report_callback =
+          [send = &_send_buffer](uint64_t rows_read) {
+            WriteNotice(
+              *send, absl::StrCat("COPY FROM ", rows_read, " rows processed"));
+          };
+      }
+    }
+
+    CheckUnrecognizedOptions();
   }
 
   void ParseText(bool is_csv) {
@@ -2173,8 +2198,6 @@ class CopyOptionsParser {
       }
     }
 
-    CheckUnrecognizedOptions();
-
     if (_is_writer) {
       SDB_ASSERT(_sink);
       auto text_options = std::make_shared<velox::text::WriterOptions>();
@@ -2184,7 +2207,8 @@ class CopyOptionsParser {
       text_options->serDeOptions = std::move(serde_options);
       text_options->schema = std::move(_row_type);
       text_options->fileFormat = FileFormat::TEXT;
-      _writer_options = std::move(text_options);
+      _writer_options = std::make_shared<sdb::connector::WriterOptions>(
+        std::move(text_options));
     } else {
       SDB_ASSERT(_source);
       auto text_options = std::make_shared<velox::text::ReaderOptions>(nullptr);
@@ -2192,47 +2216,47 @@ class CopyOptionsParser {
       text_options->setFileSchema(std::move(_row_type));
       text_options->setFileFormat(FileFormat::TEXT);
 
-      SDB_ASSERT(_send_buffer);
-      auto handler = [rejector = CopyRowRejector{log_verbosity, *_send_buffer,
+      auto handler = [rejector = CopyRowRejector{log_verbosity, _send_buffer,
                                                  _table_name, reject_limit}](
                        const RejectedRow& row) mutable {
         rejector.Process(row);
       };
       text_options->setOnRowReject(std::move(handler));
-      _reader_options = std::move(text_options);
-      _row_reader_options->setSkipRows(header);
+
+      auto row_reader_options =
+        std::make_shared<velox::dwio::common::RowReaderOptions>();
+      row_reader_options->setSkipRows(header);
+      _reader_options = std::make_shared<sdb::connector::ReaderOptions>(
+        std::move(text_options), std::move(row_reader_options));
     }
   }
 
-  void ParseParquet() {
-    CheckUnrecognizedOptions();
-    CreateDefaultWriterReader(FileFormat::PARQUET);
-  }
+  void ParseParquet() { CreateDefaultWriterReader(FileFormat::PARQUET); }
 
-  void ParseDwrf() {
-    CheckUnrecognizedOptions();
-    CreateDefaultWriterReader(FileFormat::DWRF);
-  }
+  void ParseDwrf() { CreateDefaultWriterReader(FileFormat::DWRF); }
 
-  void ParseOrc() {
-    CheckUnrecognizedOptions();
-    CreateDefaultWriterReader(FileFormat::ORC);
-  }
+  void ParseOrc() { CreateDefaultWriterReader(FileFormat::ORC); }
 
   void CreateDefaultWriterReader(FileFormat format) {
     if (_is_writer) {
       const auto& writer_factory = getWriterFactory(format);
       auto* default_opts = writer_factory->createWriterOptions().release();
-      std::shared_ptr<WriterOptions> options{default_opts};
-      options->schema = std::move(_row_type);
-      options->fileFormat = format;
-      _writer_options = std::move(options);
+      std::shared_ptr<velox::dwio::common::WriterOptions> dwio_options{
+        default_opts};
+      dwio_options->schema = std::move(_row_type);
+      dwio_options->fileFormat = format;
+      _writer_options = std::make_shared<sdb::connector::WriterOptions>(
+        std::move(dwio_options));
     } else {
-      auto options =
+      auto dwio_options =
         std::make_shared<velox::dwio::common::ReaderOptions>(nullptr);
-      options->setFileFormat(format);
-      options->setFileSchema(std::move(_row_type));
-      _reader_options = std::move(options);
+      dwio_options->setFileFormat(format);
+      dwio_options->setFileSchema(std::move(_row_type));
+      auto row_reader_options =
+        std::make_shared<velox::dwio::common::RowReaderOptions>();
+      _reader_options = std::make_shared<sdb::connector::ReaderOptions>(
+        sdb::connector::ReaderOptions{std::move(dwio_options),
+                                      std::move(row_reader_options)});
     }
   }
 
@@ -2268,26 +2292,21 @@ class CopyOptionsParser {
   void ParseDataSource() {
     if (_is_writer) {
       if (_file_path.empty()) {  // copy to stdout
-        SDB_ASSERT(_send_buffer);
         SDB_ASSERT(_copy_queue);
         _sink =
-          std::make_unique<CopyOutWriteFile>(*_send_buffer, _row_type->size());
+          std::make_unique<CopyOutWriteFile>(_send_buffer, _row_type->size());
       } else {
         _sink = std::make_unique<velox::LocalWriteFile>(_file_path, false,
                                                         false, true, true);
       }
     } else {
       if (_file_path.empty()) {  // copy from stdin
-        SDB_ASSERT(_send_buffer);
         SDB_ASSERT(_copy_queue);
-        _source = std::make_shared<CopyInReadFile>(*_send_buffer, *_copy_queue,
+        _source = std::make_shared<CopyInReadFile>(_send_buffer, *_copy_queue,
                                                    _row_type->size());
       } else {
         _source = std::make_shared<velox::LocalReadFile>(_file_path);
       }
-
-      _row_reader_options =
-        std::make_shared<velox::dwio::common::RowReaderOptions>();
     }
   }
 
@@ -2298,16 +2317,15 @@ class CopyOptionsParser {
   std::string_view _query_string;
   CopyOptions _options;
   std::string_view _file_path;
-  message::Buffer* _send_buffer;
+  message::Buffer& _send_buffer;
   CopyMessagesQueue* _copy_queue;
   std::string_view _table_name;
 
   std::unique_ptr<velox::WriteFile> _sink;  // local / S3 / hdfs etc.
-  std::shared_ptr<velox::dwio::common::WriterOptions> _writer_options;
+  std::shared_ptr<sdb::connector::WriterOptions> _writer_options;
 
   std::shared_ptr<velox::ReadFile> _source;  // local / S3 / hdfs etc.
-  std::shared_ptr<velox::dwio::common::ReaderOptions> _reader_options;
-  std::shared_ptr<velox::dwio::common::RowReaderOptions> _row_reader_options;
+  std::shared_ptr<sdb::connector::ReaderOptions> _reader_options;
 };
 
 void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
@@ -2394,8 +2412,9 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
 
   auto file_path = absl::NullSafeStringView(stmt.filename);
   auto create_options_parser = [&](const velox::RowTypePtr& type) {
+    SDB_ASSERT(_send_buffer);
     return CopyOptionsParser{type,        !stmt.is_from, _query_string.view(),
-                             file_path,   stmt.options,  _send_buffer,
+                             file_path,   stmt.options,  *_send_buffer,
                              _copy_queue, table_name,    _options};
   };
 
@@ -2403,12 +2422,10 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
     auto names = _id_generator.NextColumnNames(file_table_type->names());
     auto file_output_type = ROW(std::move(names), file_table_type->children());
     auto parser = create_options_parser(file_output_type);
-    auto [source, reader_options, row_reader_options] =
-      std::move(parser).GetReader();
+    auto [source, reader_options] = std::move(parser).GetReader();
     auto read_file_table = std::make_shared<sdb::connector::ReadFileTable>(
       file_table_type, file_path.empty() ? "stdin" : file_path,
-      std::move(source), std::move(reader_options),
-      std::move(row_reader_options));
+      std::move(source), std::move(reader_options));
     state.root = std::make_shared<lp::TableScanNode>(
       _id_generator.NextPlanId(), std::move(file_output_type),
       std::move(read_file_table), file_table_type->names());

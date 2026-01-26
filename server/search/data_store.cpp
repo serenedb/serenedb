@@ -67,11 +67,9 @@ DataStore::DataStore(const catalog::Index& index,
   path /= absl::StrCat(schema_id);
   path /= absl::StrCat(index_id);
   _dir = std::make_unique<irs::FSDirectory>(path);
-  auto codec = irs::formats::Get("default");
+  auto codec = irs::formats::Get("1_5avx");
   _writer = irs::IndexWriter::Make(*_dir, codec, irs::OpenMode::kOmCreate,
                                    _options.writer_options);
-  _reader = std::make_shared<irs::DirectoryReader>(*_dir, codec,
-                                                   _options.reader_options);
 }
 
 Snapshot DataStore::GetSnapshot() const {

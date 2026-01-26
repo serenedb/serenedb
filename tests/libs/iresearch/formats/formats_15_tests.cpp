@@ -370,7 +370,7 @@ Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
 
 void Format15TestCase::AssertWanderator(irs::DocIterator::ptr& actual,
                                         irs::IndexFeatures features,
-                                        DocsView /*docs*/) {
+                                        DocsView docs) {
   ASSERT_NE(nullptr, actual);
 
   auto* threshold_value = irs::GetMutable<irs::ScoreAttr>(actual.get());

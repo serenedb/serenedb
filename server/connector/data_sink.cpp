@@ -102,8 +102,7 @@ RocksDBUpdateDataSink::RocksDBUpdateDataSink(
   std::span<const velox::column_index_t> key_childs,
   std::vector<catalog::Column::Id> column_ids,
   std::vector<catalog::Column::Id> all_column_ids, bool update_pk,
-  velox::RowTypePtr table_row_type, 
-  size_t* number_of_rows_affected,
+  velox::RowTypePtr table_row_type, size_t* number_of_rows_affected,
   std::vector<std::unique_ptr<SinkUpdateWriter>>&& index_writers)
   : RocksDBDataSinkBase<SinkUpdateWriter>{transaction,
                                           cf,

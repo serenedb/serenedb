@@ -654,22 +654,25 @@ class IndexTestCase : public tests::IndexTestBase {
                 ASSERT_EQ(exp_docs_itr->value(), act_docs_itr->value());
                 ASSERT_EQ(expected_freq->value, actual_freq->value);
 
-                auto* actual_offs = irs::get<irs::OffsAttr>(*actual_pos);
                 auto* expected_offs = irs::get<irs::OffsAttr>(*expected_pos);
-                ASSERT_FALSE(!actual_offs);
+                auto* actual_offs = irs::get<irs::OffsAttr>(*actual_pos);
                 ASSERT_FALSE(!expected_offs);
+                ASSERT_FALSE(!actual_offs);
 
-                auto* actual_pay = irs::get<irs::PayAttr>(*actual_pos);
                 auto* expected_pay = irs::get<irs::PayAttr>(*expected_pos);
-                ASSERT_FALSE(!actual_pay);
-                ASSERT_FALSE(!expected_pay);
+                auto* actual_pay = irs::get<irs::PayAttr>(*actual_pos);
+                if (expected_pay) {
+                  ASSERT_FALSE(!actual_pay);
+                }
 
                 while (actual_pos->next()) {
                   ASSERT_TRUE(expected_pos->next());
                   ASSERT_EQ(expected_pos->value(), actual_pos->value());
                   ASSERT_EQ(expected_offs->start, actual_offs->start);
                   ASSERT_EQ(expected_offs->end, actual_offs->end);
-                  ASSERT_EQ(expected_pay->value, actual_pay->value);
+                  if (expected_pay) {
+                    ASSERT_EQ(expected_pay->value, actual_pay->value);
+                  }
                 }
 
                 ASSERT_FALSE(expected_pos->next());
@@ -6178,7 +6181,8 @@ TEST_P(IndexTestCase, doc_update) {
       irs::IndexFeatures::Freq;  // feature subset of 'test_field0'
     test_field2->index_features =
       irs::IndexFeatures::Freq | irs::IndexFeatures::Offs;
-    test_field3->index_features = irs::IndexFeatures::Freq;
+    test_field3->index_features =
+      irs::IndexFeatures::Freq | irs::IndexFeatures::Norm;
     test_field0->Name(test_field_name);
     test_field1->Name(test_field_name);
     test_field2->Name(test_field_name);

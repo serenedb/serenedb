@@ -679,8 +679,9 @@ void AssertDocs(irs::DocIterator::ptr expected_docs,
 
         auto* expected_pay = irs::get<irs::PayAttr>(*expected_pos);
         auto* actual_pay = irs::get<irs::PayAttr>(*actual_pos);
-        if (expected_pay)
+        if (expected_pay) {
           ASSERT_FALSE(!actual_pay);
+        }
         ASSERT_TRUE(!irs::pos_limits::valid(expected_pos->value()));
         ASSERT_TRUE(!irs::pos_limits::valid(actual_pos->value()));
         for (; expected_pos->next();) {

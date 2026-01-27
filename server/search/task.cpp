@@ -26,65 +26,53 @@
 #include <atomic>
 #include <exception>
 
+#include "basics/assert.h"
 #include "basics/logger/logger.h"
+#include "basics/system-compiler.h"
 #include "search/data_store.h"
 
 namespace sdb::search {
-void CommitTask::Finalize(DataStore& data_store, CommitResult& commit_res) {
+void CommitTask::Finalize(CommitResult res) {
   constexpr size_t kMaxNonEmptyCommits = 10;
-  constexpr size_t kMaxPendingConsolidations = 3;
+  // constexpr size_t kMaxPendingConsolidations = 3;
 
-  if (commit_res != CommitResult::NoChanges) {
-    if (commit_res == CommitResult::Done) {
-      if (_state->pending_consolidations.load(std::memory_order_acquire) <
-            kMaxPendingConsolidations &&
-          _state->non_empty_commits.fetch_add(1, std::memory_order_acq_rel) >=
-            kMaxNonEmptyCommits) {
-        data_store.ScheduleConsolidation(_consolidation_interval_msec);
+  switch (res) {
+    case CommitResult::Done: {
+      _state->pending_commits.fetch_sub(1, std::memory_order_release);
+      auto non_empty_commits =
+        _state->non_empty_commits.fetch_add(1, std::memory_order_acq_rel);
+      if (non_empty_commits == kMaxNonEmptyCommits) {
+        _transaction.GetDataStore()->ScheduleConsolidation(
+          _consolidation_interval_msec);
         _state->non_empty_commits.store(0, std::memory_order_release);
       }
+      break;
     }
-  } else {
-    _state->non_empty_commits.store(0, std::memory_order_release);
-    _state->noop_commit_count.fetch_add(1, std::memory_order_release);
+    case CommitResult::InProgress:
+      break;
+    case CommitResult::NoChanges:
+      _state->noop_commit_count.fetch_add(1, std::memory_order_release);
+      break;
+    case CommitResult::Undefined:
+      SDB_UNREACHABLE();
   }
 }
+
 void CommitTask::operator()() {
   const char run_id = 0;
   const auto& data_store = _transaction.GetDataStore();
   _state->pending_commits.fetch_add(1, std::memory_order_release);
   auto commit_res = CommitResult::Undefined;
-  absl::Cleanup reschedule = [&commit_res, &data_store, this] noexcept {
+  absl::Cleanup reschedule = [commit_res, this] noexcept {
     try {
-      Finalize(*data_store, commit_res);
+      Finalize(commit_res);
     } catch (const std::exception& exp) {
       SDB_ERROR("xxxxx", Logger::SEARCH,
                 "failed to call finalize: ", exp.what());
     }
   };
-  {
-    SDB_IF_FAILURE("SearchCommitTask::lockDataStore") {
-      SDB_THROW(ERROR_DEBUG);
-    }
-
-    absl::ReaderMutexLock lock{&data_store->GetMutex()};
-    auto& meta = data_store->GetMeta();
-
-    _commit_interval_msec = absl::Milliseconds(meta.commit_interval_msec);
-    _consolidation_interval_msec =
-      absl::Milliseconds(meta.consolidation_interval_msec);
-    _cleanup_interval_step = meta.cleanup_interval_step;
-  }
-
-  if (absl::ZeroDuration() == _commit_interval_msec) {
-    std::move(reschedule).Cancel();
-    SDB_DEBUG("xxxxx", Logger::SEARCH, "sync is disabled for the index '",
-              _id.id(), "', runId '", size_t(&run_id), "'");
-    return;
-  }
-
-  SDB_IF_FAILURE("SearchCommitTask::commitUnsafe") { SDB_THROW(ERROR_DEBUG); }
-  auto [res, timeMs] = _transaction.Commit();
+  // TODO(codeworse): Commit via threadpool
+  auto [res, timeMs] = std::move(_transaction).Commit();
 
   if (res.ok()) {
     SDB_TRACE("xxxxx", Logger::SEARCH, "successful sync of Search index '",
@@ -95,26 +83,6 @@ void CommitTask::operator()() {
              "ms while committing Search index '", data_store->GetId(),
              "', run id '", size_t(&run_id), "': ", res.errorNumber(), " ",
              res.errorMessage());
-  }
-  if (_cleanup_interval_step &&
-      ++_cleanup_interval_count >= _cleanup_interval_step) {
-    _cleanup_interval_count = 0;
-    SDB_IF_FAILURE("SearchCommitTask::cleanupUnsafe") {
-      SDB_THROW(ERROR_DEBUG);
-    }
-
-    auto [res, timeMs] = data_store->CleanupUnsafe();
-
-    if (res.ok()) {
-      SDB_TRACE("xxxxx", Logger::SEARCH, "successful cleanup of Search index '",
-                _id.id(), "', run id '", size_t(&run_id), "', took: ", timeMs,
-                "ms");
-    } else {
-      SDB_WARN("xxxxx", Logger::SEARCH, "error after running for ", timeMs,
-               "ms while cleaning up Search index '", _id.id(), "', run id '",
-               size_t(&run_id), "': ", res.errorNumber(), " ",
-               res.errorMessage());
-    }
   }
 }
 

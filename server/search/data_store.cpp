@@ -27,6 +27,7 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/store/fs_directory.hpp>
+#include <memory>
 
 #include "basics/assert.h"
 #include "basics/errors.h"
@@ -56,7 +57,7 @@ uint64_t ComputeAvg(std::atomic<uint64_t>& time_num, uint64_t new_time) {
 }
 }  // namespace
 
-DataStore::ResultWithTime DataStore::Transaction::Commit() {
+DataStore::ResultWithTime DataStore::Transaction::Commit() && {
   auto begin = std::chrono::steady_clock::now();
   auto res = _transaction.Commit();
   auto end = std::chrono::steady_clock::now();
@@ -65,10 +66,20 @@ DataStore::ResultWithTime DataStore::Transaction::Commit() {
   return {res ? Result{} : Result{ERROR_FAILED}, duration};
 }
 
+DataStore::ResultWithTime DataStore::Transaction::Abort() && {
+  auto begin = std::chrono::steady_clock::now();
+  _transaction.Abort();
+  auto end = std::chrono::steady_clock::now();
+  uint64_t duration =
+    std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count();
+  return {Result{}, duration};
+}
+
 DataStore::DataStore(const catalog::Index& index,
                      const DataStoreOptions& options)
   : _engine{GetServerEngine()},
     _search{SerenedServer::Instance().getFeature<SearchEngine>()},
+    _state{std::make_shared<ThreadPoolState>()},
     _options{options} {
   const auto db_id = index.GetDatabaseId();
   const auto schema_id = index.GetSchemaId();

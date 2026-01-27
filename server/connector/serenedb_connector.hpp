@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
 #include <axiom/connectors/ConnectorMetadata.h>
 #include <velox/common/file/File.h>
 #include <velox/connectors/Connector.h>
@@ -324,14 +325,14 @@ class SereneDBConnectorInsertTableHandle final
       GetTransaction().AddRocksDBRead();
     }
     auto& rocksdb_table = basics::downCast<RocksDBTable>(*_table);
-    _data_store_transactions = catalog::GetCatalog()
-                                 .GetSnapshot()
-                                 ->GetTableShard(rocksdb_table.TableId())
-                                 ->GetDataStores() |
-                               std::views::transform([](auto& data_store) {
-                                 return data_store->GetTransaction();
-                               }) |
-                               std::ranges::to<std::vector>();
+    _index_transactions = GetTransaction()
+                            .GetCatalogSnapshot()
+                            ->GetTableShard(rocksdb_table.TableId())
+                            ->GetDataStores() |
+                          std::views::transform([](auto& data_store) {
+                            return data_store->GetTransaction();
+                          }) |
+                          std::ranges::to<std::vector>();
   }
 
   bool supportsMultiThreading() const final { return false; }
@@ -346,9 +347,21 @@ class SereneDBConnectorInsertTableHandle final
 
   query::Transaction& GetTransaction() const noexcept { return _transaction; }
 
-  std::span<::sdb::search::DataStore::Transaction> GetDataStoreTransactions()
+  std::span<::sdb::search::DataStore::Transaction> GetIndexTransactions()
     const noexcept {
-    return _data_store_transactions;
+    return _index_transactions;
+  }
+
+  void CommitIndexTransactions() const {
+    for (auto&& transaction : std::move(_index_transactions)) {
+      std::move(transaction).Commit();
+    }
+  }
+
+  void AbortIndexTransactions() const {
+    for (auto&& transaction : std::move(_index_transactions)) {
+      std::move(transaction).Abort();
+    }
   }
 
   size_t NumberOfRowsAffected() const noexcept {
@@ -369,7 +382,7 @@ class SereneDBConnectorInsertTableHandle final
   axiom::connector::WriteKind _kind;
   query::Transaction& _transaction;
   mutable std::vector<::sdb::search::DataStore::Transaction>
-    _data_store_transactions;
+    _index_transactions;
   std::vector<velox::connector::ColumnHandlePtr> _row_id_handles;
   bool _update_pk{};
 };
@@ -438,6 +451,8 @@ class SereneDBConnectorMetadata final
                "Wrong type of insert table handle");
     auto& transaction = serene_insert_handle->GetTransaction();
     auto* rocksdb_transaction = transaction.GetRocksDBTransaction();
+    serene_insert_handle->CommitIndexTransactions();
+
     if (!rocksdb_transaction) [[unlikely]] {
       return yaclib::MakeFuture<int64_t>(0);
     }
@@ -481,6 +496,7 @@ class SereneDBConnectorMetadata final
                "Wrong type of insert table handle");
     auto& transaction = serene_insert_handle->GetTransaction();
     auto* rocksdb_transaction = transaction.GetRocksDBTransaction();
+    serene_insert_handle->AbortIndexTransactions();
     if (!rocksdb_transaction) [[unlikely]] {
       return velox::ContinueFuture::make();
     }
@@ -586,8 +602,7 @@ class SereneDBConnector final : public velox::connector::Connector {
     const auto& table =
       basics::downCast<const RocksDBTable>(*serene_insert_handle.Table());
     const auto& object_key = table.TableId();
-    std::span<::sdb::search::DataStore::Transaction> data_store_transactions =
-      serene_insert_handle.GetDataStoreTransactions();
+    auto data_store_transactions = serene_insert_handle.GetIndexTransactions();
     std::vector<catalog::Column::Id> column_oids;
     if (serene_insert_handle.Kind() == axiom::connector::WriteKind::kInsert ||
         serene_insert_handle.Kind() == axiom::connector::WriteKind::kUpdate) {

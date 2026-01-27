@@ -132,7 +132,8 @@ class DataStore : public std::enable_shared_from_this<DataStore> {
         _transaction(data_store->_writer->GetBatch()) {}
     auto& GetIndexWriterTransaction() { return _transaction; }
     const auto& GetDataStore() const { return _data_store; }
-    ResultWithTime Commit();
+    ResultWithTime Commit() &&;
+    ResultWithTime Abort() &&;
 
    private:
     std::shared_ptr<DataStore> _data_store;

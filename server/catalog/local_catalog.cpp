@@ -408,11 +408,6 @@ class SnapshotImpl : public Snapshot {
     SDB_ENSURE(is_new, ERROR_INTERNAL);
   }
 
-  void AddSearchDataStore(std::shared_ptr<search::DataStore> datastore) {
-    const auto is_new = _search_datastores.emplace(std::move(datastore)).second;
-    SDB_ENSURE(is_new, ERROR_INTERNAL);
-  }
-
   void DropTableShard(ObjectId id) { _table_shards.erase(id); }
 
   std::vector<std::shared_ptr<Role>> GetRoles() const final {
@@ -972,7 +967,6 @@ class SnapshotImpl : public Snapshot {
   ObjectSetByName<Database> _databases_by_name;
   ObjectSetById<Object> _objects_by_id;
   ObjectSetById<TableShard> _table_shards;
-  ObjectSetById<search::DataStore> _search_datastores;
 };
 
 LocalCatalog::LocalCatalog(bool skip_background_errors)
@@ -1159,12 +1153,13 @@ Result LocalCatalog::CreateIndex(ObjectId database_id, std::string_view schema,
       database_id, schema, std::move(*index), false,
       [&](auto& object) -> Result {
         auto& index = basics::downCast<Index>(*object);
+        auto shard = catalog::GetTableShard(index.GetRelationId());
         // create DataStore and write to RocksDB -> Add DataStore to snapshot ->
         // Write Index to RocksDB
         return physical_factory(*_engine, index, true)
-          .and_then([&](std::shared_ptr<search::DataStore>&& datastore)
+          .and_then([&](std::shared_ptr<search::DataStore>&& data_store)
                       -> ResultOr<std::shared_ptr<search::DataStore>> {
-            clone->AddSearchDataStore(std::move(datastore));
+            shard->AddDataStore(data_store);
             return std::unexpected<Result>{std::in_place,
                                            _engine->CreateIndex(index)};
           })

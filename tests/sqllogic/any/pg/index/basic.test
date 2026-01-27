@@ -1,0 +1,26 @@
+statement ok
+CREATE TABLE t(r text);
+
+
+statement ok
+CREATE INDEX index_t ON t USING secondary (r);
+
+
+statement ok
+INSERT INTO t VALUES ('a'), ('b'), ('c')
+
+
+statement ok
+INSERT INTO t VALUES ('a'), ('b'), ('c')
+
+
+query
+SELECT * FROM t;
+----
+r
+a
+b
+c
+a
+b
+c

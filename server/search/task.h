@@ -60,19 +60,17 @@ class CommitTask : public Task {
     return ThreadGroup::Commit;
   }
   static constexpr std::string_view TaskName() noexcept { return "Commit"; }
-  CommitTask(ObjectId id, DataStore::Transaction transaction,
+  CommitTask(ObjectId id, DataStore::Transaction&& transaction,
              std::shared_ptr<ThreadPoolState> state)
     : Task{id, std::move(state)}, _transaction{std::move(transaction)} {}
 
   void operator()();
-  void Finalize(DataStore& data_store, CommitResult& commit_res);
+  void Finalize(CommitResult res);
 
  private:
   DataStore::Transaction _transaction;
-  size_t _cleanup_interval_count;
   absl::Duration _commit_interval_msec;
   absl::Duration _consolidation_interval_msec;
-  size_t _cleanup_interval_step;
 };
 
 class ConsolidationTask : public Task {

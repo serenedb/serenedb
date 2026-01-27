@@ -214,6 +214,11 @@ jobs:
         working-directory: ./private/ci
         run: ./build_images.sh
 
+      # ==================== UPDATE FILE OWNERSHIP ====================
+      - name: Update file ownership
+        if: always()
+        run: ./private/ci/steps/07-ci-in-docker-update-file-ownership.bash
+
       # ==================== DETERMINE FINAL STATUS ====================
       - name: Determine final job status
         id: final_status
@@ -320,10 +325,6 @@ jobs:
           retention-days: 30
 
       # ==================== CLEANUP ====================
-      - name: Update file ownership
-        if: always()
-        run: ./private/ci/steps/07-ci-in-docker-update-file-ownership.bash
-
       - name: Docker cleanup
         if: always() && !cancelled()
         run: |

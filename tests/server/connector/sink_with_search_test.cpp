@@ -203,9 +203,10 @@ class DataSinkWithSearchTest : public ::testing::Test,
       std::make_unique<sdb::connector::search::SearchSinkInsertWriter>(
         index_transaction));
     sdb::connector::primary_key::Create(*data, pk, written_row_keys);
+    size_t rows_affected = 0;
     sdb::connector::RocksDBInsertDataSink sink(
       *data_transaction, *_cf_handles.front(), *pool_.get(), object_key, pk,
-      all_column_oids, sdb::WriteConflictPolicy::Replace,
+      all_column_oids, sdb::WriteConflictPolicy::Replace, &rows_affected,
       std::move(index_writers));
     sink.appendData(data);
     while (!sink.finish()) {
@@ -253,10 +254,12 @@ class DataSinkWithSearchTest : public ::testing::Test,
     index_writers.emplace_back(
       std::make_unique<sdb::connector::search::SearchSinkUpdateWriter>(
         index_transaction));
+    size_t rows_affected = 0;
+
     sdb::connector::RocksDBUpdateDataSink sink(
       *data_transaction, *_cf_handles.front(), *pool_.get(), object_key, pk,
       data_column_oids, all_column_oids, update_pk, table_row_type,
-      std::move(index_writers));
+      &rows_affected, std::move(index_writers));
     sink.appendData(data);
     while (!sink.finish()) {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -352,9 +355,10 @@ TEST_F(DataSinkWithSearchTest, test_InsertDeleteFlatStrings) {
     rocksdb::WriteOptions wo;
     std::unique_ptr<rocksdb::Transaction> transaction_delete{
       _db->BeginTransaction(wo, trx_opts, nullptr)};
+    size_t rows_affected = 0;
     sdb::connector::RocksDBDeleteDataSink delete_sink(
       *transaction_delete, *_cf_handles.front(), velox::ROW(names, types),
-      kObjectKey, all_column_oids, std::move(delete_writers));
+      kObjectKey, all_column_oids, &rows_affected, std::move(delete_writers));
     auto delete_data = makeRowVector({makeFlatVector<int32_t>({9001, 1})});
     delete_sink.appendData(delete_data);
     ASSERT_TRUE(delete_sink.finish());

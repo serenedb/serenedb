@@ -85,9 +85,11 @@ class DataSourceTest : public ::testing::Test,
     std::unique_ptr<rocksdb::Transaction> transaction{
       _db->BeginTransaction(wo, trx_opts, nullptr)};
     ASSERT_NE(transaction, nullptr);
+    size_t rows_affected = 0;
     sdb::connector::RocksDBInsertDataSink sink(
       *transaction, *_cf_handles.front(), *pool_.get(), object_key, pk,
-      std::move(column_ids), sdb::WriteConflictPolicy::Replace, {});
+      std::move(column_ids), sdb::WriteConflictPolicy::Replace, &rows_affected,
+      {});
     sink.appendData(data);
     while (!sink.finish()) {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));

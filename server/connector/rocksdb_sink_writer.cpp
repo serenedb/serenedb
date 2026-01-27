@@ -31,10 +31,9 @@ void RocksDBSinkWriter::ConfigureReadOptions() {
 
 void RocksDBSinkWriter::Write(std::span<const rocksdb::Slice> cell_slices,
                               std::string_view full_key) {
-  SDB_ASSERT(!cell_slices.empty());
-
   rocksdb::Slice key_slice(full_key);
   rocksdb::Status status;
+  SDB_ASSERT(!cell_slices.empty());
   if (cell_slices.size() == 1) {
     // Optimizing single slice case - rocksdb does not do additional copying
     // while gathering slice parts

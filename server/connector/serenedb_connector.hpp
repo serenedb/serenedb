@@ -634,7 +634,6 @@ class SereneDBConnector final : public velox::connector::Connector {
               rocksdb_transaction, _cf, *connector_query_ctx->memoryPool(),
               object_key, pk_indices, column_oids, all_column_oids,
               table.IsUsedForUpdatePK(), table.type(),
-              WriteConflictPolicy::Replace,
               serene_insert_handle.NumberOfRowsAffected(),
               std::vector<std::unique_ptr<SinkUpdateWriter>>{});
           } else {

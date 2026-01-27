@@ -93,7 +93,9 @@ DocIterator::ptr FixedPhraseQuery::execute(const ExecutionContext& ctx) const {
       // positions not found
       return DocIterator::empty();
     }
-    positions.emplace_back(std::ref(*pos), *position++);
+    positions.emplace_back(
+      std::ref(sdb::basics::downCast<FixedTermPositionImpl>(*pos)),
+      *position++);
   }
   const bool has_intervals = absl::c_any_of(
     this->positions,
@@ -167,7 +169,9 @@ DocIterator::ptr FixedPhraseQuery::ExecuteWithOffsets(
           !irs::get<OffsAttr>(*pos)) [[unlikely]] {
         return false;
       }
-      positions.emplace_back(std::ref(*pos), *position++);
+      positions.emplace_back(
+        std::ref(sdb::basics::downCast<FixedTermPositionImpl>(*pos)),
+        *position++);
 
       ++term_state;
       return true;

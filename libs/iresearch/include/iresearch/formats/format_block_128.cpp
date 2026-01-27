@@ -30,61 +30,6 @@ extern "C" {
 namespace irs {
 namespace {
 
-struct FormatTraits128 {
-  using AlignType = __m128i;
-
-  // TODO(mbkkt) rename to "block_128"
-  static constexpr std::string_view kName = "1_5simd";
-
-  static constexpr uint32_t kBlockSize = SIMDBlockSize;
-  static_assert(kBlockSize <= doc_limits::eof());
-
-  IRS_FORCE_INLINE static void PackBlock(const uint32_t* IRS_RESTRICT decoded,
-                                         uint32_t* IRS_RESTRICT encoded,
-                                         uint32_t bits) noexcept {
-    ::simdpackwithoutmask(decoded, reinterpret_cast<AlignType*>(encoded), bits);
-  }
-
-  IRS_FORCE_INLINE static void UnpackBlockDelta(
-    uint32_t prev, uint32_t* IRS_RESTRICT decoded,
-    const uint32_t* IRS_RESTRICT encoded, uint32_t bits) noexcept {
-    ::simdunpackd1(prev, reinterpret_cast<const AlignType*>(encoded), decoded,
-                   bits);
-  }
-
-  IRS_FORCE_INLINE static void UnpackBlock(uint32_t* IRS_RESTRICT decoded,
-                                           const uint32_t* IRS_RESTRICT encoded,
-                                           uint32_t bits) noexcept {
-    ::simdunpack(reinterpret_cast<const AlignType*>(encoded), decoded, bits);
-  }
-
-  IRS_FORCE_INLINE static void write_block_delta(IndexOutput& out, uint32_t* in,
-                                                 uint32_t prev, uint32_t* buf) {
-    DeltaEncode<kBlockSize>(in, prev);
-    bitpack::write_block32<kBlockSize>(PackBlock, out, in, buf);
-  }
-
-  IRS_FORCE_INLINE static void write_block(IndexOutput& out, const uint32_t* in,
-                                           uint32_t* buf) {
-    bitpack::write_block32<kBlockSize>(PackBlock, out, in, buf);
-  }
-
-  IRS_FORCE_INLINE static void read_block_delta(IndexInput& in, uint32_t* buf,
-                                                uint32_t* out, uint32_t prev) {
-    bitpack::read_block_delta32<kBlockSize>(UnpackBlockDelta, in, buf, out,
-                                            prev);
-  }
-
-  IRS_FORCE_INLINE static void read_block(IndexInput& in, uint32_t* buf,
-                                          uint32_t* out) {
-    bitpack::read_block32<kBlockSize>(UnpackBlock, in, buf, out);
-  }
-
-  IRS_FORCE_INLINE static void skip_block(IndexInput& in) {
-    bitpack::skip_block32(in, kBlockSize);
-  }
-};
-
 using FormatBlock128 = FormatImpl<FormatTraits128>;
 
 }  // namespace

@@ -24,6 +24,7 @@
 
 #include "disjunction.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/formats/formats_impl.hpp"
 #include "iresearch/index/index_reader.hpp"
 
 namespace irs {
@@ -76,7 +77,10 @@ struct TermInterval {
 };
 
 // position attribute + desired offset in the phrase
-using FixedTermPosition = std::pair<PosAttr::ref, TermInterval>;
+using FixedTermPositionImpl =
+  PositionImpl<IteratorTraitsImpl<FormatTraits128, true, true, false>>;
+using FixedTermPosition =
+  std::pair<std::reference_wrapper<FixedTermPositionImpl>, TermInterval>;
 
 template<typename Tp>
 struct TermPositionTraits {

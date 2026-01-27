@@ -55,6 +55,11 @@
 #include "iresearch/utils/bitpack.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
+extern "C" {
+#include <simdbitpacking.h>
+#include <simdintegratedbitpacking.h>
+}
+
 namespace irs {
 
 inline constexpr IndexFeatures kPos = IndexFeatures::Freq | IndexFeatures::Pos;
@@ -1420,11 +1425,12 @@ void CommonReadWandData(WandExtent wextent, uint8_t index,
 // IteratorTraits defines requested features.
 // FieldTraits defines requested features.
 template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
-class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
+class PostingIteratorImpl
+  : public DocIteratorBase<IteratorTraits, FieldTraits> {
   using typename DocIteratorBase<IteratorTraits, FieldTraits>::Position;
 
  public:
-  DocIteratorImpl(WandExtent extent)
+  PostingIteratorImpl(WandExtent extent)
     : _skip{IteratorTraits::kBlockSize, PostingsWriterBase::kSkipN,
             ReadSkip{extent}} {}
 
@@ -1571,8 +1577,9 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
 };
 
 template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
-void DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::ReadSkip::Read(
-  size_t level, IndexInput& in) {
+void PostingIteratorImpl<IteratorTraits, FieldTraits,
+                         WandExtent>::ReadSkip::Read(size_t level,
+                                                     IndexInput& in) {
   auto& next = _skip_levels[level];
 
   // Store previous step on the same level
@@ -1584,8 +1591,8 @@ void DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::ReadSkip::Read(
 }
 
 template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
-void DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::ReadSkip::Seal(
-  size_t level) {
+void PostingIteratorImpl<IteratorTraits, FieldTraits,
+                         WandExtent>::ReadSkip::Seal(size_t level) {
   auto& next = _skip_levels[level];
 
   // Store previous step on the same level
@@ -1596,7 +1603,7 @@ void DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::ReadSkip::Seal(
 }
 
 template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
-void DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
+void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
   const TermMeta& meta, const IndexInput* doc_in, const IndexInput* pos_in,
   const IndexInput* pay_in, uint8_t wand_index) {
   auto& term_state = static_cast<const TermMetaImpl&>(meta);
@@ -1674,7 +1681,8 @@ void DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
 }
 
 template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
-doc_id_t DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::advance() {
+doc_id_t
+PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::advance() {
   auto& doc_value = std::get<DocAttr>(this->_attrs).value;
 
   if (this->_left_in_leaf == 0) [[unlikely]] {
@@ -1703,7 +1711,7 @@ doc_id_t DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::advance() {
 }
 
 template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
-doc_id_t DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::seek(
+doc_id_t PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::seek(
   doc_id_t target) {
   auto& doc_value = std::get<DocAttr>(this->_attrs).value;
 
@@ -1758,7 +1766,7 @@ doc_id_t DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::seek(
 }
 
 template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
-void DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::SeekToBlock(
+void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::SeekToBlock(
   doc_id_t target) {
   SkipState last;  // Where block starts
   _skip.Reader().Reset(last);
@@ -2779,28 +2787,31 @@ inline size_t PostingsReaderBase::decode(const byte_type* in,
   return size_t(std::distance(in, p));
 }
 
+template<typename FormatTraits, bool Freq, bool Pos, bool Offs>
+struct IteratorTraitsImpl : FormatTraits {
+  static constexpr bool Frequency() noexcept { return Freq; }
+  static constexpr bool Position() noexcept { return Freq && Pos; }
+  static constexpr bool Offset() noexcept { return Position() && Offs; }
+  static constexpr IndexFeatures Features() noexcept {
+    auto r = IndexFeatures::None;
+    if constexpr (Freq) {
+      r |= IndexFeatures::Freq;
+    }
+    if constexpr (Pos) {
+      r |= IndexFeatures::Pos;
+    }
+    if constexpr (Offs) {
+      r |= IndexFeatures::Offs;
+    }
+    return r;
+  }
+};
+
 template<typename FormatTraits>
 class PostingsReaderImpl final : public PostingsReaderBase {
  public:
   template<bool Freq, bool Pos, bool Offs>
-  struct IteratorTraits : FormatTraits {
-    static constexpr bool Frequency() noexcept { return Freq; }
-    static constexpr bool Position() noexcept { return Freq && Pos; }
-    static constexpr bool Offset() noexcept { return Position() && Offs; }
-    static constexpr IndexFeatures Features() noexcept {
-      auto r = IndexFeatures::None;
-      if constexpr (Freq) {
-        r |= IndexFeatures::Freq;
-      }
-      if constexpr (Pos) {
-        r |= IndexFeatures::Pos;
-      }
-      if constexpr (Offs) {
-        r |= IndexFeatures::Offs;
-      }
-      return r;
-    }
-  };
+  using IteratorTraits = IteratorTraitsImpl<FormatTraits, Freq, Pos, Offs>;
 
   PostingsReaderImpl() noexcept
     : PostingsReaderBase{FormatTraits::kBlockSize} {}
@@ -3006,7 +3017,7 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
             options.count,
             [&]<typename Extent>(Extent&& extent) -> DocIterator::ptr {
               auto it = memory::make_managed<
-                DocIteratorImpl<IteratorTraits, FieldTraits, Extent>>(
+                PostingIteratorImpl<IteratorTraits, FieldTraits, Extent>>(
                 std::forward<Extent>(extent));
               it->Prepare(meta, _doc_in.get(), _pos_in.get(), _pay_in.get());
               iterator_types |= 1 << 2;
@@ -3035,7 +3046,7 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
               }
             }
             auto it = memory::make_managed<
-              DocIteratorImpl<IteratorTraits, FieldTraits, Extent>>(extent);
+              PostingIteratorImpl<IteratorTraits, FieldTraits, Extent>>(extent);
             it->WandPrepare(meta, _doc_in.get(), _pos_in.get(), _pay_in.get(),
                             meta_idx, options.make_score, scorer,
                             options.mapped_index);
@@ -3108,8 +3119,8 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
       }
       // DocIteratorImpl case
       return ResolveExtent<0>(options.count, [&]<typename Extent>(Extent&&) {
-        using Adapter =
-          PostingAdapter<DocIteratorImpl<IteratorTraits, FieldTraits, Extent>>;
+        using Adapter = PostingAdapter<
+          PostingIteratorImpl<IteratorTraits, FieldTraits, Extent>>;
         return make_min_match.template operator()<Adapter>();
       });
     });
@@ -3191,5 +3202,60 @@ class FormatImpl final : public FormatBase {
 // use base irs::position type for ancestors
 template<typename IteratorTraits>
 struct Type<PositionImpl<IteratorTraits>> : Type<PosAttr> {};
+
+struct FormatTraits128 {
+  using AlignType = __m128i;
+
+  // TODO(mbkkt) rename to "block_128"
+  static constexpr std::string_view kName = "1_5simd";
+
+  static constexpr uint32_t kBlockSize = SIMDBlockSize;
+  static_assert(kBlockSize <= doc_limits::eof());
+
+  IRS_FORCE_INLINE static void PackBlock(const uint32_t* IRS_RESTRICT decoded,
+                                         uint32_t* IRS_RESTRICT encoded,
+                                         uint32_t bits) noexcept {
+    ::simdpackwithoutmask(decoded, reinterpret_cast<AlignType*>(encoded), bits);
+  }
+
+  IRS_FORCE_INLINE static void UnpackBlockDelta(
+    uint32_t prev, uint32_t* IRS_RESTRICT decoded,
+    const uint32_t* IRS_RESTRICT encoded, uint32_t bits) noexcept {
+    ::simdunpackd1(prev, reinterpret_cast<const AlignType*>(encoded), decoded,
+                   bits);
+  }
+
+  IRS_FORCE_INLINE static void UnpackBlock(uint32_t* IRS_RESTRICT decoded,
+                                           const uint32_t* IRS_RESTRICT encoded,
+                                           uint32_t bits) noexcept {
+    ::simdunpack(reinterpret_cast<const AlignType*>(encoded), decoded, bits);
+  }
+
+  IRS_FORCE_INLINE static void write_block_delta(IndexOutput& out, uint32_t* in,
+                                                 uint32_t prev, uint32_t* buf) {
+    DeltaEncode<kBlockSize>(in, prev);
+    bitpack::write_block32<kBlockSize>(PackBlock, out, in, buf);
+  }
+
+  IRS_FORCE_INLINE static void write_block(IndexOutput& out, const uint32_t* in,
+                                           uint32_t* buf) {
+    bitpack::write_block32<kBlockSize>(PackBlock, out, in, buf);
+  }
+
+  IRS_FORCE_INLINE static void read_block_delta(IndexInput& in, uint32_t* buf,
+                                                uint32_t* out, uint32_t prev) {
+    bitpack::read_block_delta32<kBlockSize>(UnpackBlockDelta, in, buf, out,
+                                            prev);
+  }
+
+  IRS_FORCE_INLINE static void read_block(IndexInput& in, uint32_t* buf,
+                                          uint32_t* out) {
+    bitpack::read_block32<kBlockSize>(UnpackBlock, in, buf, out);
+  }
+
+  IRS_FORCE_INLINE static void skip_block(IndexInput& in) {
+    bitpack::skip_block32(in, kBlockSize);
+  }
+};
 
 }  // namespace irs

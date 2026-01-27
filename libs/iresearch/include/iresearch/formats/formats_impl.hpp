@@ -1597,7 +1597,7 @@ class DocIteratorBase : public DocIterator {
   void ReadTailBlock(doc_id_t prev_doc);
 
  protected:
-  void Refill(doc_id_t prev_doc);
+  IRS_FORCE_INLINE void Refill(doc_id_t prev_doc);
 
   uint32_t _enc_buf[IteratorTraits::kBlockSize];  // buffer for encoding
   [[no_unique_address]] utils::Need<
@@ -1841,9 +1841,9 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
     return std::get<DocAttr>(_attrs).value;
   }
 
-  doc_id_t advance() final;
+  IRS_FORCE_INLINE doc_id_t advance() final;
 
-  doc_id_t seek(doc_id_t target) final;
+  IRS_FORCE_INLINE doc_id_t seek(doc_id_t target) final;
 
   uint32_t count() final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
@@ -2082,18 +2082,12 @@ doc_id_t DocIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::seek(
   }
 
   if (this->_max_in_leaf < target) [[unlikely]] {
-    if (target - this->_max_in_leaf <= IteratorTraits::kBlockSize) {
-      if constexpr (!IteratorTraits::Position()) {
-        this->_left_in_leaf = 0;
-        doc_value = this->_max_in_leaf;
-      }
-      while (true) {
-        if (auto doc = advance(); target <= doc) {
-          return doc;
-        }
-      }
+    if (!IteratorTraits::Position() &&
+        target - this->_max_in_leaf <= IteratorTraits::kBlockSize) {
+      doc_value = this->_max_in_leaf;
+    } else {
+      SeekToBlock(target);
     }
-    SeekToBlock(target);
 
     if (this->_left_in_list == 0) [[unlikely]] {
       this->_left_in_leaf = 0;
@@ -3125,8 +3119,6 @@ struct PostingAdapter {
   IRS_FORCE_INLINE doc_id_t shallow_seek(doc_id_t target) {
     return self().shallow_seek(target);
   }
-
-  IRS_FORCE_INLINE uint32_t count() { return self().count(); }
 
   IRS_FORCE_INLINE const ScoreAttr& score() const noexcept {
     return self().score();

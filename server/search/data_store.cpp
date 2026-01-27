@@ -22,6 +22,7 @@
 #include "search/data_store.h"
 
 #include <absl/cleanup/cleanup.h>
+#include <absl/time/time.h>
 
 #include <chrono>
 #include <iresearch/index/directory_reader.hpp>
@@ -31,6 +32,7 @@
 
 #include "basics/assert.h"
 #include "basics/errors.h"
+#include "basics/system-compiler.h"
 #include "catalog/catalog.h"
 #include "metrics/gauge.h"
 #include "metrics/guard.h"
@@ -75,7 +77,16 @@ DataStore::ResultWithTime DataStore::Transaction::Abort() && {
   return {Result{}, duration};
 }
 
-DataStore::DataStore(const catalog::Index& index,
+void DataStore::Transaction::ScheduleCommit(absl::Duration delay) && {
+  CommitTask task{std::move(*this)};
+  std::move(task).Schedule(delay);
+}
+
+void DataStore::Transaction::ScheduleAbort(absl::Duration delay) && {
+  SDB_UNREACHABLE();  // Not implemented yet
+}
+
+DataStore::DataStore(const catalog::Index& index, irs::OpenMode mode,
                      const DataStoreOptions& options)
   : _engine{GetServerEngine()},
     _search{SerenedServer::Instance().getFeature<SearchEngine>()},
@@ -90,8 +101,7 @@ DataStore::DataStore(const catalog::Index& index,
   path /= absl::StrCat(index_id);
   _dir = std::make_unique<irs::FSDirectory>(path);
   auto codec = irs::formats::Get("1_5avx");
-  _writer = irs::IndexWriter::Make(*_dir, codec, irs::OpenMode::kOmCreate,
-                                   _options.writer_options);
+  _writer = irs::IndexWriter::Make(*_dir, codec, mode, _options.writer_options);
 }
 
 Snapshot DataStore::GetSnapshot() const {
@@ -102,13 +112,6 @@ Snapshot DataStore::GetSnapshot() const {
   }
 
   return {shared_from_this(), GetDataSnapshot()};
-}
-
-void DataStore::ScheduleCommit(absl::Duration delay) {
-  CommitTask task{GetId(), GetTransaction(), _state};
-
-  _state->pending_commits.fetch_add(1, std::memory_order_release);
-  std::move(task).Schedule(delay);
 }
 
 void DataStore::ScheduleConsolidation(absl::Duration delay) {
@@ -172,122 +175,6 @@ Result DataStore::CleanupUnsafeImpl() {
   } catch (...) {
     return {ERROR_INTERNAL,
             absl::StrCat("caught exception while cleaning up Search index '",
-                         GetId().id(), "'")};
-  }
-  return {};
-}
-
-DataStore::ResultWithTime DataStore::CommitUnsafe(
-  bool wait, const irs::ProgressReportCallback& progress, CommitResult& code) {
-  auto begin = std::chrono::steady_clock::now();
-  auto result = CommitUnsafeImpl(wait, progress, code);
-  uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                       std::chrono::steady_clock::now() - begin)
-                       .count();
-
-  SDB_IF_FAILURE("Search::FailOnCommit") { result.reset(ERROR_DEBUG); }
-
-  if (result.fail() && SetOutOfSync()) {
-    try {
-      MarkOutOfSyncUnsafe();
-    } catch (const std::exception& e) {
-      SDB_WARN("xxxxx", Logger::SEARCH,
-               "failed to store 'outOfSync' flag for Search index '", GetId(),
-               "': ", e.what());
-    }
-  }
-
-  if (bool ok = result.ok(); !ok && _num_failed_commits != nullptr) {
-    _num_failed_commits->fetch_add(1, std::memory_order_relaxed);
-  } else if (ok && code == CommitResult::Done &&
-             _avg_commit_time_ms != nullptr) {
-    _avg_commit_time_ms->store(ComputeAvg(_commit_time_num, time_ms),
-                               std::memory_order_relaxed);
-  }
-  return {std::move(result), time_ms};
-}
-
-Result DataStore::CommitUnsafeImpl(bool wait,
-                                   const irs::ProgressReportCallback& progress,
-                                   CommitResult& code) {
-  code = CommitResult::NoChanges;
-
-  try {
-    std::unique_lock commit_lock{_commit_mutex, std::try_to_lock};
-    if (!commit_lock.owns_lock()) {
-      if (!wait) {
-        SDB_TRACE("xxxxx", Logger::SEARCH, "Commit for Search index '", GetId(),
-                  "' is already in progress, skipping");
-
-        code = CommitResult::InProgress;
-        return {};
-      }
-
-      SDB_TRACE("xxxxx", Logger::SEARCH, "Commit for Search index '", GetId(),
-                "' is already in progress, waiting");
-
-      commit_lock.lock();
-    }
-
-    auto engine_snapshot = _engine.currentSnapshot();
-    if (!engine_snapshot) [[unlikely]] {
-      return {ERROR_INTERNAL,
-              absl::StrCat("Failed to get engine snapshot while committing "
-                           "Search index '",
-                           GetId().id(), "'")};
-    }
-    const auto before_commit =
-      engine_snapshot->GetSnapshot()->GetSequenceNumber();
-    SDB_ASSERT(_last_committed_tick <= before_commit);
-    absl::Cleanup commit_guard = [&, last = _last_committed_tick]() noexcept {
-      _last_committed_tick = last;
-    };
-    const bool were_changes = _writer->Commit({
-      .tick = _is_creation ? irs::writer_limits::kMaxTick : before_commit,
-      .progress = progress,
-      .reopen_columnstore = /* TODO */ {},
-    });
-
-    auto reader = _writer->GetSnapshot();
-    SDB_ASSERT(reader != nullptr);
-    std::move(commit_guard).Cancel();
-    if (!were_changes) {
-      SDB_TRACE("xxxxx", Logger::SEARCH, "Commit for Search index '", GetId(),
-                "' is no changes, tick ", before_commit, "'");
-      _last_committed_tick = before_commit;
-      StoreDataSnapshot(std::make_shared<DataSnapshot>(
-        std::move(reader), std::move(engine_snapshot)));
-      return {};
-    }
-    SDB_ASSERT(_is_creation || _last_committed_tick == before_commit);
-    code = CommitResult::Done;
-
-    SDB_ASSERT(GetSnapshot().GetDirectoryReader() != reader);
-    const auto reader_size = reader->size();
-    const auto docs_count = reader->docs_count();
-    const auto live_docs_count = reader->live_docs_count();
-
-    auto data = std::make_shared<DataSnapshot>(std::move(reader),
-                                               std::move(engine_snapshot));
-    StoreDataSnapshot(data);
-
-    UpdateStatsUnsafe(std::move(data));
-
-    SDB_DEBUG("xxxxx", Logger::SEARCH, "successful sync of Search index '",
-              GetId(), "', segments '", reader_size, "', docs count '",
-              docs_count, "', live docs count '", live_docs_count,
-              "', last operation tick '", _last_committed_tick, "'");
-  } catch (const basics::Exception& e) {
-    return {e.code(),
-            absl::StrCat("caught exception while committing Search index '",
-                         GetId().id(), "': ", e.message())};
-  } catch (const std::exception& e) {
-    return {ERROR_INTERNAL,
-            absl::StrCat("caught exception while committing Search index '",
-                         GetId().id(), "': ", e.what())};
-  } catch (...) {
-    return {ERROR_INTERNAL,
-            absl::StrCat("caught exception while committing Search index '",
                          GetId().id(), "'")};
   }
   return {};

@@ -21,7 +21,9 @@
 
 #include "search_engine.h"
 
+#include <absl/functional/any_invocable.h>
 #include <absl/strings/escaping.h>
+#include <absl/time/time.h>
 
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/fast_text_model.hpp>
@@ -33,6 +35,7 @@
 #include "app/app_server.h"
 #include "app/options/parameters.h"
 #include "basics/down_cast.h"
+#include "basics/exceptions.h"
 #include "basics/logger/logger.h"
 #include "basics/number_of_cores.h"
 #include "catalog/analyzer.h"
@@ -302,7 +305,7 @@ void CleanupDatabase(ObjectId database_id) {
   }
 }
 
-bool SearchEngine::queue(ThreadGroup id, absl::Duration delay,
+bool SearchEngine::Queue(ThreadGroup id, absl::Duration delay,
                          absl::AnyInvocable<void()>&& fn) {
   auto r = basics::SafeCall([&]() {
     return _thread_pools->Get(id).run(std::move(fn), delay)

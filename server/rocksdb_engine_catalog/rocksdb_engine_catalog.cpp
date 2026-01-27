@@ -42,6 +42,7 @@
 #include <vpack/iterator.h>
 
 #include <iomanip>
+#include <iresearch/index/index_writer.hpp>
 #include <limits>
 #include <memory>
 #include <utility>
@@ -1513,10 +1514,12 @@ RocksDBEngineCatalog::CreateDataStore(const catalog::Index& index,
                                       bool is_new) {
   search::DataStoreOptions options;
 
+  irs::OpenMode mode = irs::OpenMode::kOmCreate;
   if (!is_new) {
-    // Read DataStore options
+    // TODO(codeworse): Read DataStore options
+    mode = irs::OpenMode::kOmAppend;
   }
-  return {std::make_shared<search::DataStore>(index, options)};
+  return {std::make_shared<search::DataStore>(index, mode, options)};
 }
 
 Result RocksDBEngineCatalog::MarkDeleted(const catalog::Index& index,

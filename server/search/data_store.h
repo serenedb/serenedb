@@ -132,22 +132,21 @@ class DataStore : public std::enable_shared_from_this<DataStore> {
         _transaction(data_store->_writer->GetBatch()) {}
     auto& GetIndexWriterTransaction() { return _transaction; }
     const auto& GetDataStore() const { return _data_store; }
+
     ResultWithTime Commit() &&;
     ResultWithTime Abort() &&;
+    void ScheduleCommit(absl::Duration delay) &&;
+    void ScheduleAbort(absl::Duration delay) &&;
 
    private:
     std::shared_ptr<DataStore> _data_store;
     irs::IndexWriter::Transaction _transaction;
   };
 
-  DataStore(const catalog::Index& table, const DataStoreOptions& options);
+  DataStore(const catalog::Index& table, irs::OpenMode mode,
+            const DataStoreOptions& options);
 
   auto GetTransaction() { return Transaction{shared_from_this()}; }
-
-  ResultOr<CommitResult> Commit(bool wait = false);
-  ResultWithTime CommitUnsafe(bool wait,
-                              const irs::ProgressReportCallback& progress,
-                              CommitResult& res);
 
   ResultWithTime ConsolidateUnsafe(
     const DataStoreMeta::ConsolidationPolicy& policy,
@@ -156,10 +155,10 @@ class DataStore : public std::enable_shared_from_this<DataStore> {
   ResultWithTime CleanupUnsafe();
   Stats UpdateStatsUnsafe(DataSnapshotPtr data) const;
 
-  void ScheduleCommit(absl::Duration delay);
   void ScheduleConsolidation(absl::Duration delay);
 
   ObjectId GetId() const noexcept { return _id; }
+  auto GetState() const noexcept { return _state; }
 
   void StatsToVPack(vpack::Builder& builder);
   Stats GetStats() const;
@@ -181,9 +180,6 @@ class DataStore : public std::enable_shared_from_this<DataStore> {
   auto& GetMeta() { return _meta; }
 
  private:
-  Result CommitUnsafeImpl(bool wait,
-                          const irs::ProgressReportCallback& progress,
-                          CommitResult& res);
   Result ConsolidateUnsafeImpl(const DataStoreMeta::ConsolidationPolicy& policy,
                                const irs::MergeWriter::FlushProgress& progress,
                                bool& empty_consolidation);

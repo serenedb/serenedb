@@ -74,7 +74,7 @@ class SearchEngine final : public SerenedFeature {
 
   std::tuple<size_t, size_t, size_t> stats(ThreadGroup id) const;
   std::pair<size_t, size_t> limits(ThreadGroup id) const;
-  bool queue(ThreadGroup id, absl::Duration delay,
+  bool Queue(ThreadGroup id, absl::Duration delay,
              absl::AnyInvocable<void()>&& fn);
   void trackOutOfSyncLink() noexcept;
   void untrackOutOfSyncLink() noexcept;

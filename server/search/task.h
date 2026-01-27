@@ -44,8 +44,8 @@ class Task {
       _engine{&SerenedServer::Instance().getFeature<SearchEngine>()} {}
 
   template<IndexTaskType Self>
-  void Schedule(this Self&& self, absl::Duration delay) {
-    self._engine->queue(Self::ThreadGroup(), delay, std::move(self));
+  void Schedule(this Self&& self, absl::Duration delay = {}) {
+    self._engine->Queue(Self::ThreadGroup(), delay, std::move(self));
   }
 
  protected:
@@ -60,9 +60,10 @@ class CommitTask : public Task {
     return ThreadGroup::Commit;
   }
   static constexpr std::string_view TaskName() noexcept { return "Commit"; }
-  CommitTask(ObjectId id, DataStore::Transaction&& transaction,
-             std::shared_ptr<ThreadPoolState> state)
-    : Task{id, std::move(state)}, _transaction{std::move(transaction)} {}
+  CommitTask(DataStore::Transaction&& transaction)
+    : Task{transaction.GetDataStore()->GetId(),
+           transaction.GetDataStore()->GetState()},
+      _transaction{std::move(transaction)} {}
 
   void operator()();
   void Finalize(CommitResult res);

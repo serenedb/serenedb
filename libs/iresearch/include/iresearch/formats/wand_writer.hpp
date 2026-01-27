@@ -301,7 +301,7 @@ class FreqNormSource final : public WandSource {
   static constexpr bool kNorm = (Tag & kWandTagNorm) != 0;
 
  public:
-  Attribute* GetMutable(TypeInfo::type_id type) final {
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     if (irs::Type<FreqAttr>::id() == type) {
       return &_freq;
     }

@@ -425,7 +425,7 @@ class DocIteratorImpl : public irs::DocIterator {
  public:
   DocIteratorImpl(irs::IndexFeatures features, const tests::Term& data);
 
-  irs::doc_id_t value() const final { return _doc.value; }
+  irs::doc_id_t value() const noexcept final { return _doc.value; }
 
   irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
     const auto it = _attrs.find(type);
@@ -558,7 +558,9 @@ class TermIterator : public irs::SeekTermIterator {
   struct TermCookie final : irs::SeekCookie {
     explicit TermCookie(irs::bytes_view term) noexcept : term(term) {}
 
-    irs::Attribute* GetMutable(irs::TypeInfo::type_id) final { return nullptr; }
+    irs::Attribute* GetMutable(irs::TypeInfo::type_id) noexcept final {
+      return nullptr;
+    }
 
     bool IsEqual(const irs::SeekCookie& rhs) const noexcept final {
       return term == sdb::basics::downCast<TermCookie>(rhs).term;
@@ -583,7 +585,7 @@ class TermIterator : public irs::SeekTermIterator {
     return nullptr;
   }
 
-  irs::bytes_view value() const final { return _value.value; }
+  irs::bytes_view value() const noexcept final { return _value.value; }
 
   bool next() final {
     if (_next == _data.terms.end()) {

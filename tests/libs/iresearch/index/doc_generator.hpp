@@ -601,7 +601,7 @@ class TokenizerPayload final : public irs::Tokenizer {
   explicit TokenizerPayload(irs::Tokenizer* impl);
   bool next() final;
 
-  irs::Attribute* GetMutable(irs::TypeInfo::type_id type) final;
+  irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final;
 
  private:
   const irs::TermAttr* _term;

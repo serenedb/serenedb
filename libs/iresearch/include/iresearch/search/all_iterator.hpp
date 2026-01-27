@@ -57,7 +57,7 @@ class AllIterator : public DocIterator {
     return doc_value;
   }
 
-  uint32_t count() final {
+  uint32_t count() noexcept final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
     if (doc_limits::eof(doc_value)) {
       return 0;

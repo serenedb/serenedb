@@ -47,7 +47,7 @@ struct ChildIterator : irs::DocIterator {
     return _it->GetMutable(id);
   }
 
-  irs::doc_id_t value() const final { return _it->value(); }
+  irs::doc_id_t value() const noexcept final { return _it->value(); }
 
   irs::doc_id_t advance() final {
     while (true) {
@@ -82,14 +82,14 @@ class PrevDocWrapper : public irs::DocIterator {
                     nullptr);
   }
 
-  irs::Attribute* GetMutable(irs::TypeInfo::type_id id) final {
+  irs::Attribute* GetMutable(irs::TypeInfo::type_id id) noexcept final {
     if (irs::Type<irs::PrevDocAttr>::id() == id) {
       return &_prev_doc;
     }
     return _it->GetMutable(id);
   }
 
-  irs::doc_id_t value() const final { return _it->value(); }
+  irs::doc_id_t value() const noexcept final { return _it->value(); }
 
   irs::doc_id_t advance() final { return _it->advance(); }
 

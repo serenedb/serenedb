@@ -35,7 +35,9 @@
 namespace {
 
 struct EmptyAttributeProvider : irs::AttributeProvider {
-  irs::Attribute* GetMutable(irs::TypeInfo::type_id) final { return nullptr; }
+  irs::Attribute* GetMutable(irs::TypeInfo::type_id) noexcept final {
+    return nullptr;
+  }
 };
 
 EmptyAttributeProvider gEmptyAttributeProvider;

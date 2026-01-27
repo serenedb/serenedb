@@ -74,11 +74,11 @@ class FreqThresholdDocIterator : public irs::DocIterator {
       _threshold{threshold},
       _is_strict{is_strict} {}
 
-  irs::Attribute* GetMutable(irs::TypeInfo::type_id id) final {
+  irs::Attribute* GetMutable(irs::TypeInfo::type_id id) noexcept final {
     return _impl->GetMutable(id);
   }
 
-  irs::doc_id_t value() const final { return _impl->value(); }
+  irs::doc_id_t value() const noexcept final { return _impl->value(); }
 
   irs::doc_id_t advance() final {
     while (_impl->next()) {

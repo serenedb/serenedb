@@ -58,7 +58,7 @@ RocksDBDataSinkBase<SubWriterType>::RocksDBDataSinkBase(
   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
   std::span<const velox::column_index_t> key_childs,
   std::vector<catalog::Column::Id> column_ids,
-  WriteConflictPolicy conflict_policy,
+  WriteConflictPolicy conflict_policy, size_t* number_of_rows_affected,
   std::vector<std::unique_ptr<SubWriterType>>&& index_writers)
   : _data_writer{transaction, cf, conflict_policy},
     _index_writers{std::move(index_writers)},
@@ -67,11 +67,14 @@ RocksDBDataSinkBase<SubWriterType>::RocksDBDataSinkBase(
     _memory_pool{memory_pool},
     _row_slices{memory_pool},
     _store_keys_buffers{memory_pool},
-    _bytes_allocator{&memory_pool} {
+    _bytes_allocator{&memory_pool},
+    _number_of_rows_affected{number_of_rows_affected} {
   _key_childs.assign_range(key_childs);
   SDB_ASSERT(_object_key.isSet(), "RocksDBDataSinkBase: object key is empty");
   SDB_ASSERT(!_column_ids.empty(),
              "RocksDBDataSinkBase: no columns in a table");
+  SDB_ASSERT(_number_of_rows_affected,
+             "RocksDBDataSinkBase: invalid rows affected counter");
   // we rely on storage order matching machine order
   static_assert(basics::IsLittleEndian());
 }
@@ -81,13 +84,17 @@ RocksDBInsertDataSink::RocksDBInsertDataSink(
   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
   std::span<const velox::column_index_t> key_childs,
   std::vector<catalog::Column::Id> column_ids,
-  WriteConflictPolicy conflict_policy,
+  WriteConflictPolicy conflict_policy, size_t* number_of_rows_affected,
   std::vector<std::unique_ptr<SinkInsertWriter>>&& index_writers)
-  : RocksDBDataSinkBase<SinkInsertWriter>{
-      transaction,     cf,
-      memory_pool,     object_key,
-      key_childs,      std::move(column_ids),
-      conflict_policy, std::move(index_writers)} {}
+  : RocksDBDataSinkBase<SinkInsertWriter>{transaction,
+                                          cf,
+                                          memory_pool,
+                                          object_key,
+                                          key_childs,
+                                          std::move(column_ids),
+                                          conflict_policy,
+                                          number_of_rows_affected,
+                                          std::move(index_writers)} {}
 
 RocksDBUpdateDataSink::RocksDBUpdateDataSink(
   rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
@@ -95,7 +102,8 @@ RocksDBUpdateDataSink::RocksDBUpdateDataSink(
   std::span<const velox::column_index_t> key_childs,
   std::vector<catalog::Column::Id> column_ids,
   std::vector<catalog::Column::Id> all_column_ids, bool update_pk,
-  velox::RowTypePtr table_row_type,
+  velox::RowTypePtr table_row_type, WriteConflictPolicy conflict_policy,
+  size_t* number_of_rows_affected,
   std::vector<std::unique_ptr<SinkUpdateWriter>>&& index_writers)
   : RocksDBDataSinkBase<SinkUpdateWriter>{transaction,
                                           cf,
@@ -103,7 +111,8 @@ RocksDBUpdateDataSink::RocksDBUpdateDataSink(
                                           object_key,
                                           key_childs,
                                           std::move(column_ids),
-                                          WriteConflictPolicy::Replace,
+                                          conflict_policy,
+                                          number_of_rows_affected,
                                           std::move(index_writers)},
     _all_column_ids{std::move(all_column_ids)},
     _old_keys_buffers{memory_pool},
@@ -176,16 +185,17 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
   const auto skipped_rows = _data_writer.HandleConflicts(_store_keys_buffers);
   SDB_ASSERT(skipped_rows <= num_rows);
 
-  if (skipped_rows == num_rows) {
+  const auto affected_rows = num_rows - skipped_rows;
+
+  if (affected_rows == 0) {
     // All rows are skipped, nothing to do
     return;
   }
 
   for (const auto& writer : _index_writers) {
-    writer->Init(num_rows - skipped_rows);
+    writer->Init(affected_rows);
   }
 
-  // _data_writer.ResizeConflictMask(num_rows);
   velox::IndexRange all_rows(0, num_rows);
   const folly::Range all_rows_range{&all_rows, 1};
   for (velox::column_index_t i = 0; i < num_columns; ++i) {
@@ -195,10 +205,9 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
                  "one in the input vectors");
       continue;
     }
-    // _data_writer.UseConflictMask(i > 0);
-    // _data_writer.ResetRowId();
     WriteInputColumn(_column_ids[i], i, *input, all_rows_range);
   }
+  *_number_of_rows_affected += affected_rows;
 }
 
 // TODO(Dronplane)
@@ -295,6 +304,7 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
     for (velox::column_index_t i = _key_childs.size(); i < num_columns; ++i) {
       WriteInputColumn(_column_ids[i], i, *input, all_rows_range);
     }
+    *_number_of_rows_affected += num_rows;
     return;
   }
 
@@ -331,6 +341,7 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
       _data_writer.DeleteCell(old_key);
     }
   }
+  *_number_of_rows_affected += num_rows;
 }
 
 template<bool RewriteData>
@@ -2317,19 +2328,22 @@ velox::connector::DataSink::Stats RocksDBDataSinkBase<SubWriterType>::stats()
 RocksDBDeleteDataSink::RocksDBDeleteDataSink(
   rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
   velox::RowTypePtr row_type, ObjectId object_key,
-  std::vector<catalog::Column::Id> column_oids,
+  std::vector<catalog::Column::Id> column_oids, size_t* number_of_rows_affected,
   std::vector<std::unique_ptr<SinkDeleteWriter>>&& index_writers)
   : _row_type{std::move(row_type)},
     _data_writer{transaction, cf},
     _index_writers{std::move(index_writers)},
     _object_key{object_key},
-    _column_ids{std::move(column_oids)} {
+    _column_ids{std::move(column_oids)},
+    _number_of_rows_affected{number_of_rows_affected} {
   SDB_ASSERT(_object_key.isSet(), "RocksDBDeleteDataSink: object key is empty");
   SDB_ASSERT(_column_ids.size() == _row_type->size(),
              "RocksDBDeleteDataSink: column oids size ", _column_ids.size(),
              " does not match row "
              "type size",
              _row_type->size());
+  SDB_ASSERT(_number_of_rows_affected,
+             "RocksDBDeleteDataSink: invalid rows affected counter");
   _key_childs.resize(_row_type->size());
   absl::c_iota(_key_childs, 0);
 }
@@ -2373,6 +2387,7 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
       _data_writer.DeleteCell(key_buffer);
     }
   }
+  *_number_of_rows_affected += num_rows;
 }
 
 bool RocksDBDeleteDataSink::finish() {

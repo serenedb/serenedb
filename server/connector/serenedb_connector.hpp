@@ -338,17 +338,7 @@ class SereneDBConnectorInsertTableHandle final
 
   query::Transaction& GetTransaction() const noexcept { return _transaction; }
 
-  size_t NumberOfRowsAffected() const noexcept {
-    const auto keys_affected =
-      _transaction.EnsureRocksDBTransaction().GetNumKeys();
-    if (_update_pk) {
-      // Each affected rows has associated removed key and inserted one.
-      // Update of PK is implemented as delete with old key + insert with new
-      // key
-      return keys_affected / 2;
-    }
-    return keys_affected;
-  }
+  size_t* NumberOfRowsAffected() const noexcept { return &_rows_affected; }
 
  private:
   axiom::connector::ConnectorSessionPtr _session;
@@ -356,7 +346,8 @@ class SereneDBConnectorInsertTableHandle final
   axiom::connector::WriteKind _kind;
   query::Transaction& _transaction;
   std::vector<velox::connector::ColumnHandlePtr> _row_id_handles;
-  bool _update_pk{};
+  mutable size_t _rows_affected = 0;
+  bool _update_pk = false;
 };
 
 // Store transaction/etc here
@@ -428,7 +419,7 @@ class SereneDBConnectorMetadata final
     }
 
     int64_t number_of_locked_primary_keys =
-      serene_insert_handle->NumberOfRowsAffected();
+      *serene_insert_handle->NumberOfRowsAffected();
     if (serene_insert_handle->Kind() == axiom::connector::WriteKind::kInsert ||
         serene_insert_handle->Kind() == axiom::connector::WriteKind::kDelete) {
       auto& rocksdb_table =
@@ -643,11 +634,14 @@ class SereneDBConnector final : public velox::connector::Connector {
               rocksdb_transaction, _cf, *connector_query_ctx->memoryPool(),
               object_key, pk_indices, column_oids, all_column_oids,
               table.IsUsedForUpdatePK(), table.type(),
+              WriteConflictPolicy::Replace,
+              serene_insert_handle.NumberOfRowsAffected(),
               std::vector<std::unique_ptr<SinkUpdateWriter>>{});
           } else {
             return std::make_unique<RocksDBInsertDataSink>(
               rocksdb_transaction, _cf, *connector_query_ctx->memoryPool(),
               object_key, pk_indices, column_oids, table.GetConflictPolicy(),
+              serene_insert_handle.NumberOfRowsAffected(),
               std::vector<std::unique_ptr<SinkInsertWriter>>{});
           }
         });
@@ -665,6 +659,7 @@ class SereneDBConnector final : public velox::connector::Connector {
       auto& rocksdb_transaction = transaction.EnsureRocksDBTransaction();
       return std::make_unique<RocksDBDeleteDataSink>(
         rocksdb_transaction, _cf, table.type(), object_key, column_oids,
+        serene_insert_handle.NumberOfRowsAffected(),
         std::vector<std::unique_ptr<SinkDeleteWriter>>{});
     }
 

@@ -135,6 +135,8 @@ class PosIteratorImpl final : public PosAttr {
 
     if (IndexFeatures::None != (features & IndexFeatures::Offs)) {
       _offs.emplace();
+    } else {
+      _offs.reset();
     }
   }
 

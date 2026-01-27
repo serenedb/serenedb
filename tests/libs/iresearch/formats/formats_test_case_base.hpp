@@ -97,9 +97,7 @@ class FormatTestCase : public IndexTestBase {
       return true;
     }
 
-    void clear() {
-      _offs.clear();
-    }
+    void clear() { _offs.clear(); }
 
     void reset() final {
       SDB_ASSERT(false);  // unsupported

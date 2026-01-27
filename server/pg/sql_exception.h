@@ -47,3 +47,6 @@ class SqlException final : public std::exception {
 
 #define THROW_SQL_ERROR_FROM_DATA(sqlData) \
   throw ::sdb::SqlException { (sqlData), std::source_location::current() }
+
+#define CONSTRUCT_SQL_ERROR_FROM_DATA(sqlData) \
+  ::sdb::SqlException { (sqlData), std::source_location::current() }

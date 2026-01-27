@@ -176,3 +176,20 @@ key	value
 101	0
 103	0
 104	1
+
+# Correct count of affected rows
+
+statement ok
+BEGIN;
+
+statement count 1
+INSERT INTO t VALUES (105, 0);
+
+statement count 2
+INSERT INTO t VALUES (106, 0), (107, 0);
+
+statement count 1
+INSERT INTO t VALUES (108, 0);
+
+statement ok
+COMMIT;

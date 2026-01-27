@@ -75,6 +75,16 @@ constexpr auto kVariableDescription =
       },
     },
     {
+      "sdb_write_conflict_policy",
+      {
+        VariableType::SdbWriteConflictPolicy,
+        "Sets the write conflict policy. Valid values are "
+        "'emit_error' "
+        "(the default), 'do_nothing' (skip conflicted rows) and 'replace'",
+        "emit_error",
+      },
+    },
+    {
       "client_encoding",
       {
         VariableType::String,

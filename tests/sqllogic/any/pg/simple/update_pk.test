@@ -62,6 +62,9 @@ Fragment 0:  numWorkers=0:
 statement error multiple assignments to same column "a"
 UPDATE single_pk SET a = 42, a = 100500 WHERE b = 10;
 
+statement error duplicate key value violates unique constraint
+UPDATE single_pk SET a = 42;
+
 statement ok
 DROP TABLE single_pk;
 

@@ -24,6 +24,55 @@
 
 namespace sdb::connector {
 
+void RocksDBSinkWriter::ConfigureReadOptions() {
+  _read_options.async_io = true;
+  _read_options.snapshot = _transaction.GetSnapshot();
+}
+
+size_t RocksDBSinkWriter::HandleConflicts(primary_key::Keys& keys) {
+  if (_conflict_policy == WriteConflictPolicy::Replace) {
+    // Optimize out reading
+    return 0;
+  }
+
+  ConfigureReadOptions();
+  size_t skipped_cnt = 0;
+  for (auto& key : keys) {
+    auto status = _transaction.Get(_read_options, &_cf, key, &_lookup_value);
+    // We do not need value, so it may be forgotten immediately.
+    // See issue #184
+    _lookup_value.Reset();
+
+    if (!status.ok() && !status.IsNotFound()) {
+      SDB_THROW(rocksutils::ConvertStatus(status));
+    }
+
+    const bool conflict = status.ok();
+
+    if (conflict) {
+      switch (_conflict_policy) {
+        case WriteConflictPolicy::Replace:
+          SDB_ASSERT(false,
+                     "WriteConflictPolicy::Update should be handled earlier "
+                     "for optimiztion reason");
+          break;
+        case WriteConflictPolicy::DoNothing:
+          // Mark key: it should be skipped
+          key.clear();
+          skipped_cnt++;
+          break;
+        case WriteConflictPolicy::EmitError:
+          SDB_THROW(ERROR_SERVER_UNIQUE_CONSTRAINT_VIOLATED,
+                    "Primary key already exists");
+          break;
+        default:
+          SDB_UNREACHABLE();
+      }
+    }
+  }
+  return skipped_cnt;
+}
+
 void RocksDBSinkWriter::Write(std::span<const rocksdb::Slice> cell_slices,
                               std::string_view full_key) {
   rocksdb::Slice key_slice(full_key);
@@ -48,11 +97,9 @@ void RocksDBSinkWriter::Write(std::span<const rocksdb::Slice> cell_slices,
 }
 
 std::unique_ptr<rocksdb::Iterator> RocksDBSinkWriter::CreateIterator() {
-  rocksdb::ReadOptions read_options;
-  read_options.async_io = true;
-  read_options.snapshot = _transaction.GetSnapshot();
+  ConfigureReadOptions();
   return std::unique_ptr<rocksdb::Iterator>{
-    _transaction.GetIterator(read_options, &_cf)};
+    _transaction.GetIterator(_read_options, &_cf)};
 }
 
 void RocksDBSinkWriter::DeleteCell(std::string_view full_key) {

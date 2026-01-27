@@ -40,8 +40,12 @@ class RocksDBSinkWriterBase {
 
   rocksdb::Status Lock(std::string_view full_key) {
     const bool reentrant = _conflict_policy == WriteConflictPolicy::DoNothing;
-    return _transaction.GetKeyLock(&_cf, full_key, /*read_only*/ false,
-                                   /*exclusive*/ true, reentrant);
+
+    return _transaction.GetKeyLock(&_cf, full_key,
+                                   /*read_only*/ false,
+                                   /*exclusive*/ true,
+                                   /*do_validate*/ true,
+                                   /*assume_tracked*/ false, reentrant);
   }
 
  protected:

@@ -69,18 +69,8 @@ void WriteOffset(Posting& p, Stream& out, IndexFeatures& features,
 }
 
 template<typename Stream>
-void WriteProx(Stream& out, uint32_t prox, const PayAttr* pay,
-               IndexFeatures& features) {
-  if (!pay || pay->value.empty()) {
-    WriteVarint<uint32_t>(ShiftPack32(prox, false), out);
-  } else {
-    WriteVarint<uint32_t>(ShiftPack32(prox, true), out);
-    WriteVarint<size_t>(pay->value.size(), out);
-    out.write(pay->value.data(), pay->value.size());
-
-    // saw payloads
-    features |= IndexFeatures::Pay;
-  }
+void WriteProx(Stream& out, uint32_t prox) {
+  WriteVarint<uint32_t>(prox, out);
 }
 
 template<typename Inserter>
@@ -132,8 +122,9 @@ class PosIteratorImpl final : public PosAttr {
   void Clear() noexcept {
     _pos = 0;
     _value = pos_limits::invalid();
-    _offs.clear();
-    _pay.value = {};
+    if (_offs) {
+      _offs->clear();
+    }
   }
 
   // reset field
@@ -142,12 +133,9 @@ class PosIteratorImpl final : public PosAttr {
 
     _freq = &freq;
 
-    std::get<AttributePtr<OffsAttr>>(_attrs) =
-      IndexFeatures::None != (features & IndexFeatures::Offs) ? &_offs
-                                                              : nullptr;
-
-    std::get<AttributePtr<PayAttr>>(_attrs) =
-      IndexFeatures::None != (features & IndexFeatures::Pay) ? &_pay : nullptr;
+    if (IndexFeatures::None != (features & IndexFeatures::Offs)) {
+      _offs.emplace();
+    }
   }
 
   // reset value
@@ -157,7 +145,10 @@ class PosIteratorImpl final : public PosAttr {
   }
 
   Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
-    return irs::GetMutable(_attrs, id);
+    if (id == irs::Type<OffsAttr>::id() && _offs) {
+      return &*_offs;
+    }
+    return nullptr;
   }
 
   bool next() final {
@@ -169,21 +160,14 @@ class PosIteratorImpl final : public PosAttr {
       return false;
     }
 
-    uint32_t pos;
-
-    if (ShiftUnpack32(irs::vread<uint32_t>(_prox_in), pos)) {
-      const size_t size = irs::vread<size_t>(_prox_in);
-      _payload_value.resize(size);
-      _prox_in.read(const_cast<byte_type*>(_payload_value.data()), size);
-      _pay.value = _payload_value;
-    }
+    uint32_t pos = irs::vread<uint32_t>(_prox_in);
 
     _value += pos;
     SDB_ASSERT(pos_limits::valid(_value));
 
-    if (std::get<AttributePtr<OffsAttr>>(_attrs).ptr) {
-      _offs.start += irs::vread<uint32_t>(_prox_in);
-      _offs.end = _offs.start + irs::vread<uint32_t>(_prox_in);
+    if (_offs) {
+      _offs->start += irs::vread<uint32_t>(_prox_in);
+      _offs->end = _offs->start + irs::vread<uint32_t>(_prox_in);
     }
 
     ++_pos;
@@ -192,14 +176,9 @@ class PosIteratorImpl final : public PosAttr {
   }
 
  private:
-  using Attributes = std::tuple<AttributePtr<OffsAttr>, AttributePtr<PayAttr>>;
-
   Reader _prox_in;
-  bstring _payload_value;
   const FreqAttr* _freq{};  // number of term positions in a document
-  PayAttr _pay;
-  OffsAttr _offs;
-  Attributes _attrs;
+  std::optional<OffsAttr> _offs;
   uint32_t _pos{};  // current position
 };
 
@@ -654,7 +633,7 @@ FieldData::FieldData(std::string_view name,
                      int_block_pool::inserter& int_writer,
                      IndexFeatures index_features, bool random_access)
   // Unset optional features
-  : _meta{name, index_features & (~(IndexFeatures::Offs | IndexFeatures::Pay))},
+  : _meta{name, index_features & (~IndexFeatures::Offs)},
     _terms{*byte_writer},
     _byte_writer{&byte_writer},
     _int_writer{&int_writer},
@@ -718,8 +697,7 @@ void FieldData::reset(doc_id_t doc_id) {
   _seen = false;
 }
 
-void FieldData::new_term(Posting& p, doc_id_t did, const PayAttr* pay,
-                         const OffsAttr* offs) {
+void FieldData::new_term(Posting& p, doc_id_t did, const OffsAttr* offs) {
   // where pointers to data starts
   p.int_start = _int_writer->pool_offset();
 
@@ -743,7 +721,7 @@ void FieldData::new_term(Posting& p, doc_id_t did, const PayAttr* pay,
       auto& prox_stream_end = *_int_writer->parent().seek(p.int_start + 1);
       byte_block_pool::sliced_inserter prox_out(*_byte_writer, prox_stream_end);
 
-      WriteProx(prox_out, _pos, pay, _meta.index_features);
+      WriteProx(prox_out, _pos);
 
       if (offs) {
         WriteOffset(p, prox_out, _meta.index_features, _offs, *offs);
@@ -758,8 +736,7 @@ void FieldData::new_term(Posting& p, doc_id_t did, const PayAttr* pay,
   ++_stats.num_unique;
 }
 
-void FieldData::add_term(Posting& p, doc_id_t did, const PayAttr* pay,
-                         const OffsAttr* offs) {
+void FieldData::add_term(Posting& p, doc_id_t did, const OffsAttr* offs) {
   if (IndexFeatures::None == (_requested_features & IndexFeatures::Freq)) {
     if (p.doc != did) {
       SDB_ASSERT(did > p.doc);
@@ -797,7 +774,7 @@ void FieldData::add_term(Posting& p, doc_id_t did, const PayAttr* pay,
       auto& prox_stream_end = *_int_writer->parent().seek(p.int_start + 1);
       byte_block_pool::sliced_inserter prox_out(*_byte_writer, prox_stream_end);
 
-      WriteProx(prox_out, _pos, pay, _meta.index_features);
+      WriteProx(prox_out, _pos);
 
       if (offs) {
         p.offs = 0;  // reset base offset
@@ -815,7 +792,7 @@ void FieldData::add_term(Posting& p, doc_id_t did, const PayAttr* pay,
       auto& prox_stream_end = *_int_writer->parent().seek(p.int_start + 1);
       byte_block_pool::sliced_inserter prox_out(*_byte_writer, prox_stream_end);
 
-      WriteProx(prox_out, _pos - p.pos, pay, _meta.index_features);
+      WriteProx(prox_out, _pos - p.pos);
 
       if (offs) {
         WriteOffset(p, prox_out, _meta.index_features, _offs, *offs);
@@ -828,7 +805,6 @@ void FieldData::add_term(Posting& p, doc_id_t did, const PayAttr* pay,
 }
 
 void FieldData::new_term_random_access(Posting& p, doc_id_t did,
-                                       const PayAttr* pay,
                                        const OffsAttr* offs) {
   // where pointers to data starts
   p.int_start = _int_writer->pool_offset();
@@ -856,7 +832,7 @@ void FieldData::new_term_random_access(Posting& p, doc_id_t did,
       byte_block_pool::sliced_greedy_inserter prox_out(*_byte_writer,
                                                        prox_start, 1);
 
-      WriteProx(prox_out, _pos, pay, _meta.index_features);
+      WriteProx(prox_out, _pos);
 
       if (offs) {
         WriteOffset(p, prox_out, _meta.index_features, _offs, *offs);
@@ -874,7 +850,6 @@ void FieldData::new_term_random_access(Posting& p, doc_id_t did,
 }
 
 void FieldData::add_term_random_access(Posting& p, doc_id_t did,
-                                       const PayAttr* pay,
                                        const OffsAttr* offs) {
   if (IndexFeatures::None == (_requested_features & IndexFeatures::Freq)) {
     if (p.doc != did) {
@@ -926,7 +901,7 @@ void FieldData::add_term_random_access(Posting& p, doc_id_t did,
 
       auto prox_out = GreedyWriter(*_byte_writer, end_cookie);
 
-      WriteProx(prox_out, _pos, pay, _meta.index_features);
+      WriteProx(prox_out, _pos);
 
       if (offs) {
         p.offs = 0;  // reset base offset
@@ -945,7 +920,7 @@ void FieldData::add_term_random_access(Posting& p, doc_id_t did,
       auto& end_cookie = *_int_writer->parent().seek(p.int_start + 2);
       auto prox_out = GreedyWriter(*_byte_writer, end_cookie);
 
-      WriteProx(prox_out, _pos - p.pos, pay, _meta.index_features);
+      WriteProx(prox_out, _pos - p.pos);
 
       if (offs) {
         WriteOffset(p, prox_out, _meta.index_features, _offs, *offs);
@@ -963,7 +938,6 @@ bool FieldData::invert(Tokenizer& stream, doc_id_t id) {
   const auto* term = irs::get<TermAttr>(stream);
   const auto* inc = irs::get<IncAttr>(stream);
   const OffsAttr* offs = nullptr;
-  const PayAttr* pay = nullptr;
 
   if (!inc) {
     SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "field '", _meta.name,
@@ -981,10 +955,6 @@ bool FieldData::invert(Tokenizer& stream, doc_id_t id) {
 
   if (IndexFeatures::None != (_requested_features & IndexFeatures::Offs)) {
     offs = irs::get<OffsAttr>(stream);
-
-    if (offs) {
-      pay = irs::get<PayAttr>(stream);
-    }
   }
 
   reset(id);  // initialize field_data for the supplied doc_id
@@ -1033,7 +1003,7 @@ bool FieldData::invert(Tokenizer& stream, doc_id_t id) {
       continue;
     }
 
-    (this->*_proc_table[!doc_limits::valid(p->doc)])(*p, id, pay, offs);
+    (this->*_proc_table[!doc_limits::valid(p->doc)])(*p, id, offs);
     SDB_ASSERT(doc_limits::valid(p->doc));
 
     if (0 == ++_stats.len) {

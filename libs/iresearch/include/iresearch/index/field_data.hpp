@@ -158,20 +158,16 @@ class FieldData : util::Noncopyable {
     ColumnOutput* writer;
   };
 
-  using process_term_f = void (FieldData::*)(Posting&, doc_id_t, const PayAttr*,
+  using process_term_f = void (FieldData::*)(Posting&, doc_id_t,
                                              const OffsAttr*);
 
   void reset(doc_id_t doc_id);
 
-  void new_term(Posting& p, doc_id_t did, const PayAttr* pay,
-                const OffsAttr* offs);
-  void add_term(Posting& p, doc_id_t did, const PayAttr* pay,
-                const OffsAttr* offs);
+  void new_term(Posting& p, doc_id_t did, const OffsAttr* offs);
+  void add_term(Posting& p, doc_id_t did, const OffsAttr* offs);
 
-  void new_term_random_access(Posting& p, doc_id_t did, const PayAttr* pay,
-                              const OffsAttr* offs);
-  void add_term_random_access(Posting& p, doc_id_t did, const PayAttr* pay,
-                              const OffsAttr* offs);
+  void new_term_random_access(Posting& p, doc_id_t did, const OffsAttr* offs);
+  void add_term_random_access(Posting& p, doc_id_t did, const OffsAttr* offs);
 
   static constexpr process_term_f kTermProcessingTables[2][2] = {
     // sequential access: [0] - new term, [1] - add term

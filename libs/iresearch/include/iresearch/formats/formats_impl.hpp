@@ -58,8 +58,6 @@
 namespace irs {
 
 inline constexpr IndexFeatures kPos = IndexFeatures::Freq | IndexFeatures::Pos;
-inline constexpr IndexFeatures kPosOffs = kPos | IndexFeatures::Offs;
-inline constexpr IndexFeatures kPosPay = kPos | IndexFeatures::Pay;
 
 inline void WriteStrings(IndexOutput& out, const auto& strings) {
   SDB_ASSERT(strings.size() < std::numeric_limits<uint32_t>::max());
@@ -184,19 +182,11 @@ struct PosBuffer : SkipBuffer {
 
 // Buffer for storing payload data
 struct PayBuffer : SkipBuffer {
-  PayBuffer(uint32_t* pay_sizes, uint32_t* offs_start_buf,
-            uint32_t* offs_len_buf, uint64_t* skip_ptr) noexcept
+  PayBuffer(uint32_t* offs_start_buf, uint32_t* offs_len_buf,
+            uint64_t* skip_ptr) noexcept
     : SkipBuffer{skip_ptr},
-      pay_sizes{pay_sizes},
       offs_start_buf{offs_start_buf},
       offs_len_buf{offs_len_buf} {}
-
-  void PushPayload(uint32_t i, bytes_view pay) {
-    if (!pay.empty()) {
-      pay_buf.append(pay.data(), pay.size());
-    }
-    pay_sizes[i] = static_cast<uint32_t>(pay.size());
-  }
 
   void PushOffset(uint32_t i, uint32_t start, uint32_t end) noexcept {
     SDB_ASSERT(start >= last && start <= end);
@@ -208,16 +198,11 @@ struct PayBuffer : SkipBuffer {
 
   void Reset() noexcept {
     SkipBuffer::Reset();
-    pay_buf.clear();
-    block_last = 0;
     last = 0;
   }
 
-  uint32_t* pay_sizes;       // buffer to store payloads sizes
   uint32_t* offs_start_buf;  // buffer to store start offsets
   uint32_t* offs_len_buf;    // buffer to store offset lengths
-  bstring pay_buf;           // buffer for payload
-  size_t block_last{};       // last payload buffer length in a block
   uint32_t last{};           // last start offset
 };
 
@@ -275,15 +260,14 @@ class PostingsWriterBase : public PostingsWriter {
   PostingsWriterBase(doc_id_t block_size, std::span<doc_id_t> docs,
                      std::span<uint32_t> freqs, doc_id_t* skip_doc,
                      uint64_t* doc_skip_ptr, std::span<uint32_t> prox_buf,
-                     uint64_t* prox_skip_ptr, uint32_t* pay_sizes,
-                     uint32_t* offs_start_buf, uint32_t* offs_len_buf,
-                     uint64_t* pay_skip_ptr, uint32_t* enc_buf,
-                     PostingsFormat postings_format_version,
+                     uint64_t* prox_skip_ptr, uint32_t* offs_start_buf,
+                     uint32_t* offs_len_buf, uint64_t* pay_skip_ptr,
+                     uint32_t* enc_buf, PostingsFormat postings_format_version,
                      TermsFormat terms_format_version, IResourceManager& rm)
     : _skip{block_size, kSkipN, rm},
       _doc{docs, freqs, skip_doc, doc_skip_ptr},
       _pos{prox_buf, prox_skip_ptr},
-      _pay{pay_sizes, offs_start_buf, offs_len_buf, pay_skip_ptr},
+      _pay{offs_start_buf, offs_len_buf, pay_skip_ptr},
       _buf{enc_buf},
       _postings_format_version{postings_format_version},
       _terms_format_version{terms_format_version} {
@@ -326,20 +310,16 @@ class PostingsWriterBase : public PostingsWriter {
       _has_freq = (IndexFeatures::None != (features & IndexFeatures::Freq));
       _has_pos = (IndexFeatures::None != (features & IndexFeatures::Pos));
       _has_offs = (IndexFeatures::None != (features & IndexFeatures::Offs));
-      _has_pay = (IndexFeatures::None != (features & IndexFeatures::Pay));
     }
 
     bool HasFrequency() const noexcept { return _has_freq; }
     bool HasPosition() const noexcept { return _has_pos; }
     bool HasOffset() const noexcept { return _has_offs; }
-    bool HasPayload() const noexcept { return _has_pay; }
-    bool HasOffsetOrPayload() const noexcept { return _has_offs | _has_pay; }
 
    private:
     bool _has_freq{};
     bool _has_pos{};
     bool _has_offs{};
-    bool _has_pay{};
   };
 
   struct Attributes final : AttributeProvider {
@@ -349,7 +329,6 @@ class PostingsWriterBase : public PostingsWriter {
     const FreqAttr* freq{};
     PosAttr* pos{};
     const OffsAttr* offs{};
-    const PayAttr* pay{};
 
     Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
       if (type == irs::Type<DocAttr>::id()) {
@@ -366,14 +345,12 @@ class PostingsWriterBase : public PostingsWriter {
     void Reset(AttributeProvider& attrs) noexcept {
       pos = &PosAttr::empty();
       offs = nullptr;
-      pay = nullptr;
 
       freq = irs::get<FreqAttr>(attrs);
       if (freq) {
         if (auto* p = irs::GetMutable<PosAttr>(&attrs)) {
           pos = p;
           offs = irs::get<OffsAttr>(*pos);
-          pay = irs::get<PayAttr>(*pos);
         }
       }
     }
@@ -452,12 +429,8 @@ inline void PostingsWriterBase::WriteSkip(size_t level,
 
     _pos.skip_ptr[level] = pos_ptr;
 
-    if (_features.HasOffsetOrPayload()) {
+    if (_features.HasOffset()) {
       SDB_ASSERT(_pay_out);
-
-      if (_features.HasPayload()) {
-        out.WriteV32(static_cast<uint32_t>(_pay.block_last));
-      }
 
       const uint64_t pay_ptr = _pay_out->Position();
 
@@ -484,8 +457,7 @@ inline void PostingsWriterBase::prepare(IndexOutput& out,
     PrepareOutput(name, _pos_out, state, kPosExt, kPosFormatName,
                   static_cast<int32_t>(_postings_format_version));
 
-    if (IndexFeatures::None !=
-        (state.index_features & (IndexFeatures::Pay | IndexFeatures::Offs))) {
+    if (IndexFeatures::None != (state.index_features & IndexFeatures::Offs)) {
       // Prepare payload stream
       _pay.Reset();
       PrepareOutput(name, _pay_out, state, kPayExt, kPayFormatName,
@@ -524,7 +496,7 @@ inline void PostingsWriterBase::encode(BufferedOutput& out,
     if (address_limits::valid(meta.pos_end)) {
       out.WriteV64(meta.pos_end);
     }
-    if (_features.HasOffsetOrPayload()) {
+    if (_features.HasOffset()) {
       out.WriteV64(meta.pay_start - _last_state.pay_start);
     }
   }
@@ -560,7 +532,7 @@ inline void PostingsWriterBase::BeginTerm() {
     SDB_ASSERT(_pos_out);
     _pos.start = _pos_out->Position();
     std::fill_n(_pos.skip_ptr, kMaxSkipLevels, _pos.start);
-    if (_features.HasOffsetOrPayload()) {
+    if (_features.HasOffset()) {
       SDB_ASSERT(_pay_out);
       _pay.start = _pay_out->Position();
       std::fill_n(_pay.skip_ptr, kMaxSkipLevels, _pay.start);
@@ -582,10 +554,9 @@ inline void PostingsWriterBase::EndDocument() {
       // documents stream is full, but positions stream is not
       // save number of positions to skip before the next block
       _pos.block_last = _pos.size;
-      if (_features.HasOffsetOrPayload()) {
+      if (_features.HasOffset()) {
         SDB_ASSERT(_pay_out);
         _pay.end = _pay_out->Position();
-        _pay.block_last = _pay.pay_buf.size();
       }
     }
 
@@ -658,30 +629,10 @@ inline void PostingsWriterBase::EndTerm(TermMetaImpl& meta) {
 
     if (_pos.size > 0) {
       auto& out = *_pos_out;
-      uint32_t last_pay_size = std::numeric_limits<uint32_t>::max();
       uint32_t last_offs_len = std::numeric_limits<uint32_t>::max();
-      uint32_t pay_buf_start = 0;
       for (uint32_t i = 0; i < _pos.size; ++i) {
         const uint32_t pos_delta = _pos.buf[i];
-        if (_features.HasPayload()) {
-          SDB_ASSERT(_pay_out);
-
-          const uint32_t size = _pay.pay_sizes[i];
-          if (last_pay_size != size) {
-            last_pay_size = size;
-            out.WriteV32(ShiftPack32(pos_delta, true));
-            out.WriteV32(size);
-          } else {
-            out.WriteV32(ShiftPack32(pos_delta, false));
-          }
-
-          if (size != 0) {
-            out.WriteBytes(_pay.pay_buf.c_str() + pay_buf_start, size);
-            pay_buf_start += size;
-          }
-        } else {
-          out.WriteV32(pos_delta);
-        }
+        out.WriteV32(pos_delta);
 
         if (_features.HasOffset()) {
           SDB_ASSERT(_pay_out);
@@ -696,11 +647,6 @@ inline void PostingsWriterBase::EndTerm(TermMetaImpl& meta) {
             last_offs_len = len;
           }
         }
-      }
-
-      if (_features.HasPayload()) {
-        SDB_ASSERT(_pay_out);
-        _pay.pay_buf.clear();
       }
     }
   }
@@ -726,7 +672,6 @@ inline void PostingsWriterBase::EndTerm(TermMetaImpl& meta) {
   }
 
   if (_pay_out) {
-    _pay.pay_buf.clear();
     _pay.last = 0;
     meta.pay_start = _pay.start;
   }
@@ -744,7 +689,6 @@ class PostingsWriterImpl final : public PostingsWriterBase {
                          _doc_buf.skip_ptr,
                          std::span{_prox_buf.buf},
                          _prox_buf.skip_ptr,
-                         _pay_buf.pay_sizes,
                          _pay_buf.offs_start_buf,
                          _pay_buf.offs_len_buf,
                          _pay_buf.skip_ptr,
@@ -777,8 +721,6 @@ class PostingsWriterImpl final : public PostingsWriterBase {
     uint64_t skip_ptr[kMaxSkipLevels]{};
   } _prox_buf;
   struct {
-    // Buffer for payloads sizes
-    uint32_t pay_sizes[FormatTraits::kBlockSize]{};
     // Buffer for start offsets
     uint32_t offs_start_buf[FormatTraits::kBlockSize]{};
     // Buffer for offset lengths
@@ -827,10 +769,6 @@ void PostingsWriterImpl<FormatTraits>::AddPosition(uint32_t pos) {
 
   _pos.Pos(pos - _pos.last);
 
-  if (_attrs.pay) {
-    _pay.PushPayload(_pos.size, _attrs.pay->value);
-  }
-
   if (_attrs.offs) {
     _pay.PushOffset(_pos.size, _attrs.offs->start, _attrs.offs->end);
   }
@@ -840,18 +778,6 @@ void PostingsWriterImpl<FormatTraits>::AddPosition(uint32_t pos) {
   if (_pos.Full()) {
     FormatTraits::write_block(*_pos_out, _pos.buf.data(), _buf);
     _pos.size = 0;
-
-    if (_features.HasPayload()) {
-      SDB_ASSERT(_pay_out);
-      auto& pay_buf = _pay.pay_buf;
-
-      _pay_out->WriteV32(static_cast<uint32_t>(pay_buf.size()));
-      if (!pay_buf.empty()) {
-        FormatTraits::write_block(*_pay_out, _pay.pay_sizes, _buf);
-        _pay_out->WriteBytes(pay_buf.c_str(), pay_buf.size());
-        pay_buf.clear();
-      }
-    }
 
     if (_features.HasOffset()) {
       SDB_ASSERT(_pay_out);
@@ -943,14 +869,11 @@ struct SkipState {
   uint64_t doc_ptr{};
   // last document in a previous block
   doc_id_t doc{doc_limits::invalid()};
-  // payload size to skip before in new document block
-  uint32_t pay_pos{};
 };
 
 template<typename IteratorTraits>
 IRS_FORCE_INLINE void CopyState(SkipState& to, const SkipState& from) noexcept {
-  if constexpr (IteratorTraits::Position() &&
-                (IteratorTraits::Payload() || IteratorTraits::Offset())) {
+  if constexpr (IteratorTraits::Offset()) {
     to = from;
   } else {
     if constexpr (IteratorTraits::Position()) {
@@ -971,11 +894,7 @@ IRS_FORCE_INLINE void ReadState(SkipState& state, IndexInput& in) {
     state.pend_pos = in.ReadV32();
     state.pos_ptr += in.ReadV64();
 
-    if constexpr (FieldTraits::Payload() || FieldTraits::Offset()) {
-      if constexpr (FieldTraits::Payload()) {
-        state.pay_pos = in.ReadV32();
-      }
-
+    if constexpr (FieldTraits::Offset()) {
       state.pay_ptr += in.ReadV64();
     }
   }
@@ -997,278 +916,21 @@ IRS_FORCE_INLINE void CopyState(SkipState& to,
   to.doc_ptr = from.doc_start;
   if constexpr (IteratorTraits::Position()) {
     to.pos_ptr = from.pos_start;
-    if constexpr (IteratorTraits::Payload() || IteratorTraits::Offset()) {
+    if constexpr (IteratorTraits::Offset()) {
       to.pay_ptr = from.pay_start;
     }
   }
 }
 
 template<typename IteratorTraits, typename FieldTraits,
-         bool Offs = IteratorTraits::Offset(),
-         bool Pay = IteratorTraits::Payload()>
+         bool Offs = IteratorTraits::Offset()>
 struct PositionBase;
-
-// Implementation of iterator over positions, payloads and offsets
-template<typename IteratorTraits, typename FieldTraits>
-struct PositionBase<IteratorTraits, FieldTraits, true, true>
-  : public PositionBase<IteratorTraits, FieldTraits, false, false> {
-  using Base = PositionBase<IteratorTraits, FieldTraits, false, false>;
-
-  Attribute* Attribute(TypeInfo::type_id type) noexcept {
-    if (irs::Type<PayAttr>::id() == type) {
-      return &pay;
-    }
-
-    return irs::Type<OffsAttr>::id() == type ? &offs : nullptr;
-  }
-
-  void Prepare(const DocState& state) {
-    Base::Prepare(state);
-
-    pay_in = state.pay_in->Reopen();  // reopen thread-safe stream
-
-    if (!pay_in) {
-      // implementation returned wrong pointer
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                "Failed to reopen payload input in");
-
-      throw IoError{"failed to reopen payload input"};
-    }
-
-    pay_in->Seek(state.term_state->pay_start);
-  }
-
-  void Prepare(const SkipState& state) {
-    Base::Prepare(state);
-
-    pay_in->Seek(state.pay_ptr);
-    pay_data_pos = state.pay_pos;
-  }
-
-  void ReadAttributes() noexcept {
-    offs.start += offs_start_deltas[this->buf_pos];
-    offs.end = offs.start + offs_lengts[this->buf_pos];
-
-    pay.value =
-      bytes_view(pay_data.c_str() + pay_data_pos, pay_lengths[this->buf_pos]);
-    pay_data_pos += pay_lengths[this->buf_pos];
-  }
-
-  void ClearAttributes() noexcept {
-    offs.clear();
-    pay.value = {};
-  }
-
-  void ReadBlock() {
-    Base::ReadBlock();
-
-    // read payload
-    const uint32_t size = pay_in->ReadV32();
-    if (size) {
-      IteratorTraits::read_block(*pay_in, this->enc_buf, pay_lengths);
-      pay_data.resize(size);
-
-      [[maybe_unused]] const auto read =
-        pay_in->ReadBytes(pay_data.data(), size);
-      SDB_ASSERT(read == size);
-    }
-
-    // read offsets
-    IteratorTraits::read_block(*pay_in, this->enc_buf, offs_start_deltas);
-    IteratorTraits::read_block(*pay_in, this->enc_buf, offs_lengts);
-
-    pay_data_pos = 0;
-  }
-
-  void ReadTailBlock() {
-    size_t pos = 0;
-
-    for (size_t i = 0; i < this->tail_length; ++i) {
-      // read payloads
-      if (ShiftUnpack32(this->pos_in->ReadV32(), Base::pos_deltas[i])) {
-        pay_lengths[i] = this->pos_in->ReadV32();
-      } else {
-        SDB_ASSERT(i);
-        pay_lengths[i] = pay_lengths[i - 1];
-      }
-
-      if (pay_lengths[i]) {
-        const auto size = pay_lengths[i];  // length of current payload
-        pay_data.resize(pos + size);  // FIXME(gnusi): use oversize from absl
-
-        [[maybe_unused]] const auto read =
-          this->pos_in->ReadBytes(pay_data.data() + pos, size);
-        SDB_ASSERT(read == size);
-
-        pos += size;
-      }
-
-      if (ShiftUnpack32(this->pos_in->ReadV32(), offs_start_deltas[i])) {
-        offs_lengts[i] = this->pos_in->ReadV32();
-      } else {
-        SDB_ASSERT(i);
-        offs_lengts[i] = offs_lengts[i - 1];
-      }
-    }
-
-    pay_data_pos = 0;
-  }
-
-  void SkipBlock() {
-    Base::SkipBlock();
-    Base::SkipPayload(*pay_in);
-    Base::SkipOffsets(*pay_in);
-  }
-
-  void Skip(size_t count) noexcept {
-    // current payload start
-    const auto begin = this->pay_lengths + this->buf_pos;
-    const auto end = begin + count;
-    this->pay_data_pos = std::accumulate(begin, end, this->pay_data_pos);
-
-    Base::Skip(count);
-  }
-
-  uint32_t offs_start_deltas[IteratorTraits::kBlockSize]{};  // buffer to store
-                                                             // offset starts
-  uint32_t offs_lengts[IteratorTraits::kBlockSize]{};        // buffer to store
-                                                             // offset lengths
-  uint32_t pay_lengths[IteratorTraits::kBlockSize]{};        // buffer to store
-                                                             // payload lengths
-  IndexInput::ptr pay_in;
-  OffsAttr offs;
-  PayAttr pay;
-  size_t pay_data_pos{};  // current position in a payload buffer
-  bstring pay_data;       // buffer to store payload data
-};
-
-// Implementation of iterator over positions and payloads
-template<typename IteratorTraits, typename FieldTraits>
-struct PositionBase<IteratorTraits, FieldTraits, false, true>
-  : public PositionBase<IteratorTraits, FieldTraits, false, false> {
-  using Base = PositionBase<IteratorTraits, FieldTraits, false, false>;
-
-  Attribute* Attribute(TypeInfo::type_id type) noexcept {
-    return irs::Type<PayAttr>::id() == type ? &pay : nullptr;
-  }
-
-  void Prepare(const DocState& state) {
-    Base::Prepare(state);
-
-    pay_in = state.pay_in->Reopen();  // reopen thread-safe stream
-
-    if (!pay_in) {
-      // implementation returned wrong pointer
-      SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-                "Failed to reopen payload input");
-
-      throw IoError("failed to reopen payload input");
-    }
-
-    pay_in->Seek(state.term_state->pay_start);
-  }
-
-  void Prepare(const SkipState& state) {
-    Base::Prepare(state);
-
-    pay_in->Seek(state.pay_ptr);
-    pay_data_pos = state.pay_pos;
-  }
-
-  void ReadAttributes() noexcept {
-    pay.value =
-      bytes_view(pay_data.c_str() + pay_data_pos, pay_lengths[this->buf_pos]);
-    pay_data_pos += pay_lengths[this->buf_pos];
-  }
-
-  void ClearAttributes() noexcept { pay.value = {}; }
-
-  void ReadBlock() {
-    Base::ReadBlock();
-
-    // read payload
-    const uint32_t size = pay_in->ReadV32();
-    if (size) {
-      IteratorTraits::read_block(*pay_in, this->enc_buf, pay_lengths);
-      pay_data.resize(size);
-
-      [[maybe_unused]] const auto read =
-        pay_in->ReadBytes(pay_data.data(), size);
-      SDB_ASSERT(read == size);
-    }
-
-    if constexpr (FieldTraits::Offset()) {
-      Base::SkipOffsets(*pay_in);
-    }
-
-    pay_data_pos = 0;
-  }
-
-  void ReadTailBlock() {
-    size_t pos = 0;
-
-    for (size_t i = 0; i < this->tail_length; ++i) {
-      // read payloads
-      if (ShiftUnpack32(this->pos_in->ReadV32(), this->pos_deltas[i])) {
-        pay_lengths[i] = this->pos_in->ReadV32();
-      } else {
-        SDB_ASSERT(i);
-        pay_lengths[i] = pay_lengths[i - 1];
-      }
-
-      if (pay_lengths[i]) {
-        const auto size = pay_lengths[i];  // current payload length
-        pay_data.resize(pos + size);  // FIXME(gnusi): use oversize from absl
-
-        [[maybe_unused]] const auto read =
-          this->pos_in->ReadBytes(pay_data.data() + pos, size);
-        SDB_ASSERT(read == size);
-
-        pos += size;
-      }
-
-      // skip offsets
-      if constexpr (FieldTraits::Offset()) {
-        uint32_t code;
-        if (ShiftUnpack32(this->pos_in->ReadV32(), code)) {
-          this->pos_in->ReadV32();
-        }
-      }
-    }
-
-    pay_data_pos = 0;
-  }
-
-  void SkipBlock() {
-    Base::SkipBlock();
-    Base::SkipPayload(*pay_in);
-    if constexpr (FieldTraits::Offset()) {
-      Base::SkipOffsets(*pay_in);
-    }
-  }
-
-  void Skip(size_t count) noexcept {
-    // current payload start
-    const auto begin = this->pay_lengths + this->buf_pos;
-    const auto end = begin + count;
-    this->pay_data_pos = std::accumulate(begin, end, this->pay_data_pos);
-
-    Base::Skip(count);
-  }
-
-  uint32_t pay_lengths[IteratorTraits::kBlockSize]{};  // buffer to store
-                                                       // payload lengths
-  IndexInput::ptr pay_in;
-  PayAttr pay;
-  size_t pay_data_pos{};  // current position in a payload buffer
-  bstring pay_data;       // buffer to store payload data
-};
 
 // Implementation of iterator over positions and offsets
 template<typename IteratorTraits, typename FieldTraits>
-struct PositionBase<IteratorTraits, FieldTraits, true, false>
-  : public PositionBase<IteratorTraits, FieldTraits, false, false> {
-  using Base = PositionBase<IteratorTraits, FieldTraits, false, false>;
+struct PositionBase<IteratorTraits, FieldTraits, true>
+  : public PositionBase<IteratorTraits, FieldTraits, false> {
+  using Base = PositionBase<IteratorTraits, FieldTraits, false>;
 
   Attribute* Attribute(TypeInfo::type_id type) noexcept {
     return irs::Type<OffsAttr>::id() == type ? &offs : nullptr;
@@ -1305,30 +967,14 @@ struct PositionBase<IteratorTraits, FieldTraits, true, false>
 
   void ReadBlock() {
     Base::ReadBlock();
-
-    if constexpr (FieldTraits::Payload()) {
-      Base::SkipPayload(*pay_in);
-    }
-
     // read offsets
     IteratorTraits::read_block(*pay_in, this->enc_buf, offs_start_deltas);
     IteratorTraits::read_block(*pay_in, this->enc_buf, offs_lengts);
   }
 
   void ReadTailBlock() {
-    uint32_t pay_size = 0;
     for (size_t i = 0; i < this->tail_length; ++i) {
-      // skip payloads
-      if constexpr (FieldTraits::Payload()) {
-        if (ShiftUnpack32(this->pos_in->ReadV32(), this->pos_deltas[i])) {
-          pay_size = this->pos_in->ReadV32();
-        }
-        if (pay_size) {
-          this->pos_in->Seek(this->pos_in->Position() + pay_size);
-        }
-      } else {
-        this->pos_deltas[i] = this->pos_in->ReadV32();
-      }
+      this->pos_deltas[i] = this->pos_in->ReadV32();
 
       // read offsets
       if (ShiftUnpack32(this->pos_in->ReadV32(), offs_start_deltas[i])) {
@@ -1342,9 +988,6 @@ struct PositionBase<IteratorTraits, FieldTraits, true, false>
 
   void SkipBlock() {
     Base::SkipBlock();
-    if constexpr (FieldTraits::Payload()) {
-      Base::SkipPayload(*pay_in);
-    }
     Base::SkipOffsets(*pay_in);
   }
 
@@ -1358,7 +1001,7 @@ struct PositionBase<IteratorTraits, FieldTraits, true, false>
 
 // Implementation of iterator over positions
 template<typename IteratorTraits, typename FieldTraits>
-struct PositionBase<IteratorTraits, FieldTraits, false, false> {
+struct PositionBase<IteratorTraits, FieldTraits, false> {
   static void SkipPayload(IndexInput& in) {
     const size_t size = in.ReadV32();
     if (size) {
@@ -1417,18 +1060,8 @@ struct PositionBase<IteratorTraits, FieldTraits, false, false> {
   void ClearAttributes() {}
 
   void ReadTailBlock() {
-    uint32_t pay_size = 0;
     for (size_t i = 0; i < tail_length; ++i) {
-      if constexpr (FieldTraits::Payload()) {
-        if (ShiftUnpack32(pos_in->ReadV32(), pos_deltas[i])) {
-          pay_size = pos_in->ReadV32();
-        }
-        if (pay_size) {
-          pos_in->Seek(pos_in->Position() + pay_size);
-        }
-      } else {
-        pos_deltas[i] = pos_in->ReadV32();
-      }
+      pos_deltas[i] = pos_in->ReadV32();
 
       if constexpr (FieldTraits::Offset()) {
         uint32_t delta;
@@ -1580,6 +1213,7 @@ class PositionImpl final : public PosAttr,
 // Empty iterator over positions
 template<typename IteratorTraits, typename FieldTraits>
 struct PositionImpl<IteratorTraits, FieldTraits, false> : Attribute {
+  static_assert(false);
   static constexpr std::string_view type_name() noexcept {
     return PosAttr::type_name();
   }
@@ -3050,8 +2684,7 @@ inline void PostingsReaderBase::prepare(IndexInput& in,
     // some forms of corruption.
     format_utils::ReadChecksum(*_pos_in);
 
-    if (IndexFeatures::None !=
-        (features & (IndexFeatures::Pay | IndexFeatures::Offs))) {
+    if (IndexFeatures::None != (features & IndexFeatures::Offs)) {
       // prepare positions input
       PrepareInput(buf, _pay_in, IOAdvice::RANDOM, state,
                    PostingsWriterBase::kPayExt,
@@ -3154,8 +2787,7 @@ inline size_t PostingsReaderBase::decode(const byte_type* in,
                           ? vread<uint64_t>(p)
                           : address_limits::invalid();
 
-    if (IndexFeatures::None !=
-        (features & (IndexFeatures::Pay | IndexFeatures::Offs))) {
+    if (IndexFeatures::None != (features & IndexFeatures::Offs)) {
       term_meta.pay_start += vread<uint64_t>(p);
     }
   }
@@ -3173,12 +2805,11 @@ inline size_t PostingsReaderBase::decode(const byte_type* in,
 template<typename FormatTraits>
 class PostingsReaderImpl final : public PostingsReaderBase {
  public:
-  template<bool Freq, bool Pos, bool Offs, bool Pay>
+  template<bool Freq, bool Pos, bool Offs>
   struct IteratorTraits : FormatTraits {
     static constexpr bool Frequency() noexcept { return Freq; }
     static constexpr bool Position() noexcept { return Freq && Pos; }
     static constexpr bool Offset() noexcept { return Position() && Offs; }
-    static constexpr bool Payload() noexcept { return Position() && Pay; }
     static constexpr IndexFeatures Features() noexcept {
       auto r = IndexFeatures::None;
       if constexpr (Freq) {
@@ -3189,9 +2820,6 @@ class PostingsReaderImpl final : public PostingsReaderBase {
       }
       if constexpr (Offs) {
         r |= IndexFeatures::Offs;
-      }
-      if constexpr (Pay) {
-        r |= IndexFeatures::Pay;
       }
       return r;
     }
@@ -3292,11 +2920,11 @@ size_t PostingsReaderImpl<FormatTraits>::BitUnion(
       SDB_ASSERT(!doc_in->IsEOF());
 
       if (has_freq) {
-        using FieldTraits = IteratorTraits<true, false, false, false>;
+        using FieldTraits = IteratorTraits<true, false, false>;
         BitUnionImpl<FieldTraits>(*doc_in, term_state.docs_count, docs, enc_buf,
                                   set);
       } else {
-        using FieldTraits = IteratorTraits<false, false, false, false>;
+        using FieldTraits = IteratorTraits<false, false, false>;
         BitUnionImpl<FieldTraits>(*doc_in, term_state.docs_count, docs, enc_buf,
                                   set);
       }
@@ -3318,24 +2946,8 @@ template<typename FieldTraits, typename Factory>
 DocIterator::ptr PostingsReaderImpl<FormatTraits>::IteratorImpl(
   IndexFeatures enabled, Factory&& factory) {
   switch (ToIndex(enabled)) {
-    case kPosOffsPay: {
-      using IteratorTraits = IteratorTraits<true, true, true, true>;
-      if constexpr ((FieldTraits::Features() & IteratorTraits::Features()) ==
-                    IteratorTraits::Features()) {
-        return std::forward<Factory>(factory)
-          .template operator()<IteratorTraits, FieldTraits>();
-      }
-    } break;
     case kPosOffs: {
-      using IteratorTraits = IteratorTraits<true, true, true, false>;
-      if constexpr ((FieldTraits::Features() & IteratorTraits::Features()) ==
-                    IteratorTraits::Features()) {
-        return std::forward<Factory>(factory)
-          .template operator()<IteratorTraits, FieldTraits>();
-      }
-    } break;
-    case kPosPay: {
-      using IteratorTraits = IteratorTraits<true, true, false, true>;
+      using IteratorTraits = IteratorTraits<true, true, true>;
       if constexpr ((FieldTraits::Features() & IteratorTraits::Features()) ==
                     IteratorTraits::Features()) {
         return std::forward<Factory>(factory)
@@ -3343,7 +2955,7 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::IteratorImpl(
       }
     } break;
     case kPos: {
-      using IteratorTraits = IteratorTraits<true, true, false, false>;
+      using IteratorTraits = IteratorTraits<true, true, false>;
       if constexpr ((FieldTraits::Features() & IteratorTraits::Features()) ==
                     IteratorTraits::Features()) {
         return std::forward<Factory>(factory)
@@ -3351,7 +2963,7 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::IteratorImpl(
       }
     } break;
     case IndexFeatures::Freq: {
-      using IteratorTraits = IteratorTraits<true, false, false, false>;
+      using IteratorTraits = IteratorTraits<true, false, false>;
       if constexpr ((FieldTraits::Features() & IteratorTraits::Features()) ==
                     IteratorTraits::Features()) {
         return std::forward<Factory>(factory)
@@ -3361,7 +2973,7 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::IteratorImpl(
     default:
       break;
   }
-  using IteratorTraitsT = IteratorTraits<false, false, false, false>;
+  using IteratorTraitsT = IteratorTraits<false, false, false>;
   return std::forward<Factory>(factory)
     .template operator()<IteratorTraitsT, FieldTraits>();
 }
@@ -3376,28 +2988,20 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::IteratorImpl(
   const auto enabled = field_features & required_features;
 
   switch (ToIndex(field_features)) {
-    case kPosOffsPay: {
-      using FieldTraits = IteratorTraits<true, true, true, true>;
-      return IteratorImpl<FieldTraits>(enabled, std::forward<Factory>(factory));
-    }
     case kPosOffs: {
-      using FieldTraits = IteratorTraits<true, true, true, false>;
-      return IteratorImpl<FieldTraits>(enabled, std::forward<Factory>(factory));
-    }
-    case kPosPay: {
-      using FieldTraits = IteratorTraits<true, true, false, true>;
+      using FieldTraits = IteratorTraits<true, true, true>;
       return IteratorImpl<FieldTraits>(enabled, std::forward<Factory>(factory));
     }
     case kPos: {
-      using FieldTraits = IteratorTraits<true, true, false, false>;
+      using FieldTraits = IteratorTraits<true, true, false>;
       return IteratorImpl<FieldTraits>(enabled, std::forward<Factory>(factory));
     }
     case IndexFeatures::Freq: {
-      using FieldTraits = IteratorTraits<true, false, false, false>;
+      using FieldTraits = IteratorTraits<true, false, false>;
       return IteratorImpl<FieldTraits>(enabled, std::forward<Factory>(factory));
     }
     default: {
-      using FieldTraits = IteratorTraits<false, false, false, false>;
+      using FieldTraits = IteratorTraits<false, false, false>;
       return IteratorImpl<FieldTraits>(enabled, std::forward<Factory>(factory));
     }
   }

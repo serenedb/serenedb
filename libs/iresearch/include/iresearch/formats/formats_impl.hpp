@@ -1099,8 +1099,7 @@ struct PositionBase<IteratorTraits, FieldTraits, false> {
   IndexInput::ptr pos_in;
 };
 
-template<typename IteratorTraits, typename FieldTraits,
-         bool Pos = IteratorTraits::Position()>
+template<typename IteratorTraits, typename FieldTraits>
 class PositionImpl final : public PosAttr,
                            private PositionBase<IteratorTraits, FieldTraits> {
  public:
@@ -1208,20 +1207,6 @@ class PositionImpl final : public PosAttr,
     }
     Clear();
   }
-};
-
-// Empty iterator over positions
-template<typename IteratorTraits, typename FieldTraits>
-struct PositionImpl<IteratorTraits, FieldTraits, false> : Attribute {
-  static_assert(false);
-  static constexpr std::string_view type_name() noexcept {
-    return PosAttr::type_name();
-  }
-
-  void Prepare(const DocState&) noexcept {}
-  void Prepare(const SkipState&) noexcept {}
-  void Notify(uint32_t) noexcept {}
-  void Clear() noexcept {}
 };
 
 template<typename IteratorTraits, typename FieldTraits>
@@ -3212,7 +3197,7 @@ class FormatImpl final : public FormatBase {
 };
 
 // use base irs::position type for ancestors
-template<typename IteratorTraits, typename FieldTraits, bool Pos>
-struct Type<PositionImpl<IteratorTraits, FieldTraits, Pos>> : Type<PosAttr> {};
+template<typename IteratorTraits, typename FieldTraits>
+struct Type<PositionImpl<IteratorTraits, FieldTraits>> : Type<PosAttr> {};
 
 }  // namespace irs

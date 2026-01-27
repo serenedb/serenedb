@@ -182,6 +182,7 @@ void PgSQLCommTaskBase::SafeCall(Func&& func) noexcept try {
     if (e.wrappedException()) {
       std::rethrow_exception(e.wrappedException());
     }
+
     SendError(e.what(), ERRCODE_INTERNAL_ERROR);
   }
 } catch (const SqlException& e) {

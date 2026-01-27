@@ -26,7 +26,6 @@
 #include "connector/primary_key.hpp"
 #include "rocksdb/slice.h"
 #include "rocksdb/utilities/transaction.h"
-#include "rocksdb_engine_catalog/rocksdb_utils.h"
 
 namespace sdb::connector {
 
@@ -65,56 +64,14 @@ class RocksDBSinkWriter : public RocksDBSinkWriterBase {
 
   void DeleteCell(std::string_view full_key);
 
-  // Handles write conflicts
-  // Returns number of skipped rows
-  size_t HandleConflicts(primary_key::Keys& keys) {
-    if (_conflict_policy == WriteConflictPolicy::Replace) {
-      // Optimize out reading
-      return 0;
-    }
-
-    ConfigureReadOptions();
-    _pinnable_slice.Reset();
-    size_t skipped_cnt = 0;
-    for (auto& key : keys) {
-      auto status =
-        _transaction.Get(_read_options, &_cf, key, &_pinnable_slice);
-
-      if (!status.ok() && !status.IsNotFound()) {
-        SDB_THROW(rocksutils::ConvertStatus(status));
-      }
-
-      const bool conflict = status.ok();
-
-      if (conflict) {
-        switch (_conflict_policy) {
-          case WriteConflictPolicy::Replace:
-            SDB_ASSERT(false,
-                       "WriteConflictPolicy::Update should be handled earlier "
-                       "for optimiztion reason");
-            break;
-          case WriteConflictPolicy::DoNothing:
-            // Mark key: it should be skipped
-            key.clear();
-            skipped_cnt++;
-            break;
-          case WriteConflictPolicy::EmitError:
-            SDB_THROW(ERROR_SERVER_UNIQUE_CONSTRAINT_VIOLATED,
-                      "Primary key already exists");
-            break;
-          default:
-            SDB_UNREACHABLE();
-        }
-      }
-    }
-    return skipped_cnt;
-  }
+  // Handles write conflicts. Returns number of skipped rows
+  size_t HandleConflicts(primary_key::Keys& keys);
 
  private:
   void ConfigureReadOptions();
 
   rocksdb::ReadOptions _read_options;
-  rocksdb::PinnableSlice _pinnable_slice;
+  rocksdb::PinnableSlice _lookup_value;
 };
 
 }  //  namespace sdb::connector

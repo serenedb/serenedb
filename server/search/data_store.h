@@ -174,6 +174,9 @@ class DataStore : public std::enable_shared_from_this<DataStore> {
                           CommitResult& code);
   Result CleanupUnsafeImpl();
 
+  void StartCommitTasks();
+  void StartConsolidationTasks();
+
   RocksDBEngineCatalog& _engine;
   SearchEngine& _search;
   ObjectId _id;

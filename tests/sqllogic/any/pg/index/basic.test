@@ -14,13 +14,13 @@ statement ok
 INSERT INTO t VALUES ('a'), ('b'), ('c')
 
 
-query
-SELECT * FROM t;
+query ok
+SELECT * FROM t ORDER BY r;
 ----
 r
 a
-b
-c
 a
 b
+b
+c
 c

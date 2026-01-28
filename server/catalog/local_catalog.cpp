@@ -39,6 +39,7 @@
 #include "app/app_server.h"
 #include "auth/role_utils.h"
 #include "basics/application-exit.h"
+#include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
@@ -1165,6 +1166,7 @@ Result LocalCatalog::CreateIndex(ObjectId database_id, std::string_view schema,
       [&](auto& object) -> Result {
         auto& index = basics::downCast<Index>(*object);
         auto shard = catalog::GetTableShard(index.GetRelationId());
+        SDB_ASSERT(shard);
         // create DataStore and write to RocksDB -> Add DataStore to snapshot ->
         // Write Index to RocksDB
         auto data_store = std::make_shared<search::DataStore>(index);

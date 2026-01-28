@@ -375,4 +375,16 @@ bool DataStore::FailQueriesOnOutOfSync() const noexcept {
   return _search.failQueriesOnOutOfSync();
 }
 
+void DataStore::StartCommitTasks() {
+  CommitTask task{shared_from_this()};
+  std::move(task).Schedule();
+}
+
+void DataStore::StartConsolidationTasks() {
+  ConsolidationTask task{shared_from_this(), [data_store = shared_from_this()] {
+                           return /* TODO(codeworse) */ false;
+                         }};
+  std::move(task).Schedule();
+}
+
 }  // namespace sdb::search

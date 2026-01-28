@@ -572,8 +572,6 @@ class SereneDBConnector final : public velox::connector::Connector {
     const auto& table =
       basics::downCast<const RocksDBTable>(*serene_insert_handle.Table());
     const auto& object_key = table.TableId();
-    auto search_transactions =
-      transaction.GetSearchTransaction()->GetTransactionsFromTable(object_key);
     std::vector<catalog::Column::Id> column_oids;
     if (serene_insert_handle.Kind() == axiom::connector::WriteKind::kInsert ||
         serene_insert_handle.Kind() == axiom::connector::WriteKind::kUpdate) {
@@ -627,6 +625,10 @@ class SereneDBConnector final : public velox::connector::Connector {
             }
           }
           auto& rocksdb_transaction = transaction.EnsureRocksDBTransaction();
+          SDB_ASSERT(transaction.GetSearchTransaction());
+          auto search_transactions =
+            transaction.GetSearchTransaction()->GetTransactionsFromTable(
+              object_key);
 
           if constexpr (IsUpdate) {
             std::vector<catalog::Column::Id> all_column_oids;

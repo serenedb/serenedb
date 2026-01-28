@@ -113,6 +113,7 @@ ResultOr<std::shared_ptr<catalog::Index>> MakeSecondaryIndex(
 ResultOr<std::shared_ptr<catalog::Index>> MakeIndex(
   catalog::IndexBaseOptions options, const catalog::SchemaObject& relation,
   PgListWrapper<IndexElem> index_columns) {
+  options.relation_id = relation.GetId();
   switch (options.type) {
     case catalog::IndexType::Secondary:
       return MakeSecondaryIndex(std::move(options), relation, index_columns);

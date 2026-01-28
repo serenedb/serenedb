@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include <iresearch/index/field_meta.hpp>
 #include <iresearch/search/column_collector.hpp>
 #include <iresearch/search/filter.hpp>
 #include <iresearch/search/score_function.hpp>
@@ -922,15 +923,27 @@ class PhraseIterator : public DocIterator {
 
   PhraseIterator(ScoreAdapters&& itrs,
                  std::vector<typename Frequency::TermPosition>&& pos,
-                 const ColumnProvider& segment, ColumnCollector* collector,
-                 const TermReader& field, const byte_type* stats,
-                 const Scorers& ord, score_t boost)
+                 const FieldProperties& field, const byte_type* stats,
+                 score_t boost)
     : PhraseIterator{std::move(itrs), std::move(pos)} {
-    if (!ord.empty()) {
-      auto& score = std::get<ScoreAttr>(_attrs);
-      CompileScore(score, ord.buckets(), segment, collector, field, stats,
-                   *this, boost);
-    }
+    _stats = stats;
+    _boost = boost;
+    _field = field;
+  }
+
+  const ScoreFunction& PrepareScore(const Scorer& scorer,
+                                    const SubReader& segment,
+                                    ColumnCollector* collector) {
+    auto& score = std::get<irs::ScoreAttr>(_attrs);
+    score = scorer.PrepareScorer({
+      .segment = segment,
+      .field = _field,
+      .doc_attrs = *this,
+      .collector = collector,
+      .stats = _stats,
+      .boost = _boost,
+    });
+    return score;
   }
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
@@ -989,6 +1002,10 @@ class PhraseIterator : public DocIterator {
  private:
   using Attributes = std::tuple<AttributePtr<DocAttr>, AttributePtr<CostAttr>,
                                 ScoreAttr, FreqBlockAttr>;
+
+  const byte_type* _stats{};
+  score_t _boost{1.0f};
+  FieldProperties _field;
 
   // first approximation (conjunction over all words in a phrase)
   Conjunction _approx;

@@ -109,9 +109,16 @@ DocIterator::ptr FixedPhraseQuery::execute(const ExecutionContext& ctx) const {
                        });
   }
   return ResolveBool(has_intervals, [&]<bool HasIntervals> -> DocIterator::ptr {
-    return memory::make_managed<FixedPhraseIterator<false, true, HasIntervals>>(
-      std::move(itrs), std::move(positions), rdr, ctx.collector,
-      *phrase_state->reader, stats.c_str(), ord, boost);
+    auto it =
+      memory::make_managed<FixedPhraseIterator<false, true, HasIntervals>>(
+        std::move(itrs), std::move(positions), phrase_state->reader->meta(),
+        stats.c_str(), boost);
+
+    if (!ord.empty()) {
+      it->PrepareScore(*ord.buckets().front().bucket, rdr, ctx.collector);
+    }
+
+    return it;
   });
 }
 
@@ -290,17 +297,29 @@ DocIterator::ptr VariadicPhraseQuery::execute(
   if (phrase_state->volatile_boost) {
     return ResolveBool(
       has_intervals, [&]<bool HasIntervals> -> DocIterator::ptr {
-        return memory::make_managed<
+        auto it = memory::make_managed<
           VariadicPhraseIterator<Adapter, true, false, true, HasIntervals>>(
-          std::move(conj_itrs), std::move(positions), rdr, ctx.collector,
-          *phrase_state->reader, stats.c_str(), ord, boost);
+          std::move(conj_itrs), std::move(positions),
+          phrase_state->reader->meta(), stats.c_str(), boost);
+
+        if (!ord.empty()) {
+          it->PrepareScore(*ord.buckets().front().bucket, rdr, ctx.collector);
+        }
+
+        return it;
       });
   }
   return ResolveBool(has_intervals, [&]<bool HasIntervals> -> DocIterator::ptr {
-    return memory::make_managed<
+    auto it = memory::make_managed<
       VariadicPhraseIterator<Adapter, false, false, true, HasIntervals>>(
-      std::move(conj_itrs), std::move(positions), rdr, ctx.collector,
-      *phrase_state->reader, stats.c_str(), ord, boost);
+      std::move(conj_itrs), std::move(positions), phrase_state->reader->meta(),
+      stats.c_str(), boost);
+
+    if (!ord.empty()) {
+      it->PrepareScore(*ord.buckets().front().bucket, rdr, ctx.collector);
+    }
+
+    return it;
   });
 }
 

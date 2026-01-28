@@ -28,6 +28,7 @@
 #include "basics/utf8_utils.hpp"
 #include "catalog/function.h"
 #include "pg/pg_list_utils.h"
+#include "pg/sql_analyzer_velox.h"
 #include "pg/sql_error.h"
 #include "pg/sql_exception.h"
 #include "pg/sql_exception_macro.h"
@@ -56,6 +57,91 @@ int ExprLocation(const void* node) noexcept {
 std::string GetUnnamedFunctionArgumentName(size_t idx) {
   SDB_ASSERT(idx > 0);
   return absl::StrCat("$", idx);
+}
+
+// TODO: use errorPosition in THROW_SQL_ERROR calls
+catalog::FunctionSignature ToSignature(const List* pg_parameters,
+                                       const TypeName* pg_return_type) {
+  catalog::FunctionSignature signature;
+
+  containers::FlatHashSet<std::string_view> unique_names;
+  unique_names.reserve(list_length(pg_parameters));
+  auto to_sql_parameter =
+    [&unique_names](
+      size_t idx,
+      const ::FunctionParameter& pg_param) -> catalog::FunctionParameter {
+    catalog::FunctionParameter param;
+
+    if (pg_param.name) {
+      auto [_, emplaced] = unique_names.emplace(pg_param.name);
+      if (!emplaced) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                        CURSOR_POS(ExprLocation(pg_param.name)),
+                        ERR_MSG("parameter name \"", pg_param.name,
+                                "\" used more than once"));
+      }
+      param.name = pg_param.name;
+    } else {
+      param.name = GetUnnamedFunctionArgumentName(idx + 1);
+    }
+
+    if (pg_param.argType) {
+      param.type = pg::NameToType(*pg_param.argType);
+    }
+
+    if (pg_param.defexpr) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      CURSOR_POS(ExprLocation(pg_param.defexpr)),
+                      ERR_MSG("default parameter values are not supported"));
+    }
+
+    param.mode = [&] {
+      switch (pg_param.mode) {
+        using enum catalog::FunctionParameter::Mode;
+        case FUNC_PARAM_IN:
+        case FUNC_PARAM_DEFAULT:
+          return In;
+        case FUNC_PARAM_OUT:
+          return Out;
+        case FUNC_PARAM_INOUT:
+          return InOut;
+        case FUNC_PARAM_VARIADIC:
+          return Variadic;
+        case FUNC_PARAM_TABLE:
+          SDB_ENSURE(false, ERROR_NOT_IMPLEMENTED);
+      }
+    }();
+
+    return param;
+  };
+
+  std::vector<velox::TypePtr> table_types;
+  std::vector<std::string> table_names;
+  // ^ RETURNS TABLE
+
+  for (size_t i = 0; i < list_length(pg_parameters); ++i) {
+    const auto& param =
+      *castNode(::FunctionParameter, list_nth(pg_parameters, i));
+    if (param.mode != FUNC_PARAM_TABLE) {
+      signature.parameters.emplace_back(to_sql_parameter(i, param));
+    } else {
+      table_types.emplace_back(pg::NameToType(*param.argType));
+      SDB_ASSERT(table_types.back());
+      SDB_ASSERT(param.name);
+      table_names.emplace_back(param.name);
+    }
+  }
+
+  SDB_ASSERT(table_types.size() == table_names.size());
+  auto& return_type = signature.return_type;
+  if (!table_types.empty()) {
+    return_type = velox::ROW(std::move(table_names), std::move(table_types));
+  } else if (pg_return_type) {
+    return_type = pg::NameToType(*pg_return_type);
+    SDB_ASSERT(return_type);
+  }
+
+  return signature;
 }
 
 bool IsExpr(const Node* node) {

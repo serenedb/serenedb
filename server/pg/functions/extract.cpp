@@ -1,4 +1,4 @@
-#include "pg/extract.h"
+#include "pg/functions/extract.h"
 
 #include <velox/functions/Macros.h>
 #include <velox/functions/Registerer.h>
@@ -8,7 +8,7 @@
 #include <velox/functions/prestosql/types/TimestampWithTimeZoneType.h>
 #include <velox/type/SimpleFunctionApi.h>
 
-#include "pg/interval.h"
+#include "pg/functions/interval.h"
 #include "query/types.h"
 
 namespace sdb::pg::functions {

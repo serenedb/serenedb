@@ -238,9 +238,9 @@ irs::FeatureInfoProvider DefaultFeatureInfo() {
 
 void OpenReader(std::string_view format,
                 std::function<void(FailingDirectory& dir)> failure_registerer) {
-  constexpr irs::IndexFeatures kAllFeatures =
-    irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-    irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+  constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
+                                              irs::IndexFeatures::Pos |
+                                              irs::IndexFeatures::Offs;
 
   tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
                               &tests::PayloadedJsonFieldFactory);
@@ -377,9 +377,9 @@ TEST(index_death_test_formats_15, index_meta_write_fail_1st_phase) {
   }
 
   {
-    constexpr irs::IndexFeatures kAllFeatures =
-      irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-      irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+    constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
+                                                irs::IndexFeatures::Pos |
+                                                irs::IndexFeatures::Offs;
 
     irs::MemoryDirectory impl;
     FailingDirectory dir(impl);
@@ -501,9 +501,9 @@ TEST(index_death_test_formats_15, index_commit_fail_sync_1st_phase) {
   }
 
   {
-    constexpr irs::IndexFeatures kAllFeatures =
-      irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-      irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+    constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
+                                                irs::IndexFeatures::Pos |
+                                                irs::IndexFeatures::Offs;
 
     irs::MemoryDirectory impl;
     FailingDirectory dir(impl);
@@ -633,9 +633,9 @@ TEST(index_death_test_formats_15, index_meta_write_failure_2nd_phase) {
   }
 
   {
-    constexpr irs::IndexFeatures kAllFeatures =
-      irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-      irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+    constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
+                                                irs::IndexFeatures::Pos |
+                                                irs::IndexFeatures::Offs;
 
     irs::MemoryDirectory impl;
     FailingDirectory dir(impl);
@@ -740,9 +740,9 @@ TEST(index_death_test_formats_15,
   }
 
   {
-    constexpr irs::IndexFeatures kAllFeatures =
-      irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-      irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+    constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
+                                                irs::IndexFeatures::Pos |
+                                                irs::IndexFeatures::Offs;
 
     irs::MemoryDirectory impl;
     FailingDirectory dir(impl);
@@ -802,9 +802,9 @@ TEST(index_death_test_formats_15,
   }
 
   {
-    constexpr irs::IndexFeatures kAllFeatures =
-      irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-      irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+    constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
+                                                irs::IndexFeatures::Pos |
+                                                irs::IndexFeatures::Offs;
 
     irs::MemoryDirectory impl;
     FailingDirectory dir(impl);
@@ -867,9 +867,9 @@ TEST(index_death_test_formats_15,
   }
 
   {
-    constexpr irs::IndexFeatures kAllFeatures =
-      irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-      irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+    constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
+                                                irs::IndexFeatures::Pos |
+                                                irs::IndexFeatures::Offs;
 
     irs::MemoryDirectory impl;
     FailingDirectory dir(impl);
@@ -1027,9 +1027,9 @@ TEST(index_death_test_formats_15,
   }
 
   {
-    constexpr irs::IndexFeatures kAllFeatures =
-      irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-      irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+    constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
+                                                irs::IndexFeatures::Pos |
+                                                irs::IndexFeatures::Offs;
 
     irs::MemoryDirectory impl;
     FailingDirectory dir(impl);
@@ -1174,9 +1174,9 @@ TEST(index_death_test_formats_15,
   }
 
   {
-    constexpr irs::IndexFeatures kAllFeatures =
-      irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-      irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+    constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
+                                                irs::IndexFeatures::Pos |
+                                                irs::IndexFeatures::Offs;
 
     irs::MemoryDirectory impl;
     FailingDirectory dir(impl);
@@ -1315,9 +1315,9 @@ TEST(index_death_test_formats_15,
   }
 
   {
-    constexpr irs::IndexFeatures kAllFeatures =
-      irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-      irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+    constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
+                                                irs::IndexFeatures::Pos |
+                                                irs::IndexFeatures::Offs;
 
     irs::MemoryDirectory impl;
     FailingDirectory dir(impl);
@@ -1404,9 +1404,9 @@ TEST(index_death_test_formats_15,
   ASSERT_NE(nullptr, codec);
 
   {
-    constexpr irs::IndexFeatures kAllFeatures =
-      irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-      irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+    constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
+                                                irs::IndexFeatures::Pos |
+                                                irs::IndexFeatures::Offs;
 
     irs::MemoryDirectory impl;
     FailingDirectory dir(impl);
@@ -1533,9 +1533,9 @@ TEST(index_death_test_formats_15,
   ASSERT_NE(nullptr, codec);
 
   {
-    constexpr irs::IndexFeatures kAllFeatures =
-      irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-      irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+    constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
+                                                irs::IndexFeatures::Pos |
+                                                irs::IndexFeatures::Offs;
 
     irs::MemoryDirectory impl;
     FailingDirectory dir(impl);
@@ -1727,9 +1727,9 @@ TEST(index_death_test_formats_15,
 
   // segment meta creation failure
   {
-    constexpr irs::IndexFeatures kAllFeatures =
-      irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-      irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+    constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
+                                                irs::IndexFeatures::Pos |
+                                                irs::IndexFeatures::Offs;
 
     irs::MemoryDirectory impl;
     FailingDirectory failing_dir(impl);
@@ -1869,9 +1869,9 @@ TEST(index_death_test_formats_15,
 
   // segment meta synchonization failure
   {
-    constexpr irs::IndexFeatures kAllFeatures =
-      irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-      irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+    constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
+                                                irs::IndexFeatures::Pos |
+                                                irs::IndexFeatures::Offs;
 
     irs::MemoryDirectory impl;
     FailingDirectory failing_dir(impl);
@@ -2023,9 +2023,9 @@ TEST(index_death_test_formats_15, segment_components_write_fail_consolidation) {
   ASSERT_NE(nullptr, codec);
 
   {
-    constexpr irs::IndexFeatures kAllFeatures =
-      irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-      irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+    constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
+                                                irs::IndexFeatures::Pos |
+                                                irs::IndexFeatures::Offs;
 
     irs::MemoryDirectory impl;
     FailingDirectory dir(impl);
@@ -2145,9 +2145,9 @@ TEST(index_death_test_formats_15, segment_components_sync_fail_consolidation) {
   ASSERT_NE(nullptr, codec);
 
   {
-    constexpr irs::IndexFeatures kAllFeatures =
-      irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-      irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+    constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
+                                                irs::IndexFeatures::Pos |
+                                                irs::IndexFeatures::Offs;
 
     irs::MemoryDirectory impl;
     FailingDirectory dir(impl);
@@ -2258,9 +2258,9 @@ TEST(index_death_test_formats_15, segment_components_sync_fail_consolidation) {
 
 TEST(index_death_test_formats_15, segment_components_fail_import) {
   GTEST_SKIP() << "TODO(mbkkt) Invesigate it";
-  constexpr irs::IndexFeatures kAllFeatures =
-    irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-    irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+  constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
+                                              irs::IndexFeatures::Pos |
+                                              irs::IndexFeatures::Offs;
 
   tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
                               &tests::PayloadedJsonFieldFactory);
@@ -2556,9 +2556,9 @@ TEST(index_death_test_formats_15, segment_components_fail_import) {
 TEST(index_death_test_formats_15,
      segment_components_creation_fail_implicit_segment_flush) {
   GTEST_SKIP() << "TODO(mbkkt) Invesigate it";
-  constexpr irs::IndexFeatures kAllFeatures =
-    irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-    irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+  constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
+                                              irs::IndexFeatures::Pos |
+                                              irs::IndexFeatures::Offs;
 
   tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
                               &tests::PayloadedJsonFieldFactory);
@@ -2728,9 +2728,9 @@ TEST(index_death_test_formats_15,
 
 TEST(index_death_test_formats_15,
      columnstore_creation_fail_implicit_segment_flush) {
-  constexpr irs::IndexFeatures kAllFeatures =
-    irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-    irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+  constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
+                                              irs::IndexFeatures::Pos |
+                                              irs::IndexFeatures::Offs;
 
   tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
                               &tests::PayloadedJsonFieldFactory);
@@ -2905,9 +2905,9 @@ TEST(index_death_test_formats_15, fails_in_consolidate_with_removals) {
   auto codec = irs::formats::Get("1_5avx");
   ASSERT_NE(nullptr, codec);
 
-  constexpr irs::IndexFeatures kAllFeatures =
-    irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-    irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+  constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
+                                              irs::IndexFeatures::Pos |
+                                              irs::IndexFeatures::Offs;
 
   {
     irs::MemoryDirectory impl;
@@ -3067,9 +3067,9 @@ TEST(index_death_test_formats_15, fails_in_exists) {
   tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
                               &tests::PayloadedJsonFieldFactory);
 
-  constexpr irs::IndexFeatures kAllFeatures =
-    irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-    irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+  constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
+                                              irs::IndexFeatures::Pos |
+                                              irs::IndexFeatures::Offs;
 
   const auto* doc1 = gen.next();
   const auto* doc2 = gen.next();
@@ -3200,9 +3200,9 @@ TEST(index_death_test_formats_15, fails_in_length) {
   ASSERT_NE(nullptr, codec);
 
   {
-    constexpr irs::IndexFeatures kAllFeatures =
-      irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-      irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+    constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
+                                                irs::IndexFeatures::Pos |
+                                                irs::IndexFeatures::Offs;
 
     irs::MemoryDirectory impl;
     FailingDirectory dir(impl);
@@ -3400,9 +3400,9 @@ TEST(index_death_test_formats_15, open_reader) {
 }
 
 TEST(index_death_test_formats_15, columnstore_reopen_fail) {
-  constexpr irs::IndexFeatures kAllFeatures =
-    irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-    irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+  constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
+                                              irs::IndexFeatures::Pos |
+                                              irs::IndexFeatures::Offs;
 
   tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
                               &tests::PayloadedJsonFieldFactory);
@@ -3504,9 +3504,9 @@ TEST(index_death_test_formats_15, columnstore_reopen_fail) {
 }
 
 TEST(index_death_test_formats_15, fails_in_dup) {
-  constexpr irs::IndexFeatures kAllFeatures =
-    irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-    irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+  constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
+                                              irs::IndexFeatures::Pos |
+                                              irs::IndexFeatures::Offs;
 
   tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
                               &tests::PayloadedJsonFieldFactory);
@@ -3615,9 +3615,9 @@ TEST(index_death_test_formats_15, fails_in_dup) {
 }
 
 TEST(index_death_test_formats_15, postings_reopen_fail) {
-  constexpr irs::IndexFeatures kAllFeatures =
-    irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-    irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+  constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
+                                              irs::IndexFeatures::Pos |
+                                              irs::IndexFeatures::Offs;
 
   constexpr irs::IndexFeatures kPositions =
     irs::IndexFeatures::Freq | irs::IndexFeatures::Pos;
@@ -3625,10 +3625,6 @@ TEST(index_death_test_formats_15, postings_reopen_fail) {
   constexpr irs::IndexFeatures kPositionsOffsets = irs::IndexFeatures::Freq |
                                                    irs::IndexFeatures::Pos |
                                                    irs::IndexFeatures::Offs;
-
-  constexpr irs::IndexFeatures kPositionsPayload = irs::IndexFeatures::Freq |
-                                                   irs::IndexFeatures::Pos |
-                                                   irs::IndexFeatures::Pay;
 
   tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
                               &tests::PayloadedJsonFieldFactory);
@@ -3741,11 +3737,11 @@ TEST(index_death_test_formats_15, postings_reopen_fail) {
   // regiseter reopen failure in payload
   // can't reopen offset input
   dir.RegisterFailure(FailingDirectory::Failure::REOPEN, "_1.pay");
-  ASSERT_THROW((void)term_itr->postings(kPositionsPayload), irs::IoError);
+  ASSERT_THROW((void)term_itr->postings(kPositionsOffsets), irs::IoError);
   // regiseter reopen failure in payload (nullptr)
   dir.RegisterFailure(FailingDirectory::Failure::ReopenNull, "_1.pay");
   // can't reopen position (nullptr)
-  ASSERT_THROW((void)term_itr->postings(kPositionsPayload), irs::IoError);
+  ASSERT_THROW((void)term_itr->postings(kPositionsOffsets), irs::IoError);
 
   // regiseter reopen failure in postings
   dir.RegisterFailure(FailingDirectory::Failure::REOPEN, "_1.doc");

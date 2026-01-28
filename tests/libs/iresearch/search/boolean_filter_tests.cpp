@@ -131,7 +131,7 @@ class BasicDocIterator : public irs::DocIterator, irs::ScoreCtx {
     }
   }
 
-  irs::doc_id_t value() const final { return _doc.value; }
+  irs::doc_id_t value() const noexcept final { return _doc.value; }
 
   irs::doc_id_t advance() final {
     if (_first == _last) {
@@ -1152,7 +1152,7 @@ struct Unestimated : public irs::FilterWithBoost {
     irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
       return type == irs::Type<irs::DocAttr>::id() ? &doc : nullptr;
     }
-    irs::doc_id_t value() const final {
+    irs::doc_id_t value() const noexcept final {
       // prevent iterator to filter out
       return irs::doc_limits::invalid();
     }
@@ -1194,7 +1194,7 @@ struct Estimated : public irs::FilterWithBoost {
         return est;
       });
     }
-    irs::doc_id_t value() const final {
+    irs::doc_id_t value() const noexcept final {
       // prevent iterator to filter out
       return irs::doc_limits::invalid();
     }

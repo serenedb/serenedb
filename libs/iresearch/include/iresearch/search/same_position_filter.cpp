@@ -36,19 +36,25 @@ namespace irs {
 namespace {
 
 template<typename Conjunction>
-class SamePositionIterator : public Conjunction {
+class SamePositionIterator : public DocIterator {
  public:
   using Positions = std::vector<PosAttr::ref>;
 
   template<typename... Args>
   SamePositionIterator(Positions&& pos, Args&&... args)
-    : Conjunction{std::forward<Args>(args)...}, _pos(std::move(pos)) {
+    : _approx{std::forward<Args>(args)...}, _pos(std::move(pos)) {
     SDB_ASSERT(!_pos.empty());
   }
 
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+    return _approx.GetMutable(type);
+  }
+
+  doc_id_t value() const noexcept final { return _approx.value(); }
+
   doc_id_t advance() final {
     while (true) {
-      const auto doc = Conjunction::advance();
+      const auto doc = _approx.advance();
       if (doc_limits::eof(doc) || FindSamePosition()) {
         return doc;
       }
@@ -59,7 +65,7 @@ class SamePositionIterator : public Conjunction {
     if (const auto doc = this->value(); target <= doc) [[unlikely]] {
       return doc;
     }
-    const auto doc = Conjunction::seek(target);
+    const auto doc = _approx.seek(target);
     if (doc_limits::eof(doc) || FindSamePosition()) {
       return doc;
     }
@@ -89,6 +95,7 @@ class SamePositionIterator : public Conjunction {
     return true;
   }
 
+  Conjunction _approx;
   Positions _pos;
 };
 

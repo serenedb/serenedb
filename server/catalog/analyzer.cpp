@@ -130,7 +130,7 @@ irs::analysis::Analyzer::ptr Analyzer::make(std::string_view args) {
   return MakeImpl(slice);
 }
 
-irs::Attribute* Analyzer::GetMutable(irs::TypeInfo::type_id type) {
+irs::Attribute* Analyzer::GetMutable(irs::TypeInfo::type_id type) noexcept {
   if (type == irs::Type<irs::OffsAttr>::id()) {
     return nullptr;
   }

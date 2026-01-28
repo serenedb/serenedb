@@ -1901,10 +1901,10 @@ class CopyRowRejector {
     }
 
     _report_summary = false;
-    auto context =
-      absl::StrCat("COPY ", _table_name, ", line ", row.rowNumber, ", column ",
-                   ToAlias(row.columnName), ": \"", row.value, "\"");
-    ThrowCopyErr(std::move(errmsg), std::move(context));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT), ERR_MSG(errmsg),
+      ERR_CONTEXT("COPY ", _table_name, ", line ", row.rowNumber, ", column ",
+                  ToAlias(row.columnName), ": \"", row.value, "\""));
   }
 
   ~CopyRowRejector() {
@@ -1921,15 +1921,6 @@ class CopyRowRejector {
   }
 
  private:
-  void ThrowCopyErr(std::string errmsg, std::string context) {
-    SqlErrorData err{.errcode = ERRCODE_BAD_COPY_FILE_FORMAT,
-                     .errmsg = std::move(errmsg),
-                     .context = std::move(context)};
-    SqlException exception{std::move(err), std::source_location::current()};
-    throw velox::VeloxUserError{std::make_exception_ptr(std::move(exception)),
-                                "", false};
-  }
-
   void NoticeRejected(const velox::text::RejectedRow& row) {
     if (_verbosity >= LogVerbosity::Verbose) {
       auto msg =

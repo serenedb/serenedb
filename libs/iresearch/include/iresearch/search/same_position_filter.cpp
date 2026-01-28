@@ -142,7 +142,6 @@ class SamePositionQuery : public Filter::Query {
     std::vector<PosAttr::ref> positions;
     positions.reserve(itrs.size());
 
-    const bool no_score = ord.empty();
     auto term_stats = _stats.begin();
     for (auto& term_state : *query_state) {
       auto* reader = term_state.reader;
@@ -159,14 +158,6 @@ class SamePositionQuery : public Filter::Query {
       }
 
       positions.emplace_back(std::ref(*pos));
-
-      if (!no_score) {
-        auto* score = irs::GetMutable<ScoreAttr>(docs.get());
-        SDB_ASSERT(score);
-
-        CompileScore(*score, ord.buckets(), ctx.segment, ctx.collector,
-                     *term_state.reader, term_stats->c_str(), *docs, _boost);
-      }
 
       itrs.emplace_back(std::move(docs));
 

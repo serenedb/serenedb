@@ -34,9 +34,11 @@ namespace irs {
 
 class AllIterator : public DocIterator {
  public:
-  AllIterator(const ColumnProvider& reader, ColumnCollector* collector,
-              const byte_type* query_stats, const Scorers& order,
-              uint64_t docs_count, score_t boost);
+  AllIterator(uint32_t docs_count, const byte_type* query_stats, score_t boost);
+
+  const ScoreFunction& PrepareScore(const Scorer& scorer,
+                                    const SubReader& segment,
+                                    ColumnCollector* collector);
 
   Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
     return irs::GetMutable(_attrs, id);
@@ -73,6 +75,9 @@ class AllIterator : public DocIterator {
 
  private:
   using Attributes = std::tuple<DocAttr, CostAttr, ScoreAttr>;
+
+  const byte_type* _stats = nullptr;
+  score_t _boost = {};
 
   doc_id_t _max_doc;  // largest valid doc_id
   Attributes _attrs;

@@ -22,24 +22,36 @@
 
 #include "all_iterator.hpp"
 
+#include <iresearch/index/field_meta.hpp>
+#include <iresearch/search/score_function.hpp>
+
 #include "iresearch/formats/empty_term_reader.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/column_collector.hpp"
 
 namespace irs {
 
-AllIterator::AllIterator(const ColumnProvider& reader,
-                         ColumnCollector* collector,
-                         const byte_type* query_stats, const Scorers& order,
-                         uint64_t docs_count, score_t boost)
-  : _max_doc{doc_id_t(doc_limits::min() + docs_count - 1)} {
+AllIterator::AllIterator(uint32_t docs_count, const byte_type* query_stats,
+                         score_t boost)
+  : _stats{query_stats},
+    _boost{boost},
+    _max_doc{doc_limits::min() + docs_count - 1} {
   std::get<CostAttr>(_attrs).reset(_max_doc);
+}
 
-  if (!order.empty()) {
-    auto& score = std::get<ScoreAttr>(_attrs);
-    CompileScore(score, order.buckets(), reader, collector,
-                 irs::EmptyTermReader(docs_count), query_stats, *this, boost);
-  }
+const ScoreFunction& AllIterator::PrepareScore(const Scorer& scorer,
+                                               const SubReader& segment,
+                                               ColumnCollector* collector) {
+  auto& score = std::get<ScoreAttr>(_attrs);
+  score = scorer.PrepareScorer({
+    .segment = segment,
+    .field = FieldProperties{},
+    .doc_attrs = *this,
+    .collector = collector,
+    .stats = _stats,
+    .boost = _boost,
+  });
+  return std::get<ScoreAttr>(_attrs);
 }
 
 uint32_t AllIterator::collect(std::span<doc_id_t> docs) {

@@ -51,7 +51,7 @@ class RocksDBDataSinkBase : public velox::connector::DataSink {
     std::vector<std::unique_ptr<SubWriterType>>&& index_writers);
 
  public:
-  virtual bool finish();
+  bool finish() override;
   std::vector<std::string> close() final;
   void abort() final;
   Stats stats() const final;
@@ -268,9 +268,6 @@ class SSTInsertDataSink final
 
   void appendData(velox::RowVectorPtr input) final;
   bool finish() final;
-
-private:
-  uint64_t _num_rows = 0;
 };
 
 class RocksDBDeleteDataSink : public velox::connector::DataSink {

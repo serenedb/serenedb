@@ -126,7 +126,6 @@ void SSTInsertDataSink::appendData(velox::RowVectorPtr input) {
   PrepareKeyBuffers(input);
   velox::IndexRange all_rows{0, input->size()};
   const folly::Range all_rows_range{&all_rows, 1};
-  _num_rows += input->size();
   const auto num_columns = input->childrenSize();
   for (velox::column_index_t i = 0; i < num_columns; ++i) {
     if (_column_ids[i] != catalog::Column::kGeneratedPKId) {
@@ -2414,10 +2413,5 @@ velox::connector::DataSink::Stats RocksDBDeleteDataSink::stats() const {
   // TODO: implement
   return {};
 }
-
-// Explicit template instantiations
-template class RocksDBDataSinkBase<RocksDBSinkWriter, SinkInsertWriter>;
-template class RocksDBDataSinkBase<RocksDBSinkWriter, SinkUpdateWriter>;
-template class RocksDBDataSinkBase<SSTSinkWriter, SinkInsertWriter>;
 
 }  // namespace sdb::connector

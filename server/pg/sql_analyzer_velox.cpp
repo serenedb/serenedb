@@ -2191,7 +2191,7 @@ class CopyOptionsParser {
 
     if (_is_writer) {
       SDB_ASSERT(_sink);
-      velox::text::WriterOptions text_options = std::make_shared<velox::text::WriterOptions>();
+      auto text_options = std::make_shared<velox::text::WriterOptions>();
       if (header) {
         text_options->header = ToAliases(_row_type->names());
       }

@@ -33,10 +33,18 @@ class AllQuery : public Filter::Query {
     : _stats{std::move(stats)}, _boost{boost} {}
 
   DocIterator::ptr execute(const ExecutionContext& ctx) const final {
-    auto& rdr = ctx.segment;
+    auto it = memory::make_managed<AllIterator>(ctx.segment.docs_count(),
+                                                _stats.c_str(), _boost);
 
-    return memory::make_managed<AllIterator>(rdr, _stats.c_str(), ctx.scorers,
-                                             rdr.docs_count(), _boost);
+    if (!ctx.scorers.empty()) {
+      it->PrepareScore({
+        .scorer = ctx.scorers.buckets().front().bucket,
+        .segment = &ctx.segment,
+        .collector = ctx.collector,
+      });
+    }
+
+    return it;
   }
 
   void visit(const SubReader&, PreparedStateVisitor&, score_t) const final {

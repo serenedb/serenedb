@@ -50,6 +50,8 @@ struct EmptyDocIterator : ResettableDocIterator {
   }
   uint32_t count() noexcept final { return 0; }
   void reset() noexcept final {}
+  void CollectData(uint16_t index) final {}
+  uint32_t collect(std::span<doc_id_t>) final { return 0; }
 
  private:
   CostAttr _cost{0};
@@ -166,6 +168,10 @@ FieldIterator::ptr FieldIterator::empty() noexcept {
 
 ColumnIterator::ptr ColumnIterator::empty() noexcept {
   return memory::to_managed<ColumnIterator>(gEmptyColumnIterator);
+}
+
+uint32_t DocIterator::collect(std::span<doc_id_t> docs) {
+  return Collect(*this, docs);
 }
 
 }  // namespace irs

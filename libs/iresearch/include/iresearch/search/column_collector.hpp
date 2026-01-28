@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2020 ArangoDB GmbH, Cologne, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -15,32 +15,38 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
-///
-/// @author Andrey Abramov
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
 
-#include <iresearch/search/scorer.hpp>
-
-#include "iresearch/index/field_meta.hpp"
-#include "scorers.hpp"
+#include "basics/containers/flat_hash_map.h"
+#include "iresearch/formats/formats.hpp"
 
 namespace irs {
 
-struct BoostScore final : ScorerBase<BoostScore, void> {
-  static constexpr std::string_view type_name() noexcept {
-    return "boost_score";
+class ColumnCollector {
+ public:
+  const uint32_t* AddNorms(const ColumnReader* field);
+
+  void Clear() noexcept { _columns.clear(); }
+
+  void Collect(std::span<doc_id_t> docs) {
+    for (auto& [_, entry] : _columns) {
+      auto& [reader, norms] = entry;
+      reader->Collect(docs, norms);
+    }
   }
 
-  static void init();
+  void Collect(doc_id_t doc) { Collect(std::span{&doc, 1}); }
 
-  ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
+ private:
+  struct Entry {
+    NormReader::ptr reader;
+    std::vector<uint32_t> norms;
+  };
 
-  IndexFeatures GetIndexFeatures() const noexcept final {
-    return IndexFeatures::None;
-  }
+  mutable sdb::containers::FlatHashMap<field_id, Entry> _columns;
 };
 
 }  // namespace irs

@@ -22,16 +22,27 @@
 
 #pragma once
 
+#include <iresearch/search/score_function.hpp>
+#include <memory>
+
+#include "basics/assert.h"
 #include "basics/memory.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/formats/seek_cookie.hpp"
 #include "iresearch/index/index_features.hpp"
+#include "iresearch/search/score.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/attributes.hpp"
 #include "iresearch/utils/iterator.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
+
+struct PrepareScoreContext {
+  const Scorer* scorer = nullptr;
+  const SubReader* segment = nullptr;
+  ColumnCollector* collector;
+};
 
 // An iterator providing sequential and random access to a posting list
 //
@@ -60,6 +71,11 @@ struct DocIterator : AttributeProvider {
   // (for more information see class description)
   virtual doc_id_t seek(doc_id_t target) = 0;
 
+  // TODO(gnusi): return "has more"
+  virtual uint32_t collect(std::span<doc_id_t> docs);
+
+  virtual void CollectData(uint16_t index) = 0;
+
   // protected:
   // For any DocIterator we want to define block.
   // It's two bounds: (min...max]:
@@ -87,6 +103,20 @@ struct DocIterator : AttributeProvider {
       ++count;
     }
     return count;
+  }
+
+  template<typename Iterator, size_t N = std::dynamic_extent>
+  static uint32_t Collect(Iterator& it, std::span<doc_id_t, N> docs) {
+    size_t i = 0;
+    for (; i < docs.size(); ++i) {
+      const auto doc = it.advance();
+      if (doc_limits::eof(doc)) {
+        break;
+      }
+      docs[i] = doc;
+      it.CollectData(i);
+    }
+    return i;
   }
 };
 

@@ -23,6 +23,7 @@
 #include "all_iterator.hpp"
 
 #include <iresearch/index/field_meta.hpp>
+#include <iresearch/index/iterators.hpp>
 #include <iresearch/search/score_function.hpp>
 
 #include "iresearch/formats/empty_term_reader.hpp"
@@ -39,15 +40,13 @@ AllIterator::AllIterator(uint32_t docs_count, const byte_type* query_stats,
   std::get<CostAttr>(_attrs).reset(_max_doc);
 }
 
-const ScoreFunction& AllIterator::PrepareScore(const Scorer& scorer,
-                                               const SubReader& segment,
-                                               ColumnCollector* collector) {
+const ScoreFunction& AllIterator::PrepareScore(const PrepareScoreContext& ctx) {
   auto& score = std::get<ScoreAttr>(_attrs);
-  score = scorer.PrepareScorer({
-    .segment = segment,
+  score = ctx.scorer->PrepareScorer({
+    .segment = *ctx.segment,
     .field = FieldProperties{},
     .doc_attrs = *this,
-    .collector = collector,
+    .collector = ctx.collector,
     .stats = _stats,
     .boost = _boost,
   });

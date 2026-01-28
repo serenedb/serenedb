@@ -37,8 +37,11 @@ class AllQuery : public Filter::Query {
                                                 _stats.c_str(), _boost);
 
     if (!ctx.scorers.empty()) {
-      it->PrepareScore(*ctx.scorers.buckets().front().bucket, ctx.segment,
-                       ctx.collector);
+      it->PrepareScore({
+        .scorer = ctx.scorers.buckets().front().bucket,
+        .segment = &ctx.segment,
+        .collector = ctx.collector,
+      });
     }
 
     return it;

@@ -115,7 +115,11 @@ DocIterator::ptr FixedPhraseQuery::execute(const ExecutionContext& ctx) const {
         stats.c_str(), boost);
 
     if (!ord.empty()) {
-      it->PrepareScore(*ord.buckets().front().bucket, rdr, ctx.collector);
+      it->PrepareScore({
+        .scorer = ord.buckets().front().bucket,
+        .segment = &rdr,
+        .collector = ctx.collector,
+      });
     }
 
     return it;
@@ -303,7 +307,11 @@ DocIterator::ptr VariadicPhraseQuery::execute(
           phrase_state->reader->meta(), stats.c_str(), boost);
 
         if (!ord.empty()) {
-          it->PrepareScore(*ord.buckets().front().bucket, rdr, ctx.collector);
+          it->PrepareScore({
+            .scorer = ord.buckets().front().bucket,
+            .segment = &rdr,
+            .collector = ctx.collector,
+          });
         }
 
         return it;
@@ -316,7 +324,11 @@ DocIterator::ptr VariadicPhraseQuery::execute(
       stats.c_str(), boost);
 
     if (!ord.empty()) {
-      it->PrepareScore(*ord.buckets().front().bucket, rdr, ctx.collector);
+      it->PrepareScore({
+        .scorer = ord.buckets().front().bucket,
+        .segment = &rdr,
+        .collector = ctx.collector,
+      });
     }
 
     return it;

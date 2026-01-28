@@ -487,9 +487,7 @@ class NGramSimilarityDocIterator : public DocIterator, private ScoreCtx {
     _boost = boost;
   }
 
-  const ScoreFunction& PrepareScore(const Scorer& scorer,
-                                    const SubReader& segment,
-                                    ColumnCollector* collector) {
+  const ScoreFunction& PrepareScore(const PrepareScoreContext& ctx) {
     _collected_boost = std::make_unique<score_t[]>(kScoreBlock);
     std::get<BoostBlockAttr>(_attrs).value = _collected_boost.get();
 
@@ -497,11 +495,11 @@ class NGramSimilarityDocIterator : public DocIterator, private ScoreCtx {
     std::get<FreqBlockAttr>(_attrs).value = _collected_freq.get();
 
     auto& score = std::get<irs::ScoreAttr>(_attrs);
-    score = scorer.PrepareScorer({
-      .segment = segment,
+    score = ctx.scorer->PrepareScorer({
+      .segment = *ctx.segment,
       .field = _field,
       .doc_attrs = *this,
-      .collector = collector,
+      .collector = ctx.collector,
       .stats = _stats,
       .boost = _boost,
     });
@@ -625,7 +623,11 @@ DocIterator::ptr NGramSimilarityQuery::execute(
       _boost);
 
     if (!ord.empty()) {
-      it->PrepareScore(*ord.buckets().front().bucket, segment, ctx.collector);
+      it->PrepareScore({
+        .scorer = ord.buckets().front().bucket,
+        .segment = &segment,
+        .collector = ctx.collector,
+      });
     }
 
     return it;
@@ -639,7 +641,11 @@ DocIterator::ptr NGramSimilarityQuery::execute(
     _boost);
 
   if (!ord.empty()) {
-    it->PrepareScore(*ord.buckets().front().bucket, segment, ctx.collector);
+    it->PrepareScore({
+      .scorer = ord.buckets().front().bucket,
+      .segment = &segment,
+      .collector = ctx.collector,
+    });
   }
   return it;
 }

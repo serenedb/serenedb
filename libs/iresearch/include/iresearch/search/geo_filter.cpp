@@ -108,15 +108,13 @@ class GeoIterator : public irs::DocIterator {
     }
   }
 
-  const ScoreFunction& PrepareScore(const Scorer& scorer,
-                                    const SubReader& segment,
-                                    ColumnCollector* collector) {
+  const ScoreFunction& PrepareScore(const PrepareScoreContext& ctx) {
     auto& score = std::get<irs::ScoreAttr>(_attrs);
-    score = scorer.PrepareScorer({
-      .segment = segment,
+    score = ctx.scorer->PrepareScorer({
+      .segment = *ctx.segment,
       .field = _field,
       .doc_attrs = *this,
-      .collector = collector,
+      .collector = ctx.collector,
       .stats = _stats,
       .boost = _boost,
     });
@@ -211,7 +209,11 @@ irs::DocIterator::ptr MakeIterator(
     std::move(column_it), parser, acceptor, field.meta(), query_stats, boost);
 
   if (!order.empty()) {
-    it->PrepareScore(*order.buckets().front().bucket, reader, collector);
+    it->PrepareScore({
+      .scorer = order.buckets().front().bucket,
+      .segment = &reader,
+      .collector = collector,
+    });
   }
 
   return it;

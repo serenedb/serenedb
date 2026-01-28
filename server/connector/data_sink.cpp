@@ -48,6 +48,10 @@ namespace {
 constexpr std::string_view kZeroLengthVector{"\0", 1};
 constexpr std::string_view kOneValueHeader{"\0\1", 2};
 
+// Internal key footer for SST files: PackSequenceAndType(0, kTypeValue)
+// The footer is 8 bytes encoding (sequence_number << 8) | value_type
+constexpr uint64_t kSSTInternalKeyFooter = (uint64_t{0} << 8) | 0x1;
+
 }  // namespace
 
 namespace sdb::connector {
@@ -124,6 +128,17 @@ SSTInsertDataSink::SSTInsertDataSink(
 
 void SSTInsertDataSink::appendData(velox::RowVectorPtr input) {
   PrepareKeyBuffers(input);
+
+  // Append internal key footer to each key buffer once.
+  // This avoids rebuilding the internal key on every Put call in
+  // FastSstFileWriter.
+  for (auto& key : _store_keys_buffers) {
+    const auto old_size = key.size();
+    key.resize(old_size + sizeof(kSSTInternalKeyFooter));
+    memcpy(key.data() + old_size, &kSSTInternalKeyFooter,
+           sizeof(kSSTInternalKeyFooter));
+  }
+
   velox::IndexRange all_rows{0, input->size()};
   const folly::Range all_rows_range{&all_rows, 1};
   _num_rows += input->size();

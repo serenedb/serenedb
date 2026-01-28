@@ -26,6 +26,7 @@
 #include <string>
 
 #include "basics/assert.h"
+#include "table/fast_sst_file_writer.h"
 #include "rocksdb/options.h"
 #include "rocksdb/table.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
@@ -68,8 +69,8 @@ SSTSinkWriter::SSTSinkWriter(rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
       continue;
     }
 
-    _writers[i] =
-      std::make_unique<rocksdb::SstFileWriter>(rocksdb::EnvOptions{}, options);
+    _writers[i] = std::make_unique<rocksdb::FastSstFileWriter>(
+      rocksdb::EnvOptions{}, options);
     std::cerr << "Opening SST file for column " << column_oids[i]
               << " at path: " << std::endl;
     std::cerr << GenerateSSTFilePath() << std::endl;

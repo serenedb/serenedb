@@ -25,9 +25,11 @@
 
 #include "catalog/table_options.h"
 #include "rocksdb/db.h"
-#include "rocksdb/fast_sst_file_writer.h"
+#include "table/fast_sst_file_writer.h"
 
 namespace sdb::connector {
+
+class FastSSTWriter;
 
 class SSTSinkWriter {
  public:
@@ -50,7 +52,7 @@ class SSTSinkWriter {
  private:
   rocksdb::DB* _db;
   rocksdb::ColumnFamilyHandle* _cf;
-  std::vector<std::unique_ptr<rocksdb::SstFileWriter>> _writers;
+  std::vector<std::unique_ptr<rocksdb::FastSstFileWriter>> _writers;
   size_t _column_idx{0};
 };
 

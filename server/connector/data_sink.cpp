@@ -70,6 +70,7 @@ RocksDBDataSinkBase<DataWriterType, SubWriterType>::RocksDBDataSinkBase(
   SDB_ASSERT(_object_key.isSet(), "RocksDBDataSinkBase: object key is empty");
   SDB_ASSERT(!_column_ids.empty(),
              "RocksDBDataSinkBase: no columns in a table");
+  // we rely on storage order matching machine order
   static_assert(basics::IsLittleEndian());
 }
 

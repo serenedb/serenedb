@@ -35,7 +35,7 @@ struct AttributeProvider : memory::Managed {
   // Return pointer to attribute of a specified type.
   // External users should prefer using const version.
   // External users should avoid modifying attributes treat that as UB.
-  virtual Attribute* GetMutable(TypeInfo::type_id type) = 0;
+  virtual Attribute* GetMutable(TypeInfo::type_id type) noexcept = 0;
 };
 
 // Convenient helper for getting mutable attribute of a specific type.

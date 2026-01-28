@@ -926,7 +926,7 @@ class PhraseIterator : public DocIterator {
     return attr ? attr : irs::GetMutable(_attrs, type);
   }
 
-  doc_id_t value() const final {
+  doc_id_t value() const noexcept final {
     return std::get<AttributePtr<DocAttr>>(_attrs).ptr->value;
   }
 

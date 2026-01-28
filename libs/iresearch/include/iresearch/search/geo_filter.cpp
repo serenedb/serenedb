@@ -109,7 +109,7 @@ class GeoIterator : public irs::DocIterator {
     return irs::GetMutable(_attrs, type);
   }
 
-  irs::doc_id_t value() const final {
+  irs::doc_id_t value() const noexcept final {
     return std::get<irs::AttributePtr<irs::DocAttr>>(_attrs).ptr->value;
   }
 

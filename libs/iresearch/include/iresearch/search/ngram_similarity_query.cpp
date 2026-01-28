@@ -487,7 +487,7 @@ class NGramSimilarityDocIterator : public DocIterator, private ScoreCtx {
     return attr != nullptr ? attr : _checker.GetMutableAttr(type);
   }
 
-  doc_id_t value() const final {
+  doc_id_t value() const noexcept final {
     return std::get<AttributePtr<DocAttr>>(_attrs).ptr->value;
   }
 

@@ -8,7 +8,7 @@
  *-------------------------------------------------------------------------
  */
 
-#include "pg/interval.h"
+#include "pg/functions/interval.h"
 
 #include <cstring>
 

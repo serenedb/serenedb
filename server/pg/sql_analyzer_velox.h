@@ -28,20 +28,18 @@
 
 #include "pg/copy_messages_queue.h"
 #include "pg/sql_utils.h"
-#include "query/query.h"
+#include "query/context.h"
 #include "query/utils.h"
 
 namespace sdb::message {
+
 class Buffer;
-}
+
+}  // namespace sdb::message
 
 namespace sdb::pg {
 
 class Params;
-
-}  // namespace sdb::pg
-
-namespace sdb::pg {
 
 class UniqueIdGenerator {
  public:

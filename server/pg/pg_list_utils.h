@@ -37,7 +37,7 @@ LIBPG_QUERY_INCLUDES_BEGIN
 LIBPG_QUERY_INCLUDES_END
 
 // TODO: move to pg namespace
-namespace sdb {
+namespace sdb::pg {
 
 template<typename T>
 constexpr NodeTag GetNodeTag() {
@@ -1127,8 +1127,8 @@ using PgListWrapper = PgListWrapperImpl<PgNodeTraits<T>>;
 
 using PgStrListWrapper = PgListWrapperImpl<PgStrTraits>;
 
-}  // namespace sdb
+}  // namespace sdb::pg
 
 template<typename T>
 inline constexpr bool
-  std::ranges::enable_borrowed_range<sdb::PgListWrapperImpl<T>> = true;
+  std::ranges::enable_borrowed_range<sdb::pg::PgListWrapperImpl<T>> = true;

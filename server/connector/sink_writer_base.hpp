@@ -20,10 +20,10 @@
 
 #pragma once
 
-#include "basics/fwd.h"
+#include <velox/type/Type.h>
+
 #include "catalog/table_options.h"
 #include "rocksdb/slice.h"
-#include "velox/type/Type.h"
 
 namespace sdb::connector {
 

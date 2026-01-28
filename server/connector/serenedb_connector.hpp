@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
 #include <axiom/connectors/ConnectorMetadata.h>
 #include <velox/common/file/File.h>
 #include <velox/connectors/Connector.h>
@@ -28,20 +29,28 @@
 #include <velox/type/Type.h>
 #include <velox/vector/DecodedVector.h>
 
+#include <iresearch/index/index_writer.hpp>
 #include <memory>
+#include <ranges>
 
 #include "basics/assert.h"
+#include "basics/down_cast.h"
 #include "basics/fwd.h"
 #include "basics/misc.hpp"
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
+#include "connector/search_sink_writer.hpp"
+#include "connector/sink_writer_base.hpp"
 #include "data_sink.hpp"
 #include "data_source.hpp"
 #include "file_table.hpp"
 #include "query/transaction.h"
+#include "rest_server/serened_single.h"
 #include "rocksdb/utilities/transaction_db.h"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#include "storage_engine/engine_feature.h"
 #include "storage_engine/table_shard.h"
 
 namespace sdb::connector {
@@ -414,6 +423,7 @@ class SereneDBConnectorMetadata final
                "Wrong type of insert table handle");
     auto& transaction = serene_insert_handle->GetTransaction();
     auto* rocksdb_transaction = transaction.GetRocksDBTransaction();
+
     if (!rocksdb_transaction) [[unlikely]] {
       return yaclib::MakeFuture<int64_t>(0);
     }
@@ -615,6 +625,10 @@ class SereneDBConnector final : public velox::connector::Connector {
             }
           }
           auto& rocksdb_transaction = transaction.EnsureRocksDBTransaction();
+          SDB_ASSERT(transaction.GetSearchTransaction());
+          auto search_transactions =
+            transaction.GetSearchTransaction()->GetTransactionsFromTable(
+              object_key);
 
           if constexpr (IsUpdate) {
             std::vector<catalog::Column::Id> all_column_oids;
@@ -630,16 +644,32 @@ class SereneDBConnector final : public velox::connector::Connector {
               }
             }
 
+            auto search_sinks =
+              search_transactions |
+              std::views::transform(
+                [](auto& transaction) -> std::unique_ptr<SinkUpdateWriter> {
+                  return std::make_unique<search::SearchSinkUpdateWriter>(
+                    transaction);
+                }) |
+              std::ranges::to<std::vector>();
+
             return std::make_unique<RocksDBUpdateDataSink>(
               rocksdb_transaction, _cf, *connector_query_ctx->memoryPool(),
               object_key, pk_indices, column_oids, all_column_oids,
-              table.IsUsedForUpdatePK(), table.type(),
-              std::vector<std::unique_ptr<SinkUpdateWriter>>{});
+              table.IsUsedForUpdatePK(), table.type(), std::move(search_sinks));
           } else {
+            auto search_sinks =
+              search_transactions |
+              std::views::transform(
+                [](auto& transaction) -> std::unique_ptr<SinkInsertWriter> {
+                  return std::make_unique<search::SearchSinkInsertWriter>(
+                    transaction);
+                }) |
+              std::ranges::to<std::vector>();
+
             return std::make_unique<RocksDBInsertDataSink>(
               rocksdb_transaction, _cf, *connector_query_ctx->memoryPool(),
-              object_key, pk_indices, column_oids,
-              std::vector<std::unique_ptr<SinkInsertWriter>>{});
+              object_key, pk_indices, column_oids, std::move(search_sinks));
           }
         });
     }

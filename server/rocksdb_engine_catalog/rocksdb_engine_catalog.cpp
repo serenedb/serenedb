@@ -42,6 +42,7 @@
 #include <vpack/iterator.h>
 
 #include <iomanip>
+#include <iresearch/index/index_writer.hpp>
 #include <limits>
 #include <memory>
 #include <utility>
@@ -111,6 +112,7 @@
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 #include "rocksdb_engine_catalog/rocksdb_value.h"
 #include "rocksdb_engine_catalog/rocksdb_wal_access.h"
+#include "search/data_store.h"
 #include "storage_engine/table_shard.h"
 #include "vpack/serializer.h"
 #include "vpack/slice.h"
@@ -368,7 +370,6 @@ vpack::Slice GetTableProperties(vpack::Builder& builder,
   }
 
   builder.add(StaticStrings::kIndexes);
-  physical.getAllIndexesInternal(builder);
 
   builder.close();
   return builder.slice();
@@ -1506,6 +1507,19 @@ Result RocksDBEngineCatalog::CreateIndex(const catalog::Index& index) {
     },
     [&] { return RocksDBValue::Object(RocksDBEntryType::Index, b.slice()); },
     [&] { return std::string_view{}; });
+}
+
+ResultOr<std::shared_ptr<search::DataStore>>
+RocksDBEngineCatalog::CreateDataStore(const catalog::Index& index,
+                                      bool is_new) {
+  search::DataStoreOptions options;
+
+  [[maybe_unused]] irs::OpenMode mode = irs::OpenMode::kOmCreate;
+  if (!is_new) {
+    // TODO(codeworse): Read DataStore options
+    mode = irs::OpenMode::kOmAppend;
+  }
+  return {std::make_shared<search::DataStore>(index)};
 }
 
 Result RocksDBEngineCatalog::MarkDeleted(const catalog::Index& index,

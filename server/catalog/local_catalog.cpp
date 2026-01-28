@@ -39,6 +39,7 @@
 #include "app/app_server.h"
 #include "auth/role_utils.h"
 #include "basics/application-exit.h"
+#include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
@@ -66,7 +67,9 @@
 #include "general_server/state.h"
 #include "rest_server/serened.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#include "search/data_store.h"
 #include "storage_engine/engine_feature.h"
+#include "storage_engine/search_engine.h"
 #include "utils/exec_context.h"
 #include "utils/operation_options.h"
 #include "utils/query_cache.h"
@@ -78,7 +81,7 @@
 #ifdef SDB_CLUSTER
 #include "aql/query_registry_feature.h"
 #include "replication/replication_feature.h"
-#include "search/search_feature.h"
+#include "search/search_engine.h"
 #include "transaction/cluster_utils.h"
 #endif
 
@@ -396,6 +399,12 @@ class SnapshotImpl : public Snapshot {
     return it == _table_shards.end() ? nullptr : *it;
   }
 
+  std::shared_ptr<search::DataStore> GetDataStore(
+    ObjectId index_id) const final {
+    auto it = _data_stores.find(index_id);
+    return it == _data_stores.end() ? nullptr : *it;
+  }
+
   std::shared_ptr<Object> GetObject(ObjectId id) const final {
     auto it = _objects_by_id.find(id);
     return it == _objects_by_id.end() ? nullptr : *it;
@@ -403,6 +412,11 @@ class SnapshotImpl : public Snapshot {
 
   void AddTableShard(std::shared_ptr<TableShard> physical) {
     const auto is_new = _table_shards.emplace(std::move(physical)).second;
+    SDB_ENSURE(is_new, ERROR_INTERNAL);
+  }
+
+  void AddDataStore(std::shared_ptr<search::DataStore> data_store) {
+    const auto is_new = _data_stores.emplace(std::move(data_store)).second;
     SDB_ENSURE(is_new, ERROR_INTERNAL);
   }
 
@@ -965,6 +979,7 @@ class SnapshotImpl : public Snapshot {
   ObjectSetByName<Database> _databases_by_name;
   ObjectSetById<Object> _objects_by_id;
   ObjectSetById<TableShard> _table_shards;
+  ObjectSetById<search::DataStore> _data_stores;
 };
 
 LocalCatalog::LocalCatalog(bool skip_background_errors)
@@ -1017,7 +1032,6 @@ Result LocalCatalog::RegisterTable(ObjectId database_id,
 
       // TODO(gnusi): this might throw, but indexes will become a separate
       // objects soon anyway
-      physical->prepareIndexes(table, options.indexes);
       _snapshot->AddTableShard(std::move(physical));
 
       return {};
@@ -1123,9 +1137,11 @@ Result LocalCatalog::RegisterIndex(ObjectId database_id,
   }
 
   absl::MutexLock lock{&_mutex};
-  return _snapshot->RegisterObject(database_id, schema, std::move(*index),
-                                   false,
-                                   [&](auto& object) -> Result { return {}; });
+  return _snapshot->RegisterObject(
+    database_id, schema, std::move(*index), false, [&](auto& object) -> Result {
+      auto& index = basics::downCast<Index>(*object);
+      return _engine->CreateDataStore(index, false).error_or(Result{});
+    });
 }
 
 Result LocalCatalog::CreateIndex(ObjectId database_id, std::string_view schema,
@@ -1145,12 +1161,19 @@ Result LocalCatalog::CreateIndex(ObjectId database_id, std::string_view schema,
   }
 
   return Apply(_snapshot, [&](auto& clone) {
-    return clone->RegisterObject(database_id, schema, std::move(*index), false,
-                                 [&](auto& object) -> Result {
-                                   auto& index =
-                                     basics::downCast<Index>(*object);
-                                   return _engine->CreateIndex(index);
-                                 });
+    return clone->RegisterObject(
+      database_id, schema, std::move(*index), false,
+      [&](auto& object) -> Result {
+        auto& index = basics::downCast<Index>(*object);
+        auto shard = catalog::GetTableShard(index.GetRelationId());
+        SDB_ASSERT(shard);
+        // create DataStore and write to RocksDB -> Add DataStore to snapshot ->
+        // Write Index to RocksDB
+        auto data_store = std::make_shared<search::DataStore>(index);
+        _snapshot->AddDataStore(data_store);
+        shard->AddDataStore(data_store->GetId());
+        return _engine->CreateIndex(index);
+      });
   });
 }
 
@@ -1223,7 +1246,6 @@ Result LocalCatalog::CreateTable(
           return r;
         }
 
-        physical->prepareIndexes(table, options.indexes);
         clone->AddTableShard(physical);
         _engine->createTable(table, *physical);
 

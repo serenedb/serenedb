@@ -73,31 +73,6 @@ RocksDBDataSinkBase<DataWriterType, SubWriterType>::RocksDBDataSinkBase(
   static_assert(basics::IsLittleEndian());
 }
 
-template<typename DataWriterType, typename SubWriterType>
-void RocksDBDataSinkBase<DataWriterType, SubWriterType>::PrepareKeyBuffers(
-  const velox::RowVectorPtr& input) {
-  const std::string table_key = key_utils::PrepareTableKey(_object_key);
-  const auto num_rows = input->size();
-
-  _store_keys_buffers.clear();
-  _store_keys_buffers.reserve(num_rows);
-
-  for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-    key_utils::MakeColumnKey(
-      input, _key_childs, row_idx, table_key,
-      [&](std::string_view row_key) {
-        const auto status = _data_writer.Lock(row_key);
-        if (!status.ok()) {
-          const auto result = rocksutils::ConvertStatus(status);
-          SDB_THROW(result.errorNumber(),
-                    "Failed to acquire row lock for table ", _object_key.id(),
-                    " error: ", result.errorMessage());
-        }
-      },
-      _store_keys_buffers.emplace_back());
-  }
-}
-
 RocksDBInsertDataSink::RocksDBInsertDataSink(
   rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
@@ -123,7 +98,18 @@ SSTInsertDataSink::SSTInsertDataSink(
       std::vector<std::unique_ptr<SinkInsertWriter>>{}) {}
 
 void SSTInsertDataSink::appendData(velox::RowVectorPtr input) {
-  PrepareKeyBuffers(input);
+  const std::string table_key = key_utils::PrepareTableKey(_object_key);
+  const auto num_rows = input->size();
+
+  _store_keys_buffers.clear();
+  _store_keys_buffers.reserve(num_rows);
+
+  for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+    key_utils::MakeColumnKey(
+      input, _key_childs, row_idx, table_key, [&](std::string_view) {},
+      _store_keys_buffers.emplace_back());
+  }
+
   velox::IndexRange all_rows{0, input->size()};
   const folly::Range all_rows_range{&all_rows, 1};
   const auto num_columns = input->childrenSize();

@@ -34,10 +34,6 @@ class SSTSinkWriter {
   SSTSinkWriter(rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
                 std::span<catalog::Column::Id> column_oids);
 
-  rocksdb::Status Lock(std::string_view full_key) {
-    return rocksdb::Status::OK();
-  }
-
   void SetColumnIndex(size_t column_idx) { _column_idx = column_idx; }
 
   void Write(std::span<const rocksdb::Slice> cell_slices,

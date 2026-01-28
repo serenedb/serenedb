@@ -26,31 +26,27 @@
 #include <string>
 
 #include "basics/assert.h"
+#include "basics/random/random_generator.h"
 #include "rocksdb/options.h"
 #include "rocksdb/table.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 
 namespace sdb::connector {
 
-std::string GenerateSSTFilePath() {
+std::string GenerateSSTDirPath(std::string_view rocksdb_directory) {
   auto now = std::chrono::system_clock::now();
   auto timestamp =
     std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch())
       .count();
 
-  std::random_device rd;
-  std::mt19937 gen(rd());
-  std::uniform_int_distribution<uint32_t> dis(0, UINT32_MAX);
-  uint32_t random_suffix = dis(gen);
-
-  auto temp_dir = std::filesystem::temp_directory_path();
-  return temp_dir / "arelav" /
-         std::format("serenedb_sst_{}_{}.sst", timestamp, random_suffix);
+  return absl::StrCat(rocksdb_directory, "/", "bulk_insert_", timestamp, "_",
+                      random::RandU64());
 }
 
 SSTSinkWriter::SSTSinkWriter(rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
-                             std::span<catalog::Column::Id> column_oids)
-  : _db{&db}, _cf{&cf} {
+                             std::span<catalog::Column::Id> column_oids,
+                             std::string_view rocksdb_directory)
+  : _db{&db}, _cf{&cf}, _sst_directory{GenerateSSTDirPath(rocksdb_directory)} {
   _writers.resize(column_oids.size());
 
   auto options = _db->GetOptions(_cf);
@@ -63,6 +59,7 @@ SSTSinkWriter::SSTSinkWriter(rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
   options.compression = rocksdb::kNoCompression;
   options.compression_per_level.clear();
 
+  std::filesystem::create_directories(_sst_directory);
   for (size_t i = 0; i < _writers.size(); ++i) {
     if (column_oids[i] == catalog::Column::kGeneratedPKId) {
       continue;
@@ -70,10 +67,9 @@ SSTSinkWriter::SSTSinkWriter(rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
 
     _writers[i] =
       std::make_unique<rocksdb::SstFileWriter>(rocksdb::EnvOptions{}, options);
-    std::cerr << "Opening SST file for column " << column_oids[i]
-              << " at path: " << std::endl;
-    std::cerr << GenerateSSTFilePath() << std::endl;
-    auto status = _writers[i]->Open(GenerateSSTFilePath());
+    std::string sst_file_path =
+      absl::StrCat(_sst_directory, "/", "column_", i, ".sst");
+    auto status = _writers[i]->Open(sst_file_path);
     if (!status.ok()) {
       SDB_THROW(rocksutils::ConvertStatus(status));
     }
@@ -138,7 +134,9 @@ void SSTSinkWriter::Finish() {
 }
 
 void SSTSinkWriter::Abort() {
-  // TODO: implement
+  std::error_code ec;
+  std::filesystem::remove_all(_sst_directory, ec);
+  _writers.clear();
 }
 
 }  // namespace sdb::connector

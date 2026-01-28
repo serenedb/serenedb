@@ -92,10 +92,11 @@ SSTInsertDataSink::SSTInsertDataSink(
   rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
   std::span<const velox::column_index_t> key_childs,
-  std::vector<catalog::Column::Id> column_oids)
+  std::vector<catalog::Column::Id> column_oids,
+  std::string_view rocksdb_directory)
   : RocksDBDataSinkBase<SSTSinkWriter, SinkInsertWriter>(
-      SSTSinkWriter{db, cf, column_oids}, memory_pool, object_key, key_childs,
-      std::move(column_oids),
+      SSTSinkWriter{db, cf, column_oids, rocksdb_directory}, memory_pool,
+      object_key, key_childs, std::move(column_oids),
       std::vector<std::unique_ptr<SinkInsertWriter>>{}) {}
 
 void SSTInsertDataSink::appendData(velox::RowVectorPtr input) {
@@ -2307,6 +2308,8 @@ void RocksDBDataSinkBase<DataWriterType, SubWriterType>::abort() {
   // Transaction itself should be contolled outside and needed SavePoint should
   // be set.
   ResetForNewRow();
+
+  _data_writer.Abort();
   // TODO(Dronplane) should we also shrink slice vector to save some memory?
   for (const auto& writer : _index_writers) {
     writer->Abort();

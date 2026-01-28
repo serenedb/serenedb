@@ -32,7 +32,8 @@ namespace sdb::connector {
 class SSTSinkWriter {
  public:
   SSTSinkWriter(rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
-                std::span<catalog::Column::Id> column_oids);
+                std::span<catalog::Column::Id> column_oids,
+                std::string_view rocksdb_directory);
 
   void SetColumnIndex(size_t column_idx) { _column_idx = column_idx; }
 
@@ -47,6 +48,7 @@ class SSTSinkWriter {
   rocksdb::DB* _db;
   rocksdb::ColumnFamilyHandle* _cf;
   std::vector<std::unique_ptr<rocksdb::SstFileWriter>> _writers;
+  std::string _sst_directory;
   size_t _column_idx;
 };
 

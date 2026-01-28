@@ -106,6 +106,8 @@ struct Snapshot {
 
   virtual std::shared_ptr<TableShard> GetTableShard(ObjectId id) const = 0;
   virtual std::vector<std::shared_ptr<TableShard>> GetTableShards() const = 0;
+  virtual std::shared_ptr<search::DataStore> GetDataStore(
+    ObjectId index_id) const = 0;
 
   template<typename T>
   std::shared_ptr<T> GetObject(ObjectId id) const {
@@ -160,10 +162,6 @@ inline auto GetViews(const Snapshot& snapshot, ObjectId database_id,
 using IndexFactory =
   absl::FunctionRef<ResultOr<std::shared_ptr<Index>>(const SchemaObject*)>;
 
-using IndexPhysicalFactory =
-  absl::FunctionRef<ResultOr<std::shared_ptr<search::DataStore>>(
-    RocksDBEngineCatalog& engine, const catalog::Index&, bool)>;
-
 struct LogicalCatalog {
   virtual ~LogicalCatalog() = default;
 
@@ -197,8 +195,7 @@ struct LogicalCatalog {
                              CreateTableOperationOptions operation_options) = 0;
   virtual Result CreateIndex(ObjectId database_id, std::string_view schema,
                              std::string_view relation,
-                             IndexFactory index_factory,
-                             IndexPhysicalFactory physical_factory) = 0;
+                             IndexFactory index_factory) = 0;
 
   virtual Result RenameTable(ObjectId database_id, std::string_view schema,
                              std::string_view name,

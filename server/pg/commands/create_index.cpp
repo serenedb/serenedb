@@ -57,6 +57,19 @@ std::optional<catalog::IndexType> GetIndexType(char* method) {
                 : catalog::IndexType::Secondary;
 }
 
+Result MakeIndexOptions(const IndexStmt& index,
+                        catalog::IndexBaseOptions& options) {
+  auto index_type = GetIndexType(index.accessMethod);
+  if (!index_type) {
+    return Result{ERROR_BAD_PARAMETER,
+                  absl::StrCat("access method \"", index.accessMethod,
+                               "\" does not exist")};
+  }
+  options.name = index.idxname;
+  options.type = *index_type;
+  return {};
+}
+
 ResultOr<std::shared_ptr<catalog::Index>> MakeSecondaryIndex(
   catalog::IndexBaseOptions options, const catalog::SchemaObject& relation,
   PgListWrapper<IndexElem> index_columns) {
@@ -87,6 +100,8 @@ ResultOr<std::shared_ptr<catalog::Index>> MakeSecondaryIndex(
     impl_options.columns.push_back(column->id);
   }
 
+  options.id = catalog::NextId();
+
   return std::make_shared<catalog::SecondaryIndex>(
     catalog::IndexOptions<catalog::SecondaryIndexOptions>{
       .base = std::move(options),
@@ -114,12 +129,6 @@ yaclib::Future<Result> CreateIndex(ExecContext& context,
   const auto db = context.GetDatabaseId();
   const auto& conn_ctx = basics::downCast<const ConnectionContext>(context);
 
-  const auto index_type = GetIndexType(stmt.accessMethod);
-  if (!index_type) {
-    return yaclib::MakeFuture<Result>(ERROR_BAD_PARAMETER, "access method \"",
-                                      stmt.accessMethod, "\" does not exist");
-  }
-
   const std::string_view relation_name = stmt.relation->relname;
   const std::string current_schema = conn_ctx.GetCurrentSchema();
   const std::string_view schema =
@@ -133,26 +142,19 @@ yaclib::Future<Result> CreateIndex(ExecContext& context,
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
 
+  if (stmt.concurrent || stmt.if_not_exists) {
+    return yaclib::MakeFuture(Result{ERROR_NOT_IMPLEMENTED});
+  }
+
   catalog::IndexBaseOptions options;
-  options.name = stmt.idxname;
-  options.type = *index_type;
+  if (auto r = MakeIndexOptions(stmt, options); !r.ok()) {
+    return yaclib::MakeFuture(std::move(r));
+  }
 
-  auto r = catalog.CreateIndex(
-    db, schema, relation_name,
-    [&](const catalog::SchemaObject* relation) {
-      SDB_ASSERT(relation);
-      options.relation_id = relation->GetId();
-
+  Result r = catalog.CreateIndex(
+    db, schema, relation_name, [&](const catalog::SchemaObject* relation) {
       return MakeIndex(std::move(options), *relation,
                        PgListWrapper<IndexElem>{stmt.indexParams});
-    },
-    [&](RocksDBEngineCatalog& engine, const catalog::Index& index,
-        bool is_new) {
-      if (!is_new) {
-        // TODO(codeworse): load index data
-      }
-      // TODO(codeworse): insert table data(obj_id + row_type)
-      return engine.CreateDataStore(index, is_new);
     });
 
   if (r.is(ERROR_SERVER_DUPLICATE_NAME) && stmt.if_not_exists) {

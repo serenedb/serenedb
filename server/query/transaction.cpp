@@ -20,6 +20,9 @@
 
 #include "query/transaction.h"
 
+#include "basics/assert.h"
+#include "catalog/catalog.h"
+#include "search/transaction.h"
 #include "storage_engine/engine_feature.h"
 
 namespace sdb::query {
@@ -38,6 +41,8 @@ Result Transaction::Commit() {
     return {ERROR_INTERNAL,
             "Failed to commit RocksDB transaction: ", status.ToString()};
   }
+  SDB_ASSERT(_search_transaction);
+  _search_transaction->Commit();
   ApplyTableStatsDiffs();
   CommitVariables();
   Destroy();
@@ -51,6 +56,8 @@ Result Transaction::Rollback() {
     return {ERROR_INTERNAL,
             "Failed to rollback RocksDB transaction: ", status.ToString()};
   }
+  SDB_ASSERT(_search_transaction);
+  _search_transaction->Abort();
   RollbackVariables();
   Destroy();
   return {};
@@ -105,6 +112,8 @@ void Transaction::CreateRocksDBTransaction() {
   SDB_ASSERT(!_rocksdb_transaction);
   auto* db = GetServerEngine().db();
   SDB_ASSERT(db != nullptr);
+  _search_transaction =
+    std::make_shared<search::Transaction>(catalog::GetCatalog().GetSnapshot());
   rocksdb::WriteOptions write_options;
   rocksdb::TransactionOptions txn_options;
   txn_options.skip_concurrency_control = true;

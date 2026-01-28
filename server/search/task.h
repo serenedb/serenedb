@@ -23,6 +23,7 @@
 #include <absl/functional/any_invocable.h>
 
 #include <concepts>
+#include <functional>
 
 #include "app/app_server.h"
 #include "search/data_store.h"
@@ -31,16 +32,18 @@
 namespace sdb::search {
 
 template<typename T>
-concept IndexTaskType = requires {
+concept IndexTaskType = requires(const T& task) {
   { T::ThreadGroup() } -> std::same_as<ThreadGroup>;
   { T::TaskName() } -> std::same_as<std::string_view>;
+  { task.GetContinuos() } -> std::same_as<T>;  // span continuous tasks
 };
 
 class Task {
  public:
-  Task(ObjectId id, std::shared_ptr<ThreadPoolState> state)
-    : _id{id},
-      _state{std::move(state)},
+  Task(std::shared_ptr<DataStore> data_store)
+    : _id{data_store->GetId()},
+      _data_store{std::move(data_store)},
+      _state{_data_store->GetState()},
       _engine{&SerenedServer::Instance().getFeature<SearchEngine>()} {}
 
   template<IndexTaskType Self>
@@ -48,8 +51,14 @@ class Task {
     self._engine->Queue(Self::ThreadGroup(), delay, std::move(self));
   }
 
+  template<IndexTaskType Self>
+  void ScheduleContinue(this const Self& self, absl::Duration delay = {}) {
+    self._engine->Queue(Self::ThreadGroup(), delay, self.GetContinuos());
+  }
+
  protected:
   ObjectId _id;
+  std::shared_ptr<DataStore> _data_store;
   std::shared_ptr<ThreadPoolState> _state;
   [[maybe_unused]] SearchEngine* _engine;
 };
@@ -60,18 +69,19 @@ class CommitTask : public Task {
     return ThreadGroup::Commit;
   }
   static constexpr std::string_view TaskName() noexcept { return "Commit"; }
-  CommitTask(DataStore::Transaction&& transaction)
-    : Task{transaction.GetDataStore()->GetId(),
-           transaction.GetDataStore()->GetState()},
-      _transaction{std::move(transaction)} {}
+  CommitTask(std::shared_ptr<DataStore> data_store)
+    : Task{std::move(data_store)} {}
+
+  CommitTask GetContinuos() const { return CommitTask(_data_store); }
 
   void operator()();
   void Finalize(CommitResult res);
 
  private:
-  DataStore::Transaction _transaction;
   absl::Duration _commit_interval_msec;
   absl::Duration _consolidation_interval_msec;
+  size_t _cleanup_interval_step;
+  size_t _cleanup_interval_count;
 };
 
 class ConsolidationTask : public Task {
@@ -82,16 +92,15 @@ class ConsolidationTask : public Task {
   static constexpr std::string_view TaskName() noexcept {
     return "Consolidate";
   }
-  ConsolidationTask(ObjectId id, std::shared_ptr<DataStore> data_store,
-                    std::shared_ptr<ThreadPoolState> state,
-                    std::function<bool()>&& flush_progress)
-    : Task{id, std::move(state)},
-      _data_store{std::move(data_store)},
-      _progress{std::move(flush_progress)} {}
+  ConsolidationTask(std::shared_ptr<DataStore> data_store,
+                    std::function<bool()> flush_progress)
+    : Task{std::move(data_store)}, _progress{std::move(flush_progress)} {}
   void operator()();
+  ConsolidationTask GetContinuos() const {
+    return ConsolidationTask{_data_store, _progress};
+  }
 
  private:
-  std::shared_ptr<DataStore> _data_store;
   irs::MergeWriter::FlushProgress _progress;
   DataStoreMeta::ConsolidationPolicy _consolidation_policy;
   absl::Duration _consolidation_interval_msec;

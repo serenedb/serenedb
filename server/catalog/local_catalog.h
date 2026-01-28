@@ -76,8 +76,8 @@ class LocalCatalog final : public LogicalCatalog,
                      CreateTableOperationOptions operation_options) final;
 
   Result CreateIndex(ObjectId database_id, std::string_view schema,
-                     std::string_view relation, IndexFactory index_factory,
-                     IndexPhysicalFactory physical_factory) final;
+                     std::string_view relation,
+                     IndexFactory index_factory) final;
 
   Result RenameView(ObjectId database_id, std::string_view schema,
                     std::string_view name, std::string_view new_name) final;

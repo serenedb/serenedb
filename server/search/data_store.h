@@ -125,32 +125,17 @@ class DataStore : public std::enable_shared_from_this<DataStore> {
     uint64_t time_ms;
   };
 
-  class Transaction {
-   public:
-    Transaction(std::shared_ptr<DataStore> data_store)
-      : _data_store(data_store),
-        _transaction(data_store->_writer->GetBatch()) {}
-    auto& GetIndexWriterTransaction() { return _transaction; }
-    const auto& GetDataStore() const { return _data_store; }
+  DataStore(const catalog::Index& table);
 
-    ResultWithTime Commit() &&;
-    ResultWithTime Abort() &&;
-    void ScheduleCommit(absl::Duration delay) &&;
-    void ScheduleAbort(absl::Duration delay) &&;
-
-   private:
-    std::shared_ptr<DataStore> _data_store;
-    irs::IndexWriter::Transaction _transaction;
-  };
-
-  DataStore(const catalog::Index& table, irs::OpenMode mode,
-            const DataStoreOptions& options);
-
-  auto GetTransaction() { return Transaction{shared_from_this()}; }
+  auto GetTransaction() { return _writer->GetBatch(); }
 
   ResultWithTime ConsolidateUnsafe(
     const DataStoreMeta::ConsolidationPolicy& policy,
     const irs::MergeWriter::FlushProgress& progress, bool& empty_consolidation);
+
+  ResultWithTime CommitUnsafe(bool wait,
+                              const irs::ProgressReportCallback& progress,
+                              CommitResult& code);
 
   ResultWithTime CleanupUnsafe();
   Stats UpdateStatsUnsafe(DataSnapshotPtr data) const;
@@ -158,6 +143,7 @@ class DataStore : public std::enable_shared_from_this<DataStore> {
   void ScheduleConsolidation(absl::Duration delay);
 
   ObjectId GetId() const noexcept { return _id; }
+  ObjectId GetRelationId() const noexcept { return _relation_id; }
   auto GetState() const noexcept { return _state; }
 
   void StatsToVPack(vpack::Builder& builder);
@@ -183,11 +169,15 @@ class DataStore : public std::enable_shared_from_this<DataStore> {
   Result ConsolidateUnsafeImpl(const DataStoreMeta::ConsolidationPolicy& policy,
                                const irs::MergeWriter::FlushProgress& progress,
                                bool& empty_consolidation);
+  Result CommitUnsafeImpl(bool wait,
+                          const irs::ProgressReportCallback& progress,
+                          CommitResult& code);
   Result CleanupUnsafeImpl();
 
   RocksDBEngineCatalog& _engine;
   SearchEngine& _search;
   ObjectId _id;
+  ObjectId _relation_id;
   std::shared_ptr<ThreadPoolState> _state;
   DataSnapshotPtr _snapshot;
   std::shared_ptr<irs::IndexWriter> _writer;

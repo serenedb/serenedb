@@ -31,6 +31,7 @@
 #include "catalog/catalog.h"
 #include "query/config.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#include "search/transaction.h"
 #include "storage_engine/table_shard.h"
 
 namespace sdb::query {
@@ -54,6 +55,9 @@ class Transaction : public Config {
     // TODO(codeworse): manage with rocksdb snapshot
     return catalog::GetCatalog().GetSnapshot();
   }
+
+  const auto& GetSearchTransaction() const { return _search_transaction; }
+  auto& GetSearchTransaction() { return _search_transaction; }
 
   void UpdateNumRows(ObjectId table_id, int64_t delta) noexcept {
     _table_rows_deltas[table_id] += delta;
@@ -84,6 +88,7 @@ class Transaction : public Config {
   std::shared_ptr<StorageSnapshot> _storage_snapshot;
   std::unique_ptr<rocksdb::Transaction> _rocksdb_transaction;
   const rocksdb::Snapshot* _rocksdb_snapshot = nullptr;
+  std::shared_ptr<search::Transaction> _search_transaction;
   containers::FlatHashMap<ObjectId, int64_t> _table_rows_deltas;
 };
 

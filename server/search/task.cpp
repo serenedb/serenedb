@@ -32,70 +32,149 @@
 #include "search/data_store.h"
 
 namespace sdb::search {
+
 void CommitTask::Finalize(CommitResult res) {
   constexpr size_t kMaxNonEmptyCommits = 10;
-  // constexpr size_t kMaxPendingConsolidations = 3;
+  constexpr size_t kMaxPendingConsolidations = 3;
 
-  switch (res) {
-    case CommitResult::Done: {
-      _state->pending_commits.fetch_sub(1, std::memory_order_release);
-      auto non_empty_commits =
-        _state->non_empty_commits.fetch_add(1, std::memory_order_acq_rel);
-      if (non_empty_commits == kMaxNonEmptyCommits) {
-        _transaction.GetDataStore()->ScheduleConsolidation(
-          _consolidation_interval_msec);
+  if (res != CommitResult::NoChanges) {
+    _state->pending_commits.fetch_add(1, std::memory_order_release);
+    ScheduleContinue(_commit_interval_msec);
+
+    if (res == CommitResult::Done) {
+      _state->noop_commit_count.store(0, std::memory_order_release);
+      _state->noop_consolidation_count.store(0, std::memory_order_release);
+
+      if (_state->pending_consolidations.load(std::memory_order_acquire) <
+            kMaxPendingConsolidations &&
+          _state->non_empty_commits.fetch_add(1, std::memory_order_acq_rel) >=
+            kMaxNonEmptyCommits) {
+        _data_store->ScheduleConsolidation(_consolidation_interval_msec);
         _state->non_empty_commits.store(0, std::memory_order_release);
       }
-      break;
     }
-    case CommitResult::InProgress:
-      break;
-    case CommitResult::NoChanges:
-      _state->noop_commit_count.fetch_add(1, std::memory_order_release);
-      break;
-    case CommitResult::Undefined:
-      SDB_UNREACHABLE();
+  } else {
+    _state->non_empty_commits.store(0, std::memory_order_release);
+    _state->noop_commit_count.fetch_add(1, std::memory_order_release);
+
+    for (auto count = _state->pending_commits.load(std::memory_order_acquire);
+         count < 1;) {
+      if (_state->pending_commits.compare_exchange_weak(
+            count, 1, std::memory_order_acq_rel)) {
+        ScheduleContinue(_commit_interval_msec);
+        break;
+      }
+    }
   }
 }
 
 void CommitTask::operator()() {
   const char run_id = 0;
-  const auto& data_store = _transaction.GetDataStore();
-  _state->pending_commits.fetch_add(1, std::memory_order_release);
-  auto commit_res = CommitResult::Undefined;
-  absl::Cleanup reschedule = [commit_res, this] noexcept {
+  auto id = _data_store->GetId();
+  _state->pending_commits.fetch_sub(1, std::memory_order_release);
+
+  auto code = CommitResult::Undefined;
+  absl::Cleanup reschedule = [&code, this]() noexcept {
     try {
-      Finalize(commit_res);
-    } catch (const std::exception& exp) {
+      Finalize(code);
+    } catch (const std::exception& ex) {
       SDB_ERROR("xxxxx", Logger::SEARCH,
-                "failed to call finalize: ", exp.what());
+                "failed to call finalize: ", ex.what());
     }
   };
-  // TODO(codeworse): Commit via threadpool
-  auto [res, timeMs] = std::move(_transaction).Commit();
+
+  // reload RuntimeState
+  {
+    SDB_IF_FAILURE("SearchCommitTask::lockDataStore") {
+      SDB_THROW(ERROR_DEBUG);
+    }
+    SDB_ASSERT(_data_store);
+    // must be valid if linkLock->lock() is valid
+    absl::ReaderMutexLock lock{_data_store->GetMutex()};
+    // '_meta' can be asynchronously modified
+    auto& meta = _data_store->GetMeta();
+
+    _commit_interval_msec = absl::Milliseconds(meta.commit_interval_msec);
+    _consolidation_interval_msec =
+      absl::Milliseconds(meta.consolidation_interval_msec);
+    _cleanup_interval_step = meta.cleanup_interval_step;
+  }
+
+  if (absl::ZeroDuration() == _commit_interval_msec) {
+    std::move(reschedule).Cancel();
+    SDB_DEBUG("xxxxx", Logger::SEARCH, "sync is disabled for the index '",
+              id.id(), "', runId '", size_t(&run_id), "'");
+    return;
+  }
+
+  SDB_IF_FAILURE("SearchCommitTask::commitUnsafe") { SDB_THROW(ERROR_DEBUG); }
+  // run commit ('_async_self' locked by async task)
+  auto [res, timeMs] = _data_store->CommitUnsafe(false, nullptr, code);
 
   if (res.ok()) {
     SDB_TRACE("xxxxx", Logger::SEARCH, "successful sync of Search index '",
-              _id.id(), "', run id '", size_t(&run_id), "', took: ", timeMs,
+              id.id(), "', run id '", size_t(&run_id), "', took: ", timeMs,
               "ms");
   } else {
     SDB_WARN("xxxxx", Logger::SEARCH, "error after running for ", timeMs,
-             "ms while committing Search index '", data_store->GetId(),
-             "', run id '", size_t(&run_id), "': ", res.errorNumber(), " ",
+             "ms while committing Search index '", id.id(), "', run id '",
+             size_t(&run_id), "': ", res.errorNumber(), " ",
              res.errorMessage());
+  }
+  if (_cleanup_interval_step &&
+      ++_cleanup_interval_count >= _cleanup_interval_step) {  // if enabled
+    _cleanup_interval_count = 0;
+    SDB_IF_FAILURE("SearchCommitTask::cleanupUnsafe") {
+      SDB_THROW(ERROR_DEBUG);
+    }
+
+    // run cleanup ('_async_self' locked by async task)
+    auto [res, timeMs] = _data_store->CleanupUnsafe();
+
+    if (res.ok()) {
+      SDB_TRACE("xxxxx", Logger::SEARCH, "successful cleanup of Search index '",
+                id.id(), "', run id '", size_t(&run_id), "', took: ", timeMs,
+                "ms");
+    } else {
+      SDB_WARN("xxxxx", Logger::SEARCH, "error after running for ", timeMs,
+               "ms while cleaning up Search index '", id.id(), "', run id '",
+               size_t(&run_id), "': ", res.errorNumber(), " ",
+               res.errorMessage());
+    }
   }
 }
 
 void ConsolidationTask::operator()() {
   const char run_id = 0;
+  auto id = _data_store->GetId();
   _state->pending_consolidations.fetch_sub(1, std::memory_order_release);
 
+  absl::Cleanup reschedule = [this]() noexcept {
+    try {
+      for (auto count =
+             _state->pending_consolidations.load(std::memory_order_acquire);
+           count < 1;) {
+        if (_state->pending_consolidations.compare_exchange_weak(
+              count, count + 1, std::memory_order_acq_rel)) {
+          ScheduleContinue(_consolidation_interval_msec);
+          break;
+        }
+      }
+    } catch (const std::exception& ex) {
+      SDB_ERROR("xxxxx", Logger::SEARCH, "failed to reschedule: ", ex.what());
+    }
+  };
+
+  // reload RuntimeState
   {
     SDB_IF_FAILURE("SearchConsolidationTask::lockDataStore") {
       SDB_THROW(ERROR_DEBUG);
     }
 
-    absl::ReaderMutexLock lock{&_data_store->GetMutex()};
+    SDB_ASSERT(_data_store);
+    // must be valid if _async_self->lock() is valid
+    absl::ReaderMutexLock lock{_data_store->GetMutex()};
+    // '_meta' can be asynchronously modified
     auto& meta = _data_store->GetMeta();
 
     _consolidation_policy = meta.consolidation_policy;
@@ -104,8 +183,10 @@ void ConsolidationTask::operator()() {
   }
   if (absl::ZeroDuration() == _consolidation_interval_msec ||
       !_consolidation_policy.policy()) {
+    std::move(reschedule).Cancel();
+
     SDB_DEBUG("xxxxx", Logger::SEARCH,
-              "consolidation is disabled for the index '", _id.id(),
+              "consolidation is disabled for the index '", id.id(),
               "', runId '", size_t(&run_id), "'");
     return;
   }
@@ -116,11 +197,13 @@ void ConsolidationTask::operator()() {
       _state->noop_consolidation_count.load(std::memory_order_acquire) <
         kMaxNoopConsolidations) {
     _state->pending_consolidations.fetch_add(1, std::memory_order_release);
+    ScheduleContinue(_consolidation_interval_msec);
   }
   SDB_IF_FAILURE("SearchConsolidationTask::consolidateUnsafe") {
     SDB_THROW(ERROR_DEBUG);
   }
 
+  // run consolidation ('_async_self' locked by async task)
   bool empty_consolidation = false;
   const auto [res, timeMs] = _data_store->ConsolidateUnsafe(
     _consolidation_policy, _progress, empty_consolidation);
@@ -132,14 +215,14 @@ void ConsolidationTask::operator()() {
       _state->noop_consolidation_count.store(0, std::memory_order_release);
     }
     SDB_TRACE("xxxxx", Logger::SEARCH,
-              "successful consolidation of Search index '",
-              _data_store->GetId(), "', run id '", size_t(&run_id),
-              "', took: ", timeMs, "ms");
+              "successful consolidation of Search index '", id.id(),
+              "', run id '", size_t(&run_id), "', took: ", timeMs, "ms");
   } else {
     SDB_DEBUG("xxxxx", Logger::SEARCH, "error after running for ", timeMs,
-              "ms while consolidating Search index '", _data_store->GetId(),
-              "', run id '", size_t(&run_id), "': ", res.errorNumber(), " ",
+              "ms while consolidating Search index '", id.id(), "', run id '",
+              size_t(&run_id), "': ", res.errorNumber(), " ",
               res.errorMessage());
   }
 }
+
 }  // namespace sdb::search

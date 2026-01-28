@@ -398,6 +398,12 @@ class SnapshotImpl : public Snapshot {
     return it == _table_shards.end() ? nullptr : *it;
   }
 
+  std::shared_ptr<search::DataStore> GetDataStore(
+    ObjectId index_id) const final {
+    auto it = _data_stores.find(index_id);
+    return it == _data_stores.end() ? nullptr : *it;
+  }
+
   std::shared_ptr<Object> GetObject(ObjectId id) const final {
     auto it = _objects_by_id.find(id);
     return it == _objects_by_id.end() ? nullptr : *it;
@@ -405,6 +411,11 @@ class SnapshotImpl : public Snapshot {
 
   void AddTableShard(std::shared_ptr<TableShard> physical) {
     const auto is_new = _table_shards.emplace(std::move(physical)).second;
+    SDB_ENSURE(is_new, ERROR_INTERNAL);
+  }
+
+  void AddDataStore(std::shared_ptr<search::DataStore> data_store) {
+    const auto is_new = _data_stores.emplace(std::move(data_store)).second;
     SDB_ENSURE(is_new, ERROR_INTERNAL);
   }
 
@@ -967,6 +978,7 @@ class SnapshotImpl : public Snapshot {
   ObjectSetByName<Database> _databases_by_name;
   ObjectSetById<Object> _objects_by_id;
   ObjectSetById<TableShard> _table_shards;
+  ObjectSetById<search::DataStore> _data_stores;
 };
 
 LocalCatalog::LocalCatalog(bool skip_background_errors)
@@ -1133,8 +1145,7 @@ Result LocalCatalog::RegisterIndex(ObjectId database_id,
 
 Result LocalCatalog::CreateIndex(ObjectId database_id, std::string_view schema,
                                  std::string_view relation_name,
-                                 IndexFactory index_factory,
-                                 IndexPhysicalFactory physical_factory) {
+                                 IndexFactory index_factory) {
   absl::MutexLock lock{&_mutex};
 
   auto relation = _snapshot->GetRelation(database_id, schema, relation_name);
@@ -1156,14 +1167,10 @@ Result LocalCatalog::CreateIndex(ObjectId database_id, std::string_view schema,
         auto shard = catalog::GetTableShard(index.GetRelationId());
         // create DataStore and write to RocksDB -> Add DataStore to snapshot ->
         // Write Index to RocksDB
-        return physical_factory(*_engine, index, true)
-          .and_then([&](std::shared_ptr<search::DataStore>&& data_store)
-                      -> ResultOr<std::shared_ptr<search::DataStore>> {
-            shard->AddDataStore(data_store);
-            return std::unexpected<Result>{std::in_place,
-                                           _engine->CreateIndex(index)};
-          })
-          .error();
+        auto data_store = std::make_shared<search::DataStore>(index);
+        _snapshot->AddDataStore(data_store);
+        shard->AddDataStore(data_store->GetId());
+        return _engine->CreateIndex(index);
       });
   });
 }

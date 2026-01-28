@@ -1514,12 +1514,12 @@ RocksDBEngineCatalog::CreateDataStore(const catalog::Index& index,
                                       bool is_new) {
   search::DataStoreOptions options;
 
-  irs::OpenMode mode = irs::OpenMode::kOmCreate;
+  [[maybe_unused]] irs::OpenMode mode = irs::OpenMode::kOmCreate;
   if (!is_new) {
     // TODO(codeworse): Read DataStore options
     mode = irs::OpenMode::kOmAppend;
   }
-  return {std::make_shared<search::DataStore>(index, mode, options)};
+  return {std::make_shared<search::DataStore>(index)};
 }
 
 Result RocksDBEngineCatalog::MarkDeleted(const catalog::Index& index,

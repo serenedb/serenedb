@@ -34,7 +34,10 @@
 #include <type_traits>
 #include <vector>
 
+#include "basics/assert.h"
+#include "basics/containers/flat_hash_set.h"
 #include "basics/errors.h"
+#include "basics/exceptions.h"
 #include "basics/read_write_lock.h"
 #include "catalog/fwd.h"
 #include "catalog/identifiers/index_id.h"
@@ -110,8 +113,16 @@ class TableShard {
 
   auto GetDataStores() const { return _data_stores; }
 
-  void AddDataStore(const std::shared_ptr<search::DataStore>& data_store) {
-    _data_stores.push_back(data_store);
+  void AddDataStore(ObjectId data_store_id) {
+    auto [_, is_new] = _data_stores.insert(data_store_id);
+    SDB_ENSURE(is_new, ERROR_INTERNAL,
+               "DataStore already exists in TableShard");
+  }
+
+  void RemoveDataStore(ObjectId data_store_id) {
+    auto num_erased = _data_stores.erase(data_store_id);
+    SDB_ENSURE(num_erased == 1, ERROR_INTERNAL,
+               "DataStore does not exist in TableShard");
   }
 
   /// return the figures for a collection
@@ -253,7 +264,7 @@ class TableShard {
   std::shared_ptr<FollowerInfo> _followers;
 
   std::atomic_bool _deleted = false;  // TODO(gnusi): remove
-  std::vector<std::shared_ptr<search::DataStore>> _data_stores;
+  containers::FlatHashSet<ObjectId> _data_stores;
 
   // TODO(codeworse): this probably won't work in case of distributed setup
   std::atomic_uint64_t _num_rows{0};

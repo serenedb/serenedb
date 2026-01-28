@@ -2191,15 +2191,15 @@ class CopyOptionsParser {
 
     if (_is_writer) {
       SDB_ASSERT(_sink);
-      auto text_options = std::make_shared<velox::text::WriterOptions>();
+      velox::text::WriterOptions text_options = std::make_shared<velox::text::WriterOptions>();
       if (header) {
         text_options->header = ToAliases(_row_type->names());
       }
       text_options->serDeOptions = std::move(serde_options);
       text_options->schema = std::move(_row_type);
       text_options->fileFormat = FileFormat::TEXT;
-      _writer_options = std::make_shared<sdb::connector::WriterOptions>(
-        std::move(text_options));
+      _writer_options =
+        std::make_shared<connector::WriterOptions>(std::move(text_options));
     } else {
       SDB_ASSERT(_source);
       auto text_options = std::make_shared<velox::text::ReaderOptions>(nullptr);
@@ -2217,7 +2217,7 @@ class CopyOptionsParser {
       auto row_reader_options =
         std::make_shared<velox::dwio::common::RowReaderOptions>();
       row_reader_options->setSkipRows(header);
-      _reader_options = std::make_shared<sdb::connector::ReaderOptions>(
+      _reader_options = std::make_shared<connector::ReaderOptions>(
         std::move(text_options), std::move(row_reader_options));
     }
   }
@@ -2236,8 +2236,8 @@ class CopyOptionsParser {
         default_opts};
       dwio_options->schema = std::move(_row_type);
       dwio_options->fileFormat = format;
-      _writer_options = std::make_shared<sdb::connector::WriterOptions>(
-        std::move(dwio_options));
+      _writer_options =
+        std::make_shared<connector::WriterOptions>(std::move(dwio_options));
     } else {
       auto dwio_options =
         std::make_shared<velox::dwio::common::ReaderOptions>(nullptr);
@@ -2245,9 +2245,8 @@ class CopyOptionsParser {
       dwio_options->setFileSchema(std::move(_row_type));
       auto row_reader_options =
         std::make_shared<velox::dwio::common::RowReaderOptions>();
-      _reader_options = std::make_shared<sdb::connector::ReaderOptions>(
-        sdb::connector::ReaderOptions{std::move(dwio_options),
-                                      std::move(row_reader_options)});
+      _reader_options = std::make_shared<connector::ReaderOptions>(
+        std::move(dwio_options), std::move(row_reader_options));
     }
   }
 
@@ -2313,10 +2312,10 @@ class CopyOptionsParser {
   std::string_view _table_name;
 
   std::unique_ptr<velox::WriteFile> _sink;  // local / S3 / hdfs etc.
-  std::shared_ptr<sdb::connector::WriterOptions> _writer_options;
+  std::shared_ptr<connector::WriterOptions> _writer_options;
 
   std::shared_ptr<velox::ReadFile> _source;  // local / S3 / hdfs etc.
-  std::shared_ptr<sdb::connector::ReaderOptions> _reader_options;
+  std::shared_ptr<connector::ReaderOptions> _reader_options;
 };
 
 void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
@@ -2414,7 +2413,7 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
     auto file_output_type = ROW(std::move(names), file_table_type->children());
     auto parser = create_options_parser(file_output_type);
     auto [source, reader_options] = std::move(parser).GetReader();
-    auto read_file_table = std::make_shared<sdb::connector::ReadFileTable>(
+    auto read_file_table = std::make_shared<connector::ReadFileTable>(
       file_table_type, file_path.empty() ? "stdin" : file_path,
       std::move(source), std::move(reader_options));
     state.root = std::make_shared<lp::TableScanNode>(
@@ -2465,7 +2464,7 @@ void SqlAnalyzer::ProcessCopyStmt(State& state, const CopyStmt& stmt) {
 
     auto parser = create_options_parser(table_type);
     auto [sink, writer_options] = std::move(parser).GetWriter();
-    auto write_file_table = std::make_shared<sdb::connector::WriteFileTable>(
+    auto write_file_table = std::make_shared<connector::WriteFileTable>(
       std::move(table_type), file_path.empty() ? "stdout" : file_path,
       std::move(sink), std::move(writer_options));
 

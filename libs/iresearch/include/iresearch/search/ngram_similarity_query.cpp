@@ -108,18 +108,18 @@ class NGramApprox : public MinMatchDisjunction {
 };
 
 template<>
-class NGramApprox<true>
-  : public Conjunction<CostAdapter, ScoreMergeType::Noop> {
-  using Base = Conjunction<CostAdapter, ScoreMergeType::Noop>;
+class NGramApprox<true> : public Conjunction<CostAdapter> {
+  using Base = Conjunction<CostAdapter>;
 
  public:
   NGramApprox(CostAdapters&& itrs, size_t min_match_count)
-    : Base{[](auto&& itrs) {
-        absl::c_sort(itrs, [](const auto& lhs, const auto& rhs) noexcept {
-          return lhs.est < rhs.est;
-        });
-        return std::move(itrs);
-      }(std::move(itrs))},
+    : Base{ScoreMergeType::Noop,
+           [](auto&& itrs) {
+             absl::c_sort(itrs, [](const auto& lhs, const auto& rhs) noexcept {
+               return lhs.est < rhs.est;
+             });
+             return std::move(itrs);
+           }(std::move(itrs))},
       _match_count{min_match_count} {}
 
   size_t MatchCount() const noexcept { return _match_count; }

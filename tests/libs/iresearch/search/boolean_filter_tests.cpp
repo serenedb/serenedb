@@ -13975,8 +13975,9 @@ TEST(conjunction_test, next) {
     std::vector<irs::doc_id_t> expected{1, 5};
     std::vector<irs::doc_id_t> result;
     {
-      auto it_ptr = irs::MakeConjunction<irs::ScoreMergeType::Noop>(
-        {}, detail::ExecuteAll<DocIteratorImpl>(docs));
+      auto it_ptr =
+        irs::MakeConjunction(irs::ScoreMergeType::Noop, {},
+                             detail::ExecuteAll<DocIteratorImpl>(docs));
       auto& it = *it_ptr;
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -14003,8 +14004,9 @@ TEST(conjunction_test, next) {
     std::vector<irs::doc_id_t> expected{1, 5, 11, 21, 27, 31};
     std::vector<irs::doc_id_t> result;
     {
-      auto it_ptr = irs::MakeConjunction<irs::ScoreMergeType::Noop>(
-        {}, detail::ExecuteAll<DocIteratorImpl>(docs));
+      auto it_ptr =
+        irs::MakeConjunction(irs::ScoreMergeType::Noop, {},
+                             detail::ExecuteAll<DocIteratorImpl>(docs));
       auto& it = *it_ptr;
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -14031,8 +14033,9 @@ TEST(conjunction_test, next) {
     std::vector<irs::doc_id_t> expected{1, 5, 11, 21, 27, 31};
     std::vector<irs::doc_id_t> result;
     {
-      auto it_ptr = irs::MakeConjunction<irs::ScoreMergeType::Noop>(
-        {}, detail::ExecuteAll<DocIteratorImpl>(docs));
+      auto it_ptr =
+        irs::MakeConjunction(irs::ScoreMergeType::Noop, {},
+                             detail::ExecuteAll<DocIteratorImpl>(docs));
       auto& it = *it_ptr;
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -14059,8 +14062,9 @@ TEST(conjunction_test, next) {
     std::vector<irs::doc_id_t> expected{1, 5};
     std::vector<irs::doc_id_t> result;
     {
-      auto it_ptr = irs::MakeConjunction<irs::ScoreMergeType::Noop>(
-        {}, detail::ExecuteAll<DocIteratorImpl>(docs));
+      auto it_ptr =
+        irs::MakeConjunction(irs::ScoreMergeType::Noop, {},
+                             detail::ExecuteAll<DocIteratorImpl>(docs));
       auto& it = *it_ptr;
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -14086,8 +14090,9 @@ TEST(conjunction_test, next) {
 
     std::vector<irs::doc_id_t> result;
     {
-      auto it_ptr = irs::MakeConjunction<irs::ScoreMergeType::Noop>(
-        {}, detail::ExecuteAll<DocIteratorImpl>(docs));
+      auto it_ptr =
+        irs::MakeConjunction(irs::ScoreMergeType::Noop, {},
+                             detail::ExecuteAll<DocIteratorImpl>(docs));
       auto& it = *it_ptr;
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -14110,8 +14115,9 @@ TEST(conjunction_test, next) {
 
     std::vector<irs::doc_id_t> result;
     {
-      auto it_ptr = irs::MakeConjunction<irs::ScoreMergeType::Noop>(
-        {}, detail::ExecuteAll<DocIteratorImpl>(docs));
+      auto it_ptr =
+        irs::MakeConjunction(irs::ScoreMergeType::Noop, {},
+                             detail::ExecuteAll<DocIteratorImpl>(docs));
       auto& it = *it_ptr;
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -14138,8 +14144,9 @@ TEST(conjunction_test, next) {
     std::vector<irs::doc_id_t> expected{};
     std::vector<irs::doc_id_t> result;
     {
-      auto it_ptr = irs::MakeConjunction<irs::ScoreMergeType::Noop>(
-        {}, detail::ExecuteAll<DocIteratorImpl>(docs));
+      auto it_ptr =
+        irs::MakeConjunction(irs::ScoreMergeType::Noop, {},
+                             detail::ExecuteAll<DocIteratorImpl>(docs));
       auto& it = *it_ptr;
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -14162,8 +14169,9 @@ TEST(conjunction_test, next) {
     std::vector<irs::doc_id_t> expected{};
     std::vector<irs::doc_id_t> result;
     {
-      auto it_ptr = irs::MakeConjunction<irs::ScoreMergeType::Noop>(
-        {}, detail::ExecuteAll<DocIteratorImpl>(docs));
+      auto it_ptr =
+        irs::MakeConjunction(irs::ScoreMergeType::Noop, {},
+                             detail::ExecuteAll<DocIteratorImpl>(docs));
       auto& it = *it_ptr;
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -14206,8 +14214,8 @@ TEST(conjunction_test, seek) {
       {256, 256},
       {257, irs::doc_limits::eof()}};
 
-    auto it_ptr = irs::MakeConjunction<irs::ScoreMergeType::Noop>(
-      {}, detail::ExecuteAll<DocIteratorImpl>(docs));
+    auto it_ptr = irs::MakeConjunction(
+      irs::ScoreMergeType::Noop, {}, detail::ExecuteAll<DocIteratorImpl>(docs));
     auto& it = *it_ptr;
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -14239,8 +14247,8 @@ TEST(conjunction_test, seek) {
       {256, 256},
       {257, irs::doc_limits::eof()}};
 
-    auto it_ptr = irs::MakeConjunction<irs::ScoreMergeType::Noop>(
-      {}, detail::ExecuteAll<DocIteratorImpl>(docs));
+    auto it_ptr = irs::MakeConjunction(
+      irs::ScoreMergeType::Noop, {}, detail::ExecuteAll<DocIteratorImpl>(docs));
     auto& it = *it_ptr;
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -14259,8 +14267,8 @@ TEST(conjunction_test, seek) {
       {6, irs::doc_limits::eof()},
       {irs::doc_limits::invalid(), irs::doc_limits::eof()}};
 
-    auto it_ptr = irs::MakeConjunction<irs::ScoreMergeType::Noop>(
-      {}, detail::ExecuteAll<DocIteratorImpl>(docs));
+    auto it_ptr = irs::MakeConjunction(
+      irs::ScoreMergeType::Noop, {}, detail::ExecuteAll<DocIteratorImpl>(docs));
     auto& it = *it_ptr;
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -14289,8 +14297,8 @@ TEST(conjunction_test, seek) {
       {45, irs::doc_limits::eof()},
       {57, irs::doc_limits::eof()}};
 
-    auto it_ptr = irs::MakeConjunction<irs::ScoreMergeType::Noop>(
-      {}, detail::ExecuteAll<DocIteratorImpl>(docs));
+    auto it_ptr = irs::MakeConjunction(
+      irs::ScoreMergeType::Noop, {}, detail::ExecuteAll<DocIteratorImpl>(docs));
     auto& it = *it_ptr;
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -14318,8 +14326,8 @@ TEST(conjunction_test, seek) {
       {99, 99},
       {257, irs::doc_limits::eof()}};
 
-    auto it_ptr = irs::MakeConjunction<irs::ScoreMergeType::Noop>(
-      {}, detail::ExecuteAll<DocIteratorImpl>(docs));
+    auto it_ptr = irs::MakeConjunction(
+      irs::ScoreMergeType::Noop, {}, detail::ExecuteAll<DocIteratorImpl>(docs));
     auto& it = *it_ptr;
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -14343,8 +14351,8 @@ TEST(conjunction_test, seek_next) {
       {1, 4, 5, 6, 8, 12, 14, 29},
       {1, 4, 5, 8, 14}};
 
-    auto it_ptr = irs::MakeConjunction<irs::ScoreMergeType::Noop>(
-      {}, detail::ExecuteAll<DocIteratorImpl>(docs));
+    auto it_ptr = irs::MakeConjunction(
+      irs::ScoreMergeType::Noop, {}, detail::ExecuteAll<DocIteratorImpl>(docs));
     auto& it = *it_ptr;
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -14388,15 +14396,12 @@ TEST(conjunction_test, scored_seek_next) {
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14},
                       irs::Scorers::Prepare(sort4));
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum,
-      [&]<irs::ScoreMergeType MergeType> -> irs::DocIterator::ptr {
-        auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
-        return irs::MakeConjunction<MergeType>({}, std::move(res));
-      });
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      return irs::MakeConjunction(irs::ScoreMergeType::Sum, {}, std::move(res));
+    }();
 
-    using ExpectedType =
-      irs::Conjunction<irs::ScoreAdapter, irs::ScoreMergeType::Sum>;
+    using ExpectedType = irs::Conjunction<irs::ScoreAdapter>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -14452,15 +14457,13 @@ TEST(conjunction_test, scored_seek_next) {
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14},
                       irs::Scorers::Prepare(sort4));
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum,
-      [&]<irs::ScoreMergeType MergeType> -> irs::DocIterator::ptr {
-        auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
-        return irs::MakeConjunction<MergeType>({}, std::move(res));
-      });
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      return irs::MakeConjunction(irs::ScoreMergeType::Noop, {},
+                                  std::move(res));
+    }();
 
-    using ExpectedType =
-      irs::Conjunction<irs::ScoreAdapter, irs::ScoreMergeType::Noop>;
+    using ExpectedType = irs::Conjunction<irs::ScoreAdapter>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -14507,15 +14510,12 @@ TEST(conjunction_test, scored_seek_next) {
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14},
                       irs::Scorers::Prepare(sort5));
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum,
-      [&]<irs::ScoreMergeType MergeType> -> irs::DocIterator::ptr {
-        auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
-        return irs::MakeConjunction<MergeType>({}, std::move(res));
-      });
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      return irs::MakeConjunction(irs::ScoreMergeType::Sum, {}, std::move(res));
+    }();
 
-    using ExpectedType =
-      irs::Conjunction<irs::ScoreAdapter, irs::ScoreMergeType::Sum>;
+    using ExpectedType = irs::Conjunction<irs::ScoreAdapter>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -14571,15 +14571,12 @@ TEST(conjunction_test, scored_seek_next) {
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14},
                       irs::Scorers::Prepare(sort4));
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max,
-      [&]<irs::ScoreMergeType MergeType> -> irs::DocIterator::ptr {
-        auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
-        return irs::MakeConjunction<MergeType>({}, std::move(res));
-      });
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      return irs::MakeConjunction(irs::ScoreMergeType::Max, {}, std::move(res));
+    }();
 
-    using ExpectedType =
-      irs::Conjunction<irs::ScoreAdapter, irs::ScoreMergeType::Max>;
+    using ExpectedType = irs::Conjunction<irs::ScoreAdapter>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -14635,15 +14632,12 @@ TEST(conjunction_test, scored_seek_next) {
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14},
                       irs::Scorers::Prepare(sort4));
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum,
-      [&]<irs::ScoreMergeType MergeType> -> irs::DocIterator::ptr {
-        auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
-        return irs::MakeConjunction<MergeType>({}, std::move(res));
-      });
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      return irs::MakeConjunction(irs::ScoreMergeType::Sum, {}, std::move(res));
+    }();
 
-    using ExpectedType =
-      irs::Conjunction<irs::ScoreAdapter, irs::ScoreMergeType::Sum>;
+    using ExpectedType = irs::Conjunction<irs::ScoreAdapter>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -14699,15 +14693,12 @@ TEST(conjunction_test, scored_seek_next) {
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14},
                       irs::Scorers::Prepare(sort4));
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max,
-      [&]<irs::ScoreMergeType MergeType> -> irs::DocIterator::ptr {
-        auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
-        return irs::MakeConjunction<MergeType>({}, std::move(res));
-      });
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      return irs::MakeConjunction(irs::ScoreMergeType::Max, {}, std::move(res));
+    }();
 
-    using ExpectedType =
-      irs::Conjunction<irs::ScoreAdapter, irs::ScoreMergeType::Max>;
+    using ExpectedType = irs::Conjunction<irs::ScoreAdapter>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -14761,15 +14752,12 @@ TEST(conjunction_test, scored_seek_next) {
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14},
                       irs::Scorers{});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum,
-      [&]<irs::ScoreMergeType MergeType> -> irs::DocIterator::ptr {
-        auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
-        return irs::MakeConjunction<MergeType>({}, std::move(res));
-      });
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      return irs::MakeConjunction(irs::ScoreMergeType::Sum, {}, std::move(res));
+    }();
 
-    using ExpectedType =
-      irs::Conjunction<irs::ScoreAdapter, irs::ScoreMergeType::Sum>;
+    using ExpectedType = irs::Conjunction<irs::ScoreAdapter>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -14823,15 +14811,12 @@ TEST(conjunction_test, scored_seek_next) {
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14},
                       irs::Scorers{});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max,
-      [&]<irs::ScoreMergeType MergeType> -> irs::DocIterator::ptr {
-        auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
-        return irs::MakeConjunction<MergeType>({}, std::move(res));
-      });
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      return irs::MakeConjunction(irs::ScoreMergeType::Max, {}, std::move(res));
+    }();
 
-    using ExpectedType =
-      irs::Conjunction<irs::ScoreAdapter, irs::ScoreMergeType::Max>;
+    using ExpectedType = irs::Conjunction<irs::ScoreAdapter>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -14886,15 +14871,12 @@ TEST(conjunction_test, scored_seek_next) {
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14},
                       irs::Scorers::Prepare(sort4));
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum,
-      [&]<irs::ScoreMergeType MergeType> -> irs::DocIterator::ptr {
-        auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
-        return irs::MakeConjunction<MergeType>({}, std::move(res));
-      });
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      return irs::MakeConjunction(irs::ScoreMergeType::Sum, {}, std::move(res));
+    }();
 
-    using ExpectedType =
-      irs::Conjunction<irs::ScoreAdapter, irs::ScoreMergeType::Sum>;
+    using ExpectedType = irs::Conjunction<irs::ScoreAdapter>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -14949,15 +14931,12 @@ TEST(conjunction_test, scored_seek_next) {
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14},
                       irs::Scorers::Prepare(sort4));
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max,
-      [&]<irs::ScoreMergeType MergeType> -> irs::DocIterator::ptr {
-        auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
-        return irs::MakeConjunction<MergeType>({}, std::move(res));
-      });
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      return irs::MakeConjunction(irs::ScoreMergeType::Max, {}, std::move(res));
+    }();
 
-    using ExpectedType =
-      irs::Conjunction<irs::ScoreAdapter, irs::ScoreMergeType::Max>;
+    using ExpectedType = irs::Conjunction<irs::ScoreAdapter>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -15009,15 +14988,12 @@ TEST(conjunction_test, scored_seek_next) {
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14},
                       irs::Scorers{});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum,
-      [&]<irs::ScoreMergeType MergeType> -> irs::DocIterator::ptr {
-        auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
-        return irs::MakeConjunction<MergeType>({}, std::move(res));
-      });
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      return irs::MakeConjunction(irs::ScoreMergeType::Sum, {}, std::move(res));
+    }();
 
-    using ExpectedType =
-      irs::Conjunction<irs::ScoreAdapter, irs::ScoreMergeType::Sum>;
+    using ExpectedType = irs::Conjunction<irs::ScoreAdapter>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -15069,15 +15045,12 @@ TEST(conjunction_test, scored_seek_next) {
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14},
                       irs::Scorers{});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max,
-      [&]<irs::ScoreMergeType MergeType> -> irs::DocIterator::ptr {
-        auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
-        return irs::MakeConjunction<MergeType>({}, std::move(res));
-      });
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      return irs::MakeConjunction(irs::ScoreMergeType::Max, {}, std::move(res));
+    }();
 
-    using ExpectedType =
-      irs::Conjunction<irs::ScoreAdapter, irs::ScoreMergeType::Max>;
+    using ExpectedType = irs::Conjunction<irs::ScoreAdapter>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 

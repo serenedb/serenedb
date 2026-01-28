@@ -114,7 +114,7 @@ DocIterator::ptr MakeWeakDisjunction(WandContext ctx,
 
   if (min_match == size) {
     // Pure conjunction
-    return MakeConjunction<WeakConjunction::kMergeType>(ctx, std::move(itrs));
+    return MakeConjunction(WeakConjunction::kMergeType, ctx, std::move(itrs));
   }
 
   if (ctx.Enabled()) {

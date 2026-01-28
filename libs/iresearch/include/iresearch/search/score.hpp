@@ -88,7 +88,7 @@ void Merge(score_t& bucket, score_t arg) noexcept {
   } else if constexpr (MergeType == ScoreMergeType::Max) {
     bucket = std::max(bucket, arg);
   } else {
-    static_assert(false);
+    static_assert(MergeType == ScoreMergeType::Noop);
   }
 }
 

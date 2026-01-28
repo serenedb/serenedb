@@ -36,14 +36,14 @@ constexpr IndexFeatures kRequireOffs =
 
 template<bool OneShot, bool HasFreq, bool HasIntervals>
 using FixedPhraseIterator =
-  PhraseIterator<Conjunction<ScoreAdapter, ScoreMergeType::Noop>,
+  PhraseIterator<Conjunction<ScoreAdapter>,
                  FixedPhraseFrequency<OneShot, HasFreq, HasIntervals>>;
 
 // FIXME add proper handling of overlapped case
 template<typename Adapter, bool VolatileBoost, bool OneShot, bool HasFreq,
          bool HasIntervals>
 using VariadicPhraseIterator =
-  PhraseIterator<Conjunction<ScoreAdapter, ScoreMergeType::Noop>,
+  PhraseIterator<Conjunction<ScoreAdapter>,
                  VariadicPhraseFrequency<Adapter, VolatileBoost, OneShot,
                                          HasFreq, HasIntervals>>;
 
@@ -138,7 +138,7 @@ DocIterator::ptr FixedPhraseQuery::ExecuteWithOffsets(
 
   return ResolveBool(has_intervals, [&]<bool HasIntervals> -> DocIterator::ptr {
     using FixedPhraseIterator = PhraseIterator<
-      Conjunction<ScoreAdapter, ScoreMergeType::Noop>,
+      Conjunction<ScoreAdapter>,
       PhrasePosition<FixedPhraseFrequency<true, false, HasIntervals>>>;
 
     ScoreAdapters itrs;
@@ -356,7 +356,7 @@ DocIterator::ptr VariadicPhraseQuery::ExecuteWithOffsets(
 
   return ResolveBool(has_intervals, [&]<bool HasIntervals> -> DocIterator::ptr {
     using VariadicPhraseIterator =
-      PhraseIterator<Conjunction<ScoreAdapter, ScoreMergeType::Noop>,
+      PhraseIterator<Conjunction<ScoreAdapter>,
                      PhrasePosition<VariadicPhraseFrequency<
                        Adapter, false, true, false, HasIntervals>>>;
 

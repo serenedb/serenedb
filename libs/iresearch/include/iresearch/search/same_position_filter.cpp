@@ -44,10 +44,13 @@ class SamePositionIterator : public DocIterator {
   using Positions = std::vector<PosAttr::ref>;
 
   template<typename... Args>
-  SamePositionIterator(Positions&& pos, Args&&... args)
-    : _approx{std::forward<Args>(args)...}, _pos(std::move(pos)) {
+  SamePositionIterator(ScoreMergeType merge_type, Positions&& pos,
+                       Args&&... args)
+    : _approx{merge_type, std::forward<Args>(args)...}, _pos(std::move(pos)) {
     SDB_ASSERT(!_pos.empty());
   }
+
+  void PrepareScore(const PrepareScoreContext& ctx) {}
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return _approx.GetMutable(type);
@@ -164,12 +167,9 @@ class SamePositionQuery : public Filter::Query {
       ++term_stats;
     }
 
-    return ResolveMergeType(
-      ScoreMergeType::Sum, [&]<ScoreMergeType MergeType> -> DocIterator::ptr {
-        return MakeConjunction<MergeType, SamePositionIterator>(
-          // TODO(mbkkt) Implement wand?
-          {}, std::move(itrs), std::move(positions));
-      });
+    // TODO(mbkkt) Implement wand?
+    return MakeConjunction<SamePositionIterator>(
+      ScoreMergeType::Noop, {}, std::move(itrs), std::move(positions));
   }
 
   score_t Boost() const noexcept final { return _boost; }

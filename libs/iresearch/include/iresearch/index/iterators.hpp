@@ -38,6 +38,12 @@
 
 namespace irs {
 
+struct PrepareScoreContext {
+  const Scorer* scorer = nullptr;
+  const SubReader* segment = nullptr;
+  ColumnCollector* collector;
+};
+
 // An iterator providing sequential and random access to a posting list
 //
 // After creation iterator is in uninitialized state:

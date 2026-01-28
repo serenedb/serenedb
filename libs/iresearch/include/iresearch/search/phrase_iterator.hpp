@@ -26,6 +26,7 @@
 #include <iresearch/search/column_collector.hpp>
 #include <iresearch/search/filter.hpp>
 #include <iresearch/search/score_function.hpp>
+#include <iresearch/search/scorer.hpp>
 
 #include "basics/empty.hpp"
 #include "disjunction.hpp"
@@ -900,13 +901,15 @@ class PhraseIterator : public DocIterator {
   using TermPosition = typename Frequency::TermPosition;
 
   PhraseIterator(ScoreAdapters&& itrs, std::vector<TermPosition>&& pos)
-    : _approx{[](auto&& itrs) {
-        absl::c_sort(itrs, [](const auto& lhs, const auto& rhs) noexcept {
-          return CostAttr::extract(lhs, CostAttr::kMax) <
-                 CostAttr::extract(rhs, CostAttr::kMax);
-        });
-        return std::move(itrs);
-      }(std::move(itrs))},
+    : _approx{ScoreMergeType::Noop,
+              [](auto&& itrs) {
+                absl::c_sort(itrs,
+                             [](const auto& lhs, const auto& rhs) noexcept {
+                               return CostAttr::extract(lhs, CostAttr::kMax) <
+                                      CostAttr::extract(rhs, CostAttr::kMax);
+                             });
+                return std::move(itrs);
+              }(std::move(itrs))},
       _freq{std::move(pos)} {
     std::get<AttributePtr<DocAttr>>(_attrs) =
       irs::GetMutable<DocAttr>(&_approx);

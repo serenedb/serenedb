@@ -107,11 +107,8 @@ DocIterator::ptr MakeConjunction(const ExecutionContext& ctx,
     return DocIterator::empty();
   }
 
-  return irs::ResolveMergeType(
-    merge_type, [&]<ScoreMergeType MergeType>() -> DocIterator::ptr {
-      return irs::MakeConjunction<MergeType>(ctx.wand, std::move(itrs),
-                                             std::forward<Args>(args)...);
-    });
+  return irs::MakeConjunction(merge_type, ctx.wand, std::move(itrs),
+                              std::forward<Args>(args)...);
 }
 
 }  // namespace

@@ -34,8 +34,8 @@ namespace {
 
 class ColumnExistenceQuery : public Filter::Query {
  public:
-  ColumnExistenceQuery(std::string_view field, bstring&& stats, score_t boost)
-    : _field{field}, _stats{std::move(stats)}, _boost{boost} {}
+  ColumnExistenceQuery(std::string_view field, score_t boost)
+    : _field{field}, _boost{boost} {}
 
   DocIterator::ptr execute(const ExecutionContext& ctx) const override {
     const auto& segment = ctx.segment;
@@ -83,10 +83,9 @@ class ColumnExistenceQuery : public Filter::Query {
 
 class ColumnPrefixExistenceQuery : public ColumnExistenceQuery {
  public:
-  ColumnPrefixExistenceQuery(std::string_view prefix, bstring&& stats,
+  ColumnPrefixExistenceQuery(std::string_view prefix,
                              const ColumnAcceptor& acceptor, score_t boost)
-    : ColumnExistenceQuery{prefix, std::move(stats), boost},
-      _acceptor{acceptor} {
+    : ColumnExistenceQuery{prefix, boost}, _acceptor{acceptor} {
     SDB_ASSERT(_acceptor);
   }
 
@@ -134,20 +133,15 @@ Filter::Query::ptr ByColumnExistence::prepare(const PrepareContext& ctx) const {
   // skip field-level/term-level statistics because there are no explicit
   // fields/terms, but still collect index-level statistics
   // i.e. all fields and terms implicitly match
-  bstring stats(ctx.scorers.stats_size(), 0);
-  auto* stats_buf = stats.data();
-
-  PrepareCollectors(ctx.scorers.buckets(), stats_buf);
 
   const auto filter_boost = ctx.boost * Boost();
 
   auto& acceptor = options().acceptor;
 
-  return acceptor
-           ? memory::make_tracked<ColumnPrefixExistenceQuery>(
-               ctx.memory, field(), std::move(stats), acceptor, filter_boost)
-           : memory::make_tracked<ColumnExistenceQuery>(
-               ctx.memory, field(), std::move(stats), filter_boost);
+  return acceptor ? memory::make_tracked<ColumnPrefixExistenceQuery>(
+                      ctx.memory, field(), acceptor, filter_boost)
+                  : memory::make_tracked<ColumnExistenceQuery>(
+                      ctx.memory, field(), filter_boost);
 }
 
 }  // namespace irs

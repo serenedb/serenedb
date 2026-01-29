@@ -2733,6 +2733,10 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node) {
       state.pgsql_node = &node;
       return SqlCommandType::Show;
     }
+    case T_VacuumStmt: {
+      state.pgsql_node = &node;
+      return SqlCommandType::DDL;
+    }
     default:
       SDB_ENSURE(false, ERROR_INTERNAL);
       return SqlCommandType::Unknown;

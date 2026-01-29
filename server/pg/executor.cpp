@@ -76,6 +76,10 @@ yaclib::Future<Result> Executor::Execute() {
       const auto& stmt = *castNode(CreateSchemaStmt, &_node);
       return CreateSchema(*_context, stmt);
     }
+    case NodeTag::T_VacuumStmt: {
+      const auto& stmt = *castNode(VacuumStmt, &_node);
+      return Vacuum(*_context, stmt);
+    }
     default:
       SDB_UNREACHABLE();
   }

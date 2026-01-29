@@ -56,13 +56,7 @@ SSTSinkWriter::SSTSinkWriter(rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
   auto options = _db->GetOptions(_cf);
   options.PrepareForBulkLoad();
 
-  // rocksdb::BlockBasedTableOptions table_options;
-  // table_options.filter_policy = nullptr;
-  // options.table_factory.reset(
-  //   rocksdb::NewBlockBasedTableFactory(table_options));
-  // options.compression = rocksdb::kNoCompression;
-  // options.compression_per_level.clear();
-
+ 
   std::filesystem::create_directories(_sst_directory);
   for (size_t i = 0; i < _writers.size(); ++i) {
     if (column_oids[i] == catalog::Column::kGeneratedPKId) {
@@ -78,8 +72,6 @@ SSTSinkWriter::SSTSinkWriter(rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
       SDB_THROW(rocksutils::ConvertStatus(status));
     }
   }
-
-  std::cerr << "new sst sink writer " << '\n';
 }
 
 void SSTSinkWriter::Write(std::span<const rocksdb::Slice> cell_slices,

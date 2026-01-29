@@ -92,7 +92,7 @@ COPY tindex TO '/tmp/${__DATABASE__}_lmao' WITH (FORMAT CSV, HEADER TRUE);
 
 onlyif serenedb
 query
-COPY reversed(id, name) FROM '/tmp/kal' WITH (EXPLAIN LOGICAL, EXPLAIN EXECUTION, FORMAT CSV, HEADER TRUE);
+COPY reversed(id, name) FROM '/tmp/${__DATABASE__}_lmao' WITH (EXPLAIN LOGICAL, EXPLAIN EXECUTION, FORMAT CSV, HEADER TRUE);
 ----
 QUERY PLAN
 LOGICAL PLAN:
@@ -104,7 +104,7 @@ LOGICAL PLAN:
       - Project: -> ROW<"id":INTEGER,"name":VARCHAR>
           id := id
           name := name
-        - TableScan: /tmp/kal -> ROW<"id":INTEGER,"name":VARCHAR>
+        - TableScan: /tmp/${__DATABASE__}_lmao -> ROW<"id":INTEGER,"name":VARCHAR>
 EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
 -- TableWrite[4][serenedb(table=reversed, kind=INSERT)] -> rows:BIGINT

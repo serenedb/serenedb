@@ -31,8 +31,22 @@
 
 #include "basics/assert.h"
 #include "basics/fwd.h"
+#include "basics/message_buffer.h"
 
 namespace sdb::connector {
+
+using ReportCallback = std::function<void(uint64_t)>;
+
+struct WriterOptions {
+  std::shared_ptr<velox::dwio::common::WriterOptions> dwio;
+};
+
+struct ReaderOptions {
+  std::shared_ptr<velox::dwio::common::ReaderOptions> dwio;
+  std::shared_ptr<velox::dwio::common::RowReaderOptions> row_reader;
+  // if set then progress messages are written here
+  ReportCallback report_callback;
+};
 
 class FileTable : public axiom::connector::Table {
  public:
@@ -57,43 +71,30 @@ class FileTable : public axiom::connector::Table {
 
 class ReadFileTable final : public FileTable {
  public:
-  ReadFileTable(
-    velox::RowTypePtr type, std::string_view file_path,
-    std::shared_ptr<velox::ReadFile> source,
-    std::shared_ptr<velox::dwio::common::ReaderOptions> reader_options,
-    std::shared_ptr<velox::dwio::common::RowReaderOptions> row_reader_options)
+  ReadFileTable(velox::RowTypePtr type, std::string_view file_path,
+                std::shared_ptr<velox::ReadFile> source,
+                std::shared_ptr<ReaderOptions> options)
     : FileTable{std::move(type), file_path},
       _source{std::move(source)},
-      _reader_options{std::move(reader_options)},
-      _row_reader_options{std::move(row_reader_options)} {}
+      _options{std::move(options)} {}
 
   std::shared_ptr<velox::ReadFile> GetSource() const { return _source; }
 
-  const std::shared_ptr<velox::dwio::common::ReaderOptions>& GetReaderOptions()
-    const {
-    return _reader_options;
-  }
-
-  const std::shared_ptr<velox::dwio::common::RowReaderOptions>&
-  GetRowReaderOptions() const {
-    return _row_reader_options;
-  }
+  const std::shared_ptr<ReaderOptions>& GetOptions() const { return _options; }
 
  private:
   std::shared_ptr<velox::ReadFile> _source;
-  std::shared_ptr<velox::dwio::common::ReaderOptions> _reader_options;
-  std::shared_ptr<velox::dwio::common::RowReaderOptions> _row_reader_options;
+  std::shared_ptr<ReaderOptions> _options;
 };
 
 class WriteFileTable final : public FileTable {
  public:
-  WriteFileTable(
-    velox::RowTypePtr type, std::string_view file_path,
-    std::unique_ptr<velox::WriteFile> sink,
-    std::shared_ptr<velox::dwio::common::WriterOptions> writer_options)
+  WriteFileTable(velox::RowTypePtr type, std::string_view file_path,
+                 std::unique_ptr<velox::WriteFile> sink,
+                 std::shared_ptr<WriterOptions> options)
     : FileTable{std::move(type), file_path},
       _sink{std::move(sink)},
-      _writer_options{std::move(writer_options)} {
+      _options{std::move(options)} {
     SDB_ASSERT(_sink);
   }
 
@@ -102,26 +103,20 @@ class WriteFileTable final : public FileTable {
     return std::move(_sink);
   }
 
-  const std::shared_ptr<velox::dwio::common::WriterOptions>& GetWriterOptions()
-    const {
-    return _writer_options;
-  }
+  const std::shared_ptr<WriterOptions>& GetOptions() const { return _options; }
 
  private:
   mutable std::unique_ptr<velox::WriteFile> _sink;
-  std::shared_ptr<velox::dwio::common::WriterOptions> _writer_options;
+  std::shared_ptr<WriterOptions> _options;
 };
 
 class FileTableHandle final : public velox::connector::ConnectorTableHandle {
  public:
-  FileTableHandle(
-    std::shared_ptr<velox::ReadFile> source,
-    std::shared_ptr<velox::dwio::common::ReaderOptions> reader_options,
-    std::shared_ptr<velox::dwio::common::RowReaderOptions> row_reader_options)
+  FileTableHandle(std::shared_ptr<velox::ReadFile> source,
+                  std::shared_ptr<ReaderOptions> options)
     : velox::connector::ConnectorTableHandle{"serenedb"},
       _source{std::move(source)},
-      _reader_options{std::move(reader_options)},
-      _row_reader_options{std::move(row_reader_options)} {}
+      _options{std::move(options)} {}
 
   const std::string& name() const final {
     static constexpr std::string kName = "FileTableHandle";
@@ -131,29 +126,19 @@ class FileTableHandle final : public velox::connector::ConnectorTableHandle {
 
   std::shared_ptr<velox::ReadFile> GetSource() const { return _source; }
 
-  const std::shared_ptr<velox::dwio::common::ReaderOptions>& GetReaderOptions()
-    const {
-    return _reader_options;
-  }
-
-  const std::shared_ptr<velox::dwio::common::RowReaderOptions>&
-  GetRowReaderOptions() const {
-    return _row_reader_options;
-  }
+  const std::shared_ptr<ReaderOptions>& GetOptions() const { return _options; }
 
  private:
   std::shared_ptr<velox::ReadFile> _source;
-  std::shared_ptr<velox::dwio::common::ReaderOptions> _reader_options;
-  std::shared_ptr<velox::dwio::common::RowReaderOptions> _row_reader_options;
+  std::shared_ptr<ReaderOptions> _options;
 };
 
 class FileInsertTableHandle final
   : public velox::connector::ConnectorInsertTableHandle {
  public:
-  FileInsertTableHandle(
-    std::unique_ptr<velox::WriteFile> sink,
-    std::shared_ptr<velox::dwio::common::WriterOptions> writer_options)
-    : _sink{std::move(sink)}, _writer_options{std::move(writer_options)} {
+  FileInsertTableHandle(std::unique_ptr<velox::WriteFile> sink,
+                        std::shared_ptr<WriterOptions> options)
+    : _sink{std::move(sink)}, _options{std::move(options)} {
     SDB_ASSERT(_sink);
   }
 
@@ -166,31 +151,27 @@ class FileInsertTableHandle final
     return std::move(_sink);
   }
 
-  const std::shared_ptr<velox::dwio::common::WriterOptions>& GetWriterOptions()
-    const {
-    return _writer_options;
-  }
+  const std::shared_ptr<WriterOptions>& GetOptions() const { return _options; }
 
  private:
   mutable std::unique_ptr<velox::WriteFile> _sink;
-  std::shared_ptr<velox::dwio::common::WriterOptions> _writer_options;
+  std::shared_ptr<WriterOptions> _options;
 };
 
 class FileConnectorWriteHandle final
   : public axiom::connector::ConnectorWriteHandle {
  public:
-  FileConnectorWriteHandle(
-    std::unique_ptr<velox::WriteFile> sink,
-    std::shared_ptr<velox::dwio::common::WriterOptions> writer_options)
+  FileConnectorWriteHandle(std::unique_ptr<velox::WriteFile> sink,
+                           std::shared_ptr<WriterOptions> options)
     : ConnectorWriteHandle{std::make_shared<FileInsertTableHandle>(
-                             std::move(sink), std::move(writer_options)),
+                             std::move(sink), std::move(options)),
                            velox::ROW("rows", velox::BIGINT())} {}
 };
 
 class FileDataSink final : public velox::connector::DataSink {
  public:
   FileDataSink(std::unique_ptr<velox::WriteFile> sink,
-               std::shared_ptr<velox::dwio::common::WriterOptions> options,
+               std::shared_ptr<WriterOptions> options,
                velox::memory::MemoryPool& memory_pool);
 
   void appendData(velox::RowVectorPtr input) final;
@@ -211,11 +192,9 @@ class FileDataSink final : public velox::connector::DataSink {
 
 class FileDataSource final : public velox::connector::DataSource {
  public:
-  FileDataSource(
-    std::shared_ptr<velox::ReadFile> source,
-    std::shared_ptr<velox::dwio::common::ReaderOptions> options,
-    std::shared_ptr<velox::dwio::common::RowReaderOptions> row_reader_options,
-    velox::memory::MemoryPool& memory_pool);
+  FileDataSource(std::shared_ptr<velox::ReadFile> source,
+                 std::shared_ptr<ReaderOptions> options,
+                 velox::memory::MemoryPool& memory_pool);
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final {
   }
@@ -227,7 +206,7 @@ class FileDataSource final : public velox::connector::DataSource {
     velox::column_index_t output_channel,
     const std::shared_ptr<velox::common::Filter>& filter) final {}
 
-  uint64_t getCompletedBytes() final { return _completed_bytes; }
+  uint64_t getCompletedBytes() final { return 0; }
 
   uint64_t getCompletedRows() final { return _completed_rows; }
 
@@ -238,7 +217,8 @@ class FileDataSource final : public velox::connector::DataSource {
   std::shared_ptr<velox::dwio::common::RowReaderOptions> _row_reader_options;
 
   uint64_t _completed_rows = 0;
-  uint64_t _completed_bytes = 0;
+  std::chrono::high_resolution_clock::time_point _last_report_time;
+  ReportCallback _report_callback;
 };
 
 }  // namespace sdb::connector

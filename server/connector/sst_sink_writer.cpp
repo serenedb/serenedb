@@ -37,51 +37,6 @@
 
 namespace sdb::connector {
 
-// Debug function to decode and print full_key
-// Assumes PK is single INTEGER column (int32_t)
-void DebugPrintDecodedKey(std::string_view full_key) {
-  constexpr size_t kObjectIdSize = sizeof(ObjectId);             // 8 bytes
-  constexpr size_t kColumnIdSize = sizeof(catalog::Column::Id);  // 8 bytes
-  constexpr size_t kHeaderSize = kObjectIdSize + kColumnIdSize;
-
-  if (full_key.size() < kHeaderSize) {
-    std::cerr << "[DecodeKey] Error: key too short (" << full_key.size()
-              << " bytes)" << '\n';
-    return;
-  }
-
-  // ObjectId: raw little-endian uint64_t
-  uint64_t object_id_raw;
-  std::memcpy(&object_id_raw, full_key.data(), kObjectIdSize);
-
-  // Column::Id: big-endian uint64_t
-  auto column_id = absl::big_endian::Load<catalog::Column::Id>(full_key.data() +
-                                                               kObjectIdSize);
-
-  // Primary key portion
-  std::string_view row_key = full_key.substr(kHeaderSize);
-
-  std::cerr << "[DecodeKey] object_id=" << object_id_raw
-            << ", column_id=" << column_id;
-
-  // Decode PK based on size (int64_t for generated PK, int32_t for INTEGER)
-  if (row_key.size() == sizeof(int64_t)) {
-    // int64_t: big-endian with sign bit flipped
-    auto pk_raw = absl::big_endian::Load<uint64_t>(row_key.data());
-    pk_raw ^= static_cast<uint64_t>(1) << 63;
-    int64_t pk_value = std::bit_cast<int64_t>(pk_raw);
-    std::cerr << ", pk(int64)=" << pk_value;
-  } else if (row_key.size() >= sizeof(int32_t)) {
-    // int32_t: big-endian with sign bit flipped
-    auto pk_raw = absl::big_endian::Load<uint32_t>(row_key.data());
-    pk_raw ^= static_cast<uint32_t>(1) << 31;
-    int32_t pk_value = std::bit_cast<int32_t>(pk_raw);
-    std::cerr << ", pk(int32)=" << pk_value;
-  }
-
-  std::cerr << ", row_key_size=" << row_key.size() << '\n';
-}
-
 std::string GenerateSSTDirPath(std::string_view rocksdb_directory) {
   auto now = std::chrono::system_clock::now();
   auto timestamp =
@@ -135,9 +90,6 @@ void SSTSinkWriter::Write(std::span<const rocksdb::Slice> cell_slices,
 
   rocksdb::Slice key_slice{full_key};
   rocksdb::Status status;
-
-  // DebugPrintDecodedKey(full_key);
-
   auto& writer = *_writers[_column_idx];
   if (cell_slices.size() == 1) {
     status = writer.Put(key_slice, cell_slices.front());

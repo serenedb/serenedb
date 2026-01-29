@@ -53,8 +53,6 @@ class RocksDBSinkWriter : public RocksDBSinkWriterBase {
 
   void SetColumnIndex(size_t /*column_idx*/) {}
 
-  void Abort() {}
-
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key);
   std::unique_ptr<rocksdb::Iterator> CreateIterator();

@@ -56,7 +56,13 @@ SSTSinkWriter::SSTSinkWriter(rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
   auto options = _db->GetOptions(_cf);
   options.PrepareForBulkLoad();
 
- 
+  rocksdb::BlockBasedTableOptions table_options;
+  table_options.filter_policy = nullptr;
+  options.table_factory.reset(
+    rocksdb::NewBlockBasedTableFactory(table_options));
+  options.compression = rocksdb::kNoCompression;
+  options.compression_per_level.clear();
+
   std::filesystem::create_directories(_sst_directory);
   for (size_t i = 0; i < _writers.size(); ++i) {
     if (column_oids[i] == catalog::Column::kGeneratedPKId) {
@@ -65,8 +71,8 @@ SSTSinkWriter::SSTSinkWriter(rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
 
     _writers[i] =
       std::make_unique<rocksdb::SstFileWriter>(rocksdb::EnvOptions{}, options);
-    auto sst_file_path = absl::StrCat(_sst_directory, "/", "column_", i, "_",
-                                      random::RandU64(), ".sst");
+    auto sst_file_path =
+      absl::StrCat(_sst_directory, "/", "column_", i, "_.sst");
     auto status = _writers[i]->Open(sst_file_path);
     if (!status.ok()) {
       SDB_THROW(rocksutils::ConvertStatus(status));

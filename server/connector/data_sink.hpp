@@ -53,7 +53,7 @@ class RocksDBDataSinkBase : public velox::connector::DataSink {
  public:
   bool finish() override;
   std::vector<std::string> close() final;
-  void abort() final;
+  void abort() override;
   Stats stats() const final;
 
  protected:
@@ -270,6 +270,11 @@ class SSTInsertDataSink final
   bool finish() final {
     _data_writer.Finish();
     return true;
+  }
+
+  void abort() final {
+    _data_writer.Abort();
+    RocksDBDataSinkBase<SSTSinkWriter, SinkInsertWriter>::abort();
   }
 };
 

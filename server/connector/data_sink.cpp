@@ -2309,8 +2309,6 @@ void RocksDBDataSinkBase<DataWriterType, SubWriterType>::abort() {
   // Transaction itself should be contolled outside and needed SavePoint should
   // be set.
   ResetForNewRow();
-
-  _data_writer.Abort();
   // TODO(Dronplane) should we also shrink slice vector to save some memory?
   for (const auto& writer : _index_writers) {
     writer->Abort();

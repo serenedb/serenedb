@@ -36,35 +36,43 @@ namespace irs {
 namespace {
 
 template<typename Conjunction>
-class SamePositionIterator : public Conjunction {
+class SamePositionIterator : public DocIterator {
  public:
-  typedef std::vector<PosAttr::ref> PositionsT;
+  using Positions = std::vector<PosAttr::ref>;
 
   template<typename... Args>
-  SamePositionIterator(PositionsT&& pos, Args&&... args)
-    : Conjunction{std::forward<Args>(args)...}, _pos(std::move(pos)) {
+  SamePositionIterator(Positions&& pos, Args&&... args)
+    : _approx{std::forward<Args>(args)...}, _pos(std::move(pos)) {
     SDB_ASSERT(!_pos.empty());
   }
 
-  bool next() final {
-    while (Conjunction::next()) {
-      if (FindSamePosition()) {
-        return true;
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+    return _approx.GetMutable(type);
+  }
+
+  doc_id_t value() const noexcept final { return _approx.value(); }
+
+  doc_id_t advance() final {
+    while (true) {
+      const auto doc = _approx.advance();
+      if (doc_limits::eof(doc) || FindSamePosition()) {
+        return doc;
       }
     }
-    return false;
   }
 
   doc_id_t seek(doc_id_t target) final {
-    const auto doc = Conjunction::seek(target);
-
+    if (const auto doc = this->value(); target <= doc) [[unlikely]] {
+      return doc;
+    }
+    const auto doc = _approx.seek(target);
     if (doc_limits::eof(doc) || FindSamePosition()) {
       return doc;
     }
-
-    next();
-    return this->value();
+    return advance();
   }
+
+  uint32_t count() final { return DocIterator::Count(*this); }
 
  private:
   bool FindSamePosition() {
@@ -87,10 +95,11 @@ class SamePositionIterator : public Conjunction {
     return true;
   }
 
-  PositionsT _pos;
+  Conjunction _approx;
+  Positions _pos;
 };
 
-class SamePositionQuery : public Filter::Prepared {
+class SamePositionQuery : public Filter::Query {
  public:
   using TermsStatesT = ManagedVector<TermState>;
   using StatesT = StatesCache<TermsStatesT>;
@@ -130,41 +139,38 @@ class SamePositionQuery : public Filter::Prepared {
       auto* reader = term_state.reader;
       SDB_ASSERT(reader);
 
-      // get postings
-      auto docs = reader->postings(*term_state.cookie, features);
-      SDB_ASSERT(docs);
+      auto docs = reader->Iterator(features, *term_state.cookie);
+      if (!docs) {
+        return DocIterator::empty();
+      }
 
-      // get needed postings attributes
       auto* pos = irs::GetMutable<PosAttr>(docs.get());
-
       if (!pos) {
-        // positions not found
         return DocIterator::empty();
       }
 
       positions.emplace_back(std::ref(*pos));
 
       if (!no_score) {
-        auto* score = irs::GetMutable<irs::ScoreAttr>(docs.get());
+        auto* score = irs::GetMutable<ScoreAttr>(docs.get());
         SDB_ASSERT(score);
 
         CompileScore(*score, ord.buckets(), segment, *term_state.reader,
                      term_stats->c_str(), *docs, _boost);
       }
 
-      // add iterator
       itrs.emplace_back(std::move(docs));
 
       ++term_stats;
     }
 
-    return irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, ord.buckets().size(),
-      [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-        return MakeConjunction<SamePositionIterator>(
-          // TODO(mbkkt) Implement wand?
-          {}, std::move(aggregator), std::move(itrs), std::move(positions));
-      });
+    return ResolveMergeType(ScoreMergeType::Sum, ord.buckets().size(),
+                            [&]<typename A>(A&& aggregator) {
+                              // TODO(mbkkt) Implement wand?
+                              return MakeConjunction<SamePositionIterator>(
+                                {}, std::move(aggregator), std::move(itrs),
+                                std::move(positions));
+                            });
   }
 
   score_t Boost() const noexcept final { return _boost; }
@@ -177,13 +183,13 @@ class SamePositionQuery : public Filter::Prepared {
 
 }  // namespace
 
-Filter::Prepared::ptr BySamePosition::prepare(const PrepareContext& ctx) const {
+Filter::Query::ptr BySamePosition::prepare(const PrepareContext& ctx) const {
   auto& terms = options().terms;
   const auto size = terms.size();
 
   if (0 == size) {
     // empty field or phrase
-    return Filter::Prepared::empty();
+    return Filter::Query::empty();
   }
 
   // per segment query state

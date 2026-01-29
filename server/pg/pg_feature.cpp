@@ -21,6 +21,8 @@
 #include "pg_feature.h"
 
 #include <axiom/optimizer/FunctionRegistry.h>
+#include <velox/dwio/text/RegisterTextReader.h>
+#include <velox/dwio/text/RegisterTextWriter.h>
 #include <velox/functions/prestosql/aggregates/RegisterAggregateFunctions.h>
 #include <velox/functions/prestosql/registration/RegistrationFunctions.h>
 #include <velox/functions/prestosql/types/HyperLogLogRegistration.h>
@@ -54,8 +56,6 @@
 #include "storage_engine/engine_feature.h"
 
 namespace sdb::pg {
-
-static constexpr std::string kConnectorId = "serenedb";
 
 PostgresFeature::PostgresFeature(SerenedServer& server)
   : SerenedFeature{server, name()} {
@@ -155,6 +155,9 @@ void PostgresFeature::prepare() {
 
   velox::Type::registerSerDe();
 
+  velox::text::registerTextReaderFactory();
+  velox::text::registerTextWriterFactory();
+
   // TODO(mbkkt) velox::registerGeometryType();
   velox::registerHyperLogLogType();
   velox::registerIPAddressType();
@@ -193,12 +196,12 @@ void PostgresFeature::start() {
     SDB_ASSERT(cf);
 
     auto connector = std::make_shared<connector::SereneDBConnector>(
-      kConnectorId, nullptr, *engine.db(), *cf);
+      StaticStrings::kSereneDBConnector, nullptr, *engine.db(), *cf);
     velox::connector::registerConnector(std::move(connector));
     auto connector_metadata =
       std::make_shared<connector::SereneDBConnectorMetadata>();
-    axiom::connector::ConnectorMetadata::registerMetadata(kConnectorId,
-                                                          connector_metadata);
+    axiom::connector::ConnectorMetadata::registerMetadata(
+      StaticStrings::kSereneDBConnector, connector_metadata);
   }
 }
 

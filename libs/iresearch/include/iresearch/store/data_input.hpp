@@ -146,8 +146,7 @@ class InputBuf final : public std::streambuf, util::Noncopyable {
 
   int_type underflow() final;
 
-  operator IndexInput&() { return *_in; }  // cppcheck-suppress syntaxError
-
+  operator IndexInput&() { return *_in; }
   IndexInput* Internal() const { return _in; }
 
  private:

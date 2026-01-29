@@ -29,7 +29,7 @@
 namespace irs {
 namespace {
 
-class ColumnExistenceQuery : public Filter::Prepared {
+class ColumnExistenceQuery : public Filter::Query {
  public:
   ColumnExistenceQuery(std::string_view field, bstring&& stats, score_t boost)
     : _field{field}, _stats{std::move(stats)}, _boost{boost} {}
@@ -62,7 +62,7 @@ class ColumnExistenceQuery : public Filter::Prepared {
     }
 
     if (!ord.empty()) {
-      if (auto* score = irs::GetMutable<irs::ScoreAttr>(it.get()); score) {
+      if (auto* score = irs::GetMutable<ScoreAttr>(it.get())) {
         CompileScore(*score, ord.buckets(), segment,
                      EmptyTermReader(column.size()), _stats.c_str(), *it,
                      _boost);
@@ -86,9 +86,7 @@ class ColumnPrefixExistenceQuery : public ColumnExistenceQuery {
     SDB_ASSERT(_acceptor);
   }
 
-  irs::DocIterator::ptr execute(const ExecutionContext& ctx) const final {
-    using AdapterT = irs::ScoreAdapter<>;
-
+  DocIterator::ptr execute(const ExecutionContext& ctx) const final {
     SDB_ASSERT(_acceptor);
 
     auto& segment = ctx.segment;
@@ -99,12 +97,12 @@ class ColumnPrefixExistenceQuery : public ColumnExistenceQuery {
 
     if (!it->seek(prefix)) {
       // reached the end
-      return irs::DocIterator::empty();
+      return DocIterator::empty();
     }
 
     const auto* column = &it->value();
 
-    std::vector<AdapterT> itrs;
+    ScoreAdapters itrs;
     for (; column->name().starts_with(prefix); column = &it->value()) {
       if (_acceptor(column->name(), prefix)) {
         itrs.emplace_back(Iterator(segment, *column, ord));
@@ -117,11 +115,10 @@ class ColumnPrefixExistenceQuery : public ColumnExistenceQuery {
 
     return ResolveMergeType(
       ScoreMergeType::Sum, ord.buckets().size(),
-      [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-        using DisjunctionT =
-          irs::disjunction_iterator<irs::DocIterator::ptr, A>;
-        return irs::MakeDisjunction<DisjunctionT>(ctx.wand, std::move(itrs),
-                                                  std::move(aggregator));
+      [&]<typename A>(A&& aggregator) {
+        using Disjunction = DisjunctionIterator<ScoreAdapter, A>;
+        return MakeDisjunction<Disjunction>(ctx.wand, std::move(itrs),
+                                            std::move(aggregator));
       });
   }
 
@@ -131,8 +128,7 @@ class ColumnPrefixExistenceQuery : public ColumnExistenceQuery {
 
 }  // namespace
 
-Filter::Prepared::ptr ByColumnExistence::prepare(
-  const PrepareContext& ctx) const {
+Filter::Query::ptr ByColumnExistence::prepare(const PrepareContext& ctx) const {
   // skip field-level/term-level statistics because there are no explicit
   // fields/terms, but still collect index-level statistics
   // i.e. all fields and terms implicitly match

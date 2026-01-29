@@ -34,42 +34,44 @@ namespace irs {
 
 class AllIterator : public DocIterator {
  public:
-  AllIterator(const irs::SubReader& reader, const byte_type* query_stats,
-              const irs::Scorers& order, uint64_t docs_count, score_t boost);
+  AllIterator(const SubReader& reader, const byte_type* query_stats,
+              const Scorers& order, uint64_t docs_count, score_t boost);
 
   Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
     return irs::GetMutable(_attrs, id);
   }
 
-  bool next() noexcept final {
-    auto& doc = std::get<DocAttr>(_attrs);
-
-    if (doc.value >= _max_doc) {
-      doc.value = doc_limits::eof();
-      return false;
-    } else {
-      doc.value++;
-      return true;
-    }
-  }
-
-  irs::doc_id_t seek(irs::doc_id_t target) noexcept final {
-    auto& doc = std::get<DocAttr>(_attrs);
-
-    doc.value = target <= _max_doc ? target : doc_limits::eof();
-
-    return doc.value;
-  }
-
-  irs::doc_id_t value() const noexcept final {
+  doc_id_t value() const noexcept final {
     return std::get<DocAttr>(_attrs).value;
   }
 
+  doc_id_t advance() noexcept final {
+    auto& doc_value = std::get<DocAttr>(_attrs).value;
+    doc_value = doc_value < _max_doc ? doc_value + 1 : doc_limits::eof();
+    return doc_value;
+  }
+
+  doc_id_t seek(doc_id_t target) noexcept final {
+    auto& doc_value = std::get<DocAttr>(_attrs).value;
+    doc_value = target <= _max_doc ? target : doc_limits::eof();
+    return doc_value;
+  }
+
+  uint32_t count() noexcept final {
+    auto& doc_value = std::get<DocAttr>(_attrs).value;
+    if (doc_limits::eof(doc_value)) {
+      return 0;
+    }
+    const auto count = _max_doc - doc_value;
+    doc_value = doc_limits::eof();
+    return count;
+  }
+
  private:
-  using attributes = std::tuple<DocAttr, CostAttr, ScoreAttr>;
+  using Attributes = std::tuple<DocAttr, CostAttr, ScoreAttr>;
 
   doc_id_t _max_doc;  // largest valid doc_id
-  attributes _attrs;
+  Attributes _attrs;
 };
 
 }  // namespace irs

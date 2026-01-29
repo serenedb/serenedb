@@ -51,7 +51,6 @@ static_assert(std::variant_size_v<ByNestedOptions::MatchType> == 2);
 
 const Scorers& GetOrder(const ByNestedOptions::MatchType& match,
                         const Scorers& ord) noexcept {
-  // cppcheck-suppress returnTempReference
   return std::visit(
     absl::Overload{[&](Match v) noexcept -> const Scorers& {
                      return kMatchNone == v ? Scorers::kUnordered : ord;
@@ -80,19 +79,25 @@ class ScorerWrapper : public DocIterator {
     _score = std::move(score);
   }
 
-  doc_id_t value() const final { return _it->value(); }
-
-  doc_id_t seek(doc_id_t target) final { return _it->seek(target); }
-
-  bool next() final { return _it->next(); }
-
-  Attribute* GetMutable(TypeInfo::type_id id) final {
+  Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
     if (irs::Type<ScoreAttr>::id() == id) {
       return &_score;
     }
 
     return _it->GetMutable(id);
   }
+
+  doc_id_t value() const noexcept final { return _it->value(); }
+
+  doc_id_t advance() final { return _it->advance(); }
+
+  doc_id_t seek(doc_id_t target) final { return _it->seek(target); }
+
+  doc_id_t shallow_seek(doc_id_t target) final {
+    return _it->shallow_seek(target);
+  }
+
+  uint32_t count() final { return _it->count(); }
 
  private:
   DocIterator::ptr _it;
@@ -115,50 +120,41 @@ class ChildToParentJoin : public DocIterator, private Matcher {
     SDB_ASSERT(_child);
 
     std::get<AttributePtr<DocAttr>>(_attrs) =
-      irs::GetMutable<irs::DocAttr>(_parent.get());
+      irs::GetMutable<DocAttr>(_parent.get());
     SDB_ASSERT(std::get<AttributePtr<DocAttr>>(_attrs).ptr);
 
-    _child_doc = irs::get<irs::DocAttr>(*_child);
+    _child_doc = irs::get<DocAttr>(*_child);
 
     std::get<AttributePtr<CostAttr>>(_attrs) =
       irs::GetMutable<CostAttr>(_child.get());
 
-    if constexpr (kHasScoreV<Matcher>) {
+    if constexpr (kHasScore<Matcher>) {
       PrepareScore();
     }
+  }
+
+  Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
+    return irs::GetMutable(_attrs, id);
   }
 
   doc_id_t value() const noexcept final {
     return std::get<AttributePtr<DocAttr>>(_attrs).ptr->value;
   }
 
-  Attribute* GetMutable(TypeInfo::type_id id) final {
-    return irs::GetMutable(_attrs, id);
-  }
-
-  doc_id_t seek(doc_id_t target) final {
-    const auto& doc = *std::get<AttributePtr<DocAttr>>(_attrs).ptr;
-
-    if (target <= doc.value) [[unlikely]] {
-      return doc.value;
-    }
-
-    auto parent = _parent->seek(target);
-
-    if (doc_limits::eof(parent)) {
-      return doc_limits::eof();
-    }
-
+  doc_id_t advance() final {
+    const auto parent = _parent->advance();
     return SeekInternal(parent);
   }
 
-  bool next() final {
-    if (_parent->next()) [[likely]] {
-      return !doc_limits::eof(SeekInternal(value()));
+  doc_id_t seek(doc_id_t target) final {
+    if (const auto doc = value(); target <= doc) [[unlikely]] {
+      return doc;
     }
-
-    return false;
+    const auto parent = _parent->seek(target);
+    return SeekInternal(parent);
   }
+
+  uint32_t count() final { return Count(*this); }
 
  private:
   friend Matcher;
@@ -173,8 +169,9 @@ class ChildToParentJoin : public DocIterator, private Matcher {
   }
 
   doc_id_t SeekInternal(doc_id_t parent) {
-    SDB_ASSERT(!doc_limits::eof(parent));
-
+    if (doc_limits::eof(parent)) [[unlikely]] {
+      return doc_limits::eof();
+    }
     for (doc_id_t first_child = _child->seek(FirstChildApprox());
          (first_child = Matcher::Accept(first_child, parent));
          first_child = _child->seek(FirstChildApprox())) {
@@ -196,14 +193,14 @@ class ChildToParentJoin : public DocIterator, private Matcher {
   Attributes _attrs;
   const PrevDocAttr* _prev_parent{};
   const DocAttr* _child_doc{};
-  [[no_unique_address]] irs::utils::Need<kHasScoreV<Matcher>, const ScoreAttr*>
+  [[no_unique_address]] irs::utils::Need<kHasScore<Matcher>, const ScoreAttr*>
     _child_score{};
 };
 
 template<typename Matcher>
 void ChildToParentJoin<Matcher>::PrepareScore() {
-  auto& score = std::get<irs::ScoreAttr>(_attrs);
-  _child_score = irs::get<irs::ScoreAttr>(*_child);
+  auto& score = std::get<ScoreAttr>(_attrs);
+  _child_score = irs::get<ScoreAttr>(*_child);
 
   if (!std::is_same_v<Matcher, NoneMatcher> &&
       (_child_doc == nullptr || _child_score == nullptr ||
@@ -211,7 +208,7 @@ void ChildToParentJoin<Matcher>::PrepareScore() {
     SDB_ASSERT(Matcher::size());
     score = ScoreFunction::Default(Matcher::size());
   } else {
-    static_assert(kHasScoreV<Matcher>);
+    static_assert(kHasScore<Matcher>);
     score = static_cast<Matcher&>(*this).PrepareScore();
   }
 }
@@ -226,7 +223,7 @@ struct ScoreBuffer<NoopAggregator> {
 
 template<typename Merger, size_t Size>
 struct ScoreBuffer<Aggregator<Merger, Size>> {
-  static constexpr bool kIsDynamic = Size == std::numeric_limits<size_t>::max();
+  static constexpr bool kIsDynamic = Size == kBufferRuntimeSize;
 
   using BufferType =
     std::conditional_t<kIsDynamic, bstring, std::array<score_t, Size>>;
@@ -280,7 +277,7 @@ class AnyMatcher : public Merger, private ScoreCtx {
   }
 
   ScoreFunction PrepareScore() {
-    static_assert(kHasScoreV<Merger>);
+    static_assert(kHasScore<Merger>);
 
     return {*this, [](ScoreCtx* ctx, score_t* res) noexcept {
               SDB_ASSERT(ctx);
@@ -339,28 +336,32 @@ class PredMatcher : public Merger,
     auto& merger = static_cast<Merger&>(*this);
     auto& buf = static_cast<BufferType&>(*this);
 
-    const auto* child_doc = self._child_doc;
-
-    if constexpr (kHasScoreV<Merger>) {
-      (*self._child_score)(buf.Data());
+    if constexpr (kHasScore<Merger>) {
+      self._child_score->Score(buf.Data());
     }
 
-    while (_pred->next() && _pred_doc->value < parent) {
-      if (!child.next() || _pred_doc->value != child_doc->value) {
+    while (true) {
+      const auto pred_doc = _pred->advance();
+      if (parent <= pred_doc) {
+        return doc_limits::invalid();
+      }
+      SDB_ASSERT(!doc_limits::eof(pred_doc));
+
+      const auto child_doc = child.advance();
+      if (pred_doc != child_doc) {
         return parent + 1;
       }
+      SDB_ASSERT(!doc_limits::eof(child_doc));
 
-      if constexpr (kHasScoreV<Merger>) {
+      if constexpr (kHasScore<Merger>) {
         (*self._child_score)(merger.temp());
         merger(buf.Data(), merger.temp());
       }
     }
-
-    return 0;
   }
 
   ScoreFunction PrepareScore() noexcept {
-    static_assert(kHasScoreV<Merger>);
+    static_assert(kHasScore<Merger>);
 
     return {*this, [](ScoreCtx* ctx, score_t* res) noexcept {
               SDB_ASSERT(ctx);
@@ -401,7 +402,7 @@ class RangeMatcher : public Merger,
 
     if (first_child > parent) {
       if (min == 0) {
-        if constexpr (kHasScoreV<Merger>) {
+        if constexpr (kHasScore<Merger>) {
           // Reset score value as we are not able
           // to find any childs
           auto& merger = static_cast<Merger&>(*this);
@@ -424,7 +425,7 @@ class RangeMatcher : public Merger,
     // Already matched the first child
     doc_id_t count = 1;
 
-    if constexpr (kHasScoreV<Merger>) {
+    if constexpr (kHasScore<Merger>) {
       (*self._child_score)(buf.Data());
     }
     while (child.next() && child_doc->value < parent) {
@@ -432,7 +433,7 @@ class RangeMatcher : public Merger,
         return parent + 1;
       }
 
-      if constexpr (kHasScoreV<Merger>) {
+      if constexpr (kHasScore<Merger>) {
         (*self._child_score)(merger.temp());
         merger(buf.Data(), merger.temp());
       }
@@ -442,7 +443,7 @@ class RangeMatcher : public Merger,
   }
 
   ScoreFunction PrepareScore() noexcept {
-    static_assert(kHasScoreV<Merger>);
+    static_assert(kHasScore<Merger>);
 
     return {*this, [](ScoreCtx* ctx, score_t* res) noexcept {
               SDB_ASSERT(ctx);
@@ -477,7 +478,7 @@ class MinMatcher : public Merger,
     SDB_ASSERT(!doc_limits::eof(parent));
 
     if (0 == _min) {
-      if constexpr (kHasScoreV<Merger>) {
+      if constexpr (kHasScore<Merger>) {
         // Reset score value as we might not be able
         // to find any childs
         auto& merger = static_cast<Merger&>(*this);
@@ -504,7 +505,7 @@ class MinMatcher : public Merger,
     auto& child = *self._child;
     const auto* child_doc = self._child_doc;
 
-    if constexpr (kHasScoreV<Merger>) {
+    if constexpr (kHasScore<Merger>) {
       (*self._child_score)(buf.Data());
     }
 
@@ -513,7 +514,7 @@ class MinMatcher : public Merger,
         return 0;
       }
 
-      if constexpr (kHasScoreV<Merger>) {
+      if constexpr (kHasScore<Merger>) {
         (*self._child_score)(merger.temp());
         merger(buf.Data(), merger.temp());
       }
@@ -523,7 +524,7 @@ class MinMatcher : public Merger,
   }
 
   ScoreFunction PrepareScore() noexcept {
-    static_assert(kHasScoreV<Merger>);
+    static_assert(kHasScore<Merger>);
 
     return {*this, [](ScoreCtx* ctx, score_t* res) noexcept {
               SDB_ASSERT(ctx);
@@ -583,9 +584,9 @@ auto ResolveMatchType(const SubReader& segment,
 
 namespace irs {
 
-class ByNestedQuery : public Filter::Prepared {
+class ByNestedQuery : public Filter::Query {
  public:
-  ByNestedQuery(DocIteratorProvider parent, Prepared::ptr&& child,
+  ByNestedQuery(DocIteratorProvider parent, Query::ptr&& child,
                 ScoreMergeType merge_type, ByNestedOptions::MatchType match,
                 score_t none_boost) noexcept
     : _parent{std::move(parent)},
@@ -617,7 +618,7 @@ class ByNestedQuery : public Filter::Prepared {
 
  private:
   DocIteratorProvider _parent;
-  Prepared::ptr _child;
+  Query::ptr _child;
   ByNestedOptions::MatchType _match;
   ScoreMergeType _merge_type;
   score_t _none_boost;
@@ -633,7 +634,7 @@ DocIterator::ptr ByNestedQuery::execute(const ExecutionContext& ctx) const {
     return DocIterator::empty();
   }
 
-  const auto* prev = irs::get<irs::PrevDocAttr>(*parent);
+  const auto* prev = irs::get<PrevDocAttr>(*parent);
 
   if (!prev || !*prev) [[unlikely]] {
     return DocIterator::empty();
@@ -650,17 +651,16 @@ DocIterator::ptr ByNestedQuery::execute(const ExecutionContext& ctx) const {
   }
 
   return ResolveMergeType(
-    _merge_type, ord.buckets().size(),
-    [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
+    _merge_type, ord.buckets().size(), [&]<typename A>(A&& aggregator) {
       return ResolveMatchType(
         rdr, _match, _none_boost, std::forward<A>(aggregator),
-        [&]<typename M>(M&& matcher) -> irs::DocIterator::ptr {
+        [&]<typename M>(M&& matcher) -> DocIterator::ptr {
           if constexpr (std::is_same_v<NoneMatcher, M>) {
             if (doc_limits::eof(child->value())) {  // Match all parents
               if constexpr (!std::is_same_v<NoopAggregator, A>) {
                 auto func = ScoreFunction::Constant(
                   _none_boost, static_cast<uint32_t>(ord.buckets().size()));
-                auto* score = irs::GetMutable<irs::ScoreAttr>(parent.get());
+                auto* score = irs::GetMutable<ScoreAttr>(parent.get());
                 if (!score) [[unlikely]] {
                   return memory::make_managed<ScorerWrapper>(std::move(parent),
                                                              std::move(func));
@@ -691,11 +691,11 @@ DocIterator::ptr ByNestedQuery::execute(const ExecutionContext& ctx) const {
     });
 }
 
-Filter::Prepared::ptr ByNestedFilter::prepare(const PrepareContext& ctx) const {
+Filter::Query::ptr ByNestedFilter::prepare(const PrepareContext& ctx) const {
   auto& [parent, child, match, merge_type] = options();
 
   if (!parent || !child || !IsValid(match)) {
-    return Prepared::empty();
+    return Query::empty();
   }
 
   const auto sub_boost = ctx.boost * Boost();
@@ -709,7 +709,7 @@ Filter::Prepared::ptr ByNestedFilter::prepare(const PrepareContext& ctx) const {
   });
 
   if (!prepared_child) {
-    return Prepared::empty();
+    return Query::empty();
   }
 
   return memory::make_tracked<ByNestedQuery>(

@@ -70,10 +70,9 @@ void VisitImpl(const SubReader& segment, const TermReader& reader,
 
 }  // namespace
 
-Filter::Prepared::ptr ByPrefix::prepare(const PrepareContext& ctx,
-                                        std::string_view field,
-                                        bytes_view prefix,
-                                        size_t scored_terms_limit) {
+Filter::Query::ptr ByPrefix::prepare(const PrepareContext& ctx,
+                                     std::string_view field, bytes_view prefix,
+                                     size_t scored_terms_limit) {
   // object for collecting order stats
   LimitedSampleCollector<TermFrequency> collector(
     ctx.scorers.empty() ? 0 : scored_terms_limit);

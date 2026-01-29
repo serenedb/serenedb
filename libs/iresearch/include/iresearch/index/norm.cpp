@@ -35,7 +35,7 @@ bool NormReaderContextBase::Reset(const ColumnProvider& reader,
   if (column) {
     auto it = column->iterator(ColumnHint::Normal);
     if (it) [[likely]] {
-      auto* payload = irs::get<irs::PayAttr>(*it);
+      auto* payload = irs::get<PayAttr>(*it);
       if (payload) [[likely]] {
         this->header = column->payload();
         this->it = std::move(it);

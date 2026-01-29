@@ -44,11 +44,17 @@ namespace irs {
 //   - `next()` must constantly return `false`
 //   - `seek()`, `shallow_seek()` to any value must return `doc_limits::eof()`
 //   - `value()` must return `doc_limits::eof()`
-struct DocIterator : Iterator<doc_id_t, AttributeProvider> {
+struct DocIterator : AttributeProvider {
   using ptr = memory::managed_ptr<DocIterator>;
 
-  // Return an empty iterator
-  [[nodiscard]] static DocIterator::ptr empty();
+  [[nodiscard]] static DocIterator::ptr empty() noexcept;
+
+  virtual doc_id_t value() const noexcept = 0;
+
+  virtual doc_id_t advance() = 0;
+
+  // deprecated: use advance() instead
+  IRS_FORCE_INLINE bool next() { return !doc_limits::eof(advance()); }
 
   // Position iterator at a specified target and returns current value
   // (for more information see class description)
@@ -59,7 +65,7 @@ struct DocIterator : Iterator<doc_id_t, AttributeProvider> {
   // It's two bounds: (min...max]:
   // DocIterator always positioned to the some block.
   //
-  // DocIterator before seek/next/shallow_seek(any valid target)
+  // DocIterator before advance/seek/shallow_seek(any valid target)
   // positioned to the first block.
   // You could know about it max, with call shallow_seek(doc_limits::invalid());
   //
@@ -70,13 +76,26 @@ struct DocIterator : Iterator<doc_id_t, AttributeProvider> {
     seek(target);
     return doc_limits::eof();
   }
+
+  virtual uint32_t count() { return Count(*this); }
+
+ protected:
+  template<typename Iterator>
+  static uint32_t Count(Iterator& it) {
+    uint32_t count = 0;
+    while (it.next()) {
+      ++count;
+    }
+    return count;
+  }
 };
 
 // Same as `DocIterator` but also support `reset()` operation
 struct ResettableDocIterator : DocIterator {
   using ptr = memory::managed_ptr<ResettableDocIterator>;
 
-  [[nodiscard]] static ResettableDocIterator::ptr empty();
+  [[nodiscard]] static ResettableDocIterator::ptr empty() noexcept;
+
   // Reset iterator to initial state
   virtual void reset() = 0;
 };
@@ -87,8 +106,7 @@ struct TermReader;
 struct FieldIterator : Iterator<const TermReader&> {
   using ptr = memory::managed_ptr<FieldIterator>;
 
-  // Return an empty iterator
-  [[nodiscard]] static FieldIterator::ptr empty();
+  [[nodiscard]] static FieldIterator::ptr empty() noexcept;
 
   // Position iterator at a specified target.
   // Return if the target is found, false otherwise.
@@ -101,8 +119,7 @@ struct ColumnReader;
 struct ColumnIterator : Iterator<const ColumnReader&> {
   using ptr = memory::managed_ptr<ColumnIterator>;
 
-  // Return an empty iterator.
-  [[nodiscard]] static ColumnIterator::ptr empty();
+  [[nodiscard]] static ColumnIterator::ptr empty() noexcept;
 
   // Position iterator at a specified target.
   // Return if the target is found, false otherwise.
@@ -113,8 +130,7 @@ struct ColumnIterator : Iterator<const ColumnReader&> {
 struct TermIterator : Iterator<bytes_view, AttributeProvider> {
   using ptr = memory::managed_ptr<TermIterator>;
 
-  // Return an empty iterator
-  [[nodiscard]] static TermIterator::ptr empty();
+  [[nodiscard]] static TermIterator::ptr empty() noexcept;
 
   // Read term attributes
   virtual void read() = 0;
@@ -141,8 +157,7 @@ enum class SeekResult {
 struct SeekTermIterator : TermIterator {
   using ptr = memory::managed_ptr<SeekTermIterator>;
 
-  // Return an empty iterator
-  [[nodiscard]] static SeekTermIterator::ptr empty();
+  [[nodiscard]] static SeekTermIterator::ptr empty() noexcept;
 
   // Position iterator at a value that is not less than the specified
   // one. Returns seek result.

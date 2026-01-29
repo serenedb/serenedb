@@ -34,18 +34,22 @@ namespace {
 
 // Represents an iterator with no documents
 struct EmptyDocIterator : ResettableDocIterator {
-  doc_id_t value() const final { return doc_limits::eof(); }
-  bool next() final { return false; }
-  doc_id_t seek(doc_id_t /*target*/) final { return doc_limits::eof(); }
   Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
     if (Type<DocAttr>::id() == id) {
       return &_doc;
     }
-
     return Type<CostAttr>::id() == id ? &_cost : nullptr;
   }
-
-  void reset() final {}
+  doc_id_t value() const noexcept final { return doc_limits::eof(); }
+  doc_id_t advance() noexcept final { return doc_limits::eof(); }
+  doc_id_t seek(doc_id_t /*target*/) noexcept final {
+    return doc_limits::eof();
+  }
+  doc_id_t shallow_seek(doc_id_t /*target*/) noexcept final {
+    return doc_limits::eof();
+  }
+  uint32_t count() noexcept final { return 0; }
+  void reset() noexcept final {}
 
  private:
   CostAttr _cost{0};
@@ -94,28 +98,29 @@ const EmptyTermReader kEmptyTermReader{0};
 
 // Represents a reader with no fields
 struct EmptyFieldIterator : FieldIterator {
-  const TermReader& value() const final { return kEmptyTermReader; }
+  const TermReader& value() const noexcept final { return kEmptyTermReader; }
 
-  bool seek(std::string_view /*target*/) final { return false; }
+  bool seek(std::string_view /*target*/) noexcept final { return false; }
 
-  bool next() final { return false; }
+  bool next() noexcept final { return false; }
 };
 
 EmptyFieldIterator gEmptyFieldIterator;
 
 struct EmptyColumnReader final : ColumnReader {
-  field_id id() const final { return field_limits::invalid(); }
+  field_id id() const noexcept final { return field_limits::invalid(); }
 
   // Returns optional column name.
-  std::string_view name() const final { return {}; }
+  std::string_view name() const noexcept final { return {}; }
 
   // Returns column header.
-  bytes_view payload() const final { return {}; }
+  bytes_view payload() const noexcept final { return {}; }
 
   // Returns the corresponding column iterator.
   // If the column implementation supports document payloads then it
   // can be accessed via the 'payload' attribute.
-  ResettableDocIterator::ptr iterator(ColumnHint /*hint*/) const final {
+  ResettableDocIterator::ptr iterator(
+    ColumnHint /*hint*/) const noexcept final {
     return ResettableDocIterator::empty();
   }
 
@@ -126,7 +131,9 @@ const EmptyColumnReader kEmptyColumnReader;
 
 // Represents a reader with no columns
 struct EmptyColumnIterator : ColumnIterator {
-  const ColumnReader& value() const final { return kEmptyColumnReader; }
+  const ColumnReader& value() const noexcept final {
+    return kEmptyColumnReader;
+  }
 
   bool seek(std::string_view /*name*/) final { return false; }
 
@@ -137,27 +144,27 @@ EmptyColumnIterator gEmptyColumnIterator;
 
 }  // namespace
 
-TermIterator::ptr TermIterator::empty() {
+TermIterator::ptr TermIterator::empty() noexcept {
   return memory::to_managed<TermIterator>(gEmptyTermIterator);
 }
 
-SeekTermIterator::ptr SeekTermIterator::empty() {
+SeekTermIterator::ptr SeekTermIterator::empty() noexcept {
   return memory::to_managed<SeekTermIterator>(gEmptySeekIterator);
 }
 
-DocIterator::ptr DocIterator::empty() {
+DocIterator::ptr DocIterator::empty() noexcept {
   return memory::to_managed<DocIterator>(gEmptyDocIterator);
 }
 
-ResettableDocIterator::ptr ResettableDocIterator::empty() {
+ResettableDocIterator::ptr ResettableDocIterator::empty() noexcept {
   return memory::to_managed<ResettableDocIterator>(gEmptyDocIterator);
 }
 
-FieldIterator::ptr FieldIterator::empty() {
+FieldIterator::ptr FieldIterator::empty() noexcept {
   return memory::to_managed<FieldIterator>(gEmptyFieldIterator);
 }
 
-ColumnIterator::ptr ColumnIterator::empty() {
+ColumnIterator::ptr ColumnIterator::empty() noexcept {
   return memory::to_managed<ColumnIterator>(gEmptyColumnIterator);
 }
 

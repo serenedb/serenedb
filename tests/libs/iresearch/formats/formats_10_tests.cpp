@@ -38,8 +38,6 @@ using tests::FormatTestCase;
 
 class Format10TestCase : public tests::FormatTestCase {
  protected:
-  static constexpr size_t kPostingsWriterBlockSize = 128;
-
   struct BasicAttributeProvider : irs::AttributeProvider {
     irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
       if (type == irs::Type<irs::FreqAttr>::id()) {
@@ -187,7 +185,7 @@ class Format10TestCase : public tests::FormatTestCase {
           TestPostings expected_postings{docs, field.index_features};
 
           auto actual =
-            reader->iterator(field.index_features, features, read_meta, 0);
+            reader->Iterator(field.index_features, features, read_meta, 0);
           ASSERT_FALSE(irs::doc_limits::valid(actual->value()));
 
           TestPostings expected(docs, field.index_features);
@@ -217,7 +215,7 @@ class Format10TestCase : public tests::FormatTestCase {
 
         // next + seek to eof
         {
-          auto it = reader->iterator(field.index_features,
+          auto it = reader->Iterator(field.index_features,
                                      irs::IndexFeatures::None, read_meta, 0);
           ASSERT_FALSE(irs::doc_limits::valid(it->value()));
           ASSERT_TRUE(it->next());
@@ -226,10 +224,10 @@ class Format10TestCase : public tests::FormatTestCase {
         }
 
         // seek to every document 127th document in a block
-        assert_docs(kPostingsWriterBlockSize - 1, kPostingsWriterBlockSize);
+        assert_docs(GetPostingsBlockSize() - 1, GetPostingsBlockSize());
 
         // seek to every 128th document in a block
-        assert_docs(kPostingsWriterBlockSize, kPostingsWriterBlockSize);
+        assert_docs(GetPostingsBlockSize(), GetPostingsBlockSize());
 
         // seek to every document
         assert_docs(0, 1);
@@ -242,7 +240,7 @@ class Format10TestCase : public tests::FormatTestCase {
           for (auto doc = docs.rbegin(), end = docs.rend(); doc != end; ++doc) {
             TestPostings expected(docs, field.index_features);
             auto it =
-              reader->iterator(field.index_features, features, read_meta, 0);
+              reader->Iterator(field.index_features, features, read_meta, 0);
             ASSERT_FALSE(irs::doc_limits::valid(it->value()));
             ASSERT_EQ(doc->first, it->seek(doc->first));
 
@@ -262,7 +260,7 @@ class Format10TestCase : public tests::FormatTestCase {
 
         // seek to irs::doc_limits::invalid()
         {
-          auto it = reader->iterator(field.index_features,
+          auto it = reader->Iterator(field.index_features,
                                      irs::IndexFeatures::None, read_meta, 0);
           ASSERT_FALSE(irs::doc_limits::valid(it->value()));
           ASSERT_FALSE(
@@ -273,7 +271,7 @@ class Format10TestCase : public tests::FormatTestCase {
 
         // seek to irs::doc_limits::eof()
         {
-          auto it = reader->iterator(field.index_features,
+          auto it = reader->Iterator(field.index_features,
                                      irs::IndexFeatures::None, read_meta, 0);
           ASSERT_FALSE(irs::doc_limits::valid(it->value()));
           ASSERT_TRUE(irs::doc_limits::eof(it->seek(irs::doc_limits::eof())));
@@ -403,7 +401,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       }
 
       // read documents
-      auto it = reader->iterator(field.index_features, irs::IndexFeatures::None,
+      auto it = reader->Iterator(field.index_features, irs::IndexFeatures::None,
                                  read_meta, 0);
       for (size_t i = 0; it->next();) {
         ASSERT_EQ(docs0[i++].first, it->value());
@@ -427,7 +425,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       }
 
       // read documents
-      auto it = reader->iterator(field.index_features, irs::IndexFeatures::None,
+      auto it = reader->Iterator(field.index_features, irs::IndexFeatures::None,
                                  read_meta, 0);
       for (size_t i = 0; it->next();) {
         ASSERT_EQ(docs1[i++].first, it->value());
@@ -540,7 +538,7 @@ TEST_P(Format10TestCase, postings_read_write) {
       }
 
       // read documents
-      auto it = reader->iterator(field.index_features, irs::IndexFeatures::None,
+      auto it = reader->Iterator(field.index_features, irs::IndexFeatures::None,
                                  read_meta, 0);
       for (size_t i = 0; it->next();) {
         ASSERT_EQ(docs0[i++].first, it->value());
@@ -563,7 +561,7 @@ TEST_P(Format10TestCase, postings_read_write) {
       }
 
       // read documents
-      auto it = reader->iterator(field.index_features, irs::IndexFeatures::None,
+      auto it = reader->Iterator(field.index_features, irs::IndexFeatures::None,
                                  read_meta, 0);
       for (size_t i = 0; it->next();) {
         ASSERT_EQ(docs1[i++].first, it->value());
@@ -594,9 +592,9 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
 
   // write docs 'segment0' with all possible streams
   {
-    constexpr irs::IndexFeatures kFeatures =
-      irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-      irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+    constexpr irs::IndexFeatures kFeatures = irs::IndexFeatures::Freq |
+                                             irs::IndexFeatures::Pos |
+                                             irs::IndexFeatures::Offs;
 
     irs::FieldMeta field;
     field.name = "field";
@@ -654,9 +652,8 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
 
   // write docs 'segment2' with position & payload
   {
-    constexpr irs::IndexFeatures kFeatures = irs::IndexFeatures::Freq |
-                                             irs::IndexFeatures::Pos |
-                                             irs::IndexFeatures::Pay;
+    constexpr irs::IndexFeatures kFeatures =
+      irs::IndexFeatures::Freq | irs::IndexFeatures::Pos;
 
     irs::FieldMeta field;
     field.name = "field";
@@ -876,15 +873,11 @@ TEST_P(Format10TestCase, postings_seek) {
   constexpr auto kPos = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos;
   constexpr auto kOffs = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
                          irs::IndexFeatures::Offs;
-  constexpr auto kPay = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-                        irs::IndexFeatures::Pay;
-  constexpr auto kAll = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-                        irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
 
   // singleton doc
   {
     constexpr size_t kCount = 1;
-    static_assert(kCount < kPostingsWriterBlockSize);
+    ASSERT_TRUE(kCount < GetPostingsBlockSize());
 
     const auto docs = generate_docs(kCount, 1);
 
@@ -892,14 +885,12 @@ TEST_P(Format10TestCase, postings_seek) {
     PostingsSeek(docs, kFreq);
     PostingsSeek(docs, kPos);
     PostingsSeek(docs, kOffs);
-    PostingsSeek(docs, kPay);
-    PostingsSeek(docs, kAll);
   }
 
   // short list (< postings_writer::BLOCK_SIZE)
   {
     constexpr size_t kCount = 117;
-    static_assert(kCount < kPostingsWriterBlockSize);
+    ASSERT_TRUE(kCount < GetPostingsBlockSize());
 
     const auto docs = generate_docs(kCount, 1);
 
@@ -907,20 +898,16 @@ TEST_P(Format10TestCase, postings_seek) {
     PostingsSeek(docs, kFreq);
     PostingsSeek(docs, kPos);
     PostingsSeek(docs, kOffs);
-    PostingsSeek(docs, kPay);
-    PostingsSeek(docs, kAll);
   }
 
   // equals to postings_writer::BLOCK_SIZE
   {
-    const auto docs = generate_docs(kPostingsWriterBlockSize, 1);
+    const auto docs = generate_docs(GetPostingsBlockSize(), 1);
 
     PostingsSeek(docs, kNone);
     PostingsSeek(docs, kFreq);
     PostingsSeek(docs, kPos);
     PostingsSeek(docs, kOffs);
-    PostingsSeek(docs, kPay);
-    PostingsSeek(docs, kAll);
   }
 
   // long list
@@ -932,8 +919,6 @@ TEST_P(Format10TestCase, postings_seek) {
     PostingsSeek(docs, kFreq);
     PostingsSeek(docs, kPos);
     PostingsSeek(docs, kOffs);
-    PostingsSeek(docs, kPay);
-    PostingsSeek(docs, kAll);
   }
 
   // 2^15
@@ -945,15 +930,13 @@ TEST_P(Format10TestCase, postings_seek) {
     PostingsSeek(docs, kFreq);
     PostingsSeek(docs, kPos);
     PostingsSeek(docs, kOffs);
-    PostingsSeek(docs, kPay);
-    PostingsSeek(docs, kAll);
   }
 }
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 static const auto kTestValues = ::testing::Combine(
   ::testing::ValuesIn(kTestDirs),
-  ::testing::Values(tests::FormatInfo{"1_5"}, tests::FormatInfo{"1_5simd"}));
+  ::testing::Values(tests::FormatInfo{"1_5avx"}, tests::FormatInfo{"1_5simd"}));
 
 // 1.0 specific tests
 INSTANTIATE_TEST_SUITE_P(format_10_test, Format10TestCase, kTestValues,

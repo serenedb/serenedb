@@ -30,7 +30,7 @@
 namespace irs {
 
 class BufferedColumnIterator : public ResettableDocIterator {
-  static constexpr BufferedValue kEmpty{irs::doc_limits::eof(), 0, 0};
+  static constexpr BufferedValue kEmpty{doc_limits::eof(), 0, 0};
 
  public:
   BufferedColumnIterator(std::span<const BufferedValue> values,
@@ -58,15 +58,33 @@ class BufferedColumnIterator : public ResettableDocIterator {
       _end = &kEmpty;
     }
     std::get<CostAttr>(_attrs).reset(values.size());
-    std::get<irs::PayAttr>(_attrs).value = {};
-    std::get<irs::DocAttr>(_attrs).value = {};
+    std::get<PayAttr>(_attrs).value = {};
+    std::get<DocAttr>(_attrs).value = {};
   }
+
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);
   }
 
   doc_id_t value() const noexcept final {
     return std::get<DocAttr>(_attrs).value;
+  }
+
+  doc_id_t advance() noexcept final {
+    auto& doc_value = std::get<DocAttr>(_attrs).value;
+
+    if (_next == _end) [[unlikely]] {
+      return doc_value = doc_limits::eof();
+    }
+
+    auto& payload = std::get<PayAttr>(_attrs);
+
+    doc_value = _next->key;
+    payload.value = {_data.data() + _next->begin, _next->size};
+
+    ++_next;
+
+    return doc_value;
   }
 
   doc_id_t seek(doc_id_t target) noexcept final {
@@ -85,38 +103,19 @@ class BufferedColumnIterator : public ResettableDocIterator {
     }
 
     _next = curr;
-    next();
-    return value();
+    return advance();
   }
 
-  bool next() noexcept final {
-    auto& doc = std::get<DocAttr>(_attrs);
-
-    if (_next == _end) [[unlikely]] {
-      doc.value = doc_limits::eof();
-      return false;
-    }
-
-    auto& payload = std::get<irs::PayAttr>(_attrs);
-
-    doc.value = _next->key;
-    payload.value = {_data.data() + _next->begin, _next->size};
-
-    ++_next;
-
-    return true;
-  }
-
-  void reset() final {
+  void reset() noexcept final {
     _next = _begin;
-    std::get<irs::DocAttr>(_attrs).value = {};
-    std::get<irs::PayAttr>(_attrs).value = {};
+    std::get<DocAttr>(_attrs).value = {};
+    std::get<PayAttr>(_attrs).value = {};
   }
 
  private:
-  using attributes = std::tuple<DocAttr, CostAttr, irs::PayAttr>;
+  using Attributes = std::tuple<DocAttr, CostAttr, PayAttr>;
 
-  attributes _attrs;
+  Attributes _attrs;
   const BufferedValue* _begin;
   const BufferedValue* _next;
   const BufferedValue* _end;

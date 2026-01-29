@@ -60,13 +60,20 @@ struct WandWriter;
 
 using DocMap = ManagedVector<doc_id_t>;
 using DocMapView = std::span<const doc_id_t>;
-using callback_f = std::function<bool(DocIterator&)>;
 
-using ScoreFunctionFactory =
-  std::function<ScoreFunction(const AttributeProvider&)>;
+using MakeScoreCallback =
+  absl::FunctionRef<ScoreFunction(uint32_t, const AttributeProvider&)>;
 
-struct WanderatorOptions {
-  ScoreFunctionFactory factory;
+using CompileScoreCallback =
+  absl::FunctionRef<void(uint32_t, AttributeProvider&)>;
+
+struct IteratorOptions : WandContext {
+  MakeScoreCallback make_score =
+    +[](uint32_t, const AttributeProvider&) noexcept {
+      return ScoreFunction{};
+    };
+  CompileScoreCallback compile_score =
+    +[](uint32_t, AttributeProvider&) noexcept {};
 };
 
 struct SegmentWriterOptions {
@@ -137,9 +144,17 @@ struct FieldWriter {
   virtual void end() = 0;
 };
 
-struct WandInfo {
-  uint8_t mapped_index{WandContext::kDisable};
-  uint8_t count{0};
+struct IteratorFieldOptions : IteratorOptions {
+  IteratorFieldOptions(uint8_t count) : count{count} {}
+
+  IteratorFieldOptions(const IteratorOptions& options, uint8_t mapped_index,
+                       uint8_t count)
+    : IteratorOptions{options}, mapped_index{mapped_index}, count{count} {}
+
+  bool Enabled() const noexcept { return mapped_index != kDisable; }
+
+  uint8_t mapped_index = kDisable;
+  uint8_t count = 0;
 };
 
 struct PostingsReader {
@@ -161,18 +176,6 @@ struct PostingsReader {
   virtual size_t decode(const byte_type* in, IndexFeatures features,
                         TermMeta& state) = 0;
 
-  // Returns document iterator for a specified 'cookie' and 'features'
-  virtual DocIterator::ptr iterator(IndexFeatures field_features,
-                                    IndexFeatures required_features,
-                                    const TermMeta& meta,
-                                    uint8_t wand_count) = 0;
-
-  virtual DocIterator::ptr wanderator(IndexFeatures field_features,
-                                      IndexFeatures required_features,
-                                      const TermMeta& meta,
-                                      const WanderatorOptions& options,
-                                      WandContext ctx, WandInfo info) = 0;
-
   // Evaluates a union of all docs denoted by attribute supplied via a
   // speciified 'provider'. Each doc is represented by a bit in a
   // specified 'bitset'.
@@ -182,6 +185,24 @@ struct PostingsReader {
   virtual size_t BitUnion(IndexFeatures field_features,
                           const term_provider_f& provider, size_t* set,
                           uint8_t wand_count) = 0;
+
+  virtual DocIterator::ptr Iterator(IndexFeatures field_features,
+                                    IndexFeatures required_features,
+                                    std::span<const TermMeta* const> metas,
+                                    const IteratorFieldOptions& options,
+                                    size_t min_match, ScoreMergeType type,
+                                    size_t num_buckets) const = 0;
+
+  DocIterator::ptr Iterator(IndexFeatures field_features,
+                            IndexFeatures required_features,
+                            const TermMeta& meta,
+                            const IteratorFieldOptions& options,
+                            ScoreMergeType type = ScoreMergeType::Noop,
+                            size_t num_buckets = 0) const {
+    const auto* meta_ptr = &meta;
+    return Iterator(field_features, required_features, {&meta_ptr, 1}, options,
+                    1, type, num_buckets);
+  }
 };
 
 // Expected usage pattern of SeekTermIterator
@@ -196,6 +217,7 @@ enum class SeekMode : uint32_t {
 struct TermReader : public AttributeProvider {
   using ptr = std::unique_ptr<TermReader>;
   using cookie_provider = std::function<const SeekCookie*()>;
+  using Acceptor = absl::FunctionRef<bool(doc_id_t)>;
 
   // `mode` argument defines seek mode for term iterator
   // Returns an iterator over terms for a field.
@@ -203,8 +225,7 @@ struct TermReader : public AttributeProvider {
 
   // Read 'count' number of documents containing 'term' to 'docs'
   // Returns number of read documents
-  virtual size_t read_documents(bytes_view term,
-                                std::span<doc_id_t> docs) const = 0;
+  virtual void read_documents(bytes_view term, Acceptor acceptor) const = 0;
 
   // Returns term metadata for a given 'term'
   virtual TermMeta term(bytes_view term) const = 0;
@@ -222,13 +243,18 @@ struct TermReader : public AttributeProvider {
   virtual size_t BitUnion(const cookie_provider& provider,
                           size_t* bitset) const = 0;
 
-  virtual DocIterator::ptr postings(const SeekCookie& cookie,
-                                    IndexFeatures features) const = 0;
+  virtual DocIterator::ptr Iterator(IndexFeatures features,
+                                    std::span<const SeekCookie* const> cookies,
+                                    const IteratorOptions& options = {},
+                                    size_t min_match = 1,
+                                    ScoreMergeType type = ScoreMergeType::Noop,
+                                    size_t num_buckets = 0) const = 0;
 
-  virtual DocIterator::ptr wanderator(const SeekCookie& cookie,
-                                      IndexFeatures features,
-                                      const WanderatorOptions& options,
-                                      WandContext context) const = 0;
+  DocIterator::ptr Iterator(IndexFeatures features, const SeekCookie& cookie,
+                            const IteratorOptions& options = {}) const {
+    const auto* cookie_ptr = &cookie;
+    return Iterator(features, {&cookie_ptr, 1}, options);
+  }
 
   // Returns field metadata.
   virtual const FieldMeta& meta() const = 0;
@@ -269,7 +295,7 @@ struct ColumnOutput : DataOutput {
   // NOTE: doc_limits::invalid() < doc && doc < doc_limits::eof()
   virtual void Prepare(doc_id_t doc) = 0;
 
-#ifdef IRESEARCH_TEST
+#ifdef SDB_GTEST
   ColumnOutput& operator()(doc_id_t doc) {
     Prepare(doc);
     return *this;
@@ -445,6 +471,9 @@ struct ReaderState {
   ScorersView scorers;
 };
 
+void FormatBlock128Init();
+void FormatBlock256Init();
+
 namespace formats {
 // Checks whether a format with the specified name is registered.
 bool Exists(std::string_view name, bool load_library = true);
@@ -456,7 +485,12 @@ Format::ptr Get(std::string_view name, bool load_library = true) noexcept;
 
 // For static lib reference all known formats in lib
 // no explicit call of fn is required, existence of fn is sufficient.
-void Init();
+inline void Init() {
+#ifdef __AVX2__
+  FormatBlock256Init();
+#endif
+  FormatBlock128Init();
+}
 
 // Load all formats from plugins directory.
 void LoadAll(std::string_view path);

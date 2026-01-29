@@ -54,7 +54,7 @@
 #include "basics/dtoa.h"
 #include "basics/logger/logger.h"
 #include "basics/misc.hpp"
-#include "pg/interval.h"
+#include "pg/functions/interval.h"
 #include "pg/pg_types.h"
 #include "query/config.h"
 #include "query/types.h"

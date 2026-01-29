@@ -54,7 +54,7 @@ struct BM25FieldCollector final : FieldCollector {
   void collect(const SubReader& /*segment*/,
                const TermReader& field) noexcept final {
     docs_with_field += field.docs_count();
-    if (auto* freq = get<FreqAttr>(field); freq != nullptr) {
+    if (const auto* freq = irs::get<FreqAttr>(field)) {
       total_term_freq += freq->value;
     }
   }
@@ -198,17 +198,16 @@ Scorer::ptr MakeJson(std::string_view args) {
 
 struct BM1Context : public irs::ScoreCtx {
   BM1Context(float_t k, irs::score_t boost, const BM25Stats& stats,
-             const irs::FilterBoost* fb = nullptr) noexcept
+             const FilterBoost* fb = nullptr) noexcept
     : filter_boost{fb}, num{boost * (k + 1) * stats.idf} {}
 
-  const irs::FilterBoost* filter_boost;
+  const FilterBoost* filter_boost;
   float_t num;  // partially precomputed numerator : boost * (k + 1) * idf
 };
 
 struct BM15Context : public BM1Context {
   BM15Context(float_t k, irs::score_t boost, const BM25Stats& stats,
-              const FreqAttr* freq,
-              const irs::FilterBoost* fb = nullptr) noexcept
+              const FreqAttr* freq, const FilterBoost* fb = nullptr) noexcept
     : BM1Context{k, boost, stats, fb},
       freq{freq ? freq : &kEmptyFreq},
       norm_const{stats.norm_const} {
@@ -223,7 +222,7 @@ template<typename Norm>
 struct BM25Context final : public BM15Context {
   BM25Context(float_t k, irs::score_t boost, const BM25Stats& stats,
               const FreqAttr* freq, Norm&& norm,
-              const irs::FilterBoost* filter_boost = nullptr) noexcept
+              const FilterBoost* filter_boost = nullptr) noexcept
     : BM15Context{k, boost, stats, freq, filter_boost},
       norm{std::move(norm)},
       norm_length{stats.norm_length},
@@ -422,7 +421,7 @@ ScoreFunction BM25::PrepareScorer(const ColumnProvider& segment,
   }
 
   auto* stats = stats_cast(query_stats);
-  auto* filter_boost = irs::get<irs::FilterBoost>(doc_attrs);
+  auto* filter_boost = irs::get<FilterBoost>(doc_attrs);
 
   if (IsBM1()) {
     return MakeScoreFunction<BM1Context>(filter_boost, _k, boost, *stats);
@@ -470,7 +469,7 @@ ScoreFunction BM25::PrepareScorer(const ColumnProvider& segment,
 
   // No norms, pretend all fields have the same length 1.
   return prepare_norm_scorer(
-    MakeBM25NormAdapter<NormType::NormTiny>([]() { return 1U; }));
+    MakeBM25NormAdapter<NormType::NormTiny>([] { return 1U; }));
 }
 
 WandWriter::ptr BM25::prepare_wand_writer(size_t max_levels) const {
@@ -478,7 +477,7 @@ WandWriter::ptr BM25::prepare_wand_writer(size_t max_levels) const {
     return {};
   }
   if (IsBM15()) {
-    return std::make_unique<FreqNormWriter<kWandTagMaxFreq>>(max_levels, *this);
+    return std::make_unique<FreqNormWriter<kWandTagMaxFreq>>(max_levels);
   }
   if (IsBM11()) {
     // idf * (k + 1) * tf / (k * (1 - b + b * dl / avg_dl) + tf)
@@ -490,10 +489,10 @@ WandWriter::ptr BM25::prepare_wand_writer(size_t max_levels) const {
     // x / (k * ((1 - b) / dl + b / avg_dl) + x)
     // b == 1
     // x / (k / avg_dl + x)
-    return std::make_unique<FreqNormWriter<kWandTagDivNorm>>(max_levels, *this);
+    return std::make_unique<FreqNormWriter<kWandTagDivNorm>>(max_levels);
   }
   // Approximation that suited for any BM25
-  return std::make_unique<FreqNormWriter<kWandTagBM25>>(max_levels, *this, _b);
+  return std::make_unique<FreqNormWriter<kWandTagBM25>>(max_levels, _b);
 }
 
 WandSource::ptr BM25::prepare_wand_source() const {

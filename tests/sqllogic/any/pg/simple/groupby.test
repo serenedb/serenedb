@@ -251,8 +251,8 @@ FROM
     (NULL), (NULL), (NULL)
 ) AS kostya(nullik);
 ----
-count count
-3 0
+count	count
+3	0
 
 
 query
@@ -304,12 +304,12 @@ FROM
 GROUP BY 1, 2, 1, 2
 ORDER BY 1, 2;
 ----
-name grade name grade
-babsky 20 babsky 20
-babsky 21 babsky 21
-babsky 22 babsky 22
-vedernikoff 13 vedernikoff 13
-vedernikoff 14 vedernikoff 14
+name	grade	name	grade
+babsky	20	babsky	20
+babsky	21	babsky	21
+babsky	22	babsky	22
+vedernikoff	13	vedernikoff	13
+vedernikoff	14	vedernikoff	14
 
 
 query
@@ -323,12 +323,12 @@ FROM
 GROUP BY name, grade, grade, name
 ORDER BY 1, 2;
 ----
-name grade name grade
-babsky 20 babsky 20
-babsky 21 babsky 21
-babsky 22 babsky 22
-vedernikoff 13 vedernikoff 13
-vedernikoff 14 vedernikoff 14
+name	grade	name	grade
+babsky	20	babsky	20
+babsky	21	babsky	21
+babsky	22	babsky	22
+vedernikoff	13	vedernikoff	13
+vedernikoff	14	vedernikoff	14
 
 
 query
@@ -342,11 +342,11 @@ FROM
 GROUP BY 1, 2, 3, 2, 1, 3, 2, 1, 3, 1, 2, 3, 2, 1, 2, 3, 1, 2, 3, 2, 1, 3
 ORDER BY 1, 2, 3;
 ----
-name grade iq name grade iq
-babsky 21 -4 babsky 21 -4
-babsky1 22 -5 babsky1 22 -5
-babsky2 20 -3 babsky2 20 -3
-babsky3 21 -4 babsky3 21 -4
-vedernikoff 13 4 vedernikoff 13 4
-vedernikoff 14 6 vedernikoff 14 6
-vedernikoff 14 87 vedernikoff 14 87
+name	grade	iq	name	grade	iq
+babsky	21	-4	babsky	21	-4
+babsky1	22	-5	babsky1	22	-5
+babsky2	20	-3	babsky2	20	-3
+babsky3	21	-4	babsky3	21	-4
+vedernikoff	13	4	vedernikoff	13	4
+vedernikoff	14	6	vedernikoff	14	6
+vedernikoff	14	87	vedernikoff	14	87

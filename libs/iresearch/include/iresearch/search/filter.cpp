@@ -28,10 +28,10 @@ namespace irs {
 namespace {
 
 // Represents a query returning empty result set
-struct EmptyQuery : public Filter::Prepared {
+struct EmptyQuery : public Filter::Query {
  public:
   DocIterator::ptr execute(const ExecutionContext&) const final {
-    return irs::DocIterator::empty();
+    return DocIterator::empty();
   }
 
   void visit(const SubReader&, PreparedStateVisitor&, score_t) const final {
@@ -45,12 +45,12 @@ EmptyQuery gEmptyQuery;
 
 }  // namespace
 
-Filter::Prepared::ptr Filter::Prepared::empty() {
-  return memory::to_managed<Prepared>(gEmptyQuery);
+Filter::Query::ptr Filter::Query::empty() {
+  return memory::to_managed<Query>(gEmptyQuery);
 }
 
-Filter::Prepared::ptr Empty::prepare(const PrepareContext& /*ctx*/) const {
-  return memory::to_managed<Prepared>(gEmptyQuery);
+Filter::Query::ptr Empty::prepare(const PrepareContext& /*ctx*/) const {
+  return memory::to_managed<Query>(gEmptyQuery);
 }
 
 }  // namespace irs

@@ -29,7 +29,7 @@ namespace irs {
 // Filter returning all documents
 class All : public FilterWithBoost {
  public:
-  Prepared::ptr prepare(const PrepareContext& ctx) const final;
+  Query::ptr prepare(const PrepareContext& ctx) const final;
 
   TypeInfo::type_id type() const noexcept final { return irs::Type<All>::id(); }
 };

@@ -159,8 +159,8 @@ oid	nspname
 query
 SELECT oid, nspname FROM pg_catalog.pg_namespace WHERE oid = 11
 ----
-oid nspname
-11 pg_catalog
+oid	nspname
+11	pg_catalog
 
 query
 SELECT * FROM pg_opclass LIMIT 0

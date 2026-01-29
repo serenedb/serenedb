@@ -211,7 +211,8 @@ void RemoveFromExistingSegment(DocumentMask& deleted_docs,
     return;  // skip invalid prepared filters
   }
 
-  auto itr = prepared->execute({.segment = reader});
+  auto itr =
+    prepared->execute({.segment = reader, .pending_docs_mask = &deleted_docs});
 
   if (!itr) [[unlikely]] {
     return;  // skip invalid iterators
@@ -243,7 +244,8 @@ bool RemoveFromImportedSegment(DocumentMask& deleted_docs,
     return false;  // skip invalid prepared filters
   }
 
-  auto itr = prepared->execute({.segment = reader});
+  auto itr =
+    prepared->execute({.segment = reader, .pending_docs_mask = &deleted_docs});
   if (!itr) [[unlikely]] {
     return false;  // skip invalid iterators
   }
@@ -282,7 +284,8 @@ void FlushedSegmentContext::Remove(IndexWriter::QueryContext& query) {
     return;  // Skip invalid prepared filters
   }
 
-  auto itr = prepared->execute({.segment = *reader});
+  auto itr = prepared->execute(
+    {.segment = *reader, .pending_docs_mask = &document_mask});
 
   if (!itr) [[unlikely]] {
     return;  // Skip invalid iterators
@@ -348,7 +351,7 @@ using CandidatesMapping =
 struct MapCandidatesResult {
   // Number of mapped candidates.
   size_t count{0};
-  bool has_removals{false};  // cppcheck-suppress unusedStructMember
+  bool has_removals{false};
 };
 
 // candidates_mapping output mapping
@@ -2113,7 +2116,6 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
     std::vector<std::string_view> filenames;
     filenames.reserve(pending_meta.segments.size());
     for (const auto& meta : pending_meta.segments) {
-      // cppcheck-suppress useStlAlgorithm
       filenames.emplace_back(meta.filename);
     }
     absl::c_sort(filenames);

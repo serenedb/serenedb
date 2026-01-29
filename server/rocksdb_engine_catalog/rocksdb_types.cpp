@@ -81,6 +81,8 @@ const auto kIndexTombstone = MakeSlice<RocksDBEntryType::IndexTombstone>();
 
 const auto kIndex = MakeSlice<RocksDBEntryType::Index>();
 
+const auto kStats = MakeSlice<RocksDBEntryType::Stats>();
+
 }  // namespace
 
 char RocksDbFormatVersion() { return '1'; }
@@ -129,6 +131,8 @@ const rocksdb::Slice& RocksDbSlice(const RocksDBEntryType& type) {
       return kScopeTombstone;
     case RocksDBEntryType::Index:
       return kIndex;
+    case RocksDBEntryType::Stats:
+      return kStats;
     case RocksDBEntryType::IndexTombstone:
       return kIndexTombstone;
   }

@@ -29,11 +29,7 @@
 #include <velox/functions/prestosql/types/UuidType.h>
 #include <velox/type/Timestamp.h>
 
-#include <charconv>
-
-#include "basics/assert.h"
-#include "basics/system-compiler.h"
-#include "pg/interval.h"
+#include "pg/functions/interval.h"
 #include "pg/serialize.h"
 #include "query/types.h"
 

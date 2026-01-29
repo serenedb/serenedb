@@ -192,9 +192,8 @@ bool MakeVPackConfig(const NGramTokenizerBase::Options& options,
     builder->add(kPreserveOriginalParamName, options.preserve_original);
 
     // stream type
-    const auto* stream_type_value = std::find_if(
-      kStreamTypeConvertMap.begin(), kStreamTypeConvertMap.end(),
-      [&options](const decltype(kStreamTypeConvertMap)::value_type& v) {
+    const auto stream_type_value =
+      absl::c_find_if(kStreamTypeConvertMap, [&options](const auto& v) {
         return v.second == options.stream_bytes_type;
       });
 
@@ -340,7 +339,7 @@ NGramTokenizer<StreamType>::NGramTokenizer(const Options& options)
 
 void NGramTokenizerBase::emit_original() noexcept {
   auto& term = std::get<TermAttr>(_attrs);
-  auto& offset = std::get<irs::OffsAttr>(_attrs);
+  auto& offset = std::get<OffsAttr>(_attrs);
   auto& inc = std::get<IncAttr>(_attrs);
 
   switch (_emit_original) {
@@ -399,7 +398,7 @@ bool NGramTokenizerBase::reset(std::string_view value) noexcept {
   }
 
   auto& term = std::get<TermAttr>(_attrs);
-  auto& offset = std::get<irs::OffsAttr>(_attrs);
+  auto& offset = std::get<OffsAttr>(_attrs);
 
   // reset term attribute
   term.value = {};
@@ -463,7 +462,7 @@ bool NGramTokenizer<StreamType>::NextSymbol(
 template<NGramTokenizerBase::InputType StreamType>
 bool NGramTokenizer<StreamType>::next() noexcept {
   auto& term = std::get<TermAttr>(_attrs);
-  auto& offset = std::get<irs::OffsAttr>(_attrs);
+  auto& offset = std::get<OffsAttr>(_attrs);
   auto& inc = std::get<IncAttr>(_attrs);
 
   while (_begin < _data_end) {

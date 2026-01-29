@@ -69,13 +69,15 @@ set(IResearch_core_sources
     ./analysis/delimited_tokenizer.cpp
     ./analysis/solr_synonyms_tokenizer.cpp
     ./analysis/wordnet_synonyms_tokenizer.cpp
+    ./analysis/geo_analyzer.cpp
     ./error/error.cpp
     ./formats/columnstore2.cpp
     ./formats/formats.cpp
     ./formats/format_utils.cpp
     ./formats/skip_list.cpp
     ./formats/sparse_bitmap.cpp
-    ./formats/formats_impl.cpp
+    ./formats/format_block_128.cpp
+    ./formats/format_block_256.cpp
     ./formats/formats_burst_trie.cpp
     ./formats/hnsw_index.cpp
     ./index/buffered_column.cpp
@@ -123,6 +125,7 @@ set(IResearch_core_sources
     ./search/boolean_query.cpp
     ./search/ngram_similarity_filter.cpp
     ./search/ngram_similarity_query.cpp
+    ./search/geo_filter.cpp
     ./search/proxy_filter.cpp
     ./search/tfidf.cpp
     ./search/bm25.cpp
@@ -149,8 +152,37 @@ set(IResearch_core_sources
     ./utils/levenshtein_default_pdp.cpp
     ./utils/timer_utils.cpp
     ./utils/numeric_utils.cpp
+    ./parser/lucene_parser.cpp
+    ./parser/lucene_lexer.cpp
     ${IResearch_core_os_specific_sources}
     ${IResearch_core_optimized_sources}
+)
+
+find_package(FLEX)
+find_package(BISON)
+
+set_directory_properties(PROPERTIES CLEAN_NO_CUSTOM "On")
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_lexer.cpp
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMAND
+        ${FLEX_EXECUTABLE} -L
+        -o${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_lexer.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_lexer.l
+    MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_lexer.l
+    VERBATIM
+)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_parser.cpp
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMAND
+        ${CMAKE_SOURCE_DIR}/scripts/bison-c.sh ${BISON_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_parser.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_parser.y
+    MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_parser.y
+    VERBATIM
 )
 
 if(uring_FOUND)
@@ -166,10 +198,6 @@ set(IRESEARCH_EXTERNAL_INCLUDES
 include_directories(SYSTEM ${IRESEARCH_EXTERNAL_INCLUDES})
 
 add_library(iresearch-static STATIC ${IResearch_core_sources})
-
-if(BUILD_IRS_TESTS)
-    target_compile_definitions(iresearch-static PUBLIC IRESEARCH_TEST)
-endif()
 
 target_include_directories(
     iresearch-static
@@ -203,6 +231,7 @@ target_link_libraries(
     PUBLIC ${SIMD_LIBRARY_STATIC}
     PUBLIC ${FAISS_LIB}
     PUBLIC re2
+    PUBLIC serene_geo
     PRIVATE lz4_static
     PRIVATE text
     PRIVATE stemmer-static

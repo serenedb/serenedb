@@ -86,16 +86,6 @@ class RestHandlerFactory;
 
 class RocksDBEngineCatalog;
 
-class StorageSnapshot {
- public:
-  StorageSnapshot() = default;
-  StorageSnapshot(const StorageSnapshot&) = delete;
-  StorageSnapshot& operator=(const StorageSnapshot&) = delete;
-  virtual ~StorageSnapshot() = default;
-
-  virtual Tick tick() const noexcept = 0;
-};
-
 using WriteProperties = absl::FunctionRef<vpack::Slice(bool internal)>;
 
 /// helper class to make file-purging thread-safe
@@ -143,15 +133,11 @@ class RocksDBFilePurgeEnabler {
   RocksDBEngineCatalog* _engine;
 };
 
-class RocksDBSnapshot final : public StorageSnapshot {
+class StorageSnapshot {
  public:
-  explicit RocksDBSnapshot(rocksdb::DB& db) : _snapshot(&db) {}
+  explicit StorageSnapshot(rocksdb::DB& db) : _snapshot{&db} {}
 
-  Tick tick() const noexcept final {
-    return _snapshot.snapshot()->GetSequenceNumber();
-  }
-
-  decltype(auto) getSnapshot() const { return _snapshot.snapshot(); }
+  const rocksdb::Snapshot* GetSnapshot() const { return _snapshot.snapshot(); }
 
  private:
   mutable rocksdb::ManagedSnapshot _snapshot;
@@ -295,6 +281,8 @@ class RocksDBEngineCatalog {
   Result CreateRole(const catalog::Role& role);
 
   Result DropRole(const catalog::Role& role);
+
+  Result SyncTableStats(const catalog::Table& c, const TableShard& physical);
 
   yaclib::Future<Result> compactAll(bool change_level,
                                     bool compact_bottom_most_level);
@@ -621,6 +609,6 @@ struct DocCount {
 
 Result DeleteIndexEstimate(rocksdb::DB* db, uint64_t object_id);
 DocCount LoadCollectionCount(rocksdb::DB* db, uint64_t object_id);
-Result DeleteTableMeta(rocksdb::DB*, uint64_t object_id);
+Result DeleteTableMeta(rocksdb::DB*, const TableTombstone& tombstone);
 
 }  // namespace sdb

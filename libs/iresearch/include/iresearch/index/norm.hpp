@@ -37,7 +37,7 @@ struct NormReaderContextBase {
 
   bytes_view header;
   DocIterator::ptr it;
-  const irs::PayAttr* payload{};
+  const PayAttr* payload{};
   const DocAttr* doc{};
 };
 
@@ -105,7 +105,6 @@ class NormWriter : public FeatureWriter {
   explicit NormWriter() noexcept : _hdr{NormEncoding{sizeof(T)}} {}
 
   void write(const FieldStats& stats, doc_id_t doc,
-             // cppcheck-suppress constParameter
              ColumnOutput& writer) final {
     _hdr.Reset(stats.len);
 

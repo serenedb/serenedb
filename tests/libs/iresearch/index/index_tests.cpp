@@ -219,6 +219,13 @@ irs::Format::ptr IndexTestBase::get_codec() const {
   return irs::formats::Get(info.codec);
 }
 
+irs::doc_id_t IndexTestBase::GetPostingsBlockSize() const {
+  if (get_codec()->type()().name().contains("avx")) {
+    return 256;
+  }
+  return 128;
+}
+
 void IndexTestBase::AssertSnapshotEquality(const irs::IndexWriter& writer) {
   tests::AssertSnapshotEquality(writer.GetSnapshot(), open_reader());
 }
@@ -314,14 +321,6 @@ class IndexTestCase : public tests::IndexTestBase {
                                   irs::IndexFeatures::Pos |
                                   irs::IndexFeatures::Offs,
                                 skip, matcher);
-    IndexTestBase::assert_index(irs::IndexFeatures::Freq |
-                                  irs::IndexFeatures::Pos |
-                                  irs::IndexFeatures::Pay,
-                                skip, matcher);
-    IndexTestBase::assert_index(
-      irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-        irs::IndexFeatures::Offs | irs::IndexFeatures::Pay,
-      skip, matcher);
   }
 
   void ClearWriter() {
@@ -615,7 +614,7 @@ class IndexTestCase : public tests::IndexTestBase {
             pool.run([&mutex, &act_term_itr, &exp_term_itr]() -> void {
               constexpr irs::IndexFeatures kFeatures =
                 irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-                irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+                irs::IndexFeatures::Offs;
               irs::DocIterator::ptr act_docs_itr;
               irs::DocIterator::ptr exp_docs_itr;
 
@@ -655,22 +654,25 @@ class IndexTestCase : public tests::IndexTestBase {
                 ASSERT_EQ(exp_docs_itr->value(), act_docs_itr->value());
                 ASSERT_EQ(expected_freq->value, actual_freq->value);
 
-                auto* actual_offs = irs::get<irs::OffsAttr>(*actual_pos);
                 auto* expected_offs = irs::get<irs::OffsAttr>(*expected_pos);
-                ASSERT_FALSE(!actual_offs);
+                auto* actual_offs = irs::get<irs::OffsAttr>(*actual_pos);
                 ASSERT_FALSE(!expected_offs);
+                ASSERT_FALSE(!actual_offs);
 
-                auto* actual_pay = irs::get<irs::PayAttr>(*actual_pos);
                 auto* expected_pay = irs::get<irs::PayAttr>(*expected_pos);
-                ASSERT_FALSE(!actual_pay);
-                ASSERT_FALSE(!expected_pay);
+                auto* actual_pay = irs::get<irs::PayAttr>(*actual_pos);
+                if (expected_pay) {
+                  ASSERT_FALSE(!actual_pay);
+                }
 
                 while (actual_pos->next()) {
                   ASSERT_TRUE(expected_pos->next());
                   ASSERT_EQ(expected_pos->value(), actual_pos->value());
                   ASSERT_EQ(expected_offs->start, actual_offs->start);
                   ASSERT_EQ(expected_offs->end, actual_offs->end);
-                  ASSERT_EQ(expected_pay->value, actual_pay->value);
+                  if (expected_pay) {
+                    ASSERT_EQ(expected_pay->value, actual_pay->value);
+                  }
                 }
 
                 ASSERT_FALSE(expected_pos->next());
@@ -4780,10 +4782,17 @@ TEST_P(IndexTestCase, read_documents) {
   // no term
   {
     std::array<irs::doc_id_t, 10> docs{};
+    auto begin = docs.begin();
+    auto end = docs.end();
     auto* field = segment.field("name");
     ASSERT_NE(nullptr, field);
     const auto term = irs::ViewCast<irs::byte_type>("invalid"sv);
-    const auto size = field->read_documents(term, docs);
+    auto acceptor = [&](irs::doc_id_t doc) {
+      *begin++ = doc;
+      return begin != end;
+    };
+    field->read_documents(term, acceptor);
+    const auto size = std::distance(docs.begin(), begin);
     ASSERT_EQ(0, size);
     ASSERT_TRUE(
       std::all_of(docs.begin(), docs.end(), [](auto v) { return v == 0; }));
@@ -4792,23 +4801,51 @@ TEST_P(IndexTestCase, read_documents) {
   // singleton term
   {
     std::array<irs::doc_id_t, 10> docs{};
+    auto begin = docs.begin();
+    auto end = docs.end();
     auto* field = segment.field("name");
     ASSERT_NE(nullptr, field);
     const auto term = irs::ViewCast<irs::byte_type>("A"sv);
-    const auto size = field->read_documents(term, docs);
+    auto acceptor = [&](irs::doc_id_t doc) {
+      *begin++ = doc;
+      return begin != end;
+    };
+    field->read_documents(term, acceptor);
+    const auto size = std::distance(docs.begin(), begin);
     ASSERT_EQ(1, size);
     ASSERT_EQ(1, docs.front());
     ASSERT_TRUE(std::all_of(std::next(docs.begin(), size), docs.end(),
                             [](auto v) { return v == 0; }));
   }
 
+  // singleton term declined by acceptor
+  {
+    size_t calls = 0;
+    auto* field = segment.field("name");
+    ASSERT_NE(nullptr, field);
+    const auto term = irs::ViewCast<irs::byte_type>("A"sv);
+    auto acceptor = [&](irs::doc_id_t doc) {
+      calls++;
+      return false;
+    };
+    field->read_documents(term, acceptor);
+    ASSERT_EQ(1, calls);
+  }
+
   // singleton term
   {
     std::array<irs::doc_id_t, 10> docs{};
+    auto begin = docs.begin();
+    auto end = docs.end();
     auto* field = segment.field("name");
     ASSERT_NE(nullptr, field);
     const auto term = irs::ViewCast<irs::byte_type>("C"sv);
-    const auto size = field->read_documents(term, docs);
+    auto acceptor = [&](irs::doc_id_t doc) {
+      *begin++ = doc;
+      return begin != end;
+    };
+    field->read_documents(term, acceptor);
+    const auto size = std::distance(docs.begin(), begin);
     ASSERT_EQ(1, size);
     ASSERT_EQ(3, docs.front());
     ASSERT_TRUE(std::all_of(std::next(docs.begin(), size), docs.end(),
@@ -4818,10 +4855,17 @@ TEST_P(IndexTestCase, read_documents) {
   // regular term
   {
     std::array<irs::doc_id_t, 10> docs{};
+    auto begin = docs.begin();
+    auto end = docs.end();
     auto* field = segment.field("duplicated");
     ASSERT_NE(nullptr, field);
     const auto term = irs::ViewCast<irs::byte_type>("abcd"sv);
-    const auto size = field->read_documents(term, docs);
+    auto acceptor = [&](irs::doc_id_t doc) {
+      *begin++ = doc;
+      return begin != end;
+    };
+    field->read_documents(term, acceptor);
+    const auto size = std::distance(docs.begin(), begin);
     ASSERT_EQ(6, size);
     ASSERT_EQ(1, docs[0]);
     ASSERT_EQ(5, docs[1]);
@@ -4836,10 +4880,17 @@ TEST_P(IndexTestCase, read_documents) {
   // regular term, less requested
   {
     std::array<irs::doc_id_t, 3> docs{};
+    auto begin = docs.begin();
+    auto end = docs.end();
     auto* field = segment.field("duplicated");
     ASSERT_NE(nullptr, field);
     const auto term = irs::ViewCast<irs::byte_type>("abcd"sv);
-    const auto size = field->read_documents(term, docs);
+    auto acceptor = [&](irs::doc_id_t doc) {
+      *begin++ = doc;
+      return begin != end;
+    };
+    field->read_documents(term, acceptor);
+    const auto size = std::distance(docs.begin(), begin);
     ASSERT_EQ(3, size);
     ASSERT_EQ(1, docs[0]);
     ASSERT_EQ(5, docs[1]);
@@ -4848,23 +4899,43 @@ TEST_P(IndexTestCase, read_documents) {
 
   // regular term, nothing requested
   {
-    std::array<irs::doc_id_t, 10> docs{};
+    size_t calls = 0;
     auto* field = segment.field("duplicated");
     ASSERT_NE(nullptr, field);
     const auto term = irs::ViewCast<irs::byte_type>("abcd"sv);
-    const auto size =
-      field->read_documents(term, std::span{docs.data(), size_t{0}});
-    ASSERT_EQ(0, size);
-    ASSERT_TRUE(
-      std::all_of(docs.begin(), docs.end(), [](auto v) { return v == 0; }));
+    auto acceptor = [&](irs::doc_id_t doc) {
+      calls++;
+      return false;
+    };
+    field->read_documents(term, acceptor);
+    // no calls after false returned
+    ASSERT_EQ(1, calls);
   }
 
+  // regular term acceptor filtered
   {
+    std::array<irs::doc_id_t, 10> docs{};
+    auto begin = docs.begin();
+    auto end = docs.end();
     auto* field = segment.field("duplicated");
     ASSERT_NE(nullptr, field);
     const auto term = irs::ViewCast<irs::byte_type>("abcd"sv);
-    const auto size = field->read_documents(term, {});
-    ASSERT_EQ(0, size);
+    auto acceptor = [&](irs::doc_id_t doc) {
+      if (doc != 1) {
+        *begin++ = doc;
+      }
+      return begin != end;
+    };
+    field->read_documents(term, acceptor);
+    const auto size = std::distance(docs.begin(), begin);
+    ASSERT_EQ(5, size);
+    ASSERT_EQ(5, docs[0]);
+    ASSERT_EQ(11, docs[1]);
+    ASSERT_EQ(21, docs[2]);
+    ASSERT_EQ(27, docs[3]);
+    ASSERT_EQ(31, docs[4]);
+    ASSERT_TRUE(std::all_of(std::next(docs.begin(), size), docs.end(),
+                            [](auto v) { return v == 0; }));
   }
 }
 
@@ -6111,7 +6182,7 @@ TEST_P(IndexTestCase, doc_update) {
     test_field2->index_features =
       irs::IndexFeatures::Freq | irs::IndexFeatures::Offs;
     test_field3->index_features =
-      irs::IndexFeatures::Freq | irs::IndexFeatures::Pay;
+      irs::IndexFeatures::Freq | irs::IndexFeatures::Norm;
     test_field0->Name(test_field_name);
     test_field1->Name(test_field_name);
     test_field2->Name(test_field_name);
@@ -7717,9 +7788,9 @@ TEST_P(IndexTestCase, consolidate_single_segment) {
   const tests::Document* doc1 = gen.next();
   const tests::Document* doc2 = gen.next();
 
-  constexpr irs::IndexFeatures kAllFeatures =
-    irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-    irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+  constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
+                                              irs::IndexFeatures::Pos |
+                                              irs::IndexFeatures::Offs;
 
   std::vector<size_t> expected_consolidating_segments;
   auto check_consolidating_segments =
@@ -7871,9 +7942,9 @@ TEST_P(IndexTestCase, segment_consolidate_long_running) {
   const tests::Document* doc3 = gen.next();
   const tests::Document* doc4 = gen.next();
 
-  constexpr irs::IndexFeatures kAllFeatures =
-    irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-    irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+  constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
+                                              irs::IndexFeatures::Pos |
+                                              irs::IndexFeatures::Offs;
 
   size_t count = 0;
   auto get_number_of_files_in_segments =
@@ -8753,9 +8824,9 @@ TEST_P(IndexTestCase, segment_consolidate_commit) {
   const tests::Document* doc4 = gen.next();
   const tests::Document* doc5 = gen.next();
 
-  constexpr irs::IndexFeatures kAllFeatures =
-    irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-    irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+  constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
+                                              irs::IndexFeatures::Pos |
+                                              irs::IndexFeatures::Offs;
 
   size_t count = 0;
   auto get_number_of_files_in_segments =
@@ -9187,9 +9258,9 @@ TEST_P(IndexTestCase, consolidate_check_consolidating_segments) {
   }
 
   // validate structure
-  constexpr irs::IndexFeatures kAllFeatures =
-    irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-    irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+  constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
+                                              irs::IndexFeatures::Pos |
+                                              irs::IndexFeatures::Offs;
   gen.reset();
   tests::index_t expected;
   for (size_t i = 0; i < segments_count / 2; ++i) {
@@ -9280,9 +9351,9 @@ TEST_P(IndexTestCase, segment_consolidate_pending_commit) {
   const tests::Document* doc5 = gen.next();
   const tests::Document* doc6 = gen.next();
 
-  constexpr irs::IndexFeatures kAllFeatures =
-    irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-    irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+  constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
+                                              irs::IndexFeatures::Pos |
+                                              irs::IndexFeatures::Offs;
 
   size_t count = 0;
   auto get_number_of_files_in_segments =
@@ -11181,9 +11252,9 @@ TEST_P(IndexTestCase, segment_consolidate) {
 
   auto always_merge =
     irs::index_utils::MakePolicy(irs::index_utils::ConsolidateCount());
-  constexpr irs::IndexFeatures kAllFeatures =
-    irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-    irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+  constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
+                                              irs::IndexFeatures::Pos |
+                                              irs::IndexFeatures::Offs;
 
   // remove empty new segment
   {
@@ -13705,7 +13776,7 @@ TEST_P(IndexTestCase11, consolidate_old_format) {
   AssertSnapshotEquality(*writer);
   validate_codec(codec(), 2);
   // consolidate
-  auto old_codec = irs::formats::Get("1_5");
+  auto old_codec = irs::formats::Get("1_5avx");
   irs::index_utils::ConsolidateCount consolidate_all;
   ASSERT_TRUE(writer->Consolidate(irs::index_utils::MakePolicy(consolidate_all),
                                   old_codec));
@@ -14611,7 +14682,7 @@ TEST_P(IndexTestCase14, hnsw_search_basic) {
 }
 
 static const auto kTestFormats =
-  ::testing::Values(tests::FormatInfo{"1_5"}, tests::FormatInfo{"1_5simd"});
+  ::testing::Values(tests::FormatInfo{"1_5avx"}, tests::FormatInfo{"1_5simd"});
 
 static const auto kTestDirs =
   ::testing::ValuesIn(tests::GetDirectories<tests::kTypesDefaultRot13>());

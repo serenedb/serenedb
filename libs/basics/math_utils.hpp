@@ -175,7 +175,7 @@ struct MathTraits<T, sizeof(uint32_t)> {
     return ceil32(value, step);
   }
   static uint32_t bits_required(type val) noexcept {
-    return 0 == val ? 0 : 32 - static_cast<uint32_t>(std::countl_zero(val));
+    return std::bit_width(val);
   }
 };
 
@@ -190,7 +190,7 @@ struct MathTraits<T, sizeof(uint64_t)> {
     return ceil64(value, step);
   }
   static uint32_t bits_required(type val) noexcept {
-    return 0 == val ? 0 : 64 - static_cast<uint32_t>(std::countl_zero(val));
+    return std::bit_width(val);
   }
 };
 

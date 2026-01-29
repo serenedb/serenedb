@@ -22,6 +22,8 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 
 #include "basics/shared.hpp"
@@ -35,7 +37,7 @@ constexpr bool CharIsWhiteSpace(uint32_t c) noexcept {
   // For small size linear search faster than binary
   // https://dirtyhandscoding.github.io/posts/performance-comparison-linear-search-vs-binary-search.html
   // count generates avx/sse
-  return std::count(kWhiteSpaceTable.begin(), kWhiteSpaceTable.end(), c) != 0;
+  return absl::c_count(kWhiteSpaceTable, c) != 0;
 }
 
 // Note: frozen binary search make recursion and not inline for large sizes
@@ -48,7 +50,7 @@ constexpr bool CharIsWhiteSpace(uint32_t c) noexcept {
 
 template<typename V, typename Container>
 constexpr uint16_t CharCategoryImpl(V v, const Container& c) noexcept {
-  const auto it = std::lower_bound(c.begin(), c.end(), Category<V>{v, 0});
+  const auto it = absl::c_lower_bound(c, Category<V>{v, 0});
   if (it != c.begin() && it->codepoint != v) {
     return std::prev(it)->category;
   }

@@ -31,8 +31,8 @@ FROM
   misterbist as lhs JOIN
   osadchy as rhs ON lhs.teacha = rhs.teacha
 ----
-teacha teacha
-1 1
+teacha	teacha
+1	1
 
 
 statement ok
@@ -62,15 +62,15 @@ WHERE lol.vedernikoff != 993 AND lol.kostya != 'deadinside';
 query ???? rowsort
 SELECT * FROM bigfgun
 ----
-kostya vedernikoff extra_col another_col
-abugubugu 777 another 888
-abugubugu 777 another 888
-abugubugu 777 extra 555
-abugubugu 777 extra 555
-ivansolo2003 1337 another 888
-ivansolo2003 1337 another 888
-ivansolo2003 1337 extra 555
-ivansolo2003 1337 extra 555
+kostya	vedernikoff	extra_col	another_col
+abugubugu	777	another	888
+abugubugu	777	another	888
+abugubugu	777	extra	555
+abugubugu	777	extra	555
+ivansolo2003	1337	another	888
+ivansolo2003	1337	another	888
+ivansolo2003	1337	extra	555
+ivansolo2003	1337	extra	555
 
 
 query error
@@ -150,15 +150,15 @@ FROM
 query
 SELECT * FROM namingscheck;
 ----
-kostya vedernikoff matthew krivda
-babsky mopsila clickclack 1336
+kostya	vedernikoff	matthew	krivda
+babsky	mopsila	clickclack	1336
 
 
 query
 SELECT * FROM namingscheck AS anotherone(change, thesenames);
 ----
-change thesenames matthew krivda
-babsky mopsila clickclack 1336
+change	thesenames	matthew	krivda
+babsky	mopsila	clickclack	1336
 
 
 query
@@ -215,10 +215,10 @@ FROM
 query
 SELECT * FROM aliasik;
 ----
-kostello vedernikoff column3
-clickclack 666 arelav
-deadinside 993 androed
-gul 777 lmao
+kostello	vedernikoff	column3
+clickclack	666	arelav
+deadinside	993	androed
+gul	777	lmao
 
 
 statement ok

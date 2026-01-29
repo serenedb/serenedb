@@ -775,7 +775,7 @@ query
 SELECT ltrim('   hello   ');
 ----
 ltrim
-hello
+hello   
 
 
 query

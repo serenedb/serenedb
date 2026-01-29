@@ -385,7 +385,7 @@ Result ParseLoopImpl(vpack::Slice vpack,
   if (Validation && SDB_UNLIKELY(!r.ok())) {
     return r;
   }
-  auto points = std::make_unique<S2Point[]>(vertices.size());
+  auto points = s2internal::MakeS2PointArrayForOverwrite(vertices.size());
   if (Validation && options == coding::Options::S2LatLngU32) {
     absl::c_transform(vertices, points.get(), [](S2LatLng copy) {
       ToLatLngU32(copy);

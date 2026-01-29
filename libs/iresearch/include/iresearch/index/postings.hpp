@@ -79,7 +79,6 @@ class Postings : util::Noncopyable {
  public:
   using writer_t = byte_block_pool::inserter;
 
-  // cppcheck-suppress constParameter
   explicit Postings(writer_t& writer)
     : _terms{0, ValueRefHash{}, TermEq{_postings}}, _writer(writer) {}
 

@@ -675,10 +675,9 @@ bool FSDirectory::sync(std::string_view name) noexcept {
 }
 
 bool FSDirectory::sync(std::span<const std::string_view> files) noexcept {
-  return std::all_of(std::begin(files), std::end(files),
-                     [this](std::string_view name) mutable noexcept {
-                       return this->sync(name);
-                     });
+  return absl::c_all_of(files, [this](std::string_view name) mutable noexcept {
+    return this->sync(name);
+  });
 }
 
 bool CachingFSDirectory::length(uint64_t& result,

@@ -270,14 +270,14 @@ MemoryContextScope EnterMemoryContext(MemoryContextData& ctx) noexcept {
   return MemoryContextScope{old};
 }
 
-int ErrorPosition(const char* source_text, int location) {
-  if (location < 0 || !source_text) {
+int ErrorPosition(std::string_view source_text, int location) {
+  if (location < 0 || source_text.size() <= static_cast<size_t>(location)) {
     return 0;
   }
 
   // TODO(gnusi): We must honor DB encoding
   return irs::utf8_utils::Length(
-    {reinterpret_cast<const irs::byte_type*>(source_text),
+    {reinterpret_cast<const irs::byte_type*>(source_text.data()),
      static_cast<size_t>(location)});
 }
 

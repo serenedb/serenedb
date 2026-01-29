@@ -297,8 +297,7 @@ void IndexSegment::insert_indexed(const Ifield& f) {
   const std::string_view field_name = f.Name();
 
   const auto requested_features = f.GetIndexFeatures();
-  const auto features = requested_features &
-                        (~(irs::IndexFeatures::Offs | irs::IndexFeatures::Pay));
+  const auto features = requested_features & (~irs::IndexFeatures::Offs);
 
   const auto res = _fields.emplace(field_name, Field{field_name, features});
 
@@ -347,12 +346,6 @@ void IndexSegment::insert_indexed(const Ifield& f) {
         (requested_features & irs::IndexFeatures::Offs) &&
       offs) {
     field.index_features |= irs::IndexFeatures::Offs;
-  }
-  auto* pay = irs::get<irs::PayAttr>(stream);
-  if (irs::IndexFeatures::Pay ==
-        (requested_features & irs::IndexFeatures::Pay) &&
-      pay) {
-    field.index_features |= irs::IndexFeatures::Pay;
   }
 
   bool empty = true;
@@ -421,21 +414,20 @@ void IndexSegment::sort(const irs::Comparer& comparator) {
   }
 }
 
-class DocIterator : public irs::DocIterator {
+class DocIteratorImpl : public irs::DocIterator {
  public:
-  DocIterator(irs::IndexFeatures features, const tests::Term& data);
+  DocIteratorImpl(irs::IndexFeatures features, const tests::Term& data);
 
-  irs::doc_id_t value() const final { return _doc.value; }
+  irs::doc_id_t value() const noexcept final { return _doc.value; }
 
   irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
     const auto it = _attrs.find(type);
     return it == _attrs.end() ? nullptr : it->second;
   }
 
-  bool next() final {
+  irs::doc_id_t advance() final {
     if (_next == _data.postings.end()) {
-      _doc.value = irs::doc_limits::eof();
-      return false;
+      return _doc.value = irs::doc_limits::eof();
     }
 
     _prev = _next, ++_next;
@@ -443,7 +435,7 @@ class DocIterator : public irs::DocIterator {
     _freq.value = static_cast<uint32_t>(_prev->positions().size());
     _pos.Clear();
 
-    return true;
+    return _doc.value;
   }
 
   irs::doc_id_t seek(irs::doc_id_t id) final {
@@ -465,24 +457,16 @@ class DocIterator : public irs::DocIterator {
  private:
   class PosIterator final : public irs::PosAttr {
    public:
-    PosIterator(const DocIterator& owner, irs::IndexFeatures features)
+    PosIterator(const DocIteratorImpl& owner, irs::IndexFeatures features)
       : _owner(owner) {
       if (irs::IndexFeatures::None != (features & irs::IndexFeatures::Offs)) {
         _poffs = &_offs;
-      }
-
-      if (irs::IndexFeatures::None != (features & irs::IndexFeatures::Pay)) {
-        _ppay = &_pay;
       }
     }
 
     Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
       if (irs::Type<irs::OffsAttr>::id() == type) {
         return _poffs;
-      }
-
-      if (irs::Type<irs::PayAttr>::id() == type) {
-        return _ppay;
       }
 
       return nullptr;
@@ -492,7 +476,6 @@ class DocIterator : public irs::DocIterator {
       _next = _owner._prev->positions().begin();
       _value = irs::pos_limits::invalid();
       _offs.clear();
-      _pay.value = irs::bytes_view{};
     }
 
     bool next() final {
@@ -504,7 +487,6 @@ class DocIterator : public irs::DocIterator {
       _value = _next->pos;
       _offs.start = _next->start;
       _offs.end = _next->end;
-      _pay.value = _next->payload;
       ++_next;
 
       return true;
@@ -517,10 +499,8 @@ class DocIterator : public irs::DocIterator {
    private:
     std::set<Posting::Position>::const_iterator _next;
     irs::OffsAttr _offs;
-    irs::PayAttr _pay;
     irs::OffsAttr* _poffs{};
-    irs::PayAttr* _ppay{};
-    const DocIterator& _owner;
+    const DocIteratorImpl& _owner;
   };
 
   const tests::Term& _data;
@@ -534,7 +514,8 @@ class DocIterator : public irs::DocIterator {
   std::set<Posting>::const_iterator _next;
 };
 
-DocIterator::DocIterator(irs::IndexFeatures features, const tests::Term& data)
+DocIteratorImpl::DocIteratorImpl(irs::IndexFeatures features,
+                                 const tests::Term& data)
   : _data(data), _pos(*this, features) {
   _next = _data.postings.begin();
 
@@ -558,7 +539,9 @@ class TermIterator : public irs::SeekTermIterator {
   struct TermCookie final : irs::SeekCookie {
     explicit TermCookie(irs::bytes_view term) noexcept : term(term) {}
 
-    irs::Attribute* GetMutable(irs::TypeInfo::type_id) final { return nullptr; }
+    irs::Attribute* GetMutable(irs::TypeInfo::type_id) noexcept final {
+      return nullptr;
+    }
 
     bool IsEqual(const irs::SeekCookie& rhs) const noexcept final {
       return term == sdb::basics::downCast<TermCookie>(rhs).term;
@@ -583,7 +566,7 @@ class TermIterator : public irs::SeekTermIterator {
     return nullptr;
   }
 
-  irs::bytes_view value() const final { return _value.value; }
+  irs::bytes_view value() const noexcept final { return _value.value; }
 
   bool next() final {
     if (_next == _data.terms.end()) {
@@ -628,8 +611,8 @@ class TermIterator : public irs::SeekTermIterator {
                                   : irs::SeekResult::NotFound;
   }
 
-  DocIterator::ptr postings(irs::IndexFeatures features) const final {
-    return irs::memory::make_managed<DocIterator>(
+  DocIteratorImpl::ptr postings(irs::IndexFeatures features) const final {
+    return irs::memory::make_managed<DocIteratorImpl>(
       _data.index_features & features, *_prev);
   }
 
@@ -696,8 +679,9 @@ void AssertDocs(irs::DocIterator::ptr expected_docs,
 
         auto* expected_pay = irs::get<irs::PayAttr>(*expected_pos);
         auto* actual_pay = irs::get<irs::PayAttr>(*actual_pos);
-        if (expected_pay)
+        if (expected_pay) {
           ASSERT_FALSE(!actual_pay);
+        }
         ASSERT_TRUE(!irs::pos_limits::valid(expected_pos->value()));
         ASSERT_TRUE(!irs::pos_limits::valid(actual_pos->value()));
         for (; expected_pos->next();) {
@@ -731,19 +715,17 @@ void AssertDocs(const irs::TermIterator& expected_term,
                 const irs::TermReader& actual_terms,
                 irs::SeekCookie::ptr actual_cookie,
                 irs::IndexFeatures requested_features) {
-  AssertDocs(expected_term.postings(requested_features), [&]() {
-    return actual_terms.postings(*actual_cookie, requested_features);
+  AssertDocs(expected_term.postings(requested_features), [&] {
+    return actual_terms.Iterator(requested_features, *actual_cookie);
   });
 
-  AssertDocs(expected_term.postings(requested_features), [&]() {
-    // FIXME(gnusi)
-    const irs::WanderatorOptions options{
-      .factory = [](const irs::AttributeProvider&) {
-        return irs::ScoreFunction::Default(1);
-      }};
-
-    return actual_terms.wanderator(*actual_cookie, requested_features, options,
-                                   {.index = 0, .strict = false});
+  AssertDocs(expected_term.postings(requested_features), [&] {
+    return actual_terms.Iterator(
+      requested_features, *actual_cookie,
+      {{0, false}, [](uint32_t, const irs::AttributeProvider&) {
+         // FIXME(gnusi)
+         return irs::ScoreFunction::Default(1);
+       }});
   });
 
   // FIXME(gnusi): check BitUnion
@@ -1237,6 +1219,6 @@ namespace irs {
 
 // use base irs::position type for ancestors
 template<>
-struct Type<tests::DocIterator::PosIterator> : Type<irs::PosAttr> {};
+struct Type<tests::DocIteratorImpl::PosIterator> : Type<irs::PosAttr> {};
 
 }  // namespace irs

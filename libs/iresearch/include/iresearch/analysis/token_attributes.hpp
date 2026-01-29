@@ -71,7 +71,7 @@ struct PayAttr final : Attribute {
 struct DocAttr : Attribute {
   static constexpr std::string_view type_name() noexcept { return "document"; }
 
-  explicit DocAttr(irs::doc_id_t doc = irs::doc_limits::invalid()) noexcept
+  explicit DocAttr(doc_id_t doc = doc_limits::invalid()) noexcept
     : value{doc} {}
 
   doc_id_t value;
@@ -95,7 +95,7 @@ class PosAttr : public Attribute, public AttributeProvider {
   static PosAttr& empty() noexcept;
 
   template<typename Provider>
-  static PosAttr& GetMutable(Provider& attrs) {
+  static PosAttr& get(Provider& attrs) {
     auto* pos = irs::GetMutable<PosAttr>(&attrs);
     return pos ? *pos : empty();
   }
@@ -115,17 +115,17 @@ class PosAttr : public Attribute, public AttributeProvider {
 // Subscription for attribute provider change
 class AttrProviderChangeAttr final : public Attribute {
  public:
-  using callback_f = std::function<void(AttributeProvider&)>;
+  using Callback = std::function<void(AttributeProvider&)>;
 
   static constexpr std::string_view type_name() noexcept {
     return "attribute_provider_change";
   }
 
-  void subscribe(callback_f&& callback) const {
+  void Subscribe(Callback&& callback) const {
     _callback = std::move(callback);
 
     if (!_callback) [[unlikely]] {
-      _callback = &noop;
+      _callback = &Noop;
     }
   }
 
@@ -135,9 +135,9 @@ class AttrProviderChangeAttr final : public Attribute {
   }
 
  private:
-  static void noop(AttributeProvider&) noexcept {}
+  static void Noop(AttributeProvider&) noexcept {}
 
-  mutable callback_f _callback{&noop};
+  mutable Callback _callback{&Noop};
 };
 
 }  // namespace irs

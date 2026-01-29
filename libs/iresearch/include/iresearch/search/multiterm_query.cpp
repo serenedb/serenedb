@@ -38,7 +38,7 @@ class LazyBitsetIterator : public BitsetDocIterator {
  public:
   LazyBitsetIterator(const SubReader& segment, const TermReader& field,
                      std::span<const MultiTermState::UnscoredTermState> states,
-                     CostAttr::cost_t estimation) noexcept
+                     CostAttr::Type estimation) noexcept
     : BitsetDocIterator(estimation),
       _field(&field),
       _segment(&segment),
@@ -77,7 +77,6 @@ bool LazyBitsetIterator::refill(const word_t** begin, const word_t** end) {
                      _states.end()]() mutable noexcept -> const SeekCookie* {
     if (begin != end) {
       auto* cookie = begin->get();
-      // cppcheck-suppress unreadVariable
       ++begin;
       return cookie;
     }
@@ -106,7 +105,7 @@ namespace irs {
 
 void MultiTermQuery::visit(const SubReader& segment,
                            PreparedStateVisitor& visitor, score_t boost) const {
-  if (auto state = _states.find(segment); state) {
+  if (auto state = _states.find(segment)) {
     visitor.Visit(*this, *state, boost * _boost);
   }
 }
@@ -118,7 +117,8 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
   // get term state for the specified reader
   auto state = _states.find(segment);
 
-  if (!state) {
+  if (!state ||
+      (state->scored_states.empty() && state->unscored_states.empty())) {
     // invalid state
     return DocIterator::empty();
   }
@@ -130,28 +130,67 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
   const IndexFeatures features = ord.features();
   const std::span stats{_stats};
 
-  const bool has_unscored_terms = !state->unscored_terms.empty();
+  // add an iterator for each of the scored states
+  const bool no_score = ord.empty();
+  const bool has_unscored_terms = !state->unscored_states.empty();
+
+  IteratorOptions options{ctx.wand};
+  uint32_t current_cookie_idx = 0;
+
+  auto make_score = [&](uint32_t cookie_idx,
+                        const AttributeProvider& cookie_attrs) {
+    SDB_ASSERT(cookie_idx < state->scored_states.size());
+    cookie_idx = current_cookie_idx + cookie_idx;
+    auto& entry = state->scored_states[cookie_idx];
+    SDB_ASSERT(entry.stat_offset < stats.size());
+    auto* stat = stats[entry.stat_offset].c_str();
+    const auto boost = entry.boost * _boost;
+    return ord.buckets().front().bucket->PrepareScorer(
+      segment, state->reader->meta(), stat, cookie_attrs, boost);
+  };
+  if (!no_score && options.Enabled() && ord.buckets().front().bucket) {
+    options.make_score = make_score;
+  }
+
+  auto compile_score = [&](uint32_t cookie_idx,
+                           AttributeProvider& cookie_attrs) {
+    auto* score = irs::GetMutable<ScoreAttr>(&cookie_attrs);
+    SDB_ASSERT(score);
+    cookie_idx = current_cookie_idx + cookie_idx;
+    SDB_ASSERT(cookie_idx < state->scored_states.size());
+    auto& entry = state->scored_states[cookie_idx];
+    SDB_ASSERT(entry.stat_offset < stats.size());
+    auto* stat = stats[entry.stat_offset].c_str();
+    const auto boost = entry.boost * _boost;
+    CompileScore(*score, ord.buckets(), segment, *state->reader, stat,
+                 cookie_attrs, boost);
+  };
+  if (!no_score) {
+    options.compile_score = compile_score;
+  }
+
+  if (!has_unscored_terms) {
+    std::vector<const SeekCookie*> cookies;
+    cookies.reserve(state->scored_states.size());
+    for (auto& entry : state->scored_states) {
+      SDB_ASSERT(entry.cookie);
+      cookies.push_back(entry.cookie.get());
+    }
+
+    auto docs = reader->Iterator(features, cookies, options, _min_match,
+                                 _merge_type, ord.buckets().size());
+    return docs ? std::move(docs) : DocIterator::empty();
+  }
 
   ScoreAdapters itrs(state->scored_states.size() + size_t(has_unscored_terms));
   auto it = std::begin(itrs);
 
-  // add an iterator for each of the scored states
-  const bool no_score = ord.empty();
   for (auto& entry : state->scored_states) {
     SDB_ASSERT(entry.cookie);
-    auto docs = reader->postings(*entry.cookie, features);
-
+    auto docs = reader->Iterator(features, *entry.cookie, options);
+    ++current_cookie_idx;
     if (!docs) [[unlikely]] {
       continue;
-    }
-
-    if (!no_score) {
-      auto* score = irs::GetMutable<irs::ScoreAttr>(docs.get());
-      SDB_ASSERT(score);
-      SDB_ASSERT(entry.stat_offset < stats.size());
-      auto* stat = stats[entry.stat_offset].c_str();
-      CompileScore(*score, ord.buckets(), segment, *state->reader, stat, *docs,
-                   entry.boost * _boost);
     }
 
     SDB_ASSERT(it != std::end(itrs));
@@ -160,23 +199,23 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
   }
 
   if (has_unscored_terms) {
+    DocIterator::ptr docs = memory::make_managed<LazyBitsetIterator>(
+      segment, *state->reader, state->unscored_states,
+      state->unscored_states_estimation);
+
     SDB_ASSERT(it != std::end(itrs));
-    *it = {memory::make_managed<::LazyBitsetIterator>(
-      segment, *state->reader, state->unscored_terms,
-      state->unscored_states_estimation)};
+    *it = std::move(docs);
     ++it;
   }
 
   itrs.erase(it, std::end(itrs));
 
   return ResolveMergeType(
-    _merge_type, ord.buckets().size(),
-    [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-      using DisjunctionT = min_match_iterator<DocIterator::ptr, A>;
-
-      return MakeWeakDisjunction<DisjunctionT>({}, std::move(itrs), _min_match,
-                                               std::move(aggregator),
-                                               state->estimation());
+    _merge_type, ord.buckets().size(), [&]<typename A>(A&& aggregator) {
+      using Disjunction = MinMatchIterator<ScoreAdapter, A>;
+      return MakeWeakDisjunction<Disjunction>(ctx.wand, std::move(itrs),
+                                              _min_match, std::move(aggregator),
+                                              state->estimation());
     });
 }
 

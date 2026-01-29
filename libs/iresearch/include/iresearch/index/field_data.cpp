@@ -69,18 +69,8 @@ void WriteOffset(Posting& p, Stream& out, IndexFeatures& features,
 }
 
 template<typename Stream>
-void WriteProx(Stream& out, uint32_t prox, const irs::PayAttr* pay,
-               IndexFeatures& features) {
-  if (!pay || pay->value.empty()) {
-    WriteVarint<uint32_t>(ShiftPack32(prox, false), out);
-  } else {
-    WriteVarint<uint32_t>(ShiftPack32(prox, true), out);
-    WriteVarint<size_t>(pay->value.size(), out);
-    out.write(pay->value.data(), pay->value.size());
-
-    // saw payloads
-    features |= IndexFeatures::Pay;
-  }
+void WriteProx(Stream& out, uint32_t prox) {
+  WriteVarint<uint32_t>(prox, out);
 }
 
 template<typename Inserter>
@@ -125,15 +115,16 @@ IRS_FORCE_INLINE byte_block_pool::sliced_greedy_inserter GreedyWriter(
 }
 
 template<typename Reader>
-class PosIteratorImpl final : public irs::PosAttr {
+class PosIteratorImpl final : public PosAttr {
  public:
   PosIteratorImpl() : _prox_in(kEmptyPool) {}
 
   void Clear() noexcept {
     _pos = 0;
     _value = pos_limits::invalid();
-    _offs.clear();
-    _pay.value = {};
+    if (_offs) {
+      _offs->clear();
+    }
   }
 
   // reset field
@@ -142,12 +133,11 @@ class PosIteratorImpl final : public irs::PosAttr {
 
     _freq = &freq;
 
-    std::get<AttributePtr<OffsAttr>>(_attrs) =
-      IndexFeatures::None != (features & IndexFeatures::Offs) ? &_offs
-                                                              : nullptr;
-
-    std::get<AttributePtr<PayAttr>>(_attrs) =
-      IndexFeatures::None != (features & IndexFeatures::Pay) ? &_pay : nullptr;
+    if (IndexFeatures::None != (features & IndexFeatures::Offs)) {
+      _offs.emplace();
+    } else {
+      _offs.reset();
+    }
   }
 
   // reset value
@@ -157,7 +147,10 @@ class PosIteratorImpl final : public irs::PosAttr {
   }
 
   Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
-    return irs::GetMutable(_attrs, id);
+    if (id == irs::Type<OffsAttr>::id() && _offs) {
+      return &*_offs;
+    }
+    return nullptr;
   }
 
   bool next() final {
@@ -169,21 +162,14 @@ class PosIteratorImpl final : public irs::PosAttr {
       return false;
     }
 
-    uint32_t pos;
-
-    if (ShiftUnpack32(irs::vread<uint32_t>(_prox_in), pos)) {
-      const size_t size = irs::vread<size_t>(_prox_in);
-      _payload_value.resize(size);
-      _prox_in.read(const_cast<byte_type*>(_payload_value.data()), size);
-      _pay.value = _payload_value;
-    }
+    uint32_t pos = irs::vread<uint32_t>(_prox_in);
 
     _value += pos;
     SDB_ASSERT(pos_limits::valid(_value));
 
-    if (std::get<AttributePtr<OffsAttr>>(_attrs).ptr) {
-      _offs.start += irs::vread<uint32_t>(_prox_in);
-      _offs.end = _offs.start + irs::vread<uint32_t>(_prox_in);
+    if (_offs) {
+      _offs->start += irs::vread<uint32_t>(_prox_in);
+      _offs->end = _offs->start + irs::vread<uint32_t>(_prox_in);
     }
 
     ++_pos;
@@ -192,14 +178,9 @@ class PosIteratorImpl final : public irs::PosAttr {
   }
 
  private:
-  using Attributes = std::tuple<AttributePtr<OffsAttr>, AttributePtr<PayAttr>>;
-
   Reader _prox_in;
-  bstring _payload_value;
   const FreqAttr* _freq{};  // number of term positions in a document
-  PayAttr _pay;
-  OffsAttr _offs;
-  Attributes _attrs;
+  std::optional<OffsAttr> _offs;
   uint32_t _pos{};  // current position
 };
 
@@ -257,24 +238,19 @@ class DocIteratorImpl : public DocIterator {
     return irs::GetMutable(_attrs, type);
   }
 
-  doc_id_t seek(doc_id_t doc) final {
-    irs::seek(*this, doc);
-    return value();
-  }
-
   doc_id_t value() const noexcept final {
     return std::get<DocAttr>(_attrs).value;
   }
 
-  bool next() final {
-    auto& doc = std::get<DocAttr>(_attrs);
+  doc_id_t advance() final {
+    auto& doc_value = std::get<DocAttr>(_attrs).value;
 
     if (_freq_in.eof()) {
       if (!_posting) {
-        return false;
+        return doc_value = doc_limits::eof();
       }
 
-      doc.value = _posting->doc;
+      doc_value = _posting->doc;
       _freq.value = _posting->freq;
 
       if (_has_cookie) {
@@ -294,21 +270,26 @@ class DocIteratorImpl : public DocIterator {
         }
 
         SDB_ASSERT(delta < doc_limits::eof());
-        doc.value += doc_id_t(delta);
+        doc_value += doc_id_t(delta);
 
         if (_has_cookie) {
           _cookie += ReadCookie(_freq_in);
         }
       } else {
-        doc.value += irs::vread<uint32_t>(_freq_in);
+        doc_value += irs::vread<uint32_t>(_freq_in);
       }
 
-      SDB_ASSERT(doc.value != _posting->doc);
+      SDB_ASSERT(doc_value != _posting->doc);
     }
 
     _pos.Clear();
 
-    return true;
+    return doc_value;
+  }
+
+  doc_id_t seek(doc_id_t doc) final {
+    irs::seek(*this, doc);
+    return value();
   }
 
  private:
@@ -325,7 +306,7 @@ class DocIteratorImpl : public DocIterator {
   bool _has_cookie{false};  // FIXME remove
 };
 
-class SortingDocIteratorImpl : public irs::DocIterator {
+class SortingDocIteratorImpl : public DocIterator {
  public:
   // reset field
   void Reset(const FieldData& field) {
@@ -380,18 +361,12 @@ class SortingDocIteratorImpl : public irs::DocIterator {
     return irs::GetMutable(_attrs, type);
   }
 
-  doc_id_t seek(doc_id_t doc) noexcept final {
-    irs::seek(*this, doc);
-    return value();
-  }
-
   doc_id_t value() const noexcept final {
     return std::get<DocAttr>(_attrs).value;
   }
 
-  bool next() noexcept final {
-    // cppcheck-suppress shadowFunction
-    auto& value = std::get<DocAttr>(_attrs);
+  doc_id_t advance() final {
+    auto& doc_value = std::get<DocAttr>(_attrs).value;
 
     while (_it != _docs.end()) {
       if (doc_limits::eof(_it->doc)) {
@@ -401,7 +376,7 @@ class SortingDocIteratorImpl : public irs::DocIterator {
       }
 
       auto& doc = *_it;
-      value.value = doc.doc;
+      doc_value = doc.doc;
       _freq.value = doc.freq;
 
       if (doc.cookie) {  // we have proximity data
@@ -409,12 +384,16 @@ class SortingDocIteratorImpl : public irs::DocIterator {
       }
 
       ++_it;
-      return true;
+      return doc_value;
     }
 
-    value.value = doc_limits::eof();
     _freq.value = 0;
-    return false;
+    return doc_value = doc_limits::eof();
+  }
+
+  doc_id_t seek(doc_id_t doc) final {
+    irs::seek(*this, doc);
+    return value();
   }
 
  private:
@@ -473,10 +452,9 @@ class SortingDocIteratorImpl : public irs::DocIterator {
       _docs.emplace_back(new_doc, freq.value, it.Cookie());
     }
 
-    std::sort(_docs.begin(), _docs.end(),
-              [](const DocEntry& lhs, const DocEntry& rhs) noexcept {
-                return lhs.doc < rhs.doc;
-              });
+    absl::c_sort(_docs, [](const DocEntry& lhs, const DocEntry& rhs) noexcept {
+      return lhs.doc < rhs.doc;
+    });
   }
 
   void ResetAlreadySorted(DocIteratorImpl& it, const FreqAttr& freq) {
@@ -530,7 +508,7 @@ class TermIteratorImpl : public irs::TermIterator {
     // Does nothing now
   }
 
-  irs::DocIterator::ptr postings(IndexFeatures /*features*/) const final {
+  DocIterator::ptr postings(IndexFeatures /*features*/) const final {
     SDB_ASSERT(_it != _end);
 
     return (this->*kPostings[size_t(_field->prox_random_access())])(**_it);
@@ -550,9 +528,9 @@ class TermIteratorImpl : public irs::TermIterator {
 
  private:
   using PostingsF =
-    irs::DocIterator::ptr (TermIteratorImpl::*)(const Posting&) const;
+    DocIterator::ptr (TermIteratorImpl::*)(const Posting&) const;
 
-  irs::DocIterator::ptr Postings(const Posting& posting) const {
+  DocIterator::ptr Postings(const Posting& posting) const {
     SDB_ASSERT(!_doc_map);
 
     // where the term data starts
@@ -573,10 +551,10 @@ class TermIteratorImpl : public irs::TermIterator {
       prox_end);  // term's proximity // TODO: create on demand!!!
 
     _doc_itr.Reset(posting, freq, &prox);
-    return memory::to_managed<irs::DocIterator>(_doc_itr);
+    return memory::to_managed<DocIterator>(_doc_itr);
   }
 
-  irs::DocIterator::ptr SortPostings(const Posting& posting) const {
+  DocIterator::ptr SortPostings(const Posting& posting) const {
     // where the term data starts
     auto ptr = _field->_int_writer->parent().seek(posting.int_start);
     const auto freq_end = *ptr;
@@ -589,7 +567,7 @@ class TermIteratorImpl : public irs::TermIterator {
 
     _doc_itr.Reset(posting, freq, nullptr);
     _sorting_doc_itr.Reset(_doc_itr, _doc_map);
-    return memory::to_managed<irs::DocIterator>(_sorting_doc_itr);
+    return memory::to_managed<DocIterator>(_sorting_doc_itr);
   }
 
   static inline const PostingsF kPostings[2]{&TermIteratorImpl::Postings,
@@ -657,7 +635,7 @@ FieldData::FieldData(std::string_view name,
                      int_block_pool::inserter& int_writer,
                      IndexFeatures index_features, bool random_access)
   // Unset optional features
-  : _meta{name, index_features & (~(IndexFeatures::Offs | IndexFeatures::Pay))},
+  : _meta{name, index_features & (~IndexFeatures::Offs)},
     _terms{*byte_writer},
     _byte_writer{&byte_writer},
     _int_writer{&int_writer},
@@ -721,8 +699,7 @@ void FieldData::reset(doc_id_t doc_id) {
   _seen = false;
 }
 
-void FieldData::new_term(Posting& p, doc_id_t did, const PayAttr* pay,
-                         const OffsAttr* offs) {
+void FieldData::new_term(Posting& p, doc_id_t did, const OffsAttr* offs) {
   // where pointers to data starts
   p.int_start = _int_writer->pool_offset();
 
@@ -746,7 +723,7 @@ void FieldData::new_term(Posting& p, doc_id_t did, const PayAttr* pay,
       auto& prox_stream_end = *_int_writer->parent().seek(p.int_start + 1);
       byte_block_pool::sliced_inserter prox_out(*_byte_writer, prox_stream_end);
 
-      WriteProx(prox_out, _pos, pay, _meta.index_features);
+      WriteProx(prox_out, _pos);
 
       if (offs) {
         WriteOffset(p, prox_out, _meta.index_features, _offs, *offs);
@@ -761,8 +738,7 @@ void FieldData::new_term(Posting& p, doc_id_t did, const PayAttr* pay,
   ++_stats.num_unique;
 }
 
-void FieldData::add_term(Posting& p, doc_id_t did, const PayAttr* pay,
-                         const OffsAttr* offs) {
+void FieldData::add_term(Posting& p, doc_id_t did, const OffsAttr* offs) {
   if (IndexFeatures::None == (_requested_features & IndexFeatures::Freq)) {
     if (p.doc != did) {
       SDB_ASSERT(did > p.doc);
@@ -800,7 +776,7 @@ void FieldData::add_term(Posting& p, doc_id_t did, const PayAttr* pay,
       auto& prox_stream_end = *_int_writer->parent().seek(p.int_start + 1);
       byte_block_pool::sliced_inserter prox_out(*_byte_writer, prox_stream_end);
 
-      WriteProx(prox_out, _pos, pay, _meta.index_features);
+      WriteProx(prox_out, _pos);
 
       if (offs) {
         p.offs = 0;  // reset base offset
@@ -818,7 +794,7 @@ void FieldData::add_term(Posting& p, doc_id_t did, const PayAttr* pay,
       auto& prox_stream_end = *_int_writer->parent().seek(p.int_start + 1);
       byte_block_pool::sliced_inserter prox_out(*_byte_writer, prox_stream_end);
 
-      WriteProx(prox_out, _pos - p.pos, pay, _meta.index_features);
+      WriteProx(prox_out, _pos - p.pos);
 
       if (offs) {
         WriteOffset(p, prox_out, _meta.index_features, _offs, *offs);
@@ -831,7 +807,6 @@ void FieldData::add_term(Posting& p, doc_id_t did, const PayAttr* pay,
 }
 
 void FieldData::new_term_random_access(Posting& p, doc_id_t did,
-                                       const PayAttr* pay,
                                        const OffsAttr* offs) {
   // where pointers to data starts
   p.int_start = _int_writer->pool_offset();
@@ -859,7 +834,7 @@ void FieldData::new_term_random_access(Posting& p, doc_id_t did,
       byte_block_pool::sliced_greedy_inserter prox_out(*_byte_writer,
                                                        prox_start, 1);
 
-      WriteProx(prox_out, _pos, pay, _meta.index_features);
+      WriteProx(prox_out, _pos);
 
       if (offs) {
         WriteOffset(p, prox_out, _meta.index_features, _offs, *offs);
@@ -877,7 +852,6 @@ void FieldData::new_term_random_access(Posting& p, doc_id_t did,
 }
 
 void FieldData::add_term_random_access(Posting& p, doc_id_t did,
-                                       const PayAttr* pay,
                                        const OffsAttr* offs) {
   if (IndexFeatures::None == (_requested_features & IndexFeatures::Freq)) {
     if (p.doc != did) {
@@ -924,14 +898,12 @@ void FieldData::add_term_random_access(Posting& p, doc_id_t did,
       auto& last_start_cookie = *prox_stream_cookie;
 
       WriteCookie(doc_out, start_cookie - last_start_cookie);
-      // cppcheck-suppress selfAssignment
       last_start_cookie = start_cookie;  // update previous cookie
-      // cppcheck-suppress selfAssignment
-      start_cookie = end_cookie;  // update start cookie
+      start_cookie = end_cookie;         // update start cookie
 
       auto prox_out = GreedyWriter(*_byte_writer, end_cookie);
 
-      WriteProx(prox_out, _pos, pay, _meta.index_features);
+      WriteProx(prox_out, _pos);
 
       if (offs) {
         p.offs = 0;  // reset base offset
@@ -950,7 +922,7 @@ void FieldData::add_term_random_access(Posting& p, doc_id_t did,
       auto& end_cookie = *_int_writer->parent().seek(p.int_start + 2);
       auto prox_out = GreedyWriter(*_byte_writer, end_cookie);
 
-      WriteProx(prox_out, _pos - p.pos, pay, _meta.index_features);
+      WriteProx(prox_out, _pos - p.pos);
 
       if (offs) {
         WriteOffset(p, prox_out, _meta.index_features, _offs, *offs);
@@ -965,10 +937,9 @@ void FieldData::add_term_random_access(Posting& p, doc_id_t did,
 bool FieldData::invert(Tokenizer& stream, doc_id_t id) {
   SDB_ASSERT(id < doc_limits::eof());  // 0-based document id
 
-  const auto* term = get<TermAttr>(stream);
-  const auto* inc = get<IncAttr>(stream);
+  const auto* term = irs::get<TermAttr>(stream);
+  const auto* inc = irs::get<IncAttr>(stream);
   const OffsAttr* offs = nullptr;
-  const PayAttr* pay = nullptr;
 
   if (!inc) {
     SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "field '", _meta.name,
@@ -985,11 +956,7 @@ bool FieldData::invert(Tokenizer& stream, doc_id_t id) {
   }
 
   if (IndexFeatures::None != (_requested_features & IndexFeatures::Offs)) {
-    offs = get<OffsAttr>(stream);
-
-    if (offs) {
-      pay = get<PayAttr>(stream);
-    }
+    offs = irs::get<OffsAttr>(stream);
   }
 
   reset(id);  // initialize field_data for the supplied doc_id
@@ -1038,7 +1005,7 @@ bool FieldData::invert(Tokenizer& stream, doc_id_t id) {
       continue;
     }
 
-    (this->*_proc_table[!doc_limits::valid(p->doc)])(*p, id, pay, offs);
+    (this->*_proc_table[!doc_limits::valid(p->doc)])(*p, id, offs);
     SDB_ASSERT(doc_limits::valid(p->doc));
 
     if (0 == ++_stats.len) {
@@ -1109,10 +1076,10 @@ void FieldsData::flush(FieldWriter& fw, FlushState& state) {
 
   state.index_features = static_cast<IndexFeatures>(index_features);
 
-  std::sort(_sorted_fields.begin(), _sorted_fields.end(),
-            [](const FieldData* lhs, const FieldData* rhs) noexcept {
-              return lhs->meta().name < rhs->meta().name;
-            });
+  absl::c_sort(_sorted_fields,
+               [](const FieldData* lhs, const FieldData* rhs) noexcept {
+                 return lhs->meta().name < rhs->meta().name;
+               });
 
   TermReaderImpl terms(_sorted_postings, state.docmap);
 

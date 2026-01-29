@@ -23,7 +23,6 @@
 #include "bitset_doc_iterator.hpp"
 
 #include "basics/math_utils.hpp"
-#include "iresearch/formats/empty_term_reader.hpp"
 
 namespace irs {
 
@@ -44,7 +43,7 @@ Attribute* BitsetDocIterator::GetMutable(TypeInfo::type_id id) noexcept {
   return Type<CostAttr>::id() == id ? &_cost : nullptr;
 }
 
-bool BitsetDocIterator::next() noexcept {
+doc_id_t BitsetDocIterator::advance() {
   while (!_word) {
     if (_next >= _end) {
       if (refill(&_begin, &_end)) {
@@ -52,10 +51,8 @@ bool BitsetDocIterator::next() noexcept {
         continue;
       }
 
-      _doc.value = doc_limits::eof();
       _word = 0;
-
-      return false;
+      return _doc.value = doc_limits::eof();
     }
 
     _word = *_next++;
@@ -63,17 +60,15 @@ bool BitsetDocIterator::next() noexcept {
     _doc.value = _base - 1;
   }
 
-  // FIXME remove conversion
-  const doc_id_t delta = doc_id_t(std::countr_zero(_word));
+  const auto delta = std::countr_zero(_word);
+  SDB_ASSERT(delta >= 0);
   SDB_ASSERT(delta < BitsRequired<word_t>());
 
   _word = (_word >> delta) >> 1;
-  _doc.value += 1 + delta;
-
-  return true;
+  return _doc.value += 1 + delta;
 }
 
-doc_id_t BitsetDocIterator::seek(doc_id_t target) noexcept {
+doc_id_t BitsetDocIterator::seek(doc_id_t target) {
   const doc_id_t word_idx = target / BitsRequired<word_t>();
 
   while (1) {
@@ -100,9 +95,28 @@ doc_id_t BitsetDocIterator::seek(doc_id_t target) noexcept {
   _doc.value = _base - 1 + bit_idx;
 
   // FIXME consider inlining to speedup
-  next();
+  return advance();
+}
 
-  return _doc.value;
+uint32_t BitsetDocIterator::count() {
+  uint32_t count = 0;
+
+  while (_word != 0) [[unlikely]] {
+    advance();
+    ++count;
+  }
+
+  while (true) {
+    if (_next >= _end) {
+      if (refill(&_begin, &_end)) {
+        reset();
+        continue;
+      }
+      _doc.value = doc_limits::eof();
+      return count;
+    }
+    count += std::popcount(*_next++);
+  }
 }
 
 }  // namespace irs

@@ -93,7 +93,7 @@ class NormField final : public tests::Ifield {
   }
 
   irs::IndexFeatures GetIndexFeatures() const noexcept final {
-    return irs::kPosOffsPay | irs::IndexFeatures::Norm;
+    return irs::kPosOffs | irs::IndexFeatures::Norm;
   }
 
   bool Write(irs::DataOutput& out) const final {
@@ -319,10 +319,6 @@ class NormTestCase : public tests::IndexTestBase {
     IndexTestBase::assert_index(irs::IndexFeatures::Freq |
                                 irs::IndexFeatures::Pos |
                                 irs::IndexFeatures::Offs);
-    IndexTestBase::assert_index(irs::IndexFeatures::Freq |
-                                irs::IndexFeatures::Pos |
-                                irs::IndexFeatures::Pay);
-    IndexTestBase::assert_index(irs::kPosOffsPay);
     IndexTestBase::assert_columnstore();
   }
 
@@ -1225,7 +1221,7 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
 // Separate definition as MSVC parser fails to do conditional defines in macro
 // expansion
 const auto kNormTestCaseValues =
-  ::testing::Values(tests::FormatInfo{"1_5"}, tests::FormatInfo{"1_5simd"});
+  ::testing::Values(tests::FormatInfo{"1_5avx"}, tests::FormatInfo{"1_5simd"});
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 

@@ -31,7 +31,7 @@ class BySamePosition;
 
 // Options for "by same position" filter
 struct BySamePositionOptions {
-  using filter_type = BySamePosition;
+  using FilterType = BySamePosition;
 
   using search_term = std::pair<std::string, bstring>;
   using search_terms = std::vector<search_term>;
@@ -49,7 +49,7 @@ class BySamePosition : public FilterWithOptions<BySamePositionOptions> {
   static constexpr IndexFeatures kRequiredFeatures =
     IndexFeatures::Freq | IndexFeatures::Pos;
 
-  Prepared::ptr prepare(const PrepareContext& ctx) const final;
+  Query::ptr prepare(const PrepareContext& ctx) const final;
 };
 
 }  // namespace irs

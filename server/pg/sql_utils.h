@@ -115,7 +115,7 @@ void UnpackSqlState(T& buf, int sql_state) {
   }
 }
 
-int ErrorPosition(const char* source_text, int location);
+int ErrorPosition(std::string_view source_text, int location);
 
 std::tuple<std::string_view, std::string_view, std::string_view>
 GetDbSchemaRelation(const List* names);
@@ -160,6 +160,8 @@ enum class SqlCommandType : uint32_t {
   _Pragma("push_macro(\"vprintf\")") \
   _Pragma("push_macro(\"printf\")") \
   _Pragma("push_macro(\"foreach\")") \
+  _Pragma("push_macro(\"Min\")") \
+  _Pragma("push_macro(\"Max\")") \
   extern "C" {
 
 #define LIBPG_QUERY_INCLUDES_END \
@@ -179,6 +181,8 @@ enum class SqlCommandType : uint32_t {
   _Pragma("pop_macro(\"fprintf\")") \
   _Pragma("pop_macro(\"vprintf\")") \
   _Pragma("pop_macro(\"printf\")") \
-  _Pragma("pop_macro(\"foreach\")")
+  _Pragma("pop_macro(\"foreach\")") \
+  _Pragma("pop_macro(\"Min\")") \
+  _Pragma("pop_macro(\"Max\")")
 
 // clang-format on

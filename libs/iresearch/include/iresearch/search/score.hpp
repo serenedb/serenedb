@@ -37,7 +37,7 @@ struct ScoreAttr : Attribute, ScoreFunction {
 
   template<typename Provider>
   static const ScoreAttr& get(const Provider& attrs) {
-    const auto* score = irs::get<irs::ScoreAttr>(attrs);
+    const auto* score = irs::get<ScoreAttr>(attrs);
     return score ? *score : kNoScore;
   }
 
@@ -53,13 +53,13 @@ struct ScoreAttr : Attribute, ScoreFunction {
   struct UpperBounds {
     score_t tail = std::numeric_limits<score_t>::max();
     score_t leaf = std::numeric_limits<score_t>::max();
-#ifdef IRESEARCH_TEST
+#ifdef SDB_GTEST
     std::span<const score_t> levels;  // levels.back() == leaf
 #endif
   } max;
 };
 
-using ScoreFunctions = sdb::containers::SmallVector<ScoreFunction, 2>;
+using ScoreFunctions = sdb::containers::SmallVector<ScoreFunction, 1>;
 
 // Prepare scorer for each of the bucket.
 ScoreFunctions PrepareScorers(std::span<const ScorerBucket> buckets,
@@ -70,7 +70,7 @@ ScoreFunctions PrepareScorers(std::span<const ScorerBucket> buckets,
 // Compiles a set of prepared scorers into a single score function.
 ScoreFunction CompileScorers(ScoreFunctions&& scorers);
 
-void CompileScore(irs::ScoreAttr& score, std::span<const ScorerBucket> buckets,
+void CompileScore(ScoreAttr& score, std::span<const ScorerBucket> buckets,
                   const ColumnProvider& segment, const TermReader& field,
                   const byte_type* stats, const AttributeProvider& doc,
                   score_t boost);

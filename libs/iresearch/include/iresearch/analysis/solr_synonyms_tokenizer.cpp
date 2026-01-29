@@ -43,7 +43,7 @@ SolrSynonymsTokenizer::SynonymsList SplitLine(const std::string_view line) {
     }
   }
 
-  std::sort(outputs.begin(), outputs.end());
+  absl::c_sort(outputs);
   outputs.erase(std::unique(outputs.begin(), outputs.end()), outputs.end());
 
   return outputs;
@@ -133,7 +133,7 @@ bool SolrSynonymsTokenizer::next() {
 }
 
 bool SolrSynonymsTokenizer::reset(std::string_view data) {
-  auto& offset = std::get<irs::OffsAttr>(_attrs);
+  auto& offset = std::get<OffsAttr>(_attrs);
   offset.start = 0;
   offset.end = data.size();
 

@@ -32,25 +32,23 @@ struct FilterVisitor;
 
 // Options for term filter
 struct ByTermOptions {
-  using filter_type = ByTerm;
+  using FilterType = ByTerm;
 
   bstring term;
 
-  bool operator==(const ByTermOptions& rhs) const noexcept {
-    return term == rhs.term;
-  }
+  bool operator==(const ByTermOptions& rhs) const noexcept = default;
 };
 
 // User-side term filter
 class ByTerm : public FilterWithField<ByTermOptions> {
  public:
-  static Prepared::ptr prepare(const PrepareContext& ctx,
-                               std::string_view field, bytes_view term);
+  static Query::ptr prepare(const PrepareContext& ctx, std::string_view field,
+                            bytes_view term);
 
   static void visit(const SubReader& segment, const TermReader& field,
                     bytes_view term, FilterVisitor& visitor);
 
-  Prepared::ptr prepare(const PrepareContext& ctx) const final {
+  Query::ptr prepare(const PrepareContext& ctx) const final {
     auto sub_ctx = ctx;
     sub_ctx.boost *= Boost();
     return prepare(sub_ctx, field(), options().term);

@@ -79,7 +79,6 @@ class WriteLocker {
   /// releases the write-lock
   ~WriteLocker() noexcept {
     if (_is_locked) {
-      // cppcheck-suppress *
       static_assert(noexcept(_read_write_lock->unlockWrite()));
       _read_write_lock->unlockWrite();
     }

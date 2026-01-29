@@ -124,15 +124,15 @@ class SparseBitmapWriter {
   IRS_FORCE_INLINE void set(doc_id_t value) noexcept {
     SDB_ASSERT(value < kBlockSize);
 
-    irs::SetBit(_bits[value / BitsRequired<size_t>()],
-                value % BitsRequired<size_t>());
+    SetBit(_bits[value / BitsRequired<size_t>()],
+           value % BitsRequired<size_t>());
   }
 
   IRS_FORCE_INLINE void reset(doc_id_t value) noexcept {
     SDB_ASSERT(value < kBlockSize);
 
-    irs::UnsetBit(_bits[value / BitsRequired<size_t>()],
-                  value % BitsRequired<size_t>());
+    UnsetBit(_bits[value / BitsRequired<size_t>()],
+             value % BitsRequired<size_t>());
   }
 
   IRS_FORCE_INLINE void add_block(uint32_t block_id) {
@@ -211,13 +211,13 @@ class SparseBitmapIterator : public ResettableDocIterator {
     return irs::GetMutable(_attrs, type);
   }
 
-  doc_id_t seek(doc_id_t target) final;
-
-  bool next() final { return !doc_limits::eof(seek(value() + 1)); }
-
   doc_id_t value() const noexcept final {
     return std::get<DocAttr>(_attrs).value;
   }
+
+  doc_id_t advance() final { return seek(value() + 1); }
+
+  doc_id_t seek(doc_id_t target) final;
 
   void reset() final;
 
@@ -260,7 +260,7 @@ class SparseBitmapIterator : public ResettableDocIterator {
     };
   };
 
-  using attributes =
+  using Attributes =
     std::tuple<DocAttr, ValueIndex, PrevDocAttr, CostAttr, ScoreAttr>;
 
   explicit SparseBitmapIterator(Ptr&& in, const Options& opts);
@@ -269,7 +269,7 @@ class SparseBitmapIterator : public ResettableDocIterator {
   void read_block_header();
 
   ContainerIteratorContext _ctx;
-  attributes _attrs;
+  Attributes _attrs;
   Ptr _in;
   std::unique_ptr<byte_type[]> _block_index_data;
   block_seek_f _seek_func;

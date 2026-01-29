@@ -229,9 +229,6 @@ enum class ScoreMergeType {
 
   // Find max amongst multiple scores
   Max,
-
-  // Find min amongst multiple scores
-  Min,
 };
 
 struct ScorerBucket {
@@ -274,7 +271,7 @@ class Scorers final : private util::Noncopyable {
   IndexFeatures features() const noexcept { return _features; }
 
  private:
-  using ScorerBuckets = sdb::containers::SmallVector<ScorerBucket, 2>;
+  using ScorerBuckets = sdb::containers::SmallVector<ScorerBucket, 1>;
 
   template<typename Iterator>
   static Scorers Prepare(Iterator begin, Iterator end);
@@ -386,7 +383,7 @@ template<>
 struct HasScoreHelper<NoopAggregator> : std::false_type {};
 
 template<typename Aggregator>
-inline constexpr bool kHasScoreV = HasScoreHelper<Aggregator>::value;
+inline constexpr bool kHasScore = HasScoreHelper<Aggregator>::value;
 
 struct SumMerger {
   void operator()(score_t* IRS_RESTRICT dst,
@@ -409,17 +406,6 @@ struct MaxMerger {
   }
 };
 
-struct MinMerger {
-  void operator()(score_t* IRS_RESTRICT dst,
-                  const score_t* IRS_RESTRICT src) const noexcept {
-    const auto& src_value = *src;
-
-    if (src_value < *dst) {
-      *dst = src_value;
-    }
-  }
-};
-
 template<typename Visitor>
 auto ResolveMergeType(ScoreMergeType type, size_t num_buckets,
                       Visitor&& visitor) {
@@ -429,12 +415,6 @@ auto ResolveMergeType(ScoreMergeType type, size_t num_buckets,
         return visitor(NoopAggregator{});
       case 1:
         return visitor(Aggregator<Merger, 1>{});
-      case 2:
-        return visitor(Aggregator<Merger, 2>{});
-      case 3:
-        return visitor(Aggregator<Merger, 3>{});
-      case 4:
-        return visitor(Aggregator<Merger, 4>{});
       default:
         return visitor(Aggregator<Merger, kBufferRuntimeSize>{num_buckets});
     }
@@ -447,8 +427,6 @@ auto ResolveMergeType(ScoreMergeType type, size_t num_buckets,
       return impl.template operator()<SumMerger>();
     case ScoreMergeType::Max:
       return impl.template operator()<MaxMerger>();
-    case ScoreMergeType::Min:
-      return impl.template operator()<MinMerger>();
   }
 }
 

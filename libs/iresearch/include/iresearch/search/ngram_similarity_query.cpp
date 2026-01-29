@@ -34,9 +34,9 @@ namespace {
 struct Position {
   template<typename Iterator>
   explicit Position(Iterator& itr) noexcept
-    : pos{&PosAttr::GetMutable(itr)},
+    : pos{&PosAttr::get(itr)},
       doc{irs::get<DocAttr>(itr)},
-      scr{&irs::ScoreAttr::get(itr)} {
+      scr{&ScoreAttr::get(itr)} {
     SDB_ASSERT(pos);
     SDB_ASSERT(doc);
     SDB_ASSERT(scr);
@@ -103,17 +103,16 @@ class NGramApprox : public MinMatchDisjunction<NoopAggregator> {
 };
 
 template<>
-class NGramApprox<true> : public Conjunction<CostAdapter<>, NoopAggregator> {
-  using Base = Conjunction<CostAdapter<>, NoopAggregator>;
+class NGramApprox<true> : public Conjunction<CostAdapter, NoopAggregator> {
+  using Base = Conjunction<CostAdapter, NoopAggregator>;
 
  public:
   NGramApprox(CostAdapters&& itrs, size_t min_match_count)
     : Base{NoopAggregator{},
            [](auto&& itrs) {
-             std::sort(itrs.begin(), itrs.end(),
-                       [](const auto& lhs, const auto& rhs) noexcept {
-                         return lhs.est < rhs.est;
-                       });
+             absl::c_sort(itrs, [](const auto& lhs, const auto& rhs) noexcept {
+               return lhs.est < rhs.est;
+             });
              return std::move(itrs);
            }(std::move(itrs))},
       _match_count{min_match_count} {}
@@ -303,7 +302,6 @@ bool SerialPositionsChecker<Base>::Check(size_t potential, doc_id_t doc) {
                   // times. Replace with new length through swap cache - to not
                   // spoil candidate for following positions of same ngram
                   swap_cache.emplace_back(current_pos,
-                                          // cppcheck-suppress accessMoved
                                           std::move(new_candidate));
                 }
               } else if (initial_found->second->scr == pos_iterator.scr &&
@@ -478,7 +476,7 @@ class NGramSimilarityDocIterator : public DocIterator, private ScoreCtx {
     : NGramSimilarityDocIterator{std::move(itrs), total_terms_count,
                                  min_match_count, !ord.empty()} {
     if (!ord.empty()) {
-      auto& score = std::get<irs::ScoreAttr>(_attrs);
+      auto& score = std::get<ScoreAttr>(_attrs);
       CompileScore(score, ord.buckets(), segment, field, stats, *this, boost);
     }
   }
@@ -489,35 +487,31 @@ class NGramSimilarityDocIterator : public DocIterator, private ScoreCtx {
     return attr != nullptr ? attr : _checker.GetMutableAttr(type);
   }
 
-  bool next() final {
-    while (_approx.next()) {
-      if (_checker.Check(_approx.MatchCount(), value())) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  doc_id_t value() const final {
+  doc_id_t value() const noexcept final {
     return std::get<AttributePtr<DocAttr>>(_attrs).ptr->value;
   }
 
-  doc_id_t seek(doc_id_t target) final {
-    auto* doc = std::get<AttributePtr<DocAttr>>(_attrs).ptr;
-
-    if (doc->value >= target) {
-      return doc->value;
+  doc_id_t advance() final {
+    while (true) {
+      const auto doc = _approx.advance();
+      if (doc_limits::eof(doc) || _checker.Check(_approx.MatchCount(), doc)) {
+        return doc;
+      }
     }
-    const auto doc_id = _approx.seek(target);
-
-    if (doc_limits::eof(doc_id) ||
-        _checker.Check(_approx.MatchCount(), doc->value)) {
-      return doc_id;
-    }
-
-    next();
-    return doc->value;
   }
+
+  doc_id_t seek(doc_id_t target) final {
+    if (const auto doc = value(); target <= doc) [[unlikely]] {
+      return doc;
+    }
+    const auto doc = _approx.seek(target);
+    if (doc_limits::eof(doc) || _checker.Check(_approx.MatchCount(), doc)) {
+      return doc;
+    }
+    return advance();
+  }
+
+  uint32_t count() final { return Count(*this); }
 
  private:
   using Attributes =
@@ -544,16 +538,13 @@ CostAdapters Execute(const NGramState& query_state,
   itrs.reserve(query_state.terms.size());
 
   for (const auto& term_state : query_state.terms) {
-    if (term_state == nullptr) [[unlikely]] {
+    if (!term_state) [[unlikely]] {
       continue;
     }
 
-    if (auto docs = field->postings(*term_state, required_features); docs) {
-      auto& it = itrs.emplace_back(std::move(docs));
-
-      if (!it) [[unlikely]] {
-        itrs.pop_back();
-      }
+    if (auto docs = field->Iterator(required_features, *term_state))
+      [[likely]] {
+      itrs.emplace_back(std::move(docs));
     }
   }
 

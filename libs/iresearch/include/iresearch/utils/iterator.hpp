@@ -24,6 +24,7 @@
 
 #include <memory>
 
+#include "basics/memory.hpp"
 #include "basics/misc.hpp"
 #include "basics/noncopyable.hpp"
 #include "basics/std.hpp"
@@ -32,7 +33,7 @@ namespace irs {
 
 template<typename T, typename Base = memory::Managed>
 struct Iterator : Base {
-  virtual T value() const = 0;
+  virtual T value() const noexcept = 0;
   // TODO(mbkkt) return T? In such case some algorithms probably will be faster
   virtual bool next() = 0;
 };

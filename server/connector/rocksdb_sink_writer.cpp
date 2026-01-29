@@ -20,6 +20,7 @@
 
 #include "rocksdb_sink_writer.hpp"
 
+#include "basics/logger/logger.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 
 namespace sdb::connector {

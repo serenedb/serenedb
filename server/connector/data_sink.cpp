@@ -169,48 +169,41 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
   const auto num_columns = input->childrenSize();
 
   _store_keys_buffers.clear();
-  _store_keys_buffers.reserve(num_rows);
+  _store_keys_buffers.resize(num_rows);
 
-  size_t skipped_rows = 0;
   for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-    bool skip = false;
+    auto& key_buffer = _store_keys_buffers[row_idx];
     key_utils::MakeColumnKey(
       input, _key_childs, row_idx, table_key,
       [&](std::string_view row_key) {
         const auto status = _data_writer.Lock(row_key);
-        if (!status.ok()) {
-          if (_data_writer._conflict_policy == WriteConflictPolicy::DoNothing &&
-              status.IsReentrantLockAttempt()) {
-            ++skipped_rows;
-            skip = true;
-          } else {
-            const auto result = rocksutils::ConvertStatus(status);
-            SDB_THROW(result.errorNumber(),
-                      "Failed to acquire row lock for table ", _object_key.id(),
-                      " error: ", result.errorMessage());
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                            ERR_MSG("test"));
-          }
+        if (status.ok()) {
+          return;
         }
+        if (_data_writer._conflict_policy == WriteConflictPolicy::DoNothing &&
+            status.IsReentrantLockAttempt()) {
+          key_buffer.clear();
+          return;
+        }
+        const auto result = rocksutils::ConvertStatus(status);
+        SDB_THROW(result.errorNumber(), "Failed to acquire row lock for table ",
+                  _object_key.id(), " error: ", result.errorMessage());
       },
-      _store_keys_buffers.emplace_back());
+      key_buffer);
 
-    if (skip) {
-      _store_keys_buffers.back().clear();
-    } else {
-      // For early conflict detection
-      key_utils::SetupColumnForKey(_store_keys_buffers.back(),
-                                   _column_ids.front());
+    if (!key_buffer.empty()) {
+      key_utils::SetupColumnForKey(key_buffer, _column_ids.front());
     }
   }
 
-  skipped_rows += _data_writer.HandleConflicts(_store_keys_buffers);
+  _data_writer.HandleConflicts(_store_keys_buffers);
+
+  const auto skipped_rows = static_cast<size_t>(std::ranges::count_if(
+    _store_keys_buffers, [](const auto& key) { return key.empty(); }));
   SDB_ASSERT(skipped_rows <= num_rows);
 
   const auto affected_rows = num_rows - skipped_rows;
-
   if (affected_rows == 0) {
-    // All rows are skipped, nothing to do
     return;
   }
 
@@ -332,6 +325,8 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
     return;
   }
 
+  // WHAT IF IN MULTISTATEMENT TRANSACTION WILL TOUCH SAME KEY?
+
   // Take locks and prepare buffers for both new and
   // old primary keys (if old and new pk are same, than does not lock because of
   // no reentrancy)
@@ -350,9 +345,14 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
         }
       },
       _old_keys_buffers.emplace_back());
+
+    //
+    key_utils::SetupColumnForKey(_store_keys_buffers.back(),
+                                 _column_ids.front());
   }
 
   ensure_input_sorted(_old_keys_buffers);
+  _data_writer.HandleConflicts(_store_keys_buffers, _old_keys_buffers);
   auto it = _data_writer.CreateIterator();
   for (auto column_id : _all_column_ids) {
     for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {

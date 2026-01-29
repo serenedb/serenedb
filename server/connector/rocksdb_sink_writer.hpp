@@ -39,6 +39,13 @@ class RocksDBSinkWriterBase {
   virtual ~RocksDBSinkWriterBase() = default;
 
   rocksdb::Status Lock(std::string_view full_key) {
+    // Allow reentrant for replace only, other wise we need a special status
+    // - emit error -> prohibit reentrant, return status is locked to propagate
+    // error
+    // - do nothing -> prohibit reentrant, return status is locked to skip the
+    // row and correct row count
+    // const bool reentrant = _conflict_policy !=
+    // WriteConflictPolicy::EmitError;
     const bool reentrant = _conflict_policy == WriteConflictPolicy::Replace;
 
     return _transaction.GetKeyLock(&_cf, full_key,

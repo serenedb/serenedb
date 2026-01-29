@@ -104,7 +104,7 @@ LOGICAL PLAN:
       - Project: -> ROW<"id":INTEGER,"name":VARCHAR>
           id := id
           name := name
-        - TableScan: /tmp/${__DATABASE__}_lmao -> ROW<"id":INTEGER,"name":VARCHAR>
+        - TableScan: <slt:ignore> -> ROW<"id":INTEGER,"name":VARCHAR>
 EXECUTION PLAN:
 Fragment 0:  numWorkers=0:
 -- TableWrite[4][serenedb(table=reversed, kind=INSERT)] -> rows:BIGINT

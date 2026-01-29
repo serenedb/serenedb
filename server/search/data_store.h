@@ -157,13 +157,18 @@ class DataStore : public std::enable_shared_from_this<DataStore> {
 
   auto& GetMutex() { return _mutex; }
   Snapshot GetSnapshot() const;
+
   DataSnapshotPtr GetDataSnapshot() const {
     return std::atomic_load_explicit(&_snapshot, std::memory_order_acquire);
   }
+
   void StoreDataSnapshot(DataSnapshotPtr data_snapshot) {
     std::atomic_store_explicit(&_snapshot, std::move(data_snapshot),
                                std::memory_order_release);
   }
+
+  void ResetDataSnapshot() { _snapshot.reset(); }
+
   auto& GetMeta() { return _meta; }
 
   void StartTasks() {

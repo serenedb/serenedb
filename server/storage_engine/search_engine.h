@@ -70,6 +70,7 @@ class SearchEngine final : public SerenedFeature {
   void start() final;
   void stop() final;
   void unprepare() final;
+  void beginShutdown() final;
   void validateOptions(std::shared_ptr<options::ProgramOptions>) final;
 
   std::tuple<size_t, size_t, size_t> stats(ThreadGroup id) const;

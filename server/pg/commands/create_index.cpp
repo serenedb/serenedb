@@ -27,6 +27,7 @@
 #include "app/app_server.h"
 #include "basics/down_cast.h"
 #include "basics/errors.h"
+#include "basics/system-compiler.h"
 #include "catalog/catalog.h"
 #include "catalog/index.h"
 #include "catalog/object.h"
@@ -52,9 +53,9 @@ LIBPG_QUERY_INCLUDES_END
 namespace sdb::pg {
 namespace {
 
-std::optional<catalog::IndexType> GetIndexType(char* method) {
-  return method ? magic_enum::enum_cast<catalog::IndexType>(method)
-                : catalog::IndexType::Secondary;
+std::optional<IndexType> GetIndexType(char* method) {
+  return method ? magic_enum::enum_cast<IndexType>(method)
+                : IndexType::Secondary;
 }
 
 Result MakeIndexOptions(const IndexStmt& index,
@@ -115,10 +116,15 @@ ResultOr<std::shared_ptr<catalog::Index>> MakeIndex(
   PgListWrapper<IndexElem> index_columns) {
   options.relation_id = relation.GetId();
   switch (options.type) {
-    case catalog::IndexType::Secondary:
+    case IndexType::Secondary:
       return MakeSecondaryIndex(std::move(options), relation, index_columns);
-    case catalog::IndexType::Inverted:
+    case IndexType::Primary:
+    case IndexType::Inverted:
+    case IndexType::Edge:
+    case IndexType::NoAccess:
       return std::unexpected<Result>{std::in_place, ERROR_NOT_IMPLEMENTED};
+    case IndexType::Unknown:
+      SDB_UNREACHABLE();
   }
 }
 

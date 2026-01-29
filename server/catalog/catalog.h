@@ -106,6 +106,8 @@ struct Snapshot {
 
   virtual std::shared_ptr<TableShard> GetTableShard(ObjectId id) const = 0;
   virtual std::vector<std::shared_ptr<TableShard>> GetTableShards() const = 0;
+  virtual std::vector<std::shared_ptr<search::DataStore>> GetDataStores()
+    const = 0;
   virtual std::shared_ptr<search::DataStore> GetDataStore(
     ObjectId index_id) const = 0;
 
@@ -226,7 +228,8 @@ struct LogicalCatalog {
                            std::string_view name,
                            AsyncResult* async_result) = 0;
   virtual Result DropIndex(ObjectId database_id, std::string_view schema,
-                           std::string_view name) = 0;
+                           std::string_view name,
+                           AsyncResult* async_result) = 0;
 
   virtual void RegisterTableDrop(TableTombstone tombstone) = 0;
   virtual void RegisterScopeDrop(ObjectId database_id, ObjectId schema_id) = 0;

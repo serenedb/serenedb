@@ -42,14 +42,13 @@ enum class TableType : uint8_t {
   Edge = 3,
 };
 
-enum IndexType {
-  kTypeUnknown = 0,
-  kTypePrimaryIndex,
-  kTypeEdgeIndex,
-  kTypeTtlIndex,
-  kTypeSecondaryIndex,
-  kTypeNoAccessIndex,
-  kTypeInvertedIndex,
+enum class IndexType : uint8_t {
+  Unknown = 0,
+  Primary,
+  Secondary,
+  Inverted,
+  Edge,
+  NoAccess,
 };
 
 enum class IndexSerialization : uint8_t {

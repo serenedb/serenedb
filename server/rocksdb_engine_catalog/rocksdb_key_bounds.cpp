@@ -429,18 +429,17 @@ RocksDBKeyBounds::RocksDBKeyBounds(RocksDBEntryType type, uint64_t first,
 RocksDBKeyBounds GetIndexBounds(IndexType type, uint64_t object_id,
                                 bool unique) {
   switch (type) {
-    case kTypePrimaryIndex:
+    case IndexType::Primary:
       return RocksDBKeyBounds::PrimaryIndex(object_id);
-    case kTypeEdgeIndex:
+    case IndexType::Edge:
       return RocksDBKeyBounds::EdgeIndex(object_id);
-    case kTypeTtlIndex:
-    case kTypeSecondaryIndex:
-    case kTypeInvertedIndex:
+    case IndexType::Secondary:
+    case IndexType::Inverted:
       if (unique) {
         return RocksDBKeyBounds::UniqueVPackIndex(object_id, false);
       }
       return RocksDBKeyBounds::VPackIndex(object_id, false);
-    case kTypeUnknown:
+    case IndexType::Unknown:
     default:
       SDB_THROW(ERROR_NOT_IMPLEMENTED);
   }

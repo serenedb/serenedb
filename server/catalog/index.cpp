@@ -23,6 +23,7 @@
 #include "basics/errors.h"
 #include "catalog/object.h"
 #include "catalog/secondary_index.h"
+#include "catalog/types.h"
 #include "vpack/serializer.h"
 
 namespace sdb::catalog {
@@ -58,8 +59,13 @@ ResultOr<std::shared_ptr<Index>> CreateIndex(
   switch (options.base.type) {
     case IndexType::Secondary:
       return MakeIndex<SecondaryIndex>(database_id, std::move(options));
+    case IndexType::Primary:
     case IndexType::Inverted:
+    case IndexType::Edge:
+    case IndexType::NoAccess:
       return std::unexpected<Result>{std::in_place, ERROR_NOT_IMPLEMENTED};
+    case IndexType::Unknown:
+      SDB_UNREACHABLE();
   }
 }
 

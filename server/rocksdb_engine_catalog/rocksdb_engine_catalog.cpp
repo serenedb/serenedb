@@ -1665,8 +1665,8 @@ void RocksDBEngineCatalog::prepareDropTable(ObjectId collection) {
 }
 
 Result RocksDBEngineCatalog::DropIndex(IndexTombstone tombstone) {
-  SDB_ASSERT(tombstone.type != IndexType::kTypeUnknown &&
-             tombstone.type != IndexType::kTypeNoAccessIndex);
+  SDB_ASSERT(tombstone.type != IndexType::Unknown &&
+             tombstone.type != IndexType::NoAccess);
 
   rocksdb::DB* db = _db->GetRootDB();
 
@@ -1677,14 +1677,14 @@ Result RocksDBEngineCatalog::DropIndex(IndexTombstone tombstone) {
              "could not delete index estimate: ", r.errorMessage());
   }
 
-  if (tombstone.type == IndexType::kTypeInvertedIndex) {
+  if (tombstone.type == IndexType::Inverted) {
     // TODO(gnusi): handle it here?
 
     // rocksdb does not store inverted index data
     return r;
   }
 
-  const bool prefix_same_as_start = tombstone.type != IndexType::kTypeEdgeIndex;
+  const bool prefix_same_as_start = tombstone.type != IndexType::Edge;
   const bool use_range_delete =
     UseRangeDelete(tombstone.id, tombstone.number_documents);
   const auto bounds =

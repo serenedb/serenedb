@@ -39,6 +39,7 @@
 #include "basics/logger/logger.h"
 #include "basics/number_of_cores.h"
 #include "catalog/analyzer.h"
+#include "catalog/catalog.h"
 #include "catalog/identity_analyzer.h"
 #include "catalog/index.h"
 #include "catalog/search_common.h"
@@ -353,4 +354,12 @@ std::filesystem::path SearchEngine::GetPersistedPath(
   return ::sdb::search::GetPersistedPath(_dir_feature, database_id);
 }
 
+void SearchEngine::beginShutdown() {
+  // Drop rocksdb snapshots in search data stores
+  // in order to gracefully shutdown rocksdb engine
+  for (auto&& data_store :
+       catalog::GetCatalog().GetSnapshot()->GetDataStores()) {
+    data_store->ResetDataSnapshot();
+  }
+}
 }  // namespace sdb::search

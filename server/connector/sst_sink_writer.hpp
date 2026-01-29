@@ -49,7 +49,7 @@ class SSTSinkWriter {
   rocksdb::ColumnFamilyHandle* _cf;
   std::vector<std::unique_ptr<rocksdb::SstFileWriter>> _writers;
   std::string _sst_directory;
-  size_t _column_idx;
+  int64_t _column_idx = -1;
 };
 
 }  // namespace sdb::connector

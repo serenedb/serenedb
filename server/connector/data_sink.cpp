@@ -100,31 +100,32 @@ SSTInsertDataSink::SSTInsertDataSink(
       std::vector<std::unique_ptr<SinkInsertWriter>>{}) {}
 
 void SSTInsertDataSink::appendData(velox::RowVectorPtr input) {
+  SDB_ASSERT(input->encoding() == velox::VectorEncoding::Simple::ROW);
+  SDB_ASSERT(input->type()->size() == _column_ids.size(),
+             "RocksDBDataSink: column oids size ", _column_ids.size(),
+             " doesn't match input type size ", input->type()->size());
+  SDB_ASSERT(input->type()->kind() == velox::TypeKind::ROW);
+
   const std::string table_key = key_utils::PrepareTableKey(_object_key);
   const auto num_rows = input->size();
+  const auto num_columns = input->childrenSize();
 
   _store_keys_buffers.clear();
   _store_keys_buffers.reserve(num_rows);
 
   for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
     key_utils::MakeColumnKey(
-      input, _key_childs, row_idx, table_key, [&](std::string_view) {},
+      input, _key_childs, row_idx, table_key, [&](std::string_view row_key) {},
       _store_keys_buffers.emplace_back());
   }
 
-  velox::IndexRange all_rows{0, input->size()};
+  velox::IndexRange all_rows(0, num_rows);
   const folly::Range all_rows_range{&all_rows, 1};
-  const auto num_columns = input->childrenSize();
   for (velox::column_index_t i = 0; i < num_columns; ++i) {
     if (_column_ids[i] != catalog::Column::kGeneratedPKId) {
       WriteInputColumn(_column_ids[i], i, *input, all_rows_range);
     }
   }
-}
-
-bool SSTInsertDataSink::finish() {
-  _data_writer.Finish();
-  return true;
 }
 
 RocksDBUpdateDataSink::RocksDBUpdateDataSink(

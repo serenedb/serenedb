@@ -189,8 +189,6 @@ class RocksDBDataSinkBase : public velox::connector::DataSink {
     const folly::Range<const velox::IndexRange*>& ranges,
     velox::vector_size_t total_rows_number);
 
-  void PrepareKeyBuffers(const velox::RowVectorPtr& input);
-
   DataWriterType _data_writer;
   std::vector<std::unique_ptr<SubWriterType>> _index_writers;
   ObjectId _object_key;
@@ -268,7 +266,11 @@ class SSTInsertDataSink final
                     std::string_view rocksdb_directory);
 
   void appendData(velox::RowVectorPtr input) final;
-  bool finish() final;
+
+  bool finish() final {
+    _data_writer.Finish();
+    return true;
+  }
 };
 
 class RocksDBDeleteDataSink : public velox::connector::DataSink {

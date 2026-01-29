@@ -71,8 +71,8 @@ SSTSinkWriter::SSTSinkWriter(rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
 
     _writers[i] =
       std::make_unique<rocksdb::SstFileWriter>(rocksdb::EnvOptions{}, options);
-    auto sst_file_path = absl::StrCat(_sst_directory, "/", "column_", i, "_",
-                                      random::RandU64(), ".sst");
+    auto sst_file_path =
+      absl::StrCat(_sst_directory, "/", "column_", i, "_.sst");
     auto status = _writers[i]->Open(sst_file_path);
     if (!status.ok()) {
       SDB_THROW(rocksutils::ConvertStatus(status));

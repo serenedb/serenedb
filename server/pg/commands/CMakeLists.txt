@@ -11,4 +11,5 @@ target_sources(
         drop_object.cpp
         transaction.cpp
         variable_set.cpp
+        vacuum.cpp
 )

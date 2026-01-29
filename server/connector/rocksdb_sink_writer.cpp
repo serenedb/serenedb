@@ -30,9 +30,9 @@ void RocksDBSinkWriter::ConfigureReadOptions() {
   _read_options.snapshot = _transaction.GetSnapshot();
 }
 
-size_t RocksDBSinkWriter::HandleConflicts(primary_key::Keys& keys,
-                                          std::span<const std::string> s) {
-  SDB_ASSERT(keys.size() == s.size() || s.empty());
+size_t RocksDBSinkWriter::HandleSnapshotConflicts(
+  primary_key::Keys& keys, std::span<const std::string> old_keys) {
+  SDB_ASSERT(keys.size() == old_keys.size() || old_keys.empty());
   if (_conflict_policy == WriteConflictPolicy::Replace) {
     // Optimize out reading
     return 0;
@@ -50,11 +50,18 @@ size_t RocksDBSinkWriter::HandleConflicts(primary_key::Keys& keys,
       continue;
     }
     // Old key equals to new key
-    if (!s.empty() && s[i] == key) {
+    if (!old_keys.empty() && old_keys[i] == key) {
       continue;
     }
 
-    auto status = db->Get(_read_options, &_cf, key, &_lookup_value);
+    rocksdb::Status status;
+    if (old_keys.empty()) {
+      // INSERT
+      status = db->Get(_read_options, &_cf, key, &_lookup_value);
+    } else {
+      // UPDATE PK
+      status = _transaction.Get(_read_options, &_cf, key, &_lookup_value);
+    }
     // We do not need value, so it may be forgotten immediately.
     // See issue #184
     _lookup_value.Reset();

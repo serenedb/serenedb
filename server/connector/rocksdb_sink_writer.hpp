@@ -79,8 +79,8 @@ class RocksDBSinkWriter : public RocksDBSinkWriterBase {
 
   // Handles write conflicts. Returns number of skipped rows
   // TODO better api
-  size_t HandleConflicts(primary_key::Keys& keys,
-                         std::span<const std::string> s = {});
+  size_t HandleSnapshotConflicts(primary_key::Keys& keys,
+                                 std::span<const std::string> s = {});
 
  private:
   void ConfigureReadOptions();

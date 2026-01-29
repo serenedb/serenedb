@@ -167,10 +167,13 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
   const std::string table_key = key_utils::PrepareTableKey(_object_key);
   const auto num_rows = input->size();
   const auto num_columns = input->childrenSize();
+  const bool skip_duplicates =
+    _data_writer._conflict_policy == WriteConflictPolicy::DoNothing;
 
   _store_keys_buffers.clear();
   _store_keys_buffers.resize(num_rows);
 
+  size_t lock_skipped = 0;
   for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
     auto& key_buffer = _store_keys_buffers[row_idx];
     key_utils::MakeColumnKey(
@@ -180,9 +183,9 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
         if (status.ok()) {
           return;
         }
-        if (_data_writer._conflict_policy == WriteConflictPolicy::DoNothing &&
-            status.IsReentrantLockAttempt()) {
+        if (skip_duplicates && status.IsReentrantLockAttempt()) {
           key_buffer.clear();
+          ++lock_skipped;
           return;
         }
         const auto result = rocksutils::ConvertStatus(status);
@@ -196,13 +199,12 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
     }
   }
 
-  _data_writer.HandleConflicts(_store_keys_buffers);
+  const size_t snapshot_skipped =
+    _data_writer.HandleSnapshotConflicts(_store_keys_buffers);
+  const size_t total_skipped = lock_skipped + snapshot_skipped;
+  SDB_ASSERT(total_skipped <= num_rows);
 
-  const auto skipped_rows = static_cast<size_t>(std::ranges::count_if(
-    _store_keys_buffers, [](const auto& key) { return key.empty(); }));
-  SDB_ASSERT(skipped_rows <= num_rows);
-
-  const auto affected_rows = num_rows - skipped_rows;
+  const auto affected_rows = num_rows - total_skipped;
   if (affected_rows == 0) {
     return;
   }
@@ -211,14 +213,14 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
     writer->Init(affected_rows);
   }
 
-  velox::IndexRange all_rows(0, num_rows);
+  const velox::IndexRange all_rows{0, num_rows};
   const folly::Range all_rows_range{&all_rows, 1};
   for (velox::column_index_t i = 0; i < num_columns; ++i) {
     if (_column_ids[i] == catalog::Column::kGeneratedPKId) {
       SDB_ASSERT(i + 1 == num_columns,
                  "RocksDBDataSink: generated primary column should be the last "
                  "one in the input vectors");
-      continue;
+      break;
     }
     WriteInputColumn(_column_ids[i], i, *input, all_rows_range);
   }
@@ -326,6 +328,17 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
   }
 
   // WHAT IF IN MULTISTATEMENT TRANSACTION WILL TOUCH SAME KEY?
+  // TODO(mkornaukhov) WILL BE SHIT, WE MUST READ FROM TRANSACTION EACH TIME
+  // TODO(mkornaukhov) MAKE TEST
+  // begin (read you own writes)
+  // insert 1
+  // update 1 -> 2
+  // insert 1
+  // commit
+  // or
+  // begin
+  // update 1 -> 2
+  // update 1 -> 2 (must OK 0 lines, but will emit error)
 
   // Take locks and prepare buffers for both new and
   // old primary keys (if old and new pk are same, than does not lock because of
@@ -352,7 +365,7 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
   }
 
   ensure_input_sorted(_old_keys_buffers);
-  _data_writer.HandleConflicts(_store_keys_buffers, _old_keys_buffers);
+  _data_writer.HandleSnapshotConflicts(_store_keys_buffers, _old_keys_buffers);
   auto it = _data_writer.CreateIterator();
   for (auto column_id : _all_column_ids) {
     for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {

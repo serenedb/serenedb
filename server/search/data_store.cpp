@@ -74,9 +74,20 @@ DataStore::DataStore(const catalog::Index& index)
   path /= absl::StrCat(index_id);
   _dir = std::make_unique<irs::FSDirectory>(path);
   auto codec = irs::formats::Get("1_5avx");
-  _writer = irs::IndexWriter::Make(
-    *_dir, codec, (irs::OpenMode::kOmCreate | irs::OpenMode::kOmAppend),
-    _options.writer_options);
+  // TODO(codeworse): add is_exists and change open_mode
+  _writer = irs::IndexWriter::Make(*_dir, codec, irs::OpenMode::kOmCreate,
+                                   _options.writer_options);
+  // TODO(codeworse): Add recovery
+  _last_committed_tick = 0;
+
+  auto reader = _writer->GetSnapshot();
+  auto engine_snapshot = _engine.currentSnapshot();
+  if (!engine_snapshot) {
+    SDB_THROW(ERROR_INTERNAL, "Search index '", _id,
+              "' cannot acquire snapshot");
+  }
+  _snapshot = std::make_shared<DataSnapshot>(std::move(reader),
+                                             std::move(engine_snapshot));
 }
 
 Snapshot DataStore::GetSnapshot() const {
@@ -95,6 +106,13 @@ void DataStore::ScheduleConsolidation(absl::Duration delay) {
                          }};
 
   _state->pending_consolidations.fetch_add(1, std::memory_order_release);
+  std::move(task).Schedule(delay);
+}
+
+void DataStore::ScheduleCommit(absl::Duration delay) {
+  CommitTask task{shared_from_this()};
+
+  _state->pending_commits.fetch_add(1, std::memory_order_release);
   std::move(task).Schedule(delay);
 }
 
@@ -309,6 +327,7 @@ Result DataStore::CommitUnsafeImpl(bool wait,
     code = CommitResult::Done;
 
     // update reader
+    SDB_ASSERT(GetDataSnapshot());
     SDB_ASSERT(GetDataSnapshot()->reader != reader);
     const auto reader_size = reader->size();
     const auto docs_count = reader->docs_count();
@@ -373,18 +392,6 @@ bool DataStore::IsOutOfSync() const noexcept {
 
 bool DataStore::FailQueriesOnOutOfSync() const noexcept {
   return _search.failQueriesOnOutOfSync();
-}
-
-void DataStore::StartCommitTasks() {
-  CommitTask task{shared_from_this()};
-  std::move(task).Schedule();
-}
-
-void DataStore::StartConsolidationTasks() {
-  ConsolidationTask task{shared_from_this(), [data_store = shared_from_this()] {
-                           return /* TODO(codeworse) */ false;
-                         }};
-  std::move(task).Schedule();
 }
 
 }  // namespace sdb::search

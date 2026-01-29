@@ -107,6 +107,7 @@ class LocalCatalog final : public LogicalCatalog,
   void RegisterTableDrop(TableTombstone tombstone) final;
   void RegisterScopeDrop(ObjectId database_id, ObjectId schema_id) final;
   void DropTableShard(ObjectId id);
+  void DropDataStore(ObjectId id);
 
   bool GetSkipBackgroundErrors() const noexcept {
     return _skip_background_errors;

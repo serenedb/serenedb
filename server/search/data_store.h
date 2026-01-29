@@ -141,6 +141,7 @@ class DataStore : public std::enable_shared_from_this<DataStore> {
   Stats UpdateStatsUnsafe(DataSnapshotPtr data) const;
 
   void ScheduleConsolidation(absl::Duration delay);
+  void ScheduleCommit(absl::Duration delay);
 
   ObjectId GetId() const noexcept { return _id; }
   ObjectId GetRelationId() const noexcept { return _relation_id; }
@@ -165,6 +166,11 @@ class DataStore : public std::enable_shared_from_this<DataStore> {
   }
   auto& GetMeta() { return _meta; }
 
+  void StartTasks() {
+    ScheduleCommit({});
+    ScheduleConsolidation({});
+  }
+
  private:
   Result ConsolidateUnsafeImpl(const DataStoreMeta::ConsolidationPolicy& policy,
                                const irs::MergeWriter::FlushProgress& progress,
@@ -173,9 +179,6 @@ class DataStore : public std::enable_shared_from_this<DataStore> {
                           const irs::ProgressReportCallback& progress,
                           CommitResult& code);
   Result CleanupUnsafeImpl();
-
-  void StartCommitTasks();
-  void StartConsolidationTasks();
 
   RocksDBEngineCatalog& _engine;
   SearchEngine& _search;

@@ -33,7 +33,8 @@
 
 namespace sdb::search {
 
-void CommitTask::Finalize(CommitResult res) {
+void CommitTask::Finalize(std::shared_ptr<search::DataStore> data_store,
+                          CommitResult res) {
   constexpr size_t kMaxNonEmptyCommits = 10;
   constexpr size_t kMaxPendingConsolidations = 3;
 
@@ -49,7 +50,7 @@ void CommitTask::Finalize(CommitResult res) {
             kMaxPendingConsolidations &&
           _state->non_empty_commits.fetch_add(1, std::memory_order_acq_rel) >=
             kMaxNonEmptyCommits) {
-        _data_store->ScheduleConsolidation(_consolidation_interval_msec);
+        data_store->ScheduleConsolidation(_consolidation_interval_msec);
         _state->non_empty_commits.store(0, std::memory_order_release);
       }
     }
@@ -69,14 +70,20 @@ void CommitTask::Finalize(CommitResult res) {
 }
 
 void CommitTask::operator()() {
+  SDB_TRACE("xxxxx", Logger::SEARCH, "CommitTask started");
   const char run_id = 0;
-  auto id = _data_store->GetId();
+  auto data = _data_store.lock();
+  if (!data) {
+    SDB_TRACE("xxxxx", Logger::SEARCH, "DataStore ", _id, " is deleted");
+    return;
+  }
+  auto id = data->GetId();
   _state->pending_commits.fetch_sub(1, std::memory_order_release);
 
   auto code = CommitResult::Undefined;
-  absl::Cleanup reschedule = [&code, this]() noexcept {
+  absl::Cleanup reschedule = [&code, data, this]() noexcept {
     try {
-      Finalize(code);
+      Finalize(std::move(data), code);
     } catch (const std::exception& ex) {
       SDB_ERROR("xxxxx", Logger::SEARCH,
                 "failed to call finalize: ", ex.what());
@@ -88,11 +95,10 @@ void CommitTask::operator()() {
     SDB_IF_FAILURE("SearchCommitTask::lockDataStore") {
       SDB_THROW(ERROR_DEBUG);
     }
-    SDB_ASSERT(_data_store);
     // must be valid if linkLock->lock() is valid
-    absl::ReaderMutexLock lock{_data_store->GetMutex()};
+    absl::ReaderMutexLock lock{data->GetMutex()};
     // '_meta' can be asynchronously modified
-    auto& meta = _data_store->GetMeta();
+    auto& meta = data->GetMeta();
 
     _commit_interval_msec = absl::Milliseconds(meta.commit_interval_msec);
     _consolidation_interval_msec =
@@ -109,7 +115,7 @@ void CommitTask::operator()() {
 
   SDB_IF_FAILURE("SearchCommitTask::commitUnsafe") { SDB_THROW(ERROR_DEBUG); }
   // run commit ('_async_self' locked by async task)
-  auto [res, timeMs] = _data_store->CommitUnsafe(false, nullptr, code);
+  auto [res, timeMs] = data->CommitUnsafe(false, nullptr, code);
 
   if (res.ok()) {
     SDB_TRACE("xxxxx", Logger::SEARCH, "successful sync of Search index '",
@@ -129,7 +135,7 @@ void CommitTask::operator()() {
     }
 
     // run cleanup ('_async_self' locked by async task)
-    auto [res, timeMs] = _data_store->CleanupUnsafe();
+    auto [res, timeMs] = data->CleanupUnsafe();
 
     if (res.ok()) {
       SDB_TRACE("xxxxx", Logger::SEARCH, "successful cleanup of Search index '",
@@ -145,8 +151,15 @@ void CommitTask::operator()() {
 }
 
 void ConsolidationTask::operator()() {
+  SDB_TRACE("xxxxx", Logger::SEARCH, "ConsolidationTask started");
   const char run_id = 0;
-  auto id = _data_store->GetId();
+  auto data = _data_store.lock();
+  if (!data) {
+    SDB_WARN("xxxxx", Logger::SEARCH,
+             "ConsolidationTask: data store is deleted");
+    return;
+  }
+  auto id = data->GetId();
   _state->pending_consolidations.fetch_sub(1, std::memory_order_release);
 
   absl::Cleanup reschedule = [this]() noexcept {
@@ -171,11 +184,10 @@ void ConsolidationTask::operator()() {
       SDB_THROW(ERROR_DEBUG);
     }
 
-    SDB_ASSERT(_data_store);
     // must be valid if _async_self->lock() is valid
-    absl::ReaderMutexLock lock{_data_store->GetMutex()};
+    absl::ReaderMutexLock lock{data->GetMutex()};
     // '_meta' can be asynchronously modified
-    auto& meta = _data_store->GetMeta();
+    auto& meta = data->GetMeta();
 
     _consolidation_policy = meta.consolidation_policy;
     _consolidation_interval_msec =
@@ -205,7 +217,7 @@ void ConsolidationTask::operator()() {
 
   // run consolidation ('_async_self' locked by async task)
   bool empty_consolidation = false;
-  const auto [res, timeMs] = _data_store->ConsolidateUnsafe(
+  const auto [res, timeMs] = data->ConsolidateUnsafe(
     _consolidation_policy, _progress, empty_consolidation);
 
   if (res.ok()) {

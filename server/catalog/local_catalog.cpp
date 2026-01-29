@@ -22,6 +22,7 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/functional/function_ref.h>
+#include <absl/strings/str_format.h>
 #include <absl/synchronization/mutex.h>
 
 #include <algorithm>
@@ -416,11 +417,16 @@ class SnapshotImpl : public Snapshot {
   }
 
   void AddDataStore(std::shared_ptr<search::DataStore> data_store) {
+    ObjectId id = data_store->GetId();
+    ObjectId relation_id = data_store->GetRelationId();
     const auto is_new = _data_stores.emplace(std::move(data_store)).second;
     SDB_ENSURE(is_new, ERROR_INTERNAL);
+    auto shard = GetTableShard(relation_id);
+    shard->AddDataStore(id);
   }
 
   void DropTableShard(ObjectId id) { _table_shards.erase(id); }
+  void DropDataStore(ObjectId id) { _data_stores.erase(id); }
 
   std::vector<std::shared_ptr<Role>> GetRoles() const final {
     return {_roles.begin(), _roles.end()};
@@ -1140,7 +1146,11 @@ Result LocalCatalog::RegisterIndex(ObjectId database_id,
   return _snapshot->RegisterObject(
     database_id, schema, std::move(*index), false, [&](auto& object) -> Result {
       auto& index = basics::downCast<Index>(*object);
-      return _engine->CreateDataStore(index, false).error_or(Result{});
+      return _engine->CreateDataStore(index, false)
+        .transform([&](auto&& data_store) {
+          _snapshot->AddDataStore(std::move(data_store));
+        })
+        .error_or(Result{});
     });
 }
 
@@ -1165,13 +1175,14 @@ Result LocalCatalog::CreateIndex(ObjectId database_id, std::string_view schema,
       database_id, schema, std::move(*index), false,
       [&](auto& object) -> Result {
         auto& index = basics::downCast<Index>(*object);
-        auto shard = catalog::GetTableShard(index.GetRelationId());
-        SDB_ASSERT(shard);
-        // create DataStore and write to RocksDB -> Add DataStore to snapshot ->
-        // Write Index to RocksDB
-        auto data_store = std::make_shared<search::DataStore>(index);
-        _snapshot->AddDataStore(data_store);
-        shard->AddDataStore(data_store->GetId());
+        auto r = _engine->CreateDataStore(index, true)
+                   .transform([&](auto&& data_store) {
+                     _snapshot->AddDataStore(std::move(data_store));
+                   })
+                   .error_or(Result{});
+        if (!r.ok()) {
+          return r;
+        }
         return _engine->CreateIndex(index);
       });
   });
@@ -1643,6 +1654,14 @@ void LocalCatalog::DropTableShard(ObjectId id) {
   absl::MutexLock lock{&_mutex};
   std::ignore = Apply(_snapshot, [&](auto& clone) {
     clone->DropTableShard(id);
+    return Result{};
+  });
+}
+
+void LocalCatalog::DropDataStore(ObjectId id) {
+  absl::MutexLock lock{&_mutex};
+  std::ignore = Apply(_snapshot, [&](auto& clone) {
+    clone->DropDataStore(id);
     return Result{};
   });
 }

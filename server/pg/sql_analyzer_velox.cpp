@@ -39,6 +39,8 @@
 #include <velox/dwio/common/Options.h>
 #include <velox/dwio/common/Writer.h>
 #include <velox/dwio/common/WriterFactory.h>
+#include <velox/dwio/text/reader/TextReader.h>
+#include <velox/dwio/text/writer/TextWriter.h>
 #include <velox/exec/AggregateFunctionRegistry.h>
 #include <velox/exec/WindowFunction.h>
 #include <velox/expression/Expr.h>
@@ -62,7 +64,6 @@
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/down_cast.h"
-#include "basics/utf8_utils.hpp"
 #include "catalog/function.h"
 #include "catalog/object.h"
 #include "catalog/sql_function_impl.h"
@@ -83,16 +84,11 @@
 #include "query/transaction.h"
 #include "query/types.h"
 #include "utils/query_string.h"
-#include "velox/dwio/common/Options.h"
-#include "velox/dwio/text/reader/TextReader.h"
-#include "velox/dwio/text/writer/TextWriter.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
 
-#include "lib/stringinfo.h"
 #include "miscadmin.h"
-#include "nodes/nodeFuncs.h"
 #include "nodes/nodes.h"
 #include "nodes/parsenodes.h"
 #include "nodes/pg_list.h"

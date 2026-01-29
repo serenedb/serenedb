@@ -69,7 +69,9 @@ TEST_F(AnalyzerTest, duplicate_register) {
   struct DummyAnalyzer : public irs::analysis::TypedAnalyzer<DummyAnalyzer> {
     static ptr Make(std::string_view) { return ptr(new DummyAnalyzer()); }
     static bool Normalize(std::string_view, std::string&) { return true; }
-    irs::Attribute* GetMutable(irs::TypeInfo::type_id) final { return nullptr; }
+    irs::Attribute* GetMutable(irs::TypeInfo::type_id) noexcept final {
+      return nullptr;
+    }
     bool next() final { return false; }
     bool reset(std::string_view) final { return false; }
   };

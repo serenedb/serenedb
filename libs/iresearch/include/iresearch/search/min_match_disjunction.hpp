@@ -90,7 +90,9 @@ class MinMatchDisjunction : public DocIterator,
     return irs::GetMutable(_attrs, id);
   }
 
-  doc_id_t value() const final { return std::get<DocAttr>(_attrs).value; }
+  doc_id_t value() const noexcept final {
+    return std::get<DocAttr>(_attrs).value;
+  }
 
   doc_id_t advance() final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;

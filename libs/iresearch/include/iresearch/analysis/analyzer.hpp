@@ -50,11 +50,11 @@ class EmptyAnalyzer final : public TypedAnalyzer<EmptyAnalyzer> {
     return "empty_analyzer";
   }
 
-  Attribute* GetMutable(TypeInfo::type_id) final { return nullptr; }
+  Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
 
-  bool next() final { return false; }
+  bool next() noexcept final { return false; }
 
-  bool reset(std::string_view) final { return false; }
+  bool reset(std::string_view) noexcept final { return false; }
 };
 
 }  // namespace irs::analysis

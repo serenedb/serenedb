@@ -55,7 +55,7 @@ class AllIterator : public DocIterator {
     return _doc.value;
   }
 
-  uint32_t count() final {
+  uint32_t count() noexcept final {
     if (doc_limits::eof(_doc.value)) {
       return 0;
     }
@@ -78,7 +78,7 @@ class MaskDocIterator : public DocIterator {
     return _it->GetMutable(type);
   }
 
-  doc_id_t value() const final { return _it->value(); }
+  doc_id_t value() const noexcept final { return _it->value(); }
 
   doc_id_t advance() final {
     while (true) {
@@ -118,7 +118,7 @@ class MaskedDocIterator : public DocIterator {
     return irs::Type<DocAttr>::id() == type ? &_current : nullptr;
   }
 
-  doc_id_t value() const final { return _current.value; }
+  doc_id_t value() const noexcept final { return _current.value; }
 
   doc_id_t advance() final {
     while (_next < _end) {

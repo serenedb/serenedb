@@ -61,6 +61,7 @@ class BufferedColumnIterator : public ResettableDocIterator {
     std::get<PayAttr>(_attrs).value = {};
     std::get<DocAttr>(_attrs).value = {};
   }
+
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);
   }
@@ -105,7 +106,7 @@ class BufferedColumnIterator : public ResettableDocIterator {
     return advance();
   }
 
-  void reset() final {
+  void reset() noexcept final {
     _next = _begin;
     std::get<DocAttr>(_attrs).value = {};
     std::get<PayAttr>(_attrs).value = {};

@@ -1539,9 +1539,9 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
   constexpr irs::IndexFeatures kStringFieldFeatures =
     irs::IndexFeatures::Freq | irs::IndexFeatures::Pos;
-  constexpr irs::IndexFeatures kTextFieldFeatures =
-    irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-    irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+  constexpr irs::IndexFeatures kTextFieldFeatures = irs::IndexFeatures::Freq |
+                                                    irs::IndexFeatures::Pos |
+                                                    irs::IndexFeatures::Offs;
 
   std::string string1;
   std::string string2;

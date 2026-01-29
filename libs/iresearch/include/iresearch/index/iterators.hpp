@@ -47,9 +47,9 @@ namespace irs {
 struct DocIterator : AttributeProvider {
   using ptr = memory::managed_ptr<DocIterator>;
 
-  [[nodiscard]] static DocIterator::ptr empty();
+  [[nodiscard]] static DocIterator::ptr empty() noexcept;
 
-  virtual doc_id_t value() const = 0;
+  virtual doc_id_t value() const noexcept = 0;
 
   virtual doc_id_t advance() = 0;
 
@@ -94,7 +94,7 @@ struct DocIterator : AttributeProvider {
 struct ResettableDocIterator : DocIterator {
   using ptr = memory::managed_ptr<ResettableDocIterator>;
 
-  [[nodiscard]] static ResettableDocIterator::ptr empty();
+  [[nodiscard]] static ResettableDocIterator::ptr empty() noexcept;
 
   // Reset iterator to initial state
   virtual void reset() = 0;
@@ -106,8 +106,7 @@ struct TermReader;
 struct FieldIterator : Iterator<const TermReader&> {
   using ptr = memory::managed_ptr<FieldIterator>;
 
-  // Return an empty iterator
-  [[nodiscard]] static FieldIterator::ptr empty();
+  [[nodiscard]] static FieldIterator::ptr empty() noexcept;
 
   // Position iterator at a specified target.
   // Return if the target is found, false otherwise.
@@ -120,8 +119,7 @@ struct ColumnReader;
 struct ColumnIterator : Iterator<const ColumnReader&> {
   using ptr = memory::managed_ptr<ColumnIterator>;
 
-  // Return an empty iterator.
-  [[nodiscard]] static ColumnIterator::ptr empty();
+  [[nodiscard]] static ColumnIterator::ptr empty() noexcept;
 
   // Position iterator at a specified target.
   // Return if the target is found, false otherwise.
@@ -132,8 +130,7 @@ struct ColumnIterator : Iterator<const ColumnReader&> {
 struct TermIterator : Iterator<bytes_view, AttributeProvider> {
   using ptr = memory::managed_ptr<TermIterator>;
 
-  // Return an empty iterator
-  [[nodiscard]] static TermIterator::ptr empty();
+  [[nodiscard]] static TermIterator::ptr empty() noexcept;
 
   // Read term attributes
   virtual void read() = 0;
@@ -160,8 +157,7 @@ enum class SeekResult {
 struct SeekTermIterator : TermIterator {
   using ptr = memory::managed_ptr<SeekTermIterator>;
 
-  // Return an empty iterator
-  [[nodiscard]] static SeekTermIterator::ptr empty();
+  [[nodiscard]] static SeekTermIterator::ptr empty() noexcept;
 
   // Position iterator at a value that is not less than the specified
   // one. Returns seek result.

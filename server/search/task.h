@@ -81,7 +81,8 @@ class CommitTask : public Task {
   }
 
   void operator()();
-  void Finalize(std::shared_ptr<search::DataStore> data_store, CommitResult res);
+  void Finalize(std::shared_ptr<search::DataStore> data_store,
+                CommitResult res);
 
  private:
   absl::Duration _commit_interval_msec;

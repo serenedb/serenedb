@@ -39,7 +39,7 @@ class RocksDBSinkWriterBase {
   virtual ~RocksDBSinkWriterBase() = default;
 
   rocksdb::Status Lock(std::string_view full_key) {
-    const bool reentrant = _conflict_policy == WriteConflictPolicy::DoNothing;
+    const bool reentrant = _conflict_policy == WriteConflictPolicy::Replace;
 
     return _transaction.GetKeyLock(&_cf, full_key,
                                    /*read_only*/ false,
@@ -51,6 +51,8 @@ class RocksDBSinkWriterBase {
  protected:
   rocksdb::Transaction& _transaction;
   rocksdb::ColumnFamilyHandle& _cf;
+
+ public:  // fix later
   WriteConflictPolicy _conflict_policy;
 };
 
@@ -69,7 +71,9 @@ class RocksDBSinkWriter : public RocksDBSinkWriterBase {
   void DeleteCell(std::string_view full_key);
 
   // Handles write conflicts. Returns number of skipped rows
-  size_t HandleConflicts(primary_key::Keys& keys);
+  // TODO better api
+  size_t HandleConflicts(primary_key::Keys& keys,
+                         std::span<const std::string> s = {});
 
  private:
   void ConfigureReadOptions();

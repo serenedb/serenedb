@@ -29,16 +29,31 @@ void RocksDBSinkWriter::ConfigureReadOptions() {
   _read_options.snapshot = _transaction.GetSnapshot();
 }
 
-size_t RocksDBSinkWriter::HandleConflicts(primary_key::Keys& keys) {
+size_t RocksDBSinkWriter::HandleConflicts(primary_key::Keys& keys,
+                                          std::span<const std::string> s) {
+  SDB_ASSERT(keys.size() == s.size() || s.empty());
   if (_conflict_policy == WriteConflictPolicy::Replace) {
     // Optimize out reading
     return 0;
   }
 
+  auto* db = _transaction.GetDB();
+  SDB_ASSERT(db);
+
   ConfigureReadOptions();
   size_t skipped_cnt = 0;
-  for (auto& key : keys) {
-    auto status = _transaction.Get(_read_options, &_cf, key, &_lookup_value);
+  for (size_t i = 0; i < keys.size(); ++i) {
+    auto& key = keys[i];
+    if (key.empty()) {
+      // marked as duplicated in locks
+      continue;
+    }
+    // Old key equals to new key
+    if (!s.empty() && s[i] == key) {
+      continue;
+    }
+
+    auto status = db->Get(_read_options, &_cf, key, &_lookup_value);
     // We do not need value, so it may be forgotten immediately.
     // See issue #184
     _lookup_value.Reset();

@@ -43,6 +43,15 @@
 #define DATA_SINK_USE_MEMORY_SANITIZER
 #endif
 
+#include "pg/sql_exception_macro.h"
+#include "pg/sql_utils.h"
+
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+
+#include "utils/errcodes.h"
+LIBPG_QUERY_INCLUDES_END
+
 namespace {
 
 constexpr std::string_view kZeroLengthVector{"\0", 1};
@@ -110,7 +119,7 @@ RocksDBUpdateDataSink::RocksDBUpdateDataSink(
                                           object_key,
                                           key_childs,
                                           std::move(column_ids),
-                                          WriteConflictPolicy::Replace,
+                                          WriteConflictPolicy::EmitError,
                                           number_of_rows_affected,
                                           std::move(index_writers)},
     _all_column_ids{std::move(all_column_ids)},
@@ -162,26 +171,40 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
   _store_keys_buffers.clear();
   _store_keys_buffers.reserve(num_rows);
 
+  size_t skipped_rows = 0;
   for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+    bool skip = false;
     key_utils::MakeColumnKey(
       input, _key_childs, row_idx, table_key,
       [&](std::string_view row_key) {
         const auto status = _data_writer.Lock(row_key);
         if (!status.ok()) {
-          const auto result = rocksutils::ConvertStatus(status);
-          SDB_THROW(result.errorNumber(),
-                    "Failed to acquire row lock for table ", _object_key.id(),
-                    " error: ", result.errorMessage());
+          if (_data_writer._conflict_policy == WriteConflictPolicy::DoNothing &&
+              status.IsReentrantLockAttempt()) {
+            ++skipped_rows;
+            skip = true;
+          } else {
+            const auto result = rocksutils::ConvertStatus(status);
+            SDB_THROW(result.errorNumber(),
+                      "Failed to acquire row lock for table ", _object_key.id(),
+                      " error: ", result.errorMessage());
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                            ERR_MSG("test"));
+          }
         }
       },
       _store_keys_buffers.emplace_back());
 
-    // For early conflict detection
-    key_utils::SetupColumnForKey(_store_keys_buffers.back(),
-                                 _column_ids.front());
+    if (skip) {
+      _store_keys_buffers.back().clear();
+    } else {
+      // For early conflict detection
+      key_utils::SetupColumnForKey(_store_keys_buffers.back(),
+                                   _column_ids.front());
+    }
   }
 
-  const auto skipped_rows = _data_writer.HandleConflicts(_store_keys_buffers);
+  skipped_rows += _data_writer.HandleConflicts(_store_keys_buffers);
   SDB_ASSERT(skipped_rows <= num_rows);
 
   const auto affected_rows = num_rows - skipped_rows;
@@ -264,17 +287,19 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
   const velox::IndexRange all_rows(0, num_rows);
   const folly::Range all_rows_range{&all_rows, 1};
 
-  auto ensure_input_sorted = [](const auto& keys) {
+  auto extract_pk = [](std::string_view key) {
+    return key.substr(sizeof(ObjectId) + sizeof(catalog::Column::Id));
+  };
+
+  auto ensure_input_sorted = [&](const auto& keys) {
     // Rewrite on sorting if you can prove and explain why check is failed
     // Maybe JOIN as  UPDATE .. FROM t1 JOIN t2. .... will break this
     // assumption or search index with primary sort in case used as source!
     SDB_ENSURE(
-      absl::c_is_sorted(
-        keys,
-        [&](std::string_view lhs, std::string_view rhs) {
-          return lhs.substr(sizeof(ObjectId) + sizeof(catalog::Column::Id)) <
-                 rhs.substr(sizeof(ObjectId) + sizeof(catalog::Column::Id));
-        }),
+      absl::c_is_sorted(keys,
+                        [&](std::string_view lhs, std::string_view rhs) {
+                          return extract_pk(lhs) < extract_pk(rhs);
+                        }),
       ERROR_INTERNAL,
       "RocksDBUpdateDataSink: rows are expected to be sorted in case of "
       "updating");
@@ -307,13 +332,24 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
     return;
   }
 
-  // Take locks and prepare buffers for both new and old primary keys
+  // Take locks and prepare buffers for both new and
+  // old primary keys (if old and new pk are same, than does not lock because of
+  // no reentrancy)
   for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
     key_utils::MakeColumnKey(input, _updated_key_childs, row_idx, table_key,
                              lock_new_row, _store_keys_buffers.emplace_back());
 
-    key_utils::MakeColumnKey(input, _key_childs, row_idx, table_key,
-                             lock_old_row, _old_keys_buffers.emplace_back());
+    key_utils::MakeColumnKey(
+      input, _key_childs, row_idx, table_key,
+      [&](std::string_view old_lock_key) {
+        // Lock is not reentrant. Do not lock twice for queries like
+        // UPDATE t SET a = a;
+        if (old_lock_key.substr(sizeof(ObjectId)) !=
+            extract_pk(_store_keys_buffers.back())) {
+          lock_old_row(old_lock_key);
+        }
+      },
+      _old_keys_buffers.emplace_back());
   }
 
   ensure_input_sorted(_old_keys_buffers);

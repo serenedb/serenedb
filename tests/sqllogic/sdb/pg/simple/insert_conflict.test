@@ -63,6 +63,7 @@ a	b
 1	10
 2	200
 
+# TODO(mkornaukhov) statement count 1
 statement count 1
 INSERT INTO t1 VALUES (3, 300), (3, 300);
 

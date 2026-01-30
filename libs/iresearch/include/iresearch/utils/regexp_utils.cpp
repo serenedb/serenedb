@@ -1,6 +1,7 @@
 #include "regexp_utils.hpp"
 
 #include "automaton_utils.hpp"
+#include "basics/utf8_utils.hpp"
 #include "fst/closure.h"
 #include "fst/concat.h"
 #include "fst/union.h"
@@ -9,9 +10,17 @@
 namespace irs {
 namespace {
 
+automaton MakeEpsilon() {
+  automaton a;
+  a.AddStates(1);
+  a.SetStart(0);
+  a.SetFinal(0);
+  return a;
+}
+
 bool HasMetacharacters(bytes_view pattern) noexcept {
   bool escaped = false;
-  for (auto c : pattern) {
+  for (byte_type c : pattern) {
     if (escaped) {
       escaped = false;
       continue;
@@ -63,7 +72,6 @@ bool PrefixHasMetacharacters(bytes_view pattern) noexcept {
     return false;
   }
 
-  // Find where .* starts
   bool escaped = false;
   size_t dot_pos = bytes_view::npos;
 
@@ -76,44 +84,38 @@ bool PrefixHasMetacharacters(bytes_view pattern) noexcept {
       escaped = true;
       continue;
     }
-    if (pattern[i] == RegexpMeta::kDot && i + 1 < pattern.size()) {
-      // Check if next unescaped char is *
-      if (pattern[i + 1] == RegexpMeta::kStar) {
-        dot_pos = i;
-        break;
-      }
+    if (pattern[i] == RegexpMeta::kDot && i + 1 < pattern.size() &&
+        pattern[i + 1] == RegexpMeta::kStar) {
+      dot_pos = i;
+      break;
     }
   }
 
   if (dot_pos == bytes_view::npos || dot_pos == 0) {
-    return dot_pos == 0;  // If .* is at start, prefix is empty
+    return dot_pos == 0;
   }
 
   bytes_view prefix{pattern.data(), dot_pos};
   return HasMetacharacters(prefix);
 }
 
-
 class RegexpParser {
  public:
-  explicit RegexpParser(bytes_view pattern)
-    : _pattern(pattern), _pos(0), _error(false) {}
+  explicit RegexpParser(bytes_view pattern) noexcept
+    : pattern_(pattern), pos_(0), error_(false) {}
 
   automaton Parse() {
-    if (_pattern.empty()) {
-      automaton a;
-      a.AddStates(1);
-      a.SetStart(0);
-      a.SetFinal(0);
-      return a;
+    if (pattern_.empty()) {
+      return MakeEpsilon();
     }
 
     auto nfa = ParseExpr();
 
-    if (_error || _pos != _pattern.size()) {
+    if (error_ || pos_ != pattern_.size()) {
       return {};
     }
 
+    // nfa to dfa
     automaton dfa;
     if (fst::DeterminizeStar(nfa, &dfa)) {
       return {};
@@ -126,52 +128,54 @@ class RegexpParser {
   automaton ParseExpr() {
     auto result = ParseTerm();
 
-    while (!_error && !AtEnd() && Peek() == RegexpMeta::kPipe) {
-      Advance();  // consume '|'
+    while (!error_ && !AtEnd() && Peek() == RegexpMeta::kPipe) {
+      Advance();
       auto right = ParseTerm();
-      if (_error) break;
+      if (error_)
+        break;
       fst::Union(&result, right);
     }
 
     return result;
   }
 
-  // term = factor+
   automaton ParseTerm() {
-    automaton result;
-    result.AddStates(1);
-    result.SetStart(0);
-    result.SetFinal(0);
+    auto result = MakeEpsilon();
 
-    bool has_factor = false;
+    while (!error_ && !AtEnd()) {
+      byte_type c = Peek();
 
-    while (!_error && !AtEnd()) {
-      auto c = Peek();
-
-      // Stop at alternation or closing paren
       if (c == RegexpMeta::kPipe || c == RegexpMeta::kRParen) {
         break;
       }
 
       auto factor = ParseFactor();
-      if (_error) break;
+      if (error_)
+        break;
 
       fst::Concat(&result, factor);
-      has_factor = true;
-    }
-
-    if (!has_factor && !_error) {
     }
 
     return result;
   }
 
+
   automaton ParseFactor() {
+    if (!AtEnd() && Peek() == RegexpMeta::kDot) {
+      if (pos_ + 1 < pattern_.size() &&
+          pattern_[pos_ + 1] == RegexpMeta::kStar) {
+        pos_ += 2;  // skip '.' and '*'
+        return MakeAll();
+      }
+    }
+
     auto base = ParseBase();
-    if (_error) return {};
+    if (error_)
+      return {};
 
     if (!AtEnd()) {
-      auto c = Peek();
+      byte_type c = Peek();
+
       if (c == RegexpMeta::kStar) {
         Advance();
         fst::Closure(&base, fst::ClosureType::CLOSURE_STAR);
@@ -180,12 +184,7 @@ class RegexpParser {
         fst::Closure(&base, fst::ClosureType::CLOSURE_PLUS);
       } else if (c == RegexpMeta::kQuestion) {
         Advance();
-        // a? = (a | epsilon)
-        automaton epsilon;
-        epsilon.AddStates(1);
-        epsilon.SetStart(0);
-        epsilon.SetFinal(0);
-        fst::Union(&base, epsilon);
+        fst::Union(&base, MakeEpsilon());
       }
     }
 
@@ -194,19 +193,20 @@ class RegexpParser {
 
   automaton ParseBase() {
     if (AtEnd()) {
-      _error = true;
+      error_ = true;
       return {};
     }
 
-    auto c = Peek();
+    byte_type c = Peek();
 
     if (c == RegexpMeta::kLParen) {
       Advance();
       auto inner = ParseExpr();
-      if (_error) return {};
+      if (error_)
+        return {};
 
       if (AtEnd() || Peek() != RegexpMeta::kRParen) {
-        _error = true;
+        error_ = true;
         return {};
       }
       Advance();
@@ -217,16 +217,16 @@ class RegexpParser {
       return ParseCharClass();
     }
 
+
     if (c == RegexpMeta::kDot) {
       Advance();
       return MakeAny();
     }
 
-    // Escape sequence
     if (c == RegexpMeta::kEscape) {
       Advance();
       if (AtEnd()) {
-        _error = true;
+        error_ = true;
         return {};
       }
       return ParseLiteral();
@@ -234,61 +234,43 @@ class RegexpParser {
 
     if (c == RegexpMeta::kCaret || c == RegexpMeta::kDollar) {
       Advance();
-      automaton epsilon;
-      epsilon.AddStates(1);
-      epsilon.SetStart(0);
-      epsilon.SetFinal(0);
-      return epsilon;
+      return MakeEpsilon();
     }
+
 
     if (c == RegexpMeta::kStar || c == RegexpMeta::kPlus ||
         c == RegexpMeta::kQuestion || c == RegexpMeta::kPipe ||
         c == RegexpMeta::kRParen || c == RegexpMeta::kRBracket) {
-      _error = true;
+      error_ = true;
       return {};
     }
 
     return ParseLiteral();
   }
 
+
   automaton ParseLiteral() {
     if (AtEnd()) {
-      _error = true;
+      error_ = true;
       return {};
     }
 
-    const auto* start = _pattern.data() + _pos;
-    const auto* end = _pattern.data() + _pattern.size();
+    const byte_type* start = pattern_.data() + pos_;
+    const byte_type* end = pattern_.data() + pattern_.size();
 
-    size_t char_len = 1;
-    auto first_byte = static_cast<uint8_t>(*start);
+    const byte_type* next = utf8_utils::Next(start, end);
+    pos_ += static_cast<size_t>(next - start);
 
-    if ((first_byte & 0x80) == 0) {
-      char_len = 1;  // ASCII
-    } else if ((first_byte & 0xE0) == 0xC0) {
-      char_len = 2;
-    } else if ((first_byte & 0xF0) == 0xE0) {
-      char_len = 3;
-    } else if ((first_byte & 0xF8) == 0xF0) {
-      char_len = 4;
-    }
-
-    if (start + char_len > end) {
-      char_len = static_cast<size_t>(end - start);
-    }
-
-    bytes_view label{start, char_len};
-    _pos += char_len;
-
-    return MakeChar(label);
+    return MakeChar(bytes_view{start, static_cast<size_t>(next - start)});
   }
+
 
   automaton ParseCharClass() {
     SDB_ASSERT(Peek() == RegexpMeta::kLBracket);
-    Advance(); 
+    Advance();
 
     if (AtEnd()) {
-      _error = true;
+      error_ = true;
       return {};
     }
 
@@ -300,47 +282,57 @@ class RegexpParser {
 
     std::vector<automaton> chars;
 
-    while (!_error && !AtEnd() && Peek() != RegexpMeta::kRBracket) {
-      auto c = Peek();
-
-      if (c == RegexpMeta::kEscape) {
+    while (!error_ && !AtEnd() && Peek() != RegexpMeta::kRBracket) {
+      if (Peek() == RegexpMeta::kEscape) {
         Advance();
         if (AtEnd()) {
-          _error = true;
+          error_ = true;
           return {};
         }
         chars.push_back(ParseLiteral());
         continue;
       }
 
+      size_t first_pos = pos_;
       auto first = ParseLiteral();
-      if (_error) return {};
+      if (error_)
+        return {};
+      size_t first_len = pos_ - first_pos;
 
       if (!AtEnd() && Peek() == '-') {
-        if (_pos + 1 < _pattern.size() &&
-            _pattern[_pos + 1] != RegexpMeta::kRBracket) {
+        if (pos_ + 1 < pattern_.size() &&
+            pattern_[pos_ + 1] != RegexpMeta::kRBracket) {
           Advance();
-          auto last = ParseLiteral();
-          if (_error) return {};
 
-          chars.push_back(first);
+          size_t last_pos = pos_;
+          ParseLiteral();
+          if (error_)
+            return {};
+          size_t last_len = pos_ - last_pos;
+
+          ExpandRange(pattern_.data() + first_pos, first_len,
+                      pattern_.data() + last_pos, last_len, chars);
+          if (error_)
+            return {};
         } else {
-          chars.push_back(first);
+          chars.push_back(std::move(first));
         }
       } else {
-        chars.push_back(first);
+        chars.push_back(std::move(first));
       }
     }
 
     if (AtEnd() || Peek() != RegexpMeta::kRBracket) {
-      _error = true;
+      error_ = true;
       return {};
     }
-    Advance(); 
+
     if (chars.empty()) {
-      _error = true;
+      error_ = true;
       return {};
     }
+
+    Advance();
 
     automaton result = std::move(chars[0]);
     for (size_t i = 1; i < chars.size(); ++i) {
@@ -348,37 +340,63 @@ class RegexpParser {
     }
 
     if (negated) {
+      // TODO: 
       return MakeAny();
     }
 
     return result;
   }
 
-  bool AtEnd() const { return _pos >= _pattern.size(); }
 
-  byte_type Peek() const {
-    SDB_ASSERT(!AtEnd());
-    return _pattern[_pos];
+  void ExpandRange(const byte_type* first_start, size_t first_len,
+                   const byte_type* last_start, size_t last_len,
+                   std::vector<automaton>& chars) {
+    const byte_type* p1 = first_start;
+    const byte_type* p2 = last_start;
+    uint32_t first_cp = utf8_utils::ToChar32(p1, first_start + first_len);
+    uint32_t last_cp = utf8_utils::ToChar32(p2, last_start + last_len);
+
+    if (first_cp == utf8_utils::kInvalidChar32 ||
+        last_cp == utf8_utils::kInvalidChar32 || first_cp > last_cp) {
+      error_ = true;
+      return;
+    }
+
+    constexpr uint32_t kMaxRangeSize = 256;
+    if (last_cp - first_cp > kMaxRangeSize) {
+      error_ = true;
+      return;
+    }
+
+    for (uint32_t cp = first_cp; cp <= last_cp; ++cp) {
+      byte_type buf[utf8_utils::kMaxCharSize];
+      uint32_t len = utf8_utils::FromChar32(cp, buf);
+      chars.push_back(MakeChar(bytes_view{buf, len}));
+    }
   }
 
-  void Advance() {
+  bool AtEnd() const noexcept { return pos_ >= pattern_.size(); }
+
+  byte_type Peek() const noexcept {
     SDB_ASSERT(!AtEnd());
-    ++_pos;
+    return pattern_[pos_];
   }
 
-  bytes_view _pattern;
-  size_t _pos;
-  bool _error;
+  void Advance() noexcept {
+    SDB_ASSERT(!AtEnd());
+    ++pos_;
+  }
+
+  bytes_view pattern_;
+  size_t pos_;
+  bool error_;
 };
 
 }  // namespace
 
-RegexpType ComputeRegexpType(bytes_view pattern) noexcept {
-  if (pattern.empty()) {
-    return RegexpType::Literal;
-  }
 
-  if (!HasMetacharacters(pattern)) {
+RegexpType ComputeRegexpType(bytes_view pattern) noexcept {
+  if (pattern.empty() || !HasMetacharacters(pattern)) {
     return RegexpType::Literal;
   }
 
@@ -415,4 +433,4 @@ automaton FromRegexp(bytes_view pattern) {
   return parser.Parse();
 }
 
-}
+}  // namespace irs

@@ -15,7 +15,6 @@ field_visitor ByRegexp::visitor(bytes_view pattern) {
 
   switch (type) {
     case RegexpType::Literal: {
-      
       return [term = bstring(pattern)](const SubReader& segment,
                                        const TermReader& field,
                                        FilterVisitor& visitor) {
@@ -33,14 +32,13 @@ field_visitor ByRegexp::visitor(bytes_view pattern) {
     }
 
     case RegexpType::Complex: {
-      // General case - use automaton
       struct AutomatonContext : util::Noncopyable {
         explicit AutomatonContext(bytes_view pattern)
-          : acceptor{FromRegexp(pattern)},
-            matcher{MakeAutomatonMatcher(acceptor)} {}
+          : acceptor{FromRegexp(pattern)},              //  dfa
+            matcher{MakeAutomatonMatcher(acceptor)} {}  //  matcher
 
-        automaton acceptor;
-        automaton_table_matcher matcher;
+        automaton acceptor;               // dfa from regexp
+        automaton_table_matcher matcher;  // matcher for пересечения с fst
       };
 
       auto ctx = std::make_shared<AutomatonContext>(pattern);
@@ -75,6 +73,7 @@ Filter::Query::ptr ByRegexp::prepare(const PrepareContext& ctx,
     }
 
     case RegexpType::Complex:
+      // Сложный паттерн — нужен автомат
       break;
   }
 
@@ -87,4 +86,4 @@ Filter::Query::ptr ByRegexp::prepare(const PrepareContext& ctx,
   return PrepareAutomatonFilter(ctx, field, acceptor, scored_terms_limit);
 }
 
-}  
+}  // namespace irs

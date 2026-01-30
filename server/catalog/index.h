@@ -23,13 +23,9 @@
 #include <string>
 
 #include "catalog/object.h"
+#include "catalog/types.h"
 
 namespace sdb::catalog {
-
-enum class IndexType : uint8_t {
-  Secondary = 0,
-  Inverted,
-};
 
 struct IndexBaseOptions {
   ObjectId id;
@@ -68,13 +64,21 @@ ResultOr<std::shared_ptr<Index>> CreateIndex(const SchemaObject& relation,
 namespace magic_enum {
 
 template<>
-constexpr customize::customize_t customize::enum_name<sdb::catalog::IndexType>(
-  sdb::catalog::IndexType type) noexcept {
+constexpr customize::customize_t customize::enum_name<sdb::IndexType>(
+  sdb::IndexType type) noexcept {
   switch (type) {
-    case sdb::catalog::IndexType::Secondary:
+    case sdb::IndexType::Unknown:
+      return "unknown";
+    case sdb::IndexType::Primary:
+      return "primary";
+    case sdb::IndexType::Secondary:
       return "secondary";
-    case sdb::catalog::IndexType::Inverted:
-      return "gin";
+    case sdb::IndexType::Edge:
+      return "edge";
+    case sdb::IndexType::NoAccess:
+      return "noaccess";
+    case sdb::IndexType::Inverted:
+      return "inveted";
     default:
       return invalid_tag;
   }

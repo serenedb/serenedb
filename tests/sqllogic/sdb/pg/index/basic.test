@@ -1,0 +1,43 @@
+statement ok
+CREATE TABLE t(r text);
+
+
+statement ok
+CREATE INDEX index_t ON t USING secondary (r);
+
+
+statement ok
+INSERT INTO t VALUES ('a'), ('b'), ('c')
+
+
+statement ok
+INSERT INTO t VALUES ('a'), ('b'), ('c')
+
+
+query ok
+SELECT * FROM t ORDER BY r;
+----
+r
+a
+a
+b
+b
+c
+c
+
+
+query ok
+SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indexrelid = pg_class.oid;
+----
+indexname
+index_t
+
+
+statement ok
+DROP TABLE t;
+
+
+query ok
+SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indrelid = pg_class.oid;
+----
+indexname

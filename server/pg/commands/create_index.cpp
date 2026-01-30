@@ -27,6 +27,7 @@
 #include "app/app_server.h"
 #include "basics/down_cast.h"
 #include "basics/errors.h"
+#include "basics/system-compiler.h"
 #include "catalog/catalog.h"
 #include "catalog/index.h"
 #include "catalog/object.h"
@@ -37,6 +38,9 @@
 #include "pg/connection_context.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_utils.h"
+#include "rest_server/serened_single.h"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#include "search/data_store.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
@@ -49,9 +53,22 @@ LIBPG_QUERY_INCLUDES_END
 namespace sdb::pg {
 namespace {
 
-std::optional<catalog::IndexType> GetIndexType(char* method) {
-  return method ? magic_enum::enum_cast<catalog::IndexType>(method)
-                : catalog::IndexType::Secondary;
+std::optional<IndexType> GetIndexType(char* method) {
+  return method ? magic_enum::enum_cast<IndexType>(method)
+                : IndexType::Secondary;
+}
+
+Result MakeIndexOptions(const IndexStmt& index,
+                        catalog::IndexBaseOptions& options) {
+  auto index_type = GetIndexType(index.accessMethod);
+  if (!index_type) {
+    return Result{ERROR_BAD_PARAMETER,
+                  absl::StrCat("access method \"", index.accessMethod,
+                               "\" does not exist")};
+  }
+  options.name = index.idxname;
+  options.type = *index_type;
+  return {};
 }
 
 ResultOr<std::shared_ptr<catalog::Index>> MakeSecondaryIndex(
@@ -84,6 +101,8 @@ ResultOr<std::shared_ptr<catalog::Index>> MakeSecondaryIndex(
     impl_options.columns.push_back(column->id);
   }
 
+  options.id = catalog::NextId();
+
   return std::make_shared<catalog::SecondaryIndex>(
     catalog::IndexOptions<catalog::SecondaryIndexOptions>{
       .base = std::move(options),
@@ -95,11 +114,17 @@ ResultOr<std::shared_ptr<catalog::Index>> MakeSecondaryIndex(
 ResultOr<std::shared_ptr<catalog::Index>> MakeIndex(
   catalog::IndexBaseOptions options, const catalog::SchemaObject& relation,
   PgListWrapper<IndexElem> index_columns) {
+  options.relation_id = relation.GetId();
   switch (options.type) {
-    case catalog::IndexType::Secondary:
+    case IndexType::Secondary:
       return MakeSecondaryIndex(std::move(options), relation, index_columns);
-    case catalog::IndexType::Inverted:
+    case IndexType::Primary:
+    case IndexType::Inverted:
+    case IndexType::Edge:
+    case IndexType::NoAccess:
       return std::unexpected<Result>{std::in_place, ERROR_NOT_IMPLEMENTED};
+    case IndexType::Unknown:
+      SDB_UNREACHABLE();
   }
 }
 
@@ -110,12 +135,6 @@ yaclib::Future<Result> CreateIndex(ExecContext& context,
                                    const IndexStmt& stmt) {
   const auto db = context.GetDatabaseId();
   const auto& conn_ctx = basics::downCast<const ConnectionContext>(context);
-
-  const auto index_type = GetIndexType(stmt.accessMethod);
-  if (!index_type) {
-    return yaclib::MakeFuture<Result>(ERROR_BAD_PARAMETER, "access method \"",
-                                      stmt.accessMethod, "\" does not exist");
-  }
 
   const std::string_view relation_name = stmt.relation->relname;
   const std::string current_schema = conn_ctx.GetCurrentSchema();
@@ -130,15 +149,17 @@ yaclib::Future<Result> CreateIndex(ExecContext& context,
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
 
+  if (stmt.concurrent || stmt.if_not_exists) {
+    return yaclib::MakeFuture(Result{ERROR_NOT_IMPLEMENTED});
+  }
+
   catalog::IndexBaseOptions options;
-  options.name = stmt.idxname;
-  options.type = *index_type;
+  if (auto r = MakeIndexOptions(stmt, options); !r.ok()) {
+    return yaclib::MakeFuture(std::move(r));
+  }
 
-  auto r = catalog.CreateIndex(
+  Result r = catalog.CreateIndex(
     db, schema, relation_name, [&](const catalog::SchemaObject* relation) {
-      SDB_ASSERT(relation);
-      options.relation_id = relation->GetId();
-
       return MakeIndex(std::move(options), *relation,
                        PgListWrapper<IndexElem>{stmt.indexParams});
     });

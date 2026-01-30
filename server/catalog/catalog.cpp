@@ -45,6 +45,7 @@
 #include "catalog/schema.h"
 #include "catalog/table.h"
 #include "catalog/view.h"
+#include "general_server/scheduler.h"
 #include "general_server/state.h"
 #include "rest_server/serened.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
@@ -238,7 +239,7 @@ Result CatalogFeature::ProcessTombstones() {
         // TODO(gnusi): this will be gone once we have normal indexes
         struct IndexMeta {
           std::string_view objectId;  // NOLINT
-          sdb::IndexType type = sdb::IndexType::kTypeUnknown;
+          sdb::IndexType type = sdb::IndexType::Unknown;
           bool unique = false;
         };
         for (auto index_slice : vpack::ArrayIterator{options.indexes}) {

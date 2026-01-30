@@ -219,6 +219,9 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
       WriteInputColumn(_column_ids[i], i, *input, all_rows_range);
     }
   }
+  for (const auto& writer : _index_writers) {
+    writer->Finish();
+  }
 }
 
 // TODO(Dronplane)
@@ -269,10 +272,6 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
     lock_row_impl.operator()<true>(row_key);
   };
 
-  for (const auto& writer : _index_writers) {
-    writer->Init(num_rows);
-  }
-
   const velox::IndexRange all_rows(0, num_rows);
   const folly::Range all_rows_range{&all_rows, 1};
 
@@ -291,6 +290,10 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
       "RocksDBUpdateDataSink: rows are expected to be sorted in case of "
       "updating");
   };
+
+  for (const auto& writer : _index_writers) {
+    writer->Init(num_rows);
+  }
 
   if (!_update_pk) {
     // Take locks and prepare buffers
@@ -314,6 +317,9 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
     // Write updated values
     for (velox::column_index_t i = _key_childs.size(); i < num_columns; ++i) {
       WriteInputColumn(_column_ids[i], i, *input, all_rows_range);
+    }
+    for (const auto& writer : _index_writers) {
+      writer->Finish();
     }
     return;
   }

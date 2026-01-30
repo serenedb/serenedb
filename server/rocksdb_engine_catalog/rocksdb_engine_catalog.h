@@ -65,6 +65,10 @@ class TransactionDB;
 
 namespace sdb {
 
+namespace search {
+class DataStore;
+}
+
 class TableShard;
 class RocksDBBackgroundErrorListener;
 class RocksDBBackgroundThread;
@@ -245,6 +249,8 @@ class RocksDBEngineCatalog {
 
   void createTable(const catalog::Table& collection, TableShard& physical);
   Result CreateIndex(const catalog::Index& index);
+  ResultOr<std::shared_ptr<search::DataStore>> CreateDataStore(
+    const catalog::Index& index, bool is_new);
   Result MarkDeleted(const catalog::Table& collection,
                      const TableShard& physical,
                      const TableTombstone& tombstone);

@@ -22,6 +22,7 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/functional/function_ref.h>
+#include <absl/strings/str_format.h>
 #include <absl/synchronization/mutex.h>
 
 #include <algorithm>
@@ -39,6 +40,7 @@
 #include "app/app_server.h"
 #include "auth/role_utils.h"
 #include "basics/application-exit.h"
+#include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
@@ -66,7 +68,9 @@
 #include "general_server/state.h"
 #include "rest_server/serened.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#include "search/data_store.h"
 #include "storage_engine/engine_feature.h"
+#include "storage_engine/search_engine.h"
 #include "utils/exec_context.h"
 #include "utils/operation_options.h"
 #include "utils/query_cache.h"
@@ -78,7 +82,7 @@
 #ifdef SDB_CLUSTER
 #include "aql/query_registry_feature.h"
 #include "replication/replication_feature.h"
-#include "search/search_feature.h"
+#include "search/search_engine.h"
 #include "transaction/cluster_utils.h"
 #endif
 
@@ -155,6 +159,7 @@ struct TableDrop {
   TableTombstone tombstone;
   std::shared_ptr<TableShard> physical;
   std::shared_ptr<LocalCatalog> catalog;
+  std::vector<AsyncResult> index_futures;
   uint32_t delay = kInitialDelay;  // delay in microseconds
 
   std::string GetContext() const {
@@ -167,6 +172,8 @@ struct TableDrop {
 
     auto& server = SerenedServer::Instance();
     if (server.isStopping()) {
+      index_futures.clear();
+      physical.reset();
       return {};
     }
 
@@ -190,18 +197,18 @@ struct TableDrop {
 
     const bool fatal = !catalog->GetSkipBackgroundErrors();
 
-    auto& engine = GetServerEngine();
-    for (auto& index : tombstone.indexes) {
-      if (auto r = engine.DropIndex(index); !r.ok()) {
-        SDB_WARN("xxxxx", Logger::THREADS, "Failed dropping index ", index.id,
-                 ", error: ", r.errorMessage());
+    yaclib::Wait(index_futures.begin(), index_futures.size());
+    for (auto& future : index_futures) {
+      if (auto r = std::move(future).Touch().Ok(); !r.ok()) {
+        SDB_WARN("xxxxx", Logger::THREADS, "Failed dropping index in table ",
+                 tombstone.table, ", error: ", r.errorMessage());
         if (fatal) {
           return {ERROR_INTERNAL};
         }
       }
     }
 
-    if (auto r = engine.DropTable(tombstone); !r.ok()) {
+    if (auto r = GetServerEngine().DropTable(tombstone); !r.ok()) {
       SDB_WARN("xxxxx", Logger::THREADS, "Failed dropping table ",
                tombstone.table, ", error: ", r.errorMessage());
       if (fatal) {
@@ -217,6 +224,52 @@ struct TableDrop {
 
     SDB_DEBUG("xxxxx", Logger::THREADS,
               "Finish dropping table: ", tombstone.table);
+
+    return {};
+  }
+};
+
+struct IndexDrop {
+  static constexpr std::string_view kName = "index drop";
+
+  IndexTombstone tombstone;
+  std::shared_ptr<search::DataStore> data_store;
+  std::shared_ptr<LocalCatalog> catalog;
+  uint32_t delay = kInitialDelay;
+
+  std::string GetContext() const {
+    return absl::StrCat("index ", tombstone.id.id());
+  }
+
+  Result operator()() {
+    SDB_DEBUG("xxxxx", Logger::THREADS, "Start dropping index: ", tombstone.id);
+
+    if (SerenedServer::Instance().isStopping()) {
+      return {};
+    }
+
+    if (data_store && data_store.use_count() > 2) {
+      SDB_DEBUG("xxxxx", Logger::THREADS,
+                "Reschedule dropping index: ", tombstone.id);
+      return {ERROR_LOCKED};
+    }
+
+    const bool fatal = !catalog->GetSkipBackgroundErrors();
+    auto& engine = GetServerEngine();
+    if (auto r = engine.DropIndex(tombstone); !r.ok()) {
+      SDB_WARN("xxxxx", Logger::ENGINES, "Failed dropping index ", tombstone.id,
+               ", error: ", r.errorMessage());
+      if (fatal) {
+        return {ERROR_INTERNAL};
+      }
+    }
+
+    SDB_ASSERT(data_store);
+
+    catalog->DropDataStore(tombstone.id);
+
+    SDB_DEBUG("xxxxx", Logger::THREADS,
+              "Finish dropping index: ", tombstone.id);
 
     return {};
   }
@@ -379,6 +432,7 @@ class SnapshotImpl : public Snapshot {
     result->_databases_by_name = _databases_by_name;
     result->_objects_by_id = _objects_by_id;
     result->_table_shards = _table_shards;
+    result->_data_stores = _data_stores;
     return result;
   }
 
@@ -391,9 +445,19 @@ class SnapshotImpl : public Snapshot {
     return {_table_shards.begin(), _table_shards.end()};
   }
 
+  std::vector<std::shared_ptr<search::DataStore>> GetDataStores() const final {
+    return {_data_stores.begin(), _data_stores.end()};
+  }
+
   std::shared_ptr<TableShard> GetTableShard(ObjectId id) const final {
     auto it = _table_shards.find(id);
     return it == _table_shards.end() ? nullptr : *it;
+  }
+
+  std::shared_ptr<search::DataStore> GetDataStore(
+    ObjectId index_id) const final {
+    auto it = _data_stores.find(index_id);
+    return it == _data_stores.end() ? nullptr : *it;
   }
 
   std::shared_ptr<Object> GetObject(ObjectId id) const final {
@@ -406,7 +470,18 @@ class SnapshotImpl : public Snapshot {
     SDB_ENSURE(is_new, ERROR_INTERNAL);
   }
 
+  void AddDataStore(std::shared_ptr<search::DataStore> data_store) {
+    ObjectId id = data_store->GetId();
+    ObjectId relation_id = data_store->GetRelationId();
+    const auto is_new = _data_stores.emplace(std::move(data_store)).second;
+    SDB_ENSURE(is_new, ERROR_INTERNAL);
+    auto shard = GetTableShard(relation_id);
+    SDB_ASSERT(shard);
+    shard->AddDataStore(id);
+  }
+
   void DropTableShard(ObjectId id) { _table_shards.erase(id); }
+  void DropDataStore(ObjectId id) { _data_stores.erase(id); }
 
   std::vector<std::shared_ptr<Role>> GetRoles() const final {
     return {_roles.begin(), _roles.end()};
@@ -965,6 +1040,7 @@ class SnapshotImpl : public Snapshot {
   ObjectSetByName<Database> _databases_by_name;
   ObjectSetById<Object> _objects_by_id;
   ObjectSetById<TableShard> _table_shards;
+  ObjectSetById<search::DataStore> _data_stores;
 };
 
 LocalCatalog::LocalCatalog(bool skip_background_errors)
@@ -1017,7 +1093,6 @@ Result LocalCatalog::RegisterTable(ObjectId database_id,
 
       // TODO(gnusi): this might throw, but indexes will become a separate
       // objects soon anyway
-      physical->prepareIndexes(table, options.indexes);
       _snapshot->AddTableShard(std::move(physical));
 
       return {};
@@ -1123,9 +1198,15 @@ Result LocalCatalog::RegisterIndex(ObjectId database_id,
   }
 
   absl::MutexLock lock{&_mutex};
-  return _snapshot->RegisterObject(database_id, schema, std::move(*index),
-                                   false,
-                                   [&](auto& object) -> Result { return {}; });
+  return _snapshot->RegisterObject(
+    database_id, schema, std::move(*index), false, [&](auto& object) -> Result {
+      auto& index = basics::downCast<Index>(*object);
+      return _engine->CreateDataStore(index, false)
+        .transform([&](auto&& data_store) {
+          _snapshot->AddDataStore(std::move(data_store));
+        })
+        .error_or(Result{});
+    });
 }
 
 Result LocalCatalog::CreateIndex(ObjectId database_id, std::string_view schema,
@@ -1145,30 +1226,69 @@ Result LocalCatalog::CreateIndex(ObjectId database_id, std::string_view schema,
   }
 
   return Apply(_snapshot, [&](auto& clone) {
-    return clone->RegisterObject(database_id, schema, std::move(*index), false,
-                                 [&](auto& object) -> Result {
-                                   auto& index =
-                                     basics::downCast<Index>(*object);
-                                   return _engine->CreateIndex(index);
-                                 });
+    return clone->RegisterObject(
+      database_id, schema, std::move(*index), false,
+      [&](auto& object) -> Result {
+        auto& index = basics::downCast<Index>(*object);
+        auto r = _engine->CreateDataStore(index, true)
+                   .transform([&](auto&& data_store) {
+                     clone->AddDataStore(std::move(data_store));
+                   })
+                   .error_or(Result{});
+        if (!r.ok()) {
+          return r;
+        }
+        return _engine->CreateIndex(index);
+      });
   });
 }
 
 Result LocalCatalog::DropIndex(ObjectId database_id, std::string_view schema,
-                               std::string_view name) {
+                               std::string_view name,
+                               AsyncResult* async_result) {
   IndexTombstone tombstone;
+  std::shared_ptr<search::DataStore> data_store;
+  auto task = std::make_shared<IndexDrop>();
 
   absl::MutexLock lock{&_mutex};
-  return Apply(_snapshot, [&](auto& clone) {
+  auto r = Apply(_snapshot, [&](auto& clone) {
     return clone->template DropObject<Index>(
       database_id, schema, name,
       [&](auto& database, auto& schema, auto& object) -> Result {
         auto& index = basics::downCast<Index>(*object);
 
         tombstone.id = index.GetId();
+        tombstone.type = index.GetIndexType();
+
+        data_store = clone->GetDataStore(index.GetId());
+
+        auto relation = clone->GetObject(index.GetRelationId());
+        if (relation && relation->GetType() == ObjectType::Table) {
+          auto shard = clone->GetTableShard(relation->GetId());
+          if (shard) {
+            tombstone.number_documents = shard->approxNumberDocuments();
+          }
+        }
+
         return _engine->MarkDeleted(index, tombstone);
       });
   });
+
+  if (!r.ok()) {
+    return r;
+  }
+
+  task->tombstone = std::move(tombstone);
+  task->data_store = std::move(data_store);
+  task->catalog = shared_from_this();
+
+  if (auto f = QueueTask(std::move(task)); async_result) {
+    *async_result = std::move(f);
+  } else {
+    std::move(f).Detach();
+  }
+
+  return {};
 }
 
 Result LocalCatalog::CreateView(ObjectId database_id, std::string_view schema,
@@ -1223,7 +1343,6 @@ Result LocalCatalog::CreateTable(
           return r;
         }
 
-        physical->prepareIndexes(table, options.indexes);
         clone->AddTableShard(physical);
         _engine->createTable(table, *physical);
 
@@ -1576,6 +1695,8 @@ Result LocalCatalog::DropTable(ObjectId database_id, std::string_view schema,
                                AsyncResult* async_result) {
   std::shared_ptr<TableShard> shard;
   auto task = std::make_shared<TableDrop>();
+  std::vector<std::pair<IndexTombstone, std::shared_ptr<search::DataStore>>>
+    index_info;
 
   auto r = basics::SafeCall([&] {
     absl::MutexLock lock{&_mutex};
@@ -1587,6 +1708,44 @@ Result LocalCatalog::DropTable(ObjectId database_id, std::string_view schema,
           SDB_ENSURE(shard, ERROR_INTERNAL);
 
           task->tombstone = MakeTableTombstone(*shard);
+
+          ObjectId table_id = object->GetId();
+          for (const auto& relation :
+               clone->GetRelations(database_id, schema)) {
+            if (relation->GetType() != ObjectType::Index) {
+              continue;
+            }
+
+            auto& index = basics::downCast<Index>(*relation);
+            if (index.GetRelationId() != table_id) {
+              continue;
+            }
+
+            IndexTombstone index_tombstone;
+            index_tombstone.id = index.GetId();
+            index_tombstone.number_documents = task->tombstone.number_documents;
+            index_tombstone.unique = false;
+            index_tombstone.type = index.GetIndexType();
+
+            auto data_store = clone->GetDataStore(index.GetId());
+
+            auto schema_obj = clone->GetObject(index.GetSchemaId());
+            if (!schema_obj || schema_obj->GetType() != ObjectType::Schema) {
+              continue;
+            }
+
+            auto r = clone->template DropObject<Index>(
+              database_id, schema_obj->GetName(), index.GetName(),
+              [&](auto&, auto&, auto&) -> Result {
+                return _engine->MarkDeleted(index, index_tombstone);
+              });
+
+            if (!r.ok()) {
+              return r;
+            }
+
+            index_info.emplace_back(index_tombstone, std::move(data_store));
+          }
 
           return _engine->MarkDeleted(basics::downCast<Table>(*object), *shard,
                                       task->tombstone);
@@ -1605,7 +1764,17 @@ Result LocalCatalog::DropTable(ObjectId database_id, std::string_view schema,
     aql::QueryCache::instance()->invalidate(database_id, id);
   };
 
-  task->catalog = shared_from_this();
+  auto self = shared_from_this();
+  for (auto& [index_tombstone, data_store] : index_info) {
+    auto index_task = std::make_shared<IndexDrop>();
+    index_task->tombstone = std::move(index_tombstone);
+    index_task->data_store = std::move(data_store);
+    index_task->catalog = self;
+
+    task->index_futures.push_back(QueueTask(std::move(index_task)));
+  }
+
+  task->catalog = std::move(self);
   task->physical = std::move(shard);
 
   if (auto f = QueueTask(std::move(task)); async_result) {
@@ -1621,6 +1790,14 @@ void LocalCatalog::DropTableShard(ObjectId id) {
   absl::MutexLock lock{&_mutex};
   std::ignore = Apply(_snapshot, [&](auto& clone) {
     clone->DropTableShard(id);
+    return Result{};
+  });
+}
+
+void LocalCatalog::DropDataStore(ObjectId id) {
+  absl::MutexLock lock{&_mutex};
+  std::ignore = Apply(_snapshot, [&](auto& clone) {
+    clone->DropDataStore(id);
     return Result{};
   });
 }

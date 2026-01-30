@@ -4,31 +4,27 @@
 #include "string.hpp"
 
 namespace irs {
-
 enum class RegexpType {
-  Literal, 
-  Prefix,   
-  Complex,  
+  Literal,  
+  Prefix,  
+  Complex,
 };
 
-enum RegexpMeta : uint8_t {
-  kDot = '.',        
-  kStar = '*',       
-  kPlus = '+',       
-  kQuestion = '?',   
-  kPipe = '|',       
-  kLParen = '(',     
-  kRParen = ')',     
-  kLBracket = '[',   
-  kRBracket = ']',   
-  kCaret = '^',
-  kDollar = '$',    
-  kEscape = '\\',   
+
+enum RegexpMeta : byte_type {
+  kDot = '.',      
+  kStar = '*',     
+  kPlus = '+',      
+  kQuestion = '?', 
+  kPipe = '|',      
+  kLParen = '(',   
+  kRParen = ')',   
+  kLBracket = '[',  
+  kRBracket = ']',  
+  kCaret = '^',    
+  kDollar = '$',   
+  kEscape = '\\',  
 };
-
-RegexpType ComputeRegexpType(bytes_view pattern) noexcept;
-
-bytes_view ExtractRegexpPrefix(bytes_view pattern) noexcept;
 
 constexpr bool IsRegexpMeta(byte_type c) noexcept {
   switch (c) {
@@ -50,10 +46,15 @@ constexpr bool IsRegexpMeta(byte_type c) noexcept {
   }
 }
 
+
+RegexpType ComputeRegexpType(bytes_view pattern) noexcept;
+
+bytes_view ExtractRegexpPrefix(bytes_view pattern) noexcept;
+
 automaton FromRegexp(bytes_view pattern);
 
 inline automaton FromRegexp(std::string_view pattern) {
   return FromRegexp(ViewCast<byte_type>(pattern));
 }
 
-}
+}  // namespace irs

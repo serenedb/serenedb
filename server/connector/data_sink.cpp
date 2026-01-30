@@ -52,14 +52,13 @@ constexpr std::string_view kOneValueHeader{"\0\1", 2};
 
 namespace sdb::connector {
 
-template<typename SubWriterType>
-RocksDBDataSinkBase<SubWriterType>::RocksDBDataSinkBase(
-  rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
-  velox::memory::MemoryPool& memory_pool, ObjectId object_key,
-  std::span<const velox::column_index_t> key_childs,
+template<typename DataWriterType, typename SubWriterType>
+RocksDBDataSinkBase<DataWriterType, SubWriterType>::RocksDBDataSinkBase(
+  DataWriterType data_writer, velox::memory::MemoryPool& memory_pool,
+  ObjectId object_key, std::span<const velox::column_index_t> key_childs,
   std::vector<catalog::Column::Id> column_ids,
   std::vector<std::unique_ptr<SubWriterType>>&& index_writers)
-  : _data_writer{transaction, cf},
+  : _data_writer{std::move(data_writer)},
     _index_writers{std::move(index_writers)},
     _object_key{object_key},
     _column_ids{std::move(column_ids)},
@@ -81,13 +80,53 @@ RocksDBInsertDataSink::RocksDBInsertDataSink(
   std::span<const velox::column_index_t> key_childs,
   std::vector<catalog::Column::Id> column_ids,
   std::vector<std::unique_ptr<SinkInsertWriter>>&& index_writers)
-  : RocksDBDataSinkBase<SinkInsertWriter>{transaction,
-                                          cf,
-                                          memory_pool,
-                                          object_key,
-                                          key_childs,
-                                          std::move(column_ids),
-                                          std::move(index_writers)} {}
+  : RocksDBDataSinkBase<RocksDBSinkWriter, SinkInsertWriter>{
+      RocksDBSinkWriter{transaction, cf},
+      memory_pool,
+      object_key,
+      key_childs,
+      std::move(column_ids),
+      std::move(index_writers)} {}
+
+SSTInsertDataSink::SSTInsertDataSink(
+  rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
+  velox::memory::MemoryPool& memory_pool, ObjectId object_key,
+  std::span<const velox::column_index_t> key_childs,
+  std::vector<catalog::Column::Id> column_oids,
+  std::string_view rocksdb_directory)
+  : RocksDBDataSinkBase<SSTSinkWriter, SinkInsertWriter>(
+      SSTSinkWriter{db, cf, column_oids, rocksdb_directory}, memory_pool,
+      object_key, key_childs, std::move(column_oids),
+      std::vector<std::unique_ptr<SinkInsertWriter>>{}) {}
+
+void SSTInsertDataSink::appendData(velox::RowVectorPtr input) {
+  SDB_ASSERT(input->encoding() == velox::VectorEncoding::Simple::ROW);
+  SDB_ASSERT(input->type()->size() == _column_ids.size(),
+             "RocksDBDataSink: column oids size ", _column_ids.size(),
+             " doesn't match input type size ", input->type()->size());
+  SDB_ASSERT(input->type()->kind() == velox::TypeKind::ROW);
+
+  const std::string table_key = key_utils::PrepareTableKey(_object_key);
+  const auto num_rows = input->size();
+  const auto num_columns = input->childrenSize();
+
+  _store_keys_buffers.clear();
+  _store_keys_buffers.reserve(num_rows);
+
+  for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+    key_utils::MakeColumnKey(
+      input, _key_childs, row_idx, table_key, [&](std::string_view row_key) {},
+      _store_keys_buffers.emplace_back());
+  }
+
+  velox::IndexRange all_rows(0, num_rows);
+  const folly::Range all_rows_range{&all_rows, 1};
+  for (velox::column_index_t i = 0; i < num_columns; ++i) {
+    if (_column_ids[i] != catalog::Column::kGeneratedPKId) {
+      WriteInputColumn(_column_ids[i], i, *input, all_rows_range);
+    }
+  }
+}
 
 RocksDBUpdateDataSink::RocksDBUpdateDataSink(
   rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
@@ -97,13 +136,15 @@ RocksDBUpdateDataSink::RocksDBUpdateDataSink(
   std::vector<catalog::Column::Id> all_column_ids, bool update_pk,
   velox::RowTypePtr table_row_type,
   std::vector<std::unique_ptr<SinkUpdateWriter>>&& index_writers)
-  : RocksDBDataSinkBase<SinkUpdateWriter>{transaction,
-                                          cf,
-                                          memory_pool,
-                                          object_key,
-                                          key_childs,
-                                          std::move(column_ids),
-                                          std::move(index_writers)},
+  : RocksDBDataSinkBase<RocksDBSinkWriter, SinkUpdateWriter>{RocksDBSinkWriter{
+                                                               transaction, cf},
+                                                             memory_pool,
+                                                             object_key,
+                                                             key_childs,
+                                                             std::move(
+                                                               column_ids),
+                                                             std::move(
+                                                               index_writers)},
     _all_column_ids{std::move(all_column_ids)},
     _old_keys_buffers{memory_pool},
     _update_pk{update_pk} {
@@ -360,12 +401,13 @@ void RocksDBUpdateDataSink::RewriteColumn(rocksdb::Iterator& it,
   }
 }
 
-template<typename SubWriterType>
-void RocksDBDataSinkBase<SubWriterType>::WriteInputColumn(
+template<typename DataWriterType, typename SubWriterType>
+void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteInputColumn(
   catalog::Column::Id column_id, velox::vector_size_t idx,
   velox::RowVector& input,
   const folly::Range<const velox::IndexRange*>& range) {
   _column_id = column_id;
+  _data_writer.SetColumnIndex(idx);
   const auto& child = input.childAt(idx);
   const auto kind = child->typeKind();
   if (velox::VectorEncoding::isDictionary(child->encoding())) {
@@ -383,9 +425,9 @@ void RocksDBDataSinkBase<SubWriterType>::WriteInputColumn(
 // In that case original_idx stores indexes in the initial column - used for
 // rocksdb key setting. Vector ranges are iterated and each element is stored in
 // rocksdb as a single value.
-template<typename SubWriterType>
+template<typename DataWriterType, typename SubWriterType>
 template<velox::TypeKind Kind>
-void RocksDBDataSinkBase<SubWriterType>::WriteFlatColumn(
+void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteFlatColumn(
   const velox::BaseVector& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   std::span<const velox::vector_size_t> original_idx) {
@@ -417,9 +459,9 @@ void RocksDBDataSinkBase<SubWriterType>::WriteFlatColumn(
   });
 }
 
-template<typename SubWriterType>
+template<typename DataWriterType, typename SubWriterType>
 template<velox::TypeKind Kind>
-void RocksDBDataSinkBase<SubWriterType>::WriteBiasedColumn(
+void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteBiasedColumn(
   const velox::BaseVector& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   std::span<const velox::vector_size_t> original_idx) {
@@ -457,8 +499,8 @@ void RocksDBDataSinkBase<SubWriterType>::WriteBiasedColumn(
 // We write only nulls decided by dictionary itself.
 // For actual writing we just decode indexes and
 // call write on the wrapped column
-template<typename SubWriterType>
-void RocksDBDataSinkBase<SubWriterType>::WriteDictionaryColumn(
+template<typename DataWriterType, typename SubWriterType>
+void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteDictionaryColumn(
   const velox::VectorPtr& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   std::span<const velox::vector_size_t> original_idx) {
@@ -500,9 +542,9 @@ void RocksDBDataSinkBase<SubWriterType>::WriteDictionaryColumn(
   }
 }
 
-template<typename SubWriterType>
+template<typename DataWriterType, typename SubWriterType>
 template<velox::VectorEncoding::Simple Encoding>
-void RocksDBDataSinkBase<SubWriterType>::WriteComplexColumn(
+void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteComplexColumn(
   const velox::BaseVector& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   std::span<const velox::vector_size_t> original_idx) {
@@ -537,9 +579,9 @@ void RocksDBDataSinkBase<SubWriterType>::WriteComplexColumn(
   }
 }
 
-template<typename SubWriterType>
+template<typename DataWriterType, typename SubWriterType>
 template<velox::TypeKind Kind>
-void RocksDBDataSinkBase<SubWriterType>::WriteConstantColumn(
+void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteConstantColumn(
   const velox::BaseVector& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   std::span<const velox::vector_size_t> original_idx) {
@@ -567,8 +609,8 @@ void RocksDBDataSinkBase<SubWriterType>::WriteConstantColumn(
 
 // Main writing method. Used to dispatch actual writes depending on column kind
 // and encoding. See corresponding methods for description of storage formats.
-template<typename SubWriterType>
-void RocksDBDataSinkBase<SubWriterType>::WriteColumn(
+template<typename DataWriterType, typename SubWriterType>
+void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteColumn(
   const velox::VectorPtr& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   std::span<const velox::vector_size_t> original_idx) {
@@ -626,8 +668,8 @@ void RocksDBDataSinkBase<SubWriterType>::WriteColumn(
 // Writes a vector as a single value. Actual format depends on kind and
 // encoding. Method is like WriteColumn main dispatching method but for writing
 // vectors as cell value.
-template<typename SubWriterType>
-void RocksDBDataSinkBase<SubWriterType>::WriteVector(
+template<typename DataWriterType, typename SubWriterType>
+void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteVector(
   const velox::VectorPtr& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   rocksdb::Slice wrapper_nulls, bool force_nulls) {
@@ -724,9 +766,9 @@ void RocksDBDataSinkBase<SubWriterType>::WriteVector(
 // Nulls bitmask might be present if this constant vector was actually wrapped by dictionary
 // with some nulls.
 // clang-format on
-template<typename SubWriterType>
+template<typename DataWriterType, typename SubWriterType>
 template<bool ForceNulls, velox::TypeKind Kind>
-void RocksDBDataSinkBase<SubWriterType>::WriteConstantVector(
+void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteConstantVector(
   const velox::BaseVector& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   rocksdb::Slice wrapper_nulls) {
@@ -774,9 +816,9 @@ void RocksDBDataSinkBase<SubWriterType>::WriteConstantVector(
 // [flags]
 // [size of keys vector in bytes]
 // clang-format on
-template<typename SubWriterType>
+template<typename DataWriterType, typename SubWriterType>
 template<bool HaveNulls>
-void RocksDBDataSinkBase<SubWriterType>::WriteMapVector(
+void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteMapVector(
   const velox::BaseVector& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   rocksdb::Slice wrapper_nulls, bool force_nulls) {
@@ -915,9 +957,9 @@ void RocksDBDataSinkBase<SubWriterType>::WriteMapVector(
 // always equal to  1 + number of keys * 2. As one is for keys vector itself and
 // each key has value vector and in_maps bitmap (possibly with zero length).
 // clang-format on
-template<typename SubWriterType>
+template<typename DataWriterType, typename SubWriterType>
 template<bool HaveNulls>
-void RocksDBDataSinkBase<SubWriterType>::WriteFlatMapVector(
+void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteFlatMapVector(
   const velox::BaseVector& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   rocksdb::Slice wrapper_nulls, bool force_nulls) {
@@ -1111,9 +1153,9 @@ void RocksDBDataSinkBase<SubWriterType>::WriteFlatMapVector(
 //   - 1 byte flags. Marks if there is nulls mask.
 //   - [elements length data]
 // clang-format on
-template<typename SubWriterType>
+template<typename DataWriterType, typename SubWriterType>
 template<bool HaveNulls>
-void RocksDBDataSinkBase<SubWriterType>::WriteRowVector(
+void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteRowVector(
   const velox::BaseVector& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   rocksdb::Slice wrapper_nulls, bool force_nulls) {
@@ -1189,9 +1231,9 @@ void RocksDBDataSinkBase<SubWriterType>::WriteRowVector(
 //   - vencoded uint32_t vector elements count
 //   - 1 byte flags. Marks if there is nulls mask.
 // clang-format on
-template<typename SubWriterType>
+template<typename DataWriterType, typename SubWriterType>
 template<bool HaveNulls>
-void RocksDBDataSinkBase<SubWriterType>::WriteArrayVector(
+void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteArrayVector(
   const velox::BaseVector& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   rocksdb::Slice wrapper_nulls, bool force_nulls) {
@@ -1327,9 +1369,9 @@ void RocksDBDataSinkBase<SubWriterType>::WriteArrayVector(
 // copying when possible. Currenly only exception is BOOLEAN kind as it is
 // stored as bitset and we built a new bitset for reqired range.
 // clang-format on
-template<typename SubWriterType>
+template<typename DataWriterType, typename SubWriterType>
 template<bool HaveNulls, velox::TypeKind Kind>
-void RocksDBDataSinkBase<SubWriterType>::WriteFlatVector(
+void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteFlatVector(
   const velox::BaseVector& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   rocksdb::Slice wrapper_nulls, bool force_nulls) {
@@ -1568,9 +1610,9 @@ void RocksDBDataSinkBase<SubWriterType>::WriteFlatVector(
   }
 }
 
-template<typename SubWriterType>
+template<typename DataWriterType, typename SubWriterType>
 template<bool HaveNulls, velox::TypeKind Kind>
-void RocksDBDataSinkBase<SubWriterType>::WriteBiasedVector(
+void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteBiasedVector(
   const velox::BaseVector& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   rocksdb::Slice wrapper_nulls, bool force_nulls) {
@@ -1672,9 +1714,9 @@ void RocksDBDataSinkBase<SubWriterType>::WriteBiasedVector(
 
 // Writes dictionary encoded vector. Vector is stored as unwrapped vector.
 // Indexes are decoded. Nulls are combined.
-template<typename SubWriterType>
+template<typename DataWriterType, typename SubWriterType>
 template<bool HaveNulls>
-void RocksDBDataSinkBase<SubWriterType>::WriteDictionaryVector(
+void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteDictionaryVector(
   const velox::VectorPtr& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   rocksdb::Slice wrapper_nulls) {
@@ -1752,8 +1794,8 @@ void RocksDBDataSinkBase<SubWriterType>::WriteDictionaryVector(
 // containing single element designated by idx but we do not want to write
 // overhead related to storing vector header/nulls bitmap etc. if we are sure
 // we need only one value.
-template<typename SubWriterType>
-void RocksDBDataSinkBase<SubWriterType>::WriteValue(
+template<typename DataWriterType, typename SubWriterType>
+void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteValue(
   const velox::VectorPtr& input, velox::vector_size_t idx) {
   SDB_ASSERT(idx < input->size());
   if (input->isNullAt(idx)) {
@@ -1805,9 +1847,9 @@ void RocksDBDataSinkBase<SubWriterType>::WriteValue(
   }
 }
 
-template<typename SubWriterType>
+template<typename DataWriterType, typename SubWriterType>
 template<velox::TypeKind Kind>
-void RocksDBDataSinkBase<SubWriterType>::WriteBiasedValue(
+void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteBiasedValue(
   const velox::BaseVector& input, velox::vector_size_t idx) {
   SDB_ASSERT(idx < input.size());
   SDB_ASSERT(!input.isNullAt(idx));
@@ -1829,9 +1871,9 @@ void RocksDBDataSinkBase<SubWriterType>::WriteBiasedValue(
   }
 }
 
-template<typename SubWriterType>
+template<typename DataWriterType, typename SubWriterType>
 template<velox::TypeKind Kind>
-void RocksDBDataSinkBase<SubWriterType>::WriteFlatValueWrapper(
+void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteFlatValueWrapper(
   const velox::BaseVector& input, velox::vector_size_t idx) {
   using T = typename velox::TypeTraits<Kind>::NativeType;
   auto* flat_vector = input.asFlatVector<T>();
@@ -1839,9 +1881,9 @@ void RocksDBDataSinkBase<SubWriterType>::WriteFlatValueWrapper(
   WriteFlatValue(*flat_vector, idx);
 }
 
-template<typename SubWriterType>
+template<typename DataWriterType, typename SubWriterType>
 template<typename T>
-void RocksDBDataSinkBase<SubWriterType>::WriteFlatValue(
+void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteFlatValue(
   const velox::FlatVector<T>& input, velox::vector_size_t idx) {
   SDB_ASSERT(idx < input.size());
   SDB_ASSERT(!input.isNullAt(idx));
@@ -1859,8 +1901,8 @@ void RocksDBDataSinkBase<SubWriterType>::WriteFlatValue(
 // values data is raw data of struct fields in order determined by childs order
 // in type. Particular values format is determined by value kind. Null value has
 // 0 length.
-template<typename SubWriterType>
-void RocksDBDataSinkBase<SubWriterType>::WriteRowValue(
+template<typename DataWriterType, typename SubWriterType>
+void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteRowValue(
   const velox::BaseVector& input, velox::vector_size_t idx) {
   SDB_ASSERT(idx < input.size());
   SDB_ASSERT(!input.isNullAt(idx));
@@ -1909,8 +1951,8 @@ void RocksDBDataSinkBase<SubWriterType>::WriteRowValue(
 // the value and read each vector in parallel. And then combine original map.
 // key/value vectors might have its own null mask.
 // This is stored as part of the corresponding vector.
-template<typename SubWriterType>
-void RocksDBDataSinkBase<SubWriterType>::WriteMapValue(
+template<typename DataWriterType, typename SubWriterType>
+void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteMapValue(
   const velox::BaseVector& input, velox::vector_size_t idx) {
   SDB_ASSERT(idx < input.size());
   SDB_ASSERT(!input.isNullAt(idx));
@@ -1951,8 +1993,8 @@ void RocksDBDataSinkBase<SubWriterType>::WriteMapValue(
 // Flat Map is written as vector of keys (only present in current cell)
 // and corresponding values for each key.
 // Format is: [flags] [length array size] [length array] [keys vector] [values]
-template<typename SubWriterType>
-void RocksDBDataSinkBase<SubWriterType>::WriteFlatMapValue(
+template<typename DataWriterType, typename SubWriterType>
+void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteFlatMapValue(
   const velox::BaseVector& input, velox::vector_size_t idx) {
   SDB_ASSERT(idx < input.size());
   SDB_ASSERT(!input.isNullAt(idx));
@@ -2016,8 +2058,8 @@ void RocksDBDataSinkBase<SubWriterType>::WriteFlatMapValue(
 
 // Array is just a vector. So write corresponding elements vector part as a
 // value.
-template<typename SubWriterType>
-void RocksDBDataSinkBase<SubWriterType>::WriteArrayValue(
+template<typename DataWriterType, typename SubWriterType>
+void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteArrayValue(
   const velox::BaseVector& input, velox::vector_size_t idx) {
   SDB_ASSERT(idx < input.size());
   SDB_ASSERT(!input.isNullAt(idx));
@@ -2032,16 +2074,18 @@ void RocksDBDataSinkBase<SubWriterType>::WriteArrayValue(
   WriteVector(array_vector->elements(), elements_range, {}, false);
 }
 
-template<typename SubWriterType>
-void RocksDBDataSinkBase<SubWriterType>::WriteRowSlices(std::string_view key) {
+template<typename DataWriterType, typename SubWriterType>
+void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteRowSlices(
+  std::string_view key) {
   _data_writer.Write(_row_slices, key);
   for (const auto& writer : _index_writers) {
     writer->Write(_row_slices, key);
   }
 }
 
-template<typename SubWriterType>
-void RocksDBDataSinkBase<SubWriterType>::WriteNull(std::string_view key) {
+template<typename DataWriterType, typename SubWriterType>
+void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteNull(
+  std::string_view key) {
   // empty slice denotes NULL value
   rocksdb::Slice null_slice;
   std::span<const rocksdb::Slice> null_slices{&null_slice, 1};
@@ -2051,9 +2095,9 @@ void RocksDBDataSinkBase<SubWriterType>::WriteNull(std::string_view key) {
   }
 }
 
-template<typename SubWriterType>
+template<typename DataWriterType, typename SubWriterType>
 template<velox::TypeKind Kind>
-void RocksDBDataSinkBase<SubWriterType>::WriteConstantValue(
+void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteConstantValue(
   const velox::BaseVector& input) {
   using T = typename velox::KindToFlatVector<Kind>::WrapperType;
   auto const_vector = input.as<velox::ConstantVector<T>>();
@@ -2086,9 +2130,10 @@ void RocksDBDataSinkBase<SubWriterType>::WriteConstantValue(
 // non-empty strings starts from 0x00 byte - additional 0x00 byte is added to
 // the beginning. So reader should always skip first 0x00 byte if any. That will
 // make empty string distinguishable from NULL.
-template<typename SubWriterType>
+template<typename DataWriterType, typename SubWriterType>
 template<typename T>
-void RocksDBDataSinkBase<SubWriterType>::WritePrimitive(const T& value) {
+void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WritePrimitive(
+  const T& value) {
   static_assert(
     !std::is_same_v<T, void>,
     "Velox complex types that has void as NativeType should not get here");
@@ -2120,8 +2165,9 @@ void RocksDBDataSinkBase<SubWriterType>::WritePrimitive(const T& value) {
   }
 }
 
-template<typename SubWriterType>
-const std::string& RocksDBDataSinkBase<SubWriterType>::SetupRowKey(
+template<typename DataWriterType, typename SubWriterType>
+const std::string&
+RocksDBDataSinkBase<DataWriterType, SubWriterType>::SetupRowKey(
   velox::vector_size_t idx,
   std::span<const velox::vector_size_t> original_idx) {
   SDB_ASSERT(original_idx.empty() ||
@@ -2135,8 +2181,9 @@ const std::string& RocksDBDataSinkBase<SubWriterType>::SetupRowKey(
   return row_key;
 }
 
-template<typename SubWriterType>
-void RocksDBDataSinkBase<SubWriterType>::ResetForNewRow() noexcept {
+template<typename DataWriterType, typename SubWriterType>
+void RocksDBDataSinkBase<DataWriterType,
+                         SubWriterType>::ResetForNewRow() noexcept {
   _row_slices.clear();
   // memory reclaim is relatively expensive so do it only when we have
   // accumulated some noticable amount of memory.
@@ -2147,8 +2194,8 @@ void RocksDBDataSinkBase<SubWriterType>::ResetForNewRow() noexcept {
   }
 }
 
-template<typename SubWriterType>
-void RocksDBDataSinkBase<SubWriterType>::GatherNulls(
+template<typename DataWriterType, typename SubWriterType>
+void RocksDBDataSinkBase<DataWriterType, SubWriterType>::GatherNulls(
   const velox::BaseVector& input,
   const folly::Range<const velox::IndexRange*>& ranges,
   velox::vector_size_t total_rows_number, bool whole_vector,
@@ -2212,9 +2259,9 @@ void RocksDBDataSinkBase<SubWriterType>::GatherNulls(
   }
 }
 
-template<typename SubWriterType>
-RocksDBDataSinkBase<SubWriterType>::IndiciesVector
-RocksDBDataSinkBase<SubWriterType>::GatherIndicies(
+template<typename DataWriterType, typename SubWriterType>
+typename RocksDBDataSinkBase<DataWriterType, SubWriterType>::IndiciesVector
+RocksDBDataSinkBase<DataWriterType, SubWriterType>::GatherIndicies(
   const folly::Range<const velox::IndexRange*>& ranges,
   velox::vector_size_t total_rows_number) {
   IndiciesVector indicies(_memory_pool);
@@ -2249,21 +2296,22 @@ RocksDBDataSinkBase<SubWriterType>::GatherIndicies(
   return indicies;
 }
 
-template<typename SubWriterType>
-bool RocksDBDataSinkBase<SubWriterType>::finish() {
+template<typename DataWriterType, typename SubWriterType>
+bool RocksDBDataSinkBase<DataWriterType, SubWriterType>::finish() {
   for (const auto& writer : _index_writers) {
     writer->Finish();
   }
   return true;
 }
 
-template<typename SubWriterType>
-std::vector<std::string> RocksDBDataSinkBase<SubWriterType>::close() {
+template<typename DataWriterType, typename SubWriterType>
+std::vector<std::string>
+RocksDBDataSinkBase<DataWriterType, SubWriterType>::close() {
   return {};
 }
 
-template<typename SubWriterType>
-void RocksDBDataSinkBase<SubWriterType>::abort() {
+template<typename DataWriterType, typename SubWriterType>
+void RocksDBDataSinkBase<DataWriterType, SubWriterType>::abort() {
   // Transaction itself should be contolled outside and needed SavePoint should
   // be set.
   ResetForNewRow();
@@ -2273,9 +2321,9 @@ void RocksDBDataSinkBase<SubWriterType>::abort() {
   }
 }
 
-template<typename SubWriterType>
-velox::connector::DataSink::Stats RocksDBDataSinkBase<SubWriterType>::stats()
-  const {
+template<typename DataWriterType, typename SubWriterType>
+velox::connector::DataSink::Stats
+RocksDBDataSinkBase<DataWriterType, SubWriterType>::stats() const {
   // TODO(Dronplane) implement
   return {};
 }

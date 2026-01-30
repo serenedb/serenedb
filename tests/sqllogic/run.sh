@@ -139,7 +139,7 @@ run_tests() {
   local engine=$3
 
   echo
-  echo "Running tests in $mode mode on port $port with $engine"
+  echo "Running tests for $database database in $mode mode on port $port with $engine engine"
   echo
 
   # Build options dynamically

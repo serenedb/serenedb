@@ -22,11 +22,13 @@
 
 #include "iresearch/index/iterators.hpp"
 
+#include "basics/misc.hpp"
 #include "basics/singleton.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/empty_term_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/cost.hpp"
+#include "iresearch/search/scorer.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -50,6 +52,8 @@ struct EmptyDocIterator : ResettableDocIterator {
   }
   uint32_t count() noexcept final { return 0; }
   void reset() noexcept final {}
+  void CollectData(uint16_t index) final {}
+  uint32_t collect(std::span<doc_id_t>) final { return 0; }
 
  private:
   CostAttr _cost{0};
@@ -166,6 +170,28 @@ FieldIterator::ptr FieldIterator::empty() noexcept {
 
 ColumnIterator::ptr ColumnIterator::empty() noexcept {
   return memory::to_managed<ColumnIterator>(gEmptyColumnIterator);
+}
+
+std::pair<doc_id_t, bool> DocIterator::CollectBlock(
+  doc_id_t min, doc_id_t max, ScoreMergeType merge_type,
+  const ScoreFunction* score, uint64_t* IRS_RESTRICT mask,
+  score_t* IRS_RESTRICT scores, uint32_t* IRS_RESTRICT matches,
+  size_t min_match_count) {
+  if (!score || score->IsDefault()) {
+    merge_type = ScoreMergeType::Noop;
+  }
+
+  return ResolveMergeType(merge_type, [&]<ScoreMergeType MergeType> {
+    return ResolveBool(matches != nullptr, [&]<bool TrackMatch> {
+      return CollectBlockImpl<MergeType, TrackMatch>(
+        *this, min, max, score, mask, scores, matches, min_match_count);
+    });
+  });
+}
+
+const ScoreFunction& DocIterator::PrepareScore(const PrepareScoreContext& ctx) {
+  static const ScoreFunction kNoop = ScoreFunction::Default();
+  return kNoop;
 }
 
 }  // namespace irs

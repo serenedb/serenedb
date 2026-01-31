@@ -454,6 +454,8 @@ class DocIteratorImpl : public irs::DocIterator {
     return _doc.value;
   }
 
+  void CollectData(uint16_t index) final {}
+
  private:
   class PosIterator final : public irs::PosAttr {
    public:
@@ -716,15 +718,18 @@ void AssertDocs(const irs::TermIterator& expected_term,
                 irs::SeekCookie::ptr actual_cookie,
                 irs::IndexFeatures requested_features) {
   AssertDocs(expected_term.postings(requested_features), [&] {
-    return actual_terms.Iterator(requested_features, *actual_cookie);
+    return actual_terms.Iterator(
+      requested_features,
+      {.cookie = actual_cookie.get(), .field = actual_terms.meta()});
   });
 
   AssertDocs(expected_term.postings(requested_features), [&] {
     return actual_terms.Iterator(
-      requested_features, *actual_cookie,
+      requested_features,
+      {.cookie = actual_cookie.get(), .field = actual_terms.meta()},
       {{0, false}, [](uint32_t, const irs::AttributeProvider&) {
          // FIXME(gnusi)
-         return irs::ScoreFunction::Default(1);
+         return irs::ScoreFunction::Default();
        }});
   });
 

@@ -22,6 +22,9 @@
 
 #include "iresearch/search/boolean_query.hpp"
 
+#include <iresearch/search/make_disjunction.hpp>
+#include <iresearch/search/scorer.hpp>
+
 #include "iresearch/search/conjunction.hpp"
 #include "iresearch/search/disjunction.hpp"
 #include "iresearch/search/prepared_state_visitor.hpp"
@@ -76,21 +79,19 @@ DocIterator::ptr MakeDisjunction(const ExecutionContext& ctx,
     return DocIterator::empty();
   }
 
-  return ResolveMergeType(
-    merge_type, ctx.scorers.buckets().size(), [&]<typename A>(A&& aggregator) {
-      using Disjunction = DisjunctionIterator<ScoreAdapter, A>;
-      return MakeDisjunction<Disjunction>(ctx.wand, std::move(itrs),
-                                          std::forward<A>(aggregator),
-                                          std::forward<Args>(args)...);
+  return irs::ResolveMergeType(
+    merge_type, [&]<ScoreMergeType MergeType>() -> DocIterator::ptr {
+      using Disjunction = DisjunctionIterator<ScoreAdapter, MergeType>;
+      return irs::MakeDisjunction<Disjunction>(ctx.wand, std::move(itrs),
+                                               std::forward<Args>(args)...);
     });
 }
 
 // Returns conjunction iterator created from the specified queries
 template<typename QueryIterator, typename... Args>
 DocIterator::ptr MakeConjunction(const ExecutionContext& ctx,
-                                 irs::ScoreMergeType merge_type,
-                                 QueryIterator begin, QueryIterator end,
-                                 Args&&... args) {
+                                 ScoreMergeType merge_type, QueryIterator begin,
+                                 QueryIterator end, Args&&... args) {
   SDB_ASSERT(begin <= end);
   const size_t size = std::distance(begin, end);
   // check size before the execution
@@ -106,11 +107,8 @@ DocIterator::ptr MakeConjunction(const ExecutionContext& ctx,
     return DocIterator::empty();
   }
 
-  return ResolveMergeType(
-    merge_type, ctx.scorers.buckets().size(), [&]<typename A>(A&& aggregator) {
-      return MakeConjunction(ctx.wand, std::forward<A>(aggregator),
-                             std::move(itrs), std::forward<Args>(args)...);
-    });
+  return irs::MakeConjunction(merge_type, ctx.wand, std::move(itrs),
+                              std::forward<Args>(args)...);
 }
 
 }  // namespace
@@ -225,15 +223,12 @@ DocIterator::ptr MinMatchQuery::execute(const ExecutionContext& ctx,
     return DocIterator::empty();
   }
 
-  return ResolveMergeType(merge_type(), ctx.scorers.buckets().size(),
-                          [&]<typename A>(A&& aggregator) {
-                            // FIXME(gnusi): use FAST version
-                            using Disjunction =
-                              MinMatchIterator<ScoreAdapter, A>;
-                            return MakeWeakDisjunction<Disjunction, A>(
-                              ctx.wand, std::move(itrs), min_match_count,
-                              std::forward<A>(aggregator));
-                          });
+  return ResolveMergeType(merge_type(), [&]<ScoreMergeType MergeType>() {
+    // FIXME(gnusi): use FAST version
+    using Disjunction = MinMatchIterator<ScoreAdapter, MergeType>;
+    return MakeWeakDisjunction<Disjunction>(ctx.wand, std::move(itrs),
+                                            min_match_count);
+  });
 }
 
 }  // namespace irs

@@ -23,16 +23,19 @@
 #include "column_existence_filter.hpp"
 
 #include "iresearch/formats/empty_term_reader.hpp"
-#include "iresearch/index/index_reader.hpp"  // for SubReader
+#include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/disjunction.hpp"
+#include "iresearch/search/make_disjunction.hpp"
+#include "iresearch/search/scorer.hpp"
 
 namespace irs {
 namespace {
 
 class ColumnExistenceQuery : public Filter::Query {
  public:
-  ColumnExistenceQuery(std::string_view field, bstring&& stats, score_t boost)
-    : _field{field}, _stats{std::move(stats)}, _boost{boost} {}
+  ColumnExistenceQuery(std::string_view field, score_t boost)
+    : _field{field}, _boost{boost} {}
 
   DocIterator::ptr execute(const ExecutionContext& ctx) const override {
     const auto& segment = ctx.segment;
@@ -42,7 +45,7 @@ class ColumnExistenceQuery : public Filter::Query {
       return DocIterator::empty();
     }
 
-    return Iterator(segment, *column, ctx.scorers);
+    return Iterator(*column);
   }
 
   void visit(const SubReader&, PreparedStateVisitor&, score_t) const final {
@@ -52,37 +55,25 @@ class ColumnExistenceQuery : public Filter::Query {
   score_t Boost() const noexcept final { return _boost; }
 
  protected:
-  DocIterator::ptr Iterator(const SubReader& segment,
-                            const ColumnReader& column,
-                            const Scorers& ord) const {
+  DocIterator::ptr Iterator(const ColumnReader& column) const {
     auto it = column.iterator(ColumnHint::Mask);
 
     if (!it) [[unlikely]] {
       return DocIterator::empty();
     }
 
-    if (!ord.empty()) {
-      if (auto* score = irs::GetMutable<ScoreAttr>(it.get())) {
-        CompileScore(*score, ord.buckets(), segment,
-                     EmptyTermReader(column.size()), _stats.c_str(), *it,
-                     _boost);
-      }
-    }
-
     return it;
   }
 
   std::string _field;
-  bstring _stats;
   score_t _boost;
 };
 
 class ColumnPrefixExistenceQuery : public ColumnExistenceQuery {
  public:
-  ColumnPrefixExistenceQuery(std::string_view prefix, bstring&& stats,
+  ColumnPrefixExistenceQuery(std::string_view prefix,
                              const ColumnAcceptor& acceptor, score_t boost)
-    : ColumnExistenceQuery{prefix, std::move(stats), boost},
-      _acceptor{acceptor} {
+    : ColumnExistenceQuery{prefix, boost}, _acceptor{acceptor} {
     SDB_ASSERT(_acceptor);
   }
 
@@ -90,7 +81,6 @@ class ColumnPrefixExistenceQuery : public ColumnExistenceQuery {
     SDB_ASSERT(_acceptor);
 
     auto& segment = ctx.segment;
-    auto& ord = ctx.scorers;
     const std::string_view prefix = _field;
 
     auto it = segment.columns();
@@ -105,7 +95,7 @@ class ColumnPrefixExistenceQuery : public ColumnExistenceQuery {
     ScoreAdapters itrs;
     for (; column->name().starts_with(prefix); column = &it->value()) {
       if (_acceptor(column->name(), prefix)) {
-        itrs.emplace_back(Iterator(segment, *column, ord));
+        itrs.emplace_back(Iterator(*column));
       }
 
       if (!it->next()) {
@@ -114,11 +104,9 @@ class ColumnPrefixExistenceQuery : public ColumnExistenceQuery {
     }
 
     return ResolveMergeType(
-      ScoreMergeType::Sum, ord.buckets().size(),
-      [&]<typename A>(A&& aggregator) {
-        using Disjunction = DisjunctionIterator<ScoreAdapter, A>;
-        return MakeDisjunction<Disjunction>(ctx.wand, std::move(itrs),
-                                            std::move(aggregator));
+      ScoreMergeType::Sum, [&]<ScoreMergeType MergeType>() -> DocIterator::ptr {
+        using Disjunction = DisjunctionIterator<ScoreAdapter, MergeType>;
+        return irs::MakeDisjunction<Disjunction>(ctx.wand, std::move(itrs));
       });
   }
 
@@ -132,20 +120,15 @@ Filter::Query::ptr ByColumnExistence::prepare(const PrepareContext& ctx) const {
   // skip field-level/term-level statistics because there are no explicit
   // fields/terms, but still collect index-level statistics
   // i.e. all fields and terms implicitly match
-  bstring stats(ctx.scorers.stats_size(), 0);
-  auto* stats_buf = stats.data();
-
-  PrepareCollectors(ctx.scorers.buckets(), stats_buf);
 
   const auto filter_boost = ctx.boost * Boost();
 
   auto& acceptor = options().acceptor;
 
-  return acceptor
-           ? memory::make_tracked<ColumnPrefixExistenceQuery>(
-               ctx.memory, field(), std::move(stats), acceptor, filter_boost)
-           : memory::make_tracked<ColumnExistenceQuery>(
-               ctx.memory, field(), std::move(stats), filter_boost);
+  return acceptor ? memory::make_tracked<ColumnPrefixExistenceQuery>(
+                      ctx.memory, field(), acceptor, filter_boost)
+                  : memory::make_tracked<ColumnExistenceQuery>(
+                      ctx.memory, field(), filter_boost);
 }
 
 }  // namespace irs

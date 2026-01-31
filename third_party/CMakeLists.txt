@@ -750,6 +750,15 @@ target_include_directories(
 )
 
 ################################################################################
+## miniselect
+################################################################################
+    
+sdb_update_module(${GIT_EXECUTABLE} "miniselect" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+
+add_library(miniselect INTERFACE)
+target_include_directories(miniselect BEFORE INTERFACE miniselect/include)
+
+################################################################################
 ## WAMR (SHOULD BE LAST!)
 ################################################################################
 

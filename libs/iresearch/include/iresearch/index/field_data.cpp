@@ -292,6 +292,8 @@ class DocIteratorImpl : public DocIterator {
     return value();
   }
 
+  void CollectData(uint16_t index) final {}
+
  private:
   using Attributes =
     std::tuple<DocAttr, AttributePtr<FreqAttr>, AttributePtr<PosAttr>>;
@@ -395,6 +397,8 @@ class SortingDocIteratorImpl : public DocIterator {
     irs::seek(*this, doc);
     return value();
   }
+
+  void CollectData(uint16_t index) final {}
 
  private:
   using Attributes =

@@ -22,10 +22,12 @@
 
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/norm.hpp>
+#include <iresearch/search/column_collector.hpp>
 #include <iresearch/search/levenshtein_filter.hpp>
 #include <iresearch/search/prefix_filter.hpp>
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/utils/levenshtein_default_pdp.hpp>
+#include <iresearch/utils/lz4compression.hpp>
 
 #include "basics/misc.hpp"
 #include "filter_test_case_base.hpp"
@@ -574,6 +576,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
   ASSERT_EQ(1, index->size());
 
   MaxMemoryCounter counter;
+  irs::ColumnCollector collector;
 
   {
     irs::ByEditDistance filter;
@@ -608,6 +611,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     auto expected_doc = std::begin(kExpectedDocs);
     while (docs->next()) {
+      collector.Collect(docs->value());
       irs::score_t value;
       (*score)(&value);
       ASSERT_FLOAT_EQ(expected_doc->first, value);
@@ -637,8 +641,10 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     });
     ASSERT_NE(nullptr, prepared);
 
-    auto docs =
-      prepared->execute({.segment = index[0], .scorers = prepared_order});
+    collector.Clear();
+    auto docs = prepared->execute({.segment = index[0],
+                                   .scorers = prepared_order,
+                                   .collector = &collector});
     ASSERT_NE(nullptr, docs);
 
     auto* score = irs::get<irs::ScoreAttr>(*docs);
@@ -652,6 +658,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     auto expected_doc = std::begin(kExpectedDocs);
     while (docs->next()) {
+      collector.Collect(docs->value());
       irs::score_t value;
       (*score)(&value);
       ASSERT_FLOAT_EQ(expected_doc->first, value);
@@ -681,8 +688,10 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     });
     ASSERT_NE(nullptr, prepared);
 
-    auto docs =
-      prepared->execute({.segment = index[0], .scorers = prepared_order});
+    collector.Clear();
+    auto docs = prepared->execute({.segment = index[0],
+                                   .scorers = prepared_order,
+                                   .collector = &collector});
     ASSERT_NE(nullptr, docs);
 
     auto* score = irs::get<irs::ScoreAttr>(*docs);
@@ -696,6 +705,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     auto expected_doc = std::begin(kExpectedDocs);
     while (docs->next()) {
+      collector.Collect(docs->value());
       irs::score_t value;
       (*score)(&value);
 
@@ -726,8 +736,10 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     });
     ASSERT_NE(nullptr, prepared);
 
-    auto docs =
-      prepared->execute({.segment = index[0], .scorers = prepared_order});
+    collector.Clear();
+    auto docs = prepared->execute({.segment = index[0],
+                                   .scorers = prepared_order,
+                                   .collector = &collector});
     ASSERT_NE(nullptr, docs);
 
     auto* score = irs::get<irs::ScoreAttr>(*docs);
@@ -744,6 +756,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     std::vector<std::pair<float_t, irs::doc_id_t>> actual_docs;
     while (docs->next()) {
+      collector.Collect(docs->value());
       irs::score_t value;
       (*score)(&value);
       actual_docs.emplace_back(value, docs->value());
@@ -791,8 +804,10 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     });
     ASSERT_NE(nullptr, prepared);
 
-    auto docs =
-      prepared->execute({.segment = index[0], .scorers = prepared_order});
+    collector.Clear();
+    auto docs = prepared->execute({.segment = index[0],
+                                   .scorers = prepared_order,
+                                   .collector = &collector});
     ASSERT_NE(nullptr, docs);
 
     auto* score = irs::get<irs::ScoreAttr>(*docs);
@@ -807,6 +822,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     std::vector<std::pair<float_t, irs::doc_id_t>> actual_docs;
     while (docs->next()) {
+      collector.Collect(docs->value());
       irs::score_t value;
       (*score)(&value);
       actual_docs.emplace_back(value, docs->value());
@@ -857,8 +873,10 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     });
     ASSERT_NE(nullptr, prepared);
 
-    auto docs =
-      prepared->execute({.segment = index[0], .scorers = prepared_order});
+    collector.Clear();
+    auto docs = prepared->execute({.segment = index[0],
+                                   .scorers = prepared_order,
+                                   .collector = &collector});
     ASSERT_NE(nullptr, docs);
 
     auto* score = irs::get<irs::ScoreAttr>(*docs);
@@ -873,6 +891,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     std::vector<std::pair<float_t, irs::doc_id_t>> actual_docs;
     while (docs->next()) {
+      collector.Collect(docs->value());
       irs::score_t value;
       (*score)(&value);
       actual_docs.emplace_back(value, docs->value());

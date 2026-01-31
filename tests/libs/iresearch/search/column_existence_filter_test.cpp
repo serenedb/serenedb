@@ -86,7 +86,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
 
       irs::ByColumnExistence filter = MakeFilter(column_name, false);
 
-      auto prepared = filter.prepare({
+      auto prepared = tests::FilterWrapper{filter}.prepare({
         .index = *rdr,
         .memory = counter,
       });
@@ -121,7 +121,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
 
       irs::ByColumnExistence filter = MakeFilter(column_name, false);
 
-      auto prepared = filter.prepare({
+      auto prepared = tests::FilterWrapper{filter}.prepare({
         .index = *rdr,
         .memory = counter,
       });
@@ -159,7 +159,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
 
       irs::ByColumnExistence filter = MakeFilter(column_name, false);
 
-      auto prepared = filter.prepare({
+      auto prepared = tests::FilterWrapper{filter}.prepare({
         .index = *rdr,
         .memory = counter,
       });
@@ -193,7 +193,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
 
       irs::ByColumnExistence filter = MakeFilter(column_name, false);
 
-      auto prepared = filter.prepare({
+      auto prepared = tests::FilterWrapper{filter}.prepare({
         .index = *rdr,
         .memory = counter,
       });
@@ -230,7 +230,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
 
       irs::ByColumnExistence filter = MakeFilter(column_name, false);
 
-      auto prepared = filter.prepare({
+      auto prepared = tests::FilterWrapper{filter}.prepare({
         .index = *rdr,
         .memory = counter,
       });
@@ -263,7 +263,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
 
       irs::ByColumnExistence filter = MakeFilter(column_name, false);
 
-      auto prepared = filter.prepare({
+      auto prepared = tests::FilterWrapper{filter}.prepare({
         .index = *rdr,
         .memory = counter,
       });
@@ -296,7 +296,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
 
       irs::ByColumnExistence filter = MakeFilter(column_name, false);
 
-      auto prepared = filter.prepare({
+      auto prepared = tests::FilterWrapper{filter}.prepare({
         .index = *rdr,
         .memory = counter,
       });
@@ -336,7 +336,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
 
       irs::ByColumnExistence filter = MakeFilter(column_name, false);
 
-      auto prepared = filter.prepare({
+      auto prepared = tests::FilterWrapper{filter}.prepare({
         .index = *rdr,
         .memory = counter,
       });
@@ -371,7 +371,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
 
       irs::ByColumnExistence filter = MakeFilter(column_name, false);
 
-      auto prepared = filter.prepare({
+      auto prepared = tests::FilterWrapper{filter}.prepare({
         .index = *rdr,
         .memory = counter,
       });
@@ -409,7 +409,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
 
       irs::ByColumnExistence filter = MakeFilter(column_name, false);
 
-      auto prepared = filter.prepare({
+      auto prepared = tests::FilterWrapper{filter}.prepare({
         .index = *rdr,
         .memory = counter,
       });
@@ -443,7 +443,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
 
       irs::ByColumnExistence filter = MakeFilter(column_name, false);
 
-      auto prepared = filter.prepare({
+      auto prepared = tests::FilterWrapper{filter}.prepare({
         .index = *rdr,
         .memory = counter,
       });
@@ -480,7 +480,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
 
       irs::ByColumnExistence filter = MakeFilter(column_name, false);
 
-      auto prepared = filter.prepare({
+      auto prepared = tests::FilterWrapper{filter}.prepare({
         .index = *rdr,
         .memory = counter,
       });
@@ -513,7 +513,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
 
       irs::ByColumnExistence filter = MakeFilter(column_name, false);
 
-      auto prepared = filter.prepare({
+      auto prepared = tests::FilterWrapper{filter}.prepare({
         .index = *rdr,
         .memory = counter,
       });
@@ -546,7 +546,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
 
       irs::ByColumnExistence filter = MakeFilter(column_name, false);
 
-      auto prepared = filter.prepare({
+      auto prepared = tests::FilterWrapper{filter}.prepare({
         .index = *rdr,
         .memory = counter,
       });
@@ -587,7 +587,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
 
       irs::ByColumnExistence filter = MakeFilter(column_prefix, true);
 
-      auto prepared = filter.prepare({
+      auto prepared = tests::FilterWrapper{filter}.prepare({
         .index = *rdr,
         .memory = counter,
       });
@@ -660,7 +660,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
 
       irs::ByColumnExistence filter = MakeFilter(column_prefix, true);
 
-      auto prepared = filter.prepare({
+      auto prepared = tests::FilterWrapper{filter}.prepare({
         .index = *rdr,
         .memory = counter,
       });
@@ -709,7 +709,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
 
       irs::ByColumnExistence filter = MakeFilter(column_prefix, true);
 
-      auto prepared = filter.prepare({
+      auto prepared = tests::FilterWrapper{filter}.prepare({
         .index = *rdr,
         .memory = counter,
       });
@@ -758,7 +758,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
 
       irs::ByColumnExistence filter = MakeFilter(column_prefix, true);
 
-      auto prepared = filter.prepare({
+      auto prepared = tests::FilterWrapper{filter}.prepare({
         .index = *rdr,
         .memory = counter,
       });
@@ -804,7 +804,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
 
       irs::ByColumnExistence filter = MakeFilter(column_prefix, true);
 
-      auto prepared = filter.prepare({
+      auto prepared = tests::FilterWrapper{filter}.prepare({
         .index = *rdr,
         .memory = counter,
       });
@@ -848,6 +848,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       size_t collector_collect_term_count = 0;
       size_t collector_finish_count = 0;
       size_t scorer_score_count = 0;
+      irs::doc_id_t cur_doc = 0;
 
       tests::sort::CustomSort sort;
 
@@ -867,14 +868,15 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
                                   const irs::TermCollector*) -> void {
         ++collector_finish_count;
       };
-      sort.scorer_score = [&scorer_score_count](irs::doc_id_t doc,
-                                                irs::score_t* score) -> void {
+      sort.scorer_score = [&](irs::ScoreCtx* ctx, irs::score_t* score,
+                              size_t n) -> void {
+        ASSERT_EQ(1, n);
         ++scorer_score_count;
-        *score = irs::score_t(doc & 0xAAAAAAAA);
+        *score = irs::score_t(cur_doc & 0xAAAAAAAA);
       };
 
       auto prepared_order = irs::Scorers::Prepare(sort);
-      auto prepared_filter = filter.prepare({
+      auto prepared_filter = tests::FilterWrapper{filter}.prepare({
         .index = *rdr,
         .memory = counter,
         .scorers = prepared_order,
@@ -899,6 +901,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       ASSERT_TRUE(bool(score));
 
       while (filter_itr->next()) {
+        cur_doc = filter_itr->value();
         ASSERT_FALSE(!score);
         irs::score_t score_value{};
         (*score)(&score_value);
@@ -918,7 +921,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
                                             // statistics not applicable to
                                             // columnstore) FIXME TODO discuss
       ASSERT_EQ(0, collector_collect_term_count);  // should not be executed
-      ASSERT_EQ(1, collector_finish_count);
+      ASSERT_EQ(0, collector_finish_count);
       ASSERT_EQ(32, scorer_score_count);
 
       std::vector<irs::doc_id_t> expected = {
@@ -946,6 +949,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       size_t collector_collect_term_count = 0;
       size_t collector_finish_count = 0;
       size_t scorer_score_count = 0;
+      irs::doc_id_t cur_doc = 0;
 
       tests::sort::CustomSort sort;
 
@@ -965,14 +969,15 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
                                   const irs::TermCollector*) -> void {
         ++collector_finish_count;
       };
-      sort.scorer_score = [&scorer_score_count](irs::doc_id_t doc,
-                                                irs::score_t* score) -> void {
+      sort.scorer_score = [&](irs::ScoreCtx* ctx, irs::score_t* score,
+                              size_t n) -> void {
+        ASSERT_EQ(1, n);
         ++scorer_score_count;
-        *score = irs::score_t(doc & 0xAAAAAAAA);
+        *score = irs::score_t(cur_doc & 0xAAAAAAAA);
       };
 
       auto prepared_order = irs::Scorers::Prepare(sort);
-      auto prepared_filter = filter.prepare({
+      auto prepared_filter = tests::FilterWrapper{filter}.prepare({
         .index = *rdr,
         .memory = counter,
         .scorers = prepared_order,
@@ -994,6 +999,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       ASSERT_TRUE(bool(score));
 
       while (filter_itr->next()) {
+        cur_doc = filter_itr->value();
         ASSERT_FALSE(!score);
 
         irs::score_t score_value{};
@@ -1014,7 +1020,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
                                             // statistics not applicable to
                                             // columnstore) FIXME TODO discuss
       ASSERT_EQ(0, collector_collect_term_count);  // should not be executed
-      ASSERT_EQ(1, collector_finish_count);
+      ASSERT_EQ(0, collector_finish_count);
       ASSERT_EQ(32, scorer_score_count);
 
       std::vector<irs::doc_id_t> expected = {
@@ -1043,6 +1049,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       size_t collector_collect_term_count = 0;
       size_t collector_finish_count = 0;
       size_t scorer_score_count = 0;
+      irs::doc_id_t cur_doc = 0;
 
       tests::sort::CustomSort sort;
 
@@ -1062,10 +1069,11 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
                                   const irs::TermCollector*) -> void {
         ++collector_finish_count;
       };
-      sort.scorer_score = [&scorer_score_count](irs::doc_id_t doc,
-                                                irs::score_t* score) -> void {
+      sort.scorer_score = [&](irs::ScoreCtx* ctx, irs::score_t* score,
+                              size_t n) -> void {
+        ASSERT_EQ(1, n);
         ++scorer_score_count;
-        *score = irs::score_t(doc & 0xAAAAAAAA);
+        *score = irs::score_t(cur_doc & 0xAAAAAAAA);
       };
 
       auto prepared_order = irs::Scorers::Prepare(sort);
@@ -1082,8 +1090,11 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       auto column = segment.column(column_name_full);
       ASSERT_NE(nullptr, column);
       auto column_itr = column->iterator(irs::ColumnHint::Normal);
-      auto filter_itr = prepared_filter->execute(
-        {.segment = segment, .scorers = prepared_order});
+      auto filter_itr = prepared_filter->execute({
+        .segment = segment,
+        .scorers = prepared_order,
+
+      });
       ASSERT_EQ(column->size() * 2,
                 irs::CostAttr::extract(*filter_itr));  // 2 columns matched
 
@@ -1092,6 +1103,8 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       ASSERT_TRUE(bool(score));
 
       while (filter_itr->next()) {
+        filter_itr->CollectData(0);
+        cur_doc = filter_itr->value();
         ASSERT_FALSE(!score);
         irs::score_t score_value{};
         (*score)(&score_value);
@@ -1110,7 +1123,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
                                             // statistics not applicable to
                                             // columnstore) FIXME TODO discuss
       ASSERT_EQ(0, collector_collect_term_count);  // should not be executed
-      ASSERT_EQ(1, collector_finish_count);
+      ASSERT_EQ(0, collector_finish_count);
       ASSERT_EQ(32 * 2, scorer_score_count);  // 2 columns matched
 
       std::vector<irs::doc_id_t> expected = {
@@ -1600,7 +1613,7 @@ TEST_P(ColumnExistenceLongFilterTestCase, mixed_seeks) {
     // target, expected seek result
     irs::ByColumnExistence filter = MakeFilter(kTarget, false);
 
-    auto prepared = filter.prepare({
+    auto prepared = tests::FilterWrapper{filter}.prepare({
       .index = *rdr,
       .memory = counter,
     });
@@ -1633,7 +1646,7 @@ TEST_P(ColumnExistenceLongFilterTestCase, mixed_seeks) {
   {
     irs::ByColumnExistence filter = MakeFilter(kTarget, false);
 
-    auto prepared = filter.prepare({
+    auto prepared = tests::FilterWrapper{filter}.prepare({
       .index = *rdr,
       .memory = counter,
     });

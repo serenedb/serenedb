@@ -24,6 +24,7 @@
 #include "filter_test_case_base.hpp"
 
 #include <compare>
+#include <iresearch/search/column_collector.hpp>
 
 namespace tests {
 
@@ -274,10 +275,16 @@ void FilterTestCaseBase::MakeResult(const irs::Filter& filter,
 
   std::multiset<std::pair<irs::bstring, irs::doc_id_t>, decltype(score_less)>
     scored_result{score_less};
+  irs::ColumnCollector columns;
 
   for (const auto& sub : rdr) {
-    auto docs =
-      prepared_filter->execute({.segment = sub, .scorers = prepared_order});
+    columns.Clear();
+    auto docs = prepared_filter->execute({
+      .segment = sub,
+      .scorers = prepared_order,
+      .collector = &columns,
+
+    });
 
     auto* doc = irs::get<irs::DocAttr>(*docs);
     // ensure all iterators contain "document" attribute
@@ -295,7 +302,9 @@ void FilterTestCaseBase::MakeResult(const irs::Filter& filter,
       ASSERT_EQ(docs->value(), doc->value);
 
       if (score && score->Func() != &irs::ScoreFunction::DefaultScore) {
-        (*score)(reinterpret_cast<irs::score_t*>(score_value.data()));
+        docs->CollectData(0);
+        columns.Collect(docs->value());
+        score->Score(reinterpret_cast<irs::score_t*>(score_value.data()), 1);
 
         scored_result.emplace(score_value, docs->value());
       } else {

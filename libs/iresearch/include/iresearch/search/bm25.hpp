@@ -53,8 +53,6 @@ struct BM25Stats {
   float_t norm_const;
   // precomputed k*b/avgD
   float_t norm_length;
-  // precomputed 1/(k*(1-b+b*|doc|/avgDL)) for |doc| E [0..255]
-  float_t norm_cache[256];
 };
 
 class BM25 final : public irs::ScorerBase<BM25, BM25Stats> {
@@ -86,11 +84,8 @@ class BM25 final : public irs::ScorerBase<BM25, BM25Stats> {
 
   FieldCollector::ptr PrepareFieldCollector() const final;
 
-  ScoreFunction PrepareScorer(const ColumnProvider& segment,
-                              const FieldProperties& meta,
-                              const byte_type* query_stats,
-                              const AttributeProvider& doc_attrs,
-                              score_t boost) const final;
+  ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
+  ScoreFunction PrepareSingleScorer(const ScoreContext& ctx) const final;
 
   WandWriter::ptr prepare_wand_writer(size_t max_levels) const final;
 

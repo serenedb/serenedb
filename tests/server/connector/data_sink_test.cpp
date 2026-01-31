@@ -100,7 +100,7 @@ class DataSinkTest : public ::testing::Test,
     size_t rows_affected = 0;
     sdb::connector::RocksDBInsertDataSink sink(
       *transaction, *_cf_handles.front(), *pool_.get(), object_key, pk,
-      std::move(column_oids), sdb::WriteConflictPolicy::Replace, &rows_affected,
+      std::move(column_oids), sdb::WriteConflictPolicy::Replace, rows_affected,
       {});
     sink.appendData(data);
     while (!sink.finish()) {
@@ -2489,7 +2489,7 @@ TEST_F(DataSinkTest, test_deleteDataSink) {
   size_t rows_affected = 0;
   sdb::connector::RocksDBDeleteDataSink delete_sink(
     *transaction, *_cf_handles.front(), row_type, object_key, {0, 1, 2, 3},
-    &rows_affected, {});
+    rows_affected, {});
 
   delete_sink.appendData(row_data);
   ASSERT_TRUE(delete_sink.finish());
@@ -2555,7 +2555,7 @@ TEST_F(DataSinkTest, test_deleteDataSinkPartial) {
   size_t rows_affected = 0;
   sdb::connector::RocksDBDeleteDataSink delete_sink(
     *transaction, *_cf_handles.front(), row_type, object_key, column_ids,
-    &rows_affected, {});
+    rows_affected, {});
 
   delete_sink.appendData(row_data);
   ASSERT_TRUE(delete_sink.finish());
@@ -2566,7 +2566,7 @@ TEST_F(DataSinkTest, test_deleteDataSinkPartial) {
 
     sdb::connector::RocksDBDeleteDataSink delete_sink2(
       *transaction2, *_cf_handles.front(), row_type, object_key, column_ids,
-      &rows_affected2, {});
+      rows_affected2, {});
     ASSERT_ANY_THROW(delete_sink2.appendData(row_data));
     // should be empty
     ASSERT_TRUE(transaction2->Commit().ok());
@@ -2618,7 +2618,7 @@ TEST_F(DataSinkTest, test_insertDeleteConflict) {
   size_t rows_affected = 0;
   sdb::connector::RocksDBDeleteDataSink delete_sink(
     *transaction_delete, *_cf_handles.front(), row_type, kObjectKey, column_ids,
-    &rows_affected, {});
+    rows_affected, {});
   auto delete_data = makeRowVector({makeFlatVector<int32_t>({15, 6, 7, 10})});
   ASSERT_ANY_THROW(delete_sink.appendData(delete_data));
   // should be empty

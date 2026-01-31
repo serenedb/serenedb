@@ -265,7 +265,8 @@ class RocksDBTable final : public axiom::connector::Table {
   ObjectId _table_id;
   query::Transaction& _transaction;
   catalog::TableStats _stats;
-  enum WriteConflictPolicy _write_conflict_policy = WriteConflictPolicy::EmitError;
+  enum WriteConflictPolicy _write_conflict_policy =
+    WriteConflictPolicy::EmitError;
   bool _update_pk = false;
 };
 

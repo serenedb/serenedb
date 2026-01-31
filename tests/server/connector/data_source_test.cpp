@@ -88,7 +88,7 @@ class DataSourceTest : public ::testing::Test,
     size_t rows_affected = 0;
     sdb::connector::RocksDBInsertDataSink sink(
       *transaction, *_cf_handles.front(), *pool_.get(), object_key, pk,
-      std::move(column_ids), sdb::WriteConflictPolicy::Replace, &rows_affected,
+      std::move(column_ids), sdb::WriteConflictPolicy::Replace, rows_affected,
       {});
     sink.appendData(data);
     while (!sink.finish()) {

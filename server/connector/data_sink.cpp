@@ -2185,7 +2185,7 @@ void RocksDBDataSinkBase<SubWriterType>::WritePrimitive(const T& value) {
 }
 
 template<typename SubWriterType>
-std::string* RocksDBDataSinkBase<SubWriterType>::SetupRowKey(
+const std::string* RocksDBDataSinkBase<SubWriterType>::SetupRowKey(
   velox::vector_size_t idx,
   std::span<const velox::vector_size_t> original_idx) {
   SDB_ASSERT(original_idx.empty() ||

@@ -161,23 +161,6 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
     options.make_score = make_score;
   }
 
-  auto compile_score = [&](uint32_t cookie_idx,
-                           AttributeProvider& cookie_attrs) {
-    auto* score = irs::GetMutable<ScoreAttr>(&cookie_attrs);
-    SDB_ASSERT(score);
-    cookie_idx = current_cookie_idx + cookie_idx;
-    SDB_ASSERT(cookie_idx < state->scored_states.size());
-    auto& entry = state->scored_states[cookie_idx];
-    SDB_ASSERT(entry.stat_offset < stats.size());
-    auto* stat = stats[entry.stat_offset].c_str();
-    const auto boost = entry.boost * _boost;
-    CompileScore(*score, ord.buckets(), segment, ctx.collector,
-                 state->reader->meta(), stat, cookie_attrs, boost);
-  };
-  if (!no_score) {
-    options.compile_score = compile_score;
-  }
-
   if (!has_unscored_terms) {
     std::vector<PostingCookie> cookies;
     cookies.reserve(state->scored_states.size());
@@ -226,11 +209,20 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
 
   itrs.erase(it, std::end(itrs));
 
-  return ResolveMergeType(_merge_type, [&]<ScoreMergeType MergeType>() {
+  auto disj = ResolveMergeType(_merge_type, [&]<ScoreMergeType MergeType>() {
     using Disjunction = MinMatchIterator<ScoreAdapter, MergeType>;
     return MakeWeakDisjunction<Disjunction>(ctx.wand, std::move(itrs),
                                             _min_match, state->estimation());
   });
+
+  if (!no_score) {
+    disj->PrepareScore({
+      .scorer = ord.buckets().front().bucket,
+      .segment = &segment,
+      .collector = ctx.collector,
+    });
+  }
+  return disj;
 }
 
 }  // namespace irs

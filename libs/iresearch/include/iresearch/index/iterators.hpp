@@ -79,6 +79,8 @@ struct DocIterator : AttributeProvider {
 
   virtual void CollectData(uint16_t index) = 0;
 
+  virtual const ScoreFunction& PrepareScore(const PrepareScoreContext& ctx);
+
   // protected:
   // For any DocIterator we want to define block.
   // It's two bounds: (min...max]:

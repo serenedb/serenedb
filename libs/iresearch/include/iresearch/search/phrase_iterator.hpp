@@ -934,7 +934,7 @@ class PhraseIterator : public DocIterator {
     _field = field;
   }
 
-  const ScoreFunction& PrepareScore(const PrepareScoreContext& ctx) {
+  const ScoreFunction& PrepareScore(const PrepareScoreContext& ctx) final {
     auto& score = std::get<irs::ScoreAttr>(_attrs);
     score = ctx.scorer->PrepareScorer({
       .segment = *ctx.segment,

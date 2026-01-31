@@ -189,4 +189,9 @@ std::pair<doc_id_t, bool> DocIterator::CollectBlock(
   });
 }
 
+const ScoreFunction& DocIterator::PrepareScore(const PrepareScoreContext& ctx) {
+  static const ScoreFunction kNoop = ScoreFunction::Default();
+  return kNoop;
+}
+
 }  // namespace irs

@@ -108,7 +108,7 @@ class GeoIterator : public irs::DocIterator {
     }
   }
 
-  const ScoreFunction& PrepareScore(const PrepareScoreContext& ctx) {
+  const ScoreFunction& PrepareScore(const PrepareScoreContext& ctx) final {
     auto& score = std::get<irs::ScoreAttr>(_attrs);
     score = ctx.scorer->PrepareScorer({
       .segment = *ctx.segment,

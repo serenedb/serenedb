@@ -488,7 +488,7 @@ class NGramSimilarityDocIterator : public DocIterator, private ScoreCtx {
     _boost = boost;
   }
 
-  const ScoreFunction& PrepareScore(const PrepareScoreContext& ctx) {
+  const ScoreFunction& PrepareScore(const PrepareScoreContext& ctx) final {
     _collected_boost = std::make_unique<score_t[]>(kScoreBlock);
     std::get<BoostBlockAttr>(_attrs).value = _collected_boost.get();
 

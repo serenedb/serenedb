@@ -382,10 +382,6 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
       std::get<DocAttr>(_attrs).value = doc_limits::eof();
     }
 
-    if constexpr (kHasScore) {
-      this->PrepareScore();
-    }
-
     if (Traits::kMinMatch && min_match_count > 1) {
       // sort subnodes in ascending order by their cost
       // FIXME(gnusi) don't use extract
@@ -550,50 +546,64 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
     }
   };
 
-  void PrepareScore() {
-    static_assert(kHasScore);
-    auto& score = std::get<ScoreAttr>(_attrs);
-    auto min = ScoreFunction::NoopMin;
-    if (!_scores.scores.empty()) {
-      score.max.leaf = score.max.tail = _scores.sum_score;
-      min = [](ScoreCtx* ctx, score_t arg) noexcept {
-        auto& self = static_cast<BlockDisjunction&>(*ctx);
-        if (self._scores.Size() != self._itrs.size()) [[unlikely]] {
-          self._scores.Clear();
-          detail::MakeSubScores(self._itrs, self._scores);
-          auto& score = std::get<ScoreAttr>(self._attrs);
-          // TODO(mbkkt) We cannot change tail now
-          // Because it needs to recompute sum_score for our parent iterator
-          score.max.leaf /* = score.max.tail */ = self._scores.sum_score;
-        }
-        auto it = self._scores.scores.begin();
-        auto end = self._scores.scores.end();
-        [[maybe_unused]] size_t min_match = 0;
-        [[maybe_unused]] score_t sum = 0.f;
-        while (it != end) {
-          auto next = end;
-          if constexpr (Traits::kMinMatch) {
-            if (arg > sum) {  // TODO(mbkkt) strict wand: >=
-              ++min_match;
+  const ScoreFunction& PrepareScore(const PrepareScoreContext& ctx) final {
+    if constexpr (kHasScore) {
+      bool no_score = true;
+      _scorers.assign_range(_itrs | std::views::transform([&](auto& it) {
+                              auto& score = it.PrepareScore(ctx);
+                              no_score &= score.IsDefault();
+                              return &score;
+                            }));
+      if (no_score) {
+        _merge_type = ScoreMergeType::Noop;
+      }
+
+      auto& score = std::get<ScoreAttr>(_attrs);
+      auto min = ScoreFunction::NoopMin;
+      if (!_scores.scores.empty()) {
+        score.max.leaf = score.max.tail = _scores.sum_score;
+        min = [](ScoreCtx* ctx, score_t arg) noexcept {
+          auto& self = static_cast<BlockDisjunction&>(*ctx);
+          if (self._scores.Size() != self._itrs.size()) [[unlikely]] {
+            self._scores.Clear();
+            detail::MakeSubScores(self._itrs, self._scores);
+            auto& score = std::get<ScoreAttr>(self._attrs);
+            // TODO(mbkkt) We cannot change tail now
+            // Because it needs to recompute sum_score for our parent iterator
+            score.max.leaf /* = score.max.tail */ = self._scores.sum_score;
+          }
+          auto it = self._scores.scores.begin();
+          auto end = self._scores.scores.end();
+          [[maybe_unused]] size_t min_match = 0;
+          [[maybe_unused]] score_t sum = 0.f;
+          while (it != end) {
+            auto next = end;
+            if constexpr (Traits::kMinMatch) {
+              if (arg > sum) {  // TODO(mbkkt) strict wand: >=
+                ++min_match;
+                next = it + 1;
+              }
+              sum += (*it)->max.tail;
+            }
+            const auto others = self._scores.sum_score - (*it)->max.tail;
+            if (arg > others) {
+              // For common usage `arg - others <= (*it)->max.tail` -- is true
+              (*it)->Min(arg - others);
               next = it + 1;
             }
-            sum += (*it)->max.tail;
+            it = next;
           }
-          const auto others = self._scores.sum_score - (*it)->max.tail;
-          if (arg > others) {
-            // For common usage `arg - others <= (*it)->max.tail` -- is true
-            (*it)->Min(arg - others);
-            next = it + 1;
+          if constexpr (Traits::kMinMatch) {
+            self._match_buf.min_match_count(min_match);
           }
-          it = next;
-        }
-        if constexpr (Traits::kMinMatch) {
-          self._match_buf.min_match_count(min_match);
-        }
-      };
-    }
+        };
+      }
 
-    score = _score_buf.PrepareScore(this, min);
+      score = _score_buf.PrepareScore(this, min);
+      return score;
+    } else {
+      return DocIterator::PrepareScore(ctx);
+    }
   }
 
   static_assert(kWindow % kScoreBlock == 0,
@@ -601,14 +611,16 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
 
   uint64_t _mask[kNumBlocks]{};
   Adapters _itrs;
+  std::vector<const ScoreFunction*> _scorers;
   uint64_t* _begin{std::end(_mask)};
   uint64_t _cur{};
-  doc_id_t _doc_base{doc_limits::invalid()};
-  doc_id_t _min{doc_limits::min()};      // base doc id for the next mask
-  doc_id_t _max{doc_limits::invalid()};  // max doc id in the current mask
   Attributes _attrs;
   size_t _match_count;
   size_t _buf_offset{};  // offset within a buffer
+  doc_id_t _doc_base{doc_limits::invalid()};
+  doc_id_t _min{doc_limits::min()};      // base doc id for the next mask
+  doc_id_t _max{doc_limits::invalid()};  // max doc id in the current mask
+  ScoreMergeType _merge_type{MergeType};
   [[no_unique_address]] utils::Need<kHasScore, ScoreState> _score_buf;
   [[no_unique_address]] utils::Need<Traits::kMinMatch,
                                     detail::MinMatchBuffer<kWindow>> _match_buf;

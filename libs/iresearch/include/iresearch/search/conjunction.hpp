@@ -91,6 +91,11 @@ struct ScoreAdapter {
 
   IRS_FORCE_INLINE const ScoreAttr& score() const noexcept { return *_score; }
 
+  IRS_FORCE_INLINE const ScoreFunction& PrepareScore(
+    const PrepareScoreContext& ctx) const noexcept {
+    return _it->PrepareScore(ctx);
+  }
+
   IRS_FORCE_INLINE std::pair<doc_id_t, bool> CollectBlock(
     doc_id_t min, doc_id_t max, ScoreMergeType merge_type,
     const ScoreFunction* score, uint64_t* IRS_RESTRICT mask,
@@ -116,10 +121,10 @@ struct SubScores {
   score_t sum_score = 0.f;
 };
 
-auto ToScores(auto& itrs) noexcept {
+auto ToScores(const PrepareScoreContext& ctx, auto& itrs) noexcept {
   return itrs |
          std::views::filter([](auto& it) { return !it.score().IsDefault(); }) |
-         std::views::transform([](auto& it) { return &it.score(); });
+         std::views::transform([&](auto& it) { return &it.PrepareScore(ctx); });
 }
 
 class ConjunctionScorer : public ScoreCtx {
@@ -133,7 +138,7 @@ class ConjunctionScorer : public ScoreCtx {
 
     std::vector<const ScoreFunction*> sources;
     sources.reserve(itrs.size());
-    sources.append_range(ToScores(itrs));
+    sources.append_range(ToScores(ctx, itrs));
 
     if (sources.empty()) {
       return ScoreFunction::Default();
@@ -218,7 +223,7 @@ class Conjunction : public ConjunctionBase<Adapter> {
       irs::GetMutable<CostAttr>(&this->_itrs[0]);
   }
 
-  const ScoreFunction& PrepareScore(const PrepareScoreContext& ctx) {
+  const ScoreFunction& PrepareScore(const PrepareScoreContext& ctx) final {
     auto& score = std::get<irs::ScoreAttr>(_attrs);
     score = ConjunctionScorer::Make(this->_merge_type, ctx, this->_itrs,
                                     ScoreFunction::NoopMin);
@@ -289,7 +294,7 @@ class BlockConjunction : public ConjunctionBase<Adapter> {
       irs::GetMutable<CostAttr>(&this->_itrs[0]);
   }
 
-  const ScoreFunction& PrepareScore(const PrepareScoreContext& ctx) {
+  const ScoreFunction& PrepareScore(const PrepareScoreContext& ctx) final {
     auto& score = std::get<irs::ScoreAttr>(_attrs);
     score.max.leaf = score.max.tail = _sum_scores;
     score = ConjunctionScorer::Make(this->_merge_type, ctx, this->_itrs,
@@ -495,7 +500,6 @@ DocIterator::ptr MakeConjunction(ScoreMergeType merge_type, WandContext ctx,
         auto it = memory::make_managed<BlockConjunction<Adapter, MergeType>>(
           std::forward<Args>(args)..., std::move(itrs), std::move(scores),
           ctx.strict);
-        it->PrepareScore({});
         return it;
       });
     }
@@ -505,7 +509,6 @@ DocIterator::ptr MakeConjunction(ScoreMergeType merge_type, WandContext ctx,
   auto it = memory::make_managed<Wrapper<Conjunction<Adapter>>>(
     merge_type, std::forward<Args>(args)...,
     std::move(itrs) /*, std::move(scores.scores)*/);
-  it->PrepareScore({});
   return it;
 }
 

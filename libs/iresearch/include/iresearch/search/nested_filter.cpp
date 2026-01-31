@@ -132,10 +132,6 @@ class ChildToParentJoin : public DocIterator, private Matcher {
 
     std::get<AttributePtr<CostAttr>>(_attrs) =
       irs::GetMutable<CostAttr>(_child.get());
-
-    if constexpr (Matcher::kHasScore) {
-      this->PrepareScore();
-    }
   }
 
   Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
@@ -201,8 +197,6 @@ class ChildToParentJoin : public DocIterator, private Matcher {
     return value();
   }
 
-  void PrepareScore();
-
   DocIterator::ptr _parent;
   DocIterator::ptr _child;
   Attributes _attrs;
@@ -211,12 +205,13 @@ class ChildToParentJoin : public DocIterator, private Matcher {
 };
 
 template<typename Matcher>
-void ChildToParentJoin<Matcher>::PrepareScore() {
+const ScoreFunction& ChildToParentJoin<Matcher>::PrepareScore(
+  const PrepareScoreContext& ctx) {
   auto& score = std::get<ScoreAttr>(_attrs);
   if constexpr (!Matcher::kHasScore) {
     score = ScoreFunction::Default();
   } else {
-    this->_child_score = irs::get<ScoreAttr>(*_child);
+    this->_child_score = &_child->PrepareScore(ctx);
 
     if (!std::is_same_v<Matcher, NoneMatcher> &&
         (this->_child_doc == nullptr || this->_child_score == nullptr ||
@@ -227,6 +222,7 @@ void ChildToParentJoin<Matcher>::PrepareScore() {
       score = Matcher::PrepareScore();
     }
   }
+  return score;
 }
 
 class NoneMatcher {

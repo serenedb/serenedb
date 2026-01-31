@@ -1438,7 +1438,7 @@ class DocIteratorImpl : public DocIteratorBase<IteratorTraits, FieldTraits> {
     return DocIterator::Collect(*this, docs);
   }
 
-  const ScoreFunction& PrepareScore(const PrepareScoreContext& ctx) {
+  const ScoreFunction& PrepareScore(const PrepareScoreContext& ctx) final {
     auto& score = std::get<irs::ScoreAttr>(_attrs);
     score = ctx.scorer->PrepareScorer({
       .segment = *ctx.segment,
@@ -2444,6 +2444,11 @@ struct PostingAdapter {
     return self().score();
   }
 
+  IRS_FORCE_INLINE const ScoreFunction& PrepareScore(
+    const PrepareScoreContext& ctx) const noexcept {
+    return self().PrepareScore(ctx);
+  }
+
   IRS_FORCE_INLINE auto CollectBlock(doc_id_t min, doc_id_t max,
                                      ScoreMergeType merge_type,
                                      const ScoreFunction* score,
@@ -2731,12 +2736,7 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
   };
 
   if (metas.size() == 1) {
-    auto it = make_postings_iterator(0, metas[0]);
-    if (!it) {
-      return {};
-    }
-    options.compile_score(0, *it);
-    return it;
+    return make_postings_iterator(0, metas[0]);
   }
 
   std::vector<DocIterator::ptr> iterators;
@@ -2745,7 +2745,6 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
   for (const auto& meta : metas) {
     if (auto it = make_postings_iterator(meta_idx, meta)) {
       iterators.emplace_back(std::move(it));
-      options.compile_score(meta_idx, *iterators.back());
     } else if (min_match == metas.size()) {
       return {};
     }

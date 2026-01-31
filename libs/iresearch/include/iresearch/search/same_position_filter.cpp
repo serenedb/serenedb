@@ -50,8 +50,6 @@ class SamePositionIterator : public DocIterator {
     SDB_ASSERT(!_pos.empty());
   }
 
-  void PrepareScore(const PrepareScoreContext& ctx) {}
-
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return _approx.GetMutable(type);
   }

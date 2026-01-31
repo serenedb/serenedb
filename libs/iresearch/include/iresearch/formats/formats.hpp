@@ -74,8 +74,6 @@ struct IteratorOptions : WandContext {
     +[](uint32_t, const AttributeProvider&) noexcept {
       return ScoreFunction{};
     };
-  CompileScoreCallback compile_score =
-    +[](uint32_t, AttributeProvider&) noexcept {};
 };
 
 struct SegmentWriterOptions {

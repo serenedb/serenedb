@@ -65,19 +65,6 @@ DocIterator::ptr TermQuery::execute(const ExecutionContext& ctx) const {
     options.make_score = make_score;
   }
 
-  auto compile_score = [&](uint32_t cookie_idx,
-                           AttributeProvider& cookie_attrs) {
-    SDB_ASSERT(cookie_idx == 0);
-    auto* score = GetMutable<ScoreAttr>(&cookie_attrs);
-    SDB_ASSERT(score);
-    auto* stat = _stats.c_str() + ord_buckets.front().stats_offset;
-    CompileScore(*score, ord.buckets(), segment, ctx.collector,
-                 state->reader->meta(), stat, cookie_attrs, _boost);
-  };
-  if (!ord_buckets.empty()) {
-    options.compile_score = compile_score;
-  }
-
   auto it = reader->Iterator(ord.features(),
                              {
                                .cookie = state->cookie.get(),
@@ -86,7 +73,19 @@ DocIterator::ptr TermQuery::execute(const ExecutionContext& ctx) const {
                                .field = reader->meta(),
                              },
                              options);
-  return it ? std::move(it) : DocIterator::empty();
+  if (!it) {
+    return DocIterator::empty();
+  }
+
+  if (!ord_buckets.empty()) {
+    it->PrepareScore({
+      .scorer = ord_buckets.front().bucket,
+      .segment = &segment,
+      .collector = ctx.collector,
+    });
+  }
+
+  return it;
 }
 
 void TermQuery::visit(const SubReader& segment, PreparedStateVisitor& visitor,

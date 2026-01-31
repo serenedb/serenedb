@@ -36,7 +36,7 @@ class AllIterator : public DocIterator {
  public:
   AllIterator(uint32_t docs_count, score_t boost);
 
-  const ScoreFunction& PrepareScore(const PrepareScoreContext& ctx);
+  const ScoreFunction& PrepareScore(const PrepareScoreContext& ctx) final;
 
   Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
     return irs::GetMutable(_attrs, id);

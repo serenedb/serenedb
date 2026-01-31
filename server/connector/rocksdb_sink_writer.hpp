@@ -22,8 +22,6 @@
 
 #include <span>
 
-#include "catalog/types.h"
-#include "rocksdb/slice.h"
 #include "rocksdb/utilities/transaction.h"
 
 namespace sdb::connector {
@@ -31,26 +29,18 @@ namespace sdb::connector {
 class RocksDBSinkWriterBase {
  public:
   RocksDBSinkWriterBase(rocksdb::Transaction& transaction,
-                        rocksdb::ColumnFamilyHandle& cf,
-                        WriteConflictPolicy conflict_policy)
-    : _transaction{transaction}, _cf{cf}, _conflict_policy{conflict_policy} {}
+                        rocksdb::ColumnFamilyHandle& cf)
+    : _transaction(transaction), _cf(cf) {}
 
   virtual ~RocksDBSinkWriterBase() = default;
 
   rocksdb::Status Lock(std::string_view full_key) {
-    return _transaction.GetKeyLock(&_cf, full_key,
-                                   /*read_only*/ false,
-                                   /*exclusive*/ true);
+    return _transaction.GetKeyLock(&_cf, full_key, false, true);
   }
-
-  rocksdb::Transaction& GetTransaction() { return _transaction; }
-  rocksdb::ColumnFamilyHandle& GetColumnFamily() { return _cf; }
-  WriteConflictPolicy GetConflictPolicy() const { return _conflict_policy; }
 
  protected:
   rocksdb::Transaction& _transaction;
   rocksdb::ColumnFamilyHandle& _cf;
-  WriteConflictPolicy _conflict_policy;
 };
 
 // This could be final subclass of SinkInsertWriter but currently only used
@@ -58,19 +48,16 @@ class RocksDBSinkWriterBase {
 class RocksDBSinkWriter : public RocksDBSinkWriterBase {
  public:
   RocksDBSinkWriter(rocksdb::Transaction& transaction,
-                    rocksdb::ColumnFamilyHandle& cf,
-                    WriteConflictPolicy conflict_policy)
-    : RocksDBSinkWriterBase{transaction, cf, conflict_policy} {}
+                    rocksdb::ColumnFamilyHandle& cf)
+    : RocksDBSinkWriterBase(transaction, cf) {}
+
+  void SetColumnIndex(size_t /*column_idx*/) {}
+
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key);
   std::unique_ptr<rocksdb::Iterator> CreateIterator();
 
   void DeleteCell(std::string_view full_key);
-
- private:
-  void ConfigureReadOptions();
-
-  rocksdb::ReadOptions _read_options;
 };
 
 }  //  namespace sdb::connector

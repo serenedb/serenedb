@@ -40,6 +40,30 @@
 
 namespace sdb::connector {
 
+class WriteConflictResolver {
+ public:
+  WriteConflictResolver(rocksdb::Transaction& transaction,
+                        rocksdb::ColumnFamilyHandle& cf,
+                        WriteConflictPolicy policy,
+                        std::string_view table_name);
+
+  // Handles write conflicts. Returns number of skipped rows.
+  // key_indices specifies which columns to use for error detail message.
+  size_t HandleWriteConflicts(
+    primary_key::Keys& keys, std::span<const std::string> old_keys,
+    velox::RowVectorPtr input,
+    std::span<const velox::column_index_t> key_indices,
+    std::span<const std::pair<catalog::Column::Id, std::string_view>> columns);
+
+ private:
+  rocksdb::Transaction& _transaction;
+  rocksdb::ColumnFamilyHandle& _cf;
+  std::string_view _table_name;
+  rocksdb::ReadOptions _read_options;
+  rocksdb::PinnableSlice _lookup_value;
+  WriteConflictPolicy _write_conflict_policy;
+};
+
 template<typename SubWriterType>
 class RocksDBDataSinkBase : public velox::connector::DataSink {
  protected:
@@ -190,13 +214,6 @@ class RocksDBDataSinkBase : public velox::connector::DataSink {
     const folly::Range<const velox::IndexRange*>& ranges,
     velox::vector_size_t total_rows_number);
 
-  // Handles write conflicts. Returns number of skipped rows.
-  // detail_key_indices specifies which columns to use for error detail message.
-  size_t HandleWriteConflicts(
-    primary_key::Keys& keys, std::span<const std::string> old_keys,
-    velox::RowVectorPtr input,
-    std::span<const velox::column_index_t> key_indices);
-
   std::string_view _table_name;
   RocksDBSinkWriter _data_writer;
   std::vector<std::unique_ptr<SubWriterType>> _index_writers;
@@ -209,8 +226,7 @@ class RocksDBDataSinkBase : public velox::connector::DataSink {
   velox::HashStringAllocator _bytes_allocator;
   catalog::Column::Id _column_id;
   uint64_t& _number_of_rows_affected;
-  rocksdb::ReadOptions _read_options;
-  rocksdb::PinnableSlice _lookup_value;
+  WriteConflictResolver _conflict_resolver;
 };
 
 class RocksDBInsertDataSink final

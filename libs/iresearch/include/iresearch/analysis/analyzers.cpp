@@ -35,6 +35,7 @@
 #include "iresearch/analysis/nearest_neighbors_tokenizer.hpp"
 #include "iresearch/analysis/ngram_tokenizer.hpp"
 #include "iresearch/analysis/normalizing_tokenizer.hpp"
+#include "iresearch/analysis/path_hierarchy_tokenizer.hpp"
 #include "iresearch/analysis/pipeline_tokenizer.hpp"
 #include "iresearch/analysis/segmentation_tokenizer.hpp"
 #include "iresearch/analysis/stemming_tokenizer.hpp"
@@ -258,6 +259,7 @@ void Init() {
   DelimitedTokenizer::init();
   MinHashTokenizer::init();
   NearestNeighborsTokenizer::init();
+  PathHierarchyTokenizer::init();
   StopwordsTokenizer::init();
   NGramTokenizerBase::init();
   PipelineTokenizer::init();

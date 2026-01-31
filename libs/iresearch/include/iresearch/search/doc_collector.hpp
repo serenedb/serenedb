@@ -9,6 +9,7 @@
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/column_collector.hpp>
 #include <iresearch/search/score_function.hpp>
+#include <iresearch/search/scorer.hpp>
 #include <utility>
 
 #include "iresearch/index/directory_reader.hpp"
@@ -65,7 +66,12 @@ size_t ExecuteTopKWithCount(const DirectoryReader& reader, const Filter& filter,
       .scorers = scorers,
       .collector = &columns,
     });
-    const auto* scorer = irs::get<ScoreAttr>(*it);
+
+    const auto* scorer = &it->PrepareScore({
+      .scorer = scorers.buckets().front().bucket,
+      .segment = &segment,
+      .collector = &columns,
+    });
 
     while (true) {
       auto collected =

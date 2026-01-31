@@ -254,12 +254,8 @@ class RocksDBTable final : public axiom::connector::Table {
 
   query::Transaction& GetTransaction() const noexcept { return _transaction; }
 
-  WriteConflictPolicy GetConflictPolicy() const noexcept {
-    return _conflict_policy;
-  }
-
-  void SetConflictPolicy(WriteConflictPolicy conflict_policy) {
-    _conflict_policy = conflict_policy;
+  decltype(auto) WriteConflictPolicy(this auto&& self) noexcept {
+    return (self._write_conflict_policy);
   }
 
  private:
@@ -269,7 +265,7 @@ class RocksDBTable final : public axiom::connector::Table {
   ObjectId _table_id;
   query::Transaction& _transaction;
   catalog::TableStats _stats;
-  WriteConflictPolicy _conflict_policy = WriteConflictPolicy::EmitError;
+  enum WriteConflictPolicy _write_conflict_policy = WriteConflictPolicy::EmitError;
   bool _update_pk = false;
 };
 
@@ -639,7 +635,7 @@ class SereneDBConnector final : public velox::connector::Connector {
           } else {
             return std::make_unique<RocksDBInsertDataSink>(
               rocksdb_transaction, _cf, *connector_query_ctx->memoryPool(),
-              object_key, pk_indices, column_oids, table.GetConflictPolicy(),
+              object_key, pk_indices, column_oids, table.WriteConflictPolicy(),
               serene_insert_handle.NumberOfRowsAffected(),
               std::vector<std::unique_ptr<SinkInsertWriter>>{});
           }

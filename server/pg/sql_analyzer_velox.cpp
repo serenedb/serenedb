@@ -1691,7 +1691,7 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
   MakeTableWrite(state, ToNode(&stmt), *object, std::move(column_names),
                  std::move(column_exprs));
   basics::downCast<connector::RocksDBTable>(object->table)
-    ->SetConflictPolicy(conflict_policy);
+    ->WriteConflictPolicy() = conflict_policy;
 }
 
 void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {

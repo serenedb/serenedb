@@ -2354,7 +2354,7 @@ RocksDBDeleteDataSink::RocksDBDeleteDataSink(
   uint64_t& number_of_rows_affected,
   std::vector<std::unique_ptr<SinkDeleteWriter>>&& index_writers)
   : _row_type{std::move(row_type)},
-    _data_writer{transaction, cf},
+    _data_writer{transaction, cf, WriteConflictPolicy::EmitError},
     _index_writers{std::move(index_writers)},
     _object_key{object_key},
     _column_ids{std::move(column_oids)},

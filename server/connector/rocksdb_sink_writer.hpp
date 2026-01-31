@@ -31,9 +31,9 @@ namespace sdb::connector {
 
 class RocksDBSinkWriterBase {
  public:
-  RocksDBSinkWriterBase(
-    rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
-    WriteConflictPolicy conflict_policy = WriteConflictPolicy::EmitError)
+  RocksDBSinkWriterBase(rocksdb::Transaction& transaction,
+                        rocksdb::ColumnFamilyHandle& cf,
+                        WriteConflictPolicy conflict_policy)
     : _transaction{transaction}, _cf{cf}, _conflict_policy{conflict_policy} {}
 
   virtual ~RocksDBSinkWriterBase() = default;
@@ -47,8 +47,6 @@ class RocksDBSinkWriterBase {
  protected:
   rocksdb::Transaction& _transaction;
   rocksdb::ColumnFamilyHandle& _cf;
-
- public:  // fix later
   WriteConflictPolicy _conflict_policy;
 };
 
@@ -56,9 +54,9 @@ class RocksDBSinkWriterBase {
 // directly inside DataSink so no need for virtual calls/default base members
 class RocksDBSinkWriter : public RocksDBSinkWriterBase {
  public:
-  RocksDBSinkWriter(
-    rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
-    WriteConflictPolicy conflict_policy = WriteConflictPolicy::EmitError)
+  RocksDBSinkWriter(rocksdb::Transaction& transaction,
+                    rocksdb::ColumnFamilyHandle& cf,
+                    WriteConflictPolicy conflict_policy)
     : RocksDBSinkWriterBase{transaction, cf, conflict_policy} {}
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key);

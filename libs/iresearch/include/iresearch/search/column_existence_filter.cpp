@@ -45,7 +45,7 @@ class ColumnExistenceQuery : public Filter::Query {
       return DocIterator::empty();
     }
 
-    return Iterator(ctx.segment, ctx.collector, *column, ctx.scorers);
+    return Iterator(*column);
   }
 
   void visit(const SubReader&, PreparedStateVisitor&, score_t) const final {
@@ -55,28 +55,17 @@ class ColumnExistenceQuery : public Filter::Query {
   score_t Boost() const noexcept final { return _boost; }
 
  protected:
-  DocIterator::ptr Iterator(const ColumnProvider& segment,
-                            ColumnCollector* collector,
-                            const ColumnReader& column,
-                            const Scorers& ord) const {
+  DocIterator::ptr Iterator(const ColumnReader& column) const {
     auto it = column.iterator(ColumnHint::Mask);
 
     if (!it) [[unlikely]] {
       return DocIterator::empty();
     }
 
-    if (!ord.empty()) {
-      if (auto* score = irs::GetMutable<ScoreAttr>(it.get())) {
-        CompileScore(*score, ord.buckets(), segment, collector, {},
-                     _stats.c_str(), *it, _boost);
-      }
-    }
-
     return it;
   }
 
   std::string _field;
-  bstring _stats;
   score_t _boost;
 };
 
@@ -92,7 +81,6 @@ class ColumnPrefixExistenceQuery : public ColumnExistenceQuery {
     SDB_ASSERT(_acceptor);
 
     auto& segment = ctx.segment;
-    auto& ord = ctx.scorers;
     const std::string_view prefix = _field;
 
     auto it = segment.columns();
@@ -107,7 +95,7 @@ class ColumnPrefixExistenceQuery : public ColumnExistenceQuery {
     ScoreAdapters itrs;
     for (; column->name().starts_with(prefix); column = &it->value()) {
       if (_acceptor(column->name(), prefix)) {
-        itrs.emplace_back(Iterator(segment, ctx.collector, *column, ord));
+        itrs.emplace_back(Iterator(*column));
       }
 
       if (!it->next()) {

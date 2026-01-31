@@ -233,7 +233,7 @@ class RocksDBInsertDataSink final
   : public RocksDBDataSinkBase<SinkInsertWriter> {
  public:
   RocksDBInsertDataSink(
-    std::string_view name, rocksdb::Transaction& transaction,
+    std::string_view table_name, rocksdb::Transaction& transaction,
     rocksdb::ColumnFamilyHandle& cf, velox::memory::MemoryPool& memory_pool,
     ObjectId object_key, std::span<const velox::column_index_t> key_childs,
     std::vector<std::pair<catalog::Column::Id, std::string_view>> columns,
@@ -247,7 +247,7 @@ class RocksDBUpdateDataSink final
   : public RocksDBDataSinkBase<SinkUpdateWriter> {
  public:
   RocksDBUpdateDataSink(
-    std::string_view name, rocksdb::Transaction& transaction,
+    std::string_view table_name, rocksdb::Transaction& transaction,
     rocksdb::ColumnFamilyHandle& cf, velox::memory::MemoryPool& memory_pool,
     ObjectId object_key, std::span<const velox::column_index_t> key_childs,
     std::vector<std::pair<catalog::Column::Id, std::string_view>> columns,

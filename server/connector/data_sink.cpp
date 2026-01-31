@@ -111,6 +111,7 @@ std::string GetPKVeloxValue(velox::VectorPtr vec, velox::vector_size_t idx) {
     case facebook::velox::VectorEncoding::Simple::FLAT:
       return GetPKVeloxFlatValue<Kind>(vec, idx);
     default:
+      // TODO(mkornaukhov) support not only flat and constant vectors here
       return "<unsupported>";
   }
 }
@@ -125,7 +126,9 @@ std::string FormatKeyValue(const velox::RowVectorPtr& input,
     return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
       GetPKVeloxValue, vector->typeKind(), vector, row_idx);
   }
-  // TODO(mkornaukhov03) support not only flat and constant vectors here
+
+  // TODO(mkornaukhov) find out do we need complex types here
+  // and implement in case of we do
   return "<unsupported>";
 }
 
@@ -233,13 +236,13 @@ size_t WriteConflictResolver::HandleWriteConflicts(
 
 template<typename SubWriterType>
 RocksDBDataSinkBase<SubWriterType>::RocksDBDataSinkBase(
-  std::string_view name, rocksdb::Transaction& transaction,
+  std::string_view table_name, rocksdb::Transaction& transaction,
   rocksdb::ColumnFamilyHandle& cf, velox::memory::MemoryPool& memory_pool,
   ObjectId object_key, std::span<const velox::column_index_t> key_childs,
   std::vector<std::pair<catalog::Column::Id, std::string_view>> columns,
   WriteConflictPolicy write_conflict_policy, uint64_t& number_of_rows_affected,
   std::vector<std::unique_ptr<SubWriterType>>&& index_writers)
-  : _table_name{name},
+  : _table_name{table_name},
     _data_writer{transaction, cf},
     _index_writers{std::move(index_writers)},
     _object_key{object_key},
@@ -249,7 +252,7 @@ RocksDBDataSinkBase<SubWriterType>::RocksDBDataSinkBase(
     _store_keys_buffers{memory_pool},
     _bytes_allocator{&memory_pool},
     _number_of_rows_affected{number_of_rows_affected},
-    _conflict_resolver{transaction, cf, write_conflict_policy, name} {
+    _conflict_resolver{transaction, cf, write_conflict_policy, table_name} {
   _key_childs.assign_range(key_childs);
   SDB_ASSERT(_object_key.isSet(), "RocksDBDataSinkBase: object key is empty");
   SDB_ASSERT(!_columns.empty(), "RocksDBDataSinkBase: no columns in a table");
@@ -258,13 +261,13 @@ RocksDBDataSinkBase<SubWriterType>::RocksDBDataSinkBase(
 }
 
 RocksDBInsertDataSink::RocksDBInsertDataSink(
-  std::string_view name, rocksdb::Transaction& transaction,
+  std::string_view table_name, rocksdb::Transaction& transaction,
   rocksdb::ColumnFamilyHandle& cf, velox::memory::MemoryPool& memory_pool,
   ObjectId object_key, std::span<const velox::column_index_t> key_childs,
   std::vector<std::pair<catalog::Column::Id, std::string_view>> columns,
   WriteConflictPolicy conflict_policy, uint64_t& number_of_rows_affected,
   std::vector<std::unique_ptr<SinkInsertWriter>>&& index_writers)
-  : RocksDBDataSinkBase<SinkInsertWriter>{name,
+  : RocksDBDataSinkBase<SinkInsertWriter>{table_name,
                                           transaction,
                                           cf,
                                           memory_pool,
@@ -276,14 +279,14 @@ RocksDBInsertDataSink::RocksDBInsertDataSink(
                                           std::move(index_writers)} {}
 
 RocksDBUpdateDataSink::RocksDBUpdateDataSink(
-  std::string_view name, rocksdb::Transaction& transaction,
+  std::string_view table_name, rocksdb::Transaction& transaction,
   rocksdb::ColumnFamilyHandle& cf, velox::memory::MemoryPool& memory_pool,
   ObjectId object_key, std::span<const velox::column_index_t> key_childs,
   std::vector<std::pair<catalog::Column::Id, std::string_view>> columns,
   std::vector<catalog::Column::Id> all_column_ids, bool update_pk,
   velox::RowTypePtr table_row_type, uint64_t& number_of_rows_affected,
   std::vector<std::unique_ptr<SinkUpdateWriter>>&& index_writers)
-  : RocksDBDataSinkBase<SinkUpdateWriter>{name,
+  : RocksDBDataSinkBase<SinkUpdateWriter>{table_name,
                                           transaction,
                                           cf,
                                           memory_pool,

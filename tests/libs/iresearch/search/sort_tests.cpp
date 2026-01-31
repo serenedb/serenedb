@@ -40,8 +40,6 @@ struct EmptyAttributeProvider : irs::AttributeProvider {
   }
 };
 
-EmptyAttributeProvider gEmptyAttributeProvider;
-
 template<size_t Size, size_t Align>
 struct AlignedValue {
   alignas(Align) char data[Size];
@@ -108,18 +106,6 @@ TEST(sort_tests, prepare_order) {
       ++expected_offset;
     }
     ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-
-    irs::bstring stats_buf(prepared.stats_size(), 0);
-    irs::bstring score_buf(prepared.score_size(), 0);
-    auto scorers = irs::PrepareScorers(
-      prepared.buckets(), irs::SubReader::empty(), nullptr, {},
-      stats_buf.c_str(), gEmptyAttributeProvider, irs::kNoBoost);
-    ASSERT_TRUE(1 == scorers.size());
-
-    irs::ScoreAttr score;
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    score = irs::CompileScorers(std::move(scorers));
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
   }
 
   {
@@ -154,13 +140,6 @@ TEST(sort_tests, prepare_order) {
 
     irs::bstring stats_buf(prepared.stats_size(), 0);
     irs::bstring score_buf(prepared.score_size(), 0);
-
-    irs::ScoreAttr score;
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    irs::CompileScore(score, prepared.buckets(), irs::SubReader::empty(),
-                      nullptr, {}, stats_buf.c_str(), gEmptyAttributeProvider,
-                      irs::kNoBoost);
-    ASSERT_NE(score.Func(), &irs::ScoreFunction::DefaultScore);
   }
 
   {
@@ -194,28 +173,6 @@ TEST(sort_tests, prepare_order) {
       ++expected_offset;
     }
     ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-
-    irs::bstring stats_buf(prepared.stats_size(), 0);
-    irs::bstring score_buf(prepared.score_size(), 1);
-    auto scorers = irs::PrepareScorers(
-      prepared.buckets(), irs::SubReader::empty(), nullptr, {},
-      stats_buf.c_str(), gEmptyAttributeProvider, irs::kNoBoost);
-    ASSERT_TRUE(3 == scorers.size());
-    ASSERT_TRUE(scorers[0].IsDefault());
-    ASSERT_TRUE(scorers[1].IsDefault());
-    ASSERT_TRUE(scorers[2].IsDefault());
-
-    irs::ScoreAttr score;
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    score = irs::CompileScorers(std::move(scorers));
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-
-    score(reinterpret_cast<irs::score_t*>(score_buf.data()));
-
-    irs::bstring expected(prepared.score_size(), 0);
-    std::fill_n(expected.data(), sizeof(irs::score_t), 1);
-    EXPECT_EQ(irs::ViewCast<char>(irs::bytes_view{expected}),
-              irs::ViewCast<char>(irs::bytes_view{score_buf}));
   }
 
   {
@@ -248,29 +205,6 @@ TEST(sort_tests, prepare_order) {
       ++expected_offset;
     }
     ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-
-    irs::bstring stats_buf(prepared.stats_size(), 0);
-    irs::bstring score_buf(prepared.score_size(), 1);
-    auto scorers = irs::PrepareScorers(
-      prepared.buckets(), irs::SubReader::empty(), nullptr, {},
-      stats_buf.c_str(), gEmptyAttributeProvider, irs::kNoBoost);
-    ASSERT_TRUE(3 == scorers.size());
-    ASSERT_TRUE(scorers[0].IsDefault());
-    ASSERT_TRUE(scorers[1].IsDefault());
-    ASSERT_TRUE(scorers[2].IsDefault());
-
-    irs::ScoreAttr score;
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    score = irs::CompileScorers(std::move(scorers));
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-
-    score(reinterpret_cast<irs::score_t*>(score_buf.data()));
-
-    irs::bstring expected(prepared.score_size(), 0);
-    std::fill_n(expected.data() + sizeof(irs::score_t), sizeof(irs::score_t),
-                1);
-    EXPECT_EQ(irs::ViewCast<char>(irs::bytes_view{expected}),
-              irs::ViewCast<char>(irs::bytes_view{score_buf}));
   }
 
   {
@@ -302,26 +236,6 @@ TEST(sort_tests, prepare_order) {
       ++expected_offset;
     }
     ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-
-    irs::bstring stats_buf(prepared.stats_size(), 0);
-    irs::bstring score_buf(prepared.score_size(), 1);
-    auto scorers = irs::PrepareScorers(
-      prepared.buckets(), irs::SubReader::empty(), nullptr, {},
-      stats_buf.c_str(), gEmptyAttributeProvider, irs::kNoBoost);
-    ASSERT_TRUE(3 == scorers.size());
-    ASSERT_TRUE(scorers[0].IsDefault());
-    ASSERT_TRUE(scorers[1].IsDefault());
-    ASSERT_TRUE(scorers[2].IsDefault());
-
-    irs::ScoreAttr score;
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    score = irs::CompileScorers(std::move(scorers));
-    ASSERT_NE(&irs::ScoreFunction::DefaultScore, score.Func());
-
-    score(reinterpret_cast<irs::score_t*>(score_buf.data()));
-    irs::bstring expected(prepared.score_size(), 0);
-    EXPECT_EQ(irs::ViewCast<char>(irs::bytes_view{expected}),
-              irs::ViewCast<char>(irs::bytes_view{score_buf}));
   }
 
   {
@@ -353,20 +267,6 @@ TEST(sort_tests, prepare_order) {
       ++expected_offset;
     }
     ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-
-    irs::bstring stats_buf(prepared.stats_size(), 0);
-    irs::bstring score_buf(prepared.score_size(), 0);
-    auto scorers = irs::PrepareScorers(
-      prepared.buckets(), irs::SubReader::empty(), nullptr, {},
-      stats_buf.c_str(), gEmptyAttributeProvider, irs::kNoBoost);
-    ASSERT_TRUE(2 == scorers.size());
-
-    irs::ScoreAttr score;
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    score = irs::CompileScorers(std::move(scorers));
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-
-    score(reinterpret_cast<irs::score_t*>(score_buf.data()));
   }
 
   {
@@ -401,20 +301,6 @@ TEST(sort_tests, prepare_order) {
       ++expected_offset;
     }
     ASSERT_EQ(expected_offset, expected_offsets.end());
-
-    irs::bstring stats_buf(prepared.stats_size(), 0);
-    irs::bstring score_buf(prepared.score_size(), 0);
-    auto scorers = irs::PrepareScorers(
-      prepared.buckets(), irs::SubReader::empty(), nullptr, {},
-      stats_buf.c_str(), gEmptyAttributeProvider, irs::kNoBoost);
-    ASSERT_TRUE(3 == scorers.size());
-
-    irs::ScoreAttr score;
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    score = irs::CompileScorers(std::move(scorers));
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-
-    score(reinterpret_cast<irs::score_t*>(score_buf.data()));
   }
 
   {
@@ -447,20 +333,6 @@ TEST(sort_tests, prepare_order) {
       ++expected_offset;
     }
     ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-
-    irs::bstring stats_buf(prepared.stats_size(), 0);
-    irs::bstring score_buf(prepared.score_size(), 0);
-    auto scorers = irs::PrepareScorers(
-      prepared.buckets(), irs::SubReader::empty(), nullptr, {},
-      stats_buf.c_str(), gEmptyAttributeProvider, irs::kNoBoost);
-    ASSERT_TRUE(3 == scorers.size());
-
-    irs::ScoreAttr score;
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    score = irs::CompileScorers(std::move(scorers));
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-
-    score(reinterpret_cast<irs::score_t*>(score_buf.data()));
   }
 
   {
@@ -506,18 +378,6 @@ TEST(sort_tests, prepare_order) {
       ++expected_offset;
     }
     ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-
-    irs::bstring stats_buf(prepared.stats_size(), 0);
-    irs::bstring score_buf(prepared.score_size(), 0);
-    auto scorers = irs::PrepareScorers(
-      prepared.buckets(), irs::SubReader::empty(), nullptr, {},
-      stats_buf.c_str(), gEmptyAttributeProvider, irs::kNoBoost);
-    ASSERT_EQ(5, scorers.size());
-
-    irs::ScoreAttr score;
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    score = irs::CompileScorers(std::move(scorers));
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
   }
 
   {
@@ -557,18 +417,6 @@ TEST(sort_tests, prepare_order) {
       ++expected_offset;
     }
     ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-
-    irs::bstring stats_buf(prepared.stats_size(), 0);
-    irs::bstring score_buf(prepared.score_size(), 0);
-    auto scorers = irs::PrepareScorers(
-      prepared.buckets(), irs::SubReader::empty(), nullptr, {},
-      stats_buf.c_str(), gEmptyAttributeProvider, irs::kNoBoost);
-    ASSERT_TRUE(5 == scorers.size());
-
-    irs::ScoreAttr score;
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    score = irs::CompileScorers(std::move(scorers));
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
   }
 
   {
@@ -609,18 +457,6 @@ TEST(sort_tests, prepare_order) {
       ++expected_offset;
     }
     ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-
-    irs::bstring stats_buf(prepared.stats_size(), 0);
-    irs::bstring score_buf(prepared.score_size(), 0);
-    auto scorers = irs::PrepareScorers(
-      prepared.buckets(), irs::SubReader::empty(), nullptr, {},
-      stats_buf.c_str(), gEmptyAttributeProvider, irs::kNoBoost);
-    ASSERT_TRUE(5 == scorers.size());
-
-    irs::ScoreAttr score;
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    score = irs::CompileScorers(std::move(scorers));
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
   }
 
   {
@@ -660,18 +496,6 @@ TEST(sort_tests, prepare_order) {
       ++expected_offset;
     }
     ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-
-    irs::bstring stats_buf(prepared.stats_size(), 0);
-    irs::bstring score_buf(prepared.score_size(), 0);
-    auto scorers = irs::PrepareScorers(
-      prepared.buckets(), irs::SubReader::empty(), nullptr, {},
-      stats_buf.c_str(), gEmptyAttributeProvider, irs::kNoBoost);
-    ASSERT_TRUE(5 == scorers.size());
-
-    irs::ScoreAttr score;
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    score = irs::CompileScorers(std::move(scorers));
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
   }
 
   {
@@ -711,18 +535,6 @@ TEST(sort_tests, prepare_order) {
       ++expected_offset;
     }
     ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-
-    irs::bstring stats_buf(prepared.stats_size(), 0);
-    irs::bstring score_buf(prepared.score_size(), 0);
-    auto scorers = irs::PrepareScorers(
-      prepared.buckets(), irs::SubReader::empty(), nullptr, {},
-      stats_buf.c_str(), gEmptyAttributeProvider, irs::kNoBoost);
-    ASSERT_TRUE(5 == scorers.size());
-
-    irs::ScoreAttr score;
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    score = irs::CompileScorers(std::move(scorers));
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
   }
 
   {
@@ -762,20 +574,6 @@ TEST(sort_tests, prepare_order) {
       ++expected_offset;
     }
     ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-
-    irs::bstring stats_buf(prepared.stats_size(), 0);
-    irs::bstring score_buf(prepared.score_size(), 0);
-    auto scorers = irs::PrepareScorers(
-      prepared.buckets(), irs::SubReader::empty(), nullptr, {},
-      stats_buf.c_str(), gEmptyAttributeProvider, irs::kNoBoost);
-    ASSERT_TRUE(5 == scorers.size());
-
-    irs::ScoreAttr score;
-    ASSERT_TRUE(score.Ctx() == nullptr);
-    ASSERT_TRUE(score.IsDefault());
-    score = irs::CompileScorers(std::move(scorers));
-    ASSERT_FALSE(score.Ctx() == nullptr);
-    ASSERT_FALSE(score.IsDefault());
   }
 }
 

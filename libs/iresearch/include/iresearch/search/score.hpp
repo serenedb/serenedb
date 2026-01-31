@@ -63,22 +63,6 @@ struct ScoreAttr : Attribute, ScoreFunction {
 
 using ScoreFunctions = sdb::containers::SmallVector<ScoreFunction, 1>;
 
-// Prepare scorer for each of the bucket.
-ScoreFunctions PrepareScorers(std::span<const ScorerBucket> buckets,
-                              const ColumnProvider& segment,
-                              ColumnCollector* collector,
-                              const FieldProperties& field,
-                              const byte_type* stats,
-                              const AttributeProvider& doc, score_t boost);
-
-// Compiles a set of prepared scorers into a single score function.
-ScoreFunction CompileScorers(ScoreFunctions&& scorers);
-
-void CompileScore(ScoreAttr& score, std::span<const ScorerBucket> buckets,
-                  const ColumnProvider& segment, ColumnCollector* collector,
-                  const FieldProperties& field, const byte_type* stats,
-                  const AttributeProvider& doc, score_t boost);
-
 // Prepare empty collectors, i.e. call collect(...) on each of the
 // buckets without explicitly collecting field or term statistics,
 // e.g. for 'all' filter.

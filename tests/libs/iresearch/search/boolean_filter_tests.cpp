@@ -114,16 +114,20 @@ class BasicDocIterator : public irs::DocIterator, public irs::ScoreCtx {
     if (!ord.empty()) {
       SDB_ASSERT(_stats);
 
-      _scorers = irs::PrepareScorers(ord.buckets(), irs::SubReader::empty(),
-                                     nullptr, {}, _stats, *this, boost);
-      EXPECT_LT(_scorers.size(), 2);
+      if (!ord.empty()) {
+        _scorer = ord.buckets().front().bucket->PrepareScorer({
+          .segment = irs::SubReader::empty(),
+          .field = {},
+          .doc_attrs = *this,
+          .stats = _stats,
+          .boost = boost,
+        });
+      }
 
       _score.Reset(
         *this, [](irs::ScoreCtx* ctx, irs::score_t* res, size_t n) noexcept {
           const auto& self = *static_cast<BasicDocIterator*>(ctx);
-          for (auto& scorer : self._scorers) {
-            scorer.Score(res, n);
-          }
+          self._scorer.Score(res, n);
         });
 
       _attrs[irs::Type<irs::ScoreAttr>::id()] = &_score;
@@ -164,7 +168,7 @@ class BasicDocIterator : public irs::DocIterator, public irs::ScoreCtx {
  private:
   std::map<irs::TypeInfo::type_id, irs::Attribute*> _attrs;
   irs::CostAttr _est;
-  irs::ScoreFunctions _scorers;
+  irs::ScoreFunction _scorer;
   DocidsT::const_iterator _first;
   DocidsT::const_iterator _last;
   const irs::byte_type* _stats;

@@ -20,7 +20,6 @@
 
 #include <vpack/common.h>
 #include <vpack/parser.h>
-#include <iostream>
 
 #include <iresearch/analysis/analyzers.hpp>
 #include <iresearch/analysis/path_hierarchy_tokenizer.hpp>
@@ -496,7 +495,7 @@ TEST_F(PathHierarchyTokenizerTests, test_skip_exceeds_tokens) {
   irs::analysis::PathHierarchyTokenizer stream(options);
 
   ASSERT_TRUE(stream.reset(data));
-  ASSERT_FALSE(stream.next()); 
+  ASSERT_FALSE(stream.next());
 }
 
 TEST_F(PathHierarchyTokenizerTests, test_standart_skip) {
@@ -583,12 +582,12 @@ TEST_F(PathHierarchyTokenizerTests, test_empty_delimiter) {
   auto* offset = irs::get<irs::OffsAttr>(stream);
 
   ASSERT_TRUE(stream.reset(data));
-  
+
   ASSERT_TRUE(stream.next());
   ASSERT_EQ("abc", irs::ViewCast<char>(term->value));
   ASSERT_EQ(0, offset->start);
   ASSERT_EQ(3, offset->end);
-  
+
   ASSERT_FALSE(stream.next());
 }
 
@@ -597,20 +596,20 @@ TEST_F(PathHierarchyTokenizerTests, test_reset_without_next) {
 
   OptionsT options;
   options.delimiter = '/';
-  
+
   irs::analysis::PathHierarchyTokenizer stream(options);
 
   ASSERT_TRUE(stream.reset("/a/b"));
   ASSERT_TRUE(stream.reset("/x/y"));
-  
+
   auto* term = irs::get<irs::TermAttr>(stream);
-  
+
   ASSERT_TRUE(stream.next());
   ASSERT_EQ("/x", irs::ViewCast<char>(term->value));
-  
+
   ASSERT_TRUE(stream.next());
   ASSERT_EQ("/x/y", irs::ViewCast<char>(term->value));
-  
+
   ASSERT_FALSE(stream.next());
 }
 
@@ -682,7 +681,6 @@ TEST_F(PathHierarchyTokenizerTests, test_consecutive_delimiters) {
 
   ASSERT_TRUE(stream.reset(data));
 
-  
   ASSERT_TRUE(stream.next());
   ASSERT_EQ("/", irs::ViewCast<char>(term->value));
   ASSERT_EQ(0, offset->start);

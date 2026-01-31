@@ -273,10 +273,8 @@ bool PathHierarchyTokenizer::reset(std::string_view data) {
 
   state->data.assign(data.data(), data.size());
 
-  // Находим разделители
   state->findDelimiters();
 
-  // Apply skip
   state->current_token = std::min(
     state->skip,
     state->reverse
@@ -288,15 +286,13 @@ bool PathHierarchyTokenizer::reset(std::string_view data) {
   // For reverse mode "www.example.com" with delims at [3, 11]: 3 tokens (1 +
   // num_delims)
   if (state->reverse) {
-    // In reverse mode: 1 token for full text + 1 for each delimiter
     state->num_tokens = state->delim_positions.size() + 1;
   } else {
-    // In forward mode: 1 token for each delimiter position
     state->num_tokens =
       state->delim_positions.empty() ? 1 : state->delim_positions.size();
   }
   
-   _state.reset(state.release());
+  _state.reset(state.release());
 
   return true;
 }
@@ -311,7 +307,6 @@ bool PathHierarchyTokenizer::next() {
   auto& offset_attr = std::get<OffsAttr>(_attrs);
   auto& inc_attr = std::get<IncAttr>(_attrs);
 
-  // Handle empty input
   if (state.data.empty()) {
     _term_eof = true;
     return false;
@@ -333,12 +328,11 @@ bool PathHierarchyTokenizer::next() {
         state.current_token <= state.delim_positions.size()) {
       size_t delim_idx = state.current_token - 1;
       start_pos =
-        state.delim_positions[delim_idx] + 1;  // +1 для char delimiter
+        state.delim_positions[delim_idx] + 1;
     }
 
     std::string_view token_str(state.data.data() + start_pos);
 
-    // Применяем replacement если нужно (char to char замена)
     if (state.delimiter != state.replacement) {
       apply_replacement(token_str, term_attr, state.delimiter,
                         state.replacement);

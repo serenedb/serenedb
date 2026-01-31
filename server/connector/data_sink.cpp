@@ -24,6 +24,7 @@
 #include <velox/type/Type.h>
 #include <velox/vector/BiasVector.h>
 #include <velox/vector/BuilderTypeUtils.h>
+#include <velox/vector/DictionaryVector.h>
 #include <velox/vector/FlatMapVector.h>
 #include <velox/vector/FlatVector.h>
 
@@ -57,17 +58,110 @@ namespace {
 constexpr std::string_view kZeroLengthVector{"\0", 1};
 constexpr std::string_view kOneValueHeader{"\0\1", 2};
 
-template<velox::TypeKind Kind>
-std::string GetPKVeloxValues(velox::VectorPtr vec, velox::vector_size_t idx) {
-  using T = typename velox::TypeTraits<Kind>::NativeType;
-  auto as_flat = vec->as<velox::FlatVector<T>>();
-  SDB_ASSERT(!as_flat->isNullAt(idx));
-  auto val = as_flat->valueAtFast(idx);
+template<typename T>
+std::string VeloxValueToString(T val) {
   if constexpr (std::is_same_v<T, velox::StringView>) {
-    return val.data();
+    return std::string(val.data(), val.size());
   } else {
     return std::to_string(val);
   }
+}
+
+template<velox::TypeKind Kind>
+std::string GetPKVeloxValue(velox::VectorPtr vec, velox::vector_size_t idx);
+
+template<velox::TypeKind Kind>
+std::string GetPKVeloxFlatValue(velox::VectorPtr vec,
+                                velox::vector_size_t idx) {
+  using T = typename velox::TypeTraits<Kind>::NativeType;
+
+  const auto* as_flat = vec->as<velox::FlatVector<T>>();
+  return VeloxValueToString(as_flat->valueAtFast(idx));
+}
+
+template<velox::TypeKind Kind>
+std::string GetPKVeloxConstantValue(velox::VectorPtr vec,
+                                    velox::vector_size_t) {
+  using T = typename velox::TypeTraits<Kind>::NativeType;
+
+  const auto* as_const = vec->as<velox::ConstantVector<T>>();
+  if (as_const->valueVector()) {
+    return GetPKVeloxValue<Kind>(as_const->valueVector(),
+                                 as_const->wrappedIndex(0));
+  }
+
+  return VeloxValueToString(as_const->rawValues()[0]);
+}
+
+template<velox::TypeKind Kind>
+std::string GetPKVeloxDictValue(velox::VectorPtr vec,
+                                velox::vector_size_t idx) {
+  const auto& wrapped = velox::BaseVector::wrappedVectorShared(vec);
+  return GetPKVeloxValue<Kind>(wrapped, vec->wrappedIndex(idx));
+}
+
+template<velox::TypeKind Kind>
+std::string GetPKVeloxValue(velox::VectorPtr vec, velox::vector_size_t idx) {
+  SDB_ASSERT(!vec->isNullAt(idx));
+
+  switch (vec->encoding()) {
+    case facebook::velox::VectorEncoding::Simple::CONSTANT:
+      return GetPKVeloxConstantValue<Kind>(vec, idx);
+    case facebook::velox::VectorEncoding::Simple::DICTIONARY:
+      return GetPKVeloxDictValue<Kind>(vec, idx);
+    case facebook::velox::VectorEncoding::Simple::FLAT:
+      return GetPKVeloxFlatValue<Kind>(vec, idx);
+    default:
+      return "<unsupported>";
+  }
+}
+
+std::string FormatKeyValue(const velox::RowVectorPtr& input,
+                           velox::column_index_t key_idx,
+                           velox::vector_size_t row_idx) {
+  auto vector = input->childAt(key_idx);
+  auto type = input->rowType()->childAt(key_idx);
+
+  if (type->isPrimitiveType()) {
+    return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
+      GetPKVeloxValue, vector->typeKind(), vector, row_idx);
+  }
+  // TODO(mkornaukhov03) support not only flat and constant vectors here
+  SDB_PRINT("vector->encoding() = ", vector->encoding());
+  SDB_PRINT("type               = ", type->toString());
+  return "<unsupported>";
+}
+
+std::string BuildUniqueViolationDetail(
+  std::span<const velox::column_index_t> key_indices,
+  std::span<const std::pair<sdb::catalog::Column::Id, std::string_view>>
+    columns,
+  const velox::RowVectorPtr& input, velox::vector_size_t row_idx) {
+  std::string detail;
+  detail.reserve(128);
+
+  // Build "Key (col1, col2, ...)="
+  detail += "Key (";
+  for (size_t i = 0; i < key_indices.size(); ++i) {
+    if (i > 0) {
+      detail += ", ";
+    }
+    detail += columns[key_indices[i]].second;
+  }
+  detail += ")=(";
+
+  // Build "(val1, val2, ...) already exists."
+  if (input) {
+    for (size_t i = 0; i < key_indices.size(); ++i) {
+      if (i > 0) {
+        detail += ", ";
+      }
+      detail += FormatKeyValue(input, key_indices[i], row_idx);
+    }
+  }
+  detail += ") already exists.";
+
+  return detail;
 }
 }  // namespace
 
@@ -101,11 +195,11 @@ RocksDBDataSinkBase<SubWriterType>::RocksDBDataSinkBase(
 template<typename SubWriterType>
 size_t RocksDBDataSinkBase<SubWriterType>::HandleWriteConflicts(
   primary_key::Keys& keys, std::span<const std::string> old_keys,
-  velox::RowVectorPtr input) {
+  velox::RowVectorPtr input,
+  std::span<const velox::column_index_t> key_indices) {
   SDB_ASSERT(keys.size() == old_keys.size() || old_keys.empty());
-  const auto conflict_policy =
-    _data_writer.GetConflictPolicy();  // TODO(mkornaukhov) remove from
-                                       // _data_writer at all
+
+  const auto conflict_policy = _data_writer.GetConflictPolicy();
   if (conflict_policy == WriteConflictPolicy::Replace) {
     // Optimize out reading
     return 0;
@@ -114,18 +208,20 @@ size_t RocksDBDataSinkBase<SubWriterType>::HandleWriteConflicts(
   _read_options.async_io = true;
   _read_options.snapshot = _data_writer.GetTransaction().GetSnapshot();
 
+  auto& txn = _data_writer.GetTransaction();
+  auto* cf = &_data_writer.GetColumnFamily();
+
   size_t skipped_count = 0;
   for (size_t i = 0; i < keys.size(); ++i) {
     auto& key = keys[i];
-    // Old key equals to new key
-    // TODO(mkornaukhov) compare only PK part
+
+    // Skip if old key equals new key
     if (!old_keys.empty() && old_keys[i] == key) {
       continue;
     }
 
-    const auto status = _data_writer.GetTransaction().Get(
-      _read_options, &_data_writer.GetColumnFamily(), key, &_lookup_value);
-    _lookup_value.Reset();  // Value not needed, see issue #184
+    const auto status = txn.Get(_read_options, cf, key, &_lookup_value);
+    _lookup_value.Reset();
 
     if (status.IsNotFound()) {
       continue;
@@ -134,56 +230,26 @@ size_t RocksDBDataSinkBase<SubWriterType>::HandleWriteConflicts(
       SDB_THROW(rocksutils::ConvertStatus(status));
     }
 
-    // Key exists - handle conflict
+    // Key exists - handle conflict based on policy
     switch (conflict_policy) {
       case WriteConflictPolicy::DoNothing:
         key.clear();
         ++skipped_count;
         break;
       case WriteConflictPolicy::EmitError: {
-        // TODO better
-        // TODO(mkornaukhov) pass name and values here
-        std::string detail = "Key (";
-        bool first = true;
-        for (auto key_idx : _key_childs) {
-          if (!first) {
-            detail += ",";
-          }
-          first = false;
-          detail += _columns[key_idx].second;
-        }
-        detail += ")=(";
-        for (auto key_idx : _key_childs) {
-          if (!first) {
-            detail += ",";
-          }
-          first = false;
-
-          // GET VAL
-          SDB_ASSERT(input);
-          auto vec = input->childAt(key_idx);
-          auto tp = input->rowType()->childAt(key_idx);
-
-          // SDB_PRINT("row type = ", input->toString());
-          // SDB_PRINT("vec type = ", vec->toString());
-
-          if (vec->isFlatEncoding() && tp->isPrimitiveType()) {
-            auto v = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
-              GetPKVeloxValues, vec->typeKind(), vec, i);
-          } else {
-            detail += "<not implemented>";
-          }
-        }
+        auto detail =
+          BuildUniqueViolationDetail(key_indices, _columns, input, i);
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
           ERR_MSG("duplicate key value violates unique constraint \"",
                   _table_name, "_pkey\""),
-          ERR_DETAIL());
+          ERR_DETAIL(detail));
       }
       default:
         SDB_UNREACHABLE();
     }
   }
+
   return skipped_count;
 }
 
@@ -294,7 +360,7 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
   const size_t rows_skipped =
     _columns.back().first == catalog::Column::kGeneratedPKId
       ? 0
-      : HandleWriteConflicts(_store_keys_buffers, {}, input);
+      : HandleWriteConflicts(_store_keys_buffers, {}, input, _key_childs);
   SDB_ASSERT(rows_skipped <= num_rows);
   const auto affected_rows = num_rows - rows_skipped;
 
@@ -423,14 +489,21 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
   // old primary keys
   containers::FlatHashSet<std::string_view> batch_lock_keys;
   for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+    // TODO wrap in try catch and in case of exception throw error about unique
+    // constraint violation
     key_utils::MakeColumnKey(
       input, _updated_key_childs, row_idx, table_key,
       [&](std::string_view lock_key) {
-        if (auto [_, inserted] = batch_lock_keys.insert(lock_key); !inserted) {
+        if (auto [_, inserted] =
+              batch_lock_keys.insert(lock_key.substr(sizeof(ObjectId)));
+            !inserted) {
+          auto detail = BuildUniqueViolationDetail(_updated_key_childs,
+                                                   _columns, input, row_idx);
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
-            ERR_MSG("duplicate key value violates unique constraint: \"",
-                    _table_name, "_pkey", "\""));
+            ERR_MSG("duplicate key value violates unique constraint \"",
+                    _table_name, "_pkey\""),
+            ERR_DETAIL(detail));
         }
         lock_new_row(lock_key);
       },
@@ -444,15 +517,8 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
   }
 
   ensure_input_sorted(_old_keys_buffers);
-  HandleWriteConflicts(_store_keys_buffers, _old_keys_buffers, input);
-  // Check that all primary keys in store_key_buffers are unique
-  // TODO(mkornaukhov) optimize and check earlier
-  if (containers::FlatHashSet<std::string_view>(_store_keys_buffers.begin(),
-                                                _store_keys_buffers.end())
-        .size() != _store_keys_buffers.size()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
-                    ERR_MSG("duplicate key value violates unique constraint"));
-  }
+  HandleWriteConflicts(_store_keys_buffers, _old_keys_buffers, input,
+                       _updated_key_childs);
 
   auto it = _data_writer.CreateIterator();
   for (auto column_id : _all_column_ids) {

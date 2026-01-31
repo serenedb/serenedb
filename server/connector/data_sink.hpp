@@ -190,9 +190,12 @@ class RocksDBDataSinkBase : public velox::connector::DataSink {
     const folly::Range<const velox::IndexRange*>& ranges,
     velox::vector_size_t total_rows_number);
 
-  // Handles write conflicts. Returns number of skipped rows
-  size_t HandleWriteConflicts(primary_key::Keys& keys,
-                              std::span<const std::string> old_keys = {}, velox::RowVectorPtr input = nullptr);
+  // Handles write conflicts. Returns number of skipped rows.
+  // detail_key_indices specifies which columns to use for error detail message.
+  size_t HandleWriteConflicts(
+    primary_key::Keys& keys, std::span<const std::string> old_keys,
+    velox::RowVectorPtr input,
+    std::span<const velox::column_index_t> key_indices);
 
   std::string_view _table_name;
   RocksDBSinkWriter _data_writer;

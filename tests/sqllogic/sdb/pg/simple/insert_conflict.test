@@ -23,13 +23,15 @@ INSERT INTO t1 VALUES (1, 10), (2, 20), (3, 30) ON CONFLICT DO NOTHING;
 statement error
 INSERT INTO t1 VALUES (1, 10), (2, 20), (3, 30);
 ----
-db error: ERROR: duplicate key value violates unique constraint
+db error: ERROR: duplicate key value violates unique constraint "t1_pkey"
+DETAIL: Key (a)=(1) already exists.
 
 
 statement error
 INSERT INTO t1 VALUES (1, 10), (4, 40), (5, 50);
 ----
-db error: ERROR: duplicate key value violates unique constraint
+db error: ERROR: duplicate key value violates unique constraint "t1_pkey"
+DETAIL: Key (a)=(1) already exists.
 
 
 statement count 2
@@ -48,7 +50,8 @@ a	b
 statement error
 INSERT INTO t1 VALUES (100, 100), (100, 100);
 ----
-db error: ERROR: duplicate key value violates unique constraint
+db error: ERROR: duplicate key value violates unique constraint "t1_pkey"
+DETAIL: Key (a)=(100) already exists.
 
 
 # Cleanup table for less output

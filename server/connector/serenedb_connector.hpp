@@ -547,7 +547,7 @@ class SereneDBConnector final : public velox::connector::Connector {
   }
 
   std::shared_ptr<velox::connector::IndexSource> createIndexSource(
-    const velox::RowTypePtr& input_type, size_t num_join_keys,
+    const velox::RowTypePtr& input_type,
     const std::vector<std::shared_ptr<velox::core::IndexLookupCondition>>&
       join_conditions,
     const velox::RowTypePtr& output_type,

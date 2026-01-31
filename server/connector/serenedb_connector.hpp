@@ -247,18 +247,19 @@ class RocksDBTable final : public axiom::connector::Table {
 
   const velox::RowTypePtr& PKType() const noexcept { return _pk_type; }
 
-  bool IsUsedForUpdatePK() const noexcept { return _update_pk; }
-
-  void SetUsedForUpdatePK(bool value = true) { _update_pk = value; }
-
   query::Transaction& GetTransaction() const noexcept { return _transaction; }
 
   decltype(auto) WriteConflictPolicy(this auto&& self) noexcept {
     return (self._write_conflict_policy);
   }
-  void SetBulkInsert() { _bulk_insert = true; }
 
-  bool IsBulkInsert() const noexcept { return _bulk_insert; }
+  decltype(auto) UsedForUpdatePK(this auto&& self) noexcept {
+    return (self._update_pk);
+  }
+
+  decltype(auto) BulkInsert(this auto&& self) noexcept {
+    return (self._bulk_insert);
+  }
 
  private:
   std::vector<std::unique_ptr<SereneDBTableLayout>> _layout_handles;
@@ -319,7 +320,7 @@ class SereneDBConnectorInsertTableHandle final
       _table{table},
       _kind{kind},
       _transaction{basics::downCast<RocksDBTable>(*table).GetTransaction()},
-      _update_pk{basics::downCast<RocksDBTable>(*table).IsUsedForUpdatePK()} {
+      _update_pk{basics::downCast<RocksDBTable>(*table).UsedForUpdatePK()} {
     GetTransaction().AddRocksDBWrite();
     if (_update_pk) {
       GetTransaction().AddRocksDBRead();
@@ -418,7 +419,7 @@ class SereneDBConnectorMetadata final
                "Wrong type of insert table handle");
     auto& rocksdb_table =
       basics::downCast<const RocksDBTable>(*serene_insert_handle->Table());
-    if (rocksdb_table.IsBulkInsert()) {
+    if (rocksdb_table.BulkInsert()) {
       return yaclib::MakeFuture(get_total_rows_from_write_results());
     }
     auto& transaction = serene_insert_handle->GetTransaction();
@@ -631,7 +632,7 @@ class SereneDBConnector final : public velox::connector::Connector {
 
           if constexpr (IsUpdate) {
             std::vector<catalog::Column::Id> all_column_oids;
-            if (table.IsUsedForUpdatePK()) {
+            if (table.UsedForUpdatePK()) {
               all_column_oids.reserve(table.type()->size());
               for (auto& col : table.type()->names()) {
                 auto handle = table.columnMap().find(col);
@@ -646,11 +647,11 @@ class SereneDBConnector final : public velox::connector::Connector {
             return std::make_unique<RocksDBUpdateDataSink>(
               table.name(), rocksdb_transaction, _cf,
               *connector_query_ctx->memoryPool(), object_key, pk_indices,
-              columns, all_column_oids, table.IsUsedForUpdatePK(), table.type(),
+              columns, all_column_oids, table.UsedForUpdatePK(), table.type(),
               serene_insert_handle.NumberOfRowsAffected(),
               std::vector<std::unique_ptr<SinkUpdateWriter>>{});
           } else {
-            if (table.IsBulkInsert()) {
+            if (table.BulkInsert()) {
               return std::make_unique<SSTInsertDataSink>(
                 _db, _cf, *connector_query_ctx->memoryPool(), object_key,
                 pk_indices, columns, _rocksdb_directory);

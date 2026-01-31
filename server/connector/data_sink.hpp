@@ -217,7 +217,7 @@ class RocksDBDataSinkBase : public velox::connector::DataSink {
   std::vector<std::unique_ptr<SubWriterType>> _index_writers;
   ObjectId _object_key;
   std::vector<velox::column_index_t> _key_childs;
-  std::vector<std::pair<catalog::Column::Id, std::string_view>> _columns;
+  std::vector<std::pair<catalog::Column::Id, std::string_view>> _columns_info;
   velox::memory::MemoryPool& _memory_pool;
   SliceVector _row_slices;
   primary_key::Keys _store_keys_buffers;

@@ -1543,7 +1543,7 @@ void SqlAnalyzer::MakeTableWrite(State& state, const Node& stmt,
   }
 
   if (stmt.type == T_CopyStmt) {
-    basics::downCast<connector::RocksDBTable>(axiom_table)->SetBulkInsert();
+    basics::downCast<connector::RocksDBTable>(axiom_table)->BulkInsert() = true;
 
     // tmp solution:
     // for bulk insert we use SST which requires sorted data by key
@@ -1817,8 +1817,8 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
 
   MakeTableWrite(state, ToNode(&stmt), *object, std::move(column_names),
                  std::move(column_exprs));
-  basics::downCast<connector::RocksDBTable>(object->table)
-    ->SetUsedForUpdatePK(update_pk);
+  basics::downCast<connector::RocksDBTable>(object->table)->UsedForUpdatePK() =
+    update_pk;
 }
 
 void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {

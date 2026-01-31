@@ -243,14 +243,15 @@ RocksDBDataSinkBase<DataWriterType, SubWriterType>::RocksDBDataSinkBase(
   : _data_writer{std::move(data_writer)},
     _index_writers{std::move(index_writers)},
     _object_key{object_key},
-    _columns{std::move(columns)},
+    _columns_info{std::move(columns)},
     _memory_pool{memory_pool},
     _row_slices{memory_pool},
     _store_keys_buffers{memory_pool},
     _bytes_allocator{&memory_pool} {
   _key_childs.assign_range(key_childs);
   SDB_ASSERT(_object_key.isSet(), "RocksDBDataSinkBase: object key is empty");
-  SDB_ASSERT(!_columns.empty(), "RocksDBDataSinkBase: no columns in a table");
+  SDB_ASSERT(!_columns_info.empty(),
+             "RocksDBDataSinkBase: no columns in a table");
   // we rely on storage order matching machine order
   static_assert(basics::IsLittleEndian());
 }
@@ -278,17 +279,17 @@ SSTInsertDataSink::SSTInsertDataSink(
   rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
   std::span<const velox::column_index_t> key_childs,
-  std::vector<std::pair<catalog::Column::Id, std::string_view>> column_oids,
+  std::vector<std::pair<catalog::Column::Id, std::string_view>> columns,
   std::string_view rocksdb_directory)
   : RocksDBDataSinkBase<SSTSinkWriter, SinkInsertWriter>(
-      SSTSinkWriter{db, cf, column_oids, rocksdb_directory}, memory_pool,
-      object_key, key_childs, std::move(column_oids),
+      SSTSinkWriter{db, cf, columns, rocksdb_directory}, memory_pool,
+      object_key, key_childs, std::move(columns),
       std::vector<std::unique_ptr<SinkInsertWriter>>{}) {}
 
 void SSTInsertDataSink::appendData(velox::RowVectorPtr input) {
   SDB_ASSERT(input->encoding() == velox::VectorEncoding::Simple::ROW);
-  SDB_ASSERT(input->type()->size() == _columns.size(),
-             "RocksDBDataSink: column oids size ", _columns.size(),
+  SDB_ASSERT(input->type()->size() == _columns_info.size(),
+             "RocksDBDataSink: column oids size ", _columns_info.size(),
              " doesn't match input type size ", input->type()->size());
   SDB_ASSERT(input->type()->kind() == velox::TypeKind::ROW);
 
@@ -308,8 +309,8 @@ void SSTInsertDataSink::appendData(velox::RowVectorPtr input) {
   velox::IndexRange all_rows(0, num_rows);
   const folly::Range all_rows_range{&all_rows, 1};
   for (velox::column_index_t i = 0; i < num_columns; ++i) {
-    if (_columns[i].first != catalog::Column::kGeneratedPKId) {
-      WriteInputColumn(_columns[i].first, i, *input, all_rows_range);
+    if (_columns_info[i].first != catalog::Column::kGeneratedPKId) {
+      WriteInputColumn(_columns_info[i].first, i, *input, all_rows_range);
     }
   }
 }
@@ -348,9 +349,9 @@ RocksDBUpdateDataSink::RocksDBUpdateDataSink(
     // Sort all column IDs for seek-forward only iteration
     absl::c_sort(_all_column_ids);
 
-    _column_id_to_input_idx.reserve(_columns.size());
-    for (size_t i = 0; i < _columns.size(); ++i) {
-      _column_id_to_input_idx[_columns[i].first] = i;
+    _column_id_to_input_idx.reserve(_columns_info.size());
+    for (size_t i = 0; i < _columns_info.size(); ++i) {
+      _column_id_to_input_idx[_columns_info[i].first] = i;
     }
 
     // Map old PK indices to updated PK positions in input
@@ -358,7 +359,7 @@ RocksDBUpdateDataSink::RocksDBUpdateDataSink(
     // as first is old key and we need to find new values.
     _updated_key_childs.reserve(_key_childs.size());
     for (auto old_pk_index : _key_childs) {
-      auto pk_column_id = _columns[old_pk_index].first;
+      auto pk_column_id = _columns_info[old_pk_index].first;
       auto updated_pos_it = _column_id_to_input_idx.find(pk_column_id);
       SDB_ASSERT(updated_pos_it != _column_id_to_input_idx.end());
       _updated_key_childs.push_back(updated_pos_it->second);
@@ -371,8 +372,8 @@ RocksDBUpdateDataSink::RocksDBUpdateDataSink(
 // writers and avoid switch/case for kinds and encodings on each row.
 void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
   SDB_ASSERT(input->encoding() == velox::VectorEncoding::Simple::ROW);
-  SDB_ASSERT(input->type()->size() == _columns.size(),
-             "RocksDBDataSink: column oids size ", _columns.size(),
+  SDB_ASSERT(input->type()->size() == _columns_info.size(),
+             "RocksDBDataSink: column oids size ", _columns_info.size(),
              " doesn't match input type size ", input->type()->size());
   SDB_ASSERT(input->type()->kind() == velox::TypeKind::ROW);
 
@@ -398,15 +399,15 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
       },
       key_buffer);
 
-    key_utils::SetupColumnForKey(key_buffer, _columns.front().first);
+    key_utils::SetupColumnForKey(key_buffer, _columns_info.front().first);
   }
 
   // Conflicts with generated PK are not possible
   const size_t rows_skipped =
-    _columns.back().first == catalog::Column::kGeneratedPKId
+    _columns_info.back().first == catalog::Column::kGeneratedPKId
       ? 0
       : _conflict_resolver.HandleWriteConflicts(_store_keys_buffers, {}, input,
-                                                _key_childs, _columns);
+                                                _key_childs, _columns_info);
   SDB_ASSERT(rows_skipped <= num_rows);
   const auto affected_rows = num_rows - rows_skipped;
 
@@ -421,13 +422,13 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
   const velox::IndexRange all_rows{0, num_rows};
   const folly::Range all_rows_range{&all_rows, 1};
   for (velox::column_index_t i = 0; i < num_columns; ++i) {
-    if (_columns[i].first == catalog::Column::kGeneratedPKId) {
+    if (_columns_info[i].first == catalog::Column::kGeneratedPKId) {
       SDB_ASSERT(i + 1 == num_columns,
                  "RocksDBDataSink: generated primary column should be the last "
                  "one in the input vectors");
       break;
     }
-    WriteInputColumn(_columns[i].first, i, *input, all_rows_range);
+    WriteInputColumn(_columns_info[i].first, i, *input, all_rows_range);
   }
   _number_of_rows_affected += affected_rows;
 }
@@ -438,8 +439,8 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
 void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
   static_assert(basics::IsLittleEndian());
   SDB_ASSERT(input->encoding() == velox::VectorEncoding::Simple::ROW);
-  SDB_ASSERT(input->type()->size() == _columns.size(),
-             "RocksDBDataSink: column oids size ", _columns.size(),
+  SDB_ASSERT(input->type()->size() == _columns_info.size(),
+             "RocksDBDataSink: column oids size ", _columns_info.size(),
              " doesn't match input type size ", input->type()->size());
   SDB_ASSERT(input->type()->kind() == velox::TypeKind::ROW);
 
@@ -526,27 +527,27 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
 
     // Write updated values
     for (velox::column_index_t i = _key_childs.size(); i < num_columns; ++i) {
-      WriteInputColumn(_columns[i].first, i, *input, all_rows_range);
+      WriteInputColumn(_columns_info[i].first, i, *input, all_rows_range);
     }
     _number_of_rows_affected += num_rows;
     return;
   }
   // Take locks and prepare buffers for both new and
   // old primary keys
-  containers::FlatHashSet<std::string_view> batch_lock_keys;
+  containers::FlatHashSet<std::string_view> batch_keys;
   for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
     key_utils::MakeColumnKey(
       input, _updated_key_childs, row_idx, table_key,
       [&](std::string_view lock_key) {
         if (auto [_, inserted] =
-              batch_lock_keys.insert(lock_key.substr(sizeof(ObjectId)));
+              batch_keys.insert(lock_key.substr(sizeof(ObjectId)));
             !inserted) {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
             ERR_MSG("duplicate key value violates unique constraint \"",
                     _table_name, "_pkey\""),
-            ERR_DETAIL(BuildUniqueViolationDetail(_updated_key_childs, _columns,
-                                                  input, row_idx)));
+            ERR_DETAIL(BuildUniqueViolationDetail(
+              _updated_key_childs, _columns_info, input, row_idx)));
         }
         lock_new_row(lock_key);
       },
@@ -556,13 +557,13 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
                              lock_old_row, _old_keys_buffers.emplace_back());
 
     key_utils::SetupColumnForKey(_store_keys_buffers.back(),
-                                 _columns.front().first);
+                                 _columns_info.front().first);
   }
 
   ensure_input_sorted(_old_keys_buffers);
   _conflict_resolver.HandleWriteConflicts(_store_keys_buffers,
                                           _old_keys_buffers, input,
-                                          _updated_key_childs, _columns);
+                                          _updated_key_childs, _columns_info);
 
   auto it = _data_writer.CreateIterator();
   for (auto column_id : _all_column_ids) {

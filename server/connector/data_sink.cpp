@@ -169,33 +169,32 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
   _store_keys_buffers.clear();
   _store_keys_buffers.resize(num_rows);
 
-  size_t lock_skipped = 0;
   for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
     auto& key_buffer = _store_keys_buffers[row_idx];
     key_utils::MakeColumnKey(
       input, _key_childs, row_idx, table_key,
       [&](std::string_view row_key) {
         const auto status = _data_writer.Lock(row_key);
-        if (status.ok()) {
-          return;
+        if (!status.ok()) {
+          const auto result = rocksutils::ConvertStatus(status);
+          SDB_THROW(result.errorNumber(),
+                    "Failed to acquire row lock for table ", _object_key.id(),
+                    " error: ", result.errorMessage());
         }
-        const auto result = rocksutils::ConvertStatus(status);
-        SDB_THROW(result.errorNumber(), "Failed to acquire row lock for table ",
-                  _object_key.id(), " error: ", result.errorMessage());
       },
       key_buffer);
 
-    if (!key_buffer.empty()) {
-      key_utils::SetupColumnForKey(key_buffer, _column_ids.front());
-    }
+    key_utils::SetupColumnForKey(key_buffer, _column_ids.front());
   }
 
-  const size_t snapshot_skipped =
-    _data_writer.HandleWriteConflicts(_store_keys_buffers);
-  const size_t total_skipped = lock_skipped + snapshot_skipped;
-  SDB_ASSERT(total_skipped <= num_rows);
+  // Conflicts with generated PK are not possible
+  const size_t rows_skipped =
+    _column_ids.back() == catalog::Column::kGeneratedPKId
+      ? 0
+      : _data_writer.HandleWriteConflicts(_store_keys_buffers);
+  SDB_ASSERT(rows_skipped <= num_rows);
+  const auto affected_rows = num_rows - rows_skipped;
 
-  const auto affected_rows = num_rows - total_skipped;
   if (affected_rows == 0) {
     return;
   }
@@ -451,8 +450,8 @@ void RocksDBDataSinkBase<SubWriterType>::WriteFlatColumn(
     for (const auto& range : ranges) {
       const auto range_end = range.begin + range.size;
       for (velox::vector_size_t idx = range.begin; idx < range_end; ++idx) {
-        auto* key = SetupRowKey(row_id++, original_idx);
-        if (key == nullptr) {
+        const auto* key = SetupRowKey(row_id++, original_idx);
+        if (!key) {
           continue;
         }
         if constexpr (MayHaveNulls) {
@@ -484,8 +483,8 @@ void RocksDBDataSinkBase<SubWriterType>::WriteBiasedColumn(
       for (const auto& range : ranges) {
         const auto range_end = range.begin + range.size;
         for (velox::vector_size_t idx = range.begin; idx < range_end; ++idx) {
-          auto* key = SetupRowKey(row_id++, original_idx);
-          if (key == nullptr) {
+          const auto* key = SetupRowKey(row_id++, original_idx);
+          if (!key) {
             continue;
           }
           if constexpr (MayHaveNulls) {
@@ -541,8 +540,8 @@ void RocksDBDataSinkBase<SubWriterType>::WriteDictionaryColumn(
                       original_idx.subspan(current, sub_ranges.size()));
           sub_ranges.clear();
         }
-        auto* key = SetupRowKey(row_id++, original_idx);
-        if (key == nullptr) {
+        const auto* key = SetupRowKey(row_id++, original_idx);
+        if (!key) {
           continue;
         }
         WriteNull(*key);
@@ -570,8 +569,8 @@ void RocksDBDataSinkBase<SubWriterType>::WriteComplexColumn(
     int32_t begin = ranges[i].begin;
     int32_t end = begin + ranges[i].size;
     for (int32_t offset = begin; offset < end; ++offset) {
-      auto* key = SetupRowKey(row_id++, original_idx);
-      if (key == nullptr) {
+      const auto* key = SetupRowKey(row_id++, original_idx);
+      if (!key) {
         continue;
       }
       if (input.isNullAt(offset)) {
@@ -620,8 +619,8 @@ void RocksDBDataSinkBase<SubWriterType>::WriteConstantColumn(
     for (const auto& range : ranges) {
       const auto end = range.begin + range.size;
       for (int32_t offset = range.begin; offset < end; ++offset) {
-        auto* key = SetupRowKey(row_id++, original_idx);
-        if (key == nullptr) {
+        const auto* key = SetupRowKey(row_id++, original_idx);
+        if (!key) {
           continue;
         }
         WriteRowSlices(*key);

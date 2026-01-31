@@ -50,42 +50,34 @@ size_t RocksDBSinkWriter::HandleWriteConflicts(
   for (size_t i = 0; i < keys.size(); ++i) {
     auto& key = keys[i];
     // Old key equals to new key
+    // TODO(mkornaukhov) compare only PK part
     if (!old_keys.empty() && old_keys[i] == key) {
       continue;
     }
 
-    rocksdb::Status status =
+    const auto status =
       _transaction.Get(_read_options, &_cf, key, &_lookup_value);
-    // We do not need value, so it may be forgotten immediately.
-    // See issue #184
-    _lookup_value.Reset();
+    _lookup_value.Reset();  // Value not needed, see issue #184
 
-    if (!status.ok() && !status.IsNotFound()) {
+    if (status.IsNotFound()) {
+      continue;
+    }
+    if (!status.ok()) {
       SDB_THROW(rocksutils::ConvertStatus(status));
     }
 
-    const bool conflict = status.ok();
-
-    if (conflict) {
-      switch (_conflict_policy) {
-        case WriteConflictPolicy::Replace:
-          SDB_ASSERT(false,
-                     "WriteConflictPolicy::Update should be handled earlier "
-                     "for optimiztion reason");
-          break;
-        case WriteConflictPolicy::DoNothing:
-          // Mark key: it should be skipped
-          key.clear();
-          skipped_count++;
-          break;
-        case WriteConflictPolicy::EmitError:
-          THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
-            ERR_MSG("duplicate key value violates unique constraint"));
-          break;
-        default:
-          SDB_UNREACHABLE();
-      }
+    // Key exists - handle conflict
+    switch (_conflict_policy) {
+      case WriteConflictPolicy::DoNothing:
+        key.clear();
+        ++skipped_count;
+        break;
+      case WriteConflictPolicy::EmitError:
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
+          ERR_MSG("duplicate key value violates unique constraint"));
+      default:
+        SDB_UNREACHABLE();
     }
   }
   return skipped_count;

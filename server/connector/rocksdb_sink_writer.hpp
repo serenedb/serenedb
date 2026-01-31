@@ -23,7 +23,6 @@
 #include <span>
 
 #include "catalog/types.h"
-#include "connector/primary_key.hpp"
 #include "rocksdb/slice.h"
 #include "rocksdb/utilities/transaction.h"
 
@@ -43,6 +42,10 @@ class RocksDBSinkWriterBase {
                                    /*read_only*/ false,
                                    /*exclusive*/ true);
   }
+
+  rocksdb::Transaction& GetTransaction() { return _transaction; }
+  rocksdb::ColumnFamilyHandle& GetColumnFamily() { return _cf; }
+  WriteConflictPolicy GetConflictPolicy() const { return _conflict_policy; }
 
  protected:
   rocksdb::Transaction& _transaction;
@@ -64,16 +67,10 @@ class RocksDBSinkWriter : public RocksDBSinkWriterBase {
 
   void DeleteCell(std::string_view full_key);
 
-  // Handles write conflicts. Returns number of skipped rows
-  // TODO better api
-  size_t HandleWriteConflicts(primary_key::Keys& keys,
-                              std::span<const std::string> s = {});
-
  private:
   void ConfigureReadOptions();
 
   rocksdb::ReadOptions _read_options;
-  rocksdb::PinnableSlice _lookup_value;
 };
 
 }  //  namespace sdb::connector

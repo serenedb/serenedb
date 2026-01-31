@@ -20,67 +20,13 @@
 
 #include "rocksdb_sink_writer.hpp"
 
-#include "pg/sql_exception_macro.h"
-#include "pg/sql_utils.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
-
-LIBPG_QUERY_INCLUDES_BEGIN
-#include "postgres.h"
-
-#include "utils/errcodes.h"
-LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::connector {
 
 void RocksDBSinkWriter::ConfigureReadOptions() {
   _read_options.async_io = true;
   _read_options.snapshot = _transaction.GetSnapshot();
-}
-
-size_t RocksDBSinkWriter::HandleWriteConflicts(
-  primary_key::Keys& keys, std::span<const std::string> old_keys) {
-  SDB_ASSERT(keys.size() == old_keys.size() || old_keys.empty());
-  if (_conflict_policy == WriteConflictPolicy::Replace) {
-    // Optimize out reading
-    return 0;
-  }
-
-  ConfigureReadOptions();
-  size_t skipped_count = 0;
-  for (size_t i = 0; i < keys.size(); ++i) {
-    auto& key = keys[i];
-    // Old key equals to new key
-    // TODO(mkornaukhov) compare only PK part
-    if (!old_keys.empty() && old_keys[i] == key) {
-      continue;
-    }
-
-    const auto status =
-      _transaction.Get(_read_options, &_cf, key, &_lookup_value);
-    _lookup_value.Reset();  // Value not needed, see issue #184
-
-    if (status.IsNotFound()) {
-      continue;
-    }
-    if (!status.ok()) {
-      SDB_THROW(rocksutils::ConvertStatus(status));
-    }
-
-    // Key exists - handle conflict
-    switch (_conflict_policy) {
-      case WriteConflictPolicy::DoNothing:
-        key.clear();
-        ++skipped_count;
-        break;
-      case WriteConflictPolicy::EmitError:
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
-          ERR_MSG("duplicate key value violates unique constraint"));
-      default:
-        SDB_UNREACHABLE();
-    }
-  }
-  return skipped_count;
 }
 
 void RocksDBSinkWriter::Write(std::span<const rocksdb::Slice> cell_slices,

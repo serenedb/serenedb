@@ -20,8 +20,15 @@
 
 #include "rocksdb_sink_writer.hpp"
 
-#include "basics/logger/logger.h"
+#include "pg/sql_exception_macro.h"
+#include "pg/sql_utils.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
+
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+
+#include "utils/errcodes.h"
+LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::connector {
 
@@ -72,8 +79,9 @@ size_t RocksDBSinkWriter::HandleWriteConflicts(
           skipped_count++;
           break;
         case WriteConflictPolicy::EmitError:
-          SDB_THROW(ERROR_SERVER_UNIQUE_CONSTRAINT_VIOLATED,
-                    "Primary key already exists");
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
+            ERR_MSG("duplicate key value violates unique constraint"));
           break;
         default:
           SDB_UNREACHABLE();

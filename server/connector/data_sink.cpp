@@ -67,7 +67,7 @@ RocksDBDataSinkBase<SubWriterType>::RocksDBDataSinkBase(
   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
   std::span<const velox::column_index_t> key_childs,
   std::vector<catalog::Column::Id> column_ids,
-  WriteConflictPolicy conflict_policy, size_t* number_of_rows_affected,
+  WriteConflictPolicy conflict_policy, uint64_t& number_of_rows_affected,
   std::vector<std::unique_ptr<SubWriterType>>&& index_writers)
   : _data_writer{transaction, cf, conflict_policy},
     _index_writers{std::move(index_writers)},
@@ -82,8 +82,6 @@ RocksDBDataSinkBase<SubWriterType>::RocksDBDataSinkBase(
   SDB_ASSERT(_object_key.isSet(), "RocksDBDataSinkBase: object key is empty");
   SDB_ASSERT(!_column_ids.empty(),
              "RocksDBDataSinkBase: no columns in a table");
-  SDB_ASSERT(_number_of_rows_affected,
-             "RocksDBDataSinkBase: invalid rows affected counter");
   // we rely on storage order matching machine order
   static_assert(basics::IsLittleEndian());
 }
@@ -93,7 +91,7 @@ RocksDBInsertDataSink::RocksDBInsertDataSink(
   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
   std::span<const velox::column_index_t> key_childs,
   std::vector<catalog::Column::Id> column_ids,
-  WriteConflictPolicy conflict_policy, size_t* number_of_rows_affected,
+  WriteConflictPolicy conflict_policy, uint64_t& number_of_rows_affected,
   std::vector<std::unique_ptr<SinkInsertWriter>>&& index_writers)
   : RocksDBDataSinkBase<SinkInsertWriter>{transaction,
                                           cf,
@@ -111,7 +109,7 @@ RocksDBUpdateDataSink::RocksDBUpdateDataSink(
   std::span<const velox::column_index_t> key_childs,
   std::vector<catalog::Column::Id> column_ids,
   std::vector<catalog::Column::Id> all_column_ids, bool update_pk,
-  velox::RowTypePtr table_row_type, size_t* number_of_rows_affected,
+  velox::RowTypePtr table_row_type, uint64_t& number_of_rows_affected,
   std::vector<std::unique_ptr<SinkUpdateWriter>>&& index_writers)
   : RocksDBDataSinkBase<SinkUpdateWriter>{transaction,
                                           cf,
@@ -217,7 +215,7 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
     }
     WriteInputColumn(_column_ids[i], i, *input, all_rows_range);
   }
-  *_number_of_rows_affected += affected_rows;
+  _number_of_rows_affected += affected_rows;
 }
 
 // TODO(Dronplane)
@@ -316,7 +314,7 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
     for (velox::column_index_t i = _key_childs.size(); i < num_columns; ++i) {
       WriteInputColumn(_column_ids[i], i, *input, all_rows_range);
     }
-    *_number_of_rows_affected += num_rows;
+    _number_of_rows_affected += num_rows;
     return;
   }
   // Take locks and prepare buffers for both new and
@@ -335,12 +333,12 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
   ensure_input_sorted(_old_keys_buffers);
   _data_writer.HandleWriteConflicts(_store_keys_buffers, _old_keys_buffers);
   // Check that all primary keys in store_key_buffers are unique
-  // TODO optimize and check earlier
+  // TODO(mkornaukhov) optimize and check earlier
   if (containers::FlatHashSet<std::string_view>(_store_keys_buffers.begin(),
                                                 _store_keys_buffers.end())
         .size() != _store_keys_buffers.size()) {
-    SDB_THROW(ERROR_SERVER_UNIQUE_CONSTRAINT_VIOLATED,
-              "Primary key already exists");
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
+                    ERR_MSG("duplicate key value violates unique constraint"));
   }
 
   auto it = _data_writer.CreateIterator();
@@ -366,7 +364,7 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
       _data_writer.DeleteCell(old_key);
     }
   }
-  *_number_of_rows_affected += num_rows;
+  _number_of_rows_affected += num_rows;
 }
 
 template<bool RewriteData>
@@ -2353,7 +2351,8 @@ velox::connector::DataSink::Stats RocksDBDataSinkBase<SubWriterType>::stats()
 RocksDBDeleteDataSink::RocksDBDeleteDataSink(
   rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
   velox::RowTypePtr row_type, ObjectId object_key,
-  std::vector<catalog::Column::Id> column_oids, size_t* number_of_rows_affected,
+  std::vector<catalog::Column::Id> column_oids,
+  uint64_t& number_of_rows_affected,
   std::vector<std::unique_ptr<SinkDeleteWriter>>&& index_writers)
   : _row_type{std::move(row_type)},
     _data_writer{transaction, cf},
@@ -2367,8 +2366,6 @@ RocksDBDeleteDataSink::RocksDBDeleteDataSink(
              " does not match row "
              "type size",
              _row_type->size());
-  SDB_ASSERT(_number_of_rows_affected,
-             "RocksDBDeleteDataSink: invalid rows affected counter");
   _key_childs.resize(_row_type->size());
   absl::c_iota(_key_childs, 0);
 }
@@ -2412,7 +2409,7 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
       _data_writer.DeleteCell(key_buffer);
     }
   }
-  *_number_of_rows_affected += num_rows;
+  _number_of_rows_affected += num_rows;
 }
 
 bool RocksDBDeleteDataSink::finish() {

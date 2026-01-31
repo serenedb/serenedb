@@ -338,7 +338,7 @@ class SereneDBConnectorInsertTableHandle final
 
   query::Transaction& GetTransaction() const noexcept { return _transaction; }
 
-  size_t* NumberOfRowsAffected() const noexcept { return &_rows_affected; }
+  uint64_t& NumberOfRowsAffected() const noexcept { return _rows_affected; }
 
  private:
   axiom::connector::ConnectorSessionPtr _session;
@@ -346,7 +346,7 @@ class SereneDBConnectorInsertTableHandle final
   axiom::connector::WriteKind _kind;
   query::Transaction& _transaction;
   std::vector<velox::connector::ColumnHandlePtr> _row_id_handles;
-  mutable size_t _rows_affected = 0;
+  mutable uint64_t _rows_affected = 0;
   bool _update_pk = false;
 };
 
@@ -419,7 +419,7 @@ class SereneDBConnectorMetadata final
     }
 
     int64_t number_of_locked_primary_keys =
-      *serene_insert_handle->NumberOfRowsAffected();
+      serene_insert_handle->NumberOfRowsAffected();
     if (serene_insert_handle->Kind() == axiom::connector::WriteKind::kInsert ||
         serene_insert_handle->Kind() == axiom::connector::WriteKind::kDelete) {
       auto& rocksdb_table =

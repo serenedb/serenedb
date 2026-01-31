@@ -412,6 +412,7 @@ class SereneDBConnectorMetadata final
     auto& transaction = serene_insert_handle->GetTransaction();
     auto* rocksdb_transaction = transaction.GetRocksDBTransaction();
     if (!rocksdb_transaction) [[unlikely]] {
+      SDB_ASSERT(serene_insert_handle->NumberOfRowsAffected() == 0);
       return yaclib::MakeFuture<int64_t>(0);
     }
 
@@ -431,6 +432,7 @@ class SereneDBConnectorMetadata final
     if (!transaction.HasTransactionBegin()) {
       auto r = transaction.Commit();
       if (!r.ok()) {
+        SDB_ASSERT(serene_insert_handle->NumberOfRowsAffected() == 0);
         SDB_THROW(ERROR_INTERNAL,
                   "Failed to commit transaction: ", r.errorMessage());
       }

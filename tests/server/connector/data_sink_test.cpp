@@ -91,15 +91,16 @@ class DataSinkTest : public ::testing::Test,
     rocksdb::WriteOptions wo;
     transaction.reset(_db->BeginTransaction(wo, trx_opts, nullptr));
     ASSERT_NE(transaction, nullptr);
-    std::vector<sdb::catalog::Column::Id> column_oids;
+    std::vector<std::pair<sdb::catalog::Column::Id, std::string_view>>
+      column_oids;
     column_oids.reserve(data->childrenSize());
     for (velox::column_index_t i = 0; i < data->childrenSize(); ++i) {
-      column_oids.push_back(static_cast<sdb::catalog::Column::Id>(i));
+      column_oids.push_back({static_cast<sdb::catalog::Column::Id>(i), ""});
     }
     sdb::connector::primary_key::Create(*data, pk, written_row_keys);
     size_t rows_affected = 0;
     sdb::connector::RocksDBInsertDataSink sink(
-      *transaction, *_cf_handles.front(), *pool_.get(), object_key, pk,
+      "", *transaction, *_cf_handles.front(), *pool_.get(), object_key, pk,
       std::move(column_oids), sdb::WriteConflictPolicy::Replace, rows_affected,
       {});
     sink.appendData(data);
@@ -2488,8 +2489,8 @@ TEST_F(DataSinkTest, test_deleteDataSink) {
 
   size_t rows_affected = 0;
   sdb::connector::RocksDBDeleteDataSink delete_sink(
-    *transaction, *_cf_handles.front(), row_type, object_key, {0, 1, 2, 3},
-    rows_affected, {});
+    *transaction, *_cf_handles.front(), row_type, object_key,
+    {{0, ""}, {1, ""}, {2, ""}, {3, ""}}, rows_affected, {});
 
   delete_sink.appendData(row_data);
   ASSERT_TRUE(delete_sink.finish());
@@ -2509,7 +2510,8 @@ TEST_F(DataSinkTest, test_deleteDataSink) {
 }
 
 TEST_F(DataSinkTest, test_deleteDataSinkPartial) {
-  const std::vector<sdb::catalog::Column::Id> column_ids = {0, 1, 2, 3};
+  const std::vector<std::pair<sdb::catalog::Column::Id, std::string_view>>
+    column_ids = {{0, ""}, {1, ""}, {2, ""}, {3, ""}};
   std::vector<std::string> names = {"hero", "role", "skill_level"};
   std::vector<velox::TypePtr> types = {velox::VARCHAR(), velox::VARCHAR(),
                                        velox::INTEGER()};
@@ -2593,7 +2595,8 @@ TEST_F(DataSinkTest, test_deleteDataSinkPartial) {
 }
 
 TEST_F(DataSinkTest, test_insertDeleteConflict) {
-  const std::vector<sdb::catalog::Column::Id> column_ids = {0, 1};
+  const std::vector<std::pair<sdb::catalog::Column::Id, std::string_view>>
+    column_ids = {{0, ""}, {1, ""}};
   std::vector<std::string> names = {"id", "name"};
   auto row_type =
     velox::ROW(names, {velox::createScalarType(velox::TypeKind::INTEGER),
@@ -2628,8 +2631,8 @@ TEST_F(DataSinkTest, test_insertDeleteConflict) {
   // insert should be fully written
   rocksdb::ReadOptions read_options;
   size_t i = 0;
-  auto column_key =
-    sdb::connector::key_utils::PrepareColumnKey(kObjectKey, column_ids[1]);
+  auto column_key = sdb::connector::key_utils::PrepareColumnKey(
+    kObjectKey, column_ids[1].first);
   const auto base_size = column_key.size();
   for (const std::string_view key : written_row_keys) {
     column_key.resize(base_size);

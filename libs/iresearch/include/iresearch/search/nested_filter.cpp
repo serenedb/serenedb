@@ -161,6 +161,8 @@ class ChildToParentJoin : public DocIterator, private Matcher {
     return Collect(*this, docs);
   }
 
+  const ScoreFunction& PrepareScore(const PrepareScoreContext& ctx) final;
+
   void CollectData(uint16_t index) final {
     if constexpr (Matcher::kHasScore) {
       Matcher::CollectDataImpl();
@@ -219,7 +221,7 @@ const ScoreFunction& ChildToParentJoin<Matcher>::PrepareScore(
       score = ScoreFunction::Default();
     } else {
       static_assert(Matcher::kHasScore);
-      score = Matcher::PrepareScore();
+      score = Matcher::PrepareMatcherScore();
     }
   }
   return score;
@@ -239,7 +241,9 @@ class NoneMatcher {
     return child < parent ? parent + 1 : 0;
   }
 
-  ScoreFunction PrepareScore() const { return ScoreFunction::Constant(_boost); }
+  ScoreFunction PrepareMatcherScore() const {
+    return ScoreFunction::Constant(_boost);
+  }
 
  private:
   score_t _boost;
@@ -337,7 +341,7 @@ class MatcherBase : public ScoreCtx {
             ScoreFunction::NoopMin};
   }
 
-  ScoreFunction PrepareScore() { return MakeNestedScore(this); }
+  ScoreFunction PrepareMatcherScore() { return MakeNestedScore(this); }
 
   void CollectChild(auto& it) {
     if constexpr (kHasScore) {
@@ -348,7 +352,8 @@ class MatcherBase : public ScoreCtx {
 
   [[no_unique_address]] utils::Need<kHasScore, NestedScoreContext<MergeType>>
     _scores;
-  [[no_unique_address]] utils::Need<kHasScore, const ScoreAttr*> _child_score{};
+  [[no_unique_address]] utils::Need<kHasScore, const ScoreFunction*>
+    _child_score{};
 };
 
 template<ScoreMergeType MergeType>

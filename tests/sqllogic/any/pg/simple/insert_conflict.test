@@ -1,0 +1,97 @@
+# Basic test
+statement ok
+CREATE TABLE t1 (a INTEGER PRIMARY KEY, b INTEGER);
+
+statement count 3
+INSERT INTO t1 VALUES (1, 10), (2, 20), (3, 30);
+
+query
+SELECT * FROM t1 ORDER BY a;
+----
+a	b
+1	10
+2	20
+3	30
+
+statement count 0
+INSERT INTO t1 VALUES (1, 10), (2, 20), (3, 30) ON CONFLICT DO NOTHING;
+
+statement count 1
+INSERT INTO t1 VALUES (123, 123), (123, 123), (123, 123) ON CONFLICT DO NOTHING;
+
+statement count 1
+DELETE FROM t1 WHERE a = 123;
+
+statement error
+INSERT INTO t1 VALUES (1, 10), (2, 20), (3, 30);
+----
+db error: ERROR: duplicate key value violates unique constraint "t1_pkey"
+DETAIL: Key (a)=(1) already exists.
+
+
+statement error
+INSERT INTO t1 VALUES (1, 10), (4, 40), (5, 50);
+----
+db error: ERROR: duplicate key value violates unique constraint "t1_pkey"
+DETAIL: Key (a)=(1) already exists.
+
+
+statement count 2
+INSERT INTO t1 VALUES (4, 400), (5, 500);
+
+query
+SELECT * FROM t1 ORDER BY a;
+----
+a	b
+1	10
+2	20
+3	30
+4	400
+5	500
+
+statement error
+INSERT INTO t1 VALUES (100, 100), (100, 100);
+----
+db error: ERROR: duplicate key value violates unique constraint "t1_pkey"
+DETAIL: Key (a)=(100) already exists.
+
+
+statement ok
+DROP TABLE t1;
+
+# Conflict in transaction
+statement ok
+CREATE TABLE t2 (a INTEGER PRIMARY KEY, b INTEGER);
+
+statement ok
+BEGIN;
+
+statement count 1
+INSERT INTO t2 VALUES (1, 10);
+
+# We do not support 'Read Your Own Writes' yet
+onlyif serenedb
+query
+SELECT * FROM t2 ORDER BY a;
+----
+a	b
+
+# But still cannot insert into table as values is in transaction
+statement error
+INSERT INTO t2 VALUES (1, 42);
+----
+db error: ERROR: duplicate key value violates unique constraint "t2_pkey"
+DETAIL: Key (a)=(1) already exists.
+
+
+statement ok
+COMMIT
+
+# Rollbacked!
+query
+SELECT * FROM t2 ORDER BY a;
+----
+a	b
+
+statement ok
+DROP TABLE t2;

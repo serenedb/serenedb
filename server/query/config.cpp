@@ -76,6 +76,11 @@ bool ValidateValue(VariableType type, std::string_view value) {
              absl::EqualsIgnoreCase("greedy", value) ||
              absl::EqualsIgnoreCase("syntactic", value);
     }
+    case VariableType::SdbWriteConflictPolicy: {
+      return absl::EqualsIgnoreCase("emit_error", value) ||
+             absl::EqualsIgnoreCase("do_nothing", value) ||
+             absl::EqualsIgnoreCase("replace", value);
+    }
     default:
       SDB_UNREACHABLE();
   }

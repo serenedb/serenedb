@@ -59,8 +59,18 @@ Fragment 0:  numWorkers=0:
     -- Filter[1][expression: and(presto_eq("a",2),if(spark_isnotnull("a"),true,cast(pg_error(33575106,0,null value in column "a" of relation "single_pk" violates not-null constraint,presto_concat(Failing row contains (,coalesce(cast("a" as VARCHAR),null),, ,200,, ,200,).)) as BOOLEAN)))] -> "a":INTEGER
       -- TableScan[0][single_pk] -> "a":INTEGER
 
-statement error multiple assignments to same column "a"
+statement error
 UPDATE single_pk SET a = 42, a = 100500 WHERE b = 10;
+----
+db error: ERROR: multiple assignments to same column "a"
+
+
+statement error
+UPDATE single_pk SET a = 42;
+----
+db error: ERROR: duplicate key value violates unique constraint "single_pk_pkey"
+DETAIL: Key (a)=(42) already exists.
+
 
 statement ok
 DROP TABLE single_pk;
@@ -224,10 +234,12 @@ CREATE TABLE dup_test (a INTEGER PRIMARY KEY, b INTEGER);
 statement count 2
 INSERT INTO dup_test VALUES (1, 10), (2, 20);
 
-# TODO(mkornaukhov) implement unique constaint for SereneDB
-skipif serenedb
-statement error duplicate key value violates unique constraint "dup_test_pkey"
+statement error
 UPDATE dup_test SET a = 2 WHERE a = 1;
+----
+db error: ERROR: duplicate key value violates unique constraint "dup_test_pkey"
+DETAIL: Key (a)=(2) already exists.
+
 
 query
 SELECT * FROM dup_test ORDER BY a;
@@ -451,3 +463,39 @@ a	b
 
 statement ok
 DROP TABLE update_all;
+
+statement ok
+CREATE TABLE multi_pk2 (a INTEGER, b INTEGER, c VARCHAR, PRIMARY KEY(a, b));
+
+statement ok
+INSERT INTO multi_pk2 VALUES (1,1, 'a'), (1,2, 'b');
+
+statement error
+UPDATE multi_pk2 SET a = 1, b = 2 WHERE a = 1 AND b = 1;
+----
+db error: ERROR: duplicate key value violates unique constraint "multi_pk2_pkey"
+DETAIL: Key (a, b)=(1, 2) already exists.
+
+
+# Shows that lookup in transaction write buffer is required, non-reentrant lock is not a solution
+
+statement ok
+BEGIN;
+
+statement count 1
+UPDATE multi_pk2 SET a = 3, b = 3 WHERE a = 1 AND b = 1;
+
+# PK (1, 1) is already locked in previous statement
+statement count 1
+INSERT INTO multi_pk2 VALUES (1,1, 'c')
+
+statement ok
+COMMIT;
+
+query
+SELECT * FROM multi_pk2 ORDER BY a;
+----
+a	b	c
+1	1	c
+1	2	b
+3	3	a

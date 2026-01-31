@@ -1,0 +1,110 @@
+# Basic test
+statement ok
+CREATE TABLE t1 (a INTEGER PRIMARY KEY, b INTEGER);
+
+# Same as default behaviour
+statement ok
+SET sdb_write_conflict_policy = emit_error;
+
+statement count 3
+INSERT INTO t1 VALUES (1, 10), (2, 20), (3, 30);
+
+query
+SELECT * FROM t1 ORDER BY a;
+----
+a	b
+1	10
+2	20
+3	30
+
+statement count 0
+INSERT INTO t1 VALUES (1, 10), (2, 20), (3, 30) ON CONFLICT DO NOTHING;
+
+statement error
+INSERT INTO t1 VALUES (1, 10), (2, 20), (3, 30);
+----
+db error: ERROR: duplicate key value violates unique constraint "t1_pkey"
+DETAIL: Key (a)=(1) already exists.
+
+
+statement error
+INSERT INTO t1 VALUES (1, 10), (4, 40), (5, 50);
+----
+db error: ERROR: duplicate key value violates unique constraint "t1_pkey"
+DETAIL: Key (a)=(1) already exists.
+
+
+statement count 2
+INSERT INTO t1 VALUES (4, 400), (5, 500);
+
+query
+SELECT * FROM t1 ORDER BY a;
+----
+a	b
+1	10
+2	20
+3	30
+4	400
+5	500
+
+statement error
+INSERT INTO t1 VALUES (100, 100), (100, 100);
+----
+db error: ERROR: duplicate key value violates unique constraint "t1_pkey"
+DETAIL: Key (a)=(100) already exists.
+
+
+# Cleanup table for less output
+statement count 4
+DELETE FROM t1 where a != 1;
+
+# Do nothing as default behaviour
+statement ok
+SET sdb_write_conflict_policy = do_nothing;
+
+statement count 0
+INSERT INTO t1 VALUES (1, 100);
+
+statement count 1
+INSERT INTO t1 VALUES (1, 100), (2, 200);
+
+query
+SELECT * FROM t1 ORDER BY a;
+----
+a	b
+1	10
+2	200
+
+# TODO(mkornaukhov) statement count 1
+statement count 1
+INSERT INTO t1 VALUES (3, 300), (3, 300);
+
+query
+SELECT * FROM t1 ORDER BY a;
+----
+a	b
+1	10
+2	200
+3	300
+
+# Upsert as default behaviour
+statement ok
+SET sdb_write_conflict_policy = replace;
+
+statement count 3
+INSERT INTO t1 VALUES (1, 111), (2, 222), (3, 333);
+
+query
+SELECT * FROM t1 ORDER BY a;
+----
+a	b
+1	111
+2	222
+3	333
+
+statement ok
+DROP TABLE t1;
+
+# Invalid values cannot be set
+statement error
+SET sdb_write_conflict_policy = boom;

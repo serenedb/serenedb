@@ -19,6 +19,7 @@ target_link_libraries(
     iresearch-static
     rocksdb
     velox
+    pg_query
 )
 
 # TODO(Dronplane): why not make public includes for sereneserver so we avoid this ugly line below?

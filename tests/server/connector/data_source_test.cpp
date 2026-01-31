@@ -72,22 +72,25 @@ class DataSourceTest : public ::testing::Test,
 
   void MakeRocksDBWrite(velox::RowVectorPtr data, sdb::ObjectId object_key) {
     std::vector<velox::column_index_t> pk;
-    std::vector<sdb::catalog::Column::Id> column_ids;
+    std::vector<std::pair<sdb::catalog::Column::Id, std::string_view>>
+      column_ids;
     column_ids.reserve(data->type()->asRow().size());
     for (velox::vector_size_t i = 0; i < data->type()->asRow().size(); ++i) {
       if (!data->childAt(i)->mayHaveNulls()) {
         pk.push_back(i);
       }
-      column_ids.emplace_back(i);
+      column_ids.emplace_back(std::pair{i, ""});
     }
     rocksdb::TransactionOptions trx_opts;
     rocksdb::WriteOptions wo;
     std::unique_ptr<rocksdb::Transaction> transaction{
       _db->BeginTransaction(wo, trx_opts, nullptr)};
     ASSERT_NE(transaction, nullptr);
+    size_t rows_affected = 0;
     sdb::connector::RocksDBInsertDataSink sink(
-      *transaction, *_cf_handles.front(), *pool_.get(), object_key, pk,
-      column_ids, {});
+      "", *transaction, *_cf_handles.front(), *pool_.get(), object_key, pk,
+      std::move(column_ids), sdb::WriteConflictPolicy::Replace, rows_affected,
+      {});
     sink.appendData(data);
     while (!sink.finish()) {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));

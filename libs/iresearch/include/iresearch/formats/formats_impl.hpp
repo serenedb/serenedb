@@ -2724,7 +2724,7 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
             auto it = memory::make_managed<
               DocIteratorImpl<IteratorTraits, FieldTraits, Extent>>(
               std::forward<Extent>(extent));
-            it->Prepare(meta, _doc_in.get(), _pos_in.get(), _pay_in.get());
+            it->Prepare(cookie, _doc_in.get(), _pos_in.get(), _pay_in.get());
             return it;
           });
       });
@@ -2770,12 +2770,11 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
         for (auto& it : iterators) {
           adapters.emplace_back(std::move(it));
         }
-        return ResolveMergeType(
-          type, num_buckets, [&]<typename A>(A&& aggregator) {
-            using MinMatchIterator = MinMatchIterator<Adapter, A>;
-            return MakeWeakDisjunction<MinMatchIterator>(
-              options, std::move(adapters), min_match, std::move(aggregator));
-          });
+        return ResolveMergeType(type, [&]<ScoreMergeType MergeType> {
+          using MinMatchIterator = MinMatchIterator<Adapter, MergeType>;
+          return MakeWeakDisjunction<MinMatchIterator>(
+            options, std::move(adapters), min_match);
+        });
       });
     });
 }

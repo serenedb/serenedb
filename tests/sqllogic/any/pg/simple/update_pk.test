@@ -462,3 +462,26 @@ INSERT INTO multi_pk2 VALUES (1,1, 'a'), (1,2, 'b');
 
 statement error duplicate key value violates unique constraint
 UPDATE multi_pk2 SET a = 1, b = 2 WHERE a = 1 AND b = 1;
+
+# Shows that lookup in transaction write buffer is required, non-reentrant lock is not a solution 
+
+statement ok
+BEGIN;
+
+statement count 1
+UPDATE multi_pk2 SET a = 3, b = 3 WHERE a = 1 AND b = 1;
+
+# PK (1, 1) is already locked in previous statement
+statement count 1
+INSERT INTO multi_pk2 VALUES (1,1, 'c')
+
+statement ok
+COMMIT;
+
+query
+SELECT * FROM multi_pk2 ORDER BY a;
+----
+a	b	c
+1	1	c
+1	2	b
+3	3	a

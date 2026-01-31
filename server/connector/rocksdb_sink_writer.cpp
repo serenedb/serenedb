@@ -30,7 +30,7 @@ void RocksDBSinkWriter::ConfigureReadOptions() {
   _read_options.snapshot = _transaction.GetSnapshot();
 }
 
-size_t RocksDBSinkWriter::HandleSnapshotConflicts(
+size_t RocksDBSinkWriter::HandleWriteConflicts(
   primary_key::Keys& keys, std::span<const std::string> old_keys) {
   SDB_ASSERT(keys.size() == old_keys.size() || old_keys.empty());
   if (_conflict_policy == WriteConflictPolicy::Replace) {
@@ -38,30 +38,17 @@ size_t RocksDBSinkWriter::HandleSnapshotConflicts(
     return 0;
   }
 
-  auto* db = _transaction.GetDB();
-  SDB_ASSERT(db);
-
   ConfigureReadOptions();
-  size_t skipped_cnt = 0;
+  size_t skipped_count = 0;
   for (size_t i = 0; i < keys.size(); ++i) {
     auto& key = keys[i];
-    if (key.empty()) {
-      // marked as duplicated in locks
-      continue;
-    }
     // Old key equals to new key
     if (!old_keys.empty() && old_keys[i] == key) {
       continue;
     }
 
-    rocksdb::Status status;
-    if (old_keys.empty()) {
-      // INSERT
-      status = db->Get(_read_options, &_cf, key, &_lookup_value);
-    } else {
-      // UPDATE PK
-      status = _transaction.Get(_read_options, &_cf, key, &_lookup_value);
-    }
+    rocksdb::Status status =
+      _transaction.Get(_read_options, &_cf, key, &_lookup_value);
     // We do not need value, so it may be forgotten immediately.
     // See issue #184
     _lookup_value.Reset();
@@ -82,7 +69,7 @@ size_t RocksDBSinkWriter::HandleSnapshotConflicts(
         case WriteConflictPolicy::DoNothing:
           // Mark key: it should be skipped
           key.clear();
-          skipped_cnt++;
+          skipped_count++;
           break;
         case WriteConflictPolicy::EmitError:
           SDB_THROW(ERROR_SERVER_UNIQUE_CONSTRAINT_VIOLATED,
@@ -93,7 +80,7 @@ size_t RocksDBSinkWriter::HandleSnapshotConflicts(
       }
     }
   }
-  return skipped_cnt;
+  return skipped_count;
 }
 
 void RocksDBSinkWriter::Write(std::span<const rocksdb::Slice> cell_slices,

@@ -147,9 +147,6 @@ sdb::Result ConvertStatus(const rocksdb::Status& status, StatusHint hint) {
                 "failed to acquire lock due to lock number limit " +
                   status.ToString()};
       }
-      if (status.subcode() == rocksdb::Status::SubCode::kReentrantLockAttempt) {
-        return {ERROR_SERVER_UNIQUE_CONSTRAINT_VIOLATED, status.ToString()};
-      }
       return {ERROR_SERVER_CONFLICT, "write-write conflict"};
     case rocksdb::Status::Code::kExpired:
       return {ERROR_INTERNAL,

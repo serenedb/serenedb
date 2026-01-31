@@ -167,8 +167,6 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
   const std::string table_key = key_utils::PrepareTableKey(_object_key);
   const auto num_rows = input->size();
   const auto num_columns = input->childrenSize();
-  const bool skip_duplicates =
-    _data_writer._conflict_policy == WriteConflictPolicy::DoNothing;
 
   _store_keys_buffers.clear();
   _store_keys_buffers.resize(num_rows);
@@ -183,11 +181,6 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
         if (status.ok()) {
           return;
         }
-        if (skip_duplicates && status.IsReentrantLockAttempt()) {
-          key_buffer.clear();
-          ++lock_skipped;
-          return;
-        }
         const auto result = rocksutils::ConvertStatus(status);
         SDB_THROW(result.errorNumber(), "Failed to acquire row lock for table ",
                   _object_key.id(), " error: ", result.errorMessage());
@@ -200,7 +193,7 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
   }
 
   const size_t snapshot_skipped =
-    _data_writer.HandleSnapshotConflicts(_store_keys_buffers);
+    _data_writer.HandleWriteConflicts(_store_keys_buffers);
   const size_t total_skipped = lock_skipped + snapshot_skipped;
   SDB_ASSERT(total_skipped <= num_rows);
 
@@ -326,46 +319,30 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
     *_number_of_rows_affected += num_rows;
     return;
   }
-
-  // WHAT IF IN MULTISTATEMENT TRANSACTION WILL TOUCH SAME KEY?
-  // TODO(mkornaukhov) WILL BE SHIT, WE MUST READ FROM TRANSACTION EACH TIME
-  // TODO(mkornaukhov) MAKE TEST
-  // begin (read you own writes)
-  // insert 1
-  // update 1 -> 2
-  // insert 1
-  // commit
-  // or
-  // begin
-  // update 1 -> 2
-  // update 1 -> 2 (must OK 0 lines, but will emit error)
-
   // Take locks and prepare buffers for both new and
-  // old primary keys (if old and new pk are same, than does not lock because of
-  // no reentrancy)
+  // old primary keys
   for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
     key_utils::MakeColumnKey(input, _updated_key_childs, row_idx, table_key,
                              lock_new_row, _store_keys_buffers.emplace_back());
 
-    key_utils::MakeColumnKey(
-      input, _key_childs, row_idx, table_key,
-      [&](std::string_view old_lock_key) {
-        // Lock is not reentrant. Do not lock twice for queries like
-        // UPDATE t SET a = a;
-        if (old_lock_key.substr(sizeof(ObjectId)) !=
-            extract_pk(_store_keys_buffers.back())) {
-          lock_old_row(old_lock_key);
-        }
-      },
-      _old_keys_buffers.emplace_back());
+    key_utils::MakeColumnKey(input, _key_childs, row_idx, table_key,
+                             lock_old_row, _old_keys_buffers.emplace_back());
 
-    //
     key_utils::SetupColumnForKey(_store_keys_buffers.back(),
                                  _column_ids.front());
   }
 
   ensure_input_sorted(_old_keys_buffers);
-  _data_writer.HandleSnapshotConflicts(_store_keys_buffers, _old_keys_buffers);
+  _data_writer.HandleWriteConflicts(_store_keys_buffers, _old_keys_buffers);
+  // Check that all primary keys in store_key_buffers are unique
+  // TODO optimize and check earlier
+  if (containers::FlatHashSet<std::string_view>(_store_keys_buffers.begin(),
+                                                _store_keys_buffers.end())
+        .size() != _store_keys_buffers.size()) {
+    SDB_THROW(ERROR_SERVER_UNIQUE_CONSTRAINT_VIOLATED,
+              "Primary key already exists");
+  }
+
   auto it = _data_writer.CreateIterator();
   for (auto column_id : _all_column_ids) {
     for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {

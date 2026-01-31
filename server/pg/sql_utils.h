@@ -136,6 +136,7 @@ enum class SqlCommandType : uint32_t {
   Show,         // show stmt
   Nothing,      // dummy command for instead nothing rules with qual
   Call,         // call stmt
+  Copy,         // copy stmt
 };
 
 }  // namespace pg

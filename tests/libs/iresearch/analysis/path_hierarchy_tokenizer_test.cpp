@@ -567,7 +567,6 @@ TEST_F(PathHierarchyTokenizerTests, test_reverse_skip) {
   ASSERT_FALSE(stream.next());
 }
 
-
 TEST_F(PathHierarchyTokenizerTests, test_empty_delimiter) {
   typedef irs::analysis::PathHierarchyTokenizer::OptionsT OptionsT;
 

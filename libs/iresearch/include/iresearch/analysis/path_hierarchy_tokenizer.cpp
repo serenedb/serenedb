@@ -291,7 +291,7 @@ bool PathHierarchyTokenizer::reset(std::string_view data) {
     state->num_tokens =
       state->delim_positions.empty() ? 1 : state->delim_positions.size();
   }
-  
+
   _state.reset(state.release());
 
   return true;
@@ -327,8 +327,7 @@ bool PathHierarchyTokenizer::next() {
     if (state.current_token > 0 &&
         state.current_token <= state.delim_positions.size()) {
       size_t delim_idx = state.current_token - 1;
-      start_pos =
-        state.delim_positions[delim_idx] + 1;
+      start_pos = state.delim_positions[delim_idx] + 1;
     }
 
     std::string_view token_str(state.data.data() + start_pos);

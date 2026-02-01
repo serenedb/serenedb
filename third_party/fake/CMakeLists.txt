@@ -1,4 +1,4 @@
-if (NOT SDB_USE_FMT)
+if (SDB_FAKE_FMT)
   add_library(fake_fmt INTERFACE)
   target_include_directories(fake_fmt INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/fmt)
   add_library(fmt::fmt ALIAS fake_fmt)

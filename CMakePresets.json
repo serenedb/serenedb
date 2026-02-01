@@ -55,7 +55,6 @@
         "CMAKE_BUILD_TYPE": "Release",
         "STATIC_EXECUTABLES": "On",
         "SDB_DEV": "Off",
-        "SDB_USE_FMT": "On",
         "SDB_FAULT_INJECTION": "Off",
         "SDB_GTEST": "Off",
         "SDB_ALLOC": "JE"

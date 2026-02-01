@@ -645,7 +645,7 @@ add_library(double-conversion::double-conversion ALIAS double-conversion)
 ## fmt
 ################################################################################
 
-if(SDB_USE_FMT)
+if(NOT SDB_FAKE_FMT)
     sdb_update_module(${GIT_EXECUTABLE} "fmt" ${CMAKE_CURRENT_SOURCE_DIR} "LICENSE")
     add_subdirectory(fmt)
 endif()

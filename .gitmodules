@@ -109,3 +109,6 @@
 [submodule "third_party/arrow"]
 	path = third_party/arrow
 	url = git@github.com:serenedb/arrow.git
+[submodule "third_party/thrift"]
+	path = third_party/thrift
+	url = git@github.com:serenedb/thrift.git

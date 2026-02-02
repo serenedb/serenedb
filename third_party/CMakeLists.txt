@@ -642,39 +642,6 @@ add_subdirectory(double-conversion)
 add_library(double-conversion::double-conversion ALIAS double-conversion)
 
 ################################################################################
-## fmt
-################################################################################
-
-if(NOT SDB_FAKE_FMT)
-    sdb_update_module(${GIT_EXECUTABLE} "fmt" ${CMAKE_CURRENT_SOURCE_DIR} "LICENSE")
-    add_subdirectory(fmt)
-endif()
-
-################################################################################
-## fake libraries (fmt, gflags, glog, folly)
-################################################################################
-
-add_subdirectory(fake)
-
-################################################################################
-## folly
-################################################################################
-
-set(FOLLY_HAVE_INT128_T ON)
-set(FOLLY_HAVE_EXTRANDOM_SFMT19937 OFF)
-set(FOLLY_HAVE_LIBGFLAGS ON)
-set(FOLLY_HAVE_LIBGLOG ON)
-# TODO(mbkkt) FOLLY_LIBRARY_SANITIZE_ADDRESS
-set(FOLLY_USE_SYMBOLIZER OFF)
-set(FOLLY_HAVE_LIBUNWIND OFF)
-set(FOLLY_HAVE_ELF OFF)
-set(FOLLY_HAVE_DWARF OFF)
-sdb_update_module(${GIT_EXECUTABLE} "folly" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-add_subdirectory(folly)
-target_include_directories(folly PUBLIC ${OPENSSL_INCLUDE_DIR})
-target_link_libraries(folly PUBLIC ${OPENSSL_LIBRARIES})
-
-################################################################################
 ## PROTOBUF
 ################################################################################
 
@@ -907,8 +874,42 @@ if("${SDB_ALLOC}" MATCHES "JE")
 endif()
 
 ################################################################################
+## fmt
+################################################################################
+
+if(NOT SDB_FAKE_FMT)
+    sdb_update_module(${GIT_EXECUTABLE} "fmt" ${CMAKE_CURRENT_SOURCE_DIR} "LICENSE")
+    add_subdirectory(fmt)
+endif()
+
+################################################################################
+## fake libraries (fmt, gflags, glog, folly)
+################################################################################
+
+add_subdirectory(fake)
+
+################################################################################
+## folly
+################################################################################
+
+set(FOLLY_HAVE_INT128_T ON)
+set(FOLLY_HAVE_EXTRANDOM_SFMT19937 OFF)
+set(FOLLY_HAVE_LIBGFLAGS ON)
+set(FOLLY_HAVE_LIBGLOG ON)
+# TODO(mbkkt) FOLLY_LIBRARY_SANITIZE_ADDRESS
+set(FOLLY_USE_SYMBOLIZER OFF)
+set(FOLLY_HAVE_LIBUNWIND OFF)
+set(FOLLY_HAVE_ELF OFF)
+set(FOLLY_HAVE_DWARF OFF)
+sdb_update_module(${GIT_EXECUTABLE} "folly" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+add_subdirectory(folly)
+target_include_directories(folly PUBLIC ${OPENSSL_INCLUDE_DIR})
+target_link_libraries(folly PUBLIC ${OPENSSL_LIBRARIES})
+
+################################################################################
 ## velox
 ################################################################################
+
 if(SDB_GTEST)
     # Needed for our connector tests
     set(VELOX_BUILD_VECTOR_TEST_UTILS ON CACHE BOOL "" FORCE)

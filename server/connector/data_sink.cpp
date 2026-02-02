@@ -143,11 +143,16 @@ WriteConflictResolver::WriteConflictResolver(rocksdb::Transaction& transaction,
   _read_options.async_io = true;
 }
 
+template<bool CheckOldKeys>
 size_t WriteConflictResolver::HandleWriteConflicts(
-  primary_key::Keys& keys, std::span<const std::string> old_keys,
-  velox::RowVectorPtr input, std::span<const velox::column_index_t> key_indices,
-  std::span<const ColumnInfo> columns) {
-  SDB_ASSERT(keys.size() == old_keys.size() || old_keys.empty());
+  primary_key::Keys& keys, velox::RowVectorPtr input,
+  std::span<const velox::column_index_t> key_indices,
+  std::span<const ColumnInfo> columns, std::span<const std::string> old_keys) {
+  if constexpr (CheckOldKeys) {
+    SDB_ASSERT(keys.size() == old_keys.size(),
+               "WriteConflictResolver: keys.size() != old_keys.size(), cannot "
+               "check old keys");
+  }
 
   const auto conflict_policy = _write_conflict_policy;
   if (conflict_policy == WriteConflictPolicy::Replace) {
@@ -160,8 +165,10 @@ size_t WriteConflictResolver::HandleWriteConflicts(
     auto& key = keys[i];
 
     // Skip if old key equals new key
-    if (!old_keys.empty() && old_keys[i] == key) {
-      continue;
+    if constexpr (CheckOldKeys) {
+      if (old_keys[i] == key) {
+        continue;
+      }
     }
 
     const auto status =
@@ -368,8 +375,8 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
   const size_t rows_skipped =
     _columns_info.back().id == catalog::Column::kGeneratedPKId
       ? 0
-      : _conflict_resolver.HandleWriteConflicts(_store_keys_buffers, {}, input,
-                                                _key_childs, _columns_info);
+      : _conflict_resolver.HandleWriteConflicts<false>(
+          _store_keys_buffers, input, _key_childs, _columns_info, {});
   SDB_ASSERT(rows_skipped <= num_rows);
   const auto affected_rows = num_rows - rows_skipped;
 
@@ -522,9 +529,9 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
   }
 
   ensure_input_sorted(_old_keys_buffers);
-  _conflict_resolver.HandleWriteConflicts(_store_keys_buffers,
-                                          _old_keys_buffers, input,
-                                          _updated_key_childs, _columns_info);
+  _conflict_resolver.HandleWriteConflicts<true>(
+    _store_keys_buffers, input, _updated_key_childs, _columns_info,
+    _old_keys_buffers);
 
   auto it = _data_writer.CreateIterator();
   for (auto column_id : _all_column_ids) {

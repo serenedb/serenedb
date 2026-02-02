@@ -51,11 +51,11 @@ class WriteConflictResolver {
 
   // Handles write conflicts. Returns number of skipped rows.
   // key_indices specifies which columns to use for error detail message.
+  template<bool CheckOldKeys>
   size_t HandleWriteConflicts(
-    primary_key::Keys& keys, std::span<const std::string> old_keys,
-    velox::RowVectorPtr input,
+    primary_key::Keys& keys, velox::RowVectorPtr input,
     std::span<const velox::column_index_t> key_indices,
-    std::span<const ColumnInfo> columns);
+    std::span<const ColumnInfo> column, std::span<const std::string> old_keys);
 
  private:
   rocksdb::Transaction& _transaction;

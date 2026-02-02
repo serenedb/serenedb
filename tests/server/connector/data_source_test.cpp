@@ -29,10 +29,7 @@
 #include "iresearch/utils/bytes_utils.hpp"
 #include "rocksdb/utilities/transaction_db.h"
 
-using namespace sdb;
-using namespace sdb::connector;
-
-namespace {
+namespace sdb::connector {
 
 constexpr ObjectId kObjectKey{1};
 class DataSourceTest : public ::testing::Test,
@@ -73,14 +70,14 @@ class DataSourceTest : public ::testing::Test,
 
   void MakeRocksDBWrite(velox::RowVectorPtr data, ObjectId object_key) {
     std::vector<velox::column_index_t> pk;
-    std::vector<::ColumnInfo> column_ids;
+    std::vector<ColumnInfo> column_ids;
     column_ids.reserve(data->type()->asRow().size());
     for (velox::vector_size_t i = 0; i < data->type()->asRow().size(); ++i) {
       if (!data->childAt(i)->mayHaveNulls()) {
         pk.push_back(i);
       }
       column_ids.push_back(
-        {.id = static_cast<sdb::catalog::Column::Id>(i), .name = ""});
+        {.id = static_cast<catalog::Column::Id>(i), .name = ""});
     }
     rocksdb::TransactionOptions trx_opts;
     rocksdb::WriteOptions wo;
@@ -88,7 +85,7 @@ class DataSourceTest : public ::testing::Test,
       _db->BeginTransaction(wo, trx_opts, nullptr)};
     ASSERT_NE(transaction, nullptr);
     size_t rows_affected = 0;
-    ::RocksDBInsertDataSink sink(
+    RocksDBInsertDataSink sink(
       "", *transaction, *_cf_handles.front(), *pool_.get(), object_key, pk,
       std::move(column_ids), WriteConflictPolicy::Replace, rows_affected, {});
     sink.appendData(data);
@@ -108,7 +105,7 @@ class DataSourceTest : public ::testing::Test,
     SDB_ASSERT(!column_ids.empty());
     auto effective_column_id = column_ids[0];
 
-    ::RocksDBDataSource source(
+    RocksDBDataSource source(
       *pool_.get(), nullptr, *_db, *_cf_handles.front(),
       std::shared_ptr<const velox::RowType>(
         std::shared_ptr<const velox::RowType>{nullptr}, &data->type()->asRow()),
@@ -117,7 +114,7 @@ class DataSourceTest : public ::testing::Test,
     // read as single batch
     {
       source.addSplit(
-        std::make_shared<::SereneDBConnectorSplit>("test_connector"));
+        std::make_shared<SereneDBConnectorSplit>("test_connector"));
       auto future = velox::ContinueFuture::makeEmpty();
 
       auto read = source.next(data->size(), future);
@@ -145,7 +142,7 @@ class DataSourceTest : public ::testing::Test,
     // read by one row
     {
       source.addSplit(
-        std::make_shared<::SereneDBConnectorSplit>("test_connector"));
+        std::make_shared<SereneDBConnectorSplit>("test_connector"));
       auto future = velox::ContinueFuture::makeEmpty();
       for (velox::vector_size_t i = 0; i < data->size(); ++i) {
         auto read = source.next(1, future);
@@ -291,13 +288,12 @@ TEST_F(DataSourceTest, test_tableReadEmptyOutput) {
     {makeFlatVector<int32_t>(key_data), makeFlatVector<std::string>(data)});
   auto row_type_empty = velox::ROW({});
   MakeRocksDBWrite(row_data, kObjectKey);
-  ::RocksDBDataSource source(*pool_.get(), nullptr, *_db, *_cf_handles.front(),
-                             row_type_empty, {0}, 0, kObjectKey);
+  RocksDBDataSource source(*pool_.get(), nullptr, *_db, *_cf_handles.front(),
+                           row_type_empty, {0}, 0, kObjectKey);
 
   // read as single batch
   {
-    source.addSplit(
-      std::make_shared<::SereneDBConnectorSplit>("test_connector"));
+    source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
     auto future = velox::ContinueFuture::makeEmpty();
 
     auto read = source.next(row_data->size(), future);
@@ -314,8 +310,7 @@ TEST_F(DataSourceTest, test_tableReadEmptyOutput) {
 
   // read by one row
   {
-    source.addSplit(
-      std::make_shared<::SereneDBConnectorSplit>("test_connector"));
+    source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
     auto future = velox::ContinueFuture::makeEmpty();
     for (velox::vector_size_t i = 0; i < row_data->size(); ++i) {
       auto read = source.next(1, future);
@@ -332,4 +327,4 @@ TEST_F(DataSourceTest, test_tableReadEmptyOutput) {
   }
 }
 
-}  // namespace
+}  // namespace sdb::connector

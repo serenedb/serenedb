@@ -20,6 +20,7 @@
 
 #include "data_sink.hpp"
 
+#include <absl/strings/str_join.h>
 #include <velox/common/base/SimdUtil.h>
 #include <velox/type/Type.h>
 #include <velox/vector/BiasVector.h>
@@ -62,60 +63,23 @@ constexpr std::string_view kOneValueHeader{"\0\1", 2};
 template<typename T>
 std::string VeloxValueToString(T val) {
   if constexpr (std::is_same_v<T, velox::StringView>) {
-    return std::string(val.data(), val.size());
+    return static_cast<std::string>(val);
   } else {
     return std::to_string(val);
   }
 }
 
 template<velox::TypeKind Kind>
-std::string GetPKVeloxValue(velox::VectorPtr vec, velox::vector_size_t idx);
-
-template<velox::TypeKind Kind>
-std::string GetPKVeloxFlatValue(velox::VectorPtr vec,
-                                velox::vector_size_t idx) {
-  using T = typename velox::TypeTraits<Kind>::NativeType;
-
-  const auto* as_flat = vec->as<velox::FlatVector<T>>();
-  return VeloxValueToString(as_flat->valueAtFast(idx));
-}
-
-template<velox::TypeKind Kind>
-std::string GetPKVeloxConstantValue(velox::VectorPtr vec,
-                                    velox::vector_size_t) {
-  using T = typename velox::TypeTraits<Kind>::NativeType;
-
-  const auto* as_const = vec->as<velox::ConstantVector<T>>();
-  if (as_const->valueVector()) {
-    return GetPKVeloxValue<Kind>(as_const->valueVector(),
-                                 as_const->wrappedIndex(0));
-  }
-
-  return VeloxValueToString(as_const->rawValues()[0]);
-}
-
-template<velox::TypeKind Kind>
-std::string GetPKVeloxDictValue(velox::VectorPtr vec,
-                                velox::vector_size_t idx) {
-  const auto& wrapped = velox::BaseVector::wrappedVectorShared(vec);
-  return GetPKVeloxValue<Kind>(wrapped, vec->wrappedIndex(idx));
-}
-
-template<velox::TypeKind Kind>
 std::string GetPKVeloxValue(velox::VectorPtr vec, velox::vector_size_t idx) {
   SDB_ASSERT(!vec->isNullAt(idx));
+  using T = typename velox::TypeTraits<Kind>::NativeType;
 
-  switch (vec->encoding()) {
-    case facebook::velox::VectorEncoding::Simple::CONSTANT:
-      return GetPKVeloxConstantValue<Kind>(vec, idx);
-    case facebook::velox::VectorEncoding::Simple::DICTIONARY:
-      return GetPKVeloxDictValue<Kind>(vec, idx);
-    case facebook::velox::VectorEncoding::Simple::FLAT:
-      return GetPKVeloxFlatValue<Kind>(vec, idx);
-    default:
-      // TODO(mkornaukhov) support not only flat and constant vectors here
-      return "<unsupported>";
+  const auto* simple_vec = vec->as<velox::SimpleVector<T>>();
+  if (!simple_vec) {
+    // TODO(mkornaukhov) support not only simple vectors
+    return "<unsupported>";
   }
+  return VeloxValueToString(simple_vec->valueAt(idx));
 }
 
 std::string FormatKeyValue(const velox::RowVectorPtr& input,
@@ -380,10 +344,10 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
   const auto num_columns = input->childrenSize();
 
   _store_keys_buffers.clear();
-  _store_keys_buffers.resize(num_rows);
+  _store_keys_buffers.reserve(num_rows);
 
   for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-    auto& key_buffer = _store_keys_buffers[row_idx];
+    auto& key_buffer = _store_keys_buffers.emplace_back();
     key_utils::MakeColumnKey(
       input, _key_childs, row_idx, table_key,
       [&](std::string_view row_key) {
@@ -486,18 +450,18 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
   const velox::IndexRange all_rows(0, num_rows);
   const folly::Range all_rows_range{&all_rows, 1};
 
-  auto extract_pk = [](std::string_view key) {
-    return key.substr(sizeof(ObjectId) + sizeof(catalog::Column::Id));
-  };
-
   auto ensure_input_sorted = [&](const auto& keys) {
+    static constexpr size_t kUnusedPrefixLen =
+      sizeof(ObjectId) + sizeof(catalog::Column::Id);
+
     // Rewrite on sorting if you can prove and explain why check is failed
     // Maybe JOIN as  UPDATE .. FROM t1 JOIN t2. .... will break this
     // assumption or search index with primary sort in case used as source!
     SDB_ENSURE(
       absl::c_is_sorted(keys,
                         [&](std::string_view lhs, std::string_view rhs) {
-                          return extract_pk(lhs) < extract_pk(rhs);
+                          return lhs.substr(kUnusedPrefixLen) <
+                                 rhs.substr(kUnusedPrefixLen);
                         }),
       ERROR_INTERNAL,
       "RocksDBUpdateDataSink: rows are expected to be sorted in case of "
@@ -538,9 +502,7 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
     key_utils::MakeColumnKey(
       input, _updated_key_childs, row_idx, table_key,
       [&](std::string_view lock_key) {
-        if (auto [_, inserted] =
-              _batch_keys.insert(lock_key.substr(sizeof(ObjectId)));
-            !inserted) {
+        if (!_batch_keys.emplace(lock_key.substr(sizeof(ObjectId))).second) {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
             ERR_MSG("duplicate key value violates unique constraint \"",

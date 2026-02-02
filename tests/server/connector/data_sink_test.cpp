@@ -28,10 +28,7 @@
 #include "iresearch/utils/bytes_utils.hpp"
 #include "rocksdb/utilities/transaction_db.h"
 
-using namespace sdb;
-using namespace sdb::connector;
-
-namespace {
+namespace sdb::connector {
 
 constexpr ObjectId kObjectKey{123456};
 
@@ -2651,4 +2648,4 @@ TEST_F(DataSinkTest, test_insertDeleteConflict) {
   }
 }
 
-}  // namespace
+}  // namespace sdb::connector

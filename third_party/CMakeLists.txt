@@ -689,6 +689,20 @@ set(Protobuf_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/protobuf/src)
 include_directories(${Protobuf_INCLUDE_DIRS})
 
 ################################################################################
+## thrift
+################################################################################
+
+add_library(thrift INTERFACE)
+target_include_directories(thrift SYSTEM INTERFACE thrift/lib/cpp/src)
+
+################################################################################
+## arrow
+################################################################################
+
+add_library(arrow INTERFACE)
+target_include_directories(arrow SYSTEM INTERFACE arrow/cpp/src)
+
+################################################################################
 ## velox
 ################################################################################
 if(SDB_GTEST)
@@ -723,8 +737,8 @@ set(VELOX_ENABLE_S3 OFF CACHE BOOL "" FORCE)
 set(VELOX_ENABLE_GCS OFF CACHE BOOL "" FORCE)
 set(VELOX_ENABLE_ABFS OFF CACHE BOOL "" FORCE)
 set(VELOX_ENABLE_HDFS OFF CACHE BOOL "" FORCE)
-set(VELOX_ENABLE_PARQUET OFF CACHE BOOL "" FORCE)
-set(VELOX_ENABLE_ARROW OFF CACHE BOOL "" FORCE)
+set(VELOX_ENABLE_PARQUET ON CACHE BOOL "" FORCE)
+set(VELOX_ENABLE_ARROW ON CACHE BOOL "" FORCE)
 set(VELOX_ENABLE_GEO OFF CACHE BOOL "" FORCE)
 set(VELOX_ENABLE_REMOTE_FUNCTIONS OFF CACHE BOOL "" FORCE)
 set(VELOX_ENABLE_CCACHE OFF CACHE BOOL "" FORCE)

@@ -698,7 +698,7 @@ set(FLATBUFFERS_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(FLATBUFFERS_INSTALL OFF CACHE BOOL "" FORCE)
 set(FLATBUFFERS_BUILD_FLATLIB ON CACHE BOOL "" FORCE)
 set(FLATBUFFERS_BUILD_FLATC OFF CACHE BOOL "" FORCE)
-set(FLATBUFFERS_CPP_STD 26)
+# TODO(mbkkt) newer cmake in CI: set(FLATBUFFERS_CPP_STD 26)
 add_subdirectory(flatbuffers)
 
 ################################################################################

@@ -52,6 +52,8 @@ LIBPG_QUERY_INCLUDES_BEGIN
 #include "utils/errcodes.h"
 LIBPG_QUERY_INCLUDES_END
 
+namespace sdb::connector {
+
 namespace {
 
 constexpr std::string_view kZeroLengthVector{"\0", 1};
@@ -134,9 +136,8 @@ std::string FormatKeyValue(const velox::RowVectorPtr& input,
 
 std::string BuildUniqueViolationDetail(
   std::span<const velox::column_index_t> key_indices,
-  std::span<const std::pair<sdb::catalog::Column::Id, std::string_view>>
-    columns,
-  const velox::RowVectorPtr& input, velox::vector_size_t row_idx) {
+  std::span<const ColumnInfo> columns, const velox::RowVectorPtr& input,
+  velox::vector_size_t row_idx) {
   static constexpr size_t kDetailReservedSize = 128;
   std::string detail;
   detail.reserve(kDetailReservedSize);
@@ -147,7 +148,7 @@ std::string BuildUniqueViolationDetail(
     if (i > 0) {
       detail += ", ";
     }
-    detail += columns[key_indices[i]].second;
+    detail += columns[key_indices[i]].name;
   }
   detail += ")=(";
 
@@ -166,8 +167,6 @@ std::string BuildUniqueViolationDetail(
 }
 }  // namespace
 
-namespace sdb::connector {
-
 WriteConflictResolver::WriteConflictResolver(rocksdb::Transaction& transaction,
                                              rocksdb::ColumnFamilyHandle& cf,
                                              WriteConflictPolicy policy,
@@ -175,12 +174,15 @@ WriteConflictResolver::WriteConflictResolver(rocksdb::Transaction& transaction,
   : _transaction{transaction},
     _cf{cf},
     _table_name{table_name},
-    _write_conflict_policy{policy} {}
+    _write_conflict_policy{policy} {
+  _read_options.snapshot = transaction.GetSnapshot();
+  _read_options.async_io = true;
+}
 
 size_t WriteConflictResolver::HandleWriteConflicts(
   primary_key::Keys& keys, std::span<const std::string> old_keys,
   velox::RowVectorPtr input, std::span<const velox::column_index_t> key_indices,
-  std::span<const std::pair<catalog::Column::Id, std::string_view>> columns) {
+  std::span<const ColumnInfo> columns) {
   SDB_ASSERT(keys.size() == old_keys.size() || old_keys.empty());
 
   const auto conflict_policy = _write_conflict_policy;
@@ -188,9 +190,6 @@ size_t WriteConflictResolver::HandleWriteConflicts(
     // Optimize out reading
     return 0;
   }
-
-  _read_options.async_io = true;
-  _read_options.snapshot = _transaction.GetSnapshot();
 
   size_t skipped_count = 0;
   for (size_t i = 0; i < keys.size(); ++i) {
@@ -238,7 +237,7 @@ template<typename DataWriterType, typename SubWriterType>
 RocksDBDataSinkBase<DataWriterType, SubWriterType>::RocksDBDataSinkBase(
   DataWriterType data_writer, velox::memory::MemoryPool& memory_pool,
   ObjectId object_key, std::span<const velox::column_index_t> key_childs,
-  std::vector<std::pair<catalog::Column::Id, std::string_view>> columns,
+  std::vector<ColumnInfo> columns,
   std::vector<std::unique_ptr<SubWriterType>>&& index_writers)
   : _data_writer{std::move(data_writer)},
     _index_writers{std::move(index_writers)},
@@ -260,8 +259,8 @@ RocksDBInsertDataSink::RocksDBInsertDataSink(
   std::string_view table_name, rocksdb::Transaction& transaction,
   rocksdb::ColumnFamilyHandle& cf, velox::memory::MemoryPool& memory_pool,
   ObjectId object_key, std::span<const velox::column_index_t> key_childs,
-  std::vector<std::pair<catalog::Column::Id, std::string_view>> columns,
-  WriteConflictPolicy conflict_policy, uint64_t& number_of_rows_affected,
+  std::vector<ColumnInfo> columns, WriteConflictPolicy conflict_policy,
+  uint64_t& number_of_rows_affected,
   std::vector<std::unique_ptr<SinkInsertWriter>>&& index_writers)
   : RocksDBDataSinkBase<RocksDBSinkWriter, SinkInsertWriter>{RocksDBSinkWriter{
                                                                transaction, cf},
@@ -279,8 +278,7 @@ SSTInsertDataSink::SSTInsertDataSink(
   rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
   std::span<const velox::column_index_t> key_childs,
-  std::vector<std::pair<catalog::Column::Id, std::string_view>> columns,
-  std::string_view rocksdb_directory)
+  std::vector<ColumnInfo> columns, std::string_view rocksdb_directory)
   : RocksDBDataSinkBase<SSTSinkWriter, SinkInsertWriter>(
       SSTSinkWriter{db, cf, columns, rocksdb_directory}, memory_pool,
       object_key, key_childs, std::move(columns),
@@ -309,8 +307,8 @@ void SSTInsertDataSink::appendData(velox::RowVectorPtr input) {
   velox::IndexRange all_rows(0, num_rows);
   const folly::Range all_rows_range{&all_rows, 1};
   for (velox::column_index_t i = 0; i < num_columns; ++i) {
-    if (_columns_info[i].first != catalog::Column::kGeneratedPKId) {
-      WriteInputColumn(_columns_info[i].first, i, *input, all_rows_range);
+    if (_columns_info[i].id != catalog::Column::kGeneratedPKId) {
+      WriteInputColumn(_columns_info[i].id, i, *input, all_rows_range);
     }
   }
 }
@@ -319,7 +317,7 @@ RocksDBUpdateDataSink::RocksDBUpdateDataSink(
   std::string_view table_name, rocksdb::Transaction& transaction,
   rocksdb::ColumnFamilyHandle& cf, velox::memory::MemoryPool& memory_pool,
   ObjectId object_key, std::span<const velox::column_index_t> key_childs,
-  std::vector<std::pair<catalog::Column::Id, std::string_view>> columns,
+  std::vector<ColumnInfo> columns,
   std::vector<catalog::Column::Id> all_column_ids, bool update_pk,
   velox::RowTypePtr table_row_type, uint64_t& number_of_rows_affected,
   std::vector<std::unique_ptr<SinkUpdateWriter>>&& index_writers)
@@ -351,7 +349,7 @@ RocksDBUpdateDataSink::RocksDBUpdateDataSink(
 
     _column_id_to_input_idx.reserve(_columns_info.size());
     for (size_t i = 0; i < _columns_info.size(); ++i) {
-      _column_id_to_input_idx[_columns_info[i].first] = i;
+      _column_id_to_input_idx[_columns_info[i].id] = i;
     }
 
     // Map old PK indices to updated PK positions in input
@@ -359,7 +357,7 @@ RocksDBUpdateDataSink::RocksDBUpdateDataSink(
     // as first is old key and we need to find new values.
     _updated_key_childs.reserve(_key_childs.size());
     for (auto old_pk_index : _key_childs) {
-      auto pk_column_id = _columns_info[old_pk_index].first;
+      auto pk_column_id = _columns_info[old_pk_index].id;
       auto updated_pos_it = _column_id_to_input_idx.find(pk_column_id);
       SDB_ASSERT(updated_pos_it != _column_id_to_input_idx.end());
       _updated_key_childs.push_back(updated_pos_it->second);
@@ -399,12 +397,12 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
       },
       key_buffer);
 
-    key_utils::SetupColumnForKey(key_buffer, _columns_info.front().first);
+    key_utils::SetupColumnForKey(key_buffer, _columns_info.front().id);
   }
 
   // Conflicts with generated PK are not possible
   const size_t rows_skipped =
-    _columns_info.back().first == catalog::Column::kGeneratedPKId
+    _columns_info.back().id == catalog::Column::kGeneratedPKId
       ? 0
       : _conflict_resolver.HandleWriteConflicts(_store_keys_buffers, {}, input,
                                                 _key_childs, _columns_info);
@@ -422,13 +420,13 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
   const velox::IndexRange all_rows{0, num_rows};
   const folly::Range all_rows_range{&all_rows, 1};
   for (velox::column_index_t i = 0; i < num_columns; ++i) {
-    if (_columns_info[i].first == catalog::Column::kGeneratedPKId) {
+    if (_columns_info[i].id == catalog::Column::kGeneratedPKId) {
       SDB_ASSERT(i + 1 == num_columns,
                  "RocksDBDataSink: generated primary column should be the last "
                  "one in the input vectors");
       break;
     }
-    WriteInputColumn(_columns_info[i].first, i, *input, all_rows_range);
+    WriteInputColumn(_columns_info[i].id, i, *input, all_rows_range);
   }
   _number_of_rows_affected += affected_rows;
 }
@@ -527,20 +525,21 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
 
     // Write updated values
     for (velox::column_index_t i = _key_childs.size(); i < num_columns; ++i) {
-      WriteInputColumn(_columns_info[i].first, i, *input, all_rows_range);
+      WriteInputColumn(_columns_info[i].id, i, *input, all_rows_range);
     }
     _number_of_rows_affected += num_rows;
     return;
   }
   // Take locks and prepare buffers for both new and
   // old primary keys
-  containers::FlatHashSet<std::string_view> batch_keys;
+  _batch_keys.clear();
+  _batch_keys.reserve(num_rows);
   for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
     key_utils::MakeColumnKey(
       input, _updated_key_childs, row_idx, table_key,
       [&](std::string_view lock_key) {
         if (auto [_, inserted] =
-              batch_keys.insert(lock_key.substr(sizeof(ObjectId)));
+              _batch_keys.insert(lock_key.substr(sizeof(ObjectId)));
             !inserted) {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
@@ -557,7 +556,7 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
                              lock_old_row, _old_keys_buffers.emplace_back());
 
     key_utils::SetupColumnForKey(_store_keys_buffers.back(),
-                                 _columns_info.front().first);
+                                 _columns_info.front().id);
   }
 
   ensure_input_sorted(_old_keys_buffers);
@@ -2582,8 +2581,7 @@ RocksDBDataSinkBase<DataWriterType, SubWriterType>::stats() const {
 RocksDBDeleteDataSink::RocksDBDeleteDataSink(
   rocksdb::Transaction& transaction, rocksdb::ColumnFamilyHandle& cf,
   velox::RowTypePtr row_type, ObjectId object_key,
-  std::vector<std::pair<catalog::Column::Id, std::string_view>> columns,
-  uint64_t& number_of_rows_affected,
+  std::vector<ColumnInfo> columns, uint64_t& number_of_rows_affected,
   std::vector<std::unique_ptr<SinkDeleteWriter>>&& index_writers)
   : _row_type{std::move(row_type)},
     _data_writer{transaction, cf},
@@ -2636,7 +2634,7 @@ void RocksDBDeleteDataSink::appendData(velox::RowVectorPtr input) {
       key_buffer);
 
     for (velox::column_index_t col_idx = 0; col_idx < num_columns; ++col_idx) {
-      key_utils::SetupColumnForKey(key_buffer, _columns[col_idx].first);
+      key_utils::SetupColumnForKey(key_buffer, _columns[col_idx].id);
       _data_writer.DeleteCell(key_buffer);
     }
   }

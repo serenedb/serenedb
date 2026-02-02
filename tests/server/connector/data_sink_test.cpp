@@ -28,11 +28,12 @@
 #include "iresearch/utils/bytes_utils.hpp"
 #include "rocksdb/utilities/transaction_db.h"
 
+using namespace sdb;
 using namespace sdb::connector;
 
 namespace {
 
-constexpr sdb::ObjectId kObjectKey{123456};
+constexpr ObjectId kObjectKey{123456};
 
 class DataSinkTest : public ::testing::Test,
                      public velox::test::VectorTestBase {
@@ -80,29 +81,27 @@ class DataSinkTest : public ::testing::Test,
     return buff;
   }
 
-  void PrepareRocksDBWrite(
-    const velox::RowVectorPtr& data, sdb::ObjectId object_key,
-    const std::vector<velox::column_index_t>& pk,
-    std::unique_ptr<rocksdb::Transaction>& transaction,
-    sdb::connector::primary_key::Keys& written_row_keys) {
+  void PrepareRocksDBWrite(const velox::RowVectorPtr& data, ObjectId object_key,
+                           const std::vector<velox::column_index_t>& pk,
+                           std::unique_ptr<rocksdb::Transaction>& transaction,
+                           primary_key::Keys& written_row_keys) {
     rocksdb::TransactionOptions trx_opts;
     trx_opts.skip_concurrency_control = true;
     trx_opts.lock_timeout = 100;
     rocksdb::WriteOptions wo;
     transaction.reset(_db->BeginTransaction(wo, trx_opts, nullptr));
     ASSERT_NE(transaction, nullptr);
-    std::vector<std::pair<sdb::catalog::Column::Id, std::string_view>>
-      column_oids;
+    std::vector<ColumnInfo> column_oids;
     column_oids.reserve(data->childrenSize());
     for (velox::column_index_t i = 0; i < data->childrenSize(); ++i) {
-      column_oids.push_back({static_cast<sdb::catalog::Column::Id>(i), ""});
+      column_oids.push_back(
+        {.id = static_cast<sdb::catalog::Column::Id>(i), .name = ""});
     }
-    sdb::connector::primary_key::Create(*data, pk, written_row_keys);
+    primary_key::Create(*data, pk, written_row_keys);
     size_t rows_affected = 0;
-    sdb::connector::RocksDBInsertDataSink sink(
+    RocksDBInsertDataSink sink(
       "", *transaction, *_cf_handles.front(), *pool_.get(), object_key, pk,
-      std::move(column_oids), sdb::WriteConflictPolicy::Replace, rows_affected,
-      {});
+      std::move(column_oids), WriteConflictPolicy::Replace, rows_affected, {});
     sink.appendData(data);
     while (!sink.finish()) {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -111,8 +110,8 @@ class DataSinkTest : public ::testing::Test,
 
   void MakeRocksDBWrite(std::vector<std::string> names,
                         std::vector<velox::VectorPtr> data,
-                        sdb::ObjectId& object_key,
-                        sdb::connector::primary_key::Keys& written_row_keys) {
+                        ObjectId& object_key,
+                        primary_key::Keys& written_row_keys) {
     object_key = kObjectKey;
     // creating  PK column
     names.push_back("id");
@@ -732,20 +731,20 @@ class DataSinkTest : public ::testing::Test,
 
   void MakeTestWriteImpl(velox::TypePtr type, velox::VectorPtr data) {
     std::vector<std::string> names{"struct"};
-    sdb::ObjectId object_key;
-    sdb::connector::primary_key::Keys row_keys{*pool_.get()};
+    ObjectId object_key;
+    primary_key::Keys row_keys{*pool_.get()};
     MakeRocksDBWrite(names, {data}, object_key, row_keys);
     auto* loaded_data = data->loadedVector();
     ASSERT_NE(loaded_data, nullptr);
-    std::string key = sdb::connector::key_utils::PrepareTableKey(object_key);
+    std::string key = key_utils::PrepareTableKey(object_key);
     const auto base_size = key.size();
     for (velox::vector_size_t i = 0; i < data->size(); ++i) {
       SCOPED_TRACE(testing::Message("Vector:") << i);
       rocksdb::ReadOptions read_options;
       std::string value;
       key.resize(base_size);
-      sdb::rocksutils::Append(key, static_cast<sdb::catalog::Column::Id>(0),
-                              std::string_view{row_keys[i]});
+      rocksutils::Append(key, static_cast<sdb::catalog::Column::Id>(0),
+                         std::string_view{row_keys[i]});
       ASSERT_TRUE(
         _db->Get(read_options, _cf_handles.front(), rocksdb::Slice(key), &value)
           .ok());
@@ -865,8 +864,8 @@ class DataSinkTest : public ::testing::Test,
 TEST_F(DataSinkTest, test_tableWriteMulticolumnScalar) {
   constexpr size_t kDocs = 100;
   std::vector<std::string> names{"int", "flag", "name"};
-  sdb::ObjectId object_id;
-  sdb::connector::primary_key::Keys row_keys{*pool_.get()};
+  ObjectId object_id;
+  primary_key::Keys row_keys{*pool_.get()};
   MakeRocksDBWrite(
     names,
     {makeFlatVector<int>(kDocs, [&](auto row) { return row; }),
@@ -2387,9 +2386,9 @@ TEST_F(DataSinkTest, test_tableWriteConcurrent) {
   std::unique_ptr<rocksdb::Transaction> transaction;
   std::unique_ptr<rocksdb::Transaction> transaction_non_conflict;
   std::unique_ptr<rocksdb::Transaction> transaction_conflict;
-  sdb::connector::primary_key::Keys written_row_keys{*pool_.get()};
-  sdb::connector::primary_key::Keys written_row_keys2{*pool_.get()};
-  sdb::connector::primary_key::Keys written_row_keys3{*pool_.get()};
+  primary_key::Keys written_row_keys{*pool_.get()};
+  primary_key::Keys written_row_keys2{*pool_.get()};
+  primary_key::Keys written_row_keys3{*pool_.get()};
   PrepareRocksDBWrite(data, kObjectKey, pk, transaction, written_row_keys);
   PrepareRocksDBWrite(data_non_conflict, kObjectKey, pk,
                       transaction_non_conflict, written_row_keys2);
@@ -2402,12 +2401,12 @@ TEST_F(DataSinkTest, test_tableWriteConcurrent) {
   ASSERT_TRUE(transaction->Commit().ok());
   rocksdb::ReadOptions read_options;
   size_t i = 0;
-  auto column_key = sdb::connector::key_utils::PrepareColumnKey(kObjectKey, 1);
+  auto column_key = key_utils::PrepareColumnKey(kObjectKey, 1);
   const auto base_size = column_key.size();
   for (const std::string_view key : written_row_keys) {
     std::string value;
     column_key.resize(base_size);
-    sdb::rocksutils::Append(column_key, key);
+    rocksutils::Append(column_key, key);
     ASSERT_TRUE(_db
                   ->Get(read_options, _cf_handles.front(),
                         rocksdb::Slice(column_key), &value)
@@ -2419,7 +2418,7 @@ TEST_F(DataSinkTest, test_tableWriteConcurrent) {
   for (const std::string_view key : written_row_keys2) {
     std::string value;
     column_key.resize(base_size);
-    sdb::rocksutils::Append(column_key, key);
+    rocksutils::Append(column_key, key);
     ASSERT_TRUE(_db
                   ->Get(read_options, _cf_handles.front(),
                         rocksdb::Slice(column_key), &value)
@@ -2436,7 +2435,7 @@ TEST_F(DataSinkTest, test_tableWriteConcurrent) {
   for (const std::string_view key : written_row_keys3) {
     std::string value;
     column_key.resize(base_size);
-    sdb::rocksutils::Append(column_key, key);
+    rocksutils::Append(column_key, key);
     ASSERT_TRUE(_db
                   ->Get(read_options, _cf_handles.front(),
                         rocksdb::Slice(column_key), &value)
@@ -2458,8 +2457,8 @@ TEST_F(DataSinkTest, test_deleteDataSink) {
     makeFlatVector<velox::StringView>({"mid", "support", "intern"}),
     makeFlatVector<int32_t>({9001, 42, 1})};
 
-  sdb::ObjectId object_key;
-  sdb::connector::primary_key::Keys written_row_keys{*pool_.get()};
+  ObjectId object_key;
+  primary_key::Keys written_row_keys{*pool_.get()};
 
   MakeRocksDBWrite(names, data, object_key, written_row_keys);
 
@@ -2488,9 +2487,13 @@ TEST_F(DataSinkTest, test_deleteDataSink) {
   ASSERT_NE(transaction, nullptr);
 
   size_t rows_affected = 0;
-  sdb::connector::RocksDBDeleteDataSink delete_sink(
-    *transaction, *_cf_handles.front(), row_type, object_key,
-    {{0, ""}, {1, ""}, {2, ""}, {3, ""}}, rows_affected, {});
+  RocksDBDeleteDataSink delete_sink(*transaction, *_cf_handles.front(),
+                                    row_type, object_key,
+                                    {{.id = 0, .name = ""},
+                                     {.id = 1, .name = ""},
+                                     {.id = 2, .name = ""},
+                                     {.id = 3, .name = ""}},
+                                    rows_affected, {});
 
   delete_sink.appendData(row_data);
   ASSERT_TRUE(delete_sink.finish());
@@ -2510,8 +2513,10 @@ TEST_F(DataSinkTest, test_deleteDataSink) {
 }
 
 TEST_F(DataSinkTest, test_deleteDataSinkPartial) {
-  const std::vector<std::pair<sdb::catalog::Column::Id, std::string_view>>
-    column_ids = {{0, ""}, {1, ""}, {2, ""}, {3, ""}};
+  const std::vector<ColumnInfo> column_ids = {{.id = 0, .name = ""},
+                                              {.id = 1, .name = ""},
+                                              {.id = 2, .name = ""},
+                                              {.id = 3, .name = ""}};
   std::vector<std::string> names = {"hero", "role", "skill_level"};
   std::vector<velox::TypePtr> types = {velox::VARCHAR(), velox::VARCHAR(),
                                        velox::INTEGER()};
@@ -2521,8 +2526,8 @@ TEST_F(DataSinkTest, test_deleteDataSinkPartial) {
     makeFlatVector<velox::StringView>({"tank", "support", "intern"}),
     makeFlatVector<int32_t>({9001, 42, 1})};
 
-  sdb::ObjectId object_key;
-  sdb::connector::primary_key::Keys written_row_keys{*pool_.get()};
+  ObjectId object_key;
+  primary_key::Keys written_row_keys{*pool_.get()};
 
   MakeRocksDBWrite(names, data, object_key, written_row_keys);
 
@@ -2555,9 +2560,9 @@ TEST_F(DataSinkTest, test_deleteDataSinkPartial) {
   ASSERT_NE(transaction2, nullptr);
 
   size_t rows_affected = 0;
-  sdb::connector::RocksDBDeleteDataSink delete_sink(
-    *transaction, *_cf_handles.front(), row_type, object_key, column_ids,
-    rows_affected, {});
+  RocksDBDeleteDataSink delete_sink(*transaction, *_cf_handles.front(),
+                                    row_type, object_key, column_ids,
+                                    rows_affected, {});
 
   delete_sink.appendData(row_data);
   ASSERT_TRUE(delete_sink.finish());
@@ -2566,9 +2571,9 @@ TEST_F(DataSinkTest, test_deleteDataSinkPartial) {
   {
     size_t rows_affected2 = 0;
 
-    sdb::connector::RocksDBDeleteDataSink delete_sink2(
-      *transaction2, *_cf_handles.front(), row_type, object_key, column_ids,
-      rows_affected2, {});
+    RocksDBDeleteDataSink delete_sink2(*transaction2, *_cf_handles.front(),
+                                       row_type, object_key, column_ids,
+                                       rows_affected2, {});
     ASSERT_ANY_THROW(delete_sink2.appendData(row_data));
     // should be empty
     ASSERT_TRUE(transaction2->Commit().ok());
@@ -2595,8 +2600,8 @@ TEST_F(DataSinkTest, test_deleteDataSinkPartial) {
 }
 
 TEST_F(DataSinkTest, test_insertDeleteConflict) {
-  const std::vector<std::pair<sdb::catalog::Column::Id, std::string_view>>
-    column_ids = {{0, ""}, {1, ""}};
+  const std::vector<ColumnInfo> column_ids = {{.id = 0, .name = ""},
+                                              {.id = 1, .name = ""}};
   std::vector<std::string> names = {"id", "name"};
   auto row_type =
     velox::ROW(names, {velox::createScalarType(velox::TypeKind::INTEGER),
@@ -2609,7 +2614,7 @@ TEST_F(DataSinkTest, test_insertDeleteConflict) {
 
   const std::vector<velox::column_index_t> pk = {0};
   std::unique_ptr<rocksdb::Transaction> transaction;
-  sdb::connector::primary_key::Keys written_row_keys{*pool_.get()};
+  primary_key::Keys written_row_keys{*pool_.get()};
   PrepareRocksDBWrite(data, kObjectKey, pk, transaction, written_row_keys);
 
   rocksdb::TransactionOptions trx_opts;
@@ -2619,9 +2624,9 @@ TEST_F(DataSinkTest, test_insertDeleteConflict) {
   std::unique_ptr<rocksdb::Transaction> transaction_delete{
     _db->BeginTransaction(wo, trx_opts, nullptr)};
   size_t rows_affected = 0;
-  sdb::connector::RocksDBDeleteDataSink delete_sink(
-    *transaction_delete, *_cf_handles.front(), row_type, kObjectKey, column_ids,
-    rows_affected, {});
+  RocksDBDeleteDataSink delete_sink(*transaction_delete, *_cf_handles.front(),
+                                    row_type, kObjectKey, column_ids,
+                                    rows_affected, {});
   auto delete_data = makeRowVector({makeFlatVector<int32_t>({15, 6, 7, 10})});
   ASSERT_ANY_THROW(delete_sink.appendData(delete_data));
   // should be empty
@@ -2631,13 +2636,12 @@ TEST_F(DataSinkTest, test_insertDeleteConflict) {
   // insert should be fully written
   rocksdb::ReadOptions read_options;
   size_t i = 0;
-  auto column_key = sdb::connector::key_utils::PrepareColumnKey(
-    kObjectKey, column_ids[1].first);
+  auto column_key = key_utils::PrepareColumnKey(kObjectKey, column_ids[1].id);
   const auto base_size = column_key.size();
   for (const std::string_view key : written_row_keys) {
     column_key.resize(base_size);
     std::string value;
-    sdb::rocksutils::Append(column_key, key);
+    rocksutils::Append(column_key, key);
     ASSERT_TRUE(_db
                   ->Get(read_options, _cf_handles.front(),
                         rocksdb::Slice(column_key), &value)

@@ -576,7 +576,7 @@ class SereneDBConnector final : public velox::connector::Connector {
     const auto& table =
       basics::downCast<const RocksDBTable>(*serene_insert_handle.Table());
     const auto& object_key = table.TableId();
-    std::vector<std::pair<catalog::Column::Id, std::string_view>> columns;
+    std::vector<ColumnInfo> columns;
     if (serene_insert_handle.Kind() == axiom::connector::WriteKind::kInsert ||
         serene_insert_handle.Kind() == axiom::connector::WriteKind::kUpdate) {
       columns.reserve(input_type->size());
@@ -586,7 +586,7 @@ class SereneDBConnector final : public velox::connector::Connector {
         SDB_ASSERT(handle != table.columnMap().end(),
                    "RocksDBDataSink: can't find column handle for ", real_name);
         auto column = basics::downCast<const SereneDBColumn>(handle->second);
-        columns.push_back({column->Id(), column->name()});
+        columns.push_back({.id = column->Id(), .name = column->name()});
       }
       return irs::ResolveBool(
         serene_insert_handle.Kind() == axiom::connector::WriteKind::kUpdate,

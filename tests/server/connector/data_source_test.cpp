@@ -29,11 +29,12 @@
 #include "iresearch/utils/bytes_utils.hpp"
 #include "rocksdb/utilities/transaction_db.h"
 
+using namespace sdb;
 using namespace sdb::connector;
 
 namespace {
 
-constexpr sdb::ObjectId kObjectKey{1};
+constexpr ObjectId kObjectKey{1};
 class DataSourceTest : public ::testing::Test,
                        public velox::test::VectorTestBase {
  public:
@@ -70,16 +71,16 @@ class DataSourceTest : public ::testing::Test,
     std::filesystem::remove_all(_path);
   }
 
-  void MakeRocksDBWrite(velox::RowVectorPtr data, sdb::ObjectId object_key) {
+  void MakeRocksDBWrite(velox::RowVectorPtr data, ObjectId object_key) {
     std::vector<velox::column_index_t> pk;
-    std::vector<std::pair<sdb::catalog::Column::Id, std::string_view>>
-      column_ids;
+    std::vector<::ColumnInfo> column_ids;
     column_ids.reserve(data->type()->asRow().size());
     for (velox::vector_size_t i = 0; i < data->type()->asRow().size(); ++i) {
       if (!data->childAt(i)->mayHaveNulls()) {
         pk.push_back(i);
       }
-      column_ids.emplace_back(std::pair{i, ""});
+      column_ids.push_back(
+        {.id = static_cast<sdb::catalog::Column::Id>(i), .name = ""});
     }
     rocksdb::TransactionOptions trx_opts;
     rocksdb::WriteOptions wo;
@@ -87,10 +88,9 @@ class DataSourceTest : public ::testing::Test,
       _db->BeginTransaction(wo, trx_opts, nullptr)};
     ASSERT_NE(transaction, nullptr);
     size_t rows_affected = 0;
-    sdb::connector::RocksDBInsertDataSink sink(
+    ::RocksDBInsertDataSink sink(
       "", *transaction, *_cf_handles.front(), *pool_.get(), object_key, pk,
-      std::move(column_ids), sdb::WriteConflictPolicy::Replace, rows_affected,
-      {});
+      std::move(column_ids), WriteConflictPolicy::Replace, rows_affected, {});
     sink.appendData(data);
     while (!sink.finish()) {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -98,8 +98,7 @@ class DataSourceTest : public ::testing::Test,
     ASSERT_TRUE(transaction->Commit().ok());
   }
 
-  void MakeRocksDBWriteRead(velox::RowVectorPtr data,
-                            sdb::ObjectId object_key) {
+  void MakeRocksDBWriteRead(velox::RowVectorPtr data, ObjectId object_key) {
     MakeRocksDBWrite(data, object_key);
     std::vector<sdb::catalog::Column::Id> column_ids;
     column_ids.reserve(data->type()->asRow().size());
@@ -109,7 +108,7 @@ class DataSourceTest : public ::testing::Test,
     SDB_ASSERT(!column_ids.empty());
     auto effective_column_id = column_ids[0];
 
-    sdb::connector::RocksDBDataSource source(
+    ::RocksDBDataSource source(
       *pool_.get(), nullptr, *_db, *_cf_handles.front(),
       std::shared_ptr<const velox::RowType>(
         std::shared_ptr<const velox::RowType>{nullptr}, &data->type()->asRow()),
@@ -117,8 +116,8 @@ class DataSourceTest : public ::testing::Test,
 
     // read as single batch
     {
-      source.addSplit(std::make_shared<sdb::connector::SereneDBConnectorSplit>(
-        "test_connector"));
+      source.addSplit(
+        std::make_shared<::SereneDBConnectorSplit>("test_connector"));
       auto future = velox::ContinueFuture::makeEmpty();
 
       auto read = source.next(data->size(), future);
@@ -145,8 +144,8 @@ class DataSourceTest : public ::testing::Test,
 
     // read by one row
     {
-      source.addSplit(std::make_shared<sdb::connector::SereneDBConnectorSplit>(
-        "test_connector"));
+      source.addSplit(
+        std::make_shared<::SereneDBConnectorSplit>("test_connector"));
       auto future = velox::ContinueFuture::makeEmpty();
       for (velox::vector_size_t i = 0; i < data->size(); ++i) {
         auto read = source.next(1, future);
@@ -208,7 +207,7 @@ TEST_F(DataSourceTest, test_tableReadFlatScalar) {
   // same column name but different object
   std::vector<int32_t> data2 = {10, 20, 30, 40, 50};
   auto row_data2 = makeRowVector({"col"}, {makeFlatVector<int32_t>(data2)});
-  sdb::ObjectId object_key2{2};
+  ObjectId object_key2{2};
   MakeRocksDBWriteRead(row_data2, object_key2);
 }
 
@@ -292,14 +291,13 @@ TEST_F(DataSourceTest, test_tableReadEmptyOutput) {
     {makeFlatVector<int32_t>(key_data), makeFlatVector<std::string>(data)});
   auto row_type_empty = velox::ROW({});
   MakeRocksDBWrite(row_data, kObjectKey);
-  sdb::connector::RocksDBDataSource source(*pool_.get(), nullptr, *_db,
-                                           *_cf_handles.front(), row_type_empty,
-                                           {0}, 0, kObjectKey);
+  ::RocksDBDataSource source(*pool_.get(), nullptr, *_db, *_cf_handles.front(),
+                             row_type_empty, {0}, 0, kObjectKey);
 
   // read as single batch
   {
-    source.addSplit(std::make_shared<sdb::connector::SereneDBConnectorSplit>(
-      "test_connector"));
+    source.addSplit(
+      std::make_shared<::SereneDBConnectorSplit>("test_connector"));
     auto future = velox::ContinueFuture::makeEmpty();
 
     auto read = source.next(row_data->size(), future);
@@ -316,8 +314,8 @@ TEST_F(DataSourceTest, test_tableReadEmptyOutput) {
 
   // read by one row
   {
-    source.addSplit(std::make_shared<sdb::connector::SereneDBConnectorSplit>(
-      "test_connector"));
+    source.addSplit(
+      std::make_shared<::SereneDBConnectorSplit>("test_connector"));
     auto future = velox::ContinueFuture::makeEmpty();
     for (velox::vector_size_t i = 0; i < row_data->size(); ++i) {
       auto read = source.next(1, future);

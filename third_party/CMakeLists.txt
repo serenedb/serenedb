@@ -156,7 +156,6 @@ set(BOOST_INCLUDE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/boost")
 set(Boost_INCLUDE_DIRS "${BOOST_INCLUDE_PATH}")
 set(Boost_INCLUDE_DIRS "${Boost_INCLUDE_DIRS}" PARENT_SCOPE)
 
-add_library(Boost::regex ALIAS boost_boost)
 add_library(Boost::headers ALIAS boost_boost)
 
 ################################################################################
@@ -692,15 +691,35 @@ include_directories(${Protobuf_INCLUDE_DIRS})
 ## thrift
 ################################################################################
 
-add_library(thrift INTERFACE)
-target_include_directories(thrift SYSTEM INTERFACE thrift/lib/cpp/src)
+add_library(thrift STATIC
+    thrift/lib/cpp/src/thrift/protocol/TProtocol.cpp
+    thrift/lib/cpp/src/thrift/transport/TTransportException.cpp
+)
+target_include_directories(thrift SYSTEM PUBLIC thrift/lib/cpp/src)
+target_link_libraries(thrift PRIVATE Boost::headers)
 
 ################################################################################
 ## arrow
 ################################################################################
 
-add_library(arrow INTERFACE)
-target_include_directories(arrow SYSTEM INTERFACE arrow/cpp/src)
+add_library(arrow STATIC
+    arrow/cpp/src/arrow/result.cc
+    arrow/cpp/src/arrow/status.cc
+
+    arrow/cpp/src/arrow/array/array_nested.cc
+    arrow/cpp/src/arrow/array/data.cc
+
+    arrow/cpp/src/arrow/util/atfork_internal.cc
+    arrow/cpp/src/arrow/util/bit_run_reader.cc
+    arrow/cpp/src/arrow/util/bpacking.cc
+    arrow/cpp/src/arrow/util/cpu_info.cc
+    arrow/cpp/src/arrow/util/io_util.cc
+    arrow/cpp/src/arrow/util/logging.cc
+    arrow/cpp/src/arrow/util/ree_util.cc
+    arrow/cpp/src/arrow/util/string.cc
+    arrow/cpp/src/arrow/util/string_builder.cc
+)
+target_include_directories(arrow SYSTEM PUBLIC arrow/cpp/src)
 
 ################################################################################
 ## velox

@@ -23,6 +23,9 @@
 
 namespace sdb::search {
 void Transaction::AcquireTransactionsForTable(ObjectId table_id) {
+  if (!_transactions.contains(table_id)) {
+    _transactions[table_id] = {};
+  }
   auto table_shard = _snapshot->GetTableShard(table_id);
   for (auto& index_id : table_shard->GetIndexes()) {
     auto index_shard = _snapshot->GetIndexShard(index_id);

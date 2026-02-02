@@ -899,6 +899,12 @@ target_link_libraries(arrow
     PRIVATE double-conversion 
     PRIVATE FlatBuffers
 )
+if("${SDB_ALLOC}" MATCHES "JE")
+    target_sources(arrow PRIVATE
+        arrow/cpp/src/arrow/memory_pool_jemalloc.cc
+    )
+    target_compile_definitions(arrow PUBLIC ARROW_JEMALLOC)
+endif()
 
 ################################################################################
 ## velox

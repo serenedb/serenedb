@@ -62,10 +62,10 @@ constexpr std::string_view kOneValueHeader{"\0\1", 2};
 
 template<typename T>
 std::string VeloxValueToString(T val) {
-  if constexpr (std::is_same_v<T, velox::StringView>) {
+  if constexpr (sdb::type::kIsOneOf<T, velox::StringView, velox::Timestamp>) {
     return static_cast<std::string>(val);
   } else {
-    return std::to_string(val);
+    return absl::StrCat(val);
   }
 }
 

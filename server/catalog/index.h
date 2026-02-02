@@ -20,18 +20,27 @@
 
 #pragma once
 
+#include <sys/types.h>
+
 #include <string>
 
+#include "basics/result.h"
 #include "catalog/object.h"
 #include "catalog/types.h"
 
-namespace sdb::catalog {
+namespace sdb {
+
+class IndexShard;
+
+namespace catalog {
 
 struct IndexBaseOptions {
+  ObjectId database_id;
   ObjectId id;
   ObjectId relation_id;
   std::string name;
-  IndexType type = IndexType::Secondary;
+  IndexType type = IndexType::Unknown;
+  std::vector<uint16_t> column_ids;
 };
 
 template<typename Impl>
@@ -44,22 +53,29 @@ class Index : public SchemaObject {
  public:
   auto GetIndexType() const noexcept { return _type; }
   auto GetRelationId() const noexcept { return _relation_id; }
+  std::span<const uint16_t> GetColumnIds() const noexcept {
+    return _column_ids;
+  }
+  void WriteInternal(vpack::Builder& builder) const override;
+
+  virtual ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
+    bool is_new, vpack::Slice args) const = 0;
+
+  virtual ~Index() = default;
 
  protected:
   Index(IndexBaseOptions options, ObjectId database_id);
 
- private:
   ObjectId _relation_id;
   IndexType _type;
+  std::vector<uint16_t> _column_ids;
 };
 
-ResultOr<std::shared_ptr<Index>> CreateIndex(
-  ObjectId database_id, IndexOptions<vpack::Slice> options);
+ResultOr<std::shared_ptr<Index>> CreateIndex(catalog::IndexBaseOptions options);
 
-ResultOr<std::shared_ptr<Index>> CreateIndex(const SchemaObject& relation,
-                                             IndexBaseOptions options);
+}  // namespace catalog
 
-}  // namespace sdb::catalog
+}  // namespace sdb
 
 namespace magic_enum {
 
@@ -73,12 +89,10 @@ constexpr customize::customize_t customize::enum_name<sdb::IndexType>(
       return "primary";
     case sdb::IndexType::Secondary:
       return "secondary";
-    case sdb::IndexType::Edge:
-      return "edge";
     case sdb::IndexType::NoAccess:
       return "noaccess";
     case sdb::IndexType::Inverted:
-      return "inveted";
+      return "inverted";
     default:
       return invalid_tag;
   }

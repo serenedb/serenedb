@@ -285,6 +285,26 @@ Result CatalogFeature::ProcessTombstones() {
   }
 
   r = engine.VisitObjects(
+    id::kTombstoneDatabase, RocksDBEntryType::IndexTombstone,
+    [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
+      IndexTombstone tombstone;
+
+      if (auto r = vpack::ReadTupleNothrow<IndexTombstone>(slice, tombstone);
+          !r.ok()) {
+        return ErrorMeta(r.errorNumber(), "index tombstone", r.errorMessage(),
+                         slice);
+      }
+
+      Local().RegisterIndexDrop(std::move(tombstone));
+      return {};
+    });
+
+  if (!r.ok()) {
+    return {r.errorNumber(),
+            "Failed to process index tombstones, error: ", r.errorMessage()};
+  }
+
+  r = engine.VisitObjects(
     id::kTombstoneDatabase, RocksDBEntryType::ScopeTombstone,
     [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
       ObjectId database_id{RocksDBKey::SchemaId(key)};
@@ -348,16 +368,21 @@ Result CatalogFeature::AddIndexes(ObjectId database_id, const Schema& schema) {
   return GetServerEngine().VisitSchemaObjects(
     database_id, schema.GetId(), RocksDBEntryType::Index,
     [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
-      IndexOptions<vpack::Slice> options;
+      IndexBaseOptions options;
 
       if (auto r = vpack::ReadTupleNothrow(slice, options); !r.ok()) {
-        return ErrorMeta(r.errorNumber(), "index", r.errorMessage(), slice);
+        return r;
       }
 
-      return Local().RegisterIndex(
-        database_id, schema.GetName(), [&](const SchemaObject*) {
-          return CreateIndex(database_id, std::move(options));
-        });
+      // Try to load stored index shard data (may not exist for older indexes)
+      vpack::Slice shard_data = vpack::Slice::noneSlice();
+      auto shard_builder = GetServerEngine().LoadIndexShard(options.id);
+      if (shard_builder) {
+        shard_data = shard_builder->slice();
+      }
+
+      return Local().RegisterIndex(database_id, schema.GetName(),
+                                   std::move(options), shard_data);
     });
 }
 

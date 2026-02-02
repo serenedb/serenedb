@@ -641,6 +641,8 @@ class SereneDBConnector final : public velox::connector::Connector {
           }
           auto& rocksdb_transaction = transaction.EnsureRocksDBTransaction();
           SDB_ASSERT(transaction.GetSearchTransaction());
+          transaction.GetSearchTransaction()->AcquireTransactionsForTable(
+            object_key);
           auto search_transactions =
             transaction.GetSearchTransaction()->GetTransactionsFromTable(
               object_key);

@@ -41,6 +41,7 @@
 #include "rest_server/serened_single.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/data_store.h"
+#include "storage_engine/engine_feature.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
@@ -53,79 +54,46 @@ LIBPG_QUERY_INCLUDES_END
 namespace sdb::pg {
 namespace {
 
-std::optional<IndexType> GetIndexType(char* method) {
-  return method ? magic_enum::enum_cast<IndexType>(method)
-                : IndexType::Secondary;
+IndexType GetIndexType(char* method) {
+  SDB_ASSERT(method);
+  return magic_enum::enum_cast<IndexType>(method, magic_enum::case_insensitive)
+    .value_or(IndexType::Unknown);
 }
 
-Result MakeIndexOptions(const IndexStmt& index,
-                        catalog::IndexBaseOptions& options) {
+Result ParseIndexOptions(const IndexStmt& index,
+                         std::vector<std::string>& column_names,
+                         catalog::IndexBaseOptions& options) {
+  if (!index.accessMethod) {
+    return Result{ERROR_BAD_PARAMETER, "access method is not provided"};
+  }
   auto index_type = GetIndexType(index.accessMethod);
-  if (!index_type) {
+  if (index_type == IndexType::Unknown) {
     return Result{ERROR_BAD_PARAMETER,
                   absl::StrCat("access method \"", index.accessMethod,
                                "\" does not exist")};
   }
+
+  pg::PgListWrapper<IndexElem> index_columns{index.indexParams};
+  options.column_ids.reserve(index_columns.size());
+
+  for (auto* index_elem : index_columns) {
+    column_names.push_back(index_elem->name);
+  }
+
   options.name = index.idxname;
-  options.type = *index_type;
+  options.type = index_type;
   return {};
 }
 
-ResultOr<std::shared_ptr<catalog::Index>> MakeSecondaryIndex(
-  catalog::IndexBaseOptions options, const catalog::SchemaObject& relation,
-  PgListWrapper<IndexElem> index_columns) {
-  if (relation.GetType() != catalog::ObjectType::Table) {
-    return std::unexpected<Result>{
-      std::in_place, ERROR_NOT_IMPLEMENTED,
-      "Indexes over views are not implemented yet."};
+vpack::Slice ParseIndexArgs(pg::PgListWrapper<DefElem> args) {
+  vpack::Builder builder;
+  builder.openObject();
+  for (DefElem* elem : args) {
+    char* val = castNode(BitString, elem->arg)->bsval;
+    builder.add(elem->defname, val);
   }
-  auto& table = basics::downCast<catalog::Table>(relation);
-  auto& columns = table.Columns();
-
-  auto find_column = [&](std::string_view name) {
-    auto it = absl::c_find_if(
-      columns, [&](const catalog::Column& c) { return c.name == name; });
-    return it != columns.end() ? &*it : nullptr;
-  };
-
-  catalog::SecondaryIndexOptions impl_options;
-  impl_options.columns.reserve(index_columns.size());
-
-  for (auto* index_elem : index_columns) {
-    auto* column = find_column(index_elem->name);
-    if (!column) {
-      return std::unexpected<Result>{
-        std::in_place, ERROR_SERVER_DATA_SOURCE_NOT_FOUND, "column \"",
-        index_elem->name, "\" does not exist"};
-    }
-    impl_options.columns.push_back(column->id);
-  }
-
-  options.id = catalog::NextId();
-
-  return std::make_shared<catalog::SecondaryIndex>(
-    catalog::IndexOptions<catalog::SecondaryIndexOptions>{
-      .base = std::move(options),
-      .impl = std::move(impl_options),
-    },
-    relation.GetDatabaseId());
-}
-
-ResultOr<std::shared_ptr<catalog::Index>> MakeIndex(
-  catalog::IndexBaseOptions options, const catalog::SchemaObject& relation,
-  PgListWrapper<IndexElem> index_columns) {
-  options.relation_id = relation.GetId();
-  switch (options.type) {
-    case IndexType::Secondary:
-      return MakeSecondaryIndex(std::move(options), relation, index_columns);
-    case IndexType::Primary:
-    case IndexType::Inverted:
-    case IndexType::Edge:
-    case IndexType::NoAccess:
-      return std::unexpected<Result>{std::in_place, ERROR_NOT_IMPLEMENTED};
-    case IndexType::Unknown:
-      SDB_UNREACHABLE();
-  }
+  builder.close();
+  return builder.slice();
 }
 
 }  // namespace
@@ -149,20 +117,22 @@ yaclib::Future<Result> CreateIndex(ExecContext& context,
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
 
-  if (stmt.concurrent || stmt.if_not_exists) {
+  if (stmt.concurrent) {
     return yaclib::MakeFuture(Result{ERROR_NOT_IMPLEMENTED});
   }
-
+  std::vector<std::string> column_names;
   catalog::IndexBaseOptions options;
-  if (auto r = MakeIndexOptions(stmt, options); !r.ok()) {
+
+  if (auto r = ParseIndexOptions(stmt, column_names, options); !r.ok()) {
     return yaclib::MakeFuture(std::move(r));
   }
 
-  Result r = catalog.CreateIndex(
-    db, schema, relation_name, [&](const catalog::SchemaObject* relation) {
-      return MakeIndex(std::move(options), *relation,
-                       PgListWrapper<IndexElem>{stmt.indexParams});
-    });
+  pg::PgListWrapper<DefElem> pg_args{stmt.options};
+  auto args = ParseIndexArgs(pg_args);
+
+  Result r =
+    catalog.CreateIndex(db, schema, relation_name, std::move(column_names),
+                        std::move(options), std::move(args));
 
   if (r.is(ERROR_SERVER_DUPLICATE_NAME) && stmt.if_not_exists) {
     r = {};

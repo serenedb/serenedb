@@ -184,7 +184,7 @@ rocksdb::ColumnFamilyHandle* RocksDBKeyBounds::columnFamily() const {
     case RocksDBEntryType::IndexTombstone:
     case RocksDBEntryType::Index:
     case RocksDBEntryType::Stats:
-    case sdb::RocksDBEntryType::IndexPhysical:
+    case RocksDBEntryType::IndexPhysical:
       return RocksDBColumnFamilyManager::get(
         RocksDBColumnFamilyManager::Family::Definitions);
   }
@@ -231,6 +231,7 @@ RocksDBKeyBounds::RocksDBKeyBounds(RocksDBEntryType type, uint64_t first)
   switch (_type) {
     case RocksDBEntryType::TableTombstone:
     case RocksDBEntryType::ScopeTombstone:
+    case RocksDBEntryType::IndexTombstone:
     case RocksDBEntryType::Collection:
     case RocksDBEntryType::Schema:
     case RocksDBEntryType::Role: {
@@ -431,8 +432,6 @@ RocksDBKeyBounds GetIndexBounds(IndexType type, uint64_t object_id,
   switch (type) {
     case IndexType::Primary:
       return RocksDBKeyBounds::PrimaryIndex(object_id);
-    case IndexType::Edge:
-      return RocksDBKeyBounds::EdgeIndex(object_id);
     case IndexType::Secondary:
     case IndexType::Inverted:
       if (unique) {

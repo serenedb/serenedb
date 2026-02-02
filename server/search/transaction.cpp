@@ -22,25 +22,37 @@
 #include "basics/errors.h"
 
 namespace sdb::search {
-void Transaction::AcquireTransaction(ObjectId index_id) {
-  auto data_store = _snapshot->GetDataStore(index_id);
-  auto transaction = data_store->GetTransaction();
-  _transaction_ids[data_store->GetId()] = {data_store->GetRelationId(),
-                                           std::move(transaction)};
+void Transaction::AcquireTransactionsForTable(ObjectId table_id) {
+  auto table_shard = _snapshot->GetTableShard(table_id);
+  for (auto& index_id : table_shard->GetIndexes()) {
+    auto index_shard = _snapshot->GetIndexShard(index_id);
+    auto data_store = basics::downCast<DataStore>(index_shard);
+    if (!data_store) {
+      continue;
+    }
+    auto transaction = data_store->GetTransaction();
+    _transactions[table_id][data_store->GetRelationId()] =
+      std::move(transaction);
+  }
 }
 
 void Transaction::Commit() {
-  for (auto& [id, data] : _transaction_ids) {
-    data.second.Commit();
+  for (auto& [id, data] : _transactions) {
+    for (auto& [relation_id, transaction] : data) {
+      transaction.Commit();
+    }
+    _transactions.erase(id);
   }
-  _transaction_ids.clear();
 }
 
 void Transaction::Abort() {
-  for (auto& [id, data] : _transaction_ids) {
-    data.second.Abort();
+  for (auto& [id, data] : _transactions) {
+    for (auto& [relation_id, transaction] : data) {
+      transaction.Abort();
+    }
+    _transactions.erase(id);
   }
-  _transaction_ids.clear();
+  _transactions.clear();
 }
 
 }  // namespace sdb::search

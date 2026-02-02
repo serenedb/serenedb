@@ -41,6 +41,7 @@
 #include "search/task.h"
 #include "storage_engine/engine_feature.h"
 #include "storage_engine/search_engine.h"
+#include "vpack/serializer.h"
 
 namespace sdb::search {
 
@@ -59,12 +60,13 @@ uint64_t ComputeAvg(std::atomic<uint64_t>& time_num, uint64_t new_time) {
 }
 }  // namespace
 
-DataStore::DataStore(const catalog::Index& index)
-  : _engine{GetServerEngine()},
+DataStore::DataStore(const catalog::InvertedIndex& index,
+                     DataStoreOptions options)
+  : IndexShard{index},
+    _engine{GetServerEngine()},
     _search{SerenedServer::Instance().getFeature<SearchEngine>()},
-    _id{index.GetId()},
-    _relation_id{index.GetRelationId()},
-    _state{std::make_shared<ThreadPoolState>()} {
+    _state{std::make_shared<ThreadPoolState>()},
+    _options{std::move(options)} {
   const auto db_id = index.GetDatabaseId();
   const auto schema_id = index.GetSchemaId();
   const auto index_id = index.GetId();
@@ -75,8 +77,8 @@ DataStore::DataStore(const catalog::Index& index)
   _dir = std::make_unique<irs::FSDirectory>(path);
   auto codec = irs::formats::Get("1_5avx");
   // TODO(codeworse): add is_exists and change open_mode
-  _writer = irs::IndexWriter::Make(*_dir, codec, irs::OpenMode::kOmCreate,
-                                   _options.writer_options);
+  _writer = irs::IndexWriter::Make(
+    *_dir, codec, (irs::OpenMode::kOmCreate | irs::OpenMode::kOmAppend), {});
   // TODO(codeworse): Add recovery
   _last_committed_tick = 0;
 
@@ -88,6 +90,10 @@ DataStore::DataStore(const catalog::Index& index)
   }
   _snapshot = std::make_shared<DataSnapshot>(std::move(reader),
                                              std::move(engine_snapshot));
+}
+
+void DataStore::WriteInternal(vpack::Builder& builder) const {
+  vpack::WriteTuple(builder, _options);
 }
 
 Snapshot DataStore::GetSnapshot() const {

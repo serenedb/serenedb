@@ -70,6 +70,7 @@ class DataStore;
 }
 
 class TableShard;
+class IndexShard;
 class RocksDBBackgroundErrorListener;
 class RocksDBBackgroundThread;
 class RocksDBDumpManager;
@@ -249,8 +250,8 @@ class RocksDBEngineCatalog {
 
   void createTable(const catalog::Table& collection, TableShard& physical);
   Result CreateIndex(const catalog::Index& index);
-  ResultOr<std::shared_ptr<search::DataStore>> CreateDataStore(
-    const catalog::Index& index, bool is_new);
+  Result StoreIndexShard(const IndexShard& index_shard);
+  ResultOr<vpack::Builder> LoadIndexShard(ObjectId index_id);
   Result MarkDeleted(const catalog::Table& collection,
                      const TableShard& physical,
                      const TableTombstone& tombstone);
@@ -261,6 +262,7 @@ class RocksDBEngineCatalog {
 
   void prepareDropTable(ObjectId collection);
   Result DropIndex(IndexTombstone tombstone);
+  Result DropIndexShard(ObjectId index_id);
   Result DropTable(const TableTombstone& tombstone);
 
   void ChangeTable(const catalog::Table& collection,

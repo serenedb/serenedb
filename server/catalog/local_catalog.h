@@ -36,6 +36,7 @@
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "storage_engine/table_shard.h"
+#include "vpack/slice.h"
 
 namespace sdb {
 class RocksDBEngineCatalog;
@@ -61,7 +62,7 @@ class LocalCatalog final : public LogicalCatalog,
   Result RegisterTable(ObjectId database_id, std::string_view schema,
                        CreateTableOptions table) final;
   Result RegisterIndex(ObjectId database_id, std::string_view schema,
-                       IndexFactory index) final;
+                       IndexBaseOptions options, vpack::Slice args) final;
 
   Result CreateDatabase(std::shared_ptr<Database> database) final;
   Result CreateRole(std::shared_ptr<Role> role) final;
@@ -77,7 +78,8 @@ class LocalCatalog final : public LogicalCatalog,
 
   Result CreateIndex(ObjectId database_id, std::string_view schema,
                      std::string_view relation,
-                     IndexFactory index_factory) final;
+                     std::vector<std::string> column_names,
+                     IndexBaseOptions options, vpack::Slice args) final;
 
   Result RenameView(ObjectId database_id, std::string_view schema,
                     std::string_view name, std::string_view new_name) final;
@@ -105,9 +107,10 @@ class LocalCatalog final : public LogicalCatalog,
   std::shared_ptr<Snapshot> GetSnapshot() const noexcept final;
 
   void RegisterTableDrop(TableTombstone tombstone) final;
+  void RegisterIndexDrop(IndexTombstone tombstone) final;
   void RegisterScopeDrop(ObjectId database_id, ObjectId schema_id) final;
   void DropTableShard(ObjectId id);
-  void DropDataStore(ObjectId id);
+  void DropIndexShard(ObjectId id);
 
   bool GetSkipBackgroundErrors() const noexcept {
     return _skip_background_errors;

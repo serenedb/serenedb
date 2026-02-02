@@ -20,29 +20,73 @@
 
 #include "catalog/index.h"
 
+#include "basics/down_cast.h"
 #include "basics/errors.h"
+#include "catalog/inverted_index.h"
 #include "catalog/object.h"
 #include "catalog/secondary_index.h"
+#include "catalog/table.h"
 #include "catalog/types.h"
+#include "pg/pg_list_utils.h"
+#include "pg/sql_utils.h"
 #include "vpack/serializer.h"
+#include "vpack/slice.h"
+
+LIBPG_QUERY_INCLUDES_BEGIN
+#include "postgres.h"
+
+#include "nodes/nodeFuncs.h"
+#include "parser/parse_node.h"
+#include "utils/errcodes.h"
+LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::catalog {
 namespace {
-template<typename T>
-ResultOr<std::shared_ptr<Index>> MakeIndex(ObjectId database_id,
-                                           IndexOptions<vpack::Slice> options) {
-  IndexOptions<typename T::Options> impl_options{
-    .base = std::move(options.base),
+
+ResultOr<std::shared_ptr<catalog::Index>> CreateInvertedIndex(
+  catalog::IndexBaseOptions options) {
+  catalog::IndexOptions<InvertedIndexOptions> inverted_options;
+
+  // Only generate a new ID if one isn't already set (i.e., when creating a new
+  // index, not when loading an existing one from storage)
+  if (!options.id.isSet()) {
+    options.id = catalog::NextId();
+  }
+  ObjectId database_id = options.database_id;
+  inverted_options.base = std::move(options);
+
+  return std::make_shared<InvertedIndex>(inverted_options, database_id);
+}
+
+}  // namespace
+
+ResultOr<std::shared_ptr<Index>> CreateIndex(
+  catalog::IndexBaseOptions options) {
+  switch (options.type) {
+    case IndexType::Secondary:
+      SDB_THROW(ERROR_NOT_IMPLEMENTED, "Secondary index is not implemented");
+    case IndexType::Inverted:
+      return CreateInvertedIndex(std::move(options));
+    case IndexType::Primary:
+    case IndexType::NoAccess:
+      return std::unexpected<Result>{std::in_place, ERROR_NOT_IMPLEMENTED};
+    case IndexType::Unknown:
+      SDB_UNREACHABLE();
+  }
+}
+
+void Index::WriteInternal(vpack::Builder& builder) const {
+  IndexBaseOptions options{
+    .database_id = GetDatabaseId(),
+    .id = GetId(),
+    .relation_id = GetRelationId(),
+    .name = std::string{GetName()},
+    .type = GetIndexType(),
+    .column_ids = std::vector<uint16_t>{_column_ids.begin(), _column_ids.end()},
   };
 
-  auto r = vpack::ReadTupleNothrow(options.impl, impl_options.impl);
-  if (!r.ok()) {
-    return std::unexpected{std::move(r)};
-  }
-
-  return std::make_shared<T>(std::move(impl_options), database_id);
+  vpack::WriteTuple(builder, options);
 }
-}  // namespace
 
 Index::Index(IndexBaseOptions options, ObjectId database_id)
   : SchemaObject{{},
@@ -52,21 +96,7 @@ Index::Index(IndexBaseOptions options, ObjectId database_id)
                  std::move(options.name),
                  ObjectType::Index},
     _relation_id{options.relation_id},
-    _type(options.type) {}
-
-ResultOr<std::shared_ptr<Index>> CreateIndex(
-  ObjectId database_id, IndexOptions<vpack::Slice> options) {
-  switch (options.base.type) {
-    case IndexType::Secondary:
-      return MakeIndex<SecondaryIndex>(database_id, std::move(options));
-    case IndexType::Primary:
-    case IndexType::Inverted:
-    case IndexType::Edge:
-    case IndexType::NoAccess:
-      return std::unexpected<Result>{std::in_place, ERROR_NOT_IMPLEMENTED};
-    case IndexType::Unknown:
-      SDB_UNREACHABLE();
-  }
-}
+    _type(options.type),
+    _column_ids{std::move(options.column_ids)} {}
 
 }  // namespace sdb::catalog

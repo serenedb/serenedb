@@ -47,7 +47,6 @@ enum class IndexType : uint8_t {
   Primary,
   Secondary,
   Inverted,
-  Edge,
   NoAccess,
 };
 

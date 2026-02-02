@@ -44,6 +44,7 @@
 #include "catalog/view.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/data_store.h"
+#include "storage_engine/index_shard.h"
 
 namespace sdb::catalog {
 
@@ -106,9 +107,8 @@ struct Snapshot {
 
   virtual std::shared_ptr<TableShard> GetTableShard(ObjectId id) const = 0;
   virtual std::vector<std::shared_ptr<TableShard>> GetTableShards() const = 0;
-  virtual std::vector<std::shared_ptr<search::DataStore>> GetDataStores()
-    const = 0;
-  virtual std::shared_ptr<search::DataStore> GetDataStore(
+  virtual std::vector<std::shared_ptr<IndexShard>> GetIndexShards() const = 0;
+  virtual std::shared_ptr<IndexShard> GetIndexShard(
     ObjectId index_id) const = 0;
 
   template<typename T>
@@ -179,7 +179,7 @@ struct LogicalCatalog {
     ObjectId database_id, std::string_view schema,
     std::shared_ptr<catalog::Function> function) = 0;
   virtual Result RegisterIndex(ObjectId database_id, std::string_view schema,
-                               IndexFactory index) = 0;
+                               IndexBaseOptions options, vpack::Slice args) = 0;
 
   virtual Result CreateDatabase(
     std::shared_ptr<catalog::Database> database) = 0;
@@ -197,7 +197,8 @@ struct LogicalCatalog {
                              CreateTableOperationOptions operation_options) = 0;
   virtual Result CreateIndex(ObjectId database_id, std::string_view schema,
                              std::string_view relation,
-                             IndexFactory index_factory) = 0;
+                             std::vector<std::string> column_names,
+                             IndexBaseOptions options, vpack::Slice args) = 0;
 
   virtual Result RenameTable(ObjectId database_id, std::string_view schema,
                              std::string_view name,
@@ -232,6 +233,7 @@ struct LogicalCatalog {
                            AsyncResult* async_result) = 0;
 
   virtual void RegisterTableDrop(TableTombstone tombstone) = 0;
+  virtual void RegisterIndexDrop(IndexTombstone tombstone) = 0;
   virtual void RegisterScopeDrop(ObjectId database_id, ObjectId schema_id) = 0;
 
   virtual std::shared_ptr<Snapshot> GetSnapshot() const = 0;

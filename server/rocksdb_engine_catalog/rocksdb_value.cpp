@@ -27,6 +27,7 @@
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"
 #include "rocksdb_engine_catalog/rocksdb_format.h"
+#include "rocksdb_engine_catalog/rocksdb_types.h"
 
 using namespace sdb;
 using namespace sdb::rocksutils;
@@ -164,6 +165,7 @@ RocksDBValue::RocksDBValue(RocksDBEntryType type, vpack::Slice data)
     case RocksDBEntryType::Role:
     case RocksDBEntryType::KeyGeneratorValue:
     case RocksDBEntryType::Stats:
+    case sdb::RocksDBEntryType::IndexPhysical:
     case RocksDBEntryType::ReplicationApplierConfig: {
       size_t byte_size = static_cast<size_t>(data.byteSize());
       _buffer.reserve(byte_size);

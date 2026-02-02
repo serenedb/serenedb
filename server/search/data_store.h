@@ -29,9 +29,11 @@
 #include <iresearch/index/index_writer.hpp>
 #include <memory>
 
+#include "catalog/inverted_index.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/data_store_meta.h"
 #include "storage_engine/engine_feature.h"
+#include "storage_engine/index_shard.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::search {
@@ -39,8 +41,8 @@ namespace sdb::search {
 class DataStore;
 
 struct DataStoreOptions {
-  irs::IndexWriterOptions writer_options;
-  irs::IndexReaderOptions reader_options;
+  size_t commit_interval_ms;
+  size_t consolidation_interval_ms;
 };
 
 struct ThreadPoolState {
@@ -107,7 +109,8 @@ class Snapshot {
 
 // Physical representation of a search index(catalog::Index)
 // Used for creating writers/readers and managing index lifecycle
-class DataStore : public std::enable_shared_from_this<DataStore> {
+class DataStore : public std::enable_shared_from_this<DataStore>,
+                  public IndexShard {
  public:
   struct Stats {
     // NOLINTBEGIN
@@ -125,7 +128,9 @@ class DataStore : public std::enable_shared_from_this<DataStore> {
     uint64_t time_ms;
   };
 
-  DataStore(const catalog::Index& table);
+  DataStore(const catalog::InvertedIndex& index, DataStoreOptions options);
+
+  void WriteInternal(vpack::Builder& builder) const final;
 
   auto GetTransaction() { return _writer->GetBatch(); }
 
@@ -187,8 +192,6 @@ class DataStore : public std::enable_shared_from_this<DataStore> {
 
   RocksDBEngineCatalog& _engine;
   SearchEngine& _search;
-  ObjectId _id;
-  ObjectId _relation_id;
   std::shared_ptr<ThreadPoolState> _state;
   DataSnapshotPtr _snapshot;
   std::shared_ptr<irs::IndexWriter> _writer;

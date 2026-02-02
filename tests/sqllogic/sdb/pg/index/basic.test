@@ -3,7 +3,7 @@ CREATE TABLE t(r text);
 
 
 statement ok
-CREATE INDEX index_t ON t USING secondary (r);
+CREATE INDEX index_t ON t USING inverted(r);
 
 
 statement ok

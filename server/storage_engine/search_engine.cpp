@@ -357,9 +357,10 @@ std::filesystem::path SearchEngine::GetPersistedPath(
 void SearchEngine::beginShutdown() {
   // Drop rocksdb snapshots in search data stores
   // in order to gracefully shutdown rocksdb engine
-  for (auto&& data_store :
-       catalog::GetCatalog().GetSnapshot()->GetDataStores()) {
-    data_store->ResetDataSnapshot();
+  for (auto&& index_shard :
+       catalog::GetCatalog().GetSnapshot()->GetIndexShards()) {
+    auto& data_shard = basics::downCast<DataStore>(*index_shard);
+    data_shard.ResetDataSnapshot();
   }
 }
 }  // namespace sdb::search

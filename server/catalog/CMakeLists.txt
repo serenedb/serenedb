@@ -27,6 +27,7 @@ target_sources(
         secondary_index.cpp
         # TODO search
         identity_analyzer.cpp
+        inverted_index.cpp
         analyzer.cpp
         mangling.cpp
 )

@@ -23,10 +23,14 @@
 #include <iresearch/index/index_writer.hpp>
 #include <ranges>
 
+#include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
+#include "basics/down_cast.h"
 #include "basics/identifier.h"
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
+#include "search/data_store.h"
+#include "storage_engine/table_shard.h"
 
 namespace sdb::search {
 
@@ -35,16 +39,15 @@ class Transaction {
   Transaction(std::shared_ptr<catalog::Snapshot> snapshot)
     : _snapshot(snapshot) {}
 
-  void AcquireTransaction(ObjectId index_id);
+  void AcquireTransactionsForTable(ObjectId table_id);
 
   auto GetTransactionsFromTable(ObjectId table_id) {
-    return _transaction_ids | std::views::filter([&](const auto& entry) {
-             return entry.second.first == table_id;
-           }) |
-           std::views::transform(
-             [&](auto& entry) -> irs::IndexWriter::Transaction& {
-               return entry.second.second;
-             });
+    auto it = _transactions.find(table_id);
+    SDB_ASSERT(it != _transactions.end());
+    return it->second | std::views::transform(
+                          [](auto& index) -> irs::IndexWriter::Transaction& {
+                            return index.second;
+                          });
   }
 
   void Commit();
@@ -52,8 +55,8 @@ class Transaction {
 
  private:
   std::shared_ptr<catalog::Snapshot> _snapshot;
-  containers::FlatHashMap<basics::Identifier,
-                          std::pair<ObjectId, irs::IndexWriter::Transaction>>
-    _transaction_ids;
+  containers::FlatHashMap<
+    ObjectId, containers::FlatHashMap<ObjectId, irs::IndexWriter::Transaction>>
+    _transactions;
 };
 }  // namespace sdb::search

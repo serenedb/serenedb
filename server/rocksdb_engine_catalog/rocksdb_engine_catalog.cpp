@@ -35,6 +35,7 @@
 #include <rocksdb/statistics.h>
 #include <rocksdb/table.h>
 #include <rocksdb/transaction_log.h>
+#include <rocksdb/utilities/secondary_index_simple.h>
 #include <rocksdb/utilities/transaction_db.h>
 #include <rocksdb/write_batch.h>
 #include <vpack/builder.h>
@@ -1509,17 +1510,52 @@ Result RocksDBEngineCatalog::CreateIndex(const catalog::Index& index) {
     [&] { return std::string_view{}; });
 }
 
-ResultOr<std::shared_ptr<search::DataStore>>
-RocksDBEngineCatalog::CreateDataStore(const catalog::Index& index,
-                                      bool is_new) {
-  search::DataStoreOptions options;
-  auto data_store = std::make_shared<search::DataStore>(index);
-  data_store->StartTasks();
+Result RocksDBEngineCatalog::StoreIndexShard(const IndexShard& index_shard) {
+  const auto index_id = index_shard.GetId();
+  SDB_ASSERT(index_id.isSet());
 
-  if (!is_new) {
-    // TODO(codeworse): Read DataStore options
+  vpack::Builder b;
+  index_shard.WriteInternal(b);
+
+  return WriteDefinition(
+    _db->GetRootDB(),
+    [&] {
+      RocksDBKeyWithBuffer key;
+      key.constructObject(RocksDBEntryType::IndexPhysical, id::kSystemDB,
+                          index_id);
+      return key;
+    },
+    [&] {
+      return RocksDBValue::Object(RocksDBEntryType::IndexPhysical, b.slice());
+    },
+    [&] { return std::string_view{}; });
+}
+
+ResultOr<vpack::Builder> RocksDBEngineCatalog::LoadIndexShard(
+  ObjectId index_id) {
+  SDB_ASSERT(index_id.isSet());
+
+  RocksDBKeyWithBuffer key;
+  key.constructObject(RocksDBEntryType::IndexPhysical, id::kSystemDB, index_id);
+
+  std::string value;
+  auto status = _db->Get(rocksdb::ReadOptions{},
+                         RocksDBColumnFamilyManager::get(
+                           RocksDBColumnFamilyManager::Family::Definitions),
+                         key.string(), &value);
+
+  if (!status.ok()) {
+    if (status.IsNotFound()) {
+      return std::unexpected<Result>(
+        std::in_place, ERROR_SERVER_DATA_SOURCE_NOT_FOUND,
+        "Index shard data not found for index ", index_id);
+    }
+    return std::unexpected<Result>(rocksutils::ConvertStatus(status));
   }
-  return data_store;
+
+  vpack::Builder builder;
+  builder.add(vpack::Slice(reinterpret_cast<const uint8_t*>(value.data())));
+  return builder;
 }
 
 Result RocksDBEngineCatalog::MarkDeleted(const catalog::Index& index,
@@ -1684,7 +1720,7 @@ Result RocksDBEngineCatalog::DropIndex(IndexTombstone tombstone) {
     return r;
   }
 
-  const bool prefix_same_as_start = tombstone.type != IndexType::Edge;
+  const bool prefix_same_as_start = true;
   const bool use_range_delete =
     UseRangeDelete(tombstone.id, tombstone.number_documents);
   const auto bounds =
@@ -1713,6 +1749,16 @@ Result RocksDBEngineCatalog::DropIndex(IndexTombstone tombstone) {
 #endif
 
   return r;
+}
+
+Result RocksDBEngineCatalog::DropIndexShard(ObjectId index_id) {
+  SDB_ASSERT(index_id.isSet());
+
+  RocksDBKeyWithBuffer key;
+  key.constructObject(RocksDBEntryType::IndexPhysical, id::kSystemDB, index_id);
+
+  rocksdb::WriteOptions wo;
+  return rocksutils::ConvertStatus(_db->GetRootDB()->Delete(wo, key.string()));
 }
 
 bool RocksDBEngineCatalog::UseRangeDelete(ObjectId id,

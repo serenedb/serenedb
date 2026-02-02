@@ -472,6 +472,7 @@ target_include_directories(
     SYSTEM
     INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/date/include
 )
+target_link_libraries(date_interface INTERFACE absl::base)
 
 ################################################################################
 ## Linenoise
@@ -688,12 +689,31 @@ set(Protobuf_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/protobuf/src)
 include_directories(${Protobuf_INCLUDE_DIRS})
 
 ################################################################################
+## flatbuffers
+################################################################################
+
+sdb_update_module(${GIT_EXECUTABLE} "flatbuffers" ${CMAKE_CURRENT_SOURCE_DIR} "LICENSE")
+
+set(FLATBUFFERS_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(FLATBUFFERS_INSTALL OFF CACHE BOOL "" FORCE)
+set(FLATBUFFERS_BUILD_FLATLIB ON CACHE BOOL "" FORCE)
+set(FLATBUFFERS_BUILD_FLATC OFF CACHE BOOL "" FORCE)
+set(FLATBUFFERS_CPP_STD 26)
+add_subdirectory(flatbuffers)
+
+################################################################################
 ## thrift
 ################################################################################
 
+sdb_update_module(${GIT_EXECUTABLE} "thrift" ${CMAKE_CURRENT_SOURCE_DIR} "LICENSE")
+
 add_library(thrift STATIC
+    # Velox Parquet Reader and Writer
     thrift/lib/cpp/src/thrift/protocol/TProtocol.cpp
     thrift/lib/cpp/src/thrift/transport/TTransportException.cpp
+
+    # Velox Parquet Writer
+    thrift/lib/cpp/src/thrift/transport/TBufferTransports.cpp
 )
 target_include_directories(thrift SYSTEM PUBLIC thrift/lib/cpp/src)
 target_link_libraries(thrift PRIVATE Boost::headers)
@@ -703,6 +723,7 @@ target_link_libraries(thrift PRIVATE Boost::headers)
 ################################################################################
 
 add_library(arrow STATIC
+    # Velox Parquet Reader and Writer
     arrow/cpp/src/arrow/result.cc
     arrow/cpp/src/arrow/status.cc
 
@@ -718,8 +739,166 @@ add_library(arrow STATIC
     arrow/cpp/src/arrow/util/ree_util.cc
     arrow/cpp/src/arrow/util/string.cc
     arrow/cpp/src/arrow/util/string_builder.cc
+
+    # Velox Parquet Writer
+    arrow/cpp/src/arrow/array/array_base.cc
+    arrow/cpp/src/arrow/array/array_binary.cc
+    arrow/cpp/src/arrow/array/array_decimal.cc
+    arrow/cpp/src/arrow/array/array_dict.cc
+    # arrow/cpp/src/arrow/array/array_nested.cc
+    arrow/cpp/src/arrow/array/array_primitive.cc
+    arrow/cpp/src/arrow/array/array_run_end.cc
+    arrow/cpp/src/arrow/array/builder_adaptive.cc
+    arrow/cpp/src/arrow/array/builder_base.cc
+    arrow/cpp/src/arrow/array/builder_binary.cc
+    arrow/cpp/src/arrow/array/builder_decimal.cc
+    arrow/cpp/src/arrow/array/builder_dict.cc
+    arrow/cpp/src/arrow/array/builder_run_end.cc
+    arrow/cpp/src/arrow/array/builder_nested.cc
+    arrow/cpp/src/arrow/array/builder_primitive.cc
+    arrow/cpp/src/arrow/array/builder_union.cc
+    arrow/cpp/src/arrow/array/concatenate.cc
+    # arrow/cpp/src/arrow/array/data.cc
+    arrow/cpp/src/arrow/array/diff.cc
+    arrow/cpp/src/arrow/array/util.cc
+    arrow/cpp/src/arrow/array/validate.cc
+    arrow/cpp/src/arrow/builder.cc
+    arrow/cpp/src/arrow/buffer.cc
+    arrow/cpp/src/arrow/chunked_array.cc
+    arrow/cpp/src/arrow/chunk_resolver.cc
+    arrow/cpp/src/arrow/compare.cc
+    arrow/cpp/src/arrow/config.cc
+    arrow/cpp/src/arrow/datum.cc
+    arrow/cpp/src/arrow/device.cc
+    arrow/cpp/src/arrow/extension_type.cc
+    arrow/cpp/src/arrow/memory_pool.cc
+    arrow/cpp/src/arrow/pretty_print.cc
+    arrow/cpp/src/arrow/record_batch.cc
+    # arrow/cpp/src/arrow/result.cc
+    arrow/cpp/src/arrow/scalar.cc
+    arrow/cpp/src/arrow/sparse_tensor.cc
+    # arrow/cpp/src/arrow/status.cc
+    arrow/cpp/src/arrow/table.cc
+    arrow/cpp/src/arrow/table_builder.cc
+    arrow/cpp/src/arrow/tensor.cc
+    arrow/cpp/src/arrow/tensor/coo_converter.cc
+    arrow/cpp/src/arrow/tensor/csf_converter.cc
+    arrow/cpp/src/arrow/tensor/csx_converter.cc
+    arrow/cpp/src/arrow/type.cc
+    arrow/cpp/src/arrow/type_traits.cc
+    arrow/cpp/src/arrow/visitor.cc
+    arrow/cpp/src/arrow/c/bridge.cc
+    arrow/cpp/src/arrow/c/dlpack.cc
+    arrow/cpp/src/arrow/io/buffered.cc
+    arrow/cpp/src/arrow/io/caching.cc
+    arrow/cpp/src/arrow/io/compressed.cc
+    arrow/cpp/src/arrow/io/file.cc
+    # arrow/cpp/src/arrow/io/hdfs.cc
+    # arrow/cpp/src/arrow/io/hdfs_internal.cc
+    arrow/cpp/src/arrow/io/interfaces.cc
+    arrow/cpp/src/arrow/io/memory.cc
+    arrow/cpp/src/arrow/io/slow.cc
+    arrow/cpp/src/arrow/io/stdio.cc
+    arrow/cpp/src/arrow/io/transform.cc
+    arrow/cpp/src/arrow/util/align_util.cc
+    arrow/cpp/src/arrow/util/async_util.cc
+    # arrow/cpp/src/arrow/util/atfork_internal.cc
+    arrow/cpp/src/arrow/util/basic_decimal.cc
+    arrow/cpp/src/arrow/util/bit_block_counter.cc
+    # arrow/cpp/src/arrow/util/bit_run_reader.cc
+    arrow/cpp/src/arrow/util/bit_util.cc
+    arrow/cpp/src/arrow/util/bitmap.cc
+    arrow/cpp/src/arrow/util/bitmap_builders.cc
+    arrow/cpp/src/arrow/util/bitmap_ops.cc
+    # arrow/cpp/src/arrow/util/bpacking.cc
+    arrow/cpp/src/arrow/util/byte_size.cc
+    arrow/cpp/src/arrow/util/cancel.cc
+    arrow/cpp/src/arrow/util/compression.cc
+    arrow/cpp/src/arrow/util/counting_semaphore.cc
+    # arrow/cpp/src/arrow/util/cpu_info.cc
+    arrow/cpp/src/arrow/util/crc32.cc
+    arrow/cpp/src/arrow/util/debug.cc
+    arrow/cpp/src/arrow/util/decimal.cc
+    arrow/cpp/src/arrow/util/delimiting.cc
+    arrow/cpp/src/arrow/util/dict_util.cc
+    arrow/cpp/src/arrow/util/float16.cc
+    arrow/cpp/src/arrow/util/formatting.cc
+    arrow/cpp/src/arrow/util/future.cc
+    arrow/cpp/src/arrow/util/hashing.cc
+    arrow/cpp/src/arrow/util/int_util.cc
+    # arrow/cpp/src/arrow/util/io_util.cc
+    arrow/cpp/src/arrow/util/list_util.cc
+    # arrow/cpp/src/arrow/util/logging.cc
+    arrow/cpp/src/arrow/util/key_value_metadata.cc
+    arrow/cpp/src/arrow/util/memory.cc
+    arrow/cpp/src/arrow/util/mutex.cc
+    # arrow/cpp/src/arrow/util/ree_util.cc
+    # arrow/cpp/src/arrow/util/string.cc
+    # arrow/cpp/src/arrow/util/string_builder.cc
+    arrow/cpp/src/arrow/util/task_group.cc
+    arrow/cpp/src/arrow/util/tdigest.cc
+    arrow/cpp/src/arrow/util/thread_pool.cc
+    arrow/cpp/src/arrow/util/time.cc
+    arrow/cpp/src/arrow/util/tracing.cc
+    arrow/cpp/src/arrow/util/trie.cc
+    arrow/cpp/src/arrow/util/union_util.cc
+    arrow/cpp/src/arrow/util/unreachable.cc
+    arrow/cpp/src/arrow/util/uri.cc
+    arrow/cpp/src/arrow/util/utf8.cc
+    arrow/cpp/src/arrow/util/value_parsing.cc
+    arrow/cpp/src/arrow/vendored/base64.cpp
+
+    arrow/cpp/src/arrow/compute/api_aggregate.cc
+    arrow/cpp/src/arrow/compute/api_scalar.cc
+    arrow/cpp/src/arrow/compute/api_vector.cc
+    arrow/cpp/src/arrow/compute/cast.cc
+    arrow/cpp/src/arrow/compute/exec.cc
+    arrow/cpp/src/arrow/compute/expression.cc
+    arrow/cpp/src/arrow/compute/function.cc
+    arrow/cpp/src/arrow/compute/function_internal.cc
+    arrow/cpp/src/arrow/compute/kernel.cc
+    arrow/cpp/src/arrow/compute/key_hash.cc
+    arrow/cpp/src/arrow/compute/key_map.cc
+    arrow/cpp/src/arrow/compute/light_array.cc
+    arrow/cpp/src/arrow/compute/ordering.cc
+    arrow/cpp/src/arrow/compute/registry.cc
+    arrow/cpp/src/arrow/compute/kernels/codegen_internal.cc
+    arrow/cpp/src/arrow/compute/kernels/row_encoder.cc
+    arrow/cpp/src/arrow/compute/kernels/ree_util_internal.cc
+    arrow/cpp/src/arrow/compute/kernels/scalar_cast_boolean.cc
+    arrow/cpp/src/arrow/compute/kernels/scalar_cast_dictionary.cc
+    arrow/cpp/src/arrow/compute/kernels/scalar_cast_extension.cc
+    arrow/cpp/src/arrow/compute/kernels/scalar_cast_internal.cc
+    arrow/cpp/src/arrow/compute/kernels/scalar_cast_nested.cc
+    arrow/cpp/src/arrow/compute/kernels/scalar_cast_numeric.cc
+    arrow/cpp/src/arrow/compute/kernels/scalar_cast_string.cc
+    arrow/cpp/src/arrow/compute/kernels/scalar_cast_temporal.cc
+    arrow/cpp/src/arrow/compute/kernels/util_internal.cc
+    arrow/cpp/src/arrow/compute/kernels/vector_hash.cc
+    arrow/cpp/src/arrow/compute/kernels/vector_selection.cc
+    arrow/cpp/src/arrow/compute/kernels/vector_selection_filter_internal.cc
+    arrow/cpp/src/arrow/compute/kernels/vector_selection_internal.cc
+    arrow/cpp/src/arrow/compute/kernels/vector_selection_take_internal.cc
+    arrow/cpp/src/arrow/compute/row/encode_internal.cc
+    arrow/cpp/src/arrow/compute/row/compare_internal.cc
+    arrow/cpp/src/arrow/compute/row/grouper.cc
+    arrow/cpp/src/arrow/compute/row/row_internal.cc
+    arrow/cpp/src/arrow/compute/util.cc
+
+    arrow/cpp/src/arrow/ipc/dictionary.cc
+    arrow/cpp/src/arrow/ipc/feather.cc
+    arrow/cpp/src/arrow/ipc/message.cc
+    arrow/cpp/src/arrow/ipc/metadata_internal.cc
+    arrow/cpp/src/arrow/ipc/options.cc
+    arrow/cpp/src/arrow/ipc/reader.cc
+    arrow/cpp/src/arrow/ipc/writer.cc
 )
 target_include_directories(arrow SYSTEM PUBLIC arrow/cpp/src)
+target_link_libraries(arrow 
+    PUBLIC date_interface 
+    PRIVATE double-conversion 
+    PRIVATE FlatBuffers
+)
 
 ################################################################################
 ## velox

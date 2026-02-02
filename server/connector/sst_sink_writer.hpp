@@ -23,7 +23,7 @@
 #include <memory>
 #include <span>
 
-#include "catalog/table_options.h"
+#include "common.h"
 #include "rocksdb/db.h"
 #include "rocksdb/sst_file_writer.h"
 
@@ -32,7 +32,7 @@ namespace sdb::connector {
 class SSTSinkWriter {
  public:
   SSTSinkWriter(rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
-                std::span<catalog::Column::Id> column_oids,
+                std::span<const ColumnInfo> columns,
                 std::string_view rocksdb_directory);
 
   void SetColumnIndex(size_t column_idx) { _column_idx = column_idx; }

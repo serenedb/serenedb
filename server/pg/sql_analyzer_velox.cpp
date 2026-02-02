@@ -1543,7 +1543,7 @@ void SqlAnalyzer::MakeTableWrite(State& state, const Node& stmt,
   }
 
   if (stmt.type == T_CopyStmt) {
-    basics::downCast<connector::RocksDBTable>(axiom_table)->SetBulkInsert();
+    basics::downCast<connector::RocksDBTable>(axiom_table)->BulkInsert() = true;
 
     // tmp solution:
     // for bulk insert we use SST which requires sorted data by key
@@ -1603,9 +1603,26 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
   if (stmt.returningList) {
     SDB_THROW(ERROR_NOT_IMPLEMENTED, "RETURNING clause is not implemented yet");
   }
+  const auto& config =
+    basics::downCast<Config>(*_query_ctx.queryConfig().config());
+  auto conflict_policy = config.Get<VariableType::SdbWriteConflictPolicy>(
+    "sdb_write_conflict_policy");
   if (stmt.onConflictClause) {
-    SDB_THROW(ERROR_NOT_IMPLEMENTED,
-              "ON CONFLICT clause is not implemented yet");
+    if (stmt.onConflictClause->action == ONCONFLICT_UPDATE) {
+      SDB_THROW(ERROR_NOT_IMPLEMENTED,
+                "ON CONFLICT DO UPDATE SET action is not implemented yet");
+    }
+    if (stmt.onConflictClause->targetList) {
+      SDB_THROW(ERROR_NOT_IMPLEMENTED,
+                "ON CONFLICT with target list is not implemented yet");
+    }
+    if (stmt.onConflictClause->infer) {
+      SDB_THROW(ERROR_NOT_IMPLEMENTED,
+                "ON CONFLICT with infer clause is not implemented yet");
+    }
+    SDB_ASSERT(!stmt.onConflictClause->whereClause);
+    SDB_ASSERT(stmt.onConflictClause->action == ONCONFLICT_NOTHING);
+    conflict_policy = WriteConflictPolicy::DoNothing;
   }
   if (stmt.override != OVERRIDING_NOT_SET) {
     SDB_THROW(ERROR_NOT_IMPLEMENTED,
@@ -1695,6 +1712,8 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
 
   MakeTableWrite(state, ToNode(&stmt), *object, std::move(column_names),
                  std::move(column_exprs));
+  basics::downCast<connector::RocksDBTable>(object->table)
+    ->WriteConflictPolicy() = conflict_policy;
 }
 
 void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
@@ -1794,8 +1813,8 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
 
   MakeTableWrite(state, ToNode(&stmt), *object, std::move(column_names),
                  std::move(column_exprs));
-  basics::downCast<connector::RocksDBTable>(object->table)
-    ->SetUsedForUpdatePK(update_pk);
+  basics::downCast<connector::RocksDBTable>(object->table)->UsedForUpdatePK() =
+    update_pk;
 }
 
 void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {

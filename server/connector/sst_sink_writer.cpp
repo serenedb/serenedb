@@ -48,10 +48,10 @@ std::string GenerateSSTDirPath(std::string_view rocksdb_directory) {
 }
 
 SSTSinkWriter::SSTSinkWriter(rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
-                             std::span<catalog::Column::Id> column_oids,
+                             std::span<const ColumnInfo> columns,
                              std::string_view rocksdb_directory)
   : _db{&db}, _cf{&cf}, _sst_directory{GenerateSSTDirPath(rocksdb_directory)} {
-  _writers.resize(column_oids.size());
+  _writers.resize(columns.size());
 
   auto options = _db->GetOptions(_cf);
   options.PrepareForBulkLoad();
@@ -65,7 +65,7 @@ SSTSinkWriter::SSTSinkWriter(rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
 
   std::filesystem::create_directories(_sst_directory);
   for (size_t i = 0; i < _writers.size(); ++i) {
-    if (column_oids[i] == catalog::Column::kGeneratedPKId) {
+    if (columns[i].id == catalog::Column::kGeneratedPKId) {
       continue;
     }
 

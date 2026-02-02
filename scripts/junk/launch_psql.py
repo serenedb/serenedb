@@ -61,9 +61,11 @@ def main():
         'database': 'postgres',
         'user': 'postgres',
         'port': 6162,
-        'sql': 'UPDATE t1 SET a = a WHERE a % 30 = 1;',
-        'iterations': 100,
-        'timeout': 30
+        'sql': 'insert into t1 select a2.x * 1000 + a3.x, a2.x, a3.x from generate_series(1, 1000) as a2(x), generate_series(1, 1000) as a3(x);',
+        'iterations': 30,
+        'timeout': 30,
+        # Optional: SQL to run after each iteration (not measured). E.g., 'delete from t1;'
+        'post_iteration_sql': 'delete from t1;',
     }
 
     executor = PSQLExecutor(
@@ -79,6 +81,8 @@ def main():
     print(f"Starting {config['iterations']} iterations")
     print(f"Database: {config['host']}:{config['port']}/{config['database']}")
     print(f"SQL: {config['sql']}")
+    if config.get('post_iteration_sql'):
+        print(f"Post-iteration SQL (not measured): {config['post_iteration_sql']}")
     print("=" * 50)
 
     with open(log_filename, 'w') as log_file:
@@ -113,6 +117,16 @@ def main():
                 success_count += 1
             else:
                 error_count += 1
+
+            # Execute post-iteration SQL if configured (not measured)
+            if config.get('post_iteration_sql'):
+                post_exit_code, post_output, _ = executor.execute_update(
+                    config['post_iteration_sql'],
+                    config['timeout']
+                )
+                if post_exit_code != 0:
+                    print(f"Post-iteration SQL failed: {post_output}")
+                    log_file.write(f"Post-iteration SQL failed: {post_output}\n")
 
             # Optional: Add delay between iterations
             # time.sleep(0.1)
@@ -191,16 +205,22 @@ def get_results(fname):
             res.append(fl)
     return res
 
-def analyze(case):
-    oldf = 'old.' + case
-    newf = 'new.' + case
+def analyze2(oldf, newf, case):
     old_res = get_results(oldf)
     new_res = get_results(newf)
     print_percentiles(new_res, case, old_res)
     _, p_value = stats.ttest_rel(old_res, new_res)
     print(f"p-value: {p_value:.3f}")
 
+def analyze(case):
+    oldf = 'old.' + case
+    newf = 'new.' + case
+    analyze2(oldf, newf, case)
+
+
 if __name__ == "__main__":
-    main()
-    # analyze('filter.fit.log')
-    # analyze('filter.notfit.log')
+    # main()
+    # analyze2('main.replace.log', 'my.replace.log', 'replace diff')
+    analyze2('my.replace.log', 'my.do_nothing.log', 'replace vs do_nothing')
+    analyze2('my.replace.log', 'my.emit_error.log', 'replace vs emit_error')
+    analyze2('my.do_nothing.log', 'my.emit_error.log', 'do_nothing vs emit_error')

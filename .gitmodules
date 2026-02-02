@@ -112,3 +112,6 @@
 [submodule "third_party/thrift"]
 	path = third_party/thrift
 	url = git@github.com:serenedb/thrift.git
+[submodule "third_party/flatbuffers"]
+	path = third_party/flatbuffers
+	url = git@github.com:serenedb/flatbuffers.git

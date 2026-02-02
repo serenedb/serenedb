@@ -64,6 +64,12 @@ template<typename T>
 std::string VeloxValueToString(T val) {
   if constexpr (sdb::type::kIsOneOf<T, velox::StringView, velox::Timestamp>) {
     return static_cast<std::string>(val);
+  } else if constexpr (std::is_same_v<T, velox::int128_t>) {
+    std::string result;
+    basics::StrResize(result, absl::numbers_internal::kFastToBuffer128Size);
+    char* end = absl::numbers_internal::FastIntToBuffer(val, result.data());
+    result.resize(end - result.data());
+    return result;
   } else {
     return absl::StrCat(val);
   }
@@ -85,8 +91,8 @@ std::string GetPKVeloxValue(velox::VectorPtr vec, velox::vector_size_t idx) {
 std::string FormatKeyValue(const velox::RowVectorPtr& input,
                            velox::column_index_t key_idx,
                            velox::vector_size_t row_idx) {
-  auto vector = input->childAt(key_idx);
-  auto type = input->rowType()->childAt(key_idx);
+  const auto& vector = input->childAt(key_idx);
+  const auto& type = input->rowType()->childAt(key_idx);
 
   if (type->isPrimitiveType()) {
     return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(

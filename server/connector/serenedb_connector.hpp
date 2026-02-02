@@ -585,7 +585,8 @@ class SereneDBConnector final : public velox::connector::Connector {
         auto handle = table.columnMap().find(real_name);
         SDB_ASSERT(handle != table.columnMap().end(),
                    "RocksDBDataSink: can't find column handle for ", real_name);
-        auto column = basics::downCast<const SereneDBColumn>(handle->second);
+        const auto* column =
+          basics::downCast<const SereneDBColumn>(handle->second);
         columns.emplace_back(column->Id(), column->name());
       }
       return irs::ResolveBool(
@@ -673,7 +674,8 @@ class SereneDBConnector final : public velox::connector::Connector {
         auto handle = table.columnMap().find(col);
         SDB_ASSERT(handle != table.columnMap().end(),
                    "RocksDBDataSink: can't find column handle for ", col);
-        auto column = basics::downCast<const SereneDBColumn>(handle->second);
+        const auto* column =
+          basics::downCast<const SereneDBColumn>(handle->second);
         columns.emplace_back(column->Id(), column->name());
       }
       auto& rocksdb_transaction = transaction.EnsureRocksDBTransaction();

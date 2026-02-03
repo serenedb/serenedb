@@ -11,6 +11,32 @@ include(UpdateModule)
 
 sdb_update_module(${GIT_EXECUTABLE} "sqllogictest-rs" ${CMAKE_SOURCE_DIR}/third_party "README.md")
 
+################################################################################
+## JEMALLOC
+################################################################################
+if("${SDB_ALLOC}" MATCHES "JE")
+    # TODO(mbkkt) make it submodule
+    add_subdirectory(jemalloc)
+    include_directories("${JEMALLOC_HOME}/include")
+    add_library(jemalloc INTERFACE)
+    # add_dependencies(jemalloc jemalloc_build)
+    target_include_directories(jemalloc INTERFACE "${JEMALLOC_HOME}/include")
+    target_link_directories(jemalloc INTERFACE "${JEMALLOC_HOME}/lib")
+    target_link_libraries(
+        jemalloc
+        INTERFACE "${JEMALLOC_HOME}/lib/libjemalloc.a"
+    )
+    link_libraries(jemalloc)
+    set(JEMALLOC_HOME "${JEMALLOC_HOME}" PARENT_SCOPE)
+    set(FOLLY_USE_JEMALLOC ON)
+else()
+    set(FOLLY_USE_JEMALLOC OFF)
+endif()
+
+################################################################################
+## geographiclib-c
+################################################################################
+
 # TODO(mbkkt) make it submodule
 add_subdirectory(geographiclib-c)
 if(USE_DTRACE)
@@ -119,29 +145,6 @@ sdb_update_module(${GIT_EXECUTABLE} "minizip-ng" ${CMAKE_CURRENT_SOURCE_DIR} "RE
 add_subdirectory(minizip-ng)
 
 target_link_libraries(minizip PUBLIC zlib)
-
-################################################################################
-## JEMALLOC
-################################################################################
-
-if("${SDB_ALLOC}" MATCHES "JE")
-    # TODO(mbkkt) make it submodule
-    add_subdirectory(jemalloc)
-    include_directories("${JEMALLOC_HOME}/include")
-    add_library(jemalloc INTERFACE)
-    add_dependencies(jemalloc jemalloc_build)
-    target_include_directories(jemalloc INTERFACE "${JEMALLOC_HOME}/include")
-    target_link_directories(jemalloc INTERFACE "${JEMALLOC_HOME}/lib")
-    target_link_libraries(
-        jemalloc
-        INTERFACE "${JEMALLOC_HOME}/lib/libjemalloc.a"
-    )
-    link_libraries(jemalloc)
-    set(JEMALLOC_HOME "${JEMALLOC_HOME}" PARENT_SCOPE)
-    set(FOLLY_USE_JEMALLOC ON)
-else()
-    set(FOLLY_USE_JEMALLOC OFF)
-endif()
 
 ################################################################################
 ## BOOST

@@ -876,7 +876,11 @@ endif()
 if(ARCH_AMD64)
     target_compile_definitions(
         arrow
-        PUBLIC
+        PRIVATE
+            ARROW_HAVE_SSE4_2
+            ARROW_HAVE_AVX2
+        PRIVATE
+            ARROW_HAVE_BMI2
             ARROW_HAVE_RUNTIME_SSE4_2
             ARROW_HAVE_RUNTIME_AVX2
             ARROW_HAVE_RUNTIME_BMI2
@@ -896,7 +900,7 @@ if(ARCH_AMD64)
             -mavx512dq -mavx512bw
     )
 elseif(ARCH_AARCH64)
-    target_compile_definitions(arrow PUBLIC ARROW_HAVE_NEON)
+    target_compile_definitions(arrow PRIVATE ARROW_HAVE_NEON)
     target_sources(arrow PRIVATE arrow/cpp/src/arrow/util/bpacking_neon.cc)
 endif()
 

@@ -876,9 +876,7 @@ endif()
 if(ARCH_AMD64)
     target_compile_definitions(
         arrow
-        PRIVATE
-            ARROW_HAVE_SSE4_2
-            ARROW_HAVE_AVX2
+        PUBLIC ARROW_HAVE_SSE4_2 ARROW_HAVE_AVX2
         PRIVATE
             ARROW_HAVE_BMI2
             ARROW_HAVE_RUNTIME_SSE4_2

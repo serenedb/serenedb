@@ -177,7 +177,9 @@ class TestSeekTermIterator : public irs::SeekTermIterator {
   struct SeekPtr final : irs::SeekCookie {
     explicit SeekPtr(IteratorType ptr) noexcept : ptr(ptr) {}
 
-    irs::Attribute* GetMutable(irs::TypeInfo::type_id) final { return nullptr; }
+    irs::Attribute* GetMutable(irs::TypeInfo::type_id) noexcept final {
+      return nullptr;
+    }
 
     bool IsEqual(const irs::SeekCookie& rhs) const noexcept final {
       return ptr == sdb::basics::downCast<SeekPtr>(rhs).ptr;

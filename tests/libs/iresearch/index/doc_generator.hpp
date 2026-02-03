@@ -601,7 +601,7 @@ class TokenizerPayload final : public irs::Tokenizer {
   explicit TokenizerPayload(irs::Tokenizer* impl);
   bool next() final;
 
-  irs::Attribute* GetMutable(irs::TypeInfo::type_id type) final;
+  irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final;
 
  private:
   const irs::TermAttr* _term;
@@ -626,8 +626,7 @@ class TextField : public tests::FieldBase {
     }
     this->Name(name);
     index_features = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-                     irs::IndexFeatures::Offs | irs::IndexFeatures::Pay |
-                     extra_features;
+                     irs::IndexFeatures::Offs | extra_features;
   }
 
   TextField(const std::string& name, const T& value, bool payload = false,
@@ -644,8 +643,7 @@ class TextField : public tests::FieldBase {
     }
     this->Name(name);
     index_features = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-                     irs::IndexFeatures::Offs | irs::IndexFeatures::Pay |
-                     extra_features;
+                     irs::IndexFeatures::Offs | extra_features;
   }
 
   TextField(TextField&& other) = default;

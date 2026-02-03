@@ -109,7 +109,7 @@ std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
     SDB_ASSERT(_last_read_key.empty(),
                "RocksDBDataSource: inconsistent state, addSplit call missing");
     return nullptr;
-  };
+  }
 
   rocksdb::ReadOptions read_options;
   read_options.async_io = size > 1;

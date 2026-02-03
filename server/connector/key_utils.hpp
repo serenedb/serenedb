@@ -30,6 +30,10 @@
 
 namespace sdb::connector::key_utils {
 
+// Internal key footer for SST files: PackSequenceAndType(0, kTypeValue)
+// The footer is 8 bytes encoding (sequence_number << 8) | value_type
+inline constexpr uint64_t kSSTInternalKeyFooter = (uint64_t{0} << 8) | 0x1;
+
 // Constructs common part of table row. Result could be used with AppendXXX
 // methods to construct full keys.
 std::string PrepareTableKey(ObjectId id);
@@ -41,7 +45,9 @@ std::string PrepareColumnKey(ObjectId id, catalog::Column::Id column_oid);
 void AppendColumnKey(std::string& key, catalog::Column::Id column_oid);
 
 // Prepare buffer for column key and call 'row_key_handle' on row_key
-template<typename Func>
+// When IsInternalSSTKey is true, kSSTInternalKeyFooter is appended to the key
+// after construction, avoiding the need for a separate loop to append footers.
+template<bool IsInternalSSTKey = false, typename Func>
 void MakeColumnKey(const velox::RowVectorPtr& input,
                    const std::vector<velox::column_index_t>& pk_columns,
                    velox::vector_size_t row_idx, std::string_view object_id,
@@ -62,6 +68,13 @@ void MakeColumnKey(const velox::RowVectorPtr& input,
   row_key_handle(std::string_view{
     key_buffer.begin() + sizeof(catalog::Column::Id), key_buffer.end()});
   std::memcpy(key_buffer.data(), object_id.data(), sizeof(ObjectId));
+
+  if constexpr (IsInternalSSTKey) {
+    const auto key_size = key_buffer.size();
+    basics::StrAppend(key_buffer, sizeof(kSSTInternalKeyFooter));
+    std::memcpy(key_buffer.data() + key_size, &kSSTInternalKeyFooter,
+                sizeof(kSSTInternalKeyFooter));
+  }
 }
 
 // Takes buffer in format

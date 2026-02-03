@@ -32,12 +32,12 @@ namespace sdb::connector::search {
 struct VeloxFilterContext;
 
 // Recursive conversion: Handle complex expressions (AND, OR, NOT)
-Result FromVeloxExpression(irs::BooleanFilter* filter,
+Result FromVeloxExpression(irs::BooleanFilter& filter,
                           const VeloxFilterContext& ctx,
                           const velox::core::TypedExprPtr& expr);
 // Convert Velox expression to IResearch filter
-Result ExprToFilter(irs::BooleanFilter* filter,
-                          velox::core::ExpressionEvaluator* evaluator,
+Result ExprToFilter(irs::BooleanFilter& filter,
+                          velox::core::ExpressionEvaluator& evaluator,
                               const velox::core::TypedExprPtr& expr,
                               const folly::F14FastMap<std::string, const axiom::connector::Column*>& columns_map);
 

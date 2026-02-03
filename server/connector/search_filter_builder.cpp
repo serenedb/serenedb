@@ -42,7 +42,7 @@ namespace sdb::connector::search {
 // Context for filter conversion
 struct VeloxFilterContext {
   bool negated = false;
-  velox::core::ExpressionEvaluator* evaluator;
+  velox::core::ExpressionEvaluator& evaluator;
   irs::score_t boost = irs::kNoBoost;
   const folly::F14FastMap<std::string, const axiom::connector::Column*>&
     columns_map;
@@ -55,13 +55,13 @@ namespace {
 
 std::optional<velox::Variant> EvaluateConstant(
   const velox::core::TypedExprPtr& expr, const VeloxFilterContext& ctx) {
-  auto compiled_expr = ctx.evaluator->compile(expr);
+  auto compiled_expr = ctx.evaluator.compile(expr);
   SDB_ASSERT(compiled_expr->exprs().size() == 1);
   if (!compiled_expr->exprs()[0]->isConstantExpr()) {
     return std::nullopt;
   }
   velox::SelectivityVector rows(1);
-  ctx.evaluator->evaluate(compiled_expr.get(), rows, *ctx.evaluator_input,
+  ctx.evaluator.evaluate(compiled_expr.get(), rows, *ctx.evaluator_input,
                           ctx.evaluation_result);
   return ctx.evaluation_result->variantAt(0);
 }
@@ -230,14 +230,11 @@ auto& AddFilter(Source& parent) {
     static_assert(std::is_base_of_v<irs::BooleanFilter, Source>);
     return parent.add(std::make_unique<irs::All>());
   } else {
-    auto* filter = [&] {
-      if constexpr (std::is_same_v<irs::Not, Source>) {
-        return &parent.template filter<Filter>();
-      } else {
-        return &parent.template add<Filter>();
-      }
-    }();
-    return *filter;
+    if constexpr (std::is_same_v<irs::Not, Source>) {
+      return parent.template filter<Filter>();
+    } else {
+      return parent.template add<Filter>();
+    }
   }
 }
 
@@ -249,15 +246,10 @@ Filter& Negate(Source& parent) {
 }
 
 template<typename Filter, typename Source>
-Result MakeGroup(Source* parent, const VeloxFilterContext& ctx,
+Result MakeGroup(Source& parent, const VeloxFilterContext& ctx,
                  const velox::core::CallTypedExpr* call) {
-  irs::BooleanFilter* sub_filter = nullptr;
-  if (ctx.negated) {
-    sub_filter = &Negate<Filter>(*parent);
-  } else {
-    sub_filter = &AddFilter<Filter>(*parent);
-  }
-  sub_filter->boost(ctx.boost);
+  irs::BooleanFilter& sub_filter = ctx.negated ? Negate<Filter>(parent) : AddFilter<Filter>(parent);
+  sub_filter.boost(ctx.boost);
   auto sub_ctx = ctx;
   sub_ctx.negated = false;
   sub_ctx.boost = irs::kNoBoost;
@@ -272,11 +264,11 @@ Result MakeGroup(Source* parent, const VeloxFilterContext& ctx,
 
 bool IsNotExpr(const velox::core::TypedExprPtr& expr,
                const velox::core::CallTypedExpr* call,
-               velox::core::ExpressionEvaluator* evaluator) {
+               velox::core::ExpressionEvaluator& evaluator) {
   if (!call->name().ends_with("not")) {
     return false;
   }
-  auto exprs = evaluator->compile(expr);
+  auto exprs = evaluator.compile(expr);
   if (exprs->size() != 1)
     return false;
 
@@ -354,7 +346,7 @@ struct ConversionHelper {
   std::optional<velox::Variant> converted;
 };
 
-Result FromVeloxBinaryEq(irs::BooleanFilter* filter,
+Result FromVeloxBinaryEq(irs::BooleanFilter& filter,
                          const VeloxFilterContext& ctx,
                          const velox::core::CallTypedExpr* call,
                          bool not_equal) {
@@ -377,13 +369,13 @@ Result FromVeloxBinaryEq(irs::BooleanFilter* filter,
   if (value.value().isNull()) {
     // foo == NULL is always false and foo != NULL is false too.
     // so we do not check negated in context.
-    AddFilter<irs::Empty>(*filter);
+    AddFilter<irs::Empty>(filter);
     return {};
   }
 
   auto& term_filter = (ctx.negated != not_equal)
-                        ? Negate<irs::ByTerm>(*filter)
-                        : AddFilter<irs::ByTerm>(*filter);
+                        ? Negate<irs::ByTerm>(filter)
+                        : AddFilter<irs::ByTerm>(filter);
 
   // Set the field name
   std::string field_name;
@@ -395,7 +387,7 @@ Result FromVeloxBinaryEq(irs::BooleanFilter* filter,
 }
 
 // Convert range comparisons to IResearch range filters
-Result FromVeloxComparison(irs::BooleanFilter* filter,
+Result FromVeloxComparison(irs::BooleanFilter& filter,
                            const VeloxFilterContext& ctx,
                            const velox::core::CallTypedExpr* call,
                            ComparisonOp op) {
@@ -427,7 +419,7 @@ Result FromVeloxComparison(irs::BooleanFilter* filter,
 
   if (value.value().isNull()) {
     // foo <=> NULL is always false
-    AddFilter<irs::Empty>(*filter);
+    AddFilter<irs::Empty>(filter);
     return {};
   }
 
@@ -462,7 +454,7 @@ Result FromVeloxComparison(irs::BooleanFilter* filter,
     [&]<typename T>(const velox::Variant& converted_value) -> Result {
       DoMangle<T>(field_name);
       if constexpr (std::is_same_v<T, velox::StringView>) {
-        auto& range_filter = AddFilter<irs::ByRange>(*filter);
+        auto& range_filter = AddFilter<irs::ByRange>(filter);
         irs::StringTokenizer stream;
         const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
         stream.reset(converted_value.value<velox::StringView>());
@@ -470,12 +462,12 @@ Result FromVeloxComparison(irs::BooleanFilter* filter,
         setup_base_filter(range_filter, std::move(field_name))
           .assign(token->value);
       } else if constexpr (std::is_same_v<T, bool>) {
-        auto& range_filter = AddFilter<irs::ByRange>(*filter);
+        auto& range_filter = AddFilter<irs::ByRange>(filter);
         setup_base_filter(range_filter, std::move(field_name))
           .assign(irs::ViewCast<irs::byte_type>(
             irs::BooleanTokenizer::value(converted_value.value<bool>())));
       } else {
-        auto& range_filter = AddFilter<irs::ByGranularRange>(*filter);
+        auto& range_filter = AddFilter<irs::ByGranularRange>(filter);
         irs::NumericTokenizer stream;
         stream.reset(converted_value.value<T>());
         stream.next();
@@ -487,7 +479,7 @@ Result FromVeloxComparison(irs::BooleanFilter* filter,
     helper.GetConverted(value.value(), kind));
 }
 
-Result FromVeloxBetween(irs::BooleanFilter* filter,
+Result FromVeloxBetween(irs::BooleanFilter& filter,
                         const VeloxFilterContext& ctx,
                         const velox::core::CallTypedExpr* call)
 
@@ -524,7 +516,7 @@ Result FromVeloxBetween(irs::BooleanFilter* filter,
 
   if (value.value().isNull() || value_greater.value().isNull()) {
     // NULL always breaks between
-    AddFilter<irs::Empty>(*filter);
+    AddFilter<irs::Empty>(filter);
     return {};
   }
 
@@ -543,7 +535,7 @@ Result FromVeloxBetween(irs::BooleanFilter* filter,
   return DispatchValue(kind, [&]<typename T> -> Result {
     DoMangle<T>(field_name);
     if constexpr (std::is_same_v<T, velox::StringView>) {
-      auto& range_filter = AddFilter<irs::ByRange>(*filter);
+      auto& range_filter = AddFilter<irs::ByRange>(filter);
       setup_base_filter(range_filter, std::move(field_name));
       irs::StringTokenizer stream;
       const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
@@ -556,7 +548,7 @@ Result FromVeloxBetween(irs::BooleanFilter* filter,
       stream.next();
       range_filter.mutable_options()->range.max.assign(token->value);
     } else if constexpr (std::is_same_v<T, bool>) {
-      auto& range_filter = AddFilter<irs::ByRange>(*filter);
+      auto& range_filter = AddFilter<irs::ByRange>(filter);
       setup_base_filter(range_filter, std::move(field_name));
       range_filter.mutable_options()->range.min.assign(
         irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value(
@@ -565,7 +557,7 @@ Result FromVeloxBetween(irs::BooleanFilter* filter,
         irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value(
           helper.GetConverted(value_greater.value(), kind).value<bool>())));
     } else {
-      auto& range_filter = AddFilter<irs::ByGranularRange>(*filter);
+      auto& range_filter = AddFilter<irs::ByGranularRange>(filter);
       setup_base_filter(range_filter, std::move(field_name));
       irs::NumericTokenizer stream;
       stream.reset(helper.GetConverted(value.value(), kind).value<T>());
@@ -579,7 +571,7 @@ Result FromVeloxBetween(irs::BooleanFilter* filter,
   });
 }
 
-Result FromVeloxIn(irs::BooleanFilter* filter, const VeloxFilterContext& ctx,
+Result FromVeloxIn(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
                    const velox::core::CallTypedExpr* call) {
   if (call->inputs().size() < 2) {
     return {ERROR_NOT_IMPLEMENTED, "IN has ", call->inputs().size(),
@@ -619,13 +611,13 @@ Result FromVeloxIn(irs::BooleanFilter* filter, const VeloxFilterContext& ctx,
   }
 
   // Empty IN is syntax error.
-  SDB_ASSERT(!value.value().array().empty());
+  SDB_ASSERT(!values_list.empty() || !value.value().array().empty());
 
   std::string field_name;
   const auto kind = ExtractFieldName(ctx, *field_typed, field_name);
 
-  auto& terms_filter = ctx.negated ? Negate<irs::ByTerms>(*filter)
-                                   : AddFilter<irs::ByTerms>(*filter);
+  auto& terms_filter = ctx.negated ? Negate<irs::ByTerms>(filter)
+                                   : AddFilter<irs::ByTerms>(filter);
   return DispatchValue(
     kind,
     []<typename T>(auto& terms_filter, std::vector<velox::Variant>& value_array,
@@ -664,7 +656,7 @@ Result FromVeloxIn(irs::BooleanFilter* filter, const VeloxFilterContext& ctx,
   return {};
 }
 
-Result FromVeloxIsNull(irs::BooleanFilter* filter,
+Result FromVeloxIsNull(irs::BooleanFilter& filter,
                        const VeloxFilterContext& ctx,
                        const velox::core::CallTypedExpr* call)
 
@@ -683,7 +675,7 @@ Result FromVeloxIsNull(irs::BooleanFilter* filter,
   std::string field_name;
   ExtractFieldName(ctx, *left_field, field_name);
   sdb::search::mangling::MangleNull(field_name);
-  auto term_filter = AddFilter<irs::ByTerm>(*filter);
+  auto term_filter = AddFilter<irs::ByTerm>(filter);
   term_filter.boost(ctx.boost);
   *term_filter.mutable_field() = field_name;
   term_filter.mutable_options()->term.assign(
@@ -694,7 +686,7 @@ Result FromVeloxIsNull(irs::BooleanFilter* filter,
 }  // namespace
 
 // Recursive conversion: Handle complex expressions (AND, OR, NOT)
-Result FromVeloxExpression(irs::BooleanFilter* filter,
+Result FromVeloxExpression(irs::BooleanFilter& filter,
                            const VeloxFilterContext& ctx,
                            const velox::core::TypedExprPtr& expr) {
   auto* call = dynamic_cast<const velox::core::CallTypedExpr*>(expr.get());
@@ -750,7 +742,7 @@ Result FromVeloxExpression(irs::BooleanFilter* filter,
 }
 
 Result ExprToFilter(
-  irs::BooleanFilter* filter, velox::core::ExpressionEvaluator* evaluator,
+  irs::BooleanFilter& filter, velox::core::ExpressionEvaluator& evaluator,
   const velox::core::TypedExprPtr& expr,
   const folly::F14FastMap<std::string, const axiom::connector::Column*>&
     columns_map) {
@@ -758,7 +750,7 @@ Result ExprToFilter(
                          .evaluator = evaluator,
                          .columns_map = columns_map,
                          .evaluator_input = std::make_shared<velox::RowVector>(
-                           evaluator->pool(), velox::ROW({}, {}), nullptr, 1,
+                           evaluator.pool(), velox::ROW({}, {}), nullptr, 1,
                            std::vector<velox::VectorPtr>{})};
   try {
     return FromVeloxExpression(filter, ctx, expr);

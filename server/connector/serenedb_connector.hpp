@@ -153,7 +153,7 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
     irs::And conjunct_root;
     for (auto& filter : filters) {
       const auto count_before = conjunct_root.size();
-      auto res = search::ExprToFilter(&conjunct_root, &evaluator, filter, table().columnMap());
+      auto res = search::ExprToFilter(conjunct_root, evaluator, filter, table().columnMap());
       if (res.fail()) {
        if (count_before != conjunct_root.size()) {
         // we do not expect more than one conjunct added.

@@ -170,10 +170,6 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
   for (const auto& writer : _index_writers) {
     writer->Init(num_rows);
   }
-  for (const auto& writer : _index_writers) {
-    writer->Init(num_rows);
-  }
-}
 
   velox::IndexRange all_rows(0, num_rows);
   const folly::Range all_rows_range{&all_rows, 1};

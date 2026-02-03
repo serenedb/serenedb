@@ -68,7 +68,7 @@
 
 
 /* First part of user prologue.  */
-#line 40 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 40 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
 
 
 #include "parser.h"
@@ -77,7 +77,7 @@
 int yylex(void);
 void yyerror(sdb::ParserContext& ctx, const char *s);
 
-#line 80 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 80 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
 
 # ifndef YY_CAST
 #  ifdef __cplusplus
@@ -1155,7 +1155,7 @@ yyreduce:
   switch (yyn)
     {
   case 2: /* query: clause_list  */
-#line 77 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 77 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     {
                                       if (ctx.required_and) {
                                         ctx.current_parent = ctx.required_and;
@@ -1163,23 +1163,23 @@ yyreduce:
                                       }
                                       (yyval.filter) = (yyvsp[0].filter);
                                     }
-#line 1166 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1166 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 3: /* clause_list: clause  */
-#line 87 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 87 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = (yyvsp[0].filter); }
-#line 1172 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1172 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 4: /* clause_list: clause_list clause  */
-#line 88 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 88 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = (yyvsp[0].filter); }
-#line 1178 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1178 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 5: /* @1: %empty  */
-#line 89 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 89 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     {
                                       if (ctx.required_and) {
                                         ctx.current_parent = ctx.required_and;
@@ -1193,284 +1193,284 @@ yyreduce:
                                       and_filter.add(std::move(prev));
                                       ctx.current_parent = &and_filter;
                                     }
-#line 1196 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1196 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 6: /* clause_list: clause_list AND @1 clause  */
-#line 102 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 102 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     {
                                       (yyval.filter) = ctx.current_parent;
                                       ctx.current_parent = (yyvsp[-1].parent);
                                     }
-#line 1205 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1205 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 7: /* $@2: %empty  */
-#line 106 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 106 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     {
                                       if (ctx.required_and) {
                                         ctx.current_parent = ctx.required_and;
                                         ctx.required_and = nullptr;
                                       }
                                     }
-#line 1216 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1216 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 8: /* clause_list: clause_list OR $@2 clause  */
-#line 112 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 112 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = (yyvsp[0].filter); }
-#line 1222 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1222 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 9: /* clause: term_expr  */
-#line 116 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 116 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = (yyvsp[0].filter); }
-#line 1228 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1228 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 10: /* @3: %empty  */
-#line 117 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 117 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.parent) = ctx.current_parent; }
-#line 1234 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1234 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 11: /* @4: %empty  */
-#line 118 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 118 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     {
                                       auto& not_filter = (yyvsp[0].parent)->add<irs::Not>();
                                       ctx.current_parent = &not_filter.filter<irs::Or>();
                                       (yyval.filter) = &not_filter;
                                     }
-#line 1244 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1244 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 12: /* clause: NOT @3 @4 clause  */
-#line 123 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 123 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     {
                                       ctx.current_parent = (yyvsp[-2].parent);
                                       (yyval.filter) = (yyvsp[-1].filter);
                                     }
-#line 1253 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1253 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 13: /* $@5: %empty  */
-#line 127 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 127 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     {
                                       if (!ctx.required_and) {
                                         ctx.required_and = &ctx.current_parent->add<irs::And>();
                                         ctx.current_parent = ctx.required_and;
                                       }
                                     }
-#line 1264 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1264 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 14: /* clause: PLUS $@5 clause  */
-#line 133 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 133 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = (yyvsp[0].filter); }
-#line 1270 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1270 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 15: /* @6: %empty  */
-#line 134 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 134 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.parent) = ctx.current_parent; }
-#line 1276 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1276 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 16: /* @7: %empty  */
-#line 135 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 135 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     {
                                       auto& not_filter = (yyvsp[0].parent)->add<irs::Not>();
                                       ctx.current_parent = &not_filter.filter<irs::Or>();
                                       (yyval.filter) = &not_filter;
                                     }
-#line 1286 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1286 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 17: /* clause: MINUS @6 @7 clause  */
-#line 140 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 140 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     {
                                       ctx.current_parent = (yyvsp[-2].parent);
                                       (yyval.filter) = (yyvsp[-1].filter);
                                     }
-#line 1295 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1295 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 18: /* term_expr: boosted_expr  */
-#line 147 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 147 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = (yyvsp[0].filter); }
-#line 1301 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1301 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 19: /* @8: %empty  */
-#line 148 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 148 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     {
                                       (yyval.sv) = {ctx.default_field.data(), ctx.default_field.size()};
                                       ctx.default_field = (yyvsp[-1].sv);
                                     }
-#line 1310 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1310 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 20: /* term_expr: TERM COLON @8 term_expr  */
-#line 152 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 152 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     {
                                       ctx.default_field = (yyvsp[-1].sv);
                                       (yyval.filter) = (yyvsp[0].filter);
                                     }
-#line 1319 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1319 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 21: /* boosted_expr: modified_term  */
-#line 159 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 159 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = (yyvsp[0].filter); }
-#line 1325 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1325 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 22: /* boosted_expr: modified_term CARET NUMBER  */
-#line 160 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 160 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     {
                                       (yyvsp[-2].filter)->boost(static_cast<float>((yyvsp[0].num)));
                                       (yyval.filter) = (yyvsp[-2].filter);
                                     }
-#line 1334 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1334 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 23: /* boosted_expr: modified_term CARET FLOAT  */
-#line 164 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 164 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     {
                                       (yyvsp[-2].filter)->boost((yyvsp[0].fnum));
                                       (yyval.filter) = (yyvsp[-2].filter);
                                     }
-#line 1343 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1343 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 24: /* modified_term: base_term  */
-#line 171 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 171 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = (yyvsp[0].filter); }
-#line 1349 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1349 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 25: /* modified_term: TERM TILDE  */
-#line 172 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 172 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddFuzzy((yyvsp[-1].sv), 2); }
-#line 1355 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1355 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 26: /* modified_term: TERM TILDE NUMBER  */
-#line 173 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 173 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddFuzzy((yyvsp[-2].sv), (yyvsp[0].num)); }
-#line 1361 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1361 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 27: /* modified_term: PHRASE TILDE  */
-#line 174 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 174 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddPhrase((yyvsp[-1].sv), 0); }
-#line 1367 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1367 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 28: /* modified_term: PHRASE TILDE NUMBER  */
-#line 175 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 175 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddPhrase((yyvsp[-2].sv), (yyvsp[0].num)); }
-#line 1373 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1373 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 29: /* base_term: TERM  */
-#line 179 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 179 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddTerm((yyvsp[0].sv)); }
-#line 1379 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1379 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 30: /* base_term: PHRASE  */
-#line 180 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 180 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddPhrase((yyvsp[0].sv), 0); }
-#line 1385 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1385 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 31: /* base_term: REGEX  */
-#line 181 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 181 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddWildcard((yyvsp[0].sv)); }
-#line 1391 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1391 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 32: /* base_term: PREFIX  */
-#line 182 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 182 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddPrefix((yyvsp[0].sv)); }
-#line 1397 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1397 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 33: /* base_term: SUFFIX  */
-#line 183 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 183 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddWildcard((yyvsp[0].sv)); }
-#line 1403 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1403 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 34: /* base_term: WILDCARD  */
-#line 184 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 184 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddWildcard((yyvsp[0].sv)); }
-#line 1409 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1409 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 35: /* base_term: range_expr  */
-#line 185 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 185 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = (yyvsp[0].filter); }
-#line 1415 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1415 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 36: /* @9: %empty  */
-#line 186 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 186 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     {
                                       (yyval.parent) = ctx.current_parent;
                                       ctx.current_parent = &ctx.current_parent->add<irs::Or>();
                                     }
-#line 1424 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1424 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 37: /* base_term: LPAREN @9 clause_list RPAREN  */
-#line 190 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 190 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     {
                                       (yyval.filter) = ctx.current_parent;
                                       ctx.current_parent = (yyvsp[-2].parent);
                                     }
-#line 1433 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1433 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 38: /* range_expr: LBRACKET range_bound TO range_bound RBRACKET  */
-#line 198 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 198 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddRange((yyvsp[-3].sv), (yyvsp[-1].sv), true, true); }
-#line 1439 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1439 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 39: /* range_expr: LBRACE range_bound TO range_bound RBRACE  */
-#line 200 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 200 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddRange((yyvsp[-3].sv), (yyvsp[-1].sv), false, false); }
-#line 1445 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1445 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 40: /* range_expr: LBRACKET range_bound TO range_bound RBRACE  */
-#line 202 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 202 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddRange((yyvsp[-3].sv), (yyvsp[-1].sv), true, false); }
-#line 1451 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1451 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 41: /* range_expr: LBRACE range_bound TO range_bound RBRACKET  */
-#line 204 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 204 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.filter) = &ctx.AddRange((yyvsp[-3].sv), (yyvsp[-1].sv), false, true); }
-#line 1457 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1457 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 42: /* range_bound: TERM  */
-#line 208 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 208 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.sv) = (yyvsp[0].sv); }
-#line 1463 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1463 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
   case 43: /* range_bound: STAR  */
-#line 209 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 209 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
                                     { (yyval.sv) = (yyvsp[0].sv); }
-#line 1469 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1469 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
     break;
 
 
-#line 1473 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
+#line 1473 "libs/iresearch/include/iresearch/parser/lucene_parser.cpp"
 
       default: break;
     }
@@ -1663,7 +1663,7 @@ yyreturnlab:
   return yyresult;
 }
 
-#line 212 "/home/abrama/projects/search-benchmark-game/engines/iresearch/serenedb/libs/iresearch/include/iresearch/parser/lucene_parser.y"
+#line 212 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
 
 
 void yyerror(sdb::ParserContext& ctx, const char *s) {

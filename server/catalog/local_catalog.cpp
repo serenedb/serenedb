@@ -269,8 +269,6 @@ struct IndexDrop {
       }
     }
 
-    catalog->DropIndexShard(tombstone.id);
-
     SDB_DEBUG("xxxxx", Logger::THREADS,
               "Finish dropping index: ", tombstone.id);
 
@@ -1308,8 +1306,7 @@ Result LocalCatalog::DropIndex(ObjectId database_id, std::string_view schema,
         tombstone.id = index.GetId();
         tombstone.type = index.GetIndexType();
 
-        index_shard = clone->GetIndexShard(index.GetId());
-        auto table_shard = clone->GetTableShard(index.GetRelationId());
+        clone->DropIndexShard(index.GetId());
 
         return _engine->MarkDeleted(index, tombstone);
       });
@@ -1753,7 +1750,9 @@ Result LocalCatalog::DropTable(ObjectId database_id, std::string_view schema,
           ObjectId table_id = object->GetId();
           index_info.reserve(shard->GetIndexes().size());
           for (auto index_id : shard->GetIndexes()) {
-            auto& index = basics::downCast<Index>(*clone->GetObject(index_id));
+            auto object = clone->GetObject(index_id);
+            SDB_ASSERT(object);
+            auto& index = basics::downCast<Index>(*object);
             SDB_ASSERT(index.GetRelationId() == table_id);
 
             IndexTombstone index_tombstone;
@@ -1827,14 +1826,6 @@ void LocalCatalog::DropTableShard(ObjectId id) {
   absl::MutexLock lock{&_mutex};
   std::ignore = Apply(_snapshot, [&](auto& clone) {
     clone->DropTableShard(id);
-    return Result{};
-  });
-}
-
-void LocalCatalog::DropIndexShard(ObjectId id) {
-  absl::MutexLock lock{&_mutex};
-  std::ignore = Apply(_snapshot, [&](auto& clone) {
-    clone->DropIndexShard(id);
     return Result{};
   });
 }

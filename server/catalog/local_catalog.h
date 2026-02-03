@@ -110,7 +110,6 @@ class LocalCatalog final : public LogicalCatalog,
   void RegisterIndexDrop(IndexTombstone tombstone) final;
   void RegisterScopeDrop(ObjectId database_id, ObjectId schema_id) final;
   void DropTableShard(ObjectId id);
-  void DropIndexShard(ObjectId id);
 
   bool GetSkipBackgroundErrors() const noexcept {
     return _skip_background_errors;

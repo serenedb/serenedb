@@ -211,6 +211,7 @@ class FileDataSource final : public velox::connector::DataSource {
   uint64_t getCompletedRows() final { return _completed_rows; }
 
  private:
+  velox::memory::MemoryPool* _pool;
   std::shared_ptr<velox::dwio::common::Reader> _reader;
   std::unique_ptr<velox::dwio::common::RowReader> _row_reader;
   // We store RowReaderOptions to keep ScanSpec alive

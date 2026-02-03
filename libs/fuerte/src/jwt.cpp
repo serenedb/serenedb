@@ -36,12 +36,6 @@
 
 #include "basics/assert.h"
 
-#ifdef OPENSSL_NO_SSL2  // OpenSSL > 1.1.0 deprecates RAND_pseudo_bytes
-#define RAND_BYTES RAND_bytes
-#else
-#define RAND_BYTES RAND_pseudo_bytes
-#endif
-
 namespace sdb::fuerte {
 
 /// generate a JWT token for internal cluster communication

@@ -116,11 +116,14 @@ FileDataSource::FileDataSource(std::shared_ptr<velox::ReadFile> source,
   _row_reader_options->setScanSpec(std::move(spec));
 
   _row_reader = _reader->createRowReader(*_row_reader_options);
+  _pool = &memory_pool;
 }
 
 std::optional<velox::RowVectorPtr> FileDataSource::next(
   uint64_t size, velox::ContinueFuture& future) {
-  velox::VectorPtr batch;
+  velox::VectorPtr batch =
+    velox::BaseVector::create(_reader->rowType(), 0, _pool);
+
   uint64_t rows_read = _row_reader->next(size, batch);
   if (rows_read == 0) {
     return nullptr;

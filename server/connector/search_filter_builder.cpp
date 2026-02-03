@@ -62,7 +62,7 @@ std::optional<velox::Variant> EvaluateConstant(
   }
   velox::SelectivityVector rows(1);
   ctx.evaluator.evaluate(compiled_expr.get(), rows, *ctx.evaluator_input,
-                          ctx.evaluation_result);
+                         ctx.evaluation_result);
   return ctx.evaluation_result->variantAt(0);
 }
 
@@ -77,77 +77,6 @@ velox::TypeKind ExtractFieldName(const VeloxFilterContext& ctx,
   absl::big_endian::Store(field_name.data(), column_id);
   return static_cast<const SereneDBColumn*>(it->second)->type()->kind();
 }
-
-/*
-template<typename T>
-irs::bstring GetNumeric(const velox::Variant& variant) {
-  irs::NumericTokenizer stream;
-  const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
-  stream.reset(variant.value<T>());
-  stream.next();
-  return irs::bstring{token->value};
-  //filter.mutable_options()->term.assign(token->value);
-  filter.mutable_field() = field_name;
-}
-
-irs::bstring GetString(const velox::Variant& variant) {
-  irs::StringTokenizer stream;
-  const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
-  stream.reset(variant.value<velox::StringView>());
-  stream.next();
-  return irs::bstring{token->value};
-}
-
-irs::bstring GetBool(const velox::Variant& variant) {
-  return irs::bstring{irs::ViewCast<irs::byte_type>(
-    irs::BooleanTokenizer::value(variant.value<bool>()))};
-}
-
-irs::bstring GetNull() {
-  return irs::bstring{
-    irs::ViewCast<irs::byte_type>(irs::NullTokenizer::value_null())};
-}
-
-template<typename Filter, typename TermSetter>
-Result SetupFilter(Filter& filter, std::string& field_name, const
-velox::Variant& value, TermSetter& setter) { SDB_ASSERT(!value.isNull(),
-"UNKNOWN and Nulls should be handled as part of IS NULL operator. For regular
-filter it should be just irs::Empty!"); irs::bstring term_value; switch
-(value.kind()) { case velox::TypeKind::TINYINT: case velox::TypeKind::SMALLINT:
-      sdb::search::mangling::MangleNumeric(field_name);
-      term_value = GetNumeric<int32_t>(value);
-      break;
-    case velox::TypeKind::INTEGER:
-      sdb::search::mangling::MangleNumeric(field_name);
-      term_value =
-GetNumeric<velox::TypeTraits<velox::TypeKind::INTEGER>::NativeType>(value);
-      break;
-    case velox::TypeKind::BIGINT:
-      sdb::search::mangling::MangleNumeric(field_name);
-      term_value =
-GetNumeric<velox::TypeTraits<velox::TypeKind::BIGINT>::NativeType>(value);
-      break;
-    case velox::TypeKind::DOUBLE:
-    case velox::TypeKind::REAL:
-    case velox::TypeKind::HUGEINT:
-      sdb::search::mangling::MangleNumeric(field_name);
-      term_value = GetNumeric<double>(value);
-      break;
-    case velox::TypeKind::VARCHAR:
-      sdb::search::mangling::MangleString(field_name);
-      term_value = GetString(value);
-      break;
-    case velox::TypeKind::BOOLEAN:
-      sdb::search::mangling::MangleBool(field_name);
-      term_value = GetBool(value);
-      break;
-    default:
-      return {ERROR_NOT_IMPLEMENTED, "Unsupported type for term filter"};
-  }
-  setter(filter, std::move(term_value));
-  *filter.mutable_field() = field_name;
-  return {};
-}*/
 
 template<typename Func, typename... Args>
 Result DispatchValue(velox::TypeKind kind, Func&& func, Args... args) {
@@ -198,6 +127,9 @@ Result SetupTermFilter(irs::ByTerm& filter, std::string& field_name,
   SDB_ASSERT(!value.isNull(),
              "UNKNOWN and Nulls should be handled as part of IS NULL operator. "
              "For regular filter it should be just irs::Empty!");
+  SDB_ASSERT(value.kind() == kind,
+             "Values should have same kind as field. Analyzer should put "
+             "necessary casts.");
   auto process = []<typename T>(irs::ByTerm& filter, std::string& field_name,
                                 const velox::Variant& value) -> Result {
     irs::bstring term_value;
@@ -248,7 +180,8 @@ Filter& Negate(Source& parent) {
 template<typename Filter, typename Source>
 Result MakeGroup(Source& parent, const VeloxFilterContext& ctx,
                  const velox::core::CallTypedExpr* call) {
-  irs::BooleanFilter& sub_filter = ctx.negated ? Negate<Filter>(parent) : AddFilter<Filter>(parent);
+  irs::BooleanFilter& sub_filter =
+    ctx.negated ? Negate<Filter>(parent) : AddFilter<Filter>(parent);
   sub_filter.boost(ctx.boost);
   auto sub_ctx = ctx;
   sub_ctx.negated = false;
@@ -332,20 +265,6 @@ bool IsNullEq(std::string_view name) {
   return name == "isnull" || name.ends_with("_isnull");
 }
 
-struct ConversionHelper {
-  const velox::Variant& GetConverted(const velox::Variant& value,
-                                     velox::TypeKind to_kind) {
-    SDB_ASSERT(value.hasValue());
-    if (value.kind() == to_kind) {
-      return value;
-    }
-    converted = velox::VariantConverter::convert(value, to_kind);
-    return converted.value();
-  }
-
-  std::optional<velox::Variant> converted;
-};
-
 Result FromVeloxBinaryEq(irs::BooleanFilter& filter,
                          const VeloxFilterContext& ctx,
                          const velox::core::CallTypedExpr* call,
@@ -381,9 +300,7 @@ Result FromVeloxBinaryEq(irs::BooleanFilter& filter,
   std::string field_name;
   const auto kind = ExtractFieldName(ctx, *left_field, field_name);
   term_filter.boost(ctx.boost);
-  ConversionHelper helper;
-  return SetupTermFilter(term_filter, field_name, kind,
-                         helper.GetConverted(value.value(), kind));
+  return SetupTermFilter(term_filter, field_name, kind, value.value());
 }
 
 // Convert range comparisons to IResearch range filters
@@ -405,6 +322,8 @@ Result FromVeloxComparison(irs::BooleanFilter& filter,
     op = InvertComparisonOpOp(op);
   }
 
+  // TODO(Dronplane): handle case when field access is wrapped in cast.
+  // current implementation will just fail below.
   if (!field_input->isFieldAccessKind()) {
     return {ERROR_BAD_PARAMETER, "Input is not field access"};
   }
@@ -448,7 +367,9 @@ Result FromVeloxComparison(irs::BooleanFilter& filter,
         SDB_ASSERT(false, "Not all comparison operations implemented");
     }
   };
-  ConversionHelper helper;
+  SDB_ASSERT(value->kind() == kind,
+             "Values should have same kind as field. Analyzer should put "
+             "necessary casts.");
   return DispatchValue(
     kind,
     [&]<typename T>(const velox::Variant& converted_value) -> Result {
@@ -476,7 +397,7 @@ Result FromVeloxComparison(irs::BooleanFilter& filter,
       }
       return {};
     },
-    helper.GetConverted(value.value(), kind));
+    value.value());
 }
 
 Result FromVeloxBetween(irs::BooleanFilter& filter,
@@ -531,7 +452,12 @@ Result FromVeloxBetween(irs::BooleanFilter& filter,
     filter.boost(ctx.boost);
     *filter.mutable_field() = std::move(field_name);
   };
-  ConversionHelper helper;
+  SDB_ASSERT(value->kind() == kind,
+             "Values should have same kind as field. Analyzer should put "
+             "necessary casts.");
+  SDB_ASSERT(value_greater->kind() == kind,
+             "Values should have same kind as field. Analyzer should put "
+             "necessary casts.");
   return DispatchValue(kind, [&]<typename T> -> Result {
     DoMangle<T>(field_name);
     if constexpr (std::is_same_v<T, velox::StringView>) {
@@ -539,31 +465,29 @@ Result FromVeloxBetween(irs::BooleanFilter& filter,
       setup_base_filter(range_filter, std::move(field_name));
       irs::StringTokenizer stream;
       const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
-      stream.reset(
-        helper.GetConverted(value.value(), kind).value<velox::StringView>());
+      stream.reset(value->value<velox::StringView>());
       stream.next();
       range_filter.mutable_options()->range.min.assign(token->value);
-      stream.reset(helper.GetConverted(value_greater.value(), kind)
-                     .value<velox::StringView>());
+      stream.reset(value_greater->value<velox::StringView>());
       stream.next();
       range_filter.mutable_options()->range.max.assign(token->value);
     } else if constexpr (std::is_same_v<T, bool>) {
       auto& range_filter = AddFilter<irs::ByRange>(filter);
       setup_base_filter(range_filter, std::move(field_name));
       range_filter.mutable_options()->range.min.assign(
-        irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value(
-          helper.GetConverted(value.value(), kind).value<bool>())));
+        irs::ViewCast<irs::byte_type>(
+          irs::BooleanTokenizer::value(value->value<bool>())));
       range_filter.mutable_options()->range.max.assign(
-        irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value(
-          helper.GetConverted(value_greater.value(), kind).value<bool>())));
+        irs::ViewCast<irs::byte_type>(
+          irs::BooleanTokenizer::value(value_greater->value<bool>())));
     } else {
       auto& range_filter = AddFilter<irs::ByGranularRange>(filter);
       setup_base_filter(range_filter, std::move(field_name));
       irs::NumericTokenizer stream;
-      stream.reset(helper.GetConverted(value.value(), kind).value<T>());
+      stream.reset(value->value<T>());
       stream.next();
       irs::SetGranularTerm(range_filter.mutable_options()->range.min, stream);
-      stream.reset(helper.GetConverted(value_greater.value(), kind).value<T>());
+      stream.reset(value_greater->value<T>());
       stream.next();
       irs::SetGranularTerm(range_filter.mutable_options()->range.max, stream);
     }
@@ -627,23 +551,20 @@ Result FromVeloxIn(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
       terms_filter.boost(ctx.boost);
       *terms_filter.mutable_field() = field_name;
       auto& opts = *terms_filter.mutable_options();
-      ConversionHelper helper;
       for (const auto& value : value_array) {
-        auto& converted_value = helper.GetConverted(value, kind);
         if constexpr (std::is_same_v<T, velox::StringView>) {
           irs::StringTokenizer stream;
           const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
-          stream.reset(converted_value.template value<velox::StringView>());
+          stream.reset(value.template value<velox::StringView>());
           stream.next();
           opts.terms.emplace(token->value);
         } else if constexpr (std::is_same_v<T, bool>) {
-          opts.terms.emplace(
-            irs::ViewCast<irs::byte_type>(irs::BooleanTokenizer::value(
-              converted_value.template value<bool>())));
+          opts.terms.emplace(irs::ViewCast<irs::byte_type>(
+            irs::BooleanTokenizer::value(value.template value<bool>())));
         } else {
           irs::NumericTokenizer stream;
           const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
-          stream.reset(converted_value.template value<T>());
+          stream.reset(value.template value<T>());
           stream.next();
           opts.terms.emplace(token->value);
         }

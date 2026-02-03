@@ -612,15 +612,6 @@ class SereneDBConnector final : public velox::connector::Connector {
                          input_type->getChildIdx(handle->name()));
             }
 #endif
-            std::vector<catalog::Column::Id> all_column_oids;
-            all_column_oids.reserve(table.type()->size());
-            for (auto& col : table.type()->names()) {
-              auto handle = table.columnMap().find(col);
-              SDB_ASSERT(handle != table.columnMap().end(),
-                         "RocksDBDataSink: can't find column handle for ", col);
-              all_column_oids.push_back(
-                basics::downCast<const SereneDBColumn>(handle->second)->Id());
-            }
           } else {
             const auto& pk_handles =
               table.rowIdHandles(serene_insert_handle.Kind());

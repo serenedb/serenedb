@@ -194,7 +194,9 @@ struct TableDrop {
 
     const bool fatal = !catalog->GetSkipBackgroundErrors();
 
-    yaclib::Wait(index_futures.begin(), index_futures.size());
+    if (!index_futures.empty()) {
+      yaclib::Wait(index_futures.begin(), index_futures.size());
+    }
     for (auto& future : index_futures) {
       if (auto r = std::move(future).Touch().Ok(); !r.ok()) {
         SDB_WARN("xxxxx", Logger::THREADS, "Failed dropping index in table ",

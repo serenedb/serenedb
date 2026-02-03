@@ -660,9 +660,10 @@ class SereneDBConnector final : public velox::connector::Connector {
             auto search_sinks =
               search_transactions |
               std::views::transform(
-                [](auto& transaction) -> std::unique_ptr<SinkUpdateWriter> {
+                [](auto* transaction) -> std::unique_ptr<SinkUpdateWriter> {
+                  SDB_ASSERT(transaction);
                   return std::make_unique<search::SearchSinkUpdateWriter>(
-                    transaction);
+                    *transaction);
                 }) |
               std::ranges::to<std::vector>();
 
@@ -682,9 +683,10 @@ class SereneDBConnector final : public velox::connector::Connector {
             auto search_sinks =
               search_transactions |
               std::views::transform(
-                [](auto& transaction) -> std::unique_ptr<SinkInsertWriter> {
+                [](auto* transaction) -> std::unique_ptr<SinkInsertWriter> {
+                  SDB_ASSERT(transaction);
                   return std::make_unique<search::SearchSinkInsertWriter>(
-                    transaction);
+                    *transaction);
                 }) |
               std::ranges::to<std::vector>();
 

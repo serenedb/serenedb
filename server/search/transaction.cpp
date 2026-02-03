@@ -23,10 +23,8 @@
 
 namespace sdb::search {
 void Transaction::AcquireTransactionsForTable(ObjectId table_id) {
-  if (!_transactions.contains(table_id)) {
-    _transactions[table_id] = {};
-  }
   auto table_shard = _snapshot->GetTableShard(table_id);
+  SDB_ASSERT(table_shard);
   for (auto& index_id : table_shard->GetIndexes()) {
     auto index_shard = _snapshot->GetIndexShard(index_id);
     auto data_store = basics::downCast<DataStore>(index_shard);
@@ -34,9 +32,22 @@ void Transaction::AcquireTransactionsForTable(ObjectId table_id) {
       continue;
     }
     auto transaction = data_store->GetTransaction();
-    _transactions[table_id][data_store->GetRelationId()] =
-      std::move(transaction);
+    _transactions[table_id][index_id] = std::move(transaction);
   }
+}
+
+std::vector<irs::IndexWriter::Transaction*>
+Transaction::GetTransactionsFromTable(ObjectId table_id) {
+  auto it = _transactions.find(table_id);
+  if (it == _transactions.end()) {
+    return {};
+  }
+  std::vector<irs::IndexWriter::Transaction*> result;
+  result.reserve(it->second.size());
+  for (auto& [relation_id, transaction] : it->second) {
+    result.push_back(&transaction);
+  }
+  return result;
 }
 
 void Transaction::Commit() {
@@ -44,8 +55,8 @@ void Transaction::Commit() {
     for (auto& [relation_id, transaction] : data) {
       transaction.Commit();
     }
-    _transactions.erase(id);
   }
+  _transactions.clear();
 }
 
 void Transaction::Abort() {
@@ -53,7 +64,6 @@ void Transaction::Abort() {
     for (auto& [relation_id, transaction] : data) {
       transaction.Abort();
     }
-    _transactions.erase(id);
   }
   _transactions.clear();
 }

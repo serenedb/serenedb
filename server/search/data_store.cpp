@@ -64,7 +64,7 @@ DataStore::DataStore(const catalog::InvertedIndex& index,
                      DataStoreOptions options, bool is_new)
   : IndexShard{index},
     _engine{GetServerEngine()},
-    _search{SerenedServer::Instance().getFeature<SearchEngine>()},
+    _search{GetSearchEngine()},
     _state{std::make_shared<ThreadPoolState>()},
     _options{std::move(options)} {
   const auto db_id = index.GetDatabaseId();

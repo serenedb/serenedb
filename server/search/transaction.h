@@ -41,14 +41,8 @@ class Transaction {
 
   void AcquireTransactionsForTable(ObjectId table_id);
 
-  auto GetTransactionsFromTable(ObjectId table_id) {
-    auto it = _transactions.find(table_id);
-    SDB_ASSERT(it != _transactions.end());
-    return it->second | std::views::transform(
-                          [](auto& index) -> irs::IndexWriter::Transaction& {
-                            return index.second;
-                          });
-  }
+  std::vector<irs::IndexWriter::Transaction*> GetTransactionsFromTable(
+    ObjectId table_id);
 
   void Commit();
   void Abort();

@@ -43,6 +43,7 @@ Result Transaction::Commit() {
   }
   SDB_ASSERT(_search_transaction);
   _search_transaction->Commit();
+  _search_transaction.reset();
   ApplyTableStatsDiffs();
   CommitVariables();
   Destroy();
@@ -58,6 +59,7 @@ Result Transaction::Rollback() {
   }
   SDB_ASSERT(_search_transaction);
   _search_transaction->Abort();
+  _search_transaction.reset();
   RollbackVariables();
   Destroy();
   return {};
@@ -127,6 +129,7 @@ void Transaction::CreateRocksDBTransaction() {
 void Transaction::Destroy() noexcept {
   _state = State::None;
   _storage_snapshot.reset();
+  _search_transaction.reset();
   _rocksdb_transaction.reset();
   _rocksdb_snapshot = nullptr;
 }

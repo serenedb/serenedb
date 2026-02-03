@@ -45,7 +45,7 @@ class Task {
     : _id{data_store->GetId()},
       _data_store{data_store},
       _state{data_store->GetState()},
-      _engine{&SerenedServer::Instance().getFeature<SearchEngine>()} {}
+      _engine{&GetSearchEngine()} {}
 
   template<IndexTaskType Self>
   void Schedule(this Self&& self, absl::Duration delay = {}) {

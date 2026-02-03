@@ -867,10 +867,37 @@ target_link_libraries(
     PUBLIC date_interface
     PRIVATE double-conversion
     PRIVATE FlatBuffers
+    PUBLIC xsimd
 )
 if("${SDB_ALLOC}" MATCHES "JE")
     target_sources(arrow PRIVATE arrow/cpp/src/arrow/memory_pool_jemalloc.cc)
     target_compile_definitions(arrow PUBLIC ARROW_JEMALLOC)
+endif()
+if(ARCH_AMD64)
+    target_compile_definitions(
+        arrow
+        PUBLIC
+            ARROW_HAVE_RUNTIME_SSE4_2
+            ARROW_HAVE_RUNTIME_AVX2
+            ARROW_HAVE_RUNTIME_BMI2
+            ARROW_HAVE_RUNTIME_AVX512
+    )
+    target_sources(
+        arrow
+        PRIVATE
+            arrow/cpp/src/arrow/util/bpacking_avx2.cc
+            arrow/cpp/src/arrow/util/bpacking_avx512.cc
+    )
+    set_source_files_properties(
+        arrow/cpp/src/arrow/util/bpacking_avx512.cc
+        PROPERTIES
+            COMPILE_FLAGS -mavx512f
+            -mavx512cd -mavx512vl
+            -mavx512dq -mavx512bw
+    )
+elseif(ARCH_AARCH64)
+    target_compile_definitions(arrow PUBLIC ARROW_HAVE_NEON)
+    target_sources(arrow PRIVATE arrow/cpp/src/arrow/util/bpacking_neon.cc)
 endif()
 
 ################################################################################

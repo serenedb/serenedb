@@ -242,6 +242,7 @@ struct IndexDrop {
     SDB_DEBUG("xxxxx", Logger::THREADS, "Start dropping index: ", tombstone.id);
 
     if (SerenedServer::Instance().isStopping()) {
+      index_shard.reset();
       return {};
     }
 
@@ -1763,6 +1764,7 @@ Result LocalCatalog::DropTable(ObjectId database_id, std::string_view schema,
 
             auto index_shard = clone->GetIndexShard(index.GetId());
             SDB_ASSERT(index_shard);
+            clone->DropIndexShard(index.GetId());
 
             auto schema_obj = clone->GetObject(index.GetSchemaId());
             if (!schema_obj || schema_obj->GetType() != ObjectType::Schema) {

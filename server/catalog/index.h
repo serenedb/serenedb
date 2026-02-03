@@ -20,11 +20,8 @@
 
 #pragma once
 
-#include <sys/types.h>
-
 #include <string>
 
-#include "basics/result.h"
 #include "catalog/object.h"
 #include "catalog/types.h"
 

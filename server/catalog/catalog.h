@@ -43,7 +43,6 @@
 #include "catalog/types.h"
 #include "catalog/view.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "search/data_store.h"
 #include "storage_engine/index_shard.h"
 
 namespace sdb::catalog {

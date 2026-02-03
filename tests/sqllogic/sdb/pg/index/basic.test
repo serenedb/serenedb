@@ -34,6 +34,31 @@ index_t
 
 
 statement ok
+DROP INDEX index_t;
+
+
+query ok
+SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indexrelid = pg_class.oid;
+----
+indexname
+
+
+statement ok
+INSERT INTO t VALUES ('a'), ('b'), ('c');
+
+
+statement ok
+CREATE INDEX index_t ON t USING inverted(r);
+
+
+query ok
+SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indexrelid = pg_class.oid;
+----
+indexname
+index_t
+
+
+statement ok
 DROP TABLE t;
 
 

@@ -61,7 +61,7 @@ uint64_t ComputeAvg(std::atomic<uint64_t>& time_num, uint64_t new_time) {
 }  // namespace
 
 DataStore::DataStore(const catalog::InvertedIndex& index,
-                     DataStoreOptions options)
+                     DataStoreOptions options, bool is_new)
   : IndexShard{index},
     _engine{GetServerEngine()},
     _search{SerenedServer::Instance().getFeature<SearchEngine>()},
@@ -78,7 +78,8 @@ DataStore::DataStore(const catalog::InvertedIndex& index,
   auto codec = irs::formats::Get("1_5avx");
   // TODO(codeworse): add is_exists and change open_mode
   _writer = irs::IndexWriter::Make(
-    *_dir, codec, (irs::OpenMode::kOmCreate | irs::OpenMode::kOmAppend), {});
+    *_dir, codec,
+    (is_new ? irs::OpenMode::kOmCreate : irs::OpenMode::kOmAppend), {});
   // TODO(codeworse): Add recovery
   _last_committed_tick = 0;
 

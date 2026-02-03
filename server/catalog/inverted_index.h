@@ -23,5 +23,7 @@ class InvertedIndex final : public Index {
     bool is_new, vpack::Slice args) const final;
 
  private:
+  // TODO(codeworse): Add inverted index specific options
 };
+
 }  // namespace sdb::catalog

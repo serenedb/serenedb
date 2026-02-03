@@ -35,7 +35,6 @@
 #include <rocksdb/statistics.h>
 #include <rocksdb/table.h>
 #include <rocksdb/transaction_log.h>
-#include <rocksdb/utilities/secondary_index_simple.h>
 #include <rocksdb/utilities/transaction_db.h>
 #include <rocksdb/write_batch.h>
 #include <vpack/builder.h>
@@ -43,7 +42,6 @@
 #include <vpack/iterator.h>
 
 #include <iomanip>
-#include <iresearch/index/index_writer.hpp>
 #include <limits>
 #include <memory>
 #include <utility>
@@ -113,7 +111,6 @@
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 #include "rocksdb_engine_catalog/rocksdb_value.h"
 #include "rocksdb_engine_catalog/rocksdb_wal_access.h"
-#include "search/data_store.h"
 #include "storage_engine/table_shard.h"
 #include "vpack/serializer.h"
 #include "vpack/slice.h"

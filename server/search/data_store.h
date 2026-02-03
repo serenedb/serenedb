@@ -128,7 +128,8 @@ class DataStore : public std::enable_shared_from_this<DataStore>,
     uint64_t time_ms;
   };
 
-  DataStore(const catalog::InvertedIndex& index, DataStoreOptions options);
+  DataStore(const catalog::InvertedIndex& index, DataStoreOptions options,
+            bool is_new);
 
   void WriteInternal(vpack::Builder& builder) const final;
 

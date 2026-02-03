@@ -56,7 +56,6 @@ class Transaction : public Config {
     return catalog::GetCatalog().GetSnapshot();
   }
 
-  const auto& GetSearchTransaction() const { return _search_transaction; }
   auto& GetSearchTransaction() { return _search_transaction; }
 
   void UpdateNumRows(ObjectId table_id, int64_t delta) noexcept {

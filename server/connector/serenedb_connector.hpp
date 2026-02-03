@@ -29,7 +29,6 @@
 #include <velox/type/Type.h>
 #include <velox/vector/DecodedVector.h>
 
-#include <iresearch/index/index_writer.hpp>
 #include <memory>
 #include <ranges>
 
@@ -47,10 +46,8 @@
 #include "data_source.hpp"
 #include "file_table.hpp"
 #include "query/transaction.h"
-#include "rest_server/serened_single.h"
 #include "rocksdb/utilities/transaction_db.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "storage_engine/engine_feature.h"
 #include "storage_engine/table_shard.h"
 
 namespace sdb::connector {
@@ -438,7 +435,6 @@ class SereneDBConnectorMetadata final
       SDB_ASSERT(serene_insert_handle->NumberOfRowsAffected() == 0);
       return yaclib::MakeFuture<int64_t>(0);
     }
-
     int64_t number_of_locked_primary_keys =
       serene_insert_handle->NumberOfRowsAffected();
     if (serene_insert_handle->Kind() == axiom::connector::WriteKind::kInsert ||

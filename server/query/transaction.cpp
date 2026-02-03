@@ -113,7 +113,7 @@ void Transaction::CreateRocksDBTransaction() {
   auto* db = GetServerEngine().db();
   SDB_ASSERT(db != nullptr);
   _search_transaction =
-    std::make_shared<search::Transaction>(catalog::GetCatalog().GetSnapshot());
+    std::make_shared<search::Transaction>(GetCatalogSnapshot());
   rocksdb::WriteOptions write_options;
   rocksdb::TransactionOptions txn_options;
   txn_options.skip_concurrency_control = true;

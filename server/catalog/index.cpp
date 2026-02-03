@@ -20,25 +20,11 @@
 
 #include "catalog/index.h"
 
-#include "basics/down_cast.h"
 #include "basics/errors.h"
 #include "catalog/inverted_index.h"
 #include "catalog/object.h"
-#include "catalog/secondary_index.h"
-#include "catalog/table.h"
 #include "catalog/types.h"
-#include "pg/pg_list_utils.h"
-#include "pg/sql_utils.h"
 #include "vpack/serializer.h"
-#include "vpack/slice.h"
-
-LIBPG_QUERY_INCLUDES_BEGIN
-#include "postgres.h"
-
-#include "nodes/nodeFuncs.h"
-#include "parser/parse_node.h"
-#include "utils/errcodes.h"
-LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::catalog {
 namespace {
@@ -63,11 +49,10 @@ ResultOr<std::shared_ptr<catalog::Index>> CreateInvertedIndex(
 ResultOr<std::shared_ptr<Index>> CreateIndex(
   catalog::IndexBaseOptions options) {
   switch (options.type) {
-    case IndexType::Secondary:
-      SDB_THROW(ERROR_NOT_IMPLEMENTED, "Secondary index is not implemented");
     case IndexType::Inverted:
       return CreateInvertedIndex(std::move(options));
     case IndexType::Primary:
+    case IndexType::Secondary:
     case IndexType::NoAccess:
       return std::unexpected<Result>{std::in_place, ERROR_NOT_IMPLEMENTED};
     case IndexType::Unknown:

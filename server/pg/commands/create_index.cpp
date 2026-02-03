@@ -27,7 +27,6 @@
 #include "app/app_server.h"
 #include "basics/down_cast.h"
 #include "basics/errors.h"
-#include "basics/system-compiler.h"
 #include "catalog/catalog.h"
 #include "catalog/index.h"
 #include "catalog/object.h"
@@ -39,9 +38,6 @@
 #include "pg/pg_list_utils.h"
 #include "pg/sql_utils.h"
 #include "rest_server/serened_single.h"
-#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "search/data_store.h"
-#include "storage_engine/engine_feature.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
@@ -68,9 +64,8 @@ Result ParseIndexOptions(const IndexStmt& index,
   }
   auto index_type = GetIndexType(index.accessMethod);
   if (index_type == IndexType::Unknown) {
-    return Result{ERROR_BAD_PARAMETER,
-                  absl::StrCat("access method \"", index.accessMethod,
-                               "\" does not exist")};
+    return Result{ERROR_BAD_PARAMETER, "access method \"", index.accessMethod,
+                  "\" does not exist"};
   }
 
   pg::PgListWrapper<IndexElem> index_columns{index.indexParams};

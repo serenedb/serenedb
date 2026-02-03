@@ -374,8 +374,7 @@ Result CatalogFeature::AddIndexes(ObjectId database_id, const Schema& schema) {
         return r;
       }
 
-      // Try to load stored index shard data (may not exist for older indexes)
-      vpack::Slice shard_data = vpack::Slice::noneSlice();
+      vpack::Slice shard_data;
       auto shard_builder = GetServerEngine().LoadIndexShard(options.id);
       if (shard_builder) {
         shard_data = shard_builder->slice();

@@ -1255,7 +1255,7 @@ Result LocalCatalog::CreateIndex(ObjectId database_id, std::string_view schema,
   for (auto name : column_names) {
     const auto* column = find_column(name);
     if (!column) {
-      return Result{ERROR_BAD_PARAMETER, "Column \"", name,
+      return Result{ERROR_BAD_PARAMETER, "column \"", name,
                     "\" does not exist"};
     }
     options.column_ids.push_back(column->id);

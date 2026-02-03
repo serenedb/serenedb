@@ -677,11 +677,12 @@ add_subdirectory(flatbuffers)
 
 sdb_update_module(${GIT_EXECUTABLE} "thrift" ${CMAKE_CURRENT_SOURCE_DIR} "LICENSE")
 
-add_library(thrift STATIC
+add_library(
+    thrift
+    STATIC
     # Velox Parquet Reader and Writer
     thrift/lib/cpp/src/thrift/protocol/TProtocol.cpp
     thrift/lib/cpp/src/thrift/transport/TTransportException.cpp
-
     # Velox Parquet Writer
     thrift/lib/cpp/src/thrift/transport/TBufferTransports.cpp
 )
@@ -692,14 +693,14 @@ target_link_libraries(thrift PRIVATE Boost::headers)
 ## arrow
 ################################################################################
 
-add_library(arrow STATIC
+add_library(
+    arrow
+    STATIC
     # Velox Parquet Reader and Writer
     arrow/cpp/src/arrow/result.cc
     arrow/cpp/src/arrow/status.cc
-
     arrow/cpp/src/arrow/array/array_nested.cc
     arrow/cpp/src/arrow/array/data.cc
-
     arrow/cpp/src/arrow/util/atfork_internal.cc
     arrow/cpp/src/arrow/util/bit_run_reader.cc
     arrow/cpp/src/arrow/util/bpacking.cc
@@ -709,7 +710,6 @@ add_library(arrow STATIC
     arrow/cpp/src/arrow/util/ree_util.cc
     arrow/cpp/src/arrow/util/string.cc
     arrow/cpp/src/arrow/util/string_builder.cc
-
     # Velox Parquet Writer
     arrow/cpp/src/arrow/array/array_base.cc
     arrow/cpp/src/arrow/array/array_binary.cc
@@ -817,7 +817,6 @@ add_library(arrow STATIC
     arrow/cpp/src/arrow/util/utf8.cc
     arrow/cpp/src/arrow/util/value_parsing.cc
     arrow/cpp/src/arrow/vendored/base64.cpp
-
     arrow/cpp/src/arrow/compute/api_aggregate.cc
     arrow/cpp/src/arrow/compute/api_scalar.cc
     arrow/cpp/src/arrow/compute/api_vector.cc
@@ -854,7 +853,6 @@ add_library(arrow STATIC
     arrow/cpp/src/arrow/compute/row/grouper.cc
     arrow/cpp/src/arrow/compute/row/row_internal.cc
     arrow/cpp/src/arrow/compute/util.cc
-
     arrow/cpp/src/arrow/ipc/dictionary.cc
     arrow/cpp/src/arrow/ipc/feather.cc
     arrow/cpp/src/arrow/ipc/message.cc
@@ -864,15 +862,14 @@ add_library(arrow STATIC
     arrow/cpp/src/arrow/ipc/writer.cc
 )
 target_include_directories(arrow SYSTEM PUBLIC arrow/cpp/src)
-target_link_libraries(arrow 
-    PUBLIC date_interface 
-    PRIVATE double-conversion 
+target_link_libraries(
+    arrow
+    PUBLIC date_interface
+    PRIVATE double-conversion
     PRIVATE FlatBuffers
 )
 if("${SDB_ALLOC}" MATCHES "JE")
-    target_sources(arrow PRIVATE
-        arrow/cpp/src/arrow/memory_pool_jemalloc.cc
-    )
+    target_sources(arrow PRIVATE arrow/cpp/src/arrow/memory_pool_jemalloc.cc)
     target_compile_definitions(arrow PUBLIC ARROW_JEMALLOC)
 endif()
 

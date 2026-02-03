@@ -165,22 +165,22 @@ set_directory_properties(PROPERTIES CLEAN_NO_CUSTOM "On")
 
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_lexer.cpp
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     COMMAND
-        ${FLEX_EXECUTABLE} -L
-        -o${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_lexer.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_lexer.l
+        ${FLEX_EXECUTABLE} -L -o
+        libs/iresearch/include/iresearch/parser/lucene_lexer.cpp
+        libs/iresearch/include/iresearch/parser/lucene_lexer.l
     MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_lexer.l
     VERBATIM
 )
 
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_parser.cpp
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     COMMAND
         ${CMAKE_SOURCE_DIR}/scripts/bison-c.sh ${BISON_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_parser.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_parser.y
+        libs/iresearch/include/iresearch/parser/lucene_parser.cpp
+        libs/iresearch/include/iresearch/parser/lucene_parser.y
     MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_parser.y
     VERBATIM
 )

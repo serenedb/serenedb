@@ -17,17 +17,16 @@ sdb_update_module(${GIT_EXECUTABLE} "sqllogictest-rs" ${CMAKE_SOURCE_DIR}/third_
 if("${SDB_ALLOC}" MATCHES "JE")
     # TODO(mbkkt) make it submodule
     add_subdirectory(jemalloc)
-    include_directories("${JEMALLOC_HOME}/include")
-    add_library(jemalloc INTERFACE)
-    # add_dependencies(jemalloc jemalloc_build)
-    target_include_directories(jemalloc INTERFACE "${JEMALLOC_HOME}/include")
-    target_link_directories(jemalloc INTERFACE "${JEMALLOC_HOME}/lib")
-    target_link_libraries(
+    file(MAKE_DIRECTORY "${JEMALLOC_HOME}/include")
+    add_library(jemalloc STATIC IMPORTED GLOBAL)
+    set_target_properties(
         jemalloc
-        INTERFACE "${JEMALLOC_HOME}/lib/libjemalloc.a"
+        PROPERTIES
+            IMPORTED_LOCATION "${JEMALLOC_HOME}/lib/libjemalloc.a"
+            INTERFACE_INCLUDE_DIRECTORIES "${JEMALLOC_HOME}/include"
     )
+    add_dependencies(jemalloc jemalloc_build)
     link_libraries(jemalloc)
-    set(JEMALLOC_HOME "${JEMALLOC_HOME}" PARENT_SCOPE)
     set(FOLLY_USE_JEMALLOC ON)
 else()
     set(FOLLY_USE_JEMALLOC OFF)

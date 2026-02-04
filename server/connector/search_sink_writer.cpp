@@ -20,6 +20,7 @@
 
 #include "search_sink_writer.hpp"
 
+#include <velox/functions/prestosql/types/JsonType.h>
 #include <velox/type/Type.h>
 #include <velox/vector/FlatVector.h>
 
@@ -33,7 +34,6 @@
 #include "connector/common.h"
 #include "connector/key_utils.hpp"
 #include "search_remove_filter.hpp"
-#include "velox/functions/prestosql/types/JsonType.h"
 
 namespace sdb::connector::search {
 

@@ -1,6 +1,8 @@
 services:
   serenedb-single:
     image: "$BUILD_IMAGE"
+    security_opt:
+      - seccomp:unconfined
     restart: on-failure
     volumes:
       - "$WORKSPACE:/serenedb"

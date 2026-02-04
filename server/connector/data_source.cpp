@@ -30,6 +30,8 @@
 #include "common.h"
 #include "connector/primary_key.hpp"
 #include "key_utils.hpp"
+#include "rocksdb_engine_catalog/rocksdb_common.h"
+#include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 
 namespace sdb::connector {
 namespace {
@@ -76,6 +78,8 @@ std::unique_ptr<rocksdb::Iterator> RocksDBDataSource::CreateColumnIterator(
   auto it =
     std::unique_ptr<rocksdb::Iterator>(_db.NewIterator(read_options, &_cf));
   it->Seek(column_key + _last_read_key);
+  rocksutils::CheckIteratorStatus(*it);
+
   if (!_last_read_key.empty()) {
     SDB_ASSERT(
       it->Valid(),
@@ -84,6 +88,7 @@ std::unique_ptr<rocksdb::Iterator> RocksDBDataSource::CreateColumnIterator(
       it->key() == column_key + _last_read_key,
       "RocksDBDataSource: inconsistent snapshot. Last read key mismatch");
     it->Next();
+    rocksutils::CheckIteratorStatus(*it);
   }
 
   if (!it->Valid() || !it->key().starts_with(column_key)) {
@@ -103,10 +108,10 @@ std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
     SDB_ASSERT(_last_read_key.empty(),
                "RocksDBDataSource: inconsistent state, addSplit call missing");
     return nullptr;
-  };
+  }
 
   rocksdb::ReadOptions read_options;
-  read_options.async_io = size > 1;
+  read_options.async_io = GetRocksDBOptions().ioUringEnabled() && size > 1;
   read_options.snapshot = _snapshot;
   std::vector<velox::VectorPtr> columns;
 
@@ -309,6 +314,9 @@ uint64_t RocksDBDataSource::IterateColumn(rocksdb::Iterator& it,
     ++vector_size;
     it.Next();
   }
+
+  rocksutils::CheckIteratorStatus(it);
+
   return vector_size;
 }
 

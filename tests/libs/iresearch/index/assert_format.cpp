@@ -297,8 +297,7 @@ void IndexSegment::insert_indexed(const Ifield& f) {
   const std::string_view field_name = f.Name();
 
   const auto requested_features = f.GetIndexFeatures();
-  const auto features = requested_features &
-                        (~(irs::IndexFeatures::Offs | irs::IndexFeatures::Pay));
+  const auto features = requested_features & (~irs::IndexFeatures::Offs);
 
   const auto res = _fields.emplace(field_name, Field{field_name, features});
 
@@ -347,12 +346,6 @@ void IndexSegment::insert_indexed(const Ifield& f) {
         (requested_features & irs::IndexFeatures::Offs) &&
       offs) {
     field.index_features |= irs::IndexFeatures::Offs;
-  }
-  auto* pay = irs::get<irs::PayAttr>(stream);
-  if (irs::IndexFeatures::Pay ==
-        (requested_features & irs::IndexFeatures::Pay) &&
-      pay) {
-    field.index_features |= irs::IndexFeatures::Pay;
   }
 
   bool empty = true;
@@ -469,19 +462,11 @@ class DocIteratorImpl : public irs::DocIterator {
       if (irs::IndexFeatures::None != (features & irs::IndexFeatures::Offs)) {
         _poffs = &_offs;
       }
-
-      if (irs::IndexFeatures::None != (features & irs::IndexFeatures::Pay)) {
-        _ppay = &_pay;
-      }
     }
 
     Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
       if (irs::Type<irs::OffsAttr>::id() == type) {
         return _poffs;
-      }
-
-      if (irs::Type<irs::PayAttr>::id() == type) {
-        return _ppay;
       }
 
       return nullptr;
@@ -491,7 +476,6 @@ class DocIteratorImpl : public irs::DocIterator {
       _next = _owner._prev->positions().begin();
       _value = irs::pos_limits::invalid();
       _offs.clear();
-      _pay.value = irs::bytes_view{};
     }
 
     bool next() final {
@@ -503,7 +487,6 @@ class DocIteratorImpl : public irs::DocIterator {
       _value = _next->pos;
       _offs.start = _next->start;
       _offs.end = _next->end;
-      _pay.value = _next->payload;
       ++_next;
 
       return true;
@@ -516,9 +499,7 @@ class DocIteratorImpl : public irs::DocIterator {
    private:
     std::set<Posting::Position>::const_iterator _next;
     irs::OffsAttr _offs;
-    irs::PayAttr _pay;
     irs::OffsAttr* _poffs{};
-    irs::PayAttr* _ppay{};
     const DocIteratorImpl& _owner;
   };
 
@@ -698,8 +679,9 @@ void AssertDocs(irs::DocIterator::ptr expected_docs,
 
         auto* expected_pay = irs::get<irs::PayAttr>(*expected_pos);
         auto* actual_pay = irs::get<irs::PayAttr>(*actual_pos);
-        if (expected_pay)
+        if (expected_pay) {
           ASSERT_FALSE(!actual_pay);
+        }
         ASSERT_TRUE(!irs::pos_limits::valid(expected_pos->value()));
         ASSERT_TRUE(!irs::pos_limits::valid(actual_pos->value()));
         for (; expected_pos->next();) {

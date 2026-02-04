@@ -20,15 +20,14 @@
 
 #include <absl/random/random.h>
 #include <benchmark/benchmark.h>
+#include <velox/type/StringView.h>
 
 #include <cstdio>
-#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "pg/functions/json.h"
-#include "velox/type/StringView.h"
 
 using sdb::pg::JsonParser;
 

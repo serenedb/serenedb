@@ -133,7 +133,7 @@ TableTombstone MakeTableTombstone(const TableShard& physical) {
     .table = physical.GetMeta().id,
     .old_schema = physical.GetMeta().schema,
     .old_database = physical.GetMeta().database,
-    .number_documents = physical.approxNumberDocuments(),
+    .number_documents = 0,
   };
 
 #ifdef SDB_CLUSTER
@@ -213,10 +213,6 @@ struct TableDrop {
       if (fatal) {
         return {ERROR_INTERNAL};
       }
-    }
-
-    if (physical) {
-      physical->drop();
     }
 
     catalog->DropTableShard(tombstone.table);
@@ -1624,11 +1620,6 @@ Result LocalCatalog::DropDatabase(std::string_view name,
   }
 #endif
 
-  for (auto& shard : task->tables) {
-    shard.physical->setDeleted();
-    // TODO(mbkkt) probably index estimators should be cleared in unload
-    shard.physical->freeMemory();
-  }
   task->database = database_id;
   task->catalog = std::move(self);
 
@@ -1677,11 +1668,6 @@ Result LocalCatalog::DropSchema(ObjectId database_id, std::string_view schema,
     aql::QueryCache::instance()->invalidate(database_id);
   };
 
-  for (auto& shard : task->tables) {
-    shard.physical->setDeleted();
-    // TODO(mbkkt) probably index estimators should be cleared in unload
-    shard.physical->freeMemory();
-  }
   task->database = database_id;
   task->schema = schema_id;
   task->catalog = std::move(self);
@@ -1794,7 +1780,6 @@ Result LocalCatalog::DropTable(ObjectId database_id, std::string_view schema,
     return r;
   }
 
-  shard->setDeleted();
   _engine->prepareDropTable(shard->GetMeta().id);
 
   irs::Finally cleanup = [database_id, id = shard->GetMeta().id] noexcept {

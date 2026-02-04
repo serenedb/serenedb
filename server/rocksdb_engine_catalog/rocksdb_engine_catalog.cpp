@@ -1307,13 +1307,13 @@ void RocksDBEngineCatalog::processTreeRebuilds() {
         try {
           auto collection = catalog::GetTableShard(candidate.second);
 
-          if (collection != nullptr && !collection->deleted()) {
+          if (collection != nullptr) {
             SDB_INFO("xxxxx", Logger::ENGINES,
                      "starting background rebuild of revision tree for "
                      "collection ",
                      candidate.first, "/", collection->GetMeta().name);
 
-            auto res = collection->rebuildRevisionTree().Get().Ok();
+            auto res = Result{ERROR_NOT_IMPLEMENTED};
             if (res.ok()) {
               ++_metrics_tree_rebuilds_success;
               SDB_INFO("xxxxx", Logger::ENGINES,

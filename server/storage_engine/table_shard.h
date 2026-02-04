@@ -81,21 +81,8 @@ class TableShard {
 
   virtual ~TableShard() = default;
 
-  virtual RevisionId revision(transaction::Methods* trx) const { return {}; }
-
-  // Return the number of documents in this collection
-  virtual uint64_t numberDocuments(transaction::Methods* trx) const {
-    return {};
-  }
-
-  virtual uint64_t approxNumberDocuments() const { return 0; }
-
   auto& GetMeta() const noexcept { return _collection_meta; }
   auto GetId() const noexcept { return _collection_meta.id; }
-
-  virtual void close();
-
-  void drop();
 
   void UpdateNumRows(int64_t delta) {
     _num_rows.fetch_add(delta, std::memory_order_relaxed);
@@ -122,132 +109,6 @@ class TableShard {
                "Index does not exist in TableShard");
   }
 
-  /// return the figures for a collection
-  virtual yaclib::Future<OperationResult> figures(
-    bool details, const OperationOptions& options);
-
-#ifdef SDB_CLUSTER
-  virtual std::unique_ptr<DocumentIterator> getAllIterator(
-    transaction::Methods* trx, ReadOwnWrites read_own_writes) const {
-    SDB_ASSERT(false);
-    return {};
-  }
-  virtual std::unique_ptr<DocumentIterator> getAnyIterator(
-    transaction::Methods* trx) const {
-    SDB_ASSERT(false);
-    return {};
-  }
-#endif
-
-  /// Get an iterator associated with the specified replication batch
-  virtual std::unique_ptr<ReplicationIterator> getReplicationIterator(
-    ReplicationIterator::Ordering, uint64_t batch_id);
-
-  /// Get an iterator associated with the specified transaction
-  virtual std::unique_ptr<ReplicationIterator> getReplicationIterator(
-    ReplicationIterator::Ordering, transaction::Methods&);
-
-  virtual void adjustNumberDocuments(transaction::Methods&, int64_t);
-
-  virtual Result truncate(transaction::Methods& trx,
-                          const OperationOptions& options,
-                          bool& used_range_delete) {
-    return {ERROR_NOT_IMPLEMENTED};
-  }
-
-  /// compact-data operation
-  virtual void compact() {}
-
-  virtual Result lookupKey(transaction::Methods*, std::string_view, RevisionId&,
-                           ReadOwnWrites read_own_writes) const {
-    return {ERROR_NOT_IMPLEMENTED};
-  }
-
-  virtual Result lookupKeyForUpdate(transaction::Methods*, std::string_view,
-                                    RevisionId&) const {
-    return {ERROR_NOT_IMPLEMENTED};
-  }
-
-  struct LookupOptions {
-    bool read_own_writes = false;
-    bool count_bytes = false;
-  };
-
-#ifdef SDB_CLUSTER
-  virtual Result lookup(transaction::Methods* trx, std::string_view key,
-                        const IndexIterator::DocumentCallback& cb,
-                        LookupOptions options) const {
-    return {ERROR_NOT_IMPLEMENTED};
-  }
-
-  virtual Result lookup(transaction::Methods* trx, RevisionId token,
-                        const IndexIterator::DocumentCallback& cb,
-                        LookupOptions options,
-                        const StorageSnapshot* snapshot = nullptr) const {
-    return {ERROR_NOT_IMPLEMENTED};
-  }
-#endif
-
-  virtual Result insert(transaction::Methods& trx,
-                        const IndexesSnapshot& indexes_snapshot,
-                        RevisionId new_revision_id, vpack::Slice new_document,
-                        const OperationOptions& options) {
-    return {ERROR_NOT_IMPLEMENTED};
-  }
-
-  virtual Result update(transaction::Methods& trx,
-                        const IndexesSnapshot& indexes_snapshot,
-                        RevisionId previous_revision_id,
-                        vpack::Slice previous_document,
-                        RevisionId new_revision_id, vpack::Slice new_document,
-                        const OperationOptions& options) {
-    return {ERROR_NOT_IMPLEMENTED};
-  }
-
-  virtual Result replace(transaction::Methods& trx,
-                         const IndexesSnapshot& indexes_snapshot,
-                         RevisionId previous_revision_id,
-                         vpack::Slice previous_document,
-                         RevisionId new_revision_id, vpack::Slice new_document,
-                         const OperationOptions& options) {
-    return {ERROR_NOT_IMPLEMENTED};
-  }
-
-  virtual Result remove(transaction::Methods& trx,
-                        const IndexesSnapshot& indexes_snapshot,
-                        RevisionId previous_revision_id,
-                        vpack::Slice previous_document,
-                        const OperationOptions& options) {
-    return {ERROR_NOT_IMPLEMENTED};
-  }
-
-  virtual std::unique_ptr<containers::RevisionTree> revisionTree(
-    transaction::Methods& trx);
-  virtual std::unique_ptr<containers::RevisionTree> revisionTree(
-    rocksdb::SequenceNumber trx_seq);
-  virtual std::unique_ptr<containers::RevisionTree> computeRevisionTree(
-    uint64_t batch_id);
-
-  virtual yaclib::Future<Result> rebuildRevisionTree();
-
-  virtual uint64_t placeRevisionTreeBlocker(TransactionId transaction_id);
-  virtual void removeRevisionTreeBlocker(TransactionId transaction_id);
-
-  void setDeleted() noexcept {
-    _deleted.store(true, std::memory_order_release);
-  }
-
-  bool deleted() const noexcept {
-    return _deleted.load(std::memory_order_acquire);
-  }
-
-  virtual void freeMemory() noexcept;
-
-  auto& GetFollowers() const {
-    SDB_ASSERT(_followers);
-    return *_followers;
-  }
-
   explicit TableShard(catalog::TableMeta collection,
                       const catalog::TableStats& stats);
 
@@ -257,16 +118,10 @@ class TableShard {
 
   catalog::TableMeta _collection_meta;
 
-  // TODO(gnusi): refactor/move to different place
-  std::shared_ptr<FollowerInfo> _followers;
-
-  std::atomic_bool _deleted = false;  // TODO(gnusi): remove
   containers::FlatHashSet<ObjectId> _indexes;
 
   // TODO(codeworse): this probably won't work in case of distributed setup
   std::atomic_uint64_t _num_rows{0};
 };
-
-bool IsLeadingShard(const TableShard& c) noexcept;
 
 }  // namespace sdb

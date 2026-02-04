@@ -95,6 +95,8 @@ InvertedIndexShard::InvertedIndexShard(const catalog::InvertedIndex& index,
   const auto index_id = index.GetId();
   SDB_ASSERT(index_id.isSet());
   std::filesystem::path path = _search.GetPersistedPath(db_id);
+  path /= absl::StrCat(schema_id);
+  path /= absl::StrCat(index_id);
   std::error_code ec;
   bool path_exists = std::filesystem::exists(path, ec);
   if (ec) {
@@ -109,8 +111,6 @@ InvertedIndexShard::InvertedIndexShard(const catalog::InvertedIndex& index,
                 "' while initializing data store '", _id, "': ", ec.message());
     }
   }
-  path /= absl::StrCat(schema_id);
-  path /= absl::StrCat(index_id);
   _dir = std::make_unique<irs::MMapDirectory>(path);
   auto codec = irs::formats::Get("1_5simd");
   const auto open_mode =

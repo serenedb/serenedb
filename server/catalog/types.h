@@ -65,6 +65,12 @@ enum class IndexSerialization : uint8_t {
   Inventory = 16,
 };
 
+enum class WriteConflictPolicy : uint8_t {
+  EmitError,
+  DoNothing,
+  Replace,
+};
+
 using IndexEstMap = containers::FlatHashMap<std::string, double>;
 
 struct PeerState {

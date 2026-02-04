@@ -34,9 +34,7 @@
 #include "gtest/gtest.h"
 #include "iresearch/utils/bytes_utils.hpp"
 
-using namespace sdb::connector::search;
-
-namespace {
+namespace sdb::connector::search {
 
 class SearchSinkWriterTest : public ::testing::Test,
                              public velox::test::VectorTestBase {
@@ -915,4 +913,4 @@ TEST_F(SearchSinkWriterTest, DeleteNotMissedWithExisting) {
   }
 }
 
-}  // namespace
+}  // namespace sdb::connector::search

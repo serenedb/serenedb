@@ -27,31 +27,10 @@
 #include <vpack/iterator.h>
 #include <vpack/slice.h>
 
-#include <algorithm>
 #include <atomic>
 #include <yaclib/async/make.hpp>
 
-#include "app/app_server.h"
-#include "basics/assert.h"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
-#include "basics/logger/logger.h"
-#include "basics/read_locker.h"
-#include "basics/recursive_locker.h"
-#include "basics/result.h"
-#include "basics/static_strings.h"
-#include "basics/write_locker.h"
 #include "catalog/table.h"
-#include "database/ticks.h"
-#include "storage_engine/engine_feature.h"
-#include "storage_engine/indexes_snapshot.h"
-#include "utils/query_cache.h"
-#include "vpack/vpack_helper.h"
-
-#ifdef SDB_CLUSTER
-#include "indexes/index.h"
-#include "transaction/helpers.h"
-#endif
 
 namespace sdb {
 

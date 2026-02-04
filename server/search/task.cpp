@@ -98,15 +98,13 @@ void CommitTask::operator()() {
     SDB_IF_FAILURE("SearchCommitTask::lockInvertedIndexShard") {
       SDB_THROW(ERROR_DEBUG);
     }
-    // must be valid if linkLock->lock() is valid
     absl::ReaderMutexLock lock{data->GetMutex()};
-    // '_meta' can be asynchronously modified
-    auto& meta = data->GetMeta();
+    auto& settings = data->GetTasksSettings();
 
-    _commit_interval_msec = absl::Milliseconds(meta.commit_interval_msec);
+    _commit_interval_msec = absl::Milliseconds(settings.commit_interval_msec);
     _consolidation_interval_msec =
-      absl::Milliseconds(meta.consolidation_interval_msec);
-    _cleanup_interval_step = meta.cleanup_interval_step;
+      absl::Milliseconds(settings.consolidation_interval_msec);
+    _cleanup_interval_step = settings.cleanup_interval_step;
   }
 
   if (absl::ZeroDuration() == _commit_interval_msec) {
@@ -117,7 +115,6 @@ void CommitTask::operator()() {
   }
 
   SDB_IF_FAILURE("SearchCommitTask::commitUnsafe") { SDB_THROW(ERROR_DEBUG); }
-  // run commit ('_async_self' locked by async task)
   auto [res, timeMs] = data->CommitUnsafe(false, nullptr, code);
 
   if (res.ok()) {
@@ -137,7 +134,6 @@ void CommitTask::operator()() {
       SDB_THROW(ERROR_DEBUG);
     }
 
-    // run cleanup ('_async_self' locked by async task)
     auto [res, timeMs] = data->CleanupUnsafe();
 
     if (res.ok()) {
@@ -187,17 +183,15 @@ void ConsolidationTask::operator()() {
       SDB_THROW(ERROR_DEBUG);
     }
 
-    // must be valid if _async_self->lock() is valid
     absl::ReaderMutexLock lock{data->GetMutex()};
-    // '_meta' can be asynchronously modified
-    auto& meta = data->GetMeta();
+    auto& settings = data->GetTasksSettings();
 
-    _consolidation_policy = meta.consolidation_policy;
+    _consolidation_policy = settings.consolidation_policy;
     _consolidation_interval_msec =
-      absl::Milliseconds(meta.consolidation_interval_msec);
+      absl::Milliseconds(settings.consolidation_interval_msec);
   }
   if (absl::ZeroDuration() == _consolidation_interval_msec ||
-      !_consolidation_policy.policy()) {
+      !_consolidation_policy) {
     std::move(reschedule).Cancel();
 
     SDB_DEBUG("xxxxx", Logger::SEARCH,
@@ -218,7 +212,6 @@ void ConsolidationTask::operator()() {
     SDB_THROW(ERROR_DEBUG);
   }
 
-  // run consolidation ('_async_self' locked by async task)
   bool empty_consolidation = false;
   const auto [res, timeMs] = data->ConsolidateUnsafe(
     _consolidation_policy, _progress, empty_consolidation);

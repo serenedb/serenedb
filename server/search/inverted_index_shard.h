@@ -31,7 +31,6 @@
 
 #include "catalog/inverted_index.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "search/inverted_index_shard_meta.h"
 #include "storage_engine/engine_feature.h"
 #include "storage_engine/index_shard.h"
 #include "storage_engine/search_engine.h"
@@ -51,6 +50,17 @@ struct ThreadPoolState {
   std::atomic_size_t pending_consolidations{0};
   std::atomic_size_t noop_consolidation_count{0};
   std::atomic_size_t noop_commit_count{0};
+};
+
+struct TasksSettings {
+  size_t cleanup_interval_step{};
+  size_t commit_interval_msec{};
+  size_t consolidation_interval_msec{};
+  irs::ConsolidationPolicy consolidation_policy;
+  uint32_t version{};
+  size_t writebuffer_active{};
+  size_t writebuffer_idle{};
+  size_t writebuffer_size_max{};
 };
 
 enum class CommitResult {
@@ -138,7 +148,7 @@ class InvertedIndexShard
   auto GetTransaction() { return _writer->GetBatch(); }
 
   ResultWithTime ConsolidateUnsafe(
-    const InvertedIndexShardMeta::ConsolidationPolicy& policy,
+    const irs::ConsolidationPolicy& policy,
     const irs::MergeWriter::FlushProgress& progress, bool& empty_consolidation);
 
   ResultWithTime CommitUnsafe(bool wait,
@@ -157,7 +167,6 @@ class InvertedIndexShard
 
   void StatsToVPack(vpack::Builder& builder);
   Stats GetStats() const;
-  Result Properties(const InvertedIndexShardMeta& meta);
   bool SetOutOfSync() noexcept;
   void MarkOutOfSyncUnsafe();
   bool IsOutOfSync() const noexcept;
@@ -178,7 +187,7 @@ class InvertedIndexShard
 
   void ResetInvertedIndexSnapshot() { _snapshot.reset(); }
 
-  auto& GetMeta() { return _meta; }
+  auto& GetTasksSettings() { return _tasks_settings; }
 
   void StartTasks() {
     ScheduleCommit({});
@@ -186,9 +195,9 @@ class InvertedIndexShard
   }
 
  private:
-  Result ConsolidateUnsafeImpl(
-    const InvertedIndexShardMeta::ConsolidationPolicy& policy,
-    const irs::MergeWriter::FlushProgress& progress, bool& empty_consolidation);
+  Result ConsolidateUnsafeImpl(const irs::ConsolidationPolicy& policy,
+                               const irs::MergeWriter::FlushProgress& progress,
+                               bool& empty_consolidation);
   Result CommitUnsafeImpl(bool wait,
                           const irs::ProgressReportCallback& progress,
                           CommitResult& code);
@@ -201,7 +210,7 @@ class InvertedIndexShard
   std::shared_ptr<irs::IndexWriter> _writer;
   InvertedIndexShardOptions _options;
   std::unique_ptr<irs::Directory> _dir;
-  InvertedIndexShardMeta _meta;
+  TasksSettings _tasks_settings;
   absl::Mutex _mutex;
   absl::Mutex _commit_mutex;
 

@@ -24,37 +24,12 @@
 #include <rocksdb/types.h>
 
 #include <atomic>
-#include <functional>
-#include <memory>
-#include <set>
-#include <span>
-#include <string>
-#include <string_view>
-#include <thread>
-#include <type_traits>
-#include <vector>
 
-#include "basics/assert.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
-#include "basics/read_write_lock.h"
 #include "catalog/fwd.h"
-#include "catalog/identifiers/index_id.h"
-#include "catalog/identifiers/revision_id.h"
-#include "catalog/identifiers/transaction_id.h"
 #include "catalog/table_options.h"
-#include "storage_engine/replication_iterator.h"
-// consider just forward declaration
-#include "utils/coro_helper.h"
-#include "utils/merkle_tree.h"
-#include "utils/operation_result.h"
-
-#ifdef SDB_CLUSTER
-#include "cluster/follower_info.h"
-#include "indexes/index.h"
-#include "indexes/index_iterator.h"
-#endif
 
 namespace vpack {
 class Builder;

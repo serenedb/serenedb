@@ -115,7 +115,7 @@ class ConsolidationTask : public Task {
 
  private:
   irs::MergeWriter::FlushProgress _progress;
-  InvertedIndexShardMeta::ConsolidationPolicy _consolidation_policy;
+  irs::ConsolidationPolicy _consolidation_policy;
   absl::Duration _consolidation_interval_msec;
 };
 

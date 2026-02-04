@@ -202,7 +202,7 @@ Result InvertedIndexShard::CleanupUnsafeImpl() {
 }
 
 InvertedIndexShard::ResultWithTime InvertedIndexShard::ConsolidateUnsafe(
-  const InvertedIndexShardMeta::ConsolidationPolicy& policy,
+  const irs::ConsolidationPolicy& policy,
   const irs::MergeWriter::FlushProgress& progress, bool& empty_consolidation) {
   auto begin = std::chrono::steady_clock::now();
   auto result = ConsolidateUnsafeImpl(policy, progress, empty_consolidation);
@@ -255,46 +255,37 @@ InvertedIndexShard::ResultWithTime InvertedIndexShard::CommitUnsafe(
 }
 
 Result InvertedIndexShard::ConsolidateUnsafeImpl(
-  const InvertedIndexShardMeta::ConsolidationPolicy& policy,
+  const irs::ConsolidationPolicy& policy,
   const irs::MergeWriter::FlushProgress& progress, bool& empty_consolidation) {
   empty_consolidation = false;
 
-  if (!policy.policy()) {
+  if (!policy) {
     return {ERROR_BAD_PARAMETER,
-            "unset consolidation policy while executing consolidation policy '",
-            policy.properties().toString(),
-            "' on Search index '",
-            GetId().id(),
-            "'"};
+            "unset consolidation policy while executing consolidation policy "
+            "on Search index '",
+            GetId().id(), "'"};
   }
 
   try {
-    const auto res = _writer->Consolidate(policy.policy(), nullptr, progress);
+    const auto res = _writer->Consolidate(policy, nullptr, progress);
     if (!res) {
       return {ERROR_INTERNAL,
-              "failure while executing consolidation policy '",
-              policy.properties().toString(),
-              "' on Search index '",
-              GetId().id(),
-              "'"};
+              "failure while executing consolidation policy on Search index '",
+              GetId().id(), "'"};
     }
 
     empty_consolidation = (res.size == 0);
   } catch (const std::exception& e) {
     return {ERROR_INTERNAL,
-            "caught exception while executing consolidation policy '",
-            policy.properties().toString(),
-            "' on Search index '",
+            "caught exception while executing consolidation policy ",
+            "on Search index '",
             GetId().id(),
             "': ",
             e.what()};
   } catch (...) {
     return {ERROR_INTERNAL,
-            "caught exception while executing consolidation policy '",
-            policy.properties().toString(),
-            "' on Search index '",
-            GetId().id(),
-            "'"};
+            "caught exception while executing consolidation policy ",
+            "on Search index '", GetId().id(), "'"};
   }
   return {};
 }

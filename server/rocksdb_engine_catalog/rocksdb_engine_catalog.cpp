@@ -367,8 +367,6 @@ vpack::Slice GetTableProperties(vpack::Builder& builder,
     collection.WriteProperties(builder);
   }
 
-  builder.add(StaticStrings::kIndexes);
-
   builder.close();
   return builder.slice();
 }
@@ -1698,8 +1696,7 @@ void RocksDBEngineCatalog::prepareDropTable(ObjectId collection) {
 }
 
 Result RocksDBEngineCatalog::DropIndex(IndexTombstone tombstone) {
-  SDB_ASSERT(tombstone.type != IndexType::Unknown &&
-             tombstone.type != IndexType::NoAccess);
+  SDB_ASSERT(tombstone.type != IndexType::Unknown);
 
   rocksdb::DB* db = _db->GetRootDB();
 

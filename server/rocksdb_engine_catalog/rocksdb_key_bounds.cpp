@@ -430,8 +430,6 @@ RocksDBKeyBounds::RocksDBKeyBounds(RocksDBEntryType type, uint64_t first,
 RocksDBKeyBounds GetIndexBounds(IndexType type, uint64_t object_id,
                                 bool unique) {
   switch (type) {
-    case IndexType::Primary:
-      return RocksDBKeyBounds::PrimaryIndex(object_id);
     case IndexType::Secondary:
     case IndexType::Inverted:
       if (unique) {

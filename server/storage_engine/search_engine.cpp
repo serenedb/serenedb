@@ -49,7 +49,7 @@
 #include "metrics/metrics_feature.h"
 #include "rest_server/database_path_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "search/data_store.h"
+#include "search/inverted_index_shard.h"
 #include "storage_engine/search_engine.h"
 
 using namespace std::chrono_literals;
@@ -355,12 +355,12 @@ std::filesystem::path SearchEngine::GetPersistedPath(
 }
 
 void SearchEngine::beginShutdown() {
-  // Drop rocksdb snapshots in search data stores
+  // Drop rocksdb snapshots in inverted index shards
   // in order to gracefully shutdown rocksdb engine
   for (auto&& index_shard :
        catalog::GetCatalog().GetSnapshot()->GetIndexShards()) {
-    auto& data_shard = basics::downCast<DataStore>(*index_shard);
-    data_shard.ResetDataSnapshot();
+    auto& inverted_shard = basics::downCast<InvertedIndexShard>(*index_shard);
+    inverted_shard.ResetInvertedIndexSnapshot();
   }
 }
 }  // namespace sdb::search

@@ -44,10 +44,8 @@ enum class TableType : uint8_t {
 
 enum class IndexType : uint8_t {
   Unknown = 0,
-  Primary,
   Secondary,
   Inverted,
-  NoAccess,
 };
 
 enum class IndexSerialization : uint8_t {

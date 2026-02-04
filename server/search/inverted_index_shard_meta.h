@@ -27,7 +27,7 @@
 
 namespace sdb::search {
 
-struct DataStoreMeta {
+struct InvertedIndexShardMeta {
   class ConsolidationPolicy {
    public:
     ConsolidationPolicy() = default;
@@ -44,11 +44,11 @@ struct DataStoreMeta {
     vpack::Builder _properties;
   };
 
-  DataStoreMeta();
+  InvertedIndexShardMeta();
 
-  void storeFull(const DataStoreMeta& other);
-  void storeFull(DataStoreMeta&& other) noexcept;
-  void storePartial(DataStoreMeta&& other) noexcept;
+  void storeFull(const InvertedIndexShardMeta& other);
+  void storeFull(InvertedIndexShardMeta&& other) noexcept;
+  void storePartial(InvertedIndexShardMeta&& other) noexcept;
 
   struct Mask {
     bool cleanup_interval_step;
@@ -62,13 +62,13 @@ struct DataStoreMeta {
     explicit Mask(bool mask = false) noexcept;
   };
 
-  bool operator==(const DataStoreMeta& other) const noexcept;
+  bool operator==(const InvertedIndexShardMeta& other) const noexcept;
 
   bool init(vpack::Slice slice, std::string& error_field,
-            const DataStoreMeta& defaults, Mask* mask) noexcept;
+            const InvertedIndexShardMeta& defaults, Mask* mask) noexcept;
 
   bool json(vpack::Builder& builder,
-            const DataStoreMeta* ignore_equal = nullptr,
+            const InvertedIndexShardMeta* ignore_equal = nullptr,
             const Mask* mask = nullptr) const;
 
   size_t cleanup_interval_step{};

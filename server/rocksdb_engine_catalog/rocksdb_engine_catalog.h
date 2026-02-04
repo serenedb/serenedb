@@ -66,7 +66,7 @@ class TransactionDB;
 namespace sdb {
 
 namespace search {
-class DataStore;
+class InvertedIndexShard;
 }
 
 class TableShard;

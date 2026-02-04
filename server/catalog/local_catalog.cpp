@@ -67,7 +67,7 @@
 #include "general_server/state.h"
 #include "rest_server/serened.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "search/data_store.h"
+#include "search/inverted_index_shard.h"
 #include "storage_engine/engine_feature.h"
 #include "storage_engine/search_engine.h"
 #include "utils/exec_context.h"
@@ -1102,8 +1102,6 @@ Result LocalCatalog::RegisterTable(ObjectId database_id,
         return r;
       }
 
-      // TODO(gnusi): this might throw, but indexes will become a separate
-      // objects soon anyway
       _snapshot->AddTableShard(std::move(physical));
 
       return {};
@@ -1204,7 +1202,7 @@ Result LocalCatalog::RegisterIndex(ObjectId database_id,
                                    std::string_view schema,
                                    IndexBaseOptions options,
                                    vpack::Slice args) {
-  auto index = ::sdb::catalog::CreateIndex(std::move(options));
+  auto index = MakeIndex(std::move(options));
   if (!index) {
     return std::move(index).error();
   }
@@ -1264,7 +1262,7 @@ Result LocalCatalog::CreateIndex(ObjectId database_id, std::string_view schema,
     options.column_ids.push_back(column->id);
   }
 
-  auto index = ::sdb::catalog::CreateIndex(std::move(options));
+  auto index = MakeIndex(std::move(options));
   if (!index) {
     return std::move(index).error();
   }

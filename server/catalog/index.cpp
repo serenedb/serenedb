@@ -33,28 +33,20 @@ ResultOr<std::shared_ptr<catalog::Index>> CreateInvertedIndex(
   catalog::IndexBaseOptions options) {
   catalog::IndexOptions<InvertedIndexOptions> inverted_options;
 
-  // Only generate a new ID if one isn't already set (i.e., when creating a new
-  // index, not when loading an existing one from storage)
-  if (!options.id.isSet()) {
-    options.id = catalog::NextId();
-  }
-  ObjectId database_id = options.database_id;
   inverted_options.base = std::move(options);
 
-  return std::make_shared<InvertedIndex>(inverted_options, database_id);
+  return std::make_shared<InvertedIndex>(inverted_options);
 }
 
 }  // namespace
 
-ResultOr<std::shared_ptr<Index>> CreateIndex(
-  catalog::IndexBaseOptions options) {
+ResultOr<std::shared_ptr<Index>> MakeIndex(IndexBaseOptions options) {
   switch (options.type) {
     case IndexType::Inverted:
       return CreateInvertedIndex(std::move(options));
-    case IndexType::Primary:
     case IndexType::Secondary:
-    case IndexType::NoAccess:
-      return std::unexpected<Result>{std::in_place, ERROR_NOT_IMPLEMENTED};
+      return std::unexpected<Result>{std::in_place, ERROR_NOT_IMPLEMENTED,
+                                     "Secondary index is not implemented"};
     case IndexType::Unknown:
       SDB_UNREACHABLE();
   }
@@ -63,6 +55,7 @@ ResultOr<std::shared_ptr<Index>> CreateIndex(
 void Index::WriteInternal(vpack::Builder& builder) const {
   IndexBaseOptions options{
     .database_id = GetDatabaseId(),
+    .schema_id = GetSchemaId(),
     .id = GetId(),
     .relation_id = GetRelationId(),
     .name = std::string{GetName()},
@@ -73,13 +66,9 @@ void Index::WriteInternal(vpack::Builder& builder) const {
   vpack::WriteTuple(builder, options);
 }
 
-Index::Index(IndexBaseOptions options, ObjectId database_id)
-  : SchemaObject{{},
-                 database_id,
-                 {},
-                 options.id,
-                 std::move(options.name),
-                 ObjectType::Index},
+Index::Index(IndexBaseOptions options)
+  : SchemaObject{{},         options.database_id,     options.schema_id,
+                 options.id, std::move(options.name), ObjectType::Index},
     _relation_id{options.relation_id},
     _type(options.type),
     _column_ids{std::move(options.column_ids)} {

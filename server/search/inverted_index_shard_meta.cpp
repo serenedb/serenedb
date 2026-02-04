@@ -19,7 +19,7 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "data_store_meta.h"
+#include "inverted_index_shard_meta.h"
 
 #include <absl/strings/str_cat.h>
 #include <vpack/builder.h>
@@ -40,11 +40,11 @@ using namespace sdb::search;
 constexpr std::string_view kPolicyTier = "tier";
 
 template<typename T>
-DataStoreMeta::ConsolidationPolicy CreateConsolidationPolicy(
+InvertedIndexShardMeta::ConsolidationPolicy CreateConsolidationPolicy(
   vpack::Slice slice, std::string& error_field);
 
 template<>
-DataStoreMeta::ConsolidationPolicy
+InvertedIndexShardMeta::ConsolidationPolicy
 CreateConsolidationPolicy<irs::index_utils::ConsolidateTier>(
   vpack::Slice slice, std::string& error_field) {
   irs::index_utils::ConsolidateTier options;
@@ -140,7 +140,7 @@ CreateConsolidationPolicy<irs::index_utils::ConsolidateTier>(
 }  // namespace
 
 namespace sdb::search {
-DataStoreMeta::Mask::Mask(bool mask /*=false*/) noexcept
+InvertedIndexShardMeta::Mask::Mask(bool mask /*=false*/) noexcept
   : cleanup_interval_step(mask),
     commit_interval_msec(mask),
     consolidation_interval_msec(mask),
@@ -150,7 +150,7 @@ DataStoreMeta::Mask::Mask(bool mask /*=false*/) noexcept
     writebuffer_idle(mask),
     writebuffer_size_max(mask) {}
 
-DataStoreMeta::DataStoreMeta()
+InvertedIndexShardMeta::InvertedIndexShardMeta()
   : cleanup_interval_step(2),
     commit_interval_msec(1000),
     consolidation_interval_msec(1000),
@@ -167,7 +167,7 @@ DataStoreMeta::DataStoreMeta()
   SDB_ASSERT(consolidation_policy.policy());  // ensure above syntax is correct
 }
 
-void DataStoreMeta::storeFull(const DataStoreMeta& other) {
+void InvertedIndexShardMeta::storeFull(const InvertedIndexShardMeta& other) {
   if (this == &other) {
     return;
   }
@@ -181,7 +181,7 @@ void DataStoreMeta::storeFull(const DataStoreMeta& other) {
   writebuffer_size_max = other.writebuffer_size_max;
 }
 
-void DataStoreMeta::storeFull(DataStoreMeta&& other) noexcept {
+void InvertedIndexShardMeta::storeFull(InvertedIndexShardMeta&& other) noexcept {
   if (this == &other) {
     return;
   }
@@ -195,7 +195,7 @@ void DataStoreMeta::storeFull(DataStoreMeta&& other) noexcept {
   writebuffer_size_max = other.writebuffer_size_max;
 }
 
-void DataStoreMeta::storePartial(DataStoreMeta&& other) noexcept {
+void InvertedIndexShardMeta::storePartial(InvertedIndexShardMeta&& other) noexcept {
   if (this == &other) {
     return;
   }
@@ -205,9 +205,9 @@ void DataStoreMeta::storePartial(DataStoreMeta&& other) noexcept {
   consolidation_policy = std::move(other.consolidation_policy);
 }
 
-bool DataStoreMeta::json(vpack::Builder& builder,
-                         const DataStoreMeta* ignore_equal /*= nullptr*/,
-                         const DataStoreMeta::Mask* mask /*= nullptr*/) const {
+bool InvertedIndexShardMeta::json(vpack::Builder& builder,
+                         const InvertedIndexShardMeta* ignore_equal /*= nullptr*/,
+                         const InvertedIndexShardMeta::Mask* mask /*= nullptr*/) const {
   if (!builder.isOpenObject()) {
     return false;
   }
@@ -264,8 +264,8 @@ bool DataStoreMeta::json(vpack::Builder& builder,
   return true;
 }
 
-bool DataStoreMeta::init(vpack::Slice slice, std::string& error_field,
-                         const DataStoreMeta& defaults, Mask* mask) noexcept {
+bool InvertedIndexShardMeta::init(vpack::Slice slice, std::string& error_field,
+                         const InvertedIndexShardMeta& defaults, Mask* mask) noexcept {
   if (!slice.isObject()) {
     error_field = "Object is expected";
     return false;
@@ -438,7 +438,7 @@ bool DataStoreMeta::init(vpack::Slice slice, std::string& error_field,
   return true;
 }
 
-bool DataStoreMeta::operator==(const DataStoreMeta& other) const noexcept {
+bool InvertedIndexShardMeta::operator==(const InvertedIndexShardMeta& other) const noexcept {
   if (consolidation_interval_msec != other.consolidation_interval_msec ||
       cleanup_interval_step != other.cleanup_interval_step ||
       commit_interval_msec != other.commit_interval_msec ||

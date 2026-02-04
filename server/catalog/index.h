@@ -33,6 +33,7 @@ namespace catalog {
 
 struct IndexBaseOptions {
   ObjectId database_id;
+  ObjectId schema_id;
   ObjectId id;
   ObjectId relation_id;
   std::string name;
@@ -61,14 +62,14 @@ class Index : public SchemaObject {
   virtual ~Index() = default;
 
  protected:
-  Index(IndexBaseOptions options, ObjectId database_id);
+  Index(IndexBaseOptions options);
 
   ObjectId _relation_id;
   IndexType _type;
   std::vector<uint16_t> _column_ids;
 };
 
-ResultOr<std::shared_ptr<Index>> CreateIndex(catalog::IndexBaseOptions options);
+ResultOr<std::shared_ptr<Index>> MakeIndex(IndexBaseOptions options);
 
 }  // namespace catalog
 
@@ -82,12 +83,8 @@ constexpr customize::customize_t customize::enum_name<sdb::IndexType>(
   switch (type) {
     case sdb::IndexType::Unknown:
       return "unknown";
-    case sdb::IndexType::Primary:
-      return "primary";
     case sdb::IndexType::Secondary:
       return "secondary";
-    case sdb::IndexType::NoAccess:
-      return "noaccess";
     case sdb::IndexType::Inverted:
       return "inverted";
     default:

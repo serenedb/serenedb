@@ -34,8 +34,7 @@ class SecondaryIndex : public Index {
  public:
   using Options = SecondaryIndexOptions;
 
-  SecondaryIndex(IndexOptions<SecondaryIndexOptions> options,
-                 ObjectId database_id);
+  SecondaryIndex(IndexOptions<SecondaryIndexOptions> options);
 
   void WriteInternal(vpack::Builder& builder) const final;
   bool IsUnique() const noexcept { return _unique; }

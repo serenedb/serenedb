@@ -265,26 +265,6 @@ Result CatalogFeature::ProcessTombstones() {
   };
 
   auto r = engine.VisitObjects(
-    id::kTombstoneDatabase, RocksDBEntryType::TableTombstone,
-    [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
-      TableTombstone tombstone;
-
-      if (auto r = vpack::ReadTupleNothrow<TableTombstone>(slice, tombstone);
-          !r.ok()) {
-        return ErrorMeta(r.errorNumber(), "collection tombstone",
-                         r.errorMessage(), slice);
-      }
-
-      Local().RegisterTableDrop(std::move(tombstone));
-      return {};
-    });
-
-  if (!r.ok()) {
-    return {r.errorNumber(), "Failed to process collection tombstones, error: ",
-            r.errorMessage()};
-  }
-
-  r = engine.VisitObjects(
     id::kTombstoneDatabase, RocksDBEntryType::IndexTombstone,
     [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
       IndexTombstone tombstone;
@@ -302,6 +282,26 @@ Result CatalogFeature::ProcessTombstones() {
   if (!r.ok()) {
     return {r.errorNumber(),
             "Failed to process index tombstones, error: ", r.errorMessage()};
+  }
+
+  r = engine.VisitObjects(
+    id::kTombstoneDatabase, RocksDBEntryType::TableTombstone,
+    [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
+      TableTombstone tombstone;
+
+      if (auto r = vpack::ReadTupleNothrow<TableTombstone>(slice, tombstone);
+          !r.ok()) {
+        return ErrorMeta(r.errorNumber(), "collection tombstone",
+                         r.errorMessage(), slice);
+      }
+
+      Local().RegisterTableDrop(std::move(tombstone));
+      return {};
+    });
+
+  if (!r.ok()) {
+    return {r.errorNumber(), "Failed to process collection tombstones, error: ",
+            r.errorMessage()};
   }
 
   r = engine.VisitObjects(

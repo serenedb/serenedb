@@ -19,7 +19,7 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "search/data_store.h"
+#include "search/inverted_index_shard.h"
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/time/time.h>
@@ -60,8 +60,8 @@ uint64_t ComputeAvg(std::atomic<uint64_t>& time_num, uint64_t new_time) {
 }
 }  // namespace
 
-DataStore::DataStore(const catalog::InvertedIndex& index,
-                     DataStoreOptions options, bool is_new)
+InvertedIndexShard::InvertedIndexShard(const catalog::InvertedIndex& index,
+                     InvertedIndexShardOptions options, bool is_new)
   : IndexShard{index},
     _engine{GetServerEngine()},
     _search{GetSearchEngine()},
@@ -75,7 +75,7 @@ DataStore::DataStore(const catalog::InvertedIndex& index,
   path /= absl::StrCat(schema_id);
   path /= absl::StrCat(index_id);
   _dir = std::make_unique<irs::FSDirectory>(path);
-  auto codec = irs::formats::Get("1_5avx");
+  auto codec = irs::formats::Get("1_5simd");
   // TODO(codeworse): add is_exists and change open_mode
   _writer = irs::IndexWriter::Make(
     *_dir, codec,
@@ -89,25 +89,24 @@ DataStore::DataStore(const catalog::InvertedIndex& index,
     SDB_THROW(ERROR_INTERNAL, "Search index '", _id,
               "' cannot acquire snapshot");
   }
-  _snapshot = std::make_shared<DataSnapshot>(std::move(reader),
+  _snapshot = std::make_shared<InvertedIndexSnapshot>(std::move(reader),
                                              std::move(engine_snapshot));
 }
 
-void DataStore::WriteInternal(vpack::Builder& builder) const {
+void InvertedIndexShard::WriteInternal(vpack::Builder& builder) const {
   vpack::WriteTuple(builder, _options);
 }
 
-Snapshot DataStore::GetSnapshot() const {
+Snapshot InvertedIndexShard::GetSnapshot() const {
   if (FailQueriesOnOutOfSync() && IsOutOfSync()) {
-    SDB_THROW(ERROR_CLUSTER_AQL_COLLECTION_OUT_OF_SYNC,
-              absl::StrCat("Search index '", GetId(),
-                           "' is out of sync and needs to be recreated"));
+    SDB_THROW(ERROR_CLUSTER_AQL_COLLECTION_OUT_OF_SYNC, "Search index '",
+              GetId(), "' is out of sync and needs to be recreated");
   }
 
-  return {shared_from_this(), GetDataSnapshot()};
+  return {shared_from_this(), GetInvertedIndexSnapshot()};
 }
 
-void DataStore::ScheduleConsolidation(absl::Duration delay) {
+void InvertedIndexShard::ScheduleConsolidation(absl::Duration delay) {
   ConsolidationTask task{shared_from_this(), [self = shared_from_this()] {
                            return /* TODO */ true;
                          }};
@@ -116,17 +115,17 @@ void DataStore::ScheduleConsolidation(absl::Duration delay) {
   std::move(task).Schedule(delay);
 }
 
-void DataStore::ScheduleCommit(absl::Duration delay) {
+void InvertedIndexShard::ScheduleCommit(absl::Duration delay) {
   CommitTask task{shared_from_this()};
 
   _state->pending_commits.fetch_add(1, std::memory_order_release);
   std::move(task).Schedule(delay);
 }
 
-DataStore::Stats DataStore::UpdateStatsUnsafe(
-  DataSnapshotPtr data_snapshot) const {
-  SDB_ASSERT(data_snapshot);
-  auto& reader = data_snapshot->reader;
+InvertedIndexShard::Stats InvertedIndexShard::UpdateStatsUnsafe(
+  InvertedIndexSnapshotPtr inverted_index_snapshot) const {
+  SDB_ASSERT(inverted_index_snapshot);
+  auto& reader = inverted_index_snapshot->reader;
   SDB_ASSERT(reader);
   if (_mapped_memory) {
     _mapped_memory->store(reader.CountMappedMemory(),
@@ -150,7 +149,7 @@ DataStore::Stats DataStore::UpdateStatsUnsafe(
   return stats;
 }
 
-DataStore::ResultWithTime DataStore::CleanupUnsafe() {
+InvertedIndexShard::ResultWithTime InvertedIndexShard::CleanupUnsafe() {
   auto begin = std::chrono::steady_clock::now();
   auto result = CleanupUnsafeImpl();
   uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -165,23 +164,21 @@ DataStore::ResultWithTime DataStore::CleanupUnsafe() {
   return {std::move(result), time_ms};
 }
 
-Result DataStore::CleanupUnsafeImpl() {
+Result InvertedIndexShard::CleanupUnsafeImpl() {
   try {
     irs::directory_utils::RemoveAllUnreferenced(*_dir);
   } catch (const std::exception& e) {
-    return {ERROR_INTERNAL,
-            absl::StrCat("caught exception while cleaning up Search index '",
-                         GetId().id(), "': ", e.what())};
+    return {ERROR_INTERNAL, "caught exception while cleaning up Search index '",
+            GetId().id(), "': ", e.what()};
   } catch (...) {
-    return {ERROR_INTERNAL,
-            absl::StrCat("caught exception while cleaning up Search index '",
-                         GetId().id(), "'")};
+    return {ERROR_INTERNAL, "caught exception while cleaning up Search index '",
+            GetId().id(), "'"};
   }
   return {};
 }
 
-DataStore::ResultWithTime DataStore::ConsolidateUnsafe(
-  const DataStoreMeta::ConsolidationPolicy& policy,
+InvertedIndexShard::ResultWithTime InvertedIndexShard::ConsolidateUnsafe(
+  const InvertedIndexShardMeta::ConsolidationPolicy& policy,
   const irs::MergeWriter::FlushProgress& progress, bool& empty_consolidation) {
   auto begin = std::chrono::steady_clock::now();
   auto result = ConsolidateUnsafeImpl(policy, progress, empty_consolidation);
@@ -197,7 +194,7 @@ DataStore::ResultWithTime DataStore::ConsolidateUnsafe(
   return {std::move(result), time_ms};
 }
 
-DataStore::ResultWithTime DataStore::CommitUnsafe(
+InvertedIndexShard::ResultWithTime InvertedIndexShard::CommitUnsafe(
   bool wait, const irs::ProgressReportCallback& progress, CommitResult& code) {
   auto begin = std::chrono::steady_clock::now();
   auto result = CommitUnsafeImpl(wait, progress, code);
@@ -215,7 +212,7 @@ DataStore::ResultWithTime DataStore::CommitUnsafe(
       MarkOutOfSyncUnsafe();
     } catch (const std::exception& e) {
       // We couldn't persist the outOfSync flag,
-      // but we can't mark the data store as "not outOfSync" again.
+      // but we can't mark the inverted index shard as "not outOfSync" again.
       // Not much we can do except logging.
       SDB_WARN("xxxxx", Logger::SEARCH,
                "failed to store 'outOfSync' flag for Search index '",
@@ -233,47 +230,52 @@ DataStore::ResultWithTime DataStore::CommitUnsafe(
   return {std::move(result), time_ms};
 }
 
-Result DataStore::ConsolidateUnsafeImpl(
-  const DataStoreMeta::ConsolidationPolicy& policy,
+Result InvertedIndexShard::ConsolidateUnsafeImpl(
+  const InvertedIndexShardMeta::ConsolidationPolicy& policy,
   const irs::MergeWriter::FlushProgress& progress, bool& empty_consolidation) {
   empty_consolidation = false;
 
   if (!policy.policy()) {
-    return {
-      ERROR_BAD_PARAMETER,
-      absl::StrCat(
-        "unset consolidation policy while executing consolidation policy '",
-        policy.properties().toString(), "' on Search index '", GetId().id(),
-        "'")};
+    return {ERROR_BAD_PARAMETER,
+            "unset consolidation policy while executing consolidation policy '",
+            policy.properties().toString(),
+            "' on Search index '",
+            GetId().id(),
+            "'"};
   }
 
   try {
     const auto res = _writer->Consolidate(policy.policy(), nullptr, progress);
     if (!res) {
       return {ERROR_INTERNAL,
-              absl::StrCat("failure while executing consolidation policy '",
-                           policy.properties().toString(),
-                           "' on Search index '", GetId().id(), "'")};
+              "failure while executing consolidation policy '",
+              policy.properties().toString(),
+              "' on Search index '",
+              GetId().id(),
+              "'"};
     }
 
     empty_consolidation = (res.size == 0);
   } catch (const std::exception& e) {
-    return {
-      ERROR_INTERNAL,
-      absl::StrCat("caught exception while executing consolidation policy '",
-                   policy.properties().toString(), "' on Search index '",
-                   GetId().id(), "': ", e.what())};
+    return {ERROR_INTERNAL,
+            "caught exception while executing consolidation policy '",
+            policy.properties().toString(),
+            "' on Search index '",
+            GetId().id(),
+            "': ",
+            e.what()};
   } catch (...) {
-    return {
-      ERROR_INTERNAL,
-      absl::StrCat("caught exception while executing consolidation policy '",
-                   policy.properties().toString(), "' on Search index '",
-                   GetId().id(), "'")};
+    return {ERROR_INTERNAL,
+            "caught exception while executing consolidation policy '",
+            policy.properties().toString(),
+            "' on Search index '",
+            GetId().id(),
+            "'"};
   }
   return {};
 }
 
-Result DataStore::CommitUnsafeImpl(bool wait,
+Result InvertedIndexShard::CommitUnsafeImpl(bool wait,
                                    const irs::ProgressReportCallback& progress,
                                    CommitResult& code) {
   code = CommitResult::NoChanges;
@@ -298,9 +300,9 @@ Result DataStore::CommitUnsafeImpl(bool wait,
     auto engine_snapshot = _engine.currentSnapshot();
     if (!engine_snapshot) [[unlikely]] {
       return {ERROR_INTERNAL,
-              absl::StrCat("Failed to get engine snapshot while committing "
-                           "Search index '",
-                           GetId().id(), "'")};
+              "Failed to get engine snapshot while committing "
+              "Search index '",
+              GetId().id(), "'"};
     }
     const auto before_commit =
       engine_snapshot->GetSnapshot()->GetSequenceNumber();
@@ -326,7 +328,7 @@ Result DataStore::CommitUnsafeImpl(bool wait,
       // no changes, can release the latest tick before commit
       // subscription.tick(_last_committed_tick);
       // TODO(mbkkt) make_shared can throw!
-      StoreDataSnapshot(std::make_shared<DataSnapshot>(
+      StoreInvertedIndexSnapshot(std::make_shared<InvertedIndexSnapshot>(
         std::move(reader), std::move(engine_snapshot)));
       return {};
     }
@@ -334,15 +336,15 @@ Result DataStore::CommitUnsafeImpl(bool wait,
     code = CommitResult::Done;
 
     // update reader
-    SDB_ASSERT(GetDataSnapshot());
-    SDB_ASSERT(GetDataSnapshot()->reader != reader);
+    SDB_ASSERT(GetInvertedIndexSnapshot());
+    SDB_ASSERT(GetInvertedIndexSnapshot()->reader != reader);
     const auto reader_size = reader->size();
     const auto docs_count = reader->docs_count();
     const auto live_docs_count = reader->live_docs_count();
 
-    auto data = std::make_shared<DataSnapshot>(std::move(reader),
+    auto data = std::make_shared<InvertedIndexSnapshot>(std::move(reader),
                                                std::move(engine_snapshot));
-    StoreDataSnapshot(data);
+    StoreInvertedIndexSnapshot(data);
 
     // update last committed tick
     // subscription.tick(_last_committed_tick);
@@ -354,22 +356,19 @@ Result DataStore::CommitUnsafeImpl(bool wait,
               docs_count, "', live docs count '", live_docs_count,
               "', last operation tick '", _last_committed_tick, "'");
   } catch (const basics::Exception& e) {
-    return {e.code(),
-            absl::StrCat("caught exception while committing Search index '",
-                         GetId().id(), "': ", e.message())};
+    return {e.code(), "caught exception while committing Search index '",
+            GetId().id(), "': ", e.message()};
   } catch (const std::exception& e) {
-    return {ERROR_INTERNAL,
-            absl::StrCat("caught exception while committing Search index '",
-                         GetId().id(), "': ", e.what())};
+    return {ERROR_INTERNAL, "caught exception while committing Search index '",
+            GetId().id(), "': ", e.what()};
   } catch (...) {
-    return {ERROR_INTERNAL,
-            absl::StrCat("caught exception while committing Search index '",
-                         GetId().id(), "'")};
+    return {ERROR_INTERNAL, "caught exception while committing Search index '",
+            GetId().id(), "'"};
   }
   return {};
 }
 
-bool DataStore::SetOutOfSync() noexcept {
+bool InvertedIndexShard::SetOutOfSync() noexcept {
   SDB_ASSERT(!ServerState::instance()->IsCoordinator());
   auto error = _error.load(std::memory_order_relaxed);
   return error == Error::NoError &&
@@ -378,7 +377,7 @@ bool DataStore::SetOutOfSync() noexcept {
                                         std::memory_order_relaxed);
 }
 
-void DataStore::MarkOutOfSyncUnsafe() {
+void InvertedIndexShard::MarkOutOfSyncUnsafe() {
   _search.trackOutOfSyncLink();
 
   auto& catalog =
@@ -393,11 +392,11 @@ void DataStore::MarkOutOfSyncUnsafe() {
   _engine.ChangeTable(*c, *shard);
 }
 
-bool DataStore::IsOutOfSync() const noexcept {
+bool InvertedIndexShard::IsOutOfSync() const noexcept {
   return _error.load(std::memory_order_relaxed) == Error::OutOfSync;
 }
 
-bool DataStore::FailQueriesOnOutOfSync() const noexcept {
+bool InvertedIndexShard::FailQueriesOnOutOfSync() const noexcept {
   return _search.failQueriesOnOutOfSync();
 }
 

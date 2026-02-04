@@ -1,15 +1,15 @@
 #include "catalog/inverted_index.h"
 
-#include "search/data_store.h"
+#include "search/inverted_index_shard.h"
 namespace sdb::catalog {
 
 ResultOr<std::shared_ptr<IndexShard>> InvertedIndex::CreateIndexShard(
   bool is_new, vpack::Slice args) const {
-  // TODO(codeworse): parse args into DataStoreOptions
-  auto data_store = std::make_shared<search::DataStore>(
-    *this, search::DataStoreOptions{}, is_new);
-  data_store->StartTasks();
-  return data_store;
+  // TODO(codeworse): parse args into InvertedIndexShardOptions
+  auto inverted_index_shard = std::make_shared<search::InvertedIndexShard>(
+    *this, search::InvertedIndexShardOptions{}, is_new);
+  inverted_index_shard->StartTasks();
+  return inverted_index_shard;
 }
 
 void InvertedIndex::WriteInternal(vpack::Builder& builder) const {

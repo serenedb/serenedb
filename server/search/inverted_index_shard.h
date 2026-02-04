@@ -31,16 +31,16 @@
 
 #include "catalog/inverted_index.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "search/data_store_meta.h"
+#include "search/inverted_index_shard_meta.h"
 #include "storage_engine/engine_feature.h"
 #include "storage_engine/index_shard.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::search {
 
-class DataStore;
+class InvertedIndexShard;
 
-struct DataStoreOptions {
+struct InvertedIndexShardOptions {
   size_t commit_interval_ms;
   size_t consolidation_interval_ms;
 };
@@ -60,8 +60,8 @@ enum class CommitResult {
   Done,
 };
 
-struct DataSnapshot {
-  DataSnapshot(irs::DirectoryReader&& index,
+struct InvertedIndexSnapshot {
+  InvertedIndexSnapshot(irs::DirectoryReader&& index,
                std::shared_ptr<StorageSnapshot> rocksdb_snapshot)
     : reader{std::move(index)}, snapshot{std::move(rocksdb_snapshot)} {}
 
@@ -72,18 +72,18 @@ struct DataSnapshot {
   irs::DirectoryReader reader;
   std::shared_ptr<StorageSnapshot> snapshot;
 };
-using DataSnapshotPtr = std::shared_ptr<DataSnapshot>;
+using InvertedIndexSnapshotPtr = std::shared_ptr<InvertedIndexSnapshot>;
 
 class Snapshot {
  public:
-  Snapshot(std::shared_ptr<const DataStore> data_store,
-           DataSnapshotPtr data_snapshot)
-    : _data_store{std::move(data_store)}, _snapshot{std::move(data_snapshot)} {}
+  Snapshot(std::shared_ptr<const InvertedIndexShard> inverted_index_shard,
+           InvertedIndexSnapshotPtr inverted_index_snapshot)
+    : _inverted_index_shard{std::move(inverted_index_shard)}, _snapshot{std::move(inverted_index_snapshot)} {}
   Snapshot(Snapshot&&) = default;
 
   Snapshot& operator=(Snapshot&& other) {
     if (this != &other) {
-      _data_store = std::move(other._data_store);
+      _inverted_index_shard = std::move(other._inverted_index_shard);
       _snapshot = std::move(other._snapshot);
     }
     return *this;
@@ -103,13 +103,13 @@ class Snapshot {
   }
 
  private:
-  std::shared_ptr<const DataStore> _data_store;
-  DataSnapshotPtr _snapshot;
+  std::shared_ptr<const InvertedIndexShard> _inverted_index_shard;
+  InvertedIndexSnapshotPtr _snapshot;
 };
 
 // Physical representation of a search index(catalog::Index)
 // Used for creating writers/readers and managing index lifecycle
-class DataStore : public std::enable_shared_from_this<DataStore>,
+class InvertedIndexShard : public std::enable_shared_from_this<InvertedIndexShard>,
                   public IndexShard {
  public:
   struct Stats {
@@ -128,7 +128,7 @@ class DataStore : public std::enable_shared_from_this<DataStore>,
     uint64_t time_ms;
   };
 
-  DataStore(const catalog::InvertedIndex& index, DataStoreOptions options,
+  InvertedIndexShard(const catalog::InvertedIndex& index, InvertedIndexShardOptions options,
             bool is_new);
 
   void WriteInternal(vpack::Builder& builder) const final;
@@ -136,7 +136,7 @@ class DataStore : public std::enable_shared_from_this<DataStore>,
   auto GetTransaction() { return _writer->GetBatch(); }
 
   ResultWithTime ConsolidateUnsafe(
-    const DataStoreMeta::ConsolidationPolicy& policy,
+    const InvertedIndexShardMeta::ConsolidationPolicy& policy,
     const irs::MergeWriter::FlushProgress& progress, bool& empty_consolidation);
 
   ResultWithTime CommitUnsafe(bool wait,
@@ -144,7 +144,7 @@ class DataStore : public std::enable_shared_from_this<DataStore>,
                               CommitResult& code);
 
   ResultWithTime CleanupUnsafe();
-  Stats UpdateStatsUnsafe(DataSnapshotPtr data) const;
+  Stats UpdateStatsUnsafe(InvertedIndexSnapshotPtr data) const;
 
   void ScheduleConsolidation(absl::Duration delay);
   void ScheduleCommit(absl::Duration delay);
@@ -155,7 +155,7 @@ class DataStore : public std::enable_shared_from_this<DataStore>,
 
   void StatsToVPack(vpack::Builder& builder);
   Stats GetStats() const;
-  Result Properties(const DataStoreMeta& meta);
+  Result Properties(const InvertedIndexShardMeta& meta);
   bool SetOutOfSync() noexcept;
   void MarkOutOfSyncUnsafe();
   bool IsOutOfSync() const noexcept;
@@ -164,16 +164,16 @@ class DataStore : public std::enable_shared_from_this<DataStore>,
   auto& GetMutex() { return _mutex; }
   Snapshot GetSnapshot() const;
 
-  DataSnapshotPtr GetDataSnapshot() const {
+  InvertedIndexSnapshotPtr GetInvertedIndexSnapshot() const {
     return std::atomic_load_explicit(&_snapshot, std::memory_order_acquire);
   }
 
-  void StoreDataSnapshot(DataSnapshotPtr data_snapshot) {
-    std::atomic_store_explicit(&_snapshot, std::move(data_snapshot),
+  void StoreInvertedIndexSnapshot(InvertedIndexSnapshotPtr inverted_index_snapshot) {
+    std::atomic_store_explicit(&_snapshot, std::move(inverted_index_snapshot),
                                std::memory_order_release);
   }
 
-  void ResetDataSnapshot() { _snapshot.reset(); }
+  void ResetInvertedIndexSnapshot() { _snapshot.reset(); }
 
   auto& GetMeta() { return _meta; }
 
@@ -183,7 +183,7 @@ class DataStore : public std::enable_shared_from_this<DataStore>,
   }
 
  private:
-  Result ConsolidateUnsafeImpl(const DataStoreMeta::ConsolidationPolicy& policy,
+  Result ConsolidateUnsafeImpl(const InvertedIndexShardMeta::ConsolidationPolicy& policy,
                                const irs::MergeWriter::FlushProgress& progress,
                                bool& empty_consolidation);
   Result CommitUnsafeImpl(bool wait,
@@ -194,11 +194,11 @@ class DataStore : public std::enable_shared_from_this<DataStore>,
   RocksDBEngineCatalog& _engine;
   SearchEngine& _search;
   std::shared_ptr<ThreadPoolState> _state;
-  DataSnapshotPtr _snapshot;
+  InvertedIndexSnapshotPtr _snapshot;
   std::shared_ptr<irs::IndexWriter> _writer;
-  DataStoreOptions _options;
+  InvertedIndexShardOptions _options;
   std::unique_ptr<irs::Directory> _dir;
-  DataStoreMeta _meta;
+  InvertedIndexShardMeta _meta;
   absl::Mutex _mutex;
   absl::Mutex _commit_mutex;
 
@@ -222,11 +222,11 @@ class DataStore : public std::enable_shared_from_this<DataStore>,
   metrics::Guard<Stats>* _metric_stats{nullptr};
 
   enum class Error : uint8_t {
-    // data store has no issues
+    // inverted index shard has no issues
     NoError = 0,
-    // data store is out of sync
+    // inverted index shard is out of sync
     OutOfSync = 1,
-    // data store is failed (currently not used)
+    // inverted index shard is failed (currently not used)
     Failed = 2,
   };
   std::atomic<Error> _error{Error::NoError};

@@ -24,9 +24,8 @@
 
 namespace sdb::catalog {
 
-SecondaryIndex::SecondaryIndex(IndexOptions<SecondaryIndexOptions> options,
-                               ObjectId database_id)
-  : Index(std::move(options.base), database_id), _unique{options.impl.unique} {}
+SecondaryIndex::SecondaryIndex(IndexOptions<SecondaryIndexOptions> options)
+  : Index(std::move(options.base)), _unique{options.impl.unique} {}
 
 void SecondaryIndex::WriteInternal(vpack::Builder& builder) const {
   Index::WriteInternal(builder);

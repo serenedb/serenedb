@@ -22,7 +22,6 @@
 
 #include "basics/assert.h"
 #include "catalog/catalog.h"
-#include "search/transaction.h"
 #include "storage_engine/engine_feature.h"
 
 namespace sdb::query {
@@ -41,9 +40,9 @@ Result Transaction::Commit() {
     return {ERROR_INTERNAL,
             "Failed to commit RocksDB transaction: ", status.ToString()};
   }
-  SDB_ASSERT(_search_transaction);
-  _search_transaction->Commit();
-  _search_transaction.reset();
+  for (auto& search_transaction : _search_transactions) {
+    search_transaction.second->Commit();
+  }
   ApplyTableStatsDiffs();
   CommitVariables();
   Destroy();
@@ -57,9 +56,9 @@ Result Transaction::Rollback() {
     return {ERROR_INTERNAL,
             "Failed to rollback RocksDB transaction: ", status.ToString()};
   }
-  SDB_ASSERT(_search_transaction);
-  _search_transaction->Abort();
-  _search_transaction.reset();
+  for (auto& search_transaction : _search_transactions) {
+    search_transaction.second->Abort();
+  }
   RollbackVariables();
   Destroy();
   return {};
@@ -114,8 +113,6 @@ void Transaction::CreateRocksDBTransaction() {
   SDB_ASSERT(!_rocksdb_transaction);
   auto* db = GetServerEngine().db();
   SDB_ASSERT(db != nullptr);
-  _search_transaction =
-    std::make_shared<search::Transaction>(GetCatalogSnapshot());
   rocksdb::WriteOptions write_options;
   rocksdb::TransactionOptions txn_options;
   txn_options.skip_concurrency_control = true;
@@ -129,9 +126,9 @@ void Transaction::CreateRocksDBTransaction() {
 void Transaction::Destroy() noexcept {
   _state = State::None;
   _storage_snapshot.reset();
-  _search_transaction.reset();
   _rocksdb_transaction.reset();
   _rocksdb_snapshot = nullptr;
+  _search_transactions.clear();
 }
 
 catalog::TableStats Transaction::GetTableStats(ObjectId table_id) const {

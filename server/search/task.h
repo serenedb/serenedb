@@ -27,7 +27,7 @@
 
 #include "app/app_server.h"
 #include "basics/assert.h"
-#include "search/data_store.h"
+#include "search/inverted_index_shard.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::search {
@@ -41,10 +41,10 @@ concept IndexTaskType = requires(const T& task) {
 
 class Task {
  public:
-  Task(const std::shared_ptr<DataStore>& data_store)
-    : _id{data_store->GetId()},
-      _data_store{data_store},
-      _state{data_store->GetState()},
+  Task(const std::shared_ptr<InvertedIndexShard>& inverted_index_shard)
+    : _id{inverted_index_shard->GetId()},
+      _inverted_index_shard{inverted_index_shard},
+      _state{inverted_index_shard->GetState()},
       _engine{&GetSearchEngine()} {}
 
   template<IndexTaskType Self>
@@ -61,7 +61,7 @@ class Task {
 
  protected:
   ObjectId _id;
-  std::weak_ptr<DataStore> _data_store;
+  std::weak_ptr<InvertedIndexShard> _inverted_index_shard;
   std::shared_ptr<ThreadPoolState> _state;
   SearchEngine* _engine;
 };
@@ -72,17 +72,19 @@ class CommitTask : public Task {
     return ThreadGroup::Commit;
   }
   static constexpr std::string_view TaskName() noexcept { return "Commit"; }
-  CommitTask(const std::shared_ptr<DataStore>& data_store) : Task{data_store} {}
+  CommitTask(const std::shared_ptr<InvertedIndexShard>& inverted_index_shard)
+    : Task{inverted_index_shard} {}
 
   CommitTask GetContinuos() const {
-    auto self = _data_store.lock();
+    auto self = _inverted_index_shard.lock();
     SDB_ASSERT(self);
     return CommitTask(self);
   }
 
   void operator()();
-  void Finalize(std::shared_ptr<search::DataStore> data_store,
-                CommitResult res);
+  void Finalize(
+    std::shared_ptr<search::InvertedIndexShard> inverted_index_shard,
+    CommitResult res);
 
  private:
   absl::Duration _commit_interval_msec;
@@ -99,20 +101,21 @@ class ConsolidationTask : public Task {
   static constexpr std::string_view TaskName() noexcept {
     return "Consolidate";
   }
-  ConsolidationTask(const std::shared_ptr<DataStore>& data_store,
-                    std::function<bool()> flush_progress)
-    : Task{data_store}, _progress{std::move(flush_progress)} {}
+  ConsolidationTask(
+    const std::shared_ptr<InvertedIndexShard>& inverted_index_shard,
+    std::function<bool()> flush_progress)
+    : Task{inverted_index_shard}, _progress{std::move(flush_progress)} {}
 
   void operator()();
   ConsolidationTask GetContinuos() const {
-    auto self = _data_store.lock();
+    auto self = _inverted_index_shard.lock();
     SDB_ASSERT(self);
     return ConsolidationTask(self, _progress);
   }
 
  private:
   irs::MergeWriter::FlushProgress _progress;
-  DataStoreMeta::ConsolidationPolicy _consolidation_policy;
+  InvertedIndexShardMeta::ConsolidationPolicy _consolidation_policy;
   absl::Duration _consolidation_interval_msec;
 };
 

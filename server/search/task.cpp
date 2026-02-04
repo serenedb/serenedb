@@ -29,12 +29,13 @@
 #include "basics/assert.h"
 #include "basics/logger/logger.h"
 #include "basics/system-compiler.h"
-#include "search/data_store.h"
+#include "search/inverted_index_shard.h"
 
 namespace sdb::search {
 
-void CommitTask::Finalize(std::shared_ptr<search::DataStore> data_store,
-                          CommitResult res) {
+void CommitTask::Finalize(
+  std::shared_ptr<search::InvertedIndexShard> inverted_index_shard,
+  CommitResult res) {
   constexpr size_t kMaxNonEmptyCommits = 10;
   constexpr size_t kMaxPendingConsolidations = 3;
 
@@ -50,7 +51,8 @@ void CommitTask::Finalize(std::shared_ptr<search::DataStore> data_store,
             kMaxPendingConsolidations &&
           _state->non_empty_commits.fetch_add(1, std::memory_order_acq_rel) >=
             kMaxNonEmptyCommits) {
-        data_store->ScheduleConsolidation(_consolidation_interval_msec);
+        inverted_index_shard->ScheduleConsolidation(
+          _consolidation_interval_msec);
         _state->non_empty_commits.store(0, std::memory_order_release);
       }
     }
@@ -72,9 +74,10 @@ void CommitTask::Finalize(std::shared_ptr<search::DataStore> data_store,
 void CommitTask::operator()() {
   SDB_TRACE("xxxxx", Logger::SEARCH, "CommitTask started");
   const char run_id = 0;
-  auto data = _data_store.lock();
+  auto data = _inverted_index_shard.lock();
   if (!data) {
-    SDB_TRACE("xxxxx", Logger::SEARCH, "DataStore ", _id, " is deleted");
+    SDB_TRACE("xxxxx", Logger::SEARCH, "InvertedIndexShard ", _id,
+              " is deleted");
     return;
   }
   auto id = data->GetId();
@@ -153,10 +156,10 @@ void CommitTask::operator()() {
 void ConsolidationTask::operator()() {
   SDB_TRACE("xxxxx", Logger::SEARCH, "ConsolidationTask started");
   const char run_id = 0;
-  auto data = _data_store.lock();
+  auto data = _inverted_index_shard.lock();
   if (!data) {
     SDB_WARN("xxxxx", Logger::SEARCH,
-             "ConsolidationTask: data store is deleted");
+             "ConsolidationTask: inverted index shard is deleted");
     return;
   }
   auto id = data->GetId();

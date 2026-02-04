@@ -1,0 +1,31 @@
+statement ok
+CREATE TABLE t(r text);
+
+
+statement ok
+CREATE INDEX index_t ON t USING inverted(r);
+
+
+statement ok
+DROP INDEX index_t;
+
+
+statement ok
+SET sdb_fault_crash_on_packet TO DEFAULT;
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection new
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT COUNT(*) from pg_index;
+----
+COUNT
+0
+
+
+connection new
+statement ok
+CREATE INDEX index_tt ON t USING inverted(r);

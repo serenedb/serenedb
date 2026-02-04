@@ -496,12 +496,8 @@ class SereneDBConnector final : public velox::connector::Connector {
   explicit SereneDBConnector(const std::string& id,
                              velox::config::ConfigPtr config,
                              rocksdb::TransactionDB& db,
-                             rocksdb::ColumnFamilyHandle& cf,
-                             std::string_view rocksdb_directory)
-    : Connector{id, std::move(config)},
-      _db{db},
-      _cf{cf},
-      _rocksdb_directory{rocksdb_directory} {}
+                             rocksdb::ColumnFamilyHandle& cf)
+    : Connector{id, std::move(config)}, _db{db}, _cf{cf} {}
 
   bool canAddDynamicFilter() const final { return false; }
 
@@ -654,7 +650,7 @@ class SereneDBConnector final : public velox::connector::Connector {
             if (table.IsBulkInsert()) {
               return std::make_unique<SSTInsertDataSink>(
                 _db, _cf, *connector_query_ctx->memoryPool(), object_key,
-                pk_indices, column_oids, _rocksdb_directory);
+                pk_indices, column_oids);
             }
 
             return std::make_unique<RocksDBInsertDataSink>(
@@ -688,7 +684,6 @@ class SereneDBConnector final : public velox::connector::Connector {
  private:
   rocksdb::TransactionDB& _db;
   rocksdb::ColumnFamilyHandle& _cf;
-  std::string _rocksdb_directory;
 };
 
 }  // namespace sdb::connector

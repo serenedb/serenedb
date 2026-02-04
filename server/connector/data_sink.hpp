@@ -262,8 +262,7 @@ class SSTInsertDataSink final
   SSTInsertDataSink(rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
                     velox::memory::MemoryPool& memory_pool, ObjectId object_key,
                     std::span<const velox::column_index_t> key_childs,
-                    std::vector<catalog::Column::Id> column_oids,
-                    std::string_view rocksdb_directory);
+                    std::vector<catalog::Column::Id> column_oids);
 
   void appendData(velox::RowVectorPtr input) final;
 

@@ -23,8 +23,6 @@
 #include <absl/base/internal/endian.h>
 
 #include <filesystem>
-#include <format>
-#include <random>
 #include <string>
 
 #include "basics/assert.h"
@@ -33,24 +31,24 @@
 #include "catalog/table_options.h"
 #include "rocksdb/options.h"
 #include "rocksdb/table.h"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
+#include "storage_engine/engine_feature.h"
 
 namespace sdb::connector {
 
-std::string GenerateSSTDirPath(std::string_view rocksdb_directory) {
+std::string GenerateSSTDirPath() {
   auto now = std::chrono::system_clock::now();
   auto timestamp =
     std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch())
       .count();
-
-  return absl::StrCat(rocksdb_directory, "/", "bulk_insert_", timestamp, "_",
-                      random::RandU64());
+  return absl::StrCat(GetServerEngine().path(), "/", "bulk_insert_", timestamp,
+                      "_", random::RandU64());
 }
 
 SSTSinkWriter::SSTSinkWriter(rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
-                             std::span<catalog::Column::Id> column_oids,
-                             std::string_view rocksdb_directory)
-  : _db{&db}, _cf{&cf}, _sst_directory{GenerateSSTDirPath(rocksdb_directory)} {
+                             std::span<catalog::Column::Id> column_oids)
+  : _db{&db}, _cf{&cf}, _sst_directory{GenerateSSTDirPath()} {
   _writers.resize(column_oids.size());
 
   auto options = _db->GetOptions(_cf);

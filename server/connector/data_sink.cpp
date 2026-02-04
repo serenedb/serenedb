@@ -92,10 +92,9 @@ SSTInsertDataSink::SSTInsertDataSink(
   rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
   std::span<const velox::column_index_t> key_childs,
-  std::vector<catalog::Column::Id> column_oids,
-  std::string_view rocksdb_directory)
+  std::vector<catalog::Column::Id> column_oids)
   : RocksDBDataSinkBase<SSTSinkWriter, SinkInsertWriter>(
-      SSTSinkWriter{db, cf, column_oids, rocksdb_directory}, memory_pool,
+      SSTSinkWriter{db, cf, column_oids}, memory_pool,
       object_key, key_childs, std::move(column_oids),
       std::vector<std::unique_ptr<SinkInsertWriter>>{}) {}
 

@@ -59,36 +59,34 @@ class RocksDBDataSource final : public velox::connector::DataSource {
                               std::string_view column_key,
                               const velox::TypePtr& type,
                               catalog::Column::Id column_id,
-                              size_t table_prefix_size, std::string* last_key);
+                              size_t table_prefix_size);
 
   template<velox::TypeKind Kind>
   velox::VectorPtr ReadScalarColumn(rocksdb::Iterator& it, uint64_t max_size,
-                                    std::string_view column_key,
-                                    std::string* last_key);
+                                    std::string_view column_key);
   velox::VectorPtr ReadUnknownColumn(rocksdb::Iterator& it, uint64_t max_size,
-                                     std::string_view column_key,
-                                     std::string* last_key);
+                                     std::string_view column_key);
 
   velox::VectorPtr ReadColumnFromKey(rocksdb::Iterator& it, uint64_t max_size,
                                      std::string_view column_key,
-                                     size_t table_prefix_size,
-                                     std::string* last_key);
+                                     size_t table_prefix_size);
 
   template<typename Callback>
   uint64_t IterateColumn(rocksdb::Iterator& it, uint64_t max_size,
-                         std::string_view column_key, const Callback& func,
-                         std::string* last_key);
+                         std::string_view column_key, const Callback& func);
 
   std::unique_ptr<rocksdb::Iterator> CreateColumnIterator(
     const std::string_view column_key,
     const rocksdb::ReadOptions& read_options);
 
   velox::memory::MemoryPool& _memory_pool;
-  const rocksdb::Snapshot* _snapshot;
   rocksdb::DB& _db;
   rocksdb::ColumnFamilyHandle& _cf;
   velox::RowTypePtr _row_type;
   std::vector<catalog::Column::Id> _column_ids;
+  std::vector<std::string> _column_keys;
+  std::vector<std::unique_ptr<rocksdb::Iterator>> _iterators;
+  rocksdb::ReadOptions _read_options;
   // Column ID to use for iteration when the requested column is stored in the
   // key (e.g., kGeneratedPKId). This points to a column whose values are stored
   // in RocksDB as *values*, not inside *keys*. It's convenient to store it here
@@ -99,8 +97,8 @@ class RocksDBDataSource final : public velox::connector::DataSource {
   catalog::Column::Id _effective_column_id;
   std::shared_ptr<velox::connector::ConnectorSplit> _current_split;
   ObjectId _object_key;
-  std::string _last_read_key;
-  uint64_t _produced{0};
+  // std::string _last_read_key; // TODO(mkornaukhov) remove
+  uint64_t _produced = 0;
 };
 
 }  // namespace sdb::connector

@@ -95,7 +95,7 @@ void CommitTask::operator()() {
 
   // reload RuntimeState
   {
-    SDB_IF_FAILURE("SearchCommitTask::lockDataStore") {
+    SDB_IF_FAILURE("SearchCommitTask::lockInvertedIndexShard") {
       SDB_THROW(ERROR_DEBUG);
     }
     // must be valid if linkLock->lock() is valid
@@ -183,7 +183,7 @@ void ConsolidationTask::operator()() {
 
   // reload RuntimeState
   {
-    SDB_IF_FAILURE("SearchConsolidationTask::lockDataStore") {
+    SDB_IF_FAILURE("SearchConsolidationTask::lockInvertedIndexShard") {
       SDB_THROW(ERROR_DEBUG);
     }
 

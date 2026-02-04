@@ -25,13 +25,17 @@
 #include <absl/time/time.h>
 
 #include <chrono>
+#include <filesystem>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/store/fs_directory.hpp>
+#include <iresearch/store/mmap_directory.hpp>
 #include <memory>
+#include <system_error>
 
 #include "basics/assert.h"
 #include "basics/errors.h"
+#include "basics/exceptions.h"
 #include "basics/system-compiler.h"
 #include "catalog/catalog.h"
 #include "metrics/gauge.h"
@@ -61,7 +65,8 @@ uint64_t ComputeAvg(std::atomic<uint64_t>& time_num, uint64_t new_time) {
 }  // namespace
 
 InvertedIndexShard::InvertedIndexShard(const catalog::InvertedIndex& index,
-                     InvertedIndexShardOptions options, bool is_new)
+                                       InvertedIndexShardOptions options,
+                                       bool is_new)
   : IndexShard{index},
     _engine{GetServerEngine()},
     _search{GetSearchEngine()},
@@ -72,9 +77,24 @@ InvertedIndexShard::InvertedIndexShard(const catalog::InvertedIndex& index,
   const auto index_id = index.GetId();
   SDB_ASSERT(index_id.isSet());
   std::filesystem::path path = _search.GetPersistedPath(db_id);
+  std::error_code ec;
+  bool path_exists = std::filesystem::exists(path, ec);
+  if (ec) {
+    SDB_THROW(ERROR_INTERNAL, "Failed to check existence of path '",
+              path.string(), "' while initializing data store '", GetId().id(),
+              "': ", ec.message());
+  }
+  if (!path_exists) {
+    std::filesystem::create_directories(path, ec);
+    if (ec) {
+      SDB_THROW(ERROR_INTERNAL, "Failed to create directory '", path.string(),
+                "' while initializing data store '", GetId().id(),
+                "': ", ec.message());
+    }
+  }
   path /= absl::StrCat(schema_id);
   path /= absl::StrCat(index_id);
-  _dir = std::make_unique<irs::FSDirectory>(path);
+  _dir = std::make_unique<irs::MMapDirectory>(path);
   auto codec = irs::formats::Get("1_5simd");
   // TODO(codeworse): add is_exists and change open_mode
   _writer = irs::IndexWriter::Make(
@@ -82,6 +102,10 @@ InvertedIndexShard::InvertedIndexShard(const catalog::InvertedIndex& index,
     (is_new ? irs::OpenMode::kOmCreate : irs::OpenMode::kOmAppend), {});
   // TODO(codeworse): Add recovery
   _last_committed_tick = 0;
+  if (!path_exists) {
+    // Initialize empty index
+    _writer->Commit();
+  }
 
   auto reader = _writer->GetSnapshot();
   auto engine_snapshot = _engine.currentSnapshot();
@@ -89,8 +113,8 @@ InvertedIndexShard::InvertedIndexShard(const catalog::InvertedIndex& index,
     SDB_THROW(ERROR_INTERNAL, "Search index '", _id,
               "' cannot acquire snapshot");
   }
-  _snapshot = std::make_shared<InvertedIndexSnapshot>(std::move(reader),
-                                             std::move(engine_snapshot));
+  _snapshot = std::make_shared<InvertedIndexSnapshot>(
+    std::move(reader), std::move(engine_snapshot));
 }
 
 void InvertedIndexShard::WriteInternal(vpack::Builder& builder) const {
@@ -275,9 +299,8 @@ Result InvertedIndexShard::ConsolidateUnsafeImpl(
   return {};
 }
 
-Result InvertedIndexShard::CommitUnsafeImpl(bool wait,
-                                   const irs::ProgressReportCallback& progress,
-                                   CommitResult& code) {
+Result InvertedIndexShard::CommitUnsafeImpl(
+  bool wait, const irs::ProgressReportCallback& progress, CommitResult& code) {
   code = CommitResult::NoChanges;
 
   try {
@@ -342,8 +365,8 @@ Result InvertedIndexShard::CommitUnsafeImpl(bool wait,
     const auto docs_count = reader->docs_count();
     const auto live_docs_count = reader->live_docs_count();
 
-    auto data = std::make_shared<InvertedIndexSnapshot>(std::move(reader),
-                                               std::move(engine_snapshot));
+    auto data = std::make_shared<InvertedIndexSnapshot>(
+      std::move(reader), std::move(engine_snapshot));
     StoreInvertedIndexSnapshot(data);
 
     // update last committed tick

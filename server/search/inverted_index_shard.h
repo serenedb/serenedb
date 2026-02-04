@@ -62,7 +62,7 @@ enum class CommitResult {
 
 struct InvertedIndexSnapshot {
   InvertedIndexSnapshot(irs::DirectoryReader&& index,
-               std::shared_ptr<StorageSnapshot> rocksdb_snapshot)
+                        std::shared_ptr<StorageSnapshot> rocksdb_snapshot)
     : reader{std::move(index)}, snapshot{std::move(rocksdb_snapshot)} {}
 
   [[nodiscard]] auto GetSequenceNumber() const noexcept {
@@ -78,7 +78,8 @@ class Snapshot {
  public:
   Snapshot(std::shared_ptr<const InvertedIndexShard> inverted_index_shard,
            InvertedIndexSnapshotPtr inverted_index_snapshot)
-    : _inverted_index_shard{std::move(inverted_index_shard)}, _snapshot{std::move(inverted_index_snapshot)} {}
+    : _inverted_index_shard{std::move(inverted_index_shard)},
+      _snapshot{std::move(inverted_index_snapshot)} {}
   Snapshot(Snapshot&&) = default;
 
   Snapshot& operator=(Snapshot&& other) {
@@ -109,8 +110,9 @@ class Snapshot {
 
 // Physical representation of a search index(catalog::Index)
 // Used for creating writers/readers and managing index lifecycle
-class InvertedIndexShard : public std::enable_shared_from_this<InvertedIndexShard>,
-                  public IndexShard {
+class InvertedIndexShard
+  : public std::enable_shared_from_this<InvertedIndexShard>,
+    public IndexShard {
  public:
   struct Stats {
     // NOLINTBEGIN
@@ -128,8 +130,8 @@ class InvertedIndexShard : public std::enable_shared_from_this<InvertedIndexShar
     uint64_t time_ms;
   };
 
-  InvertedIndexShard(const catalog::InvertedIndex& index, InvertedIndexShardOptions options,
-            bool is_new);
+  InvertedIndexShard(const catalog::InvertedIndex& index,
+                     InvertedIndexShardOptions options, bool is_new);
 
   void WriteInternal(vpack::Builder& builder) const final;
 
@@ -168,7 +170,8 @@ class InvertedIndexShard : public std::enable_shared_from_this<InvertedIndexShar
     return std::atomic_load_explicit(&_snapshot, std::memory_order_acquire);
   }
 
-  void StoreInvertedIndexSnapshot(InvertedIndexSnapshotPtr inverted_index_snapshot) {
+  void StoreInvertedIndexSnapshot(
+    InvertedIndexSnapshotPtr inverted_index_snapshot) {
     std::atomic_store_explicit(&_snapshot, std::move(inverted_index_snapshot),
                                std::memory_order_release);
   }
@@ -183,9 +186,9 @@ class InvertedIndexShard : public std::enable_shared_from_this<InvertedIndexShar
   }
 
  private:
-  Result ConsolidateUnsafeImpl(const InvertedIndexShardMeta::ConsolidationPolicy& policy,
-                               const irs::MergeWriter::FlushProgress& progress,
-                               bool& empty_consolidation);
+  Result ConsolidateUnsafeImpl(
+    const InvertedIndexShardMeta::ConsolidationPolicy& policy,
+    const irs::MergeWriter::FlushProgress& progress, bool& empty_consolidation);
   Result CommitUnsafeImpl(bool wait,
                           const irs::ProgressReportCallback& progress,
                           CommitResult& code);

@@ -181,7 +181,8 @@ void InvertedIndexShardMeta::storeFull(const InvertedIndexShardMeta& other) {
   writebuffer_size_max = other.writebuffer_size_max;
 }
 
-void InvertedIndexShardMeta::storeFull(InvertedIndexShardMeta&& other) noexcept {
+void InvertedIndexShardMeta::storeFull(
+  InvertedIndexShardMeta&& other) noexcept {
   if (this == &other) {
     return;
   }
@@ -195,7 +196,8 @@ void InvertedIndexShardMeta::storeFull(InvertedIndexShardMeta&& other) noexcept 
   writebuffer_size_max = other.writebuffer_size_max;
 }
 
-void InvertedIndexShardMeta::storePartial(InvertedIndexShardMeta&& other) noexcept {
+void InvertedIndexShardMeta::storePartial(
+  InvertedIndexShardMeta&& other) noexcept {
   if (this == &other) {
     return;
   }
@@ -205,9 +207,10 @@ void InvertedIndexShardMeta::storePartial(InvertedIndexShardMeta&& other) noexce
   consolidation_policy = std::move(other.consolidation_policy);
 }
 
-bool InvertedIndexShardMeta::json(vpack::Builder& builder,
-                         const InvertedIndexShardMeta* ignore_equal /*= nullptr*/,
-                         const InvertedIndexShardMeta::Mask* mask /*= nullptr*/) const {
+bool InvertedIndexShardMeta::json(
+  vpack::Builder& builder,
+  const InvertedIndexShardMeta* ignore_equal /*= nullptr*/,
+  const InvertedIndexShardMeta::Mask* mask /*= nullptr*/) const {
   if (!builder.isOpenObject()) {
     return false;
   }
@@ -265,7 +268,8 @@ bool InvertedIndexShardMeta::json(vpack::Builder& builder,
 }
 
 bool InvertedIndexShardMeta::init(vpack::Slice slice, std::string& error_field,
-                         const InvertedIndexShardMeta& defaults, Mask* mask) noexcept {
+                                  const InvertedIndexShardMeta& defaults,
+                                  Mask* mask) noexcept {
   if (!slice.isObject()) {
     error_field = "Object is expected";
     return false;
@@ -438,7 +442,8 @@ bool InvertedIndexShardMeta::init(vpack::Slice slice, std::string& error_field,
   return true;
 }
 
-bool InvertedIndexShardMeta::operator==(const InvertedIndexShardMeta& other) const noexcept {
+bool InvertedIndexShardMeta::operator==(
+  const InvertedIndexShardMeta& other) const noexcept {
   if (consolidation_interval_msec != other.consolidation_interval_msec ||
       cleanup_interval_step != other.cleanup_interval_step ||
       commit_interval_msec != other.commit_interval_msec ||

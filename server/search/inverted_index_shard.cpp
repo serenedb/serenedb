@@ -27,6 +27,7 @@
 #include <chrono>
 #include <filesystem>
 #include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/store/fs_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
@@ -34,14 +35,18 @@
 #include <system_error>
 
 #include "basics/assert.h"
+#include "basics/down_cast.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
+#include "basics/logger/logger.h"
 #include "basics/system-compiler.h"
 #include "catalog/catalog.h"
 #include "metrics/gauge.h"
 #include "metrics/guard.h"
+#include "rest_server/flush_feature.h"
 #include "rest_server/serened_single.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#include "rocksdb_engine_catalog/rocksdb_recovery_manager.h"
 #include "search/task.h"
 #include "storage_engine/engine_feature.h"
 #include "storage_engine/search_engine.h"
@@ -62,6 +67,17 @@ uint64_t ComputeAvg(std::atomic<uint64_t>& time_num, uint64_t new_time) {
   }
   return (old_time + new_time) / (old_num + 1);
 }
+
+bool ReadTick(irs::bytes_view payload, Tick& tick) noexcept {
+  // Payload format: [tick:8]
+  constexpr size_t kExpectedSize = sizeof(uint64_t);
+  if (payload.size() != kExpectedSize) {
+    return false;
+  }
+  tick = absl::big_endian::Load64(payload.data());
+  return true;
+}
+
 }  // namespace
 
 InvertedIndexShard::InvertedIndexShard(const catalog::InvertedIndex& index,
@@ -72,6 +88,8 @@ InvertedIndexShard::InvertedIndexShard(const catalog::InvertedIndex& index,
     _search{GetSearchEngine()},
     _state{std::make_shared<ThreadPoolState>()},
     _options{std::move(options)} {
+  auto& server = SerenedServer::Instance();
+
   const auto db_id = index.GetDatabaseId();
   const auto schema_id = index.GetSchemaId();
   const auto index_id = index.GetId();
@@ -81,33 +99,77 @@ InvertedIndexShard::InvertedIndexShard(const catalog::InvertedIndex& index,
   bool path_exists = std::filesystem::exists(path, ec);
   if (ec) {
     SDB_THROW(ERROR_INTERNAL, "Failed to check existence of path '",
-              path.string(), "' while initializing data store '", GetId().id(),
+              path.string(), "' while initializing data store '", _id,
               "': ", ec.message());
   }
   if (!path_exists) {
     std::filesystem::create_directories(path, ec);
     if (ec) {
       SDB_THROW(ERROR_INTERNAL, "Failed to create directory '", path.string(),
-                "' while initializing data store '", GetId().id(),
-                "': ", ec.message());
+                "' while initializing data store '", _id, "': ", ec.message());
     }
   }
   path /= absl::StrCat(schema_id);
   path /= absl::StrCat(index_id);
   _dir = std::make_unique<irs::MMapDirectory>(path);
   auto codec = irs::formats::Get("1_5simd");
-  // TODO(codeworse): add is_exists and change open_mode
-  _writer = irs::IndexWriter::Make(
-    *_dir, codec,
-    (is_new ? irs::OpenMode::kOmCreate : irs::OpenMode::kOmAppend), {});
-  // TODO(codeworse): Add recovery
-  _last_committed_tick = 0;
+  const auto open_mode =
+    path_exists ? (irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate)
+                : irs::OpenMode::kOmCreate;
+
+  // Set up recovery tick based on engine state (default for new index)
+  switch (_engine.recoveryState()) {
+    case RecoveryState::Before:
+      [[fallthrough]];
+    case RecoveryState::Done:
+      _recovery_tick = _engine.recoveryTick();
+      break;
+    case RecoveryState::InProgress:
+      _recovery_tick = _engine.releasedTick();
+      break;
+  }
+  _last_committed_tick = _recovery_tick;
+
+  irs::IndexWriterOptions writer_options;
+  writer_options.segment_memory_max = 256 * (size_t{1} << 20);  // 256MB
+  writer_options.lock_repository = false;  // RocksDB has its own lock
+
+  writer_options.meta_payload_provider = [this](uint64_t tick,
+                                                irs::bstring& out) {
+    if (_is_creation) {
+      tick = _engine.currentTick();
+    }
+    _last_committed_tick = std::max(_last_committed_tick, tick);
+
+    // Write payload: [tick:8]
+    tick = absl::big_endian::FromHost(_last_committed_tick);
+
+    out.append(reinterpret_cast<const irs::byte_type*>(&tick), sizeof(tick));
+    return true;
+  };
+
+  _writer = irs::IndexWriter::Make(*_dir, codec, open_mode, writer_options);
+
   if (!path_exists) {
     // Initialize empty index
     _writer->Commit();
   }
 
   auto reader = _writer->GetSnapshot();
+  SDB_ASSERT(reader);
+
+  // For existing index, read recovery tick from persisted payload
+  if (path_exists) {
+    auto payload = irs::GetPayload(reader.Meta().index_meta);
+    if (!payload.empty()) {
+      if (!ReadTick(payload, _recovery_tick)) {
+        SDB_WARN("xxxxx", Logger::SEARCH,
+                 "Failed to read recovery tick from inverted index '",
+                 GetId().id(), "'");
+      }
+      _last_committed_tick = _recovery_tick;
+    }
+  }
   auto engine_snapshot = _engine.currentSnapshot();
   if (!engine_snapshot) {
     SDB_THROW(ERROR_INTERNAL, "Search index '", _id,
@@ -115,6 +177,55 @@ InvertedIndexShard::InvertedIndexShard(const catalog::InvertedIndex& index,
   }
   _snapshot = std::make_shared<InvertedIndexSnapshot>(
     std::move(reader), std::move(engine_snapshot));
+
+  _flush_subscription = std::make_shared<LowerBoundSubscription>(
+    _recovery_tick,
+    absl::StrCat("flush subscription for inverted index '", _id, "'"));
+
+  if (!server.hasFeature<RocksDBRecoveryManager>()) {
+    return;
+  }
+
+  auto res =
+    server.getFeature<RocksDBRecoveryManager>().registerPostRecoveryCallback(
+      [weak_self = weak_from_this(), path_exists]() -> Result {
+        auto self = weak_self.lock();
+        if (!self) {
+          // Index was dropped during recovery
+          return {};
+        }
+
+        SDB_ASSERT(!self->_engine.inRecovery());
+
+        const auto recovery_tick = self->_engine.recoveryTick();
+
+        // Check for out-of-sync condition
+        if (self->_recovery_tick > recovery_tick) {
+          SDB_WARN("xxxxx", Logger::SEARCH, "Inverted index '",
+                   self->GetId().id(), "' is recovered at tick ",
+                   self->_recovery_tick, " greater than storage engine tick ",
+                   recovery_tick,
+                   ", it seems WAL tail was lost and index is out "
+                   "of sync");
+
+          if (self->SetOutOfSync()) {
+            self->MarkOutOfSyncUnsafe();
+          }
+        }
+
+        // Register flush subscription
+        if (path_exists) {
+          self->FinishCreation();
+        }
+
+        // Start background maintenance tasks
+        self->StartTasks();
+
+        return {};
+      });
+  if (res.fail()) {
+    SDB_THROW(std::move(res));
+  }
 }
 
 void InvertedIndexShard::WriteInternal(vpack::Builder& builder) const {
@@ -333,15 +444,14 @@ Result InvertedIndexShard::CommitUnsafeImpl(
     auto reader = _writer->GetSnapshot();
     SDB_ASSERT(reader != nullptr);
     std::move(commit_guard).Cancel();
-    // auto& subscription =
-    //   basics::downCast<LowerBoundSubscription>(*_flush_subscription);
     if (!were_changes) {
       SDB_TRACE("xxxxx", Logger::SEARCH, "Commit for Search index '",
                 GetId().id(), "' is no changes, tick ", before_commit, "'");
       _last_committed_tick = before_commit;
       // no changes, can release the latest tick before commit
-      // subscription.tick(_last_committed_tick);
-      // TODO(mbkkt) make_shared can throw!
+      auto& subscription =
+        basics::downCast<LowerBoundSubscription>(*_flush_subscription);
+      subscription.tick(_last_committed_tick);
       StoreInvertedIndexSnapshot(std::make_shared<InvertedIndexSnapshot>(
         std::move(reader), std::move(engine_snapshot)));
       return {};
@@ -360,8 +470,9 @@ Result InvertedIndexShard::CommitUnsafeImpl(
       std::move(reader), std::move(engine_snapshot));
     StoreInvertedIndexSnapshot(data);
 
-    // update last committed tick
-    // subscription.tick(_last_committed_tick);
+    auto& subscription =
+      basics::downCast<LowerBoundSubscription>(*_flush_subscription);
+    subscription.tick(_last_committed_tick);
 
     UpdateStatsUnsafe(std::move(data));
 
@@ -412,6 +523,24 @@ bool InvertedIndexShard::IsOutOfSync() const noexcept {
 
 bool InvertedIndexShard::FailQueriesOnOutOfSync() const noexcept {
   return _search.failQueriesOnOutOfSync();
+}
+
+void InvertedIndexShard::FinishCreation() {
+  std::lock_guard lock{_commit_mutex};
+  if (std::exchange(_is_creation, false)) {
+    auto& server = SerenedServer::Instance();
+    if (server.hasFeature<FlushFeature>()) {
+      server.getFeature<FlushFeature>().registerFlushSubscription(
+        _flush_subscription);
+    }
+  }
+}
+
+void InvertedIndexShard::RecoveryCommit(Tick tick) {
+  _last_committed_tick = tick;
+  auto& subscription =
+    basics::downCast<LowerBoundSubscription>(*_flush_subscription);
+  subscription.tick(_last_committed_tick);
 }
 
 }  // namespace sdb::search

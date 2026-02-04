@@ -30,6 +30,7 @@
 #include <memory>
 
 #include "catalog/inverted_index.h"
+#include "rest_server/flush_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "storage_engine/engine_feature.h"
 #include "storage_engine/index_shard.h"
@@ -194,6 +195,12 @@ class InvertedIndexShard
     ScheduleConsolidation({});
   }
 
+  void FinishCreation();
+
+  void RecoveryCommit(Tick tick);
+
+  Tick GetRecoveryTick() const noexcept { return _recovery_tick; }
+
  private:
   Result ConsolidateUnsafeImpl(const irs::ConsolidationPolicy& policy,
                                const irs::MergeWriter::FlushProgress& progress,
@@ -214,7 +221,10 @@ class InvertedIndexShard
   absl::Mutex _mutex;
   absl::Mutex _commit_mutex;
 
-  uint64_t _last_committed_tick{0};
+  std::shared_ptr<FlushSubscription> _flush_subscription;
+
+  Tick _recovery_tick{0};
+  Tick _last_committed_tick{0};
   bool _is_creation{true};
 
   // Stats

@@ -8,7 +8,6 @@ ResultOr<std::shared_ptr<IndexShard>> InvertedIndex::CreateIndexShard(
   // TODO(codeworse): parse args into InvertedIndexShardOptions
   auto inverted_index_shard = std::make_shared<search::InvertedIndexShard>(
     *this, search::InvertedIndexShardOptions{}, is_new);
-  inverted_index_shard->StartTasks();
   return inverted_index_shard;
 }
 

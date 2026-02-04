@@ -34,7 +34,7 @@ services:
     networks:
       - test-network
     healthcheck:
-      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/127.0.0.1/7777' || exit 1"]
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/127.0.0.1/7777' && echo 'healthcheck: OK' || (echo 'healthcheck: FAILED' && exit 1)"]
       interval: 5s
       timeout: 5s
       retries: 10

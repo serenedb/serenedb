@@ -345,13 +345,6 @@ class WBReader final : public rocksdb::WriteBatch::Handler {
 
       if (type == RocksDBEntryType::Collection) {
         update_tick([&] { StoreMaxTick(RocksDBKey::dataSourceId(key).id()); });
-        auto slice = RocksDBValue::data(value);
-        vpack::Slice indexes = slice.get("indexes");
-        for (vpack::Slice idx : vpack::ArrayIterator(indexes)) {
-          StoreMaxTick(std::max(
-            basics::VPackHelper::stringUInt64(idx, StaticStrings::kObjectId),
-            basics::VPackHelper::stringUInt64(idx, StaticStrings::kIndexId)));
-        }
       } else if (type == RocksDBEntryType::Database) {
         StoreMaxTick(RocksDBKey::databaseId(key));
       } else if (type == RocksDBEntryType::Function ||

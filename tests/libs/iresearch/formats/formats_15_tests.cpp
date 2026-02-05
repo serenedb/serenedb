@@ -773,7 +773,7 @@ void Format15TestCase::AssertPostings(DocsView docs, uint32_t threshold) {
 }
 
 static const auto kTestFormats =
-  ::testing::Values(tests::FormatInfo{"1_5avx"}, tests::FormatInfo{"1_5simd"});
+  ::testing::Values(tests::FormatInfo{"1_5simd"});
 
 static const auto kTestDirs =
   ::testing::ValuesIn(tests::GetDirectories<tests::kTypesAll>());

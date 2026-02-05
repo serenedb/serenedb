@@ -934,9 +934,9 @@ TEST_P(Format10TestCase, postings_seek) {
 }
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
-static const auto kTestValues = ::testing::Combine(
-  ::testing::ValuesIn(kTestDirs),
-  ::testing::Values(tests::FormatInfo{"1_5avx"}, tests::FormatInfo{"1_5simd"}));
+static const auto kTestValues =
+  ::testing::Combine(::testing::ValuesIn(kTestDirs),
+                     ::testing::Values(tests::FormatInfo{"1_5simd"}));
 
 // 1.0 specific tests
 INSTANTIATE_TEST_SUITE_P(format_10_test, Format10TestCase, kTestValues,

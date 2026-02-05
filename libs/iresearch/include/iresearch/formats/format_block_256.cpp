@@ -34,7 +34,7 @@ namespace {
 struct FormatTraits256 {
   using AlignType = __m256i;
 
-  // TODO(mbkkt) rename to "block_128"
+  // TODO(mbkkt) rename to "block_256"
   static constexpr std::string_view kName = "1_5avx";
 
   static constexpr uint32_t kBlockSize = AVXBlockSize;

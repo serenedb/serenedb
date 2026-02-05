@@ -88,7 +88,6 @@ struct FreqAttr final : Attribute {
 class PosAttr : public Attribute, public AttributeProvider {
  public:
   using value_t = uint32_t;
-  using ref = std::reference_wrapper<PosAttr>;
 
   static constexpr std::string_view type_name() noexcept { return "position"; }
 

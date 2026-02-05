@@ -141,12 +141,12 @@ inline uint32_t ToChar32Impl(const byte_type*& it,
   return cp;
 }
 
-IRS_FORCE_INLINE uint32_t ToChar32(const byte_type*& it,
-                                   const byte_type* end) noexcept {
+IRS_FORCE_INLINE inline uint32_t ToChar32(const byte_type*& it,
+                                          const byte_type* end) noexcept {
   return ToChar32Impl<true>(it, end);
 }
 
-IRS_FORCE_INLINE uint32_t ToChar32(const byte_type*& it) noexcept {
+IRS_FORCE_INLINE inline uint32_t ToChar32(const byte_type*& it) noexcept {
   return ToChar32Impl<false>(it, nullptr);
 }
 

@@ -51,7 +51,7 @@ struct TopTermsCollectorImpl final : FilterVisitor {
   field_visitor ToVisitor() {
     // TODO(mbkkt) we can avoid by_terms, but needs to change
     // TopTermsCollector, to make it able keep equal elements
-    irs::ByTermsOptions::search_terms terms;
+    ByTermsOptions::search_terms terms;
     _impl.Visit([&](TopTerm<score_t>& term) {
       terms.emplace(std::move(term.term), term.key);
     });
@@ -320,7 +320,7 @@ Filter::Query::ptr VariadicPrepareCollect(const PrepareContext& ctx,
       phrase_part_visitors.emplace_back(std::visit(GetVisitor{}, word.part));
     if (!visitor) {
       auto& opts = std::get<ByEditDistanceOptions>(word.part);
-      visitor = irs::ByEditDistance::visitor(opts);
+      visitor = ByEditDistance::visitor(opts);
       all_terms_visitors.push_back(&visitor);
       top_terms_collectors.emplace_back(opts.max_terms);
     }

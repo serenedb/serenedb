@@ -53,7 +53,7 @@ constexpr bool rl(const uint32_t bits) noexcept { return kAllEqual == bits; }
 
 // skip block of the specified size that was previously
 // written with the corresponding 'write_block' function
-inline void skip_block32(IndexInput& in, uint32_t size) {
+IRS_FORCE_INLINE inline void skip_block32(IndexInput& in, uint32_t size) {
   SDB_ASSERT(size);
 
   const uint32_t bits = in.ReadByte();
@@ -139,85 +139,70 @@ IRS_FORCE_INLINE uint32_t write_block64(PackFunc&& pack, DataOutput& out,
   return bits;
 }
 
-template<typename UnpackFunc>
-IRS_FORCE_INLINE void read_block_impl32(UnpackFunc&& unpack, DataInput& in,
-                                        uint32_t* IRS_RESTRICT encoded,
-                                        uint32_t size,
-                                        uint32_t* IRS_RESTRICT decoded) {
-  SDB_ASSERT(size);
-  SDB_ASSERT(encoded);
-  SDB_ASSERT(decoded);
-
-  const uint32_t bits = in.ReadByte();
-  if (kAllEqual == bits) {
-    std::fill_n(decoded, size, in.ReadV32());
-  } else {
-    const size_t required = packed::BytesRequired32(size, bits);
-
-    const auto* buf = in.ReadBuffer(required, BufferHint::NORMAL);
-
-    if (buf) {
-      unpack(decoded, reinterpret_cast<const uint32_t*>(buf), bits);
-      return;
-    }
-
-    [[maybe_unused]] const auto read =
-      in.ReadBytes(reinterpret_cast<byte_type*>(encoded), required);
-    SDB_ASSERT(read == required);
-
-    unpack(decoded, encoded, bits);
-  }
+template<uint32_t Size>
+IRS_NO_INLINE void read_all_equal32(IndexInput& in,
+                                    uint32_t* IRS_RESTRICT decoded) {
+  const auto value = in.ReadV32();
+  std::fill_n(decoded, Size, value);
 }
 
 // reads block of 'Size' 32 bit integers from the stream
 // that was previously encoded with the corresponding
 // 'write_block32' function
 template<uint32_t Size, typename UnpackFunc>
-void read_block32(UnpackFunc&& unpack, DataInput& in,
-                  uint32_t* IRS_RESTRICT encoded,
-                  uint32_t* IRS_RESTRICT decoded) {
-  return read_block_impl32(std::forward<UnpackFunc>(unpack), in, encoded, Size,
-                           decoded);
-}
-
-template<typename UnpackFunc>
-IRS_FORCE_INLINE void read_block_delta_impl32(
-  UnpackFunc&& unpack, DataInput& in, uint32_t* IRS_RESTRICT encoded,
-  uint32_t size, uint32_t* IRS_RESTRICT decoded, uint32_t prev) {
-  SDB_ASSERT(size);
+IRS_FORCE_INLINE void read_block32(UnpackFunc&& unpack, IndexInput& in,
+                                   uint32_t* IRS_RESTRICT encoded,
+                                   uint32_t* IRS_RESTRICT decoded) {
   SDB_ASSERT(encoded);
   SDB_ASSERT(decoded);
 
   const uint32_t bits = in.ReadByte();
-  if (kAllEqual == bits) {
-    const auto value = in.ReadV32();
-    for (uint32_t i = 0; i < size; ++i) {
-      decoded[i] = prev + value * (i + 1);
-    }
+  if (kAllEqual == bits) [[unlikely]] {
+    return read_all_equal32<Size>(in, decoded);
+  }
+  const auto required = packed::BytesRequired32(Size, bits);
+  const auto* buf = in.ReadBuffer(required, BufferHint::NORMAL);
+  if (buf) [[likely]] {
+    encoded = const_cast<uint32_t*>(reinterpret_cast<const uint32_t*>(buf));
   } else {
-    const size_t required = packed::BytesRequired32(size, bits);
-
-    const auto* buf = in.ReadBuffer(required, BufferHint::NORMAL);
-
-    if (buf) {
-      unpack(prev, decoded, reinterpret_cast<const uint32_t*>(buf), bits);
-      return;
-    }
-
     [[maybe_unused]] const auto read =
       in.ReadBytes(reinterpret_cast<byte_type*>(encoded), required);
     SDB_ASSERT(read == required);
+  }
+  unpack(decoded, encoded, bits);
+}
 
-    unpack(prev, decoded, encoded, bits);
+template<uint32_t Size>
+IRS_NO_INLINE void read_all_equal_delta32(IndexInput& in,
+                                          uint32_t* IRS_RESTRICT decoded,
+                                          uint32_t prev) {
+  const auto value = in.ReadV32();
+  for (uint32_t i = 0; i < Size; ++i) {
+    decoded[i] = prev + value * (i + 1);
   }
 }
 
 template<uint32_t Size, typename UnpackFunc>
-void read_block_delta32(UnpackFunc&& unpack, DataInput& in,
-                        uint32_t* IRS_RESTRICT encoded,
-                        uint32_t* IRS_RESTRICT decoded, uint32_t prev) {
-  return read_block_delta_impl32(std::forward<UnpackFunc>(unpack), in, encoded,
-                                 Size, decoded, prev);
+IRS_FORCE_INLINE void read_block_delta32(UnpackFunc&& unpack, IndexInput& in,
+                                         uint32_t* IRS_RESTRICT encoded,
+                                         uint32_t* IRS_RESTRICT decoded,
+                                         uint32_t prev) {
+  SDB_ASSERT(encoded);
+  SDB_ASSERT(decoded);
+  const uint32_t bits = in.ReadByte();
+  if (kAllEqual == bits) [[unlikely]] {
+    return read_all_equal_delta32<Size>(in, decoded, prev);
+  }
+  const size_t required = packed::BytesRequired32(Size, bits);
+  const auto* buf = in.ReadBuffer(required, BufferHint::NORMAL);
+  if (buf) [[likely]] {
+    encoded = const_cast<uint32_t*>(reinterpret_cast<const uint32_t*>(buf));
+  } else {
+    [[maybe_unused]] const auto read =
+      in.ReadBytes(reinterpret_cast<byte_type*>(encoded), required);
+    SDB_ASSERT(read == required);
+  }
+  unpack(prev, decoded, encoded, bits);
 }
 
 }  // namespace bitpack

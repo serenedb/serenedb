@@ -125,6 +125,7 @@ using SerenedFeaturesList = type::List<
   LockfileFeature,
   RocksDBRecoveryManager,
   catalog::CatalogFeature,
+  search::SearchEngine,
   UpgradeFeature,
   ServerFeature,
   NetworkFeature,
@@ -135,8 +136,7 @@ using SerenedFeaturesList = type::List<
   BootstrapFeature,
   ShutdownFeature,
   SoftShutdownFeature,
-  TimeZoneFeature,
-  search::SearchEngine>;
+  TimeZoneFeature>;
 // clang-format on
 
 struct SerenedFeatures : SerenedFeaturesList {};

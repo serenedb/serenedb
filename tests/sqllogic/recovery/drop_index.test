@@ -1,3 +1,6 @@
+control substitution on
+
+
 statement ok
 CREATE TABLE t(r text);
 
@@ -7,22 +10,18 @@ CREATE INDEX index_t ON t USING inverted(r);
 
 
 statement ok
-DROP INDEX index_t;
-
-
-statement ok
-SET sdb_fault_crash_on_packet TO DEFAULT;
+SET sdb_fault_crash_on_index_drop TO DEFAULT;
 
 
 statement error connection closed
-SELECT 1;
+DROP INDEX index_t;
 
 
 connection new
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT COUNT(*) from pg_index;
 ----
-COUNT
+count
 0
 
 

@@ -42,6 +42,7 @@
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_map.h"
 #include "basics/containers/flat_hash_set.h"
+#include "basics/debugging.h"
 #include "basics/down_cast.h"
 #include "basics/error_code.h"
 #include "basics/errors.h"
@@ -1312,6 +1313,10 @@ Result LocalCatalog::DropIndex(ObjectId database_id, std::string_view schema,
   if (!r.ok()) {
     return r;
   }
+
+  // IndexDrop should be registered with the engine,
+  // so on restart, the index drop task will be replayed.
+  SDB_IF_FAILURE("crash_on_index_drop") { exit(1); }
 
   task->tombstone = std::move(tombstone);
   task->index_shard = std::move(index_shard);

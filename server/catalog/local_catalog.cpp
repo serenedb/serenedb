@@ -475,9 +475,10 @@ class SnapshotImpl : public Snapshot {
     ObjectId relation_id = index_shard->GetRelationId();
     const auto is_new = _index_shards.emplace(std::move(index_shard)).second;
     SDB_ENSURE(is_new, ERROR_INTERNAL);
-    auto shard = GetTableShard(relation_id);
-    SDB_ASSERT(shard);
-    shard->AddIndex(id);
+    auto table = GetObject(relation_id);
+    SDB_ASSERT(table);
+    SDB_ASSERT(table->GetType() == ObjectType::Table);
+    basics::downCast<Table>(*table).AddIndex(id);
   }
 
   void DropTableShard(ObjectId id) { _table_shards.erase(id); }
@@ -485,9 +486,10 @@ class SnapshotImpl : public Snapshot {
     auto node = _index_shards.extract(id);
     if (node) {
       auto index_shard = std::move(node.value());
-      auto table_shard = GetTableShard(index_shard->GetRelationId());
-      SDB_ASSERT(table_shard);
-      table_shard->RemoveIndex(index_shard->GetId());
+      auto table = GetObject(index_shard->GetRelationId());
+      SDB_ASSERT(table);
+      SDB_ASSERT(table->GetType() == ObjectType::Table);
+      basics::downCast<Table>(*table).RemoveIndex(index_shard->GetId());
     }
   }
 
@@ -1740,8 +1742,9 @@ Result LocalCatalog::DropTable(ObjectId database_id, std::string_view schema,
           task->tombstone = MakeTableTombstone(*shard);
 
           ObjectId table_id = object->GetId();
-          index_info.reserve(shard->GetIndexes().size());
-          for (auto index_id : shard->GetIndexes()) {
+          auto& table = basics::downCast<Table>(*object);
+          index_info.reserve(table.GetIndexes().size());
+          for (auto index_id : table.GetIndexes()) {
             auto object = clone->GetObject(index_id);
             SDB_ASSERT(object);
             auto& index = basics::downCast<Index>(*object);

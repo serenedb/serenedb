@@ -162,6 +162,8 @@ class InvertedIndexShard
   void ScheduleConsolidation(absl::Duration delay);
   void ScheduleCommit(absl::Duration delay);
 
+  yaclib::Future<> CommitWait();
+
   ObjectId GetId() const noexcept { return _id; }
   ObjectId GetRelationId() const noexcept { return _relation_id; }
   auto GetState() const noexcept { return _state; }

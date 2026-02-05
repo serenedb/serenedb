@@ -25,9 +25,6 @@
 
 #include <atomic>
 
-#include "basics/containers/flat_hash_set.h"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
 #include "catalog/fwd.h"
 #include "catalog/table_options.h"
 
@@ -71,19 +68,6 @@ class TableShard {
     vpack::WriteTuple(builder, GetTableStats());
   }
 
-  auto GetIndexes() const { return _indexes; }
-
-  void AddIndex(ObjectId index_id) {
-    auto [_, is_new] = _indexes.emplace(index_id);
-    SDB_ENSURE(is_new, ERROR_INTERNAL, "Index already exists in TableShard");
-  }
-
-  void RemoveIndex(ObjectId index_id) {
-    auto num_erased = _indexes.erase(index_id);
-    SDB_ENSURE(num_erased == 1, ERROR_INTERNAL,
-               "Index does not exist in TableShard");
-  }
-
   explicit TableShard(catalog::TableMeta collection,
                       const catalog::TableStats& stats);
 
@@ -92,8 +76,6 @@ class TableShard {
   virtual void figuresSpecific(bool details, vpack::Builder&) {}
 
   catalog::TableMeta _collection_meta;
-
-  containers::FlatHashSet<ObjectId> _indexes;
 
   // TODO(codeworse): this probably won't work in case of distributed setup
   std::atomic_uint64_t _num_rows{0};

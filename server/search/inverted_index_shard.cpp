@@ -256,14 +256,20 @@ void InvertedIndexShard::ScheduleConsolidation(absl::Duration delay) {
                          }};
 
   _state->pending_consolidations.fetch_add(1, std::memory_order_release);
-  std::move(task).Schedule(delay);
+  std::move(task).Schedule(delay).Detach();
 }
 
 void InvertedIndexShard::ScheduleCommit(absl::Duration delay) {
   CommitTask task{shared_from_this()};
 
   _state->pending_commits.fetch_add(1, std::memory_order_release);
-  std::move(task).Schedule(delay);
+  std::move(task).Schedule(delay).Detach();
+}
+
+yaclib::Future<> InvertedIndexShard::CommitWait() {
+  CommitTask task{shared_from_this()};
+  _state->pending_commits.fetch_add(1, std::memory_order_release);
+  return std::move(task).Schedule();
 }
 
 InvertedIndexShard::Stats InvertedIndexShard::UpdateStatsUnsafe(

@@ -24,11 +24,15 @@
 
 #include <concepts>
 #include <functional>
+#include <utility>
 
 #include "app/app_server.h"
 #include "basics/assert.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/search_engine.h"
+#include "yaclib/async/contract.hpp"
+#include "yaclib/async/future.hpp"
+#include "yaclib/async/promise.hpp"
 
 namespace sdb::search {
 
@@ -48,9 +52,12 @@ class Task {
       _engine{&GetSearchEngine()} {}
 
   template<IndexTaskType Self>
-  void Schedule(this Self&& self, absl::Duration delay = {}) {
+  yaclib::Future<> Schedule(this Self&& self, absl::Duration delay = {}) {
     SDB_TRACE("xxxxx", Logger::SEARCH, "Scheduling task: ", Self::TaskName());
+    auto [future, promise] = yaclib::MakeContract();
+    self._promise = std::move(promise);
     self._engine->Queue(Self::ThreadGroup(), delay, std::move(self));
+    return std::move(future);
   }
 
   template<IndexTaskType Self>
@@ -63,6 +70,7 @@ class Task {
   ObjectId _id;
   std::weak_ptr<InvertedIndexShard> _inverted_index_shard;
   std::shared_ptr<ThreadPoolState> _state;
+  yaclib::Promise<void> _promise;
   SearchEngine* _engine;
 };
 

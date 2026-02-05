@@ -31,11 +31,11 @@
 #include "basics/down_cast.h"
 #include "basics/result.h"
 #include "catalog/catalog.h"
+#include "catalog/table.h"
 #include "query/config.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/index_shard.h"
-#include "storage_engine/table_shard.h"
 
 namespace sdb::query {
 namespace {
@@ -91,8 +91,11 @@ class Transaction : public Config {
                   void(rocksdb::Transaction&, const IndexShard&)>
       Visit>
   void EnsureIndexesTransactions(ObjectId table_id, Visit&& visit) {
-    auto table = GetCatalogSnapshot()->GetTableShard(table_id);
-    for (auto index_id : table->GetIndexes()) {
+    auto table = GetCatalogSnapshot()->GetObject(table_id);
+    SDB_ASSERT(table->GetType() == catalog::ObjectType::Table);
+
+    for (auto index_id :
+         basics::downCast<catalog::Table>(*table).GetIndexes()) {
       auto index_shard = GetCatalogSnapshot()->GetIndexShard(index_id);
       if (index_shard->GetType() == IndexType::Inverted) {
         auto& inverted_index_shard =

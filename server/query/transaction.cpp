@@ -23,6 +23,7 @@
 #include "basics/assert.h"
 #include "catalog/catalog.h"
 #include "storage_engine/engine_feature.h"
+#include "storage_engine/table_shard.h"
 
 namespace sdb::query {
 

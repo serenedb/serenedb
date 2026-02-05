@@ -529,12 +529,8 @@ class SereneDBConnector final : public velox::connector::Connector {
   explicit SereneDBConnector(const std::string& id,
                              velox::config::ConfigPtr config,
                              rocksdb::TransactionDB& db,
-                             rocksdb::ColumnFamilyHandle& cf,
-                             std::string_view rocksdb_directory)
-    : Connector{id, std::move(config)},
-      _db{db},
-      _cf{cf},
-      _rocksdb_directory{rocksdb_directory} {}
+                             rocksdb::ColumnFamilyHandle& cf)
+    : Connector{id, std::move(config)}, _db{db}, _cf{cf} {}
 
   bool canAddDynamicFilter() const final { return false; }
 
@@ -647,15 +643,6 @@ class SereneDBConnector final : public velox::connector::Connector {
                          input_type->getChildIdx(handle->name()));
             }
 #endif
-            std::vector<catalog::Column::Id> all_column_oids;
-            all_column_oids.reserve(table.type()->size());
-            for (auto& col : table.type()->names()) {
-              auto handle = table.columnMap().find(col);
-              SDB_ASSERT(handle != table.columnMap().end(),
-                         "RocksDBDataSink: can't find column handle for ", col);
-              all_column_oids.push_back(
-                basics::downCast<const SereneDBColumn>(handle->second)->Id());
-            }
           } else {
             const auto& pk_handles =
               table.rowIdHandles(serene_insert_handle.Kind());
@@ -691,7 +678,7 @@ class SereneDBConnector final : public velox::connector::Connector {
             if (table.BulkInsert()) {
               return std::make_unique<SSTInsertDataSink>(
                 _db, _cf, *connector_query_ctx->memoryPool(), object_key,
-                pk_indices, columns, _rocksdb_directory);
+                pk_indices, columns);
             }
 
             auto insert_sinks =
@@ -731,7 +718,6 @@ class SereneDBConnector final : public velox::connector::Connector {
  private:
   rocksdb::TransactionDB& _db;
   rocksdb::ColumnFamilyHandle& _cf;
-  std::string _rocksdb_directory;
 };
 
 }  // namespace sdb::connector

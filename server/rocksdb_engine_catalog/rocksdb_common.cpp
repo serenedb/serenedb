@@ -40,6 +40,7 @@
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_key.h"
 #include "rocksdb_engine_catalog/rocksdb_key_bounds.h"
+#include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 #include "storage_engine/engine_feature.h"
 
@@ -64,7 +65,7 @@ size_t CountKeyRange(rocksdb::DB* db, rocksdb::Slice lower,
   read_options.snapshot = snapshot;
   read_options.verify_checksums = false;  // TODO investigate
   read_options.fill_cache = false;
-  read_options.async_io = true;
+  read_options.async_io = GetRocksDBOptions().ioUringEnabled();
   read_options.iterate_upper_bound = &upper;
   read_options.total_order_seek = !prefix_same_as_start;
   read_options.prefix_same_as_start = prefix_same_as_start;
@@ -79,6 +80,9 @@ size_t CountKeyRange(rocksdb::DB* db, rocksdb::Slice lower,
     ++count;
     it->Next();
   }
+
+  CheckIteratorStatus(*it);
+
   return count;
 }
 size_t CountKeyRange(rocksdb::DB* db, const RocksDBKeyBounds& bounds,
@@ -100,8 +104,7 @@ bool HasKeys(rocksdb::DB* db, const RocksDBKeyBounds& bounds,
   read_options.snapshot = snapshot;
   read_options.verify_checksums = false;  // TODO investigate
   read_options.fill_cache = false;
-  // TODO: Do we need async_io here? It's used to read first.
-  read_options.async_io = true;
+  read_options.async_io = GetRocksDBOptions().ioUringEnabled();
   read_options.iterate_upper_bound = &upper;
   read_options.total_order_seek = !prefix_same_as_start;
   read_options.prefix_same_as_start = prefix_same_as_start;
@@ -112,6 +115,8 @@ bool HasKeys(rocksdb::DB* db, const RocksDBKeyBounds& bounds,
   std::unique_ptr<rocksdb::Iterator> it(db->NewIterator(read_options, cf));
 
   it->Seek(lower);
+  CheckIteratorStatus(*it);
+
   return (it->Valid() && cmp->Compare(it->key(), upper) < 0);
 }
 
@@ -151,7 +156,7 @@ Result RemoveLargeRange(rocksdb::DB* db, rocksdb::Slice lower,
       rocksdb::ReadOptions read_options;
       read_options.verify_checksums = false;  // TODO investigate
       read_options.fill_cache = false;
-      read_options.async_io = true;
+      read_options.async_io = GetRocksDBOptions().ioUringEnabled();
       read_options.iterate_upper_bound = &upper;
       read_options.total_order_seek = !prefix_same_as_start;
       read_options.prefix_same_as_start = prefix_same_as_start;
@@ -184,6 +189,8 @@ Result RemoveLargeRange(rocksdb::DB* db, rocksdb::Slice lower,
           counter = 0;
         }
       }
+
+      CheckIteratorStatus(*it);
 
       SDB_DEBUG("xxxxx", Logger::ENGINES,
                 "removing large range, deleted in total: ", total);

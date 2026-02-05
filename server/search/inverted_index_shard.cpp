@@ -29,6 +29,7 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/store/fs_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <memory>
@@ -111,7 +112,6 @@ InvertedIndexShard::InvertedIndexShard(const catalog::InvertedIndex& index,
                 "' while initializing data store '", _id, "': ", ec.message());
     }
   }
-  _dir = std::make_unique<irs::MMapDirectory>(path);
   auto codec = irs::formats::Get("1_5simd");
   const auto open_mode =
     path_exists ? (irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate)
@@ -129,6 +129,15 @@ InvertedIndexShard::InvertedIndexShard(const catalog::InvertedIndex& index,
       break;
   }
   _last_committed_tick = _recovery_tick;
+  irs::ResourceManagementOptions resource_manager;
+  resource_manager.transactions = _writers_memory;
+  resource_manager.readers = _readers_memory;
+  resource_manager.consolidations = _consolidations_memory;
+  resource_manager.file_descriptors = _file_descriptors_count;
+  resource_manager.cached_columns =
+    &GetSearchEngine().getCachedColumnsManager();
+  _dir = std::make_unique<irs::MMapDirectory>(path, irs::DirectoryAttributes{},
+                                              resource_manager);
 
   irs::IndexWriterOptions writer_options;
   writer_options.segment_memory_max = 256 * (size_t{1} << 20);  // 256MB

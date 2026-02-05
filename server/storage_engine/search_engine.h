@@ -81,6 +81,10 @@ class SearchEngine final : public SerenedFeature {
 
   bool failQueriesOnOutOfSync() const noexcept;
 
+  irs::IResourceManager& getCachedColumnsManager() const noexcept {
+    return _columns_cache_memory_used;
+  }
+
 #ifdef SDB_GTEST
   void setDefaultParallelism(uint32_t v) noexcept { _default_parallelism = v; }
 #endif
@@ -97,6 +101,7 @@ class SearchEngine final : public SerenedFeature {
   std::vector<std::string> _skip_recovery_items;
 
   metrics::Gauge<uint64_t>& _out_of_sync_links;
+  irs::IResourceManager& _columns_cache_memory_used;
 
   uint32_t _consolidation_threads{0};
   uint32_t _commit_threads{0};

@@ -50,6 +50,7 @@
 #include "rest_server/database_path_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/inverted_index_shard.h"
+#include "search/resource_manager.hpp"
 #include "storage_engine/search_engine.h"
 
 using namespace std::chrono_literals;
@@ -66,6 +67,8 @@ REGISTER_ANALYZER_VPACK(wildcard::Analyzer, wildcard::Analyzer::make,
 
 DECLARE_GAUGE(serenedb_search_num_out_of_sync_links, uint64_t,
               "Number of inverted indexes currently out of sync");
+DECLARE_GAUGE(serenedb_search_columns_cache_size, LimitedResourceManager,
+              "Search columns cache usage in bytes");
 
 const std::string kCommitThreadsParam("--search.commit-threads");
 const std::string kConsolidationThreadsParam("--search.consolidation-threads");
@@ -126,7 +129,9 @@ SearchEngine::SearchEngine(Server& server)
     _dir_feature{server.getFeature<DatabasePathFeature>()},
     _thread_pools(std::make_shared<SearchThreadPools>()),
     _out_of_sync_links(server.getFeature<metrics::MetricsFeature>().add(
-      serenedb_search_num_out_of_sync_links{})) {
+      serenedb_search_num_out_of_sync_links{})),
+    _columns_cache_memory_used(server.getFeature<metrics::MetricsFeature>().add(
+      serenedb_search_columns_cache_size{})) {
   setOptional(true);
   static_assert(Server::isCreatedAfter<SearchEngine, DatabasePathFeature>());
   static_assert(

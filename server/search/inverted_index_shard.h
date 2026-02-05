@@ -214,9 +214,9 @@ class InvertedIndexShard
   SearchEngine& _search;
   std::shared_ptr<ThreadPoolState> _state;
   InvertedIndexSnapshotPtr _snapshot;
-  std::shared_ptr<irs::IndexWriter> _writer;
-  InvertedIndexShardOptions _options;
   std::unique_ptr<irs::Directory> _dir;
+  InvertedIndexShardOptions _options;
+  std::shared_ptr<irs::IndexWriter> _writer;
   TasksSettings _tasks_settings;
   absl::Mutex _mutex;
   absl::Mutex _commit_mutex;
@@ -226,6 +226,11 @@ class InvertedIndexShard
   Tick _recovery_tick{0};
   Tick _last_committed_tick{0};
   bool _is_creation{true};
+
+  irs::IResourceManager* _writers_memory{&irs::IResourceManager::gNoop};
+  irs::IResourceManager* _readers_memory{&irs::IResourceManager::gNoop};
+  irs::IResourceManager* _consolidations_memory{&irs::IResourceManager::gNoop};
+  irs::IResourceManager* _file_descriptors_count{&irs::IResourceManager::gNoop};
 
   // Stats
   metrics::Gauge<uint64_t>* _mapped_memory{nullptr};

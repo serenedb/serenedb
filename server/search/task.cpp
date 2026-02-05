@@ -75,6 +75,9 @@ void CommitTask::operator()() {
   SDB_TRACE("xxxxx", Logger::SEARCH, "CommitTask started");
   const char run_id = 0;
   auto data = _inverted_index_shard.lock();
+  absl::Cleanup set_promise = [promise = std::move(_promise)]() mutable {
+    std::move(promise).Set();
+  };
   if (!data) {
     SDB_TRACE("xxxxx", Logger::SEARCH, "InvertedIndexShard ", _id,
               " is deleted");
@@ -153,6 +156,9 @@ void ConsolidationTask::operator()() {
   SDB_TRACE("xxxxx", Logger::SEARCH, "ConsolidationTask started");
   const char run_id = 0;
   auto data = _inverted_index_shard.lock();
+  absl::Cleanup set_promise = [promise = std::move(_promise)]() mutable {
+    std::move(promise).Set();
+  };
   if (!data) {
     SDB_WARN("xxxxx", Logger::SEARCH,
              "ConsolidationTask: inverted index shard is deleted");

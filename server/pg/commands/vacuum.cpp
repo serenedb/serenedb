@@ -57,7 +57,7 @@ yaclib::Future<Result> UpdateIndexes(
   auto snapshot = catalog.GetSnapshot();
   std::vector<yaclib::Future<>> index_futures;
   for (const auto& rel : rels) {
-    std::string_view schema_name;
+    std::string_view schema_name = current_schema;
     std::string_view rel_name;
     if (rel->relation->catalogname) {
       return yaclib::MakeFuture<Result>(ERROR_NOT_IMPLEMENTED,
@@ -69,6 +69,7 @@ yaclib::Future<Result> UpdateIndexes(
     SDB_ASSERT(rel->relation->relname);
     rel_name = {rel->relation->relname};
     auto table = snapshot->GetTable(db, schema_name, rel_name);
+    SDB_ASSERT(table);
     for (const auto& index_id : table->GetIndexes()) {
       auto index = snapshot->GetIndexShard(index_id);
       SDB_ASSERT(index);

@@ -26,6 +26,10 @@ c
 c
 
 
+statement ok
+VACUUM (UPDATE_INDEXES) t;
+
+
 query ok
 SELECT pg_class.relname as indexname FROM pg_index, pg_class WHERE pg_index.indexrelid = pg_class.oid;
 ----

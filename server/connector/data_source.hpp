@@ -52,30 +52,25 @@ class RocksDBDataSource final : public velox::connector::DataSource {
   void cancel() final;
 
  private:
-  velox::VectorPtr ReadColumn(uint64_t max_size,
+  velox::VectorPtr ReadColumn(rocksdb::Iterator& it, uint64_t max_size,
+                              std::string_view column_key,
                               const velox::TypePtr& type,
                               catalog::Column::Id column_id,
-                              velox::column_index_t col_idx,
                               size_t table_prefix_size);
 
   template<velox::TypeKind Kind>
-  velox::VectorPtr ReadScalarColumn(uint64_t max_size,
-                                    std::string_view column_key,
-                                    velox::column_index_t col_idx);
-  velox::VectorPtr ReadUnknownColumn(uint64_t max_size,
-                                     std::string_view column_key,
-                                     velox::column_index_t col_idx);
+  velox::VectorPtr ReadScalarColumn(rocksdb::Iterator& it, uint64_t max_size,
+                                    std::string_view column_key);
+  velox::VectorPtr ReadUnknownColumn(rocksdb::Iterator& it, uint64_t max_size,
+                                     std::string_view column_key);
 
-  velox::VectorPtr ReadColumnFromKey(uint64_t max_size,
+  velox::VectorPtr ReadColumnFromKey(rocksdb::Iterator& it, uint64_t max_size,
                                      std::string_view column_key,
-                                     velox::column_index_t col_idx,
                                      size_t table_prefix_size);
 
   template<typename Callback>
-  uint64_t IterateColumn(uint64_t max_size,
-                         std::string_view column_key,
-                         velox::column_index_t col_idx,
-                         const Callback& func);
+  uint64_t IterateColumn(rocksdb::Iterator& it, uint64_t max_size,
+                         std::string_view column_key, const Callback& func);
 
   velox::memory::MemoryPool& _memory_pool;
   rocksdb::Transaction* _transaction;
@@ -83,8 +78,7 @@ class RocksDBDataSource final : public velox::connector::DataSource {
   velox::RowTypePtr _row_type;
   std::vector<catalog::Column::Id> _column_ids;
   std::vector<std::string> _column_keys;
-  std::unique_ptr<rocksdb::Iterator> _iterator;
-  std::vector<std::string> _last_read_keys;
+  std::vector<std::unique_ptr<rocksdb::Iterator>> _iterators;
   std::vector<velox::column_index_t> _sorted_indices;
   rocksdb::ReadOptions _read_options;
   size_t _table_prefix_size;

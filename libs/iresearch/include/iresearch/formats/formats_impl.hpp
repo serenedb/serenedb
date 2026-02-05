@@ -2707,34 +2707,34 @@ struct FormatTraits128 {
   IRS_FORCE_INLINE static void write_block_delta(IndexOutput& out, uint32_t* in,
                                                  uint32_t prev, uint32_t* buf) {
     DeltaEncode<kBlockSize>(in, prev);
-    bitpack::write_block32<kBlockSize>(PackBlock, out, in, buf);
+    bitpack::write_block32(PackBlock, out, in, buf, kBlockSize);
   }
 
   IRS_FORCE_INLINE static void write_block(IndexOutput& out, const uint32_t* in,
                                            uint32_t* buf) {
-    bitpack::write_block32<kBlockSize>(PackBlock, out, in, buf);
+    bitpack::write_block32(PackBlock, out, in, buf, kBlockSize);
   }
 
   IRS_FORCE_INLINE static void read_block_delta(IndexInput& in, uint32_t* buf,
                                                 uint32_t* out, uint32_t prev) {
-    bitpack::read_block_delta32<kBlockSize>(
+    bitpack::read_block_delta32(
       [](uint32_t prev, uint32_t* IRS_RESTRICT decoded,
          const uint32_t* IRS_RESTRICT encoded, uint32_t bits) IRS_FORCE_INLINE {
         ::simdunpackd1(prev, reinterpret_cast<const AlignType*>(encoded),
                        decoded, bits);
       },
-      in, buf, out, prev);
+      in, buf, out, kBlockSize, prev);
   }
 
   IRS_FORCE_INLINE static void read_block(IndexInput& in, uint32_t* buf,
                                           uint32_t* out) {
-    bitpack::read_block32<kBlockSize>(
+    bitpack::read_block32(
       [](uint32_t* IRS_RESTRICT decoded, const uint32_t* IRS_RESTRICT encoded,
          uint32_t bits) IRS_FORCE_INLINE {
         ::simdunpack(reinterpret_cast<const AlignType*>(encoded), decoded,
                      bits);
       },
-      in, buf, out);
+      in, buf, out, kBlockSize);
   }
 
   IRS_FORCE_INLINE static void skip_block(IndexInput& in) {

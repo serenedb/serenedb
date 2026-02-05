@@ -34,10 +34,7 @@ class SereneDBConnectorSplit;
 class RocksDBDataSource final : public velox::connector::DataSource {
  public:
   RocksDBDataSource(velox::memory::MemoryPool& memory_pool,
-                    // use just snapshot for now. But maybe we will need to have
-                    // this class template (or use some wrapper) to work with
-                    // WriteBatchWithindex or plain DB with snapshot
-                    const rocksdb::Snapshot* snapshot, rocksdb::DB& db,
+                    rocksdb::Transaction* transaction,
                     rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
                     std::vector<catalog::Column::Id> column_ids,
                     catalog::Column::Id effective_column_id,
@@ -55,38 +52,42 @@ class RocksDBDataSource final : public velox::connector::DataSource {
   void cancel() final;
 
  private:
-  velox::VectorPtr ReadColumn(rocksdb::Iterator& it, uint64_t max_size,
-                              std::string_view column_key,
+  velox::VectorPtr ReadColumn(uint64_t max_size,
                               const velox::TypePtr& type,
                               catalog::Column::Id column_id,
+                              velox::column_index_t col_idx,
                               size_t table_prefix_size);
 
   template<velox::TypeKind Kind>
-  velox::VectorPtr ReadScalarColumn(rocksdb::Iterator& it, uint64_t max_size,
-                                    std::string_view column_key);
-  velox::VectorPtr ReadUnknownColumn(rocksdb::Iterator& it, uint64_t max_size,
-                                     std::string_view column_key);
-
-  velox::VectorPtr ReadColumnFromKey(rocksdb::Iterator& it, uint64_t max_size,
+  velox::VectorPtr ReadScalarColumn(uint64_t max_size,
+                                    std::string_view column_key,
+                                    velox::column_index_t col_idx);
+  velox::VectorPtr ReadUnknownColumn(uint64_t max_size,
                                      std::string_view column_key,
+                                     velox::column_index_t col_idx);
+
+  velox::VectorPtr ReadColumnFromKey(uint64_t max_size,
+                                     std::string_view column_key,
+                                     velox::column_index_t col_idx,
                                      size_t table_prefix_size);
 
   template<typename Callback>
-  uint64_t IterateColumn(rocksdb::Iterator& it, uint64_t max_size,
-                         std::string_view column_key, const Callback& func);
-
-  std::unique_ptr<rocksdb::Iterator> CreateColumnIterator(
-    const std::string_view column_key,
-    const rocksdb::ReadOptions& read_options);
+  uint64_t IterateColumn(uint64_t max_size,
+                         std::string_view column_key,
+                         velox::column_index_t col_idx,
+                         const Callback& func);
 
   velox::memory::MemoryPool& _memory_pool;
-  rocksdb::DB& _db;
+  rocksdb::Transaction* _transaction;
   rocksdb::ColumnFamilyHandle& _cf;
   velox::RowTypePtr _row_type;
   std::vector<catalog::Column::Id> _column_ids;
   std::vector<std::string> _column_keys;
-  std::vector<std::unique_ptr<rocksdb::Iterator>> _iterators;
+  std::unique_ptr<rocksdb::Iterator> _iterator;
+  std::vector<std::string> _last_read_keys;
+  std::vector<velox::column_index_t> _sorted_indices;
   rocksdb::ReadOptions _read_options;
+  size_t _table_prefix_size;
   // Column ID to use for iteration when the requested column is stored in the
   // key (e.g., kGeneratedPKId). This points to a column whose values are stored
   // in RocksDB as *values*, not inside *keys*. It's convenient to store it here

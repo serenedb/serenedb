@@ -255,6 +255,12 @@ class Conjunction : public ConjunctionBase<Adapter> {
     return DocIterator::Collect(*this, docs);
   }
 
+  uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
+                   size_t offset,
+                   std::span<std::pair<doc_id_t, score_t>> docs) final {
+    return DocIterator::Collect(*this, scorer, columns, offset, docs);
+  }
+
  private:
   // tries to converge front_ and other iterators to the specified target.
   // if it impossible tries to find first convergence place

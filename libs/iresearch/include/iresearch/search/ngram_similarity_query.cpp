@@ -546,8 +546,14 @@ class NGramSimilarityDocIterator : public DocIterator, private ScoreCtx {
     _collected_freq[index] = _checker.GetFreq();
   }
 
+  uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
+                   size_t offset,
+                   std::span<std::pair<doc_id_t, score_t>> docs) final {
+    return DocIterator::Collect(*this, scorer, columns, offset, docs);
+  }
+
   uint32_t collect(std::span<doc_id_t> docs) final {
-    return Collect(*this, docs);
+    return DocIterator::Collect(*this, docs);
   }
 
  private:

@@ -1209,6 +1209,13 @@ class PostingIteratorBase : public DocIterator {
     return std::get<ScoreAttr>(_attrs);
   }
 
+  uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
+                   size_t offset,
+                   std::span<std::pair<doc_id_t, score_t>> docs) final {
+    // TODO(gnusi): optimize
+    return DocIterator::Collect(*this, scorer, columns, offset, docs);
+  }
+
   std::pair<doc_id_t, bool> CollectBlock(doc_id_t min, doc_id_t max,
                                          uint64_t* mask,
                                          CollectScoreContext score,
@@ -2462,6 +2469,12 @@ struct PostingAdapter {
 
   IRS_FORCE_INLINE void CollectData(uint16_t index) {
     return self().CollectData(index);
+  }
+
+  IRS_FORCE_INLINE uint32_t
+  Collect(const ScoreFunction& scorer, ColumnCollector& columns, size_t offset,
+          std::span<std::pair<doc_id_t, score_t>> docs) {
+    return self().Collect(scorer, columns, offset, docs);
   }
 
   IRS_FORCE_INLINE const ScoreFunction& PrepareScore(

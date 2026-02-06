@@ -81,7 +81,8 @@ namespace sdb {
 
 bool IsIOUringEnabled() {
 #ifdef SDB_GTEST
-  return IsIoUringSupported();
+  static const auto kSupported = IsIoUringSupported();
+  return kSupported;
 #else
   return SerenedServer::Instance()
     .getFeature<RocksDBOptionFeature>()

@@ -806,6 +806,10 @@ class MinMatchDisjunction : public DocIterator {
 
   uint32_t count() final { return Count(*this); }
 
+  uint32_t collect(std::span<doc_id_t> docs) final {
+    return Collect(*this, docs);
+  }
+
   // Calculates total count of matched iterators. This value could be
   // greater than required min_match. All matched iterators points
   // to current matched document after this call.

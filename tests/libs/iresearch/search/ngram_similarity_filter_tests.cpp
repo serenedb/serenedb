@@ -1205,6 +1205,14 @@ TEST_P(NGramSimilarityFilterTestCase, missed_last_scored_test) {
         freq.filter_boost->push_back(freq.boost_from_filter->value);
         std::memset(res, 0, n * sizeof(irs::score_t));
       },
+      [](irs::ScoreCtx* ctx, auto* res, size_t n) noexcept {
+        const auto& freq = *reinterpret_cast<TestScoreCtx*>(ctx);
+        freq.freq->push_back(freq.freq_from_filter->value);
+        freq.filter_boost->push_back(freq.boost_from_filter->value);
+        for (size_t i = 0; i < n; ++i) {
+          res[i].second = 0;
+        }
+      },
       irs::ScoreFunction::NoopMin, &frequency, freq, &filter_boost, boost);
   };
   std::vector<size_t> expected_frequency{1, 1, 2, 1, 1, 1, 1};
@@ -1274,6 +1282,14 @@ TEST_P(NGramSimilarityFilterTestCase, missed_frequency_test) {
         freq.freq->push_back(freq.freq_from_filter->value);
         freq.filter_boost->push_back(freq.boost_from_filter->value);
         std::memset(res, 0, n * sizeof(irs::score_t));
+      },
+      [](irs::ScoreCtx* ctx, auto* res, size_t n) noexcept {
+        const auto& freq = *static_cast<TestScoreCtx*>(ctx);
+        freq.freq->push_back(freq.freq_from_filter->value);
+        freq.filter_boost->push_back(freq.boost_from_filter->value);
+        for (size_t i = 0; i < n; ++i) {
+          res[i].second = 0;
+        }
       },
       irs::ScoreFunction::NoopMin, &frequency, freq, &filter_boost, boost);
   };

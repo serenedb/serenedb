@@ -524,6 +524,13 @@ TEST_P(TermsFilterTestCase, min_match) {
               static_cast<irs::score_t>(state->doc->value[i]) * state->boost;
           }
         },
+        [](irs::ScoreCtx* ctx, auto* res, size_t n) noexcept {
+          auto* state = static_cast<ScoreCtx*>(ctx);
+          for (size_t i = 0; i < n; ++i) {
+            res[i].second =
+              static_cast<irs::score_t>(state->doc->value[i]) * state->boost;
+          }
+        },
         irs::ScoreFunction::NoopMin, doc, ctx.boost);
     };
 

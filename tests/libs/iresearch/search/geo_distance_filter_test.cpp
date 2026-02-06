@@ -137,6 +137,13 @@ struct CustomSort final : public irs::ScorerBase<void> {
           ctx_impl.sort.scorer_score(ctx, res, n);
         }
       },
+      [](irs::ScoreCtx* ctx, auto* res, size_t n) noexcept {
+        auto& ctx_impl = *static_cast<const CustomSort::Scorer*>(ctx);
+
+        if (ctx_impl.sort.scorer_score2) {
+          ctx_impl.sort.scorer_score2(ctx, res, n);
+        }
+      },
       irs::ScoreFunction::NoopMin, *this, ctx);
   }
 
@@ -160,6 +167,9 @@ struct CustomSort final : public irs::ScorerBase<void> {
   std::function<void(const irs::ScoreContext& ctx)> _prepare_scorer;   // NOLINT
   std::function<irs::TermCollector::ptr()> _prepare_term_collector;    // NOLINT
   std::function<void(irs::ScoreCtx*, irs::score_t*, size_t n)> scorer_score;
+  std::function<void(irs::ScoreCtx*, std::pair<irs::doc_id_t, irs::score_t>*,
+                     size_t n)>
+    scorer_score2;
 
   static ptr make();
   CustomSort() = default;

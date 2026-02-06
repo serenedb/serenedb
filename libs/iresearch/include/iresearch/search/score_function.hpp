@@ -72,19 +72,10 @@ class ScoreFunction : util::Noncopyable {
       [](ScoreCtx* ctx) noexcept { delete static_cast<T*>(ctx); }};
   }
 
-  template<typename T, typename... Args>
-  static auto Make(ScoreF score, MinF min, Args&&... args) {
-    return ScoreFunction{
-      new T{std::forward<Args>(args)...}, score, DefaultScore2, min,
-      [](ScoreCtx* ctx) noexcept { delete static_cast<T*>(ctx); }};
-  }
-
   ScoreFunction() noexcept = default;
   ScoreFunction(ScoreCtx* ctx, ScoreF score, Score2F score2,
                 MinF min = NoopMin) noexcept
     : ScoreFunction{ctx, score, score2, min, NoopDelete} {}
-  ScoreFunction(ScoreCtx* ctx, ScoreF score, MinF min = NoopMin) noexcept
-    : ScoreFunction{ctx, score, DefaultScore2, min, NoopDelete} {}
   ScoreFunction(ScoreFunction&& rhs) noexcept
     : ScoreFunction{std::exchange(rhs._ctx, nullptr),
                     std::exchange(rhs._score, DefaultScore),
@@ -110,16 +101,6 @@ class ScoreFunction : util::Noncopyable {
     _ctx = &ctx;
     _score = score;
     _score2 = score2;
-    _min = min;
-    _deleter = NoopDelete;
-  }
-
-  void Reset(ScoreCtx& ctx, ScoreF score, MinF min = NoopMin) noexcept {
-    SDB_ASSERT(&ctx != _ctx || _deleter == NoopDelete);
-    _deleter(_ctx);
-    _ctx = &ctx;
-    _score = score;
-    _score2 = DefaultScore2;
     _min = min;
     _deleter = NoopDelete;
   }

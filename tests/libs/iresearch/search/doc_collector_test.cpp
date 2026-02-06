@@ -76,6 +76,17 @@ struct DocIdScorer : irs::ScorerBase<void> {
               : static_cast<irs::score_t>(state.freq->value[i] % state.divisor);
         }
       },
+      [](irs::ScoreCtx* ctx, auto* res, size_t n) noexcept {
+        ASSERT_NE(nullptr, res);
+        ASSERT_NE(nullptr, ctx);
+        const auto& state = *static_cast<ScorerContext*>(ctx);
+        for (size_t i = 0; i < n; ++i) {
+          res[i].second =
+            state.divisor == 0
+              ? static_cast<irs::score_t>(state.freq->value[i])
+              : static_cast<irs::score_t>(state.freq->value[i] % state.divisor);
+        }
+      },
       irs::ScoreFunction::NoopMin, freq, divisor);
   }
 

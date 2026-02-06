@@ -133,12 +133,7 @@ struct Boost : public irs::ScorerBase<Boost, void> {
   }
 
   irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
-    return irs::ScoreFunction::Make<Boost::ScoreCtx>(
-      [](irs::ScoreCtx* ctx, irs::score_t* res, size_t n) noexcept {
-        auto& state = *reinterpret_cast<ScoreCtx*>(ctx);
-        std::fill_n(res, n, state.boost);
-      },
-      irs::ScoreFunction::NoopMin, ctx.boost);
+    return irs::ScoreFunction::Constant(ctx.boost);
   }
 };
 
@@ -244,6 +239,18 @@ struct CustomSort : public irs::ScorerBase<CustomSort, void> {
           std::fill_n(res, n, 0);
         }
       },
+      [](irs::ScoreCtx* ctx, std::pair<irs::doc_id_t, irs::score_t>* res,
+         size_t n) noexcept {
+        auto& state = *reinterpret_cast<Scorer*>(ctx);
+
+        if (state.sort.scorer_score2) {
+          state.sort.scorer_score2(ctx, res, n);
+        } else {
+          for (auto& [_, score] : std::span{res, n}) {
+            score = 0;
+          }
+        }
+      },
       irs::ScoreFunction::NoopMin, *this, ctx);
   }
 
@@ -268,6 +275,9 @@ struct CustomSort : public irs::ScorerBase<CustomSort, void> {
     prepare_scorer;
   std::function<irs::TermCollector::ptr()> prepare_term_collector;
   std::function<void(irs::ScoreCtx*, irs::score_t*, size_t n)> scorer_score;
+  std::function<void(irs::ScoreCtx*, std::pair<irs::doc_id_t, irs::score_t>*,
+                     size_t n)>
+    scorer_score2;
   std::function<void()> term_reset;
   std::function<void()> field_reset;
 };
@@ -343,6 +353,19 @@ struct FrequencySort : public irs::ScorerBase<FrequencySort, StatsT> {
           }
         }
       },
+      [](irs::ScoreCtx* ctx, std::pair<irs::doc_id_t, irs::score_t>* res,
+         size_t n) noexcept {
+        auto& state = *reinterpret_cast<Scorer*>(ctx);
+        for (size_t i = 0; i < n; ++i) {
+          // docs_count may be nullptr if no collector called,
+          // e.g. by range_query for BitsetDocIterator
+          if (state.count) {
+            res[i].second = 1.f / state.count;
+          } else {
+            res[i].second = std::numeric_limits<irs::score_t>::infinity();
+          }
+        }
+      },
       irs::ScoreFunction::NoopMin, docs_count);
   }
 
@@ -372,6 +395,16 @@ struct FrequencyScore : public irs::ScorerBase<FrequencyScore, StatsT> {
         ASSERT_NE(nullptr, state.freq);
         ASSERT_NE(nullptr, state.freq->value);
         std::copy_n(state.freq->value, n, res);
+      },
+      [](irs::ScoreCtx* ctx, std::pair<irs::doc_id_t, irs::score_t>* res,
+         size_t n) noexcept {
+        auto& state = *reinterpret_cast<Scorer*>(ctx);
+        ASSERT_NE(nullptr, state.freq);
+        ASSERT_NE(nullptr, state.freq->value);
+        auto* p = state.freq->value;
+        for (auto& [_, score] : std::span{res, n}) {
+          score = *p++;
+        }
       },
       irs::ScoreFunction::NoopMin, freqs);
   }

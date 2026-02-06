@@ -58,6 +58,11 @@ struct FreqScorer : irs::ScorerBase<void> {
         auto& state = static_cast<FreqScorerContext&>(*ctx);
         *res = state.freq_source->value;
       },
+      [](irs::ScoreCtx* ctx, auto* res, size_t n) noexcept {
+        ASSERT_EQ(1, n);
+        auto& state = static_cast<FreqScorerContext&>(*ctx);
+        res->second = state.freq_source->value;
+      },
       irs::ScoreFunction::NoopMin, freq);
   }
 

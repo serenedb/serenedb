@@ -131,6 +131,14 @@ struct DocIdScorer : public irs::ScorerBase<void> {
           res[i] = static_cast<irs::score_t>(state.doc->value[i]);
         }
       },
+      [](irs::ScoreCtx* ctx, auto* res, size_t n) noexcept {
+        ASSERT_NE(nullptr, res);
+        ASSERT_NE(nullptr, ctx);
+        auto& state = *static_cast<ScorerContext*>(ctx);
+        for (size_t i = 0; i < n; ++i) {
+          res[i].second = static_cast<irs::score_t>(state.doc->value[i]);
+        }
+      },
       irs::ScoreFunction::NoopMin, doc);
   }
 };

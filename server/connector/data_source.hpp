@@ -25,6 +25,7 @@
 #include "basics/fwd.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
+#include "rocksdb/db.h"
 #include "rocksdb/utilities/transaction.h"
 
 namespace sdb::connector {
@@ -34,11 +35,11 @@ class SereneDBConnectorSplit;
 class RocksDBDataSource final : public velox::connector::DataSource {
  public:
   RocksDBDataSource(velox::memory::MemoryPool& memory_pool,
-                    rocksdb::Transaction* transaction,
+                    rocksdb::Transaction* transaction, rocksdb::DB* db,
                     rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
                     std::vector<catalog::Column::Id> column_ids,
                     catalog::Column::Id effective_column_id,
-                    ObjectId object_key);
+                    ObjectId object_key, bool read_your_own_writes);
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
   std::optional<velox::RowVectorPtr> next(uint64_t size,
@@ -74,6 +75,7 @@ class RocksDBDataSource final : public velox::connector::DataSource {
 
   velox::memory::MemoryPool& _memory_pool;
   rocksdb::Transaction* _transaction;
+  rocksdb::DB* _db;
   rocksdb::ColumnFamilyHandle& _cf;
   velox::RowTypePtr _row_type;
   std::vector<catalog::Column::Id> _column_ids;
@@ -94,6 +96,7 @@ class RocksDBDataSource final : public velox::connector::DataSource {
   ObjectId _object_key;
   // std::string _last_read_key; // TODO(mkornaukhov) remove
   uint64_t _produced = 0;
+  bool _read_your_own_writes;
 };
 
 }  // namespace sdb::connector

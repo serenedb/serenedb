@@ -1,0 +1,180 @@
+# Setup test table
+statement ok
+CREATE TABLE t_ryow (id INTEGER PRIMARY KEY, value INTEGER);
+
+# Test default behavior (on) - should read your own writes
+statement ok
+SET sdb_read_your_own_writes = on;
+
+statement ok
+BEGIN;
+
+statement count 3
+INSERT INTO t_ryow VALUES (1, 100), (2, 200), (3, 300);
+
+# With read_your_own_writes=on, we should see the uncommitted inserts
+query
+SELECT * FROM t_ryow ORDER BY id;
+----
+id	value
+1	100
+2	200
+3	300
+
+statement ok
+COMMIT;
+
+# After commit, data should still be visible
+query
+SELECT * FROM t_ryow ORDER BY id;
+----
+id	value
+1	100
+2	200
+3	300
+
+# Test with read_your_own_writes=off - should NOT read uncommitted writes
+statement ok
+SET sdb_read_your_own_writes = off;
+
+statement ok
+BEGIN;
+
+statement count 2
+INSERT INTO t_ryow VALUES (4, 400), (5, 500);
+
+# With read_your_own_writes=off, we should NOT see the uncommitted inserts
+# Should only see previously committed data (1,2,3)
+query
+SELECT * FROM t_ryow ORDER BY id;
+----
+id	value
+1	100
+2	200
+3	300
+
+statement ok
+COMMIT;
+
+# After commit, all data including 4,5 should be visible
+query
+SELECT * FROM t_ryow ORDER BY id;
+----
+id	value
+1	100
+2	200
+3	300
+4	400
+5	500
+
+# Test UPDATE with read_your_own_writes=on
+statement ok
+SET sdb_read_your_own_writes = on;
+
+statement ok
+BEGIN;
+
+statement count 1
+UPDATE t_ryow SET value = 999 WHERE id = 1;
+
+# Should see the updated value
+query
+SELECT * FROM t_ryow WHERE id = 1;
+----
+id	value
+1	999
+
+statement ok
+ROLLBACK;
+
+# Test UPDATE with read_your_own_writes=off
+statement ok
+SET sdb_read_your_own_writes = off;
+
+statement ok
+BEGIN;
+
+statement count 1
+UPDATE t_ryow SET value = 888 WHERE id = 2;
+
+# Should NOT see the updated value, should see old committed value
+query
+SELECT * FROM t_ryow WHERE id = 2;
+----
+id	value
+2	200
+
+statement ok
+ROLLBACK;
+
+# Test DELETE with read_your_own_writes=on
+statement ok
+SET sdb_read_your_own_writes = on;
+
+statement ok
+BEGIN;
+
+statement count 1
+DELETE FROM t_ryow WHERE id = 3;
+
+# Should NOT see the deleted row
+query
+SELECT * FROM t_ryow WHERE id = 3;
+----
+id	value
+
+statement ok
+ROLLBACK;
+
+# Test DELETE with read_your_own_writes=off
+statement ok
+SET sdb_read_your_own_writes = off;
+
+statement ok
+BEGIN;
+
+statement count 1
+DELETE FROM t_ryow WHERE id = 4;
+
+# Should still see the deleted row (uncommitted delete not visible)
+query
+SELECT * FROM t_ryow WHERE id = 4;
+----
+id	value
+4	400
+
+statement ok
+ROLLBACK;
+
+# Verify final state - all original data should be there
+query
+SELECT * FROM t_ryow ORDER BY id;
+----
+id	value
+1	100
+2	200
+3	300
+4	400
+5	500
+
+statement ok
+DROP TABLE t_ryow;
+
+# Test that invalid values cannot be set
+statement error
+SET sdb_read_your_own_writes = invalid;
+
+statement error
+SET sdb_read_your_own_writes = 1;
+
+statement error
+SET sdb_read_your_own_writes = true;
+
+statement ok
+SET sdb_read_your_own_writes = ON;
+
+statement ok
+SET sdb_read_your_own_writes = Off;
+
+statement ok
+SET sdb_read_your_own_writes = oN;

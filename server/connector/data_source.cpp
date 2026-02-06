@@ -40,17 +40,20 @@ constexpr uint64_t kInitialVectorSize = 1;  // arbitrary value
 
 RocksDBDataSource::RocksDBDataSource(
   velox::memory::MemoryPool& memory_pool, rocksdb::Transaction* transaction,
-  rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
+  rocksdb::DB* db, rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
   std::vector<catalog::Column::Id> column_oids,
-  catalog::Column::Id effective_column_id, ObjectId object_key)
+  catalog::Column::Id effective_column_id, ObjectId object_key,
+  bool read_your_own_writes)
   : velox::connector::DataSource{},
     _memory_pool{memory_pool},
     _transaction{transaction},
+    _db{db},
     _cf{cf},
     _row_type{std::move(row_type)},
     _column_ids(std::move(column_oids)),
     _effective_column_id(std::move(effective_column_id)),
-    _object_key{object_key} {
+    _object_key{object_key},
+    _read_your_own_writes{read_your_own_writes} {
   SDB_ASSERT(_row_type, "RocksDBDataSource: row type is null");
   SDB_ASSERT(_object_key.isSet(), "RocksDBDataSource: object key is empty");
   SDB_ASSERT(!_column_ids.empty(),
@@ -86,11 +89,14 @@ RocksDBDataSource::RocksDBDataSource(
   std::sort(_sorted_indices.begin(), _sorted_indices.end(),
             [this](auto a, auto b) { return _column_ids[a] < _column_ids[b]; });
 
-  // Create iterators for each column from transaction for read-your-own-writes
   _iterators.reserve(_column_keys.size());
   for (const auto& column_key : _column_keys) {
-    auto it = std::unique_ptr<rocksdb::Iterator>(
-      _transaction->GetIterator(_read_options, &_cf));
+    std::unique_ptr<rocksdb::Iterator> it;
+    if (_read_your_own_writes) {
+      it.reset(_transaction->GetIterator(_read_options, &_cf));
+    } else {
+      it.reset(_db->NewIterator(_read_options, &_cf));
+    }
     it->Seek(column_key);
     if (!it->Valid() || !it->key().starts_with(column_key)) {
       it.reset();

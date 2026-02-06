@@ -85,6 +85,16 @@ constexpr auto kVariableDescription =
       },
     },
     {
+      "sdb_read_your_own_writes",
+      {
+        VariableType::SdbReadYourOwnWrites,
+        "Controls whether queries can see uncommitted writes from the current "
+        "transaction. Valid values are 'on' (the default, read your own "
+        "writes) and 'off' (read from snapshot only)",
+        "on",
+      },
+    },
+    {
       "client_encoding",
       {
         VariableType::String,

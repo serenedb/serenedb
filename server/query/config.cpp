@@ -81,6 +81,10 @@ bool ValidateValue(VariableType type, std::string_view value) {
              absl::EqualsIgnoreCase("do_nothing", value) ||
              absl::EqualsIgnoreCase("replace", value);
     }
+    case VariableType::SdbReadYourOwnWrites: {
+      return absl::EqualsIgnoreCase("on", value) ||
+             absl::EqualsIgnoreCase("off", value);
+    }
     default:
       SDB_UNREACHABLE();
   }

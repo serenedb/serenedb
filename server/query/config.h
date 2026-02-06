@@ -54,6 +54,7 @@ enum class VariableType {
   PgExtraFloatDigits,
   PgByteaOutput,
   SdbWriteConflictPolicy,
+  SdbReadYourOwnWrites,
 };
 
 enum class ByteaOutput : uint8_t {
@@ -139,6 +140,14 @@ class Config : public velox::config::IConfig {
       SDB_ASSERT(absl::EqualsIgnoreCase("replace", *value_str),
                  "sdb_write_conflict_policy is not validated");
       return WriteConflictPolicy::Replace;
+    } else if constexpr (T == VariableType::SdbReadYourOwnWrites) {
+      SDB_ASSERT(key == "sdb_read_your_own_writes");
+      if (absl::EqualsIgnoreCase("on", *value_str)) {
+        return true;
+      }
+      SDB_ASSERT(absl::EqualsIgnoreCase("off", *value_str),
+                 "sdb_read_your_own_writes is not validated");
+      return false;
     } else if constexpr (T == VariableType::JoinOrderAlgorithm) {
       SDB_ASSERT(key == "join_order_algorithm");
       if (absl::EqualsIgnoreCase("cost", *value_str)) {

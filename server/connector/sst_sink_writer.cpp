@@ -27,7 +27,6 @@
 
 #include "basics/assert.h"
 #include "basics/random/random_generator.h"
-#include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
 #include "rocksdb/options.h"
 #include "rocksdb/table.h"
@@ -58,17 +57,28 @@ SSTSinkWriter::SSTSinkWriter(rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
   table_options.filter_policy = nullptr;
   options.table_factory.reset(
     rocksdb::NewBlockBasedTableFactory(table_options));
+
+  if (!options.table_factory ||
+      !options.table_factory->IsInstanceOf(
+        rocksdb::TableFactory::kBlockBasedTableName())) {
+    SDB_THROW(
+      ERROR_INTERNAL,
+      "SSTSinkWriter requires BlockBasedTableFactory for PutByInternalKey");
+  }
+
   options.compression = rocksdb::kNoCompression;
   options.compression_per_level.clear();
 
   std::filesystem::create_directories(_sst_directory);
+
+  rocksdb::EnvOptions env;
+  env.use_direct_writes = true;
   for (size_t i = 0; i < _writers.size(); ++i) {
     if (columns[i].id == catalog::Column::kGeneratedPKId) {
       continue;
     }
 
-    _writers[i] =
-      std::make_unique<rocksdb::SstFileWriter>(rocksdb::EnvOptions{}, options);
+    _writers[i] = std::make_unique<rocksdb::SstFileWriter>(env, options);
     auto sst_file_path =
       absl::StrCat(_sst_directory, "/", "column_", i, "_.sst");
     auto status = _writers[i]->Open(sst_file_path);
@@ -88,7 +98,7 @@ void SSTSinkWriter::Write(std::span<const rocksdb::Slice> cell_slices,
   rocksdb::Status status;
   auto& writer = *_writers[_column_idx];
   if (cell_slices.size() == 1) {
-    status = writer.Put(key_slice, cell_slices.front());
+    status = writer.PutByInternalKey(key_slice, cell_slices.front());
   } else {
     std::string merged_value;
     size_t total_size = 0;
@@ -99,7 +109,7 @@ void SSTSinkWriter::Write(std::span<const rocksdb::Slice> cell_slices,
     for (const auto& slice : cell_slices) {
       merged_value.append(slice.data(), slice.size());
     }
-    status = writer.Put(key_slice, merged_value);
+    status = writer.PutByInternalKey(key_slice, merged_value);
   }
 
   if (!status.ok()) {

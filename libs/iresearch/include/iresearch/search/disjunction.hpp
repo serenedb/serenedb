@@ -919,8 +919,10 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
         _cur = *_begin++;
       }
 
+      // https://lemire.me/blog/2018/02/21/iterating-over-set-bits-quickly
+      const auto t = _cur & -_cur;
       const auto offset = std::countr_zero(_cur);
-      UnsetBit(_cur, offset);
+      _cur ^= t;
 
       [[maybe_unused]] const auto buf_offset = _buf_offset + offset;
 
@@ -1033,7 +1035,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
   }
 
   uint32_t count() final {
-    if (_begin != _mask) [[unlikely]] {
+    if (_begin != std::end(_mask)) [[unlikely]] {
       return Count(*this);
     }
 

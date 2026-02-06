@@ -376,7 +376,7 @@ class FixedPhraseFrequency {
                        SinglePositionStrategy<typename Positions::iterator>>;
 
   static constexpr bool kOneShot = OneShot;
-  static constexpr bool kHasFreq = HasFreq;
+  static constexpr bool kHasFreq = !OneShot;
 
   explicit FixedPhraseFrequency(std::vector<TermPosition>&& pos) noexcept
     : _pos{std::move(pos)} {
@@ -527,7 +527,7 @@ class VariadicPhraseFrequency {
                        SinglePositionStrategy<typename Positions::iterator>>;
 
   static constexpr bool kOneShot = OneShot;
-  static constexpr bool kHasFreq = HasFreq;
+  static constexpr bool kHasFreq = !OneShot;
 
   explicit VariadicPhraseFrequency(std::vector<TermPosition>&& pos) noexcept
     : _pos{std::move(pos)}, _phrase_size{_pos.size()} {
@@ -933,7 +933,7 @@ class PhraseIterator : public DocIterator {
 
     if constexpr (Frequency::kHasFreq) {
       _collected_freqs = std::make_unique<uint32_t[]>(kScoreBlock);
-      std::get<FreqBlockAttr>(_attrs).value = _collected_freqs.get();
+      std::get<FreqBlockAttr>(_attrs).value = this->_collected_freqs.get();
     }
   }
 

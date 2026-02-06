@@ -1,7 +1,5 @@
 #pragma once
 
-#include <miniselect/median_of_ninthers.h>
-
 #include <algorithm>
 #include <cmath>
 #include <cstddef>

@@ -1172,15 +1172,19 @@ class PositionImpl final : public PosAttr {
 template<typename IteratorTraits>
 using AttributesImpl = std::conditional_t<
   IteratorTraits::Position(),
-  std::tuple<DocAttr, FreqAttr, ScoreAttr, CostAttr,
+  std::tuple<DocAttr, FreqAttr, FreqBlockAttr, ScoreAttr, CostAttr,
              PositionImpl<IteratorTraits>>,
-  std::conditional_t<IteratorTraits::Frequency(),
-                     std::tuple<DocAttr, FreqAttr, ScoreAttr, CostAttr>,
-                     std::tuple<DocAttr, ScoreAttr, CostAttr>>>;
+  std::conditional_t<
+    IteratorTraits::Frequency(),
+    std::tuple<DocAttr, FreqAttr, FreqBlockAttr, ScoreAttr, CostAttr>,
+    std::tuple<DocAttr, ScoreAttr, CostAttr>>>;
 
 template<typename IteratorTraits>
 class PostingIteratorBase : public DocIterator {
  public:
+  static_assert(IteratorTraits::kBlockSize % kScoreBlock == 0,
+                "kBlockSize must be a multiple of kScoreBlock");
+
   IRS_NO_INLINE Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);
   }
@@ -1203,6 +1207,111 @@ class PostingIteratorBase : public DocIterator {
 
   IRS_FORCE_INLINE const ScoreAttr& score() const noexcept {
     return std::get<ScoreAttr>(_attrs);
+  }
+
+  std::pair<doc_id_t, bool> CollectBlock(doc_id_t min, doc_id_t max,
+                                         uint64_t* mask,
+                                         CollectScoreContext score,
+                                         CollectMatchContext match) final {
+    auto& doc_value = std::get<DocAttr>(_attrs).value;
+
+    if (!score.score || score.score->IsDefault()) {
+      score.merge_type = ScoreMergeType::Noop;
+    }
+
+    bool empty = true;
+    auto process = [&]<ScoreMergeType MergeType, bool TrackMatch>(
+                     doc_id_t offset) __attribute__((always_inline)) {
+      if constexpr (TrackMatch) {
+        SDB_ASSERT(match.matches);
+        const bool has_match = ++match.matches[offset] >= match.min_match_count;
+        SetBit(mask[offset / BitsRequired<uint64_t>()],
+               offset % BitsRequired<uint64_t>(), has_match);
+        empty &= !has_match;
+        if constexpr (MergeType != ScoreMergeType::Noop) {
+          Merge<MergeType>(score.score_window[offset],
+                           std::bit_cast<score_t>(*(std::end(this->_enc_buf) -
+                                                    this->_left_in_leaf)));
+        }
+      } else {
+        SetBit(mask[offset / BitsRequired<uint64_t>()],
+               offset % BitsRequired<uint64_t>());
+        if constexpr (MergeType != ScoreMergeType::Noop) {
+          Merge<MergeType>(score.score_window[offset],
+                           std::bit_cast<score_t>(*(std::end(this->_enc_buf) -
+                                                    this->_left_in_leaf)));
+        }
+        empty = false;
+      }
+      --this->_left_in_leaf;
+    };
+
+    return ResolveBool(match.matches != nullptr, [&]<bool TrackMatch> {
+      return ResolveMergeType(score.merge_type, [&]<ScoreMergeType MergeType> {
+        if (!this->_doc_in) [[unlikely]] {
+          SDB_ASSERT(this->_left_in_list == 0);
+          if (this->_left_in_leaf == 0) {
+            return std::pair{doc_value = doc_limits::eof(), true};
+          }
+
+          doc_value = *(std::end(this->_docs) - 1);
+
+          if (doc_value >= max) {
+            return std::pair{doc_value, true};
+          }
+
+          if constexpr (MergeType != ScoreMergeType::Noop) {
+            if (score.collector) {
+              score.collector->Collect(std::span{&doc_value, 1});
+            }
+            score.score->Score(
+              reinterpret_cast<score_t*>(std::end(this->_enc_buf) - 1), 1);
+          }
+          process.template operator()<MergeType, TrackMatch>(doc_value - min);
+          return std::pair{doc_value, empty};
+        }
+
+        while (true) {
+          if (this->_left_in_leaf == 0) [[unlikely]] {
+            if (this->_left_in_list == 0) [[unlikely]] {
+              doc_value = doc_limits::eof();
+              break;
+            }
+
+            this->Refill(doc_value);
+            if constexpr (MergeType != ScoreMergeType::Noop) {
+              if (score.collector) {
+                score.collector->Collect(
+                  std::span{std::end(this->_docs) - this->_left_in_leaf,
+                            this->_left_in_leaf});
+              }
+              if constexpr (IteratorTraits::Frequency()) {
+                std::get<FreqBlockAttr>(_attrs).value =
+                  std::end(this->_freqs) - this->_left_in_leaf;
+              }
+              score.score->Score(
+                reinterpret_cast<score_t*>(std::end(this->_enc_buf) -
+                                           this->_left_in_leaf),
+                this->_left_in_leaf);
+            }
+          }
+
+          doc_value = *(std::end(this->_docs) - this->_left_in_leaf);
+
+          if (doc_value >= max) {
+            break;
+          }
+
+          const auto offset = doc_value - min;
+          process.template operator()<MergeType, TrackMatch>(offset);
+        }
+
+        if constexpr (IteratorTraits::Frequency()) {
+          std::get<FreqBlockAttr>(_attrs).value = this->_collected_freqs.get();
+        }
+        return std::pair{doc_value, empty};
+      });
+    });
   }
 
  protected:
@@ -1407,7 +1516,7 @@ void CommonReadWandData(WandExtent wextent, uint8_t index,
     in.Skip(scorer_offset);
   }
   ctx.Read(in, size);
-  func(&score);
+  func.Score(&score, 1);
   if (block_offset) {
     in.Skip(block_offset);
   }
@@ -1439,7 +1548,7 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
   }
 
   const ScoreFunction& PrepareScore(const PrepareScoreContext& ctx) final {
-    auto& score = std::get<irs::ScoreAttr>(_attrs);
+    auto& score = std::get<irs::ScoreAttr>(this->_attrs);
     score = ctx.scorer->PrepareScorer({
       .segment = *ctx.segment,
       .field = this->_field,
@@ -1454,13 +1563,19 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
   void CollectData(uint16_t index) final {
     if constexpr (IteratorTraits::Frequency()) {
       SDB_ASSERT(this->_collected_freqs);
-      this->_collected_freqs[index] = std::get<FreqAttr>(_attrs).value;
+      this->_collected_freqs[index] = std::get<FreqAttr>(this->_attrs).value;
     }
   }
 
   void Prepare(const PostingCookie& meta, const IndexInput* doc_in,
                const IndexInput* pos_in, const IndexInput* pay_in,
                uint8_t wand_index = WandContext::kDisable);
+
+  void Init(const PostingCookie& cookie) noexcept {
+    this->_field = cookie.field;
+    this->_stats = cookie.stats;
+    this->_boost = cookie.boost;
+  }
 
  private:
   class ReadSkip : private WandExtent {
@@ -1576,9 +1691,11 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits,
 
 template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
 void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
-  const TermMeta& meta, const IndexInput* doc_in, const IndexInput* pos_in,
+  const PostingCookie& meta, const IndexInput* doc_in, const IndexInput* pos_in,
   const IndexInput* pay_in, uint8_t wand_index) {
-  auto& term_state = static_cast<const TermMetaImpl&>(meta);
+  this->Init(meta);
+
+  auto& term_state = sdb::basics::downCast<CookieImpl>(meta.cookie)->meta;
   std::get<CostAttr>(this->_attrs)
     .reset(term_state.docs_count);  // Estimate iterator
 
@@ -1598,7 +1715,7 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
     }
 
     if constexpr (IteratorTraits::Frequency()) {
-      auto& freq_block = std::get<FreqBlockAttr>(_attrs);
+      auto& freq_block = std::get<FreqBlockAttr>(this->_attrs);
       this->_collected_freqs = std::make_unique<uint32_t[]>(kScoreBlock);
       freq_block.value = this->_collected_freqs.get();
     }
@@ -1615,7 +1732,7 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
       auto* freq = std::end(this->_freqs) - 1;
       *freq = term_state.freq;
 
-      auto& freq_block = std::get<FreqBlockAttr>(_attrs);
+      auto& freq_block = std::get<FreqBlockAttr>(this->_attrs);
       freq_block.value = freq;
     }
     this->_left_in_list = 0;
@@ -2339,6 +2456,14 @@ struct PostingAdapter {
     return self().score();
   }
 
+  IRS_FORCE_INLINE uint32_t collect(std::span<doc_id_t> docs) {
+    return self().collect(docs);
+  }
+
+  IRS_FORCE_INLINE void CollectData(uint16_t index) {
+    return self().CollectData(index);
+  }
+
   IRS_FORCE_INLINE const ScoreFunction& PrepareScore(
     const PrepareScoreContext& ctx) const noexcept {
     return self().PrepareScore(ctx);
@@ -2660,12 +2785,11 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
       for (auto& it : iterators) {
         adapters.emplace_back(std::move(it));
       }
-      return ResolveMergeType(
-        type, num_buckets, [&]<typename A>(A&& aggregator) {
-          using MinMatchIterator = MinMatchIterator<Adapter, A>;
-          return MakeWeakDisjunction<MinMatchIterator>(
-            options, std::move(adapters), min_match, std::move(aggregator));
-        });
+      return ResolveMergeType(type, [&]<ScoreMergeType MergeType> {
+        using MinMatchIterator = MinMatchIterator<Adapter, MergeType>;
+        return MakeWeakDisjunction<MinMatchIterator>(
+          options, std::move(adapters), min_match);
+      });
     });
 }
 

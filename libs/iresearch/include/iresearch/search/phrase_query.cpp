@@ -78,8 +78,7 @@ DocIterator::ptr FixedPhraseQuery::execute(const ExecutionContext& ctx) const {
   for (const auto& term_state : phrase_state->terms) {
     SDB_ASSERT(term_state.first);
 
-    auto& docs = itrs.emplace_back(
-      reader->Iterator(features, {.cookie = term_state.first.get()}));
+    auto docs = reader->Iterator(features, {.cookie = term_state.first.get()});
     if (!docs) [[unlikely]] {
       return DocIterator::empty();
     }
@@ -98,7 +97,7 @@ DocIterator::ptr FixedPhraseQuery::execute(const ExecutionContext& ctx) const {
     return ResolveBool(
       has_intervals, [&]<bool HasIntervals> -> DocIterator::ptr {
         using FixedPhraseIterator =
-          PhraseIterator<Conjunction<Adapter, NoopAggregator>,
+          PhraseIterator<Conjunction<Adapter>,
                          FixedPhraseFrequency<false, true, HasIntervals>>;
         return memory::make_managed<FixedPhraseIterator>(std::move(itrs),
                                                          std::move(positions));
@@ -108,10 +107,9 @@ DocIterator::ptr FixedPhraseQuery::execute(const ExecutionContext& ctx) const {
     using FixedPhraseIterator =
       PhraseIterator<Conjunction<Adapter>,
                      FixedPhraseFrequency<false, false, HasIntervals>>;
-    auto it = memory::make_managed<FixedPhraseIterator>(
+    return memory::make_managed<FixedPhraseIterator>(
       std::move(itrs), std::move(positions), phrase_state->reader->meta(),
       stats.c_str(), boost);
-    return it;
   });
 }
 
@@ -156,8 +154,8 @@ DocIterator::ptr FixedPhraseQuery::ExecuteWithOffsets(
     auto add_iterator = [&](IndexFeatures features) {
       SDB_ASSERT(term_state->first);
 
-      auto& docs = itrs.emplace_back(
-        reader->Iterator(features, {.cookie = term_state->first.get()}));
+      auto docs =
+        reader->Iterator(features, {.cookie = term_state->first.get()});
       if (!docs) [[unlikely]] {
         return false;
       }

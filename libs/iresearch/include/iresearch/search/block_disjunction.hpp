@@ -690,7 +690,7 @@ struct RebindIterator;
 template<typename Adapter, ScoreMergeType MergeType>
 struct RebindIterator<DisjunctionIterator<Adapter, MergeType>> {
   using Unary = void;  // block disjunction doesn't support visitor
-  using Basic = void;
+  using Basic = void;  // basic disjunction always faster than small
   using Small = void;  // block disjunction always faster than small
   using Wand = DisjunctionIterator<Adapter, MergeType>;
 };

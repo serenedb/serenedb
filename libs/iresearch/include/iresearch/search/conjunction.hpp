@@ -297,9 +297,7 @@ DocIterator::ptr MakeConjunction(ScoreMergeType merge_type, WandContext ctx,
            CostAttr::extract(rhs, CostAttr::kMax);
   });
   SubScores scores;
-  using ConjunctionImpl = Conjunction<Adapter>;
-  using WrappedConjunction = Wrapper<ConjunctionImpl>;
-  if constexpr (kHasScore<Merger>) {
+  if (merge_type != ScoreMergeType::Noop) {
     scores.scores.reserve(itrs.size());
     for (auto& it : itrs) {
       const auto& score = it.score();

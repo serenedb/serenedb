@@ -199,18 +199,18 @@ db error: ERROR: option "labudabudabdab" not recognized
 
 
 statement count 100000
-COPY
+COPY 
 (
-  SELECT *
-  FROM
-    generate_series(1, 10) as iq,
-    generate_series(1, 100) as pencil_size,
+  SELECT * 
+  FROM 
+    generate_series(1, 10) as iq, 
+    generate_series(1, 100) as pencil_size, 
     generate_series(1, 100) as weight
 ) TO '/tmp/${__DATABASE__}_arelav' WITH (FORMAT CSV, HEADER 1);
 
 
 statement ok
-CREATE TABLE arelav
+CREATE TABLE arelav 
 (
   lmao INTEGER,
   kek INTEGER,
@@ -229,9 +229,9 @@ SELECT * FROM arelav ORDER BY 1, 2, 3;
 
 
 statement count 100
-COPY
-  (SELECT x, y::text FROM generate_series(1, 10) as g1(x), generate_series(1, 10) as g2(y))
-TO
+COPY 
+  (SELECT x, y::text FROM generate_series(1, 10) as g1(x), generate_series(1, 10) as g2(y)) 
+TO 
   '/tmp/${__DATABASE__}_deadinside.tsv'
 WITH (HEADER TRUE);
 
@@ -321,7 +321,7 @@ COPY (SELECT 1 as header, 2 as header) TO '/tmp/${__DATABASE__}_headers.tsv' WIT
 
 statement count 2
 COPY header_eater FROM '/tmp/${__DATABASE__}_headers.tsv';
-
+ 
 
 query
 SELECT * FROM header_eater;
@@ -332,79 +332,6 @@ header	header
 
 
 statement error
-COPY (SELECT 1) TO '/tmp/${__DATABASE__}_sayge.tsv' WITH (FORMAT)
+COPY (SELECT 1) TO '/tmp/${__DATABASE__}_saygex.tsv' WITH (FORMAT)
 ----
 db error: ERROR: format requires a parameter
-
-
-statement ok
-CREATE TABLE ts_test (id INTEGER PRIMARY KEY, ts TIMESTAMP, d DATE);
-
-
-statement count 2
-INSERT INTO ts_test VALUES (1, '2024-01-15 10:30:45', '2024-01-15'), (2, '2024-12-31 23:59:59', '2024-12-31');
-
-
-statement count 2
-COPY ts_test TO '/tmp/${__DATABASE__}_ts_test.csv' WITH (FORMAT CSV);
-
-
-statement ok
-CREATE TABLE ts_test_copy (id INTEGER PRIMARY KEY, ts TIMESTAMP, d DATE);
-
-
-statement count 2
-COPY ts_test_copy FROM '/tmp/${__DATABASE__}_ts_test.csv' WITH (FORMAT CSV);
-
-
-query
-SELECT * FROM ts_test_copy ORDER BY 1;
-----
-id	ts	d
-1	2024-01-15 10:30:45	2024-01-15
-2	2024-12-31 23:59:59	2024-12-31
-
-
-# wanna detect format by file extension
-statement count 10
-COPY (SELECT 'imarelav', * FROM generate_series(1, 10)) TO '/tmp/${__DATABASE__}_arelav_consuma.csv';
-
-
-statement ok
-CREATE TABLE arelav_consumer
-(
-  eater TEXT
-);
-
-
-onlyif serenedb
-statement count 10
-COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (FORMAT TEXT);
-
-
-query
-SELECT * FROM arelav_consumer;
-----
-eater
-imarelav,1
-imarelav,2
-imarelav,3
-imarelav,4
-imarelav,5
-imarelav,6
-imarelav,7
-imarelav,8
-imarelav,9
-imarelav,10
-
-
-statement error
-COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (FORMAT 1);
-----
-db error: ERROR: COPY format "1" not recognized
-
-
-statement error
-COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (LOG_VERBOSITY 228.228);
-----
-db error: ERROR: COPY LOG_VERBOSITY "228.228" not recognized

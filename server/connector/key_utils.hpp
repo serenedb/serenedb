@@ -27,7 +27,6 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
 #include "connector/primary_key.hpp"
-#include "rocksdb/sst_file_writer.h"
 
 namespace sdb::connector::key_utils {
 
@@ -42,7 +41,7 @@ std::string PrepareColumnKey(ObjectId id, catalog::Column::Id column_oid);
 void AppendColumnKey(std::string& key, catalog::Column::Id column_oid);
 
 // Prepare buffer for column key and call 'row_key_handle' on row_key
-template<bool IsInternalSSTKey = false, typename Func>
+template<typename Func>
 void MakeColumnKey(const velox::RowVectorPtr& input,
                    const std::vector<velox::column_index_t>& pk_columns,
                    velox::vector_size_t row_idx, std::string_view object_id,
@@ -63,11 +62,6 @@ void MakeColumnKey(const velox::RowVectorPtr& input,
   row_key_handle(std::string_view{
     key_buffer.begin() + sizeof(catalog::Column::Id), key_buffer.end()});
   std::memcpy(key_buffer.data(), object_id.data(), sizeof(ObjectId));
-
-  if constexpr (IsInternalSSTKey) {
-    // TODO: if key is fixed size, we can avoid extra alloc here
-    basics::StrAppend(key_buffer, rocksdb::SstFileWriter::kInternalKeyFooter);
-  }
 }
 
 // Takes buffer in format

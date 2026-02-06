@@ -276,7 +276,7 @@ void SSTInsertDataSink::appendData(velox::RowVectorPtr input) {
   _store_keys_buffers.reserve(num_rows);
 
   for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-    key_utils::MakeColumnKey<true>(
+    key_utils::MakeColumnKey(
       input, _key_childs, row_idx, table_key, [&](std::string_view row_key) {},
       _store_keys_buffers.emplace_back());
   }

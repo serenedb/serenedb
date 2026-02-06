@@ -80,8 +80,6 @@ std::string DeparseStmt(Node* node);
 
 std::string DeparseExpr(Node* expr);
 
-std::string DeparseValue(Node* expr);
-
 struct MemoryContextDeleter {
   void operator()(MemoryContextData* p) const noexcept;
 };

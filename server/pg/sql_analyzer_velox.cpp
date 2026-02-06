@@ -1436,7 +1436,7 @@ void SqlAnalyzer::MakeTableWrite(State& state, const Node& stmt,
 
         project_names.emplace_back(name);
         auto expr = std::make_shared<lp::InputReferenceExpr>(type, name);
-        project_exprs.emplace_back(std::move(expr));
+        project_exprs.push_back(std::move(expr));
       }
     }
 
@@ -1871,7 +1871,6 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
 }
 
 void WriteNotice(message::Buffer& send, std::string_view message) {
-  SDB_ASSERT(send.GetUncommittedSize() == 0);
   const auto uncommitted_size = send.GetUncommittedSize();
   auto* prefix_data = send.GetContiguousData(5);
   send.WriteUncommitted(std::string_view{"SNOTICE\0VNOTICE\0C", 17});
@@ -1979,7 +1978,7 @@ class CopyOptionsParser {
           THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(&option))),
                           ERR_CODE(ERRCODE_SYNTAX_ERROR),
                           ERR_MSG("invalid value for parameter \"explain\": \"",
-                                  DeparseValue(option.arg), "\""));
+                                  DeparseExpr(option.arg), "\""));
         }
         explain_options.emplace(*maybe_explain, true);
         return;
@@ -2007,26 +2006,6 @@ class CopyOptionsParser {
   }
 
  private:
-  std::string_view TryFormatFromFile() const {
-    const auto pos = _file_path.rfind('.');
-    if (pos == std::string_view::npos) {
-      return {};
-    }
-
-    const auto file_format = _file_path.substr(pos + 1);
-    if (file_format == "csv" || file_format == "text" ||
-        file_format == "parquet" || file_format == "dwrf" ||
-        file_format == "orc") {
-      return file_format;
-    }
-
-    if (file_format == "tsv" || file_format == "txt") {
-      return "text";
-    }
-
-    return {};
-  }
-
   void Parse() {
     ParseDataSource();
 
@@ -2039,22 +2018,13 @@ class CopyOptionsParser {
 
     std::string_view format = "text";
     if (const auto* option = EraseOption("format")) {
-      auto maybe_format = TryGet<std::string_view>(option->arg);
-      if (!maybe_format || !format2parser.contains(*maybe_format)) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(&option))),
-                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("COPY format \"", DeparseValue(option->arg),
-                                "\" not recognized"));
+      format = strVal(option->arg);
+      if (!format2parser.contains(format)) {
+        THROW_SQL_ERROR(
+          CURSOR_POS(ErrorPosition(ExprLocation(&option))),
+          ERR_CODE(ERRCODE_SYNTAX_ERROR),
+          ERR_MSG("invalid value for parameter \"format\": \"", format, "\""));
       }
-      format = *maybe_format;
-    } else if (auto maybe_format = TryFormatFromFile(); !maybe_format.empty()) {
-      format = maybe_format;
-      WriteNotice(
-        _send_buffer,
-        absl::StrCat(
-          "Format \"", format,
-          "\" was auto-detected from the file extension. To override, "
-          "explicitly specify the format using the WITH (FORMAT ...) clause."));
     }
 
     auto it = format2parser.find(format);
@@ -2068,7 +2038,7 @@ class CopyOptionsParser {
         THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
                         ERR_CODE(ERRCODE_SYNTAX_ERROR),
                         ERR_MSG("invalid value for parameter \"progress\": \"",
-                                DeparseValue(option->arg), "\""));
+                                DeparseExpr(option->arg), "\""));
       }
       show_progress = *maybe_progress;
     }
@@ -2159,7 +2129,7 @@ class CopyOptionsParser {
       if (!maybe_on_error) {
         THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
                         ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("COPY ON_ERROR \"", DeparseValue(option->arg),
+                        ERR_MSG("COPY ON_ERROR \"", DeparseExpr(option->arg),
                                 "\" not recognized"));
       }
       if (*maybe_on_error == "stop") {
@@ -2187,7 +2157,7 @@ class CopyOptionsParser {
         THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
                         ERR_CODE(ERRCODE_SYNTAX_ERROR),
                         ERR_MSG("invalid input syntax for type bigint: \"",
-                                DeparseValue(option->arg), "\""));
+                                DeparseExpr(option->arg), "\""));
       }
       if (*maybe_reject_limit <= 0) {
         THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
@@ -2202,11 +2172,10 @@ class CopyOptionsParser {
     if (const auto* option = EraseOption("log_verbosity")) {
       auto maybe_verbosity = TryGet<std::string_view>(option->arg);
       if (!maybe_verbosity) {
-        THROW_SQL_ERROR(
-          CURSOR_POS(ErrorPosition(ExprLocation(option))),
-          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG("COPY LOG_VERBOSITY \"", DeparseValue(option->arg),
-                  "\" not recognized"));
+        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
+                        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        ERR_MSG("COPY LOG_VERBOSITY \"",
+                                DeparseExpr(option->arg), "\" not recognized"));
       }
 
       if (*maybe_verbosity == "verbose") {

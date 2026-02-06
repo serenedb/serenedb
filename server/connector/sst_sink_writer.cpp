@@ -27,6 +27,7 @@
 
 #include "basics/assert.h"
 #include "basics/random/random_generator.h"
+#include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
 #include "rocksdb/options.h"
 #include "rocksdb/table.h"
@@ -87,7 +88,7 @@ void SSTSinkWriter::Write(std::span<const rocksdb::Slice> cell_slices,
   rocksdb::Status status;
   auto& writer = *_writers[_column_idx];
   if (cell_slices.size() == 1) {
-    status = writer.PutByInternalKey(key_slice, cell_slices.front());
+    status = writer.Put(key_slice, cell_slices.front());
   } else {
     std::string merged_value;
     size_t total_size = 0;
@@ -98,7 +99,7 @@ void SSTSinkWriter::Write(std::span<const rocksdb::Slice> cell_slices,
     for (const auto& slice : cell_slices) {
       merged_value.append(slice.data(), slice.size());
     }
-    status = writer.PutByInternalKey(key_slice, merged_value);
+    status = writer.Put(key_slice, merged_value);
   }
 
   if (!status.ok()) {

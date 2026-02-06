@@ -205,26 +205,6 @@ std::string DeparseStmt(Node* node) {
   return DeparseStmtImpl(node);
 }
 
-std::string DeparseValue(Node* expr) {
-  switch (nodeTag(expr)) {
-    case T_String: {
-      return strVal(expr);
-    }
-    case T_Integer: {
-      return absl::StrCat(intVal(expr));
-    }
-    case T_Float: {
-      return absl::StrCat(floatVal(expr));
-    }
-    case T_Boolean: {
-      return boolVal(expr) ? "true" : "false";
-    }
-    default:
-      SDB_ASSERT(false);
-      return "";
-  }
-}
-
 std::string DeparseExpr(Node* expr) {
   SDB_ASSERT(IsExpr(expr));
 

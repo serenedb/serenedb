@@ -22,10 +22,9 @@
 
 #pragma once
 
-#include <iresearch/search/states/term_state.hpp>
-#include <iresearch/types.hpp>
-
 #include "iresearch/formats/seek_cookie.hpp"
+#include "iresearch/search/states/term_state.hpp"
+#include "iresearch/types.hpp"
 
 namespace irs {
 

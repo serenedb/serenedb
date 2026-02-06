@@ -850,6 +850,8 @@ struct BlockDisjunctionTraits {
 
   // Size of the readhead buffer in blocks
   static constexpr size_t kNumBlocks = NumBlocks;
+
+  static_assert(kNumBlocks >= 1);
 };
 
 // The implementation reads ahead 64*NumBlocks documents.
@@ -1035,11 +1037,21 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
   }
 
   uint32_t count() final {
+    // TODO(mbkkt): optimize this case we can do it only for single block
     if (_begin != std::end(_mask)) [[unlikely]] {
       return Count(*this);
     }
 
-    uint32_t count = 0;
+    const auto count = (this->*_count_impl)();
+
+    _match_count = 0;
+    std::get<DocAttr>(_attrs).value = doc_limits::eof();
+    return count;
+  }
+
+ private:
+  IRS_FORCE_INLINE uint64_t CountImplGeneric() noexcept {
+    uint64_t count = 0;
     while (Refill()) {
       if constexpr (Traits::kMinMatch) {
         count += _match_buf.count();
@@ -1049,22 +1061,23 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
         }
       }
     }
-
-    _match_count = 0;
-    std::get<DocAttr>(_attrs).value = doc_limits::eof();
     return count;
   }
 
- private:
+#ifdef __x86_64__
+  __attribute__((target("avx512vpopcntdq"))) uint64_t
+  CountImplAvx512() noexcept {
+    return CountImplGeneric();
+  }
+#endif
+
   static constexpr doc_id_t kBlockSize = BitsRequired<uint64_t>();
 
-  static constexpr doc_id_t kNumBlocks =
-    static_cast<doc_id_t>(std::max(size_t(1), Traits::kNumBlocks));
+  static constexpr auto kNumBlocks = Traits::kNumBlocks;
 
   static constexpr doc_id_t kWindow = kBlockSize * kNumBlocks;
 
-  static_assert(kBlockSize * size_t(kNumBlocks) <
-                std::numeric_limits<doc_id_t>::max());
+  static_assert(kBlockSize * kNumBlocks < std::numeric_limits<doc_id_t>::max());
 
   // FIXME(gnusi): stack based score_buffer for constant cases
   using ScoreBufferType =
@@ -1089,6 +1102,13 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
       _score_buf(Merger::size(), kWindow),
       _match_buf(min_match_count),
       _scores(std::move(scores)) {
+    _count_impl = &BlockDisjunction::CountImplGeneric;
+#ifdef __x86_64__
+    if (__builtin_cpu_supports("avx512vpopcntdq")) {
+      _count_impl = &BlockDisjunction::CountImplAvx512;
+    }
+#endif
+
     std::get<CostAttr>(_attrs).reset(std::forward<Estimation>(estimation));
 
     if (_itrs.empty()) {
@@ -1303,6 +1323,9 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
     return false;  // exhausted
   }
 
+  using CountImplFunction = uint64_t (BlockDisjunction::*)() noexcept;
+
+  CountImplFunction _count_impl;
   uint64_t _mask[kNumBlocks]{};
   Adapters _itrs;
   uint64_t* _begin{std::end(_mask)};

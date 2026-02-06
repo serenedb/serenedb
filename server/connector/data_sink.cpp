@@ -28,6 +28,8 @@
 #include <velox/vector/FlatMapVector.h>
 #include <velox/vector/FlatVector.h>
 
+#include <memory>
+
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/endian.h"
@@ -36,6 +38,7 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
 #include "connector/primary_key.hpp"
+#include "connector/sink_writer_base.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "key_utils.hpp"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
@@ -255,10 +258,11 @@ SSTInsertDataSink::SSTInsertDataSink(
   rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
   std::span<const velox::column_index_t> key_childs,
-  std::vector<ColumnInfo> columns)
+  std::vector<ColumnInfo> columns,
+  std::vector<std::unique_ptr<SinkInsertWriter>>&& index_writers)
   : RocksDBDataSinkBase<SSTSinkWriter, SinkInsertWriter>(
       SSTSinkWriter{db, cf, columns}, memory_pool, object_key, key_childs,
-      std::move(columns), std::vector<std::unique_ptr<SinkInsertWriter>>{}) {}
+      std::move(columns), std::move(index_writers)) {}
 
 void SSTInsertDataSink::appendData(velox::RowVectorPtr input) {
   SDB_ASSERT(input->encoding() == velox::VectorEncoding::Simple::ROW);

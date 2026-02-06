@@ -675,14 +675,14 @@ class SereneDBConnector final : public velox::connector::Connector {
               serene_insert_handle.NumberOfRowsAffected(),
               std::move(update_sinks));
           } else {
+            auto insert_sinks =
+              CreateIndexWriters<SinkInsertWriter>(object_key, transaction);
             if (table.BulkInsert()) {
               return std::make_unique<SSTInsertDataSink>(
                 _db, _cf, *connector_query_ctx->memoryPool(), object_key,
-                pk_indices, columns);
+                pk_indices, columns, std::move(insert_sinks));
             }
 
-            auto insert_sinks =
-              CreateIndexWriters<SinkInsertWriter>(object_key, transaction);
             return std::make_unique<RocksDBInsertDataSink>(
               table.name(), rocksdb_transaction, _cf,
               *connector_query_ctx->memoryPool(), object_key, pk_indices,

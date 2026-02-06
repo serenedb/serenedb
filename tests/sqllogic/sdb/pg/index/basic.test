@@ -128,3 +128,15 @@ DROP INDEX IF EXISTS test_index;
 
 statement ok
 DROP TABLE test;
+
+
+query ok
+SELECT oid, relname, relkind FROM pg_class WHERE relname = 'test_index'
+----
+oid	relname	relkind
+
+
+query ok
+SELECT indexrelid, indrelid FROM pg_index
+----
+indexrelid	indrelid

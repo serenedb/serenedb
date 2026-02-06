@@ -377,6 +377,7 @@ CREATE TABLE arelav_consumer
 );
 
 
+onlyif serenedb
 statement count 10
 COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (FORMAT TEXT);
 

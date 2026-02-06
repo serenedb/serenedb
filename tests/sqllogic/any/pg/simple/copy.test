@@ -370,7 +370,6 @@ statement count 10
 COPY (SELECT 'imarelav', * FROM generate_series(1, 10)) TO '/tmp/${__DATABASE__}_arelav_consuma.csv';
 
 
-onlyif serenedb
 statement ok
 CREATE TABLE arelav_consumer
 (

@@ -125,12 +125,12 @@ void SSTSinkWriter::Finish() {
       continue;
     }
 
-    rocksdb::ExternalSstFileInfo info;
-    auto status = writer->Finish(&info);
+    rocksdb::ExternalSstFileInfo file_info;
+    auto status = writer->Finish(&file_info);
     if (!status.ok()) {
       SDB_THROW(rocksutils::ConvertStatus(status));
     }
-    sst_files.emplace_back(info.file_path);
+    sst_files.emplace_back(file_info.file_path);
   }
 
   rocksdb::IngestExternalFileOptions ingest_options;

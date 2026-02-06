@@ -57,6 +57,15 @@ SSTSinkWriter::SSTSinkWriter(rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
   table_options.filter_policy = nullptr;
   options.table_factory.reset(
     rocksdb::NewBlockBasedTableFactory(table_options));
+
+  if (!options.table_factory ||
+      !options.table_factory->IsInstanceOf(
+        rocksdb::TableFactory::kBlockBasedTableName())) {
+    SDB_THROW(
+      ERROR_INTERNAL,
+      "SSTSinkWriter requires BlockBasedTableFactory for PutByInternalKey");
+  }
+
   options.compression = rocksdb::kNoCompression;
   options.compression_per_level.clear();
 

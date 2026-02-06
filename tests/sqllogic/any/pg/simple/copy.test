@@ -199,18 +199,18 @@ db error: ERROR: option "labudabudabdab" not recognized
 
 
 statement count 100000
-COPY 
+COPY
 (
-  SELECT * 
-  FROM 
-    generate_series(1, 10) as iq, 
-    generate_series(1, 100) as pencil_size, 
+  SELECT *
+  FROM
+    generate_series(1, 10) as iq,
+    generate_series(1, 100) as pencil_size,
     generate_series(1, 100) as weight
 ) TO '/tmp/${__DATABASE__}_arelav' WITH (FORMAT CSV, HEADER 1);
 
 
 statement ok
-CREATE TABLE arelav 
+CREATE TABLE arelav
 (
   lmao INTEGER,
   kek INTEGER,
@@ -229,9 +229,9 @@ SELECT * FROM arelav ORDER BY 1, 2, 3;
 
 
 statement count 100
-COPY 
-  (SELECT x, y::text FROM generate_series(1, 10) as g1(x), generate_series(1, 10) as g2(y)) 
-TO 
+COPY
+  (SELECT x, y::text FROM generate_series(1, 10) as g1(x), generate_series(1, 10) as g2(y))
+TO
   '/tmp/${__DATABASE__}_deadinside.tsv'
 WITH (HEADER TRUE);
 
@@ -321,7 +321,7 @@ COPY (SELECT 1 as header, 2 as header) TO '/tmp/${__DATABASE__}_headers.tsv' WIT
 
 statement count 2
 COPY header_eater FROM '/tmp/${__DATABASE__}_headers.tsv';
- 
+
 
 query
 SELECT * FROM header_eater;

@@ -131,7 +131,7 @@ enum class MatchType {
   MinMatch,
 };
 
-template<MatchType MinMatch, bool SeekReadahead, size_t NumBlocks = 8>
+template<MatchType MinMatch, bool SeekReadahead, size_t NumBlocks = 64>
 struct BlockDisjunctionTraits {
   // "false" - iterator is used for min match filtering,
   // "true" - otherwise

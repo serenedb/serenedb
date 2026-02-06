@@ -1584,7 +1584,15 @@ Result RocksDBEngineCatalog::MarkDeleted(const catalog::Index& index,
     [&] {
       return RocksDBValue::Object(RocksDBEntryType::IndexTombstone, b.slice());
     },
-    [&] { return std::string_view{}; });
+    [&] {
+      const wal::SchemaObjectDrop entry = {
+        .database_id = db_id,
+        .schema_id = schema_id,
+        .object_id = relation_id,
+        .uuid = index.GetName(),
+      };
+      return wal::Write(RocksDBLogType::IndexDrop, entry);
+    });
 }
 
 Result RocksDBEngineCatalog::MarkDeleted(const catalog::Table& c,

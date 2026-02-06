@@ -2007,22 +2007,19 @@ class CopyOptionsParser {
 
  private:
   std::string_view TryFormatFromFile() const {
-    if (_file_path.empty()) {
+    const auto pos = _file_path.rfind('.');
+    if (pos == std::string_view::npos) {
       return {};
     }
 
-    auto dot_pos = _file_path.rfind('.');
-    if (dot_pos == std::string_view::npos || dot_pos + 1 >= _file_path.size()) {
-      return {};
-    }
-
-    auto file_format = _file_path.substr(dot_pos + 1);
-    if (file_format == "csv" || file_format == "parquet" ||
-        file_format == "dwrf" || file_format == "orc") {
+    const auto file_format = _file_path.substr(pos + 1);
+    if (file_format == "csv" || file_format == "text" ||
+        file_format == "parquet" || file_format == "dwrf" ||
+        file_format == "orc") {
       return file_format;
     }
 
-    if (file_format == "text" || file_format == "tsv" || file_format == "txt") {
+    if (file_format == "tsv" || file_format == "txt") {
       return "text";
     }
 
@@ -2041,15 +2038,22 @@ class CopyOptionsParser {
 
     std::string_view format = "text";
     if (const auto* option = EraseOption("format")) {
-      format = strVal(option->arg);
-      if (!format2parser.contains(format)) {
-        THROW_SQL_ERROR(
-          CURSOR_POS(ErrorPosition(ExprLocation(&option))),
-          ERR_CODE(ERRCODE_SYNTAX_ERROR),
-          ERR_MSG("invalid value for parameter \"format\": \"", format, "\""));
+      auto maybe_format = TryGet<std::string_view>(option->arg);
+      if (!maybe_format || !format2parser.contains(*maybe_format)) {
+        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(&option))),
+                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        ERR_MSG("invalid value for parameter \"format\": \"",
+                                DeparseExpr(option->arg), "\""));
       }
+      format = *maybe_format;
     } else if (auto maybe_format = TryFormatFromFile(); !maybe_format.empty()) {
       format = maybe_format;
+      WriteNotice(
+        _send_buffer,
+        absl::StrCat(
+          "Format \"", format,
+          "\" was auto-detected from the file extension. To override, "
+          "explicitly specify the format using the WITH (FORMAT ...) clause."));
     }
 
     auto it = format2parser.find(format);

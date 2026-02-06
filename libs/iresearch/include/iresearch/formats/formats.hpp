@@ -64,18 +64,7 @@ struct WandWriter;
 using DocMap = ManagedVector<doc_id_t>;
 using DocMapView = std::span<const doc_id_t>;
 
-using MakeScoreCallback =
-  absl::FunctionRef<ScoreFunction(uint32_t, const AttributeProvider&)>;
-
-using CompileScoreCallback =
-  absl::FunctionRef<void(uint32_t, AttributeProvider&)>;
-
-struct IteratorOptions : WandContext {
-  MakeScoreCallback make_score =
-    +[](uint32_t, const AttributeProvider&) noexcept {
-      return ScoreFunction{};
-    };
-};
+struct IteratorOptions : WandContext {};
 
 struct SegmentWriterOptions {
   const ColumnInfoProvider& column_info;

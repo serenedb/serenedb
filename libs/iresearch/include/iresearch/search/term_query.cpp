@@ -45,24 +45,7 @@ DocIterator::ptr TermQuery::execute(const ExecutionContext& ctx) const {
   const auto* reader = state->reader;
   SDB_ASSERT(reader);
   DocIterator::ptr docs;
-  auto ord_buckets = ord.buckets();
   IteratorOptions options{ctx.wand};
-
-  auto make_score = [&](uint32_t cookie_idx,
-                        const AttributeProvider& cookie_attrs) {
-    SDB_ASSERT(cookie_idx == 0);
-    auto* stat = _stats.c_str() + ord_buckets.front().stats_offset;
-    return ord.buckets().front().bucket->PrepareSingleScorer({
-      .segment = segment,
-      .field = state->reader->meta(),
-      .doc_attrs = cookie_attrs,
-      .stats = stat,
-      .boost = _boost,
-    });
-  };
-  if (!ord_buckets.empty() && options.Enabled() && ord_buckets.front().bucket) {
-    options.make_score = make_score;
-  }
 
   auto it = reader->Iterator(ord.features(),
                              {

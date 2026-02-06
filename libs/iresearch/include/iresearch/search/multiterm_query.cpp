@@ -133,32 +133,9 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
   const std::span stats{_stats};
 
   // add an iterator for each of the scored states
-  const bool no_score = ord.empty();
   const bool has_unscored_terms = !state->unscored_states.empty();
 
   IteratorOptions options{ctx.wand};
-  uint32_t current_cookie_idx = 0;
-
-  auto make_score = [&](uint32_t cookie_idx,
-                        const AttributeProvider& cookie_attrs) {
-    SDB_ASSERT(cookie_idx < state->scored_states.size());
-    cookie_idx = current_cookie_idx + cookie_idx;
-    auto& entry = state->scored_states[cookie_idx];
-    SDB_ASSERT(entry.stat_offset < stats.size());
-    auto* stat = stats[entry.stat_offset].c_str();
-    const auto boost = entry.boost * _boost;
-    return ord.buckets().front().bucket->PrepareScorer({
-      .segment = segment,
-      .field = state->reader->meta(),
-      .doc_attrs = cookie_attrs,
-      .stats = stat,
-      .boost = boost,
-    });
-  };
-
-  if (!no_score && options.Enabled() && ord.buckets().front().bucket) {
-    options.make_score = make_score;
-  }
 
   if (!has_unscored_terms) {
     std::vector<PostingCookie> cookies;
@@ -187,7 +164,6 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
                                    .field = reader->meta(),
                                  },
                                  options);
-    ++current_cookie_idx;
     if (!docs) [[unlikely]] {
       continue;
     }

@@ -66,12 +66,7 @@ void MakeColumnKey(const velox::RowVectorPtr& input,
 
   if constexpr (IsInternalSSTKey) {
     // TODO: if key is fixed size, we can avoid extra alloc here
-    const auto key_size = key_buffer.size();
-    basics::StrAppend(key_buffer,
-                      sizeof(rocksdb::SstFileWriter::kInternalKeyFooter));
-    std::memcpy(key_buffer.data() + key_size,
-                &rocksdb::SstFileWriter::kInternalKeyFooter,
-                sizeof(rocksdb::SstFileWriter::kInternalKeyFooter));
+    basics::StrAppend(key_buffer, rocksdb::SstFileWriter::kInternalKeyFooter);
   }
 }
 

@@ -60,6 +60,10 @@ class Exclusion : public DocIterator {
 
   uint32_t count() final { return Count(*this); }
 
+  uint32_t collect(std::span<doc_id_t> docs) final {
+    return DocIterator::Collect(*this, docs);
+  }
+
  private:
   doc_id_t converge(doc_id_t incl) {
     if (doc_limits::eof(incl)) [[unlikely]] {

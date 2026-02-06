@@ -64,6 +64,11 @@ class AllIterator : public DocIterator {
     return count;
   }
 
+  uint32_t collect(std::span<doc_id_t> docs) final {
+    // TODO(gnusi): optimize
+    return Collect(*this, docs);
+  };
+
  private:
   DocAttr _doc;
   const doc_id_t _max_doc;  // largest valid doc_id
@@ -98,6 +103,10 @@ class MaskDocIterator : public DocIterator {
   }
 
   uint32_t count() final { return Count(*this); }
+
+  uint32_t collect(std::span<doc_id_t> docs) final {
+    return Collect(*this, docs);
+  }
 
  private:
   const DocumentMask& _mask;  // excluded document ids
@@ -139,6 +148,10 @@ class MaskedDocIterator : public DocIterator {
   }
 
   uint32_t count() final { return Count(*this); }
+
+  uint32_t collect(std::span<doc_id_t> docs) final {
+    return Collect(*this, docs);
+  }
 
  private:
   const DocumentMask& _docs_mask;

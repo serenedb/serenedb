@@ -26,10 +26,12 @@
 #include <iresearch/search/bitset_doc_iterator.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/column_existence_filter.hpp>
+#include <iresearch/search/filter.hpp>
 #include <iresearch/search/granular_range_filter.hpp>
 #include <iresearch/search/nested_filter.hpp>
 #include <iresearch/search/prev_doc.hpp>
 #include <iresearch/search/term_filter.hpp>
+#include <iresearch/utils/attribute_provider.hpp>
 
 #include "search/filter_test_case_base.hpp"
 #include "tests_shared.hpp"
@@ -69,6 +71,8 @@ struct ChildIterator : irs::DocIterator {
     return advance();
   }
 
+  void CollectData(uint16_t index) final { _it->CollectData(index); }
+
  private:
   irs::DocIterator::ptr _it;
   std::set<irs::doc_id_t> _parents;
@@ -95,38 +99,47 @@ class PrevDocWrapper : public irs::DocIterator {
 
   irs::doc_id_t seek(irs::doc_id_t target) final { return _it->seek(target); }
 
+  void CollectData(uint16_t index) final { _it->CollectData(index); }
+
  private:
   DocIterator::ptr _it;
   irs::PrevDocAttr _prev_doc;
 };
 
-struct DocIdScorer : irs::ScorerBase<void> {
+struct DocIdScorer : public irs::ScorerBase<void> {
   irs::IndexFeatures GetIndexFeatures() const final {
     return irs::IndexFeatures::None;
   }
 
-  irs::ScoreFunction PrepareScorer(const irs::ColumnProvider&,
-                                   const irs::FieldProperties&,
-                                   const irs::byte_type*,
-                                   const irs::AttributeProvider& attrs,
-                                   irs::score_t) const final {
+  irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
     struct ScorerContext final : irs::ScoreCtx {
-      explicit ScorerContext(const irs::DocAttr* doc) noexcept : doc{doc} {}
+      explicit ScorerContext(const tests::DocBlockAttr* doc) noexcept
+        : doc{doc} {}
 
-      const irs::DocAttr* doc;
+      const tests::DocBlockAttr* doc;
     };
 
-    auto* doc = irs::get<irs::DocAttr>(attrs);
+    auto* doc = irs::get<tests::DocBlockAttr>(ctx.doc_attrs);
     EXPECT_NE(nullptr, doc);
 
     return irs::ScoreFunction::Make<ScorerContext>(
-      [](irs::ScoreCtx* ctx, irs::score_t* res) noexcept {
+      [](irs::ScoreCtx* ctx, irs::score_t* res, size_t n) noexcept {
         ASSERT_NE(nullptr, res);
         ASSERT_NE(nullptr, ctx);
-        const auto& state = *static_cast<ScorerContext*>(ctx);
-        *res = state.doc->value;
+        auto& state = *static_cast<ScorerContext*>(ctx);
+        for (size_t i = 0; i < n; ++i) {
+          res[i] = static_cast<irs::score_t>(state.doc->value[i]);
+        }
       },
-      irs::ScoreFunction::DefaultMin, doc);
+      [](irs::ScoreCtx* ctx, auto* res, size_t n) noexcept {
+        ASSERT_NE(nullptr, res);
+        ASSERT_NE(nullptr, ctx);
+        auto& state = *static_cast<ScorerContext*>(ctx);
+        for (size_t i = 0; i < n; ++i) {
+          res[i].second = static_cast<irs::score_t>(state.doc->value[i]);
+        }
+      },
+      irs::ScoreFunction::NoopMin, doc);
   }
 };
 
@@ -1219,7 +1232,8 @@ TEST_P(NestedFilterTestCase, JoinNone3) {
   opts.match = irs::kMatchNone;
   filter.boost(0.5f);
 
-  CheckQuery(filter, Docs{6, 8, 13, 20}, Costs{4}, reader, SOURCE_LOCATION);
+  CheckQuery(tests::FilterWrapper{filter}, Docs{6, 8, 13, 20}, Costs{4}, reader,
+             SOURCE_LOCATION);
 
   {
     opts.merge_type = irs::ScoreMergeType::Max;
@@ -1233,7 +1247,8 @@ TEST_P(NestedFilterTestCase, JoinNone3) {
       {Next{}, irs::doc_limits::eof()},
     };
 
-    CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
+    CheckQuery(tests::FilterWrapper{filter}, scorers, {tests}, reader,
+               SOURCE_LOCATION);
   }
 
   if constexpr (false) {
@@ -1248,7 +1263,8 @@ TEST_P(NestedFilterTestCase, JoinNone3) {
       {Next{}, irs::doc_limits::eof()},
     };
 
-    CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
+    CheckQuery(tests::FilterWrapper{filter}, scorers, {tests}, reader,
+               SOURCE_LOCATION);
   }
 
   {
@@ -1265,7 +1281,8 @@ TEST_P(NestedFilterTestCase, JoinNone3) {
       {Next{}, irs::doc_limits::eof()},
     };
 
-    CheckQuery(filter, scorers, {tests}, reader, SOURCE_LOCATION);
+    CheckQuery(tests::FilterWrapper{filter}, scorers, {tests}, reader,
+               SOURCE_LOCATION);
   }
 }
 

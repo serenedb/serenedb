@@ -45,35 +45,21 @@ DocIterator::ptr TermQuery::execute(const ExecutionContext& ctx) const {
   const auto* reader = state->reader;
   SDB_ASSERT(reader);
   DocIterator::ptr docs;
-  auto ord_buckets = ord.buckets();
   IteratorOptions options{ctx.wand};
 
-  auto make_score = [&](uint32_t cookie_idx,
-                        const AttributeProvider& cookie_attrs) {
-    SDB_ASSERT(cookie_idx == 0);
-    auto* stat = _stats.c_str() + ord_buckets.front().stats_offset;
-    return ord.buckets().front().bucket->PrepareScorer(
-      segment, state->reader->meta(), stat, cookie_attrs, _boost);
-  };
-  if (!ord_buckets.empty() && options.Enabled() && ord_buckets.front().bucket) {
-    options.make_score = make_score;
+  auto it = reader->Iterator(ord.features(),
+                             {
+                               .cookie = state->cookie.get(),
+                               .stats = _stats.c_str(),
+                               .boost = _boost,
+                               .field = reader->meta(),
+                             },
+                             options);
+  if (!it) {
+    return DocIterator::empty();
   }
 
-  auto compile_score = [&](uint32_t cookie_idx,
-                           AttributeProvider& cookie_attrs) {
-    SDB_ASSERT(cookie_idx == 0);
-    auto* score = GetMutable<ScoreAttr>(&cookie_attrs);
-    SDB_ASSERT(score);
-    auto* stat = _stats.c_str() + ord_buckets.front().stats_offset;
-    CompileScore(*score, ord.buckets(), segment, *state->reader, stat,
-                 cookie_attrs, _boost);
-  };
-  if (!ord_buckets.empty()) {
-    options.compile_score = compile_score;
-  }
-
-  auto it = reader->Iterator(ord.features(), *state->cookie, options);
-  return it ? std::move(it) : DocIterator::empty();
+  return it;
 }
 
 void TermQuery::visit(const SubReader& segment, PreparedStateVisitor& visitor,

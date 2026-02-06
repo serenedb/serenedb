@@ -38,10 +38,13 @@ void CommitTask::Finalize(
   CommitResult res) {
   constexpr size_t kMaxNonEmptyCommits = 10;
   constexpr size_t kMaxPendingConsolidations = 3;
+  bool is_deleted = inverted_index_shard->IsDeleted();
 
   if (res != CommitResult::NoChanges) {
     _state->pending_commits.fetch_add(1, std::memory_order_release);
-    ScheduleContinue(_commit_interval_msec);
+    if (!is_deleted) {
+      ScheduleContinue(_commit_interval_msec);
+    }
 
     if (res == CommitResult::Done) {
       _state->noop_commit_count.store(0, std::memory_order_release);
@@ -51,15 +54,19 @@ void CommitTask::Finalize(
             kMaxPendingConsolidations &&
           _state->non_empty_commits.fetch_add(1, std::memory_order_acq_rel) >=
             kMaxNonEmptyCommits) {
-        inverted_index_shard->ScheduleConsolidation(
-          _consolidation_interval_msec);
+        if (!is_deleted) {
+          inverted_index_shard->ScheduleConsolidation(
+            _consolidation_interval_msec);
+        }
         _state->non_empty_commits.store(0, std::memory_order_release);
       }
     }
   } else {
     _state->non_empty_commits.store(0, std::memory_order_release);
     _state->noop_commit_count.fetch_add(1, std::memory_order_release);
-
+    if (is_deleted) {
+      return;
+    }
     for (auto count = _state->pending_commits.load(std::memory_order_acquire);
          count < 1;) {
       if (_state->pending_commits.compare_exchange_weak(
@@ -166,9 +173,13 @@ void ConsolidationTask::operator()() {
   }
   auto id = data->GetId();
   _state->pending_consolidations.fetch_sub(1, std::memory_order_release);
+  bool is_deleted = data->IsDeleted();
 
-  absl::Cleanup reschedule = [this]() noexcept {
+  absl::Cleanup reschedule = [this, is_deleted]() noexcept {
     try {
+      if (is_deleted) {
+        return;
+      }
       for (auto count =
              _state->pending_consolidations.load(std::memory_order_acquire);
            count < 1;) {
@@ -210,7 +221,8 @@ void ConsolidationTask::operator()() {
   if (_state->noop_commit_count.load(std::memory_order_acquire) <
         kMaxNoopCommits &&
       _state->noop_consolidation_count.load(std::memory_order_acquire) <
-        kMaxNoopConsolidations) {
+        kMaxNoopConsolidations &&
+      !is_deleted) {
     _state->pending_consolidations.fetch_add(1, std::memory_order_release);
     ScheduleContinue(_consolidation_interval_msec);
   }

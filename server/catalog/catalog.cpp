@@ -219,7 +219,7 @@ Result CatalogFeature::ProcessTombstones() {
   auto& engine = GetServerEngine();
   auto process_schema = [&](ObjectId database_id,
                             ObjectId schema_id) -> Result {
-    return engine.VisitSchemaObjects(
+    auto r = engine.VisitSchemaObjects(
       database_id, schema_id, RocksDBEntryType::Collection,
       [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
         CreateTableOptions options;
@@ -236,30 +236,30 @@ Result CatalogFeature::ProcessTombstones() {
         TableTombstone tombstone;
         tombstone.table = options.id;
 
-        // TODO(gnusi): this will be gone once we have normal indexes
-        struct IndexMeta {
-          std::string_view objectId;  // NOLINT
-          sdb::IndexType type = sdb::IndexType::Unknown;
-          bool unique = false;
-        };
-        for (auto index_slice : vpack::ArrayIterator{options.indexes}) {
-          IndexMeta index;
-          auto r = vpack::ReadObjectNothrow(
-            index_slice, index, {.skip_unknown = true, .strict = false});
-          if (!r.ok()) {
-            return ErrorMeta(r.errorNumber(), "index", r.errorMessage(),
-                             index_slice);
-          }
-          ObjectId index_id{basics::string_utils::Uint64(index.objectId)};
-          if (!index_id.isSet()) {
-            continue;
-          }
-          tombstone.indexes.emplace_back(index_id, index.type,
-                                         std::numeric_limits<uint64_t>::max(),
-                                         index.unique);
+        Local().RegisterTableDrop(std::move(tombstone));
+        return {};
+      });
+
+    if (!r.ok()) {
+      return r;
+    }
+
+    return engine.VisitSchemaObjects(
+      database_id, schema_id, RocksDBEntryType::Index,
+      [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
+        IndexBaseOptions options;
+
+        if (auto r = vpack::ReadTupleNothrow(slice, options); !r.ok()) {
+          return ErrorMeta(r.errorNumber(), "index", r.errorMessage(), slice);
         }
 
-        Local().RegisterTableDrop(std::move(tombstone));
+        IndexTombstone tombstone;
+        tombstone.old_database = options.database_id;
+        tombstone.old_schema = options.schema_id;
+        tombstone.id = options.id;
+        tombstone.type = options.type;
+
+        Local().RegisterIndexDrop(std::move(tombstone));
         return {};
       });
   };

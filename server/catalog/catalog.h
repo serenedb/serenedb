@@ -196,7 +196,7 @@ struct LogicalCatalog {
                              CreateTableOperationOptions operation_options) = 0;
   virtual Result CreateIndex(ObjectId database_id, std::string_view schema,
                              std::string_view relation,
-                             std::vector<std::string> column_names,
+                             const std::vector<std::string>& column_names,
                              IndexBaseOptions options, vpack::Slice args) = 0;
 
   virtual Result RenameTable(ObjectId database_id, std::string_view schema,

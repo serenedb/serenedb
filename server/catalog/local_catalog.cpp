@@ -70,6 +70,7 @@
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/engine_feature.h"
+#include "storage_engine/index_shard.h"
 #include "storage_engine/search_engine.h"
 #include "utils/exec_context.h"
 #include "utils/operation_options.h"
@@ -129,12 +130,26 @@ AsyncResult QueueTask(std::shared_ptr<T> task) {
   }
 }
 
+IndexTombstone MakeIndexTombstone(const Index& index, IndexShard& shard) {
+  IndexTombstone tombstone;
+  tombstone.id = index.GetId();
+  tombstone.old_database = index.GetDatabaseId();
+  tombstone.old_schema = index.GetSchemaId();
+  tombstone.type = index.GetIndexType();
+
+  if (index.GetIndexType() == IndexType::Inverted) {
+    basics::downCast<search::InvertedIndexShard>(shard).MarkDeleted();
+  }
+
+  return tombstone;
+}
+
 TableTombstone MakeTableTombstone(const TableShard& physical) {
   TableTombstone result{
     .table = physical.GetMeta().id,
     .old_schema = physical.GetMeta().schema,
     .old_database = physical.GetMeta().database,
-    .number_documents = 0,
+    .number_documents = kRead,
   };
 
 #ifdef SDB_CLUSTER
@@ -244,8 +259,7 @@ struct IndexDrop {
       index_shard.reset();
       return {};
     }
-
-    if (index_shard && index_shard.use_count() > 2) {
+    if (index_shard && index_shard.use_count() > 1) {
       SDB_DEBUG("xxxxx", Logger::THREADS,
                 "Reschedule dropping index: ", tombstone.id);
       return {ERROR_LOCKED};
@@ -253,17 +267,18 @@ struct IndexDrop {
 
     const bool fatal = !catalog->GetSkipBackgroundErrors();
     auto& engine = GetServerEngine();
-    if (auto r = engine.DropIndex(tombstone); !r.ok()) {
-      SDB_WARN("xxxxx", Logger::ENGINES, "Failed dropping index ", tombstone.id,
-               ", error: ", r.errorMessage());
+
+    if (auto r = engine.DropIndexShard(tombstone.id); !r.ok()) {
+      SDB_WARN("xxxxx", Logger::ENGINES, "Failed dropping index shard ",
+               tombstone.id, ", error: ", r.errorMessage());
       if (fatal) {
         return {ERROR_INTERNAL};
       }
     }
 
-    if (auto r = engine.DropIndexShard(tombstone.id); !r.ok()) {
-      SDB_WARN("xxxxx", Logger::ENGINES, "Failed dropping index shard ",
-               tombstone.id, ", error: ", r.errorMessage());
+    if (auto r = engine.DropIndex(tombstone); !r.ok()) {
+      SDB_WARN("xxxxx", Logger::ENGINES, "Failed dropping index ", tombstone.id,
+               ", error: ", r.errorMessage());
       if (fatal) {
         return {ERROR_INTERNAL};
       }
@@ -482,15 +497,15 @@ class SnapshotImpl : public Snapshot {
   }
 
   void DropTableShard(ObjectId id) { _table_shards.erase(id); }
-  void DropIndexShard(ObjectId id) {
+  std::shared_ptr<IndexShard> DropIndexShard(ObjectId id) {
     auto node = _index_shards.extract(id);
-    if (node) {
-      auto index_shard = std::move(node.value());
-      auto table = GetObject(index_shard->GetRelationId());
-      SDB_ASSERT(table);
-      SDB_ASSERT(table->GetType() == ObjectType::Table);
-      basics::downCast<Table>(*table).RemoveIndex(index_shard->GetId());
-    }
+    SDB_ASSERT(node);
+    auto index_shard = std::move(node.value());
+    auto table = GetObject(index_shard->GetRelationId());
+    SDB_ASSERT(table);
+    SDB_ASSERT(table->GetType() == ObjectType::Table);
+    basics::downCast<Table>(*table).RemoveIndex(index_shard->GetId());
+    return index_shard;
   }
 
   std::vector<std::shared_ptr<Role>> GetRoles() const final {
@@ -1225,8 +1240,11 @@ Result LocalCatalog::RegisterIndex(ObjectId database_id,
 
 Result LocalCatalog::CreateIndex(ObjectId database_id, std::string_view schema,
                                  std::string_view relation_name,
-                                 std::vector<std::string> column_names,
+                                 const std::vector<std::string>& column_names,
                                  IndexBaseOptions options, vpack::Slice args) {
+  if (column_names.empty()) {
+    return Result{ERROR_BAD_PARAMETER, "Cannot create index without columns"};
+  }
   absl::MutexLock lock{&_mutex};
 
   auto relation = _snapshot->GetRelation(database_id, schema, relation_name);
@@ -1248,11 +1266,7 @@ Result LocalCatalog::CreateIndex(ObjectId database_id, std::string_view schema,
     return it != columns.end() ? &*it : nullptr;
   };
 
-  if (column_names.empty()) {
-    return Result{ERROR_BAD_PARAMETER, "Cannot create index without columns"};
-  }
-
-  for (auto name : column_names) {
+  for (const auto& name : column_names) {
     const auto* column = find_column(name);
     if (!column) {
       return Result{ERROR_BAD_PARAMETER, "column \"", name,
@@ -1303,10 +1317,8 @@ Result LocalCatalog::DropIndex(ObjectId database_id, std::string_view schema,
       [&](auto& database, auto& schema, auto& object) -> Result {
         auto& index = basics::downCast<Index>(*object);
 
-        tombstone.id = index.GetId();
-        tombstone.type = index.GetIndexType();
-
-        clone->DropIndexShard(index.GetId());
+        index_shard = clone->DropIndexShard(index.GetId());
+        tombstone = MakeIndexTombstone(index, *index_shard);
 
         return _engine->MarkDeleted(index, tombstone);
       });
@@ -1750,14 +1762,9 @@ Result LocalCatalog::DropTable(ObjectId database_id, std::string_view schema,
             auto& index = basics::downCast<Index>(*object);
             SDB_ASSERT(index.GetRelationId() == table_id);
 
-            IndexTombstone index_tombstone;
-            index_tombstone.id = index.GetId();
-            index_tombstone.number_documents = task->tombstone.number_documents;
-            index_tombstone.unique = false;
-            index_tombstone.type = index.GetIndexType();
-
             auto index_shard = clone->GetIndexShard(index.GetId());
             SDB_ASSERT(index_shard);
+            auto index_tombstone = MakeIndexTombstone(index, *index_shard);
             clone->DropIndexShard(index.GetId());
 
             auto schema_obj = clone->GetObject(index.GetSchemaId());

@@ -81,6 +81,14 @@ bool ReadTick(irs::bytes_view payload, Tick& tick) noexcept {
 
 }  // namespace
 
+std::filesystem::path InvertedIndexShard::GetPath(ObjectId db, ObjectId schema,
+                                                  ObjectId id) {
+  std::filesystem::path path = GetSearchEngine().GetPersistedPath(db);
+  path /= absl::StrCat(schema);
+  path /= absl::StrCat(id);
+  return path;
+}
+
 InvertedIndexShard::InvertedIndexShard(const catalog::InvertedIndex& index,
                                        InvertedIndexShardOptions options,
                                        bool is_new)

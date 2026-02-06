@@ -65,6 +65,7 @@
 #include "basics/result.h"
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"
+#include "basics/system-compiler.h"
 #include "basics/system-functions.h"
 #include "catalog/catalog.h"
 #include "catalog/database.h"
@@ -111,6 +112,9 @@
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 #include "rocksdb_engine_catalog/rocksdb_value.h"
 #include "rocksdb_engine_catalog/rocksdb_wal_access.h"
+#include "search/inverted_index_shard.h"
+#include "storage_engine/engine_feature.h"
+#include "storage_engine/search_engine.h"
 #include "storage_engine/table_shard.h"
 #include "vpack/serializer.h"
 #include "vpack/slice.h"
@@ -1707,40 +1711,21 @@ Result RocksDBEngineCatalog::DropIndex(IndexTombstone tombstone) {
              "could not delete index estimate: ", r.errorMessage());
   }
 
-  if (tombstone.type == IndexType::Inverted) {
-    // TODO(gnusi): handle it here?
-
-    // rocksdb does not store inverted index data
-    return r;
+  switch (tombstone.type) {
+    case IndexType::Inverted: {
+      auto path = search::InvertedIndexShard::GetPath(
+        tombstone.old_database, tombstone.old_schema, tombstone.id);
+      if (std::filesystem::exists(path)) {
+        std::filesystem::remove_all(path);
+      }
+      break;
+    }
+    case IndexType::Secondary:
+      // TODO(codeworse): Implement secondary index erasure
+      break;
+    case IndexType::Unknown:
+      SDB_UNREACHABLE();
   }
-
-  const bool prefix_same_as_start = true;
-  const bool use_range_delete =
-    UseRangeDelete(tombstone.id, tombstone.number_documents);
-  const auto bounds =
-    GetIndexBounds(tombstone.type, tombstone.id.id(), tombstone.unique);
-
-  r = rocksutils::RemoveLargeRange(db, bounds.start(), bounds.end(),
-                                   bounds.columnFamily(), prefix_same_as_start,
-                                   use_range_delete);
-
-  if (use_range_delete) {
-    // TODO(gnusi): ignore errors?
-    compactRange(bounds);
-  }
-
-#ifdef SDB_DEV
-  // check if documents have been deleted
-  if (size_t num_docs =
-        rocksutils::CountKeyRange(db, bounds, nullptr, prefix_same_as_start);
-      num_docs > 0) {
-    SDB_THROW(
-      ERROR_INTERNAL,
-      "deletion check in index drop failed - not all documents in the index "
-      "have been deleted. remaining: ",
-      num_docs);
-  }
-#endif
 
   return r;
 }

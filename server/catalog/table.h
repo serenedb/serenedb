@@ -41,10 +41,10 @@ namespace sdb {
 static constexpr auto kRead = std::numeric_limits<uint64_t>::max();
 
 struct IndexTombstone {
+  ObjectId old_database;
+  ObjectId old_schema;
   ObjectId id;
   IndexType type = IndexType::Unknown;
-  uint64_t number_documents = kRead;
-  bool unique = false;
 };
 
 struct TableTombstone {

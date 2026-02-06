@@ -23,6 +23,7 @@
 #include <string>
 
 #include "catalog/object.h"
+#include "catalog/table_options.h"
 #include "catalog/types.h"
 
 namespace sdb {
@@ -38,7 +39,7 @@ struct IndexBaseOptions {
   ObjectId relation_id;
   std::string name;
   IndexType type = IndexType::Unknown;
-  std::vector<uint16_t> column_ids;
+  std::vector<Column::Id> column_ids;
 };
 
 template<typename Impl>
@@ -51,7 +52,7 @@ class Index : public SchemaObject {
  public:
   auto GetIndexType() const noexcept { return _type; }
   auto GetRelationId() const noexcept { return _relation_id; }
-  std::span<const uint16_t> GetColumnIds() const noexcept {
+  std::span<const Column::Id> GetColumnIds() const noexcept {
     return _column_ids;
   }
   void WriteInternal(vpack::Builder& builder) const override;
@@ -66,7 +67,7 @@ class Index : public SchemaObject {
 
   ObjectId _relation_id;
   IndexType _type;
-  std::vector<uint16_t> _column_ids;
+  std::vector<Column::Id> _column_ids;
 };
 
 ResultOr<std::shared_ptr<Index>> MakeIndex(IndexBaseOptions options);

@@ -81,7 +81,7 @@ namespace sdb {
 
 bool IsIOUringEnabled() {
 #ifdef SDB_GTEST
-  static const auto kSupported = IsIoUringSupported();
+  static const bool kSupported = IsIoUringSupported();
   return kSupported;
 #else
   return SerenedServer::Instance()

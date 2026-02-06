@@ -1871,6 +1871,7 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
 }
 
 void WriteNotice(message::Buffer& send, std::string_view message) {
+  SDB_ASSERT(send.GetUncommittedSize() == 0);
   const auto uncommitted_size = send.GetUncommittedSize();
   auto* prefix_data = send.GetContiguousData(5);
   send.WriteUncommitted(std::string_view{"SNOTICE\0VNOTICE\0C", 17});

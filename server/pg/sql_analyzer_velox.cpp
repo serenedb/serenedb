@@ -787,6 +787,9 @@ class SqlAnalyzer {
   void ProcessCreateFunctionStmt(State& state, const CreateFunctionStmt& stmt);
   void ProcessCreateViewStmt(State& state, const ViewStmt& stmt);
   void ProcessCreateStmt(State& state, const CreateStmt& stmt);
+  void ProcessCreateTableAsStmt(State& state, const CreateTableAsStmt& stmt);
+  std::pair<std::vector<std::string>, std::vector<lp::ExprPtr>>
+  ProcessIntoClause(State& state, const IntoClause& into);
   void ProcessCallStmt(State& state, const CallStmt& stmt);
 
   void ProcessValuesList(State& state, const List* list);
@@ -2647,6 +2650,96 @@ void SqlAnalyzer::ProcessCreateStmt(State& state, const CreateStmt& stmt) {
   });
 }
 
+void SqlAnalyzer::ProcessCreateTableAsStmt(State& state,
+                                           const CreateTableAsStmt& stmt) {
+  if (nodeTag(stmt.query) != T_SelectStmt) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
+                    ERR_MSG("CREATE TABLE AS only supports SELECT statements"));
+  }
+
+  if (stmt.objtype != OBJECT_TABLE) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
+                    ERR_MSG("CREATE TABLE AS only supports creating tables"));
+  }
+
+  
+  // auto [column_names, column_exprs] = ProcessIntoClause(state, *stmt.into);
+  // state.root = std::make_shared<lp::TableWriteNode>(
+  //   _id_generator.NextPlanId(), std::move(state.root), axiom_table, write_kind,
+  //   std::move(column_names), std::move(column_exprs));
+}
+
+std::pair<std::vector<std::string>, std::vector<lp::ExprPtr>>
+SqlAnalyzer::ProcessIntoClause(State& state, const IntoClause& into) {
+  SDB_ASSERT(state.root);
+  SDB_ASSERT(state.root);
+  std::vector<std::string> column_names;
+  std::vector<lp::ExprPtr> column_exprs;
+  const auto& output = *state.root->outputType();
+
+  if (output.size() < list_length(into.colNames)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_COLUMN_REFERENCE),
+                    CURSOR_POS(ErrorPosition(ExprLocation(&into))),
+                    ERR_MSG("too many column names specified"));
+  }
+
+  auto add_column = [&](std::string name, size_t idx) {
+    if (absl::c_contains(column_names, name)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DUPLICATE_COLUMN),
+        CURSOR_POS(ErrorPosition(ExprLocation(&into))),
+        ERR_MSG("column \"", name, "\" specified more than once"));
+    }
+    auto type = output.childAt(idx);
+    auto expr = std::make_shared<lp::InputReferenceExpr>(std::move(type), name);
+    column_names.emplace_back(std::move(name));
+    column_exprs.emplace_back(std::move(expr));
+  };
+
+  size_t i = 0;
+  for (; i < list_length(into.colNames); ++i) {
+    auto colname = strVal(list_nth_node(Node, into.colNames, i));
+    add_column(colname, i);
+  }
+  for (; i < output.size(); ++i) {
+    add_column(output.nameOf(i), i);
+  }
+
+  if (into.accessMethod) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    CURSOR_POS(ErrorPosition(ExprLocation(&into))),
+                    ERR_MSG("access method is not supported"));
+  }
+
+  if (into.options) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    CURSOR_POS(ErrorPosition(ExprLocation(&into))),
+                    ERR_MSG("WITH options are not supported"));
+  }
+
+  if (into.onCommit != ONCOMMIT_NOOP) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    CURSOR_POS(ErrorPosition(ExprLocation(&into))),
+                    ERR_MSG("ON COMMIT is not supported"));
+  }
+
+  if (into.tableSpaceName) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    CURSOR_POS(ErrorPosition(ExprLocation(&into))),
+                    ERR_MSG("TABLESPACE is not supported"));
+  }
+
+  if (into.skipData) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    CURSOR_POS(ErrorPosition(ExprLocation(&into))),
+                    ERR_MSG("WITH NO DATA is not supported"));
+  }
+
+  return {std::move(column_names), std::move(column_exprs)};
+}
+
 SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node) {
   switch (node.type) {
     case T_SelectStmt: {
@@ -2701,6 +2794,12 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node) {
       const auto& stmt = *castNode(CreateStmt, &node);
       ProcessCreateStmt(state, stmt);
       state.pgsql_node = &node;
+      return SqlCommandType::DDL;
+    }
+    case T_CreateTableAsStmt: {
+      state.pgsql_node = &node;
+      const auto& stmt = *castNode(CreateTableAsStmt, &node);
+      ProcessCreateTableAsStmt(state, stmt);
       return SqlCommandType::DDL;
     }
     case T_IndexStmt: {  // CREATE INDEX

@@ -22,7 +22,7 @@ Filter MakeFilter(std::string_view field, std::string_view value) {
   return q;
 }
 
-}
+}  // namespace
 
 TEST(by_regexp_test, options) {
   irs::ByRegexpOptions opts;
@@ -85,6 +85,7 @@ TEST(by_regexp_test, boost) {
   counter.Reset();
 }
 
+
 TEST(by_regexp_test, test_type_of_prepared_query) {
   MaxMemoryCounter counter;
 
@@ -113,7 +114,7 @@ TEST(by_regexp_test, test_type_of_prepared_query) {
                    .index = irs::SubReader::empty(),
                    .memory = counter,
                  });
-    auto rhs = MakeFilter("foo", "bar.*")  // regexp prefix
+    auto rhs = MakeFilter("foo", "bar.*")
                  .prepare({
                    .index = irs::SubReader::empty(),
                    .memory = counter,
@@ -196,6 +197,40 @@ TEST_P(RegexpFilterTestCase, by_regexp) {
   }
 }
 
+TEST_P(RegexpFilterTestCase, by_regexp_complex_patterns) {
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  {
+    Docs docs{1, 4, 21, 26, 31, 32};
+    Costs costs{docs.size()};
+
+    CheckQuery(MakeFilter("prefix", "(abc|abd).*"), docs, costs, rdr);
+  }
+
+  {
+    Docs docs{1, 4, 21, 26, 31, 32};
+    Costs costs{docs.size()};
+
+    CheckQuery(MakeFilter("prefix", "ab[cd].*"), docs, costs, rdr);
+  }
+
+  {
+    Docs result;
+    for (size_t i = 0; i < 32; ++i) {
+      result.push_back(irs::doc_id_t((irs::doc_limits::min)() + i));
+    }
+    Costs costs{result.size()};
+
+    CheckQuery(MakeFilter("same", "xy+z"), result, costs, rdr);
+  }
+}
+
 TEST_P(RegexpFilterTestCase, by_regexp_utf8) {
   {
     tests::JsonDocGenerator gen(resource("simple_sequential_utf8.json"),
@@ -204,8 +239,6 @@ TEST_P(RegexpFilterTestCase, by_regexp_utf8) {
   }
 
   auto rdr = open_reader();
-
-
 }
 
 TEST_P(RegexpFilterTestCase, visit) {
@@ -279,6 +312,61 @@ TEST_P(RegexpFilterTestCase, visit) {
               visitor.term_refs<char>());
 
     visitor.reset();
+  }
+
+  {
+    auto pattern = irs::ViewCast<irs::byte_type>(std::string_view("abc|abde"));
+    tests::EmptyFilterVisitor visitor;
+    auto field_visitor = irs::ByRegexp::visitor(pattern);
+    ASSERT_TRUE(field_visitor);
+    field_visitor(segment, *reader, visitor);
+    ASSERT_EQ(1, visitor.prepare_calls_counter());
+    ASSERT_EQ(2, visitor.visit_calls_counter());
+    ASSERT_EQ((std::vector<std::pair<std::string_view, irs::score_t>>{
+                {"abc", irs::kNoBoost},
+                {"abde", irs::kNoBoost},
+              }),
+              visitor.term_refs<char>());
+
+    visitor.reset();
+  }
+}
+
+TEST_P(RegexpFilterTestCase, visit_invalid_pattern) {
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  std::string fld = "prefix";
+  std::string_view field = std::string_view(fld);
+
+  auto index = open_reader();
+  ASSERT_EQ(1, index.size());
+  auto& segment = index[0];
+
+  const auto* reader = segment.field(field);
+  ASSERT_NE(nullptr, reader);
+
+  {
+    auto pattern = irs::ViewCast<irs::byte_type>(std::string_view("(abc"));
+    tests::EmptyFilterVisitor visitor;
+    auto field_visitor = irs::ByRegexp::visitor(pattern);
+    ASSERT_TRUE(field_visitor);
+    field_visitor(segment, *reader, visitor);
+    ASSERT_EQ(0, visitor.prepare_calls_counter());
+    ASSERT_EQ(0, visitor.visit_calls_counter());
+  }
+
+  {
+    auto pattern = irs::ViewCast<irs::byte_type>(std::string_view("[abc"));
+    tests::EmptyFilterVisitor visitor;
+    auto field_visitor = irs::ByRegexp::visitor(pattern);
+    ASSERT_TRUE(field_visitor);
+    field_visitor(segment, *reader, visitor);
+    ASSERT_EQ(0, visitor.prepare_calls_counter());
+    ASSERT_EQ(0, visitor.visit_calls_counter());
   }
 }
 

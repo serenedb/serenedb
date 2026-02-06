@@ -40,9 +40,7 @@ class SearchDataSource final : public velox::connector::DataSource, public Mater
                     catalog::Column::Id effective_column_id,
                     ObjectId object_key,
                     irs::IndexReader& reader,
-                    irs::Filter::ptr&& filter,
-                    velox::core::ExpressionEvaluator& evaluator,
-                    std::vector<velox::core::TypedExprPtr> remaining_filters);
+                    irs::Filter::ptr&& filter);
 
   virtual ~SearchDataSource() = default;
 

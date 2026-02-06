@@ -51,6 +51,10 @@ struct VeloxFilterContext {
   // Add other context like column mappings, analyzer settings, etc.
 };
 
+Result FromVeloxExpression(irs::BooleanFilter& filter,
+                          const VeloxFilterContext& ctx,
+                          const velox::core::TypedExprPtr& expr);
+
 namespace {
 
 std::optional<velox::Variant> EvaluateConstant(
@@ -79,29 +83,29 @@ velox::TypeKind ExtractFieldName(const VeloxFilterContext& ctx,
 }
 
 template<typename Func, typename... Args>
-Result DispatchValue(velox::TypeKind kind, Func&& func, Args... args) {
+Result DispatchValue(velox::TypeKind kind, Func&& func, Args&&... args) {
   irs::bstring term_value;
   switch (kind) {
     case velox::TypeKind::TINYINT:
     case velox::TypeKind::SMALLINT:
-      return std::forward<Func>(func).template operator()<int32_t>(args...);
+      return std::forward<Func>(func).template operator()<int32_t>(std::forward<Args>(args)...);
     case velox::TypeKind::INTEGER:
       return std::forward<Func>(func).template
       operator()<velox::TypeTraits<velox::TypeKind::INTEGER>::NativeType>(
-        args...);
+        std::forward<Args>(args)...);
     case velox::TypeKind::BIGINT:
       return std::forward<Func>(func).template
       operator()<velox::TypeTraits<velox::TypeKind::BIGINT>::NativeType>(
-        args...);
+        std::forward<Args>(args)...);
     case velox::TypeKind::DOUBLE:
     case velox::TypeKind::REAL:
     case velox::TypeKind::HUGEINT:
-      return std::forward<Func>(func).template operator()<double>(args...);
+      return std::forward<Func>(func).template operator()<double>(std::forward<Args>(args)...);
     case velox::TypeKind::VARCHAR:
       return std::forward<Func>(func).template operator()<velox::StringView>(
-        args...);
+        std::forward<Args>(args)...);
     case velox::TypeKind::BOOLEAN:
-      return std::forward<Func>(func).template operator()<bool>(args...);
+      return std::forward<Func>(func).template operator()<bool>(std::forward<Args>(args)...);
     default:
       return {ERROR_NOT_IMPLEMENTED, "Unsupported kind ",
               velox::TypeKindName::toName(kind), " for filter building"};
@@ -322,7 +326,8 @@ Result FromVeloxComparison(irs::BooleanFilter& filter,
     op = InvertComparisonOpOp(op);
   }
 
-  // TODO(Dronplane): handle case when field access is wrapped in cast.
+  // TODO(Dronplane): handle case when field access is wrapped in cast
+  // e.g. b:INTEGER  < 2.5:DOUBLE will be Cast(b, DOUBLE) < 2.5
   // current implementation will just fail below.
   if (!field_input->isFieldAccessKind()) {
     return {ERROR_BAD_PARAMETER, "Input is not field access"};
@@ -544,7 +549,7 @@ Result FromVeloxIn(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
                                    : AddFilter<irs::ByTerms>(filter);
   return DispatchValue(
     kind,
-    []<typename T>(auto& terms_filter, std::vector<velox::Variant>& value_array,
+    []<typename T>(auto& terms_filter, auto& value_array,
                    auto& ctx, auto& field_name,
                    velox::TypeKind kind) -> Result {
       DoMangle<T>(field_name);

@@ -33,9 +33,7 @@ SearchDataSource::SearchDataSource(velox::memory::MemoryPool& memory_pool,
                  rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
                  std::vector<catalog::Column::Id> column_ids,
                  catalog::Column::Id effective_column_id, ObjectId object_key,
-                 irs::IndexReader& reader, irs::Filter::ptr&& filter,
-                 velox::core::ExpressionEvaluator& evaluator,
-                 std::vector<velox::core::TypedExprPtr> remaining_filters)
+                 irs::IndexReader& reader, irs::Filter::ptr&& filter)
                  : Materializer(memory_pool, snapshot, &db, nullptr,  cf, row_type, std::move(column_ids), effective_column_id, object_key), _reader(reader), _filter(std::move(filter)) {}
 
 void SearchDataSource::addSplit(
@@ -58,6 +56,9 @@ void SearchDataSource::addSplit(
 
 std::optional<velox::RowVectorPtr> SearchDataSource::next(
   uint64_t size, velox::ContinueFuture& future) {
+  SDB_ASSERT(size);
+  SDB_ASSERT(_current_split,
+             "RocksDBDataSource: inconsistent state, addSplit call missing");
   auto next_segment = [&] {
     _doc.reset();
     if (_current_segment < _reader.size()) {
@@ -88,8 +89,12 @@ std::optional<velox::RowVectorPtr> SearchDataSource::next(
       index_keys.emplace_back(irs::ViewCast<char>(_pk_value->value));
       --size;
     }
+    if (irs::doc_limits::eof(doc_id)) {
+      _doc.reset();
+    }
   }
   if (index_keys.empty()) {
+      _current_split.reset();
       return nullptr;
   }
 

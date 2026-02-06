@@ -20,10 +20,11 @@
 
 #include "data_materializer.hpp"
 
+#include <velox/vector/FlatVector.h>
+
 #include "common.h"
 #include "key_utils.hpp"
 #include "primary_key.hpp"
-#include <velox/vector/FlatVector.h>
 
 namespace sdb::connector {
 
@@ -79,9 +80,9 @@ velox::RowVectorPtr Materializer::ReadRows(std::span<std::string> row_keys) {
                                             std::move(columns));
 }
 /*
-std::optional<velox::RowVectorPtr> Materializer::ReadRows(uint64_t size, std::string& last_read_key) {
-  SDB_ASSERT(size);
-  std::vector<velox::VectorPtr> columns;
+std::optional<velox::RowVectorPtr> Materializer::ReadRows(uint64_t size,
+std::string& last_read_key) { SDB_ASSERT(size); std::vector<velox::VectorPtr>
+columns;
 
   const auto num_columns = _row_type->size();
   std::string last_column_key;
@@ -168,39 +169,40 @@ void Materializer::IterateColumn(rocksdb::Iterator& it,
   }
 }
 
-    template<typename Decoder>
-    void Materializer::IterateColumnKeys(rocksdb::Iterator& it,
-                                              std::string_view column_key,
-                                              std::span<std::string> row_keys,
-                                              const Decoder& func) {
-      std::string buffer(column_key);
-      auto cur = row_keys.begin();
-      while (cur != row_keys.end()) {
-        buffer.resize(column_key.size());
-        buffer.append(*cur); 
-        // TODO(Dronplane) measure performance sorted vs unsorted keys.
-        ReadColumnCell(it, buffer, cur == row_keys.begin(), func);
-        ++cur;
-      }
-    }
+template<typename Decoder>
+void Materializer::IterateColumnKeys(rocksdb::Iterator& it,
+                                     std::string_view column_key,
+                                     std::span<std::string> row_keys,
+                                     const Decoder& func) {
+  std::string buffer(column_key);
+  auto cur = row_keys.begin();
+  while (cur != row_keys.end()) {
+    buffer.resize(column_key.size());
+    buffer.append(*cur);
+    // TODO(Dronplane) measure performance sorted vs unsorted keys.
+    ReadColumnCell(it, buffer, cur == row_keys.begin(), func);
+    ++cur;
+  }
+}
 
-    template<typename Decoder>
-    void Materializer::ReadColumnCell(rocksdb::Iterator& it, std::string_view full_key,
-                               bool use_seek, const Decoder& func) {
-      auto key_slice = rocksdb::Slice{full_key};
-      if (_is_range && !use_seek) {
-        it.Next();
-        if (it.key() != full_key) {
-          _is_range = false;
-          it.Seek(key_slice);
-        }
-      } else {
-        it.Seek(key_slice);
-      }
-      SDB_ENSURE(it.Valid() && it.key() == full_key, ERROR_INTERNAL,
-                 "Invalid primary key read.");
-      func(it.key().ToStringView(), it.value().ToStringView());
+template<typename Decoder>
+void Materializer::ReadColumnCell(rocksdb::Iterator& it,
+                                  std::string_view full_key, bool use_seek,
+                                  const Decoder& func) {
+  auto key_slice = rocksdb::Slice{full_key};
+  if (_is_range && !use_seek) {
+    it.Next();
+    if (it.key() != full_key) {
+      _is_range = false;
+      it.Seek(key_slice);
     }
+  } else {
+    it.Seek(key_slice);
+  }
+  SDB_ENSURE(it.Valid() && it.key() == full_key, ERROR_INTERNAL,
+             "Invalid primary key read.");
+  func(it.key().ToStringView(), it.value().ToStringView());
+}
 
 void Materializer::SeekToNextKeyBatch(rocksdb::Iterator& it,
                                       std::string_view column_key,
@@ -232,17 +234,19 @@ velox::VectorPtr Materializer::ReadColumn(
     ReadScalarColumn, StoreLast, kind, it, max_size, column_key, last_key);
 }
 
-velox::VectorPtr Materializer::ReadColumnKeys(
-  rocksdb::Iterator& it, std::span<std::string> row_keys, catalog::Column::Id column_id,
-  velox::TypeKind kind, std::string_view column_key) {
+velox::VectorPtr Materializer::ReadColumnKeys(rocksdb::Iterator& it,
+                                              std::span<std::string> row_keys,
+                                              catalog::Column::Id column_id,
+                                              velox::TypeKind kind,
+                                              std::string_view column_key) {
   if (column_id == catalog::Column::kGeneratedPKId) {
     return ReadGeneratedColumnKeys(row_keys);
   }
   if (kind == velox::TypeKind::UNKNOWN) {
     return ReadUnknownColumnKeys(row_keys);
   }
-  return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
-    ReadScalarColumnKeys, kind, it, row_keys, column_key);
+  return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(ReadScalarColumnKeys, kind, it,
+                                            row_keys, column_key);
 }
 
 template<bool StoreLast>
@@ -311,7 +315,8 @@ velox::VectorPtr Materializer::ReadUnknownColumn(
                                                &_memory_pool);
 }
 
-velox::VectorPtr Materializer::ReadUnknownColumnKeys(std::span<std::string> row_keys) {
+velox::VectorPtr Materializer::ReadUnknownColumnKeys(
+  std::span<std::string> row_keys) {
   return velox::BaseVector::createNullConstant(velox::UNKNOWN(),
                                                row_keys.size(), &_memory_pool);
 }
@@ -347,7 +352,8 @@ velox::VectorPtr Materializer::ReadScalarColumn(
 
 template<velox::TypeKind Kind>
 velox::VectorPtr Materializer::ReadScalarColumnKeys(
-  rocksdb::Iterator& it, std::span<std::string> row_keys, std::string_view column_key) {
+  rocksdb::Iterator& it, std::span<std::string> row_keys,
+  std::string_view column_key) {
   using T = typename velox::TypeTraits<Kind>::NativeType;
   auto result = velox::BaseVector::create<velox::FlatVector<T>>(
     velox::Type::create<Kind>(), row_keys.size(), &_memory_pool);

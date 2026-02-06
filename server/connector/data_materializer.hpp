@@ -37,6 +37,7 @@ public:
   catalog::Column::Id effective_column_id, ObjectId object_key) : _memory_pool{memory_pool},
     _snapshot{snapshot},
     _db{db},
+    _transaction{transaction},
     _cf{cf},
     _row_type{std::move(row_type)},
     _column_ids(std::move(column_oids)),

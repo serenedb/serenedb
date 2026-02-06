@@ -61,13 +61,15 @@ SSTSinkWriter::SSTSinkWriter(rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
   options.compression_per_level.clear();
 
   std::filesystem::create_directories(_sst_directory);
+
+  rocksdb::EnvOptions env;
+  env.use_direct_writes = true;
   for (size_t i = 0; i < _writers.size(); ++i) {
     if (columns[i].id == catalog::Column::kGeneratedPKId) {
       continue;
     }
 
-    _writers[i] =
-      std::make_unique<rocksdb::SstFileWriter>(rocksdb::EnvOptions{}, options);
+    _writers[i] = std::make_unique<rocksdb::SstFileWriter>(env, options);
     auto sst_file_path =
       absl::StrCat(_sst_directory, "/", "column_", i, "_.sst");
     auto status = _writers[i]->Open(sst_file_path);

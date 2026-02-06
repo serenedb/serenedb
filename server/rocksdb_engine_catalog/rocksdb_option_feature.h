@@ -200,6 +200,6 @@ class RocksDBOptionFeature final : public SerenedFeature {
     _max_write_buffer_number_cf;
 };
 
-RocksDBOptionFeature& GetRocksDBOptions();
+bool IsIOUringEnabled();
 
 }  // namespace sdb

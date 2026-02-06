@@ -31,10 +31,6 @@
 
 namespace sdb::connector::key_utils {
 
-// Internal key footer for SST files: PackSequenceAndType(0, kTypeValue)
-// The footer is 8 bytes encoding (sequence_number << 8) | value_type
-inline constexpr uint64_t kSSTInternalKeyFooter = (uint64_t{0} << 8) | 0x1;
-
 // Constructs common part of table row. Result could be used with AppendXXX
 // methods to construct full keys.
 std::string PrepareTableKey(ObjectId id);

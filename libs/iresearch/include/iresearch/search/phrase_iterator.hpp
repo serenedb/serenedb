@@ -24,6 +24,7 @@
 
 #include "disjunction.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/formats/formats_impl.hpp"
 #include "iresearch/index/index_reader.hpp"
 
 namespace irs {
@@ -76,12 +77,21 @@ struct TermInterval {
 };
 
 // position attribute + desired offset in the phrase
-using FixedTermPosition = std::pair<PosAttr::ref, TermInterval>;
+template<bool Offs>
+using FixedTermTraits = IteratorTraitsImpl<FormatTraits128, true, true, Offs>;
 
-template<typename Tp>
+template<bool Offs>
+using FixedTermPositionImpl = PositionImpl<FixedTermTraits<Offs>>;
+
+template<bool Offs>
+using FixedTermPosition = std::pair<FixedTermPositionImpl<Offs>*, TermInterval>;
+
+template<typename T>
 struct TermPositionTraits {
-  static PosAttr::value_t Position(Tp& pos) {
-    PosAttr::value_t res = pos_limits::eof();
+  using PositionImpl = PosAttr;
+
+  static PosAttr::value_t Position(T& pos) {
+    auto res = pos_limits::eof();
     pos.first->visit(&res, [](void* ctx, auto& it) {
       SDB_ASSERT(ctx);
       auto& position = *reinterpret_cast<PosAttr::value_t*>(ctx);
@@ -93,11 +103,11 @@ struct TermPositionTraits {
     return res;
   }
 
-  static const TermInterval& Interval(const Tp& pos) noexcept {
+  static const TermInterval& Interval(const T& pos) noexcept {
     return pos.second;
   }
 
-  static void ResetPos(const Tp&) {
+  static void ResetPos(const T&) {
     // variadic resets anyway.
     // FIXME (Dronplane) maybe it would be possible to avoid constant
     // resetting e.g. reset only at the beginning of VisitLead but all.
@@ -105,19 +115,20 @@ struct TermPositionTraits {
   }
 };
 
-template<>
-struct TermPositionTraits<FixedTermPosition> {
-  static PosAttr::value_t Position(FixedTermPosition& pos) noexcept {
-    return pos.first.get().value();
+template<bool Offs>
+struct TermPositionTraits<FixedTermPosition<Offs>> {
+  using T = FixedTermPosition<Offs>;
+  using PositionImpl = FixedTermPositionImpl<Offs>;
+
+  static PosAttr::value_t Position(T& pos) noexcept {
+    return pos.first->value();
   }
 
-  static const TermInterval& Interval(const FixedTermPosition& pos) noexcept {
+  static const TermInterval& Interval(const T& pos) noexcept {
     return pos.second;
   }
 
-  static void ResetPos(const FixedTermPosition& pos) {
-    pos.first.get().reset();
-  }
+  static void ResetPos(const T& pos) { pos.first->reset(); }
 };
 
 // clang-format off
@@ -160,10 +171,11 @@ struct TermPositionTraits<FixedTermPosition> {
 template<typename Iterator>
 class SinglePositionStrategy {
  public:
-  using Traits =
-    TermPositionTraits<typename std::iterator_traits<Iterator>::value_type>;
+  using Value = typename std::iterator_traits<Iterator>::value_type;
+  using Traits = TermPositionTraits<Value>;
+  using PositionImpl = Traits::PositionImpl;
 
-  SinglePositionStrategy(Iterator& it, PosAttr& lead_position)
+  SinglePositionStrategy(Iterator& it, PositionImpl& lead_position)
     : _lead_it{it}, _lead_pos{lead_position} {}
 
   void NotifyNextLead(const Iterator&) noexcept {
@@ -199,17 +211,18 @@ class SinglePositionStrategy {
 
  private:
   Iterator& _lead_it;
-  PosAttr& _lead_pos;
+  PositionImpl& _lead_pos;
   PosAttr::value_t _base_position{pos_limits::eof()};
 };
 
 template<typename Iterator>
 class IntervalPositionStrategy {
  public:
-  using Traits =
-    TermPositionTraits<typename std::iterator_traits<Iterator>::value_type>;
+  using Value = typename std::iterator_traits<Iterator>::value_type;
+  using Traits = TermPositionTraits<Value>;
+  using PositionImpl = Traits::PositionImpl;
 
-  IntervalPositionStrategy(Iterator& lead, PosAttr& lead_position)
+  IntervalPositionStrategy(Iterator& lead, PositionImpl& lead_position)
     : _lead_it{lead}, _lead_pos{lead_position} {}
 
   void NotifyNextLead(const Iterator& end) noexcept {
@@ -338,17 +351,17 @@ class IntervalPositionStrategy {
 
  private:
   Iterator& _lead_it;
-  PosAttr& _lead_pos;
+  PositionImpl& _lead_pos;
   PosAttr::value_t _base_position{pos_limits::eof()};
   PosAttr::value_t _interval_delta{0};
   bool _permutations{false};
   bool _need_reset{false};
 };
 
-template<bool OneShot, bool HasFreq, bool HasIntervals>
+template<bool Offs, bool OneShot, bool HasIntervals>
 class FixedPhraseFrequency {
  public:
-  using TermPosition = FixedTermPosition;
+  using TermPosition = FixedTermPosition<Offs>;
   using Positions = std::vector<TermPosition>;
 
   using ExecutionStrategy =
@@ -365,7 +378,7 @@ class FixedPhraseFrequency {
   }
 
   Attribute* GetMutable(TypeInfo::type_id id) noexcept {
-    if constexpr (HasFreq) {
+    if constexpr (!OneShot) {
       if (id == irs::Type<FreqAttr>::id()) {
         return &_phrase_freq;
       }
@@ -381,16 +394,16 @@ class FixedPhraseFrequency {
   friend class PhrasePosition<FixedPhraseFrequency>;
 
   std::pair<const uint32_t*, const uint32_t*> GetOffsets() const noexcept {
-    auto start = irs::get<OffsAttr>(_pos.front().first.get());
+    auto start = irs::get<OffsAttr>(*_pos.front().first);
     SDB_ASSERT(start);
-    auto end = irs::get<OffsAttr>(_pos.back().first.get());
+    auto end = irs::get<OffsAttr>(*_pos.back().first);
     SDB_ASSERT(end);
     return {&start->start, &end->end};
   }
 
   uint32_t NextPosition() {
     uint32_t phrase_freq = 0;
-    PosAttr& lead = _pos.front().first;
+    auto& lead = *_pos.front().first;
     lead.next();
     auto lead_it = std::begin(_pos);
     ExecutionStrategy strategy{lead_it, lead};
@@ -400,7 +413,7 @@ class FixedPhraseFrequency {
       strategy.NotifyNextLead(end);
       bool match = true;
       for (auto it = lead_it + 1; it != end;) {
-        PosAttr& pos = it->first;
+        auto& pos = *it->first;
 
         const auto term_position = strategy.NextPosition(it);
         if (!pos_limits::valid(term_position)) {
@@ -492,8 +505,7 @@ using VariadicTermPosition =
 
 // Helper for variadic phrase frequency evaluation for cases when
 // only one term may be at a single position in a phrase (e.g. synonyms)
-template<typename Adapter, bool VolatileBoost, bool OneShot, bool HasFreq,
-         bool HasIntervals>
+template<typename Adapter, bool VolatileBoost, bool OneShot, bool HasIntervals>
 class VariadicPhraseFrequency {
  public:
   using TermPosition = VariadicTermPosition<Adapter>;
@@ -519,7 +531,7 @@ class VariadicPhraseFrequency {
       }
     }
 
-    if constexpr (HasFreq) {
+    if constexpr (!OneShot) {
       if (id == irs::Type<FreqAttr>::id()) {
         return &_phrase_freq;
       }
@@ -883,16 +895,17 @@ class PhraseIterator : public DocIterator {
  public:
   using TermPosition = typename Frequency::TermPosition;
 
-  PhraseIterator(ScoreAdapters&& itrs, std::vector<TermPosition>&& pos)
+  template<typename Adapters>
+  PhraseIterator(Adapters&& itrs, std::vector<TermPosition>&& pos)
     : _approx{NoopAggregator{},
-              [](auto&& itrs) {
+              [](auto itrs) {
                 absl::c_sort(itrs,
                              [](const auto& lhs, const auto& rhs) noexcept {
                                return CostAttr::extract(lhs, CostAttr::kMax) <
                                       CostAttr::extract(rhs, CostAttr::kMax);
                              });
                 return std::move(itrs);
-              }(std::move(itrs))},
+              }(std::forward<Adapters>(itrs))},
       _freq{std::move(pos)} {
     std::get<AttributePtr<DocAttr>>(_attrs) =
       irs::GetMutable<DocAttr>(&_approx);
@@ -902,11 +915,11 @@ class PhraseIterator : public DocIterator {
       irs::GetMutable<CostAttr>(&_approx);
   }
 
-  PhraseIterator(ScoreAdapters&& itrs,
-                 std::vector<typename Frequency::TermPosition>&& pos,
+  template<typename Adapters>
+  PhraseIterator(Adapters&& itrs, std::vector<TermPosition>&& pos,
                  const SubReader& segment, const TermReader& field,
                  const byte_type* stats, const Scorers& ord, score_t boost)
-    : PhraseIterator{std::move(itrs), std::move(pos)} {
+    : PhraseIterator{std::forward<Adapters>(itrs), std::move(pos)} {
     if (!ord.empty()) {
       auto& score = std::get<ScoreAttr>(_attrs);
       CompileScore(score, ord.buckets(), segment, field, stats, *this, boost);

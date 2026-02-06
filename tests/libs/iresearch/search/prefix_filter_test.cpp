@@ -157,7 +157,7 @@ class PrefixFilterTestCase : public tests::FilterTestCaseBase {
         irs::ColumnInfo{irs::Type<irs::compression::None>::get(), {}, false},
         irs::FeatureWriterFactory{}};
     };
-    if (codec()->type()().name().starts_with("1_5avx") && wand) {
+    if (codec()->type()().name().starts_with("1_5simd") && wand) {
       opts.reader_options.scorers = {&score, 1};
     }
     // add segment
@@ -372,11 +372,10 @@ TEST_P(PrefixFilterTestCase, visit) {
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
-INSTANTIATE_TEST_SUITE_P(
-  prefix_filter_test, PrefixFilterTestCase,
-  ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                     ::testing::Values(tests::FormatInfo{"1_5avx"},
-                                       tests::FormatInfo{"1_5simd"})),
-  PrefixFilterTestCase::to_string);
+INSTANTIATE_TEST_SUITE_P(prefix_filter_test, PrefixFilterTestCase,
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
+                                            ::testing::Values(tests::FormatInfo{
+                                              "1_5simd"})),
+                         PrefixFilterTestCase::to_string);
 
 }  // namespace

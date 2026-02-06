@@ -93,10 +93,6 @@ class ScorerWrapper : public DocIterator {
 
   doc_id_t seek(doc_id_t target) final { return _it->seek(target); }
 
-  doc_id_t shallow_seek(doc_id_t target) final {
-    return _it->shallow_seek(target);
-  }
-
   uint32_t count() final { return _it->count(); }
 
  private:

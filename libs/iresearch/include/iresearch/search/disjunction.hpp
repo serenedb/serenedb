@@ -833,7 +833,7 @@ enum class MatchType {
   MinMatch,
 };
 
-template<MatchType MinMatch, bool SeekReadahead, size_t NumBlocks = 8>
+template<MatchType MinMatch, bool SeekReadahead, size_t NumBlocks = 64>
 struct BlockDisjunctionTraits {
   // "false" - iterator is used for min match filtering,
   // "true" - otherwise
@@ -1355,7 +1355,7 @@ struct RebindIterator<Disjunction<Adapter, Merger>> {
 template<typename Adapter, typename Merger>
 struct RebindIterator<DisjunctionIterator<Adapter, Merger>> {
   using Unary = void;  // block disjunction doesn't support visitor
-  using Basic = BasicDisjunction<Adapter, Merger>;
+  using Basic = void;  // block disjunction always faster than basic
   using Small = void;  // block disjunction always faster than small
   using Wand = DisjunctionIterator<Adapter, Merger>;
 };

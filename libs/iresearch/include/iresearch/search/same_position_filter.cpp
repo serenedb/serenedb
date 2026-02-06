@@ -38,7 +38,7 @@ namespace {
 template<typename Conjunction>
 class SamePositionIterator : public DocIterator {
  public:
-  using Positions = std::vector<PosAttr::ref>;
+  using Positions = std::vector<PosAttr*>;
 
   template<typename... Args>
   SamePositionIterator(Positions&& pos, Args&&... args)
@@ -79,7 +79,7 @@ class SamePositionIterator : public DocIterator {
     auto target = pos_limits::min();
 
     for (auto begin = _pos.begin(), end = _pos.end(); begin != end;) {
-      PosAttr& pos = *begin;
+      auto& pos = **begin;
 
       if (target != pos.seek(target)) {
         target = pos.value();
@@ -130,7 +130,7 @@ class SamePositionQuery : public Filter::Query {
     ScoreAdapters itrs;
     itrs.reserve(query_state->size());
 
-    std::vector<PosAttr::ref> positions;
+    std::vector<PosAttr*> positions;
     positions.reserve(itrs.size());
 
     const bool no_score = ord.empty();
@@ -149,7 +149,7 @@ class SamePositionQuery : public Filter::Query {
         return DocIterator::empty();
       }
 
-      positions.emplace_back(std::ref(*pos));
+      positions.emplace_back(pos);
 
       if (!no_score) {
         auto* score = irs::GetMutable<ScoreAttr>(docs.get());

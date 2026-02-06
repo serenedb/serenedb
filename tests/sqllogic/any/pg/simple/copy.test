@@ -332,7 +332,7 @@ header	header
 
 
 statement error
-COPY (SELECT 1) TO '/tmp/${__DATABASE__}_saygex.tsv' WITH (FORMAT)
+COPY (SELECT 1) TO '/tmp/${__DATABASE__}_sayge.tsv' WITH (FORMAT)
 ----
 db error: ERROR: format requires a parameter
 
@@ -395,3 +395,15 @@ imarelav,7
 imarelav,8
 imarelav,9
 imarelav,10
+
+
+statement error
+COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (FORMAT 1);
+----
+db error: ERROR: COPY format "1" not recognized
+
+
+statement error
+COPY arelav_consumer FROM '/tmp/${__DATABASE__}_arelav_consuma.csv' WITH (LOG_VERBOSITY 228.228);
+----
+db error: ERROR: COPY LOG_VERBOSITY "228.228" not recognized

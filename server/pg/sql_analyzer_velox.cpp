@@ -1978,7 +1978,7 @@ class CopyOptionsParser {
           THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(&option))),
                           ERR_CODE(ERRCODE_SYNTAX_ERROR),
                           ERR_MSG("invalid value for parameter \"explain\": \"",
-                                  DeparseExpr(option.arg), "\""));
+                                  DeparseValue(option.arg), "\""));
         }
         explain_options.emplace(*maybe_explain, true);
         return;
@@ -2042,8 +2042,8 @@ class CopyOptionsParser {
       if (!maybe_format || !format2parser.contains(*maybe_format)) {
         THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(&option))),
                         ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("invalid value for parameter \"format\": \"",
-                                DeparseExpr(option->arg), "\""));
+                        ERR_MSG("COPY format \"", DeparseValue(option->arg),
+                                "\" not recognized"));
       }
       format = *maybe_format;
     } else if (auto maybe_format = TryFormatFromFile(); !maybe_format.empty()) {
@@ -2067,7 +2067,7 @@ class CopyOptionsParser {
         THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
                         ERR_CODE(ERRCODE_SYNTAX_ERROR),
                         ERR_MSG("invalid value for parameter \"progress\": \"",
-                                DeparseExpr(option->arg), "\""));
+                                DeparseValue(option->arg), "\""));
       }
       show_progress = *maybe_progress;
     }
@@ -2158,7 +2158,7 @@ class CopyOptionsParser {
       if (!maybe_on_error) {
         THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
                         ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("COPY ON_ERROR \"", DeparseExpr(option->arg),
+                        ERR_MSG("COPY ON_ERROR \"", DeparseValue(option->arg),
                                 "\" not recognized"));
       }
       if (*maybe_on_error == "stop") {
@@ -2186,7 +2186,7 @@ class CopyOptionsParser {
         THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
                         ERR_CODE(ERRCODE_SYNTAX_ERROR),
                         ERR_MSG("invalid input syntax for type bigint: \"",
-                                DeparseExpr(option->arg), "\""));
+                                DeparseValue(option->arg), "\""));
       }
       if (*maybe_reject_limit <= 0) {
         THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
@@ -2201,10 +2201,11 @@ class CopyOptionsParser {
     if (const auto* option = EraseOption("log_verbosity")) {
       auto maybe_verbosity = TryGet<std::string_view>(option->arg);
       if (!maybe_verbosity) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                        ERR_MSG("COPY LOG_VERBOSITY \"",
-                                DeparseExpr(option->arg), "\" not recognized"));
+        THROW_SQL_ERROR(
+          CURSOR_POS(ErrorPosition(ExprLocation(option))),
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("COPY LOG_VERBOSITY \"", DeparseValue(option->arg),
+                  "\" not recognized"));
       }
 
       if (*maybe_verbosity == "verbose") {

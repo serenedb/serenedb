@@ -537,9 +537,8 @@ TEST_P(TermsFilterTestCase, min_match) {
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
-INSTANTIATE_TEST_SUITE_P(
-  terms_filter_test, TermsFilterTestCase,
-  ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                     ::testing::Values(tests::FormatInfo{"1_5avx"},
-                                       tests::FormatInfo{"1_5simd"})),
-  TermsFilterTestCase::to_string);
+INSTANTIATE_TEST_SUITE_P(terms_filter_test, TermsFilterTestCase,
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
+                                            ::testing::Values(tests::FormatInfo{
+                                              "1_5simd"})),
+                         TermsFilterTestCase::to_string);

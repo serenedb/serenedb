@@ -2368,7 +2368,7 @@ static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 INSTANTIATE_TEST_SUITE_P(granular_range_filter_test,
                          GranularRangeFilterTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values("1_5avx")),
+                                            ::testing::Values("1_5simd")),
                          GranularRangeFilterTestCase::to_string);
 
 }  // namespace

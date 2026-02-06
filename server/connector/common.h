@@ -26,8 +26,14 @@
 
 #include "basics/bit_utils.hpp"
 #include "basics/fwd.h"
+#include "catalog/table_options.h"
 
 namespace sdb::connector {
+
+struct ColumnInfo {
+  catalog::Column::Id id;
+  std::string_view name;
+};
 
 enum class ValueFlags : uint8_t {
   None = 0,

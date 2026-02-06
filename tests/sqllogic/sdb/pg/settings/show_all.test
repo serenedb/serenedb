@@ -7,6 +7,7 @@ join_order_algorithm	cost	Sets the join algorithm to be used for query execution
 search_path	"$user", public	Sets the schema search order for names that are not schema-qualified.
 extra_float_digits	1	Sets the number of digits displayed for floating-point values.
 bytea_output	hex	Sets the output format for values of type bytea. Valid values are 'hex' (the default) and 'escape' (the traditional PostgreSQL format).
+sdb_write_conflict_policy	emit_error	Sets the write conflict policy. Valid values are 'emit_error' (the default), 'do_nothing' (skip conflicted rows) and 'replace'
 client_encoding	UTF8	Sets the client character set encoding.
 datestyle	ISO, MDY	Sets the display format for date and time values.
 application_name	(empty)	Sets the application name to be reported in statistics and logs.

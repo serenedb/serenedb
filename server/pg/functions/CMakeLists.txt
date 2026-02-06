@@ -1,1 +1,1 @@
-target_sources(sereneserver PRIVATE json.cpp)
+target_sources(sereneserver PRIVATE extract.cpp interval.cpp json.cpp)

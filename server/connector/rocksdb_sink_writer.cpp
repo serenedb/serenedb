@@ -20,6 +20,7 @@
 
 #include "rocksdb_sink_writer.hpp"
 
+#include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 
 namespace sdb::connector {
@@ -49,7 +50,7 @@ void RocksDBSinkWriter::Write(std::span<const rocksdb::Slice> cell_slices,
 
 std::unique_ptr<rocksdb::Iterator> RocksDBSinkWriter::CreateIterator() {
   rocksdb::ReadOptions read_options;
-  read_options.async_io = true;
+  read_options.async_io = IsIOUringEnabled();
   read_options.snapshot = _transaction.GetSnapshot();
   return std::unique_ptr<rocksdb::Iterator>{
     _transaction.GetIterator(read_options, &_cf)};

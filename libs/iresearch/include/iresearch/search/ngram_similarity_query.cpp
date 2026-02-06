@@ -241,7 +241,7 @@ bool SerialPositionsChecker<Base>::Check(size_t potential, doc_id_t doc) {
   _seq_freq.value = 0;
   for (const auto& pos_iterator : _pos) {
     if (pos_iterator.doc->value == doc) {
-      PosAttr& pos = *(pos_iterator.pos);
+      auto& pos = *pos_iterator.pos;
       if (potential <= longest_sequence_len || potential < _min_match_count) {
         // this term could not start largest (or long enough) sequence.
         // skip it to first position to append to any existing candidates

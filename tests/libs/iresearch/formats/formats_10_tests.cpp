@@ -592,9 +592,9 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
 
   // write docs 'segment0' with all possible streams
   {
-    constexpr irs::IndexFeatures kFeatures =
-      irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-      irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+    constexpr irs::IndexFeatures kFeatures = irs::IndexFeatures::Freq |
+                                             irs::IndexFeatures::Pos |
+                                             irs::IndexFeatures::Offs;
 
     irs::FieldMeta field;
     field.name = "field";
@@ -652,9 +652,8 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
 
   // write docs 'segment2' with position & payload
   {
-    constexpr irs::IndexFeatures kFeatures = irs::IndexFeatures::Freq |
-                                             irs::IndexFeatures::Pos |
-                                             irs::IndexFeatures::Pay;
+    constexpr irs::IndexFeatures kFeatures =
+      irs::IndexFeatures::Freq | irs::IndexFeatures::Pos;
 
     irs::FieldMeta field;
     field.name = "field";
@@ -874,10 +873,6 @@ TEST_P(Format10TestCase, postings_seek) {
   constexpr auto kPos = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos;
   constexpr auto kOffs = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
                          irs::IndexFeatures::Offs;
-  constexpr auto kPay = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-                        irs::IndexFeatures::Pay;
-  constexpr auto kAll = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-                        irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
 
   // singleton doc
   {
@@ -890,8 +885,6 @@ TEST_P(Format10TestCase, postings_seek) {
     PostingsSeek(docs, kFreq);
     PostingsSeek(docs, kPos);
     PostingsSeek(docs, kOffs);
-    PostingsSeek(docs, kPay);
-    PostingsSeek(docs, kAll);
   }
 
   // short list (< postings_writer::BLOCK_SIZE)
@@ -905,8 +898,6 @@ TEST_P(Format10TestCase, postings_seek) {
     PostingsSeek(docs, kFreq);
     PostingsSeek(docs, kPos);
     PostingsSeek(docs, kOffs);
-    PostingsSeek(docs, kPay);
-    PostingsSeek(docs, kAll);
   }
 
   // equals to postings_writer::BLOCK_SIZE
@@ -917,8 +908,6 @@ TEST_P(Format10TestCase, postings_seek) {
     PostingsSeek(docs, kFreq);
     PostingsSeek(docs, kPos);
     PostingsSeek(docs, kOffs);
-    PostingsSeek(docs, kPay);
-    PostingsSeek(docs, kAll);
   }
 
   // long list
@@ -930,8 +919,6 @@ TEST_P(Format10TestCase, postings_seek) {
     PostingsSeek(docs, kFreq);
     PostingsSeek(docs, kPos);
     PostingsSeek(docs, kOffs);
-    PostingsSeek(docs, kPay);
-    PostingsSeek(docs, kAll);
   }
 
   // 2^15
@@ -943,15 +930,13 @@ TEST_P(Format10TestCase, postings_seek) {
     PostingsSeek(docs, kFreq);
     PostingsSeek(docs, kPos);
     PostingsSeek(docs, kOffs);
-    PostingsSeek(docs, kPay);
-    PostingsSeek(docs, kAll);
   }
 }
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
-static const auto kTestValues = ::testing::Combine(
-  ::testing::ValuesIn(kTestDirs),
-  ::testing::Values(tests::FormatInfo{"1_5avx"}, tests::FormatInfo{"1_5simd"}));
+static const auto kTestValues =
+  ::testing::Combine(::testing::ValuesIn(kTestDirs),
+                     ::testing::Values(tests::FormatInfo{"1_5simd"}));
 
 // 1.0 specific tests
 INSTANTIATE_TEST_SUITE_P(format_10_test, Format10TestCase, kTestValues,

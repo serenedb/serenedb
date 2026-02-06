@@ -90,6 +90,30 @@ statement count 3
 COPY tindex TO '/tmp/${__DATABASE__}_lmao' WITH (FORMAT CSV, HEADER TRUE);
 
 
+onlyif serenedb
+query
+COPY reversed(id, name) FROM '/tmp/${__DATABASE__}_lmao' WITH (EXPLAIN LOGICAL, EXPLAIN EXECUTION, FORMAT CSV, HEADER TRUE);
+----
+QUERY PLAN
+LOGICAL PLAN:
+- TableWrite INSERT: -> ROW<rows:BIGINT>
+    id := id
+    name := name
+  - Sort: name ASC NULLS FIRST -> ROW<"id":INTEGER,"name":VARCHAR>
+    - Filter: IF(spark_isnotnull(name), true, CAST(pg_error(33575106, 0, null value in column "name" of relation "reversed" violates not-null constraint, presto_concat(Failing row contains (, COALESCE(CAST(id AS VARCHAR), null), , , COALESCE(CAST(name AS VARCHAR), null), ).)) AS BOOLEAN)) -> ROW<"id":INTEGER,"name":VARCHAR>
+      - Project: -> ROW<"id":INTEGER,"name":VARCHAR>
+          id := id
+          name := name
+        - TableScan: <slt:ignore> -> ROW<"id":INTEGER,"name":VARCHAR>
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- TableWrite[4][serenedb(table=reversed, kind=INSERT)] -> rows:BIGINT
+  -- Project[3][expressions: (id:INTEGER, "id"), (name:VARCHAR, "name")] -> "id":INTEGER, "name":VARCHAR
+    -- OrderBy[2][name ASC NULLS FIRST] -> "id":INTEGER, "name":VARCHAR
+      -- Filter[1][expression: if(spark_isnotnull("name"),true,cast(pg_error(33575106,0,null value in column "name" of relation "reversed" violates not-null constraint,presto_concat(Failing row contains (,coalesce(cast("id" as VARCHAR),null),, ,coalesce("name",null),).)) as BOOLEAN))] -> "id":INTEGER, "name":VARCHAR
+        -- TableScan[0][FileTableHandle] -> "id":INTEGER, "name":VARCHAR
+
+
 statement count 3
 COPY reversed(id, name) FROM '/tmp/${__DATABASE__}_lmao' WITH (FORMAT CSV, HEADER TRUE);
 
@@ -305,3 +329,9 @@ SELECT * FROM header_eater;
 header1	header2
 header	header
 1	2
+
+
+statement error
+COPY (SELECT 1) TO '/tmp/${__DATABASE__}_saygex.tsv' WITH (FORMAT)
+----
+db error: ERROR: format requires a parameter

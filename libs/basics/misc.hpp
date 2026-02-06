@@ -90,7 +90,7 @@ constexpr CachedFunc<Input, Size, Func> CacheFunc(Input offset, Func&& func) {
 }
 
 template<typename Func>
-auto ResolveBool(bool value, Func&& func) {
+IRS_FORCE_INLINE auto ResolveBool(bool value, Func&& func) {
   if (value) {
     return std::forward<Func>(func).template operator()<true>();
   } else {

@@ -1,6 +1,8 @@
 services:
   postgres:
     image: postgres:18-alpine
+    security_opt:
+      - seccomp:unconfined
     environment:
       - POSTGRES_HOST_AUTH_METHOD=trust
       - POSTGRES_USER=postgres
@@ -15,6 +17,8 @@ services:
 
   serenedb-single:
     image: "$BUILD_IMAGE"
+    security_opt:
+      - seccomp:unconfined
     volumes:
       - "$WORKSPACE:/serenedb"
       - "$WORKSPACE/logs:/var/log/serenedb"

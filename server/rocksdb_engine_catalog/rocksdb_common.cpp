@@ -65,7 +65,7 @@ size_t CountKeyRange(rocksdb::DB* db, rocksdb::Slice lower,
   read_options.snapshot = snapshot;
   read_options.verify_checksums = false;  // TODO investigate
   read_options.fill_cache = false;
-  read_options.async_io = GetRocksDBOptions().ioUringEnabled();
+  read_options.async_io = IsIOUringEnabled();
   read_options.iterate_upper_bound = &upper;
   read_options.total_order_seek = !prefix_same_as_start;
   read_options.prefix_same_as_start = prefix_same_as_start;
@@ -104,7 +104,7 @@ bool HasKeys(rocksdb::DB* db, const RocksDBKeyBounds& bounds,
   read_options.snapshot = snapshot;
   read_options.verify_checksums = false;  // TODO investigate
   read_options.fill_cache = false;
-  read_options.async_io = GetRocksDBOptions().ioUringEnabled();
+  read_options.async_io = IsIOUringEnabled();
   read_options.iterate_upper_bound = &upper;
   read_options.total_order_seek = !prefix_same_as_start;
   read_options.prefix_same_as_start = prefix_same_as_start;
@@ -156,7 +156,7 @@ Result RemoveLargeRange(rocksdb::DB* db, rocksdb::Slice lower,
       rocksdb::ReadOptions read_options;
       read_options.verify_checksums = false;  // TODO investigate
       read_options.fill_cache = false;
-      read_options.async_io = GetRocksDBOptions().ioUringEnabled();
+      read_options.async_io = IsIOUringEnabled();
       read_options.iterate_upper_bound = &upper;
       read_options.total_order_seek = !prefix_same_as_start;
       read_options.prefix_same_as_start = prefix_same_as_start;

@@ -50,7 +50,7 @@ void RocksDBSinkWriter::Write(std::span<const rocksdb::Slice> cell_slices,
 
 std::unique_ptr<rocksdb::Iterator> RocksDBSinkWriter::CreateIterator() {
   rocksdb::ReadOptions read_options;
-  read_options.async_io = GetRocksDBOptions().ioUringEnabled();
+  read_options.async_io = IsIOUringEnabled();
   read_options.snapshot = _transaction.GetSnapshot();
   return std::unique_ptr<rocksdb::Iterator>{
     _transaction.GetIterator(read_options, &_cf)};

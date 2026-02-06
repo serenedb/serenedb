@@ -78,9 +78,17 @@ using namespace sdb::app;
 using namespace sdb::options;
 
 namespace sdb {
-RocksDBOptionFeature& GetRocksDBOptions() {
-  return SerenedServer::Instance().getFeature<RocksDBOptionFeature>();
+
+bool IsIOUringEnabled() {
+#ifdef SDB_GTEST
+  return IsIoUringSupported();
+#else
+  return SerenedServer::Instance()
+    .getFeature<RocksDBOptionFeature>()
+    .ioUringEnabled();
+#endif
 }
+
 }  // namespace sdb
 
 namespace {

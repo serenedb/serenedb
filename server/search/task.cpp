@@ -36,8 +36,8 @@ namespace sdb::search {
 void CommitTask::Finalize(
   std::shared_ptr<search::InvertedIndexShard> inverted_index_shard,
   CommitResult res) {
-  constexpr size_t kMaxNonEmptyCommits = 10;
-  constexpr size_t kMaxPendingConsolidations = 3;
+  static constexpr size_t kMaxNonEmptyCommits = 10;
+  static constexpr size_t kMaxPendingConsolidations = 3;
   bool is_deleted = inverted_index_shard->IsDeleted();
 
   if (res != CommitResult::NoChanges) {

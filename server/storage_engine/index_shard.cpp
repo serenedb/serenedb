@@ -1,4 +1,5 @@
 #include "storage_engine/index_shard.h"
+
 namespace sdb {
 
 IndexShard::IndexShard(const catalog::Index& index)

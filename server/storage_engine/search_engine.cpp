@@ -85,10 +85,9 @@ uint32_t ComputeThreadsCount(uint32_t threads, uint32_t threads_limit,
   constexpr uint32_t kMaxThreads = 8;
   constexpr uint32_t kMinThreads = 1;
 
-  return std::max(
-    kMinThreads,
-    std::min(threads_limit ? threads_limit : kMaxThreads,
-             threads ? threads : uint32_t(number_of_cores::GetValue()) / div));
+  return std::clamp(
+    threads ? threads : uint32_t(number_of_cores::GetValue()) / div,
+    kMinThreads, threads_limit ? threads_limit : kMaxThreads);
 }
 
 std::filesystem::path GetPersistedPath(

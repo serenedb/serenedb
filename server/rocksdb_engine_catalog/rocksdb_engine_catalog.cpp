@@ -1707,7 +1707,7 @@ void RocksDBEngineCatalog::prepareDropTable(ObjectId collection) {
 #endif
 }
 
-Result RocksDBEngineCatalog::DropIndex(IndexTombstone tombstone) {
+Result RocksDBEngineCatalog::DropIndex(const IndexTombstone& tombstone) {
   SDB_ASSERT(tombstone.type != IndexType::Unknown);
 
   rocksdb::DB* db = _db->GetRootDB();
@@ -1723,8 +1723,13 @@ Result RocksDBEngineCatalog::DropIndex(IndexTombstone tombstone) {
     case IndexType::Inverted: {
       auto path = search::InvertedIndexShard::GetPath(
         tombstone.old_database, tombstone.old_schema, tombstone.id);
-      if (std::filesystem::exists(path)) {
-        std::filesystem::remove_all(path);
+      r = basics::SafeCall([&path] {
+        if (std::filesystem::exists(path)) {
+          std::filesystem::remove_all(path);
+        }
+      });
+      if (!r.ok()) {
+        return r;
       }
       break;
     }
@@ -1734,6 +1739,16 @@ Result RocksDBEngineCatalog::DropIndex(IndexTombstone tombstone) {
     case IndexType::Unknown:
       SDB_UNREACHABLE();
   }
+  // Remove tombstone definition
+  r = DeleteDefinition(
+    db,
+    [&] {
+      RocksDBKeyWithBuffer key;
+      key.constructObject(RocksDBEntryType::IndexTombstone,
+                          id::kTombstoneDatabase, tombstone.id);
+      return key;
+    },
+    [] { return std::string_view{}; });
 
   return r;
 }

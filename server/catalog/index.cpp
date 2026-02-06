@@ -60,8 +60,7 @@ void Index::WriteInternal(vpack::Builder& builder) const {
     .relation_id = GetRelationId(),
     .name = std::string{GetName()},
     .type = GetIndexType(),
-    .column_ids =
-      std::vector<Column::Id>{_column_ids.begin(), _column_ids.end()},
+    .column_ids = _column_ids,
   };
 
   vpack::WriteTuple(builder, options);

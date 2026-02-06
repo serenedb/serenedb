@@ -261,7 +261,7 @@ class RocksDBEngineCatalog {
   Result MarkDeleted(const catalog::Schema& schema);
 
   void prepareDropTable(ObjectId collection);
-  Result DropIndex(IndexTombstone tombstone);
+  Result DropIndex(const IndexTombstone& tombstone);
   Result DropIndexShard(ObjectId index_id);
   Result DropTable(const TableTombstone& tombstone);
 

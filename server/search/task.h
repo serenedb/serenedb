@@ -70,7 +70,7 @@ class Task {
   ObjectId _id;
   std::weak_ptr<InvertedIndexShard> _inverted_index_shard;
   std::shared_ptr<ThreadPoolState> _state;
-  yaclib::Promise<void> _promise;
+  yaclib::Promise<> _promise;
   SearchEngine* _engine;
 };
 

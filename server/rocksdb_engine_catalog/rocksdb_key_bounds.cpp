@@ -430,12 +430,12 @@ RocksDBKeyBounds::RocksDBKeyBounds(RocksDBEntryType type, uint64_t first,
 RocksDBKeyBounds GetIndexBounds(IndexType type, uint64_t object_id,
                                 bool unique) {
   switch (type) {
-    case IndexType::Secondary:
     case IndexType::Inverted:
       if (unique) {
         return RocksDBKeyBounds::UniqueVPackIndex(object_id, false);
       }
       return RocksDBKeyBounds::VPackIndex(object_id, false);
+    case IndexType::Secondary:
     case IndexType::Unknown:
     default:
       SDB_THROW(ERROR_NOT_IMPLEMENTED);

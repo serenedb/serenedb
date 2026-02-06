@@ -110,5 +110,4 @@ class SearchEngine final : public SerenedFeature {
 };
 
 }  // namespace search
-
 }  // namespace sdb

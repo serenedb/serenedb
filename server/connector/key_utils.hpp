@@ -27,6 +27,7 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
 #include "connector/primary_key.hpp"
+#include "rocksdb/sst_file_writer.h"
 
 namespace sdb::connector::key_utils {
 
@@ -45,8 +46,6 @@ std::string PrepareColumnKey(ObjectId id, catalog::Column::Id column_oid);
 void AppendColumnKey(std::string& key, catalog::Column::Id column_oid);
 
 // Prepare buffer for column key and call 'row_key_handle' on row_key
-// When IsInternalSSTKey is true, kSSTInternalKeyFooter is appended to the key
-// after construction, avoiding the need for a separate loop to append footers.
 template<bool IsInternalSSTKey = false, typename Func>
 void MakeColumnKey(const velox::RowVectorPtr& input,
                    const std::vector<velox::column_index_t>& pk_columns,
@@ -70,10 +69,13 @@ void MakeColumnKey(const velox::RowVectorPtr& input,
   std::memcpy(key_buffer.data(), object_id.data(), sizeof(ObjectId));
 
   if constexpr (IsInternalSSTKey) {
+    // TODO: if key is fixed size, we can avoid resize and memcpy here
     const auto key_size = key_buffer.size();
-    basics::StrAppend(key_buffer, sizeof(kSSTInternalKeyFooter));
-    std::memcpy(key_buffer.data() + key_size, &kSSTInternalKeyFooter,
-                sizeof(kSSTInternalKeyFooter));
+    basics::StrAppend(key_buffer,
+                      sizeof(rocksdb::SstFileWriter::kInternalKeyFooter));
+    std::memcpy(key_buffer.data() + key_size,
+                &rocksdb::SstFileWriter::kInternalKeyFooter,
+                sizeof(rocksdb::SstFileWriter::kInternalKeyFooter));
   }
 }
 

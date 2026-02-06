@@ -1436,7 +1436,7 @@ void SqlAnalyzer::MakeTableWrite(State& state, const Node& stmt,
 
         project_names.emplace_back(name);
         auto expr = std::make_shared<lp::InputReferenceExpr>(type, name);
-        project_exprs.push_back(std::move(expr));
+        project_exprs.emplace_back(std::move(expr));
       }
     }
 
@@ -2006,6 +2006,29 @@ class CopyOptionsParser {
   }
 
  private:
+  std::string_view TryFormatFromFile() const {
+    if (_file_path.empty()) {
+      return {};
+    }
+
+    auto dot_pos = _file_path.rfind('.');
+    if (dot_pos == std::string_view::npos || dot_pos + 1 >= _file_path.size()) {
+      return {};
+    }
+
+    auto file_format = _file_path.substr(dot_pos + 1);
+    if (file_format == "csv" || file_format == "parquet" ||
+        file_format == "dwrf" || file_format == "orc") {
+      return file_format;
+    }
+
+    if (file_format == "text" || file_format == "tsv" || file_format == "txt") {
+      return "text";
+    }
+
+    return {};
+  }
+
   void Parse() {
     ParseDataSource();
 
@@ -2025,6 +2048,8 @@ class CopyOptionsParser {
           ERR_CODE(ERRCODE_SYNTAX_ERROR),
           ERR_MSG("invalid value for parameter \"format\": \"", format, "\""));
       }
+    } else if (auto maybe_format = TryFormatFromFile(); !maybe_format.empty()) {
+      format = maybe_format;
     }
 
     auto it = format2parser.find(format);

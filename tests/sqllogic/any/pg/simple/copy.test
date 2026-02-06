@@ -335,3 +335,33 @@ statement error
 COPY (SELECT 1) TO '/tmp/${__DATABASE__}_saygex.tsv' WITH (FORMAT)
 ----
 db error: ERROR: format requires a parameter
+
+
+statement ok
+CREATE TABLE ts_test (id INTEGER PRIMARY KEY, ts TIMESTAMP, d DATE);
+
+
+statement count 2
+INSERT INTO ts_test VALUES (1, '2024-01-15 10:30:45', '2024-01-15'), (2, '2024-12-31 23:59:59', '2024-12-31');
+
+
+statement count 2
+COPY ts_test TO '/tmp/${__DATABASE__}_ts_test.csv' WITH (FORMAT CSV);
+
+
+statement ok
+CREATE TABLE ts_test_copy (id INTEGER PRIMARY KEY, ts TIMESTAMP, d DATE);
+
+
+statement count 2
+COPY ts_test_copy FROM '/tmp/${__DATABASE__}_ts_test.csv' WITH (FORMAT CSV);
+
+
+query
+SELECT * FROM ts_test_copy ORDER BY 1;
+----
+id	ts	d
+1	2024-01-15 10:30:45	2024-01-15
+2	2024-12-31 23:59:59	2024-12-31
+
+

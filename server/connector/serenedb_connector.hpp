@@ -610,7 +610,7 @@ class SereneDBConnector final : public velox::connector::Connector {
           basics::downCast<const SereneDBColumn>(handle->second);
         columns.emplace_back(column->Id(), column->name());
       }
-      auto& rocksdb_transaction = transaction.EnsureRocksDBTransaction();
+
       return irs::ResolveBool(
         serene_insert_handle.Kind() == axiom::connector::WriteKind::kUpdate,
         [&]<bool IsUpdate>() -> std::unique_ptr<velox::connector::DataSink> {
@@ -650,10 +650,6 @@ class SereneDBConnector final : public velox::connector::Connector {
             for (const auto& handle : pk_handles) {
               pk_indices.push_back(input_type->getChildIdx(handle->name()));
             }
-            return std::make_unique<RocksDBInsertDataSink>(
-              rocksdb_transaction, _cf, *connector_query_ctx->memoryPool(),
-              object_key, pk_indices, column_oids,
-              std::vector<std::unique_ptr<SinkInsertWriter>>{});
           }
           auto& rocksdb_transaction = transaction.EnsureRocksDBTransaction();
 

@@ -140,10 +140,19 @@ class SearchFilterBuilderTest : public ::testing::Test {
     return field_name;
   }
 
-  template<typename T>
-  void AddTermFilter(irs::BooleanFilter& root, catalog::Column::Id column,
+  template<typename Filter, typename Source>
+  auto& AddFilter(Source& parent) {
+    if constexpr (std::is_same_v<irs::Not, Source>) {
+      return parent.template filter<Filter>();
+    } else {
+      return parent.template add<Filter>();
+    }
+  }
+
+  template<typename T, typename Filter>
+  void AddTermFilter(Filter& root, catalog::Column::Id column,
                      const T& value) {
-    auto& term = root.add<irs::ByTerm>();
+    auto& term = AddFilter<irs::ByTerm>(root);
     *term.mutable_field() = MakeFieldName<T>(column);
     if constexpr (std::is_same_v<T, bool>) {
       term.mutable_options()->term.assign(
@@ -195,6 +204,17 @@ TEST_F(SearchFilterBuilderTest, test_SimpleDisjunctionDifferentFields) {
   columns.emplace_back(
     std::make_unique<connector::SereneDBColumn>("b", velox::VARCHAR(), 2));
   AssertFilter(expected, "SELECT * FROM foo WHERE a = '10' OR b = 'foobar'",
+               std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_NotTerm) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  auto& not_filter = expected.add<irs::Not>();
+  AddTermFilter<int32_t>(not_filter, 1, 10);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE NOT (a = '10')",
                std::move(columns), true);
 }
 

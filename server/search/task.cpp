@@ -216,8 +216,8 @@ void ConsolidationTask::operator()() {
               "', runId '", size_t(&run_id), "'");
     return;
   }
-  constexpr size_t kMaxNoopCommits = 10;
-  constexpr size_t kMaxNoopConsolidations = 10;
+  static constexpr size_t kMaxNoopCommits = 10;
+  static constexpr size_t kMaxNoopConsolidations = 10;
   if (_state->noop_commit_count.load(std::memory_order_acquire) <
         kMaxNoopCommits &&
       _state->noop_consolidation_count.load(std::memory_order_acquire) <

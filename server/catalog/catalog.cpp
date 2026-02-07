@@ -220,6 +220,29 @@ Result CatalogFeature::ProcessTombstones() {
   auto process_schema = [&](ObjectId database_id,
                             ObjectId schema_id) -> Result {
     auto r = engine.VisitSchemaObjects(
+      database_id, schema_id, RocksDBEntryType::Index,
+      [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
+        IndexBaseOptions options;
+
+        if (auto r = vpack::ReadTupleNothrow(slice, options); !r.ok()) {
+          return ErrorMeta(r.errorNumber(), "index", r.errorMessage(), slice);
+        }
+
+        IndexTombstone tombstone;
+        tombstone.old_database = options.database_id;
+        tombstone.old_schema = options.schema_id;
+        tombstone.id = options.id;
+        tombstone.type = options.type;
+
+        Local().RegisterIndexDrop(std::move(tombstone));
+        return {};
+      });
+
+    if (!r.ok()) {
+      return r;
+    }
+
+    return engine.VisitSchemaObjects(
       database_id, schema_id, RocksDBEntryType::Collection,
       [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
         CreateTableOptions options;
@@ -237,29 +260,6 @@ Result CatalogFeature::ProcessTombstones() {
         tombstone.table = options.id;
 
         Local().RegisterTableDrop(std::move(tombstone));
-        return {};
-      });
-
-    if (!r.ok()) {
-      return r;
-    }
-
-    return engine.VisitSchemaObjects(
-      database_id, schema_id, RocksDBEntryType::Index,
-      [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
-        IndexBaseOptions options;
-
-        if (auto r = vpack::ReadTupleNothrow(slice, options); !r.ok()) {
-          return ErrorMeta(r.errorNumber(), "index", r.errorMessage(), slice);
-        }
-
-        IndexTombstone tombstone;
-        tombstone.old_database = options.database_id;
-        tombstone.old_schema = options.schema_id;
-        tombstone.id = options.id;
-        tombstone.type = options.type;
-
-        Local().RegisterIndexDrop(std::move(tombstone));
         return {};
       });
   };

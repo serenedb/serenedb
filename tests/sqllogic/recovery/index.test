@@ -1,0 +1,55 @@
+control substitution on
+
+
+statement ok
+CREATE TABLE t(r text);
+
+
+statement ok
+CREATE INDEX index_t ON t USING inverted(r);
+
+
+query ok
+select c.relname as table_name, (select relname from pg_class where pg_class.oid = i.indexrelid) as index_name from pg_class as c join pg_index as i on c.oid = i.indrelid and c.relkind = 'r';
+----
+table_name	index_name
+t	index_t
+
+
+statement ok
+SET sdb_fault_crash_on_packet TO DEFAULT;
+
+
+query error connection closed
+select 1;
+
+
+connection new1
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT c.relname AS table_name, (SELECT relname FROM pg_class WHERE pg_class.oid = i.indexrelid) AS index_name FROM pg_class AS c JOIN pg_index AS i ON c.oid = i.indrelid AND c.relkind = 'r';
+----
+table_name	index_name
+t	index_t
+
+
+connection new1
+statement ok
+SET sdb_fault_crash_on_index_drop TO DEFAULT;
+
+
+connection new1
+statement error connection closed
+DROP INDEX index_t;
+
+
+connection new2
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT COUNT(*) from pg_class WHERE relname = 't';
+----
+count
+1
+
+
+connection new2
+statement ok
+CREATE INDEX index_t ON t USING inverted(r);

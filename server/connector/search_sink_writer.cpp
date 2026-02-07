@@ -203,7 +203,9 @@ SearchSinkInsertBaseImpl::Writer SearchSinkInsertBaseImpl::MakeIndexWriter(
 
 void SearchSinkInsertBaseImpl::InitImpl(size_t batch_size) {
   SDB_ASSERT(batch_size > 0);
-  SDB_ASSERT(!_document.has_value());
+  if (_document) {
+    _document.reset();
+  }
   _document.emplace(_trx.Insert(false, batch_size));
   _emit_pk = true;
 }

@@ -51,7 +51,7 @@ yaclib::Future<Result> DropObject(ExecContext& context, const DropStmt& stmt) {
       r = catalog.DropTable(db, schema, name, nullptr);
       break;
     case OBJECT_INDEX:
-      r = catalog.DropIndex(db, schema, name);
+      r = catalog.DropIndex(db, schema, name, nullptr);
       break;
     case OBJECT_VIEW: {
       r = catalog.DropView(db, schema, name);

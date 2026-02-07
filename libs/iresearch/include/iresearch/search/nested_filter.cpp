@@ -79,7 +79,7 @@ class ScorerWrapper : public DocIterator {
     _score = std::move(score);
   }
 
-  Attribute* GetMutable(TypeInfo::type_id id) final {
+  Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
     if (irs::Type<ScoreAttr>::id() == id) {
       return &_score;
     }
@@ -87,15 +87,11 @@ class ScorerWrapper : public DocIterator {
     return _it->GetMutable(id);
   }
 
-  doc_id_t value() const final { return _it->value(); }
+  doc_id_t value() const noexcept final { return _it->value(); }
 
   doc_id_t advance() final { return _it->advance(); }
 
   doc_id_t seek(doc_id_t target) final { return _it->seek(target); }
-
-  doc_id_t shallow_seek(doc_id_t target) final {
-    return _it->shallow_seek(target);
-  }
 
   uint32_t count() final { return _it->count(); }
 
@@ -133,7 +129,7 @@ class ChildToParentJoin : public DocIterator, private Matcher {
     }
   }
 
-  Attribute* GetMutable(TypeInfo::type_id id) final {
+  Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
     return irs::GetMutable(_attrs, id);
   }
 

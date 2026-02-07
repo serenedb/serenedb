@@ -1,0 +1,240 @@
+hash-threshold 100
+
+control substitution on
+
+statement ok
+CREATE TABLE tindex
+(
+  id INTEGER PRIMARY KEY,
+  name TEXT
+);
+
+
+statement ok
+CREATE TABLE clickclack
+(
+  id INTEGER PRIMARY KEY,
+  name TEXT
+);
+
+
+statement count 3
+INSERT INTO tindex VALUES (1, 'vedernikoff'), (2, 'pavelvi'), (3, 'babsky');
+
+
+statement count 3
+COPY tindex TO '/tmp/${__DATABASE__}_quit_low_salary.parquet' (FORMAT PARQUET);
+
+
+statement count 3
+COPY clickclack FROM '/tmp/${__DATABASE__}_quit_low_salary.parquet' (FORMAT PARQUET);
+
+
+query
+SELECT * FROM clickclack ORDER BY 1, 2;
+----
+id	name
+1	vedernikoff
+2	pavelvi
+3	babsky
+
+
+statement count 3
+DELETE FROM clickclack;
+
+
+statement count 2
+COPY clickclack FROM '/tmp/${__DATABASE__}_quit_low_salary.parquet' (FORMAT PARQUET) WHERE id != 2;
+
+
+query
+SELECT * FROM clickclack ORDER BY 1, 2;
+----
+id	name
+1	vedernikoff
+3	babsky
+
+
+statement count 2
+DELETE FROM clickclack;
+
+
+statement count 1
+COPY (SELECT * FROM tindex ORDER BY 1 DESC LIMIT 1) TO '/tmp/${__DATABASE__}_quit_low_salary.parquet' (FORMAT PARQUET);
+
+
+statement count 1
+COPY clickclack FROM '/tmp/${__DATABASE__}_quit_low_salary.parquet' (FORMAT PARQUET);
+
+
+query
+SELECT * FROM clickclack;
+----
+id	name
+3	babsky
+
+
+statement count 1
+DELETE FROM clickclack;
+
+
+statement ok
+CREATE TABLE reversed
+(
+  name TEXT PRIMARY KEY,
+  id INTEGER
+);
+
+
+statement count 3
+COPY tindex TO '/tmp/${__DATABASE__}_lmao.parquet' (FORMAT PARQUET);
+
+
+onlyif serenedb
+query
+COPY reversed(id, name) FROM '/tmp/${__DATABASE__}_lmao.parquet' WITH (EXPLAIN LOGICAL, EXPLAIN EXECUTION, FORMAT PARQUET);
+----
+QUERY PLAN
+LOGICAL PLAN:
+- TableWrite INSERT: -> ROW<rows:BIGINT>
+    id := id
+    name := name
+  - Sort: name ASC NULLS FIRST -> ROW<"id":INTEGER,"name":VARCHAR>
+    - Filter: IF(spark_isnotnull(name), true, CAST(pg_error(33575106, 0, null value in column "name" of relation "reversed" violates not-null constraint, presto_concat(Failing row contains (, COALESCE(CAST(id AS VARCHAR), null), , , COALESCE(CAST(name AS VARCHAR), null), ).)) AS BOOLEAN)) -> ROW<"id":INTEGER,"name":VARCHAR>
+      - Project: -> ROW<"id":INTEGER,"name":VARCHAR>
+          id := id
+          name := name
+        - TableScan: <slt:ignore> -> ROW<"id":INTEGER,"name":VARCHAR>
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- TableWrite[4][serenedb(table=reversed, kind=INSERT)] -> rows:BIGINT
+  -- Project[3][expressions: (id:INTEGER, "id"), (name:VARCHAR, "name")] -> "id":INTEGER, "name":VARCHAR
+    -- OrderBy[2][name ASC NULLS FIRST] -> "id":INTEGER, "name":VARCHAR
+      -- Filter[1][expression: if(spark_isnotnull("name"),true,cast(pg_error(33575106,0,null value in column "name" of relation "reversed" violates not-null constraint,presto_concat(Failing row contains (,coalesce(cast("id" as VARCHAR),null),, ,coalesce("name",null),).)) as BOOLEAN))] -> "id":INTEGER, "name":VARCHAR
+        -- TableScan[0][FileTableHandle] -> "id":INTEGER, "name":VARCHAR
+
+
+statement count 3
+COPY reversed(id, name) FROM '/tmp/${__DATABASE__}_lmao.parquet' (FORMAT PARQUET);
+
+
+query
+SELECT * FROM reversed ORDER BY 1, 2;
+----
+name	id
+babsky	3
+pavelvi	2
+vedernikoff	1
+
+
+statement count 3
+DELETE FROM reversed;
+
+
+statement count 3
+COPY tindex(name, id) TO '/tmp/${__DATABASE__}_lmao.parquet' (FORMAT PARQUET);
+
+
+statement count 3
+COPY reversed FROM '/tmp/${__DATABASE__}_lmao.parquet' (FORMAT PARQUET);
+
+
+query
+SELECT * FROM reversed ORDER BY 1, 2;
+----
+name	id
+babsky	3
+pavelvi	2
+vedernikoff	1
+
+
+statement ok
+CREATE TABLE varus
+(
+  id INTEGER,
+  name TEXT,
+  iq INTEGER DEFAULT 1000 - 7,
+  iamdegenereted INTEGER GENERATED ALWAYS AS (iq + id + 228) STORED
+);
+
+
+statement count 3
+COPY varus(name, id) FROM '/tmp/${__DATABASE__}_lmao.parquet' (FORMAT PARQUET);
+
+
+statement count 3
+COPY varus(name, id) FROM '/tmp/${__DATABASE__}_lmao.parquet' (FORMAT PARQUET);
+
+
+statement count 3
+COPY varus(name, id) FROM '/tmp/${__DATABASE__}_lmao.parquet' (FORMAT PARQUET);
+
+
+query
+SELECT * FROM varus ORDER BY 1, 2, 3, 4;
+----
+id	name	iq	iamdegenereted
+1	vedernikoff	993	1222
+1	vedernikoff	993	1222
+1	vedernikoff	993	1222
+2	pavelvi	993	1223
+2	pavelvi	993	1223
+2	pavelvi	993	1223
+3	babsky	993	1224
+3	babsky	993	1224
+3	babsky	993	1224
+
+statement count 100000
+COPY 
+(
+  SELECT * 
+  FROM 
+    generate_series(1, 10) as iq, 
+    generate_series(1, 100) as pencil_size, 
+    generate_series(1, 100) as weight
+) TO '/tmp/${__DATABASE__}_arelav.parquet' WITH (FORMAT PARQUET);
+
+
+statement ok
+CREATE TABLE arelav 
+(
+  lmao BIGINT,
+  kek  BIGINT,
+  kal  BIGINT
+);
+
+
+statement count 100000
+COPY arelav FROM '/tmp/${__DATABASE__}_arelav.parquet' WITH (FORMAT PARQUET);
+
+
+query
+SELECT * FROM arelav ORDER BY 1, 2, 3;
+----
+300003 values hashing to 568009c5b2055554ab4bd827ebe85b75
+
+
+statement count 100
+COPY 
+  (SELECT x, y::text FROM generate_series(1, 10) as g1(x), generate_series(1, 10) as g2(y)) 
+TO 
+  '/tmp/${__DATABASE__}_deadinside.parquet'
+WITH (FORMAT PARQUET);
+
+
+statement ok
+CREATE TABLE donsimon
+(
+  vv BIGINT,
+  marmishka TEXT
+);
+
+
+statement count 100
+COPY donsimon FROM '/tmp/${__DATABASE__}_deadinside.parquet' (FORMAT PARQUET);
+
+
+query
+SELECT * FROM donsimon ORDER BY 1, 2;
+----
+202 values hashing to 023b58aa7a21f0c2699ccde3252f77b1

@@ -30,6 +30,7 @@
 #include "iresearch/analysis/classification_tokenizer.hpp"
 #include "iresearch/analysis/collation_tokenizer.hpp"
 #include "iresearch/analysis/delimited_tokenizer.hpp"
+#include "iresearch/analysis/geo_analyzer.hpp"
 #include "iresearch/analysis/minhash_tokenizer.hpp"
 #include "iresearch/analysis/multi_delimited_tokenizer.hpp"
 #include "iresearch/analysis/nearest_neighbors_tokenizer.hpp"
@@ -268,6 +269,7 @@ void Init() {
   StemmingTokenizer::init();
   TextTokenizer::init();
   MultiDelimitedTokenizer::init();
+  GeoAnalyzer::init();
 }
 
 }  // namespace analyzers

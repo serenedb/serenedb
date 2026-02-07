@@ -42,7 +42,7 @@ class MockTermReader final : public irs::BasicTermReader {
       _max_term(max_term) {}
 
  private:
-  irs::Attribute* GetMutable(irs::TypeInfo::type_id /*type*/) final {
+  irs::Attribute* GetMutable(irs::TypeInfo::type_id /*type*/) noexcept final {
     return nullptr;
   }
   irs::TermIterator::ptr iterator() const final {
@@ -70,19 +70,11 @@ class FormatTestCase : public IndexTestBase {
       if (irs::IndexFeatures::None != (features & irs::IndexFeatures::Offs)) {
         _poffs = &_offs;
       }
-
-      if (irs::IndexFeatures::None != (features & irs::IndexFeatures::Pay)) {
-        _ppay = &_pay;
-      }
     }
 
     Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
       if (irs::Type<irs::OffsAttr>::id() == type) {
         return _poffs;
-      }
-
-      if (irs::Type<irs::PayAttr>::id() == type) {
-        return _ppay;
       }
 
       return nullptr;
@@ -99,18 +91,13 @@ class FormatTestCase : public IndexTestBase {
       EXPECT_TRUE(irs::pos_limits::valid(_value));
 
       const auto written = sprintf(_pay_data, "%d", _value);
-      _pay.value = irs::bytes_view(
-        reinterpret_cast<const irs::byte_type*>(_pay_data), written);
 
       _offs.start = _value;
       _offs.end = _offs.start + written;
       return true;
     }
 
-    void clear() {
-      _pay.value = {};
-      _offs.clear();
-    }
+    void clear() { _offs.clear(); }
 
     void reset() final {
       SDB_ASSERT(false);  // unsupported
@@ -121,9 +108,7 @@ class FormatTestCase : public IndexTestBase {
 
     uint32_t _end;
     irs::OffsAttr _offs;
-    irs::PayAttr _pay;
     irs::OffsAttr* _poffs{};
-    irs::PayAttr* _ppay{};
     char _pay_data[21];  // enough to hold numbers up to max of uint64_t
   };
 
@@ -167,7 +152,7 @@ class FormatTestCase : public IndexTestBase {
       return _doc.value;
     }
 
-    irs::doc_id_t value() const final { return _doc.value; }
+    irs::doc_id_t value() const noexcept final { return _doc.value; }
 
     irs::doc_id_t seek(irs::doc_id_t target) final {
       irs::seek(*this, target);
@@ -222,7 +207,7 @@ class FormatTestCase : public IndexTestBase {
       return true;
     }
 
-    irs::bytes_view value() const final { return _val; }
+    irs::bytes_view value() const noexcept final { return _val; }
 
     irs::DocIterator::ptr postings(
       irs::IndexFeatures /*features*/) const final {

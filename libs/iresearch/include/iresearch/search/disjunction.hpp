@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "basics/empty.hpp"
 #include "basics/std.hpp"
 #include "basics/system-compiler.h"
 #include "conjunction.hpp"
@@ -832,7 +833,7 @@ enum class MatchType {
   MinMatch,
 };
 
-template<MatchType MinMatch, bool SeekReadahead, size_t NumBlocks = 8>
+template<MatchType MinMatch, bool SeekReadahead, size_t NumBlocks = 64>
 struct BlockDisjunctionTraits {
   // "false" - iterator is used for min match filtering,
   // "true" - otherwise
@@ -889,13 +890,13 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
                        std::move(scores),
                        ResolveOverloadTag{}} {}
 
-  size_t MatchCount() const noexcept { return _match_count; }
+  IRS_FORCE_INLINE size_t MatchCount() const noexcept { return _match_count; }
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);
   }
 
-  doc_id_t value() const noexcept final {
+  IRS_FORCE_INLINE doc_id_t value() const noexcept final {
     return std::get<DocAttr>(_attrs).value;
   }
 
@@ -1354,7 +1355,7 @@ struct RebindIterator<Disjunction<Adapter, Merger>> {
 template<typename Adapter, typename Merger>
 struct RebindIterator<DisjunctionIterator<Adapter, Merger>> {
   using Unary = void;  // block disjunction doesn't support visitor
-  using Basic = BasicDisjunction<Adapter, Merger>;
+  using Basic = void;  // block disjunction always faster than basic
   using Small = void;  // block disjunction always faster than small
   using Wand = DisjunctionIterator<Adapter, Merger>;
 };

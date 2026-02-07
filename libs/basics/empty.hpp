@@ -26,7 +26,7 @@
 
 namespace irs::utils {
 
-struct Empty final {
+struct Empty {
   template<typename... Args>
   Empty(Args&&... /*args*/) {}
 };

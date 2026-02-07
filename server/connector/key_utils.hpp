@@ -27,6 +27,7 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
 #include "connector/primary_key.hpp"
+#include "rocksdb/sst_file_writer.h"
 
 namespace sdb::connector::key_utils {
 
@@ -41,7 +42,7 @@ std::string PrepareColumnKey(ObjectId id, catalog::Column::Id column_oid);
 void AppendColumnKey(std::string& key, catalog::Column::Id column_oid);
 
 // Prepare buffer for column key and call 'row_key_handle' on row_key
-template<typename Func>
+template<bool IsInternalSSTKey = false, typename Func>
 void MakeColumnKey(const velox::RowVectorPtr& input,
                    const std::vector<velox::column_index_t>& pk_columns,
                    velox::vector_size_t row_idx, std::string_view object_id,
@@ -62,6 +63,15 @@ void MakeColumnKey(const velox::RowVectorPtr& input,
   row_key_handle(std::string_view{
     key_buffer.begin() + sizeof(catalog::Column::Id), key_buffer.end()});
   std::memcpy(key_buffer.data(), object_id.data(), sizeof(ObjectId));
+
+  if constexpr (IsInternalSSTKey) {
+    const auto key_size = key_buffer.size();
+    basics::StrAppend(key_buffer,
+                      sizeof(rocksdb::SstFileWriter::kInternalKeyFooter));
+    std::memcpy(key_buffer.data() + key_size,
+                &rocksdb::SstFileWriter::kInternalKeyFooter,
+                sizeof(rocksdb::SstFileWriter::kInternalKeyFooter));
+  }
 }
 
 // Takes buffer in format
@@ -70,6 +80,11 @@ void MakeColumnKey(const velox::RowVectorPtr& input,
 inline void SetupColumnForKey(std::string& buf, catalog::Column::Id column_id) {
   SDB_ASSERT(buf.size() >= sizeof(ObjectId) + sizeof(catalog::Column::Id));
   absl::big_endian::Store(buf.data() + sizeof(ObjectId), column_id);
+}
+
+inline std::string_view ExtractRowKey(std::string_view full_key) {
+  SDB_ASSERT(full_key.size() > sizeof(ObjectId) + sizeof(catalog::Column::Id));
+  return full_key.substr(sizeof(ObjectId) + sizeof(catalog::Column::Id));
 }
 
 // creates range covering all rows of all columns of the table

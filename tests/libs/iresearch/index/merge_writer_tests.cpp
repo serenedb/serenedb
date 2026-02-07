@@ -1539,9 +1539,9 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
   constexpr irs::IndexFeatures kStringFieldFeatures =
     irs::IndexFeatures::Freq | irs::IndexFeatures::Pos;
-  constexpr irs::IndexFeatures kTextFieldFeatures =
-    irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-    irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+  constexpr irs::IndexFeatures kTextFieldFeatures = irs::IndexFeatures::Freq |
+                                                    irs::IndexFeatures::Pos |
+                                                    irs::IndexFeatures::Offs;
 
   std::string string1;
   std::string string2;
@@ -2939,5 +2939,5 @@ INSTANTIATE_TEST_SUITE_P(
   merge_writer_test, MergeWriterTestCase,
   ::testing::Combine(
     ::testing::Values(&tests::Directory<&tests::MemoryDirectory>),
-    ::testing::Values("1_5avx", "1_5simd")),
+    ::testing::Values("1_5simd")),
   &MergeWriterTestCase::to_string);

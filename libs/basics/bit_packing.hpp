@@ -36,7 +36,7 @@ constexpr uint32_t kBlockSize32 =
 constexpr uint32_t kBlockSize64 =
   sizeof(uint64_t) * 8;  // block size is tied to number of bits in value
 
-IRS_FORCE_INLINE uint32_t Maxbits64(uint64_t val) noexcept {
+IRS_FORCE_INLINE constexpr uint32_t Maxbits64(uint64_t val) noexcept {
   return math::MathTraits<uint64_t>::bits_required(val);
 }
 
@@ -50,7 +50,7 @@ inline uint32_t Maxbits64(const uint64_t* begin, const uint64_t* end) noexcept {
   return Maxbits64(accum);
 }
 
-IRS_FORCE_INLINE uint32_t Maxbits32(uint32_t val) noexcept {
+IRS_FORCE_INLINE constexpr uint32_t Maxbits32(uint32_t val) noexcept {
   return math::MathTraits<uint32_t>::bits_required(val);
 }
 

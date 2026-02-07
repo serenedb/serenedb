@@ -54,7 +54,7 @@ struct EnumHash {
   }
 };
 
-IRS_FORCE_INLINE void WriteZV32(DataOutput& out, int32_t v) {
+IRS_FORCE_INLINE inline void WriteZV32(DataOutput& out, int32_t v) {
   out.WriteV32(sdb::ZigZagEncode32(v));
 }
 
@@ -62,7 +62,7 @@ inline int32_t ReadZV32(DataInput& in) {
   return sdb::ZigZagDecode32(in.ReadV32());
 }
 
-IRS_FORCE_INLINE void WriteZV64(DataOutput& out, int64_t v) {
+IRS_FORCE_INLINE inline void WriteZV64(DataOutput& out, int64_t v) {
   out.WriteV64(sdb::ZigZagEncode64(v));
 }
 
@@ -70,21 +70,22 @@ inline int64_t ReadZV64(DataInput& in) {
   return sdb::ZigZagDecode64(in.ReadV64());
 }
 
-IRS_FORCE_INLINE void WriteStr(DataOutput& out, const char* s, size_t len) {
+IRS_FORCE_INLINE inline void WriteStr(DataOutput& out, const char* s,
+                                      size_t len) {
   SDB_ASSERT(len < std::numeric_limits<uint32_t>::max());
   out.WriteV32(static_cast<uint32_t>(len));
   out.WriteBytes(reinterpret_cast<const byte_type*>(s), len);
 }
 
-IRS_FORCE_INLINE void WriteStr(DataOutput& out, const byte_type* s,
-                               size_t len) {
+IRS_FORCE_INLINE inline void WriteStr(DataOutput& out, const byte_type* s,
+                                      size_t len) {
   SDB_ASSERT(len < std::numeric_limits<uint32_t>::max());
   out.WriteV32(static_cast<uint32_t>(len));
   out.WriteBytes(s, len);
 }
 
 template<typename StringType>
-IRS_FORCE_INLINE void WriteStr(DataOutput& out, const StringType& str) {
+IRS_FORCE_INLINE inline void WriteStr(DataOutput& out, const StringType& str) {
   WriteStr(out, str.data(), str.size());
 }
 
@@ -164,12 +165,12 @@ StringType VReadString(const byte_type*& in) {
   return StringType(ReadRef<const char_type>(in, size), size);
 }
 
-IRS_FORCE_INLINE uint64_t ShiftPack64(uint64_t val, bool b) noexcept {
+IRS_FORCE_INLINE constexpr uint64_t ShiftPack64(uint64_t val, bool b) noexcept {
   SDB_ASSERT(val <= UINT64_C(0x7FFFFFFFFFFFFFFF));
   return (val << 1) | uint64_t(b);
 }
 
-IRS_FORCE_INLINE uint32_t ShiftPack32(uint32_t val, bool b) noexcept {
+IRS_FORCE_INLINE constexpr uint32_t ShiftPack32(uint32_t val, bool b) noexcept {
   SDB_ASSERT(val <= UINT32_C(0x7FFFFFFF));
   return (val << 1) | uint32_t(b);
 }

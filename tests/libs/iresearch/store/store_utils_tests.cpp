@@ -221,7 +221,7 @@ void PackedReadWriteCore(const std::vector<uint32_t>& src) {
   {
     auto begin = src.data();
     for (size_t i = 0; i < blocks; ++i) {
-      irs::bitpack::write_block32<kBlockSize>(pack, out, begin, encoded);
+      irs::bitpack::write_block32(pack, out, begin, encoded, kBlockSize);
       begin += kBlockSize;
     }
   }
@@ -234,7 +234,7 @@ void PackedReadWriteCore(const std::vector<uint32_t>& src) {
   {
     auto begin = read.data();
     for (size_t i = 0; i < blocks; ++i) {
-      irs::bitpack::read_block32<kBlockSize>(unpack, in, encoded, begin);
+      irs::bitpack::read_block32(unpack, in, encoded, begin, kBlockSize);
       begin += kBlockSize;
     }
   }
@@ -259,12 +259,12 @@ void PackedReadWriteBlockCore(const std::vector<uint32_t>& src) {
   // compress data to stream
   irs::bstring buf;
   irs::BytesOutput out(buf);
-  irs::bitpack::write_block32<kBlockSize>(pack, out, src.data(), encoded);
+  irs::bitpack::write_block32(pack, out, src.data(), encoded, kBlockSize);
 
   // decompress data from stream
   std::vector<uint32_t> read(src.size());
   irs::BytesViewInput in(buf);
-  irs::bitpack::read_block32<kBlockSize>(unpack, in, encoded, read.data());
+  irs::bitpack::read_block32(unpack, in, encoded, read.data(), kBlockSize);
 
   ASSERT_EQ(src, read);
 }
@@ -329,14 +329,13 @@ void ReadWriteBlock(const std::vector<uint32_t>& source,
   // write block
   irs::bstring buf;
   irs::BytesOutput out(buf);
-  irs::bitpack::write_block32(pack, out, source.data(), size,
-                              enc_dec_buf.data());
+  irs::bitpack::write_block32(pack, out, source.data(), enc_dec_buf.data(),
+                              size);
 
   // read block
   BytesInput in(buf);
   std::vector<uint32_t> read(size);
-  irs::bitpack::read_block_impl32(unpack, in, enc_dec_buf.data(), size,
-                                  read.data());
+  irs::bitpack::read_block32(unpack, in, enc_dec_buf.data(), read.data(), size);
 
   ASSERT_EQ(source, read);
 }
@@ -414,14 +413,14 @@ void ReadWriteBlockOptimized(const std::array<uint32_t, N>& source) {
   // write block
   irs::bstring buf;
   irs::BytesOutput out(buf);
-  irs::bitpack::write_block32<N>(pack_block, out, source.data(),
-                                 enc_dec_buf.data());
+  irs::bitpack::write_block32(pack_block, out, source.data(),
+                              enc_dec_buf.data(), N);
 
   // read block
   BytesInput in(buf);
   std::array<uint32_t, N> read;
-  irs::bitpack::read_block32<N>(unpack_block, in, enc_dec_buf.data(),
-                                read.data());
+  irs::bitpack::read_block32(unpack_block, in, enc_dec_buf.data(), read.data(),
+                             N);
 
   ASSERT_EQ(source, read);
 }

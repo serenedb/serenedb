@@ -80,6 +80,8 @@ std::string DeparseStmt(Node* node);
 
 std::string DeparseExpr(Node* expr);
 
+std::string DeparseValue(Node* expr);
+
 struct MemoryContextDeleter {
   void operator()(MemoryContextData* p) const noexcept;
 };
@@ -136,6 +138,7 @@ enum class SqlCommandType : uint32_t {
   Show,         // show stmt
   Nothing,      // dummy command for instead nothing rules with qual
   Call,         // call stmt
+  Copy,         // copy stmt
 };
 
 }  // namespace pg
@@ -160,6 +163,8 @@ enum class SqlCommandType : uint32_t {
   _Pragma("push_macro(\"vprintf\")") \
   _Pragma("push_macro(\"printf\")") \
   _Pragma("push_macro(\"foreach\")") \
+  _Pragma("push_macro(\"Min\")") \
+  _Pragma("push_macro(\"Max\")") \
   extern "C" {
 
 #define LIBPG_QUERY_INCLUDES_END \
@@ -179,6 +184,8 @@ enum class SqlCommandType : uint32_t {
   _Pragma("pop_macro(\"fprintf\")") \
   _Pragma("pop_macro(\"vprintf\")") \
   _Pragma("pop_macro(\"printf\")") \
-  _Pragma("pop_macro(\"foreach\")")
+  _Pragma("pop_macro(\"foreach\")") \
+  _Pragma("pop_macro(\"Min\")") \
+  _Pragma("pop_macro(\"Max\")")
 
 // clang-format on

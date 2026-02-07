@@ -454,7 +454,8 @@ TokenizerPayload::TokenizerPayload(irs::Tokenizer* impl) : _impl(impl) {
   SDB_ASSERT(_term);
 }
 
-irs::Attribute* TokenizerPayload::GetMutable(irs::TypeInfo::type_id type) {
+irs::Attribute* TokenizerPayload::GetMutable(
+  irs::TypeInfo::type_id type) noexcept {
   if (irs::Type<irs::PayAttr>::id() == type) {
     return &_pay;
   }

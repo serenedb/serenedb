@@ -47,7 +47,7 @@ struct ChildIterator : irs::DocIterator {
     return _it->GetMutable(id);
   }
 
-  irs::doc_id_t value() const final { return _it->value(); }
+  irs::doc_id_t value() const noexcept final { return _it->value(); }
 
   irs::doc_id_t advance() final {
     while (true) {
@@ -82,14 +82,14 @@ class PrevDocWrapper : public irs::DocIterator {
                     nullptr);
   }
 
-  irs::Attribute* GetMutable(irs::TypeInfo::type_id id) final {
+  irs::Attribute* GetMutable(irs::TypeInfo::type_id id) noexcept final {
     if (irs::Type<irs::PrevDocAttr>::id() == id) {
       return &_prev_doc;
     }
     return _it->GetMutable(id);
   }
 
-  irs::doc_id_t value() const final { return _it->value(); }
+  irs::doc_id_t value() const noexcept final { return _it->value(); }
 
   irs::doc_id_t advance() final { return _it->advance(); }
 
@@ -1273,12 +1273,11 @@ static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 static const auto kDirectories = ::testing::ValuesIn(kTestDirs);
 
-INSTANTIATE_TEST_SUITE_P(
-  NestedFilterTest, NestedFilterTestCase,
-  ::testing::Combine(kDirectories,
-                     ::testing::Values(tests::FormatInfo{"1_5avx"},
-                                       tests::FormatInfo{"1_5simd"})),
-  NestedFilterTestCase::to_string);
+INSTANTIATE_TEST_SUITE_P(NestedFilterTest, NestedFilterTestCase,
+                         ::testing::Combine(kDirectories,
+                                            ::testing::Values(tests::FormatInfo{
+                                              "1_5simd"})),
+                         NestedFilterTestCase::to_string);
 
 class NestedFilterFormatsTestCase : public NestedFilterTestCase {
  protected:
@@ -1327,11 +1326,10 @@ TEST_P(NestedFilterFormatsTestCase, JoinAnyAll) {
              SOURCE_LOCATION);
 }
 
-INSTANTIATE_TEST_SUITE_P(
-  NestedFilterFormatsTest, NestedFilterFormatsTestCase,
-  ::testing::Combine(kDirectories,
-                     ::testing::Values(tests::FormatInfo{"1_5avx"},
-                                       tests::FormatInfo{"1_5simd"})),
-  NestedFilterFormatsTestCase::to_string);
+INSTANTIATE_TEST_SUITE_P(NestedFilterFormatsTest, NestedFilterFormatsTestCase,
+                         ::testing::Combine(kDirectories,
+                                            ::testing::Values(tests::FormatInfo{
+                                              "1_5simd"})),
+                         NestedFilterFormatsTestCase::to_string);
 
 }  // namespace

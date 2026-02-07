@@ -39,12 +39,6 @@
 #include "basics/random/uniform_character.h"
 #include "basics/string_utils.h"
 
-#ifdef OPENSSL_NO_SSL2  // OpenSSL > 1.1.0 deprecates RAND_pseudo_bytes
-#define RAND_BYTES RAND_bytes
-#else
-#define RAND_BYTES RAND_pseudo_bytes
-#endif
-
 namespace sdb::rest::ssl_interface {
 
 std::string SslMD5(std::string_view input) {
@@ -204,7 +198,7 @@ bool VerifyHMAC(const char* challenge, size_t challenge_length,
 }
 
 int SslRand(uint64_t* value) {
-  if (!RAND_BYTES((unsigned char*)value, sizeof(uint64_t))) {
+  if (!RAND_bytes((unsigned char*)value, sizeof(uint64_t))) {
     return 1;
   }
 
@@ -212,7 +206,7 @@ int SslRand(uint64_t* value) {
 }
 
 int SslRand(int64_t* value) {
-  if (!RAND_BYTES((unsigned char*)value, sizeof(int64_t))) {
+  if (!RAND_bytes((unsigned char*)value, sizeof(int64_t))) {
     return 1;
   }
 
@@ -220,7 +214,7 @@ int SslRand(int64_t* value) {
 }
 
 int SslRand(int32_t* value) {
-  if (!RAND_BYTES((unsigned char*)value, sizeof(int32_t))) {
+  if (!RAND_bytes((unsigned char*)value, sizeof(int32_t))) {
     return 1;
   }
 

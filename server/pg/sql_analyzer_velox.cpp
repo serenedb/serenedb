@@ -2728,11 +2728,11 @@ void SqlAnalyzer::ProcessCreateTableAsStmt(State& state,
                     ERR_MSG("CREATE TABLE AS only supports creating tables"));
   }
 
-  
-  // auto [column_names, column_exprs] = ProcessIntoClause(state, *stmt.into);
-  // state.root = std::make_shared<lp::TableWriteNode>(
-  //   _id_generator.NextPlanId(), std::move(state.root), axiom_table, write_kind,
-  //   std::move(column_names), std::move(column_exprs));
+  auto [column_names, column_exprs] = ProcessIntoClause(state, *stmt.into);
+  state.root = std::make_shared<lp::TableWriteNode>(
+    _id_generator.NextPlanId(), std::move(state.root), nullptr,
+    axiom::connector::WriteKind::kInsert, std::move(column_names),
+    std::move(column_exprs));
 }
 
 std::pair<std::vector<std::string>, std::vector<lp::ExprPtr>>

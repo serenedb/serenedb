@@ -679,6 +679,20 @@ TEST_F(SearchFilterBuilderTest, test_OrWithNot) {
                std::move(columns), true);
 }
 
+TEST_F(SearchFilterBuilderTest, test_DoubleNegation) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  
+  // NOT (NOT (a = 10)) should simplify to a = 10
+  AddTermFilter<int32_t>(expected, 1, 10);
+  
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE NOT (NOT (a = 10))",
+               std::move(columns), true);
+}
+
+
 // ============================================================================
 // Complex Nested Tests
 // ============================================================================
@@ -763,6 +777,39 @@ TEST_F(SearchFilterBuilderTest, test_ComplexNested3) {
                "SELECT * FROM foo WHERE (country = 'USA' AND price < 1000) OR "
                "(country = 'UK' AND price < 800) OR (NOT (country = 'USA' OR "
                "country = 'UK') AND price < 500)",
+               std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_NestedNotWithComparisons) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  
+  // NOT (a > 50 AND b < 100) is equivalent to (a <= 50 OR b >= 100)
+  auto& or_filter = expected.add<irs::Or>();
+  AddRangeFilter<int32_t>(or_filter, 1, std::nullopt, false, 50, true);
+  AddRangeFilter<int32_t>(or_filter, 2, 100, true, std::nullopt, false);
+  
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 1));
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("b", velox::INTEGER(), 2));
+  AssertFilter(expected, "SELECT * FROM foo WHERE NOT (a > 50 AND b < 100)",
+               std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_NestedNotWithOr) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And root;
+  auto& expected = root.add<irs::And>();
+  
+  // NOT (a < 10 OR a > 100) is equivalent to (a >= 10 AND a <= 100)
+
+  AddRangeFilter<int32_t>(expected, 1, 10, true, std::nullopt, false);
+  AddRangeFilter<int32_t>(expected, 1, std::nullopt, false, 100, true);
+  
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 1));
+  AssertFilter(root, "SELECT * FROM foo WHERE NOT (a < 10 OR a > 100)",
                std::move(columns), true);
 }
 

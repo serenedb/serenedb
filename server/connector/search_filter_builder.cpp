@@ -181,17 +181,67 @@ Filter& Negate(Source& parent) {
                                               : parent));
 }
 
+enum class ComparisonOp { KNone, KLt, KLe, KGt, KGe };
+
+ComparisonOp GetComparisonOp(const std::string& name) {
+  if (name == "lte" || name.ends_with("_lte")) {
+    return ComparisonOp::KLe;
+  } else if (name == "lt" || name.ends_with("_lt")) {
+    return ComparisonOp::KLt;
+  } else if (name == "gte" || name.ends_with("_gte")) {
+    return ComparisonOp::KGe;
+  } else if (name == "gt" || name.ends_with("_gt")) {
+    return ComparisonOp::KGt;
+  }
+  return ComparisonOp::KNone;
+}
+
+ComparisonOp InvertComparisonOp(ComparisonOp op) {
+  switch (op) {
+    case ComparisonOp::KLe:
+      return ComparisonOp::KGt;
+    case ComparisonOp::KGe:
+      return ComparisonOp::KLt;
+    case ComparisonOp::KGt:
+      return ComparisonOp::KLe;
+    case ComparisonOp::KLt:
+      return ComparisonOp::KGe;
+    case ComparisonOp::KNone:
+      return ComparisonOp::KNone;
+  }
+}
+
 template<typename Filter, typename Source>
 Result MakeGroup(Source& parent, const VeloxFilterContext& ctx,
                  const velox::core::CallTypedExpr* call) {
-  irs::BooleanFilter& sub_filter =
-    ctx.negated ? Negate<Filter>(parent) : AddFilter<Filter>(parent);
-  sub_filter.boost(ctx.boost);
   auto sub_ctx = ctx;
-  sub_ctx.negated = false;
   sub_ctx.boost = irs::kNoBoost;
+  irs::BooleanFilter* group_root;
+  if (ctx.negated && absl::c_all_of(call->inputs(), [](const auto& input) {
+        auto* call =
+          dynamic_cast<const velox::core::CallTypedExpr*>(input.get());
+        if (!call) {
+          return false;
+        }
+        return GetComparisonOp(call->name()) != ComparisonOp::KNone;
+      })) {
+    // DeMorgan`s law could be used if we negate group of comparisons. As
+    // comparisons consume negation by invertion we can reduce number of NOT
+    // filters!
+    group_root =
+      irs::Type<Filter>::id() == irs::Type<irs::And>::id()
+        ? static_cast<irs::BooleanFilter*>(&AddFilter<irs::Or>(parent))
+        : static_cast<irs::BooleanFilter*>(&AddFilter<irs::And>(parent));
+  } else {
+    group_root =
+      ctx.negated
+        ? static_cast<irs::BooleanFilter*>(&Negate<Filter>(parent))
+        : static_cast<irs::BooleanFilter*>(&AddFilter<Filter>(parent));
+    sub_ctx.negated = false;
+  }
+  group_root->boost(ctx.boost);
   for (const auto& input : call->inputs()) {
-    auto result = FromVeloxExpression(sub_filter, sub_ctx, input);
+    auto result = FromVeloxExpression(*group_root, sub_ctx, input);
     if (!result.ok()) {
       return result;
     }
@@ -227,36 +277,6 @@ bool IsEqualityOp(const std::string& name, bool& not_equal) {
     return true;
   }
   return false;
-}
-
-enum class ComparisonOp { KNone, KLt, KLe, KGt, KGe };
-
-ComparisonOp GetComparisonOpOp(const std::string& name) {
-  if (name == "lte" || name.ends_with("_lte")) {
-    return ComparisonOp::KLe;
-  } else if (name == "lt" || name.ends_with("_lt")) {
-    return ComparisonOp::KLt;
-  } else if (name == "gte" || name.ends_with("_gte")) {
-    return ComparisonOp::KGe;
-  } else if (name == "gt" || name.ends_with("_gt")) {
-    return ComparisonOp::KGt;
-  }
-  return ComparisonOp::KNone;
-}
-
-ComparisonOp InvertComparisonOpOp(ComparisonOp op) {
-  switch (op) {
-    case ComparisonOp::KLe:
-      return ComparisonOp::KGt;
-    case ComparisonOp::KGe:
-      return ComparisonOp::KLt;
-    case ComparisonOp::KGt:
-      return ComparisonOp::KLe;
-    case ComparisonOp::KLt:
-      return ComparisonOp::KGe;
-    case ComparisonOp::KNone:
-      return ComparisonOp::KNone;
-  }
 }
 
 bool IsIn(std::string_view name) { return name == "in"; }
@@ -323,7 +343,7 @@ Result FromVeloxComparison(irs::BooleanFilter& filter,
   // looks like we do't need normalization. Value is always second argument
 
   if (ctx.negated) {
-    op = InvertComparisonOpOp(op);
+    op = InvertComparisonOp(op);
   }
 
   // TODO(Dronplane): handle case when field access is wrapped in cast
@@ -396,7 +416,6 @@ Result FromVeloxComparison(irs::BooleanFilter& filter,
         auto& range_filter = AddFilter<irs::ByGranularRange>(filter);
         irs::NumericTokenizer stream;
         stream.reset(converted_value.value<T>());
-        stream.next();
         irs::SetGranularTerm(
           setup_base_filter(range_filter, std::move(field_name)), stream);
       }
@@ -649,7 +668,7 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
   }
 
   // ByRange openended
-  auto comparison_op = GetComparisonOpOp(call->name());
+  auto comparison_op = GetComparisonOp(call->name());
   if (comparison_op != ComparisonOp::KNone) {
     return FromVeloxComparison(filter, ctx, call, comparison_op);
   }

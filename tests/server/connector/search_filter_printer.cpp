@@ -72,7 +72,7 @@ std::ostream& operator<<(std::ostream& os, const SearchRange<T>& range) {
     } else {
       os << " ";
     }
-    os << (range.min_type == irs::BoundType::Inclusive ? "<=" : "<")
+    os << (range.max_type == irs::BoundType::Inclusive ? "<=" : "<")
        << ToString(range.max);
   }
   return os;

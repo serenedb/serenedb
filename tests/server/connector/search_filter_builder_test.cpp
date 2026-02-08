@@ -22,6 +22,8 @@
 
 #include <iresearch/analysis/tokenizers.hpp>
 #include <iresearch/search/boolean_filter.hpp>
+#include <iresearch/search/granular_range_filter.hpp>
+#include <iresearch/search/range_filter.hpp>
 #include <iresearch/search/term_filter.hpp>
 
 #include "app/options/program_options.h"
@@ -113,11 +115,12 @@ class SearchFilterBuilderTest : public ::testing::Test {
     auto velox_query_ctx = velox::core::QueryCtx::create();
     velox::exec::SimpleExpressionEvaluator evaluator(
       velox_query_ctx.get(), query_ctx->query_memory_pool.get());
-    auto res = connector::search::ExprToFilter(
-      root, evaluator,
-      connector._table_handles[rel.first.relation]->AcceptedFilters().front(),
-      table->columnMap());
-    ASSERT_EQ(res.ok(), must_succeed);
+    for (auto& conjunct :
+         connector._table_handles[rel.first.relation]->AcceptedFilters()) {
+      auto res = connector::search::ExprToFilter(root, evaluator, conjunct,
+                                                 table->columnMap());
+      ASSERT_EQ(res.ok(), must_succeed);
+    }
     if (must_succeed) {
       ASSERT_EQ(root, expected);
     }
@@ -150,8 +153,7 @@ class SearchFilterBuilderTest : public ::testing::Test {
   }
 
   template<typename T, typename Filter>
-  void AddTermFilter(Filter& root, catalog::Column::Id column,
-                     const T& value) {
+  void AddTermFilter(Filter& root, catalog::Column::Id column, const T& value) {
     auto& term = AddFilter<irs::ByTerm>(root);
     *term.mutable_field() = MakeFieldName<T>(column);
     if constexpr (std::is_same_v<T, bool>) {
@@ -174,12 +176,77 @@ class SearchFilterBuilderTest : public ::testing::Test {
     }
   }
 
+  template<typename T, typename Filter>
+  void AddRangeFilter(Filter& root, catalog::Column::Id column,
+                      const std::optional<T>& min_value, bool min_inclusive,
+                      const std::optional<T>& max_value, bool max_inclusive) {
+    if constexpr (std::is_same_v<T, velox::StringView>) {
+      // Use ByRange for strings
+      auto& range = AddFilter<irs::ByRange>(root);
+      *range.mutable_field() = MakeFieldName<T>(column);
+      auto& options = range.mutable_options()->range;
+      irs::StringTokenizer stream;
+      const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
+      if (min_value.has_value()) {
+        stream.reset(*min_value);
+        stream.next();
+        options.min.assign(token->value);
+        options.min_type =
+          min_inclusive ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
+      } else {
+        options.min_type = irs::BoundType::Unbounded;
+      }
+
+      if (max_value.has_value()) {
+        stream.reset(*max_value);
+        stream.next();
+        options.max.assign(token->value);
+        options.max_type =
+          max_inclusive ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
+      } else {
+        options.max_type = irs::BoundType::Unbounded;
+      }
+    } else if constexpr (std::is_floating_point_v<T> || std::is_integral_v<T>) {
+      // Use ByGranularRange for numerics
+      auto& range = AddFilter<irs::ByGranularRange>(root);
+      *range.mutable_field() = MakeFieldName<T>(column);
+      auto& options = range.mutable_options()->range;
+      irs::NumericTokenizer stream;
+      if (min_value.has_value()) {
+        stream.reset(*min_value);
+        irs::SetGranularTerm(options.min, stream);
+        options.min_type =
+          min_inclusive ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
+      } else {
+        options.min_type = irs::BoundType::Unbounded;
+      }
+
+      if (max_value.has_value()) {
+        stream.reset(*max_value);
+        irs::SetGranularTerm(options.max, stream);
+        options.max_type =
+          max_inclusive ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
+      } else {
+        options.max_type = irs::BoundType::Unbounded;
+      }
+    } else if constexpr (std::is_same_v<T, bool>) {
+      // For bool, use term filter as there's no meaningful range
+      ASSERT_FALSE(true) << "Range queries on bool type not supported";
+    } else {
+      ASSERT_FALSE(true) << "Unexpected range type";
+    }
+  }
+
  protected:
   pg::MemoryContextPtr _pg_memory_ctx;
   static ServerState gServerState;
 };
 
 ServerState SearchFilterBuilderTest::gServerState;
+
+// ============================================================================
+// Basic OR Tests
+// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_SimpleDisjunction) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
@@ -197,15 +264,66 @@ TEST_F(SearchFilterBuilderTest, test_SimpleDisjunctionDifferentFields) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
   irs::And expected;
   auto& or_filter = expected.add<irs::Or>();
-  AddTermFilter<int32_t>(or_filter, 1, 10);
-  AddTermFilter<velox::StringView>(or_filter, 2, velox::StringView{"foobar"});
+  AddTermFilter<int32_t>(or_filter, 300, 10);
+  AddTermFilter<velox::StringView>(or_filter, 512, velox::StringView{"foobar"});
   columns.emplace_back(
-    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 1));
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 300));
   columns.emplace_back(
-    std::make_unique<connector::SereneDBColumn>("b", velox::VARCHAR(), 2));
+    std::make_unique<connector::SereneDBColumn>("b", velox::VARCHAR(), 512));
   AssertFilter(expected, "SELECT * FROM foo WHERE a = '10' OR b = 'foobar'",
                std::move(columns), true);
 }
+
+TEST_F(SearchFilterBuilderTest, test_MultipleOr) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
+  AddTermFilter<int32_t>(or_filter, 1, 5);
+  AddTermFilter<int32_t>(or_filter, 1, 10);
+  AddTermFilter<int32_t>(or_filter, 1, 15);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE a = 5 OR a = 10 OR a = 15",
+               std::move(columns), true);
+}
+
+// ============================================================================
+// Basic AND Tests
+// ============================================================================
+
+TEST_F(SearchFilterBuilderTest, test_SimpleConjunction) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddTermFilter<int32_t>(expected, 1, 10);
+  AddTermFilter<int32_t>(expected, 2, 20);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 1));
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("b", velox::INTEGER(), 2));
+  AssertFilter(expected, "SELECT * FROM foo WHERE a = 10 AND b = 20",
+               std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_MultipleAnd) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddTermFilter<int32_t>(expected, 1000, 10);
+  AddTermFilter<velox::StringView>(expected, 2000, velox::StringView{"test"});
+  AddTermFilter<bool>(expected, 3000, true);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 1000));
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("b", velox::VARCHAR(), 2000));
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("c", velox::BOOLEAN(), 3000));
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE a = 10 AND b = 'test' AND c = true",
+               std::move(columns), true);
+}
+
+// ============================================================================
+// NOT Tests
+// ============================================================================
 
 TEST_F(SearchFilterBuilderTest, test_NotTerm) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
@@ -215,6 +333,498 @@ TEST_F(SearchFilterBuilderTest, test_NotTerm) {
   columns.emplace_back(
     std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 1));
   AssertFilter(expected, "SELECT * FROM foo WHERE NOT (a = '10')",
+               std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_NotOr) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  auto& not_filter = expected.add<irs::Not>();
+  auto& or_filter = AddFilter<irs::Or>(not_filter);
+  AddTermFilter<int32_t>(or_filter, 1, 10);
+  AddTermFilter<int32_t>(or_filter, 1, 20);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE NOT (a = 10 OR a = 20)",
+               std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_NotAnd) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  auto& not_filter = expected.add<irs::Not>();
+  auto& and_filter = AddFilter<irs::And>(not_filter);
+  AddTermFilter<int32_t>(and_filter, 1, 10);
+  AddTermFilter<int32_t>(and_filter, 2, 20);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 1));
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("b", velox::INTEGER(), 2));
+  AssertFilter(expected, "SELECT * FROM foo WHERE NOT (a = 10 AND b = 20)",
+               std::move(columns), true);
+}
+
+// ============================================================================
+// Comparison Operator Tests - Less Than
+// ============================================================================
+
+TEST_F(SearchFilterBuilderTest, test_LessThanInteger) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddRangeFilter<int32_t>(expected, 1, std::nullopt, false, 100, false);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE a < 100", std::move(columns),
+               true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_LessThanString) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddRangeFilter<velox::StringView>(expected, 1, std::nullopt, false,
+                                    velox::StringView{"xyz"}, false);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::VARCHAR(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE a < 'xyz'",
+               std::move(columns), true);
+}
+
+// ============================================================================
+// Comparison Operator Tests - Less Than or Equal
+// ============================================================================
+
+TEST_F(SearchFilterBuilderTest, test_LessThanOrEqualInteger) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddRangeFilter<int32_t>(expected, 1, std::nullopt, false, 100, true);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE a <= 100", std::move(columns),
+               true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_LessThanOrEqualString) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddRangeFilter<velox::StringView>(expected, 1, std::nullopt, false,
+                                    velox::StringView{"test"}, true);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::VARCHAR(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE a <= 'test'",
+               std::move(columns), true);
+}
+
+// ============================================================================
+// Comparison Operator Tests - Greater Than
+// ============================================================================
+
+TEST_F(SearchFilterBuilderTest, test_GreaterThanInteger) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddRangeFilter<int32_t>(expected, 1, 50, false, std::nullopt, false);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE a > 50", std::move(columns),
+               true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_GreaterThanString) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddRangeFilter<velox::StringView>(expected, 1, velox::StringView{"abc"},
+                                    false, std::nullopt, false);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::VARCHAR(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE a > 'abc'",
+               std::move(columns), true);
+}
+
+// ============================================================================
+// Comparison Operator Tests - Greater Than or Equal
+// ============================================================================
+
+TEST_F(SearchFilterBuilderTest, test_GreaterThanOrEqualInteger) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddRangeFilter<int32_t>(expected, 1, 50, true, std::nullopt, false);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE a >= 50", std::move(columns),
+               true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_GreaterThanOrEqualString) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddRangeFilter<velox::StringView>(expected, 1, velox::StringView{"start"},
+                                    true, std::nullopt, false);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::VARCHAR(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE a >= 'start'",
+               std::move(columns), true);
+}
+
+// ============================================================================
+// BETWEEN Tests
+// ============================================================================
+
+TEST_F(SearchFilterBuilderTest, test_BetweenInteger) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddRangeFilter<int32_t>(expected, 500, 10, true, std::nullopt, false);
+  AddRangeFilter<int32_t>(expected, 500, std::nullopt, false, 100, true);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 500));
+  AssertFilter(expected, "SELECT * FROM foo WHERE a BETWEEN 10 AND 100",
+               std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_BetweenSymmetricInteger) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddRangeFilter<int32_t>(expected, 500, 10, true, std::nullopt, false);
+  AddRangeFilter<int32_t>(expected, 500, std::nullopt, false, 100, true);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 500));
+  AssertFilter(expected, "SELECT * FROM foo WHERE a BETWEEN SYMMETRIC 100 AND 10",
+               std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_BetweenString) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddRangeFilter<velox::StringView>(expected, 1, velox::StringView{"apple"},
+                                    true, std::nullopt, false);
+  AddRangeFilter<velox::StringView>(expected, 1, std::nullopt, false,
+                                    velox::StringView{"orange"}, true);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::VARCHAR(), 1));
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE a BETWEEN 'apple' AND 'orange'",
+               std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_NotBetween) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  // NOT BETWEEN 10 AND 50 is equivalent to (a < 10 OR a > 50)
+  auto& or_filter = expected.add<irs::Or>();
+  AddRangeFilter<int32_t>(or_filter, 1, std::nullopt, false, 10, false);
+  AddRangeFilter<int32_t>(or_filter, 1, 50, false, std::nullopt, false);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE a NOT BETWEEN 10 AND 50",
+               std::move(columns), true);
+}
+
+// ============================================================================
+// Combined AND/OR Tests
+// ============================================================================
+
+TEST_F(SearchFilterBuilderTest, test_AndWithOr) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddTermFilter<int32_t>(expected, 400, 10);
+  auto& or_filter = expected.add<irs::Or>();
+  AddTermFilter<velox::StringView>(or_filter, 800, velox::StringView{"foo"});
+  AddTermFilter<velox::StringView>(or_filter, 800, velox::StringView{"bar"});
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 400));
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("b", velox::VARCHAR(), 800));
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE a = 10 AND (b = 'foo' OR b = 'bar')",
+               std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_OrWithAnd) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
+  auto& and1 = or_filter.add<irs::And>();
+  AddTermFilter<int32_t>(and1, 1, 10);
+  AddTermFilter<velox::StringView>(and1, 2, velox::StringView{"test"});
+  auto& and2 = or_filter.add<irs::And>();
+  AddTermFilter<int32_t>(and2, 1, 20);
+  AddTermFilter<velox::StringView>(and2, 2, velox::StringView{"demo"});
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 1));
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("b", velox::VARCHAR(), 2));
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE (a = 10 AND b = 'test') OR (a = 20 AND "
+               "b = 'demo')",
+               std::move(columns), true);
+}
+
+// ============================================================================
+// Combined with Comparison Operators
+// ============================================================================
+
+TEST_F(SearchFilterBuilderTest, test_AndWithComparison) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddRangeFilter<int32_t>(expected, 1, 10, true, std::nullopt, false);
+  AddRangeFilter<int32_t>(expected, 1, std::nullopt, false, 100, true);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE a >= 10 AND a <= 100",
+               std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_OrWithComparison) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
+  AddRangeFilter<int32_t>(or_filter, 1, std::nullopt, false, 10, false);
+  AddRangeFilter<int32_t>(or_filter, 1, 100, false, std::nullopt, false);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE a < 10 OR a > 100",
+               std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_MixedEqualsAndComparison) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddTermFilter<velox::StringView>(expected, 1, velox::StringView{"active"});
+  AddRangeFilter<int32_t>(expected, 2, 18, true, std::nullopt, false);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("status", velox::VARCHAR(), 1));
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("age", velox::INTEGER(), 2));
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE status = 'active' AND age >= 18",
+               std::move(columns), true);
+}
+
+// ============================================================================
+// Combined with NOT
+// ============================================================================
+
+TEST_F(SearchFilterBuilderTest, test_NotWithComparison) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  // NOT (a > 50) is equivalent to a <= 50
+  AddRangeFilter<int32_t>(expected, 1, std::nullopt, false, 50, true);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE NOT (a > 50)",
+               std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_NotLessThan) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  // NOT (a < 100) is equivalent to a >= 100
+  AddRangeFilter<int32_t>(expected, 1, 100, true, std::nullopt, false);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE NOT (a < 100)",
+               std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_NotGreaterThanOrEqual) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  // NOT (a >= 50) is equivalent to a < 50
+  AddRangeFilter<int32_t>(expected, 1, std::nullopt, false, 50, false);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE NOT (a >= 50)",
+               std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_NotLessThanOrEqual) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  // NOT (a <= 25) is equivalent to a > 25
+  AddRangeFilter<int32_t>(expected, 1, 25, false, std::nullopt, false);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE NOT (a <= 25)",
+               std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_AndWithNotOr) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddTermFilter<bool>(expected, 1, true);
+  auto& not_filter = expected.add<irs::Not>();
+  auto& or_filter = AddFilter<irs::Or>(not_filter);
+  AddTermFilter<int32_t>(or_filter, 2, 10);
+  AddTermFilter<int32_t>(or_filter, 2, 20);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("active", velox::BOOLEAN(), 1));
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("value", velox::INTEGER(), 2));
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE active = true AND NOT (value = 10 OR value = 20)",
+    std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_OrWithNot) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
+  AddTermFilter<int32_t>(or_filter, 1, 5);
+  auto& not_filter = or_filter.add<irs::And>().add<irs::Not>();
+  AddTermFilter<velox::StringView>(not_filter, 2, velox::StringView{"test"});
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 1));
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("b", velox::VARCHAR(), 2));
+  AssertFilter(expected, "SELECT * FROM foo WHERE a = 5 OR NOT (b = 'test')",
+               std::move(columns), true);
+}
+
+// ============================================================================
+// Complex Nested Tests
+// ============================================================================
+
+TEST_F(SearchFilterBuilderTest, test_ComplexNested1) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
+
+  auto& and1 = or_filter.add<irs::And>();
+  auto& and_b = and1.add<irs::And>();
+  AddRangeFilter<int32_t>(and_b, 1, 18, true, std::nullopt, false);
+  AddRangeFilter<int32_t>(and_b, 1, std::nullopt, false, 65, true);
+  AddTermFilter<velox::StringView>(and1, 2, velox::StringView{"active"});
+
+  auto& and2 = or_filter.add<irs::And>();
+  AddRangeFilter<int32_t>(and2, 1, 65, false, std::nullopt, false);
+  AddTermFilter<velox::StringView>(and2, 2, velox::StringView{"retired"});
+
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("age", velox::INTEGER(), 1));
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("status", velox::VARCHAR(), 2));
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE (age BETWEEN 18 AND 65 AND status = "
+               "'active') OR (age > 65 AND status = 'retired')",
+               std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_ComplexNested2) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+
+  AddRangeFilter<int32_t>(expected, 1024, 100, true, std::nullopt, false);
+
+  auto& or_filter = expected.add<irs::Or>();
+  AddTermFilter<velox::StringView>(or_filter, 2048,
+                                   velox::StringView{"premium"});
+  AddTermFilter<velox::StringView>(or_filter, 2048, velox::StringView{"gold"});
+
+  auto& not_filter = expected.add<irs::Not>();
+  AddTermFilter<bool>(not_filter, 4096, false);
+
+  columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
+    "price", velox::INTEGER(), 1024));
+  columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
+    "tier", velox::VARCHAR(), 2048));
+  columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
+    "enabled", velox::BOOLEAN(), 4096));
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE price >= 100 AND (tier = 'premium' OR "
+               "tier = 'gold') AND NOT (enabled = false)",
+               std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_ComplexNested3) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+
+  auto& or_outer = expected.add<irs::Or>();
+
+  auto& and1 = or_outer.add<irs::And>();
+  AddTermFilter<velox::StringView>(and1, 1, velox::StringView{"USA"});
+  AddRangeFilter<int32_t>(and1, 2, std::nullopt, false, 1000, false);
+
+  auto& and2 = or_outer.add<irs::And>();
+  AddTermFilter<velox::StringView>(and2, 1, velox::StringView{"UK"});
+  AddRangeFilter<int32_t>(and2, 2, std::nullopt, false, 800, false);
+
+  auto& and3 = or_outer.add<irs::And>();
+  auto& not_filter = and3.add<irs::Not>();
+  auto& or_inner = AddFilter<irs::Or>(not_filter);
+  AddTermFilter<velox::StringView>(or_inner, 1, velox::StringView{"USA"});
+  AddTermFilter<velox::StringView>(or_inner, 1, velox::StringView{"UK"});
+  AddRangeFilter<int32_t>(and3, 2, std::nullopt, false, 500, false);
+
+  columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
+    "country", velox::VARCHAR(), 1));
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("price", velox::INTEGER(), 2));
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE (country = 'USA' AND price < 1000) OR "
+               "(country = 'UK' AND price < 800) OR (NOT (country = 'USA' OR "
+               "country = 'UK') AND price < 500)",
+               std::move(columns), true);
+}
+
+// ============================================================================
+// Implicit Cast Tests
+// ============================================================================
+
+TEST_F(SearchFilterBuilderTest, test_ImplicitCastIntegerToString) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddTermFilter<int32_t>(expected, 1, 42);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE a = '42'", std::move(columns),
+               true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_ImplicitCastInComparison) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddRangeFilter<int32_t>(expected, 1, 10, true, std::nullopt, false);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE a >= '10'",
+               std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_ImplicitCastInBetween) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddRangeFilter<int32_t>(expected, 65535, 5, true, std::nullopt, false);
+  AddRangeFilter<int32_t>(expected, 65535, std::nullopt, false, 15, true);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 65535));
+  AssertFilter(expected, "SELECT * FROM foo WHERE a BETWEEN '5' AND '15'",
+               std::move(columns), true);
+}
+
+// ============================================================================
+// Multiple Comparisons on Same Field
+// ============================================================================
+
+TEST_F(SearchFilterBuilderTest, test_MultipleComparisonsOnSameField) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddRangeFilter<int32_t>(expected, 1, 10, false, std::nullopt, false);
+  AddRangeFilter<int32_t>(expected, 1, std::nullopt, false, 100, false);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE a > 10 AND a < 100",
+               std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_MixedOperatorsOnSameField) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  auto& or_filter = expected.add<irs::Or>();
+  AddTermFilter<int32_t>(or_filter, 1, 0);
+  AddRangeFilter<int32_t>(or_filter, 1, 100, true, std::nullopt, false);
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("value", velox::INTEGER(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE value = 0 OR value >= 100",
                std::move(columns), true);
 }
 

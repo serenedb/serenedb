@@ -21,46 +21,73 @@
 #include "catalog/index.h"
 
 #include "basics/errors.h"
+#include "catalog/inverted_index.h"
 #include "catalog/object.h"
-#include "catalog/secondary_index.h"
+#include "catalog/types.h"
 #include "vpack/serializer.h"
 
 namespace sdb::catalog {
 namespace {
-template<typename T>
-ResultOr<std::shared_ptr<Index>> MakeIndex(ObjectId database_id,
-                                           IndexOptions<vpack::Slice> options) {
-  IndexOptions<typename T::Options> impl_options{
-    .base = std::move(options.base),
-  };
 
-  auto r = vpack::ReadTupleNothrow(options.impl, impl_options.impl);
-  if (!r.ok()) {
-    return std::unexpected{std::move(r)};
-  }
+ResultOr<std::shared_ptr<catalog::Index>> CreateInvertedIndex(
+  catalog::IndexBaseOptions options) {
+  catalog::IndexOptions<InvertedIndexOptions> inverted_options;
 
-  return std::make_shared<T>(std::move(impl_options), database_id);
+  inverted_options.base = std::move(options);
+
+  return std::make_shared<InvertedIndex>(inverted_options);
 }
+
 }  // namespace
 
-Index::Index(IndexBaseOptions options, ObjectId database_id)
-  : SchemaObject{{},
-                 database_id,
-                 {},
-                 options.id,
-                 std::move(options.name),
-                 ObjectType::Index},
-    _relation_id{options.relation_id},
-    _type(options.type) {}
-
-ResultOr<std::shared_ptr<Index>> CreateIndex(
-  ObjectId database_id, IndexOptions<vpack::Slice> options) {
-  switch (options.base.type) {
-    case IndexType::Secondary:
-      return MakeIndex<SecondaryIndex>(database_id, std::move(options));
+ResultOr<std::shared_ptr<Index>> MakeIndex(IndexBaseOptions options) {
+  switch (options.type) {
     case IndexType::Inverted:
-      return std::unexpected<Result>{std::in_place, ERROR_NOT_IMPLEMENTED};
+      return CreateInvertedIndex(std::move(options));
+    case IndexType::Secondary:
+      return std::unexpected<Result>{std::in_place, ERROR_NOT_IMPLEMENTED,
+                                     "Secondary index is not implemented"};
+    case IndexType::Unknown:
+      SDB_UNREACHABLE();
   }
+}
+
+// NOLINTBEGIN
+// View wrapper for IndexBaseOptions for light-weight serialization
+struct Index::IndexOutput {
+  ObjectId database_id;
+  ObjectId schema_id;
+  ObjectId id;
+  ObjectId relation_id;
+  std::string_view name;
+  IndexType type;
+  std::span<const Column::Id> column_ids;
+};
+// NOLINTEND
+
+Index::IndexOutput Index::MakeIndexOutput() const {
+  return {
+    .database_id = GetDatabaseId(),
+    .schema_id = GetSchemaId(),
+    .id = GetId(),
+    .relation_id = GetRelationId(),
+    .name = GetName(),
+    .type = GetIndexType(),
+    .column_ids = _column_ids,
+  };
+}
+
+void Index::WriteInternal(vpack::Builder& builder) const {
+  vpack::WriteTuple(builder, MakeIndexOutput());
+}
+
+Index::Index(IndexBaseOptions options)
+  : SchemaObject{{},         options.database_id,     options.schema_id,
+                 options.id, std::move(options.name), ObjectType::Index},
+    _relation_id{options.relation_id},
+    _type(options.type),
+    _column_ids{std::move(options.column_ids)} {
+  SDB_ASSERT(options.id.isSet());
 }
 
 }  // namespace sdb::catalog

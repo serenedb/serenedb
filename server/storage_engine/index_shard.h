@@ -18,22 +18,27 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "catalog/secondary_index.h"
+#pragma once
 
 #include "catalog/index.h"
+#include "vpack/builder.h"
 
-namespace sdb::catalog {
+namespace sdb {
 
-SecondaryIndex::SecondaryIndex(IndexOptions<SecondaryIndexOptions> options)
-  : Index(std::move(options.base)), _unique{options.impl.unique} {}
+class IndexShard {
+ public:
+  IndexShard(const catalog::Index& index);
+  virtual ~IndexShard() = default;
 
-void SecondaryIndex::WriteInternal(vpack::Builder& builder) const {
-  Index::WriteInternal(builder);
-  SecondaryIndexOptions options{
-    .unique = _unique,
-  };
+  virtual void WriteInternal(vpack::Builder& builder) const = 0;
 
-  vpack::WriteTuple(builder, options);
-}
+  ObjectId GetId() const { return _id; }
+  ObjectId GetRelationId() const { return _relation_id; }
+  IndexType GetType() const { return _type; }
 
-}  // namespace sdb::catalog
+ protected:
+  ObjectId _id;
+  ObjectId _relation_id;
+  IndexType _type;
+};
+}  // namespace sdb

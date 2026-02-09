@@ -184,6 +184,7 @@ rocksdb::ColumnFamilyHandle* RocksDBKeyBounds::columnFamily() const {
     case RocksDBEntryType::IndexTombstone:
     case RocksDBEntryType::Index:
     case RocksDBEntryType::Stats:
+    case RocksDBEntryType::IndexPhysical:
       return RocksDBColumnFamilyManager::get(
         RocksDBColumnFamilyManager::Family::Definitions);
   }
@@ -230,6 +231,7 @@ RocksDBKeyBounds::RocksDBKeyBounds(RocksDBEntryType type, uint64_t first)
   switch (_type) {
     case RocksDBEntryType::TableTombstone:
     case RocksDBEntryType::ScopeTombstone:
+    case RocksDBEntryType::IndexTombstone:
     case RocksDBEntryType::Collection:
     case RocksDBEntryType::Schema:
     case RocksDBEntryType::Role: {
@@ -428,18 +430,13 @@ RocksDBKeyBounds::RocksDBKeyBounds(RocksDBEntryType type, uint64_t first,
 RocksDBKeyBounds GetIndexBounds(IndexType type, uint64_t object_id,
                                 bool unique) {
   switch (type) {
-    case kTypePrimaryIndex:
-      return RocksDBKeyBounds::PrimaryIndex(object_id);
-    case kTypeEdgeIndex:
-      return RocksDBKeyBounds::EdgeIndex(object_id);
-    case kTypeTtlIndex:
-    case kTypeSecondaryIndex:
-    case kTypeInvertedIndex:
+    case IndexType::Inverted:
       if (unique) {
         return RocksDBKeyBounds::UniqueVPackIndex(object_id, false);
       }
       return RocksDBKeyBounds::VPackIndex(object_id, false);
-    case kTypeUnknown:
+    case IndexType::Secondary:
+    case IndexType::Unknown:
     default:
       SDB_THROW(ERROR_NOT_IMPLEMENTED);
   }

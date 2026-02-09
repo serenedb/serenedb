@@ -72,11 +72,34 @@ export const PGSQLEditor = React.forwardRef<HTMLElement, PGSQLEditorProps>(
                     ) => {
                         const word = model.getWordUntilPosition(position);
                         const typedText = word.word.toLowerCase();
-                        const range = {
+                        const wordRange = {
                             startLineNumber: position.lineNumber,
                             endLineNumber: position.lineNumber,
                             startColumn: word.startColumn,
                             endColumn: word.endColumn,
+                        };
+                        const linePrefix = model.getValueInRange({
+                            startLineNumber: position.lineNumber,
+                            endLineNumber: position.lineNumber,
+                            startColumn: 1,
+                            endColumn: position.column,
+                        });
+                        const linePrefixLower = linePrefix.toLowerCase();
+                        const linePrefixRange = {
+                            startLineNumber: position.lineNumber,
+                            endLineNumber: position.lineNumber,
+                            startColumn: 1,
+                            endColumn: position.column,
+                        };
+
+                        const getInsertRange = (text: string) => {
+                            if (
+                                linePrefixLower &&
+                                text.toLowerCase().startsWith(linePrefixLower)
+                            ) {
+                                return linePrefixRange;
+                            }
+                            return wordRange;
                         };
 
                         const getSortText = (
@@ -119,7 +142,7 @@ export const PGSQLEditor = React.forwardRef<HTMLElement, PGSQLEditorProps>(
                                     .Keyword,
                                 insertText: kw,
                                 filterText: kw,
-                                range,
+                                range: wordRange,
                                 sortText: getSortText(kw, "0"),
                             }));
 
@@ -131,7 +154,7 @@ export const PGSQLEditor = React.forwardRef<HTMLElement, PGSQLEditorProps>(
                                     .Function,
                                 insertText: `${fn}()`,
                                 filterText: fn,
-                                range,
+                                range: wordRange,
                                 sortText: getSortText(fn, "2"),
                             }));
 
@@ -142,7 +165,7 @@ export const PGSQLEditor = React.forwardRef<HTMLElement, PGSQLEditorProps>(
                                 kind: monaco.languages.CompletionItemKind.Class,
                                 insertText: value,
                                 filterText: value,
-                                range,
+                                range: wordRange,
                                 sortText: getSortText(value, "1"),
                             }));
 
@@ -154,7 +177,7 @@ export const PGSQLEditor = React.forwardRef<HTMLElement, PGSQLEditorProps>(
                                     .Interface,
                                 insertText: value,
                                 filterText: value,
-                                range,
+                                range: wordRange,
                                 sortText: getSortText(value, "1"),
                             }));
 
@@ -166,7 +189,7 @@ export const PGSQLEditor = React.forwardRef<HTMLElement, PGSQLEditorProps>(
                                     .Property,
                                 insertText: value,
                                 filterText: value,
-                                range,
+                                range: wordRange,
                                 sortText: getSortText(value, "1"),
                             }));
 
@@ -180,7 +203,7 @@ export const PGSQLEditor = React.forwardRef<HTMLElement, PGSQLEditorProps>(
                                     insertText: value,
                                     detail: "Saved Query",
                                     filterText: value,
-                                    range,
+                                    range: getInsertRange(value),
                                     sortText: getSortText(value, "3"),
                                 }));
 
@@ -194,7 +217,7 @@ export const PGSQLEditor = React.forwardRef<HTMLElement, PGSQLEditorProps>(
                                     insertText: value,
                                     detail: "Query History",
                                     filterText: value,
-                                    range,
+                                    range: getInsertRange(value),
                                     sortText: getSortText(value, "3"),
                                 }));
 

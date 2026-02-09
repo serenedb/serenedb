@@ -30,6 +30,8 @@
 #include "common.h"
 #include "connector/primary_key.hpp"
 #include "key_utils.hpp"
+#include "rocksdb_engine_catalog/rocksdb_common.h"
+#include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 
 namespace sdb::connector {
 namespace {
@@ -316,6 +318,9 @@ uint64_t RocksDBDataSource::IterateColumn(rocksdb::Iterator& it,
     ++vector_size;
     it.Next();
   }
+
+  rocksutils::CheckIteratorStatus(it);
+
   return vector_size;
 }
 

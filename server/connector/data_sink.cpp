@@ -255,11 +255,10 @@ SSTInsertDataSink::SSTInsertDataSink(
   rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
   std::span<const velox::column_index_t> key_childs,
-  std::vector<ColumnInfo> columns, std::string_view rocksdb_directory)
+  std::vector<ColumnInfo> columns)
   : RocksDBDataSinkBase<SSTSinkWriter, SinkInsertWriter>(
-      SSTSinkWriter{db, cf, columns, rocksdb_directory}, memory_pool,
-      object_key, key_childs, std::move(columns),
-      std::vector<std::unique_ptr<SinkInsertWriter>>{}) {}
+      SSTSinkWriter{db, cf, columns}, memory_pool, object_key, key_childs,
+      std::move(columns), std::vector<std::unique_ptr<SinkInsertWriter>>{}) {}
 
 void SSTInsertDataSink::appendData(velox::RowVectorPtr input) {
   SDB_ASSERT(input->encoding() == velox::VectorEncoding::Simple::ROW);
@@ -276,7 +275,7 @@ void SSTInsertDataSink::appendData(velox::RowVectorPtr input) {
   _store_keys_buffers.reserve(num_rows);
 
   for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-    key_utils::MakeColumnKey(
+    key_utils::MakeColumnKey<true>(
       input, _key_childs, row_idx, table_key, [&](std::string_view row_key) {},
       _store_keys_buffers.emplace_back());
   }

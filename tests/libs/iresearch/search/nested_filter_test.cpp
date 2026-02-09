@@ -1273,12 +1273,11 @@ static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 static const auto kDirectories = ::testing::ValuesIn(kTestDirs);
 
-INSTANTIATE_TEST_SUITE_P(
-  NestedFilterTest, NestedFilterTestCase,
-  ::testing::Combine(kDirectories,
-                     ::testing::Values(tests::FormatInfo{"1_5avx"},
-                                       tests::FormatInfo{"1_5simd"})),
-  NestedFilterTestCase::to_string);
+INSTANTIATE_TEST_SUITE_P(NestedFilterTest, NestedFilterTestCase,
+                         ::testing::Combine(kDirectories,
+                                            ::testing::Values(tests::FormatInfo{
+                                              "1_5simd"})),
+                         NestedFilterTestCase::to_string);
 
 class NestedFilterFormatsTestCase : public NestedFilterTestCase {
  protected:
@@ -1327,11 +1326,10 @@ TEST_P(NestedFilterFormatsTestCase, JoinAnyAll) {
              SOURCE_LOCATION);
 }
 
-INSTANTIATE_TEST_SUITE_P(
-  NestedFilterFormatsTest, NestedFilterFormatsTestCase,
-  ::testing::Combine(kDirectories,
-                     ::testing::Values(tests::FormatInfo{"1_5avx"},
-                                       tests::FormatInfo{"1_5simd"})),
-  NestedFilterFormatsTestCase::to_string);
+INSTANTIATE_TEST_SUITE_P(NestedFilterFormatsTest, NestedFilterFormatsTestCase,
+                         ::testing::Combine(kDirectories,
+                                            ::testing::Values(tests::FormatInfo{
+                                              "1_5simd"})),
+                         NestedFilterFormatsTestCase::to_string);
 
 }  // namespace

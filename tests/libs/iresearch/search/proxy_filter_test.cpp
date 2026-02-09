@@ -146,7 +146,7 @@ class DoclistTestFilter : public Filter {
 class ProxyFilterTestCase : public ::testing::TestWithParam<size_t> {
  public:
   ProxyFilterTestCase() {
-    auto codec = irs::formats::Get("1_5avx");
+    auto codec = irs::formats::Get("1_5simd");
     auto writer = irs::IndexWriter::Make(_dir, codec, irs::kOmCreate);
     {  // make dummy document so we could have non-empty index
       auto ctx = writer->GetBatch();
@@ -308,9 +308,8 @@ TEST_P(ProxyFilterRealFilter, with_disjunction_filter) {
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
-INSTANTIATE_TEST_SUITE_P(
-  proxy_filter_real_filter, ProxyFilterRealFilter,
-  ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                     ::testing::Values(tests::FormatInfo{"1_5avx"},
-                                       tests::FormatInfo{"1_5simd"})));
+INSTANTIATE_TEST_SUITE_P(proxy_filter_real_filter, ProxyFilterRealFilter,
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
+                                            ::testing::Values(tests::FormatInfo{
+                                              "1_5simd"})));
 }  // namespace

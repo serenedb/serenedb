@@ -1592,7 +1592,7 @@ TEST_P(TfidfTestCase, test_query_norms) {
 
 INSTANTIATE_TEST_SUITE_P(tfidf_test, TfidfTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values("1_5avx")),
+                                            ::testing::Values("1_5simd")),
                          TfidfTestCase::to_string);
 
 }  // namespace

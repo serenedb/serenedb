@@ -91,17 +91,15 @@ class Transaction : public Config {
                   void(rocksdb::Transaction&, const IndexShard&)>
       Visit>
   void EnsureIndexesTransactions(ObjectId table_id, Visit&& visit) {
-    auto table = GetCatalogSnapshot()->GetObject(table_id);
-    SDB_ASSERT(table->GetType() == catalog::ObjectType::Table);
-
-    for (auto index_id :
-         basics::downCast<catalog::Table>(*table).GetIndexes()) {
-      auto index_shard = GetCatalogSnapshot()->GetIndexShard(index_id);
+    auto snapshot = GetCatalogSnapshot();
+    SDB_ASSERT(snapshot->GetObject(table_id)->GetType() ==
+               catalog::ObjectType::Table);
+    for (auto index_shard : snapshot->GetIndexShardsByTable(table_id)) {
       if (index_shard->GetType() == IndexType::Inverted) {
         auto& inverted_index_shard =
           basics::downCast<search::InvertedIndexShard>(*index_shard);
-        _search_transactions.try_emplace(index_id, nullptr);
-        auto& transaction = _search_transactions[index_id];
+        _search_transactions.try_emplace(inverted_index_shard.GetId(), nullptr);
+        auto& transaction = _search_transactions[inverted_index_shard.GetId()];
         if (!transaction) {
           transaction = std::make_unique<irs::IndexWriter::Transaction>(
             inverted_index_shard.GetTransaction());

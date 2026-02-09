@@ -57,17 +57,17 @@
 namespace sdb::connector {
 
 namespace {
-template<typename WriterT>
-std::vector<std::unique_ptr<WriterT>> CreateIndexWriters(
+template<typename Writer>
+std::vector<std::unique_ptr<Writer>> CreateIndexWriters(
   ObjectId table_id, query::Transaction& transaction) {
-  std::vector<std::unique_ptr<WriterT>> writers;
+  std::vector<std::unique_ptr<Writer>> writers;
 
   transaction.EnsureIndexesTransactions(
     table_id, [&]<typename T>(T& transaction, const IndexShard& shard) {
       if constexpr (std::is_same_v<T, irs::IndexWriter::Transaction>) {
         writers.push_back(
           std::make_unique<std::conditional_t<
-            std::is_same_v<WriterT, SinkUpdateWriter>,
+            std::is_same_v<Writer, SinkUpdateWriter>,
             search::SearchSinkUpdateWriter, search::SearchSinkInsertWriter>>(
             transaction));
       } else {

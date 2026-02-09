@@ -449,6 +449,7 @@ class SnapshotImpl : public Snapshot {
     result->_objects_by_id = _objects_by_id;
     result->_table_shards = _table_shards;
     result->_index_shards = _index_shards;
+    result->_indexes_by_table = _indexes_by_table;
     return result;
   }
 
@@ -490,22 +491,54 @@ class SnapshotImpl : public Snapshot {
     ObjectId relation_id = index_shard->GetRelationId();
     const auto is_new = _index_shards.emplace(std::move(index_shard)).second;
     SDB_ENSURE(is_new, ERROR_INTERNAL);
-    auto table = GetObject(relation_id);
-    SDB_ASSERT(table);
-    SDB_ASSERT(table->GetType() == ObjectType::Table);
-    basics::downCast<Table>(*table).AddIndex(id);
+    _indexes_by_table[relation_id].insert(id);
   }
 
-  void DropTableShard(ObjectId id) { _table_shards.erase(id); }
+  void DropTableShard(ObjectId id) {
+    _table_shards.erase(id);
+    _indexes_by_table.erase(id);
+  }
+
   std::shared_ptr<IndexShard> DropIndexShard(ObjectId id) {
     auto node = _index_shards.extract(id);
     SDB_ASSERT(node);
     auto index_shard = std::move(node.value());
-    auto table = GetObject(index_shard->GetRelationId());
-    SDB_ASSERT(table);
-    SDB_ASSERT(table->GetType() == ObjectType::Table);
-    basics::downCast<Table>(*table).RemoveIndex(index_shard->GetId());
+    SDB_ASSERT(_indexes_by_table.contains(index_shard->GetRelationId()));
+    _indexes_by_table[index_shard->GetRelationId()].erase(index_shard->GetId());
     return index_shard;
+  }
+
+  std::vector<std::shared_ptr<Index>> GetIndexesByTable(
+    ObjectId table_id) const final {
+    if (!_indexes_by_table.contains(table_id)) {
+      return {};
+    }
+
+    return std::ranges::views::transform(
+             _indexes_by_table.at(table_id),
+             [&](ObjectId index_id) {
+               auto object = _objects_by_id.find(index_id);
+               SDB_ASSERT(object != _objects_by_id.end());
+               SDB_ASSERT((*object)->GetType() == ObjectType::Index);
+               return std::dynamic_pointer_cast<Index>(*object);
+             }) |
+           std::ranges::to<std::vector>();
+  }
+
+  std::vector<std::shared_ptr<IndexShard>> GetIndexShardsByTable(
+    ObjectId table_id) const final {
+    if (!_indexes_by_table.contains(table_id)) {
+      return {};
+    }
+
+    return std::ranges::views::transform(
+             _indexes_by_table.at(table_id),
+             [&](ObjectId index_id) {
+               auto index_shard = _index_shards.find(index_id);
+               SDB_ASSERT(index_shard != _index_shards.end());
+               return *index_shard;
+             }) |
+           std::ranges::to<std::vector>();
   }
 
   std::vector<std::shared_ptr<Role>> GetRoles() const final {
@@ -1066,6 +1099,9 @@ class SnapshotImpl : public Snapshot {
   ObjectSetById<Object> _objects_by_id;
   ObjectSetById<TableShard> _table_shards;
   ObjectSetById<IndexShard> _index_shards;
+
+  containers::FlatHashMap<ObjectId, containers::FlatHashSet<ObjectId>>
+    _indexes_by_table;
 };
 
 LocalCatalog::LocalCatalog(bool skip_background_errors)
@@ -1754,28 +1790,23 @@ Result LocalCatalog::DropTable(ObjectId database_id, std::string_view schema,
           task->tombstone = MakeTableTombstone(*shard);
 
           ObjectId table_id = object->GetId();
-          auto& table = basics::downCast<Table>(*object);
-          index_info.reserve(table.GetIndexes().size());
-          for (auto index_id : table.GetIndexes()) {
-            auto object = clone->GetObject(index_id);
-            SDB_ASSERT(object);
-            auto& index = basics::downCast<Index>(*object);
-            SDB_ASSERT(index.GetRelationId() == table_id);
-
-            auto index_shard = clone->GetIndexShard(index.GetId());
+          for (auto index : clone->GetIndexesByTable(table_id)) {
+            SDB_ASSERT(index);
+            SDB_ASSERT(index->GetRelationId() == table_id);
+            auto index_shard = clone->GetIndexShard(index->GetId());
             SDB_ASSERT(index_shard);
-            auto index_tombstone = MakeIndexTombstone(index, *index_shard);
-            clone->DropIndexShard(index.GetId());
+            auto index_tombstone = MakeIndexTombstone(*index, *index_shard);
+            clone->DropIndexShard(index->GetId());
 
-            auto schema_obj = clone->GetObject(index.GetSchemaId());
+            auto schema_obj = clone->GetObject(index->GetSchemaId());
             if (!schema_obj || schema_obj->GetType() != ObjectType::Schema) {
               continue;
             }
 
             auto r = clone->template DropObject<Index>(
-              database_id, schema_obj->GetName(), index.GetName(),
+              database_id, schema_obj->GetName(), index->GetName(),
               [&](auto&, auto&, auto&) -> Result {
-                return _engine->MarkDeleted(index, index_tombstone);
+                return _engine->MarkDeleted(*index, index_tombstone);
               });
 
             if (!r.ok()) {

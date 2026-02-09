@@ -108,19 +108,6 @@ class Table : public SchemaObject {
     return *_sharding_strategy;
   }
 
-  auto GetIndexes() const { return _indexes; }
-
-  void AddIndex(ObjectId index_id) {
-    auto [_, is_new] = _indexes.emplace(index_id);
-    SDB_ENSURE(is_new, ERROR_INTERNAL, "Index already exists in Table");
-  }
-
-  void RemoveIndex(ObjectId index_id) {
-    auto num_erased = _indexes.erase(index_id);
-    SDB_ENSURE(num_erased == 1, ERROR_INTERNAL,
-               "Index does not exist in Table");
-  }
-
 #ifdef SDB_GTEST
   // TODO(gnusi): remove
   void setShardMap(std::shared_ptr<ShardMap> map) {
@@ -157,8 +144,6 @@ class Table : public SchemaObject {
   // writes will be disallowed if we know we cannot fulfill it.
   // _write_concern <= _replication_factor
   uint32_t _write_concern = 1;
-
-  containers::FlatHashSet<ObjectId> _indexes;
 };
 
 Result ChangeTableHelper(const catalog::Table& old_collection,

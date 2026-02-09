@@ -52,18 +52,33 @@ ResultOr<std::shared_ptr<Index>> MakeIndex(IndexBaseOptions options) {
   }
 }
 
-void Index::WriteInternal(vpack::Builder& builder) const {
-  IndexBaseOptions options{
+// NOLINTBEGIN
+// View wrapper for IndexBaseOptions for light-weight serialization
+struct Index::IndexOutput {
+  ObjectId database_id;
+  ObjectId schema_id;
+  ObjectId id;
+  ObjectId relation_id;
+  std::string_view name;
+  IndexType type;
+  std::span<const Column::Id> column_ids;
+};
+// NOLINTEND
+
+Index::IndexOutput Index::MakeIndexOutput() const {
+  return {
     .database_id = GetDatabaseId(),
     .schema_id = GetSchemaId(),
     .id = GetId(),
     .relation_id = GetRelationId(),
-    .name = std::string{GetName()},
+    .name = GetName(),
     .type = GetIndexType(),
     .column_ids = _column_ids,
   };
+}
 
-  vpack::WriteTuple(builder, options);
+void Index::WriteInternal(vpack::Builder& builder) const {
+  vpack::WriteTuple(builder, MakeIndexOutput());
 }
 
 Index::Index(IndexBaseOptions options)

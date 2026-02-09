@@ -70,13 +70,12 @@ yaclib::Future<Result> UpdateIndexes(
     rel_name = {rel->relation->relname};
     auto table = snapshot->GetTable(db, schema_name, rel_name);
     SDB_ASSERT(table);
-    for (const auto& index_id : table->GetIndexes()) {
-      auto index = snapshot->GetIndexShard(index_id);
-      SDB_ASSERT(index);
-      switch (index->GetType()) {
+    for (auto index_shard : snapshot->GetIndexShardsByTable(table->GetId())) {
+      SDB_ASSERT(index_shard);
+      switch (index_shard->GetType()) {
         case IndexType::Inverted: {
           auto& inverted_index =
-            basics::downCast<search::InvertedIndexShard>(*index);
+            basics::downCast<search::InvertedIndexShard>(*index_shard);
           index_futures.push_back(inverted_index.CommitWait());
           break;
         }

@@ -63,6 +63,9 @@ class Index : public SchemaObject {
   virtual ~Index() = default;
 
  protected:
+  struct IndexOutput;
+  IndexOutput MakeIndexOutput() const;
+
   Index(IndexBaseOptions options);
 
   ObjectId _relation_id;

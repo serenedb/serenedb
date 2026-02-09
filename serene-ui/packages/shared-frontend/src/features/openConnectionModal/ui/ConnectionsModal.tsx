@@ -9,7 +9,10 @@ export const ConnectionsModal: React.FC = () => {
     return (
         <Dialog open={open} onOpenChange={(value) => setOpen(value)}>
             <DialogContent
+                aria-label="Manage connections"
                 showCloseButton={false}
+                onEscapeKeyDown={() => setOpen(false)}
+                onPointerDownOutside={() => setOpen(false)}
                 className="sm:max-w-[800px] w-full min-h-[560px] flex gap-0 p-0">
                 <ConnectionsSidebar />
                 <ConnectionData />

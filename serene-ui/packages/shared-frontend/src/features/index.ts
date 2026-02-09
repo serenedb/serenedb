@@ -11,3 +11,4 @@ export * from "./openSettingsModal";
 export * from "./openSupportModal";
 export * from "./testConnection";
 export * from "./refreshDatabases";
+export * from "./changeTheme";

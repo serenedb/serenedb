@@ -32,6 +32,13 @@ export function ThemeProvider({
 
     useEffect(() => {
         const root = window.document.documentElement;
+        root.classList.add("no-theme-transition");
+        const removeTransitions = () => {
+            root.classList.remove("no-theme-transition");
+        };
+        const raf = window.requestAnimationFrame(() => {
+            window.requestAnimationFrame(removeTransitions);
+        });
 
         root.classList.remove("light", "dark");
 
@@ -47,6 +54,11 @@ export function ThemeProvider({
         }
 
         root.classList.add(theme);
+
+        return () => {
+            window.cancelAnimationFrame(raf);
+            removeTransitions();
+        };
     }, [theme]);
 
     const value = {

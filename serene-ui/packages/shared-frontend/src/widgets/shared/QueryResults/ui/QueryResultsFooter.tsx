@@ -53,32 +53,30 @@ export const QueryResultsFooter: React.FC<QueryResultsFooterProps> = ({
             defaultValue="viewer"
             className="w-full h-full flex flex-col min-h-0">
             <div className="flex-1 min-h-0">{children}</div>
-            <TabsList className="mt-0 h-max px-0">
-                <div className="flex w-full p-2 border-t border-border justify-between">
-                    <div className="flex gap-1">
-                        <Button variant="thirdly">
-                            <TreeColumnsIcon />
-                            {rows?.length || 0}{" "}
-                            {rows?.length === 1 ? "element" : "elements"}
-                        </Button>
-                        <TimelineCard
-                            title="Query Execution Timeline"
-                            items={timelineItems}
-                            displayTime={executionTime}
-                            disabled={true}
-                        />
-                    </div>
-                    <div className="flex gap-1">
-                        <TabsTrigger value="viewer">Viewer</TabsTrigger>
-                        <TabsTrigger className="px-2.5 w-max" value="json">
-                            JSON
-                        </TabsTrigger>
-                    </div>
-                    <div className="flex gap-1">
-                        <DownloadResultsButton rows={rows} />
-                    </div>
+            <div className="flex w-full p-2 border-t border-border justify-between">
+                <div className="flex gap-1">
+                    <Button variant="thirdly">
+                        <TreeColumnsIcon />
+                        {rows?.length || 0}{" "}
+                        {rows?.length === 1 ? "element" : "elements"}
+                    </Button>
+                    <TimelineCard
+                        title="Query Execution Timeline"
+                        items={timelineItems}
+                        displayTime={executionTime}
+                        disabled={true}
+                    />
                 </div>
-            </TabsList>
+                <TabsList className="mt-0 h-max px-0">
+                    <TabsTrigger value="viewer">Viewer</TabsTrigger>
+                    <TabsTrigger className="px-2.5 w-max" value="json">
+                        JSON
+                    </TabsTrigger>
+                </TabsList>
+                <div className="flex gap-1">
+                    <DownloadResultsButton rows={rows} />
+                </div>
+            </div>
         </Tabs>
     );
 };

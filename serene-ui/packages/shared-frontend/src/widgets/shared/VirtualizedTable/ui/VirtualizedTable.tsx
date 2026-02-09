@@ -11,6 +11,7 @@ import { VirtualizedTableHead } from "./VirtualizedTableHead";
 import { VirtualizedTableBody } from "./VirtualizedTableBody";
 import { useResizeObserver } from "@serene-ui/shared-frontend/shared";
 import { VirtualizedTableProvider, useVirtualizedTableContext } from "../model";
+import { useChangeTheme } from "@serene-ui/shared-frontend/features";
 
 interface VirtualizedTableProps {
     data: Record<string, any>[];
@@ -24,6 +25,7 @@ const WrappedVirtualizedTable: React.FC<WrappedVirtualizedTableProps> = ({
     data,
     scrollContainerRef,
 }) => {
+    const { theme } = useChangeTheme();
     const { ref, size } = useResizeObserver();
     const { clearSelection } = useVirtualizedTableContext();
     const columnHelper = createColumnHelper<Record<string, any>>();
@@ -56,7 +58,13 @@ const WrappedVirtualizedTable: React.FC<WrappedVirtualizedTableProps> = ({
                         return (
                             <span
                                 className={
-                                    value ? "text-green-400" : "text-red-400"
+                                    value
+                                        ? theme === "dark"
+                                            ? "text-green-400"
+                                            : "text-green-600"
+                                        : theme === "dark"
+                                          ? "text-red-400"
+                                          : "text-red-600"
                                 }>
                                 {value.toString()}
                             </span>
@@ -64,24 +72,43 @@ const WrappedVirtualizedTable: React.FC<WrappedVirtualizedTableProps> = ({
                     }
                     if (typeof value === "number") {
                         return (
-                            <span className="text-blue-400">
+                            <span
+                                className={
+                                    theme === "dark"
+                                        ? "text-blue-400"
+                                        : "text-blue-600"
+                                }>
                                 {value.toString()}
                             </span>
                         );
                     }
                     if (typeof value === "object") {
                         return (
-                            <span className="text-purple-500">
+                            <span
+                                className={
+                                    theme === "dark"
+                                        ? "text-purple-500"
+                                        : "text-purple-700"
+                                }>
                                 {JSON.stringify(value)}
                             </span>
                         );
                     }
-                    return <span className="text-orange-300/60">{value}</span>;
+                    return (
+                        <span
+                            className={
+                                theme === "dark"
+                                    ? "text-orange-300/60"
+                                    : "text-orange-600"
+                            }>
+                            {value}
+                        </span>
+                    );
                 },
             }),
         );
         return [indexColumn, ...dataColumns];
-    }, [data]);
+    }, [data, theme]);
 
     const table = useReactTable({
         data,

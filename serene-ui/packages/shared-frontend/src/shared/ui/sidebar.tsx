@@ -236,7 +236,7 @@ function Sidebar({
             <div
                 data-slot="sidebar-container"
                 className={cn(
-                    "fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-200 ease-linear md:flex",
+                    "border-r-1 fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-200 ease-linear md:flex",
                     side === "left"
                         ? "left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]"
                         : "right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]",
@@ -492,7 +492,7 @@ const sidebarMenuButtonVariants = cva(
         variants: {
             variant: {
                 default:
-                    "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                    "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground text-sidebar-accent-foreground/50",
                 destructive:
                     "bg-destructive text-white shadow-xs hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60",
                 secondary:

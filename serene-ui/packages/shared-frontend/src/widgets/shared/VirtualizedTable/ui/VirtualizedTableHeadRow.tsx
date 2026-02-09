@@ -21,7 +21,7 @@ export const VirtualizedTableHeadRow = ({
             className="flex w-full bg-background border-b border-border"
             key={headerGroup.id}>
             {virtualPaddingLeft ? (
-                <th className="flex" style={{ width: virtualPaddingLeft }} />
+                <th className="flex" style={{ width: virtualPaddingLeft }} aria-hidden="true" />
             ) : null}
 
             {virtualColumns.map((virtualColumn) => {
@@ -31,7 +31,7 @@ export const VirtualizedTableHeadRow = ({
                 );
             })}
             {virtualPaddingRight ? (
-                <th style={{ display: "flex", width: virtualPaddingRight }} />
+                <th style={{ display: "flex", width: virtualPaddingRight }} aria-hidden="true" />
             ) : null}
         </tr>
     );

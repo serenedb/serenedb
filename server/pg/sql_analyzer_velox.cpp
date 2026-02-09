@@ -4727,9 +4727,12 @@ lp::ExprPtr SqlAnalyzer::ProcessAExpr(State& state, const A_Expr& expr) {
         ResolveVeloxFunctionAndInferArgsCommonType("presto_least", {low, high});
       auto greatest_val = ResolveVeloxFunctionAndInferArgsCommonType(
         "presto_greatest", {std::move(low), std::move(high)});
-      auto res = ResolveVeloxFunctionAndInferArgsCommonType(
-        "presto_between",
-        {std::move(lhs), std::move(least_val), std::move(greatest_val)});
+      auto lhs_cmp = ResolveVeloxFunctionAndInferArgsCommonType(
+        "presto_lte", {std::move(least_val), lhs});
+      auto rhs_cmp = ResolveVeloxFunctionAndInferArgsCommonType(
+        "presto_lte", {std::move(lhs), std::move(greatest_val)});
+
+      auto res = MakeAnd({std::move(lhs_cmp), std::move(rhs_cmp)});
       if (expr.kind == AEXPR_NOT_BETWEEN_SYM) {
         return ResolveVeloxFunctionAndInferArgsCommonType("presto_not",
                                                           {std::move(res)});

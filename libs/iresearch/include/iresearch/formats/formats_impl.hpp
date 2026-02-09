@@ -1332,6 +1332,39 @@ class PostingIteratorBase : public DocIterator {
     });
   }
 
+  ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
+    SDB_ASSERT(ctx.scorer);
+    return ctx.scorer->PrepareScorer({
+      .segment = *ctx.segment,
+      .field = this->_field,
+      .doc_attrs = *this,
+      .collector = ctx.collector,
+      .stats = this->_stats,
+      .boost = this->_boost,
+    });
+  }
+
+  uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
+                   std::span<doc_id_t, kScoreBlock> docs,
+                   std::span<score_t, kScoreBlock> scores) final {
+    // TODO(gnusi): optimize
+    SDB_ASSERT(kScoreBlock <= docs.size());
+    return DocIterator::Collect(*this, scorer, columns, docs, scores);
+  }
+
+  void CollectData(uint16_t index) final {
+    if constexpr (IteratorTraits::Frequency()) {
+      SDB_ASSERT(this->_collected_freqs);
+      this->_collected_freqs[index] = std::get<FreqAttr>(this->_attrs).value;
+    }
+  }
+
+  void Init(const PostingCookie& cookie) noexcept {
+    this->_field = cookie.field;
+    this->_stats = cookie.stats;
+    this->_boost = cookie.boost;
+  }
+
  protected:
   using Attributes = AttributesImpl<IteratorTraits>;
   using Position = PositionImpl<IteratorTraits>;
@@ -1514,7 +1547,7 @@ void CommonReadWandData(WandExtent wextent, uint8_t index,
   if (extent == 1) [[likely]] {
     const auto size = in.ReadByte();
     ctx.Read(in, size);
-    func.Score(&score, 1);
+    func.Score(&score);
     return;
   }
 
@@ -1534,7 +1567,7 @@ void CommonReadWandData(WandExtent wextent, uint8_t index,
     in.Skip(scorer_offset);
   }
   ctx.Read(in, size);
-  func.Score(&score, 1);
+  func.Score(&score);
   if (block_offset) {
     in.Skip(block_offset);
   }
@@ -1560,42 +1593,9 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
       _skip{IteratorTraits::kBlockSize, PostingsWriterBase::kSkipN,
             ReadSkip{extent}} {}
 
-  ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
-    SDB_ASSERT(ctx.scorer);
-    return ctx.scorer->PrepareScorer({
-      .segment = *ctx.segment,
-      .field = this->_field,
-      .doc_attrs = *this,
-      .collector = ctx.collector,
-      .stats = this->_stats,
-      .boost = this->_boost,
-    });
-  }
-
-  uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
-                   std::span<doc_id_t, kScoreBlock> docs,
-                   std::span<score_t, kScoreBlock> scores) final {
-    // TODO(gnusi): optimize
-    SDB_ASSERT(kScoreBlock <= docs.size());
-    return DocIterator::Collect(*this, scorer, columns, docs, scores);
-  }
-
-  void CollectData(uint16_t index) final {
-    if constexpr (IteratorTraits::Frequency()) {
-      SDB_ASSERT(this->_collected_freqs);
-      this->_collected_freqs[index] = std::get<FreqAttr>(this->_attrs).value;
-    }
-  }
-
   void Prepare(const PostingCookie& meta, const IndexInput* doc_in,
                const IndexInput* pos_in, const IndexInput* pay_in,
                uint8_t wand_index = WandContext::kDisable);
-
-  void Init(const PostingCookie& cookie) noexcept {
-    this->_field = cookie.field;
-    this->_stats = cookie.stats;
-    this->_boost = cookie.boost;
-  }
 
  private:
   class ReadSkip : private WandExtent {

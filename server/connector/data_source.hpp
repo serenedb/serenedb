@@ -108,9 +108,9 @@ class RocksDBRYOWDataSource final : public RocksDBDataSource {
                         catalog::Column::Id effective_column_id,
                         ObjectId object_key);
 
- private:
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
 
+ private:
   rocksdb::Transaction& _transaction;
 };
 
@@ -123,10 +123,9 @@ class RocksDBSnapshotDataSource final : public RocksDBDataSource {
                             catalog::Column::Id effective_column_id,
                             ObjectId object_key,
                             const rocksdb::Snapshot* snapshot = nullptr);
-
- private:
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
 
+ private:
   rocksdb::DB& _db;
 };
 

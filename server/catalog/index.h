@@ -36,7 +36,7 @@ struct IndexBaseOptions {
   ObjectId database_id;
   ObjectId schema_id;
   ObjectId id;
-  ObjectId relation_id;
+  ObjectId relation_id;  // relation, which is being indexed
   std::string name;
   IndexType type = IndexType::Unknown;
   std::vector<Column::Id> column_ids;

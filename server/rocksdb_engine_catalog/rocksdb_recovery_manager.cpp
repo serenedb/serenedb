@@ -343,7 +343,8 @@ class WBReader final : public rocksdb::WriteBatch::Handler {
         }
       };
 
-      if (type == RocksDBEntryType::Collection) {
+      if (type == RocksDBEntryType::Collection ||
+          type == RocksDBEntryType::Index) {
         update_tick([&] { StoreMaxTick(RocksDBKey::dataSourceId(key).id()); });
       } else if (type == RocksDBEntryType::Database) {
         StoreMaxTick(RocksDBKey::databaseId(key));

@@ -2759,6 +2759,7 @@ void SqlAnalyzer::ProcessCreateTableAsStmt(State& state,
                     ERR_MSG("CREATE TABLE AS only supports creating tables"));
   }
 
+
   auto [column_names, column_exprs] = ProcessIntoClause(state, *stmt.into);
   state.root = std::make_shared<lp::TableWriteNode>(
     _id_generator.NextPlanId(), std::move(state.root), nullptr,
@@ -2895,7 +2896,7 @@ SqlCommandType SqlAnalyzer::ProcessStmt(State& state, const Node& node) {
       state.pgsql_node = &node;
       const auto& stmt = *castNode(CreateTableAsStmt, &node);
       ProcessCreateTableAsStmt(state, stmt);
-      return SqlCommandType::DDL;
+      return SqlCommandType::CTAS;
     }
     case T_IndexStmt: {  // CREATE INDEX
       state.pgsql_node = &node;

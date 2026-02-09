@@ -67,6 +67,7 @@ enum class CommandType : uint64_t {
   Explain = 1 << 1,
   Show = 1 << 2,
   External = 1 << 3,
+  CTAS = 1 << 4,
 };
 
 enum class ExplainWith : uint64_t {

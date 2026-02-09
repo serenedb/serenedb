@@ -52,6 +52,7 @@ class Cursor {
   Process ExecuteStmt();
   Process ExecuteShow(velox::RowVectorPtr& batch);
   Process ExecuteShowAll(velox::RowVectorPtr& batch);
+  Process ExecuteCTAS(velox::RowVectorPtr& batch);
 
   friend class Query;
   Cursor(std::function<void()>&& user_task, const Query& query);

@@ -246,6 +246,7 @@ struct TableOptions {
 
 struct CreateTableOptions : TableOptions {
   std::vector<std::string> avoidServers;
+  bool createWithProtectiveTombstone = false;
 };
 
 struct TableMeta {

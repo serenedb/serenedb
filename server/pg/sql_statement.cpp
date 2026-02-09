@@ -25,6 +25,7 @@
 #include "app/app_server.h"
 #include "basics/logger/logger.h"
 #include "general_server/state.h"
+#include "pg/commands/ctas.h"
 #include "pg/executor.h"
 #include "pg/pg_feature.h"
 #include "pg/pg_list_utils.h"
@@ -97,6 +98,27 @@ bool SqlStatement::ProcessNextRoot(
     } else {
       query = query::Query::CreateShow(show_stmt->name, query_ctx);
     }
+    return true;
+  }
+
+  if (query_desc.type == pg::SqlCommandType::CTAS) {
+    SDB_ASSERT(query_desc.root);
+    SDB_ASSERT(query_desc.pgsql_node);
+    SDB_ASSERT(query_desc.root->is(axiom::logical_plan::NodeKind::kTableWrite));
+
+    const auto& ctas_stmt = *castNode(CreateTableAsStmt, query_desc.pgsql_node);
+    auto& write_node = const_cast<axiom::logical_plan::TableWriteNode&>(
+      basics::downCast<const axiom::logical_plan::TableWriteNode>(
+        *query_desc.root));
+
+    auto ctas_cmd = std::make_unique<CTASCommand>(
+      static_cast<const ExecContext&>(*connection_ctx),
+      static_cast<query::Transaction&>(*connection_ctx),
+      write_node, ctas_stmt);
+
+    query_ctx.command_type.Add(query::CommandType::CTAS);
+    query = query::Query::CreateCTAS(query_desc.root, query_ctx,
+                                     std::move(ctas_cmd));
     return true;
   }
 

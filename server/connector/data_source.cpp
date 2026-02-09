@@ -103,15 +103,6 @@ RocksDBRYOWDataSource::RocksDBRYOWDataSource(
   });
 }
 
-void RocksDBRYOWDataSource::addSplit(
-  std::shared_ptr<velox::connector::ConnectorSplit> split) {
-  RocksDBDataSource::addSplit(std::move(split));
-  InitIterators([&] {
-    return std::unique_ptr<rocksdb::Iterator>(
-      _transaction.GetIterator(_read_options, &_cf));
-  });
-}
-
 RocksDBSnapshotDataSource::RocksDBSnapshotDataSource(
   velox::memory::MemoryPool& memory_pool, rocksdb::DB& db,
   rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
@@ -125,6 +116,15 @@ RocksDBSnapshotDataSource::RocksDBSnapshotDataSource(
   InitIterators([&] {
     return std::unique_ptr<rocksdb::Iterator>(
       _db.NewIterator(_read_options, &_cf));
+  });
+}
+
+void RocksDBRYOWDataSource::addSplit(
+  std::shared_ptr<velox::connector::ConnectorSplit> split) {
+  RocksDBDataSource::addSplit(std::move(split));
+  InitIterators([&] {
+    return std::unique_ptr<rocksdb::Iterator>(
+      _transaction.GetIterator(_read_options, &_cf));
   });
 }
 

@@ -109,8 +109,7 @@ class RocksDBRYOWDataSource final : public RocksDBDataSource {
                         ObjectId object_key);
 
  private:
-  void addSplit(
-    std::shared_ptr<velox::connector::ConnectorSplit> split) final;
+  void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
 
   rocksdb::Transaction& _transaction;
 };
@@ -126,8 +125,7 @@ class RocksDBSnapshotDataSource final : public RocksDBDataSource {
                             const rocksdb::Snapshot* snapshot = nullptr);
 
  private:
-  void addSplit(
-    std::shared_ptr<velox::connector::ConnectorSplit> split) final;
+  void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
 
   rocksdb::DB& _db;
 };

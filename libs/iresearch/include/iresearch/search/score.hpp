@@ -98,36 +98,4 @@ IRS_FORCE_INLINE void Merge(T* res, std::span<I, N> hits,
   Merge<MergeType>(res, hits.data(), args.data(), hits.size());
 }
 
-template<typename T>
-class FixedBuffer {
- public:
-  void Realloc(uint16_t size) {
-    _buf = std::make_unique<T[]>(size);
-    _capacity = size;
-  }
-  void Resize(uint16_t size) {
-    SDB_ASSERT(size <= _capacity);
-    _size = size;
-  }
-  size_t Capacity() const noexcept { return _capacity; }
-  void Clear() noexcept { _size = 0; }
-  void PushBack(T value) noexcept {
-    SDB_ASSERT(_size < _capacity);
-    _buf[_size++] = value;
-  }
-  auto& Back(this auto& self) noexcept {
-    SDB_ASSERT(self._size > 0);
-    return self._buf[self._size - 1];
-  }
-  size_t Size() const noexcept { return _size; }
-  auto Data() noexcept { return _buf.get(); }
-  auto begin(this auto& self) noexcept { return self._buf.get(); }
-  auto end(this auto& self) noexcept { return self.begin() + self.Size(); }
-
- private:
-  std::unique_ptr<T[]> _buf;
-  uint32_t _size = 0;
-  uint32_t _capacity = 0;
-};
-
 }  // namespace irs

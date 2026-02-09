@@ -69,6 +69,7 @@ class DocIteratorWrapper : public irs::DocIterator {
   }
 
   irs::ScoreFunction PrepareScore(const irs::PrepareScoreContext& ctx) {
+    SDB_ASSERT(ctx.scorer);
     return ctx.scorer->PrepareScorer({
       .segment = *ctx.segment,
       .field = {},

@@ -283,6 +283,14 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
     }
   }
 
+  std::pair<doc_id_t, bool> CollectBlock(doc_id_t min, doc_id_t max,
+                                         uint64_t* mask,
+                                         CollectScoreContext score,
+                                         CollectMatchContext match) final {
+    // TODO(gnusi): optimize
+    return DocIterator::CollectBlock(*this, min, max, mask, score, match);
+  }
+
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
     if constexpr (kHasScore) {
       const PrepareScoreContext sub{

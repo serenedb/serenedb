@@ -120,6 +120,13 @@ class ChildToParentJoin : public DocIterator, private Matcher {
 
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final;
 
+  uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
+                   std::span<doc_id_t, kScoreBlock> docs,
+                   std::span<score_t, kScoreBlock> scores) final {
+    SDB_ASSERT(kScoreBlock <= docs.size());
+    return DocIterator::Collect(*this, scorer, columns, docs, scores);
+  }
+
   void CollectData(uint16_t index) final {
     if constexpr (Matcher::kHasScore) {
       Matcher::CollectDataImpl();

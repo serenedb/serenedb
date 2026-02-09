@@ -109,6 +109,7 @@ class GeoIterator : public irs::DocIterator {
   }
 
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
+    SDB_ASSERT(ctx.scorer);
     return ctx.scorer->PrepareScorer({
       .segment = *ctx.segment,
       .field = _field,
@@ -117,6 +118,19 @@ class GeoIterator : public irs::DocIterator {
       .stats = _stats,
       .boost = _boost,
     });
+  }
+
+  std::pair<doc_id_t, bool> CollectBlock(doc_id_t min, doc_id_t max,
+                                         uint64_t* mask,
+                                         CollectScoreContext score,
+                                         CollectMatchContext match) final {
+    return DocIterator::CollectBlock(*this, min, max, mask, score, match);
+  }
+
+  uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
+                   std::span<doc_id_t, kScoreBlock> docs,
+                   std::span<score_t, kScoreBlock> scores) final {
+    return DocIterator::Collect(*this, scorer, columns, docs, scores);
   }
 
   irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {

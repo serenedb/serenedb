@@ -948,6 +948,7 @@ class PhraseIterator : public DocIterator {
   }
 
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
+    SDB_ASSERT(ctx.scorer);
     return ctx.scorer->PrepareScorer({
       .segment = *ctx.segment,
       .field = _field,
@@ -1005,6 +1006,13 @@ class PhraseIterator : public DocIterator {
                    std::span<doc_id_t, kScoreBlock> docs,
                    std::span<score_t, kScoreBlock> scores) final {
     return DocIterator::Collect(*this, scorer, columns, docs, scores);
+  }
+
+  std::pair<doc_id_t, bool> CollectBlock(doc_id_t min, doc_id_t max,
+                                         uint64_t* mask,
+                                         CollectScoreContext score,
+                                         CollectMatchContext match) final {
+    return DocIterator::CollectBlock(*this, min, max, mask, score, match);
   }
 
   void CollectData(uint16_t index) final {

@@ -43,6 +43,7 @@ class PoolManager {
             password: connection.password || "",
             database: connection.database,
             ssl: connection.ssl,
+            connectionTimeoutMillis: 5000,
         });
 
         pool.on("error", (err) => {

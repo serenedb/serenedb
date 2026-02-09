@@ -141,12 +141,13 @@ const executeJob = async (taskData: any) => {
         sendComplete(true);
     } catch (err: any) {
         console.error(`[Worker ${jobId}] Error in job ${jobId}:`, err);
-        const errorStr = JSON.stringify(err);
+        const errorPayload = serializeDriverError(err);
+        const errorStr = JSON.stringify(errorPayload);
         if (db) {
             updateJobStatus(db, jobId, "failed", { error: errorStr });
         }
         log(errorStr);
-        sendComplete(false, err);
+        sendComplete(false, errorPayload);
     } finally {
         if (client) {
             client.release();
@@ -155,6 +156,80 @@ const executeJob = async (taskData: any) => {
             db.close();
         }
     }
+};
+
+const serializeDriverError = (error: unknown) => {
+    const flattenedError = unwrapAggregateError(error);
+
+    if (flattenedError instanceof Error) {
+        const errorObj = flattenedError as Error & Record<string, unknown>;
+
+        return {
+            message: errorObj.message,
+            code:
+                typeof errorObj.code === "string" ? errorObj.code : undefined,
+            detail:
+                typeof errorObj.detail === "string" ? errorObj.detail : undefined,
+            hint: typeof errorObj.hint === "string" ? errorObj.hint : undefined,
+            where:
+                typeof errorObj.where === "string" ? errorObj.where : undefined,
+            schema:
+                typeof errorObj.schema === "string"
+                    ? errorObj.schema
+                    : undefined,
+            table:
+                typeof errorObj.table === "string" ? errorObj.table : undefined,
+            column:
+                typeof errorObj.column === "string"
+                    ? errorObj.column
+                    : undefined,
+            constraint:
+                typeof errorObj.constraint === "string"
+                    ? errorObj.constraint
+                    : undefined,
+            severity:
+                typeof errorObj.severity === "string"
+                    ? errorObj.severity
+                    : undefined,
+            errno:
+                typeof errorObj.errno === "number" ? errorObj.errno : undefined,
+            syscall:
+                typeof errorObj.syscall === "string"
+                    ? errorObj.syscall
+                    : undefined,
+            address:
+                typeof errorObj.address === "string"
+                    ? errorObj.address
+                    : undefined,
+            port:
+                typeof errorObj.port === "number" ? errorObj.port : undefined,
+        };
+    }
+
+    if (typeof error === "string") {
+        return { message: error };
+    }
+
+    return {
+        message: "Unknown error",
+    };
+};
+
+const unwrapAggregateError = (error: unknown) => {
+    if (error instanceof AggregateError && error.errors?.length) {
+        const first = error.errors.find((entry) => entry) ?? error.errors[0];
+        return first ?? error;
+    }
+
+    if (error && typeof error === "object" && "errors" in error) {
+        const errors = (error as { errors?: unknown }).errors;
+        if (Array.isArray(errors) && errors.length > 0) {
+            const first = errors.find((entry) => entry) ?? errors[0];
+            return first ?? error;
+        }
+    }
+
+    return error;
 };
 
 parentPort.on("message", (taskData) => {

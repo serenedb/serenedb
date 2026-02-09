@@ -285,8 +285,16 @@ bool IsBetween(std::string_view name) {
   return name == "between" || name.ends_with("_between");
 }
 
-bool IsNullEq(std::string_view name) {
-  return name == "isnull" || name.ends_with("_isnull");
+bool IsNullEq(std::string_view name, bool& negated) {
+  if(name == "isnull" || name.ends_with("_isnull")) {
+    negated = false;
+    return true;
+  }
+  if(name == "isnotnull" || name.ends_with("_isnotnull")) {
+    negated = true;
+    return true;
+  }
+  return false;
 }
 
 Result FromVeloxBinaryEq(irs::BooleanFilter& filter,
@@ -620,7 +628,7 @@ Result FromVeloxIsNull(irs::BooleanFilter& filter,
   std::string field_name;
   ExtractFieldName(ctx, *left_field, field_name);
   sdb::search::mangling::MangleNull(field_name);
-  auto term_filter = AddFilter<irs::ByTerm>(filter);
+  auto& term_filter = ctx.negated? Negate<irs::ByTerm>(filter) : AddFilter<irs::ByTerm>(filter);
   term_filter.boost(ctx.boost);
   *term_filter.mutable_field() = field_name;
   term_filter.mutable_options()->term.assign(
@@ -647,8 +655,13 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
     return FromVeloxExpression(filter, negated_ctx, call->inputs()[0]);
   }
 
-  if (IsNullEq(call->name())) {
-    return FromVeloxIsNull(filter, ctx, call);
+  bool negated;
+  if (IsNullEq(call->name(), negated)) {
+    VeloxFilterContext sub_ctx = ctx;
+    if (negated) {
+      sub_ctx.negated = !ctx.negated;
+    }
+    return FromVeloxIsNull(filter, sub_ctx, call);
   }
 
   // Handle AND
@@ -662,9 +675,9 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
   }
 
   // Try equality/inequality
-  bool not_equal;
-  if (IsEqualityOp(call->name(), not_equal)) {
-    return FromVeloxBinaryEq(filter, ctx, call, not_equal);
+
+  if (IsEqualityOp(call->name(), negated)) {
+    return FromVeloxBinaryEq(filter, ctx, call, negated);
   }
 
   // ByRange openended

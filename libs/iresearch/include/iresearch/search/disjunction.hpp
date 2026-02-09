@@ -850,6 +850,8 @@ struct BlockDisjunctionTraits {
 
   // Size of the readhead buffer in blocks
   static constexpr size_t kNumBlocks = NumBlocks;
+
+  static_assert(kNumBlocks >= 1);
 };
 
 // The implementation reads ahead 64*NumBlocks documents.
@@ -905,27 +907,26 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
 
     do {
       while (_cur == 0) {
-        if (_begin >= std::end(_mask)) {
-          if (Refill()) {
-            SDB_ASSERT(_cur);
-            break;
+        if (_begin == std::end(_mask)) {
+          if (!Refill()) {
+            _match_count = 0;
+            return doc_value = doc_limits::eof();
           }
-
-          _match_count = 0;
-          return doc_value = doc_limits::eof();
+        } else {
+          _doc_base += BitsRequired<uint64_t>();
+          if constexpr (Traits::kMinMatch || kHasScore<Merger>) {
+            _buf_offset += BitsRequired<uint64_t>();
+          }
         }
-
         _cur = *_begin++;
-        _doc_base += BitsRequired<uint64_t>();
-        if constexpr (Traits::kMinMatch || kHasScore<Merger>) {
-          _buf_offset += BitsRequired<uint64_t>();
-        }
       }
 
-      const size_t offset = std::countr_zero(_cur);
-      irs::UnsetBit(_cur, offset);
+      // https://lemire.me/blog/2018/02/21/iterating-over-set-bits-quickly
+      const auto t = _cur & -_cur;
+      const auto offset = std::countr_zero(_cur);
+      _cur ^= t;
 
-      [[maybe_unused]] const size_t buf_offset = _buf_offset + offset;
+      [[maybe_unused]] const auto buf_offset = _buf_offset + offset;
 
       if constexpr (Traits::kMinMatch) {
         _match_count = _match_buf.match_count(buf_offset);
@@ -935,7 +936,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
         }
       }
 
-      doc_value = _doc_base + doc_id_t(offset);
+      doc_value = _doc_base + offset;
       if constexpr (kHasScore<Merger>) {
         _score_value = _score_buf.get(buf_offset);
       }
@@ -953,16 +954,17 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
     }
 
     if (target < _max) {
-      const doc_id_t block_base = (_max - kWindow);
+      const auto block_base = (_max - kWindow);
 
       target -= block_base;
-      const doc_id_t block_offset = target / kBlockSize;
+      const auto block_offset = target / kBlockSize;
 
       _doc_base = block_base + block_offset * kBlockSize;
       _begin = _mask + block_offset + 1;
 
-      SDB_ASSERT(_begin > std::begin(_mask) && _begin <= std::end(_mask));
-      _cur = _begin[-1] & ((~UINT64_C(0)) << target % kBlockSize);
+      SDB_ASSERT(std::begin(_mask) < _begin);
+      SDB_ASSERT(_begin <= std::end(_mask));
+      _cur = _begin[-1] & ((~uint64_t{0}) << (target % kBlockSize));
 
       return advance();
     }
@@ -1035,12 +1037,21 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
   }
 
   uint32_t count() final {
-    uint32_t count = 0;
-
-    while (_cur != 0 && next()) [[unlikely]] {
-      ++count;
+    // TODO(mbkkt): optimize this case we can do it only for single block
+    if (_begin != std::end(_mask)) [[unlikely]] {
+      return Count(*this);
     }
 
+    const auto count = (this->*_count_impl)();
+
+    _match_count = 0;
+    std::get<DocAttr>(_attrs).value = doc_limits::eof();
+    return count;
+  }
+
+ private:
+  IRS_FORCE_INLINE uint64_t CountImplGeneric() noexcept {
+    uint64_t count = 0;
     while (Refill()) {
       if constexpr (Traits::kMinMatch) {
         count += _match_buf.count();
@@ -1050,22 +1061,23 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
         }
       }
     }
-
-    _match_count = 0;
-    std::get<DocAttr>(_attrs).value = doc_limits::eof();
     return count;
   }
 
- private:
+#ifdef __x86_64__
+  __attribute__((target("avx512vpopcntdq"))) uint64_t
+  CountImplAvx512() noexcept {
+    return CountImplGeneric();
+  }
+#endif
+
   static constexpr doc_id_t kBlockSize = BitsRequired<uint64_t>();
 
-  static constexpr doc_id_t kNumBlocks =
-    static_cast<doc_id_t>(std::max(size_t(1), Traits::kNumBlocks));
+  static constexpr auto kNumBlocks = Traits::kNumBlocks;
 
   static constexpr doc_id_t kWindow = kBlockSize * kNumBlocks;
 
-  static_assert(kBlockSize * size_t(kNumBlocks) <
-                std::numeric_limits<doc_id_t>::max());
+  static_assert(kBlockSize * kNumBlocks < std::numeric_limits<doc_id_t>::max());
 
   // FIXME(gnusi): stack based score_buffer for constant cases
   using ScoreBufferType =
@@ -1090,6 +1102,13 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
       _score_buf(Merger::size(), kWindow),
       _match_buf(min_match_count),
       _scores(std::move(scores)) {
+    _count_impl = &BlockDisjunction::CountImplGeneric;
+#ifdef __x86_64__
+    if (__builtin_cpu_supports("avx512vpopcntdq")) {
+      _count_impl = &BlockDisjunction::CountImplAvx512;
+    }
+#endif
+
     std::get<CostAttr>(_attrs).reset(std::forward<Estimation>(estimation));
 
     if (_itrs.empty()) {
@@ -1208,6 +1227,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
   }
 
   bool Refill() {
+    SDB_ASSERT(_cur == 0);
     if (_itrs.empty()) {
       return false;
     }
@@ -1229,7 +1249,7 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
       _max = _min + kWindow;
       _min = doc_limits::eof();
 
-      VisitAndPurge([this, &empty](auto& it) mutable {
+      VisitAndPurge([&](auto& it) mutable {
         // FIXME
         // for min match case we can skip the whole block if
         // we can't satisfy match_buf_.min_match_count() conditions, namely
@@ -1244,11 +1264,11 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
         if constexpr (kHasScore<Merger>) {
           SDB_ASSERT(Merger::size());
           if (!it.score().IsDefault()) {
-            return this->Refill<true>(it, empty);
+            return Refill<true>(it, empty);
           }
         }
 
-        return this->Refill<false>(it, empty);
+        return Refill<false>(it, empty);
       });
     } while (empty && !_itrs.empty());
 
@@ -1258,20 +1278,10 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
       return false;
     }
 
-    _cur = *_mask;
-    _begin = _mask + 1;
+    _begin = _mask;
     if constexpr (Traits::kMinMatch || kHasScore<Merger>) {
       _buf_offset = 0;
     }
-    while (!_cur) {
-      _cur = *_begin++;
-      _doc_base += BitsRequired<uint64_t>();
-      if constexpr (Traits::kMinMatch || kHasScore<Merger>) {
-        _buf_offset += BitsRequired<uint64_t>();
-      }
-    }
-    SDB_ASSERT(_cur);
-
     return true;
   }
 
@@ -1313,6 +1323,9 @@ class BlockDisjunction : public DocIterator, private Merger, private ScoreCtx {
     return false;  // exhausted
   }
 
+  using CountImplFunction = uint64_t (BlockDisjunction::*)() noexcept;
+
+  CountImplFunction _count_impl;
   uint64_t _mask[kNumBlocks]{};
   Adapters _itrs;
   uint64_t* _begin{std::end(_mask)};

@@ -30,6 +30,7 @@
 #include <iresearch/search/score_function.hpp>
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/tfidf.hpp>
+#include <iresearch/types.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/type_limits.hpp>
 
@@ -207,7 +208,7 @@ std::vector<Doc> WandTestCase::Collect(const irs::DirectoryReader& index,
     auto& score_value = *scores.data();
     while (docs->next()) {
       auto doc = docs->value();
-      collector.Collect({&doc, 1});
+      collector.Collect(doc);
       docs->CollectData(0);
       score.Score(&score_value, 1);
 

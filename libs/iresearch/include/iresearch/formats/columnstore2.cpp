@@ -539,7 +539,7 @@ class NormReaderImpl : public NormReader {
     }
   }
 
-  bool Collect(doc_id_t doc, uint32_t* value) final {
+  bool Get(doc_id_t doc, uint32_t* value) final {
     _it->reset();  // TODO(gnusi): remove this
     const auto d = _it->seek(doc);
     if (doc_limits::eof(d)) [[unlikely]] {
@@ -592,7 +592,7 @@ class DirectFixedNormReader : public NormReader {
     }
   }
 
-  IRS_FORCE_INLINE bool Collect(doc_id_t doc, uint32_t* value) noexcept final {
+  IRS_FORCE_INLINE bool Get(doc_id_t doc, uint32_t* value) noexcept final {
     SDB_ASSERT(doc >= _doc_base);
     *value = ReadValue(_origin, doc - _doc_base);
     return true;

@@ -36,7 +36,7 @@ struct NormReader : public memory::Managed {
 
   virtual void Collect(std::span<doc_id_t> docs,
                        std::span<uint32_t> values) = 0;
-  virtual bool Collect(doc_id_t docs, uint32_t* value) = 0;
+  virtual bool Get(doc_id_t docs, uint32_t* value) = 0;
 };
 
 }  // namespace irs

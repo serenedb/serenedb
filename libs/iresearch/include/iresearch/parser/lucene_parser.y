@@ -18,7 +18,6 @@
  Copyright holder is SereneDB GmbH, Berlin, Germany
 */
 
-%no-lines
 %define api.pure full
 
 %code requires {

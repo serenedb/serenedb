@@ -35,7 +35,7 @@ class ColumnCollector {
 
   void Clear() noexcept { _columns.clear(); }
 
-  template<size_t N = std::dynamic_extent>
+  template<size_t N>
   void Collect(std::span<doc_id_t, N> docs) {
     for (auto& [_, entry] : _columns) {
       auto& [reader, norms] = entry;
@@ -46,7 +46,7 @@ class ColumnCollector {
   void Collect(doc_id_t doc) {
     for (auto& [_, entry] : _columns) {
       auto& [reader, norms] = entry;
-      std::ignore = reader->Collect(doc, norms.data());
+      std::ignore = reader->Get(doc, norms.data());
     }
   }
 

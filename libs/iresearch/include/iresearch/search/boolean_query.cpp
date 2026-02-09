@@ -43,7 +43,7 @@ ScoreAdapters MakeScoreAdapters(const ExecutionContext& ctx, It begin, It end) {
     ++begin;
 
     // filter out empty iterators
-    if (irs::doc_limits::eof(docs->value())) {
+    if (doc_limits::eof(docs->value())) {
       if constexpr (Conjunction) {
         return {};
       } else {
@@ -63,9 +63,8 @@ ScoreAdapters MakeScoreAdapters(const ExecutionContext& ctx, It begin, It end) {
 // Returns disjunction iterator created from the specified queries
 template<typename QueryIterator, typename... Args>
 DocIterator::ptr MakeDisjunction(const ExecutionContext& ctx,
-                                 irs::ScoreMergeType merge_type,
-                                 QueryIterator begin, QueryIterator end,
-                                 Args&&... args) {
+                                 ScoreMergeType merge_type, QueryIterator begin,
+                                 QueryIterator end, Args&&... args) {
   SDB_ASSERT(begin <= end);
   const size_t size = std::distance(begin, end);
   // check the size before the execution
@@ -79,12 +78,11 @@ DocIterator::ptr MakeDisjunction(const ExecutionContext& ctx,
     return DocIterator::empty();
   }
 
-  return irs::ResolveMergeType(
-    merge_type, [&]<ScoreMergeType MergeType>() -> DocIterator::ptr {
-      using Disjunction = DisjunctionIterator<ScoreAdapter, MergeType>;
-      return irs::MakeDisjunction<Disjunction>(ctx.wand, std::move(itrs),
-                                               std::forward<Args>(args)...);
-    });
+  return ResolveMergeType(merge_type, [&]<ScoreMergeType MergeType> {
+    using Disjunction = DisjunctionIterator<ScoreAdapter, MergeType>;
+    return MakeDisjunction<Disjunction>(ctx.wand, std::move(itrs),
+                                        std::forward<Args>(args)...);
+  });
 }
 
 // Returns conjunction iterator created from the specified queries
@@ -107,8 +105,8 @@ DocIterator::ptr MakeConjunction(const ExecutionContext& ctx,
     return DocIterator::empty();
   }
 
-  return irs::MakeConjunction(merge_type, ctx.wand, std::move(itrs),
-                              std::forward<Args>(args)...);
+  return MakeConjunction(merge_type, ctx.wand, std::move(itrs),
+                         std::forward<Args>(args)...);
 }
 
 }  // namespace
@@ -131,7 +129,7 @@ DocIterator::ptr BooleanQuery::execute(const ExecutionContext& ctx) const {
   // exclusion part does not affect scoring at all
   auto excl = MakeDisjunction(
     {.segment = ctx.segment, .scorers = Scorers::kUnordered, .ctx = ctx.ctx},
-    irs::ScoreMergeType::Noop, excl_begin, end);
+    ScoreMergeType::Noop, excl_begin, end);
 
   // got empty iterator for excluded
   if (doc_limits::eof(excl->value())) {
@@ -142,9 +140,8 @@ DocIterator::ptr BooleanQuery::execute(const ExecutionContext& ctx) const {
   return memory::make_managed<Exclusion>(std::move(incl), std::move(excl));
 }
 
-void BooleanQuery::visit(const irs::SubReader& segment,
-                         irs::PreparedStateVisitor& visitor,
-                         score_t boost) const {
+void BooleanQuery::visit(const SubReader& segment,
+                         PreparedStateVisitor& visitor, score_t boost) const {
   boost *= _boost;
 
   if (!visitor.Visit(*this, boost)) {

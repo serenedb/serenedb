@@ -52,8 +52,8 @@ struct VeloxFilterContext {
 };
 
 Result FromVeloxExpression(irs::BooleanFilter& filter,
-                          const VeloxFilterContext& ctx,
-                          const velox::core::TypedExprPtr& expr);
+                           const VeloxFilterContext& ctx,
+                           const velox::core::TypedExprPtr& expr);
 
 namespace {
 
@@ -88,7 +88,8 @@ Result DispatchValue(velox::TypeKind kind, Func&& func, Args&&... args) {
   switch (kind) {
     case velox::TypeKind::TINYINT:
     case velox::TypeKind::SMALLINT:
-      return std::forward<Func>(func).template operator()<int32_t>(std::forward<Args>(args)...);
+      return std::forward<Func>(func).template operator()<int32_t>(
+        std::forward<Args>(args)...);
     case velox::TypeKind::INTEGER:
       return std::forward<Func>(func).template
       operator()<velox::TypeTraits<velox::TypeKind::INTEGER>::NativeType>(
@@ -100,12 +101,14 @@ Result DispatchValue(velox::TypeKind kind, Func&& func, Args&&... args) {
     case velox::TypeKind::DOUBLE:
     case velox::TypeKind::REAL:
     case velox::TypeKind::HUGEINT:
-      return std::forward<Func>(func).template operator()<double>(std::forward<Args>(args)...);
+      return std::forward<Func>(func).template operator()<double>(
+        std::forward<Args>(args)...);
     case velox::TypeKind::VARCHAR:
       return std::forward<Func>(func).template operator()<velox::StringView>(
         std::forward<Args>(args)...);
     case velox::TypeKind::BOOLEAN:
-      return std::forward<Func>(func).template operator()<bool>(std::forward<Args>(args)...);
+      return std::forward<Func>(func).template operator()<bool>(
+        std::forward<Args>(args)...);
     default:
       return {ERROR_NOT_IMPLEMENTED, "Unsupported kind ",
               velox::TypeKindName::toName(kind), " for filter building"};
@@ -286,11 +289,11 @@ bool IsBetween(std::string_view name) {
 }
 
 bool IsNullEq(std::string_view name, bool& negated) {
-  if(name == "isnull" || name.ends_with("_isnull")) {
+  if (name == "isnull" || name.ends_with("_isnull")) {
     negated = false;
     return true;
   }
-  if(name == "isnotnull" || name.ends_with("_isnotnull")) {
+  if (name == "isnotnull" || name.ends_with("_isnotnull")) {
     negated = true;
     return true;
   }
@@ -576,9 +579,8 @@ Result FromVeloxIn(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
                                    : AddFilter<irs::ByTerms>(filter);
   return DispatchValue(
     kind,
-    []<typename T>(auto& terms_filter, auto& value_array,
-                   auto& ctx, auto& field_name,
-                   velox::TypeKind kind) -> Result {
+    []<typename T>(auto& terms_filter, auto& value_array, auto& ctx,
+                   auto& field_name, velox::TypeKind kind) -> Result {
       DoMangle<T>(field_name);
       terms_filter.boost(ctx.boost);
       *terms_filter.mutable_field() = field_name;
@@ -628,7 +630,8 @@ Result FromVeloxIsNull(irs::BooleanFilter& filter,
   std::string field_name;
   ExtractFieldName(ctx, *left_field, field_name);
   sdb::search::mangling::MangleNull(field_name);
-  auto& term_filter = ctx.negated? Negate<irs::ByTerm>(filter) : AddFilter<irs::ByTerm>(filter);
+  auto& term_filter =
+    ctx.negated ? Negate<irs::ByTerm>(filter) : AddFilter<irs::ByTerm>(filter);
   term_filter.boost(ctx.boost);
   *term_filter.mutable_field() = field_name;
   term_filter.mutable_options()->term.assign(

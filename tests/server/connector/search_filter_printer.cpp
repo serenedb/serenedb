@@ -19,7 +19,9 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "search_filter_printer.hpp"
+
 #include <absl/strings/ascii.h>
+
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/boolean_filter.hpp>
 #include <iresearch/search/column_existence_filter.hpp>
@@ -152,8 +154,7 @@ std::ostream& operator<<(std::ostream& os, const Empty&) {
   return os;
 }
 
-std::ostream& operator<<(std::ostream& os,
-                         const ByColumnExistence& filter) {
+std::ostream& operator<<(std::ostream& os, const ByColumnExistence& filter) {
   os << "EXISTS[" << filter.field() << ", " << size_t(filter.options().acceptor)
      << "]";
   return os;

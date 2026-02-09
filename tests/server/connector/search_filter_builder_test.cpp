@@ -109,11 +109,14 @@ class SearchFilterBuilderTest : public ::testing::Test {
       std::make_shared<query::QueryContext>(transaction, objects);
 
     {
-      // Table handles gather espressions for filter. Expressions could hold memory
-      // from pool so we must make sure all expressions are deleted before leaf
-      // pool to avoid trigger leak detection. So scope exits and local block are
-      // important here.
-      SCOPE_EXIT { connector._table_handles.clear(); table.reset(); };
+      // Table handles gather espressions for filter. Expressions could hold
+      // memory from pool so we must make sure all expressions are deleted
+      // before leaf pool to avoid trigger leak detection. So scope exits and
+      // local block are important here.
+      SCOPE_EXIT {
+        connector._table_handles.clear();
+        table.reset();
+      };
       irs::And root;
       pg::UniqueIdGenerator id_generator;
       auto query_desc = pg::AnalyzeVelox(*raw_stmt, qs, objects, id_generator,
@@ -1114,7 +1117,8 @@ TEST_F(SearchFilterBuilderTest, test_IsNotNotNull) {
 
   columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
     "required_field", velox::INTEGER(), 1));
-  AssertFilter(expected, "SELECT * FROM foo WHERE NOT(required_field IS NOT NULL)",
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE NOT(required_field IS NOT NULL)",
                std::move(columns), true);
 }
 

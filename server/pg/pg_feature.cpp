@@ -20,12 +20,12 @@
 
 #include "pg_feature.h"
 
-#include "pg_functions_registration.hpp"
 #include "basics/assert.h"
 #include "basics/down_cast.h"
 #include "basics/random/random_generator.h"
 #include "connector/serenedb_connector.hpp"
 #include "pg/system_catalog.h"
+#include "pg_functions_registration.hpp"
 #include "query/types.h"
 #include "rest_server/endpoint_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
@@ -79,7 +79,6 @@ void PostgresFeature::UnregisterTask(uint64_t key) {
   [[maybe_unused]] auto count = _tasks.erase(key);
   SDB_ASSERT(count == 1);
 }
-
 
 void PostgresFeature::prepare() {
   folly::SingletonVault::singleton()->registrationComplete();

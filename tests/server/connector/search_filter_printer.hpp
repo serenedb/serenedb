@@ -19,12 +19,12 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
-#include <string>
 #include <iresearch/search/filter.hpp>
+#include <string>
 
 // GTEST requires to us to have operator in the same namespace
 namespace irs {
 
 std::ostream& operator<<(std::ostream& os, const Filter& filter);
 
-} // namespace irs
+}  // namespace irs

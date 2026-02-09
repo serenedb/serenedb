@@ -19,28 +19,28 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
-#include "basics/fwd.h"
 #include <velox/connectors/Connector.h>
+
 #include <iresearch/search/filter.hpp>
+
+#include "basics/fwd.h"
 #include "data_materializer.hpp"
 #include "iresearch/index/index_reader.hpp"
 
-
 namespace sdb::connector::search {
 
-class SearchDataSource final : public velox::connector::DataSource, public Materializer  {
+class SearchDataSource final : public velox::connector::DataSource,
+                               public Materializer {
  public:
   SearchDataSource(velox::memory::MemoryPool& memory_pool,
-                    // use just snapshot for now. But maybe we will need to have
-                    // this class template (or use some wrapper) to work with
-                    // WriteBatchWithindex or plain DB with snapshot
-                    const rocksdb::Snapshot* snapshot, rocksdb::DB& db,
-                    rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
-                    std::vector<catalog::Column::Id> column_ids,
-                    catalog::Column::Id effective_column_id,
-                    ObjectId object_key,
-                    irs::IndexReader& reader,
-                    irs::Filter::ptr&& filter);
+                   // use just snapshot for now. But maybe we will need to have
+                   // this class template (or use some wrapper) to work with
+                   // WriteBatchWithindex or plain DB with snapshot
+                   const rocksdb::Snapshot* snapshot, rocksdb::DB& db,
+                   rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
+                   std::vector<catalog::Column::Id> column_ids,
+                   catalog::Column::Id effective_column_id, ObjectId object_key,
+                   irs::IndexReader& reader, irs::Filter::ptr&& filter);
 
   virtual ~SearchDataSource() = default;
 
@@ -55,18 +55,18 @@ class SearchDataSource final : public velox::connector::DataSource, public Mater
   std::unordered_map<std::string, velox::RuntimeMetric> getRuntimeStats() final;
   void cancel() final;
 
-private:
-    std::shared_ptr<velox::connector::ConnectorSplit> _current_split;
-    irs::IndexReader& _reader;
-    // TODO(Dronplane) when we have sorted indexes we will need Merge reader for all segments.
-    // Only sequential for now.
-    size_t _current_segment {0};
-    irs::Filter::ptr _filter;
-    irs::Filter::Query::ptr _prepared_filter;
-    irs::DocIterator::ptr _pk_iterator;
-    const irs::PayAttr* _pk_value;
-    irs::DocIterator::ptr _doc;
-    uint64_t _produced {0};
+ private:
+  std::shared_ptr<velox::connector::ConnectorSplit> _current_split;
+  irs::IndexReader& _reader;
+  // TODO(Dronplane) when we have sorted indexes we will need Merge reader for
+  // all segments. Only sequential for now.
+  size_t _current_segment{0};
+  irs::Filter::ptr _filter;
+  irs::Filter::Query::ptr _prepared_filter;
+  irs::DocIterator::ptr _pk_iterator;
+  const irs::PayAttr* _pk_value;
+  irs::DocIterator::ptr _doc;
+  uint64_t _produced{0};
 };
 
-} // namespace sdb::connector::search
+}  // namespace sdb::connector::search

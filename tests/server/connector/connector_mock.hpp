@@ -25,8 +25,7 @@ class MockTableHandle;
 
 class MockConnector final : public velox::connector::Connector {
  public:
-  explicit MockConnector(const std::string& id,
-                             velox::config::ConfigPtr config)
+  explicit MockConnector(const std::string& id, velox::config::ConfigPtr config)
     : Connector{id, std::move(config)} {}
   bool canAddDynamicFilter() const final { return false; }
 
@@ -39,7 +38,7 @@ class MockConnector final : public velox::connector::Connector {
     const velox::connector::ConnectorTableHandlePtr& table_handle,
     const velox::connector::ColumnHandleMap& column_handles,
     velox::connector::ConnectorQueryCtx* connector_query_ctx) final {
-      VELOX_UNSUPPORTED();
+    VELOX_UNSUPPORTED();
   }
 
   std::shared_ptr<velox::connector::IndexSource> createIndexSource(
@@ -62,14 +61,15 @@ class MockConnector final : public velox::connector::Connector {
     VELOX_UNSUPPORTED();
   }
 
-  void RegisterTableHandle(const std::string& table, std::shared_ptr<MockTableHandle> handle) {
+  void RegisterTableHandle(const std::string& table,
+                           std::shared_ptr<MockTableHandle> handle) {
     _table_handles[table] = std::move(handle);
   }
 
-
   folly::Executor* ioExecutor() const final { return nullptr; }
 
-  containers::FlatHashMap<std::string, std::shared_ptr<MockTableHandle>> _table_handles;
+  containers::FlatHashMap<std::string, std::shared_ptr<MockTableHandle>>
+    _table_handles;
 };
 
 class MockColumnHandle final : public velox::connector::ColumnHandle {
@@ -132,9 +132,8 @@ class MockLayout final : public axiom::connector::TableLayout {
     const axiom::connector::ConnectorSessionPtr& session,
     const std::string& columnName,
     std::vector<velox::common::Subfield> subfields = {}) const final {
-     return std::make_shared<MockColumnHandle>(
-      columnName,
-      _column_map.at(columnName));
+    return std::make_shared<MockColumnHandle>(columnName,
+                                              _column_map.at(columnName));
   }
 
   velox::connector::ConnectorTableHandlePtr createTableHandle(
@@ -144,33 +143,37 @@ class MockLayout final : public axiom::connector::TableLayout {
     std::vector<velox::core::TypedExprPtr> filters,
     std::vector<velox::core::TypedExprPtr>& rejectedFilters) const final {
     // accept everything. We will use it for testing later
-    auto handle = std::make_shared<MockTableHandle>("test", "empty", std::move(filters));
-    basics::downCast<MockConnector>(*connector()).RegisterTableHandle(table().name(), handle);
+    auto handle =
+      std::make_shared<MockTableHandle>("test", "empty", std::move(filters));
+    basics::downCast<MockConnector>(*connector())
+      .RegisterTableHandle(table().name(), handle);
     return handle;
   }
 
-  private:
-    containers::FlatHashMap<std::string, catalog::Column::Id> _column_map;
-    
+ private:
+  containers::FlatHashMap<std::string, catalog::Column::Id> _column_map;
 };
 
 class TableMock final : public axiom::connector::Table {
-public:
-  TableMock(MockConnector& connector, std::string name,
-      std::vector<std::unique_ptr<const axiom::connector::Column>>&& columns,
-      folly::F14FastMap<std::string, velox::Variant> options) : axiom::connector::Table(name, std::move(columns), options),
-      _layout(name, this, &connector, allColumns()){
-        _layouts.push_back(&_layout);
-      }
+ public:
+  TableMock(
+    MockConnector& connector, std::string name,
+    std::vector<std::unique_ptr<const axiom::connector::Column>>&& columns,
+    folly::F14FastMap<std::string, velox::Variant> options)
+    : axiom::connector::Table(name, std::move(columns), options),
+      _layout(name, this, &connector, allColumns()) {
+    _layouts.push_back(&_layout);
+  }
 
-   uint64_t numRows() const final { return 0; }
-   const std::vector<const axiom::connector::TableLayout*>& layouts()
+  uint64_t numRows() const final { return 0; }
+  const std::vector<const axiom::connector::TableLayout*>& layouts()
     const final {
     return _layouts;
   }
-private:
+
+ private:
   MockLayout _layout;
   std::vector<const axiom::connector::TableLayout*> _layouts;
 };
 
-} // namespace sdb::connector::test
+}  // namespace sdb::connector::test

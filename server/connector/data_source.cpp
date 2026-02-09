@@ -43,7 +43,6 @@ constexpr uint64_t kInitialVectorSize = 1;  // arbitrary value
 
 /////////////////////////////////////////////////////////////////////////////
 
-
 RocksDBDataSource::RocksDBDataSource(
   velox::memory::MemoryPool& memory_pool, const rocksdb::Snapshot* snapshot,
   rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,

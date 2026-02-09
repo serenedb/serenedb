@@ -42,8 +42,8 @@
 #include "file_table.hpp"
 #include "query/transaction.h"
 #include "rocksdb/utilities/transaction_db.h"
-#include "storage_engine/table_shard.h"
 #include "search_filter_builder.hpp"
+#include "storage_engine/table_shard.h"
 
 namespace sdb::connector {
 
@@ -141,34 +141,12 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
     velox::core::ExpressionEvaluator& evaluator,
     std::vector<velox::core::TypedExprPtr> filters,
     std::vector<velox::core::TypedExprPtr>& rejected_filters) const final {
-
+    rejected_filters = std::move(filters);
     if (const auto* read_file_table =
           dynamic_cast<const ReadFileTable*>(&this->table())) {
-      rejected_filters = std::move(filters);
       return std::make_shared<FileTableHandle>(read_file_table->GetSource(),
                                                read_file_table->GetOptions());
     }
-
-    irs::And conjunct_root;
-    for (auto& filter : filters) {
-      const auto count_before = conjunct_root.size();
-      auto res = search::ExprToFilter(conjunct_root, evaluator, filter, table().columnMap());
-      if (res.fail()) {
-       if (count_before != conjunct_root.size()) {
-        // we do not expect more than one conjunct added.
-        // if will be more - we will need cycle here.
-        SDB_ASSERT(count_before + 1 == conjunct_root.size());
-        conjunct_root.PopBack();
-       }
-       rejected_filters.push_back(filter);
-       std::cerr << res.errorMessage() << std::endl;
-       continue;
-      }
-    }
-
-    // !!!!
-    rejected_filters = std::move(filters);
-
     SDB_ASSERT(!table().columnMap().empty(),
                "SereneDBConnectorTableHandle: need a column for count field");
     return std::make_shared<SereneDBConnectorTableHandle>(session, *this);

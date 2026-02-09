@@ -19,8 +19,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
-#include "basics/fwd.h"
-#include "query/types.h"
 #include <axiom/optimizer/FunctionRegistry.h>
 #include <velox/dwio/parquet/RegisterParquetReader.h>
 #include <velox/dwio/parquet/RegisterParquetWriter.h>
@@ -45,7 +43,10 @@
 #include <velox/type/Timestamp.h>
 #include <velox/type/Type.h>
 #include <velox/type/TypeCoercer.h>
+
+#include "basics/fwd.h"
 #include "pg/functions.h"
+#include "query/types.h"
 
 namespace sdb::pg {
 
@@ -129,4 +130,4 @@ inline void RegisterVeloxFunctionsAndTypes() {
   velox::TypeCoercer::registerCoercions(AllowedCoercions());
 }
 
-} // namespace sdb::pg
+}  // namespace sdb::pg

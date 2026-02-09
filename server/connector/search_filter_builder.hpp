@@ -21,18 +21,20 @@
 #pragma once
 
 #include <velox/core/ExpressionEvaluator.h>
+
+#include "axiom/connectors/ConnectorMetadata.h"
 #include "basics/fwd.h"
 #include "basics/result.h"
 #include "iresearch/search/boolean_filter.hpp"
 #include "velox/core/ITypedExpr.h"
-#include "axiom/connectors/ConnectorMetadata.h"
 
 namespace sdb::connector::search {
-                   
-// Convert Velox expression to IResearch filter
-Result ExprToFilter(irs::BooleanFilter& filter,
-                          velox::core::ExpressionEvaluator& evaluator,
-                              const velox::core::TypedExprPtr& expr,
-                              const folly::F14FastMap<std::string, const axiom::connector::Column*>& columns_map);
 
-} // namespace sdb::connector::search
+// Convert Velox expression to IResearch filter
+Result ExprToFilter(
+  irs::BooleanFilter& filter, velox::core::ExpressionEvaluator& evaluator,
+  const velox::core::TypedExprPtr& expr,
+  const folly::F14FastMap<std::string, const axiom::connector::Column*>&
+    columns_map);
+
+}  // namespace sdb::connector::search

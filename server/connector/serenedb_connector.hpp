@@ -535,18 +535,21 @@ class SereneDBConnector final : public velox::connector::Connector {
       column_oids.push_back(serene_table_handle.GetEffectiveColumnId());
     }
     auto& transaction = serene_table_handle.GetTransaction();
-    transaction.AddRocksDBWrite();
-    transaction.EnsureRocksDBSnapshot();  // Ensure snapshot is created
-    auto* rocksdb_transaction = transaction.GetRocksDBTransaction();
 
     const bool read_your_own_writes =
       transaction.Get<VariableType::SdbReadYourOwnWrites>(
         "sdb_read_your_own_writes");
 
-    return std::make_unique<RocksDBDataSource>(
-      *connector_query_ctx->memoryPool(), rocksdb_transaction, &_db, _cf,
-      output_type, column_oids, serene_table_handle.GetEffectiveColumnId(),
-      object_key, read_your_own_writes);
+    if (read_your_own_writes) {
+      return std::make_unique<RocksDBRYOWDataSource>(
+        *connector_query_ctx->memoryPool(),
+        transaction.EnsureRocksDBTransaction(), _cf, output_type, column_oids,
+        serene_table_handle.GetEffectiveColumnId(), object_key);
+    }
+    return std::make_unique<RocksDBSnapshotDataSource>(
+      *connector_query_ctx->memoryPool(), _db, _cf, output_type, column_oids,
+      serene_table_handle.GetEffectiveColumnId(), object_key,
+      &transaction.EnsureRocksDBSnapshot());
   }
 
   std::shared_ptr<velox::connector::IndexSource> createIndexSource(

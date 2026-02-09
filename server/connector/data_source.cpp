@@ -41,21 +41,17 @@ constexpr uint64_t kInitialVectorSize = 1;  // arbitrary value
 }  // namespace
 
 RocksDBDataSource::RocksDBDataSource(
-  velox::memory::MemoryPool& memory_pool, rocksdb::Transaction* transaction,
-  rocksdb::DB* db, rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
-  std::vector<catalog::Column::Id> column_oids,
+  velox::memory::MemoryPool& memory_pool, rocksdb::ColumnFamilyHandle& cf,
+  velox::RowTypePtr row_type, std::vector<catalog::Column::Id> column_oids,
   catalog::Column::Id effective_column_id, ObjectId object_key,
-  bool read_your_own_writes)
+  const rocksdb::Snapshot* snapshot)
   : velox::connector::DataSource{},
     _memory_pool{memory_pool},
-    _transaction{transaction},
-    _db{db},
     _cf{cf},
     _row_type{std::move(row_type)},
     _column_ids(std::move(column_oids)),
     _effective_column_id(std::move(effective_column_id)),
-    _object_key{object_key},
-    _read_your_own_writes{read_your_own_writes} {
+    _object_key{object_key} {
   SDB_ASSERT(_row_type, "RocksDBDataSource: row type is null");
   SDB_ASSERT(_object_key.isSet(), "RocksDBDataSource: object key is empty");
   SDB_ASSERT(!_column_ids.empty(),
@@ -63,7 +59,7 @@ RocksDBDataSource::RocksDBDataSource(
   SDB_ASSERT(_row_type->size() == 0 || _row_type->size() == _column_ids.size(),
              "RocksDBDataSource: number of columns does not match row type");
 
-  _read_options.snapshot = _transaction->GetSnapshot();
+  _read_options.snapshot = snapshot;
   _read_options.async_io = false;
 
   std::string key = key_utils::PrepareTableKey(_object_key);
@@ -90,21 +86,37 @@ RocksDBDataSource::RocksDBDataSource(
   std::iota(_sorted_indices.begin(), _sorted_indices.end(), 0);
   std::sort(_sorted_indices.begin(), _sorted_indices.end(),
             [this](auto a, auto b) { return _column_ids[a] < _column_ids[b]; });
+}
 
-  _iterators.reserve(_column_keys.size());
-  for (const auto& column_key : _column_keys) {
-    std::unique_ptr<rocksdb::Iterator> it;
-    if (_read_your_own_writes) {
-      it.reset(_transaction->GetIterator(_read_options, &_cf));
-    } else {
-      it.reset(_db->NewIterator(_read_options, &_cf));
-    }
-    it->Seek(column_key);
-    if (!it->Valid() || !it->key().starts_with(column_key)) {
-      it.reset();
-    }
-    _iterators.push_back(std::move(it));
-  }
+RocksDBRYOWDataSource::RocksDBRYOWDataSource(
+  velox::memory::MemoryPool& memory_pool, rocksdb::Transaction& transaction,
+  rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
+  std::vector<catalog::Column::Id> column_ids,
+  catalog::Column::Id effective_column_id, ObjectId object_key)
+  : RocksDBDataSource(memory_pool, cf, std::move(row_type),
+                      std::move(column_ids), effective_column_id, object_key,
+                      transaction.GetSnapshot()),
+    _transaction{transaction} {
+  InitIterators([this]() {
+    return std::unique_ptr<rocksdb::Iterator>(
+      _transaction.GetIterator(_read_options, &_cf));
+  });
+}
+
+RocksDBSnapshotDataSource::RocksDBSnapshotDataSource(
+  velox::memory::MemoryPool& memory_pool, rocksdb::DB& db,
+  rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
+  std::vector<catalog::Column::Id> column_ids,
+  catalog::Column::Id effective_column_id, ObjectId object_key,
+  const rocksdb::Snapshot* snapshot)
+  : RocksDBDataSource(memory_pool, cf, std::move(row_type),
+                      std::move(column_ids), effective_column_id, object_key,
+                      snapshot),
+    _db{db} {
+  InitIterators([this]() {
+    return std::unique_ptr<rocksdb::Iterator>(
+      _db.NewIterator(_read_options, &_cf));
+  });
 }
 
 void RocksDBDataSource::addSplit(
@@ -128,18 +140,15 @@ std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
 
   const auto num_columns = _row_type->size();
   const auto table_prefix_size =
-    _column_keys.empty()
-      ? 0
-      : _column_keys.front().size() - sizeof(catalog::Column::Id);
+    _column_keys.front().size() - sizeof(catalog::Column::Id);
 
-  if (num_columns) {
+  if (num_columns > 0) {
     columns.resize(num_columns);
     for (const auto sorted_idx : _sorted_indices) {
       if (!_iterators[sorted_idx]) {
-        // no rows found. This should happen only for the first column.
+        // No rows found. This should happen only for the first column.
         // Otherwise we have a misaligned data.
-        SDB_ASSERT(columns.empty() ||
-                     absl::c_all_of(columns, [](const auto& c) { return !c; }),
+        SDB_ASSERT(sorted_idx == _sorted_indices[0],
                    "RocksDBDataSource: inconsistent number of columns");
         _current_split.reset();
         return nullptr;
@@ -150,7 +159,7 @@ std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
                    _row_type->childAt(sorted_idx), _column_ids[sorted_idx],
                    table_prefix_size);
 
-      // Check if data is exhausted (first column determines this)
+      // All rows are read
       if (sorted_idx == _sorted_indices[0] &&
           columns[sorted_idx]->size() == 0) {
         _current_split.reset();
@@ -175,6 +184,8 @@ std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
   const auto read =
     IterateColumn(*_iterators[0], size, _column_keys[0],
                   [](uint64_t, std::string_view, std::string_view) {});
+
+  // All rows are read
   if (read == 0) {
     _current_split.reset();
     return nullptr;

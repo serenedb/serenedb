@@ -84,7 +84,6 @@ const rocksdb::Snapshot& Transaction::EnsureRocksDBSnapshot() {
 }
 
 rocksdb::Transaction& Transaction::EnsureRocksDBTransaction() {
-  SDB_ASSERT((_state & State::HasRocksDBWrite) != State::None);
   if (!_rocksdb_transaction) {
     CreateRocksDBTransaction();
   }

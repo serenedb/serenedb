@@ -402,6 +402,7 @@ Result FromVeloxComparison(irs::BooleanFilter& filter,
       default:
         SDB_ASSERT(false, "Not all comparison operations implemented");
     }
+    SDB_UNREACHABLE();
   };
   SDB_ASSERT(value->kind() == kind,
              "Values should have same kind as field. Analyzer should put "

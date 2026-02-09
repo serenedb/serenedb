@@ -97,7 +97,19 @@ RocksDBRYOWDataSource::RocksDBRYOWDataSource(
                       std::move(column_ids), effective_column_id, object_key,
                       transaction.GetSnapshot()),
     _transaction{transaction} {
-  InitIterators();
+  InitIterators([&] {
+    return std::unique_ptr<rocksdb::Iterator>(
+      _transaction.GetIterator(_read_options, &_cf));
+  });
+}
+
+void RocksDBRYOWDataSource::addSplit(
+  std::shared_ptr<velox::connector::ConnectorSplit> split) {
+  RocksDBDataSource::addSplit(std::move(split));
+  InitIterators([&] {
+    return std::unique_ptr<rocksdb::Iterator>(
+      _transaction.GetIterator(_read_options, &_cf));
+  });
 }
 
 RocksDBSnapshotDataSource::RocksDBSnapshotDataSource(
@@ -110,34 +122,19 @@ RocksDBSnapshotDataSource::RocksDBSnapshotDataSource(
                       std::move(column_ids), effective_column_id, object_key,
                       snapshot),
     _db{db} {
-  InitIterators();
+  InitIterators([&] {
+    return std::unique_ptr<rocksdb::Iterator>(
+      _db.NewIterator(_read_options, &_cf));
+  });
 }
 
-void RocksDBRYOWDataSource::InitIterators() {
-  _iterators.clear();
-  _iterators.reserve(_column_keys.size());
-  for (const auto& column_key : _column_keys) {
-    std::unique_ptr<rocksdb::Iterator> it(
-      _transaction.GetIterator(_read_options, &_cf));
-    it->Seek(column_key);
-    if (!it->Valid() || !it->key().starts_with(column_key)) {
-      it.reset();
-    }
-    _iterators.push_back(std::move(it));
-  }
-}
-
-void RocksDBSnapshotDataSource::InitIterators() {
-  _iterators.clear();
-  _iterators.reserve(_column_keys.size());
-  for (const auto& column_key : _column_keys) {
-    std::unique_ptr<rocksdb::Iterator> it(_db.NewIterator(_read_options, &_cf));
-    it->Seek(column_key);
-    if (!it->Valid() || !it->key().starts_with(column_key)) {
-      it.reset();
-    }
-    _iterators.push_back(std::move(it));
-  }
+void RocksDBSnapshotDataSource::addSplit(
+  std::shared_ptr<velox::connector::ConnectorSplit> split) {
+  RocksDBDataSource::addSplit(std::move(split));
+  InitIterators([&] {
+    return std::unique_ptr<rocksdb::Iterator>(
+      _db.NewIterator(_read_options, &_cf));
+  });
 }
 
 void RocksDBDataSource::addSplit(
@@ -148,7 +145,20 @@ void RocksDBDataSource::addSplit(
               "RocksDBDataSource: a split is already being processed");
   }
   _current_split = std::move(split);
-  InitIterators();
+}
+
+template<typename CreateFn>
+void RocksDBDataSource::InitIterators(CreateFn&& create) {
+  _iterators.clear();
+  _iterators.reserve(_column_keys.size());
+  for (const auto& column_key : _column_keys) {
+    auto it = create();
+    it->Seek(column_key);
+    if (!it->Valid() || !it->key().starts_with(column_key)) {
+      it.reset();
+    }
+    _iterators.push_back(std::move(it));
+  }
 }
 
 std::optional<velox::RowVectorPtr> RocksDBDataSource::next(

@@ -34,7 +34,8 @@ class SereneDBConnectorSplit;
 
 class RocksDBDataSource : public velox::connector::DataSource {
  public:
-  void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
+  virtual void addSplit(
+    std::shared_ptr<velox::connector::ConnectorSplit> split);
   std::optional<velox::RowVectorPtr> next(uint64_t size,
                                           velox::ContinueFuture& future) final;
   void addDynamicFilter(
@@ -52,13 +53,12 @@ class RocksDBDataSource : public velox::connector::DataSource {
                     catalog::Column::Id effective_column_id,
                     ObjectId object_key, const rocksdb::Snapshot* snapshot);
 
-  virtual void InitIterators() = 0;
+  template<typename CreateFn>
+  void InitIterators(CreateFn&& create);
 
   velox::memory::MemoryPool& _memory_pool;
   rocksdb::ColumnFamilyHandle& _cf;
   rocksdb::ReadOptions _read_options;
-  std::vector<std::string> _column_keys;
-  std::vector<std::unique_ptr<rocksdb::Iterator>> _iterators;
 
  private:
   static constexpr size_t kTablePrefixSize = sizeof(ObjectId);
@@ -81,6 +81,8 @@ class RocksDBDataSource : public velox::connector::DataSource {
 
   velox::RowTypePtr _row_type;
   std::vector<catalog::Column::Id> _column_ids;
+  std::vector<std::string> _column_keys;
+  std::vector<std::unique_ptr<rocksdb::Iterator>> _iterators;
   std::vector<velox::column_index_t> _sorted_indices;
   // Column ID to use for iteration when the requested column is stored in the
   // key (e.g., kGeneratedPKId). This points to a column whose values are stored
@@ -107,7 +109,8 @@ class RocksDBRYOWDataSource final : public RocksDBDataSource {
                         ObjectId object_key);
 
  private:
-  void InitIterators() final;
+  void addSplit(
+    std::shared_ptr<velox::connector::ConnectorSplit> split) final;
 
   rocksdb::Transaction& _transaction;
 };
@@ -123,7 +126,8 @@ class RocksDBSnapshotDataSource final : public RocksDBDataSource {
                             const rocksdb::Snapshot* snapshot = nullptr);
 
  private:
-  void InitIterators() final;
+  void addSplit(
+    std::shared_ptr<velox::connector::ConnectorSplit> split) final;
 
   rocksdb::DB& _db;
 };

@@ -63,12 +63,11 @@ RocksDBDataSource::RocksDBDataSource(
   _read_options.async_io = false;
 
   std::string key = key_utils::PrepareTableKey(_object_key);
-  _table_prefix_size = key.size();
 
   _column_keys.reserve(_column_ids.size());
 
   for (const auto column_id : _column_ids) {
-    basics::StrResize(key, _table_prefix_size);
+    basics::StrResize(key, kTablePrefixSize);
 
     auto read_column_id = column_id;
     if (column_id == catalog::Column::kGeneratedPKId) {
@@ -83,9 +82,10 @@ RocksDBDataSource::RocksDBDataSource(
 
   // Build sorted indices by column_id for sequential RocksDB access
   _sorted_indices.resize(_row_type->size());
-  std::iota(_sorted_indices.begin(), _sorted_indices.end(), 0);
-  std::sort(_sorted_indices.begin(), _sorted_indices.end(),
-            [this](auto a, auto b) { return _column_ids[a] < _column_ids[b]; });
+  absl::c_iota(_sorted_indices, 0);
+  absl::c_sort(_sorted_indices, [&](auto lhs, auto rhs) {
+    return _column_ids[lhs] < _column_ids[rhs];
+  });
 }
 
 RocksDBRYOWDataSource::RocksDBRYOWDataSource(
@@ -97,10 +97,7 @@ RocksDBRYOWDataSource::RocksDBRYOWDataSource(
                       std::move(column_ids), effective_column_id, object_key,
                       transaction.GetSnapshot()),
     _transaction{transaction} {
-  InitIterators([this]() {
-    return std::unique_ptr<rocksdb::Iterator>(
-      _transaction.GetIterator(_read_options, &_cf));
-  });
+  InitIterators();
 }
 
 RocksDBSnapshotDataSource::RocksDBSnapshotDataSource(
@@ -113,10 +110,34 @@ RocksDBSnapshotDataSource::RocksDBSnapshotDataSource(
                       std::move(column_ids), effective_column_id, object_key,
                       snapshot),
     _db{db} {
-  InitIterators([this]() {
-    return std::unique_ptr<rocksdb::Iterator>(
-      _db.NewIterator(_read_options, &_cf));
-  });
+  InitIterators();
+}
+
+void RocksDBRYOWDataSource::InitIterators() {
+  _iterators.clear();
+  _iterators.reserve(_column_keys.size());
+  for (const auto& column_key : _column_keys) {
+    std::unique_ptr<rocksdb::Iterator> it(
+      _transaction.GetIterator(_read_options, &_cf));
+    it->Seek(column_key);
+    if (!it->Valid() || !it->key().starts_with(column_key)) {
+      it.reset();
+    }
+    _iterators.push_back(std::move(it));
+  }
+}
+
+void RocksDBSnapshotDataSource::InitIterators() {
+  _iterators.clear();
+  _iterators.reserve(_column_keys.size());
+  for (const auto& column_key : _column_keys) {
+    std::unique_ptr<rocksdb::Iterator> it(_db.NewIterator(_read_options, &_cf));
+    it->Seek(column_key);
+    if (!it->Valid() || !it->key().starts_with(column_key)) {
+      it.reset();
+    }
+    _iterators.push_back(std::move(it));
+  }
 }
 
 void RocksDBDataSource::addSplit(
@@ -127,6 +148,7 @@ void RocksDBDataSource::addSplit(
               "RocksDBDataSource: a split is already being processed");
   }
   _current_split = std::move(split);
+  InitIterators();
 }
 
 std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
@@ -139,8 +161,6 @@ std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
   std::vector<velox::VectorPtr> columns;
 
   const auto num_columns = _row_type->size();
-  const auto table_prefix_size =
-    _column_keys.front().size() - sizeof(catalog::Column::Id);
 
   if (num_columns > 0) {
     columns.resize(num_columns);
@@ -154,10 +174,7 @@ std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
         return nullptr;
       }
 
-      columns[sorted_idx] =
-        ReadColumn(*_iterators[sorted_idx], size, _column_keys[sorted_idx],
-                   _row_type->childAt(sorted_idx), _column_ids[sorted_idx],
-                   table_prefix_size);
+      columns[sorted_idx] = ReadColumn(sorted_idx, size);
 
       // All rows are read
       if (sorted_idx == _sorted_indices[0] &&
@@ -218,15 +235,17 @@ void RocksDBDataSource::cancel() {
   // TODO: implement cancellation logic
 }
 
-velox::VectorPtr RocksDBDataSource::ReadColumn(rocksdb::Iterator& it,
-                                               uint64_t max_size,
-                                               std::string_view column_key,
-                                               const velox::TypePtr& type,
-                                               catalog::Column::Id column_id,
-                                               size_t table_prefix_size) {
+velox::VectorPtr RocksDBDataSource::ReadColumn(velox::column_index_t col_idx,
+                                               uint64_t max_size) {
+  auto& it = *_iterators[col_idx];
+  const auto& column_key = _column_keys[col_idx];
+  auto column_id = _column_ids[col_idx];
+
   if (column_id == catalog::Column::kGeneratedPKId) {
-    return ReadColumnFromKey(it, max_size, column_key, table_prefix_size);
+    return ReadColumnFromKey(it, max_size, column_key);
   }
+
+  const auto& type = _row_type->childAt(col_idx);
   if (type->kind() == velox::TypeKind::UNKNOWN) {
     return ReadUnknownColumn(it, max_size, column_key);
   }
@@ -290,8 +309,7 @@ velox::VectorPtr RocksDBDataSource::ReadUnknownColumn(
 }
 
 velox::VectorPtr RocksDBDataSource::ReadColumnFromKey(
-  rocksdb::Iterator& it, uint64_t max_size, std::string_view column_key,
-  size_t table_prefix_size) {
+  rocksdb::Iterator& it, uint64_t max_size, std::string_view column_key) {
   auto result = velox::BaseVector::create<velox::FlatVector<int64_t>>(
     velox::BIGINT(), kInitialVectorSize, &_memory_pool);
 
@@ -303,7 +321,7 @@ velox::VectorPtr RocksDBDataSource::ReadColumnFromKey(
       }
 
       auto val = primary_key::ReadSigned<int64_t>(std::string_view{
-        key.begin() + table_prefix_size + sizeof(catalog::Column::Id),
+        key.begin() + kTablePrefixSize + sizeof(catalog::Column::Id),
         key.end()});
       result->set(value_idx, val);
     });

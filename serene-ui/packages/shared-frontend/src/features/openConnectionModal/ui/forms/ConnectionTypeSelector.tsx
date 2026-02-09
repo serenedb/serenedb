@@ -34,7 +34,8 @@ export const ConnectionTypeSelector = () => {
                 <TooltipTrigger asChild>
                     <Button
                         className="opacity-50 bg-primary/30 hover:bg-primary/30"
-                        size="icon">
+                        size="icon"
+                        aria-label="More connection types coming soon">
                         <SmallLogoIcon />
                     </Button>
                 </TooltipTrigger>

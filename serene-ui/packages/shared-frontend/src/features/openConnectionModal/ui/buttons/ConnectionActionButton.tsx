@@ -146,6 +146,11 @@ export const AddConnectionButton: React.FC<TestConnectionButtonProps> = ({
 
     return (
         <Button
+            aria-label={
+                currentConnection.id === -1
+                    ? "Connect & Add"
+                    : "Connect & Update"
+            }
             className={cn(
                 "duration-300",
                 [AnimationStage.SuccessBg, AnimationStage.SuccessText].includes(

@@ -23,9 +23,6 @@
 
 #include <velox/type/Type.h>
 
-#include "basics/containers/flat_hash_set.h"
-#include "basics/errors.h"
-#include "basics/exceptions.h"
 #include "basics/fwd.h"
 #include "catalog/identifiers/identifier.h"
 #include "catalog/identifiers/object_id.h"

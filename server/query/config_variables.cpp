@@ -80,7 +80,7 @@ constexpr auto kVariableDescription =
         VariableType::SdbWriteConflictPolicy,
         "Sets the write conflict policy. Valid values are "
         "'emit_error' "
-        "(the default), 'do_nothing' (skip conflicted rows) and 'replace'",
+        "(the default), 'do_nothing' (skip conflicted rows) and 'replace'.",
         "emit_error",
       },
     },
@@ -90,7 +90,7 @@ constexpr auto kVariableDescription =
         VariableType::SdbReadYourOwnWrites,
         "Controls whether queries can see uncommitted writes from the current "
         "transaction. Valid values are 'on' (the default, read your own "
-        "writes) and 'off' (read from snapshot only)",
+        "writes) and 'off' (read from snapshot only).",
         "on",
       },
     },

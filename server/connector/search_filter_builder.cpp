@@ -284,10 +284,6 @@ bool IsEqualityOp(const std::string& name, bool& not_equal) {
 
 bool IsIn(std::string_view name) { return name == "in"; }
 
-bool IsBetween(std::string_view name) {
-  return name == "between" || name.ends_with("_between");
-}
-
 bool IsNullEq(std::string_view name, bool& negated) {
   if (name == "isnull" || name.ends_with("_isnull")) {
     negated = false;
@@ -434,101 +430,6 @@ Result FromVeloxComparison(irs::BooleanFilter& filter,
       return {};
     },
     value.value());
-}
-
-Result FromVeloxBetween(irs::BooleanFilter& filter,
-                        const VeloxFilterContext& ctx,
-                        const velox::core::CallTypedExpr* call)
-
-{
-  if (call->inputs().size() != 3) {
-    return {ERROR_NOT_IMPLEMENTED, "BETWEEN has ", call->inputs().size(),
-            " inputs but 2 expected"};
-  }
-
-  auto field_input = call->inputs()[0];
-  auto value_input_lesser = call->inputs()[1];
-  auto value_input_greater = call->inputs()[2];
-
-  // looks like we do't need normalization. Value is always second argument
-
-  if (!field_input->isFieldAccessKind()) {
-    return {ERROR_BAD_PARAMETER, "Input is not field access"};
-  }
-
-  auto* field_typed =
-    static_cast<const velox::core::FieldAccessTypedExpr*>(field_input.get());
-  auto value = EvaluateConstant(value_input_lesser, ctx);
-
-  if (!value->hasValue()) {
-    return {ERROR_BAD_PARAMETER, "Failed to evaluate lesser value as constant"};
-  }
-
-  auto value_greater = EvaluateConstant(value_input_greater, ctx);
-
-  if (!value_greater->hasValue()) {
-    return {ERROR_BAD_PARAMETER,
-            "Failed to evaluate greater value as constant"};
-  }
-
-  if (value.value().isNull() || value_greater.value().isNull()) {
-    // NULL always breaks between
-    AddFilter<irs::Empty>(filter);
-    return {};
-  }
-
-  // Set the field name
-  std::string field_name;
-  const auto kind = ExtractFieldName(ctx, *field_typed, field_name);
-
-  auto setup_base_filter = [&](auto& filter,
-                               std::string&& field_name) -> decltype(auto) {
-    filter.mutable_options()->range.max_type = irs::BoundType::Inclusive;
-    filter.mutable_options()->range.min_type = irs::BoundType::Inclusive;
-    filter.boost(ctx.boost);
-    *filter.mutable_field() = std::move(field_name);
-  };
-  SDB_ASSERT(value->kind() == kind,
-             "Values should have same kind as field. Analyzer should put "
-             "necessary casts.");
-  SDB_ASSERT(value_greater->kind() == kind,
-             "Values should have same kind as field. Analyzer should put "
-             "necessary casts.");
-  return DispatchValue(kind, [&]<typename T> -> Result {
-    DoMangle<T>(field_name);
-    if constexpr (std::is_same_v<T, velox::StringView>) {
-      auto& range_filter = AddFilter<irs::ByRange>(filter);
-      setup_base_filter(range_filter, std::move(field_name));
-      irs::StringTokenizer stream;
-      const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
-      stream.reset(value->value<velox::StringView>());
-      stream.next();
-      range_filter.mutable_options()->range.min.assign(token->value);
-      stream.reset(value_greater->value<velox::StringView>());
-      stream.next();
-      range_filter.mutable_options()->range.max.assign(token->value);
-    } else if constexpr (std::is_same_v<T, bool>) {
-      auto& range_filter = AddFilter<irs::ByRange>(filter);
-      setup_base_filter(range_filter, std::move(field_name));
-      range_filter.mutable_options()->range.min.assign(
-        irs::ViewCast<irs::byte_type>(
-          irs::BooleanTokenizer::value(value->value<bool>())));
-      range_filter.mutable_options()->range.max.assign(
-        irs::ViewCast<irs::byte_type>(
-          irs::BooleanTokenizer::value(value_greater->value<bool>())));
-    } else {
-      auto& range_filter = AddFilter<irs::ByGranularRange>(filter);
-      setup_base_filter(range_filter, std::move(field_name));
-      irs::NumericTokenizer stream;
-      stream.reset(value->value<T>());
-      stream.next();
-      irs::SetGranularTerm(range_filter.mutable_options()->range.min, stream);
-      stream.reset(value_greater->value<T>());
-      stream.next();
-      irs::SetGranularTerm(range_filter.mutable_options()->range.max, stream);
-    }
-    return {};
-  });
 }
 
 Result FromVeloxIn(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
@@ -684,15 +585,12 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
     return FromVeloxBinaryEq(filter, ctx, call, negated);
   }
 
-  // ByRange openended
+  // ByRange openended.
+  // BETWEEN is currently executed as conjunction of comparisons so it also goes
+  // here.
   auto comparison_op = GetComparisonOp(call->name());
   if (comparison_op != ComparisonOp::KNone) {
     return FromVeloxComparison(filter, ctx, call, comparison_op);
-  }
-
-  // ByRange
-  if (IsBetween(call->name())) {
-    return FromVeloxBetween(filter, ctx, call);
   }
 
   // ByTerms

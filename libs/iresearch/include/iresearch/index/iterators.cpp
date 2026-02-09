@@ -45,9 +45,6 @@ struct EmptyDocIterator : ResettableDocIterator {
   doc_id_t seek(doc_id_t /*target*/) noexcept final {
     return doc_limits::eof();
   }
-  doc_id_t shallow_seek(doc_id_t /*target*/) noexcept final {
-    return doc_limits::eof();
-  }
   uint32_t count() noexcept final { return 0; }
   void reset() noexcept final {}
 

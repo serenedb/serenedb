@@ -111,7 +111,7 @@ std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
   }
 
   rocksdb::ReadOptions read_options;
-  read_options.async_io = GetRocksDBOptions().ioUringEnabled() && size > 1;
+  read_options.async_io = IsIOUringEnabled() && size > 1;
   read_options.snapshot = _snapshot;
   std::vector<velox::VectorPtr> columns;
 

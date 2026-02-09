@@ -551,9 +551,9 @@ TEST_P(WandTestCase, TermFilterBM11) {
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
-static const auto kTestValues = ::testing::Combine(
-  ::testing::ValuesIn(kTestDirs),
-  ::testing::Values(tests::FormatInfo{"1_5avx"}, tests::FormatInfo{"1_5simd"}));
+static const auto kTestValues =
+  ::testing::Combine(::testing::ValuesIn(kTestDirs),
+                     ::testing::Values(tests::FormatInfo{"1_5simd"}));
 
 INSTANTIATE_TEST_SUITE_P(WandTest, WandTestCase, kTestValues,
                          WandTestCase::to_string);

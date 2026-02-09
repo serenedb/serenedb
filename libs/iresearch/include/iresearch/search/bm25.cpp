@@ -439,7 +439,7 @@ ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
 
   if (!norm) {
     static constexpr auto kNorms = [] {
-      std::array<uint32_t, kScoreBlock> norms;
+      std::array<uint32_t, kMaxScoreBlock> norms;
       absl::c_fill(norms, 1);
       return norms;
     }();

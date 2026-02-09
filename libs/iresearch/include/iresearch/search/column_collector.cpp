@@ -32,7 +32,7 @@ const uint32_t* ColumnCollector::AddNorms(const ColumnReader* field) {
   auto& it = _columns.try_emplace(field->id()).first->second;
   if (!it.reader) {
     it.reader = field->norms();
-    it.norms.resize(4 * kScoreBlock);  // TODO(gnusi): fix
+    it.norms.resize(kMaxScoreBlock);  // TODO(gnusi): fix
   }
   if (!it.reader) {
     return nullptr;

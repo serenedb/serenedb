@@ -270,9 +270,9 @@ class MatcherBase : public ScoreCtx {
   static constexpr auto kMergeType = MergeType;
   static constexpr bool kHasScore = kMergeType != ScoreMergeType::Noop;
 
-  static ScoreFunction MakeNestedScore(ScoreCtx* ctx) {
+  ScoreFunction PrepareMatcherScore() {
     static_assert(kHasScore);
-    return {ctx,
+    return {this,
             [](ScoreCtx* ctx, score_t* res, size_t n) noexcept {
               SDB_ASSERT(ctx);
               SDB_ASSERT(res);
@@ -281,8 +281,6 @@ class MatcherBase : public ScoreCtx {
             },
             ScoreFunction::NoopMin};
   }
-
-  ScoreFunction PrepareMatcherScore() { return MakeNestedScore(this); }
 
   void CollectChild(auto& it) {
     if constexpr (kHasScore) {

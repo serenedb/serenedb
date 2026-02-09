@@ -32,6 +32,7 @@ namespace irs {
 
 inline constexpr size_t kScoreBlock = 32;
 static_assert(kScoreBlock < std::numeric_limits<uint16_t>::max());
+inline constexpr size_t kMaxScoreBlock = 4 * kScoreBlock;
 
 // Stateful object used for computing the document score
 // based on the stored state.

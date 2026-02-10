@@ -80,7 +80,7 @@ class RocksDBDataSource : public velox::connector::DataSource {
 
   velox::RowTypePtr _row_type;
   std::vector<std::string> _column_keys;
-  std::string _upper_bound_keys;  // Single allocation for all upper bound keys
+  std::string _upper_bound_keys;
   std::vector<rocksdb::Slice> _upper_bound_slices;
   std::vector<std::unique_ptr<rocksdb::Iterator>> _iterators;
   std::vector<velox::VectorPtr> _columns;

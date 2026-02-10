@@ -84,12 +84,13 @@ struct DocIterator : AttributeProvider {
   // (for more information see class description)
   virtual doc_id_t seek(doc_id_t target) = 0;
 
-  virtual uint32_t Collect(const ScoreFunction& scorer,
-                           ColumnCollector& columns,
-                           std::span<doc_id_t, kScoreBlock> docs,
-                           std::span<score_t, kScoreBlock> scores) {
+  virtual std::pair<uint32_t, uint32_t> Collect(const ScoreFunction& scorer,
+                                                 ColumnCollector& columns,
+                                                 std::span<doc_id_t, kScoreBlock> docs,
+                                                 std::span<score_t, kScoreBlock> scores,
+                                                 score_t min_threshold) {
     SDB_ASSERT(kScoreBlock <= docs.size());
-    return Collect(*this, scorer, columns, docs, scores);
+    return Collect(*this, scorer, columns, docs, scores, min_threshold);
   }
 
   virtual void FetchScoreArgs(uint16_t index) {}
@@ -134,9 +135,9 @@ struct DocIterator : AttributeProvider {
   }
 
   template<typename Iterator, size_t N>
-  static uint32_t Collect(Iterator& it, const ScoreFunction& scorer,
-                          ColumnCollector& columns, std::span<doc_id_t, N> docs,
-                          std::span<score_t, N> scores) {
+  static std::pair<uint32_t, uint32_t> Collect(Iterator& it, const ScoreFunction& scorer,
+                                                ColumnCollector& columns, std::span<doc_id_t, N> docs,
+                                                std::span<score_t, N> scores, score_t min_threshold) {
     SDB_ASSERT(kScoreBlock <= docs.size());
 
     size_t i = 0;
@@ -147,7 +148,7 @@ struct DocIterator : AttributeProvider {
           columns.Collect(docs.first(i));
           scorer.Score(scores.data(), i);
         }
-        return static_cast<uint32_t>(i);
+        return {static_cast<uint32_t>(i), static_cast<uint32_t>(i)};
       }
       docs[i] = doc;
       it.FetchScoreArgs(i);
@@ -156,7 +157,7 @@ struct DocIterator : AttributeProvider {
     SDB_ASSERT(i == kScoreBlock);
     columns.Collect(docs);
     scorer.ScoreBlock(scores.data());
-    return kScoreBlock;
+    return {kScoreBlock, kScoreBlock};
   }
 
   template<typename Iterator>

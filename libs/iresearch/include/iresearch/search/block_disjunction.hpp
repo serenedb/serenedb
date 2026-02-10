@@ -367,9 +367,10 @@ class BlockDisjunction : public DocIterator {
     return {doc_value, static_cast<uint16_t>(_buf_offset + offset)};
   }
 
-  uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
-                   std::span<doc_id_t, kScoreBlock> docs,
-                   std::span<score_t, kScoreBlock> scores) final {
+  std::pair<uint32_t, uint32_t> Collect(const ScoreFunction& scorer, ColumnCollector& columns,
+                                        std::span<doc_id_t, kScoreBlock> docs,
+                                        std::span<score_t, kScoreBlock> scores,
+                                        score_t min_threshold) final {
     const score_t* IRS_RESTRICT sw = nullptr;
     if constexpr (kHasScore) {
       sw = _score_buf.score_window.data();
@@ -383,7 +384,8 @@ class BlockDisjunction : public DocIterator {
     const auto end = std::end(_mask);
 
     size_t i = 0;
-    for (; i < docs.size(); ++i) {
+    size_t total = 0;
+    for (; i < docs.size();) {
       while (cur == 0) {
         if (begin >= end) {
           if (Refill()) {
@@ -401,7 +403,7 @@ class BlockDisjunction : public DocIterator {
           _cur = 0;
           doc_value = doc_limits::eof();
           _begin = begin;
-          return i;
+          return {static_cast<uint32_t>(i), static_cast<uint32_t>(total)};
         }
 
         cur = *begin++;
@@ -418,11 +420,19 @@ class BlockDisjunction : public DocIterator {
         SDB_ASSERT(_match_count >= _match_buf.min_match_count());
       }
 
+      ++total;
+
+      if constexpr (kHasScore) {
+        const auto score = sw[buf_offset + bit_offset];
+        if (score <= min_threshold) {
+          continue;
+        }
+        scores[i] = score;
+      }
+
       const auto doc = doc_base + static_cast<doc_id_t>(bit_offset);
       docs[i] = doc;
-      if constexpr (kHasScore) {
-        scores[i] = sw[buf_offset + bit_offset];
-      }
+      ++i;
     }
 
     // Write back register state
@@ -436,7 +446,7 @@ class BlockDisjunction : public DocIterator {
       doc_value = docs[i - 1];
     }
 
-    return i;
+    return {static_cast<uint32_t>(i), static_cast<uint32_t>(total)};
   }
 
   template<typename Estimation>

@@ -75,16 +75,16 @@ size_t ExecuteTopKWithCount(const DirectoryReader& reader, const Filter& filter,
     });
 
     while (true) {
-      const uint32_t n = it->Collect(scorer, columns, docs, scores);
-      if (n == 0) {
+      const auto [accepted, total] = it->Collect(scorer, columns, docs, scores, min_threshold);
+      if (accepted == 0) {
         break;
       }
-      count += n;
+      count += total;
 
-      if (n == kScoreBlock) [[likely]] {
+      if (accepted == kScoreBlock) [[likely]] {
         copy(kScoreBlock);
       } else {
-        copy(n);
+        copy(accepted);
       }
 
       if (offset >= max_size) {

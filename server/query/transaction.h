@@ -23,17 +23,28 @@
 #include <rocksdb/snapshot.h>
 #include <rocksdb/utilities/transaction.h>
 
+#include <iresearch/index/index_writer.hpp>
 #include <yaclib/async/future.hpp>
 
 #include "basics/bit_utils.hpp"
 #include "basics/containers/flat_hash_map.h"
+#include "basics/down_cast.h"
 #include "basics/result.h"
 #include "catalog/catalog.h"
+#include "catalog/table.h"
 #include "query/config.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
-#include "storage_engine/table_shard.h"
+#include "search/inverted_index_shard.h"
+#include "storage_engine/index_shard.h"
 
 namespace sdb::query {
+namespace {
+
+template<typename F, typename... Sigs>
+concept InvocableWith =
+  (std::constructible_from<absl::AnyInvocable<Sigs>, F&> && ...);
+
+}
 
 class Transaction : public Config {
  public:
@@ -49,6 +60,11 @@ class Transaction : public Config {
   Result Commit();
 
   Result Rollback();
+
+  auto GetCatalogSnapshot() const {
+    // TODO(codeworse): manage with rocksdb snapshot
+    return catalog::GetCatalog().GetSnapshot();
+  }
 
   void UpdateNumRows(ObjectId table_id, int64_t delta) noexcept {
     _table_rows_deltas[table_id] += delta;
@@ -70,6 +86,34 @@ class Transaction : public Config {
 
   catalog::TableStats GetTableStats(ObjectId table_id) const;
 
+  template<
+    InvocableWith<void(irs::IndexWriter::Transaction&, const IndexShard&),
+                  void(rocksdb::Transaction&, const IndexShard&)>
+      Visit>
+  void EnsureIndexesTransactions(ObjectId table_id, Visit&& visit) {
+    auto snapshot = GetCatalogSnapshot();
+    SDB_ASSERT(snapshot->GetObject(table_id)->GetType() ==
+               catalog::ObjectType::Table);
+    for (auto index_shard : snapshot->GetIndexShardsByTable(table_id)) {
+      if (index_shard->GetType() == IndexType::Inverted) {
+        auto& inverted_index_shard =
+          basics::downCast<search::InvertedIndexShard>(*index_shard);
+        _search_transactions.try_emplace(inverted_index_shard.GetId(), nullptr);
+        auto& transaction = _search_transactions[inverted_index_shard.GetId()];
+        if (!transaction) {
+          transaction = std::make_unique<irs::IndexWriter::Transaction>(
+            inverted_index_shard.GetTransaction());
+        }
+        visit(*transaction, *index_shard);
+      } else {
+        if (!_rocksdb_transaction) [[unlikely]] {
+          CreateRocksDBTransaction();
+        }
+        visit(*_rocksdb_transaction, *index_shard);
+      }
+    }
+  }
+
  private:
   void CreateStorageSnapshot();
   void CreateRocksDBTransaction();
@@ -79,6 +123,9 @@ class Transaction : public Config {
   std::shared_ptr<StorageSnapshot> _storage_snapshot;
   std::unique_ptr<rocksdb::Transaction> _rocksdb_transaction;
   const rocksdb::Snapshot* _rocksdb_snapshot = nullptr;
+  containers::FlatHashMap<ObjectId,
+                          std::unique_ptr<irs::IndexWriter::Transaction>>
+    _search_transactions;
   containers::FlatHashMap<ObjectId, int64_t> _table_rows_deltas;
 };
 

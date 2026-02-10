@@ -55,6 +55,7 @@
 
 #include <source_location>
 
+#include "basics/application-exit.h"
 #include "basics/logger/log_level.h"
 #include "basics/logger/log_time_format.h"
 

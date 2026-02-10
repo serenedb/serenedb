@@ -28,6 +28,8 @@
 #include <velox/vector/FlatMapVector.h>
 #include <velox/vector/FlatVector.h>
 
+#include <memory>
+
 #include "basics/assert.h"
 #include "basics/containers/flat_hash_set.h"
 #include "basics/endian.h"
@@ -36,6 +38,7 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
 #include "connector/primary_key.hpp"
+#include "connector/sink_writer_base.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "key_utils.hpp"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
@@ -255,10 +258,11 @@ SSTInsertDataSink::SSTInsertDataSink(
   rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
   velox::memory::MemoryPool& memory_pool, ObjectId object_key,
   std::span<const velox::column_index_t> key_childs,
-  std::vector<ColumnInfo> columns)
+  std::vector<ColumnInfo> columns,
+  std::vector<std::unique_ptr<SinkInsertWriter>>&& index_writers)
   : RocksDBDataSinkBase<SSTSinkWriter, SinkInsertWriter>(
       SSTSinkWriter{db, cf, columns}, memory_pool, object_key, key_childs,
-      std::move(columns), std::vector<std::unique_ptr<SinkInsertWriter>>{}) {}
+      std::move(columns), std::move(index_writers)) {}
 
 void SSTInsertDataSink::appendData(velox::RowVectorPtr input) {
   SDB_ASSERT(input->encoding() == velox::VectorEncoding::Simple::ROW);
@@ -275,7 +279,7 @@ void SSTInsertDataSink::appendData(velox::RowVectorPtr input) {
   _store_keys_buffers.reserve(num_rows);
 
   for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-    key_utils::MakeColumnKey(
+    key_utils::MakeColumnKey<true>(
       input, _key_childs, row_idx, table_key, [&](std::string_view row_key) {},
       _store_keys_buffers.emplace_back());
   }
@@ -404,6 +408,9 @@ void RocksDBInsertDataSink::appendData(velox::RowVectorPtr input) {
     }
     WriteInputColumn(_columns_info[i].id, i, *input, all_rows_range);
   }
+  for (const auto& writer : _index_writers) {
+    writer->Finish();
+  }
   _number_of_rows_affected += affected_rows;
 }
 
@@ -455,10 +462,6 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
     lock_row_impl.operator()<true>(row_key);
   };
 
-  for (const auto& writer : _index_writers) {
-    writer->Init(num_rows);
-  }
-
   const velox::IndexRange all_rows(0, num_rows);
   const folly::Range all_rows_range{&all_rows, 1};
 
@@ -479,6 +482,10 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
       "RocksDBUpdateDataSink: rows are expected to be sorted in case of "
       "updating");
   };
+
+  for (const auto& writer : _index_writers) {
+    writer->Init(num_rows);
+  }
 
   if (!_update_pk) {
     // Take locks and prepare buffers
@@ -502,6 +509,9 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
     // Write updated values
     for (velox::column_index_t i = _key_childs.size(); i < num_columns; ++i) {
       WriteInputColumn(_columns_info[i].id, i, *input, all_rows_range);
+    }
+    for (const auto& writer : _index_writers) {
+      writer->Finish();
     }
     _number_of_rows_affected += num_rows;
     return;

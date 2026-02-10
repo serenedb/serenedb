@@ -84,7 +84,6 @@ class RocksDBDataSource : public velox::connector::DataSource {
   std::string _upper_bound_keys_data;
   std::vector<rocksdb::Slice> _upper_bound_slices;
   std::vector<std::unique_ptr<rocksdb::Iterator>> _iterators;
-  std::vector<velox::VectorPtr> _columns;
   // Column ID to use for iteration when the requested column is stored in the
   // key (e.g., kGeneratedPKId). This points to a column whose values are stored
   // in RocksDB as *values*, not inside *keys*. It's convenient to store it here

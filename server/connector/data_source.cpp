@@ -175,32 +175,32 @@ std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
     return nullptr;
   }
 
-  _columns.clear();
-
   const auto num_columns = _row_type->size();
+  std::vector<velox::VectorPtr> columns;
+  columns.reserve(num_columns);
 
   if (num_columns > 0) {
-    _columns.reserve(num_columns);
+    columns.reserve(num_columns);
     for (size_t column_idx = 0; column_idx < num_columns; ++column_idx) {
-      _columns.emplace_back(ReadColumn(column_idx, size));
+      columns.emplace_back(ReadColumn(column_idx, size));
 
       // All rows are read
-      if (_columns[column_idx]->size() == 0) {
+      if (columns[column_idx]->size() == 0) {
         SDB_ASSERT(column_idx == 0,
                    "RocksDBDataSource: inconsistent number of columns");
         _current_split.reset();
         return nullptr;
       }
     }
-    SDB_ASSERT(absl::c_all_of(_columns,
+    SDB_ASSERT(absl::c_all_of(columns,
                               [&](const velox::VectorPtr& vec) {
-                                return vec->size() == _columns.front()->size();
+                                return vec->size() == columns.front()->size();
                               }),
                "RocksDBDataSource: inconsistent number of rows among columns");
-    _produced += _columns.front()->size();
+    _produced += columns.front()->size();
     return std::make_shared<velox::RowVector>(&_memory_pool, _row_type, nullptr,
-                                              _columns.front()->size(),
-                                              std::move(_columns));
+                                              columns.front()->size(),
+                                              std::move(columns));
   }
   SDB_ASSERT(_column_ids.size() == 1);
   const auto read = IterateColumn(

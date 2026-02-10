@@ -59,6 +59,8 @@ class RocksDBDataSource : public velox::connector::DataSource {
   velox::memory::MemoryPool& _memory_pool;
   rocksdb::ColumnFamilyHandle& _cf;
   rocksdb::ReadOptions _read_options;
+  ObjectId _object_key;
+  std::vector<catalog::Column::Id> _column_ids;
 
  private:
   static constexpr size_t kTablePrefixSize = sizeof(ObjectId);
@@ -80,8 +82,9 @@ class RocksDBDataSource : public velox::connector::DataSource {
                          std::string_view column_key, const Callback& func);
 
   velox::RowTypePtr _row_type;
-  std::vector<catalog::Column::Id> _column_ids;
   std::vector<std::string> _column_keys;
+  std::vector<std::string> _upper_bound_keys;
+  std::vector<rocksdb::Slice> _upper_bound_slices;
   std::vector<std::unique_ptr<rocksdb::Iterator>> _iterators;
   std::vector<velox::column_index_t> _sorted_indices;
   // Column ID to use for iteration when the requested column is stored in the
@@ -93,7 +96,6 @@ class RocksDBDataSource : public velox::connector::DataSource {
   // empty Values node.
   catalog::Column::Id _effective_column_id;
   std::shared_ptr<velox::connector::ConnectorSplit> _current_split;
-  ObjectId _object_key;
   uint64_t _produced = 0;
 };
 

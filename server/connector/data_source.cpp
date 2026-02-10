@@ -48,10 +48,10 @@ RocksDBDataSource::RocksDBDataSource(
   : velox::connector::DataSource{},
     _memory_pool{memory_pool},
     _cf{cf},
+    _object_key{object_key},
     _row_type{std::move(row_type)},
     _column_ids(std::move(column_oids)),
-    _effective_column_id(std::move(effective_column_id)),
-    _object_key{object_key} {
+    _effective_column_id(std::move(effective_column_id)) {
   SDB_ASSERT(_row_type, "RocksDBDataSource: row type is null");
   SDB_ASSERT(_object_key.isSet(), "RocksDBDataSource: object key is empty");
   SDB_ASSERT(!_column_ids.empty(),
@@ -59,12 +59,18 @@ RocksDBDataSource::RocksDBDataSource(
   SDB_ASSERT(_row_type->size() == 0 || _row_type->size() == _column_ids.size(),
              "RocksDBDataSource: number of columns does not match row type");
 
+  // TODO(mkornaukhov03) better options
   _read_options.snapshot = snapshot;
+  // _read_options.snapshot = nullptr;
+
   _read_options.async_io = false;
+  _read_options.adaptive_readahead = true;
+  // _read_options.prefix_same_as_start = true;  // bad!, -8% +-
 
   std::string key = key_utils::PrepareTableKey(_object_key);
 
   _column_keys.reserve(_column_ids.size());
+  _upper_bound_keys.reserve(_column_ids.size());
 
   for (const auto column_id : _column_ids) {
     basics::StrResize(key, kTablePrefixSize);
@@ -78,6 +84,17 @@ RocksDBDataSource::RocksDBDataSource(
 
     key_utils::AppendColumnKey(key, read_column_id);
     _column_keys.push_back(key);
+
+    SDB_ASSERT(read_column_id !=
+               std::numeric_limits<catalog::Column::Id>::max());
+    basics::StrResize(key, kTablePrefixSize);
+    key_utils::AppendColumnKey(key, read_column_id + 1);
+    _upper_bound_keys.push_back(key);
+  }
+
+  _upper_bound_slices.reserve(_upper_bound_keys.size());
+  for (const auto& ubk : _upper_bound_keys) {
+    _upper_bound_slices.emplace_back(ubk);
   }
 
   // Build sorted indices by column_id for sequential RocksDB access
@@ -141,10 +158,11 @@ template<typename CreateFn>
 void RocksDBDataSource::InitIterators(CreateFn&& create) {
   _iterators.clear();
   _iterators.reserve(_column_keys.size());
-  for (const auto& column_key : _column_keys) {
+  for (size_t i = 0; i < _column_keys.size(); ++i) {
+    _read_options.iterate_upper_bound = &_upper_bound_slices[i];
     auto it = create();
-    it->Seek(column_key);
-    if (!it->Valid() || !it->key().starts_with(column_key)) {
+    it->Seek(_column_keys[i]);
+    if (!it->Valid() || !it->key().starts_with(_column_keys[i])) {
       it.reset();
     }
     _iterators.push_back(std::move(it));

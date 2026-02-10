@@ -65,6 +65,7 @@
 #include "basics/result.h"
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"
+#include "basics/system-compiler.h"
 #include "basics/system-functions.h"
 #include "catalog/catalog.h"
 #include "catalog/database.h"
@@ -111,6 +112,9 @@
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 #include "rocksdb_engine_catalog/rocksdb_value.h"
 #include "rocksdb_engine_catalog/rocksdb_wal_access.h"
+#include "search/inverted_index_shard.h"
+#include "storage_engine/engine_feature.h"
+#include "storage_engine/search_engine.h"
 #include "storage_engine/table_shard.h"
 #include "vpack/serializer.h"
 #include "vpack/slice.h"
@@ -366,9 +370,6 @@ vpack::Slice GetTableProperties(vpack::Builder& builder,
   } else {
     collection.WriteProperties(builder);
   }
-
-  builder.add(StaticStrings::kIndexes);
-  physical.getAllIndexesInternal(builder);
 
   builder.close();
   return builder.slice();
@@ -1310,13 +1311,13 @@ void RocksDBEngineCatalog::processTreeRebuilds() {
         try {
           auto collection = catalog::GetTableShard(candidate.second);
 
-          if (collection != nullptr && !collection->deleted()) {
+          if (collection != nullptr) {
             SDB_INFO("xxxxx", Logger::ENGINES,
                      "starting background rebuild of revision tree for "
                      "collection ",
                      candidate.first, "/", collection->GetMeta().name);
 
-            auto res = collection->rebuildRevisionTree().Get().Ok();
+            auto res = Result{ERROR_NOT_IMPLEMENTED};
             if (res.ok()) {
               ++_metrics_tree_rebuilds_success;
               SDB_INFO("xxxxx", Logger::ENGINES,
@@ -1508,6 +1509,54 @@ Result RocksDBEngineCatalog::CreateIndex(const catalog::Index& index) {
     [&] { return std::string_view{}; });
 }
 
+Result RocksDBEngineCatalog::StoreIndexShard(const IndexShard& index_shard) {
+  const auto index_id = index_shard.GetId();
+  SDB_ASSERT(index_id.isSet());
+
+  vpack::Builder b;
+  index_shard.WriteInternal(b);
+
+  return WriteDefinition(
+    _db->GetRootDB(),
+    [&] {
+      RocksDBKeyWithBuffer key;
+      key.constructObject(RocksDBEntryType::IndexPhysical, id::kSystemDB,
+                          index_id);
+      return key;
+    },
+    [&] {
+      return RocksDBValue::Object(RocksDBEntryType::IndexPhysical, b.slice());
+    },
+    [&] { return std::string_view{}; });
+}
+
+ResultOr<vpack::Builder> RocksDBEngineCatalog::LoadIndexShard(
+  ObjectId index_id) {
+  SDB_ASSERT(index_id.isSet());
+
+  RocksDBKeyWithBuffer key;
+  key.constructObject(RocksDBEntryType::IndexPhysical, id::kSystemDB, index_id);
+
+  std::string value;
+  auto status = _db->Get(rocksdb::ReadOptions{},
+                         RocksDBColumnFamilyManager::get(
+                           RocksDBColumnFamilyManager::Family::Definitions),
+                         key.string(), &value);
+
+  if (!status.ok()) {
+    if (status.IsNotFound()) {
+      return std::unexpected<Result>(
+        std::in_place, ERROR_SERVER_DATA_SOURCE_NOT_FOUND,
+        "Index shard data not found for index ", index_id);
+    }
+    return std::unexpected<Result>(rocksutils::ConvertStatus(status));
+  }
+
+  vpack::Builder builder;
+  builder.add(vpack::Slice(reinterpret_cast<const uint8_t*>(value.data())));
+  return builder;
+}
+
 Result RocksDBEngineCatalog::MarkDeleted(const catalog::Index& index,
                                          const IndexTombstone& tombstone) {
   const auto db_id = index.GetDatabaseId();
@@ -1535,7 +1584,15 @@ Result RocksDBEngineCatalog::MarkDeleted(const catalog::Index& index,
     [&] {
       return RocksDBValue::Object(RocksDBEntryType::IndexTombstone, b.slice());
     },
-    [&] { return std::string_view{}; });
+    [&] {
+      const wal::SchemaObjectDrop entry = {
+        .database_id = db_id,
+        .schema_id = schema_id,
+        .object_id = relation_id,
+        .uuid = index.GetName(),
+      };
+      return wal::Write(RocksDBLogType::IndexDrop, entry);
+    });
 }
 
 Result RocksDBEngineCatalog::MarkDeleted(const catalog::Table& c,
@@ -1650,9 +1707,8 @@ void RocksDBEngineCatalog::prepareDropTable(ObjectId collection) {
 #endif
 }
 
-Result RocksDBEngineCatalog::DropIndex(IndexTombstone tombstone) {
-  SDB_ASSERT(tombstone.type != IndexType::kTypeUnknown &&
-             tombstone.type != IndexType::kTypeNoAccessIndex);
+Result RocksDBEngineCatalog::DropIndex(const IndexTombstone& tombstone) {
+  SDB_ASSERT(tombstone.type != IndexType::Unknown);
 
   rocksdb::DB* db = _db->GetRootDB();
 
@@ -1663,42 +1719,48 @@ Result RocksDBEngineCatalog::DropIndex(IndexTombstone tombstone) {
              "could not delete index estimate: ", r.errorMessage());
   }
 
-  if (tombstone.type == IndexType::kTypeInvertedIndex) {
-    // TODO(gnusi): handle it here?
-
-    // rocksdb does not store inverted index data
-    return r;
+  switch (tombstone.type) {
+    case IndexType::Inverted: {
+      auto path = search::InvertedIndexShard::GetPath(
+        tombstone.old_database, tombstone.old_schema, tombstone.id);
+      r = basics::SafeCall([&path] {
+        if (std::filesystem::exists(path)) {
+          std::filesystem::remove_all(path);
+        }
+      });
+      if (!r.ok()) {
+        return r;
+      }
+      break;
+    }
+    case IndexType::Secondary:
+      // TODO(codeworse): Implement secondary index erasure
+      break;
+    case IndexType::Unknown:
+      SDB_UNREACHABLE();
   }
-
-  const bool prefix_same_as_start = tombstone.type != IndexType::kTypeEdgeIndex;
-  const bool use_range_delete =
-    UseRangeDelete(tombstone.id, tombstone.number_documents);
-  const auto bounds =
-    GetIndexBounds(tombstone.type, tombstone.id.id(), tombstone.unique);
-
-  r = rocksutils::RemoveLargeRange(db, bounds.start(), bounds.end(),
-                                   bounds.columnFamily(), prefix_same_as_start,
-                                   use_range_delete);
-
-  if (use_range_delete) {
-    // TODO(gnusi): ignore errors?
-    compactRange(bounds);
-  }
-
-#ifdef SDB_DEV
-  // check if documents have been deleted
-  if (size_t num_docs =
-        rocksutils::CountKeyRange(db, bounds, nullptr, prefix_same_as_start);
-      num_docs > 0) {
-    SDB_THROW(
-      ERROR_INTERNAL,
-      "deletion check in index drop failed - not all documents in the index "
-      "have been deleted. remaining: ",
-      num_docs);
-  }
-#endif
+  // Remove tombstone definition
+  r = DeleteDefinition(
+    db,
+    [&] {
+      RocksDBKeyWithBuffer key;
+      key.constructObject(RocksDBEntryType::IndexTombstone,
+                          id::kTombstoneDatabase, tombstone.id);
+      return key;
+    },
+    [] { return std::string_view{}; });
 
   return r;
+}
+
+Result RocksDBEngineCatalog::DropIndexShard(ObjectId index_id) {
+  SDB_ASSERT(index_id.isSet());
+
+  RocksDBKeyWithBuffer key;
+  key.constructObject(RocksDBEntryType::IndexPhysical, id::kSystemDB, index_id);
+
+  rocksdb::WriteOptions wo;
+  return rocksutils::ConvertStatus(_db->GetRootDB()->Delete(wo, key.string()));
 }
 
 bool RocksDBEngineCatalog::UseRangeDelete(ObjectId id,

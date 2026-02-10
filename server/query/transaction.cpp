@@ -20,7 +20,10 @@
 
 #include "query/transaction.h"
 
+#include "basics/assert.h"
+#include "catalog/catalog.h"
 #include "storage_engine/engine_feature.h"
+#include "storage_engine/table_shard.h"
 
 namespace sdb::query {
 
@@ -38,6 +41,9 @@ Result Transaction::Commit() {
     return {ERROR_INTERNAL,
             "Failed to commit RocksDB transaction: ", status.ToString()};
   }
+  for (auto& search_transaction : _search_transactions) {
+    search_transaction.second->Commit();
+  }
   ApplyTableStatsDiffs();
   CommitVariables();
   Destroy();
@@ -50,6 +56,9 @@ Result Transaction::Rollback() {
   if (!status.ok()) {
     return {ERROR_INTERNAL,
             "Failed to rollback RocksDB transaction: ", status.ToString()};
+  }
+  for (auto& search_transaction : _search_transactions) {
+    search_transaction.second->Abort();
   }
   RollbackVariables();
   Destroy();
@@ -119,12 +128,13 @@ void Transaction::Destroy() noexcept {
   _storage_snapshot.reset();
   _rocksdb_transaction.reset();
   _rocksdb_snapshot = nullptr;
+  _search_transactions.clear();
   _table_rows_deltas.clear();
 }
 
 catalog::TableStats Transaction::GetTableStats(ObjectId table_id) const {
   // TODO(codeworse): manage catalog snapshot in transaction
-  auto table_shard = catalog::GetTableShard(table_id);
+  auto table_shard = GetCatalogSnapshot()->GetTableShard(table_id);
   if (!table_shard) {
     SDB_THROW(ERROR_BAD_PARAMETER,
               "Table shard not found for table id: ", table_id);

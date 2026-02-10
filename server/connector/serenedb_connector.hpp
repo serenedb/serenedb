@@ -20,7 +20,9 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
 #include <axiom/connectors/ConnectorMetadata.h>
+#include <rocksdb/utilities/transaction.h>
 #include <velox/common/file/File.h>
 #include <velox/connectors/Connector.h>
 #include <velox/dwio/common/Options.h>
@@ -28,23 +30,55 @@
 #include <velox/type/Type.h>
 #include <velox/vector/DecodedVector.h>
 
+#include <iresearch/index/index_writer.hpp>
 #include <memory>
+#include <ranges>
+#include <type_traits>
 
 #include "basics/assert.h"
+#include "basics/down_cast.h"
 #include "basics/fwd.h"
 #include "basics/misc.hpp"
+#include "basics/system-compiler.h"
 #include "catalog/catalog.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
+#include "connector/search_sink_writer.hpp"
+#include "connector/sink_writer_base.hpp"
 #include "data_sink.hpp"
 #include "data_source.hpp"
 #include "file_table.hpp"
 #include "query/transaction.h"
 #include "rocksdb/utilities/transaction_db.h"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "storage_engine/table_shard.h"
 
 namespace sdb::connector {
+
+namespace {
+template<typename Writer>
+std::vector<std::unique_ptr<Writer>> CreateIndexWriters(
+  ObjectId table_id, query::Transaction& transaction) {
+  std::vector<std::unique_ptr<Writer>> writers;
+
+  transaction.EnsureIndexesTransactions(
+    table_id, [&]<typename T>(T& transaction, const IndexShard& shard) {
+      if constexpr (std::is_same_v<T, irs::IndexWriter::Transaction>) {
+        writers.push_back(
+          std::make_unique<std::conditional_t<
+            std::is_same_v<Writer, SinkUpdateWriter>,
+            search::SearchSinkUpdateWriter, search::SearchSinkInsertWriter>>(
+            transaction));
+      } else {
+        SDB_UNREACHABLE();
+      }
+    });
+
+  return writers;
+}
+
+}  // namespace
 
 class SereneDBColumnHandle final : public velox::connector::ColumnHandle {
  public:
@@ -424,11 +458,11 @@ class SereneDBConnectorMetadata final
     }
     auto& transaction = serene_insert_handle->GetTransaction();
     auto* rocksdb_transaction = transaction.GetRocksDBTransaction();
+
     if (!rocksdb_transaction) [[unlikely]] {
       SDB_ASSERT(serene_insert_handle->NumberOfRowsAffected() == 0);
       return yaclib::MakeFuture<int64_t>(0);
     }
-
     int64_t number_of_locked_primary_keys =
       serene_insert_handle->NumberOfRowsAffected();
     if (serene_insert_handle->Kind() == axiom::connector::WriteKind::kInsert ||
@@ -598,6 +632,7 @@ class SereneDBConnector final : public velox::connector::Connector {
           basics::downCast<const SereneDBColumn>(handle->second);
         columns.emplace_back(column->Id(), column->name());
       }
+
       return irs::ResolveBool(
         serene_insert_handle.Kind() == axiom::connector::WriteKind::kUpdate,
         [&]<bool IsUpdate>() -> std::unique_ptr<velox::connector::DataSink> {
@@ -644,18 +679,21 @@ class SereneDBConnector final : public velox::connector::Connector {
                   basics::downCast<const SereneDBColumn>(handle->second)->Id());
               }
             }
-
+            auto update_sinks =
+              CreateIndexWriters<SinkUpdateWriter>(object_key, transaction);
             return std::make_unique<RocksDBUpdateDataSink>(
               table.name(), rocksdb_transaction, _cf,
               *connector_query_ctx->memoryPool(), object_key, pk_indices,
               columns, all_column_oids, table.UsedForUpdatePK(), table.type(),
               serene_insert_handle.NumberOfRowsAffected(),
-              std::vector<std::unique_ptr<SinkUpdateWriter>>{});
+              std::move(update_sinks));
           } else {
+            auto insert_sinks =
+              CreateIndexWriters<SinkInsertWriter>(object_key, transaction);
             if (table.BulkInsert()) {
               return std::make_unique<SSTInsertDataSink>(
                 _db, _cf, *connector_query_ctx->memoryPool(), object_key,
-                pk_indices, columns);
+                pk_indices, columns, std::move(insert_sinks));
             }
 
             return std::make_unique<RocksDBInsertDataSink>(
@@ -663,7 +701,7 @@ class SereneDBConnector final : public velox::connector::Connector {
               *connector_query_ctx->memoryPool(), object_key, pk_indices,
               columns, table.WriteConflictPolicy(),
               serene_insert_handle.NumberOfRowsAffected(),
-              std::vector<std::unique_ptr<SinkInsertWriter>>{});
+              std::move(insert_sinks));
           }
         });
     }

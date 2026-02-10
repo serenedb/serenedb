@@ -21,24 +21,23 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/index/index_features.hpp>
-#include <iresearch/index/norm.hpp>
-#include <iresearch/search/all_filter.hpp>
-#include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/column_existence_filter.hpp>
-#include <iresearch/search/phrase_filter.hpp>
-#include <iresearch/search/prefix_filter.hpp>
-#include <iresearch/search/range_filter.hpp>
-#include <iresearch/search/score.hpp>
-#include <iresearch/search/scorer.hpp>
-#include <iresearch/search/scorers.hpp>
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/search/tfidf.hpp>
-#include <iresearch/utils/bytes_output.hpp>
-#include <iresearch/utils/lz4compression.hpp>
-#include <iresearch/utils/type_limits.hpp>
-
 #include "index/index_tests.hpp"
+#include "iresearch/index/index_features.hpp"
+#include "iresearch/index/norm.hpp"
+#include "iresearch/search/all_filter.hpp"
+#include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/column_existence_filter.hpp"
+#include "iresearch/search/phrase_filter.hpp"
+#include "iresearch/search/prefix_filter.hpp"
+#include "iresearch/search/range_filter.hpp"
+#include "iresearch/search/score.hpp"
+#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scorers.hpp"
+#include "iresearch/search/term_filter.hpp"
+#include "iresearch/search/tfidf.hpp"
+#include "iresearch/utils/bytes_output.hpp"
+#include "iresearch/utils/lz4compression.hpp"
+#include "iresearch/utils/type_limits.hpp"
 #include "tests_shared.hpp"
 
 namespace {

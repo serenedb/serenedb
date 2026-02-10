@@ -22,18 +22,18 @@
 
 #pragma once
 
-#include <iresearch/index/field_meta.hpp>
-#include <iresearch/search/column_collector.hpp>
-#include <iresearch/search/filter.hpp>
-#include <iresearch/search/score_function.hpp>
-#include <iresearch/search/scorer.hpp>
 #include <memory>
 
 #include "basics/empty.hpp"
 #include "disjunction.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/formats_impl.hpp"
+#include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/filter.hpp"
+#include "iresearch/search/score_function.hpp"
+#include "iresearch/search/scorer.hpp"
 
 namespace irs {
 

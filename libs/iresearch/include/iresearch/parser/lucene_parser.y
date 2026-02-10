@@ -21,8 +21,8 @@
 %define api.pure full
 
 %code requires {
-#include <iresearch/search/filter.hpp>
-#include <iresearch/search/boolean_filter.hpp>
+#include "iresearch/search/filter.hpp"
+#include "iresearch/search/boolean_filter.hpp"
 
 #include "basics/down_cast.h"
 

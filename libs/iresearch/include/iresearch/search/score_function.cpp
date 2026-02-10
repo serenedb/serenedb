@@ -25,8 +25,9 @@
 #include <absl/algorithm/container.h>
 
 #include <bit>
-#include <iresearch/search/score.hpp>
-#include <iresearch/search/scorer.hpp>
+
+#include "iresearch/search/score.hpp"
+#include "iresearch/search/scorer.hpp"
 
 namespace irs {
 namespace {

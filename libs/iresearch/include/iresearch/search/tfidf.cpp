@@ -30,7 +30,6 @@
 
 #include <cmath>
 #include <cstddef>
-#include <iresearch/search/scorer.hpp>
 #include <string_view>
 
 #include "basics/down_cast.h"
@@ -43,6 +42,7 @@
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/score.hpp"
 #include "iresearch/search/score_function.hpp"
+#include "iresearch/search/scorer.hpp"
 #include "iresearch/search/scorer_impl.hpp"
 #include "iresearch/search/scorers.hpp"
 #include "vpack/serializer.h"

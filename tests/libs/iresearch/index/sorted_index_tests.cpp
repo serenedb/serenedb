@@ -21,16 +21,15 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/index/comparer.hpp>
-#include <iresearch/index/index_features.hpp>
-#include <iresearch/index/norm.hpp>
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/mmap_directory.hpp>
-#include <iresearch/utils/bytes_output.hpp>
-#include <iresearch/utils/index_utils.hpp>
-
 #include "index_tests.hpp"
+#include "iresearch/index/comparer.hpp"
+#include "iresearch/index/index_features.hpp"
+#include "iresearch/index/norm.hpp"
+#include "iresearch/search/term_filter.hpp"
+#include "iresearch/store/memory_directory.hpp"
+#include "iresearch/store/mmap_directory.hpp"
+#include "iresearch/utils/bytes_output.hpp"
+#include "iresearch/utils/index_utils.hpp"
 #include "tests_shared.hpp"
 
 namespace {

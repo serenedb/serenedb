@@ -22,9 +22,8 @@
 
 #pragma once
 
-#include <iresearch/index/field_meta.hpp>
-
 #include "basics/shared.hpp"
+#include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/utils/attributes.hpp"
 

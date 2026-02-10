@@ -24,7 +24,8 @@
 #include "filter_test_case_base.hpp"
 
 #include <compare>
-#include <iresearch/search/column_collector.hpp>
+
+#include "iresearch/search/column_collector.hpp"
 
 namespace tests {
 

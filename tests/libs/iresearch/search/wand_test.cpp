@@ -20,21 +20,20 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/index/index_features.hpp>
-#include <iresearch/index/norm.hpp>
-#include <iresearch/search/bm25.hpp>
-#include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/column_collector.hpp>
-#include <iresearch/search/filter.hpp>
-#include <iresearch/search/score.hpp>
-#include <iresearch/search/score_function.hpp>
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/search/tfidf.hpp>
-#include <iresearch/types.hpp>
-#include <iresearch/utils/index_utils.hpp>
-#include <iresearch/utils/type_limits.hpp>
-
 #include "index/index_tests.hpp"
+#include "iresearch/index/index_features.hpp"
+#include "iresearch/index/norm.hpp"
+#include "iresearch/search/bm25.hpp"
+#include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/filter.hpp"
+#include "iresearch/search/score.hpp"
+#include "iresearch/search/score_function.hpp"
+#include "iresearch/search/term_filter.hpp"
+#include "iresearch/search/tfidf.hpp"
+#include "iresearch/types.hpp"
+#include "iresearch/utils/index_utils.hpp"
+#include "iresearch/utils/type_limits.hpp"
 
 namespace {
 

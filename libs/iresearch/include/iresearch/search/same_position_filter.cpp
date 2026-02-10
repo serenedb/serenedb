@@ -22,16 +22,15 @@
 
 #include "same_position_filter.hpp"
 
-#include <iresearch/index/iterators.hpp>
-#include <iresearch/search/scorer.hpp>
-
 #include "basics/misc.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/index/iterators.hpp"
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/conjunction.hpp"
+#include "iresearch/search/scorer.hpp"
 #include "iresearch/search/states/term_state.hpp"
 #include "iresearch/search/states_cache.hpp"
 

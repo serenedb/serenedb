@@ -24,16 +24,16 @@
 #include <gtest/gtest.h>
 
 #include <basics/bit_packing.hpp>
-#include <iresearch/formats/format_utils.hpp>
-#include <iresearch/formats/formats.hpp>
-#include <iresearch/formats/formats_attributes.hpp>
-#include <iresearch/formats/seek_cookie.hpp>
-#include <iresearch/index/field_meta.hpp>
-#include <iresearch/store/mmap_directory.hpp>
-#include <iresearch/utils/type_limits.hpp>
 
 #include "basics/down_cast.h"
 #include "formats_test_case_base.hpp"
+#include "iresearch/formats/format_utils.hpp"
+#include "iresearch/formats/formats.hpp"
+#include "iresearch/formats/formats_attributes.hpp"
+#include "iresearch/formats/seek_cookie.hpp"
+#include "iresearch/index/field_meta.hpp"
+#include "iresearch/store/mmap_directory.hpp"
+#include "iresearch/utils/type_limits.hpp"
 #include "tests_shared.hpp"
 
 namespace {

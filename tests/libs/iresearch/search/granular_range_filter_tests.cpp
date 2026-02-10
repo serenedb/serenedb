@@ -21,10 +21,9 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/index/index_features.hpp>
-#include <iresearch/search/granular_range_filter.hpp>
-
 #include "filter_test_case_base.hpp"
+#include "iresearch/index/index_features.hpp"
+#include "iresearch/search/granular_range_filter.hpp"
 #include "tests_shared.hpp"
 
 namespace {

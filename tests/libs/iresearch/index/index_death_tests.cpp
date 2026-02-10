@@ -21,13 +21,12 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/formats/formats.hpp>
-#include <iresearch/index/index_features.hpp>
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/utils/index_utils.hpp>
-
 #include "index_tests.hpp"
+#include "iresearch/formats/formats.hpp"
+#include "iresearch/index/index_features.hpp"
+#include "iresearch/search/term_filter.hpp"
+#include "iresearch/store/memory_directory.hpp"
+#include "iresearch/utils/index_utils.hpp"
 #include "tests_shared.hpp"
 
 namespace {

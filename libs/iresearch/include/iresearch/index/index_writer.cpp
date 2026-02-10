@@ -27,7 +27,6 @@
 #include <absl/strings/str_cat.h>
 
 #include <cstdint>
-#include <iresearch/index/segment_writer.hpp>
 #include <shared_mutex>
 #include <type_traits>
 
@@ -43,6 +42,7 @@
 #include "iresearch/index/merge_writer.hpp"
 #include "iresearch/index/segment_reader.hpp"
 #include "iresearch/index/segment_reader_impl.hpp"
+#include "iresearch/index/segment_writer.hpp"
 #include "iresearch/store/directory.hpp"
 #include "iresearch/utils/compression.hpp"
 #include "iresearch/utils/directory_utils.hpp"

@@ -26,12 +26,12 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <iresearch/index/iterators.hpp>
 #include <ranges>
 
 #include "basics/empty.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/index_reader_options.hpp"
+#include "iresearch/index/iterators.hpp"
 #include "iresearch/search/cost.hpp"
 #include "iresearch/search/score.hpp"
 #include "iresearch/search/score_function.hpp"

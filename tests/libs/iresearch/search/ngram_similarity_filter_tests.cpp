@@ -21,19 +21,19 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <functional>
-#include <iresearch/index/field_meta.hpp>
-#include <iresearch/index/index_features.hpp>
-#include <iresearch/index/norm.hpp>
-#include <iresearch/search/bm25.hpp>
-#include <iresearch/search/ngram_similarity_filter.hpp>
-#include <iresearch/search/ngram_similarity_query.hpp>
-#include <iresearch/search/score_function.hpp>
-#include <iresearch/search/scorer.hpp>
-#include <iresearch/search/tfidf.hpp>
-#include <iresearch/utils/lz4compression.hpp>
-#include <iresearch/utils/ngram_match_utils.hpp>
 
 #include "filter_test_case_base.hpp"
+#include "iresearch/index/field_meta.hpp"
+#include "iresearch/index/index_features.hpp"
+#include "iresearch/index/norm.hpp"
+#include "iresearch/search/bm25.hpp"
+#include "iresearch/search/ngram_similarity_filter.hpp"
+#include "iresearch/search/ngram_similarity_query.hpp"
+#include "iresearch/search/score_function.hpp"
+#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/tfidf.hpp"
+#include "iresearch/utils/lz4compression.hpp"
+#include "iresearch/utils/ngram_match_utils.hpp"
 #include "tests_shared.hpp"
 
 namespace tests {

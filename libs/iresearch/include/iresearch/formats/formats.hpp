@@ -24,7 +24,6 @@
 
 #include <absl/container/flat_hash_set.h>
 
-#include <iresearch/search/scorer.hpp>
 #include <set>
 #include <vector>
 
@@ -40,6 +39,7 @@
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/score_function.hpp"
+#include "iresearch/search/scorer.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/store/directory.hpp"
 #include "iresearch/utils/attribute_provider.hpp"

@@ -22,10 +22,9 @@
 
 #include "multiterm_query.hpp"
 
-#include <iresearch/formats/formats.hpp>
-
 #include "basics/containers/bitset.hpp"
 #include "basics/shared.hpp"
+#include "iresearch/formats/formats.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/bitset_doc_iterator.hpp"
 #include "iresearch/search/make_disjunction.hpp"

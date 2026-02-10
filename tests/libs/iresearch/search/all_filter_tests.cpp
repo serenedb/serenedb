@@ -21,13 +21,12 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/index/field_meta.hpp>
-#include <iresearch/search/all_filter.hpp>
-#include <iresearch/search/cost.hpp>
-#include <iresearch/search/score.hpp>
-#include <iresearch/search/scorer.hpp>
-
 #include "filter_test_case_base.hpp"
+#include "iresearch/index/field_meta.hpp"
+#include "iresearch/search/all_filter.hpp"
+#include "iresearch/search/cost.hpp"
+#include "iresearch/search/score.hpp"
+#include "iresearch/search/scorer.hpp"
 #include "tests_shared.hpp"
 
 namespace {

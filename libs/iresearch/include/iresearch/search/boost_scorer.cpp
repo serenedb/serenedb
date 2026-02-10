@@ -24,8 +24,7 @@
 
 #include <absl/container/inlined_vector.h>
 
-#include <iresearch/analysis/token_attributes.hpp>
-
+#include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/score.hpp"
 #include "iresearch/search/score_function.hpp"

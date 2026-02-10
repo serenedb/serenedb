@@ -22,12 +22,11 @@
 
 #include "iresearch/search/boolean_query.hpp"
 
-#include <iresearch/search/make_disjunction.hpp>
-#include <iresearch/search/scorer.hpp>
-
 #include "iresearch/search/conjunction.hpp"
 #include "iresearch/search/disjunction.hpp"
+#include "iresearch/search/make_disjunction.hpp"
 #include "iresearch/search/prepared_state_visitor.hpp"
+#include "iresearch/search/scorer.hpp"
 
 namespace irs {
 namespace {

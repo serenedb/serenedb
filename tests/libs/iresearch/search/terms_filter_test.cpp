@@ -20,13 +20,12 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/index/field_meta.hpp>
-#include <iresearch/search/boost_scorer.hpp>
-#include <iresearch/search/scorer.hpp>
-#include <iresearch/search/terms_filter.hpp>
-
 #include "filter_test_case_base.hpp"
 #include "index/doc_generator.hpp"
+#include "iresearch/index/field_meta.hpp"
+#include "iresearch/search/boost_scorer.hpp"
+#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/terms_filter.hpp"
 #include "tests_shared.hpp"
 
 namespace {

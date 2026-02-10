@@ -23,10 +23,10 @@
 #include <faiss/index_factory.h>
 #include <faiss/index_io.h>
 
-#include <iresearch/utils/attribute_provider.hpp>
-#include <iresearch/utils/attributes.hpp>
 #include <random>
 
+#include "iresearch/utils/attribute_provider.hpp"
+#include "iresearch/utils/attributes.hpp"
 #include "tests_shared.hpp"
 
 double elapsed(double& t0) {

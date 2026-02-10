@@ -18,18 +18,18 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/formats/formats.hpp>
-#include <iresearch/formats/formats_attributes.hpp>
-#include <iresearch/formats/wand_writer.hpp>
-#include <iresearch/index/field_meta.hpp>
-#include <iresearch/search/score.hpp>
-#include <iresearch/search/score_function.hpp>
-#include <iresearch/search/scorer.hpp>
 #include <limits>
 #include <random>
 
 #include "formats_test_case_base.hpp"
+#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/formats/formats.hpp"
+#include "iresearch/formats/formats_attributes.hpp"
+#include "iresearch/formats/wand_writer.hpp"
+#include "iresearch/index/field_meta.hpp"
+#include "iresearch/search/score.hpp"
+#include "iresearch/search/score_function.hpp"
+#include "iresearch/search/scorer.hpp"
 #include "tests_shared.hpp"
 
 namespace {

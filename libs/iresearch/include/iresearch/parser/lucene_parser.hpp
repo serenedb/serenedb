@@ -48,8 +48,8 @@ extern int yydebug;
 /* "%code requires" blocks.  */
 #line 23 "libs/iresearch/include/iresearch/parser/lucene_parser.y"
 
-#include <iresearch/search/filter.hpp>
-#include <iresearch/search/boolean_filter.hpp>
+#include "iresearch/search/filter.hpp"
+#include "iresearch/search/boolean_filter.hpp"
 
 #include "basics/down_cast.h"
 

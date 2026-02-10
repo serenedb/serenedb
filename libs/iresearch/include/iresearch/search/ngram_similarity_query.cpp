@@ -23,17 +23,17 @@
 
 #include "ngram_similarity_query.hpp"
 
-#include <iresearch/formats/formats.hpp>
-#include <iresearch/search/score_function.hpp>
 #include <memory>
 
 #include "basics/memory.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/formats/formats.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/disjunction.hpp"
 #include "iresearch/search/score.hpp"
+#include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
 
 namespace irs {

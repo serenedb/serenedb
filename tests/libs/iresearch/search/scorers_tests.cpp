@@ -21,9 +21,8 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/index/field_meta.hpp>
-#include <iresearch/search/scorers.hpp>
-
+#include "iresearch/index/field_meta.hpp"
+#include "iresearch/search/scorers.hpp"
 #include "tests_shared.hpp"
 
 TEST(scorers_tests, duplicate_register) {

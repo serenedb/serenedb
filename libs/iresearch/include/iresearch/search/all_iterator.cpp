@@ -22,9 +22,9 @@
 
 #include "all_iterator.hpp"
 
-#include <iresearch/index/field_meta.hpp>
-#include <iresearch/index/iterators.hpp>
-#include <iresearch/search/score_function.hpp>
+#include "iresearch/index/field_meta.hpp"
+#include "iresearch/index/iterators.hpp"
+#include "iresearch/search/score_function.hpp"
 
 namespace irs {
 

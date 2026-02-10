@@ -20,17 +20,16 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/index/index_features.hpp>
-#include <iresearch/index/norm.hpp>
-#include <iresearch/search/column_collector.hpp>
-#include <iresearch/search/levenshtein_filter.hpp>
-#include <iresearch/search/prefix_filter.hpp>
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/utils/levenshtein_default_pdp.hpp>
-#include <iresearch/utils/lz4compression.hpp>
-
 #include "basics/misc.hpp"
 #include "filter_test_case_base.hpp"
+#include "iresearch/index/index_features.hpp"
+#include "iresearch/index/norm.hpp"
+#include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/levenshtein_filter.hpp"
+#include "iresearch/search/prefix_filter.hpp"
+#include "iresearch/search/term_filter.hpp"
+#include "iresearch/utils/levenshtein_default_pdp.hpp"
+#include "iresearch/utils/lz4compression.hpp"
 #include "tests_shared.hpp"
 
 namespace {

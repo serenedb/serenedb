@@ -26,10 +26,6 @@
 #include <absl/functional/overload.h>
 #include <immintrin.h>
 
-#include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/formats/formats.hpp>
-#include <iresearch/index/iterators.hpp>
-#include <iresearch/index/norm.hpp>
 #include <utility>
 
 #include "basics/down_cast.h"
@@ -37,9 +33,13 @@
 #include "basics/number_utils.h"
 #include "basics/shared.hpp"
 #include "basics/system-compiler.h"
+#include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/format_utils.hpp"
+#include "iresearch/formats/formats.hpp"
 #include "iresearch/index/file_names.hpp"
+#include "iresearch/index/iterators.hpp"
+#include "iresearch/index/norm.hpp"
 #include "iresearch/search/all_iterator.hpp"
 #include "iresearch/search/score.hpp"
 #include "iresearch/store/store_avg_utils.hpp"

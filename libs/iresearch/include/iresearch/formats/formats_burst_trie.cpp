@@ -22,11 +22,11 @@
 
 #include "formats_burst_trie.hpp"
 
-#include <iresearch/formats/formats.hpp>
 #include <variant>
 
 #include "basics/assert.h"
 #include "basics/string_utils.h"
+#include "iresearch/formats/formats.hpp"
 #include "iresearch/index/index_features.hpp"
 
 // clang-format off

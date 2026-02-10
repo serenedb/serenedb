@@ -25,7 +25,6 @@
 #include <absl/functional/overload.h>
 
 #include <cstdint>
-#include <iresearch/search/score_function.hpp>
 #include <limits>
 #include <span>
 #include <tuple>
@@ -38,6 +37,7 @@
 #include "iresearch/search/prepared_state_visitor.hpp"
 #include "iresearch/search/prev_doc.hpp"
 #include "iresearch/search/score.hpp"
+#include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 #include "iresearch/utils/type_limits.hpp"

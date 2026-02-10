@@ -31,18 +31,18 @@
 #include "basics/misc.hpp"
 
 #ifdef IRESEARCH_URING
-#include <iresearch/store/async_directory.hpp>
+#include "iresearch/store/async_directory.hpp"
 #endif
 #include <basics/async_utils.hpp>
 #include <basics/crc.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/mmap_directory.hpp>
-#include <iresearch/store/store_utils.hpp>
-#include <iresearch/utils/directory_utils.hpp>
 
 #include "basics/file_utils_ext.hpp"
 #include "basics/network_utils.hpp"
 #include "basics/process_utils.hpp"
+#include "iresearch/store/memory_directory.hpp"
+#include "iresearch/store/mmap_directory.hpp"
+#include "iresearch/store/store_utils.hpp"
+#include "iresearch/utils/directory_utils.hpp"
 #include "tests_param.hpp"
 #include "tests_shared.hpp"
 

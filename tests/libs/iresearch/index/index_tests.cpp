@@ -26,27 +26,27 @@
 #include <absl/random/random.h>
 #include <faiss/utils/distances.h>
 
-#include <iresearch/formats/formats.hpp>
-#include <iresearch/index/field_meta.hpp>
-#include <iresearch/index/index_features.hpp>
-#include <iresearch/index/norm.hpp>
-#include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/store/fs_directory.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/mmap_directory.hpp>
-#include <iresearch/utils/delta_compression.hpp>
-#include <iresearch/utils/fstext/fst_table_matcher.hpp>
-#include <iresearch/utils/index_utils.hpp>
-#include <iresearch/utils/lz4compression.hpp>
-#include <iresearch/utils/type_limits.hpp>
-#include <iresearch/utils/wildcard_utils.hpp>
 #include <string>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
 
 #include "basics/file_utils_ext.hpp"
+#include "iresearch/formats/formats.hpp"
+#include "iresearch/index/field_meta.hpp"
+#include "iresearch/index/index_features.hpp"
+#include "iresearch/index/norm.hpp"
+#include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/term_filter.hpp"
+#include "iresearch/store/fs_directory.hpp"
+#include "iresearch/store/memory_directory.hpp"
+#include "iresearch/store/mmap_directory.hpp"
+#include "iresearch/utils/delta_compression.hpp"
+#include "iresearch/utils/fstext/fst_table_matcher.hpp"
+#include "iresearch/utils/index_utils.hpp"
+#include "iresearch/utils/lz4compression.hpp"
+#include "iresearch/utils/type_limits.hpp"
+#include "iresearch/utils/wildcard_utils.hpp"
 #include "tests_shared.hpp"
 
 using namespace std::literals;

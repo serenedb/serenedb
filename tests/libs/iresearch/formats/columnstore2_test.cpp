@@ -20,10 +20,10 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/formats/columnstore2.hpp>
-#include <iresearch/search/score.hpp>
 #include <vector>
 
+#include "iresearch/formats/columnstore2.hpp"
+#include "iresearch/search/score.hpp"
 #include "tests_param.hpp"
 #include "tests_shared.hpp"
 

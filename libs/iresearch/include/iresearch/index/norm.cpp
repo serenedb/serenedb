@@ -22,10 +22,9 @@
 
 #include "norm.hpp"
 
-#include <iresearch/utils/attribute_provider.hpp>
-
 #include "basics/shared.hpp"
 #include "iresearch/store/store_utils.hpp"
+#include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 
 namespace irs {

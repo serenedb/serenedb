@@ -20,10 +20,9 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/utils/automaton.hpp>
-#include <iresearch/utils/fstext/fst_sorted_range_matcher.hpp>
-#include <iresearch/utils/fstext/fst_table_matcher.hpp>
-
+#include "iresearch/utils/automaton.hpp"
+#include "iresearch/utils/fstext/fst_sorted_range_matcher.hpp"
+#include "iresearch/utils/fstext/fst_table_matcher.hpp"
 #include "tests_shared.hpp"
 
 TEST(fst_table_matcher_test, static_const) {

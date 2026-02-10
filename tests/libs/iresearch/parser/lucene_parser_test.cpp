@@ -21,17 +21,16 @@
 #include <gtest/gtest.h>
 #include <iresearch/parser/parser.h>
 
-#include <iresearch/analysis/segmentation_tokenizer.hpp>
-#include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/levenshtein_filter.hpp>
-#include <iresearch/search/phrase_filter.hpp>
-#include <iresearch/search/prefix_filter.hpp>
-#include <iresearch/search/range_filter.hpp>
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/search/wildcard_filter.hpp>
-#include <iresearch/utils/string.hpp>
-
 #include "basics/down_cast.h"
+#include "iresearch/analysis/segmentation_tokenizer.hpp"
+#include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/levenshtein_filter.hpp"
+#include "iresearch/search/phrase_filter.hpp"
+#include "iresearch/search/prefix_filter.hpp"
+#include "iresearch/search/range_filter.hpp"
+#include "iresearch/search/term_filter.hpp"
+#include "iresearch/search/wildcard_filter.hpp"
+#include "iresearch/utils/string.hpp"
 
 namespace {
 

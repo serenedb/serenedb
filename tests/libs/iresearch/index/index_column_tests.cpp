@@ -21,10 +21,9 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/utils/lz4compression.hpp>
-
 #include "index_tests.hpp"
+#include "iresearch/store/memory_directory.hpp"
+#include "iresearch/utils/lz4compression.hpp"
 #include "tests_shared.hpp"
 
 namespace {

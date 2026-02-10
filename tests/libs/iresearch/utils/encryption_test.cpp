@@ -22,10 +22,10 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <basics/crc.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/store_utils.hpp>
-#include <iresearch/utils/encryption.hpp>
 
+#include "iresearch/store/memory_directory.hpp"
+#include "iresearch/store/store_utils.hpp"
+#include "iresearch/utils/encryption.hpp"
 #include "tests_param.hpp"
 #include "tests_shared.hpp"
 

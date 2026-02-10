@@ -21,17 +21,17 @@
 #include <vpack/iterator.h>
 #include <vpack/parser.h>
 
-#include <iresearch/index/directory_reader.hpp>
-#include <iresearch/index/index_writer.hpp>
-#include <iresearch/index/iterators.hpp>
-#include <iresearch/search/cost.hpp>
-#include <iresearch/search/score.hpp>
-#include <iresearch/search/scorer.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <set>
 
 #include "geo/geo_json.h"
+#include "iresearch/index/directory_reader.hpp"
+#include "iresearch/index/index_writer.hpp"
+#include "iresearch/index/iterators.hpp"
+#include "iresearch/search/cost.hpp"
 #include "iresearch/search/geo_filter.h"
+#include "iresearch/search/score.hpp"
+#include "iresearch/search/scorer.hpp"
+#include "iresearch/store/memory_directory.hpp"
 #include "s2/s2point_region.h"
 #include "s2/s2polygon.h"
 #include "search_fields.h"

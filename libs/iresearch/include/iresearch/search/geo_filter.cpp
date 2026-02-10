@@ -25,16 +25,13 @@
 #include <s2/s2earth.h>
 #include <s2/s2point_region.h>
 
-#include <iresearch/index/field_meta.hpp>
-#include <iresearch/search/score_function.hpp>
-#include <iresearch/types.hpp>
-
 #include "basics/down_cast.h"
 #include "basics/errors.h"
 #include "basics/logger/logger.h"
 #include "basics/memory.hpp"
 #include "geo/geo_json.h"
 #include "geo/geo_params.h"
+#include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/all_filter.hpp"
 #include "iresearch/search/boolean_filter.hpp"
@@ -43,7 +40,9 @@
 #include "iresearch/search/column_existence_filter.hpp"
 #include "iresearch/search/make_disjunction.hpp"
 #include "iresearch/search/multiterm_query.hpp"
+#include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
+#include "iresearch/types.hpp"
 #include "iresearch/utils/vpack_utils.hpp"
 
 namespace irs {

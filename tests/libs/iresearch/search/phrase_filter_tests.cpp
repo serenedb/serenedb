@@ -21,15 +21,14 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/index/iterators.hpp>
-#include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/multiterm_query.hpp>
-#include <iresearch/search/phrase_filter.hpp>
-#include <iresearch/search/phrase_query.hpp>
-#include <iresearch/search/term_query.hpp>
-
 #include "filter_test_case_base.hpp"
+#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/index/iterators.hpp"
+#include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/multiterm_query.hpp"
+#include "iresearch/search/phrase_filter.hpp"
+#include "iresearch/search/phrase_query.hpp"
+#include "iresearch/search/term_query.hpp"
 #include "tests_shared.hpp"
 
 namespace tests {

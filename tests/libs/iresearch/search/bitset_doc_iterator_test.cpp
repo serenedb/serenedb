@@ -23,9 +23,9 @@
 
 #include <basics/containers/bitset.hpp>
 #include <basics/singleton.hpp>
-#include <iresearch/search/bitset_doc_iterator.hpp>
 
 #include "filter_test_case_base.hpp"
+#include "iresearch/search/bitset_doc_iterator.hpp"
 #include "tests_shared.hpp"
 
 size_t Count(const irs::bitset& bs) { return bs.count(); }

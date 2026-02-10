@@ -25,10 +25,10 @@
 #include <absl/base/internal/endian.h>
 
 #include <cstdint>
-#include <iresearch/types.hpp>
 
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/field_meta.hpp"
+#include "iresearch/types.hpp"
 
 namespace irs {
 

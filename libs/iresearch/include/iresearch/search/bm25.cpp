@@ -31,9 +31,6 @@
 
 #include <cstdint>
 #include <exception>
-#include <iresearch/search/score.hpp>
-#include <iresearch/search/score_function.hpp>
-#include <iresearch/types.hpp>
 #include <ranges>
 #include <utility>
 
@@ -45,8 +42,11 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/score.hpp"
+#include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/search/scorer_impl.hpp"
+#include "iresearch/types.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "vpack/serializer.h"
 

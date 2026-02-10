@@ -21,13 +21,13 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <basics/utf8_utils.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/store_utils.hpp>
-#include <iresearch/utils/automaton_utils.hpp>
-#include <iresearch/utils/bytes_output.hpp>
-#include <iresearch/utils/fstext/fst_table_matcher.hpp>
-#include <iresearch/utils/levenshtein_utils.hpp>
 
+#include "iresearch/store/memory_directory.hpp"
+#include "iresearch/store/store_utils.hpp"
+#include "iresearch/utils/automaton_utils.hpp"
+#include "iresearch/utils/bytes_output.hpp"
+#include "iresearch/utils/fstext/fst_table_matcher.hpp"
+#include "iresearch/utils/levenshtein_utils.hpp"
 #include "tests_shared.hpp"
 
 using namespace std::literals;

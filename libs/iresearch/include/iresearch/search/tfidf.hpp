@@ -22,9 +22,8 @@
 
 #pragma once
 
-#include <iresearch/search/column_collector.hpp>
-#include <iresearch/search/scorer.hpp>
-
+#include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/scorer.hpp"
 #include "iresearch/search/scorers.hpp"
 
 namespace irs {

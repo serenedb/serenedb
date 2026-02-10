@@ -4268,7 +4268,8 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     };
 
     irs::DocIterator* it = nullptr;
-    sort.scorer_score = [&](irs::ScoreFunctionImpl*, irs::score_t* score, size_t n) {
+    sort.scorer_score = [&](irs::ScoreOperator*, irs::score_t* score,
+                            size_t n) {
       ASSERT_NE(nullptr, it);
       *score = it->value();
     };
@@ -4594,7 +4595,8 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
       return std::make_unique<tests::sort::CustomSort::TermCollector>(sort);
     };
     irs::DocIterator* it = nullptr;
-    sort.scorer_score = [&](irs::ScoreFunctionImpl*, irs::score_t* score, size_t n) {
+    sort.scorer_score = [&](irs::ScoreOperator*, irs::score_t* score,
+                            size_t n) {
       ASSERT_NE(nullptr, it);
       *score = it->value();
     };
@@ -6300,7 +6302,8 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     tests::sort::CustomSort sort;
     irs::DocIterator* it = nullptr;
-    sort.scorer_score = [&](irs::ScoreFunctionImpl*, irs::score_t* score, size_t n) {
+    sort.scorer_score = [&](irs::ScoreOperator*, irs::score_t* score,
+                            size_t n) {
       ASSERT_NE(nullptr, it);
       *score = it->value();
     };
@@ -6379,7 +6382,8 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     tests::sort::CustomSort sort;
     irs::DocIterator* it = nullptr;
-    sort.scorer_score = [&](irs::ScoreFunctionImpl*, irs::score_t* score, size_t n) {
+    sort.scorer_score = [&](irs::ScoreOperator*, irs::score_t* score,
+                            size_t n) {
       ASSERT_NE(nullptr, it);
       *score = it->value();
     };
@@ -6486,7 +6490,8 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
 
     tests::sort::CustomSort sort;
     irs::DocIterator* it = nullptr;
-    sort.scorer_score = [&](irs::ScoreFunctionImpl*, irs::score_t* score, size_t n) {
+    sort.scorer_score = [&](irs::ScoreOperator*, irs::score_t* score,
+                            size_t n) {
       ASSERT_NE(nullptr, it);
       *score = it->value();
     };
@@ -6968,7 +6973,8 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
 
     tests::sort::CustomSort sort;
     irs::DocIterator* it = nullptr;
-    sort.scorer_score = [&](irs::ScoreFunctionImpl*, irs::score_t* score, size_t n) {
+    sort.scorer_score = [&](irs::ScoreOperator*, irs::score_t* score,
+                            size_t n) {
       ASSERT_NE(nullptr, it);
       *score = it->value();
     };
@@ -7231,7 +7237,8 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
 
     tests::sort::CustomSort sort;
     irs::DocIterator* it = nullptr;
-    sort.scorer_score = [&](irs::ScoreFunctionImpl*, irs::score_t* score, size_t n) {
+    sort.scorer_score = [&](irs::ScoreOperator*, irs::score_t* score,
+                            size_t n) {
       ASSERT_NE(nullptr, it);
       *score = it->value();
     };
@@ -7359,7 +7366,8 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
 
     tests::sort::CustomSort sort;
     irs::DocIterator* it = nullptr;
-    sort.scorer_score = [&](irs::ScoreFunctionImpl*, irs::score_t* score, size_t n) {
+    sort.scorer_score = [&](irs::ScoreOperator*, irs::score_t* score,
+                            size_t n) {
       ASSERT_NE(nullptr, it);
       *score = it->value();
     };
@@ -7487,7 +7495,8 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
 
     tests::sort::CustomSort sort;
     irs::DocIterator* it = nullptr;
-    sort.scorer_score = [&](irs::ScoreFunctionImpl*, irs::score_t* score, size_t n) {
+    sort.scorer_score = [&](irs::ScoreOperator*, irs::score_t* score,
+                            size_t n) {
       ASSERT_NE(nullptr, it);
       *score = it->value();
     };

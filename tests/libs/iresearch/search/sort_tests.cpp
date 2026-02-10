@@ -637,7 +637,7 @@ TEST(ScoreFunctionTest, Constant) {
 }
 
 TEST(ScoreFunctionTest, construct) {
-  struct Impl : irs::ScoreFunctionImpl {
+  struct Impl : irs::ScoreOperator {
     irs::score_t buf[1]{};
     Impl() = default;
 
@@ -670,7 +670,7 @@ TEST(ScoreFunctionTest, construct) {
 }
 
 TEST(ScoreFunctionTest, reset) {
-  struct Impl : irs::ScoreFunctionImpl {
+  struct Impl : irs::ScoreOperator {
     irs::score_t buf[1]{};
     Impl() = default;
 
@@ -704,7 +704,7 @@ TEST(ScoreFunctionTest, reset) {
 }
 
 TEST(ScoreFunctionTest, move) {
-  struct Impl : irs::ScoreFunctionImpl {
+  struct Impl : irs::ScoreOperator {
     irs::score_t buf[1]{};
 
     void Score(irs::score_t* res, size_t n) noexcept override {

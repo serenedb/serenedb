@@ -228,7 +228,7 @@ void Bm25(T* res, size_t n, const uint32_t* IRS_RESTRICT freq,
 }
 
 template<bool HasFilterBoost>
-struct Bm1Score : public ScoreFunctionImpl {
+struct Bm1Score : public ScoreOperator {
   Bm1Score(float_t k, score_t boost, const BM25Stats& stats,
            const score_t* fb) noexcept
     : filter_boost{fb}, num{boost * (k + 1) * stats.idf} {}
@@ -249,11 +249,11 @@ struct Bm1Score : public ScoreFunctionImpl {
     }
   }
 
-  void ScoreMaxBlock(score_t* res) noexcept final {
+  void ScorePostingBlock(score_t* res) noexcept final {
     if constexpr (HasFilterBoost) {
-      Bm1Boost(res, kMaxScoreBlock, filter_boost, num);
+      Bm1Boost(res, kPostingBlock, filter_boost, num);
     } else {
-      std::memset(res, 0, sizeof(score_t) * kMaxScoreBlock);
+      std::memset(res, 0, sizeof(score_t) * kPostingBlock);
     }
   }
 
@@ -264,7 +264,7 @@ struct Bm1Score : public ScoreFunctionImpl {
 };
 
 template<bool HasFilterBoost>
-struct Bm15Score : public ScoreFunctionImpl {
+struct Bm15Score : public ScoreOperator {
   Bm15Score(float_t k, score_t boost, const BM25Stats& stats,
             const FreqBlockAttr* freq, const score_t* fb) noexcept
     : filter_boost{fb},
@@ -282,8 +282,8 @@ struct Bm15Score : public ScoreFunctionImpl {
     Bm15<HasFilterBoost>(res, kScoreBlock, freq->value,
                          TryGetValue(filter_boost), num, norm_const);
   }
-  void ScoreMaxBlock(score_t* res) noexcept final {
-    Bm15<HasFilterBoost>(res, kMaxScoreBlock, freq->value,
+  void ScorePostingBlock(score_t* res) noexcept final {
+    Bm15<HasFilterBoost>(res, kPostingBlock, freq->value,
                          TryGetValue(filter_boost), num, norm_const);
   }
 
@@ -295,7 +295,7 @@ struct Bm15Score : public ScoreFunctionImpl {
 };
 
 template<bool HasFilterBoost>
-struct Bm25Score : public ScoreFunctionImpl {
+struct Bm25Score : public ScoreOperator {
   Bm25Score(float_t k, score_t boost, const BM25Stats& stats,
             const FreqBlockAttr* freq, const uint32_t* norm,
             const score_t* filter_boost) noexcept
@@ -317,7 +317,7 @@ struct Bm25Score : public ScoreFunctionImpl {
                          norm_length);
   }
 
-  void ScoreMaxBlock(score_t* res) noexcept final {
+  void ScorePostingBlock(score_t* res) noexcept final {
     Bm25<HasFilterBoost>(res, kScoreBlock, freq->value, norm,
                          TryGetValue(filter_boost), num, norm_const,
                          norm_length);
@@ -461,7 +461,7 @@ ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
 
     if (!norm) {
       static constexpr auto kNorms = [] {
-        std::array<uint32_t, kMaxScoreBlock> norms;
+        std::array<uint32_t, kPostingBlock> norms;
         absl::c_fill(norms, 1);
         return norms;
       }();

@@ -217,7 +217,7 @@ class NoneMatcher {
 };
 
 template<ScoreMergeType MergeType>
-struct NestedScore final : ScoreFunctionImpl {
+struct NestedScore final : ScoreOperator {
   ScoreFunction child_score;
   ColumnCollector collector;
   std::array<score_t, kScoreBlock> parent_scores{};

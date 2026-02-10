@@ -32,48 +32,52 @@ namespace irs {
 
 inline constexpr size_t kScoreBlock = 32;
 static_assert(kScoreBlock < std::numeric_limits<uint16_t>::max());
-inline constexpr size_t kMaxScoreBlock = 4 * kScoreBlock;
+inline constexpr size_t kPostingBlock = 4 * kScoreBlock;
+static_assert(kPostingBlock < std::numeric_limits<uint16_t>::max());
 
-struct ScoreFunctionImpl : memory::Managed {
+struct ScoreOperator : memory::Managed {
   virtual void Score(score_t* res, size_t n) noexcept = 0;
   virtual void ScoreBlock(score_t* res) noexcept { Score(res, kScoreBlock); }
-  virtual void ScoreMaxBlock(score_t* res) noexcept {
-    Score(res, kMaxScoreBlock);
+  virtual void ScorePostingBlock(score_t* res) noexcept {
+    Score(res, kPostingBlock);
   }
   virtual void Score(score_t* res) noexcept { Score(res, 1); }
 };
 
-struct DefaultScore final : public ScoreFunctionImpl {
+struct DefaultScore final : public ScoreOperator {
   static DefaultScore gInstance;
+  static memory::managed_ptr<ScoreOperator> Make() {
+    return memory::to_managed<ScoreOperator>(gInstance);
+  }
 
   void Score(score_t* res, size_t n) noexcept final;
   void ScoreBlock(score_t* res) noexcept final;
-  void ScoreMaxBlock(score_t* res) noexcept final;
+  void ScorePostingBlock(score_t* res) noexcept final;
+};
+
+// For disjunction/conjunction it's just sum of sub-iterators max score
+// For iterator without score it depends on count of documents in iterator
+// For wanderator it's max score for whole skip-list
+// TODO(mbkkt) tail better here and not affect correctness
+//  but to support it we need to know max value in the tail blocks.
+//  Open question: how do it without read next blocks?
+// TODO(mbkkt) At least when iterator exhausted, we could set it to zero.
+struct UpperBounds {
+  score_t tail = std::numeric_limits<score_t>::max();
+  score_t leaf = std::numeric_limits<score_t>::max();
+#ifdef SDB_GTEST
+  std::span<const score_t> levels;  // levels.back() == leaf
+#endif
 };
 
 class ScoreFunction {
  public:
-  // For disjunction/conjunction it's just sum of sub-iterators max score
-  // For iterator without score it depends on count of documents in iterator
-  // For wanderator it's max score for whole skip-list
-  // TODO(mbkkt) tail better here and not affect correctness
-  //  but to support it we need to know max value in the tail blocks.
-  //  Open question: how do it without read next blocks?
-  // TODO(mbkkt) At least when iterator exhausted, we could set it to zero.
-  struct UpperBounds {
-    score_t tail = std::numeric_limits<score_t>::max();
-    score_t leaf = std::numeric_limits<score_t>::max();
-#ifdef SDB_GTEST
-    std::span<const score_t> levels;  // levels.back() == leaf
-#endif
-  } max;
-
   template<typename T, typename... Args>
   static ScoreFunction Make(Args&&... args) {
     return ScoreFunction{memory::make_managed<T>(std::forward<Args>(args)...)};
   }
-  static ScoreFunction Wrap(ScoreFunctionImpl& impl) noexcept {
-    return ScoreFunction{memory::to_managed<ScoreFunctionImpl>(impl)};
+  static ScoreFunction Wrap(ScoreOperator& impl) noexcept {
+    return ScoreFunction{memory::to_managed<ScoreOperator>(impl)};
   }
   static ScoreFunction Default() noexcept {
     return ScoreFunction::Wrap(DefaultScore::gInstance);
@@ -82,14 +86,10 @@ class ScoreFunction {
 
   ScoreFunction() noexcept : ScoreFunction{Default()} {}
   ScoreFunction(ScoreFunction&& other) noexcept
-    : max{std::move(other.max)},
-      _impl{std::exchange(other._impl, memory::to_managed<ScoreFunctionImpl>(
-                                         DefaultScore::gInstance))} {}
+    : _impl{std::exchange(other._impl, DefaultScore::Make())} {}
   ScoreFunction& operator=(ScoreFunction&& other) noexcept {
     if (this != &other) {
-      max = std::move(other.max);
-      _impl = std::exchange(other._impl, memory::to_managed<ScoreFunctionImpl>(
-                                           DefaultScore::gInstance));
+      _impl = std::exchange(other._impl, DefaultScore::Make());
     }
     return *this;
   }
@@ -108,9 +108,9 @@ class ScoreFunction {
     _impl->ScoreBlock(res);
   }
 
-  IRS_FORCE_INLINE void ScoreMaxBlock(score_t* res) const noexcept {
+  IRS_FORCE_INLINE void ScorePostingBlock(score_t* res) const noexcept {
     SDB_ASSERT(_impl);
-    _impl->ScoreMaxBlock(res);
+    _impl->ScorePostingBlock(res);
   }
 
   IRS_FORCE_INLINE void Score(score_t* res) const noexcept {
@@ -124,12 +124,12 @@ class ScoreFunction {
   }
 
  private:
-  explicit ScoreFunction(memory::managed_ptr<ScoreFunctionImpl> impl) noexcept
+  explicit ScoreFunction(memory::managed_ptr<ScoreOperator> impl) noexcept
     : _impl{std::move(impl)} {
     SDB_ASSERT(_impl);
   }
 
-  memory::managed_ptr<ScoreFunctionImpl> _impl;
+  memory::managed_ptr<ScoreOperator> _impl;
 };
 
 }  // namespace irs

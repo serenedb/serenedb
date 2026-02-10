@@ -119,9 +119,9 @@ class FilterWrapper : public irs::FilterWithBoost {
 namespace sort {
 
 struct Boost : public irs::ScorerBase<Boost, void> {
-  struct ScoreFunctionImpl : public irs::ScoreFunctionImpl {
+  struct ScoreOperator : public irs::ScoreOperator {
    public:
-    explicit ScoreFunctionImpl(irs::score_t boost) noexcept : boost(boost) {}
+    explicit ScoreOperator(irs::score_t boost) noexcept : boost(boost) {}
 
     void Score(irs::score_t* res, size_t n) noexcept override {
       std::fill_n(res, n, boost);
@@ -199,7 +199,7 @@ struct CustomSort : public irs::ScorerBase<CustomSort, void> {
     const CustomSort& _sort;
   };
 
-  struct Scorer : public irs::ScoreFunctionImpl {
+  struct Scorer : public irs::ScoreOperator {
     Scorer(const CustomSort& sort, const irs::ScoreContext& ctx)
       : ctx(ctx), sort(sort) {}
 
@@ -263,7 +263,8 @@ struct CustomSort : public irs::ScorerBase<CustomSort, void> {
   std::function<irs::ScoreFunction(const irs::ScoreContext& ctx)>
     prepare_scorer;
   std::function<irs::TermCollector::ptr()> prepare_term_collector;
-  std::function<void(irs::ScoreFunctionImpl*, irs::score_t*, size_t n)> scorer_score;
+  std::function<void(irs::ScoreOperator*, irs::score_t*, size_t n)>
+    scorer_score;
   std::function<void()> term_reset;
   std::function<void()> field_reset;
 };
@@ -299,7 +300,7 @@ struct FrequencySort : public irs::ScorerBase<FrequencySort, StatsT> {
     }
   };
 
-  struct Scorer : public irs::ScoreFunctionImpl {
+  struct Scorer : public irs::ScoreOperator {
     Scorer(irs::doc_id_t docs_count) : count(docs_count) {}
 
     void Score(irs::score_t* res, size_t n) noexcept override {
@@ -347,7 +348,7 @@ struct FrequencySort : public irs::ScorerBase<FrequencySort, StatsT> {
 };
 
 struct FrequencyScore : public irs::ScorerBase<FrequencyScore, StatsT> {
-  struct Scorer : public irs::ScoreFunctionImpl {
+  struct Scorer : public irs::ScoreOperator {
     Scorer(const irs::FreqBlockAttr* fr) : freq(fr) {}
 
     void Score(irs::score_t* res, size_t n) noexcept override {

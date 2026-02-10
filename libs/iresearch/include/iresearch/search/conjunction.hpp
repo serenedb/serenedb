@@ -102,7 +102,7 @@ template<typename T>
 using EmptyWrapper = T;
 
 template<ScoreMergeType MergeType>
-class ConjunctionScore : public ScoreFunctionImpl {
+class ConjunctionScore : public ScoreOperator {
  public:
   static ScoreFunction Make(const PrepareScoreContext& ctx, auto& itrs) {
     std::vector<ScoreFunction> sources;
@@ -144,17 +144,6 @@ class ConjunctionScore : public ScoreFunctionImpl {
     for (++source; source != end; ++source) {
       source->ScoreBlock(_scores.data());
       Merge<MergeType>(res, _scores.data(), kScoreBlock);
-    }
-  }
-
-  void ScoreMaxBlock(score_t* res) noexcept final {
-    auto source = _sources.begin();
-    auto end = _sources.end();
-
-    source->ScoreMaxBlock(res);
-    for (++source; source != end; ++source) {
-      source->ScoreMaxBlock(_scores.data());
-      Merge<MergeType>(res, _scores.data(), kMaxScoreBlock);
     }
   }
 
@@ -217,12 +206,12 @@ class Conjunction : public ConjunctionBase<Adapter> {
   }
 
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
-    if (this->_merge_type == ScoreMergeType::Noop) {
-      return ScoreFunction::Default();
-    }
-
-    return ResolveMergeType(this->_merge_type, [&]<ScoreMergeType MT> {
-      return ConjunctionScore<MT>::Make(ctx, this->_itrs);
+    return ResolveMergeType(this->_merge_type, [&]<ScoreMergeType MergeType> {
+      if constexpr (MergeType == ScoreMergeType::Noop) {
+        return ScoreFunction::Default();
+      } else {
+        return ConjunctionScore<MergeType>::Make(ctx, this->_itrs);
+      }
     });
   }
 

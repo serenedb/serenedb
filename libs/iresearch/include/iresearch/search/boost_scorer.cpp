@@ -44,7 +44,7 @@ void Impl(T* IRS_RESTRICT res, size_t n,
   }
 }
 
-class VolatileBoostScoreCtx : public ScoreFunctionImpl {
+class VolatileBoostScoreCtx : public ScoreOperator {
  public:
   VolatileBoostScoreCtx(const score_t* volatile_boost, score_t boost) noexcept
     : _const_boost{boost}, _volatile_boost{volatile_boost} {
@@ -59,8 +59,8 @@ class VolatileBoostScoreCtx : public ScoreFunctionImpl {
     Impl(res, kScoreBlock, _volatile_boost, _const_boost);
   }
 
-  void ScoreMaxBlock(score_t* res) noexcept final {
-    Impl(res, kMaxScoreBlock, _volatile_boost, _const_boost);
+  void ScorePostingBlock(score_t* res) noexcept final {
+    Impl(res, kPostingBlock, _volatile_boost, _const_boost);
   }
 
  private:

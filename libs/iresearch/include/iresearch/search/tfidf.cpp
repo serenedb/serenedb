@@ -206,7 +206,7 @@ IRS_FORCE_INLINE void TfIdf(T* IRS_RESTRICT res, size_t n,
 }
 
 template<bool HasNorm, bool HasFilterBoost>
-struct TfidfScore : public ScoreFunctionImpl {
+struct TfidfScore : public ScoreOperator {
   TfidfScore(const uint32_t* norm, score_t boost, TFIDFStats idf,
              const FreqBlockAttr* freq,
              const score_t* filter_boost = nullptr) noexcept
@@ -226,8 +226,8 @@ struct TfidfScore : public ScoreFunctionImpl {
                                    idf);
   }
 
-  void ScoreMaxBlock(score_t* res) noexcept final {
-    TfIdf<HasNorm, HasFilterBoost>(res, kMaxScoreBlock, freq->value,
+  void ScorePostingBlock(score_t* res) noexcept final {
+    TfIdf<HasNorm, HasFilterBoost>(res, kPostingBlock, freq->value,
                                    TryGetValue(norm), TryGetValue(filter_boost),
                                    idf);
   }

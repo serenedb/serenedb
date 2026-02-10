@@ -510,8 +510,9 @@ TEST_P(TermsFilterTestCase, min_match) {
         return irs::ScoreFunction::Constant(ctx.boost);
       }
 
-      struct ScoreFunctionImpl : public irs::ScoreFunctionImpl {
-        ScoreFunctionImpl(const tests::DocBlockAttr* doc, irs::score_t boost) noexcept
+      struct ScoreOperator : public irs::ScoreOperator {
+        ScoreOperator(const tests::DocBlockAttr* doc,
+                      irs::score_t boost) noexcept
           : doc{doc}, boost{boost} {}
 
         void Score(irs::score_t* res, size_t n) noexcept override {
@@ -524,7 +525,7 @@ TEST_P(TermsFilterTestCase, min_match) {
         irs::score_t boost;
       };
 
-      return irs::ScoreFunction::Make<ScoreFunctionImpl>(doc, ctx.boost);
+      return irs::ScoreFunction::Make<ScoreOperator>(doc, ctx.boost);
     };
 
     const auto filter =

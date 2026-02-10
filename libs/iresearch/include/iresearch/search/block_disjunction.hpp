@@ -599,7 +599,7 @@ class BlockDisjunction : public DocIterator {
 
   static_assert(kWindow <= std::numeric_limits<uint16_t>::max());
 
-  struct BlockScore final : ScoreFunctionImpl {
+  struct BlockScore final : ScoreOperator {
     std::array<score_t, kScoreBlock> result;
     alignas(4096) std::array<score_t, kWindow> score_window;
 

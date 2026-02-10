@@ -50,7 +50,7 @@ struct DocIdScorer : irs::ScorerBase<void> {
   }
 
   irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
-    struct ScorerContext : irs::ScoreFunctionImpl {
+    struct ScorerContext : irs::ScoreOperator {
       ScorerContext(const irs::FreqBlockAttr* freq,
                     irs::doc_id_t divisor) noexcept
         : freq{freq}, divisor{divisor} {}
@@ -59,9 +59,8 @@ struct DocIdScorer : irs::ScorerBase<void> {
         ASSERT_NE(nullptr, res);
         for (size_t i = 0; i < n; ++i) {
           auto doc_id = freq ? freq->value[i] : next_doc++;
-          res[i] = divisor == 0
-                     ? static_cast<irs::score_t>(doc_id)
-                     : static_cast<irs::score_t>(doc_id % divisor);
+          res[i] = divisor == 0 ? static_cast<irs::score_t>(doc_id)
+                                : static_cast<irs::score_t>(doc_id % divisor);
         }
       }
 

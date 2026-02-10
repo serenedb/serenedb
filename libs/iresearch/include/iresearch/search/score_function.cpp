@@ -30,7 +30,7 @@
 namespace irs {
 namespace {
 
-class ConstanScore : public ScoreFunctionImpl {
+class ConstanScore : public ScoreOperator {
  public:
   explicit ConstanScore(score_t value) noexcept : _value{value} {}
 
@@ -42,8 +42,8 @@ class ConstanScore : public ScoreFunctionImpl {
     std::fill_n(res, kScoreBlock, _value);
   }
 
-  void ScoreMaxBlock(score_t* res) noexcept final {
-    std::fill_n(res, kMaxScoreBlock, _value);
+  void ScorePostingBlock(score_t* res) noexcept final {
+    std::fill_n(res, kPostingBlock, _value);
   }
 
  private:
@@ -62,8 +62,8 @@ void DefaultScore::ScoreBlock(score_t* res) noexcept {
   std::memset(res, 0, sizeof(score_t) * kScoreBlock);
 }
 
-void DefaultScore::ScoreMaxBlock(score_t* res) noexcept {
-  std::memset(res, 0, sizeof(score_t) * kMaxScoreBlock);
+void DefaultScore::ScorePostingBlock(score_t* res) noexcept {
+  std::memset(res, 0, sizeof(score_t) * kPostingBlock);
 }
 
 ScoreFunction ScoreFunction::Constant(score_t value) noexcept {

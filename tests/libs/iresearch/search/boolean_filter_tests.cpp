@@ -15683,7 +15683,7 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential_ordered) {
                                 const irs::TermCollector*) -> void {
       ++collector_finish_count;
     };
-    sort.scorer_score = [&](irs::ScoreFunctionImpl*, irs::score_t* score,
+    sort.scorer_score = [&](irs::ScoreOperator*, irs::score_t* score,
                             size_t n) -> void {
       ASSERT_EQ(1, n);
       ++scorer_score_count;
@@ -15783,7 +15783,7 @@ TEST_P(BooleanFilterTestCase, not_sequential_ordered) {
                                 const irs::TermCollector*) -> void {
       ++collector_finish_count;
     };
-    sort.scorer_score = [&](irs::ScoreFunctionImpl*, irs::score_t* score,
+    sort.scorer_score = [&](irs::ScoreOperator*, irs::score_t* score,
                             size_t n) -> void {
       ASSERT_EQ(1, n);
       ++scorer_score_count;

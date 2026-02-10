@@ -1140,7 +1140,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_middle3_test) {
   counter.Reset();
 }
 
-struct TestScoreFunctionImpl : public irs::ScoreFunctionImpl {
+struct TestScoreFunctionImpl : public irs::ScoreOperator {
   TestScoreFunctionImpl(std::vector<size_t>* f, const irs::FreqAttr* p,
                         std::vector<irs::score_t>* b,
                         const irs::FilterBoost* fb) noexcept

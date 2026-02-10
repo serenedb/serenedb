@@ -114,7 +114,7 @@ struct DocIdScorer : public irs::ScorerBase<void> {
   }
 
   irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
-    struct ScorerContext : irs::ScoreFunctionImpl {
+    struct ScorerContext : irs::ScoreOperator {
       explicit ScorerContext(const tests::DocBlockAttr* doc) noexcept
         : doc{doc} {}
 

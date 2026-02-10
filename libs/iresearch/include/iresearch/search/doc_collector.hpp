@@ -43,22 +43,6 @@ size_t ExecuteTopKWithCount(const DirectoryReader& reader, const Filter& filter,
     min_threshold = pivot->second;
   };
 
-  std::array<doc_id_t, kScoreBlock> docs;
-  std::array<score_t, kScoreBlock> scores;
-  auto copy = [&](size_t n) IRS_FORCE_INLINE noexcept {
-    if (min_threshold > 0) [[unlikely]] {
-      for (size_t i = 0; i < n; ++i) {
-        if (scores[i] > min_threshold) {
-          hits[offset++] = {docs[i], scores[i]};
-        }
-      }
-    } else {
-      for (size_t i = 0; i < n; ++i) {
-        hits[offset++] = {docs[i], scores[i]};
-      }
-    }
-  };
-
   ColumnCollector columns;
   for (auto& segment : reader) {
     columns.Clear();
@@ -75,17 +59,12 @@ size_t ExecuteTopKWithCount(const DirectoryReader& reader, const Filter& filter,
     });
 
     while (true) {
-      const auto [accepted, total] = it->Collect(scorer, columns, docs, scores, min_threshold);
+      const auto [accepted, total] = it->Collect(scorer, columns, hits.subspan(offset), min_threshold);
       if (accepted == 0) {
         break;
       }
       count += total;
-
-      if (accepted == kScoreBlock) [[likely]] {
-        copy(kScoreBlock);
-      } else {
-        copy(accepted);
-      }
+      offset += accepted;
 
       if (offset >= max_size) {
         repivot();

@@ -93,6 +93,14 @@ struct DocIterator : AttributeProvider {
     return Collect(*this, scorer, columns, docs, scores, min_threshold);
   }
 
+  virtual std::pair<uint32_t, uint32_t> Collect(const ScoreFunction& scorer,
+                                                 ColumnCollector& columns,
+                                                 std::span<std::pair<doc_id_t, score_t>> buffer,
+                                                 score_t min_threshold) {
+    SDB_ASSERT(kScoreBlock <= buffer.size());
+    return Collect(*this, scorer, columns, buffer, min_threshold);
+  }
+
   virtual void FetchScoreArgs(uint16_t index) {}
 
   // Iterate from current position, calling func(doc_id) per doc.
@@ -147,6 +155,17 @@ struct DocIterator : AttributeProvider {
         if (i) {
           columns.Collect(docs.first(i));
           scorer.Score(scores.data(), i);
+          if (min_threshold > 0) [[unlikely]] {
+            size_t accepted = 0;
+            for (size_t j = 0; j < i; ++j) {
+              if (scores[j] > min_threshold) {
+                docs[accepted] = docs[j];
+                scores[accepted] = scores[j];
+                ++accepted;
+              }
+            }
+            return {static_cast<uint32_t>(accepted), static_cast<uint32_t>(i)};
+          }
         }
         return {static_cast<uint32_t>(i), static_cast<uint32_t>(i)};
       }
@@ -155,8 +174,75 @@ struct DocIterator : AttributeProvider {
     }
 
     SDB_ASSERT(i == kScoreBlock);
-    columns.Collect(docs);
+    columns.Collect(std::span{docs});
     scorer.ScoreBlock(scores.data());
+    if (min_threshold > 0) [[unlikely]] {
+      size_t accepted = 0;
+      for (size_t j = 0; j < kScoreBlock; ++j) {
+        if (scores[j] > min_threshold) {
+          docs[accepted] = docs[j];
+          scores[accepted] = scores[j];
+          ++accepted;
+        }
+      }
+      return {static_cast<uint32_t>(accepted), kScoreBlock};
+    }
+    return {kScoreBlock, kScoreBlock};
+  }
+
+  template<typename Iterator>
+  static std::pair<uint32_t, uint32_t> Collect(Iterator& it, const ScoreFunction& scorer,
+                                                ColumnCollector& columns,
+                                                std::span<std::pair<doc_id_t, score_t>> buffer,
+                                                score_t min_threshold) {
+    SDB_ASSERT(kScoreBlock <= buffer.size());
+
+    std::array<doc_id_t, kScoreBlock> docs;
+    std::array<score_t, kScoreBlock> scores;
+
+    size_t i = 0;
+    for (; i < docs.size(); ++i) {
+      const auto doc = it.advance();
+      if (doc_limits::eof(doc)) [[unlikely]] {
+        if (i) {
+          columns.Collect(std::span{docs.data(), i});
+          scorer.Score(scores.data(), i);
+          if (min_threshold > 0) [[unlikely]] {
+            size_t accepted = 0;
+            for (size_t j = 0; j < i; ++j) {
+              if (scores[j] > min_threshold) {
+                buffer[accepted] = {docs[j], scores[j]};
+                ++accepted;
+              }
+            }
+            return {static_cast<uint32_t>(accepted), static_cast<uint32_t>(i)};
+          }
+          for (size_t j = 0; j < i; ++j) {
+            buffer[j] = {docs[j], scores[j]};
+          }
+        }
+        return {static_cast<uint32_t>(i), static_cast<uint32_t>(i)};
+      }
+      docs[i] = doc;
+      it.FetchScoreArgs(i);
+    }
+
+    SDB_ASSERT(i == kScoreBlock);
+    columns.Collect(std::span{docs});
+    scorer.ScoreBlock(scores.data());
+    if (min_threshold > 0) [[unlikely]] {
+      size_t accepted = 0;
+      for (size_t j = 0; j < kScoreBlock; ++j) {
+        if (scores[j] > min_threshold) {
+          buffer[accepted] = {docs[j], scores[j]};
+          ++accepted;
+        }
+      }
+      return {static_cast<uint32_t>(accepted), kScoreBlock};
+    }
+    for (size_t j = 0; j < kScoreBlock; ++j) {
+      buffer[j] = {docs[j], scores[j]};
+    }
     return {kScoreBlock, kScoreBlock};
   }
 

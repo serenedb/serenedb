@@ -25,7 +25,9 @@
 
 #include <iresearch/formats/formats.hpp>
 #include <iresearch/search/score_function.hpp>
+#include <memory>
 
+#include "basics/memory.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
@@ -485,12 +487,21 @@ class NGramSimilarityDocIterator : public DocIterator, private ScoreCtx {
     _boost = boost;
   }
 
-  ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
-    _collected_boost = std::make_unique<score_t[]>(kScoreBlock);
-    std::get<BoostBlockAttr>(_attrs).value = _collected_boost.get();
+  ~NGramSimilarityDocIterator() noexcept {
+    if (_collected_boost) {
+      std::allocator<score_t>{}.deallocate(_collected_boost, kScoreBlock);
+    }
+    if (_collected_freq) {
+      std::allocator<uint32_t>{}.deallocate(_collected_freq, kScoreBlock);
+    }
+  }
 
-    _collected_freq = std::make_unique<uint32_t[]>(kScoreBlock);
-    std::get<FreqBlockAttr>(_attrs).value = _collected_freq.get();
+  ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
+    _collected_boost = std::allocator<score_t>{}.allocate(kScoreBlock);
+    std::get<BoostBlockAttr>(_attrs).value = _collected_boost;
+
+    _collected_freq = std::allocator<uint32_t>{}.allocate(kScoreBlock);
+    std::get<FreqBlockAttr>(_attrs).value = _collected_freq;
 
     SDB_ASSERT(ctx.scorer);
     return ctx.scorer->PrepareScorer({
@@ -566,8 +577,8 @@ class NGramSimilarityDocIterator : public DocIterator, private ScoreCtx {
   Checker _checker;
   Approx _approx;
   Attributes _attrs;
-  std::unique_ptr<score_t[]> _collected_boost;
-  std::unique_ptr<uint32_t[]> _collected_freq;
+  score_t* _collected_boost = nullptr;  // TODO(gnusi): maybe array?
+  uint32_t* _collected_freq = nullptr;
 };
 
 CostAdapters Execute(const NGramState& query_state,

@@ -27,6 +27,7 @@
 #include <iresearch/search/filter.hpp>
 #include <iresearch/search/score_function.hpp>
 #include <iresearch/search/scorer.hpp>
+#include <memory>
 
 #include "basics/empty.hpp"
 #include "disjunction.hpp"
@@ -932,8 +933,14 @@ class PhraseIterator : public DocIterator {
       irs::GetMutable<CostAttr>(&_approx);
 
     if constexpr (Frequency::kHasFreq) {
-      _collected_freqs = std::make_unique<uint32_t[]>(kScoreBlock);
-      std::get<FreqBlockAttr>(_attrs).value = this->_collected_freqs.get();
+      _collected_freqs = std::allocator<uint32_t>{}.allocate(kScoreBlock);
+      std::get<FreqBlockAttr>(_attrs).value = this->_collected_freqs;
+    }
+  }
+
+  ~PhraseIterator() {
+    if constexpr (Frequency::kHasFreq) {
+      std::allocator<uint32_t>{}.deallocate(_collected_freqs, kScoreBlock);
     }
   }
 
@@ -1033,8 +1040,8 @@ class PhraseIterator : public DocIterator {
   Conjunction _approx;
   Frequency _freq;
   Attributes _attrs;
-  [[no_unique_address]] utils::Need<
-    !Frequency::kOneShot, std::unique_ptr<uint32_t[]>> _collected_freqs;
+  [[no_unique_address]] utils::Need<!Frequency::kOneShot, uint32_t*>
+    _collected_freqs;
 };
 
 }  // namespace irs

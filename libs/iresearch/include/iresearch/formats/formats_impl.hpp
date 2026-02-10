@@ -1184,6 +1184,14 @@ class PostingIteratorBase : public DocIterator {
   static_assert(IteratorTraits::kBlockSize % kScoreBlock == 0,
                 "kBlockSize must be a multiple of kScoreBlock");
 
+  ~PostingIteratorBase() {
+    if constexpr (IteratorTraits::Frequency()) {
+      if (_doc_in) {
+        std::allocator<uint32_t>{}.deallocate(_collected_freqs, kScoreBlock);
+      }
+    }
+  }
+
   IRS_NO_INLINE Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);
   }
@@ -1325,7 +1333,7 @@ class PostingIteratorBase : public DocIterator {
         this->_left_in_leaf = static_cast<uint32_t>(doc_end - doc_ptr);
 
         if constexpr (IteratorTraits::Frequency()) {
-          std::get<FreqBlockAttr>(_attrs).value = this->_collected_freqs.get();
+          std::get<FreqBlockAttr>(_attrs).value = this->_collected_freqs;
         }
         return std::pair{doc_value, empty};
       });
@@ -1382,8 +1390,8 @@ class PostingIteratorBase : public DocIterator {
   const byte_type* _stats = nullptr;
   score_t _boost = kNoBoost;
   uint32_t _enc_buf[IteratorTraits::kBlockSize];  // buffer for encoding
-  [[no_unique_address]] utils::Need<
-    IteratorTraits::Frequency(), std::unique_ptr<uint32_t[]>> _collected_freqs;
+  [[no_unique_address]] utils::Need<IteratorTraits::Frequency(), uint32_t*>
+    _collected_freqs;
   [[no_unique_address]] utils::Need<
     IteratorTraits::Frequency(), uint32_t[IteratorTraits::kBlockSize]> _freqs;
   doc_id_t _docs[IteratorTraits::kBlockSize];
@@ -1736,8 +1744,8 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
 
     if constexpr (IteratorTraits::Frequency()) {
       auto& freq_block = std::get<FreqBlockAttr>(this->_attrs);
-      this->_collected_freqs = std::make_unique<uint32_t[]>(kScoreBlock);
-      freq_block.value = this->_collected_freqs.get();
+      this->_collected_freqs = std::allocator<uint32_t>{}.allocate(kScoreBlock);
+      freq_block.value = this->_collected_freqs;
     }
 
     this->_doc_in->Seek(term_state.doc_start);
@@ -1747,10 +1755,10 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
     auto* doc = std::end(this->_docs) - 1;
     *doc = doc_limits::min() + term_state.e_single_doc;
     if constexpr (IteratorTraits::Frequency()) {
-      this->_collected_freqs = std::make_unique<uint32_t[]>(1);
-
       auto* freq = std::end(this->_freqs) - 1;
       *freq = term_state.freq;
+
+      this->_collected_freqs = freq;
 
       auto& freq_block = std::get<FreqBlockAttr>(this->_attrs);
       freq_block.value = freq;

@@ -59,15 +59,24 @@ void SetNameToBuffer(std::string& name_buffer, catalog::Column::Id column_id) {
 }  // namespace
 
 SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
-  irs::IndexWriter::Transaction& trx)
+  irs::IndexWriter::Transaction& trx, std::span<const catalog::Column::Id> columns)
   : _trx(trx) {
   _pk_field.PrepareForStringValue();
   _pk_field.name = kPkFieldName;
+  _columns.reserve(columns.size());
+  for (auto c : columns) {
+    _columns.insert(c);
+  }
+  SDB_ASSERT(!_columns.empty());
 }
 
 bool SearchSinkInsertBaseImpl::SwitchColumnImpl(velox::TypeKind kind,
                                                 bool have_nulls,
                                                 catalog::Column::Id column_id) {
+  if (!_columns.contains(column_id)) {
+    _current_writer = nullptr;
+    return false;
+  }
   if (kind == facebook::velox::TypeKind::UNKNOWN) {
     // for UNKNOWN type we always have nulls so no need of separate nulls
     // handling
@@ -83,7 +92,10 @@ bool SearchSinkInsertBaseImpl::SwitchColumnImpl(velox::TypeKind kind,
 
 void SearchSinkInsertBaseImpl::WriteImpl(
   std::span<const rocksdb::Slice> cell_slices, std::string_view full_key) {
-  SDB_ASSERT(_current_writer);
+  if(!_current_writer) {
+    // not indexing current column
+    return;
+  }
   SDB_ASSERT(_document.has_value());
   _current_writer(full_key, cell_slices);
   _document->NextDocument();

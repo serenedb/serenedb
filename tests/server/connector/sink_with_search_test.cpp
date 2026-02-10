@@ -197,9 +197,12 @@ class DataSinkWithSearchTest : public ::testing::Test,
     index_transaction = _data_writer->GetBatch();
     ASSERT_NE(data_transaction, nullptr);
     std::vector<std::unique_ptr<SinkInsertWriter>> index_writers;
+    std::vector<catalog::Column::Id> col_idx;
+    col_idx.append_range(all_column_oids |
+                         std::views::transform([](auto& a) { return a.id; }));
     index_writers.emplace_back(
       std::make_unique<connector::search::SearchSinkInsertWriter>(
-        index_transaction));
+        index_transaction, col_idx));
     primary_key::Create(*data, pk, written_row_keys);
     size_t rows_affected = 0;
     RocksDBInsertDataSink sink("", *data_transaction, *_cf_handles.front(),
@@ -249,7 +252,7 @@ class DataSinkWithSearchTest : public ::testing::Test,
     std::vector<std::unique_ptr<SinkUpdateWriter>> index_writers;
     index_writers.emplace_back(
       std::make_unique<connector::search::SearchSinkUpdateWriter>(
-        index_transaction));
+        index_transaction, all_column_oids));
     size_t rows_affected = 0;
 
     RocksDBUpdateDataSink sink("", *data_transaction, *_cf_handles.front(),

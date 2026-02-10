@@ -31,6 +31,7 @@
 #include "basics/down_cast.h"
 #include "basics/result.h"
 #include "catalog/catalog.h"
+#include "catalog/secondary_index.h"
 #include "catalog/table.h"
 #include "query/config.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
@@ -87,14 +88,16 @@ class Transaction : public Config {
   catalog::TableStats GetTableStats(ObjectId table_id) const;
 
   template<
-    InvocableWith<void(irs::IndexWriter::Transaction&, const IndexShard&),
-                  void(rocksdb::Transaction&, const IndexShard&)>
+    InvocableWith<void(irs::IndexWriter::Transaction&, const IndexShard&, std::span<const catalog::Column::Id>),
+                  void(rocksdb::Transaction&, const IndexShard&, std::span<const catalog::Column::Id>)>
       Visit>
   void EnsureIndexesTransactions(ObjectId table_id, Visit&& visit) {
     auto snapshot = GetCatalogSnapshot();
     SDB_ASSERT(snapshot->GetObject(table_id)->GetType() ==
                catalog::ObjectType::Table);
     for (auto index_shard : snapshot->GetIndexShardsByTable(table_id)) {
+      auto index = snapshot->GetObject<catalog::Index>(index_shard->GetId());
+      SDB_ASSERT(index);
       if (index_shard->GetType() == IndexType::Inverted) {
         auto& inverted_index_shard =
           basics::downCast<search::InvertedIndexShard>(*index_shard);
@@ -104,12 +107,12 @@ class Transaction : public Config {
           transaction = std::make_unique<irs::IndexWriter::Transaction>(
             inverted_index_shard.GetTransaction());
         }
-        visit(*transaction, *index_shard);
+        visit(*transaction, *index_shard, index->GetColumnIds());
       } else {
         if (!_rocksdb_transaction) [[unlikely]] {
           CreateRocksDBTransaction();
         }
-        visit(*_rocksdb_transaction, *index_shard);
+        visit(*_rocksdb_transaction, *index_shard, index->GetColumnIds());
       }
     }
   }

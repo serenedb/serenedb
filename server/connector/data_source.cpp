@@ -34,16 +34,11 @@
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 
 namespace sdb::connector {
-
 namespace {
 
 constexpr uint64_t kInitialVectorSize = 1;  // arbitrary value
 
 }  // namespace
-
-/////////////////////////////////////////////////////////////////////////////
-
-/////////////////////////////////////////////////////////////////////////////
 
 RocksDBDataSource::RocksDBDataSource(
   velox::memory::MemoryPool& memory_pool, const rocksdb::Snapshot* snapshot,
@@ -131,9 +126,6 @@ std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
 
       auto read_column_id = _column_ids[col_idx];
       if (column_id == catalog::Column::kGeneratedPKId) {
-        // TODO: optimize this case - if there is at least one non-generated
-        // column we can read generated column in one pass with actually stored
-        // column.
         SDB_ASSERT(
           _effective_column_id != catalog::Column::kGeneratedPKId,
           "RocksDBDataSource: generated PK column is not an effective one");

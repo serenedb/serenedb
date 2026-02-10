@@ -190,33 +190,33 @@ Filter& Negate(Source& parent) {
                                               : parent));
 }
 
-enum class ComparisonOp { KNone, KLt, KLe, KGt, KGe };
+enum class ComparisonOp { None, Lt, Le, Gt, Ge };
 
 ComparisonOp GetComparisonOp(const std::string& name) {
   if (name == "lte" || name.ends_with("_lte")) {
-    return ComparisonOp::KLe;
+    return ComparisonOp::Le;
   } else if (name == "lt" || name.ends_with("_lt")) {
-    return ComparisonOp::KLt;
+    return ComparisonOp::Lt;
   } else if (name == "gte" || name.ends_with("_gte")) {
-    return ComparisonOp::KGe;
+    return ComparisonOp::Ge;
   } else if (name == "gt" || name.ends_with("_gt")) {
-    return ComparisonOp::KGt;
+    return ComparisonOp::Gt;
   }
-  return ComparisonOp::KNone;
+  return ComparisonOp::None;
 }
 
 ComparisonOp InvertComparisonOp(ComparisonOp op) {
   switch (op) {
-    case ComparisonOp::KLe:
-      return ComparisonOp::KGt;
-    case ComparisonOp::KGe:
-      return ComparisonOp::KLt;
-    case ComparisonOp::KGt:
-      return ComparisonOp::KLe;
-    case ComparisonOp::KLt:
-      return ComparisonOp::KGe;
-    case ComparisonOp::KNone:
-      return ComparisonOp::KNone;
+    case ComparisonOp::Le:
+      return ComparisonOp::Gt;
+    case ComparisonOp::Ge:
+      return ComparisonOp::Lt;
+    case ComparisonOp::Gt:
+      return ComparisonOp::Le;
+    case ComparisonOp::Lt:
+      return ComparisonOp::Ge;
+    case ComparisonOp::None:
+      return ComparisonOp::None;
   }
 }
 
@@ -232,7 +232,7 @@ Result MakeGroup(Source& parent, const VeloxFilterContext& ctx,
         if (!call) {
           return false;
         }
-        return GetComparisonOp(call->name()) != ComparisonOp::KNone;
+        return GetComparisonOp(call->name()) != ComparisonOp::None;
       })) {
     // DeMorgan`s law could be used if we negate group of comparisons. As
     // comparisons consume negation by invertion we can reduce number of NOT
@@ -394,16 +394,16 @@ Result FromVeloxComparison(irs::BooleanFilter& filter,
     *filter.mutable_field() = std::move(field_name);
     filter.boost(ctx.boost);
     switch (op) {
-      case ComparisonOp::KLt:
+      case ComparisonOp::Lt:
         filter.mutable_options()->range.max_type = irs::BoundType::Exclusive;
         return (filter.mutable_options()->range.max);
-      case ComparisonOp::KLe:
+      case ComparisonOp::Le:
         filter.mutable_options()->range.max_type = irs::BoundType::Inclusive;
         return (filter.mutable_options()->range.max);
-      case ComparisonOp::KGt:
+      case ComparisonOp::Gt:
         filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
         return (filter.mutable_options()->range.min);
-      case ComparisonOp::KGe:
+      case ComparisonOp::Ge:
         filter.mutable_options()->range.min_type = irs::BoundType::Inclusive;
         return (filter.mutable_options()->range.min);
       default:
@@ -645,7 +645,7 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
   // BETWEEN is currently executed as conjunction of comparisons so it also goes
   // here.
   auto comparison_op = GetComparisonOp(call->name());
-  if (comparison_op != ComparisonOp::KNone) {
+  if (comparison_op != ComparisonOp::None) {
     return FromVeloxComparison(filter, ctx, call, comparison_op);
   }
 

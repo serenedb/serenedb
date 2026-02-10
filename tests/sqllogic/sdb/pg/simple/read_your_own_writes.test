@@ -167,30 +167,28 @@ SET sdb_read_your_own_writes = on;
 statement ok
 CREATE TABLE t (id INTEGER PRIMARY KEY, value INTEGER);
 
-#statement ok
-#BEGIN;
-#
-#statement count 1
-#INSERT INTO t VALUES (1, 10);
-#
-#query
-#SELECT * FROM t ORDER BY id;
-#----
-#id	value
-#1	10
-#
-#statement count 1
-#DELETE FROM t WHERE id = 1;
-#
-#statement ok
-#COMMIT;
-#
-#halt
-#
-#query
-#SELECT * FROM t ORDER BY id;
-#----
-#id	value
+statement ok
+BEGIN;
+
+statement count 1
+INSERT INTO t VALUES (1, 10);
+
+query
+SELECT * FROM t ORDER BY id;
+----
+id	value
+1	10
+
+statement count 1
+DELETE FROM t WHERE id = 1;
+
+statement ok
+COMMIT;
+
+query
+SELECT * FROM t ORDER BY id;
+----
+id	value
 
 statement ok
 SET sdb_read_your_own_writes = off;
@@ -201,13 +199,11 @@ BEGIN;
 statement count 1
 INSERT INTO t VALUES (1, 10);
 
-#statement count 0
-#DELETE FROM t WHERE id = 10;
+statement count 0
+DELETE FROM t WHERE id = 1;
 
 statement ok
 COMMIT;
-
-halt
 
 query
 SELECT * FROM t ORDER BY id;

@@ -119,6 +119,7 @@ void Transaction::Destroy() noexcept {
   _storage_snapshot.reset();
   _rocksdb_transaction.reset();
   _rocksdb_snapshot = nullptr;
+  _table_rows_deltas.clear();
 }
 
 catalog::TableStats Transaction::GetTableStats(ObjectId table_id) const {
@@ -139,7 +140,6 @@ void Transaction::ApplyTableStatsDiffs() {
       table_shard->UpdateNumRows(delta);
     }
   }
-  _table_rows_deltas.clear();
 }
 
 }  // namespace sdb::query

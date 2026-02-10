@@ -96,8 +96,7 @@ RocksDBRYOWDataSource::RocksDBRYOWDataSource(
   : RocksDBDataSource(memory_pool, cf, std::move(row_type),
                       std::move(column_ids), effective_column_id, object_key,
                       transaction.GetSnapshot()),
-    _transaction{transaction} {
-}
+    _transaction{transaction} {}
 
 RocksDBSnapshotDataSource::RocksDBSnapshotDataSource(
   velox::memory::MemoryPool& memory_pool, rocksdb::DB& db,
@@ -108,8 +107,7 @@ RocksDBSnapshotDataSource::RocksDBSnapshotDataSource(
   : RocksDBDataSource(memory_pool, cf, std::move(row_type),
                       std::move(column_ids), effective_column_id, object_key,
                       snapshot),
-    _db{db} {
-}
+    _db{db} {}
 
 void RocksDBRYOWDataSource::addSplit(
   std::shared_ptr<velox::connector::ConnectorSplit> split) {

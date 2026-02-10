@@ -87,6 +87,7 @@ velox::TypeKind ExtractFieldName(const VeloxFilterContext& ctx,
   return static_cast<const SereneDBColumn*>(it->second)->type()->kind();
 }
 
+// Maps velox kinds to native types used in iresearch
 template<typename Func, typename... Args>
 Result DispatchValue(velox::TypeKind kind, Func&& func, Args&&... args) {
   irs::bstring term_value;
@@ -466,7 +467,7 @@ Result FromVeloxIn(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
   }
   if (call->inputs().size() == 2) {
     // Case with second argument as ARRAY of values or single value.
-    if (value->kind() != velox::TypeKind::ARRAY) {
+    if (!value->isNull() && value->kind() != velox::TypeKind::ARRAY) {
       values_list.push_back(std::move(value.value()));
     }
   } else {
@@ -477,12 +478,15 @@ Result FromVeloxIn(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
       if (!value.has_value()) {
         return {ERROR_BAD_PARAMETER, "Failed to evaluate value as constant"};
       }
-      values_list.push_back(std::move(value.value()));
+      if (!value->isNull()) {
+        values_list.push_back(std::move(value.value()));
+      }
+    }
+    if (values_list.empty()) {
+      AddFilter<irs::Empty>(filter);
+      return {};
     }
   }
-
-  // Empty IN is syntax error.
-  SDB_ASSERT(!values_list.empty() || !value.value().array().empty());
 
   std::string field_name;
   const auto kind = ExtractFieldName(ctx, *field_typed, field_name);
@@ -498,6 +502,9 @@ Result FromVeloxIn(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
       *terms_filter.mutable_field() = field_name;
       auto& opts = *terms_filter.mutable_options();
       for (const auto& value : value_array) {
+        if (value.isNull()) {
+          continue;
+        }
         if constexpr (std::is_same_v<T, velox::StringView>) {
           irs::StringTokenizer stream;
           const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);

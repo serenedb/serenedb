@@ -1149,6 +1149,28 @@ TEST_F(SearchFilterBuilderTest, test_InNotConst2) {
                false);
 }
 
+TEST_F(SearchFilterBuilderTest, test_InOperatorIntegersNulls) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+
+  AddTermsFilter<int32_t>(expected, 1, {10, 20, 30, 40});
+
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE a IN (10, 20, NULL, 30, 40)",
+               std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_InOperatorOnlyNulls) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  AddTermsFilter<int32_t>(expected, 1, {});
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE a IN (NULL, NULL)",
+               std::move(columns), true);
+}
+
 // ============================================================================
 // IS NULL Tests
 // ============================================================================

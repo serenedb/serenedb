@@ -55,8 +55,8 @@ struct FieldMeta;
 struct FlushState;
 struct ReaderState;
 class IndexOutput;
-struct DataInput;
-struct IndexInput;
+class DataInput;
+class IndexInput;
 struct PostingsWriter;
 struct Scorer;
 struct WandWriter;
@@ -164,7 +164,7 @@ struct PostingsReader {
 
   // in - corresponding stream
   // features - the set of features available for segment
-  virtual void prepare(IndexInput& in, const ReaderState& state,
+  virtual void prepare(DataInput& in, const ReaderState& state,
                        IndexFeatures features) = 0;
 
   // Parses input block "in" and populate "attrs" collection with

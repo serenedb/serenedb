@@ -1362,8 +1362,7 @@ void BlockIterator::Load(IndexInput& in, Encryption::Stream* cipher) {
   _leaf = ShiftUnpack64(in.ReadV64(), block_size);
 
   // for non-encrypted index try direct buffer access first
-  _suffix.begin =
-    cipher ? nullptr : in.ReadBuffer(block_size, BufferHint::PERSISTENT);
+  _suffix.begin = cipher ? nullptr : in.ReadData(block_size);
   _suffix.block.clear();
 
   if (!_suffix.begin) {
@@ -1386,7 +1385,7 @@ void BlockIterator::Load(IndexInput& in, Encryption::Stream* cipher) {
   block_size = in.ReadV64();
 
   // try direct buffer access first
-  _stats.begin = in.ReadBuffer(block_size, BufferHint::PERSISTENT);
+  _stats.begin = in.ReadData(block_size);
   _stats.block.clear();
 
   if (!_stats.begin) {

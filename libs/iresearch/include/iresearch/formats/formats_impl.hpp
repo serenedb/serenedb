@@ -81,7 +81,7 @@ inline void WriteStrings(IndexOutput& out, const auto& strings) {
   }
 }
 
-inline std::vector<std::string> ReadStrings(IndexInput& in) {
+inline std::vector<std::string> ReadStrings(DataInput& in) {
   const size_t size = in.ReadV32();
 
   if (size > std::numeric_limits<uint32_t>::max()) [[unlikely]] {
@@ -899,7 +899,7 @@ IRS_FORCE_INLINE void CopyState(SkipState& to, const SkipState& from) noexcept {
 }
 
 template<typename FieldTraits>
-IRS_FORCE_INLINE void ReadState(SkipState& state, IndexInput& in) {
+IRS_FORCE_INLINE void ReadState(SkipState& state, DataInput& in) {
   state.doc = in.ReadV32();
   state.doc_ptr += in.ReadV64();
 
@@ -1495,14 +1495,18 @@ static_assert(kMaxScorers < WandContext::kDisable);
 
 template<uint8_t Value>
 struct Extent {
-  static constexpr uint8_t GetExtent() noexcept { return Value; }
+  IRS_FORCE_INLINE static constexpr uint8_t GetExtent() noexcept {
+    return Value;
+  }
 };
 
 template<>
 struct Extent<WandContext::kDisable> {
   Extent(uint8_t value) noexcept : value{value} {}
 
-  constexpr uint8_t GetExtent() const noexcept { return value; }
+  IRS_FORCE_INLINE constexpr uint8_t GetExtent() const noexcept {
+    return value;
+  }
 
   uint8_t value;
 };
@@ -1532,7 +1536,7 @@ auto ResolveExtent(uint8_t extent, Func&& func) {
 // Remove to many Readers implementations
 
 template<typename WandExtent>
-void CommonSkipWandData(WandExtent extent, IndexInput& in) {
+void CommonSkipWandData(WandExtent extent, DataInput& in) {
   switch (auto count = extent.GetExtent(); count) {
     case 0:
       return;
@@ -1551,9 +1555,10 @@ void CommonSkipWandData(WandExtent extent, IndexInput& in) {
 }
 
 template<typename WandExtent>
-void CommonReadWandData(WandExtent wextent, uint8_t index,
-                        const ScoreFunction& func, WandSource& ctx,
-                        IndexInput& in, score_t& score) {
+IRS_FORCE_INLINE void CommonReadWandData(WandExtent wextent, uint8_t index,
+                                         const ScoreFunction& func,
+                                         WandSource& ctx, DataInput& in,
+                                         score_t& score) {
   const auto extent = wextent.GetExtent();
   SDB_ASSERT(extent);
   SDB_ASSERT(index < extent);
@@ -1617,8 +1622,9 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
       Disable();  // Prevent using skip-list by default
     }
 
-    void ReadMaxScore(uint8_t index, const ScoreFunction& func, WandSource& ctx,
-                      IndexInput& in, score_t& score) {
+    IRS_FORCE_INLINE void ReadMaxScore(uint8_t index, const ScoreFunction& func,
+                                       WandSource& ctx, DataInput& in,
+                                       score_t& score) {
       CommonReadWandData(static_cast<WandExtent>(*this), index, func, ctx, in,
                          score);
     }
@@ -1643,7 +1649,7 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
       _skip_levels.resize(num_levels);
     }
 
-    bool IsLess(size_t level, doc_id_t target) const noexcept {
+    IRS_FORCE_INLINE bool IsLess(size_t level, doc_id_t target) const noexcept {
       return _skip_levels[level].doc < target;
     }
 
@@ -1654,9 +1660,25 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
       CopyState<IteratorTraits>(next, *_prev);
     }
 
-    void Read(size_t level, IndexInput& in);
-    void Seal(size_t level);
-    size_t AdjustLevel(size_t level) const noexcept { return level; }
+    void Read(size_t level, DataInput& in) {
+      auto& next = _skip_levels[level];
+      // Store previous step on the same level
+      CopyState<IteratorTraits>(*_prev, next);
+      ReadState<FieldTraits>(next, in);
+      SkipWandData(in);
+    }
+
+    void Seal(size_t level) {
+      auto& next = _skip_levels[level];
+      // Store previous step on the same level
+      CopyState<IteratorTraits>(*_prev, next);
+      // Stream exhausted
+      next.doc = doc_limits::eof();
+    }
+
+    IRS_FORCE_INLINE size_t AdjustLevel(size_t level) const noexcept {
+      return level;
+    }
 
     void Reset(SkipState& state) noexcept {
       SDB_ASSERT(absl::c_is_sorted(
@@ -1666,12 +1688,12 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
       _prev = &state;
     }
 
-    doc_id_t UpperBound() const noexcept {
+    IRS_FORCE_INLINE doc_id_t UpperBound() const noexcept {
       SDB_ASSERT(!_skip_levels.empty());
       return _skip_levels.back().doc;
     }
 
-    void SkipWandData(IndexInput& in) {
+    IRS_FORCE_INLINE void SkipWandData(DataInput& in) {
       CommonSkipWandData(static_cast<WandExtent>(*this), in);
     }
 
@@ -1686,41 +1708,21 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
     SkipState* _prev{};  // Pointer to skip context used by skip reader
   };
 
-  IRS_FORCE_INLINE void Refill(doc_id_t prev_doc) final;
+  void Refill(doc_id_t prev_doc) final {
+    if (this->_left_in_list >= IteratorTraits::kBlockSize) [[likely]] {
+      ReadBlock(prev_doc);
+    } else {
+      ReadTailBlock(prev_doc);
+    }
+  }
   IRS_FORCE_INLINE void ReadBlock(doc_id_t prev_doc);
   IRS_FORCE_INLINE void ReadTailBlock(doc_id_t prev_doc);
-  IRS_FORCE_INLINE void SeekToBlock(doc_id_t target) final;
+  void SeekToBlock(doc_id_t target) final;
 
   uint64_t _skip_offs{};
   SkipReader<ReadSkip> _skip;
   uint32_t _docs_count{};
 };
-
-template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
-void PostingIteratorImpl<IteratorTraits, FieldTraits,
-                         WandExtent>::ReadSkip::Read(size_t level,
-                                                     IndexInput& in) {
-  auto& next = _skip_levels[level];
-
-  // Store previous step on the same level
-  CopyState<IteratorTraits>(*_prev, next);
-
-  ReadState<FieldTraits>(next, in);
-
-  SkipWandData(in);
-}
-
-template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
-void PostingIteratorImpl<IteratorTraits, FieldTraits,
-                         WandExtent>::ReadSkip::Seal(size_t level) {
-  auto& next = _skip_levels[level];
-
-  // Store previous step on the same level
-  CopyState<IteratorTraits>(*_prev, next);
-
-  // Stream exhausted
-  next.doc = doc_limits::eof();
-}
 
 template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
 void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
@@ -1811,16 +1813,6 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
     _skip.Reader().SkipWandData(*this->_doc_in);
   }
   _docs_count = term_state.docs_count;
-}
-
-template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
-void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Refill(
-  doc_id_t prev_doc) {
-  if (this->_left_in_list >= IteratorTraits::kBlockSize) [[likely]] {
-    ReadBlock(prev_doc);
-  } else {
-    ReadTailBlock(prev_doc);
-  }
 }
 
 template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
@@ -2196,7 +2188,7 @@ inline uint64_t WriteDocumentMask(IndexOutput& out, const auto& docs_mask) {
 }
 
 inline std::pair<const std::shared_ptr<DocumentMask>, uint64_t>
-ReadDocumentMask(IndexInput& in, IResourceManager& rm) {
+ReadDocumentMask(DataInput& in, IResourceManager& rm) {
   auto count = in.ReadV32();
 
   if (!count) {
@@ -2374,7 +2366,7 @@ class PostingsReaderBase : public PostingsReader {
     return bytes;
   }
 
-  void prepare(IndexInput& in, const ReaderState& state,
+  void prepare(DataInput& in, const ReaderState& state,
                IndexFeatures features) final;
 
   size_t decode(const byte_type* in, IndexFeatures field_features,
@@ -2391,8 +2383,7 @@ class PostingsReaderBase : public PostingsReader {
   size_t _block_size;
 };
 
-inline void PostingsReaderBase::prepare(IndexInput& in,
-                                        const ReaderState& state,
+inline void PostingsReaderBase::prepare(DataInput& in, const ReaderState& state,
                                         IndexFeatures features) {
   std::string buf;
 
@@ -2602,7 +2593,7 @@ class PostingsReaderImpl final : public PostingsReaderBase {
 };
 
 template<typename FieldTraits, size_t N>
-void BitUnionImpl(IndexInput& doc_in, doc_id_t docs_count, uint32_t (&docs)[N],
+void BitUnionImpl(DataInput& doc_in, doc_id_t docs_count, uint32_t (&docs)[N],
                   uint32_t (&enc_buf)[N], size_t* set) {
   constexpr auto kBits{BitsRequired<std::remove_pointer_t<decltype(set)>>()};
   size_t num_blocks = docs_count / FieldTraits::kBlockSize;
@@ -2911,24 +2902,30 @@ struct FormatTraits128 {
   static constexpr uint32_t kBlockSize = SIMDBlockSize;
   static_assert(kBlockSize <= doc_limits::eof());
 
-  IRS_FORCE_INLINE static void PackBlock(const uint32_t* IRS_RESTRICT decoded,
-                                         uint32_t* IRS_RESTRICT encoded,
-                                         uint32_t bits) noexcept {
-    ::simdpackwithoutmask(decoded, reinterpret_cast<AlignType*>(encoded), bits);
-  }
-
-  IRS_FORCE_INLINE static void write_block_delta(IndexOutput& out, uint32_t* in,
+  IRS_FORCE_INLINE static void write_block_delta(DataOutput& out, uint32_t* in,
                                                  uint32_t prev, uint32_t* buf) {
     DeltaEncode<kBlockSize>(in, prev);
-    bitpack::write_block32(PackBlock, out, in, buf, kBlockSize);
+    bitpack::write_block32(
+      [](const uint32_t* IRS_RESTRICT decoded, uint32_t* IRS_RESTRICT encoded,
+         uint32_t bits) IRS_FORCE_INLINE {
+        ::simdpackwithoutmask(decoded, reinterpret_cast<AlignType*>(encoded),
+                              bits);
+      },
+      out, in, buf, kBlockSize);
   }
 
-  IRS_FORCE_INLINE static void write_block(IndexOutput& out, const uint32_t* in,
+  IRS_FORCE_INLINE static void write_block(DataOutput& out, const uint32_t* in,
                                            uint32_t* buf) {
-    bitpack::write_block32(PackBlock, out, in, buf, kBlockSize);
+    bitpack::write_block32(
+      [](const uint32_t* IRS_RESTRICT decoded, uint32_t* IRS_RESTRICT encoded,
+         uint32_t bits) IRS_FORCE_INLINE {
+        ::simdpackwithoutmask(decoded, reinterpret_cast<AlignType*>(encoded),
+                              bits);
+      },
+      out, in, buf, kBlockSize);
   }
 
-  IRS_FORCE_INLINE static void read_block_delta(IndexInput& in, uint32_t* buf,
+  IRS_FORCE_INLINE static void read_block_delta(DataInput& in, uint32_t* buf,
                                                 uint32_t* out, uint32_t prev) {
     bitpack::read_block_delta32(
       [](uint32_t prev, uint32_t* IRS_RESTRICT decoded,
@@ -2939,7 +2936,7 @@ struct FormatTraits128 {
       in, buf, out, kBlockSize, prev);
   }
 
-  IRS_FORCE_INLINE static void read_block(IndexInput& in, uint32_t* buf,
+  IRS_FORCE_INLINE static void read_block(DataInput& in, uint32_t* buf,
                                           uint32_t* out) {
     bitpack::read_block32(
       [](uint32_t* IRS_RESTRICT decoded, const uint32_t* IRS_RESTRICT encoded,
@@ -2950,7 +2947,7 @@ struct FormatTraits128 {
       in, buf, out, kBlockSize);
   }
 
-  IRS_FORCE_INLINE static void skip_block(IndexInput& in) {
+  IRS_FORCE_INLINE static void skip_block(DataInput& in) {
     bitpack::skip_block32(in, kBlockSize);
   }
 };

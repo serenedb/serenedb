@@ -23,8 +23,7 @@
 #include "iresearch/store/mmap_directory.hpp"
 
 #include "basics/file_utils_ext.hpp"
-#include "basics/memory.hpp"
-#include "iresearch/store/store_utils.hpp"
+#include "iresearch/store/mmap_index_input.hpp"
 #include "iresearch/utils/mmap_utils.hpp"
 
 namespace irs {
@@ -141,44 +140,17 @@ size_t BytesInCache(uint8_t* addr, size_t length) {
 }
 #endif
 
-// Input stream for memory mapped directory
-class MMapIndexInput final : public BytesViewInput {
- public:
-  explicit MMapIndexInput(std::shared_ptr<MMapHandle>&& handle) noexcept
-    : _handle{std::move(handle)} {
-    if (_handle && _handle->size()) [[likely]] {
-      SDB_ASSERT(_handle->addr() != MAP_FAILED);
-      const auto* begin = reinterpret_cast<byte_type*>(_handle->addr());
-      BytesViewInput::reset(begin, _handle->size());
-    } else {
-      _handle.reset();
-    }
-  }
-
-  uint64_t CountMappedMemory() const final {
-#ifdef __linux__
-    return _handle ? BytesInCache(static_cast<uint8_t*>(_handle->addr()),
-                                  _handle->size())
-                   : 0;
-#else
-    return 0;
-#endif
-  }
-
-  MMapIndexInput(const MMapIndexInput& rhs) noexcept
-    : BytesViewInput{rhs}, _handle{rhs._handle} {}
-
-  ptr Dup() const final { return std::make_unique<MMapIndexInput>(*this); }
-
-  ptr Reopen() const final { return Dup(); }
-
- private:
-  MMapIndexInput& operator=(const MMapIndexInput&) = delete;
-
-  std::shared_ptr<mmap_utils::MMapHandle> _handle;
-};
-
 }  // namespace
+
+uint64_t MMapIndexInput::CountMappedMemory() const {
+#ifdef __linux__
+  return _handle ? BytesInCache(static_cast<uint8_t*>(_handle->addr()),
+                                _handle->size())
+                 : 0;
+#else
+  return 0;
+#endif
+}
 
 MMapDirectory::MMapDirectory(std::filesystem::path path,
                              DirectoryAttributes attrs,

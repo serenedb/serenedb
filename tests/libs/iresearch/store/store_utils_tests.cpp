@@ -40,110 +40,33 @@ using namespace irs;
 
 namespace tests::detail {
 
-//////////////////////////////////////////////////////////////////////////////
-/// @class bytes_input
-//////////////////////////////////////////////////////////////////////////////
-class BytesInput : public DataInput, public bytes_view {
+class BytesInput : public BytesViewInput {
  public:
   BytesInput() = default;
-  explicit BytesInput(bytes_view data);
   BytesInput(BytesInput&& rhs) noexcept;
   BytesInput& operator=(BytesInput&& rhs) noexcept;
-  BytesInput& operator=(bytes_view data);
 
-  void Skip(size_t size) {
-    SDB_ASSERT(_pos + size <= this->data() + this->size());
-    _pos += size;
-  }
-
-  void Seek(size_t pos) {
-    SDB_ASSERT(this->begin() + pos <= this->end());
-    _pos = this->data() + pos;
-  }
-
-  uint64_t Position() const final { return std::distance(this->data(), _pos); }
-
-  uint64_t Length() const final { return this->size(); }
-
-  bool IsEOF() const final { return _pos >= (this->data() + this->size()); }
-
-  const byte_type* ReadBuffer(size_t /*count*/, BufferHint /*hint*/) final {
-    return nullptr;
-  }
-
-  byte_type ReadByte() final {
-    SDB_ASSERT(_pos < this->data() + this->size());
-    return *_pos++;
-  }
-
-  size_t ReadBytes(byte_type* b, size_t size) final;
-
-  // append to buf
-  void ReadBytes(bstring& buf, size_t size);
-
-  int32_t ReadI32() final { return irs::read<uint32_t>(_pos); }
-
-  int64_t ReadI64() final { return irs::read<uint64_t>(_pos); }
-
-  uint32_t ReadV32() final { return irs::vread<uint32_t>(_pos); }
-
-  uint64_t ReadV64() final { return irs::vread<uint64_t>(_pos); }
+  explicit BytesInput(bytes_view data);
 
  private:
   bstring _buf;
-  const byte_type* _pos{_buf.c_str()};
 };
 
-BytesInput::BytesInput(bytes_view data)
-  : _buf(data.data(), data.size()), _pos(this->_buf.c_str()) {
-  static_cast<bytes_view&>(*this) = {_buf.data(), data.size()};
-}
+BytesInput::BytesInput(bytes_view data) : _buf{data} { reset(_buf); }
 
 BytesInput::BytesInput(BytesInput&& other) noexcept
-  : _buf(std::move(other._buf)), _pos(other._pos) {
-  static_cast<bytes_view&>(*this) = {_buf.data(), other.size()};
-  other._pos = other._buf.c_str();
-  static_cast<bytes_view&>(other) = {other.data(), 0};
-}
-
-BytesInput& BytesInput::operator=(bytes_view data) {
-  if (this != &data) {
-    _buf.assign(data);
-    _pos = this->_buf.c_str();
-    static_cast<bytes_view&>(*this) = {_buf.data(), data.size()};
-  }
-
-  return *this;
+  : _buf{std::move(other._buf)} {
+  reset(_buf);
+  other.reset({});
 }
 
 BytesInput& BytesInput::operator=(BytesInput&& other) noexcept {
   if (this != &other) {
     _buf = std::move(other._buf);
-    _pos = _buf.c_str();
-    static_cast<bytes_view&>(*this) = {_buf.data(), other.size()};
-    other._pos = other._buf.c_str();
-    static_cast<bytes_view&>(other) = {other.data(), 0};
+    reset(_buf);
+    other.reset({});
   }
-
   return *this;
-}
-
-void BytesInput::ReadBytes(bstring& buf, size_t size) {
-  auto used = buf.size();
-
-  buf.resize(used + size);
-
-  [[maybe_unused]] const auto read = ReadBytes(&(buf[0]) + used, size);
-  SDB_ASSERT(read == size);
-}
-
-size_t BytesInput::ReadBytes(byte_type* b, size_t size) {
-  SDB_ASSERT(_pos + size <= this->data() + this->size());
-  size =
-    std::min(size, size_t(std::distance(_pos, this->data() + this->size())));
-  std::memcpy(b, _pos, sizeof(byte_type) * size);
-  _pos += size;
-  return size;
 }
 
 void AvgEncodeDecodeCore(size_t step, size_t count) {
@@ -1041,11 +964,11 @@ TEST(store_utils_tests, test_remapped_bytes_view) {
                                          0x9, 0xA, 0xB, 0xC, 0xD, 0xE, 0xF};
 
   {
-    RemappedBytesViewInput::mapping mapping;
+    RemappedBytesViewInput::Mapping mapping;
     mapping.emplace_back(3, 0);
     RemappedBytesViewInput in(bytes_view(data.data(), data.size()),
                               std::move(mapping));
-    auto actual = in.ReadBuffer(3, 2, BufferHint::NORMAL);
+    auto actual = in.ReadView(3, 2);
     ASSERT_EQ(actual[0], data[0]);
     ASSERT_EQ(5, in.Position());
     std::array<irs::byte_type, 2> read;
@@ -1057,28 +980,28 @@ TEST(store_utils_tests, test_remapped_bytes_view) {
     ASSERT_EQ(0x5, read[0]);
     ASSERT_EQ(0x6, read[1]);
     ASSERT_EQ(9, in.Position());
-    auto actual2 = in.ReadBuffer(4, 2, BufferHint::NORMAL);
+    auto actual2 = in.ReadView(4, 2);
     ASSERT_EQ(actual2[0], data[1]);
     ASSERT_EQ(6, in.Position());
-    auto actual3 = in.ReadBuffer(17, 1, BufferHint::NORMAL);
+    auto actual3 = in.ReadView(17, 1);
     ASSERT_EQ(actual3[0], data[14]);
     ASSERT_EQ(18, in.Position());
   }
 
   {
-    RemappedBytesViewInput::mapping mapping;
+    RemappedBytesViewInput::Mapping mapping;
     mapping.emplace_back(3, 0);
     mapping.emplace_back(5, 7);
     mapping.emplace_back(25, 14);
     RemappedBytesViewInput in(bytes_view(data.data(), data.size()),
                               std::move(mapping));
-    auto actual = in.ReadBuffer(3, 2, BufferHint::NORMAL);
+    auto actual = in.ReadView(3, 2);
     ASSERT_EQ(actual[1], data[1]);
     ASSERT_EQ(5, in.Position());
-    auto actual2 = in.ReadBuffer(5, 2, BufferHint::NORMAL);
+    auto actual2 = in.ReadView(5, 2);
     ASSERT_EQ(actual2[0], data[7]);
     ASSERT_EQ(7, in.Position());
-    auto actual3 = in.ReadBuffer(25, 1, BufferHint::NORMAL);
+    auto actual3 = in.ReadView(25, 1);
     ASSERT_EQ(actual3[0], data[14]);
     ASSERT_EQ(26, in.Position());
   }

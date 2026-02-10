@@ -53,14 +53,14 @@ constexpr bool rl(const uint32_t bits) noexcept { return kAllEqual == bits; }
 
 // skip block of the specified size that was previously
 // written with the corresponding 'write_block' function
-IRS_FORCE_INLINE inline void skip_block32(IndexInput& in, uint32_t size) {
+IRS_FORCE_INLINE inline void skip_block32(DataInput& in, uint32_t size) {
   SDB_ASSERT(size);
 
   const uint32_t bits = in.ReadByte();
   if (kAllEqual == bits) {
     in.ReadV32();
   } else {
-    in.Seek(in.Position() + packed::BytesRequired32(size, bits));
+    in.Skip(packed::BytesRequired32(size, bits));
   }
 }
 
@@ -154,7 +154,7 @@ IRS_FORCE_INLINE void read_block32(UnpackFunc&& unpack, DataInput& in,
   }
 
   const auto required = packed::BytesRequired32(size, bits);
-  const auto* buf = in.ReadBuffer(required, BufferHint::NORMAL);
+  const auto* buf = in.ReadView(required);
   if (buf) [[likely]] {
     encoded = const_cast<uint32_t*>(reinterpret_cast<const uint32_t*>(buf));
   } else {
@@ -185,7 +185,7 @@ IRS_FORCE_INLINE void read_block_delta32(UnpackFunc&& unpack, DataInput& in,
   }
 
   const size_t required = packed::BytesRequired32(size, bits);
-  const auto* buf = in.ReadBuffer(required, BufferHint::NORMAL);
+  const auto* buf = in.ReadView(required);
   if (buf) [[likely]] {
     encoded = const_cast<uint32_t*>(reinterpret_cast<const uint32_t*>(buf));
   } else {

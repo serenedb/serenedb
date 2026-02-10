@@ -69,7 +69,7 @@ class SearchSinkWriterTest : public ::testing::Test,
     irs::IndexWriterOptions options;
     options.column_info = column_info_provider;
     options.features = feature_provider;
-    _codec = irs::formats::Get("1_5avx");
+    _codec = irs::formats::Get("1_5simd");
     _data_writer =
       irs::IndexWriter::Make(_dir, _codec, irs::kOmCreate, options);
   }
@@ -86,7 +86,6 @@ TEST_F(SearchSinkWriterTest, InsertDeleteMultipleColumns) {
   auto trx = _data_writer->GetBatch();
 
   SearchSinkInsertWriter sink{trx};
-  sink.Init(4);
 
   const std::vector<sdb::catalog::Column::Id> col_id{1, 2, 3, 4, 5};
   const std::vector<std::string_view> pk{
@@ -114,29 +113,40 @@ TEST_F(SearchSinkWriterTest, InsertDeleteMultipleColumns) {
     std::string_view{"\xb\x0\x0\x0\x0\x0\x0\x0", 8},
     std::string_view{"\xc\x0\x0\x0\x0\x0\x0\x0", 8}};
 
+  // First batch: rows 0 and 1
+  sink.Init(2);
   sink.SwitchColumn(velox::TypeKind::INTEGER, false, col_id[0]);
   sink.Write({rocksdb::Slice(integer_data[0])}, pk[0]);
   sink.Write({rocksdb::Slice(integer_data[1])}, pk[1]);
-  sink.Write({rocksdb::Slice(integer_data[2])}, pk[2]);
-  sink.Write({rocksdb::Slice(integer_data[3])}, pk[3]);
   sink.SwitchColumn(velox::TypeKind::VARCHAR, false, col_id[1]);
   sink.Write({rocksdb::Slice(string_data[0])}, pk[0]);
   sink.Write({rocksdb::Slice(string_data[1])}, pk[1]);
-  sink.Write({rocksdb::Slice(string_data[2])}, pk[2]);
-  sink.Write({rocksdb::Slice(string_data[3])}, pk[3]);
   sink.SwitchColumn(velox::TypeKind::BOOLEAN, false, col_id[2]);
   sink.Write({rocksdb::Slice(boolean_data[0])}, pk[0]);
   sink.Write({rocksdb::Slice(boolean_data[1])}, pk[1]);
-  sink.Write({rocksdb::Slice(boolean_data[2])}, pk[2]);
-  sink.Write({rocksdb::Slice(boolean_data[3])}, pk[3]);
   sink.SwitchColumn(velox::TypeKind::HUGEINT, false, col_id[3]);
   sink.Write({rocksdb::Slice(huge_data[0])}, pk[0]);
   sink.Write({rocksdb::Slice(huge_data[1])}, pk[1]);
-  sink.Write({rocksdb::Slice(huge_data[2])}, pk[2]);
-  sink.Write({rocksdb::Slice(huge_data[3])}, pk[3]);
   sink.SwitchColumn(velox::TypeKind::BIGINT, false, col_id[4]);
   sink.Write({rocksdb::Slice(big_data[0])}, pk[0]);
   sink.Write({rocksdb::Slice(big_data[1])}, pk[1]);
+  sink.Finish();
+
+  // Second batch: rows 2 and 3 - reusing the same sink (tests document reset)
+  sink.Init(2);
+  sink.SwitchColumn(velox::TypeKind::INTEGER, false, col_id[0]);
+  sink.Write({rocksdb::Slice(integer_data[2])}, pk[2]);
+  sink.Write({rocksdb::Slice(integer_data[3])}, pk[3]);
+  sink.SwitchColumn(velox::TypeKind::VARCHAR, false, col_id[1]);
+  sink.Write({rocksdb::Slice(string_data[2])}, pk[2]);
+  sink.Write({rocksdb::Slice(string_data[3])}, pk[3]);
+  sink.SwitchColumn(velox::TypeKind::BOOLEAN, false, col_id[2]);
+  sink.Write({rocksdb::Slice(boolean_data[2])}, pk[2]);
+  sink.Write({rocksdb::Slice(boolean_data[3])}, pk[3]);
+  sink.SwitchColumn(velox::TypeKind::HUGEINT, false, col_id[3]);
+  sink.Write({rocksdb::Slice(huge_data[2])}, pk[2]);
+  sink.Write({rocksdb::Slice(huge_data[3])}, pk[3]);
+  sink.SwitchColumn(velox::TypeKind::BIGINT, false, col_id[4]);
   sink.Write({rocksdb::Slice(big_data[2])}, pk[2]);
   sink.Write({rocksdb::Slice(big_data[3])}, pk[3]);
   sink.Finish();

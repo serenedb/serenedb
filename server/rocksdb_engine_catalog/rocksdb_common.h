@@ -83,27 +83,5 @@ Result CompactAll(rocksdb::DB* db, bool change_level,
                   bool compact_bottom_most_level,
                   std::atomic<bool>* canceled = nullptr);
 
-// optional switch to std::function to reduce amount of includes and
-// to avoid template
-// this helper is not meant for transactional usage!
-template<typename T>  // T is an invokeable that takes a rocksdb::Iterator*
-void IterateBounds(rocksdb::TransactionDB* db, const RocksDBKeyBounds& bounds,
-                   T callback) {
-  const rocksdb::Slice end = bounds.end();
-
-  rocksdb::ReadOptions options;
-  options.verify_checksums = false;
-  options.fill_cache = false;
-  options.async_io = true;
-  options.iterate_upper_bound = &end;
-  options.prefix_same_as_start = true;
-  options.adaptive_readahead = true;
-  std::unique_ptr<rocksdb::Iterator> it(
-    db->NewIterator(options, bounds.columnFamily()));
-  for (it->Seek(bounds.start()); it->Valid(); it->Next()) {
-    callback(it.get());
-  }
-}
-
 }  // namespace rocksutils
 }  // namespace sdb

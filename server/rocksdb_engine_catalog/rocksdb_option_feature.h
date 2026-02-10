@@ -67,6 +67,8 @@ class RocksDBOptionFeature final : public SerenedFeature {
     return _prune_wait_time_initial;
   }
 
+  bool ioUringEnabled() const noexcept;
+
  private:
   uint64_t _transaction_lock_stripes;
   int64_t _transaction_lock_timeout;
@@ -142,6 +144,7 @@ class RocksDBOptionFeature final : public SerenedFeature {
   bool _partition_files_for_primary_index_cf;
   bool _partition_files_for_edge_index_cf;
   bool _partition_files_for_vpack_index_cf;
+  std::string _io_uring;
 
  public:
   /// minimum required percentage of free disk space for considering the
@@ -196,5 +199,7 @@ class RocksDBOptionFeature final : public SerenedFeature {
   std::array<uint64_t, RocksDBColumnFamilyManager::kNumberOfColumnFamilies>
     _max_write_buffer_number_cf;
 };
+
+bool IsIOUringEnabled();
 
 }  // namespace sdb

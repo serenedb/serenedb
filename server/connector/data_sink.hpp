@@ -294,11 +294,12 @@ class RocksDBUpdateDataSink final
 class SSTInsertDataSink final
   : public RocksDBDataSinkBase<SSTSinkWriter, SinkInsertWriter> {
  public:
-  SSTInsertDataSink(rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
-                    velox::memory::MemoryPool& memory_pool, ObjectId object_key,
-                    std::span<const velox::column_index_t> key_childs,
-                    std::vector<ColumnInfo> columns,
-                    std::string_view rocksdb_directory);
+  SSTInsertDataSink(
+    rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
+    velox::memory::MemoryPool& memory_pool, ObjectId object_key,
+    std::span<const velox::column_index_t> key_childs,
+    std::vector<ColumnInfo> columns,
+    std::vector<std::unique_ptr<SinkInsertWriter>>&& index_writers);
 
   void appendData(velox::RowVectorPtr input) final;
 

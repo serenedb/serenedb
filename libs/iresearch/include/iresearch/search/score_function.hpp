@@ -36,6 +36,10 @@ inline constexpr size_t kMaxScoreBlock = 4 * kScoreBlock;
 
 struct ScoreFunctionImpl : memory::Managed {
   virtual void Score(score_t* res, size_t n) noexcept = 0;
+  virtual void ScoreBlock(score_t* res) noexcept { Score(res, kScoreBlock); }
+  virtual void ScoreMaxBlock(score_t* res) noexcept {
+    Score(res, kMaxScoreBlock);
+  }
   virtual void Score(score_t* res) noexcept { Score(res, 1); }
 };
 
@@ -43,6 +47,8 @@ struct DefaultScore final : public ScoreFunctionImpl {
   static DefaultScore gInstance;
 
   void Score(score_t* res, size_t n) noexcept final;
+  void ScoreBlock(score_t* res) noexcept final;
+  void ScoreMaxBlock(score_t* res) noexcept final;
 };
 
 class ScoreFunction {
@@ -69,27 +75,24 @@ class ScoreFunction {
   static ScoreFunction Wrap(ScoreFunctionImpl& impl) noexcept {
     return ScoreFunction{memory::to_managed<ScoreFunctionImpl>(impl)};
   }
-  static ScoreFunction Default() {
+  static ScoreFunction Default() noexcept {
     return ScoreFunction::Wrap(DefaultScore::gInstance);
   }
   static ScoreFunction Constant(score_t value) noexcept;
 
-  ScoreFunction() : ScoreFunction{Default()} {}
+  ScoreFunction() noexcept : ScoreFunction{Default()} {}
   ScoreFunction(ScoreFunction&& other) noexcept
     : max{std::move(other.max)},
-      _impl{std::exchange(other._impl,
-                          memory::to_managed<ScoreFunctionImpl>(
-                            DefaultScore::gInstance))} {}
+      _impl{std::exchange(other._impl, memory::to_managed<ScoreFunctionImpl>(
+                                         DefaultScore::gInstance))} {}
   ScoreFunction& operator=(ScoreFunction&& other) noexcept {
     if (this != &other) {
       max = std::move(other.max);
-      _impl = std::exchange(other._impl,
-                            memory::to_managed<ScoreFunctionImpl>(
-                              DefaultScore::gInstance));
+      _impl = std::exchange(other._impl, memory::to_managed<ScoreFunctionImpl>(
+                                           DefaultScore::gInstance));
     }
     return *this;
   }
-  ~ScoreFunction() noexcept = default;
 
   bool IsDefault() const noexcept {
     return _impl.get() == &DefaultScore::gInstance;
@@ -102,16 +105,15 @@ class ScoreFunction {
 
   IRS_FORCE_INLINE void ScoreBlock(score_t* res) const noexcept {
     SDB_ASSERT(_impl);
-    _impl->Score(res, kScoreBlock);
+    _impl->ScoreBlock(res);
   }
 
   IRS_FORCE_INLINE void ScoreMaxBlock(score_t* res) const noexcept {
     SDB_ASSERT(_impl);
-    _impl->Score(res, kMaxScoreBlock);
+    _impl->ScoreMaxBlock(res);
   }
 
   IRS_FORCE_INLINE void Score(score_t* res) const noexcept {
-    SDB_ASSERT(_impl);
     _impl->Score(res);
   }
   // TODO(mbkkt) Remove it, use Score
@@ -123,7 +125,9 @@ class ScoreFunction {
 
  private:
   explicit ScoreFunction(memory::managed_ptr<ScoreFunctionImpl> impl) noexcept
-    : _impl{std::move(impl)} {}
+    : _impl{std::move(impl)} {
+    SDB_ASSERT(_impl);
+  }
 
   memory::managed_ptr<ScoreFunctionImpl> _impl;
 };

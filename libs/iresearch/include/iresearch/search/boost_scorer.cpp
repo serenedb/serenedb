@@ -40,7 +40,7 @@ template<typename T>
 void Impl(T* IRS_RESTRICT res, size_t n,
           const score_t* IRS_RESTRICT volatile_boost, score_t boost) noexcept {
   for (size_t i = 0; i < n; ++i) {
-    *GetScoreValue(res[i]) = volatile_boost[i] * boost;
+    res[i] = volatile_boost[i] * boost;
   }
 }
 
@@ -53,6 +53,14 @@ class VolatileBoostScoreCtx : public ScoreFunctionImpl {
 
   void Score(score_t* res, size_t n) noexcept final {
     Impl(res, n, _volatile_boost, _const_boost);
+  }
+
+  void ScoreBlock(score_t* res) noexcept final {
+    Impl(res, kScoreBlock, _volatile_boost, _const_boost);
+  }
+
+  void ScoreMaxBlock(score_t* res) noexcept final {
+    Impl(res, kMaxScoreBlock, _volatile_boost, _const_boost);
   }
 
  private:

@@ -52,6 +52,15 @@
 namespace irs {
 namespace {
 
+template<typename T>
+constexpr const T* TryGetValue(const T* value) noexcept {
+  return value;
+}
+
+constexpr std::nullptr_t TryGetValue(utils::Empty /*value*/) noexcept {
+  return nullptr;
+}
+
 struct TFIDFFieldCollector final : FieldCollector {
   // number of documents containing the matched field
   // (possibly without matching terms)
@@ -181,7 +190,7 @@ IRS_FORCE_INLINE void TfIdf(T* IRS_RESTRICT res, size_t n,
                             [[maybe_unused]] const score_t* IRS_RESTRICT boost,
                             float_t idf) noexcept {
   for (size_t i = 0; i < n; ++i) {
-    *GetScoreValue(res[i]) = [&] {
+    res[i] = [&] {
       if constexpr (HasNorm && HasBoost) {
         return boost[i] * Tfidf(freq[i], idf) /
                std::sqrtf(static_cast<float_t>(norm[i]));
@@ -199,28 +208,33 @@ IRS_FORCE_INLINE void TfIdf(T* IRS_RESTRICT res, size_t n,
 template<bool HasNorm, bool HasFilterBoost>
 struct TfidfScore : public ScoreFunctionImpl {
   TfidfScore(const uint32_t* norm, score_t boost, TFIDFStats idf,
-               const FreqBlockAttr* freq,
-               const score_t* filter_boost = nullptr) noexcept
+             const FreqBlockAttr* freq,
+             const score_t* filter_boost = nullptr) noexcept
     : freq{freq},
       filter_boost{filter_boost},
       norm{norm},
       idf{boost * idf.value} {}
 
   void Score(score_t* res, size_t n) noexcept final {
-    SDB_ASSERT(res);
-    if constexpr (HasNorm && HasFilterBoost) {
-      TfIdf<true, true>(res, n, freq->value, norm, filter_boost, idf);
-    } else if constexpr (HasNorm) {
-      TfIdf<true, false>(res, n, freq->value, norm, nullptr, idf);
-    } else if constexpr (HasFilterBoost) {
-      TfIdf<false, true>(res, n, freq->value, nullptr, filter_boost, idf);
-    } else {
-      TfIdf<false, false>(res, n, freq->value, nullptr, nullptr, idf);
-    }
+    TfIdf<HasNorm, HasFilterBoost>(res, n, freq->value, TryGetValue(norm),
+                                   TryGetValue(filter_boost), idf);
+  }
+
+  void ScoreBlock(score_t* res) noexcept final {
+    TfIdf<HasNorm, HasFilterBoost>(res, kScoreBlock, freq->value,
+                                   TryGetValue(norm), TryGetValue(filter_boost),
+                                   idf);
+  }
+
+  void ScoreMaxBlock(score_t* res) noexcept final {
+    TfIdf<HasNorm, HasFilterBoost>(res, kMaxScoreBlock, freq->value,
+                                   TryGetValue(norm), TryGetValue(filter_boost),
+                                   idf);
   }
 
   const FreqBlockAttr* freq;
-  [[no_unique_address]] utils::Need<HasFilterBoost, const score_t*> filter_boost;
+  [[no_unique_address]] utils::Need<HasFilterBoost, const score_t*>
+    filter_boost;
   [[no_unique_address]] utils::Need<HasNorm, const uint32_t*> norm;
   float_t idf;  // precomputed : boost * idf
 };

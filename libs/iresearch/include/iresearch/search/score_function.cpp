@@ -35,8 +35,15 @@ class ConstanScore : public ScoreFunctionImpl {
   explicit ConstanScore(score_t value) noexcept : _value{value} {}
 
   void Score(score_t* res, size_t n) noexcept final {
-    SDB_ASSERT(res);
     std::fill_n(res, n, _value);
+  }
+
+  void ScoreBlock(score_t* res) noexcept final {
+    std::fill_n(res, kScoreBlock, _value);
+  }
+
+  void ScoreMaxBlock(score_t* res) noexcept final {
+    std::fill_n(res, kMaxScoreBlock, _value);
   }
 
  private:
@@ -48,8 +55,15 @@ class ConstanScore : public ScoreFunctionImpl {
 DefaultScore DefaultScore::gInstance;
 
 void DefaultScore::Score(score_t* res, size_t n) noexcept {
-  SDB_ASSERT(res);
   std::memset(res, 0, sizeof(score_t) * n);
+}
+
+void DefaultScore::ScoreBlock(score_t* res) noexcept {
+  std::memset(res, 0, sizeof(score_t) * kScoreBlock);
+}
+
+void DefaultScore::ScoreMaxBlock(score_t* res) noexcept {
+  std::memset(res, 0, sizeof(score_t) * kMaxScoreBlock);
 }
 
 ScoreFunction ScoreFunction::Constant(score_t value) noexcept {

@@ -133,7 +133,7 @@ struct DocIterator : AttributeProvider {
     return doc;
   }
 
-  template<typename Iterator, size_t N = std::dynamic_extent>
+  template<typename Iterator, size_t N>
   static uint32_t Collect(Iterator& it, const ScoreFunction& scorer,
                           ColumnCollector& columns, std::span<doc_id_t, N> docs,
                           std::span<score_t, N> scores) {
@@ -142,20 +142,21 @@ struct DocIterator : AttributeProvider {
     size_t i = 0;
     for (; i < docs.size(); ++i) {
       const auto doc = it.advance();
-      if (doc_limits::eof(doc)) {
-        break;
+      if (doc_limits::eof(doc)) [[unlikely]] {
+        if (i) {
+          columns.Collect(docs.first(i));
+          scorer.Score(scores.data(), i);
+        }
+        return static_cast<uint32_t>(i);
       }
       docs[i] = doc;
       it.FetchScoreArgs(i);
     }
 
-    if (i == 0) {
-      return 0;
-    }
-
-    columns.Collect(docs.first(i));
-    scorer.Score(scores.data(), i);
-    return static_cast<uint32_t>(i);
+    SDB_ASSERT(i == kScoreBlock);
+    columns.Collect(docs);
+    scorer.ScoreBlock(scores.data());
+    return kScoreBlock;
   }
 
   template<typename Iterator>

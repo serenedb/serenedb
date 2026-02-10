@@ -102,7 +102,7 @@ template<typename T>
 using EmptyWrapper = T;
 
 template<ScoreMergeType MergeType>
-class ConjunctionScorer : public ScoreFunctionImpl {
+class ConjunctionScore : public ScoreFunctionImpl {
  public:
   static ScoreFunction Make(const PrepareScoreContext& ctx, auto& itrs) {
     std::vector<ScoreFunction> sources;
@@ -119,11 +119,10 @@ class ConjunctionScorer : public ScoreFunctionImpl {
       return ScoreFunction::Default();
     }
 
-    return ScoreFunction::Make<ConjunctionScorer<MergeType>>(
-      std::move(sources));
+    return ScoreFunction::Make<ConjunctionScore<MergeType>>(std::move(sources));
   }
 
-  explicit ConjunctionScorer(std::vector<ScoreFunction> sources)
+  explicit ConjunctionScore(std::vector<ScoreFunction> sources)
     : _sources{std::move(sources)} {}
 
   void Score(score_t* res, size_t n) noexcept final {
@@ -134,6 +133,28 @@ class ConjunctionScorer : public ScoreFunctionImpl {
     for (++source; source != end; ++source) {
       source->Score(_scores.data(), n);
       Merge<MergeType>(res, _scores.data(), n);
+    }
+  }
+
+  void ScoreBlock(score_t* res) noexcept final {
+    auto source = _sources.begin();
+    auto end = _sources.end();
+
+    source->ScoreBlock(res);
+    for (++source; source != end; ++source) {
+      source->ScoreBlock(_scores.data());
+      Merge<MergeType>(res, _scores.data(), kScoreBlock);
+    }
+  }
+
+  void ScoreMaxBlock(score_t* res) noexcept final {
+    auto source = _sources.begin();
+    auto end = _sources.end();
+
+    source->ScoreMaxBlock(res);
+    for (++source; source != end; ++source) {
+      source->ScoreMaxBlock(_scores.data());
+      Merge<MergeType>(res, _scores.data(), kMaxScoreBlock);
     }
   }
 
@@ -201,7 +222,7 @@ class Conjunction : public ConjunctionBase<Adapter> {
     }
 
     return ResolveMergeType(this->_merge_type, [&]<ScoreMergeType MT> {
-      return ConjunctionScorer<MT>::Make(ctx, this->_itrs);
+      return ConjunctionScore<MT>::Make(ctx, this->_itrs);
     });
   }
 

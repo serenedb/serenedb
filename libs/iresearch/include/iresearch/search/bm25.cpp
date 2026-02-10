@@ -53,6 +53,15 @@
 namespace irs {
 namespace {
 
+template<typename T>
+constexpr const T* TryGetValue(const T* value) noexcept {
+  return value;
+}
+
+constexpr std::nullptr_t TryGetValue(utils::Empty /*value*/) noexcept {
+  return nullptr;
+}
+
 struct BM25FieldCollector final : FieldCollector {
   // number of documents containing the matched field
   // (possibly without matching terms)
@@ -177,7 +186,7 @@ template<typename T>
 void Bm1Boost(T* IRS_RESTRICT res, size_t n, const score_t* IRS_RESTRICT boost,
               float_t num) noexcept {
   for (size_t i = 0; i < n; ++i) {
-    *GetScoreValue(res[i]) = boost[i] * num;
+    res[i] = boost[i] * num;
   }
 }
 
@@ -195,8 +204,7 @@ void Bm15(T* IRS_RESTRICT res, size_t n, const uint32_t* IRS_RESTRICT freq,
         return num;
       }
     }();
-    *GetScoreValue(res[i]) =
-      c0 - c0 / (1.f + static_cast<float_t>(freq[i]) / c1);
+    res[i] = c0 - c0 / (1.f + static_cast<float_t>(freq[i]) / c1);
   }
 }
 
@@ -215,8 +223,7 @@ void Bm25(T* res, size_t n, const uint32_t* IRS_RESTRICT freq,
       }
     }();
     const float_t c1 = norm_const + norm_length * static_cast<float_t>(norm[i]);
-    *GetScoreValue(res[i]) =
-      c0 - c0 * c1 / (c1 + static_cast<float_t>(freq[i]));
+    res[i] = c0 - c0 * c1 / (c1 + static_cast<float_t>(freq[i]));
   }
 }
 
@@ -227,11 +234,26 @@ struct Bm1Score : public ScoreFunctionImpl {
     : filter_boost{fb}, num{boost * (k + 1) * stats.idf} {}
 
   void Score(score_t* res, size_t n) noexcept final {
-    SDB_ASSERT(res);
     if constexpr (HasFilterBoost) {
       Bm1Boost(res, n, filter_boost, num);
     } else {
       std::memset(res, 0, sizeof(score_t) * n);
+    }
+  }
+
+  void ScoreBlock(score_t* res) noexcept final {
+    if constexpr (HasFilterBoost) {
+      Bm1Boost(res, kScoreBlock, filter_boost, num);
+    } else {
+      std::memset(res, 0, sizeof(score_t) * kScoreBlock);
+    }
+  }
+
+  void ScoreMaxBlock(score_t* res) noexcept final {
+    if constexpr (HasFilterBoost) {
+      Bm1Boost(res, kMaxScoreBlock, filter_boost, num);
+    } else {
+      std::memset(res, 0, sizeof(score_t) * kMaxScoreBlock);
     }
   }
 
@@ -253,12 +275,16 @@ struct Bm15Score : public ScoreFunctionImpl {
   }
 
   void Score(score_t* res, size_t n) noexcept final {
-    SDB_ASSERT(res);
-    if constexpr (HasFilterBoost) {
-      Bm15<true>(res, n, freq->value, filter_boost, num, norm_const);
-    } else {
-      Bm15<false>(res, n, freq->value, nullptr, num, norm_const);
-    }
+    Bm15<HasFilterBoost>(res, n, freq->value, TryGetValue(filter_boost), num,
+                         norm_const);
+  }
+  void ScoreBlock(score_t* res) noexcept final {
+    Bm15<HasFilterBoost>(res, kScoreBlock, freq->value,
+                         TryGetValue(filter_boost), num, norm_const);
+  }
+  void ScoreMaxBlock(score_t* res) noexcept final {
+    Bm15<HasFilterBoost>(res, kMaxScoreBlock, freq->value,
+                         TryGetValue(filter_boost), num, norm_const);
   }
 
   [[no_unique_address]] utils::Need<HasFilterBoost, const score_t*>
@@ -281,14 +307,20 @@ struct Bm25Score : public ScoreFunctionImpl {
       norm_length{stats.norm_length} {}
 
   void Score(score_t* res, size_t n) noexcept final {
-    SDB_ASSERT(res);
-    if constexpr (HasFilterBoost) {
-      Bm25<true>(res, n, freq->value, norm, filter_boost, num, norm_const,
-                 norm_length);
-    } else {
-      Bm25<false>(res, n, freq->value, norm, nullptr, num, norm_const,
-                  norm_length);
-    }
+    Bm25<HasFilterBoost>(res, n, freq->value, norm, TryGetValue(filter_boost),
+                         num, norm_const, norm_length);
+  }
+
+  void ScoreBlock(score_t* res) noexcept final {
+    Bm25<HasFilterBoost>(res, kScoreBlock, freq->value, norm,
+                         TryGetValue(filter_boost), num, norm_const,
+                         norm_length);
+  }
+
+  void ScoreMaxBlock(score_t* res) noexcept final {
+    Bm25<HasFilterBoost>(res, kScoreBlock, freq->value, norm,
+                         TryGetValue(filter_boost), num, norm_const,
+                         norm_length);
   }
 
   [[no_unique_address]] utils::Need<HasFilterBoost, const score_t*>

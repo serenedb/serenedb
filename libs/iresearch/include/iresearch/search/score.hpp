@@ -47,21 +47,12 @@ IRS_FORCE_INLINE void Merge(score_t& bucket, score_t arg) noexcept {
   }
 }
 
-template<typename T>
-IRS_FORCE_INLINE score_t* GetScoreValue(T& v) noexcept {
-  if constexpr (std::is_same_v<T, score_t>) {
-    return std::addressof(v);
-  } else {
-    static_assert(false);
-  }
-}
-
 template<ScoreMergeType MergeType, typename T>
 IRS_FORCE_INLINE void Merge(T* IRS_RESTRICT res,
                             const score_t* IRS_RESTRICT args,
                             size_t n) noexcept {
   for (size_t i = 0; i < n; ++i) {
-    Merge<MergeType>(*GetScoreValue(res[i]), args[i]);
+    Merge<MergeType>(res[i], args[i]);
   }
 }
 

@@ -155,7 +155,7 @@ void Bm25TestCase::TestQueryNorms(irs::FeatureWriterFactory handler) {
 
     while (docs->next()) {
       columns.Collect(docs->value());
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
@@ -216,7 +216,7 @@ void Bm25TestCase::TestQueryNorms(irs::FeatureWriterFactory handler) {
 
     while (docs->next()) {
       columns.Collect(docs->value());
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
@@ -448,7 +448,7 @@ TEST_P(Bm25TestCase, test_phrase) {
 
     while (docs->next()) {
       columns.Collect(docs->value());
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
@@ -523,7 +523,7 @@ TEST_P(Bm25TestCase, test_phrase) {
 
     while (docs->next()) {
       columns.Collect(docs->value());
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
@@ -607,7 +607,7 @@ TEST_P(Bm25TestCase, test_query) {
 
     while (docs->next()) {
       columns.Collect(docs->value());
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
 
       irs::score_t score_value{};
       score.Score(&score_value, 1);
@@ -717,7 +717,7 @@ TEST_P(Bm25TestCase, test_query) {
 
       while (docs->next()) {
         columns.Collect(docs->value());
-        docs->CollectData(0);
+        docs->FetchScoreArgs(0);
         irs::score_t score_value{};
         score.Score(&score_value, 1);
         ASSERT_EQ(docs->value(), values->seek(docs->value()));
@@ -838,7 +838,7 @@ TEST_P(Bm25TestCase, test_query) {
 
       while (docs->next()) {
         columns.Collect(docs->value());
-        docs->CollectData(0);
+        docs->FetchScoreArgs(0);
         irs::score_t score_value{};
         score.Score(&score_value, 1);
         ASSERT_EQ(docs->value(), values->seek(docs->value()));
@@ -950,7 +950,7 @@ TEST_P(Bm25TestCase, test_query) {
 
       while (docs->next()) {
         columns.Collect(docs->value());
-        docs->CollectData(0);
+        docs->FetchScoreArgs(0);
         irs::score_t score_value{};
         score.Score(&score_value, 1);
         ASSERT_EQ(docs->value(), values->seek(docs->value()));
@@ -1010,7 +1010,7 @@ TEST_P(Bm25TestCase, test_query) {
 
     while (docs->next()) {
       columns.Collect(docs->value());
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
@@ -1071,7 +1071,7 @@ TEST_P(Bm25TestCase, test_query) {
 
     while (docs->next()) {
       columns.Collect(docs->value());
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
@@ -1130,7 +1130,7 @@ TEST_P(Bm25TestCase, test_query) {
 
     while (docs->next()) {
       columns.Collect(docs->value());
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
@@ -1190,7 +1190,7 @@ TEST_P(Bm25TestCase, test_query) {
 
     while (docs->next()) {
       columns.Collect(docs->value());
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
@@ -1250,7 +1250,7 @@ TEST_P(Bm25TestCase, test_query) {
 
     while (docs->next()) {
       columns.Collect(docs->value());
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
@@ -1344,7 +1344,7 @@ TEST_P(Bm25TestCase, test_query) {
       ASSERT_EQ(doc, docs->value());
 
       columns.Collect(docs->value());
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
@@ -1389,7 +1389,7 @@ TEST_P(Bm25TestCase, test_query) {
       ASSERT_EQ(doc, docs->value());
 
       columns.Collect(docs->value());
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
@@ -1435,7 +1435,7 @@ TEST_P(Bm25TestCase, test_query) {
       ASSERT_EQ(doc, docs->value());
 
       columns.Collect(docs->value());
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
 

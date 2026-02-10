@@ -613,7 +613,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     auto expected_doc = std::begin(kExpectedDocs);
     while (docs->next()) {
       collector.Collect(docs->value());
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       irs::score_t value;
       score.Score(&value, 1);
       ASSERT_FLOAT_EQ(expected_doc->first, value);
@@ -666,7 +666,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     while (docs->next()) {
       collector.Collect(docs->value());
       irs::score_t value;
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       score.Score(&value, 1);
       ASSERT_FLOAT_EQ(expected_doc->first, value);
       ASSERT_EQ(expected_doc->second, docs->value());
@@ -718,7 +718,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     while (docs->next()) {
       collector.Collect(docs->value());
       irs::score_t value;
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       score.Score(&value, 1);
 
       ASSERT_FLOAT_EQ(expected_doc->first, value);
@@ -774,7 +774,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     while (docs->next()) {
       collector.Collect(docs->value());
       irs::score_t value;
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       score.Score(&value, 1);
       actual_docs.emplace_back(value, docs->value());
     }
@@ -846,7 +846,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     while (docs->next()) {
       collector.Collect(docs->value());
       irs::score_t value;
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       score.Score(&value, 1);
       actual_docs.emplace_back(value, docs->value());
     }
@@ -921,7 +921,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     while (docs->next()) {
       collector.Collect(docs->value());
       irs::score_t value;
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       score.Score(&value, 1);
       actual_docs.emplace_back(value, docs->value());
     }

@@ -92,7 +92,7 @@ struct DocIterator : AttributeProvider {
     return Collect(*this, scorer, columns, docs, scores);
   }
 
-  virtual void CollectData(uint16_t index) {}
+  virtual void FetchScoreArgs(uint16_t index) {}
 
   // Iterate from current position, calling func(doc_id) per doc.
   // func returns false to stop. Returns current iterator value.
@@ -104,11 +104,11 @@ struct DocIterator : AttributeProvider {
 
   virtual uint32_t count() { return Count(*this); }
 
-  virtual std::pair<doc_id_t, bool> CollectBlock(doc_id_t min, doc_id_t max,
-                                                 uint64_t* mask,
-                                                 CollectScoreContext score,
-                                                 CollectMatchContext match) {
-    return CollectBlock(*this, min, max, mask, score, match);
+  virtual std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
+                                              uint64_t* mask,
+                                              CollectScoreContext score,
+                                              CollectMatchContext match) {
+    return FillBlock(*this, min, max, mask, score, match);
   }
 
  protected:
@@ -146,7 +146,7 @@ struct DocIterator : AttributeProvider {
         break;
       }
       docs[i] = doc;
-      it.CollectData(i);
+      it.FetchScoreArgs(i);
     }
 
     if (i == 0) {
@@ -159,10 +159,10 @@ struct DocIterator : AttributeProvider {
   }
 
   template<typename Iterator>
-  static std::pair<doc_id_t, bool> CollectBlock(Iterator& it, doc_id_t min,
-                                                doc_id_t max, uint64_t* mask,
-                                                CollectScoreContext score,
-                                                CollectMatchContext match) {
+  static std::pair<doc_id_t, bool> FillBlock(Iterator& it, doc_id_t min,
+                                             doc_id_t max, uint64_t* mask,
+                                             CollectScoreContext score,
+                                             CollectMatchContext match) {
     if (!score.score || score.score->IsDefault()) {
       score.merge_type = ScoreMergeType::Noop;
     }
@@ -224,7 +224,7 @@ struct DocIterator : AttributeProvider {
 
       if constexpr (MergeType != ScoreMergeType::Noop) {
         score_hits[score_index] = value;
-        it.CollectData(score_index);
+        it.FetchScoreArgs(score_index);
         ++score_index;
 
         if (score_index == kScoreBlock) {

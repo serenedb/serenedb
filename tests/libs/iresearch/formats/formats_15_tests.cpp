@@ -113,7 +113,7 @@ class FreqThresholdDocIterator : public irs::DocIterator {
     return value();
   }
 
-  void CollectData(uint16_t index) final { _impl->CollectData(index); }
+  void FetchScoreArgs(uint16_t index) final { _impl->FetchScoreArgs(index); }
 
  private:
   bool Less() {

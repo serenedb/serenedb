@@ -546,7 +546,7 @@ class NGramSimilarityDocIterator : public DocIterator, private ScoreCtx {
 
   uint32_t count() final { return Count(*this); }
 
-  void CollectData(uint16_t index) final {
+  void FetchScoreArgs(uint16_t index) final {
     SDB_ASSERT(_collected_boost);
     SDB_ASSERT(_collected_freq);
     _collected_boost[index] = _checker.GetFilterBoost();
@@ -559,11 +559,10 @@ class NGramSimilarityDocIterator : public DocIterator, private ScoreCtx {
     return DocIterator::Collect(*this, scorer, columns, docs, scores);
   }
 
-  std::pair<doc_id_t, bool> CollectBlock(doc_id_t min, doc_id_t max,
-                                         uint64_t* mask,
-                                         CollectScoreContext score,
-                                         CollectMatchContext match) final {
-    return DocIterator::CollectBlock(*this, min, max, mask, score, match);
+  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
+                                      uint64_t* mask, CollectScoreContext score,
+                                      CollectMatchContext match) final {
+    return DocIterator::FillBlock(*this, min, max, mask, score, match);
   }
 
  private:

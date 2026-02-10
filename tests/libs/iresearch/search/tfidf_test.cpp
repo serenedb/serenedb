@@ -154,7 +154,7 @@ void TfidfTestCase::TestQueryNorms(irs::FeatureWriterFactory handler) {
 
     while (docs->next()) {
       collector.Collect(docs->value());
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
@@ -218,7 +218,7 @@ void TfidfTestCase::TestQueryNorms(irs::FeatureWriterFactory handler) {
     std::vector<float_t> scores;
     while (docs->next()) {
       collector.Collect(docs->value());
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
       scores.emplace_back(score_value);
@@ -456,7 +456,7 @@ TEST_P(TfidfTestCase, test_phrase) {
 
     while (docs->next()) {
       collector.Collect(docs->value());
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
 
       irs::score_t score_value{};
@@ -533,7 +533,7 @@ TEST_P(TfidfTestCase, test_phrase) {
 
     while (docs->next()) {
       collector.Collect(docs->value());
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
 
       irs::score_t score_value{};
@@ -618,7 +618,7 @@ TEST_P(TfidfTestCase, test_query) {
 
     while (docs->next()) {
       collector.Collect(docs->value());
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
       in.reset(actual_value->value);
 
@@ -727,7 +727,7 @@ TEST_P(TfidfTestCase, test_query) {
 
       for (irs::score_t score_value{}; docs->next();) {
         collector.Collect(docs->value());
-        docs->CollectData(0);
+        docs->FetchScoreArgs(0);
         ASSERT_EQ(docs->value(), values->seek(docs->value()));
         in.reset(actual_value->value);
 
@@ -848,7 +848,7 @@ TEST_P(TfidfTestCase, test_query) {
 
       while (docs->next()) {
         collector.Collect(docs->value());
-        docs->CollectData(0);
+        docs->FetchScoreArgs(0);
         ASSERT_EQ(docs->value(), values->seek(docs->value()));
         in.reset(actual_value->value);
 
@@ -961,7 +961,7 @@ TEST_P(TfidfTestCase, test_query) {
 
       while (docs->next()) {
         collector.Collect(docs->value());
-        docs->CollectData(0);
+        docs->FetchScoreArgs(0);
         ASSERT_EQ(docs->value(), values->seek(docs->value()));
         in.reset(actual_value->value);
 
@@ -1023,7 +1023,7 @@ TEST_P(TfidfTestCase, test_query) {
 
     for (irs::score_t score_value{}; docs->next();) {
       collector.Collect(docs->value());
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
       in.reset(actual_value->value);
 
@@ -1084,7 +1084,7 @@ TEST_P(TfidfTestCase, test_query) {
 
     for (irs::score_t score_value{}; docs->next();) {
       collector.Collect(docs->value());
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
       in.reset(actual_value->value);
 
@@ -1143,7 +1143,7 @@ TEST_P(TfidfTestCase, test_query) {
 
     for (irs::score_t score_value{}; docs->next();) {
       collector.Collect(docs->value());
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
       in.reset(actual_value->value);
 
@@ -1202,7 +1202,7 @@ TEST_P(TfidfTestCase, test_query) {
 
     for (irs::score_t score_value{}; docs->next();) {
       collector.Collect(docs->value());
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
       in.reset(actual_value->value);
 
@@ -1263,7 +1263,7 @@ TEST_P(TfidfTestCase, test_query) {
 
     for (irs::score_t score_value{}; docs->next();) {
       collector.Collect(docs->value());
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
       in.reset(actual_value->value);
 
@@ -1314,7 +1314,7 @@ TEST_P(TfidfTestCase, test_query) {
     irs::doc_id_t doc = irs::doc_limits::min();
     while (docs->next()) {
       collector.Collect(docs->value());
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       ASSERT_EQ(doc, docs->value());
 
       irs::score_t score_value{};
@@ -1358,7 +1358,7 @@ TEST_P(TfidfTestCase, test_query) {
     irs::doc_id_t doc = irs::doc_limits::min();
     while (docs->next()) {
       collector.Collect(docs->value());
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       ASSERT_EQ(doc, docs->value());
 
       irs::score_t score_value{};
@@ -1403,7 +1403,7 @@ TEST_P(TfidfTestCase, test_query) {
     irs::doc_id_t doc = irs::doc_limits::min();
     while (docs->next()) {
       collector.Collect(docs->value());
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       ASSERT_EQ(doc, docs->value());
 
       irs::score_t score_value{};
@@ -1449,7 +1449,7 @@ TEST_P(TfidfTestCase, test_query) {
     irs::doc_id_t doc = irs::doc_limits::min();
     while (docs->next()) {
       collector.Collect(docs->value());
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       ASSERT_EQ(doc, docs->value());
 
       irs::score_t score_value{};
@@ -1714,7 +1714,7 @@ TEST_P(TfidfTestCase, test_order) {
 
     for (irs::score_t score_value{}; docs->next();) {
       collector.Collect(docs->value());
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       ASSERT_EQ(docs->value(), values->seek(docs->value()));
       in.reset(actual_value->value);
 

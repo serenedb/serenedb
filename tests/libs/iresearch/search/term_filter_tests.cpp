@@ -138,7 +138,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       // first hit
       {
         ASSERT_TRUE(docs->next());
-        docs->CollectData(0);
+        docs->FetchScoreArgs(0);
         irs::score_t score_value{};
         score.Score(&score_value, 1);
         ASSERT_EQ(irs::score_t(0), score_value);
@@ -171,7 +171,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       // first hit
       {
         ASSERT_TRUE(docs->next());
-        docs->CollectData(0);
+        docs->FetchScoreArgs(0);
         irs::score_t score_value{};
         score.Score(&score_value, 1);
         ASSERT_EQ(irs::score_t(value), score_value);
@@ -574,7 +574,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       });
 
       while (docs->next()) {
-        docs->CollectData(0);
+        docs->FetchScoreArgs(0);
         irs::score_t score_value{};
         score.Score(&score_value, 1);
         IRS_IGNORE(score_value);

@@ -70,7 +70,7 @@ struct ChildIterator : irs::DocIterator {
     return advance();
   }
 
-  void CollectData(uint16_t index) final { _it->CollectData(index); }
+  void FetchScoreArgs(uint16_t index) final { _it->FetchScoreArgs(index); }
 
  private:
   irs::DocIterator::ptr _it;
@@ -100,7 +100,7 @@ class PrevDocWrapper : public irs::DocIterator {
     return _prev = _it->seek(target);
   }
 
-  void CollectData(uint16_t index) final { _it->CollectData(index); }
+  void FetchScoreArgs(uint16_t index) final { _it->FetchScoreArgs(index); }
 
  private:
   DocIterator::ptr _it;

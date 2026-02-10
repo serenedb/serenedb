@@ -208,7 +208,7 @@ std::vector<Doc> WandTestCase::Collect(const irs::DirectoryReader& index,
     while (docs->next()) {
       auto doc = docs->value();
       collector.Collect(doc);
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       score.Score(&score_value, 1);
 
       if (left) {

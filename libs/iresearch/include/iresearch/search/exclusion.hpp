@@ -62,7 +62,7 @@ class Exclusion : public DocIterator {
     return _incl->PrepareScore(ctx);
   }
 
-  void CollectData(uint16_t index) final { _incl->CollectData(index); }
+  void FetchScoreArgs(uint16_t index) final { _incl->FetchScoreArgs(index); }
 
   uint32_t count() final { return Count(*this); }
 

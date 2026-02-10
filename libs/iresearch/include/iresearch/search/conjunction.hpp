@@ -76,8 +76,8 @@ struct ScoreAdapter {
 
   IRS_FORCE_INLINE uint32_t count() { return _it->count(); }
 
-  IRS_FORCE_INLINE void CollectData(uint16_t index) {
-    return _it->CollectData(index);
+  IRS_FORCE_INLINE void FetchScoreArgs(uint16_t index) {
+    return _it->FetchScoreArgs(index);
   }
 
   IRS_FORCE_INLINE ScoreFunction
@@ -85,10 +85,10 @@ struct ScoreAdapter {
     return _it->PrepareScore(ctx);
   }
 
-  IRS_FORCE_INLINE std::pair<doc_id_t, bool> CollectBlock(
+  IRS_FORCE_INLINE std::pair<doc_id_t, bool> FillBlock(
     doc_id_t min, doc_id_t max, uint64_t* mask, CollectScoreContext score,
     CollectMatchContext match) {
-    return _it->CollectBlock(min, max, mask, score, match);
+    return _it->FillBlock(min, max, mask, score, match);
   }
 
  private:
@@ -161,9 +161,9 @@ class ConjunctionScorer : public ScoreCtx {
 template<typename Adapter>
 struct ConjunctionBase : public DocIterator {
  public:
-  void CollectData(uint16_t index) final {
+  void FetchScoreArgs(uint16_t index) final {
     for (auto& it : _itrs) {
-      it.CollectData(index);
+      it.FetchScoreArgs(index);
     }
   }
 

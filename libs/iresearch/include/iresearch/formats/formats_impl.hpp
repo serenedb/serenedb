@@ -1212,10 +1212,9 @@ class PostingIteratorBase : public DocIterator {
     return left_in_leaf + left_in_list;
   }
 
-  std::pair<doc_id_t, bool> CollectBlock(doc_id_t min, doc_id_t max,
-                                         uint64_t* mask,
-                                         CollectScoreContext score,
-                                         CollectMatchContext match) final {
+  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
+                                      uint64_t* mask, CollectScoreContext score,
+                                      CollectMatchContext match) final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
 
     if (!score.score || score.score->IsDefault()) {
@@ -1360,7 +1359,7 @@ class PostingIteratorBase : public DocIterator {
     return DocIterator::Collect(*this, scorer, columns, docs, scores);
   }
 
-  void CollectData(uint16_t index) final {
+  void FetchScoreArgs(uint16_t index) final {
     if constexpr (IteratorTraits::Frequency()) {
       SDB_ASSERT(this->_collected_freqs);
       this->_collected_freqs[index] = std::get<FreqAttr>(this->_attrs).value;
@@ -2480,8 +2479,8 @@ struct PostingAdapter {
     return self().seek(target);
   }
 
-  IRS_FORCE_INLINE void CollectData(uint16_t index) {
-    return self().CollectData(index);
+  IRS_FORCE_INLINE void FetchScoreArgs(uint16_t index) {
+    return self().FetchScoreArgs(index);
   }
 
   IRS_FORCE_INLINE uint32_t Collect(const ScoreFunction& scorer,
@@ -2496,10 +2495,10 @@ struct PostingAdapter {
     return self().PrepareScore(ctx);
   }
 
-  IRS_FORCE_INLINE auto CollectBlock(doc_id_t min, doc_id_t max, uint64_t* mask,
-                                     CollectScoreContext score_ctx,
-                                     CollectMatchContext match_ctx) {
-    return self().CollectBlock(min, max, mask, score_ctx, match_ctx);
+  IRS_FORCE_INLINE auto FillBlock(doc_id_t min, doc_id_t max, uint64_t* mask,
+                                  CollectScoreContext score_ctx,
+                                  CollectMatchContext match_ctx) {
+    return self().FillBlock(min, max, mask, score_ctx, match_ctx);
   }
 
  private:

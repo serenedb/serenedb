@@ -117,9 +117,9 @@ void FilterTestCaseBase::GetQueryResult(const irs::Filter::Query::ptr& q,
       ASSERT_EQ(doc->value, stateless_random_docs->seek(doc->value));
       ASSERT_EQ(doc->value, stateless_random_docs->value());
 
-      sequential_docs->CollectData(0);
-      stateless_random_docs->CollectData(0);
-      random_docs->CollectData(0);
+      sequential_docs->FetchScoreArgs(0);
+      stateless_random_docs->FetchScoreArgs(0);
+      random_docs->FetchScoreArgs(0);
 
       irs::score_t score_value{-1};
       score.Score(&score_value, 1);
@@ -197,7 +197,7 @@ void FilterTestCaseBase::CheckQuery(const irs::Filter& filter,
     ASSERT_EQ(test.expected, it.value());
     ASSERT_EQ(test.expected, doc->value);
     if (!irs::doc_limits::eof(test.expected)) {
-      it.CollectData(0);
+      it.FetchScoreArgs(0);
       assert_equal_scores(test.score, score);
     }
   };
@@ -304,7 +304,7 @@ void FilterTestCaseBase::MakeResult(const irs::Filter& filter,
 
     while (docs->next()) {
       ASSERT_EQ(docs->value(), doc->value);
-      docs->CollectData(0);
+      docs->FetchScoreArgs(0);
       columns.Collect(docs->value());
       score.Score(&score_value, 1);
       scored_result.emplace(score_value, docs->value());

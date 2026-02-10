@@ -7029,7 +7029,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
-    disj_docs->CollectData(0);
+    disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq->value);
 
@@ -7041,7 +7041,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
-    disj_docs->CollectData(0);
+    disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq->value);
 
@@ -7053,7 +7053,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
-    disj_docs->CollectData(0);
+    disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq->value);
 
@@ -7065,7 +7065,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
-    disj_docs->CollectData(0);
+    disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq->value);
 
@@ -7077,7 +7077,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
-    disj_docs->CollectData(0);
+    disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq->value);
 
@@ -7287,7 +7287,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_EQ(1, freq_seek->value);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
-    disj_docs->CollectData(0);
+    disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq_seek->value);
 
@@ -7298,7 +7298,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_EQ(6, freq_seek->value);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
-    disj_docs->CollectData(0);
+    disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq_seek->value);
 
@@ -7309,7 +7309,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_EQ(11, freq_seek->value);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
-    disj_docs->CollectData(0);
+    disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq_seek->value);
 
@@ -7320,7 +7320,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_EQ(2, freq_seek->value);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
-    disj_docs->CollectData(0);
+    disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq_seek->value);
 
@@ -7415,7 +7415,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_EQ(1, freq_seek->value);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
-    disj_docs->CollectData(0);
+    disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq_seek->value);
 
@@ -7426,7 +7426,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_EQ(3, freq_seek->value);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
-    disj_docs->CollectData(0);
+    disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq_seek->value);
 
@@ -7437,7 +7437,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_EQ(5, freq_seek->value);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
-    disj_docs->CollectData(0);
+    disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq_seek->value);
 
@@ -7448,7 +7448,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_EQ(3, freq_seek->value);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
-    disj_docs->CollectData(0);
+    disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq_seek->value);
 
@@ -7543,7 +7543,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_EQ(3, freq_seek->value);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
-    disj_docs->CollectData(0);
+    disj_docs->FetchScoreArgs(0);
     disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq_seek->value);
 

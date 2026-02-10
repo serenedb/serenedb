@@ -1108,7 +1108,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       ASSERT_TRUE(score.IsDefault());
 
       while (filter_itr->next()) {
-        filter_itr->CollectData(0);
+        filter_itr->FetchScoreArgs(0);
         cur_doc = filter_itr->value();
         irs::score_t score_value{};
         score.Score(&score_value, 1);

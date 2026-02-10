@@ -127,7 +127,7 @@ class ChildToParentJoin : public DocIterator, private Matcher {
     return DocIterator::Collect(*this, scorer, columns, docs, scores);
   }
 
-  void CollectData(uint16_t index) final {
+  void FetchScoreArgs(uint16_t index) final {
     if constexpr (Matcher::kHasScore) {
       Matcher::CollectDataImpl();
     }
@@ -229,7 +229,7 @@ struct NestedScoreContext {
 
   void CollectChild(auto& child_it) {
     child_docs[child_idx] = child_it.value();
-    child_it.CollectData(child_idx++);
+    child_it.FetchScoreArgs(child_idx++);
     if (child_idx == kScoreBlock) {
       FlushChildBatch();
     }

@@ -240,7 +240,7 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
           }
 
           score_t sub_score;
-          it.CollectData(0);
+          it.FetchScoreArgs(0);
           scorer.Score(&sub_score);
           Merge<MergeType>(_score_buf.score_window[0], sub_score);
         }
@@ -272,23 +272,22 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
     return count;
   }
 
-  void CollectData(uint16_t index) final {
+  void FetchScoreArgs(uint16_t index) final {
     if constexpr (kHasScore) {
       SDB_ASSERT(doc_limits::valid(value()));
       SDB_ASSERT(!doc_limits::eof(value()));
-      _score_buf.CollectData(
+      _score_buf.FetchScoreArgs(
         static_cast<uint16_t>(_buf_offset + value() -
                               _doc_base),  // TODO(gnusi): make better
         index);
     }
   }
 
-  std::pair<doc_id_t, bool> CollectBlock(doc_id_t min, doc_id_t max,
-                                         uint64_t* mask,
-                                         CollectScoreContext score,
-                                         CollectMatchContext match) final {
+  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
+                                      uint64_t* mask, CollectScoreContext score,
+                                      CollectMatchContext match) final {
     // TODO(gnusi): optimize
-    return DocIterator::CollectBlock(*this, min, max, mask, score, match);
+    return DocIterator::FillBlock(*this, min, max, mask, score, match);
   }
 
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
@@ -570,7 +569,7 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
         }
 
         const auto [doc, has_hits] =
-          it.CollectBlock(_doc_base, _max, _mask, score_ctx, match_ctx);
+          it.FillBlock(_doc_base, _max, _mask, score_ctx, match_ctx);
 
         empty &= has_hits;
         _min = std::min(doc, _min);
@@ -607,7 +606,7 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
     std::array<score_t, kScoreBlock> result;
     alignas(4096) std::array<score_t, kWindow> score_window;
 
-    void CollectData(uint16_t offset, uint16_t index) noexcept {
+    void FetchScoreArgs(uint16_t offset, uint16_t index) noexcept {
       result[index] = score_window[offset];
     }
 

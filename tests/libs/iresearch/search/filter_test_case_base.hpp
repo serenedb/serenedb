@@ -59,7 +59,7 @@ class DocIteratorWrapper : public irs::DocIterator {
 
   irs::doc_id_t seek(irs::doc_id_t target) final { return _it->seek(target); }
 
-  void CollectData(uint16_t index) final { _docs[index] = value(); }
+  void FetchScoreArgs(uint16_t index) final { _docs[index] = value(); }
 
   irs::Attribute* GetMutable(irs::TypeInfo::type_id id) noexcept final {
     if (irs::Type<DocBlockAttr>::id() == id) {

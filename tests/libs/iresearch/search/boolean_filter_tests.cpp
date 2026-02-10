@@ -87,7 +87,7 @@ struct CompoundSort final : irs::ScorerBase<CompoundSort, void> {
   mutable size_t current = 0;
 };
 
-class BasicDocIterator : public irs::DocIterator, public irs::ScoreCtx {
+class BasicDocIterator : public irs::DocIterator {
  public:
   typedef std::vector<irs::doc_id_t> DocidsT;
 
@@ -3473,7 +3473,7 @@ TEST(block_disjunction_test, check_attributes) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_TRUE(score.Func() != &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
   }
 
   // scoring, order
@@ -3498,7 +3498,7 @@ TEST(block_disjunction_test, check_attributes) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
   }
 }
 
@@ -4126,7 +4126,7 @@ TEST(block_disjunction_test, next_scored) {
         .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -4188,7 +4188,7 @@ TEST(block_disjunction_test, next_scored) {
         .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
@@ -4313,7 +4313,7 @@ TEST(block_disjunction_test, next_scored) {
         .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -4389,7 +4389,7 @@ TEST(block_disjunction_test, next_scored) {
         .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
@@ -4465,7 +4465,7 @@ TEST(block_disjunction_test, next_scored) {
         .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
@@ -4529,7 +4529,7 @@ TEST(block_disjunction_test, next_scored) {
         .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
@@ -4588,7 +4588,7 @@ TEST(block_disjunction_test, next_scored) {
         .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -4645,7 +4645,7 @@ TEST(block_disjunction_test, next_scored) {
         .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -4699,7 +4699,7 @@ TEST(block_disjunction_test, next_scored) {
         .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -4775,7 +4775,7 @@ TEST(block_disjunction_test, next_scored) {
         .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -4838,7 +4838,7 @@ TEST(block_disjunction_test, next_scored) {
         .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -4897,7 +4897,7 @@ TEST(block_disjunction_test, next_scored) {
         .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -4955,7 +4955,7 @@ TEST(block_disjunction_test, next_scored) {
         .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -5012,7 +5012,7 @@ TEST(block_disjunction_test, next_scored) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -5125,7 +5125,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
         .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -5187,7 +5187,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
         .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
@@ -5311,7 +5311,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
         .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -5388,7 +5388,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
         .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
@@ -5465,7 +5465,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
         .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
@@ -5530,7 +5530,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
         .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
@@ -5588,7 +5588,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
         .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -5644,7 +5644,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
         .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -5699,7 +5699,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
         .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -5786,7 +5786,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
         .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -5849,7 +5849,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
         .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -5908,7 +5908,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
         .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -5966,7 +5966,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
         .scorer = &sort,
         .segment = &irs::SubReader::empty(),
       });
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -6023,7 +6023,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -7875,7 +7875,7 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_FALSE(irs::doc_limits::valid(doc->value));
@@ -7951,7 +7951,7 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_FALSE(irs::doc_limits::valid(doc->value));
@@ -8016,7 +8016,7 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -8075,7 +8075,7 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -8137,7 +8137,7 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -8198,7 +8198,7 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -8264,7 +8264,7 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -8333,7 +8333,7 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -8393,7 +8393,7 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -8457,7 +8457,7 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -8661,7 +8661,7 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_FALSE(irs::doc_limits::valid(doc->value));
@@ -8737,7 +8737,7 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_FALSE(irs::doc_limits::valid(doc->value));
@@ -8803,7 +8803,7 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -8860,7 +8860,7 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -8922,7 +8922,7 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -8981,7 +8981,7 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -9047,7 +9047,7 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -9116,7 +9116,7 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -9176,7 +9176,7 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -9240,7 +9240,7 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -10953,7 +10953,7 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     // cost
     ASSERT_EQ(1, irs::CostAttr::extract(it));
@@ -11031,7 +11031,7 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     // cost
     ASSERT_EQ(1, irs::CostAttr::extract(it));
@@ -11109,7 +11109,7 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     // cost
     ASSERT_EQ(1, irs::CostAttr::extract(it));
@@ -11187,7 +11187,7 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     // cost
     ASSERT_EQ(1, irs::CostAttr::extract(it));
@@ -14348,7 +14348,7 @@ TEST(conjunction_test, scored_seek_next) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     // cost
     ASSERT_EQ(docs[2].size(), irs::CostAttr::extract(it));
@@ -14459,7 +14459,7 @@ TEST(conjunction_test, scored_seek_next) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     // cost
     ASSERT_EQ(docs[2].size(), irs::CostAttr::extract(it));
@@ -14517,7 +14517,7 @@ TEST(conjunction_test, scored_seek_next) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     // cost
     ASSERT_EQ(docs[2].size(), irs::CostAttr::extract(it));
@@ -14575,7 +14575,7 @@ TEST(conjunction_test, scored_seek_next) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     // cost
     ASSERT_EQ(docs[2].size(), irs::CostAttr::extract(it));
@@ -14633,7 +14633,7 @@ TEST(conjunction_test, scored_seek_next) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     // cost
     ASSERT_EQ(docs[2].size(), irs::CostAttr::extract(it));
@@ -14691,7 +14691,7 @@ TEST(conjunction_test, scored_seek_next) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     // cost
     ASSERT_EQ(docs[2].size(), irs::CostAttr::extract(it));
@@ -14749,7 +14749,7 @@ TEST(conjunction_test, scored_seek_next) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     // cost
     ASSERT_EQ(docs[2].size(), irs::CostAttr::extract(it));
@@ -14807,7 +14807,7 @@ TEST(conjunction_test, scored_seek_next) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     // cost
     ASSERT_EQ(docs[1].size(), irs::CostAttr::extract(it));
@@ -14865,7 +14865,7 @@ TEST(conjunction_test, scored_seek_next) {
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    ASSERT_FALSE(score.IsDefault());
 
     // cost
     ASSERT_EQ(docs[1].size(), irs::CostAttr::extract(it));
@@ -15683,7 +15683,7 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential_ordered) {
                                 const irs::TermCollector*) -> void {
       ++collector_finish_count;
     };
-    sort.scorer_score = [&](irs::ScoreCtx*, irs::score_t* score,
+    sort.scorer_score = [&](irs::ScoreFunctionImpl*, irs::score_t* score,
                             size_t n) -> void {
       ASSERT_EQ(1, n);
       ++scorer_score_count;
@@ -15783,7 +15783,7 @@ TEST_P(BooleanFilterTestCase, not_sequential_ordered) {
                                 const irs::TermCollector*) -> void {
       ++collector_finish_count;
     };
-    sort.scorer_score = [&](irs::ScoreCtx*, irs::score_t* score,
+    sort.scorer_score = [&](irs::ScoreFunctionImpl*, irs::score_t* score,
                             size_t n) -> void {
       ASSERT_EQ(1, n);
       ++scorer_score_count;

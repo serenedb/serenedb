@@ -459,7 +459,7 @@ bool SerialPositionsChecker<Base>::Check(size_t potential, doc_id_t doc) {
 }
 
 template<typename Approx, typename Checker>
-class NGramSimilarityDocIterator : public DocIterator, private ScoreCtx {
+class NGramSimilarityDocIterator : public DocIterator {
  public:
   NGramSimilarityDocIterator(CostAdapters&& itrs, size_t total_terms_count,
                              size_t min_match_count, bool collect_all_states)

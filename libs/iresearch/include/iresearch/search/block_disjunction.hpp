@@ -34,11 +34,8 @@
 #include <vector>
 
 #include "basics/empty.hpp"
-#include "basics/std.hpp"
-#include "basics/system-compiler.h"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/column_collector.hpp"
-#include "iresearch/search/conjunction.hpp"
 #include "iresearch/search/disjunction.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
@@ -120,7 +117,7 @@ struct BlockDisjunctionTraits {
 // count equals to a number of input iterators.
 // It's better to to use a dedicated "conjunction" iterator.
 template<typename Adapter, ScoreMergeType MergeType, typename Traits>
-class BlockDisjunction : public DocIterator, private ScoreCtx {
+class BlockDisjunction : public DocIterator {
  public:
   using Adapters = std::vector<Adapter>;
 
@@ -308,7 +305,7 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
         return ScoreFunction::Default();
       }
 
-      return _score_buf.PrepareScore(this);
+      return ScoreFunction::Wrap(_score_buf);
     } else {
       return ScoreFunction::Default();
     }
@@ -602,7 +599,7 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
 
   static_assert(kWindow <= std::numeric_limits<uint16_t>::max());
 
-  struct ScoreState {
+  struct BlockScore final : ScoreFunctionImpl {
     std::array<score_t, kScoreBlock> result;
     alignas(4096) std::array<score_t, kWindow> score_window;
 
@@ -610,14 +607,8 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
       result[index] = score_window[offset];
     }
 
-    ScoreFunction PrepareScore(ScoreCtx* ctx) {
-      return {ctx,
-              [](ScoreCtx* ctx, score_t* res, size_t n) noexcept {
-                auto& self = static_cast<BlockDisjunction&>(*ctx);
-                std::memcpy(res, self._score_buf.result.data(),
-                            n * sizeof(score_t));
-              },
-              ScoreFunction::NoopMin};
+    void Score(score_t* res, size_t n) noexcept final {
+      std::memcpy(res, result.data(), n * sizeof(score_t));
     }
   };
 
@@ -630,7 +621,7 @@ class BlockDisjunction : public DocIterator, private ScoreCtx {
   doc_id_t _doc_base{doc_limits::invalid()};
   size_t _buf_offset{};  // offset within a buffer
   uint64_t _mask[kNumBlocks]{};
-  [[no_unique_address]] utils::Need<kHasScore, ScoreState> _score_buf;
+  [[no_unique_address]] utils::Need<kHasScore, BlockScore> _score_buf;
   [[no_unique_address]] utils::Need<Traits::kMinMatch,
                                     detail::MinMatchBuffer<kWindow>> _match_buf;
   Adapters _itrs;

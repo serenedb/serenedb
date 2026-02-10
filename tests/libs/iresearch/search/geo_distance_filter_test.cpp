@@ -92,12 +92,18 @@ struct CustomSort final : public irs::ScorerBase<void> {
     const CustomSort& _sort;
   };
 
-  struct Scorer final : public irs::ScoreCtx {
+  struct Scorer : public irs::ScoreFunctionImpl {
     Scorer(const CustomSort& sort, const irs::ScoreContext& ctx)
       : document_attrs(ctx.doc_attrs),
         stats(ctx.stats),
         segment_reader(ctx.segment),
         sort(sort) {}
+
+    void Score(irs::score_t* res, size_t n) noexcept override {
+      if (sort.scorer_score) {
+        sort.scorer_score(this, res, n);
+      }
+    }
 
     const irs::AttributeProvider& document_attrs;
     const irs::byte_type* stats;
@@ -129,15 +135,7 @@ struct CustomSort final : public irs::ScorerBase<void> {
       _prepare_scorer(ctx);
     }
 
-    return irs::ScoreFunction::Make<CustomSort::Scorer>(
-      [](irs::ScoreCtx* ctx, irs::score_t* res, size_t n) noexcept {
-        auto& ctx_impl = *static_cast<const CustomSort::Scorer*>(ctx);
-
-        if (ctx_impl.sort.scorer_score) {
-          ctx_impl.sort.scorer_score(ctx, res, n);
-        }
-      },
-      irs::ScoreFunction::NoopMin, *this, ctx);
+    return irs::ScoreFunction::Make<CustomSort::Scorer>(*this, ctx);
   }
 
   irs::TermCollector::ptr PrepareTermCollector() const final {
@@ -159,7 +157,7 @@ struct CustomSort final : public irs::ScorerBase<void> {
   std::function<irs::FieldCollector::ptr()> _prepare_field_collector;  // NOLINT
   std::function<void(const irs::ScoreContext& ctx)> _prepare_scorer;   // NOLINT
   std::function<irs::TermCollector::ptr()> _prepare_term_collector;    // NOLINT
-  std::function<void(irs::ScoreCtx*, irs::score_t*, size_t n)> scorer_score;
+  std::function<void(irs::ScoreFunctionImpl*, irs::score_t*, size_t n)> scorer_score;
 
   static ptr make();
   CustomSort() = default;
@@ -1098,7 +1096,7 @@ TEST(GeoDistanceFilterTest, checkScorer) {
       EXPECT_EQ(q.Boost(), ctx.boost);
       ++prepare_scorer_count;
     };
-    sort.scorer_score = [&](irs::ScoreCtx* ctx, irs::score_t* res, size_t n) {
+    sort.scorer_score = [&](irs::ScoreFunctionImpl* ctx, irs::score_t* res, size_t n) {
       ASSERT_TRUE(res);
       ASSERT_TRUE(cur_it);
       ASSERT_EQ(1, n);
@@ -1153,7 +1151,7 @@ TEST(GeoDistanceFilterTest, checkScorer) {
       EXPECT_EQ(q.Boost(), ctx.boost);
       ++prepare_scorer_count;
     };
-    sort.scorer_score = [&](irs::ScoreCtx* ctx, irs::score_t* res, size_t n) {
+    sort.scorer_score = [&](irs::ScoreFunctionImpl* ctx, irs::score_t* res, size_t n) {
       ASSERT_TRUE(res);
       ASSERT_EQ(1, n);
       ++scorer_score_count;

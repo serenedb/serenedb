@@ -119,9 +119,13 @@ class FilterWrapper : public irs::FilterWithBoost {
 namespace sort {
 
 struct Boost : public irs::ScorerBase<Boost, void> {
-  struct ScoreCtx final : public irs::ScoreCtx {
+  struct ScoreFunctionImpl : public irs::ScoreFunctionImpl {
    public:
-    explicit ScoreCtx(irs::score_t boost) noexcept : boost(boost) {}
+    explicit ScoreFunctionImpl(irs::score_t boost) noexcept : boost(boost) {}
+
+    void Score(irs::score_t* res, size_t n) noexcept override {
+      std::fill_n(res, n, boost);
+    }
 
     irs::score_t boost;
     uint32_t count = 0;
@@ -195,9 +199,17 @@ struct CustomSort : public irs::ScorerBase<CustomSort, void> {
     const CustomSort& _sort;
   };
 
-  struct Scorer final : public irs::ScoreCtx {
+  struct Scorer : public irs::ScoreFunctionImpl {
     Scorer(const CustomSort& sort, const irs::ScoreContext& ctx)
       : ctx(ctx), sort(sort) {}
+
+    void Score(irs::score_t* res, size_t n) noexcept override {
+      if (sort.scorer_score) {
+        sort.scorer_score(this, res, n);
+      } else {
+        std::fill_n(res, n, 0);
+      }
+    }
 
     irs::ScoreContext ctx;
     const irs::doc_id_t* docs = nullptr;
@@ -228,17 +240,7 @@ struct CustomSort : public irs::ScorerBase<CustomSort, void> {
       return prepare_scorer(ctx);
     }
 
-    return irs::ScoreFunction::Make<CustomSort::Scorer>(
-      [](irs::ScoreCtx* ctx, irs::score_t* res, size_t n) noexcept {
-        auto& state = *reinterpret_cast<Scorer*>(ctx);
-
-        if (state.sort.scorer_score) {
-          state.sort.scorer_score(ctx, res, n);
-        } else {
-          std::fill_n(res, n, 0);
-        }
-      },
-      irs::ScoreFunction::NoopMin, *this, ctx);
+    return irs::ScoreFunction::Make<CustomSort::Scorer>(*this, ctx);
   }
 
   irs::TermCollector::ptr PrepareTermCollector() const final {
@@ -261,7 +263,7 @@ struct CustomSort : public irs::ScorerBase<CustomSort, void> {
   std::function<irs::ScoreFunction(const irs::ScoreContext& ctx)>
     prepare_scorer;
   std::function<irs::TermCollector::ptr()> prepare_term_collector;
-  std::function<void(irs::ScoreCtx*, irs::score_t*, size_t n)> scorer_score;
+  std::function<void(irs::ScoreFunctionImpl*, irs::score_t*, size_t n)> scorer_score;
   std::function<void()> term_reset;
   std::function<void()> field_reset;
 };
@@ -297,8 +299,20 @@ struct FrequencySort : public irs::ScorerBase<FrequencySort, StatsT> {
     }
   };
 
-  struct Scorer final : public irs::ScoreCtx {
+  struct Scorer : public irs::ScoreFunctionImpl {
     Scorer(irs::doc_id_t docs_count) : count(docs_count) {}
+
+    void Score(irs::score_t* res, size_t n) noexcept override {
+      for (size_t i = 0; i < n; ++i) {
+        // docs_count may be nullptr if no collector called,
+        // e.g. by range_query for BitsetDocIterator
+        if (count) {
+          res[i] = 1.f / count;
+        } else {
+          res[i] = std::numeric_limits<irs::score_t>::infinity();
+        }
+      }
+    }
 
     irs::doc_id_t count;
   };
@@ -324,20 +338,7 @@ struct FrequencySort : public irs::ScorerBase<FrequencySort, StatsT> {
   irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
     auto* stats = stats_cast(ctx.stats);
     const irs::doc_id_t docs_count = stats->count;
-    return irs::ScoreFunction::Make<FrequencySort::Scorer>(
-      [](irs::ScoreCtx* ctx, irs::score_t* res, size_t n) noexcept {
-        auto& state = *reinterpret_cast<Scorer*>(ctx);
-        for (size_t i = 0; i < n; ++i) {
-          // docs_count may be nullptr if no collector called,
-          // e.g. by range_query for BitsetDocIterator
-          if (state.count) {
-            res[i] = 1.f / state.count;
-          } else {
-            res[i] = std::numeric_limits<irs::score_t>::infinity();
-          }
-        }
-      },
-      irs::ScoreFunction::NoopMin, docs_count);
+    return irs::ScoreFunction::Make<FrequencySort::Scorer>(docs_count);
   }
 
   irs::TermCollector::ptr PrepareTermCollector() const final {
@@ -346,8 +347,14 @@ struct FrequencySort : public irs::ScorerBase<FrequencySort, StatsT> {
 };
 
 struct FrequencyScore : public irs::ScorerBase<FrequencyScore, StatsT> {
-  struct Scorer final : public irs::ScoreCtx {
+  struct Scorer : public irs::ScoreFunctionImpl {
     Scorer(const irs::FreqBlockAttr* fr) : freq(fr) {}
+
+    void Score(irs::score_t* res, size_t n) noexcept override {
+      ASSERT_NE(nullptr, freq);
+      ASSERT_NE(nullptr, freq->value);
+      std::copy_n(freq->value, n, res);
+    }
 
     const irs::FreqBlockAttr* freq;
   };
@@ -360,14 +367,7 @@ struct FrequencyScore : public irs::ScorerBase<FrequencyScore, StatsT> {
     auto freqs = irs::get<irs::FreqBlockAttr>(ctx.doc_attrs);
     EXPECT_NE(nullptr, freqs);
 
-    return irs::ScoreFunction::Make<FrequencyScore::Scorer>(
-      [](irs::ScoreCtx* ctx, irs::score_t* res, size_t n) noexcept {
-        auto& state = *reinterpret_cast<Scorer*>(ctx);
-        ASSERT_NE(nullptr, state.freq);
-        ASSERT_NE(nullptr, state.freq->value);
-        std::copy_n(state.freq->value, n, res);
-      },
-      irs::ScoreFunction::NoopMin, freqs);
+    return irs::ScoreFunction::Make<FrequencyScore::Scorer>(freqs);
   }
 };
 

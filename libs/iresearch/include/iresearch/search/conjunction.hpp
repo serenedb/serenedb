@@ -101,15 +101,10 @@ using ScoreAdapters = std::vector<ScoreAdapter>;
 template<typename T>
 using EmptyWrapper = T;
 
-class ConjunctionScorer : public ScoreCtx {
+template<ScoreMergeType MergeType>
+class ConjunctionScorer : public ScoreFunctionImpl {
  public:
-  static ScoreFunction Make(ScoreMergeType merge_type,
-                            const PrepareScoreContext& ctx, auto& itrs,
-                            auto min) {
-    if (merge_type == ScoreMergeType::Noop) {
-      return ScoreFunction::Default();
-    }
-
+  static ScoreFunction Make(const PrepareScoreContext& ctx, auto& itrs) {
     std::vector<ScoreFunction> sources;
     sources.reserve(itrs.size());
     for (auto& it : itrs) {
@@ -124,25 +119,23 @@ class ConjunctionScorer : public ScoreCtx {
       return ScoreFunction::Default();
     }
 
-    return ResolveMergeType(merge_type, [&]<ScoreMergeType MergeType> {
-      return ScoreFunction::Make<ConjunctionScorer>(
-        [](ScoreCtx* ctx, score_t* res, size_t n) noexcept {
-          auto& self = *static_cast<ConjunctionScorer*>(ctx);
-          auto source = self._sources.begin();
-          auto end = self._sources.end();
-
-          source->Score(res, n);
-          for (++source; source != end; ++source) {
-            source->Score(self._scores.data(), n);
-            Merge<MergeType>(res, self._scores.data(), n);
-          }
-        },
-        min, std::move(sources));
-    });
+    return ScoreFunction::Make<ConjunctionScorer<MergeType>>(
+      std::move(sources));
   }
 
   explicit ConjunctionScorer(std::vector<ScoreFunction> sources)
     : _sources{std::move(sources)} {}
+
+  void Score(score_t* res, size_t n) noexcept final {
+    auto source = _sources.begin();
+    auto end = _sources.end();
+
+    source->Score(res, n);
+    for (++source; source != end; ++source) {
+      source->Score(_scores.data(), n);
+      Merge<MergeType>(res, _scores.data(), n);
+    }
+  }
 
  private:
   std::vector<ScoreFunction> _sources;
@@ -203,8 +196,13 @@ class Conjunction : public ConjunctionBase<Adapter> {
   }
 
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
-    return ConjunctionScorer::Make(this->_merge_type, ctx, this->_itrs,
-                                   ScoreFunction::NoopMin);
+    if (this->_merge_type == ScoreMergeType::Noop) {
+      return ScoreFunction::Default();
+    }
+
+    return ResolveMergeType(this->_merge_type, [&]<ScoreMergeType MT> {
+      return ConjunctionScorer<MT>::Make(ctx, this->_itrs);
+    });
   }
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {

@@ -38,8 +38,14 @@ struct EmptyColumnProvider : irs::ColumnProvider {
   const irs::ColumnReader* column(irs::field_id) const final { return nullptr; }
 };
 
-struct FreqScorerContext : public irs::ScoreCtx {
+struct FreqScorerContext : public irs::ScoreFunctionImpl {
   FreqScorerContext(const auto* freq) : freq_source{freq} {}
+
+  void Score(irs::score_t* res, size_t n) noexcept override {
+    ASSERT_EQ(1, n);
+    *res = freq_source->value;
+  }
+
   const irs::FreqAttr* freq_source;
 };
 
@@ -52,13 +58,7 @@ struct FreqScorer : irs::ScorerBase<void> {
     auto* freq = irs::get<irs::FreqAttr>(ctx.doc_attrs);
     EXPECT_NE(nullptr, freq);
 
-    return irs::ScoreFunction::Make<FreqScorerContext>(
-      [](irs::ScoreCtx* ctx, irs::score_t* res, size_t n) noexcept {
-        ASSERT_EQ(1, n);
-        auto& state = static_cast<FreqScorerContext&>(*ctx);
-        *res = state.freq_source->value;
-      },
-      irs::ScoreFunction::NoopMin, freq);
+    return irs::ScoreFunction::Make<FreqScorerContext>(freq);
   }
 
   irs::WandWriter::ptr prepare_wand_writer(size_t max_levels) const final {

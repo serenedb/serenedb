@@ -50,10 +50,20 @@ struct DocIdScorer : irs::ScorerBase<void> {
   }
 
   irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
-    struct ScorerContext final : irs::ScoreCtx {
+    struct ScorerContext : irs::ScoreFunctionImpl {
       ScorerContext(const irs::FreqBlockAttr* freq,
                     irs::doc_id_t divisor) noexcept
         : freq{freq}, divisor{divisor} {}
+
+      void Score(irs::score_t* res, size_t n) noexcept override {
+        ASSERT_NE(nullptr, res);
+        for (size_t i = 0; i < n; ++i) {
+          auto doc_id = freq ? freq->value[i] : next_doc++;
+          res[i] = divisor == 0
+                     ? static_cast<irs::score_t>(doc_id)
+                     : static_cast<irs::score_t>(doc_id % divisor);
+        }
+      }
 
       const irs::FreqBlockAttr* freq;
       irs::doc_id_t divisor;
@@ -62,19 +72,7 @@ struct DocIdScorer : irs::ScorerBase<void> {
 
     auto* freq = irs::get<irs::FreqBlockAttr>(ctx.doc_attrs);
 
-    return irs::ScoreFunction::Make<ScorerContext>(
-      [](irs::ScoreCtx* ctx, irs::score_t* res, size_t n) noexcept {
-        ASSERT_NE(nullptr, res);
-        ASSERT_NE(nullptr, ctx);
-        auto& state = *static_cast<ScorerContext*>(ctx);
-        for (size_t i = 0; i < n; ++i) {
-          auto doc_id = state.freq ? state.freq->value[i] : state.next_doc++;
-          res[i] = state.divisor == 0
-                     ? static_cast<irs::score_t>(doc_id)
-                     : static_cast<irs::score_t>(doc_id % state.divisor);
-        }
-      },
-      irs::ScoreFunction::NoopMin, freq, divisor);
+    return irs::ScoreFunction::Make<ScorerContext>(freq, divisor);
   }
 
   irs::doc_id_t divisor;

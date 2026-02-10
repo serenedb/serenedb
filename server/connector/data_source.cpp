@@ -70,7 +70,7 @@ RocksDBDataSource::RocksDBDataSource(
     kTablePrefixSize + sizeof(catalog::Column::Id);
 
   _column_keys.reserve(num_columns);
-  _upper_bound_keys.reserve(kKeySize * num_columns);
+  _upper_bound_keys_data.reserve(kKeySize * num_columns);
   _upper_bound_slices.reserve(num_columns);
 
   for (const auto column_id : _column_ids) {
@@ -86,16 +86,16 @@ RocksDBDataSource::RocksDBDataSource(
 
     basics::StrResize(key, kTablePrefixSize);
 
-    _upper_bound_keys.append(key);
-    key_utils::AppendColumnKey(_upper_bound_keys, read_column_id + 1);
+    _upper_bound_keys_data.append(key);
+    key_utils::AppendColumnKey(_upper_bound_keys_data, read_column_id + 1);
 
     key_utils::AppendColumnKey(key, read_column_id);
     _column_keys.push_back(key);
   }
 
   for (size_t i = 0; i < num_columns; ++i) {
-    _upper_bound_slices.emplace_back(_upper_bound_keys.data() + i * kKeySize,
-                                     kKeySize);
+    _upper_bound_slices.emplace_back(
+      _upper_bound_keys_data.data() + i * kKeySize, kKeySize);
   }
 }
 
@@ -104,9 +104,13 @@ RocksDBRYOWDataSource::RocksDBRYOWDataSource(
   rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
   std::vector<catalog::Column::Id> column_ids,
   catalog::Column::Id effective_column_id, ObjectId object_key)
-  : RocksDBDataSource(memory_pool, cf, std::move(row_type),
-                      std::move(column_ids), effective_column_id, object_key,
-                      transaction.GetSnapshot()),
+  : RocksDBDataSource{memory_pool,
+                      cf,
+                      std::move(row_type),
+                      std::move(column_ids),
+                      effective_column_id,
+                      object_key,
+                      transaction.GetSnapshot()},
     _transaction{transaction} {}
 
 RocksDBSnapshotDataSource::RocksDBSnapshotDataSource(
@@ -115,9 +119,13 @@ RocksDBSnapshotDataSource::RocksDBSnapshotDataSource(
   std::vector<catalog::Column::Id> column_ids,
   catalog::Column::Id effective_column_id, ObjectId object_key,
   const rocksdb::Snapshot* snapshot)
-  : RocksDBDataSource(memory_pool, cf, std::move(row_type),
-                      std::move(column_ids), effective_column_id, object_key,
-                      snapshot),
+  : RocksDBDataSource{memory_pool,
+                      cf,
+                      std::move(row_type),
+                      std::move(column_ids),
+                      effective_column_id,
+                      object_key,
+                      snapshot},
     _db{db} {}
 
 void RocksDBRYOWDataSource::addSplit(
@@ -148,7 +156,7 @@ void RocksDBDataSource::addSplit(
   _current_split = std::move(split);
 }
 
-template<typename CreateFn>
+template<std::invocable CreateFn>
 void RocksDBDataSource::InitIterators(CreateFn&& create_iter) {
   _iterators.clear();
   _iterators.reserve(_column_keys.size());
@@ -177,7 +185,9 @@ std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
       _columns.emplace_back(ReadColumn(column_idx, size));
 
       // All rows are read
-      if (column_idx == 0 && _columns[column_idx]->size() == 0) {
+      if (_columns[column_idx]->size() == 0) {
+        SDB_ASSERT(column_idx == 0,
+                   "RocksDBDataSource: inconsistent number of columns");
         _current_split.reset();
         return nullptr;
       }
@@ -321,7 +331,7 @@ velox::VectorPtr RocksDBDataSource::ReadColumnFromKey(rocksdb::Iterator& it,
   return result;
 }
 
-template<typename Callback>
+template<std::invocable<uint64_t, std::string_view, std::string_view> Callback>
 uint64_t RocksDBDataSource::IterateColumn(rocksdb::Iterator& it,
                                           uint64_t max_size,
                                           const Callback& func) {

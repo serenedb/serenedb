@@ -53,7 +53,7 @@ class RocksDBDataSource : public velox::connector::DataSource {
                     catalog::Column::Id effective_column_id,
                     ObjectId object_key, const rocksdb::Snapshot* snapshot);
 
-  template<typename CreateFn>
+  template<std::invocable CreateFn>
   void InitIterators(CreateFn&& create);
 
   velox::memory::MemoryPool& _memory_pool;
@@ -74,13 +74,14 @@ class RocksDBDataSource : public velox::connector::DataSource {
 
   velox::VectorPtr ReadColumnFromKey(rocksdb::Iterator& it, uint64_t max_size);
 
-  template<typename Callback>
+  template<
+    std::invocable<uint64_t, std::string_view, std::string_view> Callback>
   uint64_t IterateColumn(rocksdb::Iterator& it, uint64_t max_size,
                          const Callback& func);
 
   velox::RowTypePtr _row_type;
   std::vector<std::string> _column_keys;
-  std::string _upper_bound_keys;
+  std::string _upper_bound_keys_data;
   std::vector<rocksdb::Slice> _upper_bound_slices;
   std::vector<std::unique_ptr<rocksdb::Iterator>> _iterators;
   std::vector<velox::VectorPtr> _columns;

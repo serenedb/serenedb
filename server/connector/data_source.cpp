@@ -97,10 +97,6 @@ RocksDBRYOWDataSource::RocksDBRYOWDataSource(
                       std::move(column_ids), effective_column_id, object_key,
                       transaction.GetSnapshot()),
     _transaction{transaction} {
-  InitIterators([&] {
-    return std::unique_ptr<rocksdb::Iterator>(
-      _transaction.GetIterator(_read_options, &_cf));
-  });
 }
 
 RocksDBSnapshotDataSource::RocksDBSnapshotDataSource(
@@ -113,10 +109,6 @@ RocksDBSnapshotDataSource::RocksDBSnapshotDataSource(
                       std::move(column_ids), effective_column_id, object_key,
                       snapshot),
     _db{db} {
-  InitIterators([&] {
-    return std::unique_ptr<rocksdb::Iterator>(
-      _db.NewIterator(_read_options, &_cf));
-  });
 }
 
 void RocksDBRYOWDataSource::addSplit(

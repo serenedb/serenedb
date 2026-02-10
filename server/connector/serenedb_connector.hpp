@@ -540,11 +540,13 @@ class SereneDBConnector final : public velox::connector::Connector {
       transaction.Get<VariableType::SdbReadYourOwnWrites>(
         "sdb_read_your_own_writes");
 
-    if (read_your_own_writes) {
+    auto* rocksdb_transaction = transaction.GetRocksDBTransaction();
+
+    if (read_your_own_writes && rocksdb_transaction) {
       return std::make_unique<RocksDBRYOWDataSource>(
-        *connector_query_ctx->memoryPool(),
-        transaction.EnsureRocksDBTransaction(), _cf, output_type, column_oids,
-        serene_table_handle.GetEffectiveColumnId(), object_key);
+        *connector_query_ctx->memoryPool(), *rocksdb_transaction, _cf,
+        output_type, column_oids, serene_table_handle.GetEffectiveColumnId(),
+        object_key);
     }
     return std::make_unique<RocksDBSnapshotDataSource>(
       *connector_query_ctx->memoryPool(), _db, _cf, output_type, column_oids,

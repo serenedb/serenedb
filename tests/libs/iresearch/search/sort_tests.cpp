@@ -687,8 +687,8 @@ TEST(ScoreFunctionTest, construct) {
   }
 
   {
-    auto func = irs::ScoreFunction::Make<Ctx>(score_func,
-                                              irs::ScoreFunction::NoopMin);
+    auto func =
+      irs::ScoreFunction::Make<Ctx>(score_func, irs::ScoreFunction::NoopMin);
     ASSERT_EQ(score_func, func.Func());
     ASSERT_NE(nullptr, func.Ctx());
     irs::score_t tmp;
@@ -698,8 +698,8 @@ TEST(ScoreFunctionTest, construct) {
   }
 
   {
-    auto func = irs::ScoreFunction::Make<Ctx>(score_func,
-                                              irs::ScoreFunction::NoopMin);
+    auto func =
+      irs::ScoreFunction::Make<Ctx>(score_func, irs::ScoreFunction::NoopMin);
     ASSERT_EQ(score_func, func.Func());
     ASSERT_NE(nullptr, func.Ctx());
     irs::score_t tmp;
@@ -752,8 +752,8 @@ TEST(ScoreFunctionTest, reset) {
   }
 
   {
-    func = irs::ScoreFunction::Make<Ctx>(score_func,
-                                         irs::ScoreFunction::NoopMin);
+    func =
+      irs::ScoreFunction::Make<Ctx>(score_func, irs::ScoreFunction::NoopMin);
     ASSERT_EQ(score_func, func.Func());
     ASSERT_NE(nullptr, func.Ctx());
     irs::score_t tmp;
@@ -763,8 +763,8 @@ TEST(ScoreFunctionTest, reset) {
   }
 
   {
-    func = irs::ScoreFunction::Make<Ctx>(score_func,
-                                         irs::ScoreFunction::NoopMin);
+    func =
+      irs::ScoreFunction::Make<Ctx>(score_func, irs::ScoreFunction::NoopMin);
     ASSERT_EQ(score_func, func.Func());
     ASSERT_NE(nullptr, func.Ctx());
     irs::score_t tmp;

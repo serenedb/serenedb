@@ -34,6 +34,7 @@
 #include <iresearch/search/search_range.hpp>
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/terms_filter.hpp>
+#include <iresearch/search/wildcard_filter.hpp>
 
 namespace irs {
 
@@ -199,6 +200,14 @@ std::ostream& operator<<(std::ostream& os, const All& filter) {
   return os;
 }
 
+std::ostream& operator<<(std::ostream& os, const ByWildcard& filter) {
+  os << "WILDCARD[";
+  os << filter.field() << ", ";
+  os << irs::ViewCast<char>(irs::bytes_view{filter.options().term});
+  os << "]";
+  return os;
+}
+
 std::ostream& operator<<(std::ostream& os, const Filter& filter) {
   const auto& type = filter.type();
   if (type == irs::Type<All>::id()) {
@@ -227,6 +236,8 @@ std::ostream& operator<<(std::ostream& os, const Filter& filter) {
     return os << static_cast<const ByNestedFilter&>(filter);
   } else if (type == irs::Type<ByColumnExistence>::id()) {
     return os << static_cast<const ByColumnExistence&>(filter);
+  } else if (type == irs::Type<ByWildcard>::id()) {
+    return os << static_cast<const ByWildcard&>(filter);
   } else if (type == irs::Type<Empty>::id()) {
     return os << static_cast<const Empty&>(filter);
   } else {

@@ -26,6 +26,7 @@
 #include <iresearch/search/range_filter.hpp>
 #include <iresearch/search/term_filter.hpp>
 #include <iresearch/search/terms_filter.hpp>
+#include <iresearch/search/wildcard_filter.hpp>
 
 #include "app/options/program_options.h"
 #include "axiom/common/Session.h"
@@ -51,6 +52,7 @@ LIBPG_QUERY_INCLUDES_END
 
 #include "connector_mock.hpp"
 #include "pg/pg_functions_registration.hpp"
+#include "pg/system_catalog.h"
 
 namespace {
 
@@ -99,6 +101,18 @@ class SearchFilterBuilderTest : public ::testing::Test {
     }
     rel.second.object =
       std::make_shared<catalog::Table>(std::move(opts), ObjectId{1});
+
+    // resolve system functions that could be used in queries.
+    // copy of logic from Resolver but only for system functions
+    auto functions = std::move(objects.getFunctions());
+    for (auto& [name, data] : functions) {
+      if (const auto func = pg::GetFunction(name.relation)) {
+        auto& new_data = objects.ensureFunction(name.schema, name.relation);
+        new_data = data;
+        new_data.object = std::move(func);
+      }
+    }
+
     MockConnector connector("mock", nullptr);
     auto table = std::make_shared<TableMock>(
       connector, std::string{rel.first.relation}, std::move(columns),
@@ -309,6 +323,14 @@ class SearchFilterBuilderTest : public ::testing::Test {
     *term.mutable_field() = field_name;
     term.mutable_options()->term.assign(
       irs::ViewCast<irs::byte_type>(irs::NullTokenizer::value_null()));
+  }
+
+  template<typename Filter>
+  void AddLikeFilter(Filter& root, catalog::Column::Id column,
+                     std::string_view value) {
+    auto& wc = AddFilter<irs::ByWildcard>(root);
+    *wc.mutable_field() = MakeFieldName<velox::StringView>(column);
+    wc.mutable_options()->term.assign(irs::ViewCast<irs::byte_type>(value));
   }
 
  protected:
@@ -671,6 +693,17 @@ TEST_F(SearchFilterBuilderTest, test_MixedEqualsAndComparison) {
   AssertFilter(expected,
                "SELECT * FROM foo WHERE status = 'active' AND age >= 18",
                std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_ComparisonNotConst) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("status", velox::INTEGER(), 1));
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("age", velox::INTEGER(), 2));
+  AssertFilter(expected, "SELECT * FROM foo WHERE status <= age",
+               std::move(columns), false);
 }
 
 // ============================================================================
@@ -1068,6 +1101,30 @@ TEST_F(SearchFilterBuilderTest, test_InOperatorLargeColumnId) {
                std::move(columns), true);
 }
 
+TEST_F(SearchFilterBuilderTest, test_InNotConst) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 1));
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("b", velox::INTEGER(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE a IN (10, b, 30, 40)",
+               std::move(columns), false);
+}
+
+TEST_F(SearchFilterBuilderTest, test_InNotConst2) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("a", velox::INTEGER(), 1));
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("b", velox::INTEGER(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE a IN (b)", std::move(columns),
+               false);
+}
+
 // ============================================================================
 // IS NULL Tests
 // ============================================================================
@@ -1119,6 +1176,19 @@ TEST_F(SearchFilterBuilderTest, test_IsNotNotNull) {
     "required_field", velox::INTEGER(), 1));
   AssertFilter(expected,
                "SELECT * FROM foo WHERE NOT(required_field IS NOT NULL)",
+               std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_NotIsNull) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+
+  auto& not_filter = expected.add<irs::Not>();
+  AddNullFilter(not_filter, 1);
+
+  columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
+    "required_field", velox::INTEGER(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE NOT(required_field IS NULL)",
                std::move(columns), true);
 }
 
@@ -1203,6 +1273,87 @@ TEST_F(SearchFilterBuilderTest, test_ComplexWithInAndNull) {
                "SELECT * FROM foo WHERE category IN (1, 2, 3) AND (priority IS "
                "NULL OR priority >= 100)",
                std::move(columns), true);
+}
+
+// ============================================================================
+// LIKE Tests
+// ============================================================================
+
+TEST_F(SearchFilterBuilderTest, test_Like) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+
+  AddLikeFilter(expected, 1, "%foo_");
+
+  columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
+    "required_field", velox::VARCHAR(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE required_field LIKE '%foo_'",
+               std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_LikeOp) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+
+  AddLikeFilter(expected, 1, "%foo_");
+
+  columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
+    "required_field", velox::VARCHAR(), 1));
+  AssertFilter(expected, "SELECT * FROM foo WHERE required_field ~~ '%foo_'",
+               std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_LikeCustomEscape) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+
+  AddLikeFilter(expected, 1, "\\%!foo_");
+
+  columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
+    "required_field", velox::VARCHAR(), 1));
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE required_field LIKE '!%!!foo_' ESCAPE '!'",
+    std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_NotLike) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+
+  auto& not_filter = expected.add<irs::Not>();
+  AddLikeFilter(not_filter, 1, "%bar_");
+
+  columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
+    "required_field", velox::VARCHAR(), 1));
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE NOT(required_field LIKE '%bar_')",
+               std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_LikeWithFunc) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+
+  AddLikeFilter(expected, 1, "!!!%FOO_");
+
+  columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
+    "required_field", velox::VARCHAR(), 1));
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE required_field LIKE UPPER('!!!%foo_')",
+               std::move(columns), true);
+}
+
+TEST_F(SearchFilterBuilderTest, test_LikeNotConst) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+  columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
+    "required_field", velox::VARCHAR(), 1));
+  columns.emplace_back(std::make_unique<connector::SereneDBColumn>(
+    "value_field", velox::VARCHAR(), 2));
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE required_field LIKE UPPER(value_field)",
+               std::move(columns), false);
 }
 
 }  // namespace

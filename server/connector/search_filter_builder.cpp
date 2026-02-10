@@ -29,6 +29,8 @@
 #include <iresearch/search/range_filter.hpp>
 #include <iresearch/search/scorer.hpp>
 #include <iresearch/search/terms_filter.hpp>
+#include <iresearch/search/wildcard_filter.hpp>
+#include <iresearch/utils/wildcard_utils.hpp>
 
 #include "basics/exceptions.h"
 #include "catalog/mangling.h"
@@ -42,13 +44,14 @@ namespace sdb::connector::search {
 // Context for filter conversion
 struct VeloxFilterContext {
   bool negated = false;
-  velox::core::ExpressionEvaluator& evaluator;
   irs::score_t boost = irs::kNoBoost;
   const folly::F14FastMap<std::string, const axiom::connector::Column*>&
     columns_map;
+  velox::core::ExpressionEvaluator& evaluator;
+
+  // reusable vector for constants evaluation
   mutable velox::VectorPtr evaluation_result;
   mutable velox::RowVectorPtr evaluator_input;
-  // Add other context like column mappings, analyzer settings, etc.
 };
 
 Result FromVeloxExpression(irs::BooleanFilter& filter,
@@ -270,15 +273,16 @@ bool IsNotExpr(const velox::core::TypedExprPtr& expr,
 
 // Helper: Check if it's an equality/inequality operator
 bool IsEqualityOp(const std::string& name, bool& not_equal) {
+  if (name == "eq" || name.ends_with("_eq")) {
+    not_equal = false;
+    return true;
+  }
+
   if (name == "neq" || name.ends_with("_neq")) {
     not_equal = true;
     return true;
   }
 
-  if (name == "eq" || name.ends_with("_eq")) {
-    not_equal = false;
-    return true;
-  }
   return false;
 }
 
@@ -294,6 +298,10 @@ bool IsNullEq(std::string_view name, bool& negated) {
     return true;
   }
   return false;
+}
+
+bool IsLike(std::string_view name) {
+  return name == "like" || name.ends_with("_like");
 }
 
 Result FromVeloxBinaryEq(irs::BooleanFilter& filter,
@@ -312,7 +320,7 @@ Result FromVeloxBinaryEq(irs::BooleanFilter& filter,
     call->inputs()[0].get());
   auto value = EvaluateConstant(call->inputs()[1], ctx);
 
-  if (!value->hasValue()) {
+  if (!value.has_value()) {
     return {ERROR_BAD_PARAMETER, "Failed to evaluate right value as constant"};
   }
 
@@ -364,7 +372,7 @@ Result FromVeloxComparison(irs::BooleanFilter& filter,
     static_cast<const velox::core::FieldAccessTypedExpr*>(field_input.get());
   auto value = EvaluateConstant(value_input, ctx);
 
-  if (!value->hasValue()) {
+  if (!value.has_value()) {
     return {ERROR_BAD_PARAMETER, "Failed to evaluate right value as constant"};
   }
 
@@ -451,11 +459,11 @@ Result FromVeloxIn(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
   auto* field_typed =
     static_cast<const velox::core::FieldAccessTypedExpr*>(field_input.get());
   auto value = EvaluateConstant(value_input, ctx);
+  if (!value.has_value()) {
+    return {ERROR_BAD_PARAMETER, "Failed to evaluate value as constant"};
+  }
   if (call->inputs().size() == 2) {
     // Case with second argument as ARRAY of values or single value.
-    if (!value->hasValue()) {
-      return {ERROR_BAD_PARAMETER, "Failed to evaluate value as constant"};
-    }
     if (value->kind() != velox::TypeKind::ARRAY) {
       values_list.push_back(std::move(value.value()));
     }
@@ -464,7 +472,7 @@ Result FromVeloxIn(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
     values_list.push_back(std::move(value.value()));
     for (size_t i = 2; i < call->inputs().size(); ++i) {
       auto value = EvaluateConstant(call->inputs()[i], ctx);
-      if (!value->hasValue()) {
+      if (!value.has_value()) {
         return {ERROR_BAD_PARAMETER, "Failed to evaluate value as constant"};
       }
       values_list.push_back(std::move(value.value()));
@@ -541,6 +549,45 @@ Result FromVeloxIsNull(irs::BooleanFilter& filter,
   return {};
 }
 
+Result FromVeloxLike(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
+                     const velox::core::CallTypedExpr* call) {
+  if (call->inputs().size() != 3 && call->inputs().size() != 2) {
+    return {ERROR_NOT_IMPLEMENTED, "LIKE has ", call->inputs().size(),
+            " inputs but 2 OR 3 expected"};
+  }
+  if (!call->inputs()[0]->isFieldAccessKind()) {
+    return {ERROR_BAD_PARAMETER, "Input is not field access"};
+  }
+
+  auto value = EvaluateConstant(call->inputs()[1], ctx);
+  if (!value.has_value()) {
+    return {ERROR_BAD_PARAMETER, "Failed to evaluate value as constant"};
+  }
+
+  if (value->kind() != velox::TypeKind::VARCHAR) {
+    return {ERROR_BAD_PARAMETER, "Failed to evaluate value as VARCHAR"};
+  }
+
+  // We do not need to process custom escape - it is already done by analyzer
+
+  auto* field_typed = static_cast<const velox::core::FieldAccessTypedExpr*>(
+    call->inputs()[0].get());
+
+  std::string field_name;
+  auto kind = ExtractFieldName(ctx, *field_typed, field_name);
+  if (kind != velox::TypeKind::VARCHAR) {
+    return {ERROR_BAD_PARAMETER, "LIKE field is not VARCHAR"};
+  }
+  sdb::search::mangling::MangleString(field_name);
+  auto& wild_filter = ctx.negated ? Negate<irs::ByWildcard>(filter)
+                                  : AddFilter<irs::ByWildcard>(filter);
+  wild_filter.boost(ctx.boost);
+  *wild_filter.mutable_field() = field_name;
+  wild_filter.mutable_options()->term.assign(irs::ViewCast<irs::byte_type>(
+    static_cast<std::string_view>(value.value().value<velox::StringView>())));
+  return {};
+}
+
 }  // namespace
 
 // Recursive conversion: Handle complex expressions (AND, OR, NOT)
@@ -598,6 +645,10 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
     return FromVeloxIn(filter, ctx, call);
   }
 
+  if (IsLike(call->name())) {
+    return FromVeloxLike(filter, ctx, call);
+  }
+
   return {ERROR_NOT_IMPLEMENTED, "Unsupported operator: ", call->name()};
 }
 
@@ -607,8 +658,8 @@ Result ExprToFilter(
   const folly::F14FastMap<std::string, const axiom::connector::Column*>&
     columns_map) {
   VeloxFilterContext ctx{.negated = false,
-                         .evaluator = evaluator,
                          .columns_map = columns_map,
+                         .evaluator = evaluator,
                          .evaluator_input = std::make_shared<velox::RowVector>(
                            evaluator.pool(), velox::ROW({}, {}), nullptr, 1,
                            std::vector<velox::VectorPtr>{})};

@@ -69,11 +69,6 @@ class Materializer {
   void ReadColumnCell(rocksdb::Iterator& it, std::string_view full_key,
                       bool use_seek, const Decoder& func);
 
-  template<bool StoreLast>
-  velox::VectorPtr ReadGeneratedColumn(
-    rocksdb::Iterator& it, uint64_t max_size, std::string_view column_key,
-    [[maybe_unused]] std::optional<std::string>& last_key);
-
   velox::VectorPtr ReadGeneratedColumnKeys(std::span<std::string> row_keys);
 
   velox::VectorPtr ReadUnknownColumnKeys(std::span<std::string> row_keys);

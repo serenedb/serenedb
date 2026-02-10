@@ -19,7 +19,10 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "search_filter_builder.hpp"
-
+// NOLINTBEGIN
+// Need this header to stay first to avoid conflict in DCHECK macros
+#include "serenedb_connector.hpp"
+// NOLINTEND
 #include <velox/expression/ExprConstants.h>
 
 #include <iresearch/analysis/tokenizers.hpp>
@@ -35,7 +38,6 @@
 #include "basics/exceptions.h"
 #include "catalog/mangling.h"
 #include "iresearch/search/term_filter.hpp"
-#include "serenedb_connector.hpp"
 #include "velox/core/Expressions.h"
 #include "velox/expression/Expr.h"
 

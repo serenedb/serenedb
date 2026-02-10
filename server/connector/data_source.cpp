@@ -49,8 +49,8 @@ RocksDBDataSource::RocksDBDataSource(
     _memory_pool{memory_pool},
     _cf{cf},
     _object_key{object_key},
-    _row_type{std::move(row_type)},
     _column_ids(std::move(column_oids)),
+    _row_type{std::move(row_type)},
     _effective_column_id(std::move(effective_column_id)) {
   SDB_ASSERT(_row_type, "RocksDBDataSource: row type is null");
   SDB_ASSERT(_object_key.isSet(), "RocksDBDataSource: object key is empty");
@@ -59,22 +59,21 @@ RocksDBDataSource::RocksDBDataSource(
   SDB_ASSERT(_row_type->size() == 0 || _row_type->size() == _column_ids.size(),
              "RocksDBDataSource: number of columns does not match row type");
 
-  // TODO(mkornaukhov03) better options
   _read_options.snapshot = snapshot;
-  // _read_options.snapshot = nullptr;
-
   _read_options.async_io = false;
   _read_options.adaptive_readahead = true;
-  // _read_options.prefix_same_as_start = true;  // bad!, -8% +-
 
   std::string key = key_utils::PrepareTableKey(_object_key);
 
-  _column_keys.reserve(_column_ids.size());
-  _upper_bound_keys.reserve(_column_ids.size());
+  const auto num_columns = _column_ids.size();
+  static constexpr size_t kKeySize =
+    kTablePrefixSize + sizeof(catalog::Column::Id);
+
+  _column_keys.reserve(num_columns);
+  _upper_bound_keys.reserve(kKeySize * num_columns);
+  _upper_bound_slices.reserve(num_columns);
 
   for (const auto column_id : _column_ids) {
-    basics::StrResize(key, kTablePrefixSize);
-
     auto read_column_id = column_id;
     if (column_id == catalog::Column::kGeneratedPKId) {
       SDB_ASSERT(_effective_column_id != catalog::Column::kGeneratedPKId,
@@ -82,27 +81,22 @@ RocksDBDataSource::RocksDBDataSource(
       read_column_id = _effective_column_id;
     }
 
-    key_utils::AppendColumnKey(key, read_column_id);
-    _column_keys.push_back(key);
-
     SDB_ASSERT(read_column_id !=
                std::numeric_limits<catalog::Column::Id>::max());
+
     basics::StrResize(key, kTablePrefixSize);
-    key_utils::AppendColumnKey(key, read_column_id + 1);
-    _upper_bound_keys.push_back(key);
+
+    _upper_bound_keys.append(key);
+    key_utils::AppendColumnKey(_upper_bound_keys, read_column_id + 1);
+
+    key_utils::AppendColumnKey(key, read_column_id);
+    _column_keys.push_back(key);
   }
 
-  _upper_bound_slices.reserve(_upper_bound_keys.size());
-  for (const auto& ubk : _upper_bound_keys) {
-    _upper_bound_slices.emplace_back(ubk);
+  for (size_t i = 0; i < num_columns; ++i) {
+    _upper_bound_slices.emplace_back(_upper_bound_keys.data() + i * kKeySize,
+                                     kKeySize);
   }
-
-  // Build sorted indices by column_id for sequential RocksDB access
-  _sorted_indices.resize(_row_type->size());
-  absl::c_iota(_sorted_indices, 0);
-  absl::c_sort(_sorted_indices, [&](auto lhs, auto rhs) {
-    return _column_ids[lhs] < _column_ids[rhs];
-  });
 }
 
 RocksDBRYOWDataSource::RocksDBRYOWDataSource(
@@ -129,18 +123,17 @@ RocksDBSnapshotDataSource::RocksDBSnapshotDataSource(
 void RocksDBRYOWDataSource::addSplit(
   std::shared_ptr<velox::connector::ConnectorSplit> split) {
   RocksDBDataSource::addSplit(std::move(split));
-  InitIterators([&] {
+  InitIterators([&](const rocksdb::ReadOptions& options) {
     return std::unique_ptr<rocksdb::Iterator>(
-      _transaction.GetIterator(_read_options, &_cf));
+      _transaction.GetIterator(options, &_cf));
   });
 }
 
 void RocksDBSnapshotDataSource::addSplit(
   std::shared_ptr<velox::connector::ConnectorSplit> split) {
   RocksDBDataSource::addSplit(std::move(split));
-  InitIterators([&] {
-    return std::unique_ptr<rocksdb::Iterator>(
-      _db.NewIterator(_read_options, &_cf));
+  InitIterators([&](const rocksdb::ReadOptions& options) {
+    return std::unique_ptr<rocksdb::Iterator>(_db.NewIterator(options, &_cf));
   });
 }
 
@@ -160,9 +153,9 @@ void RocksDBDataSource::InitIterators(CreateFn&& create) {
   _iterators.reserve(_column_keys.size());
   for (size_t i = 0; i < _column_keys.size(); ++i) {
     _read_options.iterate_upper_bound = &_upper_bound_slices[i];
-    auto it = create();
+    auto it = create(_read_options);
     it->Seek(_column_keys[i]);
-    if (!it->Valid() || !it->key().starts_with(_column_keys[i])) {
+    if (!it->Valid()) {
       it.reset();
     }
     _iterators.push_back(std::move(it));
@@ -176,49 +169,47 @@ std::optional<velox::RowVectorPtr> RocksDBDataSource::next(
     return nullptr;
   }
 
-  std::vector<velox::VectorPtr> columns;
+  _columns.clear();
 
   const auto num_columns = _row_type->size();
 
   if (num_columns > 0) {
-    columns.resize(num_columns);
-    for (const auto sorted_idx : _sorted_indices) {
-      if (!_iterators[sorted_idx]) {
+    _columns.resize(num_columns);
+    for (size_t column_idx = 0; column_idx < num_columns; ++column_idx) {
+      if (!_iterators[column_idx]) {
         // No rows found. This should happen only for the first column.
         // Otherwise we have a misaligned data.
-        SDB_ASSERT(sorted_idx == _sorted_indices[0],
+        SDB_ASSERT(column_idx == 0,
                    "RocksDBDataSource: inconsistent number of columns");
         _current_split.reset();
         return nullptr;
       }
 
-      columns[sorted_idx] = ReadColumn(sorted_idx, size);
+      _columns[column_idx] = ReadColumn(column_idx, size);
 
       // All rows are read
-      if (sorted_idx == _sorted_indices[0] &&
-          columns[sorted_idx]->size() == 0) {
+      if (column_idx == 0 && _columns[column_idx]->size() == 0) {
         _current_split.reset();
         return nullptr;
       }
     }
-    SDB_ASSERT(absl::c_all_of(columns,
+    SDB_ASSERT(absl::c_all_of(_columns,
                               [&](const velox::VectorPtr& vec) {
-                                return vec->size() == columns.front()->size();
+                                return vec->size() == _columns.front()->size();
                               }),
                "RocksDBDataSource: inconsistent number of rows among columns");
-    _produced += columns.front()->size();
+    _produced += _columns.front()->size();
     return std::make_shared<velox::RowVector>(&_memory_pool, _row_type, nullptr,
-                                              columns.front()->size(),
-                                              std::move(columns));
+                                              _columns.front()->size(),
+                                              std::move(_columns));
   }
   SDB_ASSERT(_column_ids.size() == 1);
   if (!_iterators[0]) {
     _current_split.reset();
     return nullptr;
   }
-  const auto read =
-    IterateColumn(*_iterators[0], size, _column_keys[0],
-                  [](uint64_t, std::string_view, std::string_view) {});
+  const auto read = IterateColumn(
+    *_iterators[0], size, [](uint64_t, std::string_view, std::string_view) {});
 
   // All rows are read
   if (read == 0) {
@@ -256,31 +247,30 @@ void RocksDBDataSource::cancel() {
 velox::VectorPtr RocksDBDataSource::ReadColumn(velox::column_index_t col_idx,
                                                uint64_t max_size) {
   auto& it = *_iterators[col_idx];
-  const auto& column_key = _column_keys[col_idx];
   auto column_id = _column_ids[col_idx];
 
   if (column_id == catalog::Column::kGeneratedPKId) {
-    return ReadColumnFromKey(it, max_size, column_key);
+    return ReadColumnFromKey(it, max_size);
   }
 
   const auto& type = _row_type->childAt(col_idx);
   if (type->kind() == velox::TypeKind::UNKNOWN) {
-    return ReadUnknownColumn(it, max_size, column_key);
+    return ReadUnknownColumn(it, max_size);
   }
 
   return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(ReadScalarColumn, type->kind(), it,
-                                            max_size, column_key);
+                                            max_size);
 }
 
 template<velox::TypeKind Kind>
-velox::VectorPtr RocksDBDataSource::ReadScalarColumn(
-  rocksdb::Iterator& it, uint64_t max_size, std::string_view column_key) {
+velox::VectorPtr RocksDBDataSource::ReadScalarColumn(rocksdb::Iterator& it,
+                                                     uint64_t max_size) {
   using T = typename velox::TypeTraits<Kind>::NativeType;
   auto result = velox::BaseVector::create<velox::FlatVector<T>>(
     velox::Type::create<Kind>(), kInitialVectorSize, &_memory_pool);
 
   const auto vector_size = IterateColumn(
-    it, max_size, column_key,
+    it, max_size,
     [&](uint64_t value_idx, [[maybe_unused]] std::string_view key,
         std::string_view value) {
       if (value_idx == result->size()) {
@@ -317,22 +307,21 @@ velox::VectorPtr RocksDBDataSource::ReadScalarColumn(
   return result;
 }
 
-velox::VectorPtr RocksDBDataSource::ReadUnknownColumn(
-  rocksdb::Iterator& it, uint64_t max_size, std::string_view column_key) {
-  uint64_t vector_size =
-    IterateColumn(it, max_size, column_key,
-                  [](uint64_t, std::string_view, std::string_view) {});
+velox::VectorPtr RocksDBDataSource::ReadUnknownColumn(rocksdb::Iterator& it,
+                                                      uint64_t max_size) {
+  uint64_t vector_size = IterateColumn(
+    it, max_size, [](uint64_t, std::string_view, std::string_view) {});
   return velox::BaseVector::createNullConstant(velox::UNKNOWN(), vector_size,
                                                &_memory_pool);
 }
 
-velox::VectorPtr RocksDBDataSource::ReadColumnFromKey(
-  rocksdb::Iterator& it, uint64_t max_size, std::string_view column_key) {
+velox::VectorPtr RocksDBDataSource::ReadColumnFromKey(rocksdb::Iterator& it,
+                                                      uint64_t max_size) {
   auto result = velox::BaseVector::create<velox::FlatVector<int64_t>>(
     velox::BIGINT(), kInitialVectorSize, &_memory_pool);
 
   const auto vector_size = IterateColumn(
-    it, max_size, column_key,
+    it, max_size,
     [&](uint64_t value_idx, std::string_view key, std::string_view value) {
       if (value_idx == result->size()) {
         result->resize(result->size() * 2, false);
@@ -355,12 +344,11 @@ velox::VectorPtr RocksDBDataSource::ReadColumnFromKey(
 template<typename Callback>
 uint64_t RocksDBDataSource::IterateColumn(rocksdb::Iterator& it,
                                           uint64_t max_size,
-                                          std::string_view column_key,
                                           const Callback& func) {
   uint64_t vector_size = 0;
 
-  while (it.Valid() && max_size > vector_size &&
-         it.key().starts_with(column_key)) {
+  // not prefix with because upper bound is set up
+  while (it.Valid() && max_size > vector_size) {
     func(vector_size, it.key().ToStringView(), it.value().ToStringView());
     ++vector_size;
     it.Next();

@@ -68,25 +68,22 @@ class RocksDBDataSource : public velox::connector::DataSource {
   velox::VectorPtr ReadColumn(velox::column_index_t col_idx, uint64_t max_size);
 
   template<velox::TypeKind Kind>
-  velox::VectorPtr ReadScalarColumn(rocksdb::Iterator& it, uint64_t max_size,
-                                    std::string_view column_key);
+  velox::VectorPtr ReadScalarColumn(rocksdb::Iterator& it, uint64_t max_size);
 
-  velox::VectorPtr ReadUnknownColumn(rocksdb::Iterator& it, uint64_t max_size,
-                                     std::string_view column_key);
+  velox::VectorPtr ReadUnknownColumn(rocksdb::Iterator& it, uint64_t max_size);
 
-  velox::VectorPtr ReadColumnFromKey(rocksdb::Iterator& it, uint64_t max_size,
-                                     std::string_view column_key);
+  velox::VectorPtr ReadColumnFromKey(rocksdb::Iterator& it, uint64_t max_size);
 
   template<typename Callback>
   uint64_t IterateColumn(rocksdb::Iterator& it, uint64_t max_size,
-                         std::string_view column_key, const Callback& func);
+                         const Callback& func);
 
   velox::RowTypePtr _row_type;
   std::vector<std::string> _column_keys;
-  std::vector<std::string> _upper_bound_keys;
+  std::string _upper_bound_keys;  // Single allocation for all upper bound keys
   std::vector<rocksdb::Slice> _upper_bound_slices;
   std::vector<std::unique_ptr<rocksdb::Iterator>> _iterators;
-  std::vector<velox::column_index_t> _sorted_indices;
+  std::vector<velox::VectorPtr> _columns;
   // Column ID to use for iteration when the requested column is stored in the
   // key (e.g., kGeneratedPKId). This points to a column whose values are stored
   // in RocksDB as *values*, not inside *keys*. It's convenient to store it here

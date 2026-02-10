@@ -1380,4 +1380,29 @@ TEST_F(SearchFilterBuilderTest, test_LikeNotConst) {
                std::move(columns), false);
 }
 
+TEST_F(SearchFilterBuilderTest, test_FieldCastError) {
+  irs::And expected;
+  {
+    std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+    columns.emplace_back(
+      std::make_unique<connector::SereneDBColumn>("b", velox::TINYINT(), 1));
+    AssertFilter(expected, "SELECT * FROM foo WHERE b = 999999999999 ",
+                 std::move(columns), false);
+  }
+  {
+    std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+    columns.emplace_back(
+      std::make_unique<connector::SereneDBColumn>("b", velox::TINYINT(), 1));
+    AssertFilter(expected, "SELECT * FROM foo WHERE b <= 999999999999 ",
+                 std::move(columns), false);
+  }
+  {
+    std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+    columns.emplace_back(
+      std::make_unique<connector::SereneDBColumn>("b", velox::TINYINT(), 1));
+    AssertFilter(expected, "SELECT * FROM foo WHERE b IN (1.24, 3.0, 4.5) ",
+                 std::move(columns), false);
+  }
+}
+
 }  // namespace

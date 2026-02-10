@@ -1231,9 +1231,15 @@ class PostingIteratorBase : public DocIterator {
         std::get<FreqBlockAttr>(_attrs).value =
           std::end(this->_freqs) - left_in_leaf;
       }
-      score.score->Score(
-        reinterpret_cast<score_t*>(std::end(this->_enc_buf) - left_in_leaf),
-        left_in_leaf);
+      if (left_in_leaf == kMaxScoreBlock) [[likely]] {
+        score.score->ScoreMaxBlock(reinterpret_cast<score_t*>(
+          std::end(this->_enc_buf) - kMaxScoreBlock));
+
+      } else {
+        score.score->Score(
+          reinterpret_cast<score_t*>(std::end(this->_enc_buf) - left_in_leaf),
+          left_in_leaf);
+      }
     };
 
     return ResolveBool(match.matches != nullptr, [&]<bool TrackMatch> {

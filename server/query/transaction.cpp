@@ -76,7 +76,6 @@ bool Transaction::HasTransactionBegin() const noexcept {
 }
 
 rocksdb::Transaction* Transaction::GetRocksDBTransaction() const noexcept {
-  // SDB_ASSERT((_state & State::HasRocksDBWrite) != State::None);
   return _rocksdb_transaction.get();
 }
 

@@ -1015,6 +1015,30 @@ TEST_F(SearchFilterBuilderTest, test_InOperatorStrings) {
     std::move(columns), true);
 }
 
+TEST_F(SearchFilterBuilderTest, test_InOperatorLongStrings) {
+  std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+  irs::And expected;
+
+  AddTermsFilter<velox::StringView>(
+    expected, 1,
+    {velox::StringView{
+       "ACTIVE LONG STRING THAT WILL NOT FIT INTO INLINE STRINGVIEW"},
+     velox::StringView{
+       "pending super string that will not fit into inline string view"},
+     velox::StringView{
+       "COMPLETED FULL STRING THAT WILL NOT FIT INTO INLINE STRING VIEW"}});
+
+  columns.emplace_back(
+    std::make_unique<connector::SereneDBColumn>("status", velox::VARCHAR(), 1));
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE status IN (UPPER('active long string that will "
+    "not fit into inline stringView'), LOWER('pending super strinG that will "
+    "not fit into inline string view'), UPPER('completed full string that will "
+    "not fit into inline string view'))",
+    std::move(columns), true);
+}
+
 TEST_F(SearchFilterBuilderTest, test_InOperatorWithImplicitCast) {
   std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
   irs::And expected;

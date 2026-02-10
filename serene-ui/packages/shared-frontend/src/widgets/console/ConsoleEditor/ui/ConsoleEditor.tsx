@@ -1,4 +1,4 @@
-import React, { useCallback } from "react";
+import React, { useCallback, useEffect, useRef } from "react";
 import {
     ExecuteQueryButton,
     useConsoleLayout,
@@ -42,6 +42,44 @@ export const ConsoleEditor: React.FC<ConsoleEditorProps> = ({
     const { isMaximized, toggleMaximizedResults } = useConsoleLayout();
     const { executeQuery } = useQueryResults();
     const autocomplete = useConnectionAutocomplete();
+
+    const storybookPrefillAppliedRef = useRef(false);
+
+    useEffect(() => {
+        if (storybookPrefillAppliedRef.current) return;
+
+        const key = "storybook:console:prefillQuery";
+        const maxWaitMs = 2000;
+        const intervalMs = 50;
+        const start = Date.now();
+
+        const intervalId = window.setInterval(() => {
+            if (Date.now() - start > maxWaitMs) {
+                window.clearInterval(intervalId);
+                return;
+            }
+
+            const prefillQuery = localStorage.getItem(key);
+            if (!prefillQuery) return;
+
+            storybookPrefillAppliedRef.current = true;
+            localStorage.removeItem(key);
+
+            if (typeof prefillQuery === "string") {
+                if (tabs[selectedTabId]?.value !== prefillQuery) {
+                    updateTab(selectedTabId, {
+                        value: prefillQuery,
+                    });
+                }
+            }
+
+            window.clearInterval(intervalId);
+        }, intervalMs);
+
+        return () => {
+            window.clearInterval(intervalId);
+        };
+    }, [selectedTabId, tabs, updateTab]);
 
     const handleExecute = useCallback(async () => {
         const result = await executeQuery(

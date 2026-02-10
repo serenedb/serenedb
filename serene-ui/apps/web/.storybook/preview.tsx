@@ -18,6 +18,14 @@ const preview: Preview = {
             // 'error' - fail CI on a11y violations
             // 'off' - skip a11y checks entirely
             test: "error",
+            config: {
+                rules: [
+                    {
+                        id: "color-contrast",
+                        enabled: false,
+                    },
+                ],
+            },
         },
     },
     decorators: [

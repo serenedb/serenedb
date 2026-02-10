@@ -110,10 +110,9 @@ class MockLayout final : public axiom::connector::TableLayout {
              std::vector<const axiom::connector::Column*> columns)
     : axiom::connector::TableLayout(name, table, connector, columns, {}, {},
                                     {}) {
-    catalog::Column::Id id = 1;
     for (const auto& c : columns) {
-      // a bit kludgy but we do not want to make columnd id storage
-      _column_map[c->name()] = id++;
+      auto& serene_column = basics::downCast<connector::SereneDBColumn>(*c);
+      _column_map[c->name()] = serene_column.Id();
     }
   }
 

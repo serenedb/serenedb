@@ -66,7 +66,7 @@ std::optional<velox::RowVectorPtr> SearchDataSource::next(
   SDB_ASSERT(_current_split,
              "RocksDBDataSource: inconsistent state, addSplit call missing");
   auto next_segment = [&] {
-    _doc.reset();
+    SDB_ASSERT(!_doc);
     if (_current_segment < _reader.size()) {
       auto& segment = _reader[_current_segment++];
       _doc = _prepared_filter->execute({.segment = segment});

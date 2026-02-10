@@ -175,11 +175,13 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
     std::vector<velox::core::TypedExprPtr> filters,
     std::vector<velox::core::TypedExprPtr>& rejected_filters) const final {
     rejected_filters = std::move(filters);
+
     if (const auto* read_file_table =
           dynamic_cast<const ReadFileTable*>(&this->table())) {
       return std::make_shared<FileTableHandle>(read_file_table->GetSource(),
                                                read_file_table->GetOptions());
     }
+
     SDB_ASSERT(!table().columnMap().empty(),
                "SereneDBConnectorTableHandle: need a column for count field");
     return std::make_shared<SereneDBConnectorTableHandle>(session, *this);

@@ -63,6 +63,10 @@ RocksDBDataSource::RocksDBDataSource(
   _read_options.async_io = false;
   _read_options.adaptive_readahead = true;
 
+  _read_options.total_order_seek = false;
+  _read_options.auto_prefix_mode = true;
+  _read_options.prefix_same_as_start = false;
+
   std::string key = key_utils::PrepareTableKey(_object_key);
 
   const auto num_columns = _column_ids.size();

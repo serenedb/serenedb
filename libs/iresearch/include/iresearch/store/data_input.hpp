@@ -35,7 +35,7 @@ class DataInput {
  public:
   enum class Type {
     Generic,
-    MMapIndexInput,
+    BytesViewInput,
   };
 
   virtual byte_type ReadByte() = 0;

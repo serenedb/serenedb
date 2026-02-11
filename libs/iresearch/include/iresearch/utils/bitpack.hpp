@@ -25,6 +25,7 @@
 #include "basics/shared.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
+#include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/simd_utils.hpp"
 
 namespace irs {
@@ -137,11 +138,12 @@ IRS_FORCE_INLINE uint32_t write_block64(PackFunc&& pack, DataOutput& out,
 // reads block of 'Size' 32 bit integers from the stream
 // that was previously encoded with the corresponding
 // 'write_block32' function
-template<typename UnpackFunc>
-IRS_FORCE_INLINE void read_block32(UnpackFunc&& unpack, DataInput& in,
+template<typename UnpackFunc, typename InputType>
+IRS_FORCE_INLINE void read_block32(UnpackFunc&& unpack, InputType& in,
                                    uint32_t* IRS_RESTRICT encoded,
                                    uint32_t* IRS_RESTRICT decoded,
                                    uint32_t size) {
+  static_assert(std::is_base_of_v<DataInput, InputType>);
   SDB_ASSERT(encoded);
   SDB_ASSERT(decoded);
   SDB_ASSERT(size != 0);
@@ -155,7 +157,11 @@ IRS_FORCE_INLINE void read_block32(UnpackFunc&& unpack, DataInput& in,
 
   const auto required = packed::BytesRequired32(size, bits);
   const auto* buf = in.ReadView(required);
-  if (buf) [[likely]] {
+
+  if constexpr (std::is_same_v<BytesViewInput, InputType>) {
+    SDB_ASSERT(buf);
+    encoded = const_cast<uint32_t*>(reinterpret_cast<const uint32_t*>(buf));
+  } else if (buf) [[likely]] {
     encoded = const_cast<uint32_t*>(reinterpret_cast<const uint32_t*>(buf));
   } else {
     [[maybe_unused]] const auto read =
@@ -165,11 +171,12 @@ IRS_FORCE_INLINE void read_block32(UnpackFunc&& unpack, DataInput& in,
   unpack(decoded, encoded, bits);
 }
 
-template<typename UnpackFunc>
-IRS_FORCE_INLINE void read_block_delta32(UnpackFunc&& unpack, DataInput& in,
+template<typename UnpackFunc, typename InputType>
+IRS_FORCE_INLINE void read_block_delta32(UnpackFunc&& unpack, InputType& in,
                                          uint32_t* IRS_RESTRICT encoded,
                                          uint32_t* IRS_RESTRICT decoded,
                                          uint32_t size, uint32_t prev) {
+  static_assert(std::is_base_of_v<DataInput, InputType>);
   SDB_ASSERT(encoded);
   SDB_ASSERT(decoded);
   SDB_ASSERT(size != 0);
@@ -186,13 +193,17 @@ IRS_FORCE_INLINE void read_block_delta32(UnpackFunc&& unpack, DataInput& in,
 
   const size_t required = packed::BytesRequired32(size, bits);
   const auto* buf = in.ReadView(required);
-  if (buf) [[likely]] {
+  if constexpr (std::is_same_v<BytesViewInput, InputType>) {
+    SDB_ASSERT(buf);
+    encoded = const_cast<uint32_t*>(reinterpret_cast<const uint32_t*>(buf));
+  } else if (buf) [[likely]] {
     encoded = const_cast<uint32_t*>(reinterpret_cast<const uint32_t*>(buf));
   } else {
     [[maybe_unused]] const auto read =
       in.ReadBytes(reinterpret_cast<byte_type*>(encoded), required);
     SDB_ASSERT(read == required);
   }
+
   unpack(prev, decoded, encoded, bits);
 }
 

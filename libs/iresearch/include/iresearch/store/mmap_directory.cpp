@@ -23,7 +23,7 @@
 #include "iresearch/store/mmap_directory.hpp"
 
 #include "basics/file_utils_ext.hpp"
-#include "iresearch/store/mmap_index_input.hpp"
+#include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/mmap_utils.hpp"
 
 namespace irs {
@@ -140,17 +140,37 @@ size_t BytesInCache(uint8_t* addr, size_t length) {
 }
 #endif
 
-}  // namespace
+class MMapIndexInput final : public BytesViewInput {
+ public:
+  explicit MMapIndexInput(
+    std::shared_ptr<mmap_utils::MMapHandle> handle) noexcept
+    : _handle{std::move(handle)} {
+    if (_handle && _handle->size() != 0) [[likely]] {
+      SDB_ASSERT(_handle->addr() != MAP_FAILED);
+      const auto* begin = reinterpret_cast<byte_type*>(_handle->addr());
+      BytesViewInput::reset(begin, _handle->size());
+    } else {
+      _handle.reset();
+    }
+  }
 
-uint64_t MMapIndexInput::CountMappedMemory() const {
+  uint64_t CountMappedMemory() const final {
 #ifdef __linux__
-  return _handle ? BytesInCache(static_cast<uint8_t*>(_handle->addr()),
-                                _handle->size())
-                 : 0;
+    return _handle ? BytesInCache(static_cast<uint8_t*>(_handle->addr()),
+                                  _handle->size())
+                   : 0;
 #else
-  return 0;
+    return 0;
 #endif
-}
+  }
+
+  ptr Dup() const final { return std::make_unique<MMapIndexInput>(*this); }
+
+ private:
+  std::shared_ptr<mmap_utils::MMapHandle> _handle;
+};
+
+}  // namespace
 
 MMapDirectory::MMapDirectory(std::filesystem::path path,
                              DirectoryAttributes attrs,

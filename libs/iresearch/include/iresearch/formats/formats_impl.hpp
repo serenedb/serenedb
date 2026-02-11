@@ -42,7 +42,6 @@
 #include "formats_attributes.hpp"
 #include "formats_burst_trie.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/formats/seek_cookie.hpp"
 #include "iresearch/formats/skip_list.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/file_names.hpp"
@@ -1009,8 +1008,9 @@ class PositionImpl final : public PosAttr {
   }
 
   // prepares iterator to work
+  template<typename InputType>
   void Prepare(const DocState& state) {
-    _pos_in = state.pos_in->Reopen();  // reopen thread-safe stream
+    _pos_in = sdb::basics::downCast<InputType>(*state.pos_in).Reopen();
 
     if (!_pos_in) {
       // implementation returned wrong pointer
@@ -1021,14 +1021,15 @@ class PositionImpl final : public PosAttr {
     }
 
     _cookie.file_pointer = state.term_state->pos_start;
-    _pos_in->Seek(state.term_state->pos_start);
+    sdb::basics::downCast<InputType>(*_pos_in).Seek(
+      state.term_state->pos_start);
     _freq = state.freq;
     _enc_buf = state.enc_buf;
     _tail_start = state.tail_start;
     _tail_length = state.tail_length;
 
     if constexpr (IteratorTraits::Offset()) {
-      _pay_in = state.pay_in->Reopen();  // reopen thread-safe stream
+      _pay_in = sdb::basics::downCast<InputType>(*state.pay_in).Reopen();
 
       if (!_pay_in) {
         // implementation returned wrong pointer
@@ -1038,20 +1039,22 @@ class PositionImpl final : public PosAttr {
         throw IoError("failed to reopen payload input");
       }
 
-      _pay_in->Seek(state.term_state->pay_start);
+      sdb::basics::downCast<InputType>(*_pay_in).Seek(
+        state.term_state->pay_start);
     }
   }
 
   // notifies iterator that doc iterator has skipped to a new block
+  template<typename InputType>
   void Prepare(const SkipState& state) {
-    _pos_in->Seek(state.pos_ptr);
+    sdb::basics::downCast<InputType>(*_pos_in).Seek(state.pos_ptr);
     _pend_pos = state.pend_pos;
     _buf_pos = IteratorTraits::kBlockSize;
     _cookie.file_pointer = state.pos_ptr;
     _cookie.pend_pos = _pend_pos;
 
     if constexpr (IteratorTraits::Offset()) {
-      _pay_in->Seek(state.pay_ptr);
+      sdb::basics::downCast<InputType>(*_pay_in).Seek(state.pay_ptr);
     }
   }
 
@@ -1594,7 +1597,8 @@ IRS_FORCE_INLINE void CommonReadWandData(WandExtent wextent, uint8_t index,
 // Iterator over posting list.
 // IteratorTraits defines requested features.
 // FieldTraits defines requested features.
-template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
+template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
+         typename InputType>
 class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
   static_assert((IteratorTraits::Features() & FieldTraits::Features()) ==
                 IteratorTraits::Features());
@@ -1616,6 +1620,10 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
                uint8_t wand_index = WandContext::kDisable);
 
  private:
+  IRS_FORCE_INLINE InputType& GetDocIn() const noexcept {
+    return sdb::basics::downCast<InputType>(*this->_doc_in);
+  }
+
   class ReadSkip : private WandExtent {
    public:
     explicit ReadSkip(WandExtent extent) : WandExtent{extent}, _skip_levels(1) {
@@ -1660,10 +1668,11 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
       CopyState<IteratorTraits>(next, *_prev);
     }
 
-    void Read(size_t level, DataInput& in) {
+    void Read(size_t level, DataInput& data_in) {
       auto& next = _skip_levels[level];
       // Store previous step on the same level
       CopyState<IteratorTraits>(*_prev, next);
+      auto& in = sdb::basics::downCast<InputType>(data_in);
       ReadState<FieldTraits>(next, in);
       SkipWandData(in);
     }
@@ -1716,7 +1725,7 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
     }
   }
   IRS_FORCE_INLINE void ReadBlock(doc_id_t prev_doc);
-  IRS_FORCE_INLINE void ReadTailBlock(doc_id_t prev_doc);
+  void ReadTailBlock(doc_id_t prev_doc);
   void SeekToBlock(doc_id_t target) final;
 
   uint64_t _skip_offs{};
@@ -1724,10 +1733,14 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
   uint32_t _docs_count{};
 };
 
-template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
-void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
-  const PostingCookie& meta, const IndexInput* doc_in, const IndexInput* pos_in,
-  const IndexInput* pay_in, uint8_t wand_index) {
+template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
+         typename InputType>
+void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
+                         InputType>::Prepare(const PostingCookie& meta,
+                                             const IndexInput* doc_in,
+                                             const IndexInput* pos_in,
+                                             const IndexInput* pay_in,
+                                             uint8_t wand_index) {
   this->Init(meta);
 
   auto& term_state = sdb::basics::downCast<CookieImpl>(meta.cookie)->meta;
@@ -1755,8 +1768,8 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
       freq_block.value = this->_collected_freqs;
     }
 
-    this->_doc_in->Seek(term_state.doc_start);
-    SDB_ASSERT(!this->_doc_in->IsEOF());
+    GetDocIn().Seek(term_state.doc_start);
+    SDB_ASSERT(!GetDocIn().IsEOF());
   } else {
     SDB_ASSERT(term_state.docs_count == 1);
     auto* doc = std::end(this->_docs) - 1;
@@ -1800,7 +1813,7 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
       .tail_length = term_freq % IteratorTraits::kBlockSize,
     };
 
-    std::get<Position>(this->_attrs).Prepare(state);
+    std::get<Position>(this->_attrs).template Prepare<InputType>(state);
   }
 
   if (term_state.docs_count > IteratorTraits::kBlockSize) {
@@ -1810,29 +1823,31 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
   } else if (1 < term_state.docs_count &&
              term_state.docs_count < IteratorTraits::kBlockSize &&
              wand_index == WandContext::kDisable) {
-    _skip.Reader().SkipWandData(*this->_doc_in);
+    _skip.Reader().SkipWandData(GetDocIn());
   }
   _docs_count = term_state.docs_count;
 }
 
-template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
-void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::ReadBlock(
-  doc_id_t prev_doc) {
-  IteratorTraits::read_block_delta(*this->_doc_in, this->_enc_buf, this->_docs,
+template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
+         typename InputType>
+void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
+                         InputType>::ReadBlock(doc_id_t prev_doc) {
+  IteratorTraits::read_block_delta(GetDocIn(), this->_enc_buf, this->_docs,
                                    prev_doc);
   this->_max_in_leaf = *(std::end(this->_docs) - 1);
   this->_left_in_leaf = IteratorTraits::kBlockSize;
   this->_left_in_list -= IteratorTraits::kBlockSize;
   if constexpr (IteratorTraits::Frequency()) {
-    IteratorTraits::read_block(*this->_doc_in, this->_enc_buf, this->_freqs);
+    IteratorTraits::read_block(GetDocIn(), this->_enc_buf, this->_freqs);
   } else if (FieldTraits::Frequency()) {
-    IteratorTraits::skip_block(*this->_doc_in);
+    IteratorTraits::skip_block(GetDocIn());
   }
 }
 
-template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
-void PostingIteratorImpl<IteratorTraits, FieldTraits,
-                         WandExtent>::ReadTailBlock(doc_id_t prev_doc) {
+template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
+         typename InputType>
+void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
+                         InputType>::ReadTailBlock(doc_id_t prev_doc) {
   auto* doc = std::end(this->_docs) - this->_left_in_list;
 
   [[maybe_unused]] uint32_t* freq;
@@ -1842,17 +1857,17 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits,
 
   while (doc < std::end(this->_docs)) {
     if constexpr (IteratorTraits::Frequency()) {
-      if (ShiftUnpack32(this->_doc_in->ReadV32(), *doc)) {
+      if (ShiftUnpack32(GetDocIn().ReadV32(), *doc)) {
         *freq++ = 1;
       } else {
-        *freq++ = this->_doc_in->ReadV32();
+        *freq++ = GetDocIn().ReadV32();
       }
     } else if (FieldTraits::Frequency()) {
-      if (!ShiftUnpack32(this->_doc_in->ReadV32(), *doc)) {
-        this->_doc_in->ReadV32();
+      if (!ShiftUnpack32(GetDocIn().ReadV32(), *doc)) {
+        GetDocIn().ReadV32();
       }
     } else {
-      *doc = this->_doc_in->ReadV32();
+      *doc = GetDocIn().ReadV32();
     }
     const auto curr_doc = prev_doc + *doc;
     *doc++ = curr_doc;
@@ -1863,9 +1878,10 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits,
   this->_left_in_list = 0;
 }
 
-template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
-void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::SeekToBlock(
-  doc_id_t target) {
+template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
+         typename InputType>
+void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
+                         InputType>::SeekToBlock(doc_id_t target) {
   SkipState last;  // Where block starts
   _skip.Reader().Reset(last);
 
@@ -1880,10 +1896,10 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::SeekToBlock(
     // unnecessary: this->_max_in_leaf = _skip.Reader().UpperBound();
     std::get<DocAttr>(this->_attrs).value = last.doc;
 
-    this->_doc_in->Seek(last.doc_ptr);
+    GetDocIn().Seek(last.doc_ptr);
     if constexpr (IteratorTraits::Position()) {
       auto& pos = std::get<Position>(this->_attrs);
-      pos.Prepare(last);  // Notify positions
+      pos.template Prepare<InputType>(last);  // Notify positions
     }
     return;
   }
@@ -1893,19 +1909,21 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::SeekToBlock(
     return;
   }
 
-  auto skip_in = this->_doc_in->Dup();
+  auto skip_in_ptr = this->_doc_in->Dup();
 
-  if (!skip_in) {
+  if (!skip_in_ptr) {
     SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
               "Failed to duplicate document input");
 
     throw IoError("Failed to duplicate document input");
   }
+  auto& skip_in = sdb::basics::downCast<InputType>(*skip_in_ptr);
 
   SDB_ASSERT(!_skip.NumLevels());
-  skip_in->Seek(_skip_offs);
-  _skip.Reader().SkipWandData(*skip_in);
-  _skip.Prepare(std::move(skip_in), _docs_count);
+  skip_in.Seek(_skip_offs);
+  _skip.Reader().SkipWandData(skip_in);
+  // TODO(mbkkt) we can devirtualize skip_in_ptr for Prepare
+  _skip.Prepare(std::move(skip_in_ptr), _docs_count);
   _docs_count = 0;
 
   // initialize skip levels
@@ -2640,7 +2658,7 @@ size_t PostingsReaderImpl<FormatTraits>::BitUnion(
     IndexFeatures::None != (field_features & IndexFeatures::Freq);
 
   SDB_ASSERT(_doc_in);
-  auto doc_in = _doc_in->Reopen();  // reopen thread-safe stream
+  auto doc_in = _doc_in->Reopen();
 
   if (!doc_in) {
     // implementation returned wrong pointer
@@ -2767,11 +2785,19 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
         return ResolveExtent<0>(
           options.count,
           [&]<typename Extent>(Extent&& extent) -> DocIterator::ptr {
-            auto it = memory::make_managed<
-              PostingIteratorImpl<IteratorTraits, FieldTraits, Extent>>(
-              std::forward<Extent>(extent));
-            it->Prepare(cookie, _doc_in.get(), _pos_in.get(), _pay_in.get());
-            return it;
+            if (_doc_in->GetType() == DataInput::Type::BytesViewInput) {
+              auto it = memory::make_managed<PostingIteratorImpl<
+                IteratorTraits, FieldTraits, Extent, BytesViewInput>>(
+                std::forward<Extent>(extent));
+              it->Prepare(cookie, _doc_in.get(), _pos_in.get(), _pay_in.get());
+              return it;
+            } else {
+              auto it = memory::make_managed<PostingIteratorImpl<
+                IteratorTraits, FieldTraits, Extent, IndexInput>>(
+                std::forward<Extent>(extent));
+              it->Prepare(cookie, _doc_in.get(), _pos_in.get(), _pay_in.get());
+              return it;
+            }
           });
       });
   };
@@ -2925,7 +2951,8 @@ struct FormatTraits128 {
       out, in, buf, kBlockSize);
   }
 
-  IRS_FORCE_INLINE static void read_block_delta(DataInput& in, uint32_t* buf,
+  template<typename InputType>
+  IRS_FORCE_INLINE static void read_block_delta(InputType& in, uint32_t* buf,
                                                 uint32_t* out, uint32_t prev) {
     bitpack::read_block_delta32(
       [](uint32_t prev, uint32_t* IRS_RESTRICT decoded,
@@ -2936,7 +2963,8 @@ struct FormatTraits128 {
       in, buf, out, kBlockSize, prev);
   }
 
-  IRS_FORCE_INLINE static void read_block(DataInput& in, uint32_t* buf,
+  template<typename InputType>
+  IRS_FORCE_INLINE static void read_block(InputType& in, uint32_t* buf,
                                           uint32_t* out) {
     bitpack::read_block32(
       [](uint32_t* IRS_RESTRICT decoded, const uint32_t* IRS_RESTRICT encoded,

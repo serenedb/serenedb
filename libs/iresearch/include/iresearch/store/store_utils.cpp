@@ -71,7 +71,7 @@ uint32_t BytesViewInput::Checksum(uint64_t offset) const {
 }
 
 uint64_t RemappedBytesViewInput::Position() const noexcept {
-  const auto addr = BytesViewInput::Position();
+  const auto addr = _input.Position();
   auto diff = std::numeric_limits<size_t>::max();
   SDB_ASSERT(!_mapping.empty());
   MappingValue src = _mapping.front();

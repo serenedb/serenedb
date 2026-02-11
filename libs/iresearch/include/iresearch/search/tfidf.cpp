@@ -215,6 +215,13 @@ struct TfidfScore : public ScoreOperator {
       norm{norm},
       idf{boost * idf.value} {}
 
+  score_t Score() noexcept final {
+    score_t res;
+    TfIdf<HasNorm, HasFilterBoost>(&res, 1, freq->value, TryGetValue(norm),
+                                   TryGetValue(filter_boost), idf);
+    return res;
+  }
+
   void Score(score_t* res, size_t n) noexcept final {
     TfIdf<HasNorm, HasFilterBoost>(res, n, freq->value, TryGetValue(norm),
                                    TryGetValue(filter_boost), idf);

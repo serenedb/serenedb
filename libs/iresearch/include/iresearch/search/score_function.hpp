@@ -34,14 +34,17 @@ inline constexpr size_t kScoreBlock = 32;
 static_assert(kScoreBlock < std::numeric_limits<uint16_t>::max());
 inline constexpr size_t kPostingBlock = 4 * kScoreBlock;
 static_assert(kPostingBlock < std::numeric_limits<uint16_t>::max());
+static_assert(kPostingBlock % kScoreBlock == 0);
 
 struct ScoreOperator : memory::Managed {
   virtual void Score(score_t* res, size_t n) noexcept = 0;
   virtual void ScoreBlock(score_t* res) noexcept { Score(res, kScoreBlock); }
-  virtual void ScorePostingBlock(score_t* res) noexcept {
-    Score(res, kPostingBlock);
+  virtual void ScorePostingBlock(score_t* res) noexcept { SDB_ASSERT(false); }
+  virtual score_t Score() noexcept {
+    score_t result;
+    Score(&result, 1);
+    return result;
   }
-  virtual void Score(score_t* res) noexcept { Score(res, 1); }
 };
 
 struct DefaultScore final : public ScoreOperator {
@@ -86,10 +89,13 @@ class ScoreFunction {
 
   ScoreFunction() noexcept : ScoreFunction{Default()} {}
   ScoreFunction(ScoreFunction&& other) noexcept
-    : _impl{std::exchange(other._impl, DefaultScore::Make())} {}
+    : _impl{std::exchange(other._impl, DefaultScore::Make())} {
+    SDB_ASSERT(_impl);
+  }
   ScoreFunction& operator=(ScoreFunction&& other) noexcept {
     if (this != &other) {
       _impl = std::exchange(other._impl, DefaultScore::Make());
+      SDB_ASSERT(_impl);
     }
     return *this;
   }
@@ -99,25 +105,18 @@ class ScoreFunction {
   }
 
   IRS_FORCE_INLINE void Score(score_t* res, size_t n) const noexcept {
-    SDB_ASSERT(_impl);
     _impl->Score(res, n);
   }
 
   IRS_FORCE_INLINE void ScoreBlock(score_t* res) const noexcept {
-    SDB_ASSERT(_impl);
     _impl->ScoreBlock(res);
   }
 
   IRS_FORCE_INLINE void ScorePostingBlock(score_t* res) const noexcept {
-    SDB_ASSERT(_impl);
     _impl->ScorePostingBlock(res);
   }
 
-  IRS_FORCE_INLINE void Score(score_t* res) const noexcept {
-    _impl->Score(res);
-  }
-  // TODO(mbkkt) Remove it, use Score
-  IRS_FORCE_INLINE void operator()(score_t* res) const noexcept { Score(res); }
+  IRS_FORCE_INLINE score_t Score() const noexcept { return _impl->Score(); }
 
   bool operator==(const ScoreFunction& rhs) const noexcept {
     return _impl == rhs._impl;

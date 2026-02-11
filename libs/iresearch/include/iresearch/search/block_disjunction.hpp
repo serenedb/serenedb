@@ -236,9 +236,8 @@ class BlockDisjunction : public DocIterator {
             continue;
           }
 
-          score_t sub_score;
           it.FetchScoreArgs(0);
-          scorer.Score(&sub_score);
+          const auto sub_score = scorer.Score();
           Merge<MergeType>(_score_buf.score_window[0], sub_score);
         }
       }
@@ -605,6 +604,12 @@ class BlockDisjunction : public DocIterator {
 
     void FetchScoreArgs(uint16_t offset, uint16_t index) noexcept {
       result[index] = score_window[offset];
+    }
+
+    score_t Score() noexcept final { return result.front(); }
+
+    void ScoreBlock(score_t* res) noexcept final {
+      std::memcpy(res, result.data(), kScoreBlock * sizeof(score_t));
     }
 
     void Score(score_t* res, size_t n) noexcept final {

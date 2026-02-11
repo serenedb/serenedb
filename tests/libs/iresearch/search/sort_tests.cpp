@@ -584,14 +584,14 @@ TEST(ScoreFunctionTest, Noop) {
   {
     auto func = irs::ScoreFunction::Default();
     ASSERT_TRUE(func.IsDefault());
-    func(&value);
+    value = func.Score();
     ASSERT_EQ(0.f, value);
   }
 
   {
     auto func = irs::ScoreFunction::Constant(0.f);
     ASSERT_FALSE(func.IsDefault());
-    func(&value);
+    value = func.Score();
     ASSERT_EQ(0.f, value);
   }
 }

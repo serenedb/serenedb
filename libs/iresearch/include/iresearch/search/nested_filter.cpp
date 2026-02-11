@@ -258,8 +258,18 @@ struct NestedScore final : ScoreOperator {
     child_idx = 0;
   }
 
+  score_t Score() noexcept final {
+    parent_idx = 0;
+    return parent_scores.front();
+  }
+
   void Score(score_t* res, size_t n) noexcept final {
     std::memcpy(res, parent_scores.data(), n * sizeof(score_t));
+    parent_idx = 0;
+  }
+
+  void ScoreBlock(score_t* res) noexcept final {
+    std::memcpy(res, parent_scores.data(), kScoreBlock * sizeof(score_t));
     parent_idx = 0;
   }
 };

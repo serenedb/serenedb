@@ -36,6 +36,7 @@
 
 #include "basics/down_cast.h"
 #include "basics/empty.hpp"
+#include "basics/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/wand_writer.hpp"
 #include "iresearch/index/field_meta.hpp"
@@ -183,17 +184,19 @@ Scorer::ptr MakeJson(std::string_view args) {
 }
 
 template<typename T>
-void Bm1Boost(T* IRS_RESTRICT res, size_t n, const score_t* IRS_RESTRICT boost,
-              float_t num) noexcept {
+IRS_FORCE_INLINE void Bm1Boost(T* IRS_RESTRICT res, size_t n,
+                               const score_t* IRS_RESTRICT boost,
+                               float_t num) noexcept {
   for (size_t i = 0; i < n; ++i) {
     res[i] = boost[i] * num;
   }
 }
 
 template<bool HasBoost, typename T>
-void Bm15(T* IRS_RESTRICT res, size_t n, const uint32_t* IRS_RESTRICT freq,
-          [[maybe_unused]] const score_t* IRS_RESTRICT boost, float_t num,
-          float_t c1) noexcept {
+IRS_FORCE_INLINE void Bm15(T* IRS_RESTRICT res, size_t n,
+                           const uint32_t* IRS_RESTRICT freq,
+                           [[maybe_unused]] const score_t* IRS_RESTRICT boost,
+                           float_t num, float_t c1) noexcept {
   SDB_ASSERT(c1 != 0.f);
   for (size_t i = 0; i < n; ++i) {
     const auto c0 = [&] {
@@ -209,10 +212,11 @@ void Bm15(T* IRS_RESTRICT res, size_t n, const uint32_t* IRS_RESTRICT freq,
 }
 
 template<bool HasBoost, typename T>
-void Bm25(T* res, size_t n, const uint32_t* IRS_RESTRICT freq,
-          const uint32_t* IRS_RESTRICT norm,
-          [[maybe_unused]] const score_t* IRS_RESTRICT boost, float_t num,
-          float_t norm_const, float_t norm_length) noexcept {
+IRS_FORCE_INLINE void Bm25(T* res, size_t n, const uint32_t* IRS_RESTRICT freq,
+                           const uint32_t* IRS_RESTRICT norm,
+                           [[maybe_unused]] const score_t* IRS_RESTRICT boost,
+                           float_t num, float_t norm_const,
+                           float_t norm_length) noexcept {
   for (size_t i = 0; i < n; ++i) {
     const auto c0 = [&] {
       if constexpr (HasBoost) {
@@ -232,6 +236,16 @@ struct Bm1Score : public ScoreOperator {
   Bm1Score(float_t k, score_t boost, const BM25Stats& stats,
            const score_t* fb) noexcept
     : filter_boost{fb}, num{boost * (k + 1) * stats.idf} {}
+
+  score_t Score() noexcept final {
+    score_t res;
+    if constexpr (HasFilterBoost) {
+      Bm1Boost(&res, 1, filter_boost, num);
+    } else {
+      res = 0;
+    }
+    return res;
+  }
 
   void Score(score_t* res, size_t n) noexcept final {
     if constexpr (HasFilterBoost) {
@@ -274,6 +288,12 @@ struct Bm15Score : public ScoreOperator {
     SDB_ASSERT(this->freq);
   }
 
+  score_t Score() noexcept final {
+    score_t res;
+    Bm15<HasFilterBoost>(&res, 1, freq->value, TryGetValue(filter_boost), num,
+                         norm_const);
+    return res;
+  }
   void Score(score_t* res, size_t n) noexcept final {
     Bm15<HasFilterBoost>(res, n, freq->value, TryGetValue(filter_boost), num,
                          norm_const);
@@ -305,6 +325,13 @@ struct Bm25Score : public ScoreOperator {
       freq{freq},
       norm{norm},
       norm_length{stats.norm_length} {}
+
+  score_t Score() noexcept final {
+    score_t res;
+    Bm25<HasFilterBoost>(&res, 1, freq->value, norm, TryGetValue(filter_boost),
+                         num, norm_const, norm_length);
+    return res;
+  }
 
   void Score(score_t* res, size_t n) noexcept final {
     Bm25<HasFilterBoost>(res, n, freq->value, norm, TryGetValue(filter_boost),

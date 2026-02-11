@@ -1560,7 +1560,7 @@ void CommonReadWandData(WandExtent wextent, uint8_t index,
   if (extent == 1) [[likely]] {
     const auto size = in.ReadByte();
     ctx.Read(in, size);
-    func.Score(&score);
+    score = func.Score();
     return;
   }
 
@@ -1580,7 +1580,7 @@ void CommonReadWandData(WandExtent wextent, uint8_t index,
     in.Skip(scorer_offset);
   }
   ctx.Read(in, size);
-  func.Score(&score);
+  score = func.Score();
   if (block_offset) {
     in.Skip(block_offset);
   }

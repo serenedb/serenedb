@@ -125,6 +125,17 @@ class ConjunctionScore : public ScoreOperator {
   explicit ConjunctionScore(std::vector<ScoreFunction> sources)
     : _sources{std::move(sources)} {}
 
+  score_t Score() noexcept final {
+    auto source = _sources.begin();
+    auto end = _sources.end();
+
+    auto res = source->Score();
+    for (++source; source != end; ++source) {
+      Merge<MergeType>(res, source->Score());
+    }
+    return res;
+  }
+
   void Score(score_t* res, size_t n) noexcept final {
     auto source = _sources.begin();
     auto end = _sources.end();

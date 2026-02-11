@@ -25,7 +25,6 @@
 #include "iresearch/index/buffered_column.hpp"
 #include "iresearch/index/buffered_column_iterator.hpp"
 #include "iresearch/index/comparer.hpp"
-#include "iresearch/search/score.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/lz4compression.hpp"

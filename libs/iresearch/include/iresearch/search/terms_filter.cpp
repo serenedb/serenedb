@@ -123,8 +123,8 @@ Filter::Query::ptr ByTerms::Prepare(const PrepareContext& ctx,
     return ByTerm::prepare(sub_ctx, field, term->term);
   }
 
-  FieldCollectors field_stats{ctx.scorers};
-  TermCollectors term_stats{ctx.scorers, size};
+  FieldCollectors field_stats{ctx.scorer};
+  TermCollectors term_stats{ctx.scorer, size};
   MultiTermQuery::States states{ctx.memory, ctx.index.size()};
   AllTermsCollector collector{states, field_stats, term_stats};
   CollectTerms(ctx.index, field, terms, collector);
@@ -143,7 +143,7 @@ Filter::Query::ptr ByTerms::Prepare(const PrepareContext& ctx,
   MultiTermQuery::Stats stats{{ctx.memory}};
   stats.resize(size);
   for (size_t term_idx = 0; auto& stat : stats) {
-    stat.resize(ctx.scorers.stats_size(), 0);
+    stat.resize(ctx.scorer ? ctx.scorer->stats_size() : 0, 0);
     auto* stats_buf = stat.data();
     term_stats.finish(stats_buf, term_idx++, field_stats, ctx.index);
   }
@@ -157,7 +157,7 @@ Filter::Query::ptr ByTerms::prepare(const PrepareContext& ctx) const {
   if (options().terms.empty() || options().min_match != 0) {
     return Prepare(ctx.Boost(Boost()), field(), options());
   }
-  if (ctx.scorers.empty()) {
+  if (ctx.scorer == nullptr) {
     return MakeAllDocsFilter(kNoBoost)->prepare({
       .index = ctx.index,
       .memory = ctx.memory,
@@ -175,7 +175,7 @@ Filter::Query::ptr ByTerms::prepare(const PrepareContext& ctx) const {
   return disj.prepare({
     .index = ctx.index,
     .memory = ctx.memory,
-    .scorers = ctx.scorers,
+    .scorer = ctx.scorer,
     .ctx = ctx.ctx,
   });
 }

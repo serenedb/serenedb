@@ -29,7 +29,6 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/cost.hpp"
 #include "iresearch/search/geo_filter.h"
-#include "iresearch/search/score.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "s2/s2point_region.h"
@@ -739,10 +738,10 @@ TEST(GeoFilterTest, checkScorer) {
   ASSERT_EQ(docs->slice().length(), reader->live_docs_count());
 
   irs::DocIterator* cur_it = nullptr;
-  auto execute_query = [&](const irs::Filter& q, const irs::Scorers& ord) {
+  auto execute_query = [&](const irs::Filter& q, const irs::Scorer& ord) {
     std::map<std::string, score_t> actual_results;
 
-    auto prepared = q.prepare({.index = *reader, .scorers = ord});
+    auto prepared = q.prepare({.index = *reader, .scorer = &ord});
     EXPECT_NE(nullptr, prepared);
     for (auto& segment : *reader) {
       auto column = segment.column("name");
@@ -751,7 +750,7 @@ TEST(GeoFilterTest, checkScorer) {
       EXPECT_NE(nullptr, column_it);
       auto* payload = irs::get<irs::PayAttr>(*column_it);
       EXPECT_NE(nullptr, payload);
-      auto it = prepared->execute({.segment = segment, .scorers = ord});
+      auto it = prepared->execute({.segment = segment, .scorer = &ord});
       EXPECT_NE(nullptr, it);
       auto seek_it = prepared->execute({.segment = segment});
       EXPECT_NE(nullptr, seek_it);
@@ -763,7 +762,7 @@ TEST(GeoFilterTest, checkScorer) {
       }
 
       const auto score = it->PrepareScore({
-        .scorer = ord.buckets().front().bucket,
+        .scorer = &ord,
         .segment = &segment,
       });
       EXPECT_FALSE(score.IsDefault());
@@ -792,7 +791,7 @@ TEST(GeoFilterTest, checkScorer) {
       EXPECT_TRUE(irs::doc_limits::eof(seek_it->seek(it->value())));
 
       {
-        auto it = prepared->execute({.segment = segment, .scorers = ord});
+        auto it = prepared->execute({.segment = segment, .scorer = &ord});
         EXPECT_NE(nullptr, it);
 
         while (it->next()) {
@@ -883,7 +882,7 @@ TEST(GeoFilterTest, checkScorer) {
 
     const std::map<std::string, score_t> expected{{"Q", 9}, {"R", 9}};
 
-    ASSERT_EQ(expected, execute_query(q, irs::Scorers::Prepare(sort)));
+    ASSERT_EQ(expected, execute_query(q, sort));
     ASSERT_EQ(2, collector_collect_field_count);  // 2 segments
     ASSERT_EQ(0, collector_collect_term_count);
     ASSERT_EQ(1, collector_finish_count);
@@ -953,7 +952,7 @@ TEST(GeoFilterTest, checkScorer) {
 
     const std::map<std::string, irs::score_t> expected{{"Q", 9}, {"R", 9}};
 
-    ASSERT_EQ(expected, execute_query(q, irs::Scorers::Prepare(sort)));
+    ASSERT_EQ(expected, execute_query(q, sort));
     ASSERT_EQ(2, collector_collect_field_count);  // 2 segments
     ASSERT_EQ(0, collector_collect_term_count);
     ASSERT_EQ(1, collector_finish_count);

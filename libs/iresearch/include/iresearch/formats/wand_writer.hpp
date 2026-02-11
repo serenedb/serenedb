@@ -358,6 +358,9 @@ class FreqNormSource final : public WandSource {
     if (irs::Type<FreqAttr>::id() == type) {
       return &_freq;
     }
+    if (irs::Type<FreqBlockAttr>::id() == type) {
+      return &_freq_block;
+    }
     if constexpr (kNorm) {
       if (irs::Type<Norm>::id() == type) {
         return &_norm;
@@ -385,6 +388,7 @@ class FreqNormSource final : public WandSource {
 
  private:
   FreqAttr _freq;
+  FreqBlockAttr _freq_block{.value = &_freq.value};
   [[no_unique_address]] utils::Need<kNorm, Norm> _norm;
 };
 

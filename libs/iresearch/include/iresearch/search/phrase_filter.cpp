@@ -216,11 +216,11 @@ Filter::Query::ptr FixedPrepareCollect(const PrepareContext& ctx,
                                        std::string_view field,
                                        const ByPhraseOptions& options) {
   const auto phrase_size = options.size();
-  const auto is_ord_empty = ctx.scorers.empty();
+  const auto is_ord_empty = ctx.scorer == nullptr;
 
   // stats collectors
-  FieldCollectors field_stats(ctx.scorers);
-  TermCollectors term_stats(ctx.scorers, phrase_size);
+  FieldCollectors field_stats(ctx.scorer);
+  TermCollectors term_stats(ctx.scorer, phrase_size);
 
   // per segment phrase states
   FixedPhraseQuery::states_t phrase_states{ctx.memory, ctx.index.size()};
@@ -276,7 +276,7 @@ Filter::Query::ptr FixedPrepareCollect(const PrepareContext& ctx,
   SDB_ASSERT(!options.empty());
 
   // finish stats
-  bstring stats(ctx.scorers.stats_size(), 0);  // aggregated phrase stats
+  bstring stats(ctx.scorer ? ctx.scorer->stats_size() : 0, 0);
   auto* stats_buf = stats.data();
 
   FixedPhraseQuery::positions_t positions(phrase_size);
@@ -302,9 +302,8 @@ Filter::Query::ptr VariadicPrepareCollect(const PrepareContext& ctx,
                                           std::string_view field,
                                           const ByPhraseOptions& options) {
   const auto phrase_size = options.size();
-
   // stats collectors
-  FieldCollectors field_stats{ctx.scorers};
+  FieldCollectors field_stats{ctx.scorer};
 
   std::vector<field_visitor> phrase_part_visitors;
   phrase_part_visitors.reserve(phrase_size);
@@ -315,7 +314,7 @@ Filter::Query::ptr VariadicPrepareCollect(const PrepareContext& ctx,
   std::vector<TopTermsCollectorImpl> top_terms_collectors;
 
   for (const auto& word : options) {
-    phrase_part_stats.emplace_back(ctx.scorers, 0);
+    phrase_part_stats.emplace_back(ctx.scorer, 0);
     auto& visitor =
       phrase_part_visitors.emplace_back(std::visit(GetVisitor{}, word.part));
     if (!visitor) {
@@ -356,7 +355,7 @@ Filter::Query::ptr VariadicPrepareCollect(const PrepareContext& ctx,
   phrase_terms.reserve(phrase_size);
 
   // iterate over the segments
-  const auto is_ord_empty = ctx.scorers.empty();
+  const auto is_ord_empty = ctx.scorer == nullptr;
 
   PhraseTermVisitor<decltype(phrase_terms)> ptv(phrase_terms);
 
@@ -415,7 +414,7 @@ Filter::Query::ptr VariadicPrepareCollect(const PrepareContext& ctx,
   SDB_ASSERT(!options.empty());
   // finish stats
   SDB_ASSERT(phrase_size == phrase_part_stats.size());
-  bstring stats(ctx.scorers.stats_size(), 0);  // aggregated phrase stats
+  bstring stats(ctx.scorer ? ctx.scorer->stats_size() : 0, 0);
   auto* stats_buf = stats.data();
   auto collector = phrase_part_stats.begin();
 

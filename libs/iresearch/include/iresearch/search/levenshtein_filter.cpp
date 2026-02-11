@@ -196,8 +196,8 @@ Filter::Query::ptr PrepareLevenshteinFilter(const PrepareContext& ctx,
                                             bytes_view prefix, bytes_view term,
                                             size_t terms_limit,
                                             const ParametricDescription& d) {
-  FieldCollectors field_stats{ctx.scorers};
-  TermCollectors term_stats{ctx.scorers, 1};
+  FieldCollectors field_stats{ctx.scorer};
+  TermCollectors term_stats{ctx.scorer, 1};
   MultiTermQuery::States states{ctx.memory, ctx.index.size()};
 
   if (!terms_limit) {
@@ -223,7 +223,7 @@ Filter::Query::ptr PrepareLevenshteinFilter(const PrepareContext& ctx,
 
   MultiTermQuery::Stats stats(
     1, MultiTermQuery::Stats::allocator_type{ctx.memory});
-  stats.back().resize(ctx.scorers.stats_size(), 0);
+  stats.back().resize(ctx.scorer ? ctx.scorer->stats_size() : 0, 0);
   auto* stats_buf = stats[0].data();
   term_stats.finish(stats_buf, 0, field_stats, ctx.index);
 

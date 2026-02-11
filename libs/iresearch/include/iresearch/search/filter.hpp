@@ -42,7 +42,7 @@ struct PreparedStateVisitor;
 struct PrepareContext {
   const IndexReader& index;
   IResourceManager& memory = IResourceManager::gNoop;
-  const Scorers& scorers = Scorers::kUnordered;
+  const Scorer* scorer = nullptr;
   const AttributeProvider* ctx = nullptr;
   score_t boost = kNoBoost;
 
@@ -56,7 +56,7 @@ struct PrepareContext {
 struct ExecutionContext {
   const SubReader& segment;
   IResourceManager& memory = IResourceManager::gNoop;
-  const Scorers& scorers = Scorers::kUnordered;
+  const Scorer* scorer = nullptr;
   const AttributeProvider* ctx = nullptr;
   const DocumentMask* pending_docs_mask = nullptr;
   // If enabled, wand would use first scorer from scorers

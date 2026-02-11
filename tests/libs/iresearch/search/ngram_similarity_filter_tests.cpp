@@ -266,16 +266,15 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_1) {
     MakeFilter("field", {"1", "2", "3", "4"}, 0.5f);
 
   CustomNGramScorer sort;
-  auto prepared_order = irs::Scorers::Prepare(sort);
   auto prepared = filter.prepare({
     .index = rdr,
     .memory = counter,
-    .scorers = prepared_order,
+    .scorer = &sort,
   });
   for (const auto& sub : rdr) {
     auto docs = prepared->execute({
       .segment = sub,
-      .scorers = prepared_order,
+      .scorer = &sort,
     });
     auto* doc = irs::get<irs::DocAttr>(*docs);
     auto* frequency = irs::get<irs::FreqAttr>(*docs);
@@ -319,16 +318,15 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_2) {
     MakeFilter("field", {"1", "2", "3", "4"}, 0.5f);
 
   CustomNGramScorer sort;
-  auto prepared_order = irs::Scorers::Prepare(sort);
   auto prepared = filter.prepare({
     .index = rdr,
     .memory = counter,
-    .scorers = prepared_order,
+    .scorer = &sort,
   });
   for (const auto& sub : rdr) {
     auto docs = prepared->execute({
       .segment = sub,
-      .scorers = prepared_order,
+      .scorer = &sort,
     });
     auto* doc = irs::get<irs::DocAttr>(*docs);
     auto* frequency = irs::get<irs::FreqAttr>(*docs);
@@ -371,16 +369,15 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_3) {
     MakeFilter("field", {"1", "2", "3", "4"}, 0.5f);
 
   CustomNGramScorer sort;
-  auto prepared_order = irs::Scorers::Prepare(sort);
   auto prepared = filter.prepare({
     .index = rdr,
     .memory = counter,
-    .scorers = prepared_order,
+    .scorer = &sort,
   });
   for (const auto& sub : rdr) {
     auto docs = prepared->execute({
       .segment = sub,
-      .scorers = prepared_order,
+      .scorer = &sort,
     });
     auto* doc = irs::get<irs::DocAttr>(*docs);
     auto* frequency = irs::get<irs::FreqAttr>(*docs);
@@ -422,16 +419,15 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_4) {
   irs::ByNGramSimilarity filter = MakeFilter("field", {"1", "1"}, 0.5f);
 
   CustomNGramScorer sort;
-  auto prepared_order = irs::Scorers::Prepare(sort);
   auto prepared = filter.prepare({
     .index = rdr,
     .memory = counter,
-    .scorers = prepared_order,
+    .scorer = &sort,
   });
   for (const auto& sub : rdr) {
     auto docs = prepared->execute({
       .segment = sub,
-      .scorers = prepared_order,
+      .scorer = &sort,
     });
     auto* doc = irs::get<irs::DocAttr>(*docs);
     auto* frequency = irs::get<irs::FreqAttr>(*docs);
@@ -475,16 +471,15 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_5) {
   irs::ByNGramSimilarity filter = MakeFilter("field", {"1", "2", "1"}, 0.5f);
 
   CustomNGramScorer sort;
-  auto prepared_order = irs::Scorers::Prepare(sort);
   auto prepared = filter.prepare({
     .index = rdr,
     .memory = counter,
-    .scorers = prepared_order,
+    .scorer = &sort,
   });
   for (const auto& sub : rdr) {
     auto docs = prepared->execute({
       .segment = sub,
-      .scorers = prepared_order,
+      .scorer = &sort,
     });
     auto* doc = irs::get<irs::DocAttr>(*docs);
     auto* frequency = irs::get<irs::FreqAttr>(*docs);
@@ -525,16 +520,15 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_6) {
   irs::ByNGramSimilarity filter = MakeFilter("field", {"1", "1"}, 1.0f);
 
   CustomNGramScorer sort;
-  auto prepared_order = irs::Scorers::Prepare(sort);
   auto prepared = filter.prepare({
     .index = rdr,
     .memory = counter,
-    .scorers = prepared_order,
+    .scorer = &sort,
   });
   for (const auto& sub : rdr) {
     auto docs = prepared->execute({
       .segment = sub,
-      .scorers = prepared_order,
+      .scorer = &sort,
     });
     auto* doc = irs::get<irs::DocAttr>(*docs);
     auto* frequency = irs::get<irs::FreqAttr>(*docs);
@@ -578,16 +572,15 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_7) {
     MakeFilter("field", {"1", "2", "3", "4"}, 0.5f);
 
   CustomNGramScorer sort;
-  auto prepared_order = irs::Scorers::Prepare(sort);
   auto prepared = filter.prepare({
     .index = rdr,
     .memory = counter,
-    .scorers = prepared_order,
+    .scorer = &sort,
   });
   for (const auto& sub : rdr) {
     auto docs = prepared->execute({
       .segment = sub,
-      .scorers = prepared_order,
+      .scorer = &sort,
     });
     auto* doc = irs::get<irs::DocAttr>(*docs);
     auto* frequency = irs::get<irs::FreqAttr>(*docs);
@@ -630,16 +623,15 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_8) {
     MakeFilter("field", {"1", "5", "6", "2"}, 0.5f);
 
   CustomNGramScorer sort;
-  auto prepared_order = irs::Scorers::Prepare(sort);
   auto prepared = filter.prepare({
     .index = rdr,
     .memory = counter,
-    .scorers = prepared_order,
+    .scorer = &sort,
   });
   for (const auto& sub : rdr) {
     auto docs = prepared->execute({
       .segment = sub,
-      .scorers = prepared_order,
+      .scorer = &sort,
     });
     auto* doc = irs::get<irs::DocAttr>(*docs);
     auto* frequency = irs::get<irs::FreqAttr>(*docs);
@@ -684,16 +676,15 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_9) {
     MakeFilter("field", {"1", "2", "3", "4", "5", "1"}, 0.5f);
 
   CustomNGramScorer sort;
-  auto prepared_order = irs::Scorers::Prepare(sort);
   auto prepared = filter.prepare({
     .index = rdr,
     .memory = counter,
-    .scorers = prepared_order,
+    .scorer = &sort,
   });
   for (const auto& sub : rdr) {
     auto docs = prepared->execute({
       .segment = sub,
-      .scorers = prepared_order,
+      .scorer = &sort,
     });
     auto* doc = irs::get<irs::DocAttr>(*docs);
     auto* frequency = irs::get<irs::FreqAttr>(*docs);
@@ -734,16 +725,15 @@ TEST_P(NGramSimilarityFilterTestCase, check_matcher_10) {
   irs::ByNGramSimilarity filter = MakeFilter("field", {""}, 0.5f);
 
   CustomNGramScorer sort;
-  auto prepared_order = irs::Scorers::Prepare(sort);
   auto prepared = filter.prepare({
     .index = rdr,
     .memory = counter,
-    .scorers = prepared_order,
+    .scorer = &sort,
   });
   for (const auto& sub : rdr) {
     auto docs = prepared->execute({
       .segment = sub,
-      .scorers = prepared_order,
+      .scorer = &sort,
     });
     auto* doc = irs::get<irs::DocAttr>(*docs);
     auto* frequency = irs::get<irs::FreqAttr>(*docs);
@@ -1479,17 +1469,14 @@ TEST_P(NGramSimilarityFilterTestCase, seek) {
     MakeFilter("field", {"never_match", "at", "tl", "la", "as", "ll"}, 0.5f);
   Docs seek_tagrets{2, 5, 8, 13};
   auto seek_it = std::begin(seek_tagrets);
-  auto& prepared_order = irs::Scorers::kUnordered;
   auto prepared_filter = filter.prepare({
     .index = rdr,
     .memory = counter,
-    .scorers = prepared_order,
   });
   for (const auto& sub : rdr) {
     while (std::end(seek_tagrets) != seek_it) {
       auto docs = prepared_filter->execute({
         .segment = sub,
-        .scorers = prepared_order,
       });
       auto* doc = irs::get<irs::DocAttr>(*docs);
       ASSERT_TRUE(

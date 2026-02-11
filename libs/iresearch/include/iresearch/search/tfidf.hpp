@@ -60,7 +60,6 @@ class TFIDF final : public irs::ScorerBase<TFIDF, TFIDFStats> {
   FieldCollector::ptr PrepareFieldCollector() const final;
 
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
-  ScoreFunction PrepareSingleScorer(const ScoreContext& ctx) const final;
 
   TermCollector::ptr PrepareTermCollector() const final;
 

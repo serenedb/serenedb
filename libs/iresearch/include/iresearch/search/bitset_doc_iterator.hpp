@@ -24,8 +24,6 @@
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/search/cost.hpp"
-#include "iresearch/search/score.hpp"
-#include "iresearch/utils/attribute_helper.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {

@@ -22,13 +22,11 @@
 
 #pragma once
 
-#include "basics/containers/small_vector.h"
 #include "basics/math_utils.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
-#include "iresearch/utils/iterator.hpp"
 
 namespace irs {
 
@@ -52,6 +50,16 @@ struct FilterBoost final : Attribute {
   }
 
   score_t value{kNoBoost};
+};
+
+// Caller writes value, iterator reads at block boundaries to skip
+// blocks whose max score is below the threshold.
+struct ScoreThresholdAttr final : Attribute {
+  static constexpr std::string_view type_name() noexcept {
+    return "score_threshold";
+  }
+
+  score_t value{0};
 };
 
 // Object used for collecting index statistics, for a specific matched
@@ -184,9 +192,6 @@ struct Scorer {
 
   // Create a stateful scorer used for computation of document scores
   virtual ScoreFunction PrepareScorer(const ScoreContext& ctx) const = 0;
-  virtual ScoreFunction PrepareSingleScorer(const ScoreContext& ctx) const {
-    return {};
-  }
 
   // Create an object to be used for collecting index statistics, one
   // instance per matched term.
@@ -213,11 +218,8 @@ struct Scorer {
   // 255 -- compatible, same types
   static uint8_t compatible(WandType lhs, WandType rhs) noexcept;
 
-  // Number of bytes (first) and alignment (first) required to store stats
-  // Alignment must satisfy the following requirements:
-  //   - be a power of 2
-  //   - be less or equal than alignof(MAX_ALIGN_T))
-  virtual std::pair<size_t, size_t> stats_size() const = 0;
+  // Number of bytes required to store stats (already aligned).
+  virtual size_t stats_size() const = 0;
 
   virtual bool equals(const Scorer& other) const noexcept {
     return type() == other.type();
@@ -237,83 +239,6 @@ enum class ScoreMergeType {
   // Find max amongst multiple scores
   Max,
 };
-
-struct ScorerBucket {
-  ScorerBucket(const Scorer& bucket, size_t stats_offset) noexcept
-    : bucket{&bucket}, stats_offset{stats_offset} {}
-
-  const Scorer* bucket;  // prepared score
-  size_t stats_offset;   // offset in stats buffer
-};
-
-static_assert(std::is_nothrow_move_constructible_v<ScorerBucket>);
-static_assert(std::is_nothrow_move_assignable_v<ScorerBucket>);
-
-// Set of compiled scorers
-class Scorers final : private util::Noncopyable {
- public:
-  static const Scorers kUnordered;
-
-  static Scorers Prepare(std::span<const Scorer*> scorers) {
-    return Prepare(scorers.begin(), scorers.end());
-  }
-  static Scorers Prepare(std::span<const Scorer::ptr> scorers) {
-    return Prepare(scorers.begin(), scorers.end());
-  }
-  static Scorers Prepare(const Scorer* scorer) {
-    return Prepare(std::span{&scorer, 1});
-  }
-  static Scorers Prepare(const Scorer& scorer) { return Prepare(&scorer); }
-
-  Scorers() = default;
-  Scorers(Scorers&&) = default;
-  Scorers& operator=(Scorers&&) = default;
-
-  bool empty() const noexcept { return _buckets.empty(); }
-  std::span<const ScorerBucket> buckets() const noexcept {
-    return {_buckets.data(), _buckets.size()};
-  }
-  size_t score_size() const noexcept { return _score_size; }
-  size_t stats_size() const noexcept { return _stats_size; }
-  IndexFeatures features() const noexcept { return _features; }
-
- private:
-  using ScorerBuckets = sdb::containers::SmallVector<ScorerBucket, 1>;
-
-  template<typename Iterator>
-  static Scorers Prepare(Iterator begin, Iterator end);
-
-  size_t PushBack(const Scorer& scorer);
-
-  ScorerBuckets _buckets;
-  size_t _score_size{};
-  size_t _stats_size{};
-  IndexFeatures _features{IndexFeatures::None};
-};
-
-template<typename Iterator>
-Scorers Scorers::Prepare(Iterator begin, Iterator end) {
-  SDB_ASSERT(begin <= end);
-
-  size_t stats_align = 1;
-  Scorers scorers;
-  scorers._buckets.reserve(end - begin);
-
-  for (; begin != end; ++begin) {
-    const auto& scorer = *begin;
-
-    if (!scorer) [[unlikely]] {
-      continue;
-    }
-
-    stats_align = std::max(stats_align, scorers.PushBack(*scorer));
-  }
-
-  scorers._stats_size = memory::AlignUp(scorers._stats_size, stats_align);
-  scorers._score_size = sizeof(score_t) * scorers._buckets.size();
-
-  return scorers;
-}
 
 template<typename Visitor>
 IRS_FORCE_INLINE auto ResolveMergeType(ScoreMergeType type, Visitor&& visitor) {
@@ -360,17 +285,69 @@ class ScorerBase : public Scorer {
       stats_cast(const_cast<const byte_type*>(buf)));
   }
 
-  // Returns number of bytes and alignment required to store stats
-  IRS_FORCE_INLINE std::pair<size_t, size_t> stats_size() const noexcept final {
+  // Returns number of bytes required to store stats (already aligned).
+  IRS_FORCE_INLINE size_t stats_size() const noexcept final {
     if constexpr (std::is_same_v<StatsType, void>) {
-      return {size_t{0}, size_t{1}};
+      return 0;
     } else {
       static_assert(alignof(StatsType) <= alignof(std::max_align_t));
       static_assert(math::IsPower2(alignof(StatsType)));
 
-      return {sizeof(StatsType), alignof(StatsType)};
+      return memory::AlignUp(sizeof(StatsType), alignof(StatsType));
     }
   }
 };
+
+template<ScoreMergeType MergeType>
+IRS_FORCE_INLINE void Merge(score_t& bucket, score_t arg) noexcept {
+  if constexpr (MergeType == ScoreMergeType::Sum) {
+    bucket += arg;
+  } else if constexpr (MergeType == ScoreMergeType::Max) {
+    bucket = std::max(bucket, arg);
+  } else {
+    static_assert(false);
+  }
+}
+
+template<ScoreMergeType MergeType, typename T>
+IRS_FORCE_INLINE void Merge(T* IRS_RESTRICT res,
+                            const score_t* IRS_RESTRICT args,
+                            size_t n) noexcept {
+  for (size_t i = 0; i < n; ++i) {
+    Merge<MergeType>(res[i], args[i]);
+  }
+}
+
+template<ScoreMergeType MergeType, typename T, typename I>
+IRS_FORCE_INLINE void Merge(T* IRS_RESTRICT res, const I* IRS_RESTRICT hits,
+                            const score_t* IRS_RESTRICT args,
+                            size_t n) noexcept {
+  for (size_t i = 0; i < n; ++i) {
+    const auto bucket_index = hits[i];
+    Merge<MergeType>(res[bucket_index], args[i]);
+  }
+}
+
+template<ScoreMergeType MergeType, typename T, typename I>
+IRS_FORCE_INLINE void Merge(T* IRS_RESTRICT res, const I* IRS_RESTRICT hits,
+                            I base, const score_t* IRS_RESTRICT args,
+                            size_t n) noexcept {
+  for (size_t i = 0; i < n; ++i) {
+    const auto bucket_index = hits[i] - base;
+    Merge<MergeType>(res[bucket_index], args[i]);
+  }
+}
+
+template<ScoreMergeType MergeType, typename T, size_t N>
+IRS_FORCE_INLINE void Merge(score_t* res, std::span<score_t, N> args) noexcept {
+  Merge<MergeType>(res, args.data(), args.size());
+}
+
+template<ScoreMergeType MergeType, typename T, typename I, size_t N>
+IRS_FORCE_INLINE void Merge(T* res, std::span<I, N> hits,
+                            std::span<score_t, N> args) noexcept {
+  SDB_ASSERT(hits.size() <= args.size());
+  Merge<MergeType>(res, hits.data(), args.data(), hits.size());
+}
 
 }  // namespace irs

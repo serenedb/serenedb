@@ -25,8 +25,54 @@
 #include "common.h"
 #include "key_utils.hpp"
 #include "primary_key.hpp"
+#include "rocksdb_engine_catalog/rocksdb_utils.h"
 
 namespace sdb::connector {
+
+Materializer::Materializer(velox::memory::MemoryPool& memory_pool,
+                           const rocksdb::Snapshot* snapshot, rocksdb::DB* db,
+                           rocksdb::Transaction* transaction,
+                           rocksdb::ColumnFamilyHandle& cf,
+                           velox::RowTypePtr row_type,
+                           std::vector<catalog::Column::Id> column_oids,
+                           catalog::Column::Id effective_column_id,
+                           ObjectId object_key)
+  : _memory_pool{memory_pool},
+    _db{db},
+    _transaction{transaction},
+    _cf{cf},
+    _row_type{std::move(row_type)},
+    _column_ids(std::move(column_oids)),
+    _effective_column_id(std::move(effective_column_id)),
+    _object_key{object_key} {
+  SDB_ASSERT((_db != nullptr) != (_transaction != nullptr),
+             "Only one data source should be specified");
+  _read_options.async_io = true;
+  _read_options.snapshot = snapshot;
+  if (_db) {
+    _value_reader = [&](std::string_view full_key) -> std::string& {
+      auto status = _db->Get(_read_options, full_key, &_value_buffer);
+      if (!status.ok()) {
+        auto res = sdb::rocksutils::ConvertStatus(status);
+        SDB_THROW(
+          res.errorNumber(),
+          "Failed to read value by PK from database: ", res.errorMessage());
+      }
+      return _value_buffer;
+    };
+  } else {
+    _value_reader = [&](std::string_view full_key) -> std::string& {
+      auto status = _transaction->Get(_read_options, full_key, &_value_buffer);
+      if (!status.ok()) {
+        auto res = sdb::rocksutils::ConvertStatus(status);
+        SDB_THROW(
+          res.errorNumber(),
+          "Failed to read value by PK from transaction: ", res.errorMessage());
+      }
+      return _value_buffer;
+    };
+  }
+}
 
 velox::RowVectorPtr Materializer::ReadRows(std::span<std::string> row_keys) {
   std::vector<velox::VectorPtr> columns;
@@ -54,14 +100,7 @@ velox::RowVectorPtr Materializer::ReadRows(std::span<std::string> row_keys) {
     }
 
     key_utils::AppendColumnKey(key, read_column_id);
-    auto it = CreateIterator();
-    if (!it) {
-      // no rows found. This should happen only for the first column.
-      // Otherwise we have a misaligned data.
-      SDB_ASSERT(columns.empty(), "DataSource: inconsistent number of columns");
-      return nullptr;
-    }
-    columns.push_back(ReadColumnKeys(*it, row_keys, column_id,
+    columns.push_back(ReadColumnKeys(row_keys, column_id,
                                      _row_type->childAt(col_idx)->kind(), key));
   }
   SDB_ASSERT(absl::c_all_of(columns,
@@ -75,52 +114,23 @@ velox::RowVectorPtr Materializer::ReadRows(std::span<std::string> row_keys) {
                                             std::move(columns));
 }
 
-std::unique_ptr<rocksdb::Iterator> Materializer::CreateIterator() {
-  rocksdb::ReadOptions read_options;
-  read_options.async_io = false;
-  read_options.snapshot = _snapshot;
-  return std::unique_ptr<rocksdb::Iterator>(
-    _db ? _db->NewIterator(read_options, &_cf)
-        : _transaction->GetIterator(read_options, &_cf));
-}
-
 template<typename Decoder>
-void Materializer::IterateColumnKeys(rocksdb::Iterator& it,
-                                     std::string_view column_key,
+void Materializer::IterateColumnKeys(std::string_view column_key,
                                      std::span<std::string> row_keys,
                                      const Decoder& func) {
+  // TODO(Dronplane): try use multiget
   std::string buffer(column_key);
   auto cur = row_keys.begin();
   while (cur != row_keys.end()) {
     buffer.resize(column_key.size());
     buffer.append(*cur);
-    // TODO(Dronplane) measure performance sorted vs unsorted keys.
-    ReadColumnCell(it, buffer, cur == row_keys.begin(), func);
+    SDB_ASSERT(_value_reader);
+    func(buffer, _value_reader(buffer));
     ++cur;
   }
 }
 
-template<typename Decoder>
-void Materializer::ReadColumnCell(rocksdb::Iterator& it,
-                                  std::string_view full_key, bool use_seek,
-                                  const Decoder& func) {
-  auto key_slice = rocksdb::Slice{full_key};
-  if (_is_range && !use_seek) {
-    it.Next();
-    if (it.key() != full_key) {
-      _is_range = false;
-      it.Seek(key_slice);
-    }
-  } else {
-    it.Seek(key_slice);
-  }
-  SDB_ENSURE(it.Valid() && it.key() == full_key, ERROR_INTERNAL,
-             "Invalid primary key read.");
-  func(it.key().ToStringView(), it.value().ToStringView());
-}
-
-velox::VectorPtr Materializer::ReadColumnKeys(rocksdb::Iterator& it,
-                                              std::span<std::string> row_keys,
+velox::VectorPtr Materializer::ReadColumnKeys(std::span<std::string> row_keys,
                                               catalog::Column::Id column_id,
                                               velox::TypeKind kind,
                                               std::string_view column_key) {
@@ -130,7 +140,7 @@ velox::VectorPtr Materializer::ReadColumnKeys(rocksdb::Iterator& it,
   if (kind == velox::TypeKind::UNKNOWN) {
     return ReadUnknownColumnKeys(row_keys);
   }
-  return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(ReadScalarColumnKeys, kind, it,
+  return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(ReadScalarColumnKeys, kind,
                                             row_keys, column_key);
 }
 
@@ -156,14 +166,13 @@ velox::VectorPtr Materializer::ReadUnknownColumnKeys(
 
 template<velox::TypeKind Kind>
 velox::VectorPtr Materializer::ReadScalarColumnKeys(
-  rocksdb::Iterator& it, std::span<std::string> row_keys,
-  std::string_view column_key) {
+  std::span<std::string> row_keys, std::string_view column_key) {
   using T = typename velox::TypeTraits<Kind>::NativeType;
   auto result = velox::BaseVector::create<velox::FlatVector<T>>(
     velox::Type::create<Kind>(), row_keys.size(), &_memory_pool);
   velox::vector_size_t vector_idx = 0;
   IterateColumnKeys(
-    it, column_key, row_keys,
+    column_key, row_keys,
     [&]([[maybe_unused]] std::string_view key, std::string_view value) {
       ReadScalarType(value, vector_idx++, *result);
     });

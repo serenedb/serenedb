@@ -105,10 +105,7 @@ std::optional<velox::RowVectorPtr> SearchDataSource::next(
     return nullptr;
   }
 
-  // batch ready
-  // TODO(Dronplane) handle materialization failures for case when delete is
-  // committed to the rocksdb but no yet in the index! We need to read some more
-  // from index then.
+  // batch ready - materialize it
   return ReadRows(index_keys);
 }
 

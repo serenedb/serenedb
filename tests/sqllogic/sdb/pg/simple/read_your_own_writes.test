@@ -4,7 +4,7 @@ CREATE TABLE t_ryow (id INTEGER PRIMARY KEY, value INTEGER);
 
 # Test default behavior (on) - should read your own writes
 statement ok
-SET sdb_read_your_own_writes = on;
+SET sdb_read_your_own_writes = 1;
 
 statement ok
 BEGIN;
@@ -35,7 +35,7 @@ id	value
 
 # Test with read_your_own_writes=off - should NOT read uncommitted writes
 statement ok
-SET sdb_read_your_own_writes = off;
+SET sdb_read_your_own_writes = 0;
 
 statement ok
 BEGIN;
@@ -69,7 +69,7 @@ id	value
 
 # Test UPDATE with read_your_own_writes=on
 statement ok
-SET sdb_read_your_own_writes = on;
+SET sdb_read_your_own_writes = 1;
 
 statement ok
 BEGIN;
@@ -89,7 +89,7 @@ ROLLBACK;
 
 # Test UPDATE with read_your_own_writes=off
 statement ok
-SET sdb_read_your_own_writes = off;
+SET sdb_read_your_own_writes = 0;
 
 statement ok
 BEGIN;
@@ -109,7 +109,7 @@ ROLLBACK;
 
 # Test DELETE with read_your_own_writes=on
 statement ok
-SET sdb_read_your_own_writes = on;
+SET sdb_read_your_own_writes = 1;
 
 statement ok
 BEGIN;
@@ -128,7 +128,7 @@ ROLLBACK;
 
 # Test DELETE with read_your_own_writes=off
 statement ok
-SET sdb_read_your_own_writes = off;
+SET sdb_read_your_own_writes = 0;
 
 statement ok
 BEGIN;
@@ -162,7 +162,7 @@ DROP TABLE t_ryow;
 
 # Test delete non-commited rows
 statement ok
-SET sdb_read_your_own_writes = on;
+SET sdb_read_your_own_writes = 1;
 
 statement ok
 CREATE TABLE t (id INTEGER PRIMARY KEY, value INTEGER);
@@ -191,7 +191,7 @@ SELECT * FROM t ORDER BY id;
 id	value
 
 statement ok
-SET sdb_read_your_own_writes = off;
+SET sdb_read_your_own_writes = 0;
 
 statement ok
 BEGIN;
@@ -217,16 +217,16 @@ statement error
 SET sdb_read_your_own_writes = invalid;
 
 statement error
-SET sdb_read_your_own_writes = 1;
+SET sdb_read_your_own_writes = on;
 
 statement error
-SET sdb_read_your_own_writes = true;
-
-statement ok
 SET sdb_read_your_own_writes = ON;
 
 statement ok
-SET sdb_read_your_own_writes = Off;
+SET sdb_read_your_own_writes = 1;
 
 statement ok
-SET sdb_read_your_own_writes = oN;
+SET sdb_read_your_own_writes = no;
+
+statement ok
+SET sdb_read_your_own_writes = y;

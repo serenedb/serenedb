@@ -571,8 +571,7 @@ class SereneDBConnector final : public velox::connector::Connector {
     auto& transaction = serene_table_handle.GetTransaction();
 
     const bool read_your_own_writes =
-      transaction.Get<VariableType::SdbReadYourOwnWrites>(
-        "sdb_read_your_own_writes");
+      transaction.Get<VariableType::Bool>("sdb_read_your_own_writes");
 
     auto* rocksdb_transaction = transaction.GetRocksDBTransaction();
 

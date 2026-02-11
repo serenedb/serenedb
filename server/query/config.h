@@ -54,7 +54,6 @@ enum class VariableType {
   PgExtraFloatDigits,
   PgByteaOutput,
   SdbWriteConflictPolicy,
-  SdbReadYourOwnWrites,
 };
 
 enum class ByteaOutput : uint8_t {
@@ -140,14 +139,6 @@ class Config : public velox::config::IConfig {
       SDB_ASSERT(absl::EqualsIgnoreCase("replace", *value_str),
                  "sdb_write_conflict_policy is not validated");
       return WriteConflictPolicy::Replace;
-    } else if constexpr (T == VariableType::SdbReadYourOwnWrites) {
-      SDB_ASSERT(key == "sdb_read_your_own_writes");
-      if (absl::EqualsIgnoreCase("on", *value_str)) {
-        return true;
-      }
-      SDB_ASSERT(absl::EqualsIgnoreCase("off", *value_str),
-                 "sdb_read_your_own_writes is not validated");
-      return false;
     } else if constexpr (T == VariableType::JoinOrderAlgorithm) {
       SDB_ASSERT(key == "join_order_algorithm");
       if (absl::EqualsIgnoreCase("cost", *value_str)) {
@@ -162,6 +153,11 @@ class Config : public velox::config::IConfig {
     } else if constexpr (T == VariableType::U32) {
       uint32_t r = 0;
       const bool ok = absl::SimpleAtoi<uint32_t>(*value_str, &r);
+      SDB_ASSERT(ok, key, " is not validated");
+      return r;
+    } else if constexpr (T == VariableType::Bool) {
+      bool r = false;
+      const bool ok = absl::SimpleAtob(*value_str, &r);
       SDB_ASSERT(ok, key, " is not validated");
       return r;
     } else {

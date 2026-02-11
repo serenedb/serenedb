@@ -1,0 +1,624 @@
+query
+SELECT 1 AS one;
+----
+one
+1
+
+
+query
+SELECT true;
+----
+?column?
+t
+
+
+query
+SELECT false;
+----
+?column?
+f
+
+
+query
+SELECT true AS true;
+----
+true
+t
+
+
+query
+SELECT false AS false;
+----
+false
+f
+
+
+query
+SELECT Cast('true' as Bool) AS true;
+----
+true
+t
+
+
+query
+SELECT Cast(1 as Bool) AS true;
+----
+true
+t
+
+
+query
+SELECT 0::bool AS false;
+----
+false
+f
+
+
+query
+SELECT 0::bool > 1::bool;
+----
+?column?
+f
+
+
+query
+SELECT 0::bool >= 1::bool;
+----
+?column?
+f
+
+
+query
+SELECT 0::bool <> 1::bool;
+----
+?column?
+t
+
+
+query
+SELECT 0::bool < 1::bool;
+----
+?column?
+t
+
+
+query
+SELECT 0::bool <= 1::bool;
+----
+?column?
+t
+
+
+query
+SELECT bool '   f           ' AS false;
+----
+false
+f
+
+
+query
+SELECT Cast('false' as Bool) AS false;
+----
+false
+f
+
+
+query error
+SELECT Cast('test' as Bool) AS error;
+----
+db error: ERROR: invalid input syntax for type boolean: "test"
+
+
+query error
+SELECT bool 'foo' AS error;
+----
+db error: ERROR: invalid input syntax for type boolean: "foo"
+
+
+query
+SELECT bool 'y' AS true;
+----
+true
+t
+
+
+query
+SELECT bool 'yes' AS true;
+----
+true
+t
+
+
+query error
+SELECT bool 'yeah' AS error;
+----
+db error: ERROR: invalid input syntax for type boolean: "yeah"
+
+
+query
+SELECT bool 'n' AS false;
+----
+false
+f
+
+
+query
+SELECT bool 'no' AS false;
+----
+false
+f
+
+
+query error
+SELECT bool 'nay' AS error;
+----
+db error: ERROR: invalid input syntax for type boolean: "nay"
+
+
+query
+SELECT bool 'on' AS true;
+----
+true
+t
+
+
+query
+SELECT bool 'off' AS false;
+----
+false
+f
+
+
+query
+SELECT bool 'of' AS false;
+----
+false
+f
+
+
+query error
+SELECT bool 'o' AS error;
+----
+db error: ERROR: invalid input syntax for type boolean: "o"
+
+
+query error
+SELECT bool 'on_' AS error;
+----
+db error: ERROR: invalid input syntax for type boolean: "on_"
+
+
+query error
+SELECT bool 'off_' AS error;
+----
+db error: ERROR: invalid input syntax for type boolean: "off_"
+
+
+query
+SELECT bool '1' AS true;
+----
+true
+t
+
+
+query error
+SELECT bool '11' AS error;
+----
+db error: ERROR: invalid input syntax for type boolean: "11"
+
+
+query
+SELECT bool '0' AS false;
+----
+false
+f
+
+
+query error
+SELECT bool '000' AS error;
+----
+db error: ERROR: invalid input syntax for type boolean: "000"
+
+
+query error
+SELECT bool '' AS error;
+----
+db error: ERROR: invalid input syntax for type boolean: ""
+
+
+query
+SELECT bool 't' or bool 'f' AS true;
+----
+true
+t
+
+
+query
+SELECT bool 't' and bool 'f' AS false;
+----
+false
+f
+
+
+query
+SELECT not bool 'f' AS true;
+----
+true
+t
+
+
+query
+SELECT bool 't' = bool 'f' AS false;
+----
+false
+f
+
+
+query
+SELECT bool 't' <> bool 'f' AS true;
+----
+true
+t
+
+
+query
+SELECT bool 't' > bool 'f' AS true;
+----
+true
+t
+
+
+query
+SELECT bool 't' >= bool 'f' AS true;
+----
+true
+t
+
+
+query
+SELECT bool 'f' < bool 't' AS true;
+----
+true
+t
+
+
+query
+SELECT bool 'f' <= bool 't' AS true;
+----
+true
+t
+
+
+query
+SELECT 'TrUe'::text::boolean AS true, 'fAlse'::text::boolean AS false;
+----
+true	false
+t	f
+
+
+query
+SELECT '    true   '::text::boolean AS true,
+       '     FALSE'::text::boolean AS false;
+----
+true	false
+t	f
+
+
+query
+SELECT true::boolean::text AS true, false::boolean::text AS false;
+----
+true	false
+true	false
+
+
+query error
+SELECT '  tru e '::text::boolean AS invalid;    -- error
+----
+db error: ERROR: invalid input syntax for type boolean: "  tru e "
+
+
+query error
+SELECT ''::text::boolean AS invalid;            -- error
+----
+db error: ERROR: invalid input syntax for type boolean: ""
+
+
+statement count 0
+CREATE TABLE BOOLTBL1 (f1 bool);
+
+
+statement count 1
+INSERT INTO BOOLTBL1 (f1) VALUES (bool 't');
+
+
+statement count 1
+INSERT INTO BOOLTBL1 (f1) VALUES (bool 'True');
+
+
+statement count 1
+INSERT INTO BOOLTBL1 (f1) VALUES (bool 'true');
+
+
+query
+SELECT '' AS t_3, BOOLTBL1.* FROM BOOLTBL1;
+----
+t_3	f1
+(empty)	t
+(empty)	t
+(empty)	t
+
+
+query
+SELECT '' AS t_3, BOOLTBL1.*
+   FROM BOOLTBL1
+   WHERE f1 = bool 'true';
+----
+t_3	f1
+(empty)	t
+(empty)	t
+(empty)	t
+
+
+query
+SELECT '' AS t_3, BOOLTBL1.*
+   FROM BOOLTBL1
+   WHERE f1 <> bool 'false';
+----
+t_3	f1
+(empty)	t
+(empty)	t
+(empty)	t
+
+
+# TODO(mbkkt) make query
+statement count 1
+SELECT '' AS zero, BOOLTBL1.*
+   FROM BOOLTBL1
+   WHERE booleq(bool 'false', f1);
+
+
+statement count 1
+INSERT INTO BOOLTBL1 (f1) VALUES (bool 'f');
+
+
+query
+SELECT '' AS f_1, BOOLTBL1.*
+   FROM BOOLTBL1
+   WHERE f1 = bool 'false';
+----
+f_1	f1
+(empty)	f
+
+
+statement count 0
+CREATE TABLE BOOLTBL2 (f1 bool);
+
+
+statement count 1
+INSERT INTO BOOLTBL2 (f1) VALUES (bool 'f');
+
+
+statement count 1
+INSERT INTO BOOLTBL2 (f1) VALUES (bool 'false');
+
+
+statement count 1
+INSERT INTO BOOLTBL2 (f1) VALUES (bool 'False');
+
+
+statement count 1
+INSERT INTO BOOLTBL2 (f1) VALUES (bool 'FALSE');
+
+
+query error
+INSERT INTO BOOLTBL2 (f1)
+   VALUES (bool 'XXX');
+----
+db error: ERROR: invalid input syntax for type boolean: "XXX"
+
+
+query
+SELECT '' AS f_4, BOOLTBL2.* FROM BOOLTBL2;
+----
+f_4	f1
+(empty)	f
+(empty)	f
+(empty)	f
+(empty)	f
+
+
+query
+SELECT '' AS tf_12, BOOLTBL1.*, BOOLTBL2.*
+   FROM BOOLTBL1, BOOLTBL2
+   WHERE BOOLTBL2.f1 <> BOOLTBL1.f1;
+----
+tf_12	f1	f1
+(empty)	t	f
+(empty)	t	f
+(empty)	t	f
+(empty)	t	f
+(empty)	t	f
+(empty)	t	f
+(empty)	t	f
+(empty)	t	f
+(empty)	t	f
+(empty)	t	f
+(empty)	t	f
+(empty)	t	f
+
+
+query
+SELECT '' AS tf_12, BOOLTBL1.*, BOOLTBL2.*
+   FROM BOOLTBL1, BOOLTBL2
+   WHERE boolne(BOOLTBL2.f1,BOOLTBL1.f1);
+----
+tf_12	f1	f1
+(empty)	t	f
+(empty)	t	f
+(empty)	t	f
+(empty)	t	f
+(empty)	t	f
+(empty)	t	f
+(empty)	t	f
+(empty)	t	f
+(empty)	t	f
+(empty)	t	f
+(empty)	t	f
+(empty)	t	f
+
+
+query
+SELECT '' AS ff_4, BOOLTBL1.*, BOOLTBL2.*
+   FROM BOOLTBL1, BOOLTBL2
+   WHERE BOOLTBL2.f1 = BOOLTBL1.f1 and BOOLTBL1.f1 = bool 'false';
+----
+ff_4	f1	f1
+(empty)	f	f
+(empty)	f	f
+(empty)	f	f
+(empty)	f	f
+
+
+query
+SELECT '' AS tf_12_ff_4, BOOLTBL1.*, BOOLTBL2.*
+   FROM BOOLTBL1, BOOLTBL2
+   WHERE BOOLTBL2.f1 = BOOLTBL1.f1 or BOOLTBL1.f1 = bool 'true'
+   ORDER BY BOOLTBL1.f1, BOOLTBL2.f1;
+----
+tf_12_ff_4	f1	f1
+(empty)	f	f
+(empty)	f	f
+(empty)	f	f
+(empty)	f	f
+(empty)	t	f
+(empty)	t	f
+(empty)	t	f
+(empty)	t	f
+(empty)	t	f
+(empty)	t	f
+(empty)	t	f
+(empty)	t	f
+(empty)	t	f
+(empty)	t	f
+(empty)	t	f
+(empty)	t	f
+
+
+query
+SELECT '' AS "True", f1
+   FROM BOOLTBL1
+   WHERE f1 IS TRUE;
+----
+True	f1
+(empty)	t
+(empty)	t
+(empty)	t
+
+
+query
+SELECT '' AS "Not False", f1
+   FROM BOOLTBL1
+   WHERE f1 IS NOT FALSE;
+----
+Not False	f1
+(empty)	t
+(empty)	t
+(empty)	t
+
+
+query
+SELECT '' AS "False", f1
+   FROM BOOLTBL1
+   WHERE f1 IS FALSE;
+----
+False	f1
+(empty)	f
+
+
+query
+SELECT '' AS "Not True", f1
+   FROM BOOLTBL1
+   WHERE f1 IS NOT TRUE;
+----
+Not True	f1
+(empty)	f
+
+
+statement count 1
+SELECT '' AS "True", f1
+   FROM BOOLTBL2
+   WHERE f1 IS TRUE;
+
+
+statement count 1
+SELECT '' AS "Not False", f1
+   FROM BOOLTBL2
+   WHERE f1 IS NOT FALSE;
+
+
+query
+SELECT '' AS "False", f1
+   FROM BOOLTBL2
+   WHERE f1 IS FALSE;
+----
+False	f1
+(empty)	f
+(empty)	f
+(empty)	f
+(empty)	f
+
+
+query
+SELECT '' AS "Not True", f1
+   FROM BOOLTBL2
+   WHERE f1 IS NOT TRUE;
+----
+Not True	f1
+(empty)	f
+(empty)	f
+(empty)	f
+(empty)	f
+
+statement count 0
+CREATE TABLE BOOLTBL3 (d text, b bool, o int);
+
+
+statement count 1
+INSERT INTO BOOLTBL3 (d, b, o) VALUES ('true', true, 1);
+
+
+statement count 1
+INSERT INTO BOOLTBL3 (d, b, o) VALUES ('false', false, 2);
+
+
+statement count 1
+INSERT INTO BOOLTBL3 (d, b, o) VALUES ('null', null, 3);
+
+
+query
+SELECT
+    d,
+    b IS TRUE AS istrue,
+    b IS NOT TRUE AS isnottrue,
+    b IS FALSE AS isfalse,
+    b IS NOT FALSE AS isnotfalse,
+    b IS UNKNOWN AS isunknown,
+    b IS NOT UNKNOWN AS isnotunknown
+FROM booltbl3 ORDER BY o;
+----
+d	istrue	isnottrue	isfalse	isnotfalse	isunknown	isnotunknown
+true	t	f	f	t	f	t
+false	f	t	t	f	f	t
+null	f	t	f	t	t	f
+
+
+statement count 0
+DROP TABLE  BOOLTBL1;
+
+
+statement count 0
+DROP TABLE  BOOLTBL2;
+
+
+statement count 0
+DROP TABLE  BOOLTBL3;

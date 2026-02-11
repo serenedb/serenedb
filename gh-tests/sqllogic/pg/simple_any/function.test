@@ -1,0 +1,458 @@
+statement ok
+CREATE PROCEDURE typical_review()
+AS $$
+  SELECT * FROM
+  (
+    VALUES ('had done nothing, got money'), ('had done nothing, got money')
+  ),
+  (
+    VALUES ('had done nothing, got money'), ('had done nothing, got money')
+  )
+$$ LANGUAGE sql;
+
+
+statement ok
+CALL typical_review();
+
+
+query error
+SELECT * FROM typical_review();
+----
+db error: ERROR: typical_review() is a procedure
+HINT: To call a procedure, use CALL.
+
+
+query error
+SELECT typical_review();
+----
+db error: ERROR: typical_review() is a procedure
+HINT: To call a procedure, use CALL.
+
+
+query error
+SELECT WHERE typical_review() > 1
+----
+db error: ERROR: typical_review() is a procedure
+HINT: To call a procedure, use CALL.
+
+
+statement ok
+CREATE PROCEDURE create_review()
+AS $$
+  CREATE VIEW clickclack_review AS
+  SELECT 'had done nothing, got money';
+$$ LANGUAGE sql;
+
+
+statement ok
+CALL create_review();
+
+
+statement ok
+CREATE PROCEDURE create_hft(
+  title TEXT
+)
+AS $$
+  CREATE VIEW my_hft AS
+  SELECT title, 'hft earned 0 money'
+$$ LANGUAGE sql;
+
+
+query error
+CALL create_hft('vedernikoff');
+----
+db error: ERROR: column "title" does not exist
+
+
+statement ok
+CREATE FUNCTION simple_boy_old_pg()
+RETURNS TABLE(name TEXT, sername TEXT)
+AS $$
+    SELECT 'hello', 'world'
+$$ LANGUAGE sql;
+
+
+query
+SELECT * FROM simple_boy_old_pg();
+----
+name sername
+hello world
+
+
+statement ok
+CREATE FUNCTION iwillbereplaced()
+RETURNS TEXT
+AS $$
+    SELECT 'notme'
+$$ LANGUAGE sql;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION iwillbereplaced()
+RETURNS TEXT
+AS $$
+    SELECT 'me'
+$$ LANGUAGE sql;
+
+
+query
+SELECT * FROM iwillbereplaced()
+----
+iwillbereplaced
+me
+
+
+statement ok
+CREATE FUNCTION simple_boy_new_pg()
+RETURNS TABLE(name TEXT, sername TEXT)
+LANGUAGE sql
+BEGIN ATOMIC
+  SELECT 'hello', 'world';
+END;
+
+
+query
+SELECT * FROM simple_boy_new_pg();
+----
+name sername
+hello world
+
+
+statement ok
+CREATE FUNCTION ireturnvoid()
+RETURNS VOID
+AS $$
+    SELECT *
+    FROM
+    (
+      VALUES ('non-void'), ('non-void')
+    ),
+    (
+      VALUES ('non-void'), ('non-void')
+    )
+$$ LANGUAGE sql;
+
+
+query
+SELECT * FROM ireturnvoid();
+----
+ireturnvoid
+NULL
+
+
+query
+SELECT * FROM
+  clickclack_review as cr1,
+  clickclack_review as cr2,
+  clickclack_review as cr3;
+----
+?column? ?column? ?column?
+had done nothing, got money had done nothing, got money had done nothing, got money
+
+
+statement ok
+CREATE FUNCTION clickclack_employee()
+RETURNS TABLE(namenino TEXT, gradenino INTEGER)
+AS $$
+  SELECT name, (2 * weight + age) / 10 as grade
+  FROM
+  (
+    SELECT *
+    FROM
+    (
+      VALUES ('vedernikoff', 22, 60), ('arelav', 25, 69), ('billinman', 54, 228)
+    ) as clickclack(name, age, weight)
+  )
+$$ LANGUAGE sql;
+
+
+query
+SELECT * FROM clickclack_employee()
+----
+namenino	gradenino
+vedernikoff	14
+arelav	16
+billinman	51
+
+
+query ???? rowsort
+SELECT * FROM
+  clickclack_employee() as ce1,
+  clickclack_employee() as ce2;
+----
+namenino gradenino namenino gradenino
+arelav	16	arelav	16
+arelav	16	billinman	51
+arelav	16	vedernikoff	14
+billinman	51	arelav	16
+billinman	51	billinman	51
+billinman	51	vedernikoff	14
+vedernikoff	14	arelav	16
+vedernikoff	14	billinman	51
+vedernikoff	14	vedernikoff	14
+
+
+statement ok
+CREATE FUNCTION iq_test(
+  iq INTEGER
+)
+RETURNS TABLE(name INTEGER)
+AS $$
+  SELECT iq / 2
+$$ LANGUAGE sql;
+
+
+query
+SELECT * FROM iq_test(1000);
+----
+name
+500
+
+
+statement ok
+CREATE FUNCTION employee_with_grade_bt_old_pg(
+  grade_threshold INTEGER
+)
+RETURNS TABLE(name TEXT, grade INTEGER)
+AS $$
+  SELECT name, grade
+  FROM
+  (
+    SELECT name, age, (2 * weight + age) / 10 as grade
+    FROM
+    (
+      VALUES ('vedernikoff', 22, 60), ('arelav', 25, 69), ('billinman', 54, 228)
+    ) as clickclack(name, age, weight)
+  )
+  WHERE grade > grade_threshold
+$$ LANGUAGE sql;
+
+
+query
+SELECT * FROM employee_with_grade_bt_old_pg(1000 - 7 - 993 + 10 + 6)
+----
+name grade
+billinman 51
+
+
+statement ok
+CREATE FUNCTION employee_with_grade_bt_new_pg(
+  grade_threshold INTEGER
+)
+RETURNS TABLE(name TEXT, grade INTEGER)
+BEGIN ATOMIC
+  SELECT name, grade
+  FROM
+  (
+    SELECT name, age, (2 * weight + age) / 10 as grade
+    FROM
+    (
+      VALUES ('vedernikoff', 22, 60), ('arelav', 25, 69), ('billinman', 54, 228)
+    ) as clickclack(name, age, weight)
+  )
+  WHERE grade > grade_threshold;
+END;
+
+
+query
+SELECT * FROM employee_with_grade_bt_new_pg(1000 - 7 - 993 + 10 + 6)
+----
+name grade
+billinman 51
+
+
+statement ok
+CREATE FUNCTION estimate_grade(
+  weight INTEGER,
+  age INTEGER
+)
+RETURNS INTEGER
+AS $$
+    SELECT (2 * weight + age) / 10;
+$$ LANGUAGE sql;
+
+
+query
+SELECT * FROM estimate_grade(70, 43);
+----
+estimate_grade
+18
+
+
+statement ok
+CREATE FUNCTION ihavenoname(
+  INTEGER,
+  INTEGER
+)
+RETURNS INTEGER
+AS $$
+  SELECT $1 - $2
+$$ LANGUAGE sql;
+
+
+query
+SELECT * FROM ihavenoname(1000, 7)
+----
+ihavenoname
+993
+
+
+statement ok
+CREATE OR REPLACE FUNCTION itmustbelimited()
+RETURNS INTEGER
+AS $$
+  SELECT *
+  FROM
+  (
+    VALUES (1), (3), (3), (7)
+  )
+$$ LANGUAGE sql;
+
+
+query
+SELECT * FROM itmustbelimited();
+----
+itmustbelimited
+1
+
+
+statement ok
+CREATE FUNCTION mikhail_made_me_write_this_code()
+RETURNS INTEGER
+LANGUAGE sql
+BEGIN ATOMIC
+  SELECT length('i really did not want to but he made me do it')::integer;
+END;
+
+
+query
+SELECT * FROM mikhail_made_me_write_this_code();
+----
+mikhail_made_me_write_this_code
+45
+
+
+statement error
+CREATE FUNCTION i_return_wrong_scalar_type()
+RETURNS INTEGER
+LANGUAGE sql
+BEGIN ATOMIC
+  SELECT TRUE;
+END;
+----
+db error: ERROR: return type mismatch in function declared to return integer
+DETAIL: Actual return type is boolean.
+
+
+statement error
+CREATE FUNCTION i_return_wrong_scalar_type()
+RETURNS INTEGER
+LANGUAGE sql
+BEGIN ATOMIC
+  SELECT TRUE, FALSE;
+END;
+----
+db error: ERROR: return type mismatch in function declared to return integer
+DETAIL: Final statement must return exactly one column.
+
+
+statement error
+CREATE FUNCTION i_return_too_many_columns()
+RETURNS TABLE(name TEXT, sername TEXT)
+LANGUAGE sql
+BEGIN ATOMIC
+  SELECT 'hello', 'world', 'extra';
+END;
+----
+db error: ERROR: return type mismatch in function declared to return record
+DETAIL: Final statement returns too many columns.
+
+
+statement error
+CREATE FUNCTION i_return_too_few_columns()
+RETURNS TABLE(name TEXT, sername TEXT, age INTEGER)
+LANGUAGE sql
+BEGIN ATOMIC
+  SELECT 'hello', 'world';
+END;
+----
+db error: ERROR: return type mismatch in function declared to return record
+DETAIL: Final statement returns too few columns.
+
+
+statement error
+CREATE FUNCTION i_return_wrong_column_type()
+RETURNS TABLE(name TEXT, age INTEGER)
+LANGUAGE sql
+BEGIN ATOMIC
+  SELECT 'hello', TRUE;
+END;
+----
+db error: ERROR: return type mismatch in function declared to return record
+DETAIL: Final statement returns boolean instead of integer at column 2.
+
+
+statement error
+CREATE FUNCTION i_return_multiple_wrong_types()
+RETURNS TABLE(count INTEGER, price FLOAT8, active BOOL)
+LANGUAGE sql
+BEGIN ATOMIC
+  SELECT TRUE, FALSE, TRUE;
+END;
+----
+db error: ERROR: return type mismatch in function declared to return record
+DETAIL: Final statement returns boolean instead of integer at column 1.
+
+
+statement error
+CREATE FUNCTION i_am_error()
+RETURNS TABLE(name TEXT, sername TEXT)
+LANGUAGE sql
+BEGIN ATOMIC
+  SELECT 'hello', 'world', 'oops';
+END;
+----
+db error: ERROR: return type mismatch in function declared to return record
+DETAIL: Final statement returns too many columns.
+
+
+statement error
+CREATE FUNCTION i_am_error()
+RETURNS TABLE(name TEXT, sername INTEGER)
+LANGUAGE sql
+BEGIN ATOMIC
+  SELECT 'hello', TRUE, FALSE;
+END;
+----
+db error: ERROR: return type mismatch in function declared to return record
+DETAIL: Final statement returns boolean instead of integer at column 2.
+
+
+statement error
+CREATE FUNCTION i_am_error()
+RETURNS TABLE(name TEXT, sername INTEGER, kekname INTEGER)
+LANGUAGE sql
+BEGIN ATOMIC
+  SELECT 'hello', FALSE;
+END;
+----
+db error: ERROR: return type mismatch in function declared to return record
+DETAIL: Final statement returns boolean instead of integer at column 2.
+
+
+statement ok
+CREATE FUNCTION zhme()
+RETURNS INTEGER
+AS $$
+    SELECT 1
+$$ LANGUAGE sql;
+
+
+statement ok
+CREATE TABLE zhme (lmao INTEGER);
+
+
+query
+SELECT * FROM zhme as zhma, zhme();
+----
+lmao zhme

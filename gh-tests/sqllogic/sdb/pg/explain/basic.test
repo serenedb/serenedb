@@ -1,0 +1,104 @@
+query
+EXPLAIN (LOGICAL, EXECUTION) SELECT x FROM generate_series(1, 10000) AS t1(x);
+----
+QUERY PLAN
+LOGICAL PLAN:
+- Project: -> ROW<"x":BIGINT>
+    x := generate_series
+  - Project: -> ROW<"generate_series":BIGINT>
+      generate_series := generate_series
+    - Unnest: -> ROW<"generate_series":BIGINT>
+        [generate_series] := presto_sequence(CAST(1 AS BIGINT), CAST(10000 AS BIGINT))
+      - Values: 1 rows -> ROW<>
+EXECUTION PLAN:
+Fragment 0:  numWorkers=1:
+-- Project[3][expressions: (x:BIGINT, "generate_series")] -> "x":BIGINT
+  -- Unnest[2][dt3.__p9] -> "generate_series":BIGINT
+    -- Project[1][expressions: (dt3.__p9:ARRAY<BIGINT>, {1, 2, 3, 4, 5, ...9995 more})] -> "dt3.__p9":ARRAY<BIGINT>
+      -- Values[0][1 rows in 1 vectors] ->
+
+
+query
+EXPLAIN (EXECUTION, REGISTERS) SELECT x FROM generate_series(1, 10000) AS t1(x);
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=1:
+-- Project[3][expressions: (x:2:BIGINT, "generate_series:1")] -> "x:2":BIGINT
+  -- Unnest[2][dt3.__p9] -> "generate_series:1":BIGINT
+    -- Project[1][expressions: (dt3.__p9:ARRAY<BIGINT>, {1, 2, 3, 4, 5, ...9995 more})] -> "dt3.__p9":ARRAY<BIGINT>
+      -- Values[0][1 rows in 1 vectors] ->
+
+query
+EXPLAIN (EXECUTION) SELECT x FROM generate_series(1, 10000) AS t1(x);
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=1:
+-- Project[3][expressions: (x:BIGINT, "generate_series")] -> "x":BIGINT
+  -- Unnest[2][dt3.__p9] -> "generate_series":BIGINT
+    -- Project[1][expressions: (dt3.__p9:ARRAY<BIGINT>, {1, 2, 3, 4, 5, ...9995 more})] -> "dt3.__p9":ARRAY<BIGINT>
+      -- Values[0][1 rows in 1 vectors] ->
+
+
+# This is flaky because Velox stats doesn't guarantee correct numbers for rows and batches.
+skipif serenedb
+query
+EXPLAIN (ANALYZE) SELECT x FROM generate_series(1, 10000) AS t1(x);
+----
+QUERY PLAN
+EXECUTION PLAN WITH STATS:
+Fragment 0:  numWorkers=1:
+-- Project[3][expressions: (x:BIGINT, "generate_series")] -> "x":BIGINT
+   Output: 10000 rows (<slt:ignore>, 10 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: 0B, Memory allocations: 0, CPU breakdown: B/I/O/F (<slt:ignore>)
+  -- Unnest[2][dt3.__p9] -> "generate_series":BIGINT
+     Output: 10000 rows (<slt:ignore>, 10 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: <slt:ignore>, Memory allocations: <slt:ignore>, CPU breakdown: B/I/O/F (<slt:ignore>)
+    -- Project[1][expressions: (dt3.__p9:ARRAY<BIGINT>, {1, 2, 3, 4, 5, ...9995 more})] -> "dt3.__p9":ARRAY<BIGINT>
+       Output: 1 rows (<slt:ignore>, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: 0B, Memory allocations: 0, CPU breakdown: B/I/O/F (<slt:ignore>)
+      -- Values[0][1 rows in 1 vectors] ->
+         Input: 0 rows (0B, 0 batches), Output: 0 rows (0B, 1 batches), Cpu time: <slt:ignore>, Wall time: <slt:ignore>, Blocked wall time: 0ns, Peak memory: 0B, Memory allocations: 0, CPU breakdown: B/I/O/F (<slt:ignore>)
+
+
+query
+EXPLAIN (LOGICAL, EXECUTION) SELECT 1;
+----
+QUERY PLAN
+LOGICAL PLAN:
+- Project: -> ROW<"?column?":INTEGER>
+    ?column? := 1
+  - Values: 1 rows -> ROW<>
+EXECUTION PLAN:
+Fragment 0:  numWorkers=1:
+-- Project[1][expressions: (?column?:INTEGER, 1)] -> "?column?":INTEGER
+  -- Values[0][1 rows in 1 vectors] ->
+
+
+query
+EXPLAIN (LOGICAL, REGISTERS)
+SELECT
+  2 * column1 + column2 as t,
+  2 * column2 + column1 as k,
+  column3
+FROM UNNEST(generate_series(1, 10), generate_series(1, 10), generate_series(1, 10)) as lmao(column1, column2, column3)
+ORDER BY t, k;
+----
+QUERY PLAN
+LOGICAL PLAN:
+- Project: -> ROW<"t:7":BIGINT,"k:8":BIGINT,"column3:9":BIGINT>
+    t:7 := presto_plus(presto_multiply(CAST(2 AS BIGINT), column1:4), column2:5)
+    k:8 := presto_plus(presto_multiply(CAST(2 AS BIGINT), column2:5), column1:4)
+    column3:9 := column3:6
+  - Sort: presto_plus(presto_multiply(CAST(2 AS BIGINT), column1:4), column2:5) ASC NULLS LAST, presto_plus(presto_multiply(CAST(2 AS BIGINT), column2:5), column1:4) ASC NULLS LAST -> ROW<"column1:4":BIGINT,"column2:5":BIGINT,"column3:6":BIGINT>
+    - Project: -> ROW<"column1:4":BIGINT,"column2:5":BIGINT,"column3:6":BIGINT>
+        column1:4 := unnest:1
+        column2:5 := unnest:2
+        column3:6 := unnest:3
+      - Project: -> ROW<"unnest:1":BIGINT,"unnest:2":BIGINT,"unnest:3":BIGINT>
+          unnest:1 := unnest:1
+          unnest:2 := unnest:2
+          unnest:3 := unnest:3
+        - Unnest: -> ROW<"unnest:1":BIGINT,"unnest:2":BIGINT,"unnest:3":BIGINT>
+            [unnest:1] := presto_sequence(CAST(1 AS BIGINT), CAST(10 AS BIGINT))
+            [unnest:2] := presto_sequence(CAST(1 AS BIGINT), CAST(10 AS BIGINT))
+            [unnest:3] := presto_sequence(CAST(1 AS BIGINT), CAST(10 AS BIGINT))
+          - Values: 1 rows -> ROW<>

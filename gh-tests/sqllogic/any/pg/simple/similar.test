@@ -1,0 +1,214 @@
+query
+SELECT similar_to_escape('\\');
+----
+similar_to_escape
+^(?:\\\\)$
+
+
+query
+SELECT similar_to_escape('\\_');
+----
+similar_to_escape
+^(?:\\\\.)$
+
+
+query
+SELECT similar_to_escape('\\', 'A');
+----
+similar_to_escape
+^(?:\\\\\\\\)$
+
+
+query
+SELECT similar_to_escape('Serene%');
+----
+similar_to_escape
+^(?:Serene.*)$
+
+
+query
+SELECT similar_to_escape('%.TU%M');
+----
+similar_to_escape
+^(?:.*\\.TU.*M)$
+
+
+query
+SELECT similar_to_escape('....');
+----
+similar_to_escape
+^(?:\\.\\.\\.\\.)$
+
+query
+SELECT similar_to_escape('\.\.CMU', '\');
+----
+similar_to_escape
+^(?:\\.\\.CMU)$
+
+
+query
+SELECT similar_to_escape('\.\.CMU', 'C');
+----
+similar_to_escape
+^(?:\\\\\\.\\\\\\.\\MU)$
+
+
+query
+SELECT similar_to_escape('Serene(DB|SQL)%');
+----
+similar_to_escape
+^(?:Serene(?:DB|SQL).*)$
+
+
+query
+SELECT similar_to_escape('(Duck|Serene)[DB]%');
+----
+similar_to_escape
+^(?:(?:Duck|Serene)[DB].*)$
+
+
+query
+SELECT similar_to_escape('Serene[^X]%');
+----
+similar_to_escape
+^(?:Serene[^X].*)$
+
+
+query
+SELECT similar_to_escape('Serene\"\[DB\]', '\');
+----
+similar_to_escape
+^(?:Serene){1,1}?(\\[DB\\])$
+
+
+query
+SELECT similar_to_escape('(Serene|DB)');
+----
+similar_to_escape
+^(?:(?:Serene|DB))$
+
+
+query
+SELECT 'StarWars' SIMILAR TO 'Star%';
+----
+?column?
+t
+
+
+
+query
+SELECT 'StarWars' ~ similar_to_escape('Star%');
+----
+?column?
+t
+
+
+query
+SELECT 'star wars' ~ similar_to_escape('Star');
+----
+?column?
+f
+
+
+query
+SELECT 'What about SereneDB?' SIMILAR TO 'Serene%';
+----
+?column?
+f
+
+
+query
+SELECT 'What about SereneDB?' NOT SIMILAR TO 'Serene%';
+----
+?column?
+t
+
+
+query
+SELECT 'SereneDB?' SIMILAR TO 'Serene%';
+----
+?column?
+t
+
+
+query
+SELECT 'SereneDB' SIMILAR TO 'Serene_B';
+----
+?column?
+t
+
+
+query
+SELECT 'Serene.DB' SIMILAR TO 'Serene\.DB' ESCAPE '\';
+----
+?column?
+t
+
+
+query
+SELECT 'Serene%DB' SIMILAR TO 'Serene\%DB' ESCAPE '\';
+----
+?column?
+t
+
+
+query
+SELECT 'Serene%DB' SIMILAR TO 'Serene#%DB' ESCAPE '#';
+----
+?column?
+t
+
+
+query
+SELECT 'Serene\DB' SIMILAR TO 'Serene#\DB' ESCAPE '#';
+----
+?column?
+t
+
+
+query
+SELECT 'SereneDB' SIMILAR TO '(Serene|Duck)%';
+----
+?column?
+t
+
+query
+SELECT 'SereneDB' ~ '^Serene[a-z]+';
+----
+?column?
+f
+
+
+query
+SELECT 'SereneDB' ~* '^serene[a-z]+';
+----
+?column?
+t
+
+
+query
+SELECT 'SereneDB' !~ '^D....*';
+----
+?column?
+t
+
+
+query
+SELECT 'SereneDB' !~* '^[a-z]nDB';
+----
+?column?
+t
+
+
+query
+SELECT 'Serene.DB' ~ 'Serene\.DB';
+----
+?column?
+t
+
+
+query
+SELECT 'SereneDB' ~ 'Serene[A-Z]+';
+----
+?column?
+t

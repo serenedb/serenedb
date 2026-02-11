@@ -1,0 +1,22 @@
+statement ok
+CREATE DATABASE db;
+
+
+query error
+CREATE DATABASE db;
+----
+db error: ERROR: Database already exists: db
+
+
+statement ok
+DROP DATABASE db;
+
+
+query error
+DROP DATABASE db;
+----
+db error: ERROR: Database not found: db
+
+
+statement ok
+DROP DATABASE IF EXISTS db;

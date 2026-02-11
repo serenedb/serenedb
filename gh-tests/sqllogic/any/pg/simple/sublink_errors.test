@@ -1,0 +1,15 @@
+query error
+SELECT (SELECT 1000 - 7, 'we are more than one');
+----
+db error: ERROR: subquery must return only one column
+
+
+query error
+SELECT *
+FROM
+(
+  VALUES ('pudge'), ('deadinside'), ('clickclack')
+) AS lol(name)
+WHERE name NOT IN (VALUES ('pudge', 993), ('clickclack', 228));
+----
+db error: ERROR: subquery has too many columns

@@ -1,0 +1,75 @@
+query
+SELECT NULLIF(null, null);
+----
+nullif
+NULL
+
+
+query
+SELECT NULLIF(null, false);
+----
+nullif
+NULL
+
+
+query
+SELECT NULLIF(null, true);
+----
+nullif
+NULL
+
+
+query
+SELECT NULLIF(false, null);
+----
+nullif
+f
+
+
+query
+SELECT NULLIF(false, false);
+----
+nullif
+NULL
+
+
+query
+SELECT NULLIF(false, true);
+----
+nullif
+f
+
+
+query
+SELECT NULLIF(true, null);
+----
+nullif
+t
+
+
+query
+SELECT NULLIF(true, false);
+----
+nullif
+t
+
+
+query
+SELECT NULLIF(true, true);
+----
+nullif
+NULL
+
+
+query
+SELECT NULLIF(1, '1');
+----
+nullif
+NULL
+
+
+query
+SELECT NULLIF('1', 1);
+----
+nullif
+NULL

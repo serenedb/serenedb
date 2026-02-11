@@ -1,0 +1,391 @@
+# Basic object
+query
+SELECT ARRAY['{"name": "Alice"}'::json, '{"name": "Alice"}'::json];
+----
+array
+{"{\\"name\\": \\"Alice\\"}","{\\"name\\": \\"Alice\\"}"}
+
+
+# Empty object
+query
+SELECT ARRAY['{}'::json, '{}'::json];
+----
+array
+{"{}","{}"}
+
+
+# Mixed scalar types
+query
+SELECT ARRAY['{"id": 123, "active": true, "score": 98.6, "nickname": null}'::json, '{"id": 123, "active": true, "score": 98.6, "nickname": null}'::json];
+----
+array
+{"{\\"id\\": 123, \\"active\\": true, \\"score\\": 98.6, \\"nickname\\": null}","{\\"id\\": 123, \\"active\\": true, \\"score\\": 98.6, \\"nickname\\": null}"}
+
+
+# Nested object
+query
+SELECT ARRAY['{"user": {"id": 1, "profile": {"age": 30, "country": "US"}}}'::json, '{"user": {"id": 1, "profile": {"age": 30, "country": "US"}}}'::json];
+----
+array
+{"{\\"user\\": {\\"id\\": 1, \\"profile\\": {\\"age\\": 30, \\"country\\": \\"US\\"}}}","{\\"user\\": {\\"id\\": 1, \\"profile\\": {\\"age\\": 30, \\"country\\": \\"US\\"}}}"}
+
+
+# Object with nested array
+query
+SELECT ARRAY['{"user": {"id": 2, "roles": ["admin", "editor", "auditor"]}}'::json, '{"user": {"id": 2, "roles": ["admin", "editor", "auditor"]}}'::json];
+----
+array
+{"{\\"user\\": {\\"id\\": 2, \\"roles\\": [\\"admin\\", \\"editor\\", \\"auditor\\"]}}","{\\"user\\": {\\"id\\": 2, \\"roles\\": [\\"admin\\", \\"editor\\", \\"auditor\\"]}}"}
+
+
+
+# Duplicate keys (json retains textual duplicates)
+query
+SELECT ARRAY['{"k":1,"k":2,"k":3}'::json, '{"k":1,"k":2,"k":3}'::json];
+----
+array
+{"{\\"k\\":1,\\"k\\":2,\\"k\\":3}","{\\"k\\":1,\\"k\\":2,\\"k\\":3}"}
+
+
+# Unicode characters
+query
+SELECT ARRAY['{"greeting":"こんにちは世界","emoji":"😀","currency":"₽"}'::json, '{"greeting":"こんにちは世界","emoji":"😀","currency":"₽"}'::json];
+----
+array
+{"{\\"greeting\\":\\"こんにちは世界\\",\\"emoji\\":\\"😀\\",\\"currency\\":\\"₽\\"}","{\\"greeting\\":\\"こんにちは世界\\",\\"emoji\\":\\"😀\\",\\"currency\\":\\"₽\\"}"}
+
+
+# Explicit nulls
+query
+SELECT ARRAY['{"a": null, "b": [1,null,2], "c":{"d":null}}'::json, '{"a": null, "b": [1,null,2], "c":{"d":null}}'::json];
+----
+array
+{"{\\"a\\": null, \\"b\\": [1,null,2], \\"c\\":{\\"d\\":null}}","{\\"a\\": null, \\"b\\": [1,null,2], \\"c\\":{\\"d\\":null}}"}
+
+
+# Numeric forms
+query
+SELECT ARRAY['{"int":0,"negInt":-42,"zeroFloat":0.0,"negZero":-0,"frac":3.14159,"expPos":1e6,"expNeg":2.5e-4,"combo":-7.5e+10}'::json, '{"int":0,"negInt":-42,"zeroFloat":0.0,"negZero":-0,"frac":3.14159,"expPos":1e6,"expNeg":2.5e-4,"combo":-7.5e+10}'::json];
+----
+array
+{"{\\"int\\":0,\\"negInt\\":-42,\\"zeroFloat\\":0.0,\\"negZero\\":-0,\\"frac\\":3.14159,\\"expPos\\":1e6,\\"expNeg\\":2.5e-4,\\"combo\\":-7.5e+10}","{\\"int\\":0,\\"negInt\\":-42,\\"zeroFloat\\":0.0,\\"negZero\\":-0,\\"frac\\":3.14159,\\"expPos\\":1e6,\\"expNeg\\":2.5e-4,\\"combo\\":-7.5e+10}"}
+
+
+# Very large integer
+query
+SELECT ARRAY['{"bigInt":123456789012345678901234567890}'::json, '{"bigInt":123456789012345678901234567890}'::json];
+----
+array
+{"{\\"bigInt\\":123456789012345678901234567890}","{\\"bigInt\\":123456789012345678901234567890}"}
+
+
+# Very large exponent
+query
+SELECT ARRAY['{"hugeExp":1e40}'::json, '{"hugeExp":1e40}'::json];
+----
+array
+{"{\\"hugeExp\\":1e40}","{\\"hugeExp\\":1e40}"}
+
+
+# High precision decimal
+query
+SELECT ARRAY['{"highPrecision":0.123456789012345678901234567890}'::json, '{"highPrecision":0.123456789012345678901234567890}'::json];
+----
+array
+{"{\\"highPrecision\\":0.123456789012345678901234567890}","{\\"highPrecision\\":0.123456789012345678901234567890}"}
+
+
+# Simple array of numbers
+query
+SELECT ARRAY['[1,2,3,4,5]'::json, '[1,2,3,4,5]'::json];
+----
+array
+{"[1,2,3,4,5]","[1,2,3,4,5]"}
+
+
+# Empty array
+query
+SELECT ARRAY['[]'::json, '[]'::json];
+----
+array
+{[],[]}
+
+
+# Heterogeneous array
+query
+SELECT ARRAY['["text", 123, true, null, 45.67, {"a":1}, [10,20]]'::json, '["text", 123, true, null, 45.67, {"a":1}, [10,20]]'::json];
+----
+array
+{"[\\"text\\", 123, true, null, 45.67, {\\"a\\":1}, [10,20]]","[\\"text\\", 123, true, null, 45.67, {\\"a\\":1}, [10,20]]"}
+
+
+# Nested arrays
+query
+SELECT ARRAY['[[1,2],[3,[4,5]],[[]]]'::json, '[[1,2],[3,[4,5]],[[]]]'::json];
+----
+array
+{"[[1,2],[3,[4,5]],[[]]]","[[1,2],[3,[4,5]],[[]]]"}
+
+
+# Array of objects
+query
+SELECT ARRAY['[{"id":1},{"id":2,"tags":["x","y"]},{"id":3,"meta":{"k":"v"}}]'::json, '[{"id":1},{"id":2,"tags":["x","y"]},{"id":3,"meta":{"k":"v"}}]'::json];
+----
+array
+{"[{\\"id\\":1},{\\"id\\":2,\\"tags\\":[\\"x\\",\\"y\\"]},{\\"id\\":3,\\"meta\\":{\\"k\\":\\"v\\"}}]","[{\\"id\\":1},{\\"id\\":2,\\"tags\\":[\\"x\\",\\"y\\"]},{\\"id\\":3,\\"meta\\":{\\"k\\":\\"v\\"}}]"}
+
+
+# Array with deep nested object
+query
+SELECT ARRAY['[{"a":{"b":{"c":{"d":{"e":5}}}}}]'::json, '[{"a":{"b":{"c":{"d":{"e":5}}}}}]'::json];
+----
+array
+{"[{\\"a\\":{\\"b\\":{\\"c\\":{\\"d\\":{\\"e\\":5}}}}}]","[{\\"a\\":{\\"b\\":{\\"c\\":{\\"d\\":{\\"e\\":5}}}}}]"}
+
+
+# Array booleans and nulls
+query
+SELECT ARRAY['[true,false,null,true]'::json, '[true,false,null,true]'::json];
+----
+array
+{"[true,false,null,true]","[true,false,null,true]"}
+
+
+# Top-level string
+query
+SELECT ARRAY['"Just a string"'::json, '"Just a string"'::json];
+----
+array
+{"\\"Just a string\\"","\\"Just a string\\""}
+
+
+# Top-level number
+query
+SELECT ARRAY['12345'::json, '12345'::json];
+----
+array
+{12345,12345}
+
+
+# Top-level negative number
+query
+SELECT ARRAY['-98765'::json, '-98765'::json];
+----
+array
+{-98765,-98765}
+
+
+# Top-level decimal
+query
+SELECT ARRAY['0.000123'::json, '0.000123'::json];
+----
+array
+{0.000123,0.000123}
+
+
+# Top-level exponent
+query
+SELECT ARRAY['6.022e23'::json, '6.022e23'::json];
+----
+array
+{6.022e23,6.022e23}
+
+
+# Top-level true
+query
+SELECT ARRAY['true'::json, 'true'::json];
+----
+array
+{true,true}
+
+
+# Top-level false
+query
+SELECT ARRAY['false'::json, 'false'::json];
+----
+array
+{false,false}
+
+
+# Top-level null
+query
+SELECT ARRAY['null'::json, 'null'::json];
+----
+array
+{"null","null"}
+
+
+# Whitespace variations
+query
+SELECT ARRAY['   {  "spaced" : [ 1 , 2 , 3 ] }   '::json, '   {  "spaced" : [ 1 , 2 , 3 ] }   '::json];
+----
+array
+{"   {  \\"spaced\\" : [ 1 , 2 , 3 ] }   ","   {  \\"spaced\\" : [ 1 , 2 , 3 ] }   "}
+
+
+# Larger object sample
+query
+SELECT ARRAY['{"k1":1,"k2":2,"k3":3,"k4":4,"k5":5,"k6":6,"k7":{"nested":true},"k8":[1,2,3],"k9":"text","k10":null}'::json, '{"k1":1,"k2":2,"k3":3,"k4":4,"k5":5,"k6":6,"k7":{"nested":true},"k8":[1,2,3],"k9":"text","k10":null}'::json];
+----
+array
+{"{\\"k1\\":1,\\"k2\\":2,\\"k3\\":3,\\"k4\\":4,\\"k5\\":5,\\"k6\\":6,\\"k7\\":{\\"nested\\":true},\\"k8\\":[1,2,3],\\"k9\\":\\"text\\",\\"k10\\":null}","{\\"k1\\":1,\\"k2\\":2,\\"k3\\":3,\\"k4\\":4,\\"k5\\":5,\\"k6\\":6,\\"k7\\":{\\"nested\\":true},\\"k8\\":[1,2,3],\\"k9\\":\\"text\\",\\"k10\\":null}"}
+
+
+# Escaped quotes in value
+query
+SELECT ARRAY['{"weirdValue":"Escaped \\\"quoted\\\" section"}'::json, '{"weirdValue":"Escaped \\\"quoted\\\" section"}'::json];
+----
+array
+{"{\\"weirdValue\\":\\"Escaped \\\\\\\\\\\\\\"quoted\\\\\\\\\\\\\\" section\\"}","{\\"weirdValue\\":\\"Escaped \\\\\\\\\\\\\\"quoted\\\\\\\\\\\\\\" section\\"}"}
+
+
+# Numeric-looking keys
+query
+SELECT ARRAY['{"1": "one", "2": "two", "3.5": "three point five"}'::json, '{"1": "one", "2": "two", "3.5": "three point five"}'::json];
+----
+array
+{"{\\"1\\": \\"one\\", \\"2\\": \\"two\\", \\"3.5\\": \\"three point five\\"}","{\\"1\\": \\"one\\", \\"2\\": \\"two\\", \\"3.5\\": \\"three point five\\"}"}
+
+
+# Empty string key
+query
+SELECT ARRAY['{"": "emptyKeyValue", "normal":"ok"}'::json, '{"": "emptyKeyValue", "normal":"ok"}'::json];
+----
+array
+{"{\\"\\": \\"emptyKeyValue\\", \\"normal\\":\\"ok\\"}","{\\"\\": \\"emptyKeyValue\\", \\"normal\\":\\"ok\\"}"}
+
+
+# Surrogate pair (musical symbol)
+query
+SELECT ARRAY['{"music":"\\uD834\\uDD1E"}'::json, '{"music":"\\uD834\\uDD1E"}'::json];
+----
+array
+{"{\\"music\\":\\"\\\\\\\\uD834\\\\\\\\uDD1E\\"}","{\\"music\\":\\"\\\\\\\\uD834\\\\\\\\uDD1E\\"}"}
+
+
+# Array of empty objects/arrays
+query
+SELECT ARRAY['[{}, {}, [], [[], {}]]'::json, '[{}, {}, [], [[], {}]]'::json];
+----
+array
+{"[{}, {}, [], [[], {}]]","[{}, {}, [], [[], {}]]"}
+
+
+# Top-level negative zero
+query
+SELECT ARRAY['-0'::json, '-0'::json];
+----
+array
+{-0,-0}
+
+
+# Boolean variety object
+query
+SELECT ARRAY['{"tTrue":true,"tFalse":false,"tMixed":[true,false,true]}'::json, '{"tTrue":true,"tFalse":false,"tMixed":[true,false,true]}'::json];
+----
+array
+{"{\\"tTrue\\":true,\\"tFalse\\":false,\\"tMixed\\":[true,false,true]}","{\\"tTrue\\":true,\\"tFalse\\":false,\\"tMixed\\":[true,false,true]}"}
+
+
+# Repeated nested duplicate keys
+query
+SELECT ARRAY['{"outer":{"dup":1,"dup":2},"dup":3,"dup":4}'::json, '{"outer":{"dup":1,"dup":2},"dup":3,"dup":4}'::json];
+----
+array
+{"{\\"outer\\":{\\"dup\\":1,\\"dup\\":2},\\"dup\\":3,\\"dup\\":4}","{\\"outer\\":{\\"dup\\":1,\\"dup\\":2},\\"dup\\":3,\\"dup\\":4}"}
+
+
+# Array with large numbers and precision
+query
+SELECT ARRAY['[0.00000001, 1000000000000000000000, -3.1415926535897932384626]'::json, '[0.00000001, 1000000000000000000000, -3.1415926535897932384626]'::json];
+----
+array
+{"[0.00000001, 1000000000000000000000, -3.1415926535897932384626]","[0.00000001, 1000000000000000000000, -3.1415926535897932384626]"}
+
+
+# Newline, tab, carriage return, snowman
+query
+SELECT ARRAY['{"text":"Line1\\nLine2\\tTabbed\\rCarriage","snowman":"\\u2603"}'::json, '{"text":"Line1\\nLine2\\tTabbed\\rCarriage","snowman":"\\u2603"}'::json];
+----
+array
+{"{\\"text\\":\\"Line1\\\\\\\\nLine2\\\\\\\\tTabbed\\\\\\\\rCarriage\\",\\"snowman\\":\\"\\\\\\\\u2603\\"}","{\\"text\\":\\"Line1\\\\\\\\nLine2\\\\\\\\tTabbed\\\\\\\\rCarriage\\",\\"snowman\\":\\"\\\\\\\\u2603\\"}"}
+
+
+# Mixed nesting arrays/objects
+query
+SELECT ARRAY['{"a":[{"b":[{"c":[1,2,3]}]}],"d":{"e":[{"f":"g"}]}}'::json, '{"a":[{"b":[{"c":[1,2,3]}]}],"d":{"e":[{"f":"g"}]}}'::json];
+----
+array
+{"{\\"a\\":[{\\"b\\":[{\\"c\\":[1,2,3]}]}],\\"d\\":{\\"e\\":[{\\"f\\":\\"g\\"}]}}","{\\"a\\":[{\\"b\\":[{\\"c\\":[1,2,3]}]}],\\"d\\":{\\"e\\":[{\\"f\\":\\"g\\"}]}}"}
+
+
+# Empty object (again for pair comparison)
+query
+SELECT ARRAY['{}'::json, '{}'::json];
+----
+array
+{"{}","{}"}
+
+
+# Empty array (paired with empty object)
+query
+SELECT ARRAY['[]'::json, '[]'::json];
+----
+array
+{[],[]}
+
+
+# Key ordering variant 1
+query
+SELECT ARRAY['{"a":1,"b":2,"c":3,"d":4}'::json, '{"a":1,"b":2,"c":3,"d":4}'::json];
+----
+array
+{"{\\"a\\":1,\\"b\\":2,\\"c\\":3,\\"d\\":4}","{\\"a\\":1,\\"b\\":2,\\"c\\":3,\\"d\\":4}"}
+
+
+# Key ordering variant 2
+query
+SELECT ARRAY['{"d":4,"c":3,"b":2,"a":1}'::json, '{"d":4,"c":3,"b":2,"a":1}'::json];
+----
+array
+{"{\\"d\\":4,\\"c\\":3,\\"b\\":2,\\"a\\":1}","{\\"d\\":4,\\"c\\":3,\\"b\\":2,\\"a\\":1}"}
+
+
+# Nested empty structures
+query
+SELECT ARRAY['{"emptyObj":{},"emptyArr":[],"deep":{"innerEmptyObj":{},"innerEmptyArr":[]}}'::json, '{"emptyObj":{},"emptyArr":[],"deep":{"innerEmptyObj":{},"innerEmptyArr":[]}}'::json];
+----
+array
+{"{\\"emptyObj\\":{},\\"emptyArr\\":[],\\"deep\\":{\\"innerEmptyObj\\":{},\\"innerEmptyArr\\":[]}}","{\\"emptyObj\\":{},\\"emptyArr\\":[],\\"deep\\":{\\"innerEmptyObj\\":{},\\"innerEmptyArr\\":[]}}"}
+
+
+# Array only empty arrays
+query
+SELECT ARRAY['[[],[],[]]'::json, '[[],[],[]]'::json];
+----
+array
+{"[[],[],[]]","[[],[],[]]"}
+
+
+# Array only empty objects
+query
+SELECT ARRAY['[{},{},{}]'::json, '[{},{},{}]'::json];
+----
+array
+{"[{},{},{}]","[{},{},{}]"}
+
+
+# Extremely large exponent
+query
+SELECT ARRAY['{"monsterExp":9.99e39}'::json, '{"monsterExp":9.99e39}'::json];
+----
+array
+{"{\\"monsterExp\\":9.99e39}","{\\"monsterExp\\":9.99e39}"}
+
+
+# Array mixing all scalar types
+query
+SELECT ARRAY['[null,true,false,"string",123,-456,7.89,1e2,-3.4e-5]'::json, '[null,true,false,"string",123,-456,7.89,1e2,-3.4e-5]'::json];
+----
+array
+{"[null,true,false,\\"string\\",123,-456,7.89,1e2,-3.4e-5]","[null,true,false,\\"string\\",123,-456,7.89,1e2,-3.4e-5]"}

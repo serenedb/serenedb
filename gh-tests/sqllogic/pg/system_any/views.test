@@ -1,0 +1,51 @@
+# User view using system tables
+
+statement ok
+CREATE VIEW with_sys_table AS
+SELECT 1 FROM pg_authid LIMIT 0;
+
+
+query
+SELECT * FROM with_sys_table;
+----
+?column?
+
+# System views
+
+query
+SELECT * FROM pg_roles LIMIT 0;
+----
+rolname	rolsuper	rolinherit	rolcreaterole	rolcreatedb	rolcanlogin	rolreplication	rolconnlimit	rolpassword	rolvaliduntil	rolbypassrls	rolconfig	oid
+
+query
+SELECT * FROM pg_shadow LIMIT 0;
+----
+usename	usesysid	usecreatedb	usesuper	userepl	usebypassrls	passwd	valuntil	useconfig
+
+query
+SELECT * FROM pg_user LIMIT 0;
+----
+usename	usesysid	usecreatedb	usesuper	userepl	usebypassrls	passwd	valuntil	useconfig
+
+query
+SELECT * FROM pg_rules LIMIT 0;
+----
+schemaname	tablename	rulename	definition
+
+
+query
+SELECT * FROM pg_views LIMIT 0;
+----
+schemaname	viewname	viewowner	definition
+
+
+query
+SELECT * FROM pg_tables LIMIT 0;
+----
+schemaname	tablename	tableowner	tablespace	hasindexes	hasrules	hastriggers	rowsecurity
+
+
+query
+SELECT * FROM pg_matviews LIMIT 0;
+----
+schemaname	matviewname	matviewowner	tablespace	hasindexes	ispopulated	definition

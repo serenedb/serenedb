@@ -1,0 +1,60 @@
+statement ok
+CREATE TABLE t (column1 VARCHAR PRIMARY KEY, column2 INT);
+
+
+query
+explain (logical, execution) select * from t;
+----
+QUERY PLAN
+LOGICAL PLAN:
+- TableScan: t -> ROW<"column1":VARCHAR,"column2":INTEGER>
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- TableScan[0][t] -> "column1":VARCHAR, "column2":INTEGER
+
+
+query
+EXPLAIN (LOGICAL, EXECUTION) UPDATE t SET column2 = 42 WHERE column1 = 'foo';
+----
+QUERY PLAN
+LOGICAL PLAN:
+- TableWrite UPDATE: -> ROW<rows:BIGINT>
+    column1 := column1
+    column2 := column2
+  - Filter: IF(spark_isnotnull(column1), true, CAST(pg_error(33575106, 0, null value in column "column1" of relation "t" violates not-null constraint, presto_concat(Failing row contains (, COALESCE(CAST(column1 AS VARCHAR), null), , , COALESCE(CAST(column2 AS VARCHAR), null), ).)) AS BOOLEAN)) -> ROW<"column1":VARCHAR,"column2":INTEGER>
+    - Project: -> ROW<"column1":VARCHAR,"column2":INTEGER>
+        column1 := column1
+        column2 := 42
+      - Filter: presto_eq(column1, foo) -> ROW<"column1":VARCHAR,"column2":INTEGER>
+        - TableScan: t -> ROW<"column1":VARCHAR,"column2":INTEGER>
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- TableWrite[3][serenedb(table=t, kind=UPDATE)] -> rows:BIGINT
+  -- Project[2][expressions: (column1:VARCHAR, "column1"), (column2:INTEGER, 42)] -> "column1":VARCHAR, "column2":INTEGER
+    -- Filter[1][expression: and(presto_eq("column1",foo),if(spark_isnotnull("column1"),true,cast(pg_error(33575106,0,null value in column "column1" of relation "t" violates not-null constraint,presto_concat(Failing row contains (,coalesce("column1",null),, ,42,).)) as BOOLEAN)))] -> "column1":VARCHAR
+      -- TableScan[0][t] -> "column1":VARCHAR
+
+
+query
+EXPLAIN (LOGICAL, EXECUTION) UPDATE t SET column2 = column2 + 1;
+----
+QUERY PLAN
+LOGICAL PLAN:
+- TableWrite UPDATE: -> ROW<rows:BIGINT>
+    column1 := column1
+    column2 := column2
+  - Filter: IF(spark_isnotnull(column1), true, CAST(pg_error(33575106, 0, null value in column "column1" of relation "t" violates not-null constraint, presto_concat(Failing row contains (, COALESCE(CAST(column1 AS VARCHAR), null), , , COALESCE(CAST(column2 AS VARCHAR), null), ).)) AS BOOLEAN)) -> ROW<"column1":VARCHAR,"column2":INTEGER>
+    - Project: -> ROW<"column1":VARCHAR,"column2":INTEGER>
+        column1 := column1
+        column2 := presto_plus(column2, 1)
+      - TableScan: t -> ROW<"column1":VARCHAR,"column2":INTEGER>
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- TableWrite[3][serenedb(table=t, kind=UPDATE)] -> rows:BIGINT
+  -- Project[2][expressions: (column1:VARCHAR, "column1"), (column2:INTEGER, presto_plus("column2",1))] -> "column1":VARCHAR, "column2":INTEGER
+    -- Filter[1][expression: if(spark_isnotnull("column1"),true,cast(pg_error(33575106,0,null value in column "column1" of relation "t" violates not-null constraint,presto_concat(Failing row contains (,coalesce("column1",null),, ,coalesce(cast(presto_plus("column2",1) as VARCHAR),null),).)) as BOOLEAN))] -> "column1":VARCHAR, "column2":INTEGER
+      -- TableScan[0][t] -> "column1":VARCHAR, "column2":INTEGER
+
+
+statement error
+UPDATE t SET pencil_size = 31343;

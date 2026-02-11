@@ -1,0 +1,70 @@
+statement ok
+BEGIN;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+SET search_path TO root2;
+
+
+query
+SHOW search_path;
+----
+search_path
+root2
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+ABORT;
+
+
+query
+SHOW search_path;
+----
+search_path
+"$user", public
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+SET search_path TO root2;
+
+
+statement ok
+COMMIT;
+
+
+query
+SHOW search_path;
+----
+search_path
+root2
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+SET search_path TO root3;
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SHOW search_path;
+----
+search_path
+root2

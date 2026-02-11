@@ -1,0 +1,260 @@
+statement error
+CREATE TABLE iamkay
+(
+  id INTEGER PRIMARY KEY NULL
+);
+----
+db error: ERROR: conflicting NULL/NOT NULL declarations for column "id" of table "iamkay"
+
+
+statement ok
+CREATE TABLE iamkay
+(
+  id INTEGER PRIMARY KEY NOT NULL NOT NULL NOT NULL NOT NULL NOT NULL,
+  lmao INTEGER NOT NULL NOT NULL NOT NULL
+);
+
+
+# check that there's only one not null check for every column
+onlyif serenedb
+query
+EXPLAIN (LOGICAL)
+INSERT INTO iamkay DEFAULT VALUES;
+----
+QUERY PLAN
+LOGICAL PLAN:
+- TableWrite INSERT: -> ROW<rows:BIGINT>
+    id := id
+    lmao := lmao
+  - Filter: AND(IF(spark_isnotnull(id), true, CAST(pg_error(33575106, 0, null value in column "id" of relation "iamkay" violates not-null constraint, presto_concat(Failing row contains (, COALESCE(CAST(id AS VARCHAR), null), , , COALESCE(CAST(lmao AS VARCHAR), null), ).)) AS BOOLEAN)), IF(spark_isnotnull(lmao), true, CAST(pg_error(33575106, 0, null value in column "lmao" of relation "iamkay" violates not-null constraint, presto_concat(Failing row contains (, COALESCE(CAST(id AS VARCHAR), null), , , COALESCE(CAST(lmao AS VARCHAR), null), ).)) AS BOOLEAN))) -> ROW<"id":INTEGER,"lmao":INTEGER>
+    - Project: -> ROW<"id":INTEGER,"lmao":INTEGER>
+        id := null
+        lmao := null
+      - Values: 1 rows -> ROW<>
+
+
+statement ok
+CREATE TABLE iamkay228
+(
+  kek INTEGER NOT NULL CHECK (kek > 1000 - 7)
+);
+
+
+statement error
+INSERT INTO iamkay228 DEFAULT VALUES;
+----
+db error: ERROR: null value in column "kek" of relation "iamkay228" violates not-null constraint
+DETAIL: Failing row contains (null).
+
+
+statement error
+INSERT INTO iamkay228 VALUES(1000 - 7);
+----
+db error: ERROR: new row for relation "iamkay228" violates check constraint "iamkay228_kek_check"
+DETAIL: Failing row contains (993).
+
+
+statement count 1
+INSERT INTO iamkay228 VALUES(1000 + 7);
+
+
+query
+SELECT * FROM iamkay228;
+----
+kek
+1007
+
+
+statement error
+CREATE TABLE arelav
+(
+  id INTEGER NULL NOT NULL
+);
+----
+db error: ERROR: conflicting NULL/NOT NULL declarations for column "id" of table "arelav"
+
+
+statement ok
+CREATE TABLE androed_vedernikoff_1
+(
+  pencil_size INTEGER PRIMARY KEY
+);
+
+
+statement error
+INSERT INTO androed_vedernikoff_1 (pencil_size) VALUES (null);
+----
+db error: ERROR: null value in column "pencil_size" of relation "androed_vedernikoff_1" violates not-null constraint
+DETAIL: Failing row contains (null).
+
+
+statement ok
+CREATE TABLE androed_vedernikoff_2
+(
+  pencil_size INTEGER,
+  PRIMARY KEY(pencil_size)
+);
+
+
+statement error
+INSERT INTO androed_vedernikoff_1 (pencil_size) VALUES (null);
+----
+db error: ERROR: null value in column "pencil_size" of relation "androed_vedernikoff_1" violates not-null constraint
+DETAIL: Failing row contains (null).
+
+
+statement ok
+CREATE TABLE clickclack
+(
+  id INTEGER PRIMARY KEY,
+  name TEXT CHECK (name != 'babsky') CHECK (name != 'arelav'),
+  weight INTEGER,
+  age INTEGER DEFAULT 40 NOT NULL,
+  grade INTEGER GENERATED ALWAYS AS ( (2 * weight + age) / 10 ) STORED CHECK (grade > 22),
+  CHECK (name != 'deadinside' OR age != 54),
+  CONSTRAINT chk_only_skuf CHECK (age > 30 AND weight > 90)
+);
+
+
+statement error
+INSERT INTO clickclack (id, name, weight, age) VALUES (1, 'babsky', 140, 69);
+----
+db error: ERROR: new row for relation "clickclack" violates check constraint "clickclack_name_check"
+DETAIL: Failing row contains (1, babsky, 140, 69, 34).
+
+
+statement error
+INSERT INTO clickclack (id, name, weight, age) VALUES (2, 'arelav', 140, 69);
+----
+db error: ERROR: new row for relation "clickclack" violates check constraint "clickclack_name_check1"
+DETAIL: Failing row contains (2, arelav, 140, 69, 34).
+
+
+statement error
+INSERT INTO clickclack (id, name, weight, age) VALUES (3, 'deadinside', 91, 54);
+----
+db error: ERROR: new row for relation "clickclack" violates check constraint "clickclack_check"
+DETAIL: Failing row contains (3, deadinside, 91, 54, 23).
+
+
+statement error
+INSERT INTO clickclack (id, name, weight, age) VALUES (4, 'vedernikoff', 120, 21);
+----
+db error: ERROR: new row for relation "clickclack" violates check constraint "chk_only_skuf"
+DETAIL: Failing row contains (4, vedernikoff, 120, 21, 26).
+
+
+statement error
+INSERT INTO clickclack (id, name, weight, age) VALUES (5, 'danpuz', 91, 32);
+----
+db error: ERROR: new row for relation "clickclack" violates check constraint "clickclack_grade_check"
+DETAIL: Failing row contains (5, danpuz, 91, 32, 21).
+
+
+statement error
+INSERT INTO clickclack (id, name, weight, age) VALUES (6, 'young_skuf', 91, 31);
+----
+db error: ERROR: new row for relation "clickclack" violates check constraint "clickclack_grade_check"
+DETAIL: Failing row contains (6, young_skuf, 91, 31, 21).
+
+
+statement error
+INSERT INTO clickclack (id, name, weight) VALUES (7, 'young_skuf', 91);
+----
+db error: ERROR: new row for relation "clickclack" violates check constraint "clickclack_grade_check"
+DETAIL: Failing row contains (7, young_skuf, 91, 40, 22).
+
+
+statement error
+INSERT INTO clickclack (id, age) VALUES (8, NULL);
+----
+db error: ERROR: null value in column "age" of relation "clickclack" violates not-null constraint
+DETAIL: Failing row contains (8, null, null, null, null).
+
+
+statement count 1
+INSERT INTO clickclack (id, name, weight, age) VALUES (9, 'deadinside', 140, 420);
+
+
+statement count 1
+INSERT INTO clickclack (id, name) VALUES (10, 'zhme');
+
+
+query
+SELECT * FROM clickclack
+ORDER BY 1, 2, 3, 4, 5;
+----
+id name weight age grade
+9 deadinside 140 420 70
+10 zhme NULL 40 NULL
+
+
+onlyif serenedb
+statement error
+UPDATE clickclack SET name = 'babsky' WHERE name = 'deadinside';
+----
+db error: ERROR: new row for relation "clickclack" violates check constraint "clickclack_name_check"
+DETAIL: Failing row contains (9, babsky, 70).
+
+
+onlyif serenedb
+statement error
+UPDATE clickclack SET name = 'arelav' WHERE name = 'deadinside';
+----
+db error: ERROR: new row for relation "clickclack" violates check constraint "clickclack_name_check1"
+DETAIL: Failing row contains (9, arelav, 70).
+
+
+onlyif serenedb
+statement error
+UPDATE clickclack SET age = 54 WHERE name = 'deadinside';
+----
+db error: ERROR: new row for relation "clickclack" violates check constraint "clickclack_check"
+DETAIL: Failing row contains (9, 54, 33).
+
+
+onlyif serenedb
+statement error
+UPDATE clickclack SET age = 21 WHERE name = 'deadinside';
+----
+db error: ERROR: new row for relation "clickclack" violates check constraint "chk_only_skuf"
+DETAIL: Failing row contains (9, 21, 30).
+
+
+onlyif serenedb
+statement error
+UPDATE clickclack SET weight = 50 WHERE name = 'deadinside';
+----
+db error: ERROR: new row for relation "clickclack" violates check constraint "chk_only_skuf"
+DETAIL: Failing row contains (9, 50, 52).
+
+
+onlyif serenedb
+statement error
+UPDATE clickclack SET weight = 91, age = 31 WHERE name = 'deadinside';
+----
+db error: ERROR: new row for relation "clickclack" violates check constraint "clickclack_grade_check"
+DETAIL: Failing row contains (9, 91, 31, 21).
+
+
+onlyif serenedb
+statement error
+UPDATE clickclack SET age = NULL WHERE name = 'deadinside';
+----
+db error: ERROR: null value in column "age" of relation "clickclack" violates not-null constraint
+DETAIL: Failing row contains (9, null, null).
+
+
+onlyif serenedb
+statement ok
+UPDATE clickclack SET age = 1000 - 7 WHERE name = 'deadinside';
+
+
+onlyif serenedb
+query
+SELECT * FROM clickclack
+ORDER BY 1, 2, 3, 4, 5;
+----
+id name weight age grade
+9 deadinside 140 993 127
+10 zhme NULL 40 NULL

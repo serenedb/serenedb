@@ -1,0 +1,23 @@
+#!/bin/sh
+set -e
+
+getent group serenedb >/dev/null || groupadd -r serenedb
+getent passwd serenedb >/dev/null || useradd -r -g serenedb -d /usr/share/serenedb -s /bin/false -c "SereneDB Application User" serenedb
+
+# check if the serenedb group was added locally in /etc/group
+# if not, then the serened binary will very likely try to open a socket
+# connection to nscd to query the group information from there.
+# if there is no nscd running, starting the serened binary will fail
+(grep -q "^serenedb:" /etc/passwd && grep -q "^serenedb:" /etc/group) || (nscd -g >/dev/null 2>&1) || cat 1>&2 <<EOF
+################################################################################
+Unable to query nscd service for user or group 'serenedb'. As a consequence, it
+is very likely that installing or starting the serened server will fail because
+it can neither find user/group 'serenedb' in /etc/passwd or /etc/group nor via
+an nscd group lookup.
+
+Please install 'nscd' before installing the serenedb package.
+################################################################################
+EOF
+
+install -o serenedb -g serenedb -m 755 -d /var/lib/serenedb
+install -o serenedb -g serenedb -m 755 -d /var/log/serenedb

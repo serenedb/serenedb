@@ -1,0 +1,240 @@
+statement ok
+CREATE VIEW osadchy AS
+SELECT 1 as teacha;
+
+
+query
+SELECT * FROM osadchy;
+----
+teacha
+1
+
+
+query
+WITH osadchy AS (
+  SELECT 993 as supricemazafaza
+)
+SELECT * FROM osadchy;
+----
+supricemazafaza
+993
+
+
+statement ok
+CREATE VIEW misterbist AS
+SELECT 1 as teacha;
+
+
+query
+SELECT *
+FROM
+  misterbist as lhs JOIN
+  osadchy as rhs ON lhs.teacha = rhs.teacha
+----
+teacha teacha
+1 1
+
+
+statement ok
+CREATE VIEW bigfgun AS
+SELECT kek.*
+FROM
+(
+  VALUES ('clickclack', 666), ('deadinside', 993), ('gul', 777)
+) AS lol(kostya, vedernikoff),
+(
+  SELECT *
+  FROM
+  (
+    SELECT *
+    FROM
+    (
+      VALUES ('abugubugu', 777), ('ivansolo2003', 1337)
+    ) AS kek1(kostya, vedernikoff),
+    (
+      VALUES ('extra', 555), ('another', 888)
+    ) AS kek2(extra_col, another_col)
+  )
+) AS kek
+WHERE lol.vedernikoff != 993 AND lol.kostya != 'deadinside';
+
+
+query ???? rowsort
+SELECT * FROM bigfgun
+----
+kostya vedernikoff extra_col another_col
+abugubugu 777 another 888
+abugubugu 777 another 888
+abugubugu 777 extra 555
+abugubugu 777 extra 555
+ivansolo2003 1337 another 888
+ivansolo2003 1337 another 888
+ivansolo2003 1337 extra 555
+ivansolo2003 1337 extra 555
+
+
+query error
+CREATE VIEW chinchopa AS
+SELECT pudge
+FROM
+(
+  VALUES (1, 'vedernikoff')
+) AS vedernikoff(pudge, pudge);
+----
+db error: ERROR: column reference "pudge" is ambiguous
+
+
+statement ok
+CREATE VIEW pudge AS
+SELECT 1 as hero;
+
+
+query error
+CREATE VIEW pudge AS
+SELECT 2 as hero;
+----
+db error: ERROR: relation "pudge" already exists
+
+
+statement ok
+CREATE TABLE chinchopa (id INT);
+
+
+query error
+CREATE OR REPLACE VIEW chinchopa AS SELECT 1;
+----
+db error: ERROR: "chinchopa" is not a view
+
+
+statement ok
+CREATE OR REPLACE VIEW pudge AS SELECT 3 as hero;
+
+
+query
+SELECT hero FROM pudge;
+----
+hero
+3
+
+
+statement ok
+CREATE OR REPLACE VIEW vedernikoff_view AS SELECT 42 as deadinside;
+
+
+query
+SELECT deadinside FROM vedernikoff_view;
+----
+deadinside
+42
+
+
+statement ok
+DROP VIEW vedernikoff_view CASCADE;
+
+
+query error
+SELECT * FROM vedernikoff_view;
+----
+db error: ERROR: relation "vedernikoff_view" does not exist
+
+
+statement ok
+CREATE VIEW namingscheck AS
+SELECT *
+FROM
+(
+  VALUES ('babsky', 'mopsila', 'clickclack', 1336)
+) AS mynameis(kostya, vedernikoff, matthew, krivda);
+
+
+query
+SELECT * FROM namingscheck;
+----
+kostya vedernikoff matthew krivda
+babsky mopsila clickclack 1336
+
+
+query
+SELECT * FROM namingscheck AS anotherone(change, thesenames);
+----
+change thesenames matthew krivda
+babsky mopsila clickclack 1336
+
+
+query
+SELECT another.kostya FROM namingscheck as another;
+----
+kostya
+babsky
+
+
+query
+SELECT namingscheck.kostya
+FROM namingscheck
+WHERE namingscheck.vedernikoff = 'mopsila';
+----
+kostya
+babsky
+
+
+query error
+CREATE VIEW arelav AS
+SELECT deadinside
+FROM
+(
+  VALUES (1, 'vedernikoff')
+) AS pudge(deadinside, deadinside);
+----
+db error: ERROR: column reference "deadinside" is ambiguous
+
+
+statement error
+CREATE VIEW bipolar_vedernikoff AS
+SELECT 1, 1;
+----
+db error: ERROR: column "?column?" specified more than once
+
+
+statement ok
+CREATE VIEW empty_vedernkikoff AS
+SELECT;
+
+
+statement ok
+CREATE VIEW aliasik(kostello) AS
+SELECT lol.*
+FROM
+(
+  VALUES
+    ('clickclack', 666, 'arelav'),
+    ('deadinside', 993, 'androed'),
+    ('gul', 777, 'lmao')
+) AS lol(kostya, vedernikoff);
+
+
+query
+SELECT * FROM aliasik;
+----
+kostello vedernikoff column3
+clickclack 666 arelav
+deadinside 993 androed
+gul 777 lmao
+
+
+statement ok
+CREATE VIEW vedernikoff_iq_evolution AS
+SELECT length('i am key') AS keyingout;
+
+
+query
+SELECT * FROM vedernikoff_iq_evolution;
+----
+keyingout
+8
+
+
+statement error
+CREATE OR REPLACE VIEW vedernikoff AS
+SELECT 'CUDA TEACHER', $1::integer;
+----
+db error: ERROR: there is no parameter $1

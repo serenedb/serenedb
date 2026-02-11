@@ -1,0 +1,1207 @@
+query
+SELECT DATE '1969-07-14';
+----
+date
+1969-07-14
+
+
+query
+SELECT DATE '1969-07-14' + INTERVAL '13.5' year;
+----
+?column?
+1982-07-14 00:00:00
+
+
+query
+SELECT DATE '1969-07-14' + INTERVAL '2' year + INTERVAL '22.8' day
+----
+?column?
+1971-08-05 00:00:00
+
+
+query
+SELECT DATE '2000-01-01' + INTERVAL '-1' day
+----
+?column?
+1999-12-31 00:00:00
+
+
+query
+SELECT DATE '1969-07-14' + INTERVAL '48' year;
+----
+?column?
+2017-07-14 00:00:00
+
+
+query
+SELECT DATE '1969-07-14' + INTERVAL '48' month;
+----
+?column?
+1973-07-14 00:00:00
+
+
+query
+SELECT DATE '1969-07-14' + INTERVAL '48' week;
+----
+week
+1969-07-14 00:00:48
+
+
+query
+SELECT DATE '1969-07-14' + INTERVAL '666' day;
+----
+?column?
+1971-05-11 00:00:00
+
+
+query
+SELECT DATE '1969-07-14' - INTERVAL '666' day;
+----
+?column?
+1967-09-17 00:00:00
+
+
+query
+SELECT DATE '1969-07-14' + INTERVAL '666' hours;
+----
+hours
+1969-07-14 00:11:06
+
+query
+SELECT DATE '1969-07-14' - INTERVAL '666' hours;
+----
+hours
+1969-07-13 23:48:54
+
+
+query
+SELECT DATE '1969-07-14' + INTERVAL '666' minutes;
+----
+minutes
+1969-07-14 00:11:06
+
+
+query
+SELECT DATE '1969-07-14' - INTERVAL '666' minutes;
+----
+minutes
+1969-07-13 23:48:54
+
+
+query
+SELECT DATE '1969-07-14' + INTERVAL '666' seconds;
+----
+seconds
+1969-07-14 00:11:06
+
+query
+SELECT DATE '1969-07-14' - INTERVAL '666' seconds;
+----
+seconds
+1969-07-13 23:48:54
+
+
+query
+SELECT DATE '1969-07-14' + INTERVAL '666777' milliseconds;
+----
+milliseconds
+1969-07-21 17:12:57
+
+
+query
+SELECT DATE '1969-07-14' - INTERVAL '666777' milliseconds;
+----
+milliseconds
+1969-07-06 06:47:03
+
+
+query
+SELECT DATE '1969-07-14' + INTERVAL '1337666777' microseconds;
+----
+microseconds
+2011-12-03 06:06:17
+
+query
+SELECT DATE '1969-07-14' - INTERVAL '1337666777' microseconds;
+----
+microseconds
+1927-02-22 17:53:43
+
+
+query
+SELECT DATE '1969-07-14' + INTERVAL '48 years 7 months 2 week 2 days 54 min 228 seconds 228 microseconds';
+----
+?column?
+2018-03-02 00:57:48.000228
+
+
+query
+SELECT DATE '2025-08-16' - DATE '2025-11-26' as uvolen
+----
+uvolen
+-102
+
+
+query
+SELECT DATE '2025-11-26' - DATE '2025-08-16' as uvolen
+----
+uvolen
+102
+
+
+query
+SELECT DATE '1969-07-14' + INTERVAL '48 day 22 min';
+----
+?column?
+1969-08-31 00:22:00
+
+
+query ?
+SELECT str::interval
+FROM (
+    VALUES
+      ('1 year'),
+      ('2 years'),
+      ('3 month'),
+      ('4 months'),
+      ('5 day'),
+      ('6 days'),
+      ('7 hour'),
+      ('8 hours'),
+      ('9 minute'),
+      ('10 minutes'),
+      ('11 second'),
+      ('12 seconds'),
+      ('13 millisecond'),
+      ('14 microsecond'),
+      ('2 weeks'),
+      ('1 year 2 months'),
+      ('3 days 4 hours'),
+      ('5 hours 30 minutes'),
+      ('10 minutes 15 seconds'),
+      ('1 year 2 months 3 days 4 hours 5 minutes 6 seconds'),
+      ('-1 day'),
+      ('-2 hours'),
+      ('1 year -2 months 3 days'),
+      ('01:02'),
+      ('01:02:03'),
+      ('-02:10'),
+      ('1 day 01:02:03'),
+      ('-1 day -01:02:03'),
+      ('1.5 hours'),
+      ('2.25 days'),
+      ('10.5 seconds'),
+      ('3y'),
+      ('4mon'),
+      ('5d'),
+      ('6h'),
+      ('7min'),
+      ('8s'),
+      ('P1Y'),
+      ('P2M'),
+      ('P3D'),
+      ('PT4H'),
+      ('PT5M'),
+      ('PT6S'),
+      ('P1Y2M3DT4H5M6S'),
+      ('P3DT5H'),
+      ('-3 days 5 hours'),
+      ('5'),
+      ('1 day 02:03'),
+      ('P1DT2H'),
+      ('2 weeks 3 days'),
+      ('1000 days'),
+      ('500 years'),
+      ('1 year 2 mons 3 days 4:05:06'),
+      ('@ 1 year 2 months ago'),
+      ('@ 3 days 4 hours'),
+      ('1 yr'),
+      ('2 mons'),
+      ('3 mins'),
+      ('4 secs')
+) AS killmeplz(str);
+----
+str
+1 year
+2 years
+3 mons
+4 mons
+5 days
+6 days
+07:00:00
+08:00:00
+00:09:00
+00:10:00
+00:00:11
+00:00:12
+00:00:00.013
+00:00:00.000014
+14 days
+1 year 2 mons
+3 days 04:00:00
+05:30:00
+00:10:15
+1 year 2 mons 3 days 04:05:06
+-1 days
+-02:00:00
+10 mons 3 days
+01:02:00
+01:02:03
+-02:10:00
+1 day 01:02:03
+-1 days -01:02:03
+01:30:00
+2 days 06:00:00
+00:00:10.5
+3 years
+4 mons
+5 days
+06:00:00
+00:07:00
+00:00:08
+1 year
+2 mons
+3 days
+04:00:00
+00:05:00
+00:00:06
+1 year 2 mons 3 days 04:05:06
+3 days 05:00:00
+-3 days +05:00:00
+00:00:05
+1 day 02:03:00
+1 day 02:00:00
+17 days
+1000 days
+500 years
+1 year 2 mons 3 days 04:05:06
+-1 years -2 mons
+3 days 04:00:00
+1 year
+2 mons
+00:03:00
+00:00:04
+
+
+query ?
+SELECT str::interval
+FROM (
+  VALUES
+    ('1y'), ('2yr'), ('3yrs'), ('4year'), ('5years'),
+    ('1mon'), ('2mons'), ('3month'), ('4months'),
+    ('1w'), ('2week'), ('3weeks'),
+    ('1d'), ('2day'), ('3days'),
+    ('1h'), ('2hr'), ('3hrs'), ('4hour'), ('5hours'),
+    ('1m'), ('2min'), ('3mins'), ('4minute'), ('5minutes'),
+    ('1s'), ('2sec'), ('3secs'), ('4second'), ('5seconds'),
+    ('1ms'), ('2msec'), ('3msecs'),
+    ('4millisecond'), ('5milliseconds'),
+    ('10us'), ('20usec'), ('30usecs'),
+    ('40microsecond'), ('50microseconds'),
+    ('1y 2mon 3d 4h 5m 6s 7ms 8us'),
+    ('2 years 3 months 4 days'),
+    ('5hours 6minutes 7seconds'),
+    ('1 week 2 days 3 hours'),
+    ('10 microseconds'),
+    ('20 milliseconds')
+) AS killmeplz(str);
+----
+str
+1 year
+2 years
+3 years
+4 years
+5 years
+1 mon
+2 mons
+3 mons
+4 mons
+7 days
+14 days
+21 days
+1 day
+2 days
+3 days
+01:00:00
+02:00:00
+03:00:00
+04:00:00
+05:00:00
+00:01:00
+00:02:00
+00:03:00
+00:04:00
+00:05:00
+00:00:01
+00:00:02
+00:00:03
+00:00:04
+00:00:05
+00:00:00.001
+00:00:00.002
+00:00:00.003
+00:00:00.004
+00:00:00.005
+00:00:00.00001
+00:00:00.00002
+00:00:00.00003
+00:00:00.00004
+00:00:00.00005
+1 year 2 mons 3 days 04:05:06.007008
+2 years 3 mons 4 days
+05:06:07
+9 days 03:00:00
+00:00:00.00001
+00:00:00.02
+
+
+query
+SELECT DATE '2003-04-01' as kostya_bd;
+----
+kostya_bd
+2003-04-01
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '2 years 5 months' as kostya_bd;
+----
+kostya_bd
+2005-09-01 00:00:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '1 year 11 months' as kostya_bd;
+----
+kostya_bd
+2005-03-01 00:00:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '10 years 3 months' as kostya_bd;
+----
+kostya_bd
+2013-07-01 00:00:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '-1 year' as kostya_bd;
+----
+kostya_bd
+2002-04-01 00:00:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '-5 months' as kostya_bd;
+----
+kostya_bd
+2002-11-01 00:00:00
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '-2 years -3 months' as kostya_bd;
+----
+kostya_bd
+2001-01-01 00:00:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '15 days 6 hours' as kostya_bd;
+----
+kostya_bd
+2003-04-16 06:00:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '7 days 12 hours 30 minutes' as kostya_bd;
+----
+kostya_bd
+2003-04-08 12:30:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '100 days 23 hours 59 minutes 59 seconds' as kostya_bd;
+----
+kostya_bd
+2003-07-10 23:59:59
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '-10 days' as kostya_bd;
+----
+kostya_bd
+2003-03-22 00:00:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '-5 days -12 hours' as kostya_bd;
+----
+kostya_bd
+2003-03-26 12:00:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '-1 day -6 hours -30 minutes' as kostya_bd;
+----
+kostya_bd
+2003-03-30 17:30:00
+
+
+query
+SELECT DATE '2003-04-01' - INTERVAL '-1 day 66 hours -30 minutes' as kostya_bd;
+----
+kostya_bd
+2003-03-30 06:30:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '3 years 2 months 15 days 8 hours' as kostya_bd;
+----
+kostya_bd
+2006-06-16 08:00:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '1 year 6 months 10 days 5 hours 45 minutes' as kostya_bd;
+----
+kostya_bd
+2004-10-11 05:45:00
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '5 years 11 months 29 days 23 hours 59 minutes 30 seconds' as kostya_bd;
+----
+kostya_bd
+2009-03-30 23:59:30
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '-1 year -2 months -5 days' as kostya_bd;
+----
+kostya_bd
+2002-01-27 00:00:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '-6 months -15 days -10 hours' as kostya_bd;
+----
+kostya_bd
+2002-09-15 14:00:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '-2 years -4 months -20 days -12 hours -30 minutes' as kostya_bd;
+----
+kostya_bd
+2000-11-10 11:30:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '1 year -3 months' as kostya_bd;
+----
+kostya_bd
+2004-01-01 00:00:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '2 years -6 months 10 days' as kostya_bd;
+----
+kostya_bd
+2004-10-11 00:00:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '-1 year 5 months' as kostya_bd;
+----
+kostya_bd
+2002-09-01 00:00:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL 'P2Y3M' as kostya_bd;
+----
+kostya_bd
+2005-07-01 00:00:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL 'P15DT10H30M' as kostya_bd;
+----
+kostya_bd
+2003-04-16 10:30:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL 'P1Y2M3DT4H5M6S' as kostya_bd;
+----
+kostya_bd
+2004-06-04 04:05:06
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '12:30:45' as kostya_bd;
+----
+kostya_bd
+2003-04-01 12:30:45
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '-08:15:30' as kostya_bd;
+----
+kostya_bd
+2003-03-31 15:44:30
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '1 day 23:59:59.999999' as kostya_bd;
+----
+kostya_bd
+2003-04-02 23:59:59.999999
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '-365 days' as kostya_bd;
+----
+kostya_bd
+2002-04-01 00:00:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '-24 hours' as kostya_bd;
+----
+kostya_bd
+2003-03-31 00:00:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '-1440 minutes' as kostya_bd;
+----
+kostya_bd
+2003-03-31 00:00:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '1-2' as kostya_bd;
+----
+kostya_bd
+2004-06-01 00:00:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '2-6' as kostya_bd;
+----
+kostya_bd
+2005-10-01 00:00:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '5-11' as kostya_bd;
+----
+kostya_bd
+2009-03-01 00:00:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '0-3' as kostya_bd;
+----
+kostya_bd
+2003-07-01 00:00:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '10-0' as kostya_bd;
+----
+kostya_bd
+2013-04-01 00:00:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '-1-2' as kostya_bd;
+----
+kostya_bd
+2002-02-01 00:00:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '-3-6' as kostya_bd;
+----
+kostya_bd
+1999-10-01 00:00:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '-0-5' as kostya_bd;
+----
+kostya_bd
+2002-11-01 00:00:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '1 12:30:45' as kostya_bd;
+----
+kostya_bd
+2003-04-02 12:30:45
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '5 08:15:30' as kostya_bd;
+----
+kostya_bd
+2003-04-06 08:15:30
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '10 23:59:59' as kostya_bd;
+----
+kostya_bd
+2003-04-11 23:59:59
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '0 06:30:00' as kostya_bd;
+----
+kostya_bd
+2003-04-01 06:30:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '100 00:00:00' as kostya_bd;
+----
+kostya_bd
+2003-07-10 00:00:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '-1 12:30:45' as kostya_bd;
+----
+kostya_bd
+2003-03-31 12:30:45
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '-5 08:15:30' as kostya_bd;
+----
+kostya_bd
+2003-03-27 08:15:30
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '-10 23:59:59' as kostya_bd;
+----
+kostya_bd
+2003-03-22 23:59:59
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '-0 12:00:00' as kostya_bd;
+----
+kostya_bd
+2003-04-01 12:00:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '15 10:30:45.123456' as kostya_bd;
+----
+kostya_bd
+2003-04-16 10:30:45.123456
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '7 00:00:00.999999' as kostya_bd;
+----
+kostya_bd
+2003-04-08 00:00:00.999999
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '-3 06:30:15.555' as kostya_bd;
+----
+kostya_bd
+2003-03-29 06:30:15.555
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '1-6' YEAR TO MONTH as kostya_bd;
+----
+kostya_bd
+2004-10-01 00:00:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '3 04:05:06.777' DAY TO SECOND as kostya_bd;
+----
+kostya_bd
+2003-04-04 04:05:06.777
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '5 10:30:45' DAY TO MINUTE as kostya_bd;
+----
+kostya_bd
+2003-04-06 10:30:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '2 15:00:00' DAY TO HOUR as kostya_bd;
+----
+kostya_bd
+2003-04-03 15:00:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '08:30:45' HOUR TO SECOND as kostya_bd;
+----
+kostya_bd
+2003-04-01 08:30:45
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '12:45:00' HOUR TO MINUTE as kostya_bd;
+----
+kostya_bd
+2003-04-01 12:45:00
+
+
+query
+SELECT DATE '2003-04-01' + INTERVAL '30:15' MINUTE TO SECOND as kostya_bd;
+----
+kostya_bd
+2003-04-01 00:30:15
+
+
+query
+SELECT '123 mon 666 day 213312 microseconds'::interval::text;
+----
+text
+10 years 3 mons 666 days 00:00:00.213312
+
+
+query
+SELECT EXTRACT(MILLENNIUM FROM DATE '1969-07-14') as millennium;
+----
+millennium
+2
+
+
+query
+SELECT EXTRACT(MILLENNIUM FROM DATE '2003-04-01') as millennium;
+----
+millennium
+3
+
+
+query
+SELECT EXTRACT(MILLENNIUM FROM TIMESTAMP '2003-04-01 12:30:45.123456') as millennium;
+----
+millennium
+3
+
+
+query
+SELECT EXTRACT(MILLENNIUM FROM INTERVAL '500 years') as millennium;
+----
+millennium
+0
+
+
+query
+SELECT EXTRACT(CENTURY FROM DATE '1969-07-14') as century;
+----
+century
+20
+
+
+query
+SELECT EXTRACT(CENTURY FROM DATE '2003-04-01') as century;
+----
+century
+21
+
+
+query
+SELECT EXTRACT(CENTURY FROM TIMESTAMP '2003-04-01 12:30:45') as century;
+----
+century
+21
+
+
+query
+SELECT EXTRACT(CENTURY FROM INTERVAL '500 years') as century;
+----
+century
+5
+
+
+query
+SELECT EXTRACT(DECADE FROM DATE '1969-07-14') as decade;
+----
+decade
+196
+
+
+query
+SELECT EXTRACT(DECADE FROM DATE '2003-04-01') as decade;
+----
+decade
+200
+
+
+query
+SELECT EXTRACT(DECADE FROM TIMESTAMP '2003-04-01 12:30:45') as decade;
+----
+decade
+200
+
+
+query
+SELECT EXTRACT(DECADE FROM INTERVAL '500 years') as decade;
+----
+decade
+50
+
+
+query
+SELECT EXTRACT(YEAR FROM DATE '1969-07-14') as year;
+----
+year
+1969
+
+
+query
+SELECT EXTRACT(YEAR FROM DATE '2003-04-01') as year;
+----
+year
+2003
+
+
+query
+SELECT EXTRACT(YEAR FROM TIMESTAMP '2003-04-01 12:30:45') as year;
+----
+year
+2003
+
+
+query
+SELECT EXTRACT(YEAR FROM INTERVAL '48 years 7 months') as year;
+----
+year
+48
+
+
+query
+SELECT EXTRACT(QUARTER FROM DATE '2003-04-01') as quarter;
+----
+quarter
+2
+
+
+query
+SELECT EXTRACT(QUARTER FROM DATE '1969-07-14') as quarter;
+----
+quarter
+3
+
+
+query
+SELECT EXTRACT(QUARTER FROM TIMESTAMP '2003-04-01 12:30:45') as quarter;
+----
+quarter
+2
+
+
+query
+SELECT EXTRACT(MONTH FROM DATE '2003-04-01') as month;
+----
+month
+4
+
+
+query
+SELECT EXTRACT(MONTH FROM DATE '1969-07-14') as month;
+----
+month
+7
+
+
+query
+SELECT EXTRACT(MONTH FROM TIMESTAMP '2003-04-01 12:30:45') as month;
+----
+month
+4
+
+
+query
+SELECT EXTRACT(MONTH FROM INTERVAL '1 year 2 months') as month;
+----
+month
+2
+
+
+query
+SELECT EXTRACT(WEEK FROM DATE '2003-04-01') as week;
+----
+week
+14
+
+
+query
+SELECT EXTRACT(WEEK FROM DATE '1969-07-14') as week;
+----
+week
+29
+
+
+query
+SELECT EXTRACT(WEEK FROM TIMESTAMP '2003-04-01 12:30:45') as week;
+----
+week
+14
+
+
+query
+SELECT EXTRACT(DAY FROM DATE '2003-04-01') as day;
+----
+day
+1
+
+
+query
+SELECT EXTRACT(DAY FROM DATE '1969-07-14') as day;
+----
+day
+14
+
+
+query
+SELECT EXTRACT(DAY FROM TIMESTAMP '2003-04-01 12:30:45') as day;
+----
+day
+1
+
+
+query
+SELECT EXTRACT(DAY FROM INTERVAL '666 days') as day;
+----
+day
+666
+
+
+query
+SELECT EXTRACT(HOUR FROM TIMESTAMP '2003-04-01 12:30:45') as hour;
+----
+hour
+12
+
+
+query
+SELECT EXTRACT(HOUR FROM TIMESTAMP '1969-07-14 23:59:59') as hour;
+----
+hour
+23
+
+
+query
+SELECT EXTRACT(HOUR FROM INTERVAL '5 days 8 hours 15 minutes') as hour;
+----
+hour
+8
+
+
+query
+SELECT EXTRACT(MINUTE FROM TIMESTAMP '2003-04-01 12:30:45') as minute;
+----
+minute
+30
+
+
+query
+SELECT EXTRACT(MINUTE FROM TIMESTAMP '1969-07-14 08:15:30') as minute;
+----
+minute
+15
+
+
+query
+SELECT EXTRACT(MINUTE FROM INTERVAL '7 days 12 hours 30 minutes') as minute;
+----
+minute
+30
+
+
+query
+SELECT ROUND(EXTRACT(SECOND FROM TIMESTAMP '2003-04-01 12:30:45.123456'), 6) as second;
+----
+second
+45.123456
+
+
+query
+SELECT ROUND(EXTRACT(SECOND FROM TIMESTAMP '1969-07-14 08:15:30.54322'), 4) as second;
+----
+second
+30.5432
+
+
+query
+SELECT ROUND(EXTRACT(SECOND FROM INTERVAL '10 minutes 15.7575 seconds'), 4) as second;
+----
+second
+15.7575
+
+
+query
+SELECT EXTRACT(MILLISECONDS FROM TIMESTAMP '2003-04-01 12:30:45.123456') as milliseconds;
+----
+milliseconds
+45123.456
+
+
+query
+SELECT ROUND(EXTRACT(MILLISECONDS FROM INTERVAL '30.5 seconds')) as milliseconds;
+----
+milliseconds
+30500
+
+
+query
+SELECT EXTRACT(MICROSECONDS FROM TIMESTAMP '2003-04-01 12:30:45.123456') as microseconds;
+----
+microseconds
+45123456
+
+
+query
+SELECT EXTRACT(MICROSECONDS FROM INTERVAL '15.123456 seconds') as microseconds;
+----
+microseconds
+15123456
+
+
+query
+SELECT ROUND(EXTRACT(EPOCH FROM TIMESTAMP '2003-04-01 12:30:45')) as epoch;
+----
+epoch
+1049200245
+
+
+query
+SELECT EXTRACT(DOW FROM DATE '2003-04-01') as dow;
+----
+dow
+2
+
+
+query
+SELECT EXTRACT(DOW FROM DATE '1969-07-14') as dow;
+----
+dow
+1
+
+
+query
+SELECT EXTRACT(DOW FROM TIMESTAMP '2003-04-01 12:30:45') as dow;
+----
+dow
+2
+
+
+query
+SELECT EXTRACT(ISODOW FROM DATE '2003-04-01') as isodow;
+----
+isodow
+2
+
+
+query
+SELECT EXTRACT(ISODOW FROM DATE '1969-07-14') as isodow;
+----
+isodow
+1
+
+
+query
+SELECT EXTRACT(ISODOW FROM TIMESTAMP '2003-04-01 12:30:45') as isodow;
+----
+isodow
+2
+
+
+query
+SELECT EXTRACT(DOY FROM DATE '2003-04-01') as doy;
+----
+doy
+91
+
+
+query
+SELECT EXTRACT(DOY FROM DATE '1969-07-14') as doy;
+----
+doy
+195
+
+
+query
+SELECT EXTRACT(DOY FROM TIMESTAMP '2003-04-01 12:30:45') as doy;
+----
+doy
+91
+
+
+query
+SELECT EXTRACT(ISOYEAR FROM DATE '2003-04-01') as isoyear;
+----
+isoyear
+2003
+
+
+query
+SELECT EXTRACT(ISOYEAR FROM DATE '1969-07-14') as isoyear;
+----
+isoyear
+1969
+
+
+query
+SELECT EXTRACT(ISOYEAR FROM TIMESTAMP '2003-04-01 12:30:45') as isoyear;
+----
+isoyear
+2003
+
+
+query
+SELECT EXTRACT(YEAR FROM INTERVAL '48 years 7 months 2 weeks 2 days') as year;
+----
+year
+48
+
+
+query
+SELECT EXTRACT(MONTH FROM INTERVAL '48 years 7 months 2 weeks 2 days') as month;
+----
+month
+7
+
+
+query
+SELECT EXTRACT(DAY FROM INTERVAL '48 years 7 months 2 weeks 2 days') as day;
+----
+day
+16
+
+
+query
+SELECT EXTRACT(HOUR FROM INTERVAL '1 day 12:30:45') as hour;
+----
+hour
+12
+
+
+query
+SELECT EXTRACT(MINUTE FROM INTERVAL '1 day 12:30:45') as minute;
+----
+minute
+30
+
+
+query
+SELECT ROUND(EXTRACT(SECOND FROM INTERVAL '1 day 12:30:45.123456'), 5) as second;
+----
+second
+45.12346

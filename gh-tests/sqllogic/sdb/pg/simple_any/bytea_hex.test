@@ -1,0 +1,411 @@
+# Basic bytea literal - text conversion
+query
+SELECT 'hello'::bytea;
+----
+bytea
+\\x68656c6c6f
+
+# Empty bytea
+query
+SELECT ''::bytea;
+----
+bytea
+\\x
+
+# Basic bytea literal - hex format
+query
+SELECT '\x48656c6c6f'::bytea;
+----
+bytea
+\\x48656c6c6f
+
+# Bytea with hex notation - uppercase
+query
+SELECT '\x48454C4C4F'::bytea;
+----
+bytea
+\\x48454c4c4f
+
+
+# Bytea with hex notation - mixed case
+query
+SELECT '\x48654C6c4F'::bytea;
+----
+bytea
+\\x48654c6c4f
+
+
+# Bytea with null byte
+query
+SELECT '\x00'::bytea;
+----
+bytea
+\\x00
+
+
+# Bytea with multiple null bytes
+query
+SELECT '\x000000'::bytea;
+----
+bytea
+\\x000000
+
+
+# Bytea with null bytes in middle
+query
+SELECT '\x48656c00006c6f'::bytea;
+----
+bytea
+\\x48656c00006c6f
+
+
+# Bytea with all byte values (0-255 sample)
+query
+SELECT '\x00010203040506070809'::bytea;
+----
+bytea
+\\x00010203040506070809
+
+
+# Bytea with high byte values
+query
+SELECT '\xFEFF'::bytea;
+----
+bytea
+\\xfeff
+
+
+# Bytea with escape format
+query
+SELECT E'\\x414243'::bytea;
+----
+bytea
+\\x414243
+
+
+# Bytea from text with special characters
+query
+SELECT 'hello@world#2024'::bytea;
+----
+bytea
+\\x68656c6c6f40776f726c642332303234
+
+
+# Bytea from text with newline
+query
+SELECT E'line1\nline2'::bytea;
+----
+bytea
+\\x6c696e65310a6c696e6532
+
+
+# Bytea from text with tab
+query
+SELECT E'tab\there'::bytea;
+----
+bytea
+\\x7461620968657265
+
+
+# Bytea from text with quotes
+query
+SELECT 'it''s working'::bytea;
+----
+bytea
+\\x6974277320776f726b696e67
+
+
+# Bytea with unicode - Chinese
+query
+SELECT '你好世界'::bytea;
+----
+bytea
+\\xe4bda0e5a5bde4b896e7958c
+
+
+# Bytea with unicode - emoji
+query
+SELECT '🌍🌎🌏'::bytea;
+----
+bytea
+\\xf09f8c8df09f8c8ef09f8c8f
+
+
+# Bytea with unicode - accented
+query
+SELECT 'café résumé naïve'::bytea;
+----
+bytea
+\\x636166c3a92072c3a973756dc3a9206e61c3af7665
+
+
+# Bytea with spaces
+query
+SELECT '  spaces  '::bytea;
+----
+bytea
+\\x20207370616365732020
+
+
+# Bytea representing binary data - DEADBEEF
+query
+SELECT '\xDEADBEEF'::bytea;
+----
+bytea
+\\xdeadbeef
+
+
+# Bytea representing binary data - all Fs
+query
+SELECT '\xFFFFFFFF'::bytea;
+----
+bytea
+\\xffffffff
+
+
+# Bytea with single byte
+query
+SELECT '\x41'::bytea;
+----
+bytea
+\\x41
+
+
+# Bytea with two bytes
+query
+SELECT '\x4142'::bytea;
+----
+bytea
+\\x4142
+
+
+# Bytea odd number of hex digits should fail but test even
+query
+SELECT '\x010203'::bytea;
+----
+bytea
+\\x010203
+
+
+query
+SELECT '\x01 02 03'::bytea;
+----
+bytea
+\\x010203
+
+query
+SELECT '\121\121'::bytea;
+----
+bytea
+\\x5151
+
+# Bytea array - single element
+query
+SELECT ARRAY['\x48656c6c6f'::bytea];
+----
+array
+{"\\\\x48656c6c6f"}
+
+
+# Bytea array - multiple elements
+query
+SELECT ARRAY['\x41'::bytea, '\x42'::bytea, '\x43'::bytea];
+----
+array
+{"\\\\x41","\\\\x42","\\\\x43"}
+
+
+# Bytea array - with null bytes
+query
+SELECT ARRAY['\x00'::bytea, '\xFF'::bytea];
+----
+array
+{"\\\\x00","\\\\xff"}
+
+
+# Bytea array - with text conversion
+query
+SELECT ARRAY['hello'::bytea, 'world'::bytea];
+----
+array
+{"\\\\x68656c6c6f","\\\\x776f726c64"}
+
+
+# Bytea array - empty bytea elements
+query
+SELECT ARRAY[''::bytea, ''::bytea, ''::bytea];
+----
+array
+{"\\\\x","\\\\x","\\\\x"}
+
+
+# Bytea array - unicode strings as bytea
+query
+SELECT ARRAY['世界'::bytea, '🌍'::bytea, 'café'::bytea];
+----
+array
+{"\\\\xe4b896e7958c","\\\\xf09f8c8d","\\\\x636166c3a9"}
+
+
+# NULL bytea
+query
+SELECT NULL::bytea;
+----
+bytea
+NULL
+
+
+# Bytea array with NULL
+query
+SELECT ARRAY[NULL::bytea];
+----
+array
+{NULL}
+
+
+# Bytea array with NULL and values
+query
+SELECT ARRAY['\x41'::bytea, NULL::bytea, '\x42'::bytea];
+----
+array
+{"\\\\x41",NULL,"\\\\x42"}
+
+
+# Bytea array with mixed formats
+query
+SELECT ARRAY['\xDEAD'::bytea, 'text'::bytea, '\xBEEF'::bytea];
+----
+array
+{"\\\\xdead","\\\\x74657874","\\\\xbeef"}
+
+
+# Bytea with long hex string
+query
+SELECT '\x0102030405060708090A0B0C0D0E0F101112131415'::bytea;
+----
+bytea
+\\x0102030405060708090a0b0c0d0e0f101112131415
+
+
+# Bytea with PDF header signature
+query
+SELECT '\x255044462D'::bytea;
+----
+bytea
+\\x255044462d
+
+
+# Bytea with PNG header signature
+query
+SELECT '\x89504E470D0A1A0A'::bytea;
+----
+bytea
+\\x89504e470d0a1a0a
+
+
+# Bytea with JPEG header signature
+query
+SELECT '\xFFD8FFE0'::bytea;
+----
+bytea
+\\xffd8ffe0
+
+
+# Bytea with ZIP header signature
+query
+SELECT '\x504B0304'::bytea;
+----
+bytea
+\\x504b0304
+
+
+# Bytea from text with only spaces
+query
+SELECT '   '::bytea;
+----
+bytea
+\\x202020
+
+
+# Bytea with carriage return and newline
+query
+SELECT E'text\r\nmore'::bytea;
+----
+bytea
+\\x746578740d0a6d6f7265
+
+
+# Bytea with form feed
+query
+SELECT E'page1\fpage2'::bytea;
+----
+bytea
+\\x70616765310c7061676532
+
+
+# Bytea with vertical tab
+query
+SELECT E'text1\ttext2'::bytea;
+----
+bytea
+\\x7465787431097465787432
+
+
+# Bytea with bell character
+query
+SELECT E'alert\a'::bytea;
+----
+bytea
+\\x616c65727461
+
+
+# Bytea array with special binary sequences
+query
+SELECT ARRAY['\x00'::bytea, '\xFF'::bytea, '\xDEAD'::bytea, '\xBEEF'::bytea];
+----
+array
+{"\\\\x00","\\\\xff","\\\\xdead","\\\\xbeef"}
+
+
+# Bytea with alternating bits
+query
+SELECT '\xAAAAAAAA'::bytea;
+----
+bytea
+\\xaaaaaaaa
+
+
+# Bytea with alternating bits pattern 2
+query
+SELECT '\x55555555'::bytea;
+----
+bytea
+\\x55555555
+
+
+# Bytea representing 64-bit integer max
+query
+SELECT '\xFFFFFFFFFFFFFFFF'::bytea;
+----
+bytea
+\\xffffffffffffffff
+
+
+# Bytea with escape sequences in text
+query
+SELECT E'\x41\x42\x43'::bytea;
+----
+bytea
+\\x414243
+
+query
+SELECT ARRAY['\x01 02 03'::bytea, '\x01 02 03'::bytea];
+----
+array
+{"\\\\x010203","\\\\x010203"}
+
+query
+SELECT ARRAY['\121\121'::bytea, '\121\121'::bytea];
+----
+array
+{"\\\\x5151","\\\\x5151"}

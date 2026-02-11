@@ -1,0 +1,77 @@
+statement ok
+RESET sdb_faults;
+
+
+statement error
+SET sdb_faults TO DEFAULT;
+
+
+query
+SHOW sdb_faults
+----
+sdb_faults
+
+
+statement ok
+SET sdb_fault_some1 TO DEFAULT;
+
+
+statement error
+SET sdb_fault_some1 TO DEFAULT;
+
+
+statement ok
+SET sdb_fault_some2 TO DEFAULT;
+
+
+statement ok
+SET sdb_fault_some3 TO DEFAULT;
+
+
+query
+SHOW sdb_faults
+----
+sdb_faults
+some1
+some2
+some3
+
+
+statement ok
+RESET sdb_fault_some1;
+
+
+query
+SHOW sdb_faults
+----
+sdb_faults
+some2
+some3
+
+
+query
+SHOW sdb_fault_some1
+----
+sdb_fault_some1
+off
+
+
+query
+SHOW sdb_fault_some2
+----
+sdb_fault_some2
+on
+
+
+statement error
+RESET sdb_fault_some1;
+
+
+statement ok
+RESET sdb_faults;
+
+
+query
+SHOW sdb_faults
+----
+sdb_faults

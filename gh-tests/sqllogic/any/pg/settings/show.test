@@ -1,0 +1,115 @@
+query
+SHOW search_path;
+----
+search_path
+"$user", public
+
+
+query error
+SHOW non_existed_variable;
+----
+db error: ERROR: unrecognized configuration parameter "non_existed_variable"
+
+
+statement ok
+SET search_path TO root,root2;
+
+
+query
+SHOW search_path;
+----
+search_path
+root, root2
+
+
+statement ok
+RESET ALL;
+
+
+query
+SHOW search_path;
+----
+search_path
+"$user", public
+
+
+statement ok
+SET search_path = "1a", 121, _12, "1$a", "CaseSensitive", NOt_SEnsitive, "A";
+
+
+query
+SHOW search_path
+----
+search_path
+"1a", 121, _12, "1$a", "CaseSensitive", not_sensitive, "A"
+
+
+statement ok
+SET search_path TO DEFAULT;
+
+
+query
+SHOW search_path;
+----
+search_path
+"$user", public
+
+
+query
+SHOW client_encoding;
+----
+client_encoding
+UTF8
+
+
+statement ok
+SET client_encoding TO DEFAULT;
+
+
+query
+SHOW client_encoding;
+----
+client_encoding
+UTF8
+
+
+query
+SHOW default_transaction_read_only;
+----
+default_transaction_read_only
+off
+
+
+query
+SHOW in_hot_standby;
+----
+in_hot_standby
+off
+
+
+query
+SHOW integer_datetimes;
+----
+integer_datetimes
+on
+
+
+query
+SHOW scram_iterations;
+----
+scram_iterations
+4096
+
+
+query
+SHOW server_encoding;
+----
+server_encoding
+UTF8
+
+
+query
+SHOW standard_conforming_strings;
+----
+standard_conforming_strings
+on

@@ -1,0 +1,14 @@
+skipif postgres-extended
+query
+SELECT '25346cc1-a4da-4f53-8b7e-d08fade13861'::uuid;
+----
+uuid
+25346cc1-a4da-4f53-8b7e-d08fade13861
+
+
+skipif postgres-extended
+query
+SELECT '812e18cb-9e03-4fcb-92a0-a159cd7a513f'::uuid;
+----
+uuid
+812e18cb-9e03-4fcb-92a0-a159cd7a513f

@@ -1,0 +1,335 @@
+query
+SELECT * FROM pg_aggregate LIMIT 0
+----
+aggfnoid	aggkind	aggnumdirectargs	aggtransfn	aggfinalfn	aggcombinefn	aggserialfn	aggdeserialfn	aggmtransfn	aggminvtransfn	aggmfinalfn	aggfinalextra	aggmfinalextra	aggfinalmodify	aggmfinalmodify	aggsortop	aggtranstype	aggtransspace	aggmtranstype	aggmtransspace	agginitval	aggminitval
+
+query
+SELECT * FROM pg_am LIMIT 0
+----
+oid	amname	amhandler	amtype
+
+query
+SELECT * FROM pg_amop LIMIT 0
+----
+oid	amopfamily	amoplefttype	amoprighttype	amopstrategy	amoppurpose	amopopr	amopmethod	amopsortfamily
+
+query
+SELECT * FROM pg_amproc LIMIT 0
+----
+oid	amprocfamily	amproclefttype	amprocrighttype	amprocnum	amproc
+
+query
+SELECT * FROM pg_attrdef LIMIT 0
+----
+oid	adrelid	adnum	adbin
+
+query
+SELECT * FROM pg_attribute LIMIT 0
+----
+attrelid	attname	atttypid	attlen	attnum	atttypmod	attndims	attbyval	attalign	attstorage	attcompression	attnotnull	atthasdef	atthasmissing	attidentity	attgenerated	attisdropped	attislocal	attinhcount	attcollation	attstattarget	attacl	attoptions	attfdwoptions	attmissingval
+
+query
+SELECT * FROM pg_auth_members LIMIT 0
+----
+oid	roleid	member	grantor	admin_option	inherit_option	set_option
+
+query
+SELECT * FROM pg_authid LIMIT 0
+----
+oid	rolname	rolsuper	rolinherit	rolcreaterole	rolcreatedb	rolcanlogin	rolreplication	rolbypassrls	rolconnlimit	rolpassword	rolvaliduntil
+
+query
+SELECT * FROM pg_cast LIMIT 0
+----
+oid	castsource	casttarget	castfunc	castcontext	castmethod
+
+query
+SELECT * FROM pg_class LIMIT 0
+----
+oid	relname	relnamespace	reltype	reloftype	relowner	relam	relfilenode	reltablespace	relpages	reltuples	relallvisible	relallfrozen	reltoastrelid	relhasindex	relisshared	relpersistence	relkind	relnatts	relchecks	relhasrules	relhastriggers	relhassubclass	relrowsecurity	relforcerowsecurity	relispopulated	relreplident	relispartition	relrewrite	relfrozenxid	relminmxid	relacl	reloptions	relpartbound
+
+query
+SELECT * FROM pg_collation LIMIT 0
+----
+oid	collname	collnamespace	collowner	collprovider	collisdeterministic	collencoding	collcollate	collctype	colllocale	collicurules	collversion
+
+query
+SELECT * FROM pg_constraint LIMIT 0
+----
+oid	conname	connamespace	contype	condeferrable	condeferred	conenforced	convalidated	conrelid	contypid	conindid	conparentid	confrelid	confupdtype	confdeltype	confmatchtype	conislocal	coninhcount	connoinherit	conperiod	conkey	confkey	conpfeqop	conppeqop	conffeqop	confdelsetcols	conexclop	conbin
+
+query
+SELECT * FROM pg_conversion LIMIT 0
+----
+oid	conname	connamespace	conowner	conforencoding	contoencoding	conproc	condefault
+
+query
+SELECT * FROM pg_database LIMIT 0
+----
+oid	datname	datdba	encoding	datlocprovider	datistemplate	datallowconn	dathasloginevt	datconnlimit	datfrozenxid	datminmxid	dattablespace	datcollate	datctype	datlocale	daticurules	datcollversion	datacl
+
+query
+SELECT * FROM pg_db_role_setting LIMIT 0
+----
+setdatabase	setrole	setconfig
+
+query
+SELECT * FROM pg_default_acl LIMIT 0
+----
+oid	defaclrole	defaclnamespace	defaclobjtype	defaclacl
+
+query
+SELECT * FROM pg_depend LIMIT 0
+----
+classid	objid	objsubid	refclassid	refobjid	refobjsubid	deptype
+
+query
+SELECT * FROM pg_description LIMIT 0
+----
+objoid	classoid	objsubid	description
+
+query
+SELECT * FROM pg_enum LIMIT 0
+----
+oid	enumtypid	enumsortorder	enumlabel
+
+query
+SELECT * FROM pg_event_trigger LIMIT 0
+----
+oid	evtname	evtevent	evtowner	evtfoid	evtenabled	evttags
+
+query
+SELECT * FROM pg_extension LIMIT 0
+----
+oid	extname	extowner	extnamespace	extrelocatable	extversion	extconfig	extcondition
+
+query
+SELECT * FROM pg_foreign_data_wrapper LIMIT 0
+----
+oid	fdwname	fdwowner	fdwhandler	fdwvalidator	fdwacl	fdwoptions
+
+query
+SELECT * FROM pg_foreign_server LIMIT 0
+----
+oid	srvname	srvowner	srvfdw	srvtype	srvversion	srvacl	srvoptions
+
+query
+SELECT * FROM pg_foreign_table LIMIT 0
+----
+ftrelid	ftserver	ftoptions
+
+query
+SELECT * FROM pg_index LIMIT 0
+----
+indexrelid	indrelid	indnatts	indnkeyatts	indisunique	indnullsnotdistinct	indisprimary	indisexclusion	indimmediate	indisclustered	indisvalid	indcheckxmin	indisready	indislive	indisreplident	indkey	indcollation	indclass	indoption	indexprs	indpred
+
+query
+SELECT * FROM pg_inherits LIMIT 0
+----
+inhrelid	inhparent	inhseqno	inhdetachpending
+
+query
+SELECT * FROM pg_init_privs LIMIT 0
+----
+objoid	classoid	objsubid	privtype	initprivs
+
+query
+SELECT * FROM pg_language LIMIT 0
+----
+oid	lanname	lanowner	lanispl	lanpltrusted	lanplcallfoid	laninline	lanvalidator	lanacl
+
+query
+SELECT * FROM pg_largeobject LIMIT 0
+----
+loid	pageno	data
+
+query
+SELECT * FROM pg_largeobject_metadata LIMIT 0
+----
+oid	lomowner	lomacl
+
+query
+SELECT oid, nspname FROM pg_namespace WHERE nspname IN ('pg_catalog', 'public', 'information_schema') ORDER BY nspname;
+----
+oid	nspname
+<slt:ignore>	information_schema
+11	pg_catalog
+<slt:ignore>	public
+
+query
+SELECT oid, nspname FROM pg_catalog.pg_namespace WHERE oid = 11
+----
+oid nspname
+11 pg_catalog
+
+query
+SELECT * FROM pg_opclass LIMIT 0
+----
+oid	opcmethod	opcname	opcnamespace	opcowner	opcfamily	opcintype	opcdefault	opckeytype
+
+query
+SELECT * FROM pg_operator LIMIT 0
+----
+oid	oprname	oprnamespace	oprowner	oprkind	oprcanmerge	oprcanhash	oprleft	oprright	oprresult	oprcom	oprnegate	oprcode	oprrest	oprjoin
+
+query
+SELECT * FROM pg_opfamily LIMIT 0
+----
+oid	opfmethod	opfname	opfnamespace	opfowner
+
+query
+SELECT * FROM pg_parameter_acl LIMIT 0
+----
+oid	parname	paracl
+
+query
+SELECT * FROM pg_partitioned_table LIMIT 0
+----
+partrelid	partstrat	partnatts	partdefid	partattrs	partclass	partcollation	partexprs
+
+query
+SELECT * FROM pg_policy LIMIT 0
+----
+oid	polname	polrelid	polcmd	polpermissive	polroles	polqual	polwithcheck
+
+query
+SELECT * FROM pg_proc LIMIT 0
+----
+oid	proname	pronamespace	proowner	prolang	procost	prorows	provariadic	prosupport	prokind	prosecdef	proleakproof	proisstrict	proretset	provolatile	proparallel	pronargs	pronargdefaults	prorettype	proargtypes	proallargtypes	proargmodes	proargnames	proargdefaults	protrftypes	prosrc	probin	prosqlbody	proconfig	proacl
+
+query
+SELECT * FROM pg_publication LIMIT 0
+----
+oid	pubname	pubowner	puballtables	pubinsert	pubupdate	pubdelete	pubtruncate	pubviaroot	pubgencols
+
+query
+SELECT * FROM pg_publication_namespace LIMIT 0
+----
+oid	pnpubid	pnnspid
+
+query
+SELECT * FROM pg_publication_rel LIMIT 0
+----
+oid	prpubid	prrelid	prqual	prattrs
+
+query
+SELECT * FROM pg_range LIMIT 0
+----
+rngtypid	rngsubtype	rngmultitypid	rngcollation	rngsubopc	rngcanonical	rngsubdiff
+
+query
+SELECT * FROM pg_replication_origin LIMIT 0
+----
+roident	roname
+
+query
+SELECT * FROM pg_rewrite LIMIT 0
+----
+oid	rulename	ev_class	ev_type	ev_enabled	is_instead	ev_qual	ev_action
+
+query
+SELECT * FROM pg_seclabel LIMIT 0
+----
+objoid	classoid	objsubid	provider	label
+
+query
+SELECT * FROM pg_sequence LIMIT 0
+----
+seqrelid	seqtypid	seqstart	seqincrement	seqmax	seqmin	seqcache	seqcycle
+
+query
+SELECT * FROM pg_shdepend LIMIT 0
+----
+dbid	classid	objid	objsubid	refclassid	refobjid	deptype
+
+query
+SELECT * FROM pg_shdescription LIMIT 0
+----
+objoid	classoid	description
+
+query
+SELECT * FROM pg_shseclabel LIMIT 0
+----
+objoid	classoid	provider	label
+
+query
+SELECT * FROM pg_statistic LIMIT 0
+----
+starelid	staattnum	stainherit	stanullfrac	stawidth	stadistinct	stakind1	stakind2	stakind3	stakind4	stakind5	staop1	staop2	staop3	staop4	staop5	stacoll1	stacoll2	stacoll3	stacoll4	stacoll5	stanumbers1	stanumbers2	stanumbers3	stanumbers4	stanumbers5	stavalues1	stavalues2	stavalues3	stavalues4	stavalues5
+
+query
+SELECT * FROM pg_statistic_ext LIMIT 0
+----
+oid	stxrelid	stxname	stxnamespace	stxowner	stxkeys	stxstattarget	stxkind	stxexprs
+
+query
+SELECT * FROM pg_statistic_ext_data LIMIT 0
+----
+stxoid	stxdinherit	stxdndistinct	stxddependencies	stxdmcv	stxdexpr
+
+query
+SELECT * FROM pg_subscription LIMIT 0
+----
+oid	subdbid	subskiplsn	subname	subowner	subenabled	subbinary	substream	subtwophasestate	subdisableonerr	subpasswordrequired	subrunasowner	subfailover	subconninfo	subslotname	subsynccommit	subpublications	suborigin
+
+query
+SELECT * FROM pg_subscription_rel LIMIT 0
+----
+srsubid	srrelid	srsubstate	srsublsn
+
+query
+SELECT * FROM pg_tablespace LIMIT 0
+----
+oid	spcname	spcowner	spcacl	spcoptions
+
+query
+SELECT * FROM pg_transform LIMIT 0
+----
+oid	trftype	trflang	trffromsql	trftosql
+
+query
+SELECT * FROM pg_trigger LIMIT 0
+----
+oid	tgrelid	tgparentid	tgname	tgfoid	tgtype	tgenabled	tgisinternal	tgconstrrelid	tgconstrindid	tgconstraint	tgdeferrable	tginitdeferred	tgnargs	tgattr	tgargs	tgqual	tgoldtable	tgnewtable
+
+query
+SELECT * FROM pg_ts_config LIMIT 0
+----
+oid	cfgname	cfgnamespace	cfgowner	cfgparser
+
+query
+SELECT * FROM pg_ts_config_map LIMIT 0
+----
+mapcfg	maptokentype	mapseqno	mapdict
+
+query
+SELECT * FROM pg_ts_dict LIMIT 0
+----
+oid	dictname	dictnamespace	dictowner	dicttemplate	dictinitoption
+
+query
+SELECT * FROM pg_ts_parser LIMIT 0
+----
+oid	prsname	prsnamespace	prsstart	prstoken	prsend	prsheadline	prslextype
+
+query
+SELECT * FROM pg_ts_template LIMIT 0
+----
+oid	tmplname	tmplnamespace	tmplinit	tmpllexize
+
+query
+SELECT oid, typname, typowner, typlen, typbyval, typtype, typcategory, typispreferred, typisdefined, typdelim, typrelid, typelem, typarray  FROM pg_type WHERE typname = 'bool' OR typname = 'int2' OR typname = 'int4' OR typname = 'int8' OR typname = 'text' OR typname = 'float4' OR typname = 'float8' ORDER BY oid
+----
+oid	typname	typowner	typlen	typbyval	typtype	typcategory	typispreferred	typisdefined	typdelim	typrelid	typelem	typarray
+16	bool	10	1	t	b	B	t	t	,	0	0	1000
+20	int8	10	8	t	b	N	f	t	,	0	0	1016
+21	int2	10	2	t	b	N	f	t	,	0	0	1005
+23	int4	10	4	t	b	N	f	t	,	0	0	1007
+25	text	10	-1	f	b	S	t	t	,	0	0	1009
+700	float4	10	4	t	b	N	f	t	,	0	0	1021
+701	float8	10	8	t	b	N	t	t	,	0	0	1022
+
+query
+SELECT * FROM pg_user_mapping LIMIT 0
+----
+oid	umuser	umserver	umoptions

@@ -1,0 +1,128 @@
+query
+select null, 42, true, false, case cos(0) when 1 then 1 when 2 then 2 end, 3 in (1,3), 3 not in (1,3)
+----
+?column?	?column?	?column?	?column?	case	?column?	?column?
+NULL	42	t	f	1	t	f
+
+
+query
+select 3 as a, 2 as b
+----
+a	b
+3	2
+
+
+query
+select 3+cos(1) as a, 5%2, 2 as b
+----
+a	?column?	b
+3.5403023058681398	1	2
+
+
+query
+with cte as (select 1)
+select * from cte
+----
+?column?
+1
+
+
+query
+with cte as (values(42),(43)), cte2 as (select 2)
+select kek.* from cte, cte as kek
+----
+column1
+42
+43
+42
+43
+
+
+query
+SELECT coalesce(null,2,null) as kek
+----
+kek
+2
+
+
+query
+select cos(0.5) as value
+----
+value
+0.8775825618903728
+
+
+query
+select * from (values(1,2,3),(4,5,6));
+----
+column1	column2	column3
+1	2	3
+4	5	6
+
+
+statement error
+select * from (values(1,2,3))
+union all
+select * from (values(1,2))
+----
+db error: ERROR: each UNION query must have the same number of columns
+
+
+
+query
+select 1
+intersect
+select 1
+----
+?column?
+1
+
+
+query
+select 'asasassasasasasasasas' as res
+----
+res
+asasassasasasasasasas
+
+
+query
+select 'asasassasasasasasasas'
+----
+?column?
+asasassasasasasasasas
+
+
+query
+select 'a', 'b', 'c'
+----
+?column?	?column?	?column?
+a	b	c
+
+
+query
+select 'a' as b, 'b' as c, 'c' as a
+----
+b	c	a
+a	b	c
+
+
+query
+SELECT SUBSTRING('SQL Tutorial', 1, 3) AS extractstring;
+----
+extractstring
+SQL
+
+
+# Alias mismatch
+
+query
+SELECT coalesce(null,2,null)
+----
+coalesce
+2
+
+
+statement error
+select ddss
+----
+db error: ERROR: column "ddss" does not exist

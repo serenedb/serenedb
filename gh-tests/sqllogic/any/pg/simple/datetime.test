@@ -1,0 +1,42 @@
+query
+SELECT DATE '2015-05-19',
+  DATE '1997-09-12'
+----
+date date
+2015-05-19 1997-09-12
+
+
+query
+SELECT TIMESTAMP '1999-12-31 23:59:59' as new_year,
+  TIMESTAMP '2004-04-15 05:16:20'
+----
+new_year timestamp
+1999-12-31 23:59:59 2004-04-15 05:16:20
+
+
+query
+SELECT date_trunc('day', TIMESTAMP '2024-03-15 14:30:00');
+----
+date_trunc
+2024-03-15 00:00:00
+
+
+query
+SELECT date_trunc('month', TIMESTAMP '2024-03-15 14:30:00');
+----
+date_trunc
+2024-03-01 00:00:00
+
+
+query
+SELECT date_trunc('year', TIMESTAMP '2024-03-15 14:30:00');
+----
+date_trunc
+2024-01-01 00:00:00
+
+
+query
+SELECT date_trunc('hour', TIMESTAMP '2024-03-15 14:30:45');
+----
+date_trunc
+2024-03-15 14:00:00

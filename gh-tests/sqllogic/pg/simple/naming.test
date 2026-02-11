@@ -1,0 +1,11 @@
+query
+SELECT * FROM
+  generate_series(1, 2) as x,
+  generate_series(1, 2) as y,
+  generate_series(1, 1) as z;
+----
+x	y	z
+1	1	1
+2	1	1
+1	2	1
+2	2	1

@@ -1,0 +1,180 @@
+query
+SELECT null IS NULL;
+----
+?column?
+t
+
+
+query
+SELECT true IS NULL;
+----
+?column?
+f
+
+
+query
+SELECT false IS NULL;
+----
+?column?
+f
+
+
+query
+SELECT null IS NOT NULL;
+----
+?column?
+f
+
+
+query
+SELECT true IS NOT NULL;
+----
+?column?
+t
+
+
+query
+SELECT false IS NOT NULL;
+----
+?column?
+t
+
+
+query
+SELECT null IS TRUE;
+----
+?column?
+f
+
+
+query
+SELECT true IS TRUE;
+----
+?column?
+t
+
+
+query
+SELECT false IS TRUE;
+----
+?column?
+f
+
+
+query
+SELECT null IS NOT TRUE;
+----
+?column?
+t
+
+
+query
+SELECT true IS NOT TRUE;
+----
+?column?
+f
+
+
+query
+SELECT false IS NOT TRUE;
+----
+?column?
+t
+
+
+query
+SELECT null IS FALSE;
+----
+?column?
+f
+
+
+query
+SELECT true IS FALSE;
+----
+?column?
+f
+
+
+query
+SELECT false IS FALSE;
+----
+?column?
+t
+
+
+query
+SELECT null IS NOT FALSE;
+----
+?column?
+t
+
+
+query
+SELECT true IS NOT FALSE;
+----
+?column?
+t
+
+
+query
+SELECT false IS NOT FALSE;
+----
+?column?
+f
+
+
+query
+SELECT null IS UNKNOWN;
+----
+?column?
+t
+
+
+query
+SELECT true IS UNKNOWN;
+----
+?column?
+f
+
+
+query
+SELECT false IS UNKNOWN;
+----
+?column?
+f
+
+
+query
+SELECT null IS NOT UNKNOWN;
+----
+?column?
+f
+
+
+query
+SELECT true IS NOT UNKNOWN;
+----
+?column?
+t
+
+
+query
+SELECT false IS NOT UNKNOWN;
+----
+?column?
+t
+
+
+query
+SELECT false = 'false';
+----
+?column?
+t
+
+
+query
+SELECT 'TRUE' IS true;
+----
+?column?
+t

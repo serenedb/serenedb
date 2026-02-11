@@ -1,0 +1,29 @@
+#!/usr/bin/make -f
+%:
+	dh $@
+
+build:
+	echo We are assuming that the SereneDB build has already run.
+
+override_dh_auto_configure:
+	echo Skipping configure
+
+override_dh_auto_build:
+	echo Building static binaries here, downloading starter...
+
+override_dh_auto_install:
+	echo Copying files...
+	cp -a install/* debian/@EDITION@
+	mv debian/@EDITION@/usr/etc debian/@EDITION@/etc
+	mkdir -p debian/@EDITION@/lib/systemd/system
+	cp debian/serenedb.service debian/@EDITION@/lib/systemd/system
+	rm -f debian/serenedb.service
+	mkdir -p debian/@EDITION@/etc/init.d
+	cp debian/serenedb.init debian/@EDITION@/etc/init.d/serenedb
+
+override_dh_strip:
+	dh_strip --dbg-package @EDITION@-dbg
+
+override_dh_builddeb:
+	dpkg-deb -Zgzip --build debian/@EDITION@ ..
+	dpkg-deb -Zgzip --build debian/@EDITION@-dbg ..

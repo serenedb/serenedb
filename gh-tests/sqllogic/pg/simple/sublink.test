@@ -1,0 +1,109 @@
+query
+select array(values(1),(2),(3)) as kek
+----
+kek
+{1,2,3}
+
+
+query
+select exists(values(1),(2),(3)) as kek
+----
+kek
+t
+
+
+query
+select exists(values(1),(2),(3))
+----
+exists
+t
+
+
+query
+select exists(select 1 where false) as kek
+----
+kek
+f
+
+
+query
+select 1 in (select 1) as kek
+----
+kek
+t
+
+
+query
+select (select 1)
+----
+?column?
+1
+
+
+statement error
+select (select 1,2,3)
+----
+db error: ERROR: subquery must return only one column
+
+
+query
+select 1 not in (select 1) as kek
+----
+kek
+f
+
+
+query
+select 1 = any (select 1) as kek
+----
+kek
+t
+
+
+query
+select 1 = all (select 1) as kek
+----
+kek
+t
+
+
+query
+select 1 = some (select 1) as kek
+----
+kek
+t
+
+
+query
+select 1 <> some (select 1) as kek
+----
+kek
+f
+
+
+query
+select 1 where 1 in (select 1)
+----
+?column?
+1
+
+
+query
+select 1 where 1 in (select * from (values(1),(2),(3)))
+----
+?column?
+1
+
+
+query
+select 1 where (1) in (select * from (values(1),(2),(3)))
+----
+?column?
+1
+
+
+query
+select exists(select 1 as kek where 1 not in (select 1)) as kek
+----
+kek
+f

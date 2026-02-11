@@ -1,0 +1,105 @@
+# TODO: If drivers == 1, union shouldn't be parallelized.
+query ? rowsort
+SELECT 1 as a UNION ALL SELECT 2 as b;
+----
+a
+1
+2
+
+
+# TODO: If drivers == 1, union shouldn't be parallelized.
+query ? rowsort
+SELECT 2 as a UNION ALL SELECT 2 as b;
+----
+a
+2
+2
+
+
+# TODO: If drivers == 1, union shouldn't be parallelized.
+query ? rowsort
+SELECT * FROM (SELECT 1 as A UNION ALL SELECT 2 as B);
+----
+a
+1
+2
+
+
+# TODO: If drivers == 1, union shouldn't be parallelized.
+query ? rowsort
+SELECT * FROM (SELECT 1 as a UNION ALL SELECT 2 as b UNION ALL SELECT 3 as c);
+----
+a
+1
+2
+3
+
+
+# TODO: If drivers == 1, union shouldn't be parallelized.
+query ? rowsort
+SELECT 1 as a, 2 as b, 3 as c  UNION ALL SELECT 2 as e, 3 as c, 4 as g;
+----
+a	b	c
+1	2	3
+2	3	4
+
+
+# TODO: If drivers == 1, union shouldn't be parallelized.
+query ? rowsort
+SELECT a FROM (SELECT 1 as a UNION SELECT 2 as b);
+----
+a
+1
+2
+
+
+query
+SELECT 1 as a UNION SELECT 1 as b;
+----
+a
+1
+
+
+query
+SELECT a as GG FROM (SELECT 1 as A UNION SELECT 1 as B) UNION SELECT 1;
+----
+gg
+1
+
+
+# TODO: If drivers == 1, union shouldn't be parallelized.
+query ? rowsort
+SELECT a FROM (SELECT 1 as a UNION  SELECT 2 as b UNION SELECT 2 as c);
+----
+a
+1
+2
+
+
+# TODO: If drivers == 1, union shouldn't be parallelized.
+query ? rowsort
+SELECT a as GG FROM (SELECT 1 as A UNION ALL SELECT 2 as B) UNION ALL SELECT 4;
+----
+gg
+1
+2
+4
+
+
+query
+select * from (values(1,2,3))
+union
+select * from (values(1,2,3))
+----
+column1	column2	column3
+1	2	3
+
+
+query
+select * from (values(1,2,3))
+union all
+select * from (values(1,2,3))
+----
+column1	column2	column3
+1	2	3
+1	2	3

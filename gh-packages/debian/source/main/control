@@ -1,0 +1,22 @@
+Source: serenedb
+Section: database
+Priority: optional
+Maintainer: SereneDB
+Build-Depends: debhelper (>= 9), docker-ce
+
+Package: serenedb
+Architecture: @ARCHITECTURE@
+Depends: ${misc:Depends}
+Description: a real-time search & OLAP database
+
+Package: serenedb-dbg
+Architecture: @ARCHITECTURE@
+Section: debug
+Priority: extra
+Conflicts:
+    serenedb (<< ${binary:Version}),
+    serenedb (>> ${binary:Version}),
+Pre-Depends:
+    serenedb (= ${binary:Version}),
+    ${misc:Depends}
+Description: debugging symbols for serenedb

@@ -1,0 +1,58 @@
+query
+SELECT
+  ARRAY[1, 0, 1] as basic,
+  ARRAY[1, NULL, 1] as with_nulls
+----
+basic with_nulls
+{1,0,1} {1,NULL,1}
+
+
+query
+SELECT
+  ARRAY[true, false, true] as basic,
+  ARRAY[false, NULL, NULL] as with_nulls
+----
+basic with_nulls
+{t,f,t} {f,NULL,NULL}
+
+
+query
+SELECT array_to_string(ARRAY[127, 0, 0, 1], '.');
+----
+array_to_string
+127.0.0.1
+
+
+query ?
+SELECT array_to_string(ARRAY['abba', 'banana'], '*');
+----
+array_to_string
+abba*banana
+
+
+query
+SELECT array_position(ARRAY[10, 20, 30, 40], 30);
+----
+array_position
+3
+
+
+query
+SELECT array_position(ARRAY[5, 15, 25], 15);
+----
+array_position
+2
+
+
+query
+SELECT cardinality(ARRAY[10, 20, 30, 40]);
+----
+cardinality
+4
+
+
+query
+SELECT cardinality(ARRAY[5, 15, 25]);
+----
+cardinality
+3

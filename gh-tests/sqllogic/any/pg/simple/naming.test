@@ -1,0 +1,1153 @@
+query
+VALUES
+  (322, 'androed', 'another'),
+  (322, 'androed', 'abramov'),
+  (42, 'arelav', 'ksimironov')
+ORDER BY column1, column2, column3;
+----
+column1	column2	column3
+42	arelav	ksimironov
+322	androed	abramov
+322	androed	another
+
+
+query
+SELECT 1 as x
+ORDER BY x;
+----
+x
+1
+
+
+query
+SELECT lol.kostya, vedernikoff, vedernikoff
+FROM
+(
+  VALUES ('clickclack', 666), ('deadinside', 993)
+  ORDER BY column1, column2
+) AS lol(kostya, vedernikoff);
+----
+kostya	vedernikoff	vedernikoff
+clickclack	666	666
+deadinside	993	993
+
+
+query
+SELECT lol.kostya, vedernikoff, vedernikoff
+FROM
+(
+  VALUES ('clickclack', 666), ('deadinside', 993), ('deadinside', 322)
+  ORDER BY column1, column2
+) AS lol(kostya, vedernikoff)
+WHERE lol.vedernikoff = 322;
+----
+kostya	vedernikoff	vedernikoff
+deadinside	322	322
+
+
+query
+SELECT *
+FROM
+(
+  SELECT *
+  FROM
+  (
+    VALUES ('clickclack', 666), ('deadinside', 993)
+  ) as pudge(deadinside, gul)
+)
+ORDER BY gul DESC, deadinside;
+----
+deadinside	gul
+deadinside	993
+clickclack	666
+
+
+query
+SELECT kostya as kostya, vedernikoff as vedernikoff, sas as sas
+FROM
+(
+  VALUES ('clickclafk', 666, 228), ('clickclack', 993, 333), ('clickclack', 322, 111), ('salam', 993, 222)
+) AS lol(kostya, vedernikoff, sas)
+ORDER BY kostya, vedernikoff, sas;
+----
+kostya	vedernikoff	sas
+clickclack	322	111
+clickclack	993	333
+clickclafk	666	228
+salam	993	222
+
+
+query
+SELECT sas + vedernikoff as kostya_iq, vedernikoff, *, kostya
+FROM
+(
+  VALUES ('clickclafk', 666, 228), ('clickclack', 322, 111), ('salam', 993, 222), ('clickclack', 13, 333)
+) AS lol(kostya, vedernikoff, sas)
+ORDER BY kostya_iq;
+----
+kostya_iq	vedernikoff	kostya	vedernikoff	sas	kostya
+346	13	clickclack	13	333	clickclack
+433	322	clickclack	322	111	clickclack
+894	666	clickclafk	666	228	clickclafk
+1215	993	salam	993	222	salam
+
+
+query
+SELECT lol.kostya, vedernikoff, sas as notsas
+FROM
+(
+  VALUES ('clickclafk', 666, 228), ('clickclack', 993, 333), ('clickclack', 322, 111), ('salam', 993, 222)
+) AS lol(kostya, vedernikoff, sas)
+ORDER BY kostya, lol.vedernikoff DESC, notsas;
+----
+kostya	vedernikoff	notsas
+clickclack	993	333
+clickclack	322	111
+clickclafk	666	228
+salam	993	222
+
+
+query
+SELECT grade, grade, grade, serenedb.weight, serenedb.name
+FROM
+(
+  VALUES (21, 123, 'babsky'), (13, 44, 'vedernikoff'), (17, 93, 'kostya')
+) as serenedb(grade, weight, name)
+ORDER BY grade;
+----
+grade	grade	grade	weight	name
+13	13	13	44	vedernikoff
+17	17	17	93	kostya
+21	21	21	123	babsky
+
+
+query
+SELECT kostya as deadinside
+FROM
+(
+  VALUES (17, 123), (13, 213), (24, 321), (2, 32)
+) AS lol(kostya, vedernikoff)
+ORDER BY deadinside;
+----
+deadinside
+2
+13
+17
+24
+
+
+query
+SELECT * FROM
+(
+  SELECT t.a AS kostya, t.b as kostya
+  FROM
+  (
+      VALUES (1, 2), (2, 3)
+  ) as t(a, b)
+)
+----
+kostya	kostya
+1	2
+2	3
+
+
+query
+SELECT *, lol.*, *, vedernikoff as babsky
+FROM
+(
+  VALUES (-2, 17, 'babsky'), (100, 13, 'zhidky'), (3, 24, 'androed'), (403, 2, 'myasnig')
+) AS lol(iq, kostya, vedernikoff)
+ORDER BY babsky;
+----
+iq	kostya	vedernikoff	iq	kostya	vedernikoff	iq	kostya	vedernikoff	babsky
+3	24	androed	3	24	androed	3	24	androed	androed
+-2	17	babsky	-2	17	babsky	-2	17	babsky	babsky
+403	2	myasnig	403	2	myasnig	403	2	myasnig	myasnig
+100	13	zhidky	100	13	zhidky	100	13	zhidky	zhidky
+
+
+query
+SELECT kostya, vedernikoff
+FROM
+(
+  VALUES (17, 'babsky'), (13, 'zhidky'), (24, 'androed'), (2, 'myasnig')
+) AS lol(kostya, vedernikoff)
+ORDER BY lol.kostya;
+----
+kostya	vedernikoff
+2	myasnig
+13	zhidky
+17	babsky
+24	androed
+
+
+query
+SELECT kostya + iq, *
+FROM
+(
+  VALUES (-2, 17, 'babsky'), (100, 13, 'zhidky'), (3, 24, 'androed'), (403, 2, 'myasnig')
+) AS lol(iq, kostya, vedernikoff)
+ORDER BY lol.iq + lol.kostya;
+----
+?column?	iq	kostya	vedernikoff
+15	-2	17	babsky
+27	3	24	androed
+113	100	13	zhidky
+405	403	2	myasnig
+
+
+query
+SELECT lol.kostya, vedernikoff, sas as notsas
+FROM
+(
+  VALUES ('clickclafk', 666, 228), ('clickclack', 993, 333), ('clickclack', 322, 111), ('salam', 993, 222)
+) AS lol(kostya, vedernikoff, sas)
+ORDER BY kostya, lol.vedernikoff DESC, notsas;
+----
+kostya	vedernikoff	notsas
+clickclack	993	333
+clickclack	322	111
+clickclafk	666	228
+salam	993	222
+
+
+query
+SELECT sas
+FROM
+(
+  VALUES ('clickclafk', 666, 228), ('clickclack', 993, 333), ('clickclack', 322, 111), ('salam', 993, 222)
+) AS lol(sas, kostya, vedernikoff)
+ORDER BY lol.vedernikoff + vedernikoff + lol.kostya + kostya;
+----
+sas
+clickclack
+clickclafk
+salam
+clickclack
+
+
+query
+SELECT *, *, vedernikoff
+FROM
+(
+  VALUES ('clickclack', 666), ('deadinside', 993)
+) AS lol(vedernikoff, lmao);
+----
+vedernikoff	lmao	vedernikoff	lmao	vedernikoff
+clickclack	666	clickclack	666	clickclack
+deadinside	993	deadinside	993	deadinside
+
+
+query
+SELECT nonvedernikoff
+FROM
+(
+  SELECT *, *, vedernikoff as nonvedernikoff
+  FROM
+  (
+    VALUES ('clickclack', 666), ('deadinside', 993)
+  ) AS lol(vedernikoff, lmao)
+);
+----
+nonvedernikoff
+clickclack
+deadinside
+
+
+query
+SELECT *
+FROM
+(
+  VALUES ('clickclack', 666), ('deadinside', 993)
+) AS lol(vedernikoff);
+----
+vedernikoff	column2
+clickclack	666
+deadinside	993
+
+
+query
+SELECT kostya, vedernikoff
+FROM
+(
+  SELECT *
+  FROM
+  (
+    VALUES ('clickclack', 666), ('deadinside', 993)
+  ) AS lol(vedernikoff, kostya)
+);
+----
+kostya	vedernikoff
+666	clickclack
+993	deadinside
+
+
+query
+SELECT lol.kostya, vedernikoff
+FROM
+(
+  SELECT kostya, vedernikoff FROM
+  (
+    VALUES ('pudge', 993), ('deadinside', 228)
+  ) AS lol(kostya, vedernikoff)
+) AS lol(kostya, vedernikoff);
+----
+kostya	vedernikoff
+pudge	993
+deadinside	228
+
+
+query
+SELECT kostya.iq, vedernikoff.iq  FROM
+  generate_series(1, 2) as kostya(iq),
+  generate_series(1, 2) as vedernikoff(iq);
+----
+iq	iq
+1	1
+1	2
+2	1
+2	2
+
+
+query
+SELECT *
+FROM
+(
+  VALUES (1337, 42, 0), (228, 666, 777), (322, 1337, 322)
+);
+----
+column1	column2	column3
+1337	42	0
+228	666	777
+322	1337	322
+
+
+query
+SELECT *
+FROM
+(
+  SELECT *
+  FROM
+  (
+    VALUES (1337, 42, 0), (228, 666, 777), (322, 1337, 322)
+  )
+);
+----
+column1	column2	column3
+1337	42	0
+228	666	777
+322	1337	322
+
+
+query
+SELECT *
+FROM
+(
+  SELECT *
+  FROM
+  (
+    VALUES (1337, 42, 0), (228, 666, 777), (322, 1337, 322)
+  )
+) man1(kostya, vedernikoff, clickclack),
+(
+  SELECT man1.clickclack, man1.vedernikoff, man1.kostya as memes
+  FROM
+  (
+    VALUES (1337, 42, 0), (228, 666, 777), (322, 1337, 322)
+  ) as man1(kostya, vedernikoff, clickclack)
+) man2(pavel, ivanoff);
+----
+kostya	vedernikoff	clickclack	pavel	ivanoff	memes
+1337	42	0	0	42	1337
+1337	42	0	777	666	228
+1337	42	0	322	1337	322
+228	666	777	0	42	1337
+228	666	777	777	666	228
+228	666	777	322	1337	322
+322	1337	322	0	42	1337
+322	1337	322	777	666	228
+322	1337	322	322	1337	322
+
+
+query
+SELECT kek.nice_sum + kek.nice_sum
+FROM
+(
+  SELECT kostya + deadinside as nice_sum, 2 * kostya + vedernikoff
+  FROM
+  (
+    VALUES (1337, 42, 0), (228, 666, 777), (322, 1337, 322)
+  ) lmao(kostya, deadinside, vedernikoff)
+) kek;
+----
+?column?
+2758
+1788
+3318
+
+
+query
+SELECT lol.kostya, vedernikoff, vedernikoff
+FROM
+(
+  VALUES ('clickclack', 666), ('deadinside', 993), ('hello213', 213)
+) AS lol(kostya, vedernikoff)
+WHERE
+  kostya = 'clickclack' AND lol.vedernikoff = 666 OR
+  lol.kostya = 'deadinside' AND vedernikoff = 993;
+----
+kostya	vedernikoff	vedernikoff
+clickclack	666	666
+deadinside	993	993
+
+
+query
+SELECT lol.*
+FROM
+(
+  VALUES ('clickclack', 666), ('deadinside', 993)
+) AS lol;
+----
+column1	column2
+clickclack	666
+deadinside	993
+
+
+query
+SELECT vedro, nonkostya, kostro
+FROM
+(
+  SELECT lol.*, kostro as nonkostya
+  FROM
+  (
+    VALUES ('clickclack', 666), ('deadinside', 993)
+  ) AS lol(vedro, kostro)
+);
+----
+vedro	nonkostya	kostro
+clickclack	666	666
+deadinside	993	993
+
+
+query
+SELECT lmao.vedro, nonkostya, lmao.kostro
+FROM
+(
+  SELECT lol.*, kostro as nonkostya
+  FROM
+  (
+    VALUES ('clickclack', 666), ('deadinside', 993)
+  ) AS lol(vedro, kostro)
+) as lmao;
+----
+vedro	nonkostya	kostro
+clickclack	666	666
+deadinside	993	993
+
+
+query
+SELECT lol.*, *, lol.*
+FROM
+(
+  VALUES ('clickclack', 666), ('deadinside', 993)
+) AS lol(vedernikoff, vedernikoff);
+----
+vedernikoff	vedernikoff	vedernikoff	vedernikoff	vedernikoff	vedernikoff
+clickclack	666	clickclack	666	clickclack	666
+deadinside	993	deadinside	993	deadinside	993
+
+
+query
+SELECT kek.*, lol.*, *
+FROM
+(
+  VALUES ('clickclack', 666), ('deadinside', 993)
+) AS lol(kostya, vedernikoff),
+(
+  VALUES ('abugubugu', 777), ('ivansolo2003', 1337)
+) AS kek(kostya, vedernikoff);
+----
+kostya	vedernikoff	kostya	vedernikoff	kostya	vedernikoff	kostya	vedernikoff
+abugubugu	777	clickclack	666	clickclack	666	abugubugu	777
+ivansolo2003	1337	clickclack	666	clickclack	666	ivansolo2003	1337
+abugubugu	777	deadinside	993	deadinside	993	abugubugu	777
+ivansolo2003	1337	deadinside	993	deadinside	993	ivansolo2003	1337
+
+
+query
+SELECT
+  kek.kostya, kostya,
+  kek.vedernikoff, vedernikoff
+FROM
+(
+  SELECT kostya, vedernikoff
+  FROM
+  (
+    VALUES ('makak', 993), ('pudge', 228)
+  ) AS lol(kostya, vedernikoff)
+) AS kek(kostya);
+----
+kostya	kostya	vedernikoff	vedernikoff
+makak	makak	993	993
+pudge	pudge	228	228
+
+
+query
+SELECT lol.kostya, notvedernikoff, lol.notvedernikoff, babsky, lol.babsky
+FROM
+(
+  SELECT lmao.kostya as notkostya, vedernikoff as notvedernikoff, lmao.vedernikoff AS babsky
+  FROM
+  (
+    VALUES ('pudge', 993), ('deadinside', 228)
+  ) AS lmao(kostya, vedernikoff)
+) AS lol(kostya);
+----
+kostya	notvedernikoff	notvedernikoff	babsky	babsky
+pudge	993	993	993	993
+deadinside	228	228	228	228
+
+
+query
+SELECT lol.kostya, lol.vedernikoff, kostya, vedernikoff
+FROM
+(
+  SELECT kostya, vedernikoff
+  FROM
+  (
+    VALUES ('pudge', 993), ('deadinside', 228)
+  ) AS lol(kostya, vedernikoff)
+) AS lol(vedernikoff, kostya)
+----
+kostya	vedernikoff	kostya	vedernikoff
+993	pudge	993	pudge
+228	deadinside	228	deadinside
+
+
+query
+SELECT kostya, vedernikoff, lol.kostya, lol.vedernikoff
+FROM
+(
+  SELECT kostya, vedernikoff
+  FROM
+  (
+    VALUES ('pudge', 993), ('deadinside', 228)
+  ) AS lol(kostya, vedernikoff)
+) AS lol;
+----
+kostya	vedernikoff	kostya	vedernikoff
+pudge	993	pudge	993
+deadinside	228	deadinside	228
+
+
+query
+SELECT
+  new_kek, outerman.new_kek,
+  new_lmao, outerman.new_lmao,
+  dontforgetthis, outerman.dontforgetthis
+FROM
+(
+  SELECT innerman.lmao, innerman.kek, dontforgetthis
+  FROM
+  (
+    VALUES ('noscope', 360, 'addmeplz'), ('ak', 47, 'printmeplz')
+  ) AS innerman(kek, lmao, dontforgetthis)
+) AS outerman(new_kek, new_lmao);
+----
+new_kek	new_kek	new_lmao	new_lmao	dontforgetthis	dontforgetthis
+360	360	noscope	noscope	addmeplz	addmeplz
+47	47	ak	ak	printmeplz	printmeplz
+
+
+query
+SELECT lmao.vedernikoff, kekes.vedernikoff, bibibo
+FROM
+(
+  SELECT *
+  FROM
+  (
+    VALUES ('clickclack', 666), ('deadinside', 993)
+  ) AS lol(vedernikoff, bibibo)
+) as lmao,
+(
+  SELECT *
+  FROM
+  (
+    VALUES ('negaimorit', 666), ('gul', 993)
+  ) AS lol(vedernikoff)
+) as kekes;
+----
+vedernikoff	vedernikoff	bibibo
+clickclack	negaimorit	666
+clickclack	gul	666
+deadinside	negaimorit	993
+deadinside	gul	993
+
+
+query
+SELECT
+  kostya, vedernikoff
+FROM
+(
+  SELECT *
+  FROM
+  (
+    VALUES ('clickclack', 666), ('deadinside', 993)
+  ) AS kek(vedernikoff)
+),
+(
+  SELECT *
+  FROM
+  (
+    VALUES ('negaimorit', 666), ('gul', 993)
+  ) AS lol(kostya)
+);
+----
+kostya	vedernikoff
+negaimorit	clickclack
+gul	clickclack
+negaimorit	deadinside
+gul	deadinside
+
+
+query
+SELECT
+  lhs.id, pb, phrase_end,
+  rhs.id, lhs.pb, rhs.phrase_end
+FROM
+(
+  SELECT phrase_begin as pb, innerleft.id
+  FROM
+  (
+    VALUES ('clickclack', 666), ('deadinside', 993), ('vladgalakas', 777), ('vedernikoff', 228)
+  ) as innerleft(phrase_begin, id)
+) lhs
+  INNER JOIN
+(
+  SELECT phrase_end, innerright.id
+  FROM
+  (
+    VALUES ('negaimorit', 666), ('gul', 993), ('vuaaa', 778), ('kostya', 228)
+  ) as innerright(phrase_end, id)
+) rhs
+ON lhs.id = rhs.id;
+----
+id	pb	phrase_end	id	pb	phrase_end
+666	clickclack	negaimorit	666	clickclack	negaimorit
+993	deadinside	gul	993	deadinside	gul
+228	vedernikoff	kostya	228	vedernikoff	kostya
+
+
+query
+SELECT
+    t1.frog_name,
+    t1.power_level,
+    t1.secret_data,
+    outfit_type,
+    t2.creator_alias,
+    t3.magic_skill,
+    energy_power
+FROM
+(
+  SELECT
+      inner_frogs.pepe_name as frog_name,
+      inner_power.internal_level as power_level,
+      inner_frogs.hidden_col as secret_data
+  FROM
+      (
+          VALUES ('Konstantin', 'secret1'), ('vedernikoff', 'secret2'), ('pavel', 'secret3')
+      ) AS inner_frogs(pepe_name, hidden_col),
+      (
+          VALUES (8500), (9200), (7800), (9500)
+      ) AS inner_power(internal_level)
+  WHERE inner_frogs.pepe_name != 'pavel'
+) AS t1(frog_name, power_level),
+(
+  SELECT
+      costume_data.style_val as outfit_type,
+      creator_data.name_val as creator_alias,
+      costume_data.extra_info
+  FROM
+      (
+          VALUES ('ivanoff', 'extra1'), ('serenedb', 'extra2'), ('arelav', 'extra3')
+      ) AS costume_data(style_val, extra_info),
+      (
+          VALUES ('androed'), ('abramov'), ('Konstantin'), ('vedernikoff')
+      ) AS creator_data(name_val)
+  WHERE creator_data.name_val = 'Konstantin'
+) AS t2(outfit_type, creator_alias, unused_col),
+(
+  SELECT
+      magic_data.skill_val as magic_skill,
+      magic_data.power_val as energy_power,
+      magic_data.hidden_val
+  FROM
+      (
+          VALUES ('vedernikoff', 150, 'hide1'), ('pavel', 250, 'hide2'), ('ivanoff', 350, 'hide3')
+      ) AS magic_data(skill_val, power_val, hidden_val),
+      (
+          VALUES (100), (200), (300)
+      ) AS multiplier(mult_val)
+  WHERE magic_data.power_val != 350
+) AS t3
+WHERE t1.power_level > 8000
+  AND t3.energy_power < 300
+  AND t2.outfit_type != 'arelav'
+  AND secret_data = 'secret1'
+  AND outfit_type = 'serenedb'
+  AND t1.power_level > 180
+ORDER BY
+  frog_name,
+  power_level,
+  secret_data,
+  outfit_type,
+  creator_alias,
+  magic_skill,
+  energy_power;
+----
+frog_name	power_level	secret_data	outfit_type	creator_alias	magic_skill	energy_power
+Konstantin	8500	secret1	serenedb	Konstantin	pavel	250
+Konstantin	8500	secret1	serenedb	Konstantin	pavel	250
+Konstantin	8500	secret1	serenedb	Konstantin	pavel	250
+Konstantin	8500	secret1	serenedb	Konstantin	vedernikoff	150
+Konstantin	8500	secret1	serenedb	Konstantin	vedernikoff	150
+Konstantin	8500	secret1	serenedb	Konstantin	vedernikoff	150
+Konstantin	9200	secret1	serenedb	Konstantin	pavel	250
+Konstantin	9200	secret1	serenedb	Konstantin	pavel	250
+Konstantin	9200	secret1	serenedb	Konstantin	pavel	250
+Konstantin	9200	secret1	serenedb	Konstantin	vedernikoff	150
+Konstantin	9200	secret1	serenedb	Konstantin	vedernikoff	150
+Konstantin	9200	secret1	serenedb	Konstantin	vedernikoff	150
+Konstantin	9500	secret1	serenedb	Konstantin	pavel	250
+Konstantin	9500	secret1	serenedb	Konstantin	pavel	250
+Konstantin	9500	secret1	serenedb	Konstantin	pavel	250
+Konstantin	9500	secret1	serenedb	Konstantin	vedernikoff	150
+Konstantin	9500	secret1	serenedb	Konstantin	vedernikoff	150
+Konstantin	9500	secret1	serenedb	Konstantin	vedernikoff	150
+
+
+query
+SELECT man1.lmao, kek, lol
+FROM
+(
+  VALUES ('kostya1', 'vedernikoff1', 1337), ('babsky', 'dedsky', 993)
+) as man1(lmao, kek, lol)
+UNION ALL
+SELECT *
+FROM
+(
+  VALUES('kostya1337', 'vedernikoff228', 322), ('lambda', 'ili fera', 993)
+) as man2(mlg, noway, noscope)
+UNION ALL
+SELECT *
+FROM
+(
+  VALUES('kostya1337', 'vedernikoff228', 322), ('lambda', 'ili fera', 993)
+) as man3(mlg, noway, noscope)
+ORDER BY lmao, kek, lol;
+----
+lmao	kek	lol
+babsky	dedsky	993
+kostya1	vedernikoff1	1337
+kostya1337	vedernikoff228	322
+kostya1337	vedernikoff228	322
+lambda	ili fera	993
+lambda	ili fera	993
+
+
+query
+SELECT *
+FROM
+(
+  VALUES ('clickclack', 666), ('deadinside', -993)
+) as pudge(deadinside, gul)
+ORDER by gul, pudge.deadinside
+----
+deadinside	gul
+deadinside	-993
+clickclack	666
+
+
+query
+SELECT vedernikoff, *, vedernikoff, lol.*
+FROM
+(
+  VALUES ('clickclafk', 666, 228), ('clickclack', 993, 333), ('clickclack', 322, 111), ('salam', -993, 222)
+) AS lol(kostya, vedernikoff, sas)
+ORDER BY vedernikoff;
+----
+vedernikoff	kostya	vedernikoff	sas	vedernikoff	kostya	vedernikoff	sas
+-993	salam	-993	222	-993	salam	-993	222
+322	clickclack	322	111	322	clickclack	322	111
+666	clickclafk	666	228	666	clickclafk	666	228
+993	clickclack	993	333	993	clickclack	993	333
+
+
+query
+SELECT vedernikoff as kostya
+FROM
+(
+  VALUES (228, -666), (666, -228), (322, -322)
+) AS lol(kostya, vedernikoff)
+ORDER BY kostya
+----
+kostya
+-666
+-322
+-228
+
+
+query
+SELECT notvedernikoff as vedernikoff
+FROM
+(
+  VALUES ('clickclack', 666, 123, -1), ('deadinside', -993, 321, -2)
+) as pudge(vedernikoff, vedernikoff, vedernikoff, notvedernikoff)
+ORDER by vedernikoff
+----
+vedernikoff
+-2
+-1
+
+
+query
+SELECT
+  str,
+  vedro + kostya + deadinside as youmustsort,
+  vedro + kostya + deadinside as youmustsort,
+  vedro + kostya + deadinside as youmustsort
+FROM
+(
+  VALUES ('clickclack', 666, 123, -1), ('deadinside', -993, 321, -2)
+) as pudge(str, vedro, kostya, deadinside)
+ORDER by youmustsort
+----
+str	youmustsort	youmustsort	youmustsort
+deadinside	-674	-674	-674
+clickclack	788	788	788
+
+
+query
+WITH simple_data AS (
+  SELECT 1 as kostya_iq
+)
+SELECT kostya_iq FROM simple_data;
+----
+kostya_iq
+1
+
+
+query
+WITH
+sample_data (notgrade, notname) AS (
+  SELECT * FROM (VALUES
+      (15, 'enchonchinchan', 70),
+      (16, 'kostyavedernikoff', 148),
+      (17, 'pavelvi', 228),
+      (21, 'vitalik', 993),
+      (29, 'babsky', 213311)
+  ) AS t(grade, name, weight)
+)
+SELECT * FROM sample_data WHERE weight > 80 and sample_data.notgrade > 15;
+----
+notgrade	notname	weight
+16	kostyavedernikoff	148
+17	pavelvi	228
+21	vitalik	993
+29	babsky	213311
+
+
+query
+WITH
+sample_data1 (notgrade, notname) AS (
+  SELECT * FROM (VALUES
+      (15, 'enchonchinchan', 70),
+      (16, 'kostyavedernikoff', 148),
+      (17, 'pavelvi', 228),
+      (21, 'vitalik', 993),
+      (29, 'babsky', 213311)
+  ) AS t(grade, name, weight)
+),
+sample_data2 (notgrade, notname, notweight) AS (
+  SELECT * FROM (VALUES
+      (18, 'shlepach', 100),
+      (19, 'kryakva', 200),
+      (20, 'deadinside', 300)
+  ) AS t(grade, name, weight)
+)
+SELECT
+  s1.notgrade, s1.notname,
+  s2.notweight, s2.notgrade,
+  s2.notname, s2.notweight,
+  weight, s1.weight
+FROM
+sample_data1 s1,
+sample_data2 s2;
+----
+notgrade	notname	notweight	notgrade	notname	notweight	weight	weight
+15	enchonchinchan	100	18	shlepach	100	70	70
+15	enchonchinchan	200	19	kryakva	200	70	70
+15	enchonchinchan	300	20	deadinside	300	70	70
+16	kostyavedernikoff	100	18	shlepach	100	148	148
+16	kostyavedernikoff	200	19	kryakva	200	148	148
+16	kostyavedernikoff	300	20	deadinside	300	148	148
+17	pavelvi	100	18	shlepach	100	228	228
+17	pavelvi	200	19	kryakva	200	228	228
+17	pavelvi	300	20	deadinside	300	228	228
+21	vitalik	100	18	shlepach	100	993	993
+21	vitalik	200	19	kryakva	200	993	993
+21	vitalik	300	20	deadinside	300	993	993
+29	babsky	100	18	shlepach	100	213311	213311
+29	babsky	200	19	kryakva	200	213311	213311
+29	babsky	300	20	deadinside	300	213311	213311
+
+
+query
+WITH
+sample_data (notgrade, notname) AS (
+  SELECT *, weight as dontforgetme FROM (VALUES
+      (15, 'enchonchinchan', 70),
+      (16, 'kostyavedernikoff', 148)
+  ) AS t(grade, name, weight)
+)
+SELECT
+    lmao.notgrade, lmao.notname, lmao.weight, lmao.dontforgetme,
+    notgrade, notname, weight, dontforgetme
+FROM sample_data lmao;
+----
+notgrade	notname	weight	dontforgetme	notgrade	notname	weight	dontforgetme
+15	enchonchinchan	70	70	15	enchonchinchan	70	70
+16	kostyavedernikoff	148	148	16	kostyavedernikoff	148	148
+
+
+query
+WITH
+t1 AS (
+  SELECT 1 as kostya_iq
+)
+SELECT *
+FROM t1 lmao, t1 kek
+----
+kostya_iq	kostya_iq
+1	1
+
+
+query
+SELECT
+  *
+FROM
+(
+  VALUES ('clickcla'), ('deadinside'), ('vladgalaka'), ('ikoff')
+) lhs(word)
+  INNER JOIN
+(
+  VALUES ('clickclack'), ('deadinside'), ('vladgalakas'), ('vedernikoff')
+) rhs(word)
+ON length(lhs.word) = length(rhs.word)
+ORDER BY lhs.word, rhs.word;
+----
+word word
+deadinside clickclack
+deadinside deadinside
+vladgalaka clickclack
+vladgalaka deadinside
+
+
+query ???? rowsort
+SELECT kek.*
+FROM
+(
+  VALUES ('clickclack', 666), ('deadinside', 993), ('gul', 777)
+) AS lol(kostya, vedernikoff),
+(
+  SELECT *
+  FROM
+  (
+    SELECT *
+    FROM
+    (
+      VALUES ('abugubugu', 777), ('ivansolo2003', 1337)
+    ) AS kek1(kostya, vedernikoff),
+    (
+      VALUES ('extra', 555), ('another', 888)
+    ) AS kek2(extra_col, another_col)
+  )
+) AS kek
+WHERE lol.vedernikoff != 993 AND lol.kostya != 'deadinside';
+----
+kostya vedernikoff extra_col another_col
+abugubugu 777 another 888
+abugubugu 777 another 888
+abugubugu 777 extra 555
+abugubugu 777 extra 555
+ivansolo2003 1337 another 888
+ivansolo2003 1337 another 888
+ivansolo2003 1337 extra 555
+ivansolo2003 1337 extra 555
+
+
+query
+SELECT * FROM length('arelav is a poison spitter');
+----
+length
+26
+
+
+query
+SELECT *
+FROM
+(
+  (VALUES (1), (2)) AS a(id)
+  JOIN
+  (VALUES (1), (3)) AS b(id)
+  ON a.id = b.id
+)
+JOIN
+(
+  (
+    (VALUES (1), (2)) AS c(id)
+    JOIN
+    (VALUES (1), (3)) AS d(id)
+    ON c.id = d.id
+  )
+  JOIN
+  (VALUES (1), (3)) AS e(id)
+  ON c.id = e.id
+)
+ON a.id = d.id AND b.id = c.id;
+----
+id id id id id
+1 1 1 1 1
+
+
+query
+SELECT *
+FROM
+(
+  (VALUES (1), (2)) AS a(id)
+  JOIN
+  (VALUES (1), (3)) AS b(id)
+  ON a.id = b.id
+)
+JOIN
+(
+  (
+    (VALUES (1), (2)) AS c(id)
+    JOIN
+    (VALUES (1), (3)) AS d(id)
+    ON c.id = d.id
+  )
+  JOIN
+  (VALUES (1), (3)) AS e(id)
+  ON c.id = e.id
+) as vedernikoff(iq, digsize)
+ON a.id = vedernikoff.id AND b.id = vedernikoff.id;
+----
+id id iq digsize id
+1 1 1 1 1
+
+
+query
+SELECT (SELECT 'lmao' as lol);
+----
+lol
+lmao
+
+
+query
+SELECT (SELECT 'lmao' as lol) as kek;
+----
+kek
+lmao
+
+
+query
+SELECT (SELECT (SELECT 'lmao' as lol));
+----
+lol
+lmao
+
+
+query
+WITH vedernikoff as
+(
+  SELECT 228 as iq
+),
+kostya as (
+  SELECT 4 as pencil_size
+)
+SELECT * FROM
+(
+  WITH vedernikoff as
+  (
+    SELECT 1337 as iq
+  )
+  SELECT * FROM vedernikoff, kostya
+),
+kostya,
+vedernikoff;
+----
+iq pencil_size pencil_size iq
+1337 4 4 228
+
+
+query
+WITH vedernikoff as
+(
+  SELECT 228 as iq
+)
+SELECT * FROM vedernikoff as kirkuch, vedernikoff as danpuz;
+----
+iq iq
+228 228
+
+
+query
+SELECT iq
+FROM
+(
+  VALUES
+    (-2, 17, 'bbbsky'), (-2, 0, 'babsky'), (100, 13, 'zhidky'),
+    (3, 24, 'androed'), (-2, 2, 'myasnig')
+) AS lol(iq, kostya, vedernikoff)
+GROUP BY 1
+ORDER BY iq
+----
+iq
+-2
+3
+100
+
+
+query
+SELECT iq, kostya
+FROM
+(
+  VALUES
+    (-2, 17, 'bbbsky'), (15, 0, 'babsky'), (100, 13, 'zhidky'),
+    (3, 24, 'androed'), (403, 2, 'myasnig')
+) AS lol(iq, kostya, vedernikoff)
+GROUP BY 1, 2
+ORDER BY 2, 1;
+----
+iq kostya
+15 0
+403 2
+100 13
+-2 17
+3 24
+
+
+query
+SELECT *
+FROM
+(
+  VALUES (-2, 17, 'babsky'), (100, 13, 'zhidky'), (3, 24, 'androed'), (403, 2, 'myasnig')
+) AS lol(iq, iq, iq)
+ORDER BY 1;
+----
+iq iq iq
+-2 17 babsky
+3 24 androed
+100 13 zhidky
+403 2 myasnig

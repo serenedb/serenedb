@@ -1,0 +1,194 @@
+# This file may be shorten 3x after supporting loops
+
+query
+SELECT 1.0::float4;
+----
+float4
+1
+
+
+query
+SELECT 1.0000::float4;
+----
+float4
+1
+
+
+query
+SELECT (2.0 / 3.0)::float4;
+----
+float4
+0.6666667
+
+
+query
+SELECT (-2.0 / 3.0)::float4;
+----
+float4
+-0.6666667
+
+
+query
+SELECT 'NaN'::float4;
+----
+float4
+NaN
+
+
+query
+SELECT (-0.0)::float4;
+----
+float4
+0
+
+
+query
+SELECT 'Infinity'::float4;
+----
+float4
+Infinity
+
+
+query
+SELECT '-Infinity'::float4;
+----
+float4
+-Infinity
+
+
+query
+SELECT (-3.14)::float4 + '1.14';
+----
+?column?
+-2
+
+
+statement ok
+SET EXTRA_FLOAT_DIGITS = -7;
+
+
+skipif postgres-extended
+query
+SELECT 1.0::float4;
+----
+float4
+1
+
+
+skipif postgres-extended
+query
+SELECT 1.0000::float4;
+----
+float4
+1
+
+
+skipif postgres-extended
+query
+SELECT (2.0 / 3.0)::float4;
+----
+float4
+0.7
+
+
+skipif postgres-extended
+query
+SELECT (-2.0 / 3.0)::float4;
+----
+float4
+-0.7
+
+
+
+query
+SELECT 'NaN'::float4;
+----
+float4
+NaN
+
+
+skipif postgres-extended
+query
+SELECT (-0.0)::float4;
+----
+float4
+0
+
+
+query
+SELECT 'Infinity'::float4;
+----
+float4
+Infinity
+
+
+query
+SELECT '-Infinity'::float4;
+----
+float4
+-Infinity
+
+
+statement ok
+SET EXTRA_FLOAT_DIGITS = 3;
+
+
+skipif postgres-extended
+query
+SELECT 1.0::float4;
+----
+float4
+1
+
+
+skipif postgres-extended
+query
+SELECT 1.0000::float4;
+----
+float4
+1
+
+
+skipif postgres-extended
+query
+SELECT (2.0 / 3.0)::float4;
+----
+float4
+0.6666667
+
+
+skipif postgres-extended
+query
+SELECT (-2.0 / 3.0)::float4;
+----
+float4
+-0.6666667
+
+
+query
+SELECT 'NaN'::float4;
+----
+float4
+NaN
+
+
+skipif postgres-extended
+query
+SELECT (-0.0)::float4;
+----
+float4
+0
+
+
+query
+SELECT 'Infinity'::float4;
+----
+float4
+Infinity
+
+
+query
+SELECT '-Infinity'::float4;
+----
+float4
+-Infinity

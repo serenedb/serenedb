@@ -1,0 +1,109 @@
+query error
+SELECT
+  mark, student
+FROM
+(
+  VALUES
+    (1, 'vedernikoff'), (2, 'vedernikoff'), (3, 'nemov')
+) AS university(mark, student)
+WHERE ROW_NUMBER() OVER (PARTITION BY student ORDER BY mark) = 1;
+----
+db error: ERROR: window function calls are not allowed in WHERE
+
+
+query error
+SELECT
+  ROW_NUMBER() OVER (PARTITION BY student ORDER BY mark) as row_num,
+  COUNT(mark) as cnt
+FROM
+(
+  VALUES
+    (1, 'vedernikoff'), (2, 'vedernikoff'), (3, 'nemov')
+) AS university(mark, student)
+GROUP BY row_num;
+----
+db error: ERROR: column "student" must appear in the GROUP BY clause or be used in an aggregate function
+
+
+query error
+SELECT
+  ROW_NUMBER() OVER (PARTITION BY student ORDER BY mark) as row_num,
+  COUNT(mark) as cnt
+FROM
+(
+  VALUES
+    (1, 'vedernikoff'), (2, 'vedernikoff'), (3, 'nemov')
+) AS university(mark, student)
+GROUP BY ROW_NUMBER() OVER (PARTITION BY student ORDER BY mark);
+----
+db error: ERROR: window function calls are not allowed in GROUP BY
+
+
+query error
+SELECT
+  student, COUNT(mark) as cnt
+FROM
+(
+  VALUES
+    (1, 'vedernikoff'), (2, 'vedernikoff'), (3, 'nemov')
+) AS university(mark, student)
+GROUP BY student
+HAVING ROW_NUMBER() OVER (PARTITION BY student ORDER BY mark) > 1;
+----
+db error: ERROR: window function calls are not allowed in HAVING
+
+
+query error
+SELECT
+  mark, student,
+  ROW_NUMBER() OVER (PARTITION BY RANK() OVER (ORDER BY mark) ORDER BY mark) as row_num
+FROM
+(
+  VALUES
+    (1, 'vedernikoff'), (2, 'vedernikoff'), (3, 'nemov')
+) AS university(mark, student);
+----
+db error: ERROR: window function calls are not allowed in window definitions
+
+
+query error
+SELECT
+  mark, student,
+  ROW_NUMBER() OVER (PARTITION BY student ORDER BY ROW_NUMBER() OVER (ORDER BY mark)) as row_num
+FROM
+(
+  VALUES
+    (1, 'vedernikoff'), (2, 'vedernikoff'), (3, 'nemov')
+) AS university(mark, student);
+----
+db error: ERROR: window function calls are not allowed in window definitions
+
+
+query error
+SELECT
+  mark, student,
+  SUM(mark) OVER (ORDER BY mark ROWS BETWEEN ROW_NUMBER() OVER (ORDER BY mark) PRECEDING AND CURRENT ROW) as sum_mark
+FROM
+(
+  VALUES
+    (1, 'vedernikoff'), (2, 'vedernikoff'), (3, 'nemov')
+) AS university(mark, student);
+----
+db error: ERROR: window function calls are not allowed in window definitions
+
+
+query error
+SELECT
+  2 * mark + 228,
+  ROW_NUMBER() OVER (PARTITION BY 2 * mark)
+FROM
+(
+  VALUES
+    (1, 'vedernikoff'), (2, 'vedernikoff'), (2, 'vedernikoff'),
+    (3, 'vedernikoff'), (3, 'vedernikoff'), (3, 'vedernikoff'),
+    (10, 'nemov'), (10, 'malko'), (10, 'malko')
+) AS university(mark, student)
+GROUP BY 2 * mark + 228
+ORDER BY 2 * mark + 228, ROW_NUMBER() OVER (PARTITION BY 2 * mark + 228);
+----
+db error: ERROR: column "mark" must appear in the GROUP BY clause or be used in an aggregate function

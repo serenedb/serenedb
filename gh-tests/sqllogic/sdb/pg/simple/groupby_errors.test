@@ -1,0 +1,314 @@
+query error
+SELECT
+  grade as peklo, name as peklo
+FROM
+(
+  VALUES
+    (13, 'ssvor', 54), (13, 'ssvor', 55), (13, 'krivda', 43)
+) AS clickclack(superhot, name, grade)
+GROUP BY peklo
+----
+db error: ERROR: column reference "peklo" is ambiguous
+
+
+query error
+SELECT
+  grade + weight as grade
+FROM
+(
+  VALUES
+    (13, 'ssvor', 54), (13, 'ssvor', 55), (13, 'krivda', 43)
+) AS clickclack(grade, grade, grade)
+GROUP BY grade;
+----
+db error: ERROR: column reference "grade" is ambiguous
+
+
+query error
+SELECT
+  grade as superhot, name as superhot
+FROM
+(
+  VALUES
+    (13, 'ssvor', 54), (13, 'ssvor', 55), (13, 'krivda', 43)
+) AS clickclack(superhot, name, grade)
+GROUP BY grade
+ORDER BY superhot;
+----
+db error: ERROR: column reference "superhot" is ambiguous
+
+
+query error
+SELECT
+  *
+FROM
+(
+  VALUES
+    (1, 'vedernikoff'), (2, 'vedernikoff'), (2, 'vedernikoff'),
+    (3, 'vedernikoff'), (3, 'vedernikoff'), (3, 'vedernikoff'),
+    (10, 'nemov'), (10, 'malko'), (10, 'malko')
+) AS university(mark, student)
+GROUP BY university.student;
+----
+db error: ERROR: column "mark" must appear in the GROUP BY clause or be used in an aggregate function
+
+
+query error
+SELECT
+  COUNT(a)
+FROM
+(
+  VALUES
+    (1, 'vedernikoff')
+) AS university(mark, student)
+GROUP BY university.student;
+----
+db error: ERROR: column "a" does not exist
+
+
+query error
+SELECT kostya_iq + vedernikoff_power + deadinside_level + babsky_magic
+FROM
+(
+  VALUES
+    (1, 2, 3, 4), (1, 2, 5, 6),
+    (1, 2, 5, 6), (3, 4, 3, 4)
+) AS university_stats(kostya_iq, vedernikoff_power, deadinside_level, babsky_magic)
+GROUP BY kostya_iq + vedernikoff_power, deadinside_level + babsky_magic
+ORDER BY deadinside_level + babsky_magic DESC;
+----
+db error: ERROR: column "deadinside_level" must appear in the GROUP BY clause or be used in an aggregate function
+
+
+query error
+SELECT kostya_iq
+FROM
+(
+  VALUES
+    (1, 2, 3, 4), (1, 2, 5, 6),
+    (1, 2, 5, 6), (3, 4, 3, 4)
+) AS clickclack_data(kostya_iq, vedernikoff_power, deadinside_level, babsky_magic)
+GROUP BY kostya_iq + vedernikoff_power, deadinside_level + babsky_magic
+ORDER BY deadinside_level + babsky_magic DESC;
+----
+db error: ERROR: column "kostya_iq" must appear in the GROUP BY clause or be used in an aggregate function
+
+
+query error
+SELECT kostya_iq + vedernikoff_power
+FROM
+(
+  VALUES
+    (1, 2, 3, 4), (1, 2, 5, 6),
+    (1, 2, 5, 6), (3, 4, 3, 4)
+) AS lmao_university(kostya_iq, vedernikoff_power, deadinside_level, babsky_magic)
+GROUP BY kostya_iq + vedernikoff_power, deadinside_level + babsky_magic
+ORDER BY kostya_iq DESC;
+----
+db error: ERROR: column "kostya_iq" must appear in the GROUP BY clause or be used in an aggregate function
+
+
+query error
+SELECT 2 * (3 + 4 * (5 + kostya_iq))
+FROM
+(
+  VALUES
+    (1, 2, 3, 4), (1, 2, 5, 6),
+    (1, 2, 5, 6), (3, 4, 3, 4)
+) AS gul_analytics(kostya_iq, vedernikoff_power, deadinside_level, babsky_magic)
+GROUP BY kostya_iq + vedernikoff_power, deadinside_level + babsky_magic
+ORDER BY kostya_iq DESC;
+----
+db error: ERROR: column "kostya_iq" must appear in the GROUP BY clause or be used in an aggregate function
+
+
+query error
+SELECT kostya_iq + vedernikoff_power, AVG(AVG(babsky_magic)), deadinside_level + babsky_magic
+FROM
+(
+  VALUES
+    (1, 2, 3, 4), (1, 2, 5, 6),
+    (1, 2, 5, 6), (3, 4, 3, 4)
+) AS pudge_stats(kostya_iq, vedernikoff_power, deadinside_level, babsky_magic)
+GROUP BY kostya_iq + vedernikoff_power, deadinside_level + babsky_magic
+ORDER BY deadinside_level + babsky_magic DESC;
+----
+db error: ERROR: aggregate function calls cannot be nested
+
+
+query error
+SELECT AVG(kostya_iq), *
+FROM
+(
+  VALUES
+    (1, 2, 3, 4), (1, 2, 5, 6),
+    (1, 2, 5, 6), (3, 4, 3, 4)
+) AS andreod_data(kostya_iq, vedernikoff_power, deadinside_level, babsky_magic);
+----
+db error: ERROR: column "kostya_iq" must appear in the GROUP BY clause or be used in an aggregate function
+
+
+query error
+SELECT LENGTH(DISTINCT student)
+FROM
+(
+  VALUES
+    ('alice'), ('bob'), ('charlie')
+) AS test_data(student)
+----
+db error: ERROR: DISTINCT specified, but length is not an aggregate function
+
+
+query error
+SELECT LENGTH(student) FILTER (WHERE student = 'alice')
+FROM
+(
+  VALUES
+    ('alice'), ('bob'), ('charlie')
+) AS test_data(student)
+----
+db error: ERROR: FILTER specified, but length is not an aggregate function
+
+
+query error
+SELECT LENGTH(student ORDER BY student)
+FROM
+(
+  VALUES
+    ('alice'), ('bob'), ('charlie')
+) AS test_data(student)
+----
+db error: ERROR: ORDER BY specified, but length is not an aggregate function
+
+
+query error
+SELECT COUNT(kostya_iq)
+FROM
+(
+  VALUES
+    (1, 2), (3, 4), (5, 6)
+) AS pudge_stats(kostya_iq, vedernikoff_power)
+WHERE AVG(vedernikoff_power) > 3;
+----
+db error: ERROR: aggregate functions are not allowed in WHERE
+
+
+query error
+SELECT a.kostya_iq, b.vedernikoff_power
+FROM
+(
+  VALUES (1, 2), (3, 4)
+) AS a(kostya_iq, vedernikoff_power)
+JOIN
+(
+  VALUES (1, 10), (3, 20)
+) AS b(kostya_iq, vedernikoff_power)
+ON SUM(a.kostya_iq) = b.kostya_iq;
+----
+db error: ERROR: aggregate functions are not allowed in JOIN conditions
+
+
+query error
+SELECT COUNT(*)
+FROM
+(
+  VALUES
+    (1, 2), (3, 4), (5, 6)
+) AS clickclack_data(deadinside_level, babsky_magic)
+GROUP BY AVG(deadinside_level);
+
+
+query error
+SELECT kostya_iq
+FROM
+(
+  VALUES
+    (1, 2, 3, 4), (1, 2, 5, 6),
+    (1, 2, 5, 6), (3, 4, 3, 4)
+) AS clickclack_data(kostya_iq, vedernikoff_power, deadinside_level, babsky_magic)
+GROUP BY COUNT(babsky_magic)
+----
+db error: ERROR: aggregate functions are not allowed in GROUP BY
+
+
+query error
+SELECT COUNT(kostya_iq) FILTER (WHERE SUM(vedernikoff_power) > 5)
+FROM
+(
+  VALUES
+    (1, 2), (3, 4), (5, 6)
+) AS university_stats(kostya_iq, vedernikoff_power);
+----
+db error: ERROR: aggregate functions are not allowed in FILTER
+
+
+query error
+SELECT ARRAY_AGG(student ORDER BY COUNT(student) DESC)
+FROM
+(
+  VALUES
+    ('vedernikoff'), ('nemov'), ('malko')
+) AS university(student);
+----
+db error: ERROR: aggregate function calls cannot be nested
+
+
+query error
+SELECT SUM(generate_series(1, kostya_iq))
+FROM
+(
+  VALUES
+    (5), (10), (15)
+) AS superhot_data(kostya_iq);
+----
+db error: ERROR: aggregate function calls cannot contain set-returning function calls
+
+
+query error
+SELECT AVG(presto_plus(SUM(babsky_magic), deadinside_level))
+FROM
+(
+  VALUES
+    (1, 2, 3, 4), (1, 2, 5, 6),
+    (1, 2, 5, 6), (3, 4, 3, 4)
+) AS pudge_stats(kostya_iq, vedernikoff_power, deadinside_level, babsky_magic)
+----
+db error: ERROR: aggregate function calls cannot be nested
+
+
+query error
+SELECT * FROM UNNEST(COUNT(1000 - 7))
+----
+db error: ERROR: aggregate functions are not allowed in functions in FROM
+
+
+query error
+SELECT * FROM COUNT(1000 - 7)
+----
+db error: ERROR: aggregate functions are not allowed in functions in FROM
+
+
+query error
+SELECT kostya_iq, SUM(babsky_magic)
+FROM
+(
+  VALUES
+    (1, 2, 3, 4), (1, 2, 5, 6),
+    (1, 2, 5, 6), (3, 4, 3, 4)
+) AS university_stats(kostya_iq, vedernikoff_power, deadinside_level, babsky_magic)
+GROUP BY kostya_iq, AVG(deadinside_level)
+----
+db error: ERROR: aggregate functions are not allowed in GROUP BY
+
+
+query error
+SELECT vedernikoff_power
+FROM
+(
+  VALUES
+    (1, 2, 3, 4), (1, 2, 5, 6),
+    (1, 2, 5, 6), (3, 4, 3, 4)
+) AS lmao_university(kostya_iq, vedernikoff_power, deadinside_level, babsky_magic)
+GROUP BY MAX(vedernikoff_power) + MIN(deadinside_level)
+----
+db error: ERROR: aggregate functions are not allowed in GROUP BY

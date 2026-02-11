@@ -1,0 +1,11 @@
+# TODO(pasha): if literal => one error, if expression => another, pg like please!
+query error
+SELECT *
+FROM
+(
+  VALUES (1337), (228), (993), (111), (222), (333), (444)
+)
+ORDER BY column1
+LIMIT substring('arelav', 0, 1);
+----
+db error: ERROR: LIMIT value must be a constant bigint

@@ -1,0 +1,19 @@
+query
+SHOW TimeZone;
+----
+timezone
+Etc/UTC
+
+
+query
+SHOW IntervalStyle;
+----
+intervalstyle
+postgres
+
+
+query
+SHOW DateStyle;
+----
+datestyle
+ISO, MDY

@@ -1,0 +1,22 @@
+SereneDB
+--------
+
+In order to use a tar installation simply add the `@SERENEDB_PACKAGE_NAME@/bin`
+directory to your path.
+
+For bash, use
+
+    unix> export PATH="/full/path/to/unpacked/@SERENEDB_PACKAGE_NAME@/bin:$PATH"
+
+If you have additionally installed serenedb as Debian or RPM package,
+you need to ensure that `@SERENEDB_PACKAGE_NAME@` comes first in the PATH
+variable. Otherwise the binaries from the installed `serenedb` package
+will be used and not the ones from the tar file.
+
+
+Use (the simplest example for server)
+
+    serened /tmp/mydata
+
+where `/tmp/mydata` should point to the directory containing the
+data.

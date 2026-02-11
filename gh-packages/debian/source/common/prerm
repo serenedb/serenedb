@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+
+if [ -d /run/systemd/system ] ; then
+    deb-systemd-invoke stop serenedb.service >/dev/null
+else
+    if [ -x "/etc/init.d/serenedb" ]; then
+        invoke-rc.d serenedb stop || exit $?
+    fi
+fi

@@ -1,0 +1,584 @@
+query error
+SELECT vedernikoff;
+----
+db error: ERROR: column "vedernikoff" does not exist
+
+
+query error
+SELECT *;
+----
+db error: ERROR: SELECT * with no tables specified is not valid
+
+
+query error
+SELECT babsky
+FROM
+(
+  VALUES ('clickclack', 666), ('deadinside', 993)
+) AS lol(vedernikoff, vedernikoff);
+----
+db error: ERROR: column "babsky" does not exist
+
+
+query error
+SELECT column1
+FROM
+(
+VALUES ('clickclack', 666), ('deadinside', 993)
+) AS lol(kostya, vedernikoff)
+----
+db error: ERROR: column "column1" does not exist
+
+
+query error
+SELECT kostya as non_kostya, non_kostya
+FROM
+(
+VALUES ('clickclack', 666), ('deadinside', 993)
+) AS lol(kostya, vedernikoff)
+ORDER BY lol.kostya
+----
+db error: ERROR: column "non_kostya" does not exist
+
+
+query error
+SELECT vedernikoff
+FROM
+(
+  SELECT *
+  FROM
+  (
+    VALUES ('clickclack', 666), ('deadinside', 993)
+  ) AS lol(kostya, vedernikoff)
+) as kek(vedernikoff);
+----
+db error: ERROR: column reference "vedernikoff" is ambiguous
+
+
+query error
+SELECT kostya
+FROM
+(
+  SELECT *
+  FROM
+  (
+    VALUES ('clickclack', 666), ('deadinside', 993)
+  ) AS lol(kostya, vedernikoff)
+) as kek(lmao);
+----
+db error: ERROR: column "kostya" does not exist
+
+
+query error
+SELECT vedernikoff
+FROM
+(
+  VALUES ('clickclack', 666), ('deadinside', 993)
+) AS lol(vedernikoff, vedernikoff);
+----
+db error: ERROR: column reference "vedernikoff" is ambiguous
+
+
+query error
+SELECT lol.vedernikoff
+FROM
+(
+  VALUES ('clickclack', 666), ('deadinside', 993)
+) AS lol(vedernikoff, vedernikoff);
+----
+db error: ERROR: column reference "lol.vedernikoff" is ambiguous
+
+
+query error
+SELECT lol.*
+FROM
+(
+  SELECT lol.*, lol.*
+  FROM
+  (
+    VALUES ('clickclack', 666), ('deadinside', 993)
+  ) AS lol
+);
+----
+db error: ERROR: missing FROM-clause entry for table "lol"
+
+
+query error
+SELECT lmao
+FROM
+(
+  SELECT lol.*, lol.*
+  FROM
+  (
+    VALUES ('clickclack', 666), ('deadinside', 993)
+  ) AS lol(lmao, kek)
+);
+----
+db error: ERROR: column reference "lmao" is ambiguous
+
+
+query error
+SELECT vedernikoff
+FROM
+(
+  VALUES ('clickclack', 666), ('deadinside', 993)
+) AS lol(vedernikoff, vedernikoff),
+(
+  VALUES ('clickclack', 666), ('deadinside', 993)
+) AS lol(minsim, babsky);
+----
+db error: ERROR: table name "lol" specified more than once
+
+
+query error
+SELECT vedernikoff
+FROM
+(
+  VALUES ('clickclack', 666), ('deadinside', 993)
+) AS lol(vedernikoff),
+(
+  VALUES ('clickclack', 666), ('deadinside', 993)
+) AS kek(vedernikoff);
+----
+db error: ERROR: column reference "vedernikoff" is ambiguous
+
+
+query error
+SELECT *, sas + vedernikoff as kostya
+FROM
+(
+  VALUES ('clickclafk', 666, 228), ('clickclack', 993, 333), ('clickclack', 322, 111), ('salam', 993, 222)
+) AS lol(kostya, vedernikoff, sas)
+ORDER BY kostya;
+----
+db error: ERROR: column reference "kostya" is ambiguous
+
+
+query error
+SELECT *, vedernikoff as gul
+FROM
+(
+  VALUES ('clickclack', 666, 123), ('deadinside', -993, 321)
+) as pudge(deadinside, gul, vedernikoff)
+ORDER by gul
+----
+db error: ERROR: column reference "gul" is ambiguous
+
+
+query error
+SELECT vedernikoff
+FROM
+(
+  SELECT *
+  FROM
+  (
+    VALUES ('clickclack', 666), ('deadinside', 993)
+  ) AS lol(vedernikoff)
+) as lmao,
+(
+  SELECT *
+  FROM
+  (
+    VALUES ('negaimorit', 666), ('gul', 993)
+  ) AS lol(vedernikoff)
+) as kekes;
+----
+db error: ERROR: column reference "vedernikoff" is ambiguous
+
+
+query error
+SELECT lol.vedernikoff
+FROM
+(
+  SELECT lol.kostya, vedernikoff, sas as notsas
+  FROM
+  (
+    VALUES ('clickclafk', 666, 228), ('clickclack', 993, 333), ('clickclack', 322, 111), ('salam', 993, 222)
+  ) AS lol(kostya, vedernikoff, sas)
+  ORDER BY kostya, lol.vedernikoff DESC, notsas
+);
+----
+db error: ERROR: missing FROM-clause entry for table "lol"
+
+
+query error
+SELECT vedernikoff, kostya as vedernikoff
+FROM
+(
+  VALUES (-2, 17, 'babsky'), (100, 13, 'zhidky'), (3, 24, 'androed'), (403, 2, 'myasnig')
+) AS lol(vedernikoff, kostya)
+ORDER BY vedernikoff;
+----
+db error: ERROR: column reference "vedernikoff" is ambiguous
+
+
+query error
+SELECT vedernikoff
+FROM
+(
+  SELECT *
+  FROM
+  (
+    VALUES ('clickclack', 666), ('deadinside', 993)
+  ) AS lol(vedernikoff)
+) as lmao,
+(
+  SELECT *
+  FROM
+  (
+    VALUES ('negaimorit', 666), ('gul', 993)
+  ) AS lol(vedernikoff)
+) as kekes;
+----
+db error: ERROR: column reference "vedernikoff" is ambiguous
+
+
+query error
+SELECT lol.kostya, lol.vedernikoff
+FROM
+(
+  SELECT *
+  FROM
+  (
+    VALUES ('clickclack', 666), ('deadinside', 993)
+  ) AS lol(vedernikoff, kostya)
+);
+----
+db error: ERROR: missing FROM-clause entry for table "lol"
+
+
+query error
+SELECT kostya
+FROM
+(
+  SELECT vedernikoff as notvedernikoff, kostya as notkostya
+  FROM
+  (
+    VALUES ('clickclack', 666), ('deadinside', 993)
+  ) AS lol(vedernikoff, kostya)
+);
+----
+db error: ERROR: column "kostya" does not exist
+
+
+query error
+SELECT lol.kostya
+FROM
+(
+  SELECT vedernikoff as notvedernikoff, kostya
+  FROM
+  (
+    VALUES ('clickclack', 666), ('deadinside', 993)
+  ) AS lol(vedernikoff, kostya)
+) as lmao;
+----
+db error: ERROR: missing FROM-clause entry for table "lol"
+
+
+query error
+SELECT kostya
+FROM
+(
+  SELECT vedernikoff
+  FROM
+  (
+    VALUES ('clickclack', 666), ('deadinside', 993)
+  ) AS lol(vedernikoff, kostya)
+);
+----
+db error: ERROR: column "kostya" does not exist
+
+
+query error
+SELECT lol.kostya
+FROM
+(
+  SELECT vedernikoff
+  FROM
+  (
+    VALUES ('clickclack', 666), ('deadinside', 993)
+  ) AS lol(vedernikoff, kostya)
+);
+----
+db error: ERROR: missing FROM-clause entry for table "lol"
+
+
+query error
+SELECT notkostya
+FROM
+(
+  SELECT vedernikoff as notvedernikoff, kostya as notkostya
+  FROM
+  (
+    VALUES ('clickclack', 666), ('deadinside', 993)
+  ) AS lol(vedernikoff, kostya)
+) as lmao(vedernikoff),
+(
+  SELECT vedernikoff as notvedernikoff, kostya as notkostya
+  FROM
+  (
+    VALUES ('clickclack', 666), ('deadinside', 993)
+  ) AS lol(vedernikoff, kostya)
+) as kek(vedernikoff);
+----
+db error: ERROR: column reference "notkostya" is ambiguous
+
+
+query error
+SELECT iq  FROM
+  generate_series(1, 2) as kostya(iq),
+  generate_series(1, 2) as vedernikoff(iq);
+----
+db error: ERROR: column reference "iq" is ambiguous
+
+
+query error
+SELECT man1.lmao
+FROM
+(
+  SELECT man1.lmao, kek, lol
+  FROM
+  (
+    VALUES ('kostya1', 'vedernikoff1', 1337), ('babsky', 'dedsky', 993)
+  ) as man1(lmao, kek, lol)
+  UNION ALL
+  SELECT *
+  FROM
+  (
+    VALUES('kostya1337', 'vedernikoff228', 322), ('lambda', 'ili fera', 993)
+  ) as man2(mlg, noway, noscope)
+);
+----
+db error: ERROR: missing FROM-clause entry for table "man1"
+
+
+query error
+SELECT man2.mlg
+FROM
+(
+  SELECT man1.lmao, kek, lol
+  FROM
+  (
+    VALUES ('kostya1', 'vedernikoff1', 1337), ('babsky', 'dedsky', 993)
+  ) as man1(lmao, kek, lol)
+  UNION ALL
+  SELECT *
+  FROM
+  (
+    VALUES('kostya1337', 'vedernikoff228', 322), ('lambda', 'ili fera', 993)
+  ) as man2(mlg, noway, noscope)
+);
+----
+db error: ERROR: missing FROM-clause entry for table "man2"
+
+
+query error
+SELECT man1.lmao, kek, lol
+FROM
+(
+  VALUES ('kostya1', 'vedernikoff1', 1337), ('babsky', 'dedsky', 993)
+) as man1(lmao, kek, lol)
+UNION ALL
+SELECT *
+FROM
+(
+  VALUES('kostya1337', 'vedernikoff228', 322), ('lambda', 'ili fera', 993)
+) as man2(mlg, noway, noscope)
+UNION ALL
+SELECT *
+FROM
+(
+  VALUES('kostya1337', 'vedernikoff228', 322), ('lambda', 'ili fera', 993)
+) as man3(mlg, noway, noscope)
+ORDER BY mlg, kek, lol;
+----
+db error: ERROR: column "mlg" does not exist
+
+
+query error
+WITH
+sample_data (notgrade, notname) AS (
+  SELECT * FROM (VALUES
+      (15, 'enchonchinchan', 70),
+      (16, 'kostyavedernikoff', 148)
+  ) AS t(grade, name, weight)
+)
+SELECT sample_data.notgrade FROM sample_data lmao;
+----
+db error: ERROR: missing FROM-clause entry for table "sample_data"
+
+
+query error
+WITH cte1 AS (
+  SELECT vedernikoff, babsky FROM (VALUES (1, 2), (3, 4)) AS t(vedernikoff, babsky)
+),
+cte2 AS (
+  SELECT vedernikoff, babsky FROM (VALUES (5, 6), (7, 8)) AS t(vedernikoff, babsky)
+)
+SELECT vedernikoff
+FROM cte1
+INNER JOIN cte2 ON cte1.vedernikoff = cte2.vedernikoff;
+----
+db error: ERROR: column reference "vedernikoff" is ambiguous
+
+
+query error
+WITH cte AS (
+  SELECT vedernikoff, babsky FROM (VALUES (1, 2), (3, 4)) AS t(vedernikoff, babsky)
+)
+SELECT vedernikoff
+FROM cte
+INNER JOIN (
+  SELECT vedernikoff, babsky FROM (VALUES (5, 6), (7, 8)) AS t(vedernikoff, babsky)
+) AS cte2 ON cte.vedernikoff = cte2.vedernikoff;
+----
+db error: ERROR: column reference "vedernikoff" is ambiguous
+
+
+query error
+WITH cte AS (
+  SELECT kostya, vedernikoff FROM (VALUES (1, 'babsky'), (2, 'deadinside')) AS t(kostya, vedernikoff)
+)
+SELECT vedernikoff
+FROM cte
+INNER JOIN (
+  SELECT kostya, vedernikoff FROM (VALUES (3, 'babsky'), (4, 'deadinside')) AS t(kostya, vedernikoff)
+) AS cte2 ON cte.kostya = cte2.kostya;
+----
+db error: ERROR: column reference "vedernikoff" is ambiguous
+
+
+query error
+WITH cte AS (
+  SELECT babsky, vedernikoff FROM (VALUES (1, 2), (3, 4)) AS t(babsky, vedernikoff)
+)
+SELECT cte.babsky, babsky
+FROM cte
+INNER JOIN (
+  SELECT babsky FROM (VALUES (3), (4)) AS t(babsky)
+) AS cte2 ON cte.babsky = cte2.babsky;
+----
+db error: ERROR: column reference "babsky" is ambiguous
+
+
+query error
+WITH
+t1 AS (
+  SELECT 1 as kostya_iq
+),
+t1 AS (
+  SELECT 1 as kostya_iq
+)
+SELECT kostya_iq FROM t1;
+----
+db error: ERROR: WITH query name "t1" specified more than once
+
+
+query error
+WITH
+t1 AS (
+  SELECT 1 as kostya_iq
+),
+t2 AS (
+  SELECT 1 as kostya_iq
+)
+SELECT kostya_iq FROM t1, t2;
+----
+db error: ERROR: column reference "kostya_iq" is ambiguous
+
+
+query error
+WITH
+sample_data (grade, name) AS (
+  SELECT * FROM (VALUES
+      (15, 'enchonchinchan', 70),
+      (16, 'kostyavedernikoff', 148)
+  ) AS t(grade, name, weight)
+)
+SELECT t.grade FROM sample_data;
+----
+db error: ERROR: missing FROM-clause entry for table "t"
+
+
+query error
+SELECT *
+FROM
+(
+  (VALUES (1), (2)) AS a(id)
+  JOIN
+  (VALUES (1), (3)) AS b(id)
+  ON a.id = b.id
+)
+JOIN
+(
+  (
+    (VALUES (1), (2)) AS c(id)
+    JOIN
+    (VALUES (1), (3)) AS d(id)
+    ON c.id = d.id
+  )
+  JOIN
+  (VALUES (1), (3)) AS e(id)
+  ON c.id = e.id
+) as vedernikoff(id)
+ON a.id = d.id AND b.id = c.id;
+----
+db error: ERROR: missing FROM-clause entry for table "d"
+
+
+query error
+SELECT *
+FROM
+(
+  SELECT 1 as kek
+) as vedernikoff,
+(
+  SELECT * FROM (SELECT 2 as lmao)
+  WHERE lmao = kek
+) as kostya
+----
+db error: ERROR: column "kek" does not exist
+
+
+query error
+SELECT *
+FROM
+(
+  VALUES (-2, 17, 'babsky'), (100, 13, 'zhidky'), (3, 24, 'androed'), (403, 2, 'myasnig')
+) AS lol(iq, iq, iq)
+ORDER BY -228;
+----
+db error: ERROR: ORDER BY position -228 is not in select list
+
+
+query error
+SELECT *
+FROM
+(
+  VALUES (-2, 17, 'babsky'), (100, 13, 'zhidky'), (3, 24, 'androed'), (403, 2, 'myasnig')
+) AS lol(iq, iq, iq)
+ORDER BY 4;
+----
+db error: ERROR: ORDER BY position 4 is not in select list
+
+
+query error
+SELECT *
+FROM
+(
+  VALUES (-2, 17, 'babsky'), (100, 13, 'zhidky'), (3, 24, 'androed'), (403, 2, 'myasnig')
+) AS lol(iq, iq, iq)
+GROUP BY -228;
+----
+db error: ERROR: GROUP BY position -228 is not in select list
+
+
+query error
+SELECT *
+FROM
+(
+  VALUES (-2, 17, 'babsky'), (100, 13, 'zhidky'), (3, 24, 'androed'), (403, 2, 'myasnig')
+) AS lol(iq, iq, iq)
+GROUP BY 4;
+----
+db error: ERROR: GROUP BY position 4 is not in select list

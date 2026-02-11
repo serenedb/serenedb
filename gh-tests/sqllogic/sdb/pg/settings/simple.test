@@ -1,0 +1,28 @@
+query error
+SET max_elements_size_in_repeat_and_sequence to ten;
+----
+db error: ERROR: parameter "max_elements_size_in_repeat_and_sequence" requires different value type
+
+
+statement ok
+SET max_elements_size_in_repeat_and_sequence to 10;
+
+
+query
+SELECT x FROM generate_series(1, 10) AS t1(x);
+----
+x
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+
+
+query error VeloxUserError
+SELECT x FROM generate_series(1, 100) AS t1(x);

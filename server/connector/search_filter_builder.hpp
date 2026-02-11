@@ -32,8 +32,7 @@ namespace sdb::connector::search {
 
 // Convert Velox expression to IResearch filter
 Result ExprToFilter(
-  irs::BooleanFilter& filter, velox::core::ExpressionEvaluator& evaluator,
-  const velox::core::TypedExprPtr& expr,
+  irs::BooleanFilter& filter, const velox::core::TypedExprPtr& expr,
   const folly::F14FastMap<std::string, const axiom::connector::Column*>&
     columns_map);
 

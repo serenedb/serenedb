@@ -163,8 +163,8 @@ class SearchFilterBuilderTest : public ::testing::Test {
 
       for (auto& conjunct :
            connector._table_handles[rel.first.relation]->AcceptedFilters()) {
-        auto res = connector::search::ExprToFilter(root, evaluator, conjunct,
-                                                   table->columnMap());
+        auto res =
+          connector::search::ExprToFilter(root, conjunct, table->columnMap());
         ASSERT_EQ(res.ok(), must_succeed) << res.errorMessage();
       }
       if (must_succeed) {
@@ -394,7 +394,7 @@ TEST_F(SearchFilterBuilderTest, test_TypesResolving) {
       std::make_unique<connector::SereneDBColumn>("b", velox::SMALLINT(), 1));
     AssertFilter(
       expected,
-      "SELECT * FROM boolfoo WHERE b IN (CAST(10 as int2), CAST(11 as int2)) ",
+      "SELECT * FROM smallfoo WHERE b IN (CAST(10 as int2), CAST(11 as int2)) ",
       std::move(columns), true);
   }
   {

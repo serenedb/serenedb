@@ -50,11 +50,6 @@ struct VeloxFilterContext {
   irs::score_t boost = irs::kNoBoost;
   const folly::F14FastMap<std::string, const axiom::connector::Column*>&
     columns_map;
-  velox::core::ExpressionEvaluator& evaluator;
-
-  // reusable vector for constants evaluation
-  mutable velox::VectorPtr evaluation_result;
-  mutable velox::RowVectorPtr evaluator_input;
 };
 
 Result FromVeloxExpression(irs::BooleanFilter& filter,
@@ -84,16 +79,16 @@ void ResetNumericStream(irs::NumericTokenizer& stream,
 }
 
 std::optional<velox::Variant> EvaluateConstant(
-  const velox::core::TypedExprPtr& expr, const VeloxFilterContext& ctx) {
-  auto compiled_expr = ctx.evaluator.compile(expr);
-  SDB_ASSERT(compiled_expr->exprs().size() == 1);
-  if (!compiled_expr->exprs()[0]->isConstantExpr()) {
+  const velox::core::TypedExprPtr& expr) {
+  if (!expr->isConstantKind()) {
     return std::nullopt;
   }
-  velox::SelectivityVector rows(1);
-  ctx.evaluator.evaluate(compiled_expr.get(), rows, *ctx.evaluator_input,
-                         ctx.evaluation_result);
-  return ctx.evaluation_result->variantAt(0);
+  auto const_expr = basics::downCast<velox::core::ConstantTypedExpr>(*expr);
+  if (const_expr.hasValueVector()) {
+    SDB_ASSERT(const_expr.valueVector()->size() == 1);
+    return const_expr.valueVector()->variantAt(0);
+  }
+  return const_expr.value();
 }
 
 velox::TypeKind ExtractFieldName(const VeloxFilterContext& ctx,
@@ -281,20 +276,8 @@ Result MakeGroup(Source& parent, const VeloxFilterContext& ctx,
   return {};
 }
 
-bool IsNotExpr(const velox::core::TypedExprPtr& expr,
-               const velox::core::CallTypedExpr* call,
-               velox::core::ExpressionEvaluator& evaluator) {
-  if (!call->name().ends_with("not")) {
-    return false;
-  }
-  auto exprs = evaluator.compile(expr);
-  if (exprs->size() != 1)
-    return false;
-
-  auto& compiled = exprs->expr(0);
-  return compiled->vectorFunction() &&
-         compiled->vectorFunction()->getCanonicalName() ==
-           velox::exec::FunctionCanonicalName::kNot;
+bool IsNotExpr(const std::string& name) {
+  return name == "not" || name.ends_with("_not");
 }
 
 // Helper: Check if it's an equality/inequality operator
@@ -344,7 +327,7 @@ Result FromVeloxBinaryEq(irs::BooleanFilter& filter,
 
   auto* left_field = static_cast<const velox::core::FieldAccessTypedExpr*>(
     call->inputs()[0].get());
-  auto value = EvaluateConstant(call->inputs()[1], ctx);
+  auto value = EvaluateConstant(call->inputs()[1]);
 
   if (!value.has_value()) {
     return {ERROR_BAD_PARAMETER, "Failed to evaluate right value as constant"};
@@ -396,7 +379,7 @@ Result FromVeloxComparison(irs::BooleanFilter& filter,
 
   auto* left_field =
     static_cast<const velox::core::FieldAccessTypedExpr*>(field_input.get());
-  auto value = EvaluateConstant(value_input, ctx);
+  auto value = EvaluateConstant(value_input);
 
   if (!value.has_value()) {
     return {ERROR_BAD_PARAMETER, "Failed to evaluate right value as constant"};
@@ -484,7 +467,7 @@ Result FromVeloxIn(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
 
   auto* field_typed =
     static_cast<const velox::core::FieldAccessTypedExpr*>(field_input.get());
-  auto value = EvaluateConstant(value_input, ctx);
+  auto value = EvaluateConstant(value_input);
   if (!value.has_value()) {
     return {ERROR_BAD_PARAMETER, "Failed to evaluate value as constant"};
   }
@@ -497,7 +480,7 @@ Result FromVeloxIn(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
     // Values are just inputs after field access
     values_list.push_back(std::move(value.value()));
     for (size_t i = 2; i < call->inputs().size(); ++i) {
-      auto value = EvaluateConstant(call->inputs()[i], ctx);
+      auto value = EvaluateConstant(call->inputs()[i]);
       if (!value.has_value()) {
         return {ERROR_BAD_PARAMETER, "Failed to evaluate value as constant"};
       }
@@ -591,7 +574,7 @@ Result FromVeloxLike(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
     return {ERROR_BAD_PARAMETER, "Input is not field access"};
   }
 
-  auto value = EvaluateConstant(call->inputs()[1], ctx);
+  auto value = EvaluateConstant(call->inputs()[1]);
   if (!value.has_value()) {
     return {ERROR_BAD_PARAMETER, "Failed to evaluate value as constant"};
   }
@@ -632,7 +615,7 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
   }
 
   // Handle NOT
-  if (IsNotExpr(expr, call, ctx.evaluator)) {
+  if (IsNotExpr(call->name())) {
     auto negated_ctx = ctx;
     negated_ctx.negated = !ctx.negated;
     SDB_ASSERT(call->inputs().size() == 1);
@@ -685,16 +668,10 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
 }
 
 Result ExprToFilter(
-  irs::BooleanFilter& filter, velox::core::ExpressionEvaluator& evaluator,
-  const velox::core::TypedExprPtr& expr,
+  irs::BooleanFilter& filter, const velox::core::TypedExprPtr& expr,
   const folly::F14FastMap<std::string, const axiom::connector::Column*>&
     columns_map) {
-  VeloxFilterContext ctx{.negated = false,
-                         .columns_map = columns_map,
-                         .evaluator = evaluator,
-                         .evaluator_input = std::make_shared<velox::RowVector>(
-                           evaluator.pool(), velox::ROW({}, {}), nullptr, 1,
-                           std::vector<velox::VectorPtr>{})};
+  VeloxFilterContext ctx{.negated = false, .columns_map = columns_map};
   try {
     return FromVeloxExpression(filter, ctx, expr);
   } catch (const velox::VeloxException& ex) {

@@ -103,4 +103,102 @@ size_t ExecuteTopKWithCount(const DirectoryReader& reader, const Filter& filter,
   return count;
 }
 
+template<size_t K = std::dynamic_extent>
+size_t ExecuteTopKWithCountWand(const DirectoryReader& reader,
+                                const Filter& filter, const Scorers& scorers,
+                                size_t k,
+                                std::span<std::pair<doc_id_t, score_t>, K> hits,
+                                uint8_t wand_index = 0) {
+  SDB_ASSERT(BlockSize(k) <= hits.size());
+
+  auto prepared = filter.prepare({
+    .index = reader,
+    .scorers = scorers,
+  });
+
+  size_t count = 0;
+  size_t offset = 0;
+  score_t min_threshold = 0;
+  const size_t max_size = 2 * k;
+  auto pivot = hits.begin() + k;
+
+  auto cmp = [](const auto& lhs, const auto& rhs) noexcept {
+    return std::get<score_t>(lhs) > std::get<score_t>(rhs);
+  };
+  auto repivot = [&] noexcept {
+    std::nth_element(hits.begin(), pivot, hits.begin() + offset, cmp);
+    min_threshold = pivot->second;
+  };
+
+  ScoreThresholdAttr* threshold_attr = nullptr;
+
+  std::array<doc_id_t, kScoreBlock> docs;
+  std::array<score_t, kScoreBlock> scores;
+  auto copy = [&](size_t n) IRS_FORCE_INLINE noexcept {
+    if (min_threshold > 0) [[likely]] {
+      for (size_t i = 0; i < n; ++i) {
+        if (scores[i] > min_threshold) {
+          hits[offset++] = {docs[i], scores[i]};
+        }
+      }
+    } else {
+      for (size_t i = 0; i < n; ++i) {
+        hits[offset++] = {docs[i], scores[i]};
+      }
+    }
+  };
+
+  ColumnCollector columns;
+  for (auto& segment : reader) {
+    columns.Clear();
+
+    auto it = prepared->execute({
+      .segment = segment,
+      .scorers = scorers,
+      .wand = {.index = wand_index},
+    });
+
+    auto scorer = it->PrepareScore({
+      .scorer = scorers.buckets().front().bucket,
+      .segment = &segment,
+      .collector = &columns,
+    });
+
+    threshold_attr = irs::GetMutable<ScoreThresholdAttr>(it.get());
+    if (threshold_attr && min_threshold > 0) {
+      threshold_attr->value = min_threshold;
+    }
+
+    while (true) {
+      const uint32_t n = it->Collect(scorer, columns, docs, scores);
+      if (n == 0) {
+        break;
+      }
+      count += n;
+
+      if (n == kScoreBlock) [[likely]] {
+        copy(kScoreBlock);
+      } else {
+        copy(n);
+      }
+
+      if (offset >= max_size) {
+        repivot();
+        offset = k;
+        if (threshold_attr) {
+          threshold_attr->value = min_threshold;
+        }
+      }
+    }
+  }
+
+  if (offset > k) {
+    repivot();
+  }
+
+  std::sort(hits.begin(), pivot, cmp);
+
+  return count;
+}
+
 }  // namespace irs

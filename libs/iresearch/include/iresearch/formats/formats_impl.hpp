@@ -1154,7 +1154,8 @@ class PostingIteratorBase : public DocIterator {
     }
   }
 
-  IRS_NO_INLINE Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+  IRS_NO_INLINE Attribute* GetMutable(
+    TypeInfo::type_id type) noexcept override {
     return irs::GetMutable(_attrs, type);
   }
 
@@ -1303,7 +1304,7 @@ class PostingIteratorBase : public DocIterator {
     });
   }
 
-  ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
+  ScoreFunction PrepareScore(const PrepareScoreContext& ctx) override {
     SDB_ASSERT(ctx.scorer);
     return ctx.scorer->PrepareScorer({
       .segment = *ctx.segment,
@@ -1511,18 +1512,16 @@ void CommonSkipWandData(WandExtent extent, DataInput& in) {
 }
 
 template<typename WandExtent>
-IRS_FORCE_INLINE void CommonReadWandData(WandExtent wextent, uint8_t index,
-                                         const ScoreFunction& func,
-                                         WandSource& ctx, DataInput& in,
-                                         score_t& score) {
+IRS_FORCE_INLINE score_t CommonReadWandData(WandExtent wextent, uint8_t index,
+                                            const ScoreFunction& func,
+                                            WandSource& ctx, DataInput& in) {
   const auto extent = wextent.GetExtent();
   SDB_ASSERT(extent);
   SDB_ASSERT(index < extent);
   if (extent == 1) [[likely]] {
     const auto size = in.ReadByte();
     ctx.Read(in, size);
-    score = func.Score();
-    return;
+    return func.Score();
   }
 
   uint8_t i = 0;
@@ -1541,10 +1540,11 @@ IRS_FORCE_INLINE void CommonReadWandData(WandExtent wextent, uint8_t index,
     in.Skip(scorer_offset);
   }
   ctx.Read(in, size);
-  score = func.Score();
+  const auto score = func.Score();
   if (block_offset) {
     in.Skip(block_offset);
   }
+  return score;
 }
 
 // Iterator over posting list.
@@ -1580,13 +1580,6 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
    public:
     explicit ReadSkip(WandExtent extent) : WandExtent{extent}, _skip_levels(1) {
       Disable();  // Prevent using skip-list by default
-    }
-
-    IRS_FORCE_INLINE void ReadMaxScore(uint8_t index, const ScoreFunction& func,
-                                       WandSource& ctx, DataInput& in,
-                                       score_t& score) {
-      CommonReadWandData(static_cast<WandExtent>(*this), index, func, ctx, in,
-                         score);
     }
 
     void Disable() noexcept {
@@ -2498,6 +2491,365 @@ struct IteratorTraitsImpl : FormatTraits {
 };
 
 template<typename FormatTraits>
+using WandTraits = IteratorTraitsImpl<FormatTraits, true, false, false>;
+
+template<typename FormatTraits, bool Pos, bool Offs, typename WandExtent>
+class SingleWandIterator
+  : public PostingIteratorBase<WandTraits<FormatTraits>> {
+  using Traits = WandTraits<FormatTraits>;
+  using FieldTraits = IteratorTraitsImpl<FormatTraits, true, Pos, Offs>;
+
+  class DefaultWandSource final : public WandSource {
+   public:
+    Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
+    void Read(DataInput& in, size_t size) final {
+      while (size--) {
+        in.ReadByte();
+      }
+    }
+  };
+
+ public:
+  explicit SingleWandIterator(WandExtent extent)
+    : PostingIteratorBase<WandTraits<FormatTraits>>{false},
+      _skip{Traits::kBlockSize, PostingsWriterBase::kSkipN,
+            WandReadSkip{extent}} {}
+
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept override {
+    if (type == irs::Type<ScoreThresholdAttr>::id()) {
+      return &_skip.Reader().Threshold();
+    }
+    return irs::GetMutable(this->_attrs, type);
+  }
+
+  ScoreFunction PrepareScore(const PrepareScoreContext& ctx) override {
+    SDB_ASSERT(ctx.scorer);
+    if (auto wand_source = ctx.scorer->prepare_wand_source()) {
+      auto wand_func = ctx.scorer->PrepareScorer({
+        .segment = *ctx.segment,
+        .field = this->_field,
+        .doc_attrs = *wand_source,
+        .stats = this->_stats,
+        .boost = this->_boost,
+      });
+      _skip.Reader().SetWandScore(std::move(wand_func), std::move(wand_source));
+    }
+    return ctx.scorer->PrepareScorer({
+      .segment = *ctx.segment,
+      .field = this->_field,
+      .doc_attrs = *this,
+      .collector = ctx.collector,
+      .stats = this->_stats,
+      .boost = this->_boost,
+    });
+  }
+
+  void Prepare(const PostingCookie& meta, const IndexInput* doc_in,
+               uint8_t wand_index);
+
+ private:
+  class WandReadSkip : private WandExtent {
+   public:
+    explicit WandReadSkip(WandExtent extent)
+      : WandExtent{extent}, _skip_levels(1), _skip_scores(1) {
+      Disable();
+    }
+
+    void SetWandIndex(uint8_t index) noexcept { _wand_index = index; }
+
+    void SetWandScore(ScoreFunction func,
+                      WandSource::ptr wand_source) noexcept {
+      _wand_func = std::move(func);
+      _wand_source = std::move(wand_source);
+    }
+
+    ScoreThresholdAttr& Threshold() noexcept { return _threshold; }
+
+    void Disable() noexcept {
+      SDB_ASSERT(!_skip_levels.empty());
+      SDB_ASSERT(!doc_limits::valid(_skip_levels.back().doc));
+      _skip_levels.back().doc = doc_limits::eof();
+    }
+
+    void Enable(const TermMetaImpl& state) noexcept {
+      SDB_ASSERT(state.docs_count > Traits::kBlockSize);
+      auto& top = _skip_levels.front();
+      CopyState<Traits>(top, state);
+      Enable();
+    }
+
+    void Init(size_t num_levels) {
+      SDB_ASSERT(num_levels);
+      _skip_levels.resize(num_levels);
+      _skip_scores.resize(num_levels, std::numeric_limits<score_t>::max());
+    }
+
+    bool IsLess(size_t level, doc_id_t target) const noexcept {
+      return _skip_levels[level].doc < target ||
+             _skip_scores[level] <= _threshold.value;
+    }
+
+    void MoveDown(size_t level) noexcept {
+      auto& next = _skip_levels[level];
+      SDB_ASSERT(_prev);
+      CopyState<Traits>(next, *_prev);
+    }
+
+    void Read(size_t level, IndexInput& in);
+    void Seal(size_t level);
+
+    size_t AdjustLevel(size_t level) const noexcept {
+      while (level && _skip_levels[level].doc >= _skip_levels[level - 1].doc) {
+        SDB_ASSERT(_skip_levels[level - 1].doc != doc_limits::eof());
+        --level;
+      }
+      return level;
+    }
+
+    void Reset(SkipState& state) noexcept {
+      SDB_ASSERT(absl::c_is_sorted(
+        _skip_levels,
+        [](const auto& lhs, const auto& rhs) { return lhs.doc > rhs.doc; }));
+      _prev = &state;
+    }
+
+    doc_id_t UpperBound() const noexcept {
+      SDB_ASSERT(!_skip_levels.empty());
+      return _skip_levels.back().doc;
+    }
+
+    score_t ReadWandScore(IndexInput& in) {
+      return CommonReadWandData(static_cast<WandExtent>(*this), _wand_index,
+                                _wand_func, *_wand_source, in);
+    }
+
+    void SkipWandData(IndexInput& in) {
+      CommonSkipWandData(static_cast<WandExtent>(*this), in);
+    }
+
+   private:
+    void Enable() noexcept {
+      SDB_ASSERT(!_skip_levels.empty());
+      SDB_ASSERT(doc_limits::eof(_skip_levels.back().doc));
+      _skip_levels.back().doc = doc_limits::invalid();
+    }
+
+    std::vector<SkipState> _skip_levels;
+    std::vector<score_t> _skip_scores;
+    SkipState* _prev = nullptr;
+    ScoreFunction _wand_func;
+    WandSource::ptr _wand_source;
+    ScoreThresholdAttr _threshold;
+    uint8_t _wand_index = 0;
+  };
+
+  IRS_FORCE_INLINE void Refill(doc_id_t prev_doc) final;
+  IRS_FORCE_INLINE void ReadBlock(doc_id_t prev_doc);
+  IRS_FORCE_INLINE void ReadTailBlock(doc_id_t prev_doc);
+  IRS_FORCE_INLINE void SeekToBlock(doc_id_t target) final;
+  void PrepareSkipReader(uint64_t skip_offs);
+
+  SkipReader<WandReadSkip> _skip;
+  uint32_t _docs_count{};
+  bool _block_sought{};
+};
+
+template<typename FormatTraits, bool Pos, bool Offs, typename WandExtent>
+void SingleWandIterator<FormatTraits, Pos, Offs,
+                        WandExtent>::WandReadSkip::Read(size_t level,
+                                                        IndexInput& in) {
+  auto& next = _skip_levels[level];
+
+  CopyState<Traits>(*_prev, next);
+
+  ReadState<FieldTraits>(next, in);
+
+  _skip_scores[level] = ReadWandScore(in);
+}
+
+template<typename FormatTraits, bool Pos, bool Offs, typename WandExtent>
+void SingleWandIterator<FormatTraits, Pos, Offs,
+                        WandExtent>::WandReadSkip::Seal(size_t level) {
+  auto& next = _skip_levels[level];
+
+  CopyState<Traits>(*_prev, next);
+
+  next.doc = doc_limits::eof();
+}
+
+template<typename FormatTraits, bool Pos, bool Offs, typename WandExtent>
+void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent>::Prepare(
+  const PostingCookie& meta, const IndexInput* doc_in, uint8_t wand_index) {
+  this->Init(meta);
+
+  _skip.Reader().SetWandIndex(wand_index);
+
+  // Set default wand state with max score so no blocks are ever pruned
+  _skip.Reader().SetWandScore(
+    ScoreFunction::Constant(std::numeric_limits<score_t>::max()),
+    std::make_unique<DefaultWandSource>());
+
+  auto& term_state = sdb::basics::downCast<CookieImpl>(meta.cookie)->meta;
+  std::get<CostAttr>(this->_attrs).reset(term_state.docs_count);
+
+  if (term_state.docs_count > 1) {
+    this->_left_in_list = term_state.docs_count;
+    SDB_ASSERT(this->_left_in_leaf == 0);
+    SDB_ASSERT(this->_max_in_leaf == doc_limits::invalid());
+
+    if (!this->_doc_in) {
+      this->_doc_in = doc_in->Reopen();
+
+      if (!this->_doc_in) {
+        SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+                  "Failed to reopen document input");
+        throw IoError("failed to reopen document input");
+      }
+    }
+
+    auto& freq_block = std::get<FreqBlockAttr>(this->_attrs);
+    this->_collected_freqs = std::allocator<uint32_t>{}.allocate(kScoreBlock);
+    freq_block.value = this->_collected_freqs;
+
+    this->_doc_in->Seek(term_state.doc_start);
+    SDB_ASSERT(!this->_doc_in->IsEOF());
+  } else {
+    SDB_ASSERT(term_state.docs_count == 1);
+    auto* doc = std::end(this->_docs) - 1;
+    *doc = doc_limits::min() + term_state.e_single_doc;
+
+    auto* freq = std::end(this->_freqs) - 1;
+    *freq = term_state.freq;
+    this->_collected_freqs = freq;
+
+    auto& freq_block = std::get<FreqBlockAttr>(this->_attrs);
+    freq_block.value = freq;
+
+    this->_left_in_list = 0;
+    this->_left_in_leaf = 1;
+    this->_max_in_leaf = *doc;
+  }
+
+  SDB_ASSERT(term_state.freq);
+
+  if (term_state.docs_count > Traits::kBlockSize) {
+    _skip.Reader().Enable(term_state);
+    _docs_count = term_state.docs_count;
+    PrepareSkipReader(term_state.doc_start + term_state.e_skip_start);
+  } else if (1 < term_state.docs_count &&
+             term_state.docs_count < Traits::kBlockSize) {
+    _skip.Reader().SkipWandData(*this->_doc_in);
+  }
+}
+
+template<typename FormatTraits, bool Pos, bool Offs, typename WandExtent>
+void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent>::Refill(
+  doc_id_t prev_doc) {
+  if (!_block_sought && _skip.Reader().Threshold().value > 0 &&
+      _skip.NumLevels() > 0) {
+    SkipState last;
+    _skip.Reader().Reset(last);
+    this->_left_in_list = _skip.Seek(prev_doc + 1);
+    if (this->_left_in_list == 0) {
+      this->_left_in_leaf = 0;
+      return;
+    }
+    this->_doc_in->Seek(last.doc_ptr);
+    prev_doc = last.doc;
+  }
+  if (this->_left_in_list >= Traits::kBlockSize) [[likely]] {
+    ReadBlock(prev_doc);
+  } else {
+    ReadTailBlock(prev_doc);
+  }
+  _block_sought = false;
+}
+
+template<typename FormatTraits, bool Pos, bool Offs, typename WandExtent>
+void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent>::ReadBlock(
+  doc_id_t prev_doc) {
+  Traits::read_block_delta(*this->_doc_in, this->_enc_buf, this->_docs,
+                           prev_doc);
+  Traits::read_block(*this->_doc_in, this->_enc_buf, this->_freqs);
+  this->_max_in_leaf = *(std::end(this->_docs) - 1);
+  this->_left_in_leaf = Traits::kBlockSize;
+  this->_left_in_list -= Traits::kBlockSize;
+}
+
+template<typename FormatTraits, bool Pos, bool Offs, typename WandExtent>
+void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent>::ReadTailBlock(
+  doc_id_t prev_doc) {
+  auto* doc = std::end(this->_docs) - this->_left_in_list;
+  auto* freq = std::end(this->_freqs) - this->_left_in_list;
+
+  while (doc < std::end(this->_docs)) {
+    if (ShiftUnpack32(this->_doc_in->ReadV32(), *doc)) {
+      *freq++ = 1;
+    } else {
+      *freq++ = this->_doc_in->ReadV32();
+    }
+    const auto curr_doc = prev_doc + *doc;
+    *doc++ = curr_doc;
+    prev_doc = curr_doc;
+  }
+  this->_max_in_leaf = *(std::end(this->_docs) - 1);
+  this->_left_in_leaf = this->_left_in_list;
+  this->_left_in_list = 0;
+}
+
+template<typename FormatTraits, bool Pos, bool Offs, typename WandExtent>
+void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent>::PrepareSkipReader(
+  uint64_t skip_offs) {
+  SDB_ASSERT(_docs_count > 0);
+
+  auto skip_in = this->_doc_in->Dup();
+
+  if (!skip_in) {
+    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+              "Failed to duplicate document input");
+    throw IoError("Failed to duplicate document input");
+  }
+
+  SDB_ASSERT(!_skip.NumLevels());
+  skip_in->Seek(skip_offs);
+  _skip.Reader().ReadWandScore(*skip_in);
+  _skip.Prepare(std::move(skip_in), _docs_count);
+  _docs_count = 0;
+
+  if (const auto num_levels = _skip.NumLevels();
+      num_levels > 0 && num_levels <= PostingsWriterBase::kMaxSkipLevels)
+    [[likely]] {
+    SDB_ASSERT(!doc_limits::valid(_skip.Reader().UpperBound()));
+    _skip.Reader().Init(num_levels);
+  } else {
+    SDB_ASSERT(false);
+    throw IndexError{absl::StrCat("Invalid number of skip levels ", num_levels,
+                                  ", must be in range of [1, ",
+                                  PostingsWriterBase::kMaxSkipLevels, "].")};
+  }
+}
+
+template<typename FormatTraits, bool Pos, bool Offs, typename WandExtent>
+void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent>::SeekToBlock(
+  doc_id_t target) {
+  if (target <= _skip.Reader().UpperBound()) [[unlikely]] {
+    return;
+  }
+
+  SDB_ASSERT(_skip.NumLevels());
+
+  SkipState last;
+  _skip.Reader().Reset(last);
+
+  this->_left_in_list = _skip.Seek(target);
+
+  std::get<DocAttr>(this->_attrs).value = last.doc;
+
+  this->_doc_in->Seek(last.doc_ptr);
+  _block_sought = true;
+}
+
+template<typename FormatTraits>
 class PostingsReaderImpl final : public PostingsReaderBase {
  public:
   template<bool Freq, bool Pos, bool Offs>
@@ -2697,6 +3049,30 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
 
   auto make_postings_iterator = [&](uint32_t meta_idx,
                                     const PostingCookie& cookie) {
+    if (options.Enabled() &&
+        IndexFeatures::None != (field_features & IndexFeatures::Freq) &&
+        IndexFeatures::None ==
+          (required_features & (IndexFeatures::Pos | IndexFeatures::Offs))) {
+      auto make_wand = [&]<bool Pos, bool Offs>() {
+        return ResolveExtent<1>(
+          options.count,
+          [&]<typename Extent>(Extent&& extent) -> DocIterator::ptr {
+            auto it = memory::make_managed<
+              SingleWandIterator<FormatTraits, Pos, Offs, Extent>>(
+              std::forward<Extent>(extent));
+            it->Prepare(cookie, _doc_in.get(), options.mapped_index);
+            return it;
+          });
+      };
+      switch (ToIndex(field_features)) {
+        case kPosOffs:
+          return make_wand.template operator()<true, true>();
+        case kPos:
+          return make_wand.template operator()<true, false>();
+        default:
+          return make_wand.template operator()<false, false>();
+      }
+    }
     return IteratorImpl(
       field_features, required_features,
       [&]<typename IteratorTraits, typename FieldTraits> -> DocIterator::ptr {

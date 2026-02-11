@@ -54,6 +54,16 @@ struct FilterBoost final : Attribute {
   score_t value{kNoBoost};
 };
 
+// Caller writes value, iterator reads at block boundaries to skip
+// blocks whose max score is below the threshold.
+struct ScoreThresholdAttr final : Attribute {
+  static constexpr std::string_view type_name() noexcept {
+    return "score_threshold";
+  }
+
+  score_t value{0};
+};
+
 // Object used for collecting index statistics, for a specific matched
 // field, that are required by the scorer for scoring individual
 // documents.

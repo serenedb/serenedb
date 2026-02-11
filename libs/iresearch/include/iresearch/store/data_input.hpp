@@ -33,28 +33,15 @@ namespace irs {
 
 class DataInput {
  public:
-  virtual ~DataInput() = default;
-
   enum class Type {
     Generic,
     MMapIndexInput,
   };
 
-  virtual Type GetType() const noexcept { return Type::Generic; }
-
-  // If supported, provides access to an internal buffer containing
-  // the requested 'count' of bytes. Stream guarantees that buffer is immutable
-  // and will reside in memory while underlying stream is open.
-  virtual const byte_type* ReadData(uint64_t count) = 0;
-
-  // If supported, provides access to an internal buffer containing
-  // the requested 'count' of bytes. Stream guarantees that buffer is immutable
-  // and will reside in memory while underlying stream is open
-  // and before the next read operation.
-  virtual const byte_type* ReadView(uint64_t count) = 0;
-
   virtual byte_type ReadByte() = 0;
-  virtual size_t ReadBytes(byte_type* b, size_t count) = 0;
+
+  virtual uint64_t Position() const noexcept = 0;
+  virtual uint64_t Length() const noexcept = 0;
 
   virtual int16_t ReadI16() = 0;
   virtual int32_t ReadI32() = 0;
@@ -62,12 +49,27 @@ class DataInput {
   virtual uint32_t ReadV32() = 0;
   virtual uint64_t ReadV64() = 0;
 
-  virtual uint64_t Position() const noexcept = 0;
-  virtual uint64_t Length() const noexcept = 0;
+  virtual void Skip(uint64_t count) = 0;
+
+  // If supported, provides access to an internal buffer containing
+  // the requested 'count' of bytes. Stream guarantees that buffer is immutable
+  // and will reside in memory while underlying stream is open
+  // and before the next read operation.
+  virtual const byte_type* ReadView(uint64_t count) = 0;
+
+  // If supported, provides access to an internal buffer containing
+  // the requested 'count' of bytes. Stream guarantees that buffer is immutable
+  // and will reside in memory while underlying stream is open.
+  virtual const byte_type* ReadData(uint64_t count) = 0;
+
+  virtual size_t ReadBytes(byte_type* b, size_t count) = 0;
+
   // @note calling "ReadByte()" on a stream in EOF state is undefined behavior
   virtual bool IsEOF() const noexcept = 0;
 
-  virtual void Skip(uint64_t count) = 0;
+  virtual Type GetType() const noexcept { return Type::Generic; }
+
+  virtual ~DataInput() = default;
 
   // TODO(mbkkt) Remove this
   using iterator_category = std::forward_iterator_tag;
@@ -89,6 +91,8 @@ class IndexInput : public DataInput {
  public:
   using ptr = std::unique_ptr<IndexInput>;
 
+  virtual void Seek(uint64_t pos) = 0;
+
   using DataInput::ReadData;
   virtual const byte_type* ReadData(uint64_t offset, uint64_t count) = 0;
 
@@ -97,8 +101,6 @@ class IndexInput : public DataInput {
 
   using DataInput::ReadBytes;
   virtual size_t ReadBytes(uint64_t offset, byte_type* b, size_t count) = 0;
-
-  virtual void Seek(uint64_t pos) = 0;
 
   // TODO(mbkkt) now they're both implemented the same they,
   // also it doesn't look like all users aware. Maybe we should remove dup?

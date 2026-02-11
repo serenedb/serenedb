@@ -340,6 +340,74 @@ class SearchFilterBuilderTest : public ::testing::Test {
 
 ServerState SearchFilterBuilderTest::gServerState;
 
+TEST_F(SearchFilterBuilderTest, test_TypesResolving) {
+  {
+    std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+    irs::And expected;
+    AddTermFilter<float>(expected, 1, 10);
+    columns.emplace_back(
+      std::make_unique<connector::SereneDBColumn>("b", velox::REAL(), 1));
+    AssertFilter(expected, "SELECT * FROM realfoo WHERE b = 10 ",
+                 std::move(columns), true);
+  }
+  {
+    std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+    irs::And expected;
+    AddTermFilter<double>(expected, 1, 10);
+    columns.emplace_back(
+      std::make_unique<connector::SereneDBColumn>("b", velox::DOUBLE(), 1));
+    AssertFilter(expected, "SELECT * FROM doublefoo WHERE b = 10 ",
+                 std::move(columns), true);
+  }
+  {
+    std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+    irs::And expected;
+    AddTermFilter<int32>(expected, 1, 1);
+    columns.emplace_back(
+      std::make_unique<connector::SereneDBColumn>("b", velox::TINYINT(), 1));
+    AssertFilter(expected, "SELECT * FROM tinyfoo WHERE b = CAST(1 as bpchar)",
+                 std::move(columns), true);
+  }
+  {
+    std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+    irs::And expected;
+    AddTermFilter<int32>(expected, 1, 10);
+    columns.emplace_back(
+      std::make_unique<connector::SereneDBColumn>("b", velox::SMALLINT(), 1));
+    AssertFilter(expected, "SELECT * FROM smallfoo WHERE b = CAST(10 as int2)",
+                 std::move(columns), true);
+  }
+  {
+    std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+    irs::And expected;
+    AddRangeFilter<int32>(expected, 1, 10, false, std::nullopt, false);
+    columns.emplace_back(
+      std::make_unique<connector::SereneDBColumn>("b", velox::SMALLINT(), 1));
+    AssertFilter(expected, "SELECT * FROM smallfoo WHERE b > CAST(10 as int2)",
+                 std::move(columns), true);
+  }
+  {
+    std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+    irs::And expected;
+    AddTermsFilter<int32>(expected, 1, {10, 11});
+    columns.emplace_back(
+      std::make_unique<connector::SereneDBColumn>("b", velox::SMALLINT(), 1));
+    AssertFilter(
+      expected,
+      "SELECT * FROM boolfoo WHERE b IN (CAST(10 as int2), CAST(11 as int2)) ",
+      std::move(columns), true);
+  }
+  {
+    std::vector<std::unique_ptr<const axiom::connector::Column>> columns;
+    irs::And expected;
+    AddTermFilter<bool>(expected, 1, true);
+    columns.emplace_back(
+      std::make_unique<connector::SereneDBColumn>("b", velox::BOOLEAN(), 1));
+    AssertFilter(expected, "SELECT * FROM boolfoo WHERE b = true ",
+                 std::move(columns), true);
+  }
+}
+
 // ============================================================================
 // Basic OR Tests
 // ============================================================================

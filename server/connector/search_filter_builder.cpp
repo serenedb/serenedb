@@ -40,6 +40,7 @@
 #include "iresearch/search/term_filter.hpp"
 #include "velox/core/Expressions.h"
 #include "velox/expression/Expr.h"
+#include "velox/type/CppToType.h"
 
 namespace sdb::connector::search {
 
@@ -61,6 +62,34 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
                            const velox::core::TypedExprPtr& expr);
 
 namespace {
+
+using namespace sdb::search;
+
+template<typename SearchType, velox::TypeKind ValueKind>
+void ResetNumericStreamConverted(irs::NumericTokenizer& stream,
+                                 const velox::Variant& value) {
+  SDB_ASSERT(ValueKind == value.kind());
+  if constexpr (ValueKind == velox::TypeKind::TINYINT ||
+                ValueKind == velox::TypeKind::SMALLINT) {
+    stream.reset(static_cast<SearchType>(value.value<ValueKind>()));
+  } else {
+    VELOX_UNSUPPORTED("Value kind {} is not supported for numeric conversion ",
+                      velox::TypeKindName::toName(ValueKind));
+  }
+}
+
+template<typename SearchType>
+void ResetNumericStream(irs::NumericTokenizer& stream,
+                        const velox::Variant& value) {
+  SDB_ASSERT(value.hasValue());
+  if (velox::CppToType<SearchType>::typeKind == value.kind()) {
+    stream.reset(value.value<SearchType>());
+  } else {
+    // some numerics  have wider types in iresearch. So convertion is required
+    VELOX_DYNAMIC_TEMPLATE_TYPE_DISPATCH(
+      ResetNumericStreamConverted, SearchType, value.kind(), stream, value);
+  }
+}
 
 std::optional<velox::Variant> EvaluateConstant(
   const velox::core::TypedExprPtr& expr, const VeloxFilterContext& ctx) {
@@ -104,9 +133,11 @@ Result DispatchValue(velox::TypeKind kind, Func&& func, Args&&... args) {
       return std::forward<Func>(func).template
       operator()<velox::TypeTraits<velox::TypeKind::BIGINT>::NativeType>(
         std::forward<Args>(args)...);
-    case velox::TypeKind::DOUBLE:
     case velox::TypeKind::REAL:
-    case velox::TypeKind::HUGEINT:
+      return std::forward<Func>(func).template
+      operator()<velox::TypeTraits<velox::TypeKind::REAL>::NativeType>(
+        std::forward<Args>(args)...);
+    case velox::TypeKind::DOUBLE:
       return std::forward<Func>(func).template operator()<double>(
         std::forward<Args>(args)...);
     case velox::TypeKind::VARCHAR:
@@ -125,11 +156,11 @@ Result DispatchValue(velox::TypeKind kind, Func&& func, Args&&... args) {
 template<typename T>
 void DoMangle(std::string& field_name) {
   if constexpr (std::is_same_v<T, bool>) {
-    sdb::search::mangling::MangleBool(field_name);
+    mangling::MangleBool(field_name);
   } else if constexpr (std::is_same_v<T, velox::StringView>) {
-    sdb::search::mangling::MangleString(field_name);
+    mangling::MangleString(field_name);
   } else if constexpr (std::is_floating_point_v<T> || std::is_integral_v<T>) {
-    sdb::search::mangling::MangleNumeric(field_name);
+    mangling::MangleNumeric(field_name);
   } else {
     SDB_UNREACHABLE();
   }
@@ -159,7 +190,7 @@ Result SetupTermFilter(irs::ByTerm& filter, std::string& field_name,
     } else {
       irs::NumericTokenizer stream;
       const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
-      stream.reset(value.value<T>());
+      ResetNumericStream<T>(stream, value);
       stream.next();
       filter.mutable_options()->term.assign(token->value);
     }
@@ -416,13 +447,13 @@ Result FromVeloxComparison(irs::BooleanFilter& filter,
              "necessary casts.");
   return DispatchValue(
     kind,
-    [&]<typename T>(const velox::Variant& converted_value) -> Result {
+    [&]<typename T>(const velox::Variant& v) -> Result {
       DoMangle<T>(field_name);
       if constexpr (std::is_same_v<T, velox::StringView>) {
         auto& range_filter = AddFilter<irs::ByRange>(filter);
         irs::StringTokenizer stream;
         const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
-        stream.reset(converted_value.value<velox::StringView>());
+        stream.reset(v.value<velox::StringView>());
         stream.next();
         setup_base_filter(range_filter, std::move(field_name))
           .assign(token->value);
@@ -430,11 +461,11 @@ Result FromVeloxComparison(irs::BooleanFilter& filter,
         auto& range_filter = AddFilter<irs::ByRange>(filter);
         setup_base_filter(range_filter, std::move(field_name))
           .assign(irs::ViewCast<irs::byte_type>(
-            irs::BooleanTokenizer::value(converted_value.value<bool>())));
+            irs::BooleanTokenizer::value(v.value<bool>())));
       } else {
         auto& range_filter = AddFilter<irs::ByGranularRange>(filter);
         irs::NumericTokenizer stream;
-        stream.reset(converted_value.value<T>());
+        ResetNumericStream<T>(stream, v);
         irs::SetGranularTerm(
           setup_base_filter(range_filter, std::move(field_name)), stream);
       }
@@ -517,7 +548,7 @@ Result FromVeloxIn(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
         } else {
           irs::NumericTokenizer stream;
           const irs::TermAttr* token = irs::get<irs::TermAttr>(stream);
-          stream.reset(value.template value<T>());
+          ResetNumericStream<T>(stream, value);
           stream.next();
           opts.terms.emplace(token->value);
         }
@@ -548,7 +579,7 @@ Result FromVeloxIsNull(irs::BooleanFilter& filter,
 
   std::string field_name;
   ExtractFieldName(ctx, *left_field, field_name);
-  sdb::search::mangling::MangleNull(field_name);
+  mangling::MangleNull(field_name);
   auto& term_filter =
     ctx.negated ? Negate<irs::ByTerm>(filter) : AddFilter<irs::ByTerm>(filter);
   term_filter.boost(ctx.boost);
@@ -587,7 +618,7 @@ Result FromVeloxLike(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
   if (kind != velox::TypeKind::VARCHAR) {
     return {ERROR_BAD_PARAMETER, "LIKE field is not VARCHAR"};
   }
-  sdb::search::mangling::MangleString(field_name);
+  mangling::MangleString(field_name);
   auto& wild_filter = ctx.negated ? Negate<irs::ByWildcard>(filter)
                                   : AddFilter<irs::ByWildcard>(filter);
   wild_filter.boost(ctx.boost);

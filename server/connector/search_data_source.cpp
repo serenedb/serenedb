@@ -35,11 +35,11 @@ SearchDataSource::SearchDataSource(
   rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
   std::vector<catalog::Column::Id> column_ids,
   catalog::Column::Id effective_column_id, ObjectId object_key,
-  irs::IndexReader& reader, irs::Filter::ptr&& filter)
+  irs::IndexReader& reader, const irs::Filter::Query& query)
   : Materializer(memory_pool, snapshot, &db, nullptr, cf, row_type,
                  std::move(column_ids), effective_column_id, object_key),
     _reader(reader),
-    _filter(std::move(filter)) {}
+    _query(query) {}
 
 void SearchDataSource::addSplit(
   std::shared_ptr<velox::connector::ConnectorSplit> split) {
@@ -53,11 +53,6 @@ void SearchDataSource::addSplit(
   _is_range = true;
   _current_segment = 0;
   _doc.reset();
-  if (!_prepared_filter) {
-    _prepared_filter = _filter->prepare({.index = _reader});
-    SDB_ENSURE(_prepared_filter, ERROR_INTERNAL,
-               "Failed to prepare search filter");
-  }
 }
 
 std::optional<velox::RowVectorPtr> SearchDataSource::next(
@@ -69,7 +64,7 @@ std::optional<velox::RowVectorPtr> SearchDataSource::next(
     SDB_ASSERT(!_doc);
     if (_current_segment < _reader.size()) {
       auto& segment = _reader[_current_segment++];
-      _doc = _prepared_filter->execute({.segment = segment});
+      _doc = _query.execute({.segment = segment});
       const auto* pk_column =
         segment.column(sdb::connector::search::kPkFieldName);
       _pk_iterator = pk_column->iterator(irs::ColumnHint::Normal);

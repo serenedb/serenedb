@@ -40,7 +40,7 @@ class SearchDataSource final : public velox::connector::DataSource,
                    rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
                    std::vector<catalog::Column::Id> column_ids,
                    catalog::Column::Id effective_column_id, ObjectId object_key,
-                   irs::IndexReader& reader, irs::Filter::ptr&& filter);
+                   irs::IndexReader& reader, const irs::Filter::Query& query);
 
   virtual ~SearchDataSource() = default;
 
@@ -61,8 +61,7 @@ class SearchDataSource final : public velox::connector::DataSource,
   // TODO(Dronplane) when we have sorted indexes we will need Merge reader for
   // all segments. Only sequential for now.
   size_t _current_segment{0};
-  irs::Filter::ptr _filter;
-  irs::Filter::Query::ptr _prepared_filter;
+  const irs::Filter::Query& _query;
   irs::DocIterator::ptr _pk_iterator;
   const irs::PayAttr* _pk_value;
   irs::DocIterator::ptr _doc;

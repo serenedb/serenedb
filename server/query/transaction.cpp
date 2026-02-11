@@ -76,7 +76,6 @@ bool Transaction::HasTransactionBegin() const noexcept {
 }
 
 rocksdb::Transaction* Transaction::GetRocksDBTransaction() const noexcept {
-  SDB_ASSERT((_state & State::HasRocksDBWrite) != State::None);
   return _rocksdb_transaction.get();
 }
 
@@ -130,6 +129,7 @@ void Transaction::Destroy() noexcept {
   _rocksdb_transaction.reset();
   _rocksdb_snapshot = nullptr;
   _search_transactions.clear();
+  _table_rows_deltas.clear();
 }
 
 catalog::TableStats Transaction::GetTableStats(ObjectId table_id) const {

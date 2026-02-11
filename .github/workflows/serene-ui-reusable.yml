@@ -3,11 +3,6 @@ name: SereneUI Build (Reusable)
 on:
     workflow_call:
         inputs:
-            LOCATION:
-                description: "Where the load is executed"
-                required: true
-                type: string
-                default: "parilka"
             BRANCH:
                 description: "SereneDB Client UI branch to test"
                 required: true
@@ -66,7 +61,8 @@ on:
 jobs:
     build-docker:
         name: Build Docker Image
-        runs-on: ${{ inputs.LOCATION }}
+        if: inputs.RUN_TESTS || inputs.BUILD_IMAGE
+        runs-on: parilka
         timeout-minutes: 60
 
         env:
@@ -86,26 +82,16 @@ jobs:
                   ref: ${{ env.BRANCH }}
                   token: ${{ secrets.GITHUB_TOKEN }}
                   fetch-depth: 1
-                  submodules: true
+                  submodules: false
                   path: .
-
-            - name: Print environment
-              run: printenv | sort
-
-            - name: Cleanup before build
-              working-directory: ./serene-ui
-              run: |
-                  ./scripts/cleanup.sh || true
-                  rm -rf logs
-                  mkdir logs
-
+              
             - name: Run tests
               if: inputs.RUN_TESTS
               working-directory: ./serene-ui
-              run: ./scripts/run_tests.sh 2>&1 | tee -a logs/run.log
+              run: ./scripts/run_tests_docker.sh 2>&1 | tee -a logs/run.log
 
             - name: Upload test artifacts
-              if: always() && inputs.RUN_TESTS
+              if: inputs.RUN_TESTS
               uses: actions/upload-artifact@v4
               with:
                   name: serene-ui-test-artifacts-docker
@@ -114,19 +100,9 @@ jobs:
                       serene-ui/logs/**/*
                   if-no-files-found: ignore
                   retention-days: 30
-
-            - name: Build Docker image
-              if: inputs.BUILD_IMAGE
-              working-directory: ./serene-ui
-              run: ./scripts/build_docker.sh 2>&1 | tee -a logs/build.log
-
-            - name: Docker cleanup
-              if: always()
-              working-directory: ./serene-ui
-              run: ./scripts/cleanup.sh || true
-
+            
             - name: Send Telegram notification
-              if: always()
+              if: inputs.RUN_TESTS
               run: |
                   if [ "${{ job.status }}" == "success" ]; then
                     EMOJI="✅"
@@ -142,7 +118,41 @@ jobs:
                     TOPIC_ID="${{ env.TG_THREAD_ID_BUILD }}"
                   fi
 
-                  TEXT="${EMOJI} @${{ github.actor }} ${RESULT}: BRANCH=${{ env.BRANCH }} ${{ github.workflow }} #${{ github.run_number }} ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                  TEXT="${EMOJI} @${{ github.actor }} DOCKER_TEST ${RESULT}: BRANCH=${{ env.BRANCH }} ${{ github.workflow }} #${{ github.run_number }} ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+                  curl --location --request POST "https://api.telegram.org/bot${{ env.TG_TOKEN }}/sendMessage" \
+                    --form "text=${TEXT}" \
+                    --form "chat_id=${{ env.TG_CHAT_ID }}" \
+                    --form "message_thread_id=${TOPIC_ID}" || true
+
+            - name: Build Docker image
+              if: inputs.BUILD_IMAGE
+              working-directory: ./serene-ui
+              run: ./scripts/build_docker.sh 2>&1 | tee -a logs/build.log
+
+            - name: Cleanup
+              if: inputs.BUILD_IMAGE
+              working-directory: ./serene-ui
+              run: ./scripts/cleanup.sh || true
+
+            - name: Send Telegram notification
+              if: inputs.BUILD_IMAGE
+              run: |
+                  if [ "${{ job.status }}" == "success" ]; then
+                    EMOJI="✅"
+                    RESULT="SUCCESS"
+                  else
+                    EMOJI="💥"
+                    RESULT="FAILURE"
+                  fi
+
+                  if [ "${{ env.BRANCH }}" == "main" ]; then
+                    TOPIC_ID="${{ env.TG_THREAD_ID_MAIN }}"
+                  else
+                    TOPIC_ID="${{ env.TG_THREAD_ID_BUILD }}"
+                  fi
+
+                  TEXT="${EMOJI} @${{ github.actor }} DOCKER_BUILD ${RESULT}: BRANCH=${{ env.BRANCH }} ${{ github.workflow }} #${{ github.run_number }} ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
                   curl --location --request POST "https://api.telegram.org/bot${{ env.TG_TOKEN }}/sendMessage" \
                     --form "text=${TEXT}" \
@@ -151,6 +161,7 @@ jobs:
 
     build-linux-app:
         name: Build Linux App
+        if: inputs.RUN_TESTS || inputs.BUILD_LINUX_APP
         runs-on: ubuntu-latest
         timeout-minutes: 30
         steps:
@@ -161,7 +172,7 @@ jobs:
                   ref: ${{ inputs.BRANCH }}
                   token: ${{ secrets.GITHUB_TOKEN }}
                   fetch-depth: 1
-                  submodules: true
+                  submodules: false
 
             - name: Setup Node.js
               uses: actions/setup-node@v4
@@ -176,10 +187,55 @@ jobs:
               working-directory: ./serene-ui
               run: npm run build
 
+            - name: Install playwright
+              if: inputs.RUN_TESTS
+              working-directory: ./serene-ui
+              run: npx playwright install
+
+            - name: Install playwright dependencies
+              if: inputs.RUN_TESTS
+              working-directory: ./serene-ui
+              run: npx playwright install-deps
+              
             - name: Run tests
               if: inputs.RUN_TESTS
-              working-directory: ./serene-ui/apps/web
-              run: npm test
+              working-directory: ./serene-ui
+              run: ./scripts/run_tests_native.sh 2>&1 | tee -a logs/run.log
+
+            - name: Upload test artifacts
+                if: inputs.RUN_TESTS
+                uses: actions/upload-artifact@v4
+                with:
+                    name: serene-ui-test-artifacts-linux
+                    path: |
+                        serene-ui/screenshots/diff/**/*
+                        serene-ui/logs/**/*
+                    if-no-files-found: ignore
+                    retention-days: 30
+            
+            - name: Send Telegram notification
+              if: inputs.RUN_TESTS
+              run: |
+                  if [ "${{ job.status }}" == "success" ]; then
+                    EMOJI="✅"
+                    RESULT="SUCCESS"
+                  else
+                    EMOJI="💥"
+                    RESULT="FAILURE"
+                  fi
+
+                  if [ "${{ env.BRANCH }}" == "main" ]; then
+                    TOPIC_ID="${{ env.TG_THREAD_ID_MAIN }}"
+                  else
+                    TOPIC_ID="${{ env.TG_THREAD_ID_BUILD }}"
+                  fi
+
+                  TEXT="${EMOJI} @${{ github.actor }} LINUX_TEST ${RESULT}: BRANCH=${{ env.BRANCH }} ${{ github.workflow }} #${{ github.run_number }} ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+                  curl --location --request POST "https://api.telegram.org/bot${{ env.TG_TOKEN }}/sendMessage" \
+                    --form "text=${TEXT}" \
+                    --form "chat_id=${{ env.TG_CHAT_ID }}" \
+                    --form "message_thread_id=${TOPIC_ID}" || true
 
             - name: Package Electron app
               if: inputs.BUILD_LINUX_APP
@@ -199,9 +255,34 @@ jobs:
                   path: serene-ui/apps/electron/out/make/**/*
                   if-no-files-found: error
                   retention-days: 30
+            
+            - name: Send Telegram notification
+              if: inputs.RUN_TESTS
+              run: |
+                  if [ "${{ job.status }}" == "success" ]; then
+                    EMOJI="✅"
+                    RESULT="SUCCESS"
+                  else
+                    EMOJI="💥"
+                    RESULT="FAILURE"
+                  fi
+
+                  if [ "${{ env.BRANCH }}" == "main" ]; then
+                    TOPIC_ID="${{ env.TG_THREAD_ID_MAIN }}"
+                  else
+                    TOPIC_ID="${{ env.TG_THREAD_ID_BUILD }}"
+                  fi
+
+                  TEXT="${EMOJI} @${{ github.actor }} LINUX_BUILD ${RESULT}: BRANCH=${{ env.BRANCH }} ${{ github.workflow }} #${{ github.run_number }} ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+                  curl --location --request POST "https://api.telegram.org/bot${{ env.TG_TOKEN }}/sendMessage" \
+                    --form "text=${TEXT}" \
+                    --form "chat_id=${{ env.TG_CHAT_ID }}" \
+                    --form "message_thread_id=${TOPIC_ID}" || true
 
     build-windows-app:
         name: Build Windows App
+        if: inputs.RUN_TESTS || inputs.BUILD_WINDOWS_APP
         runs-on: windows-latest
         timeout-minutes: 30
         steps:
@@ -212,7 +293,7 @@ jobs:
                   ref: ${{ inputs.BRANCH }}
                   token: ${{ secrets.GITHUB_TOKEN }}
                   fetch-depth: 1
-                  submodules: true
+                  submodules: false
 
             - name: Setup Node.js
               uses: actions/setup-node@v4
@@ -227,10 +308,55 @@ jobs:
               working-directory: ./serene-ui
               run: npm run build
 
+            - name: Install playwright
+              if: inputs.RUN_TESTS
+              working-directory: ./serene-ui
+              run: npx playwright install
+
+            - name: Install playwright dependencies
+              if: inputs.RUN_TESTS
+              working-directory: ./serene-ui
+              run: npx playwright install-deps
+              
             - name: Run tests
               if: inputs.RUN_TESTS
-              working-directory: ./serene-ui/apps/web
-              run: npm test
+              working-directory: ./serene-ui
+              run: ./scripts/run_tests_native.sh 2>&1 | tee -a logs/run.log
+
+            - name: Upload test artifacts
+                if: inputs.RUN_TESTS
+                uses: actions/upload-artifact@v4
+                with:
+                    name: serene-ui-test-artifacts-windows
+                    path: |
+                        serene-ui/screenshots/diff/**/*
+                        serene-ui/logs/**/*
+                    if-no-files-found: ignore
+                    retention-days: 30
+
+            - name: Send Telegram notification
+              if: inputs.RUN_TESTS
+              run: |
+                  if [ "${{ job.status }}" == "success" ]; then
+                    EMOJI="✅"
+                    RESULT="SUCCESS"
+                  else
+                    EMOJI="💥"
+                    RESULT="FAILURE"
+                  fi
+
+                  if [ "${{ env.BRANCH }}" == "main" ]; then
+                    TOPIC_ID="${{ env.TG_THREAD_ID_MAIN }}"
+                  else
+                    TOPIC_ID="${{ env.TG_THREAD_ID_BUILD }}"
+                  fi
+
+                  TEXT="${EMOJI} @${{ github.actor }} WINDOWS_TEST ${RESULT}: BRANCH=${{ env.BRANCH }} ${{ github.workflow }} #${{ github.run_number }} ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+                  curl --location --request POST "https://api.telegram.org/bot${{ env.TG_TOKEN }}/sendMessage" \
+                    --form "text=${TEXT}" \
+                    --form "chat_id=${{ env.TG_CHAT_ID }}" \
+                    --form "message_thread_id=${TOPIC_ID}" || true
 
             - name: Package Electron app
               if: inputs.BUILD_WINDOWS_APP
@@ -250,9 +376,34 @@ jobs:
                   path: serene-ui/apps/electron/out/make/**/*
                   if-no-files-found: error
                   retention-days: 30
+            
+            - name: Send Telegram notification
+              if: inputs.RUN_TESTS
+              run: |
+                  if [ "${{ job.status }}" == "success" ]; then
+                    EMOJI="✅"
+                    RESULT="SUCCESS"
+                  else
+                    EMOJI="💥"
+                    RESULT="FAILURE"
+                  fi
+
+                  if [ "${{ env.BRANCH }}" == "main" ]; then
+                    TOPIC_ID="${{ env.TG_THREAD_ID_MAIN }}"
+                  else
+                    TOPIC_ID="${{ env.TG_THREAD_ID_BUILD }}"
+                  fi
+
+                  TEXT="${EMOJI} @${{ github.actor }} WINDOWS_BUILD ${RESULT}: BRANCH=${{ env.BRANCH }} ${{ github.workflow }} #${{ github.run_number }} ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+                  curl --location --request POST "https://api.telegram.org/bot${{ env.TG_TOKEN }}/sendMessage" \
+                    --form "text=${TEXT}" \
+                    --form "chat_id=${{ env.TG_CHAT_ID }}" \
+                    --form "message_thread_id=${TOPIC_ID}" || true
 
     build-macos-app:
         name: Build macOS App
+        if: inputs.RUN_TESTS || inputs.BUILD_MACOS_APP
         runs-on: macos-latest
         timeout-minutes: 1440
         steps:
@@ -263,7 +414,7 @@ jobs:
                   ref: ${{ inputs.BRANCH }}
                   token: ${{ secrets.GITHUB_TOKEN }}
                   fetch-depth: 1
-                  submodules: true
+                  submodules: false
 
             - name: Setup Node.js
               uses: actions/setup-node@v4
@@ -278,10 +429,55 @@ jobs:
               working-directory: ./serene-ui
               run: npm run build
 
+            - name: Install playwright
+              if: inputs.RUN_TESTS
+              working-directory: ./serene-ui
+              run: npx playwright install
+
+            - name: Install playwright dependencies
+              if: inputs.RUN_TESTS
+              working-directory: ./serene-ui
+              run: npx playwright install-deps
+              
             - name: Run tests
               if: inputs.RUN_TESTS
-              working-directory: ./serene-ui/apps/web
-              run: npm test
+              working-directory: ./serene-ui
+              run: ./scripts/run_tests_native.sh 2>&1 | tee -a logs/run.log
+
+            - name: Upload test artifacts
+                if: inputs.RUN_TESTS
+                uses: actions/upload-artifact@v4
+                with:
+                    name: serene-ui-test-artifacts-macos
+                    path: |
+                        serene-ui/screenshots/diff/**/*
+                        serene-ui/logs/**/*
+                    if-no-files-found: ignore
+                    retention-days: 30
+            
+            - name: Send Telegram notification
+              if: inputs.RUN_TESTS
+              run: |
+                  if [ "${{ job.status }}" == "success" ]; then
+                    EMOJI="✅"
+                    RESULT="SUCCESS"
+                  else
+                    EMOJI="💥"
+                    RESULT="FAILURE"
+                  fi
+
+                  if [ "${{ env.BRANCH }}" == "main" ]; then
+                    TOPIC_ID="${{ env.TG_THREAD_ID_MAIN }}"
+                  else
+                    TOPIC_ID="${{ env.TG_THREAD_ID_BUILD }}"
+                  fi
+
+                  TEXT="${EMOJI} @${{ github.actor }} MACOS_TEST ${RESULT}: BRANCH=${{ env.BRANCH }} ${{ github.workflow }} #${{ github.run_number }} ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+                  curl --location --request POST "https://api.telegram.org/bot${{ env.TG_TOKEN }}/sendMessage" \
+                    --form "text=${TEXT}" \
+                    --form "chat_id=${{ env.TG_CHAT_ID }}" \
+                    --form "message_thread_id=${TOPIC_ID}" || true
 
             - name: Package Electron app
               if: inputs.BUILD_MACOS_APP
@@ -302,10 +498,34 @@ jobs:
                   if-no-files-found: error
                   retention-days: 30
 
+            - name: Send Telegram notification
+              if: inputs.RUN_TESTS
+              run: |
+                  if [ "${{ job.status }}" == "success" ]; then
+                    EMOJI="✅"
+                    RESULT="SUCCESS"
+                  else
+                    EMOJI="💥"
+                    RESULT="FAILURE"
+                  fi
+
+                  if [ "${{ env.BRANCH }}" == "main" ]; then
+                    TOPIC_ID="${{ env.TG_THREAD_ID_MAIN }}"
+                  else
+                    TOPIC_ID="${{ env.TG_THREAD_ID_BUILD }}"
+                  fi
+
+                  TEXT="${EMOJI} @${{ github.actor }} MACOS_BUILD ${RESULT}: BRANCH=${{ env.BRANCH }} ${{ github.workflow }} #${{ github.run_number }} ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+                  curl --location --request POST "https://api.telegram.org/bot${{ env.TG_TOKEN }}/sendMessage" \
+                    --form "text=${TEXT}" \
+                    --form "chat_id=${{ env.TG_CHAT_ID }}" \
+                    --form "message_thread_id=${TOPIC_ID}" || true
+
     release:
         name: Publish GitHub Release
         needs: [build-linux-app, build-windows-app, build-macos-app]
-        if: always() && inputs.PUSH_RELEASE && (inputs.BUILD_LINUX_APP || inputs.BUILD_WINDOWS_APP || inputs.BUILD_MACOS_APP) && !contains(needs.*.result, 'failure')
+        if: inputs.PUSH_RELEASE && (inputs.BUILD_LINUX_APP || inputs.BUILD_WINDOWS_APP || inputs.BUILD_MACOS_APP) && !contains(needs.*.result, 'failure')
         runs-on: ubuntu-latest
         permissions:
             contents: write
@@ -346,9 +566,32 @@ jobs:
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+            - name: Send Telegram notification
+              run: |
+                  if [ "${{ job.status }}" == "success" ]; then
+                    EMOJI="✅"
+                    RESULT="SUCCESS"
+                  else
+                    EMOJI="💥"
+                    RESULT="FAILURE"
+                  fi
+
+                  if [ "${{ env.BRANCH }}" == "main" ]; then
+                    TOPIC_ID="${{ env.TG_THREAD_ID_MAIN }}"
+                  else
+                    TOPIC_ID="${{ env.TG_THREAD_ID_BUILD }}"
+                  fi
+
+                  TEXT="${EMOJI} @${{ github.actor }} RELEASE(!) ${RESULT}: BRANCH=${{ env.BRANCH }} ${{ github.workflow }} #${{ github.run_number }} ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+                  curl --location --request POST "https://api.telegram.org/bot${{ env.TG_TOKEN }}/sendMessage" \
+                    --form "text=${TEXT}" \
+                    --form "chat_id=${{ env.TG_CHAT_ID }}" \
+                    --form "message_thread_id=${TOPIC_ID}" || true
+
     cleanup:
         name: Cleanup
-        runs-on: ${{ inputs.LOCATION }}
+        runs-on: parilka
         if: always()
         steps:
             - name: Final Docker cleanup

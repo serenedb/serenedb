@@ -1,0 +1,6 @@
+services:
+    test-database:
+        image: postgres:17
+        ports:
+            - "6363:5432"
+        restart: unless-stopped

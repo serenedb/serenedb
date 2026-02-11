@@ -2,15 +2,6 @@ name: SereneUI Build (Manual)
 
 on:
     workflow_dispatch:
-        inputs:
-            LOCATION:
-                description: "Where the load is executed"
-                required: true
-                type: choice
-                options:
-                    - parilka
-                default: "parilka"
-            BRANCH:
                 description: "SereneUI branch to test"
                 required: true
                 type: string

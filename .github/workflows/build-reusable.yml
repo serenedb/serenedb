@@ -161,8 +161,16 @@ jobs:
           token: ${{ secrets.PAT_TOKEN }}
           path: private
           sparse-checkout: |
-            ci
+            gh-ci
           sparse-checkout-cone-mode: true
+
+      - name: Remap directories to legacy paths
+        run: |
+          rm -rf packages tests scripts
+          mv private/gh-ci private/ci
+          mv gh-packages packages
+          mv gh-tests tests
+          mv gh-scripts scripts
 
       - name: Print environment
         if: env.DEBUG_PRINT_ENV == 'true'
@@ -204,15 +212,13 @@ jobs:
       - name: Build Docker Images
         id: build_docker_images
         if: steps.serenedb_packages.outcome == 'success' && env.DOCKER_SERENEDB_IMAGE == 'true'
-        working-directory: ./packages
-        run: ./build_docker.bash
+        run: ./packages/build_docker.bash
 
       # ==================== PRODUCE BUILD IMAGES ====================
       - name: Produce Build Images
         id: produce_build_images
         if: env.DOCKER_BUILD_IMAGES == 'true'
-        working-directory: ./private/ci
-        run: ./build_images.sh
+        run: ./private/ci/build_images.sh
 
       # ==================== UPDATE FILE OWNERSHIP ====================
       - name: Update file ownership

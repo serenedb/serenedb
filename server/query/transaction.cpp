@@ -150,6 +150,7 @@ void Transaction::ApplyTableStatsDiffs() {
       table_shard->UpdateNumRows(delta);
     }
   }
+  _table_rows_deltas.clear();
 }
 
 }  // namespace sdb::query

@@ -65,29 +65,21 @@ namespace {
 
 using namespace sdb::search;
 
-template<typename SearchType, velox::TypeKind ValueKind>
-void ResetNumericStreamConverted(irs::NumericTokenizer& stream,
-                                 const velox::Variant& value) {
-  SDB_ASSERT(ValueKind == value.kind());
-  if constexpr (ValueKind == velox::TypeKind::TINYINT ||
-                ValueKind == velox::TypeKind::SMALLINT) {
-    stream.reset(static_cast<SearchType>(value.value<ValueKind>()));
-  } else {
-    VELOX_UNSUPPORTED("Value kind {} is not supported for numeric conversion ",
-                      velox::TypeKindName::toName(ValueKind));
-  }
-}
-
 template<typename SearchType>
 void ResetNumericStream(irs::NumericTokenizer& stream,
                         const velox::Variant& value) {
   SDB_ASSERT(value.hasValue());
   if (velox::CppToType<SearchType>::typeKind == value.kind()) {
     stream.reset(value.value<SearchType>());
+  } else if (value.kind() == velox::TypeKind::TINYINT) {
+    stream.reset(
+      static_cast<SearchType>(value.value<velox::TypeKind::TINYINT>()));
+  } else if (value.kind() == velox::TypeKind::SMALLINT) {
+    stream.reset(
+      static_cast<SearchType>(value.value<velox::TypeKind::SMALLINT>()));
   } else {
-    // some numerics  have wider types in iresearch. So convertion is required
-    VELOX_DYNAMIC_TEMPLATE_TYPE_DISPATCH(
-      ResetNumericStreamConverted, SearchType, value.kind(), stream, value);
+    VELOX_UNSUPPORTED("Value kind {} is not supported for numeric conversion ",
+                      velox::TypeKindName::toName(value.kind()));
   }
 }
 

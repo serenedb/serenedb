@@ -36,13 +36,35 @@ Result Transaction::Begin() {
 
 Result Transaction::Commit() {
   SDB_ASSERT(_rocksdb_transaction);
-  auto status = _rocksdb_transaction->Commit();
-  if (!status.ok()) {
-    return {ERROR_INTERNAL,
-            "Failed to commit RocksDB transaction: ", status.ToString()};
-  }
-  for (auto& search_transaction : _search_transactions) {
-    search_transaction.second->Commit();
+  const uint64_t num_ops = _rocksdb_transaction->GetNumPuts() +
+                           _rocksdb_transaction->GetNumDeletes() +
+                           _rocksdb_transaction->GetNumMerges();
+  if (num_ops > 0) [[likely]] {
+    for (auto& search_transaction : _search_transactions) {
+      // tie iresearch transaction's active segment to current flush context in
+      // writer and let IndexWriter know that he need to wait for this
+      // transaction to settle before proceeding with commit. That is important
+      // as we are committing "on tick" and must ensure that if we mark this
+      // transaction with tick (see below commit calls) writer will not commit
+      // without it. This could happend if background index commit will start
+      // AFTER RocksDB commit but before transaction commit. But as we told
+      // index writer to wait, we are safe.
+      search_transaction.second->RegisterFlush();
+    }
+    auto status = _rocksdb_transaction->Commit();
+    if (!status.ok()) {
+      return {ERROR_INTERNAL,
+              "Failed to commit RocksDB transaction: ", status.ToString()};
+    }
+    // id is first write operation seqno in the WAL
+    auto post_commit_seq = _rocksdb_transaction->GetId();
+    SDB_ASSERT(post_commit_seq != 0);
+    // add number of operations to get last operation seqno
+    post_commit_seq += num_ops - 1;
+
+    for (auto& search_transaction : _search_transactions) {
+      search_transaction.second->Commit(post_commit_seq);
+    }
   }
   ApplyTableStatsDiffs();
   CommitVariables();

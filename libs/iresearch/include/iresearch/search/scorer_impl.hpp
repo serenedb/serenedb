@@ -90,19 +90,4 @@ struct TermCollectorImpl final : TermCollector {
 
 inline constexpr FreqAttr kEmptyFreq;
 
-template<typename Ctx>
-struct MakeScoreFunctionImpl {
-  template<bool HasFilterBoost, typename... Args>
-  static ScoreFunction Make(Args&&... args);
-};
-
-template<typename Ctx, bool SingleScore, typename... Args>
-ScoreFunction MakeScoreFunction(const score_t* filter_boost,
-                                Args&&... args) noexcept {
-  return ResolveBool(filter_boost != nullptr, [&]<bool HasBoost> {
-    return MakeScoreFunctionImpl<Ctx>::template Make<HasBoost, SingleScore>(
-      std::forward<Args>(args)..., filter_boost);
-  });
-}
-
 }  // namespace irs

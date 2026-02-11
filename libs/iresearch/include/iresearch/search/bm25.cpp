@@ -36,6 +36,7 @@
 
 #include "basics/down_cast.h"
 #include "basics/empty.hpp"
+#include "basics/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/wand_writer.hpp"
 #include "iresearch/index/field_meta.hpp"
@@ -52,6 +53,15 @@
 
 namespace irs {
 namespace {
+
+template<typename T>
+constexpr const T* TryGetValue(const T* value) noexcept {
+  return value;
+}
+
+constexpr std::nullptr_t TryGetValue(utils::Empty /*value*/) noexcept {
+  return nullptr;
+}
 
 struct BM25FieldCollector final : FieldCollector {
   // number of documents containing the matched field
@@ -173,40 +183,20 @@ Scorer::ptr MakeJson(std::string_view args) {
   }
 }
 
-struct BM1Context : public irs::ScoreCtx {
-  BM1Context(float_t k, score_t boost, const BM25Stats& stats,
-             const score_t* fb = nullptr) noexcept
-    : filter_boost{fb}, num{boost * (k + 1) * stats.idf} {}
-
-  const score_t* filter_boost;
-  float_t num;  // partially precomputed numerator : boost * (k + 1) * idf
-};
-
 template<typename T>
-void Bm1Boost(T* IRS_RESTRICT res, size_t n, const score_t* IRS_RESTRICT boost,
-              float_t num) noexcept {
+IRS_FORCE_INLINE void Bm1Boost(T* IRS_RESTRICT res, size_t n,
+                               const score_t* IRS_RESTRICT boost,
+                               float_t num) noexcept {
   for (size_t i = 0; i < n; ++i) {
-    *GetScoreValue(res[i]) = boost[i] * num;
+    res[i] = boost[i] * num;
   }
 }
 
-struct BM15Context : public BM1Context {
-  BM15Context(float_t k, score_t boost, const BM25Stats& stats,
-              const FreqBlockAttr* freq, const score_t* fb = nullptr) noexcept
-    : BM1Context{k, boost, stats, fb},
-      norm_const{stats.norm_const},
-      freq{freq} {
-    SDB_ASSERT(this->freq);
-  }
-
-  float_t norm_const;         // 'k' factor
-  const FreqBlockAttr* freq;  // document frequency
-};
-
 template<bool HasBoost, typename T>
-void Bm15(T* IRS_RESTRICT res, size_t n, const uint32_t* IRS_RESTRICT freq,
-          [[maybe_unused]] const score_t* IRS_RESTRICT boost, float_t num,
-          float_t c1) noexcept {
+IRS_FORCE_INLINE void Bm15(T* IRS_RESTRICT res, size_t n,
+                           const uint32_t* IRS_RESTRICT freq,
+                           [[maybe_unused]] const score_t* IRS_RESTRICT boost,
+                           float_t num, float_t c1) noexcept {
   SDB_ASSERT(c1 != 0.f);
   for (size_t i = 0; i < n; ++i) {
     const auto c0 = [&] {
@@ -217,28 +207,16 @@ void Bm15(T* IRS_RESTRICT res, size_t n, const uint32_t* IRS_RESTRICT freq,
         return num;
       }
     }();
-    *GetScoreValue(res[i]) =
-      c0 - c0 / (1.f + static_cast<float_t>(freq[i]) / c1);
+    res[i] = c0 - c0 / (1.f + static_cast<float_t>(freq[i]) / c1);
   }
 }
 
-struct BM25Context : public BM15Context {
-  BM25Context(float_t k, score_t boost, const BM25Stats& stats,
-              const FreqBlockAttr* freq, const uint32_t* norm,
-              const score_t* filter_boost = nullptr) noexcept
-    : BM15Context{k, boost, stats, freq, filter_boost},
-      norm{norm},
-      norm_length{stats.norm_length} {}
-
-  const uint32_t* norm;
-  float_t norm_length;  // precomputed 'k*b/avg_dl'
-};
-
 template<bool HasBoost, typename T>
-void Bm25(T* res, size_t n, const uint32_t* IRS_RESTRICT freq,
-          const uint32_t* IRS_RESTRICT norm,
-          [[maybe_unused]] const score_t* IRS_RESTRICT boost, float_t num,
-          float_t norm_const, float_t norm_length) noexcept {
+IRS_FORCE_INLINE void Bm25(T* res, size_t n, const uint32_t* IRS_RESTRICT freq,
+                           const uint32_t* IRS_RESTRICT norm,
+                           [[maybe_unused]] const score_t* IRS_RESTRICT boost,
+                           float_t num, float_t norm_const,
+                           float_t norm_length) noexcept {
   for (size_t i = 0; i < n; ++i) {
     const auto c0 = [&] {
       if constexpr (HasBoost) {
@@ -249,71 +227,139 @@ void Bm25(T* res, size_t n, const uint32_t* IRS_RESTRICT freq,
       }
     }();
     const float_t c1 = norm_const + norm_length * static_cast<float_t>(norm[i]);
-    *GetScoreValue(res[i]) =
-      c0 - c0 * c1 / (c1 + static_cast<float_t>(freq[i]));
+    res[i] = c0 - c0 * c1 / (c1 + static_cast<float_t>(freq[i]));
   }
 }
 
-}  // namespace
+template<bool HasFilterBoost>
+struct Bm1Score : public ScoreOperator {
+  Bm1Score(float_t k, score_t boost, const BM25Stats& stats,
+           const score_t* fb) noexcept
+    : filter_boost{fb}, num{boost * (k + 1) * stats.idf} {}
 
-template<>
-struct MakeScoreFunctionImpl<BM1Context> {
-  using Ctx = BM1Context;
-
-  template<bool HasFilterBoost, bool Single, typename... Args>
-  static auto Make(Args&&... args) {
+  score_t Score() noexcept final {
+    score_t res;
     if constexpr (HasFilterBoost) {
-      return ScoreFunction::Make<Ctx>(
-        [](irs::ScoreCtx* ctx, irs::score_t* res, size_t n) noexcept {
-          SDB_ASSERT(res);
-          SDB_ASSERT(ctx);
-          auto& state = static_cast<Ctx&>(*ctx);
-          Bm1Boost(res, n, state.filter_boost, state.num);
-        },
-        ScoreFunction::NoopMin, std::forward<Args>(args)...);
+      Bm1Boost(&res, 1, filter_boost, num);
     } else {
-      Ctx ctx{std::forward<Args>(args)...};
-      return ScoreFunction::Constant(ctx.num);
+      res = 0;
+    }
+    return res;
+  }
+
+  void Score(score_t* res, size_t n) noexcept final {
+    if constexpr (HasFilterBoost) {
+      Bm1Boost(res, n, filter_boost, num);
+    } else {
+      std::memset(res, 0, sizeof(score_t) * n);
     }
   }
-};
 
-template<>
-struct MakeScoreFunctionImpl<BM15Context> {
-  using Ctx = BM15Context;
-
-  template<bool HasFilterBoost, bool Single, typename... Args>
-  static auto Make(Args&&... args) {
-    return ScoreFunction::Make<Ctx>(
-      [](irs::ScoreCtx* ctx, irs::score_t* res, size_t n) noexcept {
-        SDB_ASSERT(res);
-        SDB_ASSERT(ctx);
-        auto& state = *static_cast<Ctx*>(ctx);
-        Bm15<HasFilterBoost>(res, n, state.freq->value, state.filter_boost,
-                             state.num, state.norm_const);
-      },
-      ScoreFunction::NoopMin, std::forward<Args>(args)...);
+  void ScoreBlock(score_t* res) noexcept final {
+    if constexpr (HasFilterBoost) {
+      Bm1Boost(res, kScoreBlock, filter_boost, num);
+    } else {
+      std::memset(res, 0, sizeof(score_t) * kScoreBlock);
+    }
   }
-};
 
-template<>
-struct MakeScoreFunctionImpl<BM25Context> {
-  using Ctx = BM25Context;
-
-  template<bool HasFilterBoost, bool Single, typename... Args>
-  static auto Make(Args&&... args) {
-    return ScoreFunction::Make<Ctx>(
-      [](ScoreCtx* ctx, score_t* res, size_t n) noexcept {
-        SDB_ASSERT(res);
-        SDB_ASSERT(ctx);
-        auto& state = *static_cast<Ctx*>(ctx);
-        Bm25<HasFilterBoost>(res, Single ? 1 : n, state.freq->value, state.norm,
-                             state.filter_boost, state.num, state.norm_const,
-                             state.norm_length);
-      },
-      ScoreFunction::NoopMin, std::forward<Args>(args)...);
+  void ScorePostingBlock(score_t* res) noexcept final {
+    if constexpr (HasFilterBoost) {
+      Bm1Boost(res, kPostingBlock, filter_boost, num);
+    } else {
+      std::memset(res, 0, sizeof(score_t) * kPostingBlock);
+    }
   }
+
+  [[no_unique_address]] utils::Need<HasFilterBoost, const score_t*>
+    filter_boost;
+  [[no_unique_address]] utils::Need<HasFilterBoost, float_t>
+    num;  // partially precomputed numerator : boost * (k + 1) * idf
 };
+
+template<bool HasFilterBoost>
+struct Bm15Score : public ScoreOperator {
+  Bm15Score(float_t k, score_t boost, const BM25Stats& stats,
+            const FreqBlockAttr* freq, const score_t* fb) noexcept
+    : filter_boost{fb},
+      num{boost * (k + 1) * stats.idf},
+      norm_const{stats.norm_const},
+      freq{freq} {
+    SDB_ASSERT(this->freq);
+  }
+
+  score_t Score() noexcept final {
+    score_t res;
+    Bm15<HasFilterBoost>(&res, 1, freq->value, TryGetValue(filter_boost), num,
+                         norm_const);
+    return res;
+  }
+  void Score(score_t* res, size_t n) noexcept final {
+    Bm15<HasFilterBoost>(res, n, freq->value, TryGetValue(filter_boost), num,
+                         norm_const);
+  }
+  void ScoreBlock(score_t* res) noexcept final {
+    Bm15<HasFilterBoost>(res, kScoreBlock, freq->value,
+                         TryGetValue(filter_boost), num, norm_const);
+  }
+  void ScorePostingBlock(score_t* res) noexcept final {
+    Bm15<HasFilterBoost>(res, kPostingBlock, freq->value,
+                         TryGetValue(filter_boost), num, norm_const);
+  }
+
+  [[no_unique_address]] utils::Need<HasFilterBoost, const score_t*>
+    filter_boost;
+  float_t num;  // partially precomputed numerator : boost * (k + 1) * idf
+  float_t norm_const;         // 'k' factor
+  const FreqBlockAttr* freq;  // document frequency
+};
+
+template<bool HasFilterBoost>
+struct Bm25Score : public ScoreOperator {
+  Bm25Score(float_t k, score_t boost, const BM25Stats& stats,
+            const FreqBlockAttr* freq, const uint32_t* norm,
+            const score_t* filter_boost) noexcept
+    : filter_boost{filter_boost},
+      num{boost * (k + 1) * stats.idf},
+      norm_const{stats.norm_const},
+      freq{freq},
+      norm{norm},
+      norm_length{stats.norm_length} {}
+
+  score_t Score() noexcept final {
+    score_t res;
+    Bm25<HasFilterBoost>(&res, 1, freq->value, norm, TryGetValue(filter_boost),
+                         num, norm_const, norm_length);
+    return res;
+  }
+
+  void Score(score_t* res, size_t n) noexcept final {
+    Bm25<HasFilterBoost>(res, n, freq->value, norm, TryGetValue(filter_boost),
+                         num, norm_const, norm_length);
+  }
+
+  void ScoreBlock(score_t* res) noexcept final {
+    Bm25<HasFilterBoost>(res, kScoreBlock, freq->value, norm,
+                         TryGetValue(filter_boost), num, norm_const,
+                         norm_length);
+  }
+
+  void ScorePostingBlock(score_t* res) noexcept final {
+    Bm25<HasFilterBoost>(res, kScoreBlock, freq->value, norm,
+                         TryGetValue(filter_boost), num, norm_const,
+                         norm_length);
+  }
+
+  [[no_unique_address]] utils::Need<HasFilterBoost, const score_t*>
+    filter_boost;
+  float_t num;  // partially precomputed numerator : boost * (k + 1) * idf
+  float_t norm_const;         // 'k' factor
+  const FreqBlockAttr* freq;  // document frequency
+  const uint32_t* norm;
+  float_t norm_length;  // precomputed 'k*b/avg_dl'
+};
+
+}  // namespace
 
 void BM25::collect(byte_type* stats_buf, const irs::FieldCollector* field,
                    const irs::TermCollector* term) const {
@@ -378,28 +424,30 @@ ScoreFunction BM25::PrepareSingleScorer(const ScoreContext& ctx) const {
 
   auto* stats = stats_cast(ctx.stats);
 
-  if (IsBM1()) {
-    return MakeScoreFunction<BM1Context, false>(filter_boost, _k, ctx.boost,
-                                                *stats);
-  }
+  return ResolveBool(filter_boost != nullptr, [&]<bool HasBoost>() {
+    if (IsBM1()) {
+      return ScoreFunction::Make<Bm1Score<HasBoost>>(_k, ctx.boost, *stats,
+                                                     filter_boost);
+    }
 
-  if (IsBM15()) {
-    return MakeScoreFunction<BM15Context, false>(
-      filter_boost, _k, ctx.boost, *stats, nullptr);  // TODO(gnusi): fix
-  }
+    if (IsBM15()) {
+      return ScoreFunction::Make<Bm15Score<HasBoost>>(
+        _k, ctx.boost, *stats, nullptr, filter_boost);  // TODO(gnusi): fix
+    }
 
-  auto* norm = [&] {
-    auto* attr = irs::get<Norm>(ctx.doc_attrs);
-    return attr ? &attr->value : nullptr;
-  }();
+    auto* norm = [&] {
+      auto* attr = irs::get<Norm>(ctx.doc_attrs);
+      return attr ? &attr->value : nullptr;
+    }();
 
-  if (!norm) {
-    static constexpr uint32_t kNorm = 1;
-    norm = &kNorm;
-  }
+    if (!norm) {
+      static constexpr uint32_t kNorm = 1;
+      norm = &kNorm;
+    }
 
-  return MakeScoreFunction<BM25Context, false>(
-    filter_boost, _k, ctx.boost, *stats, nullptr, norm);  // TODO(gnusi): fix
+    return ScoreFunction::Make<Bm25Score<HasBoost>>(
+      _k, ctx.boost, *stats, nullptr, norm, filter_boost);  // TODO(gnusi): fix
+  });
 }
 
 ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
@@ -422,32 +470,34 @@ ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
 
   auto* stats = stats_cast(ctx.stats);
 
-  if (IsBM1()) {
-    return MakeScoreFunction<BM1Context, false>(filter_boost, _k, ctx.boost,
-                                                *stats);
-  }
+  return ResolveBool(filter_boost != nullptr, [&]<bool HasBoost>() {
+    if (IsBM1()) {
+      return ScoreFunction::Make<Bm1Score<HasBoost>>(_k, ctx.boost, *stats,
+                                                     filter_boost);
+    }
 
-  if (IsBM15()) {
-    return MakeScoreFunction<BM15Context, false>(filter_boost, _k, ctx.boost,
-                                                 *stats, freq);
-  }
+    if (IsBM15()) {
+      return ScoreFunction::Make<Bm15Score<HasBoost>>(_k, ctx.boost, *stats,
+                                                      freq, filter_boost);
+    }
 
-  const uint32_t* norm = nullptr;
-  if (ctx.collector) {
-    norm = ctx.collector->AddNorms(ctx.segment.column(ctx.field.norm));
-  }
+    const uint32_t* norm = nullptr;
+    if (ctx.collector) {
+      norm = ctx.collector->AddNorms(ctx.segment.column(ctx.field.norm));
+    }
 
-  if (!norm) {
-    static constexpr auto kNorms = [] {
-      std::array<uint32_t, kMaxScoreBlock> norms;
-      absl::c_fill(norms, 1);
-      return norms;
-    }();
-    norm = kNorms.data();
-  }
+    if (!norm) {
+      static constexpr auto kNorms = [] {
+        std::array<uint32_t, kPostingBlock> norms;
+        absl::c_fill(norms, 1);
+        return norms;
+      }();
+      norm = kNorms.data();
+    }
 
-  return MakeScoreFunction<BM25Context, false>(filter_boost, _k, ctx.boost,
-                                               *stats, freq, norm);
+    return ScoreFunction::Make<Bm25Score<HasBoost>>(_k, ctx.boost, *stats, freq,
+                                                    norm, filter_boost);
+  });
 }
 
 WandWriter::ptr BM25::prepare_wand_writer(size_t max_levels) const {

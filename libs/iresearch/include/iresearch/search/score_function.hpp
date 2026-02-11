@@ -32,126 +32,103 @@ namespace irs {
 
 inline constexpr size_t kScoreBlock = 32;
 static_assert(kScoreBlock < std::numeric_limits<uint16_t>::max());
-inline constexpr size_t kMaxScoreBlock = 4 * kScoreBlock;
+inline constexpr size_t kPostingBlock = 4 * kScoreBlock;
+static_assert(kPostingBlock < std::numeric_limits<uint16_t>::max());
+static_assert(kPostingBlock % kScoreBlock == 0);
 
-// Stateful object used for computing the document score
-// based on the stored state.
-struct ScoreCtx {
-  ScoreCtx() = default;
-  ScoreCtx(ScoreCtx&&) = default;
-  ScoreCtx& operator=(ScoreCtx&&) = default;
-
- protected:
-  ~ScoreCtx() = default;
+struct ScoreOperator : memory::Managed {
+  virtual void Score(score_t* res, size_t n) noexcept = 0;
+  virtual void ScoreBlock(score_t* res) noexcept { Score(res, kScoreBlock); }
+  virtual void ScorePostingBlock(score_t* res) noexcept { SDB_ASSERT(false); }
+  virtual score_t Score() noexcept {
+    score_t result;
+    Score(&result, 1);
+    return result;
+  }
 };
 
-// Convenient wrapper around score_ctx, score_f and min_f.
-class ScoreFunction : util::Noncopyable {
-  using ScoreF = void (*)(ScoreCtx* ctx, score_t* res, size_t n) noexcept;
-  using MinF = void (*)(ScoreCtx* ctx, score_t min) noexcept;
-  using DeleterF = void (*)(ScoreCtx* ctx) noexcept;
-  static void NoopDelete(ScoreCtx* /*ctx*/) noexcept {}
-
- public:
-  // For disjunction/conjunction it's just sum of sub-iterators max score
-  // For iterator without score it depends on count of documents in iterator
-  // For wanderator it's max score for whole skip-list
-  // TODO(mbkkt) tail better here and not affect correctness
-  //  but to support it we need to know max value in the tail blocks.
-  //  Open question: how do it without read next blocks?
-  // TODO(mbkkt) At least when iterator exhausted, we could set it to zero.
-  struct UpperBounds {
-    score_t tail = std::numeric_limits<score_t>::max();
-    score_t leaf = std::numeric_limits<score_t>::max();
-#ifdef SDB_GTEST
-    std::span<const score_t> levels;  // levels.back() == leaf
-#endif
-  } max;
-
-  static void DefaultScore(ScoreCtx* ctx, score_t* res, size_t n) noexcept;
-  static void NoopMin(ScoreCtx* /*ctx*/, score_t /*min*/) noexcept {}
-
-  static ScoreFunction Noop() noexcept {
-    return {nullptr, DefaultScore, NoopMin, NoopDelete};
+struct DefaultScore final : public ScoreOperator {
+  static DefaultScore gInstance;
+  static memory::managed_ptr<ScoreOperator> Make() {
+    return memory::to_managed<ScoreOperator>(gInstance);
   }
-  static ScoreFunction Default();
+
+  void Score(score_t* res, size_t n) noexcept final;
+  void ScoreBlock(score_t* res) noexcept final;
+  void ScorePostingBlock(score_t* res) noexcept final;
+};
+
+// For disjunction/conjunction it's just sum of sub-iterators max score
+// For iterator without score it depends on count of documents in iterator
+// For wanderator it's max score for whole skip-list
+// TODO(mbkkt) tail better here and not affect correctness
+//  but to support it we need to know max value in the tail blocks.
+//  Open question: how do it without read next blocks?
+// TODO(mbkkt) At least when iterator exhausted, we could set it to zero.
+struct UpperBounds {
+  score_t tail = std::numeric_limits<score_t>::max();
+  score_t leaf = std::numeric_limits<score_t>::max();
+#ifdef SDB_GTEST
+  std::span<const score_t> levels;  // levels.back() == leaf
+#endif
+};
+
+class ScoreFunction {
+ public:
+  template<typename T, typename... Args>
+  static ScoreFunction Make(Args&&... args) {
+    return ScoreFunction{memory::make_managed<T>(std::forward<Args>(args)...)};
+  }
+  static ScoreFunction Wrap(ScoreOperator& impl) noexcept {
+    return ScoreFunction{memory::to_managed<ScoreOperator>(impl)};
+  }
+  static ScoreFunction Default() noexcept {
+    return ScoreFunction::Wrap(DefaultScore::gInstance);
+  }
   static ScoreFunction Constant(score_t value) noexcept;
 
-  template<typename T, typename... Args>
-  static auto Make(ScoreF score, MinF min, Args&&... args) {
-    return ScoreFunction{
-      new T{std::forward<Args>(args)...}, score, min,
-      [](ScoreCtx* ctx) noexcept { delete static_cast<T*>(ctx); }};
+  ScoreFunction() noexcept : ScoreFunction{Default()} {}
+  ScoreFunction(ScoreFunction&& other) noexcept
+    : _impl{std::exchange(other._impl, DefaultScore::Make())} {
+    SDB_ASSERT(_impl);
   }
-
-  ScoreFunction() noexcept = default;
-  ScoreFunction(ScoreCtx* ctx, ScoreF score, MinF min = NoopMin) noexcept
-    : ScoreFunction{ctx, score, min, NoopDelete} {}
-  ScoreFunction(ScoreFunction&& rhs) noexcept
-    : ScoreFunction{std::exchange(rhs._ctx, nullptr),
-                    std::exchange(rhs._score, DefaultScore),
-                    std::exchange(rhs._min, NoopMin),
-                    std::exchange(rhs._deleter, NoopDelete)} {}
-  ScoreFunction& operator=(ScoreFunction&& rhs) noexcept {
-    if (this != &rhs) [[likely]] {
-      std::swap(_ctx, rhs._ctx);
-      std::swap(_score, rhs._score);
-      std::swap(_min, rhs._min);
-      std::swap(_deleter, rhs._deleter);
+  ScoreFunction& operator=(ScoreFunction&& other) noexcept {
+    if (this != &other) {
+      _impl = std::exchange(other._impl, DefaultScore::Make());
+      SDB_ASSERT(_impl);
     }
     return *this;
   }
-  ~ScoreFunction() noexcept { _deleter(_ctx); }
 
-  void Reset(ScoreCtx& ctx, ScoreF score, MinF min = NoopMin) noexcept {
-    SDB_ASSERT(&ctx != _ctx || _deleter == NoopDelete);
-    _deleter(_ctx);
-    _ctx = &ctx;
-    _score = score;
-    _min = min;
-    _deleter = NoopDelete;
+  bool IsDefault() const noexcept {
+    return _impl.get() == &DefaultScore::gInstance;
   }
-
-  bool IsDefault() const noexcept { return _score == DefaultScore; }
 
   IRS_FORCE_INLINE void Score(score_t* res, size_t n) const noexcept {
-    SDB_ASSERT(_score != nullptr);
-    _score(_ctx, res, n);
+    _impl->Score(res, n);
   }
 
-  IRS_FORCE_INLINE void Score(score_t* res) const noexcept {
-    SDB_ASSERT(_score != nullptr);
-    _score(_ctx, res, 1);
+  IRS_FORCE_INLINE void ScoreBlock(score_t* res) const noexcept {
+    _impl->ScoreBlock(res);
   }
 
-  IRS_FORCE_INLINE void Min(score_t arg) const noexcept {
-    SDB_ASSERT(_min != nullptr);
-    _min(_ctx, arg);
+  IRS_FORCE_INLINE void ScorePostingBlock(score_t* res) const noexcept {
+    _impl->ScorePostingBlock(res);
   }
 
-  score_t Max() const noexcept;
-
-  // TODO(mbkkt) Remove it, use Score
-  IRS_FORCE_INLINE void operator()(score_t* res) const noexcept {
-    Score(res, 1);
-  }
+  IRS_FORCE_INLINE score_t Score() const noexcept { return _impl->Score(); }
 
   bool operator==(const ScoreFunction& rhs) const noexcept {
-    return _ctx == rhs._ctx && _score == rhs._score && _min == rhs._min;
+    return _impl == rhs._impl;
   }
 
-  [[nodiscard]] auto* Ctx() const noexcept { return _ctx; }
-  [[nodiscard]] auto Func() const noexcept { return _score; }
-
  private:
-  ScoreFunction(ScoreCtx* ctx, ScoreF score, MinF min,
-                DeleterF deleter) noexcept
-    : _ctx{ctx}, _score{score}, _min{min}, _deleter{deleter} {}
+  explicit ScoreFunction(memory::managed_ptr<ScoreOperator> impl) noexcept
+    : _impl{std::move(impl)} {
+    SDB_ASSERT(_impl);
+  }
 
-  ScoreCtx* _ctx = nullptr;
-  ScoreF _score = DefaultScore;
-  MinF _min = NoopMin;
-  DeleterF _deleter = NoopDelete;
+  memory::managed_ptr<ScoreOperator> _impl;
 };
 
 }  // namespace irs

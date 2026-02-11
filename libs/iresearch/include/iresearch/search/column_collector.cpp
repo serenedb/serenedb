@@ -35,7 +35,7 @@ const uint32_t* ColumnCollector::AddNorms(const ColumnReader* field) {
     if (!it.reader) [[unlikely]] {
       return nullptr;
     }
-    it.norms.resize(kMaxScoreBlock);  // TODO(gnusi): fix
+    it.norms.resize(kPostingBlock);  // TODO(gnusi): fix
   }
   return it.norms.data();
 }

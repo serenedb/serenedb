@@ -24,6 +24,7 @@
 
 #include <absl/container/inlined_vector.h>
 
+#include "basics/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/score.hpp"
@@ -36,23 +37,44 @@ Scorer::ptr MakeJson(std::string_view /*args*/) {
   return std::make_unique<BoostScore>();
 }
 
-struct VolatileBoostScoreCtx final : ScoreCtx {
-  VolatileBoostScoreCtx(const score_t* volatile_boost, score_t boost) noexcept
-    : const_boost{boost}, volatile_boost{volatile_boost} {
+template<typename T>
+IRS_FORCE_INLINE void Impl(T* IRS_RESTRICT res, size_t n,
+                           const score_t* IRS_RESTRICT volatile_boost,
+                           score_t boost) noexcept {
+  for (size_t i = 0; i < n; ++i) {
+    res[i] = volatile_boost[i] * boost;
+  }
+}
+
+class VolatileBoostScore : public ScoreOperator {
+ public:
+  VolatileBoostScore(const score_t* volatile_boost, score_t boost) noexcept
+    : _const_boost{boost}, _volatile_boost{volatile_boost} {
     SDB_ASSERT(volatile_boost);
   }
 
-  score_t const_boost;
-  const score_t* volatile_boost;
-};
-
-template<typename T>
-void Impl(T* IRS_RESTRICT res, size_t n,
-          const score_t* IRS_RESTRICT volatile_boost, score_t boost) noexcept {
-  for (size_t i = 0; i < n; ++i) {
-    *GetScoreValue(res[i]) = volatile_boost[i] * boost;
+  score_t Score() noexcept final {
+    score_t res;
+    Impl(&res, 1, _volatile_boost, _const_boost);
+    return res;
   }
-}
+
+  void Score(score_t* res, size_t n) noexcept final {
+    Impl(res, n, _volatile_boost, _const_boost);
+  }
+
+  void ScoreBlock(score_t* res) noexcept final {
+    Impl(res, kScoreBlock, _volatile_boost, _const_boost);
+  }
+
+  void ScorePostingBlock(score_t* res) noexcept final {
+    Impl(res, kPostingBlock, _volatile_boost, _const_boost);
+  }
+
+ private:
+  score_t _const_boost;
+  const score_t* _volatile_boost;
+};
 
 }  // namespace
 
@@ -63,12 +85,8 @@ ScoreFunction BoostScore::PrepareScorer(const ScoreContext& ctx) const {
     return ScoreFunction::Constant(ctx.boost);
   }
 
-  return ScoreFunction::Make<VolatileBoostScoreCtx>(
-    [](ScoreCtx* ctx, score_t* res, size_t n) noexcept {
-      auto& state = static_cast<VolatileBoostScoreCtx&>(*ctx);
-      Impl(res, n, state.volatile_boost, state.const_boost);
-    },
-    ScoreFunction::NoopMin, volatile_boost->value, ctx.boost);
+  return ScoreFunction::Make<VolatileBoostScore>(volatile_boost->value,
+                                                 ctx.boost);
 }
 
 void BoostScore::init() { REGISTER_SCORER_JSON(BoostScore, MakeJson); }

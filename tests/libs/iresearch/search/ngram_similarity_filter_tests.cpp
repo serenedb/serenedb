@@ -1140,11 +1140,17 @@ TEST_P(NGramSimilarityFilterTestCase, missed_middle3_test) {
   counter.Reset();
 }
 
-struct TestScoreCtx final : public irs::ScoreCtx {
-  TestScoreCtx(std::vector<size_t>* f, const irs::FreqAttr* p,
-               std::vector<irs::score_t>* b,
-               const irs::FilterBoost* fb) noexcept
+struct TestScoreFunctionImpl : public irs::ScoreOperator {
+  TestScoreFunctionImpl(std::vector<size_t>* f, const irs::FreqAttr* p,
+                        std::vector<irs::score_t>* b,
+                        const irs::FilterBoost* fb) noexcept
     : freq(f), filter_boost(b), freq_from_filter(p), boost_from_filter(fb) {}
+
+  void Score(irs::score_t* res, size_t n) noexcept override {
+    freq->push_back(freq_from_filter->value);
+    filter_boost->push_back(boost_from_filter->value);
+    std::memset(res, 0, n * sizeof(irs::score_t));
+  }
 
   std::vector<size_t>* freq;
   std::vector<irs::score_t>* filter_boost;
@@ -1198,14 +1204,8 @@ TEST_P(NGramSimilarityFilterTestCase, missed_last_scored_test) {
      &filter_boost](const irs::ScoreContext& ctx) -> irs::ScoreFunction {
     auto* freq = irs::get<irs::FreqAttr>(ctx.doc_attrs);
     auto* boost = irs::get<irs::FilterBoost>(ctx.doc_attrs);
-    return irs::ScoreFunction::Make<TestScoreCtx>(
-      [](irs::ScoreCtx* ctx, irs::score_t* res, size_t n) noexcept {
-        const auto& freq = *reinterpret_cast<TestScoreCtx*>(ctx);
-        freq.freq->push_back(freq.freq_from_filter->value);
-        freq.filter_boost->push_back(freq.boost_from_filter->value);
-        std::memset(res, 0, n * sizeof(irs::score_t));
-      },
-      irs::ScoreFunction::NoopMin, &frequency, freq, &filter_boost, boost);
+    return irs::ScoreFunction::Make<TestScoreFunctionImpl>(
+      &frequency, freq, &filter_boost, boost);
   };
   std::vector<size_t> expected_frequency{1, 1, 2, 1, 1, 1, 1};
   std::vector<irs::score_t> expected_filter_boost{
@@ -1268,14 +1268,8 @@ TEST_P(NGramSimilarityFilterTestCase, missed_frequency_test) {
      &filter_boost](const irs::ScoreContext& ctx) -> irs::ScoreFunction {
     auto* freq = irs::get<irs::FreqAttr>(ctx.doc_attrs);
     auto* boost = irs::get<irs::FilterBoost>(ctx.doc_attrs);
-    return irs::ScoreFunction::Make<TestScoreCtx>(
-      [](irs::ScoreCtx* ctx, irs::score_t* res, size_t n) noexcept {
-        const auto& freq = *static_cast<TestScoreCtx*>(ctx);
-        freq.freq->push_back(freq.freq_from_filter->value);
-        freq.filter_boost->push_back(freq.boost_from_filter->value);
-        std::memset(res, 0, n * sizeof(irs::score_t));
-      },
-      irs::ScoreFunction::NoopMin, &frequency, freq, &filter_boost, boost);
+    return irs::ScoreFunction::Make<TestScoreFunctionImpl>(
+      &frequency, freq, &filter_boost, boost);
   };
   std::vector<size_t> expected_frequency{1, 1, 2, 1, 1, 1, 1};
   std::vector<irs::score_t> expected_filter_boost{

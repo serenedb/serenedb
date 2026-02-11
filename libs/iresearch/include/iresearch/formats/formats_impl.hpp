@@ -1231,9 +1231,15 @@ class PostingIteratorBase : public DocIterator {
         std::get<FreqBlockAttr>(_attrs).value =
           std::end(this->_freqs) - left_in_leaf;
       }
-      score.score->Score(
-        reinterpret_cast<score_t*>(std::end(this->_enc_buf) - left_in_leaf),
-        left_in_leaf);
+      if (left_in_leaf == kPostingBlock) [[likely]] {
+        score.score->ScorePostingBlock(
+          reinterpret_cast<score_t*>(std::end(this->_enc_buf) - kPostingBlock));
+
+      } else {
+        score.score->Score(
+          reinterpret_cast<score_t*>(std::end(this->_enc_buf) - left_in_leaf),
+          left_in_leaf);
+      }
     };
 
     return ResolveBool(match.matches != nullptr, [&]<bool TrackMatch> {
@@ -1554,7 +1560,7 @@ void CommonReadWandData(WandExtent wextent, uint8_t index,
   if (extent == 1) [[likely]] {
     const auto size = in.ReadByte();
     ctx.Read(in, size);
-    func.Score(&score);
+    score = func.Score();
     return;
   }
 
@@ -1574,7 +1580,7 @@ void CommonReadWandData(WandExtent wextent, uint8_t index,
     in.Skip(scorer_offset);
   }
   ctx.Read(in, size);
-  func.Score(&score);
+  score = func.Score();
   if (block_offset) {
     in.Skip(block_offset);
   }

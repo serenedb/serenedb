@@ -24,52 +24,50 @@
 
 #include <absl/algorithm/container.h>
 
-#include <bit>
-
 #include "iresearch/search/score.hpp"
 #include "iresearch/search/scorer.hpp"
 
 namespace irs {
 namespace {
 
-struct ConstantCtx {
-  score_t value;
-  uint32_t padding = 0;
-};
-static_assert(sizeof(ConstantCtx) == sizeof(ScoreCtx*));
+class ConstanScore : public ScoreOperator {
+ public:
+  explicit ConstanScore(score_t value) noexcept : _value{value} {}
 
-void ConstantScore(ScoreCtx* ctx, score_t* res, size_t n) noexcept {
-  SDB_ASSERT(res);
-  auto state = std::bit_cast<ConstantCtx>(ctx);
-  std::fill_n(res, n, state.value);
-}
+  void Score(score_t* res, size_t n) noexcept final {
+    std::fill_n(res, n, _value);
+  }
+
+  void ScoreBlock(score_t* res) noexcept final {
+    std::fill_n(res, kScoreBlock, _value);
+  }
+
+  void ScorePostingBlock(score_t* res) noexcept final {
+    std::fill_n(res, kPostingBlock, _value);
+  }
+
+ private:
+  score_t _value;
+};
 
 }  // namespace
 
-void ScoreFunction::DefaultScore(ScoreCtx* ctx, score_t* res,
-                                 size_t n) noexcept {
-  SDB_ASSERT(res != nullptr);
+DefaultScore DefaultScore::gInstance;
+
+void DefaultScore::Score(score_t* res, size_t n) noexcept {
   std::memset(res, 0, sizeof(score_t) * n);
 }
 
+void DefaultScore::ScoreBlock(score_t* res) noexcept {
+  std::memset(res, 0, sizeof(score_t) * kScoreBlock);
+}
+
+void DefaultScore::ScorePostingBlock(score_t* res) noexcept {
+  std::memset(res, 0, sizeof(score_t) * kPostingBlock);
+}
+
 ScoreFunction ScoreFunction::Constant(score_t value) noexcept {
-  ConstantCtx ctx{value};
-  return ScoreFunction{std::bit_cast<ScoreCtx*>(ctx), ConstantScore, NoopMin};
-}
-
-ScoreFunction ScoreFunction::Default() {
-  return ScoreFunction{nullptr, DefaultScore, NoopMin};
-}
-
-score_t ScoreFunction::Max() const noexcept {
-  if (_score == DefaultScore) {
-    return 0.f;
-  } else if (_score == ConstantScore) {
-    score_t score;
-    Score(&score, 1);
-    return score;
-  }
-  return std::numeric_limits<score_t>::max();
+  return ScoreFunction::Make<ConstanScore>(value);
 }
 
 }  // namespace irs

@@ -217,7 +217,7 @@ class NoneMatcher {
 };
 
 template<ScoreMergeType MergeType>
-struct NestedScoreContext {
+struct NestedScore final : ScoreOperator {
   ScoreFunction child_score;
   ColumnCollector collector;
   std::array<score_t, kScoreBlock> parent_scores{};
@@ -258,28 +258,31 @@ struct NestedScoreContext {
     child_idx = 0;
   }
 
-  void Score(score_t* res, size_t n) {
+  score_t Score() noexcept final {
+    parent_idx = 0;
+    return parent_scores.front();
+  }
+
+  void Score(score_t* res, size_t n) noexcept final {
     std::memcpy(res, parent_scores.data(), n * sizeof(score_t));
+    parent_idx = 0;
+  }
+
+  void ScoreBlock(score_t* res) noexcept final {
+    std::memcpy(res, parent_scores.data(), kScoreBlock * sizeof(score_t));
     parent_idx = 0;
   }
 };
 
 template<ScoreMergeType MergeType>
-class MatcherBase : public ScoreCtx {
+class MatcherBase {
  protected:
   static constexpr auto kMergeType = MergeType;
   static constexpr bool kHasScore = kMergeType != ScoreMergeType::Noop;
 
   ScoreFunction PrepareMatcherScore() {
     static_assert(kHasScore);
-    return {this,
-            [](ScoreCtx* ctx, score_t* res, size_t n) noexcept {
-              SDB_ASSERT(ctx);
-              SDB_ASSERT(res);
-              auto& self = static_cast<MatcherBase&>(*ctx);
-              self._scores.Score(res, n);
-            },
-            ScoreFunction::NoopMin};
+    return ScoreFunction::Wrap(_scores);
   }
 
   void CollectChild(auto& it) {
@@ -300,8 +303,7 @@ class MatcherBase : public ScoreCtx {
     }
   }
 
-  [[no_unique_address]] utils::Need<kHasScore, NestedScoreContext<MergeType>>
-    _scores;
+  [[no_unique_address]] utils::Need<kHasScore, NestedScore<MergeType>> _scores;
 };
 
 template<ScoreMergeType MergeType>

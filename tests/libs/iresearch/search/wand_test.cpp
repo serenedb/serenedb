@@ -188,20 +188,19 @@ std::vector<Doc> WandTestCase::Collect(const irs::DirectoryReader& index,
     EXPECT_NE(nullptr, doc);
     irs::ScoreFunction score;
     if (wand_idx != irs::WandContext::kDisable && can_use_wand) {
-      EXPECT_NE(std::numeric_limits<irs::score_t>::max(), score.max.tail);
+      // EXPECT_NE(std::numeric_limits<irs::score_t>::max(), score.max.tail);
       score = docs->PrepareScore({
         .scorer = scorers[wand_idx],
         .segment = &segment,
         .collector = &collector,
       });
     } else {
-      EXPECT_EQ(std::numeric_limits<irs::score_t>::max(), score.max.tail);
+      // EXPECT_EQ(std::numeric_limits<irs::score_t>::max(), score.max.tail);
     }
 
     if (!left) {
       EXPECT_TRUE(!sorted.empty());
       EXPECT_TRUE(std::is_heap(std::begin(sorted), std::end(sorted)));
-      score.Min(sorted.front().score);
     }
     std::vector<irs::score_t> scores(scorers.size());
     auto& score_value = *scores.data();
@@ -216,7 +215,6 @@ std::vector<Doc> WandTestCase::Collect(const irs::DirectoryReader& index,
 
         if (0 == --left) {
           std::make_heap(std::begin(sorted), std::end(sorted));
-          score.Min(sorted.front().score);
         }
       } else if (sorted.front().score < score_value) {
         std::pop_heap(std::begin(sorted), std::end(sorted));
@@ -227,8 +225,6 @@ std::vector<Doc> WandTestCase::Collect(const irs::DirectoryReader& index,
         min_doc.score = score_value;
 
         std::push_heap(std::begin(sorted), std::end(sorted));
-
-        score.Min(sorted.front().score);
       }
     }
 

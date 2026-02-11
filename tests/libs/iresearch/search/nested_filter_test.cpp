@@ -114,9 +114,16 @@ struct DocIdScorer : public irs::ScorerBase<void> {
   }
 
   irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
-    struct ScorerContext final : irs::ScoreCtx {
+    struct ScorerContext : irs::ScoreOperator {
       explicit ScorerContext(const tests::DocBlockAttr* doc) noexcept
         : doc{doc} {}
+
+      void Score(irs::score_t* res, size_t n) noexcept override {
+        ASSERT_NE(nullptr, res);
+        for (size_t i = 0; i < n; ++i) {
+          res[i] = static_cast<irs::score_t>(doc->value[i]);
+        }
+      }
 
       const tests::DocBlockAttr* doc;
     };
@@ -124,16 +131,7 @@ struct DocIdScorer : public irs::ScorerBase<void> {
     auto* doc = irs::get<tests::DocBlockAttr>(ctx.doc_attrs);
     EXPECT_NE(nullptr, doc);
 
-    return irs::ScoreFunction::Make<ScorerContext>(
-      [](irs::ScoreCtx* ctx, irs::score_t* res, size_t n) noexcept {
-        ASSERT_NE(nullptr, res);
-        ASSERT_NE(nullptr, ctx);
-        auto& state = *static_cast<ScorerContext*>(ctx);
-        for (size_t i = 0; i < n; ++i) {
-          res[i] = static_cast<irs::score_t>(state.doc->value[i]);
-        }
-      },
-      irs::ScoreFunction::NoopMin, doc);
+    return irs::ScoreFunction::Make<ScorerContext>(doc);
   }
 };
 

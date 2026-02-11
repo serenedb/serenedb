@@ -133,29 +133,29 @@ struct DocIterator : AttributeProvider {
     return doc;
   }
 
-  template<typename Iterator, size_t N = std::dynamic_extent>
+  template<typename Iterator>
   static uint32_t Collect(Iterator& it, const ScoreFunction& scorer,
-                          ColumnCollector& columns, std::span<doc_id_t, N> docs,
-                          std::span<score_t, N> scores) {
-    SDB_ASSERT(kScoreBlock <= docs.size());
-
+                          ColumnCollector& columns,
+                          std::span<doc_id_t, kScoreBlock> docs,
+                          std::span<score_t, kScoreBlock> scores) {
     size_t i = 0;
     for (; i < docs.size(); ++i) {
       const auto doc = it.advance();
-      if (doc_limits::eof(doc)) {
-        break;
+      if (doc_limits::eof(doc)) [[unlikely]] {
+        if (i) {
+          columns.Collect(docs.first(i));
+          scorer.Score(scores.data(), i);
+        }
+        return static_cast<uint32_t>(i);
       }
       docs[i] = doc;
       it.FetchScoreArgs(i);
     }
 
-    if (i == 0) {
-      return 0;
-    }
-
-    columns.Collect(docs.first(i));
-    scorer.Score(scores.data(), i);
-    return static_cast<uint32_t>(i);
+    SDB_ASSERT(i == kScoreBlock);
+    columns.Collect(docs);
+    scorer.ScoreBlock(scores.data());
+    return kScoreBlock;
   }
 
   template<typename Iterator>
@@ -185,16 +185,18 @@ struct DocIterator : AttributeProvider {
     [[maybe_unused]] std::array<doc_id_t, kScoreBlock> score_hits;
     [[maybe_unused]] uint16_t score_index = 0;
     [[maybe_unused]] auto flush_score = [&](size_t n) {
-      SDB_ASSERT(n);
-      SDB_ASSERT(score.score);
+      if constexpr (MergeType != ScoreMergeType::Noop) {
+        SDB_ASSERT(n);
+        SDB_ASSERT(score.score);
 
-      if (score.collector) {
-        score.collector->Collect(std::span{score_hits.data(), n});
+        if (score.collector) {
+          score.collector->Collect(std::span{score_hits.data(), n});
+        }
+        score.score->Score(score_buf.data(), n);
+        Merge<MergeType>(score.score_window, score_hits.data(), min,
+                         score_buf.data(), n);
+        score_index = 0;
       }
-      score.score->Score(score_buf.data(), n);
-      Merge<MergeType>(score.score_window, score_hits.data(), min,
-                       score_buf.data(), n);
-      score_index = 0;
     };
 
     auto value = it.value();

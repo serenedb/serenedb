@@ -867,7 +867,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
                                   const irs::TermCollector*) -> void {
         ++collector_finish_count;
       };
-      sort.scorer_score = [&](irs::ScoreCtx* ctx, irs::score_t* score,
+      sort.scorer_score = [&](irs::ScoreOperator* ctx, irs::score_t* score,
                               size_t n) -> void {
         ASSERT_EQ(1, n);
         ++scorer_score_count;
@@ -970,7 +970,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
                                   const irs::TermCollector*) -> void {
         ++collector_finish_count;
       };
-      sort.scorer_score = [&](irs::ScoreCtx* ctx, irs::score_t* score,
+      sort.scorer_score = [&](irs::ScoreOperator* ctx, irs::score_t* score,
                               size_t n) -> void {
         ASSERT_EQ(1, n);
         ++scorer_score_count;
@@ -1071,7 +1071,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
                                   const irs::TermCollector*) -> void {
         ++collector_finish_count;
       };
-      sort.scorer_score = [&](irs::ScoreCtx* ctx, irs::score_t* score,
+      sort.scorer_score = [&](irs::ScoreOperator* ctx, irs::score_t* score,
                               size_t n) -> void {
         ASSERT_EQ(1, n);
         ++scorer_score_count;

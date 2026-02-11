@@ -115,11 +115,15 @@ class ConjunctionScore : public ScoreOperator {
       sources.emplace_back(std::move(score));
     }
 
-    if (sources.empty()) {
-      return ScoreFunction::Default();
+    switch (sources.size()) {
+      case 0:
+        return ScoreFunction::Default();
+      case 1:
+        return std::move(sources.front());
+      default:
+        return ScoreFunction::Make<ConjunctionScore<MergeType>>(
+          std::move(sources));
     }
-
-    return ScoreFunction::Make<ConjunctionScore<MergeType>>(std::move(sources));
   }
 
   explicit ConjunctionScore(std::vector<ScoreFunction> sources)

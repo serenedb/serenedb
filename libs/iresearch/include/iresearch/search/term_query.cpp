@@ -22,6 +22,11 @@
 
 #include "term_query.hpp"
 
+#include <iresearch/formats/formats_attributes.hpp>
+#include <iresearch/search/all_iterator.hpp>
+#include <iresearch/search/scorer.hpp>
+
+#include "basics/memory.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/prepared_state_visitor.hpp"
@@ -35,11 +40,18 @@ TermQuery::TermQuery(States&& states, bstring&& stats, score_t boost)
 DocIterator::ptr TermQuery::execute(const ExecutionContext& ctx) const {
   const auto& segment = ctx.segment;
   const auto& ord = ctx.scorers;
-  // Get term state for the specified reader
   const auto* state = _states.find(segment);
 
   if (!state) [[unlikely]] {  // Invalid state
     return DocIterator::empty();
+  }
+
+  if (ord.empty() &&
+      segment.docs_count() ==
+        sdb::basics::downCast<CookieImpl>(*state->cookie).meta.docs_count)
+    [[unlikely]] {
+    return memory::make_managed<AllIterator>(segment.docs_count(), nullptr,
+                                             kNoBoost);
   }
 
   const auto* reader = state->reader;

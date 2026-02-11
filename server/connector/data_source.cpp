@@ -48,6 +48,7 @@ RocksDBDataSource::RocksDBDataSource(
   : velox::connector::DataSource{},
     _memory_pool{memory_pool},
     _cf{cf},
+    _snapshot{snapshot},
     _object_key{object_key},
     _column_ids(std::move(column_oids)),
     _row_type{std::move(row_type)},
@@ -58,14 +59,6 @@ RocksDBDataSource::RocksDBDataSource(
              "RocksDBDataSource: at least one column must be requested");
   SDB_ASSERT(_row_type->size() == 0 || _row_type->size() == _column_ids.size(),
              "RocksDBDataSource: number of columns does not match row type");
-
-  _read_options.snapshot = snapshot;
-  _read_options.async_io = false;
-  _read_options.adaptive_readahead = true;
-
-  _read_options.total_order_seek = false;
-  _read_options.auto_prefix_mode = true;
-  _read_options.prefix_same_as_start = false;
 
   std::string key = key_utils::PrepareTableKey(_object_key);
 
@@ -135,18 +128,17 @@ RocksDBSnapshotDataSource::RocksDBSnapshotDataSource(
 void RocksDBRYOWDataSource::addSplit(
   std::shared_ptr<velox::connector::ConnectorSplit> split) {
   RocksDBDataSource::addSplit(std::move(split));
-  InitIterators([&] {
+  InitIterators([&](const rocksdb::ReadOptions& options) {
     return std::unique_ptr<rocksdb::Iterator>(
-      _transaction.GetIterator(_read_options, &_cf));
+      _transaction.GetIterator(options, &_cf));
   });
 }
 
 void RocksDBSnapshotDataSource::addSplit(
   std::shared_ptr<velox::connector::ConnectorSplit> split) {
   RocksDBDataSource::addSplit(std::move(split));
-  InitIterators([&] {
-    return std::unique_ptr<rocksdb::Iterator>(
-      _db.NewIterator(_read_options, &_cf));
+  InitIterators([&](const rocksdb::ReadOptions& options) {
+    return std::unique_ptr<rocksdb::Iterator>(_db.NewIterator(options, &_cf));
   });
 }
 
@@ -160,13 +152,21 @@ void RocksDBDataSource::addSplit(
   _current_split = std::move(split);
 }
 
-template<std::invocable CreateFn>
+template<std::invocable<const rocksdb::ReadOptions&> CreateFn>
 void RocksDBDataSource::InitIterators(CreateFn&& create_iter) {
+  // Creating iterator API expects options by const reference, but all
+  // implementations copies this argument, so it should be safe.
+  rocksdb::ReadOptions options;
+  options.snapshot = _snapshot;
+  options.async_io = false;
+  options.adaptive_readahead = true;
+  options.auto_prefix_mode = true;
+
   _iterators.clear();
   _iterators.reserve(_column_keys.size());
   for (size_t i = 0; i < _column_keys.size(); ++i) {
-    _read_options.iterate_upper_bound = &_upper_bound_slices[i];
-    auto it = create_iter();
+    options.iterate_upper_bound = &_upper_bound_slices[i];
+    auto it = create_iter(options);
     it->Seek(_column_keys[i]);
     _iterators.push_back(std::move(it));
   }

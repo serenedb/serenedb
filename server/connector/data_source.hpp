@@ -53,12 +53,12 @@ class RocksDBDataSource : public velox::connector::DataSource {
                     catalog::Column::Id effective_column_id,
                     ObjectId object_key, const rocksdb::Snapshot* snapshot);
 
-  template<std::invocable CreateFn>
+  template<std::invocable<const rocksdb::ReadOptions&> CreateFn>
   void InitIterators(CreateFn&& create);
 
   velox::memory::MemoryPool& _memory_pool;
   rocksdb::ColumnFamilyHandle& _cf;
-  rocksdb::ReadOptions _read_options;
+  const rocksdb::Snapshot* _snapshot;
   ObjectId _object_key;
   std::vector<catalog::Column::Id> _column_ids;
 

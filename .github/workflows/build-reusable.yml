@@ -63,10 +63,6 @@ on:
         required: true
       TG_CHAT_ID:
         required: true
-      TG_THREAD_ID_BUILD:
-        required: true
-      TG_THREAD_ID_MAIN:
-        required: true
       TG_USER_MAP:
         required: true
 
@@ -343,8 +339,8 @@ jobs:
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          TG_THREAD_ID_MAIN: ${{ secrets.TG_THREAD_ID_MAIN }}
-          TG_THREAD_ID_BUILD: ${{ secrets.TG_THREAD_ID_BUILD }}
+          TG_THREAD_ID_MAIN: '51'
+          TG_THREAD_ID_BUILD: '53'
           TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
           BRANCH: ${{ inputs.BRANCH }}
           JOB_STATUS: ${{ env.HAS_FAILURES == 'true' && 'failure' || 'success' }}

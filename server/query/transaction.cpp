@@ -36,9 +36,10 @@ Result Transaction::Begin() {
 
 Result Transaction::Commit() {
   SDB_ASSERT(_rocksdb_transaction);
-  const uint64_t num_ops = _rocksdb_transaction->GetNumPuts() +
-                           _rocksdb_transaction->GetNumDeletes() +
-                           _rocksdb_transaction->GetNumMerges();
+  const uint64_t num_ops =
+    _rocksdb_transaction->GetNumPuts() + _rocksdb_transaction->GetNumDeletes();
+  SDB_ASSERT(_rocksdb_transaction->GetNumMerges() == 0,
+             "We do not expect merges for now");
   if (num_ops > 0) [[likely]] {
     for (auto& search_transaction : _search_transactions) {
       // tie iresearch transaction's active segment to current flush context in

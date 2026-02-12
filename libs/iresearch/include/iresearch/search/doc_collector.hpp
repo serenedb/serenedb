@@ -24,10 +24,9 @@ size_t ExecuteTopKWithCount(const DirectoryReader& reader, const Filter& filter,
                             std::span<std::pair<doc_id_t, score_t>, K> hits) {
   SDB_ASSERT(BlockSize(k) <= hits.size());
 
-  auto scorers = Scorers::Prepare(scorer);
   auto prepared = filter.prepare({
     .index = reader,
-    .scorers = scorers,
+    .scorer = &scorer,
   });
 
   size_t count = 0;
@@ -66,7 +65,7 @@ size_t ExecuteTopKWithCount(const DirectoryReader& reader, const Filter& filter,
 
     auto it = prepared->execute({
       .segment = segment,
-      .scorers = scorers,
+      .scorer = &scorer,
     });
 
     auto score_func = it->PrepareScore({
@@ -111,10 +110,9 @@ size_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
                    uint8_t wand_index = 0) {
   SDB_ASSERT(BlockSize(k) <= hits.size());
 
-  auto scorers = Scorers::Prepare(scorer);
   auto prepared = filter.prepare({
     .index = reader,
-    .scorers = scorers,
+    .scorer = &scorer,
   });
 
   size_t count = 0;
@@ -155,7 +153,7 @@ size_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
 
     auto it = prepared->execute({
       .segment = segment,
-      .scorers = scorers,
+      .scorer = &scorer,
       .wand = {.index = wand_index},
     });
 

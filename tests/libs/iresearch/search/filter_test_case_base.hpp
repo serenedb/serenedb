@@ -449,7 +449,7 @@ class FilterTestCaseBase : public IndexTestBase {
 
   static void GetQueryResult(const irs::Filter::Query::ptr& q,
                              const irs::IndexReader& index,
-                             const irs::Scorers& ord, ScoredDocs& result,
+                             const irs::Scorer* scorer, ScoredDocs& result,
                              Costs& result_costs,
                              std::string_view source_location);
 };

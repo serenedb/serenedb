@@ -117,7 +117,7 @@ class SamePositionQuery : public Filter::Query {
 
   DocIterator::ptr execute(const ExecutionContext& ctx) const final {
     auto& segment = ctx.segment;
-    auto& ord = ctx.scorers;
+    auto ord = ctx.scorer ? Scorers::Prepare(*ctx.scorer) : Scorers{};
 
     // get query state for the specified reader
     auto query_state = _states.find(segment);
@@ -194,10 +194,11 @@ Filter::Query::ptr BySamePosition::prepare(const PrepareContext& ctx) const {
   // !!! FIXME !!!
   // that's completely wrong, we have to collect stats for each field
   // instead of aggregating them using a single collector
-  FieldCollectors field_stats(ctx.scorers);
+  auto scorers = ctx.scorer ? Scorers::Prepare(*ctx.scorer) : Scorers{};
+  FieldCollectors field_stats(scorers);
 
   // prepare phrase stats (collector for each term)
-  TermCollectors term_stats(ctx.scorers, size);
+  TermCollectors term_stats(scorers, size);
 
   for (const auto& segment : ctx.index) {
     size_t term_idx = 0;
@@ -224,7 +225,7 @@ Filter::Query::ptr BySamePosition::prepare(const PrepareContext& ctx) const {
       SeekTermIterator::ptr term = field->iterator(SeekMode::NORMAL);
 
       if (!term->seek(branch.second)) {
-        if (ctx.scorers.empty()) {
+        if (scorers.empty()) {
           break;
         } else {
           // continue here because we should collect
@@ -261,7 +262,7 @@ Filter::Query::ptr BySamePosition::prepare(const PrepareContext& ctx) const {
   SamePositionQuery::StatsT stats(
     size, SamePositionQuery::StatsT::allocator_type{ctx.memory});
   for (auto& stat : stats) {
-    stat.resize(ctx.scorers.stats_size());
+    stat.resize(scorers.stats_size());
     auto* stats_buf = stat.data();
     term_stats.finish(stats_buf, term_idx++, field_stats, ctx.index);
   }

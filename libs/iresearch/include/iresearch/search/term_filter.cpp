@@ -94,9 +94,10 @@ void ByTerm::visit(const SubReader& segment, const TermReader& field,
 
 Filter::Query::ptr ByTerm::prepare(const PrepareContext& ctx,
                                    std::string_view field, bytes_view term) {
+  auto scorers = ctx.scorer ? Scorers::Prepare(*ctx.scorer) : Scorers{};
   TermQuery::States states{ctx.memory, ctx.index.size()};
-  FieldCollectors field_stats{ctx.scorers};
-  TermCollectors term_stats{ctx.scorers, 1};
+  FieldCollectors field_stats{scorers};
+  TermCollectors term_stats{scorers, 1};
 
   TermVisitor visitor(term_stats, states);
 
@@ -121,7 +122,7 @@ Filter::Query::ptr ByTerm::prepare(const PrepareContext& ctx,
   }
 #endif
 
-  bstring stats(ctx.scorers.stats_size(), 0);
+  bstring stats(scorers.stats_size(), 0);
   auto* stats_buf = stats.data();
 
   term_stats.finish(stats_buf, 0, field_stats, ctx.index);

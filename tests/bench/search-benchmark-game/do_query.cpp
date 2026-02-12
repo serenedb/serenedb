@@ -171,7 +171,7 @@ class Executor {
     }
     return filter->prepare({
       .index = _reader,
-      .scorers = _scorers,
+      .scorer = _scorer.get(),
     });
   }
 
@@ -196,7 +196,6 @@ class Executor {
   std::vector<std::pair<irs::doc_id_t, irs::score_t>> _results;
   irs::Scorer::ptr _scorer;
   irs::Scorer* _scorer_ptr{_scorer.get()};
-  irs::Scorers _scorers{irs::Scorers::Prepare(std::span{&_scorer, 1})};
   irs::analysis::Analyzer::ptr _tokenizer;
   irs::Format::ptr _format;
   irs::MMapDirectory _dir;

@@ -39,7 +39,7 @@ TermQuery::TermQuery(States&& states, bstring&& stats, score_t boost)
 
 DocIterator::ptr TermQuery::execute(const ExecutionContext& ctx) const {
   const auto& segment = ctx.segment;
-  const auto& ord = ctx.scorers;
+  auto ord = ctx.scorer ? Scorers::Prepare(*ctx.scorer) : Scorers{};
   const auto* state = _states.find(segment);
 
   if (!state) [[unlikely]] {  // Invalid state

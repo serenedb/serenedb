@@ -114,7 +114,6 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
     // create order
 
     auto scorer = tests::sort::Boost{};
-    auto pord = irs::Scorers::Prepare(scorer);
 
     MaxMemoryCounter counter;
 
@@ -123,15 +122,15 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       auto prep = filter.prepare({
         .index = rdr,
         .memory = counter,
-        .scorers = pord,
+        .scorer = &scorer,
       });
-      auto docs = prep->execute({.segment = *(rdr.begin()), .scorers = pord});
+      auto docs = prep->execute({.segment = *(rdr.begin()), .scorer = &scorer});
       auto* doc = irs::get<irs::DocAttr>(*docs);
       ASSERT_TRUE(bool(doc));
       ASSERT_EQ(docs->value(), doc->value);
 
       auto score = docs->PrepareScore({
-        .scorer = pord.buckets().front().bucket,
+        .scorer = &scorer,
         .segment = &*(rdr.begin()),
       });
 
@@ -160,11 +159,11 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       auto prep = filter.prepare({
         .index = rdr,
         .memory = counter,
-        .scorers = pord,
+        .scorer = &scorer,
       });
-      auto docs = prep->execute({.segment = *(rdr.begin()), .scorers = pord});
+      auto docs = prep->execute({.segment = *(rdr.begin()), .scorer = &scorer});
       auto score = docs->PrepareScore({
-        .scorer = pord.buckets().front().bucket,
+        .scorer = &scorer,
         .segment = &*(rdr.begin()),
       });
 
@@ -560,16 +559,15 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       };
 
       std::set<irs::doc_id_t> expected{31, 32};
-      auto pord = irs::Scorers::Prepare(scorer);
       auto prep = filter.prepare({
         .index = rdr,
         .memory = counter,
-        .scorers = pord,
+        .scorer = &scorer,
       });
-      auto docs = prep->execute({.segment = *(rdr.begin()), .scorers = pord});
+      auto docs = prep->execute({.segment = *(rdr.begin()), .scorer = &scorer});
 
       auto score = docs->PrepareScore({
-        .scorer = pord.buckets().front().bucket,
+        .scorer = &scorer,
         .segment = &*(rdr.begin()),
       });
 

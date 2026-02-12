@@ -111,7 +111,7 @@ void MultiTermQuery::visit(const SubReader& segment,
 
 DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
   auto& segment = ctx.segment;
-  auto& ord = ctx.scorers;
+  auto ord = ctx.scorer ? Scorers::Prepare(*ctx.scorer) : Scorers{};
 
   // get term state for the specified reader
   auto state = _states.find(segment);

@@ -44,7 +44,7 @@ using VariadicPhraseIterator = PhraseIterator<
 
 DocIterator::ptr FixedPhraseQuery::execute(const ExecutionContext& ctx) const {
   auto& rdr = ctx.segment;
-  auto& ord = ctx.scorers;
+  auto ord = ctx.scorer ? Scorers::Prepare(*ctx.scorer) : Scorers{};
 
   // get phrase state for the specified reader
   auto phrase_state = states.find(rdr);
@@ -222,7 +222,7 @@ DocIterator::ptr VariadicPhraseQuery::execute(
     return DocIterator::empty();
   }
 
-  auto& ord = ctx.scorers;
+  auto ord = ctx.scorer ? Scorers::Prepare(*ctx.scorer) : Scorers{};
 
   // get features required for query & order
   const IndexFeatures features = ord.features() | kRequiredFeatures;

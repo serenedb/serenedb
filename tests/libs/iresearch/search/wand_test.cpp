@@ -164,10 +164,7 @@ std::vector<Doc> WandTestCase::Collect(const irs::DirectoryReader& index,
                                        irs::ScorersView scorers,
                                        irs::byte_type wand_idx,
                                        bool can_use_wand, size_t limit) {
-  auto prepared = irs::Scorers::Prepare(std::span(
-    const_cast<const irs::Scorer**>(&scorers.front()), scorers.size()));
-  EXPECT_FALSE(prepared.empty());
-  auto query = filter.prepare({.index = index, .scorers = prepared});
+  auto query = filter.prepare({.index = index, .scorer = scorers.front()});
   EXPECT_NE(nullptr, query);
 
   const irs::WandContext mode{.index = wand_idx};
@@ -179,7 +176,7 @@ std::vector<Doc> WandTestCase::Collect(const irs::DirectoryReader& index,
     irs::ColumnCollector collector;
     auto docs = query->execute(irs::ExecutionContext{
       .segment = segment,
-      .scorers = prepared,
+      .scorer = scorers.front(),
       .wand = mode,
     });
     EXPECT_NE(nullptr, docs);

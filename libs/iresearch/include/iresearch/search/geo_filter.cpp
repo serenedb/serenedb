@@ -392,13 +392,15 @@ std::pair<GeoStates, irs::bstring> PrepareStates(
   SDB_ASSERT(std::unique(sorted_terms.begin(), sorted_terms.end()) ==
              sorted_terms.end());
 
+  auto scorers = ctx.scorer ? irs::Scorers::Prepare(*ctx.scorer) : irs::Scorers{};
+
   std::pair<GeoStates, irs::bstring> res{
     std::piecewise_construct,
     std::forward_as_tuple(ctx.memory, ctx.index.size()),
-    std::forward_as_tuple(ctx.scorers.stats_size(), 0)};
+    std::forward_as_tuple(scorers.stats_size(), 0)};
 
   const auto size = sorted_terms.size();
-  irs::FieldCollectors field_stats{ctx.scorers};
+  irs::FieldCollectors field_stats{scorers};
   irs::ManagedVector<irs::SeekCookie::ptr> term_states{{ctx.memory}};
 
   for (const auto& segment : ctx.index) {

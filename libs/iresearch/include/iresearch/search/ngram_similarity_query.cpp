@@ -613,7 +613,7 @@ CostAdapters Execute(const NGramState& query_state,
 
 DocIterator::ptr NGramSimilarityQuery::execute(
   const ExecutionContext& ctx) const {
-  const auto& ord = ctx.scorers;
+  auto ord = ctx.scorer ? Scorers::Prepare(*ctx.scorer) : Scorers{};
   SDB_ASSERT(1 != _min_match_count || !ord.empty());
 
   const auto& segment = ctx.segment;

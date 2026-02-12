@@ -89,8 +89,7 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
         return std::make_unique<tests::sort::CustomSort::TermCollector>(scorer);
       };
 
-      auto pord = irs::Scorers::Prepare(scorer);
-      auto prepared = filter.prepare({.index = index, .scorers = pord});
+      auto prepared = filter.prepare({.index = index, .scorer = &scorer});
       ASSERT_EQ(0, collect_field_count);  // should not be executed
       ASSERT_EQ(0, collect_term_count);   // should not be executed
       ASSERT_EQ(0, finish_count);         // no terms optimization
@@ -129,11 +128,10 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
         return std::make_unique<tests::sort::CustomSort::TermCollector>(scorer);
       };
 
-      auto pord = irs::Scorers::Prepare(scorer);
       auto prepared = filter.prepare({
         .index = index,
         .memory = counter,
-        .scorers = pord,
+        .scorer = &scorer,
       });
       ASSERT_EQ(2, collect_field_count);  // 1 field in 2 segments
       ASSERT_EQ(2, collect_term_count);   // 1 term in 2 segments
@@ -178,8 +176,7 @@ class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
         return std::make_unique<tests::sort::CustomSort::TermCollector>(scorer);
       };
 
-      auto pord = irs::Scorers::Prepare(scorer);
-      auto prepared = filter.prepare({.index = index, .scorers = pord});
+      auto prepared = filter.prepare({.index = index, .scorer = &scorer});
       ASSERT_EQ(4, collect_field_count);  // 2 fields (1 per term since treated
                                           // as a disjunction) in 2 segments
       ASSERT_EQ(4, collect_term_count);   // 2 term in 2 segments

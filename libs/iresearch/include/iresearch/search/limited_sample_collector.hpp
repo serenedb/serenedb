@@ -165,7 +165,7 @@ class LimitedSampleCollector : private util::Noncopyable {
     stats.resize(stats_offset);
     for (auto& entry : term_stats) {
       auto& stats_entry = stats[entry.second.stats_offset];
-      stats_entry.resize(scorer ? StatsSize(*scorer) : 0);
+      stats_entry.resize(scorer ? scorer->stats_size() : 0);
       auto* stats_buf = const_cast<byte_type*>(stats_entry.data());
 
       entry.second.term_stats.finish(stats_buf, 0, entry.second.field_stats,

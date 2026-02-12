@@ -260,7 +260,7 @@ Filter::Query::ptr BySamePosition::prepare(const PrepareContext& ctx) const {
   SamePositionQuery::StatsT stats(
     size, SamePositionQuery::StatsT::allocator_type{ctx.memory});
   for (auto& stat : stats) {
-    stat.resize(ctx.scorer ? StatsSize(*ctx.scorer) : 0);
+    stat.resize(ctx.scorer ? ctx.scorer->stats_size() : 0);
     auto* stats_buf = stat.data();
     term_stats.finish(stats_buf, term_idx++, field_stats, ctx.index);
   }

@@ -221,11 +221,8 @@ struct Scorer {
   // 255 -- compatible, same types
   static uint8_t compatible(WandType lhs, WandType rhs) noexcept;
 
-  // Number of bytes (first) and alignment (first) required to store stats
-  // Alignment must satisfy the following requirements:
-  //   - be a power of 2
-  //   - be less or equal than alignof(MAX_ALIGN_T))
-  virtual std::pair<size_t, size_t> stats_size() const = 0;
+  // Number of bytes required to store stats (already aligned).
+  virtual size_t stats_size() const = 0;
 
   virtual bool equals(const Scorer& other) const noexcept {
     return type() == other.type();
@@ -245,12 +242,6 @@ enum class ScoreMergeType {
   // Find max amongst multiple scores
   Max,
 };
-
-// Compute aligned stats buffer size for a single scorer.
-inline size_t StatsSize(const Scorer& scorer) {
-  auto [size, align] = scorer.stats_size();
-  return memory::AlignUp(size, align);
-}
 
 template<typename Visitor>
 IRS_FORCE_INLINE auto ResolveMergeType(ScoreMergeType type, Visitor&& visitor) {
@@ -297,15 +288,15 @@ class ScorerBase : public Scorer {
       stats_cast(const_cast<const byte_type*>(buf)));
   }
 
-  // Returns number of bytes and alignment required to store stats
-  IRS_FORCE_INLINE std::pair<size_t, size_t> stats_size() const noexcept final {
+  // Returns number of bytes required to store stats (already aligned).
+  IRS_FORCE_INLINE size_t stats_size() const noexcept final {
     if constexpr (std::is_same_v<StatsType, void>) {
-      return {size_t{0}, size_t{1}};
+      return 0;
     } else {
       static_assert(alignof(StatsType) <= alignof(std::max_align_t));
       static_assert(math::IsPower2(alignof(StatsType)));
 
-      return {sizeof(StatsType), alignof(StatsType)};
+      return memory::AlignUp(sizeof(StatsType), alignof(StatsType));
     }
   }
 };

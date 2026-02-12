@@ -121,7 +121,7 @@ Filter::Query::ptr ByTerm::prepare(const PrepareContext& ctx,
   }
 #endif
 
-  bstring stats(ctx.scorer ? StatsSize(*ctx.scorer) : 0, 0);
+  bstring stats(ctx.scorer ? ctx.scorer->stats_size() : 0, 0);
   auto* stats_buf = stats.data();
 
   term_stats.finish(stats_buf, 0, field_stats, ctx.index);

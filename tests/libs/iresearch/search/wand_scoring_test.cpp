@@ -172,16 +172,16 @@ class WandScoringTestCase : public IndexTestBase {
   // WAND top-K must match non-WAND top-K.
   void CompareWandVsNonWand(const irs::DirectoryReader& reader,
                             const irs::Filter& filter,
-                            const irs::Scorers& scorers, size_t k) {
+                            const irs::Scorer& scorer, size_t k) {
     std::vector<std::pair<irs::doc_id_t, irs::score_t>> baseline_hits(
       irs::BlockSize(k));
     std::vector<std::pair<irs::doc_id_t, irs::score_t>> wand_hits(
       irs::BlockSize(k));
 
     size_t baseline_count = irs::ExecuteTopKWithCount(
-      reader, filter, scorers, k, std::span{baseline_hits});
+      reader, filter, scorer, k, std::span{baseline_hits});
     size_t wand_count =
-      irs::ExecuteTopK(reader, filter, scorers, k, std::span{wand_hits});
+      irs::ExecuteTopK(reader, filter, scorer, k, std::span{wand_hits});
 
     auto baseline_k = std::min(baseline_count, k);
     auto wand_k = std::min(wand_count, k);
@@ -226,72 +226,66 @@ class WandScoringTestCase : public IndexTestBase {
 TEST_P(WandScoringTestCase, TfidfWandVsBaseline) {
   auto scorer = irs::TFIDF{true};
   auto reader = CreateLargeIndex(scorer, 10);
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto filter = ParseQuery("topic:database");
   ASSERT_NE(nullptr, filter);
 
-  CompareWandVsNonWand(reader, *filter, prepared_order, 10);
+  CompareWandVsNonWand(reader, *filter, scorer, 10);
 }
 
 // BM25 single-term, 4200 docs (~840 matching "search" = ~6 blocks)
 TEST_P(WandScoringTestCase, Bm25WandVsBaseline) {
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
   auto reader = CreateLargeIndex(scorer, 10);
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto filter = ParseQuery("topic:search");
   ASSERT_NE(nullptr, filter);
 
-  CompareWandVsNonWand(reader, *filter, prepared_order, 15);
+  CompareWandVsNonWand(reader, *filter, scorer, 15);
 }
 
 // BM25 with small k=3, 4200 docs (~2100 matching "tech" = ~16 blocks)
 TEST_P(WandScoringTestCase, WandSmallK) {
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
   auto reader = CreateLargeIndex(scorer, 10);
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto filter = ParseQuery("category:tech");
   ASSERT_NE(nullptr, filter);
 
-  CompareWandVsNonWand(reader, *filter, prepared_order, 3);
+  CompareWandVsNonWand(reader, *filter, scorer, 3);
 }
 
 // WAND with k larger than matches — no pruning expected
 TEST_P(WandScoringTestCase, WandLargeK) {
   auto scorer = irs::TFIDF{true};
   auto reader = CreateLargeIndex(scorer);
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto filter = ParseQuery("topic:chemistry");
   ASSERT_NE(nullptr, filter);
 
-  CompareWandVsNonWand(reader, *filter, prepared_order, 1000);
+  CompareWandVsNonWand(reader, *filter, scorer, 1000);
 }
 
 // BM15 (b=0), 4200 docs (~850 matching "physics" = ~6 blocks)
 TEST_P(WandScoringTestCase, WandBm15) {
   auto scorer = irs::BM25{irs::BM25::K(), 0.0f};
   auto reader = CreateLargeIndex(scorer, 10);
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto filter = ParseQuery("topic:physics");
   ASSERT_NE(nullptr, filter);
 
-  CompareWandVsNonWand(reader, *filter, prepared_order, 10);
+  CompareWandVsNonWand(reader, *filter, scorer, 10);
 }
 
 // k=1 — aggressive threshold, 4200 docs
 TEST_P(WandScoringTestCase, WandKOne) {
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
   auto reader = CreateLargeIndex(scorer, 10);
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto filter = ParseQuery("category:tech");
   ASSERT_NE(nullptr, filter);
 
-  CompareWandVsNonWand(reader, *filter, prepared_order, 1);
+  CompareWandVsNonWand(reader, *filter, scorer, 1);
 }
 
 // Multi-segment TFIDF, 3 segments × 1400 docs each
@@ -299,12 +293,11 @@ TEST_P(WandScoringTestCase, WandMultisegTfidf) {
   auto scorer = irs::TFIDF{true};
   auto reader = CreateMultiSegmentIndex(scorer, 10);
   ASSERT_EQ(3, reader.size());
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto filter = ParseQuery("topic:database");
   ASSERT_NE(nullptr, filter);
 
-  CompareWandVsNonWand(reader, *filter, prepared_order, 15);
+  CompareWandVsNonWand(reader, *filter, scorer, 15);
 }
 
 // Multi-segment BM25, 3 segments × 1400 docs each
@@ -312,19 +305,17 @@ TEST_P(WandScoringTestCase, WandMultisegBm25) {
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
   auto reader = CreateMultiSegmentIndex(scorer, 10);
   ASSERT_EQ(3, reader.size());
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto filter = ParseQuery("topic:search");
   ASSERT_NE(nullptr, filter);
 
-  CompareWandVsNonWand(reader, *filter, prepared_order, 20);
+  CompareWandVsNonWand(reader, *filter, scorer, 20);
 }
 
 // WAND with empty result set
 TEST_P(WandScoringTestCase, WandEmptyResults) {
   auto scorer = irs::TFIDF{true};
   auto reader = CreateLargeIndex(scorer);
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto filter = ParseQuery("topic:xyznonexistent123");
   ASSERT_NE(nullptr, filter);
@@ -334,7 +325,7 @@ TEST_P(WandScoringTestCase, WandEmptyResults) {
     irs::BlockSize(kTopK));
 
   size_t count =
-    irs::ExecuteTopK(reader, *filter, prepared_order, kTopK, std::span{hits});
+    irs::ExecuteTopK(reader, *filter, scorer, kTopK, std::span{hits});
   ASSERT_EQ(0, count);
 }
 
@@ -343,7 +334,6 @@ TEST_P(WandScoringTestCase, WandResultValues) {
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
   auto reader = CreateLargeIndex(scorer, 10);
   ASSERT_EQ(1, reader.size());
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto filter = ParseQuery("topic:database");
   ASSERT_NE(nullptr, filter);
@@ -353,7 +343,7 @@ TEST_P(WandScoringTestCase, WandResultValues) {
     irs::BlockSize(kTopK));
 
   size_t count =
-    irs::ExecuteTopK(reader, *filter, prepared_order, kTopK, std::span{hits});
+    irs::ExecuteTopK(reader, *filter, scorer, kTopK, std::span{hits});
   ASSERT_GT(count, 0);
   auto result_count = std::min(count, kTopK);
 
@@ -365,7 +355,6 @@ TEST_P(WandScoringTestCase, WandMultisegResultValues) {
   auto scorer = irs::TFIDF{true};
   auto reader = CreateMultiSegmentIndex(scorer, 10);
   ASSERT_EQ(3, reader.size());
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto filter = ParseQuery("topic:physics");
   ASSERT_NE(nullptr, filter);
@@ -375,7 +364,7 @@ TEST_P(WandScoringTestCase, WandMultisegResultValues) {
     irs::BlockSize(kTopK));
 
   size_t count =
-    irs::ExecuteTopK(reader, *filter, prepared_order, kTopK, std::span{hits});
+    irs::ExecuteTopK(reader, *filter, scorer, kTopK, std::span{hits});
   ASSERT_GT(count, 0);
   auto result_count = std::min(count, kTopK);
 

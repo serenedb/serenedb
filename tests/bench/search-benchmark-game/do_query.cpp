@@ -115,7 +115,7 @@ class Executor {
     }
 
     _results.resize(irs::BlockSize(k));
-    return irs::ExecuteTopKWithCount(_reader, *filter, _scorers, k,
+    return irs::ExecuteTopKWithCount(_reader, *filter, *_scorer, k,
                                      std::span{_results});
   }
 
@@ -126,7 +126,7 @@ class Executor {
     }
 
     _results.resize(irs::BlockSize(k));
-    return irs::ExecuteTopKWithCount(_reader, *filter, _scorers, k,
+    return irs::ExecuteTopKWithCount(_reader, *filter, *_scorer, k,
                                      std::span{_results});
   }
 

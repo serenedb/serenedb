@@ -20,10 +20,11 @@ constexpr size_t BlockSize(size_t k) noexcept { return 2 * k + kScoreBlock; }
 
 template<size_t K>
 size_t ExecuteTopKWithCount(const DirectoryReader& reader, const Filter& filter,
-                            const Scorers& scorers, size_t k,
+                            const Scorer& scorer, size_t k,
                             std::span<std::pair<doc_id_t, score_t>, K> hits) {
   SDB_ASSERT(BlockSize(k) <= hits.size());
 
+  auto scorers = Scorers::Prepare(scorer);
   auto prepared = filter.prepare({
     .index = reader,
     .scorers = scorers,
@@ -68,14 +69,14 @@ size_t ExecuteTopKWithCount(const DirectoryReader& reader, const Filter& filter,
       .scorers = scorers,
     });
 
-    auto scorer = it->PrepareScore({
-      .scorer = scorers.buckets().front().bucket,
+    auto score_func = it->PrepareScore({
+      .scorer = &scorer,
       .segment = &segment,
       .collector = &columns,
     });
 
     while (true) {
-      const uint32_t n = it->Collect(scorer, columns, docs, scores);
+      const uint32_t n = it->Collect(score_func, columns, docs, scores);
       if (n == 0) {
         break;
       }
@@ -105,11 +106,12 @@ size_t ExecuteTopKWithCount(const DirectoryReader& reader, const Filter& filter,
 
 template<size_t K>
 size_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
-                   const Scorers& scorers, size_t k,
+                   const Scorer& scorer, size_t k,
                    std::span<std::pair<doc_id_t, score_t>, K> hits,
                    uint8_t wand_index = 0) {
   SDB_ASSERT(BlockSize(k) <= hits.size());
 
+  auto scorers = Scorers::Prepare(scorer);
   auto prepared = filter.prepare({
     .index = reader,
     .scorers = scorers,
@@ -157,8 +159,8 @@ size_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
       .wand = {.index = wand_index},
     });
 
-    auto scorer = it->PrepareScore({
-      .scorer = scorers.buckets().front().bucket,
+    auto score_func = it->PrepareScore({
+      .scorer = &scorer,
       .segment = &segment,
       .collector = &columns,
     });
@@ -169,7 +171,7 @@ size_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
     }
 
     while (true) {
-      const uint32_t n = it->Collect(scorer, columns, docs, scores);
+      const uint32_t n = it->Collect(score_func, columns, docs, scores);
       if (n == 0) {
         break;
       }

@@ -36,7 +36,6 @@ Filter::Query::ptr ByNGramSimilarity::Prepare(
   const PrepareContext& ctx, std::string_view field_name,
   const std::vector<irs::bstring>& ngrams, float_t threshold,
   bool allow_phrase) {
-  auto scorers = ctx.scorer ? Scorers::Prepare(*ctx.scorer) : Scorers{};
   if (ngrams.empty() || field_name.empty()) {
     // empty field or terms or invalid threshold
     return Query::empty();
@@ -48,7 +47,7 @@ Filter::Query::ptr ByNGramSimilarity::Prepare(
     std::clamp(static_cast<size_t>(
                  std::ceil(static_cast<float_t>(terms_count) * threshold)),
                size_t{1}, terms_count);
-  if (scorers.empty() && 1 == min_match_count) {
+  if (!ctx.scorer && 1 == min_match_count) {
     irs::ByTermsOptions options;
     for (const auto& term : ngrams) {
       options.terms.emplace(term, irs::kNoBoost);
@@ -71,8 +70,8 @@ Filter::Query::ptr ByNGramSimilarity::Prepare(
   term_states.reserve(terms_count);
 
   // prepare ngrams stats
-  FieldCollectors field_stats{scorers};
-  TermCollectors term_stats{scorers, terms_count};
+  FieldCollectors field_stats{ctx.scorer};
+  TermCollectors term_stats{ctx.scorer, terms_count};
 
   for (const auto& segment : ctx.index) {
     // get term dictionary for field
@@ -126,7 +125,7 @@ Filter::Query::ptr ByNGramSimilarity::Prepare(
     return Query::empty();
   }
 
-  bstring stats(scorers.stats_size(), 0);
+  bstring stats(ctx.scorer ? StatsSize(*ctx.scorer) : 0, 0);
   auto* stats_buf = stats.data();
 
   for (size_t term_idx = 0; term_idx < terms_count; ++term_idx) {

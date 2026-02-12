@@ -130,10 +130,9 @@ Filter::Query::ptr ByRange::prepare(const PrepareContext& ctx,
     return Query::empty();
   }
 
-  auto scorers = ctx.scorer ? Scorers::Prepare(*ctx.scorer) : Scorers{};
   // object for collecting order stats
   LimitedSampleCollector<TermFrequency> collector(
-    scorers.empty() ? 0 : scored_terms_limit);
+    ctx.scorer ? scored_terms_limit : 0);
   MultiTermQuery::States states{ctx.memory, ctx.index.size()};
   MultiTermVisitor mtv{collector, states};
 
@@ -144,7 +143,7 @@ Filter::Query::ptr ByRange::prepare(const PrepareContext& ctx,
   }
 
   MultiTermQuery::Stats stats{{ctx.memory}};
-  collector.score(ctx.index, scorers, stats);
+  collector.score(ctx.index, ctx.scorer, stats);
 
   return memory::make_tracked<MultiTermQuery>(ctx.memory, std::move(states),
                                               std::move(stats), ctx.boost,

@@ -16212,14 +16212,9 @@ TEST_P(BooleanFilterTestCase, mixed_ordered) {
       filter.mutable_options()->range.max_type = irs::BoundType::Exclusive;
     }
 
-    std::array<irs::Scorer::ptr, 2> ord{std::make_unique<irs::TFIDF>(),
-                                        std::make_unique<irs::BM25>()};
+    irs::TFIDF tfidf_scorer;
 
-    auto prepared_ord = irs::Scorers::Prepare(ord);
-    ASSERT_FALSE(prepared_ord.empty());
-    ASSERT_EQ(2, prepared_ord.buckets().size());
-
-    auto prepared = root.prepare({.index = *rdr, .scorer = ord[0].get()});
+    auto prepared = root.prepare({.index = *rdr, .scorer = &tfidf_scorer});
     ASSERT_NE(nullptr, prepared);
 
     std::vector<irs::doc_id_t> expected_docs{
@@ -16228,14 +16223,15 @@ TEST_P(BooleanFilterTestCase, mixed_ordered) {
 
     auto expected_doc = expected_docs.begin();
     for (const auto& sub : rdr) {
-      auto docs = prepared->execute({.segment = sub, .scorer = ord[0].get()});
+      auto docs =
+        prepared->execute({.segment = sub, .scorer = &tfidf_scorer});
 
       auto* doc = irs::get<irs::DocAttr>(*docs);
       ASSERT_TRUE(
         bool(doc));  // ensure all iterators contain "document" attribute
 
       const auto& scr = docs->PrepareScore({
-        .scorer = prepared_ord.buckets().front().bucket,
+        .scorer = &tfidf_scorer,
         .segment = &irs::SubReader::empty(),
       });
 
@@ -16244,7 +16240,7 @@ TEST_P(BooleanFilterTestCase, mixed_ordered) {
         EXPECT_EQ(*expected_doc, doc->value);
         ++expected_doc;
 
-        irs::bstring score_value(prepared_ord.score_size(), 0);
+        irs::bstring score_value(sizeof(irs::score_t), 0);
         *reinterpret_cast<irs::score_t*>(score_value.data()) = scr.Score();
         scores.emplace_back(std::move(score_value));
       }

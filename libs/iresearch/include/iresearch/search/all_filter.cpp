@@ -48,11 +48,10 @@ class AllQuery : public Filter::Query {
 };
 
 Filter::Query::ptr All::prepare(const PrepareContext& ctx) const {
-  auto scorers = ctx.scorer ? Scorers::Prepare(*ctx.scorer) : Scorers{};
-  bstring stats(scorers.stats_size(), 0);
+  bstring stats(ctx.scorer ? StatsSize(*ctx.scorer) : 0, 0);
   auto* stats_buf = stats.data();
 
-  PrepareCollectors(scorers.buckets(), stats_buf);
+  PrepareCollectors(ctx.scorer, stats_buf);
 
   return memory::make_tracked<AllQuery>(ctx.memory, std::move(stats),
                                         ctx.boost * Boost());

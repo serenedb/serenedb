@@ -123,9 +123,8 @@ Filter::Query::ptr ByTerms::Prepare(const PrepareContext& ctx,
     return ByTerm::prepare(sub_ctx, field, term->term);
   }
 
-  auto scorers = ctx.scorer ? Scorers::Prepare(*ctx.scorer) : Scorers{};
-  FieldCollectors field_stats{scorers};
-  TermCollectors term_stats{scorers, size};
+  FieldCollectors field_stats{ctx.scorer};
+  TermCollectors term_stats{ctx.scorer, size};
   MultiTermQuery::States states{ctx.memory, ctx.index.size()};
   AllTermsCollector collector{states, field_stats, term_stats};
   CollectTerms(ctx.index, field, terms, collector);
@@ -144,7 +143,7 @@ Filter::Query::ptr ByTerms::Prepare(const PrepareContext& ctx,
   MultiTermQuery::Stats stats{{ctx.memory}};
   stats.resize(size);
   for (size_t term_idx = 0; auto& stat : stats) {
-    stat.resize(scorers.stats_size(), 0);
+    stat.resize(ctx.scorer ? StatsSize(*ctx.scorer) : 0, 0);
     auto* stats_buf = stat.data();
     term_stats.finish(stats_buf, term_idx++, field_stats, ctx.index);
   }

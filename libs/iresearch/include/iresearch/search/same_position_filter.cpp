@@ -117,8 +117,6 @@ class SamePositionQuery : public Filter::Query {
 
   DocIterator::ptr execute(const ExecutionContext& ctx) const final {
     auto& segment = ctx.segment;
-    auto ord = ctx.scorer ? Scorers::Prepare(*ctx.scorer) : Scorers{};
-
     // get query state for the specified reader
     auto query_state = _states.find(segment);
     if (!query_state) {
@@ -128,7 +126,8 @@ class SamePositionQuery : public Filter::Query {
 
     // get features required for query & order
     const IndexFeatures features =
-      ord.features() | BySamePosition::kRequiredFeatures;
+      (ctx.scorer ? ctx.scorer->GetIndexFeatures() : IndexFeatures::None) |
+      BySamePosition::kRequiredFeatures;
 
     ScoreAdapters itrs;
     itrs.reserve(query_state->size());
@@ -194,11 +193,10 @@ Filter::Query::ptr BySamePosition::prepare(const PrepareContext& ctx) const {
   // !!! FIXME !!!
   // that's completely wrong, we have to collect stats for each field
   // instead of aggregating them using a single collector
-  auto scorers = ctx.scorer ? Scorers::Prepare(*ctx.scorer) : Scorers{};
-  FieldCollectors field_stats(scorers);
+  FieldCollectors field_stats(ctx.scorer);
 
   // prepare phrase stats (collector for each term)
-  TermCollectors term_stats(scorers, size);
+  TermCollectors term_stats(ctx.scorer, size);
 
   for (const auto& segment : ctx.index) {
     size_t term_idx = 0;
@@ -225,7 +223,7 @@ Filter::Query::ptr BySamePosition::prepare(const PrepareContext& ctx) const {
       SeekTermIterator::ptr term = field->iterator(SeekMode::NORMAL);
 
       if (!term->seek(branch.second)) {
-        if (scorers.empty()) {
+        if (!ctx.scorer) {
           break;
         } else {
           // continue here because we should collect
@@ -262,7 +260,7 @@ Filter::Query::ptr BySamePosition::prepare(const PrepareContext& ctx) const {
   SamePositionQuery::StatsT stats(
     size, SamePositionQuery::StatsT::allocator_type{ctx.memory});
   for (auto& stat : stats) {
-    stat.resize(scorers.stats_size());
+    stat.resize(ctx.scorer ? StatsSize(*ctx.scorer) : 0);
     auto* stats_buf = stat.data();
     term_stats.finish(stats_buf, term_idx++, field_stats, ctx.index);
   }

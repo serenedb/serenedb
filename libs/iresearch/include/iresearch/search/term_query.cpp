@@ -39,14 +39,13 @@ TermQuery::TermQuery(States&& states, bstring&& stats, score_t boost)
 
 DocIterator::ptr TermQuery::execute(const ExecutionContext& ctx) const {
   const auto& segment = ctx.segment;
-  auto ord = ctx.scorer ? Scorers::Prepare(*ctx.scorer) : Scorers{};
   const auto* state = _states.find(segment);
 
   if (!state) [[unlikely]] {  // Invalid state
     return DocIterator::empty();
   }
 
-  if (ord.empty() &&
+  if (!ctx.scorer &&
       segment.docs_count() ==
         sdb::basics::downCast<CookieImpl>(*state->cookie).meta.docs_count)
     [[unlikely]] {
@@ -59,7 +58,9 @@ DocIterator::ptr TermQuery::execute(const ExecutionContext& ctx) const {
   DocIterator::ptr docs;
   IteratorOptions options{ctx.wand};
 
-  auto it = reader->Iterator(ord.features(),
+  auto features = ctx.scorer ? ctx.scorer->GetIndexFeatures()
+                             : IndexFeatures::None;
+  auto it = reader->Iterator(features,
                              {
                                .cookie = state->cookie.get(),
                                .stats = _stats.c_str(),

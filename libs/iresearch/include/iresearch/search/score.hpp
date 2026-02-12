@@ -31,10 +31,10 @@ namespace irs {
 
 using ScoreFunctions = sdb::containers::SmallVector<ScoreFunction, 1>;
 
-// Prepare empty collectors, i.e. call collect(...) on each of the
-// buckets without explicitly collecting field or term statistics,
+// Prepare empty collectors, i.e. call collect(...) on the scorer
+// without explicitly collecting field or term statistics,
 // e.g. for 'all' filter.
-void PrepareCollectors(std::span<const ScorerBucket> order, byte_type* stats);
+void PrepareCollectors(const Scorer* scorer, byte_type* stats);
 
 template<ScoreMergeType MergeType>
 IRS_FORCE_INLINE void Merge(score_t& bucket, score_t arg) noexcept {

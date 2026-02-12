@@ -22,13 +22,11 @@
 
 #pragma once
 
-#include "basics/containers/small_vector.h"
 #include "basics/math_utils.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
-#include "iresearch/utils/iterator.hpp"
 
 namespace irs {
 
@@ -248,81 +246,10 @@ enum class ScoreMergeType {
   Max,
 };
 
-struct ScorerBucket {
-  ScorerBucket(const Scorer& bucket, size_t stats_offset) noexcept
-    : bucket{&bucket}, stats_offset{stats_offset} {}
-
-  const Scorer* bucket;  // prepared score
-  size_t stats_offset;   // offset in stats buffer
-};
-
-static_assert(std::is_nothrow_move_constructible_v<ScorerBucket>);
-static_assert(std::is_nothrow_move_assignable_v<ScorerBucket>);
-
-// Set of compiled scorers
-class Scorers final : private util::Noncopyable {
- public:
-  static const Scorers kUnordered;
-
-  static Scorers Prepare(std::span<const Scorer*> scorers) {
-    return Prepare(scorers.begin(), scorers.end());
-  }
-  static Scorers Prepare(std::span<const Scorer::ptr> scorers) {
-    return Prepare(scorers.begin(), scorers.end());
-  }
-  static Scorers Prepare(const Scorer* scorer) {
-    return Prepare(std::span{&scorer, 1});
-  }
-  static Scorers Prepare(const Scorer& scorer) { return Prepare(&scorer); }
-
-  Scorers() = default;
-  Scorers(Scorers&&) = default;
-  Scorers& operator=(Scorers&&) = default;
-
-  bool empty() const noexcept { return _buckets.empty(); }
-  std::span<const ScorerBucket> buckets() const noexcept {
-    return {_buckets.data(), _buckets.size()};
-  }
-  size_t score_size() const noexcept { return _score_size; }
-  size_t stats_size() const noexcept { return _stats_size; }
-  IndexFeatures features() const noexcept { return _features; }
-
- private:
-  using ScorerBuckets = sdb::containers::SmallVector<ScorerBucket, 1>;
-
-  template<typename Iterator>
-  static Scorers Prepare(Iterator begin, Iterator end);
-
-  size_t PushBack(const Scorer& scorer);
-
-  ScorerBuckets _buckets;
-  size_t _score_size{};
-  size_t _stats_size{};
-  IndexFeatures _features{IndexFeatures::None};
-};
-
-template<typename Iterator>
-Scorers Scorers::Prepare(Iterator begin, Iterator end) {
-  SDB_ASSERT(begin <= end);
-
-  size_t stats_align = 1;
-  Scorers scorers;
-  scorers._buckets.reserve(end - begin);
-
-  for (; begin != end; ++begin) {
-    const auto& scorer = *begin;
-
-    if (!scorer) [[unlikely]] {
-      continue;
-    }
-
-    stats_align = std::max(stats_align, scorers.PushBack(*scorer));
-  }
-
-  scorers._stats_size = memory::AlignUp(scorers._stats_size, stats_align);
-  scorers._score_size = sizeof(score_t) * scorers._buckets.size();
-
-  return scorers;
+// Compute aligned stats buffer size for a single scorer.
+inline size_t StatsSize(const Scorer& scorer) {
+  auto [size, align] = scorer.stats_size();
+  return memory::AlignUp(size, align);
 }
 
 template<typename Visitor>

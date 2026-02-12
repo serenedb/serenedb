@@ -29,12 +29,9 @@
 
 namespace irs {
 
-void PrepareCollectors(std::span<const ScorerBucket> order,
-                       byte_type* stats_buf) {
-  for (const auto& entry : order) {
-    if (entry.bucket) [[likely]] {
-      entry.bucket->collect(stats_buf + entry.stats_offset, nullptr, nullptr);
-    }
+void PrepareCollectors(const Scorer* scorer, byte_type* stats_buf) {
+  if (scorer) {
+    scorer->collect(stats_buf, nullptr, nullptr);
   }
 }
 

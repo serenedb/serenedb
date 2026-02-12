@@ -69,22 +69,6 @@ uint8_t Scorer::compatible(WandType index, WandType query) noexcept {
   return 0;
 }
 
-size_t Scorers::PushBack(const Scorer& scorer) {
-  const auto [bucket_stats_size, bucket_stats_align] = scorer.stats_size();
-  SDB_ASSERT(bucket_stats_align <= alignof(std::max_align_t));
-  // math::IsPower2(0) returns true
-  SDB_ASSERT(math::IsPower2(bucket_stats_align));
-
-  _stats_size = memory::AlignUp(_stats_size, bucket_stats_align);
-  _features |= scorer.GetIndexFeatures();
-  _buckets.emplace_back(scorer, _stats_size);
-  _stats_size += memory::AlignUp(bucket_stats_size, bucket_stats_align);
-
-  return bucket_stats_align;
-}
-
 REGISTER_ATTRIBUTE(FilterBoost);
-
-const Scorers Scorers::kUnordered;
 
 }  // namespace irs

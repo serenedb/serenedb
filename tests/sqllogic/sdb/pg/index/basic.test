@@ -144,7 +144,7 @@ indexrelid	indrelid
 statement ok
 CREATE TABLE tstest (a INTEGER, b TIMESTAMP);
 
-stetment error db error: ERROR: Column b has unsupported kind and can not be indexed.
+statement error db error: ERROR: Column b has unsupported kind and can not be indexed.
 CREATE INDEX index_ts on tstest USING inverted(b);
 
 statement ok

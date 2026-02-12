@@ -1302,6 +1302,9 @@ Result LocalCatalog::CreateIndex(ObjectId database_id, std::string_view schema,
     return it != columns.end() ? &*it : nullptr;
   };
 
+  std::vector<const catalog::Column*> index_columns;
+  index_columns.reserve(column_names.size());
+  options.column_ids.reserve(column_names.size());
   for (const auto& name : column_names) {
     const auto* column = find_column(name);
     if (!column) {
@@ -1309,6 +1312,12 @@ Result LocalCatalog::CreateIndex(ObjectId database_id, std::string_view schema,
                     "\" does not exist"};
     }
     options.column_ids.push_back(column->id);
+    index_columns.push_back(column);
+  }
+
+  auto validation_res = ValidateIndexOptions(options, index_columns);
+  if (validation_res.fail()) {
+    return validation_res;
   }
 
   auto index = MakeIndex(std::move(options));

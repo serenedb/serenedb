@@ -63,15 +63,14 @@ std::vector<std::unique_ptr<Writer>> CreateIndexWriters(
   std::vector<std::unique_ptr<Writer>> writers;
 
   transaction.EnsureIndexesTransactions(
-    table_id, [&]<typename T>(T& transaction, const IndexShard& shard, std::span<const catalog::Column::Id> columns) {
+    table_id, [&]<typename T>(T& transaction, const IndexShard& shard,
+                              std::span<const catalog::Column::Id> columns) {
       if constexpr (std::is_same_v<T, irs::IndexWriter::Transaction>) {
-        
         writers.push_back(
           std::make_unique<std::conditional_t<
             std::is_same_v<Writer, SinkUpdateWriter>,
             search::SearchSinkUpdateWriter, search::SearchSinkInsertWriter>>(
-            transaction,
-            columns));
+            transaction, columns));
       } else {
         SDB_UNREACHABLE();
       }

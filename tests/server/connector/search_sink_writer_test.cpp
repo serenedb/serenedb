@@ -84,10 +84,9 @@ class SearchSinkWriterTest : public ::testing::Test,
 
 TEST_F(SearchSinkWriterTest, InsertDeleteMultipleColumns) {
   auto trx = _data_writer->GetBatch();
-  const std::vector<sdb::catalog::Column::Id> col_id{1, 2, 3, 4, 5};  
+  const std::vector<sdb::catalog::Column::Id> col_id{1, 2, 3, 4, 5};
   SearchSinkInsertWriter sink{trx, col_id};
 
-  
   const std::vector<std::string_view> pk{
     {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x1pk1", 19},
     {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x2pk2", 19},

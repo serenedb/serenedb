@@ -87,10 +87,11 @@ class Transaction : public Config {
 
   catalog::TableStats GetTableStats(ObjectId table_id) const;
 
-  template<
-    InvocableWith<void(irs::IndexWriter::Transaction&, const IndexShard&, std::span<const catalog::Column::Id>),
-                  void(rocksdb::Transaction&, const IndexShard&, std::span<const catalog::Column::Id>)>
-      Visit>
+  template<InvocableWith<void(irs::IndexWriter::Transaction&, const IndexShard&,
+                              std::span<const catalog::Column::Id>),
+                         void(rocksdb::Transaction&, const IndexShard&,
+                              std::span<const catalog::Column::Id>)>
+             Visit>
   void EnsureIndexesTransactions(ObjectId table_id, Visit&& visit) {
     auto snapshot = GetCatalogSnapshot();
     SDB_ASSERT(snapshot->GetObject(table_id)->GetType() ==

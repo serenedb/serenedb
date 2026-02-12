@@ -59,7 +59,8 @@ void SetNameToBuffer(std::string& name_buffer, catalog::Column::Id column_id) {
 }  // namespace
 
 SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
-  irs::IndexWriter::Transaction& trx, std::span<const catalog::Column::Id> columns)
+  irs::IndexWriter::Transaction& trx,
+  std::span<const catalog::Column::Id> columns)
   : _trx(trx) {
   _pk_field.PrepareForStringValue();
   _pk_field.name = kPkFieldName;
@@ -92,7 +93,7 @@ bool SearchSinkInsertBaseImpl::SwitchColumnImpl(velox::TypeKind kind,
 
 void SearchSinkInsertBaseImpl::WriteImpl(
   std::span<const rocksdb::Slice> cell_slices, std::string_view full_key) {
-  if(!_current_writer) {
+  if (!_current_writer) {
     // not indexing current column
     return;
   }

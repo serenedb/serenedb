@@ -21,17 +21,12 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <gtest/gtest.h>
+
 #include <algorithm>
 
-#include "basics/misc.hpp"
-#include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/formats/empty_term_reader.hpp"
-#include "iresearch/index/field_meta.hpp"
-#include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/score.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "tests_shared.hpp"
 
 namespace {
 

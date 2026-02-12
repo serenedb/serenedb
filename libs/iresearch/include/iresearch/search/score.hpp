@@ -22,10 +22,9 @@
 
 #pragma once
 
+#include "basics/containers/small_vector.h"
 #include "basics/shared.hpp"
-#include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/utils/attributes.hpp"
 
 namespace irs {
 

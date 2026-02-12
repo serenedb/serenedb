@@ -1,21 +1,36 @@
-#!/bin/bash
-set -e  # Stop on error
-set -o pipefail
+#!/usr/bin/env bash
+set -euo pipefail
 
-echo "ℹ️ Starting serene-ui Docker container..."
-docker compose -f docker-compose.test-docker.yaml up --build -d serene-ui
-sleep 10  # Wait for it to start
+COMPOSE_FILE="docker-compose.test-docker.yaml"
+MAX_ATTEMPTS=30
 
-echo "ℹ️ Running backend tests..."
-docker exec serene-ui npm run --prefix /test-app/apps/backend test
-echo "✅ Backend tests completed"
+cleanup() {
+  echo "🧹 Tearing down..."
+  docker compose -f "$COMPOSE_FILE" down --volumes --remove-orphans 2>/dev/null || true
+}
+trap cleanup EXIT
 
-echo "ℹ️ Running storybook tests..."
-docker exec serene-ui npm run --prefix /test-app/apps/web test-storybook
-echo "✅ Storybook tests completed"
+wait_for_service() {
+  echo "⏳ Waiting for serene-ui..."
+  for i in $(seq 1 "$MAX_ATTEMPTS"); do
+    docker compose -f "$COMPOSE_FILE" exec -T serene-ui \
+      wget -qO /dev/null http://localhost:3000 2>/dev/null && return 0
+    echo "  attempt $i/$MAX_ATTEMPTS..."
+    sleep 2
+  done
+  echo "❌ serene-ui failed to start"
+  exit 1
+}
 
-echo "ℹ️ Stopping serene-ui Docker container..."
-docker compose -f docker-compose.test-docker.yaml down
-echo "✅ Serene-ui Docker container stopped"
+echo "🚀 Starting services..."
+docker compose -f "$COMPOSE_FILE" up --build -d
 
-echo "✅ All tests completed successfully"
+wait_for_service
+
+echo "🧪 Running tests..."
+docker compose -f "$COMPOSE_FILE" exec -T serene-ui sh -c '
+  npm run --prefix /test-app/apps/backend test &&
+  npm run --prefix /test-app/apps/web test-storybook
+'
+
+echo "✅ All tests passed"

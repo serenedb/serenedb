@@ -51,8 +51,8 @@ using namespace tests;
 void WandScoringFieldFactory(tests::Document& doc, const std::string& name,
                              const tests::JsonDocGenerator::JsonValue& data) {
   if (JsonDocGenerator::ValueType::STRING == data.vt) {
-    doc.insert(std::make_shared<tests::StringField>(
-      name, data.str, irs::IndexFeatures::Norm));
+    doc.insert(std::make_shared<tests::StringField>(name, data.str,
+                                                    irs::IndexFeatures::Norm));
   } else if (JsonDocGenerator::ValueType::NIL == data.vt) {
     doc.insert(std::make_shared<BinaryField>());
     auto& field = (doc.indexed.end() - 1).as<BinaryField>();
@@ -99,7 +99,8 @@ class WandScoringTestCase : public IndexTestBase {
     opts.features = [](irs::IndexFeatures id) {
       irs::ColumnInfo info{irs::Type<irs::compression::None>::get(), {}, false};
       if (id == irs::IndexFeatures::Norm) {
-        return std::make_pair(info, irs::FeatureWriterFactory{&irs::Norm::MakeWriter});
+        return std::make_pair(
+          info, irs::FeatureWriterFactory{&irs::Norm::MakeWriter});
       }
       return std::make_pair(info, irs::FeatureWriterFactory{});
     };
@@ -129,7 +130,8 @@ class WandScoringTestCase : public IndexTestBase {
     opts.features = [](irs::IndexFeatures id) {
       irs::ColumnInfo info{irs::Type<irs::compression::None>::get(), {}, false};
       if (id == irs::IndexFeatures::Norm) {
-        return std::make_pair(info, irs::FeatureWriterFactory{&irs::Norm::MakeWriter});
+        return std::make_pair(
+          info, irs::FeatureWriterFactory{&irs::Norm::MakeWriter});
       }
       return std::make_pair(info, irs::FeatureWriterFactory{});
     };
@@ -144,8 +146,7 @@ class WandScoringTestCase : public IndexTestBase {
 
     for (const auto& file : files) {
       for (size_t i = 0; i < multiplier; ++i) {
-        tests::JsonDocGenerator gen(resource(file),
-                                    &WandScoringFieldFactory);
+        tests::JsonDocGenerator gen(resource(file), &WandScoringFieldFactory);
         index_ref.emplace_back(writer->FeatureInfo());
         write_segment(*writer, index_ref.back(), gen);
       }
@@ -179,8 +180,8 @@ class WandScoringTestCase : public IndexTestBase {
 
     size_t baseline_count = irs::ExecuteTopKWithCount(
       reader, filter, scorers, k, std::span{baseline_hits});
-    size_t wand_count = irs::ExecuteTopKWithCountWand(reader, filter, scorers,
-                                                      k, std::span{wand_hits});
+    size_t wand_count =
+      irs::ExecuteTopK(reader, filter, scorers, k, std::span{wand_hits});
 
     auto baseline_k = std::min(baseline_count, k);
     auto wand_k = std::min(wand_count, k);
@@ -332,8 +333,8 @@ TEST_P(WandScoringTestCase, WandEmptyResults) {
   std::vector<std::pair<irs::doc_id_t, irs::score_t>> hits(
     irs::BlockSize(kTopK));
 
-  size_t count = irs::ExecuteTopKWithCountWand(reader, *filter, prepared_order,
-                                               kTopK, std::span{hits});
+  size_t count =
+    irs::ExecuteTopK(reader, *filter, prepared_order, kTopK, std::span{hits});
   ASSERT_EQ(0, count);
 }
 
@@ -351,8 +352,8 @@ TEST_P(WandScoringTestCase, WandResultValues) {
   std::vector<std::pair<irs::doc_id_t, irs::score_t>> hits(
     irs::BlockSize(kTopK));
 
-  size_t count = irs::ExecuteTopKWithCountWand(reader, *filter, prepared_order,
-                                               kTopK, std::span{hits});
+  size_t count =
+    irs::ExecuteTopK(reader, *filter, prepared_order, kTopK, std::span{hits});
   ASSERT_GT(count, 0);
   auto result_count = std::min(count, kTopK);
 
@@ -373,8 +374,8 @@ TEST_P(WandScoringTestCase, WandMultisegResultValues) {
   std::vector<std::pair<irs::doc_id_t, irs::score_t>> hits(
     irs::BlockSize(kTopK));
 
-  size_t count = irs::ExecuteTopKWithCountWand(reader, *filter, prepared_order,
-                                               kTopK, std::span{hits});
+  size_t count =
+    irs::ExecuteTopK(reader, *filter, prepared_order, kTopK, std::span{hits});
   ASSERT_GT(count, 0);
   auto result_count = std::min(count, kTopK);
 

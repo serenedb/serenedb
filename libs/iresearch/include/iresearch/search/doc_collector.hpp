@@ -18,7 +18,7 @@ namespace irs {
 
 constexpr size_t BlockSize(size_t k) noexcept { return 2 * k + kScoreBlock; }
 
-template<size_t K = std::dynamic_extent>
+template<size_t K>
 size_t ExecuteTopKWithCount(const DirectoryReader& reader, const Filter& filter,
                             const Scorers& scorers, size_t k,
                             std::span<std::pair<doc_id_t, score_t>, K> hits) {
@@ -103,12 +103,11 @@ size_t ExecuteTopKWithCount(const DirectoryReader& reader, const Filter& filter,
   return count;
 }
 
-template<size_t K = std::dynamic_extent>
-size_t ExecuteTopKWithCountWand(const DirectoryReader& reader,
-                                const Filter& filter, const Scorers& scorers,
-                                size_t k,
-                                std::span<std::pair<doc_id_t, score_t>, K> hits,
-                                uint8_t wand_index = 0) {
+template<size_t K>
+size_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
+                   const Scorers& scorers, size_t k,
+                   std::span<std::pair<doc_id_t, score_t>, K> hits,
+                   uint8_t wand_index = 0) {
   SDB_ASSERT(BlockSize(k) <= hits.size());
 
   auto prepared = filter.prepare({

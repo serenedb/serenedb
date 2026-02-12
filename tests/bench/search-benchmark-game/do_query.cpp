@@ -108,6 +108,17 @@ class Executor {
                                      .scorers = {&_scorer_ptr, 1},
                                    })} {}
 
+  size_t ExecuteTopK(size_t k, std::string_view query) {
+    auto filter = ParseFilter(query);
+    if (!filter) {
+      return 0;
+    }
+
+    _results.resize(irs::BlockSize(k));
+    return irs::ExecuteTopKWithCount(_reader, *filter, _scorers, k,
+                                     std::span{_results});
+  }
+
   size_t ExecuteTopKWithCount(size_t k, std::string_view query) {
     auto filter = ParseFilter(query);
     if (!filter) {
@@ -123,7 +134,7 @@ class Executor {
     size_t count = 0;
     auto prepared = PrepareFilter(query);
     for (auto& segment : _reader) {
-      auto docs = prepared->execute(irs::ExecutionContext{.segment = segment});
+      auto docs = prepared->execute({.segment = segment});
       count += docs->count();
     }
     return count;
@@ -136,11 +147,11 @@ class Executor {
       case QueryType::Count:
         return ExecuteCount(query);
       case QueryType::Top10:
-        return ExecuteTopKWithCount(10, query);
+        return ExecuteTopK(10, query);
       case QueryType::Top100:
-        return ExecuteTopKWithCount(100, query);
+        return ExecuteTopK(100, query);
       case QueryType::Top1000:
-        return ExecuteTopKWithCount(1000, query);
+        return ExecuteTopK(1000, query);
       case QueryType::Top10Count:
         return ExecuteTopKWithCount(10, query);
       case QueryType::Top100Count:

@@ -1,4 +1,4 @@
-name: SereneDB-Build-Base
+name: SereneUI-Build-Base
 on:
   workflow_call:
 

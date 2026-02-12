@@ -1,4 +1,4 @@
-name: SereneDB-Build-Manual
+name: SereneUI-Build-Manual
 on:
   workflow_dispatch:
 

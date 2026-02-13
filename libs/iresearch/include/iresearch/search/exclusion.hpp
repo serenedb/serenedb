@@ -58,6 +58,12 @@ class Exclusion : public DocIterator {
     return converge(incl);
   }
 
+  ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
+    return _incl->PrepareScore(ctx);
+  }
+
+  void FetchScoreArgs(uint16_t index) final { _incl->FetchScoreArgs(index); }
+
   uint32_t count() final { return Count(*this); }
 
  private:

@@ -28,9 +28,12 @@
 #include "basics/empty.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/field_meta.hpp"
+#include "iresearch/index/index_reader.hpp"
+#include "iresearch/index/iterators.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/store/memory_directory.hpp"
+#include "iresearch/utils/attribute_provider.hpp"
 
 namespace irs {
 
@@ -114,7 +117,7 @@ enum WandTag : uint32_t {
 };
 
 template<uint32_t Tag>
-class FreqNormProducer {
+class FreqNormProducer : public AttributeProvider {
   static constexpr bool kBm25 = (Tag & kWandTagBM25) != 0;
   static constexpr bool kDivNorm = (Tag & kWandTagDivNorm) != 0;
   static constexpr bool kMinNorm = (Tag & kWandTagMinNorm) != 0;
@@ -210,55 +213,79 @@ class FreqNormProducer {
                const AttributeProvider& attrs) {
     _freq = irs::get<FreqAttr>(attrs);
 
-    if (_freq == nullptr) [[unlikely]] {
+    if (!_freq) [[unlikely]] {
       return false;
     }
 
     if constexpr (kNorm) {
-      const auto* doc = irs::get<DocAttr>(attrs);
+      _doc = irs::get<DocAttr>(attrs);
 
-      if (doc == nullptr) [[unlikely]] {
+      if (!_doc) [[unlikely]] {
         return false;
       }
 
-      if (!field_limits::valid(meta.norm)) [[unlikely]] {
+      const auto* column = reader.column(meta.norm);
+      if (!column) {
         return false;
       }
 
-      Norm::Context ctx;
-      if (!ctx.Reset(reader, meta.norm, *doc)) [[unlikely]] {
+      _norm_it = column->iterator(ColumnHint::Normal);
+      if (!_norm_it) [[unlikely]] {
         return false;
       }
 
-      _norm = Norm::MakeReader(std::move(ctx), [&](auto&& reader) {
-        return absl::AnyInvocable<uint32_t() noexcept>{std::move(reader)};
-      });
+      _norm_payload = irs::get<PayAttr>(*_norm_it);
+      if (!_norm_payload) [[unlikely]] {
+        return false;
+      }
+
+      return true;
     }
 
     return true;
   }
-
   IRS_FORCE_INLINE void Produce(Entry& to) noexcept {
     if constexpr (kBm25 || kDivNorm) {
       const auto freq = _freq->value;
-      const auto norm = _norm();
+      ReadNorm();
       if constexpr (kBm25) {
-        ProduceBM25(_b, freq, norm, to);
+        ProduceBM25(_b, freq, _norm.value, to);
       } else {
-        ProduceDivNorm(freq, norm, to);
+        ProduceDivNorm(freq, _norm.value, to);
       }
     } else if constexpr (kMaxFreq) {
       const auto freq = _freq->value;
       to.freq = freq > to.freq ? freq : to.freq;
       if constexpr (kMinNorm) {
-        const auto norm = _norm();
-        to.norm = norm < to.norm ? norm : to.norm;
+        ReadNorm();
+        to.norm = _norm.value < to.norm ? _norm.value : to.norm;
         to.norm = to.norm < to.freq ? to.freq : to.norm;
       }
     }
   }
 
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+    if (irs::Type<FreqAttr>::id() == type) {
+      return const_cast<irs::FreqAttr*>(_freq);
+    }
+    if constexpr (kNorm) {
+      if (irs::Type<Norm>::id() == type) {
+        return &_norm;
+      }
+    }
+    if (irs::Type<DocAttr>::id() == type) {
+      return const_cast<irs::DocAttr*>(_doc);
+    }
+    return nullptr;
+  }
+
  private:
+  void ReadNorm() {
+    static_assert(kNorm);
+    _norm_it->seek(_doc->value);
+    _norm.value = Norm::Read(_norm_payload->value);
+  }
+
   static IRS_FORCE_INLINE void ProduceDivNorm(uint32_t freq, uint32_t norm,
                                               Entry& to) noexcept {
     if (static_cast<uint64_t>(freq) * to.norm >
@@ -288,8 +315,13 @@ class FreqNormProducer {
   }
 
   const irs::FreqAttr* _freq{};
+  const irs::DocAttr* _doc{};
   [[no_unique_address]]
-  utils::Need<kNorm, absl::AnyInvocable<uint32_t() noexcept>> _norm;
+  utils::Need<kNorm, Norm> _norm;
+  [[no_unique_address]]
+  utils::Need<kNorm, ResettableDocIterator::ptr> _norm_it;
+  [[no_unique_address]]
+  utils::Need<kNorm, const PayAttr*> _norm_payload;
   [[no_unique_address]] utils::Need<kBm25, score_t> _b;
 };
 

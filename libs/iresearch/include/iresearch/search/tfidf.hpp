@@ -22,7 +22,8 @@
 
 #pragma once
 
-#include "iresearch/index/field_meta.hpp"
+#include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/scorer.hpp"
 #include "iresearch/search/scorers.hpp"
 
 namespace irs {
@@ -58,11 +59,8 @@ class TFIDF final : public irs::ScorerBase<TFIDF, TFIDFStats> {
 
   FieldCollector::ptr PrepareFieldCollector() const final;
 
-  ScoreFunction PrepareScorer(const ColumnProvider& segment,
-                              const FieldProperties& meta,
-                              const byte_type* stats_buf,
-                              const AttributeProvider& doc_attrs,
-                              score_t boost) const final;
+  ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
+  ScoreFunction PrepareSingleScorer(const ScoreContext& ctx) const final;
 
   TermCollector::ptr PrepareTermCollector() const final;
 

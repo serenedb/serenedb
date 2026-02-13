@@ -28,14 +28,14 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
-#include <iresearch/analysis/analyzers.hpp>
-#include <iresearch/analysis/tokenizers.hpp>
-#include <iresearch/index/index_features.hpp>
-#include <iresearch/index/index_writer.hpp>
-#include <iresearch/store/store_utils.hpp>
-#include <iresearch/utils/iterator.hpp>
 
 #include "basics/down_cast.h"
+#include "iresearch/analysis/analyzers.hpp"
+#include "iresearch/analysis/tokenizers.hpp"
+#include "iresearch/index/index_features.hpp"
+#include "iresearch/index/index_writer.hpp"
+#include "iresearch/store/store_utils.hpp"
+#include "iresearch/utils/iterator.hpp"
 
 namespace irs {
 

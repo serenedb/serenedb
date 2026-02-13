@@ -21,16 +21,15 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/index/buffered_column.hpp>
-#include <iresearch/index/buffered_column_iterator.hpp>
-#include <iresearch/index/comparer.hpp>
-#include <iresearch/search/score.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/utils/bytes_utils.hpp>
-#include <iresearch/utils/lz4compression.hpp>
-#include <iresearch/utils/type_limits.hpp>
-
+#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/index/buffered_column.hpp"
+#include "iresearch/index/buffered_column_iterator.hpp"
+#include "iresearch/index/comparer.hpp"
+#include "iresearch/search/score.hpp"
+#include "iresearch/store/memory_directory.hpp"
+#include "iresearch/utils/bytes_utils.hpp"
+#include "iresearch/utils/lz4compression.hpp"
+#include "iresearch/utils/type_limits.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -89,7 +88,6 @@ void AssertIteratorNext(const irs::BufferedColumn& column,
                         std::span<const uint32_t> expected_values) {
   irs::BufferedColumnIterator it{column.Index(), column.Data()};
   ASSERT_EQ(expected_values.size(), irs::CostAttr::extract(it));
-  ASSERT_EQ(nullptr, irs::get<irs::ScoreAttr>(it));
   auto* doc = irs::get<irs::DocAttr>(it);
   ASSERT_NE(nullptr, doc);
   auto* payload = irs::get<irs::PayAttr>(it);
@@ -115,7 +113,6 @@ void AssertIteratorSeekStateful(const irs::BufferedColumn& column,
                                 std::span<const uint32_t> expected_values) {
   irs::BufferedColumnIterator it{column.Index(), column.Data()};
   ASSERT_EQ(expected_values.size(), irs::CostAttr::extract(it));
-  ASSERT_EQ(nullptr, irs::get<irs::ScoreAttr>(it));
   auto* doc = irs::get<irs::DocAttr>(it);
   ASSERT_NE(nullptr, doc);
   auto* payload = irs::get<irs::PayAttr>(it);

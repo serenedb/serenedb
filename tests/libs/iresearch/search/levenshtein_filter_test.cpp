@@ -20,15 +20,16 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/index/index_features.hpp>
-#include <iresearch/index/norm.hpp>
-#include <iresearch/search/levenshtein_filter.hpp>
-#include <iresearch/search/prefix_filter.hpp>
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/utils/levenshtein_default_pdp.hpp>
-
 #include "basics/misc.hpp"
 #include "filter_test_case_base.hpp"
+#include "iresearch/index/index_features.hpp"
+#include "iresearch/index/norm.hpp"
+#include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/levenshtein_filter.hpp"
+#include "iresearch/search/prefix_filter.hpp"
+#include "iresearch/search/term_filter.hpp"
+#include "iresearch/utils/levenshtein_default_pdp.hpp"
+#include "iresearch/utils/lz4compression.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -574,6 +575,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
   ASSERT_EQ(1, index->size());
 
   MaxMemoryCounter counter;
+  irs::ColumnCollector collector;
 
   {
     irs::ByEditDistance filter;
@@ -595,9 +597,11 @@ TEST_P(ByEditDistanceTestCase, bm25) {
       prepared->execute({.segment = index[0], .scorers = prepared_order});
     ASSERT_NE(nullptr, docs);
 
-    auto* score = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_NE(nullptr, score);
-    ASSERT_FALSE(score->Func() == &irs::ScoreFunction::DefaultScore);
+    auto score = docs->PrepareScore({
+      .scorer = prepared_order.buckets().front().bucket,
+      .segment = &index[0],
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     constexpr std::pair<float_t, irs::doc_id_t> kExpectedDocs[]{
       {6.21361256f, 261},
@@ -608,8 +612,10 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     auto expected_doc = std::begin(kExpectedDocs);
     while (docs->next()) {
+      collector.Collect(docs->value());
+      docs->FetchScoreArgs(0);
       irs::score_t value;
-      (*score)(&value);
+      score.Score(&value, 1);
       ASSERT_FLOAT_EQ(expected_doc->first, value);
       ASSERT_EQ(expected_doc->second, docs->value());
       ++expected_doc;
@@ -637,13 +643,19 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     });
     ASSERT_NE(nullptr, prepared);
 
-    auto docs =
-      prepared->execute({.segment = index[0], .scorers = prepared_order});
+    collector.Clear();
+    auto docs = prepared->execute({
+      .segment = index[0],
+      .scorers = prepared_order,
+    });
     ASSERT_NE(nullptr, docs);
 
-    auto* score = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_NE(nullptr, score);
-    ASSERT_FALSE(score->Func() == &irs::ScoreFunction::DefaultScore);
+    auto score = docs->PrepareScore({
+      .scorer = prepared_order.buckets().front().bucket,
+      .segment = &index[0],
+    });
+
+    ASSERT_FALSE(score.IsDefault());
 
     constexpr std::pair<float_t, irs::doc_id_t> kExpectedDocs[]{
       {9.9112005f, 272},
@@ -652,8 +664,10 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     auto expected_doc = std::begin(kExpectedDocs);
     while (docs->next()) {
+      collector.Collect(docs->value());
       irs::score_t value;
-      (*score)(&value);
+      docs->FetchScoreArgs(0);
+      score.Score(&value, 1);
       ASSERT_FLOAT_EQ(expected_doc->first, value);
       ASSERT_EQ(expected_doc->second, docs->value());
       ++expected_doc;
@@ -681,13 +695,19 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     });
     ASSERT_NE(nullptr, prepared);
 
-    auto docs =
-      prepared->execute({.segment = index[0], .scorers = prepared_order});
+    collector.Clear();
+    auto docs = prepared->execute({
+      .segment = index[0],
+      .scorers = prepared_order,
+    });
     ASSERT_NE(nullptr, docs);
 
-    auto* score = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_NE(nullptr, score);
-    ASSERT_FALSE(score->Func() == &irs::ScoreFunction::DefaultScore);
+    auto score = docs->PrepareScore({
+      .scorer = prepared_order.buckets().front().bucket,
+      .segment = &index[0],
+    });
+
+    ASSERT_FALSE(score.IsDefault());
 
     constexpr std::pair<float_t, irs::doc_id_t> kExpectedDocs[]{
       {9.9112005f, 272},
@@ -696,8 +716,10 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     auto expected_doc = std::begin(kExpectedDocs);
     while (docs->next()) {
+      collector.Collect(docs->value());
       irs::score_t value;
-      (*score)(&value);
+      docs->FetchScoreArgs(0);
+      score.Score(&value, 1);
 
       ASSERT_FLOAT_EQ(expected_doc->first, value);
       ASSERT_EQ(expected_doc->second, docs->value());
@@ -726,13 +748,19 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     });
     ASSERT_NE(nullptr, prepared);
 
-    auto docs =
-      prepared->execute({.segment = index[0], .scorers = prepared_order});
+    collector.Clear();
+    auto docs = prepared->execute({
+      .segment = index[0],
+      .scorers = prepared_order,
+    });
     ASSERT_NE(nullptr, docs);
 
-    auto* score = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_NE(nullptr, score);
-    ASSERT_FALSE(score->Func() == &irs::ScoreFunction::DefaultScore);
+    auto score = docs->PrepareScore({
+      .scorer = prepared_order.buckets().front().bucket,
+      .segment = &index[0],
+    });
+
+    ASSERT_FALSE(score.IsDefault());
 
     constexpr std::pair<float_t, irs::doc_id_t> kExpectedDocs[]{
       {8.1443892f, 265},   {6.7869911f, 264},   {6.7869911f, 3054},
@@ -744,8 +772,10 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     std::vector<std::pair<float_t, irs::doc_id_t>> actual_docs;
     while (docs->next()) {
+      collector.Collect(docs->value());
       irs::score_t value;
-      (*score)(&value);
+      docs->FetchScoreArgs(0);
+      score.Score(&value, 1);
       actual_docs.emplace_back(value, docs->value());
     }
     ASSERT_FALSE(docs->next());
@@ -791,13 +821,20 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     });
     ASSERT_NE(nullptr, prepared);
 
-    auto docs =
-      prepared->execute({.segment = index[0], .scorers = prepared_order});
+    collector.Clear();
+    auto docs = prepared->execute({
+      .segment = index[0],
+      .scorers = prepared_order,
+    });
     ASSERT_NE(nullptr, docs);
 
-    auto* score = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_NE(nullptr, score);
-    ASSERT_FALSE(score->Func() == &irs::ScoreFunction::DefaultScore);
+    auto score = docs->PrepareScore({
+      .scorer = prepared_order.buckets().front().bucket,
+      .segment = &index[0],
+      .collector = &collector,
+    });
+
+    ASSERT_FALSE(score.IsDefault());
 
     constexpr std::pair<float_t, irs::doc_id_t> kExpectedDocs[]{
       {3.8292055f, 275},
@@ -807,8 +844,10 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     std::vector<std::pair<float_t, irs::doc_id_t>> actual_docs;
     while (docs->next()) {
+      collector.Collect(docs->value());
       irs::score_t value;
-      (*score)(&value);
+      docs->FetchScoreArgs(0);
+      score.Score(&value, 1);
       actual_docs.emplace_back(value, docs->value());
     }
 
@@ -857,13 +896,20 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     });
     ASSERT_NE(nullptr, prepared);
 
-    auto docs =
-      prepared->execute({.segment = index[0], .scorers = prepared_order});
+    collector.Clear();
+    auto docs = prepared->execute({
+      .segment = index[0],
+      .scorers = prepared_order,
+    });
     ASSERT_NE(nullptr, docs);
 
-    auto* score = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_NE(nullptr, score);
-    ASSERT_FALSE(score->Func() == &irs::ScoreFunction::DefaultScore);
+    auto score = docs->PrepareScore({
+      .scorer = prepared_order.buckets().front().bucket,
+      .segment = &index[0],
+      .collector = &collector,
+    });
+
+    ASSERT_FALSE(score.IsDefault());
 
     constexpr std::pair<float_t, irs::doc_id_t> kExpectedDocs[]{
       {3.8292055f, 275},
@@ -873,8 +919,10 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     std::vector<std::pair<float_t, irs::doc_id_t>> actual_docs;
     while (docs->next()) {
+      collector.Collect(docs->value());
       irs::score_t value;
-      (*score)(&value);
+      docs->FetchScoreArgs(0);
+      score.Score(&value, 1);
       actual_docs.emplace_back(value, docs->value());
     }
 

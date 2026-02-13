@@ -40,6 +40,12 @@ IRS_FORCE_INLINE constexpr size_t BitsRequired(size_t n) noexcept {
 }
 
 template<typename T>
+IRS_FORCE_INLINE constexpr T PopBit(T v) noexcept {
+  SDB_ASSERT(v);
+  return v & (v - 1);
+}
+
+template<typename T>
 IRS_FORCE_INLINE constexpr void SetBit(T& value, size_t bit) noexcept {
   static_assert(std::is_unsigned_v<T>);
   value |= (T(1) << bit);

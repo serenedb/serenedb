@@ -24,45 +24,10 @@
 
 #include "basics/shared.hpp"
 #include "iresearch/store/store_utils.hpp"
+#include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 
 namespace irs {
-
-bool NormReaderContextBase::Reset(const ColumnProvider& reader,
-                                  field_id column_id, const DocAttr& doc) {
-  const auto* column = reader.column(column_id);
-
-  if (column) {
-    auto it = column->iterator(ColumnHint::Normal);
-    if (it) [[likely]] {
-      auto* payload = irs::get<PayAttr>(*it);
-      if (payload) [[likely]] {
-        this->header = column->payload();
-        this->it = std::move(it);
-        this->payload = payload;
-        this->doc = &doc;
-        return true;
-      }
-    }
-  }
-
-  return false;
-}
-
-bool NormReaderContext::Reset(const ColumnProvider& reader, field_id column_id,
-                              const DocAttr& doc) {
-  if (NormReaderContextBase::Reset(reader, column_id, doc)) {
-    const auto hdr = NormHeader::Read(header);
-    if (hdr.has_value()) {
-      auto& value = hdr.value();
-      num_bytes = static_cast<uint32_t>(value.NumBytes());
-      max_num_bytes = static_cast<uint32_t>(value.MaxNumBytes());
-      return true;
-    }
-  }
-
-  return false;
-}
 
 void NormHeader::Reset(const NormHeader& hdr) noexcept {
   _min = std::min(hdr._min, _min);

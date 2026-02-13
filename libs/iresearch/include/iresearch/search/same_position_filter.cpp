@@ -27,8 +27,10 @@
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/index/iterators.hpp"
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/conjunction.hpp"
+#include "iresearch/search/scorer.hpp"
 #include "iresearch/search/states/term_state.hpp"
 #include "iresearch/search/states_cache.hpp"
 
@@ -41,8 +43,9 @@ class SamePositionIterator : public DocIterator {
   using Positions = std::vector<PosAttr*>;
 
   template<typename... Args>
-  SamePositionIterator(Positions&& pos, Args&&... args)
-    : _approx{std::forward<Args>(args)...}, _pos(std::move(pos)) {
+  SamePositionIterator(ScoreMergeType merge_type, Positions&& pos,
+                       Args&&... args)
+    : _approx{merge_type, std::forward<Args>(args)...}, _pos(std::move(pos)) {
     SDB_ASSERT(!_pos.empty());
   }
 
@@ -133,13 +136,13 @@ class SamePositionQuery : public Filter::Query {
     std::vector<PosAttr*> positions;
     positions.reserve(itrs.size());
 
-    const bool no_score = ord.empty();
     auto term_stats = _stats.begin();
     for (auto& term_state : *query_state) {
       auto* reader = term_state.reader;
       SDB_ASSERT(reader);
 
-      auto docs = reader->Iterator(features, *term_state.cookie);
+      auto docs =
+        reader->Iterator(features, {.cookie = term_state.cookie.get()});
       if (!docs) {
         return DocIterator::empty();
       }
@@ -151,26 +154,14 @@ class SamePositionQuery : public Filter::Query {
 
       positions.emplace_back(pos);
 
-      if (!no_score) {
-        auto* score = irs::GetMutable<ScoreAttr>(docs.get());
-        SDB_ASSERT(score);
-
-        CompileScore(*score, ord.buckets(), segment, *term_state.reader,
-                     term_stats->c_str(), *docs, _boost);
-      }
-
       itrs.emplace_back(std::move(docs));
 
       ++term_stats;
     }
 
-    return ResolveMergeType(ScoreMergeType::Sum, ord.buckets().size(),
-                            [&]<typename A>(A&& aggregator) {
-                              // TODO(mbkkt) Implement wand?
-                              return MakeConjunction<SamePositionIterator>(
-                                {}, std::move(aggregator), std::move(itrs),
-                                std::move(positions));
-                            });
+    // TODO(mbkkt) Implement wand?
+    return MakeConjunction<SamePositionIterator>(
+      ScoreMergeType::Noop, {}, std::move(itrs), std::move(positions));
   }
 
   score_t Boost() const noexcept final { return _boost; }

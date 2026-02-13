@@ -23,13 +23,23 @@
 #include "columnstore2.hpp"
 
 #include <absl/cleanup/cleanup.h>
+#include <absl/functional/overload.h>
+#include <immintrin.h>
+
+#include <utility>
 
 #include "basics/down_cast.h"
 #include "basics/memory.hpp"
 #include "basics/number_utils.h"
+#include "basics/shared.hpp"
+#include "basics/system-compiler.h"
+#include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/format_utils.hpp"
+#include "iresearch/formats/formats.hpp"
 #include "iresearch/index/file_names.hpp"
+#include "iresearch/index/iterators.hpp"
+#include "iresearch/index/norm.hpp"
 #include "iresearch/search/all_iterator.hpp"
 #include "iresearch/search/score.hpp"
 #include "iresearch/store/store_avg_utils.hpp"
@@ -178,15 +188,14 @@ void WriteBlocksDense(IndexOutput& out,
 // Iterator over a specified contiguous range of documents
 template<typename PayloadReaderImpl>
 class RangeColumnIterator : public ResettableDocIterator,
-                            private PayloadReaderImpl {
+                            public PayloadReaderImpl {
  private:
   using PayloadReader = PayloadReaderImpl;
 
   // FIXME(gnusi):
   //  * don't expose payload for noop_value_reader?
   //  * don't expose prev_doc if not requested?
-  using Attributes =
-    std::tuple<DocAttr, CostAttr, ScoreAttr, PrevDocAttr, PayAttr>;
+  using Attributes = std::tuple<DocAttr, CostAttr, PrevDocAttr, PayAttr>;
 
  public:
   template<typename... Args>
@@ -269,6 +278,8 @@ class RangeColumnIterator : public ResettableDocIterator,
     std::get<DocAttr>(_attrs).value = doc_limits::invalid();
   }
 
+  bytes_view GetPayload() noexcept { return std::get<PayAttr>(_attrs).value; }
+
  private:
   doc_id_t _min_base;
   doc_id_t _min_doc;
@@ -283,9 +294,8 @@ class BitmapColumnIterator : public ResettableDocIterator,
  private:
   using PayloadReader = PayloadReaderImpl;
 
-  using Attributes =
-    std::tuple<AttributePtr<DocAttr>, CostAttr, AttributePtr<ScoreAttr>,
-               AttributePtr<PrevDocAttr>, PayAttr>;
+  using Attributes = std::tuple<AttributePtr<DocAttr>, CostAttr,
+                                AttributePtr<PrevDocAttr>, PayAttr>;
 
  public:
   template<typename... Args>
@@ -297,8 +307,6 @@ class BitmapColumnIterator : public ResettableDocIterator,
     std::get<CostAttr>(_attrs).reset(cost);
     std::get<AttributePtr<DocAttr>>(_attrs) =
       irs::GetMutable<DocAttr>(&_bitmap);
-    std::get<AttributePtr<ScoreAttr>>(_attrs) =
-      irs::GetMutable<ScoreAttr>(&_bitmap);
     std::get<AttributePtr<PrevDocAttr>>(_attrs) =
       irs::GetMutable<PrevDocAttr>(&_bitmap);
   }
@@ -310,6 +318,8 @@ class BitmapColumnIterator : public ResettableDocIterator,
   doc_id_t value() const noexcept final {
     return std::get<AttributePtr<DocAttr>>(_attrs).ptr->value;
   }
+
+  bytes_view GetPayload() noexcept { return std::get<PayAttr>(_attrs).value; }
 
   doc_id_t advance() final {
     const auto doc = _bitmap.advance();
@@ -403,8 +413,8 @@ class ColumnBase : public ColumnReader, private util::Noncopyable {
                             std::span<memory::managed_ptr<ColumnReader>>) {}
 
  protected:
-  template<typename Factory>
-  ResettableDocIterator::ptr MakeIterator(Factory&& f, ColumnHint hint) const;
+  template<typename Factory, typename Callback>
+  auto MakeIterator(Factory&& f, Callback&& callback, ColumnHint hint) const;
 
   ColumnHeader& MutableHeader() { return _hdr; }
   void ResetStream(const IndexInput* stream) { _stream = stream; }
@@ -467,10 +477,17 @@ class ColumnBase : public ColumnReader, private util::Noncopyable {
   IndexInput::ptr _buffered_input;
   IResourceManager& _resource_manager_cached;
 
+ protected:
+  template<typename Factory>
+  NormReader::ptr MakeNormReader(Factory&& f) const;
+
+  template<typename F>
+  auto ResolveNormHeader(F&&) const;
+
  private:
-  template<typename ValueReader>
-  ResettableDocIterator::ptr MakeIterator(ValueReader&& f, IndexInput::ptr&& in,
-                                          ColumnHint hint) const;
+  template<typename ValueReader, typename Func>
+  auto MakeIterator(ValueReader&& reader, IndexInput::ptr&& in, ColumnHint hint,
+                    Func&& func) const;
 
   const IndexInput* _stream;
   Encryption::Stream* _cipher;
@@ -481,29 +498,147 @@ class ColumnBase : public ColumnReader, private util::Noncopyable {
   std::unique_ptr<HNSWIndexReader> _hnsw_index;
 };
 
-template<typename ValueReader>
-ResettableDocIterator::ptr ColumnBase::MakeIterator(ValueReader&& rdr,
-                                                    IndexInput::ptr&& index_in,
-                                                    ColumnHint hint) const {
+template<typename F>
+auto ColumnBase::ResolveNormHeader(F&& f) const {
+  auto header = NormHeader::Read(payload());
+
+  if (!header) [[unlikely]] {
+    return f.template operator()<void>();
+  }
+
+  switch (header->Encoding()) {
+    case NormEncoding::Byte:
+      return f.template operator()<NormEncoding::Byte>();
+    case NormEncoding::Short:
+      return f.template operator()<NormEncoding::Short>();
+    case NormEncoding::Int:
+      return f.template operator()<NormEncoding::Int>();
+  }
+
+  SDB_UNREACHABLE();
+}
+
+template<NormEncoding Encoding, typename Iterator>
+class NormReaderImpl : public NormReader {
+ public:
+  explicit NormReaderImpl(Iterator&& it) noexcept : _it{std::move(it)} {}
+
+  void Collect(std::span<doc_id_t> docs, std::span<uint32_t> values) final {
+    SDB_ASSERT(docs.size() <= values.size());
+
+    _it->reset();  // TODO(gnusi): remove this
+
+    const size_t size = docs.size();
+    for (size_t i = 0; i < size; ++i) {
+      const auto d = _it->seek(docs[i]);
+      if (doc_limits::eof(d)) [[unlikely]] {
+        return;
+      }
+      auto payload = _it->GetPayload();
+      values[i] = Norm::Read<Encoding>(payload);
+    }
+  }
+
+  bool Get(doc_id_t doc, uint32_t* value) final {
+    _it->reset();  // TODO(gnusi): remove this
+    const auto d = _it->seek(doc);
+    if (doc_limits::eof(d)) [[unlikely]] {
+      return false;
+    }
+    auto payload = _it->GetPayload();
+    *value = Norm::Read<Encoding>(payload);
+    return true;
+  }
+
+ private:
+  Iterator _it;
+};
+
+template<typename ValueReader, typename Callback>
+auto ColumnBase::MakeIterator(ValueReader&& reader, IndexInput::ptr&& index_in,
+                              ColumnHint hint, Callback&& callback) const {
   if (!index_in) {
     using IteratorType = RangeColumnIterator<ValueReader>;
 
-    return memory::make_managed<IteratorType>(Header(), TrackPrevDoc(hint),
-                                              std::move(rdr));
+    return callback(memory::make_managed<IteratorType>(
+      Header(), TrackPrevDoc(hint), std::move(reader)));
   } else {
     index_in->Seek(Header().docs_index);
 
     using IteratorType = BitmapColumnIterator<ValueReader>;
 
-    return memory::make_managed<IteratorType>(
+    return callback(memory::make_managed<IteratorType>(
       std::move(index_in), BitmapIteratorOptions(hint), Header().docs_count,
-      std::move(rdr));
+      std::move(reader)));
   }
 }
 
+template<NormEncoding Encoding>
+class DirectFixedNormReader : public NormReader {
+ public:
+  DirectFixedNormReader(doc_id_t base, const byte_type* origin) noexcept
+    : _doc_base{base}, _origin{origin} {}
+
+  void Collect(std::span<doc_id_t> docs,
+               std::span<uint32_t> values) noexcept final {
+    SDB_ASSERT(docs.size() <= values.size());
+
+    const size_t size = docs.size();
+    const auto base = _doc_base;
+    const auto* origin = _origin;
+
+    for (size_t i = 0; i < size; ++i) {
+      values[i] = ReadValue(origin, docs[i] - base);
+    }
+  }
+
+  IRS_FORCE_INLINE bool Get(doc_id_t doc, uint32_t* value) noexcept final {
+    SDB_ASSERT(doc >= _doc_base);
+    *value = ReadValue(_origin, doc - _doc_base);
+    return true;
+  }
+
+ private:
+  IRS_FORCE_INLINE uint32_t ReadValue(const byte_type* origin,
+                                      doc_id_t index) noexcept {
+    if constexpr (Encoding == NormEncoding::Byte) {
+      return _origin[index];
+    } else if constexpr (Encoding == NormEncoding::Short) {
+      return absl::little_endian::Load<uint16_t>(
+        reinterpret_cast<const uint16_t*>(origin) + index);
+    } else if constexpr (Encoding == NormEncoding::Int) {
+      return absl::little_endian::Load<uint32_t>(
+        reinterpret_cast<const uint32_t*>(origin) + index);
+    } else {
+      static_assert(false);
+    }
+  }
+
+  doc_id_t _doc_base;
+  const byte_type* const _origin;
+};
+
 template<typename Factory>
-ResettableDocIterator::ptr ColumnBase::MakeIterator(Factory&& f,
-                                                    ColumnHint hint) const {
+NormReader::ptr ColumnBase::MakeNormReader(Factory&& f) const {
+  return ResolveNormHeader(absl::Overload{
+    [&]<NormEncoding Encoding> {
+      return MakeIterator(
+        std::forward<Factory>(f),
+        []<typename Iterator>(Iterator it) -> NormReader::ptr {
+          return memory::make_managed<NormReaderImpl<Encoding, Iterator>>(
+            std::move(it));
+        },
+        ColumnHint::Normal);
+    },
+    []<typename T> {
+      // TODO(gnusi): return empty?
+      return NormReader::ptr{};
+    }});
+}
+
+template<typename Factory, typename Callback>
+auto ColumnBase::MakeIterator(Factory&& f, Callback&& callback,
+                              ColumnHint hint) const {
   SDB_ASSERT(Header().docs_count);
 
   IndexInput::ptr value_in = Stream().Reopen();
@@ -531,17 +666,19 @@ ResettableDocIterator::ptr ColumnBase::MakeIterator(Factory&& f,
   if (IsEncrypted(Header())) {
     SDB_ASSERT(_cipher);
     return MakeIterator(f(std::move(value_in), *_cipher), std::move(index_in),
-                        hint);
+                        hint, std::forward<Callback>(callback));
   } else {
     const byte_type* data =
       value_in->ReadBuffer(0, value_in->Length(), BufferHint::PERSISTENT);
 
     if (data) {
       // direct buffer access
-      return MakeIterator(f(data), std::move(index_in), hint);
+      return MakeIterator(f(data), std::move(index_in), hint,
+                          std::forward<Callback>(callback));
     }
 
-    return MakeIterator(f(std::move(value_in)), std::move(index_in), hint);
+    return MakeIterator(f(std::move(value_in)), std::move(index_in), hint,
+                        std::forward<Callback>(callback));
   }
 }
 
@@ -550,6 +687,9 @@ struct NoopValueReader {
 };
 
 class ValueDirectReader {
+ public:
+  const byte_type* GetData() const noexcept { return _data; }
+
  protected:
   explicit ValueDirectReader(const byte_type* data) noexcept : _data{data} {
     SDB_ASSERT(data);
@@ -717,6 +857,7 @@ class DenseFixedLengthColumn : public ColumnBase {
   }
 
   ResettableDocIterator::ptr iterator(ColumnHint hint) const final;
+  NormReader::ptr norms() const final;
 
   void MakeBuffered(
     IndexInput& in,
@@ -756,7 +897,7 @@ class DenseFixedLengthColumn : public ColumnBase {
 
  private:
   template<typename ValueReader>
-  class PayloadReader : private ValueReader {
+  class PayloadReader : public ValueReader {
    public:
     template<typename... Args>
     PayloadReader(uint64_t data, uint64_t len, Args&&... args)
@@ -771,6 +912,24 @@ class DenseFixedLengthColumn : public ColumnBase {
    private:
     uint64_t _data;  // where data starts
     uint64_t _len;   // data entry length
+  };
+
+  struct Factory {
+    PayloadReader<EncryptedValueReader<false>> operator()(
+      IndexInput::ptr&& stream, Encryption::Stream& cipher) const {
+      return {ctx->_data, ctx->_len, std::move(stream), &cipher, ctx->_len};
+    }
+
+    PayloadReader<ValueReader<false>> operator()(
+      IndexInput::ptr&& stream) const {
+      return {ctx->_data, ctx->_len, std::move(stream), ctx->_len};
+    }
+
+    PayloadReader<ValueDirectReader> operator()(const byte_type* data) const {
+      return {ctx->_data, ctx->_len, data};
+    }
+
+    const DenseFixedLengthColumn* ctx;
   };
 
   compression::Decompressor::ptr _inflater;
@@ -796,25 +955,33 @@ ResettableDocIterator::ptr DenseFixedLengthColumn::iterator(
     return MakeMaskIterator(*this, hint);
   }
 
-  struct Factory {
-    PayloadReader<EncryptedValueReader<false>> operator()(
-      IndexInput::ptr&& stream, Encryption::Stream& cipher) const {
-      return {ctx->_data, ctx->_len, std::move(stream), &cipher, ctx->_len};
-    }
+  return MakeIterator(
+    Factory{this}, [](auto it) -> ResettableDocIterator::ptr { return it; },
+    hint);
+}
 
-    PayloadReader<ValueReader<false>> operator()(
-      IndexInput::ptr&& stream) const {
-      return {ctx->_data, ctx->_len, std::move(stream), ctx->_len};
-    }
-
-    PayloadReader<ValueDirectReader> operator()(const byte_type* data) const {
-      return {ctx->_data, ctx->_len, data};
-    }
-
-    const DenseFixedLengthColumn* ctx;
-  };
-
-  return MakeIterator(Factory{this}, hint);
+NormReader::ptr DenseFixedLengthColumn::norms() const {
+  return ResolveNormHeader(absl::Overload{
+    [&]<NormEncoding Encoding> {
+      return MakeIterator(
+        Factory{this},
+        [&]<typename Iterator>(Iterator it) -> NormReader::ptr {
+          if constexpr (std::is_same_v<typename Iterator::element_type,
+                                       RangeColumnIterator<
+                                         PayloadReader<ValueDirectReader>>>) {
+            return memory::make_managed<DirectFixedNormReader<Encoding>>(
+              Header().min, it->GetData());
+          } else {
+            return memory::make_managed<NormReaderImpl<Encoding, Iterator>>(
+              std::move(it));
+          }
+        },
+        ColumnHint::Normal);
+    },
+    []<typename T> {
+      // TODO(gnusi): return empty?
+      return NormReader::ptr{};
+    }});
 }
 
 class FixedLengthColumn : public ColumnBase {
@@ -861,6 +1028,7 @@ class FixedLengthColumn : public ColumnBase {
   }
 
   ResettableDocIterator::ptr iterator(ColumnHint hint) const final;
+  NormReader::ptr norms() const final;
 
   void MakeBuffered(
     IndexInput& in,
@@ -983,16 +1151,6 @@ class FixedLengthColumn : public ColumnBase {
     return blocks;
   }
 
-  Blocks _blocks;
-  compression::Decompressor::ptr _inflater;
-  uint64_t _len;
-};
-
-ResettableDocIterator::ptr FixedLengthColumn::iterator(ColumnHint hint) const {
-  if (ColumnHint::Mask == (ColumnHint::Mask & hint)) {
-    return MakeMaskIterator(*this, hint);
-  }
-
   struct Factory {
     PayloadReader<EncryptedValueReader<false>> operator()(
       IndexInput::ptr&& stream, Encryption::Stream& cipher) const {
@@ -1012,7 +1170,23 @@ ResettableDocIterator::ptr FixedLengthColumn::iterator(ColumnHint hint) const {
     const FixedLengthColumn* ctx;
   };
 
-  return MakeIterator(Factory{this}, hint);
+  Blocks _blocks;
+  compression::Decompressor::ptr _inflater;
+  uint64_t _len;
+};
+
+ResettableDocIterator::ptr FixedLengthColumn::iterator(ColumnHint hint) const {
+  if (ColumnHint::Mask == (ColumnHint::Mask & hint)) {
+    return MakeMaskIterator(*this, hint);
+  }
+
+  return MakeIterator(
+    Factory{this}, [](auto it) -> ResettableDocIterator::ptr { return it; },
+    hint);
+}
+
+NormReader::ptr FixedLengthColumn::norms() const {
+  return MakeNormReader(Factory{this});
 }
 
 class SparseColumn : public ColumnBase {
@@ -1059,6 +1233,7 @@ class SparseColumn : public ColumnBase {
   }
 
   ResettableDocIterator::ptr iterator(ColumnHint hint) const final;
+  NormReader::ptr norms() const final;
 
   void MakeBuffered(
     IndexInput& in,
@@ -1100,6 +1275,24 @@ class SparseColumn : public ColumnBase {
 
    private:
     const ColumnBlock* _blocks;
+  };
+
+  struct Factory {
+    PayloadReader<EncryptedValueReader<true>> operator()(
+      IndexInput::ptr&& stream, Encryption::Stream& cipher) const {
+      return {ctx->_blocks.data(), std::move(stream), &cipher, size_t{0}};
+    }
+
+    PayloadReader<ValueReader<true>> operator()(
+      IndexInput::ptr&& stream) const {
+      return {ctx->_blocks.data(), std::move(stream), size_t{0}};
+    }
+
+    PayloadReader<ValueDirectReader> operator()(const byte_type* data) const {
+      return {ctx->_blocks.data(), data};
+    }
+
+    const SparseColumn* ctx;
   };
 
   template<bool Encrypted>
@@ -1285,25 +1478,13 @@ ResettableDocIterator::ptr SparseColumn::iterator(ColumnHint hint) const {
     return MakeMaskIterator(*this, hint);
   }
 
-  struct Factory {
-    PayloadReader<EncryptedValueReader<true>> operator()(
-      IndexInput::ptr&& stream, Encryption::Stream& cipher) const {
-      return {ctx->_blocks.data(), std::move(stream), &cipher, size_t{0}};
-    }
+  return MakeIterator(
+    Factory{this}, [](auto it) -> ResettableDocIterator::ptr { return it; },
+    hint);
+}
 
-    PayloadReader<ValueReader<true>> operator()(
-      IndexInput::ptr&& stream) const {
-      return {ctx->_blocks.data(), std::move(stream), size_t{0}};
-    }
-
-    PayloadReader<ValueDirectReader> operator()(const byte_type* data) const {
-      return {ctx->_blocks.data(), data};
-    }
-
-    const SparseColumn* ctx;
-  };
-
-  return MakeIterator(Factory{this}, hint);
+NormReader::ptr SparseColumn::norms() const {
+  return MakeNormReader(Factory{this});
 }
 
 using ColumnFactoryF = ColumnBasePtr (*)(

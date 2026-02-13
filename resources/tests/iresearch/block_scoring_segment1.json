@@ -1,0 +1,982 @@
+[
+  {
+    "seq": 0,
+    "category": "tech",
+    "topic": "database",
+    "content": "index search query optimization performance",
+    "tags": "search,index"
+  },
+  {
+    "seq": 1,
+    "category": "tech",
+    "topic": "database",
+    "content": "database index btree structure efficient lookup",
+    "tags": "index,database"
+  },
+  {
+    "seq": 2,
+    "category": "tech",
+    "topic": "search",
+    "content": "search engine ranking algorithm relevance score",
+    "tags": "search,ranking"
+  },
+  {
+    "seq": 3,
+    "category": "tech",
+    "topic": "database",
+    "content": "query optimization index scan full table",
+    "tags": "query,index"
+  },
+  {
+    "seq": 4,
+    "category": "tech",
+    "topic": "search",
+    "content": "full text search inverted index posting list",
+    "tags": "search,index"
+  },
+  {
+    "seq": 5,
+    "category": "science",
+    "topic": "physics",
+    "content": "quantum mechanics wave function probability",
+    "tags": "quantum,physics"
+  },
+  {
+    "seq": 6,
+    "category": "science",
+    "topic": "physics",
+    "content": "relativity spacetime gravity mass energy",
+    "tags": "physics,relativity"
+  },
+  {
+    "seq": 7,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "molecular structure bonding electron orbital",
+    "tags": "chemistry,molecular"
+  },
+  {
+    "seq": 8,
+    "category": "science",
+    "topic": "biology",
+    "content": "cell membrane protein synthesis ribosome",
+    "tags": "biology,cell"
+  },
+  {
+    "seq": 9,
+    "category": "science",
+    "topic": "physics",
+    "content": "thermodynamics entropy heat energy transfer",
+    "tags": "physics,energy"
+  },
+  {
+    "seq": 10,
+    "category": "tech",
+    "topic": "database",
+    "content": "transaction isolation level consistency durability",
+    "tags": "database,transaction"
+  },
+  {
+    "seq": 11,
+    "category": "tech",
+    "topic": "database",
+    "content": "replication sharding distributed database cluster",
+    "tags": "database,distributed"
+  },
+  {
+    "seq": 12,
+    "category": "tech",
+    "topic": "search",
+    "content": "boolean query term frequency document frequency",
+    "tags": "search,query"
+  },
+  {
+    "seq": 13,
+    "category": "tech",
+    "topic": "search",
+    "content": "relevance scoring tfidf bm25 ranking model",
+    "tags": "search,ranking"
+  },
+  {
+    "seq": 14,
+    "category": "tech",
+    "topic": "database",
+    "content": "index cardinality selectivity query planner cost",
+    "tags": "index,query"
+  },
+  {
+    "seq": 15,
+    "category": "science",
+    "topic": "physics",
+    "content": "electromagnetic field maxwell equations light wave",
+    "tags": "physics,electromagnetic"
+  },
+  {
+    "seq": 16,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "reaction kinetics catalyst activation energy rate",
+    "tags": "chemistry,reaction"
+  },
+  {
+    "seq": 17,
+    "category": "science",
+    "topic": "biology",
+    "content": "dna replication transcription translation gene expression",
+    "tags": "biology,genetics"
+  },
+  {
+    "seq": 18,
+    "category": "science",
+    "topic": "physics",
+    "content": "particle accelerator collision high energy physics",
+    "tags": "physics,particle"
+  },
+  {
+    "seq": 19,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "organic compound carbon hydrogen functional group",
+    "tags": "chemistry,organic"
+  },
+  {
+    "seq": 20,
+    "category": "tech",
+    "topic": "database",
+    "content": "storage engine write ahead log checkpoint recovery",
+    "tags": "database,storage"
+  },
+  {
+    "seq": 21,
+    "category": "tech",
+    "topic": "search",
+    "content": "tokenizer analyzer stemmer stop word filter",
+    "tags": "search,analysis"
+  },
+  {
+    "seq": 22,
+    "category": "tech",
+    "topic": "database",
+    "content": "memory buffer pool cache hit ratio optimization",
+    "tags": "database,memory"
+  },
+  {
+    "seq": 23,
+    "category": "tech",
+    "topic": "search",
+    "content": "fuzzy search edit distance levenshtein similarity",
+    "tags": "search,fuzzy"
+  },
+  {
+    "seq": 24,
+    "category": "tech",
+    "topic": "database",
+    "content": "concurrent access locking deadlock detection resolution",
+    "tags": "database,concurrency"
+  },
+  {
+    "seq": 25,
+    "category": "science",
+    "topic": "physics",
+    "content": "nuclear fission fusion reactor energy power",
+    "tags": "physics,nuclear"
+  },
+  {
+    "seq": 26,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "polymer chain monomer polymerization plastic material",
+    "tags": "chemistry,polymer"
+  },
+  {
+    "seq": 27,
+    "category": "science",
+    "topic": "biology",
+    "content": "evolution natural selection adaptation species diversity",
+    "tags": "biology,evolution"
+  },
+  {
+    "seq": 28,
+    "category": "science",
+    "topic": "physics",
+    "content": "optics lens mirror reflection refraction image",
+    "tags": "physics,optics"
+  },
+  {
+    "seq": 29,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "electrochemistry battery electrode electrolyte current",
+    "tags": "chemistry,electrochemistry"
+  },
+  {
+    "seq": 30,
+    "category": "tech",
+    "topic": "database",
+    "content": "data model schema normalization denormalization design",
+    "tags": "database,design"
+  },
+  {
+    "seq": 31,
+    "category": "tech",
+    "topic": "search",
+    "content": "phrase query proximity search word position",
+    "tags": "search,phrase"
+  },
+  {
+    "seq": 32,
+    "category": "tech",
+    "topic": "database",
+    "content": "backup restore point in time recovery disaster",
+    "tags": "database,backup"
+  },
+  {
+    "seq": 33,
+    "category": "tech",
+    "topic": "search",
+    "content": "faceted search aggregation bucket filter navigation",
+    "tags": "search,facet"
+  },
+  {
+    "seq": 34,
+    "category": "tech",
+    "topic": "database",
+    "content": "partition pruning range hash list composite",
+    "tags": "database,partition"
+  },
+  {
+    "seq": 35,
+    "category": "science",
+    "topic": "physics",
+    "content": "fluid dynamics viscosity turbulence laminar flow",
+    "tags": "physics,fluid"
+  },
+  {
+    "seq": 36,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "acid base ph neutralization titration indicator",
+    "tags": "chemistry,acid"
+  },
+  {
+    "seq": 37,
+    "category": "science",
+    "topic": "biology",
+    "content": "immune system antibody antigen pathogen response",
+    "tags": "biology,immune"
+  },
+  {
+    "seq": 38,
+    "category": "science",
+    "topic": "physics",
+    "content": "acoustic sound wave frequency amplitude vibration",
+    "tags": "physics,acoustic"
+  },
+  {
+    "seq": 39,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "spectroscopy absorption emission spectrum wavelength",
+    "tags": "chemistry,spectroscopy"
+  },
+  {
+    "seq": 40,
+    "category": "tech",
+    "topic": "database",
+    "content": "index type btree hash gin gist bloom",
+    "tags": "index,database"
+  },
+  {
+    "seq": 41,
+    "category": "tech",
+    "topic": "search",
+    "content": "vector search embedding similarity cosine distance",
+    "tags": "search,vector"
+  },
+  {
+    "seq": 42,
+    "category": "tech",
+    "topic": "database",
+    "content": "query execution plan explain analyze statistics",
+    "tags": "query,database"
+  },
+  {
+    "seq": 43,
+    "category": "tech",
+    "topic": "search",
+    "content": "autocomplete suggest prefix trie completion",
+    "tags": "search,suggest"
+  },
+  {
+    "seq": 44,
+    "category": "tech",
+    "topic": "database",
+    "content": "trigger function procedure stored routine event",
+    "tags": "database,procedure"
+  },
+  {
+    "seq": 45,
+    "category": "science",
+    "topic": "physics",
+    "content": "semiconductor conductor insulator band gap doping",
+    "tags": "physics,semiconductor"
+  },
+  {
+    "seq": 46,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "crystallography lattice unit cell symmetry diffraction",
+    "tags": "chemistry,crystal"
+  },
+  {
+    "seq": 47,
+    "category": "science",
+    "topic": "biology",
+    "content": "photosynthesis chlorophyll light reaction carbon dioxide",
+    "tags": "biology,photosynthesis"
+  },
+  {
+    "seq": 48,
+    "category": "science",
+    "topic": "physics",
+    "content": "magnetism ferromagnetic paramagnetic diamagnetic hysteresis",
+    "tags": "physics,magnetism"
+  },
+  {
+    "seq": 49,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "thermochemistry enthalpy entropy free energy spontaneous",
+    "tags": "chemistry,thermochemistry"
+  },
+  {
+    "seq": 50,
+    "category": "tech",
+    "topic": "database",
+    "content": "index scan seek full table sequential access",
+    "tags": "index,scan"
+  },
+  {
+    "seq": 51,
+    "category": "tech",
+    "topic": "search",
+    "content": "snippet highlight context surrounding match result",
+    "tags": "search,highlight"
+  },
+  {
+    "seq": 52,
+    "category": "tech",
+    "topic": "database",
+    "content": "vacuum analyze statistics maintenance table bloat",
+    "tags": "database,maintenance"
+  },
+  {
+    "seq": 53,
+    "category": "tech",
+    "topic": "search",
+    "content": "geospatial search location radius bounding box",
+    "tags": "search,geo"
+  },
+  {
+    "seq": 54,
+    "category": "tech",
+    "topic": "database",
+    "content": "foreign key constraint reference integrity cascade",
+    "tags": "database,constraint"
+  },
+  {
+    "seq": 55,
+    "category": "science",
+    "topic": "physics",
+    "content": "laser coherent light stimulated emission amplification",
+    "tags": "physics,laser"
+  },
+  {
+    "seq": 56,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "isomer stereoisomer enantiomer diastereomer chirality",
+    "tags": "chemistry,isomer"
+  },
+  {
+    "seq": 57,
+    "category": "science",
+    "topic": "biology",
+    "content": "neuron synapse neurotransmitter signal brain nervous",
+    "tags": "biology,neuron"
+  },
+  {
+    "seq": 58,
+    "category": "science",
+    "topic": "physics",
+    "content": "superconductor critical temperature zero resistance current",
+    "tags": "physics,superconductor"
+  },
+  {
+    "seq": 59,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "chromatography separation column mobile stationary phase",
+    "tags": "chemistry,chromatography"
+  },
+  {
+    "seq": 60,
+    "category": "tech",
+    "topic": "database",
+    "content": "materialized view refresh incremental complete on demand",
+    "tags": "database,view"
+  },
+  {
+    "seq": 61,
+    "category": "tech",
+    "topic": "search",
+    "content": "ngram character level partial match substring",
+    "tags": "search,ngram"
+  },
+  {
+    "seq": 62,
+    "category": "tech",
+    "topic": "database",
+    "content": "sequence identity auto increment generator serial",
+    "tags": "database,sequence"
+  },
+  {
+    "seq": 63,
+    "category": "tech",
+    "topic": "search",
+    "content": "boosting field weight importance ranking factor",
+    "tags": "search,boost"
+  },
+  {
+    "seq": 64,
+    "category": "tech",
+    "topic": "database",
+    "content": "connection pooling session management resource limit",
+    "tags": "database,connection"
+  },
+  {
+    "seq": 65,
+    "category": "science",
+    "topic": "physics",
+    "content": "plasma ionized gas electric discharge arc",
+    "tags": "physics,plasma"
+  },
+  {
+    "seq": 66,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "oxidation reduction redox electron transfer reaction",
+    "tags": "chemistry,redox"
+  },
+  {
+    "seq": 67,
+    "category": "science",
+    "topic": "biology",
+    "content": "metabolism enzyme substrate product pathway cycle",
+    "tags": "biology,metabolism"
+  },
+  {
+    "seq": 68,
+    "category": "science",
+    "topic": "physics",
+    "content": "gravitational wave binary merger detection ligo",
+    "tags": "physics,gravity"
+  },
+  {
+    "seq": 69,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "nuclear magnetic resonance nmr spectroscopy chemical shift",
+    "tags": "chemistry,nmr"
+  },
+  {
+    "seq": 70,
+    "category": "tech",
+    "topic": "database",
+    "content": "index only scan covering index include column",
+    "tags": "index,covering"
+  },
+  {
+    "seq": 71,
+    "category": "tech",
+    "topic": "search",
+    "content": "query parser syntax boolean operator wildcard",
+    "tags": "search,parser"
+  },
+  {
+    "seq": 72,
+    "category": "tech",
+    "topic": "database",
+    "content": "row level security policy permission access control",
+    "tags": "database,security"
+  },
+  {
+    "seq": 73,
+    "category": "tech",
+    "topic": "search",
+    "content": "document store schema flexible json nested",
+    "tags": "search,document"
+  },
+  {
+    "seq": 74,
+    "category": "tech",
+    "topic": "database",
+    "content": "temporal table system time application versioning",
+    "tags": "database,temporal"
+  },
+  {
+    "seq": 75,
+    "category": "science",
+    "topic": "physics",
+    "content": "string theory dimension membrane multiverse hypothesis",
+    "tags": "physics,string"
+  },
+  {
+    "seq": 76,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "coordination compound ligand metal complex geometry",
+    "tags": "chemistry,coordination"
+  },
+  {
+    "seq": 77,
+    "category": "science",
+    "topic": "biology",
+    "content": "hormone endocrine gland receptor target tissue",
+    "tags": "biology,hormone"
+  },
+  {
+    "seq": 78,
+    "category": "science",
+    "topic": "physics",
+    "content": "dark matter dark energy cosmology expansion universe",
+    "tags": "physics,cosmology"
+  },
+  {
+    "seq": 79,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "surface tension capillary wetting contact angle",
+    "tags": "chemistry,surface"
+  },
+  {
+    "seq": 80,
+    "category": "tech",
+    "topic": "database",
+    "content": "index rebuild reorganize fragmentation fill factor",
+    "tags": "index,rebuild"
+  },
+  {
+    "seq": 81,
+    "category": "tech",
+    "topic": "search",
+    "content": "synonym expansion thesaurus related term mapping",
+    "tags": "search,synonym"
+  },
+  {
+    "seq": 82,
+    "category": "tech",
+    "topic": "database",
+    "content": "deadlock victim rollback retry transaction abort",
+    "tags": "database,deadlock"
+  },
+  {
+    "seq": 83,
+    "category": "tech",
+    "topic": "search",
+    "content": "multi field search cross field combined score",
+    "tags": "search,multifield"
+  },
+  {
+    "seq": 84,
+    "category": "tech",
+    "topic": "database",
+    "content": "batch insert bulk load copy fast import",
+    "tags": "database,bulk"
+  },
+  {
+    "seq": 85,
+    "category": "science",
+    "topic": "physics",
+    "content": "entropy information theory bit shannon coding",
+    "tags": "physics,information"
+  },
+  {
+    "seq": 86,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "colloid suspension emulsion dispersion particle size",
+    "tags": "chemistry,colloid"
+  },
+  {
+    "seq": 87,
+    "category": "science",
+    "topic": "biology",
+    "content": "virus infection replication host cell genome",
+    "tags": "biology,virus"
+  },
+  {
+    "seq": 88,
+    "category": "science",
+    "topic": "physics",
+    "content": "chaos theory attractor bifurcation nonlinear dynamics",
+    "tags": "physics,chaos"
+  },
+  {
+    "seq": 89,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "mass spectrometry molecular weight fragmentation pattern",
+    "tags": "chemistry,mass"
+  },
+  {
+    "seq": 90,
+    "category": "tech",
+    "topic": "database",
+    "content": "index skip scan distinct prefix range",
+    "tags": "index,skip"
+  },
+  {
+    "seq": 91,
+    "category": "tech",
+    "topic": "search",
+    "content": "relevance feedback query expansion user interaction",
+    "tags": "search,feedback"
+  },
+  {
+    "seq": 92,
+    "category": "tech",
+    "topic": "database",
+    "content": "histogram bucket frequency distribution selectivity estimate",
+    "tags": "database,histogram"
+  },
+  {
+    "seq": 93,
+    "category": "tech",
+    "topic": "search",
+    "content": "language model neural network transformer attention",
+    "tags": "search,neural"
+  },
+  {
+    "seq": 94,
+    "category": "tech",
+    "topic": "database",
+    "content": "advisory lock explicit shared exclusive timeout",
+    "tags": "database,lock"
+  },
+  {
+    "seq": 95,
+    "category": "science",
+    "topic": "physics",
+    "content": "photoelectric effect photon electron kinetic energy",
+    "tags": "physics,photoelectric"
+  },
+  {
+    "seq": 96,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "equilibrium constant reaction quotient le chatelier",
+    "tags": "chemistry,equilibrium"
+  },
+  {
+    "seq": 97,
+    "category": "science",
+    "topic": "biology",
+    "content": "mitosis meiosis cell division chromosome spindle",
+    "tags": "biology,cell"
+  },
+  {
+    "seq": 98,
+    "category": "science",
+    "topic": "physics",
+    "content": "doppler effect frequency shift source observer motion",
+    "tags": "physics,doppler"
+  },
+  {
+    "seq": 99,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "buffer solution ph resistance weak acid base",
+    "tags": "chemistry,buffer"
+  },
+  {
+    "seq": 100,
+    "category": "tech",
+    "topic": "database",
+    "content": "index merge intersection union bitmap combining",
+    "tags": "index,merge"
+  },
+  {
+    "seq": 101,
+    "category": "tech",
+    "topic": "search",
+    "content": "result ranking score normalization linear combination",
+    "tags": "search,ranking"
+  },
+  {
+    "seq": 102,
+    "category": "tech",
+    "topic": "database",
+    "content": "write amplification compaction level tiered storage",
+    "tags": "database,compaction"
+  },
+  {
+    "seq": 103,
+    "category": "tech",
+    "topic": "search",
+    "content": "inverted index posting list skip pointer compression",
+    "tags": "search,index"
+  },
+  {
+    "seq": 104,
+    "category": "tech",
+    "topic": "database",
+    "content": "bloom filter false positive membership test hash",
+    "tags": "database,bloom"
+  },
+  {
+    "seq": 105,
+    "category": "science",
+    "topic": "physics",
+    "content": "interference constructive destructive wave superposition",
+    "tags": "physics,interference"
+  },
+  {
+    "seq": 106,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "solubility saturated supersaturated precipitation dissolve",
+    "tags": "chemistry,solubility"
+  },
+  {
+    "seq": 107,
+    "category": "science",
+    "topic": "biology",
+    "content": "respiration aerobic anaerobic glucose atp energy",
+    "tags": "biology,respiration"
+  },
+  {
+    "seq": 108,
+    "category": "science",
+    "topic": "physics",
+    "content": "polarization wave electric field filter orientation",
+    "tags": "physics,polarization"
+  },
+  {
+    "seq": 109,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "vapor pressure boiling point elevation depression colligative",
+    "tags": "chemistry,vapor"
+  },
+  {
+    "seq": 110,
+    "category": "tech",
+    "topic": "database",
+    "content": "index hint force ignore optimizer directive",
+    "tags": "index,hint"
+  },
+  {
+    "seq": 111,
+    "category": "tech",
+    "topic": "search",
+    "content": "term vector field length norm boost factor",
+    "tags": "search,vector"
+  },
+  {
+    "seq": 112,
+    "category": "tech",
+    "topic": "database",
+    "content": "checkpoint frequency wal size recovery time",
+    "tags": "database,checkpoint"
+  },
+  {
+    "seq": 113,
+    "category": "tech",
+    "topic": "search",
+    "content": "scoring function custom plugin extend algorithm",
+    "tags": "search,scoring"
+  },
+  {
+    "seq": 114,
+    "category": "tech",
+    "topic": "database",
+    "content": "extent allocation segment tablespace datafile growth",
+    "tags": "database,storage"
+  },
+  {
+    "seq": 115,
+    "category": "science",
+    "topic": "physics",
+    "content": "diffraction grating slit aperture pattern fringe",
+    "tags": "physics,diffraction"
+  },
+  {
+    "seq": 116,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "galvanic cell electrode potential standard reduction",
+    "tags": "chemistry,galvanic"
+  },
+  {
+    "seq": 117,
+    "category": "science",
+    "topic": "biology",
+    "content": "ecosystem food chain producer consumer decomposer",
+    "tags": "biology,ecosystem"
+  },
+  {
+    "seq": 118,
+    "category": "science",
+    "topic": "physics",
+    "content": "capacitor dielectric charge storage electric field",
+    "tags": "physics,capacitor"
+  },
+  {
+    "seq": 119,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "ionic compound lattice energy born haber cycle",
+    "tags": "chemistry,ionic"
+  },
+  {
+    "seq": 120,
+    "category": "tech",
+    "topic": "database",
+    "content": "index compression prefix dictionary delta encoding",
+    "tags": "index,compression"
+  },
+  {
+    "seq": 121,
+    "category": "tech",
+    "topic": "search",
+    "content": "shard routing replica primary distribution cluster",
+    "tags": "search,shard"
+  },
+  {
+    "seq": 122,
+    "category": "tech",
+    "topic": "database",
+    "content": "cursor fetch batch size result set scroll",
+    "tags": "database,cursor"
+  },
+  {
+    "seq": 123,
+    "category": "tech",
+    "topic": "search",
+    "content": "filter context query context must should must_not",
+    "tags": "search,filter"
+  },
+  {
+    "seq": 124,
+    "category": "tech",
+    "topic": "database",
+    "content": "savepoint nested transaction partial rollback point",
+    "tags": "database,savepoint"
+  },
+  {
+    "seq": 125,
+    "category": "science",
+    "topic": "physics",
+    "content": "inductor magnetic field coil self induction henry",
+    "tags": "physics,inductor"
+  },
+  {
+    "seq": 126,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "aromatic compound benzene ring resonance stability",
+    "tags": "chemistry,aromatic"
+  },
+  {
+    "seq": 127,
+    "category": "science",
+    "topic": "biology",
+    "content": "membrane potential action potential depolarization propagation",
+    "tags": "biology,membrane"
+  },
+  {
+    "seq": 128,
+    "category": "science",
+    "topic": "physics",
+    "content": "resonance natural frequency damping amplitude oscillation",
+    "tags": "physics,resonance"
+  },
+  {
+    "seq": 129,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "hybridization orbital sp sp2 sp3 geometry bond",
+    "tags": "chemistry,hybridization"
+  },
+  {
+    "seq": 130,
+    "category": "tech",
+    "topic": "database",
+    "content": "index statistics update sample analyze estimate",
+    "tags": "index,statistics"
+  },
+  {
+    "seq": 131,
+    "category": "tech",
+    "topic": "search",
+    "content": "percolator reverse search stored query match",
+    "tags": "search,percolator"
+  },
+  {
+    "seq": 132,
+    "category": "tech",
+    "topic": "database",
+    "content": "parallel query worker thread degree execution",
+    "tags": "database,parallel"
+  },
+  {
+    "seq": 133,
+    "category": "tech",
+    "topic": "search",
+    "content": "scroll pagination deep cursor token offset limit",
+    "tags": "search,scroll"
+  },
+  {
+    "seq": 134,
+    "category": "tech",
+    "topic": "database",
+    "content": "undo log mvcc version visibility snapshot",
+    "tags": "database,mvcc"
+  },
+  {
+    "seq": 135,
+    "category": "science",
+    "topic": "physics",
+    "content": "transformer primary secondary coil voltage current",
+    "tags": "physics,transformer"
+  },
+  {
+    "seq": 136,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "reaction mechanism elementary step intermediate transition",
+    "tags": "chemistry,mechanism"
+  },
+  {
+    "seq": 137,
+    "category": "science",
+    "topic": "biology",
+    "content": "protein folding structure primary secondary tertiary",
+    "tags": "biology,protein"
+  },
+  {
+    "seq": 138,
+    "category": "science",
+    "topic": "physics",
+    "content": "circuit series parallel resistance current voltage",
+    "tags": "physics,circuit"
+  },
+  {
+    "seq": 139,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "molecular orbital theory bonding antibonding energy",
+    "tags": "chemistry,orbital"
+  }
+]

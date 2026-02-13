@@ -44,7 +44,7 @@ class SearchSinkInsertBaseImpl {
   void WriteImpl(std::span<const rocksdb::Slice> cell_slices,
                  std::string_view full_key);
 
-  bool SwitchColumnImpl(velox::TypeKind kind, bool have_nulls,
+  bool SwitchColumnImpl(const velox::Type& type, bool have_nulls,
                         catalog::Column::Id column_id);
   void FinishImpl();
 
@@ -162,9 +162,9 @@ class SearchSinkInsertWriter final : public SinkInsertWriter,
 
   void Init(size_t batch_size) final { InitImpl(batch_size); }
 
-  bool SwitchColumn(velox::TypeKind kind, bool have_nulls,
+  bool SwitchColumn(const velox::Type& type, bool have_nulls,
                     catalog::Column::Id column_id) final {
-    return SwitchColumnImpl(kind, have_nulls, column_id);
+    return SwitchColumnImpl(type, have_nulls, column_id);
   }
 
   void Write(std::span<const rocksdb::Slice> cell_slices,
@@ -205,9 +205,9 @@ class SearchSinkUpdateWriter final : public SinkUpdateWriter,
     SearchSinkDeleteBaseImpl::InitImpl(batch_size);
   }
 
-  bool SwitchColumn(velox::TypeKind kind, bool have_nulls,
+  bool SwitchColumn(const velox::Type& type, bool have_nulls,
                     catalog::Column::Id column_id) final {
-    return SwitchColumnImpl(kind, have_nulls, column_id);
+    return SwitchColumnImpl(type, have_nulls, column_id);
   }
 
   void Write(std::span<const rocksdb::Slice> cell_slices,

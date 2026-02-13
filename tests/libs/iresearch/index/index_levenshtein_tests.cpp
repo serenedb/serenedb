@@ -22,11 +22,10 @@
 
 #include <utf8/core.h>
 
-#include <iresearch/utils/automaton_utils.hpp>
-#include <iresearch/utils/fstext/fst_table_matcher.hpp>
-#include <iresearch/utils/levenshtein_utils.hpp>
-
 #include "index/index_tests.hpp"
+#include "iresearch/utils/automaton_utils.hpp"
+#include "iresearch/utils/fstext/fst_table_matcher.hpp"
+#include "iresearch/utils/levenshtein_utils.hpp"
 #include "tests_shared.hpp"
 
 class LevenshteinAutomatonIndexTestCase : public tests::IndexTestBase {

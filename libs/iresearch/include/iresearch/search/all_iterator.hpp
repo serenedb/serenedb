@@ -34,8 +34,9 @@ namespace irs {
 
 class AllIterator : public DocIterator {
  public:
-  AllIterator(const SubReader& reader, const byte_type* query_stats,
-              const Scorers& order, uint64_t docs_count, score_t boost);
+  AllIterator(uint32_t docs_count, const byte_type* stats, score_t boost);
+
+  ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final;
 
   Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
     return irs::GetMutable(_attrs, id);
@@ -57,6 +58,21 @@ class AllIterator : public DocIterator {
     return doc_value;
   }
 
+  uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
+                   std::span<doc_id_t, kScoreBlock> docs,
+                   std::span<score_t, kScoreBlock> scores) final {
+    // TODO(gnusi): optimize
+    SDB_ASSERT(kScoreBlock <= docs.size());
+    return DocIterator::Collect(*this, scorer, columns, docs, scores);
+  }
+
+  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
+                                      uint64_t* mask, CollectScoreContext score,
+                                      CollectMatchContext match) final {
+    // TODO(gnusi): optimize
+    return DocIterator::FillBlock(*this, min, max, mask, score, match);
+  }
+
   uint32_t count() noexcept final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
     if (doc_limits::eof(doc_value)) {
@@ -68,7 +84,10 @@ class AllIterator : public DocIterator {
   }
 
  private:
-  using Attributes = std::tuple<DocAttr, CostAttr, ScoreAttr>;
+  using Attributes = std::tuple<DocAttr, CostAttr>;
+
+  score_t _boost = {};
+  const byte_type* _stats = nullptr;
 
   doc_id_t _max_doc;  // largest valid doc_id
   Attributes _attrs;

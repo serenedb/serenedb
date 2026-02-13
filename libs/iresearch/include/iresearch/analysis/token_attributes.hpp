@@ -84,6 +84,22 @@ struct FreqAttr final : Attribute {
   uint32_t value = 0;
 };
 
+struct FreqBlockAttr final : Attribute {
+  static constexpr std::string_view type_name() noexcept {
+    return "freq_block";
+  }
+
+  const uint32_t* value = nullptr;
+};
+
+struct BoostBlockAttr final : Attribute {
+  static constexpr std::string_view type_name() noexcept {
+    return "boost_block";
+  }
+
+  const score_t* value = nullptr;
+};
+
 // Iterator representing term positions in a document
 class PosAttr : public Attribute, public AttributeProvider {
  public:

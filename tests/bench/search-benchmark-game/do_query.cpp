@@ -108,32 +108,15 @@ class Executor {
                                      .scorers = {&_scorer_ptr, 1},
                                    })} {}
 
-  size_t ExecuteTopK(size_t k, std::string_view query, bool full_count) {
+  size_t ExecuteTopKWithCount(size_t k, std::string_view query) {
     auto filter = ParseFilter(query);
     if (!filter) {
       return 0;
     }
 
-    auto execute = [&]<size_t K> {
-      irs::WandContext wand;
-      if (!full_count) {
-        wand.index = 0;
-        wand.strict = true;
-      }
-
-      return irs::ExecuteTopK(
-        _reader, *filter, _scorers, wand, k,
-        std::span<std::pair<irs::score_t, irs::doc_id_t>, K>{_results});
-    };
-
-    _results.resize(k * 2);
-    if (k == 10) {
-      return execute.template operator()<20>();
-    } else if (k == 100) {
-      return execute.template operator()<200>();
-    } else {
-      return execute.template operator()<std::dynamic_extent>();
-    }
+    _results.resize(irs::BlockSize(k));
+    return irs::ExecuteTopKWithCount(_reader, *filter, _scorers, k,
+                                     std::span{_results});
   }
 
   size_t ExecuteCount(std::string_view query) {
@@ -153,17 +136,17 @@ class Executor {
       case QueryType::Count:
         return ExecuteCount(query);
       case QueryType::Top10:
-        return ExecuteTopK(10, query, false);
+        return ExecuteTopKWithCount(10, query);
       case QueryType::Top100:
-        return ExecuteTopK(100, query, false);
+        return ExecuteTopKWithCount(100, query);
       case QueryType::Top1000:
-        return ExecuteTopK(1000, query, false);
+        return ExecuteTopKWithCount(1000, query);
       case QueryType::Top10Count:
-        return ExecuteTopK(10, query, true);
+        return ExecuteTopKWithCount(10, query);
       case QueryType::Top100Count:
-        return ExecuteTopK(100, query, true);
+        return ExecuteTopKWithCount(100, query);
       case QueryType::Top1000Count:
-        return ExecuteTopK(1000, query, true);
+        return ExecuteTopKWithCount(1000, query);
       default:
         return 0;
     }
@@ -194,7 +177,7 @@ class Executor {
     return root;
   }
 
-  std::vector<std::pair<float_t, irs::doc_id_t>> _results;
+  std::vector<std::pair<irs::doc_id_t, irs::score_t>> _results;
   irs::Scorer::ptr _scorer;
   irs::Scorer* _scorer_ptr{_scorer.get()};
   irs::Scorers _scorers{irs::Scorers::Prepare(std::span{&_scorer, 1})};

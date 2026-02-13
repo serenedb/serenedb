@@ -23,13 +23,12 @@
 
 #include <s2/s2region_term_indexer.h>
 
-#include <iresearch/search/filter.hpp>
-#include <iresearch/search/search_range.hpp>
-#include <iresearch/utils/type_limits.hpp>
-
 #include "basics/assert.h"
 #include "geo/coding.h"
 #include "geo/shape_container.h"
+#include "iresearch/search/filter.hpp"
+#include "iresearch/search/search_range.hpp"
+#include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 

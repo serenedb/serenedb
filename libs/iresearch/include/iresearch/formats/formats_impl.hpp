@@ -19,15 +19,19 @@
 ///
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
+
 #pragma once
 
 #include <absl/algorithm/container.h>
 
+#include <bit>
 #include <limits>
+#include <memory>
 
 #include "basics/assert.h"
 #include "basics/bit_utils.hpp"
 #include "basics/containers/bitset.hpp"
+#include "basics/down_cast.h"
 #include "basics/logger/logger.h"
 #include "basics/memory.hpp"
 #include "basics/resource_manager.hpp"
@@ -38,15 +42,19 @@
 #include "formats_attributes.hpp"
 #include "formats_burst_trie.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/formats/seek_cookie.hpp"
 #include "iresearch/formats/skip_list.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/index/iterators.hpp"
 #include "iresearch/search/cost.hpp"
-#include "iresearch/search/disjunction.hpp"
+#include "iresearch/search/make_disjunction.hpp"
 #include "iresearch/search/score.hpp"
+#include "iresearch/search/score_function.hpp"
+#include "iresearch/search/scorer.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/memory_directory.hpp"
 #include "iresearch/store/store_utils.hpp"
@@ -1164,15 +1172,26 @@ class PositionImpl final : public PosAttr {
 template<typename IteratorTraits>
 using AttributesImpl = std::conditional_t<
   IteratorTraits::Position(),
-  std::tuple<DocAttr, FreqAttr, ScoreAttr, CostAttr,
+  std::tuple<DocAttr, FreqAttr, FreqBlockAttr, CostAttr,
              PositionImpl<IteratorTraits>>,
   std::conditional_t<IteratorTraits::Frequency(),
-                     std::tuple<DocAttr, FreqAttr, ScoreAttr, CostAttr>,
-                     std::tuple<DocAttr, ScoreAttr, CostAttr>>>;
+                     std::tuple<DocAttr, FreqAttr, FreqBlockAttr, CostAttr>,
+                     std::tuple<DocAttr, CostAttr>>>;
 
 template<typename IteratorTraits>
 class PostingIteratorBase : public DocIterator {
  public:
+  static_assert(IteratorTraits::kBlockSize % kScoreBlock == 0,
+                "kBlockSize must be a multiple of kScoreBlock");
+
+  ~PostingIteratorBase() {
+    if constexpr (IteratorTraits::Frequency()) {
+      if (_doc_in) {
+        std::allocator<uint32_t>{}.deallocate(_collected_freqs, kScoreBlock);
+      }
+    }
+  }
+
   IRS_NO_INLINE Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);
   }
@@ -1193,8 +1212,170 @@ class PostingIteratorBase : public DocIterator {
     return left_in_leaf + left_in_list;
   }
 
-  IRS_FORCE_INLINE const ScoreAttr& score() const noexcept {
-    return std::get<ScoreAttr>(_attrs);
+  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
+                                      uint64_t* mask, CollectScoreContext score,
+                                      CollectMatchContext match) final {
+    auto& doc_value = std::get<DocAttr>(_attrs).value;
+
+    if (!score.score || score.score->IsDefault()) {
+      score.merge_type = ScoreMergeType::Noop;
+    }
+
+    auto process_score = [&](size_t left_in_leaf) IRS_FORCE_INLINE {
+      SDB_ASSERT(score.merge_type != ScoreMergeType::Noop);
+      if (score.collector) {
+        score.collector->Collect(
+          std::span{std::end(this->_docs) - left_in_leaf, left_in_leaf});
+      }
+      if constexpr (IteratorTraits::Frequency()) {
+        std::get<FreqBlockAttr>(_attrs).value =
+          std::end(this->_freqs) - left_in_leaf;
+      }
+      if (left_in_leaf == kPostingBlock) [[likely]] {
+        score.score->ScorePostingBlock(
+          reinterpret_cast<score_t*>(std::end(this->_enc_buf) - kPostingBlock));
+
+      } else {
+        score.score->Score(
+          reinterpret_cast<score_t*>(std::end(this->_enc_buf) - left_in_leaf),
+          left_in_leaf);
+      }
+    };
+
+    return ResolveBool(match.matches != nullptr, [&]<bool TrackMatch> {
+      return ResolveMergeType(score.merge_type, [&]<ScoreMergeType MergeType> {
+        bool empty = true;
+
+        const doc_id_t base = min;
+        auto* IRS_RESTRICT const doc_mask = mask;
+        [[maybe_unused]] auto* IRS_RESTRICT const score_window =
+          score.score_window;
+
+        auto process_doc =
+          [&](doc_id_t doc, [[maybe_unused]] score_t score_val)
+            IRS_FORCE_INLINE {
+              doc -= base;
+              if constexpr (TrackMatch) {
+                SDB_ASSERT(match.matches);
+                const bool has_match =
+                  ++match.matches[doc] >= match.min_match_count;
+                empty &= !has_match;
+                if (has_match) {
+                  SetBit(doc_mask[doc / BitsRequired<uint64_t>()],
+                         doc % BitsRequired<uint64_t>(), has_match);
+
+                  if constexpr (MergeType != ScoreMergeType::Noop) {
+                    Merge<MergeType>(score_window[doc], score_val);
+                  }
+                }
+              } else {
+                SetBit(doc_mask[doc / BitsRequired<uint64_t>()],
+                       doc % BitsRequired<uint64_t>());
+                empty = false;
+                if constexpr (MergeType != ScoreMergeType::Noop) {
+                  Merge<MergeType>(score_window[doc], score_val);
+                }
+              }
+            };
+
+        [[maybe_unused]] const auto* score_end =
+          std::bit_cast<score_t*>(std::end(this->_enc_buf));
+        [[maybe_unused]] const auto* score_ptr =
+          score_end - this->_left_in_leaf;
+
+        if (!this->_doc_in) [[unlikely]] {
+          SDB_ASSERT(this->_left_in_list == 0);
+          if (this->_left_in_leaf == 0) {
+            return std::pair{doc_value = doc_limits::eof(), true};
+          }
+
+          doc_value = *(std::end(this->_docs) - 1);
+
+          if (doc_value >= max) {
+            return std::pair{doc_value, true};
+          }
+
+          if constexpr (MergeType != ScoreMergeType::Noop) {
+            process_score(1);
+          }
+          process_doc(doc_value, *score_ptr);
+          this->_left_in_leaf = 0;
+          return std::pair{doc_value, empty};
+        }
+
+        const auto* const doc_end = std::end(this->_docs);
+        const auto* doc_ptr = doc_end - this->_left_in_leaf;
+        doc_id_t doc = doc_value;
+
+        while (true) {
+          if (doc_ptr == doc_end) [[unlikely]] {
+            if (this->_left_in_list == 0) [[unlikely]] {
+              doc = doc_limits::eof();
+              break;
+            }
+
+            this->_left_in_leaf = 0;
+            this->Refill(doc);
+            doc_ptr = doc_end - this->_left_in_leaf;
+            score_ptr = score_end - this->_left_in_leaf;
+            if constexpr (MergeType != ScoreMergeType::Noop) {
+              process_score(this->_left_in_leaf);
+            }
+          }
+
+          doc = *doc_ptr;
+
+          if (doc >= max) {
+            break;
+          }
+
+          process_doc(doc, *score_ptr);
+          ++doc_ptr;
+          ++score_ptr;
+        }
+
+        doc_value = doc;
+        this->_left_in_leaf = static_cast<uint32_t>(doc_end - doc_ptr);
+
+        if constexpr (IteratorTraits::Frequency()) {
+          std::get<FreqBlockAttr>(_attrs).value = this->_collected_freqs;
+        }
+        return std::pair{doc_value, empty};
+      });
+    });
+  }
+
+  ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
+    SDB_ASSERT(ctx.scorer);
+    return ctx.scorer->PrepareScorer({
+      .segment = *ctx.segment,
+      .field = this->_field,
+      .doc_attrs = *this,
+      .collector = ctx.collector,
+      .stats = this->_stats,
+      .boost = this->_boost,
+    });
+  }
+
+  uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
+                   std::span<doc_id_t, kScoreBlock> docs,
+                   std::span<score_t, kScoreBlock> scores) final {
+    // TODO(gnusi): optimize
+    SDB_ASSERT(kScoreBlock <= docs.size());
+    return DocIterator::Collect(*this, scorer, columns, docs, scores);
+  }
+
+  void FetchScoreArgs(uint16_t index) final {
+    if constexpr (IteratorTraits::Frequency()) {
+      SDB_ASSERT(this->_collected_freqs);
+      this->_collected_freqs[index] = std::get<FreqAttr>(this->_attrs).value;
+    }
+  }
+
+  void Init(const PostingCookie& cookie) noexcept {
+    this->_field = cookie.field;
+    this->_stats = cookie.stats;
+    this->_boost = cookie.boost;
   }
 
  protected:
@@ -1210,7 +1391,12 @@ class PostingIteratorBase : public DocIterator {
   virtual void Refill(doc_id_t prev_doc) = 0;
   virtual void SeekToBlock(doc_id_t target) = 0;
 
+  FieldProperties _field;
+  const byte_type* _stats = nullptr;
+  score_t _boost = kNoBoost;
   uint32_t _enc_buf[IteratorTraits::kBlockSize];  // buffer for encoding
+  [[no_unique_address]] utils::Need<IteratorTraits::Frequency(), uint32_t*>
+    _collected_freqs;
   [[no_unique_address]] utils::Need<
     IteratorTraits::Frequency(), uint32_t[IteratorTraits::kBlockSize]> _freqs;
   doc_id_t _docs[IteratorTraits::kBlockSize];
@@ -1374,7 +1560,7 @@ void CommonReadWandData(WandExtent wextent, uint8_t index,
   if (extent == 1) [[likely]] {
     const auto size = in.ReadByte();
     ctx.Read(in, size);
-    func(&score);
+    score = func.Score();
     return;
   }
 
@@ -1394,7 +1580,7 @@ void CommonReadWandData(WandExtent wextent, uint8_t index,
     in.Skip(scorer_offset);
   }
   ctx.Read(in, size);
-  func(&score);
+  score = func.Score();
   if (block_offset) {
     in.Skip(block_offset);
   }
@@ -1411,13 +1597,16 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
   using Base = PostingIteratorBase<IteratorTraits>;
   using typename Base::Position;
 
+  static_assert(IteratorTraits::kBlockSize % kScoreBlock == 0,
+                "kBlockSize must be a multiple of kScoreBlock");
+
  public:
   PostingIteratorImpl(WandExtent extent)
     : Base{FieldTraits::Offset()},
       _skip{IteratorTraits::kBlockSize, PostingsWriterBase::kSkipN,
             ReadSkip{extent}} {}
 
-  void Prepare(const TermMeta& meta, const IndexInput* doc_in,
+  void Prepare(const PostingCookie& meta, const IndexInput* doc_in,
                const IndexInput* pos_in, const IndexInput* pay_in,
                uint8_t wand_index = WandContext::kDisable);
 
@@ -1535,9 +1724,11 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits,
 
 template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
 void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
-  const TermMeta& meta, const IndexInput* doc_in, const IndexInput* pos_in,
+  const PostingCookie& meta, const IndexInput* doc_in, const IndexInput* pos_in,
   const IndexInput* pay_in, uint8_t wand_index) {
-  auto& term_state = static_cast<const TermMetaImpl&>(meta);
+  this->Init(meta);
+
+  auto& term_state = sdb::basics::downCast<CookieImpl>(meta.cookie)->meta;
   std::get<CostAttr>(this->_attrs)
     .reset(term_state.docs_count);  // Estimate iterator
 
@@ -1556,6 +1747,12 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
       }
     }
 
+    if constexpr (IteratorTraits::Frequency()) {
+      auto& freq_block = std::get<FreqBlockAttr>(this->_attrs);
+      this->_collected_freqs = std::allocator<uint32_t>{}.allocate(kScoreBlock);
+      freq_block.value = this->_collected_freqs;
+    }
+
     this->_doc_in->Seek(term_state.doc_start);
     SDB_ASSERT(!this->_doc_in->IsEOF());
   } else {
@@ -1565,6 +1762,11 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
     if constexpr (IteratorTraits::Frequency()) {
       auto* freq = std::end(this->_freqs) - 1;
       *freq = term_state.freq;
+
+      this->_collected_freqs = freq;
+
+      auto& freq_block = std::get<FreqBlockAttr>(this->_attrs);
+      freq_block.value = freq;
     }
     this->_left_in_list = 0;
     this->_left_in_leaf = 1;
@@ -2283,8 +2485,26 @@ struct PostingAdapter {
     return self().seek(target);
   }
 
-  IRS_FORCE_INLINE const ScoreAttr& score() const noexcept {
-    return self().score();
+  IRS_FORCE_INLINE void FetchScoreArgs(uint16_t index) {
+    return self().FetchScoreArgs(index);
+  }
+
+  IRS_FORCE_INLINE uint32_t Collect(const ScoreFunction& scorer,
+                                    ColumnCollector& columns,
+                                    std::span<doc_id_t, kScoreBlock> docs,
+                                    std::span<score_t, kScoreBlock> scores) {
+    return self().Collect(scorer, columns, docs, scores);
+  }
+
+  IRS_FORCE_INLINE ScoreFunction
+  PrepareScore(const PrepareScoreContext& ctx) const noexcept {
+    return self().PrepareScore(ctx);
+  }
+
+  IRS_FORCE_INLINE auto FillBlock(doc_id_t min, doc_id_t max, uint64_t* mask,
+                                  CollectScoreContext score_ctx,
+                                  CollectMatchContext match_ctx) {
+    return self().FillBlock(min, max, mask, score_ctx, match_ctx);
   }
 
  private:
@@ -2366,10 +2586,9 @@ class PostingsReaderImpl final : public PostingsReaderBase {
 
   DocIterator::ptr Iterator(IndexFeatures field_features,
                             IndexFeatures required_features,
-                            std::span<const TermMeta* const> metas,
+                            std::span<const PostingCookie> metas,
                             const IteratorFieldOptions& options,
-                            size_t min_match, ScoreMergeType type,
-                            size_t num_buckets) const final;
+                            size_t min_match, ScoreMergeType type) const final;
 
  private:
   template<typename FieldTraits, typename Factory>
@@ -2543,13 +2762,14 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::IteratorImpl(
 template<typename FormatTraits>
 DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
   IndexFeatures field_features, IndexFeatures required_features,
-  std::span<const TermMeta* const> metas, const IteratorFieldOptions& options,
-  size_t min_match, ScoreMergeType type, size_t num_buckets) const {
+  std::span<const PostingCookie> metas, const IteratorFieldOptions& options,
+  size_t min_match, ScoreMergeType type) const {
   SDB_ASSERT(!metas.empty());
   SDB_ASSERT(1 <= min_match);
   SDB_ASSERT(min_match <= metas.size());
 
-  auto make_postings_iterator = [&](uint32_t meta_idx, const TermMeta& meta) {
+  auto make_postings_iterator = [&](uint32_t meta_idx,
+                                    const PostingCookie& cookie) {
     return IteratorImpl(
       field_features, required_features,
       [&]<typename IteratorTraits, typename FieldTraits> -> DocIterator::ptr {
@@ -2559,28 +2779,22 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
             auto it = memory::make_managed<
               PostingIteratorImpl<IteratorTraits, FieldTraits, Extent>>(
               std::forward<Extent>(extent));
-            it->Prepare(meta, _doc_in.get(), _pos_in.get(), _pay_in.get());
+            it->Prepare(cookie, _doc_in.get(), _pos_in.get(), _pay_in.get());
             return it;
           });
       });
   };
 
   if (metas.size() == 1) {
-    auto it = make_postings_iterator(0, *metas[0]);
-    if (!it) {
-      return {};
-    }
-    options.compile_score(0, *it);
-    return it;
+    return make_postings_iterator(0, metas[0]);
   }
 
   std::vector<DocIterator::ptr> iterators;
   iterators.reserve(metas.size());
   uint32_t meta_idx = 0;
-  for (const auto* meta : metas) {
-    if (auto it = make_postings_iterator(meta_idx, *meta)) {
+  for (const auto& meta : metas) {
+    if (auto it = make_postings_iterator(meta_idx, meta)) {
       iterators.emplace_back(std::move(it));
-      options.compile_score(meta_idx, *iterators.back());
     } else if (min_match == metas.size()) {
       return {};
     }
@@ -2603,12 +2817,11 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
       for (auto& it : iterators) {
         adapters.emplace_back(std::move(it));
       }
-      return ResolveMergeType(
-        type, num_buckets, [&]<typename A>(A&& aggregator) {
-          using MinMatchIterator = MinMatchIterator<Adapter, A>;
-          return MakeWeakDisjunction<MinMatchIterator>(
-            options, std::move(adapters), min_match, std::move(aggregator));
-        });
+      return ResolveMergeType(type, [&]<ScoreMergeType MergeType> {
+        using MinMatchIterator = MinMatchIterator<Adapter, MergeType>;
+        return MakeWeakDisjunction<MinMatchIterator>(
+          options, std::move(adapters), min_match);
+      });
     });
 }
 

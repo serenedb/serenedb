@@ -29,6 +29,7 @@
 #include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/levenshtein_filter.hpp"
+#include "iresearch/search/mixed_boolean_filter.hpp"
 #include "iresearch/search/phrase_filter.hpp"
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/range_filter.hpp"
@@ -38,26 +39,58 @@
 
 namespace sdb {
 
+enum class Conjunction { Or, And };
+enum class Modifier { None, Required, Not };
+
 struct ParserContext {
-  irs::BooleanFilter* current_parent;
   std::string_view default_field;
-  irs::And* required_and = nullptr;
+  irs::MixedBooleanFilter* current_root;
   irs::analysis::Analyzer* tokenizer;
   std::string error_message;
+  Modifier last_mod{Modifier::None};
 
-  ParserContext(irs::Or& root, std::string_view field,
+  ParserContext(irs::MixedBooleanFilter& root, std::string_view field,
                 irs::analysis::Analyzer& tokenizer)
-    : current_parent{&root}, default_field(field), tokenizer{&tokenizer} {}
+    : default_field(field), current_root{&root}, tokenizer{&tokenizer} {}
+
+  void AddClause(Conjunction conj) {
+    if (conj != Conjunction::And && last_mod == Modifier::None) {
+      return;
+    }
+
+    auto& opt = current_root->GetOptional();
+    auto& req = current_root->GetRequired();
+
+    auto current = opt.PopBack();
+    if (!current) {
+      return;
+    }
+
+    irs::Filter::ptr prev;
+    if (conj == Conjunction::And) {
+      prev = opt.PopBack();
+    }
+
+    if (prev) {
+      req.add(std::move(prev));
+    }
+
+    if (last_mod == Modifier::Not) {
+      req.add<irs::Not>().filter<irs::Or>().add(std::move(current));
+    } else {
+      req.add(std::move(current));
+    }
+  }
 
   irs::ByTerm& AddTerm(std::string_view value) {
-    auto& f = current_parent->add<irs::ByTerm>();
+    auto& f = current_root->GetOptional().add<irs::ByTerm>();
     *f.mutable_field() = default_field;
     f.mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
     return f;
   }
 
   irs::ByPhrase& AddPhrase(std::string_view value, int slop = 0) {
-    auto& f = current_parent->add<irs::ByPhrase>();
+    auto& f = current_root->GetOptional().add<irs::ByPhrase>();
     *f.mutable_field() = default_field;
     tokenizer->reset(value);
     auto token = irs::get<irs::TermAttr>(*tokenizer);
@@ -68,7 +101,7 @@ struct ParserContext {
   }
 
   irs::ByPrefix& AddPrefix(std::string_view value) {
-    auto& f = current_parent->add<irs::ByPrefix>();
+    auto& f = current_root->GetOptional().add<irs::ByPrefix>();
     *f.mutable_field() = default_field;
     if (!value.empty() && value.back() == '*') {
       value.remove_suffix(1);
@@ -78,7 +111,7 @@ struct ParserContext {
   }
 
   irs::ByWildcard& AddWildcard(std::string_view value) {
-    auto& f = current_parent->add<irs::ByWildcard>();
+    auto& f = current_root->GetOptional().add<irs::ByWildcard>();
     *f.mutable_field() = default_field;
     f.mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
     return f;
@@ -86,7 +119,7 @@ struct ParserContext {
 
   irs::ByRange& AddRange(std::string_view min_val, std::string_view max_val,
                          bool inc_min, bool inc_max) {
-    auto& f = current_parent->add<irs::ByRange>();
+    auto& f = current_root->GetOptional().add<irs::ByRange>();
     *f.mutable_field() = default_field;
     auto& range = f.mutable_options()->range;
     if (min_val == "*") {
@@ -107,7 +140,7 @@ struct ParserContext {
   }
 
   irs::ByEditDistance& AddFuzzy(std::string_view value, int distance) {
-    auto& f = current_parent->add<irs::ByEditDistance>();
+    auto& f = current_root->GetOptional().add<irs::ByEditDistance>();
     *f.mutable_field() = default_field;
     f.mutable_options()->term = irs::ViewCast<irs::byte_type>(value);
     f.mutable_options()->max_distance = static_cast<uint8_t>(distance);

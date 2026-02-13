@@ -165,14 +165,19 @@ class Executor {
   }
 
   irs::Filter::ptr ParseFilter(std::string_view str) {
-    auto root = std::make_unique<irs::Or>();
+    auto root = std::make_unique<irs::MixedBooleanFilter>();
     sdb::ParserContext context{*root, "text", *_tokenizer};
     auto r = sdb::ParseQuery(context, str);
     if (!r.ok()) {
       return {};
     }
-    if (root->size() == 1) {
-      return root->PopBack();
+    auto& opt = root->GetOptional();
+    auto& req = root->GetRequired();
+    if (opt.size() == 1 && req.empty()) {
+      return opt.PopBack();
+    }
+    if (req.size() == 1 && opt.empty()) {
+      return req.PopBack();
     }
     return root;
   }

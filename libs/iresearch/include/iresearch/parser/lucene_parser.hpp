@@ -114,9 +114,8 @@ union YYSTYPE
     int num;
     float fnum;
     irs::FilterWithBoost* filter;
-    irs::BooleanFilter* parent;
 
-#line 119 "libs/iresearch/include/iresearch/parser/lucene_parser.hpp"
+#line 118 "libs/iresearch/include/iresearch/parser/lucene_parser.hpp"
 
 };
 typedef union YYSTYPE YYSTYPE;

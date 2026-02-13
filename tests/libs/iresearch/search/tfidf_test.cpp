@@ -30,7 +30,6 @@
 #include "iresearch/search/phrase_filter.hpp"
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/range_filter.hpp"
-#include "iresearch/search/score.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/tfidf.hpp"
@@ -400,7 +399,6 @@ TEST_P(TfidfTestCase, test_phrase) {
 
   auto scorer = irs::TFIDF{false, true};
 
-
   // read segment
   auto index = open_reader();
   ASSERT_EQ(1, index->size());
@@ -571,7 +569,6 @@ TEST_P(TfidfTestCase, test_query) {
   }
 
   auto scorer = irs::TFIDF{false, true};
-
 
   auto reader = irs::DirectoryReader(dir(), codec());
   auto& segment = *(reader.begin());
@@ -1672,7 +1669,6 @@ TEST_P(TfidfTestCase, test_order) {
   *query.mutable_field() = "field";
 
   auto scorer = irs::TFIDF{false, true};
-
 
   uint64_t seq = 0;
   const auto* column = segment.column("seq");

@@ -36,7 +36,6 @@
 #include "iresearch/search/cost.hpp"
 #include "iresearch/search/prepared_state_visitor.hpp"
 #include "iresearch/search/prev_doc.hpp"
-#include "iresearch/search/score.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
@@ -50,13 +49,12 @@ static_assert(std::variant_size_v<ByNestedOptions::MatchType> == 2);
 
 const Scorer* GetOrder(const ByNestedOptions::MatchType& match,
                        const Scorer* scorer) noexcept {
-  return std::visit(
-    absl::Overload{[&](Match v) noexcept -> const Scorer* {
-                     return kMatchNone == v ? nullptr : scorer;
-                   },
-                   [scorer](const DocIteratorProvider&) noexcept
-                     -> const Scorer* { return scorer; }},
-    match);
+  return std::visit(absl::Overload{[&](Match v) noexcept -> const Scorer* {
+                                     return kMatchNone == v ? nullptr : scorer;
+                                   },
+                                   [scorer](const DocIteratorProvider&) noexcept
+                                     -> const Scorer* { return scorer; }},
+                    match);
 }
 
 bool IsValid(const ByNestedOptions::MatchType& match) noexcept {

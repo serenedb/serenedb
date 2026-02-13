@@ -25,6 +25,7 @@
 
 #include <memory>
 
+#include "basics/containers/small_vector.h"
 #include "basics/memory.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/formats.hpp"
@@ -32,7 +33,6 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/disjunction.hpp"
-#include "iresearch/search/score.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
 
@@ -644,8 +644,7 @@ DocIterator::ptr NGramSimilarityQuery::execute(
   return memory::make_managed<NGramSimilarityDocIterator<
     NGramApprox<false>, SerialPositionsChecker<Dummy>>>(
     std::move(itrs), query_state->terms.size(), _min_match_count,
-    query_state->reader->meta(), ctx.scorer ? _stats.c_str() : nullptr,
-    _boost);
+    query_state->reader->meta(), ctx.scorer ? _stats.c_str() : nullptr, _boost);
 }
 
 DocIterator::ptr NGramSimilarityQuery::ExecuteWithOffsets(

@@ -34,7 +34,6 @@
 #include "iresearch/search/cost.hpp"
 #include "iresearch/search/filter.hpp"
 #include "iresearch/search/filter_visitor.hpp"
-#include "iresearch/search/score.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/search/tfidf.hpp"

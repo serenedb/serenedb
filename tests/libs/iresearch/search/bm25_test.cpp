@@ -32,7 +32,6 @@
 #include "iresearch/search/phrase_filter.hpp"
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/range_filter.hpp"
-#include "iresearch/search/score.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/search/scorers.hpp"
 #include "iresearch/search/term_filter.hpp"

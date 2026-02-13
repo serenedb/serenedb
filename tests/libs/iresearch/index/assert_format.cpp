@@ -38,7 +38,6 @@
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/cost.hpp"
-#include "iresearch/search/score.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/tfidf.hpp"
 #include "iresearch/store/data_output.hpp"

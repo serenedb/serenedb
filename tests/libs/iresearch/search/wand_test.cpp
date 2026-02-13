@@ -27,7 +27,6 @@
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/filter.hpp"
-#include "iresearch/search/score.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/tfidf.hpp"

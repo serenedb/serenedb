@@ -43,7 +43,6 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/column_collector.hpp"
-#include "iresearch/search/score.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/search/scorer_impl.hpp"

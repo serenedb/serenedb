@@ -27,7 +27,6 @@
 #include "basics/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/field_meta.hpp"
-#include "iresearch/search/score.hpp"
 #include "iresearch/search/score_function.hpp"
 
 namespace irs {

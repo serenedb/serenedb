@@ -23,15 +23,12 @@
 #pragma once
 
 #include "basics/bit_utils.hpp"
-#include "basics/containers/bitset.hpp"
 #include "basics/math_utils.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/cost.hpp"
 #include "iresearch/search/prev_doc.hpp"
-#include "iresearch/search/score.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 #include "iresearch/utils/type_limits.hpp"
 

@@ -35,7 +35,9 @@ yaclib::Future<Result> Transaction(ExecContext& context,
     case TRANS_STMT_BEGIN:
     case TRANS_STMT_START: {
       if (!conn_ctx.HasTransactionBegin()) {
-        auto isolation_level = IsolationLevel::RepeatableRead;
+        auto isolation_level =
+          conn_ctx.Get<VariableType::PgTransactionIsolation>(
+            "default_transaction_isolation");
         VisitNodes(stmt.options, [&](const DefElem& option) {
           std::string_view opt_name = option.defname;
           if (opt_name == "transaction_isolation") {

@@ -1882,16 +1882,19 @@ template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
          typename InputType>
 void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
                          InputType>::SeekToBlock(doc_id_t target) {
+  if (target <= _skip.Reader().UpperBound()) [[unlikely]] {
+    return;
+  }
   SkipState last;  // Where block starts
   _skip.Reader().Reset(last);
 
   // Init skip writer in lazy fashion
   if (_docs_count == 0) [[likely]] {
   seek_after_initialization:
-    SDB_ASSERT(target > _skip.Reader().UpperBound());
     SDB_ASSERT(_skip.NumLevels());
-
+    SDB_ASSERT(target > _skip.Reader().UpperBound());
     this->_left_in_list = _skip.Seek(target);
+    SDB_ASSERT(target <= _skip.Reader().UpperBound());
     // unnecessary: this->_left_in_leaf = 0;
     // unnecessary: this->_max_in_leaf = _skip.Reader().UpperBound();
     std::get<DocAttr>(this->_attrs).value = last.doc;
@@ -1901,11 +1904,6 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
       auto& pos = std::get<Position>(this->_attrs);
       pos.template Prepare<InputType>(last);  // Notify positions
     }
-    return;
-  }
-
-  // needed for short postings lists
-  if (target <= _skip.Reader().UpperBound()) [[unlikely]] {
     return;
   }
 

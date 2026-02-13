@@ -70,6 +70,7 @@ struct bytes_io<T, sizeof(uint16_t)> {
 template<typename T>
 struct bytes_io<T, sizeof(uint32_t)> {
   static constexpr T kMaxVSize = 5;
+  static constexpr T kMask = 0x80;
 
   template<typename InputIterator>
   static void vskip(InputIterator& in) {
@@ -78,22 +79,31 @@ struct bytes_io<T, sizeof(uint32_t)> {
                      byte_type>);
     T v = *in;
     ++in;
-    if (!(v & 0x80))
+    if (!(v & kMask)) [[likely]] {
       return;
+    }
+    vskip_tail(in);
+  }
+
+  template<typename InputIterator>
+  static void vskip_tail(InputIterator& in) {
+    T v = *in;
+    ++in;
+    if (!(v & kMask)) {
+      return;
+    }
     v = *in;
     ++in;
-    if (!(v & 0x80))
+    if (!(v & kMask)) {
       return;
+    }
     v = *in;
     ++in;
-    if (!(v & 0x80))
+    if (!(v & kMask)) {
       return;
+    }
     v = *in;
     ++in;
-    if (!(v & 0x80))
-      return;
-    ++in;
-    return;
   }
 
   template<typename InputIterator>
@@ -101,38 +111,44 @@ struct bytes_io<T, sizeof(uint32_t)> {
     static_assert(
       std::is_same_v<typename std::iterator_traits<InputIterator>::value_type,
                      byte_type>);
-    static constexpr T kMask = 0x80;
     T out = *in;
     ++in;
-    if (!(out & kMask))
+    if (!(out & kMask)) [[likely]] {
       return out;
+    }
+    return vread_tail(in, out);
+  }
 
-    T b;
+  template<typename InputIterator>
+  static T vread_tail(InputIterator& in, T out) {
     out -= kMask;
-    b = *in;
+    T b = *in;
     ++in;
     out += b << 7;
-    if (!(b & kMask))
+    if (!(b & kMask)) {
       return out;
+    }
+
     out -= kMask << 7;
     b = *in;
     ++in;
     out += b << 14;
-    if (!(b & kMask))
+    if (!(b & kMask)) {
       return out;
+    }
+
     out -= kMask << 14;
     b = *in;
     ++in;
     out += b << 21;
-    if (!(b & kMask))
+    if (!(b & kMask)) {
       return out;
+    }
+
     out -= kMask << 21;
     b = *in;
     ++in;
     out += b << 28;
-    // last byte always has MSB == 0, so we don't need to check and subtract
-    // 0x80
-
     return out;
   }
 
@@ -157,7 +173,7 @@ struct bytes_io<T, sizeof(uint32_t)> {
   }
 
   /// @returns number of bytes required to store value in variable length format
-  IRS_FORCE_INLINE static uint32_t vsize(uint32_t value) {
+  static uint32_t vsize(uint32_t value) {
     // compute 0 == value ? 1 : 1 + floor(log2(value)) / 7
 
     // OR 0x1 since Log2Floor32 does not accept 0
@@ -171,51 +187,73 @@ struct bytes_io<T, sizeof(uint32_t)> {
 template<typename T>
 struct bytes_io<T, sizeof(uint64_t)> {
   static constexpr T kMaxVSize = 10;
+  static constexpr T kMask = 0x80;
 
   template<typename InputIterator>
   static void vskip(InputIterator& in) {
     static_assert(
       std::is_same_v<typename std::iterator_traits<InputIterator>::value_type,
                      byte_type>);
-    static constexpr T kMask = 0x80;
     T v = *in;
     ++in;
-    if (!(v & kMask))
+    if (!(v & kMask)) [[likely]] {
       return;
+    }
+    vskip_tail(in);
+  }
+
+  template<typename InputIterator>
+  static void vskip_tail(InputIterator& in) {
+    T v = *in;
+    ++in;
+    if (!(v & kMask)) {
+      return;
+    }
+
     v = *in;
     ++in;
-    if (!(v & kMask))
+    if (!(v & kMask)) {
       return;
+    }
+
     v = *in;
     ++in;
-    if (!(v & kMask))
+    if (!(v & kMask)) {
       return;
+    }
+
     v = *in;
     ++in;
-    if (!(v & kMask))
+    if (!(v & kMask)) {
       return;
+    }
+
     v = *in;
     ++in;
-    if (!(v & kMask))
+    if (!(v & kMask)) {
       return;
+    }
+
     v = *in;
     ++in;
-    if (!(v & kMask))
+    if (!(v & kMask)) {
       return;
+    }
+
     v = *in;
     ++in;
-    if (!(v & kMask))
+    if (!(v & kMask)) {
       return;
+    }
+
     v = *in;
     ++in;
-    if (!(v & kMask))
+    if (!(v & kMask)) {
       return;
+    }
+
     v = *in;
     ++in;
-    if (!(v & kMask))
-      return;
-    ++in;
-    return;
   }
 
   template<typename InputIterator>
@@ -223,68 +261,84 @@ struct bytes_io<T, sizeof(uint64_t)> {
     static_assert(
       std::is_same_v<typename std::iterator_traits<InputIterator>::value_type,
                      byte_type>);
-    static constexpr T kMask = 0x80;
     T out = *in;
     ++in;
-    if (!(out & kMask))
+    if (!(out & kMask)) [[likely]] {
       return out;
+    }
+    return vread_tail(in, out);
+  }
 
-    T b;
+  template<typename InputIterator>
+  static T vread_tail(InputIterator& in, T out) {
     out -= kMask;
-    b = *in;
+    T b = *in;
     ++in;
     out += b << 7;
-    if (!(b & kMask))
+    if (!(b & kMask)) {
       return out;
+    }
+
     out -= kMask << 7;
     b = *in;
     ++in;
     out += b << 14;
-    if (!(b & kMask))
+    if (!(b & kMask)) {
       return out;
+    }
+
     out -= kMask << 14;
     b = *in;
     ++in;
     out += b << 21;
-    if (!(b & kMask))
+    if (!(b & kMask)) {
       return out;
+    }
+
     out -= kMask << 21;
     b = *in;
     ++in;
     out += b << 28;
-    if (!(b & kMask))
+    if (!(b & kMask)) {
       return out;
+    }
+
     out -= kMask << 28;
     b = *in;
     ++in;
     out += b << 35;
-    if (!(b & kMask))
+    if (!(b & kMask)) {
       return out;
+    }
+
     out -= kMask << 35;
     b = *in;
     ++in;
     out += b << 42;
-    if (!(b & kMask))
+    if (!(b & kMask)) {
       return out;
+    }
+
     out -= kMask << 42;
     b = *in;
     ++in;
     out += b << 49;
-    if (!(b & kMask))
+    if (!(b & kMask)) {
       return out;
+    }
+
     out -= kMask << 49;
     b = *in;
     ++in;
     out += b << 56;
-    if (!(b & kMask))
+    if (!(b & kMask)) {
       return out;
+    }
+
     out -= kMask << 56;
     b = *in;
     ++in;
     out += b << 63;
-    // last byte always has MSB == 0, so we don't need to check and subtract
-    // 0x80
-
     return out;
   }
 
@@ -305,7 +359,7 @@ struct bytes_io<T, sizeof(uint64_t)> {
   }
 
   /// @returns number of bytes required to store value in variable length format
-  IRS_FORCE_INLINE static uint64_t vsize(uint64_t value) {
+  static uint64_t vsize(uint64_t value) {
     // compute 0 == value ? 1 : 1 + floor(log2(value)) / 7
 
     // OR 0x1 since Log2Floor64 does not accept 0

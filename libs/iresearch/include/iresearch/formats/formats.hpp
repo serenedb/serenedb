@@ -55,8 +55,8 @@ struct FieldMeta;
 struct FlushState;
 struct ReaderState;
 class IndexOutput;
-struct DataInput;
-struct IndexInput;
+class DataInput;
+class IndexInput;
 struct PostingsWriter;
 struct Scorer;
 struct WandWriter;
@@ -102,13 +102,13 @@ struct PostingsWriter {
 
   virtual ~PostingsWriter() = default;
   // out - corresponding terms stream
-  virtual void prepare(IndexOutput& out, const FlushState& state) = 0;
-  virtual void begin_field(const FieldProperties& meta) = 0;
-  virtual void write(DocIterator& docs, TermMeta& meta) = 0;
-  virtual void begin_block() = 0;
-  virtual void encode(BufferedOutput& out, const TermMeta& state) = 0;
-  virtual FieldStats end_field() = 0;
-  virtual void end() = 0;
+  virtual void Prepare(IndexOutput& out, const FlushState& state) = 0;
+  virtual void BeginField(const FieldProperties& meta) = 0;
+  virtual void Write(DocIterator& docs, TermMeta& meta) = 0;
+  virtual void BeginBlock() = 0;
+  virtual void Encode(BufferedOutput& out, const TermMeta& state) = 0;
+  virtual FieldStats EndField() = 0;
+  virtual void End() = 0;
 };
 
 struct BasicTermReader : public AttributeProvider {
@@ -164,7 +164,7 @@ struct PostingsReader {
 
   // in - corresponding stream
   // features - the set of features available for segment
-  virtual void prepare(IndexInput& in, const ReaderState& state,
+  virtual void prepare(DataInput& in, const ReaderState& state,
                        IndexFeatures features) = 0;
 
   // Parses input block "in" and populate "attrs" collection with

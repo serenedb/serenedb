@@ -100,10 +100,6 @@ class SeekTermIterator : public irs::SeekTermIterator {
       return nullptr;
     }
 
-    bool IsEqual(const irs::SeekCookie& /*rhs*/) const final { return false; }
-
-    size_t Hash() const final { return 0; }
-
     iterator_type ptr;
   };
 

@@ -62,23 +62,39 @@ class FailingDirectory : public tests::DirectoryMock {
     explicit FailingIndexInput(IndexInput::ptr&& impl, std::string_view name,
                                const FailingDirectory& dir)
       : _impl(std::move(impl)), _dir(&dir), _name(name) {}
-    const irs::byte_type* ReadBuffer(size_t offset, size_t size,
-                                     irs::BufferHint hint) final {
-      return _impl->ReadBuffer(offset, size, hint);
+
+    const irs::byte_type* ReadData(uint64_t count) final {
+      return _impl->ReadData(count);
     }
-    const irs::byte_type* ReadBuffer(size_t size, irs::BufferHint hint) final {
-      return _impl->ReadBuffer(size, hint);
+    const irs::byte_type* ReadData(uint64_t offset, uint64_t count) final {
+      return _impl->ReadData(offset, count);
     }
+
+    const irs::byte_type* ReadView(uint64_t offset, uint64_t count) final {
+      return _impl->ReadView(offset, count);
+    }
+    const irs::byte_type* ReadView(uint64_t count) final {
+      return _impl->ReadView(count);
+    }
+
     irs::byte_type ReadByte() final { return _impl->ReadByte(); }
     size_t ReadBytes(irs::byte_type* b, size_t count) final {
       return _impl->ReadBytes(b, count);
     }
-    size_t ReadBytes(size_t offset, irs::byte_type* b, size_t count) final {
+    size_t ReadBytes(uint64_t offset, irs::byte_type* b, size_t count) final {
       return _impl->ReadBytes(offset, b, count);
     }
-    uint64_t Position() const final { return _impl->Position(); }
-    uint64_t Length() const final { return _impl->Length(); }
-    bool IsEOF() const final { return _impl->IsEOF(); }
+
+    int16_t ReadI16() final { return _impl->ReadI16(); }
+    int32_t ReadI32() final { return _impl->ReadI32(); }
+    int64_t ReadI64() final { return _impl->ReadI64(); }
+    uint32_t ReadV32() final { return _impl->ReadV32(); }
+    uint64_t ReadV64() final { return _impl->ReadV64(); }
+
+    uint64_t Position() const noexcept final { return _impl->Position(); }
+    uint64_t Length() const noexcept final { return _impl->Length(); }
+    bool IsEOF() const noexcept final { return _impl->IsEOF(); }
+
     ptr Dup() const final {
       if (_dir->ShouldFail(Failure::DUP, _name)) {
         throw irs::IoError();
@@ -103,8 +119,10 @@ class FailingDirectory : public tests::DirectoryMock {
       return std::make_unique<FailingIndexInput>(_impl->Reopen(), this->_name,
                                                  *this->_dir);
     }
-    void Seek(size_t pos) final { _impl->Seek(pos); }
-    uint32_t Checksum(size_t offset) const final {
+    void Skip(uint64_t count) final { _impl->Skip(count); }
+    void Seek(uint64_t pos) final { _impl->Seek(pos); }
+
+    uint32_t Checksum(uint64_t offset) const final {
       return _impl->Checksum(offset);
     }
 

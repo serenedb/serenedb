@@ -1,3 +1,23 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
 #include <iresearch/utils/automaton_utils.hpp>
 #include <iresearch/utils/regexp_utils.hpp>
 
@@ -233,7 +253,7 @@ TEST_F(RegexpUtilsTest, match_question_middle) {
   AssertProperties(a);
   EXPECT_TRUE(Accepts(a, "ac"));  
   EXPECT_TRUE(Accepts(a, "abc")); 
-  EXPECT_FALSE(Accepts(a, "abbc")); h
+  EXPECT_FALSE(Accepts(a, "abbc"));
 }
 
 TEST_F(RegexpUtilsTest, match_question_realistic) {
@@ -781,6 +801,298 @@ TEST_F(RegexpUtilsTest, match_utf8_mixed) {
   EXPECT_TRUE(Accepts(a, "hello мир"));
   EXPECT_TRUE(Accepts(a, "hello, мир"));
   EXPECT_FALSE(Accepts(a, "hello"));
+}
+
+// UTF-8 3-byte characters (Chinese, Japanese, Korean - U+0800 to U+FFFF)
+
+TEST_F(RegexpUtilsTest, match_utf8_3byte_literal) {
+  // Chinese characters: 中 = E4 B8 AD, 文 = E6 96 87, 字 = E5 AD 97
+  auto a = irs::FromRegexp("中文");
+  AssertProperties(a);
+  EXPECT_TRUE(Accepts(a, "中文"));
+  EXPECT_FALSE(Accepts(a, "中"));
+  EXPECT_FALSE(Accepts(a, "文"));
+  EXPECT_FALSE(Accepts(a, "中文字"));
+  EXPECT_FALSE(Accepts(a, ""));
+}
+
+TEST_F(RegexpUtilsTest, match_utf8_3byte_dot) {
+  auto a = irs::FromRegexp("中.字");
+  AssertProperties(a);
+  EXPECT_TRUE(Accepts(a, "中文字"));
+  EXPECT_TRUE(Accepts(a, "中X字"));
+  EXPECT_TRUE(Accepts(a, "中国字"));  // 国 is also 3-byte
+  EXPECT_FALSE(Accepts(a, "中字"));
+  EXPECT_FALSE(Accepts(a, "中文文字"));
+}
+
+TEST_F(RegexpUtilsTest, match_utf8_3byte_quantifiers) {
+  // Star quantifier with 3-byte char
+  {
+    auto a = irs::FromRegexp("中*");
+    AssertProperties(a);
+    EXPECT_TRUE(Accepts(a, ""));
+    EXPECT_TRUE(Accepts(a, "中"));
+    EXPECT_TRUE(Accepts(a, "中中中"));
+    EXPECT_FALSE(Accepts(a, "中文"));
+  }
+  // Plus quantifier
+  {
+    auto a = irs::FromRegexp("文+");
+    AssertProperties(a);
+    EXPECT_FALSE(Accepts(a, ""));
+    EXPECT_TRUE(Accepts(a, "文"));
+    EXPECT_TRUE(Accepts(a, "文文文"));
+  }
+  // Optional quantifier
+  {
+    auto a = irs::FromRegexp("中文?字");
+    AssertProperties(a);
+    EXPECT_TRUE(Accepts(a, "中字"));
+    EXPECT_TRUE(Accepts(a, "中文字"));
+    EXPECT_FALSE(Accepts(a, "中文文字"));
+  }
+}
+
+TEST_F(RegexpUtilsTest, match_utf8_3byte_prefix_suffix) {
+  // Prefix: 中.*
+  {
+    auto a = irs::FromRegexp("中.*");
+    AssertProperties(a);
+    EXPECT_TRUE(Accepts(a, "中"));
+    EXPECT_TRUE(Accepts(a, "中文"));
+    EXPECT_TRUE(Accepts(a, "中文字"));
+    EXPECT_TRUE(Accepts(a, "中abc"));
+    EXPECT_FALSE(Accepts(a, "文中"));
+  }
+  // Suffix: .*字
+  {
+    auto a = irs::FromRegexp(".*字");
+    AssertProperties(a);
+    EXPECT_TRUE(Accepts(a, "字"));
+    EXPECT_TRUE(Accepts(a, "文字"));
+    EXPECT_TRUE(Accepts(a, "中文字"));
+    EXPECT_TRUE(Accepts(a, "abc字"));
+    EXPECT_FALSE(Accepts(a, "字中"));
+  }
+  // Infix: .*文.*
+  {
+    auto a = irs::FromRegexp(".*文.*");
+    AssertProperties(a);
+    EXPECT_TRUE(Accepts(a, "文"));
+    EXPECT_TRUE(Accepts(a, "中文"));
+    EXPECT_TRUE(Accepts(a, "文字"));
+    EXPECT_TRUE(Accepts(a, "中文字"));
+    EXPECT_FALSE(Accepts(a, "中字"));
+  }
+}
+
+TEST_F(RegexpUtilsTest, match_utf8_3byte_alternation) {
+  auto a = irs::FromRegexp("中国|日本|韓国");
+  AssertProperties(a);
+  EXPECT_TRUE(Accepts(a, "中国"));
+  EXPECT_TRUE(Accepts(a, "日本"));
+  EXPECT_TRUE(Accepts(a, "韓国"));
+  EXPECT_FALSE(Accepts(a, "中"));
+  EXPECT_FALSE(Accepts(a, "国"));
+  EXPECT_FALSE(Accepts(a, "中日韓"));
+}
+
+TEST_F(RegexpUtilsTest, match_utf8_3byte_char_class) {
+  // Character class with 3-byte chars
+  auto a = irs::FromRegexp("[中文字]+");
+  AssertProperties(a);
+  EXPECT_TRUE(Accepts(a, "中"));
+  EXPECT_TRUE(Accepts(a, "文"));
+  EXPECT_TRUE(Accepts(a, "字"));
+  EXPECT_TRUE(Accepts(a, "中文字"));
+  EXPECT_TRUE(Accepts(a, "字文中文字"));
+  EXPECT_FALSE(Accepts(a, ""));
+  EXPECT_FALSE(Accepts(a, "中abc"));
+}
+
+TEST_F(RegexpUtilsTest, match_utf8_3byte_range) {
+  // Range of CJK characters: 一 (U+4E00) to 三 (U+4E09)
+  // 一 = E4 B8 80, 二 = E4 BA 8C, 三 = E4 B8 89
+  // needs to check
+  auto a = irs::FromRegexp("[一-三]+");
+  AssertProperties(a);
+  EXPECT_TRUE(Accepts(a, "一"));
+  EXPECT_TRUE(Accepts(a, "三"));
+  EXPECT_TRUE(Accepts(a, "一一一"));
+}
+
+// UTF-8 4-byte characters (Emojis, rare CJK - U+10000 to U+10FFFF)
+
+TEST_F(RegexpUtilsTest, match_utf8_4byte_literal) {
+  // Emoji: 😀 = F0 9F 98 80 (U+1F600)
+  auto a = irs::FromRegexp("😀");
+  AssertProperties(a);
+  EXPECT_TRUE(Accepts(a, "😀"));
+  EXPECT_FALSE(Accepts(a, "😀😀"));
+  EXPECT_FALSE(Accepts(a, ""));
+  EXPECT_FALSE(Accepts(a, "X"));
+}
+
+TEST_F(RegexpUtilsTest, match_utf8_4byte_multiple) {
+  // Multiple emojis: 🎉 = F0 9F 8E 89, 🚀 = F0 9F 9A 80
+  auto a = irs::FromRegexp("😀🎉");
+  AssertProperties(a);
+  EXPECT_TRUE(Accepts(a, "😀🎉"));
+  EXPECT_FALSE(Accepts(a, "😀"));
+  EXPECT_FALSE(Accepts(a, "🎉"));
+  EXPECT_FALSE(Accepts(a, "🎉😀"));
+}
+
+TEST_F(RegexpUtilsTest, match_utf8_4byte_dot) {
+  auto a = irs::FromRegexp("a.b");
+  AssertProperties(a);
+  EXPECT_TRUE(Accepts(a, "a😀b"));
+  EXPECT_TRUE(Accepts(a, "a🎉b"));
+  EXPECT_TRUE(Accepts(a, "aXb"));
+  EXPECT_FALSE(Accepts(a, "ab"));
+  EXPECT_FALSE(Accepts(a, "a😀😀b"));
+}
+
+TEST_F(RegexpUtilsTest, match_utf8_4byte_quantifiers) {
+  // Star quantifier with emoji
+  {
+    auto a = irs::FromRegexp("😀*");
+    AssertProperties(a);
+    EXPECT_TRUE(Accepts(a, ""));
+    EXPECT_TRUE(Accepts(a, "😀"));
+    EXPECT_TRUE(Accepts(a, "😀😀😀"));
+    EXPECT_FALSE(Accepts(a, "😀🎉"));
+  }
+  // Plus quantifier
+  {
+    auto a = irs::FromRegexp("🎉+");
+    AssertProperties(a);
+    EXPECT_FALSE(Accepts(a, ""));
+    EXPECT_TRUE(Accepts(a, "🎉"));
+    EXPECT_TRUE(Accepts(a, "🎉🎉🎉"));
+  }
+  // Optional quantifier
+  {
+    auto a = irs::FromRegexp("a😀?b");
+    AssertProperties(a);
+    EXPECT_TRUE(Accepts(a, "ab"));
+    EXPECT_TRUE(Accepts(a, "a😀b"));
+    EXPECT_FALSE(Accepts(a, "a😀😀b"));
+  }
+}
+
+TEST_F(RegexpUtilsTest, match_utf8_4byte_prefix_suffix) {
+  // Prefix with emoji
+  {
+    auto a = irs::FromRegexp("😀.*");
+    AssertProperties(a);
+    EXPECT_TRUE(Accepts(a, "😀"));
+    EXPECT_TRUE(Accepts(a, "😀hello"));
+    EXPECT_TRUE(Accepts(a, "😀🎉🚀"));
+    EXPECT_FALSE(Accepts(a, "hello😀"));
+  }
+  // Suffix with emoji
+  {
+    auto a = irs::FromRegexp(".*🎉");
+    AssertProperties(a);
+    EXPECT_TRUE(Accepts(a, "🎉"));
+    EXPECT_TRUE(Accepts(a, "hello🎉"));
+    EXPECT_TRUE(Accepts(a, "😀🎉"));
+    EXPECT_FALSE(Accepts(a, "🎉hello"));
+  }
+}
+
+TEST_F(RegexpUtilsTest, match_utf8_4byte_alternation) {
+  auto a = irs::FromRegexp("😀|🎉|🚀");
+  AssertProperties(a);
+  EXPECT_TRUE(Accepts(a, "😀"));
+  EXPECT_TRUE(Accepts(a, "🎉"));
+  EXPECT_TRUE(Accepts(a, "🚀"));
+  EXPECT_FALSE(Accepts(a, "X"));
+  EXPECT_FALSE(Accepts(a, "😀🎉"));
+}
+
+TEST_F(RegexpUtilsTest, match_utf8_4byte_char_class) {
+  // Character class with emojis
+  auto a = irs::FromRegexp("[😀🎉🚀]+");
+  AssertProperties(a);
+  EXPECT_TRUE(Accepts(a, "😀"));
+  EXPECT_TRUE(Accepts(a, "🎉"));
+  EXPECT_TRUE(Accepts(a, "🚀"));
+  EXPECT_TRUE(Accepts(a, "😀🎉🚀"));
+  EXPECT_TRUE(Accepts(a, "🎉🎉🎉"));
+  EXPECT_FALSE(Accepts(a, ""));
+  EXPECT_FALSE(Accepts(a, "😀X"));
+}
+
+TEST_F(RegexpUtilsTest, match_utf8_4byte_rare_cjk) {
+  // Rare CJK: 𠀀 = F0 A0 80 80 (U+20000), 𠀁 = F0 A0 80 81 (U+20001)
+  auto a = irs::FromRegexp("𠀀𠀁");
+  AssertProperties(a);
+  EXPECT_TRUE(Accepts(a, "𠀀𠀁"));
+  EXPECT_FALSE(Accepts(a, "𠀀"));
+  EXPECT_FALSE(Accepts(a, "𠀁"));
+}
+
+// Mixed UTF-8 byte lengths (1, 2, 3, 4 bytes together)
+
+TEST_F(RegexpUtilsTest, match_utf8_mixed_all_lengths) {
+  // a (1 byte) + б (2 bytes) + 中 (3 bytes) + 😀 (4 bytes)
+  auto a = irs::FromRegexp("aб中😀");
+  AssertProperties(a);
+  EXPECT_TRUE(Accepts(a, "aб中😀"));
+  EXPECT_FALSE(Accepts(a, "aб中"));
+  EXPECT_FALSE(Accepts(a, "б中😀"));
+}
+
+TEST_F(RegexpUtilsTest, match_utf8_mixed_dot_any_length) {
+  // Dot should match any single char regardless of byte length
+  auto a = irs::FromRegexp("....");  // four dots = four chars
+  AssertProperties(a);
+  EXPECT_TRUE(Accepts(a, "abcd"));
+  EXPECT_TRUE(Accepts(a, "абвг"));
+  EXPECT_TRUE(Accepts(a, "中文日本"));
+  EXPECT_TRUE(Accepts(a, "😀🎉🚀🌟"));
+  EXPECT_TRUE(Accepts(a, "aб中😀"));
+  EXPECT_FALSE(Accepts(a, "abc"));
+  EXPECT_FALSE(Accepts(a, "abcde"));
+}
+
+TEST_F(RegexpUtilsTest, match_utf8_mixed_quantifiers) {
+  // Pattern: (any 2-byte)+ followed by (any 3-byte)* followed by emoji
+  auto a = irs::FromRegexp("при.*中.*😀");
+  AssertProperties(a);
+  EXPECT_TRUE(Accepts(a, "при中😀"));
+  EXPECT_TRUE(Accepts(a, "приXXX中YYY😀"));
+  EXPECT_TRUE(Accepts(a, "при中文字😀"));
+  EXPECT_FALSE(Accepts(a, "при中"));
+  EXPECT_FALSE(Accepts(a, "中😀"));
+}
+
+TEST_F(RegexpUtilsTest, match_utf8_mixed_char_class) {
+  // Char class with mixed byte lengths
+  auto a = irs::FromRegexp("[aбя中😀]+");
+  AssertProperties(a);
+  EXPECT_TRUE(Accepts(a, "a"));
+  EXPECT_TRUE(Accepts(a, "б"));
+  EXPECT_TRUE(Accepts(a, "中"));
+  EXPECT_TRUE(Accepts(a, "😀"));
+  EXPECT_TRUE(Accepts(a, "aб中😀"));
+  EXPECT_TRUE(Accepts(a, "😀中бa"));
+  EXPECT_FALSE(Accepts(a, ""));
+  EXPECT_FALSE(Accepts(a, "x"));
+}
+
+TEST_F(RegexpUtilsTest, match_utf8_mixed_foo_star_bar_with_emoji) {
+  // foo.*bar with emoji in the middle
+  auto a = irs::FromRegexp("foo.*bar");
+  AssertProperties(a);
+  EXPECT_TRUE(Accepts(a, "foo😀bar"));
+  EXPECT_TRUE(Accepts(a, "foo🎉🚀🌟bar"));
+  EXPECT_TRUE(Accepts(a, "foo中文bar"));
+  EXPECT_TRUE(Accepts(a, "fooприветbar"));
+  EXPECT_TRUE(Accepts(a, "foo😀中приbar"));
 }
 
 // Parse errors

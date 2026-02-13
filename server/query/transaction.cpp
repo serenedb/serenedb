@@ -20,6 +20,8 @@
 
 #include "query/transaction.h"
 
+#include <absl/cleanup/cleanup.h>
+
 #include "basics/assert.h"
 #include "catalog/catalog.h"
 #include "storage_engine/engine_feature.h"
@@ -36,10 +38,20 @@ Result Transaction::Begin() {
 
 Result Transaction::Commit() {
   SDB_ASSERT(_rocksdb_transaction);
+
+  auto abort_guard = absl::Cleanup([&] {
+    for (auto& search_transaction : _search_transactions) {
+      search_transaction.second->Abort();
+    }
+    RollbackVariables();
+    Destroy();
+  });
+
   const uint64_t num_ops =
     _rocksdb_transaction->GetNumPuts() + _rocksdb_transaction->GetNumDeletes();
   SDB_ASSERT(_rocksdb_transaction->GetNumMerges() == 0,
              "We do not expect merges for now");
+
   if (num_ops > 0) [[likely]] {
     for (auto& search_transaction : _search_transactions) {
       // tie iresearch transaction's active segment to current flush context in
@@ -59,15 +71,18 @@ Result Transaction::Commit() {
     }
     // id is first write operation seqno in the WAL
     auto post_commit_seq = _rocksdb_transaction->GetId();
-    SDB_ASSERT(post_commit_seq != 0);
     // add number of operations to get last operation seqno
     post_commit_seq += num_ops - 1;
 
     for (auto& search_transaction : _search_transactions) {
+      // TODO(Dronplane): what if one commit fails? Crash + Recovery? or mark
+      // index corrupted?
       search_transaction.second->Commit(post_commit_seq);
     }
+    std::move(abort_guard).Cancel();
+    ApplyTableStatsDiffs();
   }
-  ApplyTableStatsDiffs();
+
   CommitVariables();
   Destroy();
   return {};
@@ -75,16 +90,20 @@ Result Transaction::Commit() {
 
 Result Transaction::Rollback() {
   SDB_ASSERT(_rocksdb_transaction);
+
+  auto noexcept_cleanup = absl::Cleanup([&] {
+    for (auto& search_transaction : _search_transactions) {
+      search_transaction.second->Abort();
+    }
+    RollbackVariables();
+    Destroy();
+  });
+
   auto status = _rocksdb_transaction->Rollback();
   if (!status.ok()) {
     return {ERROR_INTERNAL,
             "Failed to rollback RocksDB transaction: ", status.ToString()};
   }
-  for (auto& search_transaction : _search_transactions) {
-    search_transaction.second->Abort();
-  }
-  RollbackVariables();
-  Destroy();
   return {};
 }
 

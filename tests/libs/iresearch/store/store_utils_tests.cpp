@@ -28,12 +28,12 @@ extern "C" {
 }
 
 #include <array>
-#include <iresearch/store/store_avg_utils.hpp>
-#include <iresearch/store/store_utils.hpp>
-#include <iresearch/utils/bytes_output.hpp>
-#include <iresearch/utils/bytes_utils.hpp>
 #include <unordered_set>
 
+#include "iresearch/store/store_avg_utils.hpp"
+#include "iresearch/store/store_utils.hpp"
+#include "iresearch/utils/bytes_output.hpp"
+#include "iresearch/utils/bytes_utils.hpp"
 #include "utils/write_helpers.hpp"
 
 using namespace irs;

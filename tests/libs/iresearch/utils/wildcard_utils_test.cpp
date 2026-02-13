@@ -20,10 +20,9 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/utils/automaton_utils.hpp>
-#include <iresearch/utils/fstext/fst_sorted_range_matcher.hpp>
-#include <iresearch/utils/wildcard_utils.hpp>
-
+#include "iresearch/utils/automaton_utils.hpp"
+#include "iresearch/utils/fstext/fst_sorted_range_matcher.hpp"
+#include "iresearch/utils/wildcard_utils.hpp"
 #include "tests_shared.hpp"
 
 class WildcardUtilsTest : public TestBase {

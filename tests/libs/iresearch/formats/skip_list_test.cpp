@@ -21,11 +21,10 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/formats/skip_list.hpp>
-#include <iresearch/index/iterators.hpp>
-#include <iresearch/store/memory_directory.hpp>
-
 #include "index/index_tests.hpp"
+#include "iresearch/formats/skip_list.hpp"
+#include "iresearch/index/iterators.hpp"
+#include "iresearch/store/memory_directory.hpp"
 #include "tests_shared.hpp"
 
 using namespace std::chrono_literals;

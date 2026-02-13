@@ -19,16 +19,11 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/search/geo_filter.h>
+#include "iresearch/search/geo_filter.h"
 
-#include <iresearch/index/index_reader.hpp>
-#include <iresearch/search/all_filter.hpp>
-#include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/collectors.hpp>
-#include <iresearch/search/column_existence_filter.hpp>
-#include <iresearch/search/disjunction.hpp>
-#include <iresearch/search/multiterm_query.hpp>
-#include <iresearch/utils/vpack_utils.hpp>
+#include <s2/s2cap.h>
+#include <s2/s2earth.h>
+#include <s2/s2point_region.h>
 
 #include "basics/down_cast.h"
 #include "basics/errors.h"
@@ -36,9 +31,19 @@
 #include "basics/memory.hpp"
 #include "geo/geo_json.h"
 #include "geo/geo_params.h"
-#include "s2/s2cap.h"
-#include "s2/s2earth.h"
-#include "s2/s2point_region.h"
+#include "iresearch/index/field_meta.hpp"
+#include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/all_filter.hpp"
+#include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/collectors.hpp"
+#include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/column_existence_filter.hpp"
+#include "iresearch/search/make_disjunction.hpp"
+#include "iresearch/search/multiterm_query.hpp"
+#include "iresearch/search/score_function.hpp"
+#include "iresearch/search/scorer.hpp"
+#include "iresearch/types.hpp"
+#include "iresearch/utils/vpack_utils.hpp"
 
 namespace irs {
 namespace {
@@ -49,7 +54,7 @@ using namespace sdb::geo;
 constexpr auto kSingletonCapEps = 2 * std::numeric_limits<double>::epsilon();
 
 using Disjunction =
-  irs::DisjunctionIterator<irs::ScoreAdapter, irs::NoopAggregator>;
+  irs::DisjunctionIterator<ScoreAdapter, ScoreMergeType::Noop>;
 
 // Return a filter matching all documents with a given geo field
 irs::Filter::Query::ptr MatchAll(const irs::PrepareContext& ctx,
@@ -80,10 +85,12 @@ class GeoIterator : public irs::DocIterator {
 
  public:
   GeoIterator(DocIterator::ptr&& approx, DocIterator::ptr&& column_it,
-              Parser& parser, Acceptor& acceptor, const irs::SubReader& reader,
-              const irs::TermReader& field, const irs::byte_type* query_stats,
-              const irs::Scorers& order, irs::score_t boost)
-    : _approx{std::move(approx)},
+              Parser& parser, Acceptor& acceptor, FieldProperties field,
+              const irs::byte_type* query_stats, irs::score_t boost)
+    : _stats{query_stats},
+      _boost{boost},
+      _field{field},
+      _approx{std::move(approx)},
       _column_it{std::move(column_it)},
       _stored_value{irs::get<irs::PayAttr>(*_column_it)},
       _acceptor{acceptor},
@@ -94,15 +101,34 @@ class GeoIterator : public irs::DocIterator {
     std::get<irs::CostAttr>(_attrs).reset(
       [&]() noexcept { return kExtraCost * irs::CostAttr::extract(*_approx); });
 
-    if (!order.empty()) {
-      auto& score = std::get<irs::ScoreAttr>(_attrs);
-      irs::CompileScore(score, order.buckets(), reader, field, query_stats,
-                        *this, boost);
-    }
     if constexpr (std::is_same_v<std::decay_t<Parser>, S2PointParser>) {
       // random, stub value but it should be unit length because assert
       _shape.reset(S2Point{1, 0, 0});
     }
+  }
+
+  ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
+    SDB_ASSERT(ctx.scorer);
+    return ctx.scorer->PrepareScorer({
+      .segment = *ctx.segment,
+      .field = _field,
+      .doc_attrs = *this,
+      .collector = ctx.collector,
+      .stats = _stats,
+      .boost = _boost,
+    });
+  }
+
+  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
+                                      uint64_t* mask, CollectScoreContext score,
+                                      CollectMatchContext match) final {
+    return DocIterator::FillBlock(*this, min, max, mask, score, match);
+  }
+
+  uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
+                   std::span<doc_id_t, kScoreBlock> docs,
+                   std::span<score_t, kScoreBlock> scores) final {
+    return DocIterator::Collect(*this, scorer, columns, docs, scores);
   }
 
   irs::Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
@@ -140,6 +166,8 @@ class GeoIterator : public irs::DocIterator {
     return doc->value;
   }
 
+  uint32_t count() final { return Count(*this); }
+
  private:
   bool Accept() {
     auto* doc = std::get<irs::AttributePtr<irs::DocAttr>>(_attrs).ptr;
@@ -154,8 +182,11 @@ class GeoIterator : public irs::DocIterator {
     return _parser(_stored_value->value, _shape) && _acceptor(_shape);
   }
 
-  using Attributes =
-    std::tuple<irs::AttributePtr<irs::DocAttr>, irs::CostAttr, irs::ScoreAttr>;
+  using Attributes = std::tuple<irs::AttributePtr<DocAttr>, CostAttr>;
+
+  const byte_type* _stats = nullptr;
+  irs::score_t _boost = {};
+  FieldProperties _field;
 
   ShapeContainer _shape;
   irs::DocIterator::ptr _approx;
@@ -167,21 +198,21 @@ class GeoIterator : public irs::DocIterator {
 };
 
 template<typename Parser, typename Acceptor>
-irs::DocIterator::ptr MakeIterator(
-  typename Disjunction::Adapters&& itrs, irs::DocIterator::ptr&& column_it,
-  const irs::SubReader& reader, const irs::TermReader& field,
-  const irs::byte_type* query_stats, const irs::Scorers& order,
-  irs::score_t boost, Parser& parser, Acceptor& acceptor) {
+irs::DocIterator::ptr MakeIterator(typename Disjunction::Adapters&& itrs,
+                                   irs::DocIterator::ptr&& column_it,
+                                   const irs::SubReader& reader,
+                                   const irs::TermReader& field,
+                                   const irs::byte_type* query_stats,
+                                   irs::score_t boost, Parser& parser,
+                                   Acceptor& acceptor) {
   if (itrs.empty() || !column_it) [[unlikely]] {
     return irs::DocIterator::empty();
   }
 
   return irs::memory::make_managed<GeoIterator<Parser, Acceptor>>(
     // TODO(mbkkt) by_terms? LazyBitsetIterator faster than disjunction
-    irs::MakeDisjunction<Disjunction>({}, std::move(itrs),
-                                      irs::NoopAggregator{}),
-    std::move(column_it), parser, acceptor, reader, field, query_stats, order,
-    boost);
+    irs::MakeDisjunction<Disjunction>({}, std::move(itrs)),
+    std::move(column_it), parser, acceptor, field.meta(), query_stats, boost);
 }
 
 // Cached per reader query state
@@ -229,8 +260,8 @@ class GeoQuery : public irs::Filter::Query {
 
     for (auto& entry : state->states) {
       SDB_ASSERT(entry);
-      auto& it =
-        itrs.emplace_back(field->Iterator(IndexFeatures::None, *entry));
+      auto& it = itrs.emplace_back(
+        field->Iterator(IndexFeatures::None, {.cookie = entry.get()}));
 
       if (!it || irs::doc_limits::eof(it.value())) [[unlikely]] {
         itrs.pop_back();
@@ -242,8 +273,8 @@ class GeoQuery : public irs::Filter::Query {
     auto column_it = state->stored_field->iterator(irs::ColumnHint::Normal);
 
     return MakeIterator(std::move(itrs), std::move(column_it), segment,
-                        *state->reader, _stats.c_str(), ctx.scorers, Boost(),
-                        _parser, _acceptor);
+                        *state->reader, _stats.c_str(), Boost(), _parser,
+                        _acceptor);
   }
 
   void visit(const irs::SubReader&, irs::PreparedStateVisitor&,

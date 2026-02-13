@@ -21,15 +21,14 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/formats/formats.hpp>
-#include <iresearch/index/index_reader.hpp>
-#include <iresearch/index/index_writer.hpp>
-#include <iresearch/store/memory_directory.hpp>
-
 #include "index/doc_generator.hpp"
 #include "index/index_tests.hpp"
+#include "iresearch/formats/formats.hpp"
 #include "iresearch/index/index_meta.hpp"
+#include "iresearch/index/index_reader.hpp"
+#include "iresearch/index/index_writer.hpp"
 #include "iresearch/index/segment_reader_impl.hpp"
+#include "iresearch/store/memory_directory.hpp"
 #include "tests_shared.hpp"
 
 using namespace std::chrono_literals;

@@ -26,6 +26,7 @@
 
 #include "basics/assert.h"
 #include "basics/string_utils.h"
+#include "iresearch/formats/formats.hpp"
 #include "iresearch/index/index_features.hpp"
 
 // clang-format off
@@ -458,31 +459,6 @@ inline int32_t PrepareInput(std::string& str, IndexInput::ptr& in,
 
   return format_utils::CheckHeader(*in, format, min_ver, max_ver);
 }
-
-struct Cookie final : SeekCookie {
-  explicit Cookie(const TermMetaImpl& meta) noexcept : meta(meta) {}
-
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    if (type == irs::Type<TermMeta>::id()) [[likely]] {
-      return &meta;
-    }
-
-    return nullptr;
-  }
-
-  bool IsEqual(const SeekCookie& rhs) const noexcept final {
-    // We intentionally don't check `rhs` cookie type.
-    const auto& rhs_meta = sdb::basics::downCast<Cookie>(rhs).meta;
-    return meta.doc_start == rhs_meta.doc_start &&
-           meta.pos_start == rhs_meta.pos_start;
-  }
-
-  size_t Hash() const noexcept final {
-    return absl::HashOf(meta.doc_start, meta.pos_start);
-  }
-
-  TermMetaImpl meta;
-};
 
 const fst::FstReadOptions& FstReadOptions() {
   static const auto kInstance = [] {
@@ -1749,11 +1725,14 @@ class TermIteratorBase : public SeekTermIterator {
   }
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+    if (type == Type<TermMeta>::id()) {
+      return &_term_meta.meta;
+    }
     return irs::GetMutable(_attrs, type);
   }
 
   SeekCookie::ptr cookie() const final {
-    return std::make_unique<::Cookie>(std::get<TermMetaImpl>(_attrs));
+    return std::make_unique<CookieImpl>(_term_meta);
   }
 
   bytes_view value() const noexcept final {
@@ -1763,21 +1742,20 @@ class TermIteratorBase : public SeekTermIterator {
   Encryption::Stream* TermsCipher() const noexcept { return _terms_cipher; }
 
  protected:
-  using Attributes = std::tuple<TermMetaImpl, TermAttr, AttributePtr<PayAttr>>;
+  using Attributes = std::tuple<TermAttr, AttributePtr<PayAttr>>;
 
   void ReadImpl(BlockIterator& it) {
-    it.LoadData(_field->meta(), std::get<TermMetaImpl>(_attrs), *_postings);
+    it.LoadData(_field->meta(), _term_meta.meta, *_postings);
   }
 
   DocIterator::ptr PostingsImpl(BlockIterator* it,
                                 IndexFeatures features) const {
-    auto& meta = std::get<TermMetaImpl>(_attrs);
     const auto& field_meta = _field->meta();
     if (it) {
-      it->LoadData(field_meta, meta, *_postings);
+      it->LoadData(field_meta, _term_meta.meta, *_postings);
     }
-    return _postings->Iterator(field_meta.index_features, features, meta,
-                               _field->WandCount());
+    return _postings->Iterator(field_meta.index_features, features,
+                               {.cookie = &_term_meta}, _field->WandCount());
   }
 
   void Copy(const byte_type* suffix, size_t prefix_size, size_t suffix_size) {
@@ -1788,6 +1766,7 @@ class TermIteratorBase : public SeekTermIterator {
   void RefreshValue() noexcept { std::get<TermAttr>(_attrs).value = _term_buf; }
   void ResetValue() noexcept { std::get<TermAttr>(_attrs).value = {}; }
 
+  mutable CookieImpl _term_meta;
   mutable Attributes _attrs;
   const TermReaderBase* _field;
   PostingsReader* _postings;
@@ -1953,7 +1932,7 @@ bool TermIteratorImpl<FST>::next() {
     } else {
       const uint64_t start = _cur_block->Start();
       _cur_block = PopBlock();
-      std::get<TermMetaImpl>(_attrs) = _cur_block->State();
+      _term_meta.meta = _cur_block->State();
       if (_cur_block->Dirty() || _cur_block->BlockStart() != start) {
         // here we're currently at non block that was not loaded yet
         SDB_ASSERT(_cur_block->Prefix() < _term_buf.size());
@@ -2196,7 +2175,7 @@ class SingleTermIterator : public SeekTermIterator {
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     if (type == irs::Type<TermMeta>::id()) {
-      return &_meta;
+      return &_meta.meta;
     }
 
     return type == irs::Type<TermAttr>::id() ? &_value : nullptr;
@@ -2211,22 +2190,22 @@ class SingleTermIterator : public SeekTermIterator {
   bool seek(bytes_view term) final;
 
   SeekCookie::ptr cookie() const final {
-    return std::make_unique<::Cookie>(_meta);
+    return std::make_unique<CookieImpl>(_meta);
   }
 
   void read() final { /*NOOP*/ }
 
   DocIterator::ptr postings(IndexFeatures features) const final {
-    return _postings->Iterator(_field->meta().index_features, features, _meta,
-                               _field->WandCount());
+    return _postings->Iterator(_field->meta().index_features, features,
+                               {.cookie = &_meta}, _field->WandCount());
   }
 
-  const TermMetaImpl& Meta() const noexcept { return _meta; }
+  const TermMetaImpl& Meta() const noexcept { return _meta.meta; }
 
  private:
   friend class BlockIterator;
 
-  TermMetaImpl _meta;
+  CookieImpl _meta;
   TermAttr _value;
   IndexInput::ptr _terms_in;
   Encryption::Stream* _cipher;
@@ -2285,7 +2264,7 @@ bool SingleTermIterator<FST>::seek(bytes_view term) {
   cur_block.Load(*_terms_in, _cipher);
 
   if (SeekResult::Found == cur_block.ScanToTerm(term, [](auto, auto) {})) {
-    cur_block.LoadData(_field->meta(), _meta, *_postings);
+    cur_block.LoadData(_field->meta(), _meta.meta, *_postings);
     _value.value = term;
     return true;
   }
@@ -2660,7 +2639,7 @@ bool AutomatonTermIterator<FST>::next() {
       } else {
         const uint64_t start = _cur_block->Start();
         _cur_block = PopBlock();
-        std::get<TermMetaImpl>(_attrs) = _cur_block->State();
+        _term_meta.meta = _cur_block->State();
         if (_cur_block->Dirty() || _cur_block->BlockStart() != start) {
           // here we're currently at non block that was not loaded yet
           SDB_ASSERT(_cur_block->Prefix() < _term_buf.size());
@@ -2805,7 +2784,7 @@ class FieldReaderImpl final : public FieldReader {
     size_t BitUnion(const cookie_provider& provider, size_t* set) const final {
       auto term_provider = [&provider]() mutable -> const TermMeta* {
         if (auto* cookie = provider()) {
-          return &sdb::basics::downCast<::Cookie>(*cookie).meta;
+          return &sdb::basics::downCast<CookieImpl>(*cookie).meta;
         }
 
         return nullptr;
@@ -2852,33 +2831,23 @@ class FieldReaderImpl final : public FieldReader {
     }
 
     DocIterator::ptr Iterator(IndexFeatures features,
-                              std::span<const SeekCookie* const> cookies,
+                              std::span<const PostingCookie> cookies,
                               const IteratorOptions& options, size_t min_match,
-                              ScoreMergeType type,
-                              size_t num_buckets) const final {
+                              ScoreMergeType type) const final {
       SDB_ASSERT(_owner);
       SDB_ASSERT(_owner->_pr);
       SDB_ASSERT(!cookies.empty());
       SDB_ASSERT(1 <= min_match);
       SDB_ASSERT(min_match <= cookies.size());
 
-      IteratorFieldOptions field_options{options, WandIndex(options.index),
-                                         WandCount()};
+      const IteratorFieldOptions field_options{
+        options,
+        WandIndex(options.index),
+        WandCount(),
+      };
 
-      if (cookies.size() == 1) {
-        return _owner->_pr->Iterator(
-          meta().index_features, features,
-          sdb::basics::downCast<::Cookie>(*cookies[0]).meta, field_options,
-          type, num_buckets);
-      }
-
-      std::vector<const TermMeta*> metas;
-      metas.reserve(cookies.size());
-      for (size_t i = 0; i < cookies.size(); ++i) {
-        metas.emplace_back(&sdb::basics::downCast<::Cookie>(*cookies[i]).meta);
-      }
-      return _owner->_pr->Iterator(meta().index_features, features, metas,
-                                   field_options, min_match, type, num_buckets);
+      return _owner->_pr->Iterator(meta().index_features, features, cookies,
+                                   field_options, min_match, type);
     }
 
    private:

@@ -27,7 +27,9 @@
 #include <set>
 #include <vector>
 
+#include "basics/memory.hpp"
 #include "iresearch/formats/hnsw_index.hpp"
+#include "iresearch/formats/norm_reader.hpp"
 #include "iresearch/formats/seek_cookie.hpp"
 #include "iresearch/index/column_finalizer.hpp"
 #include "iresearch/index/column_info.hpp"
@@ -37,6 +39,7 @@
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/score_function.hpp"
+#include "iresearch/search/scorer.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/store/directory.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
@@ -61,20 +64,7 @@ struct WandWriter;
 using DocMap = ManagedVector<doc_id_t>;
 using DocMapView = std::span<const doc_id_t>;
 
-using MakeScoreCallback =
-  absl::FunctionRef<ScoreFunction(uint32_t, const AttributeProvider&)>;
-
-using CompileScoreCallback =
-  absl::FunctionRef<void(uint32_t, AttributeProvider&)>;
-
-struct IteratorOptions : WandContext {
-  MakeScoreCallback make_score =
-    +[](uint32_t, const AttributeProvider&) noexcept {
-      return ScoreFunction{};
-    };
-  CompileScoreCallback compile_score =
-    +[](uint32_t, AttributeProvider&) noexcept {};
-};
+struct IteratorOptions : WandContext {};
 
 struct SegmentWriterOptions {
   const ColumnInfoProvider& column_info;
@@ -157,6 +147,13 @@ struct IteratorFieldOptions : IteratorOptions {
   uint8_t count = 0;
 };
 
+struct PostingCookie {
+  const SeekCookie* cookie = nullptr;
+  const byte_type* stats = nullptr;
+  score_t boost = kNoBoost;
+  FieldProperties field;
+};
+
 struct PostingsReader {
   using ptr = std::unique_ptr<PostingsReader>;
   using term_provider_f = std::function<const TermMeta*()>;
@@ -188,20 +185,18 @@ struct PostingsReader {
 
   virtual DocIterator::ptr Iterator(IndexFeatures field_features,
                                     IndexFeatures required_features,
-                                    std::span<const TermMeta* const> metas,
+                                    std::span<const PostingCookie> metas,
                                     const IteratorFieldOptions& options,
-                                    size_t min_match, ScoreMergeType type,
-                                    size_t num_buckets) const = 0;
+                                    size_t min_match,
+                                    ScoreMergeType type) const = 0;
 
   DocIterator::ptr Iterator(IndexFeatures field_features,
                             IndexFeatures required_features,
-                            const TermMeta& meta,
+                            const PostingCookie& meta,
                             const IteratorFieldOptions& options,
-                            ScoreMergeType type = ScoreMergeType::Noop,
-                            size_t num_buckets = 0) const {
-    const auto* meta_ptr = &meta;
-    return Iterator(field_features, required_features, {&meta_ptr, 1}, options,
-                    1, type, num_buckets);
+                            ScoreMergeType type = ScoreMergeType::Noop) const {
+    return Iterator(field_features, required_features, {&meta, 1}, options, 1,
+                    type);
   }
 };
 
@@ -243,17 +238,14 @@ struct TermReader : public AttributeProvider {
   virtual size_t BitUnion(const cookie_provider& provider,
                           size_t* bitset) const = 0;
 
-  virtual DocIterator::ptr Iterator(IndexFeatures features,
-                                    std::span<const SeekCookie* const> cookies,
-                                    const IteratorOptions& options = {},
-                                    size_t min_match = 1,
-                                    ScoreMergeType type = ScoreMergeType::Noop,
-                                    size_t num_buckets = 0) const = 0;
+  virtual DocIterator::ptr Iterator(
+    IndexFeatures features, std::span<const PostingCookie> cookies,
+    const IteratorOptions& options = {}, size_t min_match = 1,
+    ScoreMergeType type = ScoreMergeType::Noop) const = 0;
 
-  DocIterator::ptr Iterator(IndexFeatures features, const SeekCookie& cookie,
+  DocIterator::ptr Iterator(IndexFeatures features, const PostingCookie& cookie,
                             const IteratorOptions& options = {}) const {
-    const auto* cookie_ptr = &cookie;
-    return Iterator(features, {&cookie_ptr, 1}, options);
+    return Iterator(features, {&cookie, 1}, options);
   }
 
   // Returns field metadata.
@@ -353,6 +345,7 @@ struct ColumnReader : public memory::Managed {
   //  If the column implementation supports document payloads then it
   //  can be accessed via the 'payload' attribute.
   virtual ResettableDocIterator::ptr iterator(ColumnHint hint) const = 0;
+  virtual NormReader::ptr norms() const { return {}; }
 
   // Returns total number of columns.
   virtual doc_id_t size() const = 0;

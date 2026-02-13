@@ -155,6 +155,11 @@ class Config : public velox::config::IConfig {
       const bool ok = absl::SimpleAtoi<uint32_t>(*value_str, &r);
       SDB_ASSERT(ok, key, " is not validated");
       return r;
+    } else if constexpr (T == VariableType::Bool) {
+      bool r = false;
+      const bool ok = absl::SimpleAtob(*value_str, &r);
+      SDB_ASSERT(ok, key, " is not validated");
+      return r;
     } else {
       SDB_THROW(ERROR_NOT_IMPLEMENTED);
     }

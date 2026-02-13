@@ -28,14 +28,14 @@
 #include <unicode/ustring.h>   // for u_strToUTF32, u_strToUTF8
 #include <vpack/parser.h>
 
-#include <iresearch/analysis/text_tokenizer.hpp>
-#include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/analysis/tokenizers.hpp>
 #include <unordered_set>
 
 #include "basics/file_utils_ext.hpp"
 #include "basics/runtime_utils.hpp"
 #include "gtest/gtest.h"
+#include "iresearch/analysis/text_tokenizer.hpp"
+#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/analysis/tokenizers.hpp"
 #include "tests_config.hpp"
 
 namespace tests {

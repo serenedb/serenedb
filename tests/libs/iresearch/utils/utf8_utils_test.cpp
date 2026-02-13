@@ -22,8 +22,8 @@
 
 #include <basics/std.hpp>
 #include <basics/utf8_utils.hpp>
-#include <iresearch/utils/string.hpp>
 
+#include "iresearch/utils/string.hpp"
 #include "tests_shared.hpp"
 
 TEST(utf8_utils_test, test) {

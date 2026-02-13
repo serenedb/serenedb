@@ -21,13 +21,12 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/index/index_features.hpp>
-#include <iresearch/index/norm.hpp>
-#include <iresearch/search/bm25.hpp>
-#include <iresearch/search/filter_visitor.hpp>
-#include <iresearch/search/prefix_filter.hpp>
-
 #include "filter_test_case_base.hpp"
+#include "iresearch/index/index_features.hpp"
+#include "iresearch/index/norm.hpp"
+#include "iresearch/search/bm25.hpp"
+#include "iresearch/search/filter_visitor.hpp"
+#include "iresearch/search/prefix_filter.hpp"
 #include "tests_shared.hpp"
 
 namespace {

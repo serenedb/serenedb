@@ -20,8 +20,7 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/formats/sparse_bitmap.hpp>
-
+#include "iresearch/formats/sparse_bitmap.hpp"
 #include "tests_param.hpp"
 #include "tests_shared.hpp"
 

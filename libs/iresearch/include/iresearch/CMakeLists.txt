@@ -113,6 +113,7 @@ set(IResearch_core_sources
     ./search/nested_filter.cpp
     ./search/terms_filter.cpp
     ./search/prefix_filter.cpp
+    ./search/column_collector.cpp
     ./search/range_filter.cpp
     ./search/phrase_filter.cpp
     ./search/phrase_query.cpp

@@ -22,16 +22,40 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
+#include "basics/assert.h"
 #include "basics/memory.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/formats/seek_cookie.hpp"
 #include "iresearch/index/index_features.hpp"
+#include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/score.hpp"
+#include "iresearch/search/score_function.hpp"
+#include "iresearch/search/scorer.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
-#include "iresearch/utils/attributes.hpp"
 #include "iresearch/utils/iterator.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
+
+struct PrepareScoreContext {
+  const Scorer* scorer = nullptr;
+  const SubReader* segment = nullptr;
+  ColumnCollector* collector;
+};
+
+struct CollectScoreContext {
+  const ScoreFunction* score = nullptr;
+  ColumnCollector* collector = nullptr;
+  score_t* score_window = nullptr;
+  ScoreMergeType merge_type = ScoreMergeType::Noop;
+};
+
+struct CollectMatchContext {
+  uint32_t* matches = 0;
+  size_t min_match_count = 0;
+};
 
 // An iterator providing sequential and random access to a posting list
 //
@@ -60,7 +84,32 @@ struct DocIterator : AttributeProvider {
   // (for more information see class description)
   virtual doc_id_t seek(doc_id_t target) = 0;
 
+  virtual uint32_t Collect(const ScoreFunction& scorer,
+                           ColumnCollector& columns,
+                           std::span<doc_id_t, kScoreBlock> docs,
+                           std::span<score_t, kScoreBlock> scores) {
+    SDB_ASSERT(kScoreBlock <= docs.size());
+    return Collect(*this, scorer, columns, docs, scores);
+  }
+
+  virtual void FetchScoreArgs(uint16_t index) {}
+
+  // Iterate from current position, calling func(doc_id) per doc.
+  // func returns false to stop. Returns current iterator value.
+  virtual doc_id_t Collect(absl::FunctionRef<bool(doc_id_t)> func) {
+    return Collect(*this, func);
+  }
+
+  virtual ScoreFunction PrepareScore(const PrepareScoreContext& ctx);
+
   virtual uint32_t count() { return Count(*this); }
+
+  virtual std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
+                                              uint64_t* mask,
+                                              CollectScoreContext score,
+                                              CollectMatchContext match) {
+    return FillBlock(*this, min, max, mask, score, match);
+  }
 
  protected:
   template<typename Iterator>
@@ -70,6 +119,129 @@ struct DocIterator : AttributeProvider {
       ++count;
     }
     return count;
+  }
+
+  template<typename Iterator>
+  static doc_id_t Collect(Iterator& it,
+                          absl::FunctionRef<bool(doc_id_t)> func) {
+    auto doc = it.value();
+    for (; !doc_limits::eof(doc); doc = it.advance()) {
+      if (!func(doc)) {
+        return doc;
+      }
+    }
+    return doc;
+  }
+
+  template<typename Iterator>
+  static uint32_t Collect(Iterator& it, const ScoreFunction& scorer,
+                          ColumnCollector& columns,
+                          std::span<doc_id_t, kScoreBlock> docs,
+                          std::span<score_t, kScoreBlock> scores) {
+    size_t i = 0;
+    for (; i < docs.size(); ++i) {
+      const auto doc = it.advance();
+      if (doc_limits::eof(doc)) [[unlikely]] {
+        if (i) {
+          columns.Collect(docs.first(i));
+          scorer.Score(scores.data(), i);
+        }
+        return static_cast<uint32_t>(i);
+      }
+      docs[i] = doc;
+      it.FetchScoreArgs(i);
+    }
+
+    SDB_ASSERT(i == kScoreBlock);
+    columns.Collect(docs);
+    scorer.ScoreBlock(scores.data());
+    return kScoreBlock;
+  }
+
+  template<typename Iterator>
+  static std::pair<doc_id_t, bool> FillBlock(Iterator& it, doc_id_t min,
+                                             doc_id_t max, uint64_t* mask,
+                                             CollectScoreContext score,
+                                             CollectMatchContext match) {
+    if (!score.score || score.score->IsDefault()) {
+      score.merge_type = ScoreMergeType::Noop;
+    }
+
+    return ResolveMergeType(score.merge_type, [&]<ScoreMergeType MergeType> {
+      return ResolveBool(match.matches != nullptr, [&]<bool TrackMatch> {
+        return CollectBlockImpl<MergeType, TrackMatch>(it, min, max, mask,
+                                                       score, match);
+      });
+    });
+  }
+
+ private:
+  template<ScoreMergeType MergeType, bool TrackMatch, typename Iterator>
+  static std::pair<doc_id_t, bool> CollectBlockImpl(
+    Iterator& it, doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
+    [[maybe_unused]] CollectScoreContext score,
+    [[maybe_unused]] CollectMatchContext match) {
+    [[maybe_unused]] std::array<score_t, kScoreBlock> score_buf;
+    [[maybe_unused]] std::array<doc_id_t, kScoreBlock> score_hits;
+    [[maybe_unused]] uint16_t score_index = 0;
+    [[maybe_unused]] auto flush_score = [&](size_t n) {
+      if constexpr (MergeType != ScoreMergeType::Noop) {
+        SDB_ASSERT(n);
+        SDB_ASSERT(score.score);
+
+        if (score.collector) {
+          score.collector->Collect(std::span{score_hits.data(), n});
+        }
+        score.score->Score(score_buf.data(), n);
+        Merge<MergeType>(score.score_window, score_hits.data(), min,
+                         score_buf.data(), n);
+        score_index = 0;
+      }
+    };
+
+    auto value = it.value();
+
+    // disjunction is 1 step next behind, that may happen:
+    // - before the very first next()
+    // - after seek() in case of 'kSeekReadahead == false'
+    while (value < min) {
+      value = it.advance();
+    }
+
+    bool empty = true;
+    for (; value < max; value = it.advance()) {
+      const auto offset = value - min;
+
+      if constexpr (TrackMatch) {
+        SDB_ASSERT(match.matches);
+        const bool has_match = ++match.matches[offset] >= match.min_match_count;
+        SetBit(mask[offset / BitsRequired<uint64_t>()],
+               offset % BitsRequired<uint64_t>(), has_match);
+        empty &= !has_match;
+      } else {
+        SetBit(mask[offset / BitsRequired<uint64_t>()],
+               offset % BitsRequired<uint64_t>());
+        empty = false;
+      }
+
+      if constexpr (MergeType != ScoreMergeType::Noop) {
+        score_hits[score_index] = value;
+        it.FetchScoreArgs(score_index);
+        ++score_index;
+
+        if (score_index == kScoreBlock) {
+          flush_score(kScoreBlock);
+        }
+      }
+    }
+
+    if constexpr (MergeType != ScoreMergeType::Noop) {
+      if (score_index) {
+        flush_score(score_index);
+      }
+    }
+
+    return {value, empty};
   }
 };
 

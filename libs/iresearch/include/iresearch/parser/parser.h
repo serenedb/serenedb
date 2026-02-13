@@ -20,14 +20,13 @@
 
 #pragma once
 
-#include <iresearch/analysis/analyzer.hpp>
-#include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/analysis/tokenizer.hpp>
-#include <iresearch/utils/type_id.hpp>
 #include <string>
 #include <string_view>
 
 #include "basics/result.h"
+#include "iresearch/analysis/analyzer.hpp"
+#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/levenshtein_filter.hpp"
 #include "iresearch/search/phrase_filter.hpp"
@@ -35,6 +34,7 @@
 #include "iresearch/search/range_filter.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/wildcard_filter.hpp"
+#include "iresearch/utils/type_id.hpp"
 
 namespace sdb {
 

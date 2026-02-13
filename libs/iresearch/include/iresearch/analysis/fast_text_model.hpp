@@ -1,9 +1,10 @@
 #pragma once
 
-#include <iresearch/utils/fasttext_utils.hpp>
 #include <memory>
 #include <string>
 #include <string_view>
+
+#include "iresearch/utils/fasttext_utils.hpp"
 
 namespace sdb::fast_text {
 

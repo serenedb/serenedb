@@ -26,26 +26,26 @@
 #include <algorithm>
 #include <basics/bit_utils.hpp>
 #include <iostream>
-#include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/analysis/tokenizers.hpp>
-#include <iresearch/index/comparer.hpp>
-#include <iresearch/index/directory_reader.hpp>
-#include <iresearch/index/directory_reader_impl.hpp>
-#include <iresearch/index/field_meta.hpp>
-#include <iresearch/index/index_features.hpp>
-#include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/cost.hpp>
-#include <iresearch/search/score.hpp>
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/search/tfidf.hpp>
-#include <iresearch/store/data_output.hpp>
-#include <iresearch/utils/automaton_utils.hpp>
-#include <iresearch/utils/bytes_output.hpp>
-#include <iresearch/utils/fstext/fst_table_matcher.hpp>
-#include <iresearch/utils/type_limits.hpp>
 #include <unordered_set>
 
 #include "basics/down_cast.h"
+#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/analysis/tokenizers.hpp"
+#include "iresearch/index/comparer.hpp"
+#include "iresearch/index/directory_reader.hpp"
+#include "iresearch/index/directory_reader_impl.hpp"
+#include "iresearch/index/field_meta.hpp"
+#include "iresearch/index/index_features.hpp"
+#include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/cost.hpp"
+#include "iresearch/search/score.hpp"
+#include "iresearch/search/term_filter.hpp"
+#include "iresearch/search/tfidf.hpp"
+#include "iresearch/store/data_output.hpp"
+#include "iresearch/utils/automaton_utils.hpp"
+#include "iresearch/utils/bytes_output.hpp"
+#include "iresearch/utils/fstext/fst_table_matcher.hpp"
+#include "iresearch/utils/type_limits.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -508,7 +508,6 @@ class DocIteratorImpl : public irs::DocIterator {
   irs::DocAttr _doc;
   irs::FreqAttr _freq;
   irs::CostAttr _cost;
-  irs::ScoreAttr _score;
   PosIterator _pos;
   std::set<Posting>::const_iterator _prev;
   std::set<Posting>::const_iterator _next;
@@ -523,7 +522,6 @@ DocIteratorImpl::DocIteratorImpl(irs::IndexFeatures features,
   _attrs[irs::Type<irs::CostAttr>::id()] = &_cost;
 
   _attrs[irs::Type<irs::DocAttr>::id()] = &_doc;
-  _attrs[irs::Type<irs::ScoreAttr>::id()] = &_score;
 
   if (irs::IndexFeatures::None != (features & irs::IndexFeatures::Freq)) {
     _attrs[irs::Type<irs::FreqAttr>::id()] = &_freq;
@@ -716,16 +714,16 @@ void AssertDocs(const irs::TermIterator& expected_term,
                 irs::SeekCookie::ptr actual_cookie,
                 irs::IndexFeatures requested_features) {
   AssertDocs(expected_term.postings(requested_features), [&] {
-    return actual_terms.Iterator(requested_features, *actual_cookie);
+    return actual_terms.Iterator(
+      requested_features,
+      {.cookie = actual_cookie.get(), .field = actual_terms.meta()});
   });
 
   AssertDocs(expected_term.postings(requested_features), [&] {
     return actual_terms.Iterator(
-      requested_features, *actual_cookie,
-      {{0, false}, [](uint32_t, const irs::AttributeProvider&) {
-         // FIXME(gnusi)
-         return irs::ScoreFunction::Default(1);
-       }});
+      requested_features,
+      {.cookie = actual_cookie.get(), .field = actual_terms.meta()},
+      {{0, false}});
   });
 
   // FIXME(gnusi): check BitUnion

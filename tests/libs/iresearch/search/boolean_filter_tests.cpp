@@ -21,24 +21,25 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <functional>
-#include <iresearch/formats/empty_term_reader.hpp>
-#include <iresearch/index/field_meta.hpp>
-#include <iresearch/index/iterators.hpp>
-#include <iresearch/search/all_filter.hpp>
-#include <iresearch/search/all_iterator.hpp>
-#include <iresearch/search/bm25.hpp>
-#include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/conjunction.hpp>
-#include <iresearch/search/disjunction.hpp>
-#include <iresearch/search/exclusion.hpp>
-#include <iresearch/search/min_match_disjunction.hpp>
-#include <iresearch/search/range_filter.hpp>
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/search/term_query.hpp>
-#include <iresearch/search/tfidf.hpp>
-
 #include "filter_test_case_base.hpp"
+#include "iresearch/formats/empty_term_reader.hpp"
+#include "iresearch/index/field_meta.hpp"
+#include "iresearch/index/iterators.hpp"
+#include "iresearch/search/all_filter.hpp"
+#include "iresearch/search/all_iterator.hpp"
+#include "iresearch/search/bm25.hpp"
+#include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/conjunction.hpp"
+#include "iresearch/search/exclusion.hpp"
+#include "iresearch/search/make_disjunction.hpp"
+#include "iresearch/search/range_filter.hpp"
+#include "iresearch/search/score_function.hpp"
+#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/term_filter.hpp"
+#include "iresearch/search/term_query.hpp"
+#include "iresearch/search/tfidf.hpp"
+#include "iresearch/utils/type_limits.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -65,70 +66,55 @@ Filter& Append(irs::BooleanFilter& root, const std::string_view& name,
 namespace tests {
 namespace detail {
 
-struct BasicSort : irs::ScorerBase<BasicSort, void> {
-  explicit BasicSort(size_t idx) : idx(idx) {}
-
-  struct BasicScorer final : irs::ScoreCtx {
-    explicit BasicScorer(size_t idx) noexcept : idx(idx) {}
-
-    size_t idx;
-  };
+struct CompoundSort final : irs::ScorerBase<CompoundSort, void> {
+  explicit CompoundSort(std::vector<size_t> indexes) noexcept
+    : indexes{std::move(indexes)} {}
 
   irs::IndexFeatures GetIndexFeatures() const final {
     return irs::IndexFeatures::None;
   }
 
-  irs::ScoreFunction PrepareScorer(const irs::ColumnProvider&,
-                                   const irs::FieldProperties&,
-                                   const irs::byte_type*,
-                                   const irs::AttributeProvider&,
-                                   irs::score_t) const final {
-    return irs::ScoreFunction::Make<BasicScorer>(
-      [](irs::ScoreCtx* ctx, irs::score_t* res) noexcept {
-        ASSERT_NE(nullptr, res);
-        ASSERT_NE(nullptr, ctx);
-        const auto& state = *static_cast<BasicScorer*>(ctx);
-        *res = static_cast<uint32_t>(state.idx);
-      },
-      irs::ScoreFunction::DefaultMin, idx);
+  irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
+    if (current < indexes.size()) {
+      return irs::ScoreFunction::Constant(
+        static_cast<irs::score_t>(indexes[current++]));
+    } else {
+      return irs::ScoreFunction::Default();
+    }
   }
 
-  size_t idx;
+  std::vector<size_t> indexes;
+  mutable size_t current = 0;
 };
 
-class BasicDocIterator : public irs::DocIterator, irs::ScoreCtx {
+class BasicDocIterator : public irs::DocIterator {
  public:
   typedef std::vector<irs::doc_id_t> DocidsT;
 
   BasicDocIterator(const DocidsT::const_iterator& first,
                    const DocidsT::const_iterator& last,
                    const irs::byte_type* stats = nullptr,
-                   const irs::Scorers& ord = irs::Scorers::kUnordered,
                    irs::score_t boost = irs::kNoBoost)
     : _first(first),
       _last(last),
       _stats(stats),
+      _boost{boost},
       _doc(irs::doc_limits::invalid()) {
     _est.reset(std::distance(_first, _last));
     _attrs[irs::Type<irs::CostAttr>::id()] = &_est;
     _attrs[irs::Type<irs::DocAttr>::id()] = &_doc;
+  }
 
-    if (!ord.empty()) {
-      SDB_ASSERT(_stats);
-
-      _scorers =
-        irs::PrepareScorers(ord.buckets(), irs::SubReader::empty(),
-                            irs::EmptyTermReader{0}, _stats, *this, boost);
-
-      _score.Reset(*this, [](irs::ScoreCtx* ctx, irs::score_t* res) noexcept {
-        const auto& self = *static_cast<BasicDocIterator*>(ctx);
-        for (auto& scorer : self._scorers) {
-          scorer(res++);
-        }
-      });
-
-      _attrs[irs::Type<irs::ScoreAttr>::id()] = &_score;
-    }
+  irs::ScoreFunction PrepareScore(const irs::PrepareScoreContext& ctx) final {
+    SDB_ASSERT(ctx.scorer);
+    return ctx.scorer->PrepareScorer({
+      .segment = *ctx.segment,
+      .field = {},
+      .doc_attrs = *this,
+      .collector = ctx.collector,
+      .stats = _stats,
+      .boost = _boost,
+    });
   }
 
   irs::doc_id_t value() const noexcept final { return _doc.value; }
@@ -163,11 +149,10 @@ class BasicDocIterator : public irs::DocIterator, irs::ScoreCtx {
  private:
   std::map<irs::TypeInfo::type_id, irs::Attribute*> _attrs;
   irs::CostAttr _est;
-  irs::ScoreFunctions _scorers;
   DocidsT::const_iterator _first;
   DocidsT::const_iterator _last;
   const irs::byte_type* _stats;
-  irs::ScoreAttr _score;
+  irs::score_t _boost;
   irs::DocAttr _doc;
 };
 
@@ -195,26 +180,6 @@ std::vector<DocIteratorImpl> ExecuteAll(
   return itrs;
 }
 
-template<typename DocIteratorImpl>
-std::vector<DocIteratorImpl> ExecuteAll(
-  std::span<const std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs) {
-  const auto empty_bytes_ref = irs::kEmptyStringView<irs::byte_type>;
-  const irs::byte_type* stats = empty_bytes_ref.data();
-  std::vector<DocIteratorImpl> itrs;
-  itrs.reserve(docs.size());
-  for (const auto& [doc, ord] : docs) {
-    if (ord.empty()) {
-      itrs.emplace_back(irs::memory::make_managed<detail::BasicDocIterator>(
-        doc.begin(), doc.end()));
-    } else {
-      itrs.emplace_back(irs::memory::make_managed<detail::BasicDocIterator>(
-        doc.begin(), doc.end(), stats, ord, irs::kNoBoost));
-    }
-  }
-
-  return itrs;
-}
-
 struct SeekDoc {
   irs::doc_id_t target;
   irs::doc_id_t expected;
@@ -233,7 +198,7 @@ struct Boosted : public irs::FilterWithBoost {
       const irs::ExecutionContext& ctx) const final {
       Boosted::gExecuteCount++;
       return irs::memory::make_managed<BasicDocIterator>(
-        docs.begin(), docs.end(), stats.c_str(), ctx.scorers, Boost());
+        docs.begin(), docs.end(), stats.c_str(), Boost());
     }
 
     void visit(const irs::SubReader&, irs::PreparedStateVisitor&,
@@ -319,8 +284,11 @@ TEST(boolean_query_boost, hierarchy) {
     auto docs =
       prep->execute({.segment = irs::SubReader::empty(), .scorers = pord});
 
-    auto* scr = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_FALSE(!scr);
+    const auto& scr = docs->PrepareScore({
+      .scorer = pord.buckets().front().bucket,
+      .segment = &irs::SubReader::empty(),
+      .collector = nullptr,
+    });
 
     auto* doc = irs::get<irs::DocAttr>(*docs);
     ASSERT_TRUE(bool(doc));
@@ -330,8 +298,8 @@ TEST(boolean_query_boost, hierarchy) {
     {
       ASSERT_TRUE(docs->next());
       ASSERT_EQ(docs->value(), doc->value);
-      irs::score_t doc_boost;
-      scr->operator()(&doc_boost);
+      docs->FetchScoreArgs(0);
+      const auto doc_boost = scr.Score();
       ASSERT_EQ(4 * value * value * value + value * value, doc_boost);
     }
 
@@ -340,8 +308,8 @@ TEST(boolean_query_boost, hierarchy) {
     {
       ASSERT_TRUE(docs->next());
       ASSERT_EQ(docs->value(), doc->value);
-      irs::score_t doc_boost;
-      scr->operator()(&doc_boost);
+      docs->FetchScoreArgs(0);
+      const auto doc_boost = scr.Score();
       ASSERT_EQ(4 * value * value * value + value * value, doc_boost);
     }
 
@@ -406,8 +374,11 @@ TEST(boolean_query_boost, hierarchy) {
     auto docs =
       prep->execute({.segment = irs::SubReader::empty(), .scorers = pord});
 
-    auto* scr = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_FALSE(!scr);
+    const auto& scr = docs->PrepareScore({
+      .scorer = pord.buckets().front().bucket,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(scr.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(*docs);
     ASSERT_TRUE(bool(doc));
@@ -417,8 +388,8 @@ TEST(boolean_query_boost, hierarchy) {
     {
       ASSERT_TRUE(docs->next());
       ASSERT_EQ(docs->value(), doc->value);
-      irs::score_t doc_boost;
-      scr->operator()(&doc_boost);
+      docs->FetchScoreArgs(0);
+      const auto doc_boost = scr.Score();
       ASSERT_EQ(2 * value * value * value + 4 * value * value + value,
                 doc_boost);
     }
@@ -428,8 +399,8 @@ TEST(boolean_query_boost, hierarchy) {
     {
       ASSERT_TRUE(docs->next());
       ASSERT_EQ(docs->value(), doc->value);
-      irs::score_t doc_boost;
-      scr->operator()(&doc_boost);
+      docs->FetchScoreArgs(0);
+      const auto doc_boost = scr.Score();
       ASSERT_EQ(value * value * value + 3 * value * value + value, doc_boost);
     }
 
@@ -438,8 +409,8 @@ TEST(boolean_query_boost, hierarchy) {
     {
       ASSERT_TRUE(docs->next());
       ASSERT_EQ(docs->value(), doc->value);
-      irs::score_t doc_boost;
-      scr->operator()(&doc_boost);
+      docs->FetchScoreArgs(0);
+      const auto doc_boost = scr.Score();
       ASSERT_EQ(value * value * value + value * value + value, doc_boost);
     }
 
@@ -504,8 +475,11 @@ TEST(boolean_query_boost, hierarchy) {
     auto docs =
       prep->execute({.segment = irs::SubReader::empty(), .scorers = pord});
 
-    auto* scr = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_FALSE(!scr);
+    const auto& scr = docs->PrepareScore({
+      .scorer = pord.buckets().front().bucket,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(scr.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(*docs);
     ASSERT_TRUE(bool(doc));
@@ -513,8 +487,8 @@ TEST(boolean_query_boost, hierarchy) {
     // the first hit should be scored as value^3+2*value^2+3*value^2+value
     {
       ASSERT_TRUE(docs->next());
-      irs::score_t doc_boost;
-      scr->operator()(&doc_boost);
+      docs->FetchScoreArgs(0);
+      const auto doc_boost = scr.Score();
       ASSERT_EQ(value * value * value + 5 * value * value + value, doc_boost);
       ASSERT_EQ(docs->value(), doc->value);
     }
@@ -522,8 +496,8 @@ TEST(boolean_query_boost, hierarchy) {
     // the second hit should be scored as value
     {
       ASSERT_TRUE(docs->next());
-      irs::score_t doc_boost;
-      scr->operator()(&doc_boost);
+      docs->FetchScoreArgs(0);
+      const auto doc_boost = scr.Score();
       ASSERT_EQ(value, doc_boost);
       ASSERT_EQ(docs->value(), doc->value);
     }
@@ -531,8 +505,8 @@ TEST(boolean_query_boost, hierarchy) {
     // the third hit should be scored as value
     {
       ASSERT_TRUE(docs->next());
-      irs::score_t doc_boost;
-      scr->operator()(&doc_boost);
+      docs->FetchScoreArgs(0);
+      const auto doc_boost = scr.Score();
       ASSERT_EQ(value, doc_boost);
       ASSERT_EQ(docs->value(), doc->value);
     }
@@ -584,11 +558,14 @@ TEST(boolean_query_boost, and_filter) {
     auto docs =
       prep->execute({.segment = irs::SubReader::empty(), .scorers = pord});
 
-    auto* scr = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_FALSE(!scr);
+    const auto& scr = docs->PrepareScore({
+      .scorer = pord.buckets().front().bucket,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(scr.IsDefault());
     ASSERT_TRUE(docs->next());
-    irs::score_t doc_boost;
-    scr->operator()(&doc_boost);
+    docs->FetchScoreArgs(0);
+    const auto doc_boost = scr.Score();
     ASSERT_EQ(value, doc_boost);
     ASSERT_FALSE(docs->next());
   }
@@ -617,11 +594,14 @@ TEST(boolean_query_boost, and_filter) {
     auto* doc = irs::get<irs::DocAttr>(*docs);
     ASSERT_TRUE(bool(doc));
 
-    auto* scr = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_FALSE(!scr);
+    const auto& scr = docs->PrepareScore({
+      .scorer = pord.buckets().front().bucket,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(scr.IsDefault());
     ASSERT_TRUE(docs->next());
-    irs::score_t doc_boost;
-    scr->operator()(&doc_boost);
+    docs->FetchScoreArgs(0);
+    const auto doc_boost = scr.Score();
     ASSERT_EQ(value * value, doc_boost);
     ASSERT_EQ(docs->value(), doc->value);
     ASSERT_FALSE(docs->next());
@@ -659,11 +639,14 @@ TEST(boolean_query_boost, and_filter) {
 
     /* the first hit should be scored as value*value + value*value since it
      * exists in both results */
-    auto* scr = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_FALSE(!scr);
+    const auto& scr = docs->PrepareScore({
+      .scorer = pord.buckets().front().bucket,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(scr.IsDefault());
     ASSERT_TRUE(docs->next());
-    irs::score_t doc_boost;
-    scr->operator()(&doc_boost);
+    docs->FetchScoreArgs(0);
+    const auto doc_boost = scr.Score();
     ASSERT_EQ(2 * value * value, doc_boost);
     ASSERT_EQ(docs->value(), doc->value);
 
@@ -707,13 +690,16 @@ TEST(boolean_query_boost, and_filter) {
     auto* doc = irs::get<irs::DocAttr>(*docs);
     ASSERT_TRUE(bool(doc));
 
-    auto* scr = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_FALSE(!scr);
+    const auto& scr = docs->PrepareScore({
+      .scorer = pord.buckets().front().bucket,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(scr.IsDefault());
     ASSERT_EQ(docs->value(), doc->value);
     ASSERT_TRUE(docs->next());
     ASSERT_EQ(docs->value(), doc->value);
-    irs::score_t doc_boost;
-    scr->operator()(&doc_boost);
+    docs->FetchScoreArgs(0);
+    const auto doc_boost = scr.Score();
     ASSERT_EQ(3 * value * value + value, doc_boost);
 
     ASSERT_FALSE(docs->next());
@@ -756,13 +742,16 @@ TEST(boolean_query_boost, and_filter) {
     auto* doc = irs::get<irs::DocAttr>(*docs);
     ASSERT_TRUE(bool(doc));
 
-    auto* scr = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_FALSE(!scr);
+    const auto& scr = docs->PrepareScore({
+      .scorer = pord.buckets().front().bucket,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(scr.IsDefault());
     ASSERT_EQ(docs->value(), doc->value);
     ASSERT_TRUE(docs->next());
     ASSERT_EQ(docs->value(), doc->value);
-    irs::score_t doc_boost;
-    scr->operator()(&doc_boost);
+    docs->FetchScoreArgs(0);
+    const auto doc_boost = scr.Score();
     ASSERT_EQ(3 * value, doc_boost);
 
     ASSERT_FALSE(docs->next());
@@ -803,13 +792,16 @@ TEST(boolean_query_boost, and_filter) {
     auto* doc = irs::get<irs::DocAttr>(*docs);
     ASSERT_TRUE(bool(doc));
 
-    auto* scr = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_FALSE(!scr);
+    const auto& scr = docs->PrepareScore({
+      .scorer = pord.buckets().front().bucket,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(scr.IsDefault());
     ASSERT_EQ(docs->value(), doc->value);
     ASSERT_TRUE(docs->next());
     ASSERT_EQ(docs->value(), doc->value);
-    irs::score_t doc_boost;
-    scr->operator()(&doc_boost);
+    docs->FetchScoreArgs(0);
+    const auto doc_boost = scr.Score();
     ASSERT_EQ(irs::score_t(0), doc_boost);
 
     ASSERT_FALSE(docs->next());
@@ -860,12 +852,15 @@ TEST(boolean_query_boost, or_filter) {
     auto* doc = irs::get<irs::DocAttr>(*docs);
     ASSERT_TRUE(bool(doc));
 
-    auto* scr = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_FALSE(!scr);
+    const auto& scr = docs->PrepareScore({
+      .scorer = pord.buckets().front().bucket,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(scr.IsDefault());
     ASSERT_EQ(docs->value(), doc->value);
     ASSERT_TRUE(docs->next());
-    irs::score_t doc_boost;
-    scr->operator()(&doc_boost);
+    docs->FetchScoreArgs(0);
+    const auto doc_boost = scr.Score();
     ASSERT_EQ(value, doc_boost);
     ASSERT_EQ(docs->value(), doc->value);
     ASSERT_FALSE(docs->next());
@@ -895,13 +890,16 @@ TEST(boolean_query_boost, or_filter) {
     auto* doc = irs::get<irs::DocAttr>(*docs);
     ASSERT_TRUE(bool(doc));
 
-    auto* scr = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_FALSE(!scr);
+    const auto& scr = docs->PrepareScore({
+      .scorer = pord.buckets().front().bucket,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(scr.IsDefault());
     ASSERT_EQ(docs->value(), doc->value);
     ASSERT_TRUE(docs->next());
     ASSERT_EQ(docs->value(), doc->value);
-    irs::score_t doc_boost;
-    scr->operator()(&doc_boost);
+    docs->FetchScoreArgs(0);
+    const auto doc_boost = scr.Score();
     ASSERT_EQ(value * value, doc_boost);
     ASSERT_FALSE(docs->next());
     ASSERT_EQ(docs->value(), doc->value);
@@ -934,15 +932,18 @@ TEST(boolean_query_boost, or_filter) {
     auto* doc = irs::get<irs::DocAttr>(*docs);
     ASSERT_TRUE(bool(doc));
 
-    auto* scr = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_FALSE(!scr);
+    const auto& scr = docs->PrepareScore({
+      .scorer = pord.buckets().front().bucket,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(scr.IsDefault());
 
     // the first hit should be scored as value*value + value*value since it
     // exists in both results
     {
       ASSERT_TRUE(docs->next());
-      irs::score_t doc_boost;
-      scr->operator()(&doc_boost);
+      docs->FetchScoreArgs(0);
+      const auto doc_boost = scr.Score();
       ASSERT_EQ(2 * value * value, doc_boost);
       ASSERT_EQ(docs->value(), doc->value);
     }
@@ -951,8 +952,8 @@ TEST(boolean_query_boost, or_filter) {
     // exists in second result only
     {
       ASSERT_TRUE(docs->next());
-      irs::score_t doc_boost;
-      scr->operator()(&doc_boost);
+      docs->FetchScoreArgs(0);
+      const auto doc_boost = scr.Score();
       ASSERT_EQ(value * value, doc_boost);
       ASSERT_EQ(docs->value(), doc->value);
     }
@@ -998,14 +999,17 @@ TEST(boolean_query_boost, or_filter) {
     auto* doc = irs::get<irs::DocAttr>(*docs);
     ASSERT_TRUE(bool(doc));
 
-    auto* scr = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_FALSE(!scr);
+    const auto& scr = docs->PrepareScore({
+      .scorer = pord.buckets().front().bucket,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(scr.IsDefault());
 
     // first hit
     {
       ASSERT_TRUE(docs->next());
-      irs::score_t doc_boost;
-      scr->operator()(&doc_boost);
+      docs->FetchScoreArgs(0);
+      const auto doc_boost = scr.Score();
       ASSERT_EQ(3 * value * value + value, doc_boost);
       ASSERT_EQ(docs->value(), doc->value);
     }
@@ -1013,8 +1017,8 @@ TEST(boolean_query_boost, or_filter) {
     // second hit
     {
       ASSERT_TRUE(docs->next());
-      irs::score_t doc_boost;
-      scr->operator()(&doc_boost);
+      docs->FetchScoreArgs(0);
+      const auto doc_boost = scr.Score();
       ASSERT_EQ(2 * value * value + value, doc_boost);
       ASSERT_EQ(docs->value(), doc->value);
     }
@@ -1060,14 +1064,17 @@ TEST(boolean_query_boost, or_filter) {
     auto* doc = irs::get<irs::DocAttr>(*docs);
     ASSERT_TRUE(bool(doc));
 
-    auto* scr = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_FALSE(!scr);
+    const auto& scr = docs->PrepareScore({
+      .scorer = pord.buckets().front().bucket,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(scr.IsDefault());
 
     // first hit
     {
       ASSERT_TRUE(docs->next());
-      irs::score_t doc_boost;
-      scr->operator()(&doc_boost);
+      docs->FetchScoreArgs(0);
+      const auto doc_boost = scr.Score();
       ASSERT_EQ(3 * value, doc_boost);
       ASSERT_EQ(docs->value(), doc->value);
     }
@@ -1075,8 +1082,8 @@ TEST(boolean_query_boost, or_filter) {
     // second hit
     {
       ASSERT_TRUE(docs->next());
-      irs::score_t doc_boost;
-      scr->operator()(&doc_boost);
+      docs->FetchScoreArgs(0);
+      const auto doc_boost = scr.Score();
       ASSERT_EQ(2 * value, doc_boost);
       ASSERT_EQ(docs->value(), doc->value);
     }
@@ -1119,14 +1126,17 @@ TEST(boolean_query_boost, or_filter) {
     auto* doc = irs::get<irs::DocAttr>(*docs);
     ASSERT_TRUE(bool(doc));
 
-    auto* scr = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_FALSE(!scr);
+    const auto& scr = docs->PrepareScore({
+      .scorer = pord.buckets().front().bucket,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(scr.IsDefault());
 
     // first hit
     {
       ASSERT_TRUE(docs->next());
-      irs::score_t doc_boost;
-      scr->operator()(&doc_boost);
+      docs->FetchScoreArgs(0);
+      const auto doc_boost = scr.Score();
       ASSERT_EQ(irs::score_t(0), doc_boost);
       ASSERT_EQ(docs->value(), doc->value);
     }
@@ -1134,8 +1144,8 @@ TEST(boolean_query_boost, or_filter) {
     // second hit
     {
       ASSERT_TRUE(docs->next());
-      irs::score_t doc_boost;
-      scr->operator()(&doc_boost);
+      docs->FetchScoreArgs(0);
+      const auto doc_boost = scr.Score();
       ASSERT_EQ(irs::score_t(0), doc_boost);
       ASSERT_EQ(docs->value(), doc->value);
     }
@@ -1512,8 +1522,7 @@ TEST(boolean_query_estimation, and_filter) {
 // basic disjunction (iterator0 OR iterator1)
 
 TEST(basic_disjunction, next) {
-  using Disjunction =
-    irs::BasicDisjunction<irs::ScoreAdapter, irs::NoopAggregator>;
+  using Disjunction = irs::BasicDisjunction<irs::ScoreAdapter>;
   auto make_basic_disjunction = [](std::span<const irs::doc_id_t> lhs,
                                    std::span<const irs::doc_id_t> rhs) {
     return Disjunction{
@@ -1668,8 +1677,7 @@ TEST(basic_disjunction, next) {
 }
 
 TEST(basic_disjunction_test, seek) {
-  using Disjunction =
-    irs::BasicDisjunction<irs::ScoreAdapter, irs::NoopAggregator>;
+  using Disjunction = irs::BasicDisjunction<irs::ScoreAdapter>;
 
   // simple case
   {
@@ -1783,8 +1791,7 @@ TEST(basic_disjunction_test, seek) {
 }
 
 TEST(basic_disjunction_test, seek_next) {
-  using Disjunction =
-    irs::BasicDisjunction<irs::ScoreAdapter, irs::NoopAggregator>;
+  using Disjunction = irs::BasicDisjunction<irs::ScoreAdapter>;
 
   {
     std::vector<irs::doc_id_t> first{1, 2, 5, 7, 9, 11, 45};
@@ -1797,11 +1804,6 @@ TEST(basic_disjunction_test, seek_next) {
         last.begin(), last.end())));
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
-
-    // score, no order set
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
 
     // cost
     ASSERT_EQ(first.size() + last.size(), irs::CostAttr::extract(it));
@@ -1828,40 +1830,27 @@ TEST(basic_disjunction_test, scored_seek_next) {
 
   // disjunction without order
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
+    detail::CompoundSort sort{{1, 2}};
 
     std::vector<irs::doc_id_t> first{1, 2, 5, 7, 9, 11, 45};
-    auto prepared_first_order = irs::Scorers::Prepare(sort1);
-
     std::vector<irs::doc_id_t> last{1, 5, 6};
-    auto prepared_last_order = irs::Scorers::Prepare(sort2);
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max, 0,
-      [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-        using Disjunction = irs::BasicDisjunction<irs::ScoreAdapter, A>;
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      using Disjunction = irs::BasicDisjunction<irs::ScoreAdapter>;
 
-        return irs::memory::make_managed<Disjunction>(
-          irs::ScoreAdapter(irs::memory::make_managed<detail::BasicDocIterator>(
-            first.begin(), first.end(), empty_stats, prepared_first_order)),
-          irs::ScoreAdapter(irs::memory::make_managed<detail::BasicDocIterator>(
-            last.begin(), last.end(), empty_stats, prepared_last_order)),
-          std::move(aggregator));
-      });
+      return irs::memory::make_managed<Disjunction>(
+        irs::ScoreAdapter(irs::memory::make_managed<detail::BasicDocIterator>(
+          first.begin(), first.end(), empty_stats)),
+        irs::ScoreAdapter(irs::memory::make_managed<detail::BasicDocIterator>(
+          last.begin(), last.end(), empty_stats)));
+    }();
 
-    using ExpectedType =
-      irs::BasicDisjunction<irs::ScoreAdapter, irs::NoopAggregator>;
+    using ExpectedType = irs::BasicDisjunction<irs::ScoreAdapter>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
-
-    // score, no order set
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
 
     // estimation
     ASSERT_EQ(first.size() + last.size(), irs::CostAttr::extract(it));
@@ -1886,41 +1875,35 @@ TEST(basic_disjunction_test, scored_seek_next) {
   // disjunction with order, aggregate scores
   {
     std::vector<irs::doc_id_t> first{1, 2, 5, 7, 9, 11, 45};
-    detail::BasicSort first_order{1};
-    auto prepared_first_order = irs::Scorers::Prepare(first_order);
-
     std::vector<irs::doc_id_t> last{1, 5, 6};
-    detail::BasicSort last_order{2};
-    auto prepared_last_order = irs::Scorers::Prepare(last_order);
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-        using Disjunction = irs::BasicDisjunction<irs::ScoreAdapter, A>;
-        using Adapter = irs::ScoreAdapter;
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      using Disjunction = irs::BasicDisjunction<irs::ScoreAdapter>;
+      using Adapter = irs::ScoreAdapter;
 
-        return irs::memory::make_managed<Disjunction>(
-          Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
-            first.begin(), first.end(), empty_stats, prepared_first_order)),
-          Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
-            last.begin(), last.end(), empty_stats, prepared_last_order)),
-          std::move(aggregator), 1U);
-      });
+      return irs::memory::make_managed<Disjunction>(
+        Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
+          first.begin(), first.end(), empty_stats)),
+        Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
+          last.begin(), last.end(), empty_stats)),
+        1U);
+    }();
 
-    using ExpectedType =
-      irs::BasicDisjunction<irs::ScoreAdapter,
-                            irs::Aggregator<irs::SumMerger, 1>>;
-    ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
-    auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
+    auto& it = *it_ptr;
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
 
+    detail::CompoundSort sort{{1, 2}};
+
     // score
-    ASSERT_NE(nullptr, irs::get<irs::ScoreAttr>(it));
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_NE(&irs::ScoreAttr::kNoScore, &score);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+
+    ASSERT_TRUE(score.IsDefault());
 
     // estimation
     ASSERT_EQ(1, irs::CostAttr::extract(it));
@@ -1929,26 +1912,26 @@ TEST(basic_disjunction_test, scored_seek_next) {
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
-    ASSERT_EQ(3, tmp);  // 1 + 2
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 1 + 2
     ASSERT_EQ(5, it.seek(5));
-    score(&tmp);
-    ASSERT_EQ(3, tmp);  // 1 + 2
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 1 + 2
     ASSERT_TRUE(it.next());
-    score(&tmp);
-    ASSERT_EQ(2, tmp);  // 2
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 2
     ASSERT_EQ(6, it.value());
     ASSERT_TRUE(it.next());
     ASSERT_EQ(7, it.value());
-    score(&tmp);
-    ASSERT_EQ(1, tmp);  // 1
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 1
     ASSERT_EQ(11, it.seek(10));
-    score(&tmp);
-    ASSERT_EQ(1, tmp);  // 1
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 1
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
-    score(&tmp);
-    ASSERT_EQ(1, tmp);  // 1
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 1
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
     ASSERT_FALSE(it.next());
@@ -1958,41 +1941,35 @@ TEST(basic_disjunction_test, scored_seek_next) {
   // disjunction with order, max score
   {
     std::vector<irs::doc_id_t> first{1, 2, 5, 7, 9, 11, 45};
-    detail::BasicSort first_order{1};
-    auto prepared_first_order = irs::Scorers::Prepare(first_order);
-
     std::vector<irs::doc_id_t> last{1, 5, 6};
-    detail::BasicSort last_order{2};
-    auto prepared_last_order = irs::Scorers::Prepare(last_order);
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max, 1,
-      [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-        using Disjunction = irs::BasicDisjunction<irs::ScoreAdapter, A>;
-        using Adapter = irs::ScoreAdapter;
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      using Disjunction = irs::BasicDisjunction<irs::ScoreAdapter>;
+      using Adapter = irs::ScoreAdapter;
 
-        return irs::memory::make_managed<Disjunction>(
-          Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
-            first.begin(), first.end(), empty_stats, prepared_first_order)),
-          Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
-            last.begin(), last.end(), empty_stats, prepared_last_order)),
-          std::move(aggregator), 1U);  // custom cost
-      });
+      return irs::memory::make_managed<Disjunction>(
+        Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
+          first.begin(), first.end(), empty_stats)),
+        Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
+          last.begin(), last.end(), empty_stats)),
+        1U);  // custom cost
+    }();
 
-    using ExpectedType =
-      irs::BasicDisjunction<irs::ScoreAdapter,
-                            irs::Aggregator<irs::MaxMerger, 1>>;
-    ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
-    auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
+    auto& it = *it_ptr;
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
 
+    detail::CompoundSort sort{{1, 2}};
+
     // score
-    ASSERT_NE(nullptr, irs::get<irs::ScoreAttr>(it));
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_NE(&irs::ScoreAttr::kNoScore, &score);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+
+    ASSERT_TRUE(score.IsDefault());
 
     // estimation
     ASSERT_EQ(1, irs::CostAttr::extract(it));
@@ -2001,26 +1978,26 @@ TEST(basic_disjunction_test, scored_seek_next) {
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
-    ASSERT_EQ(2, tmp);  // std::max(1, 2)
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // std::max(1, 2)
     ASSERT_EQ(5, it.seek(5));
-    score(&tmp);
-    ASSERT_EQ(2, tmp);  // std::max(1, 2)
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // std::max(1, 2)
     ASSERT_TRUE(it.next());
-    score(&tmp);
-    ASSERT_EQ(2, tmp);  // std::max(2)
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // std::max(2)
     ASSERT_EQ(6, it.value());
     ASSERT_TRUE(it.next());
     ASSERT_EQ(7, it.value());
-    score(&tmp);
-    ASSERT_EQ(1, tmp);  // std::max(1)
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // std::max(1)
     ASSERT_EQ(11, it.seek(10));
-    score(&tmp);
-    ASSERT_EQ(1, tmp);  // std::max(1)
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // std::max(1)
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
-    score(&tmp);
-    ASSERT_EQ(1, tmp);  // std::max(1)
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // std::max(1)
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
     ASSERT_FALSE(it.next());
@@ -2032,34 +2009,32 @@ TEST(basic_disjunction_test, scored_seek_next) {
     std::vector<irs::doc_id_t> first{1, 2, 5, 7, 9, 11, 45};
     std::vector<irs::doc_id_t> last{1, 5, 6};
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-        using Disjunction = irs::BasicDisjunction<irs::ScoreAdapter, A>;
-        using Adapter = irs::ScoreAdapter;
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      using Disjunction = irs::BasicDisjunction<irs::ScoreAdapter>;
+      using Adapter = irs::ScoreAdapter;
 
-        return irs::memory::make_managed<Disjunction>(
-          Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
-            first.begin(), first.end(), empty_stats)),
-          Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
-            last.begin(), last.end(), empty_stats)),
-          std::move(aggregator));
-      });
+      return irs::memory::make_managed<Disjunction>(
+        Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
+          first.begin(), first.end(), empty_stats)),
+        Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
+          last.begin(), last.end(), empty_stats)));
+    }();
 
-    using ExpectedType =
-      irs::BasicDisjunction<irs::ScoreAdapter,
-                            irs::Aggregator<irs::SumMerger, 1>>;
-    ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
-    auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
+    auto& it = *it_ptr;
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
 
+    detail::CompoundSort sort{{1, 2}};
+
     // score
-    ASSERT_NE(nullptr, irs::get<irs::ScoreAttr>(it));
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_NE(&irs::ScoreAttr::kNoScore, &score);
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
+
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+
+    ASSERT_TRUE(score.IsDefault());
 
     // estimation
     ASSERT_EQ(first.size() + last.size(), irs::CostAttr::extract(it));
@@ -2067,26 +2042,26 @@ TEST(basic_disjunction_test, scored_seek_next) {
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_TRUE(it.next());
     irs::score_t tmp;
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(1, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_EQ(5, it.seek(5));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_TRUE(it.next());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_EQ(6, it.value());
     ASSERT_TRUE(it.next());
     ASSERT_EQ(7, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_EQ(11, it.seek(10));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_TRUE(it.next());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(45, it.value());
     ASSERT_EQ(0, tmp);
     ASSERT_FALSE(it.next());
@@ -2100,34 +2075,32 @@ TEST(basic_disjunction_test, scored_seek_next) {
     std::vector<irs::doc_id_t> first{1, 2, 5, 7, 9, 11, 45};
     std::vector<irs::doc_id_t> last{1, 5, 6};
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max, 1,
-      [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-        using Disjunction = irs::BasicDisjunction<irs::ScoreAdapter, A>;
-        using Adapter = irs::ScoreAdapter;
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      using Disjunction = irs::BasicDisjunction<irs::ScoreAdapter>;
+      using Adapter = irs::ScoreAdapter;
 
-        return irs::memory::make_managed<Disjunction>(
-          Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
-            first.begin(), first.end(), empty_stats)),
-          Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
-            last.begin(), last.end(), empty_stats)),
-          std::move(aggregator));
-      });
+      return irs::memory::make_managed<Disjunction>(
+        Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
+          first.begin(), first.end(), empty_stats)),
+        Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
+          last.begin(), last.end(), empty_stats)));
+    }();
 
-    using ExpectedType =
-      irs::BasicDisjunction<irs::ScoreAdapter,
-                            irs::Aggregator<irs::MaxMerger, 1>>;
-    ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
-    auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
+    auto& it = *it_ptr;
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
 
+    detail::CompoundSort sort{{1, 2}};
+
     // score
-    ASSERT_NE(nullptr, irs::get<irs::ScoreAttr>(it));
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_NE(&irs::ScoreAttr::kNoScore, &score);
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
+
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+
+    ASSERT_TRUE(score.IsDefault());
 
     // estimation
     ASSERT_EQ(first.size() + last.size(), irs::CostAttr::extract(it));
@@ -2136,25 +2109,25 @@ TEST(basic_disjunction_test, scored_seek_next) {
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_EQ(5, it.seek(5));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_TRUE(it.next());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_EQ(6, it.value());
     ASSERT_TRUE(it.next());
     ASSERT_EQ(7, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_EQ(11, it.seek(10));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
@@ -2164,40 +2137,35 @@ TEST(basic_disjunction_test, scored_seek_next) {
 
   // disjunction with order, first iterator with order, aggregation
   {
-    detail::BasicSort sort1{1};
+    detail::CompoundSort sort({1});
 
     std::vector<irs::doc_id_t> first{1, 2, 5, 7, 9, 11, 45};
     std::vector<irs::doc_id_t> last{1, 5, 6};
-    auto prepared_first_order = irs::Scorers::Prepare(sort1);
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max, 1,
-      [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-        using Disjunction = irs::BasicDisjunction<irs::ScoreAdapter, A>;
-        using Adapter = irs::ScoreAdapter;
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      using Disjunction = irs::BasicDisjunction<irs::ScoreAdapter>;
+      using Adapter = irs::ScoreAdapter;
 
-        return irs::memory::make_managed<Disjunction>(
-          Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
-            first.begin(), first.end(), empty_stats, prepared_first_order)),
-          Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
-            last.begin(), last.end(), empty_stats)),
-          std::move(aggregator));
-      });
+      return irs::memory::make_managed<Disjunction>(
+        Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
+          first.begin(), first.end(), empty_stats)),
+        Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
+          last.begin(), last.end(), empty_stats)));
+    }();
 
-    using ExpectedType =
-      irs::BasicDisjunction<irs::ScoreAdapter,
-                            irs::Aggregator<irs::MaxMerger, 1>>;
-    ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
-    auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
+    auto& it = *it_ptr;
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
 
     // score
-    ASSERT_NE(nullptr, irs::get<irs::ScoreAttr>(it));
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_NE(&irs::ScoreAttr::kNoScore, &score);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+
+    ASSERT_TRUE(score.IsDefault());
 
     // estimation
     ASSERT_EQ(first.size() + last.size(), irs::CostAttr::extract(it));
@@ -2206,26 +2174,26 @@ TEST(basic_disjunction_test, scored_seek_next) {
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
-    ASSERT_EQ(1, tmp);
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);
     ASSERT_EQ(5, it.seek(5));
-    score(&tmp);
-    ASSERT_EQ(1, tmp);
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);
     ASSERT_TRUE(it.next());
     ASSERT_EQ(6, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_TRUE(it.next());
     ASSERT_EQ(7, it.value());
-    score(&tmp);
-    ASSERT_EQ(1, tmp);
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);
     ASSERT_EQ(11, it.seek(10));
-    score(&tmp);
-    ASSERT_EQ(1, tmp);
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
-    score(&tmp);
-    ASSERT_EQ(1, tmp);
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
     ASSERT_FALSE(it.next());
@@ -2234,41 +2202,35 @@ TEST(basic_disjunction_test, scored_seek_next) {
 
   // disjunction with order, first iterator with order, max
   {
-    detail::BasicSort sort1{1};
+    detail::CompoundSort sort({1});
 
     std::vector<irs::doc_id_t> first{1, 2, 5, 7, 9, 11, 45};
-    auto prepared_first_order = irs::Scorers::Prepare(sort1);
-
     std::vector<irs::doc_id_t> last{1, 5, 6};
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max, 1,
-      [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-        using Disjunction = irs::BasicDisjunction<irs::ScoreAdapter, A>;
-        using Adapter = irs::ScoreAdapter;
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      using Disjunction = irs::BasicDisjunction<irs::ScoreAdapter>;
+      using Adapter = irs::ScoreAdapter;
 
-        return irs::memory::make_managed<Disjunction>(
-          Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
-            first.begin(), first.end(), empty_stats, prepared_first_order)),
-          Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
-            last.begin(), last.end(), empty_stats)),
-          std::move(aggregator));
-      });
+      return irs::memory::make_managed<Disjunction>(
+        Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
+          first.begin(), first.end(), empty_stats)),
+        Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
+          last.begin(), last.end(), empty_stats)));
+    }();
 
-    using ExpectedType =
-      irs::BasicDisjunction<irs::ScoreAdapter,
-                            irs::Aggregator<irs::MaxMerger, 1>>;
-    ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
-    auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
+    auto& it = *it_ptr;
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
 
     // score
-    ASSERT_NE(nullptr, irs::get<irs::ScoreAttr>(it));
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_NE(&irs::ScoreAttr::kNoScore, &score);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+
+    ASSERT_TRUE(score.IsDefault());
 
     // estimation
     ASSERT_EQ(first.size() + last.size(), irs::CostAttr::extract(it));
@@ -2277,26 +2239,26 @@ TEST(basic_disjunction_test, scored_seek_next) {
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
-    ASSERT_EQ(1, tmp);
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);
     ASSERT_EQ(5, it.seek(5));
-    score(&tmp);
-    ASSERT_EQ(1, tmp);
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);
     ASSERT_TRUE(it.next());
     ASSERT_EQ(6, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_TRUE(it.next());
     ASSERT_EQ(7, it.value());
-    score(&tmp);
-    ASSERT_EQ(1, tmp);
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);
     ASSERT_EQ(11, it.seek(10));
-    score(&tmp);
-    ASSERT_EQ(1, tmp);
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
-    score(&tmp);
-    ASSERT_EQ(1, tmp);
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
     ASSERT_FALSE(it.next());
@@ -2305,40 +2267,35 @@ TEST(basic_disjunction_test, scored_seek_next) {
 
   // disjunction with order, last iterator with order, aggregation
   {
-    detail::BasicSort sort1{1};
+    detail::CompoundSort sort({1});
 
     std::vector<irs::doc_id_t> first{1, 2, 5, 7, 9, 11, 45};
     std::vector<irs::doc_id_t> last{1, 5, 6};
-    auto prepared_last_order = irs::Scorers::Prepare(sort1);
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-        using Disjunction = irs::BasicDisjunction<irs::ScoreAdapter, A>;
-        using Adapter = irs::ScoreAdapter;
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      using Disjunction = irs::BasicDisjunction<irs::ScoreAdapter>;
+      using Adapter = irs::ScoreAdapter;
 
-        return irs::memory::make_managed<Disjunction>(
-          Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
-            first.begin(), first.end(), empty_stats)),
-          Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
-            last.begin(), last.end(), empty_stats, prepared_last_order)),
-          std::move(aggregator));
-      });
+      return irs::memory::make_managed<Disjunction>(
+        Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
+          first.begin(), first.end(), empty_stats)),
+        Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
+          last.begin(), last.end(), empty_stats)));
+    }();
 
-    using ExpectedType =
-      irs::BasicDisjunction<irs::ScoreAdapter,
-                            irs::Aggregator<irs::SumMerger, 1>>;
-    ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
-    auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
+    auto& it = *it_ptr;
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
 
     // score
-    ASSERT_NE(nullptr, irs::get<irs::ScoreAttr>(it));
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_NE(&irs::ScoreAttr::kNoScore, &score);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+
+    ASSERT_TRUE(score.IsDefault());
 
     // estimation
     ASSERT_EQ(first.size() + last.size(), irs::CostAttr::extract(it));
@@ -2347,25 +2304,25 @@ TEST(basic_disjunction_test, scored_seek_next) {
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
-    ASSERT_EQ(1, tmp);
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);
     ASSERT_EQ(5, it.seek(5));
-    score(&tmp);
-    ASSERT_EQ(1, tmp);
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);
     ASSERT_TRUE(it.next());
     ASSERT_EQ(6, it.value());
-    score(&tmp);
-    ASSERT_EQ(1, tmp);
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);
     ASSERT_TRUE(it.next());
     ASSERT_EQ(7, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_EQ(11, it.seek(10));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
@@ -2375,40 +2332,35 @@ TEST(basic_disjunction_test, scored_seek_next) {
 
   // disjunction with order, last iterator with order, max
   {
-    detail::BasicSort sort1{1};
+    detail::CompoundSort sort({1});
 
     std::vector<irs::doc_id_t> first{1, 2, 5, 7, 9, 11, 45};
     std::vector<irs::doc_id_t> last{1, 5, 6};
-    auto prepared_last_order = irs::Scorers::Prepare(sort1);
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max, 1,
-      [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-        using Disjunction = irs::BasicDisjunction<irs::ScoreAdapter, A>;
-        using Adapter = irs::ScoreAdapter;
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      using Disjunction = irs::BasicDisjunction<irs::ScoreAdapter>;
+      using Adapter = irs::ScoreAdapter;
 
-        return irs::memory::make_managed<Disjunction>(
-          Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
-            first.begin(), first.end(), empty_stats)),
-          Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
-            last.begin(), last.end(), empty_stats, prepared_last_order)),
-          std::move(aggregator));
-      });
+      return irs::memory::make_managed<Disjunction>(
+        Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
+          first.begin(), first.end(), empty_stats)),
+        Adapter(irs::memory::make_managed<detail::BasicDocIterator>(
+          last.begin(), last.end(), empty_stats)));
+    }();
 
-    using ExpectedType =
-      irs::BasicDisjunction<irs::ScoreAdapter,
-                            irs::Aggregator<irs::MaxMerger, 1>>;
-    ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
-    auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
+    auto& it = *it_ptr;
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
 
     // score
-    ASSERT_NE(nullptr, irs::get<irs::ScoreAttr>(it));
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_NE(&irs::ScoreAttr::kNoScore, &score);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
+
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+
+    ASSERT_TRUE(score.IsDefault());
 
     // estimation
     ASSERT_EQ(first.size() + last.size(), irs::CostAttr::extract(it));
@@ -2417,25 +2369,25 @@ TEST(basic_disjunction_test, scored_seek_next) {
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
-    ASSERT_EQ(1, tmp);
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);
     ASSERT_EQ(5, it.seek(5));
-    score(&tmp);
-    ASSERT_EQ(1, tmp);
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);
     ASSERT_TRUE(it.next());
     ASSERT_EQ(6, it.value());
-    score(&tmp);
-    ASSERT_EQ(1, tmp);
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);
     ASSERT_TRUE(it.next());
     ASSERT_EQ(7, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_EQ(11, it.seek(10));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
@@ -2447,8 +2399,7 @@ TEST(basic_disjunction_test, scored_seek_next) {
 // small disjunction (iterator0 OR iterator1 OR iterator2 OR ...)
 
 TEST(small_disjunction_test, next) {
-  using Disjunction =
-    irs::SmallDisjunction<irs::ScoreAdapter, irs::NoopAggregator>;
+  using Disjunction = irs::SmallDisjunction<irs::ScoreAdapter>;
   auto sum = [](size_t sum, const std::vector<irs::doc_id_t>& docs) {
     return sum += docs.size();
   };
@@ -2713,8 +2664,7 @@ TEST(small_disjunction_test, next) {
 }
 
 TEST(small_disjunction_test, seek) {
-  using Disjunction =
-    irs::SmallDisjunction<irs::ScoreAdapter, irs::NoopAggregator>;
+  using Disjunction = irs::SmallDisjunction<irs::ScoreAdapter>;
   auto sum = [](size_t sum, const std::vector<irs::doc_id_t>& docs) {
     return sum += docs.size();
   };
@@ -2968,8 +2918,7 @@ TEST(small_disjunction_test, seek) {
 }
 
 TEST(small_disjunction_test, seek_next) {
-  using Disjunction =
-    irs::SmallDisjunction<irs::ScoreAdapter, irs::NoopAggregator>;
+  using Disjunction = irs::SmallDisjunction<irs::ScoreAdapter>;
   auto sum = [](size_t sum, const std::vector<irs::doc_id_t>& docs) {
     return sum += docs.size();
   };
@@ -2981,11 +2930,6 @@ TEST(small_disjunction_test, seek_next) {
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
-
-    // score, no order set
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
 
     // cost
     ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
@@ -3010,42 +2954,28 @@ TEST(small_disjunction_test, seek_next) {
 TEST(small_disjunction_test, scored_seek_next) {
   // disjunction without score, sub-iterators with scores
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort{{1, 2, 4}};
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers::Prepare(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers::Prepare(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6},
-                      irs::Scorers::Prepare(sort4));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 0,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
-        using Disjunction = irs::SmallDisjunction<irs::ScoreAdapter, A>;
-        using Adapter = irs::ScoreAdapter;
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      using Disjunction = irs::SmallDisjunction<irs::ScoreAdapter>;
+      using Adapter = irs::ScoreAdapter;
 
-        auto itrs = detail::ExecuteAll<Adapter>(docs);
+      auto itrs = detail::ExecuteAll<Adapter>(docs);
 
-        return irs::memory::make_managed<Disjunction>(
-          std::move(itrs), std::move(aggregator), 1U);
-      });
+      return irs::memory::make_managed<Disjunction>(std::move(itrs), 1U);
+    }();
 
-    using ExpectedType =
-      irs::SmallDisjunction<irs::ScoreAdapter, irs::NoopAggregator>;
+    using ExpectedType = irs::SmallDisjunction<irs::ScoreAdapter>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
-
-    // score, no order set
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
 
     // cost
     ASSERT_EQ(1, irs::CostAttr::extract(it));
@@ -3067,43 +2997,34 @@ TEST(small_disjunction_test, scored_seek_next) {
 
   // disjunction with score, sub-iterators with scores AGGREGATED score
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort{{1, 2, 4}};
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers::Prepare(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers::Prepare(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6},
-                      irs::Scorers::Prepare(sort4));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
-        using Disjunction = irs::SmallDisjunction<irs::ScoreAdapter, A>;
-        using Adapter = irs::ScoreAdapter;
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      using Disjunction = irs::SmallDisjunction<irs::ScoreAdapter>;
+      using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+      auto res = detail::ExecuteAll<Adapter>(docs);
 
-        return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 1U);  // custom cost
-      });
+      return irs::memory::make_managed<Disjunction>(std::move(res),
+                                                    1U);  // custom cost
+    }();
 
-    using ExpectedType =
-      irs::SmallDisjunction<irs::ScoreAdapter,
-                            irs::Aggregator<irs::SumMerger, 1>>;
-    ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
-    auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
+    auto& it = *it_ptr;
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
 
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_TRUE(score.IsDefault());
 
     // cost
     ASSERT_EQ(1, irs::CostAttr::extract(it));
@@ -3112,26 +3033,26 @@ TEST(small_disjunction_test, scored_seek_next) {
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
-    ASSERT_EQ(7, tmp);  // 1+2+4
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 1+2+4
     ASSERT_EQ(5, it.seek(5));
-    score(&tmp);
-    ASSERT_EQ(7, tmp);  // 1+2+4
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 1+2+4
     ASSERT_TRUE(it.next());
     ASSERT_EQ(6, it.value());
-    score(&tmp);
-    ASSERT_EQ(6, tmp);  // 2+4
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 2+4
     ASSERT_TRUE(it.next());
     ASSERT_EQ(7, it.value());
-    score(&tmp);
-    ASSERT_EQ(1, tmp);  // 1
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 1
     ASSERT_EQ(29, it.seek(27));
-    score(&tmp);
-    ASSERT_EQ(2, tmp);  // 2
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 2
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
-    score(&tmp);
-    ASSERT_EQ(1, tmp);  // 1
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 1
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
     ASSERT_FALSE(it.next());
@@ -3140,43 +3061,34 @@ TEST(small_disjunction_test, scored_seek_next) {
 
   // disjunction with score, sub-iterators with scores, MAX score
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort{{1, 2, 4}};
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers::Prepare(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers::Prepare(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6},
-                      irs::Scorers::Prepare(sort4));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
-        using Disjunction = irs::SmallDisjunction<irs::ScoreAdapter, A>;
-        using Adapter = irs::ScoreAdapter;
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      using Disjunction = irs::SmallDisjunction<irs::ScoreAdapter>;
+      using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+      auto res = detail::ExecuteAll<Adapter>(docs);
 
-        return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 1U);  // custom cost
-      });
+      return irs::memory::make_managed<Disjunction>(std::move(res),
+                                                    1U);  // custom cost
+    }();
 
-    using ExpectedType =
-      irs::SmallDisjunction<irs::ScoreAdapter,
-                            irs::Aggregator<irs::MaxMerger, 1>>;
-    ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
-    auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
+    auto& it = *it_ptr;
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
 
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_TRUE(score.IsDefault());
 
     // cost
     ASSERT_EQ(1, irs::CostAttr::extract(it));
@@ -3185,26 +3097,26 @@ TEST(small_disjunction_test, scored_seek_next) {
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
-    ASSERT_EQ(4, tmp);  // std::max(1, 2, 4)
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // std::max(1, 2, 4)
     ASSERT_EQ(5, it.seek(5));
-    score(&tmp);
-    ASSERT_EQ(4, tmp);  // std::max(1, 2, 4)
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // std::max(1, 2, 4)
     ASSERT_TRUE(it.next());
     ASSERT_EQ(6, it.value());
-    score(&tmp);
-    ASSERT_EQ(4, tmp);  // std::max(2, 4)
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // std::max(2, 4)
     ASSERT_TRUE(it.next());
     ASSERT_EQ(7, it.value());
-    score(&tmp);
-    ASSERT_EQ(1, tmp);  // std::max(1)
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // std::max(1)
     ASSERT_EQ(29, it.seek(27));
-    score(&tmp);
-    ASSERT_EQ(2, tmp);  // std::max(2)
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // std::max(2)
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
-    score(&tmp);
-    ASSERT_EQ(1, tmp);  // std::max(1)
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // std::max(1)
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
     ASSERT_FALSE(it.next());
@@ -3213,42 +3125,34 @@ TEST(small_disjunction_test, scored_seek_next) {
 
   // disjunction with score, sub-iterators partially with scores, aggregation
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort{{1, 0, 4}};
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers::Prepare(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6},
-                      irs::Scorers::Prepare(sort4));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
-        using Disjunction = irs::SmallDisjunction<irs::ScoreAdapter, A>;
-        using Adapter = irs::ScoreAdapter;
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      using Disjunction = irs::SmallDisjunction<irs::ScoreAdapter>;
+      using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+      auto res = detail::ExecuteAll<Adapter>(docs);
 
-        return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 1U);  // custom cost
-      });
+      return irs::memory::make_managed<Disjunction>(std::move(res),
+                                                    1U);  // custom cost
+    }();
 
-    using ExpectedType =
-      irs::SmallDisjunction<irs::ScoreAdapter,
-                            irs::Aggregator<irs::SumMerger, 1>>;
-    ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
-    auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
+    auto& it = *it_ptr;
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
 
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_TRUE(score.IsDefault());
 
     // cost
     ASSERT_EQ(1, irs::CostAttr::extract(it));
@@ -3257,26 +3161,32 @@ TEST(small_disjunction_test, scored_seek_next) {
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
-    ASSERT_EQ(5, tmp);  // 1+4
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 1+4
     ASSERT_EQ(5, it.seek(5));
-    score(&tmp);
-    ASSERT_EQ(5, tmp);  // 1+4
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 1+4
     ASSERT_TRUE(it.next());
     ASSERT_EQ(6, it.value());
-    score(&tmp);
-    ASSERT_EQ(4, tmp);  // 4
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 4
     ASSERT_TRUE(it.next());
     ASSERT_EQ(7, it.value());
-    score(&tmp);
-    ASSERT_EQ(1, tmp);  // 1
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 1
     ASSERT_EQ(29, it.seek(27));
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);  //
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
-    score(&tmp);
-    ASSERT_EQ(1, tmp);  // 1
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 1
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
     ASSERT_FALSE(it.next());
@@ -3285,42 +3195,34 @@ TEST(small_disjunction_test, scored_seek_next) {
 
   // disjunction with score, sub-iterators partially with scores, max scores
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort{{1, 0, 4}};
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers::Prepare(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6},
-                      irs::Scorers::Prepare(sort4));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
-        using Disjunction = irs::SmallDisjunction<irs::ScoreAdapter, A>;
-        using Adapter = irs::ScoreAdapter;
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      using Disjunction = irs::SmallDisjunction<irs::ScoreAdapter>;
+      using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+      auto res = detail::ExecuteAll<Adapter>(docs);
 
-        return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 1U);  // custom cost
-      });
+      return irs::memory::make_managed<Disjunction>(std::move(res),
+                                                    1U);  // custom cost
+    }();
 
-    using ExpectedType =
-      irs::SmallDisjunction<irs::ScoreAdapter,
-                            irs::Aggregator<irs::MaxMerger, 1>>;
-    ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
-    auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
+    auto& it = *it_ptr;
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
 
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_TRUE(score.IsDefault());
 
     // cost
     ASSERT_EQ(1, irs::CostAttr::extract(it));
@@ -3329,26 +3231,26 @@ TEST(small_disjunction_test, scored_seek_next) {
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
-    ASSERT_EQ(4, tmp);  // std::max(1, 4)
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // std::max(1, 4)
     ASSERT_EQ(5, it.seek(5));
-    score(&tmp);
-    ASSERT_EQ(4, tmp);  // std::max(1, 4)
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // std::max(1, 4)
     ASSERT_TRUE(it.next());
     ASSERT_EQ(6, it.value());
-    score(&tmp);
-    ASSERT_EQ(4, tmp);  // std::max(4)
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // std::max(4)
     ASSERT_TRUE(it.next());
     ASSERT_EQ(7, it.value());
-    score(&tmp);
-    ASSERT_EQ(1, tmp);  // std::max(1)
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // std::max(1)
     ASSERT_EQ(29, it.seek(27));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);  // default value
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
-    score(&tmp);
-    ASSERT_EQ(1, tmp);  // std::max(1)
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // std::max(1)
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
     ASSERT_FALSE(it.next());
@@ -3357,38 +3259,35 @@ TEST(small_disjunction_test, scored_seek_next) {
 
   // disjunction with score, sub-iterators partially without scores, aggregation
   {
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6}, irs::Scorers{});
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
-        using Disjunction = irs::SmallDisjunction<irs::ScoreAdapter, A>;
-        using Adapter = irs::ScoreAdapter;
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      using Disjunction = irs::SmallDisjunction<irs::ScoreAdapter>;
+      using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+      auto res = detail::ExecuteAll<Adapter>(docs);
 
-        return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 1U);  // custom cost
-      });
+      return irs::memory::make_managed<Disjunction>(std::move(res),
+                                                    1U);  // custom cost
+    }();
 
-    using ExpectedType =
-      irs::SmallDisjunction<irs::ScoreAdapter,
-                            irs::Aggregator<irs::SumMerger, 1>>;
-    ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
-    auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
+    auto& it = *it_ptr;
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
 
+    detail::CompoundSort sort{{1, 2}};
+
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+
+    ASSERT_TRUE(score.IsDefault());
 
     // cost
     ASSERT_EQ(1, irs::CostAttr::extract(it));
@@ -3397,25 +3296,31 @@ TEST(small_disjunction_test, scored_seek_next) {
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1+4
     ASSERT_EQ(5, it.seek(5));
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1+4
     ASSERT_TRUE(it.next());
     ASSERT_EQ(6, it.value());
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 4
     ASSERT_TRUE(it.next());
     ASSERT_EQ(7, it.value());
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1
     ASSERT_EQ(29, it.seek(27));
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);  //
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
@@ -3425,38 +3330,34 @@ TEST(small_disjunction_test, scored_seek_next) {
 
   // disjunction with score, sub-iterators partially without scores, max
   {
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6}, irs::Scorers{});
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
-        using Disjunction = irs::SmallDisjunction<irs::ScoreAdapter, A>;
-        using Adapter = irs::ScoreAdapter;
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      using Disjunction = irs::SmallDisjunction<irs::ScoreAdapter>;
+      using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+      auto res = detail::ExecuteAll<Adapter>(docs);
 
-        return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 1U);  // custom cost
-      });
+      return irs::memory::make_managed<Disjunction>(std::move(res),
+                                                    1U);  // custom cost
+    }();
 
-    using ExpectedType =
-      irs::SmallDisjunction<irs::ScoreAdapter,
-                            irs::Aggregator<irs::MaxMerger, 1>>;
-    ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
-    auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
+    auto& it = *it_ptr;
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
 
+    detail::CompoundSort sort{{1, 2}};
+
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_TRUE(score.IsDefault());
 
     // cost
     ASSERT_EQ(1, irs::CostAttr::extract(it));
@@ -3465,25 +3366,25 @@ TEST(small_disjunction_test, scored_seek_next) {
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_EQ(5, it.seek(5));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_TRUE(it.next());
     ASSERT_EQ(6, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_TRUE(it.next());
     ASSERT_EQ(7, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_EQ(29, it.seek(27));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
@@ -3498,7 +3399,7 @@ TEST(block_disjunction_test, check_attributes) {
   // no scoring, no order
   {
     using Disjunction = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::NoopAggregator,
+      irs::ScoreAdapter, irs::ScoreMergeType::Noop,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
 
     Disjunction it(Disjunction::Adapters{});
@@ -3508,15 +3409,12 @@ TEST(block_disjunction_test, check_attributes) {
     auto* cost = irs::get<irs::CostAttr>(it);
     ASSERT_NE(nullptr, cost);
     ASSERT_EQ(0, cost->estimate());
-    auto* score = irs::get<irs::ScoreAttr>(it);
-    ASSERT_NE(nullptr, score);
-    ASSERT_TRUE(score->Func() == &irs::ScoreFunction::DefaultScore);
   }
 
   // scoring, no order
   {
     using Disjunction = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::NoopAggregator,
+      irs::ScoreAdapter, irs::ScoreMergeType::Noop,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
 
     Disjunction it(Disjunction::Adapters{});
@@ -3526,57 +3424,63 @@ TEST(block_disjunction_test, check_attributes) {
     auto* cost = irs::get<irs::CostAttr>(it);
     ASSERT_NE(nullptr, cost);
     ASSERT_EQ(0, cost->estimate());
-    auto* score = irs::get<irs::ScoreAttr>(it);
-    ASSERT_NE(nullptr, score);
-    ASSERT_TRUE(score->Func() == &irs::ScoreFunction::DefaultScore);
   }
 
   // no scoring, order
   {
-    auto scorer = irs::BM25{};
-    auto prepared = irs::Scorers::Prepare(scorer);
+    auto sort = detail::CompoundSort{{1}};
+
+    std::vector<std::vector<irs::doc_id_t>> docs{
+      {},
+    };
 
     using Disjunction = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+      irs::ScoreAdapter, irs::ScoreMergeType::Sum,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
 
-    Disjunction it(Disjunction::Adapters{}, size_t{});
+    Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 1, size_t{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_NE(nullptr, doc);
-    ASSERT_TRUE(irs::doc_limits::eof(doc->value));
+    ASSERT_FALSE(irs::doc_limits::eof(doc->value));
     auto* cost = irs::get<irs::CostAttr>(it);
     ASSERT_NE(nullptr, cost);
     ASSERT_EQ(0, cost->estimate());
-    auto* score = irs::get<irs::ScoreAttr>(it);
-    ASSERT_NE(nullptr, score);
-    ASSERT_TRUE(score->Func() != &irs::ScoreFunction::DefaultScore);
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
   }
 
   // scoring, order
   {
-    auto scorer = irs::BM25{};
-    auto prepared = irs::Scorers::Prepare(scorer);
+    std::vector<std::vector<irs::doc_id_t>> docs{
+      {},
+    };
+    auto sort = detail::CompoundSort{{1}};
 
     using Disjunction = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+      irs::ScoreAdapter, irs::ScoreMergeType::Sum,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
 
-    Disjunction it(Disjunction::Adapters{}, size_t{});
+    Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs), 1, size_t{});
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_NE(nullptr, doc);
-    ASSERT_TRUE(irs::doc_limits::eof(doc->value));
+    ASSERT_FALSE(irs::doc_limits::eof(doc->value));
     auto* cost = irs::get<irs::CostAttr>(it);
     ASSERT_NE(nullptr, cost);
     ASSERT_EQ(0, cost->estimate());
-    auto* score = irs::get<irs::ScoreAttr>(it);
-    ASSERT_NE(nullptr, score);
-    ASSERT_FALSE(score->Func() == &irs::ScoreFunction::DefaultScore);
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
   }
 }
 
 TEST(block_disjunction_test, next) {
   using Disjunction = irs::BlockDisjunction<
-    irs::ScoreAdapter, irs::NoopAggregator,
+    irs::ScoreAdapter, irs::ScoreMergeType::Noop,
     irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
 
   auto sum = [](size_t sum, const std::vector<irs::doc_id_t>& docs) {
@@ -4107,37 +4011,38 @@ TEST(block_disjunction_test, next_scored) {
     std::vector<std::pair<irs::doc_id_t, size_t>> result;
 
     {
-      detail::BasicSort sort{1};
-      std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-      docs.emplace_back(
-        std::make_pair(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                       irs::Scorers::Prepare(sort)));
+      std::vector<std::vector<irs::doc_id_t>> docs;
+      docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
 
       auto it_ptr = irs::ResolveMergeType(
-        irs::ScoreMergeType::Sum, irs::Scorers::kUnordered.buckets().size(),
-        [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+        irs::ScoreMergeType::Noop,
+        [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
           using Disjunction = irs::BlockDisjunction<
-            irs::ScoreAdapter, A,
+            irs::ScoreAdapter, MergeType,
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
           using Adapter = irs::ScoreAdapter;
 
           auto res = detail::ExecuteAll<Adapter>(docs);
 
           return irs::memory::make_managed<Disjunction>(
-            std::move(res), std::move(aggregator), 1U);  // custom cost
+            std::move(res), size_t{1}, size_t{1});  // custom cost
         });
 
       using ExpectedType = irs::BlockDisjunction<
-        irs::ScoreAdapter, irs::NoopAggregator,
+        irs::ScoreAdapter, irs::ScoreMergeType::Noop,
         irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
 
       ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
       auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
+      detail::CompoundSort sort{{}};
+
       // score, no order set
-      auto& score = irs::ScoreAttr::get(it);
-      ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-      ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+      auto score = it.PrepareScore({
+        .scorer = &sort,
+        .segment = &irs::SubReader::empty(),
+      });
+      ASSERT_TRUE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -4161,51 +4066,53 @@ TEST(block_disjunction_test, next_scored) {
   // single iterator case, values don't fit single block
   // disjunction score, sub-iterators with scores
   {
-    detail::BasicSort sort{1};
+    detail::CompoundSort sort{{1}};
 
     std::vector<std::pair<irs::doc_id_t, irs::score_t>> expected{
       {1, 1.f},  {2, 1.f},  {5, 1.f},  {7, 1.f},  {9, 1.f},
       {11, 1.f}, {45, 1.f}, {65, 1.f}, {78, 1.f}, {127, 1.f}};
     std::vector<std::pair<irs::doc_id_t, irs::score_t>> result;
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::make_pair(
-      std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45, 65, 78, 127},
-      irs::Scorers::Prepare(sort)));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(
+      std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45, 65, 78, 127});
     {
       auto it_ptr = irs::ResolveMergeType(
-        irs::ScoreMergeType::Sum, 1,
-        [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+        irs::ScoreMergeType::Sum,
+        [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
           using Disjunction = irs::BlockDisjunction<
-            irs::ScoreAdapter, A,
+            irs::ScoreAdapter, MergeType,
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
           using Adapter = irs::ScoreAdapter;
 
           auto res = detail::ExecuteAll<Adapter>(docs);
 
           return irs::memory::make_managed<Disjunction>(
-            std::move(res), std::move(aggregator), 1U);  // custom cost
+            std::move(res), size_t{1}, size_t{1});  // custom cost
         });
 
       using ExpectedType = irs::BlockDisjunction<
-        irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+        irs::ScoreAdapter, irs::ScoreMergeType::Sum,
         irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
       ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
       auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
       // score is set
-      auto& score = irs::ScoreAttr::get(it);
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-      ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+      auto score = it.PrepareScore({
+        .scorer = &sort,
+        .segment = &irs::SubReader::empty(),
+      });
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(1, irs::CostAttr::extract(it));
       for (; it.next();) {
+        it.FetchScoreArgs(0);
         ASSERT_EQ(doc->value, it.value());
         irs::score_t score_value{};
-        score(&score_value);
+        score_value = score.Score();
         result.emplace_back(it.value(), score_value);
         ASSERT_EQ(1, it.MatchCount());
       }
@@ -4221,43 +4128,43 @@ TEST(block_disjunction_test, next_scored) {
   // single iterator case, values don't fit single block, gap between block
   // disjunction score, sub-iterators with scores
   {
-    detail::BasicSort sort{2};
+    detail::CompoundSort sort{{2}};
 
     std::vector<std::pair<irs::doc_id_t, irs::score_t>> expected{
       {1, 2.f},  {2.f, 2.f},  {5, 2.f},      {7, 2.f},       {9, 2.f},
       {11, 2.f}, {1145, 2.f}, {111165, 2.f}, {1111178, 2.f}, {111111127, 2.f}};
     std::vector<std::pair<irs::doc_id_t, irs::score_t>> result;
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(
-      std::make_pair(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 1145, 111165,
-                                                1111178, 111111127},
-                     irs::Scorers::Prepare(sort)));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 1145,
+                                                 111165, 1111178, 111111127});
     {
       auto it_ptr = irs::ResolveMergeType(
-        irs::ScoreMergeType::Sum, 1,
-        [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+        irs::ScoreMergeType::Sum,
+        [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
           using Disjunction = irs::BlockDisjunction<
-            irs::ScoreAdapter, A,
+            irs::ScoreAdapter, MergeType,
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
           using Adapter = irs::ScoreAdapter;
 
           auto res = detail::ExecuteAll<Adapter>(docs);
 
           return irs::memory::make_managed<Disjunction>(
-            std::move(res), std::move(aggregator), 2U);  // custom cost
+            std::move(res), size_t{1}, size_t{2});  // custom cost
         });
 
       using ExpectedType = irs::BlockDisjunction<
-        irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+        irs::ScoreAdapter, irs::ScoreMergeType::Sum,
         irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
       ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
       auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
       // score is set
-      auto& score = irs::ScoreAttr::get(it);
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-      ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+      auto score = it.PrepareScore({
+        .scorer = &sort,
+        .segment = &irs::SubReader::empty(),
+      });
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
@@ -4265,9 +4172,10 @@ TEST(block_disjunction_test, next_scored) {
       ASSERT_EQ(2, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
+        it.FetchScoreArgs(0);
         ASSERT_EQ(doc->value, it.value());
         irs::score_t score_value{};
-        score(&score_value);
+        score_value = score.Score();
         result.emplace_back(it.value(), score_value);
         ASSERT_EQ(1, it.MatchCount());
       }
@@ -4283,44 +4191,44 @@ TEST(block_disjunction_test, next_scored) {
   // single block
   // disjunction without score, sub-iterators with scores
   {
-    detail::BasicSort sort{2};
+    detail::CompoundSort sort{{2, 0}};
 
     std::vector<std::pair<irs::doc_id_t, size_t>> expected{
       {1, 0}, {2, 0},  {5, 0},  {6, 0},  {7, 0},
       {9, 0}, {11, 0}, {12, 0}, {29, 0}, {45, 0}};
     std::vector<std::pair<irs::doc_id_t, size_t>> result;
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers::Prepare(sort));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers{});
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
 
     {
       auto it_ptr = irs::ResolveMergeType(
-        irs::ScoreMergeType::Sum, 0,
-        [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+        irs::ScoreMergeType::Noop,
+        [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
           using Disjunction = irs::BlockDisjunction<
-            irs::ScoreAdapter, A,
+            irs::ScoreAdapter, MergeType,
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
           using Adapter = irs::ScoreAdapter;
 
           auto res = detail::ExecuteAll<Adapter>(docs);
 
           return irs::memory::make_managed<Disjunction>(
-            std::move(res), std::move(aggregator), 2U);  // custom cost
+            std::move(res), size_t{1}, size_t{2});  // custom cost
         });
 
       using ExpectedType = irs::BlockDisjunction<
-        irs::ScoreAdapter, irs::NoopAggregator,
+        irs::ScoreAdapter, irs::ScoreMergeType::Noop,
         irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
       ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
       auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
       // score, no order set
-      auto& score = irs::ScoreAttr::get(it);
-      ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-      ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+      auto score = it.PrepareScore({
+        .scorer = &sort,
+        .segment = &irs::SubReader::empty(),
+      });
+      ASSERT_TRUE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
@@ -4328,6 +4236,7 @@ TEST(block_disjunction_test, next_scored) {
       ASSERT_EQ(2, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
+        it.FetchScoreArgs(0);
         ASSERT_EQ(doc->value, it.value());
         result.emplace_back(it.value(), 0);
         ASSERT_EQ(1, it.MatchCount());
@@ -4344,43 +4253,43 @@ TEST(block_disjunction_test, next_scored) {
   // values don't fit single block
   // disjunction score, sub-iterators with partially with scores
   {
-    detail::BasicSort sort{3};
+    detail::CompoundSort sort{{3, 0}};
 
     std::vector<std::pair<irs::doc_id_t, size_t>> expected{
       {1, 3},  {2, 3},  {5, 3},  {6, 0},  {7, 3},  {9, 3},   {11, 3},
       {12, 0}, {29, 0}, {45, 3}, {65, 3}, {78, 3}, {126, 0}, {127, 3}};
     std::vector<std::pair<irs::doc_id_t, size_t>> result;
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::make_pair(
-      std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45, 65, 78, 127},
-      irs::Scorers::Prepare(sort)));
-    docs.emplace_back(std::make_pair(
-      std::vector<irs::doc_id_t>{1, 5, 6, 12, 29, 126}, irs::Scorers{}));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(
+      std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45, 65, 78, 127});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29, 126});
     {
       auto it_ptr = irs::ResolveMergeType(
-        irs::ScoreMergeType::Sum, 1,
-        [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+        irs::ScoreMergeType::Sum,
+        [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
           using Disjunction = irs::BlockDisjunction<
-            irs::ScoreAdapter, A,
+            irs::ScoreAdapter, MergeType,
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
           using Adapter = irs::ScoreAdapter;
 
           auto res = detail::ExecuteAll<Adapter>(docs);
 
           return irs::memory::make_managed<Disjunction>(
-            std::move(res), std::move(aggregator), 2U);  // custom cost
+            std::move(res), size_t{1}, size_t{2});  // custom cost
         });
 
       using ExpectedType = irs::BlockDisjunction<
-        irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+        irs::ScoreAdapter, irs::ScoreMergeType::Sum,
         irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
       ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
       auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
       // score is set
-      auto& score = irs::ScoreAttr::get(it);
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-      ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+      auto score = it.PrepareScore({
+        .scorer = &sort,
+        .segment = &irs::SubReader::empty(),
+      });
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -4388,9 +4297,10 @@ TEST(block_disjunction_test, next_scored) {
       ASSERT_EQ(2, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
+        it.FetchScoreArgs(0);
         ASSERT_EQ(doc->value, it.value());
         irs::score_t score_value{};
-        score(&score_value);
+        score_value = score.Score();
         result.emplace_back(it.value(), score_value);
         ASSERT_EQ(1, it.MatchCount());
       }
@@ -4400,13 +4310,12 @@ TEST(block_disjunction_test, next_scored) {
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
 
-    ASSERT_EQ(expected, result);
+    EXPECT_EQ(expected, result);
   }
 
   // values don't fit single block, aggregation
   {
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort3{3};
+    detail::CompoundSort sort{{3, 2}};
 
     std::vector<std::pair<irs::doc_id_t, size_t>> expected{{1, 5},
                                                            {2, 3},
@@ -4426,39 +4335,37 @@ TEST(block_disjunction_test, next_scored) {
                                                            {1111178, 3},
                                                            {111111127, 3}};
     std::vector<std::pair<irs::doc_id_t, size_t>> result;
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(
-      std::make_pair(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 1145, 111165,
-                                                1111178, 111111127},
-                     irs::Scorers::Prepare(sort3)));
-    docs.emplace_back(
-      std::make_pair(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29, 126},
-                     irs::Scorers::Prepare(sort2)));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 1145,
+                                                 111165, 1111178, 111111127});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29, 126});
     {
       auto it_ptr = irs::ResolveMergeType(
-        irs::ScoreMergeType::Sum, 1,
-        [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+        irs::ScoreMergeType::Sum,
+        [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
           using Disjunction = irs::BlockDisjunction<
-            irs::ScoreAdapter, A,
+            irs::ScoreAdapter, MergeType,
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
           using Adapter = irs::ScoreAdapter;
 
           auto res = detail::ExecuteAll<Adapter>(docs);
 
           return irs::memory::make_managed<Disjunction>(
-            std::move(res), std::move(aggregator), 2U);  // custom cost
+            std::move(res), size_t{1}, size_t{2});  // custom cost
         });
 
       using ExpectedType = irs::BlockDisjunction<
-        irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+        irs::ScoreAdapter, irs::ScoreMergeType::Sum,
         irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
       ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
       auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
       // score is set
-      auto& score = irs::ScoreAttr::get(it);
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-      ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+      auto score = it.PrepareScore({
+        .scorer = &sort,
+        .segment = &irs::SubReader::empty(),
+      });
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
@@ -4466,9 +4373,10 @@ TEST(block_disjunction_test, next_scored) {
       ASSERT_EQ(2, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
+        it.FetchScoreArgs(0);
         ASSERT_EQ(doc->value, it.value());
         irs::score_t score_value{};
-        score(&score_value);
+        score_value = score.Score();
         result.emplace_back(it.value(), score_value);
         ASSERT_EQ(1, it.MatchCount());
       }
@@ -4483,8 +4391,7 @@ TEST(block_disjunction_test, next_scored) {
 
   // values don't fit single block, max
   {
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort3{3};
+    detail::CompoundSort sort{{2, 3}};
 
     std::vector<std::pair<irs::doc_id_t, size_t>> expected{{1, 3},
                                                            {2, 3},
@@ -4504,39 +4411,37 @@ TEST(block_disjunction_test, next_scored) {
                                                            {1111178, 3},
                                                            {111111127, 3}};
     std::vector<std::pair<irs::doc_id_t, size_t>> result;
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(
-      std::make_pair(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 1145, 111165,
-                                                1111178, 111111127},
-                     irs::Scorers::Prepare(sort3)));
-    docs.emplace_back(
-      std::make_pair(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29, 126},
-                     irs::Scorers::Prepare(sort2)));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29, 126});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 1145,
+                                                 111165, 1111178, 111111127});
     {
       auto it_ptr = irs::ResolveMergeType(
-        irs::ScoreMergeType::Max, 1,
-        [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+        irs::ScoreMergeType::Max,
+        [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
           using Disjunction = irs::BlockDisjunction<
-            irs::ScoreAdapter, A,
+            irs::ScoreAdapter, MergeType,
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
           using Adapter = irs::ScoreAdapter;
 
           auto res = detail::ExecuteAll<Adapter>(docs);
 
           return irs::memory::make_managed<Disjunction>(
-            std::move(res), std::move(aggregator), 2U);  // custom cost
+            std::move(res), size_t{1}, size_t{2});  // custom cost
         });
 
       using ExpectedType = irs::BlockDisjunction<
-        irs::ScoreAdapter, irs::Aggregator<irs::MaxMerger, 1>,
+        irs::ScoreAdapter, irs::ScoreMergeType::Max,
         irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
       ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
       auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
       // score is set
-      auto& score = irs::ScoreAttr::get(it);
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-      ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+      auto score = it.PrepareScore({
+        .scorer = &sort,
+        .segment = &irs::SubReader::empty(),
+      });
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
@@ -4544,9 +4449,10 @@ TEST(block_disjunction_test, next_scored) {
       ASSERT_EQ(2, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
+        it.FetchScoreArgs(0);
         ASSERT_EQ(doc->value, it.value());
         irs::score_t score_value{};
-        score(&score_value);
+        score_value = score.Score();
         result.emplace_back(it.value(), score_value);
         ASSERT_EQ(1, it.MatchCount());
       }
@@ -4561,47 +4467,45 @@ TEST(block_disjunction_test, next_scored) {
 
   // disjunction score, sub-iterators partially with scores
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort{{4, 0, 1}};
 
     std::vector<std::pair<irs::doc_id_t, size_t>> expected{
       {1, 4},      {2, 4},       {5, 4},         {7, 4},
       {9, 4},      {11, 4},      {45, 0},        {1145, 4},
       {111165, 4}, {1111178, 4}, {111111127, 4}, {1111111127, 1}};
     std::vector<std::pair<irs::doc_id_t, size_t>> result;
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
+    std::vector<std::vector<irs::doc_id_t>> docs;
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 1145,
-                                                 111165, 1111178, 111111127},
-                      irs::Scorers::Prepare(sort4));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{1111111127},
-                      irs::Scorers::Prepare(sort1));
+                                                 111165, 1111178, 111111127});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1111111127});
     {
       auto it_ptr = irs::ResolveMergeType(
-        irs::ScoreMergeType::Sum, 1,
-        [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+        irs::ScoreMergeType::Sum,
+        [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
           using Disjunction = irs::BlockDisjunction<
-            irs::ScoreAdapter, A,
+            irs::ScoreAdapter, MergeType,
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
           using Adapter = irs::ScoreAdapter;
 
           auto res = detail::ExecuteAll<Adapter>(docs);
 
           return irs::memory::make_managed<Disjunction>(
-            std::move(res), std::move(aggregator), 2U);  // custom cost
+            std::move(res), size_t{1}, size_t{2});  // custom cost
         });
 
       using ExpectedType = irs::BlockDisjunction<
-        irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+        irs::ScoreAdapter, irs::ScoreMergeType::Sum,
         irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
       ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
       auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
       // score is set
-      auto& score = irs::ScoreAttr::get(it);
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-      ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+      auto score = it.PrepareScore({
+        .scorer = &sort,
+        .segment = &irs::SubReader::empty(),
+      });
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
@@ -4609,9 +4513,10 @@ TEST(block_disjunction_test, next_scored) {
       ASSERT_EQ(2, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
+        it.FetchScoreArgs(0);
         ASSERT_EQ(doc->value, it.value());
         irs::score_t score_value{};
-        score(&score_value);
+        score_value = score.Score();
         result.emplace_back(it.value(), score_value);
         ASSERT_EQ(1, it.MatchCount());
       }
@@ -4626,51 +4531,51 @@ TEST(block_disjunction_test, next_scored) {
 
   // same datasets
   {
-    detail::BasicSort sort4{4};
-    detail::BasicSort sort5{5};
+    detail::CompoundSort sort{{4, 5}};
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers::Prepare(sort4));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers::Prepare(sort5));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
 
     std::vector<irs::doc_id_t> result;
     {
       auto it_ptr = irs::ResolveMergeType(
-        irs::ScoreMergeType::Sum, 1,
-        [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+        irs::ScoreMergeType::Sum,
+        [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
           using Disjunction = irs::BlockDisjunction<
-            irs::ScoreAdapter, A,
+            irs::ScoreAdapter, MergeType,
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
           using Adapter = irs::ScoreAdapter;
 
           auto res = detail::ExecuteAll<Adapter>(docs);
 
           return irs::memory::make_managed<Disjunction>(
-            std::move(res), std::move(aggregator), 2U);  // custom cost
+            std::move(res), size_t{1}, size_t{2});  // custom cost
         });
 
       using ExpectedType = irs::BlockDisjunction<
-        irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+        irs::ScoreAdapter, irs::ScoreMergeType::Sum,
         irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
       ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
       auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
       // score is set
-      auto& score = irs::ScoreAttr::get(it);
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-      ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+      auto score = it.PrepareScore({
+        .scorer = &sort,
+        .segment = &irs::SubReader::empty(),
+      });
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
       ASSERT_EQ(2, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
+        it.FetchScoreArgs(0);
         ASSERT_EQ(doc->value, it.value());
         result.push_back(it.value());
         irs::score_t score_value{};
-        score(&score_value);
+        score_value = score.Score();
         ASSERT_EQ(9.f, score_value);
         ASSERT_EQ(1, it.MatchCount());
       }
@@ -4679,52 +4584,54 @@ TEST(block_disjunction_test, next_scored) {
       ASSERT_FALSE(it.next());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
-    ASSERT_EQ(docs.front().first, result);
+    ASSERT_EQ(docs.front(), result);
   }
 
   // single dataset
   {
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort{{4}};
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{24},
-                      irs::Scorers::Prepare(sort4));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{24});
 
     std::vector<irs::doc_id_t> result;
     {
       auto it_ptr = irs::ResolveMergeType(
-        irs::ScoreMergeType::Sum, 1,
-        [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+        irs::ScoreMergeType::Sum,
+        [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
           using Disjunction = irs::BlockDisjunction<
-            irs::ScoreAdapter, A,
+            irs::ScoreAdapter, MergeType,
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
           using Adapter = irs::ScoreAdapter;
 
           auto res = detail::ExecuteAll<Adapter>(docs);
 
           return irs::memory::make_managed<Disjunction>(
-            std::move(res), std::move(aggregator), 2U);  // custom cost
+            std::move(res), size_t{1}, size_t{2});  // custom cost
         });
 
       using ExpectedType = irs::BlockDisjunction<
-        irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+        irs::ScoreAdapter, irs::ScoreMergeType::Sum,
         irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
       ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
       auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
       // score is set
-      auto& score = irs::ScoreAttr::get(it);
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-      ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+      auto score = it.PrepareScore({
+        .scorer = &sort,
+        .segment = &irs::SubReader::empty(),
+      });
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
       ASSERT_EQ(2, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
+        it.FetchScoreArgs(0);
         result.push_back(it.value());
         irs::score_t score_value{};
-        score(&score_value);
+        score_value = score.Score();
         ASSERT_EQ(4.f, score_value);
         ASSERT_EQ(1, it.MatchCount());
       }
@@ -4733,44 +4640,42 @@ TEST(block_disjunction_test, next_scored) {
       ASSERT_FALSE(it.next());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
-    ASSERT_EQ(docs.front().first, result);
+    ASSERT_EQ(docs.front(), result);
   }
 
   // empty
   {
-    detail::BasicSort sort4{4};
-    detail::BasicSort sort5{5};
+    detail::CompoundSort sort{{4, 5}};
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{},
-                      irs::Scorers::Prepare(sort4));
-    docs.emplace_back(std::vector<irs::doc_id_t>{},
-                      irs::Scorers::Prepare(sort5));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{});
+    docs.emplace_back(std::vector<irs::doc_id_t>{});
     {
       auto it_ptr = irs::ResolveMergeType(
-        irs::ScoreMergeType::Sum, 1,
-        [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+        irs::ScoreMergeType::Sum,
+        [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
           using Disjunction = irs::BlockDisjunction<
-            irs::ScoreAdapter, A,
+            irs::ScoreAdapter, MergeType,
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
           using Adapter = irs::ScoreAdapter;
 
           auto res = detail::ExecuteAll<Adapter>(docs);
 
-          return irs::memory::make_managed<Disjunction>(
-            std::move(res), std::move(aggregator));  // custom cost
+          return irs::memory::make_managed<Disjunction>(std::move(res));
         });
 
       using ExpectedType = irs::BlockDisjunction<
-        irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+        irs::ScoreAdapter, irs::ScoreMergeType::Sum,
         irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
       ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
       auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
       // score is set
-      auto& score = irs::ScoreAttr::get(it);
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-      ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+      auto score = it.PrepareScore({
+        .scorer = &sort,
+        .segment = &irs::SubReader::empty(),
+      });
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -4785,14 +4690,18 @@ TEST(block_disjunction_test, next_scored) {
   // no iterators provided
   {
     using Disjunction = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+      irs::ScoreAdapter, irs::ScoreMergeType::Sum,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
 
-    Disjunction it(Disjunction::Adapters{}, size_t{});
+    Disjunction it(Disjunction::Adapters{}, 1, size_t{});
 
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    detail::CompoundSort sort{{4, 5}};
+
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_TRUE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -4805,17 +4714,12 @@ TEST(block_disjunction_test, next_scored) {
   }
 
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort{{4, 2, 1}};
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers::Prepare(sort4));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers::Prepare(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6},
-                      irs::Scorers::Prepare(sort1));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
 
     std::vector<std::pair<irs::doc_id_t, size_t>> expected{
       {1, 4}, {2, 4},  {5, 4},  {6, 2},  {7, 4},
@@ -4823,38 +4727,41 @@ TEST(block_disjunction_test, next_scored) {
     std::vector<std::pair<irs::doc_id_t, size_t>> result;
     {
       auto it_ptr = irs::ResolveMergeType(
-        irs::ScoreMergeType::Max, 1,
-        [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+        irs::ScoreMergeType::Max,
+        [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
           using Disjunction = irs::BlockDisjunction<
-            irs::ScoreAdapter, A,
+            irs::ScoreAdapter, MergeType,
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
           using Adapter = irs::ScoreAdapter;
 
           auto res = detail::ExecuteAll<Adapter>(docs);
 
           return irs::memory::make_managed<Disjunction>(
-            std::move(res), std::move(aggregator), 3U);  // custom cost
+            std::move(res), size_t{1}, size_t{3});  // custom cost
         });
 
       using ExpectedType = irs::BlockDisjunction<
-        irs::ScoreAdapter, irs::Aggregator<irs::MaxMerger, 1>,
+        irs::ScoreAdapter, irs::ScoreMergeType::Max,
         irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
       ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
       auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
       // score is set
-      auto& score = irs::ScoreAttr::get(it);
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-      ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+      auto score = it.PrepareScore({
+        .scorer = &sort,
+        .segment = &irs::SubReader::empty(),
+      });
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
       ASSERT_EQ(3, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
+        it.FetchScoreArgs(0);
         ASSERT_EQ(doc->value, it.value());
         irs::score_t score_value{};
-        score(&score_value);
+        score_value = score.Score();
         result.emplace_back(it.value(), score_value);
         ASSERT_EQ(1, it.MatchCount());
       }
@@ -4867,23 +4774,14 @@ TEST(block_disjunction_test, next_scored) {
   }
 
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
-    detail::BasicSort sort8{8};
-    detail::BasicSort sort16{16};
+    detail::CompoundSort sort{{16, 8, 4, 2, 1}};
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers::Prepare(sort16));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers::Prepare(sort8));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6},
-                      irs::Scorers::Prepare(sort4));
-    docs.emplace_back(std::vector<irs::doc_id_t>{256},
-                      irs::Scorers::Prepare(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{11, 79, 101, 141, 1025, 1101},
-                      irs::Scorers::Prepare(sort1));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
+    docs.emplace_back(std::vector<irs::doc_id_t>{256});
+    docs.emplace_back(std::vector<irs::doc_id_t>{11, 79, 101, 141, 1025, 1101});
 
     std::vector<std::pair<irs::doc_id_t, size_t>> expected{
       {1, 28},  {2, 16},  {5, 28},   {6, 12},  {7, 16}, {9, 16},
@@ -4892,38 +4790,41 @@ TEST(block_disjunction_test, next_scored) {
     std::vector<std::pair<irs::doc_id_t, size_t>> result;
     {
       auto it_ptr = irs::ResolveMergeType(
-        irs::ScoreMergeType::Sum, 1,
-        [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+        irs::ScoreMergeType::Sum,
+        [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
           using Disjunction = irs::BlockDisjunction<
-            irs::ScoreAdapter, A,
+            irs::ScoreAdapter, MergeType,
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
           using Adapter = irs::ScoreAdapter;
 
           auto res = detail::ExecuteAll<Adapter>(docs);
 
           return irs::memory::make_managed<Disjunction>(
-            std::move(res), std::move(aggregator), 3U);  // custom cost
+            std::move(res), size_t{1}, size_t{3});  // custom cost
         });
 
       using ExpectedType = irs::BlockDisjunction<
-        irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+        irs::ScoreAdapter, irs::ScoreMergeType::Sum,
         irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
       ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
       auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
       // score is set
-      auto& score = irs::ScoreAttr::get(it);
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-      ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+      auto score = it.PrepareScore({
+        .scorer = &sort,
+        .segment = &irs::SubReader::empty(),
+      });
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
       ASSERT_EQ(3, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
+        it.FetchScoreArgs(0);
         ASSERT_EQ(doc->value, it.value());
         irs::score_t score_value{};
-        score(&score_value);
+        score_value = score.Score();
         result.emplace_back(it.value(), score_value);
         ASSERT_EQ(1, it.MatchCount());
       }
@@ -4936,55 +4837,53 @@ TEST(block_disjunction_test, next_scored) {
   }
 
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort{{1, 2, 4}};
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1},
-                      irs::Scorers::Prepare(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{2},
-                      irs::Scorers::Prepare(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{3},
-                      irs::Scorers::Prepare(sort4));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1});
+    docs.emplace_back(std::vector<irs::doc_id_t>{2});
+    docs.emplace_back(std::vector<irs::doc_id_t>{3});
 
     std::vector<std::pair<irs::doc_id_t, size_t>> expected{
       {1, 1}, {2, 2}, {3, 4}};
     std::vector<std::pair<irs::doc_id_t, size_t>> result;
     {
       auto it_ptr = irs::ResolveMergeType(
-        irs::ScoreMergeType::Sum, 1,
-        [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+        irs::ScoreMergeType::Sum,
+        [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
           using Disjunction = irs::BlockDisjunction<
-            irs::ScoreAdapter, A,
+            irs::ScoreAdapter, MergeType,
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
           using Adapter = irs::ScoreAdapter;
 
           auto res = detail::ExecuteAll<Adapter>(docs);
 
           return irs::memory::make_managed<Disjunction>(
-            std::move(res), std::move(aggregator), 3U);  // custom cost
+            std::move(res), size_t{1}, size_t{3});  // custom cost
         });
 
       using ExpectedType = irs::BlockDisjunction<
-        irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+        irs::ScoreAdapter, irs::ScoreMergeType::Sum,
         irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
       ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
       auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
       // score is set
-      auto& score = irs::ScoreAttr::get(it);
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-      ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+      auto score = it.PrepareScore({
+        .scorer = &sort,
+        .segment = &irs::SubReader::empty(),
+      });
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
       ASSERT_EQ(3, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
+        it.FetchScoreArgs(0);
         ASSERT_EQ(doc->value, it.value());
         irs::score_t score_value{};
-        score(&score_value);
+        score_value = score.Score();
         result.emplace_back(it.value(), score_value);
         ASSERT_EQ(1, it.MatchCount());
       }
@@ -4998,54 +4897,52 @@ TEST(block_disjunction_test, next_scored) {
 
   // same datasets
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort{{1, 2, 4}};
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers::Prepare(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers::Prepare(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers::Prepare(sort4));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
 
     std::vector<irs::doc_id_t> result;
     {
       auto it_ptr = irs::ResolveMergeType(
-        irs::ScoreMergeType::Max, 1,
-        [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+        irs::ScoreMergeType::Max,
+        [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
           using Disjunction = irs::BlockDisjunction<
-            irs::ScoreAdapter, A,
+            irs::ScoreAdapter, MergeType,
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
           using Adapter = irs::ScoreAdapter;
 
           auto res = detail::ExecuteAll<Adapter>(docs);
 
           return irs::memory::make_managed<Disjunction>(
-            std::move(res), std::move(aggregator), 3U);  // custom cost
+            std::move(res), size_t{1}, size_t{3});  // custom cost
         });
 
       using ExpectedType = irs::BlockDisjunction<
-        irs::ScoreAdapter, irs::Aggregator<irs::MaxMerger, 1>,
+        irs::ScoreAdapter, irs::ScoreMergeType::Max,
         irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
       ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
       auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
       // score is set
-      auto& score = irs::ScoreAttr::get(it);
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-      ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+      auto score = it.PrepareScore({
+        .scorer = &sort,
+        .segment = &irs::SubReader::empty(),
+      });
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
       ASSERT_EQ(3, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
+        it.FetchScoreArgs(0);
         ASSERT_EQ(doc->value, it.value());
         result.push_back(it.value());
         irs::score_t score_value{};
-        score(&score_value);
+        score_value = score.Score();
         ASSERT_EQ(4, score_value);
         ASSERT_EQ(1, it.MatchCount());
       }
@@ -5054,47 +4951,44 @@ TEST(block_disjunction_test, next_scored) {
       ASSERT_FALSE(it.next());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
-    ASSERT_EQ(docs.front().first, result);
+    ASSERT_EQ(docs.front(), result);
   }
 
   // empty datasets
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort{{1, 2, 4}};
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{},
-                      irs::Scorers::Prepare(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{},
-                      irs::Scorers::Prepare(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{},
-                      irs::Scorers::Prepare(sort4));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{});
+    docs.emplace_back(std::vector<irs::doc_id_t>{});
+    docs.emplace_back(std::vector<irs::doc_id_t>{});
 
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Max,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
         auto res = detail::ExecuteAll<Adapter>(docs);
 
         return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 3U);  // custom cost
+          std::move(res), size_t{1}, size_t{3});  // custom cost
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::Aggregator<irs::MaxMerger, 1>,
+      irs::ScoreAdapter, irs::ScoreMergeType::Max,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
     // score is set
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -5108,47 +5002,45 @@ TEST(block_disjunction_test, next_scored) {
 }
 
 TEST(block_disjunction_test, next_scored_two_blocks) {
-  auto order = [](auto& scorer) -> irs::Scorers {
-    return irs::Scorers::Prepare(scorer);
-  };
-
   // single iterator case, values fit 1 block
   // disjunction without score, sub-iterators with scores
   {
-    detail::BasicSort sort1{1};
+    detail::CompoundSort sort({1});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::make_pair(
-      std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45}, order(sort1)));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
 
     std::vector<std::pair<irs::doc_id_t, size_t>> expected{
       {1, 0}, {2, 0}, {5, 0}, {7, 0}, {9, 0}, {11, 0}, {45, 0}};
     std::vector<std::pair<irs::doc_id_t, size_t>> result;
     {
       auto it_ptr = irs::ResolveMergeType(
-        irs::ScoreMergeType::Max, 0,
-        [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+        irs::ScoreMergeType::Noop,
+        [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
           using Disjunction = irs::BlockDisjunction<
-            irs::ScoreAdapter, A,
+            irs::ScoreAdapter, MergeType,
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
           using Adapter = irs::ScoreAdapter;
 
           auto res = detail::ExecuteAll<Adapter>(docs);
 
-          return irs::memory::make_managed<Disjunction>(
-            std::move(res), std::move(aggregator), 1U);  // custom cost
+          return irs::memory::make_managed<Disjunction>(std::move(res),
+                                                        size_t{1},
+                                                        1U);  // custom cost
         });
 
       using ExpectedType = irs::BlockDisjunction<
-        irs::ScoreAdapter, irs::NoopAggregator,
+        irs::ScoreAdapter, irs::ScoreMergeType::Noop,
         irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
       ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
       auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
       // score, no order set
-      auto& score = irs::ScoreAttr::get(it);
-      ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-      ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+      auto score = it.PrepareScore({
+        .scorer = &sort,
+        .segment = &irs::SubReader::empty(),
+      });
+      ASSERT_TRUE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -5156,6 +5048,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       ASSERT_EQ(1, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       while (it.next()) {
+        it.FetchScoreArgs(0);
         ASSERT_EQ(doc->value, it.value());
         result.emplace_back(it.value(), 0);
         ASSERT_EQ(1, it.MatchCount());
@@ -5172,12 +5065,11 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
   // single iterator case, values don't fit single block
   // disjunction score, sub-iterators with scores
   {
-    detail::BasicSort sort1{1};
+    detail::CompoundSort sort({1});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::make_pair(
-      std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45, 65, 78, 127},
-      order(sort1)));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(
+      std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45, 65, 78, 127});
 
     std::vector<std::pair<irs::doc_id_t, size_t>> expected{
       {1, 1},  {2, 1},  {5, 1},  {7, 1},  {9, 1},
@@ -5185,38 +5077,41 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
     std::vector<std::pair<irs::doc_id_t, size_t>> result;
     {
       auto it_ptr = irs::ResolveMergeType(
-        irs::ScoreMergeType::Sum, 1,
-        [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+        irs::ScoreMergeType::Sum,
+        [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
           using Disjunction = irs::BlockDisjunction<
-            irs::ScoreAdapter, A,
+            irs::ScoreAdapter, MergeType,
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
           using Adapter = irs::ScoreAdapter;
 
           auto res = detail::ExecuteAll<Adapter>(docs);
 
           return irs::memory::make_managed<Disjunction>(
-            std::move(res), std::move(aggregator), 1U);  // custom cost
+            std::move(res), size_t{1}, size_t{1});  // custom cost
         });
 
       using ExpectedType = irs::BlockDisjunction<
-        irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+        irs::ScoreAdapter, irs::ScoreMergeType::Sum,
         irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
       ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
       auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
       // score is set
-      auto& score = irs::ScoreAttr::get(it);
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-      ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+      auto score = it.PrepareScore({
+        .scorer = &sort,
+        .segment = &irs::SubReader::empty(),
+      });
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       ASSERT_EQ(1, irs::CostAttr::extract(it));
       for (; it.next();) {
+        it.FetchScoreArgs(0);
         ASSERT_EQ(doc->value, it.value());
         irs::score_t score_value{};
-        score(&score_value);
+        score_value = score.Score();
         result.emplace_back(it.value(), score_value);
         ASSERT_EQ(1, it.MatchCount());
       }
@@ -5232,13 +5127,11 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
   // single iterator case, values don't fit single block, gap between block
   // disjunction score, sub-iterators with scores
   {
-    detail::BasicSort sort2{2};
+    detail::CompoundSort sort({2});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(
-      std::make_pair(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 1145, 1264,
-                                                111165, 1111178, 111111127},
-                     order(sort2)));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 1145, 1264,
+                                                 111165, 1111178, 111111127});
 
     std::vector<std::pair<irs::doc_id_t, size_t>> expected{
       {1, 2},    {2, 2},    {5, 2},      {7, 2},       {9, 2},        {11, 2},
@@ -5246,29 +5139,31 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
     std::vector<std::pair<irs::doc_id_t, size_t>> result;
     {
       auto it_ptr = irs::ResolveMergeType(
-        irs::ScoreMergeType::Sum, 1,
-        [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+        irs::ScoreMergeType::Sum,
+        [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
           using Disjunction = irs::BlockDisjunction<
-            irs::ScoreAdapter, A,
+            irs::ScoreAdapter, MergeType,
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
           using Adapter = irs::ScoreAdapter;
 
           auto res = detail::ExecuteAll<Adapter>(docs);
 
           return irs::memory::make_managed<Disjunction>(
-            std::move(res), std::move(aggregator), 2U);  // custom cost
+            std::move(res), size_t{1}, size_t{2});  // custom cost
         });
 
       using ExpectedType = irs::BlockDisjunction<
-        irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+        irs::ScoreAdapter, irs::ScoreMergeType::Sum,
         irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
       ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
       auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
       // score is set
-      auto& score = irs::ScoreAttr::get(it);
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-      ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+      auto score = it.PrepareScore({
+        .scorer = &sort,
+        .segment = &irs::SubReader::empty(),
+      });
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
@@ -5276,9 +5171,10 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       ASSERT_EQ(2, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
+        it.FetchScoreArgs(0);
         ASSERT_EQ(doc->value, it.value());
         irs::score_t score_value{};
-        score(&score_value);
+        score_value = score.Score();
         result.emplace_back(it.value(), score_value);
         ASSERT_EQ(1, it.MatchCount());
       }
@@ -5294,42 +5190,42 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
   // single block
   // disjunction without score, sub-iterators with scores
   {
-    detail::BasicSort sort2{2};
+    detail::CompoundSort sort({2});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      order(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers());
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
     std::vector<std::pair<irs::doc_id_t, size_t>> expected{
       {1, 0}, {2, 0},  {5, 0},  {6, 0},  {7, 0},
       {9, 0}, {11, 0}, {12, 0}, {29, 0}, {45, 0}};
     std::vector<std::pair<irs::doc_id_t, size_t>> result;
     {
       auto it_ptr = irs::ResolveMergeType(
-        irs::ScoreMergeType::Sum, 0,
-        [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+        irs::ScoreMergeType::Noop,
+        [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
           using Disjunction = irs::BlockDisjunction<
-            irs::ScoreAdapter, A,
+            irs::ScoreAdapter, MergeType,
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
           using Adapter = irs::ScoreAdapter;
 
           auto res = detail::ExecuteAll<Adapter>(docs);
 
           return irs::memory::make_managed<Disjunction>(
-            std::move(res), std::move(aggregator), 2U);  // custom cost
+            std::move(res), size_t{1}, size_t{2});  // custom cost
         });
 
       using ExpectedType = irs::BlockDisjunction<
-        irs::ScoreAdapter, irs::NoopAggregator,
+        irs::ScoreAdapter, irs::ScoreMergeType::Noop,
         irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
       ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
       auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
       // score, no order set
-      auto& score = irs::ScoreAttr::get(it);
-      ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-      ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+      auto score = it.PrepareScore({
+        .scorer = &sort,
+        .segment = &irs::SubReader::empty(),
+      });
+      ASSERT_TRUE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
@@ -5337,6 +5233,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       ASSERT_EQ(2, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
+        it.FetchScoreArgs(0);
         ASSERT_EQ(doc->value, it.value());
         result.emplace_back(it.value(), 0);
         ASSERT_EQ(1, it.MatchCount());
@@ -5353,14 +5250,12 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
   // values don't fit single block
   // disjunction score, sub-iterators with partially with scores
   {
-    detail::BasicSort sort3{3};
+    detail::CompoundSort sort({3});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::make_pair(
-      std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45, 65, 78, 127},
-      order(sort3)));
-    docs.emplace_back(std::make_pair(
-      std::vector<irs::doc_id_t>{1, 5, 6, 12, 29, 126}, irs::Scorers()));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(
+      std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45, 65, 78, 127});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29, 126});
 
     std::vector<std::pair<irs::doc_id_t, size_t>> expected{
       {1, 3},  {2, 3},  {5, 3},  {6, 0},  {7, 3},  {9, 3},   {11, 3},
@@ -5368,29 +5263,31 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
     std::vector<std::pair<irs::doc_id_t, size_t>> result;
     {
       auto it_ptr = irs::ResolveMergeType(
-        irs::ScoreMergeType::Sum, 1,
-        [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+        irs::ScoreMergeType::Sum,
+        [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
           using Disjunction = irs::BlockDisjunction<
-            irs::ScoreAdapter, A,
+            irs::ScoreAdapter, MergeType,
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
           using Adapter = irs::ScoreAdapter;
 
           auto res = detail::ExecuteAll<Adapter>(docs);
 
           return irs::memory::make_managed<Disjunction>(
-            std::move(res), std::move(aggregator), 2U);  // custom cost
+            std::move(res), size_t{1}, size_t{2});  // custom cost
         });
 
       using ExpectedType = irs::BlockDisjunction<
-        irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+        irs::ScoreAdapter, irs::ScoreMergeType::Sum,
         irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
       ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
       auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
       // score is set
-      auto& score = irs::ScoreAttr::get(it);
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-      ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+      auto score = it.PrepareScore({
+        .scorer = &sort,
+        .segment = &irs::SubReader::empty(),
+      });
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -5398,9 +5295,10 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       ASSERT_EQ(2, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
+        it.FetchScoreArgs(0);
         ASSERT_EQ(doc->value, it.value());
         irs::score_t score_value{};
-        score(&score_value);
+        score_value = score.Score();
         result.emplace_back(it.value(), score_value);
         ASSERT_EQ(1, it.MatchCount());
       }
@@ -5415,16 +5313,12 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
 
   // values don't fit single block, aggregation
   {
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort3{3};
+    detail::CompoundSort sort{{2, 3}};
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(
-      std::make_pair(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 1145, 111165,
-                                                1111178, 111111127},
-                     order(sort3)));
-    docs.emplace_back(std::make_pair(
-      std::vector<irs::doc_id_t>{1, 5, 6, 12, 29, 126}, order(sort2)));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29, 126});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 1145,
+                                                 111165, 1111178, 111111127});
 
     std::vector<std::pair<irs::doc_id_t, size_t>> expected{{1, 5},
                                                            {2, 3},
@@ -5446,29 +5340,31 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
     std::vector<std::pair<irs::doc_id_t, size_t>> result;
     {
       auto it_ptr = irs::ResolveMergeType(
-        irs::ScoreMergeType::Sum, 1,
-        [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+        irs::ScoreMergeType::Sum,
+        [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
           using Disjunction = irs::BlockDisjunction<
-            irs::ScoreAdapter, A,
+            irs::ScoreAdapter, MergeType,
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
           using Adapter = irs::ScoreAdapter;
 
           auto res = detail::ExecuteAll<Adapter>(docs);
 
           return irs::memory::make_managed<Disjunction>(
-            std::move(res), std::move(aggregator), 2U);  // custom cost
+            std::move(res), size_t{1}, size_t{2});  // custom cost
         });
 
       using ExpectedType = irs::BlockDisjunction<
-        irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+        irs::ScoreAdapter, irs::ScoreMergeType::Sum,
         irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
       ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
       auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
       // score is set
-      auto& score = irs::ScoreAttr::get(it);
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-      ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+      auto score = it.PrepareScore({
+        .scorer = &sort,
+        .segment = &irs::SubReader::empty(),
+      });
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
@@ -5476,9 +5372,10 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       ASSERT_EQ(2, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
+        it.FetchScoreArgs(0);
         ASSERT_EQ(doc->value, it.value());
         irs::score_t score_value{};
-        score(&score_value);
+        score_value = score.Score();
         result.emplace_back(it.value(), score_value);
         ASSERT_EQ(1, it.MatchCount());
       }
@@ -5493,16 +5390,12 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
 
   // values don't fit single block, max
   {
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort3{3};
+    detail::CompoundSort sort{{2, 3}};
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(
-      std::make_pair(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 1145, 111165,
-                                                1111178, 111111127},
-                     order(sort3)));
-    docs.emplace_back(std::make_pair(
-      std::vector<irs::doc_id_t>{1, 5, 6, 12, 29, 126}, order(sort2)));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29, 126});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 1145,
+                                                 111165, 1111178, 111111127});
 
     std::vector<std::pair<irs::doc_id_t, size_t>> expected{{1, 3},
                                                            {2, 3},
@@ -5524,29 +5417,31 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
     std::vector<std::pair<irs::doc_id_t, size_t>> result;
     {
       auto it_ptr = irs::ResolveMergeType(
-        irs::ScoreMergeType::Max, 1,
-        [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+        irs::ScoreMergeType::Max,
+        [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
           using Disjunction = irs::BlockDisjunction<
-            irs::ScoreAdapter, A,
+            irs::ScoreAdapter, MergeType,
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
           using Adapter = irs::ScoreAdapter;
 
           auto res = detail::ExecuteAll<Adapter>(docs);
 
           return irs::memory::make_managed<Disjunction>(
-            std::move(res), std::move(aggregator), 2U);  // custom cost
+            std::move(res), size_t{1}, size_t{2});  // custom cost
         });
 
       using ExpectedType = irs::BlockDisjunction<
-        irs::ScoreAdapter, irs::Aggregator<irs::MaxMerger, 1>,
+        irs::ScoreAdapter, irs::ScoreMergeType::Max,
         irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
       ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
       auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
       // score is set
-      auto& score = irs::ScoreAttr::get(it);
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-      ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+      auto score = it.PrepareScore({
+        .scorer = &sort,
+        .segment = &irs::SubReader::empty(),
+      });
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
@@ -5554,9 +5449,10 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       ASSERT_EQ(2, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
+        it.FetchScoreArgs(0);
         ASSERT_EQ(doc->value, it.value());
         irs::score_t score_value{};
-        score(&score_value);
+        score_value = score.Score();
         result.emplace_back(it.value(), score_value);
         ASSERT_EQ(1, it.MatchCount());
       }
@@ -5571,16 +5467,14 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
 
   // disjunction score, sub-iterators partially with scores
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({4, 1});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
+    std::vector<std::vector<irs::doc_id_t>> docs;
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 1145,
-                                                 111165, 1111178, 111111127},
-                      order(sort4));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers());
-    docs.emplace_back(std::vector<irs::doc_id_t>{1111111127}, order(sort1));
+                                                 111165, 1111178, 111111127});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1111111127});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+
     std::vector<std::pair<irs::doc_id_t, size_t>> expected{
       {1, 4},      {2, 4},       {5, 4},         {7, 4},
       {9, 4},      {11, 4},      {45, 0},        {1145, 4},
@@ -5588,29 +5482,31 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
     std::vector<std::pair<irs::doc_id_t, size_t>> result;
     {
       auto it_ptr = irs::ResolveMergeType(
-        irs::ScoreMergeType::Sum, 1,
-        [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+        irs::ScoreMergeType::Sum,
+        [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
           using Disjunction = irs::BlockDisjunction<
-            irs::ScoreAdapter, A,
+            irs::ScoreAdapter, MergeType,
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
           using Adapter = irs::ScoreAdapter;
 
           auto res = detail::ExecuteAll<Adapter>(docs);
 
           return irs::memory::make_managed<Disjunction>(
-            std::move(res), std::move(aggregator), 2U);  // custom cost
+            std::move(res), size_t{1}, size_t{2});  // custom cost
         });
 
       using ExpectedType = irs::BlockDisjunction<
-        irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+        irs::ScoreAdapter, irs::ScoreMergeType::Sum,
         irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
       ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
       auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
       // score is set
-      auto& score = irs::ScoreAttr::get(it);
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-      ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+      auto score = it.PrepareScore({
+        .scorer = &sort,
+        .segment = &irs::SubReader::empty(),
+      });
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
@@ -5618,9 +5514,10 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       ASSERT_EQ(2, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
+        it.FetchScoreArgs(0);
         ASSERT_EQ(doc->value, it.value());
         irs::score_t score_value{};
-        score(&score_value);
+        score_value = score.Score();
         result.emplace_back(it.value(), score_value);
         ASSERT_EQ(1, it.MatchCount());
       }
@@ -5635,50 +5532,50 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
 
   // same datasets
   {
-    detail::BasicSort sort4{4};
-    detail::BasicSort sort5{5};
+    detail::CompoundSort sort{{4, 5}};
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      order(sort4));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      order(sort5));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
     std::vector<irs::doc_id_t> result;
     {
       auto it_ptr = irs::ResolveMergeType(
-        irs::ScoreMergeType::Sum, 1,
-        [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+        irs::ScoreMergeType::Sum,
+        [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
           using Disjunction = irs::BlockDisjunction<
-            irs::ScoreAdapter, A,
+            irs::ScoreAdapter, MergeType,
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
           using Adapter = irs::ScoreAdapter;
 
           auto res = detail::ExecuteAll<Adapter>(docs);
 
           return irs::memory::make_managed<Disjunction>(
-            std::move(res), std::move(aggregator), 2U);  // custom cost
+            std::move(res), size_t{1}, size_t{2});  // custom cost
         });
 
       using ExpectedType = irs::BlockDisjunction<
-        irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+        irs::ScoreAdapter, irs::ScoreMergeType::Sum,
         irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
       ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
       auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
       // score is set
-      auto& score = irs::ScoreAttr::get(it);
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-      ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+      auto score = it.PrepareScore({
+        .scorer = &sort,
+        .segment = &irs::SubReader::empty(),
+      });
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
       ASSERT_EQ(2, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
+        it.FetchScoreArgs(0);
         ASSERT_EQ(doc->value, it.value());
         result.push_back(it.value());
         irs::score_t score_value{};
-        score(&score_value);
+        score_value = score.Score();
         ASSERT_EQ(9.f, score_value);
         ASSERT_EQ(1, it.MatchCount());
       }
@@ -5687,50 +5584,53 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       ASSERT_FALSE(it.next());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
-    ASSERT_EQ(docs.front().first, result);
+    ASSERT_EQ(docs.front(), result);
   }
 
   // single dataset
   {
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({4});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{24}, order(sort4));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{24});
     std::vector<irs::doc_id_t> result;
     {
       auto it_ptr = irs::ResolveMergeType(
-        irs::ScoreMergeType::Sum, 1,
-        [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+        irs::ScoreMergeType::Sum,
+        [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
           using Disjunction = irs::BlockDisjunction<
-            irs::ScoreAdapter, A,
+            irs::ScoreAdapter, MergeType,
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
           using Adapter = irs::ScoreAdapter;
 
           auto res = detail::ExecuteAll<Adapter>(docs);
 
           return irs::memory::make_managed<Disjunction>(
-            std::move(res), std::move(aggregator), 2U);  // custom cost
+            std::move(res), size_t{1}, size_t{2});  // custom cost
         });
 
       using ExpectedType = irs::BlockDisjunction<
-        irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+        irs::ScoreAdapter, irs::ScoreMergeType::Sum,
         irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
       ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
       auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
       // score is set
-      auto& score = irs::ScoreAttr::get(it);
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-      ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+      auto score = it.PrepareScore({
+        .scorer = &sort,
+        .segment = &irs::SubReader::empty(),
+      });
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
       ASSERT_EQ(2, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
+        it.FetchScoreArgs(0);
         result.push_back(it.value());
         irs::score_t score_value{};
-        score(&score_value);
+        score_value = score.Score();
         ASSERT_EQ(4, score_value);
         ASSERT_EQ(1, it.MatchCount());
       }
@@ -5739,42 +5639,43 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       ASSERT_FALSE(it.next());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
-    ASSERT_EQ(docs.front().first, result);
+    ASSERT_EQ(docs.front(), result);
   }
 
   // empty
   {
-    detail::BasicSort sort4{4};
-    detail::BasicSort sort5{5};
+    detail::CompoundSort sort({4, 5});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{}, order(sort4));
-    docs.emplace_back(std::vector<irs::doc_id_t>{}, order(sort5));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{});
+    docs.emplace_back(std::vector<irs::doc_id_t>{});
+
     {
       auto it_ptr = irs::ResolveMergeType(
-        irs::ScoreMergeType::Sum, 1,
-        [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+        irs::ScoreMergeType::Sum,
+        [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
           using Disjunction = irs::BlockDisjunction<
-            irs::ScoreAdapter, A,
+            irs::ScoreAdapter, MergeType,
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
           using Adapter = irs::ScoreAdapter;
 
           auto res = detail::ExecuteAll<Adapter>(docs);
 
-          return irs::memory::make_managed<Disjunction>(std::move(res),
-                                                        std::move(aggregator));
+          return irs::memory::make_managed<Disjunction>(std::move(res));
         });
 
       using ExpectedType = irs::BlockDisjunction<
-        irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+        irs::ScoreAdapter, irs::ScoreMergeType::Sum,
         irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
       ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
       auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
       // score is set
-      auto& score = irs::ScoreAttr::get(it);
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-      ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+      auto score = it.PrepareScore({
+        .scorer = &sort,
+        .segment = &irs::SubReader::empty(),
+      });
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -5789,26 +5690,29 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
   // no iterators provided
   {
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Sum,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
         using Adapter = irs::ScoreAdapter;
 
-        return irs::memory::make_managed<Disjunction>(std::vector<Adapter>{},
-                                                      std::move(aggregator));
+        return irs::memory::make_managed<Disjunction>(std::vector<Adapter>{});
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+      irs::ScoreAdapter, irs::ScoreMergeType::Sum,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    detail::CompoundSort sort{{4, 5}};
+
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_TRUE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -5821,16 +5725,12 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
   }
 
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({4, 2, 1});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      order(sort4));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      order(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6}, order(sort1));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
 
     std::vector<std::pair<irs::doc_id_t, size_t>> expected{
       {1, 4}, {2, 4},  {5, 4},  {6, 2},  {7, 4},
@@ -5838,38 +5738,41 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
     std::vector<std::pair<irs::doc_id_t, size_t>> result;
     {
       auto it_ptr = irs::ResolveMergeType(
-        irs::ScoreMergeType::Max, 1,
-        [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+        irs::ScoreMergeType::Max,
+        [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
           using Disjunction = irs::BlockDisjunction<
-            irs::ScoreAdapter, A,
+            irs::ScoreAdapter, MergeType,
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
           using Adapter = irs::ScoreAdapter;
 
           auto res = detail::ExecuteAll<Adapter>(docs);
 
           return irs::memory::make_managed<Disjunction>(
-            std::move(res), std::move(aggregator), 3U);  // custom cost
+            std::move(res), size_t{1}, size_t{3});  // custom cost
         });
 
       using ExpectedType = irs::BlockDisjunction<
-        irs::ScoreAdapter, irs::Aggregator<irs::MaxMerger, 1>,
+        irs::ScoreAdapter, irs::ScoreMergeType::Max,
         irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
       ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
       auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
       // score is set
-      auto& score = irs::ScoreAttr::get(it);
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-      ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+      auto score = it.PrepareScore({
+        .scorer = &sort,
+        .segment = &irs::SubReader::empty(),
+      });
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
       ASSERT_EQ(3, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
+        it.FetchScoreArgs(0);
         ASSERT_EQ(doc->value, it.value());
         irs::score_t score_value{};
-        score(&score_value);
+        score_value = score.Score();
         result.emplace_back(it.value(), score_value);
         ASSERT_EQ(1, it.MatchCount());
       }
@@ -5882,21 +5785,14 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
   }
 
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
-    detail::BasicSort sort8{8};
-    detail::BasicSort sort16{16};
+    detail::CompoundSort sort({16, 8, 4, 2, 1});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      order(sort16));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      order(sort8));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6}, order(sort4));
-    docs.emplace_back(std::vector<irs::doc_id_t>{256}, order(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{11, 79, 101, 141, 1025, 1101},
-                      order(sort1));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
+    docs.emplace_back(std::vector<irs::doc_id_t>{256});
+    docs.emplace_back(std::vector<irs::doc_id_t>{11, 79, 101, 141, 1025, 1101});
 
     std::vector<std::pair<irs::doc_id_t, size_t>> expected{
       {1, 28},  {2, 16},  {5, 28},   {6, 12},  {7, 16}, {9, 16},
@@ -5905,38 +5801,41 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
     std::vector<std::pair<irs::doc_id_t, size_t>> result;
     {
       auto it_ptr = irs::ResolveMergeType(
-        irs::ScoreMergeType::Sum, 1,
-        [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+        irs::ScoreMergeType::Sum,
+        [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
           using Disjunction = irs::BlockDisjunction<
-            irs::ScoreAdapter, A,
+            irs::ScoreAdapter, MergeType,
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
           using Adapter = irs::ScoreAdapter;
 
           auto res = detail::ExecuteAll<Adapter>(docs);
 
           return irs::memory::make_managed<Disjunction>(
-            std::move(res), std::move(aggregator), 3U);  // custom cost
+            std::move(res), size_t{1}, size_t{3});  // custom cost
         });
 
       using ExpectedType = irs::BlockDisjunction<
-        irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+        irs::ScoreAdapter, irs::ScoreMergeType::Sum,
         irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
       ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
       auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
       // score is set
-      auto& score = irs::ScoreAttr::get(it);
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-      ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+      auto score = it.PrepareScore({
+        .scorer = &sort,
+        .segment = &irs::SubReader::empty(),
+      });
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
       ASSERT_EQ(3, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
+        it.FetchScoreArgs(0);
         ASSERT_EQ(doc->value, it.value());
         irs::score_t score_value{};
-        score(&score_value);
+        score_value = score.Score();
         result.emplace_back(it.value(), score_value);
         ASSERT_EQ(1, it.MatchCount());
       }
@@ -5949,52 +5848,53 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
   }
 
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({1, 2, 4});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1}, order(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{2}, order(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{3}, order(sort4));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1});
+    docs.emplace_back(std::vector<irs::doc_id_t>{2});
+    docs.emplace_back(std::vector<irs::doc_id_t>{3});
 
     std::vector<std::pair<irs::doc_id_t, size_t>> expected{
       {1, 1}, {2, 2}, {3, 4}};
     std::vector<std::pair<irs::doc_id_t, size_t>> result;
     {
       auto it_ptr = irs::ResolveMergeType(
-        irs::ScoreMergeType::Sum, 1,
-        [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+        irs::ScoreMergeType::Sum,
+        [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
           using Disjunction = irs::BlockDisjunction<
-            irs::ScoreAdapter, A,
+            irs::ScoreAdapter, MergeType,
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
           using Adapter = irs::ScoreAdapter;
 
           auto res = detail::ExecuteAll<Adapter>(docs);
 
           return irs::memory::make_managed<Disjunction>(
-            std::move(res), std::move(aggregator), 3U);  // custom cost
+            std::move(res), size_t{1}, size_t{3});  // custom cost
         });
 
       using ExpectedType = irs::BlockDisjunction<
-        irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+        irs::ScoreAdapter, irs::ScoreMergeType::Sum,
         irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
       ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
       auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
       // score is set
-      auto& score = irs::ScoreAttr::get(it);
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-      ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+      auto score = it.PrepareScore({
+        .scorer = &sort,
+        .segment = &irs::SubReader::empty(),
+      });
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
       ASSERT_EQ(3, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
+        it.FetchScoreArgs(0);
         ASSERT_EQ(doc->value, it.value());
         irs::score_t score_value{};
-        score(&score_value);
+        score_value = score.Score();
         result.emplace_back(it.value(), score_value);
         ASSERT_EQ(1, it.MatchCount());
       }
@@ -6008,54 +5908,52 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
 
   // same datasets
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({1, 2, 4});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      order(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      order(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      order(sort4));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
 
     std::vector<irs::doc_id_t> result;
     {
       auto it_ptr = irs::ResolveMergeType(
-        irs::ScoreMergeType::Max, 1,
-        [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+        irs::ScoreMergeType::Max,
+        [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
           using Disjunction = irs::BlockDisjunction<
-            irs::ScoreAdapter, A,
+            irs::ScoreAdapter, MergeType,
             irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
           using Adapter = irs::ScoreAdapter;
 
           auto res = detail::ExecuteAll<Adapter>(docs);
 
           return irs::memory::make_managed<Disjunction>(
-            std::move(res), std::move(aggregator), 3U);  // custom cost
+            std::move(res), size_t{1}, size_t{3});  // custom cost
         });
 
       using ExpectedType = irs::BlockDisjunction<
-        irs::ScoreAdapter, irs::Aggregator<irs::MaxMerger, 1>,
+        irs::ScoreAdapter, irs::ScoreMergeType::Max,
         irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
       ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
       auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
       // score is set
-      auto& score = irs::ScoreAttr::get(it);
-      ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-      ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+      auto score = it.PrepareScore({
+        .scorer = &sort,
+        .segment = &irs::SubReader::empty(),
+      });
+      ASSERT_FALSE(score.IsDefault());
 
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
       ASSERT_EQ(3, irs::CostAttr::extract(it));
       ASSERT_FALSE(irs::doc_limits::valid(it.value()));
       for (; it.next();) {
+        it.FetchScoreArgs(0);
         ASSERT_EQ(doc->value, it.value());
         result.push_back(it.value());
         irs::score_t score_value{};
-        score(&score_value);
+        score_value = score.Score();
         ASSERT_EQ(4, score_value);
         ASSERT_EQ(1, it.MatchCount());
       }
@@ -6064,44 +5962,44 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
       ASSERT_FALSE(it.next());
       ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     }
-    ASSERT_EQ(docs.front().first, result);
+    ASSERT_EQ(docs.front(), result);
   }
 
   // empty datasets
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({1, 2, 4});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{}, order(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{}, order(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{}, order(sort4));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{});
+    docs.emplace_back(std::vector<irs::doc_id_t>{});
+    docs.emplace_back(std::vector<irs::doc_id_t>{});
 
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Max,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
         using Adapter = irs::ScoreAdapter;
 
         auto res = detail::ExecuteAll<Adapter>(docs);
 
         return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 3U);  // custom cost
+          std::move(res), size_t{1}, size_t{3});  // custom cost
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::Aggregator<irs::MaxMerger, 1>,
+      irs::ScoreAdapter, irs::ScoreMergeType::Max,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
     // score is set
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -6116,7 +6014,7 @@ TEST(block_disjunction_test, next_scored_two_blocks) {
 
 TEST(block_disjunction_test, min_match_next) {
   using Disjunction = irs::BlockDisjunction<
-    irs::ScoreAdapter, irs::NoopAggregator,
+    irs::ScoreAdapter, irs::ScoreMergeType::Noop,
     irs::BlockDisjunctionTraits<irs::MatchType::MinMatch, false, 1>>;
 
   auto sum = [](size_t sum, const std::vector<irs::doc_id_t>& docs) {
@@ -6758,7 +6656,7 @@ TEST(block_disjunction_test, min_match_next) {
 
 TEST(block_disjunction_test, min_match_next_two_blocks) {
   using Disjunction = irs::BlockDisjunction<
-    irs::ScoreAdapter, irs::NoopAggregator,
+    irs::ScoreAdapter, irs::ScoreMergeType::Noop,
     irs::BlockDisjunctionTraits<irs::MatchType::MinMatch, false, 2>>;
 
   auto sum = [](size_t sum, const std::vector<irs::doc_id_t>& docs) {
@@ -7400,7 +7298,7 @@ TEST(block_disjunction_test, min_match_next_two_blocks) {
 
 TEST(block_disjunction_test, seek_no_readahead) {
   using Disjunction = irs::BlockDisjunction<
-    irs::ScoreAdapter, irs::NoopAggregator,
+    irs::ScoreAdapter, irs::ScoreMergeType::Noop,
     irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
 
   auto sum = [](size_t sum, const std::vector<irs::doc_id_t>& docs) {
@@ -7806,10 +7704,6 @@ TEST(block_disjunction_test, seek_no_readahead) {
 }
 
 TEST(block_disjunction_test, seek_scored_no_readahead) {
-  auto order = [](auto& scorer) -> irs::Scorers {
-    return irs::Scorers::Prepare(scorer);
-  };
-
   struct SeekDoc {
     irs::doc_id_t target;
     irs::doc_id_t expected;
@@ -7820,20 +7714,19 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
   // no iterators provided
   {
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max, 0,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Noop,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
 
         using Adapter = irs::ScoreAdapter;
 
-        return irs::memory::make_managed<Disjunction>(std::vector<Adapter>{},
-                                                      std::move(aggregator));
+        return irs::memory::make_managed<Disjunction>(std::vector<Adapter>{});
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::NoopAggregator,
+      irs::ScoreAdapter, irs::ScoreMergeType::Noop,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
@@ -7849,11 +7742,11 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
   // single iterator case, values fit 1 block
   // disjunction without score, sub-iterators with scores
   {
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({4});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 12, 29, 45},
-                      order(sort4));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(
+      std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 12, 29, 45});
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 1, 0},
@@ -7871,29 +7764,31 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
     };
 
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 0,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Noop,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
         auto res = detail::ExecuteAll<Adapter>(docs);
 
         return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 2U);  // custom cost
+          std::move(res), size_t{1}, size_t{2});  // custom cost
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::NoopAggregator,
+      irs::ScoreAdapter, irs::ScoreMergeType::Noop,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
     // no order set
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_TRUE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_FALSE(irs::doc_limits::valid(doc->value));
@@ -7910,12 +7805,11 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
   // single iterator case, values don't fit single block
   // disjunction with score, sub-iterators with scores
   {
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({4});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
+    std::vector<std::vector<irs::doc_id_t>> docs;
     docs.emplace_back(
-      std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 12, 29, 45, 65, 78, 127},
-      order(sort4));
+      std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 12, 29, 45, 65, 78, 127});
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 1, 0},
@@ -7934,28 +7828,30 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
     };
 
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Sum,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
         auto res = detail::ExecuteAll<Adapter>(docs);
 
         return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 2U);  // custom cost
+          std::move(res), size_t{1}, size_t{2});  // custom cost
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+      irs::ScoreAdapter, irs::ScoreMergeType::Sum,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_FALSE(irs::doc_limits::valid(doc->value));
@@ -7966,21 +7862,25 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       ASSERT_EQ(target.expected, it.seek(target.target));
       ASSERT_EQ(doc->value, it.value());
       ASSERT_EQ(target.match_count, it.MatchCount());
-      irs::score_t score_value{};
-      score(&score_value);
-      ASSERT_EQ(target.score, score_value);
+
+      if (!irs::doc_limits::eof(target.expected) &&
+          irs::doc_limits::valid(target.expected)) {
+        it.FetchScoreArgs(0);
+        irs::score_t score_value{};
+        score_value = score.Score();
+        ASSERT_EQ(target.score, score_value);
+      }
     }
   }
 
   // single iterator case, values don't fit single block, gap between block
   {
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({4});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(
-      std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 12, 29, 45, 65, 127, 1145,
-                                 111165, 1111178, 111111127},
-      order(sort4));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 12, 29, 45,
+                                                 65, 127, 1145, 111165, 1111178,
+                                                 111111127});
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 1, 0},
@@ -8004,28 +7904,30 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
     };
 
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Max,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
         auto res = detail::ExecuteAll<Adapter>(docs);
 
         return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 2U);  // custom cost
+          std::move(res), size_t{1}, size_t{2});  // custom cost
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::Aggregator<irs::MaxMerger, 1>,
+      irs::ScoreAdapter, irs::ScoreMergeType::Max,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_FALSE(irs::doc_limits::valid(doc->value));
@@ -8036,21 +7938,23 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       ASSERT_EQ(target.expected, it.seek(target.target));
       ASSERT_EQ(doc->value, it.value());
       ASSERT_EQ(target.match_count, it.MatchCount());
-      irs::score_t score_value{};
-      score(&score_value);
-      ASSERT_EQ(target.score, score_value);
+
+      if (!irs::doc_limits::eof(target.expected) &&
+          irs::doc_limits::valid(target.expected)) {
+        it.FetchScoreArgs(0);
+        irs::score_t score_value{};
+        score_value = score.Score();
+        ASSERT_EQ(target.score, score_value);
+      }
     }
   }
 
   {
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({4, 2});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      order(sort4));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      order(sort2));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 1, 0},
@@ -8066,27 +7970,29 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
     };
 
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Sum,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
         auto res = detail::ExecuteAll<Adapter>(docs);
         return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 2U);  // custom cost
+          std::move(res), size_t{1}, size_t{2});  // custom cost
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+      irs::ScoreAdapter, irs::ScoreMergeType::Sum,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -8096,20 +8002,24 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       ASSERT_EQ(target.expected, it.seek(target.target));
       ASSERT_EQ(doc->value, it.value());
       ASSERT_EQ(target.match_count, it.MatchCount());
-      irs::score_t score_value{};
-      score(&score_value);
-      ASSERT_EQ(target.score, score_value);
+
+      if (!irs::doc_limits::eof(target.expected) &&
+          irs::doc_limits::valid(target.expected)) {
+        it.FetchScoreArgs(0);
+        irs::score_t score_value{};
+        score_value = score.Score();
+        ASSERT_EQ(target.score, score_value);
+      }
     }
   }
 
   // empty datasets
   {
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({4, 2});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{}, order(sort4));
-    docs.emplace_back(std::vector<irs::doc_id_t>{}, order(sort2));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{});
+    docs.emplace_back(std::vector<irs::doc_id_t>{});
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 1, 0},
@@ -8117,29 +8027,31 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       {irs::doc_limits::invalid(), irs::doc_limits::eof(), 0, 0}};
 
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Sum,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
         auto res = detail::ExecuteAll<Adapter>(docs);
 
         return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 2U);  // custom cost
+          std::move(res), size_t{1}, size_t{2});  // custom cost
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+      irs::ScoreAdapter, irs::ScoreMergeType::Sum,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
 
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -8150,21 +8062,23 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       ASSERT_EQ(target.expected, it.seek(target.target));
       ASSERT_EQ(doc->value, it.value());
       ASSERT_EQ(target.match_count, it.MatchCount());
-      irs::score_t score_value{};
-      score(&score_value);
-      ASSERT_EQ(target.score, score_value);
+
+      if (!irs::doc_limits::eof(target.expected) &&
+          irs::doc_limits::valid(target.expected)) {
+        it.FetchScoreArgs(0);
+        irs::score_t score_value{};
+        score_value = score.Score();
+        ASSERT_EQ(target.score, score_value);
+      }
     }
   }
 
   {
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({4, 2});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      order(sort4));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      order(sort2));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 1, 0},
@@ -8176,28 +8090,30 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       {57, irs::doc_limits::eof(), 0, 0}};
 
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Sum,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
         auto res = detail::ExecuteAll<Adapter>(docs);
 
         return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 2U);  // custom cost
+          std::move(res), size_t{1}, size_t{2});  // custom cost
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+      irs::ScoreAdapter, irs::ScoreMergeType::Sum,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -8208,21 +8124,23 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       ASSERT_EQ(target.expected, it.seek(target.target));
       ASSERT_EQ(doc->value, it.value());
       ASSERT_EQ(target.match_count, it.MatchCount());
-      irs::score_t score_value{};
-      score(&score_value);
-      ASSERT_EQ(target.score, score_value);
+
+      if (!irs::doc_limits::eof(target.expected) &&
+          irs::doc_limits::valid(target.expected)) {
+        it.FetchScoreArgs(0);
+        irs::score_t score_value{};
+        score_value = score.Score();
+        ASSERT_EQ(target.score, score_value);
+      }
     }
   }
 
   {
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({4, 2});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      order(sort4));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      order(sort2));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 1, 0},
@@ -8233,28 +8151,30 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       {57, irs::doc_limits::eof(), 0, 4}};
 
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Sum,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
         auto res = detail::ExecuteAll<Adapter>(docs);
 
         return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 2U);  // custom cost
+          std::move(res), size_t{1}, size_t{2});  // custom cost
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+      irs::ScoreAdapter, irs::ScoreMergeType::Sum,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -8265,23 +8185,24 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       ASSERT_EQ(target.expected, it.seek(target.target));
       ASSERT_EQ(doc->value, it.value());
       ASSERT_EQ(target.match_count, it.MatchCount());
-      irs::score_t score_value{};
-      score(&score_value);
-      ASSERT_EQ(target.score, score_value);
+
+      if (!irs::doc_limits::eof(target.expected) &&
+          irs::doc_limits::valid(target.expected)) {
+        it.FetchScoreArgs(0);
+        irs::score_t score_value{};
+        score_value = score.Score();
+        ASSERT_EQ(target.score, score_value);
+      }
     }
   }
 
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({4, 2, 1});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      order(sort4));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      order(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6}, order(sort1));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 1, 0},
@@ -8296,28 +8217,30 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       {57, irs::doc_limits::eof(), 0, 4}};
 
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Sum,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
         auto res = detail::ExecuteAll<Adapter>(docs);
 
         return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 2U);  // custom cost
+          std::move(res), size_t{1}, size_t{2});  // custom cost
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+      irs::ScoreAdapter, irs::ScoreMergeType::Sum,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -8327,27 +8250,26 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       ASSERT_EQ(target.expected, it.seek(target.target));
       ASSERT_EQ(doc->value, it.value());
       ASSERT_EQ(target.match_count, it.MatchCount());
-      irs::score_t score_value{};
-      score(&score_value);
-      ASSERT_EQ(target.score, score_value);
+
+      if (!irs::doc_limits::eof(target.expected) &&
+          irs::doc_limits::valid(target.expected)) {
+        it.FetchScoreArgs(0);
+        irs::score_t score_value{};
+        score_value = score.Score();
+        ASSERT_EQ(target.score, score_value);
+      }
     }
   }
 
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
-    detail::BasicSort sort8{8};
+    detail::CompoundSort sort({4, 2, 1, 8});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      order(sort4));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      order(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6}, order(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{256}, irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{11, 79, 101, 141, 1025, 1101},
-                      order(sort8));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
+    docs.emplace_back(std::vector<irs::doc_id_t>{11, 79, 101, 141, 1025, 1101});
+    docs.emplace_back(std::vector<irs::doc_id_t>{256});
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 1, 0},
@@ -8364,28 +8286,30 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       {2001, irs::doc_limits::eof(), 0, 8}};
 
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Sum,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
         auto res = detail::ExecuteAll<Adapter>(docs);
 
         return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 2U);  // custom cost
+          std::move(res), size_t{1}, size_t{2});  // custom cost
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+      irs::ScoreAdapter, irs::ScoreMergeType::Sum,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -8395,24 +8319,26 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       ASSERT_EQ(target.expected, it.seek(target.target));
       ASSERT_EQ(doc->value, it.value());
       ASSERT_EQ(target.match_count, it.MatchCount());
-      irs::score_t score_value{};
-      score(&score_value);
-      ASSERT_EQ(target.score, score_value);
+
+      if (!irs::doc_limits::eof(target.expected) &&
+          irs::doc_limits::valid(target.expected)) {
+        it.FetchScoreArgs(0);
+        irs::score_t score_value{};
+        score_value = score.Score();
+        ASSERT_EQ(target.score, score_value);
+      }
     }
   }
 
   // empty datasets
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
-    detail::BasicSort sort8{8};
+    detail::CompoundSort sort({8, 4, 2, 1});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{}, order(sort8));
-    docs.emplace_back(std::vector<irs::doc_id_t>{}, order(sort4));
-    docs.emplace_back(std::vector<irs::doc_id_t>{}, order(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{}, order(sort1));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{});
+    docs.emplace_back(std::vector<irs::doc_id_t>{});
+    docs.emplace_back(std::vector<irs::doc_id_t>{});
+    docs.emplace_back(std::vector<irs::doc_id_t>{});
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 1, 0},
@@ -8420,28 +8346,30 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       {irs::doc_limits::invalid(), irs::doc_limits::eof(), 0, 0}};
 
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Sum,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
         auto res = detail::ExecuteAll<Adapter>(docs);
 
         return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 2U);  // custom cost
+          std::move(res), size_t{1}, size_t{2});  // custom cost
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+      irs::ScoreAdapter, irs::ScoreMergeType::Sum,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -8451,27 +8379,26 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       ASSERT_EQ(target.expected, it.seek(target.target));
       ASSERT_EQ(doc->value, it.value());
       ASSERT_EQ(target.match_count, it.MatchCount());
-      irs::score_t score_value{};
-      score(&score_value);
-      ASSERT_EQ(target.score, score_value);
+
+      if (!irs::doc_limits::eof(target.expected) &&
+          irs::doc_limits::valid(target.expected)) {
+        it.FetchScoreArgs(0);
+        irs::score_t score_value{};
+        score_value = score.Score();
+        ASSERT_EQ(target.score, score_value);
+      }
     }
   }
 
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
-    detail::BasicSort sort8{8};
+    detail::CompoundSort sort({8, 4, 2, 1, 1});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      order(sort8));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      order(sort4));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6}, order(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{256}, order(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{11, 79, 101, 141, 1025, 1101},
-                      order(sort1));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
+    docs.emplace_back(std::vector<irs::doc_id_t>{256});
+    docs.emplace_back(std::vector<irs::doc_id_t>{11, 79, 101, 141, 1025, 1101});
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 1, 0},
@@ -8483,28 +8410,30 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       {57, irs::doc_limits::eof(), 0, 0}};
 
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Max,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
         auto res = detail::ExecuteAll<Adapter>(docs);
 
         return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 2U);  // custom cost
+          std::move(res), size_t{1}, size_t{2});  // custom cost
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::Aggregator<irs::MaxMerger, 1>,
+      irs::ScoreAdapter, irs::ScoreMergeType::Max,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -8514,22 +8443,24 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       ASSERT_EQ(target.expected, it.seek(target.target));
       ASSERT_EQ(doc->value, it.value());
       ASSERT_EQ(target.match_count, it.MatchCount());
-      irs::score_t score_value{};
-      score(&score_value);
-      ASSERT_EQ(target.score, score_value);
+
+      if (!irs::doc_limits::eof(target.expected) &&
+          irs::doc_limits::valid(target.expected)) {
+        it.FetchScoreArgs(0);
+        irs::score_t score_value{};
+        score_value = score.Score();
+        ASSERT_EQ(target.score, score_value);
+      }
     }
   }
 
   {
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers());
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers());
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6}, irs::Scorers());
-    docs.emplace_back(std::vector<irs::doc_id_t>{256}, irs::Scorers());
-    docs.emplace_back(std::vector<irs::doc_id_t>{11, 79, 101, 141, 1025, 1101},
-                      irs::Scorers());
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
+    docs.emplace_back(std::vector<irs::doc_id_t>{256});
+    docs.emplace_back(std::vector<irs::doc_id_t>{11, 79, 101, 141, 1025, 1101});
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 1, 0},
@@ -8540,28 +8471,24 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
       {1201, irs::doc_limits::eof(), 0, 0}};
 
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 0,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Sum,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
         auto res = detail::ExecuteAll<Adapter>(docs);
 
         return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 2U);  // custom cost
+          std::move(res), size_t{1}, size_t{2});  // custom cost
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::NoopAggregator,
+      irs::ScoreAdapter, irs::ScoreMergeType::Sum,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
-
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -8576,8 +8503,6 @@ TEST(block_disjunction_test, seek_scored_no_readahead) {
 }
 
 TEST(block_disjunction_test, seek_scored_readahead) {
-  auto order = [](auto& scorer) { return irs::Scorers::Prepare(scorer); };
-
   struct SeekDoc {
     irs::doc_id_t target;
     irs::doc_id_t expected;
@@ -8588,7 +8513,7 @@ TEST(block_disjunction_test, seek_scored_readahead) {
   // no iterators provided
   {
     using Disjunction = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::NoopAggregator,
+      irs::ScoreAdapter, irs::ScoreMergeType::Noop,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
 
     Disjunction it(Disjunction::Adapters{});
@@ -8603,11 +8528,11 @@ TEST(block_disjunction_test, seek_scored_readahead) {
   // single iterator case, values fit 1 block
   // disjunction without score, sub-iterators with scores
   {
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({4});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 12, 29, 45},
-                      order(sort4));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(
+      std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 12, 29, 45});
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 1, 0},
@@ -8625,29 +8550,31 @@ TEST(block_disjunction_test, seek_scored_readahead) {
     };
 
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 0,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Noop,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
         using Adapter = irs::ScoreAdapter;
 
         auto res = detail::ExecuteAll<Adapter>(docs);
 
         return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 2U);  // custom cost
+          std::move(res), size_t{1}, size_t{2});  // custom cost
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::NoopAggregator,
+      irs::ScoreAdapter, irs::ScoreMergeType::Noop,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
     // no order set
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_TRUE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_FALSE(irs::doc_limits::valid(doc->value));
@@ -8664,12 +8591,11 @@ TEST(block_disjunction_test, seek_scored_readahead) {
   // single iterator case, values don't fit single block
   // disjunction with score, sub-iterators with scores
   {
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({4});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
+    std::vector<std::vector<irs::doc_id_t>> docs;
     docs.emplace_back(
-      std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 12, 29, 45, 65, 78, 127},
-      order(sort4));
+      std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 12, 29, 45, 65, 78, 127});
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 1, 0},
@@ -8688,28 +8614,30 @@ TEST(block_disjunction_test, seek_scored_readahead) {
     };
 
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Sum,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
         using Adapter = irs::ScoreAdapter;
 
         auto res = detail::ExecuteAll<Adapter>(docs);
 
         return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 2U);  // custom cost
+          std::move(res), size_t{1}, size_t{2});  // custom cost
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+      irs::ScoreAdapter, irs::ScoreMergeType::Sum,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_FALSE(irs::doc_limits::valid(doc->value));
@@ -8720,21 +8648,25 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       ASSERT_EQ(target.expected, it.seek(target.target));
       ASSERT_EQ(doc->value, it.value());
       ASSERT_EQ(target.match_count, it.MatchCount());
-      irs::score_t score_value{};
-      score(&score_value);
-      ASSERT_EQ(target.score, score_value);
+
+      if (!irs::doc_limits::eof(target.expected) &&
+          irs::doc_limits::valid(target.expected)) {
+        it.FetchScoreArgs(0);
+        irs::score_t score_value{};
+        score_value = score.Score();
+        ASSERT_EQ(target.score, score_value);
+      }
     }
   }
 
   // single iterator case, values don't fit single block, gap between block
   {
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({4});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(
-      std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 12, 29, 45, 65, 127, 1145,
-                                 111165, 1111178, 111111127},
-      order(sort4));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 12, 29, 45,
+                                                 65, 127, 1145, 111165, 1111178,
+                                                 111111127});
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 1, 0},
@@ -8758,28 +8690,30 @@ TEST(block_disjunction_test, seek_scored_readahead) {
     };
 
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Max,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
         using Adapter = irs::ScoreAdapter;
 
         auto res = detail::ExecuteAll<Adapter>(docs);
 
         return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 2U);  // custom cost
+          std::move(res), size_t{1}, size_t{2});  // custom cost
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::Aggregator<irs::MaxMerger, 1>,
+      irs::ScoreAdapter, irs::ScoreMergeType::Max,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_FALSE(irs::doc_limits::valid(doc->value));
@@ -8790,21 +8724,23 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       ASSERT_EQ(target.expected, it.seek(target.target));
       ASSERT_EQ(doc->value, it.value());
       ASSERT_EQ(target.match_count, it.MatchCount());
-      irs::score_t score_value{};
-      score(&score_value);
-      ASSERT_EQ(target.score, score_value);
+
+      if (!irs::doc_limits::eof(target.expected) &&
+          irs::doc_limits::valid(target.expected)) {
+        it.FetchScoreArgs(0);
+        irs::score_t score_value{};
+        score_value = score.Score();
+        ASSERT_EQ(target.score, score_value);
+      }
     }
   }
 
   {
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({4, 2});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      order(sort4));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      order(sort2));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 1, 0},
@@ -8820,28 +8756,30 @@ TEST(block_disjunction_test, seek_scored_readahead) {
     };
 
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Sum,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
         using Adapter = irs::ScoreAdapter;
 
         auto res = detail::ExecuteAll<Adapter>(docs);
 
         return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 2U);  // custom cost
+          std::move(res), size_t{1}, size_t{2});  // custom cost
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+      irs::ScoreAdapter, irs::ScoreMergeType::Sum,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -8851,48 +8789,54 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       ASSERT_EQ(target.expected, it.seek(target.target));
       ASSERT_EQ(doc->value, it.value());
       ASSERT_EQ(target.match_count, it.MatchCount());
-      irs::score_t score_value{};
-      score(&score_value);
-      ASSERT_EQ(target.score, score_value);
+
+      if (!irs::doc_limits::eof(target.expected) &&
+          irs::doc_limits::valid(target.expected)) {
+        it.FetchScoreArgs(0);
+        irs::score_t score_value{};
+        score_value = score.Score();
+        ASSERT_EQ(target.score, score_value);
+      }
     }
   }
 
   // empty datasets
   {
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({4, 2});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{}, order(sort4));
-    docs.emplace_back(std::vector<irs::doc_id_t>{}, order(sort2));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{});
+    docs.emplace_back(std::vector<irs::doc_id_t>{});
 
     std::vector<SeekDoc> expected{
       {6, irs::doc_limits::eof(), 0, 0},
       {irs::doc_limits::invalid(), irs::doc_limits::eof(), 0, 0}};
 
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Sum,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
         using Adapter = irs::ScoreAdapter;
 
         auto res = detail::ExecuteAll<Adapter>(docs);
 
         return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 2U);  // custom cost
+          std::move(res), size_t{1}, size_t{2});  // custom cost
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+      irs::ScoreAdapter, irs::ScoreMergeType::Sum,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -8903,21 +8847,23 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       ASSERT_EQ(target.expected, it.seek(target.target));
       ASSERT_EQ(doc->value, it.value());
       ASSERT_EQ(target.match_count, it.MatchCount());
-      irs::score_t score_value{};
-      score(&score_value);
-      ASSERT_EQ(target.score, score_value);
+
+      if (!irs::doc_limits::eof(target.expected) &&
+          irs::doc_limits::valid(target.expected)) {
+        it.FetchScoreArgs(0);
+        irs::score_t score_value{};
+        score_value = score.Score();
+        ASSERT_EQ(target.score, score_value);
+      }
     }
   }
 
   {
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({4, 2});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      order(sort4));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      order(sort2));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 1, 0},
@@ -8929,28 +8875,30 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       {57, irs::doc_limits::eof(), 0, 0}};
 
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Sum,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
         using Adapter = irs::ScoreAdapter;
 
         auto res = detail::ExecuteAll<Adapter>(docs);
 
         return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 2U);  // custom cost
+          std::move(res), size_t{1}, size_t{2});  // custom cost
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+      irs::ScoreAdapter, irs::ScoreMergeType::Sum,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -8961,21 +8909,23 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       ASSERT_EQ(target.expected, it.seek(target.target));
       ASSERT_EQ(doc->value, it.value());
       ASSERT_EQ(target.match_count, it.MatchCount());
-      irs::score_t score_value{};
-      score(&score_value);
-      ASSERT_EQ(target.score, score_value);
+
+      if (!irs::doc_limits::eof(target.expected) &&
+          irs::doc_limits::valid(target.expected)) {
+        it.FetchScoreArgs(0);
+        irs::score_t score_value{};
+        score_value = score.Score();
+        ASSERT_EQ(target.score, score_value);
+      }
     }
   }
 
   {
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({4, 2});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      order(sort4));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      order(sort2));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
 
     std::vector<SeekDoc> expected{{9, 9, 1, 4},
                                   {12, 12, 1, 2},
@@ -8984,28 +8934,30 @@ TEST(block_disjunction_test, seek_scored_readahead) {
                                   {57, irs::doc_limits::eof(), 0, 4}};
 
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Max,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
         using Adapter = irs::ScoreAdapter;
 
         auto res = detail::ExecuteAll<Adapter>(docs);
 
         return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 2U);  // custom cost
+          std::move(res), size_t{1}, size_t{2});  // custom cost
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::Aggregator<irs::MaxMerger, 1>,
+      irs::ScoreAdapter, irs::ScoreMergeType::Max,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -9016,23 +8968,24 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       ASSERT_EQ(target.expected, it.seek(target.target));
       ASSERT_EQ(doc->value, it.value());
       ASSERT_EQ(target.match_count, it.MatchCount());
-      irs::score_t score_value{};
-      score(&score_value);
-      ASSERT_EQ(target.score, score_value);
+
+      if (!irs::doc_limits::eof(target.expected) &&
+          irs::doc_limits::valid(target.expected)) {
+        it.FetchScoreArgs(0);
+        irs::score_t score_value{};
+        score_value = score.Score();
+        ASSERT_EQ(target.score, score_value);
+      }
     }
   }
 
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({4, 2, 1});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      order(sort4));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      order(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6}, order(sort1));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 1, 0},
@@ -9047,28 +9000,30 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       {57, irs::doc_limits::eof(), 0, 4}};
 
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Sum,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
         using Adapter = irs::ScoreAdapter;
 
         auto res = detail::ExecuteAll<Adapter>(docs);
 
         return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 2U);  // custom cost
+          std::move(res), size_t{1}, size_t{2});  // custom cost
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+      irs::ScoreAdapter, irs::ScoreMergeType::Sum,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -9078,27 +9033,26 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       ASSERT_EQ(target.expected, it.seek(target.target));
       ASSERT_EQ(doc->value, it.value());
       ASSERT_EQ(target.match_count, it.MatchCount());
-      irs::score_t score_value{};
-      score(&score_value);
-      ASSERT_EQ(target.score, score_value);
+
+      if (!irs::doc_limits::eof(target.expected) &&
+          irs::doc_limits::valid(target.expected)) {
+        it.FetchScoreArgs(0);
+        irs::score_t score_value{};
+        score_value = score.Score();
+        ASSERT_EQ(target.score, score_value);
+      }
     }
   }
 
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
-    detail::BasicSort sort8{8};
+    detail::CompoundSort sort({4, 2, 1, 8});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      order(sort4));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      order(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6}, order(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{256}, irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{11, 79, 101, 141, 1025, 1101},
-                      order(sort8));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
+    docs.emplace_back(std::vector<irs::doc_id_t>{11, 79, 101, 141, 1025, 1101});
+    docs.emplace_back(std::vector<irs::doc_id_t>{256});
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 1, 0},
@@ -9115,28 +9069,30 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       {2001, irs::doc_limits::eof(), 0, 8}};
 
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Sum,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
         using Adapter = irs::ScoreAdapter;
 
         auto res = detail::ExecuteAll<Adapter>(docs);
 
         return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 2U);  // custom cost
+          std::move(res), size_t{1}, size_t{2});  // custom cost
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+      irs::ScoreAdapter, irs::ScoreMergeType::Sum,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -9146,24 +9102,26 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       ASSERT_EQ(target.expected, it.seek(target.target));
       ASSERT_EQ(doc->value, it.value());
       ASSERT_EQ(target.match_count, it.MatchCount());
-      irs::score_t score_value{};
-      score(&score_value);
-      ASSERT_EQ(target.score, score_value);
+
+      if (!irs::doc_limits::eof(target.expected) &&
+          irs::doc_limits::valid(target.expected)) {
+        it.FetchScoreArgs(0);
+        irs::score_t score_value{};
+        score_value = score.Score();
+        ASSERT_EQ(target.score, score_value);
+      }
     }
   }
 
   // empty datasets
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
-    detail::BasicSort sort8{8};
+    detail::CompoundSort sort({8, 4, 2, 1});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{}, order(sort8));
-    docs.emplace_back(std::vector<irs::doc_id_t>{}, order(sort4));
-    docs.emplace_back(std::vector<irs::doc_id_t>{}, order(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{}, order(sort1));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{});
+    docs.emplace_back(std::vector<irs::doc_id_t>{});
+    docs.emplace_back(std::vector<irs::doc_id_t>{});
+    docs.emplace_back(std::vector<irs::doc_id_t>{});
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 1, 0},
@@ -9171,28 +9129,30 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       {irs::doc_limits::invalid(), irs::doc_limits::eof(), 0, 0}};
 
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Sum,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
         using Adapter = irs::ScoreAdapter;
 
         auto res = detail::ExecuteAll<Adapter>(docs);
 
         return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 2U);  // custom cost
+          std::move(res), size_t{1}, size_t{2});  // custom cost
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+      irs::ScoreAdapter, irs::ScoreMergeType::Sum,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -9202,27 +9162,26 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       ASSERT_EQ(target.expected, it.seek(target.target));
       ASSERT_EQ(doc->value, it.value());
       ASSERT_EQ(target.match_count, it.MatchCount());
-      irs::score_t score_value{};
-      score(&score_value);
-      ASSERT_EQ(target.score, score_value);
+
+      if (!irs::doc_limits::eof(target.expected) &&
+          irs::doc_limits::valid(target.expected)) {
+        it.FetchScoreArgs(0);
+        irs::score_t score_value{};
+        score_value = score.Score();
+        ASSERT_EQ(target.score, score_value);
+      }
     }
   }
 
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
-    detail::BasicSort sort8{8};
+    detail::CompoundSort sort({8, 4, 2, 1, 1});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      order(sort8));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      order(sort4));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6}, order(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{256}, order(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{11, 79, 101, 141, 1025, 1101},
-                      order(sort1));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
+    docs.emplace_back(std::vector<irs::doc_id_t>{256});
+    docs.emplace_back(std::vector<irs::doc_id_t>{11, 79, 101, 141, 1025, 1101});
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 1, 0},
@@ -9234,28 +9193,30 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       {57, irs::doc_limits::eof(), 0, 0}};
 
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Max,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
         using Adapter = irs::ScoreAdapter;
 
         auto res = detail::ExecuteAll<Adapter>(docs);
 
         return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 2U);  // custom cost
+          std::move(res), size_t{1}, size_t{2});  // custom cost
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::Aggregator<irs::MaxMerger, 1>,
+      irs::ScoreAdapter, irs::ScoreMergeType::Max,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -9265,22 +9226,24 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       ASSERT_EQ(target.expected, it.seek(target.target));
       ASSERT_EQ(doc->value, it.value());
       ASSERT_EQ(target.match_count, it.MatchCount());
-      irs::score_t score_value{};
-      score(&score_value);
-      ASSERT_EQ(target.score, score_value);
+
+      if (!irs::doc_limits::eof(target.expected) &&
+          irs::doc_limits::valid(target.expected)) {
+        it.FetchScoreArgs(0);
+        irs::score_t score_value{};
+        score_value = score.Score();
+        ASSERT_EQ(target.score, score_value);
+      }
     }
   }
 
   {
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers());
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers());
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6}, irs::Scorers());
-    docs.emplace_back(std::vector<irs::doc_id_t>{256}, irs::Scorers());
-    docs.emplace_back(std::vector<irs::doc_id_t>{11, 79, 101, 141, 1025, 1101},
-                      irs::Scorers());
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
+    docs.emplace_back(std::vector<irs::doc_id_t>{256});
+    docs.emplace_back(std::vector<irs::doc_id_t>{11, 79, 101, 141, 1025, 1101});
 
     std::vector<SeekDoc> expected{
       {irs::doc_limits::invalid(), irs::doc_limits::invalid(), 1, 0},
@@ -9291,28 +9254,24 @@ TEST(block_disjunction_test, seek_scored_readahead) {
       {1201, irs::doc_limits::eof(), 0, 0}};
 
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 0,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Noop,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
         using Adapter = irs::ScoreAdapter;
 
         auto res = detail::ExecuteAll<Adapter>(docs);
 
         return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 2U);  // custom cost
+          std::move(res), size_t{1}, size_t{2});  // custom cost
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::NoopAggregator,
+      irs::ScoreAdapter, irs::ScoreMergeType::Noop,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
-
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -9328,7 +9287,7 @@ TEST(block_disjunction_test, seek_scored_readahead) {
 
 TEST(block_disjunction_test, min_match_seek_no_readahead) {
   using Disjunction = irs::BlockDisjunction<
-    irs::ScoreAdapter, irs::NoopAggregator,
+    irs::ScoreAdapter, irs::ScoreMergeType::Noop,
     irs::BlockDisjunctionTraits<irs::MatchType::MinMatch, false, 1>>;
 
   auto sum = [](size_t sum, const std::vector<irs::doc_id_t>& docs) {
@@ -9811,7 +9770,7 @@ TEST(block_disjunction_test, min_match_seek_no_readahead) {
 
 TEST(block_disjunction_test, seek_readahead) {
   using Disjunction = irs::BlockDisjunction<
-    irs::ScoreAdapter, irs::NoopAggregator,
+    irs::ScoreAdapter, irs::ScoreMergeType::Noop,
     irs::BlockDisjunctionTraits<irs::MatchType::Match, true, 1>>;
 
   auto sum = [](size_t sum, const std::vector<irs::doc_id_t>& docs) {
@@ -10235,7 +10194,7 @@ TEST(block_disjunction_test, seek_readahead) {
 
 TEST(block_disjunction_test, min_match_seek_readahead) {
   using Disjunction = irs::BlockDisjunction<
-    irs::ScoreAdapter, irs::NoopAggregator,
+    irs::ScoreAdapter, irs::ScoreMergeType::Noop,
     irs::BlockDisjunctionTraits<irs::MatchType::MinMatch, true, 1>>;
 
   auto sum = [](size_t sum, const std::vector<irs::doc_id_t>& docs) {
@@ -10716,7 +10675,7 @@ TEST(block_disjunction_test, min_match_seek_readahead) {
 
 TEST(block_disjunction_test, seek_next_no_readahead) {
   using Disjunction = irs::BlockDisjunction<
-    irs::ScoreAdapter, irs::NoopAggregator,
+    irs::ScoreAdapter, irs::ScoreMergeType::Noop,
     irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
   auto sum = [](size_t sum, const std::vector<irs::doc_id_t>& docs) {
     return sum += docs.size();
@@ -10729,11 +10688,6 @@ TEST(block_disjunction_test, seek_next_no_readahead) {
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
-
-    // score, no order set
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
 
     // cost
     ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
@@ -10763,11 +10717,6 @@ TEST(block_disjunction_test, seek_next_no_readahead) {
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
 
-    // score, no order set
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
-
     // cost
     ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
               irs::CostAttr::extract(it));
@@ -10786,7 +10735,7 @@ TEST(block_disjunction_test, seek_next_no_readahead) {
 
 TEST(block_disjunction_test, next_seek_no_readahead) {
   using Disjunction = irs::BlockDisjunction<
-    irs::ScoreAdapter, irs::NoopAggregator,
+    irs::ScoreAdapter, irs::ScoreMergeType::Noop,
     irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
   auto sum = [](size_t sum, const std::vector<irs::doc_id_t>& docs) {
     return sum += docs.size();
@@ -10800,11 +10749,6 @@ TEST(block_disjunction_test, next_seek_no_readahead) {
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
-
-    // score, no order set
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
 
     // cost
     ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
@@ -10832,7 +10776,7 @@ TEST(block_disjunction_test, next_seek_no_readahead) {
 
 TEST(block_disjunction_test, seek_next_no_readahead_two_blocks) {
   using Disjunction = irs::BlockDisjunction<
-    irs::ScoreAdapter, irs::NoopAggregator,
+    irs::ScoreAdapter, irs::ScoreMergeType::Noop,
     irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 2>>;
   auto sum = [](size_t sum, const std::vector<irs::doc_id_t>& docs) {
     return sum += docs.size();
@@ -10845,11 +10789,6 @@ TEST(block_disjunction_test, seek_next_no_readahead_two_blocks) {
     Disjunction it(detail::ExecuteAll<irs::ScoreAdapter>(docs));
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
-
-    // score, no order set
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
 
     // cost
     ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
@@ -10879,11 +10818,6 @@ TEST(block_disjunction_test, seek_next_no_readahead_two_blocks) {
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
 
-    // score, no order set
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
-
     // cost
     ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
               irs::CostAttr::extract(it));
@@ -10903,34 +10837,29 @@ TEST(block_disjunction_test, seek_next_no_readahead_two_blocks) {
 TEST(block_disjunction_test, scored_seek_next_no_readahead) {
   // disjunction without score, sub-iterators with scores
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({1, 2, 4});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers::Prepare(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers::Prepare(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6},
-                      irs::Scorers::Prepare(sort4));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
 
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 0,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Noop,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
         auto res = detail::ExecuteAll<Adapter>(docs);
 
         return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 1U);  // custom cost
+          std::move(res), size_t{1}, size_t{1});  // custom cost
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::NoopAggregator,
+      irs::ScoreAdapter, irs::ScoreMergeType::Noop,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
@@ -10939,9 +10868,11 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     ASSERT_TRUE(bool(doc));
 
     // score, no order set
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_TRUE(score.IsDefault());
 
     // cost
     ASSERT_EQ(1, irs::CostAttr::extract(it));
@@ -10963,34 +10894,29 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
 
   // disjunction with score, sub-iterators with scores, aggregate
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({1, 2, 4});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers::Prepare(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers::Prepare(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6},
-                      irs::Scorers::Prepare(sort4));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
 
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Sum,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
         auto res = detail::ExecuteAll<Adapter>(docs);
 
         return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 1U);  // custom cost
+          std::move(res), size_t{1}, size_t{1});  // custom cost
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+      irs::ScoreAdapter, irs::ScoreMergeType::Sum,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
@@ -10999,9 +10925,11 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     ASSERT_TRUE(bool(doc));
 
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     // cost
     ASSERT_EQ(1, irs::CostAttr::extract(it));
@@ -11009,26 +10937,32 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
-    irs::score_t tmp;
-    score(&tmp);
+    irs::score_t tmp = 0;
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(7, tmp);  // 1+2+4
     ASSERT_EQ(5, it.seek(5));
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(7, tmp);  // 1+2+4
     ASSERT_TRUE(it.next());
     ASSERT_EQ(6, it.value());
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(6, tmp);  // 2+4
     ASSERT_TRUE(it.next());
     ASSERT_EQ(7, it.value());
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(1, tmp);  // 1
     ASSERT_EQ(29, it.seek(27));
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(2, tmp);  // 2
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(1, tmp);  // 1
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
@@ -11038,34 +10972,29 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
 
   // disjunction with score, sub-iterators with scores, max
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({1, 2, 4});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers::Prepare(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers::Prepare(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6},
-                      irs::Scorers::Prepare(sort4));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
 
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Max,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
         auto res = detail::ExecuteAll<Adapter>(docs);
 
         return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 1U);  // custom cost
+          std::move(res), size_t{1}, size_t{1});  // custom cost
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::Aggregator<irs::MaxMerger, 1>,
+      irs::ScoreAdapter, irs::ScoreMergeType::Max,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
@@ -11074,9 +11003,11 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     ASSERT_TRUE(bool(doc));
 
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     // cost
     ASSERT_EQ(1, irs::CostAttr::extract(it));
@@ -11085,25 +11016,31 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(1,2,4)
     ASSERT_EQ(5, it.seek(5));
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(1,2,4)
     ASSERT_TRUE(it.next());
     ASSERT_EQ(6, it.value());
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(2,4)
     ASSERT_TRUE(it.next());
     ASSERT_EQ(7, it.value());
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(1, tmp);  // std::max(1)
     ASSERT_EQ(29, it.seek(27));
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(2, tmp);  // std::max(2)
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(1, tmp);  // std::max(1)
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
@@ -11113,33 +11050,29 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
 
   // disjunction with score, sub-iterators with scores partially, aggregate
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort{{1, 4}};
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers::Prepare(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6},
-                      irs::Scorers::Prepare(sort4));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
 
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Sum,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
         auto res = detail::ExecuteAll<Adapter>(docs);
 
         return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 1U);  // custom cost
+          std::move(res), size_t{1}, size_t{1});  // custom cost
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+      irs::ScoreAdapter, irs::ScoreMergeType::Sum,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
@@ -11148,9 +11081,11 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     ASSERT_TRUE(bool(doc));
 
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     // cost
     ASSERT_EQ(1, irs::CostAttr::extract(it));
@@ -11159,25 +11094,31 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(5, tmp);  // 1+4
     ASSERT_EQ(5, it.seek(5));
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(5, tmp);  // 1+4
     ASSERT_TRUE(it.next());
     ASSERT_EQ(6, it.value());
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(4, tmp);  // 4
     ASSERT_TRUE(it.next());
     ASSERT_EQ(7, it.value());
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(1, tmp);  // 1
     ASSERT_EQ(29, it.seek(27));
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);  //
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(1, tmp);  // 1
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
@@ -11187,33 +11128,29 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
 
   // disjunction with score, sub-iterators with scores partially, max
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort{{1, 4}};
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers::Prepare(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6},
-                      irs::Scorers::Prepare(sort4));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
 
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Max,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
         auto res = detail::ExecuteAll<Adapter>(docs);
 
         return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 1U);  // custom cost
+          std::move(res), size_t{1}, size_t{1});  // custom cost
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::Aggregator<irs::MaxMerger, 1>,
+      irs::ScoreAdapter, irs::ScoreMergeType::Max,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
@@ -11222,9 +11159,11 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     ASSERT_TRUE(bool(doc));
 
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     // cost
     ASSERT_EQ(1, irs::CostAttr::extract(it));
@@ -11233,25 +11172,31 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(1,4)
     ASSERT_EQ(5, it.seek(5));
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(1,4)
     ASSERT_TRUE(it.next());
     ASSERT_EQ(6, it.value());
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(4)
     ASSERT_TRUE(it.next());
     ASSERT_EQ(7, it.value());
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(1, tmp);  // std::max(1)
     ASSERT_EQ(29, it.seek(27));
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);  //
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(1, tmp);  // std::max(1)
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
@@ -11261,29 +11206,27 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
 
   // disjunction with score, sub-iterators without scores, aggregate
   {
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6}, irs::Scorers{});
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
 
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Sum,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
         auto res = detail::ExecuteAll<Adapter>(docs);
 
         return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 1U);  // custom cost
+          std::move(res), size_t{1}, size_t{1});  // custom cost
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>,
+      irs::ScoreAdapter, irs::ScoreMergeType::Sum,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
@@ -11292,9 +11235,12 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     ASSERT_TRUE(bool(doc));
 
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    detail::CompoundSort sort{{}};
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_TRUE(score.IsDefault());
 
     // cost
     ASSERT_EQ(1, irs::CostAttr::extract(it));
@@ -11302,27 +11248,14 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
-    irs::score_t tmp;
-    score(&tmp);
-    ASSERT_EQ(0, tmp);  // 1+4
     ASSERT_EQ(5, it.seek(5));
-    score(&tmp);
-    ASSERT_EQ(0, tmp);  // 1+4
     ASSERT_TRUE(it.next());
     ASSERT_EQ(6, it.value());
-    score(&tmp);
-    ASSERT_EQ(0, tmp);  // 4
     ASSERT_TRUE(it.next());
     ASSERT_EQ(7, it.value());
-    score(&tmp);
-    ASSERT_EQ(0, tmp);  // 1
     ASSERT_EQ(29, it.seek(27));
-    score(&tmp);
-    ASSERT_EQ(0, tmp);  //
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
-    score(&tmp);
-    ASSERT_EQ(0, tmp);  // 1
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
     ASSERT_FALSE(it.next());
@@ -11331,29 +11264,27 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
 
   // disjunction with score, sub-iterators without scores, max
   {
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6}, irs::Scorers{});
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
 
     auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
+      irs::ScoreMergeType::Max,
+      [&]<irs::ScoreMergeType MergeType> mutable -> irs::DocIterator::ptr {
         using Disjunction = irs::BlockDisjunction<
-          irs::ScoreAdapter, A,
+          irs::ScoreAdapter, MergeType,
           irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
         using Adapter = irs::ScoreAdapter;
 
         auto res = detail::ExecuteAll<Adapter>(docs);
 
         return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 1U);  // custom cost
+          std::move(res), size_t{1}, size_t{1});  // custom cost
       });
 
     using ExpectedType = irs::BlockDisjunction<
-      irs::ScoreAdapter, irs::Aggregator<irs::MaxMerger, 1>,
+      irs::ScoreAdapter, irs::ScoreMergeType::Max,
       irs::BlockDisjunctionTraits<irs::MatchType::Match, false, 1>>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
@@ -11361,10 +11292,14 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
 
+    detail::CompoundSort sort{{}};
+
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_TRUE(score.IsDefault());
 
     // cost
     ASSERT_EQ(1, irs::CostAttr::extract(it));
@@ -11372,27 +11307,14 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
-    irs::score_t tmp;
-    score(&tmp);
-    ASSERT_EQ(0, tmp);
     ASSERT_EQ(5, it.seek(5));
-    score(&tmp);
-    ASSERT_EQ(0, tmp);
     ASSERT_TRUE(it.next());
     ASSERT_EQ(6, it.value());
-    score(&tmp);
-    ASSERT_EQ(0, tmp);
     ASSERT_TRUE(it.next());
     ASSERT_EQ(7, it.value());
-    score(&tmp);
-    ASSERT_EQ(0, tmp);
     ASSERT_EQ(29, it.seek(27));
-    score(&tmp);
-    ASSERT_EQ(0, tmp);
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
-    score(&tmp);
-    ASSERT_EQ(0, tmp);
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
     ASSERT_FALSE(it.next());
@@ -11403,7 +11325,7 @@ TEST(block_disjunction_test, scored_seek_next_no_readahead) {
 // disjunction (iterator0 OR iterator1 OR iterator2 OR ...)
 
 TEST(disjunction_test, next) {
-  using Disjunction = irs::Disjunction<irs::ScoreAdapter, irs::NoopAggregator>;
+  using Disjunction = irs::Disjunction<irs::ScoreAdapter>;
   auto sum = [](size_t sum, const std::vector<irs::doc_id_t>& docs) {
     return sum += docs.size();
   };
@@ -11692,7 +11614,7 @@ TEST(disjunction_test, next) {
 }
 
 TEST(disjunction_test, seek) {
-  using Disjunction = irs::Disjunction<irs::ScoreAdapter, irs::NoopAggregator>;
+  using Disjunction = irs::Disjunction<irs::ScoreAdapter>;
   auto sum = [](size_t sum, const std::vector<irs::doc_id_t>& docs) {
     return sum += docs.size();
   };
@@ -11937,7 +11859,7 @@ TEST(disjunction_test, seek) {
 }
 
 TEST(disjunction_test, seek_next) {
-  using Disjunction = irs::Disjunction<irs::ScoreAdapter, irs::NoopAggregator>;
+  using Disjunction = irs::Disjunction<irs::ScoreAdapter>;
   auto sum = [](size_t sum, const std::vector<irs::doc_id_t>& docs) {
     return sum += docs.size();
   };
@@ -11950,10 +11872,14 @@ TEST(disjunction_test, seek_next) {
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
 
+    detail::CompoundSort sort({});
+
     // score, no order set
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_TRUE(score.IsDefault());
 
     // cost
     ASSERT_EQ(std::accumulate(docs.begin(), docs.end(), size_t(0), sum),
@@ -11978,32 +11904,24 @@ TEST(disjunction_test, seek_next) {
 TEST(disjunction_test, scored_seek_next) {
   // disjunction without score, sub-iterators with scores
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({1, 2, 4});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers::Prepare(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers::Prepare(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6},
-                      irs::Scorers::Prepare(sort4));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, irs::Scorers::kUnordered.buckets().size(),
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
-        using Disjunction = irs::Disjunction<irs::ScoreAdapter, A>;
-        using Adapter = irs::ScoreAdapter;
+    auto it_ptr = [&]() {
+      using Disjunction = irs::Disjunction<irs::ScoreAdapter>;
+      using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+      auto res = detail::ExecuteAll<Adapter>(docs);
 
-        return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 1U);  // custom cost
-      });
+      return irs::memory::make_managed<Disjunction>(std::move(res),
+                                                    1U);  // custom cost
+    }();
 
-    using ExpectedType =
-      irs::Disjunction<irs::ScoreAdapter, irs::NoopAggregator>;
+    using ExpectedType = irs::Disjunction<irs::ScoreAdapter>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -12011,9 +11929,11 @@ TEST(disjunction_test, scored_seek_next) {
     ASSERT_TRUE(bool(doc));
 
     // score, no order set
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_TRUE(score.IsDefault());
 
     // cost
     ASSERT_EQ(1, irs::CostAttr::extract(it));
@@ -12035,32 +11955,24 @@ TEST(disjunction_test, scored_seek_next) {
 
   // disjunction with score, sub-iterators with scores, aggregate
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({1, 2, 4});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers::Prepare(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers::Prepare(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6},
-                      irs::Scorers::Prepare(sort4));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
-        using Disjunction = irs::Disjunction<irs::ScoreAdapter, A>;
-        using Adapter = irs::ScoreAdapter;
+    auto it_ptr = [&] {
+      using Disjunction = irs::Disjunction<irs::ScoreAdapter>;
+      using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+      auto res = detail::ExecuteAll<Adapter>(docs);
 
-        return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 1U);  // custom cost
-      });
+      return irs::memory::make_managed<Disjunction>(std::move(res),
+                                                    1U);  // custom cost
+    }();
 
-    using ExpectedType =
-      irs::Disjunction<irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>>;
+    using ExpectedType = irs::Disjunction<irs::ScoreAdapter>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -12068,9 +11980,11 @@ TEST(disjunction_test, scored_seek_next) {
     ASSERT_TRUE(bool(doc));
 
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_TRUE(score.IsDefault());
 
     // cost
     ASSERT_EQ(1, irs::CostAttr::extract(it));
@@ -12079,26 +11993,26 @@ TEST(disjunction_test, scored_seek_next) {
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
-    ASSERT_EQ(7, tmp);  // 1+2+4
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 1+2+4
     ASSERT_EQ(5, it.seek(5));
-    score(&tmp);
-    ASSERT_EQ(7, tmp);  // 1+2+4
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 1+2+4
     ASSERT_TRUE(it.next());
     ASSERT_EQ(6, it.value());
-    score(&tmp);
-    ASSERT_EQ(6, tmp);  // 2+4
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 2+4
     ASSERT_TRUE(it.next());
     ASSERT_EQ(7, it.value());
-    score(&tmp);
-    ASSERT_EQ(1, tmp);  // 1
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 1
     ASSERT_EQ(29, it.seek(27));
-    score(&tmp);
-    ASSERT_EQ(2, tmp);  // 2
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 2
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
-    score(&tmp);
-    ASSERT_EQ(1, tmp);  // 1
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 1
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
     ASSERT_FALSE(it.next());
@@ -12107,32 +12021,24 @@ TEST(disjunction_test, scored_seek_next) {
 
   // disjunction with score, sub-iterators with scores, max
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({1, 2, 4});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers::Prepare(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers::Prepare(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6},
-                      irs::Scorers::Prepare(sort4));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
-        using Disjunction = irs::Disjunction<irs::ScoreAdapter, A>;
-        using Adapter = irs::ScoreAdapter;
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      using Disjunction = irs::Disjunction<irs::ScoreAdapter>;
+      using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+      auto res = detail::ExecuteAll<Adapter>(docs);
 
-        return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 1U);  // custom cost
-      });
+      return irs::memory::make_managed<Disjunction>(std::move(res),
+                                                    1U);  // custom cost
+    }();
 
-    using ExpectedType =
-      irs::Disjunction<irs::ScoreAdapter, irs::Aggregator<irs::MaxMerger, 1>>;
+    using ExpectedType = irs::Disjunction<irs::ScoreAdapter>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -12140,9 +12046,11 @@ TEST(disjunction_test, scored_seek_next) {
     ASSERT_TRUE(bool(doc));
 
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_TRUE(score.IsDefault());
 
     // cost
     ASSERT_EQ(1, irs::CostAttr::extract(it));
@@ -12151,26 +12059,26 @@ TEST(disjunction_test, scored_seek_next) {
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
-    ASSERT_EQ(4, tmp);  // std::max(1,2,4)
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // std::max(1,2,4)
     ASSERT_EQ(5, it.seek(5));
-    score(&tmp);
-    ASSERT_EQ(4, tmp);  // std::max(1,2,4)
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // std::max(1,2,4)
     ASSERT_TRUE(it.next());
     ASSERT_EQ(6, it.value());
-    score(&tmp);
-    ASSERT_EQ(4, tmp);  // std::max(2,4)
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // std::max(2,4)
     ASSERT_TRUE(it.next());
     ASSERT_EQ(7, it.value());
-    score(&tmp);
-    ASSERT_EQ(1, tmp);  // std::max(1)
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // std::max(1)
     ASSERT_EQ(29, it.seek(27));
-    score(&tmp);
-    ASSERT_EQ(2, tmp);  // std::max(2)
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // std::max(2)
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
-    score(&tmp);
-    ASSERT_EQ(1, tmp);  // std::max(1)
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // std::max(1)
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
     ASSERT_FALSE(it.next());
@@ -12179,31 +12087,24 @@ TEST(disjunction_test, scored_seek_next) {
 
   // disjunction with score, sub-iterators with scores partially, aggregate
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({1, 4});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers::Prepare(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6},
-                      irs::Scorers::Prepare(sort4));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
-        using Disjunction = irs::Disjunction<irs::ScoreAdapter, A>;
-        using Adapter = irs::ScoreAdapter;
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      using Disjunction = irs::Disjunction<irs::ScoreAdapter>;
+      using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+      auto res = detail::ExecuteAll<Adapter>(docs);
 
-        return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 1U);  // custom cost
-      });
+      return irs::memory::make_managed<Disjunction>(std::move(res),
+                                                    1U);  // custom cost
+    }();
 
-    using ExpectedType =
-      irs::Disjunction<irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>>;
+    using ExpectedType = irs::Disjunction<irs::ScoreAdapter>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -12211,9 +12112,11 @@ TEST(disjunction_test, scored_seek_next) {
     ASSERT_TRUE(bool(doc));
 
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_TRUE(score.IsDefault());
 
     // cost
     ASSERT_EQ(1, irs::CostAttr::extract(it));
@@ -12222,26 +12125,32 @@ TEST(disjunction_test, scored_seek_next) {
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
-    ASSERT_EQ(5, tmp);  // 1+4
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 1+4
     ASSERT_EQ(5, it.seek(5));
-    score(&tmp);
-    ASSERT_EQ(5, tmp);  // 1+4
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 1+4
     ASSERT_TRUE(it.next());
     ASSERT_EQ(6, it.value());
-    score(&tmp);
-    ASSERT_EQ(4, tmp);  // 4
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 4
     ASSERT_TRUE(it.next());
     ASSERT_EQ(7, it.value());
-    score(&tmp);
-    ASSERT_EQ(1, tmp);  // 1
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 1
     ASSERT_EQ(29, it.seek(27));
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);  //
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
-    score(&tmp);
-    ASSERT_EQ(1, tmp);  // 1
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 1
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
     ASSERT_FALSE(it.next());
@@ -12250,31 +12159,24 @@ TEST(disjunction_test, scored_seek_next) {
 
   // disjunction with score, sub-iterators with scores partially, max
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({1, 4});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers::Prepare(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6},
-                      irs::Scorers::Prepare(sort4));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
-        using Disjunction = irs::Disjunction<irs::ScoreAdapter, A>;
-        using Adapter = irs::ScoreAdapter;
+    auto it_ptr = [&] {
+      using Disjunction = irs::Disjunction<irs::ScoreAdapter>;
+      using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+      auto res = detail::ExecuteAll<Adapter>(docs);
 
-        return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 1U);  // custom cost
-      });
+      return irs::memory::make_managed<Disjunction>(std::move(res),
+                                                    1U);  // custom cost
+    }();
 
-    using ExpectedType =
-      irs::Disjunction<irs::ScoreAdapter, irs::Aggregator<irs::MaxMerger, 1>>;
+    using ExpectedType = irs::Disjunction<irs::ScoreAdapter>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -12282,9 +12184,11 @@ TEST(disjunction_test, scored_seek_next) {
     ASSERT_TRUE(bool(doc));
 
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_TRUE(score.IsDefault());
 
     // cost
     ASSERT_EQ(1, irs::CostAttr::extract(it));
@@ -12293,26 +12197,26 @@ TEST(disjunction_test, scored_seek_next) {
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
-    ASSERT_EQ(4, tmp);  // std::max(1,4)
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // std::max(1,4)
     ASSERT_EQ(5, it.seek(5));
-    score(&tmp);
-    ASSERT_EQ(4, tmp);  // std::max(1,4)
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // std::max(1,4)
     ASSERT_TRUE(it.next());
     ASSERT_EQ(6, it.value());
-    score(&tmp);
-    ASSERT_EQ(4, tmp);  // std::max(4)
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // std::max(4)
     ASSERT_TRUE(it.next());
     ASSERT_EQ(7, it.value());
-    score(&tmp);
-    ASSERT_EQ(1, tmp);  // std::max(1)
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // std::max(1)
     ASSERT_EQ(29, it.seek(27));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);  //
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
-    score(&tmp);
-    ASSERT_EQ(1, tmp);  // std::max(1)
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // std::max(1)
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
     ASSERT_FALSE(it.next());
@@ -12321,37 +12225,36 @@ TEST(disjunction_test, scored_seek_next) {
 
   // disjunction with score, sub-iterators without scores, aggregate
   {
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6}, irs::Scorers{});
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
-        using Disjunction = irs::Disjunction<irs::ScoreAdapter, A>;
-        using Adapter = irs::ScoreAdapter;
+    auto it_ptr = [&] {
+      using Disjunction = irs::Disjunction<irs::ScoreAdapter>;
+      using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+      auto res = detail::ExecuteAll<Adapter>(docs);
 
-        return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 1U);  // custom cost
-      });
+      return irs::memory::make_managed<Disjunction>(std::move(res),
+                                                    1U);  // custom cost
+    }();
 
-    using ExpectedType =
-      irs::Disjunction<irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>>;
+    using ExpectedType = irs::Disjunction<irs::ScoreAdapter>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
 
+    detail::CompoundSort sort({});
+
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_TRUE(score.IsDefault());
 
     // cost
     ASSERT_EQ(1, irs::CostAttr::extract(it));
@@ -12360,25 +12263,31 @@ TEST(disjunction_test, scored_seek_next) {
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1+4
     ASSERT_EQ(5, it.seek(5));
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1+4
     ASSERT_TRUE(it.next());
     ASSERT_EQ(6, it.value());
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 4
     ASSERT_TRUE(it.next());
     ASSERT_EQ(7, it.value());
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1
     ASSERT_EQ(29, it.seek(27));
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);  //
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
@@ -12388,37 +12297,36 @@ TEST(disjunction_test, scored_seek_next) {
 
   // disjunction with score, sub-iterators without scores, max
   {
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6}, irs::Scorers{});
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max, 1,
-      [&]<typename A>(A&& aggregator) mutable -> irs::DocIterator::ptr {
-        using Disjunction = irs::Disjunction<irs::ScoreAdapter, A>;
-        using Adapter = irs::ScoreAdapter;
+    auto it_ptr = [&] {
+      using Disjunction = irs::Disjunction<irs::ScoreAdapter>;
+      using Adapter = irs::ScoreAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+      auto res = detail::ExecuteAll<Adapter>(docs);
 
-        return irs::memory::make_managed<Disjunction>(
-          std::move(res), std::move(aggregator), 1U);  // custom cost
-      });
+      return irs::memory::make_managed<Disjunction>(std::move(res),
+                                                    1U);  // custom cost
+    }();
 
-    using ExpectedType =
-      irs::Disjunction<irs::ScoreAdapter, irs::Aggregator<irs::MaxMerger, 1>>;
+    using ExpectedType = irs::Disjunction<irs::ScoreAdapter>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
 
+    detail::CompoundSort sort({});
+
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_TRUE(score.IsDefault());
 
     // cost
     ASSERT_EQ(1, irs::CostAttr::extract(it));
@@ -12427,25 +12335,25 @@ TEST(disjunction_test, scored_seek_next) {
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_EQ(5, it.seek(5));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_TRUE(it.next());
     ASSERT_EQ(6, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_TRUE(it.next());
     ASSERT_EQ(7, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_EQ(29, it.seek(27));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_TRUE(it.next());
     ASSERT_EQ(45, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
@@ -12457,7 +12365,7 @@ TEST(disjunction_test, scored_seek_next) {
 // minimum match count: iterator0 OR iterator1 OR iterator2 OR ...
 
 TEST(min_match_disjunction_test, next) {
-  using Disjunction = irs::MinMatchDisjunction<irs::NoopAggregator>;
+  using Disjunction = irs::MinMatchDisjunction;
   // single dataset
   {
     std::vector<std::vector<irs::doc_id_t>> docs{
@@ -13054,7 +12962,7 @@ TEST(min_match_disjunction_test, next) {
 }
 
 TEST(min_match_disjunction_test, seek) {
-  using Disjunction = irs::MinMatchDisjunction<irs::NoopAggregator>;
+  using Disjunction = irs::MinMatchDisjunction;
 
   // simple case
   {
@@ -13477,7 +13385,7 @@ TEST(min_match_disjunction_test, seek) {
 }
 
 TEST(min_match_disjunction_test, seek_next) {
-  using Disjunction = irs::MinMatchDisjunction<irs::NoopAggregator>;
+  using Disjunction = irs::MinMatchDisjunction;
 
   {
     std::vector<std::vector<irs::doc_id_t>> docs{
@@ -13486,11 +13394,6 @@ TEST(min_match_disjunction_test, seek_next) {
     Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs), 2U);
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
-
-    // score, no order set
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
 
     // cost
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
@@ -13519,7 +13422,7 @@ TEST(min_match_disjunction_test, seek_next) {
 }
 
 TEST(min_match_disjunction_test, match_count) {
-  using Disjunction = irs::MinMatchDisjunction<irs::NoopAggregator>;
+  using Disjunction = irs::MinMatchDisjunction;
 
   {
     std::vector<std::vector<irs::doc_id_t>> docs{
@@ -13528,11 +13431,6 @@ TEST(min_match_disjunction_test, match_count) {
     Disjunction it(detail::ExecuteAll<irs::CostAdapter>(docs), 1U);
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
-
-    // score, no order set
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
 
     // cost
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
@@ -13550,31 +13448,23 @@ TEST(min_match_disjunction_test, match_count) {
 TEST(min_match_disjunction_test, scored_seek_next) {
   // disjunction without score, sub-iterators with scores
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({1, 2, 4});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers::Prepare(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers::Prepare(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 9, 29},
-                      irs::Scorers::Prepare(sort4));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 9, 29});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max, 0,
-      [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-        using Disjunction = irs::MinMatchDisjunction<A>;
-        using Adapter = typename irs::CostAdapter;
+    auto it_ptr = [&] {
+      using Disjunction = irs::MinMatchDisjunction;
+      using Adapter = typename irs::CostAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+      auto res = detail::ExecuteAll<Adapter>(docs);
 
-        return irs::memory::make_managed<Disjunction>(std::move(res), 2U,
-                                                      std::move(aggregator));
-      });
+      return irs::memory::make_managed<Disjunction>(std::move(res), 2U);
+    }();
 
-    using ExpectedType = irs::MinMatchDisjunction<irs::NoopAggregator>;
+    using ExpectedType = irs::MinMatchDisjunction;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -13582,14 +13472,15 @@ TEST(min_match_disjunction_test, scored_seek_next) {
     ASSERT_TRUE(bool(doc));
 
     // score, no order set
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_TRUE(score.IsDefault());
 
     // cost
-    ASSERT_EQ(
-      docs[0].first.size() + docs[1].first.size() + docs[2].first.size(),
-      irs::CostAttr::extract(it));
+    ASSERT_EQ(docs[0].size() + docs[1].size() + docs[2].size(),
+              irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_EQ(5, it.seek(5));
@@ -13606,32 +13497,23 @@ TEST(min_match_disjunction_test, scored_seek_next) {
 
   // disjunction with score, sub-iterators with scores, aggregate
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({1, 2, 4});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers::Prepare(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers::Prepare(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 9, 29},
-                      irs::Scorers::Prepare(sort4));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 9, 29});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-        using Disjunction = irs::MinMatchDisjunction<A>;
-        using Adapter = typename irs::CostAdapter;
+    auto it_ptr = [&] {
+      using Disjunction = irs::MinMatchDisjunction;
+      using Adapter = typename irs::CostAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+      auto res = detail::ExecuteAll<Adapter>(docs);
 
-        return irs::memory::make_managed<Disjunction>(std::move(res), 2U,
-                                                      std::move(aggregator));
-      });
+      return irs::memory::make_managed<Disjunction>(std::move(res), 2U);
+    }();
 
-    using ExpectedType =
-      irs::MinMatchDisjunction<irs::Aggregator<irs::SumMerger, 1>>;
+    using ExpectedType = irs::MinMatchDisjunction;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -13639,35 +13521,36 @@ TEST(min_match_disjunction_test, scored_seek_next) {
     ASSERT_TRUE(bool(doc));
 
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_TRUE(score.IsDefault());
 
     // cost
-    ASSERT_EQ(
-      docs[0].first.size() + docs[1].first.size() + docs[2].first.size(),
-      irs::CostAttr::extract(it));
+    ASSERT_EQ(docs[0].size() + docs[1].size() + docs[2].size(),
+              irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
-    ASSERT_EQ(7, tmp);  // 1+2+4
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 1+2+4
     ASSERT_EQ(5, it.seek(5));
-    score(&tmp);
-    ASSERT_EQ(7, tmp);  // 1+2+4
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 1+2+4
     ASSERT_TRUE(it.next());
     ASSERT_EQ(6, it.value());
-    score(&tmp);
-    ASSERT_EQ(6, tmp);  // 2+4
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 2+4
     ASSERT_TRUE(it.next());
     ASSERT_EQ(9, it.value());
-    score(&tmp);
-    ASSERT_EQ(5, tmp);  // 1+4
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 1+4
     ASSERT_EQ(29, it.seek(27));
-    score(&tmp);
-    ASSERT_EQ(6, tmp);  // 2+4
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 2+4
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
     ASSERT_FALSE(it.next());
@@ -13676,32 +13559,23 @@ TEST(min_match_disjunction_test, scored_seek_next) {
 
   // disjunction with score, sub-iterators with scores, max
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({1, 2, 4});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers::Prepare(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers::Prepare(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 9, 29},
-                      irs::Scorers::Prepare(sort4));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 9, 29});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max, 1,
-      [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-        using Disjunction = irs::MinMatchDisjunction<A>;
-        using Adapter = typename irs::CostAdapter;
+    auto it_ptr = [&] {
+      using Disjunction = irs::MinMatchDisjunction;
+      using Adapter = typename irs::CostAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+      auto res = detail::ExecuteAll<Adapter>(docs);
 
-        return irs::memory::make_managed<Disjunction>(std::move(res), 2U,
-                                                      std::move(aggregator));
-      });
+      return irs::memory::make_managed<Disjunction>(std::move(res), 2U);
+    }();
 
-    using ExpectedType =
-      irs::MinMatchDisjunction<irs::Aggregator<irs::MaxMerger, 1>>;
+    using ExpectedType = irs::MinMatchDisjunction;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -13709,35 +13583,36 @@ TEST(min_match_disjunction_test, scored_seek_next) {
     ASSERT_TRUE(bool(doc));
 
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_TRUE(score.IsDefault());
 
     // cost
-    ASSERT_EQ(
-      docs[0].first.size() + docs[1].first.size() + docs[2].first.size(),
-      irs::CostAttr::extract(it));
+    ASSERT_EQ(docs[0].size() + docs[1].size() + docs[2].size(),
+              irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
-    ASSERT_EQ(4, tmp);  // std::max(1,2,4)
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // std::max(1,2,4)
     ASSERT_EQ(5, it.seek(5));
-    score(&tmp);
-    ASSERT_EQ(4, tmp);  // std::max(1,2,4)
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // std::max(1,2,4)
     ASSERT_TRUE(it.next());
     ASSERT_EQ(6, it.value());
-    score(&tmp);
-    ASSERT_EQ(4, tmp);  // std::max(2,4)
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // std::max(2,4)
     ASSERT_TRUE(it.next());
     ASSERT_EQ(9, it.value());
-    score(&tmp);
-    ASSERT_EQ(4, tmp);  // std::max(1,4)
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // std::max(1,4)
     ASSERT_EQ(29, it.seek(27));
-    score(&tmp);
-    ASSERT_EQ(4, tmp);  // std::max(2,4)
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // std::max(2,4)
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
     ASSERT_FALSE(it.next());
@@ -13746,31 +13621,23 @@ TEST(min_match_disjunction_test, scored_seek_next) {
 
   // disjunction with score, sub-iterators with scores partially, aggregate
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({1, 4});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers::Prepare(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 9, 29},
-                      irs::Scorers::Prepare(sort4));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 9, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-        using Disjunction = irs::MinMatchDisjunction<A>;
-        using Adapter = typename irs::CostAdapter;
+    auto it_ptr = [&] {
+      using Disjunction = irs::MinMatchDisjunction;
+      using Adapter = typename irs::CostAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+      auto res = detail::ExecuteAll<Adapter>(docs);
 
-        return irs::memory::make_managed<Disjunction>(std::move(res), 2U,
-                                                      std::move(aggregator));
-      });
+      return irs::memory::make_managed<Disjunction>(std::move(res), 2U);
+    }();
 
-    using ExpectedType =
-      irs::MinMatchDisjunction<irs::Aggregator<irs::SumMerger, 1>>;
+    using ExpectedType = irs::MinMatchDisjunction;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -13778,35 +13645,36 @@ TEST(min_match_disjunction_test, scored_seek_next) {
     ASSERT_TRUE(bool(doc));
 
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_TRUE(score.IsDefault());
 
     // cost
-    ASSERT_EQ(
-      docs[0].first.size() + docs[1].first.size() + docs[2].first.size(),
-      irs::CostAttr::extract(it));
+    ASSERT_EQ(docs[0].size() + docs[1].size() + docs[2].size(),
+              irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
-    ASSERT_EQ(5, tmp);  // 1+2+4
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 1+2+4
     ASSERT_EQ(5, it.seek(5));
-    score(&tmp);
-    ASSERT_EQ(5, tmp);  // 1+2+4
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 1+2+4
     ASSERT_TRUE(it.next());
     ASSERT_EQ(6, it.value());
-    score(&tmp);
-    ASSERT_EQ(4, tmp);  // 2+4
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 2+4
     ASSERT_TRUE(it.next());
     ASSERT_EQ(9, it.value());
-    score(&tmp);
-    ASSERT_EQ(5, tmp);  // 1+4
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 1+4
     ASSERT_EQ(29, it.seek(27));
-    score(&tmp);
-    ASSERT_EQ(4, tmp);  // 2+4
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);  // 2+4
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
     ASSERT_FALSE(it.next());
@@ -13815,34 +13683,23 @@ TEST(min_match_disjunction_test, scored_seek_next) {
 
   // disjunction with score, sub-iterators with scores partially, max
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({1, 4});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers::Prepare(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 9, 29},
-                      irs::Scorers::Prepare(sort4));
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 9, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
 
-    auto prepared_order = irs::Scorers::Prepare(
-      detail::BasicSort{std::numeric_limits<size_t>::max()});
+    auto it_ptr = [&] {
+      using Disjunction = irs::MinMatchDisjunction;
+      using Adapter = typename irs::CostAdapter;
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max, 1,
-      [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-        using Disjunction = irs::MinMatchDisjunction<A>;
-        using Adapter = typename irs::CostAdapter;
+      auto res = detail::ExecuteAll<Adapter>(docs);
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+      return irs::memory::make_managed<Disjunction>(std::move(res), 2U);
+    }();
 
-        return irs::memory::make_managed<Disjunction>(std::move(res), 2U,
-                                                      std::move(aggregator));
-      });
-
-    using ExpectedType =
-      irs::MinMatchDisjunction<irs::Aggregator<irs::MaxMerger, 1>>;
+    using ExpectedType = irs::MinMatchDisjunction;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -13850,35 +13707,36 @@ TEST(min_match_disjunction_test, scored_seek_next) {
     ASSERT_TRUE(bool(doc));
 
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_TRUE(score.IsDefault());
 
     // cost
-    ASSERT_EQ(
-      docs[0].first.size() + docs[1].first.size() + docs[2].first.size(),
-      irs::CostAttr::extract(it));
+    ASSERT_EQ(docs[0].size() + docs[1].size() + docs[2].size(),
+              irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
-    ASSERT_EQ(4, tmp);
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);
     ASSERT_EQ(5, it.seek(5));
-    score(&tmp);
-    ASSERT_EQ(4, tmp);
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);
     ASSERT_TRUE(it.next());
     ASSERT_EQ(6, it.value());
-    score(&tmp);
-    ASSERT_EQ(4, tmp);
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);
     ASSERT_TRUE(it.next());
     ASSERT_EQ(9, it.value());
-    score(&tmp);
-    ASSERT_EQ(4, tmp);
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);
     ASSERT_EQ(29, it.seek(27));
-    score(&tmp);
-    ASSERT_EQ(4, tmp);
+    tmp = score.Score();
+    ASSERT_EQ(0, tmp);
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
     ASSERT_FALSE(it.next());
@@ -13887,63 +13745,59 @@ TEST(min_match_disjunction_test, scored_seek_next) {
 
   // disjunction with score, sub-iterators without scores, aggregate
   {
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 9, 29},
-                      irs::Scorers{});
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 9, 29});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-        using Disjunction = irs::MinMatchDisjunction<A>;
-        using Adapter = typename irs::CostAdapter;
+    auto it_ptr = [&] {
+      using Disjunction = irs::MinMatchDisjunction;
+      using Adapter = typename irs::CostAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+      auto res = detail::ExecuteAll<Adapter>(docs);
 
-        return irs::memory::make_managed<Disjunction>(std::move(res), 2U,
-                                                      std::move(aggregator));
-      });
+      return irs::memory::make_managed<Disjunction>(std::move(res), 2U);
+    }();
 
-    using ExpectedType =
-      irs::MinMatchDisjunction<irs::Aggregator<irs::SumMerger, 1>>;
+    using ExpectedType = irs::MinMatchDisjunction;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
 
+    detail::CompoundSort sort({});
+
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_TRUE(score.IsDefault());
 
     // cost
-    ASSERT_EQ(
-      docs[0].first.size() + docs[1].first.size() + docs[2].first.size(),
-      irs::CostAttr::extract(it));
+    ASSERT_EQ(docs[0].size() + docs[1].size() + docs[2].size(),
+              irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1+2+4
     ASSERT_EQ(5, it.seek(5));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1+2+4
     ASSERT_TRUE(it.next());
     ASSERT_EQ(6, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 2+4
     ASSERT_TRUE(it.next());
     ASSERT_EQ(9, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1+4
     ASSERT_EQ(29, it.seek(27));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 2+4
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
@@ -13953,28 +13807,21 @@ TEST(min_match_disjunction_test, scored_seek_next) {
 
   // disjunction with score, sub-iterators without scores, max
   {
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45},
-                      irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29},
-                      irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 9, 29},
-                      irs::Scorers{});
+    std::vector<std::vector<irs::doc_id_t>> docs;
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 12, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 5, 6, 9, 29});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max, 1,
-      [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-        using Disjunction = irs::MinMatchDisjunction<A>;
-        using Adapter = typename irs::CostAdapter;
+    auto it_ptr = [&] {
+      using Disjunction = irs::MinMatchDisjunction;
+      using Adapter = typename irs::CostAdapter;
 
-        auto res = detail::ExecuteAll<Adapter>(docs);
+      auto res = detail::ExecuteAll<Adapter>(docs);
 
-        return irs::memory::make_managed<Disjunction>(std::move(res), 2U,
-                                                      std::move(aggregator));
-      });
+      return irs::memory::make_managed<Disjunction>(std::move(res), 2U);
+    }();
 
-    using ExpectedType =
-      irs::MinMatchDisjunction<irs::Aggregator<irs::MaxMerger, 1>>;
+    using ExpectedType = irs::MinMatchDisjunction;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -13982,34 +13829,36 @@ TEST(min_match_disjunction_test, scored_seek_next) {
     ASSERT_TRUE(bool(doc));
 
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    detail::CompoundSort sort({});
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_TRUE(score.IsDefault());
 
     // cost
-    ASSERT_EQ(
-      docs[0].first.size() + docs[1].first.size() + docs[2].first.size(),
-      irs::CostAttr::extract(it));
+    ASSERT_EQ(docs[0].size() + docs[1].size() + docs[2].size(),
+              irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_EQ(5, it.seek(5));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_TRUE(it.next());
     ASSERT_EQ(6, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_TRUE(it.next());
     ASSERT_EQ(9, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_EQ(29, it.seek(27));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
@@ -14039,8 +13888,9 @@ TEST(conjunction_test, next) {
     std::vector<irs::doc_id_t> expected{1, 5};
     std::vector<irs::doc_id_t> result;
     {
-      auto it_ptr = irs::MakeConjunction(
-        {}, irs::NoopAggregator{}, detail::ExecuteAll<DocIteratorImpl>(docs));
+      auto it_ptr =
+        irs::MakeConjunction(irs::ScoreMergeType::Noop, {},
+                             detail::ExecuteAll<DocIteratorImpl>(docs));
       auto& it = *it_ptr;
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -14067,8 +13917,9 @@ TEST(conjunction_test, next) {
     std::vector<irs::doc_id_t> expected{1, 5, 11, 21, 27, 31};
     std::vector<irs::doc_id_t> result;
     {
-      auto it_ptr = irs::MakeConjunction(
-        {}, irs::NoopAggregator{}, detail::ExecuteAll<DocIteratorImpl>(docs));
+      auto it_ptr =
+        irs::MakeConjunction(irs::ScoreMergeType::Noop, {},
+                             detail::ExecuteAll<DocIteratorImpl>(docs));
       auto& it = *it_ptr;
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -14095,8 +13946,9 @@ TEST(conjunction_test, next) {
     std::vector<irs::doc_id_t> expected{1, 5, 11, 21, 27, 31};
     std::vector<irs::doc_id_t> result;
     {
-      auto it_ptr = irs::MakeConjunction(
-        {}, irs::NoopAggregator{}, detail::ExecuteAll<DocIteratorImpl>(docs));
+      auto it_ptr =
+        irs::MakeConjunction(irs::ScoreMergeType::Noop, {},
+                             detail::ExecuteAll<DocIteratorImpl>(docs));
       auto& it = *it_ptr;
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -14123,8 +13975,9 @@ TEST(conjunction_test, next) {
     std::vector<irs::doc_id_t> expected{1, 5};
     std::vector<irs::doc_id_t> result;
     {
-      auto it_ptr = irs::MakeConjunction(
-        {}, irs::NoopAggregator{}, detail::ExecuteAll<DocIteratorImpl>(docs));
+      auto it_ptr =
+        irs::MakeConjunction(irs::ScoreMergeType::Noop, {},
+                             detail::ExecuteAll<DocIteratorImpl>(docs));
       auto& it = *it_ptr;
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -14150,8 +14003,9 @@ TEST(conjunction_test, next) {
 
     std::vector<irs::doc_id_t> result;
     {
-      auto it_ptr = irs::MakeConjunction(
-        {}, irs::NoopAggregator{}, detail::ExecuteAll<DocIteratorImpl>(docs));
+      auto it_ptr =
+        irs::MakeConjunction(irs::ScoreMergeType::Noop, {},
+                             detail::ExecuteAll<DocIteratorImpl>(docs));
       auto& it = *it_ptr;
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -14174,8 +14028,9 @@ TEST(conjunction_test, next) {
 
     std::vector<irs::doc_id_t> result;
     {
-      auto it_ptr = irs::MakeConjunction(
-        {}, irs::NoopAggregator{}, detail::ExecuteAll<DocIteratorImpl>(docs));
+      auto it_ptr =
+        irs::MakeConjunction(irs::ScoreMergeType::Noop, {},
+                             detail::ExecuteAll<DocIteratorImpl>(docs));
       auto& it = *it_ptr;
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -14202,8 +14057,9 @@ TEST(conjunction_test, next) {
     std::vector<irs::doc_id_t> expected{};
     std::vector<irs::doc_id_t> result;
     {
-      auto it_ptr = irs::MakeConjunction(
-        {}, irs::NoopAggregator{}, detail::ExecuteAll<DocIteratorImpl>(docs));
+      auto it_ptr =
+        irs::MakeConjunction(irs::ScoreMergeType::Noop, {},
+                             detail::ExecuteAll<DocIteratorImpl>(docs));
       auto& it = *it_ptr;
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -14226,8 +14082,9 @@ TEST(conjunction_test, next) {
     std::vector<irs::doc_id_t> expected{};
     std::vector<irs::doc_id_t> result;
     {
-      auto it_ptr = irs::MakeConjunction(
-        {}, irs::NoopAggregator{}, detail::ExecuteAll<DocIteratorImpl>(docs));
+      auto it_ptr =
+        irs::MakeConjunction(irs::ScoreMergeType::Noop, {},
+                             detail::ExecuteAll<DocIteratorImpl>(docs));
       auto& it = *it_ptr;
       auto* doc = irs::get<irs::DocAttr>(it);
       ASSERT_TRUE(bool(doc));
@@ -14271,7 +14128,7 @@ TEST(conjunction_test, seek) {
       {257, irs::doc_limits::eof()}};
 
     auto it_ptr = irs::MakeConjunction(
-      {}, irs::NoopAggregator{}, detail::ExecuteAll<DocIteratorImpl>(docs));
+      irs::ScoreMergeType::Noop, {}, detail::ExecuteAll<DocIteratorImpl>(docs));
     auto& it = *it_ptr;
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -14304,7 +14161,7 @@ TEST(conjunction_test, seek) {
       {257, irs::doc_limits::eof()}};
 
     auto it_ptr = irs::MakeConjunction(
-      {}, irs::NoopAggregator{}, detail::ExecuteAll<DocIteratorImpl>(docs));
+      irs::ScoreMergeType::Noop, {}, detail::ExecuteAll<DocIteratorImpl>(docs));
     auto& it = *it_ptr;
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -14324,7 +14181,7 @@ TEST(conjunction_test, seek) {
       {irs::doc_limits::invalid(), irs::doc_limits::eof()}};
 
     auto it_ptr = irs::MakeConjunction(
-      {}, irs::NoopAggregator{}, detail::ExecuteAll<DocIteratorImpl>(docs));
+      irs::ScoreMergeType::Noop, {}, detail::ExecuteAll<DocIteratorImpl>(docs));
     auto& it = *it_ptr;
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -14354,7 +14211,7 @@ TEST(conjunction_test, seek) {
       {57, irs::doc_limits::eof()}};
 
     auto it_ptr = irs::MakeConjunction(
-      {}, irs::NoopAggregator{}, detail::ExecuteAll<DocIteratorImpl>(docs));
+      irs::ScoreMergeType::Noop, {}, detail::ExecuteAll<DocIteratorImpl>(docs));
     auto& it = *it_ptr;
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -14383,7 +14240,7 @@ TEST(conjunction_test, seek) {
       {257, irs::doc_limits::eof()}};
 
     auto it_ptr = irs::MakeConjunction(
-      {}, irs::NoopAggregator{}, detail::ExecuteAll<DocIteratorImpl>(docs));
+      irs::ScoreMergeType::Noop, {}, detail::ExecuteAll<DocIteratorImpl>(docs));
     auto& it = *it_ptr;
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -14408,15 +14265,18 @@ TEST(conjunction_test, seek_next) {
       {1, 4, 5, 8, 14}};
 
     auto it_ptr = irs::MakeConjunction(
-      {}, irs::NoopAggregator{}, detail::ExecuteAll<DocIteratorImpl>(docs));
+      irs::ScoreMergeType::Noop, {}, detail::ExecuteAll<DocIteratorImpl>(docs));
     auto& it = *it_ptr;
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
 
     // score, no order set
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    detail::CompoundSort sort({});
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_TRUE(score.IsDefault());
 
     // cost
     ASSERT_EQ(std::min_element(docs.begin(), docs.end(), shortest)->size(),
@@ -14439,28 +14299,20 @@ TEST(conjunction_test, seek_next) {
 TEST(conjunction_test, scored_seek_next) {
   // conjunction with score, sub-iterators with scores, aggregation
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({1, 2, 4});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
+    std::vector<std::vector<irs::doc_id_t>> docs;
     docs.emplace_back(
-      std::vector<irs::doc_id_t>{1, 2, 4, 5, 7, 8, 9, 11, 14, 45},
-      irs::Scorers::Prepare(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 6, 8, 12, 14, 29},
-                      irs::Scorers::Prepare(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14},
-                      irs::Scorers::Prepare(sort4));
+      std::vector<irs::doc_id_t>{1, 2, 4, 5, 7, 8, 9, 11, 14, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 6, 8, 12, 14, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-        auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
-        return irs::MakeConjunction({}, std::move(aggregator), std::move(res));
-      });
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      return irs::MakeConjunction(irs::ScoreMergeType::Sum, {}, std::move(res));
+    }();
 
-    using ExpectedType =
-      irs::Conjunction<irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>>;
+    using ExpectedType = irs::Conjunction<irs::ScoreAdapter>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -14468,32 +14320,39 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_TRUE(bool(doc));
 
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     // cost
-    ASSERT_EQ(docs[2].first.size(), irs::CostAttr::extract(it));
+    ASSERT_EQ(docs[2].size(), irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(7, tmp);  // 1+2+4
     ASSERT_EQ(4, it.seek(3));
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(7, tmp);  // 1+2+4
     ASSERT_TRUE(it.next());
     ASSERT_EQ(5, it.value());
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(7, tmp);  // 1+2+4
     ASSERT_TRUE(it.next());
     ASSERT_EQ(8, it.value());
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(7, tmp);  // 1+2+4
     ASSERT_EQ(14, it.seek(14));
-    score(&tmp);
+    it.FetchScoreArgs(0);
+    tmp = score.Score();
     ASSERT_EQ(7, tmp);  // 1+2+4
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
@@ -14503,28 +14362,21 @@ TEST(conjunction_test, scored_seek_next) {
 
   // conjunction without score, sub-iterators with scores
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({1, 2, 4});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
+    std::vector<std::vector<irs::doc_id_t>> docs;
     docs.emplace_back(
-      std::vector<irs::doc_id_t>{1, 2, 4, 5, 7, 8, 9, 11, 14, 45},
-      irs::Scorers::Prepare(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 6, 8, 12, 14, 29},
-                      irs::Scorers::Prepare(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14},
-                      irs::Scorers::Prepare(sort4));
+      std::vector<irs::doc_id_t>{1, 2, 4, 5, 7, 8, 9, 11, 14, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 6, 8, 12, 14, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 0,
-      [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-        auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
-        return irs::MakeConjunction({}, std::move(aggregator), std::move(res));
-      });
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      return irs::MakeConjunction(irs::ScoreMergeType::Noop, {},
+                                  std::move(res));
+    }();
 
-    using ExpectedType =
-      irs::Conjunction<irs::ScoreAdapter, irs::NoopAggregator>;
+    using ExpectedType = irs::Conjunction<irs::ScoreAdapter>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -14532,12 +14384,14 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_TRUE(bool(doc));
 
     // score, no order set
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_TRUE(score.IsDefault());
 
     // cost
-    ASSERT_EQ(docs[2].first.size(), irs::CostAttr::extract(it));
+    ASSERT_EQ(docs[2].size(), irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_EQ(4, it.seek(3));
@@ -14555,31 +14409,21 @@ TEST(conjunction_test, scored_seek_next) {
   // conjunction with 4 sub-iterators with score, sub-iterators with scores,
   // aggregation
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
-    detail::BasicSort sort5{5};
+    detail::CompoundSort sort({1, 2, 4, 5});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
+    std::vector<std::vector<irs::doc_id_t>> docs;
     docs.emplace_back(
-      std::vector<irs::doc_id_t>{1, 2, 4, 5, 7, 8, 9, 11, 14, 45},
-      irs::Scorers::Prepare(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 6, 8, 12, 14, 29},
-                      irs::Scorers::Prepare(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14},
-                      irs::Scorers::Prepare(sort4));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14},
-                      irs::Scorers::Prepare(sort5));
+      std::vector<irs::doc_id_t>{1, 2, 4, 5, 7, 8, 9, 11, 14, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 6, 8, 12, 14, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-        auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
-        return irs::MakeConjunction({}, std::move(aggregator), std::move(res));
-      });
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      return irs::MakeConjunction(irs::ScoreMergeType::Sum, {}, std::move(res));
+    }();
 
-    using ExpectedType =
-      irs::Conjunction<irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>>;
+    using ExpectedType = irs::Conjunction<irs::ScoreAdapter>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -14587,32 +14431,34 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_TRUE(bool(doc));
 
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     // cost
-    ASSERT_EQ(docs[2].first.size(), irs::CostAttr::extract(it));
+    ASSERT_EQ(docs[2].size(), irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(12, tmp);  // 1+2+4+5
     ASSERT_EQ(4, it.seek(3));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(12, tmp);  // 1+2+4+5
     ASSERT_TRUE(it.next());
     ASSERT_EQ(5, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(12, tmp);  // 1+2+4+5
     ASSERT_TRUE(it.next());
     ASSERT_EQ(8, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(12, tmp);  // 1+2+4+5
     ASSERT_EQ(14, it.seek(14));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(12, tmp);  // 1+2+4+5
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
@@ -14622,28 +14468,20 @@ TEST(conjunction_test, scored_seek_next) {
 
   // conjunction with score, sub-iterators with scores, max
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({1, 2, 4});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
+    std::vector<std::vector<irs::doc_id_t>> docs;
     docs.emplace_back(
-      std::vector<irs::doc_id_t>{1, 2, 4, 5, 7, 8, 9, 11, 14, 45},
-      irs::Scorers::Prepare(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 6, 8, 12, 14, 29},
-                      irs::Scorers::Prepare(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14},
-                      irs::Scorers::Prepare(sort4));
+      std::vector<irs::doc_id_t>{1, 2, 4, 5, 7, 8, 9, 11, 14, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 6, 8, 12, 14, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max, 1,
-      [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-        auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
-        return irs::MakeConjunction({}, std::move(aggregator), std::move(res));
-      });
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      return irs::MakeConjunction(irs::ScoreMergeType::Max, {}, std::move(res));
+    }();
 
-    using ExpectedType =
-      irs::Conjunction<irs::ScoreAdapter, irs::Aggregator<irs::MaxMerger, 1>>;
+    using ExpectedType = irs::Conjunction<irs::ScoreAdapter>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -14651,32 +14489,34 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_TRUE(bool(doc));
 
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     // cost
-    ASSERT_EQ(docs[2].first.size(), irs::CostAttr::extract(it));
+    ASSERT_EQ(docs[2].size(), irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(1,2,4)
     ASSERT_EQ(4, it.seek(3));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(1,2,4)
     ASSERT_TRUE(it.next());
     ASSERT_EQ(5, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(1,2,4)
     ASSERT_TRUE(it.next());
     ASSERT_EQ(8, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(1,2,4)
     ASSERT_EQ(14, it.seek(14));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(1,2,4)
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
@@ -14686,28 +14526,20 @@ TEST(conjunction_test, scored_seek_next) {
 
   // conjunction with score, sub-iterators with scores, aggregation
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({1, 2, 4});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
+    std::vector<std::vector<irs::doc_id_t>> docs;
     docs.emplace_back(
-      std::vector<irs::doc_id_t>{1, 2, 4, 5, 7, 8, 9, 11, 14, 45},
-      irs::Scorers::Prepare(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 6, 8, 12, 14, 29},
-                      irs::Scorers::Prepare(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14},
-                      irs::Scorers::Prepare(sort4));
+      std::vector<irs::doc_id_t>{1, 2, 4, 5, 7, 8, 9, 11, 14, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 6, 8, 12, 14, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-        auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
-        return irs::MakeConjunction({}, std::move(aggregator), std::move(res));
-      });
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      return irs::MakeConjunction(irs::ScoreMergeType::Sum, {}, std::move(res));
+    }();
 
-    using ExpectedType =
-      irs::Conjunction<irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>>;
+    using ExpectedType = irs::Conjunction<irs::ScoreAdapter>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -14715,32 +14547,34 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_TRUE(bool(doc));
 
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     // cost
-    ASSERT_EQ(docs[2].first.size(), irs::CostAttr::extract(it));
+    ASSERT_EQ(docs[2].size(), irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(7, tmp);  // 1+2+4
     ASSERT_EQ(4, it.seek(3));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(7, tmp);  // 1+2+4
     ASSERT_TRUE(it.next());
     ASSERT_EQ(5, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(7, tmp);  // 1+2+4
     ASSERT_TRUE(it.next());
     ASSERT_EQ(8, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(7, tmp);  // 1+2+4
     ASSERT_EQ(14, it.seek(14));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(7, tmp);  // 1+2+4
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
@@ -14750,28 +14584,20 @@ TEST(conjunction_test, scored_seek_next) {
 
   // conjunction with score, sub-iterators with scores, max
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort2{2};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort({1, 2, 4});
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
+    std::vector<std::vector<irs::doc_id_t>> docs;
     docs.emplace_back(
-      std::vector<irs::doc_id_t>{1, 2, 4, 5, 7, 8, 9, 11, 14, 45},
-      irs::Scorers::Prepare(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 6, 8, 12, 14, 29},
-                      irs::Scorers::Prepare(sort2));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14},
-                      irs::Scorers::Prepare(sort4));
+      std::vector<irs::doc_id_t>{1, 2, 4, 5, 7, 8, 9, 11, 14, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 6, 8, 12, 14, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max, 1,
-      [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-        auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
-        return irs::MakeConjunction({}, std::move(aggregator), std::move(res));
-      });
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      return irs::MakeConjunction(irs::ScoreMergeType::Max, {}, std::move(res));
+    }();
 
-    using ExpectedType =
-      irs::Conjunction<irs::ScoreAdapter, irs::Aggregator<irs::MaxMerger, 1>>;
+    using ExpectedType = irs::Conjunction<irs::ScoreAdapter>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -14779,32 +14605,34 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_TRUE(bool(doc));
 
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     // cost
-    ASSERT_EQ(docs[2].first.size(), irs::CostAttr::extract(it));
+    ASSERT_EQ(docs[2].size(), irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(1,2,4)
     ASSERT_EQ(4, it.seek(3));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(1,2,4)
     ASSERT_TRUE(it.next());
     ASSERT_EQ(5, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(1,2,4)
     ASSERT_TRUE(it.next());
     ASSERT_EQ(8, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(1,2,4)
     ASSERT_EQ(14, it.seek(14));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(1,2,4)
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
@@ -14814,26 +14642,20 @@ TEST(conjunction_test, scored_seek_next) {
 
   // conjunction with score, 1 sub-iterator with scores, aggregation
   {
-    detail::BasicSort sort1{1};
+    detail::CompoundSort sort{{1}};
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
+    std::vector<std::vector<irs::doc_id_t>> docs;
     docs.emplace_back(
-      std::vector<irs::doc_id_t>{1, 2, 4, 5, 7, 8, 9, 11, 14, 45},
-      irs::Scorers::Prepare(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 6, 8, 12, 14, 29},
-                      irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14},
-                      irs::Scorers{});
+      std::vector<irs::doc_id_t>{1, 2, 4, 5, 7, 8, 9, 11, 14, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 6, 8, 12, 14, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-        auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
-        return irs::MakeConjunction({}, std::move(aggregator), std::move(res));
-      });
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      return irs::MakeConjunction(irs::ScoreMergeType::Sum, {}, std::move(res));
+    }();
 
-    using ExpectedType =
-      irs::Conjunction<irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>>;
+    using ExpectedType = irs::Conjunction<irs::ScoreAdapter>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -14841,32 +14663,34 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_TRUE(bool(doc));
 
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     // cost
-    ASSERT_EQ(docs[2].first.size(), irs::CostAttr::extract(it));
+    ASSERT_EQ(docs[2].size(), irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(1, tmp);  // 1
     ASSERT_EQ(4, it.seek(3));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(1, tmp);  // 1
     ASSERT_TRUE(it.next());
     ASSERT_EQ(5, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(1, tmp);  // 1
     ASSERT_TRUE(it.next());
     ASSERT_EQ(8, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(1, tmp);  // 1
     ASSERT_EQ(14, it.seek(14));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(1, tmp);  // 1
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
@@ -14876,26 +14700,20 @@ TEST(conjunction_test, scored_seek_next) {
 
   // conjunction with score, 1 sub-iterators with scores, max
   {
-    detail::BasicSort sort1{1};
+    detail::CompoundSort sort{{1}};
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
+    std::vector<std::vector<irs::doc_id_t>> docs;
     docs.emplace_back(
-      std::vector<irs::doc_id_t>{1, 2, 4, 5, 7, 8, 9, 11, 14, 45},
-      irs::Scorers::Prepare(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 6, 8, 12, 14, 29},
-                      irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14},
-                      irs::Scorers{});
+      std::vector<irs::doc_id_t>{1, 2, 4, 5, 7, 8, 9, 11, 14, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 6, 8, 12, 14, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max, 1,
-      [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-        auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
-        return irs::MakeConjunction({}, std::move(aggregator), std::move(res));
-      });
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      return irs::MakeConjunction(irs::ScoreMergeType::Max, {}, std::move(res));
+    }();
 
-    using ExpectedType =
-      irs::Conjunction<irs::ScoreAdapter, irs::Aggregator<irs::MaxMerger, 1>>;
+    using ExpectedType = irs::Conjunction<irs::ScoreAdapter>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -14903,32 +14721,34 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_TRUE(bool(doc));
 
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     // cost
-    ASSERT_EQ(docs[2].first.size(), irs::CostAttr::extract(it));
+    ASSERT_EQ(docs[2].size(), irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(1, tmp);
     ASSERT_EQ(4, it.seek(3));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(1, tmp);
     ASSERT_TRUE(it.next());
     ASSERT_EQ(5, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(1, tmp);
     ASSERT_TRUE(it.next());
     ASSERT_EQ(8, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(1, tmp);
     ASSERT_EQ(14, it.seek(14));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(1, tmp);
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
@@ -14938,27 +14758,20 @@ TEST(conjunction_test, scored_seek_next) {
 
   // conjunction with score, 2 sub-iterators with scores, aggregation
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort{{1, 4}};
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
+    std::vector<std::vector<irs::doc_id_t>> docs;
     docs.emplace_back(
-      std::vector<irs::doc_id_t>{1, 2, 4, 5, 7, 8, 9, 11, 14, 45},
-      irs::Scorers::Prepare(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 6, 8, 12, 14, 29},
-                      irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14},
-                      irs::Scorers::Prepare(sort4));
+      std::vector<irs::doc_id_t>{1, 2, 4, 5, 7, 8, 9, 11, 14, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 6, 8, 12, 14, 29});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-        auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
-        return irs::MakeConjunction({}, std::move(aggregator), std::move(res));
-      });
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      return irs::MakeConjunction(irs::ScoreMergeType::Sum, {}, std::move(res));
+    }();
 
-    using ExpectedType =
-      irs::Conjunction<irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>>;
+    using ExpectedType = irs::Conjunction<irs::ScoreAdapter>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -14966,32 +14779,34 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_TRUE(bool(doc));
 
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     // cost
-    ASSERT_EQ(docs[2].first.size(), irs::CostAttr::extract(it));
+    ASSERT_EQ(docs[1].size(), irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(5, tmp);  // 1+2+4
     ASSERT_EQ(4, it.seek(3));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(5, tmp);  // 1+2+4
     ASSERT_TRUE(it.next());
     ASSERT_EQ(5, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(5, tmp);  // 1+2+4
     ASSERT_TRUE(it.next());
     ASSERT_EQ(8, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(5, tmp);  // 1+2+4
     ASSERT_EQ(14, it.seek(14));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(5, tmp);  // 1+2+4
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
@@ -15001,27 +14816,20 @@ TEST(conjunction_test, scored_seek_next) {
 
   // conjunction with score, 2 sub-iterators with scores, max
   {
-    detail::BasicSort sort1{1};
-    detail::BasicSort sort4{4};
+    detail::CompoundSort sort{{1, 4}};
 
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
+    std::vector<std::vector<irs::doc_id_t>> docs;
     docs.emplace_back(
-      std::vector<irs::doc_id_t>{1, 2, 4, 5, 7, 8, 9, 11, 14, 45},
-      irs::Scorers::Prepare(sort1));
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 6, 8, 12, 14, 29},
-                      irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14},
-                      irs::Scorers::Prepare(sort4));
+      std::vector<irs::doc_id_t>{1, 2, 4, 5, 7, 8, 9, 11, 14, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 6, 8, 12, 14, 29});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max, 1,
-      [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-        auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
-        return irs::MakeConjunction({}, std::move(aggregator), std::move(res));
-      });
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      return irs::MakeConjunction(irs::ScoreMergeType::Max, {}, std::move(res));
+    }();
 
-    using ExpectedType =
-      irs::Conjunction<irs::ScoreAdapter, irs::Aggregator<irs::MaxMerger, 1>>;
+    using ExpectedType = irs::Conjunction<irs::ScoreAdapter>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -15029,32 +14837,34 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_TRUE(bool(doc));
 
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_FALSE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_FALSE(score.IsDefault());
 
     // cost
-    ASSERT_EQ(docs[2].first.size(), irs::CostAttr::extract(it));
+    ASSERT_EQ(docs[1].size(), irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(1,2,4)
     ASSERT_EQ(4, it.seek(3));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(1,2,4)
     ASSERT_TRUE(it.next());
     ASSERT_EQ(5, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(1,2,4)
     ASSERT_TRUE(it.next());
     ASSERT_EQ(8, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(1,2,4)
     ASSERT_EQ(14, it.seek(14));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(4, tmp);  // std::max(1,2,4)
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
@@ -15064,24 +14874,18 @@ TEST(conjunction_test, scored_seek_next) {
 
   // conjunction with score, sub-iterators without scores, aggregation
   {
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
+    std::vector<std::vector<irs::doc_id_t>> docs;
     docs.emplace_back(
-      std::vector<irs::doc_id_t>{1, 2, 4, 5, 7, 8, 9, 11, 14, 45},
-      irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 6, 8, 12, 14, 29},
-                      irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14},
-                      irs::Scorers{});
+      std::vector<irs::doc_id_t>{1, 2, 4, 5, 7, 8, 9, 11, 14, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 6, 8, 12, 14, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, 1,
-      [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-        auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
-        return irs::MakeConjunction({}, std::move(aggregator), std::move(res));
-      });
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      return irs::MakeConjunction(irs::ScoreMergeType::Sum, {}, std::move(res));
+    }();
 
-    using ExpectedType =
-      irs::Conjunction<irs::ScoreAdapter, irs::Aggregator<irs::SumMerger, 1>>;
+    using ExpectedType = irs::Conjunction<irs::ScoreAdapter>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -15089,32 +14893,35 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_TRUE(bool(doc));
 
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    detail::CompoundSort sort{{}};
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_TRUE(score.IsDefault());
 
     // cost
-    ASSERT_EQ(docs[2].first.size(), irs::CostAttr::extract(it));
+    ASSERT_EQ(docs[2].size(), irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1+2+4
     ASSERT_EQ(4, it.seek(3));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1+2+4
     ASSERT_TRUE(it.next());
     ASSERT_EQ(5, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1+2+4
     ASSERT_TRUE(it.next());
     ASSERT_EQ(8, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1+2+4
     ASSERT_EQ(14, it.seek(14));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);  // 1+2+4
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
@@ -15124,24 +14931,18 @@ TEST(conjunction_test, scored_seek_next) {
 
   // conjunction with score, sub-iterators without scores, max
   {
-    std::vector<std::pair<std::vector<irs::doc_id_t>, irs::Scorers>> docs;
+    std::vector<std::vector<irs::doc_id_t>> docs;
     docs.emplace_back(
-      std::vector<irs::doc_id_t>{1, 2, 4, 5, 7, 8, 9, 11, 14, 45},
-      irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 6, 8, 12, 14, 29},
-                      irs::Scorers{});
-    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14},
-                      irs::Scorers{});
+      std::vector<irs::doc_id_t>{1, 2, 4, 5, 7, 8, 9, 11, 14, 45});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 6, 8, 12, 14, 29});
+    docs.emplace_back(std::vector<irs::doc_id_t>{1, 4, 5, 8, 14});
 
-    auto it_ptr = irs::ResolveMergeType(
-      irs::ScoreMergeType::Max, 1,
-      [&]<typename A>(A&& aggregator) -> irs::DocIterator::ptr {
-        auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
-        return irs::MakeConjunction({}, std::move(aggregator), std::move(res));
-      });
+    auto it_ptr = [&] -> irs::DocIterator::ptr {
+      auto res = detail::ExecuteAll<DocIteratorImpl>(docs);
+      return irs::MakeConjunction(irs::ScoreMergeType::Max, {}, std::move(res));
+    }();
 
-    using ExpectedType =
-      irs::Conjunction<irs::ScoreAdapter, irs::Aggregator<irs::MaxMerger, 1>>;
+    using ExpectedType = irs::Conjunction<irs::ScoreAdapter>;
     ASSERT_NE(nullptr, dynamic_cast<ExpectedType*>(it_ptr.get()));
     auto& it = dynamic_cast<ExpectedType&>(*it_ptr);
 
@@ -15149,32 +14950,35 @@ TEST(conjunction_test, scored_seek_next) {
     ASSERT_TRUE(bool(doc));
 
     // score
-    auto& score = irs::ScoreAttr::get(it);
-    ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-    ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(&it));
+    detail::CompoundSort sort{{}};
+    auto score = it.PrepareScore({
+      .scorer = &sort,
+      .segment = &irs::SubReader::empty(),
+    });
+    ASSERT_TRUE(score.IsDefault());
 
     // cost
-    ASSERT_EQ(docs[2].first.size(), irs::CostAttr::extract(it));
+    ASSERT_EQ(docs[2].size(), irs::CostAttr::extract(it));
 
     ASSERT_EQ(irs::doc_limits::invalid(), it.value());
     ASSERT_TRUE(it.next());
     ASSERT_EQ(1, it.value());
     irs::score_t tmp;
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_EQ(4, it.seek(3));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_TRUE(it.next());
     ASSERT_EQ(5, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_TRUE(it.next());
     ASSERT_EQ(8, it.value());
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_EQ(14, it.seek(14));
-    score(&tmp);
+    tmp = score.Score();
     ASSERT_EQ(0, tmp);
     ASSERT_FALSE(it.next());
     ASSERT_EQ(irs::doc_limits::eof(), it.value());
@@ -15197,12 +15001,6 @@ TEST(exclusion_test, next) {
                           included.begin(), included.end()),
                         irs::memory::make_managed<detail::BasicDocIterator>(
                           excluded.begin(), excluded.end()));
-
-      // score, no order set
-      auto& score = irs::ScoreAttr::get(it);
-      ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-      ASSERT_FALSE(irs::GetMutable<irs::ScoreAttr>(&it));
-      ASSERT_EQ(&score, &irs::ScoreAttr::kNoScore);
 
       // cost
       ASSERT_EQ(included.size(), irs::CostAttr::extract(it));
@@ -15725,14 +15523,12 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
     Append<irs::ByTerm>(root, "duplicated", "abcd");
     root.min_match_count(3);
     irs::Scorer::ptr sort{std::make_unique<sort::CustomSort>()};
-    auto& impl = static_cast<sort::CustomSort&>(*sort);
-    impl.scorer_score = [](auto doc, auto* score) { *score = doc; };
 
-    CheckQuery(
-      root, std::span{&sort, 1},
-      Docs{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16,
-           17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
-      rdr);
+    Docs expected{1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
+                  12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
+                  23, 24, 25, 26, 27, 28, 29, 30, 31, 32};
+
+    CheckQuery(root, std::span{&sort, 1}, expected, rdr);
   }
 }
 
@@ -15843,6 +15639,7 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential_ordered) {
     size_t collector_collect_term_count = 0;
     size_t collector_finish_count = 0;
     size_t scorer_score_count = 0;
+    irs::doc_id_t cur_doc = 0;
 
     sort::CustomSort sort;
 
@@ -15862,10 +15659,11 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential_ordered) {
                                 const irs::TermCollector*) -> void {
       ++collector_finish_count;
     };
-    sort.scorer_score = [&scorer_score_count](irs::doc_id_t doc,
-                                              irs::score_t* score) {
+    sort.scorer_score = [&](irs::ScoreOperator*, irs::score_t* score,
+                            size_t n) -> void {
+      ASSERT_EQ(1, n);
       ++scorer_score_count;
-      *score = doc;
+      *score = cur_doc;
     };
 
     auto prepared_order = irs::Scorers::Prepare(sort);
@@ -15880,13 +15678,18 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential_ordered) {
       prepared_filter->execute({.segment = segment, .scorers = prepared_order});
     ASSERT_EQ(32, irs::CostAttr::extract(*filter_itr));
 
+    auto score = filter_itr->PrepareScore({
+      .scorer = prepared_order.buckets().front().bucket,
+      .segment = &segment,
+    });
+
     size_t docs_count = 0;
-    auto* score = irs::get<irs::ScoreAttr>(*filter_itr);
 
     while (filter_itr->next()) {
-      ASSERT_FALSE(!score);
+      cur_doc = filter_itr->value();
+      filter_itr->FetchScoreArgs(0);
       irs::score_t score_value{};
-      score->operator()(&score_value);
+      score.Score(&score_value, 1);
       scored_result.emplace(score_value, filter_itr->value());
       ++docs_count;
     }
@@ -15936,6 +15739,7 @@ TEST_P(BooleanFilterTestCase, not_sequential_ordered) {
     size_t collector_collect_term_count = 0;
     size_t collector_finish_count = 0;
     size_t scorer_score_count = 0;
+    irs::doc_id_t cur_doc = 0;
 
     sort::CustomSort sort;
 
@@ -15955,10 +15759,11 @@ TEST_P(BooleanFilterTestCase, not_sequential_ordered) {
                                 const irs::TermCollector*) -> void {
       ++collector_finish_count;
     };
-    sort.scorer_score = [&scorer_score_count](irs::doc_id_t doc,
-                                              irs::score_t* score) -> void {
+    sort.scorer_score = [&](irs::ScoreOperator*, irs::score_t* score,
+                            size_t n) -> void {
+      ASSERT_EQ(1, n);
       ++scorer_score_count;
-      *score = doc;
+      *score = cur_doc;
     };
 
     auto prepared_order = irs::Scorers::Prepare(sort);
@@ -15973,13 +15778,18 @@ TEST_P(BooleanFilterTestCase, not_sequential_ordered) {
       prepared_filter->execute({.segment = segment, .scorers = prepared_order});
     ASSERT_EQ(32, irs::CostAttr::extract(*filter_itr));
 
+    auto score = filter_itr->PrepareScore({
+      .scorer = prepared_order.buckets().front().bucket,
+      .segment = &segment,
+    });
+
     size_t docs_count = 0;
-    auto* score = irs::get<irs::ScoreAttr>(*filter_itr);
 
     while (filter_itr->next()) {
-      ASSERT_FALSE(!score);
+      cur_doc = filter_itr->value();
+      filter_itr->FetchScoreArgs(0);
       irs::score_t score_value{};
-      score->operator()(&score_value);
+      score.Score(&score_value, 1);
       scored_result.emplace(score_value, filter_itr->value());
       ++docs_count;
     }
@@ -16285,15 +16095,15 @@ TEST_P(BooleanFilterTestCase, mixed) {
       CheckQuery(root, Docs{24}, rdr);
     }
 
-    // ((same=xyz AND duplicated=abcd) OR (name=A or name=C or NAME=P or name=U
-    // or name=X)) OR (same=xyz AND (duplicated=vczc OR (name=A OR name=C OR
-    // NAME=P OR name=U OR name=X)) ) 1, 2, 3, 4, 5, 8, 11, 14, 16, 17, 19, 21,
-    // 24, 27, 31
+    // ((same=xyz AND duplicated=abcd) OR (name=A or name=C or NAME=P or
+    // name=U or name=X)) OR (same=xyz AND (duplicated=vczc OR (name=A OR
+    // name=C OR NAME=P OR name=U OR name=X)) ) 1, 2, 3, 4, 5, 8, 11, 14, 16,
+    // 17, 19, 21, 24, 27, 31
     {
       irs::Or root;
 
-      // (same=xyz AND duplicated=abcd) OR (name=A or name=C or NAME=P or name=U
-      // or name=X) 1, 3, 5,11, 16, 21, 24, 27, 31
+      // (same=xyz AND duplicated=abcd) OR (name=A or name=C or NAME=P or
+      // name=U or name=X) 1, 3, 5,11, 16, 21, 24, 27, 31
       {
         irs::Or& child = root.add<irs::Or>();
 
@@ -16310,13 +16120,14 @@ TEST_P(BooleanFilterTestCase, mixed) {
         Append<irs::ByTerm>(child, "name", "X");
       }
 
-      // (same=xyz AND (duplicated=vczc OR (name=A OR name=C OR NAME=P OR name=U
-      // OR name=X)) 1, 2, 3, 8, 14, 16, 17, 19, 21, 24
+      // (same=xyz AND (duplicated=vczc OR (name=A OR name=C OR NAME=P OR
+      // name=U OR name=X)) 1, 2, 3, 8, 14, 16, 17, 19, 21, 24
       {
         irs::And& child = root.add<irs::And>();
         Append<irs::ByTerm>(child, "same", "xyz");
 
-        // (duplicated=vczc OR (name=A OR name=C OR NAME=P OR name=U OR name=X)
+        // (duplicated=vczc OR (name=A OR name=C OR NAME=P OR name=U OR
+        // name=X)
         {
           irs::Or& subchild = child.add<irs::Or>();
           Append<irs::ByTerm>(subchild, "duplicated", "vczc");
@@ -16363,7 +16174,8 @@ TEST_P(BooleanFilterTestCase, mixed) {
                  rdr);
     }
 
-    // (same=xyz AND duplicated=abcd) OR (same=xyz AND duplicated=vczc) OR NOT *
+    // (same=xyz AND duplicated=abcd) OR (same=xyz AND duplicated=vczc) OR NOT
+    // *
     {
       irs::Or root;
 
@@ -16440,8 +16252,10 @@ TEST_P(BooleanFilterTestCase, mixed_ordered) {
       ASSERT_TRUE(
         bool(doc));  // ensure all iterators contain "document" attribute
 
-      const auto* score = irs::get<irs::ScoreAttr>(*docs);
-      ASSERT_NE(nullptr, score);
+      const auto& scr = docs->PrepareScore({
+        .scorer = prepared_ord.buckets().front().bucket,
+        .segment = &irs::SubReader::empty(),
+      });
 
       std::vector<irs::bstring> scores;
       while (docs->next()) {
@@ -16449,7 +16263,7 @@ TEST_P(BooleanFilterTestCase, mixed_ordered) {
         ++expected_doc;
 
         irs::bstring score_value(prepared_ord.score_size(), 0);
-        score->operator()(reinterpret_cast<irs::score_t*>(score_value.data()));
+        *reinterpret_cast<irs::score_t*>(score_value.data()) = scr.Score();
         scores.emplace_back(std::move(score_value));
       }
 
@@ -16659,13 +16473,16 @@ TEST(And_test, not_boosted) {
   auto prep = root.prepare({.index = irs::SubReader::empty(), .scorers = pord});
   auto docs =
     prep->execute({.segment = irs::SubReader::empty(), .scorers = pord});
-  auto* scr = irs::get<irs::ScoreAttr>(*docs);
-  ASSERT_FALSE(!scr);
+  const auto& scr = docs->PrepareScore({
+    .scorer = pord.buckets().front().bucket,
+    .segment = &irs::SubReader::empty(),
+  });
+  ASSERT_FALSE(scr.IsDefault());
   auto* doc = irs::get<irs::DocAttr>(*docs);
 
   ASSERT_TRUE(docs->next());
-  irs::score_t doc_boost;
-  scr->operator()(&doc_boost);
+  docs->FetchScoreArgs(0);
+  const auto doc_boost = scr.Score();
   ASSERT_EQ(5., doc_boost);  // FIXME: should be 9 if we will boost negation
   ASSERT_EQ(1, doc->value);
 
@@ -16811,8 +16628,9 @@ TEST(Or_test, optimize_all_scored) {
   auto prep = root.prepare({.index = irs::SubReader::empty(), .scorers = pord});
 
   prep->execute({.segment = irs::SubReader::empty()});
-  ASSERT_EQ(3, detail::Boosted::gExecuteCount);  // specific filters should
-                                                 // executed as score needs them
+  ASSERT_EQ(3,
+            detail::Boosted::gExecuteCount);  // specific filters should
+                                              // executed as score needs them
 }
 
 TEST(Or_test, optimize_only_all_boosted) {
@@ -16847,13 +16665,16 @@ TEST(Or_test, boosted_not) {
   auto prep = root.prepare({.index = irs::SubReader::empty(), .scorers = pord});
   auto docs =
     prep->execute({.segment = irs::SubReader::empty(), .scorers = pord});
-  auto* scr = irs::get<irs::ScoreAttr>(*docs);
-  ASSERT_FALSE(!scr);
+  const auto& scr = docs->PrepareScore({
+    .scorer = pord.buckets().front().bucket,
+    .segment = &irs::SubReader::empty(),
+  });
+  ASSERT_FALSE(scr.IsDefault());
   auto* doc = irs::get<irs::DocAttr>(*docs);
 
   ASSERT_TRUE(docs->next());
-  irs::score_t doc_boost;
-  scr->operator()(&doc_boost);
+  docs->FetchScoreArgs(0);
+  const auto doc_boost = scr.Score();
   ASSERT_EQ(5., doc_boost);  // FIXME: should be 9 if we will boost negation
   ASSERT_EQ(1, doc->value);
   ASSERT_FALSE(docs->next());

@@ -22,58 +22,52 @@
 
 #include "iresearch/search/score_function.hpp"
 
-#include <absl/base/casts.h>
+#include <absl/algorithm/container.h>
+
+#include "iresearch/search/score.hpp"
+#include "iresearch/search/scorer.hpp"
 
 namespace irs {
 namespace {
 
-void Constant1(ScoreCtx* ctx, score_t* res) noexcept {
-  SDB_ASSERT(res != nullptr);
-  const auto boost = reinterpret_cast<uintptr_t>(ctx);
-  std::memcpy(res, &boost, sizeof(score_t));
-}
+class ConstanScore : public ScoreOperator {
+ public:
+  explicit ConstanScore(score_t value) noexcept : _value{value} {}
 
-struct ConstantCtx {
-  score_t value;
-  uint32_t count;
+  void Score(score_t* res, size_t n) noexcept final {
+    std::fill_n(res, n, _value);
+  }
+
+  void ScoreBlock(score_t* res) noexcept final {
+    std::fill_n(res, kScoreBlock, _value);
+  }
+
+  void ScorePostingBlock(score_t* res) noexcept final {
+    std::fill_n(res, kPostingBlock, _value);
+  }
+
+ private:
+  score_t _value;
 };
-
-void ConstantN(ScoreCtx* ctx, score_t* res) noexcept {
-  SDB_ASSERT(res != nullptr);
-  const auto score_ctx = absl::bit_cast<ConstantCtx>(ctx);
-  std::fill_n(res, score_ctx.count, score_ctx.value);
-}
 
 }  // namespace
 
+DefaultScore DefaultScore::gInstance;
+
+void DefaultScore::Score(score_t* res, size_t n) noexcept {
+  std::memset(res, 0, sizeof(score_t) * n);
+}
+
+void DefaultScore::ScoreBlock(score_t* res) noexcept {
+  std::memset(res, 0, sizeof(score_t) * kScoreBlock);
+}
+
+void DefaultScore::ScorePostingBlock(score_t* res) noexcept {
+  std::memset(res, 0, sizeof(score_t) * kPostingBlock);
+}
+
 ScoreFunction ScoreFunction::Constant(score_t value) noexcept {
-  static_assert(sizeof(score_t) <= sizeof(uintptr_t));
-  uintptr_t boost = 0;
-  std::memcpy(&boost, &value, sizeof(score_t));
-  static_assert(sizeof(ScoreCtx*) == sizeof(uintptr_t));
-  return {reinterpret_cast<ScoreCtx*>(boost), Constant1, DefaultMin, Noop};
-}
-
-ScoreFunction ScoreFunction::Constant(score_t value, uint32_t count) noexcept {
-  if (0 == count) {
-    return {};
-  } else if (1 == count) {
-    return Constant(value);
-  } else {
-    return {absl::bit_cast<ScoreCtx*>(ConstantCtx{value, count}), ConstantN,
-            DefaultMin, Noop};
-  }
-}
-
-score_t ScoreFunction::Max() const noexcept {
-  if (_score == ScoreFunction::DefaultScore) {
-    return 0.f;
-  } else if (_score == Constant1 || _score == ConstantN) {
-    score_t score;
-    Score(&score);
-    return score;
-  }
-  return std::numeric_limits<score_t>::max();
+  return ScoreFunction::Make<ConstanScore>(value);
 }
 
 }  // namespace irs

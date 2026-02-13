@@ -21,8 +21,7 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/formats/formats.hpp>
-
+#include "iresearch/formats/formats.hpp"
 #include "tests_shared.hpp"
 
 TEST(formats_tests, duplicate_register) {

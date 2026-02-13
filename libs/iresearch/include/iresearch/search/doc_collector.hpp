@@ -235,7 +235,7 @@ size_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
 
     auto* threshold = irs::GetMutable<ScoreThresholdAttr>(docs.get());
 
-    if (begin != end && threshold) {
+    if (begin == end && threshold) {
       threshold->value = results.front().second;
     }
 
@@ -259,14 +259,14 @@ size_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
           threshold->value = results.front().second;
         }
       } else if (results.front().second < score_value) {
-        std::make_heap(begin, end,
-                       [](const auto& lhs, const auto& rhs) noexcept {
-                         return lhs.second > rhs.second;
-                       });
+        std::pop_heap(begin, end,
+                      [](const auto& lhs, const auto& rhs) noexcept {
+                        return lhs.second > rhs.second;
+                      });
 
         *back = {doc, score_value};
 
-        std::make_heap(begin, end,
+        std::push_heap(begin, end,
                        [](const auto& lhs, const auto& rhs) noexcept {
                          return lhs.second > rhs.second;
                        });

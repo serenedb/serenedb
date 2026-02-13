@@ -3076,6 +3076,7 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
                                                         Extent, IndexInput>>(
                   std::forward<Extent>(extent));
               it->Prepare(cookie, _doc_in.get(), options.mapped_index);
+              return it;
             }
           });
       };

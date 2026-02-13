@@ -106,10 +106,9 @@ size_t ExecuteTopKWithCount(const DirectoryReader& reader, const Filter& filter,
 }
 
 template<size_t K>
-size_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
-                   const Scorer& scorer, size_t k,
-                   std::span<std::pair<doc_id_t, score_t>, K> hits,
-                   WandContext wand) {
+size_t ExecuteTopK1(const DirectoryReader& reader, const Filter& filter,
+                    const Scorer& scorer, size_t k, WandContext wand,
+                    std::span<std::pair<doc_id_t, score_t>, K> hits) {
   SDB_ASSERT(BlockSize(k) <= hits.size());
 
   auto prepared = filter.prepare({
@@ -203,10 +202,10 @@ size_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
 }
 
 template<size_t K>
-size_t ExecuteTopKHeap(const DirectoryReader& reader, const Filter& filter,
-                       const Scorer& scorer, WandContext wand, size_t k,
-                       std::span<std::pair<doc_id_t, score_t>, K> results) {
-  SDB_ASSERT(k >= results.size());
+size_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
+                   const Scorer& scorer, size_t k, WandContext wand,
+                   std::span<std::pair<doc_id_t, score_t>, K> results) {
+  SDB_ASSERT(k <= results.size());
 
   auto prepared = filter.prepare({
     .index = reader,
@@ -215,10 +214,11 @@ size_t ExecuteTopKHeap(const DirectoryReader& reader, const Filter& filter,
 
   size_t count = 0;
   auto begin = results.begin();
-  auto end = results.end();
+  auto end = begin + k;
+  auto back = end - 1;
 
   ColumnCollector columns;
-  for (auto left = k; auto& segment : reader) {
+  for (auto& segment : reader) {
     columns.Clear();
 
     auto docs = prepared->execute({
@@ -235,50 +235,51 @@ size_t ExecuteTopKHeap(const DirectoryReader& reader, const Filter& filter,
 
     auto* threshold = irs::GetMutable<ScoreThresholdAttr>(docs.get());
 
-    if (!left && threshold) {
+    if (begin != end && threshold) {
       threshold->value = results.front().second;
     }
 
-    float_t score_value;
     for (doc_id_t doc; !doc_limits::eof(doc = docs->advance());) {
       ++count;
 
       docs->FetchScoreArgs(0);
-      score_value = score.Score();
+      columns.Collect(doc);
+      const auto score_value = score.Score();
 
       if (begin != end) {
-        *begin = {score_value, doc};
+        *begin = {doc, score_value};
         ++begin;
 
         if (begin == end) {
-          absl::c_make_heap(results,
-                            [](const auto& lhs, const auto& rhs) noexcept {
-                              return lhs.second > rhs.second;
-                            });
-
-          threshold->value = results.front().second;
-        }
-      } else if (results.front().second < score_value) {
-        absl::c_pop_heap(results,
+          std::make_heap(begin, end,
                          [](const auto& lhs, const auto& rhs) noexcept {
                            return lhs.second > rhs.second;
                          });
 
-        results.back() = {doc, score_value};
+          threshold->value = results.front().second;
+        }
+      } else if (results.front().second < score_value) {
+        std::make_heap(begin, end,
+                       [](const auto& lhs, const auto& rhs) noexcept {
+                         return lhs.second > rhs.second;
+                       });
 
-        absl::c_push_heap(results,
-                          [](const auto& lhs, const auto& rhs) noexcept {
-                            return lhs.second > rhs.second;
-                          });
+        *back = {doc, score_value};
+
+        std::make_heap(begin, end,
+                       [](const auto& lhs, const auto& rhs) noexcept {
+                         return lhs.second > rhs.second;
+                       });
 
         threshold->value = results.front().second;
       }
     }
   }
 
-  absl::c_sort(results, [](const auto& lhs, const auto& rhs) noexcept {
-    return lhs.first > rhs.first;
-  });
+  std::sort(results.begin(), begin,
+            [](const auto& lhs, const auto& rhs) noexcept {
+              return lhs.second > rhs.second;
+            });
 
   return count;
 }

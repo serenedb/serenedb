@@ -23,6 +23,7 @@
 #include "basics/down_cast.h"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
+#include "pg/pg_list_utils.h"
 #include "pg/sql_exception_macro.h"
 
 namespace sdb::pg {
@@ -32,15 +33,40 @@ yaclib::Future<Result> Transaction(ExecContext& context,
   auto& conn_ctx = basics::downCast<ConnectionContext>(context);
   switch (stmt.kind) {
     case TRANS_STMT_BEGIN:
-    case TRANS_STMT_START:
+    case TRANS_STMT_START: {
       if (!conn_ctx.HasTransactionBegin()) {
-        return yaclib::MakeFuture(conn_ctx.Begin());
+        auto isolation_level = IsolationLevel::RepeatableRead;
+        VisitNodes(stmt.options, [&](const DefElem& option) {
+          std::string_view opt_name = option.defname;
+          if (opt_name == "transaction_isolation") {
+            std::string_view level =
+              strVal(&castNode(A_Const, option.arg)->val);
+            if (level == "repeatable read") {
+              isolation_level = IsolationLevel::RepeatableRead;
+            } else {
+              THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                              ERR_MSG("transaction isolation level \"", level,
+                                      "\" is not supported"));
+            }
+          } else if (opt_name == "transaction_read_only") {
+            THROW_SQL_ERROR(
+              ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+              ERR_MSG(
+                "transaction READ WRITE | READ ONLY is not supported yet"));
+          } else if (opt_name == "transaction_deferrable") {
+            THROW_SQL_ERROR(
+              ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+              ERR_MSG("transaction DEFERRABLE is not supported yet"));
+          }
+        });
+        return yaclib::MakeFuture(conn_ctx.Begin(isolation_level));
       } else {
         conn_ctx.AddNotice(SQL_ERROR_DATA(
           ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
           ERR_MSG("there is already a transaction in progress")));
       }
       break;
+    }
     case TRANS_STMT_COMMIT:
       if (conn_ctx.HasTransactionBegin()) {
         return yaclib::MakeFuture(conn_ctx.Commit());

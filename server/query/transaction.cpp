@@ -27,8 +27,9 @@
 
 namespace sdb::query {
 
-Result Transaction::Begin() {
+Result Transaction::Begin(IsolationLevel isolation_level) {
   SDB_ASSERT(!HasTransactionBegin());
+  _isolation_level = isolation_level;
   CreateRocksDBTransaction();
   _state |= State::HasTransactionBegin;
   return {};
@@ -125,6 +126,7 @@ void Transaction::CreateRocksDBTransaction() {
 
 void Transaction::Destroy() noexcept {
   _state = State::None;
+  _isolation_level = IsolationLevel::RepeatableRead;
   _storage_snapshot.reset();
   _rocksdb_transaction.reset();
   _rocksdb_snapshot = nullptr;

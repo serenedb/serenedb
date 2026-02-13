@@ -55,7 +55,9 @@ class Transaction : public Config {
     HasTransactionBegin = 1 << 2,
   };
 
-  Result Begin();
+  Result Begin(IsolationLevel isolation_level = IsolationLevel::RepeatableRead);
+
+  IsolationLevel GetIsolationLevel() const noexcept { return _isolation_level; }
 
   Result Commit();
 
@@ -120,6 +122,7 @@ class Transaction : public Config {
   void ApplyTableStatsDiffs();
 
   State _state = State::None;
+  IsolationLevel _isolation_level = IsolationLevel::RepeatableRead;
   std::shared_ptr<StorageSnapshot> _storage_snapshot;
   std::unique_ptr<rocksdb::Transaction> _rocksdb_transaction;
   const rocksdb::Snapshot* _rocksdb_snapshot = nullptr;

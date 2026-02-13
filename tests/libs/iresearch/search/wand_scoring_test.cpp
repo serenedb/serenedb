@@ -181,7 +181,8 @@ class WandScoringTestCase : public IndexTestBase {
     size_t baseline_count = irs::ExecuteTopKWithCount(reader, filter, scorer, k,
                                                       std::span{baseline_hits});
     size_t wand_count =
-      irs::ExecuteTopK(reader, filter, scorer, k, std::span{wand_hits}, 0);
+      irs::ExecuteTopK(reader, filter, scorer, k, std::span{wand_hits},
+                       {.index = 0, .strict = true});
 
     auto baseline_k = std::min(baseline_count, k);
     auto wand_k = std::min(wand_count, k);
@@ -325,7 +326,8 @@ TEST_P(WandScoringTestCase, WandEmptyResults) {
     irs::BlockSize(kTopK));
 
   size_t count =
-    irs::ExecuteTopK(reader, *filter, scorer, kTopK, std::span{hits}, 0);
+    irs::ExecuteTopK(reader, *filter, scorer, kTopK, std::span{hits},
+                     {.index = 0, .strict = true});
   ASSERT_EQ(0, count);
 }
 
@@ -343,7 +345,8 @@ TEST_P(WandScoringTestCase, WandResultValues) {
     irs::BlockSize(kTopK));
 
   size_t count =
-    irs::ExecuteTopK(reader, *filter, scorer, kTopK, std::span{hits}, 0);
+    irs::ExecuteTopK(reader, *filter, scorer, kTopK, std::span{hits},
+                     {.index = 0, .strict = true});
   ASSERT_GT(count, 0);
   auto result_count = std::min(count, kTopK);
 
@@ -364,7 +367,8 @@ TEST_P(WandScoringTestCase, WandMultisegResultValues) {
     irs::BlockSize(kTopK));
 
   size_t count =
-    irs::ExecuteTopK(reader, *filter, scorer, kTopK, std::span{hits}, 0);
+    irs::ExecuteTopK(reader, *filter, scorer, kTopK, std::span{hits},
+                     {.index = 0, .strict = true});
   ASSERT_GT(count, 0);
   auto result_count = std::min(count, kTopK);
 

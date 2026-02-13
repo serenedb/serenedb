@@ -115,7 +115,7 @@ class Executor {
 
     _results.resize(irs::BlockSize(k));
     return irs::ExecuteTopK(_reader, *filter, *_scorer, k, std::span{_results},
-                            0);
+                            {.index = 0, .strict = true});
   }
 
   size_t ExecuteTopKWithCount(size_t k, std::string_view query) {

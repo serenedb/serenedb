@@ -1,6 +1,8 @@
 #pragma once
 
 #include <algorithm>
+#include <iresearch/index/index_reader_options.hpp>
+#include <iresearch/utils/type_limits.hpp>
 #include <utility>
 
 #include "basics/shared.hpp"
@@ -107,7 +109,7 @@ template<size_t K>
 size_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
                    const Scorer& scorer, size_t k,
                    std::span<std::pair<doc_id_t, score_t>, K> hits,
-                   uint8_t wand_index) {
+                   WandContext wand) {
   SDB_ASSERT(BlockSize(k) <= hits.size());
 
   auto prepared = filter.prepare({
@@ -154,7 +156,7 @@ size_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
     auto it = prepared->execute({
       .segment = segment,
       .scorer = &scorer,
-      .wand = {.index = wand_index, .strict = true},
+      .wand = wand,
     });
 
     auto score_func = it->PrepareScore({
@@ -196,6 +198,87 @@ size_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
   }
 
   std::sort(hits.begin(), pivot, cmp);
+
+  return count;
+}
+
+template<size_t K>
+size_t ExecuteTopKHeap(const DirectoryReader& reader, const Filter& filter,
+                       const Scorer& scorer, WandContext wand, size_t k,
+                       std::span<std::pair<doc_id_t, score_t>, K> results) {
+  SDB_ASSERT(k >= results.size());
+
+  auto prepared = filter.prepare({
+    .index = reader,
+    .scorer = &scorer,
+  });
+
+  size_t count = 0;
+  auto begin = results.begin();
+  auto end = results.end();
+
+  ColumnCollector columns;
+  for (auto left = k; auto& segment : reader) {
+    columns.Clear();
+
+    auto docs = prepared->execute({
+      .segment = segment,
+      .scorer = &scorer,
+      .wand = wand,
+    });
+
+    auto score = docs->PrepareScore({
+      .scorer = &scorer,
+      .segment = &segment,
+      .collector = &columns,
+    });
+
+    auto* threshold = irs::GetMutable<ScoreThresholdAttr>(docs.get());
+
+    if (!left && threshold) {
+      threshold->value = results.front().second;
+    }
+
+    float_t score_value;
+    for (doc_id_t doc; !doc_limits::eof(doc = docs->advance());) {
+      ++count;
+
+      docs->FetchScoreArgs(0);
+      score_value = score.Score();
+
+      if (begin != end) {
+        *begin = {score_value, doc};
+        ++begin;
+
+        if (begin == end) {
+          absl::c_make_heap(results,
+                            [](const auto& lhs, const auto& rhs) noexcept {
+                              return lhs.second > rhs.second;
+                            });
+
+          threshold->value = results.front().second;
+        }
+      } else if (results.front().second < score_value) {
+        absl::c_pop_heap(results,
+                         [](const auto& lhs, const auto& rhs) noexcept {
+                           return lhs.second > rhs.second;
+                         });
+
+        results.back() = {doc, score_value};
+
+        absl::c_push_heap(results,
+                          [](const auto& lhs, const auto& rhs) noexcept {
+                            return lhs.second > rhs.second;
+                          });
+
+        threshold->value = results.front().second;
+      }
+    }
+  }
+
+  absl::c_sort(results, [](const auto& lhs, const auto& rhs) noexcept {
+    return lhs.first > rhs.first;
+  });
 
   return count;
 }

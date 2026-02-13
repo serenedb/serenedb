@@ -57,25 +57,70 @@
 namespace sdb::connector {
 
 namespace {
+
+inline bool HasColumnOverlap(
+  std::span<const catalog::Column::Id> index_columns,
+  containers::FlatHashSet<catalog::Column::Id> updated_columns) {
+  return absl::c_any_of(index_columns, [&](auto index_col) {
+    return updated_columns.contains(index_col);
+  });
+}
+
 template<typename Writer>
 std::vector<std::unique_ptr<Writer>> CreateIndexWriters(
-  ObjectId table_id, query::Transaction& transaction) {
+  ObjectId table_id, query::Transaction& transaction,
+  std::span<ColumnInfo> updated_columns = {}, bool pk_updated = false) {
   std::vector<std::unique_ptr<Writer>> writers;
 
-  transaction.EnsureIndexesTransactions(
-    table_id, [&]<typename T>(T& transaction, const IndexShard& shard,
-                              std::span<const catalog::Column::Id> columns) {
-      if constexpr (std::is_same_v<T, irs::IndexWriter::Transaction>) {
+  using InvertedIndexWriter =
+    std::conditional_t<std::is_same_v<Writer, SinkUpdateWriter>,
+                       search::SearchSinkUpdateWriter,
+                       search::SearchSinkInsertWriter>;
+
+  auto resolve_index_writer =
+    [&](auto& transaction, std::span<const catalog::Column::Id> columns) {
+      if constexpr (std::is_same_v<std::decay_t<decltype(transaction)>,
+                                   irs::IndexWriter::Transaction>) {
         writers.push_back(
-          std::make_unique<std::conditional_t<
-            std::is_same_v<Writer, SinkUpdateWriter>,
-            search::SearchSinkUpdateWriter, search::SearchSinkInsertWriter>>(
-            transaction, columns));
+          std::make_unique<InvertedIndexWriter>(transaction, columns));
       } else {
         SDB_UNREACHABLE();
       }
-    });
+    };
 
+  if constexpr (std::is_same_v<Writer, SinkUpdateWriter>) {
+    containers::FlatHashSet<catalog::Column::Id> update_column_ids;
+    if (!pk_updated) {
+      update_column_ids.reserve(updated_columns.size());
+      for (const auto& c : updated_columns) {
+        update_column_ids.emplace(c.id);
+      }
+    }
+    auto index_filter =
+      [&](std::span<const catalog::Column::Id> index_columns) {
+        if (pk_updated) {
+          return true;
+        }
+        return HasColumnOverlap(index_columns, update_column_ids);
+      };
+
+    transaction.EnsureIndexesTransactions(table_id, resolve_index_writer,
+                                          index_filter);
+  } else {
+    transaction.EnsureIndexesTransactions(table_id, resolve_index_writer);
+  }
+
+  SDB_IF_FAILURE("connector_must_one_index") {
+    if (writers.size() != 1) {
+      SDB_THROW(ERROR_DEBUG, "Connector::must_one_index condition failed");
+    }
+  }
+
+  SDB_IF_FAILURE("connector_must_two_index") {
+    if (writers.size() != 2) {
+      SDB_THROW(ERROR_DEBUG, "Connector::must_two_index condition failed");
+    }
+  }
   return writers;
 }
 
@@ -656,7 +701,12 @@ class SereneDBConnector final : public velox::connector::Connector {
 
           if constexpr (IsUpdate) {
             std::vector<catalog::Column::Id> all_column_oids;
-            if (table.UsedForUpdatePK()) {
+            auto update_sinks = CreateIndexWriters<SinkUpdateWriter>(
+              object_key, transaction,
+              std::span(columns.begin() + table.PKType()->size(),
+                        columns.end()),
+              table.UsedForUpdatePK());
+            if (table.UsedForUpdatePK() || !update_sinks.empty()) {
               all_column_oids.reserve(table.type()->size());
               for (auto& col : table.type()->names()) {
                 auto handle = table.columnMap().find(col);
@@ -667,8 +717,6 @@ class SereneDBConnector final : public velox::connector::Connector {
                   basics::downCast<const SereneDBColumn>(handle->second)->Id());
               }
             }
-            auto update_sinks =
-              CreateIndexWriters<SinkUpdateWriter>(object_key, transaction);
             return std::make_unique<RocksDBUpdateDataSink>(
               table.name(), rocksdb_transaction, _cf,
               *connector_query_ctx->memoryPool(), object_key, pk_indices,

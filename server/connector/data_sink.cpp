@@ -319,6 +319,7 @@ RocksDBUpdateDataSink::RocksDBUpdateDataSink(
   if (_update_pk || !_index_writers.empty()) {
     // record column kinds before sorting as order matches in row type and
     // column ids
+    SDB_ASSERT(_all_column_ids.size() == table_row_type->children().size());
     _column_id_to_kind.reserve(_all_column_ids.size());
     velox::vector_size_t idx = 0;
     for (const auto& child : table_row_type->children()) {
@@ -498,7 +499,8 @@ void RocksDBUpdateDataSink::appendData(velox::RowVectorPtr input) {
       ensure_input_sorted(_store_keys_buffers);
       auto it = _data_writer.CreateIterator();
       for (auto column_id : _all_column_ids) {
-        if (!IsUpdatedColumn(column_id)) {
+        if (column_id != catalog::Column::kGeneratedPKId &&
+            !IsUpdatedColumn(column_id)) {
           // Do now rewrite data in rocksdb - only index parts
           RewriteColumn<false>(*it, column_id, _store_keys_buffers,
                                _store_keys_buffers);
@@ -579,6 +581,8 @@ void RocksDBUpdateDataSink::RewriteColumn(rocksdb::Iterator& it,
                                           catalog::Column::Id column_id,
                                           const primary_key::Keys& old_keys,
                                           primary_key::Keys& new_keys) {
+  SDB_ASSERT(column_id != catalog::Column::kGeneratedPKId,
+             "Generated column is not stored and can not be rewritten");
   bool is_range = true;
   auto seek_to_key = [&](std::string_view key, bool use_seek) {
     if (is_range && !use_seek) {

@@ -1,0 +1,22 @@
+[
+  {"name":"doc1","term":"foobar", "opt":"color", "alt":"cat","class":"abc123","plus":"fobar"},
+  {"name":"doc2","term":"foo123bar","opt":"colour","alt":"dog","class":"xyz789","plus":"foobar"},
+  {"name":"doc3","term":"fooXXXbar","opt":"colouur", "alt":"bird", "class":"ABC123","plus":"fooobar"},
+  {"name":"doc4","term":"foobarbar","opt":"colr","alt":"cat","class":"def456","plus":"fbar"},
+  {"name":"doc5","term":"foobarbazbar", "opt":"clor","alt":"fish", "class":"123abc","plus":"bar"},
+  {"name":"doc6","term":"foobasbar","opt":"cor", "alt":"dog","class":"456def","plus":"obar"},
+  {"name":"doc7","term":"foobaxbar","opt":"cr","alt":"bird", "class":"GHI789","plus":"oobar"},
+  {"name":"doc8","term":"foobabar", "opt":"gray","alt":"cat","class":"jkl012","plus":"foooobar"},
+  {"name":"doc9","term":"foo","opt":"grey","alt":"mouse","class":"MNO345","plus":"fo"},
+  {"name":"doc10", "term":"bar","opt":"graaaay", "alt":"cat","class":"pqr678","plus":"f"},
+  {"name":"doc11", "term":"fooba","opt":"graey", "alt":"dog","class":"STU901","plus":"fffbar"},
+  {"name":"doc12", "term":"oobar","opt":"gry", "alt":"bird", "class":"vwx234","plus":"ffoobar"},
+  {"name":"doc13", "term":"foobarbaz","opt":"test","alt":"fish", "class":"YZA567","plus":"ffobar"},
+  {"name":"doc14", "term":"fooXbar","opt":"tset","alt":"cat","class":"bcd890","plus":"ooobar"},
+  {"name":"doc15", "term":"fobar","opt":"abc", "alt":"dog","class":"EFG111","plus":"fffffbar"},
+  {"name":"doc16", "term":"foooobar", "opt":"xyz", "alt":"bird", "class":"hij222","plus":"xyzbar"},
+  {"name":"doc17", "term":"xfoobar","opt":"aab", "alt":"cat","class":"KLM333","plus":"abcbar"},
+  {"name":"doc18", "term":"foobarx","opt":"abb", "alt":"dog","class":"nop444","plus":"defbar"},
+  {"name":"doc19", "term":"xfoobarx", "opt":"aabb","alt":"fish", "class":"QRS555","plus":"ghbar"},
+  {"name":"doc20", "term":"fooxbar","opt":"aaabbb","alt":"cat","class":"tuv666","plus":"ijbar"}
+]

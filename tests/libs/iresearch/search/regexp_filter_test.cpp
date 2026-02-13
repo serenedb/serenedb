@@ -1,3 +1,23 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
 #include <iresearch/search/all_filter.hpp>
 #include <iresearch/search/multiterm_query.hpp>
 #include <iresearch/search/prefix_filter.hpp>
@@ -42,9 +62,7 @@ TEST(by_regexp_test, equal) {
   const irs::ByRegexp q = MakeFilter("field", "bar.*");
 
   ASSERT_EQ(q, MakeFilter("field", "bar.*"));
-
   ASSERT_NE(q, MakeFilter("field1", "bar.*"));
-
   ASSERT_NE(q, MakeFilter("field", "bar"));
 
   irs::ByRegexp q1 = MakeFilter("field", "bar.*");
@@ -145,11 +163,354 @@ TEST(by_regexp_test, test_type_of_prepared_query) {
   counter.Reset();
 }
 
+//=============================================================================
+// Integration/Execution tests with index
+// Using regexp_test_data.json
+//=============================================================================
+
 class RegexpFilterTestCase : public tests::FilterTestCaseBase {};
 
-TEST_P(RegexpFilterTestCase, by_regexp) {
+TEST_P(RegexpFilterTestCase, by_regexp_foo_dot_star_bar) {
   {
-    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+    tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  // foo.*bar
+  {
+    Docs docs{1, 2, 3, 4, 5, 6, 7, 8, 14, 16, 20};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("term", "foo.*bar"), docs, costs, rdr);
+  }
+}
+
+TEST_P(RegexpFilterTestCase, by_regexp_foo_star_bar) {
+  {
+    tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  {
+    Docs docs{1, 15, 16};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("term", "foo*bar"), docs, costs, rdr);
+  }
+}
+
+// Suffix pattern: .*bar
+
+TEST_P(RegexpFilterTestCase, by_regexp_suffix) {
+  {
+    tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  {
+    Docs docs{1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 15, 16, 17, 20};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("term", ".*bar"), docs, costs, rdr);
+  }
+}
+
+// Prefix pattern: foo.*
+
+TEST_P(RegexpFilterTestCase, by_regexp_prefix) {
+  {
+    tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  {
+    Docs docs{1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 13, 14, 16, 18, 20};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("term", "foo.*"), docs, costs, rdr);
+  }
+}
+
+// Optional quantifier: ?
+
+TEST_P(RegexpFilterTestCase, by_regexp_optional_colou_r) {
+  {
+    tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  {
+    Docs docs{1, 2};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("opt", "colou?r"), docs, costs, rdr);
+  }
+}
+
+TEST_P(RegexpFilterTestCase, by_regexp_optional_gra_y) {
+  {
+    tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  {
+    Docs docs{8, 12};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("opt", "gra?y"), docs, costs, rdr);
+  }
+}
+
+TEST_P(RegexpFilterTestCase, by_regexp_optional_multiple) {
+  {
+    tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  {
+    Docs docs{18};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("opt", "a?bb?"), docs, costs, rdr);
+  }
+}
+
+// Plus quantifier: +
+
+TEST_P(RegexpFilterTestCase, by_regexp_plus_fo_bar) {
+  {
+    tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  {
+    Docs docs{1, 2, 3, 8};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("plus", "fo+bar"), docs, costs, rdr);
+  }
+}
+
+TEST_P(RegexpFilterTestCase, by_regexp_plus_f_bar) {
+  {
+    tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  {
+    Docs docs{4, 11, 15};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("plus", "f+bar"), docs, costs, rdr);
+  }
+}
+
+// Alternation: |
+
+TEST_P(RegexpFilterTestCase, by_regexp_alternation_two) {
+  {
+    tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  // cat|dog
+  {
+    Docs docs{1, 2, 4, 6, 8, 10, 11, 14, 15, 17, 18, 20};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("alt", "cat|dog"), docs, costs, rdr);
+  }
+}
+
+TEST_P(RegexpFilterTestCase, by_regexp_alternation_three) {
+  {
+    tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  // cat|dog|bird
+  {
+    Docs docs{1, 2, 3, 4, 6, 7, 8, 10, 11, 12, 14, 15, 16, 17, 18, 20};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("alt", "cat|dog|bird"), docs, costs, rdr);
+  }
+}
+
+TEST_P(RegexpFilterTestCase, by_regexp_alternation_single) {
+  {
+    tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  {
+    Docs docs{9};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("alt", "mouse"), docs, costs, rdr);
+  }
+}
+
+// Character classes: [...]
+
+TEST_P(RegexpFilterTestCase, by_regexp_char_class_lower_digits) {
+  {
+    tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  // [a-z]+[0-9]+ = lowercase letters followed by digits
+  // Matches: abc123(1), xyz789(2), def456(4), jkl012(8), pqr678(10),
+  //          vwx234(12), bcd890(14), hij222(16), nop444(18), tuv666(20)
+  {
+    Docs docs{1, 2, 4, 8, 10, 12, 14, 16, 18, 20};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("class", "[a-z]+[0-9]+"), docs, costs, rdr);
+  }
+}
+
+TEST_P(RegexpFilterTestCase, by_regexp_char_class_upper_digits) {
+  {
+    tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  // [A-Z]+[0-9]+ = uppercase letters followed by digits
+  // Matches: ABC123(3), GHI789(7), MNO345(9), STU901(11), YZA567(13),
+  //          EFG111(15), KLM333(17), QRS555(19)
+  {
+    Docs docs{3, 7, 9, 11, 13, 15, 17, 19};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("class", "[A-Z]+[0-9]+"), docs, costs, rdr);
+  }
+}
+
+TEST_P(RegexpFilterTestCase, by_regexp_char_class_digits_letters) {
+  {
+    tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  // [0-9]+[a-z]+ = digits followed by lowercase letters
+  // Matches: 123abc(5), 456def(6)
+  {
+    Docs docs{5, 6};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("class", "[0-9]+[a-z]+"), docs, costs, rdr);
+  }
+}
+
+// Dot
+
+TEST_P(RegexpFilterTestCase, by_regexp_dot_single) {
+  {
+    tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  // foo.bar = foo + any single char + bar
+  {
+    Docs docs{14, 20};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("term", "foo.bar"), docs, costs, rdr);
+  }
+}
+
+TEST_P(RegexpFilterTestCase, by_regexp_dot_multiple) {
+  {
+    tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  // foo...bar = foo + exactly 3 chars + bar
+  {
+    Docs docs{2, 3, 4, 6, 7};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("term", "foo...bar"), docs, costs, rdr);
+  }
+}
+
+// Combined patterns
+
+TEST_P(RegexpFilterTestCase, by_regexp_combined_group_quantifier) {
+  {
+    tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  // (foo|fo).*bar = ("foo" or "fo") + anything + "bar"
+  {
+    Docs docs{1, 2, 3, 4, 5, 6, 7, 8, 14, 15, 16, 20};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("term", "(foo|fo).*bar"), docs, costs, rdr);
+  }
+}
+
+TEST_P(RegexpFilterTestCase, by_regexp_combined_optional_star) {
+  {
+    tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  // foo?.*bar = fo + (o?) + (.*) + bar
+  // = "fo" or "foo" followed by anything and "bar"
+  {
+    Docs docs{1, 2, 3, 4, 5, 6, 7, 8, 14, 15, 16, 20};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("term", "foo?.*bar"), docs, costs, rdr);
+  }
+}
+
+// Edge cases
+
+TEST_P(RegexpFilterTestCase, by_regexp_empty_filter) {
+  {
+    tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
     add_segment(gen);
   }
@@ -157,105 +518,59 @@ TEST_P(RegexpFilterTestCase, by_regexp) {
   auto rdr = open_reader();
 
   CheckQuery(irs::ByRegexp(), Docs{}, Costs{0}, rdr);
-
-  CheckQuery(MakeFilter("", "xyz.*"), Docs{}, Costs{0}, rdr);
-
-  CheckQuery(MakeFilter("nonexistent_field", "xyz.*"), Docs{}, Costs{0}, rdr);
-
-  CheckQuery(MakeFilter("same", "xyz_invalid_pattern.*"), Docs{}, Costs{0},
-             rdr);
-
-  CheckQuery(MakeFilter("duplicated", ""), Docs{}, Costs{0}, rdr);
-
-  {
-    Docs result;
-    for (size_t i = 0; i < 32; ++i) {
-      result.push_back(irs::doc_id_t((irs::doc_limits::min)() + i));
-    }
-
-    Costs costs{result.size()};
-
-    CheckQuery(MakeFilter("same", ".*"), result, costs, rdr);
-    CheckQuery(MakeFilter("same", "x.*"), result, costs, rdr);
-    CheckQuery(MakeFilter("same", "xy.*"), result, costs, rdr);
-    CheckQuery(MakeFilter("same", "xyz.*"), result, costs, rdr);
-    CheckQuery(MakeFilter("same", "xyz"), result, costs, rdr);
-  }
-
-  {
-    Docs docs{1, 4, 21, 26, 31, 32};
-    Costs costs{docs.size()};
-
-    CheckQuery(MakeFilter("prefix", "abc.*"), docs, costs, rdr);
-  }
-
-  {
-    Docs docs{1, 4, 21, 26, 31, 32};
-    Costs costs{docs.size()};
-
-    CheckQuery(MakeFilter("prefix", "a.c.*"), docs, costs, rdr);
-  }
 }
 
-TEST_P(RegexpFilterTestCase, by_regexp_complex_patterns) {
+TEST_P(RegexpFilterTestCase, by_regexp_no_match) {
   {
-    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+    tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
     add_segment(gen);
   }
 
   auto rdr = open_reader();
 
-  {
-    Docs docs{1, 4, 21, 26, 31, 32};
-    Costs costs{docs.size()};
-
-    CheckQuery(MakeFilter("prefix", "(abc|abd).*"), docs, costs, rdr);
-  }
-
-  {
-    Docs docs{1, 4, 21, 26, 31, 32};
-    Costs costs{docs.size()};
-
-    CheckQuery(MakeFilter("prefix", "ab[cd].*"), docs, costs, rdr);
-  }
-
-  {
-    Docs result;
-    for (size_t i = 0; i < 32; ++i) {
-      result.push_back(irs::doc_id_t((irs::doc_limits::min)() + i));
-    }
-    Costs costs{result.size()};
-
-    CheckQuery(MakeFilter("same", "xy+z"), result, costs, rdr);
-  }
+  CheckQuery(MakeFilter("term", "nomatch.*"), Docs{}, Costs{0}, rdr);
+  CheckQuery(MakeFilter("term", "zzz"), Docs{}, Costs{0}, rdr);
+  CheckQuery(MakeFilter("nonexistent", ".*"), Docs{}, Costs{0}, rdr);
 }
 
-TEST_P(RegexpFilterTestCase, by_regexp_utf8) {
+TEST_P(RegexpFilterTestCase, by_regexp_exact_match) {
   {
-    tests::JsonDocGenerator gen(resource("simple_sequential_utf8.json"),
+    tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
     add_segment(gen);
   }
 
   auto rdr = open_reader();
+
+  // Exact literal match
+  {
+    Docs docs{1};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("term", "foobar"), docs, costs, rdr);
+  }
+
+  {
+    Docs docs{9};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("term", "foo"), docs, costs, rdr);
+  }
 }
 
-TEST_P(RegexpFilterTestCase, visit) {
+// Visitor tests
+
+TEST_P(RegexpFilterTestCase, visit_literal) {
   {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                 &tests::GenericJsonFieldFactory);
     add_segment(gen);
   }
-
-  std::string fld = "prefix";
-  std::string_view field = std::string_view(fld);
 
   auto index = open_reader();
   ASSERT_EQ(1, index.size());
   auto& segment = index[0];
 
-  const auto* reader = segment.field(field);
+  const auto* reader = segment.field("prefix");
   ASSERT_NE(nullptr, reader);
 
   {
@@ -270,15 +585,24 @@ TEST_P(RegexpFilterTestCase, visit) {
                 {"abc", irs::kNoBoost},
               }),
               visitor.term_refs<char>());
-
-    visitor.reset();
   }
+}
+
+TEST_P(RegexpFilterTestCase, visit_prefix) {
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto index = open_reader();
+  auto& segment = index[0];
+  const auto* reader = segment.field("prefix");
 
   {
     auto prefix = irs::ViewCast<irs::byte_type>(std::string_view("ab.*"));
     tests::EmptyFilterVisitor visitor;
     auto field_visitor = irs::ByRegexp::visitor(prefix);
-    ASSERT_TRUE(field_visitor);
     field_visitor(segment, *reader, visitor);
     ASSERT_EQ(1, visitor.prepare_calls_counter());
     ASSERT_EQ(6, visitor.visit_calls_counter());
@@ -290,45 +614,6 @@ TEST_P(RegexpFilterTestCase, visit) {
                 {"abcy", irs::kNoBoost},
                 {"abde", irs::kNoBoost}}),
               visitor.term_refs<char>());
-
-    visitor.reset();
-  }
-
-  {
-    auto wildcard = irs::ViewCast<irs::byte_type>(std::string_view("a.c.*"));
-    tests::EmptyFilterVisitor visitor;
-    auto field_visitor = irs::ByRegexp::visitor(wildcard);
-    ASSERT_TRUE(field_visitor);
-    field_visitor(segment, *reader, visitor);
-    ASSERT_EQ(1, visitor.prepare_calls_counter());
-    ASSERT_EQ(5, visitor.visit_calls_counter());
-    ASSERT_EQ((std::vector<std::pair<std::string_view, irs::score_t>>{
-                {"abc", irs::kNoBoost},
-                {"abcd", irs::kNoBoost},
-                {"abcde", irs::kNoBoost},
-                {"abcdrer", irs::kNoBoost},
-                {"abcy", irs::kNoBoost},
-              }),
-              visitor.term_refs<char>());
-
-    visitor.reset();
-  }
-
-  {
-    auto pattern = irs::ViewCast<irs::byte_type>(std::string_view("abc|abde"));
-    tests::EmptyFilterVisitor visitor;
-    auto field_visitor = irs::ByRegexp::visitor(pattern);
-    ASSERT_TRUE(field_visitor);
-    field_visitor(segment, *reader, visitor);
-    ASSERT_EQ(1, visitor.prepare_calls_counter());
-    ASSERT_EQ(2, visitor.visit_calls_counter());
-    ASSERT_EQ((std::vector<std::pair<std::string_view, irs::score_t>>{
-                {"abc", irs::kNoBoost},
-                {"abde", irs::kNoBoost},
-              }),
-              visitor.term_refs<char>());
-
-    visitor.reset();
   }
 }
 
@@ -339,16 +624,11 @@ TEST_P(RegexpFilterTestCase, visit_invalid_pattern) {
     add_segment(gen);
   }
 
-  std::string fld = "prefix";
-  std::string_view field = std::string_view(fld);
-
   auto index = open_reader();
-  ASSERT_EQ(1, index.size());
   auto& segment = index[0];
+  const auto* reader = segment.field("prefix");
 
-  const auto* reader = segment.field(field);
-  ASSERT_NE(nullptr, reader);
-
+  // Unclosed parenthesis
   {
     auto pattern = irs::ViewCast<irs::byte_type>(std::string_view("(abc"));
     tests::EmptyFilterVisitor visitor;
@@ -359,14 +639,22 @@ TEST_P(RegexpFilterTestCase, visit_invalid_pattern) {
     ASSERT_EQ(0, visitor.visit_calls_counter());
   }
 
+  // Unclosed bracket
   {
     auto pattern = irs::ViewCast<irs::byte_type>(std::string_view("[abc"));
     tests::EmptyFilterVisitor visitor;
     auto field_visitor = irs::ByRegexp::visitor(pattern);
-    ASSERT_TRUE(field_visitor);
     field_visitor(segment, *reader, visitor);
     ASSERT_EQ(0, visitor.prepare_calls_counter());
-    ASSERT_EQ(0, visitor.visit_calls_counter());
+  }
+
+  // Double quantifier
+  {
+    auto pattern = irs::ViewCast<irs::byte_type>(std::string_view("a**"));
+    tests::EmptyFilterVisitor visitor;
+    auto field_visitor = irs::ByRegexp::visitor(pattern);
+    field_visitor(segment, *reader, visitor);
+    ASSERT_EQ(0, visitor.prepare_calls_counter());
   }
 }
 

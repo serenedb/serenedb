@@ -75,8 +75,6 @@ Result Transaction::Commit() {
     post_commit_seq += num_ops - 1;
 
     for (auto& search_transaction : _search_transactions) {
-      // TODO(Dronplane): what if one commit fails? Crash + Recovery? or mark
-      // index corrupted?
       search_transaction.second->Commit(post_commit_seq);
     }
     std::move(abort_guard).Cancel();

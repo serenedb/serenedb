@@ -656,7 +656,7 @@ void FieldWriterImpl::WriteBlock(size_t prefix, size_t begin, size_t end,
 
   Block::BlockIndex index;
 
-  _pw->begin_block();
+  _pw->BeginBlock();
 
   for (; begin < end; ++begin) {
     auto& e = _stack[begin];
@@ -673,7 +673,7 @@ void FieldWriterImpl::WriteBlock(size_t prefix, size_t begin, size_t end,
     _suffix.stream.WriteBytes(data.data() + prefix, suf_size);
 
     if (EntryType::Term == type) {
-      _pw->encode(_stats.stream, e.Term());
+      _pw->Encode(_stats.stream, e.Term());
     } else {
       SDB_ASSERT(EntryType::Block == type);
 
@@ -894,7 +894,7 @@ void FieldWriterImpl::prepare(const FlushState& state) {
   WriteFeatures(*_index_out, state.index_features);
 
   // prepare postings writer
-  _pw->prepare(*_terms_out, state);
+  _pw->Prepare(*_terms_out, state);
 
   _suffix.Reset();
   _stats.Reset();
@@ -917,7 +917,7 @@ void FieldWriterImpl::write(const BasicTermReader& reader) {
   while (terms->next()) {
     auto postings = terms->postings(index_features);
     TermMetaImpl meta;
-    _pw->write(*postings, meta);
+    _pw->Write(*postings, meta);
 
     if (freq_exists) {
       sum_tfreq += meta.freq;
@@ -947,7 +947,7 @@ void FieldWriterImpl::BeginField(const FieldProperties& meta) {
   // At the beginning of the field there should be no pending entries at all
   SDB_ASSERT(_stack.empty());
 
-  _pw->begin_field(meta);
+  _pw->BeginField(meta);
 }
 
 void FieldWriterImpl::EndField(std::string_view name, FieldProperties props,
@@ -962,7 +962,7 @@ void FieldWriterImpl::EndField(std::string_view name, FieldProperties props,
     return;
   }
 
-  const auto [wand_mask, doc_count] = _pw->end_field();
+  const auto [wand_mask, doc_count] = _pw->EndField();
 
   // cause creation of all final blocks
   Push(kEmptyStringView<byte_type>);
@@ -1029,7 +1029,7 @@ void FieldWriterImpl::end() {
   SDB_ASSERT(_index_out);
 
   // finish postings
-  _pw->end();
+  _pw->End();
 
   format_utils::WriteFooter(*_terms_out);
   _terms_out.reset();  // ensure stream is closed

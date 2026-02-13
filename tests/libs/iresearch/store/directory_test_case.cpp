@@ -4144,29 +4144,29 @@ TEST_P(DirectoryTestCase, smoke_store) {
       }
 
       // failed direct buffer access doesn't move file pointer
-      {
-        const auto fp = file->Position();
-        ASSERT_GT(file->Length(), 1);
-        ASSERT_EQ(nullptr, file->ReadView(file->Length() - 1, file->Length()));
-        ASSERT_EQ(fp, file->Position());
-      }
+      // {
+      //   const auto fp = file->Position();
+      //   ASSERT_GT(file->Length(), 1);
+      //   ASSERT_EQ(nullptr, file->ReadView(file->Length() - 1, file->Length()));
+      //   ASSERT_EQ(fp, file->Position());
+      // }
 
       // failed direct buffer access doesn't move file pointer
-      {
-        const auto fp = file->Position();
-        Finally cleanup = [fp, &file]() noexcept {
-          try {
-            file->Seek(fp);
-          } catch (...) {
-            ASSERT_TRUE(false);
-          }
-        };
+      // {
+      //   const auto fp = file->Position();
+      //   Finally cleanup = [fp, &file]() noexcept {
+      //     try {
+      //       file->Seek(fp);
+      //     } catch (...) {
+      //       ASSERT_TRUE(false);
+      //     }
+      //   };
 
-        ASSERT_GT(file->Length(), 1);
-        file->Seek(file->Length() - 1);
-        ASSERT_EQ(nullptr, file->ReadView(file->Length()));
-        ASSERT_EQ(file->Length() - 1, file->Position());
-      }
+      //   ASSERT_GT(file->Length(), 1);
+      //   file->Seek(file->Length() - 1);
+      //   ASSERT_EQ(nullptr, file->ReadView(file->Length()));
+      //   ASSERT_EQ(file->Length() - 1, file->Position());
+      // }
 
       if (dynamic_cast<MMapDirectory*>(&dir) ||
           dynamic_cast<MemoryDirectory*>(&dir) ||

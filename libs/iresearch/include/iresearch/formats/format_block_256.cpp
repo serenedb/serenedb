@@ -40,6 +40,12 @@ struct FormatTraits256 {
   static constexpr uint32_t kBlockSize = AVXBlockSize;
   static_assert(kBlockSize <= doc_limits::eof());
 
+  static constexpr auto kEncBufByteSize =
+    std::max(2 * streamvbyte_max_compressedbytes(kBlockSize - 1),
+             kBlockSize * sizeof(uint32_t));
+  static constexpr auto kEncBufSize =
+    (kEncBufByteSize + sizeof(uint32_t)) / sizeof(uint32_t);
+
   IRS_FORCE_INLINE static void PackBlock(const uint32_t* IRS_RESTRICT decoded,
                                          uint32_t* IRS_RESTRICT encoded,
                                          uint32_t bits) noexcept {

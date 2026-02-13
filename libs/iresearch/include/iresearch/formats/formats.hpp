@@ -102,13 +102,13 @@ struct PostingsWriter {
 
   virtual ~PostingsWriter() = default;
   // out - corresponding terms stream
-  virtual void prepare(IndexOutput& out, const FlushState& state) = 0;
-  virtual void begin_field(const FieldProperties& meta) = 0;
-  virtual void write(DocIterator& docs, TermMeta& meta) = 0;
-  virtual void begin_block() = 0;
-  virtual void encode(BufferedOutput& out, const TermMeta& state) = 0;
-  virtual FieldStats end_field() = 0;
-  virtual void end() = 0;
+  virtual void Prepare(IndexOutput& out, const FlushState& state) = 0;
+  virtual void BeginField(const FieldProperties& meta) = 0;
+  virtual void Write(DocIterator& docs, TermMeta& meta) = 0;
+  virtual void BeginBlock() = 0;
+  virtual void Encode(BufferedOutput& out, const TermMeta& state) = 0;
+  virtual FieldStats EndField() = 0;
+  virtual void End() = 0;
 };
 
 struct BasicTermReader : public AttributeProvider {

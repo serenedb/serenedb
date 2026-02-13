@@ -178,12 +178,6 @@ class TestSeekTermIterator : public irs::SeekTermIterator {
       return nullptr;
     }
 
-    bool IsEqual(const irs::SeekCookie& rhs) const noexcept final {
-      return ptr == sdb::basics::downCast<SeekPtr>(rhs).ptr;
-    }
-
-    size_t Hash() const noexcept final { return absl::HashOf(ptr->first); }
-
     IteratorType ptr;
   };
 

@@ -234,6 +234,7 @@ target_link_libraries(
     PUBLIC ${FAISS_LIB}
     PUBLIC re2
     PUBLIC serene_geo
+    PUBLIC streamvbyte
     PRIVATE lz4_static
     PRIVATE text
     PRIVATE stemmer-static

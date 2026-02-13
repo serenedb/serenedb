@@ -127,24 +127,24 @@ class Format10TestCase : public tests::FormatTestCase {
       irs::WriteStr(*out, std::string_view("file_header"));
 
       // prepare writer
-      writer->prepare(*out, state);
+      writer->Prepare(*out, state);
 
-      writer->begin_field(field);
+      writer->BeginField(field);
 
       // write postings for term
       {
         TestPostings it(docs, field.index_features);
-        writer->write(it, term_meta.meta);
+        writer->Write(it, term_meta.meta);
 
         // write attributes to out
-        writer->encode(*out, term_meta.meta);
+        writer->Encode(*out, term_meta.meta);
       }
 
-      auto stats = writer->end_field();
+      auto stats = writer->EndField();
       ASSERT_EQ(0, stats.wand_mask);
       ASSERT_EQ(docs.size(), stats.docs_count);
 
-      writer->end();
+      writer->End();
     }
 
     // read postings
@@ -179,8 +179,8 @@ class Format10TestCase : public tests::FormatTestCase {
           ASSERT_EQ(term_meta.meta.docs_count, read_meta.meta.docs_count);
           ASSERT_EQ(term_meta.meta.doc_start, read_meta.meta.doc_start);
           ASSERT_EQ(term_meta.meta.pos_start, read_meta.meta.pos_start);
-          ASSERT_EQ(term_meta.meta.pos_end, read_meta.meta.pos_end);
           ASSERT_EQ(term_meta.meta.pay_start, read_meta.meta.pay_start);
+          ASSERT_EQ(term_meta.meta.pos_offset, read_meta.meta.pos_offset);
           ASSERT_EQ(term_meta.meta.e_single_doc, read_meta.meta.e_single_doc);
           ASSERT_EQ(term_meta.meta.e_skip_start, read_meta.meta.e_skip_start);
         }
@@ -319,15 +319,15 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
     ASSERT_FALSE(!out);
 
     // prepare writer
-    writer->prepare(*out, state);
+    writer->Prepare(*out, state);
 
     // begin field
-    writer->begin_field(field);
+    writer->BeginField(field);
 
     // write postings for term0
     {
       TestPostings docs(docs0);
-      writer->write(docs, meta0);
+      writer->Write(docs, meta0);
 
       // check TermMeta
       {
@@ -337,13 +337,13 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       }
 
       // write term0 attributes to out
-      writer->encode(*out, meta0);
+      writer->Encode(*out, meta0);
     }
 
     // write postings for term0
     {
       TestPostings docs(docs1);
-      writer->write(docs, meta1);
+      writer->Write(docs, meta1);
 
       // check TermMeta
       {
@@ -353,7 +353,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       }
 
       // write term0 attributes to out
-      writer->encode(*out, meta1);
+      writer->Encode(*out, meta1);
     }
 
     // check doc positions for term0 & term1
@@ -361,12 +361,12 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       ASSERT_EQ(meta0.docs_count, meta1.docs_count);
       ASSERT_EQ(meta0.doc_start, meta1.doc_start);
       ASSERT_EQ(meta0.pos_start, meta1.pos_start);
-      ASSERT_EQ(meta0.pos_end, meta1.pos_end);
       ASSERT_EQ(meta0.pay_start, meta1.pay_start);
+      ASSERT_EQ(meta0.pos_offset, meta1.pos_offset);
     }
 
     // finish writing
-    writer->end();
+    writer->End();
   }
 
   // read postings
@@ -401,8 +401,8 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
         ASSERT_EQ(meta0.docs_count, read_meta.meta.docs_count);
         ASSERT_EQ(meta0.doc_start, read_meta.meta.doc_start);
         ASSERT_EQ(meta0.pos_start, read_meta.meta.pos_start);
-        ASSERT_EQ(meta0.pos_end, read_meta.meta.pos_end);
         ASSERT_EQ(meta0.pay_start, read_meta.meta.pay_start);
+        ASSERT_EQ(meta0.pos_offset, read_meta.meta.pos_offset);
         ASSERT_EQ(meta0.e_single_doc, read_meta.meta.e_single_doc);
         ASSERT_EQ(meta0.e_skip_start, read_meta.meta.e_skip_start);
       }
@@ -425,8 +425,8 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
         ASSERT_EQ(0, read_meta.meta.doc_start); /* we don't read doc start in
                                               case of singleton */
         ASSERT_EQ(meta1.pos_start, read_meta.meta.pos_start);
-        ASSERT_EQ(meta1.pos_end, read_meta.meta.pos_end);
         ASSERT_EQ(meta1.pay_start, read_meta.meta.pay_start);
+        ASSERT_EQ(meta1.pos_offset, read_meta.meta.pos_offset);
         ASSERT_EQ(meta1.e_single_doc, read_meta.meta.e_single_doc);
         ASSERT_EQ(meta1.e_skip_start, read_meta.meta.e_skip_start);
       }
@@ -476,33 +476,33 @@ TEST_P(Format10TestCase, postings_read_write) {
     ASSERT_FALSE(!out);
 
     // prepare writer
-    writer->prepare(*out, state);
+    writer->Prepare(*out, state);
 
     // begin field
-    writer->begin_field(field);
+    writer->BeginField(field);
 
     // write postings for term0
     {
       TestPostings docs(docs0);
-      writer->write(docs, meta0);
+      writer->Write(docs, meta0);
 
       // write attributes to out
-      writer->encode(*out, meta0);
+      writer->Encode(*out, meta0);
     }
     // write postings for term1
     {
       TestPostings docs(docs1);
-      writer->write(docs, meta1);
+      writer->Write(docs, meta1);
 
       // write attributes to out
-      writer->encode(*out, meta1);
+      writer->Encode(*out, meta1);
     }
 
     // check doc positions for term0 & term1
     ASSERT_LT(meta0.doc_start, meta1.doc_start);
 
     // finish writing
-    writer->end();
+    writer->End();
   }
 
   // read postings
@@ -538,8 +538,8 @@ TEST_P(Format10TestCase, postings_read_write) {
         ASSERT_EQ(meta0.docs_count, read_meta.meta.docs_count);
         ASSERT_EQ(meta0.doc_start, read_meta.meta.doc_start);
         ASSERT_EQ(meta0.pos_start, read_meta.meta.pos_start);
-        ASSERT_EQ(meta0.pos_end, read_meta.meta.pos_end);
         ASSERT_EQ(meta0.pay_start, read_meta.meta.pay_start);
+        ASSERT_EQ(meta0.pos_offset, read_meta.meta.pos_offset);
         ASSERT_EQ(meta0.e_single_doc, read_meta.meta.e_single_doc);
         ASSERT_EQ(meta0.e_skip_start, read_meta.meta.e_skip_start);
       }
@@ -561,8 +561,8 @@ TEST_P(Format10TestCase, postings_read_write) {
         ASSERT_EQ(meta1.docs_count, read_meta.meta.docs_count);
         ASSERT_EQ(meta1.doc_start, read_meta.meta.doc_start);
         ASSERT_EQ(meta1.pos_start, read_meta.meta.pos_start);
-        ASSERT_EQ(meta1.pos_end, read_meta.meta.pos_end);
         ASSERT_EQ(meta1.pay_start, read_meta.meta.pay_start);
+        ASSERT_EQ(meta1.pos_offset, read_meta.meta.pos_offset);
         ASSERT_EQ(meta1.e_single_doc, read_meta.meta.e_single_doc);
         ASSERT_EQ(meta1.e_skip_start, read_meta.meta.e_skip_start);
       }
@@ -620,11 +620,11 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
 
     TestPostings docs(docs0);
 
-    writer->prepare(*out, state);
-    writer->begin_field(field);
+    writer->Prepare(*out, state);
+    writer->BeginField(field);
     irs::TermMetaImpl meta;
-    writer->write(docs, meta);
-    writer->end();
+    writer->Write(docs, meta);
+    writer->End();
   }
 
   // write docs 'segment1' with position & offset
@@ -650,11 +650,11 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
 
     TestPostings docs(docs0);
 
-    writer->prepare(*out, state);
-    writer->begin_field(field);
+    writer->Prepare(*out, state);
+    writer->BeginField(field);
     irs::TermMetaImpl meta;
-    writer->write(docs, meta);
-    writer->end();
+    writer->Write(docs, meta);
+    writer->End();
   }
 
   // write docs 'segment2' with position & payload
@@ -679,11 +679,11 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
 
     TestPostings docs(docs0);
 
-    writer->prepare(*out, state);
-    writer->begin_field(field);
+    writer->Prepare(*out, state);
+    writer->BeginField(field);
     irs::TermMetaImpl meta;
-    writer->write(docs, meta);
-    writer->end();
+    writer->Write(docs, meta);
+    writer->End();
   }
 
   // write docs 'segment3' with position
@@ -708,11 +708,11 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
 
     TestPostings docs(docs0);
 
-    writer->prepare(*out, state);
-    writer->begin_field(field);
+    writer->Prepare(*out, state);
+    writer->BeginField(field);
     irs::TermMetaImpl meta;
-    writer->write(docs, meta);
-    writer->end();
+    writer->Write(docs, meta);
+    writer->End();
   }
 
   // write docs 'segment3' with frequency
@@ -736,11 +736,11 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
 
     TestPostings docs(docs0);
 
-    writer->prepare(*out, state);
-    writer->begin_field(field);
+    writer->Prepare(*out, state);
+    writer->BeginField(field);
     irs::TermMetaImpl meta;
-    writer->write(docs, meta);
-    writer->end();
+    writer->Write(docs, meta);
+    writer->End();
   }
 
   // writer segment without any attributes
@@ -762,11 +762,11 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
 
     TestPostings docs(docs0);
 
-    writer->prepare(*out, state);
-    writer->begin_field(field);
+    writer->Prepare(*out, state);
+    writer->BeginField(field);
     irs::TermMetaImpl meta;
-    writer->write(docs, meta);
-    writer->end();
+    writer->Write(docs, meta);
+    writer->End();
   }
 }
 

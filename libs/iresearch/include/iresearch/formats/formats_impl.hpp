@@ -2492,10 +2492,11 @@ struct IteratorTraitsImpl : FormatTraits {
 template<typename FormatTraits>
 using WandTraits = IteratorTraitsImpl<FormatTraits, true, false, false>;
 
-template<typename FormatTraits, bool Pos, bool Offs, typename WandExtent>
+template<typename FormatTraits, bool Pos, bool Offs, typename WandExtent,
+         typename InputType>
 class SingleWandIterator
   : public PostingIteratorBase<WandTraits<FormatTraits>> {
-  using Traits = WandTraits<FormatTraits>;
+  using IteratorTraits = WandTraits<FormatTraits>;
   using FieldTraits = IteratorTraitsImpl<FormatTraits, true, Pos, Offs>;
 
   class DefaultWandSource final : public WandSource {
@@ -2510,8 +2511,7 @@ class SingleWandIterator
 
  public:
   explicit SingleWandIterator(WandExtent extent)
-    : PostingIteratorBase<WandTraits<FormatTraits>>{false},
-      _skip{Traits::kBlockSize, PostingsWriterBase::kSkipN,
+    : _skip{IteratorTraits::kBlockSize, PostingsWriterBase::kSkipN,
             WandReadSkip{extent}} {}
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept override {
@@ -2571,9 +2571,9 @@ class SingleWandIterator
     }
 
     void Enable(const TermMetaImpl& state) noexcept {
-      SDB_ASSERT(state.docs_count > Traits::kBlockSize);
+      SDB_ASSERT(state.docs_count > IteratorTraits::kBlockSize);
       auto& top = _skip_levels.front();
-      CopyState<Traits>(top, state);
+      CopyState<IteratorTraits>(top, state);
       Enable();
     }
 
@@ -2591,7 +2591,7 @@ class SingleWandIterator
     void MoveDown(size_t level) noexcept {
       auto& next = _skip_levels[level];
       SDB_ASSERT(_prev);
-      CopyState<Traits>(next, *_prev);
+      CopyState<IteratorTraits>(next, *_prev);
     }
 
     void Read(size_t level, IndexInput& in);
@@ -2642,9 +2642,11 @@ class SingleWandIterator
     uint8_t _wand_index = 0;
   };
 
-  IRS_FORCE_INLINE void Refill(doc_id_t prev_doc) final;
-  IRS_FORCE_INLINE void ReadBlock(doc_id_t prev_doc);
-  IRS_FORCE_INLINE void ReadTailBlock(doc_id_t prev_doc);
+  IRS_FORCE_INLINE InputType& GetDocIn() const noexcept {
+    return sdb::basics::downCast<InputType>(*this->_doc_in);
+  }
+
+  IRS_FORCE_INLINE void ReadBlock(doc_id_t prev_doc) final;
   IRS_FORCE_INLINE void SeekToBlock(doc_id_t target) final;
   void PrepareSkipReader(uint64_t skip_offs);
 
@@ -2653,32 +2655,37 @@ class SingleWandIterator
   bool _block_sought{};
 };
 
-template<typename FormatTraits, bool Pos, bool Offs, typename WandExtent>
-void SingleWandIterator<FormatTraits, Pos, Offs,
-                        WandExtent>::WandReadSkip::Read(size_t level,
-                                                        IndexInput& in) {
+template<typename FormatTraits, bool Pos, bool Offs, typename WandExtent,
+         typename InputType>
+void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent,
+                        InputType>::WandReadSkip::Read(size_t level,
+                                                       IndexInput& in) {
   auto& next = _skip_levels[level];
 
-  CopyState<Traits>(*_prev, next);
+  CopyState<IteratorTraits>(*_prev, next);
 
   ReadState<FieldTraits>(next, in);
 
   _skip_scores[level] = ReadWandScore(in);
 }
 
-template<typename FormatTraits, bool Pos, bool Offs, typename WandExtent>
-void SingleWandIterator<FormatTraits, Pos, Offs,
-                        WandExtent>::WandReadSkip::Seal(size_t level) {
+template<typename FormatTraits, bool Pos, bool Offs, typename WandExtent,
+         typename InputType>
+void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent,
+                        InputType>::WandReadSkip::Seal(size_t level) {
   auto& next = _skip_levels[level];
 
-  CopyState<Traits>(*_prev, next);
+  CopyState<IteratorTraits>(*_prev, next);
 
   next.doc = doc_limits::eof();
 }
 
-template<typename FormatTraits, bool Pos, bool Offs, typename WandExtent>
-void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent>::Prepare(
-  const PostingCookie& meta, const IndexInput* doc_in, uint8_t wand_index) {
+template<typename FormatTraits, bool Pos, bool Offs, typename WandExtent,
+         typename InputType>
+void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent,
+                        InputType>::Prepare(const PostingCookie& meta,
+                                            const IndexInput* doc_in,
+                                            uint8_t wand_index) {
   this->Init(meta);
 
   _skip.Reader().SetWandIndex(wand_index);
@@ -2731,19 +2738,20 @@ void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent>::Prepare(
 
   SDB_ASSERT(term_state.freq);
 
-  if (term_state.docs_count > Traits::kBlockSize) {
+  if (term_state.docs_count > IteratorTraits::kBlockSize) {
     _skip.Reader().Enable(term_state);
     _docs_count = term_state.docs_count;
     PrepareSkipReader(term_state.doc_start + term_state.e_skip_start);
   } else if (1 < term_state.docs_count &&
-             term_state.docs_count < Traits::kBlockSize) {
+             term_state.docs_count < IteratorTraits::kBlockSize) {
     _skip.Reader().SkipWandData(*this->_doc_in);
   }
 }
 
-template<typename FormatTraits, bool Pos, bool Offs, typename WandExtent>
-void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent>::Refill(
-  doc_id_t prev_doc) {
+template<typename FormatTraits, bool Pos, bool Offs, typename WandExtent,
+         typename InputType>
+void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent,
+                        InputType>::ReadBlock(doc_id_t prev_doc) {
   if (!_block_sought && _skip.Reader().Threshold().value > 0 &&
       _skip.NumLevels() > 0) {
     SkipState last;
@@ -2756,49 +2764,48 @@ void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent>::Refill(
     this->_doc_in->Seek(last.doc_ptr);
     prev_doc = last.doc;
   }
-  if (this->_left_in_list >= Traits::kBlockSize) [[likely]] {
-    ReadBlock(prev_doc);
+  if (const auto tail = this->_left_in_list; tail >= IteratorTraits::kBlockSize)
+    [[likely]] {
+    IteratorTraits::read_block_delta(GetDocIn(), this->_enc_buf, this->_docs,
+                                     prev_doc);
+    this->_max_in_leaf = *(std::end(this->_docs) - 1);
+    this->_left_in_leaf = IteratorTraits::kBlockSize;
+    this->_left_in_list -= IteratorTraits::kBlockSize;
+    if constexpr (IteratorTraits::Frequency()) {
+      IteratorTraits::read_block(GetDocIn(), this->_enc_buf, this->_freqs);
+    } else if (FieldTraits::Frequency()) {
+      IteratorTraits::skip_block(GetDocIn());
+    }
   } else {
-    ReadTailBlock(prev_doc);
+    const uint16_t size = GetDocIn().ReadI16();
+    const auto* buf = GetDocIn().ReadView(size);
+    if constexpr (std::is_same_v<BytesViewInput, InputType>) {
+      SDB_ASSERT(buf);
+    } else if (!buf) [[likely]] {
+      auto* encoded = reinterpret_cast<byte_type*>(this->_enc_buf);
+      [[maybe_unused]] const auto read = GetDocIn().ReadBytes(encoded, size);
+      SDB_ASSERT(read == size);
+      buf = encoded;
+    }
+    auto* doc = std::end(this->_docs) - tail;
+    const auto doc_size = streamvbyte_delta_decode(buf, doc, tail, prev_doc);
+    this->_max_in_leaf = *(std::end(this->_docs) - 1);
+    this->_left_in_leaf = tail;
+    this->_left_in_list = 0;
+    if constexpr (IteratorTraits::Frequency()) {
+      auto* freq = std::end(this->_freqs) - tail;
+      [[maybe_unused]] const auto freq_size =
+        streamvbyte_decode(buf + doc_size, freq, tail);
+      SDB_ASSERT(doc_size + freq_size == size);
+    }
   }
   _block_sought = false;
 }
 
-template<typename FormatTraits, bool Pos, bool Offs, typename WandExtent>
-void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent>::ReadBlock(
-  doc_id_t prev_doc) {
-  Traits::read_block_delta(*this->_doc_in, this->_enc_buf, this->_docs,
-                           prev_doc);
-  Traits::read_block(*this->_doc_in, this->_enc_buf, this->_freqs);
-  this->_max_in_leaf = *(std::end(this->_docs) - 1);
-  this->_left_in_leaf = Traits::kBlockSize;
-  this->_left_in_list -= Traits::kBlockSize;
-}
-
-template<typename FormatTraits, bool Pos, bool Offs, typename WandExtent>
-void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent>::ReadTailBlock(
-  doc_id_t prev_doc) {
-  auto* doc = std::end(this->_docs) - this->_left_in_list;
-  auto* freq = std::end(this->_freqs) - this->_left_in_list;
-
-  while (doc < std::end(this->_docs)) {
-    if (ShiftUnpack32(this->_doc_in->ReadV32(), *doc)) {
-      *freq++ = 1;
-    } else {
-      *freq++ = this->_doc_in->ReadV32();
-    }
-    const auto curr_doc = prev_doc + *doc;
-    *doc++ = curr_doc;
-    prev_doc = curr_doc;
-  }
-  this->_max_in_leaf = *(std::end(this->_docs) - 1);
-  this->_left_in_leaf = this->_left_in_list;
-  this->_left_in_list = 0;
-}
-
-template<typename FormatTraits, bool Pos, bool Offs, typename WandExtent>
-void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent>::PrepareSkipReader(
-  uint64_t skip_offs) {
+template<typename FormatTraits, bool Pos, bool Offs, typename WandExtent,
+         typename InputType>
+void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent,
+                        InputType>::PrepareSkipReader(uint64_t skip_offs) {
   SDB_ASSERT(_docs_count > 0);
 
   auto skip_in = this->_doc_in->Dup();
@@ -2828,9 +2835,10 @@ void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent>::PrepareSkipReader(
   }
 }
 
-template<typename FormatTraits, bool Pos, bool Offs, typename WandExtent>
-void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent>::SeekToBlock(
-  doc_id_t target) {
+template<typename FormatTraits, bool Pos, bool Offs, typename WandExtent,
+         typename InputType>
+void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent,
+                        InputType>::SeekToBlock(doc_id_t target) {
   if (target <= _skip.Reader().UpperBound()) [[unlikely]] {
     return;
   }
@@ -3056,11 +3064,19 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
         return ResolveExtent<1>(
           options.count,
           [&]<typename Extent>(Extent&& extent) -> DocIterator::ptr {
-            auto it = memory::make_managed<
-              SingleWandIterator<FormatTraits, Pos, Offs, Extent>>(
-              std::forward<Extent>(extent));
-            it->Prepare(cookie, _doc_in.get(), options.mapped_index);
-            return it;
+            if (_doc_in->GetType() == DataInput::Type::BytesViewInput) {
+              auto it = memory::make_managed<SingleWandIterator<
+                FormatTraits, Pos, Offs, Extent, BytesViewInput>>(
+                std::forward<Extent>(extent));
+              it->Prepare(cookie, _doc_in.get(), options.mapped_index);
+              return it;
+            } else {
+              auto it =
+                memory::make_managed<SingleWandIterator<FormatTraits, Pos, Offs,
+                                                        Extent, IndexInput>>(
+                  std::forward<Extent>(extent));
+              it->Prepare(cookie, _doc_in.get(), options.mapped_index);
+            }
           });
       };
       switch (ToIndex(field_features)) {

@@ -359,7 +359,7 @@ Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
     EXPECT_EQ(term_meta.docs_count, read_meta.docs_count);
     EXPECT_EQ(term_meta.doc_start, read_meta.doc_start);
     EXPECT_EQ(term_meta.pos_start, read_meta.pos_start);
-    EXPECT_EQ(term_meta.pos_end, read_meta.pos_end);
+    EXPECT_EQ(term_meta.pend_pos, read_meta.pend_pos);
     EXPECT_EQ(term_meta.pay_start, read_meta.pay_start);
     EXPECT_EQ(term_meta.e_single_doc, read_meta.e_single_doc);
     EXPECT_EQ(term_meta.e_skip_start, read_meta.e_skip_start);

@@ -179,7 +179,7 @@ class Format10TestCase : public tests::FormatTestCase {
           ASSERT_EQ(term_meta.meta.docs_count, read_meta.meta.docs_count);
           ASSERT_EQ(term_meta.meta.doc_start, read_meta.meta.doc_start);
           ASSERT_EQ(term_meta.meta.pos_start, read_meta.meta.pos_start);
-          ASSERT_EQ(term_meta.meta.pos_end, read_meta.meta.pos_end);
+          ASSERT_EQ(term_meta.meta.pend_pos, read_meta.meta.pend_pos);
           ASSERT_EQ(term_meta.meta.pay_start, read_meta.meta.pay_start);
           ASSERT_EQ(term_meta.meta.e_single_doc, read_meta.meta.e_single_doc);
           ASSERT_EQ(term_meta.meta.e_skip_start, read_meta.meta.e_skip_start);
@@ -361,7 +361,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       ASSERT_EQ(meta0.docs_count, meta1.docs_count);
       ASSERT_EQ(meta0.doc_start, meta1.doc_start);
       ASSERT_EQ(meta0.pos_start, meta1.pos_start);
-      ASSERT_EQ(meta0.pos_end, meta1.pos_end);
+      ASSERT_EQ(meta0.pend_pos, meta1.pend_pos);
       ASSERT_EQ(meta0.pay_start, meta1.pay_start);
     }
 
@@ -401,7 +401,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
         ASSERT_EQ(meta0.docs_count, read_meta.meta.docs_count);
         ASSERT_EQ(meta0.doc_start, read_meta.meta.doc_start);
         ASSERT_EQ(meta0.pos_start, read_meta.meta.pos_start);
-        ASSERT_EQ(meta0.pos_end, read_meta.meta.pos_end);
+        ASSERT_EQ(meta0.pend_pos, read_meta.meta.pend_pos);
         ASSERT_EQ(meta0.pay_start, read_meta.meta.pay_start);
         ASSERT_EQ(meta0.e_single_doc, read_meta.meta.e_single_doc);
         ASSERT_EQ(meta0.e_skip_start, read_meta.meta.e_skip_start);
@@ -425,7 +425,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
         ASSERT_EQ(0, read_meta.meta.doc_start); /* we don't read doc start in
                                               case of singleton */
         ASSERT_EQ(meta1.pos_start, read_meta.meta.pos_start);
-        ASSERT_EQ(meta1.pos_end, read_meta.meta.pos_end);
+        ASSERT_EQ(meta1.pend_pos, read_meta.meta.pend_pos);
         ASSERT_EQ(meta1.pay_start, read_meta.meta.pay_start);
         ASSERT_EQ(meta1.e_single_doc, read_meta.meta.e_single_doc);
         ASSERT_EQ(meta1.e_skip_start, read_meta.meta.e_skip_start);
@@ -538,7 +538,7 @@ TEST_P(Format10TestCase, postings_read_write) {
         ASSERT_EQ(meta0.docs_count, read_meta.meta.docs_count);
         ASSERT_EQ(meta0.doc_start, read_meta.meta.doc_start);
         ASSERT_EQ(meta0.pos_start, read_meta.meta.pos_start);
-        ASSERT_EQ(meta0.pos_end, read_meta.meta.pos_end);
+        ASSERT_EQ(meta0.pend_pos, read_meta.meta.pend_pos);
         ASSERT_EQ(meta0.pay_start, read_meta.meta.pay_start);
         ASSERT_EQ(meta0.e_single_doc, read_meta.meta.e_single_doc);
         ASSERT_EQ(meta0.e_skip_start, read_meta.meta.e_skip_start);
@@ -561,7 +561,7 @@ TEST_P(Format10TestCase, postings_read_write) {
         ASSERT_EQ(meta1.docs_count, read_meta.meta.docs_count);
         ASSERT_EQ(meta1.doc_start, read_meta.meta.doc_start);
         ASSERT_EQ(meta1.pos_start, read_meta.meta.pos_start);
-        ASSERT_EQ(meta1.pos_end, read_meta.meta.pos_end);
+        ASSERT_EQ(meta1.pend_pos, read_meta.meta.pend_pos);
         ASSERT_EQ(meta1.pay_start, read_meta.meta.pay_start);
         ASSERT_EQ(meta1.e_single_doc, read_meta.meta.e_single_doc);
         ASSERT_EQ(meta1.e_skip_start, read_meta.meta.e_skip_start);

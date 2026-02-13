@@ -107,7 +107,7 @@ template<size_t K>
 size_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
                    const Scorer& scorer, size_t k,
                    std::span<std::pair<doc_id_t, score_t>, K> hits,
-                   uint8_t wand_index = 0) {
+                   uint8_t wand_index) {
   SDB_ASSERT(BlockSize(k) <= hits.size());
 
   auto prepared = filter.prepare({
@@ -154,7 +154,7 @@ size_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
     auto it = prepared->execute({
       .segment = segment,
       .scorer = &scorer,
-      .wand = {.index = wand_index},
+      .wand = {.index = wand_index, .strict = true},
     });
 
     auto score_func = it->PrepareScore({

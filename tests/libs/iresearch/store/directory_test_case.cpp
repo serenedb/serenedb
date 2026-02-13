@@ -4147,7 +4147,8 @@ TEST_P(DirectoryTestCase, smoke_store) {
       // {
       //   const auto fp = file->Position();
       //   ASSERT_GT(file->Length(), 1);
-      //   ASSERT_EQ(nullptr, file->ReadView(file->Length() - 1, file->Length()));
+      //   ASSERT_EQ(nullptr, file->ReadView(file->Length() - 1,
+      //   file->Length()));
       //   ASSERT_EQ(fp, file->Position());
       // }
 

@@ -10,6 +10,9 @@ add_library(
     search_sink_writer.cpp
     search_remove_filter.cpp
     file_table.cpp
+    data_materializer.cpp
+    search_data_source.cpp
+    search_filter_builder.cpp
     sst_sink_writer.cpp
 )
 

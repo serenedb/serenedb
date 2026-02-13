@@ -285,8 +285,8 @@ class RocksDBUpdateDataSink final
   std::vector<velox::column_index_t> _updated_key_childs;
   primary_key::Keys _old_keys_buffers;
   containers::FlatHashMap<catalog::Column::Id, size_t> _column_id_to_input_idx;
-  containers::FlatHashMap<catalog::Column::Id, velox::TypeKind>
-    _column_id_to_kind;
+  containers::FlatHashMap<catalog::Column::Id, velox::TypePtr>
+    _column_id_to_type;
   containers::FlatHashSet<std::string_view> _batch_keys;
   bool _update_pk{};
 };

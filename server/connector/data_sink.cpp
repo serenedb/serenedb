@@ -317,12 +317,12 @@ RocksDBUpdateDataSink::RocksDBUpdateDataSink(
     _old_keys_buffers{memory_pool},
     _update_pk{update_pk} {
   if (_update_pk || !_index_writers.empty()) {
-    // record column kinds before sorting as order matches in row type and
+    // record column types before sorting as order matches in row type and
     // column ids
-    _column_id_to_kind.reserve(_all_column_ids.size());
+    _column_id_to_type.reserve(_all_column_ids.size());
     velox::vector_size_t idx = 0;
     for (const auto& child : table_row_type->children()) {
-      _column_id_to_kind.emplace(_all_column_ids[idx++], child->kind());
+      _column_id_to_type.emplace(_all_column_ids[idx++], child);
     }
     // Sort all column IDs for seek-forward only iteration
     absl::c_sort(_all_column_ids);
@@ -591,11 +591,11 @@ void RocksDBUpdateDataSink::RewriteColumn(rocksdb::Iterator& it,
     it.Seek(key);
   };
 
-  SDB_ASSERT(_column_id_to_kind.contains(column_id));
-  const auto kind = _column_id_to_kind[column_id];
+  SDB_ASSERT(_column_id_to_type.contains(column_id));
+  const auto& type = _column_id_to_type[column_id];
   for (const auto& writer : _index_writers) {
     // TODO (Dronplane) determine nullable or not from metadata?
-    writer->SwitchColumn(kind, true, column_id);
+    writer->SwitchColumn(*type, true, column_id);
   }
   const auto num_rows = new_keys.size();
   SDB_ASSERT(old_keys.size() == new_keys.size());
@@ -624,13 +624,12 @@ void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteInputColumn(
   _column_id = column_id;
   _data_writer.SetColumnIndex(idx);
   const auto& child = input.childAt(idx);
-  const auto kind = child->typeKind();
   if (velox::VectorEncoding::isDictionary(child->encoding())) {
     child->loadedVector();
   }
   const auto have_nulls = child->mayHaveNulls();
   for (const auto& writer : _index_writers) {
-    writer->SwitchColumn(kind, have_nulls, _column_id);
+    writer->SwitchColumn(*child->type(), have_nulls, _column_id);
   }
   WriteColumn(child, range, {});
 }

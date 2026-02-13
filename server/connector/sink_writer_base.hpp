@@ -35,7 +35,7 @@ class SinkInsertWriter {
   virtual void Init(size_t batch_size) {}
 
   // returns true if writer is interested in this column
-  virtual bool SwitchColumn(velox::TypeKind kind, bool have_nulls,
+  virtual bool SwitchColumn(const velox::Type& type, bool have_nulls,
                             sdb::catalog::Column::Id column_id) {
     return false;
   }

@@ -56,11 +56,15 @@ Result Transaction::Commit() {
 }
 
 Result Transaction::Rollback() {
-  SDB_ASSERT(_rocksdb_transaction);
-  auto status = _rocksdb_transaction->Rollback();
-  if (!status.ok()) {
-    return {ERROR_INTERNAL,
-            "Failed to rollback RocksDB transaction: ", status.ToString()};
+  // RocksDB transaction is lazy initialized, so it may be nullptr here. It
+  // means no rocksdb transaction actually started, for example, sequential
+  // BEGIN and ROLLBACK statements.
+  if (_rocksdb_transaction) {
+    auto status = _rocksdb_transaction->Rollback();
+    if (!status.ok()) {
+      return {ERROR_INTERNAL,
+              "Failed to rollback RocksDB transaction: ", status.ToString()};
+    }
   }
   for (auto& search_transaction : _search_transactions) {
     search_transaction.second->Abort();

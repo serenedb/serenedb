@@ -24,6 +24,7 @@
 #include "pg/commands.h"
 #include "pg/connection_context.h"
 #include "pg/pg_list_utils.h"
+#include "pg/sql_exception_macro.h"
 #include "query/config.h"
 
 namespace sdb::pg {
@@ -121,6 +122,40 @@ yaclib::Future<Result> VariableSet(ExecContext& ctx,
     conn_ctx.ResetAll();
     return {};
   }
+
+  if (stmt.kind == VAR_SET_MULTI) {
+    std::string_view name = stmt.name;
+    if (name == "TRANSACTION" || name == "SESSION CHARACTERISTICS") {
+      auto var_context = name == "TRANSACTION"
+                           ? Config::VariableContext::Transaction
+                           : Config::VariableContext::Session;
+      VisitNodes(stmt.args, [&](const DefElem& option) {
+        std::string_view opt_name = option.defname;
+        if (opt_name == "transaction_isolation") {
+          std::string_view level = strVal(&castNode(A_Const, option.arg)->val);
+          if (level != "repeatable read") {
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                            ERR_MSG("transaction isolation level \"", level,
+                                    "\" is not supported"));
+          }
+          conn_ctx.Set(var_context, "default_transaction_isolation",
+                       std::string{level});
+        } else if (opt_name == "transaction_read_only") {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+            ERR_MSG("transaction READ WRITE | READ ONLY is not supported yet"));
+        } else if (opt_name == "transaction_deferrable") {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+            ERR_MSG("transaction DEFERRABLE is not supported yet"));
+        }
+      });
+      return {};
+    }
+    return yaclib::MakeFuture<Result>(ERROR_NOT_IMPLEMENTED, "SET ", name,
+                                      " is not implemented");
+  }
+
   std::string_view stmt_name = stmt.name;
 
 #ifdef SDB_FAULT_INJECTION
@@ -189,7 +224,7 @@ yaclib::Future<Result> VariableSet(ExecContext& ctx,
       r = {ERROR_NOT_IMPLEMENTED, "SET ... TO CURRENT is not implemented"};
       break;
     case VAR_SET_MULTI:
-      r = {ERROR_NOT_IMPLEMENTED, "SET ... TO MULTI is not implemented"};
+      SDB_UNREACHABLE();
       break;
     default:
       SDB_UNREACHABLE();

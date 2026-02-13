@@ -27,20 +27,25 @@
 
 namespace sdb::query {
 
-Result Transaction::Begin() {
+Result Transaction::Begin(IsolationLevel isolation_level) {
   SDB_ASSERT(!HasTransactionBegin());
-  CreateRocksDBTransaction();
+  _isolation_level = isolation_level;
   _state |= State::HasTransactionBegin;
   return {};
 }
 
 Result Transaction::Commit() {
-  SDB_ASSERT(_rocksdb_transaction);
-  auto status = _rocksdb_transaction->Commit();
-  if (!status.ok()) {
-    return {ERROR_INTERNAL,
-            "Failed to commit RocksDB transaction: ", status.ToString()};
+  // RocksDB transaction is lazy initialized, so it may be nullptr here. It
+  // means no rocksdb transaction actually started, for example, sequential
+  // BEGIN and COMMIT statements.
+  if (_rocksdb_transaction) {
+    auto status = _rocksdb_transaction->Commit();
+    if (!status.ok()) {
+      return {ERROR_INTERNAL,
+              "Failed to commit RocksDB transaction: ", status.ToString()};
+    }
   }
+
   for (auto& search_transaction : _search_transactions) {
     search_transaction.second->Commit();
   }
@@ -51,11 +56,15 @@ Result Transaction::Commit() {
 }
 
 Result Transaction::Rollback() {
-  SDB_ASSERT(_rocksdb_transaction);
-  auto status = _rocksdb_transaction->Rollback();
-  if (!status.ok()) {
-    return {ERROR_INTERNAL,
-            "Failed to rollback RocksDB transaction: ", status.ToString()};
+  // RocksDB transaction is lazy initialized, so it may be nullptr here. It
+  // means no rocksdb transaction actually started, for example, sequential
+  // BEGIN and ROLLBACK statements.
+  if (_rocksdb_transaction) {
+    auto status = _rocksdb_transaction->Rollback();
+    if (!status.ok()) {
+      return {ERROR_INTERNAL,
+              "Failed to rollback RocksDB transaction: ", status.ToString()};
+    }
   }
   for (auto& search_transaction : _search_transactions) {
     search_transaction.second->Abort();
@@ -125,6 +134,7 @@ void Transaction::CreateRocksDBTransaction() {
 
 void Transaction::Destroy() noexcept {
   _state = State::None;
+  _isolation_level = IsolationLevel::RepeatableRead;
   _storage_snapshot.reset();
   _rocksdb_transaction.reset();
   _rocksdb_snapshot = nullptr;

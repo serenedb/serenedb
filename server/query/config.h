@@ -54,11 +54,16 @@ enum class VariableType {
   PgExtraFloatDigits,
   PgByteaOutput,
   SdbWriteConflictPolicy,
+  PgTransactionIsolation,
 };
 
 enum class ByteaOutput : uint8_t {
   Hex,
   Escape,
+};
+
+enum class IsolationLevel : uint8_t {
+  RepeatableRead = 0,
 };
 
 struct VariableDescription {
@@ -128,6 +133,11 @@ class Config : public velox::config::IConfig {
                    "bytea_output is not validated");
         return ByteaOutput::Escape;
       }
+    } else if constexpr (T == VariableType::PgTransactionIsolation) {
+      SDB_ASSERT(key == "default_transaction_isolation");
+      SDB_ASSERT(absl::EqualsIgnoreCase("repeatable read", *value_str),
+                 "default_transaction_isolation is not validated");
+      return IsolationLevel::RepeatableRead;
     } else if constexpr (T == VariableType::SdbWriteConflictPolicy) {
       SDB_ASSERT(key == "sdb_write_conflict_policy");
       if (absl::EqualsIgnoreCase("emit_error", *value_str)) {

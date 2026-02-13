@@ -118,6 +118,14 @@ constexpr auto kVariableDescription =
       },
     },
     {
+      "default_transaction_isolation",
+      {
+        VariableType::PgTransactionIsolation,
+        "Sets the transaction isolation level of each new transaction.",
+        "repeatable read",
+      },
+    },
+    {
       "default_transaction_read_only",
       {
         VariableType::Bool,

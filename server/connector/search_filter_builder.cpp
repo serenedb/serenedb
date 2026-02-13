@@ -19,10 +19,13 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "search_filter_builder.hpp"
+
 // NOLINTBEGIN
-// Need this header to stay first to avoid conflict in DCHECK macros
+// Need this header to stay before iresearch/utils/wildcard_utils.hpp to avoid
+// conflict in DCHECK macros see issue #230
 #include "serenedb_connector.hpp"
 // NOLINTEND
+
 #include <velox/expression/ExprConstants.h>
 
 #include <iresearch/analysis/tokenizers.hpp>
@@ -83,7 +86,8 @@ std::optional<velox::Variant> EvaluateConstant(
   if (!expr->isConstantKind()) {
     return std::nullopt;
   }
-  auto const_expr = basics::downCast<velox::core::ConstantTypedExpr>(*expr);
+  const auto& const_expr =
+    basics::downCast<velox::core::ConstantTypedExpr>(*expr);
   if (const_expr.hasValueVector()) {
     SDB_ASSERT(const_expr.valueVector()->size() == 1);
     return const_expr.valueVector()->variantAt(0);
@@ -240,17 +244,18 @@ ComparisonOp InvertComparisonOp(ComparisonOp op) {
 
 template<typename Filter, typename Source>
 Result MakeGroup(Source& parent, const VeloxFilterContext& ctx,
-                 const velox::core::CallTypedExpr* call) {
+                 const velox::core::CallTypedExpr& call) {
   auto sub_ctx = ctx;
   sub_ctx.boost = irs::kNoBoost;
   irs::BooleanFilter* group_root;
-  if (ctx.negated && absl::c_all_of(call->inputs(), [](const auto& input) {
-        auto* call =
-          dynamic_cast<const velox::core::CallTypedExpr*>(input.get());
-        if (!call) {
+  if (ctx.negated && absl::c_all_of(call.inputs(), [](const auto& input) {
+        SDB_ASSERT(input);
+        if (!input->isCallKind()) {
           return false;
         }
-        return GetComparisonOp(call->name()) != ComparisonOp::None;
+        const auto& call =
+          basics::downCast<const velox::core::CallTypedExpr>(*input);
+        return GetComparisonOp(call.name()) != ComparisonOp::None;
       })) {
     // DeMorgan`s law could be used if we negate group of comparisons. As
     // comparisons consume negation by invertion we can reduce number of NOT
@@ -267,7 +272,7 @@ Result MakeGroup(Source& parent, const VeloxFilterContext& ctx,
     sub_ctx.negated = false;
   }
   group_root->boost(ctx.boost);
-  for (const auto& input : call->inputs()) {
+  for (const auto& input : call.inputs()) {
     auto result = FromVeloxExpression(*group_root, sub_ctx, input);
     if (!result.ok()) {
       return result;
@@ -280,7 +285,6 @@ bool IsNotExpr(const std::string& name) {
   return name == "not" || name.ends_with("_not");
 }
 
-// Helper: Check if it's an equality/inequality operator
 bool IsEqualityOp(const std::string& name, bool& not_equal) {
   if (name == "eq" || name.ends_with("_eq")) {
     not_equal = false;
@@ -315,19 +319,19 @@ bool IsLike(std::string_view name) {
 
 Result FromVeloxBinaryEq(irs::BooleanFilter& filter,
                          const VeloxFilterContext& ctx,
-                         const velox::core::CallTypedExpr* call,
+                         const velox::core::CallTypedExpr& call,
                          bool not_equal) {
-  if (call->inputs().size() != 2) {
-    return {ERROR_NOT_IMPLEMENTED, "Equality has ", call->inputs().size(),
+  if (call.inputs().size() != 2) {
+    return {ERROR_NOT_IMPLEMENTED, "Equality has ", call.inputs().size(),
             " inputs but 2 expected"};
   }
-  if (!call->inputs()[0]->isFieldAccessKind()) {
+  if (!call.inputs()[0]->isFieldAccessKind()) {
     return {ERROR_BAD_PARAMETER, "Left input is not field access"};
   }
 
   auto* left_field = static_cast<const velox::core::FieldAccessTypedExpr*>(
-    call->inputs()[0].get());
-  auto value = EvaluateConstant(call->inputs()[1]);
+    call.inputs()[0].get());
+  auto value = EvaluateConstant(call.inputs()[1]);
 
   if (!value.has_value()) {
     return {ERROR_BAD_PARAMETER, "Failed to evaluate right value as constant"};
@@ -344,25 +348,23 @@ Result FromVeloxBinaryEq(irs::BooleanFilter& filter,
                         ? Negate<irs::ByTerm>(filter)
                         : AddFilter<irs::ByTerm>(filter);
 
-  // Set the field name
   std::string field_name;
   const auto kind = ExtractFieldName(ctx, *left_field, field_name);
   term_filter.boost(ctx.boost);
   return SetupTermFilter(term_filter, field_name, kind, value.value());
 }
 
-// Convert range comparisons to IResearch range filters
 Result FromVeloxComparison(irs::BooleanFilter& filter,
                            const VeloxFilterContext& ctx,
-                           const velox::core::CallTypedExpr* call,
+                           const velox::core::CallTypedExpr& call,
                            ComparisonOp op) {
-  if (call->inputs().size() != 2) {
-    return {ERROR_NOT_IMPLEMENTED, "Comparison has ", call->inputs().size(),
+  if (call.inputs().size() != 2) {
+    return {ERROR_NOT_IMPLEMENTED, "Comparison has ", call.inputs().size(),
             " inputs but 2 expected"};
   }
 
-  auto field_input = call->inputs()[0];
-  auto value_input = call->inputs()[1];
+  auto field_input = call.inputs()[0];
+  auto value_input = call.inputs()[1];
 
   // looks like we do't need normalization. Value is always second argument
 
@@ -391,7 +393,6 @@ Result FromVeloxComparison(irs::BooleanFilter& filter,
     return {};
   }
 
-  // Set the field name
   std::string field_name;
   const auto kind = ExtractFieldName(ctx, *left_field, field_name);
 
@@ -450,14 +451,14 @@ Result FromVeloxComparison(irs::BooleanFilter& filter,
 }
 
 Result FromVeloxIn(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
-                   const velox::core::CallTypedExpr* call) {
-  if (call->inputs().size() < 2) {
-    return {ERROR_NOT_IMPLEMENTED, "IN has ", call->inputs().size(),
+                   const velox::core::CallTypedExpr& call) {
+  if (call.inputs().size() < 2) {
+    return {ERROR_NOT_IMPLEMENTED, "IN has ", call.inputs().size(),
             " inputs but at least 2 expected"};
   }
 
-  auto field_input = call->inputs()[0];
-  auto value_input = call->inputs()[1];
+  auto field_input = call.inputs()[0];
+  auto value_input = call.inputs()[1];
 
   if (!field_input->isFieldAccessKind()) {
     return {ERROR_BAD_PARAMETER, "Input is not field access"};
@@ -471,7 +472,7 @@ Result FromVeloxIn(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
   if (!value.has_value()) {
     return {ERROR_BAD_PARAMETER, "Failed to evaluate value as constant"};
   }
-  if (call->inputs().size() == 2) {
+  if (call.inputs().size() == 2) {
     // Case with second argument as ARRAY of values or single value.
     if (!value->isNull() && value->kind() != velox::TypeKind::ARRAY) {
       values_list.push_back(std::move(value.value()));
@@ -479,8 +480,8 @@ Result FromVeloxIn(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
   } else {
     // Values are just inputs after field access
     values_list.push_back(std::move(value.value()));
-    for (size_t i = 2; i < call->inputs().size(); ++i) {
-      auto value = EvaluateConstant(call->inputs()[i]);
+    for (size_t i = 2; i < call.inputs().size(); ++i) {
+      auto value = EvaluateConstant(call.inputs()[i]);
       if (!value.has_value()) {
         return {ERROR_BAD_PARAMETER, "Failed to evaluate value as constant"};
       }
@@ -538,19 +539,19 @@ Result FromVeloxIn(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
 
 Result FromVeloxIsNull(irs::BooleanFilter& filter,
                        const VeloxFilterContext& ctx,
-                       const velox::core::CallTypedExpr* call)
+                       const velox::core::CallTypedExpr& call)
 
 {
-  if (call->inputs().size() != 1) {
-    return {ERROR_NOT_IMPLEMENTED, "IS NULL has ", call->inputs().size(),
+  if (call.inputs().size() != 1) {
+    return {ERROR_NOT_IMPLEMENTED, "IS NULL has ", call.inputs().size(),
             " inputs but 1 expected"};
   }
-  if (!call->inputs()[0]->isFieldAccessKind()) {
+  if (!call.inputs()[0]->isFieldAccessKind()) {
     return {ERROR_BAD_PARAMETER, "Input is not field access"};
   }
 
   auto* left_field = static_cast<const velox::core::FieldAccessTypedExpr*>(
-    call->inputs()[0].get());
+    call.inputs()[0].get());
 
   std::string field_name;
   ExtractFieldName(ctx, *left_field, field_name);
@@ -565,16 +566,16 @@ Result FromVeloxIsNull(irs::BooleanFilter& filter,
 }
 
 Result FromVeloxLike(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
-                     const velox::core::CallTypedExpr* call) {
-  if (call->inputs().size() != 3 && call->inputs().size() != 2) {
-    return {ERROR_NOT_IMPLEMENTED, "LIKE has ", call->inputs().size(),
+                     const velox::core::CallTypedExpr& call) {
+  if (call.inputs().size() != 3 && call.inputs().size() != 2) {
+    return {ERROR_BAD_PARAMETER, "LIKE has ", call.inputs().size(),
             " inputs but 2 OR 3 expected"};
   }
-  if (!call->inputs()[0]->isFieldAccessKind()) {
+  if (!call.inputs()[0]->isFieldAccessKind()) {
     return {ERROR_BAD_PARAMETER, "Input is not field access"};
   }
 
-  auto value = EvaluateConstant(call->inputs()[1]);
+  auto value = EvaluateConstant(call.inputs()[1]);
   if (!value.has_value()) {
     return {ERROR_BAD_PARAMETER, "Failed to evaluate value as constant"};
   }
@@ -586,7 +587,7 @@ Result FromVeloxLike(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
   // We do not need to process custom escape - it is already done by analyzer
 
   auto* field_typed = static_cast<const velox::core::FieldAccessTypedExpr*>(
-    call->inputs()[0].get());
+    call.inputs()[0].get());
 
   std::string field_name;
   auto kind = ExtractFieldName(ctx, *field_typed, field_name);
@@ -594,36 +595,35 @@ Result FromVeloxLike(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
     return {ERROR_BAD_PARAMETER, "LIKE field is not VARCHAR"};
   }
   mangling::MangleString(field_name);
-  auto& wild_filter = ctx.negated ? Negate<irs::ByWildcard>(filter)
-                                  : AddFilter<irs::ByWildcard>(filter);
-  wild_filter.boost(ctx.boost);
-  *wild_filter.mutable_field() = field_name;
-  wild_filter.mutable_options()->term.assign(irs::ViewCast<irs::byte_type>(
+  auto& wildcard_filter = ctx.negated ? Negate<irs::ByWildcard>(filter)
+                                      : AddFilter<irs::ByWildcard>(filter);
+  wildcard_filter.boost(ctx.boost);
+  *wildcard_filter.mutable_field() = field_name;
+  wildcard_filter.mutable_options()->term.assign(irs::ViewCast<irs::byte_type>(
     static_cast<std::string_view>(value.value().value<velox::StringView>())));
   return {};
 }
 
 }  // namespace
 
-// Recursive conversion: Handle complex expressions (AND, OR, NOT)
 Result FromVeloxExpression(irs::BooleanFilter& filter,
                            const VeloxFilterContext& ctx,
                            const velox::core::TypedExprPtr& expr) {
-  auto* call = dynamic_cast<const velox::core::CallTypedExpr*>(expr.get());
-  if (!call) {
+  if (!expr->isCallKind()) {
     return {ERROR_NOT_IMPLEMENTED, "Expression is not a call"};
   }
+  const auto& call =
+    basics::downCast<const velox::core::CallTypedExpr>(*expr.get());
 
-  // Handle NOT
-  if (IsNotExpr(call->name())) {
+  if (IsNotExpr(call.name())) {
     auto negated_ctx = ctx;
     negated_ctx.negated = !ctx.negated;
-    SDB_ASSERT(call->inputs().size() == 1);
-    return FromVeloxExpression(filter, negated_ctx, call->inputs()[0]);
+    SDB_ASSERT(call.inputs().size() == 1);
+    return FromVeloxExpression(filter, negated_ctx, call.inputs()[0]);
   }
 
   bool negated;
-  if (IsNullEq(call->name(), negated)) {
+  if (IsNullEq(call.name(), negated)) {
     VeloxFilterContext sub_ctx = ctx;
     if (negated) {
       sub_ctx.negated = !ctx.negated;
@@ -631,40 +631,34 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
     return FromVeloxIsNull(filter, sub_ctx, call);
   }
 
-  // Handle AND
-  if (call->name() == velox::expression::kAnd) {
+  if (call.name() == velox::expression::kAnd) {
     return MakeGroup<irs::And>(filter, ctx, call);
   }
 
-  // Handle OR
-  if (call->name() == velox::expression::kOr) {
+  if (call.name() == velox::expression::kOr) {
     return MakeGroup<irs::Or>(filter, ctx, call);
   }
 
-  // Try equality/inequality
-
-  if (IsEqualityOp(call->name(), negated)) {
+  if (IsEqualityOp(call.name(), negated)) {
     return FromVeloxBinaryEq(filter, ctx, call, negated);
   }
 
-  // ByRange openended.
-  // BETWEEN is currently executed as conjunction of comparisons so it also goes
-  // here.
-  auto comparison_op = GetComparisonOp(call->name());
+  // This handles also BETWEEN as it is currently executed as conjunction of
+  // comparisons That is why there is no dedicated BETWEEN handler.
+  const auto comparison_op = GetComparisonOp(call.name());
   if (comparison_op != ComparisonOp::None) {
     return FromVeloxComparison(filter, ctx, call, comparison_op);
   }
 
-  // ByTerms
-  if (IsIn(call->name())) {
+  if (IsIn(call.name())) {
     return FromVeloxIn(filter, ctx, call);
   }
 
-  if (IsLike(call->name())) {
+  if (IsLike(call.name())) {
     return FromVeloxLike(filter, ctx, call);
   }
 
-  return {ERROR_NOT_IMPLEMENTED, "Unsupported operator: ", call->name()};
+  return {ERROR_NOT_IMPLEMENTED, "Unsupported operator: ", call.name()};
 }
 
 Result ExprToFilter(

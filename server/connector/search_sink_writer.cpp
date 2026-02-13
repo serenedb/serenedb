@@ -279,7 +279,7 @@ void SearchSinkInsertBaseImpl::Field::SetNumericValue(T value) {
   if constexpr (std::is_same_v<
                   T, velox::TypeTraits<velox::TypeKind::HUGEINT>::NativeType>) {
     // TODO(Dronplane): Native int128 support
-    VELOX_UNSUPPORTED("HUGEINT kind is not supported");
+    SDB_THROW(ERROR_NOT_IMPLEMENTED, "HUGEINT kind is not supported");
   } else if constexpr (
     std::is_same_v<T,
                    velox::TypeTraits<velox::TypeKind::TINYINT>::NativeType> ||

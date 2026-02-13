@@ -21,6 +21,7 @@
 #pragma once
 #include <velox/connectors/Connector.h>
 
+#include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/search/filter.hpp>
 
 #include "basics/fwd.h"
@@ -41,8 +42,6 @@ class SearchDataSource final : public velox::connector::DataSource,
                    std::vector<catalog::Column::Id> column_ids,
                    catalog::Column::Id effective_column_id, ObjectId object_key,
                    irs::IndexReader& reader, const irs::Filter::Query& query);
-
-  virtual ~SearchDataSource() = default;
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
   std::optional<velox::RowVectorPtr> next(uint64_t size,

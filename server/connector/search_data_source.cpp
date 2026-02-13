@@ -36,10 +36,17 @@ SearchDataSource::SearchDataSource(
   std::vector<catalog::Column::Id> column_ids,
   catalog::Column::Id effective_column_id, ObjectId object_key,
   irs::IndexReader& reader, const irs::Filter::Query& query)
-  : Materializer(memory_pool, snapshot, &db, nullptr, cf, row_type,
-                 std::move(column_ids), effective_column_id, object_key),
-    _reader(reader),
-    _query(query) {}
+  : Materializer{memory_pool,
+                 snapshot,
+                 &db,
+                 nullptr,
+                 cf,
+                 row_type,
+                 std::move(column_ids),
+                 effective_column_id,
+                 object_key},
+    _reader{reader},
+    _query{query} {}
 
 void SearchDataSource::addSplit(
   std::shared_ptr<velox::connector::ConnectorSplit> split) {

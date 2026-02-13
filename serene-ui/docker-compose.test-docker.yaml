@@ -3,8 +3,7 @@ services:
     image: postgres:17
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: test
-      POSTGRES_DB: test
+      POSTGRES_PASSWORD: postgres
     ports:
       - "6363:5432"
     healthcheck:

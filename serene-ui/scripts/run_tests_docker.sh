@@ -29,8 +29,11 @@ wait_for_service
 
 echo "🧪 Running tests..."
 docker compose -f "$COMPOSE_FILE" exec -T serene-ui sh -c '
-  npm run --prefix /test-app/apps/backend test &&
+  npm run --prefix /test-app/apps/backend test && # <-- do we want to stop if one fails?
+  # TODO: (vlaski) add echo message
   npm run --prefix /test-app/apps/web test-storybook
+  # TODO: (vlaski) add echo message
 '
 
+# TODO: (vlaski) fix test report message below
 echo "✅ All tests passed"

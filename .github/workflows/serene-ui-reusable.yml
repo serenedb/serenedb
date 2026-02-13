@@ -293,7 +293,7 @@ jobs:
   build-macos-app:
     name: Build macOS App
     if: inputs.RUN_TESTS || inputs.BUILD_MACOS_APP
-    runs-on: macos-latest
+    runs-on: marilka
     timeout-minutes: 1440
     defaults:
       run:
@@ -371,6 +371,8 @@ jobs:
           RUN_NUMBER: ${{ github.run_number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: ./scripts/notify_telegram.bash
+
+        # TODO: (vlaski) add cleanup step
 
   release:
     name: Publish GitHub Release

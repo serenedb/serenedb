@@ -38,7 +38,37 @@ ResultOr<std::shared_ptr<catalog::Index>> CreateInvertedIndex(
   return std::make_shared<InvertedIndex>(inverted_options);
 }
 
+Result ValidateInvertedIndexOptions(std::span<const Column*> indexed_columns) {
+  for (auto c : indexed_columns) {
+    if (c->type->providesCustomComparison()) {
+      return {ERROR_BAD_PARAMETER, "Column ", c->name,
+              " has type with custom comparison and can not be indexed."};
+    }
+    if (!c->type->isPrimitiveType()) {
+      return {ERROR_BAD_PARAMETER, "Column ", c->name,
+              " has non primitive type and can not be indexed."};
+    }
+    if (c->type->kind() == velox::TypeKind::TIMESTAMP ||
+        c->type->kind() == velox::TypeKind::HUGEINT) {
+      return {ERROR_BAD_PARAMETER, "Column ", c->name,
+              " has unsupported kind and can not be indexed."};
+    }
+  }
+  return {};
+}
+
 }  // namespace
+
+Result ValidateIndexOptions(const IndexBaseOptions& options,
+                            std::span<const Column*> indexed_columns) {
+  switch (options.type) {
+    case IndexType::Inverted:
+      return ValidateInvertedIndexOptions(indexed_columns);
+    default:
+      // TODO implement necessary validation on create for other index type
+      return {};
+  }
+}
 
 ResultOr<std::shared_ptr<Index>> MakeIndex(IndexBaseOptions options) {
   switch (options.type) {

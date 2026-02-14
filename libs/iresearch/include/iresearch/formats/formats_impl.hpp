@@ -2769,7 +2769,9 @@ doc_id_t SingleWandIterator<IteratorTraits, Pos, Offs, WandExtent,
     }
 
     auto& state = _skip.Reader().State();
-    _doc_in->Seek(state.doc_ptr);
+    if (state.doc_ptr) [[likely]] {
+      _doc_in->Seek(state.doc_ptr);
+    }
     ReadBlock(doc_value);
   }
 

@@ -251,27 +251,27 @@ size_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
         ++begin;
 
         if (begin == end) {
-          std::make_heap(begin, end,
+          std::make_heap(results.begin(), end,
                          [](const auto& lhs, const auto& rhs) noexcept {
                            return lhs.second > rhs.second;
                          });
 
           threshold->value = results.front().second;
         }
-      } else if (results.front().second < score_value) {
-        std::pop_heap(begin, end,
+      } else if (results.begin()->second < score_value) {
+        std::pop_heap(results.begin(), end,
                       [](const auto& lhs, const auto& rhs) noexcept {
                         return lhs.second > rhs.second;
                       });
 
         *back = {doc, score_value};
 
-        std::push_heap(begin, end,
+        std::push_heap(results.begin(), end,
                        [](const auto& lhs, const auto& rhs) noexcept {
                          return lhs.second > rhs.second;
                        });
 
-        threshold->value = results.front().second;
+        threshold->value = results.begin()->second;
       }
     }
   }

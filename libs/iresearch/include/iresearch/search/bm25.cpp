@@ -403,52 +403,6 @@ FieldCollector::ptr BM25::PrepareFieldCollector() const {
   return std::make_unique<BM25FieldCollector>();
 }
 
-ScoreFunction BM25::PrepareSingleScorer(const ScoreContext& ctx) const {
-  auto* freq = irs::get<FreqAttr>(ctx.doc_attrs);
-
-  if (!freq) {
-    if (!_boost_as_score || 0.f == ctx.boost) {
-      return ScoreFunction::Default();
-    }
-
-    // if there is no frequency then all the scores
-    // will be the same (e.g. filter irs::all)
-    return ScoreFunction::Constant(ctx.boost);
-  }
-
-  auto* filter_boost = [&] {
-    auto* attr = irs::get<FilterBoost>(ctx.doc_attrs);
-    return attr ? &attr->value : nullptr;
-  }();
-
-  auto* stats = stats_cast(ctx.stats);
-
-  return ResolveBool(filter_boost != nullptr, [&]<bool HasBoost>() {
-    if (IsBM1()) {
-      return ScoreFunction::Make<Bm1Score<HasBoost>>(_k, ctx.boost, *stats,
-                                                     filter_boost);
-    }
-
-    if (IsBM15()) {
-      return ScoreFunction::Make<Bm15Score<HasBoost>>(
-        _k, ctx.boost, *stats, nullptr, filter_boost);  // TODO(gnusi): fix
-    }
-
-    auto* norm = [&] {
-      auto* attr = irs::get<Norm>(ctx.doc_attrs);
-      return attr ? &attr->value : nullptr;
-    }();
-
-    if (!norm) {
-      static constexpr uint32_t kNorm = 1;
-      norm = &kNorm;
-    }
-
-    return ScoreFunction::Make<Bm25Score<HasBoost>>(
-      _k, ctx.boost, *stats, nullptr, norm, filter_boost);  // TODO(gnusi): fix
-  });
-}
-
 ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
   auto* freq = irs::get<FreqBlockAttr>(ctx.doc_attrs);
 

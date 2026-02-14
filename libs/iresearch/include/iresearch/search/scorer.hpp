@@ -192,9 +192,6 @@ struct Scorer {
 
   // Create a stateful scorer used for computation of document scores
   virtual ScoreFunction PrepareScorer(const ScoreContext& ctx) const = 0;
-  virtual ScoreFunction PrepareSingleScorer(const ScoreContext& ctx) const {
-    return {};
-  }
 
   // Create an object to be used for collecting index statistics, one
   // instance per matched term.

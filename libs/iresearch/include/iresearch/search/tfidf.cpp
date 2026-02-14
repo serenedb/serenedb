@@ -264,41 +264,6 @@ void TFIDF::collect(byte_type* stats_buf, const FieldCollector* field,
   // TODO(mbkkt) SDB_ASSERT(idf.value >= 0.f);
 }
 
-ScoreFunction TFIDF::PrepareSingleScorer(const ScoreContext& ctx) const {
-  auto* freq = irs::get<FreqAttr>(ctx.doc_attrs);
-
-  if (!freq) {
-    if (!_boost_as_score || 0.f == ctx.boost) {
-      return ScoreFunction::Default();
-    }
-
-    // if there is no frequency then all the
-    // scores will be the same (e.g. filter irs::all)
-    return ScoreFunction::Constant(ctx.boost);
-  }
-
-  auto* filter_boost = [&] {
-    auto* attr = irs::get<FilterBoost>(ctx.doc_attrs);
-    return attr ? &attr->value : nullptr;
-  }();
-
-  const uint32_t* norm = nullptr;
-  if (_normalize) {
-    norm = [&] {
-      auto attr = irs::get<Norm>(ctx.doc_attrs);
-      return attr ? &attr->value : nullptr;
-    }();
-  }
-
-  return ResolveBool(norm != nullptr, [&]<bool HasNorms>() {
-    return ResolveBool(filter_boost != nullptr, [&]<bool HasBoost>() {
-      const auto* stats = stats_cast(ctx.stats);
-      return ScoreFunction::Make<TfidfScore<HasNorms, HasBoost>>(
-        norm, ctx.boost, *stats, nullptr, filter_boost);
-    });
-  });
-}
-
 ScoreFunction TFIDF::PrepareScorer(const ScoreContext& ctx) const {
   auto* freq = irs::get<FreqBlockAttr>(ctx.doc_attrs);
 

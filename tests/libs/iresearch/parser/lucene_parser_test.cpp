@@ -387,11 +387,15 @@ TEST_F(LuceneParserTest, ComplexMixedQuery) {
   const auto& group_ab =
     sdb::basics::downCast<irs::MixedBooleanFilter>(RequiredRoot()[0]);
   ASSERT_EQ(2, group_ab.GetOptional().size());
+  AssertTerm(group_ab.GetOptional()[0], "content", "a");
+  AssertTerm(group_ab.GetOptional()[1], "content", "b");
 
   // Second: (c d)
   const auto& group_cd =
     sdb::basics::downCast<irs::MixedBooleanFilter>(RequiredRoot()[1]);
   ASSERT_EQ(2, group_cd.GetOptional().size());
+  AssertTerm(group_cd.GetOptional()[0], "content", "c");
+  AssertTerm(group_cd.GetOptional()[1], "content", "d");
 
   // Third: Not(e)
   const auto& not_e = sdb::basics::downCast<irs::Not>(RequiredRoot()[2]);
@@ -476,7 +480,6 @@ TEST_F(LuceneParserTest, MultiplePlusOperators) {
   ASSERT_EQ(2, RequiredRoot().size());
 
   AssertTerm(RequiredRoot()[0], "content", "foo");
-
   AssertTerm(RequiredRoot()[1], "content", "bar");
 }
 
@@ -1024,6 +1027,26 @@ TEST_F(LuceneParserTest, PlusOrMinusAnd) {
   AssertTerm((*not_b_or)[0], "content", "b");
 
   AssertTerm(RequiredRoot()[2], "content", "c");
+}
+
+TEST_F(LuceneParserTest, AndOrAndFlat) {
+  // a AND b OR -c AND d → Required[a, b, Not(c), d]
+  // Flat Lucene-like behavior: modifiers create MUST/MUST_NOT regardless of OR
+  // This is NOT grouped as (a AND b) OR (-c AND d) - it's flat!
+  ASSERT_TRUE(sdb::ParseQuery(ctx, "a AND b OR -c AND d").ok());
+  ASSERT_TRUE(OptionalRoot().empty());
+  ASSERT_EQ(4, RequiredRoot().size());
+
+  AssertTerm(RequiredRoot()[0], "content", "a");
+  AssertTerm(RequiredRoot()[1], "content", "b");
+
+  const auto& not_c = sdb::basics::downCast<irs::Not>(RequiredRoot()[2]);
+  const auto* not_c_or = not_c.filter<irs::Or>();
+  ASSERT_NE(nullptr, not_c_or);
+  ASSERT_EQ(1, not_c_or->size());
+  AssertTerm((*not_c_or)[0], "content", "c");
+
+  AssertTerm(RequiredRoot()[3], "content", "d");
 }
 
 TEST_F(LuceneParserTest, ManyImplicitOr) {
@@ -1655,10 +1678,14 @@ TEST_F(LuceneParserTest, NestedGroupsWithMixedOperators) {
   const auto& g1 =
     sdb::basics::downCast<irs::MixedBooleanFilter>(outer.GetRequired()[0]);
   ASSERT_EQ(2, g1.GetOptional().size());
+  AssertTerm(g1.GetOptional()[0], "content", "a");
+  AssertTerm(g1.GetOptional()[1], "content", "b");
 
   const auto& g2 =
     sdb::basics::downCast<irs::MixedBooleanFilter>(outer.GetRequired()[1]);
   ASSERT_EQ(2, g2.GetOptional().size());
+  AssertTerm(g2.GetOptional()[0], "content", "c");
+  AssertTerm(g2.GetOptional()[1], "content", "d");
 
   AssertTerm(OptionalRoot()[1], "content", "e");
 }
@@ -1692,6 +1719,8 @@ TEST_F(LuceneParserTest, DeeplyNestedNotGroups) {
     sdb::basics::downCast<irs::MixedBooleanFilter>((*inner_or)[0]);
   ASSERT_TRUE(inner.GetOptional().empty());
   ASSERT_EQ(2, inner.GetRequired().size());
+  AssertTerm(inner.GetRequired()[0], "content", "a");
+  AssertTerm(inner.GetRequired()[1], "content", "b");
 }
 
 TEST_F(LuceneParserTest, ComplexMultiFieldNested) {

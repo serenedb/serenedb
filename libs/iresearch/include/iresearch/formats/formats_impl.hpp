@@ -2594,7 +2594,9 @@ class SingleWandIterator : public DocIterator {
   class WandReadSkip {
    public:
     explicit WandReadSkip(WandExtent extent)
-      : _skip_levels(1), _wand_extent{extent} {
+      : _skip_levels(1),
+        _skip_scores(1, std::numeric_limits<score_t>::max()),
+        _wand_extent{extent} {
       Disable();
     }
 
@@ -2944,8 +2946,8 @@ class PostingsReaderImpl final : public PostingsReaderBase {
   DocIterator::ptr Iterator(IndexFeatures field_features,
                             IndexFeatures required_features,
                             std::span<const PostingCookie> metas,
-                            const IteratorFieldOptions& options,
-                            size_t min_match, ScoreMergeType type) const final;
+                            IteratorFieldOptions options, size_t min_match,
+                            ScoreMergeType type) const final;
 
  private:
   template<typename FieldTraits, typename Factory>
@@ -3121,7 +3123,7 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::IteratorImpl(
 template<typename FormatTraits>
 DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
   IndexFeatures field_features, IndexFeatures required_features,
-  std::span<const PostingCookie> metas, const IteratorFieldOptions& options,
+  std::span<const PostingCookie> metas, IteratorFieldOptions options,
   size_t min_match, ScoreMergeType type) const {
   SDB_ASSERT(!metas.empty());
   SDB_ASSERT(1 <= min_match);
@@ -3188,6 +3190,8 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
   if (metas.size() == 1) {
     return make_postings_iterator(0, metas[0]);
   }
+
+  options.mapped_index = WandContext::kDisable;
 
   std::vector<DocIterator::ptr> iterators;
   iterators.reserve(metas.size());

@@ -106,9 +106,9 @@ size_t ExecuteTopKWithCount(const DirectoryReader& reader, const Filter& filter,
 }
 
 template<size_t K>
-size_t ExecuteTopK1(const DirectoryReader& reader, const Filter& filter,
-                    const Scorer& scorer, size_t k, WandContext wand,
-                    std::span<std::pair<doc_id_t, score_t>, K> hits) {
+size_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
+                   const Scorer& scorer, size_t k, WandContext wand,
+                   std::span<std::pair<doc_id_t, score_t>, K> hits) {
   SDB_ASSERT(BlockSize(k) <= hits.size());
 
   auto prepared = filter.prepare({
@@ -202,9 +202,9 @@ size_t ExecuteTopK1(const DirectoryReader& reader, const Filter& filter,
 }
 
 template<size_t K>
-size_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
-                   const Scorer& scorer, size_t k, WandContext wand,
-                   std::span<std::pair<doc_id_t, score_t>, K> results) {
+size_t ExecuteTopK1(const DirectoryReader& reader, const Filter& filter,
+                    const Scorer& scorer, size_t k, WandContext wand,
+                    std::span<std::pair<doc_id_t, score_t>, K> results) {
   SDB_ASSERT(k <= results.size());
 
   auto prepared = filter.prepare({

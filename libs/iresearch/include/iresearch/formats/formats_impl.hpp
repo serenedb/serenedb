@@ -2557,7 +2557,7 @@ class SingleWandIterator : public DocIterator {
     return std::get<DocAttr>(_attrs).value;
   }
 
-  IRS_FORCE_INLINE doc_id_t advance() final;
+  IRS_FORCE_INLINE doc_id_t advance() final { return seek(value() + 1); }
 
   IRS_FORCE_INLINE doc_id_t seek(doc_id_t target) final;
 
@@ -2711,7 +2711,7 @@ class SingleWandIterator : public DocIterator {
   }
 
   IRS_FORCE_INLINE void ReadBlock(doc_id_t prev_doc);
-  void PrepareSkipReader(uint64_t skip_offs);
+  void PrepareSkipReader(uint64_t skip_offs, uint32_t docs_count);
   IRS_FORCE_INLINE auto* EncBufEnd() {
     return std::begin(_enc_buf) + IteratorTraits::kBlockSize;
   }
@@ -2745,15 +2745,7 @@ class SingleWandIterator : public DocIterator {
   IndexInput::ptr _doc_in;
   Attributes _attrs;
   SkipReader<WandReadSkip> _skip;
-  uint32_t _docs_count{};
 };
-
-template<typename IteratorTraits, bool Pos, bool Offs, typename WandExtent,
-         typename InputType>
-doc_id_t SingleWandIterator<IteratorTraits, Pos, Offs, WandExtent,
-                            InputType>::advance() {
-  return seek(value() + 1);
-}
 
 template<typename IteratorTraits, bool Pos, bool Offs, typename WandExtent,
          typename InputType>
@@ -2855,8 +2847,8 @@ void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent,
 
   if (term_state.docs_count > IteratorTraits::kBlockSize) {
     _skip.Reader().Enable(term_state);
-    _docs_count = term_state.docs_count;
-    PrepareSkipReader(term_state.doc_start + term_state.e_skip_start);
+    PrepareSkipReader(term_state.doc_start + term_state.e_skip_start,
+                      term_state.docs_count);
   } else if (1 < term_state.docs_count &&
              term_state.docs_count < IteratorTraits::kBlockSize) {
     _skip.Reader().SkipWandData(*this->_doc_in);
@@ -2907,8 +2899,9 @@ void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent,
 template<typename FormatTraits, bool Pos, bool Offs, typename WandExtent,
          typename InputType>
 void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent,
-                        InputType>::PrepareSkipReader(uint64_t skip_offs) {
-  SDB_ASSERT(_docs_count > 0);
+                        InputType>::PrepareSkipReader(uint64_t skip_offs,
+                                                      uint32_t docs_count) {
+  SDB_ASSERT(docs_count > 0);
 
   auto skip_in = this->_doc_in->Dup();
 
@@ -2921,8 +2914,7 @@ void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent,
   SDB_ASSERT(!_skip.NumLevels());
   skip_in->Seek(skip_offs);
   _skip.Reader().ReadWandScore(*skip_in);
-  _skip.Prepare(std::move(skip_in), _docs_count);
-  _docs_count = 0;
+  _skip.Prepare(std::move(skip_in), docs_count);
 
   if (const auto num_levels = _skip.NumLevels();
       num_levels > 0 && num_levels <= PostingsWriterBase::kMaxSkipLevels)

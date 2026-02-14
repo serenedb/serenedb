@@ -480,8 +480,12 @@ ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
                                                       freq, filter_boost);
     }
 
-    const uint32_t* norm = nullptr;
-    if (ctx.collector) {
+    const uint32_t* norm = [&] {
+      auto* attr = irs::get<Norm>(ctx.doc_attrs);
+      return attr ? &attr->value : nullptr;
+    }();
+
+    if (!norm && ctx.collector) {
       norm = ctx.collector->AddNorms(ctx.segment.column(ctx.field.norm));
     }
 

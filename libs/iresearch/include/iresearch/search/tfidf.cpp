@@ -318,9 +318,16 @@ ScoreFunction TFIDF::PrepareScorer(const ScoreContext& ctx) const {
   }();
 
   const uint32_t* norm = nullptr;
-  if (_normalize && ctx.collector) {
+  if (_normalize) {
+    norm = [&] {
+      auto* attr = irs::get<Norm>(ctx.doc_attrs);
+      return attr ? &attr->value : nullptr;
+    }();
+
     // Fallback to reading from columnstore
-    norm = ctx.collector->AddNorms(ctx.segment.column(ctx.field.norm));
+    if (!norm && ctx.collector) {
+      norm = ctx.collector->AddNorms(ctx.segment.column(ctx.field.norm));
+    }
   }
 
   return ResolveBool(norm != nullptr, [&]<bool HasNorms>() {

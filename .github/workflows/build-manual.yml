@@ -18,7 +18,8 @@ on:
         type: choice
         required: true
         options:
-          - parilka
+          - X64
+          - ARM64
           - self-hosted
         default: 'self-hosted'
       BRANCH:

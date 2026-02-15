@@ -1007,18 +1007,18 @@ class PhraseIterator : public DocIterator {
     return advance();
   }
 
-  uint32_t count() final { return Count(*this); }
+  uint32_t count() final { return CountImpl(*this); }
 
   uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
                    std::span<doc_id_t, kScoreBlock> docs,
                    std::span<score_t, kScoreBlock> scores) final {
-    return DocIterator::Collect(*this, scorer, columns, docs, scores);
+    return CollectImpl(*this, scorer, columns, docs, scores);
   }
 
   std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
                                       uint64_t* mask, CollectScoreContext score,
                                       CollectMatchContext match) final {
-    return DocIterator::FillBlock(*this, min, max, mask, score, match);
+    return FillBlockImpl(*this, min, max, mask, score, match);
   }
 
   void FetchScoreArgs(uint16_t index) final {

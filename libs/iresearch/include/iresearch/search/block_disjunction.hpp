@@ -283,7 +283,7 @@ class BlockDisjunction : public DocIterator {
                                       uint64_t* mask, CollectScoreContext score,
                                       CollectMatchContext match) final {
     // TODO(gnusi): optimize
-    return DocIterator::FillBlock(*this, min, max, mask, score, match);
+    return FillBlockImpl(*this, min, max, mask, score, match);
   }
 
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
@@ -475,13 +475,14 @@ class BlockDisjunction : public DocIterator {
         // TODO(mbkkt) It looks good, but only for wand case
         // scores_.unscored -= begin->score().IsDefault();
         std::iter_swap(begin, --end);
-        _itrs.pop_back();
         _scorers.pop_back();
+        _itrs.pop_back();
 
         if constexpr (Traits::kMinMatchEarlyPruning) {
           // we don't need precise match count
           if (_itrs.size() < _match_buf.min_match_count()) {
             // can't fulfill min match requirement anymore
+            _scorers.clear();
             _itrs.clear();
             return;
           }
@@ -495,6 +496,7 @@ class BlockDisjunction : public DocIterator {
       // we need precise match count, so can't break earlier
       if (_itrs.size() < _match_buf.min_match_count()) {
         // can't fulfill min match requirement anymore
+        _scorers.clear();
         _itrs.clear();
         return;
       }

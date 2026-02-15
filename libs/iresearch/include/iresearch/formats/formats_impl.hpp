@@ -1174,9 +1174,11 @@ class PostingIteratorBase : public DocIterator {
     return left_in_leaf + left_in_list;
   }
 
-  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
-                                      uint64_t* mask, CollectScoreContext score,
+  std::pair<doc_id_t, bool> FillBlock(const doc_id_t min, const doc_id_t max,
+                                      uint64_t* IRS_RESTRICT mask,
+                                      CollectScoreContext score,
                                       CollectMatchContext match) final {
+    SDB_ASSERT(min < max);
     auto& doc_value = std::get<DocAttr>(_attrs).value;
 
     if (!score.score || score.score->IsDefault()) {
@@ -1205,7 +1207,6 @@ class PostingIteratorBase : public DocIterator {
       return ResolveMergeType(score.merge_type, [&]<ScoreMergeType MergeType> {
         bool empty = true;
 
-        const doc_id_t base = min;
         auto* IRS_RESTRICT const doc_mask = mask;
         [[maybe_unused]] auto* IRS_RESTRICT const score_window =
           score.score_window;
@@ -1213,27 +1214,22 @@ class PostingIteratorBase : public DocIterator {
         auto process_doc =
           [&](doc_id_t doc, [[maybe_unused]] score_t score_val)
             IRS_FORCE_INLINE {
-              doc -= base;
+              SDB_ASSERT(doc >= min);
+              doc -= min;
               if constexpr (TrackMatch) {
                 SDB_ASSERT(match.matches);
                 const bool has_match =
                   ++match.matches[doc] >= match.min_match_count;
+                SetBit(doc_mask[doc / BitsRequired<uint64_t>()],
+                       doc % BitsRequired<uint64_t>(), has_match);
                 empty &= !has_match;
-                if (has_match) {
-                  SetBit(doc_mask[doc / BitsRequired<uint64_t>()],
-                         doc % BitsRequired<uint64_t>(), has_match);
-
-                  if constexpr (MergeType != ScoreMergeType::Noop) {
-                    Merge<MergeType>(score_window[doc], score_val);
-                  }
-                }
               } else {
                 SetBit(doc_mask[doc / BitsRequired<uint64_t>()],
                        doc % BitsRequired<uint64_t>());
                 empty = false;
-                if constexpr (MergeType != ScoreMergeType::Noop) {
-                  Merge<MergeType>(score_window[doc], score_val);
-                }
+              }
+              if constexpr (MergeType != ScoreMergeType::Noop) {
+                Merge<MergeType>(score_window[doc], score_val);
               }
             };
 
@@ -1319,8 +1315,7 @@ class PostingIteratorBase : public DocIterator {
                    std::span<doc_id_t, kScoreBlock> docs,
                    std::span<score_t, kScoreBlock> scores) final {
     // TODO(gnusi): optimize
-    SDB_ASSERT(kScoreBlock <= docs.size());
-    return DocIterator::Collect(*this, scorer, columns, docs, scores);
+    return CollectImpl(*this, scorer, columns, docs, scores);
   }
 
   void FetchScoreArgs(uint16_t index) final {
@@ -2418,22 +2413,15 @@ struct PostingAdapter {
     return self().FetchScoreArgs(index);
   }
 
-  IRS_FORCE_INLINE uint32_t Collect(const ScoreFunction& scorer,
-                                    ColumnCollector& columns,
-                                    std::span<doc_id_t, kScoreBlock> docs,
-                                    std::span<score_t, kScoreBlock> scores) {
-    return self().Collect(scorer, columns, docs, scores);
-  }
-
   IRS_FORCE_INLINE ScoreFunction
   PrepareScore(const PrepareScoreContext& ctx) const noexcept {
     return self().PrepareScore(ctx);
   }
 
-  IRS_FORCE_INLINE auto FillBlock(doc_id_t min, doc_id_t max, uint64_t* mask,
-                                  CollectScoreContext score_ctx,
-                                  CollectMatchContext match_ctx) {
-    return self().FillBlock(min, max, mask, score_ctx, match_ctx);
+  IRS_FORCE_INLINE std::pair<doc_id_t, bool> FillBlock(
+    doc_id_t min, doc_id_t max, uint64_t* mask, CollectScoreContext score,
+    CollectMatchContext match) {
+    return self().FillBlock(min, max, mask, score, match);
   }
 
  private:

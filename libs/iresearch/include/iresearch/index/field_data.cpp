@@ -627,6 +627,10 @@ ResettableDocIterator::ptr CachedColumn::iterator(ColumnHint hint) const {
                                                       _stream.Data());
 }
 
+NormReader::ptr CachedColumn::norms() const {
+  return MakeNormReader(payload(), _stream.Index(), _stream.Data());
+}
+
 FieldData::FieldData(std::string_view name,
                      const FeatureInfoProvider& feature_columns,
                      CachedColumns& cached_columns,

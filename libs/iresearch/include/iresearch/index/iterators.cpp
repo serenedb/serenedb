@@ -124,7 +124,7 @@ struct EmptyColumnReader final : ColumnReader {
     return ResettableDocIterator::empty();
   }
 
-  doc_id_t size() const final { return 0; }
+  doc_id_t size() const noexcept final { return 0; }
 };
 
 const EmptyColumnReader kEmptyColumnReader;

@@ -257,7 +257,7 @@ SSTInsertDataSink::SSTInsertDataSink(
   std::span<const velox::column_index_t> key_childs,
   std::vector<ColumnInfo> columns)
   : RocksDBDataSinkBase<SSTSinkWriter, SinkInsertWriter>(
-      SSTSinkWriter{db, cf, columns}, memory_pool, object_key, key_childs,
+      SSTSinkWriter{object_key, db, cf, columns}, memory_pool, object_key, key_childs,
       std::move(columns), std::vector<std::unique_ptr<SinkInsertWriter>>{}) {}
 
 void SSTInsertDataSink::appendData(velox::RowVectorPtr input) {
@@ -274,11 +274,8 @@ void SSTInsertDataSink::appendData(velox::RowVectorPtr input) {
   _store_keys_buffers.clear();
   _store_keys_buffers.reserve(num_rows);
 
-  for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-    key_utils::MakeColumnKey<true>(
-      input, _key_childs, row_idx, table_key, [&](std::string_view row_key) {},
-      _store_keys_buffers.emplace_back());
-  }
+
+  SDB_ASSERT(_key_childs.empty());
 
   velox::IndexRange all_rows(0, num_rows);
   const folly::Range all_rows_range{&all_rows, 1};
@@ -645,23 +642,23 @@ void RocksDBDataSinkBase<DataWriterType, SubWriterType>::WriteFlatColumn(
   auto* flat_vector = input.as<velox::FlatVector<T>>();
   SDB_ASSERT(flat_vector);
   irs::ResolveBool(flat_vector->mayHaveNulls(), [&]<bool MayHaveNulls>() {
-    size_t row_id = 0;
+    // size_t row_id = 0;
     for (const auto& range : ranges) {
       const auto range_end = range.begin + range.size;
       for (velox::vector_size_t idx = range.begin; idx < range_end; ++idx) {
-        const auto* key = SetupRowKey(row_id++, original_idx);
-        if (!key) {
-          continue;
-        }
+        // const auto* key = SetupRowKey(row_id++, original_idx);
+        // if (!key) {
+        //   continue;
+        // }
         if constexpr (MayHaveNulls) {
           if (flat_vector->isNullAt(idx)) {
-            WriteNull(*key);
+            WriteNull({});
             continue;
           }
         }
         ResetForNewRow();
         WriteFlatValue(*flat_vector, idx);
-        WriteRowSlices(*key);
+        WriteRowSlices({});
       }
     }
   });

@@ -112,6 +112,12 @@ class BufferedColumnIterator : public ResettableDocIterator {
     std::get<PayAttr>(_attrs).value = {};
   }
 
+  bytes_view GetPayload() const noexcept {
+    return std::get<PayAttr>(_attrs).value;
+  }
+
+  size_t Size() const noexcept { return _end - _begin; }
+
  private:
   using Attributes = std::tuple<DocAttr, CostAttr, PayAttr>;
 

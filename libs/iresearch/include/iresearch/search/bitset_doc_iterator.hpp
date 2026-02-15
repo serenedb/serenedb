@@ -41,6 +41,13 @@ class BitsetDocIterator : public DocIterator, private util::Noncopyable {
   doc_id_t advance() final;
   doc_id_t seek(doc_id_t target) final;
   uint32_t count() final;
+  uint32_t Collect(const irs::ScoreFunction& scorer,
+                   irs::ColumnCollector& columns,
+                   std::span<irs::doc_id_t, irs::kScoreBlock> docs,
+                   std::span<irs::score_t, irs::kScoreBlock> scores) final;
+  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
+                                      uint64_t* mask, CollectScoreContext score,
+                                      CollectMatchContext match) final;
 
  protected:
   explicit BitsetDocIterator(CostAttr::Type cost) noexcept

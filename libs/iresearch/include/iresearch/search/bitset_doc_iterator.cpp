@@ -119,4 +119,19 @@ uint32_t BitsetDocIterator::count() {
   }
 }
 
+uint32_t BitsetDocIterator::Collect(
+  const irs::ScoreFunction& scorer, irs::ColumnCollector& columns,
+  std::span<irs::doc_id_t, irs::kScoreBlock> docs,
+  std::span<irs::score_t, irs::kScoreBlock> scores) {
+  // TODO(mbkkt) optimize
+  return CollectImpl(*this, scorer, columns, docs, scores);
+}
+
+std::pair<doc_id_t, bool> BitsetDocIterator::FillBlock(
+  doc_id_t min, doc_id_t max, uint64_t* mask, CollectScoreContext score,
+  CollectMatchContext match) {
+  // TODO(mbkkt) optimize
+  return FillBlockImpl(*this, min, max, mask, score, match);
+}
+
 }  // namespace irs

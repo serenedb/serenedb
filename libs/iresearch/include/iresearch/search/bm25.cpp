@@ -519,8 +519,11 @@ WandWriter::ptr BM25::prepare_wand_writer(size_t max_levels) const {
     // x / (k / avg_dl + x)
     return std::make_unique<FreqNormWriter<kWandTagDivNorm>>(max_levels);
   }
-  // Approximation that suited for any BM25
-  return std::make_unique<FreqNormWriter<kWandTagBM25>>(max_levels, _b);
+  // It's not precise if we have more than 1 segment.
+  // But search is distributed and we don't compute cluster wide avg_dl,
+  // so it's better to use this instead of kWandTagBM25.
+  // But if we want precise wand info, we need to return kWandTagBM25 here.
+  return std::make_unique<FreqNormWriter<kWandTagAvgDL>>(max_levels, _b);
 }
 
 WandSource::ptr BM25::prepare_wand_source() const {

@@ -192,7 +192,7 @@ class Executor {
     return root;
   }
 
-  std::vector<std::pair<irs::doc_id_t, irs::score_t>> _results;
+  std::vector<irs::ScoreDoc> _results;
   irs::Scorer::ptr _scorer;
   irs::Scorer* _scorer_ptr{_scorer.get()};
   irs::analysis::Analyzer::ptr _tokenizer;

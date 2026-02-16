@@ -37,7 +37,7 @@ class IndexOutput;
 struct SubReader;
 struct ColumnProvider;
 struct TermReader;
-class ColumnCollector;
+class ColumnArgsFetcher;
 
 // Represents no boost value.
 inline constexpr score_t kNoBoost{1.f};
@@ -151,7 +151,7 @@ struct ScoreContext {
   const ColumnProvider& segment;
   const FieldProperties& field;
   const AttributeProvider& doc_attrs;
-  ColumnCollector* collector = nullptr;
+  ColumnArgsFetcher* fetcher = nullptr;
   const byte_type* stats = nullptr;
   score_t boost = kNoBoost;
 };

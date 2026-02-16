@@ -55,10 +55,10 @@ class AllIterator : public DocIterator {
     return _doc.value;
   }
 
-  uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
-                   std::span<doc_id_t, kScoreBlock> docs,
-                   std::span<score_t, kScoreBlock> scores) final {
-    return CollectImpl(*this, scorer, columns, docs, scores);
+  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
+               ScoreCollector& collector) final {
+    // TODO(gnusi): optimize
+    CollectImpl(*this, scorer, fetcher, collector);
   }
 
   uint32_t count() noexcept final {
@@ -105,10 +105,10 @@ class MaskDocIterator : public DocIterator {
 
   uint32_t count() final { return CountImpl(*this); }
 
-  uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
-                   std::span<doc_id_t, kScoreBlock> docs,
-                   std::span<score_t, kScoreBlock> scores) final {
-    return CollectImpl(*this, scorer, columns, docs, scores);
+  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
+               ScoreCollector& collector) final {
+    // TODO(gnusi): optimize
+    CollectImpl(*this, scorer, fetcher, collector);
   }
 
  private:
@@ -152,10 +152,10 @@ class MaskedDocIterator : public DocIterator {
 
   uint32_t count() final { return CountImpl(*this); }
 
-  uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
-                   std::span<doc_id_t, kScoreBlock> docs,
-                   std::span<score_t, kScoreBlock> scores) final {
-    return CollectImpl(*this, scorer, columns, docs, scores);
+  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
+               ScoreCollector& collector) final {
+    // TODO(gnusi): optimize
+    CollectImpl(*this, scorer, fetcher, collector);
   }
 
  private:

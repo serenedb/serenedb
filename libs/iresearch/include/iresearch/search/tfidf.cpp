@@ -290,8 +290,8 @@ ScoreFunction TFIDF::PrepareScorer(const ScoreContext& ctx) const {
     }();
 
     // Fallback to reading from columnstore
-    if (!norm && ctx.collector) {
-      norm = ctx.collector->AddNorms(ctx.segment.column(ctx.field.norm));
+    if (!norm && ctx.fetcher) {
+      norm = ctx.fetcher->AddNorms(ctx.segment.column(ctx.field.norm));
     }
   }
 

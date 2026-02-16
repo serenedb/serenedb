@@ -334,8 +334,7 @@ TEST_P(BlockScoringTestCase, TfidfBytermBlockScoring) {
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 10;
-  std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
-    irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> docs(irs::BlockSize(kTopK));
 
   size_t count =
     irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
@@ -362,8 +361,7 @@ TEST_P(BlockScoringTestCase, TfidfTopicSearch) {
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 20;
-  std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
-    irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> docs(irs::BlockSize(kTopK));
 
   size_t count =
     irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
@@ -396,8 +394,7 @@ TEST_P(BlockScoringTestCase, Bm25BytermBlockScoring) {
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 15;
-  std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
-    irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> docs(irs::BlockSize(kTopK));
 
   size_t count =
     irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
@@ -430,8 +427,7 @@ TEST_P(BlockScoringTestCase, Bm25ChemistrySearch) {
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 10;
-  std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
-    irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> docs(irs::BlockSize(kTopK));
 
   size_t count =
     irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
@@ -465,8 +461,7 @@ TEST_P(BlockScoringTestCase, TfidfAndFilterBlockScoring) {
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 10;
-  std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
-    irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> docs(irs::BlockSize(kTopK));
 
   size_t count =
     irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
@@ -502,8 +497,7 @@ TEST_P(BlockScoringTestCase, Bm25AndFilterBlockScoring) {
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 15;
-  std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
-    irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> docs(irs::BlockSize(kTopK));
 
   size_t count =
     irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
@@ -539,8 +533,7 @@ TEST_P(BlockScoringTestCase, BlockBoundarySmallK) {
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 3;
-  std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
-    irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> docs(irs::BlockSize(kTopK));
 
   size_t count =
     irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
@@ -576,8 +569,7 @@ TEST_P(BlockScoringTestCase, BlockBoundaryLargeK) {
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 50;
-  std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
-    irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> docs(irs::BlockSize(kTopK));
 
   size_t count =
     irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
@@ -612,14 +604,12 @@ TEST_P(BlockScoringTestCase, TfidfVsBm25Comparison) {
   constexpr size_t kTopK = 10;
 
   // Get TFIDF results
-  std::vector<std::pair<irs::doc_id_t, irs::score_t>> tfidf_docs(
-    irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> tfidf_docs(irs::BlockSize(kTopK));
   size_t tfidf_count = irs::ExecuteTopKWithCount(reader, *filter, tfidf_scorer,
                                                  kTopK, std::span{tfidf_docs});
 
   // Get BM25 results
-  std::vector<std::pair<irs::doc_id_t, irs::score_t>> bm25_docs(
-    irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> bm25_docs(irs::BlockSize(kTopK));
   size_t bm25_count = irs::ExecuteTopKWithCount(reader, *filter, bm25_scorer,
                                                 kTopK, std::span{bm25_docs});
 
@@ -661,8 +651,7 @@ TEST_P(BlockScoringTestCase, KLargerThanMatches) {
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 1000;  // Much larger than chemistry documents
-  std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
-    irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> docs(irs::BlockSize(kTopK));
 
   size_t count =
     irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
@@ -694,8 +683,7 @@ TEST_P(BlockScoringTestCase, EmptyResultSet) {
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 10;
-  std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
-    irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> docs(irs::BlockSize(kTopK));
 
   size_t count =
     irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
@@ -721,8 +709,7 @@ TEST_P(BlockScoringTestCase, AndFilterThreeClauses) {
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 10;
-  std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
-    irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> docs(irs::BlockSize(kTopK));
 
   size_t count =
     irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
@@ -764,8 +751,7 @@ TEST_P(BlockScoringTestCase, Bm25ParameterVariations) {
   {
     auto scorer = irs::BM25{};
 
-    std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
-      irs::BlockSize(kTopK));
+    std::vector<irs::ScoreDoc> docs(irs::BlockSize(kTopK));
 
     size_t count = irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK,
                                              std::span{docs});
@@ -787,8 +773,7 @@ TEST_P(BlockScoringTestCase, Bm25ParameterVariations) {
   {
     auto scorer = irs::BM25{irs::BM25::K(), 0.0f};
 
-    std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
-      irs::BlockSize(kTopK));
+    std::vector<irs::ScoreDoc> docs(irs::BlockSize(kTopK));
 
     size_t count = irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK,
                                              std::span{docs});
@@ -810,8 +795,7 @@ TEST_P(BlockScoringTestCase, Bm25ParameterVariations) {
   {
     auto scorer = irs::BM25{irs::BM25::K(), 1.0f};
 
-    std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
-      irs::BlockSize(kTopK));
+    std::vector<irs::ScoreDoc> docs(irs::BlockSize(kTopK));
 
     size_t count = irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK,
                                              std::span{docs});
@@ -848,8 +832,7 @@ TEST_P(BlockScoringTestCase, TfidfWithWithoutNorms) {
   {
     auto scorer = irs::TFIDF{true};
 
-    std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs_with_norms(
-      irs::BlockSize(kTopK));
+    std::vector<irs::ScoreDoc> docs_with_norms(irs::BlockSize(kTopK));
 
     size_t count = irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK,
                                              std::span{docs_with_norms});
@@ -871,8 +854,7 @@ TEST_P(BlockScoringTestCase, TfidfWithWithoutNorms) {
   {
     auto scorer = irs::TFIDF{false};
 
-    std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs_without_norms(
-      irs::BlockSize(kTopK));
+    std::vector<irs::ScoreDoc> docs_without_norms(irs::BlockSize(kTopK));
 
     size_t count = irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK,
                                              std::span{docs_without_norms});
@@ -913,8 +895,7 @@ TEST_P(BlockScoringTestCase, MultisegTfidfByterm) {
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 15;
-  std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
-    irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> docs(irs::BlockSize(kTopK));
 
   size_t count =
     irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
@@ -945,8 +926,7 @@ TEST_P(BlockScoringTestCase, MultisegBm25Byterm) {
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 20;
-  std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
-    irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> docs(irs::BlockSize(kTopK));
 
   size_t count =
     irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
@@ -976,8 +956,7 @@ TEST_P(BlockScoringTestCase, MultisegTfidfAndFilter) {
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 15;
-  std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
-    irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> docs(irs::BlockSize(kTopK));
 
   size_t count =
     irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
@@ -1010,8 +989,7 @@ TEST_P(BlockScoringTestCase, MultisegBm25AndFilter) {
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 20;
-  std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
-    irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> docs(irs::BlockSize(kTopK));
 
   size_t count =
     irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
@@ -1044,8 +1022,7 @@ TEST_P(BlockScoringTestCase, MultisegSmallKBlockBoundaries) {
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 5;  // Small k to test block boundaries
-  std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
-    irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> docs(irs::BlockSize(kTopK));
 
   size_t count =
     irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
@@ -1076,8 +1053,7 @@ TEST_P(BlockScoringTestCase, MultisegQuantumQuery) {
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 10;
-  std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
-    irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> docs(irs::BlockSize(kTopK));
 
   size_t count =
     irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
@@ -1108,8 +1084,7 @@ TEST_P(BlockScoringTestCase, TfidfDisjunctionTwoTerms) {
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 15;
-  std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
-    irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> docs(irs::BlockSize(kTopK));
 
   size_t count =
     irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
@@ -1143,8 +1118,7 @@ TEST_P(BlockScoringTestCase, Bm25DisjunctionTwoTerms) {
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 20;
-  std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
-    irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> docs(irs::BlockSize(kTopK));
 
   size_t count =
     irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
@@ -1177,8 +1151,7 @@ TEST_P(BlockScoringTestCase, MultisegTfidfDisjunction) {
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 15;
-  std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
-    irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> docs(irs::BlockSize(kTopK));
 
   size_t count =
     irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
@@ -1213,8 +1186,7 @@ TEST_P(BlockScoringTestCase, MultisegBm25Disjunction) {
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 20;
-  std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
-    irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> docs(irs::BlockSize(kTopK));
 
   size_t count =
     irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
@@ -1251,8 +1223,7 @@ TEST_P(BlockScoringTestCase, Bm25DisjunctionFourTerms) {
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 25;
-  std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
-    irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> docs(irs::BlockSize(kTopK));
 
   size_t count =
     irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
@@ -1287,8 +1258,7 @@ TEST_P(BlockScoringTestCase, MultisegTfidfDisjunctionFiveTerms) {
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 30;
-  std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
-    irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> docs(irs::BlockSize(kTopK));
 
   size_t count =
     irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
@@ -1331,8 +1301,7 @@ TEST_P(BlockScoringTestCase, Bm25DisjunctionThreeTermsSameField) {
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 20;
-  std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
-    irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> docs(irs::BlockSize(kTopK));
 
   size_t count =
     irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});

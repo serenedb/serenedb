@@ -277,10 +277,10 @@ void FilterTestCaseBase::MakeResult(const irs::Filter& filter,
 
   std::multiset<std::pair<irs::score_t, irs::doc_id_t>, decltype(score_less)>
     scored_result{score_less};
-  irs::ColumnCollector columns;
+  irs::ColumnArgsFetcher fetcher;
 
   for (const auto& sub : rdr) {
-    columns.Clear();
+    fetcher.Clear();
     auto docs = prepared_filter->execute({
       .segment = sub,
       .scorer = scorer,
@@ -295,7 +295,7 @@ void FilterTestCaseBase::MakeResult(const irs::Filter& filter,
       score = docs->PrepareScore({
         .scorer = scorer,
         .segment = &sub,
-        .collector = &columns,
+        .fetcher = &fetcher,
       });
     }
 
@@ -304,7 +304,7 @@ void FilterTestCaseBase::MakeResult(const irs::Filter& filter,
     while (docs->next()) {
       ASSERT_EQ(docs->value(), doc->value);
       docs->FetchScoreArgs(0);
-      columns.Collect(docs->value());
+      fetcher.Fetch(docs->value());
       score.Score(&score_value, 1);
       scored_result.emplace(score_value, docs->value());
     }

@@ -111,7 +111,7 @@ class BasicDocIterator : public irs::DocIterator {
       .segment = *ctx.segment,
       .field = {},
       .doc_attrs = *this,
-      .collector = ctx.collector,
+      .fetcher = ctx.fetcher,
       .stats = _stats,
       .boost = _boost,
     });
@@ -286,7 +286,7 @@ TEST(boolean_query_boost, hierarchy) {
     const auto& scr = docs->PrepareScore({
       .scorer = &sort,
       .segment = &irs::SubReader::empty(),
-      .collector = nullptr,
+      .fetcher = nullptr,
     });
 
     auto* doc = irs::get<irs::DocAttr>(*docs);
@@ -4052,10 +4052,10 @@ TEST(block_disjunction_test, next_scored) {
   {
     detail::CompoundSort sort{{1}};
 
-    std::vector<std::pair<irs::doc_id_t, irs::score_t>> expected{
+    std::vector<irs::ScoreDoc> expected{
       {1, 1.f},  {2, 1.f},  {5, 1.f},  {7, 1.f},  {9, 1.f},
       {11, 1.f}, {45, 1.f}, {65, 1.f}, {78, 1.f}, {127, 1.f}};
-    std::vector<std::pair<irs::doc_id_t, irs::score_t>> result;
+    std::vector<irs::ScoreDoc> result;
 
     std::vector<std::vector<irs::doc_id_t>> docs;
     docs.emplace_back(
@@ -4114,10 +4114,10 @@ TEST(block_disjunction_test, next_scored) {
   {
     detail::CompoundSort sort{{2}};
 
-    std::vector<std::pair<irs::doc_id_t, irs::score_t>> expected{
+    std::vector<irs::ScoreDoc> expected{
       {1, 2.f},  {2.f, 2.f},  {5, 2.f},      {7, 2.f},       {9, 2.f},
       {11, 2.f}, {1145, 2.f}, {111165, 2.f}, {1111178, 2.f}, {111111127, 2.f}};
-    std::vector<std::pair<irs::doc_id_t, irs::score_t>> result;
+    std::vector<irs::ScoreDoc> result;
 
     std::vector<std::vector<irs::doc_id_t>> docs;
     docs.emplace_back(std::vector<irs::doc_id_t>{1, 2, 5, 7, 9, 11, 1145,

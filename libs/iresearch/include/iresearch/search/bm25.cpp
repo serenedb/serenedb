@@ -441,8 +441,8 @@ ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
       return attr ? &attr->value : nullptr;
     }();
 
-    if (!norm && ctx.collector) {
-      norm = ctx.collector->AddNorms(ctx.segment.column(ctx.field.norm));
+    if (!norm && ctx.fetcher) {
+      norm = ctx.fetcher->AddNorms(ctx.segment.column(ctx.field.norm));
     }
 
     if (!norm) {

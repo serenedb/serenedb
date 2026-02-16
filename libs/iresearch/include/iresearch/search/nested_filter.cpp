@@ -118,10 +118,9 @@ class ChildToParentJoin : public DocIterator, private Matcher {
 
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final;
 
-  uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
-                   std::span<doc_id_t, kScoreBlock> docs,
-                   std::span<score_t, kScoreBlock> scores) final {
-    return CollectImpl(*this, scorer, columns, docs, scores);
+  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
+               ScoreCollector& collector) final {
+    CollectImpl(*this, scorer, fetcher, collector);
   }
 
   void FetchScoreArgs(uint16_t index) final {
@@ -179,7 +178,7 @@ ScoreFunction ChildToParentJoin<Matcher>::PrepareScore(
     }
 
     auto child_ctx = ctx;
-    child_ctx.collector = &this->_scores.collector;
+    child_ctx.fetcher = &this->_scores.fetcher;
     auto child_score = _child->PrepareScore(child_ctx);
 
     if (child_score.IsDefault()) {
@@ -216,7 +215,7 @@ class NoneMatcher {
 template<ScoreMergeType MergeType>
 struct NestedScore final : ScoreOperator {
   ScoreFunction child_score;
-  ColumnCollector collector;
+  ColumnArgsFetcher fetcher;
   std::array<score_t, kScoreBlock> parent_scores{};
   std::array<score_t, kScoreBlock> child_temp;
   std::array<doc_id_t, kScoreBlock> child_docs;
@@ -247,7 +246,7 @@ struct NestedScore final : ScoreOperator {
 
   void FlushChildBatch() {
     SDB_ASSERT(child_idx);
-    collector.Collect(std::span{child_docs.data(), child_idx});
+    fetcher.Fetch(std::span{child_docs.data(), child_idx});
     child_score.Score(child_temp.data(), child_idx);
     for (uint16_t i = 0; i < child_idx; ++i) {
       Merge<MergeType>(current_parent_score, child_temp[i]);

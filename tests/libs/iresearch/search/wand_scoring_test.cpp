@@ -173,10 +173,8 @@ class WandScoringTestCase : public IndexTestBase {
   void CompareWandVsNonWand(const irs::DirectoryReader& reader,
                             const irs::Filter& filter,
                             const irs::Scorer& scorer, size_t k) {
-    std::vector<std::pair<irs::doc_id_t, irs::score_t>> baseline_hits(
-      irs::BlockSize(k));
-    std::vector<std::pair<irs::doc_id_t, irs::score_t>> wand_hits(
-      irs::BlockSize(k));
+    std::vector<irs::ScoreDoc> baseline_hits(irs::BlockSize(k));
+    std::vector<irs::ScoreDoc> wand_hits(irs::BlockSize(k));
 
     size_t baseline_count = irs::ExecuteTopKWithCount(reader, filter, scorer, k,
                                                       std::span{baseline_hits});
@@ -322,8 +320,7 @@ TEST_P(WandScoringTestCase, WandEmptyResults) {
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 10;
-  std::vector<std::pair<irs::doc_id_t, irs::score_t>> hits(
-    irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> hits(irs::BlockSize(kTopK));
 
   size_t count =
     irs::ExecuteTopK(reader, *filter, scorer, kTopK,
@@ -341,8 +338,7 @@ TEST_P(WandScoringTestCase, WandResultValues) {
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 10;
-  std::vector<std::pair<irs::doc_id_t, irs::score_t>> hits(
-    irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> hits(irs::BlockSize(kTopK));
 
   size_t count =
     irs::ExecuteTopK(reader, *filter, scorer, kTopK,
@@ -363,8 +359,7 @@ TEST_P(WandScoringTestCase, WandMultisegResultValues) {
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 10;
-  std::vector<std::pair<irs::doc_id_t, irs::score_t>> hits(
-    irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> hits(irs::BlockSize(kTopK));
 
   size_t count =
     irs::ExecuteTopK(reader, *filter, scorer, kTopK,

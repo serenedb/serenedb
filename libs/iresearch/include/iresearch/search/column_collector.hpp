@@ -29,20 +29,20 @@ namespace irs {
 
 struct ColumnReader;
 
-class ColumnCollector {
+class ColumnArgsFetcher {
  public:
   const uint32_t* AddNorms(const ColumnReader* field);
 
   void Clear() noexcept { _columns.clear(); }
 
-  void Collect(std::span<doc_id_t> docs) {
+  void Fetch(std::span<doc_id_t> docs) {
     for (auto& [_, entry] : _columns) {
       auto& [reader, norms] = entry;
       reader->Get(docs, norms);
     }
   }
 
-  void Collect(doc_id_t doc) {
+  void Fetch(doc_id_t doc) {
     for (auto& [_, entry] : _columns) {
       auto& [reader, norms] = entry;
       SDB_ASSERT(!norms.empty());

@@ -573,7 +573,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
   ASSERT_EQ(1, index->size());
 
   MaxMemoryCounter counter;
-  irs::ColumnCollector collector;
+  irs::ColumnArgsFetcher fetcher;
 
   {
     irs::ByEditDistance filter;
@@ -610,7 +610,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     auto expected_doc = std::begin(kExpectedDocs);
     while (docs->next()) {
-      collector.Collect(docs->value());
+      fetcher.Fetch(docs->value());
       docs->FetchScoreArgs(0);
       irs::score_t value;
       score.Score(&value, 1);
@@ -641,7 +641,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     });
     ASSERT_NE(nullptr, prepared);
 
-    collector.Clear();
+    fetcher.Clear();
     auto docs = prepared->execute({
       .segment = index[0],
       .scorer = order.front().get(),
@@ -662,7 +662,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     auto expected_doc = std::begin(kExpectedDocs);
     while (docs->next()) {
-      collector.Collect(docs->value());
+      fetcher.Fetch(docs->value());
       irs::score_t value;
       docs->FetchScoreArgs(0);
       score.Score(&value, 1);
@@ -693,7 +693,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     });
     ASSERT_NE(nullptr, prepared);
 
-    collector.Clear();
+    fetcher.Clear();
     auto docs = prepared->execute({
       .segment = index[0],
       .scorer = order.front().get(),
@@ -714,7 +714,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     auto expected_doc = std::begin(kExpectedDocs);
     while (docs->next()) {
-      collector.Collect(docs->value());
+      fetcher.Fetch(docs->value());
       irs::score_t value;
       docs->FetchScoreArgs(0);
       score.Score(&value, 1);
@@ -746,7 +746,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     });
     ASSERT_NE(nullptr, prepared);
 
-    collector.Clear();
+    fetcher.Clear();
     auto docs = prepared->execute({
       .segment = index[0],
       .scorer = order.front().get(),
@@ -770,7 +770,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     std::vector<std::pair<float_t, irs::doc_id_t>> actual_docs;
     while (docs->next()) {
-      collector.Collect(docs->value());
+      fetcher.Fetch(docs->value());
       irs::score_t value;
       docs->FetchScoreArgs(0);
       score.Score(&value, 1);
@@ -819,7 +819,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     });
     ASSERT_NE(nullptr, prepared);
 
-    collector.Clear();
+    fetcher.Clear();
     auto docs = prepared->execute({
       .segment = index[0],
       .scorer = order.front().get(),
@@ -829,7 +829,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     auto score = docs->PrepareScore({
       .scorer = order.front().get(),
       .segment = &index[0],
-      .collector = &collector,
+      .fetcher = &fetcher,
     });
 
     ASSERT_FALSE(score.IsDefault());
@@ -842,7 +842,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     std::vector<std::pair<float_t, irs::doc_id_t>> actual_docs;
     while (docs->next()) {
-      collector.Collect(docs->value());
+      fetcher.Fetch(docs->value());
       irs::score_t value;
       docs->FetchScoreArgs(0);
       score.Score(&value, 1);
@@ -894,7 +894,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     });
     ASSERT_NE(nullptr, prepared);
 
-    collector.Clear();
+    fetcher.Clear();
     auto docs = prepared->execute({
       .segment = index[0],
       .scorer = order.front().get(),
@@ -904,7 +904,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     auto score = docs->PrepareScore({
       .scorer = order.front().get(),
       .segment = &index[0],
-      .collector = &collector,
+      .fetcher = &fetcher,
     });
 
     ASSERT_FALSE(score.IsDefault());
@@ -917,7 +917,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     std::vector<std::pair<float_t, irs::doc_id_t>> actual_docs;
     while (docs->next()) {
-      collector.Collect(docs->value());
+      fetcher.Fetch(docs->value());
       irs::score_t value;
       docs->FetchScoreArgs(0);
       score.Score(&value, 1);

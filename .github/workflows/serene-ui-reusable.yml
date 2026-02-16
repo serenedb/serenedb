@@ -157,7 +157,7 @@ jobs:
 
             - name: Install dependencies & build
               run: |
-                  rm -f package-lock.json
+                  rm package-lock.json
                   npm install
                   npm run build
 

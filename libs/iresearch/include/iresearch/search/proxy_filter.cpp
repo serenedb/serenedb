@@ -251,8 +251,8 @@ class ProxyQuery : public Filter::Query {
 Filter::Query::ptr ProxyFilter::prepare(const PrepareContext& ctx) const {
   // Currently we do not support caching scores.
   // Proxy filter should not be used with scorers!
-  SDB_ASSERT(ctx.scorers.empty());
-  if (!_cache || !ctx.scorers.empty()) {
+  SDB_ASSERT(!ctx.scorer);
+  if (!_cache || ctx.scorer) {
     return Filter::Query::empty();
   }
   if (!_cache->real_filter_prepared) {

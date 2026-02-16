@@ -121,7 +121,7 @@ struct Sort : irs::Scorer {
     return irs::ScoreFunction::Default();
   }
 
-  std::pair<size_t, size_t> stats_size() const final { return {0, 0}; }
+  size_t stats_size() const final { return 0; }
 };
 
 class TestSeekTermIterator : public irs::SeekTermIterator {

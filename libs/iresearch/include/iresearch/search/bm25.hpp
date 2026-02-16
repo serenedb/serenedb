@@ -88,7 +88,6 @@ class BM25 final : public irs::ScorerBase<BM25, BM25Stats> {
   FieldCollector::ptr PrepareFieldCollector() const final;
 
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
-  ScoreFunction PrepareSingleScorer(const ScoreContext& ctx) const final;
 
   WandWriter::ptr prepare_wand_writer(size_t max_levels) const final;
 

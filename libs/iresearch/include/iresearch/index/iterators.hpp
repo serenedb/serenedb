@@ -30,7 +30,6 @@
 #include "iresearch/formats/seek_cookie.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/search/column_collector.hpp"
-#include "iresearch/search/score.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/utils/attribute_provider.hpp"

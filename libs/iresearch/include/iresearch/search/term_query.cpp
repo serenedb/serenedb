@@ -22,15 +22,12 @@
 
 #include "term_query.hpp"
 
-#include <iresearch/formats/formats_attributes.hpp>
-#include <iresearch/search/all_iterator.hpp>
-#include <iresearch/search/scorer.hpp>
-
 #include "basics/memory.hpp"
-#include "iresearch/index/field_meta.hpp"
+#include "iresearch/formats/formats_attributes.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/all_iterator.hpp"
 #include "iresearch/search/prepared_state_visitor.hpp"
-#include "iresearch/search/score.hpp"
+#include "iresearch/search/scorer.hpp"
 
 namespace irs {
 
@@ -39,14 +36,13 @@ TermQuery::TermQuery(States&& states, bstring&& stats, score_t boost)
 
 DocIterator::ptr TermQuery::execute(const ExecutionContext& ctx) const {
   const auto& segment = ctx.segment;
-  const auto& ord = ctx.scorers;
   const auto* state = _states.find(segment);
 
   if (!state) [[unlikely]] {  // Invalid state
     return DocIterator::empty();
   }
 
-  if (ord.empty() &&
+  if (!ctx.scorer &&
       segment.docs_count() ==
         sdb::basics::downCast<CookieImpl>(*state->cookie).meta.docs_count)
     [[unlikely]] {
@@ -59,7 +55,8 @@ DocIterator::ptr TermQuery::execute(const ExecutionContext& ctx) const {
   DocIterator::ptr docs;
   IteratorOptions options{ctx.wand};
 
-  auto it = reader->Iterator(ord.features(),
+  const auto features = GetFeatures(ctx.scorer);
+  auto it = reader->Iterator(features,
                              {
                                .cookie = state->cookie.get(),
                                .stats = _stats.c_str(),

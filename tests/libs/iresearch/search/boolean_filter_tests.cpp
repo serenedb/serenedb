@@ -238,7 +238,6 @@ TEST(boolean_query_boost, hierarchy) {
     const irs::score_t value = 5;
 
     tests::sort::Boost sort;
-    auto pord = irs::Scorers::Prepare(sort);
 
     irs::And root;
     root.boost(value);
@@ -279,13 +278,13 @@ TEST(boolean_query_boost, hierarchy) {
     }
 
     auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorers = pord});
+      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
 
     auto docs =
-      prep->execute({.segment = irs::SubReader::empty(), .scorers = pord});
+      prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
 
     const auto& scr = docs->PrepareScore({
-      .scorer = pord.buckets().front().bucket,
+      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
       .collector = nullptr,
     });
@@ -321,7 +320,6 @@ TEST(boolean_query_boost, hierarchy) {
     const irs::score_t value = 5;
 
     tests::sort::Boost sort;
-    auto pord = irs::Scorers::Prepare(sort);
 
     irs::And root;
     root.boost(value);
@@ -369,13 +367,13 @@ TEST(boolean_query_boost, hierarchy) {
     }
 
     auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorers = pord});
+      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
 
     auto docs =
-      prep->execute({.segment = irs::SubReader::empty(), .scorers = pord});
+      prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
 
     const auto& scr = docs->PrepareScore({
-      .scorer = pord.buckets().front().bucket,
+      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
@@ -423,7 +421,6 @@ TEST(boolean_query_boost, hierarchy) {
     const irs::score_t value = 5;
 
     tests::sort::Boost sort;
-    auto pord = irs::Scorers::Prepare(sort);
 
     irs::Or root;
     root.boost(value);
@@ -470,13 +467,13 @@ TEST(boolean_query_boost, hierarchy) {
     }
 
     auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorers = pord});
+      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
 
     auto docs =
-      prep->execute({.segment = irs::SubReader::empty(), .scorers = pord});
+      prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
 
     const auto& scr = docs->PrepareScore({
-      .scorer = pord.buckets().front().bucket,
+      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
@@ -543,7 +540,6 @@ TEST(boolean_query_boost, and_filter) {
     const irs::score_t value = 5;
 
     tests::sort::Boost sort;
-    auto pord = irs::Scorers::Prepare(sort);
 
     irs::And root;
     {
@@ -553,13 +549,13 @@ TEST(boolean_query_boost, and_filter) {
     }
 
     auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorers = pord});
+      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
 
     auto docs =
-      prep->execute({.segment = irs::SubReader::empty(), .scorers = pord});
+      prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
 
     const auto& scr = docs->PrepareScore({
-      .scorer = pord.buckets().front().bucket,
+      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
@@ -575,7 +571,6 @@ TEST(boolean_query_boost, and_filter) {
     const irs::score_t value = 5;
 
     tests::sort::Boost sort;
-    auto pord = irs::Scorers::Prepare(sort);
 
     irs::And root;
     {
@@ -586,16 +581,16 @@ TEST(boolean_query_boost, and_filter) {
     root.boost(value);
 
     auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorers = pord});
+      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
 
     auto docs =
-      prep->execute({.segment = irs::SubReader::empty(), .scorers = pord});
+      prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
 
     auto* doc = irs::get<irs::DocAttr>(*docs);
     ASSERT_TRUE(bool(doc));
 
     const auto& scr = docs->PrepareScore({
-      .scorer = pord.buckets().front().bucket,
+      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
@@ -613,7 +608,6 @@ TEST(boolean_query_boost, and_filter) {
     const irs::score_t value = 5;
 
     tests::sort::Boost sort;
-    auto pord = irs::Scorers::Prepare(sort);
 
     irs::And root;
     {
@@ -629,10 +623,10 @@ TEST(boolean_query_boost, and_filter) {
     root.boost(value);
 
     auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorers = pord});
+      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
 
     auto docs =
-      prep->execute({.segment = irs::SubReader::empty(), .scorers = pord});
+      prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
 
     auto* doc = irs::get<irs::DocAttr>(*docs);
     ASSERT_TRUE(bool(doc));
@@ -640,7 +634,7 @@ TEST(boolean_query_boost, and_filter) {
     /* the first hit should be scored as value*value + value*value since it
      * exists in both results */
     const auto& scr = docs->PrepareScore({
-      .scorer = pord.buckets().front().bucket,
+      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
@@ -659,7 +653,6 @@ TEST(boolean_query_boost, and_filter) {
     const irs::score_t value = 5;
 
     tests::sort::Boost sort;
-    auto pord = irs::Scorers::Prepare(sort);
 
     irs::And root;
     root.boost(value);
@@ -684,14 +677,14 @@ TEST(boolean_query_boost, and_filter) {
     }
 
     auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorers = pord});
+      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
     auto docs =
-      prep->execute({.segment = irs::SubReader::empty(), .scorers = pord});
+      prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
     auto* doc = irs::get<irs::DocAttr>(*docs);
     ASSERT_TRUE(bool(doc));
 
     const auto& scr = docs->PrepareScore({
-      .scorer = pord.buckets().front().bucket,
+      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
@@ -711,7 +704,6 @@ TEST(boolean_query_boost, and_filter) {
     const irs::score_t value = 5;
 
     tests::sort::Boost sort;
-    auto pord = irs::Scorers::Prepare(sort);
 
     irs::And root;
     {
@@ -736,14 +728,14 @@ TEST(boolean_query_boost, and_filter) {
     }
 
     auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorers = pord});
+      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
     auto docs =
-      prep->execute({.segment = irs::SubReader::empty(), .scorers = pord});
+      prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
     auto* doc = irs::get<irs::DocAttr>(*docs);
     ASSERT_TRUE(bool(doc));
 
     const auto& scr = docs->PrepareScore({
-      .scorer = pord.buckets().front().bucket,
+      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
@@ -761,7 +753,6 @@ TEST(boolean_query_boost, and_filter) {
   // unboosted root & several unboosted subqueries
   {
     tests::sort::Boost sort;
-    auto pord = irs::Scorers::Prepare(sort);
 
     irs::And root;
     {
@@ -786,14 +777,14 @@ TEST(boolean_query_boost, and_filter) {
     }
 
     auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorers = pord});
+      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
     auto docs =
-      prep->execute({.segment = irs::SubReader::empty(), .scorers = pord});
+      prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
     auto* doc = irs::get<irs::DocAttr>(*docs);
     ASSERT_TRUE(bool(doc));
 
     const auto& scr = docs->PrepareScore({
-      .scorer = pord.buckets().front().bucket,
+      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
@@ -836,7 +827,6 @@ TEST(boolean_query_boost, or_filter) {
     const irs::score_t value = 5;
 
     tests::sort::Boost sort;
-    auto pord = irs::Scorers::Prepare(sort);
 
     irs::Or root;
     {
@@ -846,14 +836,14 @@ TEST(boolean_query_boost, or_filter) {
     root.boost(value);
 
     auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorers = pord});
+      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
     auto docs =
-      prep->execute({.segment = irs::SubReader::empty(), .scorers = pord});
+      prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
     auto* doc = irs::get<irs::DocAttr>(*docs);
     ASSERT_TRUE(bool(doc));
 
     const auto& scr = docs->PrepareScore({
-      .scorer = pord.buckets().front().bucket,
+      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
@@ -872,7 +862,6 @@ TEST(boolean_query_boost, or_filter) {
     const irs::score_t value = 5;
 
     tests::sort::Boost sort;
-    auto pord = irs::Scorers::Prepare(sort);
 
     irs::Or root;
     {
@@ -883,15 +872,15 @@ TEST(boolean_query_boost, or_filter) {
     root.boost(value);
 
     auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorers = pord});
+      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
 
     auto docs =
-      prep->execute({.segment = irs::SubReader::empty(), .scorers = pord});
+      prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
     auto* doc = irs::get<irs::DocAttr>(*docs);
     ASSERT_TRUE(bool(doc));
 
     const auto& scr = docs->PrepareScore({
-      .scorer = pord.buckets().front().bucket,
+      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
@@ -910,7 +899,6 @@ TEST(boolean_query_boost, or_filter) {
     const irs::score_t value = 5;
 
     tests::sort::Boost sort;
-    auto pord = irs::Scorers::Prepare(sort);
 
     irs::Or root;
     {
@@ -926,14 +914,14 @@ TEST(boolean_query_boost, or_filter) {
     root.boost(value);
 
     auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorers = pord});
+      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
     auto docs =
-      prep->execute({.segment = irs::SubReader::empty(), .scorers = pord});
+      prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
     auto* doc = irs::get<irs::DocAttr>(*docs);
     ASSERT_TRUE(bool(doc));
 
     const auto& scr = docs->PrepareScore({
-      .scorer = pord.buckets().front().bucket,
+      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
@@ -967,7 +955,6 @@ TEST(boolean_query_boost, or_filter) {
     const irs::score_t value = 5;
 
     tests::sort::Boost sort;
-    auto pord = irs::Scorers::Prepare(sort);
 
     irs::Or root;
     root.boost(value);
@@ -993,14 +980,14 @@ TEST(boolean_query_boost, or_filter) {
     }
 
     auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorers = pord});
+      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
     auto docs =
-      prep->execute({.segment = irs::SubReader::empty(), .scorers = pord});
+      prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
     auto* doc = irs::get<irs::DocAttr>(*docs);
     ASSERT_TRUE(bool(doc));
 
     const auto& scr = docs->PrepareScore({
-      .scorer = pord.buckets().front().bucket,
+      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
@@ -1032,7 +1019,6 @@ TEST(boolean_query_boost, or_filter) {
     const irs::score_t value = 5;
 
     tests::sort::Boost sort;
-    auto pord = irs::Scorers::Prepare(sort);
 
     irs::Or root;
 
@@ -1058,14 +1044,14 @@ TEST(boolean_query_boost, or_filter) {
     }
 
     auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorers = pord});
+      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
     auto docs =
-      prep->execute({.segment = irs::SubReader::empty(), .scorers = pord});
+      prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
     auto* doc = irs::get<irs::DocAttr>(*docs);
     ASSERT_TRUE(bool(doc));
 
     const auto& scr = docs->PrepareScore({
-      .scorer = pord.buckets().front().bucket,
+      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
@@ -1095,7 +1081,6 @@ TEST(boolean_query_boost, or_filter) {
   // unboosted root & several unboosted subqueries
   {
     tests::sort::Boost sort;
-    auto pord = irs::Scorers::Prepare(sort);
 
     irs::Or root;
     {
@@ -1120,14 +1105,14 @@ TEST(boolean_query_boost, or_filter) {
     }
 
     auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorers = pord});
+      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
     auto docs =
-      prep->execute({.segment = irs::SubReader::empty(), .scorers = pord});
+      prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
     auto* doc = irs::get<irs::DocAttr>(*docs);
     ASSERT_TRUE(bool(doc));
 
     const auto& scr = docs->PrepareScore({
-      .scorer = pord.buckets().front().bucket,
+      .scorer = &sort,
       .segment = &irs::SubReader::empty(),
     });
     ASSERT_FALSE(scr.IsDefault());
@@ -1367,9 +1352,8 @@ TEST(boolean_query_estimation, or_filter) {
     tests::sort::Boost impl;
     const irs::Scorer* sort{&impl};
 
-    auto pord = irs::Scorers::Prepare(std::span{&sort, 1});
     auto prep =
-      root.prepare({.index = irs::SubReader::empty(), .scorers = pord});
+      root.prepare({.index = irs::SubReader::empty(), .scorer = sort});
 
     auto docs = prep->execute({.segment = irs::SubReader::empty()});
 
@@ -15666,20 +15650,18 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential_ordered) {
       *score = cur_doc;
     };
 
-    auto prepared_order = irs::Scorers::Prepare(sort);
-    auto prepared_filter =
-      not_node.prepare({.index = *rdr, .scorers = prepared_order});
+    auto prepared_filter = not_node.prepare({.index = *rdr, .scorer = &sort});
     std::multimap<irs::score_t, irs::doc_id_t, std::greater<>> scored_result;
 
     ASSERT_EQ(1, rdr->size());
     auto& segment = (*rdr)[0];
 
     auto filter_itr =
-      prepared_filter->execute({.segment = segment, .scorers = prepared_order});
+      prepared_filter->execute({.segment = segment, .scorer = &sort});
     ASSERT_EQ(32, irs::CostAttr::extract(*filter_itr));
 
     auto score = filter_itr->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = &sort,
       .segment = &segment,
     });
 
@@ -15766,20 +15748,18 @@ TEST_P(BooleanFilterTestCase, not_sequential_ordered) {
       *score = cur_doc;
     };
 
-    auto prepared_order = irs::Scorers::Prepare(sort);
-    auto prepared_filter =
-      root.prepare({.index = *rdr, .scorers = prepared_order});
+    auto prepared_filter = root.prepare({.index = *rdr, .scorer = &sort});
     std::multimap<irs::score_t, irs::doc_id_t, std::greater<>> scored_result;
 
     ASSERT_EQ(1, rdr->size());
     auto& segment = (*rdr)[0];
 
     auto filter_itr =
-      prepared_filter->execute({.segment = segment, .scorers = prepared_order});
+      prepared_filter->execute({.segment = segment, .scorer = &sort});
     ASSERT_EQ(32, irs::CostAttr::extract(*filter_itr));
 
     auto score = filter_itr->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = &sort,
       .segment = &segment,
     });
 
@@ -16230,14 +16210,9 @@ TEST_P(BooleanFilterTestCase, mixed_ordered) {
       filter.mutable_options()->range.max_type = irs::BoundType::Exclusive;
     }
 
-    std::array<irs::Scorer::ptr, 2> ord{std::make_unique<irs::TFIDF>(),
-                                        std::make_unique<irs::BM25>()};
+    irs::TFIDF tfidf_scorer;
 
-    auto prepared_ord = irs::Scorers::Prepare(ord);
-    ASSERT_FALSE(prepared_ord.empty());
-    ASSERT_EQ(2, prepared_ord.buckets().size());
-
-    auto prepared = root.prepare({.index = *rdr, .scorers = prepared_ord});
+    auto prepared = root.prepare({.index = *rdr, .scorer = &tfidf_scorer});
     ASSERT_NE(nullptr, prepared);
 
     std::vector<irs::doc_id_t> expected_docs{
@@ -16246,14 +16221,14 @@ TEST_P(BooleanFilterTestCase, mixed_ordered) {
 
     auto expected_doc = expected_docs.begin();
     for (const auto& sub : rdr) {
-      auto docs = prepared->execute({.segment = sub, .scorers = prepared_ord});
+      auto docs = prepared->execute({.segment = sub, .scorer = &tfidf_scorer});
 
       auto* doc = irs::get<irs::DocAttr>(*docs);
       ASSERT_TRUE(
         bool(doc));  // ensure all iterators contain "document" attribute
 
       const auto& scr = docs->PrepareScore({
-        .scorer = prepared_ord.buckets().front().bucket,
+        .scorer = &tfidf_scorer,
         .segment = &irs::SubReader::empty(),
       });
 
@@ -16262,7 +16237,7 @@ TEST_P(BooleanFilterTestCase, mixed_ordered) {
         EXPECT_EQ(*expected_doc, doc->value);
         ++expected_doc;
 
-        irs::bstring score_value(prepared_ord.score_size(), 0);
+        irs::bstring score_value(sizeof(irs::score_t), 0);
         *reinterpret_cast<irs::score_t*>(score_value.data()) = scr.Score();
         scores.emplace_back(std::move(score_value));
       }
@@ -16434,9 +16409,8 @@ TEST(And_test, optimize_all_filters) {
     Append<irs::ByTerm>(root, "test_field", "test_term");
 
     tests::sort::Boost sort{};
-    auto pord = irs::Scorers::Prepare(sort);
     auto prepared =
-      root.prepare({.index = irs::SubReader::empty(), .scorers = pord});
+      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
     ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
     ASSERT_EQ(8.f, prepared->Boost());
   }
@@ -16447,9 +16421,8 @@ TEST(And_test, optimize_all_filters) {
     irs::And root;
     Append<irs::ByTerm>(root, "test_field", "test_term");
     root.add<irs::All>().boost(5.f);
-    auto pord = irs::Scorers::Prepare(sort);
     auto prepared =
-      root.prepare({.index = irs::SubReader::empty(), .scorers = pord});
+      root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
     ASSERT_NE(nullptr, dynamic_cast<const irs::TermQuery*>(prepared.get()));
     ASSERT_EQ(6.f, prepared->Boost());
   }
@@ -16457,7 +16430,6 @@ TEST(And_test, optimize_all_filters) {
 
 TEST(And_test, not_boosted) {
   tests::sort::Boost sort{};
-  auto pord = irs::Scorers::Prepare(sort);
   irs::And root;
   {
     auto& neg = root.add<irs::Not>();
@@ -16470,11 +16442,11 @@ TEST(And_test, not_boosted) {
     node.docs = {1};
     node.boost(5);
   }
-  auto prep = root.prepare({.index = irs::SubReader::empty(), .scorers = pord});
+  auto prep = root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
   auto docs =
-    prep->execute({.segment = irs::SubReader::empty(), .scorers = pord});
+    prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
   const auto& scr = docs->PrepareScore({
-    .scorer = pord.buckets().front().bucket,
+    .scorer = &sort,
     .segment = &irs::SubReader::empty(),
   });
   ASSERT_FALSE(scr.IsDefault());
@@ -16624,8 +16596,7 @@ TEST(Or_test, optimize_all_scored) {
   root.add<irs::All>();
   root.add<irs::Empty>();
   tests::sort::Boost sort{};
-  auto pord = irs::Scorers::Prepare(sort);
-  auto prep = root.prepare({.index = irs::SubReader::empty(), .scorers = pord});
+  auto prep = root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
 
   prep->execute({.segment = irs::SubReader::empty()});
   ASSERT_EQ(3,
@@ -16635,13 +16606,12 @@ TEST(Or_test, optimize_all_scored) {
 
 TEST(Or_test, optimize_only_all_boosted) {
   tests::sort::Boost sort{};
-  auto pord = irs::Scorers::Prepare(sort);
   irs::Or root;
   root.boost(2);
   root.add<irs::All>().boost(3);
   root.add<irs::All>().boost(5);
 
-  auto prep = root.prepare({.index = irs::SubReader::empty(), .scorers = pord});
+  auto prep = root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
 
   prep->execute({.segment = irs::SubReader::empty()});
   ASSERT_EQ(16, prep->Boost());
@@ -16649,7 +16619,6 @@ TEST(Or_test, optimize_only_all_boosted) {
 
 TEST(Or_test, boosted_not) {
   tests::sort::Boost sort{};
-  auto pord = irs::Scorers::Prepare(sort);
   irs::Or root;
   {
     auto& neg = root.add<irs::Not>();
@@ -16662,11 +16631,11 @@ TEST(Or_test, boosted_not) {
     node.docs = {1};
     node.boost(5);
   }
-  auto prep = root.prepare({.index = irs::SubReader::empty(), .scorers = pord});
+  auto prep = root.prepare({.index = irs::SubReader::empty(), .scorer = &sort});
   auto docs =
-    prep->execute({.segment = irs::SubReader::empty(), .scorers = pord});
+    prep->execute({.segment = irs::SubReader::empty(), .scorer = &sort});
   const auto& scr = docs->PrepareScore({
-    .scorer = pord.buckets().front().bucket,
+    .scorer = &sort,
     .segment = &irs::SubReader::empty(),
   });
   ASSERT_FALSE(scr.IsDefault());

@@ -12,7 +12,6 @@
 #include <iresearch/index/index_reader_options.hpp>
 #include <iresearch/search/doc_collector.hpp>
 #include <iresearch/search/filter.hpp>
-#include <iresearch/search/score.hpp>
 #include <iresearch/search/scorer.hpp>
 #include <iresearch/search/scorers.hpp>
 #include <iresearch/store/directory.hpp>
@@ -108,6 +107,17 @@ class Executor {
                                      .scorers = {&_scorer_ptr, 1},
                                    })} {}
 
+  size_t ExecuteTopK(size_t k, std::string_view query) {
+    auto filter = ParseFilter(query);
+    if (!filter) {
+      return 0;
+    }
+
+    _results.resize(irs::BlockSize(k));
+    return irs::ExecuteTopK(_reader, *filter, *_scorer, k,
+                            {.index = 0, .strict = true}, std::span{_results});
+  }
+
   size_t ExecuteTopKWithCount(size_t k, std::string_view query) {
     auto filter = ParseFilter(query);
     if (!filter) {
@@ -115,7 +125,7 @@ class Executor {
     }
 
     _results.resize(irs::BlockSize(k));
-    return irs::ExecuteTopKWithCount(_reader, *filter, _scorers, k,
+    return irs::ExecuteTopKWithCount(_reader, *filter, *_scorer, k,
                                      std::span{_results});
   }
 
@@ -123,7 +133,7 @@ class Executor {
     size_t count = 0;
     auto prepared = PrepareFilter(query);
     for (auto& segment : _reader) {
-      auto docs = prepared->execute(irs::ExecutionContext{.segment = segment});
+      auto docs = prepared->execute({.segment = segment});
       count += docs->count();
     }
     return count;
@@ -136,11 +146,11 @@ class Executor {
       case QueryType::Count:
         return ExecuteCount(query);
       case QueryType::Top10:
-        return ExecuteTopKWithCount(10, query);
+        return ExecuteTopK(10, query);
       case QueryType::Top100:
-        return ExecuteTopKWithCount(100, query);
+        return ExecuteTopK(100, query);
       case QueryType::Top1000:
-        return ExecuteTopKWithCount(1000, query);
+        return ExecuteTopK(1000, query);
       case QueryType::Top10Count:
         return ExecuteTopKWithCount(10, query);
       case QueryType::Top100Count:
@@ -160,7 +170,7 @@ class Executor {
     }
     return filter->prepare({
       .index = _reader,
-      .scorers = _scorers,
+      .scorer = _scorer.get(),
     });
   }
 
@@ -185,7 +195,6 @@ class Executor {
   std::vector<std::pair<irs::doc_id_t, irs::score_t>> _results;
   irs::Scorer::ptr _scorer;
   irs::Scorer* _scorer_ptr{_scorer.get()};
-  irs::Scorers _scorers{irs::Scorers::Prepare(std::span{&_scorer, 1})};
   irs::analysis::Analyzer::ptr _tokenizer;
   irs::Format::ptr _format;
   irs::MMapDirectory _dir;

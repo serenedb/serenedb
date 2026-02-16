@@ -44,8 +44,6 @@ using VariadicPhraseIterator = PhraseIterator<
 
 DocIterator::ptr FixedPhraseQuery::execute(const ExecutionContext& ctx) const {
   auto& rdr = ctx.segment;
-  auto& ord = ctx.scorers;
-
   // get phrase state for the specified reader
   auto phrase_state = states.find(rdr);
 
@@ -63,7 +61,7 @@ DocIterator::ptr FixedPhraseQuery::execute(const ExecutionContext& ctx) const {
   }
 
   // get index features required for query & order
-  const IndexFeatures features = ord.features() | kRequiredFeatures;
+  const IndexFeatures features = GetFeatures(ctx.scorer) | kRequiredFeatures;
 
   using Adapter = PostingAdapter<PostingIteratorBase<FixedTermTraits<false>>>;
 
@@ -93,7 +91,7 @@ DocIterator::ptr FixedPhraseQuery::execute(const ExecutionContext& ctx) const {
   const bool has_intervals = absl::c_any_of(
     this->positions,
     [](const auto& pos) { return pos.offs_max != pos.offs_min; });
-  if (ord.empty()) {
+  if (!ctx.scorer) {
     return ResolveBool(
       has_intervals, [&]<bool HasIntervals> -> DocIterator::ptr {
         using FixedPhraseIterator =
@@ -222,10 +220,8 @@ DocIterator::ptr VariadicPhraseQuery::execute(
     return DocIterator::empty();
   }
 
-  auto& ord = ctx.scorers;
-
   // get features required for query & order
-  const IndexFeatures features = ord.features() | kRequiredFeatures;
+  const IndexFeatures features = GetFeatures(ctx.scorer) | kRequiredFeatures;
 
   ScoreAdapters conj_itrs;
   conj_itrs.reserve(phrase_state->terms.size());
@@ -278,7 +274,7 @@ DocIterator::ptr VariadicPhraseQuery::execute(
     this->positions,
     [](const auto& pos) { return pos.offs_max != pos.offs_min; });
 
-  if (ord.empty()) {
+  if (!ctx.scorer) {
     return ResolveBool(
       has_intervals, [&]<bool HasIntervals> -> DocIterator::ptr {
         return memory::make_managed<

@@ -71,11 +71,11 @@ jobs:
       BRANCH: ${{ inputs.BRANCH }}
       PRESET: ${{ inputs.PRESET }}
       LOCATION: ${{ inputs.LOCATION }}
-      DOCKER_SERENEDB_IMAGE: ${{ inputs.DOCKER_SERENEDB_IMAGE }} 
+      DOCKER_SERENEDB_IMAGE: ${{ inputs.DOCKER_SERENEDB_IMAGE }}
       PUSH_IMAGES_2_REGISTRY: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
       DOCKER_EXTRA_TAGS: ${{ inputs.DOCKER_EXTRA_TAGS }}
       EXTRA_ARTIFACTS: ${{ inputs.EXTRA_ARTIFACTS }}
-      DOCKER_BUILD_IMAGES: ${{ inputs.DOCKER_BUILD_IMAGES }} 
+      DOCKER_BUILD_IMAGES: ${{ inputs.DOCKER_BUILD_IMAGES }}
       # Job config environment
       JOB_CONFIG: ${{ inputs.JOB_CONFIG }}
       # Build config environment

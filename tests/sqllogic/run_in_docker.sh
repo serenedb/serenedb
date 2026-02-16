@@ -37,10 +37,10 @@ fi
 # Executable 'serened' switches to 'serenedb' user. If required dirs are not created,
 # /serenedb dir owner is 'root' and it's impossible for 'serenedb' user to create directory there.
 mkdir -p "$WORKSPACE/sanitizers"
-mkdir -p "$WORKSPACE/build/coverage"
+mkdir -p "$WORKSPACE/${BUILD_DIR:-build}/coverage"
 
 if test -z "$BUILD_IMAGE"; then
-    export BUILD_IMAGE=10.serenedb.com:5000/serenedb-build-ubuntu:latest
+  export BUILD_IMAGE=registry.serenedb.com:5000/serenedb-build-ubuntu:latest
 fi
 
 cd $SQLLOGIC_DIR

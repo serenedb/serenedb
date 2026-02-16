@@ -29,9 +29,9 @@ services:
         sh -c '
           if ! id serenedb >/dev/null 2>&1; then
             useradd serenedb &&
-            chown -R serenedb:serenedb /serenedb/sanitizers /serenedb/build/coverage
+            chown -R serenedb:serenedb /serenedb/sanitizers /serenedb/${BUILD_DIR:-build}/coverage
           fi &&
-          exec /serenedb/build/bin/serened /tmp/serenedb_datadir \
+          exec /serenedb/${BUILD_DIR:-build}/bin/serened /tmp/serenedb_datadir \
             --server.endpoint pgsql+tcp://0.0.0.0:7777 \
             --server.endpoint tcp://0.0.0.0:8529 \
             --server.authentication 0

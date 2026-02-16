@@ -1,5 +1,0 @@
-query
-select * from sdb_log where message like '%Have fun%';
-----
-id	timestamp	topic	level	message
-<slt:ignore>	<slt:ignore>	general	INFO	[xxxxx] {general} SereneDB (version 1.0.0 [linux]) is ready for business. Have fun!\n

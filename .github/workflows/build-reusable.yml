@@ -70,7 +70,7 @@ env:
   WORKSPACE: ${{ github.workspace }}
   BUILD_CONFIG: ${{ inputs.build_config || '{}' }}
   DOCKER_EXTRA_TAGS: ${{ inputs.DOCKER_EXTRA_TAGS }}
-  DOCKER_SERENEDB_IMAGE: ${{ inputs.DOCKER_SERENEDB_IMAGE }} 
+  DOCKER_SERENEDB_IMAGE: ${{ inputs.DOCKER_SERENEDB_IMAGE }}
   DOCKER_BUILD_IMAGES: ${{ inputs.DOCKER_BUILD_IMAGES }}
   # Job config environment (from JOB_CONFIG JSON)
   CLUSTER_BRANCH: ${{ fromJSON(inputs.JOB_CONFIG).CLUSTER_BRANCH }}
@@ -131,12 +131,12 @@ jobs:
               echo "USE_COVERAGE=" >> $GITHUB_ENV
               ;;
           esac
-          
+
           BUILD_CONFIG='${{ inputs.BUILD_CONFIG }}'
           if [[ -n "$BUILD_CONFIG" && "$BUILD_CONFIG" != "{}" ]]; then
             echo "$BUILD_CONFIG" | docker run --rm -i ghcr.io/jqlang/jq:1.8.1 -r 'to_entries | .[] | "\(.key)=\(.value)"' >> $GITHUB_ENV
           fi
-          
+
           git config --global --add safe.directory '*'
 
       - name: Checkout SereneDB
@@ -162,11 +162,9 @@ jobs:
 
       - name: Remap directories to legacy paths
         run: |
-          rm -rf packages tests scripts
+          rm -rf packages
           mv private/gh-ci private/ci
           mv gh-packages packages
-          mv gh-tests tests
-          mv gh-scripts scripts
 
       - name: Print environment
         if: env.DEBUG_PRINT_ENV == 'true'
@@ -180,7 +178,7 @@ jobs:
         run: ./private/ci/steps/02-ci-build-docker-env-file.bash
 
       # ==================== BUILD ====================
-      # if selected, DOCKER_BUILD_IMAGES owns the build 
+      # if selected, DOCKER_BUILD_IMAGES owns the build
       - name: SereneDB build
         id: serenedb_build
         if: env.DOCKER_BUILD_IMAGES != 'true'

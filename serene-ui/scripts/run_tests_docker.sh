@@ -27,13 +27,40 @@ docker compose -f "$COMPOSE_FILE" up --build -d
 
 wait_for_service
 
-echo "🧪 Running tests..."
-docker compose -f "$COMPOSE_FILE" exec -T serene-ui sh -c '
-  npm run --prefix /test-app/apps/backend test && # <-- do we want to stop if one fails?
-  # TODO: (vlaski) add echo message
-  npm run --prefix /test-app/apps/web test-storybook
-  # TODO: (vlaski) add echo message
-'
+FAILED=0
+FAILED_LOGS=()
 
-# TODO: (vlaski) fix test report message below
+run_docker_test() {
+  local name="$1"
+  local cmd="$2"
+  local log_file
+  log_file="$(mktemp)"
+
+  echo "🧪 Running $name..."
+  if docker compose -f "$COMPOSE_FILE" exec -T serene-ui sh -c "$cmd" >"$log_file" 2>&1; then
+    echo "✅ $name passed"
+    rm -f "$log_file"
+    return 0
+  fi
+
+  echo "❌ $name failed"
+  FAILED=1
+  FAILED_LOGS+=("$name:$log_file")
+  return 0
+}
+
+run_docker_test "backend tests" "npm run --prefix /test-app/apps/backend test"
+run_docker_test "storybook tests" "npm run --prefix /test-app/apps/web test-storybook"
+
+if [[ "$FAILED" -ne 0 ]]; then
+  for entry in "${FAILED_LOGS[@]}"; do
+    name="${entry%%:*}"
+    log_file="${entry#*:}"
+    echo "----- $name logs -----"
+    cat "$log_file"
+    rm -f "$log_file"
+  done
+  exit 1
+fi
+
 echo "✅ All tests passed"

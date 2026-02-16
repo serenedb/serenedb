@@ -116,15 +116,14 @@ class ChildToParentJoin : public DocIterator, private Matcher {
     return SeekInternal(parent);
   }
 
-  uint32_t count() final { return Count(*this); }
+  uint32_t count() final { return CountImpl(*this); }
 
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final;
 
   uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
                    std::span<doc_id_t, kScoreBlock> docs,
                    std::span<score_t, kScoreBlock> scores) final {
-    SDB_ASSERT(kScoreBlock <= docs.size());
-    return DocIterator::Collect(*this, scorer, columns, docs, scores);
+    return CollectImpl(*this, scorer, columns, docs, scores);
   }
 
   void FetchScoreArgs(uint16_t index) final {
@@ -323,13 +322,11 @@ class AnyMatcher : protected MatcherBase<MergeType> {
       auto& child = *self._child;
       const auto parent_doc = self.value();
 
-      child.Collect([&](doc_id_t doc) -> bool {
-        if (doc >= parent_doc) {
-          return false;
-        }
+      // TODO(mbkkt) Maybe replace with collector to optimize?
+      for (auto doc = child.value(); doc < parent_doc; doc = child.advance()) {
         this->CollectChild(child);
-        return true;
-      });
+      }
+
       this->FinishParent();
     }
   }
@@ -504,13 +501,11 @@ class MinMatcher : protected MatcherBase<MergeType> {
       auto& child = *self._child;
       const auto parent_doc = self.value();
 
-      child.Collect([&](doc_id_t doc) {
-        if (doc >= parent_doc) {
-          return false;
-        }
+      // TODO(mbkkt) Maybe replace with collector to optimize?
+      for (auto doc = child.value(); doc < parent_doc; doc = child.advance()) {
         this->CollectChild(child);
-        return true;
-      });
+      }
+
       this->FinishParent();
     }
   }

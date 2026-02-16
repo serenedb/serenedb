@@ -78,7 +78,9 @@ struct DocIterator : AttributeProvider {
   virtual doc_id_t advance() = 0;
 
   // deprecated: use advance() instead
-  IRS_FORCE_INLINE bool next() { return !doc_limits::eof(advance()); }
+  IRS_FORCE_INLINE bool next(this auto& self) {
+    return !doc_limits::eof(self.advance());
+  }
 
   // Position iterator at a specified target and returns current value
   // (for more information see class description)
@@ -88,59 +90,39 @@ struct DocIterator : AttributeProvider {
                            ColumnCollector& columns,
                            std::span<doc_id_t, kScoreBlock> docs,
                            std::span<score_t, kScoreBlock> scores) {
-    SDB_ASSERT(kScoreBlock <= docs.size());
-    return Collect(*this, scorer, columns, docs, scores);
+    return CollectImpl(*this, scorer, columns, docs, scores);
   }
 
   virtual void FetchScoreArgs(uint16_t index) {}
 
-  // Iterate from current position, calling func(doc_id) per doc.
-  // func returns false to stop. Returns current iterator value.
-  virtual doc_id_t Collect(absl::FunctionRef<bool(doc_id_t)> func) {
-    return Collect(*this, func);
-  }
-
   virtual ScoreFunction PrepareScore(const PrepareScoreContext& ctx);
 
-  virtual uint32_t count() { return Count(*this); }
+  virtual uint32_t count() { return CountImpl(*this); }
 
+  // TODO(mbkkt) Maybe implement FillBlock for all iterators?
   virtual std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
                                               uint64_t* mask,
                                               CollectScoreContext score,
                                               CollectMatchContext match) {
-    return FillBlock(*this, min, max, mask, score, match);
+    return FillBlockImpl(*this, min, max, mask, score, match);
   }
 
  protected:
-  template<typename Iterator>
-  static uint32_t Count(Iterator& it) {
+  IRS_FORCE_INLINE static uint32_t CountImpl(auto& self) {
     uint32_t count = 0;
-    while (it.next()) {
+    while (self.next()) {
       ++count;
     }
     return count;
   }
 
-  template<typename Iterator>
-  static doc_id_t Collect(Iterator& it,
-                          absl::FunctionRef<bool(doc_id_t)> func) {
-    auto doc = it.value();
-    for (; !doc_limits::eof(doc); doc = it.advance()) {
-      if (!func(doc)) {
-        return doc;
-      }
-    }
-    return doc;
-  }
-
-  template<typename Iterator>
-  static uint32_t Collect(Iterator& it, const ScoreFunction& scorer,
-                          ColumnCollector& columns,
-                          std::span<doc_id_t, kScoreBlock> docs,
-                          std::span<score_t, kScoreBlock> scores) {
+  IRS_FORCE_INLINE static uint32_t CollectImpl(
+    auto& self, const ScoreFunction& scorer, ColumnCollector& columns,
+    std::span<doc_id_t, kScoreBlock> docs,
+    std::span<score_t, kScoreBlock> scores) {
     size_t i = 0;
     for (; i < docs.size(); ++i) {
-      const auto doc = it.advance();
+      const auto doc = self.advance();
       if (doc_limits::eof(doc)) [[unlikely]] {
         if (i) {
           columns.Collect(docs.first(i));
@@ -149,7 +131,7 @@ struct DocIterator : AttributeProvider {
         return static_cast<uint32_t>(i);
       }
       docs[i] = doc;
-      it.FetchScoreArgs(i);
+      self.FetchScoreArgs(i);
     }
 
     SDB_ASSERT(i == kScoreBlock);
@@ -158,29 +140,29 @@ struct DocIterator : AttributeProvider {
     return kScoreBlock;
   }
 
-  template<typename Iterator>
-  static std::pair<doc_id_t, bool> FillBlock(Iterator& it, doc_id_t min,
-                                             doc_id_t max, uint64_t* mask,
-                                             CollectScoreContext score,
-                                             CollectMatchContext match) {
+  IRS_FORCE_INLINE static std::pair<doc_id_t, bool> FillBlockImpl(
+    auto& self, doc_id_t min, doc_id_t max, uint64_t* mask,
+    CollectScoreContext score, CollectMatchContext match) {
     if (!score.score || score.score->IsDefault()) {
       score.merge_type = ScoreMergeType::Noop;
     }
 
     return ResolveMergeType(score.merge_type, [&]<ScoreMergeType MergeType> {
       return ResolveBool(match.matches != nullptr, [&]<bool TrackMatch> {
-        return FillBlockImpl<MergeType, TrackMatch>(it, min, max, mask, score,
+        return FillBlockImpl<MergeType, TrackMatch>(self, min, max, mask, score,
                                                     match);
       });
     });
   }
 
  private:
-  template<ScoreMergeType MergeType, bool TrackMatch, typename Iterator>
+  template<ScoreMergeType MergeType, bool TrackMatch>
   static std::pair<doc_id_t, bool> FillBlockImpl(
-    Iterator& it, doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
-    [[maybe_unused]] CollectScoreContext score,
+    auto& self, const doc_id_t min, const doc_id_t max,
+    uint64_t* IRS_RESTRICT mask, [[maybe_unused]] CollectScoreContext score,
     [[maybe_unused]] CollectMatchContext match) {
+    SDB_ASSERT(min < max);
+
     [[maybe_unused]] std::array<score_t, kScoreBlock> score_buf;
     [[maybe_unused]] std::array<doc_id_t, kScoreBlock> score_hits;
     [[maybe_unused]] uint16_t score_index = 0;
@@ -192,24 +174,24 @@ struct DocIterator : AttributeProvider {
         if (score.collector) {
           score.collector->Collect(std::span{score_hits.data(), n});
         }
-        score.score->Score(score_buf.data(), n);
+        if (n == kScoreBlock) [[likely]] {
+          score.score->ScoreBlock(score_buf.data());
+        } else {
+          score.score->Score(score_buf.data(), n);
+        }
         Merge<MergeType>(score.score_window, score_hits.data(), min,
                          score_buf.data(), n);
         score_index = 0;
       }
     };
 
-    auto value = it.value();
-
-    // disjunction is 1 step next behind, that may happen:
-    // - before the very first next()
-    // - after seek() in case of 'kSeekReadahead == false'
+    auto value = self.value();
     while (value < min) {
-      value = it.advance();
+      value = self.advance();
     }
-
     bool empty = true;
-    for (; value < max; value = it.advance()) {
+    for (; value < max; value = self.advance()) {
+      SDB_ASSERT(value >= min);
       const auto offset = value - min;
 
       if constexpr (TrackMatch) {
@@ -226,7 +208,7 @@ struct DocIterator : AttributeProvider {
 
       if constexpr (MergeType != ScoreMergeType::Noop) {
         score_hits[score_index] = value;
-        it.FetchScoreArgs(score_index);
+        self.FetchScoreArgs(score_index);
         ++score_index;
 
         if (score_index == kScoreBlock) {

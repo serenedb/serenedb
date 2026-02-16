@@ -111,25 +111,24 @@ void AssertNormHeader(irs::bytes_view header, uint32_t num_bytes, uint32_t min,
   constexpr irs::NormVersion kVersion{irs::NormVersion::Min};
 
   ASSERT_FALSE(irs::IsNull(header));
-  ASSERT_EQ(10, header.size());
+  ASSERT_EQ(14, header.size());
 
   auto* p = header.data();
   const auto actual_verson = *p++;
   const auto actual_num_bytes = *p++;
-  const auto actual_min = irs::read<uint32_t>(p);
   const auto actual_max = irs::read<uint32_t>(p);
+  [[maybe_unused]] const auto actual_sum = irs::read<uint64_t>(p);
   ASSERT_EQ(p, header.data() + header.size());
 
   ASSERT_EQ(static_cast<uint32_t>(kVersion), actual_verson);
   ASSERT_EQ(num_bytes, actual_num_bytes);
-  ASSERT_EQ(min, actual_min);
   ASSERT_EQ(max, actual_max);
 }
 
 TEST(NormHeaderTest, Construct) {
   irs::NormHeader hdr{irs::NormEncoding::Int};
-  ASSERT_EQ(1, hdr.MaxNumBytes());
-  ASSERT_EQ(sizeof(uint32_t), hdr.NumBytes());
+  ASSERT_EQ(1, irs::NormHeader::MaxNumBytes(hdr.Max()));
+  ASSERT_EQ(sizeof(uint32_t), std::to_underlying(hdr.Encoding()));
 
   irs::bstring buf;
   irs::BytesOutput writer{buf};
@@ -160,8 +159,8 @@ TEST(NormHeaderTest, ResetByValue) {
     hdr.Reset(std::numeric_limits<ValueType>::max() - 2);
     hdr.Reset(std::numeric_limits<ValueType>::max());
     hdr.Reset(std::numeric_limits<ValueType>::max() - 1);
-    ASSERT_EQ(sizeof(ValueType), hdr.MaxNumBytes());
-    ASSERT_EQ(sizeof(ValueType), hdr.NumBytes());
+    ASSERT_EQ(sizeof(ValueType), irs::NormHeader::MaxNumBytes(hdr.Max()));
+    ASSERT_EQ(sizeof(ValueType), std::to_underlying(hdr.Encoding()));
 
     irs::bstring buf;
     irs::BytesOutput writer{buf};
@@ -229,7 +228,7 @@ TEST(NormHeaderTest, ResetByPayload) {
     hdr.Reset(std::numeric_limits<ValueType>::max() - 2);
     hdr.Reset(std::numeric_limits<ValueType>::max());
     hdr.Reset(std::numeric_limits<ValueType>::max() - 1);
-    ASSERT_EQ(sizeof(ValueType), hdr.NumBytes());
+    ASSERT_EQ(sizeof(ValueType), std::to_underlying(hdr.Encoding()));
 
     buf.clear();
     irs::BytesOutput writer{buf};
@@ -240,15 +239,14 @@ TEST(NormHeaderTest, ResetByPayload) {
                      std::numeric_limits<ValueType>::max());
   };
 
-  irs::NormHeader acc{irs::NormEncoding::Byte};
-
   // 1-byte header
   {
+    irs::NormHeader acc{irs::NormEncoding::Byte};
     irs::bstring buf;
     write_header(uint8_t{}, buf);
     auto hdr = irs::NormHeader::Read(buf);
     ASSERT_TRUE(hdr.has_value());
-    acc.Reset(hdr.value());
+    acc.Reset(hdr->Max());
     buf.clear();
     irs::BytesOutput writer{buf};
     irs::NormHeader::Write(acc, writer);
@@ -261,11 +259,12 @@ TEST(NormHeaderTest, ResetByPayload) {
 
   // 2-byte header
   {
+    irs::NormHeader acc{irs::NormEncoding::Short};
     irs::bstring buf;
     write_header(uint16_t{}, buf);
     auto hdr = irs::NormHeader::Read(buf);
     ASSERT_TRUE(hdr.has_value());
-    acc.Reset(hdr.value());
+    acc.Reset(hdr->Max());
     buf.clear();
     irs::BytesOutput writer{buf};
     irs::NormHeader::Write(acc, writer);
@@ -278,11 +277,12 @@ TEST(NormHeaderTest, ResetByPayload) {
 
   // 4-byte header
   {
+    irs::NormHeader acc{irs::NormEncoding::Int};
     irs::bstring buf;
     write_header(uint32_t{}, buf);
     auto hdr = irs::NormHeader::Read(buf);
     ASSERT_TRUE(hdr.has_value());
-    acc.Reset(hdr.value());
+    acc.Reset(hdr->Max());
     buf.clear();
     irs::BytesOutput writer{buf};
     irs::NormHeader::Write(acc, writer);

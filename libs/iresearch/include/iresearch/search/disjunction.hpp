@@ -66,8 +66,6 @@ class UnaryDisjunction : public CompoundDocIterator<Adapter> {
 
   doc_id_t seek(doc_id_t target) final { return _it.seek(target); }
 
-  uint32_t count() final { return _it.count(); }
-
   void visit(void* ctx, IteratorVisitor<Adapter> visitor) final {
     SDB_ASSERT(ctx);
     SDB_ASSERT(visitor);
@@ -305,8 +303,6 @@ class SmallDisjunction : public CompoundDocIterator<Adapter> {
     return doc_value = min;
   }
 
-  uint32_t count() final { return DocIterator::Count(*this); }
-
   void visit(void* ctx, IteratorVisitor<Adapter> visitor) final {
     SDB_ASSERT(ctx);
     SDB_ASSERT(visitor);
@@ -456,8 +452,6 @@ class Disjunction : public CompoundDocIterator<Adapter> {
 
     return doc_value = lead().value();
   }
-
-  uint32_t count() final { return DocIterator::Count(*this); }
 
   void visit(void* ctx, IteratorVisitor<Adapter> visitor) final {
     SDB_ASSERT(ctx);
@@ -777,8 +771,6 @@ class MinMatchDisjunction : public DocIterator {
       }
     }
   }
-
-  uint32_t count() final { return Count(*this); }
 
   // Calculates total count of matched iterators. This value could be
   // greater than required min_match. All matched iterators points

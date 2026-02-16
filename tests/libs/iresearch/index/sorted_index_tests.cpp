@@ -277,7 +277,9 @@ class SortedIndexTestCase : public tests::IndexTestBase {
     {
       irs::NormHeader hdr{after_consolidation ? irs::NormEncoding::Byte
                                               : irs::NormEncoding::Int};
-      hdr.Reset(1);
+      for (size_t i = 0; i < count; ++i) {
+        hdr.Reset(1);
+      }
 
       irs::bstring buf;
       irs::BytesOutput writer{buf};

@@ -95,7 +95,7 @@ class DataSourceWithSearchTest : public ::testing::Test,
     irs::IndexWriterOptions options;
     options.column_info = column_info_provider;
     options.features = feature_provider;
-    _codec = irs::formats::Get("1_5avx");
+    _codec = irs::formats::Get("1_5simd");
     _data_writer =
       irs::IndexWriter::Make(_dir, _codec, irs::kOmCreate, options);
   }

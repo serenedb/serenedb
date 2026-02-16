@@ -100,37 +100,41 @@ struct BM25FieldCollector final : FieldCollector {
   }
 };
 
-struct Params {
+struct ObjectParams {
   float_t k = BM25::K();
   float_t b = BM25::B();
+  bool boost_as_score = BM25::BOOST_AS_SCORE();
+  bool approximate = true;
 };
 
 Scorer::ptr MakeFromObject(const vpack::Slice slice) {
-  Params params;
+  ObjectParams params;
   auto r = vpack::ReadObjectNothrow(slice, params,
                                     {
                                       .skip_unknown = true,
                                       .strict = false,
                                     });
   if (!r.ok()) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      absl::StrCat("Error '", r.errorMessage(),
-                   "' while constructing bm25 scorer from VPack arguments"));
+    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Error '", r.errorMessage(),
+              "' while constructing bm25 scorer from VPack arguments");
     return {};
   }
 
-  return std::make_unique<BM25>(params.k, params.b);
+  return std::make_unique<BM25>(params.k, params.b, params.boost_as_score,
+                                params.approximate);
 }
 
+struct ArrayParams {
+  float_t k = BM25::K();
+  float_t b = BM25::B();
+};
+
 Scorer::ptr MakeFromArray(const vpack::Slice slice) {
-  Params params;
+  ArrayParams params;
   auto r = vpack::ReadTupleNothrow(slice, params);
   if (!r.ok()) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      absl::StrCat("Error '", r.errorMessage(),
-                   "' while constructing bm25 scorer from VPack arguments"));
+    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Error '", r.errorMessage(),
+              "' while constructing bm25 scorer from VPack arguments");
     return {};
   }
 
@@ -155,32 +159,30 @@ Scorer::ptr MakeVPack(std::string_view args) {
   if (IsNull(args)) {
     // default args
     return std::make_unique<irs::BM25>();
-  } else {
-    vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-    return MakeVPack(slice);
   }
+  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
+  return MakeVPack(slice);
 }
 
 Scorer::ptr MakeJson(std::string_view args) {
   if (IsNull(args)) {
     // default args
     return std::make_unique<irs::BM25>();
-  } else {
-    try {
-      auto vpack = vpack::Parser::fromJson(args.data(), args.size());
-      return MakeVPack(vpack->slice());
-    } catch (const vpack::Exception& ex) {
-      SDB_ERROR(
-        "xxxxx", sdb::Logger::IRESEARCH,
-        absl::StrCat("Caught error '", ex.what(),
-                     "' while constructing VPack from JSON for bm25 scorer"));
-    } catch (...) {
-      SDB_ERROR(
-        "xxxxx", sdb::Logger::IRESEARCH,
-        "Caught error while constructing VPack from JSON for bm25 scorer");
-    }
-    return nullptr;
   }
+  try {
+    auto vpack = vpack::Parser::fromJson(args.data(), args.size());
+    return MakeVPack(vpack->slice());
+  } catch (const vpack::Exception& ex) {
+    SDB_ERROR(
+      "xxxxx", sdb::Logger::IRESEARCH,
+      absl::StrCat("Caught error '", ex.what(),
+                   "' while constructing VPack from JSON for bm25 scorer"));
+  } catch (...) {
+    SDB_ERROR(
+      "xxxxx", sdb::Logger::IRESEARCH,
+      "Caught error while constructing VPack from JSON for bm25 scorer");
+  }
+  return nullptr;
 }
 
 template<typename T>
@@ -519,7 +521,15 @@ WandWriter::ptr BM25::prepare_wand_writer(size_t max_levels) const {
     // x / (k / avg_dl + x)
     return std::make_unique<FreqNormWriter<kWandTagDivNorm>>(max_levels);
   }
-  // Approximation that suited for any BM25
+  if (_approximate) {
+    // It's not precise if we have more than 1 segment.
+    // But search is distributed and we don't compute cluster wide avg_dl,
+    // so it's better to use this instead of kWandTagBM25.
+    // But if we want precise wand info, we need to return kWandTagBM25 here.
+    return std::make_unique<FreqNormWriter<kWandTagAvgDL>>(max_levels, _b);
+  }
+  // It's precise for any numbers of segments, even for distributed case.
+  // In other words for this we don't need to know avg_dl in ahead.
   return std::make_unique<FreqNormWriter<kWandTagBM25>>(max_levels, _b);
 }
 

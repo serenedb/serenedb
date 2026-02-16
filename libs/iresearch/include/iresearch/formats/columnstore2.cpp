@@ -478,11 +478,11 @@ class ColumnBase : public ColumnReader, private util::Noncopyable {
   IResourceManager& _resource_manager_cached;
 
  protected:
-  template<typename Factory>
-  NormReader::ptr MakeNormReader(Factory&& f) const;
+  template<typename F>
+  auto ResolveNormHeader(F&& f) const;
 
   template<typename F>
-  auto ResolveNormHeader(F&&) const;
+  NormReader::ptr MakeNormReader(F&& f) const;
 
  private:
   template<typename ValueReader, typename Func>
@@ -501,21 +501,12 @@ class ColumnBase : public ColumnReader, private util::Noncopyable {
 template<typename F>
 auto ColumnBase::ResolveNormHeader(F&& f) const {
   auto header = NormHeader::Read(payload());
-
   if (!header) [[unlikely]] {
-    return f.template operator()<void>();
+    return decltype(f.template operator()<NormEncoding::Byte>()) {};
   }
-
-  switch (header->Encoding()) {
-    case NormEncoding::Byte:
-      return f.template operator()<NormEncoding::Byte>();
-    case NormEncoding::Short:
-      return f.template operator()<NormEncoding::Short>();
-    case NormEncoding::Int:
-      return f.template operator()<NormEncoding::Int>();
-  }
-
-  SDB_UNREACHABLE();
+  return ResolveNormEncoding(header->Encoding(), [&]<NormEncoding Encoding> {
+    return f.template operator()<Encoding>();
+  });
 }
 
 template<NormEncoding Encoding, typename Iterator>
@@ -523,34 +514,31 @@ class NormReaderImpl : public NormReader {
  public:
   explicit NormReaderImpl(Iterator&& it) noexcept : _it{std::move(it)} {}
 
-  void Collect(std::span<doc_id_t> docs, std::span<uint32_t> values) final {
+  void Get(std::span<const doc_id_t> docs, std::span<uint32_t> values) final {
     SDB_ASSERT(docs.size() <= values.size());
-
+    SDB_ASSERT(absl::c_is_sorted(docs));
     _it->reset();  // TODO(gnusi): remove this
-
-    const size_t size = docs.size();
-    for (size_t i = 0; i < size; ++i) {
-      const auto d = _it->seek(docs[i]);
-      if (doc_limits::eof(d)) [[unlikely]] {
-        return;
-      }
-      auto payload = _it->GetPayload();
-      values[i] = Norm::Read<Encoding>(payload);
+    const auto size = docs.size();
+    for (size_t i = 0; i != size; ++i) {
+      values[i] = GetImpl(docs[i]);
     }
   }
 
-  bool Get(doc_id_t doc, uint32_t* value) final {
+  uint32_t Get(doc_id_t doc) final {
     _it->reset();  // TODO(gnusi): remove this
-    const auto d = _it->seek(doc);
-    if (doc_limits::eof(d)) [[unlikely]] {
-      return false;
-    }
-    auto payload = _it->GetPayload();
-    *value = Norm::Read<Encoding>(payload);
-    return true;
+    return GetImpl(doc);
   }
 
  private:
+  IRS_FORCE_INLINE uint32_t GetImpl(doc_id_t doc) {
+    const auto r = _it->seek(doc);
+    if (r != doc) [[unlikely]] {
+      return {};
+    }
+    const auto payload = _it->GetPayload();
+    return Norm::Read<Encoding>(payload);
+  }
+
   Iterator _it;
 };
 
@@ -579,36 +567,35 @@ class DirectFixedNormReader : public NormReader {
   DirectFixedNormReader(doc_id_t base, const byte_type* origin) noexcept
     : _doc_base{base}, _origin{origin} {}
 
-  void Collect(std::span<doc_id_t> docs,
-               std::span<uint32_t> values) noexcept final {
+  void Get(std::span<const doc_id_t> docs,
+           std::span<uint32_t> values) noexcept final {
     SDB_ASSERT(docs.size() <= values.size());
 
-    const size_t size = docs.size();
+    const auto size = docs.size();
     const auto base = _doc_base;
-    const auto* origin = _origin;
+    const auto* IRS_RESTRICT const origin = _origin;
+    auto* IRS_RESTRICT const values_data = values.data();
+    const auto* IRS_RESTRICT const docs_data = docs.data();
 
     for (size_t i = 0; i < size; ++i) {
-      values[i] = ReadValue(origin, docs[i] - base);
+      values_data[i] = ReadValue(origin, docs_data[i] - base);
     }
   }
 
-  IRS_FORCE_INLINE bool Get(doc_id_t doc, uint32_t* value) noexcept final {
+  IRS_FORCE_INLINE uint32_t Get(doc_id_t doc) noexcept final {
     SDB_ASSERT(doc >= _doc_base);
-    *value = ReadValue(_origin, doc - _doc_base);
-    return true;
+    return ReadValue(_origin, doc - _doc_base);
   }
 
  private:
-  IRS_FORCE_INLINE uint32_t ReadValue(const byte_type* origin,
-                                      doc_id_t index) noexcept {
+  IRS_FORCE_INLINE static uint32_t ReadValue(
+    const byte_type* IRS_RESTRICT origin, doc_id_t index) noexcept {
     if constexpr (Encoding == NormEncoding::Byte) {
-      return _origin[index];
+      return origin[index];
     } else if constexpr (Encoding == NormEncoding::Short) {
-      return absl::little_endian::Load<uint16_t>(
-        reinterpret_cast<const uint16_t*>(origin) + index);
+      return absl::little_endian::Load16(origin + index * sizeof(uint16_t));
     } else if constexpr (Encoding == NormEncoding::Int) {
-      return absl::little_endian::Load<uint32_t>(
-        reinterpret_cast<const uint32_t*>(origin) + index);
+      return absl::little_endian::Load32(origin + index * sizeof(uint32_t));
     } else {
       static_assert(false);
     }
@@ -618,22 +605,18 @@ class DirectFixedNormReader : public NormReader {
   const byte_type* const _origin;
 };
 
-template<typename Factory>
-NormReader::ptr ColumnBase::MakeNormReader(Factory&& f) const {
-  return ResolveNormHeader(absl::Overload{
-    [&]<NormEncoding Encoding> {
-      return MakeIterator(
-        std::forward<Factory>(f),
-        []<typename Iterator>(Iterator it) -> NormReader::ptr {
-          return memory::make_managed<NormReaderImpl<Encoding, Iterator>>(
-            std::move(it));
-        },
-        ColumnHint::Normal);
-    },
-    []<typename T> {
-      // TODO(gnusi): return empty?
-      return NormReader::ptr{};
-    }});
+template<typename F>
+NormReader::ptr ColumnBase::MakeNormReader(F&& f) const {
+  // TODO(gnusi) Maybe we want to return empty NormReader if payload is invalid?
+  return ResolveNormHeader([&]<NormEncoding Encoding> {
+    return MakeIterator(
+      std::forward<F>(f),
+      []<typename Iterator>(Iterator it) -> NormReader::ptr {
+        return memory::make_managed<NormReaderImpl<Encoding, Iterator>>(
+          std::move(it));
+      },
+      ColumnHint::Normal);
+  });
 }
 
 template<typename Factory, typename Callback>
@@ -960,27 +943,22 @@ ResettableDocIterator::ptr DenseFixedLengthColumn::iterator(
 }
 
 NormReader::ptr DenseFixedLengthColumn::norms() const {
-  return ResolveNormHeader(absl::Overload{
-    [&]<NormEncoding Encoding> {
-      return MakeIterator(
-        Factory{this},
-        [&]<typename Iterator>(Iterator it) -> NormReader::ptr {
-          if constexpr (std::is_same_v<typename Iterator::element_type,
-                                       RangeColumnIterator<
-                                         PayloadReader<ValueDirectReader>>>) {
-            return memory::make_managed<DirectFixedNormReader<Encoding>>(
-              Header().min, it->GetData());
-          } else {
-            return memory::make_managed<NormReaderImpl<Encoding, Iterator>>(
-              std::move(it));
-          }
-        },
-        ColumnHint::Normal);
-    },
-    []<typename T> {
-      // TODO(gnusi): return empty?
-      return NormReader::ptr{};
-    }});
+  return ResolveNormHeader([&]<NormEncoding Encoding> -> NormReader::ptr {
+    return MakeIterator(
+      Factory{this},
+      [&]<typename Iterator>(Iterator it) -> NormReader::ptr {
+        if constexpr (std::is_same_v<typename Iterator::element_type,
+                                     RangeColumnIterator<
+                                       PayloadReader<ValueDirectReader>>>) {
+          return memory::make_managed<DirectFixedNormReader<Encoding>>(
+            Header().min, it->GetData());
+        } else {
+          return memory::make_managed<NormReaderImpl<Encoding, Iterator>>(
+            std::move(it));
+        }
+      },
+      ColumnHint::Normal);
+  });
 }
 
 class FixedLengthColumn : public ColumnBase {

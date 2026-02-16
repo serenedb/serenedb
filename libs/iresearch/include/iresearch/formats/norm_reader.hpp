@@ -32,11 +32,25 @@ namespace irs {
 struct NormReader : public memory::Managed {
   using ptr = memory::managed_ptr<NormReader>;
 
-  virtual ~NormReader() = default;
+  virtual void Get(std::span<const doc_id_t> docs,
+                   std::span<uint32_t> values) = 0;
 
-  virtual void Collect(std::span<doc_id_t> docs,
-                       std::span<uint32_t> values) = 0;
-  virtual bool Get(doc_id_t docs, uint32_t* value) = 0;
+  virtual uint32_t Get(doc_id_t doc) = 0;
+
+  virtual score_t GetAvg() const noexcept {
+    SDB_ASSERT(false);
+    return {};
+  }
+
+ protected:
+  IRS_FORCE_INLINE void GetImpl(this auto& self, std::span<const doc_id_t> docs,
+                                std::span<uint32_t> values) {
+    SDB_ASSERT(docs.size() <= values.size());
+    const auto size = docs.size();
+    for (size_t i = 0; i < size; ++i) {
+      values[i] = self.Get(docs[i]);
+    }
+  }
 };
 
 }  // namespace irs

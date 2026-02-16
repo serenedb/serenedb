@@ -345,7 +345,10 @@ struct ColumnReader : public memory::Managed {
   //  If the column implementation supports document payloads then it
   //  can be accessed via the 'payload' attribute.
   virtual ResettableDocIterator::ptr iterator(ColumnHint hint) const = 0;
-  virtual NormReader::ptr norms() const { return {}; }
+  virtual NormReader::ptr norms() const {
+    SDB_ASSERT(false);
+    return {};
+  }
 
   // Returns total number of columns.
   virtual doc_id_t size() const = 0;

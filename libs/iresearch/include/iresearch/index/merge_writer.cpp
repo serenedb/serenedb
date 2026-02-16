@@ -1108,9 +1108,9 @@ class BufferedValues final : public ColumnReader, DataOutput {
   std::string_view name() const noexcept final { return {}; }
 
   bytes_view payload() const noexcept final {
-    return _header.has_value() ? bytes_view{_header->data() + sizeof(uint32_t),
-                                            _header->size() - sizeof(uint32_t)}
-                               : bytes_view{};
+    return _header ? bytes_view{_header->data() + sizeof(uint32_t),
+                                _header->size() - sizeof(uint32_t)}
+                   : bytes_view{};
   }
 
   doc_id_t size() const noexcept final {
@@ -1123,6 +1123,10 @@ class BufferedValues final : public ColumnReader, DataOutput {
 
     // FIXME(gnusi): can avoid allocation with the help of managed_ptr
     return memory::make_managed<BufferedColumnIterator>(_index, _data);
+  }
+
+  NormReader::ptr norms() const final {
+    return MakeNormReader(payload(), _index, _data);
   }
 
   const auto& Index() const { return _index; }

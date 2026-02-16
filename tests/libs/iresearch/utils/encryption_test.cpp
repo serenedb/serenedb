@@ -358,7 +358,7 @@ class EncryptionTestCase : public tests::DirectoryTestCaseBase<> {
         enc->header_length() + irs::bytes_io<uint64_t>::vsize(header.size()),
         decryptor.stream().Position());
       ASSERT_EQ(std::max(buf_size, size_t(1)) * cipher->block_size(),
-                decryptor.buffer_size());
+                decryptor.BufferSize());
       ASSERT_EQ(0, decryptor.Position());
 
       decryptor.Seek(fp_magic);
@@ -511,13 +511,13 @@ TEST(encryption_test_case, ensure_no_double_bufferring) {
       irs::BufferedIndexInput::reset(_buf, sizeof _buf, 0);
     }
 
-    uint64_t Length() const final { return _in->Length(); }
+    uint64_t Length() const noexcept final { return _in->Length(); }
+    bool IsEOF() const noexcept final { return Position() >= Length(); }
 
     IndexInput::ptr Dup() const final { throw irs::NotImplError(); }
-
     IndexInput::ptr Reopen() const final { throw irs::NotImplError(); }
 
-    uint32_t Checksum(size_t offset) const final {
+    uint32_t Checksum(uint64_t offset) const final {
       return _in->Checksum(offset);
     }
 
@@ -526,7 +526,7 @@ TEST(encryption_test_case, ensure_no_double_bufferring) {
     size_t LastReadSize() const noexcept { return _last_read_size; }
 
    protected:
-    void SeekInternal(size_t pos) final { _in->Seek(pos); }
+    void SeekInternal(uint64_t pos) final { _in->Seek(pos); }
 
     size_t ReadInternal(irs::byte_type* b, size_t size) final {
       _last_read_size = size;

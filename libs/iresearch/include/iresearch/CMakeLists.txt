@@ -125,6 +125,7 @@ set(IResearch_core_sources
     ./search/term_query.cpp
     ./search/boolean_filter.cpp
     ./search/boolean_query.cpp
+    ./search/mixed_boolean_filter.cpp
     ./search/ngram_similarity_filter.cpp
     ./search/ngram_similarity_query.cpp
     ./search/geo_filter.cpp
@@ -234,6 +235,7 @@ target_link_libraries(
     PUBLIC ${FAISS_LIB}
     PUBLIC re2
     PUBLIC serene_geo
+    PUBLIC streamvbyte
     PRIVATE lz4_static
     PRIVATE text
     PRIVATE stemmer-static

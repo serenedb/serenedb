@@ -321,18 +321,18 @@ Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
     EXPECT_FALSE(!out);
     irs::WriteStr(*out, std::string_view("file_header"));
 
-    writer->prepare(*out, state);
-    writer->begin_field(irs::FieldProperties{.index_features = features});
+    writer->Prepare(*out, state);
+    writer->BeginField(irs::FieldProperties{.index_features = features});
 
     TestPostings it{docs, features};
-    writer->write(it, term_meta);
-    const auto stats = writer->end_field();
+    writer->Write(it, term_meta);
+    const auto stats = writer->EndField();
     EXPECT_EQ(docs.size(), stats.docs_count);
     const uint64_t expected_wand_mask{irs::IndexFeatures::None !=
                                       (features & irs::IndexFeatures::Freq)};
     EXPECT_EQ(expected_wand_mask, stats.wand_mask);
-    writer->encode(*out, term_meta);
-    writer->end();
+    writer->Encode(*out, term_meta);
+    writer->End();
   }
 
   irs::SegmentMeta meta;
@@ -359,8 +359,8 @@ Format15TestCase::WriteReadMeta(irs::Directory& dir, DocsView docs,
     EXPECT_EQ(term_meta.docs_count, read_meta.docs_count);
     EXPECT_EQ(term_meta.doc_start, read_meta.doc_start);
     EXPECT_EQ(term_meta.pos_start, read_meta.pos_start);
-    EXPECT_EQ(term_meta.pos_end, read_meta.pos_end);
     EXPECT_EQ(term_meta.pay_start, read_meta.pay_start);
+    EXPECT_EQ(term_meta.pos_offset, read_meta.pos_offset);
     EXPECT_EQ(term_meta.e_single_doc, read_meta.e_single_doc);
     EXPECT_EQ(term_meta.e_skip_start, read_meta.e_skip_start);
   }

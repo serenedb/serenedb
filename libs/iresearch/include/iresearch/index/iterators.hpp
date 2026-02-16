@@ -169,15 +169,15 @@ struct DocIterator : AttributeProvider {
 
     return ResolveMergeType(score.merge_type, [&]<ScoreMergeType MergeType> {
       return ResolveBool(match.matches != nullptr, [&]<bool TrackMatch> {
-        return CollectBlockImpl<MergeType, TrackMatch>(it, min, max, mask,
-                                                       score, match);
+        return FillBlockImpl<MergeType, TrackMatch>(it, min, max, mask, score,
+                                                    match);
       });
     });
   }
 
  private:
   template<ScoreMergeType MergeType, bool TrackMatch, typename Iterator>
-  static std::pair<doc_id_t, bool> CollectBlockImpl(
+  static std::pair<doc_id_t, bool> FillBlockImpl(
     Iterator& it, doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,
     [[maybe_unused]] CollectScoreContext score,
     [[maybe_unused]] CollectMatchContext match) {

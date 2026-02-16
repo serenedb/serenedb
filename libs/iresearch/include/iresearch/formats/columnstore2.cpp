@@ -458,7 +458,7 @@ class ColumnBase : public ColumnReader, private util::Noncopyable {
   }
 
   void StoreBitmapIndex(size_t bitmap_size, size_t buffer_offset,
-                        RemappedBytesViewInput::mapping* mapping,
+                        RemappedBytesViewInput::Mapping* mapping,
                         ColumnHeader& hdr, IndexInput& in) {
     SDB_ASSERT(bitmap_size);
     SDB_ASSERT(hdr.docs_index);
@@ -668,8 +668,7 @@ auto ColumnBase::MakeIterator(Factory&& f, Callback&& callback,
     return MakeIterator(f(std::move(value_in), *_cipher), std::move(index_in),
                         hint, std::forward<Callback>(callback));
   } else {
-    const byte_type* data =
-      value_in->ReadBuffer(0, value_in->Length(), BufferHint::PERSISTENT);
+    const byte_type* data = value_in->ReadData(0, value_in->Length());
 
     if (data) {
       // direct buffer access
@@ -852,7 +851,7 @@ class DenseFixedLengthColumn : public ColumnBase {
     if (IsEncrypted(Header()) && !_column_data.empty()) {
       _buffered_input.reset();  // force memory release
       _resource_manager_cached.Decrease(
-        sizeof(RemappedBytesViewInput::mapping_value) * 2);
+        sizeof(RemappedBytesViewInput::MappingValue) * 2);
     }
   }
 
@@ -872,13 +871,13 @@ class DenseFixedLengthColumn : public ColumnBase {
     if (encrypted) {
       // We don't want to store actual number to not increase column size,
       // so it's approximated number of mappings
-      mapping_size = sizeof(RemappedBytesViewInput::mapping_value) * 2;
+      mapping_size = sizeof(RemappedBytesViewInput::MappingValue) * 2;
     }
     if (!AllocateBufferedMemory(total_size, mapping_size)) {
       return;
     }
     in.ReadBytes(_data, _column_data.data(), data_size);
-    RemappedBytesViewInput::mapping mapping;
+    RemappedBytesViewInput::Mapping mapping;
     if (bitmap_size) {
       StoreBitmapIndex(bitmap_size, data_size, &mapping, hdr, in);
     }
@@ -1023,7 +1022,7 @@ class FixedLengthColumn : public ColumnBase {
     if (IsEncrypted(Header()) && !_column_data.empty()) {
       _buffered_input.reset();  // force memory release
       _resource_manager_cached.Decrease(
-        sizeof(RemappedBytesViewInput::mapping_value) * _blocks.size());
+        sizeof(RemappedBytesViewInput::MappingValue) * _blocks.size());
     }
   }
 
@@ -1041,7 +1040,7 @@ class FixedLengthColumn : public ColumnBase {
           bytes_view{_column_data.data(), _column_data.size()});
       }
     } else {
-      RemappedBytesViewInput::mapping mapping;
+      RemappedBytesViewInput::Mapping mapping;
       if (MakeBufferedData<true>(_len, hdr, in, _blocks, _column_data,
                                  next_sorted_columns, &mapping)) {
         _buffered_input = std::make_unique<RemappedBytesViewInput>(
@@ -1083,7 +1082,7 @@ class FixedLengthColumn : public ColumnBase {
     uint64_t len, ColumnHeader& hdr, IndexInput& in, Blocks& blocks,
     std::vector<byte_type>& column_data,
     std::span<memory::managed_ptr<ColumnReader>> next_sorted_columns,
-    RemappedBytesViewInput::mapping* mapping) {
+    RemappedBytesViewInput::Mapping* mapping) {
     SDB_ASSERT(!blocks.empty());
     const auto last_block_full = hdr.docs_count % Column::kBlockSize == 0;
     auto last_offset = blocks.back();
@@ -1096,7 +1095,7 @@ class FixedLengthColumn : public ColumnBase {
       // We don't want to store actual number to not increase column size,
       // so it's approximated number of mappings
       mapping_size =
-        sizeof(RemappedBytesViewInput::mapping_value) * blocks.size();
+        sizeof(RemappedBytesViewInput::MappingValue) * blocks.size();
     }
     for (auto& block : blocks) {
       size_t length = (block != last_offset || last_block_full)
@@ -1228,7 +1227,7 @@ class SparseColumn : public ColumnBase {
     if (IsEncrypted(Header()) && !_column_data.empty()) {
       _buffered_input.reset();  // force memory release
       _resource_manager_cached.Decrease(
-        sizeof(RemappedBytesViewInput::mapping_value) * _blocks.size() * 2);
+        sizeof(RemappedBytesViewInput::MappingValue) * _blocks.size() * 2);
     }
   }
 
@@ -1246,7 +1245,7 @@ class SparseColumn : public ColumnBase {
           bytes_view{_column_data.data(), _column_data.size()});
       }
     } else {
-      RemappedBytesViewInput::mapping mapping;
+      RemappedBytesViewInput::Mapping mapping;
       if (MakeBufferedData<true>(hdr, in, _blocks, _column_data,
                                  next_sorted_columns, &mapping)) {
         _buffered_input = std::make_unique<RemappedBytesViewInput>(
@@ -1300,7 +1299,7 @@ class SparseColumn : public ColumnBase {
     ColumnHeader& hdr, IndexInput& in, ManagedVector<ColumnBlock>& blocks,
     std::vector<byte_type>& column_data,
     std::span<memory::managed_ptr<ColumnReader>> next_sorted_columns,
-    RemappedBytesViewInput::mapping* mapping) {
+    RemappedBytesViewInput::Mapping* mapping) {
     // idx adr/block offset length source
     std::vector<std::tuple<size_t, bool, size_t, size_t, size_t>> chunks;
     size_t chunks_size{0};
@@ -1312,7 +1311,7 @@ class SparseColumn : public ColumnBase {
       // We don't want to store actual number to not increase column size,
       // so it's approximated number of mappings
       mapping_size =
-        sizeof(RemappedBytesViewInput::mapping_value) * blocks.size() * 2;
+        sizeof(RemappedBytesViewInput::MappingValue) * blocks.size() * 2;
     }
     for (auto& block : blocks) {
       size_t length{0};

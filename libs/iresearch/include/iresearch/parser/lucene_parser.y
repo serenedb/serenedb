@@ -58,7 +58,6 @@ void yyerror(sdb::ParserContext& ctx, const char *s);
     int num;
     float fnum;
     irs::FilterWithBoost* filter;
-    irs::BooleanFilter* parent;
 }
 
 %token <sv> TERM PHRASE REGEX PREFIX SUFFIX WILDCARD STAR
@@ -68,7 +67,7 @@ void yyerror(sdb::ParserContext& ctx, const char *s);
 %token LPAREN RPAREN LBRACKET RBRACKET LBRACE RBRACE
 %token COLON CARET TILDE PLUS MINUS
 
-%type <filter> query clause_list clause term_expr boosted_expr modified_term base_term range_expr
+%type <filter> modified_term base_term range_expr
 %type <sv> range_bound
 
 %left OR
@@ -79,97 +78,36 @@ void yyerror(sdb::ParserContext& ctx, const char *s);
 %%
 
 query:
-    clause_list                     {
-                                      if (ctx.required_and) {
-                                        ctx.current_parent = ctx.required_and;
-                                        ctx.required_and = nullptr;
-                                      }
-                                      $$ = $1;
-                                    }
+    clause_list
     ;
 
 clause_list:
-    clause                          { $$ = $1; }
-    | clause_list clause            { $$ = $2; }
-    | clause_list AND               {
-                                      if (ctx.required_and) {
-                                        ctx.current_parent = ctx.required_and;
-                                        ctx.required_and = nullptr;
-                                      }
-                                      // Pop the previous term from current parent
-                                      auto prev = ctx.current_parent->PopBack();
-                                      $<parent>$ = ctx.current_parent;
-                                      // Create And and add the previous term to it
-                                      auto& and_filter = ctx.current_parent->add<irs::And>();
-                                      and_filter.add(std::move(prev));
-                                      ctx.current_parent = &and_filter;
-                                    }
-        clause                      {
-                                      $$ = ctx.current_parent;
-                                      ctx.current_parent = $<parent>3;
-                                    }
-    | clause_list OR                {
-                                      if (ctx.required_and) {
-                                        ctx.current_parent = ctx.required_and;
-                                        ctx.required_and = nullptr;
-                                      }
-                                    }
-        clause                      { $$ = $4; }
+    mod_clause                      { ctx.AddClause(sdb::Conjunction::Or); }
+    | clause_list mod_clause        { ctx.AddClause(sdb::Conjunction::Or); }
+    | clause_list AND mod_clause    { ctx.AddClause(sdb::Conjunction::And); }
+    | clause_list OR mod_clause     { ctx.AddClause(sdb::Conjunction::Or); }
     ;
 
-clause:
-    term_expr                       { $$ = $1; }
-    | NOT                           { $<parent>$ = ctx.current_parent; }
-                                    {
-                                      auto& not_filter = $<parent>2->add<irs::Not>();
-                                      ctx.current_parent = &not_filter.filter<irs::Or>();
-                                      $<filter>$ = &not_filter;
-                                    }
-        clause                      {
-                                      ctx.current_parent = $<parent>2;
-                                      $$ = $<filter>3;
-                                    }
-    | PLUS                          {
-                                      if (!ctx.required_and) {
-                                        ctx.required_and = &ctx.current_parent->add<irs::And>();
-                                        ctx.current_parent = ctx.required_and;
-                                      }
-                                    }
-        clause                      { $$ = $3; }
-    | MINUS                         { $<parent>$ = ctx.current_parent; }
-                                    {
-                                      auto& not_filter = $<parent>2->add<irs::Not>();
-                                      ctx.current_parent = &not_filter.filter<irs::Or>();
-                                      $<filter>$ = &not_filter;
-                                    }
-        clause                      {
-                                      ctx.current_parent = $<parent>2;
-                                      $$ = $<filter>3;
-                                    }
+mod_clause:
+    term_expr                       { ctx.last_mod = sdb::Modifier::None; }
+    | PLUS term_expr                { ctx.last_mod = sdb::Modifier::Required; }
+    | MINUS term_expr               { ctx.last_mod = sdb::Modifier::Not; }
+    | NOT term_expr                 { ctx.last_mod = sdb::Modifier::Not; }
     ;
 
 term_expr:
-    boosted_expr                    { $$ = $1; }
+    boosted_expr
     | TERM COLON                    {
                                       $<sv>$ = {ctx.default_field.data(), ctx.default_field.size()};
                                       ctx.default_field = $1;
                                     }
-      term_expr                     {
-                                      ctx.default_field = $<sv>3;
-                                      $$ = $4;
-                                    }
+      term_expr                     { ctx.default_field = $<sv>3; }
     ;
 
 boosted_expr:
-    modified_term                   { $$ = $1; }
-    | modified_term CARET NUMBER    {
-                                      $1->boost(static_cast<float>($3));
-                                      $$ = $1;
-                                    }
-    | modified_term CARET FLOAT     {
-                                      $1->boost($3);
-                                      $$ = $1;
-                                    }
+    modified_term
+    | modified_term CARET NUMBER    { $1->boost(static_cast<float>($3)); }
+    | modified_term CARET FLOAT     { $1->boost($3); }
     ;
 
 modified_term:
@@ -189,12 +127,12 @@ base_term:
     | WILDCARD                      { $$ = &ctx.AddWildcard($1); }
     | range_expr                    { $$ = $1; }
     | LPAREN                        {
-                                      $<parent>$ = ctx.current_parent;
-                                      ctx.current_parent = &ctx.current_parent->add<irs::Or>();
+                                      $<filter>$ = ctx.current_root;
+                                      ctx.current_root = &ctx.current_root->GetOptional().add<irs::MixedBooleanFilter>();
                                     }
         clause_list RPAREN          {
-                                      $$ = ctx.current_parent;
-                                      ctx.current_parent = $<parent>2;
+                                      $$ = ctx.current_root;
+                                      ctx.current_root = sdb::basics::downCast<irs::MixedBooleanFilter>($<filter>2);
                                     }
     ;
 

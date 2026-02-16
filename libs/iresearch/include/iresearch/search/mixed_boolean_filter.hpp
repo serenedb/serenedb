@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2022 ArangoDB GmbH, Cologne, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -15,22 +15,35 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
-///
-/// @author Andrey Abramov
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
 
-#include <memory>
-
-#include "iresearch/utils/attribute_provider.hpp"
+#include "iresearch/search/boolean_filter.hpp"
 
 namespace irs {
 
-// Implementation defined term value state
-struct SeekCookie : AttributeProvider {
-  using ptr = std::unique_ptr<SeekCookie>;
+class MixedBooleanFilter final : public FilterWithType<MixedBooleanFilter>,
+                                 public AllDocsProvider {
+ public:
+  MixedBooleanFilter() : _and{&_root.add<And>()}, _or{&_root.add<Or>()} {}
+
+  auto& GetRequired(this auto& self) noexcept { return *self._and; }
+
+  auto& GetOptional(this auto& self) noexcept { return *self._or; }
+
+  bool empty() const noexcept { return _and->empty() && _or->empty(); }
+
+  Query::ptr prepare(const PrepareContext& ctx) const final;
+
+ protected:
+  bool equals(const Filter& rhs) const noexcept final;
+
+ private:
+  And _root;
+  And* _and;
+  Or* _or;
 };
 
 }  // namespace irs

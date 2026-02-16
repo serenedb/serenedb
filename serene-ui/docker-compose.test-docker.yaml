@@ -1,0 +1,25 @@
+services:
+  test-database:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "6363:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  serene-ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: serene-ui
+    ports:
+      - "3000:3000"
+      - "6543:6543"
+    depends_on:
+      test-database:
+        condition: service_healthy

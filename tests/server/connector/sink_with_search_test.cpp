@@ -34,6 +34,7 @@
 #include "connector/data_source.hpp"
 #include "connector/key_utils.hpp"
 #include "connector/primary_key.hpp"
+#include "connector/search_data_source.hpp"
 #include "connector/search_remove_filter.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "connector/serenedb_connector.hpp"
@@ -43,6 +44,7 @@
 
 using namespace sdb;
 using namespace sdb::connector;
+using namespace sdb::connector::search;
 
 namespace {
 
@@ -188,7 +190,9 @@ class DataSinkWithSearchTest : public ::testing::Test,
     ObjectId object_key, const std::vector<velox::column_index_t>& pk,
     std::unique_ptr<rocksdb::Transaction>& data_transaction,
     irs::IndexWriter::Transaction& index_transaction,
-    primary_key::Keys& written_row_keys) {
+    primary_key::Keys& written_row_keys,
+    std::optional<std::vector<catalog::Column::Id>> index_col_idx =
+      std::nullopt) {
     rocksdb::TransactionOptions trx_opts;
     trx_opts.skip_concurrency_control = true;
     trx_opts.lock_timeout = 100;
@@ -198,8 +202,12 @@ class DataSinkWithSearchTest : public ::testing::Test,
     ASSERT_NE(data_transaction, nullptr);
     std::vector<std::unique_ptr<SinkInsertWriter>> index_writers;
     std::vector<catalog::Column::Id> col_idx;
-    col_idx.append_range(all_column_oids |
-                         std::views::transform([](auto& a) { return a.id; }));
+    if (index_col_idx.has_value()) {
+      col_idx = index_col_idx.value();
+    } else {
+      col_idx.append_range(all_column_oids |
+                           std::views::transform([](auto& a) { return a.id; }));
+    }
     index_writers.emplace_back(
       std::make_unique<connector::search::SearchSinkInsertWriter>(
         index_transaction, col_idx));
@@ -215,18 +223,19 @@ class DataSinkWithSearchTest : public ::testing::Test,
     }
   }
 
-  void MakeRocksDBWrite(std::vector<std::string> names,
-                        std::vector<velox::VectorPtr> data,
-                        std::vector<ColumnInfo> all_column_oids,
-                        ObjectId& object_key,
-                        primary_key::Keys& written_row_keys) {
+  void MakeRocksDBWrite(
+    std::vector<std::string> names, std::vector<velox::VectorPtr> data,
+    std::vector<ColumnInfo> all_column_oids, ObjectId& object_key,
+    primary_key::Keys& written_row_keys,
+    std::optional<std::vector<catalog::Column::Id>> index_col_idx =
+      std::nullopt) {
     object_key = kObjectKey;
     auto row_data = makeRowVector(names, data);
     std::unique_ptr<rocksdb::Transaction> transaction;
     irs::IndexWriter::Transaction index_transaction;
     std::vector<velox::column_index_t> pk = {0};
     PrepareRocksDBWrite(row_data, all_column_oids, object_key, pk, transaction,
-                        index_transaction, written_row_keys);
+                        index_transaction, written_row_keys, index_col_idx);
     ASSERT_TRUE(index_transaction.Valid());
     ASSERT_TRUE(transaction->Commit().ok());
     ASSERT_TRUE(index_transaction.Commit());
@@ -820,6 +829,72 @@ TEST_F(DataSinkWithSearchTest,
     VerifyRocksDB(read.value()->childAt(0).get(), update_data[1].get(), idxs2);
     VerifyRocksDB(read.value()->childAt(2).get(), update_data[2].get(), idxs2);
   }
+}
+
+TEST_F(DataSinkWithSearchTest, test_InsertNotAllColumnsInIndex) {
+  std::vector<sdb::catalog::Column::Id> all_column_oids = {0, 1, 2};
+  std::vector<ColumnInfo> all_columns = {
+    {.id = 0, .name = ""}, {.id = 1, .name = ""}, {.id = 2, .name = ""}};
+  std::vector<std::string> names = {"id", "value", "description"};
+  std::vector<velox::TypePtr> types = {velox::INTEGER(), velox::VARCHAR(),
+                                       velox::VARCHAR()};
+
+  std::vector<catalog::Column::Id> index_col_id = {1};
+
+  std::vector<velox::VectorPtr> data = {
+    makeFlatVector<int32_t>({1, 42, 9001}),
+    makeFlatVector<velox::StringView>({"1", "42", "9001"}),
+    makeFlatVector<velox::StringView>({"value3", "value2", "value1"})};
+
+  ObjectId object_key;
+  primary_key::Keys written_row_keys{*pool_.get()};
+  MakeRocksDBWrite(names, data, all_columns, object_key, written_row_keys,
+                   index_col_id);
+
+  auto reader = irs::DirectoryReader(_dir, _codec);
+  ASSERT_EQ(1, reader.size());
+  ASSERT_EQ(3, reader.docs_count());
+  ASSERT_EQ(3, reader.live_docs_count());
+  auto id_terms = reader[0].field(
+    std::string_view{"\x00\x00\x00\x00\x00\x00\x00\x00\x02", 9});
+  ASSERT_EQ(nullptr, id_terms);
+  auto value_terms = reader[0].field(
+    std::string_view{"\x00\x00\x00\x00\x00\x00\x00\x01\x03", 9});
+  ASSERT_NE(nullptr, value_terms);
+  auto description_terms = reader[0].field(
+    std::string_view{"\x00\x00\x00\x00\x00\x00\x00\x02\x03", 9});
+  ASSERT_EQ(nullptr, description_terms);
+  const auto* pk_column =
+    reader[0].column(sdb::connector::search::kPkFieldName);
+  ASSERT_NE(nullptr, pk_column);
+  irs::And root;
+  auto& term_filter = root.add<irs::ByTerm>();
+  *term_filter.mutable_field() =
+    std::string{"\x00\x00\x00\x00\x00\x00\x00\x01\x03", 9};
+  term_filter.mutable_options()->term =
+    irs::ViewCast<irs::byte_type>(std::string_view("42"));
+
+  auto query = root.prepare({.index = reader});
+  SearchDataSource source(*pool(), nullptr, *_db, *_cf_handles.front(),
+                          velox::ROW(names, types), all_column_oids,
+                          all_column_oids[0], kObjectKey, reader, *query);
+
+  source.addSplit(std::make_shared<SereneDBConnectorSplit>("test_connector"));
+  const auto expected = makeRowVector(
+    {makeFlatVector<int32_t>({42}), makeFlatVector<velox::StringView>({"42"}),
+     makeFlatVector<velox::StringView>({"value2"})});
+  auto future = velox::ContinueFuture::makeEmpty();
+
+  auto read = source.next(10, future);
+  ASSERT_TRUE(read.has_value());
+  ASSERT_TRUE(future.isReady());
+  ASSERT_NE(read.value(), nullptr);
+  facebook::velox::test::assertEqualVectors(expected, read.value());
+  auto future2 = velox::ContinueFuture::makeEmpty();
+  auto read2 = source.next(11, future2);
+  ASSERT_TRUE(read2.has_value());
+  ASSERT_TRUE(future2.isReady());
+  ASSERT_EQ(read2.value(), nullptr);
 }
 
 }  // namespace

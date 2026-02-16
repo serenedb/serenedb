@@ -571,11 +571,11 @@ class DirectFixedNormReader : public NormReader {
            std::span<uint32_t> values) noexcept final {
     SDB_ASSERT(docs.size() <= values.size());
 
-    const size_t size = docs.size();
+    const auto size = docs.size();
     const auto base = _doc_base;
-    const auto* IRS_RESTRICT origin = _origin;
-    auto* IRS_RESTRICT values_data = values.data();
-    const auto* IRS_RESTRICT docs_data = docs.data();
+    const auto* IRS_RESTRICT const origin = _origin;
+    auto* IRS_RESTRICT const values_data = values.data();
+    const auto* IRS_RESTRICT const docs_data = docs.data();
 
     for (size_t i = 0; i < size; ++i) {
       values_data[i] = ReadValue(origin, docs_data[i] - base);

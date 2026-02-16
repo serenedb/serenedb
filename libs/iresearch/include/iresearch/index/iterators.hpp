@@ -116,10 +116,10 @@ struct DocIterator : AttributeProvider {
     return count;
   }
 
-  IRS_FORCE_INLINE uint32_t
-  CollectImpl(auto& self, const ScoreFunction& scorer, ColumnCollector& columns,
-              std::span<doc_id_t, kScoreBlock> docs,
-              std::span<score_t, kScoreBlock> scores) {
+  IRS_FORCE_INLINE static uint32_t CollectImpl(
+    auto& self, const ScoreFunction& scorer, ColumnCollector& columns,
+    std::span<doc_id_t, kScoreBlock> docs,
+    std::span<score_t, kScoreBlock> scores) {
     size_t i = 0;
     for (; i < docs.size(); ++i) {
       const auto doc = self.advance();
@@ -140,7 +140,7 @@ struct DocIterator : AttributeProvider {
     return kScoreBlock;
   }
 
-  IRS_FORCE_INLINE std::pair<doc_id_t, bool> FillBlockImpl(
+  IRS_FORCE_INLINE static std::pair<doc_id_t, bool> FillBlockImpl(
     auto& self, doc_id_t min, doc_id_t max, uint64_t* mask,
     CollectScoreContext score, CollectMatchContext match) {
     if (!score.score || score.score->IsDefault()) {
@@ -157,7 +157,7 @@ struct DocIterator : AttributeProvider {
 
  private:
   template<ScoreMergeType MergeType, bool TrackMatch>
-  IRS_NO_INLINE std::pair<doc_id_t, bool> FillBlockImpl(
+  static std::pair<doc_id_t, bool> FillBlockImpl(
     auto& self, const doc_id_t min, const doc_id_t max,
     uint64_t* IRS_RESTRICT mask, [[maybe_unused]] CollectScoreContext score,
     [[maybe_unused]] CollectMatchContext match) {
@@ -186,7 +186,7 @@ struct DocIterator : AttributeProvider {
     };
 
     auto value = self.value();
-    while (value < min) [[unlikely]] {
+    while (value < min) {
       value = self.advance();
     }
     bool empty = true;

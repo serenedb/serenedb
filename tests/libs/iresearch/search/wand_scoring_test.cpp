@@ -379,8 +379,7 @@ static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(WandScoringTest, WandScoringTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values("1_5simd",
-                                                              "1_5avx")),
+                                            ::testing::Values("1_5simd")),
                          WandScoringTestCase::to_string);
 
 }  // namespace

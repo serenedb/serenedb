@@ -109,7 +109,7 @@ std::vector<std::unique_ptr<Writer>> CreateIndexWriters(
   } else {
     transaction.EnsureIndexesTransactions(table_id, resolve_index_writer);
   }
-#ifdef SDB_FAULT_INJECTION
+#ifdef SDB_FAULT_INJECTION_2
   // failpoints are per process so we make unique name to allow multiple sqlogic
   // tests run in parallel without interference of failpoints
   // TODO(Dronplane): Find a better way. Maybe make failpoints database

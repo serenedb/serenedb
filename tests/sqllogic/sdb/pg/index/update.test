@@ -29,10 +29,16 @@ statement ok
 DROP TABLE idx_update_pk;
 
 statement ok
+RESET sdb_fault_connector_must_one_index;
+
+statement ok
 CREATE TABLE idx_update_nopk (a INTEGER, b INTEGER);
 
 statement ok
 INSERT INTO idx_update_nopk(a,b) VALUES (1,1), (2,3), (4,5);
+
+statement ok
+SET sdb_fault_connector_must_one_index TO DEFAULT;
 
 statement ok
 UPDATE idx_update_nopk SET b = 11 WHERE a = 1;

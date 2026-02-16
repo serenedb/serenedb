@@ -157,7 +157,8 @@ jobs:
 
             - name: Install dependencies & build
               run: |
-                  npm ci
+                  rm -f package-lock.json
+                  npm install
                   npm run build
 
             - name: Install Playwright
@@ -239,7 +240,8 @@ jobs:
 
             - name: Install dependencies & build
               run: |
-                  npm ci
+                  rm -f package-lock.json
+                  npm install
                   npm run build
 
             - name: Install Playwright
@@ -321,7 +323,8 @@ jobs:
 
             - name: Install dependencies & build
               run: |
-                  npm ci
+                  rm -f package-lock.json
+                  npm install
                   npm run build
 
             - name: Install Playwright

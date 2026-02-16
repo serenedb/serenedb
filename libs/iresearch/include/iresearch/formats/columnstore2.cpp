@@ -24,7 +24,6 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/functional/overload.h>
-#include <immintrin.h>
 
 #include <utility>
 

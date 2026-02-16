@@ -109,18 +109,30 @@ std::vector<std::unique_ptr<Writer>> CreateIndexWriters(
   } else {
     transaction.EnsureIndexesTransactions(table_id, resolve_index_writer);
   }
-
-  SDB_IF_FAILURE("connector_must_one_index") {
+#ifdef SDB_FAULT_INJECTION
+  // failpoints are per process so we make unique name to allow multiple sqlogic
+  // tests run in parallel without interference of failpoints
+  // TODO(Dronplane): Find a better way. Maybe make failpoints database
+  // bindable to allow parallel execution.
+  auto table_ptr =
+    transaction.GetCatalogSnapshot()->GetObject<catalog::Table>(table_id);
+  SDB_ASSERT(table_ptr);
+  auto one_index_fp =
+    absl::StrCat(table_ptr->GetName(), "_connector_must_one_index");
+  auto two_index_fp =
+    absl::StrCat(table_ptr->GetName(), "_connector_must_two_index");
+  SDB_IF_FAILURE(one_index_fp) {
     if (writers.size() != 1) {
-      SDB_THROW(ERROR_DEBUG, "Connector::must_one_index condition failed");
+      SDB_THROW(ERROR_DEBUG, one_index_fp, " condition failed");
     }
   }
 
-  SDB_IF_FAILURE("connector_must_two_index") {
+  SDB_IF_FAILURE(two_index_fp) {
     if (writers.size() != 2) {
-      SDB_THROW(ERROR_DEBUG, "Connector::must_two_index condition failed");
+      SDB_THROW(ERROR_DEBUG, two_index_fp, " condition failed");
     }
   }
+#endif
   return writers;
 }
 

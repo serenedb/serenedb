@@ -158,7 +158,6 @@ export const VerifyTree: Story = {
     tags: ["test"],
     play: async ({ canvasElement }) => {
         const canvas = within(canvasElement);
-        const body = within(document.body);
 
         const explorerHeading = await canvas.findByText("Explorer");
         const explorerWrapper = explorerHeading.parentElement?.parentElement;

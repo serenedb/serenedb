@@ -35,6 +35,12 @@ statement ok
 CREATE TABLE idx_update_nopk (a INTEGER, b INTEGER);
 
 statement ok
+CREATE INDEX index_nopk_a  ON idx_update_nopk USING inverted(a);
+
+statement ok
+CREATE INDEX index_nopk_b  ON idx_update_nopk USING inverted(b);
+
+statement ok
 INSERT INTO idx_update_nopk(a,b) VALUES (1,1), (2,3), (4,5);
 
 statement ok

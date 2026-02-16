@@ -1317,14 +1317,14 @@ class PostingIteratorBase : public DocIterator {
     return CollectImpl(*this, scorer, columns, docs, scores);
   }
 
-  void FetchScoreArgs(uint16_t index) final {
+  IRS_FORCE_INLINE void FetchScoreArgs(uint16_t index) final {
     if constexpr (IteratorTraits::Frequency()) {
       SDB_ASSERT(_collected_freqs);
       _collected_freqs[index] = std::get<FreqAttr>(_attrs).value;
     }
   }
 
-  void Init(const PostingCookie& cookie) noexcept {
+  IRS_FORCE_INLINE void Init(const PostingCookie& cookie) noexcept {
     _field = cookie.field;
     _stats = cookie.stats;
     _boost = cookie.boost;

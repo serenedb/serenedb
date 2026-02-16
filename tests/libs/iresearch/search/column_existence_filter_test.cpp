@@ -887,8 +887,8 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       auto column = segment.column(column_name);
       ASSERT_NE(nullptr, column);
       auto column_itr = column->iterator(irs::ColumnHint::Normal);
-      auto filter_itr = prepared_filter->execute(
-        {.segment = segment, .scorer = &sort});
+      auto filter_itr =
+        prepared_filter->execute({.segment = segment, .scorer = &sort});
       ASSERT_EQ(column->size(), irs::CostAttr::extract(*filter_itr));
 
       auto* doc = irs::get<irs::DocAttr>(*filter_itr);
@@ -989,8 +989,8 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       auto column = segment.column(column_name);
       ASSERT_NE(nullptr, column);
       auto column_itr = column->iterator(irs::ColumnHint::Normal);
-      auto filter_itr = prepared_filter->execute(
-        {.segment = segment, .scorer = &sort});
+      auto filter_itr =
+        prepared_filter->execute({.segment = segment, .scorer = &sort});
       ASSERT_EQ(column->size(), irs::CostAttr::extract(*filter_itr));
 
       size_t docs_count = 0;

@@ -15650,8 +15650,7 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential_ordered) {
       *score = cur_doc;
     };
 
-    auto prepared_filter =
-      not_node.prepare({.index = *rdr, .scorer = &sort});
+    auto prepared_filter = not_node.prepare({.index = *rdr, .scorer = &sort});
     std::multimap<irs::score_t, irs::doc_id_t, std::greater<>> scored_result;
 
     ASSERT_EQ(1, rdr->size());
@@ -15749,8 +15748,7 @@ TEST_P(BooleanFilterTestCase, not_sequential_ordered) {
       *score = cur_doc;
     };
 
-    auto prepared_filter =
-      root.prepare({.index = *rdr, .scorer = &sort});
+    auto prepared_filter = root.prepare({.index = *rdr, .scorer = &sort});
     std::multimap<irs::score_t, irs::doc_id_t, std::greater<>> scored_result;
 
     ASSERT_EQ(1, rdr->size());
@@ -16223,8 +16221,7 @@ TEST_P(BooleanFilterTestCase, mixed_ordered) {
 
     auto expected_doc = expected_docs.begin();
     for (const auto& sub : rdr) {
-      auto docs =
-        prepared->execute({.segment = sub, .scorer = &tfidf_scorer});
+      auto docs = prepared->execute({.segment = sub, .scorer = &tfidf_scorer});
 
       auto* doc = irs::get<irs::DocAttr>(*docs);
       ASSERT_TRUE(

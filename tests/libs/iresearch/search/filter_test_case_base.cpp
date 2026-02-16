@@ -102,7 +102,8 @@ void FilterTestCaseBase::GetQueryResult(const irs::Filter::Query::ptr& q,
     result_costs.emplace_back(irs::CostAttr::extract(*sequential_docs));
 
     while (sequential_docs->next()) {
-      auto stateless_random_docs = q->execute({.segment = sub, .scorer = scorer});
+      auto stateless_random_docs =
+        q->execute({.segment = sub, .scorer = scorer});
       auto stateless_random_score = stateless_random_docs->PrepareScore({
         .scorer = scorer,
         .segment = &sub,
@@ -208,12 +209,11 @@ void FilterTestCaseBase::CheckQuery(const irs::Filter& filter,
     auto random_docs = q->execute({.segment = sub, .scorer = scorer});
     ASSERT_NE(nullptr, random_docs);
 
-    auto random_score = scorer == nullptr
-                          ? irs::ScoreFunction{}
-                          : random_docs->PrepareScore({
-                              .scorer = scorer,
-                              .segment = &sub,
-                            });
+    auto random_score = scorer == nullptr ? irs::ScoreFunction{}
+                                          : random_docs->PrepareScore({
+                                              .scorer = scorer,
+                                              .segment = &sub,
+                                            });
 
     for (auto& test : *test) {
       assert_iterator(test, *random_docs, random_score);
@@ -255,8 +255,7 @@ void FilterTestCaseBase::MakeResult(const irs::Filter& filter,
                                     std::vector<irs::doc_id_t>& result,
                                     bool score_must_be_present, bool reverse) {
   auto* scorer = order.empty() ? nullptr : order.front().get();
-  auto prepared_filter =
-    filter.prepare({.index = rdr, .scorer = scorer});
+  auto prepared_filter = filter.prepare({.index = rdr, .scorer = scorer});
   auto score_less =
     [reverse](const std::pair<irs::score_t, irs::doc_id_t>& lhs,
               const std::pair<irs::score_t, irs::doc_id_t>& rhs) -> bool {

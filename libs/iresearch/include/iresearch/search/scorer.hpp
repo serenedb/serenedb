@@ -59,7 +59,7 @@ struct ScoreThresholdAttr final : Attribute {
     return "score_threshold";
   }
 
-  score_t value{0};
+  score_t value = std::numeric_limits<score_t>::min();
 };
 
 // Object used for collecting index statistics, for a specific matched

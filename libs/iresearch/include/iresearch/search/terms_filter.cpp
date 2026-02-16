@@ -157,7 +157,7 @@ Filter::Query::ptr ByTerms::prepare(const PrepareContext& ctx) const {
   if (options().terms.empty() || options().min_match != 0) {
     return Prepare(ctx.Boost(Boost()), field(), options());
   }
-  if (ctx.scorer == nullptr) {
+  if (!ctx.scorer) {
     return MakeAllDocsFilter(kNoBoost)->prepare({
       .index = ctx.index,
       .memory = ctx.memory,

@@ -53,7 +53,7 @@ FieldCollectorWrapper::collector_type& FieldCollectorWrapper::noop() noexcept {
 }
 
 FieldCollectors::FieldCollectors(const Scorer* scorer)
-  : CollectorsBase<FieldCollectorWrapper>(scorer ? 1 : 0, scorer) {
+  : CollectorsBase<FieldCollectorWrapper>{size_t{scorer != nullptr}, scorer} {
   if (scorer) {
     _collectors.front() = scorer->PrepareFieldCollector();
     SDB_ASSERT(_collectors.front());
@@ -81,7 +81,7 @@ TermCollectorWrapper::collector_type& TermCollectorWrapper::noop() noexcept {
 }
 
 TermCollectors::TermCollectors(const Scorer* scorer, size_t size)
-  : CollectorsBase<TermCollectorWrapper>(scorer ? size : 0, scorer) {
+  : CollectorsBase<TermCollectorWrapper>{scorer ? size : size_t{0}, scorer} {
   for (auto& collector : _collectors) {
     collector = scorer->PrepareTermCollector();
     SDB_ASSERT(collector);

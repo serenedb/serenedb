@@ -216,7 +216,7 @@ Filter::Query::ptr FixedPrepareCollect(const PrepareContext& ctx,
                                        std::string_view field,
                                        const ByPhraseOptions& options) {
   const auto phrase_size = options.size();
-  const auto is_ord_empty = ctx.scorer == nullptr;
+  const auto is_ord_empty = !ctx.scorer;
 
   // stats collectors
   FieldCollectors field_stats(ctx.scorer);
@@ -355,7 +355,7 @@ Filter::Query::ptr VariadicPrepareCollect(const PrepareContext& ctx,
   phrase_terms.reserve(phrase_size);
 
   // iterate over the segments
-  const auto is_ord_empty = ctx.scorer == nullptr;
+  const auto is_ord_empty = !ctx.scorer;
 
   PhraseTermVisitor<decltype(phrase_terms)> ptv(phrase_terms);
 

@@ -612,7 +612,7 @@ DocIterator::ptr ByNestedQuery::execute(const ExecutionContext& ctx) const {
         rdr, _match, _none_boost,
         [&]<typename M>(M&& matcher) -> DocIterator::ptr {
           if constexpr (std::is_same_v<NoneMatcher, M>) {
-            if (doc_limits::eof(child->value()) && ctx.scorer == nullptr) {
+            if (doc_limits::eof(child->value()) && !ctx.scorer) {
               return std::move(parent);
             }
           } else if constexpr (std::is_same_v<MinMatcher<MergeType>, M> ||

@@ -125,7 +125,7 @@ Filter::Query::ptr ByNGramSimilarity::Prepare(
     return Query::empty();
   }
 
-  bstring stats(ctx.scorer ? ctx.scorer->stats_size() : 0, 0);
+  bstring stats(GetStatsSize(ctx.scorer), 0);
   auto* stats_buf = stats.data();
 
   for (size_t term_idx = 0; term_idx < terms_count; ++term_idx) {

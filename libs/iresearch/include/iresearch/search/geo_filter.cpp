@@ -395,7 +395,7 @@ std::pair<GeoStates, irs::bstring> PrepareStates(
   std::pair<GeoStates, irs::bstring> res{
     std::piecewise_construct,
     std::forward_as_tuple(ctx.memory, ctx.index.size()),
-    std::forward_as_tuple(ctx.scorer ? ctx.scorer->stats_size() : 0, 0)};
+    std::forward_as_tuple(GetStatsSize(ctx.scorer), 0)};
 
   const auto size = sorted_terms.size();
   irs::FieldCollectors field_stats{ctx.scorer};

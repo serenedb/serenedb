@@ -223,7 +223,7 @@ Filter::Query::ptr PrepareLevenshteinFilter(const PrepareContext& ctx,
 
   MultiTermQuery::Stats stats(
     1, MultiTermQuery::Stats::allocator_type{ctx.memory});
-  stats.back().resize(ctx.scorer ? ctx.scorer->stats_size() : 0, 0);
+  stats.back().resize(GetStatsSize(ctx.scorer), 0);
   auto* stats_buf = stats[0].data();
   term_stats.finish(stats_buf, 0, field_stats, ctx.index);
 

@@ -63,6 +63,14 @@ struct ExecutionContext {
   WandContext wand{};
 };
 
+inline IndexFeatures GetFeatures(const Scorer* scorer) noexcept {
+  return scorer ? scorer->GetIndexFeatures() : IndexFeatures::None;
+}
+
+inline size_t GetStatsSize(const Scorer* scorer) noexcept {
+  return scorer ? scorer->stats_size() : 0;
+}
+
 // Base class for all user-side filters
 class Filter {
  public:

@@ -138,9 +138,7 @@ class SamePositionQuery : public Filter::Query {
 
     // get features required for query & order
     const IndexFeatures features =
-      (ctx.scorer ? ctx.scorer->GetIndexFeatures() : IndexFeatures::None) |
-      BySamePosition::kRequiredFeatures;
-
+      GetFeatures(ctx.scorer) | BySamePosition::kRequiredFeatures;
     ScoreAdapters itrs;
     itrs.reserve(query_state->size());
 
@@ -272,7 +270,7 @@ Filter::Query::ptr BySamePosition::prepare(const PrepareContext& ctx) const {
   SamePositionQuery::StatsT stats(
     size, SamePositionQuery::StatsT::allocator_type{ctx.memory});
   for (auto& stat : stats) {
-    stat.resize(ctx.scorer ? ctx.scorer->stats_size() : 0);
+    stat.resize(GetStatsSize(ctx.scorer));
     auto* stats_buf = stat.data();
     term_stats.finish(stats_buf, term_idx++, field_stats, ctx.index);
   }

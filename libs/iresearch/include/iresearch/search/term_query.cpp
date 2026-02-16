@@ -55,8 +55,7 @@ DocIterator::ptr TermQuery::execute(const ExecutionContext& ctx) const {
   DocIterator::ptr docs;
   IteratorOptions options{ctx.wand};
 
-  auto features =
-    ctx.scorer ? ctx.scorer->GetIndexFeatures() : IndexFeatures::None;
+  const auto features = GetFeatures(ctx.scorer);
   auto it = reader->Iterator(features,
                              {
                                .cookie = state->cookie.get(),

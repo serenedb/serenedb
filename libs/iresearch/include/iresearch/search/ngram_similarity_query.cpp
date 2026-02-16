@@ -622,8 +622,7 @@ DocIterator::ptr NGramSimilarityQuery::execute(
     return DocIterator::empty();
   }
 
-  const auto features =
-    ctx.scorer ? ctx.scorer->GetIndexFeatures() : IndexFeatures::None;
+  const auto features = GetFeatures(ctx.scorer);
   auto itrs = Execute(*query_state, kRequiredFeatures, features);
 
   if (itrs.size() < _min_match_count) {

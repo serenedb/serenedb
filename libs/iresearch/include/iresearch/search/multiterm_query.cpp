@@ -124,8 +124,7 @@ DocIterator::ptr MultiTermQuery::execute(const ExecutionContext& ctx) const {
   SDB_ASSERT(reader);
 
   // Get required features
-  const IndexFeatures features =
-    ctx.scorer ? ctx.scorer->GetIndexFeatures() : IndexFeatures::None;
+  const IndexFeatures features = GetFeatures(ctx.scorer);
   const std::span stats{_stats};
 
   // add an iterator for each of the scored states

@@ -61,9 +61,7 @@ DocIterator::ptr FixedPhraseQuery::execute(const ExecutionContext& ctx) const {
   }
 
   // get index features required for query & order
-  const IndexFeatures features =
-    (ctx.scorer ? ctx.scorer->GetIndexFeatures() : IndexFeatures::None) |
-    kRequiredFeatures;
+  const IndexFeatures features = GetFeatures(ctx.scorer) | kRequiredFeatures;
 
   using Adapter = PostingAdapter<PostingIteratorBase<FixedTermTraits<false>>>;
 
@@ -223,9 +221,7 @@ DocIterator::ptr VariadicPhraseQuery::execute(
   }
 
   // get features required for query & order
-  const IndexFeatures features =
-    (ctx.scorer ? ctx.scorer->GetIndexFeatures() : IndexFeatures::None) |
-    kRequiredFeatures;
+  const IndexFeatures features = GetFeatures(ctx.scorer) | kRequiredFeatures;
 
   ScoreAdapters conj_itrs;
   conj_itrs.reserve(phrase_state->terms.size());

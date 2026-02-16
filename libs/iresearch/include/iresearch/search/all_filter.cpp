@@ -48,7 +48,7 @@ class AllQuery : public Filter::Query {
 };
 
 Filter::Query::ptr All::prepare(const PrepareContext& ctx) const {
-  bstring stats(ctx.scorer ? ctx.scorer->stats_size() : 0, 0);
+  bstring stats(GetStatsSize(ctx.scorer), 0);
 
   if (ctx.scorer) {
     ctx.scorer->collect(stats.data(), nullptr, nullptr);

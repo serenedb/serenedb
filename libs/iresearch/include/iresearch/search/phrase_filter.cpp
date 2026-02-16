@@ -276,7 +276,7 @@ Filter::Query::ptr FixedPrepareCollect(const PrepareContext& ctx,
   SDB_ASSERT(!options.empty());
 
   // finish stats
-  bstring stats(ctx.scorer ? ctx.scorer->stats_size() : 0, 0);
+  bstring stats(GetStatsSize(ctx.scorer), 0);
   auto* stats_buf = stats.data();
 
   FixedPhraseQuery::positions_t positions(phrase_size);
@@ -414,7 +414,7 @@ Filter::Query::ptr VariadicPrepareCollect(const PrepareContext& ctx,
   SDB_ASSERT(!options.empty());
   // finish stats
   SDB_ASSERT(phrase_size == phrase_part_stats.size());
-  bstring stats(ctx.scorer ? ctx.scorer->stats_size() : 0, 0);
+  bstring stats(GetStatsSize(ctx.scorer), 0);
   auto* stats_buf = stats.data();
   auto collector = phrase_part_stats.begin();
 

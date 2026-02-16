@@ -42,15 +42,6 @@ bool CheckResult(const Result& result) {
 }
 }  // namespace
 
-AsyncResult DefinitionDrop::operator()() {
-  auto& server = GetServerEngine();
-  auto r = server.DropObject(parent_id, type, id);
-  if (!CheckResult(r)) {
-    return QueueDropTask(shared_from_this());
-  }
-  return yaclib::MakeFuture<Result>(ERROR_OK);
-}
-
 AsyncResult TableShardDrop::operator()() {
   auto& server = GetServerEngine();
   auto r = server.DropObject(parent_id, RocksDBEntryType::Stats, id);
@@ -170,13 +161,9 @@ Result SchemaDrop::Finalize() {
 
 AsyncResult SchemaDrop::operator()() {
   std::vector<yaclib::Future<>> async_results;
-  async_results.reserve(tables.size() + definitions.size());
+  async_results.reserve(tables.size());
   for (auto& table : tables) {
     async_results.push_back(QueueDropTask(table).ThenInline([](Result&& r) {}));
-  }
-  for (auto& definition : definitions) {
-    async_results.push_back(
-      QueueDropTask(definition).ThenInline([](Result&& r) {}));
   }
   return yaclib::WhenAll(async_results.begin(), async_results.end())
     .ThenInline([self = shared_from_this()]() {

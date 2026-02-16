@@ -55,14 +55,14 @@ class LocalCatalog final : public LogicalCatalog,
   Result RegisterDatabase(std::shared_ptr<Database> database) final;
   Result RegisterSchema(ObjectId database_id,
                         std::shared_ptr<Schema> schema) final;
-  Result RegisterView(ObjectId database_id, std::string_view schema,
+  Result RegisterView(ObjectId database_id, ObjectId schema_id,
                       std::shared_ptr<View> view) final;
-  Result RegisterFunction(ObjectId database_id, std::string_view schema,
+  Result RegisterFunction(ObjectId database_id, ObjectId schema_id,
                           std::shared_ptr<Function> function) final;
-  Result RegisterTable(ObjectId database_id, std::string_view schema,
+  Result RegisterTable(ObjectId database_id, ObjectId schema_id,
                        CreateTableOptions table) final;
-  Result RegisterIndex(ObjectId database_id, std::string_view schema,
-                       IndexBaseOptions options, vpack::Slice args) final;
+  Result RegisterIndex(ObjectId database_id, ObjectId schema_id,
+                       IndexBaseOptions options) final;
 
   Result CreateDatabase(std::shared_ptr<Database> database) final;
   Result CreateRole(std::shared_ptr<Role> role) final;

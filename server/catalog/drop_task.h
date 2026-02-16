@@ -20,15 +20,16 @@
 
 #pragma once
 
-#include "app/app_server.h"
-#include "catalog/local_catalog.h"
-#include "catalog/object.h"
+#include <yaclib/async/future.hpp>
+
+#include "catalog/index.h"
 #include "catalog/object_dependency.h"
 #include "general_server/scheduler.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "storage_engine/engine_feature.h"
 
 namespace sdb::catalog {
+using AsyncResult = yaclib::Future<Result>;
 
 static constexpr uint32_t kInitialDelay = 125;
 static constexpr uint32_t kMaxDelay = kInitialDelay << 7;
@@ -78,24 +79,7 @@ struct DropTask {
   ObjectId parent_id;
   ObjectId id;
   bool is_root = false;
-  uint32_t delay = kInitialDelay; // delay in microseconds
-};
-
-// Used for dropping objects, which don't have dependencies and have only
-// definition
-struct DefinitionDrop : DropTask, std::enable_shared_from_this<DefinitionDrop> {
-  static constexpr std::string_view kName = "definition drop";
-
-  RocksDBEntryType type;
-
-  DefinitionDrop(DropTask&& task, RocksDBEntryType type)
-    : DropTask{std::move(task)}, type{type} {}
-
-  std::string GetContext() const {
-    return absl::StrCat("definition ", parent_id, " ", id);
-  }
-
-  AsyncResult operator()();
+  uint32_t delay = kInitialDelay;  // delay in microseconds
 };
 
 struct TableShardDrop : DropTask, std::enable_shared_from_this<TableShardDrop> {
@@ -161,8 +145,6 @@ struct SchemaDrop : DropTask, std::enable_shared_from_this<SchemaDrop> {
   static constexpr std::string_view kName = "scope drop";
 
   std::vector<std::shared_ptr<TableDrop>> tables;
-  std::vector<std::shared_ptr<DefinitionDrop>>
-    definitions;                   // e.g., functions, views, etc.
 
   std::string GetContext() const {
     return absl::StrCat("schema ", parent_id, ".", id);

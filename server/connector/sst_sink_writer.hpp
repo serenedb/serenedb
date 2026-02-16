@@ -41,7 +41,7 @@ class SSTBlockBuilder {
 
   bool ShouldFlush() const { return _cur.buffer.size() >= kFlushThreshold; }
 
-  std::string BuildNextKey() const;
+  bool IsGeneratedPK() const { return _generated_pk_counter > 0; }
 
   // Appends some block metadata as BlockBuilder does
   rocksdb::BlockFlushData Finish(
@@ -75,7 +75,7 @@ class SSTBlockBuilder {
   Block _cur;
   Block _next;
 
-  int64_t _generated_pk_counter;
+  int64_t _generated_pk_counter = 0;
   ObjectId _table_id;
   catalog::Column::Id _column_id;
   uint64_t _total_entry_cnt = 0;

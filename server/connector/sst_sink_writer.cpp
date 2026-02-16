@@ -181,27 +181,6 @@ std::string SSTBlockBuilder::BuildLastKey() const {
   return last_key;
 }
 
-std::string SSTBlockBuilder::BuildNextKey() const {
-  constexpr size_t kPrimaryKeySize = sizeof(uint64_t);
-  const size_t key_size = kPrefixSize + kPrimaryKeySize +
-                          sizeof(rocksdb::SstFileWriter::kInternalKeyFooter);
-  std::string next_key;
-  basics::StrResize(next_key, key_size);
-
-  absl::big_endian::Store(next_key.data(), _table_id);
-  absl::big_endian::Store(next_key.data() + sizeof(ObjectId), _column_id);
-
-  // Build the next primary key
-  const int64_t next_pk = _generated_pk_counter + _total_entry_cnt;
-  primary_key::AppendSigned(next_key, next_pk);
-
-  std::memcpy(next_key.data() + kPrefixSize + kPrimaryKeySize,
-              &rocksdb::SstFileWriter::kInternalKeyFooter,
-              sizeof(rocksdb::SstFileWriter::kInternalKeyFooter));
-
-  return next_key;
-}
-
 rocksdb::BlockFlushData SSTBlockBuilder::Finish(
   std::span<const rocksdb::Slice> next_block_first_value) {
   constexpr uint32_t kRestartOffset = 0;

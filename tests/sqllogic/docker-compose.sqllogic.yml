@@ -14,6 +14,11 @@ services:
           size: 16G
     networks:
       - test-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   serenedb-single:
     image: "$BUILD_IMAGE"
@@ -38,8 +43,16 @@ services:
         '
     env_file:
       - "$WORKSPACE/docker.env"
+    environment:
+      - BUILD_DIR=${BUILD_DIR:-build}
     networks:
       - test-network
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/127.0.0.1/7777' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
   tests:
     image: rust:latest
@@ -47,8 +60,10 @@ services:
       - "$SQLLOGIC_DIR:/sqllogic"
       - "$WORKSPACE/third_party/sqllogictest-rs:/sqllogictest-rs"
     depends_on:
-      - postgres
-      - serenedb-single
+      postgres:
+        condition: service_healthy
+      serenedb-single:
+        condition: service_healthy
     command: sqllogic/run_serene_and_pg.sh
     networks:
       - test-network

@@ -39,35 +39,48 @@ class SSTBlockBuilder {
 
   void AddEntry(std::span<const rocksdb::Slice> value_slices);
 
-  bool ShouldFlush() const { return _buffer.size() >= kFlushThreshold; }
+  bool ShouldFlush() const { return _cur.buffer.size() >= kFlushThreshold; }
+
+  std::string BuildNextKey() const;
+
+  // Appends some block metadata as BlockBuilder does
+  rocksdb::BlockFlushData Finish(
+    std::span<const rocksdb::Slice> next_block_first_value);
+
+  void NextBlock();
+
+  bool IsEmpty() const { return _cur.entry_cnt == 0; }
+
+ private:
+  struct Block {
+    std::string buffer;
+    size_t last_pk_size = 0;
+    size_t last_pk_offset = 0;
+
+    uint64_t entry_cnt = 0;
+    size_t raw_key_size = 0;
+    size_t raw_value_size = 0;
+  };
+
+  void AddEntryImpl(Block& block, std::span<const rocksdb::Slice> value_slices);
 
   std::string BuildLastKey() const;
 
-  rocksdb::BlockFlushData Finish();
+  size_t AppendPK(Block& block);
 
-  void Reset();
-
-  bool IsEmpty() const { return _cur_block_entry_cnt == 0; }
-
- private:
-  size_t AppendPK();
-
-  static constexpr size_t kFlushThreshold = 1024 * 1024;  // 1MB
+  static constexpr size_t kFlushThreshold = 64 * 1024;  // 1MB
   static constexpr size_t kPrefixSize =
     sizeof(ObjectId) + sizeof(catalog::Column::Id);
 
-  std::string _buffer;
+  Block _cur;
+  Block _next;
 
   int64_t _generated_pk_counter;
   ObjectId _table_id;
   catalog::Column::Id _column_id;
-  size_t _last_primary_key_offset = 0;
-  size_t _last_primary_key_size = 0;
-
-  uint64_t _cur_block_entry_cnt = 0;
-  uint64_t _raw_key_size = 0;
-  uint64_t _raw_value_size = 0;
   uint64_t _total_entry_cnt = 0;
+
+  std::string _last_key_buffer;
 };
 
 class SSTSinkWriter {
@@ -86,13 +99,15 @@ class SSTSinkWriter {
   void Abort();
 
  private:
-  void FlushBlockBuilder(size_t column_idx);
+  void FlushBlockBuilder(
+    size_t column_idx, std::span<const rocksdb::Slice> next_block_first_value);
 
   rocksdb::DB* _db;
   rocksdb::ColumnFamilyHandle* _cf;
   std::vector<std::unique_ptr<rocksdb::SstFileWriter>> _writers;
   std::vector<std::unique_ptr<SSTBlockBuilder>> _block_builders;
   std::string _sst_directory;
+  std::string _next_key_buffer;
   int64_t _column_idx = -1;
 };
 

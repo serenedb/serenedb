@@ -100,66 +100,72 @@ SSTBlockBuilder::SSTBlockBuilder(int64_t generated_pk_counter,
   : _generated_pk_counter{generated_pk_counter},
     _table_id{table_id},
     _column_id{column_id} {
-  _buffer.reserve(2 * kFlushThreshold);
+  constexpr size_t kCapacity = 2 * kFlushThreshold;
+  _cur.buffer.reserve(kCapacity);
+  _next.buffer.reserve(kCapacity);
 }
 
 void SSTBlockBuilder::AddEntry(std::span<const rocksdb::Slice> value_slices) {
+  AddEntryImpl(_cur, value_slices);
+}
+
+void SSTBlockBuilder::AddEntryImpl(
+  Block& block, std::span<const rocksdb::Slice> value_slices) {
   constexpr size_t kPrimaryKeySize = sizeof(uint64_t);
   constexpr size_t kInternalKeyFooterSize =
     sizeof(rocksdb::SstFileWriter::kInternalKeyFooter);
 
-  // Calculate total value size
   size_t total_value_size = 0;
   for (const auto& slice : value_slices) {
     total_value_size += slice.size();
   }
 
-  if (_cur_block_entry_cnt == 0) [[unlikely]] {
+  auto& buffer = block.buffer;
+  if (block.entry_cnt == 0) [[unlikely]] {
     const uint32_t non_shared =
       kPrefixSize + kPrimaryKeySize + kInternalKeyFooterSize;
-    PutVarint32x3ToBuffer(_buffer, 0, non_shared,
+    PutVarint32x3ToBuffer(buffer, 0, non_shared,
                           static_cast<uint32_t>(total_value_size));
 
-    const size_t pos = _buffer.size();
-    basics::StrAppend(_buffer, kPrefixSize);
-    absl::big_endian::Store(_buffer.data() + pos, _table_id);
-    absl::big_endian::Store(_buffer.data() + pos + sizeof(ObjectId),
-                            _column_id);
+    const size_t pos = buffer.size();
+    basics::StrAppend(buffer, kPrefixSize);
+    absl::big_endian::Store(buffer.data() + pos, _table_id);
+    absl::big_endian::Store(buffer.data() + pos + sizeof(ObjectId), _column_id);
   } else {
     const uint32_t non_shared = kPrimaryKeySize + kInternalKeyFooterSize;
-    PutVarint32x3ToBuffer(_buffer, kPrefixSize, non_shared,
+    PutVarint32x3ToBuffer(buffer, kPrefixSize, non_shared,
                           static_cast<uint32_t>(total_value_size));
   }
 
-  _last_primary_key_offset = _buffer.size();
-  _last_primary_key_size = AppendPK();
+  block.last_pk_offset = buffer.size();
+  block.last_pk_size = AppendPK(block);
 
-  const size_t footer_pos = _buffer.size();
-  basics::StrAppend(_buffer, kInternalKeyFooterSize);
-  std::memcpy(_buffer.data() + footer_pos,
+  const size_t footer_pos = buffer.size();
+  basics::StrAppend(buffer, kInternalKeyFooterSize);
+  std::memcpy(buffer.data() + footer_pos,
               &rocksdb::SstFileWriter::kInternalKeyFooter,
               kInternalKeyFooterSize);
 
   for (const auto& slice : value_slices) {
-    const size_t value_pos = _buffer.size();
-    basics::StrAppend(_buffer, slice.size());
-    std::memcpy(_buffer.data() + value_pos, slice.data(), slice.size());
+    const size_t value_pos = buffer.size();
+    basics::StrAppend(buffer, slice.size());
+    std::memcpy(buffer.data() + value_pos, slice.data(), slice.size());
   }
 
-  _raw_key_size += kPrefixSize + kPrimaryKeySize + kInternalKeyFooterSize;
-  _raw_value_size += total_value_size;
-  ++_cur_block_entry_cnt;
+  block.raw_key_size += kPrefixSize + kPrimaryKeySize + kInternalKeyFooterSize;
+  block.raw_value_size += total_value_size;
+  ++block.entry_cnt;
   ++_total_entry_cnt;
 }
 
-size_t SSTBlockBuilder::AppendPK() {
+size_t SSTBlockBuilder::AppendPK(Block& block) {
   const int64_t generated_pk = _generated_pk_counter + _total_entry_cnt;
-  primary_key::AppendSigned(_buffer, generated_pk);
+  primary_key::AppendSigned(block.buffer, generated_pk);
   return sizeof(generated_pk);
 }
 
 std::string SSTBlockBuilder::BuildLastKey() const {
-  const size_t key_size = kPrefixSize + _last_primary_key_size +
+  const size_t key_size = kPrefixSize + _cur.last_pk_size +
                           sizeof(rocksdb::SstFileWriter::kInternalKeyFooter);
   std::string last_key;
   basics::StrResize(last_key, key_size);
@@ -167,43 +173,82 @@ std::string SSTBlockBuilder::BuildLastKey() const {
   absl::big_endian::Store(last_key.data(), _table_id);
   absl::big_endian::Store(last_key.data() + sizeof(ObjectId), _column_id);
   std::memcpy(last_key.data() + kPrefixSize,
-              _buffer.data() + _last_primary_key_offset,
-              _last_primary_key_size);
-  std::memcpy(last_key.data() + kPrefixSize + _last_primary_key_size,
+              _cur.buffer.data() + _cur.last_pk_offset, _cur.last_pk_size);
+  std::memcpy(last_key.data() + kPrefixSize + _cur.last_pk_size,
               &rocksdb::SstFileWriter::kInternalKeyFooter,
               sizeof(rocksdb::SstFileWriter::kInternalKeyFooter));
 
   return last_key;
 }
 
-rocksdb::BlockFlushData SSTBlockBuilder::Finish() {
-  // Append restart array (single restart at offset 0)
+std::string SSTBlockBuilder::BuildNextKey() const {
+  constexpr size_t kPrimaryKeySize = sizeof(uint64_t);
+  const size_t key_size = kPrefixSize + kPrimaryKeySize +
+                          sizeof(rocksdb::SstFileWriter::kInternalKeyFooter);
+  std::string next_key;
+  basics::StrResize(next_key, key_size);
+
+  absl::big_endian::Store(next_key.data(), _table_id);
+  absl::big_endian::Store(next_key.data() + sizeof(ObjectId), _column_id);
+
+  // Build the next primary key
+  const int64_t next_pk = _generated_pk_counter + _total_entry_cnt;
+  primary_key::AppendSigned(next_key, next_pk);
+
+  std::memcpy(next_key.data() + kPrefixSize + kPrimaryKeySize,
+              &rocksdb::SstFileWriter::kInternalKeyFooter,
+              sizeof(rocksdb::SstFileWriter::kInternalKeyFooter));
+
+  return next_key;
+}
+
+rocksdb::BlockFlushData SSTBlockBuilder::Finish(
+  std::span<const rocksdb::Slice> next_block_first_value) {
   constexpr uint32_t kRestartOffset = 0;
-  size_t pos = _buffer.size();
-  basics::StrAppend(_buffer, sizeof(uint32_t));
-  absl::little_endian::Store(reinterpret_cast<uint32_t*>(_buffer.data() + pos),
-                             kRestartOffset);
+  size_t pos = _cur.buffer.size();
+  basics::StrAppend(_cur.buffer, sizeof(uint32_t));
+  absl::little_endian::Store(
+    reinterpret_cast<uint32_t*>(_cur.buffer.data() + pos), kRestartOffset);
 
   constexpr uint32_t kNumRestarts = 1;
   uint32_t block_footer = kNumRestarts;
-  pos = _buffer.size();
-  basics::StrAppend(_buffer, sizeof(uint32_t));
-  absl::little_endian::Store(reinterpret_cast<uint32_t*>(_buffer.data() + pos),
-                             block_footer);
-  return {.buffer = &_buffer,
-          .last_block_key = BuildLastKey(),
-          .num_entries = _cur_block_entry_cnt,
-          .raw_key_size = _raw_key_size,
-          .raw_value_size = _raw_value_size};
+  pos = _cur.buffer.size();
+  basics::StrAppend(_cur.buffer, sizeof(uint32_t));
+  absl::little_endian::Store(
+    reinterpret_cast<uint32_t*>(_cur.buffer.data() + pos), block_footer);
+
+  rocksdb::Slice first_key_in_next_block;
+  if (!next_block_first_value.empty()) {
+    AddEntryImpl(_next, next_block_first_value);
+    const size_t key_size = kPrefixSize + _next.last_pk_size +
+                            sizeof(rocksdb::SstFileWriter::kInternalKeyFooter);
+    SDB_ASSERT(_next.last_pk_offset >= kPrefixSize);
+    SDB_ASSERT(_next.last_pk_offset - kPrefixSize + key_size <=
+               _next.buffer.size());
+    const char* first_key =
+      _next.buffer.data() + _next.last_pk_offset - kPrefixSize;
+    first_key_in_next_block = {first_key, key_size};
+  }
+
+  // Store last key in member variable to avoid dangling pointer
+  _last_key_buffer = BuildLastKey();
+
+  return {.buffer = &_cur.buffer,
+          .last_key_in_current_block = _last_key_buffer,
+          .first_key_in_next_block = first_key_in_next_block,
+          .num_entries = _cur.entry_cnt,
+          .raw_key_size = _cur.raw_key_size,
+          .raw_value_size = _cur.raw_value_size};
 }
 
-void SSTBlockBuilder::Reset() {
-  _buffer.clear();
-  _last_primary_key_offset = 0;
-  _last_primary_key_size = 0;
-  _cur_block_entry_cnt = 0;
-  _raw_key_size = 0;
-  _raw_value_size = 0;
+void SSTBlockBuilder::NextBlock() {
+  _cur.buffer.clear();
+  _cur.last_pk_offset = 0;
+  _cur.last_pk_size = 0;
+  _cur.entry_cnt = 0;
+  _cur.raw_key_size = 0;
+  _cur.raw_value_size = 0;
+  std::swap(_cur, _next);
 }
 
 std::string GenerateSSTDirPath() {
@@ -273,22 +318,29 @@ void SSTSinkWriter::Write(std::span<const rocksdb::Slice> cell_slices,
   SDB_ASSERT(_block_builders[_column_idx]);
 
   auto& block_builder = *_block_builders[_column_idx];
-  block_builder.AddEntry(cell_slices);
+
   if (block_builder.ShouldFlush()) [[unlikely]] {
-    FlushBlockBuilder(_column_idx);
+    FlushBlockBuilder(_column_idx, cell_slices);
+    return;
   }
+
+  block_builder.AddEntry(cell_slices);
 }
 
-void SSTSinkWriter::FlushBlockBuilder(size_t column_idx) {
-  SDB_ASSERT(_column_idx < _block_builders.size());
-  SDB_ASSERT(_block_builders[_column_idx]);
-  SDB_ASSERT(_writers[_column_idx]);
+void SSTSinkWriter::FlushBlockBuilder(
+  size_t column_idx, std::span<const rocksdb::Slice> next_block_first_value) {
+  SDB_ASSERT(column_idx < _block_builders.size());
+  SDB_ASSERT(_block_builders[column_idx]);
+  SDB_ASSERT(_writers[column_idx]);
 
   auto& block_builder = *_block_builders[column_idx];
-  auto flush_data = block_builder.Finish();
-  auto& writer = *_writers[_column_idx];
+  if (block_builder.IsEmpty()) {
+    return;
+  }
+  auto flush_data = block_builder.Finish(next_block_first_value);
+  auto& writer = *_writers[column_idx];
   writer.FlushFromInternalBuffer(flush_data);
-  block_builder.Reset();
+  block_builder.NextBlock();
 }
 
 void SSTSinkWriter::Finish() {
@@ -303,8 +355,8 @@ void SSTSinkWriter::Finish() {
   }
 
   for (size_t i = 0; i < _block_builders.size(); ++i) {
-    if (_block_builders[i] && !_block_builders[i]->IsEmpty()) {
-      FlushBlockBuilder(i);
+    if (_block_builders[i]) {
+      FlushBlockBuilder(i, {});
     }
   }
 

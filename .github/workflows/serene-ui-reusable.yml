@@ -49,6 +49,9 @@ on:
                 type: boolean
                 default: false
         secrets:
+            PAT_TOKEN:
+                required: true
+                description: "Personal Access Token with repo access"
             TG_TOKEN:
                 required: true
             TG_CHAT_ID:

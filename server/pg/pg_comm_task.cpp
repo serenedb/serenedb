@@ -149,17 +149,13 @@ constexpr std::array<char, 47> kTimeoutTermination{PQ_MSG_ERROR_RESPONSE,
 
 // clang-format on
 
-template<size_t N>
-BufferView ToBuffer(const std::array<char, N>& data) {
-  return BufferView{data.data(), data.size()};
-}
-
 }  // namespace
 
 PgSQLCommTaskBase::PgSQLCommTaskBase(rest::GeneralServer& server,
                                      ConnectionInfo info)
   : rest::CommTask(server, std::move(info)),
     _feature{server.server().getFeature<PostgresFeature>()},
+    _copy_queue{_queue_mutex},
     _send{64, 4096, 4096,
           [this](message::SequenceView data) { this->SendAsync(data); }} {}
 
@@ -281,7 +277,7 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
     }
 
     _connection_ctx = std::make_shared<ConnectionContext>(
-      UserName(), DatabaseName(), database->GetId());
+      UserName(), DatabaseName(), database->GetId(), &_send, &_copy_queue);
 
     const auto& ci = GetConnectionInfo();
     [[maybe_unused]] hba::Client client{
@@ -369,6 +365,9 @@ void PgSQLCommTaskBase::HandleClientHello(std::string_view packet) {
 }
 
 void PgSQLCommTaskBase::HandleClientPacket(std::string_view packet) {
+  // Crash injection for recovery testing
+  SDB_IF_FAILURE("crash_on_packet") { exit(1); }
+
   // 1 byte type + 4 byte length
   SDB_ASSERT(packet.size() >= 5);
   SDB_ASSERT(_state == State::Idle);
@@ -414,7 +413,7 @@ void PgSQLCommTaskBase::DescribeAnalyzedQuery(
   const auto* pg_node = castNode(RawStmt, statement.tree.GetRoot());
   SDB_ASSERT(pg_node);
 
-  // We want **don't** want to describe columns in the following cases:
+  // We **don't** want to describe columns in the following cases:
   // 1. Query is CALL some_procedure()
   // 2. Query is without logical plan and doesn't have columns at all,
   //    for example CREATE and DROP). But query may be without logical plan, but
@@ -1132,11 +1131,12 @@ void PgSQLCommTaskBase::ParseClientParameters(std::string_view data) {
 }
 
 void PgSQLCommTaskBase::CancelPacket() {
-  std::lock_guard lock{_queue_mutex};
+  std::unique_lock lock{_queue_mutex};
   _cancel_packet.store(true, std::memory_order_relaxed);
   if (_current_portal && _current_portal->cursor) {
     _current_portal->cursor->RequestCancel();
   }
+  _copy_queue.Abort(lock);
 }
 
 void PgSQLCommTaskBase::ReleaseCursor(SqlPortal& portal) {
@@ -1265,7 +1265,7 @@ void PgSQLCommTaskBase::SendNotice(char type, const pg::SqlErrorData& what) {
   char sql_state[pg::kSqlStateSize];
   pg::UnpackSqlState(sql_state, what.errcode);
   SendNotice(type, what.errmsg, {sql_state, pg::kSqlStateSize}, what.errdetail,
-             what.errhint, _current_query, what.cursorpos);
+             what.errhint, what.context, _current_query, what.cursorpos);
 }
 
 void PgSQLCommTaskBase::SendError(std::string_view message, int errcode) {
@@ -1278,8 +1278,9 @@ void PgSQLCommTaskBase::SendNotice(char type, std::string_view message,
                                    std::string_view sqlstate,
                                    std::string_view error_detail /*= {} */,
                                    std::string_view error_hint /*= {} */,
+                                   std::string_view context /*= {} */,
                                    std::string_view query /* = {} */,
-                                   int cursor_pos /* = 0 */) {
+                                   int cursor_pos /* = -1 */) {
   SDB_ASSERT(type == PQ_MSG_ERROR_RESPONSE || type == PQ_MSG_NOTICE_RESPONSE);
   const auto uncommitted_size = _send.GetUncommittedSize();
   auto* prefix_data = _send.GetContiguousData(5);
@@ -1298,6 +1299,10 @@ void PgSQLCommTaskBase::SendNotice(char type, std::string_view message,
   if (error_hint.size()) {
     _send.WriteUncommitted({"\0H", 2});
     _send.WriteUncommitted(error_hint);
+  }
+  if (context.size()) {
+    _send.WriteUncommitted({"\0W", 2});
+    _send.WriteUncommitted(context);
   }
   if (query.size() > 1) {
     _send.WriteUncommitted({"\0q", 2});
@@ -1423,10 +1428,17 @@ bool PgSQLCommTask<T>::ReadCallback(asio_ns::error_code ec) {
           }
           {
             std::string packet{_packet.data(), _pending_len};
-            std::lock_guard lock{this->_queue_mutex};
-            this->_queue.emplace(std::move(packet));
-            if (this->_queue.size() == 1 && !this->Stopped()) {
-              this->_feature.ScheduleProcessFirst(this->weak_from_this());
+            // TODO: error if there's no copy in progress
+            if (packet.starts_with(PQ_MSG_COPY_DATA)) {
+              this->_copy_queue.AppendCopyDataMsg(std::move(packet));
+            } else if (packet.starts_with(PQ_MSG_COPY_DONE)) {
+              this->_copy_queue.AppendCopyDoneMsg();
+            } else {
+              std::lock_guard lock{this->_queue_mutex};
+              this->_queue.emplace(std::move(packet));
+              if (this->_queue.size() == 1 && !this->Stopped()) {
+                this->_feature.ScheduleProcessFirst(this->weak_from_this());
+              }
             }
           }
           _packet.erase(0, _pending_len);

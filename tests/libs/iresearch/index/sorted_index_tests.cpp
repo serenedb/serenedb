@@ -21,16 +21,15 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/index/comparer.hpp>
-#include <iresearch/index/index_features.hpp>
-#include <iresearch/index/norm.hpp>
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/mmap_directory.hpp>
-#include <iresearch/utils/bytes_output.hpp>
-#include <iresearch/utils/index_utils.hpp>
-
 #include "index_tests.hpp"
+#include "iresearch/index/comparer.hpp"
+#include "iresearch/index/index_features.hpp"
+#include "iresearch/index/norm.hpp"
+#include "iresearch/search/term_filter.hpp"
+#include "iresearch/store/memory_directory.hpp"
+#include "iresearch/store/mmap_directory.hpp"
+#include "iresearch/utils/bytes_output.hpp"
+#include "iresearch/utils/index_utils.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -72,8 +71,8 @@ class SortedEuroparlDocTemplate : public tests::EuroparlDocTemplate {
     : _field{std::move(field)}, _features{features} {}
 
   void init() final {
-    indexed.push_back(std::make_shared<tests::StringField>(
-      "title", irs::kPosOffsPay | _features));
+    indexed.push_back(
+      std::make_shared<tests::StringField>("title", irs::kPosOffs | _features));
     indexed.push_back(
       std::make_shared<text_ref_field>("title_anl", false, _features));
     indexed.push_back(
@@ -88,16 +87,16 @@ class SortedEuroparlDocTemplate : public tests::EuroparlDocTemplate {
       field.Name("date");
     }
     insert(std::make_shared<tests::StringField>("datestr",
-                                                irs::kPosOffsPay | _features));
-    insert(std::make_shared<tests::StringField>("body",
-                                                irs::kPosOffsPay | _features));
+                                                irs::kPosOffs | _features));
+    insert(
+      std::make_shared<tests::StringField>("body", irs::kPosOffs | _features));
     {
       insert(std::make_shared<tests::IntField>());
       auto& field = static_cast<tests::IntField&>(indexed.back());
       field.Name("id");
     }
-    insert(std::make_shared<tests::StringField>("idstr",
-                                                irs::kPosOffsPay | _features));
+    insert(
+      std::make_shared<tests::StringField>("idstr", irs::kPosOffs | _features));
 
     auto fields = indexed.find(_field);
 
@@ -254,15 +253,6 @@ class SortedIndexTestCase : public tests::IndexTestBase {
       irs::IndexFeatures::None | irs::IndexFeatures::Freq |
         irs::IndexFeatures::Pos | irs::IndexFeatures::Offs,
       skip, matcher);
-    IndexTestBase::assert_index(
-      irs::IndexFeatures::None | irs::IndexFeatures::Freq |
-        irs::IndexFeatures::Pos | irs::IndexFeatures::Pay,
-      skip, matcher);
-    IndexTestBase::assert_index(
-      irs::IndexFeatures::None | irs::IndexFeatures::Freq |
-        irs::IndexFeatures::Pos | irs::IndexFeatures::Offs |
-        irs::IndexFeatures::Pay,
-      skip, matcher);
     IndexTestBase::assert_columnstore();
   }
 
@@ -287,7 +277,9 @@ class SortedIndexTestCase : public tests::IndexTestBase {
     {
       irs::NormHeader hdr{after_consolidation ? irs::NormEncoding::Byte
                                               : irs::NormEncoding::Int};
-      hdr.Reset(1);
+      for (size_t i = 0; i < count; ++i) {
+        hdr.Reset(1);
+      }
 
       irs::bstring buf;
       irs::BytesOutput writer{buf};
@@ -309,7 +301,7 @@ TEST_P(SortedIndexTestCase, simple_sequential) {
                            const tests::JsonDocGenerator::JsonValue& data) {
       if (data.is_string()) {
         auto field = std::make_shared<tests::StringField>(
-          name, data.str, irs::kPosOffsPay | FieldFeatures());
+          name, data.str, irs::kPosOffs | FieldFeatures());
 
         doc.insert(field);
 
@@ -556,7 +548,7 @@ TEST_P(SortedIndexTestCase, simple_sequential_consolidate) {
                            const tests::JsonDocGenerator::JsonValue& data) {
       if (data.is_string()) {
         auto field = std::make_shared<tests::StringField>(
-          name, data.str, irs::kPosOffsPay | FieldFeatures());
+          name, data.str, irs::kPosOffs | FieldFeatures());
 
         doc.insert(field);
 
@@ -921,7 +913,7 @@ TEST_P(SortedIndexTestCase, simple_sequential_already_sorted) {
                            const tests::JsonDocGenerator::JsonValue& data) {
       if (data.is_string()) {
         auto field = std::make_shared<tests::StringField>(
-          name, data.str, irs::kPosOffsPay | FieldFeatures());
+          name, data.str, irs::kPosOffs | FieldFeatures());
 
         doc.insert(field);
 
@@ -1235,7 +1227,7 @@ TEST_P(SortedIndexTestCase, check_document_order_after_consolidation_dense) {
            const tests::JsonDocGenerator::JsonValue& data) {
       if (data.is_string()) {
         auto field = std::make_shared<tests::StringField>(
-          name, data.str, irs::kPosOffsPay | FieldFeatures());
+          name, data.str, irs::kPosOffs | FieldFeatures());
 
         doc.insert(field);
 
@@ -1437,7 +1429,7 @@ TEST_P(SortedIndexTestCase,
            const tests::JsonDocGenerator::JsonValue& data) {
       if (data.is_string()) {
         auto field = std::make_shared<tests::StringField>(
-          name, data.str, irs::kPosOffsPay | FieldFeatures());
+          name, data.str, irs::kPosOffs | FieldFeatures());
 
         doc.insert(field);
 
@@ -1888,7 +1880,7 @@ TEST_P(SortedIndexTestCase,
            const tests::JsonDocGenerator::JsonValue& data) {
       if (data.is_string()) {
         auto field = std::make_shared<tests::StringField>(
-          name, data.str, irs::kPosOffsPay | FieldFeatures());
+          name, data.str, irs::kPosOffs | FieldFeatures());
 
         doc.insert(field);
 
@@ -2087,7 +2079,7 @@ TEST_P(SortedIndexTestCase, check_document_order_after_consolidation_sparse) {
            const tests::JsonDocGenerator::JsonValue& data) {
       if (data.is_string()) {
         auto field = std::make_shared<tests::StringField>(
-          name, data.str, irs::kPosOffsPay | FieldFeatures());
+          name, data.str, irs::kPosOffs | FieldFeatures());
 
         doc.insert(field);
 
@@ -2324,7 +2316,7 @@ TEST_P(SortedIndexTestCase,
            const tests::JsonDocGenerator::JsonValue& data) {
       if (data.is_string()) {
         auto field = std::make_shared<tests::StringField>(
-          name, data.str, irs::kPosOffsPay | FieldFeatures());
+          name, data.str, irs::kPosOffs | FieldFeatures());
 
         doc.insert(field);
 
@@ -2559,7 +2551,7 @@ TEST_P(SortedIndexTestCase,
         const tests::JsonDocGenerator::JsonValue& data) {
       if (data.is_string()) {
         auto field = std::make_shared<tests::StringField>(
-          name, data.str, irs::kPosOffsPay | FieldFeatures());
+          name, data.str, irs::kPosOffs | FieldFeatures());
 
         doc.insert(field);
 
@@ -2792,7 +2784,7 @@ TEST_P(SortedIndexTestCase,
 }
 
 const auto kSortedIndexTestCaseValues =
-  ::testing::Values(tests::FormatInfo{"1_5avx"}, tests::FormatInfo{"1_5simd"});
+  ::testing::Values(tests::FormatInfo{"1_5simd"});
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
@@ -3161,8 +3153,7 @@ INSTANTIATE_TEST_SUITE_P(
   SortedIndexStressTest, SortedIndexStressTestCase,
   ::testing::Combine(
     ::testing::Values(&tests::Directory<&tests::MemoryDirectory>),
-    ::testing::Values(tests::FormatInfo{"1_5avx"},
-                      tests::FormatInfo{"1_5simd"})),
+    ::testing::Values(tests::FormatInfo{"1_5simd"})),
   SortedIndexStressTestCase::to_string);
 
 }  // namespace

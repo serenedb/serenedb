@@ -22,16 +22,16 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <array>
-#include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/index/comparer.hpp>
-#include <iresearch/index/index_features.hpp>
-#include <iresearch/index/index_reader.hpp>
-#include <iresearch/index/segment_writer.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/store_utils.hpp>
-#include <iresearch/utils/lz4compression.hpp>
 
 #include "index/index_tests.hpp"
+#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/index/comparer.hpp"
+#include "iresearch/index/index_features.hpp"
+#include "iresearch/index/index_reader.hpp"
+#include "iresearch/index/segment_writer.hpp"
+#include "iresearch/store/memory_directory.hpp"
+#include "iresearch/store/store_utils.hpp"
+#include "iresearch/utils/lz4compression.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -59,7 +59,7 @@ class SegmentWriterTests : public TestBase {
     };
   }
 
-  static auto DefaultCodec() { return irs::formats::Get("1_5avx"); }
+  static auto DefaultCodec() { return irs::formats::Get("1_5simd"); }
 };
 
 struct TokenizerMock final : public irs::Tokenizer {
@@ -116,7 +116,7 @@ TEST_F(SegmentWriterTests, memory_sorted_vs_unsorted) {
 
   irs::SegmentMeta segment;
   segment.name = "foo";
-  segment.codec = irs::formats::Get("1_5avx");
+  segment.codec = irs::formats::Get("1_5simd");
   writer_sorted->reset(segment);
   ASSERT_EQ(0, writer_sorted->memory_active());
   writer_unsorted->reset(segment);
@@ -176,7 +176,7 @@ TEST_F(SegmentWriterTests, insert_sorted_without_comparator) {
 
   irs::SegmentMeta segment;
   segment.name = "foo";
-  segment.codec = irs::formats::Get("1_5avx");
+  segment.codec = irs::formats::Get("1_5simd");
   writer->reset(segment);
   ASSERT_EQ(0, writer->memory_active());
 
@@ -223,7 +223,7 @@ TEST_F(SegmentWriterTests, memory_store_sorted_field) {
 
     irs::SegmentMeta segment;
     segment.name = "foo";
-    segment.codec = irs::formats::Get("1_5avx");
+    segment.codec = irs::formats::Get("1_5simd");
     writer->reset(segment);
     ASSERT_EQ(0, writer->memory_active());
 
@@ -251,7 +251,7 @@ TEST_F(SegmentWriterTests, memory_store_sorted_field) {
 
     irs::SegmentMeta segment;
     segment.name = "foo";
-    segment.codec = irs::formats::Get("1_5avx");
+    segment.codec = irs::formats::Get("1_5simd");
     writer->reset(segment);
     ASSERT_EQ(0, writer->memory_active());
     irs::SegmentWriter::DocContext ctx;
@@ -316,7 +316,7 @@ TEST_F(SegmentWriterTests, memory_index_store_sorted_field) {
 
     irs::SegmentMeta segment;
     segment.name = "foo";
-    segment.codec = irs::formats::Get("1_5avx");
+    segment.codec = irs::formats::Get("1_5simd");
     writer->reset(segment);
     ASSERT_EQ(0, writer->memory_active());
 
@@ -354,7 +354,7 @@ TEST_F(SegmentWriterTests, memory_index_store_sorted_field) {
 
     irs::SegmentMeta segment;
     segment.name = "foo";
-    segment.codec = irs::formats::Get("1_5avx");
+    segment.codec = irs::formats::Get("1_5simd");
     writer->reset(segment);
     ASSERT_EQ(0, writer->memory_active());
     irs::SegmentWriter::DocContext ctx;
@@ -404,7 +404,7 @@ TEST_F(SegmentWriterTests, memory_store_field_sorted) {
 
     irs::SegmentMeta segment;
     segment.name = "foo";
-    segment.codec = irs::formats::Get("1_5avx");
+    segment.codec = irs::formats::Get("1_5simd");
     writer->reset(segment);
     ASSERT_EQ(0, writer->memory_active());
 
@@ -432,7 +432,7 @@ TEST_F(SegmentWriterTests, memory_store_field_sorted) {
 
     irs::SegmentMeta segment;
     segment.name = "foo";
-    segment.codec = irs::formats::Get("1_5avx");
+    segment.codec = irs::formats::Get("1_5simd");
     writer->reset(segment);
     ASSERT_EQ(0, writer->memory_active());
     irs::SegmentWriter::DocContext ctx;
@@ -478,7 +478,7 @@ TEST_F(SegmentWriterTests, memory_store_field_unsorted) {
 
     irs::SegmentMeta segment;
     segment.name = "foo";
-    segment.codec = irs::formats::Get("1_5avx");
+    segment.codec = irs::formats::Get("1_5simd");
     writer->reset(segment);
     ASSERT_EQ(0, writer->memory_active());
 
@@ -505,7 +505,7 @@ TEST_F(SegmentWriterTests, memory_store_field_unsorted) {
 
     irs::SegmentMeta segment;
     segment.name = "foo";
-    segment.codec = irs::formats::Get("1_5avx");
+    segment.codec = irs::formats::Get("1_5simd");
     writer->reset(segment);
     ASSERT_EQ(0, writer->memory_active());
 
@@ -567,7 +567,7 @@ TEST_F(SegmentWriterTests, memory_index_store_field_unsorted) {
 
     irs::SegmentMeta segment;
     segment.name = "foo";
-    segment.codec = irs::formats::Get("1_5avx");
+    segment.codec = irs::formats::Get("1_5simd");
     writer->reset(segment);
     ASSERT_EQ(0, writer->memory_active());
 
@@ -603,7 +603,7 @@ TEST_F(SegmentWriterTests, memory_index_store_field_unsorted) {
 
     irs::SegmentMeta segment;
     segment.name = "foo";
-    segment.codec = irs::formats::Get("1_5avx");
+    segment.codec = irs::formats::Get("1_5simd");
     writer->reset(segment);
     ASSERT_EQ(0, writer->memory_active());
 
@@ -651,7 +651,7 @@ TEST_F(SegmentWriterTests, memory_index_field) {
   {
     irs::SegmentMeta segment;
     segment.name = "tmp";
-    segment.codec = irs::formats::Get("1_5avx");
+    segment.codec = irs::formats::Get("1_5simd");
     ASSERT_NE(nullptr, segment.codec);
 
     irs::MemoryDirectory dir;
@@ -679,7 +679,7 @@ TEST_F(SegmentWriterTests, memory_index_field) {
   {
     irs::SegmentMeta segment;
     segment.name = "tmp";
-    segment.codec = irs::formats::Get("1_5avx");
+    segment.codec = irs::formats::Get("1_5simd");
     ASSERT_NE(nullptr, segment.codec);
 
     irs::MemoryDirectory dir;
@@ -724,7 +724,7 @@ TEST_F(SegmentWriterTests, index_field) {
   {
     irs::SegmentMeta segment;
     segment.name = "tmp";
-    segment.codec = irs::formats::Get("1_5avx");
+    segment.codec = irs::formats::Get("1_5simd");
     ASSERT_NE(nullptr, segment.codec);
 
     const irs::SegmentWriterOptions options{.column_info = column_info,
@@ -753,7 +753,7 @@ TEST_F(SegmentWriterTests, index_field) {
   {
     irs::SegmentMeta segment;
     segment.name = "tmp";
-    segment.codec = irs::formats::Get("1_5avx");
+    segment.codec = irs::formats::Get("1_5simd");
     ASSERT_NE(nullptr, segment.codec);
 
     const irs::SegmentWriterOptions options{.column_info = column_info,

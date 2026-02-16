@@ -21,10 +21,9 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/utils/lz4compression.hpp>
-
 #include "index_tests.hpp"
+#include "iresearch/store/memory_directory.hpp"
+#include "iresearch/utils/lz4compression.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -8283,9 +8282,8 @@ TEST_P(IndexColumnTestCase, read_empty_doc_attributes) {
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
-INSTANTIATE_TEST_SUITE_P(
-  index_column_test, IndexColumnTestCase,
-  ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                     ::testing::Values(tests::FormatInfo{"1_5avx"},
-                                       tests::FormatInfo{"1_5simd"})),
-  IndexColumnTestCase::to_string);
+INSTANTIATE_TEST_SUITE_P(index_column_test, IndexColumnTestCase,
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
+                                            ::testing::Values(tests::FormatInfo{
+                                              "1_5simd"})),
+                         IndexColumnTestCase::to_string);

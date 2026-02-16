@@ -21,16 +21,19 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <functional>
-#include <iresearch/index/field_meta.hpp>
-#include <iresearch/index/index_features.hpp>
-#include <iresearch/index/norm.hpp>
-#include <iresearch/search/bm25.hpp>
-#include <iresearch/search/ngram_similarity_filter.hpp>
-#include <iresearch/search/ngram_similarity_query.hpp>
-#include <iresearch/search/tfidf.hpp>
-#include <iresearch/utils/ngram_match_utils.hpp>
 
 #include "filter_test_case_base.hpp"
+#include "iresearch/index/field_meta.hpp"
+#include "iresearch/index/index_features.hpp"
+#include "iresearch/index/norm.hpp"
+#include "iresearch/search/bm25.hpp"
+#include "iresearch/search/ngram_similarity_filter.hpp"
+#include "iresearch/search/ngram_similarity_query.hpp"
+#include "iresearch/search/score_function.hpp"
+#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/tfidf.hpp"
+#include "iresearch/utils/lz4compression.hpp"
+#include "iresearch/utils/ngram_match_utils.hpp"
 #include "tests_shared.hpp"
 
 namespace tests {
@@ -1137,11 +1140,17 @@ TEST_P(NGramSimilarityFilterTestCase, missed_middle3_test) {
   counter.Reset();
 }
 
-struct TestScoreCtx final : public irs::ScoreCtx {
-  TestScoreCtx(std::vector<size_t>* f, const irs::FreqAttr* p,
-               std::vector<irs::score_t>* b,
-               const irs::FilterBoost* fb) noexcept
+struct TestScoreFunctionImpl : public irs::ScoreOperator {
+  TestScoreFunctionImpl(std::vector<size_t>* f, const irs::FreqAttr* p,
+                        std::vector<irs::score_t>* b,
+                        const irs::FilterBoost* fb) noexcept
     : freq(f), filter_boost(b), freq_from_filter(p), boost_from_filter(fb) {}
+
+  void Score(irs::score_t* res, size_t n) noexcept override {
+    freq->push_back(freq_from_filter->value);
+    filter_boost->push_back(boost_from_filter->value);
+    std::memset(res, 0, n * sizeof(irs::score_t));
+  }
 
   std::vector<size_t>* freq;
   std::vector<irs::score_t>* filter_boost;
@@ -1191,20 +1200,12 @@ TEST_P(NGramSimilarityFilterTestCase, missed_last_scored_test) {
     return std::make_unique<CustomNGramScorer::TermCollector>(scorer);
   };
   scorer.prepare_scorer =
-    [&frequency, &filter_boost](
-      const irs::ColumnProvider& /*segment*/,
-      const irs::FieldProperties& /*term*/, const irs::byte_type* /*stats_buf*/,
-      const irs::AttributeProvider& attr, irs::score_t) -> irs::ScoreFunction {
-    auto* freq = irs::get<irs::FreqAttr>(attr);
-    auto* boost = irs::get<irs::FilterBoost>(attr);
-    return irs::ScoreFunction::Make<TestScoreCtx>(
-      [](irs::ScoreCtx* ctx, irs::score_t* res) noexcept {
-        const auto& freq = *reinterpret_cast<TestScoreCtx*>(ctx);
-        freq.freq->push_back(freq.freq_from_filter->value);
-        freq.filter_boost->push_back(freq.boost_from_filter->value);
-        *res = {};
-      },
-      irs::ScoreFunction::DefaultMin, &frequency, freq, &filter_boost, boost);
+    [&frequency,
+     &filter_boost](const irs::ScoreContext& ctx) -> irs::ScoreFunction {
+    auto* freq = irs::get<irs::FreqAttr>(ctx.doc_attrs);
+    auto* boost = irs::get<irs::FilterBoost>(ctx.doc_attrs);
+    return irs::ScoreFunction::Make<TestScoreFunctionImpl>(
+      &frequency, freq, &filter_boost, boost);
   };
   std::vector<size_t> expected_frequency{1, 1, 2, 1, 1, 1, 1};
   std::vector<irs::score_t> expected_filter_boost{
@@ -1263,20 +1264,12 @@ TEST_P(NGramSimilarityFilterTestCase, missed_frequency_test) {
     return std::make_unique<CustomNGramScorer::TermCollector>(scorer);
   };
   scorer.prepare_scorer =
-    [&frequency, &filter_boost](
-      const irs::ColumnProvider& /*segment*/,
-      const irs::FieldProperties& /*term*/, const irs::byte_type* /*stats_buf*/,
-      const irs::AttributeProvider& attr, irs::score_t) -> irs::ScoreFunction {
-    auto* freq = irs::get<irs::FreqAttr>(attr);
-    auto* boost = irs::get<irs::FilterBoost>(attr);
-    return irs::ScoreFunction::Make<TestScoreCtx>(
-      [](irs::ScoreCtx* ctx, irs::score_t* res) noexcept {
-        const auto& freq = *static_cast<TestScoreCtx*>(ctx);
-        freq.freq->push_back(freq.freq_from_filter->value);
-        freq.filter_boost->push_back(freq.boost_from_filter->value);
-        *res = {};
-      },
-      irs::ScoreFunction::DefaultMin, &frequency, freq, &filter_boost, boost);
+    [&frequency,
+     &filter_boost](const irs::ScoreContext& ctx) -> irs::ScoreFunction {
+    auto* freq = irs::get<irs::FreqAttr>(ctx.doc_attrs);
+    auto* boost = irs::get<irs::FilterBoost>(ctx.doc_attrs);
+    return irs::ScoreFunction::Make<TestScoreFunctionImpl>(
+      &frequency, freq, &filter_boost, boost);
   };
   std::vector<size_t> expected_frequency{1, 1, 2, 1, 1, 1, 1};
   std::vector<irs::score_t> expected_filter_boost{
@@ -1526,11 +1519,10 @@ TEST_P(NGramSimilarityFilterTestCase, seek) {
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
-INSTANTIATE_TEST_SUITE_P(
-  ngram_similarity_test, NGramSimilarityFilterTestCase,
-  ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                     ::testing::Values(tests::FormatInfo{"1_5avx"},
-                                       tests::FormatInfo{"1_5simd"})),
-  NGramSimilarityFilterTestCase::to_string);
+INSTANTIATE_TEST_SUITE_P(ngram_similarity_test, NGramSimilarityFilterTestCase,
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
+                                            ::testing::Values(tests::FormatInfo{
+                                              "1_5simd"})),
+                         NGramSimilarityFilterTestCase::to_string);
 
 }  // namespace tests

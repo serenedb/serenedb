@@ -27,8 +27,11 @@
 #include <functional>
 
 #include "basics/down_cast.h"
+#include "iresearch/index/index_meta.hpp"
+#include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/index/iterators.hpp"
+#include "iresearch/search/column_collector.hpp"
 #include "iresearch/utils/hash_utils.hpp"
 
 namespace irs {
@@ -55,8 +58,9 @@ struct ExecutionContext {
   IResourceManager& memory = IResourceManager::gNoop;
   const Scorers& scorers = Scorers::kUnordered;
   const AttributeProvider* ctx = nullptr;
+  const DocumentMask* pending_docs_mask = nullptr;
   // If enabled, wand would use first scorer from scorers
-  WandContext wand;
+  WandContext wand{};
 };
 
 // Base class for all user-side filters

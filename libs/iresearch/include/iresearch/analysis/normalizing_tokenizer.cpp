@@ -386,7 +386,7 @@ bool NormalizingTokenizer::reset(std::string_view data) {
   static_assert(sizeof(byte_type) == sizeof(char));
   std::get<TermAttr>(_attrs).value =
     ViewCast<byte_type>(std::string_view{_state->term_buf});
-  auto& offset = std::get<irs::OffsAttr>(_attrs);
+  auto& offset = std::get<OffsAttr>(_attrs);
   offset.start = 0;
   offset.end = static_cast<uint32_t>(data.size());
   _term_eof = false;

@@ -21,15 +21,19 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <basics/bit_packing.hpp>
-#include <iresearch/formats/format_utils.hpp>
-#include <iresearch/formats/formats.hpp>
-#include <iresearch/formats/formats_attributes.hpp>
-#include <iresearch/index/field_meta.hpp>
-#include <iresearch/store/mmap_directory.hpp>
-#include <iresearch/utils/type_limits.hpp>
+#include <gtest/gtest.h>
 
+#include <basics/bit_packing.hpp>
+
+#include "basics/down_cast.h"
 #include "formats_test_case_base.hpp"
+#include "iresearch/formats/format_utils.hpp"
+#include "iresearch/formats/formats.hpp"
+#include "iresearch/formats/formats_attributes.hpp"
+#include "iresearch/formats/seek_cookie.hpp"
+#include "iresearch/index/field_meta.hpp"
+#include "iresearch/store/mmap_directory.hpp"
+#include "iresearch/utils/type_limits.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -107,7 +111,7 @@ class Format10TestCase : public tests::FormatTestCase {
     auto writer =
       codec->get_postings_writer(false, irs::IResourceManager::gNoop);
     ASSERT_NE(nullptr, writer);
-    irs::TermMetaImpl term_meta;
+    irs::CookieImpl term_meta;
 
     // write postings for field
     {
@@ -123,24 +127,24 @@ class Format10TestCase : public tests::FormatTestCase {
       irs::WriteStr(*out, std::string_view("file_header"));
 
       // prepare writer
-      writer->prepare(*out, state);
+      writer->Prepare(*out, state);
 
-      writer->begin_field(field);
+      writer->BeginField(field);
 
       // write postings for term
       {
         TestPostings it(docs, field.index_features);
-        writer->write(it, term_meta);
+        writer->Write(it, term_meta.meta);
 
         // write attributes to out
-        writer->encode(*out, term_meta);
+        writer->Encode(*out, term_meta.meta);
       }
 
-      auto stats = writer->end_field();
+      auto stats = writer->EndField();
       ASSERT_EQ(0, stats.wand_mask);
       ASSERT_EQ(docs.size(), stats.docs_count);
 
-      writer->end();
+      writer->End();
     }
 
     // read postings
@@ -167,25 +171,25 @@ class Format10TestCase : public tests::FormatTestCase {
 
       // read term attributes
       {
-        irs::TermMetaImpl read_meta;
-        begin += reader->decode(begin, field.index_features, read_meta);
+        irs::CookieImpl read_meta;
+        begin += reader->decode(begin, field.index_features, read_meta.meta);
 
         // check TermMeta
         {
-          ASSERT_EQ(term_meta.docs_count, read_meta.docs_count);
-          ASSERT_EQ(term_meta.doc_start, read_meta.doc_start);
-          ASSERT_EQ(term_meta.pos_start, read_meta.pos_start);
-          ASSERT_EQ(term_meta.pos_end, read_meta.pos_end);
-          ASSERT_EQ(term_meta.pay_start, read_meta.pay_start);
-          ASSERT_EQ(term_meta.e_single_doc, read_meta.e_single_doc);
-          ASSERT_EQ(term_meta.e_skip_start, read_meta.e_skip_start);
+          ASSERT_EQ(term_meta.meta.docs_count, read_meta.meta.docs_count);
+          ASSERT_EQ(term_meta.meta.doc_start, read_meta.meta.doc_start);
+          ASSERT_EQ(term_meta.meta.pos_start, read_meta.meta.pos_start);
+          ASSERT_EQ(term_meta.meta.pay_start, read_meta.meta.pay_start);
+          ASSERT_EQ(term_meta.meta.pos_offset, read_meta.meta.pos_offset);
+          ASSERT_EQ(term_meta.meta.e_single_doc, read_meta.meta.e_single_doc);
+          ASSERT_EQ(term_meta.meta.e_skip_start, read_meta.meta.e_skip_start);
         }
 
         auto assert_docs = [&](size_t seed, size_t inc) {
           TestPostings expected_postings{docs, field.index_features};
 
-          auto actual =
-            reader->iterator(field.index_features, features, read_meta, 0);
+          auto actual = reader->Iterator(field.index_features, features,
+                                         {.cookie = &read_meta}, 0);
           ASSERT_FALSE(irs::doc_limits::valid(actual->value()));
 
           TestPostings expected(docs, field.index_features);
@@ -215,8 +219,9 @@ class Format10TestCase : public tests::FormatTestCase {
 
         // next + seek to eof
         {
-          auto it = reader->iterator(field.index_features,
-                                     irs::IndexFeatures::None, read_meta, 0);
+          auto it =
+            reader->Iterator(field.index_features, irs::IndexFeatures::None,
+                             {.cookie = &read_meta}, 0);
           ASSERT_FALSE(irs::doc_limits::valid(it->value()));
           ASSERT_TRUE(it->next());
           ASSERT_EQ(docs.front().first, it->value());
@@ -239,8 +244,8 @@ class Format10TestCase : public tests::FormatTestCase {
         {
           for (auto doc = docs.rbegin(), end = docs.rend(); doc != end; ++doc) {
             TestPostings expected(docs, field.index_features);
-            auto it =
-              reader->iterator(field.index_features, features, read_meta, 0);
+            auto it = reader->Iterator(field.index_features, features,
+                                       {.cookie = &read_meta}, 0);
             ASSERT_FALSE(irs::doc_limits::valid(it->value()));
             ASSERT_EQ(doc->first, it->seek(doc->first));
 
@@ -260,8 +265,9 @@ class Format10TestCase : public tests::FormatTestCase {
 
         // seek to irs::doc_limits::invalid()
         {
-          auto it = reader->iterator(field.index_features,
-                                     irs::IndexFeatures::None, read_meta, 0);
+          auto it =
+            reader->Iterator(field.index_features, irs::IndexFeatures::None,
+                             {.cookie = &read_meta}, 0);
           ASSERT_FALSE(irs::doc_limits::valid(it->value()));
           ASSERT_FALSE(
             irs::doc_limits::valid(it->seek(irs::doc_limits::invalid())));
@@ -271,8 +277,9 @@ class Format10TestCase : public tests::FormatTestCase {
 
         // seek to irs::doc_limits::eof()
         {
-          auto it = reader->iterator(field.index_features,
-                                     irs::IndexFeatures::None, read_meta, 0);
+          auto it =
+            reader->Iterator(field.index_features, irs::IndexFeatures::None,
+                             {.cookie = &read_meta}, 0);
           ASSERT_FALSE(irs::doc_limits::valid(it->value()));
           ASSERT_TRUE(irs::doc_limits::eof(it->seek(irs::doc_limits::eof())));
           ASSERT_FALSE(it->next());
@@ -312,15 +319,15 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
     ASSERT_FALSE(!out);
 
     // prepare writer
-    writer->prepare(*out, state);
+    writer->Prepare(*out, state);
 
     // begin field
-    writer->begin_field(field);
+    writer->BeginField(field);
 
     // write postings for term0
     {
       TestPostings docs(docs0);
-      writer->write(docs, meta0);
+      writer->Write(docs, meta0);
 
       // check TermMeta
       {
@@ -330,13 +337,13 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       }
 
       // write term0 attributes to out
-      writer->encode(*out, meta0);
+      writer->Encode(*out, meta0);
     }
 
     // write postings for term0
     {
       TestPostings docs(docs1);
-      writer->write(docs, meta1);
+      writer->Write(docs, meta1);
 
       // check TermMeta
       {
@@ -346,7 +353,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       }
 
       // write term0 attributes to out
-      writer->encode(*out, meta1);
+      writer->Encode(*out, meta1);
     }
 
     // check doc positions for term0 & term1
@@ -354,12 +361,12 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       ASSERT_EQ(meta0.docs_count, meta1.docs_count);
       ASSERT_EQ(meta0.doc_start, meta1.doc_start);
       ASSERT_EQ(meta0.pos_start, meta1.pos_start);
-      ASSERT_EQ(meta0.pos_end, meta1.pos_end);
       ASSERT_EQ(meta0.pay_start, meta1.pay_start);
+      ASSERT_EQ(meta0.pos_offset, meta1.pos_offset);
     }
 
     // finish writing
-    writer->end();
+    writer->End();
   }
 
   // read postings
@@ -385,24 +392,24 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
 
     // read term0 attributes & postings
     {
-      irs::TermMetaImpl read_meta;
+      irs::CookieImpl read_meta;
 
-      begin += reader->decode(begin, field.index_features, read_meta);
+      begin += reader->decode(begin, field.index_features, read_meta.meta);
 
       // check TermMeta for term0
       {
-        ASSERT_EQ(meta0.docs_count, read_meta.docs_count);
-        ASSERT_EQ(meta0.doc_start, read_meta.doc_start);
-        ASSERT_EQ(meta0.pos_start, read_meta.pos_start);
-        ASSERT_EQ(meta0.pos_end, read_meta.pos_end);
-        ASSERT_EQ(meta0.pay_start, read_meta.pay_start);
-        ASSERT_EQ(meta0.e_single_doc, read_meta.e_single_doc);
-        ASSERT_EQ(meta0.e_skip_start, read_meta.e_skip_start);
+        ASSERT_EQ(meta0.docs_count, read_meta.meta.docs_count);
+        ASSERT_EQ(meta0.doc_start, read_meta.meta.doc_start);
+        ASSERT_EQ(meta0.pos_start, read_meta.meta.pos_start);
+        ASSERT_EQ(meta0.pay_start, read_meta.meta.pay_start);
+        ASSERT_EQ(meta0.pos_offset, read_meta.meta.pos_offset);
+        ASSERT_EQ(meta0.e_single_doc, read_meta.meta.e_single_doc);
+        ASSERT_EQ(meta0.e_skip_start, read_meta.meta.e_skip_start);
       }
 
       // read documents
-      auto it = reader->iterator(field.index_features, irs::IndexFeatures::None,
-                                 read_meta, 0);
+      auto it = reader->Iterator(field.index_features, irs::IndexFeatures::None,
+                                 {.cookie = &read_meta}, 0);
       for (size_t i = 0; it->next();) {
         ASSERT_EQ(docs0[i++].first, it->value());
       }
@@ -410,23 +417,23 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
 
     // check TermMeta for term1
     {
-      irs::TermMetaImpl read_meta;
-      begin += reader->decode(begin, field.index_features, read_meta);
+      irs::CookieImpl read_meta;
+      begin += reader->decode(begin, field.index_features, read_meta.meta);
 
       {
-        ASSERT_EQ(meta1.docs_count, read_meta.docs_count);
-        ASSERT_EQ(0, read_meta.doc_start); /* we don't read doc start in case of
-                                              singleton */
-        ASSERT_EQ(meta1.pos_start, read_meta.pos_start);
-        ASSERT_EQ(meta1.pos_end, read_meta.pos_end);
-        ASSERT_EQ(meta1.pay_start, read_meta.pay_start);
-        ASSERT_EQ(meta1.e_single_doc, read_meta.e_single_doc);
-        ASSERT_EQ(meta1.e_skip_start, read_meta.e_skip_start);
+        ASSERT_EQ(meta1.docs_count, read_meta.meta.docs_count);
+        ASSERT_EQ(0, read_meta.meta.doc_start); /* we don't read doc start in
+                                              case of singleton */
+        ASSERT_EQ(meta1.pos_start, read_meta.meta.pos_start);
+        ASSERT_EQ(meta1.pay_start, read_meta.meta.pay_start);
+        ASSERT_EQ(meta1.pos_offset, read_meta.meta.pos_offset);
+        ASSERT_EQ(meta1.e_single_doc, read_meta.meta.e_single_doc);
+        ASSERT_EQ(meta1.e_skip_start, read_meta.meta.e_skip_start);
       }
 
       // read documents
-      auto it = reader->iterator(field.index_features, irs::IndexFeatures::None,
-                                 read_meta, 0);
+      auto it = reader->Iterator(field.index_features, irs::IndexFeatures::None,
+                                 {.cookie = &read_meta}, 0);
       for (size_t i = 0; it->next();) {
         ASSERT_EQ(docs1[i++].first, it->value());
       }
@@ -469,33 +476,33 @@ TEST_P(Format10TestCase, postings_read_write) {
     ASSERT_FALSE(!out);
 
     // prepare writer
-    writer->prepare(*out, state);
+    writer->Prepare(*out, state);
 
     // begin field
-    writer->begin_field(field);
+    writer->BeginField(field);
 
     // write postings for term0
     {
       TestPostings docs(docs0);
-      writer->write(docs, meta0);
+      writer->Write(docs, meta0);
 
       // write attributes to out
-      writer->encode(*out, meta0);
+      writer->Encode(*out, meta0);
     }
     // write postings for term1
     {
       TestPostings docs(docs1);
-      writer->write(docs, meta1);
+      writer->Write(docs, meta1);
 
       // write attributes to out
-      writer->encode(*out, meta1);
+      writer->Encode(*out, meta1);
     }
 
     // check doc positions for term0 & term1
     ASSERT_LT(meta0.doc_start, meta1.doc_start);
 
     // finish writing
-    writer->end();
+    writer->End();
   }
 
   // read postings
@@ -520,26 +527,26 @@ TEST_P(Format10TestCase, postings_read_write) {
     const auto* begin = in_data.c_str();
 
     // cumulative attribute
-    irs::TermMetaImpl read_meta;
+    irs::CookieImpl read_meta;
 
     // read term0 attributes
     {
-      begin += reader->decode(begin, field.index_features, read_meta);
+      begin += reader->decode(begin, field.index_features, read_meta.meta);
 
       // check TermMeta
       {
-        ASSERT_EQ(meta0.docs_count, read_meta.docs_count);
-        ASSERT_EQ(meta0.doc_start, read_meta.doc_start);
-        ASSERT_EQ(meta0.pos_start, read_meta.pos_start);
-        ASSERT_EQ(meta0.pos_end, read_meta.pos_end);
-        ASSERT_EQ(meta0.pay_start, read_meta.pay_start);
-        ASSERT_EQ(meta0.e_single_doc, read_meta.e_single_doc);
-        ASSERT_EQ(meta0.e_skip_start, read_meta.e_skip_start);
+        ASSERT_EQ(meta0.docs_count, read_meta.meta.docs_count);
+        ASSERT_EQ(meta0.doc_start, read_meta.meta.doc_start);
+        ASSERT_EQ(meta0.pos_start, read_meta.meta.pos_start);
+        ASSERT_EQ(meta0.pay_start, read_meta.meta.pay_start);
+        ASSERT_EQ(meta0.pos_offset, read_meta.meta.pos_offset);
+        ASSERT_EQ(meta0.e_single_doc, read_meta.meta.e_single_doc);
+        ASSERT_EQ(meta0.e_skip_start, read_meta.meta.e_skip_start);
       }
 
       // read documents
-      auto it = reader->iterator(field.index_features, irs::IndexFeatures::None,
-                                 read_meta, 0);
+      auto it = reader->Iterator(field.index_features, irs::IndexFeatures::None,
+                                 {.cookie = &read_meta}, 0);
       for (size_t i = 0; it->next();) {
         ASSERT_EQ(docs0[i++].first, it->value());
       }
@@ -547,22 +554,22 @@ TEST_P(Format10TestCase, postings_read_write) {
 
     // read term1 attributes
     {
-      begin += reader->decode(begin, field.index_features, read_meta);
+      begin += reader->decode(begin, field.index_features, read_meta.meta);
 
       // check TermMeta
       {
-        ASSERT_EQ(meta1.docs_count, read_meta.docs_count);
-        ASSERT_EQ(meta1.doc_start, read_meta.doc_start);
-        ASSERT_EQ(meta1.pos_start, read_meta.pos_start);
-        ASSERT_EQ(meta1.pos_end, read_meta.pos_end);
-        ASSERT_EQ(meta1.pay_start, read_meta.pay_start);
-        ASSERT_EQ(meta1.e_single_doc, read_meta.e_single_doc);
-        ASSERT_EQ(meta1.e_skip_start, read_meta.e_skip_start);
+        ASSERT_EQ(meta1.docs_count, read_meta.meta.docs_count);
+        ASSERT_EQ(meta1.doc_start, read_meta.meta.doc_start);
+        ASSERT_EQ(meta1.pos_start, read_meta.meta.pos_start);
+        ASSERT_EQ(meta1.pay_start, read_meta.meta.pay_start);
+        ASSERT_EQ(meta1.pos_offset, read_meta.meta.pos_offset);
+        ASSERT_EQ(meta1.e_single_doc, read_meta.meta.e_single_doc);
+        ASSERT_EQ(meta1.e_skip_start, read_meta.meta.e_skip_start);
       }
 
       // read documents
-      auto it = reader->iterator(field.index_features, irs::IndexFeatures::None,
-                                 read_meta, 0);
+      auto it = reader->Iterator(field.index_features, irs::IndexFeatures::None,
+                                 {.cookie = &read_meta}, 0);
       for (size_t i = 0; it->next();) {
         ASSERT_EQ(docs1[i++].first, it->value());
       }
@@ -592,9 +599,9 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
 
   // write docs 'segment0' with all possible streams
   {
-    constexpr irs::IndexFeatures kFeatures =
-      irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-      irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
+    constexpr irs::IndexFeatures kFeatures = irs::IndexFeatures::Freq |
+                                             irs::IndexFeatures::Pos |
+                                             irs::IndexFeatures::Offs;
 
     irs::FieldMeta field;
     field.name = "field";
@@ -613,11 +620,11 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
 
     TestPostings docs(docs0);
 
-    writer->prepare(*out, state);
-    writer->begin_field(field);
+    writer->Prepare(*out, state);
+    writer->BeginField(field);
     irs::TermMetaImpl meta;
-    writer->write(docs, meta);
-    writer->end();
+    writer->Write(docs, meta);
+    writer->End();
   }
 
   // write docs 'segment1' with position & offset
@@ -643,18 +650,17 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
 
     TestPostings docs(docs0);
 
-    writer->prepare(*out, state);
-    writer->begin_field(field);
+    writer->Prepare(*out, state);
+    writer->BeginField(field);
     irs::TermMetaImpl meta;
-    writer->write(docs, meta);
-    writer->end();
+    writer->Write(docs, meta);
+    writer->End();
   }
 
   // write docs 'segment2' with position & payload
   {
-    constexpr irs::IndexFeatures kFeatures = irs::IndexFeatures::Freq |
-                                             irs::IndexFeatures::Pos |
-                                             irs::IndexFeatures::Pay;
+    constexpr irs::IndexFeatures kFeatures =
+      irs::IndexFeatures::Freq | irs::IndexFeatures::Pos;
 
     irs::FieldMeta field;
     field.name = "field";
@@ -673,11 +679,11 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
 
     TestPostings docs(docs0);
 
-    writer->prepare(*out, state);
-    writer->begin_field(field);
+    writer->Prepare(*out, state);
+    writer->BeginField(field);
     irs::TermMetaImpl meta;
-    writer->write(docs, meta);
-    writer->end();
+    writer->Write(docs, meta);
+    writer->End();
   }
 
   // write docs 'segment3' with position
@@ -702,11 +708,11 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
 
     TestPostings docs(docs0);
 
-    writer->prepare(*out, state);
-    writer->begin_field(field);
+    writer->Prepare(*out, state);
+    writer->BeginField(field);
     irs::TermMetaImpl meta;
-    writer->write(docs, meta);
-    writer->end();
+    writer->Write(docs, meta);
+    writer->End();
   }
 
   // write docs 'segment3' with frequency
@@ -730,11 +736,11 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
 
     TestPostings docs(docs0);
 
-    writer->prepare(*out, state);
-    writer->begin_field(field);
+    writer->Prepare(*out, state);
+    writer->BeginField(field);
     irs::TermMetaImpl meta;
-    writer->write(docs, meta);
-    writer->end();
+    writer->Write(docs, meta);
+    writer->End();
   }
 
   // writer segment without any attributes
@@ -756,11 +762,11 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
 
     TestPostings docs(docs0);
 
-    writer->prepare(*out, state);
-    writer->begin_field(field);
+    writer->Prepare(*out, state);
+    writer->BeginField(field);
     irs::TermMetaImpl meta;
-    writer->write(docs, meta);
-    writer->end();
+    writer->Write(docs, meta);
+    writer->End();
   }
 }
 
@@ -874,10 +880,6 @@ TEST_P(Format10TestCase, postings_seek) {
   constexpr auto kPos = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos;
   constexpr auto kOffs = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
                          irs::IndexFeatures::Offs;
-  constexpr auto kPay = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-                        irs::IndexFeatures::Pay;
-  constexpr auto kAll = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
-                        irs::IndexFeatures::Offs | irs::IndexFeatures::Pay;
 
   // singleton doc
   {
@@ -890,8 +892,6 @@ TEST_P(Format10TestCase, postings_seek) {
     PostingsSeek(docs, kFreq);
     PostingsSeek(docs, kPos);
     PostingsSeek(docs, kOffs);
-    PostingsSeek(docs, kPay);
-    PostingsSeek(docs, kAll);
   }
 
   // short list (< postings_writer::BLOCK_SIZE)
@@ -905,8 +905,6 @@ TEST_P(Format10TestCase, postings_seek) {
     PostingsSeek(docs, kFreq);
     PostingsSeek(docs, kPos);
     PostingsSeek(docs, kOffs);
-    PostingsSeek(docs, kPay);
-    PostingsSeek(docs, kAll);
   }
 
   // equals to postings_writer::BLOCK_SIZE
@@ -917,8 +915,6 @@ TEST_P(Format10TestCase, postings_seek) {
     PostingsSeek(docs, kFreq);
     PostingsSeek(docs, kPos);
     PostingsSeek(docs, kOffs);
-    PostingsSeek(docs, kPay);
-    PostingsSeek(docs, kAll);
   }
 
   // long list
@@ -930,8 +926,6 @@ TEST_P(Format10TestCase, postings_seek) {
     PostingsSeek(docs, kFreq);
     PostingsSeek(docs, kPos);
     PostingsSeek(docs, kOffs);
-    PostingsSeek(docs, kPay);
-    PostingsSeek(docs, kAll);
   }
 
   // 2^15
@@ -943,15 +937,13 @@ TEST_P(Format10TestCase, postings_seek) {
     PostingsSeek(docs, kFreq);
     PostingsSeek(docs, kPos);
     PostingsSeek(docs, kOffs);
-    PostingsSeek(docs, kPay);
-    PostingsSeek(docs, kAll);
   }
 }
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
-static const auto kTestValues = ::testing::Combine(
-  ::testing::ValuesIn(kTestDirs),
-  ::testing::Values(tests::FormatInfo{"1_5avx"}, tests::FormatInfo{"1_5simd"}));
+static const auto kTestValues =
+  ::testing::Combine(::testing::ValuesIn(kTestDirs),
+                     ::testing::Values(tests::FormatInfo{"1_5simd"}));
 
 // 1.0 specific tests
 INSTANTIATE_TEST_SUITE_P(format_10_test, Format10TestCase, kTestValues,

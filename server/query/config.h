@@ -36,6 +36,7 @@
 #include "basics/exceptions.h"
 #include "basics/fwd.h"
 #include "basics/system-compiler.h"
+#include "catalog/table_options.h"
 
 namespace sdb {
 
@@ -52,6 +53,7 @@ enum class VariableType {
   PgSearchPath,
   PgExtraFloatDigits,
   PgByteaOutput,
+  SdbWriteConflictPolicy,
 };
 
 enum class ByteaOutput : uint8_t {
@@ -126,6 +128,17 @@ class Config : public velox::config::IConfig {
                    "bytea_output is not validated");
         return ByteaOutput::Escape;
       }
+    } else if constexpr (T == VariableType::SdbWriteConflictPolicy) {
+      SDB_ASSERT(key == "sdb_write_conflict_policy");
+      if (absl::EqualsIgnoreCase("emit_error", *value_str)) {
+        return WriteConflictPolicy::EmitError;
+      }
+      if (absl::EqualsIgnoreCase("do_nothing", *value_str)) {
+        return WriteConflictPolicy::DoNothing;
+      }
+      SDB_ASSERT(absl::EqualsIgnoreCase("replace", *value_str),
+                 "sdb_write_conflict_policy is not validated");
+      return WriteConflictPolicy::Replace;
     } else if constexpr (T == VariableType::JoinOrderAlgorithm) {
       SDB_ASSERT(key == "join_order_algorithm");
       if (absl::EqualsIgnoreCase("cost", *value_str)) {
@@ -140,6 +153,11 @@ class Config : public velox::config::IConfig {
     } else if constexpr (T == VariableType::U32) {
       uint32_t r = 0;
       const bool ok = absl::SimpleAtoi<uint32_t>(*value_str, &r);
+      SDB_ASSERT(ok, key, " is not validated");
+      return r;
+    } else if constexpr (T == VariableType::Bool) {
+      bool r = false;
+      const bool ok = absl::SimpleAtob(*value_str, &r);
       SDB_ASSERT(ok, key, " is not validated");
       return r;
     } else {
@@ -166,7 +184,7 @@ class Config : public velox::config::IConfig {
   // Used by TxnState(transaction state) to commit/rollback transaction
   // variables
   void CommitVariables();
-  void RollbackVariables() { _transaction.clear(); }
+  void RollbackVariables() noexcept { _transaction.clear(); }
 
  private:
   std::optional<std::string> Get(std::string_view key) const;

@@ -27,8 +27,10 @@
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/index/iterators.hpp"
 #include "iresearch/search/collectors.hpp"
 #include "iresearch/search/conjunction.hpp"
+#include "iresearch/search/scorer.hpp"
 #include "iresearch/search/states/term_state.hpp"
 #include "iresearch/search/states_cache.hpp"
 
@@ -36,19 +38,26 @@ namespace irs {
 namespace {
 
 template<typename Conjunction>
-class SamePositionIterator : public Conjunction {
+class SamePositionIterator : public DocIterator {
  public:
-  typedef std::vector<PosAttr::ref> PositionsT;
+  using Positions = std::vector<PosAttr*>;
 
   template<typename... Args>
-  SamePositionIterator(PositionsT&& pos, Args&&... args)
-    : Conjunction{std::forward<Args>(args)...}, _pos(std::move(pos)) {
+  SamePositionIterator(ScoreMergeType merge_type, Positions&& pos,
+                       Args&&... args)
+    : _approx{merge_type, std::forward<Args>(args)...}, _pos(std::move(pos)) {
     SDB_ASSERT(!_pos.empty());
   }
 
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+    return _approx.GetMutable(type);
+  }
+
+  doc_id_t value() const noexcept final { return _approx.value(); }
+
   doc_id_t advance() final {
     while (true) {
-      const auto doc = Conjunction::advance();
+      const auto doc = _approx.advance();
       if (doc_limits::eof(doc) || FindSamePosition()) {
         return doc;
       }
@@ -59,21 +68,33 @@ class SamePositionIterator : public Conjunction {
     if (const auto doc = this->value(); target <= doc) [[unlikely]] {
       return doc;
     }
-    const auto doc = Conjunction::seek(target);
+    const auto doc = _approx.seek(target);
     if (doc_limits::eof(doc) || FindSamePosition()) {
       return doc;
     }
     return advance();
   }
 
-  uint32_t count() final { return DocIterator::Count(*this); }
+  uint32_t count() final { return CountImpl(*this); }
+
+  uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
+                   std::span<doc_id_t, kScoreBlock> docs,
+                   std::span<score_t, kScoreBlock> scores) final {
+    return CollectImpl(*this, scorer, columns, docs, scores);
+  }
+
+  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
+                                      uint64_t* mask, CollectScoreContext score,
+                                      CollectMatchContext match) final {
+    return FillBlockImpl(*this, min, max, mask, score, match);
+  }
 
  private:
   bool FindSamePosition() {
     auto target = pos_limits::min();
 
     for (auto begin = _pos.begin(), end = _pos.end(); begin != end;) {
-      PosAttr& pos = *begin;
+      auto& pos = **begin;
 
       if (target != pos.seek(target)) {
         target = pos.value();
@@ -89,7 +110,8 @@ class SamePositionIterator : public Conjunction {
     return true;
   }
 
-  PositionsT _pos;
+  Conjunction _approx;
+  Positions _pos;
 };
 
 class SamePositionQuery : public Filter::Query {
@@ -123,50 +145,35 @@ class SamePositionQuery : public Filter::Query {
     ScoreAdapters itrs;
     itrs.reserve(query_state->size());
 
-    std::vector<PosAttr::ref> positions;
+    std::vector<PosAttr*> positions;
     positions.reserve(itrs.size());
 
-    const bool no_score = ord.empty();
     auto term_stats = _stats.begin();
     for (auto& term_state : *query_state) {
       auto* reader = term_state.reader;
       SDB_ASSERT(reader);
 
-      // get postings
-      auto docs = reader->postings(*term_state.cookie, features);
-      SDB_ASSERT(docs);
-
-      // get needed postings attributes
-      auto* pos = irs::GetMutable<PosAttr>(docs.get());
-
-      if (!pos) {
-        // positions not found
+      auto docs =
+        reader->Iterator(features, {.cookie = term_state.cookie.get()});
+      if (!docs) {
         return DocIterator::empty();
       }
 
-      positions.emplace_back(std::ref(*pos));
-
-      if (!no_score) {
-        auto* score = irs::GetMutable<irs::ScoreAttr>(docs.get());
-        SDB_ASSERT(score);
-
-        CompileScore(*score, ord.buckets(), segment, *term_state.reader,
-                     term_stats->c_str(), *docs, _boost);
+      auto* pos = irs::GetMutable<PosAttr>(docs.get());
+      if (!pos) {
+        return DocIterator::empty();
       }
 
-      // add iterator
+      positions.emplace_back(pos);
+
       itrs.emplace_back(std::move(docs));
 
       ++term_stats;
     }
 
-    return irs::ResolveMergeType(
-      irs::ScoreMergeType::Sum, ord.buckets().size(),
-      [&]<typename A>(A&& aggregator) -> DocIterator::ptr {
-        return MakeConjunction<SamePositionIterator>(
-          // TODO(mbkkt) Implement wand?
-          {}, std::move(aggregator), std::move(itrs), std::move(positions));
-      });
+    // TODO(mbkkt) Implement wand?
+    return MakeConjunction<SamePositionIterator>(
+      ScoreMergeType::Noop, {}, std::move(itrs), std::move(positions));
   }
 
   score_t Boost() const noexcept final { return _boost; }

@@ -65,7 +65,12 @@ class TransactionDB;
 
 namespace sdb {
 
+namespace search {
+class InvertedIndexShard;
+}
+
 class TableShard;
+class IndexShard;
 class RocksDBBackgroundErrorListener;
 class RocksDBBackgroundThread;
 class RocksDBDumpManager;
@@ -85,16 +90,6 @@ class RestHandlerFactory;
 }
 
 class RocksDBEngineCatalog;
-
-class StorageSnapshot {
- public:
-  StorageSnapshot() = default;
-  StorageSnapshot(const StorageSnapshot&) = delete;
-  StorageSnapshot& operator=(const StorageSnapshot&) = delete;
-  virtual ~StorageSnapshot() = default;
-
-  virtual Tick tick() const noexcept = 0;
-};
 
 using WriteProperties = absl::FunctionRef<vpack::Slice(bool internal)>;
 
@@ -143,15 +138,11 @@ class RocksDBFilePurgeEnabler {
   RocksDBEngineCatalog* _engine;
 };
 
-class RocksDBSnapshot final : public StorageSnapshot {
+class StorageSnapshot {
  public:
-  explicit RocksDBSnapshot(rocksdb::DB& db) : _snapshot(&db) {}
+  explicit StorageSnapshot(rocksdb::DB& db) : _snapshot{&db} {}
 
-  Tick tick() const noexcept final {
-    return _snapshot.snapshot()->GetSequenceNumber();
-  }
-
-  decltype(auto) getSnapshot() const { return _snapshot.snapshot(); }
+  const rocksdb::Snapshot* GetSnapshot() const { return _snapshot.snapshot(); }
 
  private:
   mutable rocksdb::ManagedSnapshot _snapshot;
@@ -259,6 +250,8 @@ class RocksDBEngineCatalog {
 
   void createTable(const catalog::Table& collection, TableShard& physical);
   Result CreateIndex(const catalog::Index& index);
+  Result StoreIndexShard(const IndexShard& index_shard);
+  ResultOr<vpack::Builder> LoadIndexShard(ObjectId index_id);
   Result MarkDeleted(const catalog::Table& collection,
                      const TableShard& physical,
                      const TableTombstone& tombstone);
@@ -268,7 +261,8 @@ class RocksDBEngineCatalog {
   Result MarkDeleted(const catalog::Schema& schema);
 
   void prepareDropTable(ObjectId collection);
-  Result DropIndex(IndexTombstone tombstone);
+  Result DropIndex(const IndexTombstone& tombstone);
+  Result DropIndexShard(ObjectId index_id);
   Result DropTable(const TableTombstone& tombstone);
 
   void ChangeTable(const catalog::Table& collection,
@@ -295,6 +289,8 @@ class RocksDBEngineCatalog {
   Result CreateRole(const catalog::Role& role);
 
   Result DropRole(const catalog::Role& role);
+
+  Result SyncTableStats(const catalog::Table& c, const TableShard& physical);
 
   yaclib::Future<Result> compactAll(bool change_level,
                                     bool compact_bottom_most_level);
@@ -621,6 +617,6 @@ struct DocCount {
 
 Result DeleteIndexEstimate(rocksdb::DB* db, uint64_t object_id);
 DocCount LoadCollectionCount(rocksdb::DB* db, uint64_t object_id);
-Result DeleteTableMeta(rocksdb::DB*, uint64_t object_id);
+Result DeleteTableMeta(rocksdb::DB*, const TableTombstone& tombstone);
 
 }  // namespace sdb

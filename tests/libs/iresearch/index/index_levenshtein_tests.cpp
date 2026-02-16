@@ -22,11 +22,10 @@
 
 #include <utf8/core.h>
 
-#include <iresearch/utils/automaton_utils.hpp>
-#include <iresearch/utils/fstext/fst_table_matcher.hpp>
-#include <iresearch/utils/levenshtein_utils.hpp>
-
 #include "index/index_tests.hpp"
+#include "iresearch/utils/automaton_utils.hpp"
+#include "iresearch/utils/fstext/fst_table_matcher.hpp"
+#include "iresearch/utils/levenshtein_utils.hpp"
 #include "tests_shared.hpp"
 
 class LevenshteinAutomatonIndexTestCase : public tests::IndexTestBase {
@@ -131,6 +130,5 @@ INSTANTIATE_TEST_SUITE_P(
   levenshtein_automaton_index_test, LevenshteinAutomatonIndexTestCase,
   ::testing::Combine(
     ::testing::Values(&tests::Directory<&tests::MemoryDirectory>),
-    ::testing::Values(tests::FormatInfo{"1_5avx"},
-                      tests::FormatInfo{"1_5simd"})),
+    ::testing::Values(tests::FormatInfo{"1_5simd"})),
   LevenshteinAutomatonIndexTestCase::to_string);

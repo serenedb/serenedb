@@ -43,7 +43,7 @@ class Exclusion : public DocIterator {
     return _incl->GetMutable(type);
   }
 
-  doc_id_t value() const final { return _incl_doc->value; }
+  doc_id_t value() const noexcept final { return _incl_doc->value; }
 
   doc_id_t advance() final {
     const auto incl = _incl->advance();
@@ -58,7 +58,25 @@ class Exclusion : public DocIterator {
     return converge(incl);
   }
 
-  uint32_t count() final { return Count(*this); }
+  ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
+    return _incl->PrepareScore(ctx);
+  }
+
+  void FetchScoreArgs(uint16_t index) final { _incl->FetchScoreArgs(index); }
+
+  uint32_t count() final { return CountImpl(*this); }
+
+  uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
+                   std::span<doc_id_t, kScoreBlock> docs,
+                   std::span<score_t, kScoreBlock> scores) final {
+    return CollectImpl(*this, scorer, columns, docs, scores);
+  }
+
+  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
+                                      uint64_t* mask, CollectScoreContext score,
+                                      CollectMatchContext match) final {
+    return FillBlockImpl(*this, min, max, mask, score, match);
+  }
 
  private:
   doc_id_t converge(doc_id_t incl) {

@@ -69,13 +69,16 @@ set(IResearch_core_sources
     ./analysis/delimited_tokenizer.cpp
     ./analysis/solr_synonyms_tokenizer.cpp
     ./analysis/wordnet_synonyms_tokenizer.cpp
+    ./analysis/fast_text_model.cpp
+    ./analysis/geo_analyzer.cpp
     ./error/error.cpp
     ./formats/columnstore2.cpp
     ./formats/formats.cpp
     ./formats/format_utils.cpp
     ./formats/skip_list.cpp
     ./formats/sparse_bitmap.cpp
-    ./formats/formats_impl.cpp
+    ./formats/format_block_128.cpp
+    ./formats/format_block_256.cpp
     ./formats/formats_burst_trie.cpp
     ./formats/hnsw_index.cpp
     ./index/buffered_column.cpp
@@ -110,6 +113,7 @@ set(IResearch_core_sources
     ./search/nested_filter.cpp
     ./search/terms_filter.cpp
     ./search/prefix_filter.cpp
+    ./search/column_collector.cpp
     ./search/range_filter.cpp
     ./search/phrase_filter.cpp
     ./search/phrase_query.cpp
@@ -121,8 +125,10 @@ set(IResearch_core_sources
     ./search/term_query.cpp
     ./search/boolean_filter.cpp
     ./search/boolean_query.cpp
+    ./search/mixed_boolean_filter.cpp
     ./search/ngram_similarity_filter.cpp
     ./search/ngram_similarity_query.cpp
+    ./search/geo_filter.cpp
     ./search/proxy_filter.cpp
     ./search/tfidf.cpp
     ./search/bm25.cpp
@@ -162,22 +168,22 @@ set_directory_properties(PROPERTIES CLEAN_NO_CUSTOM "On")
 
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_lexer.cpp
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     COMMAND
-        ${FLEX_EXECUTABLE} -L
-        -o${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_lexer.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_lexer.l
+        ${FLEX_EXECUTABLE} -L -o
+        libs/iresearch/include/iresearch/parser/lucene_lexer.cpp
+        libs/iresearch/include/iresearch/parser/lucene_lexer.l
     MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_lexer.l
     VERBATIM
 )
 
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_parser.cpp
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     COMMAND
         ${CMAKE_SOURCE_DIR}/scripts/bison-c.sh ${BISON_EXECUTABLE}
-        ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_parser.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_parser.y
+        libs/iresearch/include/iresearch/parser/lucene_parser.cpp
+        libs/iresearch/include/iresearch/parser/lucene_parser.y
     MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_parser.y
     VERBATIM
 )
@@ -228,6 +234,8 @@ target_link_libraries(
     PUBLIC ${SIMD_LIBRARY_STATIC}
     PUBLIC ${FAISS_LIB}
     PUBLIC re2
+    PUBLIC serene_geo
+    PUBLIC streamvbyte
     PRIVATE lz4_static
     PRIVATE text
     PRIVATE stemmer-static

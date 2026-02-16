@@ -24,7 +24,6 @@
 #pragma once
 
 #include <array>
-#include <iresearch/types.hpp>
 #include <memory>
 
 #include "basics/memory.hpp"
@@ -32,6 +31,7 @@
 #include "basics/noncopyable.hpp"
 #include "basics/resource_manager.hpp"
 #include "basics/shared.hpp"
+#include "iresearch/types.hpp"
 
 namespace irs::container_utils {
 

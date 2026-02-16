@@ -10,12 +10,11 @@ statement ok
 INSERT INTO t VALUES (0, 0);
 
 
-# Read-your-own-writes
-# query
-# SELECT * FROM t;
-# ----
-# key	value
-# 0	0
+query
+SELECT * FROM t;
+----
+key	value
+0	0
 
 
 statement ok
@@ -108,14 +107,22 @@ statement ok
 BEGIN;
 
 
+statement ok
+INSERT INTO t VALUES (3, 0);
+
+
 connection client2
 statement ok
 BEGIN;
 
 
-statement ok
-INSERT INTO t VALUES (3, 0);
-
+connection client2
+query
+SELECT * FROM t;
+----
+key	value
+0	0
+1	0
 
 connection client2
 statement ok
@@ -150,3 +157,38 @@ key	value
 1	0
 3	0
 4	1
+
+
+statement count 4
+INSERT INTO t SELECT key + 100 as key, value as value FROM t;
+
+
+query
+SELECT * FROM t;
+----
+key	value
+0	0
+1	0
+3	0
+4	1
+100	0
+101	0
+103	0
+104	1
+
+# Correct count of affected rows
+
+statement ok
+BEGIN;
+
+statement count 1
+INSERT INTO t VALUES (105, 0);
+
+statement count 2
+INSERT INTO t VALUES (106, 0), (107, 0);
+
+statement count 1
+INSERT INTO t VALUES (108, 0);
+
+statement ok
+COMMIT;

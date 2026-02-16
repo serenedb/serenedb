@@ -21,15 +21,15 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/store/fs_directory.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/mmap_directory.hpp>
-#include <iresearch/utils/index_utils.hpp>
 #include <thread>
 
 #include "basics/file_utils_ext.hpp"
 #include "index_tests.hpp"
+#include "iresearch/search/term_filter.hpp"
+#include "iresearch/store/fs_directory.hpp"
+#include "iresearch/store/memory_directory.hpp"
+#include "iresearch/store/mmap_directory.hpp"
+#include "iresearch/utils/index_utils.hpp"
 
 namespace {
 bool Visit(const irs::ColumnReader& reader,
@@ -732,5 +732,5 @@ static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(index_profile_test, IndexProfileTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values("1_5avx")),
+                                            ::testing::Values("1_5simd")),
                          IndexProfileTestCase::to_string);

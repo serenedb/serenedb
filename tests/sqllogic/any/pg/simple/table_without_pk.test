@@ -88,6 +88,31 @@ count
 5
 
 
+statement count 5
+DELETE FROM no_pk;
+
+
+statement count 0
+UPDATE no_pk SET b = 300 WHERE a = 42;
+
+
+query
+SELECT * FROM no_pk ORDER BY a;
+----
+a	b	c
+
+
+statement count 1
+INSERT INTO no_pk VALUES (123, 456, NULL);
+
+
+query
+SELECT * FROM no_pk ORDER BY a;
+----
+a	b	c
+123	456	NULL
+
+
 # Column name as for generated column
 statement ok
 CREATE TABLE collision (a INTEGER, sdb_generated_pk VARCHAR);

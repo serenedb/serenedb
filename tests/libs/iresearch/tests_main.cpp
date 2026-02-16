@@ -23,12 +23,13 @@
 
 #include <cmdline.h>
 
-#include <iresearch/search/scorers.hpp>
 #include <type_traits>
 #include <utility>
 
 #include "basics/application-exit.h"
 #include "basics/logger/log_level.h"
+#include "basics/runtime_utils.hpp"
+#include "iresearch/search/scorers.hpp"
 
 #if !defined(_WIN32)
 #include <dlfcn.h>  // for RTLD_NEXT
@@ -43,16 +44,15 @@
 #include <basics/containers/bitset.hpp>
 #include <ctime>
 #include <filesystem>
-#include <iresearch/analysis/analyzers.hpp>
-#include <iresearch/formats/formats.hpp>
-#include <iresearch/utils/attributes.hpp>
-#include <iresearch/utils/mmap_utils.hpp>
 #include <vector>
 
 #include "basics/file_utils_ext.hpp"
 #include "basics/network_utils.hpp"
-#include "basics/runtime_utils.hpp"
 #include "index/doc_generator.hpp"
+#include "iresearch/analysis/analyzers.hpp"
+#include "iresearch/formats/formats.hpp"
+#include "iresearch/utils/attributes.hpp"
+#include "iresearch/utils/mmap_utils.hpp"
 #include "tests_config.hpp"
 #include "tests_shared.hpp"
 

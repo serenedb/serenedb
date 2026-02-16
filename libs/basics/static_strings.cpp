@@ -27,6 +27,9 @@ using namespace sdb;
 const std::string StaticStrings::kEmpty;
 const std::string StaticStrings::kN1800("1800");
 
+// SereneDB connector name
+const std::string StaticStrings::kSereneDBConnector("serenedb");
+
 // index lookup strings
 const std::string StaticStrings::kIndexEq("eq");
 const std::string StaticStrings::kIndexIn("in");

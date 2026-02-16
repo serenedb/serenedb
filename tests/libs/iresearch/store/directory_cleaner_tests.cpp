@@ -21,16 +21,16 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/formats/formats.hpp>
-#include <iresearch/index/index_writer.hpp>
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/store/directory_cleaner.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/utils/directory_utils.hpp>
 #include <unordered_set>
 
 #include "index/doc_generator.hpp"
 #include "index/index_tests.hpp"
+#include "iresearch/formats/formats.hpp"
+#include "iresearch/index/index_writer.hpp"
+#include "iresearch/search/term_filter.hpp"
+#include "iresearch/store/directory_cleaner.hpp"
+#include "iresearch/store/memory_directory.hpp"
+#include "iresearch/utils/directory_utils.hpp"
 #include "tests_shared.hpp"
 
 using namespace std::chrono_literals;
@@ -256,7 +256,7 @@ TEST(directory_cleaner_tests, test_directory_cleaner_current_segment) {
   const tests::Document* doc2 = gen.next();
   Filter::ptr query_doc1 = MakeByTerm("name", "A");
   irs::MemoryDirectory dir;
-  auto codec_ptr = irs::formats::Get("1_5avx");
+  auto codec_ptr = irs::formats::Get("1_5simd");
   ASSERT_NE(nullptr, codec_ptr);
 
   // writer commit tracks files that are in active segments

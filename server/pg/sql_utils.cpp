@@ -205,6 +205,26 @@ std::string DeparseStmt(Node* node) {
   return DeparseStmtImpl(node);
 }
 
+std::string DeparseValue(Node* expr) {
+  switch (nodeTag(expr)) {
+    case T_String: {
+      return strVal(expr);
+    }
+    case T_Integer: {
+      return absl::StrCat(intVal(expr));
+    }
+    case T_Float: {
+      return absl::StrCat(floatVal(expr));
+    }
+    case T_Boolean: {
+      return boolVal(expr) ? "true" : "false";
+    }
+    default:
+      SDB_ASSERT(false);
+      return "";
+  }
+}
+
 std::string DeparseExpr(Node* expr) {
   SDB_ASSERT(IsExpr(expr));
 
@@ -270,14 +290,14 @@ MemoryContextScope EnterMemoryContext(MemoryContextData& ctx) noexcept {
   return MemoryContextScope{old};
 }
 
-int ErrorPosition(const char* source_text, int location) {
-  if (location < 0 || !source_text) {
+int ErrorPosition(std::string_view source_text, int location) {
+  if (location < 0 || source_text.size() <= static_cast<size_t>(location)) {
     return 0;
   }
 
   // TODO(gnusi): We must honor DB encoding
   return irs::utf8_utils::Length(
-    {reinterpret_cast<const irs::byte_type*>(source_text),
+    {reinterpret_cast<const irs::byte_type*>(source_text.data()),
      static_cast<size_t>(location)});
 }
 

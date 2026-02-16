@@ -40,7 +40,7 @@ bool Encrypt(std::string_view filename, IndexOutput& out, Encryption* enc,
 
   if (header.empty()) {
     // no encryption
-    irs::WriteStr(out, header);
+    WriteStr(out, header);
     return false;
   }
 
@@ -52,7 +52,7 @@ bool Encrypt(std::string_view filename, IndexOutput& out, Encryption* enc,
   }
 
   // header is encrypted here
-  irs::WriteStr(out, header);
+  WriteStr(out, header);
 
   cipher = enc->create_stream(filename, header.data());
 
@@ -169,8 +169,8 @@ void EncryptedOutput::WriteDirect(const byte_type* b, size_t len) {
 }
 
 EncryptedInput::EncryptedInput(IndexInput& in, Encryption::Stream& cipher,
-                               size_t num_buffers, size_t padding /* = 0*/)
-  : _buf_size(cipher.block_size() * std::max(size_t(1), num_buffers)),
+                               size_t num_buffers, size_t padding)
+  : _buf_size(cipher.block_size() * std::max<size_t>(1, num_buffers)),
     _buf(std::make_unique<byte_type[]>(_buf_size)),
     _in(&in),
     _cipher(&cipher),
@@ -182,7 +182,7 @@ EncryptedInput::EncryptedInput(IndexInput& in, Encryption::Stream& cipher,
 }
 
 EncryptedInput::EncryptedInput(IndexInput::ptr&& in, Encryption::Stream& cipher,
-                               size_t num_buffers, size_t padding /* = 0*/)
+                               size_t num_buffers, size_t padding)
   : EncryptedInput(*in, cipher, num_buffers, padding) {
   _managed_in = std::move(in);
 }
@@ -200,7 +200,7 @@ EncryptedInput::EncryptedInput(const EncryptedInput& rhs,
   BufferedIndexInput::reset(_buf.get(), _buf_size, rhs.Position());
 }
 
-uint32_t EncryptedInput::Checksum(size_t offset) const {
+uint32_t EncryptedInput::Checksum(uint64_t offset) const {
   const auto begin = Position();
   const auto end = (std::min)(begin + offset, this->Length());
 
@@ -244,7 +244,7 @@ IndexInput::ptr EncryptedInput::Reopen() const {
   return IndexInput::ptr{new EncryptedInput{*this, std::move(reopened)}};
 }
 
-void EncryptedInput::SeekInternal(size_t pos) {
+void EncryptedInput::SeekInternal(uint64_t pos) {
   pos += _start;
 
   if (pos != _in->Position()) {

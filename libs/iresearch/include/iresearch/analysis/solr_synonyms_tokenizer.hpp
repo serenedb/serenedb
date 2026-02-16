@@ -22,10 +22,9 @@
 
 #include <absl/container/flat_hash_map.h>
 
-#include <iresearch/analysis/token_attributes.hpp>
-
 #include "analyzers.hpp"
 #include "basics/result.h"
+#include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 
 namespace irs::analysis {
@@ -72,8 +71,8 @@ class SolrSynonymsTokenizer final : public TypedAnalyzer<SolrSynonymsTokenizer>,
     std::string_view input);
   static sdb::ResultOr<SynonymsMap> Parse(const SynonymsLines& lines);
 
-  explicit SolrSynonymsTokenizer(SynonymsMap&&);
-  Attribute* GetMutable(TypeInfo::type_id type) final {
+  explicit SolrSynonymsTokenizer(SynonymsMap&& synonyms);
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);
   }
   bool next() final;
@@ -82,8 +81,8 @@ class SolrSynonymsTokenizer final : public TypedAnalyzer<SolrSynonymsTokenizer>,
  private:
   SynonymsMap _synonyms;
 
-  using attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
-  attributes _attrs;
+  using Attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
+  Attributes _attrs;
 
   const std::string_view* _begin{};
   const std::string_view* _curr{};

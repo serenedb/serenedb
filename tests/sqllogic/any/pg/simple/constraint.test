@@ -184,9 +184,9 @@ query
 SELECT * FROM clickclack
 ORDER BY 1, 2, 3, 4, 5;
 ----
-id name weight age grade
-9 deadinside 140 420 70
-10 zhme NULL 40 NULL
+id	name	weight	age	grade
+9	deadinside	140	420	70
+10	zhme	NULL	40	NULL
 
 
 onlyif serenedb
@@ -255,6 +255,6 @@ query
 SELECT * FROM clickclack
 ORDER BY 1, 2, 3, 4, 5;
 ----
-id name weight age grade
-9 deadinside 140 993 127
-10 zhme NULL 40 NULL
+id	name	weight	age	grade
+9	deadinside	140	993	127
+10	zhme	NULL	40	NULL

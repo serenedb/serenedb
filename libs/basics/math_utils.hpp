@@ -119,7 +119,7 @@ constexpr uint32_t Log264(uint64_t value) noexcept { return Log(value, 2); }
 
 constexpr uint32_t Log232(uint32_t value) noexcept { return Log(value, 2); }
 
-IRS_FORCE_INLINE uint32_t Log2Floor32(uint32_t v) {
+IRS_FORCE_INLINE constexpr uint32_t Log2Floor32(uint32_t v) {
 #if __GNUC__ >= 4
   return UINT32_C(31) ^ __builtin_clz(v);
 #elif defined(_MSC_VER)
@@ -131,11 +131,11 @@ IRS_FORCE_INLINE uint32_t Log2Floor32(uint32_t v) {
 #endif
 }
 
-IRS_FORCE_INLINE uint32_t Log2Ceil32(uint32_t v) {
+IRS_FORCE_INLINE constexpr uint32_t Log2Ceil32(uint32_t v) {
   return Log2Floor32(v) + static_cast<uint32_t>(!IsPower2(v));
 }
 
-IRS_FORCE_INLINE uint64_t Log2Floor64(uint64_t v) {
+IRS_FORCE_INLINE constexpr uint64_t Log2Floor64(uint64_t v) {
 #if __GNUC__ >= 4
   return UINT64_C(63) ^ __builtin_clzll(v);
 #elif defined(_MSC_VER)
@@ -147,7 +147,7 @@ IRS_FORCE_INLINE uint64_t Log2Floor64(uint64_t v) {
 #endif
 }
 
-IRS_FORCE_INLINE uint64_t Log2Ceil64(uint64_t v) {
+IRS_FORCE_INLINE constexpr uint64_t Log2Ceil64(uint64_t v) {
   return Log2Floor64(v) + static_cast<uint64_t>(!IsPower2(v));
 }
 
@@ -175,7 +175,7 @@ struct MathTraits<T, sizeof(uint32_t)> {
     return ceil32(value, step);
   }
   static uint32_t bits_required(type val) noexcept {
-    return 0 == val ? 0 : 32 - static_cast<uint32_t>(std::countl_zero(val));
+    return std::bit_width(val);
   }
 };
 
@@ -190,7 +190,7 @@ struct MathTraits<T, sizeof(uint64_t)> {
     return ceil64(value, step);
   }
   static uint32_t bits_required(type val) noexcept {
-    return 0 == val ? 0 : 64 - static_cast<uint32_t>(std::countl_zero(val));
+    return std::bit_width(val);
   }
 };
 

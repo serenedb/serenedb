@@ -55,7 +55,13 @@ class AllIterator : public DocIterator {
     return _doc.value;
   }
 
-  uint32_t count() final {
+  uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
+                   std::span<doc_id_t, kScoreBlock> docs,
+                   std::span<score_t, kScoreBlock> scores) final {
+    return CollectImpl(*this, scorer, columns, docs, scores);
+  }
+
+  uint32_t count() noexcept final {
     if (doc_limits::eof(_doc.value)) {
       return 0;
     }
@@ -78,7 +84,7 @@ class MaskDocIterator : public DocIterator {
     return _it->GetMutable(type);
   }
 
-  doc_id_t value() const final { return _it->value(); }
+  doc_id_t value() const noexcept final { return _it->value(); }
 
   doc_id_t advance() final {
     while (true) {
@@ -97,7 +103,13 @@ class MaskDocIterator : public DocIterator {
     return advance();
   }
 
-  uint32_t count() final { return Count(*this); }
+  uint32_t count() final { return CountImpl(*this); }
+
+  uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
+                   std::span<doc_id_t, kScoreBlock> docs,
+                   std::span<score_t, kScoreBlock> scores) final {
+    return CollectImpl(*this, scorer, columns, docs, scores);
+  }
 
  private:
   const DocumentMask& _mask;  // excluded document ids
@@ -118,7 +130,7 @@ class MaskedDocIterator : public DocIterator {
     return irs::Type<DocAttr>::id() == type ? &_current : nullptr;
   }
 
-  doc_id_t value() const final { return _current.value; }
+  doc_id_t value() const noexcept final { return _current.value; }
 
   doc_id_t advance() final {
     while (_next < _end) {
@@ -138,7 +150,13 @@ class MaskedDocIterator : public DocIterator {
     return advance();
   }
 
-  uint32_t count() final { return Count(*this); }
+  uint32_t count() final { return CountImpl(*this); }
+
+  uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
+                   std::span<doc_id_t, kScoreBlock> docs,
+                   std::span<score_t, kScoreBlock> scores) final {
+    return CollectImpl(*this, scorer, columns, docs, scores);
+  }
 
  private:
   const DocumentMask& _docs_mask;

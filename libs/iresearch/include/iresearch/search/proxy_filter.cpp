@@ -159,7 +159,21 @@ class LazyFilterBitsetIterator : public DocIterator, private util::Noncopyable {
 
   uint32_t count() final {
     // TODO(mbkkt) custom implementation?
-    return Count(*this);
+    return CountImpl(*this);
+  }
+
+  uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
+                   std::span<doc_id_t, kScoreBlock> docs,
+                   std::span<score_t, kScoreBlock> scores) final {
+    // TODO(mbkkt) custom implementation?
+    return CollectImpl(*this, scorer, columns, docs, scores);
+  }
+
+  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
+                                      uint64_t* mask, CollectScoreContext score,
+                                      CollectMatchContext match) final {
+    // TODO(mbkkt) custom implementation?
+    return FillBlockImpl(*this, min, max, mask, score, match);
   }
 
   void Reset() noexcept {

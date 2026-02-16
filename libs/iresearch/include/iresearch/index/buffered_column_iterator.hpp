@@ -30,7 +30,7 @@
 namespace irs {
 
 class BufferedColumnIterator : public ResettableDocIterator {
-  static constexpr BufferedValue kEmpty{irs::doc_limits::eof(), 0, 0};
+  static constexpr BufferedValue kEmpty{doc_limits::eof(), 0, 0};
 
  public:
   BufferedColumnIterator(std::span<const BufferedValue> values,
@@ -58,9 +58,10 @@ class BufferedColumnIterator : public ResettableDocIterator {
       _end = &kEmpty;
     }
     std::get<CostAttr>(_attrs).reset(values.size());
-    std::get<irs::PayAttr>(_attrs).value = {};
-    std::get<irs::DocAttr>(_attrs).value = {};
+    std::get<PayAttr>(_attrs).value = {};
+    std::get<DocAttr>(_attrs).value = {};
   }
+
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);
   }
@@ -76,7 +77,7 @@ class BufferedColumnIterator : public ResettableDocIterator {
       return doc_value = doc_limits::eof();
     }
 
-    auto& payload = std::get<irs::PayAttr>(_attrs);
+    auto& payload = std::get<PayAttr>(_attrs);
 
     doc_value = _next->key;
     payload.value = {_data.data() + _next->begin, _next->size};
@@ -105,14 +106,20 @@ class BufferedColumnIterator : public ResettableDocIterator {
     return advance();
   }
 
-  void reset() final {
+  void reset() noexcept final {
     _next = _begin;
-    std::get<irs::DocAttr>(_attrs).value = {};
-    std::get<irs::PayAttr>(_attrs).value = {};
+    std::get<DocAttr>(_attrs).value = {};
+    std::get<PayAttr>(_attrs).value = {};
   }
 
+  bytes_view GetPayload() const noexcept {
+    return std::get<PayAttr>(_attrs).value;
+  }
+
+  size_t Size() const noexcept { return _end - _begin; }
+
  private:
-  using Attributes = std::tuple<DocAttr, CostAttr, irs::PayAttr>;
+  using Attributes = std::tuple<DocAttr, CostAttr, PayAttr>;
 
   Attributes _attrs;
   const BufferedValue* _begin;

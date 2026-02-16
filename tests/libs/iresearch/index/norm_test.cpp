@@ -22,15 +22,14 @@
 
 #include <frozen/map.h>
 
-#include <iresearch/index/index_features.hpp>
-#include <iresearch/index/norm.hpp>
-#include <iresearch/search/cost.hpp>
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/utils/bytes_output.hpp>
-#include <iresearch/utils/index_utils.hpp>
-#include <iresearch/utils/type_limits.hpp>
-
 #include "index_tests.hpp"
+#include "iresearch/index/index_features.hpp"
+#include "iresearch/index/norm.hpp"
+#include "iresearch/search/cost.hpp"
+#include "iresearch/search/term_filter.hpp"
+#include "iresearch/utils/bytes_output.hpp"
+#include "iresearch/utils/index_utils.hpp"
+#include "iresearch/utils/type_limits.hpp"
 
 namespace {
 
@@ -93,7 +92,7 @@ class NormField final : public tests::Ifield {
   }
 
   irs::IndexFeatures GetIndexFeatures() const noexcept final {
-    return irs::kPosOffsPay | irs::IndexFeatures::Norm;
+    return irs::kPosOffs | irs::IndexFeatures::Norm;
   }
 
   bool Write(irs::DataOutput& out) const final {
@@ -112,25 +111,24 @@ void AssertNormHeader(irs::bytes_view header, uint32_t num_bytes, uint32_t min,
   constexpr irs::NormVersion kVersion{irs::NormVersion::Min};
 
   ASSERT_FALSE(irs::IsNull(header));
-  ASSERT_EQ(10, header.size());
+  ASSERT_EQ(14, header.size());
 
   auto* p = header.data();
   const auto actual_verson = *p++;
   const auto actual_num_bytes = *p++;
-  const auto actual_min = irs::read<uint32_t>(p);
   const auto actual_max = irs::read<uint32_t>(p);
+  [[maybe_unused]] const auto actual_sum = irs::read<uint64_t>(p);
   ASSERT_EQ(p, header.data() + header.size());
 
   ASSERT_EQ(static_cast<uint32_t>(kVersion), actual_verson);
   ASSERT_EQ(num_bytes, actual_num_bytes);
-  ASSERT_EQ(min, actual_min);
   ASSERT_EQ(max, actual_max);
 }
 
 TEST(NormHeaderTest, Construct) {
   irs::NormHeader hdr{irs::NormEncoding::Int};
-  ASSERT_EQ(1, hdr.MaxNumBytes());
-  ASSERT_EQ(sizeof(uint32_t), hdr.NumBytes());
+  ASSERT_EQ(1, irs::NormHeader::MaxNumBytes(hdr.Max()));
+  ASSERT_EQ(sizeof(uint32_t), std::to_underlying(hdr.Encoding()));
 
   irs::bstring buf;
   irs::BytesOutput writer{buf};
@@ -161,8 +159,8 @@ TEST(NormHeaderTest, ResetByValue) {
     hdr.Reset(std::numeric_limits<ValueType>::max() - 2);
     hdr.Reset(std::numeric_limits<ValueType>::max());
     hdr.Reset(std::numeric_limits<ValueType>::max() - 1);
-    ASSERT_EQ(sizeof(ValueType), hdr.MaxNumBytes());
-    ASSERT_EQ(sizeof(ValueType), hdr.NumBytes());
+    ASSERT_EQ(sizeof(ValueType), irs::NormHeader::MaxNumBytes(hdr.Max()));
+    ASSERT_EQ(sizeof(ValueType), std::to_underlying(hdr.Encoding()));
 
     irs::bstring buf;
     irs::BytesOutput writer{buf};
@@ -230,7 +228,7 @@ TEST(NormHeaderTest, ResetByPayload) {
     hdr.Reset(std::numeric_limits<ValueType>::max() - 2);
     hdr.Reset(std::numeric_limits<ValueType>::max());
     hdr.Reset(std::numeric_limits<ValueType>::max() - 1);
-    ASSERT_EQ(sizeof(ValueType), hdr.NumBytes());
+    ASSERT_EQ(sizeof(ValueType), std::to_underlying(hdr.Encoding()));
 
     buf.clear();
     irs::BytesOutput writer{buf};
@@ -241,15 +239,14 @@ TEST(NormHeaderTest, ResetByPayload) {
                      std::numeric_limits<ValueType>::max());
   };
 
-  irs::NormHeader acc{irs::NormEncoding::Byte};
-
   // 1-byte header
   {
+    irs::NormHeader acc{irs::NormEncoding::Byte};
     irs::bstring buf;
     write_header(uint8_t{}, buf);
     auto hdr = irs::NormHeader::Read(buf);
     ASSERT_TRUE(hdr.has_value());
-    acc.Reset(hdr.value());
+    acc.Reset(hdr->Max());
     buf.clear();
     irs::BytesOutput writer{buf};
     irs::NormHeader::Write(acc, writer);
@@ -262,11 +259,12 @@ TEST(NormHeaderTest, ResetByPayload) {
 
   // 2-byte header
   {
+    irs::NormHeader acc{irs::NormEncoding::Short};
     irs::bstring buf;
     write_header(uint16_t{}, buf);
     auto hdr = irs::NormHeader::Read(buf);
     ASSERT_TRUE(hdr.has_value());
-    acc.Reset(hdr.value());
+    acc.Reset(hdr->Max());
     buf.clear();
     irs::BytesOutput writer{buf};
     irs::NormHeader::Write(acc, writer);
@@ -279,11 +277,12 @@ TEST(NormHeaderTest, ResetByPayload) {
 
   // 4-byte header
   {
+    irs::NormHeader acc{irs::NormEncoding::Int};
     irs::bstring buf;
     write_header(uint32_t{}, buf);
     auto hdr = irs::NormHeader::Read(buf);
     ASSERT_TRUE(hdr.has_value());
-    acc.Reset(hdr.value());
+    acc.Reset(hdr->Max());
     buf.clear();
     irs::BytesOutput writer{buf};
     irs::NormHeader::Write(acc, writer);
@@ -319,10 +318,6 @@ class NormTestCase : public tests::IndexTestBase {
     IndexTestBase::assert_index(irs::IndexFeatures::Freq |
                                 irs::IndexFeatures::Pos |
                                 irs::IndexFeatures::Offs);
-    IndexTestBase::assert_index(irs::IndexFeatures::Freq |
-                                irs::IndexFeatures::Pos |
-                                irs::IndexFeatures::Pay);
-    IndexTestBase::assert_index(irs::kPosOffsPay);
     IndexTestBase::assert_columnstore();
   }
 
@@ -371,30 +366,14 @@ void NormTestCase::AssertNormColumn(
   auto* doc = irs::get<irs::DocAttr>(*values);
   ASSERT_NE(nullptr, doc);
 
-  irs::NormReaderContext ctx;
-  ASSERT_EQ(0, ctx.num_bytes);
-  ASSERT_EQ(nullptr, ctx.it);
-  ASSERT_EQ(nullptr, ctx.payload);
-  ASSERT_EQ(nullptr, ctx.doc);
-  ASSERT_TRUE(ctx.Reset(segment, meta.norm, *doc));
-  ASSERT_EQ(sizeof(T), ctx.num_bytes);
-  ASSERT_NE(nullptr, ctx.it);
-  ASSERT_NE(nullptr, ctx.payload);
-  ASSERT_EQ(irs::get<irs::PayAttr>(*ctx.it), ctx.payload);
-  ASSERT_EQ(doc, ctx.doc);
-
-  auto reader = irs::Norm::MakeReader<T>(std::move(ctx));
-
   for (auto expected_doc = std::begin(expected_docs); values->next();
        ++expected_doc) {
     ASSERT_EQ(expected_doc->first, values->value());
     ASSERT_EQ(expected_doc->first, doc->value);
     ASSERT_EQ(sizeof(T), payload->value.size());
 
-    auto* p = payload->value.data();
-    const auto value = irs::read<T>(p);
+    const auto value = irs::Norm::Read(payload->value);
     ASSERT_EQ(expected_doc->second, value);
-    ASSERT_EQ(value, reader());
   }
 }
 
@@ -1225,7 +1204,7 @@ TEST_P(NormTestCase, CheckNormsConsolidationWithRemovals) {
 // Separate definition as MSVC parser fails to do conditional defines in macro
 // expansion
 const auto kNormTestCaseValues =
-  ::testing::Values(tests::FormatInfo{"1_5avx"}, tests::FormatInfo{"1_5simd"});
+  ::testing::Values(tests::FormatInfo{"1_5simd"});
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 

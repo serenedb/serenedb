@@ -42,6 +42,8 @@
 #include "catalog/table_options.h"
 #include "catalog/types.h"
 #include "catalog/view.h"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#include "storage_engine/index_shard.h"
 
 namespace sdb::catalog {
 
@@ -104,6 +106,13 @@ struct Snapshot {
 
   virtual std::shared_ptr<TableShard> GetTableShard(ObjectId id) const = 0;
   virtual std::vector<std::shared_ptr<TableShard>> GetTableShards() const = 0;
+  virtual std::vector<std::shared_ptr<IndexShard>> GetIndexShards() const = 0;
+  virtual std::vector<std::shared_ptr<Index>> GetIndexesByTable(
+    ObjectId table_id) const = 0;
+  virtual std::vector<std::shared_ptr<IndexShard>> GetIndexShardsByTable(
+    ObjectId table_id) const = 0;
+  virtual std::shared_ptr<IndexShard> GetIndexShard(
+    ObjectId index_id) const = 0;
 
   template<typename T>
   std::shared_ptr<T> GetObject(ObjectId id) const {
@@ -173,7 +182,7 @@ struct LogicalCatalog {
     ObjectId database_id, std::string_view schema,
     std::shared_ptr<catalog::Function> function) = 0;
   virtual Result RegisterIndex(ObjectId database_id, std::string_view schema,
-                               IndexFactory index) = 0;
+                               IndexBaseOptions options, vpack::Slice args) = 0;
 
   virtual Result CreateDatabase(
     std::shared_ptr<catalog::Database> database) = 0;
@@ -191,7 +200,8 @@ struct LogicalCatalog {
                              CreateTableOperationOptions operation_options) = 0;
   virtual Result CreateIndex(ObjectId database_id, std::string_view schema,
                              std::string_view relation,
-                             IndexFactory index_factory) = 0;
+                             const std::vector<std::string>& column_names,
+                             IndexBaseOptions options, vpack::Slice args) = 0;
 
   virtual Result RenameTable(ObjectId database_id, std::string_view schema,
                              std::string_view name,
@@ -222,9 +232,11 @@ struct LogicalCatalog {
                            std::string_view name,
                            AsyncResult* async_result) = 0;
   virtual Result DropIndex(ObjectId database_id, std::string_view schema,
-                           std::string_view name) = 0;
+                           std::string_view name,
+                           AsyncResult* async_result) = 0;
 
   virtual void RegisterTableDrop(TableTombstone tombstone) = 0;
+  virtual void RegisterIndexDrop(IndexTombstone tombstone) = 0;
   virtual void RegisterScopeDrop(ObjectId database_id, ObjectId schema_id) = 0;
 
   virtual std::shared_ptr<Snapshot> GetSnapshot() const = 0;
@@ -285,5 +297,6 @@ class CatalogFeature final : public SerenedFeature {
 ResultOr<std::shared_ptr<Database>> GetDatabase(ObjectId database_id);
 ResultOr<std::shared_ptr<Database>> GetDatabase(std::string_view name);
 std::shared_ptr<TableShard> GetTableShard(ObjectId id);
+LogicalCatalog& GetCatalog();
 
 }  // namespace sdb::catalog

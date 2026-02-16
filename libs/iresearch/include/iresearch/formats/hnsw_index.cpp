@@ -99,14 +99,14 @@ const float* ColumnDistanceBase::LoadData(faiss::idx_t id,
     SDB_THROW(sdb::ERROR_INTERNAL, "Failed to load vector data for doc: ", doc);
   }
   SDB_ASSERT(doc == next_doc);
-  auto* payload = irs::get<irs::PayAttr>(*it);
+  auto* payload = irs::get<PayAttr>(*it);
   SDB_ASSERT(payload);
   SDB_ASSERT(payload->value.size() == _info.d * sizeof(float));
   return reinterpret_cast<const float*>(payload->value.data());
 }
 
 ColumnSearchDistance::ColumnSearchDistance(ResettableDocIterator::ptr&& it,
-                                           irs::HNSWInfo info)
+                                           HNSWInfo info)
   : ColumnDistanceBase{std::move(info)}, _it{std::move(it)} {}
 
 float ColumnSearchDistance::operator()(faiss::idx_t id) {

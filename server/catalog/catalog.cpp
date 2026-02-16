@@ -45,6 +45,7 @@
 #include "catalog/schema.h"
 #include "catalog/table.h"
 #include "catalog/view.h"
+#include "general_server/scheduler.h"
 #include "general_server/state.h"
 #include "rest_server/serened.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
@@ -218,6 +219,29 @@ Result CatalogFeature::ProcessTombstones() {
   auto& engine = GetServerEngine();
   auto process_schema = [&](ObjectId database_id,
                             ObjectId schema_id) -> Result {
+    auto r = engine.VisitSchemaObjects(
+      database_id, schema_id, RocksDBEntryType::Index,
+      [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
+        IndexBaseOptions options;
+
+        if (auto r = vpack::ReadTupleNothrow(slice, options); !r.ok()) {
+          return ErrorMeta(r.errorNumber(), "index", r.errorMessage(), slice);
+        }
+
+        IndexTombstone tombstone;
+        tombstone.old_database = options.database_id;
+        tombstone.old_schema = options.schema_id;
+        tombstone.id = options.id;
+        tombstone.type = options.type;
+
+        Local().RegisterIndexDrop(std::move(tombstone));
+        return {};
+      });
+
+    if (!r.ok()) {
+      return r;
+    }
+
     return engine.VisitSchemaObjects(
       database_id, schema_id, RocksDBEntryType::Collection,
       [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
@@ -235,35 +259,32 @@ Result CatalogFeature::ProcessTombstones() {
         TableTombstone tombstone;
         tombstone.table = options.id;
 
-        // TODO(gnusi): this will be gone once we have normal indexes
-        struct IndexMeta {
-          std::string_view objectId;  // NOLINT
-          sdb::IndexType type = sdb::IndexType::kTypeUnknown;
-          bool unique = false;
-        };
-        for (auto index_slice : vpack::ArrayIterator{options.indexes}) {
-          IndexMeta index;
-          auto r = vpack::ReadObjectNothrow(
-            index_slice, index, {.skip_unknown = true, .strict = false});
-          if (!r.ok()) {
-            return ErrorMeta(r.errorNumber(), "index", r.errorMessage(),
-                             index_slice);
-          }
-          ObjectId index_id{basics::string_utils::Uint64(index.objectId)};
-          if (!index_id.isSet()) {
-            continue;
-          }
-          tombstone.indexes.emplace_back(index_id, index.type,
-                                         std::numeric_limits<uint64_t>::max(),
-                                         index.unique);
-        }
-
         Local().RegisterTableDrop(std::move(tombstone));
         return {};
       });
   };
 
   auto r = engine.VisitObjects(
+    id::kTombstoneDatabase, RocksDBEntryType::IndexTombstone,
+    [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
+      IndexTombstone tombstone;
+
+      if (auto r = vpack::ReadTupleNothrow<IndexTombstone>(slice, tombstone);
+          !r.ok()) {
+        return ErrorMeta(r.errorNumber(), "index tombstone", r.errorMessage(),
+                         slice);
+      }
+
+      Local().RegisterIndexDrop(std::move(tombstone));
+      return {};
+    });
+
+  if (!r.ok()) {
+    return {r.errorNumber(),
+            "Failed to process index tombstones, error: ", r.errorMessage()};
+  }
+
+  r = engine.VisitObjects(
     id::kTombstoneDatabase, RocksDBEntryType::TableTombstone,
     [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
       TableTombstone tombstone;
@@ -347,16 +368,20 @@ Result CatalogFeature::AddIndexes(ObjectId database_id, const Schema& schema) {
   return GetServerEngine().VisitSchemaObjects(
     database_id, schema.GetId(), RocksDBEntryType::Index,
     [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
-      IndexOptions<vpack::Slice> options;
+      IndexBaseOptions options;
 
       if (auto r = vpack::ReadTupleNothrow(slice, options); !r.ok()) {
-        return ErrorMeta(r.errorNumber(), "index", r.errorMessage(), slice);
+        return r;
       }
 
-      return Local().RegisterIndex(
-        database_id, schema.GetName(), [&](const SchemaObject*) {
-          return CreateIndex(database_id, std::move(options));
-        });
+      vpack::Slice shard_data;
+      auto shard_builder = GetServerEngine().LoadIndexShard(options.id);
+      if (shard_builder) {
+        shard_data = shard_builder->slice();
+      }
+
+      return Local().RegisterIndex(database_id, schema.GetName(),
+                                   std::move(options), shard_data);
     });
 }
 
@@ -454,11 +479,15 @@ ResultOr<std::shared_ptr<Database>> GetDatabase(std::string_view name) {
 }
 
 std::shared_ptr<TableShard> GetTableShard(ObjectId id) {
+  auto& catalog = GetCatalog();
+  return catalog.GetSnapshot()->GetTableShard(id);
+}
+
+LogicalCatalog& GetCatalog() {
   auto& catalogs =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
-  auto& catalog = ServerState::instance()->IsCoordinator() ? catalogs.Global()
-                                                           : catalogs.Local();
-  return catalog.GetSnapshot()->GetTableShard(id);
+  return ServerState::instance()->IsCoordinator() ? catalogs.Global()
+                                                  : catalogs.Local();
 }
 
 }  // namespace sdb::catalog

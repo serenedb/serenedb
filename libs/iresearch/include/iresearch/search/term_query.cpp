@@ -22,6 +22,11 @@
 
 #include "term_query.hpp"
 
+#include <iresearch/formats/formats_attributes.hpp>
+#include <iresearch/search/all_iterator.hpp>
+#include <iresearch/search/scorer.hpp>
+
+#include "basics/memory.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/prepared_state_visitor.hpp"
@@ -33,44 +38,40 @@ TermQuery::TermQuery(States&& states, bstring&& stats, score_t boost)
   : _states{std::move(states)}, _stats{std::move(stats)}, _boost{boost} {}
 
 DocIterator::ptr TermQuery::execute(const ExecutionContext& ctx) const {
-  const auto& rdr = ctx.segment;
+  const auto& segment = ctx.segment;
   const auto& ord = ctx.scorers;
-  // Get term state for the specified reader
-  const auto* state = _states.find(rdr);
+  const auto* state = _states.find(segment);
 
   if (!state) [[unlikely]] {  // Invalid state
     return DocIterator::empty();
   }
 
+  if (ord.empty() &&
+      segment.docs_count() ==
+        sdb::basics::downCast<CookieImpl>(*state->cookie).meta.docs_count)
+    [[unlikely]] {
+    return memory::make_managed<AllIterator>(segment.docs_count(), nullptr,
+                                             kNoBoost);
+  }
+
   const auto* reader = state->reader;
   SDB_ASSERT(reader);
   DocIterator::ptr docs;
-  auto ord_buckets = ord.buckets();
-  if (ctx.wand.Enabled() && !ord_buckets.empty()) {
-    const auto& front = ord_buckets.front();
-    if (front.bucket != nullptr) {
-      docs = reader->wanderator(
-        *state->cookie, ord.features(), {[&](const AttributeProvider& attrs) {
-          return front.bucket->PrepareScorer(
-            rdr, state->reader->meta(), _stats.c_str() + front.stats_offset,
-            attrs, _boost);
-        }},
-        ctx.wand);
-    }
-  }
-  if (!docs) {
-    docs = reader->postings(*state->cookie, ord.features());
-  }
-  SDB_ASSERT(docs);
+  IteratorOptions options{ctx.wand};
 
-  if (!ord_buckets.empty()) {
-    auto* score = irs::GetMutable<irs::ScoreAttr>(docs.get());
-    SDB_ASSERT(score);
-    CompileScore(*score, ord_buckets, rdr, *state->reader, _stats.c_str(),
-                 *docs, _boost);
+  auto it = reader->Iterator(ord.features(),
+                             {
+                               .cookie = state->cookie.get(),
+                               .stats = _stats.c_str(),
+                               .boost = _boost,
+                               .field = reader->meta(),
+                             },
+                             options);
+  if (!it) {
+    return DocIterator::empty();
   }
 
-  return docs;
+  return it;
 }
 
 void TermQuery::visit(const SubReader& segment, PreparedStateVisitor& visitor,

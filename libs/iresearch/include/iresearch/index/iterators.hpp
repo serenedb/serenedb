@@ -22,71 +22,208 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
+#include "basics/assert.h"
 #include "basics/memory.hpp"
 #include "basics/shared.hpp"
 #include "iresearch/formats/seek_cookie.hpp"
 #include "iresearch/index/index_features.hpp"
+#include "iresearch/search/column_collector.hpp"
+#include "iresearch/search/score.hpp"
+#include "iresearch/search/score_function.hpp"
+#include "iresearch/search/scorer.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
-#include "iresearch/utils/attributes.hpp"
 #include "iresearch/utils/iterator.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 
+struct PrepareScoreContext {
+  const Scorer* scorer = nullptr;
+  const SubReader* segment = nullptr;
+  ColumnCollector* collector;
+};
+
+struct CollectScoreContext {
+  const ScoreFunction* score = nullptr;
+  ColumnCollector* collector = nullptr;
+  score_t* score_window = nullptr;
+  ScoreMergeType merge_type = ScoreMergeType::Noop;
+};
+
+struct CollectMatchContext {
+  uint32_t* matches = 0;
+  size_t min_match_count = 0;
+};
+
 // An iterator providing sequential and random access to a posting list
 //
 // After creation iterator is in uninitialized state:
 //   - `value()` returns `doc_limits::invalid()` or `doc_limits::eof()`
-// `seek()`, `shallow_seek()` to:
+// `seek()` to:
 //   - `doc_limits::invalid()` is undefined and implementation dependent
 //   - `doc_limits::eof()` must always return `doc_limits::eof()`
 // Once iterator is exhausted:
 //   - `next()` must constantly return `false`
-//   - `seek()`, `shallow_seek()` to any value must return `doc_limits::eof()`
+//   - `seek()` to any value must return `doc_limits::eof()`
 //   - `value()` must return `doc_limits::eof()`
 struct DocIterator : AttributeProvider {
   using ptr = memory::managed_ptr<DocIterator>;
 
-  [[nodiscard]] static DocIterator::ptr empty();
+  [[nodiscard]] static DocIterator::ptr empty() noexcept;
 
-  virtual doc_id_t value() const = 0;
+  virtual doc_id_t value() const noexcept = 0;
 
   virtual doc_id_t advance() = 0;
 
   // deprecated: use advance() instead
-  IRS_FORCE_INLINE bool next() { return !doc_limits::eof(advance()); }
+  IRS_FORCE_INLINE bool next(this auto& self) {
+    return !doc_limits::eof(self.advance());
+  }
 
   // Position iterator at a specified target and returns current value
   // (for more information see class description)
   virtual doc_id_t seek(doc_id_t target) = 0;
 
-  // protected:
-  // For any DocIterator we want to define block.
-  // It's two bounds: (min...max]:
-  // DocIterator always positioned to the some block.
-  //
-  // DocIterator before advance/seek/shallow_seek(any valid target)
-  // positioned to the first block.
-  // You could know about it max, with call shallow_seek(doc_limits::invalid());
-  //
-  // shallow_seek could move iterator to the some next block.
-  // If target is not in the current block or
-  // min competitive score force moving to the next block.
-  virtual doc_id_t shallow_seek(doc_id_t target) {
-    seek(target);
-    return doc_limits::eof();
+  virtual uint32_t Collect(const ScoreFunction& scorer,
+                           ColumnCollector& columns,
+                           std::span<doc_id_t, kScoreBlock> docs,
+                           std::span<score_t, kScoreBlock> scores) {
+    return CollectImpl(*this, scorer, columns, docs, scores);
   }
 
-  virtual uint32_t count() { return Count(*this); }
+  virtual void FetchScoreArgs(uint16_t index) {}
+
+  virtual ScoreFunction PrepareScore(const PrepareScoreContext& ctx);
+
+  virtual uint32_t count() { return CountImpl(*this); }
+
+  // TODO(mbkkt) Maybe implement FillBlock for all iterators?
+  virtual std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
+                                              uint64_t* mask,
+                                              CollectScoreContext score,
+                                              CollectMatchContext match) {
+    return FillBlockImpl(*this, min, max, mask, score, match);
+  }
 
  protected:
-  template<typename Iterator>
-  static uint32_t Count(Iterator& it) {
+  IRS_FORCE_INLINE static uint32_t CountImpl(auto& self) {
     uint32_t count = 0;
-    while (it.next()) {
+    while (self.next()) {
       ++count;
     }
     return count;
+  }
+
+  IRS_FORCE_INLINE static uint32_t CollectImpl(
+    auto& self, const ScoreFunction& scorer, ColumnCollector& columns,
+    std::span<doc_id_t, kScoreBlock> docs,
+    std::span<score_t, kScoreBlock> scores) {
+    size_t i = 0;
+    for (; i < docs.size(); ++i) {
+      const auto doc = self.advance();
+      if (doc_limits::eof(doc)) [[unlikely]] {
+        if (i) {
+          columns.Collect(docs.first(i));
+          scorer.Score(scores.data(), i);
+        }
+        return static_cast<uint32_t>(i);
+      }
+      docs[i] = doc;
+      self.FetchScoreArgs(i);
+    }
+
+    SDB_ASSERT(i == kScoreBlock);
+    columns.Collect(docs);
+    scorer.ScoreBlock(scores.data());
+    return kScoreBlock;
+  }
+
+  IRS_FORCE_INLINE static std::pair<doc_id_t, bool> FillBlockImpl(
+    auto& self, doc_id_t min, doc_id_t max, uint64_t* mask,
+    CollectScoreContext score, CollectMatchContext match) {
+    if (!score.score || score.score->IsDefault()) {
+      score.merge_type = ScoreMergeType::Noop;
+    }
+
+    return ResolveMergeType(score.merge_type, [&]<ScoreMergeType MergeType> {
+      return ResolveBool(match.matches != nullptr, [&]<bool TrackMatch> {
+        return FillBlockImpl<MergeType, TrackMatch>(self, min, max, mask, score,
+                                                    match);
+      });
+    });
+  }
+
+ private:
+  template<ScoreMergeType MergeType, bool TrackMatch>
+  static std::pair<doc_id_t, bool> FillBlockImpl(
+    auto& self, const doc_id_t min, const doc_id_t max,
+    uint64_t* IRS_RESTRICT mask, [[maybe_unused]] CollectScoreContext score,
+    [[maybe_unused]] CollectMatchContext match) {
+    SDB_ASSERT(min < max);
+
+    [[maybe_unused]] std::array<score_t, kScoreBlock> score_buf;
+    [[maybe_unused]] std::array<doc_id_t, kScoreBlock> score_hits;
+    [[maybe_unused]] uint16_t score_index = 0;
+    [[maybe_unused]] auto flush_score = [&](size_t n) {
+      if constexpr (MergeType != ScoreMergeType::Noop) {
+        SDB_ASSERT(n);
+        SDB_ASSERT(score.score);
+
+        if (score.collector) {
+          score.collector->Collect(std::span{score_hits.data(), n});
+        }
+        if (n == kScoreBlock) [[likely]] {
+          score.score->ScoreBlock(score_buf.data());
+        } else {
+          score.score->Score(score_buf.data(), n);
+        }
+        Merge<MergeType>(score.score_window, score_hits.data(), min,
+                         score_buf.data(), n);
+        score_index = 0;
+      }
+    };
+
+    auto value = self.value();
+    while (value < min) {
+      value = self.advance();
+    }
+    bool empty = true;
+    for (; value < max; value = self.advance()) {
+      SDB_ASSERT(value >= min);
+      const auto offset = value - min;
+
+      if constexpr (TrackMatch) {
+        SDB_ASSERT(match.matches);
+        const bool has_match = ++match.matches[offset] >= match.min_match_count;
+        SetBit(mask[offset / BitsRequired<uint64_t>()],
+               offset % BitsRequired<uint64_t>(), has_match);
+        empty &= !has_match;
+      } else {
+        SetBit(mask[offset / BitsRequired<uint64_t>()],
+               offset % BitsRequired<uint64_t>());
+        empty = false;
+      }
+
+      if constexpr (MergeType != ScoreMergeType::Noop) {
+        score_hits[score_index] = value;
+        self.FetchScoreArgs(score_index);
+        ++score_index;
+
+        if (score_index == kScoreBlock) {
+          flush_score(kScoreBlock);
+        }
+      }
+    }
+
+    if constexpr (MergeType != ScoreMergeType::Noop) {
+      if (score_index) {
+        flush_score(score_index);
+      }
+    }
+
+    return {value, empty};
   }
 };
 
@@ -94,7 +231,7 @@ struct DocIterator : AttributeProvider {
 struct ResettableDocIterator : DocIterator {
   using ptr = memory::managed_ptr<ResettableDocIterator>;
 
-  [[nodiscard]] static ResettableDocIterator::ptr empty();
+  [[nodiscard]] static ResettableDocIterator::ptr empty() noexcept;
 
   // Reset iterator to initial state
   virtual void reset() = 0;
@@ -106,8 +243,7 @@ struct TermReader;
 struct FieldIterator : Iterator<const TermReader&> {
   using ptr = memory::managed_ptr<FieldIterator>;
 
-  // Return an empty iterator
-  [[nodiscard]] static FieldIterator::ptr empty();
+  [[nodiscard]] static FieldIterator::ptr empty() noexcept;
 
   // Position iterator at a specified target.
   // Return if the target is found, false otherwise.
@@ -120,8 +256,7 @@ struct ColumnReader;
 struct ColumnIterator : Iterator<const ColumnReader&> {
   using ptr = memory::managed_ptr<ColumnIterator>;
 
-  // Return an empty iterator.
-  [[nodiscard]] static ColumnIterator::ptr empty();
+  [[nodiscard]] static ColumnIterator::ptr empty() noexcept;
 
   // Position iterator at a specified target.
   // Return if the target is found, false otherwise.
@@ -132,8 +267,7 @@ struct ColumnIterator : Iterator<const ColumnReader&> {
 struct TermIterator : Iterator<bytes_view, AttributeProvider> {
   using ptr = memory::managed_ptr<TermIterator>;
 
-  // Return an empty iterator
-  [[nodiscard]] static TermIterator::ptr empty();
+  [[nodiscard]] static TermIterator::ptr empty() noexcept;
 
   // Read term attributes
   virtual void read() = 0;
@@ -160,8 +294,7 @@ enum class SeekResult {
 struct SeekTermIterator : TermIterator {
   using ptr = memory::managed_ptr<SeekTermIterator>;
 
-  // Return an empty iterator
-  [[nodiscard]] static SeekTermIterator::ptr empty();
+  [[nodiscard]] static SeekTermIterator::ptr empty() noexcept;
 
   // Position iterator at a value that is not less than the specified
   // one. Returns seek result.

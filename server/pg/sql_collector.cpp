@@ -30,6 +30,7 @@
 #include "connector/serenedb_connector.hpp"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_exception_macro.h"
+#include "query/transaction.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
 #include "postgres.h"
@@ -75,6 +76,7 @@ class ObjectCollector {
   void CollectViewStmt(State& state, const ViewStmt& stmt);
   void CollectCreateFunctionStmt(State& state, const CreateFunctionStmt& stmt);
   void CollectCreateStmt(State& state, const CreateStmt& stmt);
+  void CollectCopyStmt(State& state, const CopyStmt& stmt);
 
   void CollectRangeVar(const State& state, const RangeVar* var);
   void CollectRangeSubSelect(const State& state,
@@ -530,6 +532,12 @@ void ObjectCollector::CollectCreateStmt(State& state, const CreateStmt& stmt) {
   });
 }
 
+void ObjectCollector::CollectCopyStmt(State& state, const CopyStmt& stmt) {
+  CollectRangeVar(state, stmt.relation);
+  CollectStmt(&state, stmt.query);
+  CollectExprNode(state, stmt.whereClause);
+}
+
 void ObjectCollector::CollectStmt(const State* parent, const Node* node) {
   if (!node) {
     return;
@@ -557,6 +565,8 @@ void ObjectCollector::CollectStmt(const State* parent, const Node* node) {
                                        *castNode(CreateFunctionStmt, node));
     case T_CreateStmt:
       return CollectCreateStmt(state, *castNode(CreateStmt, node));
+    case T_CopyStmt:
+      return CollectCopyStmt(state, *castNode(CopyStmt, node));
     default:
       break;
   }
@@ -564,11 +574,11 @@ void ObjectCollector::CollectStmt(const State* parent, const Node* node) {
 
 }  // namespace
 
-void Objects::ObjectData::EnsureTable() const {
+void Objects::ObjectData::EnsureTable(query::Transaction& transaction) const {
   if (!table) {
     SDB_ASSERT(object);
     table = std::make_shared<connector::RocksDBTable>(
-      basics::downCast<catalog::Table>(*object));
+      basics::downCast<catalog::Table>(*object), transaction);
   }
 }
 

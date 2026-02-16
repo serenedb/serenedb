@@ -51,25 +51,21 @@ enum class IndexFeatures : uint8_t {
   // Offsets, depends on positions
   Offs = 1U << 2,
 
-  // Payload, depends on positions
-  Pay = 1U << 3,
-
   // Field norms
   Norm = 1U << 4,
 
-  Max = Freq | Pos | Offs | Pay | Norm,
+  Max = Freq | Pos | Offs | Norm,
 };
 static_assert(IndexFeatures::Max < IndexFeatures{0x80U},
               "adjust features storage format");
 ENABLE_BITMASK_ENUM(IndexFeatures);
 
-inline constexpr IndexFeatures kPosOffsPay =
-  IndexFeatures::Freq | IndexFeatures::Pos | IndexFeatures::Offs |
-  IndexFeatures::Pay;
+inline constexpr IndexFeatures kPosOffs =
+  IndexFeatures::Freq | IndexFeatures::Pos | IndexFeatures::Offs;
 
 // Get only index features
 constexpr IndexFeatures ToIndex(IndexFeatures features) noexcept {
-  return features & kPosOffsPay;
+  return features & kPosOffs;
 }
 
 // Return true if 'lhs' is a subset of 'rhs'

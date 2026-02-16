@@ -26,9 +26,9 @@
 #include <vpack/common.h>
 #include <vpack/parser.h>
 
-#include <iresearch/analysis/ngram_tokenizer.hpp>
 #include <sstream>
 
+#include "iresearch/analysis/ngram_tokenizer.hpp"
 #include "tests_shared.hpp"
 
 TEST(ngram_token_stream_test, consts) {

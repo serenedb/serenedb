@@ -19,51 +19,128 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
-#include <rocksdb/utilities/transaction_db.h>
 
+#include <rocksdb/snapshot.h>
+#include <rocksdb/utilities/transaction.h>
+
+#include <iresearch/index/index_writer.hpp>
 #include <yaclib/async/future.hpp>
 
+#include "basics/bit_utils.hpp"
 #include "basics/containers/flat_hash_map.h"
+#include "basics/down_cast.h"
 #include "basics/result.h"
+#include "catalog/catalog.h"
+#include "catalog/table.h"
 #include "query/config.h"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
+#include "search/inverted_index_shard.h"
+#include "storage_engine/index_shard.h"
 
-namespace sdb {
+namespace sdb::query {
+namespace {
 
-std::shared_ptr<rocksdb::Transaction> CreateTransaction(
-  rocksdb::TransactionDB& db);
+template<typename F, typename... Sigs>
+concept InvocableWith =
+  (std::constructible_from<absl::AnyInvocable<Sigs>, F&> && ...);
 
-class TxnState : public Config {
+}
+
+class Transaction : public Config {
  public:
-  class LazyTransaction {
-   public:
-    void SetTransaction() { _initialized = true; }
-
-    const std::shared_ptr<rocksdb::Transaction>& GetTransaction() const;
-
-    bool IsInitialized() const noexcept { return _initialized; }
-
-    void Reset() {
-      _txn.reset();
-      _initialized = false;
-    }
-
-   private:
-    mutable std::shared_ptr<rocksdb::Transaction> _txn;
-    bool _initialized = false;
+  enum class State : uint8_t {
+    None = 0,
+    HasRocksDBRead = 1 << 0,
+    HasRocksDBWrite = 1 << 1,
+    HasTransactionBegin = 1 << 2,
   };
 
-  yaclib::Future<Result> Begin();
+#ifdef SDB_DEV
+  virtual ~Transaction() {
+    // Search transactions have implicit commit in destructor (historical
+    // reasons) So if we get here explicit Commit/Rollback should be already
+    // called. Otherwise we might have some unexpected data
+    SDB_ASSERT(_search_transactions.empty());
+    // RocksDB transactions aborts itself in destructor but just for consistency
+    // we should do Commit/Rollback explicitly
+    SDB_ASSERT(!_rocksdb_transaction);
+  }
+#endif
 
-  yaclib::Future<Result> Commit();
+  Result Begin();
 
-  yaclib::Future<Result> Rollback();
+  Result Commit();
 
-  bool InsideTransaction() const noexcept { return _txn.IsInitialized(); }
+  Result Rollback();
 
-  const auto& GetTransaction() const { return _txn.GetTransaction(); }
+  auto GetCatalogSnapshot() const {
+    // TODO(codeworse): manage with rocksdb snapshot
+    return catalog::GetCatalog().GetSnapshot();
+  }
+
+  void UpdateNumRows(ObjectId table_id, int64_t delta) noexcept {
+    _table_rows_deltas[table_id] += delta;
+  }
+
+  void AddRocksDBRead() noexcept;
+
+  void AddRocksDBWrite() noexcept;
+
+  bool HasTransactionBegin() const noexcept;
+
+  rocksdb::Transaction* GetRocksDBTransaction() const noexcept;
+
+  rocksdb::Transaction& EnsureRocksDBTransaction();
+
+  const rocksdb::Snapshot& EnsureRocksDBSnapshot();
+
+  void Destroy() noexcept;
+
+  catalog::TableStats GetTableStats(ObjectId table_id) const;
+
+  template<
+    InvocableWith<void(irs::IndexWriter::Transaction&, const IndexShard&),
+                  void(rocksdb::Transaction&, const IndexShard&)>
+      Visit>
+  void EnsureIndexesTransactions(ObjectId table_id, Visit&& visit) {
+    auto snapshot = GetCatalogSnapshot();
+    SDB_ASSERT(snapshot->GetObject(table_id)->GetType() ==
+               catalog::ObjectType::Table);
+    for (auto index_shard : snapshot->GetIndexShardsByTable(table_id)) {
+      if (index_shard->GetType() == IndexType::Inverted) {
+        auto& inverted_index_shard =
+          basics::downCast<search::InvertedIndexShard>(*index_shard);
+        _search_transactions.try_emplace(inverted_index_shard.GetId(), nullptr);
+        auto& transaction = _search_transactions[inverted_index_shard.GetId()];
+        if (!transaction) {
+          transaction = std::make_unique<irs::IndexWriter::Transaction>(
+            inverted_index_shard.GetTransaction());
+        }
+        visit(*transaction, *index_shard);
+      } else {
+        if (!_rocksdb_transaction) [[unlikely]] {
+          CreateRocksDBTransaction();
+        }
+        visit(*_rocksdb_transaction, *index_shard);
+      }
+    }
+  }
 
  private:
-  LazyTransaction _txn;
+  void CreateStorageSnapshot();
+  void CreateRocksDBTransaction();
+  void ApplyTableStatsDiffs();
+
+  State _state = State::None;
+  std::shared_ptr<StorageSnapshot> _storage_snapshot;
+  std::unique_ptr<rocksdb::Transaction> _rocksdb_transaction;
+  const rocksdb::Snapshot* _rocksdb_snapshot = nullptr;
+  containers::FlatHashMap<ObjectId,
+                          std::unique_ptr<irs::IndexWriter::Transaction>>
+    _search_transactions;
+  containers::FlatHashMap<ObjectId, int64_t> _table_rows_deltas;
 };
 
-}  // namespace sdb
+ENABLE_BITMASK_ENUM(Transaction::State);
+
+}  // namespace sdb::query

@@ -27,7 +27,6 @@
 #include <absl/strings/str_cat.h>
 
 #include <cstdint>
-#include <iresearch/index/segment_writer.hpp>
 #include <shared_mutex>
 #include <type_traits>
 
@@ -43,6 +42,7 @@
 #include "iresearch/index/merge_writer.hpp"
 #include "iresearch/index/segment_reader.hpp"
 #include "iresearch/index/segment_reader_impl.hpp"
+#include "iresearch/index/segment_writer.hpp"
 #include "iresearch/store/directory.hpp"
 #include "iresearch/utils/compression.hpp"
 #include "iresearch/utils/directory_utils.hpp"
@@ -211,7 +211,8 @@ void RemoveFromExistingSegment(DocumentMask& deleted_docs,
     return;  // skip invalid prepared filters
   }
 
-  auto itr = prepared->execute({.segment = reader});
+  auto itr =
+    prepared->execute({.segment = reader, .pending_docs_mask = &deleted_docs});
 
   if (!itr) [[unlikely]] {
     return;  // skip invalid iterators
@@ -243,7 +244,8 @@ bool RemoveFromImportedSegment(DocumentMask& deleted_docs,
     return false;  // skip invalid prepared filters
   }
 
-  auto itr = prepared->execute({.segment = reader});
+  auto itr =
+    prepared->execute({.segment = reader, .pending_docs_mask = &deleted_docs});
   if (!itr) [[unlikely]] {
     return false;  // skip invalid iterators
   }
@@ -282,7 +284,8 @@ void FlushedSegmentContext::Remove(IndexWriter::QueryContext& query) {
     return;  // Skip invalid prepared filters
   }
 
-  auto itr = prepared->execute({.segment = *reader});
+  auto itr = prepared->execute(
+    {.segment = *reader, .pending_docs_mask = &document_mask});
 
   if (!itr) [[unlikely]] {
     return;  // Skip invalid iterators

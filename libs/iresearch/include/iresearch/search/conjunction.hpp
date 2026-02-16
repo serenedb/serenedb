@@ -22,61 +22,147 @@
 
 #pragma once
 
+#include <absl/container/inlined_vector.h>
+
+#include <cstddef>
+#include <cstdint>
+#include <ranges>
+
 #include "basics/empty.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/index_reader_options.hpp"
+#include "iresearch/index/iterators.hpp"
 #include "iresearch/search/cost.hpp"
 #include "iresearch/search/score.hpp"
+#include "iresearch/search/score_function.hpp"
+#include "iresearch/search/scorer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
+// Conjunction is template for Adapter instead of direct use of ScoreAdapter
+// only because of ngram
 namespace irs {
 
-// Adapter to use DocIteratorImpl with conjunction and disjunction.
-template<typename DocIteratorImpl = DocIterator::ptr>
+// Adapter to use DocIterator::ptr with conjunction and disjunction.
 struct ScoreAdapter {
-  ScoreAdapter() noexcept = default;
-  ScoreAdapter(DocIteratorImpl&& it) noexcept
-    : it{std::move(it)},
-      doc{irs::get<irs::DocAttr>(*this->it)},
-      score{&irs::ScoreAttr::get(*this->it)} {
+  ScoreAdapter() = default;
+
+  ScoreAdapter(DocIterator::ptr it) noexcept : _it{std::move(it)} {
+    const auto* doc = irs::get<DocAttr>(*this->_it);
     SDB_ASSERT(doc);
+    _doc = &doc->value;
   }
 
   ScoreAdapter(ScoreAdapter&&) noexcept = default;
   ScoreAdapter& operator=(ScoreAdapter&&) noexcept = default;
 
-  auto* operator->() const noexcept { return it.get(); }
-
-  const Attribute* get(TypeInfo::type_id type) const noexcept {
-    return it->get(type);
+  IRS_FORCE_INLINE operator DocIterator::ptr&&() && noexcept {
+    return std::move(_it);
   }
 
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept {
-    return it->GetMutable(type);
+  IRS_FORCE_INLINE explicit operator bool() const noexcept {
+    return _it != nullptr;
   }
 
-  operator DocIteratorImpl&&() && noexcept { return std::move(it); }
+  IRS_FORCE_INLINE Attribute* GetMutable(TypeInfo::type_id type) noexcept {
+    return _it->GetMutable(type);
+  }
 
-  explicit operator bool() const noexcept { return it != nullptr; }
+  IRS_FORCE_INLINE doc_id_t value() const noexcept { return *_doc; }
 
-  // access iterator value without virtual call
-  doc_id_t value() const noexcept { return doc->value; }
+  IRS_FORCE_INLINE doc_id_t advance() { return _it->advance(); }
 
-  DocIteratorImpl it;
-  const irs::DocAttr* doc{};
-  const irs::ScoreAttr* score{};
+  IRS_FORCE_INLINE doc_id_t seek(doc_id_t target) { return _it->seek(target); }
+
+  IRS_FORCE_INLINE void FetchScoreArgs(uint16_t index) {
+    return _it->FetchScoreArgs(index);
+  }
+
+  IRS_FORCE_INLINE ScoreFunction
+  PrepareScore(const PrepareScoreContext& ctx) const noexcept {
+    return _it->PrepareScore(ctx);
+  }
+
+  IRS_FORCE_INLINE std::pair<doc_id_t, bool> FillBlock(
+    doc_id_t min, doc_id_t max, uint64_t* mask, CollectScoreContext score,
+    CollectMatchContext match) {
+    return _it->FillBlock(min, max, mask, score, match);
+  }
+
+ private:
+  DocIterator::ptr _it;
+  const doc_id_t* _doc{};
 };
 
-using ScoreAdapters = std::vector<ScoreAdapter<>>;
+using ScoreAdapters = std::vector<ScoreAdapter>;
 
-// Helpers
 template<typename T>
 using EmptyWrapper = T;
 
-struct SubScores {
-  std::vector<irs::ScoreAttr*> scores;
-  score_t sum_score = 0.f;
+template<ScoreMergeType MergeType>
+class ConjunctionScore : public ScoreOperator {
+ public:
+  static ScoreFunction Make(const PrepareScoreContext& ctx, auto& itrs) {
+    std::vector<ScoreFunction> sources;
+    sources.reserve(itrs.size());
+    for (auto& it : itrs) {
+      auto score = it.PrepareScore(ctx);
+      if (score.IsDefault()) {
+        continue;
+      }
+      sources.emplace_back(std::move(score));
+    }
+
+    switch (sources.size()) {
+      case 0:
+        return ScoreFunction::Default();
+      case 1:
+        return std::move(sources.front());
+      default:
+        return ScoreFunction::Make<ConjunctionScore<MergeType>>(
+          std::move(sources));
+    }
+  }
+
+  explicit ConjunctionScore(std::vector<ScoreFunction> sources)
+    : _sources{std::move(sources)} {}
+
+  score_t Score() noexcept final {
+    auto source = _sources.begin();
+    auto end = _sources.end();
+
+    auto res = source->Score();
+    for (++source; source != end; ++source) {
+      Merge<MergeType>(res, source->Score());
+    }
+    return res;
+  }
+
+  void Score(score_t* res, size_t n) noexcept final {
+    auto source = _sources.begin();
+    auto end = _sources.end();
+
+    source->Score(res, n);
+    for (++source; source != end; ++source) {
+      source->Score(_scores.data(), n);
+      Merge<MergeType>(res, _scores.data(), n);
+    }
+  }
+
+  void ScoreBlock(score_t* res) noexcept final {
+    auto source = _sources.begin();
+    auto end = _sources.end();
+
+    source->ScoreBlock(res);
+    for (++source; source != end; ++source) {
+      source->ScoreBlock(_scores.data());
+      Merge<MergeType>(res, _scores.data(), kScoreBlock);
+    }
+  }
+
+ private:
+  std::vector<ScoreFunction> _sources;
+  std::array<score_t, kScoreBlock> _scores;
 };
 
 // Conjunction of N iterators
@@ -88,16 +174,19 @@ struct SubScores {
 //   V  [n] <-- end
 // -----------------------------------------------------------------------------
 // goto used instead of labeled cycles, with them we can achieve best perfomance
-template<typename DocIteratorImpl, typename Merger>
-struct ConjunctionBase : public DocIterator,
-                         protected Merger,
-                         protected ScoreCtx {
+template<typename Adapter>
+struct ConjunctionBase : public DocIterator {
+ public:
+  void FetchScoreArgs(uint16_t index) final {
+    for (auto& it : _itrs) {
+      it.FetchScoreArgs(index);
+    }
+  }
+
  protected:
-  explicit ConjunctionBase(Merger&& merger, std::vector<DocIteratorImpl>&& itrs,
-                           std::vector<irs::ScoreAttr*>&& scorers)
-    : Merger{std::move(merger)},
-      _itrs{std::move(itrs)},
-      _scores{std::move(scorers)} {
+  explicit ConjunctionBase(ScoreMergeType merge_type,
+                           std::vector<Adapter>&& itrs)
+    : _merge_type{merge_type}, _itrs{std::move(itrs)} {
     SDB_ASSERT(
       absl::c_is_sorted(_itrs, [](const auto& lhs, const auto& rhs) noexcept {
         return CostAttr::extract(lhs, CostAttr::kMax) <
@@ -105,395 +194,105 @@ struct ConjunctionBase : public DocIterator,
       }));
   }
 
-  static void Score2(ScoreCtx* ctx, score_t* res) noexcept {
-    auto& self = static_cast<ConjunctionBase&>(*ctx);
-    auto& merger = static_cast<Merger&>(self);
-    (*self._scores.front())(res);
-    (*self._scores.back())(merger.temp());
-    merger(res, merger.temp());
-  }
-
-  static void ScoreN(ScoreCtx* ctx, score_t* res) noexcept {
-    auto& self = static_cast<ConjunctionBase&>(*ctx);
-    auto& merger = static_cast<Merger&>(self);
-    auto it = self._scores.begin();
-    auto end = self._scores.end();
-    (**it)(res);
-    ++it;
-    do {
-      (**it)(merger.temp());
-      merger(res, merger.temp());
-      ++it;
-    } while (it != end);
-  }
-
-  void PrepareScore(irs::ScoreAttr& score, auto score_2, auto score_n,
-                    auto min) {
-    SDB_ASSERT(Merger::size());
-    switch (_scores.size()) {
-      case 0:
-        score = ScoreFunction::Default(Merger::size());
-        break;
-      case 1:
-        score = std::move(*_scores.front());
-        break;
-      case 2:
-        score.Reset(*this, score_2, min);
-        break;
-      default:
-        score.Reset(*this, score_n, min);
-        break;
-    }
-  }
-
   auto begin() const noexcept { return _itrs.begin(); }
   auto end() const noexcept { return _itrs.end(); }
   size_t size() const noexcept { return _itrs.size(); }
 
-  std::vector<DocIteratorImpl> _itrs;
-  std::vector<ScoreAttr*> _scores;
+  ScoreMergeType _merge_type;
+  std::vector<Adapter> _itrs;
 };
 
-template<typename DocIteratorImpl, typename Merger>
-class Conjunction : public ConjunctionBase<DocIteratorImpl, Merger> {
-  using Base = ConjunctionBase<DocIteratorImpl, Merger>;
-  using Attributes =
-    std::tuple<AttributePtr<DocAttr>, AttributePtr<CostAttr>, ScoreAttr>;
+template<typename Adapter>
+class Conjunction : public ConjunctionBase<Adapter> {
+  using Base = ConjunctionBase<Adapter>;
+  using Attributes = std::tuple<AttributePtr<DocAttr>, AttributePtr<CostAttr>>;
 
  public:
-  explicit Conjunction(Merger&& merger, std::vector<DocIteratorImpl>&& itrs,
-                       std::vector<irs::ScoreAttr*>&& scores = {})
-    : Base{std::move(merger), std::move(itrs), std::move(scores)},
-      _front{this->_itrs.front().it.get()} {
+  explicit Conjunction(ScoreMergeType merge_type, std::vector<Adapter>&& itrs)
+    : Base{merge_type, std::move(itrs)} {
     SDB_ASSERT(!this->_itrs.empty());
-    SDB_ASSERT(_front);
 
-    auto* front_doc = irs::GetMutable<DocAttr>(_front);
-    _front_doc = &front_doc->value;
-    std::get<AttributePtr<DocAttr>>(_attrs) = front_doc;
-
+    std::get<AttributePtr<DocAttr>>(_attrs) =
+      irs::GetMutable<DocAttr>(&this->_itrs[0]);
     std::get<AttributePtr<CostAttr>>(_attrs) =
-      irs::GetMutable<CostAttr>(_front);
+      irs::GetMutable<CostAttr>(&this->_itrs[0]);
+  }
 
-    if constexpr (kHasScore<Merger>) {
-      auto& score = std::get<irs::ScoreAttr>(_attrs);
-      this->PrepareScore(score, Base::Score2, Base::ScoreN,
-                         ScoreFunction::DefaultMin);
-    }
+  ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
+    return ResolveMergeType(this->_merge_type, [&]<ScoreMergeType MergeType> {
+      if constexpr (MergeType == ScoreMergeType::Noop) {
+        return ScoreFunction::Default();
+      } else {
+        return ConjunctionScore<MergeType>::Make(ctx, this->_itrs);
+      }
+    });
   }
 
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);
   }
 
-  doc_id_t value() const final { return *_front_doc; }
-
-  doc_id_t advance() override { return converge(_front->advance()); }
-
-  doc_id_t seek(doc_id_t target) override {
-    return converge(_front->seek(target));
+  IRS_FORCE_INLINE doc_id_t value() const noexcept final {
+    return std::get<AttributePtr<DocAttr>>(_attrs).ptr->value;
   }
 
-  uint32_t count() override { return DocIterator::Count(*this); }
+  doc_id_t advance() final { return converge(this->_itrs[0].advance()); }
+
+  doc_id_t seek(doc_id_t target) final {
+    return converge(this->_itrs[0].seek(target));
+  }
+
+  uint32_t count() final { return DocIterator::CountImpl(*this); }
+
+  uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
+                   std::span<doc_id_t, kScoreBlock> docs,
+                   std::span<score_t, kScoreBlock> scores) final {
+    return DocIterator::CollectImpl(*this, scorer, columns, docs, scores);
+  }
 
  private:
   // tries to converge front_ and other iterators to the specified target.
   // if it impossible tries to find first convergence place
   doc_id_t converge(doc_id_t target) {
-    if (doc_limits::eof(target)) [[unlikely]] {
-      return doc_limits::eof();
-    }
     const auto begin = this->_itrs.begin() + 1;
     const auto end = this->_itrs.end();
   restart:
-    SDB_ASSERT(!doc_limits::eof(target));
+    if (doc_limits::eof(target)) [[unlikely]] {
+      return doc_limits::eof();
+    }
     for (auto it = begin; it != end; ++it) {
-      const auto doc = (*it)->seek(target);
+      const auto doc = it->seek(target);
       if (target < doc) {
-        target = _front->seek(doc);
-        if (!doc_limits::eof(target)) [[likely]] {
-          goto restart;
-        }
-        return target;
+        target = this->_itrs[0].seek(doc);
+        goto restart;
       }
     }
     return target;
   }
 
   Attributes _attrs;
-  DocIterator* _front;
-  const doc_id_t* _front_doc{};
-};
-
-template<bool Root, typename DocIteratorImpl, typename Merger>
-class BlockConjunction : public ConjunctionBase<DocIteratorImpl, Merger> {
-  using Base = ConjunctionBase<DocIteratorImpl, Merger>;
-  using Attributes =
-    std::tuple<DocAttr, AttributePtr<CostAttr>, irs::ScoreAttr>;
-
- public:
-  explicit BlockConjunction(Merger&& merger,
-                            std::vector<DocIteratorImpl>&& itrs,
-                            SubScores&& scores, bool strict)
-    : Base{std::move(merger), std::move(itrs), std::move(scores.scores)},
-      _sum_scores{scores.sum_score},
-      _score{static_cast<Merger&>(*this).size()} {
-    SDB_ASSERT(this->_itrs.size() >= 2);
-    SDB_ASSERT(!this->_scores.empty());
-    absl::c_sort(this->_scores, [](const auto* lhs, const auto* rhs) {
-      return lhs->max.tail > rhs->max.tail;
-    });
-    std::get<AttributePtr<CostAttr>>(_attrs) =
-      irs::GetMutable<CostAttr>(this->_itrs.front().it.get());
-    auto& score = std::get<irs::ScoreAttr>(_attrs);
-    score.max.leaf = score.max.tail = _sum_scores;
-    auto min = strict ? MinStrictN : MinWeakN;
-    if constexpr (Root) {
-      auto score_root = [](ScoreCtx* ctx, score_t* res) noexcept {
-        auto& self = static_cast<BlockConjunction&>(*ctx);
-        std::memcpy(res, self._score.temp(),
-                    static_cast<Merger&>(self).byte_size());
-      };
-      this->PrepareScore(score, score_root, score_root, min);
-    } else {
-      this->PrepareScore(score, Base::Score2, Base::ScoreN, min);
-    }
-  }
-
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    return irs::GetMutable(_attrs, type);
-  }
-
-  IRS_FORCE_INLINE auto& score() {
-    return std::get<irs::ScoreAttr>(_attrs).max;
-  }
-
-  doc_id_t value() const final { return std::get<DocAttr>(_attrs).value; }
-
-  doc_id_t advance() final { return seek(value() + 1); }
-
-  doc_id_t seek(doc_id_t target) final {
-    auto& doc = std::get<DocAttr>(_attrs).value;
-    if (target <= doc) [[unlikely]] {
-      if constexpr (Root) {
-        if (_threshold < _score.temp()[0]) {
-          return doc;
-        }
-        target = doc + !doc_limits::eof(doc);
-      } else {
-        return doc;
-      }
-    }
-    auto& merger = static_cast<Merger&>(*this);
-  align_leafs:
-    target = ShallowSeekImpl(target);
-  align_docs:
-    if (doc_limits::eof(target)) [[unlikely]] {
-      return Seal();
-    }
-    auto it = this->_itrs.begin();
-    const auto seek_target = (*it)->seek(target);
-    if (seek_target > _leafs_doc) {
-      target = seek_target;
-      goto align_leafs;
-    }
-    if (doc_limits::eof(seek_target)) [[unlikely]] {
-      return Seal();
-    }
-    ++it;
-    const auto end = this->_itrs.end();
-    do {
-      target = (*it)->seek(seek_target);
-      if (target != seek_target) {
-        if (target > _leafs_doc) {
-          goto align_leafs;
-        }
-        goto align_docs;
-      }
-      ++it;
-    } while (it != end);
-    doc = seek_target;
-
-    if constexpr (Root) {
-      auto begin = this->_scores.begin();
-      auto end = this->_scores.end();
-
-      (**begin)(_score.temp());
-      for (++begin; begin != end; ++begin) {
-        (**begin)(merger.temp());
-        merger(_score.temp(), merger.temp());
-      }
-      if (_threshold < _score.temp()[0]) {
-        return target;
-      }
-      ++target;
-      if (target > _leafs_doc) {
-        goto align_leafs;
-      }
-      goto align_docs;
-    } else {
-      return target;
-    }
-  }
-
-  doc_id_t shallow_seek(doc_id_t target) final {
-    target = ShallowSeekImpl(target);
-    if (doc_limits::eof(target)) [[unlikely]] {
-      return Seal();
-    }
-    return _leafs_doc;
-  }
-
-  uint32_t count() final { return DocIterator::Count(*this); }
-
- private:
-  // TODO(mbkkt) Maybe optimize for 2?
-  static void MinN(BlockConjunction& self, score_t arg) noexcept {
-    for (auto* score : self._scores) {
-      const auto others = self._sum_scores - score->max.tail;
-      if (arg <= others) {
-        return;
-      }
-      score->Min(arg - others);
-    }
-  }
-
-  static void MinStrictN(ScoreCtx* ctx, score_t arg) noexcept {
-    auto& self = static_cast<BlockConjunction&>(*ctx);
-    SDB_ASSERT(self._threshold <= arg);
-    self._threshold = arg;
-    MinN(self, arg);
-  }
-
-  static void MinWeakN(ScoreCtx* ctx, score_t arg) noexcept {
-    auto& self = static_cast<BlockConjunction&>(*ctx);
-    SDB_ASSERT(self._threshold <= arg);
-    self._threshold = std::nextafter(arg, 0.f);
-    MinN(self, arg);
-  }
-
-  IRS_NO_INLINE doc_id_t Seal() {
-    _leafs_doc = doc_limits::eof();
-    std::get<DocAttr>(_attrs).value = doc_limits::eof();
-    score().leaf = {};
-    score().tail = {};
-    return doc_limits::eof();
-  }
-
-  doc_id_t ShallowSeekImpl(doc_id_t target) {
-    auto& doc = std::get<DocAttr>(_attrs).value;
-    auto& merger = static_cast<Merger&>(*this);
-    if (target <= _leafs_doc) {
-    score_check:
-      if (_threshold < score().leaf) {
-        return target;
-      }
-      target = _leafs_doc + !doc_limits::eof(_leafs_doc);
-    }
-    SDB_ASSERT(doc <= _leafs_doc);
-  eof_check:
-    if (doc_limits::eof(target)) [[unlikely]] {
-      return target;
-    }
-
-    auto max_leafs = doc_limits::eof();
-    auto min_leafs = doc;
-    score_t sum_leafs_score = 0.f;
-
-    for (auto& it : this->_itrs) {
-      auto max_leaf = it->shallow_seek(target);
-      auto min_leaf = it.doc->value;
-      SDB_ASSERT(min_leaf <= max_leaf);
-      if (target < min_leaf) {
-        target = min_leaf;
-      }
-      if (max_leafs < min_leaf) {
-        goto eof_check;
-      }
-      if (min_leafs < min_leaf) {
-        min_leafs = min_leaf;
-      }
-      if (max_leafs > max_leaf) {
-        max_leafs = max_leaf;
-      }
-      SDB_ASSERT(min_leafs <= max_leafs);
-      merger.Merge(sum_leafs_score, it.score->max.leaf);
-    }
-
-    _leafs_doc = max_leafs;
-    doc = min_leafs;
-    score().leaf = sum_leafs_score;
-    SDB_ASSERT(doc <= target);
-    SDB_ASSERT(target <= _leafs_doc);
-    goto score_check;
-  }
-
-  Attributes _attrs;
-  score_t _sum_scores;
-  doc_id_t _leafs_doc{doc_limits::invalid()};
-  score_t _threshold{};
-  typename Merger::Buffer _score;
 };
 
 // Returns conjunction iterator created from the specified sub iterators
-template<template<typename> typename Wrapper = EmptyWrapper, typename Merger,
-         typename DocIteratorImpl, typename... Args>
-DocIterator::ptr MakeConjunction(WandContext ctx, Merger&& merger,
-                                 std::vector<DocIteratorImpl>&& itrs,
-                                 Args&&... args) {
+template<template<typename> typename Wrapper = EmptyWrapper, typename Adapter,
+         typename... Args>
+DocIterator::ptr MakeConjunction(ScoreMergeType merge_type, WandContext ctx,
+                                 std::vector<Adapter>&& itrs, Args&&... args) {
   if (const auto size = itrs.size(); 0 == size) {
     // empty or unreachable search criteria
     return DocIterator::empty();
   } else if (1 == size) {
     // single sub-query
-    return std::move(itrs.front());
+    return std::move(itrs[0]);
   }
 
-  // conjunction
   absl::c_sort(itrs, [](const auto& lhs, const auto& rhs) noexcept {
     return CostAttr::extract(lhs, CostAttr::kMax) <
            CostAttr::extract(rhs, CostAttr::kMax);
   });
-  SubScores scores;
-  using ConjunctionImpl = Conjunction<DocIteratorImpl, Merger>;
-  using WrappedConjunction = Wrapper<ConjunctionImpl>;
-  if constexpr (kHasScore<Merger> &&
-                std::is_same_v<ConjunctionImpl, WrappedConjunction>) {
-    scores.scores.reserve(itrs.size());
-    // TODO(mbkkt) Find better one
-    static constexpr size_t kBlockConjunctionCostThreshold = 1;
-    bool use_block =
-      ctx.Enabled() && CostAttr::extract(itrs.front(), CostAttr::kMax) >
-                         kBlockConjunctionCostThreshold;
-    for (auto& it : itrs) {
-      // FIXME(gnusi): remove const cast
-      auto* score = const_cast<irs::ScoreAttr*>(it.score);
-      SDB_ASSERT(score);  // ensured by ScoreAdapter
-      if (score->IsDefault()) {
-        continue;
-      }
-      scores.scores.emplace_back(score);
-      const auto tail = score->max.tail;
-      use_block &= tail != std::numeric_limits<score_t>::max();
-      if (use_block) {
-        scores.sum_score += tail;
-      }
-    }
-    use_block &= !scores.scores.empty();
-    if (use_block) {
-      return ResolveBool(ctx.root, [&]<bool Root> -> DocIterator::ptr {
-        return memory::make_managed<
-          Wrapper<BlockConjunction<Root, DocIteratorImpl, Merger>>>(
-          std::forward<Args>(args)..., std::forward<Merger>(merger),
-          std::move(itrs), std::move(scores), ctx.strict);
-      });
-    }
-    // TODO(mbkkt) We still could set min producer and root scoring
-  }
 
-  return memory::make_managed<Wrapper<Conjunction<DocIteratorImpl, Merger>>>(
-    std::forward<Args>(args)..., std::forward<Merger>(merger), std::move(itrs),
-    std::move(scores.scores));
+  return memory::make_managed<Wrapper<Conjunction<Adapter>>>(
+    merge_type, std::forward<Args>(args)..., std::move(itrs));
 }
 
 }  // namespace irs

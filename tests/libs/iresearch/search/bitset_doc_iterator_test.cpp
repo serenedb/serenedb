@@ -23,22 +23,26 @@
 
 #include <basics/containers/bitset.hpp>
 #include <basics/singleton.hpp>
-#include <iresearch/search/bitset_doc_iterator.hpp>
 
 #include "filter_test_case_base.hpp"
+#include "iresearch/search/bitset_doc_iterator.hpp"
 #include "tests_shared.hpp"
+
+size_t Count(const irs::bitset& bs) { return bs.count(); }
+
+size_t IteratorCount(const irs::bitset& bs) {
+  irs::BitsetDocIterator it{bs.begin(), bs.end()};
+  return it.count();
+}
 
 TEST(bitset_iterator_test, next) {
   {
     irs::BitsetDocIterator it(nullptr, nullptr);
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
-
     ASSERT_TRUE(bool(irs::get<irs::DocAttr>(it)));
     auto* cost = irs::get<irs::CostAttr>(it);
     ASSERT_TRUE(bool(cost));
     ASSERT_EQ(0, cost->estimate());
-    ASSERT_EQ(&irs::ScoreAttr::kNoScore, &irs::ScoreAttr::get(it));
-    ASSERT_EQ(nullptr, irs::GetMutable<irs::ScoreAttr>(&it));
 
     ASSERT_FALSE(it.next());
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
@@ -49,6 +53,7 @@ TEST(bitset_iterator_test, next) {
 
   {
     irs::bitset bs;
+    EXPECT_EQ(IteratorCount(bs), Count(bs));
     irs::BitsetDocIterator it(bs.begin(), bs.end());
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
 
@@ -56,7 +61,6 @@ TEST(bitset_iterator_test, next) {
     auto* cost = irs::get<irs::CostAttr>(it);
     ASSERT_TRUE(bool(cost));
     ASSERT_EQ(0, cost->estimate());
-    ASSERT_FALSE(irs::get<irs::ScoreAttr>(it));
 
     ASSERT_FALSE(it.next());
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
@@ -68,6 +72,7 @@ TEST(bitset_iterator_test, next) {
   // non-empty bitset
   {
     irs::bitset bs(13);
+    EXPECT_EQ(IteratorCount(bs), Count(bs));
     irs::BitsetDocIterator it(bs.begin(), bs.end());
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
 
@@ -76,7 +81,6 @@ TEST(bitset_iterator_test, next) {
     auto* cost = irs::get<irs::CostAttr>(it);
     ASSERT_TRUE(bool(cost));
     ASSERT_EQ(0, cost->estimate());
-    ASSERT_FALSE(irs::get<irs::ScoreAttr>(it));
 
     ASSERT_FALSE(it.next());
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
@@ -98,6 +102,7 @@ TEST(bitset_iterator_test, next) {
 
     bs.memset(data);
 
+    EXPECT_EQ(IteratorCount(bs), Count(bs));
     irs::BitsetDocIterator it(bs.begin(), bs.end());
     ASSERT_FALSE(irs::doc_limits::valid(it.value()));
 
@@ -106,7 +111,6 @@ TEST(bitset_iterator_test, next) {
     auto* cost = irs::get<irs::CostAttr>(it);
     ASSERT_TRUE(bool(cost));
     ASSERT_EQ(size, cost->estimate());
-    ASSERT_FALSE(irs::get<irs::ScoreAttr>(it));
 
     ASSERT_EQ(it.value(), doc->value);
     // note that bitset iterator doesn't care about
@@ -133,6 +137,7 @@ TEST(bitset_iterator_test, next) {
       bs.reset(i, i % 2);
     }
 
+    EXPECT_EQ(IteratorCount(bs), Count(bs));
     irs::BitsetDocIterator it(bs.begin(), bs.end());
     ASSERT_TRUE(!irs::doc_limits::valid(it.value()));
 
@@ -141,7 +146,6 @@ TEST(bitset_iterator_test, next) {
     auto* cost = irs::get<irs::CostAttr>(it);
     ASSERT_TRUE(bool(cost));
     ASSERT_EQ(size / 2, cost->estimate());
-    ASSERT_FALSE(irs::get<irs::ScoreAttr>(it));
 
     ASSERT_EQ(it.value(), doc->value);
     for (size_t i = 1; i < size; i += 2) {
@@ -201,6 +205,7 @@ TEST(bitset_iterator_test, next) {
 
     bs.memset(data);
 
+    EXPECT_EQ(IteratorCount(bs), Count(bs));
     irs::BitsetDocIterator it(bs.begin(), bs.end());
     auto* doc = irs::get<irs::DocAttr>(it);
     ASSERT_TRUE(bool(doc));
@@ -237,6 +242,7 @@ TEST(bitset_iterator_test, next) {
 
     bs.memset(data);
 
+    EXPECT_EQ(IteratorCount(bs), Count(bs));
     irs::BitsetDocIterator it(bs.begin(), bs.end());
     ASSERT_TRUE(!irs::doc_limits::valid(it.value()));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -262,6 +268,7 @@ TEST(bitset_iterator_test, seek) {
   {
     // empty bitset
     irs::bitset bs;
+    EXPECT_EQ(IteratorCount(bs), Count(bs));
     irs::BitsetDocIterator it(bs.begin(), bs.end());
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -270,7 +277,6 @@ TEST(bitset_iterator_test, seek) {
     auto* cost = irs::get<irs::CostAttr>(it);
     ASSERT_TRUE(bool(cost));
     ASSERT_EQ(0, cost->estimate());
-    ASSERT_FALSE(irs::get<irs::ScoreAttr>(it));
 
     ASSERT_TRUE(irs::doc_limits::eof(it.seek(1)));
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
@@ -284,6 +290,7 @@ TEST(bitset_iterator_test, seek) {
   // non-empty bitset
   {
     irs::bitset bs(13);
+    EXPECT_EQ(IteratorCount(bs), Count(bs));
     irs::BitsetDocIterator it(bs.begin(), bs.end());
     ASSERT_TRUE(irs::doc_limits::eof(it.value()));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -292,7 +299,6 @@ TEST(bitset_iterator_test, seek) {
     auto* cost = irs::get<irs::CostAttr>(it);
     ASSERT_TRUE(bool(cost));
     ASSERT_EQ(0, cost->estimate());
-    ASSERT_FALSE(irs::get<irs::ScoreAttr>(it));
 
     ASSERT_EQ(it.value(), doc->value);
     ASSERT_FALSE(it.next());
@@ -314,6 +320,7 @@ TEST(bitset_iterator_test, seek) {
 
     bs.memset(data);
 
+    EXPECT_EQ(IteratorCount(bs), Count(bs));
     irs::BitsetDocIterator it(bs.begin(), bs.end());
     ASSERT_FALSE(irs::doc_limits::valid(it.value()));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -322,7 +329,6 @@ TEST(bitset_iterator_test, seek) {
     auto* cost = irs::get<irs::CostAttr>(it);
     ASSERT_TRUE(bool(cost));
     ASSERT_EQ(size, cost->estimate());
-    ASSERT_FALSE(irs::get<irs::ScoreAttr>(it));
 
     for (size_t expected_doc = 0; expected_doc < size; ++expected_doc) {
       ASSERT_EQ(expected_doc, it.seek(expected_doc));
@@ -346,6 +352,7 @@ TEST(bitset_iterator_test, seek) {
 
     bs.memset(data);
 
+    EXPECT_EQ(IteratorCount(bs), Count(bs));
     irs::BitsetDocIterator it(bs.begin(), bs.end());
     ASSERT_FALSE(irs::doc_limits::valid(it.value()));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -354,7 +361,6 @@ TEST(bitset_iterator_test, seek) {
     auto* cost = irs::get<irs::CostAttr>(it);
     ASSERT_TRUE(bool(cost));
     ASSERT_EQ(size, cost->estimate());
-    ASSERT_FALSE(irs::get<irs::ScoreAttr>(it));
 
     ASSERT_EQ(irs::doc_limits::eof(), it.seek(size));
 
@@ -379,6 +385,7 @@ TEST(bitset_iterator_test, seek) {
 
     bs.memset(data);
 
+    EXPECT_EQ(IteratorCount(bs), Count(bs));
     irs::BitsetDocIterator it(bs.begin(), bs.end());
     ASSERT_TRUE(!irs::doc_limits::valid(it.value()));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -400,6 +407,7 @@ TEST(bitset_iterator_test, seek) {
 
     bs.memset(data);
 
+    EXPECT_EQ(IteratorCount(bs), Count(bs));
     irs::BitsetDocIterator it(bs.begin(), bs.end());
     ASSERT_TRUE(!irs::doc_limits::valid(it.value()));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -420,6 +428,7 @@ TEST(bitset_iterator_test, seek) {
 
     bs.memset(data);
 
+    EXPECT_EQ(IteratorCount(bs), Count(bs));
     irs::BitsetDocIterator it(bs.begin(), bs.end());
     ASSERT_TRUE(!irs::doc_limits::valid(it.value()));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -441,6 +450,7 @@ TEST(bitset_iterator_test, seek) {
 
     bs.memset(data);
 
+    EXPECT_EQ(IteratorCount(bs), Count(bs));
     irs::BitsetDocIterator it(bs.begin(), bs.end());
     ASSERT_TRUE(!irs::doc_limits::valid(it.value()));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -461,6 +471,7 @@ TEST(bitset_iterator_test, seek) {
       bs.reset(i, i % 2);
     }
 
+    EXPECT_EQ(IteratorCount(bs), Count(bs));
     irs::BitsetDocIterator it(bs.begin(), bs.end());
     ASSERT_TRUE(!irs::doc_limits::valid(it.value()));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -469,7 +480,6 @@ TEST(bitset_iterator_test, seek) {
     auto* cost = irs::get<irs::CostAttr>(it);
     ASSERT_TRUE(bool(cost));
     ASSERT_EQ(size / 2, cost->estimate());
-    ASSERT_FALSE(irs::get<irs::ScoreAttr>(it));
 
     for (size_t expected_doc = 1; expected_doc < size; expected_doc += 2) {
       ASSERT_EQ(expected_doc, it.seek(expected_doc - 1));
@@ -495,6 +505,7 @@ TEST(bitset_iterator_test, seek) {
       bs.reset(i, i % 2);
     }
 
+    EXPECT_EQ(IteratorCount(bs), Count(bs));
     irs::BitsetDocIterator it(bs.begin(), bs.end());
     ASSERT_TRUE(!irs::doc_limits::valid(it.value()));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -503,7 +514,6 @@ TEST(bitset_iterator_test, seek) {
     auto* cost = irs::get<irs::CostAttr>(it);
     ASSERT_TRUE(bool(cost));
     ASSERT_EQ(size / 2, cost->estimate());
-    ASSERT_FALSE(irs::get<irs::ScoreAttr>(it));
 
     ASSERT_EQ(irs::doc_limits::eof(), it.seek(size));
 
@@ -530,6 +540,7 @@ TEST(bitset_iterator_test, seek) {
 
     bs.memset(data);
 
+    EXPECT_EQ(IteratorCount(bs), Count(bs));
     irs::BitsetDocIterator it(bs.begin(), bs.end());
     ASSERT_TRUE(!irs::doc_limits::valid(it.value()));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -563,6 +574,7 @@ TEST(bitset_iterator_test, seek) {
 
     bs.memset(data);
 
+    EXPECT_EQ(IteratorCount(bs), Count(bs));
     irs::BitsetDocIterator it(bs.begin(), bs.end());
     ASSERT_TRUE(!irs::doc_limits::valid(it.value()));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -594,6 +606,7 @@ TEST(bitset_iterator_test, seek) {
 
     bs.memset(data);
 
+    EXPECT_EQ(IteratorCount(bs), Count(bs));
     irs::BitsetDocIterator it(bs.begin(), bs.end());
     ASSERT_TRUE(!irs::doc_limits::valid(it.value()));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -620,6 +633,7 @@ TEST(bitset_iterator_test, seek) {
       irs::bitset::word_t(UINT64_C(0x4440000000000000))};
     bs.memset(data);
 
+    EXPECT_EQ(IteratorCount(bs), Count(bs));
     irs::BitsetDocIterator it(bs.begin(), bs.end());
     ASSERT_TRUE(!irs::doc_limits::valid(it.value()));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -647,6 +661,7 @@ TEST(bitset_iterator_test, seek) {
 
     bs.memset(data);
 
+    EXPECT_EQ(IteratorCount(bs), Count(bs));
     irs::BitsetDocIterator it(bs.begin(), bs.end());
     ASSERT_TRUE(!irs::doc_limits::valid(it.value()));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -672,6 +687,7 @@ TEST(bitset_iterator_test, seek) {
 
     bs.memset(data);
 
+    EXPECT_EQ(IteratorCount(bs), Count(bs));
     irs::BitsetDocIterator it(bs.begin(), bs.end());
     ASSERT_TRUE(!irs::doc_limits::valid(it.value()));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -695,6 +711,7 @@ TEST(bitset_iterator_test, seek_next) {
 
     bs.memset(data);
 
+    EXPECT_EQ(IteratorCount(bs), Count(bs));
     irs::BitsetDocIterator it(bs.begin(), bs.end());
     ASSERT_FALSE(irs::doc_limits::valid(it.value()));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -703,7 +720,6 @@ TEST(bitset_iterator_test, seek_next) {
     auto* cost = irs::get<irs::CostAttr>(it);
     ASSERT_TRUE(bool(cost));
     ASSERT_EQ(size, cost->estimate());
-    ASSERT_FALSE(irs::get<irs::ScoreAttr>(it));
 
     const size_t steps = 5;
     for (size_t expected_doc = 0; expected_doc < size; ++expected_doc) {
@@ -733,6 +749,7 @@ TEST(bitset_iterator_test, seek_next) {
 
     bs.memset(data);
 
+    EXPECT_EQ(IteratorCount(bs), Count(bs));
     irs::BitsetDocIterator it(bs.begin(), bs.end());
     ASSERT_FALSE(irs::doc_limits::valid(it.value()));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -741,7 +758,6 @@ TEST(bitset_iterator_test, seek_next) {
     auto* cost = irs::get<irs::CostAttr>(it);
     ASSERT_TRUE(bool(cost));
     ASSERT_EQ(size, cost->estimate());
-    ASSERT_FALSE(irs::get<irs::ScoreAttr>(it));
 
     ASSERT_EQ(irs::doc_limits::eof(), it.seek(size));
 
@@ -772,6 +788,7 @@ TEST(bitset_iterator_test, seek_next) {
       bs.reset(i, i % 2);
     }
 
+    EXPECT_EQ(IteratorCount(bs), Count(bs));
     irs::BitsetDocIterator it(bs.begin(), bs.end());
     ASSERT_TRUE(!irs::doc_limits::valid(it.value()));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -780,7 +797,6 @@ TEST(bitset_iterator_test, seek_next) {
     auto* cost = irs::get<irs::CostAttr>(it);
     ASSERT_TRUE(bool(cost));
     ASSERT_EQ(size / 2, cost->estimate());
-    ASSERT_FALSE(irs::get<irs::ScoreAttr>(it));
 
     size_t steps = 5;
     for (size_t i = 0; i < size; i += 2) {
@@ -810,6 +826,7 @@ TEST(bitset_iterator_test, seek_next) {
       bs.reset(i, i % 2);
     }
 
+    EXPECT_EQ(IteratorCount(bs), Count(bs));
     irs::BitsetDocIterator it(bs.begin(), bs.end());
     ASSERT_TRUE(!irs::doc_limits::valid(it.value()));
     auto* doc = irs::get<irs::DocAttr>(it);
@@ -818,7 +835,6 @@ TEST(bitset_iterator_test, seek_next) {
     auto* cost = irs::get<irs::CostAttr>(it);
     ASSERT_TRUE(bool(cost));
     ASSERT_EQ(size / 2, cost->estimate());
-    ASSERT_FALSE(irs::get<irs::ScoreAttr>(it));
 
     ASSERT_EQ(irs::doc_limits::eof(), it.seek(size));
 
@@ -848,6 +864,7 @@ TEST(bitset_iterator_test, seek_next) {
 
     bs.memset(data);
 
+    EXPECT_EQ(IteratorCount(bs), Count(bs));
     irs::BitsetDocIterator it(bs.begin(), bs.end());
     ASSERT_TRUE(!irs::doc_limits::valid(it.value()));
     auto* doc = irs::get<irs::DocAttr>(it);

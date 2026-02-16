@@ -21,10 +21,9 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/index/index_features.hpp>
-#include <iresearch/search/granular_range_filter.hpp>
-
 #include "filter_test_case_base.hpp"
+#include "iresearch/index/index_features.hpp"
+#include "iresearch/search/granular_range_filter.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -1932,7 +1931,7 @@ TEST_P(GranularRangeFilterTestCase, by_range_order) {
     q.mutable_options()->range.min_type = irs::BoundType::Exclusive;
     q.mutable_options()->range.max_type = irs::BoundType::Exclusive;
 
-    CheckQuery(q, order, docs, rdr);
+    CheckQuery(tests::FilterWrapper{q}, order, docs, rdr);
     ASSERT_EQ(11, collect_field_count);  // 11 fields (1 per term since treated
                                          // as a disjunction) in 1 segment
     ASSERT_EQ(11, collect_term_count);   // 11 different terms
@@ -2368,7 +2367,7 @@ static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 INSTANTIATE_TEST_SUITE_P(granular_range_filter_test,
                          GranularRangeFilterTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values("1_5avx")),
+                                            ::testing::Values("1_5simd")),
                          GranularRangeFilterTestCase::to_string);
 
 }  // namespace

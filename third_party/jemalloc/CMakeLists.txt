@@ -77,6 +77,8 @@ if (LINUX OR DARWIN)
         --with-version=${JEMALLOC_VERSION}-0-g0
         ${JEMALLOC_PROF}
         ${JEMALLOC_CHECKS}
+    BUILD_BYPRODUCTS 
+      ${JEMALLOC_LIB}
     BUILD_COMMAND
       ${MAKE} build_lib_static
     INSTALL_COMMAND

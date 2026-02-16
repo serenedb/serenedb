@@ -71,7 +71,7 @@ struct PayAttr final : Attribute {
 struct DocAttr : Attribute {
   static constexpr std::string_view type_name() noexcept { return "document"; }
 
-  explicit DocAttr(irs::doc_id_t doc = irs::doc_limits::invalid()) noexcept
+  explicit DocAttr(doc_id_t doc = doc_limits::invalid()) noexcept
     : value{doc} {}
 
   doc_id_t value;
@@ -84,18 +84,33 @@ struct FreqAttr final : Attribute {
   uint32_t value = 0;
 };
 
+struct FreqBlockAttr final : Attribute {
+  static constexpr std::string_view type_name() noexcept {
+    return "freq_block";
+  }
+
+  const uint32_t* value = nullptr;
+};
+
+struct BoostBlockAttr final : Attribute {
+  static constexpr std::string_view type_name() noexcept {
+    return "boost_block";
+  }
+
+  const score_t* value = nullptr;
+};
+
 // Iterator representing term positions in a document
 class PosAttr : public Attribute, public AttributeProvider {
  public:
   using value_t = uint32_t;
-  using ref = std::reference_wrapper<PosAttr>;
 
   static constexpr std::string_view type_name() noexcept { return "position"; }
 
   static PosAttr& empty() noexcept;
 
   template<typename Provider>
-  static PosAttr& GetMutable(Provider& attrs) {
+  static PosAttr& get(Provider& attrs) {
     auto* pos = irs::GetMutable<PosAttr>(&attrs);
     return pos ? *pos : empty();
   }

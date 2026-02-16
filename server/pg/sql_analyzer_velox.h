@@ -26,17 +26,20 @@
 #include <velox/core/PlanNode.h>
 #include <velox/core/QueryCtx.h>
 
+#include "pg/copy_messages_queue.h"
 #include "pg/sql_utils.h"
-#include "query/query.h"
+#include "query/context.h"
 #include "query/utils.h"
+
+namespace sdb::message {
+
+class Buffer;
+
+}  // namespace sdb::message
 
 namespace sdb::pg {
 
 class Params;
-
-}  // namespace sdb::pg
-
-namespace sdb::pg {
 
 class UniqueIdGenerator {
  public:
@@ -49,16 +52,24 @@ class UniqueIdGenerator {
     return absl::StrCat(alias, query::kColumnSeparator, NextColumnId());
   }
 
+  std::vector<std::string> NextColumnNames(
+    std::span<const std::string> aliases) {
+    return aliases | std::views::transform([&](const std::string& name) {
+             return NextColumnName(name);
+           }) |
+           std::ranges::to<std::vector>();
+  }
+
  private:
   uint64_t _next_plan_id = 1;
   uint64_t _next_column_id = 1;
 };
 
 struct VeloxQuery {
+  using OptionValue = std::variant<bool, int, std::string, double>;
   // logical plan info
   axiom::logical_plan::LogicalPlanNodePtr root;
-  containers::FlatHashMap<std::string_view, query::QueryContext::OptionValue>
-    options;
+  containers::FlatHashMap<std::string_view, OptionValue> options;
 
   const Node* pgsql_node = nullptr;
 
@@ -69,7 +80,9 @@ class Objects;
 
 VeloxQuery AnalyzeVelox(const RawStmt& node, const QueryString& query_string,
                         const Objects& objects, UniqueIdGenerator& id_generator,
-                        query::QueryContext& query_ctx, pg::Params& params);
+                        query::QueryContext& query_ctx, pg::Params& params,
+                        message::Buffer* send_buffer,
+                        CopyMessagesQueue* copy_queue);
 
 velox::TypePtr NameToType(const TypeName& type_name);
 

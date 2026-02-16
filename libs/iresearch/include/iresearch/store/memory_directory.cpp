@@ -29,14 +29,7 @@
 #include "basics/assert.h"
 #include "basics/crc.hpp"
 #include "basics/logger/logger.h"
-#include "basics/shared.hpp"
-#include "basics/std.hpp"
-#include "basics/thread_utils.hpp"
-#include "iresearch/error/error.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
-#include "iresearch/utils/directory_utils.hpp"
-#include "iresearch/utils/numeric_utils.hpp"
-#include "iresearch/utils/string.hpp"
 
 namespace irs {
 
@@ -68,14 +61,71 @@ class SingleInstanceLock : public IndexLock {
   MemoryDirectory* _parent;
 };
 
-MemoryIndexInput::MemoryIndexInput(const MemoryFile& file) noexcept
-  : _file{&file} {}
+const byte_type* MemoryIndexInput::ReadData(uint64_t count) noexcept {
+  const auto* begin = _begin + count;
 
-IndexInput::ptr MemoryIndexInput::Dup() const {
-  return ptr(new MemoryIndexInput(*this));
+  if (begin > _end) {
+    return nullptr;
+  }
+
+  std::swap(begin, _begin);
+  return begin;
 }
 
-uint32_t MemoryIndexInput::Checksum(size_t offset) const {
+const byte_type* MemoryIndexInput::ReadData(uint64_t offset,
+                                            uint64_t count) noexcept {
+  const auto idx = _file->buffer_offset(offset);
+  SDB_ASSERT(idx < _file->buffer_count());
+  const auto& buf = _file->get_buffer(idx);
+  const auto begin = buf.data + offset - buf.offset;
+  const auto end = begin + count;
+  const auto buf_end =
+    buf.data + std::min(buf.size, _file->Length() - buf.offset);
+
+  if (end <= buf_end) {
+    _buf = buf.data;
+    _begin = end;
+    _end = buf_end;
+    _start = buf.offset;
+    return begin;
+  }
+
+  return nullptr;
+}
+
+size_t MemoryIndexInput::ReadBytes(byte_type* b, size_t count) {
+  const auto bytes_left = count;  // initial length
+  while (count) {
+    if (_begin >= _end) {
+      if (IsEOF()) {
+        break;
+      }
+      SwitchBuffer(Position());
+    }
+
+    auto copied = std::min<size_t>(std::distance(_begin, _end), count);
+    std::memcpy(b, _begin, sizeof(byte_type) * copied);
+
+    count -= copied;
+    _begin += copied;
+    b += copied;
+  }
+  return bytes_left - count;
+}
+
+void MemoryIndexInput::Seek(uint64_t pos) {
+  // allow seeking past eof(), set to eof
+  if (pos >= _file->Length()) {
+    _buf = nullptr;
+    _begin = nullptr;
+    _start = _file->Length();
+    return;
+  }
+
+  SwitchBuffer(pos);
+}
+
+uint32_t MemoryIndexInput::Checksum(uint64_t offset) const {
   if (!_file->Length()) {
     return 0;
   }
@@ -87,7 +137,7 @@ uint32_t MemoryIndexInput::Checksum(size_t offset) const {
 
   // process current buffer if exists
   if (_begin) {
-    to_process = std::min(offset, remain());
+    to_process = std::min(offset, Remain());
     crc.process_bytes(_begin, to_process);
     offset -= to_process;
     ++buffer_idx;
@@ -117,13 +167,7 @@ uint32_t MemoryIndexInput::Checksum(size_t offset) const {
   return crc.checksum();
 }
 
-bool MemoryIndexInput::IsEOF() const { return Position() >= _file->Length(); }
-
-IndexInput::ptr MemoryIndexInput::Reopen() const {
-  return Dup();  // memory_file pointers are thread-safe
-}
-
-void MemoryIndexInput::switch_buffer(size_t pos) {
+void MemoryIndexInput::SwitchBuffer(size_t pos) {
   auto idx = _file->buffer_offset(pos);
   SDB_ASSERT(idx < _file->buffer_count());
   auto& buf = _file->get_buffer(idx);
@@ -136,112 +180,6 @@ void MemoryIndexInput::switch_buffer(size_t pos) {
 
   SDB_ASSERT(_start <= pos && pos < _start + std::distance(_buf, _end));
   _begin = _buf + (pos - _start);
-}
-
-uint64_t MemoryIndexInput::Length() const { return _file->Length(); }
-
-uint64_t MemoryIndexInput::Position() const {
-  return _start + std::distance(_buf, _begin);
-}
-
-void MemoryIndexInput::Seek(size_t pos) {
-  // allow seeking past eof(), set to eof
-  if (pos >= _file->Length()) {
-    _buf = nullptr;
-    _begin = nullptr;
-    _start = _file->Length();
-    return;
-  }
-
-  switch_buffer(pos);
-}
-
-const byte_type* MemoryIndexInput::ReadBuffer(size_t offset, size_t size,
-                                              BufferHint /*hint*/) noexcept {
-  const auto idx = _file->buffer_offset(offset);
-  SDB_ASSERT(idx < _file->buffer_count());
-  const auto& buf = _file->get_buffer(idx);
-  const auto begin = buf.data + offset - buf.offset;
-  const auto end = begin + size;
-  const auto buf_end =
-    buf.data + std::min(buf.size, _file->Length() - buf.offset);
-
-  if (end <= buf_end) {
-    _buf = buf.data;
-    _begin = end;
-    _end = buf_end;
-    _start = buf.offset;
-    return begin;
-  }
-
-  return nullptr;
-}
-
-const byte_type* MemoryIndexInput::ReadBuffer(size_t size,
-                                              BufferHint /*hint*/) noexcept {
-  const auto* begin = _begin + size;
-
-  if (begin > _end) {
-    return nullptr;
-  }
-
-  std::swap(begin, _begin);
-  return begin;
-}
-
-byte_type MemoryIndexInput::ReadByte() {
-  if (_begin >= _end) {
-    switch_buffer(Position());
-  }
-
-  return *_begin++;
-}
-
-size_t MemoryIndexInput::ReadBytes(byte_type* b, size_t left) {
-  const size_t bytes_left = left;  // initial length
-  while (left) {
-    if (_begin >= _end) {
-      if (IsEOF()) {
-        break;
-      }
-      switch_buffer(Position());
-    }
-
-    size_t copied = std::min(size_t(std::distance(_begin, _end)), left);
-    std::memcpy(b, _begin, sizeof(byte_type) * copied);
-
-    left -= copied;
-    _begin += copied;
-    b += copied;
-  }
-  return bytes_left - left;
-}
-
-int16_t MemoryIndexInput::ReadI16() {
-  return remain() < sizeof(uint16_t) ? DataInput::ReadI16()
-                                     : irs::read<uint16_t>(_begin);
-}
-
-int32_t MemoryIndexInput::ReadI32() {
-  return remain() < sizeof(uint32_t) ? irs::read<uint32_t>(*this)
-                                     : irs::read<uint32_t>(_begin);
-}
-
-int64_t MemoryIndexInput::ReadI64() {
-  return remain() < sizeof(uint64_t) ? irs::read<uint64_t>(*this)
-                                     : irs::read<uint64_t>(_begin);
-}
-
-uint32_t MemoryIndexInput::ReadV32() {
-  return remain() < bytes_io<uint32_t>::kMaxVSize
-           ? irs::vread<uint32_t>(*this)
-           : irs::vread<uint32_t>(_begin);
-}
-
-uint64_t MemoryIndexInput::ReadV64() {
-  return remain() < bytes_io<uint64_t>::kMaxVSize
-           ? irs::vread<uint64_t>(*this)
-           : irs::vread<uint64_t>(_begin);
 }
 
 void MemoryIndexOutput::FlushBuffer() {

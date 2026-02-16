@@ -34,7 +34,7 @@
 namespace irs {
 
 class DataOutput;
-struct DataInput;
+class DataInput;
 
 template<typename T, size_t SubstCost = 1>
 inline size_t EditDistance(const T* lhs, size_t lhs_size, const T* rhs,
@@ -74,8 +74,8 @@ inline size_t EditDistance(const T* lhs, size_t lhs_size, const T* rhs,
 /// @param rhs string to compare
 /// @returns edit distance
 template<typename Char>
-inline size_t EditDistance(irs::basic_string_view<Char> lhs,
-                           irs::basic_string_view<Char> rhs) {
+inline size_t EditDistance(basic_string_view<Char> lhs,
+                           basic_string_view<Char> rhs) {
   return EditDistance(lhs.data(), lhs.size(), rhs.data(), rhs.size());
 }
 

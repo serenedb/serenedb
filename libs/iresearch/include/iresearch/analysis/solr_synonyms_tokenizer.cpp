@@ -23,12 +23,12 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_split.h>
 
-#include <iresearch/analysis/pipeline_tokenizer.hpp>
-#include <iresearch/analysis/token_attributes.hpp>
 #include <string_view>
 
 #include "basics/exceptions.h"
 #include "basics/result.h"
+#include "iresearch/analysis/pipeline_tokenizer.hpp"
+#include "iresearch/analysis/token_attributes.hpp"
 
 namespace irs::analysis {
 
@@ -133,7 +133,7 @@ bool SolrSynonymsTokenizer::next() {
 }
 
 bool SolrSynonymsTokenizer::reset(std::string_view data) {
-  auto& offset = std::get<irs::OffsAttr>(_attrs);
+  auto& offset = std::get<OffsAttr>(_attrs);
   offset.start = 0;
   offset.end = data.size();
 

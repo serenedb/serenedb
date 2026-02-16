@@ -25,24 +25,17 @@
 #include "basics/fwd.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
+#include "rocksdb/db.h"
 #include "rocksdb/utilities/transaction.h"
 
 namespace sdb::connector {
 
 class SereneDBConnectorSplit;
 
-class RocksDBDataSource final : public velox::connector::DataSource {
+class RocksDBDataSource : public velox::connector::DataSource {
  public:
-  RocksDBDataSource(velox::memory::MemoryPool& memory_pool,
-                    // use just snapshot for now. But maybe we will need to have
-                    // this class template (or use some wrapper) to work with
-                    // WriteBatchWithindex or plain DB with snapshot
-                    const rocksdb::Snapshot* snapshot, rocksdb::DB& db,
-                    rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
-                    std::vector<catalog::Column::Id> column_ids,
-                    ObjectId object_key);
-
-  void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
+  virtual void addSplit(
+    std::shared_ptr<velox::connector::ConnectorSplit> split);
   std::optional<velox::RowVectorPtr> next(uint64_t size,
                                           velox::ContinueFuture& future) final;
   void addDynamicFilter(
@@ -53,45 +46,86 @@ class RocksDBDataSource final : public velox::connector::DataSource {
   std::unordered_map<std::string, velox::RuntimeMetric> getRuntimeStats() final;
   void cancel() final;
 
- private:
-  velox::VectorPtr ReadColumn(rocksdb::Iterator& it, uint64_t max_size,
-                              std::string_view column_key,
-                              const velox::TypePtr& type,
-                              catalog::Column::Id column_id,
-                              size_t table_prefix_size, std::string* last_key);
+ protected:
+  RocksDBDataSource(velox::memory::MemoryPool& memory_pool,
+                    rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
+                    std::vector<catalog::Column::Id> column_ids,
+                    catalog::Column::Id effective_column_id,
+                    ObjectId object_key, const rocksdb::Snapshot* snapshot);
 
-  template<velox::TypeKind Kind>
-  velox::VectorPtr ReadScalarColumn(rocksdb::Iterator& it, uint64_t max_size,
-                                    std::string_view column_key,
-                                    std::string* last_key);
-  velox::VectorPtr ReadUnknownColumn(rocksdb::Iterator& it, uint64_t max_size,
-                                     std::string_view column_key,
-                                     std::string* last_key);
-
-  velox::VectorPtr ReadColumnFromKey(rocksdb::Iterator& it, uint64_t max_size,
-                                     std::string_view column_key,
-                                     size_t table_prefix_size,
-                                     std::string* last_key);
-
-  template<typename Callback>
-  uint64_t IterateColumn(rocksdb::Iterator& it, uint64_t max_size,
-                         std::string_view column_key, const Callback& func,
-                         std::string* last_key);
-
-  std::unique_ptr<rocksdb::Iterator> CreateColumnIterator(
-    const std::string_view column_key,
-    const rocksdb::ReadOptions& read_options);
+  template<std::invocable<const rocksdb::ReadOptions&> CreateFn>
+  void InitIterators(CreateFn&& create);
 
   velox::memory::MemoryPool& _memory_pool;
-  const rocksdb::Snapshot* _snapshot;
-  rocksdb::DB& _db;
   rocksdb::ColumnFamilyHandle& _cf;
-  velox::RowTypePtr _row_type;
-  std::vector<catalog::Column::Id> _column_ids;
-  std::shared_ptr<velox::connector::ConnectorSplit> _current_split;
+  const rocksdb::Snapshot* _snapshot;
   ObjectId _object_key;
-  std::string _last_read_key;
-  uint64_t _produced{0};
+  std::vector<catalog::Column::Id> _column_ids;
+
+ private:
+  static constexpr size_t kTablePrefixSize = sizeof(ObjectId);
+
+  velox::VectorPtr ReadColumn(velox::column_index_t col_idx, uint64_t max_size);
+
+  template<velox::TypeKind Kind>
+  velox::VectorPtr ReadScalarColumn(rocksdb::Iterator& it, uint64_t max_size);
+
+  velox::VectorPtr ReadUnknownColumn(rocksdb::Iterator& it, uint64_t max_size);
+
+  velox::VectorPtr ReadColumnFromKey(rocksdb::Iterator& it, uint64_t max_size);
+
+  template<
+    std::invocable<uint64_t, std::string_view, std::string_view> Callback>
+  uint64_t IterateColumn(rocksdb::Iterator& it, uint64_t max_size,
+                         const Callback& func);
+
+  velox::RowTypePtr _row_type;
+  std::vector<std::string> _column_keys;
+  std::string _upper_bound_keys_data;
+  std::vector<rocksdb::Slice> _upper_bound_slices;
+  std::vector<std::unique_ptr<rocksdb::Iterator>> _iterators;
+  // Column ID to use for iteration when the requested column is stored in the
+  // key (e.g., kGeneratedPKId). This points to a column whose values are stored
+  // in RocksDB as *values*, not inside *keys*. It's convenient to store it here
+  // for scans where we need only columns that are stored as parts of the key.
+  // Tables with only such columns are tables without columns at all *for now*,
+  // this case is handled in SqlAnalyzer code, such scans are replaced with
+  // empty Values node.
+  catalog::Column::Id _effective_column_id;
+  std::shared_ptr<velox::connector::ConnectorSplit> _current_split;
+  uint64_t _produced = 0;
+};
+
+// RocksDB Read Your Own Writes DataSource
+class RocksDBRYOWDataSource final : public RocksDBDataSource {
+ public:
+  RocksDBRYOWDataSource(velox::memory::MemoryPool& memory_pool,
+                        rocksdb::Transaction& transaction,
+                        rocksdb::ColumnFamilyHandle& cf,
+                        velox::RowTypePtr row_type,
+                        std::vector<catalog::Column::Id> column_ids,
+                        catalog::Column::Id effective_column_id,
+                        ObjectId object_key);
+
+  void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
+
+ private:
+  rocksdb::Transaction& _transaction;
+};
+
+class RocksDBSnapshotDataSource final : public RocksDBDataSource {
+ public:
+  RocksDBSnapshotDataSource(velox::memory::MemoryPool& memory_pool,
+                            rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
+                            velox::RowTypePtr row_type,
+                            std::vector<catalog::Column::Id> column_ids,
+                            catalog::Column::Id effective_column_id,
+                            ObjectId object_key,
+                            const rocksdb::Snapshot* snapshot = nullptr);
+  void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
+
+ private:
+  rocksdb::DB& _db;
 };
 
 }  // namespace sdb::connector

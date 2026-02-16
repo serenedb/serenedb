@@ -25,9 +25,8 @@ target_sources(
         replication_common.cpp
         role.cpp
         secondary_index.cpp
-        # TODO search
-        geo.cpp
         identity_analyzer.cpp
+        inverted_index.cpp
         analyzer.cpp
         mangling.cpp
 )

@@ -21,14 +21,14 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/multiterm_query.hpp>
-#include <iresearch/search/phrase_filter.hpp>
-#include <iresearch/search/phrase_query.hpp>
-#include <iresearch/search/term_query.hpp>
-
 #include "filter_test_case_base.hpp"
+#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/index/iterators.hpp"
+#include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/multiterm_query.hpp"
+#include "iresearch/search/phrase_filter.hpp"
+#include "iresearch/search/phrase_query.hpp"
+#include "iresearch/search/term_query.hpp"
 #include "tests_shared.hpp"
 
 namespace tests {
@@ -2510,8 +2510,6 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     auto docs = prepared->execute({.segment = *sub});
     ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
     ASSERT_FALSE(irs::get<irs::FreqAttr>(*docs));
-    auto* score = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_NE(nullptr, score);
     auto* doc = irs::get<irs::DocAttr>(*docs);
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(docs->value(), doc->value);
@@ -4268,13 +4266,19 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     sort.prepare_term_collector = [&sort]() -> irs::TermCollector::ptr {
       return std::make_unique<tests::sort::CustomSort::TermCollector>(sort);
     };
-    sort.scorer_score = [](irs::doc_id_t doc, irs::score_t* score) {
-      ASSERT_NE(nullptr, score);
-      *score = doc;
+
+    irs::DocIterator* it = nullptr;
+    sort.scorer_score = [&](irs::ScoreOperator*, irs::score_t* score,
+                            size_t n) {
+      ASSERT_NE(nullptr, it);
+      *score = it->value();
     };
 
     auto pord = irs::Scorers::Prepare(sort);
-    auto prepared = q.prepare({.index = rdr, .scorers = pord});
+    auto prepared = q.prepare({
+      .index = rdr,
+      .scorers = pord,
+    });
     ASSERT_EQ(1, collect_field_count);  // 1 field in 1 segment
     ASSERT_EQ(6, collect_term_count);   // 6 different terms
     ASSERT_EQ(6, finish_count);         // 6 sub-terms in phrase
@@ -4294,7 +4298,12 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
       ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
     }
 
-    auto docs = prepared->execute({.segment = *sub, .scorers = pord});
+    auto docs = prepared->execute({
+      .segment = *sub,
+      .scorers = pord,
+
+    });
+    it = docs.get();
     auto* freq = irs::get<irs::FreqAttr>(*docs);
     ASSERT_TRUE(freq);
     ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
@@ -4302,7 +4311,11 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(docs->value(), doc->value);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub, .scorers = pord});
+    auto docs_seek = prepared->execute({
+      .segment = *sub,
+      .scorers = pord,
+
+    });
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -4581,13 +4594,18 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     sort.prepare_term_collector = [&sort]() -> irs::TermCollector::ptr {
       return std::make_unique<tests::sort::CustomSort::TermCollector>(sort);
     };
-    sort.scorer_score = [](irs::doc_id_t doc, irs::score_t* score) {
-      ASSERT_NE(nullptr, score);
-      *score = doc;
+    irs::DocIterator* it = nullptr;
+    sort.scorer_score = [&](irs::ScoreOperator*, irs::score_t* score,
+                            size_t n) {
+      ASSERT_NE(nullptr, it);
+      *score = it->value();
     };
 
     auto pord = irs::Scorers::Prepare(sort);
-    auto prepared = q.prepare({.index = rdr, .scorers = pord});
+    auto prepared = q.prepare({
+      .index = rdr,
+      .scorers = pord,
+    });
     ASSERT_EQ(1, collect_field_count);  // 1 field in 1 segment
     ASSERT_EQ(3, collect_term_count);   // 3 different terms
     ASSERT_EQ(3, finish_count);         // 3 sub-terms in phrase
@@ -4606,7 +4624,11 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_NE(nullptr, values);
     auto* actual_value = irs::get<irs::PayAttr>(*values);
     ASSERT_NE(nullptr, actual_value);
-    auto docs = prepared->execute({.segment = *sub, .scorers = pord});
+    auto docs = prepared->execute({
+      .segment = *sub,
+      .scorers = pord,
+
+    });
     auto* freq = irs::get<irs::FreqAttr>(*docs);
     ASSERT_TRUE(freq);
     ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
@@ -4614,10 +4636,13 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(docs->value(), doc->value);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub, .scorers = pord});
+    auto docs_seek = prepared->execute({
+      .segment = *sub,
+      .scorers = pord,
+
+    });
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
-    auto* score = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_FALSE(!score);
+    it = docs.get();
 
     ASSERT_TRUE(docs->next());
     ASSERT_EQ(1, freq->value);
@@ -5057,7 +5082,11 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_NE(nullptr, values);
     auto* actual_value = irs::get<irs::PayAttr>(*values);
     ASSERT_NE(nullptr, actual_value);
-    auto docs = prepared->execute({.segment = *sub, .scorers = prepared_order});
+    auto docs = prepared->execute({
+      .segment = *sub,
+      .scorers = prepared_order,
+
+    });
     auto* freq = irs::get<irs::FreqAttr>(*docs);
     ASSERT_TRUE(freq);
     auto* boost = irs::get<irs::FilterBoost>(*docs);
@@ -5066,8 +5095,11 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(docs->value(), doc->value);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek =
-      prepared->execute({.segment = *sub, .scorers = prepared_order});
+    auto docs_seek = prepared->execute({
+      .segment = *sub,
+      .scorers = prepared_order,
+
+    });
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -5118,7 +5150,11 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_NE(nullptr, values);
     auto* actual_value = irs::get<irs::PayAttr>(*values);
     ASSERT_NE(nullptr, actual_value);
-    auto docs = prepared->execute({.segment = *sub, .scorers = prepared_order});
+    auto docs = prepared->execute({
+      .segment = *sub,
+      .scorers = prepared_order,
+
+    });
     auto* freq = irs::get<irs::FreqAttr>(*docs);
     ASSERT_TRUE(freq);
     ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
@@ -5126,8 +5162,11 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(docs->value(), doc->value);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek =
-      prepared->execute({.segment = *sub, .scorers = prepared_order});
+    auto docs_seek = prepared->execute({
+      .segment = *sub,
+      .scorers = prepared_order,
+
+    });
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -5178,7 +5217,11 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_NE(nullptr, values);
     auto* actual_value = irs::get<irs::PayAttr>(*values);
     ASSERT_NE(nullptr, actual_value);
-    auto docs = prepared->execute({.segment = *sub, .scorers = prepared_order});
+    auto docs = prepared->execute({
+      .segment = *sub,
+      .scorers = prepared_order,
+
+    });
     auto* freq = irs::get<irs::FreqAttr>(*docs);
     ASSERT_TRUE(freq);
     auto* boost = irs::get<irs::FilterBoost>(*docs);
@@ -5187,8 +5230,11 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(docs->value(), doc->value);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek =
-      prepared->execute({.segment = *sub, .scorers = prepared_order});
+    auto docs_seek = prepared->execute({
+      .segment = *sub,
+      .scorers = prepared_order,
+
+    });
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -5262,7 +5308,11 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_NE(nullptr, values);
     auto* actual_value = irs::get<irs::PayAttr>(*values);
     ASSERT_NE(nullptr, actual_value);
-    auto docs = prepared->execute({.segment = *sub, .scorers = prepared_order});
+    auto docs = prepared->execute({
+      .segment = *sub,
+      .scorers = prepared_order,
+
+    });
     auto* freq = irs::get<irs::FreqAttr>(*docs);
     ASSERT_TRUE(freq);
     ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
@@ -5270,8 +5320,11 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(docs->value(), doc->value);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek =
-      prepared->execute({.segment = *sub, .scorers = prepared_order});
+    auto docs_seek = prepared->execute({
+      .segment = *sub,
+      .scorers = prepared_order,
+
+    });
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -5390,7 +5443,11 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_NE(nullptr, values);
     auto* actual_value = irs::get<irs::PayAttr>(*values);
     ASSERT_NE(nullptr, actual_value);
-    auto docs = prepared->execute({.segment = *sub, .scorers = prepared_order});
+    auto docs = prepared->execute({
+      .segment = *sub,
+      .scorers = prepared_order,
+
+    });
     auto* freq = irs::get<irs::FreqAttr>(*docs);
     ASSERT_TRUE(freq);
     auto* boost = irs::get<irs::FilterBoost>(*docs);
@@ -5399,8 +5456,11 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(docs->value(), doc->value);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek =
-      prepared->execute({.segment = *sub, .scorers = prepared_order});
+    auto docs_seek = prepared->execute({
+      .segment = *sub,
+      .scorers = prepared_order,
+
+    });
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -5543,7 +5603,11 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_NE(nullptr, values);
     auto* actual_value = irs::get<irs::PayAttr>(*values);
     ASSERT_NE(nullptr, actual_value);
-    auto docs = prepared->execute({.segment = *sub, .scorers = prepared_order});
+    auto docs = prepared->execute({
+      .segment = *sub,
+      .scorers = prepared_order,
+
+    });
     auto* freq = irs::get<irs::FreqAttr>(*docs);
     ASSERT_TRUE(freq);
     ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
@@ -5551,8 +5615,11 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(docs->value(), doc->value);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek =
-      prepared->execute({.segment = *sub, .scorers = prepared_order});
+    auto docs_seek = prepared->execute({
+      .segment = *sub,
+      .scorers = prepared_order,
+
+    });
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -6234,13 +6301,18 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
       irs::ViewCast<irs::byte_type>(std::string_view("forward"));
 
     tests::sort::CustomSort sort;
-    sort.scorer_score = [](irs::doc_id_t doc, irs::score_t* score) {
-      ASSERT_NE(nullptr, score);
-      *score = doc;
+    irs::DocIterator* it = nullptr;
+    sort.scorer_score = [&](irs::ScoreOperator*, irs::score_t* score,
+                            size_t n) {
+      ASSERT_NE(nullptr, it);
+      *score = it->value();
     };
     auto pord = irs::Scorers::Prepare(sort);
 
-    auto prepared = q.prepare({.index = rdr, .scorers = pord});
+    auto prepared = q.prepare({
+      .index = rdr,
+      .scorers = pord,
+    });
     auto sub = rdr.begin();
     auto column = sub->column("name");
     ASSERT_NE(nullptr, column);
@@ -6248,7 +6320,12 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_NE(nullptr, values);
     auto* actual_value = irs::get<irs::PayAttr>(*values);
     ASSERT_NE(nullptr, actual_value);
-    auto docs = prepared->execute({.segment = *sub, .scorers = pord});
+    auto docs = prepared->execute({
+      .segment = *sub,
+      .scorers = pord,
+
+    });
+    it = docs.get();
     auto* freq = irs::get<irs::FreqAttr>(*docs);
     ASSERT_TRUE(freq);
     ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
@@ -6256,14 +6333,20 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(docs->value(), doc->value);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub, .scorers = pord});
+    auto docs_seek = prepared->execute({
+      .segment = *sub,
+      .scorers = pord,
+
+    });
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
-    auto* score = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_FALSE(!score);
+    auto score = it->PrepareScore({
+      .scorer = pord.buckets().front().bucket,
+      .segment = &*sub,
+    });
 
     ASSERT_TRUE(docs->next());
     irs::score_t score_value{};
-    (*score)(&score_value);
+    score.Score(&score_value, 1);
     ASSERT_EQ(docs->value(), score_value);
     ASSERT_EQ(1, freq->value);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
@@ -6298,13 +6381,18 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
       irs::ViewCast<irs::byte_type>(std::string_view("forward"));
 
     tests::sort::CustomSort sort;
-    sort.scorer_score = [](irs::doc_id_t doc, irs::score_t* score) {
-      ASSERT_NE(nullptr, score);
-      *score = doc;
+    irs::DocIterator* it = nullptr;
+    sort.scorer_score = [&](irs::ScoreOperator*, irs::score_t* score,
+                            size_t n) {
+      ASSERT_NE(nullptr, it);
+      *score = it->value();
     };
     auto pord = irs::Scorers::Prepare(sort);
 
-    auto prepared = q.prepare({.index = rdr, .scorers = pord});
+    auto prepared = q.prepare({
+      .index = rdr,
+      .scorers = pord,
+    });
     auto sub = rdr.begin();
     auto column = sub->column("name");
     ASSERT_NE(nullptr, column);
@@ -6312,7 +6400,12 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_NE(nullptr, values);
     auto* actual_value = irs::get<irs::PayAttr>(*values);
     ASSERT_NE(nullptr, actual_value);
-    auto docs = prepared->execute({.segment = *sub, .scorers = pord});
+    auto docs = prepared->execute({
+      .segment = *sub,
+      .scorers = pord,
+
+    });
+    it = docs.get();
     auto* freq = irs::get<irs::FreqAttr>(*docs);
     ASSERT_TRUE(freq);
     ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
@@ -6320,14 +6413,19 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(docs->value(), doc->value);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub, .scorers = pord});
+    auto docs_seek = prepared->execute({
+      .segment = *sub,
+      .scorers = pord,
+    });
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
-    auto* score = irs::get<irs::ScoreAttr>(*docs);
-    ASSERT_FALSE(!score);
+    auto score = docs->PrepareScore({
+      .scorer = pord.buckets().front().bucket,
+      .segment = &*sub,
+    });
 
     ASSERT_TRUE(docs->next());
     irs::score_t score_value{};
-    (*score)(&score_value);
+    score.Score(&score_value, 1);
     ASSERT_EQ(docs->value(), score_value);
     ASSERT_EQ(1, freq->value);
     ASSERT_EQ(docs->value(), values->seek(docs->value()));
@@ -6391,13 +6489,18 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
       irs::ViewCast<irs::byte_type>(std::string_view("quick"));
 
     tests::sort::CustomSort sort;
-    sort.scorer_score = [](irs::doc_id_t doc, irs::score_t* score) {
-      ASSERT_NE(nullptr, score);
-      *score = doc;
+    irs::DocIterator* it = nullptr;
+    sort.scorer_score = [&](irs::ScoreOperator*, irs::score_t* score,
+                            size_t n) {
+      ASSERT_NE(nullptr, it);
+      *score = it->value();
     };
     auto pord = irs::Scorers::Prepare(sort);
 
-    auto prepared = q.prepare({.index = rdr, .scorers = pord});
+    auto prepared = q.prepare({
+      .index = rdr,
+      .scorers = pord,
+    });
 
     auto sub = rdr.begin();
     auto column = sub->column("name");
@@ -6406,7 +6509,12 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_NE(nullptr, values);
     auto* actual_value = irs::get<irs::PayAttr>(*values);
     ASSERT_NE(nullptr, actual_value);
-    auto docs = prepared->execute({.segment = *sub, .scorers = pord});
+    auto docs = prepared->execute({
+      .segment = *sub,
+      .scorers = pord,
+
+    });
+    it = docs.get();
     auto* freq = irs::get<irs::FreqAttr>(*docs);
     ASSERT_TRUE(freq);
     ASSERT_FALSE(irs::get<irs::FilterBoost>(*docs));
@@ -6414,7 +6522,11 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(docs->value(), doc->value);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub, .scorers = pord});
+    auto docs_seek = prepared->execute({
+      .segment = *sub,
+      .scorers = pord,
+
+    });
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -6860,13 +6972,18 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     add_phrase(2);
 
     tests::sort::CustomSort sort;
-    sort.scorer_score = [](irs::doc_id_t doc, irs::score_t* score) {
-      ASSERT_NE(nullptr, score);
-      *score = doc;
+    irs::DocIterator* it = nullptr;
+    sort.scorer_score = [&](irs::ScoreOperator*, irs::score_t* score,
+                            size_t n) {
+      ASSERT_NE(nullptr, it);
+      *score = it->value();
     };
     auto pord = irs::Scorers::Prepare(sort);
     auto sub = rdr.begin();
-    auto prepared = q.prepare({.index = rdr, .scorers = pord});
+    auto prepared = q.prepare({
+      .index = rdr,
+      .scorers = pord,
+    });
     auto column = sub->column("name");
     ASSERT_NE(nullptr, column);
     auto values = column->iterator(irs::ColumnHint::Normal);
@@ -6876,14 +6993,26 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
 
     tests::sort::FrequencyScore freq_score;
     auto pord2 = irs::Scorers::Prepare(freq_score);
-    auto disj_prepared = disjunction.prepare({.index = rdr, .scorers = pord2});
-    auto disj_docs =
-      disj_prepared->execute({.segment = *sub, .scorers = pord2});
-    auto* disj_score = irs::get<irs::ScoreAttr>(*disj_docs);
-    ASSERT_TRUE(disj_score);
+    auto disj_prepared = disjunction.prepare({
+      .index = rdr,
+      .scorers = pord2,
+    });
+    auto disj_docs = disj_prepared->execute({
+      .segment = *sub,
+      .scorers = pord2,
+
+    });
+    auto disj_score = disj_docs->PrepareScore({
+      .scorer = pord2.buckets().front().bucket,
+      .segment = &*sub,
+    });
     irs::score_t score_val;
 
-    auto docs = prepared->execute({.segment = *sub, .scorers = pord});
+    auto docs = prepared->execute({
+      .segment = *sub,
+      .scorers = pord,
+    });
+    it = docs.get();
 
     auto* freq = irs::get<irs::FreqAttr>(*docs);
     ASSERT_TRUE(freq);
@@ -6892,7 +7021,10 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(docs->value(), doc->value);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub, .scorers = pord});
+    auto docs_seek = prepared->execute({
+      .segment = *sub,
+      .scorers = pord,
+    });
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
 
     ASSERT_TRUE(docs->next());
@@ -6903,7 +7035,8 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
-    (*disj_score)(&score_val);
+    disj_docs->FetchScoreArgs(0);
+    disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq->value);
 
     ASSERT_TRUE(docs->next());
@@ -6914,7 +7047,8 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
-    (*disj_score)(&score_val);
+    disj_docs->FetchScoreArgs(0);
+    disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq->value);
 
     ASSERT_TRUE(docs->next());
@@ -6925,7 +7059,8 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
-    (*disj_score)(&score_val);
+    disj_docs->FetchScoreArgs(0);
+    disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq->value);
 
     ASSERT_TRUE(docs->next());
@@ -6936,7 +7071,8 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
-    (*disj_score)(&score_val);
+    disj_docs->FetchScoreArgs(0);
+    disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq->value);
 
     ASSERT_TRUE(docs->next());
@@ -6947,7 +7083,8 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_EQ(freq->value, irs::get<irs::FreqAttr>(*docs_seek)->value);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
-    (*disj_score)(&score_val);
+    disj_docs->FetchScoreArgs(0);
+    disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq->value);
 
     ASSERT_FALSE(docs->next());
@@ -7099,13 +7236,18 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     add_phrase(3, 3);
 
     tests::sort::CustomSort sort;
-    sort.scorer_score = [](irs::doc_id_t doc, irs::score_t* score) {
-      ASSERT_NE(nullptr, score);
-      *score = doc;
+    irs::DocIterator* it = nullptr;
+    sort.scorer_score = [&](irs::ScoreOperator*, irs::score_t* score,
+                            size_t n) {
+      ASSERT_NE(nullptr, it);
+      *score = it->value();
     };
     auto pord = irs::Scorers::Prepare(sort);
 
-    auto prepared = q.prepare({.index = rdr, .scorers = pord});
+    auto prepared = q.prepare({
+      .index = rdr,
+      .scorers = pord,
+    });
     auto sub = rdr.begin();
     auto column = sub->column("name");
     ASSERT_NE(nullptr, column);
@@ -7114,22 +7256,35 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     auto* actual_value = irs::get<irs::PayAttr>(*values);
     ASSERT_NE(nullptr, actual_value);
     auto docs = prepared->execute({.segment = *sub});
+    it = docs.get();
     auto* doc = irs::get<irs::DocAttr>(*docs);
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(docs->value(), doc->value);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub, .scorers = pord});
+    auto docs_seek = prepared->execute({
+      .segment = *sub,
+      .scorers = pord,
+
+    });
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
     auto* freq_seek = irs::get<irs::FreqAttr>(*docs_seek);
     ASSERT_TRUE(freq_seek);
 
     tests::sort::FrequencyScore freq_score;
     auto pord2 = irs::Scorers::Prepare(freq_score);
-    auto disj_prepared = disjunction.prepare({.index = rdr, .scorers = pord2});
-    auto disj_docs =
-      disj_prepared->execute({.segment = *sub, .scorers = pord2});
-    auto* disj_score = irs::get<irs::ScoreAttr>(*disj_docs);
-    ASSERT_TRUE(disj_score);
+    auto disj_prepared = disjunction.prepare({
+      .index = rdr,
+      .scorers = pord2,
+    });
+    auto disj_docs = disj_prepared->execute({
+      .segment = *sub,
+      .scorers = pord2,
+
+    });
+    auto disj_score = disj_docs->PrepareScore({
+      .scorer = pord2.buckets().front().bucket,
+      .segment = &*sub,
+    });
     irs::score_t score_val;
 
     ASSERT_TRUE(docs->next());
@@ -7139,7 +7294,8 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_EQ(1, freq_seek->value);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
-    (*disj_score)(&score_val);
+    disj_docs->FetchScoreArgs(0);
+    disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq_seek->value);
 
     ASSERT_TRUE(docs->next());
@@ -7149,7 +7305,8 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_EQ(6, freq_seek->value);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
-    (*disj_score)(&score_val);
+    disj_docs->FetchScoreArgs(0);
+    disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq_seek->value);
 
     ASSERT_TRUE(docs->next());
@@ -7159,7 +7316,8 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_EQ(11, freq_seek->value);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
-    (*disj_score)(&score_val);
+    disj_docs->FetchScoreArgs(0);
+    disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq_seek->value);
 
     ASSERT_TRUE(docs->next());
@@ -7169,7 +7327,8 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_EQ(2, freq_seek->value);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
-    disj_score->Score(&score_val);
+    disj_docs->FetchScoreArgs(0);
+    disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq_seek->value);
 
     ASSERT_FALSE(docs->next());
@@ -7206,13 +7365,18 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     add_phrase(4, 2);
 
     tests::sort::CustomSort sort;
-    sort.scorer_score = [](irs::doc_id_t doc, irs::score_t* score) {
-      ASSERT_NE(nullptr, score);
-      *score = doc;
+    irs::DocIterator* it = nullptr;
+    sort.scorer_score = [&](irs::ScoreOperator*, irs::score_t* score,
+                            size_t n) {
+      ASSERT_NE(nullptr, it);
+      *score = it->value();
     };
     auto pord = irs::Scorers::Prepare(sort);
 
-    auto prepared = q.prepare({.index = rdr, .scorers = pord});
+    auto prepared = q.prepare({
+      .index = rdr,
+      .scorers = pord,
+    });
     auto sub = rdr.begin();
     auto column = sub->column("name");
     ASSERT_NE(nullptr, column);
@@ -7221,22 +7385,35 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     auto* actual_value = irs::get<irs::PayAttr>(*values);
     ASSERT_NE(nullptr, actual_value);
     auto docs = prepared->execute({.segment = *sub});
+    it = docs.get();
     auto* doc = irs::get<irs::DocAttr>(*docs);
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(docs->value(), doc->value);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub, .scorers = pord});
+    auto docs_seek = prepared->execute({
+      .segment = *sub,
+      .scorers = pord,
+
+    });
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
     auto* freq_seek = irs::get<irs::FreqAttr>(*docs_seek);
     ASSERT_TRUE(freq_seek);
 
     tests::sort::FrequencyScore freq_score;
     auto pord2 = irs::Scorers::Prepare(freq_score);
-    auto disj_prepared = disjunction.prepare({.index = rdr, .scorers = pord2});
-    auto disj_docs =
-      disj_prepared->execute({.segment = *sub, .scorers = pord2});
-    auto* disj_score = irs::get<irs::ScoreAttr>(*disj_docs);
-    ASSERT_TRUE(disj_score);
+    auto disj_prepared = disjunction.prepare({
+      .index = rdr,
+      .scorers = pord2,
+    });
+    auto disj_docs = disj_prepared->execute({
+      .segment = *sub,
+      .scorers = pord2,
+
+    });
+    auto disj_score = disj_docs->PrepareScore({
+      .scorer = pord2.buckets().front().bucket,
+      .segment = &*sub,
+    });
     irs::score_t score_val;
 
     ASSERT_TRUE(docs->next());
@@ -7246,7 +7423,8 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_EQ(1, freq_seek->value);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
-    (*disj_score)(&score_val);
+    disj_docs->FetchScoreArgs(0);
+    disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq_seek->value);
 
     ASSERT_TRUE(docs->next());
@@ -7256,7 +7434,8 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_EQ(3, freq_seek->value);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
-    (*disj_score)(&score_val);
+    disj_docs->FetchScoreArgs(0);
+    disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq_seek->value);
 
     ASSERT_TRUE(docs->next());
@@ -7266,7 +7445,8 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_EQ(5, freq_seek->value);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
-    (*disj_score)(&score_val);
+    disj_docs->FetchScoreArgs(0);
+    disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq_seek->value);
 
     ASSERT_TRUE(docs->next());
@@ -7276,7 +7456,8 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_EQ(3, freq_seek->value);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
-    disj_score->Score(&score_val);
+    disj_docs->FetchScoreArgs(0);
+    disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq_seek->value);
 
     ASSERT_FALSE(docs->next());
@@ -7313,13 +7494,18 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     add_phrase(0, 3);
 
     tests::sort::CustomSort sort;
-    sort.scorer_score = [](irs::doc_id_t doc, irs::score_t* score) {
-      ASSERT_NE(nullptr, score);
-      *score = doc;
+    irs::DocIterator* it = nullptr;
+    sort.scorer_score = [&](irs::ScoreOperator*, irs::score_t* score,
+                            size_t n) {
+      ASSERT_NE(nullptr, it);
+      *score = it->value();
     };
     auto pord = irs::Scorers::Prepare(sort);
 
-    auto prepared = q.prepare({.index = rdr, .scorers = pord});
+    auto prepared = q.prepare({
+      .index = rdr,
+      .scorers = pord,
+    });
     auto sub = rdr.begin();
     auto column = sub->column("name");
     ASSERT_NE(nullptr, column);
@@ -7328,22 +7514,35 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     auto* actual_value = irs::get<irs::PayAttr>(*values);
     ASSERT_NE(nullptr, actual_value);
     auto docs = prepared->execute({.segment = *sub});
+    it = docs.get();
     auto* doc = irs::get<irs::DocAttr>(*docs);
     ASSERT_TRUE(bool(doc));
     ASSERT_EQ(docs->value(), doc->value);
     ASSERT_FALSE(irs::doc_limits::valid(docs->value()));
-    auto docs_seek = prepared->execute({.segment = *sub, .scorers = pord});
+    auto docs_seek = prepared->execute({
+      .segment = *sub,
+      .scorers = pord,
+
+    });
     ASSERT_FALSE(irs::doc_limits::valid(docs_seek->value()));
     auto* freq_seek = irs::get<irs::FreqAttr>(*docs_seek);
     ASSERT_TRUE(freq_seek);
 
     tests::sort::FrequencyScore freq_score;
     auto pord2 = irs::Scorers::Prepare(freq_score);
-    auto disj_prepared = disjunction.prepare({.index = rdr, .scorers = pord2});
-    auto disj_docs =
-      disj_prepared->execute({.segment = *sub, .scorers = pord2});
-    auto* disj_score = irs::get<irs::ScoreAttr>(*disj_docs);
-    ASSERT_TRUE(disj_score);
+    auto disj_prepared = disjunction.prepare({
+      .index = rdr,
+      .scorers = pord2,
+    });
+    auto disj_docs = disj_prepared->execute({
+      .segment = *sub,
+      .scorers = pord2,
+
+    });
+    auto disj_score = disj_docs->PrepareScore({
+      .scorer = pord2.buckets().front().bucket,
+      .segment = &*sub,
+    });
     irs::score_t score_val;
 
     ASSERT_TRUE(docs->next());
@@ -7353,7 +7552,8 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
     ASSERT_EQ(3, freq_seek->value);
     ASSERT_TRUE(disj_docs->next());
     ASSERT_EQ(docs->value(), disj_docs->value());
-    (*disj_score)(&score_val);
+    disj_docs->FetchScoreArgs(0);
+    disj_score.Score(&score_val, 1);
     ASSERT_DOUBLE_EQ(score_val, freq_seek->value);
 
     ASSERT_FALSE(docs->next());
@@ -7814,9 +8014,8 @@ TEST(by_phrase_test, copy_move) {
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
-INSTANTIATE_TEST_SUITE_P(
-  phrase_filter_test, PhraseFilterTestCase,
-  ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                     ::testing::Values(tests::FormatInfo{"1_5avx"},
-                                       tests::FormatInfo{"1_5simd"})),
-  PhraseFilterTestCase::to_string);
+INSTANTIATE_TEST_SUITE_P(phrase_filter_test, PhraseFilterTestCase,
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
+                                            ::testing::Values(tests::FormatInfo{
+                                              "1_5simd"})),
+                         PhraseFilterTestCase::to_string);

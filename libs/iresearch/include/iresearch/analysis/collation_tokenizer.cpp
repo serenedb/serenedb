@@ -309,7 +309,7 @@ bool CollationTokenizer::reset(std::string_view data) {
   }
 
   std::get<TermAttr>(_attrs).value = {_state->term_buf, term_buf_idx};
-  auto& offset = std::get<irs::OffsAttr>(_attrs);
+  auto& offset = std::get<OffsAttr>(_attrs);
   offset.start = 0;
   offset.end = static_cast<uint32_t>(data.size());
   _term_eof = false;

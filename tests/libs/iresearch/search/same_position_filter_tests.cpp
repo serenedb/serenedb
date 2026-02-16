@@ -21,13 +21,12 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/formats/formats.hpp>
-#include <iresearch/search/same_position_filter.hpp>
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/store/memory_directory.hpp>
-
 #include "filter_test_case_base.hpp"
+#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/formats/formats.hpp"
+#include "iresearch/search/same_position_filter.hpp"
+#include "iresearch/search/term_filter.hpp"
+#include "iresearch/store/memory_directory.hpp"
 #include "tests_shared.hpp"
 
 class SamePositionFilterTestCase : public tests::FilterTestCaseBase {
@@ -716,9 +715,8 @@ TEST(by_same_position_test, equal) {
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
-INSTANTIATE_TEST_SUITE_P(
-  same_position_filter_test, SamePositionFilterTestCase,
-  ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                     ::testing::Values(tests::FormatInfo{"1_5avx"},
-                                       tests::FormatInfo{"1_5simd"})),
-  SamePositionFilterTestCase::to_string);
+INSTANTIATE_TEST_SUITE_P(same_position_filter_test, SamePositionFilterTestCase,
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
+                                            ::testing::Values(tests::FormatInfo{
+                                              "1_5simd"})),
+                         SamePositionFilterTestCase::to_string);

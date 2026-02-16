@@ -124,15 +124,15 @@ class SparseBitmapWriter {
   IRS_FORCE_INLINE void set(doc_id_t value) noexcept {
     SDB_ASSERT(value < kBlockSize);
 
-    irs::SetBit(_bits[value / BitsRequired<size_t>()],
-                value % BitsRequired<size_t>());
+    SetBit(_bits[value / BitsRequired<size_t>()],
+           value % BitsRequired<size_t>());
   }
 
   IRS_FORCE_INLINE void reset(doc_id_t value) noexcept {
     SDB_ASSERT(value < kBlockSize);
 
-    irs::UnsetBit(_bits[value / BitsRequired<size_t>()],
-                  value % BitsRequired<size_t>());
+    UnsetBit(_bits[value / BitsRequired<size_t>()],
+             value % BitsRequired<size_t>());
   }
 
   IRS_FORCE_INLINE void add_block(uint32_t block_id) {
@@ -260,8 +260,7 @@ class SparseBitmapIterator : public ResettableDocIterator {
     };
   };
 
-  using Attributes =
-    std::tuple<DocAttr, ValueIndex, PrevDocAttr, CostAttr, ScoreAttr>;
+  using Attributes = std::tuple<DocAttr, ValueIndex, PrevDocAttr, CostAttr>;
 
   explicit SparseBitmapIterator(Ptr&& in, const Options& opts);
 

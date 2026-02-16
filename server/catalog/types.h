@@ -42,14 +42,10 @@ enum class TableType : uint8_t {
   Edge = 3,
 };
 
-enum IndexType {
-  kTypeUnknown = 0,
-  kTypePrimaryIndex,
-  kTypeEdgeIndex,
-  kTypeTtlIndex,
-  kTypeSecondaryIndex,
-  kTypeNoAccessIndex,
-  kTypeInvertedIndex,
+enum class IndexType : uint8_t {
+  Unknown = 0,
+  Secondary,
+  Inverted,
 };
 
 enum class IndexSerialization : uint8_t {
@@ -63,6 +59,12 @@ enum class IndexSerialization : uint8_t {
   Internals = 8,
   /// serialize for inventory
   Inventory = 16,
+};
+
+enum class WriteConflictPolicy : uint8_t {
+  EmitError,
+  DoNothing,
+  Replace,
 };
 
 using IndexEstMap = containers::FlatHashMap<std::string, double>;

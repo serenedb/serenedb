@@ -21,12 +21,12 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/index/field_meta.hpp>
-#include <iresearch/search/all_filter.hpp>
-#include <iresearch/search/cost.hpp>
-#include <iresearch/search/score.hpp>
-
 #include "filter_test_case_base.hpp"
+#include "iresearch/index/field_meta.hpp"
+#include "iresearch/search/all_filter.hpp"
+#include "iresearch/search/cost.hpp"
+#include "iresearch/search/score.hpp"
+#include "iresearch/search/scorer.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -61,9 +61,6 @@ TEST_P(AllFilterTestCase, all_sequential) {
   auto* it_cost = irs::get<irs::CostAttr>(*it);
   ASSERT_TRUE(it_cost);
   ASSERT_EQ(docs.size(), it_cost->estimate());
-  auto& score = irs::ScoreAttr::get(*it);
-  ASSERT_TRUE(score.Func() == &irs::ScoreFunction::DefaultScore);
-  ASSERT_EQ(&score, irs::GetMutable<irs::ScoreAttr>(it.get()));
   it.reset();
   EXPECT_EQ(counter.current, 0);
   EXPECT_GT(counter.max, 0);
@@ -116,10 +113,12 @@ TEST_P(AllFilterTestCase, all_order) {
       [&collector_finish_count](
         const irs::byte_type*, const irs::FieldCollector*,
         const irs::TermCollector*) -> void { ++collector_finish_count; };
-    sort->scorer_score = [&scorer_score_count](irs::doc_id_t doc,
-                                               irs::score_t* score) -> void {
+    sort->scorer_score = [&](irs::ScoreOperator* ctx, irs::score_t* score,
+                             size_t n) -> void {
+      ASSERT_EQ(1, n);
+      ASSERT_LT(scorer_score_count, docs.size());
       ++scorer_score_count;
-      *score = irs::score_t(doc & 0xAAAAAAAA);
+      *score = irs::score_t(scorer_score_count & 0xAAAAAAAA);
     };
 
     CheckQuery(irs::All(), std::span{&bucket, 1}, docs, rdr);
@@ -140,11 +139,9 @@ TEST_P(AllFilterTestCase, all_order) {
     sort.prepare_field_collector = []() -> irs::FieldCollector::ptr {
       return nullptr;
     };
-    sort.prepare_scorer = [](const irs::ColumnProvider&,
-                             const irs::FieldProperties&, const irs::byte_type*,
-                             const irs::AttributeProvider&,
-                             irs::score_t) -> irs::ScoreFunction {
-      return irs::ScoreFunction::Default(1);
+    sort.prepare_scorer =
+      [](const irs::ScoreContext& ctx) -> irs::ScoreFunction {
+      return irs::ScoreFunction::Default();
     };
     sort.prepare_term_collector = []() -> irs::TermCollector::ptr {
       return nullptr;
@@ -188,7 +185,7 @@ static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(all_filter_test, AllFilterTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values("1_5avx")),
+                                            ::testing::Values("1_5simd")),
                          AllFilterTestCase::to_string);
 
 }  // namespace

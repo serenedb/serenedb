@@ -22,11 +22,11 @@
 
 #include <absl/container/flat_hash_map.h>
 
-#include <iresearch/analysis/token_attributes.hpp>
 #include <string_view>
 
 #include "analyzers.hpp"
 #include "basics/result.h"
+#include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 
 namespace irs::analysis {
@@ -45,7 +45,7 @@ class WordnetSynonymsTokenizer final
   static sdb::ResultOr<SynonymsMap> Parse(std::string_view input);
 
   explicit WordnetSynonymsTokenizer(SynonymsMap&& mapping);
-  Attribute* GetMutable(TypeInfo::type_id type) final {
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return irs::GetMutable(_attrs, type);
   }
   bool next() final;

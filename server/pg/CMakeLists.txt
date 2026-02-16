@@ -8,6 +8,7 @@ target_sources(
         pg_feature.cpp
         sql_statement.cpp
         connection_context.cpp
+        copy_file.cpp
         pg_types.cpp
         serialize.cpp
         system_catalog.cpp
@@ -17,8 +18,6 @@ target_sources(
         pg_catalog/pg_type.cpp
         sdb_catalog/sdb_log.cpp
         functions.cpp
-        extract.cpp
-        interval.cpp
         sql_analyzer_velox.cpp
         sql_collector.cpp
         sql_def.cpp

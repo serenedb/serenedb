@@ -38,6 +38,11 @@
 #include <limits>
 #include <memory>
 
+#ifdef __linux__
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
+
 #include "app/app_server.h"
 #include "app/options/option.h"
 #include "app/options/parameters.h"
@@ -53,18 +58,51 @@
 #include "rocksdb_engine_catalog/rocksdb_column_family_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_prefix_extractor.h"
 
-// It's not atomic because it shouldn't change after initilization.
-// And initialization should happen before rocksdb initialization.
-static bool gIoUringEnabled = true;
+namespace {
 
-// weak symbol from rocksdb
-extern "C" bool RocksDbIOUringEnable() { return gIoUringEnabled; }
+bool IsIoUringSupported() {
+#if defined(__linux__) && defined(__NR_io_uring_setup)
+  // Try to call io_uring_setup with invalid parameters
+  // If it returns ENOSYS, io_uring is not supported
+  long ret = syscall(__NR_io_uring_setup, 0, nullptr);
+  return ret != -1 || errno != ENOSYS;
+#else
+  return false;
+#endif
+}
+
+}  // namespace
 
 using namespace sdb;
 using namespace sdb::app;
 using namespace sdb::options;
 
+namespace sdb {
+
+bool IsIOUringEnabled() {
+#ifdef SDB_GTEST
+  static const bool kSupported = IsIoUringSupported();
+  return kSupported;
+#else
+  return SerenedServer::Instance()
+    .getFeature<RocksDBOptionFeature>()
+    .ioUringEnabled();
+#endif
+}
+
+}  // namespace sdb
+
 namespace {
+
+const std::string kIoUringEnabled = "enabled";
+const std::string kIoUringDisabled = "disabled";
+const std::string kIoUringNotSupported = "not-supported";
+
+const containers::FlatHashSet<std::string> kIoUringValues = {
+  kIoUringEnabled,
+  kIoUringDisabled,
+  kIoUringNotSupported,
+};
 
 const std::string kCompressionTypeLZ4 = "lz4";
 const std::string kCompressionTypeLZ4HC = "lz4hc";
@@ -313,6 +351,7 @@ RocksDBOptionFeature::RocksDBOptionFeature(Server& server)
     _partition_files_for_primary_index_cf(false),
     _partition_files_for_edge_index_cf(false),
     _partition_files_for_vpack_index_cf(false),
+    _io_uring(IsIoUringSupported() ? kIoUringEnabled : kIoUringNotSupported),
     _max_transaction_size(transaction::Options::gDefaultMaxTransactionSize),
     _intermediate_commit_size(
       transaction::Options::gDefaultIntermediateCommitSize),
@@ -341,6 +380,10 @@ const rocksdb::BlockBasedTableOptions& RocksDBOptionFeature::getTableOptions()
     _table_options = doGetTableOptions();
   }
   return *_table_options;
+}
+
+bool RocksDBOptionFeature::ioUringEnabled() const noexcept {
+  return _io_uring == kIoUringEnabled;
 }
 
 void RocksDBOptionFeature::collectOptions(
@@ -383,6 +426,18 @@ void RocksDBOptionFeature::collectOptions(
                      "The compression algorithm to use within RocksDB.",
                      new DiscreteValuesParameter<StringParameter>(
                        &_compression_type, ::kCompressionTypes));
+
+  SDB_ASSERT(::kIoUringValues.contains(_io_uring));
+  options->addOption(
+    "--rocksdb.io-uring",
+    "Enable or disable io_uring for async I/O in RocksDB. "
+    "Possible values: 'enabled', 'disabled', 'not-supported'. "
+    "The value 'not-supported' is set automatically if io_uring is not "
+    "available on this system and cannot be changed to 'enabled'.",
+    new DiscreteValuesParameter<StringParameter>(&_io_uring, ::kIoUringValues),
+    options::MakeFlags(options::Flags::DefaultNoComponents,
+                       options::Flags::OnAgent, options::Flags::OnDBServer,
+                       options::Flags::OnSingle));
 
   options
     ->addOption("--rocksdb.transaction-lock-stripes",
@@ -1230,15 +1285,6 @@ of outgrowing the maximum number of file descriptors the SereneDB process
 can open. Thus the option should only be enabled on deployments with a
 limited number of edge collections/shards/indexes.)");
 
-  options->addOption(
-    "--rocksdb.use-io_uring",
-    "Check for existence of io_uring at startup and use it if available. "
-    "Should be set to false only to opt out of using io_uring.",
-    new BooleanParameter(&gIoUringEnabled),
-    options::MakeFlags(options::Flags::Uncommon, options::Flags::OsLinux,
-                       options::Flags::OnAgent, options::Flags::OnDBServer,
-                       options::Flags::OnSingle));
-
   /// minimum required percentage of free disk space for considering
   /// the server "healthy". this is expressed as a floating point value
   /// between 0 and 1! if set to 0.0, the % amount of free disk is ignored in
@@ -1462,6 +1508,14 @@ void RocksDBOptionFeature::validateOptions(
   transaction::Options::setLimits(_max_transaction_size,
                                   _intermediate_commit_size,
                                   _intermediate_commit_count);
+
+  if (_io_uring == kIoUringNotSupported &&
+      options->processingResult().touched("--rocksdb.io-uring")) {
+    SDB_WARN("xxxxx", sdb::Logger::STARTUP,
+             "io_uring is not supported on this system, ignoring "
+             "--rocksdb.io-uring configuration");
+  }
+
   if (_sync_interval > 0) {
     if (_sync_interval < kMinSyncInterval) {
       // _sync_interval = 0 means turned off!

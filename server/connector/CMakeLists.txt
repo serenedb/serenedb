@@ -6,6 +6,14 @@ add_library(
     data_source.cpp
     serenedb_connector.cpp
     key_utils.cpp
+    rocksdb_sink_writer.cpp
+    search_sink_writer.cpp
+    search_remove_filter.cpp
+    file_table.cpp
+    data_materializer.cpp
+    search_data_source.cpp
+    search_filter_builder.cpp
+    sst_sink_writer.cpp
 )
 
 target_link_libraries(
@@ -14,6 +22,7 @@ target_link_libraries(
     iresearch-static
     rocksdb
     velox
+    pg_query
 )
 
 # TODO(Dronplane): why not make public includes for sereneserver so we avoid this ugly line below?

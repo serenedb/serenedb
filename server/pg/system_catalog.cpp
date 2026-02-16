@@ -448,7 +448,10 @@ void VisitSystemTables(
 }
 
 std::shared_ptr<catalog::Function> GetFunction(std::string_view name) {
+#ifndef SDB_GTEST
+  // For query building tests we need to run this without feature
   SDB_ASSERT(SerenedServer::Instance().isEnabled<pg::PostgresFeature>());
+#endif
   FunctionLanguage language = FunctionLanguage::VeloxNative;
   bool table = false;
   FunctionKind kind = FunctionKind::Scalar;

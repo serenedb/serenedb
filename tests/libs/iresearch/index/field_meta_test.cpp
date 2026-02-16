@@ -21,9 +21,8 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/index/field_meta.hpp>
-
+#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/index/field_meta.hpp"
 #include "tests_shared.hpp"
 
 using namespace irs;

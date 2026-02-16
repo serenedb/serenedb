@@ -20,13 +20,12 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/search/all_filter.hpp>
-#include <iresearch/search/multiterm_query.hpp>
-#include <iresearch/search/prefix_filter.hpp>
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/search/wildcard_filter.hpp>
-
 #include "filter_test_case_base.hpp"
+#include "iresearch/search/all_filter.hpp"
+#include "iresearch/search/multiterm_query.hpp"
+#include "iresearch/search/prefix_filter.hpp"
+#include "iresearch/search/term_filter.hpp"
+#include "iresearch/search/wildcard_filter.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -624,9 +623,8 @@ TEST_P(WildcardFilterTestCase, visit) {
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
-INSTANTIATE_TEST_SUITE_P(
-  wildcard_filter_test, WildcardFilterTestCase,
-  ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                     ::testing::Values(tests::FormatInfo{"1_5avx"},
-                                       tests::FormatInfo{"1_5simd"})),
-  WildcardFilterTestCase::to_string);
+INSTANTIATE_TEST_SUITE_P(wildcard_filter_test, WildcardFilterTestCase,
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
+                                            ::testing::Values(tests::FormatInfo{
+                                              "1_5simd"})),
+                         WildcardFilterTestCase::to_string);

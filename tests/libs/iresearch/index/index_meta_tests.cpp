@@ -21,17 +21,16 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/formats/formats.hpp>
-#include <iresearch/index/index_meta.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/utils/type_limits.hpp>
-
+#include "iresearch/formats/formats.hpp"
+#include "iresearch/index/index_meta.hpp"
+#include "iresearch/store/memory_directory.hpp"
+#include "iresearch/utils/type_limits.hpp"
 #include "tests_shared.hpp"
 
 using namespace irs;
 
 TEST(index_meta_tests, memory_directory_read_write_15) {
-  auto codec = irs::formats::Get("1_5avx");
+  auto codec = irs::formats::Get("1_5simd");
   ASSERT_NE(nullptr, codec);
   irs::MemoryDirectory dir;
   auto writer = codec->get_index_meta_writer();
@@ -132,7 +131,7 @@ TEST(index_meta_tests, last_generation) {
     ASSERT_FALSE(!out);
   }
 
-  auto codec = irs::formats::Get("1_5avx");
+  auto codec = irs::formats::Get("1_5simd");
   ASSERT_NE(nullptr, codec);
   std::string last_seg_file;
 

@@ -71,6 +71,31 @@ void RocksDBKey::constructFromBuffer(std::string_view buffer) {
   *_buffer = buffer;
 }
 
+void RocksDBKey::constructDefinition(ObjectId parent_id, RocksDBEntryType type,
+                                     ObjectId object_id) {
+  SDB_ASSERT(parent_id.isSet());
+  SDB_ASSERT(object_id.isSet());
+  _type = type;
+  rocksutils::Concat(*_buffer, parent_id, type, object_id);
+}
+
+ObjectId RocksDBKey::GetParentId(const rocksdb::Slice& slice) {
+  SDB_ASSERT(slice.size() >= sizeof(uint64_t));
+  return ObjectId{rocksutils::Uint64FromPersistent(slice.data())};
+}
+
+RocksDBEntryType RocksDBKey::GetType(const rocksdb::Slice& slice) {
+  SDB_ASSERT(slice.size() >= sizeof(uint64_t) + sizeof(char));
+  return static_cast<RocksDBEntryType>(slice.data()[sizeof(uint64_t)]);
+}
+
+ObjectId RocksDBKey::GetObjectId(const rocksdb::Slice& slice) {
+  SDB_ASSERT(slice.size() >=
+             sizeof(uint64_t) + sizeof(char) + sizeof(uint64_t));
+  return ObjectId{rocksutils::Uint64FromPersistent(
+    slice.data() + sizeof(uint64_t) + sizeof(char))};
+}
+
 void RocksDBKey::constructDatabase(ObjectId database_id) {
   SDB_ASSERT(database_id.isSet());
   _type = RocksDBEntryType::Database;

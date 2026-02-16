@@ -97,18 +97,15 @@ class LocalCatalog final : public LogicalCatalog,
   Result DropSchema(ObjectId database_id, std::string_view name, bool cascade,
                     AsyncResult* async_result) final;
   Result DropView(ObjectId database_id, std::string_view schema,
-                  std::string_view name) final;
+                  std::string_view name, AsyncResult* async_result) final;
   Result DropFunction(ObjectId database_id, std::string_view schema,
-                      std::string_view name) final;
+                      std::string_view name, AsyncResult* async_result) final;
   Result DropTable(ObjectId database_id, std::string_view schema,
                    std::string_view name, AsyncResult* async_result) final;
   Result DropIndex(ObjectId database_id, std::string_view schema,
                    std::string_view name, AsyncResult* async_result) final;
   std::shared_ptr<Snapshot> GetSnapshot() const noexcept final;
 
-  void RegisterTableDrop(TableTombstone tombstone) final;
-  void RegisterIndexDrop(IndexTombstone tombstone) final;
-  void RegisterScopeDrop(ObjectId database_id, ObjectId schema_id) final;
   void DropTableShard(ObjectId id);
 
   bool GetSkipBackgroundErrors() const noexcept {

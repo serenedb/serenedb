@@ -56,8 +56,11 @@ enum class RocksDBEntryType : char {
   TableTombstone = '|',
   IndexTombstone = '/',
   ScopeTombstone = '~',
+  TableShardTombstone = '>',
+  IndexShardTombstone = '$',
   Index = '?',
   IndexPhysical = '!',
+  TablePhysical = '.',
   Stats = '@',
 };
 

@@ -18,15 +18,37 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "storage_engine/index_shard.h"
+#pragma once
 
-namespace sdb {
+#include "basics/containers/flat_hash_set.h"
+#include "catalog/identifiers/object_id.h"
 
-IndexShard::IndexShard(const catalog::Index& index)
-  : catalog::Object{ObjectId{0}, ObjectId{0}, index.GetName(),
-                    catalog::ObjectType::IndexShard},
-    _index_id{index.GetId()},
-    _relation_id{index.GetRelationId()},
-    _type{index.GetIndexType()} {}
+namespace sdb::catalog {
 
-}  // namespace sdb
+struct ObjectDependencyBase {
+  virtual ~ObjectDependencyBase() = default;
+};
+
+struct TableDependency : public ObjectDependencyBase {
+  ObjectId shard_id;
+  containers::FlatHashSet<ObjectId> indexes;
+};
+
+struct IndexDependency : public ObjectDependencyBase {
+  ObjectId shard_id;
+  containers::FlatHashSet<ObjectId> shrads;
+};
+
+struct SchemaDependency : public ObjectDependencyBase {
+  containers::FlatHashSet<ObjectId> tables;
+  containers::FlatHashSet<ObjectId> indexes;
+  containers::FlatHashSet<ObjectId> functions;
+  containers::FlatHashSet<ObjectId> views;
+};
+
+// For simple object dependencies
+struct ObjectDependency : public ObjectDependencyBase {
+  containers::FlatHashSet<ObjectId> objects;
+};
+
+}  // namespace sdb::catalog

@@ -85,6 +85,11 @@ const auto kStats = MakeSlice<RocksDBEntryType::Stats>();
 
 const auto kIndexPhysical = MakeSlice<RocksDBEntryType::IndexPhysical>();
 
+const auto kIndexShardTombstone =
+  MakeSlice<RocksDBEntryType::IndexShardTombstone>();
+
+const auto kTablePhysical = MakeSlice<RocksDBEntryType::TablePhysical>();
+
 }  // namespace
 
 char RocksDbFormatVersion() { return '1'; }
@@ -139,6 +144,10 @@ const rocksdb::Slice& RocksDbSlice(const RocksDBEntryType& type) {
       return kIndexPhysical;
     case RocksDBEntryType::IndexTombstone:
       return kIndexTombstone;
+    case RocksDBEntryType::IndexShardTombstone:
+      return kIndexShardTombstone;
+    case sdb::RocksDBEntryType::TablePhysical:
+      return kTablePhysical;
   }
 
   return kPlaceholder;  // avoids warning - errorslice instead ?!

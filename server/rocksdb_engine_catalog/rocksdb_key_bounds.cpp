@@ -67,6 +67,42 @@ RocksDBKeyBounds RocksDBKeyBounds::SchemaObjects(RocksDBEntryType entry,
   return bounds;
 }
 
+RocksDBKeyBounds RocksDBKeyBounds::DefinitionObjects(ObjectId parent_id,
+                                                     RocksDBEntryType type) {
+  // Key: [parent_id(8) | type(1) | object_id(8)]
+  // Range: [parent_id | type | 0] to [parent_id | type | UINT64_MAX]
+  RocksDBKeyBounds bounds;
+  bounds._type = type;
+  auto& buf = bounds.internals().buffer();
+  // start: parent_id | type | 0 (implicit since ObjectId{0})
+  Uint64ToPersistent(buf, parent_id.id());
+  buf.push_back(static_cast<char>(type));
+  Uint64ToPersistent(buf, 0ULL);
+  bounds.internals().separate();
+  // end: parent_id | type | MAX
+  Uint64ToPersistent(buf, parent_id.id());
+  buf.push_back(static_cast<char>(type));
+  Uint64ToPersistent(buf, UINT64_MAX);
+  return bounds;
+}
+
+RocksDBKeyBounds RocksDBKeyBounds::ChildDefinitions(ObjectId parent_id) {
+  // Range: [parent_id | 0x00 | 0] to [parent_id | 0xFF | UINT64_MAX]
+  RocksDBKeyBounds bounds;
+  bounds._type = RocksDBEntryType::Database;  // marker for definitions CF
+  auto& buf = bounds.internals().buffer();
+  // start
+  Uint64ToPersistent(buf, parent_id.id());
+  buf.push_back('\0');
+  Uint64ToPersistent(buf, 0ULL);
+  bounds.internals().separate();
+  // end
+  Uint64ToPersistent(buf, parent_id.id());
+  buf.push_back(static_cast<char>(0xFF));
+  Uint64ToPersistent(buf, UINT64_MAX);
+  return bounds;
+}
+
 RocksDBKeyBounds RocksDBKeyBounds::CollectionDocuments(
   uint64_t collection_object_id) {
   return RocksDBKeyBounds(RocksDBEntryType::Document, collection_object_id);
@@ -185,6 +221,8 @@ rocksdb::ColumnFamilyHandle* RocksDBKeyBounds::columnFamily() const {
     case RocksDBEntryType::Index:
     case RocksDBEntryType::Stats:
     case RocksDBEntryType::IndexPhysical:
+    case RocksDBEntryType::IndexShardTombstone:
+    case RocksDBEntryType::TablePhysical:
       return RocksDBColumnFamilyManager::get(
         RocksDBColumnFamilyManager::Family::Definitions);
   }

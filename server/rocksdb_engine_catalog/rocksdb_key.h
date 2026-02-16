@@ -47,6 +47,17 @@ class RocksDBKey {
   // construct a RocksDB key from another, already filled buffer
   void constructFromBuffer(std::string_view buffer);
 
+  // New flat definition key: [parent_id(8) | type(1) | object_id(8)] = 17 bytes
+  void constructDefinition(ObjectId parent_id, RocksDBEntryType type,
+                           ObjectId object_id);
+
+  // Extract fields from a new flat definition key
+  static ObjectId GetParentId(const rocksdb::Slice& slice);
+  static RocksDBEntryType GetType(const rocksdb::Slice& slice);
+  static ObjectId GetObjectId(const rocksdb::Slice& slice);
+
+  // --- Deprecated: old key format methods (kept for non-definition keys) ---
+
   // Create a fully-specified database key
   void constructDatabase(ObjectId database_id);
 

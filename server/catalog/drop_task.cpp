@@ -1,0 +1,216 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#include "catalog/drop_task.h"
+
+#include "basics/assert.h"
+#include "basics/errors.h"
+#include "catalog/types.h"
+#include "rocksdb_engine_catalog/rocksdb_types.h"
+#include "search/inverted_index_shard.h"
+#include "storage_engine/engine_feature.h"
+#include "yaclib/async/make.hpp"
+#include "yaclib/async/when_all.hpp"
+
+namespace sdb::catalog {
+
+namespace {
+bool CheckResult(const Result& result) {
+  return result == ERROR_OK || result == ERROR_SERVER_DATA_SOURCE_NOT_FOUND ||
+         result == ERROR_SERVER_DATABASE_NOT_FOUND ||
+         result == ERROR_SERVER_DOCUMENT_NOT_FOUND ||
+         result == ERROR_SERVER_INDEX_NOT_FOUND ||
+         result == ERROR_SERVER_DATA_SOURCE_NOT_FOUND ||
+         result == ERROR_SERVER_DOCUMENT_NOT_FOUND;
+}
+}  // namespace
+
+AsyncResult DefinitionDrop::operator()() {
+  auto& server = GetServerEngine();
+  auto r = server.DropObject(parent_id, type, id);
+  if (!CheckResult(r)) {
+    return QueueDropTask(shared_from_this());
+  }
+  return yaclib::MakeFuture<Result>(ERROR_OK);
+}
+
+AsyncResult TableShardDrop::operator()() {
+  auto& server = GetServerEngine();
+  auto r = server.DropObject(parent_id, RocksDBEntryType::Stats, id);
+  if (!CheckResult(r)) {
+    return QueueDropTask(shared_from_this());
+  }
+  r = server.DropObject(parent_id, RocksDBEntryType::TableShardTombstone, id);
+  if (!CheckResult(r)) {
+    return QueueDropTask(shared_from_this());
+  }
+  return yaclib::MakeFuture<Result>(ERROR_OK);
+}
+
+AsyncResult IndexShardDrop::operator()() {
+  auto& server = GetServerEngine();
+  if (is_root) {
+    if (type == IndexType::Inverted) {
+      auto path = search::InvertedIndexShard::GetPath(db_id, schema_id, id);
+      std::error_code ec;
+      std::filesystem::remove_all(path, ec);
+      if (ec) {
+        return QueueDropTask(shared_from_this());
+      }
+    }
+    auto r = server.DropObject(parent_id, RocksDBEntryType::IndexPhysical, id);
+    if (!CheckResult(r)) {
+      return QueueDropTask(shared_from_this());
+    }
+    r = server.DropObject(parent_id, RocksDBEntryType::IndexShardTombstone, id);
+    if (!CheckResult(r)) {
+      return QueueDropTask(shared_from_this());
+    }
+    return yaclib::MakeFuture<Result>(ERROR_OK);
+  }
+  return yaclib::MakeFuture<Result>(ERROR_OK);
+}
+
+Result IndexDrop::Finalize() {
+  auto& server = GetServerEngine();
+  auto r = server.DropEntry(id, RocksDBEntryType::IndexPhysical);
+  if (!CheckResult(r)) {
+    return r;
+  }
+  if (is_root) {
+    return server.DropObject(parent_id, RocksDBEntryType::IndexTombstone, id);
+  }
+  return {};
+}
+
+AsyncResult IndexDrop::operator()() {
+  auto shard_task = std::make_shared<IndexShardDrop>(
+    DropTask{.parent_id = id, .id = shard_id, .is_root = false}, db_id,
+    schema_id, type);
+  return QueueDropTask(std::move(shard_task))
+    .ThenInline([self = shared_from_this()](Result&&) {
+      auto r = self->Finalize();
+      if (!CheckResult(r)) {
+        return QueueDropTask(self);
+      }
+      return yaclib::MakeFuture<Result>(ERROR_OK);
+    });
+}
+
+Result TableDrop::Finalize() {
+  auto& server = GetServerEngine();
+  auto r = server.DropEntry(id, RocksDBEntryType::TablePhysical);
+  if (!CheckResult(r)) {
+    return r;
+  }
+  if (is_root) {
+    return server.DropObject(parent_id, RocksDBEntryType::TableTombstone, id);
+  }
+  return {};
+}
+
+AsyncResult TableDrop::operator()() {
+  std::vector<yaclib::Future<>> async_results;
+  async_results.reserve(indexes.size() + 1);
+  auto shard_task = std::make_shared<TableShardDrop>(
+    DropTask{.parent_id = id, .id = shard_id, .is_root = false});
+  async_results.push_back(
+    QueueDropTask(std::move(shard_task)).ThenInline([](Result&&) {}));
+  for (auto& index : indexes) {
+    async_results.push_back(QueueDropTask(index).ThenInline([](Result&&) {}));
+  }
+  return yaclib::WhenAll(async_results.begin(), async_results.end())
+    .ThenInline([self = shared_from_this()]() {
+      auto r = self->Finalize();
+      if (!CheckResult(r)) {
+        return QueueDropTask(self);
+      }
+      return yaclib::MakeFuture<Result>(ERROR_OK);
+    });
+}
+
+Result SchemaDrop::Finalize() {
+  auto& server = GetServerEngine();
+  auto drop_entry = [&](RocksDBEntryType type) {
+    auto r = server.DropEntry(id, type);
+    return r;
+  };
+  for (auto entry_type : {RocksDBEntryType::Collection, RocksDBEntryType::Index,
+                          RocksDBEntryType::Function, RocksDBEntryType::View}) {
+    auto r = drop_entry(entry_type);
+    if (!CheckResult(r)) {
+      return r;
+    }
+  }
+  if (is_root) {
+    auto r = server.DropObject(parent_id, RocksDBEntryType::ScopeTombstone, id);
+    if (!CheckResult(r)) {
+      return r;
+    }
+  }
+  return {};
+}
+
+AsyncResult SchemaDrop::operator()() {
+  std::vector<yaclib::Future<>> async_results;
+  async_results.reserve(tables.size() + definitions.size());
+  for (auto& table : tables) {
+    async_results.push_back(QueueDropTask(table).ThenInline([](Result&& r) {}));
+  }
+  for (auto& definition : definitions) {
+    async_results.push_back(
+      QueueDropTask(definition).ThenInline([](Result&& r) {}));
+  }
+  return yaclib::WhenAll(async_results.begin(), async_results.end())
+    .ThenInline([self = shared_from_this()]() {
+      auto r = self->Finalize();
+      if (!CheckResult(r)) {
+        return QueueDropTask(self);
+      }
+      return yaclib::MakeFuture<Result>(ERROR_OK);
+    });
+}
+
+Result DatabaseDrop::Finalize() {
+  auto& server = GetServerEngine();
+  auto r = server.DropEntry(id, RocksDBEntryType::ScopeTombstone);
+  if (!CheckResult(r)) {
+    return r;
+  }
+  return server.DropEntry(parent_id, RocksDBEntryType::ScopeTombstone);
+}
+
+AsyncResult DatabaseDrop::operator()() {
+  std::vector<yaclib::Future<>> async_results;
+  async_results.reserve(schemas.size());
+  for (auto& schema : schemas) {
+    async_results.push_back(QueueDropTask(schema).ThenInline([](Result&&) {}));
+  }
+  return yaclib::WhenAll(async_results.begin(), async_results.end())
+    .ThenInline([self = shared_from_this()]() {
+      auto r = self->Finalize();
+      if (!CheckResult(r)) {
+        return QueueDropTask(self);
+      }
+      return yaclib::MakeFuture<Result>(ERROR_OK);
+    });
+}
+
+}  // namespace sdb::catalog

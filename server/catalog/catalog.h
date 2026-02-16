@@ -105,10 +105,6 @@ struct Snapshot {
   virtual std::shared_ptr<Object> GetObject(ObjectId id) const = 0;
 
   virtual std::shared_ptr<TableShard> GetTableShard(ObjectId id) const = 0;
-  virtual std::vector<std::shared_ptr<TableShard>> GetTableShards() const = 0;
-  virtual std::vector<std::shared_ptr<IndexShard>> GetIndexShards() const = 0;
-  virtual std::vector<std::shared_ptr<Index>> GetIndexesByTable(
-    ObjectId table_id) const = 0;
   virtual std::vector<std::shared_ptr<IndexShard>> GetIndexShardsByTable(
     ObjectId table_id) const = 0;
   virtual std::shared_ptr<IndexShard> GetIndexShard(
@@ -225,19 +221,16 @@ struct LogicalCatalog {
   virtual Result DropSchema(ObjectId database, std::string_view name,
                             bool cascade, AsyncResult* async_result) = 0;
   virtual Result DropFunction(ObjectId database, std::string_view schema,
-                              std::string_view name) = 0;
+                              std::string_view name,
+                              AsyncResult* async_result) = 0;
   virtual Result DropView(ObjectId database, std::string_view schema,
-                          std::string_view name) = 0;
+                          std::string_view name, AsyncResult* async_result) = 0;
   virtual Result DropTable(ObjectId database, std::string_view schema,
                            std::string_view name,
                            AsyncResult* async_result) = 0;
   virtual Result DropIndex(ObjectId database_id, std::string_view schema,
                            std::string_view name,
                            AsyncResult* async_result) = 0;
-
-  virtual void RegisterTableDrop(TableTombstone tombstone) = 0;
-  virtual void RegisterIndexDrop(IndexTombstone tombstone) = 0;
-  virtual void RegisterScopeDrop(ObjectId database_id, ObjectId schema_id) = 0;
 
   virtual std::shared_ptr<Snapshot> GetSnapshot() const = 0;
 };

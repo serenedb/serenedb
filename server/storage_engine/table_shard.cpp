@@ -30,6 +30,7 @@
 #include <atomic>
 #include <yaclib/async/make.hpp>
 
+#include "catalog/object.h"
 #include "catalog/table.h"
 
 namespace sdb {
@@ -49,6 +50,9 @@ catalog::TableMeta MakeTableMeta(const catalog::Table& c) {
 
 TableShard::TableShard(catalog::TableMeta collection_meta,
                        const catalog::TableStats& stats)
-  : _collection_meta{std::move(collection_meta)}, _num_rows{stats.num_rows} {}
+  : catalog::Object{ObjectId{0}, ObjectId{0}, collection_meta.name,
+                    catalog::ObjectType::TableShard},
+    _collection_meta{std::move(collection_meta)},
+    _num_rows{stats.num_rows} {}
 
 }  // namespace sdb

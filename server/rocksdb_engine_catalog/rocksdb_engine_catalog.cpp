@@ -938,9 +938,9 @@ Result RocksDBEngineCatalog::VisitObjectsImpl(
 }
 
 Result RocksDBEngineCatalog::VisitObjects(
-  ObjectId database_id, RocksDBEntryType entry,
+  ObjectId parent_id, RocksDBEntryType type,
   absl::FunctionRef<Result(rocksdb::Slice key, vpack::Slice)> visitor) {
-  return VisitObjectsImpl(RocksDBKeyBounds::DatabaseObjects(entry, database_id),
+  return VisitObjectsImpl(RocksDBKeyBounds::DefinitionObjects(parent_id, type),
                           visitor);
 }
 
@@ -958,7 +958,7 @@ Result RocksDBEngineCatalog::DeleteSchemaObject(
     _db->GetRootDB(),
     [&] {
       RocksDBKeyWithBuffer key;
-      key.constructSchemaObject(entry, db_id, schema_id, object_id);
+      key.constructDefinition(schema_id, entry, object_id);
       return key;
     },
     [&] {
@@ -981,7 +981,7 @@ Result RocksDBEngineCatalog::PutSchemaObject(ObjectId db, ObjectId schema_id,
     _db->GetRootDB(),
     [&] {
       RocksDBKeyWithBuffer key;
-      key.constructSchemaObject(entry, db, schema_id, id);
+      key.constructDefinition(schema_id, entry, id);
       return key;
     },
     [&] { return RocksDBValue::Object(entry, properties(true)); },
@@ -1004,7 +1004,7 @@ Result RocksDBEngineCatalog::PutObject(ObjectId database_id, ObjectId object_id,
     _db->GetRootDB(),
     [&] {
       RocksDBKeyWithBuffer key;
-      key.constructObject(entry, database_id, object_id);
+      key.constructDefinition(database_id, entry, object_id);
       return key;
     },
     [&] { return RocksDBValue::Object(entry, properties(true)); },
@@ -1026,7 +1026,7 @@ Result RocksDBEngineCatalog::DeleteObject(ObjectId db_id, ObjectId object_id,
     _db->GetRootDB(),
     [&] {
       RocksDBKeyWithBuffer key;
-      key.constructObject(entry, db_id, object_id);
+      key.constructDefinition(db_id, entry, object_id);
       return key;
     },
     [&] {
@@ -1149,8 +1149,7 @@ Result RocksDBEngineCatalog::writeCreateTableMarker(
     _db->GetRootDB(),
     [&] {
       RocksDBKeyWithBuffer key;
-      key.constructSchemaObject(RocksDBEntryType::Collection, database_id,
-                                schema_id, cid);
+      key.constructDefinition(schema_id, RocksDBEntryType::Collection, cid);
       return key;
     },
     [&] {
@@ -1164,7 +1163,7 @@ Result RocksDBEngineCatalog::createDatabase(ObjectId id, vpack::Slice slice) {
     _db->GetRootDB(),
     [&] {
       RocksDBKeyWithBuffer key;
-      key.constructDatabase(id);
+      key.constructDefinition(id::kSystemDB, RocksDBEntryType::Database, id);
       return key;
     },
     [&] { return RocksDBValue::Database(slice); },
@@ -1174,70 +1173,6 @@ Result RocksDBEngineCatalog::createDatabase(ObjectId id, vpack::Slice slice) {
         .data = slice,
       };
       return wal::Write(RocksDBLogType::DatabaseCreate, entry);
-    });
-}
-
-Result RocksDBEngineCatalog::MarkDeleted(const catalog::Database& database) {
-  vpack::Builder b;
-  database.WriteInternal(b);
-
-  return WriteDefinition(
-    _db->GetRootDB(),
-    [&] {
-      RocksDBKeyWithBuffer key;
-      key.constructDatabase(database.GetId());
-      return key;
-    },
-    [&] {
-      RocksDBKeyWithBuffer key;
-      key.constructSchemaObject(RocksDBEntryType::ScopeTombstone,
-                                id::kTombstoneDatabase, database.GetId(),
-                                ObjectId{});
-      return key;
-    },
-    [&] {
-      // TODO(gnusi): write empty value
-      return RocksDBValue::Object(RocksDBEntryType::ScopeTombstone,
-                                  vpack::Slice::emptyArraySlice());
-    },
-    [&] {
-      const wal::Database entry{
-        .database_id = database.GetId(),
-        .data = b.slice(),
-      };
-      return wal::Write(RocksDBLogType::DatabaseDrop, entry);
-    });
-}
-
-Result RocksDBEngineCatalog::MarkDeleted(const catalog::Schema& schema) {
-  vpack::Builder b;
-  schema.WriteInternal(b);
-
-  return WriteDefinition(
-    _db->GetRootDB(),
-    [&] {
-      RocksDBKeyWithBuffer key;
-      key.constructSchema(schema.GetDatabaseId(), schema.GetId());
-      return key;
-    },
-    [&] {
-      RocksDBKeyWithBuffer key;
-      key.constructSchemaObject(RocksDBEntryType::ScopeTombstone,
-                                id::kTombstoneDatabase, schema.GetDatabaseId(),
-                                schema.GetId());
-      return key;
-    },
-    [&] {
-      // TODO(gnusi): write empty value
-      return RocksDBValue::Object(RocksDBEntryType::ScopeTombstone,
-                                  vpack::Slice::emptyArraySlice());
-    },
-    [&] {
-      const wal::Database entry{
-        .database_id = schema.GetId(),
-        .data = b.slice(),
-      };
-      return wal::Write(RocksDBLogType::SchemaDrop, entry);
     });
 }
 
@@ -1489,7 +1424,6 @@ void RocksDBEngineCatalog::processCompactions() {
 }
 
 Result RocksDBEngineCatalog::CreateIndex(const catalog::Index& index) {
-  const auto db_id = index.GetDatabaseId();
   const auto schema_id = index.GetSchemaId();
   const auto index_id = index.GetId();
   SDB_ASSERT(index_id.isSet());
@@ -1501,8 +1435,7 @@ Result RocksDBEngineCatalog::CreateIndex(const catalog::Index& index) {
     _db->GetRootDB(),
     [&] {
       RocksDBKeyWithBuffer key;
-      key.constructSchemaObject(RocksDBEntryType::Index, db_id, schema_id,
-                                index_id);
+      key.constructDefinition(schema_id, RocksDBEntryType::Index, index_id);
       return key;
     },
     [&] { return RocksDBValue::Object(RocksDBEntryType::Index, b.slice()); },
@@ -1520,8 +1453,8 @@ Result RocksDBEngineCatalog::StoreIndexShard(const IndexShard& index_shard) {
     _db->GetRootDB(),
     [&] {
       RocksDBKeyWithBuffer key;
-      key.constructObject(RocksDBEntryType::IndexPhysical, id::kSystemDB,
-                          index_id);
+      key.constructDefinition(id::kSystemDB, RocksDBEntryType::IndexPhysical,
+                              index_id);
       return key;
     },
     [&] {
@@ -1535,7 +1468,8 @@ ResultOr<vpack::Builder> RocksDBEngineCatalog::LoadIndexShard(
   SDB_ASSERT(index_id.isSet());
 
   RocksDBKeyWithBuffer key;
-  key.constructObject(RocksDBEntryType::IndexPhysical, id::kSystemDB, index_id);
+  key.constructDefinition(id::kSystemDB, RocksDBEntryType::IndexPhysical,
+                          index_id);
 
   std::string value;
   auto status = _db->Get(rocksdb::ReadOptions{},
@@ -1557,85 +1491,6 @@ ResultOr<vpack::Builder> RocksDBEngineCatalog::LoadIndexShard(
   return builder;
 }
 
-Result RocksDBEngineCatalog::MarkDeleted(const catalog::Index& index,
-                                         const IndexTombstone& tombstone) {
-  const auto db_id = index.GetDatabaseId();
-  const auto schema_id = index.GetSchemaId();
-  const auto relation_id = index.GetId();
-  SDB_ASSERT(relation_id.isSet());
-
-  vpack::Builder b;
-  vpack::WriteTuple(b, tombstone);
-
-  return WriteDefinition(
-    _db->GetRootDB(),
-    [&] {
-      RocksDBKeyWithBuffer key;
-      key.constructSchemaObject(RocksDBEntryType::Index, db_id, schema_id,
-                                relation_id);
-      return key;
-    },
-    [&] {
-      RocksDBKeyWithBuffer key;
-      key.constructObject(RocksDBEntryType::IndexTombstone,
-                          id::kTombstoneDatabase, tombstone.id);
-      return key;
-    },
-    [&] {
-      return RocksDBValue::Object(RocksDBEntryType::IndexTombstone, b.slice());
-    },
-    [&] {
-      const wal::SchemaObjectDrop entry = {
-        .database_id = db_id,
-        .schema_id = schema_id,
-        .object_id = relation_id,
-        .uuid = index.GetName(),
-      };
-      return wal::Write(RocksDBLogType::IndexDrop, entry);
-    });
-}
-
-Result RocksDBEngineCatalog::MarkDeleted(const catalog::Table& c,
-                                         const TableShard& physical,
-                                         const TableTombstone& tombstone) {
-  const auto db_id = c.GetDatabaseId();
-  const auto schema_id = c.GetSchemaId();
-  const auto collection_id = c.GetId();
-  SDB_ASSERT(collection_id.isSet());
-
-  vpack::Builder b;
-
-  return WriteDefinition(
-    _db->GetRootDB(),
-    [&] {
-      RocksDBKeyWithBuffer key;
-      key.constructSchemaObject(RocksDBEntryType::Collection, db_id, schema_id,
-                                collection_id);
-      return key;
-    },
-    [&] {
-      RocksDBKeyWithBuffer key;
-      key.constructObject(RocksDBEntryType::TableTombstone,
-                          id::kTombstoneDatabase, collection_id);
-      return key;
-    },
-    [&] {
-      b.clear();
-      vpack::WriteTuple(b, tombstone);
-
-      return RocksDBValue::Object(RocksDBEntryType::TableTombstone, b.slice());
-    },
-    [&] {
-      const wal::SchemaObjectDrop entry{
-        .database_id = db_id,
-        .schema_id = schema_id,
-        .object_id = c.GetId(),
-        .uuid = c.GetName(),
-      };
-      return wal::Write(RocksDBLogType::TableDrop, entry);
-    });
-}
-
 Result RocksDBEngineCatalog::createTableShard(
   const catalog::Table& collection, bool is_new,
   std::shared_ptr<TableShard>& physical) {
@@ -1644,9 +1499,8 @@ Result RocksDBEngineCatalog::createTableShard(
   if (!is_new) {
     // Load Table stats
     RocksDBKeyWithBuffer key;
-    key.constructSchemaObject(RocksDBEntryType::Stats,
-                              collection.GetDatabaseId(),
-                              collection.GetSchemaId(), collection.GetId());
+    key.constructDefinition(collection.GetSchemaId(), RocksDBEntryType::Stats,
+                            collection.GetId());
     std::string value;
     _db->Get(rocksdb::ReadOptions{},
              RocksDBColumnFamilyManager::get(
@@ -1678,8 +1532,8 @@ void RocksDBEngineCatalog::createTable(const catalog::Table& c,
     _db->GetRootDB(),
     [&] {
       RocksDBKeyWithBuffer key;
-      key.constructSchemaObject(RocksDBEntryType::Collection, db_id, schema_id,
-                                collection_id);
+      key.constructDefinition(schema_id, RocksDBEntryType::Collection,
+                              collection_id);
       return key;
     },
     [&] {
@@ -1701,68 +1555,6 @@ void RocksDBEngineCatalog::createTable(const catalog::Table& c,
   }
 }
 
-void RocksDBEngineCatalog::prepareDropTable(ObjectId collection) {
-#ifdef SDB_CLUSTER
-  replicationManager()->dropCollection(collection);
-#endif
-}
-
-Result RocksDBEngineCatalog::DropIndex(const IndexTombstone& tombstone) {
-  SDB_ASSERT(tombstone.type != IndexType::Unknown);
-
-  rocksdb::DB* db = _db->GetRootDB();
-
-  auto r = DeleteIndexEstimate(db, tombstone.id.id());
-
-  if (!r.ok()) {
-    SDB_WARN("xxxxx", Logger::ENGINES,
-             "could not delete index estimate: ", r.errorMessage());
-  }
-
-  switch (tombstone.type) {
-    case IndexType::Inverted: {
-      auto path = search::InvertedIndexShard::GetPath(
-        tombstone.old_database, tombstone.old_schema, tombstone.id);
-      r = basics::SafeCall([&path] {
-        if (std::filesystem::exists(path)) {
-          std::filesystem::remove_all(path);
-        }
-      });
-      if (!r.ok()) {
-        return r;
-      }
-      break;
-    }
-    case IndexType::Secondary:
-      // TODO(codeworse): Implement secondary index erasure
-      break;
-    case IndexType::Unknown:
-      SDB_UNREACHABLE();
-  }
-  // Remove tombstone definition
-  r = DeleteDefinition(
-    db,
-    [&] {
-      RocksDBKeyWithBuffer key;
-      key.constructObject(RocksDBEntryType::IndexTombstone,
-                          id::kTombstoneDatabase, tombstone.id);
-      return key;
-    },
-    [] { return std::string_view{}; });
-
-  return r;
-}
-
-Result RocksDBEngineCatalog::DropIndexShard(ObjectId index_id) {
-  SDB_ASSERT(index_id.isSet());
-
-  RocksDBKeyWithBuffer key;
-  key.constructObject(RocksDBEntryType::IndexPhysical, id::kSystemDB, index_id);
-
-  rocksdb::WriteOptions wo;
-  return rocksutils::ConvertStatus(_db->GetRootDB()->Delete(wo, key.string()));
-}
-
 bool RocksDBEngineCatalog::UseRangeDelete(ObjectId id,
                                           uint64_t number_documents) {
   if (number_documents == kRead) {
@@ -1770,91 +1562,6 @@ bool RocksDBEngineCatalog::UseRangeDelete(ObjectId id,
     number_documents = cnt.added - cnt.removed;
   }
   return number_documents >= 32 * 1024;
-}
-
-Result RocksDBEngineCatalog::DropTable(const TableTombstone& tombstone) {
-  const bool use_range_delete =
-    UseRangeDelete(tombstone.table, tombstone.number_documents);
-  rocksdb::DB* db = _db->GetRootDB();
-
-  // Unregister collection metadata
-  auto r = DeleteTableMeta(db, tombstone);
-  if (!r.ok()) {
-    SDB_ERROR("xxxxx", Logger::ENGINES, "error removing collection meta-data: ",
-              r.errorMessage());  // continue regardless
-  }
-
-  // Delete documents
-  auto bounds = RocksDBKeyBounds::CollectionDocuments(tombstone.table.id());
-  r =
-    rocksutils::RemoveLargeRange(db, bounds.start(), bounds.end(),
-                                 bounds.columnFamily(), true, use_range_delete);
-  if (!r.ok()) {
-    // We try to remove all documents.
-    // If it does not work they cannot be accessed any more and leaked.
-    SDB_ERROR("xxxxx", Logger::ENGINES, "error removing collection data: ",
-              r.errorMessage());  // continue regardless
-  }
-
-  // Delete columns
-  auto [lower, upper] = connector::key_utils::CreateTableRange(tombstone.table);
-  auto* table_cf =
-    RocksDBColumnFamilyManager::get(RocksDBColumnFamilyManager::Family::Data);
-  r = rocksutils::RemoveLargeRange(db, lower, upper, table_cf, true,
-                                   true);  // TODO(gnusi): Check rows*columns
-  if (!r.ok()) {
-    // We try to remove all columns.
-    // If it does not work they cannot be accessed any more and leaked.
-    SDB_ERROR("xxxxx", Logger::ENGINES, "error removing table data: ",
-              r.errorMessage());  // continue regardless
-  }
-
-  // Remove tombstone definition
-  r = DeleteDefinition(
-    db,
-    [&] {
-      RocksDBKeyWithBuffer key;
-      key.constructObject(RocksDBEntryType::TableTombstone,
-                          id::kTombstoneDatabase, tombstone.table);
-      return key;
-    },
-    [] { return std::string_view{}; });
-
-  if (!r.ok()) {
-    return r;
-  }
-
-  // run compaction for data only if collection contained a considerable
-  // amount of documents. otherwise don't run compaction, because it will
-  // slow things down a lot, especially during tests that create/drop LOTS
-  // of collections
-  if (use_range_delete) {
-    compactRange(bounds);
-  }
-
-#ifdef SDB_DEV
-  // check if documents have been deleted
-  if (size_t num_docs = rocksutils::CountKeyRange(_db, bounds, nullptr, true);
-      num_docs > 0) {
-    SDB_THROW(ERROR_INTERNAL,
-              "deletion check in collection drop failed - not all documents "
-              "have been deleted. remaining: ",
-              num_docs);
-  }
-  // check if columns have been deleted
-  if (size_t num_values =
-        rocksutils::CountKeyRange(_db, lower, upper, table_cf, nullptr, true);
-      num_values > 0) {
-    SDB_THROW(ERROR_INTERNAL,
-              "deletion check in table drop failed - not all values have been "
-              "deleted. remaining: ",
-              num_values);
-  }
-#endif
-
-  // if we get here all documents / indexes are gone.
-  // We have no data garbage left.
-  return {};
 }
 
 void RocksDBEngineCatalog::ChangeTable(const catalog::Table& c,
@@ -1868,8 +1575,8 @@ void RocksDBEngineCatalog::ChangeTable(const catalog::Table& c,
     _db->GetRootDB(),
     [&] {
       RocksDBKeyWithBuffer key;
-      key.constructSchemaObject(RocksDBEntryType::Collection, db_id, schema_id,
-                                c.GetId());
+      key.constructDefinition(schema_id, RocksDBEntryType::Collection,
+                              c.GetId());
       return key;
     },
     [&] {
@@ -1903,8 +1610,8 @@ Result RocksDBEngineCatalog::RenameTable(const catalog::Table& c,
     _db->GetRootDB(),
     [&] {
       RocksDBKeyWithBuffer key;
-      key.constructSchemaObject(RocksDBEntryType::Collection, db_id,
-                                c.GetSchemaId(), cid);
+      key.constructDefinition(c.GetSchemaId(), RocksDBEntryType::Collection,
+                              cid);
       return key;
     },
     [&] {
@@ -1985,7 +1692,7 @@ Result RocksDBEngineCatalog::SyncTableStats(const catalog::Table& c,
   const auto db_id = c.GetDatabaseId();
   const auto cid = c.GetId();
   vpack::Builder b;
-  physical.GetTableStatsVPack(b);
+  physical.WriteInternal(b);
   auto value = RocksDBValue::Object(RocksDBEntryType::Stats, b.slice());
   RocksDBKeyWithBuffer key;
   key.constructSchemaObject(RocksDBEntryType::Stats, db_id, c.GetSchemaId(),
@@ -2512,6 +2219,26 @@ void RocksDBEngineCatalog::EnsureSystemDatabase() {
     SDB_FATAL("xxxxx", Logger::STARTUP,
               "unable to write schema marker: ", r.errorMessage());
   }
+}
+
+Result RocksDBEngineCatalog::DropObject(ObjectId parent_id,
+                                        RocksDBEntryType type, ObjectId id) {
+  return DeleteDefinition(
+    _db->GetRootDB(),
+    [parent_id, type, id] {
+      RocksDBKeyWithBuffer key;
+      key.constructDefinition(parent_id, type, id);
+      return key;
+    },
+    [&] { return std::string_view{}; });
+}
+
+Result RocksDBEngineCatalog::DropEntry(ObjectId parent_id,
+                                       RocksDBEntryType type) {
+  return VisitObjects(
+    parent_id, type, [&](rocksdb::Slice key, vpack::Slice value) {
+      return DropObject(parent_id, type, RocksDBKey::GetParentId(key));
+    });
 }
 
 DECLARE_GAUGE(rocksdb_cache_active_tables, uint64_t,
@@ -3212,58 +2939,6 @@ void RocksDBEngineCatalog::addCacheMetrics(
     _metrics_edge_cache_compressed_inserts.count(total_compressed_inserts);
     _metrics_edge_cache_empty_inserts.count(total_empty_inserts);
   }
-}
-
-Result DeleteTableMeta(rocksdb::DB* db, const TableTombstone& tombstone) {
-  rocksdb::ColumnFamilyHandle* const cf = RocksDBColumnFamilyManager::get(
-    RocksDBColumnFamilyManager::Family::Definitions);
-  rocksdb::WriteOptions wo;
-  ObjectId old_database = tombstone.old_database;
-  ObjectId old_schema = tombstone.old_schema;
-  ObjectId table = tombstone.table;
-
-  // Step 1. delete the document count
-  RocksDBKeyWithBuffer key;
-  key.constructCounterValue(table.id());
-  rocksdb::Status s = db->Delete(wo, cf, key.string());
-  if (!s.ok()) {
-    SDB_ERROR("xxxxx", Logger::ENGINES,
-              "could not delete counter value for collection with objectId '",
-              table.id(), "': ", s.ToString());
-    // try to remove the key generator value regardless
-  } else {
-    SDB_TRACE("xxxxx", Logger::ENGINES,
-              "deleted counter for collection with objectId '", table.id(),
-              "'");
-  }
-
-  key.constructKeyGeneratorValue(table.id());
-  s = db->Delete(wo, cf, key.string());
-  if (!s.ok() && !s.IsNotFound()) {
-    SDB_ERROR("xxxxx", Logger::ENGINES,
-              "could not delete key generator value: ", s.ToString());
-    return rocksutils::ConvertStatus(s);
-  }
-
-  key.constructRevisionTreeValue(table.id());
-  s = db->Delete(wo, cf, key.string());
-  if (!s.ok() && !s.IsNotFound()) {
-    SDB_ERROR("xxxxx", Logger::ENGINES,
-              "could not delete revision tree value: ", s.ToString());
-    return rocksutils::ConvertStatus(s);
-  }
-
-  // Delete table stats
-  key.constructSchemaObject(RocksDBEntryType::Stats, old_database, old_schema,
-                            table);
-  s = db->Delete(wo, cf, key.string());
-  if (!s.ok() && !s.IsNotFound()) {
-    SDB_ERROR("xxxxx", Logger::ENGINES,
-              "could not delete table stats: ", s.ToString());
-    return rocksutils::ConvertStatus(s);
-  }
-
-  return {};
 }
 
 Result DeleteIndexEstimate(rocksdb::DB* db, uint64_t object_id) {

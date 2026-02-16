@@ -52,6 +52,15 @@ class RocksDBKeyBounds {
                                         ObjectId database_id,
                                         ObjectId schema_id);
 
+  // New flat key format bounds: [parent_id | type | 0] to [parent_id | type |
+  // MAX]
+  static RocksDBKeyBounds DefinitionObjects(ObjectId parent_id,
+                                            RocksDBEntryType type);
+
+  // All children of a parent: [parent_id | 0x00 | 0] to [parent_id | 0xFF |
+  // MAX]
+  static RocksDBKeyBounds ChildDefinitions(ObjectId parent_id);
+
   // Bounds for all documents belonging to a specified collection
   static RocksDBKeyBounds CollectionDocuments(uint64_t object_id);
 

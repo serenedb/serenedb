@@ -26,6 +26,7 @@
 #include <atomic>
 
 #include "catalog/fwd.h"
+#include "catalog/object.h"
 #include "catalog/table_options.h"
 
 namespace vpack {
@@ -47,14 +48,14 @@ class Result;
 
 catalog::TableMeta MakeTableMeta(const catalog::Table& c);
 
-class TableShard {
+class TableShard : public catalog::Object {
  public:
   static constexpr double kDefaultLockTimeout = 10.0 * 60.0;
 
   virtual ~TableShard() = default;
 
   auto& GetMeta() const noexcept { return _collection_meta; }
-  auto GetId() const noexcept { return _collection_meta.id; }
+  auto GetTableId() const noexcept { return _collection_meta.id; }
 
   void UpdateNumRows(int64_t delta) {
     _num_rows.fetch_add(delta, std::memory_order_relaxed);
@@ -64,7 +65,7 @@ class TableShard {
     return {.num_rows = _num_rows.load(std::memory_order_relaxed)};
   }
 
-  void GetTableStatsVPack(vpack::Builder& builder) const {
+  void WriteInternal(vpack::Builder& builder) const {
     vpack::WriteTuple(builder, GetTableStats());
   }
 

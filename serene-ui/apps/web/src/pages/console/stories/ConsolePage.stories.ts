@@ -7,8 +7,8 @@ import { expect } from "vitest";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const TEST_CONNECTION_NAME = "test";
-const TEST_CONNECTION_PORT = "6363";
+//const TEST_CONNECTION_NAME = "test";
+//const TEST_CONNECTION_PORT = "6363";
 const VIEWPORT_WIDTH = 1200;
 const VIEWPORT_HEIGHT = 900;
 
@@ -17,7 +17,7 @@ const setConsistentViewport = async () => {
     await page.viewport(VIEWPORT_WIDTH, VIEWPORT_HEIGHT);
     return page;
 };
-
+/*
 const openConnectionsModal = async (canvasElement: HTMLElement) => {
     const canvas = within(canvasElement);
     const body = within(document.body);
@@ -43,6 +43,7 @@ const openConnectionsModal = async (canvasElement: HTMLElement) => {
 
     return { body, dialog };
 };
+{
 
 const ensureTestConnection = async (canvasElement: HTMLElement) => {
     const { body, dialog } = await openConnectionsModal(canvasElement);
@@ -76,7 +77,7 @@ const ensureTestConnection = async (canvasElement: HTMLElement) => {
 
     await userEvent.keyboard("{Escape}");
 };
-
+ */
 const meta = {
     component: ConsolePage,
     parameters: {
@@ -138,8 +139,8 @@ export const SupportModal: Story = {
         } as MatchImageSnapshotOptions);
     },
 };
-{
-    /*
+
+/*
 export const AddConnection: Story = {
     tags: ["test"],
     play: async ({ canvasElement }) => {
@@ -322,4 +323,3 @@ export const ExecuteCorrectQuery: Story = {
     },
 };
 */
-}

@@ -27,21 +27,33 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table_options.h"
 #include "common.h"
+#include "connector/primary_key.hpp"
 #include "rocksdb/db.h"
 #include "rocksdb/sst_file_writer.h"
 
 namespace sdb::connector {
 
+template<bool IsGeneratedPK>
 class SSTBlockBuilder {
  public:
   SSTBlockBuilder(int64_t generated_pk_counter, ObjectId table_id,
                   catalog::Column::Id column_id);
 
+  void SetRowIdx(size_t row_idx)
+    requires(!IsGeneratedPK)
+  {
+    _row_idx = row_idx;
+  }
+
+  void SetKeys(const primary_key::Keys* keys)
+    requires(!IsGeneratedPK)
+  {
+    _keys = keys;
+  }
+
   void AddEntry(std::span<const rocksdb::Slice> value_slices);
 
   bool ShouldFlush() const { return _cur.buffer.size() >= kFlushThreshold; }
-
-  bool IsGeneratedPK() const { return _generated_pk_counter > 0; }
 
   // Appends some block metadata as BlockBuilder does
   rocksdb::BlockFlushData Finish(
@@ -68,7 +80,9 @@ class SSTBlockBuilder {
 
   size_t AppendPK(Block& block);
 
-  static constexpr size_t kFlushThreshold = 64 * 1024;  // 1MB
+  size_t GetPKSize() const;
+
+  static constexpr size_t kFlushThreshold = 64 * 1024;  // 64 KB
   static constexpr size_t kPrefixSize =
     sizeof(ObjectId) + sizeof(catalog::Column::Id);
 
@@ -81,8 +95,14 @@ class SSTBlockBuilder {
   uint64_t _total_entry_cnt = 0;
 
   std::string _last_key_buffer;
+  size_t _row_idx = 0;
+  const primary_key::Keys* _keys = nullptr;
 };
 
+extern template class SSTBlockBuilder<true>;
+extern template class SSTBlockBuilder<false>;
+
+template<bool IsGeneratedPK>
 class SSTSinkWriter {
  public:
   SSTSinkWriter(ObjectId table_id, rocksdb::DB& db,
@@ -90,6 +110,26 @@ class SSTSinkWriter {
                 std::span<const ColumnInfo> columns);
 
   void SetColumnIndex(size_t column_idx) { _column_idx = column_idx; }
+
+  void SetRowIdx(size_t row_idx)
+    requires(!IsGeneratedPK)
+  {
+    SDB_ASSERT(_column_idx < _block_builders.size());
+    SDB_ASSERT(_column_idx < _block_builders.size());
+    if (_block_builders[_column_idx]) {
+      _block_builders[_column_idx]->SetRowIdx(row_idx);
+    }
+  }
+
+  void SetKeys(const primary_key::Keys* keys)
+    requires(!IsGeneratedPK)
+  {
+    for (auto& builder : _block_builders) {
+      if (builder) {
+        builder->SetKeys(keys);
+      }
+    }
+  }
 
   void Write(std::span<const rocksdb::Slice> cell_slices,
              std::string_view full_key);
@@ -105,10 +145,18 @@ class SSTSinkWriter {
   rocksdb::DB* _db;
   rocksdb::ColumnFamilyHandle* _cf;
   std::vector<std::unique_ptr<rocksdb::SstFileWriter>> _writers;
-  std::vector<std::unique_ptr<SSTBlockBuilder>> _block_builders;
+  std::vector<std::unique_ptr<SSTBlockBuilder<IsGeneratedPK>>> _block_builders;
   std::string _sst_directory;
   std::string _next_key_buffer;
   int64_t _column_idx = -1;
 };
+
+extern template class SSTSinkWriter<true>;
+extern template class SSTSinkWriter<false>;
+
+template<typename T>
+inline constexpr bool kIsSSTSinkWriter = false;
+template<bool IsGeneratedPK>
+inline constexpr bool kIsSSTSinkWriter<SSTSinkWriter<IsGeneratedPK>> = true;
 
 }  // namespace sdb::connector

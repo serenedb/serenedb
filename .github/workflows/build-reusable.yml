@@ -275,6 +275,7 @@ jobs:
             clang-format.diff
             vpack-tests.log
             iresearch-tests.log
+            sqllogic-tests.log
             serenedb-tests*.log
             fuerte-tests.log
             tests.log

@@ -9,7 +9,7 @@ services:
       - POSTGRES_DB=postgres
     volumes:
       - type: tmpfs
-        target: /var/lib/postgresql/data
+        target: /var/lib/postgresql
         tmpfs:
           size: 16G
     networks:
@@ -31,21 +31,10 @@ services:
     # It assumes that sanitizers and coverage dirs are created.
     # Executable 'serened' switches to 'serenedb' user. If required dirs are not created,
     # /serenedb dir owner is 'root' and it's impossible for 'serenedb' user to create directory there.
-    command: >
-        sh -c '
-          if ! id serenedb >/dev/null 2>&1; then
-            useradd serenedb &&
-            chown -R serenedb:serenedb /serenedb/sanitizers /serenedb/${BUILD_DIR:-build}/coverage
-          fi &&
-          exec /serenedb/${BUILD_DIR:-build}/bin/serened /tmp/serenedb_datadir \
-            --server.endpoint pgsql+tcp://0.0.0.0:7777 \
-            --server.endpoint tcp://0.0.0.0:8529 \
-            --server.authentication 0
-        '
     env_file:
       - "$WORKSPACE/docker.env"
     environment:
-      - BUILD_DIR=${BUILD_DIR:-build}
+      - BLD_DIR=${BUILD_DIR:-build}
     networks:
       - test-network
     healthcheck:
@@ -54,6 +43,17 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+    command: >
+        sh -c '
+          if ! id serenedb >/dev/null 2>&1; then
+            useradd serenedb &&
+            chown -R serenedb:serenedb /serenedb/sanitizers /serenedb/${BLD_DIR:-build}/coverage
+          fi &&
+          exec /serenedb/${BLD_DIR:-build}/bin/serened /tmp/serenedb_datadir \
+            --server.endpoint pgsql+tcp://0.0.0.0:7777 \
+            --server.endpoint tcp://0.0.0.0:8529 \
+            --server.authentication 0
+        '
 
   tests:
     image: rust:latest
@@ -65,9 +65,9 @@ services:
         condition: service_healthy
       serenedb-single:
         condition: service_healthy
-    command: sqllogic/run_serene_and_pg.sh
     networks:
       - test-network
+    command: sqllogic/run_serene_and_pg.sh
 
 networks:
   test-network:

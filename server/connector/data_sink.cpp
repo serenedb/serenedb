@@ -687,7 +687,7 @@ void RocksDBDataSinkBase<DataWriterType>::WriteFlatColumn(
         }
         if constexpr (MayHaveNulls) {
           if (flat_vector->isNullAt(idx)) {
-            WriteNull({}, current_row);
+            WriteNull(row_key, current_row);
             continue;
           }
         }

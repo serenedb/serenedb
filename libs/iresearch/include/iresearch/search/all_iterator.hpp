@@ -23,10 +23,8 @@
 #pragma once
 
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/cost.hpp"
-#include "iresearch/search/score.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 
@@ -34,8 +32,9 @@ namespace irs {
 
 class AllIterator : public DocIterator {
  public:
-  AllIterator(const SubReader& reader, const byte_type* query_stats,
-              const Scorers& order, uint64_t docs_count, score_t boost);
+  AllIterator(uint32_t docs_count, const byte_type* stats, score_t boost);
+
+  ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final;
 
   Attribute* GetMutable(TypeInfo::type_id id) noexcept final {
     return irs::GetMutable(_attrs, id);
@@ -57,6 +56,20 @@ class AllIterator : public DocIterator {
     return doc_value;
   }
 
+  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
+               ScoreCollector& collector) final {
+    // TODO(gnusi): optimize
+    CollectImpl(*this, scorer, fetcher, collector);
+  }
+
+  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
+                                      uint64_t* mask,
+                                      FillBlockScoreContext score,
+                                      FillBlockMatchContext match) final {
+    // TODO(gnusi): optimize
+    return FillBlockImpl(*this, min, max, mask, score, match);
+  }
+
   uint32_t count() noexcept final {
     auto& doc_value = std::get<DocAttr>(_attrs).value;
     if (doc_limits::eof(doc_value)) {
@@ -68,7 +81,10 @@ class AllIterator : public DocIterator {
   }
 
  private:
-  using Attributes = std::tuple<DocAttr, CostAttr, ScoreAttr>;
+  using Attributes = std::tuple<DocAttr, CostAttr>;
+
+  score_t _boost = {};
+  const byte_type* _stats = nullptr;
 
   doc_id_t _max_doc;  // largest valid doc_id
   Attributes _attrs;

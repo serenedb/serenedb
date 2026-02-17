@@ -1,0 +1,982 @@
+[
+  {
+    "seq": 280,
+    "category": "tech",
+    "topic": "database",
+    "content": "etl extract transform load pipeline batch",
+    "tags": "database,etl"
+  },
+  {
+    "seq": 281,
+    "category": "tech",
+    "topic": "search",
+    "content": "zero shot search transfer learning generalization",
+    "tags": "search,zeroshot"
+  },
+  {
+    "seq": 282,
+    "category": "tech",
+    "topic": "database",
+    "content": "elt extract load transform modern warehouse",
+    "tags": "database,elt"
+  },
+  {
+    "seq": 283,
+    "category": "tech",
+    "topic": "search",
+    "content": "few shot search limited labeled data learning",
+    "tags": "search,fewshot"
+  },
+  {
+    "seq": 284,
+    "category": "tech",
+    "topic": "database",
+    "content": "data pipeline orchestration airflow dagster prefect",
+    "tags": "database,pipeline"
+  },
+  {
+    "seq": 285,
+    "category": "science",
+    "topic": "physics",
+    "content": "bell inequality entanglement local hidden variable test",
+    "tags": "physics,bell"
+  },
+  {
+    "seq": 286,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "inductive effect electron withdrawing donating substituent",
+    "tags": "chemistry,inductive"
+  },
+  {
+    "seq": 287,
+    "category": "science",
+    "topic": "biology",
+    "content": "beta oxidation fatty acid acetyl coa catabolism",
+    "tags": "biology,beta"
+  },
+  {
+    "seq": 288,
+    "category": "science",
+    "topic": "physics",
+    "content": "quantum decoherence measurement environment interaction classical",
+    "tags": "physics,decoherence"
+  },
+  {
+    "seq": 289,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "mesomeric effect resonance electron delocalization conjugation",
+    "tags": "chemistry,mesomeric"
+  },
+  {
+    "seq": 290,
+    "category": "tech",
+    "topic": "database",
+    "content": "streaming analytics real time event processing kafka",
+    "tags": "database,streaming"
+  },
+  {
+    "seq": 291,
+    "category": "tech",
+    "topic": "search",
+    "content": "contrastive learning representation self supervised",
+    "tags": "search,contrastive"
+  },
+  {
+    "seq": 292,
+    "category": "tech",
+    "topic": "database",
+    "content": "batch processing hadoop spark large scale offline",
+    "tags": "database,batch"
+  },
+  {
+    "seq": 293,
+    "category": "tech",
+    "topic": "search",
+    "content": "retrieval augmented generation rag llm context",
+    "tags": "search,rag"
+  },
+  {
+    "seq": 294,
+    "category": "tech",
+    "topic": "database",
+    "content": "lambda architecture batch speed serving layer",
+    "tags": "database,lambda"
+  },
+  {
+    "seq": 295,
+    "category": "science",
+    "topic": "physics",
+    "content": "quantum teleportation entanglement state transfer information",
+    "tags": "physics,teleportation"
+  },
+  {
+    "seq": 296,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "steric effect spatial hindrance bulky group repulsion",
+    "tags": "chemistry,steric"
+  },
+  {
+    "seq": 297,
+    "category": "science",
+    "topic": "biology",
+    "content": "gluconeogenesis glucose synthesis pyruvate precursor liver",
+    "tags": "biology,gluconeogenesis"
+  },
+  {
+    "seq": 298,
+    "category": "science",
+    "topic": "physics",
+    "content": "quantum computing qubit superposition gate algorithm",
+    "tags": "physics,computing"
+  },
+  {
+    "seq": 299,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "chelate effect bidentate ligand stability entropy",
+    "tags": "chemistry,chelate"
+  },
+  {
+    "seq": 300,
+    "category": "tech",
+    "topic": "database",
+    "content": "kappa architecture streaming only real time simple",
+    "tags": "database,kappa"
+  },
+  {
+    "seq": 301,
+    "category": "tech",
+    "topic": "search",
+    "content": "instruction tuning llm fine tuning task specific",
+    "tags": "search,instruction"
+  },
+  {
+    "seq": 302,
+    "category": "tech",
+    "topic": "database",
+    "content": "data lake raw unstructured schema on read",
+    "tags": "database,datalake"
+  },
+  {
+    "seq": 303,
+    "category": "tech",
+    "topic": "search",
+    "content": "prompt engineering llm input optimization technique",
+    "tags": "search,prompt"
+  },
+  {
+    "seq": 304,
+    "category": "tech",
+    "topic": "database",
+    "content": "data warehouse structured schema on write olap",
+    "tags": "database,warehouse"
+  },
+  {
+    "seq": 305,
+    "category": "science",
+    "topic": "physics",
+    "content": "quantum supremacy advantage classical impossible problem",
+    "tags": "physics,supremacy"
+  },
+  {
+    "seq": 306,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "trans effect ligand substitution kinetics platinum",
+    "tags": "chemistry,trans"
+  },
+  {
+    "seq": 307,
+    "category": "science",
+    "topic": "biology",
+    "content": "urea cycle ammonia detoxification nitrogen excretion",
+    "tags": "biology,urea"
+  },
+  {
+    "seq": 308,
+    "category": "science",
+    "topic": "physics",
+    "content": "topological quantum computing anyons braiding error",
+    "tags": "physics,topological"
+  },
+  {
+    "seq": 309,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "crystal field theory d orbital splitting color",
+    "tags": "chemistry,crystalfield"
+  },
+  {
+    "seq": 310,
+    "category": "tech",
+    "topic": "database",
+    "content": "data fabric unified architecture intelligent automation",
+    "tags": "database,fabric"
+  },
+  {
+    "seq": 311,
+    "category": "tech",
+    "topic": "search",
+    "content": "chain of thought reasoning step by step",
+    "tags": "search,chainofthought"
+  },
+  {
+    "seq": 312,
+    "category": "tech",
+    "topic": "database",
+    "content": "reverse etl operational analytics activation sync",
+    "tags": "database,reverseetl"
+  },
+  {
+    "seq": 313,
+    "category": "tech",
+    "topic": "search",
+    "content": "tool augmented llm api function calling",
+    "tags": "search,toolaugmented"
+  },
+  {
+    "seq": 314,
+    "category": "tech",
+    "topic": "database",
+    "content": "feature store ml feature engineering serving online",
+    "tags": "database,featurestore"
+  },
+  {
+    "seq": 315,
+    "category": "science",
+    "topic": "physics",
+    "content": "quantum error correction fault tolerant stabilizer",
+    "tags": "physics,errorcorrection"
+  },
+  {
+    "seq": 316,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "ligand field theory molecular orbital metal complex",
+    "tags": "chemistry,ligandfield"
+  },
+  {
+    "seq": 317,
+    "category": "science",
+    "topic": "biology",
+    "content": "amino acid catabolism transamination deamination carbon",
+    "tags": "biology,aminoacid"
+  },
+  {
+    "seq": 318,
+    "category": "science",
+    "topic": "physics",
+    "content": "quantum cryptography key distribution bb84 protocol",
+    "tags": "physics,cryptography"
+  },
+  {
+    "seq": 319,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "jahn teller distortion degenerate orbital geometry",
+    "tags": "chemistry,jahnteller"
+  },
+  {
+    "seq": 320,
+    "category": "tech",
+    "topic": "database",
+    "content": "mlops model deployment monitoring versioning pipeline",
+    "tags": "database,mlops"
+  },
+  {
+    "seq": 321,
+    "category": "tech",
+    "topic": "search",
+    "content": "agent based search autonomous tool use reasoning",
+    "tags": "search,agent"
+  },
+  {
+    "seq": 322,
+    "category": "tech",
+    "topic": "database",
+    "content": "dataops automation testing ci cd data pipeline",
+    "tags": "database,dataops"
+  },
+  {
+    "seq": 323,
+    "category": "tech",
+    "topic": "search",
+    "content": "multi hop reasoning complex question decomposition",
+    "tags": "search,multihop"
+  },
+  {
+    "seq": 324,
+    "category": "tech",
+    "topic": "database",
+    "content": "observability logging tracing metrics monitoring stack",
+    "tags": "database,observability"
+  },
+  {
+    "seq": 325,
+    "category": "science",
+    "topic": "physics",
+    "content": "quantum sensing metrology precision measurement magnetic",
+    "tags": "physics,sensing"
+  },
+  {
+    "seq": 326,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "nephelauxetic effect covalent bonding cloud expansion",
+    "tags": "chemistry,nephelauxetic"
+  },
+  {
+    "seq": 327,
+    "category": "science",
+    "topic": "biology",
+    "content": "nucleotide synthesis de novo salvage pathway purine",
+    "tags": "biology,nucleotide"
+  },
+  {
+    "seq": 328,
+    "category": "science",
+    "topic": "physics",
+    "content": "quantum simulation many body hamiltonian analog digital",
+    "tags": "physics,simulation"
+  },
+  {
+    "seq": 329,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "spectrochemical series ligand field strength splitting",
+    "tags": "chemistry,spectrochemical"
+  },
+  {
+    "seq": 330,
+    "category": "tech",
+    "topic": "database",
+    "content": "gitops infrastructure as code declarative version",
+    "tags": "database,gitops"
+  },
+  {
+    "seq": 331,
+    "category": "tech",
+    "topic": "search",
+    "content": "document chunking segmentation overlap retrieval context",
+    "tags": "search,chunking"
+  },
+  {
+    "seq": 332,
+    "category": "tech",
+    "topic": "database",
+    "content": "infrastructure as code terraform pulumi cloudformation",
+    "tags": "database,iac"
+  },
+  {
+    "seq": 333,
+    "category": "tech",
+    "topic": "search",
+    "content": "embedding model sentence transformer dense vector",
+    "tags": "search,embedding"
+  },
+  {
+    "seq": 334,
+    "category": "tech",
+    "topic": "database",
+    "content": "cloud native kubernetes container microservice scalable",
+    "tags": "database,cloudnative"
+  },
+  {
+    "seq": 335,
+    "category": "science",
+    "topic": "physics",
+    "content": "quantum memory storage retrieval coherence time",
+    "tags": "physics,memory"
+  },
+  {
+    "seq": 336,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "spin only magnetic moment unpaired electron formula",
+    "tags": "chemistry,spinonly"
+  },
+  {
+    "seq": 337,
+    "category": "science",
+    "topic": "biology",
+    "content": "lipid metabolism fatty acid synthesis elongation",
+    "tags": "biology,lipid"
+  },
+  {
+    "seq": 338,
+    "category": "science",
+    "topic": "physics",
+    "content": "quantum network node entanglement distribution repeater",
+    "tags": "physics,network"
+  },
+  {
+    "seq": 339,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "magnetic susceptibility paramagnetic diamagnetic ferromagnetic material",
+    "tags": "chemistry,magnetic"
+  },
+  {
+    "seq": 340,
+    "category": "tech",
+    "topic": "database",
+    "content": "serverless database aurora dynamodb scalable managed",
+    "tags": "database,serverless"
+  },
+  {
+    "seq": 341,
+    "category": "tech",
+    "topic": "search",
+    "content": "cross encoder bi encoder trade off accuracy",
+    "tags": "search,encoder"
+  },
+  {
+    "seq": 342,
+    "category": "tech",
+    "topic": "database",
+    "content": "edge computing distributed processing latency proximity",
+    "tags": "database,edge"
+  },
+  {
+    "seq": 343,
+    "category": "tech",
+    "topic": "search",
+    "content": "late interaction colbert efficient neural retrieval",
+    "tags": "search,lateinteraction"
+  },
+  {
+    "seq": 344,
+    "category": "tech",
+    "topic": "database",
+    "content": "fog computing intermediate layer cloud edge hybrid",
+    "tags": "database,fog"
+  },
+  {
+    "seq": 345,
+    "category": "science",
+    "topic": "physics",
+    "content": "quantum internet secure communication teleportation global",
+    "tags": "physics,internet"
+  },
+  {
+    "seq": 346,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "electron spin resonance esr paramagnetic detection",
+    "tags": "chemistry,esr"
+  },
+  {
+    "seq": 347,
+    "category": "science",
+    "topic": "biology",
+    "content": "cholesterol synthesis mevalonate pathway steroid precursor",
+    "tags": "biology,cholesterol"
+  },
+  {
+    "seq": 348,
+    "category": "science",
+    "topic": "physics",
+    "content": "quantum radar imaging stealth detection entangled",
+    "tags": "physics,radar"
+  },
+  {
+    "seq": 349,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "nuclear magnetic resonance nmr chemical environment shift",
+    "tags": "chemistry,nmr"
+  },
+  {
+    "seq": 350,
+    "category": "tech",
+    "topic": "database",
+    "content": "polyglot persistence multiple database type specialized",
+    "tags": "database,polyglot"
+  },
+  {
+    "seq": 351,
+    "category": "tech",
+    "topic": "search",
+    "content": "query reformulation rewriting clarification improvement",
+    "tags": "search,reformulation"
+  },
+  {
+    "seq": 352,
+    "category": "tech",
+    "topic": "database",
+    "content": "data sovereignty compliance gdpr regional storage",
+    "tags": "database,sovereignty"
+  },
+  {
+    "seq": 353,
+    "category": "tech",
+    "topic": "search",
+    "content": "faceted navigation filtering drill down refinement",
+    "tags": "search,faceted"
+  },
+  {
+    "seq": 354,
+    "category": "tech",
+    "topic": "database",
+    "content": "data residency location requirement regulatory local",
+    "tags": "database,residency"
+  },
+  {
+    "seq": 355,
+    "category": "science",
+    "topic": "physics",
+    "content": "quantum illumination target detection noise enhanced",
+    "tags": "physics,illumination"
+  },
+  {
+    "seq": 356,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "infrared spectroscopy ir molecular vibration functional",
+    "tags": "chemistry,infrared"
+  },
+  {
+    "seq": 357,
+    "category": "science",
+    "topic": "biology",
+    "content": "signal transduction cascade receptor second messenger",
+    "tags": "biology,signaling"
+  },
+  {
+    "seq": 358,
+    "category": "science",
+    "topic": "physics",
+    "content": "quantum clock atomic frequency standard precision",
+    "tags": "physics,clock"
+  },
+  {
+    "seq": 359,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "raman spectroscopy scattering polarizability molecular fingerprint",
+    "tags": "chemistry,raman"
+  },
+  {
+    "seq": 360,
+    "category": "tech",
+    "topic": "database",
+    "content": "data encryption at rest in transit key",
+    "tags": "database,encryption"
+  },
+  {
+    "seq": 361,
+    "category": "tech",
+    "topic": "search",
+    "content": "entity resolution deduplication matching record linkage",
+    "tags": "search,entity"
+  },
+  {
+    "seq": 362,
+    "category": "tech",
+    "topic": "database",
+    "content": "access control rbac abac permission authorization",
+    "tags": "database,accesscontrol"
+  },
+  {
+    "seq": 363,
+    "category": "tech",
+    "topic": "search",
+    "content": "question answering extractive generative span passage",
+    "tags": "search,qa"
+  },
+  {
+    "seq": 364,
+    "category": "tech",
+    "topic": "database",
+    "content": "audit logging compliance trail forensics tracking",
+    "tags": "database,audit"
+  },
+  {
+    "seq": 365,
+    "category": "science",
+    "topic": "physics",
+    "content": "quantum battery energy storage charging advantage",
+    "tags": "physics,battery"
+  },
+  {
+    "seq": 366,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "uv visible spectroscopy absorption electronic transition",
+    "tags": "chemistry,uvvis"
+  },
+  {
+    "seq": 367,
+    "category": "science",
+    "topic": "biology",
+    "content": "apoptosis programmed cell death caspase pathway",
+    "tags": "biology,apoptosis"
+  },
+  {
+    "seq": 368,
+    "category": "science",
+    "topic": "physics",
+    "content": "quantum thermodynamics heat engine efficiency limit",
+    "tags": "physics,thermodynamics"
+  },
+  {
+    "seq": 369,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "fluorescence emission excited state photon relaxation",
+    "tags": "chemistry,fluorescence"
+  },
+  {
+    "seq": 370,
+    "category": "tech",
+    "topic": "database",
+    "content": "data masking anonymization pseudonymization privacy protection",
+    "tags": "database,masking"
+  },
+  {
+    "seq": 371,
+    "category": "tech",
+    "topic": "search",
+    "content": "passage retrieval document ranking granular context",
+    "tags": "search,passage"
+  },
+  {
+    "seq": 372,
+    "category": "tech",
+    "topic": "database",
+    "content": "tokenization sensitive data vault pci compliance",
+    "tags": "database,tokenization"
+  },
+  {
+    "seq": 373,
+    "category": "tech",
+    "topic": "search",
+    "content": "negative sampling contrastive loss hard example",
+    "tags": "search,negative"
+  },
+  {
+    "seq": 374,
+    "category": "tech",
+    "topic": "database",
+    "content": "homomorphic encryption compute encrypted data privacy",
+    "tags": "database,homomorphic"
+  },
+  {
+    "seq": 375,
+    "category": "science",
+    "topic": "physics",
+    "content": "quantum machine learning variational circuit classifier",
+    "tags": "physics,machinelearning"
+  },
+  {
+    "seq": 376,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "phosphorescence triplet state intersystem crossing long",
+    "tags": "chemistry,phosphorescence"
+  },
+  {
+    "seq": 377,
+    "category": "science",
+    "topic": "biology",
+    "content": "autophagy cellular recycling lysosome degradation stress",
+    "tags": "biology,autophagy"
+  },
+  {
+    "seq": 378,
+    "category": "science",
+    "topic": "physics",
+    "content": "quantum optimization annealing combinatorial problem solver",
+    "tags": "physics,optimization"
+  },
+  {
+    "seq": 379,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "chemiluminescence chemical reaction light emission excited",
+    "tags": "chemistry,chemiluminescence"
+  },
+  {
+    "seq": 380,
+    "category": "tech",
+    "topic": "database",
+    "content": "differential privacy noise statistical protection aggregate",
+    "tags": "database,differential"
+  },
+  {
+    "seq": 381,
+    "category": "tech",
+    "topic": "search",
+    "content": "knowledge distillation teacher student model compression",
+    "tags": "search,distillation"
+  },
+  {
+    "seq": 382,
+    "category": "tech",
+    "topic": "database",
+    "content": "secure multi party computation collaborative privacy",
+    "tags": "database,mpc"
+  },
+  {
+    "seq": 383,
+    "category": "tech",
+    "topic": "search",
+    "content": "quantization model efficiency integer precision speed",
+    "tags": "search,quantization"
+  },
+  {
+    "seq": 384,
+    "category": "tech",
+    "topic": "database",
+    "content": "zero knowledge proof verification without revealing",
+    "tags": "database,zeroknowledge"
+  },
+  {
+    "seq": 385,
+    "category": "science",
+    "topic": "physics",
+    "content": "quantum chemistry molecular simulation electronic structure",
+    "tags": "physics,chemistry"
+  },
+  {
+    "seq": 386,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "bioluminescence living organism light enzyme luciferin",
+    "tags": "chemistry,bioluminescence"
+  },
+  {
+    "seq": 387,
+    "category": "science",
+    "topic": "biology",
+    "content": "necrosis cell death injury inflammation damage",
+    "tags": "biology,necrosis"
+  },
+  {
+    "seq": 388,
+    "category": "science",
+    "topic": "physics",
+    "content": "quantum finance option pricing portfolio optimization",
+    "tags": "physics,finance"
+  },
+  {
+    "seq": 389,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "electrochemiluminescence ecl electrode electron transfer emission",
+    "tags": "chemistry,ecl"
+  },
+  {
+    "seq": 390,
+    "category": "tech",
+    "topic": "database",
+    "content": "trusted execution environment tee secure enclave",
+    "tags": "database,tee"
+  },
+  {
+    "seq": 391,
+    "category": "tech",
+    "topic": "search",
+    "content": "pruning model sparsity weight removal efficiency",
+    "tags": "search,pruning"
+  },
+  {
+    "seq": 392,
+    "category": "tech",
+    "topic": "database",
+    "content": "confidential computing protected memory attestation trust",
+    "tags": "database,confidential"
+  },
+  {
+    "seq": 393,
+    "category": "tech",
+    "topic": "search",
+    "content": "caching retrieval results latency reduction speed",
+    "tags": "search,caching"
+  },
+  {
+    "seq": 394,
+    "category": "tech",
+    "topic": "database",
+    "content": "data lineage provenance tracking origin transformation",
+    "tags": "database,lineage"
+  },
+  {
+    "seq": 395,
+    "category": "science",
+    "topic": "physics",
+    "content": "quantum biology photosynthesis navigation magnetoreception",
+    "tags": "physics,biology"
+  },
+  {
+    "seq": 396,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "photocatalysis light driven reaction semiconductor surface",
+    "tags": "chemistry,photocatalysis"
+  },
+  {
+    "seq": 397,
+    "category": "science",
+    "topic": "biology",
+    "content": "senescence aging cell cycle arrest telomere",
+    "tags": "biology,senescence"
+  },
+  {
+    "seq": 398,
+    "category": "science",
+    "topic": "physics",
+    "content": "quantum gravity loop string spacetime discrete",
+    "tags": "physics,gravity"
+  },
+  {
+    "seq": 399,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "electrocatalysis electrode surface reaction rate overpotential",
+    "tags": "chemistry,electrocatalysis"
+  },
+  {
+    "seq": 400,
+    "category": "tech",
+    "topic": "database",
+    "content": "schema evolution migration versioning backward compatible",
+    "tags": "database,schema"
+  },
+  {
+    "seq": 401,
+    "category": "tech",
+    "topic": "search",
+    "content": "index compression posting list dictionary encoding",
+    "tags": "search,compression"
+  },
+  {
+    "seq": 402,
+    "category": "tech",
+    "topic": "database",
+    "content": "data migration strategy cutover parallel validation",
+    "tags": "database,migration"
+  },
+  {
+    "seq": 403,
+    "category": "tech",
+    "topic": "search",
+    "content": "incremental indexing update delta change tracking",
+    "tags": "search,incremental"
+  },
+  {
+    "seq": 404,
+    "category": "tech",
+    "topic": "database",
+    "content": "database testing unit integration performance load",
+    "tags": "database,testing"
+  },
+  {
+    "seq": 405,
+    "category": "science",
+    "topic": "physics",
+    "content": "holographic principle information surface area entropy",
+    "tags": "physics,holographic"
+  },
+  {
+    "seq": 406,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "heterogeneous catalysis solid surface adsorption active",
+    "tags": "chemistry,heterogeneous"
+  },
+  {
+    "seq": 407,
+    "category": "science",
+    "topic": "biology",
+    "content": "stem cell differentiation pluripotent regeneration tissue",
+    "tags": "biology,stemcell"
+  },
+  {
+    "seq": 408,
+    "category": "science",
+    "topic": "physics",
+    "content": "ads cft correspondence anti de sitter conformal",
+    "tags": "physics,adscft"
+  },
+  {
+    "seq": 409,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "homogeneous catalysis single phase solution coordination",
+    "tags": "chemistry,homogeneous"
+  },
+  {
+    "seq": 410,
+    "category": "tech",
+    "topic": "database",
+    "content": "chaos engineering fault injection resilience testing",
+    "tags": "database,chaos"
+  },
+  {
+    "seq": 411,
+    "category": "tech",
+    "topic": "search",
+    "content": "distributed search sharding replication consistency availability",
+    "tags": "search,distributed"
+  },
+  {
+    "seq": 412,
+    "category": "tech",
+    "topic": "database",
+    "content": "disaster recovery rpo rto backup restore strategy",
+    "tags": "database,disaster"
+  },
+  {
+    "seq": 413,
+    "category": "tech",
+    "topic": "search",
+    "content": "search quality evaluation metrics precision recall",
+    "tags": "search,quality"
+  },
+  {
+    "seq": 414,
+    "category": "tech",
+    "topic": "database",
+    "content": "high availability clustering failover redundancy uptime",
+    "tags": "database,availability"
+  },
+  {
+    "seq": 415,
+    "category": "science",
+    "topic": "physics",
+    "content": "black hole information paradox firewall complementarity",
+    "tags": "physics,information"
+  },
+  {
+    "seq": 416,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "enzyme catalysis biocatalyst specificity turnover number",
+    "tags": "chemistry,enzyme"
+  },
+  {
+    "seq": 417,
+    "category": "science",
+    "topic": "biology",
+    "content": "cancer oncogene tumor suppressor mutation proliferation",
+    "tags": "biology,cancer"
+  },
+  {
+    "seq": 418,
+    "category": "science",
+    "topic": "physics",
+    "content": "cosmological constant dark energy vacuum acceleration",
+    "tags": "physics,cosmological"
+  },
+  {
+    "seq": 419,
+    "category": "science",
+    "topic": "chemistry",
+    "content": "green chemistry sustainable synthesis atom economy waste",
+    "tags": "chemistry,green"
+  }
+]

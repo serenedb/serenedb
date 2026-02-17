@@ -1,5 +1,5 @@
 add_executable(search-benchmark-game-build build_index.cpp)
-target_link_libraries(search-benchmark-game-build sereneserver)
+target_link_libraries(search-benchmark-game-build iresearch-static simdjson)
 
 add_executable(search-benchmark-game-query do_query.cpp)
 

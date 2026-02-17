@@ -32,18 +32,17 @@ namespace sdb::connector::search {
 
 class SearchRemoveFilterBase;
 
-// BaseImpl (WriteImpl, finish impl)
-
-class SearchSinkInsertBaseImpl {
+class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
  public:
-  SearchSinkInsertBaseImpl(irs::IndexWriter::Transaction& trx);
+  SearchSinkInsertBaseImpl(irs::IndexWriter::Transaction& trx,
+                           std::span<const catalog::Column::Id> columns);
 
   void InitImpl(size_t batch_size);
 
   void WriteImpl(std::span<const rocksdb::Slice> cell_slices,
                  std::string_view full_key);
 
-  bool SwitchColumnImpl(velox::TypeKind kind, bool have_nulls,
+  bool SwitchColumnImpl(const velox::Type& type, bool have_nulls,
                         catalog::Column::Id column_id);
   void FinishImpl();
 
@@ -130,6 +129,7 @@ class SearchSinkInsertBaseImpl {
   std::string _null_name_buffer;
   irs::IndexWriter::Transaction& _trx;
   std::optional<irs::IndexWriter::Document> _document;
+
   Writer _current_writer;
   bool _emit_pk{true};
 };
@@ -151,17 +151,18 @@ class SearchSinkDeleteBaseImpl {
   std::shared_ptr<SearchRemoveFilterBase> _remove_filter;
 };
 
-class SearchSinkInsertWriter final : public SinkInsertWriter,
+class SearchSinkInsertWriter final : public SinkIndexWriter,
                                      public SearchSinkInsertBaseImpl {
  public:
-  SearchSinkInsertWriter(irs::IndexWriter::Transaction& trx)
-    : SearchSinkInsertBaseImpl(trx) {}
+  SearchSinkInsertWriter(irs::IndexWriter::Transaction& trx,
+                         std::span<const catalog::Column::Id> columns)
+    : SearchSinkInsertBaseImpl{trx, columns} {}
 
   void Init(size_t batch_size) final { InitImpl(batch_size); }
 
-  bool SwitchColumn(velox::TypeKind kind, bool have_nulls,
+  bool SwitchColumn(const velox::Type& type, bool have_nulls,
                     catalog::Column::Id column_id) final {
-    return SwitchColumnImpl(kind, have_nulls, column_id);
+    return SwitchColumnImpl(type, have_nulls, column_id);
   }
 
   void Write(std::span<const rocksdb::Slice> cell_slices,
@@ -174,11 +175,11 @@ class SearchSinkInsertWriter final : public SinkInsertWriter,
   void Abort() final { AbortImpl(); }
 };
 
-class SearchSinkDeleteWriter final : public SinkDeleteWriter,
+class SearchSinkDeleteWriter final : public SinkIndexWriter,
                                      public SearchSinkDeleteBaseImpl {
  public:
   SearchSinkDeleteWriter(irs::IndexWriter::Transaction& trx)
-    : SearchSinkDeleteBaseImpl(trx) {}
+    : SearchSinkDeleteBaseImpl{trx} {}
 
   void Init(size_t batch_size) final { InitImpl(batch_size); }
 
@@ -189,21 +190,22 @@ class SearchSinkDeleteWriter final : public SinkDeleteWriter,
   void Abort() final { AbortImpl(); }
 };
 
-class SearchSinkUpdateWriter final : public SinkUpdateWriter,
+class SearchSinkUpdateWriter final : public SinkIndexWriter,
                                      public SearchSinkInsertBaseImpl,
                                      public SearchSinkDeleteBaseImpl {
  public:
-  SearchSinkUpdateWriter(irs::IndexWriter::Transaction& trx)
-    : SearchSinkInsertBaseImpl(trx), SearchSinkDeleteBaseImpl(trx) {}
+  SearchSinkUpdateWriter(irs::IndexWriter::Transaction& trx,
+                         std::span<const catalog::Column::Id> columns)
+    : SearchSinkInsertBaseImpl{trx, columns}, SearchSinkDeleteBaseImpl{trx} {}
 
   void Init(size_t batch_size) final {
     SearchSinkInsertBaseImpl::InitImpl(batch_size);
     SearchSinkDeleteBaseImpl::InitImpl(batch_size);
   }
 
-  bool SwitchColumn(velox::TypeKind kind, bool have_nulls,
+  bool SwitchColumn(const velox::Type& type, bool have_nulls,
                     catalog::Column::Id column_id) final {
-    return SwitchColumnImpl(kind, have_nulls, column_id);
+    return SwitchColumnImpl(type, have_nulls, column_id);
   }
 
   void Write(std::span<const rocksdb::Slice> cell_slices,
@@ -224,11 +226,6 @@ class SearchSinkUpdateWriter final : public SinkUpdateWriter,
   }
 
   void DeleteRow(std::string_view row_key) final { DeleteRowImpl(row_key); }
-
-  bool IsIndexed(catalog::Column::Id column_id) const noexcept final {
-    // TODO(Dronplane): implement proper check when we have metadata
-    return true;
-  }
 };
 
 }  // namespace sdb::connector::search

@@ -58,7 +58,25 @@ class Exclusion : public DocIterator {
     return converge(incl);
   }
 
-  uint32_t count() final { return Count(*this); }
+  ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
+    return _incl->PrepareScore(ctx);
+  }
+
+  void FetchScoreArgs(uint16_t index) final { _incl->FetchScoreArgs(index); }
+
+  uint32_t count() final { return CountImpl(*this); }
+
+  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
+               ScoreCollector& collector) final {
+    CollectImpl(*this, scorer, fetcher, collector);
+  }
+
+  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
+                                      uint64_t* mask,
+                                      FillBlockScoreContext score,
+                                      FillBlockMatchContext match) final {
+    return FillBlockImpl(*this, min, max, mask, score, match);
+  }
 
  private:
   doc_id_t converge(doc_id_t incl) {

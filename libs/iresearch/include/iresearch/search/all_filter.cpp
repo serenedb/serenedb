@@ -26,17 +26,14 @@
 
 namespace irs {
 
-// Compiled all_filter that returns all documents
 class AllQuery : public Filter::Query {
  public:
   explicit AllQuery(bstring&& stats, score_t boost)
     : _stats{std::move(stats)}, _boost{boost} {}
 
   DocIterator::ptr execute(const ExecutionContext& ctx) const final {
-    auto& rdr = ctx.segment;
-
-    return memory::make_managed<AllIterator>(rdr, _stats.c_str(), ctx.scorers,
-                                             rdr.docs_count(), _boost);
+    return memory::make_managed<AllIterator>(ctx.segment.docs_count(),
+                                             _stats.c_str(), _boost);
   }
 
   void visit(const SubReader&, PreparedStateVisitor&, score_t) const final {
@@ -51,13 +48,11 @@ class AllQuery : public Filter::Query {
 };
 
 Filter::Query::ptr All::prepare(const PrepareContext& ctx) const {
-  // skip field-level/term-level statistics because there are no explicit
-  // fields/terms, but still collect index-level statistics
-  // i.e. all fields and terms implicitly match
-  bstring stats(ctx.scorers.stats_size(), 0);
-  auto* stats_buf = stats.data();
+  bstring stats(GetStatsSize(ctx.scorer), 0);
 
-  PrepareCollectors(ctx.scorers.buckets(), stats_buf);
+  if (ctx.scorer) {
+    ctx.scorer->collect(stats.data(), nullptr, nullptr);
+  }
 
   return memory::make_tracked<AllQuery>(ctx.memory, std::move(stats),
                                         ctx.boost * Boost());

@@ -22,9 +22,12 @@
 
 #pragma once
 
+#include <absl/functional/any_invocable.h>
+
 #include "iresearch/formats/formats.hpp"
 #include "iresearch/index/index_reader_options.hpp"
-#include "iresearch/utils/iterator.hpp"
+#include "iresearch/index/iterators.hpp"
+#include "iresearch/types.hpp"
 
 namespace irs {
 

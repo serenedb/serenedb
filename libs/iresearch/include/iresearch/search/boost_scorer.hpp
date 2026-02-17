@@ -23,6 +23,7 @@
 #pragma once
 
 #include "iresearch/index/field_meta.hpp"
+#include "iresearch/search/scorer.hpp"
 #include "scorers.hpp"
 
 namespace irs {
@@ -34,11 +35,7 @@ struct BoostScore final : ScorerBase<BoostScore, void> {
 
   static void init();
 
-  ScoreFunction PrepareScorer(const ColumnProvider& /*segment*/,
-                              const FieldProperties& /*meta*/,
-                              const byte_type* /*stats*/,
-                              const AttributeProvider& attrs,
-                              score_t boost) const final;
+  ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
 
   IndexFeatures GetIndexFeatures() const noexcept final {
     return IndexFeatures::None;

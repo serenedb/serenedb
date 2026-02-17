@@ -28,7 +28,6 @@
 #include "iresearch/search/boolean_query.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/terms_filter.hpp"
-#include "min_match_disjunction.hpp"
 #include "prepared_state_visitor.hpp"
 
 namespace irs {
@@ -221,7 +220,7 @@ Filter::Query::ptr And::PrepareBoolean(std::vector<const Filter*>& incl,
       // substitute new_boost back we will get ( boost * OR_BOOST * ALL_BOOST +
       // boost * OR_BOOST * LEFT_BOOST) - original non-optimized boost value
       auto left_boost = (*incl.begin())->BoostImpl();
-      if (Boost() != 0 && left_boost != 0 && !sub_ctx.scorers.empty()) {
+      if (Boost() != 0 && left_boost != 0 && sub_ctx.scorer) {
         sub_ctx.boost = (sub_ctx.boost * Boost() * all_boost +
                          sub_ctx.boost * Boost() * left_boost) /
                         (left_boost * Boost());
@@ -295,8 +294,7 @@ Filter::Query::ptr Or::PrepareBoolean(std::vector<const Filter*>& incl,
     }
   }
   if (all_count != 0) {
-    if (sub_ctx.scorers.empty() && incl.size() > 1 &&
-        _min_match_count <= all_count) {
+    if (!sub_ctx.scorer && incl.size() > 1 && _min_match_count <= all_count) {
       // if we have at least one all in include group - all other filters are
       // not necessary in case there is no scoring and 'all' count satisfies
       // min_match

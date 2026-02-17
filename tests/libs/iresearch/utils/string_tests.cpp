@@ -22,8 +22,8 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <climits>
-#include <iresearch/utils/string.hpp>
 
+#include "iresearch/utils/string.hpp"
 #include "tests_shared.hpp"
 
 void ExpectSignEq(long double lhs, long double rhs) {

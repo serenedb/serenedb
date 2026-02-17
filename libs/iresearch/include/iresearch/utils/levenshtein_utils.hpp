@@ -34,7 +34,7 @@
 namespace irs {
 
 class DataOutput;
-struct DataInput;
+class DataInput;
 
 template<typename T, size_t SubstCost = 1>
 inline size_t EditDistance(const T* lhs, size_t lhs_size, const T* rhs,

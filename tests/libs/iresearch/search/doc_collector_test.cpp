@@ -20,15 +20,18 @@
 
 #include <absl/algorithm/container.h>
 
-#include <iresearch/search/all_filter.hpp>
-#include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/doc_collector.hpp>
-#include <iresearch/search/score.hpp>
-#include <iresearch/search/scorers.hpp>
-#include <iresearch/search/term_filter.hpp>
 #include <span>
 
 #include "index/index_tests.hpp"
+#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/search/all_filter.hpp"
+#include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/doc_collector.hpp"
+#include "iresearch/search/score_function.hpp"
+#include "iresearch/search/scorer.hpp"
+#include "iresearch/search/scorers.hpp"
+#include "iresearch/search/term_filter.hpp"
+#include "iresearch/types.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -45,40 +48,36 @@ struct DocIdScorer : irs::ScorerBase<void> {
     return irs::IndexFeatures::None;
   }
 
-  irs::ScoreFunction PrepareScorer(const irs::ColumnProvider&,
-                                   const irs::FieldProperties&,
-                                   const irs::byte_type*,
-                                   const irs::AttributeProvider& attrs,
-                                   irs::score_t) const final {
-    struct ScorerContext final : irs::ScoreCtx {
-      ScorerContext(const irs::DocAttr* doc, irs::doc_id_t divisor) noexcept
-        : doc{doc}, divisor{divisor} {}
+  irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
+    struct ScorerContext : irs::ScoreOperator {
+      ScorerContext(const irs::FreqBlockAttr* freq,
+                    irs::doc_id_t divisor) noexcept
+        : freq{freq}, divisor{divisor} {}
 
-      const irs::DocAttr* doc;
+      void Score(irs::score_t* res, size_t n) noexcept override {
+        ASSERT_NE(nullptr, res);
+        for (size_t i = 0; i < n; ++i) {
+          auto doc_id = freq ? freq->value[i] : next_doc++;
+          res[i] = divisor == 0 ? static_cast<irs::score_t>(doc_id)
+                                : static_cast<irs::score_t>(doc_id % divisor);
+        }
+      }
+
+      const irs::FreqBlockAttr* freq;
       irs::doc_id_t divisor;
+      mutable irs::doc_id_t next_doc{irs::doc_limits::min()};
     };
 
-    auto* doc = irs::get<irs::DocAttr>(attrs);
-    EXPECT_NE(nullptr, doc);
+    auto* freq = irs::get<irs::FreqBlockAttr>(ctx.doc_attrs);
 
-    return irs::ScoreFunction::Make<ScorerContext>(
-      [](irs::ScoreCtx* ctx, irs::score_t* res) noexcept {
-        ASSERT_NE(nullptr, res);
-        ASSERT_NE(nullptr, ctx);
-        const auto& state = *static_cast<ScorerContext*>(ctx);
-        *res = state.divisor == 0
-                 ? static_cast<irs::score_t>(state.doc->value)
-                 : static_cast<irs::score_t>(state.doc->value % state.divisor);
-      },
-      irs::ScoreFunction::DefaultMin, doc, divisor);
+    return irs::ScoreFunction::Make<ScorerContext>(freq, divisor);
   }
 
   irs::doc_id_t divisor;
 };
 
-auto constexpr kScoreDescending = [](const auto& lhs,
-                                     const auto& rhs) noexcept {
-  return lhs.first > rhs.first;
+constexpr auto kScoreDescending = [](const auto& l, const auto& r) noexcept {
+  return std::get<irs::score_t>(l) > std::get<irs::score_t>(r);
 };
 
 class DocCollectorTestCase : public IndexTestBase {};
@@ -92,7 +91,6 @@ TEST_P(DocCollectorTestCase, test_execute_topk_basic) {
   }
 
   DocIdScorer scorer;
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   auto& segment = *reader.begin();
@@ -103,9 +101,9 @@ TEST_P(DocCollectorTestCase, test_execute_topk_basic) {
     irs::All filter;
     constexpr size_t k = 5;
 
-    std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
-    size_t count = irs::ExecuteTopK(reader, filter, prepared_order, {}, k,
-                                    std::span{results});
+    std::vector<irs::ScoreDoc> results(irs::BlockSize(k));
+    size_t count =
+      irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
@@ -114,7 +112,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_basic) {
                                   kScoreDescending));
     // With DocIdScorer, score equals doc_id
     for (size_t i = 0; i < result_count; ++i) {
-      ASSERT_EQ(results[i].first, results[i].second);
+      ASSERT_EQ(std::get<irs::doc_id_t>(results[i]),
+                std::get<irs::score_t>(results[i]));
     }
   }
 }
@@ -128,7 +127,6 @@ TEST_P(DocCollectorTestCase, test_execute_topk_larger_k) {
   }
 
   DocIdScorer scorer;
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   auto& segment = *reader.begin();
@@ -139,9 +137,9 @@ TEST_P(DocCollectorTestCase, test_execute_topk_larger_k) {
     irs::All filter;
     constexpr size_t k = 1000;
 
-    std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
-    size_t count = irs::ExecuteTopK(reader, filter, prepared_order, {}, k,
-                                    std::span{results});
+    std::vector<irs::ScoreDoc> results(irs::BlockSize(k));
+    size_t count =
+      irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
@@ -160,7 +158,6 @@ TEST_P(DocCollectorTestCase, test_execute_topk_empty_results) {
   }
 
   DocIdScorer scorer;
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
 
@@ -172,9 +169,9 @@ TEST_P(DocCollectorTestCase, test_execute_topk_empty_results) {
       irs::ViewCast<irs::byte_type>(std::string_view("nonexistent_term_xyz"));
     constexpr size_t k = 10;
 
-    std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
-    size_t count = irs::ExecuteTopK(reader, filter, prepared_order, {}, k,
-                                    std::span{results});
+    std::vector<irs::ScoreDoc> results(irs::BlockSize(k));
+    size_t count =
+      irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
 
     ASSERT_EQ(0, count);
     ASSERT_EQ(0, std::min(count, k));
@@ -190,7 +187,6 @@ TEST_P(DocCollectorTestCase, test_execute_topk_all_filter) {
   }
 
   DocIdScorer scorer;
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   auto& segment = *reader.begin();
@@ -201,9 +197,9 @@ TEST_P(DocCollectorTestCase, test_execute_topk_all_filter) {
     irs::All filter;
     constexpr size_t k = 10;
 
-    std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
-    size_t count = irs::ExecuteTopK(reader, filter, prepared_order, {}, k,
-                                    std::span{results});
+    std::vector<irs::ScoreDoc> results(irs::BlockSize(k));
+    size_t count =
+      irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
@@ -248,7 +244,6 @@ TEST_P(DocCollectorTestCase, test_execute_topk_multi_segment) {
   }
 
   DocIdScorer scorer;
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   ASSERT_EQ(2, reader.size());
@@ -263,9 +258,9 @@ TEST_P(DocCollectorTestCase, test_execute_topk_multi_segment) {
     irs::All filter;
     constexpr size_t k = 5;
 
-    std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
-    size_t count = irs::ExecuteTopK(reader, filter, prepared_order, {}, k,
-                                    std::span{results});
+    std::vector<irs::ScoreDoc> results(irs::BlockSize(k));
+    size_t count =
+      irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
@@ -286,7 +281,6 @@ TEST_P(DocCollectorTestCase, test_execute_topk_term_filter) {
   }
 
   DocIdScorer scorer;
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
 
@@ -298,9 +292,9 @@ TEST_P(DocCollectorTestCase, test_execute_topk_term_filter) {
       irs::ViewCast<irs::byte_type>(std::string_view("abcd"));
     constexpr size_t k = 3;
 
-    std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
-    size_t count = irs::ExecuteTopK(reader, filter, prepared_order, {}, k,
-                                    std::span{results});
+    std::vector<irs::ScoreDoc> results(irs::BlockSize(k));
+    size_t count =
+      irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
 
     ASSERT_GT(count, 0);
     auto result_count = std::min(count, k);
@@ -319,7 +313,6 @@ TEST_P(DocCollectorTestCase, test_execute_topk_disjunction) {
   }
 
   DocIdScorer scorer;
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
 
@@ -340,9 +333,9 @@ TEST_P(DocCollectorTestCase, test_execute_topk_disjunction) {
     }
     constexpr size_t k = 5;
 
-    std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
-    size_t count = irs::ExecuteTopK(reader, filter, prepared_order, {}, k,
-                                    std::span{results});
+    std::vector<irs::ScoreDoc> results(irs::BlockSize(k));
+    size_t count =
+      irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
 
     ASSERT_GT(count, 0);
     auto result_count = std::min(count, k);
@@ -361,7 +354,6 @@ TEST_P(DocCollectorTestCase, test_execute_topk_k_equals_one) {
   }
 
   DocIdScorer scorer;
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   auto& segment = *reader.begin();
@@ -372,16 +364,17 @@ TEST_P(DocCollectorTestCase, test_execute_topk_k_equals_one) {
     irs::All filter;
     constexpr size_t k = 1;
 
-    std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
-    size_t count = irs::ExecuteTopK(reader, filter, prepared_order, {}, k,
-                                    std::span{results});
+    std::vector<irs::ScoreDoc> results(irs::BlockSize(k));
+    size_t count =
+      irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
     ASSERT_EQ(1, result_count);
     // The single result should have score equal to doc_id (highest doc_id)
-    ASSERT_EQ(results[0].first, results[0].second);
-    ASSERT_EQ(total_docs, results[0].second);
+    ASSERT_EQ(std::get<irs::doc_id_t>(results[0]),
+              std::get<irs::score_t>(results[0]));
+    ASSERT_EQ(total_docs, std::get<irs::doc_id_t>(results[0]));
   }
 }
 
@@ -394,7 +387,6 @@ TEST_P(DocCollectorTestCase, test_execute_topk_verifies_top_docs) {
   }
 
   DocIdScorer scorer;
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   auto& segment = *reader.begin();
@@ -405,9 +397,9 @@ TEST_P(DocCollectorTestCase, test_execute_topk_verifies_top_docs) {
     irs::All filter;
     constexpr size_t k = 3;
 
-    std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
-    size_t count = irs::ExecuteTopK(reader, filter, prepared_order, {}, k,
-                                    std::span{results});
+    std::vector<irs::ScoreDoc> results(irs::BlockSize(k));
+    size_t count =
+      irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
@@ -417,9 +409,9 @@ TEST_P(DocCollectorTestCase, test_execute_topk_verifies_top_docs) {
 
     // With DocIdScorer, top 3 should be docs with highest doc_ids
     // Doc IDs start from 1, so for N docs, top 3 are N, N-1, N-2
-    ASSERT_EQ(total_docs, results[0].second);
-    ASSERT_EQ(total_docs - 1, results[1].second);
-    ASSERT_EQ(total_docs - 2, results[2].second);
+    ASSERT_EQ(total_docs, std::get<irs::doc_id_t>(results[0]));
+    ASSERT_EQ(total_docs - 1, std::get<irs::doc_id_t>(results[1]));
+    ASSERT_EQ(total_docs - 2, std::get<irs::doc_id_t>(results[2]));
   }
 }
 
@@ -434,7 +426,6 @@ TEST_P(DocCollectorTestCase, test_execute_topk_similar_scores) {
   // Use DocIdScorer with divisor 3, so scores are 0, 1, or 2
   // This creates many documents with identical scores
   DocIdScorer scorer{3};
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   auto& segment = *reader.begin();
@@ -445,9 +436,9 @@ TEST_P(DocCollectorTestCase, test_execute_topk_similar_scores) {
     irs::All filter;
     constexpr size_t k = 5;
 
-    std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
-    size_t count = irs::ExecuteTopK(reader, filter, prepared_order, {}, k,
-                                    std::span{results});
+    std::vector<irs::ScoreDoc> results(irs::BlockSize(k));
+    size_t count =
+      irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
@@ -457,7 +448,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_similar_scores) {
                                   kScoreDescending));
     // All top results should have score 2 (the maximum score from mod 3)
     for (size_t i = 0; i < result_count; ++i) {
-      ASSERT_EQ(2, results[i].first);
+      ASSERT_EQ(2, std::get<irs::score_t>(results[i]));
     }
   }
 
@@ -466,9 +457,9 @@ TEST_P(DocCollectorTestCase, test_execute_topk_similar_scores) {
     irs::All filter;
     constexpr size_t k = 10;
 
-    std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
-    size_t count = irs::ExecuteTopK(reader, filter, prepared_order, {}, k,
-                                    std::span{results});
+    std::vector<irs::ScoreDoc> results(irs::BlockSize(k));
+    size_t count =
+      irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
@@ -477,8 +468,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_similar_scores) {
                                   kScoreDescending));
     // Verify scores are valid (0, 1, or 2)
     for (size_t i = 0; i < result_count; ++i) {
-      ASSERT_GE(results[i].first, 0);
-      ASSERT_LE(results[i].first, 2);
+      ASSERT_GE(std::get<irs::score_t>(results[i]), 0);
+      ASSERT_LE(std::get<irs::score_t>(results[i]), 2);
     }
   }
 }
@@ -493,7 +484,6 @@ TEST_P(DocCollectorTestCase, test_execute_topk_all_same_score) {
 
   // Use DocIdScorer with divisor 1, so all scores are 0
   DocIdScorer scorer{1};
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   auto& segment = *reader.begin();
@@ -504,16 +494,16 @@ TEST_P(DocCollectorTestCase, test_execute_topk_all_same_score) {
     irs::All filter;
     constexpr size_t k = 5;
 
-    std::vector<std::pair<irs::score_t, irs::doc_id_t>> results(k * 2);
-    size_t count = irs::ExecuteTopK(reader, filter, prepared_order, {}, k,
-                                    std::span{results});
+    std::vector<irs::ScoreDoc> results(irs::BlockSize(k));
+    size_t count =
+      irs::ExecuteTopKWithCount(reader, filter, scorer, k, std::span{results});
 
     ASSERT_EQ(total_docs, count);
     auto result_count = std::min(count, k);
     ASSERT_EQ(5, result_count);
     // All scores should be 0
     for (size_t i = 0; i < result_count; ++i) {
-      ASSERT_EQ(0, results[i].first);
+      ASSERT_EQ(0, std::get<irs::score_t>(results[i]));
     }
   }
 }

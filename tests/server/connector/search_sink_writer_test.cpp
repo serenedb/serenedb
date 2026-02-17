@@ -102,11 +102,18 @@ TEST_F(SearchSinkWriterTest, InsertDeleteMultipleColumns) {
   const std::vector<std::string_view> boolean_data{
     std::string_view{"\x0", 1}, std::string_view{"\x1", 1},
     std::string_view{"\x1", 1}, std::string_view{"\x0", 1}};
-  const std::vector<std::string_view> huge_data{
-    std::string_view{"\x5\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0", 16},
-    std::string_view{"\x6\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0", 16},
-    std::string_view{"\x7\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0", 16},
-    std::string_view{"\x8\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0", 16}};
+  std::vector<std::string> real_data;
+  std::string data;
+  basics::StrResize(data, sizeof(float));
+  absl::little_endian::Store<float>(data.data(), 5.);
+  real_data.push_back(data);
+  absl::little_endian::Store<float>(data.data(), 6.);
+  real_data.push_back(data);
+  absl::little_endian::Store<float>(data.data(), 7.);
+  real_data.push_back(data);
+  absl::little_endian::Store<float>(data.data(), 8.);
+  real_data.push_back(data);
+
   const std::vector<std::string_view> big_data{
     std::string_view{"\x9\x0\x0\x0\x0\x0\x0\x0", 8},
     std::string_view{"\xa\x0\x0\x0\x0\x0\x0\x0", 8},
@@ -115,38 +122,38 @@ TEST_F(SearchSinkWriterTest, InsertDeleteMultipleColumns) {
 
   // First batch: rows 0 and 1
   sink.Init(2);
-  sink.SwitchColumn(velox::TypeKind::INTEGER, false, col_id[0]);
+  sink.SwitchColumn(*velox::INTEGER(), false, col_id[0]);
   sink.Write({rocksdb::Slice(integer_data[0])}, pk[0]);
   sink.Write({rocksdb::Slice(integer_data[1])}, pk[1]);
-  sink.SwitchColumn(velox::TypeKind::VARCHAR, false, col_id[1]);
+  sink.SwitchColumn(*velox::VARCHAR(), false, col_id[1]);
   sink.Write({rocksdb::Slice(string_data[0])}, pk[0]);
   sink.Write({rocksdb::Slice(string_data[1])}, pk[1]);
-  sink.SwitchColumn(velox::TypeKind::BOOLEAN, false, col_id[2]);
+  sink.SwitchColumn(*velox::BOOLEAN(), false, col_id[2]);
   sink.Write({rocksdb::Slice(boolean_data[0])}, pk[0]);
   sink.Write({rocksdb::Slice(boolean_data[1])}, pk[1]);
-  sink.SwitchColumn(velox::TypeKind::HUGEINT, false, col_id[3]);
-  sink.Write({rocksdb::Slice(huge_data[0])}, pk[0]);
-  sink.Write({rocksdb::Slice(huge_data[1])}, pk[1]);
-  sink.SwitchColumn(velox::TypeKind::BIGINT, false, col_id[4]);
+  sink.SwitchColumn(*velox::REAL(), false, col_id[3]);
+  sink.Write({rocksdb::Slice(real_data[0])}, pk[0]);
+  sink.Write({rocksdb::Slice(real_data[1])}, pk[1]);
+  sink.SwitchColumn(*velox::BIGINT(), false, col_id[4]);
   sink.Write({rocksdb::Slice(big_data[0])}, pk[0]);
   sink.Write({rocksdb::Slice(big_data[1])}, pk[1]);
   sink.Finish();
 
   // Second batch: rows 2 and 3 - reusing the same sink (tests document reset)
   sink.Init(2);
-  sink.SwitchColumn(velox::TypeKind::INTEGER, false, col_id[0]);
+  sink.SwitchColumn(*velox::INTEGER(), false, col_id[0]);
   sink.Write({rocksdb::Slice(integer_data[2])}, pk[2]);
   sink.Write({rocksdb::Slice(integer_data[3])}, pk[3]);
-  sink.SwitchColumn(velox::TypeKind::VARCHAR, false, col_id[1]);
+  sink.SwitchColumn(*velox::VARCHAR(), false, col_id[1]);
   sink.Write({rocksdb::Slice(string_data[2])}, pk[2]);
   sink.Write({rocksdb::Slice(string_data[3])}, pk[3]);
-  sink.SwitchColumn(velox::TypeKind::BOOLEAN, false, col_id[2]);
+  sink.SwitchColumn(*velox::BOOLEAN(), false, col_id[2]);
   sink.Write({rocksdb::Slice(boolean_data[2])}, pk[2]);
   sink.Write({rocksdb::Slice(boolean_data[3])}, pk[3]);
-  sink.SwitchColumn(velox::TypeKind::HUGEINT, false, col_id[3]);
-  sink.Write({rocksdb::Slice(huge_data[2])}, pk[2]);
-  sink.Write({rocksdb::Slice(huge_data[3])}, pk[3]);
-  sink.SwitchColumn(velox::TypeKind::BIGINT, false, col_id[4]);
+  sink.SwitchColumn(*velox::REAL(), false, col_id[3]);
+  sink.Write({rocksdb::Slice(real_data[2])}, pk[2]);
+  sink.Write({rocksdb::Slice(real_data[3])}, pk[3]);
+  sink.SwitchColumn(*velox::BIGINT(), false, col_id[4]);
   sink.Write({rocksdb::Slice(big_data[2])}, pk[2]);
   sink.Write({rocksdb::Slice(big_data[3])}, pk[3]);
   sink.Finish();
@@ -155,7 +162,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteMultipleColumns) {
 
   auto validate_row = [](const irs::SubReader& segment, std::string_view pk,
                          int32_t col1, std::string_view col2, bool col3,
-                         __int128_t col4, int64_t col5) {
+                         float col4, int64_t col5) {
     const auto* pk_column =
       segment.column(sdb::connector::search::kPkFieldName);
     ASSERT_NE(nullptr, pk_column);
@@ -172,9 +179,9 @@ TEST_F(SearchSinkWriterTest, InsertDeleteMultipleColumns) {
     auto bool_terms = segment.field(
       std::string_view{"\x00\x00\x00\x00\x00\x00\x00\x03\x01", 9});
     ASSERT_NE(nullptr, bool_terms);
-    auto huge_terms = segment.field(
+    auto real_terms = segment.field(
       std::string_view{"\x00\x00\x00\x00\x00\x00\x00\x04\x02", 9});
-    ASSERT_NE(nullptr, huge_terms);
+    ASSERT_NE(nullptr, real_terms);
     auto big_terms = segment.field(
       std::string_view{"\x00\x00\x00\x00\x00\x00\x00\x05\x02", 9});
     ASSERT_NE(nullptr, big_terms);
@@ -196,12 +203,12 @@ TEST_F(SearchSinkWriterTest, InsertDeleteMultipleColumns) {
     ASSERT_TRUE(int32_term_itr->seek(num_token->value));
     auto int32_postings =
       segment.mask(int32_term_itr->postings(irs::IndexFeatures::None));
-    num_stream.reset(static_cast<double>(col4));
+    num_stream.reset(col4);
     ASSERT_TRUE(num_stream.next());
-    auto huge_term_itr = huge_terms->iterator(irs::SeekMode::NORMAL);
-    ASSERT_TRUE(huge_term_itr->seek(num_token->value));
-    auto huge_postings =
-      segment.mask(huge_term_itr->postings(irs::IndexFeatures::None));
+    auto real_term_itr = real_terms->iterator(irs::SeekMode::NORMAL);
+    ASSERT_TRUE(real_term_itr->seek(num_token->value));
+    auto real_postings =
+      segment.mask(real_term_itr->postings(irs::IndexFeatures::None));
     num_stream.reset(col5);
     ASSERT_TRUE(num_stream.next());
     auto big_term_itr = big_terms->iterator(irs::SeekMode::NORMAL);
@@ -216,10 +223,10 @@ TEST_F(SearchSinkWriterTest, InsertDeleteMultipleColumns) {
       segment.mask(bool_term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(int32_postings->next());
     ASSERT_TRUE(varchar_postings->next());
-    ASSERT_TRUE(huge_postings->next());
+    ASSERT_TRUE(real_postings->next());
     ASSERT_TRUE(big_postings->next());
     ASSERT_EQ(big_postings->value(), varchar_postings->value());
-    ASSERT_EQ(huge_postings->value(), varchar_postings->value());
+    ASSERT_EQ(real_postings->value(), varchar_postings->value());
     ASSERT_EQ(int32_postings->value(), varchar_postings->value());
     // Bools are not unique in each row so checking with seek that our row has
     // expected value
@@ -230,7 +237,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteMultipleColumns) {
     ASSERT_EQ(pk, irs::ViewCast<char>(actual_pk_value->value));
     ASSERT_FALSE(varchar_postings->next());
     ASSERT_FALSE(int32_postings->next());
-    ASSERT_FALSE(huge_postings->next());
+    ASSERT_FALSE(real_postings->next());
     ASSERT_FALSE(big_postings->next());
   };
   {
@@ -287,12 +294,12 @@ TEST_F(SearchSinkWriterTest, InsertNullsColumns) {
   SearchSinkInsertWriter sink{trx};
   sink.Init(4);
 
-  sink.SwitchColumn(velox::TypeKind::VARCHAR, true, col_id[0]);
+  sink.SwitchColumn(*velox::VARCHAR(), true, col_id[0]);
   sink.Write({rocksdb::Slice(string_data[0])}, pk[0]);
   sink.Write({{}}, pk[1]);  // null
   sink.Write({rocksdb::Slice(string_data[1])}, pk[2]);
   sink.Write({{}}, pk[3]);  // null
-  sink.SwitchColumn(velox::TypeKind::UNKNOWN, true, col_id[1]);
+  sink.SwitchColumn(*velox::UNKNOWN(), true, col_id[1]);
   sink.Write({{}}, pk[0]);  // null
   sink.Write({{}}, pk[1]);  // null
   sink.Write({{}}, pk[2]);  // null
@@ -456,7 +463,7 @@ TEST_F(SearchSinkWriterTest, InsertStringPrefix) {
     {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x3pk3", 19},
     {"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\x4pk4", 19}};
 
-  sink.SwitchColumn(velox::TypeKind::VARCHAR, false, col_id);
+  sink.SwitchColumn(*velox::VARCHAR(), false, col_id);
   sink.Write({rocksdb::Slice("\x0", 1), rocksdb::Slice("\x0foo", 4)}, pk[0]);
 
   sink.Finish();
@@ -498,7 +505,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertWithExisting) {
     auto trx = _data_writer->GetBatch();
     SearchSinkInsertWriter sink{trx};
     sink.Init(2);
-    sink.SwitchColumn(velox::TypeKind::VARCHAR, false, 1);
+    sink.SwitchColumn(*velox::VARCHAR(), false, 1);
     sink.Write({rocksdb::Slice("value1", 6)}, kPk);
     // second document to keep segment around
     sink.Write({rocksdb::Slice("value9", 6)}, kPk2);
@@ -519,7 +526,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertWithExisting) {
     auto trx = _data_writer->GetBatch();
     SearchSinkInsertWriter sink{trx};
     sink.Init(1);
-    sink.SwitchColumn(velox::TypeKind::VARCHAR, false, 1);
+    sink.SwitchColumn(*velox::VARCHAR(), false, 1);
     sink.Write({rocksdb::Slice("value2", 6)}, kPk);
     sink.Finish();
     trx.Commit();
@@ -539,7 +546,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertWithExisting) {
     auto trx = _data_writer->GetBatch();
     SearchSinkInsertWriter sink{trx};
     sink.Init(1);
-    sink.SwitchColumn(velox::TypeKind::VARCHAR, false, 1);
+    sink.SwitchColumn(*velox::VARCHAR(), false, 1);
     sink.Write({rocksdb::Slice("value3", 6)}, kPk);
     sink.Finish();
     trx.Commit();
@@ -605,7 +612,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertOnePending) {
     auto trx = _data_writer->GetBatch();
     SearchSinkInsertWriter sink{trx};
     sink.Init(1);
-    sink.SwitchColumn(velox::TypeKind::VARCHAR, false, 1);
+    sink.SwitchColumn(*velox::VARCHAR(), false, 1);
     sink.Write({rocksdb::Slice("value1", 6)}, kPk);
     sink.Finish();
     trx.Commit();
@@ -625,7 +632,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertOnePending) {
     auto trx = _data_writer->GetBatch();
     SearchSinkInsertWriter sink{trx};
     sink.Init(1);
-    sink.SwitchColumn(velox::TypeKind::VARCHAR, false, 1);
+    sink.SwitchColumn(*velox::VARCHAR(), false, 1);
     sink.Write({rocksdb::Slice("value2", 6)}, kPk);
     sink.Finish();
     trx.Commit();
@@ -645,7 +652,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertOnePending) {
     auto trx = _data_writer->GetBatch();
     SearchSinkInsertWriter sink{trx};
     sink.Init(1);
-    sink.SwitchColumn(velox::TypeKind::VARCHAR, false, 1);
+    sink.SwitchColumn(*velox::VARCHAR(), false, 1);
     sink.Write({rocksdb::Slice("value3", 6)}, kPk);
     sink.Finish();
     trx.Commit();
@@ -737,7 +744,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
       auto trx = limited_data_writer->GetBatch();
       SearchSinkInsertWriter sink{trx};
       sink.Init(2);
-      sink.SwitchColumn(velox::TypeKind::VARCHAR, false, 1);
+      sink.SwitchColumn(*velox::VARCHAR(), false, 1);
       sink.Write({rocksdb::Slice("value1", 6)}, kPk);
       sink.Write({rocksdb::Slice("value8", 6)}, kPk3);
       sink.Finish();
@@ -758,7 +765,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
       auto trx = limited_data_writer->GetBatch();
       SearchSinkInsertWriter sink{trx};
       sink.Init(2);
-      sink.SwitchColumn(velox::TypeKind::VARCHAR, false, 1);
+      sink.SwitchColumn(*velox::VARCHAR(), false, 1);
       sink.Write({rocksdb::Slice("value2", 6)}, kPk);
       // we need this doc to keep flushed segment from discarding as empty
       sink.Write({rocksdb::Slice("value22", 7)}, kPk2);
@@ -780,7 +787,7 @@ TEST_F(SearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
       auto trx = limited_data_writer->GetBatch();
       SearchSinkInsertWriter sink{trx};
       sink.Init(1);
-      sink.SwitchColumn(velox::TypeKind::VARCHAR, false, 1);
+      sink.SwitchColumn(*velox::VARCHAR(), false, 1);
       sink.Write({rocksdb::Slice("value3", 6)}, kPk);
       sink.Finish();
       trx.Commit();
@@ -852,7 +859,7 @@ TEST_F(SearchSinkWriterTest, DeleteNotMissedWithExisting) {
     auto trx = _data_writer->GetBatch();
     SearchSinkInsertWriter sink{trx};
     sink.Init(2);
-    sink.SwitchColumn(velox::TypeKind::VARCHAR, false, 1);
+    sink.SwitchColumn(*velox::VARCHAR(), false, 1);
     sink.Write({rocksdb::Slice("value1", 6)}, kPk);
     // second document to keep segment around
     sink.Write({rocksdb::Slice("value9", 6)}, kPk2);
@@ -875,7 +882,7 @@ TEST_F(SearchSinkWriterTest, DeleteNotMissedWithExisting) {
     auto trx = _data_writer->GetBatch();
     SearchSinkInsertWriter sink{trx};
     sink.Init(1);
-    sink.SwitchColumn(velox::TypeKind::VARCHAR, false, 1);
+    sink.SwitchColumn(*velox::VARCHAR(), false, 1);
     sink.Write({rocksdb::Slice("value2", 6)}, kPk);
     sink.Finish();
     trx.Commit();

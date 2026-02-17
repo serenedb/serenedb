@@ -161,8 +161,7 @@ class DataSinkWithSearchTest : public ::testing::Test,
     auto prepared = and_filter.prepare({.index = reader});
     size_t count = 0;
     for (auto& segment : reader) {
-      auto docs =
-        segment.mask(prepared->execute({.segment = segment, .scorers = {}}));
+      auto docs = segment.mask(prepared->execute({.segment = segment}));
       while (docs->next()) {
         const auto* pk_column = segment.column(connector::search::kPkFieldName);
         ASSERT_NE(nullptr, pk_column);

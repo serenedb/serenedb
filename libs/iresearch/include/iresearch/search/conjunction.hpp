@@ -33,7 +33,6 @@
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/cost.hpp"
-#include "iresearch/search/score.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
@@ -73,8 +72,6 @@ struct ScoreAdapter {
   IRS_FORCE_INLINE doc_id_t advance() { return _it->advance(); }
 
   IRS_FORCE_INLINE doc_id_t seek(doc_id_t target) { return _it->seek(target); }
-
-  IRS_FORCE_INLINE uint32_t count() { return _it->count(); }
 
   IRS_FORCE_INLINE void FetchScoreArgs(uint16_t index) {
     return _it->FetchScoreArgs(index);
@@ -244,12 +241,12 @@ class Conjunction : public ConjunctionBase<Adapter> {
     return converge(this->_itrs[0].seek(target));
   }
 
-  uint32_t count() final { return DocIterator::Count(*this); }
+  uint32_t count() final { return DocIterator::CountImpl(*this); }
 
   uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
                    std::span<doc_id_t, kScoreBlock> docs,
                    std::span<score_t, kScoreBlock> scores) final {
-    return DocIterator::Collect(*this, scorer, columns, docs, scores);
+    return DocIterator::CollectImpl(*this, scorer, columns, docs, scores);
   }
 
  private:

@@ -38,6 +38,7 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
 #include "iresearch/search/bm25.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/doc_collector.hpp"
+#include "iresearch/search/mixed_boolean_filter.hpp"
 #include "iresearch/search/scorers.hpp"
 #include "iresearch/search/tfidf.hpp"
 #include "iresearch/types.hpp"
@@ -304,7 +305,7 @@ class BlockScoringTestCase : public IndexTestBase {
     if (!_tokenizer) {
       _tokenizer = std::make_unique<irs::analysis::DelimitedTokenizer>(" ");
     }
-    auto root = std::make_unique<irs::Or>();
+    auto root = std::make_unique<irs::MixedBooleanFilter>();
     sdb::ParserContext ctx{*root, default_field, *_tokenizer};
     auto result = sdb::ParseQuery(ctx, query);
     EXPECT_TRUE(result.ok()) << "Failed to parse query: " << query;
@@ -320,7 +321,6 @@ TEST_P(BlockScoringTestCase, TfidfBytermBlockScoring) {
   CreateMultiSegmentIndex();
 
   auto scorer = irs::TFIDF{true};
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   size_t total_docs = 0;
@@ -337,8 +337,8 @@ TEST_P(BlockScoringTestCase, TfidfBytermBlockScoring) {
   std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
     irs::BlockSize(kTopK));
 
-  size_t count = irs::ExecuteTopKWithCount(reader, *filter, prepared_order,
-                                           kTopK, std::span{docs});
+  size_t count =
+    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
 
   ASSERT_GT(count, 0) << "Expected matches for 'database' in topic field";
   auto result_count = std::min(count, kTopK);
@@ -352,7 +352,6 @@ TEST_P(BlockScoringTestCase, TfidfTopicSearch) {
   CreateLargeIndex();
 
   auto scorer = irs::TFIDF{true};
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
@@ -366,8 +365,8 @@ TEST_P(BlockScoringTestCase, TfidfTopicSearch) {
   std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
     irs::BlockSize(kTopK));
 
-  size_t count = irs::ExecuteTopKWithCount(reader, *filter, prepared_order,
-                                           kTopK, std::span{docs});
+  size_t count =
+    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
 
   ASSERT_GT(count, 5) << "Expected multiple matches for 'physics' in topic";
   auto result_count = std::min(count, kTopK);
@@ -387,7 +386,6 @@ TEST_P(BlockScoringTestCase, Bm25BytermBlockScoring) {
   CreateLargeIndex();
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
@@ -401,8 +399,8 @@ TEST_P(BlockScoringTestCase, Bm25BytermBlockScoring) {
   std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
     irs::BlockSize(kTopK));
 
-  size_t count = irs::ExecuteTopKWithCount(reader, *filter, prepared_order,
-                                           kTopK, std::span{docs});
+  size_t count =
+    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
 
   ASSERT_GT(count, 0) << "Expected matches for 'search' in topic field";
   auto result_count = std::min(count, kTopK);
@@ -422,7 +420,6 @@ TEST_P(BlockScoringTestCase, Bm25ChemistrySearch) {
   CreateLargeIndex();
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
@@ -436,8 +433,8 @@ TEST_P(BlockScoringTestCase, Bm25ChemistrySearch) {
   std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
     irs::BlockSize(kTopK));
 
-  size_t count = irs::ExecuteTopKWithCount(reader, *filter, prepared_order,
-                                           kTopK, std::span{docs});
+  size_t count =
+    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
 
   ASSERT_GT(count, 0);
   auto result_count = std::min(count, kTopK);
@@ -458,7 +455,6 @@ TEST_P(BlockScoringTestCase, TfidfAndFilterBlockScoring) {
   CreateLargeIndex();
 
   auto scorer = irs::TFIDF{true};
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
@@ -472,8 +468,8 @@ TEST_P(BlockScoringTestCase, TfidfAndFilterBlockScoring) {
   std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
     irs::BlockSize(kTopK));
 
-  size_t count = irs::ExecuteTopKWithCount(reader, *filter, prepared_order,
-                                           kTopK, std::span{docs});
+  size_t count =
+    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
 
   ASSERT_GT(count, 0) << "Expected matches for tech AND database";
   auto result_count = std::min(count, kTopK);
@@ -496,7 +492,6 @@ TEST_P(BlockScoringTestCase, Bm25AndFilterBlockScoring) {
   CreateLargeIndex();
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
@@ -510,8 +505,8 @@ TEST_P(BlockScoringTestCase, Bm25AndFilterBlockScoring) {
   std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
     irs::BlockSize(kTopK));
 
-  size_t count = irs::ExecuteTopKWithCount(reader, *filter, prepared_order,
-                                           kTopK, std::span{docs});
+  size_t count =
+    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
 
   ASSERT_GT(count, 0) << "Expected matches for science AND physics";
   auto result_count = std::min(count, kTopK);
@@ -534,7 +529,6 @@ TEST_P(BlockScoringTestCase, BlockBoundarySmallK) {
   CreateLargeIndex();
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
@@ -548,8 +542,8 @@ TEST_P(BlockScoringTestCase, BlockBoundarySmallK) {
   std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
     irs::BlockSize(kTopK));
 
-  size_t count = irs::ExecuteTopKWithCount(reader, *filter, prepared_order,
-                                           kTopK, std::span{docs});
+  size_t count =
+    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
 
   // Should have many tech documents, k=3 should trigger multiple blocks
   ASSERT_GT(count, kTopK * 2)
@@ -572,7 +566,6 @@ TEST_P(BlockScoringTestCase, BlockBoundaryLargeK) {
   CreateLargeIndex();
 
   auto scorer = irs::TFIDF{true};
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
@@ -586,8 +579,8 @@ TEST_P(BlockScoringTestCase, BlockBoundaryLargeK) {
   std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
     irs::BlockSize(kTopK));
 
-  size_t count = irs::ExecuteTopKWithCount(reader, *filter, prepared_order,
-                                           kTopK, std::span{docs});
+  size_t count =
+    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
 
   ASSERT_GT(count, 0);
   auto result_count = std::min(count, kTopK);
@@ -608,8 +601,6 @@ TEST_P(BlockScoringTestCase, TfidfVsBm25Comparison) {
 
   auto tfidf_scorer = irs::TFIDF{true};
   auto bm25_scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
-  auto tfidf_order = irs::Scorers::Prepare(tfidf_scorer);
-  auto bm25_order = irs::Scorers::Prepare(bm25_scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
@@ -623,13 +614,13 @@ TEST_P(BlockScoringTestCase, TfidfVsBm25Comparison) {
   // Get TFIDF results
   std::vector<std::pair<irs::doc_id_t, irs::score_t>> tfidf_docs(
     irs::BlockSize(kTopK));
-  size_t tfidf_count = irs::ExecuteTopKWithCount(reader, *filter, tfidf_order,
+  size_t tfidf_count = irs::ExecuteTopKWithCount(reader, *filter, tfidf_scorer,
                                                  kTopK, std::span{tfidf_docs});
 
   // Get BM25 results
   std::vector<std::pair<irs::doc_id_t, irs::score_t>> bm25_docs(
     irs::BlockSize(kTopK));
-  size_t bm25_count = irs::ExecuteTopKWithCount(reader, *filter, bm25_order,
+  size_t bm25_count = irs::ExecuteTopKWithCount(reader, *filter, bm25_scorer,
                                                 kTopK, std::span{bm25_docs});
 
   // Both should return the same number of matching documents
@@ -660,7 +651,6 @@ TEST_P(BlockScoringTestCase, KLargerThanMatches) {
   CreateLargeIndex();
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
@@ -674,8 +664,8 @@ TEST_P(BlockScoringTestCase, KLargerThanMatches) {
   std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
     irs::BlockSize(kTopK));
 
-  size_t count = irs::ExecuteTopKWithCount(reader, *filter, prepared_order,
-                                           kTopK, std::span{docs});
+  size_t count =
+    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
 
   ASSERT_GT(count, 0);
   ASSERT_LT(count, kTopK) << "Should have fewer chemistry docs than k";
@@ -696,7 +686,6 @@ TEST_P(BlockScoringTestCase, EmptyResultSet) {
   CreateLargeIndex();
 
   auto scorer = irs::TFIDF{true};
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
 
@@ -708,8 +697,8 @@ TEST_P(BlockScoringTestCase, EmptyResultSet) {
   std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
     irs::BlockSize(kTopK));
 
-  size_t count = irs::ExecuteTopKWithCount(reader, *filter, prepared_order,
-                                           kTopK, std::span{docs});
+  size_t count =
+    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
 
   ASSERT_EQ(0, count);
 }
@@ -719,7 +708,6 @@ TEST_P(BlockScoringTestCase, AndFilterThreeClauses) {
   CreateLargeIndex();
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
@@ -736,8 +724,8 @@ TEST_P(BlockScoringTestCase, AndFilterThreeClauses) {
   std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
     irs::BlockSize(kTopK));
 
-  size_t count = irs::ExecuteTopKWithCount(reader, *filter, prepared_order,
-                                           kTopK, std::span{docs});
+  size_t count =
+    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
 
   // Some documents should match all three conditions
   auto result_count = std::min(count, kTopK);
@@ -775,13 +763,12 @@ TEST_P(BlockScoringTestCase, Bm25ParameterVariations) {
   // Test with default BM25 (k=1.2, b=0.75)
   {
     auto scorer = irs::BM25{};
-    auto prepared_order = irs::Scorers::Prepare(scorer);
 
     std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
       irs::BlockSize(kTopK));
 
-    size_t count = irs::ExecuteTopKWithCount(reader, *filter, prepared_order,
-                                             kTopK, std::span{docs});
+    size_t count = irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK,
+                                             std::span{docs});
 
     ASSERT_GT(count, 0);
     auto result_count = std::min(count, kTopK);
@@ -799,13 +786,12 @@ TEST_P(BlockScoringTestCase, Bm25ParameterVariations) {
   // Test with BM15 (b=0)
   {
     auto scorer = irs::BM25{irs::BM25::K(), 0.0f};
-    auto prepared_order = irs::Scorers::Prepare(scorer);
 
     std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
       irs::BlockSize(kTopK));
 
-    size_t count = irs::ExecuteTopKWithCount(reader, *filter, prepared_order,
-                                             kTopK, std::span{docs});
+    size_t count = irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK,
+                                             std::span{docs});
 
     ASSERT_GT(count, 0);
     auto result_count = std::min(count, kTopK);
@@ -823,13 +809,12 @@ TEST_P(BlockScoringTestCase, Bm25ParameterVariations) {
   // Test with BM11 (b=1)
   {
     auto scorer = irs::BM25{irs::BM25::K(), 1.0f};
-    auto prepared_order = irs::Scorers::Prepare(scorer);
 
     std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
       irs::BlockSize(kTopK));
 
-    size_t count = irs::ExecuteTopKWithCount(reader, *filter, prepared_order,
-                                             kTopK, std::span{docs});
+    size_t count = irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK,
+                                             std::span{docs});
 
     ASSERT_GT(count, 0);
     auto result_count = std::min(count, kTopK);
@@ -862,13 +847,12 @@ TEST_P(BlockScoringTestCase, TfidfWithWithoutNorms) {
   // Test with norms
   {
     auto scorer = irs::TFIDF{true};
-    auto prepared_order = irs::Scorers::Prepare(scorer);
 
     std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs_with_norms(
       irs::BlockSize(kTopK));
 
-    size_t count = irs::ExecuteTopKWithCount(reader, *filter, prepared_order,
-                                             kTopK, std::span{docs_with_norms});
+    size_t count = irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK,
+                                             std::span{docs_with_norms});
 
     ASSERT_GT(count, 0);
     auto result_count = std::min(count, kTopK);
@@ -886,13 +870,12 @@ TEST_P(BlockScoringTestCase, TfidfWithWithoutNorms) {
   // Test without norms
   {
     auto scorer = irs::TFIDF{false};
-    auto prepared_order = irs::Scorers::Prepare(scorer);
 
     std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs_without_norms(
       irs::BlockSize(kTopK));
 
-    size_t count = irs::ExecuteTopKWithCount(
-      reader, *filter, prepared_order, kTopK, std::span{docs_without_norms});
+    size_t count = irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK,
+                                             std::span{docs_without_norms});
 
     ASSERT_GT(count, 0);
     auto result_count = std::min(count, kTopK);
@@ -913,7 +896,6 @@ TEST_P(BlockScoringTestCase, MultisegTfidfByterm) {
   CreateMultiSegmentIndex();
 
   auto scorer = irs::TFIDF{true};
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
 
@@ -934,8 +916,8 @@ TEST_P(BlockScoringTestCase, MultisegTfidfByterm) {
   std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
     irs::BlockSize(kTopK));
 
-  size_t count = irs::ExecuteTopKWithCount(reader, *filter, prepared_order,
-                                           kTopK, std::span{docs});
+  size_t count =
+    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
 
   ASSERT_GT(count, 0);
   auto result_count = std::min(count, kTopK);
@@ -954,7 +936,6 @@ TEST_P(BlockScoringTestCase, MultisegBm25Byterm) {
   CreateMultiSegmentIndex();
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   ASSERT_EQ(3, reader.size());
@@ -967,8 +948,8 @@ TEST_P(BlockScoringTestCase, MultisegBm25Byterm) {
   std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
     irs::BlockSize(kTopK));
 
-  size_t count = irs::ExecuteTopKWithCount(reader, *filter, prepared_order,
-                                           kTopK, std::span{docs});
+  size_t count =
+    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
 
   ASSERT_GT(count, 0);
   auto result_count = std::min(count, kTopK);
@@ -986,7 +967,6 @@ TEST_P(BlockScoringTestCase, MultisegTfidfAndFilter) {
   CreateMultiSegmentIndex();
 
   auto scorer = irs::TFIDF{true};
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   ASSERT_EQ(3, reader.size());
@@ -999,8 +979,8 @@ TEST_P(BlockScoringTestCase, MultisegTfidfAndFilter) {
   std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
     irs::BlockSize(kTopK));
 
-  size_t count = irs::ExecuteTopKWithCount(reader, *filter, prepared_order,
-                                           kTopK, std::span{docs});
+  size_t count =
+    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
 
   ASSERT_GT(count, 0) << "Expected matches for tech AND database";
   auto result_count = std::min(count, kTopK);
@@ -1021,7 +1001,6 @@ TEST_P(BlockScoringTestCase, MultisegBm25AndFilter) {
   CreateMultiSegmentIndex();
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   ASSERT_EQ(3, reader.size());
@@ -1034,8 +1013,8 @@ TEST_P(BlockScoringTestCase, MultisegBm25AndFilter) {
   std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
     irs::BlockSize(kTopK));
 
-  size_t count = irs::ExecuteTopKWithCount(reader, *filter, prepared_order,
-                                           kTopK, std::span{docs});
+  size_t count =
+    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
 
   ASSERT_GT(count, 0) << "Expected matches for science AND physics";
   auto result_count = std::min(count, kTopK);
@@ -1056,7 +1035,6 @@ TEST_P(BlockScoringTestCase, MultisegSmallKBlockBoundaries) {
   CreateMultiSegmentIndex();
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   ASSERT_EQ(3, reader.size());
@@ -1069,8 +1047,8 @@ TEST_P(BlockScoringTestCase, MultisegSmallKBlockBoundaries) {
   std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
     irs::BlockSize(kTopK));
 
-  size_t count = irs::ExecuteTopKWithCount(reader, *filter, prepared_order,
-                                           kTopK, std::span{docs});
+  size_t count =
+    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
 
   ASSERT_GT(count, kTopK * 2) << "Need many matches to test block boundaries";
   auto result_count = std::min(count, kTopK);
@@ -1089,7 +1067,6 @@ TEST_P(BlockScoringTestCase, MultisegQuantumQuery) {
   CreateMultiSegmentIndex();
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   ASSERT_EQ(3, reader.size());
@@ -1102,8 +1079,8 @@ TEST_P(BlockScoringTestCase, MultisegQuantumQuery) {
   std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
     irs::BlockSize(kTopK));
 
-  size_t count = irs::ExecuteTopKWithCount(reader, *filter, prepared_order,
-                                           kTopK, std::span{docs});
+  size_t count =
+    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
 
   ASSERT_GT(count, 0);
   auto result_count = std::min(count, kTopK);
@@ -1121,7 +1098,6 @@ TEST_P(BlockScoringTestCase, TfidfDisjunctionTwoTerms) {
   CreateLargeIndex();
 
   auto scorer = irs::TFIDF{true};
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
@@ -1135,8 +1111,8 @@ TEST_P(BlockScoringTestCase, TfidfDisjunctionTwoTerms) {
   std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
     irs::BlockSize(kTopK));
 
-  size_t count = irs::ExecuteTopKWithCount(reader, *filter, prepared_order,
-                                           kTopK, std::span{docs});
+  size_t count =
+    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
 
   ASSERT_GT(count, 0) << "Expected matches for database OR search";
   auto result_count = std::min(count, kTopK);
@@ -1157,7 +1133,6 @@ TEST_P(BlockScoringTestCase, Bm25DisjunctionTwoTerms) {
   CreateLargeIndex();
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
@@ -1171,8 +1146,8 @@ TEST_P(BlockScoringTestCase, Bm25DisjunctionTwoTerms) {
   std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
     irs::BlockSize(kTopK));
 
-  size_t count = irs::ExecuteTopKWithCount(reader, *filter, prepared_order,
-                                           kTopK, std::span{docs});
+  size_t count =
+    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
 
   ASSERT_GT(count, 0) << "Expected matches for tech OR science";
   auto result_count = std::min(count, kTopK);
@@ -1193,7 +1168,6 @@ TEST_P(BlockScoringTestCase, MultisegTfidfDisjunction) {
   CreateMultiSegmentIndex();
 
   auto scorer = irs::TFIDF{true};
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   ASSERT_EQ(3, reader.size()) << "Expected 3 segments";
@@ -1206,8 +1180,8 @@ TEST_P(BlockScoringTestCase, MultisegTfidfDisjunction) {
   std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
     irs::BlockSize(kTopK));
 
-  size_t count = irs::ExecuteTopKWithCount(reader, *filter, prepared_order,
-                                           kTopK, std::span{docs});
+  size_t count =
+    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
 
   ASSERT_GT(count, 0) << "Expected matches for physics OR chemistry";
   auto result_count = std::min(count, kTopK);
@@ -1230,7 +1204,6 @@ TEST_P(BlockScoringTestCase, MultisegBm25Disjunction) {
   CreateMultiSegmentIndex();
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   ASSERT_EQ(3, reader.size()) << "Expected 3 segments";
@@ -1243,8 +1216,8 @@ TEST_P(BlockScoringTestCase, MultisegBm25Disjunction) {
   std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
     irs::BlockSize(kTopK));
 
-  size_t count = irs::ExecuteTopKWithCount(reader, *filter, prepared_order,
-                                           kTopK, std::span{docs});
+  size_t count =
+    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
 
   ASSERT_GT(count, 0) << "Expected matches for tech OR science";
   auto result_count = std::min(count, kTopK);
@@ -1267,7 +1240,6 @@ TEST_P(BlockScoringTestCase, Bm25DisjunctionFourTerms) {
   CreateLargeIndex();
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
@@ -1282,8 +1254,8 @@ TEST_P(BlockScoringTestCase, Bm25DisjunctionFourTerms) {
   std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
     irs::BlockSize(kTopK));
 
-  size_t count = irs::ExecuteTopKWithCount(reader, *filter, prepared_order,
-                                           kTopK, std::span{docs});
+  size_t count =
+    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
 
   ASSERT_GT(count, 0) << "Expected matches for 4-term disjunction";
   auto result_count = std::min(count, kTopK);
@@ -1305,7 +1277,6 @@ TEST_P(BlockScoringTestCase, MultisegTfidfDisjunctionFiveTerms) {
   CreateMultiSegmentIndex();
 
   auto scorer = irs::TFIDF{true};
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   ASSERT_EQ(3, reader.size()) << "Expected 3 segments";
@@ -1319,8 +1290,8 @@ TEST_P(BlockScoringTestCase, MultisegTfidfDisjunctionFiveTerms) {
   std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
     irs::BlockSize(kTopK));
 
-  size_t count = irs::ExecuteTopKWithCount(reader, *filter, prepared_order,
-                                           kTopK, std::span{docs});
+  size_t count =
+    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
 
   ASSERT_GT(count, 0) << "Expected matches for 5-term disjunction";
   auto result_count = std::min(count, kTopK);
@@ -1350,7 +1321,6 @@ TEST_P(BlockScoringTestCase, Bm25DisjunctionThreeTermsSameField) {
   CreateLargeIndex();
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   ASSERT_EQ(1, reader.size()) << "Expected single segment for value checks";
@@ -1364,8 +1334,8 @@ TEST_P(BlockScoringTestCase, Bm25DisjunctionThreeTermsSameField) {
   std::vector<std::pair<irs::doc_id_t, irs::score_t>> docs(
     irs::BlockSize(kTopK));
 
-  size_t count = irs::ExecuteTopKWithCount(reader, *filter, prepared_order,
-                                           kTopK, std::span{docs});
+  size_t count =
+    irs::ExecuteTopKWithCount(reader, *filter, scorer, kTopK, std::span{docs});
 
   ASSERT_GT(count, 0) << "Expected matches for 3-term disjunction";
   auto result_count = std::min(count, kTopK);
@@ -1386,8 +1356,7 @@ static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(BlockScoringTest, BlockScoringTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values("1_5simd",
-                                                              "1_5avx")),
+                                            ::testing::Values("1_5simd")),
                          BlockScoringTestCase::to_string);
 
 }  // namespace

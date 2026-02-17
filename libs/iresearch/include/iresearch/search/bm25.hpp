@@ -67,9 +67,12 @@ class BM25 final : public irs::ScorerBase<BM25, BM25Stats> {
 
   static void init();  // for trigering registration in a static build
 
-  BM25(float_t k = K(), float_t b = B(),
-       bool boost_as_score = BOOST_AS_SCORE()) noexcept
-    : _k{k}, _b{b}, _boost_as_score{boost_as_score} {}
+  BM25(float_t k = K(), float_t b = B(), bool boost_as_score = BOOST_AS_SCORE(),
+       bool approximate = true) noexcept
+    : _k{k},
+      _b{b},
+      _boost_as_score{boost_as_score},
+      _approximate{approximate} {}
 
   void collect(byte_type* stats_buf, const irs::FieldCollector* field,
                const irs::TermCollector* term) const final;
@@ -85,7 +88,6 @@ class BM25 final : public irs::ScorerBase<BM25, BM25Stats> {
   FieldCollector::ptr PrepareFieldCollector() const final;
 
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
-  ScoreFunction PrepareSingleScorer(const ScoreContext& ctx) const final;
 
   WandWriter::ptr prepare_wand_writer(size_t max_levels) const final;
 
@@ -115,6 +117,7 @@ class BM25 final : public irs::ScorerBase<BM25, BM25Stats> {
   float_t _k;
   float_t _b;
   bool _boost_as_score;
+  bool _approximate;
 };
 
 }  // namespace irs

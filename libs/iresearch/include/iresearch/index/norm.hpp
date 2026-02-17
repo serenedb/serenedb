@@ -27,62 +27,79 @@
 #include <cstdint>
 
 #include "iresearch/formats/formats.hpp"
+#include "iresearch/index/buffered_column.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/types.hpp"
 
 namespace irs {
 
-enum class NormVersion : uint8_t { Min = 0 };
+enum class NormVersion : uint8_t {
+  Min = 0,
+};
 
 enum class NormEncoding : uint8_t {
   Byte = sizeof(uint8_t),
   Short = sizeof(uint16_t),
-  Int = sizeof(uint32_t)
+  Int = sizeof(uint32_t),
 };
+
+template<typename F>
+IRS_FORCE_INLINE auto ResolveNormEncoding(NormEncoding encoding, F&& f) {
+  switch (encoding) {
+    case NormEncoding::Byte:
+      return std::forward<F>(f).template operator()<NormEncoding::Byte>();
+    case NormEncoding::Short:
+      return std::forward<F>(f).template operator()<NormEncoding::Short>();
+    case NormEncoding::Int:
+      return std::forward<F>(f).template operator()<NormEncoding::Int>();
+    default:
+      SDB_UNREACHABLE();
+  }
+}
 
 class NormHeader final {
  public:
   constexpr static size_t ByteSize() noexcept {
-    return sizeof(NormVersion) + sizeof(_encoding) + sizeof(_min) +
-           sizeof(_max);
+    return sizeof(NormVersion) + sizeof(_encoding) + sizeof(_max) +
+           sizeof(_sum);
   }
 
   constexpr static bool CheckNumBytes(size_t num_bytes) noexcept {
-    return num_bytes == sizeof(uint8_t) || num_bytes == sizeof(uint16_t) ||
-           num_bytes == sizeof(uint32_t);
+    return num_bytes == std::to_underlying(NormEncoding::Byte) ||
+           num_bytes == std::to_underlying(NormEncoding::Short) ||
+           num_bytes == std::to_underlying(NormEncoding::Int);
   }
 
   explicit NormHeader(NormEncoding encoding) noexcept : _encoding{encoding} {
-    SDB_ASSERT(CheckNumBytes(static_cast<size_t>(_encoding)));
+    SDB_ASSERT(CheckNumBytes(std::to_underlying(_encoding)));
   }
 
   void Reset(uint32_t value) noexcept {
-    _min = std::min(_min, value);
     _max = std::max(_max, value);
+    _sum += value;
   }
 
-  void Reset(const NormHeader& hdr) noexcept;
+  NormEncoding Encoding() const noexcept { return _encoding; }
+  uint32_t Max() const noexcept { return _max; }
+  uint64_t Sum() const noexcept { return _sum; }
 
-  size_t MaxNumBytes() const noexcept {
-    if (_max <= std::numeric_limits<uint8_t>::max()) {
+  static void Write(const NormHeader& hdr, DataOutput& out);
+  static std::optional<NormHeader> Read(bytes_view payload) noexcept;
+
+  static size_t MaxNumBytes(uint32_t value) noexcept {
+    if (value <= std::numeric_limits<uint8_t>::max()) {
       return sizeof(uint8_t);
-    } else if (_max <= std::numeric_limits<uint16_t>::max()) {
+    } else if (value <= std::numeric_limits<uint16_t>::max()) {
       return sizeof(uint16_t);
     } else {
       return sizeof(uint32_t);
     }
   }
 
-  auto Encoding() const noexcept { return _encoding; }
-  size_t NumBytes() const noexcept { return static_cast<size_t>(Encoding()); }
-
-  static void Write(const NormHeader& hdr, DataOutput& out);
-  static std::optional<NormHeader> Read(bytes_view payload) noexcept;
-
  private:
-  uint32_t _min{std::numeric_limits<uint32_t>::max()};
-  uint32_t _max{std::numeric_limits<uint32_t>::min()};
   NormEncoding _encoding;  // Number of bytes used for encoding
+  uint32_t _max = 0;
+  uint64_t _sum = 0;
 };
 
 class Norm : public Attribute {
@@ -93,45 +110,32 @@ class Norm : public Attribute {
 
   static FeatureWriter::ptr MakeWriter(std::span<const bytes_view> payload);
 
-  static uint32_t Read(bytes_view payload) noexcept {
-    const auto* p = payload.data();
-    switch (payload.size()) {
-      case sizeof(uint8_t):
-        return *p;
-      case sizeof(uint16_t):
-        return absl::little_endian::Load16(p);
-      case sizeof(uint32_t):
-        return absl::little_endian::Load32(p);
-      [[unlikely]] default:
-        // we should investigate why we failed to find a norm value for doc
-        SDB_ASSERT(false);
-        return 1;
-    }
-  }
-
   template<NormEncoding Encoding>
-  IRS_FORCE_INLINE static uint32_t ReadUnchecked(const void* value) noexcept {
+  IRS_FORCE_INLINE static uint32_t ReadUnchecked(
+    const byte_type* value) noexcept {
     if constexpr (Encoding == NormEncoding::Byte) {
-      return absl::little_endian::Load<uint8_t>(value);
+      return *value;
     } else if constexpr (Encoding == NormEncoding::Short) {
-      return absl::little_endian::Load<uint16_t>(value);
+      return absl::little_endian::Load16(value);
     } else if constexpr (Encoding == NormEncoding::Int) {
-      return absl::little_endian::Load<uint32_t>(value);
+      return absl::little_endian::Load32(value);
     } else {
       static_assert(false);
     }
   }
 
+  static uint32_t Read(bytes_view value) noexcept {
+    SDB_ASSERT(NormHeader::CheckNumBytes(value.size()));
+    return ResolveNormEncoding(static_cast<NormEncoding>(value.size()),
+                               [&]<NormEncoding Encoding> {
+                                 return ReadUnchecked<Encoding>(value.data());
+                               });
+  }
+
   template<NormEncoding Encoding>
   IRS_FORCE_INLINE static uint32_t Read(bytes_view value) noexcept {
-    if (value.size() == std::to_underlying(Encoding)) [[likely]] {
-      return ReadUnchecked<Encoding>(value.data());
-    }
-
-    // we should investigate why we failed to find a norm value for doc
-    SDB_ASSERT(false);
-
-    return 1;
+    SDB_ASSERT(value.size() == std::to_underlying(Encoding));
+    return ReadUnchecked<Encoding>(value.data());
   }
 
   ValueType value = 0;
@@ -141,13 +145,10 @@ class Norm : public Attribute {
 static_assert(std::is_nothrow_move_constructible_v<Norm>);
 static_assert(std::is_nothrow_move_assignable_v<Norm>);
 
-template<typename T>
+template<NormEncoding Encoding>
 class NormWriter : public FeatureWriter {
  public:
-  static_assert(std::is_same_v<T, uint8_t> || std::is_same_v<T, uint16_t> ||
-                std::is_same_v<T, uint32_t>);
-
-  explicit NormWriter() noexcept : _hdr{NormEncoding{sizeof(T)}} {}
+  explicit NormWriter() noexcept : _hdr{Encoding} {}
 
   void write(const FieldStats& stats, doc_id_t doc,
              ColumnOutput& writer) final {
@@ -166,16 +167,18 @@ class NormWriter : public FeatureWriter {
 
  private:
   static void WriteValue(DataOutput& out, uint32_t value) {
-    if constexpr (sizeof(T) == sizeof(uint8_t)) {
-      const auto v = static_cast<uint8_t>(value & 0xFF);
+    // TODO(mbkkt) We should use WriteU16, WriteU32
+    // as soon as we will switch to little endian
+    SDB_ASSERT(NormHeader::MaxNumBytes(value) <= std::to_underlying(Encoding));
+    if constexpr (Encoding == NormEncoding::Byte) {
+      const auto v = static_cast<uint8_t>(value);
       out.WriteByte(v);
-    } else if constexpr (sizeof(T) == sizeof(uint16_t)) {
-      const auto v =
-        absl::little_endian::FromHost(static_cast<uint16_t>(value & 0xFFFF));
-      out.WriteBytes(reinterpret_cast<const byte_type*>(&v), sizeof(T));
-    } else if constexpr (sizeof(T) == sizeof(uint32_t)) {
-      value = absl::little_endian::FromHost(value);
-      out.WriteBytes(reinterpret_cast<const byte_type*>(&value), sizeof(T));
+    } else if constexpr (Encoding == NormEncoding::Short) {
+      const auto v = absl::little_endian::FromHost16(value);
+      out.WriteBytes(reinterpret_cast<const byte_type*>(&v), sizeof(uint16_t));
+    } else if constexpr (Encoding == NormEncoding::Int) {
+      const auto v = absl::little_endian::FromHost32(value);
+      out.WriteBytes(reinterpret_cast<const byte_type*>(&v), sizeof(uint32_t));
     } else {
       static_assert(false);
     }
@@ -183,5 +186,9 @@ class NormWriter : public FeatureWriter {
 
   NormHeader _hdr;
 };
+
+NormReader::ptr MakeNormReader(bytes_view payload,
+                               std::span<const BufferedValue> values,
+                               bytes_view data);
 
 }  // namespace irs

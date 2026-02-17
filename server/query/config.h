@@ -194,7 +194,7 @@ class Config : public velox::config::IConfig {
   // Used by TxnState(transaction state) to commit/rollback transaction
   // variables
   void CommitVariables();
-  void RollbackVariables() { _transaction.clear(); }
+  void RollbackVariables() noexcept { _transaction.clear(); }
 
  private:
   std::optional<std::string> Get(std::string_view key) const;

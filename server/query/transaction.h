@@ -55,6 +55,18 @@ class Transaction : public Config {
     HasTransactionBegin = 1 << 2,
   };
 
+#ifdef SDB_DEV
+  virtual ~Transaction() {
+    // Search transactions have implicit commit in destructor (historical
+    // reasons) So if we get here explicit Commit/Rollback should be already
+    // called. Otherwise we might have some unexpected data
+    SDB_ASSERT(_search_transactions.empty());
+    // RocksDB transactions aborts itself in destructor but just for consistency
+    // we should do Commit/Rollback explicitly
+    SDB_ASSERT(!_rocksdb_transaction);
+  }
+#endif
+
   Result Begin(IsolationLevel isolation_level = IsolationLevel::RepeatableRead);
 
   IsolationLevel GetIsolationLevel() const noexcept { return _isolation_level; }

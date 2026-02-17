@@ -20,6 +20,8 @@
 
 #include "query/transaction.h"
 
+#include <absl/cleanup/cleanup.h>
+
 #include "basics/assert.h"
 #include "catalog/catalog.h"
 #include "storage_engine/engine_feature.h"
@@ -35,42 +37,87 @@ Result Transaction::Begin(IsolationLevel isolation_level) {
 }
 
 Result Transaction::Commit() {
+  auto cleanup = [&] {
+    ApplyTableStatsDiffs();
+    CommitVariables();
+    Destroy();
+  };
+
   // RocksDB transaction is lazy initialized, so it may be nullptr here. It
   // means no rocksdb transaction actually started, for example, sequential
   // BEGIN and COMMIT statements.
-  if (_rocksdb_transaction) {
+  if (!_rocksdb_transaction) {
+    cleanup();
+    return {};
+  }
+
+  auto abort_guard = absl::Cleanup([&] {
+    for (auto& search_transaction : _search_transactions) {
+      search_transaction.second->Abort();
+    }
+    RollbackVariables();
+    Destroy();
+  });
+
+  const uint64_t num_ops =
+    _rocksdb_transaction->GetNumPuts() + _rocksdb_transaction->GetNumDeletes();
+  SDB_ASSERT(_rocksdb_transaction->GetNumMerges() == 0,
+             "We do not expect merges for now");
+
+  if (num_ops > 0) [[likely]] {
+    for (auto& search_transaction : _search_transactions) {
+      // tie iresearch transaction's active segment to current flush context in
+      // writer and let IndexWriter know that he need to wait for this
+      // transaction to settle before proceeding with commit. That is important
+      // as we are committing "on tick" and must ensure that if we mark this
+      // transaction with tick (see below commit calls) writer will not commit
+      // without it. This could happend if background index commit will start
+      // AFTER RocksDB commit but before transaction commit. But as we told
+      // index writer to wait, we are safe.
+      search_transaction.second->RegisterFlush();
+    }
     auto status = _rocksdb_transaction->Commit();
     if (!status.ok()) {
       return {ERROR_INTERNAL,
               "Failed to commit RocksDB transaction: ", status.ToString()};
     }
-  }
 
-  for (auto& search_transaction : _search_transactions) {
-    search_transaction.second->Commit();
+    // id is first write operation seqno in the WAL
+    auto post_commit_seq = _rocksdb_transaction->GetId();
+    // add number of operations to get last operation seqno
+    post_commit_seq += num_ops - 1;
+
+    for (auto& search_transaction : _search_transactions) {
+      search_transaction.second->Commit(post_commit_seq);
+    }
   }
-  ApplyTableStatsDiffs();
-  CommitVariables();
-  Destroy();
+  std::move(abort_guard).Cancel();
+  cleanup();
+
   return {};
 }
 
 Result Transaction::Rollback() {
+  auto cleanup = absl::Cleanup([&] {
+    for (auto& search_transaction : _search_transactions) {
+      search_transaction.second->Abort();
+    }
+    RollbackVariables();
+    Destroy();
+  });
+
   // RocksDB transaction is lazy initialized, so it may be nullptr here. It
   // means no rocksdb transaction actually started, for example, sequential
   // BEGIN and ROLLBACK statements.
-  if (_rocksdb_transaction) {
-    auto status = _rocksdb_transaction->Rollback();
-    if (!status.ok()) {
-      return {ERROR_INTERNAL,
-              "Failed to rollback RocksDB transaction: ", status.ToString()};
-    }
+  if (!_rocksdb_transaction) {
+    return {};
   }
-  for (auto& search_transaction : _search_transactions) {
-    search_transaction.second->Abort();
+
+  auto status = _rocksdb_transaction->Rollback();
+  if (!status.ok()) {
+    return {ERROR_INTERNAL,
+            "Failed to rollback RocksDB transaction: ", status.ToString()};
   }
-  RollbackVariables();
-  Destroy();
   return {};
 }
 

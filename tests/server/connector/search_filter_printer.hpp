@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2017 ArangoDB GmbH, Cologne, Germany
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -15,27 +15,16 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
-///
-/// @author Andrey Abramov
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "score.hpp"
+#pragma once
+#include <iresearch/search/filter.hpp>
+#include <string>
 
-#include "iresearch/formats/formats.hpp"
-#include "iresearch/search/column_collector.hpp"
-#include "iresearch/search/score_function.hpp"
-#include "iresearch/search/scorer.hpp"
-
+// GTEST requires to us to have operator in the same namespace
 namespace irs {
 
-void PrepareCollectors(std::span<const ScorerBucket> order,
-                       byte_type* stats_buf) {
-  for (const auto& entry : order) {
-    if (entry.bucket) [[likely]] {
-      entry.bucket->collect(stats_buf + entry.stats_offset, nullptr, nullptr);
-    }
-  }
-}
+std::ostream& operator<<(std::ostream& os, const Filter& filter);
 
 }  // namespace irs

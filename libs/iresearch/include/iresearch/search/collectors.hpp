@@ -99,8 +99,8 @@ class CollectorsBase {
  public:
   using iterator_type = typename std::vector<Collector>::const_iterator;
 
-  explicit CollectorsBase(size_t size, const Scorers& order)
-    : _collectors(size), _buckets{order.buckets()} {}
+  explicit CollectorsBase(size_t size, const Scorer* scorer)
+    : _collectors(size), _scorer{scorer} {}
 
   CollectorsBase(CollectorsBase&&) = default;
   CollectorsBase& operator=(CollectorsBase&&) = default;
@@ -134,7 +134,7 @@ class CollectorsBase {
 
  protected:
   std::vector<Collector> _collectors;
-  std::span<const ScorerBucket> _buckets;
+  const Scorer* _scorer{};
 };
 
 // Wrapper around FieldCollector which guarantees collector
@@ -165,7 +165,7 @@ static_assert(std::is_nothrow_move_assignable_v<FieldCollectorWrapper>);
 // all buckets
 class FieldCollectors : public CollectorsBase<FieldCollectorWrapper> {
  public:
-  explicit FieldCollectors(const Scorers& buckets);
+  explicit FieldCollectors(const Scorer* scorer);
   FieldCollectors(FieldCollectors&&) = default;
   FieldCollectors& operator=(FieldCollectors&&) = default;
 
@@ -220,13 +220,11 @@ static_assert(std::is_nothrow_move_assignable_v<TermCollectorWrapper>);
 // all buckets
 class TermCollectors : public CollectorsBase<TermCollectorWrapper> {
  public:
-  TermCollectors(const Scorers& buckets, size_t size);
+  TermCollectors(const Scorer* scorer, size_t size);
   TermCollectors(TermCollectors&&) = default;
   TermCollectors& operator=(TermCollectors&&) = default;
 
-  size_t size() const noexcept {
-    return _buckets.size() ? _collectors.size() / _buckets.size() : 0;
-  }
+  size_t size() const noexcept { return _scorer ? _collectors.size() : 0; }
 
   // Add collectors for another term and return term_offset
   size_t push_back();

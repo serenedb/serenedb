@@ -568,8 +568,6 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     "bm25", irs::Type<irs::text_format::Json>::get(), std::string_view{})};
   ASSERT_NE(nullptr, order.front());
 
-  auto prepared_order = irs::Scorers::Prepare(order);
-
   auto index = open_reader();
   ASSERT_NE(nullptr, index);
   ASSERT_EQ(1, index->size());
@@ -589,16 +587,16 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     auto prepared = filter.prepare({
       .index = *index,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = order.front().get(),
     });
     ASSERT_NE(nullptr, prepared);
 
     auto docs =
-      prepared->execute({.segment = index[0], .scorers = prepared_order});
+      prepared->execute({.segment = index[0], .scorer = order.front().get()});
     ASSERT_NE(nullptr, docs);
 
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = order.front().get(),
       .segment = &index[0],
     });
     ASSERT_FALSE(score.IsDefault());
@@ -639,19 +637,19 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     auto prepared = filter.prepare({
       .index = *index,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = order.front().get(),
     });
     ASSERT_NE(nullptr, prepared);
 
     collector.Clear();
     auto docs = prepared->execute({
       .segment = index[0],
-      .scorers = prepared_order,
+      .scorer = order.front().get(),
     });
     ASSERT_NE(nullptr, docs);
 
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = order.front().get(),
       .segment = &index[0],
     });
 
@@ -691,19 +689,19 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     auto prepared = filter.prepare({
       .index = *index,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = order.front().get(),
     });
     ASSERT_NE(nullptr, prepared);
 
     collector.Clear();
     auto docs = prepared->execute({
       .segment = index[0],
-      .scorers = prepared_order,
+      .scorer = order.front().get(),
     });
     ASSERT_NE(nullptr, docs);
 
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = order.front().get(),
       .segment = &index[0],
     });
 
@@ -744,19 +742,19 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     auto prepared = filter.prepare({
       .index = *index,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = order.front().get(),
     });
     ASSERT_NE(nullptr, prepared);
 
     collector.Clear();
     auto docs = prepared->execute({
       .segment = index[0],
-      .scorers = prepared_order,
+      .scorer = order.front().get(),
     });
     ASSERT_NE(nullptr, docs);
 
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = order.front().get(),
       .segment = &index[0],
     });
 
@@ -817,19 +815,19 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     auto prepared = filter.prepare({
       .index = *index,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = order.front().get(),
     });
     ASSERT_NE(nullptr, prepared);
 
     collector.Clear();
     auto docs = prepared->execute({
       .segment = index[0],
-      .scorers = prepared_order,
+      .scorer = order.front().get(),
     });
     ASSERT_NE(nullptr, docs);
 
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = order.front().get(),
       .segment = &index[0],
       .collector = &collector,
     });
@@ -892,19 +890,19 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     auto prepared = filter.prepare({
       .index = *index,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = order.front().get(),
     });
     ASSERT_NE(nullptr, prepared);
 
     collector.Clear();
     auto docs = prepared->execute({
       .segment = index[0],
-      .scorers = prepared_order,
+      .scorer = order.front().get(),
     });
     ASSERT_NE(nullptr, docs);
 
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = order.front().get(),
       .segment = &index[0],
       .collector = &collector,
     });

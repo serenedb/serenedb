@@ -121,7 +121,7 @@ struct Sort : irs::Scorer {
     return irs::ScoreFunction::Default();
   }
 
-  std::pair<size_t, size_t> stats_size() const final { return {0, 0}; }
+  size_t stats_size() const final { return 0; }
 };
 
 class TestSeekTermIterator : public irs::SeekTermIterator {
@@ -177,12 +177,6 @@ class TestSeekTermIterator : public irs::SeekTermIterator {
     irs::Attribute* GetMutable(irs::TypeInfo::type_id) noexcept final {
       return nullptr;
     }
-
-    bool IsEqual(const irs::SeekCookie& rhs) const noexcept final {
-      return ptr == sdb::basics::downCast<SeekPtr>(rhs).ptr;
-    }
-
-    size_t Hash() const noexcept final { return absl::HashOf(ptr->first); }
 
     IteratorType ptr;
   };

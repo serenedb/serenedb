@@ -43,7 +43,6 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/column_collector.hpp"
-#include "iresearch/search/score.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/search/scorer_impl.hpp"
@@ -100,37 +99,41 @@ struct BM25FieldCollector final : FieldCollector {
   }
 };
 
-struct Params {
+struct ObjectParams {
   float_t k = BM25::K();
   float_t b = BM25::B();
+  bool boost_as_score = BM25::BOOST_AS_SCORE();
+  bool approximate = true;
 };
 
 Scorer::ptr MakeFromObject(const vpack::Slice slice) {
-  Params params;
+  ObjectParams params;
   auto r = vpack::ReadObjectNothrow(slice, params,
                                     {
                                       .skip_unknown = true,
                                       .strict = false,
                                     });
   if (!r.ok()) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      absl::StrCat("Error '", r.errorMessage(),
-                   "' while constructing bm25 scorer from VPack arguments"));
+    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Error '", r.errorMessage(),
+              "' while constructing bm25 scorer from VPack arguments");
     return {};
   }
 
-  return std::make_unique<BM25>(params.k, params.b);
+  return std::make_unique<BM25>(params.k, params.b, params.boost_as_score,
+                                params.approximate);
 }
 
+struct ArrayParams {
+  float_t k = BM25::K();
+  float_t b = BM25::B();
+};
+
 Scorer::ptr MakeFromArray(const vpack::Slice slice) {
-  Params params;
+  ArrayParams params;
   auto r = vpack::ReadTupleNothrow(slice, params);
   if (!r.ok()) {
-    SDB_ERROR(
-      "xxxxx", sdb::Logger::IRESEARCH,
-      absl::StrCat("Error '", r.errorMessage(),
-                   "' while constructing bm25 scorer from VPack arguments"));
+    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH, "Error '", r.errorMessage(),
+              "' while constructing bm25 scorer from VPack arguments");
     return {};
   }
 
@@ -155,32 +158,30 @@ Scorer::ptr MakeVPack(std::string_view args) {
   if (IsNull(args)) {
     // default args
     return std::make_unique<irs::BM25>();
-  } else {
-    vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
-    return MakeVPack(slice);
   }
+  vpack::Slice slice(reinterpret_cast<const uint8_t*>(args.data()));
+  return MakeVPack(slice);
 }
 
 Scorer::ptr MakeJson(std::string_view args) {
   if (IsNull(args)) {
     // default args
     return std::make_unique<irs::BM25>();
-  } else {
-    try {
-      auto vpack = vpack::Parser::fromJson(args.data(), args.size());
-      return MakeVPack(vpack->slice());
-    } catch (const vpack::Exception& ex) {
-      SDB_ERROR(
-        "xxxxx", sdb::Logger::IRESEARCH,
-        absl::StrCat("Caught error '", ex.what(),
-                     "' while constructing VPack from JSON for bm25 scorer"));
-    } catch (...) {
-      SDB_ERROR(
-        "xxxxx", sdb::Logger::IRESEARCH,
-        "Caught error while constructing VPack from JSON for bm25 scorer");
-    }
-    return nullptr;
   }
+  try {
+    auto vpack = vpack::Parser::fromJson(args.data(), args.size());
+    return MakeVPack(vpack->slice());
+  } catch (const vpack::Exception& ex) {
+    SDB_ERROR(
+      "xxxxx", sdb::Logger::IRESEARCH,
+      absl::StrCat("Caught error '", ex.what(),
+                   "' while constructing VPack from JSON for bm25 scorer"));
+  } catch (...) {
+    SDB_ERROR(
+      "xxxxx", sdb::Logger::IRESEARCH,
+      "Caught error while constructing VPack from JSON for bm25 scorer");
+  }
+  return nullptr;
 }
 
 template<typename T>
@@ -404,52 +405,6 @@ FieldCollector::ptr BM25::PrepareFieldCollector() const {
   return std::make_unique<BM25FieldCollector>();
 }
 
-ScoreFunction BM25::PrepareSingleScorer(const ScoreContext& ctx) const {
-  auto* freq = irs::get<FreqAttr>(ctx.doc_attrs);
-
-  if (!freq) {
-    if (!_boost_as_score || 0.f == ctx.boost) {
-      return ScoreFunction::Default();
-    }
-
-    // if there is no frequency then all the scores
-    // will be the same (e.g. filter irs::all)
-    return ScoreFunction::Constant(ctx.boost);
-  }
-
-  auto* filter_boost = [&] {
-    auto* attr = irs::get<FilterBoost>(ctx.doc_attrs);
-    return attr ? &attr->value : nullptr;
-  }();
-
-  auto* stats = stats_cast(ctx.stats);
-
-  return ResolveBool(filter_boost != nullptr, [&]<bool HasBoost>() {
-    if (IsBM1()) {
-      return ScoreFunction::Make<Bm1Score<HasBoost>>(_k, ctx.boost, *stats,
-                                                     filter_boost);
-    }
-
-    if (IsBM15()) {
-      return ScoreFunction::Make<Bm15Score<HasBoost>>(
-        _k, ctx.boost, *stats, nullptr, filter_boost);  // TODO(gnusi): fix
-    }
-
-    auto* norm = [&] {
-      auto* attr = irs::get<Norm>(ctx.doc_attrs);
-      return attr ? &attr->value : nullptr;
-    }();
-
-    if (!norm) {
-      static constexpr uint32_t kNorm = 1;
-      norm = &kNorm;
-    }
-
-    return ScoreFunction::Make<Bm25Score<HasBoost>>(
-      _k, ctx.boost, *stats, nullptr, norm, filter_boost);  // TODO(gnusi): fix
-  });
-}
-
 ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
   auto* freq = irs::get<FreqBlockAttr>(ctx.doc_attrs);
 
@@ -481,8 +436,12 @@ ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
                                                       freq, filter_boost);
     }
 
-    const uint32_t* norm = nullptr;
-    if (ctx.collector) {
+    const uint32_t* norm = [&] {
+      auto* attr = irs::get<Norm>(ctx.doc_attrs);
+      return attr ? &attr->value : nullptr;
+    }();
+
+    if (!norm && ctx.collector) {
       norm = ctx.collector->AddNorms(ctx.segment.column(ctx.field.norm));
     }
 
@@ -519,7 +478,15 @@ WandWriter::ptr BM25::prepare_wand_writer(size_t max_levels) const {
     // x / (k / avg_dl + x)
     return std::make_unique<FreqNormWriter<kWandTagDivNorm>>(max_levels);
   }
-  // Approximation that suited for any BM25
+  if (_approximate) {
+    // It's not precise if we have more than 1 segment.
+    // But search is distributed and we don't compute cluster wide avg_dl,
+    // so it's better to use this instead of kWandTagBM25.
+    // But if we want precise wand info, we need to return kWandTagBM25 here.
+    return std::make_unique<FreqNormWriter<kWandTagAvgDL>>(max_levels, _b);
+  }
+  // It's precise for any numbers of segments, even for distributed case.
+  // In other words for this we don't need to know avg_dl in ahead.
   return std::make_unique<FreqNormWriter<kWandTagBM25>>(max_levels, _b);
 }
 

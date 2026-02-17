@@ -30,9 +30,7 @@
 #include "iresearch/search/phrase_filter.hpp"
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/range_filter.hpp"
-#include "iresearch/search/score.hpp"
 #include "iresearch/search/scorer.hpp"
-#include "iresearch/search/scorers.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/tfidf.hpp"
 #include "iresearch/utils/bytes_output.hpp"
@@ -103,7 +101,6 @@ void TfidfTestCase::TestQueryNorms(irs::FeatureWriterFactory handler) {
   }
 
   auto scorer = irs::TFIDF{true};
-  auto prepared_order = irs::Scorers::Prepare(scorer);
   irs::ColumnCollector collector;
 
   auto reader = irs::DirectoryReader(dir(), codec());
@@ -138,16 +135,16 @@ void TfidfTestCase::TestQueryNorms(irs::FeatureWriterFactory handler) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
 
     collector.Clear();
     auto docs = prepared_filter->execute({
       .segment = segment,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = &scorer,
       .segment = &segment,
       .collector = &collector,
     });
@@ -201,16 +198,16 @@ void TfidfTestCase::TestQueryNorms(irs::FeatureWriterFactory handler) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
 
     collector.Clear();
     auto docs = prepared_filter->execute({
       .segment = segment,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = &scorer,
       .segment = &segment,
       .collector = &collector,
     });
@@ -401,7 +398,6 @@ TEST_P(TfidfTestCase, test_phrase) {
   }
 
   auto scorer = irs::TFIDF{false, true};
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   // read segment
   auto index = open_reader();
@@ -433,16 +429,16 @@ TEST_P(TfidfTestCase, test_phrase) {
     auto prepared_filter = filter.prepare({
       .index = *index,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
 
     collector.Clear();
     auto docs = prepared_filter->execute({
       .segment = segment,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = &scorer,
       .segment = &segment,
       .collector = &collector,
     });
@@ -510,16 +506,16 @@ TEST_P(TfidfTestCase, test_phrase) {
     auto prepared_filter = filter.prepare({
       .index = *index,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
 
     collector.Clear();
     auto docs = prepared_filter->execute({
       .segment = segment,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = &scorer,
       .segment = &segment,
       .collector = &collector,
     });
@@ -573,7 +569,6 @@ TEST_P(TfidfTestCase, test_query) {
   }
 
   auto scorer = irs::TFIDF{false, true};
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   auto& segment = *(reader.begin());
@@ -602,16 +597,16 @@ TEST_P(TfidfTestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
 
     collector.Clear();
     auto docs = prepared_filter->execute({
       .segment = segment,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = &scorer,
       .segment = &segment,
       .collector = &collector,
     });
@@ -704,7 +699,7 @@ TEST_P(TfidfTestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
 
     for (auto& segment : reader) {
@@ -717,10 +712,10 @@ TEST_P(TfidfTestCase, test_query) {
       collector.Clear();
       auto docs = prepared_filter->execute({
         .segment = segment,
-        .scorers = prepared_order,
+        .scorer = &scorer,
       });
       auto score = docs->PrepareScore({
-        .scorer = prepared_order.buckets().front().bucket,
+        .scorer = &scorer,
         .segment = &segment,
         .collector = &collector,
       });
@@ -824,7 +819,7 @@ TEST_P(TfidfTestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
 
     for (auto& segment : reader) {
@@ -837,11 +832,11 @@ TEST_P(TfidfTestCase, test_query) {
       collector.Clear();
       auto docs = prepared_filter->execute({
         .segment = segment,
-        .scorers = prepared_order,
+        .scorer = &scorer,
 
       });
       auto score = docs->PrepareScore({
-        .scorer = prepared_order.buckets().front().bucket,
+        .scorer = &scorer,
         .segment = &segment,
         .collector = &collector,
       });
@@ -937,7 +932,7 @@ TEST_P(TfidfTestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
 
     for (auto& segment : reader) {
@@ -950,11 +945,11 @@ TEST_P(TfidfTestCase, test_query) {
       collector.Clear();
       auto docs = prepared_filter->execute({
         .segment = segment,
-        .scorers = prepared_order,
+        .scorer = &scorer,
 
       });
       auto score = docs->PrepareScore({
-        .scorer = prepared_order.buckets().front().bucket,
+        .scorer = &scorer,
         .segment = &segment,
         .collector = &collector,
       });
@@ -1008,15 +1003,15 @@ TEST_P(TfidfTestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     collector.Clear();
     auto docs = prepared_filter->execute({
       .segment = segment,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = &scorer,
       .segment = &segment,
       .collector = &collector,
     });
@@ -1069,15 +1064,15 @@ TEST_P(TfidfTestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     collector.Clear();
     auto docs = prepared_filter->execute({
       .segment = segment,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = &scorer,
       .segment = &segment,
       .collector = &collector,
     });
@@ -1128,15 +1123,15 @@ TEST_P(TfidfTestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     collector.Clear();
     auto docs = prepared_filter->execute({
       .segment = segment,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = &scorer,
       .segment = &segment,
       .collector = &collector,
     });
@@ -1187,15 +1182,15 @@ TEST_P(TfidfTestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     collector.Clear();
     auto docs = prepared_filter->execute({
       .segment = segment,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = &scorer,
       .segment = &segment,
       .collector = &collector,
     });
@@ -1248,15 +1243,15 @@ TEST_P(TfidfTestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     collector.Clear();
     auto docs = prepared_filter->execute({
       .segment = segment,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = &scorer,
       .segment = &segment,
       .collector = &collector,
     });
@@ -1298,15 +1293,15 @@ TEST_P(TfidfTestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     collector.Clear();
     auto docs = prepared_filter->execute({
       .segment = segment,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = &scorer,
       .segment = &segment,
       .collector = &collector,
     });
@@ -1342,15 +1337,15 @@ TEST_P(TfidfTestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     collector.Clear();
     auto docs = prepared_filter->execute({
       .segment = segment,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = &scorer,
       .segment = &segment,
       .collector = &collector,
     });
@@ -1386,15 +1381,15 @@ TEST_P(TfidfTestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     collector.Clear();
     auto docs = prepared_filter->execute({
       .segment = segment,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = &scorer,
       .segment = &segment,
       .collector = &collector,
     });
@@ -1432,15 +1427,15 @@ TEST_P(TfidfTestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     collector.Clear();
     auto docs = prepared_filter->execute({
       .segment = segment,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = &scorer,
       .segment = &segment,
       .collector = &collector,
     });
@@ -1674,7 +1669,6 @@ TEST_P(TfidfTestCase, test_order) {
   *query.mutable_field() = "field";
 
   auto scorer = irs::TFIDF{false, true};
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   uint64_t seq = 0;
   const auto* column = segment.column("seq");
@@ -1699,15 +1693,15 @@ TEST_P(TfidfTestCase, test_order) {
     auto prepared = query.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     collector.Clear();
     auto docs = prepared->execute({
       .segment = segment,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = &scorer,
       .segment = &segment,
       .collector = &collector,
     });

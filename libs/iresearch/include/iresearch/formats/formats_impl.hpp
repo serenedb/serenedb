@@ -23,6 +23,8 @@
 #pragma once
 
 #include <absl/algorithm/container.h>
+#include <streamvbyte.h>
+#include <streamvbytedelta.h>
 
 #include <bit>
 #include <limits>
@@ -42,7 +44,6 @@
 #include "formats_attributes.hpp"
 #include "formats_burst_trie.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/formats/seek_cookie.hpp"
 #include "iresearch/formats/skip_list.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/file_names.hpp"
@@ -52,7 +53,6 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/cost.hpp"
 #include "iresearch/search/make_disjunction.hpp"
-#include "iresearch/search/score.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/store/data_input.hpp"
@@ -81,7 +81,7 @@ inline void WriteStrings(IndexOutput& out, const auto& strings) {
   }
 }
 
-inline std::vector<std::string> ReadStrings(IndexInput& in) {
+inline std::vector<std::string> ReadStrings(DataInput& in) {
   const size_t size = in.ReadV32();
 
   if (size > std::numeric_limits<uint32_t>::max()) [[unlikely]] {
@@ -132,11 +132,7 @@ inline void PrepareInput(std::string& str, IndexInput::ptr& in, IOAdvice advice,
 struct SkipBuffer {
   explicit SkipBuffer(uint64_t* skip_ptr) noexcept : skip_ptr{skip_ptr} {}
 
-  void Reset() noexcept { start = end = 0; }
-
   uint64_t* skip_ptr;  // skip data
-  uint64_t start{};    // start position of block
-  uint64_t end{};      // end position of block
 };
 
 // Buffer for storing doc data
@@ -174,23 +170,24 @@ struct PosBuffer : SkipBuffer {
   bool Full() const noexcept { return buf.size() == size; }
 
   void Next(uint32_t pos) noexcept {
+    SDB_ASSERT(last <= pos);
+
+    buf[size] = pos - last;
     last = pos;
+
     ++size;
   }
 
-  void Pos(uint32_t pos) noexcept { buf[size] = pos; }
-
   void Reset() noexcept {
-    SkipBuffer::Reset();
-    last = 0;
-    block_last = 0;
+    offset = 0;
     size = 0;
+    last = pos_limits::invalid();
   }
 
+  uint64_t offset{};
   std::span<uint32_t> buf;  // buffer to store position deltas
-  uint32_t last{};          // last buffered position
-  uint32_t block_last{};    // last position in a block
   uint32_t size{};          // number of buffered elements
+  uint32_t last{};          // last buffered position
 };
 
 // Buffer for storing payload data
@@ -201,21 +198,25 @@ struct PayBuffer : SkipBuffer {
       offs_start_buf{offs_start_buf},
       offs_len_buf{offs_len_buf} {}
 
-  void PushOffset(uint32_t i, uint32_t start, uint32_t end) noexcept {
-    SDB_ASSERT(start >= last && start <= end);
+  void PushOffset(uint32_t start, uint32_t end) noexcept {
+    SDB_ASSERT(last <= start);
+    SDB_ASSERT(start <= end);
 
-    offs_start_buf[i] = start - last;
-    offs_len_buf[i] = end - start;
+    offs_start_buf[size] = start - last;
+    offs_len_buf[size] = end - start;
     last = start;
+
+    ++size;
   }
 
   void Reset() noexcept {
-    SkipBuffer::Reset();
+    size = 0;
     last = 0;
   }
 
   uint32_t* offs_start_buf;  // buffer to store start offsets
   uint32_t* offs_len_buf;    // buffer to store offset lengths
+  uint32_t size{};           // number of buffered elements
   uint32_t last{};           // last start offset
 };
 
@@ -238,11 +239,7 @@ enum class TermsFormat : int32_t {
 enum class PostingsFormat : int32_t {
   Min = 0,
 
-  // store competitive scores in blocks
-  Wand = Min,
-
-  // store block max scores, sse used
-  WandSimd,
+  WandSimd = Min,
 
   Max = WandSimd,
 };
@@ -291,30 +288,22 @@ class PostingsWriterBase : public PostingsWriter {
   }
 
  public:
-  void begin_field(const FieldProperties& meta) final {
-    _features.Reset(meta.index_features);
-    PrepareWriters(meta);
-    _docs.clear();
-    _last_state.clear();
-  }
-
-  FieldStats end_field() noexcept final {
+  FieldStats EndField() noexcept final {
     const auto count = _docs.count();
     SDB_ASSERT(count < doc_limits::eof());
     return {.wand_mask = _writers_mask,
             .docs_count = static_cast<doc_id_t>(count)};
   }
 
-  void begin_block() final {
+  void BeginBlock() final {
     // clear state in order to write
     // absolute address of the first
     // entry in the block
     _last_state.clear();
   }
 
-  void prepare(IndexOutput& out, const FlushState& state) final;
-  void encode(BufferedOutput& out, const TermMeta& attrs) final;
-  void end() final;
+  void Prepare(IndexOutput& out, const FlushState& state) final;
+  void Encode(BufferedOutput& out, const TermMeta& attrs) final;
 
  protected:
   class Features {
@@ -370,7 +359,7 @@ class PostingsWriterBase : public PostingsWriter {
   };
 
   void WriteSkip(size_t level, MemoryIndexOutput& out) const;
-  void BeginTerm();
+  void BeginTerm(TermMetaImpl& meta);
   void EndTerm(TermMetaImpl& meta);
   void EndDocument();
   void PrepareWriters(const FieldProperties& meta);
@@ -425,6 +414,7 @@ inline void PostingsWriterBase::PrepareWriters(const FieldProperties& meta) {
 
 inline void PostingsWriterBase::WriteSkip(size_t level,
                                           MemoryIndexOutput& out) const {
+  SDB_ASSERT(_doc_out);
   const doc_id_t doc_delta = _doc.block_last;  //- doc_.skip_doc[level];
   const uint64_t doc_ptr = _doc_out->Position();
 
@@ -435,25 +425,22 @@ inline void PostingsWriterBase::WriteSkip(size_t level,
   _doc.skip_ptr[level] = doc_ptr;
 
   if (_features.HasPosition()) {
+    SDB_ASSERT(_pos_out);
     const uint64_t pos_ptr = _pos_out->Position();
-
-    out.WriteV32(_pos.block_last);
     out.WriteV64(pos_ptr - _pos.skip_ptr[level]);
-
     _pos.skip_ptr[level] = pos_ptr;
-
     if (_features.HasOffset()) {
       SDB_ASSERT(_pay_out);
-
       const uint64_t pay_ptr = _pay_out->Position();
-
       out.WriteV64(pay_ptr - _pay.skip_ptr[level]);
       _pay.skip_ptr[level] = pay_ptr;
     }
+    SDB_ASSERT(_pos.size <= std::numeric_limits<uint8_t>::max());
+    out.WriteByte(_pos.size);
   }
 }
 
-inline void PostingsWriterBase::prepare(IndexOutput& out,
+inline void PostingsWriterBase::Prepare(IndexOutput& out,
                                         const FlushState& state) {
   SDB_ASSERT(state.dir);
   SDB_ASSERT(!IsNull(state.name));
@@ -493,7 +480,7 @@ inline void PostingsWriterBase::prepare(IndexOutput& out,
   _docs.reset(doc_limits::min() + state.doc_count);
 }
 
-inline void PostingsWriterBase::encode(BufferedOutput& out,
+inline void PostingsWriterBase::Encode(BufferedOutput& out,
                                        const TermMeta& state) {
   const auto& meta = static_cast<const TermMetaImpl&>(state);
 
@@ -506,12 +493,11 @@ inline void PostingsWriterBase::encode(BufferedOutput& out,
   out.WriteV64(meta.doc_start - _last_state.doc_start);
   if (_features.HasPosition()) {
     out.WriteV64(meta.pos_start - _last_state.pos_start);
-    if (address_limits::valid(meta.pos_end)) {
-      out.WriteV64(meta.pos_end);
-    }
     if (_features.HasOffset()) {
       out.WriteV64(meta.pay_start - _last_state.pay_start);
     }
+    SDB_ASSERT(meta.pos_offset <= std::numeric_limits<uint8_t>::max());
+    out.WriteByte(meta.pos_offset);
   }
 
   if (1 == meta.docs_count) {
@@ -523,33 +509,19 @@ inline void PostingsWriterBase::encode(BufferedOutput& out,
   _last_state = meta;
 }
 
-inline void PostingsWriterBase::end() {
-  format_utils::WriteFooter(*_doc_out);
-  _doc_out.reset();  // ensure stream is closed
-
-  if (_pos_out) {
-    format_utils::WriteFooter(*_pos_out);
-    _pos_out.reset();  // ensure stream is closed
-  }
-
-  if (_pay_out) {
-    format_utils::WriteFooter(*_pay_out);
-    _pay_out.reset();  // ensure stream is closed
-  }
-}
-
-inline void PostingsWriterBase::BeginTerm() {
-  _doc.start = _doc_out->Position();
-  std::fill_n(_doc.skip_ptr, kMaxSkipLevels, _doc.start);
+inline void PostingsWriterBase::BeginTerm(TermMetaImpl& meta) {
+  meta.doc_start = _doc_out->Position();
+  std::fill_n(_doc.skip_ptr, kMaxSkipLevels, meta.doc_start);
   if (_features.HasPosition()) {
     SDB_ASSERT(_pos_out);
-    _pos.start = _pos_out->Position();
-    std::fill_n(_pos.skip_ptr, kMaxSkipLevels, _pos.start);
+    meta.pos_start = _pos_out->Position();
+    std::fill_n(_pos.skip_ptr, kMaxSkipLevels, meta.pos_start);
     if (_features.HasOffset()) {
       SDB_ASSERT(_pay_out);
-      _pay.start = _pay_out->Position();
-      std::fill_n(_pay.skip_ptr, kMaxSkipLevels, _pay.start);
+      meta.pay_start = _pay_out->Position();
+      std::fill_n(_pay.skip_ptr, kMaxSkipLevels, meta.pay_start);
     }
+    meta.pos_offset = _pos.size;
   }
 
   _doc.last = doc_limits::invalid();
@@ -560,19 +532,6 @@ inline void PostingsWriterBase::BeginTerm() {
 inline void PostingsWriterBase::EndDocument() {
   if (_doc.Full()) {
     _doc.block_last = _doc.last;
-    _doc.end = _doc_out->Position();
-    if (_features.HasPosition()) {
-      SDB_ASSERT(_pos_out);
-      _pos.end = _pos_out->Position();
-      // documents stream is full, but positions stream is not
-      // save number of positions to skip before the next block
-      _pos.block_last = _pos.size;
-      if (_features.HasOffset()) {
-        SDB_ASSERT(_pay_out);
-        _pay.end = _pay_out->Position();
-      }
-    }
-
     _doc.doc = _doc.docs.begin();
     _doc.freq = _doc.freqs.begin();
   }
@@ -595,72 +554,22 @@ inline void PostingsWriterBase::EndTerm(TermMetaImpl& meta) {
   if (1 == meta.docs_count) {
     meta.e_single_doc = _doc.docs[0] - doc_limits::min();
   } else {
-    // write remaining documents using
-    // variable length encoding
-    auto& out = *_doc_out;
-    auto doc = _doc.docs.begin();
-    auto prev = _doc.block_last;
-
     if (!has_skip_list) {
       write_max_score(0);
     }
-    // TODO(mbkkt) using bits not full block encoding
-    if (_features.HasFrequency()) {
-      auto doc_freq = _doc.freqs.begin();
-      for (; doc < _doc.doc; ++doc) {
-        const uint32_t freq = *doc_freq;
-        const doc_id_t delta = *doc - prev;
-
-        if (1 == freq) {
-          out.WriteV32(ShiftPack32(delta, true));
-        } else {
-          out.WriteV32(ShiftPack32(delta, false));
-          out.WriteV32(freq);
-        }
-
-        ++doc_freq;
-        prev = *doc;
+    // write remaining documents and frequencies
+    auto* doc = _doc.docs.data();
+    const auto tail_size = std::distance(doc, _doc.doc.base());
+    if (tail_size != 0) {
+      auto* buf = reinterpret_cast<byte_type*>(_buf);
+      auto size =
+        streamvbyte_delta_encode(doc, tail_size, buf, _doc.block_last);
+      if (_features.HasFrequency()) {
+        auto* freq = _doc.freqs.data();
+        size += streamvbyte_encode(freq, tail_size, buf + size);
       }
-    } else {
-      for (; doc < _doc.doc; ++doc) {
-        out.WriteV32(*doc - prev);
-        prev = *doc;
-      }
-    }
-  }
-
-  meta.pos_end = address_limits::invalid();
-
-  // write remaining position using
-  // variable length encoding
-  if (_features.HasPosition()) {
-    SDB_ASSERT(_pos_out);
-
-    if (meta.freq > _skip.Skip0()) {
-      meta.pos_end = _pos_out->Position() - _pos.start;
-    }
-
-    if (_pos.size > 0) {
-      auto& out = *_pos_out;
-      uint32_t last_offs_len = std::numeric_limits<uint32_t>::max();
-      for (uint32_t i = 0; i < _pos.size; ++i) {
-        const uint32_t pos_delta = _pos.buf[i];
-        out.WriteV32(pos_delta);
-
-        if (_features.HasOffset()) {
-          SDB_ASSERT(_pay_out);
-
-          const uint32_t pay_offs_delta = _pay.offs_start_buf[i];
-          const uint32_t len = _pay.offs_len_buf[i];
-          if (len == last_offs_len) {
-            out.WriteV32(ShiftPack32(pay_offs_delta, false));
-          } else {
-            out.WriteV32(ShiftPack32(pay_offs_delta, true));
-            out.WriteV32(len);
-            last_offs_len = len;
-          }
-        }
-      }
+      _doc_out->WriteU16(size);
+      _doc_out->WriteBytes(buf, size);
     }
   }
 
@@ -668,7 +577,7 @@ inline void PostingsWriterBase::EndTerm(TermMetaImpl& meta) {
   // one block there was buffered
   // skip data, so we need to flush it
   if (has_skip_list) {
-    meta.e_skip_start = _doc_out->Position() - _doc.start;
+    meta.e_skip_start = _doc_out->Position() - meta.doc_start;
     const auto num_levels = _skip.CountLevels();
     write_max_score(num_levels);
     _skip.FlushLevels(num_levels, *_doc_out);
@@ -677,17 +586,10 @@ inline void PostingsWriterBase::EndTerm(TermMetaImpl& meta) {
   _doc.doc = _doc.docs.begin();
   _doc.freq = _doc.freqs.begin();
   _doc.last = doc_limits::invalid();
-  meta.doc_start = _doc.start;
 
-  if (_pos_out) {
-    _pos.size = 0;
-    meta.pos_start = _pos.start;
-  }
+  _pos.last = pos_limits::invalid();
 
-  if (_pay_out) {
-    _pay.last = 0;
-    meta.pay_start = _pay.start;
-  }
+  _pay.last = 0;
 }
 
 template<typename FormatTraits>
@@ -711,9 +613,13 @@ class PostingsWriterImpl final : public PostingsWriterBase {
                          rm},
       _volatile_attributes{volatile_attributes} {}
 
-  void write(DocIterator& docs, TermMeta& base_meta) final;
+  void BeginField(const FieldProperties& meta) final;
+  void Write(DocIterator& docs, TermMeta& base_meta) final;
+  void End() final;
 
  private:
+  void FlushTailPos();
+  void FlushTailPay();
   void AddPosition(uint32_t pos);
   void BeginDocument();
 
@@ -743,10 +649,65 @@ class PostingsWriterImpl final : public PostingsWriterBase {
   } _pay_buf;
   struct {
     // Buffer for encoding (worst case)
-    uint32_t buf[FormatTraits::kBlockSize];
+    uint32_t buf[FormatTraits::kEncBufSize];
   } _encbuf;
   bool _volatile_attributes;
 };
+
+template<typename FormatTraits>
+void PostingsWriterImpl<FormatTraits>::FlushTailPos() {
+  SDB_ASSERT(_pos_out);
+  SDB_ASSERT(_pos.size != 0);
+  const auto tail_size = FormatTraits::kBlockSize - _pos.size;
+  SDB_ASSERT(tail_size != 0);
+
+  auto* pos_tail = _pos.buf.data() + _pos.size;
+  std::fill_n(pos_tail, tail_size, pos_tail[-1]);
+  FormatTraits::write_block(*_pos_out, _pos.buf.data(), _buf);
+
+  _pos.size = 0;
+}
+
+template<typename FormatTraits>
+void PostingsWriterImpl<FormatTraits>::FlushTailPay() {
+  SDB_ASSERT(_pay_out);
+  SDB_ASSERT(_pay.size != 0);
+  const auto tail_size = FormatTraits::kBlockSize - _pay.size;
+  SDB_ASSERT(tail_size != 0);
+
+  auto* offs_start_tail = _pay.offs_start_buf + _pay.size;
+  std::fill_n(offs_start_tail, tail_size, offs_start_tail[-1]);
+  FormatTraits::write_block(*_pay_out, _pay.offs_start_buf, _buf);
+
+  auto* offs_len_tail = _pay.offs_len_buf + _pay.size;
+  std::fill_n(offs_len_tail, tail_size, offs_len_tail[-1]);
+  FormatTraits::write_block(*_pay_out, _pay.offs_len_buf, _buf);
+
+  _pay.size = 0;
+}
+
+template<typename FormatTraits>
+void PostingsWriterImpl<FormatTraits>::BeginField(const FieldProperties& meta) {
+  _features.Reset(meta.index_features);
+  PrepareWriters(meta);
+  _docs.clear();
+  _last_state.clear();
+
+  // It's needed because offsets block should be aligned with positions block.
+  // But it's possible that fields have different features set.
+  // So if it was case when we didn't have offsets we need to flush positions.
+  // And if we had positions and offsets and now we will write only positions
+  // we need to flush positions and offsets.
+  if (_features.HasOffset()) {
+    if (_pos.size != _pay.size) [[unlikely]] {
+      SDB_ASSERT(_pay.size == 0);
+      FlushTailPos();
+    }
+  } else if (_pay.size != 0) [[unlikely]] {
+    FlushTailPos();
+    FlushTailPay();
+  }
+}
 
 template<typename FormatTraits>
 void PostingsWriterImpl<FormatTraits>::BeginDocument() {
@@ -777,31 +738,61 @@ void PostingsWriterImpl<FormatTraits>::BeginDocument() {
 template<typename FormatTraits>
 void PostingsWriterImpl<FormatTraits>::AddPosition(uint32_t pos) {
   // at least positions stream should be created
-  SDB_ASSERT(_features.HasPosition() && _pos_out);
-  SDB_ASSERT(!_attrs.offs || _attrs.offs->start <= _attrs.offs->end);
+  SDB_ASSERT(_features.HasPosition());
+  SDB_ASSERT(!_features.HasOffset() == !_attrs.offs);
 
-  _pos.Pos(pos - _pos.last);
-
-  if (_attrs.offs) {
-    _pay.PushOffset(_pos.size, _attrs.offs->start, _attrs.offs->end);
-  }
-
+  SDB_ASSERT(_pos.size == _pay.size || _pay.size == 0);
   _pos.Next(pos);
+  if (_features.HasOffset()) {
+    _pay.PushOffset(_attrs.offs->start, _attrs.offs->end);
+  }
+  SDB_ASSERT(_pos.size == _pay.size || _pay.size == 0);
 
-  if (_pos.Full()) {
+  if (_pos.Full()) [[unlikely]] {
+    SDB_ASSERT(_pos_out);
     FormatTraits::write_block(*_pos_out, _pos.buf.data(), _buf);
     _pos.size = 0;
 
     if (_features.HasOffset()) {
       SDB_ASSERT(_pay_out);
+      SDB_ASSERT(_pay.size != 0);
       FormatTraits::write_block(*_pay_out, _pay.offs_start_buf, _buf);
       FormatTraits::write_block(*_pay_out, _pay.offs_len_buf, _buf);
+      _pay.size = 0;
     }
   }
 }
 
 template<typename FormatTraits>
-void PostingsWriterImpl<FormatTraits>::write(DocIterator& docs,
+void PostingsWriterImpl<FormatTraits>::End() {
+  format_utils::WriteFooter(*_doc_out);
+  _doc_out.reset();  // ensure stream is closed
+
+  if (_pos_out) {
+    if (_pos.size != 0) {
+      FlushTailPos();
+    }
+    format_utils::WriteFooter(*_pos_out);
+    _pos_out.reset();  // ensure stream is closed
+
+    if (_pay_out) {
+      if (_pay.size != 0) {
+        FlushTailPay();
+      }
+      format_utils::WriteFooter(*_pay_out);
+      _pay_out.reset();  // ensure stream is closed
+    } else {
+      SDB_ASSERT(_pay.size == 0);
+    }
+  } else {
+    SDB_ASSERT(_pos.size == 0);
+    SDB_ASSERT(!_pay_out);
+    SDB_ASSERT(_pay.size == 0);
+  }
+}
+
+template<typename FormatTraits>
+void PostingsWriterImpl<FormatTraits>::Write(DocIterator& docs,
                                              TermMeta& base_meta) {
   auto refresh = [this, no_freq = FreqAttr{}](auto& attrs) noexcept {
     _attrs.Reset(attrs);
@@ -821,7 +812,7 @@ void PostingsWriterImpl<FormatTraits>::write(DocIterator& docs,
 
   auto& meta = static_cast<TermMetaImpl&>(base_meta);
 
-  BeginTerm();
+  BeginTerm(meta);
   ApplyWriters([&](auto& writer) { writer.Reset(); });
 
   uint32_t docs_count = 0;
@@ -872,16 +863,16 @@ void PostingsWriterImpl<FormatTraits>::write(DocIterator& docs,
 }
 
 struct SkipState {
-  // pointer to the payloads of the first document in a document block
-  uint64_t pay_ptr{};
-  // pointer to the positions of the first document in a document block
-  uint64_t pos_ptr{};
-  // positions to skip before new document block
-  size_t pend_pos{};
   // pointer to the beginning of document block
-  uint64_t doc_ptr{};
+  uint64_t doc_ptr = 0;
   // last document in a previous block
-  doc_id_t doc{doc_limits::invalid()};
+  doc_id_t doc = doc_limits::invalid();
+  // positions to skip before new document block
+  uint32_t pos_offset = 0;
+  // pointer to the positions of the first document in a document block
+  uint64_t pos_ptr = 0;
+  // pointer to the payloads of the first document in a document block
+  uint64_t pay_ptr = 0;
 };
 
 template<typename IteratorTraits>
@@ -889,27 +880,25 @@ IRS_FORCE_INLINE void CopyState(SkipState& to, const SkipState& from) noexcept {
   if constexpr (IteratorTraits::Offset()) {
     to = from;
   } else {
-    if constexpr (IteratorTraits::Position()) {
-      to.pos_ptr = from.pos_ptr;
-      to.pend_pos = from.pend_pos;
-    }
     to.doc_ptr = from.doc_ptr;
     to.doc = from.doc;
+    if constexpr (IteratorTraits::Position()) {
+      to.pos_offset = from.pos_offset;
+      to.pos_ptr = from.pos_ptr;
+    }
   }
 }
 
 template<typename FieldTraits>
-IRS_FORCE_INLINE void ReadState(SkipState& state, IndexInput& in) {
+IRS_FORCE_INLINE void ReadState(SkipState& state, DataInput& in) {
   state.doc = in.ReadV32();
   state.doc_ptr += in.ReadV64();
-
   if constexpr (FieldTraits::Position()) {
-    state.pend_pos = in.ReadV32();
     state.pos_ptr += in.ReadV64();
-
     if constexpr (FieldTraits::Offset()) {
       state.pay_ptr += in.ReadV64();
     }
+    state.pos_offset = in.ReadByte();
   }
 }
 
@@ -919,8 +908,6 @@ struct DocState {
   const TermMetaImpl* term_state;
   const uint32_t* freq;
   uint32_t* enc_buf;
-  uint64_t tail_start;
-  size_t tail_length;
 };
 
 template<typename IteratorTraits>
@@ -932,14 +919,13 @@ IRS_FORCE_INLINE void CopyState(SkipState& to,
     if constexpr (IteratorTraits::Offset()) {
       to.pay_ptr = from.pay_start;
     }
+    to.pos_offset = from.pos_offset;
   }
 }
 
 template<typename IteratorTraits>
 class PositionImpl final : public PosAttr {
  public:
-  void Init(bool field_has_offset) { _field_has_offset = field_has_offset; }
-
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     if constexpr (IteratorTraits::Offset()) {
       return irs::Type<OffsAttr>::id() == type ? &_offs : nullptr;
@@ -951,12 +937,12 @@ class PositionImpl final : public PosAttr {
   value_t seek(value_t target) final {
     const uint32_t freq = *_freq;
     if (_pend_pos > freq) {
-      Skip(static_cast<uint32_t>(_pend_pos - freq));
+      Skip(_pend_pos - freq);
       _pend_pos = freq;
     }
     while (_value < target && _pend_pos) {
       if (_buf_pos == IteratorTraits::kBlockSize) {
-        Refill();
+        ReadBlock();
         _buf_pos = 0;
       }
       _value += _pos_deltas[_buf_pos];
@@ -982,12 +968,12 @@ class PositionImpl final : public PosAttr {
     const uint32_t freq = *_freq;
 
     if (_pend_pos > freq) {
-      Skip(static_cast<uint32_t>(_pend_pos - freq));
+      Skip(_pend_pos - freq);
       _pend_pos = freq;
     }
 
     if (_buf_pos == IteratorTraits::kBlockSize) {
-      Refill();
+      ReadBlock();
       _buf_pos = 0;
     }
     _value += _pos_deltas[_buf_pos];
@@ -1000,8 +986,8 @@ class PositionImpl final : public PosAttr {
   }
 
   void reset() final {
-    _value = pos_limits::invalid();
-    if (std::numeric_limits<size_t>::max() != _cookie.file_pointer) {
+    Clear();
+    if (_cookie.file_pointer != std::numeric_limits<uint64_t>::max()) {
       _buf_pos = IteratorTraits::kBlockSize;
       _pend_pos = _cookie.pend_pos;
       _pos_in->Seek(_cookie.file_pointer);
@@ -1009,8 +995,9 @@ class PositionImpl final : public PosAttr {
   }
 
   // prepares iterator to work
+  template<typename InputType>
   void Prepare(const DocState& state) {
-    _pos_in = state.pos_in->Reopen();  // reopen thread-safe stream
+    _pos_in = sdb::basics::downCast<InputType>(*state.pos_in).Reopen();
 
     if (!_pos_in) {
       // implementation returned wrong pointer
@@ -1021,14 +1008,15 @@ class PositionImpl final : public PosAttr {
     }
 
     _cookie.file_pointer = state.term_state->pos_start;
-    _pos_in->Seek(state.term_state->pos_start);
+    _cookie.pend_pos = state.term_state->pos_offset;
+    sdb::basics::downCast<InputType>(*_pos_in).Seek(
+      state.term_state->pos_start);
     _freq = state.freq;
     _enc_buf = state.enc_buf;
-    _tail_start = state.tail_start;
-    _tail_length = state.tail_length;
+    _pend_pos = _cookie.pend_pos;
 
     if constexpr (IteratorTraits::Offset()) {
-      _pay_in = state.pay_in->Reopen();  // reopen thread-safe stream
+      _pay_in = sdb::basics::downCast<InputType>(*state.pay_in).Reopen();
 
       if (!_pay_in) {
         // implementation returned wrong pointer
@@ -1038,20 +1026,22 @@ class PositionImpl final : public PosAttr {
         throw IoError("failed to reopen payload input");
       }
 
-      _pay_in->Seek(state.term_state->pay_start);
+      sdb::basics::downCast<InputType>(*_pay_in).Seek(
+        state.term_state->pay_start);
     }
   }
 
   // notifies iterator that doc iterator has skipped to a new block
+  template<typename InputType>
   void Prepare(const SkipState& state) {
-    _pos_in->Seek(state.pos_ptr);
-    _pend_pos = state.pend_pos;
+    sdb::basics::downCast<InputType>(*_pos_in).Seek(state.pos_ptr);
+    _pend_pos = state.pos_offset;
     _buf_pos = IteratorTraits::kBlockSize;
     _cookie.file_pointer = state.pos_ptr;
     _cookie.pend_pos = _pend_pos;
 
     if constexpr (IteratorTraits::Offset()) {
-      _pay_in->Seek(state.pay_ptr);
+      sdb::basics::downCast<InputType>(*_pay_in).Seek(state.pay_ptr);
     }
   }
 
@@ -1067,30 +1057,24 @@ class PositionImpl final : public PosAttr {
   }
 
  private:
-  IRS_FORCE_INLINE void Refill() {
-    if (_pos_in->Position() != _tail_start) {
-      ReadBlock();
-    } else {
-      ReadTailBlock();
-    }
-  }
-
-  void Skip(uint32_t count) {
+  void Skip(uint64_t count) {
+    SDB_ASSERT(count != 0);
     auto left = IteratorTraits::kBlockSize - _buf_pos;
-    if (count >= left) {
+    if (count > left) {
       count -= left;
       while (count >= IteratorTraits::kBlockSize) {
         SkipBlock();
         count -= IteratorTraits::kBlockSize;
       }
-      Refill();
-      _buf_pos = 0;
-      left = IteratorTraits::kBlockSize;
+      if (count == 0) {
+        _buf_pos = IteratorTraits::kBlockSize;
+      } else {
+        ReadBlock();
+        _buf_pos = 0;
+      }
     }
-
-    if (count < left) {
-      _buf_pos += count;
-    }
+    _buf_pos += count;
+    SDB_ASSERT(_buf_pos <= IteratorTraits::kBlockSize);
     Clear();
   }
 
@@ -1115,26 +1099,6 @@ class PositionImpl final : public PosAttr {
     }
   }
 
-  void ReadTailBlock() {
-    for (uint16_t i = 0; i < _tail_length; ++i) {
-      _pos_deltas[i] = _pos_in->ReadV32();
-
-      if constexpr (IteratorTraits::Offset()) {
-        if (ShiftUnpack32(_pos_in->ReadV32(), _offs_start_deltas[i])) {
-          _offs_lengths[i] = _pos_in->ReadV32();
-        } else {
-          SDB_ASSERT(i > 0);
-          _offs_lengths[i] = _offs_lengths[i - 1];
-        }
-      } else if (_field_has_offset) {
-        uint32_t delta;
-        if (ShiftUnpack32(_pos_in->ReadV32(), delta)) {
-          _pos_in->ReadV32();
-        }
-      }
-    }
-  }
-
   void SkipBlock() {
     IteratorTraits::skip_block(*_pos_in);
     if constexpr (IteratorTraits::Offset()) {
@@ -1144,7 +1108,7 @@ class PositionImpl final : public PosAttr {
   }
 
   struct Cookie {
-    uint64_t pend_pos{};
+    uint64_t pend_pos = 0;
     uint64_t file_pointer = std::numeric_limits<uint64_t>::max();
   };
 
@@ -1159,10 +1123,7 @@ class PositionImpl final : public PosAttr {
   const uint32_t* _freq;   // lenght of the posting list for a document
   uint32_t* _enc_buf;      // auxillary buffer to decode data
   uint64_t _pend_pos = 0;  // how many positions "behind" we are
-  uint64_t _tail_start;    // file pointer where the last pos delta block is
-  bool _field_has_offset = false;
-  uint16_t _tail_length;  // number of positions in the last pos delta block
-  uint16_t _buf_pos = IteratorTraits::kBlockSize;  // position in pos_deltas_
+  uint64_t _buf_pos = IteratorTraits::kBlockSize;  // position in pos_deltas_
   Cookie _cookie;
   IndexInput::ptr _pos_in;
   [[no_unique_address]] ForOffset<IndexInput::ptr> _pay_in;
@@ -1212,9 +1173,11 @@ class PostingIteratorBase : public DocIterator {
     return left_in_leaf + left_in_list;
   }
 
-  std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
-                                      uint64_t* mask, CollectScoreContext score,
+  std::pair<doc_id_t, bool> FillBlock(const doc_id_t min, const doc_id_t max,
+                                      uint64_t* IRS_RESTRICT mask,
+                                      CollectScoreContext score,
                                       CollectMatchContext match) final {
+    SDB_ASSERT(min < max);
     auto& doc_value = std::get<DocAttr>(_attrs).value;
 
     if (!score.score || score.score->IsDefault()) {
@@ -1225,20 +1188,17 @@ class PostingIteratorBase : public DocIterator {
       SDB_ASSERT(score.merge_type != ScoreMergeType::Noop);
       if (score.collector) {
         score.collector->Collect(
-          std::span{std::end(this->_docs) - left_in_leaf, left_in_leaf});
+          std::span{std::end(_docs) - left_in_leaf, left_in_leaf});
       }
       if constexpr (IteratorTraits::Frequency()) {
-        std::get<FreqBlockAttr>(_attrs).value =
-          std::end(this->_freqs) - left_in_leaf;
+        std::get<FreqBlockAttr>(_attrs).value = std::end(_freqs) - left_in_leaf;
       }
       if (left_in_leaf == kPostingBlock) [[likely]] {
         score.score->ScorePostingBlock(
-          reinterpret_cast<score_t*>(std::end(this->_enc_buf) - kPostingBlock));
-
+          reinterpret_cast<score_t*>(EncBufEnd() - kPostingBlock));
       } else {
         score.score->Score(
-          reinterpret_cast<score_t*>(std::end(this->_enc_buf) - left_in_leaf),
-          left_in_leaf);
+          reinterpret_cast<score_t*>(EncBufEnd() - left_in_leaf), left_in_leaf);
       }
     };
 
@@ -1246,7 +1206,6 @@ class PostingIteratorBase : public DocIterator {
       return ResolveMergeType(score.merge_type, [&]<ScoreMergeType MergeType> {
         bool empty = true;
 
-        const doc_id_t base = min;
         auto* IRS_RESTRICT const doc_mask = mask;
         [[maybe_unused]] auto* IRS_RESTRICT const score_window =
           score.score_window;
@@ -1254,42 +1213,36 @@ class PostingIteratorBase : public DocIterator {
         auto process_doc =
           [&](doc_id_t doc, [[maybe_unused]] score_t score_val)
             IRS_FORCE_INLINE {
-              doc -= base;
+              SDB_ASSERT(doc >= min);
+              doc -= min;
               if constexpr (TrackMatch) {
                 SDB_ASSERT(match.matches);
                 const bool has_match =
                   ++match.matches[doc] >= match.min_match_count;
+                SetBit(doc_mask[doc / BitsRequired<uint64_t>()],
+                       doc % BitsRequired<uint64_t>(), has_match);
                 empty &= !has_match;
-                if (has_match) {
-                  SetBit(doc_mask[doc / BitsRequired<uint64_t>()],
-                         doc % BitsRequired<uint64_t>(), has_match);
-
-                  if constexpr (MergeType != ScoreMergeType::Noop) {
-                    Merge<MergeType>(score_window[doc], score_val);
-                  }
-                }
               } else {
                 SetBit(doc_mask[doc / BitsRequired<uint64_t>()],
                        doc % BitsRequired<uint64_t>());
                 empty = false;
-                if constexpr (MergeType != ScoreMergeType::Noop) {
-                  Merge<MergeType>(score_window[doc], score_val);
-                }
+              }
+              if constexpr (MergeType != ScoreMergeType::Noop) {
+                Merge<MergeType>(score_window[doc], score_val);
               }
             };
 
         [[maybe_unused]] const auto* score_end =
-          std::bit_cast<score_t*>(std::end(this->_enc_buf));
-        [[maybe_unused]] const auto* score_ptr =
-          score_end - this->_left_in_leaf;
+          reinterpret_cast<score_t*>(EncBufEnd());
+        [[maybe_unused]] const auto* score_ptr = score_end - _left_in_leaf;
 
-        if (!this->_doc_in) [[unlikely]] {
-          SDB_ASSERT(this->_left_in_list == 0);
-          if (this->_left_in_leaf == 0) {
+        if (!_doc_in) [[unlikely]] {
+          SDB_ASSERT(_left_in_list == 0);
+          if (_left_in_leaf == 0) {
             return std::pair{doc_value = doc_limits::eof(), true};
           }
 
-          doc_value = *(std::end(this->_docs) - 1);
+          doc_value = *(std::end(_docs) - 1);
 
           if (doc_value >= max) {
             return std::pair{doc_value, true};
@@ -1299,27 +1252,27 @@ class PostingIteratorBase : public DocIterator {
             process_score(1);
           }
           process_doc(doc_value, *score_ptr);
-          this->_left_in_leaf = 0;
+          _left_in_leaf = 0;
           return std::pair{doc_value, empty};
         }
 
-        const auto* const doc_end = std::end(this->_docs);
-        const auto* doc_ptr = doc_end - this->_left_in_leaf;
+        const auto* const doc_end = std::end(_docs);
+        const auto* doc_ptr = doc_end - _left_in_leaf;
         doc_id_t doc = doc_value;
 
         while (true) {
           if (doc_ptr == doc_end) [[unlikely]] {
-            if (this->_left_in_list == 0) [[unlikely]] {
+            if (_left_in_list == 0) [[unlikely]] {
               doc = doc_limits::eof();
               break;
             }
 
-            this->_left_in_leaf = 0;
-            this->Refill(doc);
-            doc_ptr = doc_end - this->_left_in_leaf;
-            score_ptr = score_end - this->_left_in_leaf;
+            _left_in_leaf = 0;
+            ReadBlock(doc);
+            doc_ptr = doc_end - _left_in_leaf;
+            score_ptr = score_end - _left_in_leaf;
             if constexpr (MergeType != ScoreMergeType::Noop) {
-              process_score(this->_left_in_leaf);
+              process_score(_left_in_leaf);
             }
           }
 
@@ -1335,10 +1288,10 @@ class PostingIteratorBase : public DocIterator {
         }
 
         doc_value = doc;
-        this->_left_in_leaf = static_cast<uint32_t>(doc_end - doc_ptr);
+        _left_in_leaf = static_cast<uint32_t>(doc_end - doc_ptr);
 
         if constexpr (IteratorTraits::Frequency()) {
-          std::get<FreqBlockAttr>(_attrs).value = this->_collected_freqs;
+          std::get<FreqBlockAttr>(_attrs).value = _collected_freqs;
         }
         return std::pair{doc_value, empty};
       });
@@ -1349,11 +1302,11 @@ class PostingIteratorBase : public DocIterator {
     SDB_ASSERT(ctx.scorer);
     return ctx.scorer->PrepareScorer({
       .segment = *ctx.segment,
-      .field = this->_field,
+      .field = _field,
       .doc_attrs = *this,
       .collector = ctx.collector,
-      .stats = this->_stats,
-      .boost = this->_boost,
+      .stats = _stats,
+      .boost = _boost,
     });
   }
 
@@ -1361,40 +1314,38 @@ class PostingIteratorBase : public DocIterator {
                    std::span<doc_id_t, kScoreBlock> docs,
                    std::span<score_t, kScoreBlock> scores) final {
     // TODO(gnusi): optimize
-    SDB_ASSERT(kScoreBlock <= docs.size());
-    return DocIterator::Collect(*this, scorer, columns, docs, scores);
+    return CollectImpl(*this, scorer, columns, docs, scores);
   }
 
-  void FetchScoreArgs(uint16_t index) final {
+  IRS_FORCE_INLINE void FetchScoreArgs(uint16_t index) final {
     if constexpr (IteratorTraits::Frequency()) {
-      SDB_ASSERT(this->_collected_freqs);
-      this->_collected_freqs[index] = std::get<FreqAttr>(this->_attrs).value;
+      SDB_ASSERT(_collected_freqs);
+      _collected_freqs[index] = std::get<FreqAttr>(_attrs).value;
     }
   }
 
-  void Init(const PostingCookie& cookie) noexcept {
-    this->_field = cookie.field;
-    this->_stats = cookie.stats;
-    this->_boost = cookie.boost;
+  IRS_FORCE_INLINE void Init(const PostingCookie& cookie) noexcept {
+    _field = cookie.field;
+    _stats = cookie.stats;
+    _boost = cookie.boost;
   }
 
  protected:
   using Attributes = AttributesImpl<IteratorTraits>;
   using Position = PositionImpl<IteratorTraits>;
 
-  PostingIteratorBase([[maybe_unused]] bool field_has_offset) {
-    if constexpr (IteratorTraits::Position()) {
-      std::get<Position>(_attrs).Init(field_has_offset);
-    }
-  }
-
-  virtual void Refill(doc_id_t prev_doc) = 0;
+  virtual void ReadBlock(doc_id_t prev_doc) = 0;
   virtual void SeekToBlock(doc_id_t target) = 0;
 
   FieldProperties _field;
   const byte_type* _stats = nullptr;
   score_t _boost = kNoBoost;
-  uint32_t _enc_buf[IteratorTraits::kBlockSize];  // buffer for encoding
+
+  IRS_FORCE_INLINE auto* EncBufEnd() {
+    return std::begin(_enc_buf) + IteratorTraits::kBlockSize;
+  }
+
+  uint32_t _enc_buf[IteratorTraits::kEncBufSize];
   [[no_unique_address]] utils::Need<IteratorTraits::Frequency(), uint32_t*>
     _collected_freqs;
   [[no_unique_address]] utils::Need<
@@ -1403,7 +1354,6 @@ class PostingIteratorBase : public DocIterator {
   doc_id_t _max_in_leaf = doc_limits::invalid();
   uint32_t _left_in_leaf = 0;
   uint32_t _left_in_list = 0;
-  bool _field_has_frequency;
   IndexInput::ptr _doc_in;
   Attributes _attrs;
 };
@@ -1417,7 +1367,7 @@ doc_id_t PostingIteratorBase<IteratorTraits>::advance() {
       return doc_value = doc_limits::eof();
     }
 
-    Refill(doc_value);
+    ReadBlock(doc_value);
   }
 
   doc_value = *(std::end(_docs) - _left_in_leaf);
@@ -1458,7 +1408,7 @@ doc_id_t PostingIteratorBase<IteratorTraits>::seek(doc_id_t target) {
       return doc_value = doc_limits::eof();
     }
 
-    Refill(doc_value);
+    ReadBlock(doc_value);
   }
 
   [[maybe_unused]] uint32_t notify = 0;
@@ -1495,14 +1445,18 @@ static_assert(kMaxScorers < WandContext::kDisable);
 
 template<uint8_t Value>
 struct Extent {
-  static constexpr uint8_t GetExtent() noexcept { return Value; }
+  IRS_FORCE_INLINE static constexpr uint8_t GetExtent() noexcept {
+    return Value;
+  }
 };
 
 template<>
 struct Extent<WandContext::kDisable> {
   Extent(uint8_t value) noexcept : value{value} {}
 
-  constexpr uint8_t GetExtent() const noexcept { return value; }
+  IRS_FORCE_INLINE constexpr uint8_t GetExtent() const noexcept {
+    return value;
+  }
 
   uint8_t value;
 };
@@ -1532,7 +1486,7 @@ auto ResolveExtent(uint8_t extent, Func&& func) {
 // Remove to many Readers implementations
 
 template<typename WandExtent>
-void CommonSkipWandData(WandExtent extent, IndexInput& in) {
+void CommonSkipWandData(WandExtent extent, DataInput& in) {
   switch (auto count = extent.GetExtent(); count) {
     case 0:
       return;
@@ -1551,17 +1505,16 @@ void CommonSkipWandData(WandExtent extent, IndexInput& in) {
 }
 
 template<typename WandExtent>
-void CommonReadWandData(WandExtent wextent, uint8_t index,
-                        const ScoreFunction& func, WandSource& ctx,
-                        IndexInput& in, score_t& score) {
+IRS_FORCE_INLINE score_t CommonReadWandData(WandExtent wextent, uint8_t index,
+                                            const ScoreFunction& func,
+                                            WandSource& ctx, DataInput& in) {
   const auto extent = wextent.GetExtent();
   SDB_ASSERT(extent);
   SDB_ASSERT(index < extent);
   if (extent == 1) [[likely]] {
     const auto size = in.ReadByte();
     ctx.Read(in, size);
-    score = func.Score();
-    return;
+    return func.Score();
   }
 
   uint8_t i = 0;
@@ -1580,16 +1533,18 @@ void CommonReadWandData(WandExtent wextent, uint8_t index,
     in.Skip(scorer_offset);
   }
   ctx.Read(in, size);
-  score = func.Score();
+  const auto score = func.Score();
   if (block_offset) {
     in.Skip(block_offset);
   }
+  return score;
 }
 
 // Iterator over posting list.
 // IteratorTraits defines requested features.
 // FieldTraits defines requested features.
-template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
+template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
+         typename InputType>
 class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
   static_assert((IteratorTraits::Features() & FieldTraits::Features()) ==
                 IteratorTraits::Features());
@@ -1602,8 +1557,7 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
 
  public:
   PostingIteratorImpl(WandExtent extent)
-    : Base{FieldTraits::Offset()},
-      _skip{IteratorTraits::kBlockSize, PostingsWriterBase::kSkipN,
+    : _skip{IteratorTraits::kBlockSize, PostingsWriterBase::kSkipN,
             ReadSkip{extent}} {}
 
   void Prepare(const PostingCookie& meta, const IndexInput* doc_in,
@@ -1611,16 +1565,14 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
                uint8_t wand_index = WandContext::kDisable);
 
  private:
+  IRS_FORCE_INLINE InputType& GetDocIn() const noexcept {
+    return sdb::basics::downCast<InputType>(*this->_doc_in);
+  }
+
   class ReadSkip : private WandExtent {
    public:
     explicit ReadSkip(WandExtent extent) : WandExtent{extent}, _skip_levels(1) {
       Disable();  // Prevent using skip-list by default
-    }
-
-    void ReadMaxScore(uint8_t index, const ScoreFunction& func, WandSource& ctx,
-                      IndexInput& in, score_t& score) {
-      CommonReadWandData(static_cast<WandExtent>(*this), index, func, ctx, in,
-                         score);
     }
 
     void Disable() noexcept {
@@ -1643,7 +1595,7 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
       _skip_levels.resize(num_levels);
     }
 
-    bool IsLess(size_t level, doc_id_t target) const noexcept {
+    IRS_FORCE_INLINE bool IsLess(size_t level, doc_id_t target) const noexcept {
       return _skip_levels[level].doc < target;
     }
 
@@ -1654,9 +1606,26 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
       CopyState<IteratorTraits>(next, *_prev);
     }
 
-    void Read(size_t level, IndexInput& in);
-    void Seal(size_t level);
-    size_t AdjustLevel(size_t level) const noexcept { return level; }
+    void Read(size_t level, DataInput& data_in) {
+      auto& next = _skip_levels[level];
+      // Store previous step on the same level
+      CopyState<IteratorTraits>(*_prev, next);
+      auto& in = sdb::basics::downCast<InputType>(data_in);
+      ReadState<FieldTraits>(next, in);
+      SkipWandData(in);
+    }
+
+    void Seal(size_t level) {
+      auto& next = _skip_levels[level];
+      // Store previous step on the same level
+      CopyState<IteratorTraits>(*_prev, next);
+      // Stream exhausted
+      next.doc = doc_limits::eof();
+    }
+
+    IRS_FORCE_INLINE size_t AdjustLevel(size_t level) const noexcept {
+      return level;
+    }
 
     void Reset(SkipState& state) noexcept {
       SDB_ASSERT(absl::c_is_sorted(
@@ -1666,12 +1635,12 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
       _prev = &state;
     }
 
-    doc_id_t UpperBound() const noexcept {
+    IRS_FORCE_INLINE doc_id_t UpperBound() const noexcept {
       SDB_ASSERT(!_skip_levels.empty());
       return _skip_levels.back().doc;
     }
 
-    void SkipWandData(IndexInput& in) {
+    IRS_FORCE_INLINE void SkipWandData(DataInput& in) {
       CommonSkipWandData(static_cast<WandExtent>(*this), in);
     }
 
@@ -1686,46 +1655,22 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
     SkipState* _prev{};  // Pointer to skip context used by skip reader
   };
 
-  IRS_FORCE_INLINE void Refill(doc_id_t prev_doc) final;
-  IRS_FORCE_INLINE void ReadBlock(doc_id_t prev_doc);
-  IRS_FORCE_INLINE void ReadTailBlock(doc_id_t prev_doc);
-  IRS_FORCE_INLINE void SeekToBlock(doc_id_t target) final;
+  void ReadBlock(doc_id_t prev_doc) final;
+  void SeekToBlock(doc_id_t target) final;
 
   uint64_t _skip_offs{};
   SkipReader<ReadSkip> _skip;
   uint32_t _docs_count{};
 };
 
-template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
-void PostingIteratorImpl<IteratorTraits, FieldTraits,
-                         WandExtent>::ReadSkip::Read(size_t level,
-                                                     IndexInput& in) {
-  auto& next = _skip_levels[level];
-
-  // Store previous step on the same level
-  CopyState<IteratorTraits>(*_prev, next);
-
-  ReadState<FieldTraits>(next, in);
-
-  SkipWandData(in);
-}
-
-template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
-void PostingIteratorImpl<IteratorTraits, FieldTraits,
-                         WandExtent>::ReadSkip::Seal(size_t level) {
-  auto& next = _skip_levels[level];
-
-  // Store previous step on the same level
-  CopyState<IteratorTraits>(*_prev, next);
-
-  // Stream exhausted
-  next.doc = doc_limits::eof();
-}
-
-template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
-void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
-  const PostingCookie& meta, const IndexInput* doc_in, const IndexInput* pos_in,
-  const IndexInput* pay_in, uint8_t wand_index) {
+template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
+         typename InputType>
+void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
+                         InputType>::Prepare(const PostingCookie& meta,
+                                             const IndexInput* doc_in,
+                                             const IndexInput* pos_in,
+                                             const IndexInput* pay_in,
+                                             uint8_t wand_index) {
   this->Init(meta);
 
   auto& term_state = sdb::basics::downCast<CookieImpl>(meta.cookie)->meta;
@@ -1753,8 +1698,8 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
       freq_block.value = this->_collected_freqs;
     }
 
-    this->_doc_in->Seek(term_state.doc_start);
-    SDB_ASSERT(!this->_doc_in->IsEOF());
+    GetDocIn().Seek(term_state.doc_start);
+    SDB_ASSERT(!GetDocIn().IsEOF());
   } else {
     SDB_ASSERT(term_state.docs_count == 1);
     auto* doc = std::end(this->_docs) - 1;
@@ -1776,17 +1721,6 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
   SDB_ASSERT(!IteratorTraits::Frequency() || term_state.freq);
   if constexpr (IteratorTraits::Position()) {
     static_assert(IteratorTraits::Frequency());
-    const auto term_freq = term_state.freq;
-
-    const auto tail_start = [&] noexcept {
-      if (term_freq < IteratorTraits::kBlockSize) {
-        return term_state.pos_start;
-      } else if (term_freq == IteratorTraits::kBlockSize) {
-        return address_limits::invalid();
-      } else {
-        return term_state.pos_start + term_state.pos_end;
-      }
-    }();
 
     const DocState state{
       .pos_in = pos_in,
@@ -1794,11 +1728,9 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
       .term_state = &term_state,
       .freq = &std::get<FreqAttr>(this->_attrs).value,
       .enc_buf = this->_enc_buf,
-      .tail_start = tail_start,
-      .tail_length = term_freq % IteratorTraits::kBlockSize,
     };
 
-    std::get<Position>(this->_attrs).Prepare(state);
+    std::get<Position>(this->_attrs).template Prepare<InputType>(state);
   }
 
   if (term_state.docs_count > IteratorTraits::kBlockSize) {
@@ -1808,112 +1740,96 @@ void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Prepare(
   } else if (1 < term_state.docs_count &&
              term_state.docs_count < IteratorTraits::kBlockSize &&
              wand_index == WandContext::kDisable) {
-    _skip.Reader().SkipWandData(*this->_doc_in);
+    _skip.Reader().SkipWandData(GetDocIn());
   }
   _docs_count = term_state.docs_count;
 }
 
-template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
-void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::Refill(
-  doc_id_t prev_doc) {
-  if (this->_left_in_list >= IteratorTraits::kBlockSize) [[likely]] {
-    ReadBlock(prev_doc);
-  } else {
-    ReadTailBlock(prev_doc);
-  }
-}
-
-template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
-void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::ReadBlock(
-  doc_id_t prev_doc) {
-  IteratorTraits::read_block_delta(*this->_doc_in, this->_enc_buf, this->_docs,
-                                   prev_doc);
-  this->_max_in_leaf = *(std::end(this->_docs) - 1);
-  this->_left_in_leaf = IteratorTraits::kBlockSize;
-  this->_left_in_list -= IteratorTraits::kBlockSize;
-  if constexpr (IteratorTraits::Frequency()) {
-    IteratorTraits::read_block(*this->_doc_in, this->_enc_buf, this->_freqs);
-  } else if (FieldTraits::Frequency()) {
-    IteratorTraits::skip_block(*this->_doc_in);
-  }
-}
-
-template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
-void PostingIteratorImpl<IteratorTraits, FieldTraits,
-                         WandExtent>::ReadTailBlock(doc_id_t prev_doc) {
-  auto* doc = std::end(this->_docs) - this->_left_in_list;
-
-  [[maybe_unused]] uint32_t* freq;
-  if constexpr (IteratorTraits::Frequency()) {
-    freq = std::end(this->_freqs) - this->_left_in_list;
-  }
-
-  while (doc < std::end(this->_docs)) {
+template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
+         typename InputType>
+void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
+                         InputType>::ReadBlock(doc_id_t prev_doc) {
+  if (const auto tail = this->_left_in_list; tail >= IteratorTraits::kBlockSize)
+    [[likely]] {
+    IteratorTraits::read_block_delta(GetDocIn(), this->_enc_buf, this->_docs,
+                                     prev_doc);
+    this->_max_in_leaf = *(std::end(this->_docs) - 1);
+    this->_left_in_leaf = IteratorTraits::kBlockSize;
+    this->_left_in_list -= IteratorTraits::kBlockSize;
     if constexpr (IteratorTraits::Frequency()) {
-      if (ShiftUnpack32(this->_doc_in->ReadV32(), *doc)) {
-        *freq++ = 1;
-      } else {
-        *freq++ = this->_doc_in->ReadV32();
-      }
+      IteratorTraits::read_block(GetDocIn(), this->_enc_buf, this->_freqs);
     } else if (FieldTraits::Frequency()) {
-      if (!ShiftUnpack32(this->_doc_in->ReadV32(), *doc)) {
-        this->_doc_in->ReadV32();
-      }
-    } else {
-      *doc = this->_doc_in->ReadV32();
+      IteratorTraits::skip_block(GetDocIn());
     }
-    const auto curr_doc = prev_doc + *doc;
-    *doc++ = curr_doc;
-    prev_doc = curr_doc;
+  } else {
+    const uint16_t size = GetDocIn().ReadI16();
+    const auto* buf = GetDocIn().ReadView(size);
+    if constexpr (std::is_same_v<BytesViewInput, InputType>) {
+      SDB_ASSERT(buf);
+    } else if (!buf) [[likely]] {
+      auto* encoded = reinterpret_cast<byte_type*>(this->_enc_buf);
+      [[maybe_unused]] const auto read = GetDocIn().ReadBytes(encoded, size);
+      SDB_ASSERT(read == size);
+      buf = encoded;
+    }
+    auto* doc = std::end(this->_docs) - tail;
+    const auto doc_size = streamvbyte_delta_decode(buf, doc, tail, prev_doc);
+    this->_max_in_leaf = *(std::end(this->_docs) - 1);
+    this->_left_in_leaf = tail;
+    this->_left_in_list = 0;
+    if constexpr (IteratorTraits::Frequency()) {
+      auto* freq = std::end(this->_freqs) - tail;
+      [[maybe_unused]] const auto freq_size =
+        streamvbyte_decode(buf + doc_size, freq, tail);
+      SDB_ASSERT(doc_size + freq_size == size);
+    }
   }
-  this->_max_in_leaf = *(std::end(this->_docs) - 1);
-  this->_left_in_leaf = this->_left_in_list;
-  this->_left_in_list = 0;
 }
 
-template<typename IteratorTraits, typename FieldTraits, typename WandExtent>
-void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent>::SeekToBlock(
-  doc_id_t target) {
+template<typename IteratorTraits, typename FieldTraits, typename WandExtent,
+         typename InputType>
+void PostingIteratorImpl<IteratorTraits, FieldTraits, WandExtent,
+                         InputType>::SeekToBlock(doc_id_t target) {
+  if (target <= _skip.Reader().UpperBound()) [[unlikely]] {
+    return;
+  }
   SkipState last;  // Where block starts
   _skip.Reader().Reset(last);
 
   // Init skip writer in lazy fashion
   if (_docs_count == 0) [[likely]] {
   seek_after_initialization:
-    SDB_ASSERT(target > _skip.Reader().UpperBound());
     SDB_ASSERT(_skip.NumLevels());
-
+    SDB_ASSERT(target > _skip.Reader().UpperBound());
     this->_left_in_list = _skip.Seek(target);
+    SDB_ASSERT(target <= _skip.Reader().UpperBound());
     // unnecessary: this->_left_in_leaf = 0;
     // unnecessary: this->_max_in_leaf = _skip.Reader().UpperBound();
     std::get<DocAttr>(this->_attrs).value = last.doc;
 
-    this->_doc_in->Seek(last.doc_ptr);
+    GetDocIn().Seek(last.doc_ptr);
     if constexpr (IteratorTraits::Position()) {
       auto& pos = std::get<Position>(this->_attrs);
-      pos.Prepare(last);  // Notify positions
+      pos.template Prepare<InputType>(last);  // Notify positions
     }
     return;
   }
 
-  // needed for short postings lists
-  if (target <= _skip.Reader().UpperBound()) [[unlikely]] {
-    return;
-  }
+  auto skip_in_ptr = this->_doc_in->Dup();
 
-  auto skip_in = this->_doc_in->Dup();
-
-  if (!skip_in) {
+  if (!skip_in_ptr) {
     SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
               "Failed to duplicate document input");
 
     throw IoError("Failed to duplicate document input");
   }
+  auto& skip_in = sdb::basics::downCast<InputType>(*skip_in_ptr);
 
   SDB_ASSERT(!_skip.NumLevels());
-  skip_in->Seek(_skip_offs);
-  _skip.Reader().SkipWandData(*skip_in);
-  _skip.Prepare(std::move(skip_in), _docs_count);
+  skip_in.Seek(_skip_offs);
+  _skip.Reader().SkipWandData(skip_in);
+  // TODO(mbkkt) we can devirtualize skip_in_ptr for Prepare
+  _skip.Prepare(std::move(skip_in_ptr), _docs_count);
   _docs_count = 0;
 
   // initialize skip levels
@@ -2196,7 +2112,7 @@ inline uint64_t WriteDocumentMask(IndexOutput& out, const auto& docs_mask) {
 }
 
 inline std::pair<const std::shared_ptr<DocumentMask>, uint64_t>
-ReadDocumentMask(IndexInput& in, IResourceManager& rm) {
+ReadDocumentMask(DataInput& in, IResourceManager& rm) {
   auto count = in.ReadV32();
 
   if (!count) {
@@ -2374,7 +2290,7 @@ class PostingsReaderBase : public PostingsReader {
     return bytes;
   }
 
-  void prepare(IndexInput& in, const ReaderState& state,
+  void prepare(DataInput& in, const ReaderState& state,
                IndexFeatures features) final;
 
   size_t decode(const byte_type* in, IndexFeatures field_features,
@@ -2391,8 +2307,7 @@ class PostingsReaderBase : public PostingsReader {
   size_t _block_size;
 };
 
-inline void PostingsReaderBase::prepare(IndexInput& in,
-                                        const ReaderState& state,
+inline void PostingsReaderBase::prepare(DataInput& in, const ReaderState& state,
                                         IndexFeatures features) {
   std::string buf;
 
@@ -2489,22 +2404,15 @@ struct PostingAdapter {
     return self().FetchScoreArgs(index);
   }
 
-  IRS_FORCE_INLINE uint32_t Collect(const ScoreFunction& scorer,
-                                    ColumnCollector& columns,
-                                    std::span<doc_id_t, kScoreBlock> docs,
-                                    std::span<score_t, kScoreBlock> scores) {
-    return self().Collect(scorer, columns, docs, scores);
-  }
-
   IRS_FORCE_INLINE ScoreFunction
   PrepareScore(const PrepareScoreContext& ctx) const noexcept {
     return self().PrepareScore(ctx);
   }
 
-  IRS_FORCE_INLINE auto FillBlock(doc_id_t min, doc_id_t max, uint64_t* mask,
-                                  CollectScoreContext score_ctx,
-                                  CollectMatchContext match_ctx) {
-    return self().FillBlock(min, max, mask, score_ctx, match_ctx);
+  IRS_FORCE_INLINE std::pair<doc_id_t, bool> FillBlock(
+    doc_id_t min, doc_id_t max, uint64_t* mask, CollectScoreContext score,
+    CollectMatchContext match) {
+    return self().FillBlock(min, max, mask, score, match);
   }
 
  private:
@@ -2532,14 +2440,10 @@ inline size_t PostingsReaderBase::decode(const byte_type* in,
   if (has_freq && term_meta.freq &&
       IndexFeatures::None != (features & IndexFeatures::Pos)) {
     term_meta.pos_start += vread<uint64_t>(p);
-
-    term_meta.pos_end = term_meta.freq > _block_size
-                          ? vread<uint64_t>(p)
-                          : address_limits::invalid();
-
     if (IndexFeatures::None != (features & IndexFeatures::Offs)) {
       term_meta.pay_start += vread<uint64_t>(p);
     }
+    term_meta.pos_offset = *p++;
   }
 
   if (1 == term_meta.docs_count) {
@@ -2573,6 +2477,451 @@ struct IteratorTraitsImpl : FormatTraits {
 };
 
 template<typename FormatTraits>
+using WandTraits = IteratorTraitsImpl<FormatTraits, true, false, false>;
+
+template<typename FormatTraits, bool Pos, bool Offs, typename WandExtent,
+         typename InputType>
+class SingleWandIterator : public DocIterator {
+  using IteratorTraits = WandTraits<FormatTraits>;
+  using FieldTraits = IteratorTraitsImpl<FormatTraits, true, Pos, Offs>;
+
+  class DefaultWandSource final : public WandSource {
+   public:
+    Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
+    void Read(DataInput& in, size_t size) final {
+      while (size--) {
+        in.ReadByte();
+      }
+    }
+  };
+
+ public:
+  static_assert(IteratorTraits::kBlockSize % kScoreBlock == 0,
+                "kBlockSize must be a multiple of kScoreBlock");
+
+  explicit SingleWandIterator(WandExtent extent)
+    : _skip{IteratorTraits::kBlockSize, PostingsWriterBase::kSkipN,
+            WandReadSkip{extent}} {}
+
+  ~SingleWandIterator() {
+    if (_doc_in) {
+      std::allocator<uint32_t>{}.deallocate(_collected_freqs, kScoreBlock);
+    }
+  }
+
+  ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
+    SDB_ASSERT(ctx.scorer);
+    if (auto wand_source = ctx.scorer->prepare_wand_source()) {
+      auto wand_func = ctx.scorer->PrepareScorer({
+        .segment = *ctx.segment,
+        .field = this->_field,
+        .doc_attrs = *wand_source,
+        .stats = this->_stats,
+        .boost = this->_boost,
+      });
+      _skip.Reader().SetWandScore(std::move(wand_func), std::move(wand_source));
+    }
+    return ctx.scorer->PrepareScorer({
+      .segment = *ctx.segment,
+      .field = this->_field,
+      .doc_attrs = *this,
+      .collector = ctx.collector,
+      .stats = this->_stats,
+      .boost = this->_boost,
+    });
+  }
+
+  void Prepare(const PostingCookie& meta, const IndexInput* doc_in,
+               uint8_t wand_index);
+
+  IRS_NO_INLINE Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+    if (type == irs::Type<ScoreThresholdAttr>::id()) {
+      return &_skip.Reader().Threshold();
+    }
+    return irs::GetMutable(_attrs, type);
+  }
+
+  IRS_FORCE_INLINE doc_id_t value() const noexcept final {
+    return std::get<DocAttr>(_attrs).value;
+  }
+
+  IRS_FORCE_INLINE doc_id_t advance() final { return seek(value() + 1); }
+
+  IRS_FORCE_INLINE doc_id_t seek(doc_id_t target) final;
+
+  uint32_t count() final {
+    auto& doc_value = std::get<DocAttr>(_attrs).value;
+    doc_value = doc_limits::eof();
+    const auto left_in_leaf = std::exchange(_left_in_leaf, 0);
+    const auto left_in_list = std::exchange(_left_in_list, 0);
+    return left_in_leaf + left_in_list;
+  }
+
+  uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
+                   std::span<doc_id_t, kScoreBlock> docs,
+                   std::span<score_t, kScoreBlock> scores) final {
+    // TODO(gnusi): optimize
+    SDB_ASSERT(kScoreBlock <= docs.size());
+    return CollectImpl(*this, scorer, columns, docs, scores);
+  }
+
+  void FetchScoreArgs(uint16_t index) final {
+    if constexpr (IteratorTraits::Frequency()) {
+      SDB_ASSERT(_collected_freqs);
+      _collected_freqs[index] = std::get<FreqAttr>(_attrs).value;
+    }
+  }
+
+  void Init(const PostingCookie& cookie) noexcept {
+    _field = cookie.field;
+    _stats = cookie.stats;
+    _boost = cookie.boost;
+  }
+
+ private:
+  class WandReadSkip {
+   public:
+    explicit WandReadSkip(WandExtent extent)
+      : _skip_levels(1),
+        _skip_scores(1, std::numeric_limits<score_t>::max()),
+        _wand_extent{extent} {
+      Disable();
+    }
+
+    void SetWandIndex(uint8_t index) noexcept { _wand_index = index; }
+
+    void SetWandScore(ScoreFunction func,
+                      WandSource::ptr wand_source) noexcept {
+      _wand_func = std::move(func);
+      _wand_source = std::move(wand_source);
+    }
+
+    ScoreThresholdAttr& Threshold() noexcept { return _threshold; }
+
+    void EnsureSorted() const noexcept {
+      SDB_ASSERT(absl::c_is_sorted(
+        _skip_levels,
+        [](const auto& lhs, const auto& rhs) { return lhs.doc > rhs.doc; }));
+      SDB_ASSERT(absl::c_is_sorted(_skip_scores, std::greater<>{}));
+    }
+
+    void Disable() noexcept {
+      SDB_ASSERT(!_skip_levels.empty());
+      SDB_ASSERT(!doc_limits::valid(_skip_levels.back().doc));
+      _skip_levels.back().doc = doc_limits::eof();
+    }
+
+    void Enable(const TermMetaImpl& state) noexcept {
+      SDB_ASSERT(state.docs_count > IteratorTraits::kBlockSize);
+      auto& top = _skip_levels.front();
+      CopyState<IteratorTraits>(top, state);
+      Enable();
+    }
+
+    void Init(size_t num_levels) {
+      SDB_ASSERT(num_levels);
+      _skip_levels.resize(num_levels);
+      _skip_scores.resize(num_levels, std::numeric_limits<score_t>::max());
+    }
+
+    bool IsLess(size_t level, doc_id_t target) const noexcept {
+      return _skip_levels[level].doc < target ||
+             _skip_scores[level] <= _threshold.value;
+    }
+    bool IsLessThanUpperBound(doc_id_t target) const noexcept {
+      return _skip_levels.back().doc < target ||
+             _skip_scores.back() <= _threshold.value;
+    }
+
+    void MoveDown(size_t level) noexcept {
+      auto& next = _skip_levels[level];
+      CopyState<IteratorTraits>(next, _prev_skip);
+    }
+
+    void Read(size_t level, IndexInput& in) {
+      auto& next = _skip_levels[level];
+      CopyState<IteratorTraits>(_prev_skip, next);
+      ReadState<FieldTraits>(next, sdb::basics::downCast<InputType>(in));
+      _skip_scores[level] = ReadWandScore(in);
+    }
+
+    void Seal(size_t level) {
+      auto& next = _skip_levels[level];
+
+      // Store previous step on the same level
+      CopyState<IteratorTraits>(_prev_skip, next);
+
+      // Stream exhausted
+      next.doc = doc_limits::eof();
+      _skip_scores[level] = std::numeric_limits<score_t>::max();
+    }
+
+    size_t AdjustLevel(size_t level) const noexcept {
+      while (level && _skip_levels[level].doc >= _skip_levels[level - 1].doc) {
+        SDB_ASSERT(_skip_levels[level - 1].doc != doc_limits::eof());
+        --level;
+      }
+      return level;
+    }
+
+    doc_id_t UpperBound() const noexcept {
+      SDB_ASSERT(!_skip_levels.empty());
+      return _skip_levels.back().doc;
+    }
+
+    score_t ReadWandScore(IndexInput& in) {
+      return CommonReadWandData(_wand_extent, _wand_index, _wand_func,
+                                *_wand_source, in);
+    }
+
+    void SkipWandData(IndexInput& in) { CommonSkipWandData(_wand_extent, in); }
+
+    SkipState& State() noexcept { return _prev_skip; }
+    SkipState& Next() noexcept { return _skip_levels.back(); }
+
+   private:
+    void Enable() noexcept {
+      SDB_ASSERT(!_skip_levels.empty());
+      SDB_ASSERT(doc_limits::eof(_skip_levels.back().doc));
+      _skip_levels.back().doc = doc_limits::invalid();
+    }
+
+    std::vector<SkipState> _skip_levels;
+    std::vector<score_t> _skip_scores;
+    SkipState _prev_skip;
+    ScoreFunction _wand_func;
+    WandSource::ptr _wand_source;
+    ScoreThresholdAttr _threshold;
+    uint8_t _wand_index = 0;
+    [[no_unique_address]] WandExtent _wand_extent;
+  };
+
+  IRS_FORCE_INLINE InputType& GetDocIn() const noexcept {
+    return sdb::basics::downCast<InputType>(*this->_doc_in);
+  }
+
+  IRS_FORCE_INLINE void ReadBlock(doc_id_t prev_doc);
+  void PrepareSkipReader(uint64_t skip_offs, uint32_t docs_count);
+  IRS_FORCE_INLINE auto* EncBufEnd() {
+    return std::begin(_enc_buf) + IteratorTraits::kBlockSize;
+  }
+
+  void SeekToBlock(doc_id_t target) {
+    _skip.Reader().EnsureSorted();
+    // Ensured by WandPrepare(...)
+    SDB_ASSERT(_skip.NumLevels());
+
+    this->_left_in_list = _skip.Seek(target);
+    this->_left_in_leaf = 0;
+    std::get<DocAttr>(_attrs).value = _skip.Reader().State().doc;
+    // std::get<ScoreAttr>(_attrs).max.leaf = _skip.Reader().skip_scores.back();
+  }
+
+  using Attributes = AttributesImpl<IteratorTraits>;
+
+  FieldProperties _field;
+  const byte_type* _stats = nullptr;
+  score_t _boost = kNoBoost;
+
+  uint32_t _enc_buf[IteratorTraits::kEncBufSize];
+  [[no_unique_address]] utils::Need<IteratorTraits::Frequency(), uint32_t*>
+    _collected_freqs;
+  [[no_unique_address]] utils::Need<
+    IteratorTraits::Frequency(), uint32_t[IteratorTraits::kBlockSize]> _freqs;
+  doc_id_t _docs[IteratorTraits::kBlockSize];
+  doc_id_t _max_in_leaf = doc_limits::invalid();
+  uint32_t _left_in_leaf = 0;
+  uint32_t _left_in_list = 0;
+  IndexInput::ptr _doc_in;
+  Attributes _attrs;
+  SkipReader<WandReadSkip> _skip;
+};
+
+template<typename IteratorTraits, bool Pos, bool Offs, typename WandExtent,
+         typename InputType>
+doc_id_t SingleWandIterator<IteratorTraits, Pos, Offs, WandExtent,
+                            InputType>::seek(doc_id_t target) {
+  auto& doc_value = std::get<DocAttr>(_attrs).value;
+
+  if (target <= doc_value) [[unlikely]] {
+    return doc_value;
+  }
+
+  if (_skip.Reader().IsLessThanUpperBound(target)) [[unlikely]] {
+    SeekToBlock(target);
+  }
+
+  if (_left_in_leaf == 0) [[unlikely]] {
+    if (_left_in_list == 0) [[unlikely]] {
+      return doc_value = doc_limits::eof();
+    }
+
+    auto& state = _skip.Reader().State();
+    if (state.doc_ptr) [[likely]] {
+      _doc_in->Seek(state.doc_ptr);
+    }
+    ReadBlock(doc_value);
+  }
+
+  while (this->_left_in_leaf != 0) {
+    const auto doc = *(std::end(_docs) - _left_in_leaf);
+
+    --_left_in_leaf;
+
+    if (target <= doc) {
+      auto& freq_value = std::get<FreqAttr>(_attrs).value;
+      freq_value = *(std::end(_freqs) - (_left_in_leaf + 1));
+
+      return doc_value = doc;
+    }
+  }
+
+  return doc_value = doc_limits::eof();
+}
+
+template<typename FormatTraits, bool Pos, bool Offs, typename WandExtent,
+         typename InputType>
+void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent,
+                        InputType>::Prepare(const PostingCookie& meta,
+                                            const IndexInput* doc_in,
+                                            uint8_t wand_index) {
+  this->Init(meta);
+
+  _skip.Reader().SetWandIndex(wand_index);
+
+  // Set default wand state with max score so no blocks are ever pruned
+  _skip.Reader().SetWandScore(
+    ScoreFunction::Constant(std::numeric_limits<score_t>::max()),
+    std::make_unique<DefaultWandSource>());
+
+  auto& term_state = sdb::basics::downCast<CookieImpl>(meta.cookie)->meta;
+  std::get<CostAttr>(this->_attrs).reset(term_state.docs_count);
+
+  if (term_state.docs_count > 1) {
+    this->_left_in_list = term_state.docs_count;
+    SDB_ASSERT(this->_left_in_leaf == 0);
+    SDB_ASSERT(this->_max_in_leaf == doc_limits::invalid());
+
+    if (!this->_doc_in) {
+      this->_doc_in = doc_in->Reopen();
+
+      if (!this->_doc_in) {
+        SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+                  "Failed to reopen document input");
+        throw IoError("failed to reopen document input");
+      }
+    }
+
+    auto& freq_block = std::get<FreqBlockAttr>(this->_attrs);
+    this->_collected_freqs = std::allocator<uint32_t>{}.allocate(kScoreBlock);
+    freq_block.value = this->_collected_freqs;
+
+    this->_doc_in->Seek(term_state.doc_start);
+    SDB_ASSERT(!this->_doc_in->IsEOF());
+  } else {
+    SDB_ASSERT(term_state.docs_count == 1);
+    auto* doc = std::end(this->_docs) - 1;
+    *doc = doc_limits::min() + term_state.e_single_doc;
+
+    auto* freq = std::end(this->_freqs) - 1;
+    *freq = term_state.freq;
+    this->_collected_freqs = freq;
+
+    auto& freq_block = std::get<FreqBlockAttr>(this->_attrs);
+    freq_block.value = freq;
+
+    this->_left_in_list = 0;
+    this->_left_in_leaf = 1;
+    this->_max_in_leaf = *doc;
+  }
+
+  SDB_ASSERT(term_state.freq);
+
+  if (term_state.docs_count > IteratorTraits::kBlockSize) {
+    _skip.Reader().Enable(term_state);
+    PrepareSkipReader(term_state.doc_start + term_state.e_skip_start,
+                      term_state.docs_count);
+  } else if (1 < term_state.docs_count &&
+             term_state.docs_count < IteratorTraits::kBlockSize) {
+    _skip.Reader().SkipWandData(*this->_doc_in);
+  }
+}
+
+template<typename FormatTraits, bool Pos, bool Offs, typename WandExtent,
+         typename InputType>
+void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent,
+                        InputType>::ReadBlock(doc_id_t prev_doc) {
+  if (const auto tail = this->_left_in_list; tail >= IteratorTraits::kBlockSize)
+    [[likely]] {
+    IteratorTraits::read_block_delta(GetDocIn(), this->_enc_buf, this->_docs,
+                                     prev_doc);
+    this->_max_in_leaf = *(std::end(this->_docs) - 1);
+    this->_left_in_leaf = IteratorTraits::kBlockSize;
+    this->_left_in_list -= IteratorTraits::kBlockSize;
+    if constexpr (IteratorTraits::Frequency()) {
+      IteratorTraits::read_block(GetDocIn(), this->_enc_buf, this->_freqs);
+    } else if (FieldTraits::Frequency()) {
+      IteratorTraits::skip_block(GetDocIn());
+    }
+  } else {
+    const uint16_t size = GetDocIn().ReadI16();
+    const auto* buf = GetDocIn().ReadView(size);
+    if constexpr (std::is_same_v<BytesViewInput, InputType>) {
+      SDB_ASSERT(buf);
+    } else if (!buf) [[likely]] {
+      auto* encoded = reinterpret_cast<byte_type*>(this->_enc_buf);
+      [[maybe_unused]] const auto read = GetDocIn().ReadBytes(encoded, size);
+      SDB_ASSERT(read == size);
+      buf = encoded;
+    }
+    auto* doc = std::end(this->_docs) - tail;
+    const auto doc_size = streamvbyte_delta_decode(buf, doc, tail, prev_doc);
+    this->_max_in_leaf = *(std::end(this->_docs) - 1);
+    this->_left_in_leaf = tail;
+    this->_left_in_list = 0;
+    if constexpr (IteratorTraits::Frequency()) {
+      auto* freq = std::end(this->_freqs) - tail;
+      [[maybe_unused]] const auto freq_size =
+        streamvbyte_decode(buf + doc_size, freq, tail);
+      SDB_ASSERT(doc_size + freq_size == size);
+    }
+  }
+}
+
+template<typename FormatTraits, bool Pos, bool Offs, typename WandExtent,
+         typename InputType>
+void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent,
+                        InputType>::PrepareSkipReader(uint64_t skip_offs,
+                                                      uint32_t docs_count) {
+  SDB_ASSERT(docs_count > 0);
+
+  auto skip_in = this->_doc_in->Dup();
+
+  if (!skip_in) {
+    SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
+              "Failed to duplicate document input");
+    throw IoError("Failed to duplicate document input");
+  }
+
+  SDB_ASSERT(!_skip.NumLevels());
+  skip_in->Seek(skip_offs);
+  _skip.Reader().ReadWandScore(*skip_in);
+  _skip.Prepare(std::move(skip_in), docs_count);
+
+  if (const auto num_levels = _skip.NumLevels();
+      num_levels > 0 && num_levels <= PostingsWriterBase::kMaxSkipLevels)
+    [[likely]] {
+    SDB_ASSERT(!doc_limits::valid(_skip.Reader().UpperBound()));
+    _skip.Reader().Init(num_levels);
+  } else {
+    SDB_ASSERT(false);
+    throw IndexError{absl::StrCat("Invalid number of skip levels ", num_levels,
+                                  ", must be in range of [1, ",
+                                  PostingsWriterBase::kMaxSkipLevels, "].")};
+  }
+}
+
+template<typename FormatTraits>
 class PostingsReaderImpl final : public PostingsReaderBase {
  public:
   template<bool Freq, bool Pos, bool Offs>
@@ -2587,8 +2936,8 @@ class PostingsReaderImpl final : public PostingsReaderBase {
   DocIterator::ptr Iterator(IndexFeatures field_features,
                             IndexFeatures required_features,
                             std::span<const PostingCookie> metas,
-                            const IteratorFieldOptions& options,
-                            size_t min_match, ScoreMergeType type) const final;
+                            IteratorFieldOptions options, size_t min_match,
+                            ScoreMergeType type) const final;
 
  private:
   template<typename FieldTraits, typename Factory>
@@ -2602,7 +2951,7 @@ class PostingsReaderImpl final : public PostingsReaderBase {
 };
 
 template<typename FieldTraits, size_t N>
-void BitUnionImpl(IndexInput& doc_in, doc_id_t docs_count, uint32_t (&docs)[N],
+void BitUnionImpl(DataInput& doc_in, doc_id_t docs_count, uint32_t (&docs)[N],
                   uint32_t (&enc_buf)[N], size_t* set) {
   constexpr auto kBits{BitsRequired<std::remove_pointer_t<decltype(set)>>()};
   size_t num_blocks = docs_count / FieldTraits::kBlockSize;
@@ -2621,20 +2970,22 @@ void BitUnionImpl(IndexInput& doc_in, doc_id_t docs_count, uint32_t (&docs)[N],
     prev_doc = docs[N - 1];
   }
 
-  doc_id_t docs_left = docs_count % FieldTraits::kBlockSize;
+  const auto tail = docs_count % FieldTraits::kBlockSize;
+  const uint16_t size = doc_in.ReadI16();
+  const auto* buf = doc_in.ReadView(size);
+  if (!buf) {
+    auto* encoded = reinterpret_cast<byte_type*>(enc_buf);
+    const auto read = doc_in.ReadBytes(encoded, size);
+    SDB_ASSERT(read == size);
+    buf = encoded;
+  }
+  auto* doc = std::end(docs) - tail;
+  const auto doc_size = streamvbyte_delta_decode(buf, doc, tail, prev_doc);
+  SDB_ASSERT(FieldTraits::Frequency() == (size != doc_size));
 
-  while (docs_left--) {
-    doc_id_t delta;
-    if constexpr (FieldTraits::Frequency()) {
-      if (!ShiftUnpack32(doc_in.ReadV32(), delta)) {
-        doc_in.ReadV32();
-      }
-    } else {
-      delta = doc_in.ReadV32();
-    }
-
-    prev_doc += delta;
-    SetBit(set[prev_doc / kBits], prev_doc % kBits);
+  // FIXME optimize
+  for (const auto doc : std::span{doc, tail}) {
+    SetBit(set[doc / kBits], doc % kBits);
   }
 }
 
@@ -2649,7 +3000,7 @@ size_t PostingsReaderImpl<FormatTraits>::BitUnion(
     IndexFeatures::None != (field_features & IndexFeatures::Freq);
 
   SDB_ASSERT(_doc_in);
-  auto doc_in = _doc_in->Reopen();  // reopen thread-safe stream
+  auto doc_in = _doc_in->Reopen();
 
   if (!doc_in) {
     // implementation returned wrong pointer
@@ -2762,7 +3113,7 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::IteratorImpl(
 template<typename FormatTraits>
 DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
   IndexFeatures field_features, IndexFeatures required_features,
-  std::span<const PostingCookie> metas, const IteratorFieldOptions& options,
+  std::span<const PostingCookie> metas, IteratorFieldOptions options,
   size_t min_match, ScoreMergeType type) const {
   SDB_ASSERT(!metas.empty());
   SDB_ASSERT(1 <= min_match);
@@ -2770,17 +3121,58 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
 
   auto make_postings_iterator = [&](uint32_t meta_idx,
                                     const PostingCookie& cookie) {
+    if (options.Enabled() &&
+        IndexFeatures::None != (field_features & IndexFeatures::Freq) &&
+        IndexFeatures::None ==
+          (required_features & (IndexFeatures::Pos | IndexFeatures::Offs))) {
+      auto make_wand = [&]<bool Pos, bool Offs>() {
+        return ResolveExtent<1>(
+          options.count,
+          [&]<typename Extent>(Extent&& extent) -> DocIterator::ptr {
+            if (_doc_in->GetType() == DataInput::Type::BytesViewInput) {
+              auto it = memory::make_managed<SingleWandIterator<
+                FormatTraits, Pos, Offs, Extent, BytesViewInput>>(
+                std::forward<Extent>(extent));
+              it->Prepare(cookie, _doc_in.get(), options.mapped_index);
+              return it;
+            } else {
+              auto it =
+                memory::make_managed<SingleWandIterator<FormatTraits, Pos, Offs,
+                                                        Extent, IndexInput>>(
+                  std::forward<Extent>(extent));
+              it->Prepare(cookie, _doc_in.get(), options.mapped_index);
+              return it;
+            }
+          });
+      };
+      switch (ToIndex(field_features)) {
+        case kPosOffs:
+          return make_wand.template operator()<true, true>();
+        case kPos:
+          return make_wand.template operator()<true, false>();
+        default:
+          return make_wand.template operator()<false, false>();
+      }
+    }
     return IteratorImpl(
       field_features, required_features,
       [&]<typename IteratorTraits, typename FieldTraits> -> DocIterator::ptr {
         return ResolveExtent<0>(
           options.count,
           [&]<typename Extent>(Extent&& extent) -> DocIterator::ptr {
-            auto it = memory::make_managed<
-              PostingIteratorImpl<IteratorTraits, FieldTraits, Extent>>(
-              std::forward<Extent>(extent));
-            it->Prepare(cookie, _doc_in.get(), _pos_in.get(), _pay_in.get());
-            return it;
+            if (_doc_in->GetType() == DataInput::Type::BytesViewInput) {
+              auto it = memory::make_managed<PostingIteratorImpl<
+                IteratorTraits, FieldTraits, Extent, BytesViewInput>>(
+                std::forward<Extent>(extent));
+              it->Prepare(cookie, _doc_in.get(), _pos_in.get(), _pay_in.get());
+              return it;
+            } else {
+              auto it = memory::make_managed<PostingIteratorImpl<
+                IteratorTraits, FieldTraits, Extent, IndexInput>>(
+                std::forward<Extent>(extent));
+              it->Prepare(cookie, _doc_in.get(), _pos_in.get(), _pay_in.get());
+              return it;
+            }
           });
       });
   };
@@ -2788,6 +3180,8 @@ DocIterator::ptr PostingsReaderImpl<FormatTraits>::Iterator(
   if (metas.size() == 1) {
     return make_postings_iterator(0, metas[0]);
   }
+
+  options.mapped_index = WandContext::kDisable;
 
   std::vector<DocIterator::ptr> iterators;
   iterators.reserve(metas.size());
@@ -2911,24 +3305,37 @@ struct FormatTraits128 {
   static constexpr uint32_t kBlockSize = SIMDBlockSize;
   static_assert(kBlockSize <= doc_limits::eof());
 
-  IRS_FORCE_INLINE static void PackBlock(const uint32_t* IRS_RESTRICT decoded,
-                                         uint32_t* IRS_RESTRICT encoded,
-                                         uint32_t bits) noexcept {
-    ::simdpackwithoutmask(decoded, reinterpret_cast<AlignType*>(encoded), bits);
-  }
+  static constexpr auto kEncBufByteSize =
+    std::max(2 * streamvbyte_max_compressedbytes(kBlockSize - 1),
+             kBlockSize * sizeof(uint32_t));
+  static constexpr auto kEncBufSize =
+    (kEncBufByteSize + sizeof(uint32_t)) / sizeof(uint32_t);
 
-  IRS_FORCE_INLINE static void write_block_delta(IndexOutput& out, uint32_t* in,
+  IRS_FORCE_INLINE static void write_block_delta(DataOutput& out, uint32_t* in,
                                                  uint32_t prev, uint32_t* buf) {
     DeltaEncode<kBlockSize>(in, prev);
-    bitpack::write_block32(PackBlock, out, in, buf, kBlockSize);
+    bitpack::write_block32(
+      [](const uint32_t* IRS_RESTRICT decoded, uint32_t* IRS_RESTRICT encoded,
+         uint32_t bits) IRS_FORCE_INLINE {
+        ::simdpackwithoutmask(decoded, reinterpret_cast<AlignType*>(encoded),
+                              bits);
+      },
+      out, in, buf, kBlockSize);
   }
 
-  IRS_FORCE_INLINE static void write_block(IndexOutput& out, const uint32_t* in,
+  IRS_FORCE_INLINE static void write_block(DataOutput& out, const uint32_t* in,
                                            uint32_t* buf) {
-    bitpack::write_block32(PackBlock, out, in, buf, kBlockSize);
+    bitpack::write_block32(
+      [](const uint32_t* IRS_RESTRICT decoded, uint32_t* IRS_RESTRICT encoded,
+         uint32_t bits) IRS_FORCE_INLINE {
+        ::simdpackwithoutmask(decoded, reinterpret_cast<AlignType*>(encoded),
+                              bits);
+      },
+      out, in, buf, kBlockSize);
   }
 
-  IRS_FORCE_INLINE static void read_block_delta(IndexInput& in, uint32_t* buf,
+  template<typename InputType>
+  IRS_FORCE_INLINE static void read_block_delta(InputType& in, uint32_t* buf,
                                                 uint32_t* out, uint32_t prev) {
     bitpack::read_block_delta32(
       [](uint32_t prev, uint32_t* IRS_RESTRICT decoded,
@@ -2939,7 +3346,8 @@ struct FormatTraits128 {
       in, buf, out, kBlockSize, prev);
   }
 
-  IRS_FORCE_INLINE static void read_block(IndexInput& in, uint32_t* buf,
+  template<typename InputType>
+  IRS_FORCE_INLINE static void read_block(InputType& in, uint32_t* buf,
                                           uint32_t* out) {
     bitpack::read_block32(
       [](uint32_t* IRS_RESTRICT decoded, const uint32_t* IRS_RESTRICT encoded,
@@ -2950,7 +3358,7 @@ struct FormatTraits128 {
       in, buf, out, kBlockSize);
   }
 
-  IRS_FORCE_INLINE static void skip_block(IndexInput& in) {
+  IRS_FORCE_INLINE static void skip_block(DataInput& in) {
     bitpack::skip_block32(in, kBlockSize);
   }
 };

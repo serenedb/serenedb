@@ -38,7 +38,6 @@
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "iresearch/search/cost.hpp"
-#include "iresearch/search/score.hpp"
 #include "iresearch/search/term_filter.hpp"
 #include "iresearch/search/tfidf.hpp"
 #include "iresearch/store/data_output.hpp"
@@ -77,7 +76,8 @@ bool Visit(const irs::ColumnReader& reader,
 
 namespace tests {
 
-void AssertTerm(const irs::TermIterator& expected_term,
+void AssertTerm(size_t segment_index, size_t field_index, size_t term_index,
+                const irs::TermIterator& expected_term,
                 const irs::TermIterator& actual_term,
                 irs::IndexFeatures requested_features);
 
@@ -541,12 +541,6 @@ class TermIterator : public irs::SeekTermIterator {
       return nullptr;
     }
 
-    bool IsEqual(const irs::SeekCookie& rhs) const noexcept final {
-      return term == sdb::basics::downCast<TermCookie>(rhs).term;
-    }
-
-    size_t Hash() const noexcept final { return absl::HashOf(term); }
-
     irs::bytes_view term;
   };
 
@@ -631,21 +625,24 @@ irs::SeekTermIterator::ptr Field::iterator() const {
 }
 
 template<typename IteratorFactory>
-void AssertDocs(irs::DocIterator::ptr expected_docs,
+void AssertDocs(size_t segment_index, size_t field_index, size_t term_index,
+                irs::DocIterator::ptr expected_docs,
                 IteratorFactory&& factory) {
   ASSERT_NE(nullptr, expected_docs);
 
-  auto seek_docs = factory();
-  ASSERT_NE(nullptr, seek_docs);
-
   auto seq_docs = factory();
   ASSERT_NE(nullptr, seq_docs);
+
+  auto seek_docs = factory();
+  ASSERT_NE(nullptr, seek_docs);
 
   ASSERT_TRUE(!irs::doc_limits::valid(expected_docs->value()));
   ASSERT_TRUE(!irs::doc_limits::valid(seq_docs->value()));
   ASSERT_TRUE(!irs::doc_limits::valid(seek_docs->value()));
 
+  size_t doc_index = 0;
   while (expected_docs->next()) {
+    SCOPED_TRACE(absl::StrCat("doc_index=", doc_index++));
     const auto expected_doc = expected_docs->value();
 
     ASSERT_TRUE(seq_docs->next());
@@ -657,47 +654,66 @@ void AssertDocs(irs::DocIterator::ptr expected_docs,
     // check document attributes
     {
       auto* expected_freq = irs::get<irs::FreqAttr>(*expected_docs);
-      auto* actual_freq = irs::get<irs::FreqAttr>(*seq_docs);
+      auto* actual_seq_freq = irs::get<irs::FreqAttr>(*seq_docs);
+      auto* actual_seek_freq = irs::get<irs::FreqAttr>(*seek_docs);
 
       if (expected_freq) {
-        ASSERT_FALSE(!actual_freq);
-        ASSERT_EQ(expected_freq->value, actual_freq->value);
+        ASSERT_FALSE(!actual_seq_freq);
+        ASSERT_FALSE(!actual_seek_freq);
+        ASSERT_EQ(expected_freq->value, actual_seq_freq->value);
+        ASSERT_EQ(expected_freq->value, actual_seek_freq->value);
       }
 
       auto* expected_pos = irs::GetMutable<irs::PosAttr>(expected_docs.get());
-      auto* actual_pos = irs::GetMutable<irs::PosAttr>(seq_docs.get());
+      auto* actual_seq_pos = irs::GetMutable<irs::PosAttr>(seq_docs.get());
+      auto* actual_seek_pos = irs::GetMutable<irs::PosAttr>(seek_docs.get());
 
       if (expected_pos) {
-        ASSERT_FALSE(!actual_pos);
+        ASSERT_FALSE(!actual_seq_pos);
+        ASSERT_FALSE(!actual_seek_freq);
 
         auto* expected_offs = irs::get<irs::OffsAttr>(*expected_pos);
-        auto* actual_offs = irs::get<irs::OffsAttr>(*actual_pos);
-        if (expected_offs)
-          ASSERT_FALSE(!actual_offs);
-
+        auto* actual_seq_offs = irs::get<irs::OffsAttr>(*actual_seq_pos);
+        auto* actual_seek_offs = irs::get<irs::OffsAttr>(*actual_seek_pos);
+        if (expected_offs) {
+          ASSERT_FALSE(!actual_seq_offs);
+          ASSERT_FALSE(!actual_seek_offs);
+        }
         auto* expected_pay = irs::get<irs::PayAttr>(*expected_pos);
-        auto* actual_pay = irs::get<irs::PayAttr>(*actual_pos);
+        auto* actual_seq_pay = irs::get<irs::PayAttr>(*actual_seq_pos);
+        auto* actual_seek_pay = irs::get<irs::PayAttr>(*actual_seek_pos);
         if (expected_pay) {
-          ASSERT_FALSE(!actual_pay);
+          ASSERT_FALSE(!actual_seq_pay);
+          ASSERT_FALSE(!actual_seek_pay);
         }
         ASSERT_TRUE(!irs::pos_limits::valid(expected_pos->value()));
-        ASSERT_TRUE(!irs::pos_limits::valid(actual_pos->value()));
+        ASSERT_TRUE(!irs::pos_limits::valid(actual_seq_pos->value()));
+        ASSERT_TRUE(!irs::pos_limits::valid(actual_seek_pos->value()));
+        size_t pos_index = 0;
         for (; expected_pos->next();) {
-          ASSERT_TRUE(actual_pos->next());
-          ASSERT_EQ(expected_pos->value(), actual_pos->value());
+          SCOPED_TRACE(absl::StrCat("pos_index=", pos_index++));
+          ASSERT_TRUE(actual_seq_pos->next());
+          ASSERT_EQ(expected_pos->value(), actual_seq_pos->value());
+          ASSERT_TRUE(actual_seek_pos->next());
+          ASSERT_EQ(expected_pos->value(), actual_seek_pos->value());
 
           if (expected_offs) {
-            ASSERT_EQ(expected_offs->start, actual_offs->start);
-            ASSERT_EQ(expected_offs->end, actual_offs->end);
+            ASSERT_EQ(expected_offs->start, actual_seq_offs->start);
+            ASSERT_EQ(expected_offs->end, actual_seq_offs->end);
+            ASSERT_EQ(expected_offs->start, actual_seek_offs->start);
+            ASSERT_EQ(expected_offs->end, actual_seek_offs->end);
           }
 
           if (expected_pay) {
-            ASSERT_EQ(expected_pay->value, actual_pay->value);
+            ASSERT_EQ(expected_pay->value, actual_seq_pay->value);
+            ASSERT_EQ(expected_pay->value, actual_seek_pay->value);
           }
         }
-        ASSERT_FALSE(actual_pos->next());
+        ASSERT_FALSE(actual_seq_pos->next());
+        ASSERT_FALSE(actual_seek_pos->next());
         ASSERT_TRUE(irs::pos_limits::eof(expected_pos->value()));
-        ASSERT_TRUE(irs::pos_limits::eof(actual_pos->value()));
+        ASSERT_TRUE(irs::pos_limits::eof(actual_seq_pos->value()));
+        ASSERT_TRUE(irs::pos_limits::eof(actual_seek_pos->value()));
       }
     }
   }
@@ -712,24 +728,28 @@ void AssertDocs(irs::DocIterator::ptr expected_docs,
 void AssertDocs(const irs::TermIterator& expected_term,
                 const irs::TermReader& actual_terms,
                 irs::SeekCookie::ptr actual_cookie,
-                irs::IndexFeatures requested_features) {
-  AssertDocs(expected_term.postings(requested_features), [&] {
-    return actual_terms.Iterator(
-      requested_features,
-      {.cookie = actual_cookie.get(), .field = actual_terms.meta()});
-  });
+                irs::IndexFeatures requested_features, size_t segment_index,
+                size_t field_index, size_t term_index) {
+  AssertDocs(segment_index, field_index, term_index,
+             expected_term.postings(requested_features), [&] {
+               return actual_terms.Iterator(
+                 requested_features,
+                 {.cookie = actual_cookie.get(), .field = actual_terms.meta()});
+             });
 
-  AssertDocs(expected_term.postings(requested_features), [&] {
-    return actual_terms.Iterator(
-      requested_features,
-      {.cookie = actual_cookie.get(), .field = actual_terms.meta()},
-      {{0, false}});
-  });
+  AssertDocs(segment_index, field_index, term_index,
+             expected_term.postings(requested_features), [&] {
+               return actual_terms.Iterator(
+                 requested_features,
+                 {.cookie = actual_cookie.get(), .field = actual_terms.meta()},
+                 {{0, false}});
+             });
 
   // FIXME(gnusi): check BitUnion
 }
 
-void AssertTerm(irs::TermIterator& expected_term,
+void AssertTerm(size_t segment_index, size_t field_index, size_t term_index,
+                irs::TermIterator& expected_term,
                 irs::TermIterator& actual_term,
                 irs::IndexFeatures requested_features) {
   ASSERT_EQ(expected_term.value(), actual_term.value());
@@ -746,11 +766,13 @@ void AssertTerm(irs::TermIterator& expected_term,
   // FIXME(gnusi): uncomment
   // ASSERT_EQ(expected_meta->freq, actual_meta->freq);
 
-  AssertDocs(expected_term.postings(requested_features),
+  AssertDocs(segment_index, field_index, term_index,
+             expected_term.postings(requested_features),
              [&]() { return actual_term.postings(requested_features); });
 }
 
-void AssertTermsNext(const Field& expected_field,
+void AssertTermsNext(size_t segment_index, size_t field_index,
+                     const Field& expected_field,
                      const irs::TermReader& actual_field,
                      irs::IndexFeatures features,
                      irs::automaton_table_matcher* matcher) {
@@ -769,11 +791,15 @@ void AssertTermsNext(const Field& expected_field,
   auto actual_term = matcher ? actual_field.iterator(*matcher)
                              : actual_field.iterator(irs::SeekMode::NORMAL);
 
+  size_t term_index = 0;
   for (; expected_term->next(); ++actual_size) {
+    SCOPED_TRACE(absl::StrCat("term_index=", term_index++));
     ASSERT_TRUE(actual_term->next());
 
-    AssertTerm(*expected_term, *actual_term, features);
-    AssertDocs(*expected_term, actual_field, actual_term->cookie(), features);
+    AssertTerm(segment_index, field_index, term_index, *expected_term,
+               *actual_term, features);
+    AssertDocs(*expected_term, actual_field, actual_term->cookie(), features,
+               segment_index, field_index, term_index);
 
     if (irs::IsNull(actual_min)) {
       actual_min_buf = actual_term->value();
@@ -796,7 +822,8 @@ void AssertTermsNext(const Field& expected_field,
   }
 }
 
-void AssertTermsSeek(const Field& expected_field,
+void AssertTermsSeek(size_t segment_index, size_t field_index,
+                     const Field& expected_field,
                      const irs::TermReader& actual_field,
                      irs::IndexFeatures features,
                      irs::automaton_table_matcher* matcher,
@@ -816,11 +843,14 @@ void AssertTermsSeek(const Field& expected_field,
     actual_field.iterator(irs::SeekMode::RandomOnly);
   ASSERT_NE(nullptr, actual_term_with_state_random_only);
 
+  size_t term_index = 0;
   for (; expected_term->next();) {
+    SCOPED_TRACE(absl::StrCat("term_index=", term_index));
     // seek with state
     {
       ASSERT_TRUE(actual_term_with_state->seek(expected_term->value()));
-      AssertTerm(*expected_term, *actual_term_with_state, features);
+      AssertTerm(segment_index, field_index, term_index, *expected_term,
+                 *actual_term_with_state, features);
     }
 
     // seek without state random only
@@ -828,7 +858,8 @@ void AssertTermsSeek(const Field& expected_field,
       auto actual_term = actual_field.iterator(irs::SeekMode::RandomOnly);
       ASSERT_TRUE(actual_term->seek(expected_term->value()));
 
-      AssertTerm(*expected_term, *actual_term, features);
+      AssertTerm(segment_index, field_index, term_index, *expected_term,
+                 *actual_term, features);
     }
 
     // seek with state random only
@@ -836,7 +867,8 @@ void AssertTermsSeek(const Field& expected_field,
       ASSERT_TRUE(
         actual_term_with_state_random_only->seek(expected_term->value()));
 
-      AssertTerm(*expected_term, *actual_term_with_state_random_only, features);
+      AssertTerm(segment_index, field_index, term_index, *expected_term,
+                 *actual_term_with_state_random_only, features);
     }
 
     // seek without state, iterate forward
@@ -844,7 +876,8 @@ void AssertTermsSeek(const Field& expected_field,
     {
       auto actual_term = actual_field.iterator(irs::SeekMode::NORMAL);
       ASSERT_TRUE(actual_term->seek(expected_term->value()));
-      AssertTerm(*expected_term, *actual_term, features);
+      AssertTerm(segment_index, field_index, term_index, *expected_term,
+                 *actual_term, features);
       actual_term->read();
       cookie = actual_term->cookie();
 
@@ -862,13 +895,15 @@ void AssertTermsSeek(const Field& expected_field,
           if (!copy_expected_next) {
             break;
           }
-          AssertTerm(*copy_expected_term, *actual_term, features);
+          AssertTerm(segment_index, field_index, term_index,
+                     *copy_expected_term, *actual_term, features);
         }
       }
 
       // seek back to initial term
       ASSERT_TRUE(actual_term->seek(expected_term->value()));
-      AssertTerm(*expected_term, *actual_term, features);
+      AssertTerm(segment_index, field_index, term_index, *expected_term,
+                 *actual_term, features);
     }
 
     // seek greater or equal without state, iterate forward
@@ -876,7 +911,8 @@ void AssertTermsSeek(const Field& expected_field,
       auto actual_term = actual_field.iterator(irs::SeekMode::NORMAL);
       ASSERT_EQ(irs::SeekResult::Found,
                 actual_term->seek_ge(expected_term->value()));
-      AssertTerm(*expected_term, *actual_term, features);
+      AssertTerm(segment_index, field_index, term_index, *expected_term,
+                 *actual_term, features);
 
       // iterate forward
       {
@@ -891,13 +927,15 @@ void AssertTermsSeek(const Field& expected_field,
           if (!copy_expected_next) {
             break;
           }
-          AssertTerm(*copy_expected_term, *actual_term, features);
+          AssertTerm(segment_index, field_index, term_index,
+                     *copy_expected_term, *actual_term, features);
         }
       }
 
       // seek back to initial term
       ASSERT_TRUE(actual_term->seek(expected_term->value()));
-      AssertTerm(*expected_term, *actual_term, features);
+      AssertTerm(segment_index, field_index, term_index, *expected_term,
+                 *actual_term, features);
     }
 
     // seek to cookie without state, iterate to the end
@@ -906,16 +944,19 @@ void AssertTermsSeek(const Field& expected_field,
 
       // seek to the same term
       ASSERT_TRUE(actual_term->seek(expected_term->value()));
-      AssertTerm(*expected_term, *actual_term, features);
+      AssertTerm(segment_index, field_index, term_index, *expected_term,
+                 *actual_term, features);
 
       // seek to the same term
       ASSERT_TRUE(actual_term->seek(expected_term->value()));
-      AssertTerm(*expected_term, *actual_term, features);
+      AssertTerm(segment_index, field_index, term_index, *expected_term,
+                 *actual_term, features);
 
       // seek greater equal to the same term
       ASSERT_EQ(irs::SeekResult::Found,
                 actual_term->seek_ge(expected_term->value()));
-      AssertTerm(*expected_term, *actual_term, features);
+      AssertTerm(segment_index, field_index, term_index, *expected_term,
+                 *actual_term, features);
     }
   }
 }
@@ -1129,7 +1170,9 @@ void AssertIndex(irs::IndexReader::ptr actual_index,
   // check number of segments
   ASSERT_EQ(expected_index.size(), actual_index->size());
   size_t i = 0;
+  size_t segment_index = 0;
   for (auto& actual_segment : *actual_index) {
+    SCOPED_TRACE(absl::StrCat("segment_index=", segment_index++));
     // skip segment if validation not required
     if (skip) {
       ++i;
@@ -1149,7 +1192,9 @@ void AssertIndex(irs::IndexReader::ptr actual_index,
 
     // iterate over fields
     auto actual_fields = actual_segment.fields();
+    size_t field_index = 0;
     for (; actual_fields->next(); ++expected_field) {
+      SCOPED_TRACE(absl::StrCat("field_index=", field_index++));
       ASSERT_EQ(expected_field->first, actual_fields->value().meta().name);
       ASSERT_EQ(expected_field->second.name,
                 actual_fields->value().meta().name);
@@ -1191,8 +1236,10 @@ void AssertIndex(irs::IndexReader::ptr actual_index,
         ASSERT_EQ(nullptr, actual_freq);
       }
 
-      AssertTermsNext(expected_field->second, *actual_terms, features, matcher);
-      AssertTermsSeek(expected_field->second, *actual_terms, features, matcher);
+      AssertTermsNext(segment_index, field_index, expected_field->second,
+                      *actual_terms, features, matcher);
+      AssertTermsSeek(segment_index, field_index, expected_field->second,
+                      *actual_terms, features, matcher);
     }
     ASSERT_FALSE(actual_fields->next());
 

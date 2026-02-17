@@ -9,7 +9,7 @@ services:
       - POSTGRES_DB=postgres
     volumes:
       - type: tmpfs
-        target: /var/lib/postgresql/data
+        target: /var/lib/postgresql/
         tmpfs:
           size: 16G
     networks:

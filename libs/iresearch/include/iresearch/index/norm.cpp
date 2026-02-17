@@ -22,25 +22,51 @@
 
 #include "norm.hpp"
 
-#include "basics/shared.hpp"
-#include "iresearch/store/store_utils.hpp"
-#include "iresearch/utils/attribute_provider.hpp"
+#include "iresearch/index/buffered_column_iterator.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 
 namespace irs {
+namespace {
 
-void NormHeader::Reset(const NormHeader& hdr) noexcept {
-  _min = std::min(hdr._min, _min);
-  _max = std::max(hdr._max, _max);
-  _encoding = std::max(hdr._encoding, _encoding);
-}
+// TODO(mbkkt) Make it faster, with compile time known size of value.
+template<NormEncoding Encoding>
+class BufferedNormReader : public NormReader {
+ public:
+  explicit BufferedNormReader(uint64_t sum,
+                              std::span<const BufferedValue> values,
+                              bytes_view data) noexcept
+    : _sum{sum}, _it{values, data} {}
+
+  void Get(std::span<const doc_id_t> docs, std::span<uint32_t> values) final {
+    GetImpl(docs, values);
+  }
+
+  uint32_t Get(doc_id_t doc) final {
+    const auto r = _it.seek(doc);
+    if (r != doc) [[unlikely]] {
+      return {};
+    }
+    const auto payload = _it.GetPayload();
+    return Norm::Read<Encoding>(payload);
+  }
+
+  score_t GetAvg() const noexcept final {
+    return static_cast<double>(_sum) / _it.Size();
+  }
+
+ private:
+  uint64_t _sum;
+  BufferedColumnIterator _it;
+};
+
+}  // namespace
 
 void NormHeader::Write(const NormHeader& hdr, DataOutput& out) {
   out.WriteU32(static_cast<uint32_t>(ByteSize()));
   out.WriteByte(static_cast<byte_type>(NormVersion::Min));
   out.WriteByte(static_cast<byte_type>(hdr._encoding));
-  out.WriteU32(hdr._min);
   out.WriteU32(hdr._max);
+  out.WriteU64(hdr._sum);
 }
 
 std::optional<NormHeader> NormHeader::Read(bytes_view payload) noexcept {
@@ -55,53 +81,62 @@ std::optional<NormHeader> NormHeader::Read(bytes_view payload) noexcept {
   if (const byte_type ver = *p++;
       ver != static_cast<byte_type>(NormVersion::Min)) [[unlikely]] {
     SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              absl::StrCat("'norm' header version mismatch, expected: ",
-                           static_cast<uint32_t>(NormVersion::Min),
-                           ", got: ", static_cast<uint32_t>(ver)));
+              "'norm' header version mismatch, expected: ",
+              static_cast<uint32_t>(NormVersion::Min),
+              ", got: ", static_cast<uint32_t>(ver));
     return std::nullopt;
   }
 
   const byte_type num_bytes = *p++;
   if (!CheckNumBytes(num_bytes)) [[unlikely]] {
     SDB_ERROR("xxxxx", sdb::Logger::IRESEARCH,
-              absl::StrCat("Malformed 'norm' header, invalid number of bytes: ",
-                           static_cast<uint32_t>(num_bytes)));
+              "Malformed 'norm' header, invalid number of bytes: ",
+              static_cast<uint32_t>(num_bytes));
     return std::nullopt;
   }
 
   NormHeader hdr{NormEncoding{num_bytes}};
-  hdr._min = irs::read<decltype(_min)>(p);
   hdr._max = irs::read<decltype(_max)>(p);
+  hdr._sum = irs::read<decltype(_sum)>(p);
 
   return hdr;
 }
 
 FeatureWriter::ptr Norm::MakeWriter(std::span<const bytes_view> headers) {
-  size_t max_bytes{sizeof(ValueType)};
-
+  size_t max_bytes = sizeof(ValueType);
   if (!headers.empty()) {
-    NormHeader acc{NormEncoding::Byte};
-    for (auto header : headers) {
-      auto hdr = NormHeader::Read(header);
-      if (!hdr.has_value()) {
-        return nullptr;
+    uint32_t max_value = 0;
+    for (const auto header : headers) {
+      const auto hdr = NormHeader::Read(header);
+      if (!hdr) {
+        return {};
       }
-      acc.Reset(hdr.value());
+      max_value = std::max(max_value, hdr->Max());
     }
-    max_bytes = acc.MaxNumBytes();
+    max_bytes = NormHeader::MaxNumBytes(max_value);
   }
-
-  switch (max_bytes) {
-    case sizeof(uint8_t):
-      return memory::make_managed<NormWriter<uint8_t>>();
-    case sizeof(uint16_t):
-      return memory::make_managed<NormWriter<uint16_t>>();
-    default:
-      SDB_ASSERT(max_bytes == sizeof(uint32_t));
-      return memory::make_managed<NormWriter<uint32_t>>();
-  }
+  SDB_ASSERT(NormHeader::CheckNumBytes(max_bytes));
+  return ResolveNormEncoding(
+    static_cast<NormEncoding>(max_bytes),
+    []<NormEncoding Encoding> -> FeatureWriter::ptr {
+      return memory::make_managed<NormWriter<Encoding>>();
+    });
 }
 
 REGISTER_ATTRIBUTE(Norm);
+
+NormReader::ptr MakeNormReader(bytes_view payload,
+                               std::span<const BufferedValue> values,
+                               bytes_view data) {
+  auto header = NormHeader::Read(payload);
+  if (!header) [[unlikely]] {
+    return {};
+  }
+  return ResolveNormEncoding(
+    header->Encoding(), [&]<NormEncoding Encoding> -> NormReader::ptr {
+      return memory::make_managed<BufferedNormReader<Encoding>>(header->Sum(),
+                                                                values, data);
+    });
+}
 
 }  // namespace irs

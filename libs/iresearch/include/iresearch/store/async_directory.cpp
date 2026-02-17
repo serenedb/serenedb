@@ -23,12 +23,11 @@
 #include "async_directory.hpp"
 
 #include <absl/strings/str_cat.h>
+#include <liburing.h>
 
 #include "basics/crc.hpp"
 #include "basics/file_utils_ext.hpp"
-#include "basics/memory.hpp"
-#include "liburing.h"
-#include "store_utils.hpp"
+#include "iresearch/error/error.hpp"
 
 namespace irs {
 namespace {

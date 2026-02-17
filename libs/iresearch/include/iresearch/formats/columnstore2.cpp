@@ -40,12 +40,8 @@
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/index/norm.hpp"
-#include "iresearch/search/all_iterator.hpp"
-#include "iresearch/search/score.hpp"
-#include "iresearch/store/store_avg_utils.hpp"
 #include "iresearch/utils/bitpack.hpp"
 #include "iresearch/utils/compression.hpp"
-#include "iresearch/utils/directory_utils.hpp"
 
 namespace irs::columnstore2 {
 namespace {
@@ -458,7 +454,7 @@ class ColumnBase : public ColumnReader, private util::Noncopyable {
   }
 
   void StoreBitmapIndex(size_t bitmap_size, size_t buffer_offset,
-                        RemappedBytesViewInput::mapping* mapping,
+                        RemappedBytesViewInput::Mapping* mapping,
                         ColumnHeader& hdr, IndexInput& in) {
     SDB_ASSERT(bitmap_size);
     SDB_ASSERT(hdr.docs_index);
@@ -478,11 +474,11 @@ class ColumnBase : public ColumnReader, private util::Noncopyable {
   IResourceManager& _resource_manager_cached;
 
  protected:
-  template<typename Factory>
-  NormReader::ptr MakeNormReader(Factory&& f) const;
+  template<typename F>
+  auto ResolveNormHeader(F&& f) const;
 
   template<typename F>
-  auto ResolveNormHeader(F&&) const;
+  NormReader::ptr MakeNormReader(F&& f) const;
 
  private:
   template<typename ValueReader, typename Func>
@@ -501,21 +497,12 @@ class ColumnBase : public ColumnReader, private util::Noncopyable {
 template<typename F>
 auto ColumnBase::ResolveNormHeader(F&& f) const {
   auto header = NormHeader::Read(payload());
-
   if (!header) [[unlikely]] {
-    return f.template operator()<void>();
+    return decltype(f.template operator()<NormEncoding::Byte>()) {};
   }
-
-  switch (header->Encoding()) {
-    case NormEncoding::Byte:
-      return f.template operator()<NormEncoding::Byte>();
-    case NormEncoding::Short:
-      return f.template operator()<NormEncoding::Short>();
-    case NormEncoding::Int:
-      return f.template operator()<NormEncoding::Int>();
-  }
-
-  SDB_UNREACHABLE();
+  return ResolveNormEncoding(header->Encoding(), [&]<NormEncoding Encoding> {
+    return f.template operator()<Encoding>();
+  });
 }
 
 template<NormEncoding Encoding, typename Iterator>
@@ -523,34 +510,31 @@ class NormReaderImpl : public NormReader {
  public:
   explicit NormReaderImpl(Iterator&& it) noexcept : _it{std::move(it)} {}
 
-  void Collect(std::span<doc_id_t> docs, std::span<uint32_t> values) final {
+  void Get(std::span<const doc_id_t> docs, std::span<uint32_t> values) final {
     SDB_ASSERT(docs.size() <= values.size());
-
+    SDB_ASSERT(absl::c_is_sorted(docs));
     _it->reset();  // TODO(gnusi): remove this
-
-    const size_t size = docs.size();
-    for (size_t i = 0; i < size; ++i) {
-      const auto d = _it->seek(docs[i]);
-      if (doc_limits::eof(d)) [[unlikely]] {
-        return;
-      }
-      auto payload = _it->GetPayload();
-      values[i] = Norm::Read<Encoding>(payload);
+    const auto size = docs.size();
+    for (size_t i = 0; i != size; ++i) {
+      values[i] = GetImpl(docs[i]);
     }
   }
 
-  bool Get(doc_id_t doc, uint32_t* value) final {
+  uint32_t Get(doc_id_t doc) final {
     _it->reset();  // TODO(gnusi): remove this
-    const auto d = _it->seek(doc);
-    if (doc_limits::eof(d)) [[unlikely]] {
-      return false;
-    }
-    auto payload = _it->GetPayload();
-    *value = Norm::Read<Encoding>(payload);
-    return true;
+    return GetImpl(doc);
   }
 
  private:
+  IRS_FORCE_INLINE uint32_t GetImpl(doc_id_t doc) {
+    const auto r = _it->seek(doc);
+    if (r != doc) [[unlikely]] {
+      return {};
+    }
+    const auto payload = _it->GetPayload();
+    return Norm::Read<Encoding>(payload);
+  }
+
   Iterator _it;
 };
 
@@ -579,36 +563,35 @@ class DirectFixedNormReader : public NormReader {
   DirectFixedNormReader(doc_id_t base, const byte_type* origin) noexcept
     : _doc_base{base}, _origin{origin} {}
 
-  void Collect(std::span<doc_id_t> docs,
-               std::span<uint32_t> values) noexcept final {
+  void Get(std::span<const doc_id_t> docs,
+           std::span<uint32_t> values) noexcept final {
     SDB_ASSERT(docs.size() <= values.size());
 
-    const size_t size = docs.size();
+    const auto size = docs.size();
     const auto base = _doc_base;
-    const auto* origin = _origin;
+    const auto* IRS_RESTRICT const origin = _origin;
+    auto* IRS_RESTRICT const values_data = values.data();
+    const auto* IRS_RESTRICT const docs_data = docs.data();
 
     for (size_t i = 0; i < size; ++i) {
-      values[i] = ReadValue(origin, docs[i] - base);
+      values_data[i] = ReadValue(origin, docs_data[i] - base);
     }
   }
 
-  IRS_FORCE_INLINE bool Get(doc_id_t doc, uint32_t* value) noexcept final {
+  IRS_FORCE_INLINE uint32_t Get(doc_id_t doc) noexcept final {
     SDB_ASSERT(doc >= _doc_base);
-    *value = ReadValue(_origin, doc - _doc_base);
-    return true;
+    return ReadValue(_origin, doc - _doc_base);
   }
 
  private:
-  IRS_FORCE_INLINE uint32_t ReadValue(const byte_type* origin,
-                                      doc_id_t index) noexcept {
+  IRS_FORCE_INLINE static uint32_t ReadValue(
+    const byte_type* IRS_RESTRICT origin, doc_id_t index) noexcept {
     if constexpr (Encoding == NormEncoding::Byte) {
-      return _origin[index];
+      return origin[index];
     } else if constexpr (Encoding == NormEncoding::Short) {
-      return absl::little_endian::Load<uint16_t>(
-        reinterpret_cast<const uint16_t*>(origin) + index);
+      return absl::little_endian::Load16(origin + index * sizeof(uint16_t));
     } else if constexpr (Encoding == NormEncoding::Int) {
-      return absl::little_endian::Load<uint32_t>(
-        reinterpret_cast<const uint32_t*>(origin) + index);
+      return absl::little_endian::Load32(origin + index * sizeof(uint32_t));
     } else {
       static_assert(false);
     }
@@ -618,22 +601,18 @@ class DirectFixedNormReader : public NormReader {
   const byte_type* const _origin;
 };
 
-template<typename Factory>
-NormReader::ptr ColumnBase::MakeNormReader(Factory&& f) const {
-  return ResolveNormHeader(absl::Overload{
-    [&]<NormEncoding Encoding> {
-      return MakeIterator(
-        std::forward<Factory>(f),
-        []<typename Iterator>(Iterator it) -> NormReader::ptr {
-          return memory::make_managed<NormReaderImpl<Encoding, Iterator>>(
-            std::move(it));
-        },
-        ColumnHint::Normal);
-    },
-    []<typename T> {
-      // TODO(gnusi): return empty?
-      return NormReader::ptr{};
-    }});
+template<typename F>
+NormReader::ptr ColumnBase::MakeNormReader(F&& f) const {
+  // TODO(gnusi) Maybe we want to return empty NormReader if payload is invalid?
+  return ResolveNormHeader([&]<NormEncoding Encoding> {
+    return MakeIterator(
+      std::forward<F>(f),
+      []<typename Iterator>(Iterator it) -> NormReader::ptr {
+        return memory::make_managed<NormReaderImpl<Encoding, Iterator>>(
+          std::move(it));
+      },
+      ColumnHint::Normal);
+  });
 }
 
 template<typename Factory, typename Callback>
@@ -668,8 +647,7 @@ auto ColumnBase::MakeIterator(Factory&& f, Callback&& callback,
     return MakeIterator(f(std::move(value_in), *_cipher), std::move(index_in),
                         hint, std::forward<Callback>(callback));
   } else {
-    const byte_type* data =
-      value_in->ReadBuffer(0, value_in->Length(), BufferHint::PERSISTENT);
+    const byte_type* data = value_in->ReadData(0, value_in->Length());
 
     if (data) {
       // direct buffer access
@@ -852,7 +830,7 @@ class DenseFixedLengthColumn : public ColumnBase {
     if (IsEncrypted(Header()) && !_column_data.empty()) {
       _buffered_input.reset();  // force memory release
       _resource_manager_cached.Decrease(
-        sizeof(RemappedBytesViewInput::mapping_value) * 2);
+        sizeof(RemappedBytesViewInput::MappingValue) * 2);
     }
   }
 
@@ -872,13 +850,13 @@ class DenseFixedLengthColumn : public ColumnBase {
     if (encrypted) {
       // We don't want to store actual number to not increase column size,
       // so it's approximated number of mappings
-      mapping_size = sizeof(RemappedBytesViewInput::mapping_value) * 2;
+      mapping_size = sizeof(RemappedBytesViewInput::MappingValue) * 2;
     }
     if (!AllocateBufferedMemory(total_size, mapping_size)) {
       return;
     }
     in.ReadBytes(_data, _column_data.data(), data_size);
-    RemappedBytesViewInput::mapping mapping;
+    RemappedBytesViewInput::Mapping mapping;
     if (bitmap_size) {
       StoreBitmapIndex(bitmap_size, data_size, &mapping, hdr, in);
     }
@@ -961,27 +939,22 @@ ResettableDocIterator::ptr DenseFixedLengthColumn::iterator(
 }
 
 NormReader::ptr DenseFixedLengthColumn::norms() const {
-  return ResolveNormHeader(absl::Overload{
-    [&]<NormEncoding Encoding> {
-      return MakeIterator(
-        Factory{this},
-        [&]<typename Iterator>(Iterator it) -> NormReader::ptr {
-          if constexpr (std::is_same_v<typename Iterator::element_type,
-                                       RangeColumnIterator<
-                                         PayloadReader<ValueDirectReader>>>) {
-            return memory::make_managed<DirectFixedNormReader<Encoding>>(
-              Header().min, it->GetData());
-          } else {
-            return memory::make_managed<NormReaderImpl<Encoding, Iterator>>(
-              std::move(it));
-          }
-        },
-        ColumnHint::Normal);
-    },
-    []<typename T> {
-      // TODO(gnusi): return empty?
-      return NormReader::ptr{};
-    }});
+  return ResolveNormHeader([&]<NormEncoding Encoding> -> NormReader::ptr {
+    return MakeIterator(
+      Factory{this},
+      [&]<typename Iterator>(Iterator it) -> NormReader::ptr {
+        if constexpr (std::is_same_v<typename Iterator::element_type,
+                                     RangeColumnIterator<
+                                       PayloadReader<ValueDirectReader>>>) {
+          return memory::make_managed<DirectFixedNormReader<Encoding>>(
+            Header().min, it->GetData());
+        } else {
+          return memory::make_managed<NormReaderImpl<Encoding, Iterator>>(
+            std::move(it));
+        }
+      },
+      ColumnHint::Normal);
+  });
 }
 
 class FixedLengthColumn : public ColumnBase {
@@ -1023,7 +996,7 @@ class FixedLengthColumn : public ColumnBase {
     if (IsEncrypted(Header()) && !_column_data.empty()) {
       _buffered_input.reset();  // force memory release
       _resource_manager_cached.Decrease(
-        sizeof(RemappedBytesViewInput::mapping_value) * _blocks.size());
+        sizeof(RemappedBytesViewInput::MappingValue) * _blocks.size());
     }
   }
 
@@ -1041,7 +1014,7 @@ class FixedLengthColumn : public ColumnBase {
           bytes_view{_column_data.data(), _column_data.size()});
       }
     } else {
-      RemappedBytesViewInput::mapping mapping;
+      RemappedBytesViewInput::Mapping mapping;
       if (MakeBufferedData<true>(_len, hdr, in, _blocks, _column_data,
                                  next_sorted_columns, &mapping)) {
         _buffered_input = std::make_unique<RemappedBytesViewInput>(
@@ -1083,7 +1056,7 @@ class FixedLengthColumn : public ColumnBase {
     uint64_t len, ColumnHeader& hdr, IndexInput& in, Blocks& blocks,
     std::vector<byte_type>& column_data,
     std::span<memory::managed_ptr<ColumnReader>> next_sorted_columns,
-    RemappedBytesViewInput::mapping* mapping) {
+    RemappedBytesViewInput::Mapping* mapping) {
     SDB_ASSERT(!blocks.empty());
     const auto last_block_full = hdr.docs_count % Column::kBlockSize == 0;
     auto last_offset = blocks.back();
@@ -1096,7 +1069,7 @@ class FixedLengthColumn : public ColumnBase {
       // We don't want to store actual number to not increase column size,
       // so it's approximated number of mappings
       mapping_size =
-        sizeof(RemappedBytesViewInput::mapping_value) * blocks.size();
+        sizeof(RemappedBytesViewInput::MappingValue) * blocks.size();
     }
     for (auto& block : blocks) {
       size_t length = (block != last_offset || last_block_full)
@@ -1228,7 +1201,7 @@ class SparseColumn : public ColumnBase {
     if (IsEncrypted(Header()) && !_column_data.empty()) {
       _buffered_input.reset();  // force memory release
       _resource_manager_cached.Decrease(
-        sizeof(RemappedBytesViewInput::mapping_value) * _blocks.size() * 2);
+        sizeof(RemappedBytesViewInput::MappingValue) * _blocks.size() * 2);
     }
   }
 
@@ -1246,7 +1219,7 @@ class SparseColumn : public ColumnBase {
           bytes_view{_column_data.data(), _column_data.size()});
       }
     } else {
-      RemappedBytesViewInput::mapping mapping;
+      RemappedBytesViewInput::Mapping mapping;
       if (MakeBufferedData<true>(hdr, in, _blocks, _column_data,
                                  next_sorted_columns, &mapping)) {
         _buffered_input = std::make_unique<RemappedBytesViewInput>(
@@ -1300,7 +1273,7 @@ class SparseColumn : public ColumnBase {
     ColumnHeader& hdr, IndexInput& in, ManagedVector<ColumnBlock>& blocks,
     std::vector<byte_type>& column_data,
     std::span<memory::managed_ptr<ColumnReader>> next_sorted_columns,
-    RemappedBytesViewInput::mapping* mapping) {
+    RemappedBytesViewInput::Mapping* mapping) {
     // idx adr/block offset length source
     std::vector<std::tuple<size_t, bool, size_t, size_t, size_t>> chunks;
     size_t chunks_size{0};
@@ -1312,7 +1285,7 @@ class SparseColumn : public ColumnBase {
       // We don't want to store actual number to not increase column size,
       // so it's approximated number of mappings
       mapping_size =
-        sizeof(RemappedBytesViewInput::mapping_value) * blocks.size() * 2;
+        sizeof(RemappedBytesViewInput::MappingValue) * blocks.size() * 2;
     }
     for (auto& block : blocks) {
       size_t length{0};

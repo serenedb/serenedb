@@ -22,6 +22,8 @@
 
 #pragma once
 
+#include <absl/base/optimization.h>
+
 #include <array>
 #include <cstdint>
 
@@ -29,9 +31,10 @@
 
 namespace irs::utf8_utils {
 
-alignas(64) inline constexpr std::array<uint32_t, 10> kWhiteSpaceTable{
-  0x9, 0x20, 0x85, 0xa0, 0x1680, 0x2000, 0x2028, 0x202f, 0x205f, 0x3000,
-};
+ABSL_CACHELINE_ALIGNED inline constexpr std::array<uint32_t, 10>
+  kWhiteSpaceTable{
+    0x9, 0x20, 0x85, 0xa0, 0x1680, 0x2000, 0x2028, 0x202f, 0x205f, 0x3000,
+  };
 
 template<typename T>
 struct Category {

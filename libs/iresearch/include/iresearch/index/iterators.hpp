@@ -209,8 +209,8 @@ struct DocIterator : AttributeProvider {
                                            const ScoreFunction& scorer,
                                            ColumnArgsFetcher& fetcher,
                                            ScoreCollector& c) {
-    alignas(64) std::array<score_t, kScoreBlock> scores;
-    alignas(64) std::array<doc_id_t, kScoreBlock> docs;
+    ABSL_CACHELINE_ALIGNED std::array<score_t, kScoreBlock> scores;
+    ABSL_CACHELINE_ALIGNED std::array<doc_id_t, kScoreBlock> docs;
     ResolveScoreCollector(c, [&](auto& collector) IRS_FORCE_INLINE {
       while (true) {
         for (size_t i = 0; i != kScoreBlock; ++i) {

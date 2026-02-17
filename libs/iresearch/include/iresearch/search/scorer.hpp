@@ -228,18 +228,6 @@ struct Scorer {
   virtual TypeInfo::type_id type() const noexcept = 0;
 };
 
-// Possible variants of merging multiple scores
-enum class ScoreMergeType {
-  // Do nothing
-  Noop = 0,
-
-  // Sum multiple scores
-  Sum,
-
-  // Find max amongst multiple scores
-  Max,
-};
-
 template<typename Visitor>
 IRS_FORCE_INLINE auto ResolveMergeType(ScoreMergeType type, Visitor&& visitor) {
   switch (type) {
@@ -305,7 +293,8 @@ IRS_FORCE_INLINE void Merge(score_t& bucket, score_t arg) noexcept {
   } else if constexpr (MergeType == ScoreMergeType::Max) {
     bucket = std::max(bucket, arg);
   } else {
-    static_assert(false);
+    static_assert(MergeType == ScoreMergeType::Noop);
+    bucket = arg;
   }
 }
 

@@ -262,9 +262,9 @@ rocksdb::BlockFlushData SSTBlockBuilder<IsGeneratedPK>::Finish(
     first_key_in_next_block = {first_key, key_size};
   }
 
-  // Store last key in member variable to avoid dangling pointer
+  // TODO: build the last key with delta = 0 to pass only view to buffer for
+  // _last_key_buffer
   _last_key_buffer = BuildLastKey();
-
   return {
     .buffer = {reinterpret_cast<char*>(_cur.buffer.data()), _cur.buffer.size()},
     .last_key_in_current_block = _last_key_buffer,
@@ -378,7 +378,7 @@ void SSTSinkWriter<IsGeneratedPK>::FlushBlockBuilder(
   }
   auto flush_data = block_builder.Finish(next_block_first_value);
   auto& writer = *_writers[column_idx];
-  writer.FlushFromInternalBuffer(flush_data);
+  writer.FlushFromExternalBuffer(flush_data);
   block_builder.NextBlock();
 }
 

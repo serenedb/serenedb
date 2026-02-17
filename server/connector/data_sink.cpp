@@ -277,9 +277,9 @@ void SSTInsertDataSink<IsGeneratedPK>::appendData(velox::RowVectorPtr input) {
   const auto num_rows = input->size();
   const auto num_columns = input->childrenSize();
 
-  this->_store_keys_buffers.clear();
-  this->_store_keys_buffers.reserve(num_rows);
   if constexpr (!IsGeneratedPK) {
+    this->_store_keys_buffers.clear();
+    this->_store_keys_buffers.reserve(num_rows);
     for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
       auto& key_buffer = this->_store_keys_buffers.emplace_back();
       primary_key::Create(*input, this->_key_childs, row_idx, key_buffer);

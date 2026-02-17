@@ -67,36 +67,21 @@ inline bool HasColumnOverlap(
 }
 
 template<axiom::connector::WriteKind Kind>
-struct IndexWriterFactory {};
-
-template<>
-struct IndexWriterFactory<axiom::connector::WriteKind::kInsert> {
-  static std::unique_ptr<SinkIndexWriter> MakeInvertedIndexWriter(
-    irs::IndexWriter::Transaction& transaction,
-    std::span<const catalog::Column::Id> columns) {
+std::unique_ptr<SinkIndexWriter> MakeInvertedIndexWriter(
+  irs::IndexWriter::Transaction& transaction,
+  std::span<const catalog::Column::Id> columns) {
+  if constexpr (Kind == axiom::connector::WriteKind::kInsert) {
     return std::make_unique<search::SearchSinkInsertWriter>(transaction,
                                                             columns);
   }
-};
-
-template<>
-struct IndexWriterFactory<axiom::connector::WriteKind::kUpdate> {
-  static std::unique_ptr<SinkIndexWriter> MakeInvertedIndexWriter(
-    irs::IndexWriter::Transaction& transaction,
-    std::span<const catalog::Column::Id> columns) {
+  if constexpr (Kind == axiom::connector::WriteKind::kUpdate) {
     return std::make_unique<search::SearchSinkUpdateWriter>(transaction,
                                                             columns);
   }
-};
-
-template<>
-struct IndexWriterFactory<axiom::connector::WriteKind::kDelete> {
-  static std::unique_ptr<SinkIndexWriter> MakeInvertedIndexWriter(
-    irs::IndexWriter::Transaction& transaction,
-    std::span<const catalog::Column::Id>) {
+  if constexpr (Kind == axiom::connector::WriteKind::kDelete) {
     return std::make_unique<search::SearchSinkDeleteWriter>(transaction);
   }
-};
+}
 
 template<axiom::connector::WriteKind Kind>
 std::vector<std::unique_ptr<SinkIndexWriter>> CreateIndexWriters(
@@ -108,8 +93,7 @@ std::vector<std::unique_ptr<SinkIndexWriter>> CreateIndexWriters(
     [&](auto& transaction, std::span<const catalog::Column::Id> columns) {
       if constexpr (std::is_same_v<std::decay_t<decltype(transaction)>,
                                    irs::IndexWriter::Transaction>) {
-        writers.push_back(IndexWriterFactory<Kind>::MakeInvertedIndexWriter(
-          transaction, columns));
+        writers.push_back(MakeInvertedIndexWriter<Kind>(transaction, columns));
       } else {
         SDB_UNREACHABLE();
       }

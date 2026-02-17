@@ -152,7 +152,7 @@ void SSTBlockBuilder<IsGeneratedPK>::AddEntryImpl(
 
   if (is_first) [[unlikely]] {
     absl::big_endian::Store(ptr, _table_id);
-    absl::big_endian::Store(ptr + sizeof(ObjectId), _column_id);
+    absl::big_endian::Store(ptr + sizeof(_table_id), _column_id);
     ptr += kPrefixSize;
   }
 
@@ -215,14 +215,14 @@ rocksdb::BlockFlushData SSTBlockBuilder<IsGeneratedPK>::Finish(
   std::span<const rocksdb::Slice> next_block_first_value) {
   constexpr uint32_t kRestartOffset = 0;
   size_t pos = _cur.buffer.size();
-  Resize(_cur.buffer, sizeof(uint32_t));
+  Resize(_cur.buffer, sizeof(kRestartOffset));
   absl::little_endian::Store(
     reinterpret_cast<uint32_t*>(_cur.buffer.data() + pos), kRestartOffset);
 
   constexpr uint32_t kNumRestarts = 1;
   uint32_t block_footer = kNumRestarts;
   pos = _cur.buffer.size();
-  Resize(_cur.buffer, sizeof(uint32_t));
+  Resize(_cur.buffer, sizeof(block_footer));
   absl::little_endian::Store(
     reinterpret_cast<uint32_t*>(_cur.buffer.data() + pos), block_footer);
 

@@ -251,17 +251,9 @@ class BlockDisjunction : public DocIterator {
   uint32_t count() final {
     uint32_t count = 0;
 
-    while (_cur != 0 && next()) [[unlikely]] {
-      ++count;
-    }
-
-    while (Refill()) {
-      if constexpr (Traits::kMinMatch) {
-        count += _match_buf.count();
-      } else {
-        for (const auto word : _mask) {
-          count += std::popcount(word);
-        }
+    while (RefillImpl()) {
+      for (const auto word : _mask) {
+        count += std::popcount(word);
       }
     }
 
@@ -499,7 +491,7 @@ class BlockDisjunction : public DocIterator {
     }
   }
 
-  bool Refill() {
+  bool RefillImpl() {
     if (_itrs.empty()) {
       return false;
     }
@@ -560,6 +552,11 @@ class BlockDisjunction : public DocIterator {
       });
     } while (empty && !_itrs.empty());
 
+    return !empty;
+  }
+
+  bool Refill() {
+    const bool empty = !RefillImpl();
     if (empty) {
       // exhausted
       SDB_ASSERT(_itrs.empty());

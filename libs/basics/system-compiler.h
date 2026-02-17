@@ -52,7 +52,7 @@
 
 // abnormal immediate program termination
 #if defined(__clang__) || defined(__GNUC__)
-#define SDB_IMMEDIATE_ABORT() std::abort();
+#define SDB_IMMEDIATE_ABORT() exit(1);
 #else
 #define SDB_IMMEDIATE_ABORT() std::abort();
 #endif

@@ -143,12 +143,13 @@ std::string BuildUniqueViolationDetail(
 WriteConflictResolver::WriteConflictResolver(rocksdb::Transaction& transaction,
                                              rocksdb::ColumnFamilyHandle& cf,
                                              WriteConflictPolicy policy,
-                                             std::string_view table_name)
+                                             std::string_view table_name,
+                                             const rocksdb::Snapshot* snapshot)
   : _transaction{transaction},
     _cf{cf},
     _table_name{table_name},
     _write_conflict_policy{policy} {
-  _read_options.snapshot = transaction.GetSnapshot();
+  _read_options.snapshot = snapshot;
   _read_options.async_io = true;
 }
 
@@ -241,7 +242,8 @@ RocksDBInsertDataSink::RocksDBInsertDataSink(
   ObjectId object_key, std::span<const velox::column_index_t> key_childs,
   std::vector<ColumnInfo> columns, WriteConflictPolicy conflict_policy,
   uint64_t& number_of_rows_affected,
-  std::vector<std::unique_ptr<SinkInsertWriter>>&& index_writers)
+  std::vector<std::unique_ptr<SinkInsertWriter>>&& index_writers,
+  const rocksdb::Snapshot* snapshot)
   : RocksDBDataSinkBase<RocksDBSinkWriter, SinkInsertWriter>{RocksDBSinkWriter{
                                                                transaction, cf},
                                                              memory_pool,
@@ -251,7 +253,7 @@ RocksDBInsertDataSink::RocksDBInsertDataSink(
                                                              std::move(
                                                                index_writers)},
     _table_name{table_name},
-    _conflict_resolver{transaction, cf, conflict_policy, table_name},
+    _conflict_resolver{transaction, cf, conflict_policy, table_name, snapshot},
     _number_of_rows_affected{number_of_rows_affected} {}
 
 SSTInsertDataSink::SSTInsertDataSink(
@@ -300,7 +302,8 @@ RocksDBUpdateDataSink::RocksDBUpdateDataSink(
   std::vector<ColumnInfo> columns,
   std::vector<catalog::Column::Id> all_column_ids, bool update_pk,
   velox::RowTypePtr table_row_type, uint64_t& number_of_rows_affected,
-  std::vector<std::unique_ptr<SinkUpdateWriter>>&& index_writers)
+  std::vector<std::unique_ptr<SinkUpdateWriter>>&& index_writers,
+  const rocksdb::Snapshot* snapshot)
   : RocksDBDataSinkBase<RocksDBSinkWriter, SinkUpdateWriter>{RocksDBSinkWriter{
                                                                transaction, cf},
                                                              memory_pool,
@@ -311,7 +314,7 @@ RocksDBUpdateDataSink::RocksDBUpdateDataSink(
                                                                index_writers)},
     _table_name{table_name},
     _conflict_resolver{transaction, cf, WriteConflictPolicy::EmitError,
-                       table_name},
+                       table_name, snapshot},
     _number_of_rows_affected{number_of_rows_affected},
     _all_column_ids{std::move(all_column_ids)},
     _old_keys_buffers{memory_pool},

@@ -668,6 +668,10 @@ class SereneDBConnector final : public velox::connector::Connector {
             }
           }
           auto& rocksdb_transaction = transaction.EnsureRocksDBTransaction();
+          const rocksdb::Snapshot* snapshot =
+            transaction.GetIsolationLevel() == IsolationLevel::ReadCommitted
+              ? nullptr
+              : rocksdb_transaction.GetSnapshot();
 
           if constexpr (IsUpdate) {
             std::vector<catalog::Column::Id> all_column_oids;
@@ -689,7 +693,7 @@ class SereneDBConnector final : public velox::connector::Connector {
               *connector_query_ctx->memoryPool(), object_key, pk_indices,
               columns, all_column_oids, table.UsedForUpdatePK(), table.type(),
               serene_insert_handle.NumberOfRowsAffected(),
-              std::move(update_sinks));
+              std::move(update_sinks), snapshot);
           } else {
             auto insert_sinks =
               CreateIndexWriters<SinkInsertWriter>(object_key, transaction);
@@ -704,7 +708,7 @@ class SereneDBConnector final : public velox::connector::Connector {
               *connector_query_ctx->memoryPool(), object_key, pk_indices,
               columns, table.WriteConflictPolicy(),
               serene_insert_handle.NumberOfRowsAffected(),
-              std::move(insert_sinks));
+              std::move(insert_sinks), snapshot);
           }
         });
     }

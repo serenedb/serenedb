@@ -551,3 +551,57 @@ id	val
 1	100
 2	200
 3	300
+
+
+###############################################################################
+# 12. UPDATE sees concurrent inserts (write uses fresh snapshot)
+#     conn1 SELECTs and sees N rows, conn2 inserts+commits a new row,
+#     conn1 UPDATEs all rows — affects N+1 rows (including conn2's insert)
+###############################################################################
+
+statement ok
+CREATE TABLE t_upd(key INT PRIMARY KEY, value INT);
+
+statement ok
+INSERT INTO t_upd VALUES (1, 10), (2, 20);
+
+# conn1 begins and reads — sees 2 rows
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+query
+SELECT * FROM t_upd ORDER BY key;
+----
+key	value
+1	10
+2	20
+
+# conn2 inserts a third row and commits
+connection conn2
+statement ok
+INSERT INTO t_upd VALUES (3, 30);
+
+# conn1 updates all rows — affects 3 rows (including conn2's committed insert)
+statement count 3
+UPDATE t_upd SET value = value + 100;
+
+# conn1 sees all 3 rows updated
+query
+SELECT * FROM t_upd ORDER BY key;
+----
+key	value
+1	110
+2	120
+3	130
+
+statement ok
+COMMIT;
+
+# Outside the transaction, all updates are visible
+query
+SELECT * FROM t_upd ORDER BY key;
+----
+key	value
+1	110
+2	120
+3	130

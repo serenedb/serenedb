@@ -87,8 +87,6 @@ class SSTBlockBuilder {
 
   std::string BuildLastKey() const;
 
-  size_t AppendPK(Block& block);
-
   size_t GetPKSize() const;
 
   static constexpr size_t kFlushThreshold = 64 * 1024;  // 64 KB

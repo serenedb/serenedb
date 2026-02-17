@@ -28,6 +28,7 @@
 #include "basics/assert.h"
 #include "basics/random/random_generator.h"
 #include "basics/string_utils.h"
+#include "basics/system-compiler.h"
 #include "catalog/table_options.h"
 #include "key_utils.hpp"
 #include "rocksdb/options.h"
@@ -54,48 +55,42 @@ inline constexpr size_t VarintLength(uint32_t v) {
   }
 }
 
-inline char* EncodeVarint32(char* dst, uint32_t v) {
-  unsigned char* ptr = reinterpret_cast<unsigned char*>(dst);
+inline uint8_t* EncodeVarint32(uint8_t* ptr, uint32_t v, size_t len) {
   constexpr int kB = 128;
-  if (v < (1 << 7)) {
-    *(ptr++) = v;
-  } else if (v < (1 << 14)) {
-    *(ptr++) = v | kB;
-    *(ptr++) = v >> 7;
-  } else if (v < (1 << 21)) {
-    *(ptr++) = v | kB;
-    *(ptr++) = (v >> 7) | kB;
-    *(ptr++) = v >> 14;
-  } else if (v < (1 << 28)) {
-    *(ptr++) = v | kB;
-    *(ptr++) = (v >> 7) | kB;
-    *(ptr++) = (v >> 14) | kB;
-    *(ptr++) = v >> 21;
-  } else {
-    *(ptr++) = v | kB;
-    *(ptr++) = (v >> 7) | kB;
-    *(ptr++) = (v >> 14) | kB;
-    *(ptr++) = (v >> 21) | kB;
-    *(ptr++) = v >> 28;
+  switch (len) {
+    case 1:
+      *(ptr++) = v;
+      return ptr;
+    case 2:
+      *(ptr++) = v | kB;
+      *(ptr++) = v >> 7;
+      return ptr;
+    case 3:
+      *(ptr++) = v | kB;
+      *(ptr++) = (v >> 7) | kB;
+      *(ptr++) = v >> 14;
+      return ptr;
+    case 4:
+      *(ptr++) = v | kB;
+      *(ptr++) = (v >> 7) | kB;
+      *(ptr++) = (v >> 14) | kB;
+      *(ptr++) = v >> 21;
+      return ptr;
+    case 5:
+      *(ptr++) = v | kB;
+      *(ptr++) = (v >> 7) | kB;
+      *(ptr++) = (v >> 14) | kB;
+      *(ptr++) = (v >> 21) | kB;
+      *(ptr++) = v >> 28;
+      return ptr;
+    default:
+      SDB_UNREACHABLE();
   }
-  return reinterpret_cast<char*>(ptr);
 }
 
 template<typename Buffer>
 inline void Resize(Buffer& buf, size_t additional) {
   buf.resize(buf.size() + additional);
-}
-
-template<typename Buffer>
-inline void PutVarint32x3ToBuffer(Buffer& buffer, uint32_t v1, uint32_t v2,
-                                  uint32_t v3) {
-  const size_t len = VarintLength(v1) + VarintLength(v2) + VarintLength(v3);
-  const size_t pos = buffer.size();
-  Resize(buffer, len);
-  char* ptr = reinterpret_cast<char*>(buffer.data()) + pos;
-  ptr = EncodeVarint32(ptr, v1);
-  ptr = EncodeVarint32(ptr, v2);
-  EncodeVarint32(ptr, v3);
 }
 
 }  // namespace
@@ -138,20 +133,22 @@ void SSTBlockBuilder<IsGeneratedPK>::AddEntryImpl(
     (is_first ? kPrefixSize : 0) + pk_size + kInternalKeyFooterSize;
   const uint32_t value_size = static_cast<uint32_t>(total_value_size);
 
-  const size_t varint_len =
-    VarintLength(shared) + VarintLength(non_shared) + VarintLength(value_size);
+  const size_t shared_len = VarintLength(shared);
+  const size_t non_shared_len = VarintLength(non_shared);
+  const size_t value_size_len = VarintLength(value_size);
   const size_t prefix_len = is_first ? kPrefixSize : 0;
-  const size_t total_entry_size = varint_len + prefix_len + pk_size +
+  const size_t total_entry_size = shared_len + non_shared_len + value_size_len +
+                                  prefix_len + pk_size +
                                   kInternalKeyFooterSize + total_value_size;
 
   const size_t start_pos = buffer.size();
   Resize(buffer, total_entry_size);
-  char* ptr = reinterpret_cast<char*>(buffer.data()) + start_pos;
+  uint8_t* ptr = reinterpret_cast<uint8_t*>(buffer.data()) + start_pos;
 
   // Write delta-encoding
-  ptr = EncodeVarint32(ptr, shared);
-  ptr = EncodeVarint32(ptr, non_shared);
-  ptr = EncodeVarint32(ptr, value_size);
+  ptr = EncodeVarint32(ptr, shared, shared_len);
+  ptr = EncodeVarint32(ptr, non_shared, non_shared_len);
+  ptr = EncodeVarint32(ptr, value_size, value_size_len);
 
   if (is_first) [[unlikely]] {
     absl::big_endian::Store(ptr, _table_id);
@@ -159,11 +156,11 @@ void SSTBlockBuilder<IsGeneratedPK>::AddEntryImpl(
     ptr += kPrefixSize;
   }
 
-  block.last_pk_offset = ptr - reinterpret_cast<char*>(buffer.data());
+  block.last_pk_offset = ptr - reinterpret_cast<uint8_t*>(buffer.data());
   if constexpr (IsGeneratedPK) {
     const int64_t generated_pk = _generated_pk_counter + _total_entry_cnt;
     absl::big_endian::Store(ptr, generated_pk);
-    ptr[0] = static_cast<uint8_t>(ptr[0]) ^ 0x80;
+    ptr[0] ^= 0x80;
     block.last_pk_size = sizeof(generated_pk);
   } else {
     const auto& pk = (*_keys)[_row_idx];
@@ -190,32 +187,9 @@ void SSTBlockBuilder<IsGeneratedPK>::AddEntryImpl(
 template<bool IsGeneratedPK>
 size_t SSTBlockBuilder<IsGeneratedPK>::GetPKSize() const {
   if constexpr (IsGeneratedPK) {
-    return sizeof(int64_t);
+    return sizeof(_generated_pk_counter);
   } else {
     return (*_keys)[_row_idx].size();
-  }
-}
-
-template<bool IsGeneratedPK>
-size_t SSTBlockBuilder<IsGeneratedPK>::AppendPK(Block& block) {
-  if constexpr (IsGeneratedPK) {
-    const int64_t generated_pk = _generated_pk_counter + _total_entry_cnt;
-    const size_t pos = block.buffer.size();
-    Resize(block.buffer, sizeof(generated_pk));
-    char* ptr = reinterpret_cast<char*>(block.buffer.data()) + pos;
-    absl::big_endian::Store(ptr, generated_pk);
-    ptr[0] = static_cast<uint8_t>(ptr[0]) ^ 0x80;
-    return sizeof(generated_pk);
-  } else {
-    // TODO: maybe it's better to build primary key directly
-    // in the buffer of the first SSTBlockBuilder and the others
-    // will copy from the first
-    const auto& pk = (*_keys)[_row_idx];
-    const size_t pos = block.buffer.size();
-    Resize(block.buffer, pk.size());
-    std::memcpy(reinterpret_cast<char*>(block.buffer.data()) + pos, pk.data(),
-                pk.size());
-    return pk.size();
   }
 }
 

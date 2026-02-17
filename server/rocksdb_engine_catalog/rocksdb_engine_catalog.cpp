@@ -1857,6 +1857,24 @@ Result RocksDBEngineCatalog::DropTable(const TableTombstone& tombstone) {
   return {};
 }
 
+Result RocksDBEngineCatalog::RemoveTombstone(ObjectId table_id) {
+  SDB_ASSERT(table_id.isSet());
+
+  // Удалить только запись tombstone из RocksDB, НЕ трогая данные таблицы
+  return DeleteDefinition(
+    _db->GetRootDB(),
+    [&] {
+      RocksDBKeyWithBuffer key;
+      key.constructObject(RocksDBEntryType::TableTombstone,
+                          id::kTombstoneDatabase, table_id);
+      return key;
+    },
+    [] {
+      // Пустой WAL entry - не нужен для RemoveTombstone
+      return std::string_view{};
+    });
+}
+
 void RocksDBEngineCatalog::ChangeTable(const catalog::Table& c,
                                        const TableShard& physical) {
   const auto db_id = c.GetDatabaseId();

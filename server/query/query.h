@@ -29,11 +29,16 @@
 #include <velox/exec/Task.h>
 
 #include <memory>
+#include <optional>
 
 #include "basics/fwd.h"
 #include "query/context.h"
 #include "query/external_executor.h"
 #include "query/runner.h"
+
+namespace sdb::pg {
+class CTASCommand;
+}
 
 namespace sdb::query {
 
@@ -52,6 +57,11 @@ class Query {
                                            const QueryContext& query_ctx);
 
   static std::unique_ptr<Query> CreateShowAll(const QueryContext& query_ctx);
+
+  static std::unique_ptr<Query> CreateCTAS(
+    const axiom::logical_plan::LogicalPlanNodePtr& root,
+    const QueryContext& query_ctx,
+    std::unique_ptr<pg::CTASCommand> ctas_command);
 
   velox::RowTypePtr GetOutputType() const { return _output_type; }
   const QueryContext& GetContext() const { return _query_ctx; }
@@ -73,6 +83,8 @@ class Query {
 
   bool IsDataQuery() const { return _logical_plan != nullptr; }
 
+  pg::CTASCommand* GetCTASCommand() const { return _ctas_command.get(); }
+
   std::unique_ptr<Cursor> MakeCursor(std::function<void()>&& user_task) const;
 
   Runner MakeRunner() const;
@@ -89,6 +101,10 @@ class Query {
   // use for CreateShow and CreateShowAll
   Query(velox::RowTypePtr output_type, const QueryContext& query_ctx);
 
+  // // use for CreateTableAsStmt
+  // Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
+  //       std::unique_ptr<ExternalExecutor> executor);
+
   void CompileQuery();
 
   QueryContext _query_ctx;
@@ -97,10 +113,15 @@ class Query {
   axiom::logical_plan::LogicalPlanNodePtr _logical_plan;
   velox::RowTypePtr _output_type;
   std::unique_ptr<ExternalExecutor> _executor;
+  std::unique_ptr<pg::CTASCommand> _ctas_command;
 
   std::string _initial_query_graph_plan;
   std::string _final_query_graph_plan;
   std::string _physical_plan;
+
+ public:
+  // Custom deleter to handle incomplete CTASCommand type
+  ~Query();
 };
 
 using QueryPtr = std::unique_ptr<Query>;

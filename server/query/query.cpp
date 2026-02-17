@@ -34,6 +34,7 @@
 
 #include "catalog/table.h"
 #include "connector/serenedb_connector.hpp"
+#include "pg/commands/ctas.h"
 #include "pg/sql_resolver.h"
 #include "query/cursor.h"
 
@@ -95,6 +96,16 @@ std::unique_ptr<Query> Query::CreateShowAll(const QueryContext& query_ctx) {
                {velox::VARCHAR(), velox::VARCHAR(), velox::VARCHAR()}),
     query_ctx,
   });
+}
+
+std::unique_ptr<Query> Query::CreateCTAS(
+  const axiom::logical_plan::LogicalPlanNodePtr& root,
+  const QueryContext& query_ctx,
+  std::unique_ptr<pg::CTASCommand> ctas_command) {
+  SDB_ASSERT(root->kind() == axiom::logical_plan::NodeKind::kTableWrite);
+  auto query = std::unique_ptr<Query>(new Query{root, query_ctx});
+  query->_ctas_command = std::move(ctas_command);
+  return query;
 }
 
 Query::Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
@@ -245,6 +256,8 @@ void Query::CompileQuery() {
 Query::Query(std::unique_ptr<ExternalExecutor> executor,
              const QueryContext& query_ctx)
   : _query_ctx{query_ctx}, _executor{std::move(executor)} {}
+
+Query::~Query() {}
 
 std::string Query::GetLogicalPlan() const {
   SDB_ASSERT(_logical_plan);

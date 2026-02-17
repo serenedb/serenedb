@@ -1418,13 +1418,16 @@ Result LocalCatalog::CreateFunction(ObjectId database_id,
 Result LocalCatalog::CreateTable(
   ObjectId database_id, std::string_view schema, CreateTableOptions options,
   CreateTableOperationOptions operation_options) {
+  // Сохранить флаг до перемещения options
+  bool create_with_tombstone = options.createWithProtectiveTombstone;
+
   auto table = std::make_shared<Table>(std::move(options), database_id);
 
   absl::MutexLock lock{&_mutex};
-  return Apply(_snapshot, [&](auto& clone) {
+  return Apply(_snapshot, [&, create_with_tombstone](auto& clone) {
     return clone->RegisterObject(
       database_id, schema, std::move(table), false,
-      [&](auto& object) -> Result {
+      [&, create_with_tombstone](auto& object) -> Result {
         auto& table = basics::downCast<Table>(*object);
 
         std::shared_ptr<TableShard> physical;
@@ -1435,6 +1438,16 @@ Result LocalCatalog::CreateTable(
 
         clone->AddTableShard(physical);
         _engine->createTable(table, *physical);
+
+        // Если нужна защитная tombstone для CTAS
+        if (create_with_tombstone) {
+          TableTombstone tombstone = MakeTableTombstone(*physical);
+          auto tomb_r = _engine->MarkDeleted(table, *physical, tombstone);
+          if (!tomb_r.ok()) {
+            // При ошибке транзакция откатится автоматически
+            return tomb_r;
+          }
+        }
 
         return {};
       });

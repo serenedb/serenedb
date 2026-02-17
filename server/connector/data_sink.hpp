@@ -193,8 +193,8 @@ class RocksDBDataSinkBase : public velox::connector::DataSink {
   template<typename T>
   void WritePrimitive(const T& value);
 
-  void WriteRowSlices(std::string_view key);
-  void WriteNull(std::string_view key);
+  void WriteRowSlices(std::string_view key, size_t row_id);
+  void WriteNull(std::string_view key, size_t row_id);
 
   const std::string* SetupRowKey(
     velox::vector_size_t idx,
@@ -224,6 +224,7 @@ class RocksDBDataSinkBase : public velox::connector::DataSink {
   primary_key::Keys _store_keys_buffers;
   velox::HashStringAllocator _bytes_allocator;
   catalog::Column::Id _column_id;
+  bool _is_generated_pk;
 };
 
 class RocksDBInsertDataSink final
@@ -291,8 +292,12 @@ class RocksDBUpdateDataSink final
   bool _update_pk{};
 };
 
+template<bool IsGeneratedPK>
 class SSTInsertDataSink final
-  : public RocksDBDataSinkBase<SSTSinkWriter, SinkInsertWriter> {
+  : public RocksDBDataSinkBase<SSTSinkWriter<IsGeneratedPK>, SinkInsertWriter> {
+  using Base =
+    RocksDBDataSinkBase<SSTSinkWriter<IsGeneratedPK>, SinkInsertWriter>;
+
  public:
   SSTInsertDataSink(
     rocksdb::DB& db, rocksdb::ColumnFamilyHandle& cf,
@@ -304,15 +309,18 @@ class SSTInsertDataSink final
   void appendData(velox::RowVectorPtr input) final;
 
   bool finish() final {
-    _data_writer.Finish();
+    this->_data_writer.Finish();
     return true;
   }
 
   void abort() final {
-    _data_writer.Abort();
-    RocksDBDataSinkBase<SSTSinkWriter, SinkInsertWriter>::abort();
+    this->_data_writer.Abort();
+    Base::abort();
   }
 };
+
+extern template class SSTInsertDataSink<true>;
+extern template class SSTInsertDataSink<false>;
 
 class RocksDBDeleteDataSink : public velox::connector::DataSink {
  public:

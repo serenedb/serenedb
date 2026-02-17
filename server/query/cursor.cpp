@@ -22,13 +22,25 @@
 
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_split.h>
+#include <axiom/logical_plan/LogicalPlanNode.h>
+#include <axiom/logical_plan/PlanBuilder.h>
+#include <axiom/optimizer/Optimization.h>
 #include <velox/vector/VariantToVector.h>
 
+#include "app/app_server.h"
 #include "basics/down_cast.h"
 #include "basics/string_utils.h"
+#include "catalog/catalog.h"
+#include "catalog/database.h"
+#include "catalog/table.h"
+#include "catalog/table_options.h"
+#include "connector/serenedb_connector.hpp"
+#include "pg/commands/ctas.h"
+#include "pg/sql_collector.h"
 #include "query/config.h"
 #include "query/query.h"
 #include "query/transaction.h"
+#include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "utils.h"
 
 namespace sdb::query {
@@ -59,6 +71,10 @@ Cursor::Process Cursor::Next(velox::RowVectorPtr& batch) {
 
   if (query_ctx.command_type.Has(CommandType::External)) {
     return ExecuteStmt();
+  }
+
+  if (query_ctx.command_type.Has(CommandType::CTAS)) {
+    return ExecuteCTAS(batch);
   }
 
   if (query_ctx.command_type.Has(CommandType::Show)) {
@@ -276,12 +292,39 @@ void Cursor::BuildBatch(velox::RowVectorPtr& batch,
                                              batch_rows, std::move(vectors));
 }
 
+Cursor::Process Cursor::ExecuteCTAS(velox::RowVectorPtr& batch) {
+  auto* ctas_cmd = _query.GetCTASCommand();
+  SDB_ASSERT(ctas_cmd);
+
+  if (!ctas_cmd->IsTableCreated()) {
+    auto r = std::move(ctas_cmd->CreateTable()).Get().Ok();
+    if (!r.ok()) {
+      SDB_THROW(std::move(r));
+    }
+  }
+
+  auto process = ExecuteVelox(batch);
+  if (process != Process::Done) {
+    return process;
+  }
+
+  if (!ctas_cmd->IsMarkerRemoved()) {
+    auto r = std::move(ctas_cmd->RemoveDropMarker()).Get().Ok();
+    if (!r.ok()) {
+      SDB_THROW(std::move(r));
+    }
+  }
+
+  return Process::Done;
+}
+
 Cursor::Cursor(std::function<void()>&& user_task, const Query& query)
   : _data_memory_pool{query.GetContext().velox_query_ctx->pool()->addLeafChild(
       "data_memory_pool")},
     _user_task{std::move(user_task)},
     _query{query} {
-  if (_query.GetContext().command_type.Has(query::CommandType::Query)) {
+  if (_query.GetContext().command_type.Has(query::CommandType::Query) ||
+      _query.GetContext().command_type.Has(query::CommandType::CTAS)) {
     _runner = _query.MakeRunner();
   }
 }

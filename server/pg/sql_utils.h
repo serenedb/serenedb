@@ -139,6 +139,7 @@ enum class SqlCommandType : uint32_t {
   Nothing,      // dummy command for instead nothing rules with qual
   Call,         // call stmt
   Copy,         // copy stmt
+  CTAS          // create table as select
 };
 
 }  // namespace pg

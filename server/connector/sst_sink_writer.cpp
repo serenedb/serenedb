@@ -270,8 +270,8 @@ std::string GenerateSSTDirPath() {
   auto timestamp =
     std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch())
       .count();
-  return absl::StrCat(sdb::GetServerEngine().path(), "/", "bulk_insert_",
-                      timestamp, "_", sdb::random::RandU64());
+  return absl::StrCat(GetServerEngine().path(), "/", "bulk_insert_", timestamp,
+                      "_", random::RandU64());
 }
 
 template<bool IsGeneratedPK>

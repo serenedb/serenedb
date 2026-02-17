@@ -32,6 +32,7 @@
 #include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
 #include "basics/errors.h"
+#include "basics/result_or.h"
 #include "catalog/database.h"
 #include "catalog/drop_task.h"
 #include "catalog/function.h"
@@ -175,11 +176,13 @@ struct LogicalCatalog {
                               std::shared_ptr<catalog::View> view) = 0;
   virtual Result RegisterTable(ObjectId database_id, ObjectId schema_id,
                                CreateTableOptions options) = 0;
+  virtual Result RegisterTableShard(std::shared_ptr<TableShard> shard) = 0;
   virtual Result RegisterFunction(
     ObjectId database_id, ObjectId schema_id,
     std::shared_ptr<catalog::Function> function) = 0;
-  virtual Result RegisterIndex(ObjectId database_id, ObjectId schema_id,
-                               IndexBaseOptions options) = 0;
+  virtual ResultOr<std::shared_ptr<Index>> RegisterIndex(
+    ObjectId table_id, IndexBaseOptions options) = 0;
+  virtual Result RegisterIndexShard(std::shared_ptr<IndexShard> shard) = 0;
 
   virtual Result CreateDatabase(
     std::shared_ptr<catalog::Database> database) = 0;
@@ -222,10 +225,9 @@ struct LogicalCatalog {
   virtual Result DropSchema(ObjectId database, std::string_view name,
                             bool cascade, AsyncResult* async_result) = 0;
   virtual Result DropFunction(ObjectId database, std::string_view schema,
-                              std::string_view name,
-                              AsyncResult* async_result) = 0;
+                              std::string_view name) = 0;
   virtual Result DropView(ObjectId database, std::string_view schema,
-                          std::string_view name, AsyncResult* async_result) = 0;
+                          std::string_view name) = 0;
   virtual Result DropTable(ObjectId database, std::string_view schema,
                            std::string_view name,
                            AsyncResult* async_result) = 0;
@@ -277,8 +279,10 @@ class CatalogFeature final : public SerenedFeature {
   Result RegisterSchemas(ObjectId database_id);
   Result RegisterFunctions(ObjectId database_id, ObjectId schema_id);
   Result RegisterViews(ObjectId database_id, ObjectId schema_id);
+  Result RegisterTableShard(ObjectId table_id);
   Result RegisterTables(ObjectId database_id, ObjectId schema_id);
-  Result RegisterIndexes(ObjectId database_id, ObjectId schema_id);
+  Result RegisterIndexShard(const std::shared_ptr<Index>& index);
+  Result RegisterIndexes(ObjectId table_id);
 
   Result AddRoles();
 
@@ -290,7 +294,7 @@ class CatalogFeature final : public SerenedFeature {
                  vpack::Slice definition);
   Result AddTable(ObjectId database_id, ObjectId schema_id, ObjectId table_id,
                   vpack::Slice definition);
-  Result AddIndex(ObjectId database_id, ObjectId schema_id, ObjectId index_id,
+  Result AddIndex(ObjectId table_id, ObjectId index_id,
                   vpack::Slice definition);
 
   Result AddTableShard(ObjectId table_id, ObjectId shard_id,

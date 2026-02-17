@@ -223,9 +223,6 @@ class RocksDBEngineCatalog {
   /// current recovery tick
   Tick recoveryTick() noexcept;
 
-  Result createTableShard(const catalog::Table& collection, bool is_new,
-                          std::shared_ptr<TableShard>& physical);
-
   /// disallow purging of WAL files even if the archive gets too big
   /// removing WAL files does not seem to be thread-safe, so we have to track
   /// usage of WAL files ourselves
@@ -248,16 +245,15 @@ class RocksDBEngineCatalog {
   Result DropFunction(ObjectId db, ObjectId schema_id, ObjectId id,
                       std::string_view name);
 
-  void createTable(const catalog::Table& collection, TableShard& physical);
+  void CreateTable(const catalog::Table& collection);
   Result CreateIndex(const catalog::Index& index);
   Result StoreIndexShard(const IndexShard& index_shard);
   ResultOr<vpack::Builder> LoadIndexShard(ObjectId index_id);
 
-  void ChangeTable(const catalog::Table& collection,
-                   const TableShard& physical);
+  void ChangeTable(const catalog::Table& collection);
 
   Result RenameTable(const catalog::Table& collection,
-                     const TableShard& physical, std::string_view old_name);
+                     std::string_view old_name);
 
   Result CreateSchema(ObjectId db, ObjectId id, WriteProperties properties);
   Result ChangeSchema(ObjectId db, ObjectId id, WriteProperties properties);
@@ -282,6 +278,7 @@ class RocksDBEngineCatalog {
 
   Result DropObject(ObjectId parent_id, RocksDBEntryType type, ObjectId id);
   Result DropEntry(ObjectId parent_id, RocksDBEntryType type);
+  Result WriteTombstone(ObjectId parent_id, RocksDBEntryType type, ObjectId id);
 
   yaclib::Future<Result> compactAll(bool change_level,
                                     bool compact_bottom_most_level);
@@ -397,7 +394,7 @@ class RocksDBEngineCatalog {
   getCacheMetrics();
 
   Result VisitObjects(
-    ObjectId database_id, RocksDBEntryType entry,
+    ObjectId parent_id, RocksDBEntryType entry,
     absl::FunctionRef<Result(rocksdb::Slice, vpack::Slice)> visitor);
   Result VisitSchemaObjects(
     ObjectId database_id, ObjectId schema_id, RocksDBEntryType entry,

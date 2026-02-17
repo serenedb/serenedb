@@ -155,8 +155,6 @@ Result Apply(auto& snapshot, auto&& f) {
 
 class SnapshotImpl : public Snapshot {
  public:
-  using ObjectWithDependencies =
-    std::tuple<std::shared_ptr<Object>, std::shared_ptr<ObjectDependencyBase>>;
   std::shared_ptr<SnapshotImpl> Clone() const {
     // TODO(gnusi): COW
     auto result = std::make_shared<SnapshotImpl>();
@@ -165,6 +163,15 @@ class SnapshotImpl : public Snapshot {
     result->_objects = _objects;
     result->_object_dependencies = _object_dependencies;
     return result;
+  }
+
+  template<typename T>
+  std::shared_ptr<T> GetDependency(ObjectId id) {
+    auto deps = _object_dependencies.find(id);
+    SDB_ASSERT(deps != _object_dependencies.end());
+    auto res = std::static_pointer_cast<T>(deps->second);
+    SDB_ASSERT(res);
+    return res;
   }
 
   std::shared_ptr<DatabaseDrop> CreateDatabaseDrop(ObjectId db_id) {
@@ -195,18 +202,6 @@ class SnapshotImpl : public Snapshot {
                           return CreateTableDrop(db_id, schema_id, id, false);
                         }) |
                         std::ranges::to<std::vector>();
-
-    auto functions =
-      schema_deps.functions | std::views::transform([&](ObjectId id) {
-        return CreateDefinitionDrop(schema_id, id, RocksDBEntryType::Function,
-                                    false);
-      });
-    auto views = schema_deps.views | std::views::transform([&](ObjectId id) {
-                   return CreateDefinitionDrop(schema_id, id,
-                                               RocksDBEntryType::View, false);
-                 });
-    drop_task->definitions.append_range(functions);
-    drop_task->definitions.append_range(views);
 
     drop_task->parent_id = db_id;
     drop_task->id = schema_id;
@@ -249,16 +244,6 @@ class SnapshotImpl : public Snapshot {
     drop_task->shard_id = index_deps.shard_id;
     drop_task->schema_id = schema_id;
     drop_task->db_id = db_id;
-    return drop_task;
-  }
-
-  std::shared_ptr<DefinitionDrop> CreateDefinitionDrop(ObjectId parent_id,
-                                                       ObjectId definition_id,
-                                                       RocksDBEntryType type,
-                                                       bool is_root) {
-    auto drop_task = std::make_shared<DefinitionDrop>(
-      DropTask{.parent_id = parent_id, .id = definition_id, .is_root = is_root},
-      type);
     return drop_task;
   }
 
@@ -707,19 +692,8 @@ Result LocalCatalog::RegisterTable(ObjectId database_id, ObjectId schema_id,
   auto table = std::make_shared<Table>(std::move(options), database_id);
 
   absl::MutexLock lock{&_mutex};
-  auto r = _snapshot->RegisterObject<ResolveType::Relation, TableDependency>(
+  return _snapshot->RegisterObject<ResolveType::Relation, TableDependency>(
     table, schema_id, false);
-  {
-    std::shared_ptr<TableShard> physical;
-    auto r = _engine->createTableShard(*table, false, physical);
-    if (!r.ok()) {
-      return r;
-    }
-
-    _snapshot->AddTableShard(std::move(physical));
-
-    return {};
-  };
 }
 
 Result LocalCatalog::RegisterFunction(ObjectId database_id, ObjectId schema_id,
@@ -808,29 +782,36 @@ Result LocalCatalog::CreateRole(std::shared_ptr<Role> role) {
   return {};
 }
 
-Result LocalCatalog::RegisterIndex(ObjectId database_id, ObjectId schema_id,
-                                   IndexBaseOptions options) {
+ResultOr<std::shared_ptr<Index>> LocalCatalog::RegisterIndex(
+  ObjectId table_id, IndexBaseOptions options) {
   auto index = MakeIndex(std::move(options));
   if (!index) {
-    return std::move(index).error();
+    return std::unexpected<Result>(std::in_place, std::move(index).error());
   }
 
   absl::MutexLock lock{&_mutex};
 
-  return _snapshot->RegisterObject<ResolveType::Relation, IndexDependency>(
-    *index, schema_id, false);
+  auto r = _snapshot->RegisterObject<ResolveType::Relation, IndexDependency>(
+    *index, table_id, false);
+  if (!r.ok()) {
+    return std::unexpected<Result>(std::in_place, r.errorNumber(),
+                                   r.errorMessage());
+  }
+  return *index;
+}
 
-  return (*index)
-    ->CreateIndexShard(false, std::move(args))
-    .transform([&](auto&& index_shard) {
-      auto r = _engine->StoreIndexShard(*index_shard);
-      if (!r.ok()) {
-        return r;
-      }
-      _snapshot->AddIndexShard(std::move(index_shard));
-      return Result{};
-    })
-    .error_or(Result{});
+Result LocalCatalog::RegisterIndexShard(std::shared_ptr<IndexShard> shard) {
+  absl::MutexLock lock{&_mutex};
+
+  _snapshot->AddIndexShard(shard);
+  return {};
+}
+
+Result LocalCatalog::RegisterTableShard(std::shared_ptr<TableShard> shard) {
+  absl::MutexLock lock{&_mutex};
+
+  _snapshot->AddTableShard(shard);
+  return {};
 }
 
 Result LocalCatalog::CreateIndex(ObjectId database_id, std::string_view schema,
@@ -965,14 +946,7 @@ Result LocalCatalog::CreateTable(
       return r;
     }
 
-    std::shared_ptr<TableShard> physical;
-    r = _engine->createTableShard(*table, true, physical);
-    if (!r.ok()) {
-      return r;
-    }
-
-    clone->AddTableShard(physical);
-    _engine->createTable(*table, *physical);
+    _engine->CreateTable(*table);
 
     return {};
   });
@@ -1082,9 +1056,7 @@ Result LocalCatalog::RenameTable(ObjectId database_id, std::string_view schema,
         return r;
       }
 
-      auto shard = clone->GetTableShard(table_id);
-      SDB_ENSURE(shard, ERROR_INTERNAL);
-      return _engine->RenameTable(*new_table, *shard, name);
+      return _engine->RenameTable(*new_table, name);
     });
   }();
 
@@ -1224,10 +1196,7 @@ Result LocalCatalog::ChangeTable(ObjectId database_id, std::string_view schema,
         return r;
       }
 
-      auto shard = clone->GetTableShard(table_id);
-      SDB_ENSURE(shard, ERROR_INTERNAL);
-
-      return basics::SafeCall([&] { _engine->ChangeTable(*updated, *shard); });
+      return basics::SafeCall([&] { _engine->ChangeTable(*updated); });
     });
   }();
 
@@ -1268,10 +1237,10 @@ Result LocalCatalog::DropDatabase(std::string_view name,
       return Result{ERROR_SERVER_ILLEGAL_NAME};
     }
     auto task = clone->CreateDatabaseDrop(*db_id);
-    auto res = QueueDropTask(std::move(task));
     auto id = clone->template UnregisterObject<ResolveType::Database>(
       ObjectId{0}, name);
     SDB_ASSERT(id && *id == *db_id);
+    auto res = QueueDropTask(std::move(task));
     if (async_result) {
       *async_result = std::move(res);
     }
@@ -1289,10 +1258,15 @@ Result LocalCatalog::DropSchema(ObjectId db_id, std::string_view name,
       return Result{ERROR_SERVER_ILLEGAL_NAME};
     }
     auto task = clone->CreateSchemaDrop(db_id, *schema_id, true);
-    auto res = QueueDropTask(std::move(task));
     auto id =
       clone->template UnregisterObject<ResolveType::Schema>(db_id, name);
     SDB_ASSERT(id && *id == *schema_id);
+    if (auto r = _engine->WriteTombstone(
+          db_id, RocksDBEntryType::ScopeTombstone, *schema_id);
+        !r.ok()) {
+      return r;
+    }
+    auto res = QueueDropTask(std::move(task));
     if (async_result) {
       *async_result = std::move(res);
     }
@@ -1316,12 +1290,15 @@ Result LocalCatalog::DropTable(ObjectId db_id, std::string_view schema_name,
       return Result{ERROR_SERVER_ILLEGAL_NAME};
     }
     auto task = clone->CreateTableDrop(db_id, *schema_id, *table_id, true);
-    auto res = QueueDropTask(std::move(task));
-
     auto id =
       clone->template UnregisterObject<ResolveType::Relation>(*schema_id, name);
     SDB_ASSERT(id && *id == *table_id);
-
+    if (auto r = _engine->WriteTombstone(
+          *schema_id, RocksDBEntryType::TableTombstone, *table_id);
+        !r.ok()) {
+      return r;
+    }
+    auto res = QueueDropTask(std::move(task));
     if (async_result) {
       *async_result = std::move(res);
     }
@@ -1350,12 +1327,15 @@ Result LocalCatalog::DropIndex(ObjectId db_id, std::string_view schema_name,
     SDB_ASSERT(index);
     auto task = clone->CreateIndexDrop(db_id, *schema_id,
                                        index->GetRelationId(), *index_id, true);
-    auto res = QueueDropTask(std::move(task));
-
     auto id =
       clone->template UnregisterObject<ResolveType::Relation>(*schema_id, name);
     SDB_ASSERT(id && *id == *index_id);
-
+    if (auto r = _engine->WriteTombstone(
+          index->GetRelationId(), RocksDBEntryType::IndexTombstone, *index_id);
+        !r.ok()) {
+      return r;
+    }
+    auto res = QueueDropTask(std::move(task));
     if (async_result) {
       *async_result = std::move(res);
     }
@@ -1364,8 +1344,7 @@ Result LocalCatalog::DropIndex(ObjectId db_id, std::string_view schema_name,
 }
 
 Result LocalCatalog::DropView(ObjectId db_id, std::string_view schema_name,
-                              std::string_view name,
-                              AsyncResult* async_result) {
+                              std::string_view name) {
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
     auto schema_id =
@@ -1382,24 +1361,21 @@ Result LocalCatalog::DropView(ObjectId db_id, std::string_view schema_name,
     SDB_ASSERT(obj);
     auto view = std::dynamic_pointer_cast<catalog::View>(obj);
     SDB_ASSERT(view);
-    auto task = clone->CreateDefinitionDrop(*schema_id, *view_id,
-                                            RocksDBEntryType::View, true);
-    auto res = QueueDropTask(std::move(task));
-
+    auto r = _engine->DropView(view->GetId(), view->GetSchemaId(),
+                               view->GetId(), view->GetName());
+    if (!r.ok()) {
+      return r;
+    }
     auto id =
       clone->template UnregisterObject<ResolveType::Relation>(*schema_id, name);
     SDB_ASSERT(id && *id == *view_id);
 
-    if (async_result) {
-      *async_result = std::move(res);
-    }
     return Result{};
   });
 }
 
 Result LocalCatalog::DropFunction(ObjectId db_id, std::string_view schema_name,
-                                  std::string_view name,
-                                  AsyncResult* async_result) {
+                                  std::string_view name) {
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
     auto schema_id =
@@ -1416,17 +1392,16 @@ Result LocalCatalog::DropFunction(ObjectId db_id, std::string_view schema_name,
     SDB_ASSERT(obj);
     auto func = std::dynamic_pointer_cast<catalog::Function>(obj);
     SDB_ASSERT(func);
-    auto task = clone->CreateDefinitionDrop(*schema_id, *func_id,
-                                            RocksDBEntryType::Function, true);
-    auto res = QueueDropTask(std::move(task));
+    auto r = _engine->DropFunction(func->GetDatabaseId(), func->GetSchemaId(),
+                                   *func_id, func->GetName());
+    if (!r.ok()) {
+      return r;
+    }
 
     auto id =
       clone->template UnregisterObject<ResolveType::Relation>(*schema_id, name);
     SDB_ASSERT(id && *id == *func_id);
 
-    if (async_result) {
-      *async_result = std::move(res);
-    }
     return Result{};
   });
 }

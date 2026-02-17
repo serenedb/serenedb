@@ -27,7 +27,12 @@ namespace sdb {
 
 class IndexShard : public catalog::Object {
  public:
-  IndexShard(const catalog::Index& index);
+  // Existed index shard
+  IndexShard(ObjectId id, ObjectId index_id, ObjectId relation_id,
+             IndexType type);
+
+  // New index shard
+  IndexShard(ObjectId index_id, ObjectId relation_id, IndexType type);
   virtual ~IndexShard() = default;
 
   virtual void WriteInternal(vpack::Builder& builder) const = 0;

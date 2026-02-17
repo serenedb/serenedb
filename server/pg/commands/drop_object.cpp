@@ -54,10 +54,10 @@ yaclib::Future<Result> DropObject(ExecContext& context, const DropStmt& stmt) {
       r = catalog.DropIndex(db, schema, name, nullptr);
       break;
     case OBJECT_VIEW: {
-      r = catalog.DropView(db, schema, name, nullptr);
+      r = catalog.DropView(db, schema, name);
     } break;
     case OBJECT_FUNCTION: {
-      r = catalog.DropFunction(db, schema, name, nullptr);
+      r = catalog.DropFunction(db, schema, name);
     } break;
     case OBJECT_SCHEMA: {
       // TODO: ensure that schema is empty

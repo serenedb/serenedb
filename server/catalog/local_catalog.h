@@ -61,8 +61,11 @@ class LocalCatalog final : public LogicalCatalog,
                           std::shared_ptr<Function> function) final;
   Result RegisterTable(ObjectId database_id, ObjectId schema_id,
                        CreateTableOptions table) final;
-  Result RegisterIndex(ObjectId database_id, ObjectId schema_id,
-                       IndexBaseOptions options) final;
+  Result RegisterTableShard(std::shared_ptr<TableShard> shard) final;
+
+  ResultOr<std::shared_ptr<Index>> RegisterIndex(
+    ObjectId table_id, IndexBaseOptions options) final;
+  Result RegisterIndexShard(std::shared_ptr<IndexShard> shard) final;
 
   Result CreateDatabase(std::shared_ptr<Database> database) final;
   Result CreateRole(std::shared_ptr<Role> role) final;
@@ -97,9 +100,9 @@ class LocalCatalog final : public LogicalCatalog,
   Result DropSchema(ObjectId database_id, std::string_view name, bool cascade,
                     AsyncResult* async_result) final;
   Result DropView(ObjectId database_id, std::string_view schema,
-                  std::string_view name, AsyncResult* async_result) final;
+                  std::string_view name) final;
   Result DropFunction(ObjectId database_id, std::string_view schema,
-                      std::string_view name, AsyncResult* async_result) final;
+                      std::string_view name) final;
   Result DropTable(ObjectId database_id, std::string_view schema,
                    std::string_view name, AsyncResult* async_result) final;
   Result DropIndex(ObjectId database_id, std::string_view schema,

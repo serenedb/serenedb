@@ -41,6 +41,7 @@ namespace sdb::search {
 class InvertedIndexShard;
 
 struct InvertedIndexShardOptions {
+  ObjectId id;
   size_t commit_interval_ms;
   size_t consolidation_interval_ms;
 };

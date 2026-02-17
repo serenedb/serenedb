@@ -361,7 +361,7 @@ Result WriteDefinition(rocksdb::DB* db, auto&& make_old_key,
 
 vpack::Slice GetTableProperties(vpack::Builder& builder,
                                 const catalog::Table& collection,
-                                const TableShard& physical, bool internal) {
+                                bool internal) {
   builder.clear();
   builder.openObject();
 
@@ -1250,28 +1250,28 @@ void RocksDBEngineCatalog::processTreeRebuilds() {
             SDB_INFO("xxxxx", Logger::ENGINES,
                      "starting background rebuild of revision tree for "
                      "collection ",
-                     candidate.first, "/", collection->GetMeta().name);
+                     candidate.first, "/", collection->GetName());
 
             auto res = Result{ERROR_NOT_IMPLEMENTED};
             if (res.ok()) {
               ++_metrics_tree_rebuilds_success;
               SDB_INFO("xxxxx", Logger::ENGINES,
                        "successfully rebuilt revision tree for collection ",
-                       candidate.first, "/", collection->GetMeta().name);
+                       candidate.first, "/", collection->GetName());
             } else {
               ++_metrics_tree_rebuilds_failure;
               if (res.is(ERROR_LOCK_TIMEOUT)) {
                 SDB_WARN("xxxxx", Logger::ENGINES,
                          "failure during revision tree rebuilding for "
                          "collection ",
-                         candidate.first, "/", collection->GetMeta().name, ": ",
+                         candidate.first, "/", collection->GetName(), ": ",
                          res.errorMessage());
               } else {
                 SDB_ERROR("xxxxx", Logger::ENGINES,
                           "failure during revision tree rebuilding for "
                           "collection ",
-                          candidate.first, "/", collection->GetMeta().name,
-                          ": ", res.errorMessage());
+                          candidate.first, "/", collection->GetName(), ": ",
+                          res.errorMessage());
               }
               {
                 // mark as to-be-done again
@@ -1491,36 +1491,7 @@ ResultOr<vpack::Builder> RocksDBEngineCatalog::LoadIndexShard(
   return builder;
 }
 
-Result RocksDBEngineCatalog::createTableShard(
-  const catalog::Table& collection, bool is_new,
-  std::shared_ptr<TableShard>& physical) {
-  auto meta = MakeTableMeta(collection);
-  catalog::TableStats stats;
-  if (!is_new) {
-    // Load Table stats
-    RocksDBKeyWithBuffer key;
-    key.constructDefinition(collection.GetSchemaId(), RocksDBEntryType::Stats,
-                            collection.GetId());
-    std::string value;
-    _db->Get(rocksdb::ReadOptions{},
-             RocksDBColumnFamilyManager::get(
-               RocksDBColumnFamilyManager::Family::Definitions),
-             key.string(), &value);
-    auto slice = vpack::Slice{reinterpret_cast<const uint8_t*>(value.data())};
-    if (auto r = vpack::ReadTupleNothrow<catalog::TableStats>(slice, stats);
-        !r.ok()) {
-      // TODO(codeworse): load num_rows from rocksdb sst tables as a fallback
-      SDB_WARN("xxxxx", Logger::ENGINES, "unable to read stats for collection ",
-               collection.GetDatabaseId(), ".", collection.GetSchemaId(), ".",
-               collection.GetId(), ": ", r.errorMessage());
-    }
-  }
-  physical = std::make_shared<TableShard>(meta, stats);
-  return {};
-}
-
-void RocksDBEngineCatalog::createTable(const catalog::Table& c,
-                                       TableShard& physical) {
+void RocksDBEngineCatalog::CreateTable(const catalog::Table& c) {
   const auto db_id = c.GetDatabaseId();
   const auto schema_id = c.GetSchemaId();
   const auto collection_id = c.GetId();
@@ -1538,14 +1509,14 @@ void RocksDBEngineCatalog::createTable(const catalog::Table& c,
     },
     [&] {
       return RocksDBValue::Object(RocksDBEntryType::Collection,
-                                  GetTableProperties(b, c, physical, true));
+                                  GetTableProperties(b, c, true));
     },
     [&] {
       const wal::SchemaObjectPut entry{
         .database_id = db_id,
         .schema_id = schema_id,
         .object_id = collection_id,
-        .data = GetTableProperties(b, c, physical, false),
+        .data = GetTableProperties(b, c, false),
       };
       return wal::Write(RocksDBLogType::TableCreate, entry);
     });
@@ -1564,8 +1535,7 @@ bool RocksDBEngineCatalog::UseRangeDelete(ObjectId id,
   return number_documents >= 32 * 1024;
 }
 
-void RocksDBEngineCatalog::ChangeTable(const catalog::Table& c,
-                                       const TableShard& physical) {
+void RocksDBEngineCatalog::ChangeTable(const catalog::Table& c) {
   const auto db_id = c.GetDatabaseId();
   const auto schema_id = c.GetSchemaId();
 
@@ -1581,14 +1551,14 @@ void RocksDBEngineCatalog::ChangeTable(const catalog::Table& c,
     },
     [&] {
       return RocksDBValue::Object(RocksDBEntryType::Collection,
-                                  GetTableProperties(b, c, physical, true));
+                                  GetTableProperties(b, c, true));
     },
     [&] {
       const wal::SchemaObjectPut entry{
         .database_id = db_id,
         .schema_id = schema_id,
         .object_id = c.GetId(),
-        .data = GetTableProperties(b, c, physical, false),
+        .data = GetTableProperties(b, c, false),
       };
       return wal::Write(RocksDBLogType::TableChange, entry);
     });
@@ -1599,7 +1569,6 @@ void RocksDBEngineCatalog::ChangeTable(const catalog::Table& c,
 }
 
 Result RocksDBEngineCatalog::RenameTable(const catalog::Table& c,
-                                         const TableShard& physical,
                                          std::string_view old_name) {
   const auto db_id = c.GetDatabaseId();
   const auto cid = c.GetId();
@@ -1616,7 +1585,7 @@ Result RocksDBEngineCatalog::RenameTable(const catalog::Table& c,
     },
     [&] {
       return RocksDBValue::Object(RocksDBEntryType::Collection,
-                                  GetTableProperties(b, c, physical, true));
+                                  GetTableProperties(b, c, true));
     },
     [&] {
       b.clear();
@@ -1680,8 +1649,7 @@ Result RocksDBEngineCatalog::DropSchema(ObjectId db, ObjectId id) {
     _db->GetRootDB(),
     [&] {
       RocksDBKeyWithBuffer key;
-      key.constructSchemaObject(RocksDBEntryType::ScopeTombstone,
-                                id::kTombstoneDatabase, db, id);
+      key.constructDefinition(db, RocksDBEntryType::ScopeTombstone, id);
       return key;
     },
     [] { return std::string_view{}; });
@@ -2237,8 +2205,22 @@ Result RocksDBEngineCatalog::DropEntry(ObjectId parent_id,
                                        RocksDBEntryType type) {
   return VisitObjects(
     parent_id, type, [&](rocksdb::Slice key, vpack::Slice value) {
-      return DropObject(parent_id, type, RocksDBKey::GetParentId(key));
+      return DropObject(parent_id, type, RocksDBKey::GetObjectId(key));
     });
+}
+
+Result RocksDBEngineCatalog::WriteTombstone(ObjectId parent_id,
+                                            RocksDBEntryType type,
+                                            ObjectId id) {
+  return WriteDefinition(
+    _db->GetRootDB(),
+    [parent_id, type, id] {
+      RocksDBKeyWithBuffer key;
+      key.constructDefinition(parent_id, type, id);
+      return key;
+    },
+    [type] { return RocksDBValue::Empty(type); },
+    [&] { return std::string_view{}; });
 }
 
 DECLARE_GAUGE(rocksdb_cache_active_tables, uint64_t,

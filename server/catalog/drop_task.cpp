@@ -22,6 +22,7 @@
 
 #include "basics/assert.h"
 #include "basics/errors.h"
+#include "catalog/identifiers/object_id.h"
 #include "catalog/types.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "search/inverted_index_shard.h"
@@ -36,9 +37,7 @@ bool CheckResult(const Result& result) {
   return result == ERROR_OK || result == ERROR_SERVER_DATA_SOURCE_NOT_FOUND ||
          result == ERROR_SERVER_DATABASE_NOT_FOUND ||
          result == ERROR_SERVER_DOCUMENT_NOT_FOUND ||
-         result == ERROR_SERVER_INDEX_NOT_FOUND ||
-         result == ERROR_SERVER_DATA_SOURCE_NOT_FOUND ||
-         result == ERROR_SERVER_DOCUMENT_NOT_FOUND;
+         result == ERROR_SERVER_INDEX_NOT_FOUND;
 }
 }  // namespace
 
@@ -85,6 +84,10 @@ Result IndexDrop::Finalize() {
   if (!CheckResult(r)) {
     return r;
   }
+  r = server.DropObject(schema_id, RocksDBEntryType::Index, id);
+  if (!CheckResult(r)) {
+    return r;
+  }
   if (is_root) {
     return server.DropObject(parent_id, RocksDBEntryType::IndexTombstone, id);
   }
@@ -108,6 +111,10 @@ AsyncResult IndexDrop::operator()() {
 Result TableDrop::Finalize() {
   auto& server = GetServerEngine();
   auto r = server.DropEntry(id, RocksDBEntryType::TablePhysical);
+  if (!CheckResult(r)) {
+    return r;
+  }
+  r = server.DropObject(parent_id, RocksDBEntryType::Collection, id);
   if (!CheckResult(r)) {
     return r;
   }
@@ -150,8 +157,12 @@ Result SchemaDrop::Finalize() {
       return r;
     }
   }
+  auto r = server.DropObject(parent_id, RocksDBEntryType::Schema, id);
+  if (!CheckResult(r)) {
+    return r;
+  }
   if (is_root) {
-    auto r = server.DropObject(parent_id, RocksDBEntryType::ScopeTombstone, id);
+    r = server.DropObject(parent_id, RocksDBEntryType::ScopeTombstone, id);
     if (!CheckResult(r)) {
       return r;
     }
@@ -177,11 +188,19 @@ AsyncResult SchemaDrop::operator()() {
 
 Result DatabaseDrop::Finalize() {
   auto& server = GetServerEngine();
-  auto r = server.DropEntry(id, RocksDBEntryType::ScopeTombstone);
+  auto r = server.DropEntry(id, RocksDBEntryType::Schema);
   if (!CheckResult(r)) {
     return r;
   }
-  return server.DropEntry(parent_id, RocksDBEntryType::ScopeTombstone);
+  r = server.DropEntry(id, RocksDBEntryType::ScopeTombstone);
+  if (!CheckResult(r)) {
+    return r;
+  }
+  r = server.DropObject(id::kSystemDB, RocksDBEntryType::Database, id);
+  if (!CheckResult(r)) {
+    return r;
+  }
+  return {};
 }
 
 AsyncResult DatabaseDrop::operator()() {

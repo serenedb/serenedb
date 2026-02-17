@@ -46,16 +46,13 @@ class DocumentIterator;
 struct OperationOptions;
 class Result;
 
-catalog::TableMeta MakeTableMeta(const catalog::Table& c);
-
 class TableShard : public catalog::Object {
  public:
   static constexpr double kDefaultLockTimeout = 10.0 * 60.0;
 
   virtual ~TableShard() = default;
 
-  auto& GetMeta() const noexcept { return _collection_meta; }
-  auto GetTableId() const noexcept { return _collection_meta.id; }
+  auto GetTableId() const noexcept { return _table_id; }
 
   void UpdateNumRows(int64_t delta) {
     _num_rows.fetch_add(delta, std::memory_order_relaxed);
@@ -68,16 +65,18 @@ class TableShard : public catalog::Object {
   void WriteInternal(vpack::Builder& builder) const {
     vpack::WriteTuple(builder, GetTableStats());
   }
+  // New table shard ctor
+  explicit TableShard(ObjectId table_id, const catalog::TableStats& stats);
 
-  explicit TableShard(catalog::TableMeta collection,
+  // existed table shard ctor
+  explicit TableShard(ObjectId id, ObjectId table_id,
                       const catalog::TableStats& stats);
 
  protected:
   /// Inject figures that are specific to StorageEngine
   virtual void figuresSpecific(bool details, vpack::Builder&) {}
 
-  catalog::TableMeta _collection_meta;
-
+  ObjectId _table_id;
   // TODO(codeworse): this probably won't work in case of distributed setup
   std::atomic_uint64_t _num_rows{0};
 };

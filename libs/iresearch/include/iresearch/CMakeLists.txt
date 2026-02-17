@@ -201,6 +201,12 @@ include_directories(SYSTEM ${IRESEARCH_EXTERNAL_INCLUDES})
 
 add_library(iresearch-static STATIC ${IResearch_core_sources})
 
+set_source_files_properties(
+    search/bm25.cpp
+    search/tfidf.cpp
+    PROPERTIES COMPILE_OPTIONS "-ffast-math"
+)
+
 target_include_directories(
     iresearch-static
     SYSTEM

@@ -41,7 +41,8 @@ export const QueryExecutionService = {
                     connectionData = {
                         mode: "socket",
                         user: input.user || connection.user || "postgres",
-                        password: input.password || connection.password || "",
+                        password:
+                            input.password || connection.password || "postgres",
                         socket: connection.socket,
                         database: input.database || connection.database || "",
                     };
@@ -49,7 +50,8 @@ export const QueryExecutionService = {
                     connectionData = {
                         mode: "host",
                         user: input.user || connection.user || "postgres",
-                        password: input.password || connection.password || "",
+                        password:
+                            input.password || connection.password || "postgres",
                         host: input.host || connection.host,
                         port: input.port || connection.port,
                         database: input.database || connection.database || "",
@@ -59,7 +61,7 @@ export const QueryExecutionService = {
                 connectionData = {
                     mode: input.socket ? "socket" : "host",
                     user: input.user || "postgres",
-                    password: input.password || "",
+                    password: input.password || "postgres",
                     host: input.host || undefined,
                     port: input.port || undefined,
                     socket: input.socket || undefined,

@@ -240,7 +240,7 @@ jobs:
 
             - name: Install dependencies & build
               run: |
-                  rm package-lock.json
+                  rm package-lock.json -ErrorAction SilentlyContinue
                   npm install
                   npm run build
 

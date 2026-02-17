@@ -38,7 +38,6 @@ Result Transaction::Begin(IsolationLevel isolation_level) {
 
 Result Transaction::Commit() {
   auto cleanup = [&] {
-    ApplyTableStatsDiffs();
     CommitVariables();
     Destroy();
   };
@@ -47,6 +46,7 @@ Result Transaction::Commit() {
   // means no rocksdb transaction actually started, for example, sequential
   // BEGIN and COMMIT statements.
   if (!_rocksdb_transaction) {
+    SDB_ASSERT(_search_transactions.empty());
     cleanup();
     return {};
   }
@@ -94,6 +94,7 @@ Result Transaction::Commit() {
     for (auto& search_transaction : _search_transactions) {
       search_transaction.second->Commit(post_commit_seq);
     }
+    ApplyTableStatsDiffs();
   }
   std::move(abort_guard).Cancel();
   cleanup();

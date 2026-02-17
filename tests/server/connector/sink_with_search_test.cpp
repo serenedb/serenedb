@@ -200,7 +200,7 @@ class DataSinkWithSearchTest : public ::testing::Test,
     data_transaction.reset(_db->BeginTransaction(wo, trx_opts, nullptr));
     index_transaction = _data_writer->GetBatch();
     ASSERT_NE(data_transaction, nullptr);
-    std::vector<std::unique_ptr<SinkInsertWriter>> index_writers;
+    std::vector<std::unique_ptr<SinkIndexWriter>> index_writers;
     std::vector<catalog::Column::Id> col_idx;
     if (index_col_idx.has_value()) {
       col_idx = index_col_idx.value();
@@ -258,7 +258,7 @@ class DataSinkWithSearchTest : public ::testing::Test,
     ASSERT_NE(nullptr, data_transaction->GetSnapshot());
     index_transaction = _data_writer->GetBatch();
     ASSERT_NE(data_transaction, nullptr);
-    std::vector<std::unique_ptr<SinkUpdateWriter>> index_writers;
+    std::vector<std::unique_ptr<SinkIndexWriter>> index_writers;
     index_writers.emplace_back(
       std::make_unique<connector::search::SearchSinkUpdateWriter>(
         index_transaction, all_column_oids));
@@ -352,7 +352,7 @@ TEST_F(DataSinkWithSearchTest, test_InsertDeleteFlatStrings) {
   }
   {
     auto index_transaction = _data_writer->GetBatch();
-    std::vector<std::unique_ptr<SinkDeleteWriter>> delete_writers;
+    std::vector<std::unique_ptr<SinkIndexWriter>> delete_writers;
     delete_writers.emplace_back(
       std::make_unique<connector::search::SearchSinkDeleteWriter>(
         index_transaction));

@@ -32,9 +32,7 @@ namespace sdb::connector::search {
 
 class SearchRemoveFilterBase;
 
-// BaseImpl (WriteImpl, finish impl)
-
-class SearchSinkInsertBaseImpl {
+class SearchSinkInsertBaseImpl : public ColumnSinkWriterImplBase {
  public:
   SearchSinkInsertBaseImpl(irs::IndexWriter::Transaction& trx,
                            std::span<const catalog::Column::Id> columns);
@@ -131,7 +129,7 @@ class SearchSinkInsertBaseImpl {
   std::string _null_name_buffer;
   irs::IndexWriter::Transaction& _trx;
   std::optional<irs::IndexWriter::Document> _document;
-  containers::FlatHashSet<catalog::Column::Id> _columns;
+
   Writer _current_writer;
   bool _emit_pk{true};
 };
@@ -153,7 +151,7 @@ class SearchSinkDeleteBaseImpl {
   std::shared_ptr<SearchRemoveFilterBase> _remove_filter;
 };
 
-class SearchSinkInsertWriter final : public SinkInsertWriter,
+class SearchSinkInsertWriter final : public SinkIndexWriter,
                                      public SearchSinkInsertBaseImpl {
  public:
   SearchSinkInsertWriter(irs::IndexWriter::Transaction& trx,
@@ -177,7 +175,7 @@ class SearchSinkInsertWriter final : public SinkInsertWriter,
   void Abort() final { AbortImpl(); }
 };
 
-class SearchSinkDeleteWriter final : public SinkDeleteWriter,
+class SearchSinkDeleteWriter final : public SinkIndexWriter,
                                      public SearchSinkDeleteBaseImpl {
  public:
   SearchSinkDeleteWriter(irs::IndexWriter::Transaction& trx)
@@ -192,7 +190,7 @@ class SearchSinkDeleteWriter final : public SinkDeleteWriter,
   void Abort() final { AbortImpl(); }
 };
 
-class SearchSinkUpdateWriter final : public SinkUpdateWriter,
+class SearchSinkUpdateWriter final : public SinkIndexWriter,
                                      public SearchSinkInsertBaseImpl,
                                      public SearchSinkDeleteBaseImpl {
  public:
@@ -228,11 +226,6 @@ class SearchSinkUpdateWriter final : public SinkUpdateWriter,
   }
 
   void DeleteRow(std::string_view row_key) final { DeleteRowImpl(row_key); }
-
-  bool IsIndexed(catalog::Column::Id column_id) const noexcept final {
-    // TODO(Dronplane): implement proper check when we have metadata
-    return true;
-  }
 };
 
 }  // namespace sdb::connector::search

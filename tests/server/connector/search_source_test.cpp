@@ -137,7 +137,7 @@ class DataSourceWithSearchTest : public ::testing::Test,
     data_transaction.reset(_db->BeginTransaction(wo, trx_opts, nullptr));
     index_transaction = _data_writer->GetBatch();
     ASSERT_NE(data_transaction, nullptr);
-    std::vector<std::unique_ptr<SinkInsertWriter>> index_writers;
+    std::vector<std::unique_ptr<SinkIndexWriter>> index_writers;
     std::vector<catalog::Column::Id> col_idx;
     col_idx.append_range(all_column_oids |
                          std::views::transform([](auto& a) { return a.id; }));

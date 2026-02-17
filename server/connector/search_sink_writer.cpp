@@ -61,21 +61,18 @@ void SetNameToBuffer(std::string& name_buffer, catalog::Column::Id column_id) {
 SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
   irs::IndexWriter::Transaction& trx,
   std::span<const catalog::Column::Id> columns)
-  : _trx(trx) {
+  : ColumnSinkWriterImplBase{columns}, _trx{trx} {
   _pk_field.PrepareForStringValue();
   _pk_field.name = kPkFieldName;
-  _columns.reserve(columns.size());
-  for (auto c : columns) {
-    _columns.insert(c);
-  }
-  SDB_ASSERT(!_columns.empty());
 }
 
 bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const velox::Type& type,
                                                 bool have_nulls,
                                                 catalog::Column::Id column_id) {
-  if (!_columns.contains(column_id)) {
+  if (!IsIndexed(column_id)) {
+#ifdef SDB_DEV
     _current_writer = nullptr;
+#endif
     return false;
   }
   // For now we do not support types that are not default comparable as our
@@ -96,10 +93,7 @@ bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const velox::Type& type,
 
 void SearchSinkInsertBaseImpl::WriteImpl(
   std::span<const rocksdb::Slice> cell_slices, std::string_view full_key) {
-  if (!_current_writer) {
-    // not indexing current column
-    return;
-  }
+  SDB_ASSERT(_current_writer);
   SDB_ASSERT(_document.has_value());
   _current_writer(full_key, cell_slices);
   _document->NextDocument();

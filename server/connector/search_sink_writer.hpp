@@ -156,7 +156,7 @@ class SearchSinkInsertWriter final : public SinkIndexWriter,
  public:
   SearchSinkInsertWriter(irs::IndexWriter::Transaction& trx,
                          std::span<const catalog::Column::Id> columns)
-    : SearchSinkInsertBaseImpl(trx, columns) {}
+    : SearchSinkInsertBaseImpl{trx, columns} {}
 
   void Init(size_t batch_size) final { InitImpl(batch_size); }
 
@@ -179,7 +179,7 @@ class SearchSinkDeleteWriter final : public SinkIndexWriter,
                                      public SearchSinkDeleteBaseImpl {
  public:
   SearchSinkDeleteWriter(irs::IndexWriter::Transaction& trx)
-    : SearchSinkDeleteBaseImpl(trx) {}
+    : SearchSinkDeleteBaseImpl{trx} {}
 
   void Init(size_t batch_size) final { InitImpl(batch_size); }
 
@@ -196,7 +196,7 @@ class SearchSinkUpdateWriter final : public SinkIndexWriter,
  public:
   SearchSinkUpdateWriter(irs::IndexWriter::Transaction& trx,
                          std::span<const catalog::Column::Id> columns)
-    : SearchSinkInsertBaseImpl(trx, columns), SearchSinkDeleteBaseImpl(trx) {}
+    : SearchSinkInsertBaseImpl{trx, columns}, SearchSinkDeleteBaseImpl{trx} {}
 
   void Init(size_t batch_size) final {
     SearchSinkInsertBaseImpl::InitImpl(batch_size);

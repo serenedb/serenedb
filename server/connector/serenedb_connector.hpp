@@ -60,7 +60,7 @@ namespace {
 
 inline bool HasColumnOverlap(
   std::span<const catalog::Column::Id> index_columns,
-  containers::FlatHashSet<catalog::Column::Id> updated_columns) {
+  const containers::FlatHashSet<catalog::Column::Id>& updated_columns) {
   return absl::c_any_of(index_columns, [&](auto index_col) {
     return updated_columns.contains(index_col);
   });
@@ -101,7 +101,7 @@ struct IndexWriterFactory<axiom::connector::WriteKind::kDelete> {
 template<axiom::connector::WriteKind Kind>
 std::vector<std::unique_ptr<SinkIndexWriter>> CreateIndexWriters(
   ObjectId table_id, query::Transaction& transaction,
-  std::span<ColumnInfo> updated_columns = {}, bool pk_updated = false) {
+  std::span<const ColumnInfo> updated_columns = {}, bool pk_updated = false) {
   std::vector<std::unique_ptr<SinkIndexWriter>> writers;
 
   auto resolve_index_writer =
@@ -755,8 +755,8 @@ class SereneDBConnector final : public velox::connector::Connector {
             auto update_sinks =
               CreateIndexWriters<axiom::connector::WriteKind::kUpdate>(
                 object_key, transaction,
-                std::span(columns.begin() + table.PKType()->size(),
-                          columns.end()),
+                std::span{columns.begin() + table.PKType()->size(),
+                          columns.end()},
                 table.UsedForUpdatePK());
             if (table.UsedForUpdatePK() || !update_sinks.empty()) {
               all_column_oids.reserve(table.type()->size());

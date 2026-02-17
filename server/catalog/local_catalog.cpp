@@ -1366,7 +1366,7 @@ Result LocalCatalog::DropIndex(ObjectId database_id, std::string_view schema,
 
   // IndexDrop should be registered with the engine,
   // so on restart, the index drop task will be replayed.
-  SDB_IF_FAILURE("crash_on_index_drop") { exit(1); }
+  SDB_IF_FAILURE("crash_on_index_drop") { SDB_IMMEDIATE_ABORT(); }
 
   task->tombstone = std::move(tombstone);
   task->index_shard = std::move(index_shard);

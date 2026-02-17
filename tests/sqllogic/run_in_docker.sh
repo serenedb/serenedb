@@ -46,7 +46,7 @@ fi
 cd $SQLLOGIC_DIR
 
 # can be useful to run from container: docker compose run tests bash
-BUILD_DIR="${BUILD_DIR:-build}" docker compose -f "$COMPOSE_FILE" up --attach tests --exit-code-from tests --remove-orphans
+BUILD_DIR="${BUILD_DIR:-build}" docker compose -f "$COMPOSE_FILE" up --attach tests --exit-code-from tests --remove-orphans --timestamps
 test_exit_code=$?
 if ! test "${test_exit_code}" -eq "0"; then
   echo "$TEST_KIND tests failed!"

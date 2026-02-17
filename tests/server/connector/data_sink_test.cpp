@@ -98,7 +98,8 @@ class DataSinkTest : public ::testing::Test,
     size_t rows_affected = 0;
     RocksDBInsertDataSink sink(
       "", *transaction, *_cf_handles.front(), *pool_.get(), object_key, pk,
-      std::move(column_oids), WriteConflictPolicy::Replace, rows_affected, {});
+      std::move(column_oids), WriteConflictPolicy::Replace, rows_affected, {},
+      transaction->GetSnapshot());
     sink.appendData(data);
     while (!sink.finish()) {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));

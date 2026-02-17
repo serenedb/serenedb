@@ -50,9 +50,7 @@
 #define SDB_PRETTY_FUNCTION __func__
 #endif
 
-// abnormal immediate program termination
-#if defined(__clang__) || defined(__GNUC__)
-#define SDB_IMMEDIATE_ABORT() exit(1);
-#else
-#define SDB_IMMEDIATE_ABORT() std::abort();
-#endif
+// TODO(mkornaukhov) use `__builtin_trap()` for clang and gcc,
+// but it makes recovery tests two times longer.
+// immediate program termination
+#define SDB_IMMEDIATE_ABORT() std::exit(1)

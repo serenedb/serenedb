@@ -131,38 +131,54 @@ void SSTBlockBuilder<IsGeneratedPK>::AddEntryImpl(
   }
 
   auto& buffer = block.buffer;
-  if (block.entry_cnt == 0) [[unlikely]] {
-    const uint32_t non_shared = kPrefixSize + pk_size + kInternalKeyFooterSize;
-    PutVarint32x3ToBuffer(buffer, 0, non_shared,
-                          static_cast<uint32_t>(total_value_size));
+  const bool is_first = block.entry_cnt == 0;
 
-    const size_t pos = buffer.size();
-    Resize(buffer, kPrefixSize);
-    absl::big_endian::Store(reinterpret_cast<char*>(buffer.data()) + pos,
-                            _table_id);
-    absl::big_endian::Store(
-      reinterpret_cast<char*>(buffer.data()) + pos + sizeof(ObjectId),
-      _column_id);
-  } else {
-    const uint32_t non_shared = pk_size + kInternalKeyFooterSize;
-    PutVarint32x3ToBuffer(buffer, kPrefixSize, non_shared,
-                          static_cast<uint32_t>(total_value_size));
+  const uint32_t shared = is_first ? 0 : kPrefixSize;
+  const uint32_t non_shared =
+    (is_first ? kPrefixSize : 0) + pk_size + kInternalKeyFooterSize;
+  const uint32_t value_size = static_cast<uint32_t>(total_value_size);
+
+  const size_t varint_len =
+    VarintLength(shared) + VarintLength(non_shared) + VarintLength(value_size);
+  const size_t prefix_len = is_first ? kPrefixSize : 0;
+  const size_t total_entry_size = varint_len + prefix_len + pk_size +
+                                  kInternalKeyFooterSize + total_value_size;
+
+  const size_t start_pos = buffer.size();
+  Resize(buffer, total_entry_size);
+  char* ptr = reinterpret_cast<char*>(buffer.data()) + start_pos;
+
+  // Write delta-encoding
+  ptr = EncodeVarint32(ptr, shared);
+  ptr = EncodeVarint32(ptr, non_shared);
+  ptr = EncodeVarint32(ptr, value_size);
+
+  if (is_first) [[unlikely]] {
+    absl::big_endian::Store(ptr, _table_id);
+    absl::big_endian::Store(ptr + sizeof(ObjectId), _column_id);
+    ptr += kPrefixSize;
   }
 
-  block.last_pk_offset = buffer.size();
-  block.last_pk_size = AppendPK(block);
+  block.last_pk_offset = ptr - reinterpret_cast<char*>(buffer.data());
+  if constexpr (IsGeneratedPK) {
+    const int64_t generated_pk = _generated_pk_counter + _total_entry_cnt;
+    absl::big_endian::Store(ptr, generated_pk);
+    ptr[0] = static_cast<uint8_t>(ptr[0]) ^ 0x80;
+    block.last_pk_size = sizeof(generated_pk);
+  } else {
+    const auto& pk = (*_keys)[_row_idx];
+    std::memcpy(ptr, pk.data(), pk.size());
+    block.last_pk_size = pk.size();
+  }
+  ptr += block.last_pk_size;
 
-  const size_t footer_pos = buffer.size();
-  Resize(buffer, kInternalKeyFooterSize);
-  std::memcpy(reinterpret_cast<char*>(buffer.data()) + footer_pos,
-              &rocksdb::SstFileWriter::kInternalKeyFooter,
+  std::memcpy(ptr, &rocksdb::SstFileWriter::kInternalKeyFooter,
               kInternalKeyFooterSize);
+  ptr += kInternalKeyFooterSize;
 
   for (const auto& slice : value_slices) {
-    const size_t value_pos = buffer.size();
-    Resize(buffer, slice.size());
-    std::memcpy(reinterpret_cast<char*>(buffer.data()) + value_pos,
-                slice.data(), slice.size());
+    std::memcpy(ptr, slice.data(), slice.size());
+    ptr += slice.size();
   }
 
   block.raw_key_size += kPrefixSize + pk_size + kInternalKeyFooterSize;
@@ -249,12 +265,13 @@ rocksdb::BlockFlushData SSTBlockBuilder<IsGeneratedPK>::Finish(
   // Store last key in member variable to avoid dangling pointer
   _last_key_buffer = BuildLastKey();
 
-  return {.buffer = {reinterpret_cast<char*>(_cur.buffer.data()), _cur.buffer.size()},
-          .last_key_in_current_block = _last_key_buffer,
-          .first_key_in_next_block = first_key_in_next_block,
-          .num_entries = _cur.entry_cnt,
-          .raw_key_size = _cur.raw_key_size,
-          .raw_value_size = _cur.raw_value_size};
+  return {
+    .buffer = {reinterpret_cast<char*>(_cur.buffer.data()), _cur.buffer.size()},
+    .last_key_in_current_block = _last_key_buffer,
+    .first_key_in_next_block = first_key_in_next_block,
+    .num_entries = _cur.entry_cnt,
+    .raw_key_size = _cur.raw_key_size,
+    .raw_value_size = _cur.raw_value_size};
 }
 
 template<bool IsGeneratedPK>

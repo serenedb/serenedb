@@ -73,12 +73,12 @@ std::unique_ptr<SinkIndexWriter> MakeInvertedIndexWriter(
   if constexpr (Kind == axiom::connector::WriteKind::kInsert) {
     return std::make_unique<search::SearchSinkInsertWriter>(transaction,
                                                             columns);
-  }
-  if constexpr (Kind == axiom::connector::WriteKind::kUpdate) {
+  } else if constexpr (Kind == axiom::connector::WriteKind::kUpdate) {
     return std::make_unique<search::SearchSinkUpdateWriter>(transaction,
                                                             columns);
-  }
-  if constexpr (Kind == axiom::connector::WriteKind::kDelete) {
+  } else {
+    static_assert(Kind == axiom::connector::WriteKind::kDelete,
+                  "Unexpected WriteKind");
     return std::make_unique<search::SearchSinkDeleteWriter>(transaction);
   }
 }

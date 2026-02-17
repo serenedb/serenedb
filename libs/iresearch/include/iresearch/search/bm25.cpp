@@ -213,7 +213,8 @@ IRS_FORCE_INLINE void Bm15(T* IRS_RESTRICT res, size_t n,
 }
 
 template<bool HasBoost, typename T>
-IRS_FORCE_INLINE void Bm25(T* res, size_t n, const uint32_t* IRS_RESTRICT freq,
+IRS_FORCE_INLINE void Bm25(T* IRS_RESTRICT res, size_t n,
+                           const uint32_t* IRS_RESTRICT freq,
                            const uint32_t* IRS_RESTRICT norm,
                            [[maybe_unused]] const score_t* IRS_RESTRICT boost,
                            float_t num, float_t norm_const,

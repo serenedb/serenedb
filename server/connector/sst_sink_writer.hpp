@@ -64,8 +64,17 @@ class SSTBlockBuilder {
   bool IsEmpty() const { return _cur.entry_cnt == 0; }
 
  private:
+  struct UnitializedChar {
+    char val;
+
+    // necessary to prevent zero-initialization of val
+    UnitializedChar() {}
+
+    operator char() const { return val; }
+  };
+
   struct Block {
-    std::string buffer;
+    std::vector<UnitializedChar> buffer;
     size_t last_pk_size = 0;
     size_t last_pk_offset = 0;
 

@@ -81,12 +81,18 @@ inline char* EncodeVarint32(char* dst, uint32_t v) {
   return reinterpret_cast<char*>(ptr);
 }
 
-inline void PutVarint32x3ToBuffer(std::string& buffer, uint32_t v1, uint32_t v2,
+template<typename Buffer>
+inline void Resize(Buffer& buf, size_t additional) {
+  buf.resize(buf.size() + additional);
+}
+
+template<typename Buffer>
+inline void PutVarint32x3ToBuffer(Buffer& buffer, uint32_t v1, uint32_t v2,
                                   uint32_t v3) {
   const size_t len = VarintLength(v1) + VarintLength(v2) + VarintLength(v3);
   const size_t pos = buffer.size();
-  basics::StrAppend(buffer, len);
-  char* ptr = buffer.data() + pos;
+  Resize(buffer, len);
+  char* ptr = reinterpret_cast<char*>(buffer.data()) + pos;
   ptr = EncodeVarint32(ptr, v1);
   ptr = EncodeVarint32(ptr, v2);
   EncodeVarint32(ptr, v3);
@@ -131,9 +137,12 @@ void SSTBlockBuilder<IsGeneratedPK>::AddEntryImpl(
                           static_cast<uint32_t>(total_value_size));
 
     const size_t pos = buffer.size();
-    basics::StrAppend(buffer, kPrefixSize);
-    absl::big_endian::Store(buffer.data() + pos, _table_id);
-    absl::big_endian::Store(buffer.data() + pos + sizeof(ObjectId), _column_id);
+    Resize(buffer, kPrefixSize);
+    absl::big_endian::Store(reinterpret_cast<char*>(buffer.data()) + pos,
+                            _table_id);
+    absl::big_endian::Store(
+      reinterpret_cast<char*>(buffer.data()) + pos + sizeof(ObjectId),
+      _column_id);
   } else {
     const uint32_t non_shared = pk_size + kInternalKeyFooterSize;
     PutVarint32x3ToBuffer(buffer, kPrefixSize, non_shared,
@@ -144,15 +153,16 @@ void SSTBlockBuilder<IsGeneratedPK>::AddEntryImpl(
   block.last_pk_size = AppendPK(block);
 
   const size_t footer_pos = buffer.size();
-  basics::StrAppend(buffer, kInternalKeyFooterSize);
-  std::memcpy(buffer.data() + footer_pos,
+  Resize(buffer, kInternalKeyFooterSize);
+  std::memcpy(reinterpret_cast<char*>(buffer.data()) + footer_pos,
               &rocksdb::SstFileWriter::kInternalKeyFooter,
               kInternalKeyFooterSize);
 
   for (const auto& slice : value_slices) {
     const size_t value_pos = buffer.size();
-    basics::StrAppend(buffer, slice.size());
-    std::memcpy(buffer.data() + value_pos, slice.data(), slice.size());
+    Resize(buffer, slice.size());
+    std::memcpy(reinterpret_cast<char*>(buffer.data()) + value_pos,
+                slice.data(), slice.size());
   }
 
   block.raw_key_size += kPrefixSize + pk_size + kInternalKeyFooterSize;
@@ -174,11 +184,18 @@ template<bool IsGeneratedPK>
 size_t SSTBlockBuilder<IsGeneratedPK>::AppendPK(Block& block) {
   if constexpr (IsGeneratedPK) {
     const int64_t generated_pk = _generated_pk_counter + _total_entry_cnt;
-    primary_key::AppendSigned(block.buffer, generated_pk);
+    const size_t pos = block.buffer.size();
+    Resize(block.buffer, sizeof(generated_pk));
+    char* ptr = reinterpret_cast<char*>(block.buffer.data()) + pos;
+    absl::big_endian::Store(ptr, generated_pk);
+    ptr[0] = static_cast<uint8_t>(ptr[0]) ^ 0x80;
     return sizeof(generated_pk);
   } else {
     const auto& pk = (*_keys)[_row_idx];
-    block.buffer.append(pk);
+    const size_t pos = block.buffer.size();
+    Resize(block.buffer, pk.size());
+    std::memcpy(reinterpret_cast<char*>(block.buffer.data()) + pos, pk.data(),
+                pk.size());
     return pk.size();
   }
 }
@@ -189,7 +206,6 @@ std::string SSTBlockBuilder<IsGeneratedPK>::BuildLastKey() const {
                           sizeof(rocksdb::SstFileWriter::kInternalKeyFooter);
   std::string last_key;
   basics::StrResize(last_key, key_size);
-
   absl::big_endian::Store(last_key.data(), _table_id);
   absl::big_endian::Store(last_key.data() + sizeof(ObjectId), _column_id);
   std::memcpy(last_key.data() + kPrefixSize,
@@ -206,14 +222,14 @@ rocksdb::BlockFlushData SSTBlockBuilder<IsGeneratedPK>::Finish(
   std::span<const rocksdb::Slice> next_block_first_value) {
   constexpr uint32_t kRestartOffset = 0;
   size_t pos = _cur.buffer.size();
-  basics::StrAppend(_cur.buffer, sizeof(uint32_t));
+  Resize(_cur.buffer, sizeof(uint32_t));
   absl::little_endian::Store(
     reinterpret_cast<uint32_t*>(_cur.buffer.data() + pos), kRestartOffset);
 
   constexpr uint32_t kNumRestarts = 1;
   uint32_t block_footer = kNumRestarts;
   pos = _cur.buffer.size();
-  basics::StrAppend(_cur.buffer, sizeof(uint32_t));
+  Resize(_cur.buffer, sizeof(uint32_t));
   absl::little_endian::Store(
     reinterpret_cast<uint32_t*>(_cur.buffer.data() + pos), block_footer);
 
@@ -225,15 +241,15 @@ rocksdb::BlockFlushData SSTBlockBuilder<IsGeneratedPK>::Finish(
     SDB_ASSERT(_next.last_pk_offset >= kPrefixSize);
     SDB_ASSERT(_next.last_pk_offset - kPrefixSize + key_size <=
                _next.buffer.size());
-    const char* first_key =
-      _next.buffer.data() + _next.last_pk_offset - kPrefixSize;
+    const char* first_key = reinterpret_cast<const char*>(_next.buffer.data()) +
+                            _next.last_pk_offset - kPrefixSize;
     first_key_in_next_block = {first_key, key_size};
   }
 
   // Store last key in member variable to avoid dangling pointer
   _last_key_buffer = BuildLastKey();
 
-  return {.buffer = &_cur.buffer,
+  return {.buffer = {reinterpret_cast<char*>(_cur.buffer.data()), _cur.buffer.size()},
           .last_key_in_current_block = _last_key_buffer,
           .first_key_in_next_block = first_key_in_next_block,
           .num_entries = _cur.entry_cnt,

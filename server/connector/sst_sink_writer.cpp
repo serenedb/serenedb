@@ -306,8 +306,10 @@ SSTSinkWriter<IsGeneratedPK>::SSTSinkWriter(ObjectId table_id, rocksdb::DB& db,
   rocksdb::EnvOptions env;
   env.use_direct_writes = true;
 
-  const auto generated_pk_counter =
-    std::bit_cast<int64_t>(RevisionId::create().id());
+  int64_t generated_pk_counter = 0;
+  if constexpr (IsGeneratedPK) {
+    generated_pk_counter = std::bit_cast<int64_t>(RevisionId::create().id());
+  }
   for (size_t i = 0; i < _writers.size(); ++i) {
     if (columns[i].id == catalog::Column::kGeneratedPKId) {
       continue;

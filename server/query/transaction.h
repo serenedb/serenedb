@@ -69,8 +69,6 @@ class Transaction : public Config {
 
   Result Begin(IsolationLevel isolation_level = IsolationLevel::RepeatableRead);
 
-  IsolationLevel GetIsolationLevel() const noexcept { return _isolation_level; }
-
   Result Commit();
 
   Result Rollback();

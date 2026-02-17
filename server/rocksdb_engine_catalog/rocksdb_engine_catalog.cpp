@@ -901,7 +901,10 @@ Result RocksDBEngineCatalog::VisitDatabases(
   std::unique_ptr<rocksdb::Iterator> iter(_db->NewIterator(
     read_options, RocksDBColumnFamilyManager::get(
                     RocksDBColumnFamilyManager::Family::Definitions)));
-  auto r_slice = RocksDbSlice(RocksDBEntryType::Database);
+  std::string prefix;
+  rocksutils::Concat(prefix, id::kRoot, RocksDBEntryType::Database);
+  SDB_INFO("xxxxx", Logger::FIXME, "Visiting with prefix: ", prefix);
+  auto r_slice = rocksdb::Slice{prefix};
   for (iter->Seek(r_slice); iter->Valid() && iter->key().starts_with(r_slice);
        iter->Next()) {
     auto slice =
@@ -1163,7 +1166,7 @@ Result RocksDBEngineCatalog::createDatabase(ObjectId id, vpack::Slice slice) {
     _db->GetRootDB(),
     [&] {
       RocksDBKeyWithBuffer key;
-      key.constructDefinition(id::kSystemDB, RocksDBEntryType::Database, id);
+      key.constructDefinition(id::kRoot, RocksDBEntryType::Database, id);
       return key;
     },
     [&] { return RocksDBValue::Database(slice); },

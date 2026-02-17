@@ -304,7 +304,7 @@ class SnapshotImpl : public Snapshot {
 
   std::shared_ptr<Database> GetDatabase(std::string_view database) const final {
     return _resolution_table
-      .ResolveObject<ResolveType::Database>(ObjectId{0}, database)
+      .ResolveObject<ResolveType::Database>(id::kRoot, database)
       .transform([&](ObjectId db_id) {
         auto it = _objects.find(db_id);
         SDB_ASSERT(it != _objects.end());
@@ -670,7 +670,7 @@ Result LocalCatalog::RegisterRole(std::shared_ptr<Role> role) {
 Result LocalCatalog::RegisterDatabase(std::shared_ptr<Database> database) {
   absl::MutexLock lock{&_mutex};
   return _snapshot->RegisterObject<ResolveType::Database, ObjectDependency>(
-    std::move(database), ObjectId{0}, false);
+    std::move(database), id::kRoot, false);
 }
 
 Result LocalCatalog::RegisterSchema(ObjectId database_id,
@@ -713,7 +713,7 @@ Result LocalCatalog::CreateDatabase(std::shared_ptr<Database> database) {
   return Apply(_snapshot, [&](auto& clone) {
     auto r =
       clone->template RegisterObject<ResolveType::Database, ObjectDependency>(
-        database, ObjectId{0}, false);
+        database, id::kRoot, false);
     if (!r.ok()) {
       return r;
     }
@@ -1232,14 +1232,19 @@ Result LocalCatalog::DropDatabase(std::string_view name,
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) {
     auto db_id =
-      clone->template GetObjectId<ResolveType::Database>(ObjectId{0}, name);
+      clone->template GetObjectId<ResolveType::Database>(id::kRoot, name);
     if (!db_id) {
       return Result{ERROR_SERVER_ILLEGAL_NAME};
     }
     auto task = clone->CreateDatabaseDrop(*db_id);
-    auto id = clone->template UnregisterObject<ResolveType::Database>(
-      ObjectId{0}, name);
+    auto id =
+      clone->template UnregisterObject<ResolveType::Database>(id::kRoot, name);
     SDB_ASSERT(id && *id == *db_id);
+    if (auto r = GetServerEngine().WriteTombstone(
+          id::kRoot, RocksDBEntryType::ScopeTombstone, *id);
+        !r.ok()) {
+      return r;
+    }
     auto res = QueueDropTask(std::move(task));
     if (async_result) {
       *async_result = std::move(res);

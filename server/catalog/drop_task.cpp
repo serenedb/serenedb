@@ -176,14 +176,18 @@ AsyncResult SchemaDrop::operator()() {
   for (auto& table : tables) {
     async_results.push_back(QueueDropTask(table).ThenInline([](Result&& r) {}));
   }
+  auto on_finish = [self = shared_from_this()]() {
+    auto r = self->Finalize();
+    if (!CheckResult(r)) {
+      return QueueDropTask(self);
+    }
+    return yaclib::MakeFuture<Result>(ERROR_OK);
+  };
+  if (async_results.empty()) {
+    return on_finish();
+  }
   return yaclib::WhenAll(async_results.begin(), async_results.end())
-    .ThenInline([self = shared_from_this()]() {
-      auto r = self->Finalize();
-      if (!CheckResult(r)) {
-        return QueueDropTask(self);
-      }
-      return yaclib::MakeFuture<Result>(ERROR_OK);
-    });
+    .ThenInline(std::move(on_finish));
 }
 
 Result DatabaseDrop::Finalize() {
@@ -192,11 +196,11 @@ Result DatabaseDrop::Finalize() {
   if (!CheckResult(r)) {
     return r;
   }
-  r = server.DropEntry(id, RocksDBEntryType::ScopeTombstone);
+  r = server.DropObject(id::kRoot, RocksDBEntryType::ScopeTombstone, id);
   if (!CheckResult(r)) {
     return r;
   }
-  r = server.DropObject(id::kSystemDB, RocksDBEntryType::Database, id);
+  r = server.DropObject(id::kRoot, RocksDBEntryType::Database, id);
   if (!CheckResult(r)) {
     return r;
   }
@@ -209,14 +213,18 @@ AsyncResult DatabaseDrop::operator()() {
   for (auto& schema : schemas) {
     async_results.push_back(QueueDropTask(schema).ThenInline([](Result&&) {}));
   }
+  auto on_finish = [self = shared_from_this()]() {
+    auto r = self->Finalize();
+    if (!CheckResult(r)) {
+      return QueueDropTask(self);
+    }
+    return yaclib::MakeFuture<Result>(ERROR_OK);
+  };
+  if (async_results.empty()) {
+    return on_finish();
+  }
   return yaclib::WhenAll(async_results.begin(), async_results.end())
-    .ThenInline([self = shared_from_this()]() {
-      auto r = self->Finalize();
-      if (!CheckResult(r)) {
-        return QueueDropTask(self);
-      }
-      return yaclib::MakeFuture<Result>(ERROR_OK);
-    });
+    .ThenInline(std::move(on_finish));
 }
 
 }  // namespace sdb::catalog

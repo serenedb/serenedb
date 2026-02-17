@@ -42,6 +42,7 @@ inline constexpr ObjectId kInvalid{};
 inline constexpr ObjectId kRootUser{1000000};
 
 // Database IDs
+inline constexpr ObjectId kRoot{1000004};
 inline constexpr ObjectId kTombstoneDatabase{1000001};
 inline constexpr ObjectId kSystemDB{1000002};
 inline constexpr ObjectId kMaxSystem{2000000};

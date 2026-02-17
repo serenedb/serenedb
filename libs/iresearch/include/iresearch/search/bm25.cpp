@@ -346,7 +346,7 @@ struct Bm25Score : public ScoreOperator {
   }
 
   void ScorePostingBlock(score_t* res) noexcept final {
-    Bm25<HasFilterBoost>(res, kScoreBlock, freq->value, norm,
+    Bm25<HasFilterBoost>(res, kPostingBlock, freq->value, norm,
                          TryGetValue(filter_boost), num, norm_const,
                          norm_length);
   }

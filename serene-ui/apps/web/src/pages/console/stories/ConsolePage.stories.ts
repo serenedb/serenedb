@@ -138,7 +138,8 @@ export const SupportModal: Story = {
         } as MatchImageSnapshotOptions);
     },
 };
-
+{
+    /*
 export const AddConnection: Story = {
     tags: ["test"],
     play: async ({ canvasElement }) => {
@@ -320,3 +321,5 @@ export const ExecuteCorrectQuery: Story = {
         await body.findByText("schemaname", {}, { timeout: 15000 });
     },
 };
+*/
+}

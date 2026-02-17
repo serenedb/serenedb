@@ -293,9 +293,7 @@ SSTSinkWriter<IsGeneratedPK>::SSTSinkWriter(ObjectId table_id, rocksdb::DB& db,
   if (!options.table_factory ||
       !options.table_factory->IsInstanceOf(
         rocksdb::TableFactory::kBlockBasedTableName())) {
-    SDB_THROW(
-      ERROR_INTERNAL,
-      "SSTSinkWriter requires BlockBasedTableFactory for PutByInternalKey");
+    SDB_THROW(ERROR_INTERNAL, "SSTSinkWriter requires BlockBasedTableFactory");
   }
 
   options.compression = rocksdb::kNoCompression;

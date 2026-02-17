@@ -100,7 +100,7 @@ class SSTBlockBuilder {
 
   int64_t _generated_pk_counter = 0;
   ObjectId _table_id;
-  catalog::Column::Id _column_id;
+  catalog::Column::Id _column_id = 0;
   uint64_t _total_entry_cnt = 0;
 
   std::string _last_key_buffer;
@@ -156,7 +156,6 @@ class SSTSinkWriter {
   std::vector<std::unique_ptr<rocksdb::SstFileWriter>> _writers;
   std::vector<std::unique_ptr<SSTBlockBuilder<IsGeneratedPK>>> _block_builders;
   std::string _sst_directory;
-  std::string _next_key_buffer;
   int64_t _column_idx = -1;
 };
 

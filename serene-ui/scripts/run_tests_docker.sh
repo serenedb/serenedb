@@ -13,8 +13,10 @@ trap cleanup EXIT
 wait_for_service() {
   echo "⏳ Waiting for serene-ui..."
   for i in $(seq 1 "$MAX_ATTEMPTS"); do
-    docker compose -f "$COMPOSE_FILE" exec -T serene-ui \
-      wget -qO /dev/null http://localhost:3000 2>/dev/null && return 0
+    container_id="$(docker compose -f "$COMPOSE_FILE" ps -q serene-ui || true)"
+    if [[ -n "$container_id" ]] && [[ "$(docker inspect -f '{{.State.Running}}' "$container_id" 2>/dev/null || true)" == "true" ]]; then
+      return 0
+    fi
     echo "  attempt $i/$MAX_ATTEMPTS..."
     sleep 2
   done

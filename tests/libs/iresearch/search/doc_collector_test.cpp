@@ -76,9 +76,8 @@ struct DocIdScorer : irs::ScorerBase<void> {
   irs::doc_id_t divisor;
 };
 
-auto constexpr kScoreDescending = [](const auto& lhs,
-                                     const auto& rhs) noexcept {
-  return lhs.second > rhs.second;
+constexpr auto kScoreDescending = [](const auto& l, const auto& r) noexcept {
+  return std::get<irs::score_t>(l) > std::get<irs::score_t>(r);
 };
 
 class DocCollectorTestCase : public IndexTestBase {};
@@ -113,7 +112,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_basic) {
                                   kScoreDescending));
     // With DocIdScorer, score equals doc_id
     for (size_t i = 0; i < result_count; ++i) {
-      ASSERT_EQ(results[i].first, results[i].second);
+      ASSERT_EQ(std::get<irs::doc_id_t>(results[i]),
+                std::get<irs::score_t>(results[i]));
     }
   }
 }
@@ -372,8 +372,9 @@ TEST_P(DocCollectorTestCase, test_execute_topk_k_equals_one) {
     auto result_count = std::min(count, k);
     ASSERT_EQ(1, result_count);
     // The single result should have score equal to doc_id (highest doc_id)
-    ASSERT_EQ(results[0].first, results[0].second);
-    ASSERT_EQ(total_docs, results[0].first);
+    ASSERT_EQ(std::get<irs::doc_id_t>(results[0]),
+              std::get<irs::score_t>(results[0]));
+    ASSERT_EQ(total_docs, std::get<irs::doc_id_t>(results[0]));
   }
 }
 
@@ -408,9 +409,9 @@ TEST_P(DocCollectorTestCase, test_execute_topk_verifies_top_docs) {
 
     // With DocIdScorer, top 3 should be docs with highest doc_ids
     // Doc IDs start from 1, so for N docs, top 3 are N, N-1, N-2
-    ASSERT_EQ(total_docs, results[0].first);
-    ASSERT_EQ(total_docs - 1, results[1].first);
-    ASSERT_EQ(total_docs - 2, results[2].first);
+    ASSERT_EQ(total_docs, std::get<irs::doc_id_t>(results[0]));
+    ASSERT_EQ(total_docs - 1, std::get<irs::doc_id_t>(results[1]));
+    ASSERT_EQ(total_docs - 2, std::get<irs::doc_id_t>(results[2]));
   }
 }
 
@@ -447,7 +448,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_similar_scores) {
                                   kScoreDescending));
     // All top results should have score 2 (the maximum score from mod 3)
     for (size_t i = 0; i < result_count; ++i) {
-      ASSERT_EQ(2, results[i].second);
+      ASSERT_EQ(2, std::get<irs::score_t>(results[i]));
     }
   }
 
@@ -467,8 +468,8 @@ TEST_P(DocCollectorTestCase, test_execute_topk_similar_scores) {
                                   kScoreDescending));
     // Verify scores are valid (0, 1, or 2)
     for (size_t i = 0; i < result_count; ++i) {
-      ASSERT_GE(results[i].second, 0);
-      ASSERT_LE(results[i].second, 2);
+      ASSERT_GE(std::get<irs::score_t>(results[i]), 0);
+      ASSERT_LE(std::get<irs::score_t>(results[i]), 2);
     }
   }
 }
@@ -502,7 +503,7 @@ TEST_P(DocCollectorTestCase, test_execute_topk_all_same_score) {
     ASSERT_EQ(5, result_count);
     // All scores should be 0
     for (size_t i = 0; i < result_count; ++i) {
-      ASSERT_EQ(0, results[i].second);
+      ASSERT_EQ(0, std::get<irs::score_t>(results[i]));
     }
   }
 }

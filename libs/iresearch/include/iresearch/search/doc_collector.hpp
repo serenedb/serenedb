@@ -89,6 +89,8 @@ inline uint64_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
     }
 
     it->Collect(score_func, fetcher, collector);
+
+    collector.SetScoreThreshold(score_threshold);
   }
 
   const auto count = collector.Finalize();

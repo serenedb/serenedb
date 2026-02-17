@@ -151,8 +151,8 @@ class BlockScoringTestCase : public IndexTestBase {
  protected:
   // Helper to check if doc ID is valid
   static bool IsValidDoc(auto& doc) {
-    return !irs::doc_limits::eof(doc.first) &&
-           doc.first != irs::doc_limits::invalid();
+    return !irs::doc_limits::eof(std::get<irs::doc_id_t>(doc)) &&
+           std::get<irs::doc_id_t>(doc) != irs::doc_limits::invalid();
   }
 
   // Helper to read string column value for a document
@@ -173,7 +173,8 @@ class BlockScoringTestCase : public IndexTestBase {
     if (!payload) {
       return {};
     }
-    if (doc.first != values->seek(doc.first)) {
+    if (std::get<irs::doc_id_t>(doc) !=
+        values->seek(std::get<irs::doc_id_t>(doc))) {
       return {};
     }
     return irs::ToString<std::string>(payload->value.data());
@@ -226,10 +227,11 @@ class BlockScoringTestCase : public IndexTestBase {
   // Helper to verify scores are positive, descending, and doc IDs are valid
   void VerifyScoresAndDocs(auto docs, size_t result_count) {
     for (size_t i = 0; i < result_count; ++i) {
-      EXPECT_GT(docs[i].second, 0)
+      EXPECT_GT(std::get<irs::score_t>(docs[i]), 0)
         << "Score at position " << i << " should be positive";
       if (i > 0) {
-        EXPECT_GE(docs[i - 1].second, docs[i].second)
+        EXPECT_GE(std::get<irs::score_t>(docs[i - 1]),
+                  std::get<irs::score_t>(docs[i]))
           << "Scores should be in descending order at position " << i;
       }
       ASSERT_TRUE(IsValidDoc(docs[i]))

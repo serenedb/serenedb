@@ -93,8 +93,8 @@ class NthPartitionScoreCollector final : public ScoreCollector {
     SDB_ASSERT(2 * k == hits.size());
   }
 
-  void SetScoreThreshold(score_t& IRS_RESTRICT score_threshold) noexcept {
-    SDB_ASSERT(&score_threshold != _score_threshold);
+  void SetScoreThreshold(score_t& score_threshold) noexcept {
+    SDB_ASSERT(score_threshold <= *_score_threshold);
     score_threshold = *_score_threshold;
     _score_threshold = &score_threshold;
   }
@@ -109,7 +109,7 @@ class NthPartitionScoreCollector final : public ScoreCollector {
     if (_hits_it != _hits_end) {
       return;
     }
-    _hits_it = _hits_begin;
+    _hits_it = _hits_pivot;
     std::nth_element(_hits_begin, _hits_pivot, _hits_end,
                      [](const auto& l, const auto& r) {
                        return std::get<score_t>(l) > std::get<score_t>(r);

@@ -9,8 +9,8 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 //const TEST_CONNECTION_NAME = "test";
 //const TEST_CONNECTION_PORT = "6363";
-const VIEWPORT_WIDTH = 1200;
-const VIEWPORT_HEIGHT = 900;
+const VIEWPORT_WIDTH = 960;
+const VIEWPORT_HEIGHT = 720;
 
 const setConsistentViewport = async () => {
     const { page } = await import("vitest/browser");

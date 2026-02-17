@@ -61,8 +61,8 @@ export default defineConfig({
             }),
             instances: [{ browser: "chromium" }],
             viewport: {
-                width: 1920,
-                height: 1080,
+                width: 960,
+                height: 720,
             },
             commands: {
                 compareScreenshot,

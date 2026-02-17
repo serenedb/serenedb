@@ -45,6 +45,8 @@ yaclib::Future<Result> Transaction(ExecContext& context,
               strVal(&castNode(A_Const, option.arg)->val);
             if (level == "repeatable read") {
               isolation_level = IsolationLevel::RepeatableRead;
+            } else if (level == "read committed") {
+              isolation_level = IsolationLevel::ReadCommitted;
             } else {
               THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                               ERR_MSG("transaction isolation level \"", level,

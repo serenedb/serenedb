@@ -88,6 +88,8 @@ class Transaction : public Config {
 
   bool HasTransactionBegin() const noexcept;
 
+  IsolationLevel GetIsolationLevel() const noexcept { return _isolation_level; }
+
   rocksdb::Transaction* GetRocksDBTransaction() const noexcept;
 
   rocksdb::Transaction& EnsureRocksDBTransaction();

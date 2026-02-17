@@ -142,6 +142,9 @@ rocksdb::Transaction* Transaction::GetRocksDBTransaction() const noexcept {
 
 const rocksdb::Snapshot& Transaction::EnsureRocksDBSnapshot() {
   SDB_ASSERT((_state & State::HasRocksDBRead) != State::None);
+  SDB_ASSERT(
+    _isolation_level != IsolationLevel::ReadCommitted,
+    "Read Commited assumes snapshot per statement, not per transaction");
   if (!_rocksdb_snapshot) {
     if ((_state & State::HasRocksDBWrite) != State::None) {
       CreateRocksDBTransaction();

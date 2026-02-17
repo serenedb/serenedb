@@ -100,14 +100,15 @@ RocksDBRYOWDataSource::RocksDBRYOWDataSource(
   velox::memory::MemoryPool& memory_pool, rocksdb::Transaction& transaction,
   rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
   std::vector<catalog::Column::Id> column_ids,
-  catalog::Column::Id effective_column_id, ObjectId object_key)
+  catalog::Column::Id effective_column_id, ObjectId object_key,
+  const rocksdb::Snapshot* snapshot)
   : RocksDBDataSource{memory_pool,
                       cf,
                       std::move(row_type),
                       std::move(column_ids),
                       effective_column_id,
                       object_key,
-                      transaction.GetSnapshot()},
+                      snapshot},
     _transaction{transaction} {}
 
 RocksDBSnapshotDataSource::RocksDBSnapshotDataSource(

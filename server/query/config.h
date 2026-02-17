@@ -63,7 +63,8 @@ enum class ByteaOutput : uint8_t {
 };
 
 enum class IsolationLevel : uint8_t {
-  RepeatableRead = 0,
+  ReadCommitted = 0,
+  RepeatableRead,
 };
 
 struct VariableDescription {
@@ -135,9 +136,12 @@ class Config : public velox::config::IConfig {
       }
     } else if constexpr (T == VariableType::PgTransactionIsolation) {
       SDB_ASSERT(key == "default_transaction_isolation");
-      SDB_ASSERT(absl::EqualsIgnoreCase("repeatable read", *value_str),
+      if (absl::EqualsIgnoreCase("repeatable read", *value_str)) {
+        return IsolationLevel::RepeatableRead;
+      }
+      SDB_ASSERT(absl::EqualsIgnoreCase("read committed", *value_str),
                  "default_transaction_isolation is not validated");
-      return IsolationLevel::RepeatableRead;
+      return IsolationLevel::ReadCommitted;
     } else if constexpr (T == VariableType::SdbWriteConflictPolicy) {
       SDB_ASSERT(key == "sdb_write_conflict_policy");
       if (absl::EqualsIgnoreCase("emit_error", *value_str)) {

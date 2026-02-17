@@ -207,6 +207,9 @@ size_t SSTBlockBuilder<IsGeneratedPK>::AppendPK(Block& block) {
     ptr[0] = static_cast<uint8_t>(ptr[0]) ^ 0x80;
     return sizeof(generated_pk);
   } else {
+    // TODO: maybe it's better to build primary key directly
+    // in the buffer of the first SSTBlockBuilder and the others
+    // will copy from the first
     const auto& pk = (*_keys)[_row_idx];
     const size_t pos = block.buffer.size();
     Resize(block.buffer, pk.size());

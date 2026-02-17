@@ -246,7 +246,7 @@ jobs:
 
             - name: Install Playwright
               if: inputs.RUN_TESTS
-              run: npx playwright install --with-deps
+              run: npx playwright install
 
             - name: Run tests
               if: inputs.RUN_TESTS

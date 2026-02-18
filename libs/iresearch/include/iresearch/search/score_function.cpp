@@ -29,7 +29,7 @@
 namespace irs {
 namespace {
 
-template<ScoreMergeType MergeType = ScoreMergeType::Noop>
+template<ScoreMergeType MergeType>
 IRS_FORCE_INLINE void ConstantScoreImpl(score_t* res, ScoresCountType n,
                                         score_t value) {
   if constexpr (MergeType == ScoreMergeType::Noop) {
@@ -48,7 +48,7 @@ class ConstanScore : public ScoreOperator {
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
                                   ScoresCountType n) const noexcept {
-    ConstantScoreImpl(res, n, _value);
+    ConstantScoreImpl<MergeType>(res, n, _value);
   }
 
   score_t Score() const noexcept final { return _value; }

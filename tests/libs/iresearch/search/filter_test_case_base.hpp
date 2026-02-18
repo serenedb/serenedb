@@ -124,7 +124,7 @@ struct Boost : public irs::ScorerBase<Boost, void> {
 
     template<irs::ScoreMergeType MergeType = irs::ScoreMergeType::Noop>
     void ScoreImpl(irs::score_t* res, irs::ScoresCountType n) const noexcept {
-      SDB_ASSERT(MergeType == irs::ScoreMergeType::Noop);
+      ASSERT_EQ(MergeType, irs::ScoreMergeType::Noop);
       std::fill_n(res, n, boost);
     }
 
@@ -218,8 +218,8 @@ struct CustomSort : public irs::ScorerBase<CustomSort, void> {
 
     template<irs::ScoreMergeType MergeType = irs::ScoreMergeType::Noop>
     void ScoreImpl(irs::score_t* res, irs::ScoresCountType n) const noexcept {
-      SDB_ASSERT(MergeType == irs::ScoreMergeType::Noop);
       if (sort.scorer_score) {
+        ASSERT_EQ(MergeType, irs::ScoreMergeType::Noop);
         sort.scorer_score(this, res, n);
       } else {
         std::fill_n(res, n, 0);

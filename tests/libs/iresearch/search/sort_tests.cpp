@@ -135,7 +135,7 @@ struct Impl : irs::ScoreOperator {
 
   template<irs::ScoreMergeType MergeType = irs::ScoreMergeType::Noop>
   void ScoreImpl(irs::score_t* res, irs::ScoresCountType n) const noexcept {
-    SDB_ASSERT(MergeType == irs::ScoreMergeType::Noop);
+    ASSERT_EQ(MergeType, irs::ScoreMergeType::Noop);
     buf[0] = 42;
     std::fill_n(res, n, 42);
   }

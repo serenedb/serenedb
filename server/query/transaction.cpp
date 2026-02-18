@@ -74,7 +74,6 @@ Result Transaction::Commit() {
       return {ERROR_INTERNAL,
               "Failed to commit RocksDB transaction: ", status.ToString()};
     }
-
     // id is first write operation seqno in the WAL
     auto post_commit_seq = _rocksdb_transaction->GetId();
     // add number of operations to get last operation seqno
@@ -88,11 +87,12 @@ Result Transaction::Commit() {
   std::move(abort_guard).Cancel();
   CommitVariables();
   Destroy();
-
   return {};
 }
 
 Result Transaction::Rollback() {
+  SDB_ASSERT(_rocksdb_transaction);
+
   auto cleanup = absl::Cleanup([&] {
     for (auto& search_transaction : _search_transactions) {
       search_transaction.second->Abort();

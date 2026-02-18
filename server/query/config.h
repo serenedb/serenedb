@@ -63,7 +63,7 @@ enum class ByteaOutput : uint8_t {
 };
 
 enum class IsolationLevel : uint8_t {
-  ReadCommitted = 0,
+  ReadCommitted,
   RepeatableRead,
 };
 

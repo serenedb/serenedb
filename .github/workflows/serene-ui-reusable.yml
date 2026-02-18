@@ -97,7 +97,7 @@ jobs:
                   BUILD_IMAGE="$IMAGE" \
                   WORKSPACE="${{ github.workspace }}/serene-ui" \
                   RUNNER_ID="$RUNNER_ID" \
-                  ./scripts/update_ownership.sh
+                  bash ./scripts/update_ownership.sh
 
             - name: Upload test artifacts
               if: inputs.RUN_TESTS
@@ -132,7 +132,7 @@ jobs:
                   WORKFLOW: ${{ github.workflow }}
                   RUN_NUMBER: ${{ github.run_number }}
                   RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-              run: ./scripts/notify_telegram.bash
+              run: ../scripts/notify_telegram.bash
 
             - name: Cleanup workspace & Docker
               if: always()
@@ -225,7 +225,7 @@ jobs:
                   WORKFLOW: ${{ github.workflow }}
                   RUN_NUMBER: ${{ github.run_number }}
                   RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-              run: ./scripts/notify_telegram.bash
+              run: ../scripts/notify_telegram.bash
 
     build-windows-app:
         name: Build Windows App
@@ -258,13 +258,13 @@ jobs:
 
             - name: Install dependencies & build
               run: |
-                  rm package-lock.json -ErrorAction SilentlyContinue
+                  rm -f package-lock.json
                   npm install
                   npm run build
 
             - name: Install Playwright
               if: inputs.RUN_TESTS
-              run: npx playwright install
+              run: npx playwright install --with-deps
 
             - name: Run tests
               if: inputs.RUN_TESTS
@@ -313,7 +313,7 @@ jobs:
                   WORKFLOW: ${{ github.workflow }}
                   RUN_NUMBER: ${{ github.run_number }}
                   RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-              run: ./scripts/notify_telegram.bash
+              run: ../scripts/notify_telegram.bash
 
     build-macos-app:
         name: Build macOS App
@@ -400,7 +400,7 @@ jobs:
                   WORKFLOW: ${{ github.workflow }}
                   RUN_NUMBER: ${{ github.run_number }}
                   RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-              run: ./scripts/notify_telegram.bash
+              run: ../scripts/notify_telegram.bash
 
               # TODO: (vlaski) add cleanup step
               #

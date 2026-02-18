@@ -88,6 +88,10 @@ jobs:
               if: inputs.RUN_TESTS
               run: ./scripts/run_tests_docker.sh 2>&1 | tee -a logs/run.log
 
+            - name: Update file ownership
+              if: always()
+              run: chown "${{ github.run_id }}" -R /serenedb
+
             - name: Upload test artifacts
               if: inputs.RUN_TESTS
               uses: actions/upload-artifact@v4

@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2019 ArangoDB GmbH, Cologne, Germany
+/// Copyright 2025 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
 /// See the License for the specific language governing permissions and
 /// limitations under the License.
 ///
-/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
 #pragma once
@@ -49,13 +49,11 @@ class PathHierarchyTokenizer final
     private util::Noncopyable {
  public:
   struct OptionsT {
-    char delimiter{'/'};       // path separator
-    char replacement{'/'};     // replacement character for delimiter
-    size_t buffer_size{1024};  // term buffer size hint
-    bool reverse{false};       // reverse: domain hierarchies (e.g. example.com)
-    size_t skip{0};            // skip first N tokens
-
-    OptionsT() = default;
+    char delimiter = '/';       // path separator
+    char replacement = '/';     // replacement character for delimiter
+    size_t buffer_size = 1024;  // term buffer size hint
+    bool reverse = false;  // reverse: domain hierarchies (e.g. example.com)
+    size_t skip = 0;       // skip first N tokens
   };
 
   static constexpr std::string_view type_name() noexcept {
@@ -74,14 +72,14 @@ class PathHierarchyTokenizer final
   void apply_replacement(std::string_view input, TermAttr& term_attr,
                          char delimiter, char replacement);
 
-  using attributes_t = std::tuple<IncAttr, OffsAttr, TermAttr>;
+  using attributes = std::tuple<IncAttr, OffsAttr, TermAttr>;
 
   struct StateT;
   struct StateDeleterT {
     void operator()(StateT*) const noexcept;
   };
 
-  attributes_t _attrs;
+  attributes _attrs;
   std::unique_ptr<StateT, StateDeleterT> _state;
   bool _term_eof;
   std::string _replace_buffer;

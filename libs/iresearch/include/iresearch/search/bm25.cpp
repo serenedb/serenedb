@@ -185,21 +185,21 @@ Scorer::ptr MakeJson(std::string_view args) {
 }
 
 template<ScoreMergeType MergeType>
-IRS_FORCE_INLINE void Bm1Boost(score_t* IRS_RESTRICT res, ScoresCountType n,
+IRS_FORCE_INLINE void Bm1Boost(score_t* IRS_RESTRICT res, scores_size_t n,
                                const score_t* IRS_RESTRICT boost,
                                score_t num) noexcept {
-  for (ScoresCountType i = 0; i != n; ++i) {
+  for (scores_size_t i = 0; i != n; ++i) {
     res[i] = boost[i] * num;
   }
 }
 
 template<ScoreMergeType MergeType, bool HasBoost>
-IRS_FORCE_INLINE void Bm15(score_t* IRS_RESTRICT res, ScoresCountType n,
+IRS_FORCE_INLINE void Bm15(score_t* IRS_RESTRICT res, scores_size_t n,
                            const uint32_t* IRS_RESTRICT freq,
                            [[maybe_unused]] const score_t* IRS_RESTRICT boost,
                            score_t num, score_t c1) noexcept {
   SDB_ASSERT(c1 != 0.f);
-  for (ScoresCountType i = 0; i != n; ++i) {
+  for (scores_size_t i = 0; i != n; ++i) {
     const auto c0 = [&] IRS_FORCE_INLINE {
       if constexpr (HasBoost) {
         SDB_ASSERT(boost);
@@ -214,13 +214,13 @@ IRS_FORCE_INLINE void Bm15(score_t* IRS_RESTRICT res, ScoresCountType n,
 }
 
 template<ScoreMergeType MergeType, bool HasBoost>
-IRS_FORCE_INLINE void Bm25(score_t* IRS_RESTRICT res, ScoresCountType n,
+IRS_FORCE_INLINE void Bm25(score_t* IRS_RESTRICT res, scores_size_t n,
                            const uint32_t* IRS_RESTRICT freq,
                            const uint32_t* IRS_RESTRICT norm,
                            [[maybe_unused]] const score_t* IRS_RESTRICT boost,
                            score_t num, score_t norm_const,
                            score_t norm_length) noexcept {
-  for (ScoresCountType i = 0; i != n; ++i) {
+  for (scores_size_t i = 0; i != n; ++i) {
     const auto c0 = [&] IRS_FORCE_INLINE {
       if constexpr (HasBoost) {
         SDB_ASSERT(boost);
@@ -243,7 +243,7 @@ struct Bm1Score : public ScoreOperator {
 
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
-                                  ScoresCountType n) const noexcept {
+                                  scores_size_t n) const noexcept {
     if constexpr (HasFilterBoost) {
       Bm1Boost<MergeType>(res, n, filter_boost, num);
     } else {
@@ -257,13 +257,13 @@ struct Bm1Score : public ScoreOperator {
     return res;
   }
 
-  void Score(score_t* res, ScoresCountType n) const noexcept final {
+  void Score(score_t* res, scores_size_t n) const noexcept final {
     ScoreImpl(res, n);
   }
-  void ScoreSum(score_t* res, ScoresCountType n) const noexcept final {
+  void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
     ScoreImpl<ScoreMergeType::Sum>(res, n);
   }
-  void ScoreMax(score_t* res, ScoresCountType n) const noexcept final {
+  void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
     ScoreImpl<ScoreMergeType::Max>(res, n);
   }
 
@@ -300,7 +300,7 @@ struct Bm15Score : public ScoreOperator {
 
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
-                                  ScoresCountType n) const noexcept {
+                                  scores_size_t n) const noexcept {
     Bm15<MergeType, HasFilterBoost>(res, n, freq->value,
                                     TryGetValue(filter_boost), num, norm_const);
   }
@@ -311,13 +311,13 @@ struct Bm15Score : public ScoreOperator {
     return res;
   }
 
-  void Score(score_t* res, ScoresCountType n) const noexcept final {
+  void Score(score_t* res, scores_size_t n) const noexcept final {
     ScoreImpl(res, n);
   }
-  void ScoreSum(score_t* res, ScoresCountType n) const noexcept final {
+  void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
     ScoreImpl<ScoreMergeType::Sum>(res, n);
   }
-  void ScoreMax(score_t* res, ScoresCountType n) const noexcept final {
+  void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
     ScoreImpl<ScoreMergeType::Max>(res, n);
   }
 
@@ -356,7 +356,7 @@ struct Bm25Score : public ScoreOperator {
 
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
-                                  ScoresCountType n) const noexcept {
+                                  scores_size_t n) const noexcept {
     Bm25<MergeType, HasFilterBoost>(res, n, freq->value, norm,
                                     TryGetValue(filter_boost), num, norm_const,
                                     norm_length);
@@ -368,13 +368,13 @@ struct Bm25Score : public ScoreOperator {
     return res;
   }
 
-  void Score(score_t* res, ScoresCountType n) const noexcept final {
+  void Score(score_t* res, scores_size_t n) const noexcept final {
     ScoreImpl(res, n);
   }
-  void ScoreSum(score_t* res, ScoresCountType n) const noexcept final {
+  void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
     ScoreImpl<ScoreMergeType::Sum>(res, n);
   }
-  void ScoreMax(score_t* res, ScoresCountType n) const noexcept final {
+  void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
     ScoreImpl<ScoreMergeType::Max>(res, n);
   }
 

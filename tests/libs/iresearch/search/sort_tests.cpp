@@ -134,21 +134,19 @@ struct Impl : irs::ScoreOperator {
   Impl() = default;
 
   template<irs::ScoreMergeType MergeType = irs::ScoreMergeType::Noop>
-  void ScoreImpl(irs::score_t* res, irs::ScoresCountType n) const noexcept {
+  void ScoreImpl(irs::score_t* res, irs::scores_size_t n) const noexcept {
     ASSERT_EQ(MergeType, irs::ScoreMergeType::Noop);
     buf[0] = 42;
     std::fill_n(res, n, 42);
   }
 
-  void Score(irs::score_t* res, irs::ScoresCountType n) const noexcept final {
+  void Score(irs::score_t* res, irs::scores_size_t n) const noexcept final {
     ScoreImpl(res, n);
   }
-  void ScoreSum(irs::score_t* res,
-                irs::ScoresCountType n) const noexcept final {
+  void ScoreSum(irs::score_t* res, irs::scores_size_t n) const noexcept final {
     ScoreImpl<irs::ScoreMergeType::Sum>(res, n);
   }
-  void ScoreMax(irs::score_t* res,
-                irs::ScoresCountType n) const noexcept final {
+  void ScoreMax(irs::score_t* res, irs::scores_size_t n) const noexcept final {
     ScoreImpl<irs::ScoreMergeType::Max>(res, n);
   }
 };

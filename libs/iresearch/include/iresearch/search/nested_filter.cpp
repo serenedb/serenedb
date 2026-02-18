@@ -261,18 +261,18 @@ struct NestedScore final : ScoreOperator {
 
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
-                                  ScoresCountType n) const noexcept {
+                                  scores_size_t n) const noexcept {
     parent_idx = 0;
     Merge<MergeType>(res, parent_scores.data(), n);
   }
 
-  void Score(score_t* res, ScoresCountType n) const noexcept final {
+  void Score(score_t* res, scores_size_t n) const noexcept final {
     ScoreImpl(res, n);
   }
-  void ScoreSum(score_t* res, ScoresCountType n) const noexcept final {
+  void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
     ScoreImpl<ScoreMergeType::Sum>(res, n);
   }
-  void ScoreMax(score_t* res, ScoresCountType n) const noexcept final {
+  void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
     ScoreImpl<ScoreMergeType::Max>(res, n);
   }
 

@@ -99,22 +99,22 @@ struct CustomSort final : public irs::ScorerBase<void> {
         sort(sort) {}
 
     template<irs::ScoreMergeType MergeType = irs::ScoreMergeType::Noop>
-    void ScoreImpl(irs::score_t* res, irs::ScoresCountType n) const noexcept {
+    void ScoreImpl(irs::score_t* res, irs::scores_size_t n) const noexcept {
       ASSERT_EQ(MergeType, irs::ScoreMergeType::Noop);
       if (sort.scorer_score) {
         sort.scorer_score(this, res, n);
       }
     }
 
-    void Score(irs::score_t* res, irs::ScoresCountType n) const noexcept final {
+    void Score(irs::score_t* res, irs::scores_size_t n) const noexcept final {
       ScoreImpl(res, n);
     }
     void ScoreSum(irs::score_t* res,
-                  irs::ScoresCountType n) const noexcept final {
+                  irs::scores_size_t n) const noexcept final {
       ScoreImpl<irs::ScoreMergeType::Sum>(res, n);
     }
     void ScoreMax(irs::score_t* res,
-                  irs::ScoresCountType n) const noexcept final {
+                  irs::scores_size_t n) const noexcept final {
       ScoreImpl<irs::ScoreMergeType::Max>(res, n);
     }
 

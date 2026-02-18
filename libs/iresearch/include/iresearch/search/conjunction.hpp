@@ -137,13 +137,13 @@ class ConjunctionScore : public ScoreOperator {
     return res;
   }
 
-  void Score(score_t* res, ScoresCountType n) const noexcept final {
+  void Score(score_t* res, scores_size_t n) const noexcept final {
     ScoreImpl<ScoreMergeType::Noop>(res, n);
   }
-  void ScoreSum(score_t* res, ScoresCountType n) const noexcept final {
+  void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
     ScoreImpl<ScoreMergeType::Sum>(res, n);
   }
-  void ScoreMax(score_t* res, ScoresCountType n) const noexcept final {
+  void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
     ScoreImpl<ScoreMergeType::Max>(res, n);
   }
 
@@ -160,7 +160,7 @@ class ConjunctionScore : public ScoreOperator {
  private:
   template<ScoreMergeType OuterType>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
-                                  ScoresCountType n) const noexcept {
+                                  scores_size_t n) const noexcept {
     auto source = _sources.begin();
     auto end = _sources.end();
 

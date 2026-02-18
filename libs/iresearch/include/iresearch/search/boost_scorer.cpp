@@ -37,10 +37,10 @@ Scorer::ptr MakeJson(std::string_view /*args*/) {
 }
 
 template<ScoreMergeType MergeType>
-IRS_FORCE_INLINE void Impl(score_t* IRS_RESTRICT res, ScoresCountType n,
+IRS_FORCE_INLINE void Impl(score_t* IRS_RESTRICT res, scores_size_t n,
                            const score_t* IRS_RESTRICT volatile_boost,
                            score_t boost) noexcept {
-  for (ScoresCountType i = 0; i != n; ++i) {
+  for (scores_size_t i = 0; i != n; ++i) {
     const auto r = volatile_boost[i] * boost;
     Merge<MergeType>(res[i], r);
   }
@@ -64,13 +64,13 @@ class VolatileBoostScore : public ScoreOperator {
     return res;
   }
 
-  void Score(score_t* res, ScoresCountType n) const noexcept final {
+  void Score(score_t* res, scores_size_t n) const noexcept final {
     ScoreImpl(res, n);
   }
-  void ScoreSum(score_t* res, ScoresCountType n) const noexcept final {
+  void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
     ScoreImpl<ScoreMergeType::Sum>(res, n);
   }
-  void ScoreMax(score_t* res, ScoresCountType n) const noexcept final {
+  void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
     ScoreImpl<ScoreMergeType::Max>(res, n);
   }
 

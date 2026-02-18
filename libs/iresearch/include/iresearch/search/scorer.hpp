@@ -301,8 +301,8 @@ IRS_FORCE_INLINE void Merge(score_t& bucket, T arg) noexcept {
 template<ScoreMergeType MergeType, typename T>
 IRS_FORCE_INLINE void Merge(score_t* IRS_RESTRICT res,
                             const T* IRS_RESTRICT args,
-                            ScoresCountType n) noexcept {
-  for (ScoresCountType i = 0; i != n; ++i) {
+                            scores_size_t n) noexcept {
+  for (scores_size_t i = 0; i != n; ++i) {
     Merge<MergeType>(res[i], args[i]);
   }
 }
@@ -311,8 +311,8 @@ template<ScoreMergeType MergeType, typename I>
 IRS_FORCE_INLINE void Merge(score_t* IRS_RESTRICT res,
                             const I* IRS_RESTRICT hits,
                             const score_t* IRS_RESTRICT args,
-                            ScoresCountType n) noexcept {
-  for (ScoresCountType i = 0; i != n; ++i) {
+                            scores_size_t n) noexcept {
+  for (scores_size_t i = 0; i != n; ++i) {
     const auto bucket_index = hits[i];
     Merge<MergeType>(res[bucket_index], args[i]);
   }
@@ -322,8 +322,8 @@ template<ScoreMergeType MergeType, typename I>
 IRS_FORCE_INLINE void Merge(score_t* IRS_RESTRICT res,
                             const I* IRS_RESTRICT hits, I base,
                             const score_t* IRS_RESTRICT args,
-                            ScoresCountType n) noexcept {
-  for (ScoresCountType i = 0; i != n; ++i) {
+                            scores_size_t n) noexcept {
+  for (scores_size_t i = 0; i != n; ++i) {
     const auto bucket_index = hits[i] - base;
     Merge<MergeType>(res[bucket_index], args[i]);
   }

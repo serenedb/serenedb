@@ -30,11 +30,11 @@
 
 namespace irs {
 
-using ScoresCountType = uint8_t;
-inline constexpr ScoresCountType kScoreBlock = 32;
-static_assert(kScoreBlock < std::numeric_limits<uint16_t>::max());
-inline constexpr ScoresCountType kPostingBlock = 4 * kScoreBlock;
-static_assert(kPostingBlock < std::numeric_limits<uint16_t>::max());
+using scores_size_t = uint8_t;  // NOLINT
+inline constexpr scores_size_t kScoreBlock = 32;
+static_assert(kScoreBlock < std::numeric_limits<scores_size_t>::max());
+inline constexpr scores_size_t kPostingBlock = 4 * kScoreBlock;
+static_assert(kPostingBlock < std::numeric_limits<scores_size_t>::max());
 static_assert(kPostingBlock % kScoreBlock == 0);
 
 // Possible variants of merging multiple scores
@@ -57,9 +57,9 @@ struct ScoreOperator : memory::Managed {
     return result;
   }
 
-  virtual void Score(score_t* res, ScoresCountType n) const noexcept = 0;
-  virtual void ScoreSum(score_t* res, ScoresCountType n) const noexcept = 0;
-  virtual void ScoreMax(score_t* res, ScoresCountType n) const noexcept = 0;
+  virtual void Score(score_t* res, scores_size_t n) const noexcept = 0;
+  virtual void ScoreSum(score_t* res, scores_size_t n) const noexcept = 0;
+  virtual void ScoreMax(score_t* res, scores_size_t n) const noexcept = 0;
 
   virtual void ScoreBlock(score_t* res) const noexcept {
     Score(res, kScoreBlock);
@@ -79,9 +79,9 @@ struct ScoreOperator : memory::Managed {
 struct DefaultScore final : public ScoreOperator {
   score_t Score() const noexcept final;
 
-  void Score(score_t* res, ScoresCountType n) const noexcept final;
-  void ScoreSum(score_t* res, ScoresCountType n) const noexcept final;
-  void ScoreMax(score_t* res, ScoresCountType n) const noexcept final;
+  void Score(score_t* res, scores_size_t n) const noexcept final;
+  void ScoreSum(score_t* res, scores_size_t n) const noexcept final;
+  void ScoreMax(score_t* res, scores_size_t n) const noexcept final;
 
   void ScoreBlock(score_t* res) const noexcept final;
   void ScoreSumBlock(score_t* res) const noexcept final;
@@ -136,7 +136,7 @@ class ScoreFunction {
   IRS_FORCE_INLINE score_t Score() const noexcept { return _impl->Score(); }
 
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
-  IRS_FORCE_INLINE void Score(score_t* res, ScoresCountType n) const noexcept {
+  IRS_FORCE_INLINE void Score(score_t* res, scores_size_t n) const noexcept {
     if constexpr (MergeType == ScoreMergeType::Sum) {
       _impl->ScoreSum(res, n);
     } else if constexpr (MergeType == ScoreMergeType::Max) {

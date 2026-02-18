@@ -592,13 +592,13 @@ class BlockDisjunction : public DocIterator {
 
     score_t Score() const noexcept final { return result.front(); }
 
-    void Score(score_t* res, ScoresCountType n) const noexcept final {
+    void Score(score_t* res, scores_size_t n) const noexcept final {
       Merge<ScoreMergeType::Noop>(res, result.data(), n);
     }
-    void ScoreSum(score_t* res, ScoresCountType n) const noexcept final {
+    void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
       Merge<ScoreMergeType::Sum>(res, result.data(), n);
     }
-    void ScoreMax(score_t* res, ScoresCountType n) const noexcept final {
+    void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
       Merge<ScoreMergeType::Max>(res, result.data(), n);
     }
 

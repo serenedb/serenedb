@@ -30,12 +30,12 @@ namespace irs {
 namespace {
 
 template<ScoreMergeType MergeType>
-IRS_FORCE_INLINE void ConstantScoreImpl(score_t* res, ScoresCountType n,
+IRS_FORCE_INLINE void ConstantScoreImpl(score_t* res, scores_size_t n,
                                         score_t value) {
   if constexpr (MergeType == ScoreMergeType::Noop) {
     std::fill_n(res, n, value);
   } else {
-    for (ScoresCountType i = 0; i != n; ++i) {
+    for (scores_size_t i = 0; i != n; ++i) {
       Merge<MergeType>(res[i], value);
     }
   }
@@ -47,19 +47,19 @@ class ConstanScore : public ScoreOperator {
 
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
-                                  ScoresCountType n) const noexcept {
+                                  scores_size_t n) const noexcept {
     ConstantScoreImpl<MergeType>(res, n, _value);
   }
 
   score_t Score() const noexcept final { return _value; }
 
-  void Score(score_t* res, ScoresCountType n) const noexcept final {
+  void Score(score_t* res, scores_size_t n) const noexcept final {
     ScoreImpl(res, n);
   }
-  void ScoreSum(score_t* res, ScoresCountType n) const noexcept final {
+  void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
     ScoreImpl<ScoreMergeType::Sum>(res, n);
   }
-  void ScoreMax(score_t* res, ScoresCountType n) const noexcept final {
+  void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
     ScoreImpl<ScoreMergeType::Max>(res, n);
   }
 
@@ -82,7 +82,7 @@ class ConstanScore : public ScoreOperator {
 };
 
 template<ScoreMergeType MergeType = ScoreMergeType::Noop>
-IRS_FORCE_INLINE void DefaultScoreImpl(score_t* res, ScoresCountType n) {
+IRS_FORCE_INLINE void DefaultScoreImpl(score_t* res, scores_size_t n) {
   if constexpr (MergeType == ScoreMergeType::Noop) {
     std::memset(res, 0, sizeof(score_t) * n);
   } else {
@@ -94,13 +94,13 @@ IRS_FORCE_INLINE void DefaultScoreImpl(score_t* res, ScoresCountType n) {
 
 score_t DefaultScore::Score() const noexcept { return 0; }
 
-void DefaultScore::Score(score_t* res, ScoresCountType n) const noexcept {
+void DefaultScore::Score(score_t* res, scores_size_t n) const noexcept {
   DefaultScoreImpl(res, n);
 }
-void DefaultScore::ScoreSum(score_t* res, ScoresCountType n) const noexcept {
+void DefaultScore::ScoreSum(score_t* res, scores_size_t n) const noexcept {
   DefaultScoreImpl<ScoreMergeType::Sum>(res, n);
 }
-void DefaultScore::ScoreMax(score_t* res, ScoresCountType n) const noexcept {
+void DefaultScore::ScoreMax(score_t* res, scores_size_t n) const noexcept {
   DefaultScoreImpl<ScoreMergeType::Max>(res, n);
 }
 

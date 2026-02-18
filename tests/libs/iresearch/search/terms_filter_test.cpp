@@ -373,22 +373,20 @@ struct ScoreOperator : public irs::ScoreOperator {
     : doc{doc}, boost{boost} {}
 
   template<irs::ScoreMergeType MergeType = irs::ScoreMergeType::Noop>
-  void ScoreImpl(irs::score_t* res, irs::ScoresCountType n) const noexcept {
+  void ScoreImpl(irs::score_t* res, irs::scores_size_t n) const noexcept {
     for (size_t i = 0; i < n; ++i) {
       irs::Merge<MergeType>(res[i],
                             static_cast<irs::score_t>(doc->value[i]) * boost);
     }
   }
 
-  void Score(irs::score_t* res, irs::ScoresCountType n) const noexcept final {
+  void Score(irs::score_t* res, irs::scores_size_t n) const noexcept final {
     ScoreImpl(res, n);
   }
-  void ScoreSum(irs::score_t* res,
-                irs::ScoresCountType n) const noexcept final {
+  void ScoreSum(irs::score_t* res, irs::scores_size_t n) const noexcept final {
     ScoreImpl<irs::ScoreMergeType::Sum>(res, n);
   }
-  void ScoreMax(irs::score_t* res,
-                irs::ScoresCountType n) const noexcept final {
+  void ScoreMax(irs::score_t* res, irs::scores_size_t n) const noexcept final {
     ScoreImpl<irs::ScoreMergeType::Max>(res, n);
   }
   const tests::DocBlockAttr* doc;

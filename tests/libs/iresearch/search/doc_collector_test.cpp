@@ -54,7 +54,7 @@ struct DocIdScorer : irs::ScorerBase<void> {
       : freq{freq}, divisor{divisor} {}
 
     template<irs::ScoreMergeType MergeType = irs::ScoreMergeType::Noop>
-    void ScoreImpl(irs::score_t* res, irs::ScoresCountType n) const noexcept {
+    void ScoreImpl(irs::score_t* res, irs::scores_size_t n) const noexcept {
       ASSERT_NE(nullptr, res);
       for (size_t i = 0; i < n; ++i) {
         auto doc_id = freq ? freq->value[i] : next_doc++;
@@ -64,15 +64,15 @@ struct DocIdScorer : irs::ScorerBase<void> {
       }
     }
 
-    void Score(irs::score_t* res, irs::ScoresCountType n) const noexcept final {
+    void Score(irs::score_t* res, irs::scores_size_t n) const noexcept final {
       ScoreImpl(res, n);
     }
     void ScoreSum(irs::score_t* res,
-                  irs::ScoresCountType n) const noexcept final {
+                  irs::scores_size_t n) const noexcept final {
       ScoreImpl<irs::ScoreMergeType::Sum>(res, n);
     }
     void ScoreMax(irs::score_t* res,
-                  irs::ScoresCountType n) const noexcept final {
+                  irs::scores_size_t n) const noexcept final {
       ScoreImpl<irs::ScoreMergeType::Max>(res, n);
     }
 

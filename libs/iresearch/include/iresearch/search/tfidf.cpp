@@ -183,12 +183,12 @@ IRS_FORCE_INLINE score_t TfIdf(uint32_t freq, score_t idf) noexcept {
 }
 
 template<ScoreMergeType MergeType, bool HasNorm, bool HasBoost>
-IRS_FORCE_INLINE void TfIdf(score_t* IRS_RESTRICT res, ScoresCountType n,
+IRS_FORCE_INLINE void TfIdf(score_t* IRS_RESTRICT res, scores_size_t n,
                             const uint32_t* IRS_RESTRICT freq,
                             [[maybe_unused]] const uint32_t* IRS_RESTRICT norm,
                             [[maybe_unused]] const score_t* IRS_RESTRICT boost,
                             score_t idf) noexcept {
-  for (ScoresCountType i = 0; i != n; ++i) {
+  for (scores_size_t i = 0; i != n; ++i) {
     const auto r = [&] IRS_FORCE_INLINE {
       if constexpr (HasNorm && HasBoost) {
         return boost[i] * TfIdf(freq[i], idf) /
@@ -217,7 +217,7 @@ struct TfIdfScore : public ScoreOperator {
 
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* IRS_RESTRICT res,
-                                  ScoresCountType n) const noexcept {
+                                  scores_size_t n) const noexcept {
     TfIdf<MergeType, HasNorm, HasFilterBoost>(
       res, n, freq->value, TryGetValue(norm), TryGetValue(filter_boost), idf);
   }
@@ -228,13 +228,13 @@ struct TfIdfScore : public ScoreOperator {
     return res;
   }
 
-  void Score(score_t* res, ScoresCountType n) const noexcept final {
+  void Score(score_t* res, scores_size_t n) const noexcept final {
     ScoreImpl(res, n);
   }
-  void ScoreSum(score_t* res, ScoresCountType n) const noexcept final {
+  void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
     ScoreImpl<ScoreMergeType::Sum>(res, n);
   }
-  void ScoreMax(score_t* res, ScoresCountType n) const noexcept final {
+  void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
     ScoreImpl<ScoreMergeType::Max>(res, n);
   }
 

@@ -92,20 +92,12 @@ jobs:
 
             - name: Update file ownership
               if: always()
-              run: chown "${{ github.run_id }}" -R /serenedb
-
-            - name: Verify files ownership
               run: |
-                  EXPECTED="${{ github.run_id }}"
-
-                  WRONG=$(find /serenedb ! -user "$EXPECTED" | head -n 1)
-
-                  if [ -n "$WRONG" ]; then
-                    echo "❌ Found file with wrong owner: $WRONG"
-                    exit 1
-                  fi
-
-                  echo "✅ All files have correct ownership. Continuing..."
+                  RUNNER_ID="$(id -u):$(id -g)"
+                  BUILD_IMAGE="$IMAGE" \
+                  WORKSPACE="${{ github.workspace }}/serene-ui" \
+                  RUNNER_ID="$RUNNER_ID" \
+                  ./scripts/update_ownership.sh
 
             - name: Upload test artifacts
               if: inputs.RUN_TESTS
@@ -153,6 +145,8 @@ jobs:
         if: inputs.RUN_TESTS || inputs.BUILD_LINUX_APP
         runs-on: ubuntu-latest
         timeout-minutes: 30
+        env:
+            BRANCH: ${{ inputs.BRANCH }}
         defaults:
             run:
                 working-directory: ./serene-ui
@@ -238,8 +232,11 @@ jobs:
         if: inputs.RUN_TESTS || inputs.BUILD_WINDOWS_APP
         runs-on: windows-latest
         timeout-minutes: 30
+        env:
+            BRANCH: ${{ inputs.BRANCH }}
         defaults:
             run:
+                shell: bash
                 working-directory: ./serene-ui
         steps:
             - name: Checkout SereneUI
@@ -323,6 +320,8 @@ jobs:
         if: inputs.RUN_TESTS || inputs.BUILD_MACOS_APP
         runs-on: marilka
         timeout-minutes: 1440
+        env:
+            BRANCH: ${{ inputs.BRANCH }}
         defaults:
             run:
                 working-directory: ./serene-ui

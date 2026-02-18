@@ -92,6 +92,19 @@ jobs:
               if: always()
               run: chown "${{ github.run_id }}" -R /serenedb
 
+            - name: Verify files ownership
+              run: |
+                  EXPECTED="${{ github.run_id }}"
+
+                  WRONG=$(find /serenedb ! -user "$EXPECTED" | head -n 1)
+
+                  if [ -n "$WRONG" ]; then
+                    echo "❌ Found file with wrong owner: $WRONG"
+                    exit 1
+                  fi
+
+                  echo "✅ All files have correct ownership. Continuing..."
+
             - name: Upload test artifacts
               if: inputs.RUN_TESTS
               uses: actions/upload-artifact@v4

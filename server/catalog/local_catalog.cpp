@@ -53,6 +53,7 @@
 #include "basics/recursive_locker.h"
 #include "basics/result.h"
 #include "basics/result_or.h"
+#include "basics/system-compiler.h"
 #include "catalog/catalog.h"
 #include "catalog/database.h"
 #include "catalog/drop_task.h"
@@ -164,15 +165,6 @@ class SnapshotImpl : public Snapshot {
     result->_objects = _objects;
     result->_object_dependencies = _object_dependencies;
     return result;
-  }
-
-  template<typename T>
-  std::shared_ptr<T> GetDependency(ObjectId id) {
-    auto deps = _object_dependencies.find(id);
-    SDB_ASSERT(deps != _object_dependencies.end());
-    auto res = std::static_pointer_cast<T>(deps->second);
-    SDB_ASSERT(res);
-    return res;
   }
 
   std::shared_ptr<DatabaseDrop> CreateDatabaseDrop(ObjectId db_id) {
@@ -428,31 +420,9 @@ class SnapshotImpl : public Snapshot {
                                            std::string_view name) {
     auto id = _resolution_table.RemoveObject<Type>(parent_id, name);
     if (id) {
-      _object_dependencies.erase(*id);
-      _objects.erase(*id);
+      RemoveObject(parent_id, *id);
     }
     return id;
-  }
-
-  void RemoveFromSchema(ObjectId schema_id, ObjectId object_id) {
-    auto it = _object_dependencies.find(schema_id);
-    SDB_ASSERT(it != _object_dependencies.end());
-    auto& schema_deps = basics::downCast<SchemaDependency>(*it->second);
-    schema_deps.tables.erase(object_id);
-    schema_deps.indexes.erase(object_id);
-    schema_deps.views.erase(object_id);
-    schema_deps.functions.erase(object_id);
-    _objects.erase(object_id);
-    _object_dependencies.erase(object_id);
-  }
-
-  void RemoveFromDatabase(ObjectId db_id, ObjectId schema_id) {
-    auto it = _object_dependencies.find(db_id);
-    SDB_ASSERT(it != _object_dependencies.end());
-    auto& db_deps = basics::downCast<ObjectDependency>(*it->second);
-    db_deps.objects.erase(schema_id);
-    _objects.erase(schema_id);
-    _object_dependencies.erase(schema_id);
   }
 
   void AddToSchema(ObjectId schema_id, const Object& object) {
@@ -516,7 +486,12 @@ class SnapshotImpl : public Snapshot {
       AddToDatabase(parent_id, object->GetId());
     } else if constexpr (Type == ResolveType::Relation ||
                          Type == ResolveType::Function) {
-      AddToSchema(parent_id, *object);
+      if (object->GetType() == ObjectType::Index) {
+        auto table_deps = GetDependency<TableDependency>(parent_id);
+        table_deps->indexes.insert(object->GetId());
+      }
+      const auto& schema_object = basics::downCast<SchemaObject>(*object);
+      AddToSchema(schema_object.GetSchemaId(), *object);
     }
     return {};
   }
@@ -681,6 +656,107 @@ class SnapshotImpl : public Snapshot {
   }
 
  private:
+  template<typename T>
+  std::shared_ptr<T> GetDependency(ObjectId id) {
+    auto it = _object_dependencies.find(id);
+    SDB_ASSERT(it != _object_dependencies.end());
+    auto deps = it->second;
+    SDB_ASSERT(deps);
+    return basics::downCast<T>(deps);
+  }
+
+  void RemoveObject(ObjectId parent_id, ObjectId id, bool root = true) {
+    auto node = _objects.extract(id);
+    SDB_ASSERT(!node.empty());
+    auto obj = node.value();
+    auto drop_deps = [&](const auto& deps) {
+      for (auto child_id : deps) {
+        RemoveObject(id, child_id, false);
+      }
+    };
+    // Drop from parent deps
+    if (root) {
+      switch (obj->GetType()) {
+        case ObjectType::Database:
+          break;
+        case ObjectType::Schema: {
+          auto db_deps = GetDependency<ObjectDependency>(parent_id);
+          db_deps->objects.erase(id);
+          break;
+        }
+        case ObjectType::Index: {
+          auto table_deps = GetDependency<TableDependency>(parent_id);
+          table_deps->indexes.erase(id);
+          auto index = std::dynamic_pointer_cast<Index>(obj);
+          auto schema_deps =
+            GetDependency<SchemaDependency>(index->GetSchemaId());
+          schema_deps->indexes.erase(id);
+          break;
+        }
+        case ObjectType::IndexShard: {
+          auto index_deps = GetDependency<IndexDependency>(parent_id);
+          index_deps->shard_id = ObjectId::none();
+          break;
+        }
+        case ObjectType::Function: {
+          auto schema_deps = GetDependency<SchemaDependency>(parent_id);
+          schema_deps->functions.erase(id);
+          break;
+        }
+        case ObjectType::Table: {
+          auto schema_deps = GetDependency<SchemaDependency>(parent_id);
+          schema_deps->tables.erase(id);
+          break;
+        }
+        case ObjectType::TableShard: {
+          auto table_deps = GetDependency<TableDependency>(parent_id);
+          table_deps->shard_id = ObjectId::none();
+          break;
+        }
+        case ObjectType::View: {
+          auto schema_deps = GetDependency<SchemaDependency>(parent_id);
+          schema_deps->views.erase(id);
+          break;
+        }
+        default:
+          SDB_UNREACHABLE();
+      }
+    }
+    // Drop childs
+    switch (obj->GetType()) {
+      case ObjectType::Database: {
+        auto db_deps = GetDependency<ObjectDependency>(id);
+        drop_deps(db_deps->objects);
+        break;
+      }
+      case ObjectType::Schema: {
+        auto schema_deps = GetDependency<SchemaDependency>(id);
+        drop_deps(schema_deps->functions);
+        drop_deps(schema_deps->views);
+        drop_deps(schema_deps->tables);
+        break;
+      }
+      case ObjectType::Table: {
+        auto table_deps = GetDependency<TableDependency>(id);
+        RemoveObject(id, table_deps->shard_id);
+        drop_deps(table_deps->indexes);
+        break;
+      }
+      case ObjectType::Index: {
+        auto index_deps = GetDependency<IndexDependency>(id);
+        RemoveObject(id, index_deps->shard_id);
+        break;
+      }
+      case ObjectType::Function:
+      case ObjectType::View:
+      case ObjectType::TableShard:
+      case ObjectType::IndexShard:
+        break;
+      default:
+        SDB_UNREACHABLE();
+    }
+    _object_dependencies.erase(id);
+  }
   template<typename W>
   Result ResolveRole(this auto&& self, std::string_view role, W&& writer) {
     auto role_it = self._roles.find(role);
@@ -967,7 +1043,7 @@ Result LocalCatalog::CreateIndex(ObjectId database_id, std::string_view schema,
   return Apply(_snapshot, [&](auto& clone) {
     auto r =
       clone->template RegisterObject<ResolveType::Relation, IndexDependency>(
-        *index, *schema_id, false);
+        *index, (*index)->GetRelationId(), false);
     if (!r.ok()) {
       return r;
     }
@@ -1058,8 +1134,6 @@ Result LocalCatalog::CreateTable(
     }
   }
 
-  auto table = std::make_shared<Table>(std::move(options), database_id);
-
   absl::MutexLock lock{&_mutex};
   return Apply(_snapshot, [&](auto& clone) -> Result {
     auto schema_id =
@@ -1068,6 +1142,7 @@ Result LocalCatalog::CreateTable(
       return Result{ERROR_SERVER_ILLEGAL_NAME};
     }
     options.schema_id = *schema_id;
+    auto table = std::make_shared<Table>(std::move(options), database_id);
     auto r =
       clone->template RegisterObject<ResolveType::Relation, TableDependency>(
         table, *schema_id, false);
@@ -1411,7 +1486,6 @@ Result LocalCatalog::DropSchema(ObjectId db_id, std::string_view name,
         !r.ok()) {
       return r;
     }
-    clone->RemoveFromDatabase(db_id, *schema_id);
     auto res = QueueDropTask(std::move(task));
     if (async_result) {
       *async_result = std::move(res);
@@ -1444,7 +1518,6 @@ Result LocalCatalog::DropTable(ObjectId db_id, std::string_view schema_name,
         !r.ok()) {
       return r;
     }
-    clone->RemoveFromSchema(*schema_id, *table_id);
     auto res = QueueDropTask(std::move(task));
     if (async_result) {
       *async_result = std::move(res);
@@ -1474,15 +1547,14 @@ Result LocalCatalog::DropIndex(ObjectId db_id, std::string_view schema_name,
     SDB_ASSERT(index);
     auto task = clone->CreateIndexDrop(db_id, *schema_id,
                                        index->GetRelationId(), *index_id, true);
-    auto id =
-      clone->template UnregisterObject<ResolveType::Relation>(*schema_id, name);
+    auto id = clone->template UnregisterObject<ResolveType::Relation>(
+      index->GetRelationId(), name);
     SDB_ASSERT(id && *id == *index_id);
     if (auto r = _engine->WriteTombstone(
           index->GetRelationId(), RocksDBEntryType::IndexTombstone, *index_id);
         !r.ok()) {
       return r;
     }
-    clone->RemoveFromSchema(*schema_id, *index_id);
     auto res = QueueDropTask(std::move(task));
     if (async_result) {
       *async_result = std::move(res);
@@ -1517,7 +1589,6 @@ Result LocalCatalog::DropView(ObjectId db_id, std::string_view schema_name,
     auto id =
       clone->template UnregisterObject<ResolveType::Relation>(*schema_id, name);
     SDB_ASSERT(id && *id == *view_id);
-    clone->RemoveFromSchema(*schema_id, *view_id);
 
     return Result{};
   });
@@ -1550,7 +1621,6 @@ Result LocalCatalog::DropFunction(ObjectId db_id, std::string_view schema_name,
     auto id =
       clone->template UnregisterObject<ResolveType::Function>(*schema_id, name);
     SDB_ASSERT(id && *id == *func_id);
-    clone->RemoveFromSchema(*schema_id, *func_id);
 
     return Result{};
   });

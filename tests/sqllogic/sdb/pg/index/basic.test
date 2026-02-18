@@ -126,7 +126,6 @@ query ok
 SELECT indexrelid, indrelid FROM pg_index
 ----
 indexrelid	indrelid
-<slt:ignore>	<slt:ignore>
 
 
 statement error db error: ERROR: index "test_index" does not exist

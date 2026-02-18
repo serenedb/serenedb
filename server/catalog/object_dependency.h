@@ -36,7 +36,6 @@ struct TableDependency : public ObjectDependencyBase {
 
 struct IndexDependency : public ObjectDependencyBase {
   ObjectId shard_id;
-  containers::FlatHashSet<ObjectId> shrads;
 };
 
 struct SchemaDependency : public ObjectDependencyBase {

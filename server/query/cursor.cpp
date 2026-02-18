@@ -55,6 +55,7 @@ void Cursor::RequestCancel() {
 
 Cursor::Process Cursor::Next(velox::RowVectorPtr& batch) {
   const auto& query_ctx = _query.GetContext();
+  query_ctx.transaction->OnNewStatement();
   auto output_type = _query.GetOutputType();
 
   if (query_ctx.command_type.Has(CommandType::External)) {

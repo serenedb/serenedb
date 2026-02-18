@@ -68,7 +68,14 @@ class Transaction : public Config {
   }
 #endif
 
-  Result Begin(IsolationLevel isolation_level = IsolationLevel::RepeatableRead);
+  void OnNewStatement() const {
+    if (_isolation_level == IsolationLevel::ReadCommitted &&
+        _rocksdb_transaction) {
+      SetTransactionSnapshot();
+    }
+  }
+
+  Result Begin(IsolationLevel isolation_level);
 
   Result Commit();
 
@@ -145,14 +152,19 @@ class Transaction : public Config {
 
  private:
   void CreateStorageSnapshot();
-  void CreateRocksDBTransaction() const;
+  void CreateRocksDBTransaction();
   void ApplyTableStatsDiffs();
+  void SetTransactionSnapshot() const {
+    _rocksdb_transaction->SetSnapshot();
+    _rocksdb_snapshot = _rocksdb_transaction->GetSnapshot();
+    SDB_ASSERT(_rocksdb_snapshot);
+  }
 
   State _state = State::None;
   IsolationLevel _isolation_level =
     Get<VariableType::PgTransactionIsolation>("default_transaction_isolation");
   std::shared_ptr<StorageSnapshot> _storage_snapshot;
-  mutable std::unique_ptr<rocksdb::Transaction>
+  std::unique_ptr<rocksdb::Transaction>
     _rocksdb_transaction;  // Lazy initialized
   mutable const rocksdb::Snapshot* _rocksdb_snapshot =
     nullptr;  // Lazy initialized

@@ -33,6 +33,7 @@ Result Transaction::Begin(IsolationLevel isolation_level) {
   SDB_ASSERT(!HasTransactionBegin());
   _isolation_level = isolation_level;
   _state |= State::HasTransactionBegin;
+  CreateRocksDBTransaction();
   return {};
 }
 
@@ -137,23 +138,23 @@ bool Transaction::HasTransactionBegin() const noexcept {
 }
 
 rocksdb::Transaction* Transaction::GetRocksDBTransaction() const noexcept {
-  if (HasTransactionBegin() && !_rocksdb_transaction) {
-    CreateRocksDBTransaction();
-  }
   return _rocksdb_transaction.get();
 }
 
 const rocksdb::Snapshot* Transaction::GetRocksDBSnapshot() {
   SDB_ASSERT((_state & State::HasRocksDBRead) != State::None);
   if (!_rocksdb_snapshot) {
-    if ((_state & State::HasRocksDBWrite) != State::None &&
-        !_rocksdb_transaction) {
-      CreateRocksDBTransaction();
-    } else if ((_state & State::HasRocksDBWrite) == State::None &&
-               !_storage_snapshot) {
+    if ((_state & State::HasRocksDBWrite) != State::None) {
+      if (!_rocksdb_transaction) {
+        CreateRocksDBTransaction();
+      }
+      SetTransactionSnapshot();
+    } else {
       CreateStorageSnapshot();
     }
   }
+
+  SDB_ASSERT(_rocksdb_snapshot);
   return _rocksdb_snapshot;
 }
 
@@ -161,6 +162,10 @@ rocksdb::Transaction& Transaction::EnsureRocksDBTransaction() {
   SDB_ASSERT((_state & State::HasRocksDBWrite) != State::None);
   if (!_rocksdb_transaction) {
     CreateRocksDBTransaction();
+  }
+  if (!_rocksdb_snapshot &&
+      _isolation_level == IsolationLevel::RepeatableRead) {
+    SetTransactionSnapshot();
   }
   return *_rocksdb_transaction;
 }
@@ -170,16 +175,11 @@ void Transaction::CreateStorageSnapshot() {
   SDB_ASSERT(!_storage_snapshot);
   _storage_snapshot = GetServerEngine().currentSnapshot();
   SDB_ASSERT(_storage_snapshot != nullptr);
-  if (_isolation_level == IsolationLevel::RepeatableRead) {
-    _rocksdb_snapshot = _storage_snapshot->GetSnapshot();
-    SDB_ASSERT(_rocksdb_snapshot != nullptr);
-  } else {
-    SDB_ASSERT(_isolation_level == IsolationLevel::ReadCommitted);
-    _rocksdb_snapshot = nullptr;
-  }
+  _rocksdb_snapshot = _storage_snapshot->GetSnapshot();
+  SDB_ASSERT(_rocksdb_snapshot != nullptr);
 }
 
-void Transaction::CreateRocksDBTransaction() const {
+void Transaction::CreateRocksDBTransaction() {
   SDB_ASSERT(!_rocksdb_transaction);
   SDB_ASSERT(!_rocksdb_snapshot);
   auto* db = GetServerEngine().db();
@@ -189,15 +189,6 @@ void Transaction::CreateRocksDBTransaction() const {
   txn_options.skip_concurrency_control = true;
   _rocksdb_transaction.reset(db->BeginTransaction(write_options, txn_options));
   SDB_ASSERT(_rocksdb_transaction != nullptr);
-
-  if (_isolation_level == IsolationLevel::RepeatableRead) {
-    _rocksdb_transaction->SetSnapshot();
-    _rocksdb_snapshot = _rocksdb_transaction->GetSnapshot();
-    SDB_ASSERT(_rocksdb_snapshot != nullptr);
-  } else {
-    SDB_ASSERT(_isolation_level == IsolationLevel::ReadCommitted);
-    _rocksdb_snapshot = nullptr;
-  }
 }
 
 void Transaction::Destroy() noexcept {

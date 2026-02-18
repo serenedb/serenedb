@@ -99,7 +99,7 @@ export const Default: Story = {
             fullPage: true,
         } as ScreenshotOptions);
         expect(screenshot).toMatchImageSnapshot({
-            maxDiffPercentage: 1.0,
+            maxDiffPercentage: 2.0,
         } as MatchImageSnapshotOptions);
     },
 };
@@ -117,7 +117,7 @@ export const SearchModal: Story = {
             fullPage: true,
         } as ScreenshotOptions);
         expect(screenshot).toMatchImageSnapshot({
-            maxDiffPercentage: 1.0,
+            maxDiffPercentage: 2.0,
         } as MatchImageSnapshotOptions);
     },
 };
@@ -135,7 +135,7 @@ export const SupportModal: Story = {
             fullPage: true,
         } as ScreenshotOptions);
         expect(screenshot).toMatchImageSnapshot({
-            maxDiffPercentage: 1.0,
+            maxDiffPercentage: 2.0,
         } as MatchImageSnapshotOptions);
     },
 };

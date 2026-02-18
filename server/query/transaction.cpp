@@ -181,6 +181,7 @@ void Transaction::CreateStorageSnapshot() {
 
 void Transaction::CreateRocksDBTransaction() const {
   SDB_ASSERT(!_rocksdb_transaction);
+  SDB_ASSERT(!_rocksdb_snapshot);
   auto* db = GetServerEngine().db();
   SDB_ASSERT(db != nullptr);
   rocksdb::WriteOptions write_options;

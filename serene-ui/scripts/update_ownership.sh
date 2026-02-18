@@ -3,14 +3,13 @@ set -euo pipefail
 
 : "${RUNNER_ID:?RUNNER_ID is required (UID:GID)}"
 : "${WORKSPACE:?WORKSPACE is required}"
-: "${BUILD_IMAGE:?BUILD_IMAGE is required}"
 # Update project's file ownership inside Docker container
 
 CONTAINER_SCRIPT='
-set -o pipefail
+set -e
 
 # Fix ownership for CI runner
-chown "${RUNNER_ID}" -R /serene-ui
+chown "${RUNNER_ID}" -R /serenedb
 '
 
 if
@@ -21,11 +20,11 @@ if
     --privileged \
     --security-opt seccomp=unconfined \
     -e RUNNER_ID="$RUNNER_ID" \
-    -v "${WORKSPACE}:/serene-ui" \
+    -v "${WORKSPACE}:/serenedb" \
     -v /etc/passwd:/etc/passwd:ro \
     -v /etc/group:/etc/group:ro \
-    "$BUILD_IMAGE" \
-    bash -c "${CONTAINER_SCRIPT}"
+    alpine:latest \
+    sh -c "${CONTAINER_SCRIPT}"
 then
   echo "UPDATE_OWNERSHIP=PASSED"
 else

@@ -67,6 +67,7 @@ jobs:
             run:
                 working-directory: ./serene-ui
         env:
+            WORKSPACE: ${{ github.workspace }}
             BRANCH: ${{ inputs.BRANCH }}
             PUSH_IMAGE_TO_REGISTRY: ${{ inputs.PUSH_IMAGE_TO_REGISTRY }}
             DOCKER_TAG: ${{ inputs.DOCKER_TAG }}
@@ -93,10 +94,7 @@ jobs:
             - name: Update file ownership
               if: always()
               run: |
-                  RUNNER_ID="$(id -u):$(id -g)"
-                  BUILD_IMAGE="serene-ui-serene-ui:latest" \
-                  WORKSPACE="${{ github.workspace }}/serene-ui" \
-                  RUNNER_ID="$RUNNER_ID" \
+                  export RUNNER_ID="$(id -u):$(id -g)"
                   bash ./scripts/update_ownership.sh
 
             - name: Upload test artifacts
@@ -139,7 +137,6 @@ jobs:
               run: |
                   docker system prune -f 2>/dev/null || true
                   docker volume prune -f 2>/dev/null || true
-
     build-linux-app:
         name: Build Linux App
         if: inputs.RUN_TESTS || inputs.BUILD_LINUX_APP

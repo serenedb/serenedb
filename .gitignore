@@ -15,3 +15,4 @@
 /tests/sqllogic/*-junit.xml
 
 /perf.*
+*.pyc

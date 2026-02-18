@@ -1,152 +1,99 @@
 #pragma once
 
-#include <cmath>
+#include <algorithm>
+#include <iresearch/index/index_reader_options.hpp>
+#include <iresearch/utils/type_limits.hpp>
+#include <utility>
 
+#include "basics/shared.hpp"
 #include "iresearch/index/directory_reader.hpp"
-#include "iresearch/index/index_reader_options.hpp"
+#include "iresearch/index/index_reader.hpp"
+#include "iresearch/index/norm.hpp"
+#include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/filter.hpp"
-#include "iresearch/search/score.hpp"
+#include "iresearch/search/score_function.hpp"
+#include "iresearch/search/scorer.hpp"
 #include "iresearch/types.hpp"
 
 namespace irs {
 
-template<size_t Extent = std::dynamic_extent>
-size_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
-                   const Scorers& scorers, const WandContext& wand, size_t k,
-                   std::span<std::pair<score_t, doc_id_t>, Extent> results) {
-  SDB_ASSERT(k * 2 <= results.size());
+constexpr size_t BlockSize(size_t k) noexcept { return 2 * k; }
+
+inline uint64_t ExecuteTopKWithCount(const DirectoryReader& reader,
+                                     const Filter& filter, const Scorer& scorer,
+                                     size_t k, std::span<ScoreDoc> hits) {
+  SDB_ASSERT(BlockSize(k) == hits.size());
 
   auto prepared = filter.prepare({
     .index = reader,
-    .scorers = scorers,
+    .scorer = &scorer,
   });
 
-  size_t count = 0;
-  float_t min_threshold = 0;
-  auto begin = results.begin();
-  auto pivot = begin + k;
-  auto end = results.end();
-
+  score_t score_threshold = std::numeric_limits<score_t>::min();
+  NthPartitionScoreCollector collector{score_threshold, k, hits};
+  ColumnArgsFetcher fetcher;
   for (auto& segment : reader) {
-    auto docs = prepared->execute({
+    fetcher.Clear();
+
+    auto it = prepared->execute({
       .segment = segment,
-      .scorers = scorers,
-      .wand = wand,
+      .scorer = &scorer,
     });
-    const auto* doc = irs::get<DocAttr>(*docs);
-    const auto* score = irs::get<ScoreAttr>(*docs);
-    if (score) {
-      score->Min(min_threshold);
-    }
 
-    for (float_t score_value; docs->next();) {
-      ++count;
+    auto score_func = it->PrepareScore({
+      .scorer = &scorer,
+      .segment = &segment,
+      .fetcher = &fetcher,
+    });
 
-      (*score)(&score_value);
-
-      if (score_value <= min_threshold) {
-        continue;
-      }
-
-      *begin = {score_value, doc->value};
-      ++begin;
-
-      if (begin == end) {
-        std::nth_element(results.begin(), pivot, end,
-                         [](const auto& lhs, const auto& rhs) noexcept {
-                           return lhs.first > rhs.first;
-                         });
-        begin = pivot;
-        min_threshold = begin->first;
-        score->Min(min_threshold);
-      }
-    }
+    it->Collect(score_func, fetcher, collector);
   }
 
-  if (begin > pivot) {
-    std::nth_element(results.begin(), pivot, end,
-                     [](const auto& lhs, const auto& rhs) noexcept {
-                       return lhs.first > rhs.first;
-                     });
-    begin = pivot;
-  }
-  std::sort(results.begin(), begin,
-            [](const auto& lhs, const auto& rhs) noexcept {
-              return lhs.first > rhs.first;
-            });
+  const auto count = collector.Finalize();
 
   return count;
 }
 
-template<size_t Extent = std::dynamic_extent>
-size_t ExecuteTopKHeap(
-  const DirectoryReader& reader, const Filter& filter, const Scorers& scorers,
-  const WandContext& wand, size_t k,
-  std::span<std::pair<score_t, doc_id_t>, Extent> results) {
-  SDB_ASSERT(k >= results.size());
+inline uint64_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
+                            const Scorer& scorer, size_t k, WandContext wand,
+                            std::span<ScoreDoc> hits) {
+  SDB_ASSERT(BlockSize(k) == hits.size());
 
   auto prepared = filter.prepare({
     .index = reader,
-    .scorers = scorers,
+    .scorer = &scorer,
+
   });
 
-  size_t count = 0;
-  auto begin = results.begin();
-  auto end = results.end();
+  score_t score_threshold = std::numeric_limits<score_t>::min();
+  NthPartitionScoreCollector collector{score_threshold, k, hits};
+  ColumnArgsFetcher fetcher;
+  for (auto& segment : reader) {
+    fetcher.Clear();
 
-  for (auto left = k; auto& segment : reader) {
-    auto docs = prepared->execute(irs::ExecutionContext{
-      .segment = segment, .scorers = scorers, .wand = wand});
-    const auto* doc = irs::get<DocAttr>(*docs);
-    const auto* score = irs::get<ScoreAttr>(*docs);
-    auto* threshold = irs::GetMutable<ScoreAttr>(docs.get());
-    SDB_ASSERT(threshold);
+    auto it = prepared->execute({
+      .segment = segment,
+      .scorer = &scorer,
+      .wand = wand,
+    });
 
-    if (!left && threshold) {
-      threshold->Min(results.front().first);
+    auto score_func = it->PrepareScore({
+      .scorer = &scorer,
+      .segment = &segment,
+      .fetcher = &fetcher,
+    });
+
+    if (auto* score_threshold = irs::GetMutable<ScoreThresholdAttr>(it.get())) {
+      collector.SetScoreThreshold(score_threshold->value);
     }
 
-    for (float_t score_value; docs->next();) {
-      ++count;
+    it->Collect(score_func, fetcher, collector);
 
-      (*score)(&score_value);
-
-      if (begin != end) {
-        *begin = {score_value, doc->value};
-        ++begin;
-
-        if (begin == end) {
-          absl::c_make_heap(results,
-                            [](const auto& lhs, const auto& rhs) noexcept {
-                              return lhs.first > rhs.first;
-                            });
-
-          threshold->Min(results.front().first);
-        }
-      } else if (results.front().first < score_value) {
-        absl::c_pop_heap(results,
-                         [](const auto& lhs, const auto& rhs) noexcept {
-                           return lhs.first > rhs.first;
-                         });
-
-        auto& [score, doc_id] = results.back();
-        score = score_value;
-        doc_id = doc->value;
-
-        absl::c_push_heap(
-          results, [](const std::pair<float_t, irs::doc_id_t>& lhs,
-                      const std::pair<float_t, irs::doc_id_t>& rhs) noexcept {
-            return lhs.first > rhs.first;
-          });
-
-        threshold->Min(results.front().first);
-      }
-    }
+    collector.SetScoreThreshold(score_threshold);
   }
 
-  absl::c_sort(results, [](const auto& lhs, const auto& rhs) noexcept {
-    return lhs.first > rhs.first;
-  });
+  const auto count = collector.Finalize();
 
   return count;
 }

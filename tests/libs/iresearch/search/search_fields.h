@@ -22,11 +22,10 @@
 
 #include <vpack/slice.h>
 
-#include <iresearch/analysis/tokenizers.hpp>
-#include <iresearch/store/store_utils.hpp>
-
 #include "geo/geo_json.h"
 #include "iresearch/analysis/geo_analyzer.hpp"
+#include "iresearch/analysis/tokenizers.hpp"
+#include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/vpack_utils.hpp"
 
 namespace irs::tests {

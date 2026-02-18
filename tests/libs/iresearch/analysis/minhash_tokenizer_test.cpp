@@ -23,11 +23,10 @@
 #include <vpack/common.h>
 #include <vpack/parser.h>
 
-#include <iresearch/analysis/analyzers.hpp>
-#include <iresearch/analysis/minhash_tokenizer.hpp>
-#include <iresearch/analysis/segmentation_tokenizer.hpp>
-#include <iresearch/analysis/tokenizers.hpp>
-
+#include "iresearch/analysis/analyzers.hpp"
+#include "iresearch/analysis/minhash_tokenizer.hpp"
+#include "iresearch/analysis/segmentation_tokenizer.hpp"
+#include "iresearch/analysis/tokenizers.hpp"
 #include "tests_shared.hpp"
 
 namespace {

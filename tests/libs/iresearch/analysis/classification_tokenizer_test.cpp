@@ -24,8 +24,7 @@
 #include <vpack/common.h>
 #include <vpack/parser.h>
 
-#include <iresearch/analysis/classification_tokenizer.hpp>
-
+#include "iresearch/analysis/classification_tokenizer.hpp"
 #include "tests_shared.hpp"
 
 namespace {

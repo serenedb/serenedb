@@ -39,7 +39,7 @@ size_t BytesViewInput::ReadBytes(byte_type* b, size_t size) noexcept {
   return size;
 }
 
-size_t BytesViewInput::ReadBytes(size_t offset, byte_type* b,
+size_t BytesViewInput::ReadBytes(uint64_t offset, byte_type* b,
                                  size_t size) noexcept {
   if (offset < _data.size()) {
     size = std::min(size, size_t(_data.size() - offset));
@@ -52,9 +52,8 @@ size_t BytesViewInput::ReadBytes(size_t offset, byte_type* b,
   return 0;
 }
 
-// append to buf
 void BytesViewInput::ReadBytes(bstring& buf, size_t size) {
-  auto used = buf.size();
+  const auto used = buf.size();
 
   buf.resize(used + size);
 
@@ -62,7 +61,7 @@ void BytesViewInput::ReadBytes(bstring& buf, size_t size) {
   SDB_ASSERT(read == size);
 }
 
-uint32_t BytesViewInput::Checksum(size_t offset) const {
+uint32_t BytesViewInput::Checksum(uint64_t offset) const {
   Crc32c crc;
 
   crc.process_bytes(_pos,
@@ -71,24 +70,11 @@ uint32_t BytesViewInput::Checksum(size_t offset) const {
   return crc.checksum();
 }
 
-size_t RemappedBytesViewInput::src_to_internal(size_t t) const noexcept {
-  SDB_ASSERT(!_mapping.empty());
-  auto it = absl::c_lower_bound(
-    _mapping, t, [](const auto& l, const auto& r) { return l.first < r; });
-  if (it == _mapping.end()) {
-    --it;
-  } else if (it->first > t) {
-    SDB_ASSERT(it != _mapping.begin());
-    --it;
-  }
-  return it->second + (t - it->first);
-}
-
 uint64_t RemappedBytesViewInput::Position() const noexcept {
-  const auto addr = BytesViewInput::Position();
+  const auto addr = _input.Position();
   auto diff = std::numeric_limits<size_t>::max();
   SDB_ASSERT(!_mapping.empty());
-  mapping_value src = _mapping.front();
+  MappingValue src = _mapping.front();
   for (const auto& m : _mapping) {
     if (m.second < addr) {
       if (addr - m.second < diff) {
@@ -102,6 +88,20 @@ uint64_t RemappedBytesViewInput::Position() const noexcept {
     return 0;
   }
   return src.first + (addr - src.second);
+}
+
+uint64_t RemappedBytesViewInput::SourceToInternal(
+  uint64_t offset) const noexcept {
+  SDB_ASSERT(!_mapping.empty());
+  auto it = absl::c_lower_bound(
+    _mapping, offset, [](const auto& l, const auto& r) { return l.first < r; });
+  if (it == _mapping.end()) {
+    --it;
+  } else if (it->first > offset) {
+    SDB_ASSERT(it != _mapping.begin());
+    --it;
+  }
+  return it->second + (offset - it->first);
 }
 
 }  // namespace irs

@@ -48,30 +48,31 @@ namespace irs {
 
 struct BM25Stats {
   // precomputed idf value
-  float_t idf;
+  score_t idf;
   // precomputed k*(1-b)
-  float_t norm_const;
+  score_t norm_const;
   // precomputed k*b/avgD
-  float_t norm_length;
-  // precomputed 1/(k*(1-b+b*|doc|/avgDL)) for |doc| E [0..255]
-  float_t norm_cache[256];
+  score_t norm_length;
 };
 
 class BM25 final : public irs::ScorerBase<BM25, BM25Stats> {
  public:
   static constexpr std::string_view type_name() noexcept { return "bm25"; }
 
-  static constexpr float_t K() noexcept { return 1.2f; }
+  static constexpr score_t K() noexcept { return 1.2f; }
 
-  static constexpr float_t B() noexcept { return 0.75f; }
+  static constexpr score_t B() noexcept { return 0.75f; }
 
   static constexpr bool BOOST_AS_SCORE() noexcept { return false; }
 
   static void init();  // for trigering registration in a static build
 
-  BM25(float_t k = K(), float_t b = B(),
-       bool boost_as_score = BOOST_AS_SCORE()) noexcept
-    : _k{k}, _b{b}, _boost_as_score{boost_as_score} {}
+  BM25(score_t k = K(), score_t b = B(), bool boost_as_score = BOOST_AS_SCORE(),
+       bool approximate = true) noexcept
+    : _k{k},
+      _b{b},
+      _boost_as_score{boost_as_score},
+      _approximate{approximate} {}
 
   void collect(byte_type* stats_buf, const irs::FieldCollector* field,
                const irs::TermCollector* term) const final;
@@ -86,11 +87,7 @@ class BM25 final : public irs::ScorerBase<BM25, BM25Stats> {
 
   FieldCollector::ptr PrepareFieldCollector() const final;
 
-  ScoreFunction PrepareScorer(const ColumnProvider& segment,
-                              const FieldProperties& meta,
-                              const byte_type* query_stats,
-                              const AttributeProvider& doc_attrs,
-                              score_t boost) const final;
+  ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
 
   WandWriter::ptr prepare_wand_writer(size_t max_levels) const final;
 
@@ -102,9 +99,9 @@ class BM25 final : public irs::ScorerBase<BM25, BM25Stats> {
 
   bool equals(const Scorer& other) const noexcept final;
 
-  float_t k() const noexcept { return _k; }
+  score_t k() const noexcept { return _k; }
 
-  float_t b() const noexcept { return _b; }
+  score_t b() const noexcept { return _b; }
 
   bool use_boost_as_score() const noexcept { return _boost_as_score; }
 
@@ -117,9 +114,10 @@ class BM25 final : public irs::ScorerBase<BM25, BM25Stats> {
   bool NeedsNorm() const noexcept { return !IsBM1() && !IsBM15(); }
 
  private:
-  float_t _k;
-  float_t _b;
+  score_t _k;
+  score_t _b;
   bool _boost_as_score;
+  bool _approximate;
 };
 
 }  // namespace irs

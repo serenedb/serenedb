@@ -28,9 +28,12 @@
 #include "basics/empty.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/field_meta.hpp"
+#include "iresearch/index/index_reader.hpp"
+#include "iresearch/index/iterators.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/store/memory_directory.hpp"
+#include "iresearch/utils/attribute_provider.hpp"
 
 namespace irs {
 
@@ -99,7 +102,7 @@ class WandWriterImpl final : public WandWriter {
 };
 
 enum WandTag : uint32_t {
-  // What will be written?
+  // What was written?
   kWandTagFreq = 0U,
   kWandTagNorm = 1U << 0U,
   // How to Produce best Entry?
@@ -110,22 +113,30 @@ enum WandTag : uint32_t {
   // Produce max freq/norm
   kWandTagDivNorm = 1U << 3U,
   // Produce best freq, norm for BM25 with specified b -- (0...1)
-  kWandTagBM25 = 1U << 4U,
+  kWandTagBM25 = 1U << 5U,
+  // Produce best freq, norm for BM25 with specified b -- (0...1) and avg_dl
+  kWandTagAvgDL = 1U << 6U,
 };
 
 template<uint32_t Tag>
-class FreqNormProducer {
-  static constexpr bool kBm25 = (Tag & kWandTagBM25) != 0;
+class FreqNormProducer : public AttributeProvider {
+  static_assert((Tag & kWandTagFreq) == 0);
+  static_assert((Tag & kWandTagNorm) == 0);
+
+  static constexpr bool kAvgDL = (Tag & kWandTagAvgDL) != 0;
+  static constexpr bool kBm25 = kAvgDL || (Tag & kWandTagBM25) != 0;
   static constexpr bool kDivNorm = (Tag & kWandTagDivNorm) != 0;
   static constexpr bool kMinNorm = (Tag & kWandTagMinNorm) != 0;
   static constexpr bool kMaxFreq = kMinNorm || (Tag & kWandTagMaxFreq) != 0;
 
-  static constexpr bool kNorm =
-    kBm25 || kDivNorm || kMinNorm || (Tag & kWandTagNorm) != 0;
+  static constexpr bool kNorm = kBm25 || kDivNorm || kMinNorm != 0;
 
   static constexpr score_t kMinAvgDL = 1.f;
   static constexpr score_t kMaxAvgDL = 4294967296.f;
 
+  // TODO(mbkkt) For known avg_dl we can precompute (1 - b) * avg_dl
+  // For kAvgDL we need to precompute with _avg_dl
+  // For kBM25 we need to precompute with kMinAvgDL and kMaxAvgDL
   static IRS_FORCE_INLINE auto CmpBm25(score_t avg_dl, score_t b, uint32_t tf_1,
                                        uint32_t dl_1, uint32_t tf_2,
                                        uint32_t dl_2) noexcept {
@@ -167,7 +178,7 @@ class FreqNormProducer {
 
   IRS_FORCE_INLINE void Produce(const Entry& from, Entry& to) noexcept {
     if constexpr (kBm25) {
-      ProduceBM25(_b, from.freq, from.norm, to);
+      ProduceBM25(from.freq, from.norm, to);
     } else if constexpr (kMaxFreq) {
       to.freq = from.freq > to.freq ? from.freq : to.freq;
       if constexpr (kMinNorm) {
@@ -210,55 +221,78 @@ class FreqNormProducer {
                const AttributeProvider& attrs) {
     _freq = irs::get<FreqAttr>(attrs);
 
-    if (_freq == nullptr) [[unlikely]] {
+    if (!_freq) [[unlikely]] {
       return false;
     }
 
     if constexpr (kNorm) {
-      const auto* doc = irs::get<DocAttr>(attrs);
+      _doc = irs::get<DocAttr>(attrs);
 
-      if (doc == nullptr) [[unlikely]] {
+      if (!_doc) [[unlikely]] {
         return false;
       }
 
-      if (!field_limits::valid(meta.norm)) [[unlikely]] {
+      const auto* column = reader.column(meta.norm);
+      if (!column) {
         return false;
       }
 
-      Norm::Context ctx;
-      if (!ctx.Reset(reader, meta.norm, *doc)) [[unlikely]] {
+      _norm_it = column->norms();
+      if (!_norm_it) [[unlikely]] {
         return false;
       }
 
-      _norm = Norm::MakeReader(std::move(ctx), [&](auto&& reader) {
-        return absl::AnyInvocable<uint32_t() noexcept>{std::move(reader)};
-      });
+      if constexpr (kAvgDL) {
+        _avg_dl = _norm_it->GetAvg();
+      }
+
+      return true;
     }
 
     return true;
   }
-
   IRS_FORCE_INLINE void Produce(Entry& to) noexcept {
     if constexpr (kBm25 || kDivNorm) {
       const auto freq = _freq->value;
-      const auto norm = _norm();
+      ReadNorm();
       if constexpr (kBm25) {
-        ProduceBM25(_b, freq, norm, to);
+        ProduceBM25(freq, _norm.value, to);
       } else {
-        ProduceDivNorm(freq, norm, to);
+        ProduceDivNorm(freq, _norm.value, to);
       }
     } else if constexpr (kMaxFreq) {
       const auto freq = _freq->value;
       to.freq = freq > to.freq ? freq : to.freq;
       if constexpr (kMinNorm) {
-        const auto norm = _norm();
-        to.norm = norm < to.norm ? norm : to.norm;
+        ReadNorm();
+        to.norm = _norm.value < to.norm ? _norm.value : to.norm;
         to.norm = to.norm < to.freq ? to.freq : to.norm;
       }
     }
   }
 
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+    if (irs::Type<FreqAttr>::id() == type) {
+      return const_cast<irs::FreqAttr*>(_freq);
+    }
+    if constexpr (kNorm) {
+      if (irs::Type<Norm>::id() == type) {
+        return &_norm;
+      }
+    }
+    if (irs::Type<DocAttr>::id() == type) {
+      return const_cast<irs::DocAttr*>(_doc);
+    }
+    return nullptr;
+  }
+
  private:
+  void ReadNorm() {
+    static_assert(kNorm);
+    _norm.value = _norm_it->Get(_doc->value);
+    SDB_ASSERT(_norm.value);
+  }
+
   static IRS_FORCE_INLINE void ProduceDivNorm(uint32_t freq, uint32_t norm,
                                               Entry& to) noexcept {
     if (static_cast<uint64_t>(freq) * to.norm >
@@ -268,29 +302,42 @@ class FreqNormProducer {
     }
   }
 
-  static IRS_NO_INLINE void ProduceBM25(score_t b, uint32_t freq, uint32_t norm,
-                                        Entry& to) noexcept {
-    // try to choose best document for any avg_dl
-    const auto min = CmpBm25(kMinAvgDL, b, freq, norm, to.freq, to.norm);
-    const auto max = CmpBm25(kMaxAvgDL, b, freq, norm, to.freq, to.norm);
-    if (min <= 0 && max <= 0) {
-      return;
-    }
-    if (min >= 0 && max >= 0) {
+  IRS_NO_INLINE void ProduceBM25(uint32_t freq, uint32_t norm,
+                                 Entry& to) noexcept {
+    if constexpr (kAvgDL) {
+      const auto cmp = CmpBm25(_avg_dl, _b, freq, norm, to.freq, to.norm);
+      if (cmp <= 0) {
+        return;
+      }
       to.freq = freq;
       to.norm = norm;
-      return;
+    } else {
+      // try to choose best document for any avg_dl
+      const auto min = CmpBm25(kMinAvgDL, _b, freq, norm, to.freq, to.norm);
+      const auto max = CmpBm25(kMaxAvgDL, _b, freq, norm, to.freq, to.norm);
+      if (min <= 0 && max <= 0) {
+        return;
+      }
+      if (min >= 0 && max >= 0) {
+        to.freq = freq;
+        to.norm = norm;
+        return;
+      }
+      // fallback, create virtual document
+      to.freq = freq > to.freq ? freq : to.freq;
+      to.norm = norm < to.norm ? norm : to.norm;
+      to.norm = to.norm < to.freq ? to.freq : to.norm;
     }
-    // fallback, create virtual document
-    to.freq = freq > to.freq ? freq : to.freq;
-    to.norm = norm < to.norm ? norm : to.norm;
-    to.norm = to.norm < to.freq ? to.freq : to.norm;
   }
 
   const irs::FreqAttr* _freq{};
+  const irs::DocAttr* _doc{};
   [[no_unique_address]]
-  utils::Need<kNorm, absl::AnyInvocable<uint32_t() noexcept>> _norm;
+  utils::Need<kNorm, Norm> _norm;
+  [[no_unique_address]]
+  utils::Need<kNorm, NormReader::ptr> _norm_it;
   [[no_unique_address]] utils::Need<kBm25, score_t> _b;
+  [[no_unique_address]] utils::Need<kAvgDL, score_t> _avg_dl;
 };
 
 template<uint32_t Tag>
@@ -298,12 +345,21 @@ using FreqNormWriter = WandWriterImpl<FreqNormProducer<Tag>>;
 
 template<uint32_t Tag>
 class FreqNormSource final : public WandSource {
+  static_assert((Tag & kWandTagMaxFreq) == 0);
+  static_assert((Tag & kWandTagMinNorm) == 0);
+  static_assert((Tag & kWandTagDivNorm) == 0);
+  static_assert((Tag & kWandTagBM25) == 0);
+  static_assert((Tag & kWandTagAvgDL) == 0);
+
   static constexpr bool kNorm = (Tag & kWandTagNorm) != 0;
 
  public:
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     if (irs::Type<FreqAttr>::id() == type) {
       return &_freq;
+    }
+    if (irs::Type<FreqBlockAttr>::id() == type) {
+      return &_freq_block;
     }
     if constexpr (kNorm) {
       if (irs::Type<Norm>::id() == type) {
@@ -332,6 +388,7 @@ class FreqNormSource final : public WandSource {
 
  private:
   FreqAttr _freq;
+  FreqBlockAttr _freq_block{.value = &_freq.value};
   [[no_unique_address]] utils::Need<kNorm, Norm> _norm;
 };
 

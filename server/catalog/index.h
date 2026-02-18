@@ -74,6 +74,8 @@ class Index : public SchemaObject {
 };
 
 ResultOr<std::shared_ptr<Index>> MakeIndex(IndexBaseOptions options);
+Result ValidateIndexOptions(const IndexBaseOptions& options,
+                            std::span<const Column*> indexed_columns);
 
 }  // namespace catalog
 

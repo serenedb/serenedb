@@ -21,8 +21,7 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/utils/fstext/fst_string_weight.hpp>
-
+#include "iresearch/utils/fstext/fst_string_weight.hpp"
 #include "tests_shared.hpp"
 
 TEST(fst_string_weight_test, static_const) {

@@ -29,14 +29,14 @@
 #include <utf8.h>
 
 #include <iomanip>
-#include <iresearch/analysis/tokenizers.hpp>
-#include <iresearch/index/field_data.hpp>
-#include <iresearch/index/norm.hpp>
-#include <iresearch/store/store_utils.hpp>
 #include <numeric>
 #include <sstream>
 
 #include "basics/file_utils_ext.hpp"
+#include "iresearch/analysis/tokenizers.hpp"
+#include "iresearch/index/field_data.hpp"
+#include "iresearch/index/norm.hpp"
+#include "iresearch/store/store_utils.hpp"
 #include "utils/write_helpers.hpp"
 
 namespace utf8 {

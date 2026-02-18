@@ -25,14 +25,10 @@
 
 #include <absl/container/flat_hash_map.h>
 
-#include <mutex>
-
-#include "basics/async_utils.hpp"
 #include "basics/resource_manager.hpp"
-#include "directory.hpp"
+#include "iresearch/error/error.hpp"
+#include "iresearch/store/directory.hpp"
 #include "iresearch/store/directory_attributes.hpp"
-#include "iresearch/utils/attributes.hpp"
-#include "iresearch/utils/string.hpp"
 
 namespace irs {
 
@@ -104,44 +100,81 @@ class MemoryFile : public container_utils::RawBlockVector<16, 8> {
 
 class MemoryIndexInput final : public IndexInput {
  public:
-  explicit MemoryIndexInput(const MemoryFile& file) noexcept;
+  explicit MemoryIndexInput(const MemoryFile& file) noexcept : _file{&file} {}
 
-  IndexInput::ptr Dup() const final;
-  uint32_t Checksum(size_t offset) const final;
-  bool IsEOF() const final;
-  byte_type ReadByte() final;
-  const byte_type* ReadBuffer(size_t size, BufferHint hint) noexcept final;
-  const byte_type* ReadBuffer(size_t offset, size_t size,
-                              BufferHint hint) noexcept final;
-  size_t ReadBytes(byte_type* b, size_t len) final;
-  size_t ReadBytes(size_t offset, byte_type* b, size_t len) final {
-    Seek(offset);
-    return ReadBytes(b, len);
+  const byte_type* ReadData(uint64_t count) noexcept final;
+  const byte_type* ReadData(uint64_t offset, uint64_t count) noexcept final;
+
+  const byte_type* ReadView(uint64_t count) noexcept final {
+    return ReadData(count);
   }
-  IndexInput::ptr Reopen() const final;
-  uint64_t Length() const final;
+  const byte_type* ReadView(uint64_t offset, uint64_t count) noexcept final {
+    return ReadData(offset, count);
+  }
 
-  uint64_t Position() const final;
+  byte_type ReadByte() final {
+    if (_begin >= _end) {
+      SwitchBuffer(Position());
+    }
+    return *_begin++;
+  }
+  size_t ReadBytes(byte_type* b, size_t count) final;
+  size_t ReadBytes(uint64_t offset, byte_type* b, size_t count) final {
+    Seek(offset);
+    return ReadBytes(b, count);
+  }
 
-  void Seek(size_t pos) final;
+  int16_t ReadI16() final {
+    return Remain() < sizeof(uint16_t) ? irs::read<uint16_t>(*this)
+                                       : irs::read<uint16_t>(_begin);
+  }
+  int32_t ReadI32() final {
+    return Remain() < sizeof(uint32_t) ? irs::read<uint32_t>(*this)
+                                       : irs::read<uint32_t>(_begin);
+  }
+  int64_t ReadI64() final {
+    return Remain() < sizeof(uint64_t) ? irs::read<uint64_t>(*this)
+                                       : irs::read<uint64_t>(_begin);
+  }
+  uint32_t ReadV32() final {
+    return Remain() < bytes_io<uint32_t>::kMaxVSize
+             ? irs::vread<uint32_t>(*this)
+             : irs::vread<uint32_t>(_begin);
+  }
+  uint64_t ReadV64() final {
+    return Remain() < bytes_io<uint64_t>::kMaxVSize
+             ? irs::vread<uint64_t>(*this)
+             : irs::vread<uint64_t>(_begin);
+  }
 
-  int16_t ReadI16() final;
-  int32_t ReadI32() final;
-  int64_t ReadI64() final;
-  uint32_t ReadV32() final;
-  uint64_t ReadV64() final;
+  uint64_t Position() const noexcept final {
+    return _start + std::distance(_buf, _begin);
+  }
+  uint64_t Length() const noexcept final { return _file->Length(); }
+  bool IsEOF() const noexcept final { return Position() >= Length(); }
 
+  void Skip(uint64_t count) final { Seek(Position() + count); }
+  void Seek(uint64_t pos) final;
+
+  IndexInput::ptr Dup() const final {
+    return std::make_unique<MemoryIndexInput>(*this);
+  }
+  IndexInput::ptr Reopen() const final { return Dup(); }
+
+  uint32_t Checksum(uint64_t offset) const final;
+
+  // TODO(mbkkt) remove this
   byte_type operator*() { return ReadByte(); }
   MemoryIndexInput& operator++() noexcept { return *this; }
   MemoryIndexInput& operator++(int) noexcept { return *this; }
 
  private:
-  MemoryIndexInput(const MemoryIndexInput&) = default;
-
-  void switch_buffer(size_t pos);
+  void SwitchBuffer(size_t pos);
 
   // returns number of reamining bytes in the buffer
-  IRS_FORCE_INLINE size_t remain() const { return std::distance(_begin, _end); }
+  IRS_FORCE_INLINE uint64_t Remain() const {
+    return std::distance(_begin, _end);
+  }
 
   const MemoryFile* _file;        // underline file
   const byte_type* _buf{};        // current buffer

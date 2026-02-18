@@ -49,7 +49,7 @@
 namespace irs {
 
 class DataOutput;
-struct DataInput;
+class DataInput;
 
 namespace compression {
 

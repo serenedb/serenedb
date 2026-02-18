@@ -27,13 +27,12 @@
 #include <vpack/builder.h>
 #include <vpack/slice.h>
 
-#include <iresearch/analysis/analyzer.hpp>
-#include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/utils/attribute_helper.hpp>
-
 #include "basics/resource_manager.hpp"
 #include "geo/coding.h"
 #include "geo/shape_container.h"
+#include "iresearch/analysis/analyzer.hpp"
+#include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/utils/attribute_helper.hpp"
 
 namespace irs {
 

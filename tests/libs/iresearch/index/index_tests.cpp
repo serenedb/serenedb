@@ -26,26 +26,27 @@
 #include <absl/random/random.h>
 #include <faiss/utils/distances.h>
 
-#include <iresearch/index/field_meta.hpp>
-#include <iresearch/index/index_features.hpp>
-#include <iresearch/index/norm.hpp>
-#include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/store/fs_directory.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/mmap_directory.hpp>
-#include <iresearch/utils/delta_compression.hpp>
-#include <iresearch/utils/fstext/fst_table_matcher.hpp>
-#include <iresearch/utils/index_utils.hpp>
-#include <iresearch/utils/lz4compression.hpp>
-#include <iresearch/utils/type_limits.hpp>
-#include <iresearch/utils/wildcard_utils.hpp>
 #include <string>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
 
 #include "basics/file_utils_ext.hpp"
+#include "iresearch/formats/formats.hpp"
+#include "iresearch/index/field_meta.hpp"
+#include "iresearch/index/index_features.hpp"
+#include "iresearch/index/norm.hpp"
+#include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/term_filter.hpp"
+#include "iresearch/store/fs_directory.hpp"
+#include "iresearch/store/memory_directory.hpp"
+#include "iresearch/store/mmap_directory.hpp"
+#include "iresearch/utils/delta_compression.hpp"
+#include "iresearch/utils/fstext/fst_table_matcher.hpp"
+#include "iresearch/utils/index_utils.hpp"
+#include "iresearch/utils/lz4compression.hpp"
+#include "iresearch/utils/type_limits.hpp"
+#include "iresearch/utils/wildcard_utils.hpp"
 #include "tests_shared.hpp"
 
 using namespace std::literals;
@@ -13412,20 +13413,18 @@ TEST_P(IndexTestCase, ensure_no_empty_norms_written) {
     {
       EXPECT_TRUE(it->next());
       EXPECT_EQ(it->value(), 1);
-      irs::BytesViewInput in(payload->value);
-      EXPECT_EQ(irs::read<uint32_t>(in), 0);
+      EXPECT_EQ(irs::Norm::Read(payload->value), 0);
     }
+
     {
       EXPECT_TRUE(it->next());
       EXPECT_EQ(it->value(), 2);
-      irs::BytesViewInput in(payload->value);
-      EXPECT_EQ(irs::read<uint32_t>(in), 1);
+      EXPECT_EQ(irs::Norm::Read(payload->value), 1);
     }
     {
       EXPECT_TRUE(it->next());
       EXPECT_EQ(it->value(), 3);
-      irs::BytesViewInput in(payload->value);
-      EXPECT_EQ(irs::read<uint32_t>(in), 2);
+      EXPECT_EQ(irs::Norm::Read(payload->value), 2);
     }
     EXPECT_FALSE(it->next());
     EXPECT_FALSE(it->next());

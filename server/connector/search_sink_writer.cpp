@@ -59,22 +59,32 @@ void SetNameToBuffer(std::string& name_buffer, catalog::Column::Id column_id) {
 }  // namespace
 
 SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
-  irs::IndexWriter::Transaction& trx)
-  : _trx(trx) {
+  irs::IndexWriter::Transaction& trx,
+  std::span<const catalog::Column::Id> columns)
+  : ColumnSinkWriterImplBase{columns}, _trx{trx} {
   _pk_field.PrepareForStringValue();
   _pk_field.name = kPkFieldName;
 }
 
-bool SearchSinkInsertBaseImpl::SwitchColumnImpl(velox::TypeKind kind,
+bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const velox::Type& type,
                                                 bool have_nulls,
                                                 catalog::Column::Id column_id) {
-  if (kind == facebook::velox::TypeKind::UNKNOWN) {
+  if (!IsIndexed(column_id)) {
+#ifdef SDB_DEV
+    _current_writer = nullptr;
+#endif
+    return false;
+  }
+  // For now we do not support types that are not default comparable as our
+  // ranges depend on that.
+  SDB_ASSERT(!type.providesCustomComparison());
+  if (type.kind() == facebook::velox::TypeKind::UNKNOWN) {
     // for UNKNOWN type we always have nulls so no need of separate nulls
     // handling
     SetupColumnWriter<velox::TypeKind::UNKNOWN>(column_id, false);
   } else {
-    VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(SetupColumnWriter, kind, column_id,
-                                       have_nulls);
+    VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(SetupColumnWriter, type.kind(),
+                                       column_id, have_nulls);
   }
   SDB_ASSERT(_document.has_value());
   _document->NextFieldBatch();
@@ -276,7 +286,7 @@ void SearchSinkInsertBaseImpl::Field::SetNumericValue(T value) {
   if constexpr (std::is_same_v<
                   T, velox::TypeTraits<velox::TypeKind::HUGEINT>::NativeType>) {
     // TODO(Dronplane): Native int128 support
-    nstream.reset(static_cast<double>(value));
+    SDB_THROW(ERROR_NOT_IMPLEMENTED, "HUGEINT kind is not supported");
   } else if constexpr (
     std::is_same_v<T,
                    velox::TypeTraits<velox::TypeKind::TINYINT>::NativeType> ||

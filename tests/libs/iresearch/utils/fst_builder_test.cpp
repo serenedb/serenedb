@@ -24,18 +24,18 @@
 
 #include "tests_shared.hpp"
 
-#include <iresearch/index/directory_reader.hpp>
-#include <iresearch/index/index_writer.hpp>
-#include <iresearch/store/mmap_directory.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/utils/fstext/fst_string_ref_weight.hpp>
-#include <iresearch/utils/fstext/fst_string_weight.hpp>
-#include <iresearch/utils/fstext/fst_builder.hpp>
-#include <iresearch/utils/fstext/fst_matcher.hpp>
-#include <iresearch/utils/fstext/immutable_fst.hpp>
-#include <iresearch/utils/fstext/fst_utils.hpp>
-#include <iresearch/utils/fstext/fst_decl.hpp>
-#include <iresearch/utils/numeric_utils.hpp>
+#include "iresearch/index/directory_reader.hpp"
+#include "iresearch/index/index_writer.hpp"
+#include "iresearch/store/mmap_directory.hpp"
+#include "iresearch/store/memory_directory.hpp"
+#include "iresearch/utils/fstext/fst_string_ref_weight.hpp"
+#include "iresearch/utils/fstext/fst_string_weight.hpp"
+#include "iresearch/utils/fstext/fst_builder.hpp"
+#include "iresearch/utils/fstext/fst_matcher.hpp"
+#include "iresearch/utils/fstext/immutable_fst.hpp"
+#include "iresearch/utils/fstext/fst_utils.hpp"
+#include "iresearch/utils/fstext/fst_decl.hpp"
+#include "iresearch/utils/numeric_utils.hpp"
 
 #include <fst/matcher.h>
 #include <fst/vector-fst.h>

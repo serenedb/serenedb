@@ -106,13 +106,13 @@ set(IResearch_core_sources
     ./search/score_function.cpp
     ./search/cost.cpp
     ./search/collectors.cpp
-    ./search/score.cpp
     ./search/bitset_doc_iterator.cpp
     ./search/filter.cpp
     ./search/term_filter.cpp
     ./search/nested_filter.cpp
     ./search/terms_filter.cpp
     ./search/prefix_filter.cpp
+    ./search/column_collector.cpp
     ./search/range_filter.cpp
     ./search/phrase_filter.cpp
     ./search/phrase_query.cpp
@@ -124,6 +124,7 @@ set(IResearch_core_sources
     ./search/term_query.cpp
     ./search/boolean_filter.cpp
     ./search/boolean_query.cpp
+    ./search/mixed_boolean_filter.cpp
     ./search/ngram_similarity_filter.cpp
     ./search/ngram_similarity_query.cpp
     ./search/geo_filter.cpp
@@ -200,6 +201,12 @@ include_directories(SYSTEM ${IRESEARCH_EXTERNAL_INCLUDES})
 
 add_library(iresearch-static STATIC ${IResearch_core_sources})
 
+set_source_files_properties(
+    search/bm25.cpp
+    search/tfidf.cpp
+    PROPERTIES COMPILE_OPTIONS "-ffast-math"
+)
+
 target_include_directories(
     iresearch-static
     SYSTEM
@@ -233,6 +240,7 @@ target_link_libraries(
     PUBLIC ${FAISS_LIB}
     PUBLIC re2
     PUBLIC serene_geo
+    PUBLIC streamvbyte
     PRIVATE lz4_static
     PRIVATE text
     PRIVATE stemmer-static

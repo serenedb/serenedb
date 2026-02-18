@@ -46,8 +46,8 @@ class WriteConflictResolver {
  public:
   WriteConflictResolver(rocksdb::Transaction& transaction,
                         rocksdb::ColumnFamilyHandle& cf,
-                        WriteConflictPolicy policy, std::string_view table_name,
-                        const rocksdb::Snapshot* snapshot);
+                        WriteConflictPolicy policy,
+                        std::string_view table_name);
 
   // Handles write conflicts. Returns number of skipped rows.
   // key_indices specifies which columns to use for error detail message.
@@ -238,8 +238,7 @@ class RocksDBInsertDataSink final
     ObjectId object_key, std::span<const velox::column_index_t> key_childs,
     std::vector<ColumnInfo> columns, WriteConflictPolicy conflict_policy,
     uint64_t& number_of_rows_affected,
-    std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers,
-    const rocksdb::Snapshot* snapshot);
+    std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers);
 
   void appendData(velox::RowVectorPtr input) final;
 

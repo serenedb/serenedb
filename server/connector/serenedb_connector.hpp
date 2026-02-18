@@ -733,7 +733,6 @@ class SereneDBConnector final : public velox::connector::Connector {
             }
           }
           auto& rocksdb_transaction = transaction.EnsureRocksDBTransaction();
-          const auto* snapshot = rocksdb_transaction.GetSnapshot();
 
           if constexpr (IsUpdate) {
             std::vector<catalog::Column::Id> all_column_oids;
@@ -775,7 +774,7 @@ class SereneDBConnector final : public velox::connector::Connector {
               *connector_query_ctx->memoryPool(), object_key, pk_indices,
               columns, table.WriteConflictPolicy(),
               serene_insert_handle.NumberOfRowsAffected(),
-              std::move(insert_sinks), snapshot);
+              std::move(insert_sinks));
           }
         });
     }

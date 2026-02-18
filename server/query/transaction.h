@@ -159,8 +159,7 @@ class Transaction : public Config {
   IsolationLevel _isolation_level =
     Get<VariableType::PgTransactionIsolation>("default_transaction_isolation");
   std::shared_ptr<StorageSnapshot> _storage_snapshot;
-  std::unique_ptr<rocksdb::Transaction>
-    _rocksdb_transaction;  // Lazy initialized
+  std::unique_ptr<rocksdb::Transaction> _rocksdb_transaction;
   mutable const rocksdb::Snapshot* _rocksdb_snapshot =
     nullptr;  // Lazy initialized
   containers::FlatHashMap<ObjectId,

@@ -212,10 +212,10 @@ class DataSinkWithSearchTest : public ::testing::Test,
         index_transaction, col_idx));
     primary_key::Create(*data, pk, written_row_keys);
     size_t rows_affected = 0;
-    RocksDBInsertDataSink sink(
-      "", *data_transaction, *_cf_handles.front(), *pool_.get(), object_key, pk,
-      all_column_oids, WriteConflictPolicy::Replace, rows_affected,
-      std::move(index_writers), data_transaction->GetSnapshot());
+    RocksDBInsertDataSink sink("", *data_transaction, *_cf_handles.front(),
+                               *pool_.get(), object_key, pk, all_column_oids,
+                               WriteConflictPolicy::Replace, rows_affected,
+                               std::move(index_writers));
     sink.appendData(data);
     while (!sink.finish()) {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -263,10 +263,10 @@ class DataSinkWithSearchTest : public ::testing::Test,
         index_transaction, all_column_oids));
     size_t rows_affected = 0;
 
-    RocksDBUpdateDataSink sink(
-      "", *data_transaction, *_cf_handles.front(), *pool_.get(), object_key, pk,
-      data_column_oids, all_column_oids, update_pk, table_row_type,
-      rows_affected, std::move(index_writers), data_transaction->GetSnapshot());
+    RocksDBUpdateDataSink sink("", *data_transaction, *_cf_handles.front(),
+                               *pool_.get(), object_key, pk, data_column_oids,
+                               all_column_oids, update_pk, table_row_type,
+                               rows_affected, std::move(index_writers));
     sink.appendData(data);
     while (!sink.finish()) {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));

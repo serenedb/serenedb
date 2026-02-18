@@ -644,11 +644,7 @@ class SereneDBConnector final : public velox::connector::Connector {
 
     auto* rocksdb_transaction = transaction.GetRocksDBTransaction();
 
-    const rocksdb::Snapshot* snapshot =
-      transaction.GetIsolationLevel() == IsolationLevel::ReadCommitted
-        ? nullptr
-        : &transaction.EnsureRocksDBSnapshot();
-
+    const auto* snapshot = transaction.GetRocksDBSnapshot();
     if (read_your_own_writes && rocksdb_transaction) {
       return std::make_unique<RocksDBRYOWDataSource>(
         *connector_query_ctx->memoryPool(), *rocksdb_transaction, _cf,
@@ -737,10 +733,7 @@ class SereneDBConnector final : public velox::connector::Connector {
             }
           }
           auto& rocksdb_transaction = transaction.EnsureRocksDBTransaction();
-          const rocksdb::Snapshot* snapshot =
-            transaction.GetIsolationLevel() == IsolationLevel::ReadCommitted
-              ? nullptr
-              : rocksdb_transaction.GetSnapshot();
+          const auto* snapshot = rocksdb_transaction.GetSnapshot();
 
           if constexpr (IsUpdate) {
             std::vector<catalog::Column::Id> all_column_oids;

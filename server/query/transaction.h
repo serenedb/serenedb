@@ -95,7 +95,8 @@ class Transaction : public Config {
 
   rocksdb::Transaction& EnsureRocksDBTransaction();
 
-  const rocksdb::Snapshot& EnsureRocksDBSnapshot();
+  // May return nullptr for Read Committed isolation level
+  const rocksdb::Snapshot* GetRocksDBSnapshot();
 
   void Destroy() noexcept;
 
@@ -144,14 +145,17 @@ class Transaction : public Config {
 
  private:
   void CreateStorageSnapshot();
-  void CreateRocksDBTransaction();
+  void CreateRocksDBTransaction() const;
   void ApplyTableStatsDiffs();
 
   State _state = State::None;
-  IsolationLevel _isolation_level = IsolationLevel::RepeatableRead;
+  IsolationLevel _isolation_level =
+    Get<VariableType::PgTransactionIsolation>("default_transaction_isolation");
   std::shared_ptr<StorageSnapshot> _storage_snapshot;
-  std::unique_ptr<rocksdb::Transaction> _rocksdb_transaction;
-  const rocksdb::Snapshot* _rocksdb_snapshot = nullptr;
+  mutable std::unique_ptr<rocksdb::Transaction>
+    _rocksdb_transaction;  // Lazy initialized
+  mutable const rocksdb::Snapshot* _rocksdb_snapshot =
+    nullptr;  // Lazy initialized
   containers::FlatHashMap<ObjectId,
                           std::unique_ptr<irs::IndexWriter::Transaction>>
     _search_transactions;

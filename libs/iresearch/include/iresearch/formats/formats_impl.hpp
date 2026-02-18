@@ -1175,8 +1175,8 @@ class PostingIteratorBase : public DocIterator {
 
   std::pair<doc_id_t, bool> FillBlock(const doc_id_t min, const doc_id_t max,
                                       uint64_t* IRS_RESTRICT mask,
-                                      CollectScoreContext score,
-                                      CollectMatchContext match) final {
+                                      FillBlockScoreContext score,
+                                      FillBlockMatchContext match) final {
     SDB_ASSERT(min < max);
     auto& doc_value = std::get<DocAttr>(_attrs).value;
 
@@ -1186,8 +1186,8 @@ class PostingIteratorBase : public DocIterator {
 
     auto process_score = [&](size_t left_in_leaf) IRS_FORCE_INLINE {
       SDB_ASSERT(score.merge_type != ScoreMergeType::Noop);
-      if (score.collector) {
-        score.collector->Collect(
+      if (score.fetcher) {
+        score.fetcher->Fetch(
           std::span{std::end(_docs) - left_in_leaf, left_in_leaf});
       }
       if constexpr (IteratorTraits::Frequency()) {
@@ -1304,17 +1304,16 @@ class PostingIteratorBase : public DocIterator {
       .segment = *ctx.segment,
       .field = _field,
       .doc_attrs = *this,
-      .collector = ctx.collector,
+      .fetcher = ctx.fetcher,
       .stats = _stats,
       .boost = _boost,
     });
   }
 
-  uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
-                   std::span<doc_id_t, kScoreBlock> docs,
-                   std::span<score_t, kScoreBlock> scores) final {
+  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
+               ScoreCollector& collector) final {
     // TODO(gnusi): optimize
-    return CollectImpl(*this, scorer, columns, docs, scores);
+    CollectImpl(*this, scorer, fetcher, collector);
   }
 
   IRS_FORCE_INLINE void FetchScoreArgs(uint16_t index) final {
@@ -2410,8 +2409,8 @@ struct PostingAdapter {
   }
 
   IRS_FORCE_INLINE std::pair<doc_id_t, bool> FillBlock(
-    doc_id_t min, doc_id_t max, uint64_t* mask, CollectScoreContext score,
-    CollectMatchContext match) {
+    doc_id_t min, doc_id_t max, uint64_t* mask, FillBlockScoreContext score,
+    FillBlockMatchContext match) {
     return self().FillBlock(min, max, mask, score, match);
   }
 
@@ -2525,7 +2524,7 @@ class SingleWandIterator : public DocIterator {
       .segment = *ctx.segment,
       .field = this->_field,
       .doc_attrs = *this,
-      .collector = ctx.collector,
+      .fetcher = ctx.fetcher,
       .stats = this->_stats,
       .boost = this->_boost,
     });
@@ -2557,12 +2556,10 @@ class SingleWandIterator : public DocIterator {
     return left_in_leaf + left_in_list;
   }
 
-  uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
-                   std::span<doc_id_t, kScoreBlock> docs,
-                   std::span<score_t, kScoreBlock> scores) final {
+  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
+               ScoreCollector& collector) final {
     // TODO(gnusi): optimize
-    SDB_ASSERT(kScoreBlock <= docs.size());
-    return CollectImpl(*this, scorer, columns, docs, scores);
+    CollectImpl(*this, scorer, fetcher, collector);
   }
 
   void FetchScoreArgs(uint16_t index) final {

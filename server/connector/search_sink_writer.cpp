@@ -59,8 +59,9 @@ void SetNameToBuffer(std::string& name_buffer, catalog::Column::Id column_id) {
 }  // namespace
 
 SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
-  irs::IndexWriter::Transaction& trx)
-  : _trx(trx) {
+  irs::IndexWriter::Transaction& trx,
+  std::span<const catalog::Column::Id> columns)
+  : ColumnSinkWriterImplBase{columns}, _trx{trx} {
   _pk_field.PrepareForStringValue();
   _pk_field.name = kPkFieldName;
 }
@@ -68,6 +69,12 @@ SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
 bool SearchSinkInsertBaseImpl::SwitchColumnImpl(const velox::Type& type,
                                                 bool have_nulls,
                                                 catalog::Column::Id column_id) {
+  if (!IsIndexed(column_id)) {
+#ifdef SDB_DEV
+    _current_writer = nullptr;
+#endif
+    return false;
+  }
   // For now we do not support types that are not default comparable as our
   // ranges depend on that.
   SDB_ASSERT(!type.providesCustomComparison());

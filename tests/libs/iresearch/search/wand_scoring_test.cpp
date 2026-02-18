@@ -173,10 +173,8 @@ class WandScoringTestCase : public IndexTestBase {
   void CompareWandVsNonWand(const irs::DirectoryReader& reader,
                             const irs::Filter& filter,
                             const irs::Scorer& scorer, size_t k) {
-    std::vector<std::pair<irs::doc_id_t, irs::score_t>> baseline_hits(
-      irs::BlockSize(k));
-    std::vector<std::pair<irs::doc_id_t, irs::score_t>> wand_hits(
-      irs::BlockSize(k));
+    std::vector<irs::ScoreDoc> baseline_hits(irs::BlockSize(k));
+    std::vector<irs::ScoreDoc> wand_hits(irs::BlockSize(k));
 
     size_t baseline_count = irs::ExecuteTopKWithCount(reader, filter, scorer, k,
                                                       std::span{baseline_hits});
@@ -199,23 +197,27 @@ class WandScoringTestCase : public IndexTestBase {
 
     // Compare actual top-K docs and scores
     for (size_t i = 0; i < baseline_k; ++i) {
-      EXPECT_EQ(baseline_hits[i].first, wand_hits[i].first)
+      EXPECT_EQ(std::get<irs::doc_id_t>(baseline_hits[i]),
+                std::get<irs::doc_id_t>(wand_hits[i]))
         << "Doc ID mismatch at position " << i;
-      EXPECT_FLOAT_EQ(baseline_hits[i].second, wand_hits[i].second)
+      EXPECT_FLOAT_EQ(std::get<irs::score_t>(baseline_hits[i]),
+                      std::get<irs::score_t>(wand_hits[i]))
         << "Score mismatch at position " << i;
     }
   }
 
   void VerifyScoresAndDocs(auto docs, size_t result_count) {
     for (size_t i = 0; i < result_count; ++i) {
-      EXPECT_GT(docs[i].second, 0)
+      EXPECT_GT(std::get<irs::score_t>(docs[i]), 0)
         << "Score at position " << i << " should be positive";
       if (i > 0) {
-        EXPECT_GE(docs[i - 1].second, docs[i].second)
+        EXPECT_GE(std::get<irs::score_t>(docs[i - 1]),
+                  std::get<irs::score_t>(docs[i]))
           << "Scores should be in descending order at position " << i;
       }
-      ASSERT_TRUE(!irs::doc_limits::eof(docs[i].first) &&
-                  docs[i].first != irs::doc_limits::invalid())
+      ASSERT_TRUE(!irs::doc_limits::eof(std::get<irs::doc_id_t>(docs[i])) &&
+                  std::get<irs::doc_id_t>(docs[i]) !=
+                    irs::doc_limits::invalid())
         << "Doc ID at position " << i << " should be valid, got " << docs[i];
     }
   }
@@ -322,8 +324,7 @@ TEST_P(WandScoringTestCase, WandEmptyResults) {
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 10;
-  std::vector<std::pair<irs::doc_id_t, irs::score_t>> hits(
-    irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> hits(irs::BlockSize(kTopK));
 
   size_t count =
     irs::ExecuteTopK(reader, *filter, scorer, kTopK,
@@ -341,8 +342,7 @@ TEST_P(WandScoringTestCase, WandResultValues) {
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 10;
-  std::vector<std::pair<irs::doc_id_t, irs::score_t>> hits(
-    irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> hits(irs::BlockSize(kTopK));
 
   size_t count =
     irs::ExecuteTopK(reader, *filter, scorer, kTopK,
@@ -363,8 +363,7 @@ TEST_P(WandScoringTestCase, WandMultisegResultValues) {
   ASSERT_NE(nullptr, filter);
 
   constexpr size_t kTopK = 10;
-  std::vector<std::pair<irs::doc_id_t, irs::score_t>> hits(
-    irs::BlockSize(kTopK));
+  std::vector<irs::ScoreDoc> hits(irs::BlockSize(kTopK));
 
   size_t count =
     irs::ExecuteTopK(reader, *filter, scorer, kTopK,

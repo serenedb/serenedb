@@ -40,7 +40,7 @@ ScoreFunction AllIterator::PrepareScore(const PrepareScoreContext& ctx) {
     .segment = *ctx.segment,
     .field = {},
     .doc_attrs = *this,
-    .collector = ctx.collector,
+    .fetcher = ctx.fetcher,
     .stats = _stats,
     .boost = _boost,
   });

@@ -129,17 +129,29 @@ TEST(ScoreFunctionTest, Constant) {
   }
 }
 
+struct Impl : irs::ScoreOperator {
+  mutable irs::score_t buf[1]{};
+  Impl() = default;
+
+  template<irs::ScoreMergeType MergeType = irs::ScoreMergeType::Noop>
+  void ScoreImpl(irs::score_t* res, irs::scores_size_t n) const noexcept {
+    ASSERT_EQ(MergeType, irs::ScoreMergeType::Noop);
+    buf[0] = 42;
+    std::fill_n(res, n, 42);
+  }
+
+  void Score(irs::score_t* res, irs::scores_size_t n) const noexcept final {
+    ScoreImpl(res, n);
+  }
+  void ScoreSum(irs::score_t* res, irs::scores_size_t n) const noexcept final {
+    ScoreImpl<irs::ScoreMergeType::Sum>(res, n);
+  }
+  void ScoreMax(irs::score_t* res, irs::scores_size_t n) const noexcept final {
+    ScoreImpl<irs::ScoreMergeType::Max>(res, n);
+  }
+};
+
 TEST(ScoreFunctionTest, construct) {
-  struct Impl : irs::ScoreOperator {
-    irs::score_t buf[1]{};
-    Impl() = default;
-
-    void Score(irs::score_t* res, size_t n) noexcept override {
-      buf[0] = 42;
-      std::fill_n(res, n, 42);
-    }
-  };
-
   {
     irs::ScoreFunction func;
     irs::score_t tmp{1};
@@ -163,16 +175,6 @@ TEST(ScoreFunctionTest, construct) {
 }
 
 TEST(ScoreFunctionTest, reset) {
-  struct Impl : irs::ScoreOperator {
-    irs::score_t buf[1]{};
-    Impl() = default;
-
-    void Score(irs::score_t* res, size_t n) noexcept override {
-      buf[0] = 42;
-      std::fill_n(res, n, 42);
-    }
-  };
-
   irs::ScoreFunction func;
 
   {
@@ -197,14 +199,6 @@ TEST(ScoreFunctionTest, reset) {
 }
 
 TEST(ScoreFunctionTest, move) {
-  struct Impl : irs::ScoreOperator {
-    irs::score_t buf[1]{};
-
-    void Score(irs::score_t* res, size_t n) noexcept override {
-      std::fill_n(res, n, 42);
-    }
-  };
-
   // move construction
   {
     float_t tmp{1};

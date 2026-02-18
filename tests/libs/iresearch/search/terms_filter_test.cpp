@@ -368,6 +368,31 @@ TEST_P(TermsFilterTestCase, simple_sequential) {
   }
 }
 
+struct ScoreOperator : public irs::ScoreOperator {
+  ScoreOperator(const tests::DocBlockAttr* doc, irs::score_t boost) noexcept
+    : doc{doc}, boost{boost} {}
+
+  template<irs::ScoreMergeType MergeType = irs::ScoreMergeType::Noop>
+  void ScoreImpl(irs::score_t* res, irs::scores_size_t n) const noexcept {
+    for (size_t i = 0; i < n; ++i) {
+      irs::Merge<MergeType>(res[i],
+                            static_cast<irs::score_t>(doc->value[i]) * boost);
+    }
+  }
+
+  void Score(irs::score_t* res, irs::scores_size_t n) const noexcept final {
+    ScoreImpl(res, n);
+  }
+  void ScoreSum(irs::score_t* res, irs::scores_size_t n) const noexcept final {
+    ScoreImpl<irs::ScoreMergeType::Sum>(res, n);
+  }
+  void ScoreMax(irs::score_t* res, irs::scores_size_t n) const noexcept final {
+    ScoreImpl<irs::ScoreMergeType::Max>(res, n);
+  }
+  const tests::DocBlockAttr* doc;
+  irs::score_t boost;
+};
+
 TEST_P(TermsFilterTestCase, min_match) {
   // write segments
   auto writer = open_writer(irs::kOmCreate);
@@ -509,22 +534,6 @@ TEST_P(TermsFilterTestCase, min_match) {
       if (!doc) {
         return irs::ScoreFunction::Constant(ctx.boost);
       }
-
-      struct ScoreOperator : public irs::ScoreOperator {
-        ScoreOperator(const tests::DocBlockAttr* doc,
-                      irs::score_t boost) noexcept
-          : doc{doc}, boost{boost} {}
-
-        void Score(irs::score_t* res, size_t n) noexcept override {
-          for (size_t i = 0; i < n; ++i) {
-            res[i] = static_cast<irs::score_t>(doc->value[i]) * boost;
-          }
-        }
-
-        const tests::DocBlockAttr* doc;
-        irs::score_t boost;
-      };
-
       return irs::ScoreFunction::Make<ScoreOperator>(doc, ctx.boost);
     };
 

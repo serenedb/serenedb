@@ -29,7 +29,7 @@
 namespace irs {
 
 struct TFIDFStats {
-  float_t value;
+  score_t value;
 };
 
 class TFIDF final : public irs::ScorerBase<TFIDF, TFIDFStats> {

@@ -172,7 +172,7 @@ std::vector<Doc> WandTestCase::Collect(const irs::DirectoryReader& index,
   sorted.reserve(limit);
 
   for (size_t left = limit, segment_id = 0; const auto& segment : index) {
-    irs::ColumnCollector collector;
+    irs::ColumnArgsFetcher fetcher;
     auto docs = query->execute(irs::ExecutionContext{
       .segment = segment,
       .scorer = scorers.front(),
@@ -188,7 +188,7 @@ std::vector<Doc> WandTestCase::Collect(const irs::DirectoryReader& index,
       score = docs->PrepareScore({
         .scorer = scorers[wand_idx],
         .segment = &segment,
-        .collector = &collector,
+        .fetcher = &fetcher,
       });
     } else {
       // EXPECT_EQ(std::numeric_limits<irs::score_t>::max(), score.max.tail);
@@ -202,7 +202,7 @@ std::vector<Doc> WandTestCase::Collect(const irs::DirectoryReader& index,
     auto& score_value = *scores.data();
     while (docs->next()) {
       auto doc = docs->value();
-      collector.Collect(doc);
+      fetcher.Fetch(doc);
       docs->FetchScoreArgs(0);
       score.Score(&score_value, 1);
 

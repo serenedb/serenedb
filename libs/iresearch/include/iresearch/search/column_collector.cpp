@@ -25,7 +25,7 @@
 
 namespace irs {
 
-const uint32_t* ColumnCollector::AddNorms(const ColumnReader* field) {
+const uint32_t* ColumnArgsFetcher::AddNorms(const ColumnReader* field) {
   if (!field) {
     return nullptr;
   }

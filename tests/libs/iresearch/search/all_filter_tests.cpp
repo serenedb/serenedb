@@ -112,7 +112,7 @@ TEST_P(AllFilterTestCase, all_order) {
       [&collector_finish_count](
         const irs::byte_type*, const irs::FieldCollector*,
         const irs::TermCollector*) -> void { ++collector_finish_count; };
-    sort->scorer_score = [&](irs::ScoreOperator* ctx, irs::score_t* score,
+    sort->scorer_score = [&](const irs::ScoreOperator* ctx, irs::score_t* score,
                              size_t n) -> void {
       ASSERT_EQ(1, n);
       ASSERT_LT(scorer_score_count, docs.size());

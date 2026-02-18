@@ -36,12 +36,13 @@ Scorer::ptr MakeJson(std::string_view /*args*/) {
   return std::make_unique<BoostScore>();
 }
 
-template<typename T>
-IRS_FORCE_INLINE void Impl(T* IRS_RESTRICT res, size_t n,
+template<ScoreMergeType MergeType>
+IRS_FORCE_INLINE void Impl(score_t* IRS_RESTRICT res, scores_size_t n,
                            const score_t* IRS_RESTRICT volatile_boost,
                            score_t boost) noexcept {
-  for (size_t i = 0; i < n; ++i) {
-    res[i] = volatile_boost[i] * boost;
+  for (scores_size_t i = 0; i != n; ++i) {
+    const auto r = volatile_boost[i] * boost;
+    Merge<MergeType>(res[i], r);
   }
 }
 
@@ -52,22 +53,39 @@ class VolatileBoostScore : public ScoreOperator {
     SDB_ASSERT(volatile_boost);
   }
 
-  score_t Score() noexcept final {
-    score_t res;
-    Impl(&res, 1, _volatile_boost, _const_boost);
+  template<ScoreMergeType MergeType = ScoreMergeType::Noop>
+  IRS_FORCE_INLINE void ScoreImpl(score_t* res, size_t n) const noexcept {
+    Impl<MergeType>(res, n, _volatile_boost, _const_boost);
+  }
+
+  score_t Score() const noexcept final {
+    score_t res{};
+    ScoreImpl(&res, 1);
     return res;
   }
 
-  void Score(score_t* res, size_t n) noexcept final {
-    Impl(res, n, _volatile_boost, _const_boost);
+  void Score(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl(res, n);
+  }
+  void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl<ScoreMergeType::Sum>(res, n);
+  }
+  void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl<ScoreMergeType::Max>(res, n);
   }
 
-  void ScoreBlock(score_t* res) noexcept final {
-    Impl(res, kScoreBlock, _volatile_boost, _const_boost);
+  void ScoreBlock(score_t* res) const noexcept final {
+    ScoreImpl(res, kScoreBlock);
+  }
+  void ScoreSumBlock(score_t* res) const noexcept final {
+    ScoreImpl<ScoreMergeType::Sum>(res, kScoreBlock);
+  }
+  void ScoreMaxBlock(score_t* res) const noexcept final {
+    ScoreImpl<ScoreMergeType::Max>(res, kScoreBlock);
   }
 
-  void ScorePostingBlock(score_t* res) noexcept final {
-    Impl(res, kPostingBlock, _volatile_boost, _const_boost);
+  void ScorePostingBlock(score_t* res) const noexcept final {
+    ScoreImpl(res, kPostingBlock);
   }
 
  private:

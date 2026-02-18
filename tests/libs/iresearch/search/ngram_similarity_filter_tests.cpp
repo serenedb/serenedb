@@ -1136,10 +1136,22 @@ struct TestScoreFunctionImpl : public irs::ScoreOperator {
                         const irs::FilterBoost* fb) noexcept
     : freq(f), filter_boost(b), freq_from_filter(p), boost_from_filter(fb) {}
 
-  void Score(irs::score_t* res, size_t n) noexcept override {
+  template<irs::ScoreMergeType MergeType = irs::ScoreMergeType::Noop>
+  void ScoreImpl(irs::score_t* res, irs::scores_size_t n) const noexcept {
+    ASSERT_EQ(MergeType, irs::ScoreMergeType::Noop);
     freq->push_back(freq_from_filter->value);
     filter_boost->push_back(boost_from_filter->value);
     std::memset(res, 0, n * sizeof(irs::score_t));
+  }
+
+  void Score(irs::score_t* res, irs::scores_size_t n) const noexcept final {
+    ScoreImpl(res, n);
+  }
+  void ScoreSum(irs::score_t* res, irs::scores_size_t n) const noexcept final {
+    ScoreImpl<irs::ScoreMergeType::Sum>(res, n);
+  }
+  void ScoreMax(irs::score_t* res, irs::scores_size_t n) const noexcept final {
+    ScoreImpl<irs::ScoreMergeType::Max>(res, n);
   }
 
   std::vector<size_t>* freq;

@@ -113,21 +113,34 @@ struct DocIdScorer : public irs::ScorerBase<void> {
     return irs::IndexFeatures::None;
   }
 
-  irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
-    struct ScorerContext : irs::ScoreOperator {
-      explicit ScorerContext(const tests::DocBlockAttr* doc) noexcept
-        : doc{doc} {}
+  struct ScorerContext : irs::ScoreOperator {
+    explicit ScorerContext(const tests::DocBlockAttr* doc) noexcept
+      : doc{doc} {}
 
-      void Score(irs::score_t* res, size_t n) noexcept override {
-        ASSERT_NE(nullptr, res);
-        for (size_t i = 0; i < n; ++i) {
-          res[i] = static_cast<irs::score_t>(doc->value[i]);
-        }
+    template<irs::ScoreMergeType MergeType = irs::ScoreMergeType::Noop>
+    void ScoreImpl(irs::score_t* res, irs::scores_size_t n) const noexcept {
+      ASSERT_NE(nullptr, res);
+      for (size_t i = 0; i < n; ++i) {
+        irs::Merge<MergeType>(res[i], static_cast<irs::score_t>(doc->value[i]));
       }
+    }
 
-      const tests::DocBlockAttr* doc;
-    };
+    void Score(irs::score_t* res, irs::scores_size_t n) const noexcept final {
+      ScoreImpl(res, n);
+    }
+    void ScoreSum(irs::score_t* res,
+                  irs::scores_size_t n) const noexcept final {
+      ScoreImpl<irs::ScoreMergeType::Sum>(res, n);
+    }
+    void ScoreMax(irs::score_t* res,
+                  irs::scores_size_t n) const noexcept final {
+      ScoreImpl<irs::ScoreMergeType::Max>(res, n);
+    }
 
+    const tests::DocBlockAttr* doc;
+  };
+
+  irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
     auto* doc = irs::get<tests::DocBlockAttr>(ctx.doc_attrs);
     EXPECT_NE(nullptr, doc);
 

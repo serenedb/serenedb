@@ -115,6 +115,10 @@ void Transaction::AddRocksDBWrite() noexcept {
   _state |= State::HasRocksDBWrite;
 }
 
+bool Transaction::HasRocksDBWrite() const noexcept {
+  return (_state & State::HasRocksDBWrite) != State::None;
+}
+
 bool Transaction::HasTransactionBegin() const noexcept {
   return (_state & State::HasTransactionBegin) != State::None;
 }
@@ -162,8 +166,8 @@ void Transaction::CreateStorageSnapshot() {
 }
 
 void Transaction::CreateRocksDBTransaction() {
-  SDB_ASSERT(!_rocksdb_transaction);
   SDB_ASSERT(!_rocksdb_snapshot);
+  SDB_ASSERT(!_rocksdb_transaction);
   auto* db = GetServerEngine().db();
   SDB_ASSERT(db != nullptr);
   rocksdb::WriteOptions write_options;

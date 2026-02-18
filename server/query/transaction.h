@@ -94,6 +94,8 @@ class Transaction : public Config {
 
   void AddRocksDBWrite() noexcept;
 
+  bool HasRocksDBWrite() const noexcept;
+
   bool HasTransactionBegin() const noexcept;
 
   IsolationLevel GetIsolationLevel() const noexcept { return _isolation_level; }

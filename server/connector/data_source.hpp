@@ -105,7 +105,7 @@ class RocksDBRYOWDataSource final : public RocksDBDataSource {
                         velox::RowTypePtr row_type,
                         std::vector<catalog::Column::Id> column_ids,
                         catalog::Column::Id effective_column_id,
-                        ObjectId object_key, const rocksdb::Snapshot* snapshot);
+                        ObjectId object_key);
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
 

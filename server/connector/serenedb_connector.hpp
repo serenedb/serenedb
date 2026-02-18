@@ -642,14 +642,15 @@ class SereneDBConnector final : public velox::connector::Connector {
     const bool read_your_own_writes =
       transaction.Get<VariableType::Bool>("sdb_read_your_own_writes");
 
-    auto* rocksdb_transaction = transaction.GetRocksDBTransaction();
-
     const auto* snapshot = &transaction.EnsureRocksDBSnapshot();
-    if (read_your_own_writes && rocksdb_transaction) {
+    if (read_your_own_writes && transaction.HasRocksDBWrite()) {
+      auto* rocksdb_transaction = transaction.GetRocksDBTransaction();
+      SDB_ASSERT(rocksdb_transaction);
+      SDB_ASSERT(snapshot == rocksdb_transaction->GetSnapshot());
       return std::make_unique<RocksDBRYOWDataSource>(
         *connector_query_ctx->memoryPool(), *rocksdb_transaction, _cf,
         output_type, column_oids, serene_table_handle.GetEffectiveColumnId(),
-        object_key, snapshot);
+        object_key);
     }
     return std::make_unique<RocksDBSnapshotDataSource>(
       *connector_query_ctx->memoryPool(), _db, _cf, output_type, column_oids,

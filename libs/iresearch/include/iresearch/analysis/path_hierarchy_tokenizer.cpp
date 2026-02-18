@@ -46,82 +46,55 @@ bool ParseVPackOptions(const vpack::Slice slice,
     return false;
   }
 
-  bool has_delimiter = false;
-  {
-    auto it = slice.get("delimiter");
-    if (!it.isNone()) {
-      if (!it.isString()) {
-        SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
-                 "Invalid type 'delimiter' (string expected) for "
-                 "path_hierarchy_token_stream from VPack arguments");
-        return false;
-      }
-      std::string delimiter_str = it.copyString();
-      SDB_ASSERT(delimiter_str.size() == 1);
-      options.delimiter = delimiter_str[0];
-      has_delimiter = true;
-    }
+  struct VPackOptionsTemp {
+    std::string delimiter;
+    std::string replacement;
+    size_t buffer_size = 1024;
+    bool reverse = false;
+    size_t skip = 0;
+  } temp;
+
+  auto r = vpack::ReadObjectNothrow(slice, temp,
+                                    {
+                                      .skip_unknown = true,
+                                      .strict = false,
+                                    });
+  if (!r.ok()) {
+    SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+             "Failed to parse path_hierarchy_token_stream options: ",
+             r.errorMessage());
+    return false;
   }
 
-  bool has_replacement = false;
-  {
-    auto it = slice.get("replacement");
-    if (!it.isNone()) {
-      if (!it.isString()) {
-        SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
-                 "Invalid type 'replacement' (string expected) for "
-                 "path_hierarchy_token_stream from VPack arguments");
-        return false;
-      }
-      std::string replacement_str = it.copyString();
-      SDB_ASSERT(replacement_str.size() == 1);
-      options.replacement = replacement_str[0];
-      has_replacement = true;
-    }
+  if (temp.delimiter.empty()) {
+    temp.delimiter = "/";
   }
 
-  if (has_delimiter && !has_replacement) {
+  if (temp.delimiter.size() != 1) {
+    SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
+             "Invalid type 'delimiter' (single character string expected) for "
+             "path_hierarchy_token_stream from VPack arguments");
+    return false;
+  }
+
+  options.delimiter = temp.delimiter[0];
+
+  if (temp.replacement.empty()) {
     options.replacement = options.delimiter;
+  } else {
+    if (temp.replacement.size() != 1) {
+      SDB_WARN(
+        "xxxxx", sdb::Logger::IRESEARCH,
+        "Invalid type 'replacement' (single character string expected) for "
+        "path_hierarchy_token_stream from VPack arguments");
+      return false;
+    }
+    options.replacement = temp.replacement[0];
   }
 
-  {
-    auto it = slice.get("buffer_size");
-    if (!it.isNone()) {
-      if (!it.isNumber()) {
-        SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
-                 "Invalid type 'buffer_size' (number expected) for "
-                 "path_hierarchy_token_stream from VPack arguments");
-        return false;
-      }
-      options.buffer_size = it.getNumber<decltype(options.buffer_size)>();
-    }
-  }
-
-  {
-    auto it = slice.get("reverse");
-    if (!it.isNone()) {
-      if (!it.isBool()) {
-        SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
-                 "Invalid type 'reverse' (bool expected) for "
-                 "path_hierarchy_token_stream from VPack arguments");
-        return false;
-      }
-      options.reverse = it.getBool();
-    }
-  }
-
-  {
-    auto it = slice.get("skip");
-    if (!it.isNone()) {
-      if (!it.isNumber()) {
-        SDB_WARN("xxxxx", sdb::Logger::IRESEARCH,
-                 "Invalid type 'skip' (number expected) for "
-                 "path_hierarchy_token_stream from VPack arguments");
-        return false;
-      }
-      options.skip = it.getNumber<decltype(options.skip)>();
-    }
-  }
+  options.buffer_size = temp.buffer_size;
+  options.reverse = temp.reverse;
+  options.skip = temp.skip;
 
   return true;
 }

@@ -86,7 +86,9 @@ jobs:
 
             - name: Run tests
               if: inputs.RUN_TESTS
-              run: ./scripts/run_tests_docker.sh 2>&1 | tee -a logs/run.log
+              run: |
+                  mkdir -p logs
+                  ./scripts/run_tests_docker.sh 2>&1 | tee -a logs/run.log
 
             - name: Update file ownership
               if: always()
@@ -184,7 +186,9 @@ jobs:
 
             - name: Run tests
               if: inputs.RUN_TESTS
-              run: ./scripts/run_tests_native.sh 2>&1 | tee -a logs/run.log
+              run: |
+                  mkdir -p logs
+                  ./scripts/run_tests_native.sh 2>&1 | tee -a logs/run.log
 
             - name: Upload test artifacts
               if: inputs.RUN_TESTS && !cancelled()
@@ -267,7 +271,9 @@ jobs:
 
             - name: Run tests
               if: inputs.RUN_TESTS
-              run: ./scripts/run_tests_native.sh 2>&1 | tee -a logs/run.log
+              run: |
+                  mkdir -p logs
+                  ./scripts/run_tests_native.sh 2>&1 | tee -a logs/run.log
 
             - name: Upload test artifacts
               if: inputs.RUN_TESTS && !cancelled()
@@ -350,7 +356,9 @@ jobs:
 
             - name: Run tests
               if: inputs.RUN_TESTS
-              run: ./scripts/run_tests_native.sh 2>&1 | tee -a logs/run.log
+              run: |
+                  mkdir -p logs
+                  ./scripts/run_tests_native.sh 2>&1 | tee -a logs/run.log
 
             - name: Upload test artifacts
               if: inputs.RUN_TESTS && !cancelled()

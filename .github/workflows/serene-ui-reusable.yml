@@ -94,7 +94,7 @@ jobs:
               if: always()
               run: |
                   RUNNER_ID="$(id -u):$(id -g)"
-                  BUILD_IMAGE="$IMAGE" \
+                  BUILD_IMAGE="serene-ui-serene-ui:latest" \
                   WORKSPACE="${{ github.workspace }}/serene-ui" \
                   RUNNER_ID="$RUNNER_ID" \
                   bash ./scripts/update_ownership.sh
@@ -176,7 +176,7 @@ jobs:
 
             - name: Install Playwright
               if: inputs.RUN_TESTS
-              run: npx playwright install --with-deps
+              run: npx playwright install
 
             - name: Run tests
               if: inputs.RUN_TESTS

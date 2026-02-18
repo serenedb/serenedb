@@ -768,11 +768,11 @@ class SereneDBConnector final : public velox::connector::Connector {
               if (is_generated_pk) {
                 return std::make_unique<SSTInsertDataSink<true>>(
                   _db, _cf, *connector_query_ctx->memoryPool(), object_key,
-                  pk_indices, columns, std::move(insert_sinks)));
+                  pk_indices, columns, std::move(insert_sinks));
               } else {
                 return std::make_unique<SSTInsertDataSink<false>>(
                   _db, _cf, *connector_query_ctx->memoryPool(), object_key,
-                  pk_indices, columns, std::move(insert_sinks)));
+                  pk_indices, columns, std::move(insert_sinks));
               }
             }
 

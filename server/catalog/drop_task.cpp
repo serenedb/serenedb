@@ -43,7 +43,7 @@ bool CheckResult(const Result& result) {
 
 AsyncResult TableShardDrop::operator()() {
   auto& server = GetServerEngine();
-  auto r = server.DropObject(parent_id, RocksDBEntryType::Stats, id);
+  auto r = server.DropObject(parent_id, RocksDBEntryType::TablePhysical, id);
   if (!CheckResult(r)) {
     return QueueDropTask(shared_from_this());
   }

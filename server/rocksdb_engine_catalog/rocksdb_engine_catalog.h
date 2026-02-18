@@ -246,6 +246,7 @@ class RocksDBEngineCatalog {
                       std::string_view name);
 
   void CreateTable(const catalog::Table& collection);
+  void CreateTableShard(const TableShard& shard);
   Result CreateIndex(const catalog::Index& index);
   Result StoreIndexShard(const IndexShard& index_shard);
   ResultOr<vpack::Builder> LoadIndexShard(ObjectId index_id);

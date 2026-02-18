@@ -89,7 +89,8 @@ class ResolutionTable {
       if (!replace) {
         auto [_, inserted] = _databases.try_emplace(object_name, object_id);
         if (!inserted) {
-          return Result{ERROR_SERVER_DUPLICATE_NAME};
+          return Result{ERROR_SERVER_DUPLICATE_NAME,
+                        "Database already exists: ", object_name};
         }
       } else {
         _databases.insert_or_assign(object_name, object_id);

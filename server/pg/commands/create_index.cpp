@@ -131,6 +131,12 @@ yaclib::Future<Result> CreateIndex(ExecContext& context,
 
   if (r.is(ERROR_SERVER_DUPLICATE_NAME) && stmt.if_not_exists) {
     r = {};
+  } else if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
+    r = {ERROR_SERVER_DUPLICATE_NAME, "relation \"", stmt.idxname,
+         "\" already exists"};
+  } else if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
+    r = {ERROR_SERVER_ILLEGAL_NAME, "relation \"", stmt.idxname,
+         "\" does not exist"};
   }
   return yaclib::MakeFuture(std::move(r));
 }

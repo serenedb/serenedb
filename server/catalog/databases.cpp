@@ -22,6 +22,7 @@
 
 #include "app/app_server.h"
 #include "app/name_validator.h"
+#include "basics/errors.h"
 #include "catalog/catalog.h"
 #include "rest_server/serened.h"
 
@@ -53,7 +54,6 @@ Result DropDatabase(const ExecContext& exec, std::string_view db_name) {
   if (exec.systemAuthLevel() != auth::Level::RW) {
     return {ERROR_FORBIDDEN};
   }
-
   return SerenedServer::Instance()
     .getFeature<catalog::CatalogFeature>()
     .Global()

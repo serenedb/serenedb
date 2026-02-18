@@ -359,14 +359,7 @@ std::filesystem::path SearchEngine::GetPersistedPath(
 }
 
 void SearchEngine::beginShutdown() {
-  // Drop rocksdb snapshots in inverted index shards
-  // in order to gracefully shutdown rocksdb engine
-  /* TODO(codeworse): fix
-  for (auto&& index_shard :
-       catalog::GetCatalog().GetSnapshot()->GetIndexShards()) {
-    auto& inverted_shard = basics::downCast<InvertedIndexShard>(*index_shard);
-    inverted_shard.ResetInvertedIndexSnapshot();
-  }
-  */
+  _thread_pools->Get(ThreadGroup::Commit).stop(false);
+  _thread_pools->Get(ThreadGroup::Consolidation).stop(false);
 }
 }  // namespace sdb::search

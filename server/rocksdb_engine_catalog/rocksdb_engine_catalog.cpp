@@ -1494,6 +1494,25 @@ ResultOr<vpack::Builder> RocksDBEngineCatalog::LoadIndexShard(
   return builder;
 }
 
+void RocksDBEngineCatalog::CreateTableShard(const TableShard& shard) {
+  const auto shard_id = shard.GetId();
+  const auto table_id = shard.GetTableId();
+  vpack::Builder b;
+  auto r = WriteDefinition(
+    _db->GetRootDB(),
+    [&] {
+      RocksDBKeyWithBuffer key;
+      key.constructDefinition(table_id, RocksDBEntryType::TablePhysical,
+                              shard_id);
+      return key;
+    },
+    [&] { return RocksDBValue::Empty(RocksDBEntryType::TablePhysical); },
+    [&] { return std::string_view{}; });
+  if (!r.ok()) {
+    SDB_THROW(std::move(r));
+  }
+}
+
 void RocksDBEngineCatalog::CreateTable(const catalog::Table& c) {
   const auto db_id = c.GetDatabaseId();
   const auto schema_id = c.GetSchemaId();

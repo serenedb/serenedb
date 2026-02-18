@@ -117,7 +117,7 @@ velox::RowTypePtr BuildRowType(const std::vector<Column>& columns) {
 Table::Table(TableOptions&& options, ObjectId database_id)
   : SchemaObject{{},
                  database_id,
-                 {},
+                 options.schema_id,
                  options.id,
                  std::move(options.name),
                  ObjectType::Table},

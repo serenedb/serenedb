@@ -37,10 +37,11 @@ class BaseQueryView : public View, public QueryViewImpl {
 
  public:
   static Result Make(std::shared_ptr<catalog::View>& view, ObjectId database_id,
-                     ViewOptions&& options, ViewContext ctx);
+                     ObjectId schema_id, ViewOptions&& options,
+                     ViewContext ctx);
 
-  BaseQueryView(ObjectId database_id, ViewMeta&& options, Internal&& meta,
-                StatePtr state);
+  BaseQueryView(ObjectId database_id, ObjectId schema_id, ViewMeta&& options,
+                Internal&& meta, StatePtr state);
 
   std::string_view GetQuery() const noexcept {
     return _meta.query;  // TODO probably unsafe, because we return reference

@@ -87,6 +87,9 @@ yaclib::Future<Result> UpdateIndexes(
       }
     }
   }
+  if (index_futures.empty()) {
+    return yaclib::MakeFuture<Result>(ERROR_OK);
+  }
   return yaclib::WhenAll(index_futures.begin(), index_futures.size())
     .ThenInline([] { return Result{}; });
 }

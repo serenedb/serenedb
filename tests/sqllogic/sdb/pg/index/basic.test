@@ -3,6 +3,10 @@ CREATE TABLE t(r text);
 
 
 statement ok
+VACUUM (UPDATE_INDEXES) t;
+
+
+statement ok
 CREATE INDEX index_t ON t USING inverted(r);
 
 
@@ -92,7 +96,7 @@ statement ok
 CREATE INDEX test_index ON test USING inverted (i);
 
 
-statement error db error: ERROR: Object already exists: test_index
+statement error db error: ERROR: relation "test_index" already exists
 CREATE INDEX test_index ON test USING inverted (i);
 
 
@@ -118,7 +122,14 @@ statement ok
 DROP INDEX test_index;
 
 
-statement error db error: ERROR: Index not found: test_index
+query ok
+SELECT indexrelid, indrelid FROM pg_index
+----
+indexrelid	indrelid
+<slt:ignore>	<slt:ignore>
+
+
+statement error db error: ERROR: index "test_index" does not exist
 DROP INDEX test_index;
 
 
@@ -134,9 +145,3 @@ query ok
 SELECT oid, relname, relkind FROM pg_class WHERE relname = 'test_index'
 ----
 oid	relname	relkind
-
-
-query ok
-SELECT indexrelid, indrelid FROM pg_index
-----
-indexrelid	indrelid

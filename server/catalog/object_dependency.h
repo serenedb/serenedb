@@ -44,6 +44,10 @@ struct SchemaDependency : public ObjectDependencyBase {
   containers::FlatHashSet<ObjectId> indexes;
   containers::FlatHashSet<ObjectId> functions;
   containers::FlatHashSet<ObjectId> views;
+  bool Empty() const {
+    return tables.empty() && indexes.empty() && functions.empty() &&
+           views.empty();
+  }
 };
 
 // For simple object dependencies

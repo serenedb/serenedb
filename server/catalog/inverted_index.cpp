@@ -10,7 +10,9 @@ ResultOr<std::shared_ptr<IndexShard>> InvertedIndex::CreateIndexShard(
   bool is_new, vpack::Slice args) const {
   // TODO(codeworse): parse args into InvertedIndexShardOptions
   search::InvertedIndexShardOptions options;
-  if (auto r = vpack::ReadObjectNothrow(args, options); !r.ok()) {
+  if (auto r = vpack::ReadObjectNothrow(
+        args, options, {.skip_unknown = true, .strict = false});
+      !r.ok()) {
     return std::unexpected<Result>(std::in_place, r.errorNumber(),
                                    r.errorMessage());
   }

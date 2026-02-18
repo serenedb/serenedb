@@ -194,8 +194,10 @@ yaclib::Future<Result> CreateFunction(ExecContext& context,
   sql_impl->ToVPack(builder);
   properties.implementation = builder.slice();
 
-  auto function = std::make_shared<catalog::Function>(std::move(properties),
-                                                      std::move(sql_impl), db);
+  auto schema_object = catalog.GetSnapshot()->GetSchema(db, schema);
+  SDB_ASSERT(schema_object);
+  auto function = std::make_shared<catalog::Function>(
+    std::move(properties), std::move(sql_impl), db, schema_object->GetId());
 
   r = catalog.CreateFunction(db, schema, function, stmt.replace);
 

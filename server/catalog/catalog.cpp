@@ -184,8 +184,8 @@ void CatalogFeature::unprepare() {
   // TODO(gnusi): fix
   SDB_ASSERT(_local);
   SDB_ASSERT(_global);
-  //_local.reset();
-  //_global.reset();
+  _local.reset();
+  _global.reset();
 }
 
 void CatalogFeature::beginShutdown() {}
@@ -267,7 +267,8 @@ Result CatalogFeature::RegisterFunctions(ObjectId db_id, ObjectId schema_id) {
     schema_id, RocksDBEntryType::Function,
     [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
       std::shared_ptr<catalog::Function> function;
-      auto r = catalog::Function::Instantiate(function, db_id, slice, false);
+      auto r = catalog::Function::Instantiate(
+        function, db_id, RocksDBKey::GetParentId(key), slice, false);
       if (!r.ok()) {
         return ErrorMeta(r.errorNumber(), "function", r.errorMessage(), slice);
       }
@@ -287,8 +288,8 @@ Result CatalogFeature::RegisterViews(ObjectId db_id, ObjectId schema_id) {
       }
       std::shared_ptr<View> view;
 
-      r = CreateViewInstance(view, db_id, std::move(options),
-                             ViewContext::Restore);
+      r = CreateViewInstance(view, db_id, RocksDBKey::GetParentId(key),
+                             std::move(options), ViewContext::Restore);
       if (!r.ok()) {
         return r;
       }
@@ -322,10 +323,6 @@ Result CatalogFeature::RegisterTableShard(ObjectId table_id) {
     [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
       ObjectId shard_id = RocksDBKey::GetObjectId(key);
       TableStats stats;
-      if (auto r = vpack::ReadObjectNothrow<TableStats>(slice, stats);
-          !r.ok()) {
-        return r;
-      }
       auto shard = std::make_shared<TableShard>(shard_id, table_id, stats);
       return Local().RegisterTableShard(shard);
     });
@@ -475,9 +472,9 @@ ResultOr<std::shared_ptr<Database>> GetDatabase(std::string_view name) {
   return GetDatabaseImpl(name);
 }
 
-std::shared_ptr<TableShard> GetTableShard(ObjectId id) {
+std::shared_ptr<TableShard> GetTableShard(ObjectId table_id) {
   auto& catalog = GetCatalog();
-  return catalog.GetSnapshot()->GetTableShard(id);
+  return catalog.GetSnapshot()->GetTableShard(table_id);
 }
 
 LogicalCatalog& GetCatalog() {

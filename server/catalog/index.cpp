@@ -87,7 +87,7 @@ Index::Index(IndexBaseOptions options)
     _relation_id{options.relation_id},
     _type(options.type),
     _column_ids{std::move(options.column_ids)} {
-  SDB_ASSERT(options.id.isSet());
+  SDB_ASSERT(GetId().isSet());
 }
 
 }  // namespace sdb::catalog

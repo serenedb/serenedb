@@ -889,8 +889,8 @@ IRS_FORCE_INLINE void CopyState(SkipState& to, const SkipState& from) noexcept {
   }
 }
 
-template<typename FieldTraits>
-IRS_FORCE_INLINE void ReadState(SkipState& state, DataInput& in) {
+template<typename FieldTraits, typename Input>
+IRS_FORCE_INLINE void ReadState(SkipState& state, Input& in) {
   state.doc = in.ReadV32();
   state.doc_ptr += in.ReadV64();
   if constexpr (FieldTraits::Position()) {
@@ -1411,20 +1411,24 @@ doc_id_t PostingIteratorBase<IteratorTraits>::seek(doc_id_t target) {
   }
 
   [[maybe_unused]] uint32_t notify = 0;
+  uint32_t left = _left_in_leaf;
+  const auto* doc_ptr = std::end(_docs) - left;
 
-  while (_left_in_leaf != 0) {
-    const auto doc = *(std::end(_docs) - _left_in_leaf);
+  while (left != 0) {
+    const auto doc = *doc_ptr++;
 
     if constexpr (IteratorTraits::Position()) {
-      notify += *(std::end(_freqs) - _left_in_leaf);
+      notify += *(std::end(_freqs) - left);
     }
 
-    --_left_in_leaf;
+    --left;
 
     if (target <= doc) {
+      _left_in_leaf = left;
+
       if constexpr (IteratorTraits::Frequency()) {
         auto& freq_value = std::get<FreqAttr>(_attrs).value;
-        freq_value = *(std::end(_freqs) - (_left_in_leaf + 1));
+        freq_value = *(std::end(_freqs) - (left + 1));
       }
 
       if constexpr (IteratorTraits::Position()) {
@@ -1437,6 +1441,7 @@ doc_id_t PostingIteratorBase<IteratorTraits>::seek(doc_id_t target) {
     }
   }
 
+  _left_in_leaf = 0;
   return doc_value = doc_limits::eof();
 }
 
@@ -1484,8 +1489,8 @@ auto ResolveExtent(uint8_t extent, Func&& func) {
 // TODO(mbkkt) Make it overloads
 // Remove to many Readers implementations
 
-template<typename WandExtent>
-void CommonSkipWandData(WandExtent extent, DataInput& in) {
+template<typename WandExtent, typename Input>
+void CommonSkipWandData(WandExtent extent, Input& in) {
   switch (auto count = extent.GetExtent(); count) {
     case 0:
       return;
@@ -1570,6 +1575,8 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
 
   class ReadSkip : private WandExtent {
    public:
+    using StreamType = InputType;
+
     explicit ReadSkip(WandExtent extent) : WandExtent{extent}, _skip_levels(1) {
       Disable();  // Prevent using skip-list by default
     }
@@ -1605,11 +1612,10 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
       CopyState<IteratorTraits>(next, *_prev);
     }
 
-    void Read(size_t level, DataInput& data_in) {
+    void Read(size_t level, InputType& in) {
       auto& next = _skip_levels[level];
       // Store previous step on the same level
       CopyState<IteratorTraits>(*_prev, next);
-      auto& in = sdb::basics::downCast<InputType>(data_in);
       ReadState<FieldTraits>(next, in);
       SkipWandData(in);
     }
@@ -1639,7 +1645,7 @@ class PostingIteratorImpl : public PostingIteratorBase<IteratorTraits> {
       return _skip_levels.back().doc;
     }
 
-    IRS_FORCE_INLINE void SkipWandData(DataInput& in) {
+    IRS_FORCE_INLINE void SkipWandData(InputType& in) {
       CommonSkipWandData(static_cast<WandExtent>(*this), in);
     }
 
@@ -2578,6 +2584,8 @@ class SingleWandIterator : public DocIterator {
  private:
   class WandReadSkip {
    public:
+    using StreamType = InputType;
+
     explicit WandReadSkip(WandExtent extent)
       : _skip_levels(1),
         _skip_scores(1, std::numeric_limits<score_t>::max()),
@@ -2635,10 +2643,10 @@ class SingleWandIterator : public DocIterator {
       CopyState<IteratorTraits>(next, _prev_skip);
     }
 
-    void Read(size_t level, IndexInput& in) {
+    void Read(size_t level, InputType& in) {
       auto& next = _skip_levels[level];
       CopyState<IteratorTraits>(_prev_skip, next);
-      ReadState<FieldTraits>(next, sdb::basics::downCast<InputType>(in));
+      ReadState<FieldTraits>(next, in);
       _skip_scores[level] = ReadWandScore(in);
     }
 
@@ -2671,7 +2679,7 @@ class SingleWandIterator : public DocIterator {
                                 *_wand_source, in);
     }
 
-    void SkipWandData(IndexInput& in) { CommonSkipWandData(_wand_extent, in); }
+    void SkipWandData(InputType& in) { CommonSkipWandData(_wand_extent, in); }
 
     SkipState& State() noexcept { return _prev_skip; }
     SkipState& Next() noexcept { return _skip_levels.back(); }
@@ -2840,7 +2848,7 @@ void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent,
                       term_state.docs_count);
   } else if (1 < term_state.docs_count &&
              term_state.docs_count < IteratorTraits::kBlockSize) {
-    _skip.Reader().SkipWandData(*this->_doc_in);
+    _skip.Reader().SkipWandData(GetDocIn());
   }
 }
 

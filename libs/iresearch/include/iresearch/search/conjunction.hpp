@@ -24,11 +24,15 @@
 
 #include <absl/container/inlined_vector.h>
 
+#include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <numeric>
 #include <ranges>
 
 #include "basics/empty.hpp"
+#include "basics/shared.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/index/iterators.hpp"
@@ -261,7 +265,93 @@ class Conjunction : public ConjunctionBase<Adapter> {
     return converge(this->_itrs[0].seek(target));
   }
 
-  uint32_t count() final { return DocIterator::CountImpl(*this); }
+  static constexpr size_t kNumBlocks = 16;
+  static constexpr doc_id_t kWindow = BitsRequired<uint64_t>() * kNumBlocks;
+
+  uint32_t count() final {
+    // TODO(gnusi): real number of docs
+    constexpr uint64_t kMaxDoc = 5000000;
+    constexpr uint64_t kDensityThresholdInverse = 32;
+    const auto lead_cost = CostAttr::extract(this->_itrs[0], CostAttr::kMax);
+
+    if (lead_cost < kMaxDoc / kDensityThresholdInverse) {
+      return DocIterator::CountImpl(*this);
+    } else {
+      return CountDense();
+    }
+  }
+
+  uint32_t CountDense() {
+    SDB_ASSERT(this->_itrs.size() > 1);
+
+    const auto lead = this->_itrs.begin();
+    const auto tail_end = this->_itrs.end();
+    const auto tail_back = tail_end - 1;
+
+    constexpr FillBlockScoreContext no_score{};
+    constexpr FillBlockMatchContext no_match{};
+
+    alignas(64) uint64_t mask[kNumBlocks];
+    alignas(64) uint64_t tail_mask[kNumBlocks];
+    uint32_t total = 0;
+
+    doc_id_t base = this->_itrs[0].advance();
+
+    while (true) {
+    align:
+      base = ConvergeRange(base);
+      if (doc_limits::eof(base)) {
+        return total;
+      }
+      const doc_id_t max = base + kWindow;
+
+      std::memset(mask, 0, sizeof(mask));
+
+      // TODO(gnusi): fix FillBlock to handle min?
+      {
+        const auto offset = lead->value() - base;
+        SetBit(mask[offset / BitsRequired<uint64_t>()],
+               offset % BitsRequired<uint64_t>());
+      }
+
+      const auto [lead_next, _] =
+        lead->FillBlock(base, max, mask, no_score, no_match);
+
+      for (auto tail = lead + 1; tail != tail_end; ++tail) {
+        std::memset(tail_mask, 0, sizeof(tail_mask));
+
+        // TODO(gnusi): fix FillBlock to handle min?
+        {
+          const auto offset = tail->value() - base;
+          SetBit(tail_mask[offset / BitsRequired<uint64_t>()],
+                 offset % BitsRequired<uint64_t>());
+        }
+
+        const auto [tail_next, _] =
+          tail->FillBlock(base, max, tail_mask, no_score, no_match);
+
+        if (tail == tail_back) {
+          // Last tail: AND + popcount in one pass.
+          for (size_t i = 0; i < kNumBlocks; ++i) {
+            total += std::popcount(mask[i] & tail_mask[i]);
+          }
+        } else {
+          uint64_t any_set = 0;
+          for (size_t i = 0; i < kNumBlocks; ++i) {
+            mask[i] &= tail_mask[i];
+            any_set |= mask[i];
+          }
+
+          if (any_set == 0) {
+            base = lead->seek(tail_next);
+            goto align;
+          }
+        }
+      }
+
+      base = lead_next;
+    }
+  }
 
   void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
                ScoreCollector& collector) final {
@@ -271,7 +361,7 @@ class Conjunction : public ConjunctionBase<Adapter> {
  private:
   // tries to converge front_ and other iterators to the specified target.
   // if it impossible tries to find first convergence place
-  doc_id_t converge(doc_id_t target) {
+  IRS_FORCE_INLINE doc_id_t converge(doc_id_t target) {
     const auto begin = this->_itrs.begin() + 1;
     const auto end = this->_itrs.end();
   restart:
@@ -286,6 +376,21 @@ class Conjunction : public ConjunctionBase<Adapter> {
       }
     }
     return target;
+  }
+
+  IRS_FORCE_INLINE doc_id_t ConvergeRange(doc_id_t min) {
+  restart2:
+    if (doc_limits::eof(min)) [[unlikely]] {
+      return doc_limits::eof();
+    }
+    for (auto it = this->_itrs.begin() + 1; it != this->_itrs.end(); ++it) {
+      const auto doc = it->seek(min);
+      if (doc >= min + kWindow) {
+        min = this->_itrs[0].seek(doc);
+        goto restart2;
+      }
+    }
+    return min;
   }
 
   Attributes _attrs;

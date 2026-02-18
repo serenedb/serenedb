@@ -221,7 +221,8 @@ doc_id_t SkipReader<Read>::Seek(doc_id_t target) {
   while (id != size) {
     id = _reader.AdjustLevel(id);
     auto& level = _levels[id];
-    auto& stream = *level.stream;
+    auto& stream =
+      static_cast<typename Read::StreamType&>(*level.stream);
     uint64_t child_ptr = level.child;
     const bool is_leaf = (child_ptr == kUndefined);
 

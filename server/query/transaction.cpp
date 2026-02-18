@@ -141,7 +141,7 @@ rocksdb::Transaction* Transaction::GetRocksDBTransaction() const noexcept {
   return _rocksdb_transaction.get();
 }
 
-const rocksdb::Snapshot* Transaction::GetRocksDBSnapshot() {
+const rocksdb::Snapshot& Transaction::EnsureRocksDBSnapshot() {
   SDB_ASSERT((_state & State::HasRocksDBRead) != State::None);
   if (!_rocksdb_snapshot) {
     if ((_state & State::HasRocksDBWrite) != State::None) {
@@ -155,7 +155,7 @@ const rocksdb::Snapshot* Transaction::GetRocksDBSnapshot() {
   }
 
   SDB_ASSERT(_rocksdb_snapshot);
-  return _rocksdb_snapshot;
+  return *_rocksdb_snapshot;
 }
 
 rocksdb::Transaction& Transaction::EnsureRocksDBTransaction() {
@@ -221,6 +221,12 @@ void Transaction::ApplyTableStatsDiffs() {
     }
   }
   _table_rows_deltas.clear();
+}
+
+void Transaction::SetTransactionSnapshot() const {
+  _rocksdb_transaction->SetSnapshot();
+  _rocksdb_snapshot = _rocksdb_transaction->GetSnapshot();
+  SDB_ASSERT(_rocksdb_snapshot);
 }
 
 }  // namespace sdb::query

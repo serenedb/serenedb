@@ -644,7 +644,7 @@ class SereneDBConnector final : public velox::connector::Connector {
 
     auto* rocksdb_transaction = transaction.GetRocksDBTransaction();
 
-    const auto* snapshot = transaction.GetRocksDBSnapshot();
+    const auto* snapshot = &transaction.EnsureRocksDBSnapshot();
     if (read_your_own_writes && rocksdb_transaction) {
       return std::make_unique<RocksDBRYOWDataSource>(
         *connector_query_ctx->memoryPool(), *rocksdb_transaction, _cf,
@@ -759,7 +759,7 @@ class SereneDBConnector final : public velox::connector::Connector {
               *connector_query_ctx->memoryPool(), object_key, pk_indices,
               columns, all_column_oids, table.UsedForUpdatePK(), table.type(),
               serene_insert_handle.NumberOfRowsAffected(),
-              std::move(update_sinks), snapshot);
+              std::move(update_sinks));
           } else {
             auto insert_sinks =
               CreateIndexWriters<axiom::connector::WriteKind::kInsert>(

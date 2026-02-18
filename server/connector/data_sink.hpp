@@ -259,8 +259,7 @@ class RocksDBUpdateDataSink final
     std::vector<ColumnInfo> columns,
     std::vector<catalog::Column::Id> all_column_ids, bool update_pk,
     velox::RowTypePtr table_row_type, uint64_t& number_of_rows_affected,
-    std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers,
-    const rocksdb::Snapshot* snapshot);
+    std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers);
 
   void appendData(velox::RowVectorPtr input) final;
 

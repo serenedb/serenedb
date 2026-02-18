@@ -303,8 +303,7 @@ RocksDBUpdateDataSink::RocksDBUpdateDataSink(
   std::vector<ColumnInfo> columns,
   std::vector<catalog::Column::Id> all_column_ids, bool update_pk,
   velox::RowTypePtr table_row_type, uint64_t& number_of_rows_affected,
-  std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers,
-  const rocksdb::Snapshot* snapshot)
+  std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers)
   : RocksDBDataSinkBase<RocksDBSinkWriter>{RocksDBSinkWriter{transaction, cf},
                                            memory_pool,
                                            object_key,
@@ -313,7 +312,7 @@ RocksDBUpdateDataSink::RocksDBUpdateDataSink(
                                            std::move(index_writers)},
     _table_name{table_name},
     _conflict_resolver{transaction, cf, WriteConflictPolicy::EmitError,
-                       table_name, snapshot},
+                       table_name, transaction.GetSnapshot()},
     _number_of_rows_affected{number_of_rows_affected},
     _all_column_ids{std::move(all_column_ids)},
     _old_keys_buffers{memory_pool},

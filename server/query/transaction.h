@@ -102,8 +102,7 @@ class Transaction : public Config {
 
   rocksdb::Transaction& EnsureRocksDBTransaction();
 
-  // May return nullptr for Read Committed isolation level
-  const rocksdb::Snapshot* GetRocksDBSnapshot();
+  const rocksdb::Snapshot& EnsureRocksDBSnapshot();
 
   void Destroy() noexcept;
 
@@ -154,11 +153,7 @@ class Transaction : public Config {
   void CreateStorageSnapshot();
   void CreateRocksDBTransaction();
   void ApplyTableStatsDiffs();
-  void SetTransactionSnapshot() const {
-    _rocksdb_transaction->SetSnapshot();
-    _rocksdb_snapshot = _rocksdb_transaction->GetSnapshot();
-    SDB_ASSERT(_rocksdb_snapshot);
-  }
+  void SetTransactionSnapshot() const;
 
   State _state = State::None;
   IsolationLevel _isolation_level =

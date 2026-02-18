@@ -38,19 +38,7 @@ Result Transaction::Begin(IsolationLevel isolation_level) {
 }
 
 Result Transaction::Commit() {
-  auto cleanup = [&] {
-    CommitVariables();
-    Destroy();
-  };
-
-  // RocksDB transaction is lazy initialized, so it may be nullptr here. It
-  // means no rocksdb transaction actually started, for example, sequential
-  // BEGIN and COMMIT statements.
-  if (!_rocksdb_transaction) {
-    SDB_ASSERT(_search_transactions.empty());
-    cleanup();
-    return {};
-  }
+  SDB_ASSERT(_rocksdb_transaction);
 
   auto abort_guard = absl::Cleanup([&] {
     for (auto& search_transaction : _search_transactions) {
@@ -98,7 +86,8 @@ Result Transaction::Commit() {
     ApplyTableStatsDiffs();
   }
   std::move(abort_guard).Cancel();
-  cleanup();
+  CommitVariables();
+  Destroy();
 
   return {};
 }
@@ -111,13 +100,6 @@ Result Transaction::Rollback() {
     RollbackVariables();
     Destroy();
   });
-
-  // RocksDB transaction is lazy initialized, so it may be nullptr here. It
-  // means no rocksdb transaction actually started, for example, sequential
-  // BEGIN and ROLLBACK statements.
-  if (!_rocksdb_transaction) {
-    return {};
-  }
 
   auto status = _rocksdb_transaction->Rollback();
   if (!status.ok()) {

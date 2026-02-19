@@ -94,8 +94,8 @@ void PostgresFeature::start() {
   if (ServerState::instance()->IsDBServer() ||
       ServerState::instance()->IsSingle()) {
     auto& engine = GetServerEngine();
-    auto* cf =
-      RocksDBColumnFamilyManager::get(RocksDBColumnFamilyManager::Family::Data);
+    auto* cf = RocksDBColumnFamilyManager::get(
+      RocksDBColumnFamilyManager::Family::Default);
     SDB_ASSERT(cf);
 
     auto connector = std::make_shared<connector::SereneDBConnector>(

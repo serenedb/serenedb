@@ -171,12 +171,12 @@ rocksdb::BlockFlushData SSTBlockBuilder<IsGeneratedPK>::Finish(
   size_t block_data_size = _cur.buffer.size();
   rocksdb::Slice first_key_in_next_block;
   if (!next_block_first_value.empty()) {
-    SDB_ASSERT(IsLastPKDeltaCompressed());
+    SDB_ASSERT(IsLastPKIsFull());
     AddEntryImpl<true>(_next, next_block_first_pk, next_block_first_value);
     first_key_in_next_block = {
       reinterpret_cast<const char*>(_next.buffer.data()) + _next.last_pk_offset,
       _next.last_pk_size};
-  } else if (_cur.entry_cnt > 1 && !IsLastPKDeltaCompressed()) {
+  } else if (_cur.entry_cnt > 1 && !IsLastPKIsFull()) {
     // First key is always full.
     // This is the last block which is flushed in the Finish() of the
     // SSTSinkWriter. We couldn't know that the entry was the last so
@@ -210,7 +210,7 @@ void SSTBlockBuilder<IsGeneratedPK>::NextBlock() {
   _cur.buffer.clear();
   _cur.last_pk_offset = 0;
   _cur.last_pk_size = 0;
-  _cur.last_pk_is_delta_compressed = false;
+  _cur.last_pk_is_full = false;
   _cur.entry_cnt = 0;
   _cur.raw_key_size = 0;
   _cur.raw_value_size = 0;
@@ -286,7 +286,7 @@ void SSTSinkWriter<IsGeneratedPK>::Write(
   auto& block_builder = *_block_builders[_column_idx];
 
   if (block_builder.ShouldFlush()) [[unlikely]] {
-    if (!block_builder.IsLastPKDeltaCompressed()) {
+    if (!block_builder.IsLastPKIsFull()) {
       block_builder.AddLastEntry(cell_slices, key);
       return;
     }

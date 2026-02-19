@@ -47,7 +47,7 @@ class SSTBlockBuilder {
   void AddLastEntry(std::span<const rocksdb::Slice> value_slices,
                     std::string_view key) {
     AddEntryImpl<true>(_cur, key, value_slices);
-    _cur.last_pk_is_delta_compressed = true;
+    _cur.last_pk_is_full = true;
   }
 
   bool ShouldFlush() const { return _cur.buffer.size() >= kFlushThreshold; }
@@ -61,9 +61,7 @@ class SSTBlockBuilder {
 
   bool IsEmpty() const { return _cur.entry_cnt == 0; }
 
-  bool IsLastPKDeltaCompressed() const {
-    return _cur.last_pk_is_delta_compressed;
-  }
+  bool IsLastPKIsFull() const { return _cur.last_pk_is_full; }
 
  private:
   // https://mmore500.com/2019/12/11/uninitialized-char.html
@@ -80,7 +78,7 @@ class SSTBlockBuilder {
     std::vector<UnitializedChar> buffer;
     size_t last_pk_offset = 0;
     size_t last_pk_size = 0;
-    bool last_pk_is_delta_compressed = false;
+    bool last_pk_is_full = false;
 
     uint64_t entry_cnt = 0;
     size_t raw_key_size = 0;

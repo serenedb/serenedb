@@ -1,5 +1,8 @@
 name: SereneUI-Build-Base
 
+permissions:
+    contents: write
+
 on:
     workflow_call:
         inputs:
@@ -416,7 +419,7 @@ jobs:
             && inputs.PUSH_RELEASE
             && (inputs.BUILD_LINUX_APP || inputs.BUILD_WINDOWS_APP || inputs.BUILD_MACOS_APP)
             && !contains(needs.*.result, 'failure')
-        runs-on: parilka
+        runs-on: X64
         permissions:
             contents: write
         steps:

@@ -227,7 +227,6 @@ class RocksDBDataSinkBase : public velox::connector::DataSink {
   primary_key::Keys _store_keys_buffers;
   velox::HashStringAllocator _bytes_allocator;
   catalog::Column::Id _column_id;
-  bool _is_generated_pk;
 };
 
 class RocksDBInsertDataSink final

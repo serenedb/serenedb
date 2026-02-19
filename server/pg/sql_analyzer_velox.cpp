@@ -2020,10 +2020,6 @@ class CopyOptionsParser {
       return file_format;
     }
 
-    if (file_format == "tsv" || file_format == "txt") {
-      return "text";
-    }
-
     return {};
   }
 

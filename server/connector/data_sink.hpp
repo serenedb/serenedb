@@ -195,8 +195,8 @@ class RocksDBDataSinkBase : public velox::connector::DataSink {
   template<typename T>
   void WritePrimitive(const T& value);
 
-  void WriteRowSlices(std::string_view key, size_t row_id);
-  void WriteNull(std::string_view key, size_t row_id);
+  void WriteRowSlices(std::string_view key);
+  void WriteNull(std::string_view key);
 
   const std::string* SetupRowKey(
     velox::vector_size_t idx,

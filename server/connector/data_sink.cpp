@@ -277,14 +277,17 @@ void SSTInsertDataSink<IsGeneratedPK>::appendData(velox::RowVectorPtr input) {
   const auto num_rows = input->size();
   const auto num_columns = input->childrenSize();
 
-  if constexpr (!IsGeneratedPK) {
-    this->_store_keys_buffers.clear();
-    this->_store_keys_buffers.reserve(num_rows);
-    for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
-      auto& key_buffer = this->_store_keys_buffers.emplace_back();
+  this->_store_keys_buffers.clear();
+  this->_store_keys_buffers.reserve(num_rows);
+  for (size_t row_idx = 0; row_idx < num_rows; ++row_idx) {
+    auto& key_buffer = this->_store_keys_buffers.emplace_back();
+    if (!this->_key_childs.empty()) {
       primary_key::Create(*input, this->_key_childs, row_idx, key_buffer);
+    } else {
+      const auto generated_pk =
+        std::bit_cast<int64_t>(RevisionId::create().id());
+      primary_key::AppendSigned(key_buffer, generated_pk);
     }
-    this->_data_writer.SetKeys(&this->_store_keys_buffers);
   }
 
   velox::IndexRange all_rows(0, num_rows);
@@ -293,8 +296,6 @@ void SSTInsertDataSink<IsGeneratedPK>::appendData(velox::RowVectorPtr input) {
     if (this->_columns_info[i].id != catalog::Column::kGeneratedPKId) {
       this->WriteInputColumn(this->_columns_info[i].id, i, *input,
                              all_rows_range);
-    } else {
-      SDB_ASSERT(IsGeneratedPK);
     }
   }
 }
@@ -676,24 +677,19 @@ void RocksDBDataSinkBase<DataWriterType>::WriteFlatColumn(
     for (const auto& range : ranges) {
       const auto range_end = range.begin + range.size;
       for (velox::vector_size_t idx = range.begin; idx < range_end; ++idx) {
-        const auto current_row = row_id++;
-        std::string_view row_key;
-        if constexpr (!kIsSSTSinkWriter<DataWriterType>) {
-          const auto* key = SetupRowKey(current_row, original_idx);
-          if (!key) {
-            continue;
-          }
-          row_key = *key;
+        const auto* key = SetupRowKey(row_id++, original_idx);
+        if (!key) {
+          continue;
         }
         if constexpr (MayHaveNulls) {
           if (flat_vector->isNullAt(idx)) {
-            WriteNull(row_key, current_row);
+            WriteNull(*key);
             continue;
           }
         }
         ResetForNewRow();
         WriteFlatValue(*flat_vector, idx);
-        WriteRowSlices(row_key, current_row);
+        WriteRowSlices(*key);
       }
     }
   });
@@ -714,25 +710,20 @@ void RocksDBDataSinkBase<DataWriterType>::WriteBiasedColumn(
       for (const auto& range : ranges) {
         const auto range_end = range.begin + range.size;
         for (velox::vector_size_t idx = range.begin; idx < range_end; ++idx) {
-          const auto current_row = row_id++;
-          std::string_view row_key;
-          if constexpr (!kIsSSTSinkWriter<DataWriterType>) {
-            const auto* key = SetupRowKey(current_row, original_idx);
-            if (!key) {
-              continue;
-            }
-            row_key = *key;
+          const auto* key = SetupRowKey(row_id++, original_idx);
+          if (!key) {
+            continue;
           }
           if constexpr (MayHaveNulls) {
             if (bias_vector->isNullAt(idx)) {
-              WriteNull(row_key, current_row);
+              WriteNull(*key);
               continue;
             }
           }
           ResetForNewRow();
           auto tmp = bias_vector->valueAtFast(idx);
           WritePrimitive(tmp);
-          WriteRowSlices(row_key, current_row);
+          WriteRowSlices(*key);
         }
       }
     });
@@ -776,16 +767,11 @@ void RocksDBDataSinkBase<DataWriterType>::WriteDictionaryColumn(
                       original_idx.subspan(current, sub_ranges.size()));
           sub_ranges.clear();
         }
-        const auto current_row = row_id++;
-        std::string_view row_key;
-        if constexpr (!kIsSSTSinkWriter<DataWriterType>) {
-          const auto* key = SetupRowKey(current_row, original_idx);
-          if (!key) {
-            continue;
-          }
-          row_key = *key;
+        const auto* key = SetupRowKey(row_id++, original_idx);
+        if (!key) {
+          continue;
         }
-        WriteNull(row_key, current_row);
+        WriteNull(*key);
         current = row_id;
         continue;
       }
@@ -810,17 +796,12 @@ void RocksDBDataSinkBase<DataWriterType>::WriteComplexColumn(
     int32_t begin = ranges[i].begin;
     int32_t end = begin + ranges[i].size;
     for (int32_t offset = begin; offset < end; ++offset) {
-      const auto current_row = row_id++;
-      std::string_view row_key;
-      if constexpr (!kIsSSTSinkWriter<DataWriterType>) {
-        const auto* key = SetupRowKey(current_row, original_idx);
-        if (!key) {
-          continue;
-        }
-        row_key = *key;
+      const auto* key = SetupRowKey(row_id++, original_idx);
+      if (!key) {
+        continue;
       }
       if (input.isNullAt(offset)) {
-        WriteNull(row_key, current_row);
+        WriteNull(*key);
       } else {
         ResetForNewRow();
         static_assert(
@@ -838,7 +819,7 @@ void RocksDBDataSinkBase<DataWriterType>::WriteComplexColumn(
         } else {
           WriteFlatMapValue(input, offset);
         }
-        WriteRowSlices(row_key, current_row);
+        WriteRowSlices(*key);
       }
     }
   }
@@ -865,16 +846,11 @@ void RocksDBDataSinkBase<DataWriterType>::WriteConstantColumn(
     for (const auto& range : ranges) {
       const auto end = range.begin + range.size;
       for (int32_t offset = range.begin; offset < end; ++offset) {
-        const auto current_row = row_id++;
-        std::string_view row_key;
-        if constexpr (!kIsSSTSinkWriter<DataWriterType>) {
-          const auto* key = SetupRowKey(current_row, original_idx);
-          if (!key) {
-            continue;
-          }
-          row_key = *key;
+        const auto* key = SetupRowKey(row_id++, original_idx);
+        if (!key) {
+          continue;
         }
-        WriteRowSlices(row_key, current_row);
+        WriteRowSlices(*key);
       }
     }
   }
@@ -2348,11 +2324,7 @@ void RocksDBDataSinkBase<DataWriterType>::WriteArrayValue(
 }
 
 template<typename DataWriterType>
-void RocksDBDataSinkBase<DataWriterType>::WriteRowSlices(std::string_view key,
-                                                         size_t row_id) {
-  if constexpr (requires { _data_writer.SetRowIdx(size_t{}); }) {
-    _data_writer.SetRowIdx(row_id);
-  }
+void RocksDBDataSinkBase<DataWriterType>::WriteRowSlices(std::string_view key) {
   _data_writer.Write(_row_slices, key);
   for (const auto& writer : _column_index_writers) {
     writer->Write(_row_slices, key);
@@ -2360,11 +2332,7 @@ void RocksDBDataSinkBase<DataWriterType>::WriteRowSlices(std::string_view key,
 }
 
 template<typename DataWriterType>
-void RocksDBDataSinkBase<DataWriterType>::WriteNull(std::string_view key,
-                                                    size_t row_id) {
-  if constexpr (requires { _data_writer.SetRowIdx(size_t{}); }) {
-    _data_writer.SetRowIdx(row_id);
-  }
+void RocksDBDataSinkBase<DataWriterType>::WriteNull(std::string_view key) {
   // empty slice denotes NULL value
   rocksdb::Slice null_slice;
   std::span<const rocksdb::Slice> null_slices{&null_slice, 1};
@@ -2456,7 +2424,9 @@ const std::string* RocksDBDataSinkBase<DataWriterType>::SetupRowKey(
   if (row_key.empty()) {
     return nullptr;
   }
-  key_utils::SetupColumnForKey(row_key, _column_id);
+  if constexpr (!kIsSSTSinkWriter<DataWriterType>) {
+    key_utils::SetupColumnForKey(row_key, _column_id);
+  }
 
   return &row_key;
 }

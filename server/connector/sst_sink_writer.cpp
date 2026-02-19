@@ -30,6 +30,7 @@
 #include "basics/string_utils.h"
 #include "basics/system-compiler.h"
 #include "catalog/table_options.h"
+#include "iresearch/utils/bytes_utils.hpp"
 #include "key_utils.hpp"
 #include "rocksdb/options.h"
 #include "rocksdb/table.h"
@@ -41,210 +42,163 @@ namespace sdb::connector {
 
 namespace {
 
-inline constexpr size_t VarintLength(uint32_t v) {
-  if (v < (1 << 7)) {
-    return 1;
-  } else if (v < (1 << 14)) {
-    return 2;
-  } else if (v < (1 << 21)) {
-    return 3;
-  } else if (v < (1 << 28)) {
-    return 4;
-  } else {
-    return 5;
-  }
-}
-
-inline uint8_t* EncodeVarint32(uint8_t* ptr, uint32_t v, size_t len) {
-  constexpr int kB = 128;
-  switch (len) {
-    case 1:
-      *(ptr++) = v;
-      return ptr;
-    case 2:
-      *(ptr++) = v | kB;
-      *(ptr++) = v >> 7;
-      return ptr;
-    case 3:
-      *(ptr++) = v | kB;
-      *(ptr++) = (v >> 7) | kB;
-      *(ptr++) = v >> 14;
-      return ptr;
-    case 4:
-      *(ptr++) = v | kB;
-      *(ptr++) = (v >> 7) | kB;
-      *(ptr++) = (v >> 14) | kB;
-      *(ptr++) = v >> 21;
-      return ptr;
-    case 5:
-      *(ptr++) = v | kB;
-      *(ptr++) = (v >> 7) | kB;
-      *(ptr++) = (v >> 14) | kB;
-      *(ptr++) = (v >> 21) | kB;
-      *(ptr++) = v >> 28;
-      return ptr;
-    default:
-      SDB_UNREACHABLE();
-  }
-}
-
 template<typename Buffer>
-inline void Resize(Buffer& buf, size_t additional) {
+inline void AppendSize(Buffer& buf, size_t additional) {
   buf.resize(buf.size() + additional);
 }
 
 }  // namespace
 
+static constexpr size_t kInternalKeyFooterSize =
+  sizeof(rocksdb::SstFileWriter::kInternalKeyFooter);
+
 template<bool IsGeneratedPK>
-SSTBlockBuilder<IsGeneratedPK>::SSTBlockBuilder(int64_t generated_pk_counter,
-                                                ObjectId table_id,
+SSTBlockBuilder<IsGeneratedPK>::SSTBlockBuilder(ObjectId table_id,
                                                 catalog::Column::Id column_id)
-  : _generated_pk_counter{generated_pk_counter},
-    _table_id{table_id},
-    _column_id{column_id} {
-  constexpr size_t kCapacity = 2 * kFlushThreshold;
+  : _table_id{table_id}, _column_id{column_id} {
+  static constexpr size_t kCapacity = 2 * kFlushThreshold;
   _cur.buffer.reserve(kCapacity);
   _next.buffer.reserve(kCapacity);
 }
 
 template<bool IsGeneratedPK>
 void SSTBlockBuilder<IsGeneratedPK>::AddEntry(
-  std::span<const rocksdb::Slice> value_slices) {
-  AddEntryImpl(_cur, value_slices);
+  std::span<const rocksdb::Slice> value_slices, std::string_view key) {
+  if (_cur.entry_cnt == 0) {
+    AddEntryImpl<true>(_cur, key, value_slices);
+  } else {
+    AddEntryImpl<false>(_cur, key, value_slices);
+  }
 }
 
 template<bool IsGeneratedPK>
+template<bool IsFullKey>
 void SSTBlockBuilder<IsGeneratedPK>::AddEntryImpl(
-  Block& block, std::span<const rocksdb::Slice> value_slices) {
-  const size_t pk_size = GetPKSize();
-  constexpr size_t kInternalKeyFooterSize =
-    sizeof(rocksdb::SstFileWriter::kInternalKeyFooter);
+  Block& block, std::string_view key,
+  std::span<const rocksdb::Slice> value_slices) {
+  const size_t pk_size = IsGeneratedPK ? sizeof(uint64_t) : key.size();
 
   size_t total_value_size = 0;
-  for (const auto& slice : value_slices) {
-    total_value_size += slice.size();
+  if (value_slices.size() == 1) [[likely]] {
+    total_value_size += value_slices.front().size();
+  } else {
+    for (const auto& slice : value_slices) {
+      total_value_size += slice.size();
+    }
   }
 
   auto& buffer = block.buffer;
-  const bool is_first = block.entry_cnt == 0;
 
-  const uint32_t shared = is_first ? 0 : kPrefixSize;
+  const uint32_t shared = IsFullKey ? 0 : kPrefixSize;
   const uint32_t non_shared =
-    (is_first ? kPrefixSize : 0) + pk_size + kInternalKeyFooterSize;
+    (IsFullKey ? kPrefixSize : 0) + pk_size + kInternalKeyFooterSize;
   const uint32_t value_size = static_cast<uint32_t>(total_value_size);
 
-  const size_t shared_len = VarintLength(shared);
-  const size_t non_shared_len = VarintLength(non_shared);
-  const size_t value_size_len = VarintLength(value_size);
-  const size_t prefix_len = is_first ? kPrefixSize : 0;
-  const size_t total_entry_size = shared_len + non_shared_len + value_size_len +
-                                  prefix_len + pk_size +
-                                  kInternalKeyFooterSize + total_value_size;
+  static constexpr size_t kSharedVarIntLen = 1;
+  static constexpr size_t kMaxVarintSize = 5;
+  static constexpr size_t kNonSharedVarIntBound =
+    IsGeneratedPK ? 1 : kMaxVarintSize;
+
+  const size_t prefix_len = IsFullKey ? kPrefixSize : 0;
+  const size_t upper_bound_entry_size =
+    kSharedVarIntLen + kNonSharedVarIntBound + kMaxVarintSize + prefix_len +
+    pk_size + kInternalKeyFooterSize + total_value_size;
 
   const size_t start_pos = buffer.size();
-  Resize(buffer, total_entry_size);
+  AppendSize(buffer, upper_bound_entry_size);
   uint8_t* ptr = reinterpret_cast<uint8_t*>(buffer.data()) + start_pos;
 
   // Write delta-encoding
-  ptr = EncodeVarint32(ptr, shared, shared_len);
-  ptr = EncodeVarint32(ptr, non_shared, non_shared_len);
-  ptr = EncodeVarint32(ptr, value_size, value_size_len);
+  *(ptr++) = shared;
+  if constexpr (IsGeneratedPK) {
+    *(ptr++) = non_shared;
+  } else {
+    irs::WriteVarint(non_shared, ptr);
+  }
+  irs::WriteVarint(value_size, ptr);
 
-  if (is_first) [[unlikely]] {
+  block.last_pk_offset = reinterpret_cast<const char*>(ptr) -
+                         reinterpret_cast<const char*>(buffer.data());
+  block.last_pk_size = non_shared;
+  if constexpr (IsFullKey) {
     absl::big_endian::Store(ptr, _table_id);
     absl::big_endian::Store(ptr + sizeof(_table_id), _column_id);
     ptr += kPrefixSize;
   }
-
-  block.last_pk_offset = ptr - reinterpret_cast<uint8_t*>(buffer.data());
-  if constexpr (IsGeneratedPK) {
-    const int64_t generated_pk = _generated_pk_counter + _total_entry_cnt;
-    absl::big_endian::Store(ptr, generated_pk);
-    ptr[0] ^= 0x80;
-    block.last_pk_size = sizeof(generated_pk);
-  } else {
-    const auto& pk = (*_keys)[_row_idx];
-    std::memcpy(ptr, pk.data(), pk.size());
-    block.last_pk_size = pk.size();
-  }
-  ptr += block.last_pk_size;
+  std::memcpy(ptr, key.data(), pk_size);
+  ptr += pk_size;
 
   std::memcpy(ptr, &rocksdb::SstFileWriter::kInternalKeyFooter,
               kInternalKeyFooterSize);
   ptr += kInternalKeyFooterSize;
 
-  for (const auto& slice : value_slices) {
+  if (value_slices.size() == 1) [[likely]] {
+    const auto& slice = value_slices[0];
     std::memcpy(ptr, slice.data(), slice.size());
     ptr += slice.size();
+  } else {
+    for (const auto& slice : value_slices) {
+      std::memcpy(ptr, slice.data(), slice.size());
+      ptr += slice.size();
+    }
   }
+
+  // We could write more bytes because we use upper bound for varint
+  buffer.resize(ptr - reinterpret_cast<uint8_t*>(buffer.data()));
 
   block.raw_key_size += kPrefixSize + pk_size + kInternalKeyFooterSize;
   block.raw_value_size += total_value_size;
   ++block.entry_cnt;
-  ++_total_entry_cnt;
-}
-
-template<bool IsGeneratedPK>
-size_t SSTBlockBuilder<IsGeneratedPK>::GetPKSize() const {
-  if constexpr (IsGeneratedPK) {
-    return sizeof(_generated_pk_counter);
-  } else {
-    return (*_keys)[_row_idx].size();
-  }
-}
-
-template<bool IsGeneratedPK>
-std::string SSTBlockBuilder<IsGeneratedPK>::BuildLastKey() const {
-  const size_t key_size = kPrefixSize + _cur.last_pk_size +
-                          sizeof(rocksdb::SstFileWriter::kInternalKeyFooter);
-  std::string last_key;
-  basics::StrResize(last_key, key_size);
-  absl::big_endian::Store(last_key.data(), _table_id);
-  absl::big_endian::Store(last_key.data() + sizeof(ObjectId), _column_id);
-  std::memcpy(last_key.data() + kPrefixSize,
-              _cur.buffer.data() + _cur.last_pk_offset, _cur.last_pk_size);
-  std::memcpy(last_key.data() + kPrefixSize + _cur.last_pk_size,
-              &rocksdb::SstFileWriter::kInternalKeyFooter,
-              sizeof(rocksdb::SstFileWriter::kInternalKeyFooter));
-
-  return last_key;
 }
 
 template<bool IsGeneratedPK>
 rocksdb::BlockFlushData SSTBlockBuilder<IsGeneratedPK>::Finish(
+  std::string_view next_block_first_pk,
   std::span<const rocksdb::Slice> next_block_first_value) {
   constexpr uint32_t kRestartOffset = 0;
   size_t pos = _cur.buffer.size();
-  Resize(_cur.buffer, sizeof(kRestartOffset));
+  AppendSize(_cur.buffer, sizeof(kRestartOffset));
   absl::little_endian::Store(
     reinterpret_cast<uint32_t*>(_cur.buffer.data() + pos), kRestartOffset);
 
   constexpr uint32_t kNumRestarts = 1;
   uint32_t block_footer = kNumRestarts;
   pos = _cur.buffer.size();
-  Resize(_cur.buffer, sizeof(block_footer));
+  AppendSize(_cur.buffer, sizeof(block_footer));
   absl::little_endian::Store(
     reinterpret_cast<uint32_t*>(_cur.buffer.data() + pos), block_footer);
 
+  size_t block_data_size = _cur.buffer.size();
   rocksdb::Slice first_key_in_next_block;
   if (!next_block_first_value.empty()) {
-    AddEntryImpl(_next, next_block_first_value);
-    const size_t key_size = kPrefixSize + _next.last_pk_size +
-                            sizeof(rocksdb::SstFileWriter::kInternalKeyFooter);
-    SDB_ASSERT(_next.last_pk_offset >= kPrefixSize);
-    SDB_ASSERT(_next.last_pk_offset - kPrefixSize + key_size <=
-               _next.buffer.size());
-    const char* first_key = reinterpret_cast<const char*>(_next.buffer.data()) +
-                            _next.last_pk_offset - kPrefixSize;
-    first_key_in_next_block = {first_key, key_size};
+    SDB_ASSERT(IsLastPKDeltaCompressed());
+    AddEntryImpl<true>(_next, next_block_first_pk, next_block_first_value);
+    first_key_in_next_block = {
+      reinterpret_cast<const char*>(_next.buffer.data()) + _next.last_pk_offset,
+      _next.last_pk_size};
+  } else if (_cur.entry_cnt > 1 && !IsLastPKDeltaCompressed()) {
+    // First key is always full.
+    // This is the last block which is flushed in the Finish() of the
+    // SSTSinkWriter. We couldn't know that the entry was the last so
+    // it's a non-full key. We'll append it to buffer and make a view.
+    const size_t full_pk_size = kPrefixSize + _cur.last_pk_size;
+    const size_t append_pos = _cur.buffer.size();
+    AppendSize(_cur.buffer, full_pk_size);
+    auto* ptr = reinterpret_cast<char*>(_cur.buffer.data()) + append_pos;
+    absl::big_endian::Store(ptr, _table_id);
+    absl::big_endian::Store(ptr + sizeof(_table_id), _column_id);
+    std::memcpy(ptr + kPrefixSize, _cur.buffer.data() + _cur.last_pk_offset,
+                _cur.last_pk_size);
+    _cur.last_pk_offset = append_pos;
+    _cur.last_pk_size = full_pk_size;
   }
 
-  // TODO: build the last key with delta = 0 to pass only view to buffer for
-  // _last_key_buffer
-  _last_key_buffer = BuildLastKey();
   return {
-    .buffer = {reinterpret_cast<char*>(_cur.buffer.data()), _cur.buffer.size()},
-    .last_key_in_current_block = _last_key_buffer,
+    .buffer = {reinterpret_cast<char*>(_cur.buffer.data()), block_data_size},
+    .last_key_in_current_block = {reinterpret_cast<const char*>(
+                                    _cur.buffer.data()) +
+                                    _cur.last_pk_offset,
+                                  _cur.last_pk_size},
     .first_key_in_next_block = first_key_in_next_block,
     .num_entries = _cur.entry_cnt,
     .raw_key_size = _cur.raw_key_size,
@@ -256,6 +210,7 @@ void SSTBlockBuilder<IsGeneratedPK>::NextBlock() {
   _cur.buffer.clear();
   _cur.last_pk_offset = 0;
   _cur.last_pk_size = 0;
+  _cur.last_pk_is_delta_compressed = false;
   _cur.entry_cnt = 0;
   _cur.raw_key_size = 0;
   _cur.raw_value_size = 0;
@@ -304,18 +259,14 @@ SSTSinkWriter<IsGeneratedPK>::SSTSinkWriter(ObjectId table_id, rocksdb::DB& db,
   rocksdb::EnvOptions env;
   env.use_direct_writes = true;
 
-  int64_t generated_pk_counter = 0;
-  if constexpr (IsGeneratedPK) {
-    generated_pk_counter = std::bit_cast<int64_t>(RevisionId::create().id());
-  }
   for (size_t i = 0; i < _writers.size(); ++i) {
     if (columns[i].id == catalog::Column::kGeneratedPKId) {
       continue;
     }
 
     _writers[i] = std::make_unique<rocksdb::SstFileWriter>(env, options);
-    _block_builders[i] = std::make_unique<SSTBlockBuilder<IsGeneratedPK>>(
-      generated_pk_counter, table_id, columns[i].id);
+    _block_builders[i] =
+      std::make_unique<SSTBlockBuilder<IsGeneratedPK>>(table_id, columns[i].id);
     auto sst_file_path =
       absl::StrCat(_sst_directory, "/", "column_", i, "_.sst");
     auto status = _writers[i]->Open(sst_file_path);
@@ -327,7 +278,7 @@ SSTSinkWriter<IsGeneratedPK>::SSTSinkWriter(ObjectId table_id, rocksdb::DB& db,
 
 template<bool IsGeneratedPK>
 void SSTSinkWriter<IsGeneratedPK>::Write(
-  std::span<const rocksdb::Slice> cell_slices, std::string_view full_key) {
+  std::span<const rocksdb::Slice> cell_slices, std::string_view key) {
   SDB_ASSERT(!cell_slices.empty());
   SDB_ASSERT(_column_idx < _block_builders.size());
   SDB_ASSERT(_block_builders[_column_idx]);
@@ -335,16 +286,22 @@ void SSTSinkWriter<IsGeneratedPK>::Write(
   auto& block_builder = *_block_builders[_column_idx];
 
   if (block_builder.ShouldFlush()) [[unlikely]] {
-    FlushBlockBuilder(_column_idx, cell_slices);
+    if (!block_builder.IsLastPKDeltaCompressed()) {
+      block_builder.AddLastEntry(cell_slices, key);
+      return;
+    }
+
+    FlushBlockBuilder(_column_idx, key, cell_slices);
     return;
   }
 
-  block_builder.AddEntry(cell_slices);
+  block_builder.AddEntry(cell_slices, key);
 }
 
 template<bool IsGeneratedPK>
 void SSTSinkWriter<IsGeneratedPK>::FlushBlockBuilder(
-  size_t column_idx, std::span<const rocksdb::Slice> next_block_first_value) {
+  size_t column_idx, std::string_view next_block_first_pk,
+  std::span<const rocksdb::Slice> next_block_first_value) {
   SDB_ASSERT(column_idx < _block_builders.size());
   SDB_ASSERT(_block_builders[column_idx]);
   SDB_ASSERT(_writers[column_idx]);
@@ -353,7 +310,8 @@ void SSTSinkWriter<IsGeneratedPK>::FlushBlockBuilder(
   if (block_builder.IsEmpty()) {
     return;
   }
-  auto flush_data = block_builder.Finish(next_block_first_value);
+  auto flush_data =
+    block_builder.Finish(next_block_first_pk, next_block_first_value);
   auto& writer = *_writers[column_idx];
   writer.FlushFromExternalBuffer(flush_data);
   block_builder.NextBlock();
@@ -373,7 +331,7 @@ void SSTSinkWriter<IsGeneratedPK>::Finish() {
 
   for (size_t i = 0; i < _block_builders.size(); ++i) {
     if (_block_builders[i]) {
-      FlushBlockBuilder(i, {});
+      FlushBlockBuilder(i, {}, {});
     }
   }
 

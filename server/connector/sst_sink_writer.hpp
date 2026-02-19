@@ -36,34 +36,37 @@ namespace sdb::connector {
 template<bool IsGeneratedPK>
 class SSTBlockBuilder {
  public:
-  SSTBlockBuilder(int64_t generated_pk_counter, ObjectId table_id,
-                  catalog::Column::Id column_id);
+  SSTBlockBuilder(ObjectId table_id, catalog::Column::Id column_id);
 
-  void SetRowIdx(size_t row_idx)
-    requires(!IsGeneratedPK)
-  {
-    _row_idx = row_idx;
+  void AddEntry(std::span<const rocksdb::Slice> value_slices,
+                std::string_view key);
+
+  // rocksdb requires last pk to be set without delta, so before
+  // finising the block this method is supposed to be called
+  // for writing the full key
+  void AddLastEntry(std::span<const rocksdb::Slice> value_slices,
+                    std::string_view key) {
+    AddEntryImpl<true>(_cur, key, value_slices);
+    _cur.last_pk_is_delta_compressed = true;
   }
-
-  void SetKeys(const primary_key::Keys* keys)
-    requires(!IsGeneratedPK)
-  {
-    _keys = keys;
-  }
-
-  void AddEntry(std::span<const rocksdb::Slice> value_slices);
 
   bool ShouldFlush() const { return _cur.buffer.size() >= kFlushThreshold; }
 
   // Appends some block metadata as BlockBuilder does
   rocksdb::BlockFlushData Finish(
+    std::string_view next_block_first_pk,
     std::span<const rocksdb::Slice> next_block_first_value);
 
   void NextBlock();
 
   bool IsEmpty() const { return _cur.entry_cnt == 0; }
 
+  bool IsLastPKDeltaCompressed() const {
+    return _cur.last_pk_is_delta_compressed;
+  }
+
  private:
+  // https://mmore500.com/2019/12/11/uninitialized-char.html
   struct UnitializedChar {
     char val;
 
@@ -75,19 +78,18 @@ class SSTBlockBuilder {
 
   struct Block {
     std::vector<UnitializedChar> buffer;
-    size_t last_pk_size = 0;
     size_t last_pk_offset = 0;
+    size_t last_pk_size = 0;
+    bool last_pk_is_delta_compressed = false;
 
     uint64_t entry_cnt = 0;
     size_t raw_key_size = 0;
     size_t raw_value_size = 0;
   };
 
-  void AddEntryImpl(Block& block, std::span<const rocksdb::Slice> value_slices);
-
-  std::string BuildLastKey() const;
-
-  size_t GetPKSize() const;
+  template<bool DeltaCompressEntry>
+  void AddEntryImpl(Block& block, std::string_view pk,
+                    std::span<const rocksdb::Slice> value_slices);
 
   static constexpr size_t kFlushThreshold = 64 * 1024;  // 64 KB
   static constexpr size_t kPrefixSize =
@@ -96,14 +98,8 @@ class SSTBlockBuilder {
   Block _cur;
   Block _next;
 
-  int64_t _generated_pk_counter = 0;
   ObjectId _table_id;
   catalog::Column::Id _column_id = 0;
-  uint64_t _total_entry_cnt = 0;
-
-  std::string _last_key_buffer;
-  size_t _row_idx = 0;
-  const primary_key::Keys* _keys = nullptr;
 };
 
 extern template class SSTBlockBuilder<true>;
@@ -118,28 +114,7 @@ class SSTSinkWriter {
 
   void SetColumnIndex(size_t column_idx) { _column_idx = column_idx; }
 
-  void SetRowIdx(size_t row_idx)
-    requires(!IsGeneratedPK)
-  {
-    SDB_ASSERT(_column_idx < _block_builders.size());
-    SDB_ASSERT(_column_idx < _block_builders.size());
-    if (_block_builders[_column_idx]) {
-      _block_builders[_column_idx]->SetRowIdx(row_idx);
-    }
-  }
-
-  void SetKeys(const primary_key::Keys* keys)
-    requires(!IsGeneratedPK)
-  {
-    for (auto& builder : _block_builders) {
-      if (builder) {
-        builder->SetKeys(keys);
-      }
-    }
-  }
-
-  void Write(std::span<const rocksdb::Slice> cell_slices,
-             std::string_view full_key);
+  void Write(std::span<const rocksdb::Slice> cell_slices, std::string_view key);
 
   void Finish();
 
@@ -147,7 +122,8 @@ class SSTSinkWriter {
 
  private:
   void FlushBlockBuilder(
-    size_t column_idx, std::span<const rocksdb::Slice> next_block_first_value);
+    size_t column_idx, std::string_view next_block_first_pk,
+    std::span<const rocksdb::Slice> next_block_first_value);
 
   rocksdb::DB* _db;
   rocksdb::ColumnFamilyHandle* _cf;

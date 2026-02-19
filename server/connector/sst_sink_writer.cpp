@@ -59,8 +59,8 @@ SSTBlockBuilder<IsGeneratedPK>::SSTBlockBuilder(ObjectId table_id,
   : _cur{pool}, _next{pool}, _table_id{table_id}, _column_id{column_id} {
   static constexpr size_t kEstimatedKeySize = 8;  // TODO: get it from schema
   static constexpr size_t kFinishOverhead = 2 * sizeof(uint32_t) + kPrefixSize +
-                                            kInternalKeyFooterSize +
-                                            kEstimatedKeySize;
+                                            kEstimatedKeySize +
+                                            kInternalKeyFooterSize;
   static constexpr size_t kCapacity = kFlushThreshold + kFinishOverhead;
   _cur.buffer.reserve(kCapacity);
   _next.buffer.reserve(kCapacity);
@@ -248,6 +248,7 @@ SSTSinkWriter<IsGeneratedPK>::SSTSinkWriter(ObjectId table_id, rocksdb::DB& db,
 
   rocksdb::BlockBasedTableOptions table_options;
   table_options.filter_policy = nullptr;
+  table_options.checksum = rocksdb::kNoChecksum;
   options.table_factory.reset(
     rocksdb::NewBlockBasedTableFactory(table_options));
 

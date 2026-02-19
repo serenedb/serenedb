@@ -83,33 +83,36 @@ TEST_F(RocksDBKeyTestBigEndian, test_schema) {
   static_assert(static_cast<char>(RocksDBEntryType::Schema) == '+');
 
   RocksDBKeyWithBuffer key;
-  key.constructDatabaseObject(RocksDBEntryType::Schema, ObjectId{23}, ObjectId{42});
+  key.constructDatabaseObject(RocksDBEntryType::Schema, ObjectId{23},
+                              ObjectId{42});
   const auto& s2 = key.string();
 
   EXPECT_EQ(s2.size(), sizeof(char) + sizeof(uint64_t) + sizeof(uint64_t));
   EXPECT_EQ(s2, std::string("+\0\0\0\0\0\0\0\x17\0\0\0\0\0\0\0\x2a", 17));
 
-  key.constructDatabaseObject(RocksDBEntryType::Schema, ObjectId{255}, ObjectId{255});
+  key.constructDatabaseObject(RocksDBEntryType::Schema, ObjectId{255},
+                              ObjectId{255});
   const auto& s3 = key.string();
 
   EXPECT_EQ(s3.size(), sizeof(char) + sizeof(uint64_t) + sizeof(uint64_t));
   EXPECT_EQ(s3, std::string("+\0\0\0\0\0\0\0\xff\0\0\0\0\0\0\0\xff", 17));
 
-  key.constructDatabaseObject(RocksDBEntryType::Schema, ObjectId{256}, ObjectId{257});
+  key.constructDatabaseObject(RocksDBEntryType::Schema, ObjectId{256},
+                              ObjectId{257});
   const auto& s4 = key.string();
 
   EXPECT_EQ(s4.size(), sizeof(char) + sizeof(uint64_t) + sizeof(uint64_t));
   EXPECT_EQ(s4, std::string("+\0\0\0\0\0\0\x01\0\0\0\0\0\0\0\x01\x01", 17));
 
   key.constructDatabaseObject(RocksDBEntryType::Schema, ObjectId{49152},
-                      ObjectId{16384});
+                              ObjectId{16384});
   const auto& s5 = key.string();
 
   EXPECT_EQ(s5.size(), sizeof(char) + sizeof(uint64_t) + sizeof(uint64_t));
   EXPECT_EQ(s5, std::string("+\0\0\0\0\0\0\xc0\0\0\0\0\0\0\0\x40\0", 17));
 
   key.constructDatabaseObject(RocksDBEntryType::Schema, ObjectId{12345678901},
-                      ObjectId{987654321});
+                              ObjectId{987654321});
   const auto& s6 = key.string();
 
   EXPECT_EQ(s6.size(), sizeof(char) + sizeof(uint64_t) + sizeof(uint64_t));
@@ -117,8 +120,9 @@ TEST_F(RocksDBKeyTestBigEndian, test_schema) {
     s6 ==
     std::string("+\0\0\0\x02\xdf\xdc\x1c\x35\0\0\0\0\x3a\xde\x68\xb1", 17));
 
-  key.constructDatabaseObject(RocksDBEntryType::Schema, ObjectId{0xf0f1f2f3f4f5f6f7ULL},
-                      ObjectId{0xf0f1f2f3f4f5f6f7ULL});
+  key.constructDatabaseObject(RocksDBEntryType::Schema,
+                              ObjectId{0xf0f1f2f3f4f5f6f7ULL},
+                              ObjectId{0xf0f1f2f3f4f5f6f7ULL});
   const auto& s7 = key.string();
 
   EXPECT_EQ(s7.size(), sizeof(char) + sizeof(uint64_t) + sizeof(uint64_t));

@@ -1,8 +1,5 @@
 name: SereneUI-Build-Base
 
-permissions:
-    contents: write
-
 on:
     workflow_call:
         inputs:
@@ -420,8 +417,6 @@ jobs:
             && (inputs.BUILD_LINUX_APP || inputs.BUILD_WINDOWS_APP || inputs.BUILD_MACOS_APP)
             && !contains(needs.*.result, 'failure')
         runs-on: X64
-        permissions:
-            contents: write
         steps:
             - name: Checkout (for notify script)
               uses: actions/checkout@v4
@@ -468,8 +463,6 @@ jobs:
                   draft: false
                   prerelease: true
                   files: release-assets/**/*
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
             - name: Send Telegram notification
               if: always() && !cancelled()

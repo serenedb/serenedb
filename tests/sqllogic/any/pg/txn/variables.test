@@ -16,6 +16,7 @@ SHOW default_transaction_isolation;
 default_transaction_isolation
 repeatable read
 
+
 query
 SHOW transaction_isolation;
 ----
@@ -50,11 +51,13 @@ SHOW default_transaction_isolation;
 default_transaction_isolation
 read committed
 
+
 query
 SHOW transaction_isolation;
 ----
 transaction_isolation
 read committed
+
 
 # Restore
 statement ok
@@ -65,6 +68,7 @@ SHOW default_transaction_isolation;
 ----
 default_transaction_isolation
 repeatable read
+
 
 query
 SHOW transaction_isolation;
@@ -86,12 +90,14 @@ SHOW transaction_isolation;
 transaction_isolation
 read committed
 
+
 # default is not affected
 query
 SHOW default_transaction_isolation;
 ----
 default_transaction_isolation
 repeatable read
+
 
 # After COMMIT, transaction_isolation reverts to session default
 statement ok
@@ -117,6 +123,7 @@ SHOW transaction_isolation;
 transaction_isolation
 read committed
 
+
 statement ok
 ROLLBACK;
 
@@ -139,6 +146,7 @@ SHOW transaction_isolation;
 ----
 transaction_isolation
 repeatable read
+
 
 statement ok
 COMMIT;
@@ -175,12 +183,14 @@ SHOW default_transaction_isolation;
 default_transaction_isolation
 read committed
 
+
 # transaction_isolation still reflects old session value during the transaction
 query
 SHOW transaction_isolation;
 ----
 transaction_isolation
 repeatable read
+
 
 statement ok
 COMMIT;
@@ -192,11 +202,13 @@ SHOW default_transaction_isolation;
 default_transaction_isolation
 read committed
 
+
 query
 SHOW transaction_isolation;
 ----
 transaction_isolation
 read committed
+
 
 # Restore
 statement ok
@@ -216,6 +228,7 @@ SHOW default_transaction_isolation;
 default_transaction_isolation
 read committed
 
+
 statement ok
 ROLLBACK;
 
@@ -225,6 +238,7 @@ SHOW default_transaction_isolation;
 ----
 default_transaction_isolation
 repeatable read
+
 
 query
 SHOW transaction_isolation;
@@ -240,6 +254,7 @@ statement error
 SET LOCAL transaction_isolation TO 'read committed';
 ----
 db error: ERROR: SET LOCAL can only be used in transaction blocks
+
 
 query
 SHOW transaction_isolation;
@@ -260,6 +275,7 @@ SHOW transaction_isolation;
 ----
 transaction_isolation
 read committed
+
 
 statement ok
 COMMIT;
@@ -296,6 +312,7 @@ SHOW transaction_isolation;
 transaction_isolation
 read committed
 
+
 # Override for this transaction only
 statement ok
 SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
@@ -306,12 +323,14 @@ SHOW transaction_isolation;
 transaction_isolation
 repeatable read
 
+
 # Session default unchanged
 query
 SHOW default_transaction_isolation;
 ----
 default_transaction_isolation
 read committed
+
 
 statement ok
 COMMIT;
@@ -326,6 +345,7 @@ SHOW transaction_isolation;
 transaction_isolation
 read committed
 
+
 statement ok
 COMMIT;
 
@@ -338,6 +358,7 @@ SHOW default_transaction_isolation;
 ----
 default_transaction_isolation
 repeatable read
+
 
 query
 SHOW transaction_isolation;
@@ -379,6 +400,7 @@ query
 SELECT * FROM t_iso;
 ----
 id
+
 
 statement ok
 SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;

@@ -1,0 +1,346 @@
+
+###############################################################################
+# Isolation level variable tests
+# Covers: SET TRANSACTION, SET SESSION CHARACTERISTICS AS TRANSACTION,
+#         SHOW transaction_isolation, SHOW default_transaction_isolation
+###############################################################################
+
+skipif serenedb
+statement ok
+SET default_transaction_isolation = "repeatable read";
+
+# 1. Check defaults
+query
+SHOW default_transaction_isolation;
+----
+default_transaction_isolation
+repeatable read
+
+query
+SHOW transaction_isolation;
+----
+transaction_isolation
+repeatable read
+
+
+# 2. SET TRANSACTION outside a transaction block -> error
+# Warning in Postgres
+skipif postgres
+statement error
+SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+----
+db error: ERROR: SET TRANSACTION can only be used in transaction blocks
+
+
+# Variables unchanged after the error
+query
+SHOW transaction_isolation;
+----
+transaction_isolation
+repeatable read
+
+
+# 3. SET SESSION CHARACTERISTICS outside a transaction -> sets both variables immediately
+statement ok
+SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+query
+SHOW default_transaction_isolation;
+----
+default_transaction_isolation
+read committed
+
+query
+SHOW transaction_isolation;
+----
+transaction_isolation
+read committed
+
+# Restore
+statement ok
+SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+query
+SHOW default_transaction_isolation;
+----
+default_transaction_isolation
+repeatable read
+
+query
+SHOW transaction_isolation;
+----
+transaction_isolation
+repeatable read
+
+
+# 4. SET TRANSACTION inside a transaction changes transaction_isolation locally
+statement ok
+BEGIN;
+
+statement ok
+SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+query
+SHOW transaction_isolation;
+----
+transaction_isolation
+read committed
+
+# default is not affected
+query
+SHOW default_transaction_isolation;
+----
+default_transaction_isolation
+repeatable read
+
+# After COMMIT, transaction_isolation reverts to session default
+statement ok
+COMMIT;
+
+query
+SHOW transaction_isolation;
+----
+transaction_isolation
+repeatable read
+
+
+# 5. SET TRANSACTION inside a transaction, ROLLBACK reverts
+statement ok
+BEGIN;
+
+statement ok
+SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+query
+SHOW transaction_isolation;
+----
+transaction_isolation
+read committed
+
+statement ok
+ROLLBACK;
+
+query
+SHOW transaction_isolation;
+----
+transaction_isolation
+repeatable read
+
+
+# 6. SET TRANSACTION to same level inside a transaction -> ok (no error)
+statement ok
+BEGIN;
+
+statement ok
+SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+query
+SHOW transaction_isolation;
+----
+transaction_isolation
+repeatable read
+
+statement ok
+COMMIT;
+
+
+# 7. SET TRANSACTION with unsupported isolation level -> error
+statement ok
+BEGIN;
+
+skipif postgres
+statement error
+SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+----
+db error: ERROR: transaction isolation level "serializable" is not supported
+
+statement ok
+ROLLBACK;
+
+
+
+# 8. SET SESSION CHARACTERISTICS inside a transaction
+#     - transaction_isolation is NOT updated during the transaction
+#     - After COMMIT: both default and transaction_isolation show new value
+statement ok
+BEGIN;
+
+statement ok
+SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+# default_transaction_isolation changed at transaction scope
+query
+SHOW default_transaction_isolation;
+----
+default_transaction_isolation
+read committed
+
+# transaction_isolation still reflects old session value during the transaction
+query
+SHOW transaction_isolation;
+----
+transaction_isolation
+repeatable read
+
+statement ok
+COMMIT;
+
+# After COMMIT: both are updated in session
+query
+SHOW default_transaction_isolation;
+----
+default_transaction_isolation
+read committed
+
+query
+SHOW transaction_isolation;
+----
+transaction_isolation
+read committed
+
+# Restore
+statement ok
+SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+
+# 9. SET SESSION CHARACTERISTICS inside a transaction, ROLLBACK reverts
+statement ok
+BEGIN;
+
+statement ok
+SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+query
+SHOW default_transaction_isolation;
+----
+default_transaction_isolation
+read committed
+
+statement ok
+ROLLBACK;
+
+# After ROLLBACK: both revert to session values
+query
+SHOW default_transaction_isolation;
+----
+default_transaction_isolation
+repeatable read
+
+query
+SHOW transaction_isolation;
+----
+transaction_isolation
+repeatable read
+
+
+# 10. SET LOCAL outside a transaction -> error
+# Warning in Postgres
+skipif postgres
+statement error
+SET LOCAL transaction_isolation TO 'read committed';
+----
+db error: ERROR: SET LOCAL can only be used in transaction blocks
+
+query
+SHOW transaction_isolation;
+----
+transaction_isolation
+repeatable read
+
+
+# 11. SET LOCAL transaction_isolation inside a transaction -> scoped to transaction
+statement ok
+BEGIN;
+
+statement ok
+SET LOCAL transaction_isolation TO 'read committed';
+
+query
+SHOW transaction_isolation;
+----
+transaction_isolation
+read committed
+
+statement ok
+COMMIT;
+
+# After COMMIT, reverts to session default
+query
+SHOW transaction_isolation;
+----
+transaction_isolation
+repeatable read
+
+
+# 12. Direct SET transaction_isolation = ... -> silently ignored, no change
+statement ok
+SET transaction_isolation TO 'read committed';
+
+query
+SHOW transaction_isolation;
+----
+transaction_isolation
+repeatable read
+
+
+# 13. New transaction inherits the session default_transaction_isolation
+statement ok
+SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+statement ok
+BEGIN;
+
+query
+SHOW transaction_isolation;
+----
+transaction_isolation
+read committed
+
+# Override for this transaction only
+statement ok
+SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+query
+SHOW transaction_isolation;
+----
+transaction_isolation
+repeatable read
+
+# Session default unchanged
+query
+SHOW default_transaction_isolation;
+----
+default_transaction_isolation
+read committed
+
+statement ok
+COMMIT;
+
+# Next transaction still inherits session default
+statement ok
+BEGIN;
+
+query
+SHOW transaction_isolation;
+----
+transaction_isolation
+read committed
+
+statement ok
+COMMIT;
+
+# Restore
+statement ok
+SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+query
+SHOW default_transaction_isolation;
+----
+default_transaction_isolation
+repeatable read
+
+query
+SHOW transaction_isolation;
+----
+transaction_isolation
+repeatable read

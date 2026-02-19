@@ -156,7 +156,6 @@ void Config::CommitVariables() {
     if (value.action == TxnAction::Apply) {
       if (key == "default_transaction_isolation") {
         // Such strange logics is required, look at litmus pseudo-queries:
-        //
         // SET default_transaction_isolation = A
         // BEGIN
         // SET default_transaction_isolation = B;

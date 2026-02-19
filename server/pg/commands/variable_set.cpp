@@ -87,6 +87,12 @@ Result ProcessValues(const List* list, std::string_view name, VariableType type,
     return {};
   }
 
+  if (context == Config::VariableContext::Session &&
+      name == "transaction_isolation") {
+    // Silently ignore
+    return {};
+  }
+
   SDB_ASSERT(list_length(list) == 1);
   if (list_length(list) != 1) {
     return {ERROR_FAILED, "SET ", name, " takes only one argument"};
@@ -186,9 +192,18 @@ yaclib::Future<Result> VariableSet(ExecContext& ctx,
       auto isolation_level = get_isolation_level(stmt);
       SDB_ASSERT(!isolation_level.empty());
 
-      conn_ctx.Set(Config::VariableContext::Transaction,
-                   "default_transaction_isolation",
-                   std::string{isolation_level});
+      if (conn_ctx.HasTransactionBegin()) {
+        conn_ctx.Set(Config::VariableContext::Transaction,
+                     "default_transaction_isolation",
+                     std::string{isolation_level});
+      } else {
+        conn_ctx.Set(Config::VariableContext::Session,
+                     "default_transaction_isolation",
+                     std::string{isolation_level});
+        conn_ctx.Set(Config::VariableContext::Session, "transaction_isolation",
+                     std::string{isolation_level});
+      }
+
       return {};
     }
     return yaclib::MakeFuture<Result>(ERROR_NOT_IMPLEMENTED, "SET ", name,
@@ -261,9 +276,6 @@ yaclib::Future<Result> VariableSet(ExecContext& ctx,
       break;
     case VAR_SET_CURRENT:
       r = {ERROR_NOT_IMPLEMENTED, "SET ... TO CURRENT is not implemented"};
-      break;
-    case VAR_SET_MULTI:
-      SDB_UNREACHABLE();
       break;
     default:
       SDB_UNREACHABLE();

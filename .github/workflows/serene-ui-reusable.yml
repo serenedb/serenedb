@@ -54,6 +54,12 @@ on:
                 description: "Personal Access Token with repo access"
             TG_TOKEN:
                 required: true
+            APPLE_ID:
+                required: true
+            APPLE_ID_PASSWORD:
+                required: true
+            APPLE_TEAM_ID:
+                required: true
             TG_CHAT_ID:
                 required: true
 
@@ -370,6 +376,10 @@ jobs:
             - name: Build Electron distributables
               if: inputs.BUILD_MACOS_APP
               working-directory: ./serene-ui/apps/electron
+              env:
+                  APPLE_ID: ${{ secrets.APPLE_ID }}
+                  APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+                  APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
               run: |
                   npm run package:prod
                   npm run make:prod
@@ -398,10 +408,6 @@ jobs:
                   RUN_NUMBER: ${{ github.run_number }}
                   RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
               run: ../scripts/notify_telegram.bash
-
-              # TODO: (vlaski) add cleanup step
-              #
-              # TODO: Return Release
     release:
         name: Publish GitHub Release
         needs: [build-linux-app, build-windows-app, build-macos-app]

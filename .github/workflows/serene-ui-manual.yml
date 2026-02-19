@@ -66,3 +66,6 @@ jobs:
             PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
             TG_TOKEN: ${{ secrets.TG_TOKEN }}
             TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+            APPLE_ID: ${{ secrets.APPLE_ID }}
+            APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+            APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}

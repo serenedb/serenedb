@@ -50,7 +50,7 @@
 #define SDB_PRETTY_FUNCTION __func__
 #endif
 
-// TODO(mkornaukhov) use `__builtin_trap()` for clang and gcc,
+// TODO(mkornaukhov) Should use `__builtin_trap()` for clang and gcc,
 // but it makes recovery tests two times longer.
 // immediate program termination
 #define SDB_IMMEDIATE_ABORT() std::exit(1)

@@ -138,6 +138,9 @@ yaclib::Future<Result> VariableSet(ExecContext& ctx,
                             ERR_MSG("transaction isolation level \"", level,
                                     "\" is not supported"));
           }
+          // TODO(mkornaukhov)
+          // 1. default_transaction_isolation -- for session
+          // 2. transaction_isolation         -- for current transaction
           conn_ctx.Set(var_context, "default_transaction_isolation",
                        std::string{level});
         } else if (opt_name == "transaction_read_only") {

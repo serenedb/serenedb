@@ -40,20 +40,20 @@ Result Transaction::Begin(IsolationLevel isolation_level) {
 Result Transaction::Commit() {
   SDB_ASSERT(_rocksdb_transaction);
 
-  auto abort_guard = absl::Cleanup([&] {
-    for (auto& search_transaction : _search_transactions) {
-      search_transaction.second->Abort();
-    }
-    RollbackVariables();
-    Destroy();
-  });
-
   const uint64_t num_ops =
     _rocksdb_transaction->GetNumPuts() + _rocksdb_transaction->GetNumDeletes();
   SDB_ASSERT(_rocksdb_transaction->GetNumMerges() == 0,
              "We do not expect merges for now");
 
   if (num_ops > 0) [[likely]] {
+    auto abort_guard = absl::Cleanup([&] {
+      for (auto& search_transaction : _search_transactions) {
+        search_transaction.second->Abort();
+      }
+      RollbackVariables();
+      Destroy();
+    });
+
     for (auto& search_transaction : _search_transactions) {
       // tie iresearch transaction's active segment to current flush context in
       // writer and let IndexWriter know that he need to wait for this
@@ -82,9 +82,9 @@ Result Transaction::Commit() {
     for (auto& search_transaction : _search_transactions) {
       search_transaction.second->Commit(post_commit_seq);
     }
+    std::move(abort_guard).Cancel();
     ApplyTableStatsDiffs();
   }
-  std::move(abort_guard).Cancel();
   CommitVariables();
   Destroy();
   return {};
@@ -130,10 +130,11 @@ rocksdb::Transaction* Transaction::GetRocksDBTransaction() const noexcept {
 const rocksdb::Snapshot& Transaction::EnsureRocksDBSnapshot() {
   SDB_ASSERT((_state & State::HasRocksDBRead) != State::None);
   if (!_rocksdb_snapshot) {
-    if ((_state & State::HasRocksDBWrite) != State::None) {
-      if (!_rocksdb_transaction) {
-        CreateRocksDBTransaction();
-      }
+    if (HasTransactionBegin()) {
+      // What if we will create transaction lazily?
+      SetTransactionSnapshot();
+    } else if (HasRocksDBWrite()) {
+      CreateRocksDBTransaction();
       SetTransactionSnapshot();
     } else {
       CreateStorageSnapshot();

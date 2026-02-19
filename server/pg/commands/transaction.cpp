@@ -31,6 +31,7 @@ namespace sdb::pg {
 yaclib::Future<Result> Transaction(ExecContext& context,
                                    const TransactionStmt& stmt) {
   auto& conn_ctx = basics::downCast<ConnectionContext>(context);
+  Result r;
   switch (stmt.kind) {
     case TRANS_STMT_BEGIN:
     case TRANS_STMT_START: {
@@ -43,7 +44,6 @@ yaclib::Future<Result> Transaction(ExecContext& context,
             if (ValidateValue(VariableType::SdbTransactionIsolation, level)) {
               conn_ctx.Set(Config::VariableContext::Local,
                            "transaction_isolation", std::string{level});
-
             } else {
               THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                               ERR_MSG("transaction isolation level \"", level,
@@ -60,7 +60,7 @@ yaclib::Future<Result> Transaction(ExecContext& context,
               ERR_MSG("transaction DEFERRABLE is not supported yet"));
           }
         });
-        return yaclib::MakeFuture(conn_ctx.Begin());
+        conn_ctx.AddTransactionBegin();
       } else {
         conn_ctx.AddNotice(SQL_ERROR_DATA(
           ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
@@ -69,7 +69,7 @@ yaclib::Future<Result> Transaction(ExecContext& context,
     } break;
     case TRANS_STMT_COMMIT:
       if (conn_ctx.HasTransactionBegin()) {
-        return yaclib::MakeFuture(conn_ctx.Commit());
+        r = conn_ctx.Commit();
       } else {
         conn_ctx.AddNotice(
           SQL_ERROR_DATA(ERR_CODE(ERRCODE_NO_ACTIVE_SQL_TRANSACTION),
@@ -78,7 +78,7 @@ yaclib::Future<Result> Transaction(ExecContext& context,
       break;
     case TRANS_STMT_ROLLBACK:
       if (conn_ctx.HasTransactionBegin()) {
-        return yaclib::MakeFuture(conn_ctx.Rollback());
+        r = conn_ctx.Rollback();
       } else {
         conn_ctx.AddNotice(
           SQL_ERROR_DATA(ERR_CODE(ERRCODE_NO_ACTIVE_SQL_TRANSACTION),
@@ -87,6 +87,9 @@ yaclib::Future<Result> Transaction(ExecContext& context,
       break;
     default:
       SDB_UNREACHABLE();
+  }
+  if (!r.ok()) {
+    return yaclib::MakeFuture(std::move(r));
   }
   return {};
 }

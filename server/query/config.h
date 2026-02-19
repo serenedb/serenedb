@@ -209,7 +209,7 @@ class Config : public velox::config::IConfig {
  protected:
   // Used by TxnState(transaction state) to commit/rollback transaction
   // variables
-  void CommitVariables();
+  void CommitVariables() noexcept;
   void RollbackVariables() noexcept { _transaction.clear(); }
 
  private:

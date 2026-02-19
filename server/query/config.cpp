@@ -151,7 +151,7 @@ void Config::Reset(std::string_view key) {
   _session.erase(key);
 }
 
-void Config::CommitVariables() {
+void Config::CommitVariables() noexcept {
   for (auto&& [key, value] : _transaction) {
     if (value.action == TxnAction::Apply) {
       if (key == "default_transaction_isolation") {

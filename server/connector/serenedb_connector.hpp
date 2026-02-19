@@ -647,6 +647,19 @@ class SereneDBConnector final : public velox::connector::Connector {
       auto* rocksdb_transaction = transaction.GetRocksDBTransaction();
       SDB_ASSERT(rocksdb_transaction);
       SDB_ASSERT(snapshot == rocksdb_transaction->GetSnapshot());
+
+#ifdef SDB_FAULT_INJECTION
+      // failpoints are per process so we make unique name to allow multiple
+      // sqlogic tests run in parallel without interference of failpoints
+      // TODO(mkornaukhov): Find a better way. Maybe make failpoints database
+      // bindable to allow parallel execution.
+      auto table_ptr =
+        transaction.GetCatalogSnapshot()->GetObject<catalog::Table>(object_key);
+      SDB_ASSERT(table_ptr);
+      auto fail_on_ryow = absl::StrCat(table_ptr->GetName(), "_fail_on_ryow");
+      SDB_IF_FAILURE(fail_on_ryow) { SDB_IMMEDIATE_ABORT(); }
+#endif
+
       return std::make_unique<RocksDBRYOWDataSource>(
         *connector_query_ctx->memoryPool(), *rocksdb_transaction, _cf,
         output_type, column_oids, serene_table_handle.GetEffectiveColumnId(),

@@ -43,53 +43,31 @@ const rocksdb::Slice MakeSlice() {
 
 const auto kPlaceholder = MakeSlice<RocksDBEntryType::Placeholder>();
 
-const auto kDatabase = MakeSlice<RocksDBEntryType::Database>();
-
-const auto kFunction = MakeSlice<RocksDBEntryType::Function>();
-
-const auto kCollection = MakeSlice<RocksDBEntryType::Collection>();
-
-const auto kCounter = MakeSlice<RocksDBEntryType::CounterValue>();
-
-const auto kDocument = MakeSlice<RocksDBEntryType::Document>();
-
-const auto kPrimaryIndex = MakeSlice<RocksDBEntryType::PrimaryIndexValue>();
-
-const auto kEdgeIndex = MakeSlice<RocksDBEntryType::EdgeIndexValue>();
-
-const auto kVPackIndex = MakeSlice<RocksDBEntryType::VPackIndexValue>();
-
-const auto kUniqueVPackIndex =
-  MakeSlice<RocksDBEntryType::UniqueVPackIndexValue>();
-
-const auto kView = MakeSlice<RocksDBEntryType::View>();
+const auto kSettings = MakeSlice<RocksDBEntryType::SettingsValue>();
 
 const auto kRole = MakeSlice<RocksDBEntryType::Role>();
 
+const auto kDatabase = MakeSlice<RocksDBEntryType::Database>();
+
 const auto kSchema = MakeSlice<RocksDBEntryType::Schema>();
 
-const auto kSettings = MakeSlice<RocksDBEntryType::SettingsValue>();
+const auto kFunction = MakeSlice<RocksDBEntryType::Function>();
 
-const auto kReplicationApplierConfig =
-  MakeSlice<RocksDBEntryType::ReplicationApplierConfig>();
+const auto kView = MakeSlice<RocksDBEntryType::View>();
 
-const auto kIndexEstimate = MakeSlice<RocksDBEntryType::IndexEstimateValue>();
-
-const auto kKeyGenerator = MakeSlice<RocksDBEntryType::KeyGeneratorValue>();
-
-const auto kRevisionTree = MakeSlice<RocksDBEntryType::RevisionTreeValue>();
-
-const auto kTableTombstone = MakeSlice<RocksDBEntryType::TableTombstone>();
-
-const auto kScopeTombstone = MakeSlice<RocksDBEntryType::ScopeTombstone>();
-
-const auto kIndexTombstone = MakeSlice<RocksDBEntryType::IndexTombstone>();
+const auto kTable = MakeSlice<RocksDBEntryType::Table>();
 
 const auto kIndex = MakeSlice<RocksDBEntryType::Index>();
 
-const auto kStats = MakeSlice<RocksDBEntryType::Stats>();
+const auto kScopeTombstone = MakeSlice<RocksDBEntryType::ScopeTombstone>();
 
-const auto kIndexPhysical = MakeSlice<RocksDBEntryType::IndexPhysical>();
+const auto kTableTombstone = MakeSlice<RocksDBEntryType::TableTombstone>();
+
+const auto kIndexTombstone = MakeSlice<RocksDBEntryType::IndexTombstone>();
+
+const auto kTableShard = MakeSlice<RocksDBEntryType::TableShard>();
+
+const auto kIndexShard = MakeSlice<RocksDBEntryType::IndexShard>();
 
 const auto kIndexShardTombstone =
   MakeSlice<RocksDBEntryType::IndexShardTombstone>();
@@ -104,56 +82,32 @@ const rocksdb::Slice& RocksDbSlice(const RocksDBEntryType& type) {
   switch (type) {
     case RocksDBEntryType::Placeholder:
       return kPlaceholder;
-    case RocksDBEntryType::Database:
-      return kDatabase;
-    case RocksDBEntryType::Function:
-      return kFunction;
-    case RocksDBEntryType::Collection:
-      return kCollection;
-    case RocksDBEntryType::CounterValue:
-      return kCounter;
-    case RocksDBEntryType::Document:
-      return kDocument;
-    case RocksDBEntryType::PrimaryIndexValue:
-      return kPrimaryIndex;
-    case RocksDBEntryType::EdgeIndexValue:
-      return kEdgeIndex;
-    case RocksDBEntryType::VPackIndexValue:
-      return kVPackIndex;
-    case RocksDBEntryType::UniqueVPackIndexValue:
-      return kUniqueVPackIndex;
-    case RocksDBEntryType::View:
-      return kView;
-    case RocksDBEntryType::Role:
-      return kRole;
-    case RocksDBEntryType::Schema:
-      return kSchema;
     case RocksDBEntryType::SettingsValue:
       return kSettings;
-    case RocksDBEntryType::ReplicationApplierConfig:
-      return kReplicationApplierConfig;
-    case RocksDBEntryType::IndexEstimateValue:
-      return kIndexEstimate;
-    case RocksDBEntryType::KeyGeneratorValue:
-      return kKeyGenerator;
-    case RocksDBEntryType::RevisionTreeValue:
-      return kRevisionTree;
-    case RocksDBEntryType::TableTombstone:
-      return kTableTombstone;
-    case RocksDBEntryType::ScopeTombstone:
-      return kScopeTombstone;
+    case RocksDBEntryType::Role:
+      return kRole;
+    case RocksDBEntryType::Database:
+      return kDatabase;
+    case RocksDBEntryType::Schema:
+      return kSchema;
+    case RocksDBEntryType::Function:
+      return kFunction;
+    case RocksDBEntryType::View:
+      return kView;
+    case RocksDBEntryType::Table:
+      return kTable;
     case RocksDBEntryType::Index:
       return kIndex;
-    case RocksDBEntryType::Stats:
-      return kStats;
-    case sdb::RocksDBEntryType::IndexPhysical:
-      return kIndexPhysical;
+    case RocksDBEntryType::ScopeTombstone:
+      return kScopeTombstone;
+    case RocksDBEntryType::TableTombstone:
+      return kTableTombstone;
     case RocksDBEntryType::IndexTombstone:
       return kIndexTombstone;
-    case RocksDBEntryType::IndexShardTombstone:
-      return kIndexShardTombstone;
-    case sdb::RocksDBEntryType::TablePhysical:
-      return kTablePhysical;
+    case RocksDBEntryType::TableShard:
+      return kTableShard;
+    case sdb::RocksDBEntryType::IndexShard:
+      return kIndexShard;
   }
 
   return kPlaceholder;  // avoids warning - errorslice instead ?!

@@ -66,8 +66,7 @@ yaclib::Future<Result> Transaction(ExecContext& context,
           ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
           ERR_MSG("there is already a transaction in progress")));
       }
-      break;
-    }
+    } break;
     case TRANS_STMT_COMMIT:
       if (conn_ctx.HasTransactionBegin()) {
         return yaclib::MakeFuture(conn_ctx.Commit());

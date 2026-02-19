@@ -32,10 +32,10 @@ namespace sdb::query {
 void Transaction::OnNewStatement() {
   switch (GetIsolationLevel()) {
     case IsolationLevel::ReadCommitted:
-      if (_rocksdb_transaction) {
-        _rocksdb_snapshot = nullptr;
-        _rocksdb_transaction->ClearSnapshot();
-      }
+      // if (_rocksdb_transaction) {
+      _rocksdb_snapshot = nullptr;
+      // _rocksdb_transaction->ClearSnapshot();
+      // }
       return;
     case IsolationLevel::RepeatableRead:
       return;
@@ -171,6 +171,7 @@ rocksdb::Transaction& Transaction::EnsureRocksDBTransaction() {
   if (!_rocksdb_snapshot) {
     SetTransactionSnapshot();
   }
+  SDB_ASSERT(_rocksdb_snapshot == _rocksdb_transaction->GetSnapshot());
   return *_rocksdb_transaction;
 }
 

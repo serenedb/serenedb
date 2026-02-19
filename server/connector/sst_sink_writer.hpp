@@ -49,11 +49,11 @@ class SSTBlockBuilder {
   // for writing the full key
   void AddLastEntry(std::span<const rocksdb::Slice> value_slices,
                     std::string_view key) {
-    AddEntryImpl<true>(_cur, key, value_slices);
-    _cur.last_pk_is_full = true;
+    AddEntryImpl<true>(_curr, key, value_slices);
+    _curr.last_pk_is_full = true;
   }
 
-  bool ShouldFlush() const { return _cur.buffer.size() >= kFlushThreshold; }
+  bool ShouldFlush() const { return _curr.buffer.size() >= kFlushThreshold; }
 
   // Appends some block metadata as BlockBuilder does
   rocksdb::BlockFlushData Finish(
@@ -62,9 +62,9 @@ class SSTBlockBuilder {
 
   void NextBlock();
 
-  bool IsEmpty() const { return _cur.entry_cnt == 0; }
+  bool IsEmpty() const { return _curr.entry_cnt == 0; }
 
-  bool IsLastPKIsFull() const { return _cur.last_pk_is_full; }
+  bool IsLastPKIsFull() const { return _curr.last_pk_is_full; }
 
  private:
   // https://mmore500.com/2019/12/11/uninitialized-char.html
@@ -98,7 +98,7 @@ class SSTBlockBuilder {
   static constexpr size_t kPrefixSize =
     sizeof(ObjectId) + sizeof(catalog::Column::Id);
 
-  Block _cur;
+  Block _curr;
   Block _next;
 
   ObjectId _table_id;

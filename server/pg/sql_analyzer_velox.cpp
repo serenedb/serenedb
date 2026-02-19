@@ -2008,15 +2008,15 @@ class CopyOptionsParser {
 
  private:
   std::string_view TryFormatFromFile() const {
+    // text format is default so detecting it here would be redundant
     const auto pos = _file_path.rfind('.');
     if (pos == std::string_view::npos) {
       return {};
     }
 
     const auto file_format = _file_path.substr(pos + 1);
-    if (file_format == "csv" || file_format == "text" ||
-        file_format == "parquet" || file_format == "dwrf" ||
-        file_format == "orc") {
+    if (file_format == "csv" || file_format == "parquet" ||
+        file_format == "dwrf" || file_format == "orc") {
       return file_format;
     }
 

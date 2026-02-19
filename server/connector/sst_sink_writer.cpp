@@ -56,21 +56,21 @@ template<bool IsGeneratedPK>
 SSTBlockBuilder<IsGeneratedPK>::SSTBlockBuilder(ObjectId table_id,
                                                 catalog::Column::Id column_id,
                                                 velox::memory::MemoryPool& pool)
-  : _cur{pool}, _next{pool}, _table_id{table_id}, _column_id{column_id} {
+  : _curr{pool}, _next{pool}, _table_id{table_id}, _column_id{column_id} {
   static_assert(kFlushThreshold == 64 * 1024);
   // https://jemalloc.net/jemalloc.3.html
   static constexpr size_t kCapacity = 80 * 1024;
-  _cur.buffer.reserve(kCapacity);
+  _curr.buffer.reserve(kCapacity);
   _next.buffer.reserve(kCapacity);
 }
 
 template<bool IsGeneratedPK>
 void SSTBlockBuilder<IsGeneratedPK>::AddEntry(
   std::span<const rocksdb::Slice> value_slices, std::string_view key) {
-  if (_cur.entry_cnt == 0) {
-    AddEntryImpl<true>(_cur, key, value_slices);
+  if (_curr.entry_cnt == 0) [[unlikely]] {
+    AddEntryImpl<true>(_curr, key, value_slices);
   } else {
-    AddEntryImpl<false>(_cur, key, value_slices);
+    AddEntryImpl<false>(_curr, key, value_slices);
   }
 }
 
@@ -159,19 +159,19 @@ rocksdb::BlockFlushData SSTBlockBuilder<IsGeneratedPK>::Finish(
   std::string_view next_block_first_pk,
   std::span<const rocksdb::Slice> next_block_first_value) {
   constexpr uint32_t kRestartOffset = 0;
-  size_t pos = _cur.buffer.size();
-  AppendSize(_cur.buffer, sizeof(kRestartOffset));
+  size_t pos = _curr.buffer.size();
+  AppendSize(_curr.buffer, sizeof(kRestartOffset));
   absl::little_endian::Store(
-    reinterpret_cast<uint32_t*>(_cur.buffer.data() + pos), kRestartOffset);
+    reinterpret_cast<uint32_t*>(_curr.buffer.data() + pos), kRestartOffset);
 
   constexpr uint32_t kNumRestarts = 1;
   uint32_t block_footer = kNumRestarts;
-  pos = _cur.buffer.size();
-  AppendSize(_cur.buffer, sizeof(block_footer));
+  pos = _curr.buffer.size();
+  AppendSize(_curr.buffer, sizeof(block_footer));
   absl::little_endian::Store(
-    reinterpret_cast<uint32_t*>(_cur.buffer.data() + pos), block_footer);
+    reinterpret_cast<uint32_t*>(_curr.buffer.data() + pos), block_footer);
 
-  size_t block_data_size = _cur.buffer.size();
+  size_t block_data_size = _curr.buffer.size();
   rocksdb::Slice first_key_in_next_block;
   if (!next_block_first_value.empty()) {
     SDB_ASSERT(IsLastPKIsFull());
@@ -179,45 +179,45 @@ rocksdb::BlockFlushData SSTBlockBuilder<IsGeneratedPK>::Finish(
     first_key_in_next_block = {
       reinterpret_cast<const char*>(_next.buffer.data()) + _next.last_pk_offset,
       _next.last_pk_size};
-  } else if (_cur.entry_cnt > 1 && !IsLastPKIsFull()) {
+  } else if (_curr.entry_cnt > 1 && !IsLastPKIsFull()) {
     // First key is always full.
     // This is the last block which is flushed in the Finish() of the
     // SSTSinkWriter. We couldn't know that the entry was the last so
     // it's a non-full key. We'll append it to buffer and make a view.
-    const size_t full_pk_size = kPrefixSize + _cur.last_pk_size;
-    const size_t append_pos = _cur.buffer.size();
-    AppendSize(_cur.buffer, full_pk_size);
-    auto* ptr = reinterpret_cast<char*>(_cur.buffer.data()) + append_pos;
+    const size_t full_pk_size = kPrefixSize + _curr.last_pk_size;
+    const size_t append_pos = _curr.buffer.size();
+    AppendSize(_curr.buffer, full_pk_size);
+    auto* ptr = reinterpret_cast<char*>(_curr.buffer.data()) + append_pos;
     absl::big_endian::Store(ptr, _table_id);
     absl::big_endian::Store(ptr + sizeof(_table_id), _column_id);
-    std::memcpy(ptr + kPrefixSize, _cur.buffer.data() + _cur.last_pk_offset,
-                _cur.last_pk_size);
-    _cur.last_pk_offset = append_pos;
-    _cur.last_pk_size = full_pk_size;
+    std::memcpy(ptr + kPrefixSize, _curr.buffer.data() + _curr.last_pk_offset,
+                _curr.last_pk_size);
+    _curr.last_pk_offset = append_pos;
+    _curr.last_pk_size = full_pk_size;
   }
 
   return {
-    .buffer = {reinterpret_cast<char*>(_cur.buffer.data()), block_data_size},
+    .buffer = {reinterpret_cast<char*>(_curr.buffer.data()), block_data_size},
     .last_key_in_current_block = {reinterpret_cast<const char*>(
-                                    _cur.buffer.data()) +
-                                    _cur.last_pk_offset,
-                                  _cur.last_pk_size},
+                                    _curr.buffer.data()) +
+                                    _curr.last_pk_offset,
+                                  _curr.last_pk_size},
     .first_key_in_next_block = first_key_in_next_block,
-    .num_entries = _cur.entry_cnt,
-    .raw_key_size = _cur.raw_key_size,
-    .raw_value_size = _cur.raw_value_size};
+    .num_entries = _curr.entry_cnt,
+    .raw_key_size = _curr.raw_key_size,
+    .raw_value_size = _curr.raw_value_size};
 }
 
 template<bool IsGeneratedPK>
 void SSTBlockBuilder<IsGeneratedPK>::NextBlock() {
-  _cur.buffer.clear();
-  _cur.last_pk_offset = 0;
-  _cur.last_pk_size = 0;
-  _cur.last_pk_is_full = false;
-  _cur.entry_cnt = 0;
-  _cur.raw_key_size = 0;
-  _cur.raw_value_size = 0;
-  std::swap(_cur, _next);
+  _curr.buffer.clear();
+  _curr.last_pk_offset = 0;
+  _curr.last_pk_size = 0;
+  _curr.last_pk_is_full = false;
+  _curr.entry_cnt = 0;
+  _curr.raw_key_size = 0;
+  _curr.raw_value_size = 0;
+  std::swap(_curr, _next);
 }
 
 template class SSTBlockBuilder<true>;
@@ -246,7 +246,6 @@ SSTSinkWriter<IsGeneratedPK>::SSTSinkWriter(ObjectId table_id, rocksdb::DB& db,
 
   rocksdb::BlockBasedTableOptions table_options;
   table_options.filter_policy = nullptr;
-  table_options.checksum = rocksdb::kNoChecksum;
   options.table_factory.reset(
     rocksdb::NewBlockBasedTableFactory(table_options));
 

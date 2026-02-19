@@ -29,11 +29,10 @@
 
 namespace sdb::query {
 
-Result Transaction::Begin(IsolationLevel isolation_level) {
+Result Transaction::Begin() {
   SDB_ASSERT(!HasTransactionBegin());
-  _isolation_level = isolation_level;
-  _state |= State::HasTransactionBegin;
   CreateRocksDBTransaction();
+  _state |= State::HasTransactionBegin;
   return {};
 }
 
@@ -111,6 +110,10 @@ Result Transaction::Rollback() {
 
 void Transaction::AddRocksDBRead() noexcept { _state |= State::HasRocksDBRead; }
 
+bool Transaction::HasRocksDBRead() const noexcept {
+  return (_state & State::HasRocksDBRead) != State::None;
+}
+
 void Transaction::AddRocksDBWrite() noexcept {
   _state |= State::HasRocksDBWrite;
 }
@@ -151,7 +154,7 @@ rocksdb::Transaction& Transaction::EnsureRocksDBTransaction() {
     CreateRocksDBTransaction();
   }
   if (!_rocksdb_snapshot &&
-      _isolation_level == IsolationLevel::RepeatableRead) {
+      GetIsolationLevel() == IsolationLevel::RepeatableRead) {
     SetTransactionSnapshot();
   }
   return *_rocksdb_transaction;
@@ -180,8 +183,6 @@ void Transaction::CreateRocksDBTransaction() {
 
 void Transaction::Destroy() noexcept {
   _state = State::None;
-  _isolation_level =
-    Get<VariableType::PgTransactionIsolation>("default_transaction_isolation");
   _storage_snapshot.reset();
   _rocksdb_transaction.reset();
   _rocksdb_snapshot = nullptr;

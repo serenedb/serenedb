@@ -35,18 +35,15 @@ yaclib::Future<Result> Transaction(ExecContext& context,
     case TRANS_STMT_BEGIN:
     case TRANS_STMT_START: {
       if (!conn_ctx.HasTransactionBegin()) {
-        auto isolation_level =
-          conn_ctx.Get<VariableType::PgTransactionIsolation>(
-            "default_transaction_isolation");
         VisitNodes(stmt.options, [&](const DefElem& option) {
           std::string_view opt_name = option.defname;
           if (opt_name == "transaction_isolation") {
             std::string_view level =
               strVal(&castNode(A_Const, option.arg)->val);
-            if (level == "repeatable read") {
-              isolation_level = IsolationLevel::RepeatableRead;
-            } else if (level == "read committed") {
-              isolation_level = IsolationLevel::ReadCommitted;
+            if (level == "repeatable read" || level == "read committed") {
+              conn_ctx.Set(Config::VariableContext::Local,
+                           "transaction_isolation", std::string{level});
+
             } else {
               THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                               ERR_MSG("transaction isolation level \"", level,
@@ -63,7 +60,7 @@ yaclib::Future<Result> Transaction(ExecContext& context,
               ERR_MSG("transaction DEFERRABLE is not supported yet"));
           }
         });
-        return yaclib::MakeFuture(conn_ctx.Begin(isolation_level));
+        return yaclib::MakeFuture(conn_ctx.Begin());
       } else {
         conn_ctx.AddNotice(SQL_ERROR_DATA(
           ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),

@@ -117,11 +117,21 @@ constexpr auto kVariableDescription =
         "",
       },
     },
+    // TODO(mkornaukhov) test description. Looks like <slt:ignore> for certain
+    // level is requires
     {
       "default_transaction_isolation",
       {
         VariableType::PgTransactionIsolation,
         "Sets the transaction isolation level of each new transaction.",
+        "repeatable read",
+      },
+    },
+    {
+      "transaction_isolation",
+      {
+        VariableType::PgTransactionIsolation,
+        "Sets the current transaction's isolation level.",
         "repeatable read",
       },
     },

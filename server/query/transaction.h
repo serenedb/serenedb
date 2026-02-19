@@ -69,13 +69,13 @@ class Transaction : public Config {
 #endif
 
   void OnNewStatement() const {
-    if (_isolation_level == IsolationLevel::ReadCommitted &&
+    if (GetIsolationLevel() == IsolationLevel::ReadCommitted &&
         _rocksdb_transaction) {
       SetTransactionSnapshot();
     }
   }
 
-  Result Begin(IsolationLevel isolation_level);
+  Result Begin();
 
   Result Commit();
 
@@ -92,13 +92,17 @@ class Transaction : public Config {
 
   void AddRocksDBRead() noexcept;
 
+  bool HasRocksDBRead() const noexcept;
+
   void AddRocksDBWrite() noexcept;
 
   bool HasRocksDBWrite() const noexcept;
 
   bool HasTransactionBegin() const noexcept;
 
-  IsolationLevel GetIsolationLevel() const noexcept { return _isolation_level; }
+  IsolationLevel GetIsolationLevel() const noexcept {
+    return Get<VariableType::PgTransactionIsolation>("transaction_isolation");
+  }
 
   rocksdb::Transaction* GetRocksDBTransaction() const noexcept;
 
@@ -158,8 +162,6 @@ class Transaction : public Config {
   void SetTransactionSnapshot() const;
 
   State _state = State::None;
-  IsolationLevel _isolation_level =
-    Get<VariableType::PgTransactionIsolation>("default_transaction_isolation");
   std::shared_ptr<StorageSnapshot> _storage_snapshot;
   std::unique_ptr<rocksdb::Transaction> _rocksdb_transaction;
   mutable const rocksdb::Snapshot* _rocksdb_snapshot =

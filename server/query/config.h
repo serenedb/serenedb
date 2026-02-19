@@ -65,7 +65,21 @@ enum class ByteaOutput : uint8_t {
 enum class IsolationLevel : uint8_t {
   ReadCommitted,
   RepeatableRead,
+  Invalid,
 };
+
+// TODO(mkornaukhov) get rid of this shit somehow?
+inline std::string_view IsolationLevelToStringView(
+  IsolationLevel isolation_level) {
+  switch (isolation_level) {
+    case IsolationLevel::ReadCommitted:
+      return "read committed";
+    case IsolationLevel::RepeatableRead:
+      return "repeatable read";
+    default:
+      SDB_UNREACHABLE();
+  }
+}
 
 struct VariableDescription {
   VariableType type;
@@ -135,7 +149,8 @@ class Config : public velox::config::IConfig {
         return ByteaOutput::Escape;
       }
     } else if constexpr (T == VariableType::PgTransactionIsolation) {
-      SDB_ASSERT(key == "default_transaction_isolation");
+      SDB_ASSERT(key == "default_transaction_isolation" ||
+                 key == "transaction_isolation");
       if (absl::EqualsIgnoreCase("repeatable read", *value_str)) {
         return IsolationLevel::RepeatableRead;
       }

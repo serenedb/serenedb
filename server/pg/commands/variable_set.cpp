@@ -125,24 +125,19 @@ yaclib::Future<Result> VariableSet(ExecContext& ctx,
 
   if (stmt.kind == VAR_SET_MULTI) {
     std::string_view name = stmt.name;
-    if (name == "TRANSACTION" || name == "SESSION CHARACTERISTICS") {
-      auto var_context = name == "TRANSACTION"
-                           ? Config::VariableContext::Transaction
-                           : Config::VariableContext::Session;
+
+    auto get_isolation_level = [](const VariableSetStmt& stmt) {
+      std::string_view level;
       VisitNodes(stmt.args, [&](const DefElem& option) {
         std::string_view opt_name = option.defname;
         if (opt_name == "transaction_isolation") {
-          std::string_view level = strVal(&castNode(A_Const, option.arg)->val);
+          level = strVal(&castNode(A_Const, option.arg)->val);
           if (level != "repeatable read" && level != "read committed") {
             THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                             ERR_MSG("transaction isolation level \"", level,
                                     "\" is not supported"));
           }
-          // TODO(mkornaukhov)
-          // 1. default_transaction_isolation -- for session
-          // 2. transaction_isolation         -- for current transaction
-          conn_ctx.Set(var_context, "default_transaction_isolation",
-                       std::string{level});
+          return level;
         } else if (opt_name == "transaction_read_only") {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -152,7 +147,48 @@ yaclib::Future<Result> VariableSet(ExecContext& ctx,
             ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
             ERR_MSG("transaction DEFERRABLE is not supported yet"));
         }
+        SDB_UNREACHABLE();
       });
+      return level;
+    };
+
+    if (name == "TRANSACTION") {
+      // SET TRANSACTION ...
+      // Set up local variable. After end of the transaction it will be reset
+
+      if (!conn_ctx.HasTransactionBegin()) {
+        return yaclib::MakeFuture<Result>(
+          ERROR_QUERY_USER_WARN,
+          "SET TRANSACTION can only be used in transaction blocks");
+      }
+
+      auto isolation_level = get_isolation_level(stmt);
+      SDB_ASSERT(!isolation_level.empty());
+      if ((conn_ctx.HasRocksDBRead() || conn_ctx.HasRocksDBWrite()) &&
+          isolation_level !=
+            IsolationLevelToStringView(conn_ctx.GetIsolationLevel())) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
+          ERR_MSG("SET TRANSACTION ISOLATION LEVEL must be called before "
+                  "any query"));
+      }
+      conn_ctx.Set(Config::VariableContext::Local, "transaction_isolation",
+                   std::string{isolation_level});
+      return {};
+    }
+
+    if (name == "SESSION CHARACTERISTICS") {
+      // SET SESSION CHARACTERISTICS AS TRANSACTION
+      // Set up transaction variable. After commit will redefine session'
+      // variable "default_transaction_isolation". "transaction_isolation" uses
+      // this variable.
+
+      auto isolation_level = get_isolation_level(stmt);
+      SDB_ASSERT(!isolation_level.empty());
+
+      conn_ctx.Set(Config::VariableContext::Transaction,
+                   "default_transaction_isolation",
+                   std::string{isolation_level});
       return {};
     }
     return yaclib::MakeFuture<Result>(ERROR_NOT_IMPLEMENTED, "SET ", name,

@@ -217,9 +217,9 @@ Result CatalogFeature::AddRoles() {
 
 Result CatalogFeature::ProcessTombstones() {
   auto& engine = GetServerEngine();
-  auto process_schema = [&](ObjectId database_id,
-                            ObjectId schema_id) -> Result {
-    auto r = engine.VisitSchemaObjects(
+
+  auto process_indexes = [&](ObjectId database_id, ObjectId schema_id) {
+    return engine.VisitSchemaObjects(
       database_id, schema_id, RocksDBEntryType::Index,
       [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
         IndexBaseOptions options;
@@ -237,13 +237,11 @@ Result CatalogFeature::ProcessTombstones() {
         Local().RegisterIndexDrop(std::move(tombstone));
         return {};
       });
+  };
 
-    if (!r.ok()) {
-      return r;
-    }
-
+  auto process_tables = [&](ObjectId database_id, ObjectId schema_id) {
     return engine.VisitSchemaObjects(
-      database_id, schema_id, RocksDBEntryType::Collection,
+      database_id, schema_id, RocksDBEntryType::Table,
       [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
         CreateTableOptions options;
 
@@ -262,6 +260,14 @@ Result CatalogFeature::ProcessTombstones() {
         Local().RegisterTableDrop(std::move(tombstone));
         return {};
       });
+  };
+
+  auto process_schema = [&](ObjectId database_id, ObjectId schema_id) {
+    auto r = process_indexes(database_id, schema_id);
+    if (!r.ok()) {
+      return r;
+    }
+    return process_tables(database_id, schema_id);
   };
 
   auto r = engine.VisitObjects(
@@ -314,7 +320,7 @@ Result CatalogFeature::ProcessTombstones() {
                          "invalid database id", slice);
       }
 
-      ObjectId schema_id{RocksDBKey::objectId(key)};
+      ObjectId schema_id{RocksDBKey::dataSourceId(key)};
 
       auto r = [&] {
         if (schema_id.isSet()) {
@@ -323,7 +329,7 @@ Result CatalogFeature::ProcessTombstones() {
           return engine.VisitObjects(
             database_id, RocksDBEntryType::Schema,
             [&](rocksdb::Slice key, vpack::Slice slice) {
-              ObjectId schema_id{RocksDBKey::objectId(key)};
+              ObjectId schema_id{RocksDBKey::dataSourceId(key)};
               if (!schema_id.isSet()) {
                 return ErrorMeta(ERROR_BAD_PARAMETER, "schema",
                                  "invalid schema id", slice);
@@ -347,7 +353,7 @@ Result CatalogFeature::ProcessTombstones() {
 
 Result CatalogFeature::AddTables(ObjectId database_id, const Schema& schema) {
   return GetServerEngine().VisitSchemaObjects(
-    database_id, schema.GetId(), RocksDBEntryType::Collection,
+    database_id, schema.GetId(), RocksDBEntryType::Table,
     [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
       CreateTableOptions options;
 

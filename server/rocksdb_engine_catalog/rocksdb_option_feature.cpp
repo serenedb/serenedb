@@ -2039,7 +2039,7 @@ rocksdb::ColumnFamilyOptions RocksDBOptionFeature::getColumnFamilyOptions(
       if (family == RocksDBColumnFamilyManager::Family::Data) {
         result.sst_partitioner_factory =
           rocksdb::NewSstPartitionerFixedPrefixFactory(
-            RocksDBKey::objectIdSize() + sizeof(catalog::Column::Id));
+            sizeof(ObjectId) + sizeof(catalog::Column::Id));
       } else {
         result.sst_partitioner_factory =
           rocksdb::NewSstPartitionerFixedPrefixFactory(sizeof(uint64_t));
@@ -2091,7 +2091,7 @@ RocksDBOptionFeature::getColumnFamilyOptionsDefault(
 
   auto make_column_optimized_for_get = [&] {
     result.prefix_extractor.reset(
-      rocksdb::NewFixedPrefixTransform(RocksDBKey::objectIdSize()));
+      rocksdb::NewFixedPrefixTransform(sizeof(ObjectId)));
 
     rocksdb::BlockBasedTableOptions table_options(getTableOptions());
     table_options.data_block_index_type =
@@ -2118,7 +2118,7 @@ RocksDBOptionFeature::getColumnFamilyOptionsDefault(
     case sdb::RocksDBColumnFamilyManager::Family::Data: {
       // TODO(mbkkt) make it fixed?
       result.prefix_extractor.reset(rocksdb::NewCappedPrefixTransform(
-        RocksDBKey::objectIdSize() + sizeof(catalog::Column::Id)));
+        sizeof(ObjectId) + sizeof(catalog::Column::Id)));
 
       auto table_options = getTableOptions();
       result.table_factory.reset(
@@ -2155,7 +2155,7 @@ RocksDBOptionFeature::getColumnFamilyOptionsDefault(
       // we expect that index exist
       result.optimize_filters_for_hits = true;
       result.prefix_extractor.reset(
-        rocksdb::NewFixedPrefixTransform(RocksDBKey::objectIdSize()));
+        rocksdb::NewFixedPrefixTransform(sizeof(ObjectId)));
       // vpack based index variants with custom comparator
       // TODO(mbkkt) in general it's unnecessary, we should write vpack value in
       // another format, like icu::Collator::getSortKey

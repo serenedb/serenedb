@@ -262,7 +262,7 @@ SSTInsertDataSink<IsGeneratedPK>::SSTInsertDataSink(
   std::span<const velox::column_index_t> key_childs,
   std::vector<ColumnInfo> columns,
   std::vector<std::unique_ptr<SinkIndexWriter>>&& index_writers)
-  : Base(SSTSinkWriter<IsGeneratedPK>{object_key, db, cf, columns}, memory_pool,
+  : Base(SSTSinkWriter<IsGeneratedPK>{object_key, db, cf, columns, memory_pool}, memory_pool,
          object_key, key_childs, std::move(columns), std::move(index_writers)) {
 }
 

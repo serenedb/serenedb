@@ -54,9 +54,14 @@ static constexpr size_t kInternalKeyFooterSize =
 
 template<bool IsGeneratedPK>
 SSTBlockBuilder<IsGeneratedPK>::SSTBlockBuilder(ObjectId table_id,
-                                                catalog::Column::Id column_id)
-  : _table_id{table_id}, _column_id{column_id} {
-  static constexpr size_t kCapacity = 2 * kFlushThreshold;
+                                                catalog::Column::Id column_id,
+                                                velox::memory::MemoryPool& pool)
+  : _cur{pool}, _next{pool}, _table_id{table_id}, _column_id{column_id} {
+  static constexpr size_t kEstimatedKeySize = 8;  // TODO: get it from schema
+  static constexpr size_t kFinishOverhead = 2 * sizeof(uint32_t) + kPrefixSize +
+                                            kInternalKeyFooterSize +
+                                            kEstimatedKeySize;
+  static constexpr size_t kCapacity = kFlushThreshold + kFinishOverhead;
   _cur.buffer.reserve(kCapacity);
   _next.buffer.reserve(kCapacity);
 }
@@ -232,7 +237,8 @@ std::string GenerateSSTDirPath() {
 template<bool IsGeneratedPK>
 SSTSinkWriter<IsGeneratedPK>::SSTSinkWriter(ObjectId table_id, rocksdb::DB& db,
                                             rocksdb::ColumnFamilyHandle& cf,
-                                            std::span<const ColumnInfo> columns)
+                                            std::span<const ColumnInfo> columns,
+                                            velox::memory::MemoryPool& pool)
   : _db{&db}, _cf{&cf}, _sst_directory{GenerateSSTDirPath()} {
   _writers.resize(columns.size());
   _block_builders.resize(columns.size());
@@ -265,8 +271,8 @@ SSTSinkWriter<IsGeneratedPK>::SSTSinkWriter(ObjectId table_id, rocksdb::DB& db,
     }
 
     _writers[i] = std::make_unique<rocksdb::SstFileWriter>(env, options);
-    _block_builders[i] =
-      std::make_unique<SSTBlockBuilder<IsGeneratedPK>>(table_id, columns[i].id);
+    _block_builders[i] = std::make_unique<SSTBlockBuilder<IsGeneratedPK>>(
+      table_id, columns[i].id, pool);
     auto sst_file_path =
       absl::StrCat(_sst_directory, "/", "column_", i, "_.sst");
     auto status = _writers[i]->Open(sst_file_path);

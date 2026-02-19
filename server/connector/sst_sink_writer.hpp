@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <velox/common/memory/MemoryPool.h>
+
 #include <memory>
 #include <span>
 #include <string>
@@ -36,7 +38,8 @@ namespace sdb::connector {
 template<bool IsGeneratedPK>
 class SSTBlockBuilder {
  public:
-  SSTBlockBuilder(ObjectId table_id, catalog::Column::Id column_id);
+  SSTBlockBuilder(ObjectId table_id, catalog::Column::Id column_id,
+                  velox::memory::MemoryPool& pool);
 
   void AddEntry(std::span<const rocksdb::Slice> value_slices,
                 std::string_view key);
@@ -75,7 +78,7 @@ class SSTBlockBuilder {
   };
 
   struct Block {
-    std::vector<UnitializedChar> buffer;
+    ManagedVector<UnitializedChar> buffer;
     size_t last_pk_offset = 0;
     size_t last_pk_size = 0;
     bool last_pk_is_full = false;
@@ -83,6 +86,8 @@ class SSTBlockBuilder {
     uint64_t entry_cnt = 0;
     size_t raw_key_size = 0;
     size_t raw_value_size = 0;
+
+    explicit Block(velox::memory::MemoryPool& pool) : buffer{pool} {}
   };
 
   template<bool DeltaCompressEntry>
@@ -108,7 +113,8 @@ class SSTSinkWriter {
  public:
   SSTSinkWriter(ObjectId table_id, rocksdb::DB& db,
                 rocksdb::ColumnFamilyHandle& cf,
-                std::span<const ColumnInfo> columns);
+                std::span<const ColumnInfo> columns,
+                velox::memory::MemoryPool& pool);
 
   void SetColumnIndex(size_t column_idx) { _column_idx = column_idx; }
 

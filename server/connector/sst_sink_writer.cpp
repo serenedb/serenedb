@@ -57,11 +57,9 @@ SSTBlockBuilder<IsGeneratedPK>::SSTBlockBuilder(ObjectId table_id,
                                                 catalog::Column::Id column_id,
                                                 velox::memory::MemoryPool& pool)
   : _cur{pool}, _next{pool}, _table_id{table_id}, _column_id{column_id} {
-  static constexpr size_t kEstimatedKeySize = 8;  // TODO: get it from schema
-  static constexpr size_t kFinishOverhead = 2 * sizeof(uint32_t) + kPrefixSize +
-                                            kEstimatedKeySize +
-                                            kInternalKeyFooterSize;
-  static constexpr size_t kCapacity = kFlushThreshold + kFinishOverhead;
+  static_assert(kFlushThreshold == 64 * 1024);
+  // https://jemalloc.net/jemalloc.3.html
+  static constexpr size_t kCapacity = 80 * 1024;
   _cur.buffer.reserve(kCapacity);
   _next.buffer.reserve(kCapacity);
 }

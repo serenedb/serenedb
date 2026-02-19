@@ -320,7 +320,7 @@ Result CatalogFeature::ProcessTombstones() {
                          "invalid database id", slice);
       }
 
-      ObjectId schema_id{RocksDBKey::dataSourceId(key)};
+      ObjectId schema_id{RocksDBKey::databaseId(key)};
 
       auto r = [&] {
         if (schema_id.isSet()) {
@@ -329,7 +329,7 @@ Result CatalogFeature::ProcessTombstones() {
           return engine.VisitObjects(
             database_id, RocksDBEntryType::Schema,
             [&](rocksdb::Slice key, vpack::Slice slice) {
-              ObjectId schema_id{RocksDBKey::dataSourceId(key)};
+              ObjectId schema_id{RocksDBKey::databaseId(key)};
               if (!schema_id.isSet()) {
                 return ErrorMeta(ERROR_BAD_PARAMETER, "schema",
                                  "invalid schema id", slice);

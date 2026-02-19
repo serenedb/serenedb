@@ -347,10 +347,7 @@ RocksDBOptionFeature::RocksDBOptionFeature(Server& server)
     _allow_fallocate(true),
     _enable_blob_garbage_collection(true),
     _min_write_buffer_number_to_merge_touched(false),
-    _partition_files_for_documents_cf(true),
-    _partition_files_for_primary_index_cf(false),
-    _partition_files_for_edge_index_cf(false),
-    _partition_files_for_vpack_index_cf(false),
+    _partition_files_for_default_cf(true),
     _io_uring(IsIoUringSupported() ? kIoUringEnabled : kIoUringNotSupported),
     _max_transaction_size(transaction::Options::gDefaultMaxTransactionSize),
     _intermediate_commit_size(
@@ -358,7 +355,7 @@ RocksDBOptionFeature::RocksDBOptionFeature(Server& server)
     _intermediate_commit_count(
       transaction::Options::gDefaultIntermediateCommitCount),
     _vpack_cmp(std::make_unique<RocksDBVPackComparator>()),
-    _max_write_buffer_number_cf{0, 0, 0, 0, 0} {
+    _max_write_buffer_number_cf{0, 0} {
   if (_total_write_buffer_size == 0) {
     // unlimited write buffer size... now set to some fraction of physical RAM
     _total_write_buffer_size = ::DefaultTotalWriteBufferSize();
@@ -1171,119 +1168,33 @@ avoid periodic auto-compaction and the I/O caused by it, you can set this
 option to `0`.)");
 
   options
-    ->addOption("--rocksdb.partition-files-for-documents",
+    ->addOption("--rocksdb.partition-files-for-default",
                 "If enabled, the document data for different "
-                "collections/shards will end up in "
+                "tables/shards will end up in "
                 "different .sst files.",
-                new BooleanParameter(&_partition_files_for_documents_cf),
+                new BooleanParameter(&_partition_files_for_default_cf),
                 options::MakeFlags(
                   options::Flags::Uncommon, options::Flags::Experimental,
                   options::Flags::DefaultNoComponents, options::Flags::OnAgent,
                   options::Flags::OnDBServer, options::Flags::OnSingle))
 
     .setLongDescription(R"(Enabling this option will make RocksDB's
-compaction write the document data for different collections/shards
+compaction write the document data for different tables/shards
 into different .sst files. Otherwise the document data from different
-collections/shards can be mixed and written into the same .sst files.
+tables/shards can be mixed and written into the same .sst files.
 
 Enabling this option usually has the benefit of making the RocksDB
-compaction more efficient when a lot of different collections/shards
+compaction more efficient when a lot of different tables/shards
 are written to in parallel.
 The disavantage of enabling this option is that there can be more .sst
 files than when the option is turned off, and the disk space used by
 these .sst files can be higher than if there are fewer .sst files (this
 is because there is some per-.sst file overhead).
-In particular on deployments with many collections/shards
+In particular on deployments with many tables/shards
 this can lead to a very high number of .sst files, with the potential
 of outgrowing the maximum number of file descriptors the SereneDB process
 can open. Thus the option should only be enabled on deployments with a
-limited number of collections/shards.)");
-
-  options
-    ->addOption("--rocksdb.partition-files-for-primary-index",
-                "If enabled, the primary index data for different "
-                "collections/shards will end up in "
-                "different .sst files.",
-                new BooleanParameter(&_partition_files_for_primary_index_cf),
-                options::MakeFlags(
-                  options::Flags::Uncommon, options::Flags::Experimental,
-                  options::Flags::DefaultNoComponents, options::Flags::OnAgent,
-                  options::Flags::OnDBServer, options::Flags::OnSingle))
-
-    .setLongDescription(R"(Enabling this option will make RocksDB's
-compaction write the primary index data for different collections/shards
-into different .sst files. Otherwise the primary index data from different
-collections/shards can be mixed and written into the same .sst files.
-
-Enabling this option usually has the benefit of making the RocksDB
-compaction more efficient when a lot of different collections/shards
-are written to in parallel.
-The disavantage of enabling this option is that there can be more .sst
-files than when the option is turned off, and the disk space used by
-these .sst files can be higher than if there are fewer .sst files (this
-is because there is some per-.sst file overhead).
-In particular on deployments with many collections/shards
-this can lead to a very high number of .sst files, with the potential
-of outgrowing the maximum number of file descriptors the SereneDB process
-can open. Thus the option should only be enabled on deployments with a
-limited number of collections/shards.)");
-
-  options
-    ->addOption("--rocksdb.partition-files-for-edge-index",
-                "If enabled, the index data for different edge "
-                "indexes will end up in different .sst files.",
-                new BooleanParameter(&_partition_files_for_edge_index_cf),
-                options::MakeFlags(
-                  options::Flags::Uncommon, options::Flags::Experimental,
-                  options::Flags::DefaultNoComponents, options::Flags::OnAgent,
-                  options::Flags::OnDBServer, options::Flags::OnSingle))
-
-    .setLongDescription(R"(Enabling this option will make RocksDB's
-compaction write the edge index data for different edge collections/shards
-into different .sst files. Otherwise the edge index data from different
-edge collections/shards can be mixed and written into the same .sst files.
-
-Enabling this option usually has the benefit of making the RocksDB
-compaction more efficient when a lot of different edge collections/shards
-are written to in parallel.
-The disavantage of enabling this option is that there can be more .sst
-files than when the option is turned off, and the disk space used by
-these .sst files can be higher than if there are fewer .sst files (this
-is because there is some per-.sst file overhead).
-In particular on deployments with many edge collections/shards
-this can lead to a very high number of .sst files, with the potential
-of outgrowing the maximum number of file descriptors the SereneDB process
-can open. Thus the option should only be enabled on deployments with a
-limited number of edge collections/shards.)");
-
-  options
-    ->addOption("--rocksdb.partition-files-for-secondary-index",
-                "If enabled, the index data for different secondary "
-                "indexes will end up in different .sst files.",
-                new BooleanParameter(&_partition_files_for_vpack_index_cf),
-                options::MakeFlags(
-                  options::Flags::Uncommon, options::Flags::Experimental,
-                  options::Flags::DefaultNoComponents, options::Flags::OnAgent,
-                  options::Flags::OnDBServer, options::Flags::OnSingle))
-
-    .setLongDescription(R"(Enabling this option will make RocksDB's
-compaction write the secondary index data for different secondary
-indexes (also indexes from different collections/shards) into different
-.sst files. Otherwise the secondary index data from different
-collections/shards/indexes can be mixed and written into the same .sst files.
-
-Enabling this option usually has the benefit of making the RocksDB
-compaction more efficient when a lot of different collections/shards/indexes
-are written to in parallel.
-The disavantage of enabling this option is that there can be more .sst
-files than when the option is turned off, and the disk space used by
-these .sst files can be higher than if there are fewer .sst files (this
-is because there is some per-.sst file overhead).
-In particular on deployments with many collections/shards/indexes
-this can lead to a very high number of .sst files, with the potential
-of outgrowing the maximum number of file descriptors the SereneDB process
-can open. Thus the option should only be enabled on deployments with a
-limited number of edge collections/shards/indexes.)");
+limited number of tables/shards.)");
 
   /// minimum required percentage of free disk space for considering
   /// the server "healthy". this is expressed as a floating point value
@@ -1481,8 +1392,7 @@ when disk size is very constrained and no replication is used.)");
   //////////////////////////////////////////////////////////////////////////////
   auto add_max_write_buffer_number_cf =
     [this, &options](RocksDBColumnFamilyManager::Family family) {
-      std::string name = RocksDBColumnFamilyManager::name(
-        family, RocksDBColumnFamilyManager::NameMode::External);
+      std::string name = RocksDBColumnFamilyManager::name(family);
       size_t index = std::to_underlying(family);
       options->addOption(
         "--rocksdb.max-write-buffer-number-" + name,
@@ -1493,11 +1403,8 @@ when disk size is very constrained and no replication is used.)");
         options::MakeDefaultFlags(options::Flags::Uncommon));
     };
   for (auto family : {
+         RocksDBColumnFamilyManager::Family::Default,
          RocksDBColumnFamilyManager::Family::Definitions,
-         RocksDBColumnFamilyManager::Family::Documents,
-         RocksDBColumnFamilyManager::Family::PrimaryIndex,
-         RocksDBColumnFamilyManager::Family::EdgeIndex,
-         RocksDBColumnFamilyManager::Family::VPackIndex,
        }) {
     add_max_write_buffer_number_cf(family);
   }
@@ -2014,8 +1921,7 @@ rocksdb::ColumnFamilyOptions RocksDBOptionFeature::getColumnFamilyOptions(
   RocksDBColumnFamilyManager::Family family) const {
   auto result = getColumnFamilyOptionsDefault(family);
 
-  if (family == RocksDBColumnFamilyManager::Family::Documents ||
-      family == RocksDBColumnFamilyManager::Family::Data) {
+  if (family == RocksDBColumnFamilyManager::Family::Default) {
     result.enable_blob_files = _enable_blob_files;
     result.min_blob_size = _min_blob_size;
     result.blob_file_size = _blob_file_size;
@@ -2034,36 +1940,16 @@ rocksdb::ColumnFamilyOptions RocksDBOptionFeature::getColumnFamilyOptions(
       // use whatever block cache we use for blobs as well
       result.blob_cache = getTableOptions().block_cache;
     }
-    if (_partition_files_for_documents_cf) {
+    if (_partition_files_for_default_cf) {
       // partition .sst files by object id prefix
-      if (family == RocksDBColumnFamilyManager::Family::Data) {
+      if (family == RocksDBColumnFamilyManager::Family::Default) {
         result.sst_partitioner_factory =
           rocksdb::NewSstPartitionerFixedPrefixFactory(
             sizeof(ObjectId) + sizeof(catalog::Column::Id));
       } else {
         result.sst_partitioner_factory =
-          rocksdb::NewSstPartitionerFixedPrefixFactory(sizeof(uint64_t));
+          rocksdb::NewSstPartitionerFixedPrefixFactory(sizeof(ObjectId));
       }
-    }
-  } else if (family == RocksDBColumnFamilyManager::Family::PrimaryIndex) {
-    // partition .sst files by object id prefix
-    if (_partition_files_for_primary_index_cf) {
-      result.sst_partitioner_factory =
-        rocksdb::NewSstPartitionerFixedPrefixFactory(sizeof(uint64_t));
-    }
-    // keep immutable mem tables around in memory for conflict checking
-    result.max_write_buffer_size_to_maintain = 64 << 20;
-  } else if (family == RocksDBColumnFamilyManager::Family::EdgeIndex) {
-    // partition .sst files by object id prefix
-    if (_partition_files_for_edge_index_cf) {
-      result.sst_partitioner_factory =
-        rocksdb::NewSstPartitionerFixedPrefixFactory(sizeof(uint64_t));
-    }
-  } else if (family == RocksDBColumnFamilyManager::Family::VPackIndex) {
-    // partition .sst files by object id prefix
-    if (_partition_files_for_vpack_index_cf) {
-      result.sst_partitioner_factory =
-        rocksdb::NewSstPartitionerFixedPrefixFactory(sizeof(uint64_t));
     }
   }
 
@@ -2089,33 +1975,9 @@ RocksDBOptionFeature::getColumnFamilyOptionsDefault(
   RocksDBColumnFamilyManager::Family family) const {
   rocksdb::ColumnFamilyOptions result(getOptions());
 
-  auto make_column_optimized_for_get = [&] {
-    result.prefix_extractor.reset(
-      rocksdb::NewFixedPrefixTransform(sizeof(ObjectId)));
-
-    rocksdb::BlockBasedTableOptions table_options(getTableOptions());
-    table_options.data_block_index_type =
-      rocksdb::BlockBasedTableOptions::kDataBlockBinaryAndHash;
-    result.table_factory.reset(
-      rocksdb::NewBlockBasedTableFactory(table_options));
-  };
-
   // TODO(mbkkt) current column families are wrong
-  // Instead we want to have such column families:
-  // clang-format off
-  // | name      | key             | value      | prefix        | filter        | index    | data blocks |
-  // | Documents | objID, pk       | rev, data  | objID         | hits + key    | binary*  | hash        |
-  // | Unique    | objID, data     | pk         | objID         | key           | binary*  | hash        |
-  // | Sorted    | objID, data, pk |            | objID         | hits + prefix | firstKey | binary      |
-  // | Lookup    | objID, data, pk |            | objID, data   | prefix        | firstKey | binary      |
-  // clang-format on
-  // * -- maybe hash if shouldn't be sorted
-  // Documents and PrimaryIndex  => Documents
-  // PrimaryIndex and VPackIndex => Unique
-  // VPackIndex                  => Sorted
-  // EdgeIndex                   => Lookup
   switch (family) {
-    case sdb::RocksDBColumnFamilyManager::Family::Data: {
+    case RocksDBColumnFamilyManager::Family::Default: {
       // TODO(mbkkt) make it fixed?
       result.prefix_extractor.reset(rocksdb::NewCappedPrefixTransform(
         sizeof(ObjectId) + sizeof(catalog::Column::Id)));
@@ -2125,48 +1987,10 @@ RocksDBOptionFeature::getColumnFamilyOptionsDefault(
         rocksdb::NewBlockBasedTableFactory(table_options));
     } break;
     case RocksDBColumnFamilyManager::Family::Definitions:
-    case RocksDBColumnFamilyManager::Family::Invalid:
       break;
-    case RocksDBColumnFamilyManager::Family::Documents: {
-      result.optimize_filters_for_hits = true;
-      make_column_optimized_for_get();
-    } break;
-    case RocksDBColumnFamilyManager::Family::PrimaryIndex: {
-      make_column_optimized_for_get();
-    } break;
-    case RocksDBColumnFamilyManager::Family::EdgeIndex: {
-      // we don't expect a lot of source vertexes with 0 outbound edges
-      result.optimize_filters_for_hits = true;
-      result.prefix_extractor = std::make_shared<RocksDBPrefixExtractor>();
-
-      rocksdb::BlockBasedTableOptions table_options(getTableOptions());
-      // there is not a lot of sense in bloom filter for each edge
-      // because it can be used only to remove single edge
-      table_options.whole_key_filtering = false;
-      // kBinarySearchWithFirstKey + kNoShortening best for short scans
-      table_options.index_type =
-        rocksdb::BlockBasedTableOptions::IndexType::kBinarySearchWithFirstKey;
-      table_options.index_shortening =
-        rocksdb::BlockBasedTableOptions::IndexShorteningMode::kNoShortening;
-      result.table_factory.reset(
-        rocksdb::NewBlockBasedTableFactory(table_options));
-    } break;
-    case RocksDBColumnFamilyManager::Family::VPackIndex: {
-      // we expect that index exist
-      result.optimize_filters_for_hits = true;
-      result.prefix_extractor.reset(
-        rocksdb::NewFixedPrefixTransform(sizeof(ObjectId)));
-      // vpack based index variants with custom comparator
-      // TODO(mbkkt) in general it's unnecessary, we should write vpack value in
-      // another format, like icu::Collator::getSortKey
-      result.comparator = _vpack_cmp.get();
-      rocksdb::BlockBasedTableOptions table_options(getTableOptions());
-      // there is not any sense in bloom filter for each value
-      // because we never makes Get or full key Seek
-      table_options.whole_key_filtering = false;
-      result.table_factory.reset(
-        rocksdb::NewBlockBasedTableFactory(table_options));
-    } break;
+    default:
+      SDB_UNREACHABLE();
+      break;
   }
 
   // set TTL for .sst file compaction

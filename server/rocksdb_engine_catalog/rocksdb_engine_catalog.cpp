@@ -657,13 +657,8 @@ void RocksDBEngineCatalog::start() {
     std::string name = RocksDBColumnFamilyManager::name(family);
     cf_families.emplace_back(name, specialized);
   };
-  // no prefix families for default column family (Has to be there)
+  add_family(RocksDBColumnFamilyManager::Family::Default);
   add_family(RocksDBColumnFamilyManager::Family::Definitions);
-  add_family(RocksDBColumnFamilyManager::Family::Documents);
-  add_family(RocksDBColumnFamilyManager::Family::PrimaryIndex);
-  add_family(RocksDBColumnFamilyManager::Family::EdgeIndex);
-  add_family(RocksDBColumnFamilyManager::Family::VPackIndex);
-  add_family(RocksDBColumnFamilyManager::Family::Data);
 
   bool db_existed = checkExistingDB(cf_families);
 
@@ -702,25 +697,15 @@ void RocksDBEngineCatalog::start() {
   SDB_ASSERT(_db != nullptr);
 
   // set our column families
-  RocksDBColumnFamilyManager::set(RocksDBColumnFamilyManager::Family::Invalid,
-                                  _db->DefaultColumnFamily());
   RocksDBColumnFamilyManager::set(
-    RocksDBColumnFamilyManager::Family::Definitions, cf_handles[0]);
-  RocksDBColumnFamilyManager::set(RocksDBColumnFamilyManager::Family::Documents,
-                                  cf_handles[1]);
-  RocksDBColumnFamilyManager::set(
-    RocksDBColumnFamilyManager::Family::PrimaryIndex, cf_handles[2]);
-  RocksDBColumnFamilyManager::set(RocksDBColumnFamilyManager::Family::EdgeIndex,
-                                  cf_handles[3]);
-  RocksDBColumnFamilyManager::set(
-    RocksDBColumnFamilyManager::Family::VPackIndex, cf_handles[4]);
+    RocksDBColumnFamilyManager::Family::Default,
+    cf_handles[std::to_underlying(
+      RocksDBColumnFamilyManager::Family::Default)]);
 
-  RocksDBColumnFamilyManager::set(RocksDBColumnFamilyManager::Family::Data,
-                                  cf_handles[5]);
-
-  SDB_ASSERT(RocksDBColumnFamilyManager::get(
-               RocksDBColumnFamilyManager::Family::Definitions)
-               ->GetID() == 0);
+  RocksDBColumnFamilyManager::set(
+    RocksDBColumnFamilyManager::Family::Definitions,
+    cf_handles[std::to_underlying(
+      RocksDBColumnFamilyManager::Family::Definitions)]);
 
   // will crash the process if version does not match
   StartupVersionCheck(SerenedServer::Instance(), _db, db_existed);
@@ -1677,8 +1662,8 @@ Result RocksDBEngineCatalog::DropTable(const TableTombstone& tombstone) {
 
   // Delete columns
   auto [lower, upper] = connector::key_utils::CreateTableRange(tombstone.table);
-  auto* table_cf =
-    RocksDBColumnFamilyManager::get(RocksDBColumnFamilyManager::Family::Data);
+  auto* table_cf = RocksDBColumnFamilyManager::get(
+    RocksDBColumnFamilyManager::Family::Default);
   r = rocksutils::RemoveLargeRange(db, lower, upper, table_cf, true,
                                    true);  // TODO(gnusi): Check rows*columns
   if (!r.ok()) {
@@ -2576,8 +2561,7 @@ void RocksDBEngineCatalog::getStatistics(vpack::Builder& builder) const {
 
   // add column family properties
   auto add_cf = [&](RocksDBColumnFamilyManager::Family family) {
-    std::string name = RocksDBColumnFamilyManager::name(
-      family, RocksDBColumnFamilyManager::NameMode::External);
+    std::string name = RocksDBColumnFamilyManager::name(family);
     rocksdb::ColumnFamilyHandle* c = RocksDBColumnFamilyManager::get(family);
     std::string v;
     builder.add(name, vpack::Value(vpack::ValueType::Object));
@@ -2694,11 +2678,8 @@ void RocksDBEngineCatalog::getStatistics(vpack::Builder& builder) const {
   // print column family statistics
   //  warning: output format limits numbers to 3 digits of precision or less.
   builder.add("columnFamilies", vpack::Value(vpack::ValueType::Object));
+  add_cf(RocksDBColumnFamilyManager::Family::Default);
   add_cf(RocksDBColumnFamilyManager::Family::Definitions);
-  add_cf(RocksDBColumnFamilyManager::Family::Documents);
-  add_cf(RocksDBColumnFamilyManager::Family::PrimaryIndex);
-  add_cf(RocksDBColumnFamilyManager::Family::EdgeIndex);
-  add_cf(RocksDBColumnFamilyManager::Family::VPackIndex);
   builder.close();
 
   {

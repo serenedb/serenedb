@@ -21,86 +21,52 @@
 
 #include "rocksdb_column_family_manager.h"
 
-#include "basics/debugging.h"
-
 namespace sdb {
 
 std::array<const char*,
            sdb::RocksDBColumnFamilyManager::kNumberOfColumnFamilies>
-  RocksDBColumnFamilyManager::gInternalNames = {"default",      "Documents",
-                                                "PrimaryIndex", "EdgeIndex",
-                                                "VPackIndex",   "Postgres"};
-
-std::array<const char*,
-           sdb::RocksDBColumnFamilyManager::kNumberOfColumnFamilies>
-  RocksDBColumnFamilyManager::gExternalNames = {
-    "definitions", "documents", "primary", "edge", "vpack", "postgres"};
+  RocksDBColumnFamilyManager::gNames = {
+    "definitions",
+    "default",
+};
 
 std::array<rocksdb::ColumnFamilyHandle*,
            RocksDBColumnFamilyManager::kNumberOfColumnFamilies>
-  RocksDBColumnFamilyManager::gHandles = {nullptr, nullptr, nullptr,
-                                          nullptr, nullptr, nullptr};
-
-rocksdb::ColumnFamilyHandle* RocksDBColumnFamilyManager::gDefaultHandle =
-  nullptr;
-
-void RocksDBColumnFamilyManager::initialize() {
-  size_t index = std::to_underlying(Family::Definitions);
-  gInternalNames[index] = rocksdb::kDefaultColumnFamilyName.c_str();
-}
+  RocksDBColumnFamilyManager::gHandles = {
+    nullptr,
+    nullptr,
+};
 
 rocksdb::ColumnFamilyHandle* RocksDBColumnFamilyManager::get(Family family) {
-  if (family == Family::Invalid) {
-    return gDefaultHandle;
-  }
-
-  size_t index = std::to_underlying(family);
+  SDB_VERIFY(family != Family::Invalid);
+  const auto index = std::to_underlying(family);
   SDB_ASSERT(index < gHandles.size());
-
   return gHandles[index];
 }
 
 void RocksDBColumnFamilyManager::set(Family family,
                                      rocksdb::ColumnFamilyHandle* handle) {
-  if (family == Family::Invalid) {
-    gDefaultHandle = handle;
-    return;
-  }
-
-  size_t index = std::to_underlying(family);
+  SDB_VERIFY(family != Family::Invalid);
+  const auto index = std::to_underlying(family);
   SDB_ASSERT(index < gHandles.size());
-
   gHandles[index] = handle;
 }
 
-const char* RocksDBColumnFamilyManager::name(Family family, NameMode mode) {
-  if (family == Family::Invalid) {
-    return rocksdb::kDefaultColumnFamilyName.c_str();
-  }
-
-  size_t index = std::to_underlying(family);
-  SDB_ASSERT(index < gInternalNames.size());
-
-  if (mode == NameMode::Internal) {
-    return gInternalNames[index];
-  }
-  return gExternalNames[index];
+const char* RocksDBColumnFamilyManager::name(Family family) {
+  SDB_VERIFY(family != Family::Invalid);
+  const auto index = std::to_underlying(family);
+  SDB_ASSERT(index < gNames.size());
+  return gNames[index];
 }
 
 const char* RocksDBColumnFamilyManager::name(
-  rocksdb::ColumnFamilyHandle* handle, NameMode mode) {
+  rocksdb::ColumnFamilyHandle* handle) {
   for (size_t i = 0; i < gHandles.size(); ++i) {
     if (gHandles[i] == handle) {
-      if (mode == NameMode::Internal) {
-        return gInternalNames[i];
-      }
-      return gExternalNames[i];
+      return gNames[i];
     }
   }
-
-  // didn't find it in the list; we should never get here
-  SDB_ASSERT(false);
-  return "unknown";
+  SDB_VERIFY(false);
 }
 
 const std::array<rocksdb::ColumnFamilyHandle*,

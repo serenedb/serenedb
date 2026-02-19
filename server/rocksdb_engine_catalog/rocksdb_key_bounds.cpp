@@ -64,9 +64,6 @@ RocksDBKeyBounds RocksDBKeyBounds::SchemaObjects(RocksDBEntryType entry,
 
 rocksdb::ColumnFamilyHandle* RocksDBKeyBounds::columnFamily() const {
   switch (_type) {
-    case RocksDBEntryType::Placeholder:
-      return RocksDBColumnFamilyManager::get(
-        RocksDBColumnFamilyManager::Family::Invalid);
     case RocksDBEntryType::SettingsValue:
     case RocksDBEntryType::Role:
     case RocksDBEntryType::View:
@@ -82,11 +79,11 @@ rocksdb::ColumnFamilyHandle* RocksDBKeyBounds::columnFamily() const {
     case RocksDBEntryType::IndexShard:
       return RocksDBColumnFamilyManager::get(
         RocksDBColumnFamilyManager::Family::Definitions);
+    default:
+      SDB_THROW(ERROR_TYPE_ERROR);
   }
-  SDB_THROW(ERROR_TYPE_ERROR);
 }
 
-/// bounds to iterate over entire index
 RocksDBKeyBounds::RocksDBKeyBounds(RocksDBEntryType type, uint64_t first)
   : _type(type) {
   switch (_type) {

@@ -154,9 +154,9 @@ SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
 ----
 db error: ERROR: transaction isolation level "serializable" is not supported
 
+
 statement ok
 ROLLBACK;
-
 
 
 # 8. SET SESSION CHARACTERISTICS inside a transaction

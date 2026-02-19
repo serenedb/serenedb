@@ -88,7 +88,6 @@ jobs:
                   path: .
                   sparse-checkout: |
                       serene-ui
-                      scripts
                   sparse-checkout-cone-mode: true
 
             - name: Run tests
@@ -122,27 +121,12 @@ jobs:
                     docker push "$IMAGE" 2>&1 | tee -a logs/build.log
                   fi
 
-            - name: Send Telegram notification
-              if: always() && !cancelled()
-              env:
-                  TG_TOKEN: ${{ secrets.TG_TOKEN }}
-                  TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-                  TG_THREAD_ID_MAIN: "51"
-                  TG_THREAD_ID_BUILD: "53"
-                  TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
-                  BRANCH: ${{ inputs.BRANCH }}
-                  JOB_STATUS: ${{ job.status }}
-                  ACTOR: ${{ github.actor }}
-                  WORKFLOW: ${{ github.workflow }}
-                  RUN_NUMBER: ${{ github.run_number }}
-                  RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-              run: ../scripts/notify_telegram.bash
-
             - name: Cleanup workspace & Docker
               if: always()
               run: |
                   docker system prune -f 2>/dev/null || true
                   docker volume prune -f 2>/dev/null || true
+
     build-linux-app:
         name: Build Linux App
         if: inputs.RUN_TESTS || inputs.BUILD_LINUX_APP
@@ -163,7 +147,6 @@ jobs:
                   path: .
                   sparse-checkout: |
                       serene-ui
-                      scripts
                   sparse-checkout-cone-mode: true
 
             - name: Setup Node.js
@@ -214,22 +197,6 @@ jobs:
                   if-no-files-found: error
                   retention-days: 30
 
-            - name: Send Telegram notification
-              if: always() && !cancelled()
-              env:
-                  TG_TOKEN: ${{ secrets.TG_TOKEN }}
-                  TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-                  TG_THREAD_ID_MAIN: "51"
-                  TG_THREAD_ID_BUILD: "53"
-                  TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
-                  BRANCH: ${{ inputs.BRANCH }}
-                  JOB_STATUS: ${{ job.status }}
-                  ACTOR: ${{ github.actor }}
-                  WORKFLOW: ${{ github.workflow }}
-                  RUN_NUMBER: ${{ github.run_number }}
-                  RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-              run: ../scripts/notify_telegram.bash
-
     build-windows-app:
         name: Build Windows App
         if: inputs.RUN_TESTS || inputs.BUILD_WINDOWS_APP
@@ -251,7 +218,6 @@ jobs:
                   path: .
                   sparse-checkout: |
                       serene-ui
-                      scripts
                   sparse-checkout-cone-mode: true
 
             - name: Setup Node.js
@@ -302,22 +268,6 @@ jobs:
                   if-no-files-found: error
                   retention-days: 30
 
-            - name: Send Telegram notification
-              if: always() && !cancelled()
-              env:
-                  TG_TOKEN: ${{ secrets.TG_TOKEN }}
-                  TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-                  TG_THREAD_ID_MAIN: "51"
-                  TG_THREAD_ID_BUILD: "53"
-                  TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
-                  BRANCH: ${{ inputs.BRANCH }}
-                  JOB_STATUS: ${{ job.status }}
-                  ACTOR: ${{ github.actor }}
-                  WORKFLOW: ${{ github.workflow }}
-                  RUN_NUMBER: ${{ github.run_number }}
-                  RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-              run: ../scripts/notify_telegram.bash
-
     build-macos-app:
         name: Build macOS App
         if: inputs.RUN_TESTS || inputs.BUILD_MACOS_APP
@@ -338,7 +288,6 @@ jobs:
                   path: .
                   sparse-checkout: |
                       serene-ui
-                      scripts
                   sparse-checkout-cone-mode: true
 
             - name: Setup Node.js
@@ -393,21 +342,6 @@ jobs:
                   if-no-files-found: error
                   retention-days: 30
 
-            - name: Send Telegram notification
-              if: always() && !cancelled()
-              env:
-                  TG_TOKEN: ${{ secrets.TG_TOKEN }}
-                  TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-                  TG_THREAD_ID_MAIN: "51"
-                  TG_THREAD_ID_BUILD: "53"
-                  TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
-                  BRANCH: ${{ inputs.BRANCH }}
-                  JOB_STATUS: ${{ job.status }}
-                  ACTOR: ${{ github.actor }}
-                  WORKFLOW: ${{ github.workflow }}
-                  RUN_NUMBER: ${{ github.run_number }}
-                  RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-              run: ../scripts/notify_telegram.bash
     release:
         name: Publish GitHub Release
         needs: [build-linux-app, build-windows-app, build-macos-app]
@@ -418,17 +352,8 @@ jobs:
             && !contains(needs.*.result, 'failure')
         runs-on: X64
         steps:
-            - name: Checkout (for notify script)
-              uses: actions/checkout@v4
-              with:
-                  repository: serenedb/serenedb
-                  ref: ${{ inputs.BRANCH }}
-                  token: ${{ secrets.PAT_TOKEN }}
-                  path: .
-                  sparse-checkout: |
-                      serene-ui
-                      scripts
-                  sparse-checkout-cone-mode: true
+            - name: Clean release-assets directory
+              run: rm -rf "${{ github.workspace }}/release-assets"
 
             - name: Download Linux artifacts
               if: inputs.BUILD_LINUX_APP
@@ -464,8 +389,25 @@ jobs:
                   prerelease: true
                   files: release-assets/**/*
 
+    notify:
+        name: Send Notification
+        needs: [build-docker, build-linux-app, build-windows-app, build-macos-app, release]
+        if: always()
+        runs-on: X64
+        timeout-minutes: 5
+        steps:
+            - name: Checkout (for notify script)
+              uses: actions/checkout@v4
+              with:
+                  repository: serenedb/serenedb
+                  ref: ${{ inputs.BRANCH }}
+                  token: ${{ secrets.PAT_TOKEN }}
+                  path: .
+                  sparse-checkout: |
+                      scripts
+                  sparse-checkout-cone-mode: true
+
             - name: Send Telegram notification
-              if: always() && !cancelled()
               env:
                   TG_TOKEN: ${{ secrets.TG_TOKEN }}
                   TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
@@ -473,15 +415,14 @@ jobs:
                   TG_THREAD_ID_BUILD: "53"
                   TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
                   BRANCH: ${{ inputs.BRANCH }}
-                  JOB_STATUS: ${{ job.status }}
+                  JOB_STATUS: ${{ (contains(needs.*.result, 'failure') && 'failure') || (contains(needs.*.result, 'cancelled') && 'cancelled') || 'success' }}
                   ACTOR: ${{ github.actor }}
                   WORKFLOW: ${{ github.workflow }}
                   RUN_NUMBER: ${{ github.run_number }}
                   RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-              run: ./scripts/notify_telegram.bash
-
-            - name: Cleanup workspace
-              if: always()
-              run: |
-                  cd /
-                  rm -rf "${{ github.workspace }}" 2>/dev/null || true    #
+                  JOB_STATUS_DOCKER: ${{ needs.build-docker.result }}
+                  JOB_STATUS_LINUX: ${{ needs.build-linux-app.result }}
+                  JOB_STATUS_WINDOWS: ${{ needs.build-windows-app.result }}
+                  JOB_STATUS_MACOS: ${{ needs.build-macos-app.result }}
+                  JOB_STATUS_RELEASE: ${{ needs.release.result }}
+              run: ./scripts/notify_telegram_serene-ui.bash

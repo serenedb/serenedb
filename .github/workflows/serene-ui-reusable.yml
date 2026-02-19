@@ -402,3 +402,84 @@ jobs:
               # TODO: (vlaski) add cleanup step
               #
               # TODO: Return Release
+    release:
+        name: Publish GitHub Release
+        needs: [build-linux-app, build-windows-app, build-macos-app]
+        if: >-
+            always()
+            && inputs.PUSH_RELEASE
+            && (inputs.BUILD_LINUX_APP || inputs.BUILD_WINDOWS_APP || inputs.BUILD_MACOS_APP)
+            && !contains(needs.*.result, 'failure')
+        runs-on: parilka
+        permissions:
+            contents: write
+        steps:
+            - name: Checkout (for notify script)
+              uses: actions/checkout@v4
+              with:
+                  repository: serenedb/serenedb
+                  ref: ${{ inputs.BRANCH }}
+                  token: ${{ secrets.PAT_TOKEN }}
+                  path: .
+                  sparse-checkout: |
+                      serene-ui
+                      scripts
+                  sparse-checkout-cone-mode: true
+
+            - name: Download Linux artifacts
+              if: inputs.BUILD_LINUX_APP
+              uses: actions/download-artifact@v4
+              with:
+                  name: serene-ui-linux
+                  path: release-assets/linux
+
+            - name: Download Windows artifacts
+              if: inputs.BUILD_WINDOWS_APP
+              uses: actions/download-artifact@v4
+              with:
+                  name: serene-ui-windows
+                  path: release-assets/windows
+
+            - name: Download macOS artifacts
+              if: inputs.BUILD_MACOS_APP
+              uses: actions/download-artifact@v4
+              with:
+                  name: serene-ui-macos
+                  path: release-assets/macos
+
+            - name: Create GitHub Release
+              uses: softprops/action-gh-release@v2
+              with:
+                  tag_name: serene-ui-v${{ github.run_number }}
+                  name: SereneUI Build #${{ github.run_number }}
+                  body: |
+                      SereneUI desktop app build from branch `${{ inputs.BRANCH }}`.
+
+                      Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+                  draft: false
+                  prerelease: true
+                  files: release-assets/**/*
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Send Telegram notification
+              if: always() && !cancelled()
+              env:
+                  TG_TOKEN: ${{ secrets.TG_TOKEN }}
+                  TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+                  TG_THREAD_ID_MAIN: "51"
+                  TG_THREAD_ID_BUILD: "53"
+                  TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
+                  BRANCH: ${{ inputs.BRANCH }}
+                  JOB_STATUS: ${{ job.status }}
+                  ACTOR: ${{ github.actor }}
+                  WORKFLOW: ${{ github.workflow }}
+                  RUN_NUMBER: ${{ github.run_number }}
+                  RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+              run: ./scripts/notify_telegram.bash
+
+            - name: Cleanup workspace
+              if: always()
+              run: |
+                  cd /
+                  rm -rf "${{ github.workspace }}" 2>/dev/null || true    #

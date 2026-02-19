@@ -29,8 +29,25 @@
 
 namespace sdb::query {
 
+void Transaction::OnNewStatement() {
+  switch (GetIsolationLevel()) {
+    case IsolationLevel::ReadCommitted:
+      if (_rocksdb_transaction) {
+        _rocksdb_snapshot = nullptr;
+        _rocksdb_transaction->ClearSnapshot();
+      }
+      return;
+    case IsolationLevel::RepeatableRead:
+      return;
+  }
+}
+
 Result Transaction::Begin() {
   SDB_ASSERT(!HasTransactionBegin());
+  // We must create RocksDB transaction here, it cannot be postponed
+  // (as opposed to setting a snapshot) because we **must not** set
+  // '_rocksdb_snapshot with' 'CreateStorageSnapshot()' as RocksDB does not
+  // allow to reuse created snapshot for transaction later.
   CreateRocksDBTransaction();
   _state |= State::HasTransactionBegin;
   return {};
@@ -131,14 +148,10 @@ rocksdb::Transaction* Transaction::GetRocksDBTransaction() const noexcept {
 }
 
 const rocksdb::Snapshot& Transaction::EnsureRocksDBSnapshot() {
-  SDB_ASSERT((_state & State::HasRocksDBRead) != State::None);
+  SDB_ASSERT(HasRocksDBRead());
   if (!_rocksdb_snapshot) {
-    if (HasTransactionBegin()) {
-      // What if we will create transaction lazily?
-      SetTransactionSnapshot();
-    } else if (HasRocksDBWrite()) {
-      CreateRocksDBTransaction();
-      SetTransactionSnapshot();
+    if (HasRocksDBWrite() || HasTransactionBegin()) {
+      EnsureRocksDBTransaction();
     } else {
       CreateStorageSnapshot();
     }
@@ -149,12 +162,13 @@ const rocksdb::Snapshot& Transaction::EnsureRocksDBSnapshot() {
 }
 
 rocksdb::Transaction& Transaction::EnsureRocksDBTransaction() {
-  SDB_ASSERT((_state & State::HasRocksDBWrite) != State::None);
+  SDB_ASSERT(HasTransactionBegin() || HasRocksDBWrite());
   if (!_rocksdb_transaction) {
+    // Single insert/update statement case
+    SDB_ASSERT(!HasTransactionBegin());
     CreateRocksDBTransaction();
   }
-  if (!_rocksdb_snapshot &&
-      GetIsolationLevel() == IsolationLevel::RepeatableRead) {
+  if (!_rocksdb_snapshot) {
     SetTransactionSnapshot();
   }
   return *_rocksdb_transaction;
@@ -211,7 +225,9 @@ void Transaction::ApplyTableStatsDiffs() {
   _table_rows_deltas.clear();
 }
 
-void Transaction::SetTransactionSnapshot() const {
+void Transaction::SetTransactionSnapshot() {
+  SDB_ASSERT(_rocksdb_transaction);
+  SDB_ASSERT(!_rocksdb_snapshot, "Snapshot must be cleared before set");
   _rocksdb_transaction->SetSnapshot();
   _rocksdb_snapshot = _rocksdb_transaction->GetSnapshot();
   SDB_ASSERT(_rocksdb_snapshot);

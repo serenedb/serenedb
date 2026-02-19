@@ -65,7 +65,7 @@ enum class ByteaOutput : uint8_t {
 enum class IsolationLevel : uint8_t {
   ReadCommitted,
   RepeatableRead,
-  Invalid,
+  // Invalid,
 };
 
 // TODO(mkornaukhov) get rid of this shit somehow?

@@ -68,12 +68,7 @@ class Transaction : public Config {
   }
 #endif
 
-  void OnNewStatement() const {
-    if (GetIsolationLevel() == IsolationLevel::ReadCommitted &&
-        _rocksdb_transaction) {
-      SetTransactionSnapshot();
-    }
-  }
+  void OnNewStatement();
 
   Result Begin();
 
@@ -159,13 +154,12 @@ class Transaction : public Config {
   void CreateStorageSnapshot();
   void CreateRocksDBTransaction();
   void ApplyTableStatsDiffs();
-  void SetTransactionSnapshot() const;
+  void SetTransactionSnapshot();
 
   State _state = State::None;
   std::shared_ptr<StorageSnapshot> _storage_snapshot;
   std::unique_ptr<rocksdb::Transaction> _rocksdb_transaction;
-  mutable const rocksdb::Snapshot* _rocksdb_snapshot =
-    nullptr;  // Lazy initialized
+  const rocksdb::Snapshot* _rocksdb_snapshot = nullptr;
   containers::FlatHashMap<ObjectId,
                           std::unique_ptr<irs::IndexWriter::Transaction>>
     _search_transactions;

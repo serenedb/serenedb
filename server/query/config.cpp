@@ -154,15 +154,15 @@ void Config::Reset(std::string_view key) {
 void Config::CommitVariables() {
   for (auto&& [key, value] : _transaction) {
     if (value.action == TxnAction::Apply) {
-      // TODO(mkornaukhov) is it good place?
-      // Example:
-      // set default_transaction_isolation = A
-      // BEGIN
-      // set default_transaction_isolation = B;
-      // show transaction_isolation == A;
-      // COMMIT
-      // show transaction_isolation == B;
       if (key == "default_transaction_isolation") {
+        // Such strange logics is required, look at litmus pseudo-queries:
+        //
+        // SET default_transaction_isolation = A
+        // BEGIN
+        // SET default_transaction_isolation = B;
+        // SHOW transaction_isolation == A;
+        // COMMIT
+        // SHOW transaction_isolation == B;
         _session.insert_or_assign("transaction_isolation", value.value);
       }
       _session.insert_or_assign(key, std::move(value.value));

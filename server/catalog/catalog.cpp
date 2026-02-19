@@ -99,7 +99,7 @@ Result CreateIndexDrop(RocksDBEngineCatalog& engine, ObjectId table_id,
     drop->schema_id = options.schema_id;
     drop->type = options.type;
   }
-  return engine.VisitObjects(index_id, RocksDBEntryType::IndexPhysical,
+  return engine.VisitObjects(index_id, RocksDBEntryType::IndexShard,
                              [&](rocksdb::Slice key, vpack::Slice) {
                                SDB_ASSERT(!drop->shard_id.isSet());
                                drop->shard_id = RocksDBKey::GetObjectId(key);
@@ -112,7 +112,7 @@ Result CreateTableDrop(RocksDBEngineCatalog& engine, ObjectId schema_id,
   drop->parent_id = schema_id;
   drop->id = table_id;
 
-  auto r = engine.VisitObjects(table_id, RocksDBEntryType::TablePhysical,
+  auto r = engine.VisitObjects(table_id, RocksDBEntryType::TableShard,
                                [&](rocksdb::Slice key, vpack::Slice) {
                                  SDB_ASSERT(!drop->shard_id.isSet());
                                  drop->shard_id = RocksDBKey::GetObjectId(key);
@@ -136,8 +136,7 @@ Result CreateSchemaDrop(RocksDBEngineCatalog& engine, ObjectId db_id,
   drop->parent_id = db_id;
   drop->id = schema_id;
   return engine.VisitObjects(
-    schema_id, RocksDBEntryType::Collection,
-    [&](rocksdb::Slice key, vpack::Slice) {
+    schema_id, RocksDBEntryType::Table, [&](rocksdb::Slice key, vpack::Slice) {
       drop->tables.push_back(std::make_shared<TableDrop>());
       drop->tables.back()->is_root = false;
       return CreateTableDrop(engine, schema_id, RocksDBKey::GetObjectId(key),
@@ -319,7 +318,7 @@ Result CatalogFeature::RegisterIndexes(ObjectId table_id) {
 
 Result CatalogFeature::RegisterTableShard(ObjectId table_id) {
   return GetServerEngine().VisitObjects(
-    table_id, RocksDBEntryType::TablePhysical,
+    table_id, RocksDBEntryType::TableShard,
     [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
       ObjectId shard_id = RocksDBKey::GetObjectId(key);
       TableStats stats;
@@ -330,7 +329,7 @@ Result CatalogFeature::RegisterTableShard(ObjectId table_id) {
 
 Result CatalogFeature::RegisterIndexShard(const std::shared_ptr<Index>& index) {
   return GetServerEngine().VisitObjects(
-    index->GetId(), RocksDBEntryType::IndexPhysical,
+    index->GetId(), RocksDBEntryType::IndexShard,
     [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
       return index->CreateIndexShard(false, std::move(slice))
         .transform([&](auto&& shard) {
@@ -347,7 +346,7 @@ Result CatalogFeature::RegisterIndexShard(const std::shared_ptr<Index>& index) {
 Result CatalogFeature::RegisterTables(ObjectId db_id, ObjectId schema_id) {
   auto deleted = CollectObjects(schema_id, RocksDBEntryType::TableTombstone);
   return GetServerEngine().VisitObjects(
-    schema_id, RocksDBEntryType::Collection,
+    schema_id, RocksDBEntryType::Table,
     [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
       auto table_id = RocksDBKey::GetObjectId(key);
       if (deleted.contains(table_id)) {

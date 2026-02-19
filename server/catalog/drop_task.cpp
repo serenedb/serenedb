@@ -43,11 +43,7 @@ bool CheckResult(const Result& result) {
 
 AsyncResult TableShardDrop::operator()() {
   auto& server = GetServerEngine();
-  auto r = server.DropObject(parent_id, RocksDBEntryType::TablePhysical, id);
-  if (!CheckResult(r)) {
-    return QueueDropTask(shared_from_this());
-  }
-  r = server.DropObject(parent_id, RocksDBEntryType::TableShardTombstone, id);
+  auto r = server.DropObject(parent_id, RocksDBEntryType::TableShard, id);
   if (!CheckResult(r)) {
     return QueueDropTask(shared_from_this());
   }
@@ -65,11 +61,7 @@ AsyncResult IndexShardDrop::operator()() {
         return QueueDropTask(shared_from_this());
       }
     }
-    auto r = server.DropObject(parent_id, RocksDBEntryType::IndexPhysical, id);
-    if (!CheckResult(r)) {
-      return QueueDropTask(shared_from_this());
-    }
-    r = server.DropObject(parent_id, RocksDBEntryType::IndexShardTombstone, id);
+    auto r = server.DropObject(parent_id, RocksDBEntryType::IndexShard, id);
     if (!CheckResult(r)) {
       return QueueDropTask(shared_from_this());
     }
@@ -80,7 +72,7 @@ AsyncResult IndexShardDrop::operator()() {
 
 Result IndexDrop::Finalize() {
   auto& server = GetServerEngine();
-  auto r = server.DropEntry(id, RocksDBEntryType::IndexPhysical);
+  auto r = server.DropEntry(id, RocksDBEntryType::IndexShard);
   if (!CheckResult(r)) {
     return r;
   }
@@ -110,11 +102,11 @@ AsyncResult IndexDrop::operator()() {
 
 Result TableDrop::Finalize() {
   auto& server = GetServerEngine();
-  auto r = server.DropEntry(id, RocksDBEntryType::TablePhysical);
+  auto r = server.DropEntry(id, RocksDBEntryType::TableShard);
   if (!CheckResult(r)) {
     return r;
   }
-  r = server.DropObject(parent_id, RocksDBEntryType::Collection, id);
+  r = server.DropObject(parent_id, RocksDBEntryType::Table, id);
   if (!CheckResult(r)) {
     return r;
   }
@@ -150,7 +142,7 @@ Result SchemaDrop::Finalize() {
     auto r = server.DropEntry(id, type);
     return r;
   };
-  for (auto entry_type : {RocksDBEntryType::Collection, RocksDBEntryType::Index,
+  for (auto entry_type : {RocksDBEntryType::Table, RocksDBEntryType::Index,
                           RocksDBEntryType::Function, RocksDBEntryType::View}) {
     auto r = drop_entry(entry_type);
     if (!CheckResult(r)) {

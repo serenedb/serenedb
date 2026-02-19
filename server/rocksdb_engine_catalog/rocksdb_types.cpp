@@ -69,11 +69,6 @@ const auto kTableShard = MakeSlice<RocksDBEntryType::TableShard>();
 
 const auto kIndexShard = MakeSlice<RocksDBEntryType::IndexShard>();
 
-const auto kIndexShardTombstone =
-  MakeSlice<RocksDBEntryType::IndexShardTombstone>();
-
-const auto kTablePhysical = MakeSlice<RocksDBEntryType::TablePhysical>();
-
 }  // namespace
 
 char RocksDbFormatVersion() { return '1'; }

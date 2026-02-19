@@ -1044,7 +1044,7 @@ Result RocksDBEngineCatalog::writeCreateTableMarker(
     _db->GetRootDB(),
     [&] {
       RocksDBKeyWithBuffer key;
-      key.constructDefinition(schema_id, RocksDBEntryType::Collection, cid);
+      key.constructDefinition(schema_id, RocksDBEntryType::Table, cid);
       return key;
     },
     [&] { return RocksDBValue::Object(RocksDBEntryType::Table, slice); },  //
@@ -1346,7 +1346,7 @@ Result RocksDBEngineCatalog::StoreIndexShard(const IndexShard& index_shard) {
     _db->GetRootDB(),
     [&] {
       RocksDBKeyWithBuffer key;
-      key.constructDefinition(id::kSystemDB, RocksDBEntryType::IndexPhysical,
+      key.constructDefinition(id::kSystemDB, RocksDBEntryType::IndexShard,
                               index_id);
       return key;
     },
@@ -1361,7 +1361,7 @@ ResultOr<vpack::Builder> RocksDBEngineCatalog::LoadIndexShard(
   SDB_ASSERT(index_id.isSet());
 
   RocksDBKeyWithBuffer key;
-  key.constructDefinition(id::kSystemDB, RocksDBEntryType::IndexPhysical,
+  key.constructDefinition(id::kSystemDB, RocksDBEntryType::IndexShard,
                           index_id);
 
   std::string value;
@@ -1392,11 +1392,10 @@ void RocksDBEngineCatalog::CreateTableShard(const TableShard& shard) {
     _db->GetRootDB(),
     [&] {
       RocksDBKeyWithBuffer key;
-      key.constructDefinition(table_id, RocksDBEntryType::TablePhysical,
-                              shard_id);
+      key.constructDefinition(table_id, RocksDBEntryType::TableShard, shard_id);
       return key;
     },
-    [&] { return RocksDBValue::Empty(RocksDBEntryType::TablePhysical); },
+    [&] { return RocksDBValue::Empty(RocksDBEntryType::TableShard); },
     [&] { return std::string_view{}; });
   if (!r.ok()) {
     SDB_THROW(std::move(r));
@@ -1415,12 +1414,12 @@ void RocksDBEngineCatalog::CreateTable(const catalog::Table& c) {
     _db->GetRootDB(),
     [&] {
       RocksDBKeyWithBuffer key;
-      key.constructDefinition(schema_id, RocksDBEntryType::Collection,
+      key.constructDefinition(schema_id, RocksDBEntryType::Table,
                               collection_id);
       return key;
     },
     [&] {
-      return RocksDBValue::Object(RocksDBEntryType::Collection,
+      return RocksDBValue::Object(RocksDBEntryType::Table,
                                   GetTableProperties(b, c, true));
     },
     [&] {
@@ -1438,15 +1437,6 @@ void RocksDBEngineCatalog::CreateTable(const catalog::Table& c) {
   }
 }
 
-bool RocksDBEngineCatalog::UseRangeDelete(ObjectId id,
-                                          uint64_t number_documents) {
-  if (number_documents == kRead) {
-    const auto cnt = LoadCollectionCount(_db, id.id());
-    number_documents = cnt.added - cnt.removed;
-  }
-  return number_documents >= 32 * 1024;
-}
-
 void RocksDBEngineCatalog::ChangeTable(const catalog::Table& c) {
   const auto db_id = c.GetDatabaseId();
   const auto schema_id = c.GetSchemaId();
@@ -1457,12 +1447,11 @@ void RocksDBEngineCatalog::ChangeTable(const catalog::Table& c) {
     _db->GetRootDB(),
     [&] {
       RocksDBKeyWithBuffer key;
-      key.constructDefinition(schema_id, RocksDBEntryType::Collection,
-                              c.GetId());
+      key.constructDefinition(schema_id, RocksDBEntryType::Table, c.GetId());
       return key;
     },
     [&] {
-      return RocksDBValue::Object(RocksDBEntryType::Collection,
+      return RocksDBValue::Object(RocksDBEntryType::Table,
                                   GetTableProperties(b, c, true));
     },
     [&] {
@@ -1491,12 +1480,11 @@ Result RocksDBEngineCatalog::RenameTable(const catalog::Table& c,
     _db->GetRootDB(),
     [&] {
       RocksDBKeyWithBuffer key;
-      key.constructDefinition(c.GetSchemaId(), RocksDBEntryType::Collection,
-                              cid);
+      key.constructDefinition(c.GetSchemaId(), RocksDBEntryType::Table, cid);
       return key;
     },
     [&] {
-      return RocksDBValue::Object(RocksDBEntryType::Collection,
+      return RocksDBValue::Object(RocksDBEntryType::Table,
                                   GetTableProperties(b, c, true));
     },
     [&] {
@@ -1573,7 +1561,7 @@ Result RocksDBEngineCatalog::SyncTableStats(const catalog::Table& c,
   const auto cid = c.GetId();
   vpack::Builder b;
   physical.WriteInternal(b);
-  auto value = RocksDBValue::Object(RocksDBEntryType::Stats, b.slice());
+  auto value = RocksDBValue::Object(RocksDBEntryType::TableShard, b.slice());
   RocksDBKeyWithBuffer key;
   key.constructSchemaObject(RocksDBEntryType::TableShard, db_id,
                             c.GetSchemaId(), cid);

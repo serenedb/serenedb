@@ -41,9 +41,6 @@ class RocksDBKey {
  public:
   explicit RocksDBKey(std::string* buf) : _buffer{buf} { SDB_ASSERT(_buffer); }
 
-  // verify that a key actually contains the given local document id
-  bool containsRevisionId(RevisionId id) const;
-
   // construct a RocksDB key from another, already filled buffer
   void constructFromBuffer(std::string_view buffer);
 

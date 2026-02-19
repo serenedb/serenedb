@@ -111,16 +111,8 @@ rocksdb::ColumnFamilyHandle* RocksDBKeyBounds::columnFamily() const {
     case RocksDBEntryType::TableTombstone:
     case RocksDBEntryType::ScopeTombstone:
     case RocksDBEntryType::IndexTombstone:
-<<<<<<< HEAD
-    case RocksDBEntryType::Index:
-    case RocksDBEntryType::Stats:
-    case RocksDBEntryType::IndexPhysical:
-    case RocksDBEntryType::IndexShardTombstone:
-    case RocksDBEntryType::TablePhysical:
-=======
     case RocksDBEntryType::TableShard:
     case RocksDBEntryType::IndexShard:
->>>>>>> main
       return RocksDBColumnFamilyManager::get(
         RocksDBColumnFamilyManager::Family::Definitions);
     default:

@@ -35,28 +35,6 @@ namespace sdb {
 using namespace rocksutils;
 
 /// verify that a key actually contains the given local document id
-bool RocksDBKey::containsRevisionId(RevisionId document_id) const {
-  switch (_type) {
-    case RocksDBEntryType::Document:
-    case RocksDBEntryType::EdgeIndexValue:
-    case RocksDBEntryType::VPackIndexValue: {
-      uint64_t value;
-      absl::big_endian::Store64(&value, document_id.id());
-      std::string_view buffer{reinterpret_cast<const char*>(&value),
-                              sizeof(value)};
-
-      // and now check if the key actually contains this local document id
-      return _buffer->find(buffer) != std::string::npos;
-    }
-
-    default: {
-      // we should never never get here
-      SDB_ASSERT(false);
-    }
-  }
-
-  return false;
-}
 
 void RocksDBKey::constructFromBuffer(std::string_view buffer) {
   // we don't know what the exact type is. we will simply take

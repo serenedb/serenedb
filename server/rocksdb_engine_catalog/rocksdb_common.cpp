@@ -229,11 +229,10 @@ Result CompactAll(rocksdb::DB* db, bool change_level,
   SDB_INFO("xxxxx", sdb::Logger::ENGINES,
            "starting compaction of entire RocksDB database key range");
 
-  for (auto family : {RocksDBColumnFamilyManager::Family::Definitions,
-                      RocksDBColumnFamilyManager::Family::Documents,
-                      RocksDBColumnFamilyManager::Family::PrimaryIndex,
-                      RocksDBColumnFamilyManager::Family::EdgeIndex,
-                      RocksDBColumnFamilyManager::Family::VPackIndex}) {
+  for (auto family : {
+         RocksDBColumnFamilyManager::Family::Default,
+         RocksDBColumnFamilyManager::Family::Definitions,
+       }) {
     auto* cf = RocksDBColumnFamilyManager::get(family);
     // compact the entire data range
     rocksdb::Status s = db->CompactRange(options, cf, nullptr, nullptr);

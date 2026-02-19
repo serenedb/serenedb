@@ -239,8 +239,6 @@ DECLARE_COUNTER(
 // global flag to cancel all compactions. will be flipped to true on shutdown
 static std::atomic_bool gCancelCompactions = false;
 
-static constexpr ObjectId kDatabaseIdForGlobalApplier;
-
 RocksDBFilePurgePreventer::RocksDBFilePurgePreventer(
   RocksDBEngineCatalog* engine)
   : _engine(engine) {
@@ -659,13 +657,8 @@ void RocksDBEngineCatalog::start() {
     std::string name = RocksDBColumnFamilyManager::name(family);
     cf_families.emplace_back(name, specialized);
   };
-  // no prefix families for default column family (Has to be there)
+  add_family(RocksDBColumnFamilyManager::Family::Default);
   add_family(RocksDBColumnFamilyManager::Family::Definitions);
-  add_family(RocksDBColumnFamilyManager::Family::Documents);
-  add_family(RocksDBColumnFamilyManager::Family::PrimaryIndex);
-  add_family(RocksDBColumnFamilyManager::Family::EdgeIndex);
-  add_family(RocksDBColumnFamilyManager::Family::VPackIndex);
-  add_family(RocksDBColumnFamilyManager::Family::Data);
 
   bool db_existed = checkExistingDB(cf_families);
 
@@ -704,25 +697,15 @@ void RocksDBEngineCatalog::start() {
   SDB_ASSERT(_db != nullptr);
 
   // set our column families
-  RocksDBColumnFamilyManager::set(RocksDBColumnFamilyManager::Family::Invalid,
-                                  _db->DefaultColumnFamily());
   RocksDBColumnFamilyManager::set(
-    RocksDBColumnFamilyManager::Family::Definitions, cf_handles[0]);
-  RocksDBColumnFamilyManager::set(RocksDBColumnFamilyManager::Family::Documents,
-                                  cf_handles[1]);
-  RocksDBColumnFamilyManager::set(
-    RocksDBColumnFamilyManager::Family::PrimaryIndex, cf_handles[2]);
-  RocksDBColumnFamilyManager::set(RocksDBColumnFamilyManager::Family::EdgeIndex,
-                                  cf_handles[3]);
-  RocksDBColumnFamilyManager::set(
-    RocksDBColumnFamilyManager::Family::VPackIndex, cf_handles[4]);
+    RocksDBColumnFamilyManager::Family::Default,
+    cf_handles[std::to_underlying(
+      RocksDBColumnFamilyManager::Family::Default)]);
 
-  RocksDBColumnFamilyManager::set(RocksDBColumnFamilyManager::Family::Data,
-                                  cf_handles[5]);
-
-  SDB_ASSERT(RocksDBColumnFamilyManager::get(
-               RocksDBColumnFamilyManager::Family::Definitions)
-               ->GetID() == 0);
+  RocksDBColumnFamilyManager::set(
+    RocksDBColumnFamilyManager::Family::Definitions,
+    cf_handles[std::to_underlying(
+      RocksDBColumnFamilyManager::Family::Definitions)]);
 
   // will crash the process if version does not match
   StartupVersionCheck(SerenedServer::Instance(), _db, db_existed);
@@ -1054,97 +1037,6 @@ void RocksDBEngineCatalog::cleanupReplicationContexts() {
 #endif
 }
 
-ErrorCode RocksDBEngineCatalog::getReplicationApplierConfiguration(
-  ObjectId database, vpack::Builder& builder) {
-  RocksDBKeyWithBuffer key;
-  key.constructReplicationApplierConfig(database);
-  return getReplicationApplierConfiguration(key, builder);
-}
-
-ErrorCode RocksDBEngineCatalog::getReplicationApplierConfiguration(
-  vpack::Builder& builder) {
-  RocksDBKeyWithBuffer key;
-  key.constructReplicationApplierConfig(kDatabaseIdForGlobalApplier);
-  return getReplicationApplierConfiguration(key, builder);
-}
-
-ErrorCode RocksDBEngineCatalog::getReplicationApplierConfiguration(
-  const RocksDBKey& key, vpack::Builder& builder) {
-  rocksdb::PinnableSlice value;
-
-  auto s = _db->Get({},
-                    RocksDBColumnFamilyManager::get(
-                      RocksDBColumnFamilyManager::Family::Definitions),
-                    key.string(), &value);
-  if (!s.ok()) {
-    return ERROR_FILE_NOT_FOUND;
-  }
-
-  builder.add(RocksDBValue::data(value));
-  return ERROR_OK;
-}
-
-ErrorCode RocksDBEngineCatalog::removeReplicationApplierConfiguration(
-  ObjectId database) {
-  RocksDBKeyWithBuffer key;
-
-  key.constructReplicationApplierConfig(database);
-
-  return removeReplicationApplierConfiguration(key);
-}
-
-ErrorCode RocksDBEngineCatalog::removeReplicationApplierConfiguration() {
-  RocksDBKeyWithBuffer key;
-  key.constructReplicationApplierConfig(kDatabaseIdForGlobalApplier);
-  return removeReplicationApplierConfiguration(key);
-}
-
-ErrorCode RocksDBEngineCatalog::removeReplicationApplierConfiguration(
-  const RocksDBKey& key) {
-  auto status = rocksutils::ConvertStatus(
-    _db->Delete(rocksdb::WriteOptions(),
-                RocksDBColumnFamilyManager::get(
-                  RocksDBColumnFamilyManager::Family::Definitions),
-                key.string()));
-  if (!status.ok()) {
-    return status.errorNumber();
-  }
-
-  return ERROR_OK;
-}
-
-ErrorCode RocksDBEngineCatalog::saveReplicationApplierConfiguration(
-  ObjectId database, vpack::Slice slice, bool do_sync) {
-  RocksDBKeyWithBuffer key;
-
-  key.constructReplicationApplierConfig(database);
-
-  return saveReplicationApplierConfiguration(key, slice, do_sync);
-}
-
-ErrorCode RocksDBEngineCatalog::saveReplicationApplierConfiguration(
-  vpack::Slice slice, bool do_sync) {
-  RocksDBKeyWithBuffer key;
-  key.constructReplicationApplierConfig(kDatabaseIdForGlobalApplier);
-  return saveReplicationApplierConfiguration(key, slice, do_sync);
-}
-
-ErrorCode RocksDBEngineCatalog::saveReplicationApplierConfiguration(
-  const RocksDBKey& key, vpack::Slice slice, bool do_sync) {
-  auto value = RocksDBValue::ReplicationApplierConfig(slice);
-
-  auto status = rocksutils::ConvertStatus(
-    _db->Put(rocksdb::WriteOptions(),
-             RocksDBColumnFamilyManager::get(
-               RocksDBColumnFamilyManager::Family::Definitions),
-             key.string(), value.string()));
-  if (!status.ok()) {
-    return status.errorNumber();
-  }
-
-  return ERROR_OK;
-}
-
 Result RocksDBEngineCatalog::writeCreateTableMarker(
   ObjectId database_id, ObjectId schema_id, ObjectId cid, vpack::Slice slice,
   std::string_view log_value) {
@@ -1155,9 +1047,7 @@ Result RocksDBEngineCatalog::writeCreateTableMarker(
       key.constructDefinition(schema_id, RocksDBEntryType::Collection, cid);
       return key;
     },
-    [&] {
-      return RocksDBValue::Object(RocksDBEntryType::Collection, slice);
-    },  //
+    [&] { return RocksDBValue::Object(RocksDBEntryType::Table, slice); },  //
     [&] { return log_value; });
 }
 
@@ -1461,7 +1351,7 @@ Result RocksDBEngineCatalog::StoreIndexShard(const IndexShard& index_shard) {
       return key;
     },
     [&] {
-      return RocksDBValue::Object(RocksDBEntryType::IndexPhysical, b.slice());
+      return RocksDBValue::Object(RocksDBEntryType::IndexShard, b.slice());
     },
     [&] { return std::string_view{}; });
 }
@@ -1685,8 +1575,8 @@ Result RocksDBEngineCatalog::SyncTableStats(const catalog::Table& c,
   physical.WriteInternal(b);
   auto value = RocksDBValue::Object(RocksDBEntryType::Stats, b.slice());
   RocksDBKeyWithBuffer key;
-  key.constructSchemaObject(RocksDBEntryType::Stats, db_id, c.GetSchemaId(),
-                            cid);
+  key.constructSchemaObject(RocksDBEntryType::TableShard, db_id,
+                            c.GetSchemaId(), cid);
   auto* cf = RocksDBColumnFamilyManager::get(
     RocksDBColumnFamilyManager::Family::Definitions);
 
@@ -2435,8 +2325,7 @@ void RocksDBEngineCatalog::getStatistics(vpack::Builder& builder) const {
 
   // add column family properties
   auto add_cf = [&](RocksDBColumnFamilyManager::Family family) {
-    std::string name = RocksDBColumnFamilyManager::name(
-      family, RocksDBColumnFamilyManager::NameMode::External);
+    std::string name = RocksDBColumnFamilyManager::name(family);
     rocksdb::ColumnFamilyHandle* c = RocksDBColumnFamilyManager::get(family);
     std::string v;
     builder.add(name, vpack::Value(vpack::ValueType::Object));
@@ -2553,11 +2442,8 @@ void RocksDBEngineCatalog::getStatistics(vpack::Builder& builder) const {
   // print column family statistics
   //  warning: output format limits numbers to 3 digits of precision or less.
   builder.add("columnFamilies", vpack::Value(vpack::ValueType::Object));
+  add_cf(RocksDBColumnFamilyManager::Family::Default);
   add_cf(RocksDBColumnFamilyManager::Family::Definitions);
-  add_cf(RocksDBColumnFamilyManager::Family::Documents);
-  add_cf(RocksDBColumnFamilyManager::Family::PrimaryIndex);
-  add_cf(RocksDBColumnFamilyManager::Family::EdgeIndex);
-  add_cf(RocksDBColumnFamilyManager::Family::VPackIndex);
   builder.close();
 
   {
@@ -2943,74 +2829,6 @@ void RocksDBEngineCatalog::addCacheMetrics(
     _metrics_edge_cache_compressed_inserts.count(total_compressed_inserts);
     _metrics_edge_cache_empty_inserts.count(total_empty_inserts);
   }
-}
-
-Result DeleteIndexEstimate(rocksdb::DB* db, uint64_t object_id) {
-  rocksdb::ColumnFamilyHandle* const cf = RocksDBColumnFamilyManager::get(
-    RocksDBColumnFamilyManager::Family::Definitions);
-  rocksdb::WriteOptions wo;
-
-  RocksDBKeyWithBuffer key;
-  key.constructIndexEstimateValue(object_id);
-  rocksdb::Status s = db->Delete(wo, cf, key.string());
-  if (!s.ok() && !s.IsNotFound()) {
-    return rocksutils::ConvertStatus(s);
-  }
-  return {};
-}
-
-DocCount LoadCollectionCount(rocksdb::DB* db, uint64_t object_id) {
-  auto cf = RocksDBColumnFamilyManager::get(
-    RocksDBColumnFamilyManager::Family::Definitions);
-  rocksdb::ReadOptions ro;
-  // TODO ro.verify_checksums = false;
-  ro.fill_cache = false;
-
-  RocksDBKeyWithBuffer key;
-  key.constructCounterValue(object_id);
-
-  rocksdb::PinnableSlice value;
-  rocksdb::Status s = db->Get(ro, cf, key.string(), &value);
-  if (s.ok()) {
-    vpack::Slice count_slice = RocksDBValue::data(value);
-    SDB_TRACE("xxxxx", Logger::ENGINES, "loaded counter '",
-              count_slice.toJson(), "' for collection with objectId '",
-              object_id, "'");
-    return DocCount{count_slice};
-  }
-  SDB_TRACE("xxxxx", Logger::ENGINES,
-            "loaded default zero counter for collection with objectId '",
-            object_id, "'");
-  return {};
-}
-
-DocCount::DocCount(vpack::Slice slice) : DocCount{} {
-  if (!slice.isArray()) {  // got a somewhat invalid slice
-    // probably old data from before the key structure changes
-    return;
-  }
-
-  vpack::ArrayIterator array{slice};
-  if (array.valid()) {
-    committed_seq = (*array).getUInt();
-    // versions pre 3.4 stored only a single "count" value
-    // 3.4 and higher store "added" and "removed" seperately
-    added = (*(++array)).getUInt();
-    if (array.size() > 3) {
-      SDB_ASSERT(array.size() == 4);
-      removed = (*(++array)).getUInt();
-    }
-    revision_id = RevisionId{(*(++array)).getUInt()};
-  }
-}
-
-void DocCount::toVPack(vpack::Builder& b) const {
-  b.openArray();
-  b.add(committed_seq);
-  b.add(added);
-  b.add(removed);
-  b.add(revision_id.id());
-  b.close();
 }
 
 }  // namespace sdb

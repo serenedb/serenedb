@@ -138,7 +138,7 @@ yaclib::Future<Result> VariableSet(ExecContext& ctx,
         std::string_view opt_name = option.defname;
         if (opt_name == "transaction_isolation") {
           level = strVal(&castNode(A_Const, option.arg)->val);
-          if (level != "repeatable read" && level != "read committed") {
+          if (!ValidateValue(VariableType::SdbTransactionIsolation, level)) {
             THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                             ERR_MSG("transaction isolation level \"", level,
                                     "\" is not supported"));
@@ -171,8 +171,7 @@ yaclib::Future<Result> VariableSet(ExecContext& ctx,
       auto isolation_level = get_isolation_level(stmt);
       SDB_ASSERT(!isolation_level.empty());
       if ((conn_ctx.HasRocksDBRead() || conn_ctx.HasRocksDBWrite()) &&
-          isolation_level !=
-            IsolationLevelToStringView(conn_ctx.GetIsolationLevel())) {
+          isolation_level != IsolationLevelName(conn_ctx.GetIsolationLevel())) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
           ERR_MSG("SET TRANSACTION ISOLATION LEVEL must be called before "

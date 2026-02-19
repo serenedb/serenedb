@@ -81,7 +81,7 @@ bool ValidateValue(VariableType type, std::string_view value) {
              absl::EqualsIgnoreCase("do_nothing", value) ||
              absl::EqualsIgnoreCase("replace", value);
     }
-    case VariableType::PgTransactionIsolation: {
+    case VariableType::SdbTransactionIsolation: {
       return absl::EqualsIgnoreCase("repeatable read", value) ||
              absl::EqualsIgnoreCase("read committed", value);
     }

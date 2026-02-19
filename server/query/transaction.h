@@ -96,7 +96,7 @@ class Transaction : public Config {
   bool HasTransactionBegin() const noexcept;
 
   IsolationLevel GetIsolationLevel() const noexcept {
-    return Get<VariableType::PgTransactionIsolation>("transaction_isolation");
+    return Get<VariableType::SdbTransactionIsolation>("transaction_isolation");
   }
 
   rocksdb::Transaction* GetRocksDBTransaction() const noexcept;

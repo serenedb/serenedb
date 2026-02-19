@@ -122,7 +122,7 @@ constexpr auto kVariableDescription =
     {
       "default_transaction_isolation",
       {
-        VariableType::PgTransactionIsolation,
+        VariableType::SdbTransactionIsolation,
         "Sets the transaction isolation level of each new transaction.",
         "repeatable read",
       },
@@ -130,7 +130,7 @@ constexpr auto kVariableDescription =
     {
       "transaction_isolation",
       {
-        VariableType::PgTransactionIsolation,
+        VariableType::SdbTransactionIsolation,
         "Sets the current transaction's isolation level.",
         "repeatable read",
       },

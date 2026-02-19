@@ -40,7 +40,7 @@ yaclib::Future<Result> Transaction(ExecContext& context,
           if (opt_name == "transaction_isolation") {
             std::string_view level =
               strVal(&castNode(A_Const, option.arg)->val);
-            if (level == "repeatable read" || level == "read committed") {
+            if (ValidateValue(VariableType::SdbTransactionIsolation, level)) {
               conn_ctx.Set(Config::VariableContext::Local,
                            "transaction_isolation", std::string{level});
 

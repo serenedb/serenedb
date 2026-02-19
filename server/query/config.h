@@ -54,7 +54,7 @@ enum class VariableType {
   PgExtraFloatDigits,
   PgByteaOutput,
   SdbWriteConflictPolicy,
-  PgTransactionIsolation,
+  SdbTransactionIsolation,
 };
 
 enum class ByteaOutput : uint8_t {
@@ -65,12 +65,9 @@ enum class ByteaOutput : uint8_t {
 enum class IsolationLevel : uint8_t {
   ReadCommitted,
   RepeatableRead,
-  // Invalid,
 };
 
-// TODO(mkornaukhov) get rid of this shit somehow?
-inline std::string_view IsolationLevelToStringView(
-  IsolationLevel isolation_level) {
+constexpr std::string_view IsolationLevelName(IsolationLevel isolation_level) {
   switch (isolation_level) {
     case IsolationLevel::ReadCommitted:
       return "read committed";
@@ -148,7 +145,7 @@ class Config : public velox::config::IConfig {
                    "bytea_output is not validated");
         return ByteaOutput::Escape;
       }
-    } else if constexpr (T == VariableType::PgTransactionIsolation) {
+    } else if constexpr (T == VariableType::SdbTransactionIsolation) {
       SDB_ASSERT(key == "default_transaction_isolation" ||
                  key == "transaction_isolation");
       if (absl::EqualsIgnoreCase("repeatable read", *value_str)) {

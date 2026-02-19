@@ -26,8 +26,8 @@ namespace sdb {
 std::array<const char*,
            sdb::RocksDBColumnFamilyManager::kNumberOfColumnFamilies>
   RocksDBColumnFamilyManager::gNames = {
+    rocksdb::kDefaultColumnFamilyName.c_str(),
     "definitions",
-    "default",
 };
 
 std::array<rocksdb::ColumnFamilyHandle*,

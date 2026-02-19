@@ -45,8 +45,6 @@ struct RocksDBColumnFamilyManager {
   static constexpr size_t kMinNumberOfColumnFamilies = 2;
   static constexpr size_t kNumberOfColumnFamilies = 2;
 
-  static void initialize();
-
   static rocksdb::ColumnFamilyHandle* get(Family family);
   static void set(Family family, rocksdb::ColumnFamilyHandle* handle);
 

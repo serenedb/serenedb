@@ -61,7 +61,7 @@ jobs:
     build-docker:
         name: Build Docker Image
         if: inputs.RUN_TESTS || inputs.BUILD_IMAGE
-        runs-on: "self-hosted"
+        runs-on: X64
         timeout-minutes: 60
         defaults:
             run:
@@ -315,7 +315,7 @@ jobs:
     build-macos-app:
         name: Build macOS App
         if: inputs.RUN_TESTS || inputs.BUILD_MACOS_APP
-        runs-on: marilka
+        runs-on: macOS
         timeout-minutes: 1440
         env:
             BRANCH: ${{ inputs.BRANCH }}

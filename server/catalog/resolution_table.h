@@ -85,12 +85,26 @@ class ResolutionTable {
   template<ResolveType Type>
   Result AddObject(ObjectId parent_id, std::string_view object_name,
                    ObjectId object_id, bool replace) {
+    auto already_exists = [&]() -> Result {
+      std::string_view object_type;
+      if constexpr (Type == ResolveType::Database) {
+        object_type = "database";
+      } else if constexpr (Type == ResolveType::Schema) {
+        object_type = "schema";
+      } else if constexpr (Type == ResolveType::Function) {
+        object_type = "function";
+      } else {
+        object_type = "relation";
+      }
+      return {ERROR_SERVER_DUPLICATE_NAME, object_type, " \"", object_name,
+              "\" already exists"};
+    };
+
     if constexpr (Type == ResolveType::Database) {
       if (!replace) {
         auto [_, inserted] = _databases.try_emplace(object_name, object_id);
         if (!inserted) {
-          return Result{ERROR_SERVER_DUPLICATE_NAME,
-                        "Database already exists: ", object_name};
+          return already_exists();
         }
       } else {
         _databases.insert_or_assign(object_name, object_id);
@@ -100,26 +114,31 @@ class ResolutionTable {
     } else {
       auto insert = [replace](auto& insert_map, ObjectId parent_id,
                               std::string_view object_name,
-                              ObjectId object_id) -> Result {
+                              ObjectId object_id) {
         if (!replace) {
           auto [_, inserted] =
             insert_map.at(parent_id).try_emplace(object_name, object_id);
-          return Result{!inserted ? ERROR_SERVER_DUPLICATE_NAME : ERROR_OK};
+          return inserted;
         }
         insert_map.at(parent_id).insert_or_assign(object_name, object_id);
-        return Result{ERROR_OK};
+        return true;
       };
       if constexpr (Type == ResolveType::Function) {
-        return insert(_functions, parent_id, object_name, object_id);
+        return insert(_functions, parent_id, object_name, object_id)
+                 ? Result{}
+                 : already_exists();
       } else if constexpr (Type == ResolveType::Schema) {
-        auto r = insert(_schemas, parent_id, object_name, object_id);
-        if (r.ok()) {
+        auto inserted = insert(_schemas, parent_id, object_name, object_id);
+        if (inserted) {
           _relations.try_emplace(object_id);
           _functions.try_emplace(object_id);
+          return {};
         }
-        return r;
+        return already_exists();
       } else if constexpr (Type == ResolveType::Relation) {
-        return insert(_relations, parent_id, object_name, object_id);
+        return insert(_relations, parent_id, object_name, object_id)
+                 ? Result{}
+                 : already_exists();
       } else {
         SDB_UNREACHABLE();
       }

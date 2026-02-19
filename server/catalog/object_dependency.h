@@ -40,12 +40,10 @@ struct IndexDependency : public ObjectDependencyBase {
 
 struct SchemaDependency : public ObjectDependencyBase {
   containers::FlatHashSet<ObjectId> tables;
-  containers::FlatHashSet<ObjectId> indexes;
   containers::FlatHashSet<ObjectId> functions;
   containers::FlatHashSet<ObjectId> views;
   bool Empty() const {
-    return tables.empty() && indexes.empty() && functions.empty() &&
-           views.empty();
+    return tables.empty() && functions.empty() && views.empty();
   }
 };
 

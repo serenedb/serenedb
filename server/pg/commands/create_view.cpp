@@ -106,17 +106,6 @@ yaclib::Future<Result> CreateView(const ExecContext& context,
 
   r = catalog.CreateView(db, schema, view, stmt.replace);
 
-  if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-    if (stmt.replace) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
-                      ERR_MSG("\"", stmt.view->relname, "\" is not a view"));
-    } else {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_DUPLICATE_TABLE),
-        ERR_MSG("relation \"", stmt.view->relname, "\" already exists"));
-    }
-  }
-
   return yaclib::MakeFuture(std::move(r));
 }
 

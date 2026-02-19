@@ -344,3 +344,44 @@ SHOW transaction_isolation;
 ----
 transaction_isolation
 repeatable read
+
+
+# 14. SET TRANSACTION ISOLATION LEVEL must be called before any query
+#     Begin RR, execute a SELECT (marks HasRocksDBRead), then attempt to change
+#     isolation level -> error
+statement ok
+CREATE TABLE t_iso(id INT PRIMARY KEY);
+
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+query
+SELECT * FROM t_iso;
+----
+id
+
+
+# Now HasRocksDBRead is set; changing to a different level must fail
+statement error
+SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+----
+db error: ERROR: SET TRANSACTION ISOLATION LEVEL must be called before any query
+
+
+statement ok
+ROLLBACK;
+
+# Setting to the same level after a query is allowed (no level change)
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+query
+SELECT * FROM t_iso;
+----
+id
+
+statement ok
+SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+statement ok
+ROLLBACK;

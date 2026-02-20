@@ -770,9 +770,16 @@ class SereneDBConnector final : public velox::connector::Connector {
               CreateIndexWriters<axiom::connector::WriteKind::kInsert>(
                 object_key, transaction);
             if (table.BulkInsert()) {
-              return std::make_unique<SSTInsertDataSink>(
-                _db, _cf, *connector_query_ctx->memoryPool(), object_key,
-                pk_indices, columns, std::move(insert_sinks));
+              const bool is_generated_pk = pk_indices.empty();
+              if (is_generated_pk) {
+                return std::make_unique<SSTInsertDataSink<true>>(
+                  _db, _cf, *connector_query_ctx->memoryPool(), object_key,
+                  pk_indices, columns, std::move(insert_sinks));
+              } else {
+                return std::make_unique<SSTInsertDataSink<false>>(
+                  _db, _cf, *connector_query_ctx->memoryPool(), object_key,
+                  pk_indices, columns, std::move(insert_sinks));
+              }
             }
 
             return std::make_unique<RocksDBInsertDataSink>(

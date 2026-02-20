@@ -54,13 +54,13 @@ statement ok
 INSERT INTO t VALUES (1, 0);
 
 
-# Read-your-own-writes
-# query
-# SELECT * FROM t;
-# ----
-# key	value
-# 0	0
-# 1	0
+#Read-your-own-writes
+query
+SELECT * FROM t;
+----
+key	value
+0	0
+1	0
 
 
 statement ok

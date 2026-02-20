@@ -56,7 +56,7 @@ class TableShard {
   auto& GetMeta() const noexcept { return _collection_meta; }
   auto GetId() const noexcept { return _collection_meta.id; }
 
-  void UpdateNumRows(int64_t delta) {
+  void UpdateNumRows(int64_t delta) noexcept {
     _num_rows.fetch_add(delta, std::memory_order_relaxed);
   }
 

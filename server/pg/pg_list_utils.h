@@ -25,7 +25,6 @@
 
 #include "basics/assert.h"
 #include "basics/errors.h"
-#include "basics/exceptions.h"
 #include "pg/sql_utils.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN

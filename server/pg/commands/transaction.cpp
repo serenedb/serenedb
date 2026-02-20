@@ -24,7 +24,6 @@
 #include "pg/commands.h"
 #include "pg/connection_context.h"
 #include "pg/isolation_level.h"
-#include "pg/pg_list_utils.h"
 #include "pg/sql_exception_macro.h"
 
 namespace sdb::pg {

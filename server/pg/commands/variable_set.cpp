@@ -249,7 +249,6 @@ yaclib::Future<Result> VariableSet(ExecContext& ctx,
     conn_ctx.ResetAll();
     return {};
   }
-
   std::string_view stmt_name = stmt.name;
 
   if (stmt.kind == VAR_SET_MULTI) {

@@ -26,9 +26,13 @@
 #include <streamvbyte.h>
 #include <streamvbytedelta.h>
 
+#include <algorithm>
 #include <bit>
+#include <cstdint>
+#include <iresearch/search/disjunction.hpp>
 #include <limits>
 #include <memory>
+#include <numeric>
 
 #include "basics/assert.h"
 #include "basics/bit_utils.hpp"
@@ -2917,6 +2921,204 @@ void SingleWandIterator<FormatTraits, Pos, Offs, WandExtent,
                                   PostingsWriterBase::kMaxSkipLevels, "].")};
   }
 }
+
+template<typename Adapter>
+class MaxScoreIterator : public DocIterator {
+ public:
+  static constexpr doc_id_t kBlockSize = BitsRequired<uint64_t>();
+  static constexpr auto kNumBlocks = 64;
+  static constexpr doc_id_t kWindow = kBlockSize * kNumBlocks;
+
+  struct AdapterWrapper {
+    Adapter it;
+    ScoreFunction scorer;
+    CostAttr::Type cost{};
+    double prefix_score_sum{};
+    score_t max_score{};
+  };
+
+  explicit MaxScoreIterator(std::vector<Adapter> itrs) {
+    _itrs.resize(itrs.size());
+    _itrs_sorted.resize(itrs.size());
+    for (size_t i = 0; i < itrs.size(); ++i) {
+      _itrs[i] = std::move(itrs[i]);
+      _itrs_sorted[i] = &_itrs[i];
+    }
+    _first_essential = _itrs_sorted.begin();
+
+    std::get<CostAttr>(_attrs) = [&] noexcept {
+      return absl::c_accumulate(
+        _itrs, CostAttr::Type{0},
+        [](CostAttr::Type lhs, const Adapter& rhs) noexcept {
+          return lhs + CostAttr::extract(rhs.it, 0);
+        });
+    };
+  }
+
+  doc_id_t value() const noexcept { return doc_limits::eof(); }
+  doc_id_t advance() { return value(); }
+  doc_id_t seek(doc_id_t target) { return value(); }
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept {
+    return GetMutable(_attrs, type);
+  }
+
+  ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final {
+    const PrepareScoreContext sub{
+      .scorer = ctx.scorer,
+      .segment = ctx.segment,
+      .fetcher = &_fetcher,
+    };
+
+    for (auto& it : _itrs) {
+      it.scorer = it.it->PrepareScore(sub);
+    }
+
+    return ScoreFunction::Default();
+  }
+
+  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
+               ScoreCollector& collector) final {
+    ResolveScoreCollector(collector, [&](auto& collector) {
+      const doc_id_t max = doc_limits::eof();
+      doc_id_t window_min = 0;
+
+    outer:
+      while (window_min < max) {
+        doc_id_t window_max = ComputeOuterWindow(window_min);
+
+        while (true) {
+          UpdateWindowScores(window_min, window_max);
+          if (!Split()) {
+            window_min = window_max;
+            goto outer;
+          }
+
+          const doc_id_t new_window_max = ComputeOuterWindow(window_min);
+          if (new_window_max >= window_max) {
+            break;
+          }
+
+          window_max = new_window_max;
+        }
+
+        BuildHeap(window_min);
+
+        while (Top() < window_max) {
+          CollectWindow(collector, window_max);
+
+          if (std::get<ScoreThresholdAttr>(_attrs).value >= _next_threshold) {
+            break;
+          }
+        }
+
+        window_min = std::min(Top(), window_max);
+      }
+    });
+  }
+
+ private:
+  IRS_FORCE_INLINE doc_id_t Top() const noexcept {
+    return (*_first_essential)->it.value();
+  }
+
+  void CollectWindow(auto& collector, doc_id_t max) {
+    // TODO(gnusi): implement score window
+  }
+
+  void BuildHeap(doc_id_t min) {
+    auto cmp = [](auto* lhs, auto* rhs) {
+      return lhs->it.value() > rhs->it.value();
+    };
+    auto end = _itrs_sorted.end();
+    for (auto it = _first_essential; it != end; ++it) {
+      if ((*it)->it.value() < min) {
+        (*it)->it.seek(min);
+      }
+    }
+    std::make_heap(_first_essential, end, cmp);
+  }
+
+  doc_id_t UpdateHeap(doc_id_t target) {
+    auto cmp = [](auto* lhs, auto* rhs) {
+      return (*lhs)->it.value() > (*rhs)->it.value();
+    };
+    std::pop_heap(_first_essential, _itrs_sorted.end(), cmp);
+    _itrs_sorted.back()->it.advance(target);
+    std::push_heap(_first_essential, _itrs_sorted.end(), cmp);
+    return (_first_essential)->it.value();
+  }
+
+  void UpdateWindowScores(doc_id_t min, doc_id_t max) {
+    for (auto& it : _itrs) {
+      if (it.value() >= max) {
+        it.max_score = 0;
+        continue;
+      }
+      if (it.value() < min) {
+        it.SeekToBlock(min);
+      }
+      it.max_score = it.GetMaxScore();
+    }
+  }
+
+  bool Split() {
+    auto end = _itrs_sorted.end();
+
+    absl::c_sort(_itrs_sorted, [](auto* lhs, auto* rhs) {
+      auto get_value = [](auto& it) {
+        return static_cast<double>(it->max_score) / std::max(1, it->cost);
+      };
+      return get_value(lhs) < get_value(rhs);
+    });
+
+    double max_score = 0;
+    auto begin = _itrs_sorted.begin();
+    for (; begin != end; ++begin) {
+      const double new_max_score = max_score + (*begin)->max_score;
+      if (new_max_score >= std::get<ScoreThresholdAttr>(_attrs).value) {
+        break;
+      }
+
+      max_score = new_max_score;
+      (*begin)->prefix_score_sum = max_score;
+    }
+
+    _first_essential = begin;
+
+    if (_first_essential == _itrs_sorted.end()) {
+      return false;
+    }
+
+    _next_threshold =
+      static_cast<double>(max_score) +
+      std::accumulate(
+        begin, end, std::numeric_limits<score_t>::max(),
+        [](score_t acc, auto* it) { return std::min(acc, it->max_score); });
+
+    return true;
+  }
+
+  doc_id_t ComputeOuterWindow(doc_id_t min) {
+    doc_id_t max = doc_limits::eof();
+    for (auto begin = _first_essential; begin != _itrs_sorted.end(); ++begin) {
+      const doc_id_t block_max =
+        (*begin)->it.SeekToBlock(std::max((*begin)->it.value(), min));
+      max = std::min(block_max + 1, max);
+    }
+    return max;
+  }
+
+  using Attributes = std::tuple<ScoreThresholdAttr, CostAttr>;
+
+  alignas(4096) uint64_t _mask[kWindow];
+  alignas(4096) score_t _scores[kWindow];
+  std::vector<AdapterWrapper> _itrs;
+  std::vector<AdapterWrapper*> _itrs_sorted;
+  std::vector<AdapterWrapper*>::iterator _first_essential;
+  ColumnArgsFetcher _fetcher;
+  double _next_threshold = std::numeric_limits<double>::min();
+  Attributes _attrs;
+};
 
 template<typename FormatTraits>
 class PostingsReaderImpl final : public PostingsReaderBase {

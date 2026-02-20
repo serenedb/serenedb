@@ -10,7 +10,7 @@
 #   TG_CHAT_ID          - Target chat ID
 #   TG_THREAD_ID_MAIN   - Thread ID for main branch notifications
 #   TG_THREAD_ID_BUILD  - Thread ID for other branch notifications
-#   JOB_STATUS          - Build status (success/failure/cancelled)
+#   JOB_STATUS          - Overall build status (success/failure/cancelled)
 #   BRANCH              - Git branch name
 #   ACTOR               - User who triggered the build (GitHub username)
 #   WORKFLOW            - Workflow name
@@ -20,6 +20,11 @@
 # Optional Environment Variables:
 #   TG_USER_MAP         - JSON mapping of GitHub usernames to Telegram usernames
 #                         Example: {"octocat":"john_doe_tg","user2":"tg_user2"}
+#   JOB_STATUS_DOCKER   - Result of the build-docker job
+#   JOB_STATUS_LINUX    - Result of the build-linux-app job
+#   JOB_STATUS_WINDOWS  - Result of the build-windows-app job
+#   JOB_STATUS_MACOS    - Result of the build-macos-app job
+#   JOB_STATUS_RELEASE  - Result of the release job
 #
 ###############################################################################
 
@@ -106,10 +111,50 @@ else
 fi
 
 #------------------------------------------------------------------------------
+# Helper: map a job result string to an emoji
+#------------------------------------------------------------------------------
+
+job_status_emoji() {
+  case "${1:-}" in
+  success) echo "✅" ;;
+  failure) echo "💥" ;;
+  cancelled) echo "⚠️" ;;
+  skipped) echo "⏭️" ;;
+  *) echo "➖" ;;
+  esac
+}
+
+#------------------------------------------------------------------------------
 # Build Message
 #------------------------------------------------------------------------------
 
 MESSAGE="${EMOJI} @${TG_USERNAME} ${RESULT}: BRANCH=${BRANCH} ${WORKFLOW} #${RUN_NUMBER} ${RUN_URL}"
+
+# Append per-job status lines when the variables are provided
+JOB_LINES=""
+
+declare -A JOB_MAP=(
+  ["Docker"]="${JOB_STATUS_DOCKER:-}"
+  ["Linux"]="${JOB_STATUS_LINUX:-}"
+  ["Windows"]="${JOB_STATUS_WINDOWS:-}"
+  ["macOS"]="${JOB_STATUS_MACOS:-}"
+  ["Release"]="${JOB_STATUS_RELEASE:-}"
+)
+
+# Preserve a consistent display order
+JOB_ORDER=("Docker" "Linux" "Windows" "macOS" "Release")
+
+for job_name in "${JOB_ORDER[@]}"; do
+  job_result="${JOB_MAP[$job_name]}"
+  if [[ -n "${job_result}" ]]; then
+    job_emoji=$(job_status_emoji "${job_result}")
+    JOB_LINES+=$'\n'"  ${job_emoji} ${job_name}: ${job_result}"
+  fi
+done
+
+if [[ -n "${JOB_LINES}" ]]; then
+  MESSAGE+=$'\n'"Jobs:${JOB_LINES}"
+fi
 
 #------------------------------------------------------------------------------
 # Send Notification

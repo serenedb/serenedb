@@ -256,8 +256,8 @@ jobs:
               if: inputs.BUILD_WINDOWS_APP
               working-directory: ./serene-ui/apps/electron
               run: |
-                  npm run package:prod
-                  npm run make:prod
+                  DEBUG=* npm run package:prod
+                  DEBUG=* npm run make:prod
 
             - name: Upload Windows artifacts
               if: inputs.BUILD_WINDOWS_APP
@@ -272,7 +272,7 @@ jobs:
         name: Build macOS App
         if: inputs.RUN_TESTS || inputs.BUILD_MACOS_APP
         runs-on: macOS
-        timeout-minutes: 14400
+        timeout-minutes: 144000
         env:
             BRANCH: ${{ inputs.BRANCH }}
         defaults:

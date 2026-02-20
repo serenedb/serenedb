@@ -24,6 +24,8 @@
 
 #include <absl/functional/function_ref.h>
 
+#include <cstring>
+
 #include "basics/assert.h"
 #include "basics/down_cast.h"
 #include "basics/memory.hpp"

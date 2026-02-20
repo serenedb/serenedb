@@ -98,6 +98,7 @@ void FileDataSink::abort() {
 
 FileDataSource::FileDataSource(std::shared_ptr<velox::ReadFile> source,
                                std::shared_ptr<ReaderOptions> options,
+                               const velox::common::SubfieldFilters& subfield_filters,
                                velox::memory::MemoryPool& memory_pool)
   : _row_reader_options{options->row_reader},
     _report_callback{options->report_callback} {
@@ -113,6 +114,11 @@ FileDataSource::FileDataSource(std::shared_ptr<velox::ReadFile> source,
   auto row_type = _reader->rowType();
   auto spec = std::make_shared<velox::common::ScanSpec>("root");
   spec->addAllChildFields(*row_type);
+
+  for (auto& [subfield, filter] : subfield_filters) {
+    spec->getOrCreateChild(subfield)->setFilter(filter);
+  }
+
   _row_reader_options->setScanSpec(std::move(spec));
 
   _row_reader = _reader->createRowReader(*_row_reader_options);

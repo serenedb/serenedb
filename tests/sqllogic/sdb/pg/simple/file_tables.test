@@ -1,0 +1,42 @@
+query
+COPY (
+  SELECT 
+    iq,
+    'salary '::text || salary::text || '$'::text as salary, 
+    'i do nothing and gain money'
+  FROM
+    generate_series(1, 100) as clickclack(iq),
+    generate_series(1, 100) as serenedb(salary)
+) TO '/tmp/vedernikoff_company.parquet';
+
+
+statement ok
+CREATE TABLE vedernikoff_company(
+  iq INT8,
+  salary TEXT,
+  fact TEXT
+) WITH (source = '/tmp/vedernikoff_company.parquet');
+
+
+query
+SELECT * FROM vedernikoff_company;
+----
+
+
+# filter is supposed to be pushdowned so there's no one
+query
+EXPLAIN (EXECUTION)
+SELECT *
+FROM 
+  vedernikoff_company as v1, 
+  vedernikoff_company as v2
+WHERE v1.iq > 90 AND v2.iq = 90 AND v1.iq != 98;
+
+
+query
+SELECT *
+FROM 
+  vedernikoff_company as v1, 
+  vedernikoff_company as v2
+WHERE v1.iq > 90 AND v2.iq > 90 AND v1.iq != 98;
+----

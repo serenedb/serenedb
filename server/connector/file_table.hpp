@@ -28,6 +28,7 @@
 #include <velox/dwio/common/Writer.h>
 #include <velox/dwio/text/reader/TextReader.h>
 #include <velox/dwio/text/writer/TextWriter.h>
+#include <velox/type/Filter.h>
 
 #include "basics/assert.h"
 #include "basics/fwd.h"
@@ -113,10 +114,12 @@ class WriteFileTable final : public FileTable {
 class FileTableHandle final : public velox::connector::ConnectorTableHandle {
  public:
   FileTableHandle(std::shared_ptr<velox::ReadFile> source,
-                  std::shared_ptr<ReaderOptions> options)
+                  std::shared_ptr<ReaderOptions> options,
+                  velox::common::SubfieldFilters subfield_filters)
     : velox::connector::ConnectorTableHandle{"serenedb"},
       _source{std::move(source)},
-      _options{std::move(options)} {}
+      _options{std::move(options)},
+      _subfield_filters{std::move(subfield_filters)} {}
 
   const std::string& name() const final {
     static constexpr std::string kName = "FileTableHandle";
@@ -128,9 +131,14 @@ class FileTableHandle final : public velox::connector::ConnectorTableHandle {
 
   const std::shared_ptr<ReaderOptions>& GetOptions() const { return _options; }
 
+  const velox::common::SubfieldFilters& GetSubfieldFilters() const {
+    return _subfield_filters;
+  }
+
  private:
   std::shared_ptr<velox::ReadFile> _source;
   std::shared_ptr<ReaderOptions> _options;
+  velox::common::SubfieldFilters _subfield_filters;
 };
 
 class FileInsertTableHandle final
@@ -194,6 +202,7 @@ class FileDataSource final : public velox::connector::DataSource {
  public:
   FileDataSource(std::shared_ptr<velox::ReadFile> source,
                  std::shared_ptr<ReaderOptions> options,
+                 const velox::common::SubfieldFilters& subfield_filters,
                  velox::memory::MemoryPool& memory_pool);
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final {

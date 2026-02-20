@@ -1025,7 +1025,7 @@ void PgSQLCommTaskBase::SendBatch(const velox::RowVectorPtr& batch) {
   decoded_columns.reserve(batch_columns);
   for (uint16_t i = 0; i < batch_columns; ++i) {
     const auto& column = *batch->childAt(i);
-    decoded_columns.emplace_back().decode(column, false);
+    decoded_columns.emplace_back().decode(column, true);
   }
 
   for (velox::vector_size_t row = 0; row < batch_rows; ++row) {

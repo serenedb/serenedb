@@ -25,6 +25,7 @@
 #include <rocksdb/utilities/transaction.h>
 #include <velox/common/file/File.h>
 #include <velox/connectors/Connector.h>
+#include <velox/connectors/hive/HiveConnectorUtil.h>
 #include <velox/dwio/common/Options.h>
 #include <velox/dwio/common/ReaderFactory.h>
 #include <velox/type/Type.h>
@@ -243,14 +244,25 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
     velox::core::ExpressionEvaluator& evaluator,
     std::vector<velox::core::TypedExprPtr> filters,
     std::vector<velox::core::TypedExprPtr>& rejected_filters) const final {
-    rejected_filters = std::move(filters);
-
     if (const auto* read_file_table =
           dynamic_cast<const ReadFileTable*>(&this->table())) {
+      velox::common::SubfieldFilters subfield_filters;
+      double sample_rate = 1.0;
+      for (auto& filter : filters) {
+        auto remaining =
+          velox::connector::hive::extractFiltersFromRemainingFilter(
+            filter, &evaluator, subfield_filters, sample_rate);
+        if (remaining) {
+          rejected_filters.push_back(std::move(remaining));
+        }
+      }
+
       return std::make_shared<FileTableHandle>(read_file_table->GetSource(),
-                                               read_file_table->GetOptions());
+                                               read_file_table->GetOptions(),
+                                               std::move(subfield_filters));
     }
 
+    rejected_filters = std::move(filters);
     SDB_ASSERT(!table().columnMap().empty(),
                "SereneDBConnectorTableHandle: need a column for count field");
     return std::make_shared<SereneDBConnectorTableHandle>(session, *this);
@@ -616,7 +628,7 @@ class SereneDBConnector final : public velox::connector::Connector {
           dynamic_cast<const FileTableHandle*>(table_handle.get())) {
       return std::make_unique<FileDataSource>(
         file_handle->GetSource(), file_handle->GetOptions(),
-        *connector_query_ctx->memoryPool());
+        file_handle->GetSubfieldFilters(), *connector_query_ctx->memoryPool());
     }
 
     const auto& serene_table_handle =

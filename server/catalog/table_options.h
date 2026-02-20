@@ -214,6 +214,8 @@ struct CreateTableRequest {
   std::string_view id;  // TODO(gnusi): make ObjectId
   int type = std::to_underlying(TableType::Document);
   bool waitForSync = false;
+  std::optional<std::string> file_source_path;
+  std::optional<std::string> file_format;
 };
 
 struct TableStats {
@@ -242,6 +244,8 @@ struct TableOptions {
   uint32_t writeConcern = 1;
   int type = std::to_underlying(TableType::Document);
   bool waitForSync = false;
+  std::optional<std::string> file_source_path;
+  std::optional<std::string> file_format;
 };
 
 struct CreateTableOptions : TableOptions {

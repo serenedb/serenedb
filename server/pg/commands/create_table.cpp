@@ -340,6 +340,25 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
   });
   SDB_ASSERT(!stmt.constraints);
 
+  VisitNodes(stmt.options, [&](const DefElem& option) {
+    std::string_view option_name = option.defname;
+
+    if (option_name == "source") {
+      if (!option.arg || nodeTag(option.arg) != T_String) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                        CURSOR_POS(ExprLocation(&option)),
+                        ERR_MSG("'source' option must be a string path"));
+      }
+      request.file_source_path = strVal(option.arg);
+      request.type = std::to_underlying(TableType::File);
+    } else {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      CURSOR_POS(ExprLocation(&option)),
+                      ERR_MSG("option '", option_name,
+                              "' is not supported yet for CREATE TABLE"));
+    }
+  });
+
   catalog::CreateTableOptions options;
   auto r = MakeTableOptions(std::move(request), database->GetId(), options,
                             database->GetReplicationFactor(),

@@ -104,6 +104,12 @@ class Table : public SchemaObject {
     SDB_ASSERT(_sharding_strategy);
     return *_sharding_strategy;
   }
+  const std::optional<std::string>& GetFileSourcePath() const noexcept {
+    return _file_source_path;
+  }
+  const std::optional<std::string>& GetFileFormat() const noexcept {
+    return _file_format;
+  }
 
 #ifdef SDB_GTEST
   // TODO(gnusi): remove
@@ -141,6 +147,8 @@ class Table : public SchemaObject {
   // writes will be disallowed if we know we cannot fulfill it.
   // _write_concern <= _replication_factor
   uint32_t _write_concern = 1;
+  std::optional<std::string> _file_source_path;
+  std::optional<std::string> _file_format;
 };
 
 Result ChangeTableHelper(const catalog::Table& old_collection,

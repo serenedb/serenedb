@@ -37,6 +37,8 @@
 #include <velox/core/QueryCtx.h>
 #include <velox/dwio/common/FileSink.h>
 #include <velox/dwio/common/Options.h>
+#include <velox/dwio/common/Reader.h>
+#include <velox/dwio/common/ReaderFactory.h>
 #include <velox/dwio/common/Writer.h>
 #include <velox/dwio/common/WriterFactory.h>
 #include <velox/dwio/text/reader/TextReader.h>
@@ -71,6 +73,7 @@
 #include "catalog/table.h"
 #include "catalog/table_options.h"
 #include "catalog/virtual_table.h"
+#include "connector/file_table.hpp"
 #include "connector/serenedb_connector.hpp"
 #include "pg/copy_file.h"
 #include "pg/pg_ast_visitor.h"
@@ -410,7 +413,7 @@ std::string ToPgSignatureString(const std::vector<lp::ExprPtr>& args,
 
 std::string ToPgOperatorString(std::string_view name,
                                const std::vector<lp::ExprPtr>& args) {
-  return ToPgSignatureString(args, name);
+  return ToPgSignatureString(args, absl::StrCat(" ", name, " "));
 }
 
 std::string ToPgFunctionString(std::string_view name,
@@ -856,6 +859,9 @@ class SqlAnalyzer {
                      std::string_view table_name,
                      const Objects::ObjectData& object, const RangeVar* node,
                      bool implicit_pk_column = false);
+
+  State ProcessFileTable(State* parent, const catalog::Table& table,
+                         std::string_view table_name, const RangeVar* node);
 
   State ProcessSystemTable(State* parent, std::string_view name,
                            catalog::VirtualTableSnapshot& snapshot,
@@ -1660,6 +1666,14 @@ void SqlAnalyzer::ProcessInsertStmt(State& state, const InsertStmt& stmt) {
   }
 
   const auto& table = basics::downCast<catalog::Table>(logical_object);
+
+  if (table.GetTableType() == TableType::File) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
+                    ERR_MSG("File tables are read-only. ",
+                            "INSERT, UPDATE, and DELETE are not supported."));
+  }
+
   const auto& table_type = *table.RowType();
   std::vector<std::string> column_names;
   std::vector<lp::ExprPtr> column_exprs;
@@ -1754,6 +1768,13 @@ void SqlAnalyzer::ProcessUpdateStmt(State& state, const UpdateStmt& stmt) {
   ProcessFilterNode(state, stmt.whereClause, ExprKind::Where);
 
   const auto& table = basics::downCast<catalog::Table>(logical_object);
+  if (table.GetTableType() == TableType::File) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
+                    ERR_MSG("File tables are read-only. ",
+                            "INSERT, UPDATE, and DELETE are not supported."));
+  }
+
   const auto& pk_type = *table.PKType();
   std::vector<std::string> column_names;
   std::vector<lp::ExprPtr> column_exprs;
@@ -1855,6 +1876,12 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
   ProcessFilterNode(state, stmt.whereClause, ExprKind::Where);
 
   const auto& table = basics::downCast<catalog::Table>(logical_object);
+  if (table.GetTableType() == TableType::File) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    CURSOR_POS(ErrorPosition(ExprLocation(&stmt))),
+                    ERR_MSG("File tables are read-only. ",
+                            "INSERT, UPDATE, and DELETE are not supported."));
+  }
   const auto& pk_type = *table.PKType();
   std::vector<std::string> column_names;
   std::vector<lp::ExprPtr> column_exprs;
@@ -3793,6 +3820,11 @@ State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
                                 const Objects::ObjectData& object,
                                 const RangeVar* node, bool load_implicit_pk) {
   const auto& table = basics::downCast<catalog::Table>(*object.object);
+
+  if (table.GetTableType() == TableType::File) {
+    return ProcessFileTable(parent, table, table_name, node);
+  }
+
   auto type = table.RowType();
 
   auto [table_alias, column_names] = ProcessTableColumns(parent, node, type);
@@ -3829,6 +3861,46 @@ State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
     _id_generator.NextPlanId(),
     velox::ROW(std::move(column_names), type->children()), object.table,
     type->names());
+
+  state.resolver.CreateTable(table_alias,
+                             MakePtrView(state.root->outputType()));
+  return state;
+}
+
+State SqlAnalyzer::ProcessFileTable(State* parent, const catalog::Table& table,
+                                    std::string_view table_name,
+                                    const RangeVar* node) {
+  SDB_ASSERT(table.GetFileSourcePath());
+  const auto& file_path = table.GetFileSourcePath();
+  auto file_format = FileFormat::PARQUET;
+
+  auto row_type = table.RowType();
+
+  auto [table_alias, column_names] =
+    ProcessTableColumns(parent, node, row_type);
+  auto file_output_type =
+    velox::ROW(std::move(column_names), row_type->children());
+
+  std::shared_ptr<connector::ReaderOptions> reader_options;
+  reader_options = std::make_shared<connector::ReaderOptions>();
+  reader_options->dwio =
+    std::make_shared<velox::dwio::common::ReaderOptions>(nullptr);
+  auto& dwio = *reader_options->dwio;
+  dwio.setFileSchema(row_type);
+  dwio.setFileFormat(file_format);
+
+  reader_options->row_reader =
+    std::make_shared<velox::dwio::common::RowReaderOptions>();
+
+  auto source = std::make_shared<velox::LocalReadFile>(*file_path);
+
+  auto read_file_table = std::make_shared<connector::ReadFileTable>(
+    row_type, *file_path, std::move(source), std::move(reader_options));
+
+  auto state = parent->MakeChild();
+  state.root = std::make_shared<lp::TableScanNode>(
+    _id_generator.NextPlanId(), std::move(file_output_type),
+    std::move(read_file_table), row_type->names());
 
   state.resolver.CreateTable(table_alias,
                              MakePtrView(state.root->outputType()));
@@ -4635,7 +4707,7 @@ lp::ExprPtr SqlAnalyzer::ProcessPrefixUnaryOp(std::string_view name,
   }
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
                   CURSOR_POS(ErrorPosition(location)),
-                  ERR_MSG("operator does not exist:",
+                  ERR_MSG("operator does not exist: ",
                           ToPgOperatorString(name, {std::move(arg)})));
 }
 
@@ -4649,6 +4721,13 @@ lp::ExprPtr SqlAnalyzer::ProcessBinaryOp(std::string_view name, lp::ExprPtr lhs,
   if (it != kOpToFunc.end()) {
     return ResolveVeloxFunctionAndInferArgsCommonType(
       std::string{it->second}, {std::move(lhs), std::move(rhs)});
+  }
+
+  if (name == "||" && lhs->type() == velox::VARCHAR() &&
+      rhs->type() == velox::VARCHAR()) {
+    return std::make_shared<lp::CallExpr>(
+      velox::VARCHAR(), "presto_concat",
+      std::vector<lp::ExprPtr>{std::move(lhs), std::move(rhs)});
   }
 
   if (IsMatchOperator(name)) {
@@ -4665,7 +4744,7 @@ lp::ExprPtr SqlAnalyzer::ProcessBinaryOp(std::string_view name, lp::ExprPtr lhs,
 
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_UNDEFINED_FUNCTION), CURSOR_POS(ErrorPosition(location)),
-    ERR_MSG("operator does not exist:",
+    ERR_MSG("operator does not exist: ",
             ToPgOperatorString(name, {std::move(lhs), std::move(rhs)})));
 }
 

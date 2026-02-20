@@ -24,6 +24,7 @@
 #include "basics/down_cast.h"
 #include "basics/random/random_generator.h"
 #include "connector/serenedb_connector.hpp"
+#include <velox/expression/ExprToSubfieldFilter.h>
 #include "pg/system_catalog.h"
 #include "pg_functions_registration.hpp"
 #include "query/types.h"
@@ -97,6 +98,10 @@ void PostgresFeature::start() {
     auto* cf = RocksDBColumnFamilyManager::get(
       RocksDBColumnFamilyManager::Family::Default);
     SDB_ASSERT(cf);
+
+    velox::exec::ExprToSubfieldFilterParser::registerParser(
+      std::make_shared<velox::exec::PrestoExprToSubfieldFilterParser>(
+        "presto_"));
 
     auto connector = std::make_shared<connector::SereneDBConnector>(
       StaticStrings::kSereneDBConnector, nullptr, *engine.db(), *cf);

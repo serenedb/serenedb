@@ -163,10 +163,10 @@ TEST(by_regexp_test, test_type_of_prepared_query) {
   counter.Reset();
 }
 
-//=============================================================================
+
 // Integration/Execution tests with index
 // Using regexp_test_data.json
-//=============================================================================
+
 
 class RegexpFilterTestCase : public tests::FilterTestCaseBase {};
 
@@ -387,8 +387,6 @@ TEST_P(RegexpFilterTestCase, by_regexp_char_class_lower_digits) {
   auto rdr = open_reader();
 
   // [a-z]+[0-9]+ = lowercase letters followed by digits
-  // Matches: abc123(1), xyz789(2), def456(4), jkl012(8), pqr678(10),
-  //          vwx234(12), bcd890(14), hij222(16), nop444(18), tuv666(20)
   {
     Docs docs{1, 2, 4, 8, 10, 12, 14, 16, 18, 20};
     Costs costs{docs.size()};
@@ -405,9 +403,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_char_class_upper_digits) {
 
   auto rdr = open_reader();
 
-  // [A-Z]+[0-9]+ = uppercase letters followed by digits
-  // Matches: ABC123(3), GHI789(7), MNO345(9), STU901(11), YZA567(13),
-  //          EFG111(15), KLM333(17), QRS555(19)
+  // [A-Z]+[0-9]+
   {
     Docs docs{3, 7, 9, 11, 13, 15, 17, 19};
     Costs costs{docs.size()};
@@ -424,8 +420,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_char_class_digits_letters) {
 
   auto rdr = open_reader();
 
-  // [0-9]+[a-z]+ = digits followed by lowercase letters
-  // Matches: 123abc(5), 456def(6)
+  // [0-9]+[a-z]+
   {
     Docs docs{5, 6};
     Costs costs{docs.size()};
@@ -498,7 +493,6 @@ TEST_P(RegexpFilterTestCase, by_regexp_combined_optional_star) {
   auto rdr = open_reader();
 
   // foo?.*bar = fo + (o?) + (.*) + bar
-  // = "fo" or "foo" followed by anything and "bar"
   {
     Docs docs{1, 2, 3, 4, 5, 6, 7, 8, 14, 15, 16, 20};
     Costs costs{docs.size()};
@@ -557,7 +551,460 @@ TEST_P(RegexpFilterTestCase, by_regexp_exact_match) {
   }
 }
 
-// Visitor tests
+
+// Scoring tests (ported from wildcard, using simple_sequential.json)
+
+TEST_P(RegexpFilterTestCase, by_regexp_scoring_custom_sort) {
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  // CustomSort collector counts: .* on "prefix" field
+  // 9 unique terms in "prefix" field, 10 docs
+  {
+    Docs docs{1, 4, 9, 16, 21, 24, 26, 29, 31, 32};
+
+    size_t collect_field_count = 0;
+    size_t collect_term_count = 0;
+    size_t finish_count = 0;
+
+    std::array<irs::Scorer::ptr, 1> order{
+      std::make_unique<tests::sort::CustomSort>()};
+    auto& scorer = static_cast<tests::sort::CustomSort&>(*order.front());
+
+    scorer.collector_collect_field = [&collect_field_count](
+                                       const irs::SubReader&,
+                                       const irs::TermReader&) -> void {
+      ++collect_field_count;
+    };
+    scorer.collector_collect_term =
+      [&collect_term_count](const irs::SubReader&, const irs::TermReader&,
+                            const irs::AttributeProvider&) -> void {
+      ++collect_term_count;
+    };
+    scorer.collectors_collect =
+      [&finish_count](irs::byte_type*, const irs::FieldCollector*,
+                      const irs::TermCollector*) -> void { ++finish_count; };
+    scorer.prepare_field_collector = [&scorer]() -> irs::FieldCollector::ptr {
+      return std::make_unique<tests::sort::CustomSort::FieldCollector>(scorer);
+    };
+    scorer.prepare_term_collector = [&scorer]() -> irs::TermCollector::ptr {
+      return std::make_unique<tests::sort::CustomSort::TermCollector>(scorer);
+    };
+
+    CheckQuery(MakeFilter("prefix", ".*"), order, docs, rdr);
+    ASSERT_EQ(9, collect_field_count);  // 9 unique terms (1 per term, disjunction)
+    ASSERT_EQ(9, collect_term_count);   // 9 different terms
+    ASSERT_EQ(9, finish_count);         // 9 unique terms
+  }
+}
+
+TEST_P(RegexpFilterTestCase, by_regexp_scoring_frequency_sort) {
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  // FrequencySort: .* on "prefix" — ordered by term frequency
+  // "abcy" appears in docs 31,32 (freq=2) → first, rest freq=1
+  {
+    Docs docs{31, 32, 1, 4, 9, 16, 21, 24, 26, 29};
+
+    std::array<irs::Scorer::ptr, 1> order{
+      std::make_unique<tests::sort::FrequencySort>()};
+
+    CheckQuery(MakeFilter("prefix", ".*"), order, docs, rdr);
+  }
+
+  // FrequencySort: a.* on "prefix" — prefix "a"
+  {
+    Docs docs{31, 32, 1, 4, 16, 21, 26, 29};
+
+    std::array<irs::Scorer::ptr, 1> order{
+      std::make_unique<tests::sort::FrequencySort>()};
+
+    CheckQuery(MakeFilter("prefix", "a.*"), order, docs, rdr);
+  }
+}
+
+
+// Match all / match nothing (using simple_sequential_utf8.json)
+
+TEST_P(RegexpFilterTestCase, by_regexp_match_all) {
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential_utf8.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  // All 32 docs have same="xyz"
+  Docs all;
+  for (size_t i = 0; i < 32; ++i) {
+    all.push_back(irs::doc_id_t((irs::doc_limits::min)() + i));
+  }
+  Costs all_costs{all.size()};
+
+  // .* matches everything (including "xyz")
+  CheckQuery(MakeFilter("same", ".*"), all, all_costs, rdr);
+
+  // ... matches exactly 3-char terms ("xyz" is 3 chars)
+  CheckQuery(MakeFilter("same", "..."), all, all_costs, rdr);
+
+  // .+ matches any non-empty string
+  CheckQuery(MakeFilter("same", ".+"), all, all_costs, rdr);
+
+  // x.z matches "xyz" (x + any + z)
+  CheckQuery(MakeFilter("same", "x.z"), all, all_costs, rdr);
+
+  // x.*z matches "xyz"
+  CheckQuery(MakeFilter("same", "x.*z"), all, all_costs, rdr);
+
+  // . matches only single-char terms — "xyz" is 3 chars → no match
+  CheckQuery(MakeFilter("same", "."), Docs{}, Costs{0}, rdr);
+
+  // .. matches only 2-char terms → no match
+  CheckQuery(MakeFilter("same", ".."), Docs{}, Costs{0}, rdr);
+
+  // empty query
+  CheckQuery(irs::ByRegexp(), Docs{}, Costs{0}, rdr);
+
+  // empty field
+  CheckQuery(MakeFilter("", "xyz.*"), Docs{}, Costs{0}, rdr);
+
+  // invalid field
+  CheckQuery(MakeFilter("same1", "xyz.*"), Docs{}, Costs{0}, rdr);
+
+  // no match prefix
+  CheckQuery(MakeFilter("same", "xyz_invalid.*"), Docs{}, Costs{0}, rdr);
+
+  // empty pattern - exact match empty term (no docs have empty "same" value)
+  CheckQuery(MakeFilter("duplicated", ""), Docs{}, Costs{0}, rdr);
+}
+
+
+// Wildcard-equivalent patterns (ported from wildcard, using
+// simple_sequential_utf8.json)
+
+TEST_P(RegexpFilterTestCase, by_regexp_wildcard_equivalent_patterns) {
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential_utf8.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  // --- "duplicated" field patterns ---
+  // Wildcard v_z% → regex v.z.*
+  {
+    Docs docs{2, 3, 8, 14, 17, 19, 24};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("duplicated", "v.z.*"), docs, costs, rdr);
+  }
+
+  // Wildcard v%c → regex v.*c
+  {
+    Docs docs{2, 3, 8, 14, 17, 19, 24};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("duplicated", "v.*c"), docs, costs, rdr);
+  }
+
+  // Wildcard %c → regex .*c
+  {
+    Docs docs{2, 3, 8, 14, 17, 19, 24};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("duplicated", ".*c"), docs, costs, rdr);
+  }
+
+  // Wildcard %_c → regex .*.c
+  {
+    Docs docs{2, 3, 8, 14, 17, 19, 24};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("duplicated", ".*.c"), docs, costs, rdr);
+  }
+
+  // Wildcard a% → regex a.*
+  {
+    Docs docs{1, 5, 11, 21, 27, 31};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("duplicated", "a.*"), docs, costs, rdr);
+  }
+
+  // Wildcard vcz% → regex vcz.*
+  {
+    Docs docs{2, 3, 8, 14, 17, 19, 24};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("duplicated", "vcz.*"), docs, costs, rdr);
+  }
+
+  // --- "prefix" field patterns ---
+  // Wildcard %c% → regex .*c.*
+  {
+    Docs docs{1, 4, 9, 21, 26, 31, 32};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("prefix", ".*c.*"), docs, costs, rdr);
+  }
+
+  // Wildcard abc% → regex abc.*
+  {
+    Docs docs{1, 4, 21, 26, 31, 32};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("prefix", "abc.*"), docs, costs, rdr);
+  }
+
+  // Wildcard a%d% → regex a.*d.*
+  {
+    Docs docs{1, 4, 16, 26};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("prefix", "a.*d.*"), docs, costs, rdr);
+  }
+
+  // Wildcard b% → regex b.*
+  {
+    Docs docs{9, 24};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("prefix", "b.*"), docs, costs, rdr);
+  }
+
+  // Exact match
+  CheckQuery(MakeFilter("prefix", "bateradsfsfasdf"), Docs{24}, Costs{1}, rdr);
+
+  // Wildcard !% on name → regex !.* (only doc28 has name "!")
+  // Actually name="!" is exact, so "!.*" matches "!" (since .* can be empty)
+  CheckQuery(MakeFilter("name", "!.*"), Docs{28}, Costs{1}, rdr);
+}
+
+
+// UTF-8 execution tests (using simple_sequential_utf8.json)
+
+TEST_P(RegexpFilterTestCase, by_regexp_utf8_execution) {
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential_utf8.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  // utf8 field values:
+  // doc1:  "пуй"
+  // doc2:  "хублот"
+  // doc3:  "проглот"
+  // doc14: "обама"
+  // doc17: "трамп"
+  // doc24: "меркель"
+  // doc26: "вий"
+
+  // Prefix п.* → "пуй"(1), "проглот"(3)
+  {
+    Docs docs{1, 3};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("utf8", "\xD0\xBF.*"), docs, costs, rdr);
+  }
+
+  // Suffix .*й → "пуй"(1), "вий"(26)
+  {
+    Docs docs{1, 26};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("utf8", ".*\xD0\xB9"), docs, costs, rdr);
+  }
+
+  // Infix в.*й → "вий"(26)
+  {
+    Docs docs{26};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("utf8", "\xD0\xB2.*\xD0\xB9"), docs, costs, rdr);
+  }
+
+  // Suffix .*лот → "хублот"(2), "проглот"(3)
+  {
+    Docs docs{2, 3};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("utf8", ".*\xD0\xBB\xD0\xBE\xD1\x82"), docs, costs,
+               rdr);
+  }
+
+  // Dot with UTF-8: п..  → "пуй"(1)  (п + any + any = 3 codepoints)
+  {
+    Docs docs{1};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("utf8", "\xD0\xBF.."), docs, costs, rdr);
+  }
+
+  // Alternation: пуй|вий → docs 1, 26
+  {
+    Docs docs{1, 26};
+    Costs costs{docs.size()};
+    CheckQuery(
+      MakeFilter("utf8",
+                 "\xD0\xBF\xD1\x83\xD0\xB9|\xD0\xB2\xD0\xB8\xD0\xB9"),
+      docs, costs, rdr);
+  }
+
+  // .* matches all docs with utf8 field
+  {
+    Docs docs{1, 2, 3, 14, 17, 24, 26};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("utf8", ".*"), docs, costs, rdr);
+  }
+
+  // No match — nonexistent UTF-8 term
+  CheckQuery(MakeFilter("utf8", "\xD1\x8F.*"), Docs{}, Costs{0}, rdr);
+}
+
+
+// Cross-validation: ByRegexp vs ByTerm/ByPrefix on real index
+
+TEST_P(RegexpFilterTestCase, by_regexp_cross_validation) {
+  {
+    tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  // ByRegexp("term", "foobar") should match same docs as ByTerm("term","foobar")
+  {
+    Docs regexp_docs, term_docs;
+    Costs regexp_costs, term_costs;
+
+    auto regexp_q = MakeFilter("term", "foobar");
+    auto term_q = MakeFilter<irs::ByTerm>("term", "foobar");
+
+    // Both should return doc 1
+    CheckQuery(regexp_q, Docs{1}, Costs{1}, rdr);
+    CheckQuery(term_q, Docs{1}, Costs{1}, rdr);
+  }
+
+  // ByRegexp("term", "foo.*") should match same docs as ByPrefix("term","foo")
+  {
+    Docs expected{1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 13, 14, 16, 18, 20};
+    Costs costs{expected.size()};
+
+    CheckQuery(MakeFilter("term", "foo.*"), expected, costs, rdr);
+    CheckQuery(MakeFilter<irs::ByPrefix>("term", "foo"), expected, costs, rdr);
+  }
+
+  // ByRegexp("term", ".*") should match all docs with "term" field
+  {
+    Docs expected;
+    for (irs::doc_id_t i = 1; i <= 20; ++i) {
+      expected.push_back(i);
+    }
+    Costs costs{expected.size()};
+
+    CheckQuery(MakeFilter("term", ".*"), expected, costs, rdr);
+    CheckQuery(MakeFilter<irs::ByPrefix>("term", ""), expected, costs, rdr);
+  }
+}
+
+
+// Two-segment test
+
+
+// TODO: Two-segment test
+
+
+
+// Negation character class [^...]
+
+TEST_P(RegexpFilterTestCase, by_regexp_negation_char_class) {
+  {
+    tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  // [^a-z]+[0-9]+ on "class" field — starts with non-lowercase chars + digits
+  // Matches uppercase: ABC123(3), GHI789(7), MNO345(9), STU901(11),
+  //   YZA567(13), EFG111(15), KLM333(17), QRS555(19)
+  // Also matches digit-first: 123abc(5)→ no, "123" are [^a-z] then "abc" are
+  //   not [0-9]. Actually [^a-z]+[0-9]+ means one-or-more non-lowercase then
+  //   one-or-more digits.
+  //   "123abc": '1','2','3' are [^a-z], then 'a' is not [0-9] → fails as
+  //             full match. Actually "123abc" = [^a-z]{3}[a-z]{3} which is
+  //             [^a-z]+[0-9]+? No — 'a','b','c' are not [0-9]. So no match.
+  //   "456def": same, no match.
+  // So only uppercase+digits:
+  {
+    Docs docs{3, 7, 9, 11, 13, 15, 17, 19};
+    Costs costs{docs.size()};
+    CheckQuery(MakeFilter("class", "[^a-z]+[0-9]+"), docs, costs, rdr);
+  }
+}
+
+
+// Invalid patterns — execution smoke test (no crash, 0 results)
+
+TEST_P(RegexpFilterTestCase, by_regexp_invalid_pattern_execution) {
+  {
+    tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  // Invalid patterns should return 0 documents, not crash
+  CheckQuery(MakeFilter("term", "(abc"), Docs{}, Costs{0}, rdr);
+  CheckQuery(MakeFilter("term", "[abc"), Docs{}, Costs{0}, rdr);
+  CheckQuery(MakeFilter("term", "a**"), Docs{}, Costs{0}, rdr);
+}
+
+
+// Filter reuse — prepare() twice on different readers
+
+TEST_P(RegexpFilterTestCase, by_regexp_filter_reuse) {
+  MaxMemoryCounter counter;
+
+  auto q = MakeFilter("same", ".*");
+
+  // Prepare on empty reader
+  {
+    auto prepared = q.prepare({
+      .index = irs::SubReader::empty(),
+      .memory = counter,
+    });
+    ASSERT_NE(nullptr, prepared);
+    ASSERT_EQ(irs::kNoBoost, prepared->Boost());
+  }
+  EXPECT_EQ(counter.current, 0);
+  EXPECT_GT(counter.max, 0);
+  counter.Reset();
+
+  // Now prepare on real reader
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto rdr = open_reader();
+
+  {
+    Docs all;
+    for (size_t i = 0; i < 32; ++i) {
+      all.push_back(irs::doc_id_t((irs::doc_limits::min)() + i));
+    }
+    Costs costs{all.size()};
+    CheckQuery(q, all, costs, rdr);
+  }
+}
+
+
+// Visitor tests (including wildcard-like pattern)
 
 TEST_P(RegexpFilterTestCase, visit_literal) {
   {
@@ -613,6 +1060,37 @@ TEST_P(RegexpFilterTestCase, visit_prefix) {
                 {"abcdrer", irs::kNoBoost},
                 {"abcy", irs::kNoBoost},
                 {"abde", irs::kNoBoost}}),
+              visitor.term_refs<char>());
+  }
+}
+
+TEST_P(RegexpFilterTestCase, visit_wildcard_like) {
+  {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen);
+  }
+
+  auto index = open_reader();
+  auto& segment = index[0];
+  const auto* reader = segment.field("prefix");
+
+  // Regex a.c.* is analogous to wildcard a_c%
+  {
+    auto pattern = irs::ViewCast<irs::byte_type>(std::string_view("a.c.*"));
+    tests::EmptyFilterVisitor visitor;
+    auto field_visitor = irs::ByRegexp::visitor(pattern);
+    ASSERT_TRUE(field_visitor);
+    field_visitor(segment, *reader, visitor);
+    ASSERT_EQ(1, visitor.prepare_calls_counter());
+    ASSERT_EQ(5, visitor.visit_calls_counter());
+    ASSERT_EQ((std::vector<std::pair<std::string_view, irs::score_t>>{
+                {"abc", irs::kNoBoost},
+                {"abcd", irs::kNoBoost},
+                {"abcde", irs::kNoBoost},
+                {"abcdrer", irs::kNoBoost},
+                {"abcy", irs::kNoBoost},
+              }),
               visitor.term_refs<char>());
   }
 }

@@ -99,5 +99,3 @@ count
 connection after_schema_drop
 statement ok
 CREATE SCHEMA s1;
-
-

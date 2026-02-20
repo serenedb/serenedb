@@ -76,7 +76,7 @@ class ScoreCollector {
   virtual void Add(score_t score, doc_id_t doc) = 0;
 
   virtual void AddWindow(const score_t* scores, const uint64_t* mask,
-                         doc_id_t min, size_t num_blocks) = 0;
+                         doc_id_t min, size_t num_blocks, bool clear_score) = 0;
 
  protected:
   explicit ScoreCollector(Tag tag) noexcept : _tag{tag} {}
@@ -124,8 +124,8 @@ class NthPartitionScoreCollector final : public ScoreCollector {
   }
 
   IRS_FORCE_INLINE void AddWindow(const score_t* scores, const uint64_t* mask,
-                                  doc_id_t min,
-                                  size_t num_blocks) noexcept final {
+                                  doc_id_t min, size_t num_blocks,
+                                  bool clear_score) noexcept final {
     auto threshold = _mm256_set1_ps(*_score_threshold);
     for (size_t i = 0; i < num_blocks; ++i) {
       auto word = mask[i];
@@ -145,6 +145,11 @@ class NthPartitionScoreCollector final : public ScoreCollector {
           threshold = _mm256_set1_ps(*_score_threshold);
           word &= GetScoreMask(score_base, threshold);
         }
+      }
+
+      if (clear_score) {
+        std::memset(const_cast<score_t*>(score_base), 0,
+                    kBlockSize * sizeof(score_t));
       }
     }
   }

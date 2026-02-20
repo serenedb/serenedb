@@ -1722,8 +1722,8 @@ Result RocksDBEngineCatalog::RemoveTombstone(ObjectId table_id) {
     _db->GetRootDB(),
     [&] {
       RocksDBKeyWithBuffer key;
-      key.constructObject(RocksDBEntryType::TableTombstone,
-                          id::kTombstoneDatabase, table_id);
+      key.constructDatabaseObject(RocksDBEntryType::TableTombstone,
+                                  id::kTombstoneDatabase, table_id);
       return key;
     },
     [] {

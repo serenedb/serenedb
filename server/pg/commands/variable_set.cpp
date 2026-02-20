@@ -168,7 +168,6 @@ void ProcessTransactionIsolation(sdb::ConnectionContext& conn_ctx,
       }
       auto isolation_level = GetIsolationLevel(stmt);
       SDB_ASSERT(!isolation_level.empty());
-      SDB_ASSERT(absl::c_none_of(isolation_level, absl::ascii_isupper));
       ValidateIsolationLevel(isolation_level);
 
       if ((conn_ctx.HasRocksDBRead() || conn_ctx.HasRocksDBWrite()) &&
@@ -214,7 +213,6 @@ void ProcessDefaultTransactionIsolation(sdb::ConnectionContext& conn_ctx,
     case VAR_SET_MULTI: {
       auto isolation_level = GetIsolationLevel(stmt);
       SDB_ASSERT(!isolation_level.empty());
-      SDB_ASSERT(absl::c_none_of(isolation_level, absl::ascii_isupper));
       ValidateIsolationLevel(isolation_level);
 
       if (var_ctx == Config::VariableContext::Session) {

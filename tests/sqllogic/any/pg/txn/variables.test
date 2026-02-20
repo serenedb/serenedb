@@ -9,71 +9,71 @@ skipif serenedb
 statement ok
 SET default_transaction_isolation = "repeatable read";
 
-## 1. Check defaults
-#query
-#SHOW default_transaction_isolation;
-#----
-#default_transaction_isolation
-#repeatable read
-#
-#
-#query
-#SHOW transaction_isolation;
-#----
-#transaction_isolation
-#repeatable read
-#
-#
-## 2. SET TRANSACTION outside a transaction block -> just warning, not an error
-## Warning in Postgres
-#statement ok
-#SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
-#
-#
-## Variables unchanged after the error
-#query
-#SHOW transaction_isolation;
-#----
-#transaction_isolation
-#repeatable read
-#
-#
-## 3. SET SESSION CHARACTERISTICS outside a transaction -> sets both variables immediately
-#statement ok
-#SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL READ COMMITTED;
-#
-#query
-#SHOW default_transaction_isolation;
-#----
-#default_transaction_isolation
-#read committed
-#
-#
-#query
-#SHOW transaction_isolation;
-#----
-#transaction_isolation
-#read committed
-#
-#
-## Restore
-#statement ok
-#SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL REPEATABLE READ;
-#
-#query
-#SHOW default_transaction_isolation;
-#----
-#default_transaction_isolation
-#repeatable read
-#
-#
-#query
-#SHOW transaction_isolation;
-#----
-#transaction_isolation
-#repeatable read
-#
-#
+# 1. Check defaults
+query
+SHOW default_transaction_isolation;
+----
+default_transaction_isolation
+repeatable read
+
+
+query
+SHOW transaction_isolation;
+----
+transaction_isolation
+repeatable read
+
+
+# 2. SET TRANSACTION outside a transaction block -> just warning, not an error
+# Warning in Postgres
+statement ok
+SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+
+# Variables unchanged after the error
+query
+SHOW transaction_isolation;
+----
+transaction_isolation
+repeatable read
+
+
+# 3. SET SESSION CHARACTERISTICS outside a transaction -> sets both variables immediately
+statement ok
+SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+query
+SHOW default_transaction_isolation;
+----
+default_transaction_isolation
+read committed
+
+
+query
+SHOW transaction_isolation;
+----
+transaction_isolation
+read committed
+
+
+# Restore
+statement ok
+SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+query
+SHOW default_transaction_isolation;
+----
+default_transaction_isolation
+repeatable read
+
+
+query
+SHOW transaction_isolation;
+----
+transaction_isolation
+repeatable read
+
+
 # 4. SET TRANSACTION inside a transaction changes transaction_isolation locally
 statement ok
 BEGIN;
@@ -115,7 +115,7 @@ statement ok
 SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
 
 query
-SHOW transaction_isolation;
+SHOW transaction_ISOLATION;
 ----
 transaction_isolation
 read committed
@@ -175,7 +175,7 @@ SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL READ COMMITTED;
 
 # default_transaction_isolation changed at transaction scope
 query
-SHOW default_transaction_isolation;
+SHOW default_TRANSACTION_isolation;
 ----
 default_transaction_isolation
 read committed
@@ -287,7 +287,7 @@ repeatable read
 
 # 12. Direct SET transaction_isolation = ... -> silently ignored, no change
 statement ok
-SET transaction_isolation TO 'read committed';
+SET transaction_ISOLATION TO 'read committed';
 
 query
 SHOW transaction_isolation;

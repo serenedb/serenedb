@@ -20,6 +20,8 @@
 
 #include "pg/isolation_level.h"
 
+#include <absl/strings/match.h>
+
 #include "pg/pg_list_utils.h"
 #include "pg/sql_exception_macro.h"
 
@@ -80,23 +82,36 @@ std::string GetIsolationLevel(const TransactionStmt& stmt) {
 }
 
 void ValidateIsolationLevel(std::string_view isolation_level) {
-  const bool is_unsupported =
-    isolation_level == kReadUncommitted || isolation_level == kSerializable;
+  const bool is_known = IsKnownIsolationLevel(isolation_level);
+  const bool is_supported = IsSupportedIsolationLevel(isolation_level);
+
   static constexpr std::string_view kHint =
     "Available values: repeatable read, read committed.";
-  if (is_unsupported) {
+  if (is_known && !is_supported) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("transaction isolation level \"", isolation_level,
                             "\" is not supported"),
                     ERR_HINT(kHint));
   }
-  if (!ValidateValue(VariableType::SdbTransactionIsolation, isolation_level)) {
+  if (!is_supported) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("invalid value for parameter \"transaction_isolation\": \"",
               isolation_level, "\""),
       ERR_HINT(kHint));
   }
+}
+
+bool IsKnownIsolationLevel(std::string_view data) {
+  return absl::EqualsIgnoreCase(data, kReadUncommitted) ||
+         absl::EqualsIgnoreCase(data, kReadCommitted) ||
+         absl::EqualsIgnoreCase(data, kRepeatableRead) ||
+         absl::EqualsIgnoreCase(data, kSerializable);
+}
+
+bool IsSupportedIsolationLevel(std::string_view data) {
+  return absl::EqualsIgnoreCase(data, kReadCommitted) ||
+         absl::EqualsIgnoreCase(data, kRepeatableRead);
 }
 
 }  // namespace sdb::pg

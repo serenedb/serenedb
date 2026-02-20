@@ -27,7 +27,7 @@
 #include "basics/assert.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
-#include "basics/logger/logger.h"
+#include "pg/isolation_level.h"
 
 namespace sdb {
 
@@ -82,8 +82,7 @@ bool ValidateValue(VariableType type, std::string_view value) {
              absl::EqualsIgnoreCase("replace", value);
     }
     case VariableType::SdbTransactionIsolation: {
-      return absl::EqualsIgnoreCase("repeatable read", value) ||
-             absl::EqualsIgnoreCase("read committed", value);
+      return pg::IsSupportedIsolationLevel(value);
     }
     default:
       SDB_UNREACHABLE();
@@ -152,18 +151,21 @@ void Config::Reset(std::string_view key) {
 }
 
 void Config::CommitVariables() noexcept {
+  if (auto it = _transaction.find(pg::kDefaultTransactionIsolation);
+      it != _transaction.end()) {
+    // Such strange logics is required, look at litmus pseudo-queries:
+    // SET default_transaction_isolation = A
+    // BEGIN
+    //  SET default_transaction_isolation = B;
+    //  SHOW transaction_isolation == A;
+    //  COMMIT
+    // SHOW transaction_isolation == B;
+    SDB_ASSERT(it->second.action == TxnAction::Apply);
+    _session.insert_or_assign(pg::kTransactionIsolation, it->second.value);
+  }
+
   for (auto&& [key, value] : _transaction) {
     if (value.action == TxnAction::Apply) {
-      if (key == "default_transaction_isolation") {
-        // Such strange logics is required, look at litmus pseudo-queries:
-        // SET default_transaction_isolation = A
-        // BEGIN
-        // SET default_transaction_isolation = B;
-        // SHOW transaction_isolation == A;
-        // COMMIT
-        // SHOW transaction_isolation == B;
-        _session.insert_or_assign("transaction_isolation", value.value);
-      }
       _session.insert_or_assign(key, std::move(value.value));
     }
   }

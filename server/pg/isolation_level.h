@@ -23,7 +23,7 @@
 #include <string>
 #include <string_view>
 
-#include "pg/sql_utils.h"
+#include "basics/system-compiler.h"
 #include "query/config.h"
 
 LIBPG_QUERY_INCLUDES_BEGIN
@@ -54,12 +54,15 @@ constexpr std::string_view IsolationLevelName(IsolationLevel isolation_level) {
   }
 }
 
-// Extracts the isolation level string from some statements
+// Extracts the isolation level string from some statements.
 std::string GetIsolationLevel(const VariableSetStmt& stmt);
 std::string GetIsolationLevel(const TransactionStmt& stmt);
 
 // Validates that isolation_level is a known and supported level.
 // Throws a SQL error for unknown or unsupported levels.
 void ValidateIsolationLevel(std::string_view isolation_level);
+
+bool IsKnownIsolationLevel(std::string_view data);
+bool IsSupportedIsolationLevel(std::string_view data);
 
 }  // namespace sdb::pg

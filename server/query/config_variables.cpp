@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "basics/assert.h"
+#include "pg/isolation_level.h"
 #include "query/config.h"
 
 namespace sdb {
@@ -118,7 +119,7 @@ constexpr auto kVariableDescription =
       },
     },
     {
-      "default_transaction_isolation",
+      pg::kDefaultTransactionIsolation,
       {
         VariableType::SdbTransactionIsolation,
         "Sets the transaction isolation level of each new transaction.",
@@ -126,7 +127,7 @@ constexpr auto kVariableDescription =
       },
     },
     {
-      "transaction_isolation",
+      pg::kTransactionIsolation,
       {
         VariableType::SdbTransactionIsolation,
         "Sets the current transaction's isolation level.",

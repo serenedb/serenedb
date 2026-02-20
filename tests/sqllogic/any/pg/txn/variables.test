@@ -158,6 +158,7 @@ statement error
 SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
 ----
 db error: ERROR: transaction isolation level "serializable" is not supported
+HINT: Available values: repeatable read, read committed.
 
 
 statement ok
@@ -544,3 +545,4 @@ statement error
 BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
 ----
 db error: ERROR: transaction isolation level "serializable" is not supported
+HINT: Available values: repeatable read, read committed.

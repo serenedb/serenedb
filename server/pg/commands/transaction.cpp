@@ -40,7 +40,7 @@ yaclib::Future<Result> Transaction(ExecContext& context,
         auto isolation_level = GetIsolationLevel(stmt);
         if (!isolation_level.empty()) {
           // BEGIN TRANSACTION ISOLATION LEVEL ...
-          ValidateIsolationLevel(isolation_level);
+          ValidateIsolationLevel(isolation_level, "");
           conn_ctx.Set(Config::VariableContext::Local, kTransactionIsolation,
                        std::move(isolation_level));
         }

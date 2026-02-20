@@ -60,7 +60,8 @@ std::string GetIsolationLevel(const TransactionStmt& stmt);
 
 // Validates that isolation_level is a known and supported level.
 // Throws a SQL error for unknown or unsupported levels.
-void ValidateIsolationLevel(std::string_view isolation_level);
+void ValidateIsolationLevel(std::string_view isolation_level,
+                            std::string_view parameter_name);
 
 bool IsKnownIsolationLevel(std::string_view data);
 bool IsSupportedIsolationLevel(std::string_view data);

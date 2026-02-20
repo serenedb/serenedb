@@ -81,7 +81,8 @@ std::string GetIsolationLevel(const TransactionStmt& stmt) {
   return GetIsolationLevelFromList(stmt.options);
 }
 
-void ValidateIsolationLevel(std::string_view isolation_level) {
+void ValidateIsolationLevel(std::string_view isolation_level,
+                            std::string_view parameter_name) {
   const bool is_known = IsKnownIsolationLevel(isolation_level);
   const bool is_supported = IsSupportedIsolationLevel(isolation_level);
 
@@ -94,11 +95,11 @@ void ValidateIsolationLevel(std::string_view isolation_level) {
                     ERR_HINT(kHint));
   }
   if (!is_supported) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("invalid value for parameter \"transaction_isolation\": \"",
-              isolation_level, "\""),
-      ERR_HINT(kHint));
+    SDB_ASSERT(!parameter_name.empty());
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("invalid value for parameter \"", parameter_name,
+                            "\": \"", isolation_level, "\""),
+                    ERR_HINT(kHint));
   }
 }
 

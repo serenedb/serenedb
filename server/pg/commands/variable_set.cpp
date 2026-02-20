@@ -168,7 +168,7 @@ void ProcessTransactionIsolation(sdb::ConnectionContext& conn_ctx,
       }
       auto isolation_level = GetIsolationLevel(stmt);
       SDB_ASSERT(!isolation_level.empty());
-      ValidateIsolationLevel(isolation_level);
+      ValidateIsolationLevel(isolation_level, stmt.name);
 
       if ((conn_ctx.HasRocksDBRead() || conn_ctx.HasRocksDBWrite()) &&
           isolation_level != IsolationLevelName(conn_ctx.GetIsolationLevel())) {
@@ -213,7 +213,7 @@ void ProcessDefaultTransactionIsolation(sdb::ConnectionContext& conn_ctx,
     case VAR_SET_MULTI: {
       auto isolation_level = GetIsolationLevel(stmt);
       SDB_ASSERT(!isolation_level.empty());
-      ValidateIsolationLevel(isolation_level);
+      ValidateIsolationLevel(isolation_level, stmt.name);
 
       if (var_ctx == Config::VariableContext::Session) {
         conn_ctx.Set(Config::VariableContext::Session, kTransactionIsolation,

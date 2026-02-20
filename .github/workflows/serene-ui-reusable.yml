@@ -272,7 +272,7 @@ jobs:
         name: Build macOS App
         if: inputs.RUN_TESTS || inputs.BUILD_MACOS_APP
         runs-on: macOS
-        timeout-minutes: 1440
+        timeout-minutes: 14400
         env:
             BRANCH: ${{ inputs.BRANCH }}
         defaults:
@@ -330,7 +330,7 @@ jobs:
                   APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
                   APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
               run: |
-                  npm run package:prod
+                  DEBUG=electron-builder,electron-osx-sign* npm run package:prod
                   npm run make:prod
 
             - name: Upload macOS artifacts
@@ -391,7 +391,14 @@ jobs:
 
     notify:
         name: Send Notification
-        needs: [build-docker, build-linux-app, build-windows-app, build-macos-app, release]
+        needs:
+            [
+                build-docker,
+                build-linux-app,
+                build-windows-app,
+                build-macos-app,
+                release,
+            ]
         if: always()
         runs-on: X64
         timeout-minutes: 5

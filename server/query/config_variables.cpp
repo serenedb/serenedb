@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "basics/assert.h"
+#include "pg/isolation_level.h"
 #include "query/config.h"
 
 namespace sdb {
@@ -115,6 +116,22 @@ constexpr auto kVariableDescription =
         VariableType::String,
         "Sets the application name to be reported in statistics and logs.",
         "",
+      },
+    },
+    {
+      pg::kDefaultTransactionIsolation,
+      {
+        VariableType::SdbTransactionIsolation,
+        "Sets the transaction isolation level of each new transaction.",
+        "repeatable read",
+      },
+    },
+    {
+      pg::kTransactionIsolation,
+      {
+        VariableType::SdbTransactionIsolation,
+        "Sets the current transaction's isolation level.",
+        "repeatable read",
       },
     },
     {

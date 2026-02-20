@@ -27,7 +27,7 @@
 #include "basics/assert.h"
 #include "basics/errors.h"
 #include "basics/exceptions.h"
-#include "basics/logger/logger.h"
+#include "pg/isolation_level.h"
 
 namespace sdb {
 
@@ -80,6 +80,9 @@ bool ValidateValue(VariableType type, std::string_view value) {
       return absl::EqualsIgnoreCase("emit_error", value) ||
              absl::EqualsIgnoreCase("do_nothing", value) ||
              absl::EqualsIgnoreCase("replace", value);
+    }
+    case VariableType::SdbTransactionIsolation: {
+      return pg::IsSupportedIsolationLevel(value);
     }
     default:
       SDB_UNREACHABLE();
@@ -147,7 +150,20 @@ void Config::Reset(std::string_view key) {
   _session.erase(key);
 }
 
-void Config::CommitVariables() {
+void Config::CommitVariables() noexcept {
+  if (auto it = _transaction.find(pg::kDefaultTransactionIsolation);
+      it != _transaction.end()) {
+    // Such strange logics is required, look at litmus pseudo-queries:
+    // SET default_transaction_isolation = A
+    // BEGIN
+    //  SET default_transaction_isolation = B;
+    //  SHOW transaction_isolation == A;
+    //  COMMIT
+    // SHOW transaction_isolation == B;
+    SDB_ASSERT(it->second.action == TxnAction::Apply);
+    _session.insert_or_assign(pg::kTransactionIsolation, it->second.value);
+  }
+
   for (auto&& [key, value] : _transaction) {
     if (value.action == TxnAction::Apply) {
       _session.insert_or_assign(key, std::move(value.value));

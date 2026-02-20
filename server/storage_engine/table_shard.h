@@ -54,7 +54,7 @@ class TableShard : public catalog::Object {
 
   auto GetTableId() const noexcept { return _table_id; }
 
-  void UpdateNumRows(int64_t delta) {
+  void UpdateNumRows(int64_t delta) noexcept {
     _num_rows.fetch_add(delta, std::memory_order_relaxed);
   }
 

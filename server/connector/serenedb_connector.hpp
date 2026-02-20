@@ -526,32 +526,26 @@ class SereneDBConnectorMetadata final
       return yaclib::MakeFuture(get_total_rows_from_write_results());
     }
     auto& transaction = serene_insert_handle->GetTransaction();
-    auto* rocksdb_transaction = transaction.GetRocksDBTransaction();
 
-    if (!rocksdb_transaction) [[unlikely]] {
-      SDB_ASSERT(serene_insert_handle->NumberOfRowsAffected() == 0);
-      return yaclib::MakeFuture<int64_t>(0);
-    }
-    int64_t number_of_locked_primary_keys =
+    const int64_t number_of_rows_affected =
       serene_insert_handle->NumberOfRowsAffected();
-    if (serene_insert_handle->Kind() == axiom::connector::WriteKind::kInsert ||
-        serene_insert_handle->Kind() == axiom::connector::WriteKind::kDelete) {
-      int64_t delta_num_rows =
-        serene_insert_handle->Kind() == axiom::connector::WriteKind::kInsert
-          ? number_of_locked_primary_keys
-          : -number_of_locked_primary_keys;
-      transaction.UpdateNumRows(rocksdb_table.TableId(), delta_num_rows);
+    const auto kind = serene_insert_handle->Kind();
+    if (number_of_rows_affected != 0 &&
+        kind != axiom::connector::WriteKind::kUpdate) {
+      transaction.UpdateNumRows(rocksdb_table.TableId(),
+                                kind == axiom::connector::WriteKind::kDelete
+                                  ? -number_of_rows_affected
+                                  : number_of_rows_affected);
     }
 
     if (!transaction.HasTransactionBegin()) {
       auto r = transaction.Commit();
       if (!r.ok()) {
-        SDB_ASSERT(serene_insert_handle->NumberOfRowsAffected() == 0);
         SDB_THROW(ERROR_INTERNAL,
                   "Failed to commit transaction: ", r.errorMessage());
       }
     }
-    return yaclib::MakeFuture(number_of_locked_primary_keys);
+    return yaclib::MakeFuture(number_of_rows_affected);
   }
 
   velox::ContinueFuture abortWrite(
@@ -569,10 +563,6 @@ class SereneDBConnectorMetadata final
     SDB_ENSURE(serene_insert_handle, ERROR_INTERNAL,
                "Wrong type of insert table handle");
     auto& transaction = serene_insert_handle->GetTransaction();
-    auto* rocksdb_transaction = transaction.GetRocksDBTransaction();
-    if (!rocksdb_transaction) [[unlikely]] {
-      return velox::ContinueFuture::make();
-    }
     // TODO: should be rollback to last save point
     auto r = transaction.Rollback();
     if (!r.ok()) {
@@ -639,21 +629,37 @@ class SereneDBConnector final : public velox::connector::Connector {
     }
     auto& transaction = serene_table_handle.GetTransaction();
 
-    const bool read_your_own_writes =
+    const bool needs_read_your_own_writes =
+      transaction.HasRocksDBWrite() &&
       transaction.Get<VariableType::Bool>("sdb_read_your_own_writes");
 
-    auto* rocksdb_transaction = transaction.GetRocksDBTransaction();
+    const auto* snapshot = &transaction.EnsureRocksDBSnapshot();
+    if (needs_read_your_own_writes) {
+      auto& rocksdb_transaction = transaction.GetRocksDBTransaction();
+      SDB_ASSERT(snapshot == rocksdb_transaction.GetSnapshot());
 
-    if (read_your_own_writes && rocksdb_transaction) {
+#ifdef SDB_FAULT_INJECTION
+      // failpoints are per process so we make unique name to allow multiple
+      // sqlogic tests run in parallel without interference of failpoints
+      // TODO(mkornaukhov): Find a better way. Maybe make failpoints database
+      // bindable to allow parallel execution.
+      auto table_ptr =
+        transaction.GetCatalogSnapshot()->GetObject<catalog::Table>(object_key);
+      SDB_ASSERT(table_ptr);
+      auto fail_on_ryow = absl::StrCat(table_ptr->GetName(), "_fail_on_ryow");
+      SDB_IF_FAILURE(fail_on_ryow) {
+        SDB_THROW(ERROR_DEBUG, fail_on_ryow, " condition failed");
+      }
+#endif
+
       return std::make_unique<RocksDBRYOWDataSource>(
-        *connector_query_ctx->memoryPool(), *rocksdb_transaction, _cf,
+        *connector_query_ctx->memoryPool(), rocksdb_transaction, _cf,
         output_type, column_oids, serene_table_handle.GetEffectiveColumnId(),
         object_key);
     }
     return std::make_unique<RocksDBSnapshotDataSource>(
       *connector_query_ctx->memoryPool(), _db, _cf, output_type, column_oids,
-      serene_table_handle.GetEffectiveColumnId(), object_key,
-      &transaction.EnsureRocksDBSnapshot());
+      serene_table_handle.GetEffectiveColumnId(), object_key, snapshot);
   }
 
   std::shared_ptr<velox::connector::IndexSource> createIndexSource(
@@ -764,9 +770,16 @@ class SereneDBConnector final : public velox::connector::Connector {
               CreateIndexWriters<axiom::connector::WriteKind::kInsert>(
                 object_key, transaction);
             if (table.BulkInsert()) {
-              return std::make_unique<SSTInsertDataSink>(
-                _db, _cf, *connector_query_ctx->memoryPool(), object_key,
-                pk_indices, columns, std::move(insert_sinks));
+              const bool is_generated_pk = pk_indices.empty();
+              if (is_generated_pk) {
+                return std::make_unique<SSTInsertDataSink<true>>(
+                  _db, _cf, *connector_query_ctx->memoryPool(), object_key,
+                  pk_indices, columns, std::move(insert_sinks));
+              } else {
+                return std::make_unique<SSTInsertDataSink<false>>(
+                  _db, _cf, *connector_query_ctx->memoryPool(), object_key,
+                  pk_indices, columns, std::move(insert_sinks));
+              }
             }
 
             return std::make_unique<RocksDBInsertDataSink>(

@@ -31,21 +31,11 @@
 #include "basics/down_cast.h"
 #include "basics/result.h"
 #include "catalog/catalog.h"
-#include "catalog/secondary_index.h"
-#include "catalog/table.h"
 #include "query/config.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "search/inverted_index_shard.h"
-#include "storage_engine/index_shard.h"
 
 namespace sdb::query {
-namespace {
-
-template<typename F, typename... Sigs>
-concept InvocableWith =
-  (std::constructible_from<absl::AnyInvocable<Sigs>, F&> && ...);
-
-}
 
 class Transaction : public Config {
  public:
@@ -68,7 +58,7 @@ class Transaction : public Config {
   }
 #endif
 
-  Result Begin();
+  void OnNewStatement();
 
   Result Commit();
 
@@ -84,12 +74,22 @@ class Transaction : public Config {
   }
 
   void AddRocksDBRead() noexcept;
+  bool HasRocksDBRead() const noexcept;
 
   void AddRocksDBWrite() noexcept;
+  bool HasRocksDBWrite() const noexcept;
 
+  void AddTransactionBegin() noexcept;
   bool HasTransactionBegin() const noexcept;
 
-  rocksdb::Transaction* GetRocksDBTransaction() const noexcept;
+  IsolationLevel GetIsolationLevel() const noexcept {
+    return Get<VariableType::SdbTransactionIsolation>("transaction_isolation");
+  }
+
+  rocksdb::Transaction& GetRocksDBTransaction() const noexcept {
+    SDB_ASSERT(_rocksdb_transaction);
+    return *_rocksdb_transaction;
+  }
 
   rocksdb::Transaction& EnsureRocksDBTransaction();
 
@@ -99,12 +99,7 @@ class Transaction : public Config {
 
   catalog::TableStats GetTableStats(ObjectId table_id) const;
 
-  template<InvocableWith<void(irs::IndexWriter::Transaction&,
-                              std::span<const catalog::Column::Id>),
-                         void(rocksdb::Transaction&,
-                              std::span<const catalog::Column::Id>)>
-             Visit,
-           typename Filter = std::nullptr_t>
+  template<typename Visit, typename Filter = std::nullptr_t>
   void EnsureIndexesTransactions(ObjectId table_id, Visit&& visit,
                                  Filter&& filter = nullptr) {
     auto snapshot = GetCatalogSnapshot();
@@ -133,18 +128,13 @@ class Transaction : public Config {
         }
         visit(*transaction, index->GetColumnIds());
       } else {
-        if (!_rocksdb_transaction) [[unlikely]] {
-          CreateRocksDBTransaction();
-        }
-        visit(*_rocksdb_transaction, index->GetColumnIds());
+        visit(EnsureRocksDBTransaction(), index->GetColumnIds());
       }
     }
   }
 
  private:
-  void CreateStorageSnapshot();
-  void CreateRocksDBTransaction();
-  void ApplyTableStatsDiffs();
+  void ApplyTableStatsDiffs() noexcept;
 
   State _state = State::None;
   std::shared_ptr<StorageSnapshot> _storage_snapshot;

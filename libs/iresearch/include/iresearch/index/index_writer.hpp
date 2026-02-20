@@ -438,7 +438,7 @@ class IndexWriter : private util::Noncopyable {
     void Reset() noexcept;
 
     // Register underlying segment to be flushed with the upcoming index commit
-    void RegisterFlush();
+    void RegisterFlush() noexcept;
 
     // Commit all accumulated modifications and release resources
     // return successful or not, if not call Abort

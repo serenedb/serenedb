@@ -12,6 +12,8 @@ sdb_read_your_own_writes	true	Controls whether queries can see uncommitted write
 client_encoding	UTF8	Sets the client character set encoding.
 datestyle	ISO, MDY	Sets the display format for date and time values.
 application_name	(empty)	Sets the application name to be reported in statistics and logs.
+default_transaction_isolation	repeatable read	Sets the transaction isolation level of each new transaction.
+transaction_isolation	repeatable read	Sets the current transaction's isolation level.
 default_transaction_read_only	off	Sets the default read-only status of new transactions.
 in_hot_standby	off	Shows whether the server is currently in hot standby mode.
 integer_datetimes	on	Shows whether datetimes are integer based.

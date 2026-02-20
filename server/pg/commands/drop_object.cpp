@@ -26,6 +26,7 @@
 #include "basics/debugging.h"
 #include "basics/errors.h"
 #include "basics/static_strings.h"
+#include "basics/system-compiler.h"
 #include "catalog/catalog.h"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
@@ -104,7 +105,7 @@ yaclib::Future<Result> DropObject(ExecContext& context, const DropStmt& stmt) {
   } else if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
     r = {};
   }
-  SDB_IF_FAILURE("crash_on_drop") { exit(1); }
+  SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
   return yaclib::MakeFuture(std::move(r));
 }
 

@@ -2,8 +2,8 @@
 
 cd sqllogic
 
-export RETRY_ATTEMPTS=10
-export BACKOFF_DURATION=500ms
+export RETRY_ATTEMPTS=60
+export BACKOFF_DURATION=1s
 
 declare -a test_files=()
 while IFS= read -r -d '' file; do

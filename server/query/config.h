@@ -67,17 +67,6 @@ enum class IsolationLevel : uint8_t {
   RepeatableRead,
 };
 
-constexpr std::string_view IsolationLevelName(IsolationLevel isolation_level) {
-  switch (isolation_level) {
-    case IsolationLevel::ReadCommitted:
-      return "read committed";
-    case IsolationLevel::RepeatableRead:
-      return "repeatable read";
-    default:
-      SDB_UNREACHABLE();
-  }
-}
-
 struct VariableDescription {
   VariableType type;
   std::string_view description;

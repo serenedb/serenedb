@@ -21,18 +21,24 @@
 
 #include "rocksdb_types.h"
 
+#include "catalog/identifiers/object_id.h"
 #include "magic_enum/magic_enum.hpp"
 
 namespace sdb {
 namespace {
 
-// TODO(mbkkt) add constexpr ctor for rocksdb::Slice
 template<RocksDBEntryType Type>
 const rocksdb::Slice MakeSlice() {
-  static constexpr auto kData = Type;
-  return {
-    reinterpret_cast<const std::underlying_type_t<RocksDBEntryType>*>(&kData),
-    1};
+  static constexpr auto kData = [] {
+    std::array<char, sizeof(ObjectId::BaseType) + 1> buf{};
+    auto root = id::kRoot.id();
+    for (size_t i = 0; i < sizeof(root); ++i) {
+      buf[i] = static_cast<char>((root >> ((sizeof(root) - 1 - i) * 8)) & 0xFF);
+    }
+    buf[sizeof(root)] = static_cast<char>(Type);
+    return buf;
+  }();
+  return rocksdb::Slice{kData.data(), kData.size()};
 }
 
 const auto kPlaceholder = MakeSlice<RocksDBEntryType::Placeholder>();

@@ -173,8 +173,8 @@ struct FunctionProperties {
 class Function final : public SchemaObject {
  public:
   static Result Instantiate(std::shared_ptr<catalog::Function>& function,
-                            ObjectId database_id, vpack::Slice definition,
-                            bool is_user_request);
+                            ObjectId database_id, ObjectId schema_id,
+                            vpack::Slice definition, bool is_user_request);
 
   Function(std::string_view name, FunctionSignature signature,
            FunctionOptions options, aql::FunctionImpl impl);
@@ -183,10 +183,12 @@ class Function final : public SchemaObject {
            FunctionOptions options);
 
   Function(FunctionProperties&& properties,
-           std::unique_ptr<search::AnalyzerImpl> impl, ObjectId database_id);
+           std::unique_ptr<search::AnalyzerImpl> impl, ObjectId database_id,
+           ObjectId schema_id);
 
   Function(FunctionProperties&& properties,
-           std::unique_ptr<pg::FunctionImpl> impl, ObjectId database_id);
+           std::unique_ptr<pg::FunctionImpl> impl, ObjectId database_id,
+           ObjectId schema_id);
 
   ~Function() final;
 

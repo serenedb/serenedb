@@ -39,17 +39,21 @@
 #include "basics/static_strings.h"
 #include "basics/string_utils.h"
 #include "catalog/database.h"
+#include "catalog/drop_task.h"
 #include "catalog/identifiers/object_id.h"
 #include "catalog/index.h"
 #include "catalog/local_catalog.h"
+#include "catalog/object.h"
 #include "catalog/schema.h"
 #include "catalog/table.h"
+#include "catalog/table_options.h"
 #include "catalog/view.h"
 #include "general_server/scheduler.h"
 #include "general_server/state.h"
 #include "rest_server/serened.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_key.h"
+#include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "storage_engine/engine_feature.h"
 #include "utils/query_cache.h"
 #include "vpack/builder.h"
@@ -71,6 +75,77 @@ Result ErrorMeta(ErrorCode code, std::string_view object_type,
           error, " metadata: ",     meta.toJson()};
 }
 
+containers::FlatHashSet<ObjectId> CollectObjects(ObjectId parent_id,
+                                                 RocksDBEntryType type) {
+  auto& engine = GetServerEngine();
+  containers::FlatHashSet<ObjectId> drops;
+  auto r =
+    engine.VisitObjects(parent_id, type, [&](rocksdb::Slice key, vpack::Slice) {
+      drops.insert(RocksDBKey::GetObjectId(key));
+      return Result{};
+    });
+  SDB_ASSERT(r.ok());
+  return drops;
+}
+
+Result CreateIndexDrop(RocksDBEngineCatalog& engine, ObjectId table_id,
+                       ObjectId index_id, std::shared_ptr<IndexDrop>& drop,
+                       vpack::Slice definition) {
+  drop->parent_id = table_id;
+  drop->id = index_id;
+  IndexBaseOptions options;
+  if (vpack::ReadTupleNothrow(definition, options).ok()) {
+    drop->db_id = options.database_id;
+    drop->schema_id = options.schema_id;
+    drop->type = options.type;
+  }
+  return engine.VisitObjects(index_id, RocksDBEntryType::IndexShard,
+                             [&](rocksdb::Slice key, vpack::Slice) {
+                               SDB_ASSERT(!drop->shard_id.isSet());
+                               drop->shard_id = RocksDBKey::GetObjectId(key);
+                               return Result{};
+                             });
+}
+
+Result CreateTableDrop(RocksDBEngineCatalog& engine, ObjectId schema_id,
+                       ObjectId table_id, std::shared_ptr<TableDrop>& drop) {
+  drop->parent_id = schema_id;
+  drop->id = table_id;
+
+  auto r = engine.VisitObjects(table_id, RocksDBEntryType::TableShard,
+                               [&](rocksdb::Slice key, vpack::Slice) {
+                                 SDB_ASSERT(!drop->shard_id.isSet());
+                                 drop->shard_id = RocksDBKey::GetObjectId(key);
+                                 return Result{};
+                               });
+  if (!r.ok()) {
+    return r;
+  }
+  return engine.VisitObjects(
+    table_id, RocksDBEntryType::Index,
+    [&](rocksdb::Slice key, vpack::Slice slice) {
+      drop->indexes.push_back(std::make_shared<IndexDrop>());
+      drop->indexes.back()->is_root = false;
+      return CreateIndexDrop(engine, table_id, RocksDBKey::GetObjectId(key),
+                             drop->indexes.back(), slice);
+    });
+}
+
+Result CreateSchemaDrop(RocksDBEngineCatalog& engine, ObjectId db_id,
+                        ObjectId schema_id, std::shared_ptr<SchemaDrop>& drop) {
+  drop->parent_id = db_id;
+  drop->id = schema_id;
+  return engine.VisitObjects(
+    schema_id, RocksDBEntryType::Table, [&](rocksdb::Slice key, vpack::Slice) {
+      drop->tables.push_back(std::make_shared<TableDrop>());
+      drop->tables.back()->is_root = false;
+      return CreateTableDrop(engine, schema_id, RocksDBKey::GetObjectId(key),
+                             drop->tables.back());
+    });
+}
+
+}  // namespace
+
 template<typename T>
 ResultOr<std::shared_ptr<Database>> GetDatabaseImpl(T key) {
   auto& catalog =
@@ -83,8 +158,6 @@ ResultOr<std::shared_ptr<Database>> GetDatabaseImpl(T key) {
   }
   return database;
 }
-
-}  // namespace
 
 CatalogFeature::CatalogFeature(Server& server)
   : SerenedFeature{server, name()} {}
@@ -110,8 +183,8 @@ void CatalogFeature::unprepare() {
   // TODO(gnusi): fix
   SDB_ASSERT(_local);
   SDB_ASSERT(_global);
-  //_local.reset();
-  //_global.reset();
+  _local.reset();
+  _global.reset();
 }
 
 void CatalogFeature::beginShutdown() {}
@@ -133,27 +206,19 @@ Result CatalogFeature::Open() {
     return {};
   }
 
-  auto r = ProcessTombstones();
-  if (!r.ok()) {
-    return r;
-  }
-
   if (ServerState::instance()->IsSingle()) {
     if (auto r = AddRoles(); !r.ok()) {
       return r;
     }
   }
 
-  r = GetServerEngine().VisitDatabases([&](vpack::Slice slice) -> Result {
+  auto r = GetServerEngine().VisitDatabases([&](vpack::Slice slice) -> Result {
     catalog::DatabaseOptions database;
     if (auto r = vpack::ReadTupleNothrow(slice, database); !r.ok()) {
       return r;
     }
 
-    if (auto r = OpenDatabase(std::move(database)); !r.ok()) {
-      return r;
-    }
-    return {};
+    return OpenDatabase(std::move(database));
   });
 
   if (!r.ok()) {
@@ -174,21 +239,123 @@ Result CatalogFeature::AddDatabase(const DatabaseOptions& options) {
     std::make_shared<catalog::Database>(options));
 }
 
-Result CatalogFeature::AddSchemas(
-  ObjectId database_id, std::vector<std::shared_ptr<Schema>>& schemas) {
+Result CatalogFeature::RegisterSchemas(ObjectId database_id) {
+  auto deleted = CollectObjects(database_id, RocksDBEntryType::ScopeTombstone);
   return GetServerEngine().VisitObjects(
     database_id, RocksDBEntryType::Schema,
     [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
-      SchemaOptions options;
-      if (auto r = vpack::ReadTupleNothrow(slice, options); !r.ok()) {
-        return ErrorMeta(r.errorNumber(), "schema", r.errorMessage(), slice);
+      auto schema_id = RocksDBKey::GetObjectId(key);
+      if (deleted.contains(schema_id)) {
+        auto schema_drop = std::make_shared<SchemaDrop>();
+        schema_drop->is_root = true;
+        auto r = CreateSchemaDrop(GetServerEngine(), database_id, schema_id,
+                                  schema_drop);
+        QueueDropTask(std::move(schema_drop)).Detach();
+        return r;
+      } else {
+        return AddSchema(database_id, schema_id, slice);
+      }
+    });
+}
+
+Result CatalogFeature::RegisterFunctions(ObjectId db_id, ObjectId schema_id) {
+  return GetServerEngine().VisitObjects(
+    schema_id, RocksDBEntryType::Function,
+    [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
+      std::shared_ptr<catalog::Function> function;
+      auto r = catalog::Function::Instantiate(
+        function, db_id, RocksDBKey::GetParentId(key), slice, false);
+      if (!r.ok()) {
+        return ErrorMeta(r.errorNumber(), "function", r.errorMessage(), slice);
       }
 
-      auto schema =
-        std::make_shared<catalog::Schema>(database_id, std::move(options));
-      schemas.emplace_back(schema);
+      return Global().RegisterFunction(db_id, schema_id, std::move(function));
+    });
+}
 
-      return Global().RegisterSchema(database_id, std::move(schema));
+Result CatalogFeature::RegisterViews(ObjectId db_id, ObjectId schema_id) {
+  return GetServerEngine().VisitObjects(
+    schema_id, RocksDBEntryType::View,
+    [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
+      ViewOptions options;
+      auto r = ViewOptions::Read(options, slice);
+      if (!r.ok()) {
+        return ErrorMeta(r.errorNumber(), "view", r.errorMessage(), slice);
+      }
+      std::shared_ptr<View> view;
+
+      r = CreateViewInstance(view, db_id, RocksDBKey::GetParentId(key),
+                             std::move(options), ViewContext::Restore);
+      if (!r.ok()) {
+        return r;
+      }
+
+      return Global().RegisterView(schema_id, view->GetId(), view);
+    });
+}
+
+Result CatalogFeature::RegisterIndexes(ObjectId table_id) {
+  auto deleted = CollectObjects(table_id, RocksDBEntryType::IndexTombstone);
+  return GetServerEngine().VisitObjects(
+    table_id, RocksDBEntryType::Index,
+    [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
+      auto index_id = RocksDBKey::GetObjectId(key);
+      if (deleted.contains(index_id)) {
+        auto index_drop = std::make_shared<IndexDrop>();
+        index_drop->is_root = true;
+        auto r = CreateIndexDrop(GetServerEngine(), table_id, index_id,
+                                 index_drop, slice);
+        QueueDropTask(std::move(index_drop)).Detach();
+        return r;
+      } else {
+        return AddIndex(table_id, index_id, slice);
+      }
+    });
+}
+
+Result CatalogFeature::RegisterTableShard(ObjectId table_id) {
+  return GetServerEngine().VisitObjects(
+    table_id, RocksDBEntryType::TableShard,
+    [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
+      ObjectId shard_id = RocksDBKey::GetObjectId(key);
+      TableStats stats;
+      auto shard = std::make_shared<TableShard>(shard_id, table_id, stats);
+      return Local().RegisterTableShard(shard);
+    });
+}
+
+Result CatalogFeature::RegisterIndexShard(const std::shared_ptr<Index>& index) {
+  return GetServerEngine().VisitObjects(
+    index->GetId(), RocksDBEntryType::IndexShard,
+    [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
+      return index->CreateIndexShard(false, std::move(slice))
+        .transform([&](auto&& shard) {
+          auto r = GetServerEngine().StoreIndexShard(*shard);
+          if (!r.ok()) {
+            return r;
+          }
+          return Local().RegisterIndexShard(shard);
+        })
+        .error_or(Result{});
+    });
+}
+
+Result CatalogFeature::RegisterTables(ObjectId db_id, ObjectId schema_id) {
+  auto deleted = CollectObjects(schema_id, RocksDBEntryType::TableTombstone);
+  return GetServerEngine().VisitObjects(
+    schema_id, RocksDBEntryType::Table,
+    [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
+      auto table_id = RocksDBKey::GetObjectId(key);
+      if (deleted.contains(table_id)) {
+        auto table_drop = std::make_shared<TableDrop>();
+        table_drop->is_root = true;
+        auto r =
+          CreateTableDrop(GetServerEngine(), schema_id, table_id, table_drop);
+        QueueDropTask(std::move(table_drop)).Detach();
+        return r;
+      } else {
+        return AddTable(db_id, schema_id, table_id, slice);
+      }
     });
 }
 
@@ -215,217 +382,63 @@ Result CatalogFeature::AddRoles() {
   return {};
 }
 
-Result CatalogFeature::ProcessTombstones() {
-  auto& engine = GetServerEngine();
+Result CatalogFeature::AddTable(ObjectId db_id, ObjectId schema_id,
+                                ObjectId table_id, vpack::Slice slice) {
+  CreateTableOptions options;
 
-  auto process_indexes = [&](ObjectId database_id, ObjectId schema_id) {
-    return engine.VisitSchemaObjects(
-      database_id, schema_id, RocksDBEntryType::Index,
-      [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
-        IndexBaseOptions options;
-
-        if (auto r = vpack::ReadTupleNothrow(slice, options); !r.ok()) {
-          return ErrorMeta(r.errorNumber(), "index", r.errorMessage(), slice);
-        }
-
-        IndexTombstone tombstone;
-        tombstone.old_database = options.database_id;
-        tombstone.old_schema = options.schema_id;
-        tombstone.id = options.id;
-        tombstone.type = options.type;
-
-        Local().RegisterIndexDrop(std::move(tombstone));
-        return {};
-      });
-  };
-
-  auto process_tables = [&](ObjectId database_id, ObjectId schema_id) {
-    return engine.VisitSchemaObjects(
-      database_id, schema_id, RocksDBEntryType::Table,
-      [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
-        CreateTableOptions options;
-
-        // TODO(gnusi): .skip_unknown = false, .strict = true
-        if (auto r = vpack::ReadObjectNothrow<TableOptions>(
-              slice, options, {.skip_unknown = true, .strict = false},
-              ObjectInternal{database_id});
-            !r.ok()) {
-          return ErrorMeta(r.errorNumber(), "collection", r.errorMessage(),
-                           slice);
-        }
-
-        TableTombstone tombstone;
-        tombstone.table = options.id;
-
-        Local().RegisterTableDrop(std::move(tombstone));
-        return {};
-      });
-  };
-
-  auto process_schema = [&](ObjectId database_id, ObjectId schema_id) {
-    auto r = process_indexes(database_id, schema_id);
-    if (!r.ok()) {
-      return r;
-    }
-    return process_tables(database_id, schema_id);
-  };
-
-  auto r = engine.VisitObjects(
-    id::kTombstoneDatabase, RocksDBEntryType::IndexTombstone,
-    [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
-      IndexTombstone tombstone;
-
-      if (auto r = vpack::ReadTupleNothrow<IndexTombstone>(slice, tombstone);
-          !r.ok()) {
-        return ErrorMeta(r.errorNumber(), "index tombstone", r.errorMessage(),
-                         slice);
-      }
-
-      Local().RegisterIndexDrop(std::move(tombstone));
-      return {};
-    });
-
-  if (!r.ok()) {
-    return {r.errorNumber(),
-            "Failed to process index tombstones, error: ", r.errorMessage()};
+  // TODO(gnusi): .skip_unknown = false, .strict = true
+  if (auto r = vpack::ReadObjectNothrow<TableOptions>(
+        slice, options, {.skip_unknown = true, .strict = false},
+        ObjectInternal{db_id});
+      !r.ok()) {
+    return ErrorMeta(r.errorNumber(), "table", r.errorMessage(), slice);
   }
 
-  r = engine.VisitObjects(
-    id::kTombstoneDatabase, RocksDBEntryType::TableTombstone,
-    [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
-      TableTombstone tombstone;
-
-      if (auto r = vpack::ReadTupleNothrow<TableTombstone>(slice, tombstone);
-          !r.ok()) {
-        return ErrorMeta(r.errorNumber(), "collection tombstone",
-                         r.errorMessage(), slice);
-      }
-
-      Local().RegisterTableDrop(std::move(tombstone));
-      return {};
-    });
-
+  auto r = Global().RegisterTable(db_id, schema_id, std::move(options));
   if (!r.ok()) {
-    return {r.errorNumber(), "Failed to process collection tombstones, error: ",
-            r.errorMessage()};
+    return r;
+  }
+  r = RegisterTableShard(table_id);
+  if (!r.ok()) {
+    return r;
+  }
+  return RegisterIndexes(table_id);
+}
+
+Result CatalogFeature::AddIndex(ObjectId table_id, ObjectId index_id,
+                                vpack::Slice slice) {
+  IndexBaseOptions options;
+  if (auto r = vpack::ReadTupleNothrow(slice, options); !r.ok()) {
+    return r;
+  }
+  return Global()
+    .RegisterIndex(table_id, std::move(options))
+    .transform([&](auto&& index) { return RegisterIndexShard(index); })
+    .error_or(Result{});
+}
+
+Result CatalogFeature::AddSchema(ObjectId db_id, ObjectId schema_id,
+                                 vpack::Slice slice) {
+  SchemaOptions options;
+  if (auto r = vpack::ReadTupleNothrow(slice, options); !r.ok()) {
+    return ErrorMeta(r.errorNumber(), "schema", r.errorMessage(), slice);
   }
 
-  r = engine.VisitObjects(
-    id::kTombstoneDatabase, RocksDBEntryType::ScopeTombstone,
-    [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
-      ObjectId database_id{RocksDBKey::SchemaId(key)};
+  auto schema = std::make_shared<catalog::Schema>(db_id, std::move(options));
 
-      if (!database_id.isSet()) {
-        return ErrorMeta(ERROR_BAD_PARAMETER, "scope tombstone",
-                         "invalid database id", slice);
-      }
-
-      ObjectId schema_id{RocksDBKey::databaseId(key)};
-
-      auto r = [&] {
-        if (schema_id.isSet()) {
-          return process_schema(database_id, schema_id);
-        } else {
-          return engine.VisitObjects(
-            database_id, RocksDBEntryType::Schema,
-            [&](rocksdb::Slice key, vpack::Slice slice) {
-              ObjectId schema_id{RocksDBKey::databaseId(key)};
-              if (!schema_id.isSet()) {
-                return ErrorMeta(ERROR_BAD_PARAMETER, "schema",
-                                 "invalid schema id", slice);
-              }
-
-              return process_schema(database_id, schema_id);
-            });
-        }
-      }();
-
-      if (!r.ok()) {
-        return r;
-      }
-
-      Local().RegisterScopeDrop(database_id, schema_id);
-      return {};
-    });
-
-  return {};
-}
-
-Result CatalogFeature::AddTables(ObjectId database_id, const Schema& schema) {
-  return GetServerEngine().VisitSchemaObjects(
-    database_id, schema.GetId(), RocksDBEntryType::Table,
-    [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
-      CreateTableOptions options;
-
-      // TODO(gnusi): .skip_unknown = false, .strict = true
-      if (auto r = vpack::ReadObjectNothrow<TableOptions>(
-            slice, options, {.skip_unknown = true, .strict = false},
-            ObjectInternal{database_id});
-          !r.ok()) {
-        return ErrorMeta(r.errorNumber(), "table", r.errorMessage(), slice);
-      }
-
-      return Local().RegisterTable(database_id, schema.GetName(),
-                                   std::move(options));
-    });
-}
-
-Result CatalogFeature::AddIndexes(ObjectId database_id, const Schema& schema) {
-  return GetServerEngine().VisitSchemaObjects(
-    database_id, schema.GetId(), RocksDBEntryType::Index,
-    [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
-      IndexBaseOptions options;
-
-      if (auto r = vpack::ReadTupleNothrow(slice, options); !r.ok()) {
-        return r;
-      }
-
-      vpack::Slice shard_data;
-      auto shard_builder = GetServerEngine().LoadIndexShard(options.id);
-      if (shard_builder) {
-        shard_data = shard_builder->slice();
-      }
-
-      return Local().RegisterIndex(database_id, schema.GetName(),
-                                   std::move(options), shard_data);
-    });
-}
-
-Result CatalogFeature::AddFunctions(ObjectId database_id,
-                                    const Schema& schema) {
-  return GetServerEngine().VisitSchemaObjects(
-    database_id, schema.GetId(), RocksDBEntryType::Function,
-    [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
-      std::shared_ptr<catalog::Function> function;
-      auto r =
-        catalog::Function::Instantiate(function, database_id, slice, false);
-      if (!r.ok()) {
-        return ErrorMeta(r.errorNumber(), "function", r.errorMessage(), slice);
-      }
-
-      return Global().RegisterFunction(database_id, schema.GetName(),
-                                       std::move(function));
-    });
-}
-
-Result CatalogFeature::AddViews(ObjectId database_id, const Schema& schema) {
-  return GetServerEngine().VisitSchemaObjects(
-    database_id, schema.GetId(), RocksDBEntryType::View,
-    [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
-      ViewOptions options;
-      auto r = ViewOptions::Read(options, slice);
-
-      if (!r.ok()) {
-        return ErrorMeta(r.errorNumber(), "view", r.errorMessage(), slice);
-      }
-
-      std::shared_ptr<catalog::View> view;
-      r = CreateViewInstance(view, database_id, std::move(options),
-                             ViewContext::Internal);
-
-      return Global().RegisterView(database_id, schema.GetName(),
-                                   std::move(view));
-    });
+  if (auto r = Global().RegisterSchema(db_id, std::move(schema)); !r.ok()) {
+    return r;
+  }
+  if (auto r = RegisterTables(db_id, schema_id); !r.ok()) {
+    return r;
+  }
+  if (auto r = RegisterViews(db_id, schema_id); !r.ok()) {
+    return r;
+  }
+  if (auto r = RegisterFunctions(db_id, schema_id); !r.ok()) {
+    return r;
+  }
+  return Result{ERROR_OK};
 }
 
 Result CatalogFeature::OpenDatabase(catalog::DatabaseOptions database) {
@@ -439,36 +452,7 @@ Result CatalogFeature::OpenDatabase(catalog::DatabaseOptions database) {
         return r;
       }
 
-      auto make_error = [&](auto& r, std::string_view context) {
-        return Result{r.errorNumber(),  "Failed to read ", context,
-                      " in database: ", database.name,     " error: ",
-                      r.errorMessage()};
-      };
-
-      std::vector<std::shared_ptr<Schema>> schemas;
-      if (auto r = AddSchemas(database.id, schemas); !r.ok()) {
-        return make_error(r, "schemas");
-      }
-
-      for (auto& schema : schemas) {
-        if (ServerState::instance()->IsSingle()) {
-          if (auto r = AddFunctions(database.id, *schema); !r.ok()) {
-            return make_error(r, "functions");
-          }
-        }
-        if (auto r = AddTables(database.id, *schema); !r.ok()) {
-          return make_error(r, "tables");
-        }
-        if (auto r = AddIndexes(database.id, *schema); !r.ok()) {
-          return make_error(r, "indexes");
-        }
-        if (ServerState::instance()->IsSingle()) {
-          if (auto r = AddViews(database.id, *schema); !r.ok()) {
-            return make_error(r, "views");
-          }
-        }
-      }
-      return {};
+      return RegisterSchemas(database.id);
     },
     [&](ErrorCode code, std::string_view message) {
       return Result{code, "error while opening database '", database.name,
@@ -484,9 +468,9 @@ ResultOr<std::shared_ptr<Database>> GetDatabase(std::string_view name) {
   return GetDatabaseImpl(name);
 }
 
-std::shared_ptr<TableShard> GetTableShard(ObjectId id) {
+std::shared_ptr<TableShard> GetTableShard(ObjectId table_id) {
   auto& catalog = GetCatalog();
-  return catalog.GetSnapshot()->GetTableShard(id);
+  return catalog.GetSnapshot()->GetTableShard(table_id);
 }
 
 LogicalCatalog& GetCatalog() {

@@ -20,38 +20,36 @@
 
 #pragma once
 
-#include "basics/identifier.h"
+#include "basics/containers/flat_hash_set.h"
+#include "catalog/identifiers/object_id.h"
 
-namespace sdb {
+namespace sdb::catalog {
 
-class ObjectId : public basics::Identifier {
- public:
-  using Identifier::Identifier;
-
-  static constexpr ObjectId none() { return ObjectId{0}; }
-
-  bool isSet() const { return id() != 0; }
+struct ObjectDependencyBase {
+  virtual ~ObjectDependencyBase() = default;
 };
 
-static_assert(sizeof(ObjectId) == sizeof(ObjectId::BaseType));
+struct TableDependency : public ObjectDependencyBase {
+  ObjectId shard_id;
+  containers::FlatHashSet<ObjectId> indexes;
+};
 
-namespace id {  // system IDs
+struct IndexDependency : public ObjectDependencyBase {
+  ObjectId shard_id;
+};
 
-// User IDs
-inline constexpr ObjectId kInvalid{};
-inline constexpr ObjectId kRootUser{1000000};
+struct SchemaDependency : public ObjectDependencyBase {
+  containers::FlatHashSet<ObjectId> tables;
+  containers::FlatHashSet<ObjectId> functions;
+  containers::FlatHashSet<ObjectId> views;
+  bool Empty() const {
+    return tables.empty() && functions.empty() && views.empty();
+  }
+};
 
-// Database IDs
-inline constexpr ObjectId kRoot{1000004};
-inline constexpr ObjectId kTombstoneDatabase{1000001};
-inline constexpr ObjectId kSystemDB{1000002};
-inline constexpr ObjectId kMaxSystem{2000000};
-inline constexpr ObjectId kCalculationDB{std::numeric_limits<uint64_t>::max()};
+// For simple object dependencies
+struct ObjectDependency : public ObjectDependencyBase {
+  containers::FlatHashSet<ObjectId> objects;
+};
 
-// Schema IDs
-inline constexpr ObjectId kPgCatalogSchema{11};
-inline constexpr ObjectId kPgInformationSchema{1000003};
-
-}  // namespace id
-
-}  // namespace sdb
+}  // namespace sdb::catalog

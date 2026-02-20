@@ -55,14 +55,17 @@ class LocalCatalog final : public LogicalCatalog,
   Result RegisterDatabase(std::shared_ptr<Database> database) final;
   Result RegisterSchema(ObjectId database_id,
                         std::shared_ptr<Schema> schema) final;
-  Result RegisterView(ObjectId database_id, std::string_view schema,
+  Result RegisterView(ObjectId database_id, ObjectId schema_id,
                       std::shared_ptr<View> view) final;
-  Result RegisterFunction(ObjectId database_id, std::string_view schema,
+  Result RegisterFunction(ObjectId database_id, ObjectId schema_id,
                           std::shared_ptr<Function> function) final;
-  Result RegisterTable(ObjectId database_id, std::string_view schema,
+  Result RegisterTable(ObjectId database_id, ObjectId schema_id,
                        CreateTableOptions table) final;
-  Result RegisterIndex(ObjectId database_id, std::string_view schema,
-                       IndexBaseOptions options, vpack::Slice args) final;
+  Result RegisterTableShard(std::shared_ptr<TableShard> shard) final;
+
+  ResultOr<std::shared_ptr<Index>> RegisterIndex(
+    ObjectId table_id, IndexBaseOptions options) final;
+  Result RegisterIndexShard(std::shared_ptr<IndexShard> shard) final;
 
   Result CreateDatabase(std::shared_ptr<Database> database) final;
   Result CreateRole(std::shared_ptr<Role> role) final;
@@ -106,9 +109,6 @@ class LocalCatalog final : public LogicalCatalog,
                    std::string_view name, AsyncResult* async_result) final;
   std::shared_ptr<Snapshot> GetSnapshot() const noexcept final;
 
-  void RegisterTableDrop(TableTombstone tombstone) final;
-  void RegisterIndexDrop(IndexTombstone tombstone) final;
-  void RegisterScopeDrop(ObjectId database_id, ObjectId schema_id) final;
   void DropTableShard(ObjectId id);
 
   bool GetSkipBackgroundErrors() const noexcept {

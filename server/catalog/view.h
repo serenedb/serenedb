@@ -79,14 +79,14 @@ class View : public SchemaObject {
                         vpack::Slice properties) const = 0;
 
  protected:
-  View(ViewMeta&& options, ObjectId database_id);
+  View(ViewMeta&& options, ObjectId database_id, ObjectId schema_id);
 
   ViewType _type;
 };
 
 Result CreateViewInstance(std::shared_ptr<catalog::View>& view,
-                          ObjectId database_id, ViewOptions&& options,
-                          ViewContext ctx);
+                          ObjectId database_id, ObjectId schema_id,
+                          ViewOptions&& options, ViewContext ctx);
 
 }  // namespace sdb::catalog
 

@@ -3,6 +3,7 @@ target_sources(
     PRIVATE
         column_expr.cpp
         database.cpp
+        drop_task.cpp
         schema.cpp
         databases.cpp
         local_catalog.cpp

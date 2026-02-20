@@ -25,6 +25,7 @@
 
 #include "app/app_server.h"
 #include "basics/assert.h"
+#include "basics/errors.h"
 #include "catalog/catalog.h"
 #include "catalog/schema.h"
 #include "pg/sql_utils.h"

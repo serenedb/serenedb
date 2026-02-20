@@ -97,24 +97,14 @@ yaclib::Future<Result> CreateView(const ExecContext& context,
   options.properties = builder.slice();
 
   std::shared_ptr<catalog::View> view;
-  auto r = SqlQueryView::Make(view, db, std::move(options),
-                              catalog::ViewContext::User);
+  auto schema_object = catalog.GetSnapshot()->GetSchema(db, schema);
+  auto r = SqlQueryView::Make(view, db, schema_object->GetId(),
+                              std::move(options), catalog::ViewContext::User);
   if (!r.ok()) {
     return yaclib::MakeFuture(std::move(r));
   }
 
   r = catalog.CreateView(db, schema, view, stmt.replace);
-
-  if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
-    if (stmt.replace) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
-                      ERR_MSG("\"", stmt.view->relname, "\" is not a view"));
-    } else {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_DUPLICATE_TABLE),
-        ERR_MSG("relation \"", stmt.view->relname, "\" already exists"));
-    }
-  }
 
   return yaclib::MakeFuture(std::move(r));
 }
@@ -136,7 +126,7 @@ std::shared_ptr<catalog::View> CreateSystemView(const ViewStmt& stmt) {
 
   std::shared_ptr<catalog::View> view;
   // TODO why ViewContext::Internal and id::kInvalid() does not work?
-  auto r = SqlQueryView::Make(view, id::kSystemDB, std::move(options),
+  auto r = SqlQueryView::Make(view, id::kSystemDB, {}, std::move(options),
                               catalog::ViewContext::User);
 
   SDB_ASSERT(r.ok(), "Cannot make system view");

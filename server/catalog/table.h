@@ -37,20 +37,6 @@ namespace sdb {
 // Read from storage engine if unknown
 static constexpr auto kRead = std::numeric_limits<uint64_t>::max();
 
-struct IndexTombstone {
-  ObjectId old_database;
-  ObjectId old_schema;
-  ObjectId id;
-  IndexType type = IndexType::Unknown;
-};
-
-struct TableTombstone {
-  ObjectId table;
-  ObjectId old_schema;
-  ObjectId old_database;
-  uint64_t number_documents = kRead;
-  std::vector<IndexTombstone> indexes;
-};
 }  // namespace sdb
 
 namespace sdb::catalog {
@@ -68,7 +54,7 @@ NewOptions ParseTableChange(vpack::Slice slice);
 
 class Table : public SchemaObject {
  public:
-  Table(TableOptions&& options, ObjectId database_id);
+  Table(TableOptions&& options, ObjectId database_id, ObjectId schema_id);
   Table(const catalog::Table& other, NewOptions options);
 
   void WriteProperties(vpack::Builder& build) const final;

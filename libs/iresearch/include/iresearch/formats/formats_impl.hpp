@@ -3089,11 +3089,11 @@ class MaxScoreIterator : public DocIterator {
       return false;
     }
 
-    _next_threshold =
-      static_cast<double>(max_score) +
+    _next_threshold = static_cast<score_t>(
+      max_score +
       std::accumulate(
         begin, end, std::numeric_limits<score_t>::max(),
-        [](score_t acc, auto* it) { return std::min(acc, it->max_score); });
+        [](score_t acc, auto* it) { return std::min(acc, it->max_score); }));
 
     return true;
   }
@@ -3116,7 +3116,7 @@ class MaxScoreIterator : public DocIterator {
   std::vector<AdapterWrapper*> _itrs_sorted;
   std::vector<AdapterWrapper*>::iterator _first_essential;
   ColumnArgsFetcher _fetcher;
-  double _next_threshold = std::numeric_limits<double>::min();
+  score_t _next_threshold = std::numeric_limits<score_t>::min();
   Attributes _attrs;
 };
 

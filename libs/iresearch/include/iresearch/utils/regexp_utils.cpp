@@ -30,23 +30,6 @@
 namespace irs {
 namespace {
 
-////////////////////////////////////////////////////////////////////////////////
-/// @brief Creates an automaton that accepts only the empty string.
-///
-/// Theory: In formal language theory, epsilon (ε) represents the empty string.
-/// An epsilon-automaton has a single state that is both initial and final,
-/// with no transitions. It accepts exactly one string: "".
-///
-/// This is used for:
-/// - Empty alternatives in patterns like "a|" (matches "a" or "")
-/// - Optional quantifier: a? = a | ε
-/// - Anchors ^$ which consume no input
-/// - Empty terms in alternation
-///
-/// Structure:
-///   →((q0))   [single state, both start and final]
-///
-////////////////////////////////////////////////////////////////////////////////
 automaton MakeEpsilon() {
   automaton a;
   a.AddStates(1);
@@ -55,15 +38,7 @@ automaton MakeEpsilon() {
   return a;
 }
 
-////////////////////////////////////////////////////////////////////////////////
-/// @brief Checks if pattern contains any unescaped metacharacters.
-///
-/// Metacharacters are: . * + ? | ( ) [ ] ^ $ \
-/// Escaped metacharacters (like \. or \*) are treated as literals.
-///
-/// @param pattern The regexp pattern to analyze
-/// @return true if pattern contains metacharacters requiring automaton
-////////////////////////////////////////////////////////////////////////////////
+
 bool HasMetacharacters(bytes_view pattern) noexcept {
   bool escaped = false;
   for (byte_type c : pattern) {
@@ -82,56 +57,22 @@ bool HasMetacharacters(bytes_view pattern) noexcept {
   return false;
 }
 
-////////////////////////////////////////////////////////////////////////////////
-/// @brief Checks if pattern ends with unescaped ".*" (match-all suffix).
-///
-/// Patterns ending with .* can be optimized to prefix search:
-///   "foo.*" -> ByPrefix("foo") instead of full automaton intersection
-///
-/// @param pattern The regexp pattern to analyze
-/// @return true if pattern ends with .*
-////////////////////////////////////////////////////////////////////////////////
-bool EndsWithDotStar(bytes_view pattern) noexcept {
-  if (pattern.size() < 2) {
-    return false;
-  }
-
-  bool escaped = false;
-  size_t last_unescaped_pos = bytes_view::npos;
-  size_t prev_unescaped_pos = bytes_view::npos;
-
-  for (size_t i = 0; i < pattern.size(); ++i) {
-    if (escaped) {
-      escaped = false;
-      continue;
+// Checks if pattern contains any escape sequences
+bool HasEscapes(bytes_view pattern) noexcept {
+  for (byte_type c : pattern) {
+    if (c == RegexpMeta::kEscape) {
+      return true;
     }
-    if (pattern[i] == RegexpMeta::kEscape) {
-      escaped = true;
-      continue;
-    }
-    prev_unescaped_pos = last_unescaped_pos;
-    last_unescaped_pos = i;
   }
-
-  if (prev_unescaped_pos == bytes_view::npos ||
-      last_unescaped_pos == bytes_view::npos) {
-    return false;
-  }
-
-  return pattern[prev_unescaped_pos] == RegexpMeta::kDot &&
-         pattern[last_unescaped_pos] == RegexpMeta::kStar;
+  return false;
 }
 
-
-// Checks if the prefix (before .*) contains metacharacters.
-bool PrefixHasMetacharacters(bytes_view pattern) noexcept {
+bool IsLiteralPrefixDotStar(bytes_view pattern) noexcept {
   if (pattern.size() < 2) {
     return false;
   }
 
   bool escaped = false;
-  size_t dot_pos = bytes_view::npos;
-
   for (size_t i = 0; i < pattern.size(); ++i) {
     if (escaped) {
       escaped = false;
@@ -141,19 +82,15 @@ bool PrefixHasMetacharacters(bytes_view pattern) noexcept {
       escaped = true;
       continue;
     }
-    if (pattern[i] == RegexpMeta::kDot && i + 1 < pattern.size() &&
-        pattern[i + 1] == RegexpMeta::kStar) {
-      dot_pos = i;
-      break;
+    // First unescaped metacharacter must be '.' followed by '*' at the very end
+    if (IsRegexpMeta(pattern[i])) {
+      return pattern[i] == RegexpMeta::kDot &&
+             i + 1 == pattern.size() - 1 &&
+             pattern[i + 1] == RegexpMeta::kStar;
     }
   }
 
-  if (dot_pos == bytes_view::npos || dot_pos == 0) {
-    return dot_pos == 0;
-  }
-
-  bytes_view prefix{pattern.data(), dot_pos};
-  return HasMetacharacters(prefix);
+  return false;
 }
 
 
@@ -177,6 +114,9 @@ class RegexpParser {
     if (error_ || pos_ != pattern_.size()) {
       return {};
     }
+
+    // Mark NFA as sorted (required by DeterminizeStar for correct operation)
+    nfa.SetProperties(fst::kILabelSorted, fst::kILabelSorted);
 
     // Convert NFA to DFA using subset construction (determinization)
     // DeterminizeStar handles epsilon transitions automatically
@@ -238,17 +178,21 @@ class RegexpParser {
       return std::move(factors[0]);
     }
 
-    // Calculate total states for efficient allocation
-    size_t total_states = 0;
+    // Build concatenation using prepending (reverse order) for efficiency.
+    // This matches the approach in FromWildcard: prepending is O(sum of sizes)
+    // while appending can be worse due to repeated state renumbering.
+    automaton result;
+    result.SetStart(result.AddState());
+    result.SetFinal(0, true);
+
+    size_t total_states = result.NumStates();
     for (const auto& f : factors) {
       total_states += f.NumStates();
     }
-
-    // Build concatenation: L(f1)  L(f2)  ...  L(fn)
-    automaton result = std::move(factors[0]);
     result.ReserveStates(total_states);
-    for (size_t i = 1; i < factors.size(); ++i) {
-      fst::Concat(&result, factors[i]);
+
+    for (auto it = factors.rbegin(); it != factors.rend(); ++it) {
+      fst::Concat(*it, &result);
     }
 
     return result;
@@ -369,20 +313,7 @@ class RegexpParser {
     return MakeChar(bytes_view{start, char_len});
   }
 
-  size_t SkipUtf8Char() {
-    if (AtEnd()) {
-      error_ = true;
-      return 0;
-    }
-
-    const byte_type* start = pattern_.data() + pos_;
-    const byte_type* end = pattern_.data() + pattern_.size();
-    const byte_type* next = utf8_utils::Next(start, end);
-    
-    size_t char_len = static_cast<size_t>(next - start);
-    pos_ += char_len;
-    return char_len;
-  }
+  // (removed SkipUtf8Char — no longer needed)
 
 
   automaton ParseCharClass() {
@@ -401,8 +332,9 @@ class RegexpParser {
       Advance();
     }
 
-    std::vector<automaton> chars;
-    chars.reserve(16);
+    // Collect individual codepoints and ranges as (first_cp, last_cp) pairs
+    std::vector<std::pair<uint32_t, uint32_t>> ranges;
+    ranges.reserve(16);
 
     while (!error_ && !AtEnd() && Peek() != RegexpMeta::kRBracket) {
       // Escape inside class: \- or \]
@@ -412,37 +344,40 @@ class RegexpParser {
           error_ = true;
           return {};
         }
-        chars.push_back(ParseLiteral());
-        continue;
       }
 
-      // Parse first character of potential range
-      size_t first_pos = pos_;
-      auto first = ParseLiteral();
+      // Parse first character
+      uint32_t first_cp = ParseCodepoint();
       if (error_) return {};
-      size_t first_len = pos_ - first_pos;
 
       // Check for range: a-z
       if (!AtEnd() && Peek() == '-') {
-        // Look ahead: is this a range or literal dash at end?
         if (pos_ + 1 < pattern_.size() &&
             pattern_[pos_ + 1] != RegexpMeta::kRBracket) {
           Advance();  // consume '-'
 
-          size_t last_pos = pos_;
-          size_t last_len = SkipUtf8Char();  // don't build automaton
+          if (!AtEnd() && Peek() == RegexpMeta::kEscape) {
+            Advance();
+            if (AtEnd()) {
+              error_ = true;
+              return {};
+            }
+          }
+
+          uint32_t last_cp = ParseCodepoint();
           if (error_) return {};
 
-          // Expand range into individual character automata
-          ExpandRange(pattern_.data() + first_pos, first_len,
-                      pattern_.data() + last_pos, last_len, chars);
-          if (error_) return {};
+          if (first_cp > last_cp) {
+            error_ = true;
+            return {};
+          }
+          ranges.emplace_back(first_cp, last_cp);
         } else {
-          // Dash at end like [abc-] is literal
-          chars.push_back(std::move(first));
+          // Dash at end like [abc-] — dash is literal
+          ranges.emplace_back(first_cp, first_cp);
         }
       } else {
-        chars.push_back(std::move(first));
+        ranges.emplace_back(first_cp, first_cp);
       }
     }
 
@@ -453,66 +388,136 @@ class RegexpParser {
     }
 
     // Empty class [] is error
-    if (chars.empty()) {
+    if (ranges.empty()) {
       error_ = true;
       return {};
     }
 
     Advance();  // consume ']'
 
-    // Build union of all characters
-    automaton result = std::move(chars[0]);
-    for (size_t i = 1; i < chars.size(); ++i) {
-      fst::Union(&result, chars[i]);
+    // Sort and merge overlapping ranges
+    std::sort(ranges.begin(), ranges.end());
+    std::vector<std::pair<uint32_t, uint32_t>> merged;
+    merged.push_back(ranges[0]);
+    for (size_t i = 1; i < ranges.size(); ++i) {
+      auto& back = merged.back();
+      if (ranges[i].first <= back.second + 1) {
+        back.second = std::max(back.second, ranges[i].second);
+      } else {
+        merged.push_back(ranges[i]);
+      }
     }
 
-    // Handle negation
-    // TODO: Proper negation requires alphabet complement.
-    // For now, [^...] falls back to "any character" which is overly permissive.
-    // Correct implementation for ASCII would be: complement([chars]) over [0-127]
     if (negated) {
-      return MakeAny();
+      // Build complement ranges
+      std::vector<std::pair<uint32_t, uint32_t>> complement;
+      uint32_t prev_end = 0;
+      for (const auto& [lo, hi] : merged) {
+        if (lo > prev_end) {
+          complement.emplace_back(prev_end, lo - 1);
+        }
+        prev_end = hi + 1;
+      }
+      // Add tail range up to max Unicode codepoint
+      // We use 0x10FFFF but in practice UTF-8 byte-level matching
+      // handles this through MakeAny(); for complement we cover
+      // what we can with single-byte ranges and fall back for multi-byte
+      if (prev_end <= 0x7F) {
+        complement.emplace_back(prev_end, 0x7F);
+      }
+
+      // If all ranges are ASCII, we can build precise complement
+      // Otherwise fall back to imprecise MakeAny()
+      bool all_ascii = merged.back().second <= 0x7F;
+      if (!all_ascii || complement.empty()) {
+        // TODO: proper UTF-8 complement for non-ASCII ranges
+        return MakeAny();
+      }
+
+      merged = std::move(complement);
     }
 
-    return result;
+    // Build automaton from merged ranges using RangeLabel
+    return BuildCharClassAutomaton(merged);
   }
 
-
-  void ExpandRange(const byte_type* first_start, size_t first_len,
-                   const byte_type* last_start, size_t last_len,
-                   std::vector<automaton>& chars) {
-    // Decode UTF-8 to Unicode codepoints
-    const byte_type* p1 = first_start;
-    const byte_type* p2 = last_start;
-    uint32_t first_cp = utf8_utils::ToChar32(p1, first_start + first_len);
-    uint32_t last_cp = utf8_utils::ToChar32(p2, last_start + last_len);
-
-    // Validate codepoints
-    if (first_cp == utf8_utils::kInvalidChar32 ||
-        last_cp == utf8_utils::kInvalidChar32) {
+  uint32_t ParseCodepoint() {
+    if (AtEnd()) {
       error_ = true;
-      return;
+      return 0;
     }
 
-    // Range must be in order: [a-z] ok, [z-a] error
-    if (first_cp > last_cp) {
+    const byte_type* start = pattern_.data() + pos_;
+    const byte_type* end = pattern_.data() + pattern_.size();
+    const byte_type* next = utf8_utils::Next(start, end);
+
+    size_t char_len = static_cast<size_t>(next - start);
+    pos_ += char_len;
+
+    uint32_t cp = utf8_utils::ToChar32(start, next);
+    if (cp == utf8_utils::kInvalidChar32) {
       error_ = true;
-      return;
+      return 0;
+    }
+    return cp;
+  }
+
+  /// @brief Build a 2-state automaton that accepts any character in the
+  ///        given sorted, non-overlapping ranges.
+  ///        Uses RangeLabel for single-byte (ASCII) ranges for efficiency.
+  automaton BuildCharClassAutomaton(
+      const std::vector<std::pair<uint32_t, uint32_t>>& ranges) {
+    // Check if all ranges are single-byte (ASCII) — use RangeLabel directly
+    bool all_single_byte = ranges.back().second <= 0x7F;
+
+    if (all_single_byte) {
+      automaton a;
+      a.AddStates(2);
+      a.SetStart(0);
+      a.SetFinal(1);
+      for (const auto& [lo, hi] : ranges) {
+        a.EmplaceArc(0, RangeLabel::From(lo, hi), 1);
+      }
+      return a;
     }
 
-    // Limit range size to prevent state explosion
-    constexpr uint32_t kMaxRangeSize = 256;
-    if (last_cp - first_cp > kMaxRangeSize) {
+    // Multi-byte: fall back to union of individual MakeChar automata
+    // (still better than one-per-codepoint when ranges are small)
+    std::vector<automaton> parts;
+    for (const auto& [lo, hi] : ranges) {
+      if (lo <= 0x7F && hi <= 0x7F) {
+        automaton a;
+        a.AddStates(2);
+        a.SetStart(0);
+        a.SetFinal(1);
+        a.EmplaceArc(0, RangeLabel::From(lo, hi), 1);
+        parts.push_back(std::move(a));
+      } else {
+        // For multi-byte ranges, expand individually
+        // (constrained to prevent explosion)
+        constexpr uint32_t kMaxRangeSize = 256;
+        if (hi - lo > kMaxRangeSize) {
+          error_ = true;
+          return {};
+        }
+        for (uint32_t cp = lo; cp <= hi; ++cp) {
+          byte_type buf[utf8_utils::kMaxCharSize];
+          uint32_t len = utf8_utils::FromChar32(cp, buf);
+          parts.push_back(MakeChar(bytes_view{buf, len}));
+        }
+      }
+    }
+
+    if (parts.empty()) {
       error_ = true;
-      return;
+      return {};
     }
 
-    // Generate automaton for each character in range
-    for (uint32_t cp = first_cp; cp <= last_cp; ++cp) {
-      byte_type buf[utf8_utils::kMaxCharSize];
-      uint32_t len = utf8_utils::FromChar32(cp, buf);
-      chars.push_back(MakeChar(bytes_view{buf, len}));
+    automaton result = std::move(parts[0]);
+    for (size_t i = 1; i < parts.size(); ++i) {
+      fst::Union(&result, parts[i]);
     }
+    return result;
   }
 
   bool AtEnd() const noexcept { return pos_ >= pattern_.size(); }
@@ -535,13 +540,45 @@ class RegexpParser {
 }  // namespace
 
 
+bytes_view UnescapeRegexp(bytes_view in, bstring& out) {
+  out.clear();
+  out.reserve(in.size());
+
+  bool escaped = false;
+  for (byte_type c : in) {
+    if (escaped) {
+      out.push_back(c);
+      escaped = false;
+    } else if (c == RegexpMeta::kEscape) {
+      escaped = true;
+    } else {
+      out.push_back(c);
+    }
+  }
+  // Trailing backslash — treat as literal
+  if (escaped) {
+    out.push_back(RegexpMeta::kEscape);
+  }
+
+  return bytes_view{out.data(), out.size()};
+}
+
+
 RegexpType ComputeRegexpType(bytes_view pattern) noexcept {
-  if (pattern.empty() || !HasMetacharacters(pattern)) {
+  if (pattern.empty()) {
     return RegexpType::Literal;
   }
 
-  if (EndsWithDotStar(pattern) && !PrefixHasMetacharacters(pattern)) {
-    return RegexpType::Prefix;
+  if (!HasMetacharacters(pattern)) {
+    return HasEscapes(pattern) ? RegexpType::LiteralEscaped
+                               : RegexpType::Literal;
+  }
+
+  if (IsLiteralPrefixDotStar(pattern)) {
+    // Extract the literal part (everything before the trailing .*)
+    bytes_view prefix{pattern.data(), pattern.size() - 2};
+    return HasEscapes(prefix) ? RegexpType::PrefixEscaped
+                              : RegexpType::Prefix;
   }
 
   return RegexpType::Complex;
@@ -549,24 +586,10 @@ RegexpType ComputeRegexpType(bytes_view pattern) noexcept {
 
 
 bytes_view ExtractRegexpPrefix(bytes_view pattern) noexcept {
-  bool escaped = false;
-
-  for (size_t i = 0; i < pattern.size(); ++i) {
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (pattern[i] == RegexpMeta::kEscape) {
-      escaped = true;
-      continue;
-    }
-    if (pattern[i] == RegexpMeta::kDot && i + 1 < pattern.size() &&
-        pattern[i + 1] == RegexpMeta::kStar) {
-      return bytes_view{pattern.data(), i};
-    }
-  }
-
-  return pattern;
+  // Pattern is guaranteed to be <literal>.* by ComputeRegexpType
+  // Strip trailing .* and return raw prefix (may still contain escapes)
+  SDB_ASSERT(pattern.size() >= 2);
+  return bytes_view{pattern.data(), pattern.size() - 2};
 }
 
 

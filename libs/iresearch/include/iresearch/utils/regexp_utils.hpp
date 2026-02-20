@@ -25,9 +25,11 @@
 
 namespace irs {
 enum class RegexpType {
-  Literal,  
-  Prefix,  
-  Complex,
+  LiteralEscaped,  // e.g. hello\.world (literal after unescape)
+  Literal,         // e.g. hello (no metacharacters at all)
+  PrefixEscaped,   // e.g. hello\.world.* (prefix with escapes + .* suffix)
+  Prefix,          // e.g. hello.* (literal prefix + .* suffix)
+  Complex,         // everything else — requires full automaton
 };
 
 
@@ -72,6 +74,8 @@ RegexpType ComputeRegexpType(bytes_view pattern) noexcept;
 bytes_view ExtractRegexpPrefix(bytes_view pattern) noexcept;
 
 automaton FromRegexp(bytes_view pattern);
+
+bytes_view UnescapeRegexp(bytes_view in, bstring& out);
 
 inline automaton FromRegexp(std::string_view pattern) {
   return FromRegexp(ViewCast<byte_type>(pattern));

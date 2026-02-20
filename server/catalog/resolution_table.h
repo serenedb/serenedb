@@ -109,18 +109,20 @@ class ResolutionTable {
       } else {
         _databases.insert_or_assign(object_name, object_id);
       }
-      _schemas.try_emplace(object_id);
+      auto [_, inserted] = _schemas.try_emplace(object_id);
+      SDB_ASSERT(inserted);
       return Result{ERROR_OK};
     } else {
       auto insert = [replace](auto& insert_map, ObjectId parent_id,
                               std::string_view object_name,
                               ObjectId object_id) {
+        auto it = insert_map.find(parent_id);
+        SDB_ASSERT(it != insert_map.end());
         if (!replace) {
-          auto [_, inserted] =
-            insert_map.at(parent_id).try_emplace(object_name, object_id);
+          auto [_, inserted] = it->second.try_emplace(object_name, object_id);
           return inserted;
         }
-        insert_map.at(parent_id).insert_or_assign(object_name, object_id);
+        it->second.insert_or_assign(object_name, object_id);
         return true;
       };
       if constexpr (Type == ResolveType::Function) {
@@ -130,8 +132,9 @@ class ResolutionTable {
       } else if constexpr (Type == ResolveType::Schema) {
         auto inserted = insert(_schemas, parent_id, object_name, object_id);
         if (inserted) {
-          _relations.try_emplace(object_id);
-          _functions.try_emplace(object_id);
+          auto [_, insert_rel] = _relations.try_emplace(object_id);
+          auto [_, insert_function] = _functions.try_emplace(object_id);
+          SDB_ASSERT(insert_rel && insert_function);
           return {};
         }
         return already_exists();
@@ -165,7 +168,9 @@ class ResolutionTable {
       auto remove = [](
                       auto& remove_map, ObjectId parent_id,
                       std::string_view object_name) -> std::optional<ObjectId> {
-        auto object = remove_map.at(parent_id).extract(object_name);
+        auto it = remove_map.find(parent_id);
+        SDB_ASSERT(it != remove_map.end());
+        auto object = it->second.extract(object_name);
         if (object.empty()) {
           return std::nullopt;
         }

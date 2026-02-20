@@ -1317,7 +1317,7 @@ void RocksDBEngineCatalog::processCompactions() {
 }
 
 Result RocksDBEngineCatalog::CreateIndex(const catalog::Index& index) {
-  const auto schema_id = index.GetSchemaId();
+  const auto table_id = index.GetRelationId();
   const auto index_id = index.GetId();
   SDB_ASSERT(index_id.isSet());
 
@@ -1328,7 +1328,7 @@ Result RocksDBEngineCatalog::CreateIndex(const catalog::Index& index) {
     _db->GetRootDB(),
     [&] {
       RocksDBKeyWithBuffer key;
-      key.constructDefinition(schema_id, RocksDBEntryType::Index, index_id);
+      key.constructDefinition(table_id, RocksDBEntryType::Index, index_id);
       return key;
     },
     [&] { return RocksDBValue::Object(RocksDBEntryType::Index, b.slice()); },

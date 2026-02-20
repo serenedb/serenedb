@@ -54,7 +54,7 @@ NewOptions ParseTableChange(vpack::Slice slice);
 
 class Table : public SchemaObject {
  public:
-  Table(TableOptions&& options, ObjectId database_id);
+  Table(TableOptions&& options, ObjectId database_id, ObjectId schema_id);
   Table(const catalog::Table& other, NewOptions options);
 
   void WriteProperties(vpack::Builder& build) const final;

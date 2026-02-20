@@ -34,7 +34,7 @@ t	index_t
 
 connection new1
 statement ok
-SET sdb_fault_crash_on_index_drop TO DEFAULT;
+SET sdb_fault_crash_on_drop TO DEFAULT;
 
 
 connection new1

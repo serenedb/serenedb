@@ -218,10 +218,7 @@ Result CatalogFeature::Open() {
       return r;
     }
 
-    if (auto r = OpenDatabase(std::move(database)); !r.ok()) {
-      return r;
-    }
-    return {};
+    return OpenDatabase(std::move(database));
   });
 
   if (!r.ok()) {

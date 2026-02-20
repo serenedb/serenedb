@@ -101,10 +101,10 @@ yaclib::Future<Result> CreateIndex(ExecContext& context,
 
   const std::string_view relation_name = stmt.relation->relname;
   const std::string current_schema = conn_ctx.GetCurrentSchema();
-  const std::string_view schema =
+  const std::string_view relation_schema =
     stmt.relation->schemaname ? std::string_view{stmt.relation->schemaname}
                               : current_schema;
-  if (schema.empty()) {
+  if (relation_schema.empty()) {
     return yaclib::MakeFuture<Result>(
       ERROR_BAD_PARAMETER, "no schema has been selected to create in");
   }
@@ -125,9 +125,9 @@ yaclib::Future<Result> CreateIndex(ExecContext& context,
   pg::PgListWrapper<DefElem> pg_args{stmt.options};
   auto args = ParseIndexArgs(pg_args);
 
-  Result r =
-    catalog.CreateIndex(db, schema, relation_name, std::move(column_names),
-                        std::move(options), std::move(args));
+  Result r = catalog.CreateIndex(db, relation_schema, relation_name,
+                                 std::move(column_names), std::move(options),
+                                 std::move(args));
 
   if (r.is(ERROR_SERVER_DUPLICATE_NAME) && stmt.if_not_exists) {
     r = {};

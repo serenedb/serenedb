@@ -23,6 +23,7 @@
 #include <yaclib/async/make.hpp>
 
 #include "app/app_server.h"
+#include "basics/debugging.h"
 #include "basics/errors.h"
 #include "basics/static_strings.h"
 #include "catalog/catalog.h"
@@ -103,6 +104,7 @@ yaclib::Future<Result> DropObject(ExecContext& context, const DropStmt& stmt) {
   } else if (r.is(ERROR_SERVER_ILLEGAL_NAME)) {
     r = {};
   }
+  SDB_IF_FAILURE("crash_on_drop") { exit(1); }
   return yaclib::MakeFuture(std::move(r));
 }
 

@@ -220,14 +220,12 @@ class SnapshotImpl : public Snapshot {
                                              ObjectId table_id,
                                              ObjectId index_id, bool is_root) {
     auto index_deps = GetDependency<IndexDependency>(index_id);
+    auto index = GetObject<Index>(index_id);
     auto drop_task = std::make_shared<IndexDrop>();
-    auto obj = _objects.find(index_id);
-    SDB_ASSERT(obj != _objects.end());
-    auto& index = basics::downCast<Index>(**obj);
     drop_task->parent_id = table_id;
     drop_task->id = index_id;
     drop_task->is_root = is_root;
-    drop_task->type = index.GetIndexType();
+    drop_task->type = index->GetIndexType();
     drop_task->shard_id = index_deps->shard_id;
     drop_task->schema_id = schema_id;
     drop_task->db_id = db_id;
@@ -791,12 +789,14 @@ class SnapshotImpl : public Snapshot {
         auto table_deps = GetDependency<TableDependency>(id);
         RemoveObjectDefinition(id, table_deps->shard_id);
         auto index_ids = table_deps->indexes;
-        for (auto index_id : index_ids) {
-          // indexes resolutions weren't erased in RemoveResulion
-          // So, we need to do it now
-          auto index = GetObject<Index>(index_id);
-          auto r = UnregisterObject(index);
-          SDB_ASSERT(r.ok());
+        if (root) {
+          for (auto index_id : index_ids) {
+            // indexes resolutions weren't erased in RemoveResulion
+            // So, we need to do it now
+            auto index = GetObject<Index>(index_id);
+            auto r = UnregisterObject(index);
+            SDB_ASSERT(r.ok());
+          }
         }
         break;
       }
@@ -897,7 +897,8 @@ Result LocalCatalog::RegisterView(ObjectId database_id, ObjectId schema_id,
 
 Result LocalCatalog::RegisterTable(ObjectId database_id, ObjectId schema_id,
                                    CreateTableOptions options) {
-  auto table = std::make_shared<Table>(std::move(options), database_id);
+  auto table =
+    std::make_shared<Table>(std::move(options), database_id, schema_id);
 
   absl::MutexLock lock{&_mutex};
   return _snapshot->RegisterObject(table, false);
@@ -1015,7 +1016,8 @@ Result LocalCatalog::RegisterTableShard(std::shared_ptr<TableShard> shard) {
   return _snapshot->RegisterObject(shard, false);
 }
 
-Result LocalCatalog::CreateIndex(ObjectId database_id, std::string_view schema,
+Result LocalCatalog::CreateIndex(ObjectId database_id,
+                                 std::string_view relation_schema,
                                  std::string_view relation_name,
                                  const std::vector<std::string>& column_names,
                                  IndexBaseOptions options, vpack::Slice args) {
@@ -1024,13 +1026,14 @@ Result LocalCatalog::CreateIndex(ObjectId database_id, std::string_view schema,
   }
   absl::MutexLock lock{&_mutex};
   auto schema_id =
-    _snapshot->GetObjectId<ResolveType::Schema>(database_id, schema);
+    _snapshot->GetObjectId<ResolveType::Schema>(database_id, relation_schema);
   if (!schema_id) {
-    return {ERROR_SERVER_ILLEGAL_NAME, "Cannot resolve schema \"", schema,
-            "\""};
+    return {ERROR_SERVER_ILLEGAL_NAME, "Cannot resolve schema \"",
+            relation_schema, "\""};
   }
 
-  auto relation = _snapshot->GetRelation(database_id, schema, relation_name);
+  auto relation =
+    _snapshot->GetRelation(database_id, relation_schema, relation_name);
   if (!relation) {
     return {ERROR_SERVER_DATA_SOURCE_NOT_FOUND, "relation \"", relation_name,
             "\" does not exist"};
@@ -1189,8 +1192,8 @@ Result LocalCatalog::CreateTable(
     if (!schema_id) {
       return Result{ERROR_SERVER_ILLEGAL_NAME};
     }
-    options.schema_id = *schema_id;
-    auto table = std::make_shared<Table>(std::move(options), database_id);
+    auto table =
+      std::make_shared<Table>(std::move(options), database_id, *schema_id);
     auto r = clone->RegisterObject(table, false);
     if (!r.ok()) {
       return r;
@@ -1505,6 +1508,8 @@ Result LocalCatalog::DropDatabase(std::string_view name,
         !r.ok()) {
       return r;
     }
+    // Check that SereneDB won't open this database after reboot
+    SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
     auto res = QueueDropTask(std::move(task));
     if (async_result) {
       *async_result = std::move(res);
@@ -1541,6 +1546,8 @@ Result LocalCatalog::DropSchema(ObjectId db_id, std::string_view name,
         !r.ok()) {
       return r;
     }
+    // Check that SereneDB won't open this schema after reboot
+    SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
     auto res = QueueDropTask(std::move(task));
     if (async_result) {
       *async_result = std::move(res);
@@ -1575,6 +1582,8 @@ Result LocalCatalog::DropTable(ObjectId db_id, std::string_view schema_name,
         !r.ok()) {
       return r;
     }
+    // Check that SereneDB won't open this table after reboot
+    SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
     auto res = QueueDropTask(std::move(task));
     if (async_result) {
       *async_result = std::move(res);
@@ -1601,17 +1610,20 @@ Result LocalCatalog::DropIndex(ObjectId db_id, std::string_view schema_name,
     }
     auto index = clone->template GetObject<Index>(*index_id);
     SDB_ASSERT(index);
+    if (auto r = _engine->WriteTombstone(
+          index->GetRelationId(), RocksDBEntryType::IndexTombstone, *index_id);
+        !r.ok()) {
+      return r;
+    }
+    // Check that SereneDB won't open this index after reboot
+    SDB_IF_FAILURE("crash_on_drop") { return Result{}; }
+
     auto task = clone->CreateIndexDrop(db_id, *schema_id,
                                        index->GetRelationId(), *index_id, true);
     if (auto r = clone->UnregisterObject(index); !r.ok()) {
       return r;
     }
 
-    if (auto r = _engine->WriteTombstone(
-          index->GetRelationId(), RocksDBEntryType::IndexTombstone, *index_id);
-        !r.ok()) {
-      return r;
-    }
     auto res = QueueDropTask(std::move(task));
     if (async_result) {
       *async_result = std::move(res);

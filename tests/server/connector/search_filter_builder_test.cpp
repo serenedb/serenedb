@@ -99,8 +99,8 @@ class SearchFilterBuilderTest : public ::testing::Test {
                              .type = serene_column.type(),
                              .name = serene_column.name()});
     }
-    rel.second.object =
-      std::make_shared<catalog::Table>(std::move(opts), ObjectId{1});
+    rel.second.object = std::make_shared<catalog::Table>(
+      std::move(opts), ObjectId{1}, ObjectId{2});
 
     // resolve system functions that could be used in queries.
     // copy of logic from Resolver but only for system functions

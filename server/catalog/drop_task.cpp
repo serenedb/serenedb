@@ -76,7 +76,7 @@ Result IndexDrop::Finalize() {
   if (!CheckResult(r)) {
     return r;
   }
-  r = server.DropObject(schema_id, RocksDBEntryType::Index, id);
+  r = server.DropObject(parent_id, RocksDBEntryType::Index, id);
   if (!CheckResult(r)) {
     return r;
   }

@@ -1,0 +1,103 @@
+control substitution on
+
+
+statement ok
+CREATE SCHEMA s1;
+
+
+statement ok
+CREATE SCHEMA s2;
+
+
+statement ok
+CREATE TABLE s1.t(id INTEGER);
+
+
+statement ok
+CREATE INDEX i ON s1.t USING inverted(id);
+
+
+statement ok
+SET sdb_fault_crash_on_drop TO DEFAULT;
+
+
+statement error connection closed
+DROP INDEX s1.i;
+
+
+connection after_index_drop
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT COUNT(*) FROM pg_class WHERE relname = 'i';
+----
+count
+0
+
+
+connection after_index_drop
+query ok
+SELECT COUNT(*) FROM pg_class WHERE relname = 't';
+----
+count
+1
+
+
+connection after_index_drop
+statement ok
+CREATE INDEX i ON s1.t USING inverted(id);
+
+
+connection after_index_drop
+statement ok
+SET sdb_fault_crash_on_drop TO DEFAULT;
+
+
+connection after_index_drop
+statement error connection closed
+DROP TABLE s1.t;
+
+
+connection after_table_drop
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT COUNT(*) FROM pg_class WHERE relname = 'i' OR relname = 't';
+----
+count
+0
+
+connection after_table_drop
+statement ok
+CREATE TABLE s1.t(id INTEGER);
+
+
+connection after_table_drop
+statement ok
+CREATE INDEX i on s1.t USING inverted(id);
+
+
+connection after_table_drop
+statement ok
+CREATE TABLE s2.t(id INTEGER);
+
+
+connection after_table_drop
+statement ok
+SET sdb_fault_crash_on_drop TO DEFAULT;
+
+
+connection after_table_drop
+statement error connection closed
+DROP SCHEMA s1 CASCADE;
+
+
+connection after_schema_drop
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+select COUNT(*) FROM pg_class WHERE relname = 't';
+----
+count
+1
+
+
+connection after_schema_drop
+statement ok
+CREATE SCHEMA s1;
+
+

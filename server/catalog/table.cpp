@@ -114,10 +114,10 @@ velox::RowTypePtr BuildRowType(const std::vector<Column>& columns) {
   return velox::ROW(std::move(names), std::move(types));
 }
 
-Table::Table(TableOptions&& options, ObjectId database_id)
+Table::Table(TableOptions&& options, ObjectId database_id, ObjectId schema_id)
   : SchemaObject{{},
                  database_id,
-                 options.schema_id,
+                 schema_id,
                  options.id,
                  std::move(options.name),
                  ObjectType::Table},
@@ -181,6 +181,7 @@ struct Table::TableOutput {
   const KeyGenerator* keyOptions;
   std::shared_ptr<ShardMap> shards;
   Identifier id;
+  ObjectId schema_id;
   ForeignId distributeShardsLike;
   Identifier planId;
   ObjectId planDb;
@@ -206,6 +207,7 @@ Table::TableOutput Table::MakeTableOptions() const {
     .keyOptions = _key_generator.get(),
     .shards = _shard_ids,
     .id = Identifier{GetId().id()},
+    .schema_id = Identifier{GetId().id()},
     .distributeShardsLike = ForeignId{_distribute_shards_like.id()},
     .planId = Identifier{_plan_id.id()},
     .planDb = _plan_db,

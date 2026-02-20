@@ -24,13 +24,10 @@ transaction_isolation
 repeatable read
 
 
-# 2. SET TRANSACTION outside a transaction block -> error
+# 2. SET TRANSACTION outside a transaction block -> just warning, not an error
 # Warning in Postgres
-skipif postgres
-statement error
+statement ok
 SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
-----
-db error: ERROR: SET TRANSACTION can only be used in transaction blocks
 
 
 # Variables unchanged after the error
@@ -407,3 +404,106 @@ SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
 
 statement ok
 ROLLBACK;
+
+
+# 15. SET transaction_isolation = '...' must be called before any query
+#     Begin RR, execute a SELECT (marks HasRocksDBRead), then attempt to change
+#     isolation level -> error
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+query
+SELECT * FROM t_iso;
+----
+id
+
+
+# Now HasRocksDBRead is set; changing to a different level must fail
+statement error
+SET transaction_isolation = 'read committed';
+----
+db error: ERROR: SET TRANSACTION ISOLATION LEVEL must be called before any query
+
+
+statement ok
+ROLLBACK;
+
+# Setting to the same level after a query is allowed (no level change)
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+query
+SELECT * FROM t_iso;
+----
+id
+
+
+statement ok
+SET transaction_isolation = 'repeatable read';
+
+statement ok
+ROLLBACK;
+
+
+# 16. RESET transaction_isolation -> error
+skipif postgres
+statement error
+RESET transaction_isolation;
+----
+db error: ERROR: parameter "transaction_isolation" cannot be reset
+
+
+# 17. SET transaction_isolation TO DEFAULT -> error
+skipif postgres
+statement error
+SET transaction_isolation TO DEFAULT;
+----
+db error: ERROR: parameter "transaction_isolation" cannot be reset
+
+
+# 18. RESET default_transaction_isolation works properly
+#     Set via SET SESSION CHARACTERISTICS, then RESET restores the system default
+statement ok
+SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL READ COMMITTED;
+
+query
+SHOW default_transaction_isolation;
+----
+default_transaction_isolation
+read committed
+
+
+statement ok
+RESET default_transaction_isolation;
+
+skipif postgres
+query
+SHOW default_transaction_isolation;
+----
+default_transaction_isolation
+repeatable read
+
+
+# 19. SET default_transaction_isolation TO DEFAULT works properly
+#     Set via SET default_transaction_isolation = ..., then SET TO DEFAULT restores the system default
+skipif postgres
+statement ok
+SET default_transaction_isolation = 'read committed';
+
+skipif postgres
+query
+SHOW default_transaction_isolation;
+----
+default_transaction_isolation
+read committed
+
+skipif postgres
+statement ok
+SET default_transaction_isolation TO DEFAULT;
+
+skipif postgres
+query
+SHOW default_transaction_isolation;
+----
+default_transaction_isolation
+repeatable read

@@ -23,6 +23,7 @@
 #include "basics/down_cast.h"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
+#include "pg/isolation_level.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_exception_macro.h"
 #include "query/config.h"
@@ -143,68 +144,6 @@ yaclib::Future<Result> ProcessFailurePoint(std::string_view stmt_name,
 
 #endif
 
-std::string GetIsolationLevel(const VariableSetStmt& stmt) {
-  if (stmt.kind == VAR_SET_MULTI) {
-    std::string level;
-    VisitNodes(stmt.args, [&](const DefElem& option) {
-      std::string_view opt_name = option.defname;
-      if (opt_name == "transaction_isolation") {
-        level = strVal(&castNode(A_Const, option.arg)->val);
-        if (!ValidateValue(VariableType::SdbTransactionIsolation, level)) {
-          THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                          ERR_MSG("transaction isolation level \"", level,
-                                  "\" is not supported"));
-        }
-        return;
-      }
-      if (opt_name == "transaction_read_only") {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-          ERR_MSG("transaction READ WRITE | READ ONLY is not supported yet"));
-      }
-      if (opt_name == "transaction_deferrable") {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                        ERR_MSG("transaction DEFERRABLE is not supported yet"));
-      }
-      SDB_ASSERT(!opt_name.data());
-    });
-    return level;
-  }
-  SDB_ASSERT(stmt.kind == VAR_SET_VALUE);
-  if (list_length(stmt.args) != 1) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("SET ", stmt.name, " takes only one argument"));
-  }
-  return ProcessValue(*list_nth_node(A_Const, stmt.args, 0));
-};
-
-constexpr std::string_view IsolationLevelName(IsolationLevel isolation_level) {
-  switch (isolation_level) {
-    case IsolationLevel::ReadCommitted:
-      return "read committed";
-    case IsolationLevel::RepeatableRead:
-      return "repeatable read";
-    default:
-      SDB_UNREACHABLE();
-  }
-}
-
-void ValidateIsolationLevel(std::string_view isolation_level) {
-  const bool is_unsupported =
-    isolation_level == "read uncommitted" || isolation_level == "serializable";
-  if (is_unsupported) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG("transaction isolation level \"", isolation_level,
-                            "\" is not supported"));
-  }
-  if (!ValidateValue(VariableType::SdbTransactionIsolation, isolation_level)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("invalid value for parameter \"transaction_isolation\": \"",
-              isolation_level, "\""));
-  }
-}
-
 // SET TRANSACTION statement and "transaction_isolation" variable processing
 void ProcessTransactionIsolation(sdb::ConnectionContext& conn_ctx,
                                  const VariableSetStmt& stmt) {
@@ -240,8 +179,8 @@ void ProcessTransactionIsolation(sdb::ConnectionContext& conn_ctx,
                   "any query"));
       }
 
-      conn_ctx.Set(Config::VariableContext::Local, "transaction_isolation",
-                   std::string{isolation_level});
+      conn_ctx.Set(Config::VariableContext::Local, kTransactionIsolation,
+                   std::move(isolation_level));
     } break;
     default:
       SDB_UNREACHABLE();
@@ -259,16 +198,16 @@ void ProcessDefaultTransactionIsolation(sdb::ConnectionContext& conn_ctx,
 
   switch (stmt.kind) {
     case VAR_SET_DEFAULT: {
-      auto description = GetDefaultDescription("default_transaction_isolation");
+      auto description = GetDefaultDescription(kDefaultTransactionIsolation);
       SDB_ASSERT(description);
       auto default_value = description->default_value;
       SDB_ASSERT(default_value.data());
 
-      conn_ctx.Set(var_ctx, "default_transaction_isolation",
+      conn_ctx.Set(var_ctx, kDefaultTransactionIsolation,
                    std::string{default_value});
     } break;
     case VAR_RESET:
-      conn_ctx.Reset("default_transaction_isolation");
+      conn_ctx.Reset(kDefaultTransactionIsolation);
       break;
     case VAR_SET_VALUE:
       [[fallthrough]];
@@ -278,12 +217,12 @@ void ProcessDefaultTransactionIsolation(sdb::ConnectionContext& conn_ctx,
       SDB_ASSERT(absl::c_none_of(isolation_level, absl::ascii_isupper));
       ValidateIsolationLevel(isolation_level);
 
-      conn_ctx.Set(var_ctx, "default_transaction_isolation",
-                   std::string{isolation_level});
       if (var_ctx == Config::VariableContext::Session) {
-        conn_ctx.Set(Config::VariableContext::Session, "transaction_isolation",
-                     std::string{isolation_level});
+        conn_ctx.Set(Config::VariableContext::Session, kTransactionIsolation,
+                     isolation_level);
       }
+      conn_ctx.Set(var_ctx, kDefaultTransactionIsolation,
+                   std::move(isolation_level));
     } break;
     default:
       SDB_UNREACHABLE();
@@ -338,12 +277,12 @@ yaclib::Future<Result> VariableSet(ExecContext& ctx,
       ERROR_FAILED, "unrecognized configuration parameter \"", stmt.name, "\"");
   }
 
-  if (value_name == "transaction_isolation") {
+  if (value_name == kTransactionIsolation) {
     ProcessTransactionIsolation(conn_ctx, stmt);
     return {};
   }
 
-  if (value_name == "default_transaction_isolation") {
+  if (value_name == kDefaultTransactionIsolation) {
     ProcessDefaultTransactionIsolation(conn_ctx, stmt);
     return {};
   }

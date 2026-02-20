@@ -117,8 +117,6 @@ constexpr auto kVariableDescription =
         "",
       },
     },
-    // TODO(mkornaukhov) test description. Looks like <slt:ignore> for certain
-    // level is requires
     {
       "default_transaction_isolation",
       {

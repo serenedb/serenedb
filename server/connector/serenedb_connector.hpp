@@ -647,7 +647,9 @@ class SereneDBConnector final : public velox::connector::Connector {
         transaction.GetCatalogSnapshot()->GetObject<catalog::Table>(object_key);
       SDB_ASSERT(table_ptr);
       auto fail_on_ryow = absl::StrCat(table_ptr->GetName(), "_fail_on_ryow");
-      SDB_IF_FAILURE(fail_on_ryow) { SDB_IMMEDIATE_ABORT(); }
+      SDB_IF_FAILURE(fail_on_ryow) {
+        SDB_THROW(ERROR_DEBUG, fail_on_ryow, " condition failed");
+      }
 #endif
 
       return std::make_unique<RocksDBRYOWDataSource>(

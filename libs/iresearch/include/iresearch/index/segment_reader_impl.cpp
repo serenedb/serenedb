@@ -55,6 +55,12 @@ class AllIterator : public DocIterator {
     return _doc.value;
   }
 
+  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
+               ScoreCollector& collector) final {
+    // TODO(gnusi): optimize
+    CollectImpl(*this, scorer, fetcher, collector);
+  }
+
   uint32_t count() noexcept final {
     if (doc_limits::eof(_doc.value)) {
       return 0;
@@ -97,7 +103,13 @@ class MaskDocIterator : public DocIterator {
     return advance();
   }
 
-  uint32_t count() final { return Count(*this); }
+  uint32_t count() final { return CountImpl(*this); }
+
+  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
+               ScoreCollector& collector) final {
+    // TODO(gnusi): optimize
+    CollectImpl(*this, scorer, fetcher, collector);
+  }
 
  private:
   const DocumentMask& _mask;  // excluded document ids
@@ -138,7 +150,13 @@ class MaskedDocIterator : public DocIterator {
     return advance();
   }
 
-  uint32_t count() final { return Count(*this); }
+  uint32_t count() final { return CountImpl(*this); }
+
+  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
+               ScoreCollector& collector) final {
+    // TODO(gnusi): optimize
+    CollectImpl(*this, scorer, fetcher, collector);
+  }
 
  private:
   const DocumentMask& _docs_mask;

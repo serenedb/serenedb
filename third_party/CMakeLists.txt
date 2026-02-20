@@ -220,6 +220,13 @@ set(BENCHMARK_CXX_STANDARD ${CMAKE_CXX_STANDARD} CACHE STRING "" FORCE)
 add_subdirectory(benchmark)
 
 ################################################################################
+### streamvbyte library
+################################################################################
+
+sdb_update_module(${GIT_EXECUTABLE} "streamvbyte" ${CMAKE_CURRENT_SOURCE_DIR} "LICENSE")
+add_subdirectory(streamvbyte)
+
+################################################################################
 ### sse2neon library -- need this after abseil and highway, but before simdcomp
 ################################################################################
 

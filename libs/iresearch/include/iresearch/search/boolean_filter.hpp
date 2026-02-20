@@ -56,6 +56,10 @@ class BooleanFilter : public FilterWithBoost, public AllDocsProvider {
   void clear() { _filters.clear(); }
   bool empty() const { return _filters.empty(); }
   size_t size() const { return _filters.size(); }
+  auto& operator[](this auto& self, size_t i) noexcept {
+    SDB_ASSERT(i < self._filters.size());
+    return *self._filters[i];
+  }
 
   Filter::ptr PopBack() {
     if (_filters.empty()) {

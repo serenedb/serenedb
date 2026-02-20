@@ -23,19 +23,23 @@
 #include <string>
 
 #include "catalog/object.h"
+#include "catalog/table_options.h"
+#include "catalog/types.h"
 
-namespace sdb::catalog {
+namespace sdb {
 
-enum class IndexType : uint8_t {
-  Secondary = 0,
-  Inverted,
-};
+class IndexShard;
+
+namespace catalog {
 
 struct IndexBaseOptions {
+  ObjectId database_id;
+  ObjectId schema_id;
   ObjectId id;
-  ObjectId relation_id;
+  ObjectId relation_id;  // relation, which is being indexed
   std::string name;
-  IndexType type = IndexType::Secondary;
+  IndexType type = IndexType::Unknown;
+  std::vector<Column::Id> column_ids;
 };
 
 template<typename Impl>
@@ -48,33 +52,47 @@ class Index : public SchemaObject {
  public:
   auto GetIndexType() const noexcept { return _type; }
   auto GetRelationId() const noexcept { return _relation_id; }
+  std::span<const Column::Id> GetColumnIds() const noexcept {
+    return _column_ids;
+  }
+  void WriteInternal(vpack::Builder& builder) const override;
+
+  virtual ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
+    bool is_new, vpack::Slice args) const = 0;
+
+  virtual ~Index() = default;
 
  protected:
-  Index(IndexBaseOptions options, ObjectId database_id);
+  struct IndexOutput;
+  IndexOutput MakeIndexOutput() const;
 
- private:
+  Index(IndexBaseOptions options);
+
   ObjectId _relation_id;
   IndexType _type;
+  std::vector<Column::Id> _column_ids;
 };
 
-ResultOr<std::shared_ptr<Index>> CreateIndex(
-  ObjectId database_id, IndexOptions<vpack::Slice> options);
+ResultOr<std::shared_ptr<Index>> MakeIndex(IndexBaseOptions options);
+Result ValidateIndexOptions(const IndexBaseOptions& options,
+                            std::span<const Column*> indexed_columns);
 
-ResultOr<std::shared_ptr<Index>> CreateIndex(const SchemaObject& relation,
-                                             IndexBaseOptions options);
+}  // namespace catalog
 
-}  // namespace sdb::catalog
+}  // namespace sdb
 
 namespace magic_enum {
 
 template<>
-constexpr customize::customize_t customize::enum_name<sdb::catalog::IndexType>(
-  sdb::catalog::IndexType type) noexcept {
+constexpr customize::customize_t customize::enum_name<sdb::IndexType>(
+  sdb::IndexType type) noexcept {
   switch (type) {
-    case sdb::catalog::IndexType::Secondary:
+    case sdb::IndexType::Unknown:
+      return "unknown";
+    case sdb::IndexType::Secondary:
       return "secondary";
-    case sdb::catalog::IndexType::Inverted:
-      return "gin";
+    case sdb::IndexType::Inverted:
+      return "inverted";
     default:
       return invalid_tag;
   }

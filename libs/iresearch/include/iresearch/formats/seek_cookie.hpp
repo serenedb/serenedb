@@ -31,14 +31,6 @@ namespace irs {
 // Implementation defined term value state
 struct SeekCookie : AttributeProvider {
   using ptr = std::unique_ptr<SeekCookie>;
-
-  // Return `true` is cookie denoted by `rhs` is equal to the given one,
-  // false - otherwise.
-  // Caller must provide correct cookie type for comparison
-  virtual bool IsEqual(const SeekCookie& rhs) const = 0;
-
-  // Return cookie hash value.
-  virtual size_t Hash() const = 0;
 };
 
 }  // namespace irs

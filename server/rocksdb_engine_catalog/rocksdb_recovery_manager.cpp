@@ -281,56 +281,8 @@ class WBReader final : public rocksdb::WriteBatch::Handler {
     //          - databases
 
     if (column_family_id == RocksDBColumnFamilyManager::get(
-                              RocksDBColumnFamilyManager::Family::Documents)
+                              RocksDBColumnFamilyManager::Family::Definitions)
                               ->GetID()) {
-      StoreMaxHlc(RocksDBKey::documentId(key).id());
-    } else if (column_family_id ==
-               RocksDBColumnFamilyManager::get(
-                 RocksDBColumnFamilyManager::Family::PrimaryIndex)
-                 ->GetID()) {
-      // document key
-      std::string_view ref = RocksDBKey::primaryKey(key);
-      SDB_ASSERT(!ref.empty());
-      if (ref.empty()) {
-        return;
-      }
-      // check if the key is numeric
-      if (ref[0] >= '1' && ref[0] <= '9') {
-        // numeric start byte. looks good
-        bool valid;
-        uint64_t tick = number_utils::Atoi<uint64_t>(
-          ref.data(), ref.data() + ref.size(), valid);
-        if (valid && tick > _max_tick_found) {
-          uint64_t compare_tick = _max_tick_found;
-          if (compare_tick == 0) {
-            compare_tick = _minimum_server_tick;
-          }
-          // if no previous _max_tick_found set or the numeric value found is
-          // "near" our previous _max_tick_found, then we update it
-          if (tick > compare_tick && (tick - compare_tick) < 2048) {
-            StoreMaxTick(tick);
-          }
-        }
-        // else we got a non-numeric key. simply ignore it
-      }
-
-#ifdef SDB_CLUSTER
-      auto idx = FindIndex(RocksDBKey::objectId(key));
-      if (idx) {
-        auto& catalog =
-          SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
-        auto c = catalog.Local().GetSnapshot()->GetObject<catalog::Table>(
-          idx->GetMeta().id);
-        SDB_ENSURE(c, ERROR_INTERNAL);
-
-        c->keyGenerator().track(ref);
-      }
-#endif
-
-    } else if (column_family_id ==
-               RocksDBColumnFamilyManager::get(
-                 RocksDBColumnFamilyManager::Family::Definitions)
-                 ->GetID()) {
       const auto type = RocksDBKey::type(key);
 
       // TODO(gnusi): using tick from RocksDBKey::dataSourceId(key)
@@ -343,23 +295,15 @@ class WBReader final : public rocksdb::WriteBatch::Handler {
         }
       };
 
-      if (type == RocksDBEntryType::Collection) {
-        update_tick([&] { StoreMaxTick(RocksDBKey::dataSourceId(key).id()); });
-        auto slice = RocksDBValue::data(value);
-        vpack::Slice indexes = slice.get("indexes");
-        for (vpack::Slice idx : vpack::ArrayIterator(indexes)) {
-          StoreMaxTick(std::max(
-            basics::VPackHelper::stringUInt64(idx, StaticStrings::kObjectId),
-            basics::VPackHelper::stringUInt64(idx, StaticStrings::kIndexId)));
-        }
-      } else if (type == RocksDBEntryType::Database) {
+      if (type == RocksDBEntryType::Database) {
         StoreMaxTick(RocksDBKey::databaseId(key));
+      } else if (type == RocksDBEntryType::Schema) {
+        StoreMaxTick(RocksDBKey::SchemaId(key).id());
       } else if (type == RocksDBEntryType::Function ||
-                 type == RocksDBEntryType::View) {
-        update_tick([&] {
-          StoreMaxTick(std::max(RocksDBKey::databaseId(key),
-                                RocksDBKey::dataSourceId(key).id()));
-        });
+                 type == RocksDBEntryType::View ||
+                 type == RocksDBEntryType::Table ||
+                 type == RocksDBEntryType::Index) {
+        update_tick([&] { StoreMaxTick(RocksDBKey::dataSourceId(key).id()); });
       }
     }
   }
@@ -383,49 +327,6 @@ class WBReader final : public rocksdb::WriteBatch::Handler {
     IncTick();
 
     UpdateMaxTick(column_family_id, key, value);
-    if (column_family_id == RocksDBColumnFamilyManager::get(
-                              RocksDBColumnFamilyManager::Family::Documents)
-                              ->GetID()) {
-#ifdef SDB_CLUSTER
-      if (auto coll = FindCollection(RocksDBKey::objectId(key)); coll) {
-        auto revision_id = RocksDBKey::documentId(key);
-        coll->meta().adjustNumberDocumentsInRecovery(_current_sequence,
-                                                     revision_id, 1);
-
-        std::vector<uint64_t> inserts;
-        std::vector<uint64_t> removes;
-        inserts.emplace_back(revision_id.id());
-        coll->bufferUpdates(_current_sequence, std::move(inserts),
-                            std::move(removes));
-      }
-#endif
-    } else {
-#ifdef SDB_CLUSTER
-      // We have to adjust the estimate with an insert
-      uint64_t hashval = 0;
-      if (column_family_id == RocksDBColumnFamilyManager::get(
-                                RocksDBColumnFamilyManager::Family::VPackIndex)
-                                ->GetID()) {
-        hashval = RocksDBVPackIndex::HashForKey(key);
-      } else if (column_family_id ==
-                 RocksDBColumnFamilyManager::get(
-                   RocksDBColumnFamilyManager::Family::EdgeIndex)
-                   ->GetID()) {
-        hashval = RocksDBEdgeIndex::HashForKey(key);
-      }
-
-      if (hashval != 0) {
-        auto* idx = FindIndex(RocksDBKey::objectId(key));
-        if (idx) {
-          auto* est = idx->estimator();
-          if (est && est->appliedSeq() < _current_sequence) {
-            // We track estimates for this index
-            est->Insert(hashval);
-          }
-        }
-      }
-#endif
-    }
 
     for (auto helper : _engine.recoveryHelpers()) {
       helper->PutCF(column_family_id, key, value, _current_sequence);
@@ -434,57 +335,7 @@ class WBReader final : public rocksdb::WriteBatch::Handler {
     return rocksdb::Status();
   }
 
-  void HandleDeleteCf(uint32_t cf_id, const rocksdb::Slice& key) {
-    IncTick();
-
-    if (cf_id == RocksDBColumnFamilyManager::get(
-                   RocksDBColumnFamilyManager::Family::Documents)
-                   ->GetID()) {
-      uint64_t object_id = RocksDBKey::objectId(key);
-      auto revision_id = RocksDBKey::documentId(key);
-
-      StoreMaxHlc(revision_id.id());
-      StoreMaxTick(object_id);
-
-#ifdef SDB_CLUSTER
-      if (auto coll = FindCollection(RocksDBKey::objectId(key)); coll) {
-        coll->meta().adjustNumberDocumentsInRecovery(_current_sequence,
-                                                     revision_id, -1);
-
-        std::vector<uint64_t> inserts;
-        std::vector<uint64_t> removes;
-        removes.emplace_back(revision_id.id());
-        coll->bufferUpdates(_current_sequence, std::move(inserts),
-                            std::move(removes));
-      }
-#endif
-    } else {
-#ifdef SDB_CLUSTER
-      // We have to adjust the estimate with an insert
-      uint64_t hashval = 0;
-      if (cf_id == RocksDBColumnFamilyManager::get(
-                     RocksDBColumnFamilyManager::Family::VPackIndex)
-                     ->GetID()) {
-        hashval = RocksDBVPackIndex::HashForKey(key);
-      } else if (cf_id == RocksDBColumnFamilyManager::get(
-                            RocksDBColumnFamilyManager::Family::EdgeIndex)
-                            ->GetID()) {
-        hashval = RocksDBEdgeIndex::HashForKey(key);
-      }
-
-      if (hashval != 0) {
-        auto* idx = FindIndex(RocksDBKey::objectId(key));
-        if (idx) {
-          RocksDBCuckooIndexEstimatorType* est = idx->estimator();
-          if (est && est->appliedSeq() < _current_sequence) {
-            // We track estimates for this index
-            est->Remove(hashval);
-          }
-        }
-      }
-#endif
-    }
-  }
+  void HandleDeleteCf(uint32_t cf_id, const rocksdb::Slice& key) { IncTick(); }
 
   rocksdb::Status DeleteCF(uint32_t column_family_id,
                            const rocksdb::Slice& key) override {
@@ -520,37 +371,6 @@ class WBReader final : public rocksdb::WriteBatch::Handler {
     for (auto helper : _engine.recoveryHelpers()) {
       helper->DeleteRangeCF(column_family_id, begin_key, end_key,
                             _current_sequence);
-    }
-
-    // check for a range-delete of the primary index
-    if (column_family_id == RocksDBColumnFamilyManager::get(
-                              RocksDBColumnFamilyManager::Family::Documents)
-                              ->GetID()) {
-      uint64_t object_id = RocksDBKey::objectId(begin_key);
-      SDB_ASSERT(object_id == RocksDBKey::objectId(end_key));
-
-#ifdef SDB_CLUSTER
-      auto coll = FindCollection(object_id);
-      if (!coll) {
-        return rocksdb::Status();
-      }
-
-      uint64_t current_count = coll->meta().numberDocuments();
-      if (current_count != 0) {
-        coll->meta().adjustNumberDocumentsInRecovery(
-          _current_sequence, RevisionId::none(),
-          -static_cast<int64_t>(current_count));
-      }
-      for (const auto& idx : coll->getReadyIndexes()) {
-        RocksDBIndex* ridx = static_cast<RocksDBIndex*>(idx.get());
-        RocksDBCuckooIndexEstimatorType* est = ridx->estimator();
-        SDB_ASSERT(ridx->type() != kTypeEdgeIndex || est);
-        if (est) {
-          est->ClearInRecovery(_current_sequence);
-        }
-      }
-      std::ignore = coll->bufferTruncate(_current_sequence);
-#endif
     }
 
     return rocksdb::Status();  // make WAL iterator happy

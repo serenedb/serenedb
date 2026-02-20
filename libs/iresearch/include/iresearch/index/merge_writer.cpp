@@ -23,9 +23,11 @@
 
 #include "merge_writer.hpp"
 
+#include <iresearch/index/norm.hpp>
 #include <vector>
 
 #include "basics/assert.h"
+#include "basics/containers/small_vector.h"
 #include "basics/down_cast.h"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/utils/string.hpp"
@@ -37,6 +39,7 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/internal/resize_uninitialized.h>
 
+#include "basics/down_cast.h"
 #include "basics/logger/logger.h"
 #include "basics/memory.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
@@ -46,9 +49,6 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/heap_iterator.hpp"
 #include "iresearch/index/index_meta.hpp"
-#include "iresearch/index/norm.hpp"
-#include "iresearch/index/segment_reader.hpp"
-#include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/bytes_output.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -1108,9 +1108,9 @@ class BufferedValues final : public ColumnReader, DataOutput {
   std::string_view name() const noexcept final { return {}; }
 
   bytes_view payload() const noexcept final {
-    return _header.has_value() ? bytes_view{_header->data() + sizeof(uint32_t),
-                                            _header->size() - sizeof(uint32_t)}
-                               : bytes_view{};
+    return _header ? bytes_view{_header->data() + sizeof(uint32_t),
+                                _header->size() - sizeof(uint32_t)}
+                   : bytes_view{};
   }
 
   doc_id_t size() const noexcept final {
@@ -1123,6 +1123,10 @@ class BufferedValues final : public ColumnReader, DataOutput {
 
     // FIXME(gnusi): can avoid allocation with the help of managed_ptr
     return memory::make_managed<BufferedColumnIterator>(_index, _data);
+  }
+
+  NormReader::ptr norms() const final {
+    return MakeNormReader(payload(), _index, _data);
   }
 
   const auto& Index() const { return _index; }

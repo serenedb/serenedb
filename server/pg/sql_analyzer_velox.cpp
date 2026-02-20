@@ -2011,20 +2011,16 @@ class CopyOptionsParser {
 
  private:
   std::string_view TryFormatFromFile() const {
+    // text format is default so detecting it here would be redundant
     const auto pos = _file_path.rfind('.');
     if (pos == std::string_view::npos) {
       return {};
     }
 
     const auto file_format = _file_path.substr(pos + 1);
-    if (file_format == "csv" || file_format == "text" ||
-        file_format == "parquet" || file_format == "dwrf" ||
-        file_format == "orc") {
+    if (file_format == "csv" || file_format == "parquet" ||
+        file_format == "dwrf" || file_format == "orc") {
       return file_format;
-    }
-
-    if (file_format == "tsv" || file_format == "txt") {
-      return "text";
     }
 
     return {};
@@ -4862,9 +4858,12 @@ lp::ExprPtr SqlAnalyzer::ProcessAExpr(State& state, const A_Expr& expr) {
         ResolveVeloxFunctionAndInferArgsCommonType("presto_least", {low, high});
       auto greatest_val = ResolveVeloxFunctionAndInferArgsCommonType(
         "presto_greatest", {std::move(low), std::move(high)});
-      auto res = ResolveVeloxFunctionAndInferArgsCommonType(
-        "presto_between",
-        {std::move(lhs), std::move(least_val), std::move(greatest_val)});
+      auto lhs_cmp = ResolveVeloxFunctionAndInferArgsCommonType(
+        "presto_lte", {std::move(least_val), lhs});
+      auto rhs_cmp = ResolveVeloxFunctionAndInferArgsCommonType(
+        "presto_lte", {std::move(lhs), std::move(greatest_val)});
+
+      auto res = MakeAnd({std::move(lhs_cmp), std::move(rhs_cmp)});
       if (expr.kind == AEXPR_NOT_BETWEEN_SYM) {
         return ResolveVeloxFunctionAndInferArgsCommonType("presto_not",
                                                           {std::move(res)});

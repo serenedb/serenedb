@@ -41,10 +41,8 @@ class RocksDBKeyBounds {
  public:
   static RocksDBKeyBounds Empty();
 
-  // Bounds for list of all databases
   static RocksDBKeyBounds Databases();
 
-  // Bounds for all objects belonging to a specified database
   static RocksDBKeyBounds DatabaseObjects(RocksDBEntryType entry,
                                           ObjectId database_id);
 
@@ -52,52 +50,6 @@ class RocksDBKeyBounds {
                                         ObjectId database_id,
                                         ObjectId schema_id);
 
-  // Bounds for all documents belonging to a specified collection
-  static RocksDBKeyBounds CollectionDocuments(uint64_t object_id);
-
-  static RocksDBKeyBounds CollectionDocuments(uint64_t object_id,
-                                              uint64_t lower, uint64_t upper);
-
-  // Bounds for all index-entries- belonging to a specified primary index
-  static RocksDBKeyBounds PrimaryIndex(uint64_t index_id);
-
-  // Bounds for all index-entries- within a range belonging to a specified
-  // primary index
-  static RocksDBKeyBounds PrimaryIndex(uint64_t index_id,
-                                       const std::string& lower,
-                                       const std::string& upper);
-
-  // Bounds for all index-entries belonging to a specified edge index
-  static RocksDBKeyBounds EdgeIndex(uint64_t index_id);
-
-  // Bounds for all index-entries belonging to a specified edge index
-  // related to the specified vertex
-  static RocksDBKeyBounds EdgeIndexVertex(uint64_t index_id,
-                                          std::string_view vertex_id);
-
-  // Bounds for all index-entries belonging to a specified non-unique
-  // index
-  static RocksDBKeyBounds VPackIndex(uint64_t index_id, bool reverse);
-
-  // Bounds for all entries belonging to a specified unique index
-  static RocksDBKeyBounds UniqueVPackIndex(uint64_t index_id, bool reverse);
-
-  // Bounds for all index-entries within a value range belonging to a
-  // specified non-unique index
-  static RocksDBKeyBounds VPackIndex(uint64_t index_id, vpack::Slice left,
-                                     vpack::Slice right);
-
-  // Bounds for all documents within a value range belonging to a
-  // specified unique index
-  static RocksDBKeyBounds UniqueVPackIndex(uint64_t index_id, vpack::Slice left,
-                                           vpack::Slice right);
-
-  // Bounds for all documents within a value range belonging to a
-  // specified unique index. this method is used for point lookups
-  static RocksDBKeyBounds UniqueVPackIndex(uint64_t index_id,
-                                           vpack::Slice left);
-
- public:
   RocksDBKeyBounds(const RocksDBKeyBounds& other) = default;
   RocksDBKeyBounds(RocksDBKeyBounds&& other) noexcept = default;
   RocksDBKeyBounds& operator=(const RocksDBKeyBounds& other) = default;
@@ -124,20 +76,11 @@ class RocksDBKeyBounds {
   // for bound is used.
   rocksdb::ColumnFamilyHandle* columnFamily() const;
 
-  // Returns the object ID for these bounds
-  //
-  // This method is only valid for certain types of bounds: Documents and
-  // Index entries.
-  uint64_t objectId() const;
-
   // clears the bounds' internals
   void clear() noexcept { _internals.clear(); }
 
   // checks if the bounds' internals are empty
   bool empty() const noexcept { return _internals.empty(); }
-
-  void fill(RocksDBEntryType type, uint64_t first, vpack::Slice second,
-            vpack::Slice third);
 
  private:
   // constructor for an empty bound. do not use for anything but to
@@ -145,16 +88,6 @@ class RocksDBKeyBounds {
   RocksDBKeyBounds() = default;
 
   RocksDBKeyBounds(RocksDBEntryType type, uint64_t first);
-  RocksDBKeyBounds(RocksDBEntryType type, uint64_t first, bool second);
-  RocksDBKeyBounds(RocksDBEntryType type, uint64_t first,
-                   std::string_view second);
-  RocksDBKeyBounds(RocksDBEntryType type, uint64_t first, vpack::Slice second);
-  RocksDBKeyBounds(RocksDBEntryType type, uint64_t first, vpack::Slice second,
-                   vpack::Slice third);
-  RocksDBKeyBounds(RocksDBEntryType type, uint64_t first, uint64_t second,
-                   uint64_t third);
-  RocksDBKeyBounds(RocksDBEntryType type, uint64_t id, std::string_view lower,
-                   std::string_view upper);
 
   // TODO(gnusi): remove? looks useless
   template<typename Sink>
@@ -263,11 +196,8 @@ class RocksDBKeyBounds {
 
   auto& internals(this auto& self) { return self._internals; }
 
-  RocksDBEntryType _type = RocksDBEntryType::VPackIndexValue;
+  RocksDBEntryType _type = RocksDBEntryType::Placeholder;
   BoundsBuffer _internals;
 };
-
-RocksDBKeyBounds GetIndexBounds(IndexType type, uint64_t object_id,
-                                bool unique);
 
 }  // namespace sdb

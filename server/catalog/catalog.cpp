@@ -45,6 +45,7 @@
 #include "catalog/schema.h"
 #include "catalog/table.h"
 #include "catalog/view.h"
+#include "general_server/scheduler.h"
 #include "general_server/state.h"
 #include "rest_server/serened.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
@@ -216,10 +217,31 @@ Result CatalogFeature::AddRoles() {
 
 Result CatalogFeature::ProcessTombstones() {
   auto& engine = GetServerEngine();
-  auto process_schema = [&](ObjectId database_id,
-                            ObjectId schema_id) -> Result {
+
+  auto process_indexes = [&](ObjectId database_id, ObjectId schema_id) {
     return engine.VisitSchemaObjects(
-      database_id, schema_id, RocksDBEntryType::Collection,
+      database_id, schema_id, RocksDBEntryType::Index,
+      [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
+        IndexBaseOptions options;
+
+        if (auto r = vpack::ReadTupleNothrow(slice, options); !r.ok()) {
+          return ErrorMeta(r.errorNumber(), "index", r.errorMessage(), slice);
+        }
+
+        IndexTombstone tombstone;
+        tombstone.old_database = options.database_id;
+        tombstone.old_schema = options.schema_id;
+        tombstone.id = options.id;
+        tombstone.type = options.type;
+
+        Local().RegisterIndexDrop(std::move(tombstone));
+        return {};
+      });
+  };
+
+  auto process_tables = [&](ObjectId database_id, ObjectId schema_id) {
+    return engine.VisitSchemaObjects(
+      database_id, schema_id, RocksDBEntryType::Table,
       [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
         CreateTableOptions options;
 
@@ -235,35 +257,40 @@ Result CatalogFeature::ProcessTombstones() {
         TableTombstone tombstone;
         tombstone.table = options.id;
 
-        // TODO(gnusi): this will be gone once we have normal indexes
-        struct IndexMeta {
-          std::string_view objectId;  // NOLINT
-          sdb::IndexType type = sdb::IndexType::kTypeUnknown;
-          bool unique = false;
-        };
-        for (auto index_slice : vpack::ArrayIterator{options.indexes}) {
-          IndexMeta index;
-          auto r = vpack::ReadObjectNothrow(
-            index_slice, index, {.skip_unknown = true, .strict = false});
-          if (!r.ok()) {
-            return ErrorMeta(r.errorNumber(), "index", r.errorMessage(),
-                             index_slice);
-          }
-          ObjectId index_id{basics::string_utils::Uint64(index.objectId)};
-          if (!index_id.isSet()) {
-            continue;
-          }
-          tombstone.indexes.emplace_back(index_id, index.type,
-                                         std::numeric_limits<uint64_t>::max(),
-                                         index.unique);
-        }
-
         Local().RegisterTableDrop(std::move(tombstone));
         return {};
       });
   };
 
+  auto process_schema = [&](ObjectId database_id, ObjectId schema_id) {
+    auto r = process_indexes(database_id, schema_id);
+    if (!r.ok()) {
+      return r;
+    }
+    return process_tables(database_id, schema_id);
+  };
+
   auto r = engine.VisitObjects(
+    id::kTombstoneDatabase, RocksDBEntryType::IndexTombstone,
+    [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
+      IndexTombstone tombstone;
+
+      if (auto r = vpack::ReadTupleNothrow<IndexTombstone>(slice, tombstone);
+          !r.ok()) {
+        return ErrorMeta(r.errorNumber(), "index tombstone", r.errorMessage(),
+                         slice);
+      }
+
+      Local().RegisterIndexDrop(std::move(tombstone));
+      return {};
+    });
+
+  if (!r.ok()) {
+    return {r.errorNumber(),
+            "Failed to process index tombstones, error: ", r.errorMessage()};
+  }
+
+  r = engine.VisitObjects(
     id::kTombstoneDatabase, RocksDBEntryType::TableTombstone,
     [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
       TableTombstone tombstone;
@@ -293,7 +320,7 @@ Result CatalogFeature::ProcessTombstones() {
                          "invalid database id", slice);
       }
 
-      ObjectId schema_id{RocksDBKey::objectId(key)};
+      ObjectId schema_id{RocksDBKey::databaseId(key)};
 
       auto r = [&] {
         if (schema_id.isSet()) {
@@ -302,7 +329,7 @@ Result CatalogFeature::ProcessTombstones() {
           return engine.VisitObjects(
             database_id, RocksDBEntryType::Schema,
             [&](rocksdb::Slice key, vpack::Slice slice) {
-              ObjectId schema_id{RocksDBKey::objectId(key)};
+              ObjectId schema_id{RocksDBKey::databaseId(key)};
               if (!schema_id.isSet()) {
                 return ErrorMeta(ERROR_BAD_PARAMETER, "schema",
                                  "invalid schema id", slice);
@@ -326,7 +353,7 @@ Result CatalogFeature::ProcessTombstones() {
 
 Result CatalogFeature::AddTables(ObjectId database_id, const Schema& schema) {
   return GetServerEngine().VisitSchemaObjects(
-    database_id, schema.GetId(), RocksDBEntryType::Collection,
+    database_id, schema.GetId(), RocksDBEntryType::Table,
     [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
       CreateTableOptions options;
 
@@ -347,16 +374,20 @@ Result CatalogFeature::AddIndexes(ObjectId database_id, const Schema& schema) {
   return GetServerEngine().VisitSchemaObjects(
     database_id, schema.GetId(), RocksDBEntryType::Index,
     [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
-      IndexOptions<vpack::Slice> options;
+      IndexBaseOptions options;
 
       if (auto r = vpack::ReadTupleNothrow(slice, options); !r.ok()) {
-        return ErrorMeta(r.errorNumber(), "index", r.errorMessage(), slice);
+        return r;
       }
 
-      return Local().RegisterIndex(
-        database_id, schema.GetName(), [&](const SchemaObject*) {
-          return CreateIndex(database_id, std::move(options));
-        });
+      vpack::Slice shard_data;
+      auto shard_builder = GetServerEngine().LoadIndexShard(options.id);
+      if (shard_builder) {
+        shard_data = shard_builder->slice();
+      }
+
+      return Local().RegisterIndex(database_id, schema.GetName(),
+                                   std::move(options), shard_data);
     });
 }
 

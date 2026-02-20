@@ -473,7 +473,7 @@ void SparseBitmapIterator::read_block_header() {
   } else if (popcnt <= kBitSetThreshold) {
     const size_t block_size = 2 * popcnt;
     _cont_begin = _in->Position() + block_size;
-    _ctx.u8data = _in->ReadBuffer(block_size, BufferHint::NORMAL);
+    _ctx.u8data = _in->ReadView(block_size);
     _ctx.sparse.index = _index;
 
     _seek_func = GetSeekFunc<kBtSparse>(_ctx.u8data, _track_prev_doc);
@@ -484,8 +484,7 @@ void SparseBitmapIterator::read_block_header() {
     _ctx.dense.word_idx = -1;
     _ctx.dense.popcnt = _index;
     if (_use_block_index) {
-      _ctx.dense.index.u8data =
-        _in->ReadBuffer(kDenseIndexBlockSizeInBytes, BufferHint::PERSISTENT);
+      _ctx.dense.index.u8data = _in->ReadData(kDenseIndexBlockSizeInBytes);
 
       if (!_ctx.dense.index.u8data) {
         if (!_block_index_data) {
@@ -503,7 +502,7 @@ void SparseBitmapIterator::read_block_header() {
     }
 
     _cont_begin = _in->Position() + kBlockSize;
-    _ctx.u8data = _in->ReadBuffer(kBlockSize, BufferHint::NORMAL);
+    _ctx.u8data = _in->ReadView(kBlockSize);
 
     _seek_func = GetSeekFunc<kBtDense>(_ctx.u8data, _track_prev_doc);
   }

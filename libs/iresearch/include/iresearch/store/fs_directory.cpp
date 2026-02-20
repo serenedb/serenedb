@@ -279,24 +279,27 @@ class PooledFsIndexInput;
 
 class FsIndexInput : public BufferedIndexInput {
  public:
+  uint64_t Length() const noexcept final { return _handle->size; }
+  bool IsEOF() const noexcept final { return Position() >= Length(); }
+
   uint64_t CountMappedMemory() const final { return 0; }
 
   using BufferedIndexInput::ReadInternal;
 
-  uint32_t Checksum(size_t offset) const final {
+  uint32_t Checksum(uint64_t offset) const final {
     // "ReadInternal" modifies pos_
     Finally restore_position = [pos = this->_pos, this]() noexcept {
       const_cast<FsIndexInput*>(this)->_pos = pos;
     };
 
     const auto begin = _pos;
-    const auto end = (std::min)(begin + offset, _handle->size);
+    const auto end = std::min(begin + offset, _handle->size);
 
     Crc32c crc;
     byte_type buf[sizeof _buf];
 
     for (auto pos = begin; pos < end;) {
-      const auto to_read = (std::min)(end - pos, sizeof buf);
+      const auto to_read = std::min(end - pos, sizeof buf);
       pos += const_cast<FsIndexInput*>(this)->ReadInternal(buf, to_read);
       crc.process_bytes(buf, to_read);
     }
@@ -304,7 +307,8 @@ class FsIndexInput : public BufferedIndexInput {
     return crc.checksum();
   }
 
-  ptr Dup() const override { return ptr(new FsIndexInput(*this)); }
+  ptr Dup() const override { return ptr{new FsIndexInput{*this}}; }
+  ptr Reopen() const override;
 
   static IndexInput::ptr Open(const path_char_t* name, size_t pool_size,
                               IOAdvice advice,
@@ -346,12 +350,8 @@ class FsIndexInput : public BufferedIndexInput {
     return nullptr;
   }
 
-  uint64_t Length() const final { return _handle->size; }
-
-  ptr Reopen() const override;
-
  protected:
-  void SeekInternal(size_t pos) final {
+  void SeekInternal(uint64_t pos) final {
     if (pos > _handle->size) {
       throw IoError{absl::StrCat("seek out of range for input file, length '",
                                  _handle->size, "', position '", pos, "'")};
@@ -405,9 +405,9 @@ class FsIndexInput : public BufferedIndexInput {
     }
     operator void*() const { return handle.get(); }
 
-    file_utils::handle_t handle; /* native file handle */
-    size_t size{};               /* file size */
-    size_t pos{};                /* current file position*/
+    file_utils::handle_t handle;  // native file handle
+    uint64_t size{};              // file size
+    uint64_t pos{};               // current file position
     IOAdvice io_advice{IOAdvice::NORMAL};
     const ResourceManagementOptions& resource_manager;
   };
@@ -423,15 +423,16 @@ class FsIndexInput : public BufferedIndexInput {
   byte_type _buf[1024];
   FileHandle::ptr _handle;  // shared file handle
   size_t _pool_size;  // size of pool for instances of pooled_fs_index_input
-  size_t _pos;        // current input stream position
+  uint64_t _pos;      // current input stream position
 };
 
 class PooledFsIndexInput final : public FsIndexInput {
  public:
   explicit PooledFsIndexInput(const FsIndexInput& in);
   ~PooledFsIndexInput() noexcept final;
+
   IndexInput::ptr Dup() const final {
-    return ptr(new PooledFsIndexInput(*this));
+    return ptr{new PooledFsIndexInput{*this}};
   }
   IndexInput::ptr Reopen() const final;
 

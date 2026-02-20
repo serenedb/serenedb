@@ -22,30 +22,42 @@
 
 #pragma once
 
+#include "basics/down_cast.h"
 #include "iresearch/formats/formats.hpp"
 
 namespace irs {
 
 struct TermMetaImpl : TermMeta {
-  TermMetaImpl() noexcept
-    : e_skip_start(0) {}  // GCC 4.9 does not initialize unions properly
-
+  TermMetaImpl() noexcept : e_skip_start{0} {}
   void clear() noexcept {
     TermMeta::clear();
-    doc_start = pos_start = pay_start = 0;
-    pos_end = address_limits::invalid();
+    e_skip_start = doc_start = pos_start = pay_start = pos_offset = 0;
   }
 
   uint64_t doc_start = 0;  // where this term's postings start in the .doc file
   uint64_t pos_start = 0;  // where this term's postings start in the .pos file
-  // file pointer where the last (vInt encoded) pos delta is
-  uint64_t pos_end = address_limits::invalid();
-  // where this term's payloads/offsets start in the .pay file
-  uint64_t pay_start = 0;
+  uint64_t pay_start = 0;  // where this term's postings start in the .pay file
+  // how many positions do we need to skip in positions block
+  size_t pos_offset = 0;
   union {
-    doc_id_t e_single_doc;  // singleton document id delta
     uint64_t e_skip_start;  // pointer where skip data starts (after doc_start)
+    doc_id_t e_single_doc;  // singleton document id delta
   };
+};
+
+struct CookieImpl final : SeekCookie {
+  CookieImpl() = default;
+  explicit CookieImpl(const TermMetaImpl& meta) noexcept : meta(meta) {}
+
+  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
+    if (type == irs::Type<TermMeta>::id()) [[likely]] {
+      return &meta;
+    }
+
+    return nullptr;
+  }
+
+  TermMetaImpl meta;
 };
 
 template<>

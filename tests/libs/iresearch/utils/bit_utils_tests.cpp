@@ -22,10 +22,10 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <climits>
-#include <iresearch/types.hpp>
 
 #include "basics/bit_utils.hpp"
 #include "basics/number_utils.h"
+#include "iresearch/types.hpp"
 #include "tests_shared.hpp"
 
 TEST(bit_utils_test, zig_zag_32) {

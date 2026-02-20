@@ -20,7 +20,12 @@
 
 #include "query/transaction.h"
 
+#include <absl/cleanup/cleanup.h>
+
+#include "basics/assert.h"
+#include "catalog/catalog.h"
 #include "storage_engine/engine_feature.h"
+#include "storage_engine/table_shard.h"
 
 namespace sdb::query {
 
@@ -33,12 +38,49 @@ Result Transaction::Begin() {
 
 Result Transaction::Commit() {
   SDB_ASSERT(_rocksdb_transaction);
-  auto status = _rocksdb_transaction->Commit();
-  if (!status.ok()) {
-    return {ERROR_INTERNAL,
-            "Failed to commit RocksDB transaction: ", status.ToString()};
+
+  auto abort_guard = absl::Cleanup([&] {
+    for (auto& search_transaction : _search_transactions) {
+      search_transaction.second->Abort();
+    }
+    RollbackVariables();
+    Destroy();
+  });
+
+  const uint64_t num_ops =
+    _rocksdb_transaction->GetNumPuts() + _rocksdb_transaction->GetNumDeletes();
+  SDB_ASSERT(_rocksdb_transaction->GetNumMerges() == 0,
+             "We do not expect merges for now");
+
+  if (num_ops > 0) [[likely]] {
+    for (auto& search_transaction : _search_transactions) {
+      // tie iresearch transaction's active segment to current flush context in
+      // writer and let IndexWriter know that he need to wait for this
+      // transaction to settle before proceeding with commit. That is important
+      // as we are committing "on tick" and must ensure that if we mark this
+      // transaction with tick (see below commit calls) writer will not commit
+      // without it. This could happend if background index commit will start
+      // AFTER RocksDB commit but before transaction commit. But as we told
+      // index writer to wait, we are safe.
+      search_transaction.second->RegisterFlush();
+    }
+    auto status = _rocksdb_transaction->Commit();
+    if (!status.ok()) {
+      return {ERROR_INTERNAL,
+              "Failed to commit RocksDB transaction: ", status.ToString()};
+    }
+    // id is first write operation seqno in the WAL
+    auto post_commit_seq = _rocksdb_transaction->GetId();
+    // add number of operations to get last operation seqno
+    post_commit_seq += num_ops - 1;
+
+    for (auto& search_transaction : _search_transactions) {
+      search_transaction.second->Commit(post_commit_seq);
+    }
+    std::move(abort_guard).Cancel();
+    ApplyTableStatsDiffs();
   }
-  ApplyTableStatsDiffs();
+
   CommitVariables();
   Destroy();
   return {};
@@ -46,13 +88,20 @@ Result Transaction::Commit() {
 
 Result Transaction::Rollback() {
   SDB_ASSERT(_rocksdb_transaction);
+
+  auto noexcept_cleanup = absl::Cleanup([&] {
+    for (auto& search_transaction : _search_transactions) {
+      search_transaction.second->Abort();
+    }
+    RollbackVariables();
+    Destroy();
+  });
+
   auto status = _rocksdb_transaction->Rollback();
   if (!status.ok()) {
     return {ERROR_INTERNAL,
             "Failed to rollback RocksDB transaction: ", status.ToString()};
   }
-  RollbackVariables();
-  Destroy();
   return {};
 }
 
@@ -67,7 +116,6 @@ bool Transaction::HasTransactionBegin() const noexcept {
 }
 
 rocksdb::Transaction* Transaction::GetRocksDBTransaction() const noexcept {
-  SDB_ASSERT((_state & State::HasRocksDBWrite) != State::None);
   return _rocksdb_transaction.get();
 }
 
@@ -120,11 +168,13 @@ void Transaction::Destroy() noexcept {
   _storage_snapshot.reset();
   _rocksdb_transaction.reset();
   _rocksdb_snapshot = nullptr;
+  _search_transactions.clear();
+  _table_rows_deltas.clear();
 }
 
 catalog::TableStats Transaction::GetTableStats(ObjectId table_id) const {
   // TODO(codeworse): manage catalog snapshot in transaction
-  auto table_shard = catalog::GetTableShard(table_id);
+  auto table_shard = GetCatalogSnapshot()->GetTableShard(table_id);
   if (!table_shard) {
     SDB_THROW(ERROR_BAD_PARAMETER,
               "Table shard not found for table id: ", table_id);

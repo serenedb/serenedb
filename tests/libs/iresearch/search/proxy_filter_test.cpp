@@ -20,13 +20,12 @@
 /// @author Andrei Lobov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/index/index_writer.hpp>
-#include <iresearch/search/boolean_filter.hpp>
-#include <iresearch/search/proxy_filter.hpp>
-#include <iresearch/search/term_filter.hpp>
-#include <iresearch/store/memory_directory.hpp>
-
 #include "filter_test_case_base.hpp"
+#include "iresearch/index/index_writer.hpp"
+#include "iresearch/search/boolean_filter.hpp"
+#include "iresearch/search/proxy_filter.hpp"
+#include "iresearch/search/term_filter.hpp"
+#include "iresearch/store/memory_directory.hpp"
 #include "tests_shared.hpp"
 
 namespace {

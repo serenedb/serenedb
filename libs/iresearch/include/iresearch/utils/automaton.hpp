@@ -22,10 +22,10 @@
 
 #pragma once
 
-#include <iresearch/types.hpp>
 #include <vector>
 
 #include "basics/shared.hpp"
+#include "iresearch/types.hpp"
 
 // clang-format off
 #include <fst/fst.h>

@@ -25,11 +25,13 @@
 #include <absl/container/node_hash_map.h>
 
 #include <functional>
-#include <iresearch/index/index_meta.hpp>
 
 #include "basics/down_cast.h"
+#include "iresearch/index/index_meta.hpp"
+#include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/index/iterators.hpp"
+#include "iresearch/search/column_collector.hpp"
 #include "iresearch/utils/hash_utils.hpp"
 
 namespace irs {
@@ -40,7 +42,7 @@ struct PreparedStateVisitor;
 struct PrepareContext {
   const IndexReader& index;
   IResourceManager& memory = IResourceManager::gNoop;
-  const Scorers& scorers = Scorers::kUnordered;
+  const Scorer* scorer = nullptr;
   const AttributeProvider* ctx = nullptr;
   score_t boost = kNoBoost;
 
@@ -54,12 +56,20 @@ struct PrepareContext {
 struct ExecutionContext {
   const SubReader& segment;
   IResourceManager& memory = IResourceManager::gNoop;
-  const Scorers& scorers = Scorers::kUnordered;
+  const Scorer* scorer = nullptr;
   const AttributeProvider* ctx = nullptr;
   const DocumentMask* pending_docs_mask = nullptr;
   // If enabled, wand would use first scorer from scorers
   WandContext wand{};
 };
+
+inline IndexFeatures GetFeatures(const Scorer* scorer) noexcept {
+  return scorer ? scorer->GetIndexFeatures() : IndexFeatures::None;
+}
+
+inline size_t GetStatsSize(const Scorer* scorer) noexcept {
+  return scorer ? scorer->stats_size() : 0;
+}
 
 // Base class for all user-side filters
 class Filter {

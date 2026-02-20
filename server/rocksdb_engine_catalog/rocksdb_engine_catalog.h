@@ -65,7 +65,12 @@ class TransactionDB;
 
 namespace sdb {
 
+namespace search {
+class InvertedIndexShard;
+}
+
 class TableShard;
+class IndexShard;
 class RocksDBBackgroundErrorListener;
 class RocksDBBackgroundThread;
 class RocksDBDumpManager;
@@ -180,16 +185,6 @@ class RocksDBEngineCatalog {
 
   void cleanupReplicationContexts();
 
-  ErrorCode getReplicationApplierConfiguration(ObjectId database,
-                                               vpack::Builder& builder);
-  ErrorCode getReplicationApplierConfiguration(vpack::Builder& builder);
-  ErrorCode removeReplicationApplierConfiguration(ObjectId database);
-  ErrorCode removeReplicationApplierConfiguration();
-  ErrorCode saveReplicationApplierConfiguration(ObjectId database,
-                                                vpack::Slice slice,
-                                                bool do_sync);
-  ErrorCode saveReplicationApplierConfiguration(vpack::Slice slice,
-                                                bool do_sync);
   Result createTickRanges(vpack::Builder& builder);
   Result firstTick(uint64_t& tick);
   const WalAccess* walAccess() const;
@@ -245,6 +240,8 @@ class RocksDBEngineCatalog {
 
   void createTable(const catalog::Table& collection, TableShard& physical);
   Result CreateIndex(const catalog::Index& index);
+  Result StoreIndexShard(const IndexShard& index_shard);
+  ResultOr<vpack::Builder> LoadIndexShard(ObjectId index_id);
   Result MarkDeleted(const catalog::Table& collection,
                      const TableShard& physical,
                      const TableTombstone& tombstone);
@@ -256,7 +253,8 @@ class RocksDBEngineCatalog {
   Result RemoveTombstone(ObjectId table_id);
 
   void prepareDropTable(ObjectId collection);
-  Result DropIndex(IndexTombstone tombstone);
+  Result DropIndex(const IndexTombstone& tombstone);
+  Result DropIndexShard(ObjectId index_id);
   Result DropTable(const TableTombstone& tombstone);
 
   void ChangeTable(const catalog::Table& collection,
@@ -407,8 +405,6 @@ class RocksDBEngineCatalog {
     absl::FunctionRef<Result(rocksdb::Slice, vpack::Slice)> visitor);
 
  private:
-  bool UseRangeDelete(ObjectId id, uint64_t number_documents);
-
   Result VisitObjectsImpl(
     const RocksDBKeyBounds& bounds,
     absl::FunctionRef<Result(rocksdb::Slice, vpack::Slice)> visitor);
@@ -429,12 +425,6 @@ class RocksDBEngineCatalog {
 
   void shutdownRocksDBInstance() noexcept;
   void waitForCompactionJobsToFinish();
-  ErrorCode getReplicationApplierConfiguration(const RocksDBKey& key,
-                                               vpack::Builder& builder);
-  ErrorCode removeReplicationApplierConfiguration(const RocksDBKey& key);
-  ErrorCode saveReplicationApplierConfiguration(const RocksDBKey& key,
-                                                vpack::Slice slice,
-                                                bool do_sync);
   void EnsureSystemDatabase();
 
   std::string getCompressionSupport() const;
@@ -592,25 +582,6 @@ class RocksDBEngineCatalog {
   std::shared_ptr<RocksDBDumpManager> _dump_manager;
 };
 
-struct DocCount {
-  rocksdb::SequenceNumber committed_seq;  /// safe sequence number for recovery
-  uint64_t added;                         /// number of added documents
-  uint64_t removed;                       /// number of removed documents
-  RevisionId revision_id;                 /// last used revision id
-
-  DocCount()
-    : committed_seq{0}, added{0}, removed{0}, revision_id{RevisionId::none()} {}
-
-  DocCount(rocksdb::SequenceNumber sq, uint64_t added, uint64_t removed,
-           RevisionId rid)
-    : committed_seq(sq), added(added), removed(removed), revision_id(rid) {}
-
-  explicit DocCount(vpack::Slice slice);
-  void toVPack(vpack::Builder& b) const;
-};
-
-Result DeleteIndexEstimate(rocksdb::DB* db, uint64_t object_id);
-DocCount LoadCollectionCount(rocksdb::DB* db, uint64_t object_id);
 Result DeleteTableMeta(rocksdb::DB*, const TableTombstone& tombstone);
 
 }  // namespace sdb

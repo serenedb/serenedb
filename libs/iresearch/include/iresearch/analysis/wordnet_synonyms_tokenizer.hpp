@@ -22,11 +22,11 @@
 
 #include <absl/container/flat_hash_map.h>
 
-#include <iresearch/analysis/token_attributes.hpp>
 #include <string_view>
 
 #include "analyzers.hpp"
 #include "basics/result.h"
+#include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 
 namespace irs::analysis {

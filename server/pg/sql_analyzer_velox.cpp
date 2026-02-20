@@ -823,8 +823,10 @@ class SqlAnalyzer {
   void ProcessCreateViewStmt(State& state, const ViewStmt& stmt);
   void ProcessCreateStmt(State& state, const CreateStmt& stmt);
   void ProcessCreateTableAsStmt(State& state, const CreateTableAsStmt& stmt);
-  std::pair<std::vector<std::string>, std::vector<lp::ExprPtr>>
-  ProcessIntoClause(State& state, const IntoClause& into);
+
+  using ColumnNamesAndExprs =
+    std::pair<std::vector<std::string>, std::vector<lp::ExprPtr>>;
+  ColumnNamesAndExprs ProcessIntoClause(State& state, const IntoClause& into);
   void ProcessCallStmt(State& state, const CallStmt& stmt);
 
   void ProcessValuesList(State& state, const List* list);
@@ -2755,7 +2757,8 @@ void SqlAnalyzer::ProcessCreateTableAsStmt(State& state,
                     ERR_MSG("CREATE TABLE AS only supports creating tables"));
   }
 
-
+  const SelectStmt& select = *castNode(SelectStmt, stmt.query);
+  ProcessSelectStmt(state, select);
   auto [column_names, column_exprs] = ProcessIntoClause(state, *stmt.into);
   state.root = std::make_shared<lp::TableWriteNode>(
     _id_generator.NextPlanId(), std::move(state.root), nullptr,
@@ -2763,9 +2766,8 @@ void SqlAnalyzer::ProcessCreateTableAsStmt(State& state,
     std::move(column_exprs));
 }
 
-std::pair<std::vector<std::string>, std::vector<lp::ExprPtr>>
-SqlAnalyzer::ProcessIntoClause(State& state, const IntoClause& into) {
-  SDB_ASSERT(state.root);
+SqlAnalyzer::ColumnNamesAndExprs SqlAnalyzer::ProcessIntoClause(
+  State& state, const IntoClause& into) {
   SDB_ASSERT(state.root);
   std::vector<std::string> column_names;
   std::vector<lp::ExprPtr> column_exprs;

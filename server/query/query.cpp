@@ -111,18 +111,18 @@ std::unique_ptr<Query> Query::CreateCTAS(
 Query::Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
              const QueryContext& query_ctx)
   : _query_ctx{query_ctx}, _logical_plan{root} {
-  CompileQuery();
+  // CompileQuery();
 
-  if (_query_ctx.command_type.Has(CommandType::Explain)) {
-    _output_type = velox::ROW({"QUERY PLAN"}, {velox::VARCHAR()});
-  } else {
-    SDB_ASSERT(_execution_plan);
-    const auto& fragments = _execution_plan->fragments();
-    SDB_ASSERT(!fragments.empty());
-    const auto& gather_fragment = fragments.back().fragment.planNode;
-    SDB_ASSERT(gather_fragment);
-    _output_type = gather_fragment->outputType();
-  }
+  // if (_query_ctx.command_type.Has(CommandType::Explain)) {
+  //   _output_type = velox::ROW({"QUERY PLAN"}, {velox::VARCHAR()});
+  // } else {
+  //   SDB_ASSERT(_execution_plan);
+  //   const auto& fragments = _execution_plan->fragments();
+  //   SDB_ASSERT(!fragments.empty());
+  //   const auto& gather_fragment = fragments.back().fragment.planNode;
+  //   SDB_ASSERT(gather_fragment);
+  //   _output_type = gather_fragment->outputType();
+  // }
 }
 
 void Query::CompileQuery() {

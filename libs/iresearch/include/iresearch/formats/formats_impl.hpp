@@ -3071,8 +3071,8 @@ class MaxScoreIterator : public DocIterator {
     for (size_t b = 0; b < kNumBlocks; ++b) {
       const doc_id_t base = min + static_cast<doc_id_t>(b * kBlockSize);
       for (auto word = _mask[b]; word; word = PopBit(word)) {
-        const size_t bit = std::countr_zero(word);
-        const doc_id_t doc = base + static_cast<doc_id_t>(bit);
+        const doc_id_t bit = std::countr_zero(word);
+        const doc_id_t doc = base + bit;
         if (_scores[doc - min] >= threshold) {
           collector.Add(_scores[doc - min], doc);
         }

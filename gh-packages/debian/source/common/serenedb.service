@@ -1,0 +1,38 @@
+# This file is part of package serenedb.
+#
+
+[Unit]
+Description=SereneDB database server
+After=sysinit.target sockets.target timers.target paths.target slices.target network.target syslog.target
+
+[Service]
+# we could use another type for more reliable reporting
+Type=simple
+
+# system limits
+LimitNOFILE=131072
+LimitNPROC=131072
+TasksMax=131072
+
+PIDFile=/var/run/serenedb/serened.pid
+
+# Protect users from making their installation unusable by
+# starting serened with wrong permissions (e.g. as root).
+# This will reset the permissions to the working default.
+ExecStartPre=/usr/bin/install -g serenedb -o serenedb -d /var/tmp/serenedb
+ExecStartPre=/usr/bin/install -g serenedb -o serenedb -d /var/run/serenedb
+ExecStartPre=/usr/bin/env chown -R serenedb:serenedb /var/log/serenedb
+ExecStartPre=/usr/bin/env chmod 700 /var/log/serenedb
+ExecStartPre=/usr/bin/env chown -R serenedb:serenedb /var/lib/serenedb
+ExecStartPre=/usr/bin/env chmod 700 /var/lib/serenedb
+
+ExecStart=/usr/sbin/serened --uid serenedb --gid serenedb --pid-file /var/run/serenedb/serened.pid --temp.path /var/tmp/serenedb --log.foreground-tty true
+
+TimeoutStopSec=3600
+TimeoutSec=3600
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

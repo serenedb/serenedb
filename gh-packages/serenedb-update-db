@@ -1,0 +1,8 @@
+#!/bin/sh
+
+#update db
+/usr/sbin/serened --uid serenedb --gid serenedb --pid-file /var/run/serenedb/serened.pid --server.rest-server false --database.auto-upgrade true
+
+rv=$?
+. /usr/share/serenedb/serenedb-helper
+ar_exit_by_num $rv

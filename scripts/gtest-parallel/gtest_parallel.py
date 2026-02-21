@@ -165,6 +165,9 @@ def get_save_file_path():
     default_cache_path = os.path.join(os.path.expanduser('~'), '.cache')
     cache_path = os.environ.get('XDG_CACHE_HOME', default_cache_path)
 
+  if not os.path.isdir(cache_path):
+    os.makedirs(cache_path, exist_ok=True)
+
   if os.path.isdir(cache_path):
     return os.path.join(cache_path, 'gtest-parallel')
   else:

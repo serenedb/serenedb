@@ -3004,6 +3004,7 @@ class MaxScoreIterator : public DocIterator {
         BuildHeap(window_min);
 
         while (Top() < window_max) {
+          ScoreWindow(window_max);
           CollectWindow(collector, window_max);
 
           if (std::get<ScoreThresholdAttr>(_attrs).value >= _next_threshold) {
@@ -3021,10 +3022,24 @@ class MaxScoreIterator : public DocIterator {
     return (*_first_essential)->it.value();
   }
 
-  void CollectWindow(auto& collector, doc_id_t window_max) {
+  void CollectWindow(auto& collector, doc_id_t min) {
+    const score_t threshold = std::get<ScoreThresholdAttr>(_attrs).value;
+    doc_id_t base = min;
+
+    for (size_t i = 0; i < kNumBlocks; ++i, base += kBlockSize) {
+      for (auto word = _mask[i]; word; word = PopBit(word)) {
+        const doc_id_t bit = std::countr_zero(word);
+        const doc_id_t doc = base + bit;
+        if (_scores[doc - min] > threshold) {
+          collector.Add(_scores[doc - min], doc);
+        }
+      }
+    }
+  }
+
+  void ScoreWindow(doc_id_t window_max) {
     const doc_id_t min = Top();
     const doc_id_t max = std::min(min + kWindow, window_max);
-    const score_t threshold = std::get<ScoreThresholdAttr>(_attrs).value;
 
     std::memset(_mask, 0, kNumBlocks * sizeof(uint64_t));
     std::memset(_scores, 0, (max - min) * sizeof(score_t));
@@ -3035,13 +3050,23 @@ class MaxScoreIterator : public DocIterator {
     score_ctx.merge_type = ScoreMergeType::Sum;
 
     while (Top() < max) {
-      UpdateTop([&](AdapterWrapper& w) {
-        score_ctx.score = &w.scorer;
-        w.it.FillBlock(min, max, _mask, score_ctx, {});
+      UpdateTop([&](AdapterWrapper& it) {
+        score_ctx.score = &it.scorer;
+        it.it.FillBlock(min, max, _mask, score_ctx, {});
       });
     }
 
-    for (auto it = _first_essential; it-- != _itrs_sorted.begin();) {
+    ScoreNonEssential(min, max);
+  }
+
+  void ScoreNonEssential(doc_id_t min, doc_id_t max) {
+    const score_t threshold = std::get<ScoreThresholdAttr>(_attrs).value;
+
+    // TODO(gnusi): consider adaptive scoring strategy based on candidate
+    // density: for sparse hits use per-doc scoring (current), for dense hits
+    // use a kScoreBlock-granularity group mask + batch ScoreFunction call to
+    // amortize scoring overhead across groups of kScoreBlock docs.
+    for (auto it = _first_essential; it != _itrs_sorted.begin(); --it) {
       const score_t budget = static_cast<score_t>((*it)->prefix_score_sum);
       doc_id_t doc = (*it)->it.seek(min);
 
@@ -3058,23 +3083,12 @@ class MaxScoreIterator : public DocIterator {
 
         while (doc < block_end) {
           const size_t offset = doc - min;
-          if (_scores[offset] + budget >= threshold) {
+          if (_scores[offset] + budget > threshold) {
             _fetcher.Fetch(doc);
             (*it)->it.FetchScoreArgs(0);
             _scores[offset] += (*it)->scorer.Score();
           }
           doc = (*it)->it.advance();
-        }
-      }
-    }
-
-    for (size_t b = 0; b < kNumBlocks; ++b) {
-      const doc_id_t base = min + static_cast<doc_id_t>(b * kBlockSize);
-      for (auto word = _mask[b]; word; word = PopBit(word)) {
-        const doc_id_t bit = std::countr_zero(word);
-        const doc_id_t doc = base + bit;
-        if (_scores[doc - min] >= threshold) {
-          collector.Add(_scores[doc - min], doc);
         }
       }
     }

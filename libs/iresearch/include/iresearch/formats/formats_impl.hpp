@@ -3021,8 +3021,63 @@ class MaxScoreIterator : public DocIterator {
     return (*_first_essential)->it.value();
   }
 
-  void CollectWindow(auto& collector, doc_id_t max) {
-    // TODO(gnusi): implement score window
+  void CollectWindow(auto& collector, doc_id_t window_max) {
+    const doc_id_t min = Top();
+    const doc_id_t max = std::min(min + kWindow, window_max);
+    const score_t threshold = std::get<ScoreThresholdAttr>(_attrs).value;
+
+    std::memset(_mask, 0, kNumBlocks * sizeof(uint64_t));
+    std::memset(_scores, 0, (max - min) * sizeof(score_t));
+
+    FillBlockScoreContext score_ctx;
+    score_ctx.fetcher = &_fetcher;
+    score_ctx.score_window = _scores;
+    score_ctx.merge_type = ScoreMergeType::Sum;
+
+    while (Top() < max) {
+      UpdateTop([&](AdapterWrapper& w) {
+        score_ctx.score = &w.scorer;
+        w.it.FillBlock(min, max, _mask, score_ctx, {});
+      });
+    }
+
+    for (auto it = _first_essential; it-- != _itrs_sorted.begin();) {
+      const score_t budget = static_cast<score_t>((*it)->prefix_score_sum);
+      doc_id_t doc = (*it)->it.seek(min);
+
+      doc_id_t block_end = min;
+      for (size_t i = 0; i < kNumBlocks && doc < max; ++i) {
+        block_end += kBlockSize;
+
+        if (_mask[i] == 0) {
+          if (doc < block_end) {
+            doc = (*it)->it.seek(block_end);
+          }
+          continue;
+        }
+
+        while (doc < block_end) {
+          const size_t offset = doc - min;
+          if (_scores[offset] + budget >= threshold) {
+            _fetcher.Fetch(doc);
+            (*it)->it.FetchScoreArgs(0);
+            _scores[offset] += (*it)->scorer.Score();
+          }
+          doc = (*it)->it.advance();
+        }
+      }
+    }
+
+    for (size_t b = 0; b < kNumBlocks; ++b) {
+      const doc_id_t base = min + static_cast<doc_id_t>(b * kBlockSize);
+      for (auto word = _mask[b]; word; word = PopBit(word)) {
+        const size_t bit = std::countr_zero(word);
+        const doc_id_t doc = base + static_cast<doc_id_t>(bit);
+        if (_scores[doc - min] >= threshold) {
+          collector.Add(_scores[doc - min], doc);
+        }
+      }
+    }
   }
 
   void BuildHeap(doc_id_t min) {
@@ -3038,14 +3093,15 @@ class MaxScoreIterator : public DocIterator {
     std::make_heap(_first_essential, end, cmp);
   }
 
-  doc_id_t UpdateHeap(doc_id_t target) {
+  template<typename F>
+  doc_id_t UpdateTop(F&& f) {
     auto cmp = [](auto* lhs, auto* rhs) {
-      return (*lhs)->it.value() > (*rhs)->it.value();
+      return lhs->it.value() > rhs->it.value();
     };
     std::pop_heap(_first_essential, _itrs_sorted.end(), cmp);
-    _itrs_sorted.back()->it.advance(target);
+    f(*_itrs_sorted.back());
     std::push_heap(_first_essential, _itrs_sorted.end(), cmp);
-    return (_first_essential)->it.value();
+    return (*_first_essential)->it.value();
   }
 
   void UpdateWindowScores(doc_id_t min, doc_id_t max) {

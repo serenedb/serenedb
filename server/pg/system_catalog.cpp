@@ -284,6 +284,7 @@ constexpr auto kMapping =
     {"tan", {"presto_tan", false}},
     {"trunc", {"presto_truncate", false}},
     {"width_bucket", {"presto_width_bucket", false}},
+    {"fail", {"pg_error", false}},
     // Date/Time functions
     {"date_trunc", {"presto_date_trunc", false}},
     {"extract", {"pg_extract", false}},

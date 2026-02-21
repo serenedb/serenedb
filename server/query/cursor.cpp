@@ -301,12 +301,16 @@ Cursor::Process Cursor::ExecuteCTAS(velox::RowVectorPtr& batch) {
     if (!r.ok()) {
       SDB_THROW(std::move(r));
     }
+    _query.CompileQuery();
+    _runner = _query.MakeRunner();
   }
 
   auto process = ExecuteVelox(batch);
-  if (process != Process::Done) {
+  if (process == Process::Wait) {
     return process;
   }
+
+  velox::RowVectorPtr saved_batch = std::move(batch);
 
   if (!ctas_cmd->IsMarkerRemoved()) {
     auto r = std::move(ctas_cmd->RemoveDropMarker()).Get().Ok();
@@ -315,18 +319,19 @@ Cursor::Process Cursor::ExecuteCTAS(velox::RowVectorPtr& batch) {
     }
   }
 
+  batch = std::move(saved_batch);
   return Process::Done;
 }
 
-Cursor::Cursor(std::function<void()>&& user_task, const Query& query)
+Cursor::Cursor(std::function<void()>&& user_task, Query& query)
   : _data_memory_pool{query.GetContext().velox_query_ctx->pool()->addLeafChild(
       "data_memory_pool")},
     _user_task{std::move(user_task)},
     _query{query} {
-  if (_query.GetContext().command_type.Has(query::CommandType::Query) ||
-      _query.GetContext().command_type.Has(query::CommandType::CTAS)) {
+  if (_query.GetContext().command_type.Has(query::CommandType::Query)) {
     _runner = _query.MakeRunner();
   }
+  // For CTAS: runner is created in ExecuteCTAS after table creation + compile.
 }
 
 Cursor::~Cursor() {

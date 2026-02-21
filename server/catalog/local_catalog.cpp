@@ -1427,7 +1427,7 @@ Result LocalCatalog::CreateFunction(ObjectId database_id,
 Result LocalCatalog::CreateTable(
   ObjectId database_id, std::string_view schema, CreateTableOptions options,
   CreateTableOperationOptions operation_options) {
-  bool create_with_tombstone = options.createWithProtectiveTombstone;
+  bool create_with_tombstone = options.createWithTombstone;
   for (auto pk_id : options.pkColumns) {
     auto col = absl::c_find_if(options.columns,
                                [&](const auto& c) { return c.id == pk_id; });
@@ -1464,13 +1464,11 @@ Result LocalCatalog::CreateTable(
         clone->AddTableShard(physical);
         _engine->createTable(table, *physical);
 
-        // Если нужна защитная tombstone для CTAS
         if (create_with_tombstone) {
           TableTombstone tombstone = MakeTableTombstone(*physical);
-          auto tomb_r = _engine->MarkDeleted(table, *physical, tombstone);
-          if (!tomb_r.ok()) {
-            // При ошибке транзакция откатится автоматически
-            return tomb_r;
+          auto r = _engine->MarkDeleted(table, *physical, tombstone);
+          if (!r.ok()) {
+            return r;
           }
         }
 

@@ -527,6 +527,13 @@ struct PgErrorFunction {
   VELOX_DEFINE_FUNCTION_TYPES(T);
 
   [[noreturn]] FOLLY_ALWAYS_INLINE void call(  // NOLINT
+    out_type<velox::UnknownValue>& /*result*/,
+    const arg_type<velox::Varchar>& errmsg) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_RAISE_EXCEPTION),
+                    ERR_MSG(std::string_view{errmsg}));
+  }
+
+  [[noreturn]] FOLLY_ALWAYS_INLINE void call(  // NOLINT
     out_type<velox::UnknownValue>& /*result*/, const arg_type<int32_t>& errcode,
     const arg_type<int32_t>& cursorpos,
     const arg_type<velox::Varchar>& errmsg) {
@@ -622,6 +629,9 @@ void registerFunctions(const std::string& prefix) {
   velox::registerFunction<PgJsonOutFunction, velox::Varchar, velox::Json>(
     {prefix + "jsonout"});
 
+  // pg_error(message)
+  velox::registerFunction<PgErrorFunction, velox::UnknownValue, velox::Varchar>(
+    {prefix + "error"});
   // pg_error(errcode, cursorpos, message)
   velox::registerFunction<PgErrorFunction, velox::UnknownValue, int32_t,
                           int32_t, velox::Varchar>({prefix + "error"});

@@ -85,9 +85,11 @@ class Query {
 
   pg::CTASCommand* GetCTASCommand() const { return _ctas_command.get(); }
 
-  std::unique_ptr<Cursor> MakeCursor(std::function<void()>&& user_task) const;
+  std::unique_ptr<Cursor> MakeCursor(std::function<void()>&& user_task);
 
   Runner MakeRunner() const;
+
+  void CompileQuery();
 
  private:
   // use for CreateQuery
@@ -101,11 +103,10 @@ class Query {
   // use for CreateShow and CreateShowAll
   Query(velox::RowTypePtr output_type, const QueryContext& query_ctx);
 
-  // // use for CreateTableAsStmt
-  // Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
-  //       std::unique_ptr<ExternalExecutor> executor);
-
-  void CompileQuery();
+  // use for CreateCTAS (defers compilation until after table is created)
+  Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
+        const QueryContext& query_ctx,
+        std::unique_ptr<pg::CTASCommand> ctas_command);
 
   QueryContext _query_ctx;
   mutable axiom::runner::FinishWrite _finish_write;

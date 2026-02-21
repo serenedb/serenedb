@@ -2772,6 +2772,8 @@ SqlAnalyzer::ColumnNamesAndExprs SqlAnalyzer::ProcessIntoClause(
   std::vector<std::string> column_names;
   std::vector<lp::ExprPtr> column_exprs;
   const auto& output = *state.root->outputType();
+  column_names.reserve(output.size());
+  column_exprs.reserve(output.size());
 
   if (output.size() < list_length(into.colNames)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_COLUMN_REFERENCE),
@@ -2779,26 +2781,28 @@ SqlAnalyzer::ColumnNamesAndExprs SqlAnalyzer::ProcessIntoClause(
                     ERR_MSG("too many column names specified"));
   }
 
-  auto add_column = [&](std::string name, size_t idx) {
-    if (absl::c_contains(column_names, name)) {
+  auto add_column = [&](std::string_view alias, size_t idx) {
+    if (absl::c_contains(column_names, alias)) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_DUPLICATE_COLUMN),
         CURSOR_POS(ErrorPosition(ExprLocation(&into))),
-        ERR_MSG("column \"", name, "\" specified more than once"));
+        ERR_MSG("column \"", alias, "\" specified more than once"));
     }
-    auto type = output.childAt(idx);
-    auto expr = std::make_shared<lp::InputReferenceExpr>(std::move(type), name);
-    column_names.emplace_back(std::move(name));
+    column_names.emplace_back(alias);
+
+    auto expr = std::make_shared<lp::InputReferenceExpr>(output.childAt(idx),
+                                                         output.nameOf(idx));
     column_exprs.emplace_back(std::move(expr));
   };
 
   size_t i = 0;
   for (; i < list_length(into.colNames); ++i) {
-    auto colname = strVal(list_nth_node(Node, into.colNames, i));
-    add_column(colname, i);
+    auto alias = strVal(list_nth_node(Node, into.colNames, i));
+    add_column(alias, i);
   }
   for (; i < output.size(); ++i) {
-    add_column(output.nameOf(i), i);
+    auto alias = ToAlias(output.nameOf(i));
+    add_column(alias, i);
   }
 
   if (into.accessMethod) {

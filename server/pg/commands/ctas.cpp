@@ -59,8 +59,8 @@ yaclib::Future<Result> CTASCommand::CreateTable() {
   if (!r.ok()) {
     return yaclib::MakeFuture(std::move(r));
   }
-  // Set protective tombstone for CTAS
-  options.createWithProtectiveTombstone = true;
+
+  options.createWithTombstone = true;
   r = catalog.CreateTable(db, schema, std::move(options), {});
   if (r.is(ERROR_SERVER_DUPLICATE_NAME) && _stmt.if_not_exists) {
     r = {};

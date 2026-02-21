@@ -113,12 +113,11 @@ bool SqlStatement::ProcessNextRoot(
 
     auto ctas_cmd = std::make_unique<CTASCommand>(
       static_cast<const ExecContext&>(*connection_ctx),
-      static_cast<query::Transaction&>(*connection_ctx),
-      write_node, ctas_stmt);
+      static_cast<query::Transaction&>(*connection_ctx), write_node, ctas_stmt);
 
     query_ctx.command_type.Add(query::CommandType::CTAS);
-    query = query::Query::CreateCTAS(query_desc.root, query_ctx,
-                                     std::move(ctas_cmd));
+    query =
+      query::Query::CreateCTAS(query_desc.root, query_ctx, std::move(ctas_cmd));
     return true;
   }
 

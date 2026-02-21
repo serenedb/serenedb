@@ -103,26 +103,24 @@ std::unique_ptr<Query> Query::CreateCTAS(
   const QueryContext& query_ctx,
   std::unique_ptr<pg::CTASCommand> ctas_command) {
   SDB_ASSERT(root->kind() == axiom::logical_plan::NodeKind::kTableWrite);
-  auto query = std::unique_ptr<Query>(new Query{root, query_ctx});
-  query->_ctas_command = std::move(ctas_command);
-  return query;
+  return std::unique_ptr<Query>(
+    new Query{root, query_ctx, std::move(ctas_command)});
 }
 
 Query::Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
              const QueryContext& query_ctx)
   : _query_ctx{query_ctx}, _logical_plan{root} {
-  // CompileQuery();
+  CompileQuery();
+}
 
-  // if (_query_ctx.command_type.Has(CommandType::Explain)) {
-  //   _output_type = velox::ROW({"QUERY PLAN"}, {velox::VARCHAR()});
-  // } else {
-  //   SDB_ASSERT(_execution_plan);
-  //   const auto& fragments = _execution_plan->fragments();
-  //   SDB_ASSERT(!fragments.empty());
-  //   const auto& gather_fragment = fragments.back().fragment.planNode;
-  //   SDB_ASSERT(gather_fragment);
-  //   _output_type = gather_fragment->outputType();
-  // }
+Query::Query(const axiom::logical_plan::LogicalPlanNodePtr& root,
+             const QueryContext& query_ctx,
+             std::unique_ptr<pg::CTASCommand> ctas_command)
+  : _query_ctx{query_ctx},
+    _logical_plan{root},
+    _output_type{root->outputType()},
+    _ctas_command{std::move(ctas_command)} {
+  // Compilation is deferred until after table creation in Cursor::ExecuteCTAS.
 }
 
 void Query::CompileQuery() {
@@ -140,6 +138,7 @@ void Query::CompileQuery() {
 
   if (only_explain && !needs_initial_query_graph && !needs_final_query_graph &&
       !needs_physical && !needs_execution) {
+    _output_type = velox::ROW({"QUERY PLAN"}, {velox::VARCHAR()});
     return;
   }
 
@@ -217,6 +216,7 @@ void Query::CompileQuery() {
       axiom::optimizer::DerivedTablePrinter::toText(*optimization.graph());
     if (only_explain && !needs_final_query_graph && !needs_physical &&
         !needs_execution) {
+      _output_type = velox::ROW({"QUERY PLAN"}, {velox::VARCHAR()});
       return;
     }
   }
@@ -227,6 +227,7 @@ void Query::CompileQuery() {
     _final_query_graph_plan =
       axiom::optimizer::DerivedTablePrinter::toText(*optimization.graph());
     if (only_explain && !needs_physical && !needs_execution) {
+      _output_type = velox::ROW({"QUERY PLAN"}, {velox::VARCHAR()});
       return;
     }
   }
@@ -244,6 +245,7 @@ void Query::CompileQuery() {
         *best->op, {.includeCost = include_cost});
     }
     if (only_explain && !needs_execution) {
+      _output_type = velox::ROW({"QUERY PLAN"}, {velox::VARCHAR()});
       return;
     }
   }
@@ -251,6 +253,17 @@ void Query::CompileQuery() {
   auto result = optimization.toVeloxPlan(best->op);
   _execution_plan = std::move(result.plan);
   _finish_write = std::move(result.finishWrite);
+
+  if (_query_ctx.command_type.Has(CommandType::Explain)) {
+    _output_type = velox::ROW({"QUERY PLAN"}, {velox::VARCHAR()});
+  } else {
+    SDB_ASSERT(_execution_plan);
+    const auto& fragments = _execution_plan->fragments();
+    SDB_ASSERT(!fragments.empty());
+    const auto& gather_fragment = fragments.back().fragment.planNode;
+    SDB_ASSERT(gather_fragment);
+    _output_type = gather_fragment->outputType();
+  }
 }
 
 Query::Query(std::unique_ptr<ExternalExecutor> executor,
@@ -278,7 +291,7 @@ ExternalExecutor& Query::GetExternalExecutor() const {
 }
 
 std::unique_ptr<Cursor> Query::MakeCursor(
-  std::function<void()>&& user_task) const {
+  std::function<void()>&& user_task) {
   std::unique_ptr<Cursor> ptr;
   ptr.reset(new Cursor{std::move(user_task), *this});
   _finish_write = {};

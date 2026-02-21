@@ -1714,10 +1714,31 @@ Result RocksDBEngineCatalog::DropTable(const TableTombstone& tombstone) {
   return {};
 }
 
+Result RocksDBEngineCatalog::WriteTombstone(const catalog::Table& table,
+                                            const TableTombstone& tombstone) {
+  SDB_ASSERT(table.GetId().isSet());
+
+  vpack::Builder b;
+  b.clear();
+  vpack::WriteTuple(b, tombstone);
+
+  return WriteDefinition(
+    _db->GetRootDB(),
+    [&] {
+      RocksDBKeyWithBuffer key;
+      key.constructDatabaseObject(RocksDBEntryType::TableTombstone,
+                                  id::kTombstoneDatabase, table.GetId());
+      return key;
+    },
+    [&] {
+      return RocksDBValue::Object(RocksDBEntryType::TableTombstone, b.slice());
+    },
+    [] { return std::string_view{}; });
+}
+
 Result RocksDBEngineCatalog::RemoveTombstone(ObjectId table_id) {
   SDB_ASSERT(table_id.isSet());
 
-  // Удалить только запись tombstone из RocksDB, НЕ трогая данные таблицы
   return DeleteDefinition(
     _db->GetRootDB(),
     [&] {
@@ -1726,10 +1747,7 @@ Result RocksDBEngineCatalog::RemoveTombstone(ObjectId table_id) {
                                   id::kTombstoneDatabase, table_id);
       return key;
     },
-    [] {
-      // Пустой WAL entry - не нужен для RemoveTombstone
-      return std::string_view{};
-    });
+    [] { return std::string_view{}; });
 }
 
 void RocksDBEngineCatalog::ChangeTable(const catalog::Table& c,

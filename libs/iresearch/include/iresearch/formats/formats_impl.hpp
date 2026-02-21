@@ -2949,7 +2949,7 @@ class MaxScoreIterator : public DocIterator {
     std::get<CostAttr>(_attrs) = [&] noexcept {
       return absl::c_accumulate(
         _itrs, CostAttr::Type{0},
-        [](CostAttr::Type lhs, const Adapter& rhs) noexcept {
+        [](CostAttr::Type lhs, const AdapterWrapper& rhs) noexcept {
           return lhs + CostAttr::extract(rhs.it, 0);
         });
     };
@@ -2970,7 +2970,7 @@ class MaxScoreIterator : public DocIterator {
     };
 
     for (auto& it : _itrs) {
-      it.scorer = it.it->PrepareScore(sub);
+      it.scorer = it.it.PrepareScore(sub);
     }
 
     return ScoreFunction::Default();
@@ -3003,9 +3003,9 @@ class MaxScoreIterator : public DocIterator {
 
         BuildHeap(window_min);
 
-        while (Top() < window_max) {
-          ScoreWindow(window_max);
-          CollectWindow(collector, window_max);
+        for (auto min = Top(); min < window_max; min = Top()) {
+          ScoreWindow(min, window_max);
+          CollectWindow(collector, min);
 
           if (std::get<ScoreThresholdAttr>(_attrs).value >= _next_threshold) {
             break;
@@ -3037,9 +3037,8 @@ class MaxScoreIterator : public DocIterator {
     }
   }
 
-  void ScoreWindow(doc_id_t window_max) {
-    const doc_id_t min = Top();
-    const doc_id_t max = std::min(min + kWindow, window_max);
+  void ScoreWindow(doc_id_t min, doc_id_t max) {
+    max = std::min(min + kWindow, max);
 
     std::memset(_mask, 0, kNumBlocks * sizeof(uint64_t));
     std::memset(_scores, 0, (max - min) * sizeof(score_t));
@@ -3066,7 +3065,8 @@ class MaxScoreIterator : public DocIterator {
     // density: for sparse hits use per-doc scoring (current), for dense hits
     // use a kScoreBlock-granularity group mask + batch ScoreFunction call to
     // amortize scoring overhead across groups of kScoreBlock docs.
-    for (auto it = _first_essential; it != _itrs_sorted.begin(); --it) {
+    for (auto it = _first_essential; it != _itrs_sorted.begin();) {
+      --it;
       const score_t budget = static_cast<score_t>((*it)->prefix_score_sum);
       doc_id_t doc = (*it)->it.seek(min);
 
@@ -3120,14 +3120,14 @@ class MaxScoreIterator : public DocIterator {
 
   void UpdateWindowScores(doc_id_t min, doc_id_t max) {
     for (auto& it : _itrs) {
-      if (it.value() >= max) {
+      if (it.it.value() >= max) {
         it.max_score = 0;
         continue;
       }
-      if (it.value() < min) {
-        it.SeekToBlock(min);
+      if (it.it.value() < min) {
+        it.it.SeekToBlock(min);
       }
-      it.max_score = it.GetMaxScore();
+      it.max_score = it.it.GetMaxScore();
     }
   }
 
@@ -3173,7 +3173,9 @@ class MaxScoreIterator : public DocIterator {
     for (auto begin = _first_essential; begin != _itrs_sorted.end(); ++begin) {
       const doc_id_t block_max =
         (*begin)->it.SeekToBlock(std::max((*begin)->it.value(), min));
-      max = std::min(block_max + 1, max);
+      if (!doc_limits::eof(block_max)) {
+        max = std::min(block_max + 1, max);
+      }
     }
     return max;
   }

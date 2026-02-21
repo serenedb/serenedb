@@ -2955,7 +2955,10 @@ class MaxScoreIterator : public DocIterator {
     };
   }
 
-  doc_id_t value() const noexcept { return doc_limits::eof(); }
+  doc_id_t value() const noexcept {
+    SDB_ASSERT(false);
+    return doc_limits::eof();
+  }
   doc_id_t advance() { return value(); }
   doc_id_t seek(doc_id_t target) { return value(); }
   Attribute* GetMutable(TypeInfo::type_id type) noexcept {

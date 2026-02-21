@@ -1,28 +1,36 @@
 services:
   postgres:
     image: postgres:18-alpine
+    cpus:             3.5
+    mem_limit:        11g
+    mem_reservation:  7g
     security_opt:
       - seccomp:unconfined
     environment:
       - POSTGRES_HOST_AUTH_METHOD=trust
       - POSTGRES_USER=postgres
       - POSTGRES_DB=postgres
+      # Reduce durability guarantees for faster in-memory test performance
+      # - POSTGRES_INITDB_ARGS=--wal-level=minimal --fsync=off --full_page_writes=off
     volumes:
       - type: tmpfs
         target: /var/lib/postgresql
         tmpfs:
-          size: 16G
+          size: 5G
     networks:
       - test-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-      start_period: 10s
+      interval:   10s
+      timeout:    10s
+      retries:    18
+      start_period: 30s
 
   serenedb-single:
     image: "$BUILD_IMAGE"
+    cpus:             5.0
+    mem_limit:        7g
+    mem_reservation:  4g
     security_opt:
       - seccomp:unconfined
     volumes:
@@ -39,24 +47,27 @@ services:
       - test-network
     healthcheck:
       test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/127.0.0.1/7777' || exit 1"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-      start_period: 10s
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 40s
     command: >
-        sh -c '
-          if ! id serenedb >/dev/null 2>&1; then
-            useradd serenedb &&
-            chown -R serenedb:serenedb /serenedb/sanitizers /serenedb/${BUILD_DIR}/coverage
-          fi &&
-          exec /serenedb/${BUILD_DIR}/bin/serened /tmp/serenedb_datadir \
-            --server.endpoint pgsql+tcp://0.0.0.0:7777 \
-            --server.endpoint tcp://0.0.0.0:8529 \
-            --server.authentication 0
-        '
+      sh -c '
+        if ! id serenedb >/dev/null 2>&1; then
+          useradd serenedb &&
+          chown -R serenedb:serenedb /serenedb/sanitizers /serenedb/${BUILD_DIR}/coverage
+        fi &&
+        exec /serenedb/${BUILD_DIR}/bin/serened /tmp/serenedb_datadir \
+          --server.endpoint pgsql+tcp://0.0.0.0:7777 \
+          --server.endpoint tcp://0.0.0.0:8529 \
+          --server.authentication 0
+      '
 
   tests:
     image: rust:latest
+    cpus:             7.0
+    mem_limit:        6g
+    mem_reservation:  3g
     volumes:
       - "$SQLLOGIC_DIR:/sqllogic"
       - "$WORKSPACE/third_party/sqllogictest-rs:/sqllogictest-rs"

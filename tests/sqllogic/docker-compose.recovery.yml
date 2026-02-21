@@ -1,6 +1,9 @@
 services:
   serenedb-single:
     image: "$BUILD_IMAGE"
+    cpus:             5.0
+    mem_limit:        7g
+    mem_reservation:  4g
     security_opt:
       - seccomp:unconfined
     restart: on-failure
@@ -18,10 +21,10 @@ services:
       - test-network
     healthcheck:
       test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/127.0.0.1/7777' || exit 1"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-      start_period: 10s
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 40s
     command: >
         sh -c '
           if ! id serenedb >/dev/null 2>&1; then
@@ -36,6 +39,9 @@ services:
 
   tests:
     image: rust:latest
+    cpus:             7.0
+    mem_limit:        6g
+    mem_reservation:  3g
     volumes:
       - "$SQLLOGIC_DIR:/sqllogic"
       - "$WORKSPACE/third_party/sqllogictest-rs:/sqllogictest-rs"

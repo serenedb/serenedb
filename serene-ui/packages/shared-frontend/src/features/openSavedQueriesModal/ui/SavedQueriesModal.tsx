@@ -42,7 +42,7 @@ export const SavedQueriesModal = () => {
                 <DialogTitle />
                 <div className="flex flex-col gap-2">
                     <div className="flex gap-2">
-                        <div className="flex flex-1 min-h-110 min-w-200 bg-sidebar rounded-md border border-border">
+                        <div className="flex flex-1 min-h-120 min-w-250 bg-sidebar rounded-md border border-border">
                             <SavedQueriesSidebar />
                             <SavedQueryData />
                         </div>
@@ -55,7 +55,7 @@ export const SavedQueriesModal = () => {
                         ) : null}
                     </div>
 
-                    <div className="flex-1 flex min-h-50 bg-background rounded-md border border-border">
+                    <div className="flex-1 flex min-h-60 bg-background rounded-md border border-border">
                         <QueryResults
                             results={[
                                 {

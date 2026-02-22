@@ -49,7 +49,16 @@ on:
                 type: boolean
                 default: false
         secrets:
+            PAT_TOKEN:
+                required: true
+                description: "Personal Access Token with repo access"
             TG_TOKEN:
+                required: true
+            APPLE_ID:
+                required: true
+            APPLE_ID_PASSWORD:
+                required: true
+            APPLE_TEAM_ID:
                 required: true
             TG_CHAT_ID:
                 required: true
@@ -58,12 +67,13 @@ jobs:
     build-docker:
         name: Build Docker Image
         if: inputs.RUN_TESTS || inputs.BUILD_IMAGE
-        runs-on: "self-hosted"
+        runs-on: X64
         timeout-minutes: 60
         defaults:
             run:
                 working-directory: ./serene-ui
         env:
+            WORKSPACE: ${{ github.workspace }}
             BRANCH: ${{ inputs.BRANCH }}
             PUSH_IMAGE_TO_REGISTRY: ${{ inputs.PUSH_IMAGE_TO_REGISTRY }}
             DOCKER_TAG: ${{ inputs.DOCKER_TAG }}
@@ -78,12 +88,19 @@ jobs:
                   path: .
                   sparse-checkout: |
                       serene-ui
-                      scripts
                   sparse-checkout-cone-mode: true
 
             - name: Run tests
               if: inputs.RUN_TESTS
-              run: ./scripts/run_tests_docker.sh 2>&1 | tee -a logs/run.log
+              run: |
+                  mkdir -p logs
+                  ./scripts/run_tests_docker.sh 2>&1 | tee -a logs/run.log
+
+            - name: Update file ownership
+              if: always()
+              run: |
+                  export RUNNER_ID="$(id -u):$(id -g)"
+                  bash ./scripts/update_ownership.sh
 
             - name: Upload test artifacts
               if: inputs.RUN_TESTS
@@ -104,22 +121,6 @@ jobs:
                     docker push "$IMAGE" 2>&1 | tee -a logs/build.log
                   fi
 
-            - name: Send Telegram notification
-              if: always() && !cancelled()
-              env:
-                  TG_TOKEN: ${{ secrets.TG_TOKEN }}
-                  TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-                  TG_THREAD_ID_MAIN: "51"
-                  TG_THREAD_ID_BUILD: "53"
-                  TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
-                  BRANCH: ${{ inputs.BRANCH }}
-                  JOB_STATUS: ${{ job.status }}
-                  ACTOR: ${{ github.actor }}
-                  WORKFLOW: ${{ github.workflow }}
-                  RUN_NUMBER: ${{ github.run_number }}
-                  RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-              run: ./scripts/notify_telegram.bash
-
             - name: Cleanup workspace & Docker
               if: always()
               run: |
@@ -131,6 +132,8 @@ jobs:
         if: inputs.RUN_TESTS || inputs.BUILD_LINUX_APP
         runs-on: ubuntu-latest
         timeout-minutes: 30
+        env:
+            BRANCH: ${{ inputs.BRANCH }}
         defaults:
             run:
                 working-directory: ./serene-ui
@@ -144,7 +147,6 @@ jobs:
                   path: .
                   sparse-checkout: |
                       serene-ui
-                      scripts
                   sparse-checkout-cone-mode: true
 
             - name: Setup Node.js
@@ -154,7 +156,8 @@ jobs:
 
             - name: Install dependencies & build
               run: |
-                  npm ci
+                  rm -f package-lock.json
+                  npm install
                   npm run build
 
             - name: Install Playwright
@@ -163,7 +166,9 @@ jobs:
 
             - name: Run tests
               if: inputs.RUN_TESTS
-              run: ./scripts/run_tests_native.sh 2>&1 | tee -a logs/run.log
+              run: |
+                  mkdir -p logs
+                  ./scripts/run_tests_native.sh 2>&1 | tee -a logs/run.log
 
             - name: Upload test artifacts
               if: inputs.RUN_TESTS && !cancelled()
@@ -192,29 +197,16 @@ jobs:
                   if-no-files-found: error
                   retention-days: 30
 
-            - name: Send Telegram notification
-              if: always() && !cancelled()
-              env:
-                  TG_TOKEN: ${{ secrets.TG_TOKEN }}
-                  TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-                  TG_THREAD_ID_MAIN: "51"
-                  TG_THREAD_ID_BUILD: "53"
-                  TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
-                  BRANCH: ${{ inputs.BRANCH }}
-                  JOB_STATUS: ${{ job.status }}
-                  ACTOR: ${{ github.actor }}
-                  WORKFLOW: ${{ github.workflow }}
-                  RUN_NUMBER: ${{ github.run_number }}
-                  RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-              run: ./scripts/notify_telegram.bash
-
     build-windows-app:
         name: Build Windows App
         if: inputs.RUN_TESTS || inputs.BUILD_WINDOWS_APP
         runs-on: windows-latest
         timeout-minutes: 30
+        env:
+            BRANCH: ${{ inputs.BRANCH }}
         defaults:
             run:
+                shell: bash
                 working-directory: ./serene-ui
         steps:
             - name: Checkout SereneUI
@@ -226,7 +218,6 @@ jobs:
                   path: .
                   sparse-checkout: |
                       serene-ui
-                      scripts
                   sparse-checkout-cone-mode: true
 
             - name: Setup Node.js
@@ -236,16 +227,19 @@ jobs:
 
             - name: Install dependencies & build
               run: |
-                  npm ci
+                  rm -f package-lock.json
+                  npm install
                   npm run build
 
             - name: Install Playwright
               if: inputs.RUN_TESTS
-              run: npx playwright install --with-deps
+              run: npx playwright install
 
             - name: Run tests
               if: inputs.RUN_TESTS
-              run: ./scripts/run_tests_native.sh 2>&1 | tee -a logs/run.log
+              run: |
+                  mkdir -p logs
+                  ./scripts/run_tests_native.sh 2>&1 | tee -a logs/run.log
 
             - name: Upload test artifacts
               if: inputs.RUN_TESTS && !cancelled()
@@ -274,27 +268,13 @@ jobs:
                   if-no-files-found: error
                   retention-days: 30
 
-            - name: Send Telegram notification
-              if: always() && !cancelled()
-              env:
-                  TG_TOKEN: ${{ secrets.TG_TOKEN }}
-                  TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-                  TG_THREAD_ID_MAIN: "51"
-                  TG_THREAD_ID_BUILD: "53"
-                  TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
-                  BRANCH: ${{ inputs.BRANCH }}
-                  JOB_STATUS: ${{ job.status }}
-                  ACTOR: ${{ github.actor }}
-                  WORKFLOW: ${{ github.workflow }}
-                  RUN_NUMBER: ${{ github.run_number }}
-                  RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-              run: ./scripts/notify_telegram.bash
-
     build-macos-app:
         name: Build macOS App
         if: inputs.RUN_TESTS || inputs.BUILD_MACOS_APP
-        runs-on: marilka
-        timeout-minutes: 1440
+        runs-on: macOS
+        timeout-minutes: 144000
+        env:
+            BRANCH: ${{ inputs.BRANCH }}
         defaults:
             run:
                 working-directory: ./serene-ui
@@ -308,7 +288,6 @@ jobs:
                   path: .
                   sparse-checkout: |
                       serene-ui
-                      scripts
                   sparse-checkout-cone-mode: true
 
             - name: Setup Node.js
@@ -318,7 +297,8 @@ jobs:
 
             - name: Install dependencies & build
               run: |
-                  npm ci
+                  rm -f package-lock.json
+                  npm install
                   npm run build
 
             - name: Install Playwright
@@ -327,7 +307,9 @@ jobs:
 
             - name: Run tests
               if: inputs.RUN_TESTS
-              run: ./scripts/run_tests_native.sh 2>&1 | tee -a logs/run.log
+              run: |
+                  mkdir -p logs
+                  ./scripts/run_tests_native.sh 2>&1 | tee -a logs/run.log
 
             - name: Upload test artifacts
               if: inputs.RUN_TESTS && !cancelled()
@@ -343,9 +325,13 @@ jobs:
             - name: Build Electron distributables
               if: inputs.BUILD_MACOS_APP
               working-directory: ./serene-ui/apps/electron
+              env:
+                  APPLE_ID: ${{ secrets.APPLE_ID }}
+                  APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+                  APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
               run: |
-                  npm run package:prod
-                  npm run make:prod
+                  DEBUG=* npm run package:prod
+                  DEBUG=* npm run make:prod
 
             - name: Upload macOS artifacts
               if: inputs.BUILD_MACOS_APP
@@ -356,24 +342,6 @@ jobs:
                   if-no-files-found: error
                   retention-days: 30
 
-            - name: Send Telegram notification
-              if: always() && !cancelled()
-              env:
-                  TG_TOKEN: ${{ secrets.TG_TOKEN }}
-                  TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-                  TG_THREAD_ID_MAIN: "51"
-                  TG_THREAD_ID_BUILD: "53"
-                  TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
-                  BRANCH: ${{ inputs.BRANCH }}
-                  JOB_STATUS: ${{ job.status }}
-                  ACTOR: ${{ github.actor }}
-                  WORKFLOW: ${{ github.workflow }}
-                  RUN_NUMBER: ${{ github.run_number }}
-                  RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-              run: ./scripts/notify_telegram.bash
-
-              # TODO: (vlaski) add cleanup step
-
     release:
         name: Publish GitHub Release
         needs: [build-linux-app, build-windows-app, build-macos-app]
@@ -382,21 +350,10 @@ jobs:
             && inputs.PUSH_RELEASE
             && (inputs.BUILD_LINUX_APP || inputs.BUILD_WINDOWS_APP || inputs.BUILD_MACOS_APP)
             && !contains(needs.*.result, 'failure')
-        runs-on: parilka
-        permissions:
-            contents: write
+        runs-on: X64
         steps:
-            - name: Checkout (for notify script)
-              uses: actions/checkout@v4
-              with:
-                  repository: serenedb/serenedb
-                  ref: ${{ inputs.BRANCH }}
-                  token: ${{ secrets.PAT_TOKEN }}
-                  path: .
-                  sparse-checkout: |
-                      serene-ui
-                      scripts
-                  sparse-checkout-cone-mode: true
+            - name: Clean release-assets directory
+              run: rm -rf "${{ github.workspace }}/release-assets"
 
             - name: Download Linux artifacts
               if: inputs.BUILD_LINUX_APP
@@ -431,11 +388,33 @@ jobs:
                   draft: false
                   prerelease: true
                   files: release-assets/**/*
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    notify:
+        name: Send Notification
+        needs:
+            [
+                build-docker,
+                build-linux-app,
+                build-windows-app,
+                build-macos-app,
+                release,
+            ]
+        if: always()
+        runs-on: X64
+        timeout-minutes: 5
+        steps:
+            - name: Checkout (for notify script)
+              uses: actions/checkout@v4
+              with:
+                  repository: serenedb/serenedb
+                  ref: ${{ inputs.BRANCH }}
+                  token: ${{ secrets.PAT_TOKEN }}
+                  path: .
+                  sparse-checkout: |
+                      scripts
+                  sparse-checkout-cone-mode: true
 
             - name: Send Telegram notification
-              if: always() && !cancelled()
               env:
                   TG_TOKEN: ${{ secrets.TG_TOKEN }}
                   TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
@@ -443,15 +422,14 @@ jobs:
                   TG_THREAD_ID_BUILD: "53"
                   TG_USER_MAP: ${{ secrets.TG_USER_MAP }}
                   BRANCH: ${{ inputs.BRANCH }}
-                  JOB_STATUS: ${{ job.status }}
+                  JOB_STATUS: ${{ (contains(needs.*.result, 'failure') && 'failure') || (contains(needs.*.result, 'cancelled') && 'cancelled') || 'success' }}
                   ACTOR: ${{ github.actor }}
                   WORKFLOW: ${{ github.workflow }}
                   RUN_NUMBER: ${{ github.run_number }}
                   RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-              run: ./scripts/notify_telegram.bash
-
-            - name: Cleanup workspace
-              if: always()
-              run: |
-                  cd /
-                  rm -rf "${{ github.workspace }}" 2>/dev/null || true
+                  JOB_STATUS_DOCKER: ${{ needs.build-docker.result }}
+                  JOB_STATUS_LINUX: ${{ needs.build-linux-app.result }}
+                  JOB_STATUS_WINDOWS: ${{ needs.build-windows-app.result }}
+                  JOB_STATUS_MACOS: ${{ needs.build-macos-app.result }}
+                  JOB_STATUS_RELEASE: ${{ needs.release.result }}
+              run: ./scripts/notify_telegram_serene-ui.bash

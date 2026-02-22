@@ -618,7 +618,8 @@ class SereneDBConnector final : public velox::connector::Connector {
           dynamic_cast<const FileTableHandle*>(table_handle.get())) {
       return std::make_unique<FileDataSource>(
         file_handle->GetSource(), file_handle->GetOptions(),
-        file_handle->GetSubfieldFilters(), *connector_query_ctx->memoryPool());
+        file_handle->GetSubfieldFilters(), output_type,
+        *connector_query_ctx->memoryPool());
     }
 
     const auto& serene_table_handle =

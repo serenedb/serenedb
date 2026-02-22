@@ -96,11 +96,13 @@ void FileDataSink::abort() {
   _closed = true;
 }
 
-FileDataSource::FileDataSource(std::shared_ptr<velox::ReadFile> source,
-                               std::shared_ptr<ReaderOptions> options,
-                               const velox::common::SubfieldFilters& subfield_filters,
-                               velox::memory::MemoryPool& memory_pool)
-  : _row_reader_options{options->row_reader},
+FileDataSource::FileDataSource(
+  std::shared_ptr<velox::ReadFile> source,
+  std::shared_ptr<ReaderOptions> options,
+  const velox::common::SubfieldFilters& subfield_filters,
+  velox::RowTypePtr output_type, velox::memory::MemoryPool& memory_pool)
+  : _output_type{std::move(output_type)},
+    _row_reader_options{options->row_reader},
     _report_callback{options->report_callback} {
   SDB_ASSERT(_row_reader_options);
 
@@ -111,9 +113,11 @@ FileDataSource::FileDataSource(std::shared_ptr<velox::ReadFile> source,
   options->dwio->setMemoryPool(memory_pool);
   _reader = reader_factory->createReader(std::move(input), *options->dwio);
 
-  auto row_type = _reader->rowType();
   auto spec = std::make_shared<velox::common::ScanSpec>("root");
-  spec->addAllChildFields(*row_type);
+  for (velox::column_index_t i = 0; i < _output_type->size(); ++i) {
+    std::string_view name = _output_type->nameOf(i);
+    spec->addField(std::string{name.substr(0, name.find(':'))}, i);
+  }
 
   for (auto& [subfield, filter] : subfield_filters) {
     spec->getOrCreateChild(subfield)->setFilter(filter);
@@ -127,8 +131,7 @@ FileDataSource::FileDataSource(std::shared_ptr<velox::ReadFile> source,
 
 std::optional<velox::RowVectorPtr> FileDataSource::next(
   uint64_t size, velox::ContinueFuture& future) {
-  velox::VectorPtr batch =
-    velox::BaseVector::create(_reader->rowType(), 0, _pool);
+  velox::VectorPtr batch = velox::BaseVector::create(_output_type, 0, _pool);
 
   uint64_t rows_read = _row_reader->next(size, batch);
   if (rows_read == 0) {

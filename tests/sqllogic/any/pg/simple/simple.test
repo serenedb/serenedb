@@ -1066,6 +1066,6 @@ select ~('-1'::integer);
 
 
 query
-SELECT '80' || '14' || 'vedernikof';
+SELECT '80' || 14 || 'vedernikof';
 ----
 8014vedernikof

@@ -1,13 +1,16 @@
-query
+hash-threshold 100
+control substitution on
+
+statement count 10000
 COPY (
   SELECT 
     iq,
-    'salary '::text || salary::text || '$'::text as salary, 
-    'i do nothing and gain money'
+    'salary '::text || salary::text || ' dallar'::text as salary, 
+    'i do nothing and gain money' as fact
   FROM
     generate_series(1, 100) as clickclack(iq),
     generate_series(1, 100) as serenedb(salary)
-) TO '/tmp/vedernikoff_company.parquet';
+) TO '/tmp/${__DATABASE__}_vedernikoff_company.parquet';
 
 
 statement ok
@@ -15,12 +18,46 @@ CREATE TABLE vedernikoff_company(
   iq INT8,
   salary TEXT,
   fact TEXT
-) WITH (source = '/tmp/vedernikoff_company.parquet');
+) WITH (source = '/tmp/${__DATABASE__}_vedernikoff_company.parquet');
 
 
 query
 SELECT * FROM vedernikoff_company;
 ----
+30003 values hashing to 017114532d4bd6a929a5d709e1e8d90f
+
+
+query
+SELECT fact, salary FROM vedernikoff_company OFFSET 50 LIMIT 20;
+----
+fact	salary
+i do nothing and gain money	salary 51 dallar
+i do nothing and gain money	salary 52 dallar
+i do nothing and gain money	salary 53 dallar
+i do nothing and gain money	salary 54 dallar
+i do nothing and gain money	salary 55 dallar
+i do nothing and gain money	salary 56 dallar
+i do nothing and gain money	salary 57 dallar
+i do nothing and gain money	salary 58 dallar
+i do nothing and gain money	salary 59 dallar
+i do nothing and gain money	salary 60 dallar
+i do nothing and gain money	salary 61 dallar
+i do nothing and gain money	salary 62 dallar
+i do nothing and gain money	salary 63 dallar
+i do nothing and gain money	salary 64 dallar
+i do nothing and gain money	salary 65 dallar
+i do nothing and gain money	salary 66 dallar
+i do nothing and gain money	salary 67 dallar
+i do nothing and gain money	salary 68 dallar
+i do nothing and gain money	salary 69 dallar
+i do nothing and gain money	salary 70 dallar
+
+
+query
+SELECT salary, fact FROM vedernikoff_company ORDER BY 1 DESC LIMIT 1;
+----
+salary	fact
+salary 99 dallar	i do nothing and gain money
 
 
 # filter is supposed to be pushdowned so there's no one
@@ -31,12 +68,48 @@ FROM
   vedernikoff_company as v1, 
   vedernikoff_company as v2
 WHERE v1.iq > 90 AND v2.iq = 90 AND v1.iq != 98;
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- NestedLoopJoin[2][INNER] -> "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR, "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR
+  -- TableScan[0][FileTableHandle] -> "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR
+  -- TableScan[1][FileTableHandle] -> "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR
 
 
-query
+query ??????
 SELECT *
-FROM 
-  vedernikoff_company as v1, 
+FROM
+  vedernikoff_company as v1,
   vedernikoff_company as v2
 WHERE v1.iq > 90 AND v2.iq > 90 AND v1.iq != 98;
 ----
+5400006 values hashing to 497bc5d96ddaa8438d0571265649bb89
+
+
+query ?
+SELECT iq FROM vedernikoff_company WHERE iq = 7 AND salary = 'salary 7 dallar';
+----
+iq
+7
+
+
+query ??
+SELECT salary, iq FROM vedernikoff_company WHERE iq = 7 AND salary = 'salary 7 dallar';
+----
+salary	iq
+salary 7 dallar	7
+
+
+query ?
+SELECT salary FROM vedernikoff_company WHERE iq = 42 AND salary = 'salary 42 dallar';
+----
+salary
+salary 42 dallar
+
+
+query
+SELECT COUNT(iq) FROM vedernikoff_company;
+----
+count
+10000

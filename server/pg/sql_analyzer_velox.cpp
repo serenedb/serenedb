@@ -2291,7 +2291,10 @@ class CopyOptionsParser {
     }
   }
 
-  void ParseParquet() { CreateDefaultWriterReader(FileFormat::PARQUET); }
+  void ParseParquet() {
+    _row_type = velox::ROW(ToAliases(_row_type->names()), _row_type->children());
+    CreateDefaultWriterReader(FileFormat::PARQUET);
+  }
 
   void ParseDwrf() { CreateDefaultWriterReader(FileFormat::DWRF); }
 
@@ -4466,6 +4469,7 @@ const OpToFuncMap kOpToFunc{
   {"!", "presto_not"},
   {"!=", "presto_neq"},
   {"<>", "presto_neq"},
+  {"||", "presto_concat"},
   {"and", "and"},
   {"or", "or"},
   {"is", "presto_is"},
@@ -4717,13 +4721,6 @@ lp::ExprPtr SqlAnalyzer::ProcessBinaryOp(std::string_view name, lp::ExprPtr lhs,
   if (it != kOpToFunc.end()) {
     return ResolveVeloxFunctionAndInferArgsCommonType(
       std::string{it->second}, {std::move(lhs), std::move(rhs)});
-  }
-
-  if (name == "||" && lhs->type() == velox::VARCHAR() &&
-      rhs->type() == velox::VARCHAR()) {
-    return std::make_shared<lp::CallExpr>(
-      velox::VARCHAR(), "presto_concat",
-      std::vector<lp::ExprPtr>{std::move(lhs), std::move(rhs)});
   }
 
   if (IsMatchOperator(name)) {

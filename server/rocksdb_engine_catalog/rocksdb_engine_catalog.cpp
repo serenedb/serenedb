@@ -1714,23 +1714,23 @@ Result RocksDBEngineCatalog::DropTable(const TableTombstone& tombstone) {
   return {};
 }
 
-Result RocksDBEngineCatalog::WriteTombstone(const catalog::Table& table,
-                                            const TableTombstone& tombstone) {
-  SDB_ASSERT(table.GetId().isSet());
+Result RocksDBEngineCatalog::WriteTombstone(ObjectId table_id,
+                                             const TableTombstone& tombstone) {
+  SDB_ASSERT(table_id.isSet());
 
   vpack::Builder b;
-  b.clear();
-  vpack::WriteTuple(b, tombstone);
 
   return WriteDefinition(
     _db->GetRootDB(),
     [&] {
       RocksDBKeyWithBuffer key;
       key.constructDatabaseObject(RocksDBEntryType::TableTombstone,
-                                  id::kTombstoneDatabase, table.GetId());
+                                  id::kTombstoneDatabase, table_id);
       return key;
     },
     [&] {
+      b.clear();
+      vpack::WriteTuple(b, tombstone);
       return RocksDBValue::Object(RocksDBEntryType::TableTombstone, b.slice());
     },
     [] { return std::string_view{}; });

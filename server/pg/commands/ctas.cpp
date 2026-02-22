@@ -60,8 +60,10 @@ yaclib::Future<Result> CTASCommand::CreateTable() {
     return yaclib::MakeFuture(std::move(r));
   }
 
-  options.createWithTombstone = true;
-  r = catalog.CreateTable(db, schema, std::move(options), {});
+  catalog::CreateTableOperationOptions table_operation;
+  table_operation.in_memory_only = true;
+  table_operation.create_with_tombstone = true;
+  r = catalog.CreateTable(db, schema, std::move(options), table_operation);
   if (r.is(ERROR_SERVER_DUPLICATE_NAME) && _stmt.if_not_exists) {
     r = {};
   }
@@ -73,36 +75,17 @@ yaclib::Future<Result> CTASCommand::CreateTable() {
   SDB_ASSERT(object);
   object->EnsureTable(_transaction);
   _write.setTable(object->table);
+  _created_table_id = object->object->GetId();
 
   _table_created = true;
   return yaclib::MakeFuture(std::move(r));
 }
 
-yaclib::Future<Result> CTASCommand::RemoveDropMarker() {
-  Objects objects;
-  const auto db = _context.GetDatabaseId();
-  const auto& conn_ctx = basics::downCast<const ConnectionContext>(_context);
-  std::string current_schema = conn_ctx.GetCurrentSchema();
-
-  const auto& rel = *_stmt.into->rel;
-  const std::string_view schema =
-    rel.schemaname ? std::string_view{rel.schemaname} : current_schema;
-  const std::string_view table = rel.relname;
-
-  objects.ensureRelation(schema, table);
-  Resolve(db, objects, conn_ctx);
-  auto* object = objects.getRelation(schema, table);
-  if (!object || !object->object) {
-    return yaclib::MakeFuture<Result>(
-      ERROR_SERVER_DATA_SOURCE_NOT_FOUND, "Table not found after creation");
-  }
-
-  auto& engine = GetServerEngine();
-  auto r = engine.RemoveTombstone(object->object->GetId());
-  if (r.ok()) {
-    _marker_removed = true;
-  }
-  return yaclib::MakeFuture(std::move(r));
+yaclib::Future<Result> CTASCommand::PersistTableDefinition() {
+  auto& catalog =
+    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+  _is_persisted = true;
+  return yaclib::MakeFuture(catalog.PersistTable(_created_table_id));
 }
 
 }  // namespace sdb::pg

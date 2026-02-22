@@ -250,6 +250,7 @@ class RocksDBEngineCatalog {
   Result MarkDeleted(const catalog::Database& database);
   Result MarkDeleted(const catalog::Schema& schema);
 
+  Result WriteTombstone(ObjectId table_id, const TableTombstone& tombstone);
   Result RemoveTombstone(ObjectId table_id);
 
   void prepareDropTable(ObjectId collection);

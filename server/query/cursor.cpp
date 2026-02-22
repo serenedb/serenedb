@@ -296,31 +296,80 @@ Cursor::Process Cursor::ExecuteCTAS(velox::RowVectorPtr& batch) {
   auto* ctas_cmd = _query.GetCTASCommand();
   SDB_ASSERT(ctas_cmd);
 
-  if (!ctas_cmd->IsTableCreated()) {
-    auto r = std::move(ctas_cmd->CreateTable()).Get().Ok();
-    if (!r.ok()) {
-      SDB_THROW(std::move(r));
+  for (;;) {
+    switch (ctas_cmd->GetStage()) {
+      using enum pg::CTASCommand::Stage;
+      case None: {
+        auto f = ctas_cmd->CreateTable();
+        if (!f.Ready()) {
+          ctas_cmd->SetStage(CreateTableWaiting);
+          std::move(f).DetachInline(
+            [ctas_cmd, user_task = _user_task](yaclib::Result<Result>&& r) {
+              std::lock_guard lock{ctas_cmd->AsyncResultMutex()};
+              ctas_cmd->StoreAsyncResult(std::move(r));
+              user_task();
+            });
+          return Process::Wait;
+        }
+        auto r = std::move(f).Touch().Ok();
+        if (!r.ok()) {
+          SDB_THROW(std::move(r));
+        }
+        ctas_cmd->SetStage(VeloxRunning);
+        _query.CompileQuery();
+        _runner = _query.MakeRunner();
+        continue;
+      }
+      case CreateTableWaiting: {
+        std::lock_guard lock{ctas_cmd->AsyncResultMutex()};
+        if (!ctas_cmd->IsAsyncResultReady()) {
+          return Process::Wait;
+        }
+        auto r = ctas_cmd->TakeAsyncResult().Ok();
+        if (!r.ok()) {
+          SDB_THROW(std::move(r));
+        }
+        ctas_cmd->SetStage(VeloxRunning);
+        _query.CompileQuery();
+        _runner = _query.MakeRunner();
+        continue;
+      }
+      case VeloxRunning: {
+        auto process = ExecuteVelox(batch);
+        if (process != Process::Done) {
+          return process;
+        }
+        auto f = ctas_cmd->PersistTableDefinition();
+        if (!f.Ready()) {
+          ctas_cmd->SetStage(PersistWaiting);
+          std::move(f).DetachInline(
+            [ctas_cmd, user_task = _user_task](yaclib::Result<Result>&& r) {
+              std::lock_guard lock{ctas_cmd->AsyncResultMutex()};
+              ctas_cmd->StoreAsyncResult(std::move(r));
+              user_task();
+            });
+          return Process::Wait;
+        }
+        auto r = std::move(f).Touch().Ok();
+        if (!r.ok()) {
+          SDB_THROW(std::move(r));
+        }
+        return Process::Done;
+      }
+      case PersistWaiting: {
+        std::lock_guard lock{ctas_cmd->AsyncResultMutex()};
+        if (!ctas_cmd->IsAsyncResultReady()) {
+          return Process::Wait;
+        }
+        auto r = ctas_cmd->TakeAsyncResult().Ok();
+        if (!r.ok()) {
+          SDB_THROW(std::move(r));
+        }
+        return Process::Done;
+      }
     }
-    _query.CompileQuery();
-    _runner = _query.MakeRunner();
+    SDB_UNREACHABLE();
   }
-
-  auto process = ExecuteVelox(batch);
-  if (process == Process::Wait) {
-    return process;
-  }
-
-  velox::RowVectorPtr saved_batch = std::move(batch);
-
-  if (!ctas_cmd->IsMarkerRemoved()) {
-    auto r = std::move(ctas_cmd->RemoveDropMarker()).Get().Ok();
-    if (!r.ok()) {
-      SDB_THROW(std::move(r));
-    }
-  }
-
-  batch = std::move(saved_batch);
-  return Process::Done;
 }
 
 Cursor::Cursor(std::function<void()>&& user_task, Query& query)
@@ -331,7 +380,6 @@ Cursor::Cursor(std::function<void()>&& user_task, Query& query)
   if (_query.GetContext().command_type.Has(query::CommandType::Query)) {
     _runner = _query.MakeRunner();
   }
-  // For CTAS: runner is created in ExecuteCTAS after table creation + compile.
 }
 
 Cursor::~Cursor() {

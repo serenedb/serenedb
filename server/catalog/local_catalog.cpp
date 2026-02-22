@@ -1427,7 +1427,6 @@ Result LocalCatalog::CreateFunction(ObjectId database_id,
 Result LocalCatalog::CreateTable(
   ObjectId database_id, std::string_view schema, CreateTableOptions options,
   CreateTableOperationOptions operation_options) {
-  bool create_with_tombstone = options.createWithTombstone;
   for (auto pk_id : options.pkColumns) {
     auto col = absl::c_find_if(options.columns,
                                [&](const auto& c) { return c.id == pk_id; });
@@ -1446,35 +1445,51 @@ Result LocalCatalog::CreateTable(
     }
   }
 
+  bool in_memory_only = operation_options.in_memory_only;
+  bool create_with_tombstone = operation_options.create_with_tombstone;
   auto table = std::make_shared<Table>(std::move(options), database_id);
 
   absl::MutexLock lock{&_mutex};
-  return Apply(_snapshot, [&, create_with_tombstone](auto& clone) {
-    return clone->RegisterObject(
-      database_id, schema, std::move(table), false,
-      [&, create_with_tombstone](auto& object) -> Result {
-        auto& table = basics::downCast<Table>(*object);
+  return Apply(
+    _snapshot, [&, in_memory_only, create_with_tombstone](auto& clone) {
+      return clone->RegisterObject(
+        database_id, schema, std::move(table), false,
+        [&, in_memory_only, create_with_tombstone](auto& object) -> Result {
+          auto& table = basics::downCast<Table>(*object);
 
-        std::shared_ptr<TableShard> physical;
-        auto r = _engine->createTableShard(table, true, physical);
-        if (!r.ok()) {
-          return r;
-        }
-
-        clone->AddTableShard(physical);
-        _engine->createTable(table, *physical);
-
-        if (create_with_tombstone) {
-          TableTombstone tombstone = MakeTableTombstone(*physical);
-          auto r = _engine->MarkDeleted(table, *physical, tombstone);
+          std::shared_ptr<TableShard> physical;
+          auto r = _engine->createTableShard(table, true, physical);
           if (!r.ok()) {
             return r;
           }
-        }
 
-        return {};
-      });
-  });
+          clone->AddTableShard(physical);
+
+          if (!in_memory_only) {
+            _engine->createTable(table, *physical);
+          }
+
+          if (create_with_tombstone) {
+            TableTombstone tombstone = MakeTableTombstone(*physical);
+            auto r = _engine->WriteTombstone(table.GetId(), tombstone);
+            if (!r.ok()) {
+              return r;
+            }
+          }
+
+          return {};
+        });
+    });
+}
+
+Result LocalCatalog::PersistTable(ObjectId table_id) {
+  auto snapshot = GetSnapshot();
+  auto object = snapshot->GetObject(table_id);
+  SDB_ENSURE(object, ERROR_SERVER_DATA_SOURCE_NOT_FOUND);
+  auto& table = basics::downCast<Table>(*object);
+  auto shard = snapshot->GetTableShard(table_id);
+  SDB_ENSURE(shard, ERROR_INTERNAL);
+  return basics::SafeCall([&] { _engine->createTable(table, *shard); });
 }
 
 Result LocalCatalog::RenameView(ObjectId database_id, std::string_view schema,

@@ -121,7 +121,6 @@ class Query {
   std::string _physical_plan;
 
  public:
-  // Custom deleter to handle incomplete CTASCommand type
   ~Query();
 };
 

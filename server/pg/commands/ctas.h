@@ -21,10 +21,13 @@
 
 #pragma once
 
+#include <absl/synchronization/mutex.h>
 #include <axiom/logical_plan/LogicalPlanNode.h>
+#include <yaclib/util/result.hpp>
 
 #include "basics/fwd.h"
 #include "basics/result.h"
+#include "catalog/identifiers/object_id.h"
 #include "utils/exec_context.h"
 #include "yaclib/async/future.hpp"
 
@@ -39,6 +42,13 @@ namespace sdb::pg {
 // create table as stmt command
 class CTASCommand {
  public:
+  enum class Stage {
+    None,
+    CreateTableWaiting,
+    VeloxRunning,
+    PersistWaiting,
+  };
+
   CTASCommand(const ExecContext& context, query::Transaction& transaction,
               axiom::logical_plan::TableWriteNode& write,
               const CreateTableAsStmt& stmt)
@@ -49,10 +59,25 @@ class CTASCommand {
 
   yaclib::Future<Result> CreateTable();
 
-  yaclib::Future<Result> RemoveDropMarker();
+  yaclib::Future<Result> PersistTableDefinition();
 
   bool IsTableCreated() const { return _table_created; }
-  bool IsMarkerRemoved() const { return _marker_removed; }
+  bool IsPersisted() const { return _is_persisted; }
+
+  Stage GetStage() const { return _stage; }
+  void SetStage(Stage s) { _stage = s; }
+
+  absl::Mutex& AsyncResultMutex() { return _async_result_mutex; }
+
+  bool IsAsyncResultReady() const {
+    return _async_result.State() != yaclib::ResultState::Empty;
+  }
+
+  yaclib::Result<Result> TakeAsyncResult() { return std::move(_async_result); }
+
+  void StoreAsyncResult(yaclib::Result<Result>&& r) {
+    _async_result = std::move(r);
+  }
 
  private:
   const ExecContext& _context;
@@ -60,8 +85,13 @@ class CTASCommand {
   axiom::logical_plan::TableWriteNode& _write;
   const CreateTableAsStmt& _stmt;
 
+  ObjectId _created_table_id;
   bool _table_created = false;
-  bool _marker_removed = false;
+  bool _is_persisted = false;
+
+  Stage _stage = Stage::None;
+  yaclib::Result<Result> _async_result;
+  absl::Mutex _async_result_mutex;
 };
 
 }  // namespace sdb::pg

@@ -246,10 +246,6 @@ struct TableOptions {
 
 struct CreateTableOptions : TableOptions {
   std::vector<std::string> avoidServers;
-  // Write a tombstone alongside the table definition so that an incomplete
-  // creation is cleaned up on restart. Must be removed via RemoveTombstone()
-  // once the table is fully ready. (ex: Create Table As Select)
-  bool createWithTombstone = false;
 };
 
 struct TableMeta {

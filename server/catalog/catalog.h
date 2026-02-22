@@ -29,6 +29,7 @@
 #include <vector>
 
 #include "basics/containers/flat_hash_map.h"
+#include "basics/containers/flat_hash_set.h"
 #include "basics/down_cast.h"
 #include "basics/errors.h"
 #include "catalog/database.h"
@@ -55,6 +56,8 @@ using ChangeCallback = absl::FunctionRef<Result(const T&, std::shared_ptr<T>&)>;
 struct CreateTableOperationOptions {
   bool wait_for_sync_replication = false;
   bool enforce_replication_factor = false;
+  bool in_memory_only = false;
+  bool create_with_tombstone = false;
 };
 
 template<typename T>
@@ -198,6 +201,7 @@ struct LogicalCatalog {
   virtual Result CreateTable(ObjectId database_id, std::string_view schema,
                              CreateTableOptions options,
                              CreateTableOperationOptions operation_options) = 0;
+  virtual Result PersistTable(ObjectId table_id) = 0;
   virtual Result CreateIndex(ObjectId database_id, std::string_view schema,
                              std::string_view relation,
                              const std::vector<std::string>& column_names,

@@ -23,6 +23,7 @@
 
 #include <absl/synchronization/mutex.h>
 #include <axiom/logical_plan/LogicalPlanNode.h>
+
 #include <yaclib/util/result.hpp>
 
 #include "basics/fwd.h"
@@ -79,11 +80,17 @@ class CTASCommand {
     _async_result = std::move(r);
   }
 
+  void Rollback();
+
  private:
   const ExecContext& _context;
   query::Transaction& _transaction;
   axiom::logical_plan::TableWriteNode& _write;
   const CreateTableAsStmt& _stmt;
+
+  std::string _schema;
+  std::string_view _table_name;
+  ObjectId _db;
 
   ObjectId _created_table_id;
   bool _table_created = false;

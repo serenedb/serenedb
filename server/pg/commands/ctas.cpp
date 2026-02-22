@@ -23,26 +23,25 @@
 namespace sdb::pg {
 
 yaclib::Future<Result> CTASCommand::CreateTable() {
-  const auto db = _context.GetDatabaseId();
+  _db = _context.GetDatabaseId();
   const auto& conn_ctx = basics::downCast<const ConnectionContext>(_context);
   std::string current_schema = conn_ctx.GetCurrentSchema();
 
   const auto& rel = *_stmt.into->rel;
-  const std::string_view schema =
-    rel.schemaname ? std::string_view{rel.schemaname} : current_schema;
-  if (schema.empty()) {
+  _schema = rel.schemaname ? rel.schemaname : std::move(current_schema);
+  if (_schema.empty()) {
     return yaclib::MakeFuture<Result>(
       ERROR_BAD_PARAMETER, "no schema has been selected to create in");
   }
-  const std::string_view table = rel.relname;
+  _table_name = rel.relname;
 
   auto& catalog =
     SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
-  auto database = catalog.GetSnapshot()->GetDatabase(db);
+  auto database = catalog.GetSnapshot()->GetDatabase(_db);
   SDB_ENSURE(database, ERROR_SERVER_DATABASE_NOT_FOUND);
 
   catalog::CreateTableRequest request;
-  request.name = table;
+  request.name = _table_name;
 
   auto& columns = request.columns;
   columns.resize(_write.columnNames().size());
@@ -63,15 +62,17 @@ yaclib::Future<Result> CTASCommand::CreateTable() {
   catalog::CreateTableOperationOptions table_operation;
   table_operation.in_memory_only = true;
   table_operation.create_with_tombstone = true;
-  r = catalog.CreateTable(db, schema, std::move(options), table_operation);
+  
+  r = catalog.CreateTable(_db, _schema, std::move(options), table_operation);
   if (r.is(ERROR_SERVER_DUPLICATE_NAME) && _stmt.if_not_exists) {
     r = {};
   }
 
   Objects objects;
-  objects.ensureRelation(schema, table);
-  Resolve(db, objects, conn_ctx);
-  auto* object = objects.getRelation(schema, table);
+  std::string_view schema{_schema};
+  objects.ensureRelation(schema, _table_name);
+  Resolve(_db, objects, conn_ctx);
+  auto* object = objects.getRelation(schema, _table_name);
   SDB_ASSERT(object);
   object->EnsureTable(_transaction);
   _write.setTable(object->table);
@@ -79,6 +80,15 @@ yaclib::Future<Result> CTASCommand::CreateTable() {
 
   _table_created = true;
   return yaclib::MakeFuture(std::move(r));
+}
+
+void CTASCommand::Rollback() {
+  if (!_table_created || _is_persisted) {
+    return;
+  }
+  auto& catalog =
+    SerenedServer::Instance().getFeature<catalog::CatalogFeature>().Global();
+  std::ignore = catalog.DropTable(_db, _schema, _table_name, nullptr);
 }
 
 yaclib::Future<Result> CTASCommand::PersistTableDefinition() {

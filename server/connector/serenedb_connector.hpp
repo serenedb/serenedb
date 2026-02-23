@@ -46,6 +46,7 @@
 #include "catalog/table_options.h"
 #include "connector/search_sink_writer.hpp"
 #include "connector/sink_writer_base.hpp"
+#include "connector/search_data_source.hpp"
 #include "data_sink.hpp"
 #include "data_source.hpp"
 #include "file_table.hpp"
@@ -180,13 +181,29 @@ class SereneDBConnectorTableHandle final
     return _effective_column_id;
   }
 
+  void AddSearchQuery(ObjectId index_id, irs::Filter::Query::ptr&& query) {
+    SDB_ASSERT(!_search_query);
+    _search_query = std::move(query);
+    _index_id = index_id;
+  }
+ 
   auto& GetTransaction() const noexcept { return _transaction; }
+// splits per segment???
+  const irs::Filter::Query*  GetSearchQuery() const noexcept {
+    return _search_query.get();
+  }
+
+  ObjectId GetIndex() const noexcept {
+    return _index_id;
+  }
 
  private:
   std::string _name;
   ObjectId _table_id;
   catalog::Column::Id _effective_column_id;
   query::Transaction& _transaction;
+  irs::Filter::Query::ptr _search_query;
+  ObjectId _index_id = ObjectId::none();
 };
 
 class SereneDBColumn final : public axiom::connector::Column {
@@ -242,22 +259,10 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
     std::vector<velox::connector::ColumnHandlePtr> column_handles,
     velox::core::ExpressionEvaluator& evaluator,
     std::vector<velox::core::TypedExprPtr> filters,
-    std::vector<velox::core::TypedExprPtr>& rejected_filters) const final {
-    rejected_filters = std::move(filters);
-
-    if (const auto* read_file_table =
-          dynamic_cast<const ReadFileTable*>(&this->table())) {
-      return std::make_shared<FileTableHandle>(read_file_table->GetSource(),
-                                               read_file_table->GetOptions());
-    }
-
-    SDB_ASSERT(!table().columnMap().empty(),
-               "SereneDBConnectorTableHandle: need a column for count field");
-    return std::make_shared<SereneDBConnectorTableHandle>(session, *this);
-  }
+    std::vector<velox::core::TypedExprPtr>& rejected_filters) const final;
 };
 
-class RocksDBTable final : public axiom::connector::Table {
+class RocksDBTable : public axiom::connector::Table {
   struct Init {
     const catalog::Table& collection;
     velox::RowTypePtr pk_type;
@@ -375,6 +380,19 @@ class RocksDBTable final : public axiom::connector::Table {
     WriteConflictPolicy::EmitError;
   bool _update_pk = false;
   bool _bulk_insert = false;
+};
+
+class RocksDBInvertedIndexTable : public RocksDBTable {
+ public:
+  explicit RocksDBInvertedIndexTable(const catalog::Table& collection,
+                                     query::Transaction& transaction,
+                                     const catalog::InvertedIndex& index)
+    : RocksDBTable{collection, transaction}, _index{index} {}
+
+  const auto& GetIndex() const noexcept { return _index; }
+
+ private:
+  const catalog::InvertedIndex& _index;
 };
 
 class SereneDBConnectorSplit final : public velox::connector::ConnectorSplit {
@@ -645,11 +663,21 @@ class SereneDBConnector final : public velox::connector::Connector {
     auto* rocksdb_transaction = transaction.GetRocksDBTransaction();
 
     if (read_your_own_writes && rocksdb_transaction) {
+      // TODO: RYOW is not supported by search index anyway. Check that and skip index building!
       return std::make_unique<RocksDBRYOWDataSource>(
         *connector_query_ctx->memoryPool(), *rocksdb_transaction, _cf,
         output_type, column_oids, serene_table_handle.GetEffectiveColumnId(),
         object_key);
     }
+
+    if (serene_table_handle.GetSearchQuery()) {
+      const auto& search_snapshot = transaction.EnsureSearchSnapshot(serene_table_handle.GetIndex());
+      return std::make_unique<search::SearchDataSource>(
+        *connector_query_ctx->memoryPool(), search_snapshot.snapshot->GetSnapshot(), _db, _cf,
+        output_type, column_oids, serene_table_handle.GetEffectiveColumnId(),
+        object_key, search_snapshot.reader, *serene_table_handle.GetSearchQuery());
+    }
+
     return std::make_unique<RocksDBSnapshotDataSource>(
       *connector_query_ctx->memoryPool(), _db, _cf, output_type, column_oids,
       serene_table_handle.GetEffectiveColumnId(), object_key,

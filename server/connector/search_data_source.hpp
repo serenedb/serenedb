@@ -34,14 +34,12 @@ class SearchDataSource final : public velox::connector::DataSource,
                                public Materializer {
  public:
   SearchDataSource(velox::memory::MemoryPool& memory_pool,
-                   // use just snapshot for now. But maybe we will need to have
-                   // this class template (or use some wrapper) to work with
-                   // WriteBatchWithindex or plain DB with snapshot
+                   // Search source always uses snapshot 
                    const rocksdb::Snapshot* snapshot, rocksdb::DB& db,
                    rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
                    std::vector<catalog::Column::Id> column_ids,
                    catalog::Column::Id effective_column_id, ObjectId object_key,
-                   irs::IndexReader& reader, const irs::Filter::Query& query);
+                   const irs::IndexReader& reader, const irs::Filter::Query& query);
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
   std::optional<velox::RowVectorPtr> next(uint64_t size,
@@ -56,7 +54,7 @@ class SearchDataSource final : public velox::connector::DataSource,
 
  private:
   std::shared_ptr<velox::connector::ConnectorSplit> _current_split;
-  irs::IndexReader& _reader;
+  const irs::IndexReader& _reader;
   // TODO(Dronplane) when we have sorted indexes we will need Merge reader for
   // all segments. Only sequential for now.
   size_t _current_segment{0};

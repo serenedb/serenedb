@@ -35,7 +35,7 @@ SearchDataSource::SearchDataSource(
   rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
   std::vector<catalog::Column::Id> column_ids,
   catalog::Column::Id effective_column_id, ObjectId object_key,
-  irs::IndexReader& reader, const irs::Filter::Query& query)
+  const irs::IndexReader& reader, const irs::Filter::Query& query)
   : Materializer{memory_pool,
                  snapshot,
                  &db,

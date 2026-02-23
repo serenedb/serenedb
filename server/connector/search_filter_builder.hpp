@@ -25,15 +25,16 @@
 #include "axiom/connectors/ConnectorMetadata.h"
 #include "basics/fwd.h"
 #include "basics/result.h"
+#include "connector/serenedb_connector.hpp"
 #include "iresearch/search/boolean_filter.hpp"
 #include "velox/core/ITypedExpr.h"
 
 namespace sdb::connector::search {
 
+using ColumnGetter = std::function<const SereneDBColumn*(std::string_view)>;
 // Convert Velox expression to IResearch filter
 Result ExprToFilter(
   irs::BooleanFilter& filter, const velox::core::TypedExprPtr& expr,
-  const folly::F14FastMap<std::string, const axiom::connector::Column*>&
-    columns_map);
+  const ColumnGetter& column_getter);
 
 }  // namespace sdb::connector::search

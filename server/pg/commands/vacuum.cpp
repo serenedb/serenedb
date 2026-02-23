@@ -69,6 +69,10 @@ yaclib::Future<Result> UpdateIndexes(
     SDB_ASSERT(rel->relation->relname);
     rel_name = {rel->relation->relname};
     auto table = snapshot->GetTable(db, schema_name, rel_name);
+    if (!table) {
+      return yaclib::MakeFuture<Result>(ERROR_BAD_PARAMETER, "Relation '",
+                                        rel_name, "' not found.");
+    }
     SDB_ASSERT(table);
     for (auto index_shard : snapshot->GetIndexShardsByTable(table->GetId())) {
       SDB_ASSERT(index_shard);

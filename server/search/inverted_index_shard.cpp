@@ -89,7 +89,16 @@ std::filesystem::path InvertedIndexShard::GetPath(ObjectId db, ObjectId schema,
   return path;
 }
 
-InvertedIndexShard::InvertedIndexShard(const catalog::InvertedIndex& index,
+std::shared_ptr<InvertedIndexShard> InvertedIndexShard::Create(const catalog::InvertedIndex& index,
+                                       InvertedIndexShardOptions options,
+                                       bool is_new) {
+  auto shard = std::make_shared<InvertedIndexShard>(PrivateTag{}, index, options, is_new);
+  // TODO(Dronpane) use actual is_new value when indexing of existing table would be implemented
+  shard->InitPostRecovery(false);
+  return shard;
+}
+
+InvertedIndexShard::InvertedIndexShard(PrivateTag, const catalog::InvertedIndex& index,
                                        InvertedIndexShardOptions options,
                                        bool is_new)
   : IndexShard{index},
@@ -97,6 +106,9 @@ InvertedIndexShard::InvertedIndexShard(const catalog::InvertedIndex& index,
     _search{GetSearchEngine()},
     _state{std::make_shared<ThreadPoolState>()},
     _options{std::move(options)} {
+  _tasks_settings.commit_interval_msec = _options.commit_interval_ms;
+  _tasks_settings.consolidation_interval_msec = _options.consolidation_interval_ms;
+  _tasks_settings.cleanup_interval_step = 10;
   auto& server = SerenedServer::Instance();
 
   const auto db_id = index.GetDatabaseId();
@@ -202,10 +214,13 @@ InvertedIndexShard::InvertedIndexShard(const catalog::InvertedIndex& index,
   if (!server.hasFeature<RocksDBRecoveryManager>()) {
     return;
   }
+}
 
+void InvertedIndexShard::InitPostRecovery(bool is_new) {
+  auto& server = SerenedServer::Instance();
   auto res =
     server.getFeature<RocksDBRecoveryManager>().registerPostRecoveryCallback(
-      [weak_self = weak_from_this(), path_exists]() -> Result {
+      [weak_self = weak_from_this(), is_new]() -> Result {
         auto self = weak_self.lock();
         if (!self) {
           // Index was dropped during recovery
@@ -230,8 +245,9 @@ InvertedIndexShard::InvertedIndexShard(const catalog::InvertedIndex& index,
           }
         }
 
-        // Register flush subscription
-        if (path_exists) {
+        // Register flush subscription if we are loading existing index
+        // If not finishCreation would be called later when indexing finishes
+        if (!is_new) {
           self->FinishCreation();
         }
 

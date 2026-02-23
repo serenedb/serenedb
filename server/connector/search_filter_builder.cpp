@@ -51,8 +51,7 @@ namespace sdb::connector::search {
 struct VeloxFilterContext {
   bool negated = false;
   irs::score_t boost = irs::kNoBoost;
-  const folly::F14FastMap<std::string, const axiom::connector::Column*>&
-    columns_map;
+  const ColumnGetter& column_getter;
 };
 
 Result FromVeloxExpression(irs::BooleanFilter& filter,
@@ -98,13 +97,13 @@ std::optional<velox::Variant> EvaluateConstant(
 velox::TypeKind ExtractFieldName(const VeloxFilterContext& ctx,
                                  const velox::core::FieldAccessTypedExpr& expr,
                                  std::string& field_name) {
-  auto it = ctx.columns_map.find(expr.name());
-  SDB_ENSURE(it != ctx.columns_map.end(), ERROR_BAD_PARAMETER, "Column ",
+  auto column = ctx.column_getter(expr.name());
+  SDB_ENSURE(column, ERROR_BAD_PARAMETER, "Column ",
              expr.name(), " was not found");
-  auto column_id = static_cast<const SereneDBColumn*>(it->second)->Id();
+  auto column_id = column->Id();
   basics::StrResize(field_name, sizeof(column_id));
   absl::big_endian::Store(field_name.data(), column_id);
-  return static_cast<const SereneDBColumn*>(it->second)->type()->kind();
+  return column->type()->kind();
 }
 
 // Maps velox kinds to native types used in iresearch
@@ -663,9 +662,8 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
 
 Result ExprToFilter(
   irs::BooleanFilter& filter, const velox::core::TypedExprPtr& expr,
-  const folly::F14FastMap<std::string, const axiom::connector::Column*>&
-    columns_map) {
-  VeloxFilterContext ctx{.negated = false, .columns_map = columns_map};
+  const ColumnGetter& column_getter) {
+  VeloxFilterContext ctx{.negated = false, .column_getter = column_getter};
   try {
     return FromVeloxExpression(filter, ctx, expr);
   } catch (const velox::VeloxException& ex) {

@@ -19,7 +19,7 @@ on:
         required: true
         options:
           - X64
-          - ARM64
+          - arm
           - self-hosted
         default: 'self-hosted'
       BRANCH:

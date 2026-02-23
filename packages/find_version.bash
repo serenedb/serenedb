@@ -1,6 +1,6 @@
 #!/bin/bash
 
-WORKDIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )/..
+WORKDIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)/..
 cd $WORKDIR
 
 CMAKELIST="CMakeLists.txt"
@@ -20,8 +20,7 @@ export SERENEDB_VERSION_RELEASE_TYPE=$(grep "$AV""_RELEASE_TYPE" $CMAKELIST | gr
 export SERENEDB_VERSION_RELEASE_NUMBER=$(grep "$AV""_RELEASE_NUMBER" $CMAKELIST | grep -v unset | sed -e $SEDFIX)
 
 # stable release
-if [[ "$SERENEDB_VERSION_RELEASE_TYPE" = "" ]]
-then
+if [[ "$SERENEDB_VERSION_RELEASE_TYPE" = "" ]]; then
   export SERENEDB_VERSION="$SERENEDB_VERSION_MAJOR.$SERENEDB_VERSION_MINOR.$SERENEDB_VERSION_PATCH"
 
   export SERENEDB_DARWIN_UPSTREAM="$SERENEDB_VERSION_MAJOR.$SERENEDB_VERSION_MINOR.$SERENEDB_VERSION_PATCH"
@@ -64,11 +63,11 @@ elif [[ "$SERENEDB_VERSION_RELEASE_TYPE" = "devel" ]] || [[ "$SERENEDB_VERSION_R
   fi
 
 # unstable release, devel or nightly
-elif [[ "$SERENEDB_VERSION_RELEASE_TYPE" = "alpha" ]] || \
-     [[ "$SERENEDB_VERSION_RELEASE_TYPE" = "beta" ]] || \
-     [[ "$SERENEDB_VERSION_RELEASE_TYPE" = "milestone" ]] || \
-     [[ "$SERENEDB_VERSION_RELEASE_TYPE" = "preview" ]] || \
-     [[ "$SERENEDB_VERSION_RELEASE_TYPE" = "rc" ]]; then
+elif [[ "$SERENEDB_VERSION_RELEASE_TYPE" = "alpha" ]] ||
+  [[ "$SERENEDB_VERSION_RELEASE_TYPE" = "beta" ]] ||
+  [[ "$SERENEDB_VERSION_RELEASE_TYPE" = "milestone" ]] ||
+  [[ "$SERENEDB_VERSION_RELEASE_TYPE" = "preview" ]] ||
+  [[ "$SERENEDB_VERSION_RELEASE_TYPE" = "rc" ]]; then
   if [[ "$SERENEDB_VERSION_RELEASE_NUMBER" = "" ]]; then
     echo "ERROR: missing SERENEDB_VERSION_RELEASE_NUMBER for type $SERENEDB_VERSION_RELEASE_TYPE"
     return
@@ -128,8 +127,8 @@ else
   export DOCKER_TAG="$SERENEDB_VERSION_MAJOR.$SERENEDB_VERSION_MINOR.$SERENEDB_VERSION_PATCH.$SERENEDB_VERSION_RELEASE_TYPE"
 fi
 
-if [[ "$DOCKER_DISTRO" != "" ]] && [[ "$DOCKER_DISTRO" != "alpine" ]]; then
-  export DOCKER_TAG="$DOCKER_TAG-$DOCKER_DISTRO"
+if [[ -n "${DOCKER_DISTRO:-}" ]] && [[ "${DOCKER_DISTRO:-}" != "alpine" ]]; then
+  export DOCKER_TAG="${DOCKER_TAG}-${DOCKER_DISTRO}"
 fi
 
 echo '------------------------------------------------------------------------------'

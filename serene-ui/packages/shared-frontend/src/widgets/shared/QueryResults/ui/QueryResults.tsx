@@ -5,12 +5,14 @@ import { TabsContent } from "@serene-ui/shared-frontend/shared";
 import { QueryViewerResults } from "./QueryViewerResults";
 import { QueryPending } from "./QueryPending";
 import { QueryFailed } from "./QueryFailed";
+import { QuerySucceeded } from "./QuerySucceeded";
 
 interface QueryResultsProps {
     results: {
         rows: Record<string, any>[] | undefined;
         status: "success" | "failed" | "pending" | "running";
         error?: string;
+        message?: string;
         created_at?: string;
         execution_started_at?: string;
         execution_finished_at?: string;
@@ -23,31 +25,38 @@ export const QueryResults: React.FC<QueryResultsProps> = ({
     results,
     selectedResultIndex,
 }) => {
-    const rows = (results?.[selectedResultIndex]?.rows || undefined) as
+    if (
+        selectedResultIndex < 0 ||
+        !results?.length ||
+        !results[selectedResultIndex]
+    ) {
+        return <NoQueryResults />;
+    }
+
+    const selectedResult = results[selectedResultIndex];
+    const rows = (selectedResult.rows || undefined) as
         | Record<string, unknown>[]
         | undefined;
 
     if (
-        results?.[selectedResultIndex]?.status === "pending" ||
-        results?.[selectedResultIndex]?.status === "running"
+        selectedResult.status === "pending" ||
+        selectedResult.status === "running"
     ) {
         return <QueryPending />;
     }
 
-    if (results?.[selectedResultIndex]?.status === "failed") {
-        return (
-            <QueryFailed error={results?.[selectedResultIndex]?.error || ""} />
-        );
+    if (selectedResult.status === "failed") {
+        return <QueryFailed error={selectedResult.error || ""} />;
     }
 
-    if (!rows?.length) {
-        return <NoQueryResults />;
+    if (selectedResult.status === "success" && !rows?.length) {
+        return <QuerySucceeded message={selectedResult.message} />;
     }
 
-    const created_at = results?.[selectedResultIndex]?.created_at;
-    const started_at = results?.[selectedResultIndex]?.execution_started_at;
-    const finished_at = results?.[selectedResultIndex]?.execution_finished_at;
-    const received_at = results?.[selectedResultIndex]?.received_at;
+    const created_at = selectedResult.created_at;
+    const started_at = selectedResult.execution_started_at;
+    const finished_at = selectedResult.execution_finished_at;
+    const received_at = selectedResult.received_at;
 
     return (
         <div className="flex flex-col flex-1 min-h-0">

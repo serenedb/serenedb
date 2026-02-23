@@ -12,6 +12,7 @@ export function jobToRow(
     const result = "result" in job ? JSON.stringify(job.result) : null;
     const error = "error" in job ? job.error : null;
     const action_type = "action_type" in job ? job.action_type : null;
+    const message = "message" in job ? job.message : null;
     const createdAt = job.created_at ?? null;
     const startedAt = job.execution_started_at ?? null;
     const finishedAt = job.execution_finished_at ?? null;
@@ -22,6 +23,7 @@ export function jobToRow(
         result: result,
         error: error,
         action_type,
+        message,
         created_at: createdAt,
         execution_started_at: startedAt,
         execution_finished_at: finishedAt,
@@ -43,6 +45,7 @@ export function rowToJob(row: QueryExecutionJobRow): QueryExecutionJobSchema {
         result: r.result ? JSON.parse(r.result.toString()) : undefined,
         error: r.error ?? undefined,
         action_type: r.action_type ?? undefined,
+        message: r.message ?? undefined,
         created_at: r.created_at ?? undefined,
         execution_started_at: r.execution_started_at ?? undefined,
         execution_finished_at: r.execution_finished_at ?? undefined,

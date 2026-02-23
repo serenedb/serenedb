@@ -23,6 +23,7 @@ const SuccessQueryExecutionJobSchema = BaseQueryExecutionJobSchema.extend({
     action_type: z
         .enum(["SELECT", "INSERT", "UPDATE", "DELETE", "OTHER"])
         .optional(),
+    message: z.string().optional(),
     result: z.array(z.record(z.string(), z.any())),
 });
 

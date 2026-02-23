@@ -30,6 +30,8 @@
 #include <velox/dwio/text/writer/TextWriter.h>
 #include <velox/type/Filter.h>
 
+#include <limits>
+
 #include "basics/assert.h"
 #include "basics/fwd.h"
 #include "basics/message_buffer.h"
@@ -37,6 +39,15 @@
 namespace sdb::connector {
 
 using ReportCallback = std::function<void(uint64_t)>;
+
+struct FileConnectorSplit final : public velox::connector::ConnectorSplit {
+  const uint64_t start;
+  const uint64_t length;
+
+  FileConnectorSplit(const std::string& connector_id, uint64_t start = 0,
+                     uint64_t length = std::numeric_limits<uint64_t>::max())
+    : ConnectorSplit(connector_id), start(start), length(length) {}
+};
 
 struct WriterOptions {
   std::shared_ptr<velox::dwio::common::WriterOptions> dwio;
@@ -47,6 +58,27 @@ struct ReaderOptions {
   std::shared_ptr<velox::dwio::common::RowReaderOptions> row_reader;
   // if set then progress messages are written here
   ReportCallback report_callback;
+};
+
+class FileSplitSource final : public axiom::connector::SplitSource {
+ public:
+  FileSplitSource(std::shared_ptr<velox::ReadFile> source,
+                  std::shared_ptr<ReaderOptions> options,
+                  std::string connector_id,
+                  axiom::connector::SplitOptions split_options = {});
+
+  std::vector<SplitSource::SplitAndGroup> getSplits(
+    uint64_t target_bytes) final;
+
+ private:
+  std::vector<SplitSource::SplitAndGroup> GetParquetSplits() const;
+  std::vector<SplitSource::SplitAndGroup> WholeFile() const;
+
+  std::shared_ptr<velox::ReadFile> _source;
+  std::shared_ptr<ReaderOptions> _options;
+  std::string _connector_id;
+  axiom::connector::SplitOptions _split_options;
+  bool _done = false;
 };
 
 class FileTable : public axiom::connector::Table {
@@ -207,8 +239,7 @@ class FileDataSource final : public velox::connector::DataSource {
                  const velox::connector::ColumnHandleMap& column_handles,
                  velox::memory::MemoryPool& memory_pool);
 
-  void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final {
-  }
+  void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
 
   std::optional<velox::RowVectorPtr> next(uint64_t size,
                                           velox::ContinueFuture& future) final;
@@ -224,7 +255,9 @@ class FileDataSource final : public velox::connector::DataSource {
  private:
   velox::memory::MemoryPool* _pool;
   velox::RowTypePtr _output_type;
-  std::shared_ptr<velox::dwio::common::Reader> _reader;
+  std::shared_ptr<velox::ReadFile> _source;
+  std::shared_ptr<velox::dwio::common::ReaderOptions> _reader_options_dwio;
+  std::unique_ptr<velox::dwio::common::Reader> _reader;
   std::unique_ptr<velox::dwio::common::RowReader> _row_reader;
   // We store RowReaderOptions to keep ScanSpec alive
   std::shared_ptr<velox::dwio::common::RowReaderOptions> _row_reader_options;

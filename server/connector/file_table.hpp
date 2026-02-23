@@ -203,6 +203,8 @@ class FileDataSource final : public velox::connector::DataSource {
   FileDataSource(std::shared_ptr<velox::ReadFile> source,
                  std::shared_ptr<ReaderOptions> options,
                  const velox::common::SubfieldFilters& subfield_filters,
+                 velox::RowTypePtr output_type,
+                 const velox::connector::ColumnHandleMap& column_handles,
                  velox::memory::MemoryPool& memory_pool);
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final {
@@ -221,6 +223,7 @@ class FileDataSource final : public velox::connector::DataSource {
 
  private:
   velox::memory::MemoryPool* _pool;
+  velox::RowTypePtr _output_type;
   std::shared_ptr<velox::dwio::common::Reader> _reader;
   std::unique_ptr<velox::dwio::common::RowReader> _row_reader;
   // We store RowReaderOptions to keep ScanSpec alive

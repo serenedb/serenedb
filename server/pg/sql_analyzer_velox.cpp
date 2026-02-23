@@ -2292,7 +2292,20 @@ class CopyOptionsParser {
   }
 
   void ParseParquet() {
-    _row_type = velox::ROW(ToAliases(_row_type->names()), _row_type->children());
+    std::vector<std::string> aliases;
+    aliases.reserve(_row_type->size());
+
+    for (const auto& name : _row_type->names()) {
+      if (absl::c_contains(aliases, name)) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_COLUMN),
+                        ERR_MSG("column \"", name,
+                                "\" specified more than once. That's forbidden "
+                                "for \"PARQUET\" format"));
+      }
+      aliases.emplace_back(ToAlias(name));
+    }
+
+    _row_type = velox::ROW(std::move(aliases), _row_type->children());
     CreateDefaultWriterReader(FileFormat::PARQUET);
   }
 

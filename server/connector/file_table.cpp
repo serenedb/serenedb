@@ -100,7 +100,9 @@ FileDataSource::FileDataSource(
   std::shared_ptr<velox::ReadFile> source,
   std::shared_ptr<ReaderOptions> options,
   const velox::common::SubfieldFilters& subfield_filters,
-  velox::RowTypePtr output_type, velox::memory::MemoryPool& memory_pool)
+  velox::RowTypePtr output_type,
+  const velox::connector::ColumnHandleMap& column_handles,
+  velox::memory::MemoryPool& memory_pool)
   : _output_type{std::move(output_type)},
     _row_reader_options{options->row_reader},
     _report_callback{options->report_callback} {
@@ -114,9 +116,13 @@ FileDataSource::FileDataSource(
   _reader = reader_factory->createReader(std::move(input), *options->dwio);
 
   auto spec = std::make_shared<velox::common::ScanSpec>("root");
-  for (velox::column_index_t i = 0; i < _output_type->size(); ++i) {
-    std::string_view name = _output_type->nameOf(i);
-    spec->addField(std::string{name.substr(0, name.find(':'))}, i);
+  const auto& names = _output_type->names();
+  for (size_t i = 0; i < names.size(); ++i) {
+    auto handle_it = column_handles.find(names[i]);
+    SDB_ENSURE(handle_it != column_handles.end(), ERROR_INTERNAL,
+               "FileDataSource: can't find column handle for ", names[i]);
+    const auto& handle = *handle_it->second;
+    spec->addField(handle.name(), i);
   }
 
   for (auto& [subfield, filter] : subfield_filters) {

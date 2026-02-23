@@ -44,9 +44,9 @@
 #include "catalog/identifiers/object_id.h"
 #include "catalog/table.h"
 #include "catalog/table_options.h"
+#include "connector/search_data_source.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "connector/sink_writer_base.hpp"
-#include "connector/search_data_source.hpp"
 #include "data_sink.hpp"
 #include "data_source.hpp"
 #include "file_table.hpp"
@@ -186,16 +186,14 @@ class SereneDBConnectorTableHandle final
     _search_query = std::move(query);
     _index_id = index_id;
   }
- 
+
   auto& GetTransaction() const noexcept { return _transaction; }
-// splits per segment???
-  const irs::Filter::Query*  GetSearchQuery() const noexcept {
+  // splits per segment???
+  const irs::Filter::Query* GetSearchQuery() const noexcept {
     return _search_query.get();
   }
 
-  ObjectId GetIndex() const noexcept {
-    return _index_id;
-  }
+  ObjectId GetIndex() const noexcept { return _index_id; }
 
  private:
   std::string _name;
@@ -663,7 +661,8 @@ class SereneDBConnector final : public velox::connector::Connector {
     auto* rocksdb_transaction = transaction.GetRocksDBTransaction();
 
     if (read_your_own_writes && rocksdb_transaction) {
-      // TODO: RYOW is not supported by search index anyway. Check that and skip index building!
+      // TODO: RYOW is not supported by search index anyway. Check that and skip
+      // index building!
       return std::make_unique<RocksDBRYOWDataSource>(
         *connector_query_ctx->memoryPool(), *rocksdb_transaction, _cf,
         output_type, column_oids, serene_table_handle.GetEffectiveColumnId(),
@@ -671,11 +670,13 @@ class SereneDBConnector final : public velox::connector::Connector {
     }
 
     if (serene_table_handle.GetSearchQuery()) {
-      const auto& search_snapshot = transaction.EnsureSearchSnapshot(serene_table_handle.GetIndex());
+      const auto& search_snapshot =
+        transaction.EnsureSearchSnapshot(serene_table_handle.GetIndex());
       return std::make_unique<search::SearchDataSource>(
-        *connector_query_ctx->memoryPool(), search_snapshot.snapshot->GetSnapshot(), _db, _cf,
-        output_type, column_oids, serene_table_handle.GetEffectiveColumnId(),
-        object_key, search_snapshot.reader, *serene_table_handle.GetSearchQuery());
+        *connector_query_ctx->memoryPool(),
+        search_snapshot.snapshot->GetSnapshot(), _db, _cf, output_type,
+        column_oids, serene_table_handle.GetEffectiveColumnId(), object_key,
+        search_snapshot.reader, *serene_table_handle.GetSearchQuery());
     }
 
     return std::make_unique<RocksDBSnapshotDataSource>(

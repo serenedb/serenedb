@@ -34,12 +34,13 @@ class SearchDataSource final : public velox::connector::DataSource,
                                public Materializer {
  public:
   SearchDataSource(velox::memory::MemoryPool& memory_pool,
-                   // Search source always uses snapshot 
+                   // Search source always uses snapshot
                    const rocksdb::Snapshot* snapshot, rocksdb::DB& db,
                    rocksdb::ColumnFamilyHandle& cf, velox::RowTypePtr row_type,
                    std::vector<catalog::Column::Id> column_ids,
                    catalog::Column::Id effective_column_id, ObjectId object_key,
-                   const irs::IndexReader& reader, const irs::Filter::Query& query);
+                   const irs::IndexReader& reader,
+                   const irs::Filter::Query& query);
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
   std::optional<velox::RowVectorPtr> next(uint64_t size,

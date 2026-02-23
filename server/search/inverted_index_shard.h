@@ -151,8 +151,9 @@ class InvertedIndexShard final
   InvertedIndexShard(PrivateTag, const catalog::InvertedIndex& index,
                      InvertedIndexShardOptions options, bool is_new);
 
-  static std::shared_ptr<InvertedIndexShard> Create(const catalog::InvertedIndex& index,
-                     InvertedIndexShardOptions options, bool is_new);
+  static std::shared_ptr<InvertedIndexShard> Create(
+    const catalog::InvertedIndex& index, InvertedIndexShardOptions options,
+    bool is_new);
 
   static std::filesystem::path GetPath(ObjectId db, ObjectId schema,
                                        ObjectId id);

@@ -119,15 +119,20 @@ rocksdb::Transaction* Transaction::GetRocksDBTransaction() const noexcept {
   return _rocksdb_transaction.get();
 }
 
-const search::InvertedIndexSnapshot& Transaction::EnsureSearchSnapshot(ObjectId index_id) {
+const search::InvertedIndexSnapshot& Transaction::EnsureSearchSnapshot(
+  ObjectId index_id) {
   SDB_ASSERT((_state & State::HasRocksDBRead) != State::None);
   auto it = _search_snapshots.find(index_id);
   if (it == _search_snapshots.end()) {
     auto index_shard = GetCatalogSnapshot()->GetIndexShard(index_id);
     SDB_ASSERT(index_shard);
-    SDB_ASSERT(index_shard->GetType() == IndexType::Inverted, "Expected inverted index shard");
-    auto& inverted_index_shard = basics::downCast<search::InvertedIndexShard>(*index_shard.get());
-    it = _search_snapshots.emplace(index_id, inverted_index_shard.GetInvertedIndexSnapshot()).first;
+    SDB_ASSERT(index_shard->GetType() == IndexType::Inverted,
+               "Expected inverted index shard");
+    auto& inverted_index_shard =
+      basics::downCast<search::InvertedIndexShard>(*index_shard.get());
+    it = _search_snapshots
+           .emplace(index_id, inverted_index_shard.GetInvertedIndexSnapshot())
+           .first;
   }
   return *it->second;
 }

@@ -62,7 +62,8 @@ Materializer::Materializer(velox::memory::MemoryPool& memory_pool,
     };
   } else {
     _value_reader = [&](std::string_view full_key) -> std::string& {
-      auto status = _transaction->Get(_read_options, &_cf, full_key, &_value_buffer);
+      auto status =
+        _transaction->Get(_read_options, &_cf, full_key, &_value_buffer);
       if (!status.ok()) {
         auto res = sdb::rocksutils::ConvertStatus(status);
         SDB_THROW(

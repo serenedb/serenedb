@@ -98,8 +98,8 @@ velox::TypeKind ExtractFieldName(const VeloxFilterContext& ctx,
                                  const velox::core::FieldAccessTypedExpr& expr,
                                  std::string& field_name) {
   auto column = ctx.column_getter(expr.name());
-  SDB_ENSURE(column, ERROR_BAD_PARAMETER, "Column ",
-             expr.name(), " was not found");
+  SDB_ENSURE(column, ERROR_BAD_PARAMETER, "Column ", expr.name(),
+             " was not found");
   auto column_id = column->Id();
   basics::StrResize(field_name, sizeof(column_id));
   absl::big_endian::Store(field_name.data(), column_id);
@@ -660,9 +660,9 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
   return {ERROR_NOT_IMPLEMENTED, "Unsupported operator: ", call.name()};
 }
 
-Result ExprToFilter(
-  irs::BooleanFilter& filter, const velox::core::TypedExprPtr& expr,
-  const ColumnGetter& column_getter) {
+Result ExprToFilter(irs::BooleanFilter& filter,
+                    const velox::core::TypedExprPtr& expr,
+                    const ColumnGetter& column_getter) {
   VeloxFilterContext ctx{.negated = false, .column_getter = column_getter};
   try {
     return FromVeloxExpression(filter, ctx, expr);

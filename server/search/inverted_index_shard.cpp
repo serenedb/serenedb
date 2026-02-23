@@ -89,16 +89,19 @@ std::filesystem::path InvertedIndexShard::GetPath(ObjectId db, ObjectId schema,
   return path;
 }
 
-std::shared_ptr<InvertedIndexShard> InvertedIndexShard::Create(const catalog::InvertedIndex& index,
-                                       InvertedIndexShardOptions options,
-                                       bool is_new) {
-  auto shard = std::make_shared<InvertedIndexShard>(PrivateTag{}, index, options, is_new);
-  // TODO(Dronpane) use actual is_new value when indexing of existing table would be implemented
+std::shared_ptr<InvertedIndexShard> InvertedIndexShard::Create(
+  const catalog::InvertedIndex& index, InvertedIndexShardOptions options,
+  bool is_new) {
+  auto shard =
+    std::make_shared<InvertedIndexShard>(PrivateTag{}, index, options, is_new);
+  // TODO(Dronpane) use actual is_new value when indexing of existing table
+  // would be implemented
   shard->InitPostRecovery(false);
   return shard;
 }
 
-InvertedIndexShard::InvertedIndexShard(PrivateTag, const catalog::InvertedIndex& index,
+InvertedIndexShard::InvertedIndexShard(PrivateTag,
+                                       const catalog::InvertedIndex& index,
                                        InvertedIndexShardOptions options,
                                        bool is_new)
   : IndexShard{index},
@@ -107,7 +110,8 @@ InvertedIndexShard::InvertedIndexShard(PrivateTag, const catalog::InvertedIndex&
     _state{std::make_shared<ThreadPoolState>()},
     _options{std::move(options)} {
   _tasks_settings.commit_interval_msec = _options.commit_interval_ms;
-  _tasks_settings.consolidation_interval_msec = _options.consolidation_interval_ms;
+  _tasks_settings.consolidation_interval_msec =
+    _options.consolidation_interval_ms;
   _tasks_settings.cleanup_interval_step = 10;
   auto& server = SerenedServer::Instance();
 

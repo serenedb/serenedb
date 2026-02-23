@@ -33,8 +33,8 @@ namespace sdb::connector::search {
 
 using ColumnGetter = std::function<const SereneDBColumn*(std::string_view)>;
 // Convert Velox expression to IResearch filter
-Result ExprToFilter(
-  irs::BooleanFilter& filter, const velox::core::TypedExprPtr& expr,
-  const ColumnGetter& column_getter);
+Result ExprToFilter(irs::BooleanFilter& filter,
+                    const velox::core::TypedExprPtr& expr,
+                    const ColumnGetter& column_getter);
 
 }  // namespace sdb::connector::search

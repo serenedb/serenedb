@@ -420,6 +420,12 @@ class SereneDBConnectorSplitManager final
     const velox::connector::ConnectorTableHandlePtr& table_handle,
     const std::vector<axiom::connector::PartitionHandlePtr>& partitions,
     axiom::connector::SplitOptions options = {}) final {
+    if (const auto* file_handle =
+          dynamic_cast<const FileTableHandle*>(table_handle.get())) {
+      return std::make_shared<FileSplitSource>(
+        file_handle->GetSource(), file_handle->GetOptions(),
+        StaticStrings::kSereneDBConnector, options);
+    }
     return std::make_shared<SereneDBSplitSource>();
   }
 };

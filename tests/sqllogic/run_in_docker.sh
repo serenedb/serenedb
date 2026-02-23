@@ -55,8 +55,7 @@ docker compose \
   up \
   --attach tests \
   --exit-code-from tests \
-  --remove-orphans \
-  --timestamps
+  --remove-orphans
 test_exit_code=$?
 if ! test "${test_exit_code}" -eq "0"; then
   echo "$TEST_KIND tests failed!"

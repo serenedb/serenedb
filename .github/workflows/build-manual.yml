@@ -57,11 +57,11 @@ on:
         required: true
         type: boolean
         default: false
-#      BUILD_CONFIG:
-#        description: 'Backup JSON configuration for builds'
-#        type: string
-#        required: false
-#        default: '{}'
+      BUILD_CONFIG:
+        description: 'Backup JSON configuration for builds'
+        type: string
+        required: false
+        default: '{}'
 
 jobs:
   call-reusable:
@@ -79,7 +79,6 @@ jobs:
       # Job config environment
       JOB_CONFIG: ${{ inputs.JOB_CONFIG }}
       # Build config environment
-      #BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
-      # Scripts environment
+      BUILD_CONFIG: ${{ inputs.BUILD_CONFIG }}
 
     secrets: inherit

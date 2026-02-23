@@ -162,9 +162,9 @@ jobs:
 
       - name: Remap directories to legacy paths
         run: |
-          rm -rf packages
           mv private/gh-ci private/ci
-          mv gh-packages packages
+          # rm -rf packages
+          # mv gh-packages packages
 
       - name: Print environment
         if: env.DEBUG_PRINT_ENV == 'true'

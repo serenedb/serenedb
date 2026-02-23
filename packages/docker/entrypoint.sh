@@ -1,88 +1,158 @@
 #!/bin/sh
+# =============================================================================
+# SereneDB Docker Entrypoint
+# Handles initialization and startup of the database server
+# =============================================================================
 set -e
 
-if [ -z "$SERENE_INIT_PORT" ] ; then
-    SERENE_INIT_PORT=8999
-fi
-
+# Configuration
+SERENE_INIT_PORT="${SERENE_INIT_PORT:-8999}"
 AUTHENTICATION="true"
+NUMACTL=""
+CONFIG_FILE="/etc/serenedb/serened.conf"
+RUNTIME_CONFIG="/tmp/serened.conf"
+DATA_DIR="/var/lib/serenedb"
+INIT_MARKER="${DATA_DIR}/SERVER"
 
-# if command starts with an option, prepend serened
+# Handle command line arguments
+# If command starts with '-', prepend 'serened'
 case "$1" in
-    -*) set -- serened "$@" ;;
-    *) ;;
+-*)
+  set -- serened "$@"
+  ;;
 esac
 
-# check for numa
-NUMACTL=""
-
-if [ -d /sys/devices/system/node/node1 -a -f /proc/self/numa_maps ]; then
-    if [ "$NUMA" = "" ]; then
-        NUMACTL="numactl --interleave=all"
+# NUMA Configuration
+# Improves performance on multi-socket systems
+configure_numa() {
+  if [ -d /sys/devices/system/node/node1 ] && [ -f /proc/self/numa_maps ]; then
+    if [ -z "$NUMA" ]; then
+      NUMACTL="numactl --interleave=all"
     elif [ "$NUMA" != "disable" ]; then
-        NUMACTL="numactl --interleave=$NUMA"
+      NUMACTL="numactl --interleave=$NUMA"
     fi
 
-    if [ "$NUMACTL" != "" ]; then
-        if $NUMACTL echo > /dev/null 2>&1; then
-            echo "using NUMA $NUMACTL"
-        else
-            echo "cannot start with NUMA $NUMACTL: please ensure that docker is running with --cap-add SYS_NICE"
-            NUMACTL=""
-        fi
+    if [ -n "$NUMACTL" ]; then
+      if $NUMACTL echo >/dev/null 2>&1; then
+        echo "NUMA: Using $NUMACTL"
+      else
+        echo "NUMA: Cannot use $NUMACTL (try: docker run --cap-add SYS_NICE)"
+        NUMACTL=""
+      fi
     fi
-fi
+  fi
+}
 
+# Password handling
+get_root_password() {
+  # From file
+  if [ -n "$SERENE_ROOT_PASSWORD_FILE" ]; then
+    if [ -f "$SERENE_ROOT_PASSWORD_FILE" ]; then
+      SERENE_ROOT_PASSWORD="$(cat "$SERENE_ROOT_PASSWORD_FILE")"
+    else
+      echo "WARNING: Password file not found: $SERENE_ROOT_PASSWORD_FILE"
+    fi
+  fi
+
+  # Generate random password
+  if [ -n "$SERENE_RANDOM_ROOT_PASSWORD" ]; then
+    SERENE_ROOT_PASSWORD=$(pwgen -s -1 16)
+    echo "==========================================="
+    echo "GENERATED ROOT PASSWORD: $SERENE_ROOT_PASSWORD"
+    echo "==========================================="
+  fi
+}
+
+# Database initialization
+initialize_database() {
+  # Skip if already initialized
+  [ -f "$INIT_MARKER" ] && return 0
+
+  # Disable auth if requested
+  if [ -n "$SERENE_NO_AUTH" ]; then
+    AUTHENTICATION="false"
+    return 0
+  fi
+
+  get_root_password
+
+  # Check that password is configured
+  # Note: ${VAR+x} checks if VAR is set (even if empty)
+  if [ -z "${SERENE_ROOT_PASSWORD+x}" ]; then
+    echo >&2 "ERROR: Database is uninitialized and no password configured"
+    echo >&2 ""
+    echo >&2 "Please set one of:"
+    echo >&2 "  - SERENE_ROOT_PASSWORD"
+    echo >&2 "  - SERENE_ROOT_PASSWORD_FILE"
+    echo >&2 "  - SERENE_RANDOM_ROOT_PASSWORD=1"
+    echo >&2 "  - SERENE_NO_AUTH=1 (disable authentication)"
+    exit 1
+  fi
+
+  # Initialize with password (if not empty)
+  if [ -n "$SERENE_ROOT_PASSWORD" ]; then
+    echo "Initializing database with root password..."
+    SERENEDB_DEFAULT_ROOT_PASSWORD="$SERENE_ROOT_PASSWORD" \
+      /usr/sbin/serene-init-database \
+      -c "$RUNTIME_CONFIG" \
+      --server.rest-server false \
+      --log.level error \
+      --database.init-database true ||
+      true
+  fi
+}
+
+# Apply encryption settings
+configure_encryption() {
+  if [ -n "$SERENE_ENCRYPTION_KEYFILE" ]; then
+    echo "Encryption: Enabled (keyfile: $SERENE_ENCRYPTION_KEYFILE)"
+    sed -i "s;^.*encryption-keyfile.*;encryption-keyfile=$SERENE_ENCRYPTION_KEYFILE;" "$RUNTIME_CONFIG"
+  fi
+}
+
+# Run init scripts from /docker-entrypoint-initdb.d/
+run_init_scripts() {
+  if [ -d /docker-entrypoint-initdb.d ] && [ -n "$(ls -A /docker-entrypoint-initdb.d 2>/dev/null)" ]; then
+    echo "Running initialization scripts..."
+    for f in /docker-entrypoint-initdb.d/*; do
+      case "$f" in
+      *.sh)
+        echo "  Running: $f"
+        . "$f"
+        ;;
+      *)
+        echo "  Skipping: $f (not .sh)"
+        ;;
+      esac
+    done
+  fi
+}
+
+# Main
 if [ "$1" = "serened" ]; then
-    # Make a copy of the configuration file to patch it,
-    # note that this must work regardless under which user we run:
-    cp /etc/serenedb/serened.conf /tmp/serened.conf
+  echo "=== Starting SereneDB ==="
 
-    SERENE_STORAGE_ENGINE=rocksdb
-    if [ ! -z "$SERENE_ENCRYPTION_KEYFILE" ]; then
-        echo "Using encrypted database"
-        sed -i /tmp/serened.conf -e "s;^.*encryption-keyfile.*;encryption-keyfile=$SERENE_ENCRYPTION_KEYFILE;"
-    fi
+  # Copy config to writable location
+  cp "$CONFIG_FILE" "$RUNTIME_CONFIG"
 
-    if [ ! -z "$SERENE_NO_AUTH" ]; then
-        AUTHENTICATION="false"
-    elif [ ! -f /var/lib/serenedb/SERVER ]; then
-        if [ ! -z "$SERENE_ROOT_PASSWORD_FILE" ]; then
-            if [ -f "$SERENE_ROOT_PASSWORD_FILE" ]; then
-                SERENE_ROOT_PASSWORD="$(cat $SERENE_ROOT_PASSWORD_FILE)"
-            else
-                echo "WARNING: password file '$SERENE_ROOT_PASSWORD_FILE' does not exist"
-            fi
-        fi
+  # Configure
+  configure_numa
+  configure_encryption
+  initialize_database
+  run_init_scripts
 
-        if [ ! -z "$SERENE_RANDOM_ROOT_PASSWORD" ]; then
-            SERENE_ROOT_PASSWORD=$(pwgen -s -1 16)
-            echo "==========================================="
-            echo "GENERATED ROOT PASSWORD: $SERENE_ROOT_PASSWORD"
-            echo "==========================================="
-        fi
+  # Build final command
+  set -- "$@" \
+    --server.authentication="$AUTHENTICATION" \
+    --config "$RUNTIME_CONFIG"
 
-        # Please note that the +x in the following line is for the case that SERENE_ROOT_PASSWORD is set but to an empty value,
-        # please do not remove!
-        if [ -z "${SERENE_ROOT_PASSWORD+x}" ]; then
-            echo >&2 "error: database is uninitialized and password option is not specified "
-            echo >&2 "  You need to specify one of SERENE_NO_AUTH, SERENE_ROOT_PASSWORD, SERENE_ROOT_PASSWORD_FILE and SERENE_RANDOM_ROOT_PASSWORD"
-            exit 1
-        fi
-
-
-        # Root user by default has empty password, so we don't need to init root password if it's set but empty.
-        # It's also common case for coordinators in cluster, because it's impossible to specify password for cluster nodes with serene-init-database
-        # So empty SERENE_ROOT_PASSWORD should be used for coordinator if password auth required for them, but better to use jwt/ssl.
-        if [ ! -z "${SERENE_ROOT_PASSWORD}" ]; then
-            echo "Initializing root user"
-            SERENEDB_DEFAULT_ROOT_PASSWORD="$SERENE_ROOT_PASSWORD" /usr/sbin/serene-init-database -c /tmp/serened.conf --server.rest-server false --log.level error --database.init-database true || true
-        fi
-    fi
-
-    set -- "$@" --server.authentication="$AUTHENTICATION" --config /tmp/serened.conf
+  echo "Authentication: $AUTHENTICATION"
+  echo "Config: $RUNTIME_CONFIG"
+  echo ""
 else
-    NUMACTL=""
+  # Not serened - run whatever was requested
+  NUMACTL=""
 fi
 
+# Execute
 exec $NUMACTL "$@"

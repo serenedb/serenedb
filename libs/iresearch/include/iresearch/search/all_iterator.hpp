@@ -23,10 +23,8 @@
 #pragma once
 
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/cost.hpp"
-#include "iresearch/search/score.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
 
@@ -58,16 +56,16 @@ class AllIterator : public DocIterator {
     return doc_value;
   }
 
-  uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
-                   std::span<doc_id_t, kScoreBlock> docs,
-                   std::span<score_t, kScoreBlock> scores) final {
+  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
+               ScoreCollector& collector) final {
     // TODO(gnusi): optimize
-    return CollectImpl(*this, scorer, columns, docs, scores);
+    CollectImpl(*this, scorer, fetcher, collector);
   }
 
   std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
-                                      uint64_t* mask, CollectScoreContext score,
-                                      CollectMatchContext match) final {
+                                      uint64_t* mask,
+                                      FillBlockScoreContext score,
+                                      FillBlockMatchContext match) final {
     // TODO(gnusi): optimize
     return FillBlockImpl(*this, min, max, mask, score, match);
   }

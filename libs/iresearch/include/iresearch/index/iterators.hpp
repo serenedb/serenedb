@@ -25,12 +25,13 @@
 #include <absl/functional/function_ref.h>
 
 #include "basics/assert.h"
+#include "basics/down_cast.h"
 #include "basics/memory.hpp"
 #include "basics/shared.hpp"
+#include "basics/system-compiler.h"
 #include "iresearch/formats/seek_cookie.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/search/column_collector.hpp"
-#include "iresearch/search/score.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
@@ -42,20 +43,108 @@ namespace irs {
 struct PrepareScoreContext {
   const Scorer* scorer = nullptr;
   const SubReader* segment = nullptr;
-  ColumnCollector* collector;
+  ColumnArgsFetcher* fetcher;
 };
 
-struct CollectScoreContext {
+struct FillBlockScoreContext {
   const ScoreFunction* score = nullptr;
-  ColumnCollector* collector = nullptr;
+  ColumnArgsFetcher* fetcher = nullptr;
   score_t* score_window = nullptr;
   ScoreMergeType merge_type = ScoreMergeType::Noop;
 };
 
-struct CollectMatchContext {
+struct FillBlockMatchContext {
   uint32_t* matches = 0;
   size_t min_match_count = 0;
 };
+
+class ScoreCollector {
+ public:
+  enum class Tag {
+    NthPartition,
+    Generic,
+  };
+
+  IRS_FORCE_INLINE Tag GetTag() const noexcept { return _tag; }
+
+  virtual void Add(score_t score, doc_id_t doc) = 0;
+
+ protected:
+  explicit ScoreCollector(Tag tag) noexcept : _tag{tag} {}
+
+  ~ScoreCollector() = default;
+
+ private:
+  Tag _tag;
+};
+
+using ScoreDoc = std::pair<score_t, doc_id_t>;
+
+class NthPartitionScoreCollector final : public ScoreCollector {
+ public:
+  explicit NthPartitionScoreCollector(score_t& score_threshold, size_t k,
+                                      std::span<ScoreDoc> hits) noexcept
+    : ScoreCollector{Tag::NthPartition},
+      _score_threshold{&score_threshold},
+      _hits_it{hits.data()},
+      _hits_begin{hits.data()},
+      _hits_pivot{hits.data() + k},
+      _hits_end{hits.data() + hits.size()} {
+    SDB_ASSERT(2 * k == hits.size());
+  }
+
+  void SetScoreThreshold(score_t& score_threshold) noexcept {
+    SDB_ASSERT(score_threshold <= *_score_threshold);
+    score_threshold = *_score_threshold;
+    _score_threshold = &score_threshold;
+  }
+
+  IRS_FORCE_INLINE void Add(score_t score, doc_id_t doc) final {
+    ++_count;
+    if (score <= *_score_threshold) {
+      return;
+    }
+    *_hits_it = {score, doc};
+    ++_hits_it;
+    if (_hits_it != _hits_end) {
+      return;
+    }
+    _hits_it = _hits_pivot;
+    std::nth_element(_hits_begin, _hits_pivot, _hits_end,
+                     [](const auto& l, const auto& r) {
+                       return std::get<score_t>(l) > std::get<score_t>(r);
+                     });
+    *_score_threshold = std::get<score_t>(*_hits_pivot);
+  }
+
+  IRS_FORCE_INLINE uint64_t Finalize() {
+    std::sort(_hits_begin, _hits_end, [](const auto& l, const auto& r) {
+      return std::get<score_t>(l) > std::get<score_t>(r);
+    });
+    return _count;
+  }
+
+ private:
+  uint64_t _count = 0;
+  score_t* IRS_RESTRICT _score_threshold = nullptr;
+  ScoreDoc* IRS_RESTRICT _hits_it;
+  ScoreDoc* IRS_RESTRICT const _hits_begin;
+  ScoreDoc* IRS_RESTRICT const _hits_pivot;
+  ScoreDoc* IRS_RESTRICT const _hits_end;
+};
+
+template<typename F>
+IRS_FORCE_INLINE auto ResolveScoreCollector(ScoreCollector& collector, F&& f) {
+  switch (collector.GetTag()) {
+    case ScoreCollector::Tag::NthPartition:
+      return std::forward<F>(f)(
+        sdb::basics::downCast<NthPartitionScoreCollector>(collector));
+    case ScoreCollector::Tag::Generic:
+      return std::forward<F>(f)(collector);
+    default:
+      SDB_UNREACHABLE();
+  }
+}
 
 // An iterator providing sequential and random access to a posting list
 //
@@ -86,24 +175,24 @@ struct DocIterator : AttributeProvider {
   // (for more information see class description)
   virtual doc_id_t seek(doc_id_t target) = 0;
 
-  virtual uint32_t Collect(const ScoreFunction& scorer,
-                           ColumnCollector& columns,
-                           std::span<doc_id_t, kScoreBlock> docs,
-                           std::span<score_t, kScoreBlock> scores) {
-    return CollectImpl(*this, scorer, columns, docs, scores);
+  virtual void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
+                       ScoreCollector& collector) {
+    CollectImpl(*this, scorer, fetcher, collector);
   }
 
   virtual void FetchScoreArgs(uint16_t index) {}
 
-  virtual ScoreFunction PrepareScore(const PrepareScoreContext& ctx);
+  virtual ScoreFunction PrepareScore(const PrepareScoreContext& ctx) {
+    return {};
+  }
 
   virtual uint32_t count() { return CountImpl(*this); }
 
   // TODO(mbkkt) Maybe implement FillBlock for all iterators?
   virtual std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
                                               uint64_t* mask,
-                                              CollectScoreContext score,
-                                              CollectMatchContext match) {
+                                              FillBlockScoreContext score,
+                                              FillBlockMatchContext match) {
     return FillBlockImpl(*this, min, max, mask, score, match);
   }
 
@@ -116,33 +205,41 @@ struct DocIterator : AttributeProvider {
     return count;
   }
 
-  IRS_FORCE_INLINE static uint32_t CollectImpl(
-    auto& self, const ScoreFunction& scorer, ColumnCollector& columns,
-    std::span<doc_id_t, kScoreBlock> docs,
-    std::span<score_t, kScoreBlock> scores) {
-    size_t i = 0;
-    for (; i < docs.size(); ++i) {
-      const auto doc = self.advance();
-      if (doc_limits::eof(doc)) [[unlikely]] {
-        if (i) {
-          columns.Collect(docs.first(i));
-          scorer.Score(scores.data(), i);
+  IRS_FORCE_INLINE static void CollectImpl(auto& self,
+                                           const ScoreFunction& scorer,
+                                           ColumnArgsFetcher& fetcher,
+                                           ScoreCollector& c) {
+    ABSL_CACHELINE_ALIGNED std::array<score_t, kScoreBlock> scores;
+    ABSL_CACHELINE_ALIGNED std::array<doc_id_t, kScoreBlock> docs;
+    ResolveScoreCollector(c, [&](auto& collector) IRS_FORCE_INLINE {
+      while (true) {
+        for (size_t i = 0; i != kScoreBlock; ++i) {
+          const auto doc = self.advance();
+          if (doc_limits::eof(doc)) [[unlikely]] {
+            if (i != 0) {
+              fetcher.Fetch({docs.data(), i});
+              scorer.Score(scores.data(), i);
+              for (size_t j = 0; j < i; ++j) {
+                collector.Add(scores[j], docs[j]);
+              }
+            }
+            return;
+          }
+          docs[i] = doc;
+          self.FetchScoreArgs(i);
         }
-        return static_cast<uint32_t>(i);
+        fetcher.Fetch(docs);
+        scorer.ScoreBlock(scores.data());
+        for (size_t j = 0; j != kScoreBlock; ++j) {
+          collector.Add(scores[j], docs[j]);
+        }
       }
-      docs[i] = doc;
-      self.FetchScoreArgs(i);
-    }
-
-    SDB_ASSERT(i == kScoreBlock);
-    columns.Collect(docs);
-    scorer.ScoreBlock(scores.data());
-    return kScoreBlock;
+    });
   }
 
   IRS_FORCE_INLINE static std::pair<doc_id_t, bool> FillBlockImpl(
     auto& self, doc_id_t min, doc_id_t max, uint64_t* mask,
-    CollectScoreContext score, CollectMatchContext match) {
+    FillBlockScoreContext score, FillBlockMatchContext match) {
     if (!score.score || score.score->IsDefault()) {
       score.merge_type = ScoreMergeType::Noop;
     }
@@ -159,8 +256,8 @@ struct DocIterator : AttributeProvider {
   template<ScoreMergeType MergeType, bool TrackMatch>
   static std::pair<doc_id_t, bool> FillBlockImpl(
     auto& self, const doc_id_t min, const doc_id_t max,
-    uint64_t* IRS_RESTRICT mask, [[maybe_unused]] CollectScoreContext score,
-    [[maybe_unused]] CollectMatchContext match) {
+    uint64_t* IRS_RESTRICT mask, [[maybe_unused]] FillBlockScoreContext score,
+    [[maybe_unused]] FillBlockMatchContext match) {
     SDB_ASSERT(min < max);
 
     [[maybe_unused]] std::array<score_t, kScoreBlock> score_buf;
@@ -171,8 +268,8 @@ struct DocIterator : AttributeProvider {
         SDB_ASSERT(n);
         SDB_ASSERT(score.score);
 
-        if (score.collector) {
-          score.collector->Collect(std::span{score_hits.data(), n});
+        if (score.fetcher) {
+          score.fetcher->Fetch(std::span{score_hits.data(), n});
         }
         if (n == kScoreBlock) [[likely]] {
           score.score->ScoreBlock(score_buf.data());

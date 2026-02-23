@@ -186,14 +186,14 @@ struct PostingsReader {
   virtual DocIterator::ptr Iterator(IndexFeatures field_features,
                                     IndexFeatures required_features,
                                     std::span<const PostingCookie> metas,
-                                    const IteratorFieldOptions& options,
+                                    IteratorFieldOptions options,
                                     size_t min_match,
                                     ScoreMergeType type) const = 0;
 
   DocIterator::ptr Iterator(IndexFeatures field_features,
                             IndexFeatures required_features,
                             const PostingCookie& meta,
-                            const IteratorFieldOptions& options,
+                            IteratorFieldOptions options,
                             ScoreMergeType type = ScoreMergeType::Noop) const {
     return Iterator(field_features, required_features, {&meta, 1}, options, 1,
                     type);

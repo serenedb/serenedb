@@ -126,9 +126,8 @@ DocIterator::ptr BooleanQuery::execute(const ExecutionContext& ctx) const {
   }
 
   // exclusion part does not affect scoring at all
-  auto excl = MakeDisjunction(
-    {.segment = ctx.segment, .scorers = Scorers::kUnordered, .ctx = ctx.ctx},
-    ScoreMergeType::Noop, excl_begin, end);
+  auto excl = MakeDisjunction({.segment = ctx.segment, .ctx = ctx.ctx},
+                              ScoreMergeType::Noop, excl_begin, end);
 
   // got empty iterator for excluded
   if (doc_limits::eof(excl->value())) {

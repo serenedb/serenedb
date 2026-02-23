@@ -75,6 +75,7 @@ set(iresearch-tests_sources
     ./search/geo_analyzer_test.cpp
     ./search/doc_collector_test.cpp
     ./search/block_scoring_test.cpp
+    ./search/wand_scoring_test.cpp
     ./utils/async_utils_tests.cpp
     ./utils/automaton_test.cpp
     ./utils/bitvector_tests.cpp

@@ -77,15 +77,15 @@ class SamePositionIterator : public DocIterator {
 
   uint32_t count() final { return CountImpl(*this); }
 
-  uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
-                   std::span<doc_id_t, kScoreBlock> docs,
-                   std::span<score_t, kScoreBlock> scores) final {
-    return CollectImpl(*this, scorer, columns, docs, scores);
+  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
+               ScoreCollector& collector) final {
+    CollectImpl(*this, scorer, fetcher, collector);
   }
 
   std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
-                                      uint64_t* mask, CollectScoreContext score,
-                                      CollectMatchContext match) final {
+                                      uint64_t* mask,
+                                      FillBlockScoreContext score,
+                                      FillBlockMatchContext match) final {
     return FillBlockImpl(*this, min, max, mask, score, match);
   }
 
@@ -129,8 +129,6 @@ class SamePositionQuery : public Filter::Query {
 
   DocIterator::ptr execute(const ExecutionContext& ctx) const final {
     auto& segment = ctx.segment;
-    auto& ord = ctx.scorers;
-
     // get query state for the specified reader
     auto query_state = _states.find(segment);
     if (!query_state) {
@@ -140,8 +138,7 @@ class SamePositionQuery : public Filter::Query {
 
     // get features required for query & order
     const IndexFeatures features =
-      ord.features() | BySamePosition::kRequiredFeatures;
-
+      GetFeatures(ctx.scorer) | BySamePosition::kRequiredFeatures;
     ScoreAdapters itrs;
     itrs.reserve(query_state->size());
 
@@ -206,10 +203,10 @@ Filter::Query::ptr BySamePosition::prepare(const PrepareContext& ctx) const {
   // !!! FIXME !!!
   // that's completely wrong, we have to collect stats for each field
   // instead of aggregating them using a single collector
-  FieldCollectors field_stats(ctx.scorers);
+  FieldCollectors field_stats(ctx.scorer);
 
   // prepare phrase stats (collector for each term)
-  TermCollectors term_stats(ctx.scorers, size);
+  TermCollectors term_stats(ctx.scorer, size);
 
   for (const auto& segment : ctx.index) {
     size_t term_idx = 0;
@@ -236,7 +233,7 @@ Filter::Query::ptr BySamePosition::prepare(const PrepareContext& ctx) const {
       SeekTermIterator::ptr term = field->iterator(SeekMode::NORMAL);
 
       if (!term->seek(branch.second)) {
-        if (ctx.scorers.empty()) {
+        if (!ctx.scorer) {
           break;
         } else {
           // continue here because we should collect
@@ -273,7 +270,7 @@ Filter::Query::ptr BySamePosition::prepare(const PrepareContext& ctx) const {
   SamePositionQuery::StatsT stats(
     size, SamePositionQuery::StatsT::allocator_type{ctx.memory});
   for (auto& stat : stats) {
-    stat.resize(ctx.scorers.stats_size());
+    stat.resize(GetStatsSize(ctx.scorer));
     auto* stats_buf = stat.data();
     term_stats.finish(stats_buf, term_idx++, field_stats, ctx.index);
   }

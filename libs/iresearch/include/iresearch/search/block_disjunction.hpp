@@ -95,6 +95,8 @@ enum class MatchType {
 
 template<MatchType MinMatch, bool SeekReadahead, size_t NumBlocks = 64>
 struct BlockDisjunctionTraits {
+  static_assert(NumBlocks >= 1);
+
   // "false" - iterator is used for min match filtering,
   // "true" - otherwise
   static constexpr bool kMinMatchEarlyPruning =
@@ -109,7 +111,7 @@ struct BlockDisjunctionTraits {
   static constexpr bool kSeekReadahead = SeekReadahead;
 
   // Size of the readhead buffer in blocks
-  static constexpr size_t kNumBlocks = NumBlocks;
+  static constexpr auto kNumBlocks = NumBlocks;
 };
 
 // The implementation reads ahead 64*NumBlocks documents.
@@ -249,17 +251,9 @@ class BlockDisjunction : public DocIterator {
   uint32_t count() final {
     uint32_t count = 0;
 
-    while (_cur != 0 && next()) [[unlikely]] {
-      ++count;
-    }
-
-    while (Refill()) {
-      if constexpr (Traits::kMinMatch) {
-        count += _match_buf.count();
-      } else {
-        for (const auto word : _mask) {
-          count += std::popcount(word);
-        }
+    while (RefillImpl()) {
+      for (const auto word : _mask) {
+        count += std::popcount(word);
       }
     }
 
@@ -280,8 +274,9 @@ class BlockDisjunction : public DocIterator {
   }
 
   std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
-                                      uint64_t* mask, CollectScoreContext score,
-                                      CollectMatchContext match) final {
+                                      uint64_t* mask,
+                                      FillBlockScoreContext score,
+                                      FillBlockMatchContext match) final {
     // TODO(gnusi): optimize
     return FillBlockImpl(*this, min, max, mask, score, match);
   }
@@ -291,7 +286,7 @@ class BlockDisjunction : public DocIterator {
       const PrepareScoreContext sub{
         .scorer = ctx.scorer,
         .segment = ctx.segment,
-        .collector = &_collector,
+        .fetcher = &_fetcher,
       };
 
       bool no_score = true;
@@ -313,13 +308,11 @@ class BlockDisjunction : public DocIterator {
  private:
   static constexpr doc_id_t kBlockSize = BitsRequired<uint64_t>();
 
-  static constexpr doc_id_t kNumBlocks =
-    static_cast<doc_id_t>(std::max(size_t(1), Traits::kNumBlocks));
+  static constexpr auto kNumBlocks = Traits::kNumBlocks;
 
   static constexpr doc_id_t kWindow = kBlockSize * kNumBlocks;
 
-  static_assert(kBlockSize * size_t(kNumBlocks) <
-                std::numeric_limits<doc_id_t>::max());
+  static_assert(kBlockSize * kNumBlocks < std::numeric_limits<doc_id_t>::max());
 
   using Attributes = std::tuple<DocAttr, CostAttr>;
 
@@ -366,76 +359,60 @@ class BlockDisjunction : public DocIterator {
     return {doc_value, static_cast<uint16_t>(_buf_offset + offset)};
   }
 
-  uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
-                   std::span<doc_id_t, kScoreBlock> docs,
-                   std::span<score_t, kScoreBlock> scores) final {
-    const score_t* IRS_RESTRICT sw = nullptr;
-    if constexpr (kHasScore) {
-      sw = _score_buf.score_window.data();
-    }
+  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
+               ScoreCollector& collector) final {
+    ResolveScoreCollector(collector, [&](auto& collector) IRS_FORCE_INLINE {
+      const score_t* IRS_RESTRICT score_window = nullptr;
+      if constexpr (kHasScore) {
+        score_window = _score_buf.score_window.data();
+      }
 
-    auto& doc_value = std::get<DocAttr>(_attrs).value;
-    auto cur = _cur;
-    auto doc_base = _doc_base;
-    [[maybe_unused]] auto buf_offset = _buf_offset;
-    auto begin = _begin;
-    const auto end = std::end(_mask);
+      auto& doc_value = std::get<DocAttr>(_attrs).value;
+      auto cur = _cur;
+      auto doc_base = _doc_base;
+      [[maybe_unused]] auto buf_offset = _buf_offset;
+      auto* IRS_RESTRICT begin = _begin;
+      const auto* IRS_RESTRICT const end = std::end(_mask);
 
-    size_t i = 0;
-    for (; i < docs.size(); ++i) {
-      while (cur == 0) {
-        if (begin >= end) {
-          if (Refill()) {
-            SDB_ASSERT(_cur);
-            cur = _cur;
-            doc_base = _doc_base;
-            begin = _begin;
-            if constexpr (Traits::kMinMatch || kHasScore) {
-              buf_offset = _buf_offset;
+      while (true) {
+        while (cur == 0) {
+          if (begin >= end) {
+            if (Refill()) {
+              SDB_ASSERT(_cur);
+              cur = _cur;
+              doc_base = _doc_base;
+              begin = _begin;
+              if constexpr (Traits::kMinMatch || kHasScore) {
+                buf_offset = _buf_offset;
+              }
+              break;
             }
-            break;
+
+            _match_count = 0;
+            _cur = 0;
+            doc_value = doc_limits::eof();
+            _begin = begin;
+            return;
           }
 
-          _match_count = 0;
-          _cur = 0;
-          doc_value = doc_limits::eof();
-          _begin = begin;
-          return i;
+          cur = *begin++;
+          doc_base += BitsRequired<uint64_t>();
+          if constexpr (Traits::kMinMatch || kHasScore) {
+            buf_offset += BitsRequired<uint64_t>();
+          }
+        }
+        const auto bit_offset = std::countr_zero(cur);
+        cur = PopBit(cur);
+
+        if constexpr (Traits::kMinMatch) {
+          _match_count = _match_buf.match_count(buf_offset + bit_offset);
+          SDB_ASSERT(_match_count >= _match_buf.min_match_count());
         }
 
-        cur = *begin++;
-        doc_base += BitsRequired<uint64_t>();
-        if constexpr (Traits::kMinMatch || kHasScore) {
-          buf_offset += BitsRequired<uint64_t>();
-        }
+        const auto doc = doc_base + static_cast<doc_id_t>(bit_offset);
+        collector.Add(score_window[buf_offset + bit_offset], doc);
       }
-      const size_t bit_offset = std::countr_zero(cur);
-      cur = PopBit(cur);
-
-      if constexpr (Traits::kMinMatch) {
-        _match_count = _match_buf.match_count(buf_offset + bit_offset);
-        SDB_ASSERT(_match_count >= _match_buf.min_match_count());
-      }
-
-      const auto doc = doc_base + static_cast<doc_id_t>(bit_offset);
-      docs[i] = doc;
-      if constexpr (kHasScore) {
-        scores[i] = sw[buf_offset + bit_offset];
-      }
-    }
-
-    // Write back register state
-    _cur = cur;
-    _doc_base = doc_base;
-    _begin = begin;
-    if constexpr (Traits::kMinMatch || kHasScore) {
-      _buf_offset = buf_offset;
-    }
-    if (i > 0) {
-      doc_value = docs[i - 1];
-    }
-
-    return i;
+    });
   }
 
   template<typename Estimation>
@@ -514,7 +491,7 @@ class BlockDisjunction : public DocIterator {
     }
   }
 
-  bool Refill() {
+  bool RefillImpl() {
     if (_itrs.empty()) {
       return false;
     }
@@ -523,13 +500,13 @@ class BlockDisjunction : public DocIterator {
       Reset();
     }
 
-    [[maybe_unused]] CollectScoreContext score_ctx;
+    [[maybe_unused]] FillBlockScoreContext score_ctx;
     if constexpr (kHasScore) {
-      score_ctx.collector = &_collector;
+      score_ctx.fetcher = &_fetcher;
       score_ctx.score_window = _score_buf.score_window.data();
       score_ctx.merge_type = MergeType;
     }
-    [[maybe_unused]] CollectMatchContext match_ctx;
+    [[maybe_unused]] FillBlockMatchContext match_ctx;
     if constexpr (Traits::kMinMatch) {
       match_ctx.matches = _match_buf.data();
       match_ctx.min_match_count = _match_buf.min_match_count();
@@ -575,6 +552,11 @@ class BlockDisjunction : public DocIterator {
       });
     } while (empty && !_itrs.empty());
 
+    return !empty;
+  }
+
+  bool Refill() {
+    const bool empty = !RefillImpl();
     if (empty) {
       // exhausted
       SDB_ASSERT(_itrs.empty());
@@ -601,28 +583,40 @@ class BlockDisjunction : public DocIterator {
   static_assert(kWindow <= std::numeric_limits<uint16_t>::max());
 
   struct BlockScore final : ScoreOperator {
-    std::array<score_t, kScoreBlock> result;
+    ABSL_CACHELINE_ALIGNED std::array<score_t, kScoreBlock> result;
     alignas(4096) std::array<score_t, kWindow> score_window;
 
     void FetchScoreArgs(uint16_t offset, uint16_t index) noexcept {
       result[index] = score_window[offset];
     }
 
-    score_t Score() noexcept final { return result.front(); }
+    score_t Score() const noexcept final { return result.front(); }
 
-    void ScoreBlock(score_t* res) noexcept final {
-      std::memcpy(res, result.data(), kScoreBlock * sizeof(score_t));
+    void Score(score_t* res, scores_size_t n) const noexcept final {
+      Merge<ScoreMergeType::Noop>(res, result.data(), n);
+    }
+    void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
+      Merge<ScoreMergeType::Sum>(res, result.data(), n);
+    }
+    void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
+      Merge<ScoreMergeType::Max>(res, result.data(), n);
     }
 
-    void Score(score_t* res, size_t n) noexcept final {
-      std::memcpy(res, result.data(), n * sizeof(score_t));
+    void ScoreBlock(score_t* res) const noexcept final {
+      Merge<ScoreMergeType::Noop>(res, result.data(), kScoreBlock);
+    }
+    void ScoreSumBlock(score_t* res) const noexcept final {
+      Merge<ScoreMergeType::Sum>(res, result.data(), kScoreBlock);
+    }
+    void ScoreMaxBlock(score_t* res) const noexcept final {
+      Merge<ScoreMergeType::Max>(res, result.data(), kScoreBlock);
     }
   };
 
   static_assert(kWindow % kScoreBlock == 0,
                 "kWindow must be a multiple of kScoreBlock");
 
-  ColumnCollector _collector;
+  ColumnArgsFetcher _fetcher;
   doc_id_t _min{doc_limits::min()};      // base doc id for the next mask
   doc_id_t _max{doc_limits::invalid()};  // max doc id in the current mask
   doc_id_t _doc_base{doc_limits::invalid()};
@@ -633,7 +627,7 @@ class BlockDisjunction : public DocIterator {
                                     detail::MinMatchBuffer<kWindow>> _match_buf;
   Adapters _itrs;
   std::vector<ScoreFunction> _scorers;
-  uint64_t* _begin{std::end(_mask)};
+  uint64_t* IRS_RESTRICT _begin{std::end(_mask)};
   uint64_t _cur{};
   Attributes _attrs;
   size_t _match_count;

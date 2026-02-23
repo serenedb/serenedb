@@ -32,7 +32,6 @@
 #include "iresearch/search/phrase_filter.hpp"
 #include "iresearch/search/prefix_filter.hpp"
 #include "iresearch/search/range_filter.hpp"
-#include "iresearch/search/score.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/search/scorers.hpp"
 #include "iresearch/search/term_filter.hpp"
@@ -105,7 +104,6 @@ void Bm25TestCase::TestQueryNorms(irs::FeatureWriterFactory handler) {
   }
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B(), true};
-  auto prepared_order = irs::Scorers::Prepare(scorer);
 
   auto reader = irs::DirectoryReader(dir(), codec());
   auto& segment = *(reader.begin());
@@ -113,7 +111,7 @@ void Bm25TestCase::TestQueryNorms(irs::FeatureWriterFactory handler) {
   ASSERT_NE(nullptr, column);
 
   MaxMemoryCounter counter;
-  irs::ColumnCollector columns;
+  irs::ColumnArgsFetcher fetcher;
 
   // by_range multiple
   {
@@ -138,23 +136,23 @@ void Bm25TestCase::TestQueryNorms(irs::FeatureWriterFactory handler) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
 
-    columns.Clear();
+    fetcher.Clear();
 
     auto docs = prepared_filter->execute({
       .segment = segment,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = &scorer,
       .segment = &segment,
-      .collector = &columns,
+      .fetcher = &fetcher,
     });
 
     while (docs->next()) {
-      columns.Collect(docs->value());
+      fetcher.Fetch(docs->value());
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
@@ -200,22 +198,22 @@ void Bm25TestCase::TestQueryNorms(irs::FeatureWriterFactory handler) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
 
-    columns.Clear();
+    fetcher.Clear();
 
     auto docs = prepared_filter->execute({
       .segment = segment,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = &scorer,
       .segment = &segment,
     });
 
     while (docs->next()) {
-      columns.Collect(docs->value());
+      fetcher.Fetch(docs->value());
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
@@ -395,7 +393,6 @@ TEST_P(Bm25TestCase, test_phrase) {
 
   auto impl = irs::scorers::Get(
     "bm25", irs::Type<irs::text_format::Json>::get(), "{ \"b\" : 0 }");
-  auto prepared_order = irs::Scorers::Prepare(*impl);
 
   // read segment
   auto index = open_reader();
@@ -403,7 +400,7 @@ TEST_P(Bm25TestCase, test_phrase) {
   auto& segment = *(index.begin());
 
   MaxMemoryCounter counter;
-  irs::ColumnCollector columns;
+  irs::ColumnArgsFetcher fetcher;
 
   // "jumps high" with order
   {
@@ -425,17 +422,17 @@ TEST_P(Bm25TestCase, test_phrase) {
     auto prepared_filter = filter.prepare({
       .index = *index,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = impl.get(),
     });
 
-    columns.Clear();
+    fetcher.Clear();
 
     auto docs = prepared_filter->execute({
       .segment = segment,
-      .scorers = prepared_order,
+      .scorer = impl.get(),
     });
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = impl.get(),
       .segment = &segment,
     });
 
@@ -447,7 +444,7 @@ TEST_P(Bm25TestCase, test_phrase) {
     ASSERT_NE(nullptr, actual_value);
 
     while (docs->next()) {
-      columns.Collect(docs->value());
+      fetcher.Fetch(docs->value());
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
@@ -500,17 +497,17 @@ TEST_P(Bm25TestCase, test_phrase) {
     auto prepared_filter = filter.prepare({
       .index = *index,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = impl.get(),
     });
 
-    columns.Clear();
+    fetcher.Clear();
 
     auto docs = prepared_filter->execute({
       .segment = segment,
-      .scorers = prepared_order,
+      .scorer = impl.get(),
     });
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = impl.get(),
       .segment = &segment,
     });
 
@@ -522,7 +519,7 @@ TEST_P(Bm25TestCase, test_phrase) {
     ASSERT_NE(nullptr, actual_value);
 
     while (docs->next()) {
-      columns.Collect(docs->value());
+      fetcher.Fetch(docs->value());
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
@@ -561,10 +558,7 @@ TEST_P(Bm25TestCase, test_query) {
     add_segment(gen);
   }
 
-  irs::BM25 impl{irs::BM25::K(), irs::BM25::B(), true};
-  const irs::Scorer* sort{&impl};
-
-  auto prepared_order = irs::Scorers::Prepare(std::span{&sort, 1});
+  irs::BM25 scorer{irs::BM25::K(), irs::BM25::B(), true};
 
   auto reader = irs::DirectoryReader(dir(), codec());
   auto& segment = *(reader.begin());
@@ -572,7 +566,7 @@ TEST_P(Bm25TestCase, test_query) {
   ASSERT_NE(nullptr, column);
 
   MaxMemoryCounter counter;
-  irs::ColumnCollector columns;
+  irs::ColumnArgsFetcher fetcher;
 
   // by_term
   {
@@ -593,20 +587,20 @@ TEST_P(Bm25TestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
-    columns.Clear();
+    fetcher.Clear();
     auto docs = prepared_filter->execute({
       .segment = segment,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = &scorer,
       .segment = &segment,
     });
 
     while (docs->next()) {
-      columns.Collect(docs->value());
+      fetcher.Fetch(docs->value());
       docs->FetchScoreArgs(0);
 
       irs::score_t score_value{};
@@ -693,12 +687,12 @@ TEST_P(Bm25TestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
 
-    irs::ColumnCollector columns;
+    irs::ColumnArgsFetcher fetcher;
     for (auto& segment : reader) {
-      columns.Clear();
+      fetcher.Clear();
       const auto* column = segment.column("seq");
       ASSERT_NE(nullptr, column);
       auto values = column->iterator(irs::ColumnHint::Normal);
@@ -707,16 +701,16 @@ TEST_P(Bm25TestCase, test_query) {
       ASSERT_NE(nullptr, actual_value);
       auto docs = prepared_filter->execute({
         .segment = segment,
-        .scorers = prepared_order,
+        .scorer = &scorer,
       });
       auto score = docs->PrepareScore({
-        .scorer = prepared_order.buckets().front().bucket,
+        .scorer = &scorer,
         .segment = &segment,
-        .collector = &columns,
+        .fetcher = &fetcher,
       });
 
       while (docs->next()) {
-        columns.Collect(docs->value());
+        fetcher.Fetch(docs->value());
         docs->FetchScoreArgs(0);
         irs::score_t score_value{};
         score.Score(&score_value, 1);
@@ -815,11 +809,11 @@ TEST_P(Bm25TestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
 
     for (auto& segment : reader) {
-      columns.Clear();
+      fetcher.Clear();
       const auto* column = segment.column("seq");
       ASSERT_NE(nullptr, column);
       auto values = column->iterator(irs::ColumnHint::Normal);
@@ -828,16 +822,16 @@ TEST_P(Bm25TestCase, test_query) {
       ASSERT_NE(nullptr, actual_value);
       auto docs = prepared_filter->execute({
         .segment = segment,
-        .scorers = prepared_order,
+        .scorer = &scorer,
       });
       auto score = docs->PrepareScore({
-        .scorer = prepared_order.buckets().front().bucket,
+        .scorer = &scorer,
         .segment = &segment,
-        .collector = &columns,
+        .fetcher = &fetcher,
       });
 
       while (docs->next()) {
-        columns.Collect(docs->value());
+        fetcher.Fetch(docs->value());
         docs->FetchScoreArgs(0);
         irs::score_t score_value{};
         score.Score(&score_value, 1);
@@ -926,12 +920,12 @@ TEST_P(Bm25TestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
 
-    irs::ColumnCollector columns;
+    irs::ColumnArgsFetcher fetcher;
     for (auto& segment : reader) {
-      columns.Clear();
+      fetcher.Clear();
       const auto* column = segment.column("seq");
       ASSERT_NE(nullptr, column);
       auto values = column->iterator(irs::ColumnHint::Normal);
@@ -940,16 +934,16 @@ TEST_P(Bm25TestCase, test_query) {
       ASSERT_NE(nullptr, actual_value);
       auto docs = prepared_filter->execute({
         .segment = segment,
-        .scorers = prepared_order,
+        .scorer = &scorer,
       });
       auto score = docs->PrepareScore({
-        .scorer = prepared_order.buckets().front().bucket,
+        .scorer = &scorer,
         .segment = &segment,
-        .collector = &columns,
+        .fetcher = &fetcher,
       });
 
       while (docs->next()) {
-        columns.Collect(docs->value());
+        fetcher.Fetch(docs->value());
         docs->FetchScoreArgs(0);
         irs::score_t score_value{};
         score.Score(&score_value, 1);
@@ -996,20 +990,20 @@ TEST_P(Bm25TestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
-    columns.Clear();
+    fetcher.Clear();
     auto docs = prepared_filter->execute({
       .segment = segment,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = &scorer,
       .segment = &segment,
     });
 
     while (docs->next()) {
-      columns.Collect(docs->value());
+      fetcher.Fetch(docs->value());
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
@@ -1057,20 +1051,20 @@ TEST_P(Bm25TestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
-    columns.Clear();
+    fetcher.Clear();
     auto docs = prepared_filter->execute({
       .segment = segment,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = &scorer,
       .segment = &segment,
     });
 
     while (docs->next()) {
-      columns.Collect(docs->value());
+      fetcher.Fetch(docs->value());
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
@@ -1116,20 +1110,20 @@ TEST_P(Bm25TestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
-    columns.Clear();
+    fetcher.Clear();
     auto docs = prepared_filter->execute({
       .segment = segment,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = &scorer,
       .segment = &segment,
     });
 
     while (docs->next()) {
-      columns.Collect(docs->value());
+      fetcher.Fetch(docs->value());
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
@@ -1175,21 +1169,21 @@ TEST_P(Bm25TestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
-    columns.Clear();
+    fetcher.Clear();
     auto docs = prepared_filter->execute({
       .segment = segment,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = &scorer,
       .segment = &segment,
-      .collector = &columns,
+      .fetcher = &fetcher,
     });
 
     while (docs->next()) {
-      columns.Collect(docs->value());
+      fetcher.Fetch(docs->value());
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
@@ -1236,20 +1230,20 @@ TEST_P(Bm25TestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
-    columns.Clear();
+    fetcher.Clear();
     auto docs = prepared_filter->execute({
       .segment = segment,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = &scorer,
       .segment = &segment,
     });
 
     while (docs->next()) {
-      columns.Collect(docs->value());
+      fetcher.Fetch(docs->value());
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
@@ -1286,21 +1280,21 @@ TEST_P(Bm25TestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
-    columns.Clear();
+    fetcher.Clear();
     auto docs = prepared_filter->execute({
       .segment = segment,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = &scorer,
       .segment = &segment,
     });
 
     irs::doc_id_t doc = irs::doc_limits::min();
     while (docs->next()) {
-      columns.Collect(docs->value());
+      fetcher.Fetch(docs->value());
       ASSERT_EQ(doc, docs->value());
       irs::score_t score_value{};
       score.Score(&score_value, 1);
@@ -1327,15 +1321,15 @@ TEST_P(Bm25TestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
-    columns.Clear();
+    fetcher.Clear();
     auto docs = prepared_filter->execute({
       .segment = segment,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = &scorer,
       .segment = &segment,
     });
 
@@ -1343,7 +1337,7 @@ TEST_P(Bm25TestCase, test_query) {
     while (docs->next()) {
       ASSERT_EQ(doc, docs->value());
 
-      columns.Collect(docs->value());
+      fetcher.Fetch(docs->value());
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
@@ -1371,15 +1365,15 @@ TEST_P(Bm25TestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
-    columns.Clear();
+    fetcher.Clear();
     auto docs = prepared_filter->execute({
       .segment = segment,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = &scorer,
       .segment = &segment,
     });
     ASSERT_TRUE(score.IsDefault());
@@ -1388,7 +1382,7 @@ TEST_P(Bm25TestCase, test_query) {
     while (docs->next()) {
       ASSERT_EQ(doc, docs->value());
 
-      columns.Collect(docs->value());
+      fetcher.Fetch(docs->value());
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
@@ -1417,15 +1411,15 @@ TEST_P(Bm25TestCase, test_query) {
     auto prepared_filter = filter.prepare({
       .index = reader,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
-    columns.Clear();
+    fetcher.Clear();
     auto docs = prepared_filter->execute({
       .segment = segment,
-      .scorers = prepared_order,
+      .scorer = &scorer,
     });
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = &scorer,
       .segment = &segment,
     });
     ASSERT_TRUE(score.IsDefault());
@@ -1434,7 +1428,7 @@ TEST_P(Bm25TestCase, test_query) {
     while (docs->next()) {
       ASSERT_EQ(doc, docs->value());
 
-      columns.Collect(docs->value());
+      fetcher.Fetch(docs->value());
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
@@ -1716,7 +1710,7 @@ TEST_P(Bm25TestCase, test_order) {
   auto& segment = *(reader.begin());
 
   MaxMemoryCounter counter;
-  irs::ColumnCollector columns;
+  irs::ColumnArgsFetcher fetcher;
 
   irs::ByTerm query;
   *query.mutable_field() = "field";
@@ -1727,12 +1721,6 @@ TEST_P(Bm25TestCase, test_order) {
   irs::BM25 sort1{0.f, 0.1337f};
   for (irs::score_t boost : {0.f, 0.5f, irs::kNoBoost}) {
     for (auto& sort : {sort25, sort15, sort11, sort1}) {
-      const irs::Scorer* impl{&sort};
-
-      auto prepared_order = irs::Scorers::Prepare(std::span{&impl, 1});
-      ASSERT_EQ(sizeof(irs::score_t), prepared_order.score_size());
-      ASSERT_EQ(1, prepared_order.buckets().size());
-
       uint64_t seq = 0;
       const auto* column = segment.column("seq");
       ASSERT_NE(nullptr, column);
@@ -1753,22 +1741,22 @@ TEST_P(Bm25TestCase, test_order) {
         auto prepared = query.prepare({
           .index = reader,
           .memory = counter,
-          .scorers = prepared_order,
+          .scorer = &sort,
           .boost = boost,
         });
-        columns.Clear();
+        fetcher.Clear();
         auto docs = prepared->execute({
           .segment = segment,
-          .scorers = prepared_order,
+          .scorer = &sort,
         });
         auto score = docs->PrepareScore({
-          .scorer = prepared_order.buckets().front().bucket,
+          .scorer = &sort,
           .segment = &segment,
-          .collector = &columns,
+          .fetcher = &fetcher,
         });
 
         for (; docs->next();) {
-          columns.Collect(docs->value());
+          fetcher.Fetch(docs->value());
           irs::score_t score_value{};
           score.Score(&score_value, 1);
 

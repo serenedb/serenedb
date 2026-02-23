@@ -1302,6 +1302,9 @@ Result LocalCatalog::CreateIndex(ObjectId database_id, std::string_view schema,
     return it != columns.end() ? &*it : nullptr;
   };
 
+  std::vector<const catalog::Column*> index_columns;
+  index_columns.reserve(column_names.size());
+  options.column_ids.reserve(column_names.size());
   for (const auto& name : column_names) {
     const auto* column = find_column(name);
     if (!column) {
@@ -1309,6 +1312,12 @@ Result LocalCatalog::CreateIndex(ObjectId database_id, std::string_view schema,
                     "\" does not exist"};
     }
     options.column_ids.push_back(column->id);
+    index_columns.push_back(column);
+  }
+
+  auto validation_res = ValidateIndexOptions(options, index_columns);
+  if (validation_res.fail()) {
+    return validation_res;
   }
 
   auto index = MakeIndex(std::move(options));
@@ -1366,7 +1375,7 @@ Result LocalCatalog::DropIndex(ObjectId database_id, std::string_view schema,
 
   // IndexDrop should be registered with the engine,
   // so on restart, the index drop task will be replayed.
-  SDB_IF_FAILURE("crash_on_index_drop") { exit(1); }
+  SDB_IF_FAILURE("crash_on_index_drop") { SDB_IMMEDIATE_ABORT(); }
 
   task->tombstone = std::move(tombstone);
   task->index_shard = std::move(index_shard);
@@ -1418,6 +1427,24 @@ Result LocalCatalog::CreateFunction(ObjectId database_id,
 Result LocalCatalog::CreateTable(
   ObjectId database_id, std::string_view schema, CreateTableOptions options,
   CreateTableOperationOptions operation_options) {
+  for (auto pk_id : options.pkColumns) {
+    auto col = absl::c_find_if(options.columns,
+                               [&](const auto& c) { return c.id == pk_id; });
+    SDB_ASSERT(col != options.columns.end());
+    // PK must be default sortable or we can not guarantee table scan order
+    if (col->type->providesCustomComparison()) {
+      return {
+        ERROR_BAD_PARAMETER, "Column ", col->name,
+        " has type with custom comparison and can not be part of primary key"};
+    }
+    // this is current limitation of our pirmary key builder. And might be
+    // lifted some day.
+    if (!col->type->isPrimitiveType()) {
+      return {ERROR_BAD_PARAMETER, "Column ", col->name,
+              " has non primitive type and can not be part of primary key"};
+    }
+  }
+
   auto table = std::make_shared<Table>(std::move(options), database_id);
 
   absl::MutexLock lock{&_mutex};

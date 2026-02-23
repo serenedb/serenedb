@@ -162,16 +162,16 @@ class LazyFilterBitsetIterator : public DocIterator, private util::Noncopyable {
     return CountImpl(*this);
   }
 
-  uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
-                   std::span<doc_id_t, kScoreBlock> docs,
-                   std::span<score_t, kScoreBlock> scores) final {
+  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
+               ScoreCollector& collector) final {
     // TODO(mbkkt) custom implementation?
-    return CollectImpl(*this, scorer, columns, docs, scores);
+    CollectImpl(*this, scorer, fetcher, collector);
   }
 
   std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
-                                      uint64_t* mask, CollectScoreContext score,
-                                      CollectMatchContext match) final {
+                                      uint64_t* mask,
+                                      FillBlockScoreContext score,
+                                      FillBlockMatchContext match) final {
     // TODO(mbkkt) custom implementation?
     return FillBlockImpl(*this, min, max, mask, score, match);
   }
@@ -251,8 +251,8 @@ class ProxyQuery : public Filter::Query {
 Filter::Query::ptr ProxyFilter::prepare(const PrepareContext& ctx) const {
   // Currently we do not support caching scores.
   // Proxy filter should not be used with scorers!
-  SDB_ASSERT(ctx.scorers.empty());
-  if (!_cache || !ctx.scorers.empty()) {
+  SDB_ASSERT(!ctx.scorer);
+  if (!_cache || ctx.scorer) {
     return Filter::Query::empty();
   }
   if (!_cache->real_filter_prepared) {

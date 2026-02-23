@@ -867,18 +867,17 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
                                   const irs::TermCollector*) -> void {
         ++collector_finish_count;
       };
-      sort.scorer_score = [&](irs::ScoreOperator* ctx, irs::score_t* score,
-                              size_t n) -> void {
+      sort.scorer_score = [&](const irs::ScoreOperator* ctx,
+                              irs::score_t* score, size_t n) -> void {
         ASSERT_EQ(1, n);
         ++scorer_score_count;
         *score = irs::score_t(cur_doc & 0xAAAAAAAA);
       };
 
-      auto prepared_order = irs::Scorers::Prepare(sort);
       auto prepared_filter = tests::FilterWrapper{filter}.prepare({
         .index = *rdr,
         .memory = counter,
-        .scorers = prepared_order,
+        .scorer = &sort,
       });
       std::multimap<irs::score_t, irs::doc_id_t> scored_result;
 
@@ -888,8 +887,8 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       auto column = segment.column(column_name);
       ASSERT_NE(nullptr, column);
       auto column_itr = column->iterator(irs::ColumnHint::Normal);
-      auto filter_itr = prepared_filter->execute(
-        {.segment = segment, .scorers = prepared_order});
+      auto filter_itr =
+        prepared_filter->execute({.segment = segment, .scorer = &sort});
       ASSERT_EQ(column->size(), irs::CostAttr::extract(*filter_itr));
 
       auto* doc = irs::get<irs::DocAttr>(*filter_itr);
@@ -897,7 +896,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
 
       size_t docs_count = 0;
       auto score = column_itr->PrepareScore({
-        .scorer = prepared_order.buckets().front().bucket,
+        .scorer = &sort,
         .segment = &segment,
       });
       ASSERT_TRUE(score.IsDefault());
@@ -970,18 +969,17 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
                                   const irs::TermCollector*) -> void {
         ++collector_finish_count;
       };
-      sort.scorer_score = [&](irs::ScoreOperator* ctx, irs::score_t* score,
-                              size_t n) -> void {
+      sort.scorer_score = [&](const irs::ScoreOperator* ctx,
+                              irs::score_t* score, size_t n) -> void {
         ASSERT_EQ(1, n);
         ++scorer_score_count;
         *score = irs::score_t(cur_doc & 0xAAAAAAAA);
       };
 
-      auto prepared_order = irs::Scorers::Prepare(sort);
       auto prepared_filter = tests::FilterWrapper{filter}.prepare({
         .index = *rdr,
         .memory = counter,
-        .scorers = prepared_order,
+        .scorer = &sort,
       });
       std::multimap<irs::score_t, irs::doc_id_t> scored_result;
 
@@ -991,13 +989,13 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       auto column = segment.column(column_name);
       ASSERT_NE(nullptr, column);
       auto column_itr = column->iterator(irs::ColumnHint::Normal);
-      auto filter_itr = prepared_filter->execute(
-        {.segment = segment, .scorers = prepared_order});
+      auto filter_itr =
+        prepared_filter->execute({.segment = segment, .scorer = &sort});
       ASSERT_EQ(column->size(), irs::CostAttr::extract(*filter_itr));
 
       size_t docs_count = 0;
       auto score = column_itr->PrepareScore({
-        .scorer = prepared_order.buckets().front().bucket,
+        .scorer = &sort,
         .segment = &segment,
       });
       ASSERT_TRUE(score.IsDefault());
@@ -1071,18 +1069,17 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
                                   const irs::TermCollector*) -> void {
         ++collector_finish_count;
       };
-      sort.scorer_score = [&](irs::ScoreOperator* ctx, irs::score_t* score,
-                              size_t n) -> void {
+      sort.scorer_score = [&](const irs::ScoreOperator* ctx,
+                              irs::score_t* score, size_t n) -> void {
         ASSERT_EQ(1, n);
         ++scorer_score_count;
         *score = irs::score_t(cur_doc & 0xAAAAAAAA);
       };
 
-      auto prepared_order = irs::Scorers::Prepare(sort);
       auto prepared_filter = filter.prepare({
         .index = *rdr,
         .memory = counter,
-        .scorers = prepared_order,
+        .scorer = &sort,
       });
       std::multimap<irs::score_t, irs::doc_id_t> scored_result;
 
@@ -1094,7 +1091,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
       auto column_itr = column->iterator(irs::ColumnHint::Normal);
       auto filter_itr = prepared_filter->execute({
         .segment = segment,
-        .scorers = prepared_order,
+        .scorer = &sort,
 
       });
       ASSERT_EQ(column->size() * 2,
@@ -1102,7 +1099,7 @@ class ColumnExistenceFilterTestCase : public tests::FilterTestCaseBase {
 
       size_t docs_count = 0;
       auto score = column_itr->PrepareScore({
-        .scorer = prepared_order.buckets().front().bucket,
+        .scorer = &sort,
         .segment = &segment,
       });
       ASSERT_TRUE(score.IsDefault());

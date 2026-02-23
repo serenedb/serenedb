@@ -36,7 +36,6 @@
 #include "iresearch/search/cost.hpp"
 #include "iresearch/search/prepared_state_visitor.hpp"
 #include "iresearch/search/prev_doc.hpp"
-#include "iresearch/search/score.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
 #include "iresearch/utils/attribute_helper.hpp"
@@ -48,15 +47,14 @@ using namespace irs;
 
 static_assert(std::variant_size_v<ByNestedOptions::MatchType> == 2);
 
-const Scorers& GetOrder(const ByNestedOptions::MatchType& match,
-                        const Scorers& ord) noexcept {
-  return std::visit(
-    absl::Overload{[&](Match v) noexcept -> const Scorers& {
-                     return kMatchNone == v ? Scorers::kUnordered : ord;
-                   },
-                   [&ord](const DocIteratorProvider&) noexcept
-                     -> const Scorers& { return ord; }},
-    match);
+const Scorer* GetOrder(const ByNestedOptions::MatchType& match,
+                       const Scorer* scorer) noexcept {
+  return std::visit(absl::Overload{[&](Match v) noexcept -> const Scorer* {
+                                     return kMatchNone == v ? nullptr : scorer;
+                                   },
+                                   [scorer](const DocIteratorProvider&) noexcept
+                                     -> const Scorer* { return scorer; }},
+                    match);
 }
 
 bool IsValid(const ByNestedOptions::MatchType& match) noexcept {
@@ -120,10 +118,9 @@ class ChildToParentJoin : public DocIterator, private Matcher {
 
   ScoreFunction PrepareScore(const PrepareScoreContext& ctx) final;
 
-  uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
-                   std::span<doc_id_t, kScoreBlock> docs,
-                   std::span<score_t, kScoreBlock> scores) final {
-    return CollectImpl(*this, scorer, columns, docs, scores);
+  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
+               ScoreCollector& collector) final {
+    CollectImpl(*this, scorer, fetcher, collector);
   }
 
   void FetchScoreArgs(uint16_t index) final {
@@ -181,7 +178,7 @@ ScoreFunction ChildToParentJoin<Matcher>::PrepareScore(
     }
 
     auto child_ctx = ctx;
-    child_ctx.collector = &this->_scores.collector;
+    child_ctx.fetcher = &this->_scores.fetcher;
     auto child_score = _child->PrepareScore(child_ctx);
 
     if (child_score.IsDefault()) {
@@ -215,16 +212,16 @@ class NoneMatcher {
   score_t _boost;
 };
 
-template<ScoreMergeType MergeType>
+template<ScoreMergeType InnerType>
 struct NestedScore final : ScoreOperator {
   ScoreFunction child_score;
-  ColumnCollector collector;
-  std::array<score_t, kScoreBlock> parent_scores{};
-  std::array<score_t, kScoreBlock> child_temp;
-  std::array<doc_id_t, kScoreBlock> child_docs;
+  ColumnArgsFetcher fetcher;
+  ABSL_CACHELINE_ALIGNED std::array<score_t, kScoreBlock> parent_scores{};
+  ABSL_CACHELINE_ALIGNED std::array<score_t, kScoreBlock> child_temp;
+  ABSL_CACHELINE_ALIGNED std::array<doc_id_t, kScoreBlock> child_docs;
   score_t current_parent_score = 0;
   uint16_t child_idx = 0;
-  uint16_t parent_idx = 0;
+  mutable uint16_t parent_idx = 0;
 
   void CollectChild(auto& child_it) {
     child_docs[child_idx] = child_it.value();
@@ -249,27 +246,44 @@ struct NestedScore final : ScoreOperator {
 
   void FlushChildBatch() {
     SDB_ASSERT(child_idx);
-    collector.Collect(std::span{child_docs.data(), child_idx});
+    fetcher.Fetch(std::span{child_docs.data(), child_idx});
     child_score.Score(child_temp.data(), child_idx);
     for (uint16_t i = 0; i < child_idx; ++i) {
-      Merge<MergeType>(current_parent_score, child_temp[i]);
+      Merge<InnerType>(current_parent_score, child_temp[i]);
     }
     child_idx = 0;
   }
 
-  score_t Score() noexcept final {
+  score_t Score() const noexcept final {
     parent_idx = 0;
     return parent_scores.front();
   }
 
-  void Score(score_t* res, size_t n) noexcept final {
-    std::memcpy(res, parent_scores.data(), n * sizeof(score_t));
+  template<ScoreMergeType MergeType = ScoreMergeType::Noop>
+  IRS_FORCE_INLINE void ScoreImpl(score_t* res,
+                                  scores_size_t n) const noexcept {
     parent_idx = 0;
+    Merge<MergeType>(res, parent_scores.data(), n);
   }
 
-  void ScoreBlock(score_t* res) noexcept final {
-    std::memcpy(res, parent_scores.data(), kScoreBlock * sizeof(score_t));
-    parent_idx = 0;
+  void Score(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl(res, n);
+  }
+  void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl<ScoreMergeType::Sum>(res, n);
+  }
+  void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
+    ScoreImpl<ScoreMergeType::Max>(res, n);
+  }
+
+  void ScoreBlock(score_t* res) const noexcept final {
+    ScoreImpl(res, kScoreBlock);
+  }
+  void ScoreSumBlock(score_t* res) const noexcept final {
+    ScoreImpl<ScoreMergeType::Sum>(res, kScoreBlock);
+  }
+  void ScoreMaxBlock(score_t* res) const noexcept final {
+    ScoreImpl<ScoreMergeType::Max>(res, kScoreBlock);
   }
 };
 
@@ -585,7 +599,6 @@ class ByNestedQuery : public Filter::Query {
 
 DocIterator::ptr ByNestedQuery::execute(const ExecutionContext& ctx) const {
   auto& rdr = ctx.segment;
-  auto& ord = ctx.scorers;
 
   auto parent = _parent(rdr);
 
@@ -600,7 +613,7 @@ DocIterator::ptr ByNestedQuery::execute(const ExecutionContext& ctx) const {
   }
 
   auto child = _child->execute({.segment = rdr,
-                                .scorers = GetOrder(_match, ord),
+                                .scorer = GetOrder(_match, ctx.scorer),
                                 .ctx = ctx.ctx,
                                 // TODO(mbkkt) wand for nested?
                                 .wand = {}});
@@ -615,7 +628,7 @@ DocIterator::ptr ByNestedQuery::execute(const ExecutionContext& ctx) const {
         rdr, _match, _none_boost,
         [&]<typename M>(M&& matcher) -> DocIterator::ptr {
           if constexpr (std::is_same_v<NoneMatcher, M>) {
-            if (doc_limits::eof(child->value()) && ord.empty()) {
+            if (doc_limits::eof(child->value()) && !ctx.scorer) {
               return std::move(parent);
             }
           } else if constexpr (std::is_same_v<MinMatcher<MergeType>, M> ||
@@ -650,7 +663,7 @@ Filter::Query::ptr ByNestedFilter::prepare(const PrepareContext& ctx) const {
   auto prepared_child = child->prepare({
     .index = ctx.index,
     .memory = ctx.memory,
-    .scorers = GetOrder(match, ctx.scorers),
+    .scorer = GetOrder(match, ctx.scorer),
     .ctx = ctx.ctx,
     .boost = sub_boost,
   });

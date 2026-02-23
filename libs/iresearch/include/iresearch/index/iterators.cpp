@@ -168,8 +168,4 @@ ColumnIterator::ptr ColumnIterator::empty() noexcept {
   return memory::to_managed<ColumnIterator>(gEmptyColumnIterator);
 }
 
-ScoreFunction DocIterator::PrepareScore(const PrepareScoreContext& ctx) {
-  return ScoreFunction::Default();
-}
-
 }  // namespace irs

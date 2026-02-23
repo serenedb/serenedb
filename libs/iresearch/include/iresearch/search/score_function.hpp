@@ -30,32 +30,64 @@
 
 namespace irs {
 
-inline constexpr size_t kScoreBlock = 32;
-static_assert(kScoreBlock < std::numeric_limits<uint16_t>::max());
-inline constexpr size_t kPostingBlock = 4 * kScoreBlock;
-static_assert(kPostingBlock < std::numeric_limits<uint16_t>::max());
+using scores_size_t = uint8_t;  // NOLINT
+inline constexpr scores_size_t kScoreBlock = 32;
+static_assert(kScoreBlock < std::numeric_limits<scores_size_t>::max());
+inline constexpr scores_size_t kPostingBlock = 4 * kScoreBlock;
+static_assert(kPostingBlock < std::numeric_limits<scores_size_t>::max());
 static_assert(kPostingBlock % kScoreBlock == 0);
 
+// Possible variants of merging multiple scores
+enum class ScoreMergeType {
+  // Do nothing
+  Noop = 0,
+
+  // Sum multiple scores
+  Sum,
+
+  // Find max amongst multiple scores
+  Max,
+};
+
 struct ScoreOperator : memory::Managed {
-  virtual void Score(score_t* res, size_t n) noexcept = 0;
-  virtual void ScoreBlock(score_t* res) noexcept { Score(res, kScoreBlock); }
-  virtual void ScorePostingBlock(score_t* res) noexcept { SDB_ASSERT(false); }
-  virtual score_t Score() noexcept {
+  // TODO(mbkkt): Maybe add ScoreSum and ScoreMax for single score?
+  virtual score_t Score() const noexcept {
     score_t result;
     Score(&result, 1);
     return result;
   }
+
+  virtual void Score(score_t* res, scores_size_t n) const noexcept = 0;
+  virtual void ScoreSum(score_t* res, scores_size_t n) const noexcept = 0;
+  virtual void ScoreMax(score_t* res, scores_size_t n) const noexcept = 0;
+
+  virtual void ScoreBlock(score_t* res) const noexcept {
+    Score(res, kScoreBlock);
+  }
+  virtual void ScoreSumBlock(score_t* res) const noexcept {
+    ScoreSum(res, kScoreBlock);
+  }
+  virtual void ScoreMaxBlock(score_t* res) const noexcept {
+    ScoreMax(res, kScoreBlock);
+  }
+
+  virtual void ScorePostingBlock(score_t* res) const noexcept {
+    SDB_ASSERT(false);
+  }
 };
 
 struct DefaultScore final : public ScoreOperator {
-  static DefaultScore gInstance;
-  static memory::managed_ptr<ScoreOperator> Make() {
-    return memory::to_managed<ScoreOperator>(gInstance);
-  }
+  score_t Score() const noexcept final;
 
-  void Score(score_t* res, size_t n) noexcept final;
-  void ScoreBlock(score_t* res) noexcept final;
-  void ScorePostingBlock(score_t* res) noexcept final;
+  void Score(score_t* res, scores_size_t n) const noexcept final;
+  void ScoreSum(score_t* res, scores_size_t n) const noexcept final;
+  void ScoreMax(score_t* res, scores_size_t n) const noexcept final;
+
+  void ScoreBlock(score_t* res) const noexcept final;
+  void ScoreSumBlock(score_t* res) const noexcept final;
+  void ScoreMaxBlock(score_t* res) const noexcept final;
+
+  void ScorePostingBlock(score_t* res) const noexcept final;
 };
 
 // For disjunction/conjunction it's just sum of sub-iterators max score
@@ -74,6 +106,8 @@ struct UpperBounds {
 };
 
 class ScoreFunction {
+  inline static constinit DefaultScore gDefaultScore;
+
  public:
   template<typename T, typename... Args>
   static ScoreFunction Make(Args&&... args) {
@@ -82,45 +116,52 @@ class ScoreFunction {
   static ScoreFunction Wrap(ScoreOperator& impl) noexcept {
     return ScoreFunction{memory::to_managed<ScoreOperator>(impl)};
   }
-  static ScoreFunction Default() noexcept {
-    return ScoreFunction::Wrap(DefaultScore::gInstance);
-  }
+  static ScoreFunction Default() noexcept { return ScoreFunction{}; }
   static ScoreFunction Constant(score_t value) noexcept;
 
-  ScoreFunction() noexcept : ScoreFunction{Default()} {}
-  ScoreFunction(ScoreFunction&& other) noexcept
-    : _impl{std::exchange(other._impl, DefaultScore::Make())} {
-    SDB_ASSERT(_impl);
+  ScoreFunction() noexcept
+    : ScoreFunction{memory::to_managed<ScoreOperator>(gDefaultScore)} {}
+  ScoreFunction(ScoreFunction&& other) noexcept : ScoreFunction{} {
+    std::swap(_impl, other._impl);
   }
   ScoreFunction& operator=(ScoreFunction&& other) noexcept {
     if (this != &other) {
-      _impl = std::exchange(other._impl, DefaultScore::Make());
-      SDB_ASSERT(_impl);
+      std::swap(_impl, other._impl);
     }
     return *this;
   }
 
-  bool IsDefault() const noexcept {
-    return _impl.get() == &DefaultScore::gInstance;
+  bool IsDefault() const noexcept { return _impl.get() == &gDefaultScore; }
+
+  IRS_FORCE_INLINE score_t Score() const noexcept { return _impl->Score(); }
+
+  template<ScoreMergeType MergeType = ScoreMergeType::Noop>
+  IRS_FORCE_INLINE void Score(score_t* res, scores_size_t n) const noexcept {
+    if constexpr (MergeType == ScoreMergeType::Sum) {
+      _impl->ScoreSum(res, n);
+    } else if constexpr (MergeType == ScoreMergeType::Max) {
+      _impl->ScoreMax(res, n);
+    } else {
+      _impl->Score(res, n);
+    }
   }
 
-  IRS_FORCE_INLINE void Score(score_t* res, size_t n) const noexcept {
-    _impl->Score(res, n);
-  }
-
+  template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreBlock(score_t* res) const noexcept {
-    _impl->ScoreBlock(res);
+    if constexpr (MergeType == ScoreMergeType::Sum) {
+      _impl->ScoreSumBlock(res);
+    } else if constexpr (MergeType == ScoreMergeType::Max) {
+      _impl->ScoreMaxBlock(res);
+    } else {
+      _impl->ScoreBlock(res);
+    }
   }
 
   IRS_FORCE_INLINE void ScorePostingBlock(score_t* res) const noexcept {
     _impl->ScorePostingBlock(res);
   }
 
-  IRS_FORCE_INLINE score_t Score() const noexcept { return _impl->Score(); }
-
-  bool operator==(const ScoreFunction& rhs) const noexcept {
-    return _impl == rhs._impl;
-  }
+  bool operator==(const ScoreFunction& rhs) const noexcept = default;
 
  private:
   explicit ScoreFunction(memory::managed_ptr<ScoreOperator> impl) noexcept

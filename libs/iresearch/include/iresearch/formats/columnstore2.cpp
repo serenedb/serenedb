@@ -39,12 +39,8 @@
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/index/norm.hpp"
-#include "iresearch/search/all_iterator.hpp"
-#include "iresearch/search/score.hpp"
-#include "iresearch/store/store_avg_utils.hpp"
 #include "iresearch/utils/bitpack.hpp"
 #include "iresearch/utils/compression.hpp"
-#include "iresearch/utils/directory_utils.hpp"
 
 namespace irs::columnstore2 {
 namespace {

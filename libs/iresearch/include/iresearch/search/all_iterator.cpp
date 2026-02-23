@@ -22,7 +22,7 @@
 
 #include "all_iterator.hpp"
 
-#include "iresearch/index/field_meta.hpp"
+#include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/score_function.hpp"
 
@@ -40,7 +40,7 @@ ScoreFunction AllIterator::PrepareScore(const PrepareScoreContext& ctx) {
     .segment = *ctx.segment,
     .field = {},
     .doc_attrs = *this,
-    .collector = ctx.collector,
+    .fetcher = ctx.fetcher,
     .stats = _stats,
     .boost = _boost,
   });

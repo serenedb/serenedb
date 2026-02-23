@@ -27,44 +27,56 @@
 
 namespace sdb::connector {
 
-class SinkInsertWriter {
+// Interface for all index writers used in DataSink
+class SinkIndexWriter {
  public:
-  SinkInsertWriter() = default;
-  virtual ~SinkInsertWriter() = default;
+  SinkIndexWriter() = default;
+  virtual ~SinkIndexWriter() = default;
 
   virtual void Init(size_t batch_size) {}
+
+  virtual void Finish() = 0;
+  virtual void Abort() = 0;
 
   // returns true if writer is interested in this column
   virtual bool SwitchColumn(const velox::Type& type, bool have_nulls,
                             sdb::catalog::Column::Id column_id) {
+    SDB_ASSERT(false, "SwitchColumn call not implemented");
     return false;
   }
+
+  // Writes a value of cell in column switched to by previous call to
+  // SwitchColumn. Particular writer would not be called for cell values if
+  // returned false from SwitchColumn.
   virtual void Write(std::span<const rocksdb::Slice> cell_slices,
-                     std::string_view full_key) = 0;
+                     std::string_view full_key) {
+    SDB_ASSERT(false, "Write call not implemented");
+  }
 
-  virtual void Finish() = 0;
-  virtual void Abort() = 0;
+  // deletes row denoted by row_key. It is up to concrete writer to perform all
+  // necessary deletes.
+  virtual void DeleteRow(std::string_view row_key) {
+    SDB_ASSERT(false, "DeleteRow call not implemented");
+  }
 };
 
-class SinkUpdateWriter : public SinkInsertWriter {
+// Base implementation of column centric index writers
+class ColumnSinkWriterImplBase {
  public:
-  SinkUpdateWriter() = default;
+  ColumnSinkWriterImplBase(std::span<const catalog::Column::Id> columns) {
+    _columns.reserve(columns.size());
+    for (auto c : columns) {
+      _columns.insert(c);
+    }
+    SDB_ASSERT(!_columns.empty());
+  }
 
-  virtual bool IsIndexed(sdb::catalog::Column::Id column_id) const noexcept = 0;
-  virtual void DeleteRow(std::string_view row_key) = 0;
-};
+  bool IsIndexed(sdb::catalog::Column::Id column_id) const noexcept {
+    return _columns.contains(column_id);
+  }
 
-class SinkDeleteWriter {
- public:
-  SinkDeleteWriter() = default;
-  virtual ~SinkDeleteWriter() = default;
-
-  virtual void Init(size_t batch_size) {}
-
-  virtual void DeleteRow(std::string_view row_key) = 0;
-
-  virtual void Finish() = 0;
-  virtual void Abort() = 0;
+ protected:
+  containers::FlatHashSet<catalog::Column::Id> _columns;
 };
 
 }  // namespace sdb::connector

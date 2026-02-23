@@ -25,6 +25,7 @@
 
 #include <memory>
 
+#include "basics/containers/small_vector.h"
 #include "basics/memory.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/formats.hpp"
@@ -32,7 +33,6 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/column_collector.hpp"
 #include "iresearch/search/disjunction.hpp"
-#include "iresearch/search/score.hpp"
 #include "iresearch/search/score_function.hpp"
 #include "iresearch/search/scorer.hpp"
 
@@ -508,7 +508,7 @@ class NGramSimilarityDocIterator : public DocIterator {
       .segment = *ctx.segment,
       .field = _field,
       .doc_attrs = *this,
-      .collector = ctx.collector,
+      .fetcher = ctx.fetcher,
       .stats = _stats,
       .boost = _boost,
     });
@@ -553,15 +553,15 @@ class NGramSimilarityDocIterator : public DocIterator {
     _collected_freq[index] = _checker.GetFreq();
   }
 
-  uint32_t Collect(const ScoreFunction& scorer, ColumnCollector& columns,
-                   std::span<doc_id_t, kScoreBlock> docs,
-                   std::span<score_t, kScoreBlock> scores) final {
-    return CollectImpl(*this, scorer, columns, docs, scores);
+  void Collect(const ScoreFunction& scorer, ColumnArgsFetcher& fetcher,
+               ScoreCollector& collector) final {
+    CollectImpl(*this, scorer, fetcher, collector);
   }
 
   std::pair<doc_id_t, bool> FillBlock(doc_id_t min, doc_id_t max,
-                                      uint64_t* mask, CollectScoreContext score,
-                                      CollectMatchContext match) final {
+                                      uint64_t* mask,
+                                      FillBlockScoreContext score,
+                                      FillBlockMatchContext match) final {
     return FillBlockImpl(*this, min, max, mask, score, match);
   }
 
@@ -613,8 +613,7 @@ CostAdapters Execute(const NGramState& query_state,
 
 DocIterator::ptr NGramSimilarityQuery::execute(
   const ExecutionContext& ctx) const {
-  const auto& ord = ctx.scorers;
-  SDB_ASSERT(1 != _min_match_count || !ord.empty());
+  SDB_ASSERT(1 != _min_match_count || ctx.scorer);
 
   const auto& segment = ctx.segment;
   const auto* query_state = _states.find(segment);
@@ -623,7 +622,8 @@ DocIterator::ptr NGramSimilarityQuery::execute(
     return DocIterator::empty();
   }
 
-  auto itrs = Execute(*query_state, kRequiredFeatures, ord.features());
+  const auto features = GetFeatures(ctx.scorer);
+  auto itrs = Execute(*query_state, kRequiredFeatures, features);
 
   if (itrs.size() < _min_match_count) {
     return DocIterator::empty();
@@ -635,7 +635,7 @@ DocIterator::ptr NGramSimilarityQuery::execute(
     return memory::make_managed<NGramSimilarityDocIterator<
       NGramApprox<true>, SerialPositionsChecker<Dummy>>>(
       std::move(itrs), query_state->terms.size(), _min_match_count,
-      query_state->reader->meta(), ord.empty() ? nullptr : _stats.c_str(),
+      query_state->reader->meta(), ctx.scorer ? _stats.c_str() : nullptr,
       _boost);
   }
   // TODO(mbkkt) min_match_count_ == 1: disjunction for approx,
@@ -643,8 +643,7 @@ DocIterator::ptr NGramSimilarityQuery::execute(
   return memory::make_managed<NGramSimilarityDocIterator<
     NGramApprox<false>, SerialPositionsChecker<Dummy>>>(
     std::move(itrs), query_state->terms.size(), _min_match_count,
-    query_state->reader->meta(), ord.empty() ? nullptr : _stats.c_str(),
-    _boost);
+    query_state->reader->meta(), ctx.scorer ? _stats.c_str() : nullptr, _boost);
 }
 
 DocIterator::ptr NGramSimilarityQuery::ExecuteWithOffsets(

@@ -568,14 +568,12 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     "bm25", irs::Type<irs::text_format::Json>::get(), std::string_view{})};
   ASSERT_NE(nullptr, order.front());
 
-  auto prepared_order = irs::Scorers::Prepare(order);
-
   auto index = open_reader();
   ASSERT_NE(nullptr, index);
   ASSERT_EQ(1, index->size());
 
   MaxMemoryCounter counter;
-  irs::ColumnCollector collector;
+  irs::ColumnArgsFetcher fetcher;
 
   {
     irs::ByEditDistance filter;
@@ -589,16 +587,16 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     auto prepared = filter.prepare({
       .index = *index,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = order.front().get(),
     });
     ASSERT_NE(nullptr, prepared);
 
     auto docs =
-      prepared->execute({.segment = index[0], .scorers = prepared_order});
+      prepared->execute({.segment = index[0], .scorer = order.front().get()});
     ASSERT_NE(nullptr, docs);
 
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = order.front().get(),
       .segment = &index[0],
     });
     ASSERT_FALSE(score.IsDefault());
@@ -612,7 +610,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     auto expected_doc = std::begin(kExpectedDocs);
     while (docs->next()) {
-      collector.Collect(docs->value());
+      fetcher.Fetch(docs->value());
       docs->FetchScoreArgs(0);
       irs::score_t value;
       score.Score(&value, 1);
@@ -639,19 +637,19 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     auto prepared = filter.prepare({
       .index = *index,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = order.front().get(),
     });
     ASSERT_NE(nullptr, prepared);
 
-    collector.Clear();
+    fetcher.Clear();
     auto docs = prepared->execute({
       .segment = index[0],
-      .scorers = prepared_order,
+      .scorer = order.front().get(),
     });
     ASSERT_NE(nullptr, docs);
 
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = order.front().get(),
       .segment = &index[0],
     });
 
@@ -664,7 +662,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     auto expected_doc = std::begin(kExpectedDocs);
     while (docs->next()) {
-      collector.Collect(docs->value());
+      fetcher.Fetch(docs->value());
       irs::score_t value;
       docs->FetchScoreArgs(0);
       score.Score(&value, 1);
@@ -691,19 +689,19 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     auto prepared = filter.prepare({
       .index = *index,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = order.front().get(),
     });
     ASSERT_NE(nullptr, prepared);
 
-    collector.Clear();
+    fetcher.Clear();
     auto docs = prepared->execute({
       .segment = index[0],
-      .scorers = prepared_order,
+      .scorer = order.front().get(),
     });
     ASSERT_NE(nullptr, docs);
 
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = order.front().get(),
       .segment = &index[0],
     });
 
@@ -716,7 +714,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     auto expected_doc = std::begin(kExpectedDocs);
     while (docs->next()) {
-      collector.Collect(docs->value());
+      fetcher.Fetch(docs->value());
       irs::score_t value;
       docs->FetchScoreArgs(0);
       score.Score(&value, 1);
@@ -744,19 +742,19 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     auto prepared = filter.prepare({
       .index = *index,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = order.front().get(),
     });
     ASSERT_NE(nullptr, prepared);
 
-    collector.Clear();
+    fetcher.Clear();
     auto docs = prepared->execute({
       .segment = index[0],
-      .scorers = prepared_order,
+      .scorer = order.front().get(),
     });
     ASSERT_NE(nullptr, docs);
 
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = order.front().get(),
       .segment = &index[0],
     });
 
@@ -772,7 +770,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     std::vector<std::pair<float_t, irs::doc_id_t>> actual_docs;
     while (docs->next()) {
-      collector.Collect(docs->value());
+      fetcher.Fetch(docs->value());
       irs::score_t value;
       docs->FetchScoreArgs(0);
       score.Score(&value, 1);
@@ -817,21 +815,21 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     auto prepared = filter.prepare({
       .index = *index,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = order.front().get(),
     });
     ASSERT_NE(nullptr, prepared);
 
-    collector.Clear();
+    fetcher.Clear();
     auto docs = prepared->execute({
       .segment = index[0],
-      .scorers = prepared_order,
+      .scorer = order.front().get(),
     });
     ASSERT_NE(nullptr, docs);
 
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = order.front().get(),
       .segment = &index[0],
-      .collector = &collector,
+      .fetcher = &fetcher,
     });
 
     ASSERT_FALSE(score.IsDefault());
@@ -844,7 +842,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     std::vector<std::pair<float_t, irs::doc_id_t>> actual_docs;
     while (docs->next()) {
-      collector.Collect(docs->value());
+      fetcher.Fetch(docs->value());
       irs::score_t value;
       docs->FetchScoreArgs(0);
       score.Score(&value, 1);
@@ -892,21 +890,21 @@ TEST_P(ByEditDistanceTestCase, bm25) {
     auto prepared = filter.prepare({
       .index = *index,
       .memory = counter,
-      .scorers = prepared_order,
+      .scorer = order.front().get(),
     });
     ASSERT_NE(nullptr, prepared);
 
-    collector.Clear();
+    fetcher.Clear();
     auto docs = prepared->execute({
       .segment = index[0],
-      .scorers = prepared_order,
+      .scorer = order.front().get(),
     });
     ASSERT_NE(nullptr, docs);
 
     auto score = docs->PrepareScore({
-      .scorer = prepared_order.buckets().front().bucket,
+      .scorer = order.front().get(),
       .segment = &index[0],
-      .collector = &collector,
+      .fetcher = &fetcher,
     });
 
     ASSERT_FALSE(score.IsDefault());
@@ -919,7 +917,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
 
     std::vector<std::pair<float_t, irs::doc_id_t>> actual_docs;
     while (docs->next()) {
-      collector.Collect(docs->value());
+      fetcher.Fetch(docs->value());
       irs::score_t value;
       docs->FetchScoreArgs(0);
       score.Score(&value, 1);

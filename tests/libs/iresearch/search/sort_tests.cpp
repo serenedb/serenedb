@@ -21,17 +21,12 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <gtest/gtest.h>
+
 #include <algorithm>
 
-#include "basics/misc.hpp"
-#include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/formats/empty_term_reader.hpp"
-#include "iresearch/index/field_meta.hpp"
-#include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/score.hpp"
 #include "iresearch/search/score_function.hpp"
-#include "iresearch/search/scorers.hpp"
-#include "tests_shared.hpp"
+#include "iresearch/search/scorer.hpp"
 
 namespace {
 
@@ -74,508 +69,6 @@ class AlignedScorer final
 TEST(sort_tests, static_const) {
   static_assert("filter_boost" == irs::Type<irs::FilterBoost>::name());
   static_assert(irs::kNoBoost == irs::FilterBoost().value);
-
-  ASSERT_TRUE(irs::Scorers::kUnordered.buckets().empty());
-  ASSERT_EQ(0, irs::Scorers::kUnordered.score_size());
-  ASSERT_EQ(0, irs::Scorers::kUnordered.stats_size());
-  ASSERT_EQ(irs::IndexFeatures::None, irs::Scorers::kUnordered.features());
-}
-
-TEST(sort_tests, prepare_order) {
-  {
-    std::array<irs::Scorer::ptr, 2> ord{
-      nullptr, std::make_unique<AlignedScorer<AlignedValue<1, 4>>>()};
-
-    // first - score offset
-    // second - stats offset
-    constexpr std::array<std::pair<size_t, size_t>, 1> kExpectedOffsets{
-      std::pair{size_t{0}, size_t{0}},  // score: 0-0
-    };
-
-    auto prepared = irs::Scorers::Prepare(ord);
-    ASSERT_EQ(irs::IndexFeatures::None, prepared.features());
-    ASSERT_FALSE(prepared.buckets().empty());
-    ASSERT_EQ(1, prepared.buckets().size());
-    ASSERT_EQ(prepared.buckets().size() * sizeof(irs::score_t),
-              prepared.score_size());
-    ASSERT_EQ(4, prepared.stats_size());
-
-    auto expected_offset = kExpectedOffsets.begin();
-    for (auto& bucket : prepared.buckets()) {
-      ASSERT_NE(nullptr, bucket.bucket);
-      ASSERT_EQ(expected_offset->second, bucket.stats_offset);
-      ++expected_offset;
-    }
-    ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-  }
-
-  {
-    std::array<irs::Scorer::ptr, 4> ord{
-      nullptr, std::make_unique<AlignedScorer<AlignedValue<2, 2>>>(),
-      std::make_unique<AlignedScorer<AlignedValue<2, 2>>>(),
-      std::make_unique<AlignedScorer<AlignedValue<4, 4>>>()};
-
-    // first - score offset
-    // second - stats offset
-    constexpr std::array<std::pair<size_t, size_t>, 3> kExpectedOffsets{
-      std::pair{0, 0},  // score: 0-1
-      std::pair{1, 2},  // score: 2-3
-      std::pair{2, 4},  // score: 4-7
-    };
-
-    auto prepared = irs::Scorers::Prepare(ord);
-    ASSERT_EQ(irs::IndexFeatures::None, prepared.features());
-    ASSERT_FALSE(prepared.buckets().empty());
-    ASSERT_EQ(3, prepared.buckets().size());
-    ASSERT_EQ(prepared.buckets().size() * sizeof(irs::score_t),
-              prepared.score_size());
-    ASSERT_EQ(8, prepared.stats_size());
-
-    auto expected_offset = kExpectedOffsets.begin();
-    for (auto& bucket : prepared.buckets()) {
-      ASSERT_NE(nullptr, bucket.bucket);
-      ASSERT_EQ(expected_offset->second, bucket.stats_offset);
-      ++expected_offset;
-    }
-    ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-
-    irs::bstring stats_buf(prepared.stats_size(), 0);
-    irs::bstring score_buf(prepared.score_size(), 0);
-  }
-
-  {
-    std::array<irs::Scorer::ptr, 4> ord{
-      nullptr,
-      std::make_unique<AlignedScorer<AlignedValue<2, 2>>>(
-        irs::IndexFeatures::None, false),  // returns valid scorers
-      std::make_unique<AlignedScorer<AlignedValue<2, 2>>>(),
-      std::make_unique<AlignedScorer<AlignedValue<4, 4>>>()};
-
-    // first - score offset
-    // second - stats offset
-    constexpr std::array<std::pair<size_t, size_t>, 3> kExpectedOffsets{
-      std::pair{0, 0},  // score: 0-1
-      std::pair{1, 2},  // score: 2-3
-      std::pair{2, 4},  // score: 4-7
-    };
-
-    auto prepared = irs::Scorers::Prepare(ord);
-    ASSERT_EQ(irs::IndexFeatures::None, prepared.features());
-    ASSERT_FALSE(prepared.buckets().empty());
-    ASSERT_EQ(3, prepared.buckets().size());
-    ASSERT_EQ(prepared.buckets().size() * sizeof(irs::score_t),
-              prepared.score_size());
-    ASSERT_EQ(8, prepared.stats_size());
-
-    auto expected_offset = kExpectedOffsets.begin();
-    for (auto& bucket : prepared.buckets()) {
-      ASSERT_NE(nullptr, bucket.bucket);
-      ASSERT_EQ(expected_offset->second, bucket.stats_offset);
-      ++expected_offset;
-    }
-    ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-  }
-
-  {
-    std::array<irs::Scorer::ptr, 4> ord{
-      nullptr, std::make_unique<AlignedScorer<AlignedValue<2, 2>>>(),
-      std::make_unique<AlignedScorer<AlignedValue<2, 2>>>(
-        irs::IndexFeatures::Freq, false),  // returns valid scorer
-      std::make_unique<AlignedScorer<AlignedValue<4, 4>>>()};
-
-    // first - score offset
-    // second - stats offset
-    constexpr std::array<std::pair<size_t, size_t>, 3> kExpectedOffsets{
-      std::pair{0, 0},  // score: 0-1
-      std::pair{1, 2},  // score: 2-3
-      std::pair{2, 4},  // score: 4-7
-    };
-
-    auto prepared = irs::Scorers::Prepare(ord);
-    ASSERT_EQ(irs::IndexFeatures::Freq, prepared.features());
-    ASSERT_FALSE(prepared.buckets().empty());
-    ASSERT_EQ(3, prepared.buckets().size());
-    ASSERT_EQ(prepared.buckets().size() * sizeof(irs::score_t),
-              prepared.score_size());
-    ASSERT_EQ(8, prepared.stats_size());
-
-    auto expected_offset = kExpectedOffsets.begin();
-    for (auto& bucket : prepared.buckets()) {
-      ASSERT_NE(nullptr, bucket.bucket);
-      ASSERT_EQ(expected_offset->second, bucket.stats_offset);
-      ++expected_offset;
-    }
-    ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-  }
-
-  {
-    std::array<irs::Scorer::ptr, 4> ord{
-      nullptr, std::make_unique<AlignedScorer<AlignedValue<1, 1>>>(),
-      std::make_unique<AlignedScorer<AlignedValue<1, 1>>>(),
-      std::make_unique<AlignedScorer<AlignedValue<1, 1>>>()};
-
-    // first - score offset
-    // second - stats offset
-    constexpr std::array<std::pair<size_t, size_t>, 3> kExpectedOffsets{
-      std::pair{0, 0},  // score: 0-0
-      std::pair{1, 1},  // score: 1-1
-      std::pair{2, 2}   // score: 2-2
-    };
-
-    auto prepared = irs::Scorers::Prepare(ord);
-    ASSERT_EQ(irs::IndexFeatures::None, prepared.features());
-    ASSERT_FALSE(prepared.buckets().empty());
-    ASSERT_EQ(3, prepared.buckets().size());
-    ASSERT_EQ(prepared.buckets().size() * sizeof(irs::score_t),
-              prepared.score_size());
-    ASSERT_EQ(3, prepared.stats_size());
-
-    auto expected_offset = kExpectedOffsets.begin();
-    for (auto& bucket : prepared.buckets()) {
-      ASSERT_NE(nullptr, bucket.bucket);
-      ASSERT_EQ(expected_offset->second, bucket.stats_offset);
-      ++expected_offset;
-    }
-    ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-  }
-
-  {
-    std::array<irs::Scorer::ptr, 3> ord{
-      std::make_unique<AlignedScorer<AlignedValue<1, 1>>>(
-        irs::IndexFeatures::None, false),
-      std::make_unique<AlignedScorer<AlignedValue<2, 2>>>(
-        irs::IndexFeatures::None, false),
-      nullptr};
-
-    // first - score offset
-    // second - stats offset
-    constexpr std::array<std::pair<size_t, size_t>, 2> kExpectedOffsets{
-      std::pair{0, 0},  // score: 0-0, padding: 1-1
-      std::pair{1, 2}   // score: 2-3
-    };
-
-    auto prepared = irs::Scorers::Prepare(ord);
-    ASSERT_FALSE(prepared.buckets().empty());
-    ASSERT_EQ(irs::IndexFeatures::None, prepared.features());
-    ASSERT_EQ(2, prepared.buckets().size());
-    ASSERT_EQ(8, prepared.score_size());
-    ASSERT_EQ(4, prepared.stats_size());
-
-    auto expected_offset = kExpectedOffsets.begin();
-    for (auto& bucket : prepared.buckets()) {
-      ASSERT_NE(nullptr, bucket.bucket);
-      ASSERT_EQ(expected_offset->second, bucket.stats_offset);
-      ++expected_offset;
-    }
-    ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-  }
-
-  {
-    std::array<irs::Scorer::ptr, 4> ord{
-      std::make_unique<AlignedScorer<AlignedValue<1, 1>>>(
-        irs::IndexFeatures::None, false),
-      nullptr,
-      std::make_unique<AlignedScorer<AlignedValue<2, 2>>>(
-        irs::IndexFeatures::None, false),
-      std::make_unique<AlignedScorer<AlignedValue<4, 4>>>(
-        irs::IndexFeatures::None, false)};
-
-    auto prepared = irs::Scorers::Prepare(ord);
-    ASSERT_EQ(irs::IndexFeatures::None, prepared.features());
-    ASSERT_FALSE(prepared.buckets().empty());
-    ASSERT_EQ(3, prepared.buckets().size());
-    ASSERT_EQ(12, prepared.score_size());
-    ASSERT_EQ(8, prepared.stats_size());
-
-    // first - score offset
-    // second - stats offset
-    const std::vector<std::pair<size_t, size_t>> expected_offsets{
-      {0, 0},  // score: 0-0, padding: 1-1
-      {1, 2},  // score: 2-3
-      {2, 4}   // score: 4-7
-    };
-
-    auto expected_offset = expected_offsets.begin();
-    for (auto& bucket : prepared.buckets()) {
-      ASSERT_NE(nullptr, bucket.bucket);
-      ASSERT_EQ(expected_offset->second, bucket.stats_offset);
-      ++expected_offset;
-    }
-    ASSERT_EQ(expected_offset, expected_offsets.end());
-  }
-
-  {
-    std::array<irs::Scorer::ptr, 4> ord{
-      std::make_unique<AlignedScorer<AlignedValue<1, 1>>>(
-        irs::IndexFeatures::None, false),
-      std::make_unique<AlignedScorer<AlignedValue<5, 4>>>(), nullptr,
-      std::make_unique<AlignedScorer<AlignedValue<2, 2>>>(
-        irs::IndexFeatures::Freq, false)};
-
-    // first - score offset
-    // second - stats offset
-    constexpr std::array<std::pair<size_t, size_t>, 3> kExpectedOffsets{
-      std::pair{0, 0},  // score: 0-0, padding: 1-3
-      std::pair{1, 4},  // score: 4-8, padding: 9-11
-      std::pair{2, 12}  // score: 12-14
-    };
-
-    auto prepared = irs::Scorers::Prepare(ord);
-    ASSERT_EQ(irs::IndexFeatures::Freq, prepared.features());
-    ASSERT_FALSE(prepared.buckets().empty());
-    ASSERT_EQ(3, prepared.buckets().size());
-    ASSERT_EQ(12, prepared.score_size());
-    ASSERT_EQ(16, prepared.stats_size());
-
-    auto expected_offset = kExpectedOffsets.begin();
-    for (auto& bucket : prepared.buckets()) {
-      ASSERT_NE(nullptr, bucket.bucket);
-      ASSERT_EQ(expected_offset->second, bucket.stats_offset);
-      ++expected_offset;
-    }
-    ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-  }
-
-  {
-    std::array<irs::Scorer::ptr, 11> ord{
-      nullptr,
-      std::make_unique<AlignedScorer<AlignedValue<3, 1>>>(
-        irs::IndexFeatures::None),
-      nullptr,
-      std::make_unique<AlignedScorer<AlignedValue<27, 8>>>(),
-      nullptr,
-      std::make_unique<AlignedScorer<AlignedValue<7, 4>>>(
-        irs::IndexFeatures::Freq),
-      nullptr,
-      std::make_unique<AlignedScorer<AlignedValue<1, 1>>>(
-        irs::IndexFeatures::Freq),
-      nullptr,
-      std::make_unique<AlignedScorer<AlignedValue<1, 1>>>(
-        irs::IndexFeatures::Freq),
-      nullptr};
-
-    // first - score offset
-    // second - stats offset
-    constexpr std::array<std::pair<size_t, size_t>, 5> kExpectedOffsets{
-      std::pair{0, 0},   // score: 0-2, padding: 3-7
-      std::pair{1, 8},   // score: 8-34, padding: 35-39
-      std::pair{2, 40},  // score: 40-46, padding: 47-47
-      std::pair{3, 48},  // score: 48-48
-      std::pair{4, 49}   // score: 49-49
-    };
-
-    auto prepared = irs::Scorers::Prepare(ord);
-    ASSERT_EQ(irs::IndexFeatures::Freq, prepared.features());
-    ASSERT_FALSE(prepared.buckets().empty());
-    ASSERT_EQ(5, prepared.buckets().size());
-    ASSERT_EQ(prepared.buckets().size() * sizeof(irs::score_t),
-              prepared.score_size());
-    ASSERT_EQ(56, prepared.stats_size());
-
-    auto expected_offset = kExpectedOffsets.begin();
-    for (auto& bucket : prepared.buckets()) {
-      ASSERT_NE(nullptr, bucket.bucket);
-      ASSERT_EQ(expected_offset->second, bucket.stats_offset);
-      ++expected_offset;
-    }
-    ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-  }
-
-  {
-    std::array<irs::Scorer::ptr, 5> ord{
-      std::make_unique<AlignedScorer<AlignedValue<27, 8>>>(),
-      std::make_unique<AlignedScorer<AlignedValue<3, 1>>>(
-        irs::IndexFeatures::None),
-      std::make_unique<AlignedScorer<AlignedValue<7, 4>>>(
-        irs::IndexFeatures::Freq),
-      std::make_unique<AlignedScorer<AlignedValue<1, 1>>>(
-        irs::IndexFeatures::Freq),
-      std::make_unique<AlignedScorer<AlignedValue<1, 1>>>(
-        irs::IndexFeatures::Freq)};
-
-    // first - score offset
-    // second - stats offset
-    constexpr std::array<std::pair<size_t, size_t>, 5> kExpectedOffsets{
-      std::pair{0, 0},   // score: 0-26, padding: 27-31
-      std::pair{1, 32},  // score: 32-34, padding: 34-35
-      std::pair{2, 36},  // score: 36-42, padding: 43-43
-      std::pair{3, 44},  // score: 44-44
-      std::pair{4, 45}   // score: 45-45
-    };
-
-    auto prepared = irs::Scorers::Prepare(ord);
-    ASSERT_EQ(irs::IndexFeatures::Freq, prepared.features());
-    ASSERT_FALSE(prepared.buckets().empty());
-    ASSERT_EQ(5, prepared.buckets().size());
-    ASSERT_EQ(prepared.buckets().size() * sizeof(irs::score_t),
-              prepared.score_size());
-    ASSERT_EQ(48, prepared.stats_size());
-
-    auto expected_offset = kExpectedOffsets.begin();
-    for (auto& bucket : prepared.buckets()) {
-      ASSERT_NE(nullptr, bucket.bucket);
-      ASSERT_EQ(expected_offset->second, bucket.stats_offset);
-      ++expected_offset;
-    }
-    ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-  }
-
-  {
-    std::array<irs::Scorer::ptr, 5> ord{
-      std::make_unique<AlignedScorer<AlignedValue<27, 8>>>(),
-      std::make_unique<AlignedScorer<AlignedValue<7, 4>>>(
-        irs::IndexFeatures::Freq),
-      std::make_unique<AlignedScorer<AlignedValue<3, 1>>>(
-        irs::IndexFeatures::Pos),
-      std::make_unique<AlignedScorer<AlignedValue<1, 1>>>(
-        irs::IndexFeatures::Freq),
-      std::make_unique<AlignedScorer<AlignedValue<1, 1>>>(
-        irs::IndexFeatures::Freq)};
-
-    // first - score offset
-    // second - stats offset
-    constexpr std::array<std::pair<size_t, size_t>, 5> kExpectedOffsets{
-      std::pair{0, 0},   // score: 0-26, padding: 27-31
-      std::pair{1, 32},  // score: 32-38, padding: 39-39
-      std::pair{2, 40},  // score: 40-42
-      std::pair{3, 43},  // score: 43-43
-      std::pair{4, 44}   // score: 44-44
-    };
-
-    auto prepared = irs::Scorers::Prepare(ord);
-    ASSERT_EQ(irs::IndexFeatures::Freq | irs::IndexFeatures::Pos,
-              prepared.features());
-    ASSERT_FALSE(prepared.buckets().empty());
-    ASSERT_EQ(5, prepared.buckets().size());
-    ASSERT_EQ(prepared.buckets().size() * sizeof(irs::score_t),
-              prepared.score_size());
-    ASSERT_EQ(48, prepared.stats_size());
-
-    auto expected_offset = kExpectedOffsets.begin();
-    for (auto& bucket : prepared.buckets()) {
-      ASSERT_NE(nullptr, bucket.bucket);
-      ASSERT_EQ(expected_offset->second, bucket.stats_offset);
-      ++expected_offset;
-    }
-    ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-  }
-
-  {
-    std::array<irs::Scorer::ptr, 5> ord{
-      std::make_unique<AlignedScorer<AlignedValue<27, 8>>>(),
-      std::make_unique<AlignedScorer<AlignedValue<2, 2>>>(
-        irs::IndexFeatures::None),
-      std::make_unique<AlignedScorer<AlignedValue<4, 4>>>(
-        irs::IndexFeatures::Freq),
-      std::make_unique<AlignedScorer<AlignedValue<1, 1>>>(
-        irs::IndexFeatures::Freq),
-      std::make_unique<AlignedScorer<AlignedValue<1, 1>>>(
-        irs::IndexFeatures::Freq)};
-
-    // first - score offset
-    // second - stats offset
-    constexpr std::array<std::pair<size_t, size_t>, 5> kExpectedOffsets{
-      std::pair{0, 0},   // score: 0-26, padding: 27-31
-      std::pair{1, 32},  // score: 32-33, padding: 34-35
-      std::pair{2, 36},  // score: 36-39
-      std::pair{3, 40},  // score: 40-40
-      std::pair{4, 41}   // score: 41-41
-    };
-
-    auto prepared = irs::Scorers::Prepare(ord);
-    ASSERT_EQ(irs::IndexFeatures::Freq, prepared.features());
-    ASSERT_FALSE(prepared.buckets().empty());
-    ASSERT_EQ(5, prepared.buckets().size());
-    ASSERT_EQ(prepared.buckets().size() * sizeof(irs::score_t),
-              prepared.score_size());
-    ASSERT_EQ(48, prepared.stats_size());
-
-    auto expected_offset = kExpectedOffsets.begin();
-    for (auto& bucket : prepared.buckets()) {
-      ASSERT_NE(nullptr, bucket.bucket);
-      ASSERT_EQ(expected_offset->second, bucket.stats_offset);
-      ++expected_offset;
-    }
-    ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-  }
-
-  {
-    std::array<irs::Scorer::ptr, 5> ord{
-      std::make_unique<AlignedScorer<AlignedValue<27, 8>>>(),
-      std::make_unique<AlignedScorer<AlignedValue<4, 4>>>(
-        irs::IndexFeatures::Freq),
-      std::make_unique<AlignedScorer<AlignedValue<2, 2>>>(
-        irs::IndexFeatures::None),
-      std::make_unique<AlignedScorer<AlignedValue<1, 1>>>(
-        irs::IndexFeatures::Freq),
-      std::make_unique<AlignedScorer<AlignedValue<1, 1>>>(
-        irs::IndexFeatures::Freq)};
-
-    // first - score offset
-    // second - stats offset
-    constexpr std::array<std::pair<size_t, size_t>, 5> kExpectedOffsets{
-      std::pair{0, 0},   // score: 0-26, padding: 27-31
-      std::pair{1, 32},  // score: 32-35
-      std::pair{2, 36},  // score: 36-37
-      std::pair{3, 38},  // score: 38-38
-      std::pair{4, 39}   // score: 39-39
-    };
-
-    auto prepared = irs::Scorers::Prepare(ord);
-    ASSERT_EQ(irs::IndexFeatures::Freq, prepared.features());
-    ASSERT_FALSE(prepared.buckets().empty());
-    ASSERT_EQ(5, prepared.buckets().size());
-    ASSERT_EQ(prepared.buckets().size() * sizeof(irs::score_t),
-              prepared.score_size());
-    ASSERT_EQ(40, prepared.stats_size());
-
-    auto expected_offset = kExpectedOffsets.begin();
-    for (auto& bucket : prepared.buckets()) {
-      ASSERT_NE(nullptr, bucket.bucket);
-      ASSERT_EQ(expected_offset->second, bucket.stats_offset);
-      ++expected_offset;
-    }
-    ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-  }
-
-  {
-    std::array<irs::Scorer::ptr, 5> ord{
-      std::make_unique<AlignedScorer<AlignedValue<27, 8>>>(),
-      std::make_unique<AlignedScorer<AlignedValue<4, 4>>>(
-        irs::IndexFeatures::Freq),
-      std::make_unique<AlignedScorer<AlignedValue<2, 2>>>(
-        irs::IndexFeatures::None),
-      std::make_unique<AlignedScorer<AlignedValue<1, 1>>>(
-        irs::IndexFeatures::Freq),
-      std::make_unique<AlignedScorer<AlignedValue<1, 1>>>(
-        irs::IndexFeatures::Freq)};
-
-    // first - score offset
-    // second - stats offset
-    constexpr std::array<std::pair<size_t, size_t>, 5> kExpectedOffsets{
-      std::pair{0, 0},   // score: 0-26, padding: 27-31
-      std::pair{1, 32},  // score: 32-35
-      std::pair{2, 36},  // score: 36-37
-      std::pair{3, 38},  // score: 38-38
-      std::pair{4, 39}   // score: 39-39
-    };
-
-    auto prepared = irs::Scorers::Prepare(ord);
-    ASSERT_EQ(irs::IndexFeatures::Freq, prepared.features());
-    ASSERT_FALSE(prepared.buckets().empty());
-    ASSERT_EQ(5, prepared.buckets().size());
-    ASSERT_EQ(prepared.buckets().size() * sizeof(irs::score_t),
-              prepared.score_size());
-    ASSERT_EQ(40, prepared.stats_size());
-
-    auto expected_offset = kExpectedOffsets.begin();
-    for (auto& bucket : prepared.buckets()) {
-      ASSERT_NE(nullptr, bucket.bucket);
-      ASSERT_EQ(expected_offset->second, bucket.stats_offset);
-      ++expected_offset;
-    }
-    ASSERT_EQ(expected_offset, kExpectedOffsets.end());
-  }
 }
 
 TEST(ScoreFunctionTest, Noop) {
@@ -636,17 +129,29 @@ TEST(ScoreFunctionTest, Constant) {
   }
 }
 
+struct Impl : irs::ScoreOperator {
+  mutable irs::score_t buf[1]{};
+  Impl() = default;
+
+  template<irs::ScoreMergeType MergeType = irs::ScoreMergeType::Noop>
+  void ScoreImpl(irs::score_t* res, irs::scores_size_t n) const noexcept {
+    ASSERT_EQ(MergeType, irs::ScoreMergeType::Noop);
+    buf[0] = 42;
+    std::fill_n(res, n, 42);
+  }
+
+  void Score(irs::score_t* res, irs::scores_size_t n) const noexcept final {
+    ScoreImpl(res, n);
+  }
+  void ScoreSum(irs::score_t* res, irs::scores_size_t n) const noexcept final {
+    ScoreImpl<irs::ScoreMergeType::Sum>(res, n);
+  }
+  void ScoreMax(irs::score_t* res, irs::scores_size_t n) const noexcept final {
+    ScoreImpl<irs::ScoreMergeType::Max>(res, n);
+  }
+};
+
 TEST(ScoreFunctionTest, construct) {
-  struct Impl : irs::ScoreOperator {
-    irs::score_t buf[1]{};
-    Impl() = default;
-
-    void Score(irs::score_t* res, size_t n) noexcept override {
-      buf[0] = 42;
-      std::fill_n(res, n, 42);
-    }
-  };
-
   {
     irs::ScoreFunction func;
     irs::score_t tmp{1};
@@ -670,16 +175,6 @@ TEST(ScoreFunctionTest, construct) {
 }
 
 TEST(ScoreFunctionTest, reset) {
-  struct Impl : irs::ScoreOperator {
-    irs::score_t buf[1]{};
-    Impl() = default;
-
-    void Score(irs::score_t* res, size_t n) noexcept override {
-      buf[0] = 42;
-      std::fill_n(res, n, 42);
-    }
-  };
-
   irs::ScoreFunction func;
 
   {
@@ -704,14 +199,6 @@ TEST(ScoreFunctionTest, reset) {
 }
 
 TEST(ScoreFunctionTest, move) {
-  struct Impl : irs::ScoreOperator {
-    irs::score_t buf[1]{};
-
-    void Score(irs::score_t* res, size_t n) noexcept override {
-      std::fill_n(res, n, 42);
-    }
-  };
-
   // move construction
   {
     float_t tmp{1};

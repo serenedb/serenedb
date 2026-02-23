@@ -106,7 +106,6 @@ set(IResearch_core_sources
     ./search/score_function.cpp
     ./search/cost.cpp
     ./search/collectors.cpp
-    ./search/score.cpp
     ./search/bitset_doc_iterator.cpp
     ./search/filter.cpp
     ./search/term_filter.cpp
@@ -201,6 +200,12 @@ set(IRESEARCH_EXTERNAL_INCLUDES
 include_directories(SYSTEM ${IRESEARCH_EXTERNAL_INCLUDES})
 
 add_library(iresearch-static STATIC ${IResearch_core_sources})
+
+set_source_files_properties(
+    search/bm25.cpp
+    search/tfidf.cpp
+    PROPERTIES COMPILE_OPTIONS "-ffast-math"
+)
 
 target_include_directories(
     iresearch-static

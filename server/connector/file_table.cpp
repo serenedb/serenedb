@@ -103,8 +103,7 @@ FileDataSource::FileDataSource(
   std::shared_ptr<velox::ReadFile> source,
   std::shared_ptr<ReaderOptions> options,
   const velox::common::SubfieldFilters& subfield_filters,
-  const velox::core::TypedExprPtr& remaining_filter,
-  velox::core::ExpressionEvaluator* evaluator, velox::RowTypePtr output_type,
+  velox::RowTypePtr output_type,
   const velox::connector::ColumnHandleMap& column_handles,
   velox::memory::MemoryPool& memory_pool)
   : _output_type{std::move(output_type)},
@@ -127,12 +126,6 @@ FileDataSource::FileDataSource(
 
   for (auto& [subfield, filter] : subfield_filters) {
     spec->getOrCreateChild(subfield)->setFilter(filter);
-  }
-
-  if (remaining_filter) {
-    _row_reader_options->setMetadataFilter(
-      std::make_shared<velox::common::MetadataFilter>(*spec, *remaining_filter,
-                                                      evaluator));
   }
 
   _row_reader_options->setScanSpec(std::move(spec));

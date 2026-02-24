@@ -3746,7 +3746,7 @@ State SqlAnalyzer::ProcessFileTable(State* parent, const catalog::Table& table,
       case FileFormat::Text:
         return VeloxFormat::TEXT;
       case FileFormat::Parquet:
-        return VeloxFormat::TEXT;
+        return VeloxFormat::PARQUET;
       case FileFormat::Dwrf:
         return VeloxFormat::DWRF;
       case FileFormat::Orc:

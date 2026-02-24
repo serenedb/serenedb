@@ -249,29 +249,18 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
           dynamic_cast<const ReadFileTable*>(&this->table())) {
       velox::common::SubfieldFilters subfield_filters;
       double sample_rate = 1.0;
-      std::vector<velox::core::TypedExprPtr> remaining_filters;
       for (auto& filter : filters) {
         auto remaining =
           velox::connector::hive::extractFiltersFromRemainingFilter(
             filter, &evaluator, subfield_filters, sample_rate);
         if (remaining) {
           rejected_filters.push_back(remaining);
-          remaining_filters.push_back(std::move(remaining));
         }
-      }
-
-      velox::core::TypedExprPtr remaining_filter;
-      if (remaining_filters.size() == 1) {
-        remaining_filter = std::move(remaining_filters[0]);
-      } else if (remaining_filters.size() > 1) {
-        remaining_filter = std::make_shared<velox::core::CallTypedExpr>(
-          velox::BOOLEAN(), std::move(remaining_filters), "and");
       }
 
       return std::make_shared<FileTableHandle>(read_file_table->GetSource(),
                                                read_file_table->GetOptions(),
-                                               std::move(subfield_filters),
-                                               std::move(remaining_filter));
+                                               std::move(subfield_filters));
     }
 
     rejected_filters = std::move(filters);
@@ -636,8 +625,7 @@ class SereneDBConnector final : public velox::connector::Connector {
           dynamic_cast<const FileTableHandle*>(table_handle.get())) {
       return std::make_unique<FileDataSource>(
         file_handle->GetSource(), file_handle->GetOptions(),
-        file_handle->GetSubfieldFilters(), file_handle->GetRemainingFilter(),
-        connector_query_ctx->expressionEvaluator(), output_type, column_handles,
+        file_handle->GetSubfieldFilters(), output_type, column_handles,
         *connector_query_ctx->memoryPool());
     }
 

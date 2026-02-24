@@ -39,7 +39,7 @@ class FileOptionsParser {
  public:
   FileOptionsParser(std::string_view operation, std::string_view query_string,
                     std::string_view file_path,
-                    std::function<void(std::string)> notice = {})
+                    std::function<void(std::string)> notice)
     : _query_string{query_string},
       _file_path{file_path},
       _operation{operation},

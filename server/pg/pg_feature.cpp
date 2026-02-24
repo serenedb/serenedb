@@ -100,8 +100,7 @@ void PostgresFeature::start() {
     SDB_ASSERT(cf);
 
     velox::exec::ExprToSubfieldFilterParser::registerParser(
-      std::make_shared<velox::exec::PrestoExprToSubfieldFilterParser>(
-        "presto_"));
+      std::make_shared<velox::exec::PrestoExprToSubfieldFilterParser>());
 
     auto connector = std::make_shared<connector::SereneDBConnector>(
       StaticStrings::kSereneDBConnector, nullptr, *engine.db(), *cf);

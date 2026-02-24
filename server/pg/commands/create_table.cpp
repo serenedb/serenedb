@@ -77,7 +77,7 @@ class CreateTableUsingExternalOptions : public FileOptionsParser {
     }
     _file_path = *maybe_path;
 
-    auto [underlying_format, format, location] = ParseFileFormat();
+    auto [underlying_format, _, location] = ParseFileFormat();
     _parsed_format = underlying_format;
 
     CheckUnrecognizedOptions();

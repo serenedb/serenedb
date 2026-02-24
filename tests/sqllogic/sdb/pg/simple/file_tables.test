@@ -18,7 +18,36 @@ CREATE TABLE vedernikoff_company(
   iq INT8,
   salary TEXT,
   fact TEXT
-) WITH (source = '/tmp/${__DATABASE__}_vedernikoff_company.parquet');
+) USING EXTERNAL 
+WITH (
+  PATH = '/tmp/${__DATABASE__}_vedernikoff_company.parquet'
+);
+
+
+# all filters are supposed to be pushdowned — no FilterNode in the plan
+query ?
+EXPLAIN (EXECUTION)
+SELECT *
+FROM
+  vedernikoff_company as v1,
+  vedernikoff_company as v2,
+  vedernikoff_company as v3
+WHERE 
+  v1.iq > 90 AND v1.iq < 100 AND v1.iq != 95 AND v1.salary IS NOT NULL
+  AND v2.iq = 90 AND v2.salary IS NULL
+  AND v3.iq >= 90 AND v3.iq <= 100 AND v3.iq NOT IN (99, 95, 97)
+  AND v3.fact LIKE '%gain%' AND (v1.iq = 23 OR v2.iq = 54);
+----
+QUERY PLAN
+EXECUTION PLAN:
+Fragment 0:  numWorkers=0:
+-- NestedLoopJoin[6][INNER] -> "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR, "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR, "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR
+  -- Filter[0][expression: or(presto_eq("iq",23),presto_eq("iq",54))] -> "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR, "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR
+    -- NestedLoopJoin[3][INNER] -> "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR, "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR
+      -- TableScan[1][File(parquet), [(salary, Filter(IsNotNull, deterministic, no nulls)), (iq, BigintMultiRange: [[91, 94], [96, 99]] no nulls)]] -> "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR
+      -- TableScan[2][File(parquet), [(salary, Filter(IsNull, deterministic, with nulls)), (iq, BigintRange: [90, 90] no nulls)]] -> "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR
+  -- Filter[5][expression: presto_like("fact",%gain%,\\)] -> "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR
+    -- TableScan[4][File(parquet), [(iq, BigintMultiRange: [[90, 94], [96, 96], [98, 98], [100, 100]] no nulls)], (presto_like("fact",%gain%,\\))] -> "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR
 
 
 query
@@ -58,23 +87,6 @@ SELECT salary, fact FROM vedernikoff_company ORDER BY 1 DESC LIMIT 1;
 ----
 salary	fact
 salary 99 dallar	i do nothing and gain money
-
-
-# filter is supposed to be pushdowned so there's no one
-query
-EXPLAIN (EXECUTION)
-SELECT *
-FROM 
-  vedernikoff_company as v1, 
-  vedernikoff_company as v2
-WHERE v1.iq > 90 AND v2.iq = 90 AND v1.iq != 98;
-----
-QUERY PLAN
-EXECUTION PLAN:
-Fragment 0:  numWorkers=0:
--- NestedLoopJoin[2][INNER] -> "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR, "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR
-  -- TableScan[0][FileTableHandle] -> "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR
-  -- TableScan[1][FileTableHandle] -> "iq":BIGINT, "salary":VARCHAR, "fact":VARCHAR
 
 
 query ??????

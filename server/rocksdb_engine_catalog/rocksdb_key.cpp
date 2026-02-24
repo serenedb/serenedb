@@ -24,6 +24,8 @@
 #include <absl/base/internal/endian.h>
 #include <absl/strings/internal/resize_uninitialized.h>
 
+#include <limits>
+
 #include "basics/exceptions.h"
 #include "catalog/identifiers/object_id.h"
 #include "rocksdb_engine_catalog/concat.h"
@@ -34,88 +36,79 @@ namespace sdb {
 
 using namespace rocksutils;
 
-/// verify that a key actually contains the given local document id
-
-void RocksDBKey::constructFromBuffer(std::string_view buffer) {
-  // we don't know what the exact type is. we will simply take
-  // over the data from the incoming buffer
-  _type = RocksDBEntryType::Placeholder;
-  *_buffer = buffer;
+ObjectId DefinitionKey::GetParentId() const {
+  SDB_ASSERT(_key.size() ==
+             sizeof(ObjectId) + sizeof(RocksDBEntryType) + sizeof(ObjectId));
+  return ObjectId{rocksutils::Uint64FromPersistent(_key.data())};
 }
 
-void RocksDBKey::constructDefinition(ObjectId parent_id, RocksDBEntryType type,
-                                     ObjectId object_id) {
-  SDB_ASSERT(parent_id.isSet());
-  SDB_ASSERT(object_id.isSet());
-  _type = type;
-  rocksutils::Concat(*_buffer, parent_id, type, object_id);
+RocksDBEntryType DefinitionKey::GetEntryType() const {
+  SDB_ASSERT(_key.size() ==
+             sizeof(ObjectId) + sizeof(RocksDBEntryType) + sizeof(ObjectId));
+  return static_cast<RocksDBEntryType>(_key.data()[sizeof(ObjectId)]);
 }
 
-ObjectId RocksDBKey::GetParentId(const rocksdb::Slice& slice) {
-  SDB_ASSERT(slice.size() >= sizeof(uint64_t));
-  return ObjectId{rocksutils::Uint64FromPersistent(slice.data())};
-}
-
-RocksDBEntryType RocksDBKey::GetType(const rocksdb::Slice& slice) {
-  SDB_ASSERT(slice.size() >= sizeof(uint64_t) + sizeof(char));
-  return static_cast<RocksDBEntryType>(slice.data()[sizeof(uint64_t)]);
-}
-
-ObjectId RocksDBKey::GetObjectId(const rocksdb::Slice& slice) {
-  SDB_ASSERT(slice.size() >=
-             sizeof(uint64_t) + sizeof(char) + sizeof(uint64_t));
+ObjectId DefinitionKey::GetObjectId() const {
+  SDB_ASSERT(_key.size() ==
+             sizeof(ObjectId) + sizeof(RocksDBEntryType) + sizeof(ObjectId));
   return ObjectId{rocksutils::Uint64FromPersistent(
-    slice.data() + sizeof(uint64_t) + sizeof(char))};
+    _key.data() + sizeof(ObjectId) + sizeof(RocksDBEntryType))};
 }
 
-void RocksDBKey::constructDatabase(ObjectId database_id) {
-  SDB_ASSERT(database_id.isSet());
-  _type = RocksDBEntryType::Database;
-  rocksutils::Concat(*_buffer, _type, database_id);
+std::string DefinitionKey::Create(ObjectId parent_id, RocksDBEntryType entry,
+                                  ObjectId id) {
+  std::string key;
+  key.reserve(sizeof(ObjectId) + sizeof(RocksDBEntryType) + sizeof(ObjectId));
+  Uint64ToPersistent(key, parent_id.id());
+  key.push_back(static_cast<char>(entry));
+  Uint64ToPersistent(key, id.id());
+  return key;
 }
 
-void RocksDBKey::constructDatabaseObject(RocksDBEntryType type,
-                                         ObjectId database_id, ObjectId id) {
-  SDB_ASSERT(database_id.isSet());
-  SDB_ASSERT(id.isSet());
-  _type = type;
-  rocksutils::Concat(*_buffer, _type, database_id, id.id());
+std::pair<std::string, std::string> DefinitionKey::CreateInterval(
+  ObjectId parent_id) {
+  std::string start, end;
+  Uint64ToPersistent(start, parent_id.id());
+  start.push_back(0);
+  Uint64ToPersistent(start, 0ULL);
+
+  Uint64ToPersistent(end, parent_id.id());
+  end.push_back(std::numeric_limits<char>::max());
+  Uint64ToPersistent(end, std::numeric_limits<unsigned long long>::max());
+  return {start, end};
 }
 
-void RocksDBKey::constructSchemaObject(RocksDBEntryType type,
-                                       ObjectId database_id, ObjectId schema_id,
-                                       ObjectId id) {
-  SDB_ASSERT(database_id.isSet());
-  _type = type;
-  rocksutils::Concat(*_buffer, type, database_id, schema_id.id(), id.id());
-}
-void RocksDBKey::constructSettingsValue(RocksDBSettingsType st) {
-  SDB_ASSERT(st != RocksDBSettingsType::Invalid);
-  _type = RocksDBEntryType::SettingsValue;
-  rocksutils::Concat(*_buffer, _type, st);
+std::pair<std::string, std::string> DefinitionKey::CreateInterval(
+  ObjectId parent_id, RocksDBEntryType type) {
+  std::string start, end;
+  Uint64ToPersistent(start, parent_id.id());
+  start.push_back(static_cast<char>(type));
+  Uint64ToPersistent(start, 0ULL);
+
+  Uint64ToPersistent(end, parent_id.id());
+  end.push_back(static_cast<char>(type));
+  end.push_back(static_cast<char>(type));
+  Uint64ToPersistent(end, std::numeric_limits<unsigned long long>::max());
+  return {start, end};
 }
 
-RocksDBEntryType RocksDBKey::type(const RocksDBKey& key) {
-  return type(key._buffer->data(), key._buffer->size());
+std::string SettingsKey::Create(RocksDBSettingsType settings_type) {
+  std::string key;
+  rocksutils::Concat(key, RocksDBEntryType::SettingsValue, settings_type);
+  return key;
 }
 
-Tick RocksDBKey::GetDatabaseId(const char* data, size_t size) {
-  SDB_ASSERT(data);
-  SDB_ASSERT(size >= sizeof(char) + sizeof(uint64_t));
-  return Uint64FromPersistent(data + sizeof(char));
+RocksDBSettingsType SettingsKey::GetSettingsType() const {
+  SDB_ASSERT(_key.size() ==
+             sizeof(RocksDBEntryType) + sizeof(RocksDBSettingsType));
+  return static_cast<RocksDBSettingsType>(
+    _key.data()[sizeof(RocksDBEntryType)]);
 }
 
-ObjectId RocksDBKey::GetSchemaId(const char* data, size_t size) {
-  SDB_ASSERT(data);
-  SDB_ASSERT(size >= sizeof(char) + (2 * sizeof(uint64_t)));
-  return ObjectId{Uint64FromPersistent(data + sizeof(char) + sizeof(uint64_t))};
-}
-
-ObjectId RocksDBKey::GetObjectId(const char* data, size_t size) {
-  SDB_ASSERT(data);
-  SDB_ASSERT(size >= sizeof(char) + (3 * sizeof(uint64_t)));
-  return ObjectId{
-    Uint64FromPersistent(data + sizeof(char) + 2 * sizeof(uint64_t))};
+RocksDBEntryType SettingsKey::GetEntryType() const {
+  SDB_ASSERT(_key.size() ==
+             sizeof(RocksDBEntryType) + sizeof(RocksDBSettingsType));
+  return static_cast<RocksDBEntryType>(*_key.data());
 }
 
 }  // namespace sdb

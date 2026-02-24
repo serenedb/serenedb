@@ -22,18 +22,15 @@
 
 namespace sdb {
 
-IndexShard::IndexShard(ObjectId id, ObjectId index_id, ObjectId relation_id,
-                       IndexType type)
+IndexShard::IndexShard(ObjectId id, ObjectId index_id, IndexType type)
   : catalog::Object{ObjectId{0}, id, "", catalog::ObjectType::IndexShard},
     _index_id{index_id},
-    _relation_id{relation_id},
     _type{type} {}
 
-IndexShard::IndexShard(ObjectId index_id, ObjectId relation_id, IndexType type)
+IndexShard::IndexShard(ObjectId index_id, IndexType type)
   : catalog::Object{ObjectId{0}, ObjectId{0}, "",
                     catalog::ObjectType::IndexShard},
     _index_id{index_id},
-    _relation_id{relation_id},
     _type{type} {}
 
 }  // namespace sdb

@@ -396,7 +396,7 @@ std::shared_ptr<catalog::Function> MakeAnalyzer(
   }
 
   return std::make_shared<catalog::Function>(std::move(properties),
-                                             std::move(impl), database, schema);
+                                             std::move(impl), database);
 }
 
 bool AnalyzerEquals(const AnalyzerImpl& analyzer, std::string_view type,

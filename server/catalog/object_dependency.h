@@ -48,8 +48,8 @@ struct SchemaDependency : public ObjectDependencyBase {
 };
 
 // For simple object dependencies
-struct ObjectDependency : public ObjectDependencyBase {
-  containers::FlatHashSet<ObjectId> objects;
+struct DatabaseDependency : public ObjectDependencyBase {
+  containers::FlatHashSet<ObjectId> schemas;
 };
 
 }  // namespace sdb::catalog

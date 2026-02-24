@@ -181,7 +181,6 @@ struct Table::TableOutput {
   const KeyGenerator* keyOptions;
   std::shared_ptr<ShardMap> shards;
   Identifier id;
-  ObjectId schema_id;
   ForeignId distributeShardsLike;
   Identifier planId;
   ObjectId planDb;
@@ -207,7 +206,6 @@ Table::TableOutput Table::MakeTableOptions() const {
     .keyOptions = _key_generator.get(),
     .shards = _shard_ids,
     .id = Identifier{GetId().id()},
-    .schema_id = Identifier{GetId().id()},
     .distributeShardsLike = ForeignId{_distribute_shards_like.id()},
     .planId = Identifier{_plan_id.id()},
     .planDb = _plan_db,

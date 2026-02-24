@@ -45,11 +45,9 @@ class GraphView final : public View {
   static constexpr auto type() noexcept { return ViewType::ViewGraph; }
 
   static Result Make(std::shared_ptr<catalog::View>& view, ObjectId database_id,
-                     ObjectId schema_id, ViewOptions&& options,
-                     bool is_user_request);
+                     ViewOptions&& options, bool is_user_request);
 
-  GraphView(ObjectId database_id, ObjectId schema_id, ViewMeta&& meta,
-            Internal&& internal);
+  GraphView(ObjectId database_id, ViewMeta&& meta, Internal&& internal);
 
   auto GetEdges() const noexcept { return std::span{_meta.edges}; }
 

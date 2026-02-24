@@ -107,7 +107,7 @@ Result FunctionProperties::Read(FunctionProperties& properties,
 
 Result catalog::Function::Instantiate(
   std::shared_ptr<catalog::Function>& function, ObjectId database,
-  ObjectId schema, vpack::Slice definition, bool is_user_request) {
+  vpack::Slice definition, bool is_user_request) {
   FunctionProperties properties;
   auto r = FunctionProperties::Read(properties, definition, is_user_request);
   if (!r.ok()) {
@@ -134,8 +134,8 @@ Result catalog::Function::Instantiate(
     if (!r.ok()) {
       return r;
     }
-    function = std::make_shared<catalog::Function>(
-      std::move(properties), std::move(impl), database, schema);
+    function = std::make_shared<catalog::Function>(std::move(properties),
+                                                   std::move(impl), database);
     return Result{};
   };
 
@@ -183,10 +183,10 @@ catalog::Function::Function(std::string_view name, FunctionSignature signature,
 
 catalog::Function::Function(FunctionProperties&& properties,
                             std::unique_ptr<search::AnalyzerImpl> analyzer,
-                            ObjectId database_id, ObjectId schema_id)
+                            ObjectId database_id)
   : SchemaObject{{},
                  database_id,
-                 schema_id,
+                 {},
                  properties.id,
                  std::move(properties.name),
                  ObjectType::Function},
@@ -200,10 +200,10 @@ catalog::Function::Function(FunctionProperties&& properties,
 
 catalog::Function::Function(FunctionProperties&& properties,
                             std::unique_ptr<pg::FunctionImpl> function,
-                            ObjectId database_id, ObjectId schema_id)
+                            ObjectId database_id)
   : SchemaObject{{},
                  database_id,
-                 schema_id,
+                 {},
                  properties.id,
                  std::move(properties.name),
                  ObjectType::Function},

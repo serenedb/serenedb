@@ -39,7 +39,6 @@
 #include "rocksdb_engine_catalog/rocksdb_comparator.h"
 #include "rocksdb_engine_catalog/rocksdb_engine_catalog.h"
 #include "rocksdb_engine_catalog/rocksdb_key.h"
-#include "rocksdb_engine_catalog/rocksdb_key_bounds.h"
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_utils.h"
 #include "storage_engine/engine_feature.h"
@@ -85,20 +84,10 @@ size_t CountKeyRange(rocksdb::DB* db, rocksdb::Slice lower,
 
   return count;
 }
-size_t CountKeyRange(rocksdb::DB* db, const RocksDBKeyBounds& bounds,
-                     const rocksdb::Snapshot* snapshot,
-                     bool prefix_same_as_start) {
-  return CountKeyRange(db, bounds.start(), bounds.end(), bounds.columnFamily(),
-                       snapshot, prefix_same_as_start);
-}
-
 /// whether or not the specified range has keys
-bool HasKeys(rocksdb::DB* db, const RocksDBKeyBounds& bounds,
-             const rocksdb::Snapshot* snapshot, bool prefix_same_as_start) {
-  // note: snapshot may be a nullptr!
-  rocksdb::Slice lower(bounds.start());
-  rocksdb::Slice upper(bounds.end());
-
+bool HasKeys(rocksdb::DB* db, rocksdb::Slice lower, rocksdb::Slice upper,
+             rocksdb::ColumnFamilyHandle* cf, const rocksdb::Snapshot* snapshot,
+             bool prefix_same_as_start) {
   rocksdb::ReadOptions read_options;
   // TODO how to read less?
   read_options.snapshot = snapshot;
@@ -110,7 +99,6 @@ bool HasKeys(rocksdb::DB* db, const RocksDBKeyBounds& bounds,
   read_options.prefix_same_as_start = prefix_same_as_start;
   read_options.adaptive_readahead = true;
 
-  rocksdb::ColumnFamilyHandle* cf = bounds.columnFamily();
   const rocksdb::Comparator* cmp = cf->GetComparator();
   std::unique_ptr<rocksdb::Iterator> it(db->NewIterator(read_options, cf));
 

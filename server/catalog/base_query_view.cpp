@@ -48,7 +48,6 @@ namespace sdb::catalog {
 template<typename ImplQueryView>
 Result BaseQueryView<ImplQueryView>::Make(std::shared_ptr<catalog::View>& view,
                                           ObjectId database_id,
-                                          ObjectId schema_id,
                                           ViewOptions&& options,
                                           ViewContext ctx) {
   Internal meta;
@@ -82,18 +81,16 @@ Result BaseQueryView<ImplQueryView>::Make(std::shared_ptr<catalog::View>& view,
     }
   }
 
-  view = std::make_shared<BaseQueryView>(database_id, schema_id,
-                                         std::move(options.meta),
+  view = std::make_shared<BaseQueryView>(database_id, std::move(options.meta),
                                          std::move(meta), std::move(state));
   return {};
 }
 
 template<typename ImplQueryView>
 BaseQueryView<ImplQueryView>::BaseQueryView(ObjectId database_id,
-                                            ObjectId schema_id,
                                             ViewMeta&& options, Internal&& meta,
                                             StatePtr state)
-  : View{std::move(options), database_id, schema_id},
+  : View{std::move(options), database_id},
     _meta{std::move(meta)},
     _state{std::move(state)} {}
 
@@ -123,7 +120,7 @@ Result BaseQueryView<ImplQueryView>::Rename(
     return r;
   }
 
-  new_view = std::make_shared<BaseQueryView>(GetDatabaseId(), GetSchemaId(),
+  new_view = std::make_shared<BaseQueryView>(GetDatabaseId(),
                                              ViewMeta{
                                                .id = GetId().id(),
                                                .name = std::string{new_name},
@@ -161,7 +158,7 @@ Result BaseQueryView<ImplQueryView>::Update(
   }
 
   new_view =
-    std::make_shared<BaseQueryView>(GetDatabaseId(), GetSchemaId(),
+    std::make_shared<BaseQueryView>(GetDatabaseId(),
                                     ViewMeta{
                                       .id = GetId().id(),
                                       .name = _name,

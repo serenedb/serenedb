@@ -309,6 +309,7 @@ void SchedulerFeature::start() {
 void SchedulerFeature::stop() {
   // shutdown user jobs again, in case new ones appear
   signalStuffDeinit();
+  SDB_ASSERT(_scheduler);
   _scheduler->shutdown();
 }
 

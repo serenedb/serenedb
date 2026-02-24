@@ -36,6 +36,8 @@
 #include "pg/commands.h"
 #include "pg/connection_context.h"
 #include "pg/pg_list_utils.h"
+#include "pg/sql_exception.h"
+#include "pg/sql_exception_macro.h"
 #include "pg/sql_utils.h"
 #include "rest_server/serened_single.h"
 
@@ -101,10 +103,10 @@ yaclib::Future<Result> CreateIndex(ExecContext& context,
 
   const std::string_view relation_name = stmt.relation->relname;
   const std::string current_schema = conn_ctx.GetCurrentSchema();
-  const std::string_view relation_schema =
+  const std::string_view schema =
     stmt.relation->schemaname ? std::string_view{stmt.relation->schemaname}
                               : current_schema;
-  if (relation_schema.empty()) {
+  if (schema.empty()) {
     return yaclib::MakeFuture<Result>(
       ERROR_BAD_PARAMETER, "no schema has been selected to create in");
   }
@@ -125,12 +127,15 @@ yaclib::Future<Result> CreateIndex(ExecContext& context,
   pg::PgListWrapper<DefElem> pg_args{stmt.options};
   auto args = ParseIndexArgs(pg_args);
 
-  Result r = catalog.CreateIndex(db, relation_schema, relation_name,
-                                 std::move(column_names), std::move(options),
-                                 std::move(args));
+  Result r =
+    catalog.CreateIndex(db, schema, relation_name, std::move(column_names),
+                        std::move(options), std::move(args));
 
   if (r.is(ERROR_SERVER_DUPLICATE_NAME) && stmt.if_not_exists) {
     r = {};
+  } else if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+                    ERR_MSG("relation \"", stmt.idxname, "\" already exists"));
   }
   return yaclib::MakeFuture(std::move(r));
 }

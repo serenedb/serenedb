@@ -129,8 +129,8 @@ Result ToInternal(vpack::Slice definition, ObjectId database_id, auto& meta) {
 }  // namespace
 
 Result GraphView::Make(std::shared_ptr<catalog::View>& view,
-                       ObjectId database_id, ObjectId schema_id,
-                       ViewOptions&& options, bool is_user_request) {
+                       ObjectId database_id, ViewOptions&& options,
+                       bool is_user_request) {
   Internal meta;
   auto r = [&] -> Result {
     if (is_user_request) {
@@ -147,14 +147,13 @@ Result GraphView::Make(std::shared_ptr<catalog::View>& view,
   SDB_ASSERT(absl::c_is_sorted(meta.edges));
   SDB_ASSERT(absl::c_adjacent_find(meta.edges) == meta.edges.end());
 
-  view = std::make_shared<GraphView>(database_id, schema_id,
-                                     std::move(options.meta), std::move(meta));
+  view = std::make_shared<GraphView>(database_id, std::move(options.meta),
+                                     std::move(meta));
   return {};
 }
 
-GraphView::GraphView(ObjectId database_id, ObjectId schema_id, ViewMeta&& meta,
-                     Internal&& internal)
-  : View{std::move(meta), database_id, schema_id}, _meta{std::move(internal)} {}
+GraphView::GraphView(ObjectId database_id, ViewMeta&& meta, Internal&& internal)
+  : View{std::move(meta), database_id}, _meta{std::move(internal)} {}
 
 bool GraphView::visitCollections(const CollectionVisitor& visitor) const {
   for (auto& edge : _meta.edges) {
@@ -206,7 +205,7 @@ void GraphView::WriteProperties(vpack::Builder& b) const {
 Result GraphView::Rename(std::shared_ptr<catalog::View>& new_view,
                          std::string_view new_name) const {
   SDB_ASSERT(new_name != GetName());
-  new_view = std::make_shared<GraphView>(GetDatabaseId(), GetSchemaId(),
+  new_view = std::make_shared<GraphView>(GetDatabaseId(),
                                          ViewMeta{
                                            .id = GetId().id(),
                                            .name = std::string{new_name},
@@ -225,7 +224,7 @@ Result GraphView::Update(std::shared_ptr<catalog::View>& new_view,
   }
 
   new_view = std::make_shared<GraphView>(
-    GetDatabaseId(), GetSchemaId(),
+    GetDatabaseId(),
     ViewMeta{.id = GetId().id(), .name = _name, .type = GetViewType()},
     std::move(new_meta));
   return {};

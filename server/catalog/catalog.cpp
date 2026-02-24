@@ -75,15 +75,15 @@ Result ErrorMeta(ErrorCode code, std::string_view object_type,
           error, " metadata: ",     meta.toJson()};
 }
 
-containers::FlatHashSet<ObjectId> CollectObjects(ObjectId parent_id,
-                                                 RocksDBEntryType type) {
+containers::FlatHashSet<ObjectId> CollectDefinitions(ObjectId parent_id,
+                                                     RocksDBEntryType type) {
   auto& engine = GetServerEngine();
   containers::FlatHashSet<ObjectId> drops;
-  auto r =
-    engine.VisitObjects(parent_id, type, [&](rocksdb::Slice key, vpack::Slice) {
-      drops.insert(RocksDBKey::GetObjectId(key));
-      return Result{};
-    });
+  auto r = engine.VisitDefinitions(parent_id, type,
+                                   [&](DefinitionKey key, vpack::Slice) {
+                                     drops.insert(key.GetObjectId());
+                                     return Result{};
+                                   });
   SDB_ASSERT(r.ok());
   return drops;
 }
@@ -99,12 +99,12 @@ Result CreateIndexDrop(RocksDBEngineCatalog& engine, ObjectId table_id,
     drop->schema_id = options.schema_id;
     drop->type = options.type;
   }
-  return engine.VisitObjects(index_id, RocksDBEntryType::IndexShard,
-                             [&](rocksdb::Slice key, vpack::Slice) {
-                               SDB_ASSERT(!drop->shard_id.isSet());
-                               drop->shard_id = RocksDBKey::GetObjectId(key);
-                               return Result{};
-                             });
+  return engine.VisitDefinitions(index_id, RocksDBEntryType::IndexShard,
+                                 [&](DefinitionKey key, vpack::Slice) {
+                                   SDB_ASSERT(!drop->shard_id.isSet());
+                                   drop->shard_id = key.GetObjectId();
+                                   return Result{};
+                                 });
 }
 
 Result CreateTableDrop(RocksDBEngineCatalog& engine, ObjectId schema_id,
@@ -112,21 +112,21 @@ Result CreateTableDrop(RocksDBEngineCatalog& engine, ObjectId schema_id,
   drop->parent_id = schema_id;
   drop->id = table_id;
 
-  auto r = engine.VisitObjects(table_id, RocksDBEntryType::TableShard,
-                               [&](rocksdb::Slice key, vpack::Slice) {
-                                 SDB_ASSERT(!drop->shard_id.isSet());
-                                 drop->shard_id = RocksDBKey::GetObjectId(key);
-                                 return Result{};
-                               });
+  auto r = engine.VisitDefinitions(table_id, RocksDBEntryType::TableShard,
+                                   [&](DefinitionKey key, vpack::Slice) {
+                                     SDB_ASSERT(!drop->shard_id.isSet());
+                                     drop->shard_id = key.GetObjectId();
+                                     return Result{};
+                                   });
   if (!r.ok()) {
     return r;
   }
-  return engine.VisitObjects(
+  return engine.VisitDefinitions(
     table_id, RocksDBEntryType::Index,
-    [&](rocksdb::Slice key, vpack::Slice slice) {
+    [&](DefinitionKey key, vpack::Slice slice) {
       drop->indexes.push_back(std::make_shared<IndexDrop>());
       drop->indexes.back()->is_root = false;
-      return CreateIndexDrop(engine, table_id, RocksDBKey::GetObjectId(key),
+      return CreateIndexDrop(engine, table_id, key.GetObjectId(),
                              drop->indexes.back(), slice);
     });
 }
@@ -135,11 +135,11 @@ Result CreateSchemaDrop(RocksDBEngineCatalog& engine, ObjectId db_id,
                         ObjectId schema_id, std::shared_ptr<SchemaDrop>& drop) {
   drop->parent_id = db_id;
   drop->id = schema_id;
-  return engine.VisitObjects(
-    schema_id, RocksDBEntryType::Table, [&](rocksdb::Slice key, vpack::Slice) {
+  return engine.VisitDefinitions(
+    schema_id, RocksDBEntryType::Table, [&](DefinitionKey key, vpack::Slice) {
       drop->tables.push_back(std::make_shared<TableDrop>());
       drop->tables.back()->is_root = false;
-      return CreateTableDrop(engine, schema_id, RocksDBKey::GetObjectId(key),
+      return CreateTableDrop(engine, schema_id, key.GetObjectId(),
                              drop->tables.back());
     });
 }
@@ -212,14 +212,16 @@ Result CatalogFeature::Open() {
     }
   }
 
-  auto r = GetServerEngine().VisitDatabases([&](vpack::Slice slice) -> Result {
-    catalog::DatabaseOptions database;
-    if (auto r = vpack::ReadTupleNothrow(slice, database); !r.ok()) {
-      return r;
-    }
+  auto r = GetServerEngine().VisitDefinitions(
+    id::kInstance, RocksDBEntryType::Database,
+    [&](DefinitionKey, vpack::Slice slice) -> Result {
+      catalog::DatabaseOptions database;
+      if (auto r = vpack::ReadTupleNothrow(slice, database); !r.ok()) {
+        return r;
+      }
 
-    return OpenDatabase(std::move(database));
-  });
+      return OpenDatabase(std::move(database));
+    });
 
   if (!r.ok()) {
     SDB_FATAL("xxxxx", Logger::FIXME, "Failed to open database, ",
@@ -240,11 +242,11 @@ Result CatalogFeature::AddDatabase(const DatabaseOptions& options) {
 }
 
 Result CatalogFeature::RegisterSchemas(ObjectId database_id) {
-  auto deleted = CollectObjects(database_id, RocksDBEntryType::ScopeTombstone);
-  return GetServerEngine().VisitObjects(
+  auto deleted = CollectDefinitions(database_id, RocksDBEntryType::Tombstone);
+  return GetServerEngine().VisitDefinitions(
     database_id, RocksDBEntryType::Schema,
-    [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
-      auto schema_id = RocksDBKey::GetObjectId(key);
+    [&](DefinitionKey key, vpack::Slice slice) -> Result {
+      auto schema_id = key.GetObjectId();
       if (deleted.contains(schema_id)) {
         auto schema_drop = std::make_shared<SchemaDrop>();
         schema_drop->is_root = true;
@@ -259,12 +261,11 @@ Result CatalogFeature::RegisterSchemas(ObjectId database_id) {
 }
 
 Result CatalogFeature::RegisterFunctions(ObjectId db_id, ObjectId schema_id) {
-  return GetServerEngine().VisitObjects(
+  return GetServerEngine().VisitDefinitions(
     schema_id, RocksDBEntryType::Function,
-    [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
+    [&](DefinitionKey key, vpack::Slice slice) -> Result {
       std::shared_ptr<catalog::Function> function;
-      auto r = catalog::Function::Instantiate(
-        function, db_id, RocksDBKey::GetParentId(key), slice, false);
+      auto r = catalog::Function::Instantiate(function, db_id, slice, false);
       if (!r.ok()) {
         return ErrorMeta(r.errorNumber(), "function", r.errorMessage(), slice);
       }
@@ -274,9 +275,9 @@ Result CatalogFeature::RegisterFunctions(ObjectId db_id, ObjectId schema_id) {
 }
 
 Result CatalogFeature::RegisterViews(ObjectId db_id, ObjectId schema_id) {
-  return GetServerEngine().VisitObjects(
+  return GetServerEngine().VisitDefinitions(
     schema_id, RocksDBEntryType::View,
-    [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
+    [&](DefinitionKey key, vpack::Slice slice) -> Result {
       ViewOptions options;
       auto r = ViewOptions::Read(options, slice);
       if (!r.ok()) {
@@ -284,8 +285,8 @@ Result CatalogFeature::RegisterViews(ObjectId db_id, ObjectId schema_id) {
       }
       std::shared_ptr<View> view;
 
-      r = CreateViewInstance(view, db_id, RocksDBKey::GetParentId(key),
-                             std::move(options), ViewContext::Restore);
+      r = CreateViewInstance(view, db_id, std::move(options),
+                             ViewContext::Restore);
       if (!r.ok()) {
         return r;
       }
@@ -295,11 +296,11 @@ Result CatalogFeature::RegisterViews(ObjectId db_id, ObjectId schema_id) {
 }
 
 Result CatalogFeature::RegisterIndexes(ObjectId table_id) {
-  auto deleted = CollectObjects(table_id, RocksDBEntryType::IndexTombstone);
-  return GetServerEngine().VisitObjects(
+  auto deleted = CollectDefinitions(table_id, RocksDBEntryType::Tombstone);
+  return GetServerEngine().VisitDefinitions(
     table_id, RocksDBEntryType::Index,
-    [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
-      auto index_id = RocksDBKey::GetObjectId(key);
+    [&](DefinitionKey key, vpack::Slice slice) -> Result {
+      auto index_id = key.GetObjectId();
       if (deleted.contains(index_id)) {
         auto index_drop = std::make_shared<IndexDrop>();
         index_drop->is_root = true;
@@ -314,10 +315,10 @@ Result CatalogFeature::RegisterIndexes(ObjectId table_id) {
 }
 
 Result CatalogFeature::RegisterTableShard(ObjectId table_id) {
-  return GetServerEngine().VisitObjects(
+  return GetServerEngine().VisitDefinitions(
     table_id, RocksDBEntryType::TableShard,
-    [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
-      ObjectId shard_id = RocksDBKey::GetObjectId(key);
+    [&](DefinitionKey key, vpack::Slice slice) -> Result {
+      ObjectId shard_id = key.GetObjectId();
       TableStats stats;
       auto shard = std::make_shared<TableShard>(shard_id, table_id, stats);
       return Local().RegisterTableShard(shard);
@@ -325,12 +326,16 @@ Result CatalogFeature::RegisterTableShard(ObjectId table_id) {
 }
 
 Result CatalogFeature::RegisterIndexShard(const std::shared_ptr<Index>& index) {
-  return GetServerEngine().VisitObjects(
+  return GetServerEngine().VisitDefinitions(
     index->GetId(), RocksDBEntryType::IndexShard,
-    [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
-      return index->CreateIndexShard(false, std::move(slice))
+    [&](DefinitionKey key, vpack::Slice slice) -> Result {
+      return index->CreateIndexShard(false, key.GetObjectId(), std::move(slice))
         .transform([&](auto&& shard) {
-          auto r = GetServerEngine().StoreIndexShard(*shard);
+          vpack::Builder b;
+          shard->WriteInternal(b);
+          auto r = GetServerEngine().CreateDefinition(
+            shard->GetIndexId(), RocksDBEntryType::IndexShard, shard->GetId(),
+            [&](bool) { return b.slice(); });
           if (!r.ok()) {
             return r;
           }
@@ -341,11 +346,11 @@ Result CatalogFeature::RegisterIndexShard(const std::shared_ptr<Index>& index) {
 }
 
 Result CatalogFeature::RegisterTables(ObjectId db_id, ObjectId schema_id) {
-  auto deleted = CollectObjects(schema_id, RocksDBEntryType::TableTombstone);
-  return GetServerEngine().VisitObjects(
+  auto deleted = CollectDefinitions(schema_id, RocksDBEntryType::Tombstone);
+  return GetServerEngine().VisitDefinitions(
     schema_id, RocksDBEntryType::Table,
-    [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
-      auto table_id = RocksDBKey::GetObjectId(key);
+    [&](DefinitionKey key, vpack::Slice slice) -> Result {
+      auto table_id = key.GetObjectId();
       if (deleted.contains(table_id)) {
         auto table_drop = std::make_shared<TableDrop>();
         table_drop->is_root = true;
@@ -361,9 +366,9 @@ Result CatalogFeature::RegisterTables(ObjectId db_id, ObjectId schema_id) {
 
 Result CatalogFeature::AddRoles() {
   auto& engine = GetServerEngine();
-  auto r = engine.VisitObjects(
+  auto r = engine.VisitDefinitions(
     id::kSystemDB, RocksDBEntryType::Role,
-    [&](rocksdb::Slice key, vpack::Slice slice) -> Result {
+    [&](DefinitionKey, vpack::Slice slice) -> Result {
       SDB_ASSERT(!slice.get(StaticStrings::kDataSourceId).isNone());
 
       std::shared_ptr<catalog::Role> role;
@@ -466,11 +471,6 @@ ResultOr<std::shared_ptr<Database>> GetDatabase(ObjectId database_id) {
 
 ResultOr<std::shared_ptr<Database>> GetDatabase(std::string_view name) {
   return GetDatabaseImpl(name);
-}
-
-std::shared_ptr<TableShard> GetTableShard(ObjectId table_id) {
-  auto& catalog = GetCatalog();
-  return catalog.GetSnapshot()->GetTableShard(table_id);
 }
 
 LogicalCatalog& GetCatalog() {

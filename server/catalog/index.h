@@ -58,7 +58,7 @@ class Index : public SchemaObject {
   void WriteInternal(vpack::Builder& builder) const override;
 
   virtual ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
-    bool is_new, vpack::Slice args) const = 0;
+    bool is_new, ObjectId id, vpack::Slice args) const = 0;
 
   virtual ~Index() = default;
 

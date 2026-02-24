@@ -19,7 +19,7 @@ class InvertedIndex final : public Index {
 
   void WriteInternal(vpack::Builder& builder) const final;
   ResultOr<std::shared_ptr<IndexShard>> CreateIndexShard(
-    bool is_new, vpack::Slice args) const final;
+    bool is_new, ObjectId id, vpack::Slice args) const final;
 
  private:
   // TODO(codeworse): Add inverted index specific options

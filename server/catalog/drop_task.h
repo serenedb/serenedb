@@ -22,9 +22,13 @@
 
 #include <yaclib/async/future.hpp>
 
+#include "app/app_server.h"
+#include "basics/assert.h"
 #include "catalog/index.h"
 #include "catalog/object_dependency.h"
 #include "general_server/scheduler.h"
+#include "rest_server/serened_single.h"
+#include "rest_server/server_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "storage_engine/engine_feature.h"
 
@@ -37,9 +41,10 @@ static constexpr uint32_t kMaxDelay = kInitialDelay << 7;
 template<typename T>
 AsyncResult QueueDropTask(std::shared_ptr<T> task) {
   auto* scheduler = GetScheduler();
-  if (!scheduler) {
+  if (SerenedServer::Instance().isStopping()) {
     return yaclib::MakeFuture<Result>();
   }
+  SDB_ASSERT(scheduler);
 
   try {
     auto [f, p] = yaclib::MakeContract<Result>();

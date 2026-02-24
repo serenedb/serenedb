@@ -85,33 +85,18 @@ class ResolutionTable {
   template<ResolveType Type>
   Result AddObject(ObjectId parent_id, std::string_view object_name,
                    ObjectId object_id, bool replace) {
-    auto already_exists = [&]() -> Result {
-      std::string_view object_type;
-      if constexpr (Type == ResolveType::Database) {
-        object_type = "database";
-      } else if constexpr (Type == ResolveType::Schema) {
-        object_type = "schema";
-      } else if constexpr (Type == ResolveType::Function) {
-        object_type = "function";
-      } else {
-        object_type = "relation";
-      }
-      return {ERROR_SERVER_DUPLICATE_NAME, object_type, " \"", object_name,
-              "\" already exists"};
-    };
-
     if constexpr (Type == ResolveType::Database) {
       if (!replace) {
         auto [_, inserted] = _databases.try_emplace(object_name, object_id);
         if (!inserted) {
-          return already_exists();
+          return {ERROR_SERVER_DUPLICATE_NAME};
         }
       } else {
         _databases.insert_or_assign(object_name, object_id);
       }
       auto [_, inserted] = _schemas.try_emplace(object_id);
       SDB_ASSERT(inserted);
-      return Result{ERROR_OK};
+      return {};
     } else {
       auto insert = [replace](auto& insert_map, ObjectId parent_id,
                               std::string_view object_name,
@@ -128,7 +113,7 @@ class ResolutionTable {
       if constexpr (Type == ResolveType::Function) {
         return insert(_functions, parent_id, object_name, object_id)
                  ? Result{}
-                 : already_exists();
+                 : Result{ERROR_SERVER_DUPLICATE_NAME};
       } else if constexpr (Type == ResolveType::Schema) {
         auto inserted = insert(_schemas, parent_id, object_name, object_id);
         if (inserted) {
@@ -137,11 +122,11 @@ class ResolutionTable {
           SDB_ASSERT(insert_rel && insert_function);
           return {};
         }
-        return already_exists();
+        return {ERROR_SERVER_DUPLICATE_NAME};
       } else if constexpr (Type == ResolveType::Relation) {
         return insert(_relations, parent_id, object_name, object_id)
                  ? Result{}
-                 : already_exists();
+                 : Result{ERROR_SERVER_DUPLICATE_NAME};
       } else {
         SDB_UNREACHABLE();
       }
@@ -213,6 +198,7 @@ class ResolutionTable {
   using MapByName = containers::FlatHashMap<std::string_view, T>;
   template<typename T>
   using MapById = containers::FlatHashMap<ObjectId, T>;
+
   // database_name -> database_id
   MapByName<ObjectId> _databases;
   // database_id -> (schema_name -> schema_id)

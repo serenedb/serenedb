@@ -89,11 +89,11 @@ std::filesystem::path InvertedIndexShard::GetPath(ObjectId db, ObjectId schema,
   return path;
 }
 
-InvertedIndexShard::InvertedIndexShard(const catalog::InvertedIndex& index,
+InvertedIndexShard::InvertedIndexShard(ObjectId id,
+                                       const catalog::InvertedIndex& index,
                                        InvertedIndexShardOptions options,
                                        bool is_new)
-  : IndexShard{options.id, index.GetId(), index.GetRelationId(),
-               IndexType::Inverted},
+  : IndexShard{id, index.GetId(), IndexType::Inverted},
     _engine{GetServerEngine()},
     _search{GetSearchEngine()},
     _state{std::make_shared<ThreadPoolState>()},
@@ -526,19 +526,7 @@ bool InvertedIndexShard::SetOutOfSync() noexcept {
                                         std::memory_order_relaxed);
 }
 
-void InvertedIndexShard::MarkOutOfSyncUnsafe() {
-  _search.trackOutOfSyncLink();
-
-  auto& catalog =
-    SerenedServer::Instance().getFeature<catalog::CatalogFeature>();
-  auto snapshot = catalog.Local().GetSnapshot();
-  auto c = snapshot->GetObject<catalog::Table>(GetId());
-  if (!c) {
-    return;
-  }
-
-  _engine.ChangeTable(*c);
-}
+void InvertedIndexShard::MarkOutOfSyncUnsafe() { _search.trackOutOfSyncLink(); }
 
 bool InvertedIndexShard::IsOutOfSync() const noexcept {
   return _error.load(std::memory_order_relaxed) == Error::OutOfSync;

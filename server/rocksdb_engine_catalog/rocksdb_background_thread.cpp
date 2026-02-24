@@ -73,16 +73,20 @@ void RocksDBBackgroundThread::SyncStats() {
   auto snapshot = catalog::GetCatalog().GetSnapshot();
   for (auto& db : snapshot->GetDatabases()) {
     for (auto& schema : snapshot->GetSchemas(db->GetId())) {
-      catalog::VisitTables(*snapshot, db->GetId(), schema->GetName(),
-                           [&](auto& table, auto& shard) mutable {
-                             auto r = _engine.SyncTableStats(*table, *shard);
-                             if (!r.ok()) {
-                               SDB_WARN("xxxxx", Logger::ENGINES,
-                                        "unable to update settings for table '",
-                                        table->GetName(),
-                                        "': ", r.errorMessage());
-                             }
-                           });
+      catalog::VisitTables(
+        *snapshot, db->GetId(), schema->GetName(),
+        [&](auto& table, auto& shard) mutable {
+          if (!shard) {
+            SDB_WARN("xxxxx", Logger::ENGINES, "table shard is null");
+            return;
+          }
+          auto r = _engine.SyncTableShard(*shard);
+          if (!r.ok()) {
+            SDB_WARN("xxxxx", Logger::ENGINES,
+                     "unable to update settings for table '", table->GetName(),
+                     "': ", r.errorMessage());
+          }
+        });
     }
   }
 }

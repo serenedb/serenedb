@@ -39,111 +39,43 @@ namespace sdb {
 
 class RocksDBKey {
  public:
-  explicit RocksDBKey(std::string* buf) : _buffer{buf} { SDB_ASSERT(_buffer); }
+  RocksDBKey(std::string_view key) : _key{key} {}
+  RocksDBKey(rocksdb::Slice slice) : _key{slice.data(), slice.size()} {}
 
-  // construct a RocksDB key from another, already filled buffer
-  void constructFromBuffer(std::string_view buffer);
-
-  // New flat definition key: [parent_id(8) | type(1) | object_id(8)] = 17 bytes
-  void constructDefinition(ObjectId parent_id, RocksDBEntryType type,
-                           ObjectId object_id);
-
-  // Extract fields from a new flat definition key
-  static ObjectId GetParentId(const rocksdb::Slice& slice);
-  static RocksDBEntryType GetType(const rocksdb::Slice& slice);
-  static ObjectId GetObjectId(const rocksdb::Slice& slice);
-
-  // --- Deprecated: old key format methods (kept for non-definition keys) ---
-
-  // Create a fully-specified database key
-  void constructDatabase(ObjectId database_id);
-
-  void constructDatabaseObject(RocksDBEntryType type, ObjectId database_id,
-                               ObjectId id);
-
-  void constructSchemaObject(RocksDBEntryType type, ObjectId database_id,
-                             ObjectId schema_id, ObjectId id);
-
-  // Create a fully-specified key for a settings value
-  void constructSettingsValue(RocksDBSettingsType st);
-
-  // Extracts the type from a key
-  // May be called on any valid key (in our keyspace)
-  static RocksDBEntryType type(const RocksDBKey&);
-  static RocksDBEntryType type(rocksdb::Slice slice) {
-    return type(slice.data(), slice.size());
-  }
-
-  static Tick databaseId(const rocksdb::Slice& slice) {
-    return GetDatabaseId(slice.data(), slice.size());
-  }
-
-  static ObjectId SchemaId(const rocksdb::Slice& slice) {
-    return GetSchemaId(slice.data(), slice.size());
-  }
-
-  static ObjectId dataSourceId(const rocksdb::Slice& slice) {
-    return GetObjectId(slice.data(), slice.size());
-  }
-
-  // Returns a reference to the full, constructed key
-  rocksdb::Slice string() const { return rocksdb::Slice(*_buffer); }
-
-  size_t size() const { return _buffer->size(); }
-
-  bool operator==(const RocksDBKey& other) const = default;
-
-  std::string* buffer() const { return _buffer; }
-
-  void reset(rocksdb::Slice slice) {
-    SDB_ASSERT(_buffer);
-    _type = RocksDBEntryType::Placeholder;
-    _buffer->assign(slice.data(), slice.size());
-  }
-
- private:
-  // Entry type in the definitions CF
-  static RocksDBEntryType type(const char* data, size_t size) {
-    SDB_ASSERT(data != nullptr);
-    SDB_ASSERT(size >= sizeof(char));
-
-    const auto type = static_cast<RocksDBEntryType>(data[0]);
-    switch (type) {
-      case RocksDBEntryType::SettingsValue:
-      case RocksDBEntryType::Role:
-      case RocksDBEntryType::Database:
-      case RocksDBEntryType::Schema:
-      case RocksDBEntryType::Function:
-      case RocksDBEntryType::View:
-      case RocksDBEntryType::Table:
-      case RocksDBEntryType::Index:
-      case RocksDBEntryType::ScopeTombstone:
-      case RocksDBEntryType::TableTombstone:
-      case RocksDBEntryType::IndexTombstone:
-      case RocksDBEntryType::TableShard:
-      case RocksDBEntryType::IndexShard:
-        return type;
-      default:
-        return RocksDBEntryType::Placeholder;
-    }
-    return type;
-  }
-
-  static Tick GetDatabaseId(const char* data, size_t size);
-  static ObjectId GetSchemaId(const char* data, size_t size);
-  static ObjectId GetObjectId(const char* data, size_t size);
-
-  RocksDBEntryType _type{RocksDBEntryType::Placeholder};
-  std::string* _buffer;
+ protected:
+  std::string_view _key;
 };
 
-class RocksDBKeyWithBuffer : public RocksDBKey {
+class DefinitionKey : public RocksDBKey {
  public:
-  RocksDBKeyWithBuffer() : RocksDBKey{&_buffer} {}
-  RocksDBKeyWithBuffer(RocksDBKeyWithBuffer&& rhs)
-    : RocksDBKey{&_buffer}, _buffer{std::move(rhs._buffer)} {}
+  ObjectId GetParentId() const;
+  RocksDBEntryType GetEntryType() const;
+  ObjectId GetObjectId() const;
 
-  RocksDBKeyWithBuffer operator=(RocksDBKeyWithBuffer&&) = delete;
+  static std::string Create(ObjectId parent_id, RocksDBEntryType entry,
+                            ObjectId id);
+
+  static std::pair<std::string, std::string> CreateInterval(ObjectId parent_id);
+  static std::pair<std::string, std::string> CreateInterval(
+    ObjectId parent_id, RocksDBEntryType entry);
+};
+
+class SettingsKey : public RocksDBKey {
+ public:
+  static std::string Create(RocksDBSettingsType settings_type);
+  RocksDBSettingsType GetSettingsType() const;
+  RocksDBEntryType GetEntryType() const;
+};
+
+template<typename Key>
+class RocksDBKeyWithBuffer {
+ public:
+  template<typename... Args>
+  RocksDBKeyWithBuffer(Args&&... args)
+    : _buffer{Key::Create(std::forward<Args>(args)...)} {}
+
+  Key GetKey() const { return Key{_buffer}; }
+  const std::string& GetBuffer() const { return _buffer; }
 
  private:
   std::string _buffer;

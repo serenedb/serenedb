@@ -51,7 +51,6 @@
 #include "catalog/types.h"
 #include "database/access_mode.h"
 #include "metrics/fwd.h"
-#include "rocksdb_engine_catalog/rocksdb_key_bounds.h"
 #include "rocksdb_engine_catalog/rocksdb_option_feature.h"
 #include "rocksdb_engine_catalog/rocksdb_recovery_manager.h"
 #include "rocksdb_engine_catalog/rocksdb_types.h"
@@ -175,9 +174,6 @@ class RocksDBEngineCatalog {
   void toPrometheus(std::string& result, std::string_view globals,
                     bool ensure_whitespace) const;
 
-  Result VisitDatabases(
-    absl::FunctionRef<Result(vpack::Slice database)> visitor);
-
   std::string versionFilename(ObjectId id) const;
   std::string databasePath() const { return _base_path; }
   std::string path() const { return _path; }
@@ -204,9 +200,6 @@ class RocksDBEngineCatalog {
                   bool flush_column_families = false);
   void waitForEstimatorSync();
 
-  Result createDatabase(ObjectId id, vpack::Slice slice);
-  Result dropDatabase(ObjectId id);
-
   // wal in recovery
   RecoveryState recoveryState() noexcept;
 
@@ -226,60 +219,26 @@ class RocksDBEngineCatalog {
   void scheduleTreeRebuild(ObjectId database, ObjectId collection);
   void processTreeRebuilds();
 
-  void compactRange(RocksDBKeyBounds bounds);
   void processCompactions();
 
-  Result CreateFunction(ObjectId db, ObjectId schema_id, ObjectId id,
-                        WriteProperties properties);
-
-  Result DropFunction(ObjectId db, ObjectId schema_id, ObjectId id,
-                      std::string_view name);
-
   void CreateTable(const catalog::Table& collection);
-  void CreateTableShard(const TableShard& shard);
   Result CreateIndex(const catalog::Index& index);
-  Result StoreIndexShard(const IndexShard& index_shard);
-  ResultOr<vpack::Builder> LoadIndexShard(ObjectId index_id);
 
   void ChangeTable(const catalog::Table& collection);
 
   Result RenameTable(const catalog::Table& collection,
                      std::string_view old_name);
 
-  Result CreateSchema(ObjectId db, ObjectId id, WriteProperties properties);
-  Result ChangeSchema(ObjectId db, ObjectId id, WriteProperties properties);
-  Result DropSchema(ObjectId db, ObjectId id);
+  Result SyncTableShard(const TableShard& shard);
 
-  Result ChangeView(ObjectId db, ObjectId schema_id, ObjectId id,
-                    WriteProperties properties);
-
-  Result CreateView(ObjectId db, ObjectId schema_id, ObjectId id,
-                    WriteProperties properties);
-
-  Result DropView(ObjectId db, ObjectId schema_id, ObjectId id,
-                  std::string_view name);
-
-  Result ChangeRole(ObjectId id, WriteProperties properties);
-
-  Result CreateRole(const catalog::Role& role);
-
-  Result DropRole(const catalog::Role& role);
-
-  Result SyncTableStats(const catalog::Table& c, const TableShard& physical);
-
-  Result DropObject(ObjectId parent_id, RocksDBEntryType type, ObjectId id);
+  Result CreateDefinition(ObjectId parent_id, RocksDBEntryType type,
+                          ObjectId id, WriteProperties properties);
+  Result DropDefinition(ObjectId parent_id, RocksDBEntryType type, ObjectId id);
   Result DropEntry(ObjectId parent_id, RocksDBEntryType type);
-  Result WriteTombstone(ObjectId parent_id, RocksDBEntryType type, ObjectId id);
+  Result WriteTombstone(ObjectId parent_id, ObjectId id);
 
   yaclib::Future<Result> compactAll(bool change_level,
                                     bool compact_bottom_most_level);
-
-  // TODO(gnusi): remove
-  using IndexTriple = std::tuple<ObjectId, ObjectId, IndexId>;
-  IndexTriple mapObjectToIndex(uint64_t object_id) const;
-  void addIndexMapping(uint64_t object_id, ObjectId db_id, ObjectId cid,
-                       IndexId iid);
-  void removeIndexMapping(uint64_t object_id);
 
   rocksdb::TransactionDB* db() const { return _db; }
 
@@ -384,31 +343,14 @@ class RocksDBEngineCatalog {
   std::tuple<uint64_t, uint64_t, uint64_t, uint64_t, uint64_t>
   getCacheMetrics();
 
-  Result VisitObjects(
-    ObjectId parent_id, RocksDBEntryType entry,
-    absl::FunctionRef<Result(rocksdb::Slice, vpack::Slice)> visitor);
-  Result VisitSchemaObjects(
-    ObjectId database_id, ObjectId schema_id, RocksDBEntryType entry,
-    absl::FunctionRef<Result(rocksdb::Slice, vpack::Slice)> visitor);
+  Result VisitDefinitions(
+    ObjectId parent_id, RocksDBEntryType type,
+    absl::FunctionRef<Result(DefinitionKey, vpack::Slice)> visitor);
 
  private:
-  Result VisitObjectsImpl(
-    const RocksDBKeyBounds& bounds,
-    absl::FunctionRef<Result(rocksdb::Slice, vpack::Slice)> visitor);
-
-  Result DeleteSchemaObject(ObjectId db_id, ObjectId schema_id,
-                            ObjectId object_id, std::string_view object_name,
-                            RocksDBEntryType entry, RocksDBLogType log);
-  Result PutSchemaObject(ObjectId db, ObjectId schema_id, ObjectId id,
-                         WriteProperties properties, RocksDBEntryType entry,
-                         RocksDBLogType log);
-
-  Result PutObject(ObjectId db, ObjectId id, WriteProperties properties,
-                   RocksDBEntryType entry, RocksDBLogType log);
-
-  Result DeleteObject(ObjectId db_id, ObjectId object_id,
-                      std::string_view object_name, RocksDBEntryType entry,
-                      RocksDBLogType log);
+  Result VisitDefinitionsImpl(
+    const std::string& start, const std::string& end,
+    absl::FunctionRef<Result(DefinitionKey, vpack::Slice)> visitor);
 
   void shutdownRocksDBInstance() noexcept;
   void waitForCompactionJobsToFinish();
@@ -455,10 +397,6 @@ class RocksDBEngineCatalog {
   struct Collection {
     ObjectId db;
   };
-
-  // TODO(gnusi): remove
-  mutable absl::Mutex _map_lock;
-  containers::FlatHashMap<uint64_t, IndexTriple> _index_map;
 
   /// protects _prunable_wal_files
   mutable absl::Mutex _wal_file_lock;
@@ -518,7 +456,7 @@ class RocksDBEngineCatalog {
   /// lock for _pending_compactions and _running_compactions
   absl::Mutex _pending_compactions_lock;
   /// bounds for compactions that we have to process
-  std::deque<RocksDBKeyBounds> _pending_compactions;
+  std::deque<std::pair<std::string, std::string>> _pending_compactions;
   /// number of currently running compaction jobs
   size_t _running_compactions = 0;
   /// column families for which we are currently running a compaction.

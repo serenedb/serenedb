@@ -7,7 +7,7 @@
 namespace sdb::catalog {
 
 ResultOr<std::shared_ptr<IndexShard>> InvertedIndex::CreateIndexShard(
-  bool is_new, vpack::Slice args) const {
+  bool is_new, ObjectId id, vpack::Slice args) const {
   // TODO(codeworse): parse args into InvertedIndexShardOptions
   search::InvertedIndexShardOptions options;
   if (auto r = vpack::ReadObjectNothrow(
@@ -17,7 +17,7 @@ ResultOr<std::shared_ptr<IndexShard>> InvertedIndex::CreateIndexShard(
                                    r.errorMessage());
   }
   auto inverted_index_shard =
-    std::make_shared<search::InvertedIndexShard>(*this, options, is_new);
+    std::make_shared<search::InvertedIndexShard>(id, *this, options, is_new);
   return inverted_index_shard;
 }
 

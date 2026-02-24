@@ -53,30 +53,29 @@ Result ViewOptions::Read(ViewOptions& options, vpack::Slice slice) {
   return {};
 }
 
-View::View(ViewMeta&& options, ObjectId database_id, ObjectId schema_id)
+View::View(ViewMeta&& options, ObjectId database_id)
   : SchemaObject{{},
                  database_id,
-                 schema_id,
+                 {},
                  *options.id,
                  std::move(options.name),
                  ObjectType::View},
     _type{options.type} {}
 
 Result CreateViewInstance(std::shared_ptr<catalog::View>& view,
-                          ObjectId database_id, ObjectId schema_id,
-                          ViewOptions&& options, ViewContext ctx) {
+                          ObjectId database_id, ViewOptions&& options,
+                          ViewContext ctx) {
   SDB_ASSERT(ServerState::instance()->IsClientNode());
 
   switch (options.meta.type) {
     case ViewType::ViewSqlQuery:
-      return SqlQueryView::Make(view, database_id, schema_id,
-                                std::move(options), ctx);
+      return SqlQueryView::Make(view, database_id, std::move(options), ctx);
     case ViewType::ViewGraph:
-      return GraphView::Make(view, database_id, schema_id, std::move(options),
+      return GraphView::Make(view, database_id, std::move(options),
                              ctx != ViewContext::Internal);
     case ViewType::ViewSearch:
 #ifdef SDB_CLUSTER
-      return SearchView::Make(view, database_id, schema_id, std::move(options),
+      return SearchView::Make(view, database_id, std::move(options),
                               ctx != ViewContext::Internal);
 #endif
   }

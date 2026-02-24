@@ -64,9 +64,7 @@ RocksDBValue::RocksDBValue(RocksDBEntryType type, vpack::Slice data)
     case RocksDBEntryType::View:
     case RocksDBEntryType::Table:
     case RocksDBEntryType::Index:
-    case RocksDBEntryType::ScopeTombstone:
-    case RocksDBEntryType::TableTombstone:
-    case RocksDBEntryType::IndexTombstone:
+    case sdb::RocksDBEntryType::Tombstone:
     case RocksDBEntryType::TableShard:
     case RocksDBEntryType::IndexShard: {
       size_t byte_size = static_cast<size_t>(data.byteSize());

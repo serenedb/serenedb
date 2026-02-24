@@ -50,6 +50,7 @@ constexpr uint64_t kNullMask = MaskFromNonNulls({
 void RetrieveObjects(ObjectId database_id,
                      const catalog::LogicalCatalog& catalog,
                      std::vector<PgClass>& values) {
+  auto snapshot = catalog::GetCatalog().GetSnapshot();
   auto insert_object =
     [&](const std::shared_ptr<catalog::SchemaObject>& object) {
       PgClass::Relkind relkind;
@@ -78,7 +79,7 @@ void RetrieveObjects(ObjectId database_id,
       };
 
       if (relkind == PgClass::Relkind::OrdinaryTable) {
-        auto shard = catalog::GetTableShard(object->GetId());
+        auto shard = snapshot->GetTableShard(object->GetId());
         SDB_ASSERT(shard);
         auto stats = shard->GetTableStats();
         row.reltuples = static_cast<float>(stats.num_rows);
@@ -88,7 +89,6 @@ void RetrieveObjects(ObjectId database_id,
       values.push_back(std::move(row));
     };
 
-  auto snapshot = catalog.GetSnapshot();
   for (const auto& schema : snapshot->GetSchemas(database_id)) {
     for (const auto& relation :
          snapshot->GetRelations(database_id, schema->GetName())) {

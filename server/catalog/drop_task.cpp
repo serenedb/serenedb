@@ -42,15 +42,17 @@ bool CheckResult(const Result& result) {
 }  // namespace
 
 AsyncResult TableShardDrop::operator()() {
+  SDB_TRACE("xxxxx", Logger::ROCKSDB, "TableShardDrop task is running...");
   auto& server = GetServerEngine();
-  auto r = server.DropObject(parent_id, RocksDBEntryType::TableShard, id);
+  auto r = server.DropDefinition(parent_id, RocksDBEntryType::TableShard, id);
   if (!CheckResult(r)) {
     return QueueDropTask(shared_from_this());
   }
-  return yaclib::MakeFuture<Result>(ERROR_OK);
+  return yaclib::MakeFuture<Result>();
 }
 
 AsyncResult IndexShardDrop::operator()() {
+  SDB_TRACE("xxxxx", Logger::ROCKSDB, "IndexShardDrop task is running...");
   auto& server = GetServerEngine();
   if (is_root) {
     if (type == IndexType::Inverted) {
@@ -61,13 +63,12 @@ AsyncResult IndexShardDrop::operator()() {
         return QueueDropTask(shared_from_this());
       }
     }
-    auto r = server.DropObject(parent_id, RocksDBEntryType::IndexShard, id);
+    auto r = server.DropDefinition(parent_id, RocksDBEntryType::IndexShard, id);
     if (!CheckResult(r)) {
       return QueueDropTask(shared_from_this());
     }
-    return yaclib::MakeFuture<Result>(ERROR_OK);
   }
-  return yaclib::MakeFuture<Result>(ERROR_OK);
+  return yaclib::MakeFuture<Result>();
 }
 
 Result IndexDrop::Finalize() {
@@ -76,17 +77,18 @@ Result IndexDrop::Finalize() {
   if (!CheckResult(r)) {
     return r;
   }
-  r = server.DropObject(parent_id, RocksDBEntryType::Index, id);
+  r = server.DropDefinition(parent_id, RocksDBEntryType::Index, id);
   if (!CheckResult(r)) {
     return r;
   }
   if (is_root) {
-    return server.DropObject(parent_id, RocksDBEntryType::IndexTombstone, id);
+    return server.DropDefinition(parent_id, RocksDBEntryType::Tombstone, id);
   }
   return {};
 }
 
 AsyncResult IndexDrop::operator()() {
+  SDB_TRACE("xxxxx", Logger::ROCKSDB, "IndexDrop task is running...");
   auto shard_task = std::make_shared<IndexShardDrop>(
     DropTask{.parent_id = id, .id = shard_id, .is_root = false}, db_id,
     schema_id, type);
@@ -96,7 +98,7 @@ AsyncResult IndexDrop::operator()() {
       if (!CheckResult(r)) {
         return QueueDropTask(self);
       }
-      return yaclib::MakeFuture<Result>(ERROR_OK);
+      return yaclib::MakeFuture<Result>();
     });
 }
 
@@ -106,17 +108,19 @@ Result TableDrop::Finalize() {
   if (!CheckResult(r)) {
     return r;
   }
-  r = server.DropObject(parent_id, RocksDBEntryType::Table, id);
+  r = server.DropDefinition(parent_id, RocksDBEntryType::Table, id);
   if (!CheckResult(r)) {
     return r;
   }
   if (is_root) {
-    return server.DropObject(parent_id, RocksDBEntryType::TableTombstone, id);
+    return server.DropDefinition(parent_id, RocksDBEntryType::Tombstone, id);
   }
   return {};
 }
 
 AsyncResult TableDrop::operator()() {
+  SDB_TRACE("xxxxx", Logger::ROCKSDB, "TableDrop task is running...");
+
   std::vector<yaclib::Future<>> async_results;
   async_results.reserve(indexes.size() + 1);
   auto shard_task = std::make_shared<TableShardDrop>(
@@ -132,7 +136,7 @@ AsyncResult TableDrop::operator()() {
       if (!CheckResult(r)) {
         return QueueDropTask(self);
       }
-      return yaclib::MakeFuture<Result>(ERROR_OK);
+      return yaclib::MakeFuture<Result>();
     });
 }
 
@@ -149,12 +153,12 @@ Result SchemaDrop::Finalize() {
       return r;
     }
   }
-  auto r = server.DropObject(parent_id, RocksDBEntryType::Schema, id);
+  auto r = server.DropDefinition(parent_id, RocksDBEntryType::Schema, id);
   if (!CheckResult(r)) {
     return r;
   }
   if (is_root) {
-    r = server.DropObject(parent_id, RocksDBEntryType::ScopeTombstone, id);
+    r = server.DropDefinition(parent_id, RocksDBEntryType::Tombstone, id);
     if (!CheckResult(r)) {
       return r;
     }
@@ -163,6 +167,7 @@ Result SchemaDrop::Finalize() {
 }
 
 AsyncResult SchemaDrop::operator()() {
+  SDB_TRACE("xxxxx", Logger::ROCKSDB, "SchemaDrop task is running...");
   std::vector<yaclib::Future<>> async_results;
   async_results.reserve(tables.size());
   for (auto& table : tables) {
@@ -173,7 +178,7 @@ AsyncResult SchemaDrop::operator()() {
     if (!CheckResult(r)) {
       return QueueDropTask(self);
     }
-    return yaclib::MakeFuture<Result>(ERROR_OK);
+    return yaclib::MakeFuture<Result>();
   };
   if (async_results.empty()) {
     return on_finish();
@@ -188,11 +193,11 @@ Result DatabaseDrop::Finalize() {
   if (!CheckResult(r)) {
     return r;
   }
-  r = server.DropObject(id::kRoot, RocksDBEntryType::ScopeTombstone, id);
+  r = server.DropDefinition(id::kInstance, RocksDBEntryType::Tombstone, id);
   if (!CheckResult(r)) {
     return r;
   }
-  r = server.DropObject(id::kRoot, RocksDBEntryType::Database, id);
+  r = server.DropDefinition(id::kInstance, RocksDBEntryType::Database, id);
   if (!CheckResult(r)) {
     return r;
   }
@@ -200,6 +205,7 @@ Result DatabaseDrop::Finalize() {
 }
 
 AsyncResult DatabaseDrop::operator()() {
+  SDB_TRACE("xxxxx", Logger::ROCKSDB, "DatabaseDrop task is running...");
   std::vector<yaclib::Future<>> async_results;
   async_results.reserve(schemas.size());
   for (auto& schema : schemas) {
@@ -210,7 +216,7 @@ AsyncResult DatabaseDrop::operator()() {
     if (!CheckResult(r)) {
       return QueueDropTask(self);
     }
-    return yaclib::MakeFuture<Result>(ERROR_OK);
+    return yaclib::MakeFuture<Result>();
   };
   if (async_results.empty()) {
     return on_finish();

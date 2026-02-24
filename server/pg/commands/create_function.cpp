@@ -194,12 +194,16 @@ yaclib::Future<Result> CreateFunction(ExecContext& context,
   sql_impl->ToVPack(builder);
   properties.implementation = builder.slice();
 
-  auto schema_object = catalog.GetSnapshot()->GetSchema(db, schema);
-  SDB_ASSERT(schema_object);
-  auto function = std::make_shared<catalog::Function>(
-    std::move(properties), std::move(sql_impl), db, schema_object->GetId());
+  auto function = std::make_shared<catalog::Function>(std::move(properties),
+                                                      std::move(sql_impl), db);
 
   r = catalog.CreateFunction(db, schema, function, stmt.replace);
+
+  if (r.is(ERROR_SERVER_DUPLICATE_NAME)) {
+    SDB_ASSERT(!stmt.replace);
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
+                    ERR_MSG("relation \"", function_name, "\" already exists"));
+  }
 
   return yaclib::MakeFuture(std::move(r));
 }

@@ -77,12 +77,12 @@ env:
   BUILD_IMAGE: ${{ fromJSON(inputs.JOB_CONFIG).BUILD_IMAGE }}
   SDB_CLUSTER: ${{ fromJSON(inputs.JOB_CONFIG).SDB_CLUSTER }}
   DEBUG_PRINT_ENV: ${{ fromJSON(inputs.JOB_CONFIG).DEBUG_PRINT_ENV }}
+  PUSH_IMAGES_2_REGISTRY: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
 
   #BRANCH: ${{ inputs.BRANCH }}
   #CLUSTER_BRANCH: ${{ inputs.CLUSTER_BRANCH }}
   #EXTRA_ARTIFACTS: ${{ inputs.EXTRA_ARTIFACTS }}
   #LOCATION: ${{ inputs.LOCATION }}
-  #PUSH_IMAGES_2_REGISTRY: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
   #STRIP_TARBALL: ${{ inputs.STRIP_TARBALL }}
   #WORKFLOW: ${{ github.workflow }}
 

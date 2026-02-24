@@ -20,6 +20,10 @@
 
 #include "catalog/drop_task.h"
 
+#include <yaclib/async/join.hpp>
+#include <yaclib/async/make.hpp>
+#include <yaclib/async/when_all.hpp>
+
 #include "basics/assert.h"
 #include "basics/errors.h"
 #include "catalog/identifiers/object_id.h"
@@ -27,8 +31,6 @@
 #include "rocksdb_engine_catalog/rocksdb_types.h"
 #include "search/inverted_index_shard.h"
 #include "storage_engine/engine_feature.h"
-#include "yaclib/async/make.hpp"
-#include "yaclib/async/when_all.hpp"
 
 namespace sdb::catalog {
 
@@ -118,16 +120,15 @@ Result TableDrop::Finalize() {
 }
 
 AsyncResult TableDrop::operator()() {
-  std::vector<yaclib::Future<>> async_results;
+  std::vector<AsyncResult> async_results;
   async_results.reserve(indexes.size() + 1);
   auto shard_task = std::make_shared<TableShardDrop>(
     DropTask{.parent_id = id, .id = shard_id, .is_root = false});
-  async_results.push_back(
-    QueueDropTask(std::move(shard_task)).ThenInline([](Result&&) {}));
+  async_results.push_back(QueueDropTask(std::move(shard_task)));
   for (auto& index : indexes) {
-    async_results.push_back(QueueDropTask(index).ThenInline([](Result&&) {}));
+    async_results.push_back(QueueDropTask(index));
   }
-  return yaclib::WhenAll(async_results.begin(), async_results.end())
+  return yaclib::Join(async_results.begin(), async_results.end())
     .ThenInline([self = shared_from_this()]() {
       auto r = self->Finalize();
       if (!CheckResult(r)) {
@@ -164,10 +165,10 @@ Result SchemaDrop::Finalize() {
 }
 
 AsyncResult SchemaDrop::operator()() {
-  std::vector<yaclib::Future<>> async_results;
+  std::vector<AsyncResult> async_results;
   async_results.reserve(tables.size());
   for (auto& table : tables) {
-    async_results.push_back(QueueDropTask(table).ThenInline([](Result&& r) {}));
+    async_results.push_back(QueueDropTask(table));
   }
   auto on_finish = [self = shared_from_this()]() {
     auto r = self->Finalize();
@@ -179,7 +180,7 @@ AsyncResult SchemaDrop::operator()() {
   if (async_results.empty()) {
     return on_finish();
   }
-  return yaclib::WhenAll(async_results.begin(), async_results.end())
+  return yaclib::Join(async_results.begin(), async_results.end())
     .ThenInline(std::move(on_finish));
 }
 
@@ -201,10 +202,10 @@ Result DatabaseDrop::Finalize() {
 }
 
 AsyncResult DatabaseDrop::operator()() {
-  std::vector<yaclib::Future<>> async_results;
+  std::vector<AsyncResult> async_results;
   async_results.reserve(schemas.size());
   for (auto& schema : schemas) {
-    async_results.push_back(QueueDropTask(schema).ThenInline([](Result&&) {}));
+    async_results.push_back(QueueDropTask(schema));
   }
   auto on_finish = [self = shared_from_this()]() {
     auto r = self->Finalize();
@@ -216,7 +217,7 @@ AsyncResult DatabaseDrop::operator()() {
   if (async_results.empty()) {
     return on_finish();
   }
-  return yaclib::WhenAll(async_results.begin(), async_results.end())
+  return yaclib::Join(async_results.begin(), async_results.end())
     .ThenInline(std::move(on_finish));
 }
 

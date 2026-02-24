@@ -325,6 +325,10 @@ Result CatalogFeature::RegisterTableShard(ObjectId table_id) {
     [&](DefinitionKey key, vpack::Slice slice) -> Result {
       ObjectId shard_id = key.GetObjectId();
       TableStats stats;
+      if (auto r = vpack::ReadTupleNothrow(slice, stats); !r.ok()) {
+        SDB_WARN("xxxxx", Logger::STARTUP,
+                 "Failed to read table stats for table shard ", shard_id);
+      }
       auto shard = std::make_shared<TableShard>(shard_id, table_id, stats);
       return Local().RegisterTableShard(shard);
     });

@@ -1298,16 +1298,17 @@ Result RocksDBEngineCatalog::SyncTableShard(const TableShard& shard) {
   ObjectId shard_id = shard.GetId();
   vpack::Builder b;
   shard.WriteInternal(b);
-  auto value = RocksDBValue::Object(RocksDBEntryType::TableShard, b.slice());
   RocksDBKeyWithBuffer<DefinitionKey> key{
     table_id, RocksDBEntryType::TableShard, shard_id};
   auto* cf = RocksDBColumnFamilyManager::get(
     RocksDBColumnFamilyManager::Family::Definitions);
 
+  auto slice =
+    rocksdb::Slice{reinterpret_cast<const char*>(b.data()), b.size()};
   // TODO(codeworse): probably should use Merge instead of Put, since in case of
   // concurrent delete operation it may re-create deleted entry.
   return rocksutils::ConvertStatus(
-    _db->Put(rocksdb::WriteOptions{}, cf, key.GetBuffer(), value.string()));
+    _db->Put(rocksdb::WriteOptions{}, cf, key.GetBuffer(), slice));
 }
 
 yaclib::Future<Result> RocksDBEngineCatalog::compactAll(

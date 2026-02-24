@@ -72,7 +72,8 @@ LIBPG_QUERY_INCLUDES_BEGIN
 #include "utils/elog.h"
 LIBPG_QUERY_INCLUDES_END
 
-#define SDB_LOG_PGSQL(...) SDB_PRINT_IF(true, __VA_ARGS__)
+#define SDB_LOG_PGSQL(...) \
+  SDB_ERROR("00000", sdb::Logger::COMMUNICATION, __VA_ARGS__)
 
 namespace sdb::pg {
 namespace {

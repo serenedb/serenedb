@@ -2,47 +2,32 @@
 # =============================================================================
 # SereneDB Docker Image Build Script
 #
-# Usage:
-#   ./build_docker.bash [OPTIONS]
-#
-# Options:
-#   --version VERSION    Set version (default: from find_version.bash)
-#   --tag TAG            Additional tag (can be repeated)
-#   --push               Push to registry after build
-#   --registry URL       Registry URL (default: registry.serenedb.com:5000)
-#   --no-cache           Build without cache
-#   --platform PLATFORM  Target platform (default: linux/amd64)
-#   --help               Show this help
-#
-# Environment:
-#   DOCKER_REGISTRY      Registry URL
-#   DOCKER_USERNAME      Registry username (for push)
-#   DOCKER_PASSWORD      Registry password (for push)
-#   DOCKER_TAG           Docker tag override (from find_version.bash)
-#   DOCKER_DISTRO        Distribution variant (e.g., ubuntu, alpine)
-#
-# Examples:
-#   ./build_docker.bash
-#   ./build_docker.bash --push
-#   ./build_docker.bash --tag latest --tag stable --push
+# Environment Configuration:
+#   DOCKER_TAG_OVERRIDE      Set version (default: from find_version.bash)
+#   DOCKER_EXTRA_TAGS        Comma or space-separated list of additional tags
+#   PUSH_IMAGES_2_REGISTRY   'true' to push to registry after build
+#   DOCKER_REGISTRY          Registry URL (default: registry.serenedb.com:5000)
+#   DOCKER_NO_CACHE          'true' to build without cache
+#   DOCKER_PLATFORM          Target platform (default: linux/amd64)
+#   DOCKER_USERNAME          Registry username (for push)
+#   DOCKER_PASSWORD          Registry password (for push)
 # =============================================================================
 set -e
 
 # -----------------------------------------------------------------------------
-# Configuration
+# Configuration from Environment Variables
 # -----------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DOCKER_DIR="${SCRIPT_DIR}/docker"
 TARBALL_DIR="${SCRIPT_DIR}/tarball"
-
 IMAGE_NAME="serenedb"
-REGISTRY="${DOCKER_REGISTRY:-registry.serenedb.com:5000}"
-PLATFORM="linux/amd64"
-PUSH_IMAGES_2_REGISTRY=false
-NO_CACHE=""
-DOCKER_EXTRA_TAGS=()
-DOCKER_TAG_OVERRIDE=""
+
+: "${DOCKER_REGISTRY:=registry.serenedb.com:5000}"
+: "${DOCKER_PLATFORM:=linux/amd64}"
+
+# Parse DOCKER_EXTRA_TAGS into a bash array (handles commas and spaces)
+IFS=', ' read -r -a EXTRA_TAGS_ARRAY <<<"${DOCKER_EXTRA_TAGS:-}"
 
 # -----------------------------------------------------------------------------
 # Functions
@@ -54,11 +39,6 @@ log() {
 error() {
   echo "[ERROR] $*" >&2
   exit 1
-}
-
-show_help() {
-  sed -n '/^# Usage:/,/^# ====/p' "$0" | grep -v '====' | sed 's/^# //'
-  exit 0
 }
 
 get_version_and_tag() {
@@ -79,50 +59,12 @@ get_version_and_tag() {
 }
 
 # -----------------------------------------------------------------------------
-# Parse arguments
-# -----------------------------------------------------------------------------
-while [[ $# -gt 0 ]]; do
-  case $1 in
-  --version)
-    DOCKER_TAG_OVERRIDE="$2"
-    shift 2
-    ;;
-  --tag)
-    DOCKER_EXTRA_TAGS+=("$2")
-    shift 2
-    ;;
-  --push)
-    PUSH_IMAGES_2_REGISTRY=true
-    shift
-    ;;
-  --registry)
-    REGISTRY="$2"
-    shift 2
-    ;;
-  --no-cache)
-    NO_CACHE="--no-cache"
-    shift
-    ;;
-  --platform)
-    PLATFORM="$2"
-    shift 2
-    ;;
-  --help | -h)
-    show_help
-    ;;
-  *)
-    error "Unknown option: $1"
-    ;;
-  esac
-done
-
-# -----------------------------------------------------------------------------
 # Determine version and Docker tag
 # -----------------------------------------------------------------------------
-if [ -n "$DOCKER_TAG_OVERRIDE" ]; then
+if [ -n "${DOCKER_TAG_OVERRIDE:-}" ]; then
   VERSION="$DOCKER_TAG_OVERRIDE"
   log "Using version override: ${VERSION}"
-elif [ -n "$DOCKER_TAG" ]; then
+elif [ -n "${DOCKER_TAG:-}" ]; then
   # DOCKER_TAG already set in environment
   VERSION="$DOCKER_TAG"
   log "Using DOCKER_TAG from environment: ${VERSION}"
@@ -132,7 +74,7 @@ else
   log "Using version from find_version.bash: ${VERSION}"
 fi
 
-FULL_IMAGE_NAME="${REGISTRY}/${IMAGE_NAME}"
+FULL_IMAGE_NAME="${DOCKER_REGISTRY}/${IMAGE_NAME}"
 BUILD_DIR=$(mktemp -d)
 
 trap "rm -rf ${BUILD_DIR}" EXIT
@@ -140,7 +82,7 @@ trap "rm -rf ${BUILD_DIR}" EXIT
 log "=== SereneDB Docker Build ==="
 log "Version:  ${VERSION}"
 log "Image:    ${FULL_IMAGE_NAME}"
-log "Platform: ${PLATFORM}"
+log "Platform: ${DOCKER_PLATFORM}"
 log "Build:    ${BUILD_DIR}"
 
 # Verify prerequisites
@@ -173,18 +115,23 @@ log "  Context size: $(du -sh "${BUILD_DIR}" | cut -f1)"
 log "Building Docker image..."
 
 BUILD_ARGS=(
-  --platform "${PLATFORM}"
+  --platform "${DOCKER_PLATFORM}"
   --tag "${FULL_IMAGE_NAME}:${VERSION}"
   --label "org.opencontainers.image.version=${VERSION}"
   --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   --label "org.opencontainers.image.revision=$(git rev-parse HEAD 2>/dev/null || echo 'unknown')"
   --file "${BUILD_DIR}/Dockerfile"
-  ${NO_CACHE}
 )
 
+if [ "${DOCKER_NO_CACHE:-false}" = "true" ]; then
+  BUILD_ARGS+=(--no-cache)
+fi
+
 # Add extra tags
-for tag in "${DOCKER_EXTRA_TAGS[@]}"; do
-  BUILD_ARGS+=(--tag "${FULL_IMAGE_NAME}:${tag}")
+for tag in "${EXTRA_TAGS_ARRAY[@]}"; do
+  if [ -n "$tag" ]; then
+    BUILD_ARGS+=(--tag "${FULL_IMAGE_NAME}:${tag}")
+  fi
 done
 
 docker build "${BUILD_ARGS[@]}" "${BUILD_DIR}"
@@ -201,21 +148,21 @@ log ""
 log "=== Testing Image ==="
 
 # Quick smoke test
-if docker run --rm "${FULL_IMAGE_NAME}:${VERSION}" --version 2>/dev/null; then
+if docker run --rm -e SERENE_NO_AUTH=1 "${FULL_IMAGE_NAME}:${VERSION}" --version 2>/dev/null; then
   log "  ✓ Version check passed"
 else
   log "  ✗ Version check failed (continuing anyway)"
 fi
 
 # Push to registry
-if [ "$PUSH_IMAGES_2_REGISTRY" = true ]; then
+if [ "${PUSH_IMAGES_2_REGISTRY:=false}" = true ]; then
   log ""
   log "=== Pushing to Registry ==="
 
   # Login if credentials provided
   if [ -n "${DOCKER_USERNAME:-}" ] && [ -n "${DOCKER_PASSWORD:-}" ]; then
-    log "Logging in to ${REGISTRY}..."
-    echo "$DOCKER_PASSWORD" | docker login "$REGISTRY" -u "$DOCKER_USERNAME" --password-stdin
+    log "Logging in to ${DOCKER_REGISTRY}..."
+    echo "$DOCKER_PASSWORD" | docker login "$DOCKER_REGISTRY" -u "$DOCKER_USERNAME" --password-stdin
   fi
 
   # Push version tag
@@ -224,8 +171,10 @@ if [ "$PUSH_IMAGES_2_REGISTRY" = true ]; then
 
   # Push extra tags
   for tag in "${DOCKER_EXTRA_TAGS[@]}"; do
-    log "Pushing ${FULL_IMAGE_NAME}:${tag}..."
-    docker push "${FULL_IMAGE_NAME}:${tag}"
+    if [ -n "$tag" ]; then
+      log "Pushing ${FULL_IMAGE_NAME}:${tag}..."
+      docker push "${FULL_IMAGE_NAME}:${tag}"
+    fi
   done
 
   log "Push complete!"

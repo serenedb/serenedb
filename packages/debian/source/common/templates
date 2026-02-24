@@ -16,18 +16,3 @@ Description: Backup database files before upgrading?
  On subsequent updates of this package upgrades of the database files will happen.
  If you specify "yes" here, a backup of your database files is created before
  upgrading the files. The backup will be stored in /var/lib/serenedb-DATE.
-
-Template: @EDITION@/password
-Type: password
-Description: password for the SereneDB "root" user:
- Please enter the password for the database root user account that should be granted
- administrative privileges
-
-Template: @EDITION@/password_again
-Type: password
-Description: Repeat password for the SereneDB "root" user:
-
-Template: @EDITION@/password_mismatch
-Type: error
-Description: Password input error
- The two passwords you entered were not the same. Please try again.

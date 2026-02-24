@@ -1,0 +1,66 @@
+hash-threshold 100
+
+statement count 10000
+CREATE TABLE vedernikoff AS
+SELECT
+  iq,
+  CONCAT('salary ', salary::text, '$') AS salary,
+  'i do nothing and gain money' AS description
+FROM
+  generate_series(1, 100) AS clickclack(iq),
+  generate_series(1, 100) AS serenedb(salary);
+
+
+query ???
+SELECT * FROM vedernikoff;
+----
+30003 values hashing to 4054c492260f852b8162b374b3e41700
+
+
+statement error db error: ERROR: Object already exists: vedernikoff
+CREATE TABLE vedernikoff AS SELECT 1 AS id;
+
+
+# statement error
+# CREATE TABLE vedernikoff (id INTEGER PRIMARY KEY);
+# ----
+# db error: ERROR: Object already exists: vedernikoff
+
+
+statement error
+CREATE TABLE lmao(iq, lmao) AS SELECT 1;
+----
+db error: ERROR: too many column names specified
+
+
+statement error
+CREATE TABLE lmao AS SELECT 1 AS x, 2 AS x;
+----
+db error: ERROR: column "x" specified more than once
+
+
+statement ok
+DROP TABLE vedernikoff;
+
+
+query error
+SELECT * FROM vedernikoff;
+----
+db error: ERROR: relation "vedernikoff" does not exist
+
+
+statement error
+CREATE TABLE vedernikoff AS
+SELECT
+  CASE WHEN iq > 500 THEN iq
+  ELSE fail('im gonna fail dis sheet(i mean a peace of paper)')
+  END as rakamakaka
+FROM
+  generate_series(1, 10000) AS clickclack(iq);
+----
+db error: ERROR: im gonna fail dis sheet(i mean a peace of paper)
+
+
+query error
+SELECT * FROM vedernikoff;
+----

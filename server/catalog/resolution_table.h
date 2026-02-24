@@ -44,11 +44,7 @@ enum class ResolveType {
   Function,
   Relation,
 };
-/// Name-based resolution for the in-memory catalog.
-///
-/// _base:      database_name -> schema_name -> schema_id
-/// _relations: schema_id     -> relation_name -> object_id  (tables, indexes,
-/// views) _functions: schema_id     -> function_name -> object_id
+
 class ResolutionTable {
  public:
   template<ResolveType Type>
@@ -181,16 +177,23 @@ class ResolutionTable {
   }
 
   auto GetDatabaseIds() const { return _databases | std::views::values; }
+
   auto GetSchemaIds(ObjectId db_id) const {
-    return _schemas.at(db_id) | std::views::values;
+    auto it = _schemas.find(db_id);
+    SDB_ASSERT(it != _schemas.end());
+    return it->second | std::views::values;
   }
 
   auto GetRelationIds(ObjectId db_id, ObjectId schema_id) const {
-    return _relations.at(schema_id) | std::views::values;
+    auto it = _relations.find(schema_id);
+    SDB_ASSERT(it != _relations.end());
+    return it->second | std::views::values;
   }
 
   auto GetFunctionIds(ObjectId db_id, ObjectId schema_id) const {
-    return _functions.at(schema_id) | std::views::values;
+    auto it = _functions.find(schema_id);
+    SDB_ASSERT(it != _functions.end());
+    return it->second | std::views::values;
   }
 
  private:

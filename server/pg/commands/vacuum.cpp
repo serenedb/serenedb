@@ -46,8 +46,8 @@ LIBPG_QUERY_INCLUDES_END
 namespace sdb::pg {
 namespace {
 
-yaclib::Future<Result> UpdateIndexes(
-  ExecContext& context, const PgListWrapper<VacuumRelation>& rels) {
+yaclib::Future<> UpdateIndexes(ExecContext& context,
+                               const PgListWrapper<VacuumRelation>& rels) {
   auto current_schema =
     basics::downCast<const ConnectionContext>(context).GetCurrentSchema();
   auto current_database = context.GetDatabase();
@@ -60,8 +60,7 @@ yaclib::Future<Result> UpdateIndexes(
     std::string_view schema_name = current_schema;
     std::string_view rel_name;
     if (rel->relation->catalogname) {
-      return yaclib::MakeFuture<Result>(ERROR_NOT_IMPLEMENTED,
-                                        "Database name is not supported");
+      return yaclib::MakeFuture<>();
     }
     if (rel->relation->schemaname) {
       schema_name = {rel->relation->schemaname};
@@ -80,18 +79,16 @@ yaclib::Future<Result> UpdateIndexes(
           break;
         }
         case IndexType::Secondary:
-          return yaclib::MakeFuture<Result>(
-            ERROR_NOT_IMPLEMENTED, "Secondary index update is not supported");
+          return yaclib::MakeFuture<>();
         case IndexType::Unknown:
           SDB_UNREACHABLE();
       }
     }
   }
   if (index_futures.empty()) {
-    return yaclib::MakeFuture<Result>(ERROR_OK);
+    return yaclib::MakeFuture<>();
   }
-  return yaclib::WhenAll(index_futures.begin(), index_futures.size())
-    .ThenInline([] { return Result{}; });
+  return yaclib::WhenAll(index_futures.begin(), index_futures.size());
 }
 }  // namespace
 
@@ -104,7 +101,8 @@ yaclib::Future<Result> Vacuum(ExecContext& context, const VacuumStmt& stmt) {
   PgListWrapper<DefElem> options(stmt.options);
   if (options.size() == 1 &&
       std::string_view{(*options.begin())->defname} == "update_indexes") {
-    return UpdateIndexes(context, PgListWrapper<VacuumRelation>{stmt.rels});
+    return UpdateIndexes(context, PgListWrapper<VacuumRelation>{stmt.rels})
+      .ThenInline([] { return Result{}; });
   }
   if (list_length(stmt.options) > 0) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),

@@ -28,6 +28,7 @@
 #include "catalog/table_options.h"
 #include "pg/commands.h"
 #include "pg/connection_context.h"
+#include "pg/file_options_parser.h"
 #include "pg/pg_list_utils.h"
 #include "pg/sql_analyzer_velox.h"
 #include "pg/sql_exception.h"
@@ -43,6 +44,52 @@ LIBPG_QUERY_INCLUDES_BEGIN
 LIBPG_QUERY_INCLUDES_END
 
 namespace sdb::pg {
+
+class CreateTableUsingExternalOptions : public FileOptionsParser {
+ public:
+  CreateTableUsingExternalOptions(const List* options,
+                                  ConnectionContext& conn_ctx)
+    : FileOptionsParser{
+        "CREATE TABLE", {}, {}, [&conn_ctx](std::string msg) {
+          conn_ctx.AddNotice(SqlErrorData{.errmsg = std::move(msg)});
+        }} {
+    VisitNodes(options, [&](const DefElem& option) {
+      auto [_, emplaced] =
+        _options.try_emplace(std::string_view{option.defname}, &option);
+      if (!emplaced) {
+        THROW_SQL_ERROR(CURSOR_POS(ExprLocation(&option)),
+                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                        ERR_MSG("conflicting or redundant options"));
+      }
+    });
+
+    const auto* path_option = EraseOption("path");
+    if (!path_option) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+        ERR_MSG("CREATE TABLE USING EXTERNAL requires 'path' option"));
+    }
+    auto maybe_path = TryGet<std::string_view>(path_option->arg);
+    if (!maybe_path) {
+      THROW_SQL_ERROR(CURSOR_POS(ExprLocation(path_option)),
+                      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("'path' option must be a string"));
+    }
+    _file_path = *maybe_path;
+
+    auto [underlying_format, format, location] = ParseFileFormat();
+    _parsed_format = underlying_format;
+
+    CheckUnrecognizedOptions();
+  }
+
+  catalog::FileInfo GetFileInfo() {
+    return {.format = _parsed_format, .storage = ParseStorageOptions()};
+  }
+
+ private:
+  FileFormat _parsed_format = FileFormat::None;
+};
 
 std::shared_ptr<ColumnExpr> MakeColumnExpr(ObjectId database_id, Node* expr) {
   auto column_expr = std::make_shared<ColumnExpr>();
@@ -69,7 +116,7 @@ enum class NullInfo : uint8_t { NotStated = 0, Null = 1, NotNull = 2 };
 yaclib::Future<Result> CreateTable(ExecContext& context,
                                    const CreateStmt& stmt) {
   const auto db = context.GetDatabaseId();
-  const auto& conn_ctx = basics::downCast<const ConnectionContext>(context);
+  auto& conn_ctx = basics::downCast<ConnectionContext>(context);
   std::string current_schema = conn_ctx.GetCurrentSchema();
   const std::string_view schema =
     stmt.relation->schemaname ? std::string_view{stmt.relation->schemaname}
@@ -340,24 +387,12 @@ yaclib::Future<Result> CreateTable(ExecContext& context,
   });
   SDB_ASSERT(!stmt.constraints);
 
-  VisitNodes(stmt.options, [&](const DefElem& option) {
-    std::string_view option_name = option.defname;
-
-    if (option_name == "source") {
-      if (!option.arg || nodeTag(option.arg) != T_String) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                        CURSOR_POS(ExprLocation(&option)),
-                        ERR_MSG("'source' option must be a string path"));
-      }
-      request.file_source_path = strVal(option.arg);
-      request.type = std::to_underlying(TableType::File);
-    } else {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      CURSOR_POS(ExprLocation(&option)),
-                      ERR_MSG("option '", option_name,
-                              "' is not supported yet for CREATE TABLE"));
-    }
-  });
+  bool is_external = absl::NullSafeStringView(stmt.accessMethod) == "external";
+  if (is_external) {
+    CreateTableUsingExternalOptions parser{stmt.options, conn_ctx};
+    request.file_info = parser.GetFileInfo();
+    request.type = std::to_underlying(TableType::File);
+  }
 
   catalog::CreateTableOptions options;
   auto r = MakeTableOptions(std::move(request), database->GetId(), options,

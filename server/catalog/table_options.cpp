@@ -429,8 +429,7 @@ Result MakeTableOptions(CreateTableRequest&& request, ObjectId database_id,
   options.writeConcern = *request.writeConcern;
   options.type = request.type;
   options.waitForSync = request.waitForSync;
-  options.file_source_path = std::move(request.file_source_path);
-  options.file_format = std::move(request.file_format);
+  options.file_info = std::move(request.file_info);
 
   return {};
 }

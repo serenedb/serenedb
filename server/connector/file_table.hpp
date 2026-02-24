@@ -23,6 +23,9 @@
 #include <axiom/connectors/ConnectorMetadata.h>
 #include <velox/common/file/File.h>
 #include <velox/connectors/Connector.h>
+#include <velox/core/ExpressionEvaluator.h>
+#include <velox/core/Expressions.h>
+#include <velox/dwio/common/MetadataFilter.h>
 #include <velox/dwio/common/Options.h>
 #include <velox/dwio/common/Reader.h>
 #include <velox/dwio/common/Writer.h>
@@ -147,11 +150,13 @@ class FileTableHandle final : public velox::connector::ConnectorTableHandle {
  public:
   FileTableHandle(std::shared_ptr<velox::ReadFile> source,
                   std::shared_ptr<ReaderOptions> options,
-                  velox::common::SubfieldFilters subfield_filters)
+                  velox::common::SubfieldFilters subfield_filters,
+                  velox::core::TypedExprPtr remaining_filter)
     : velox::connector::ConnectorTableHandle{"serenedb"},
       _source{std::move(source)},
       _options{std::move(options)},
-      _subfield_filters{std::move(subfield_filters)} {}
+      _subfield_filters{std::move(subfield_filters)},
+      _remaining_filter{std::move(remaining_filter)} {}
 
   const std::string& name() const final {
     static constexpr std::string kName = "FileTableHandle";
@@ -167,10 +172,15 @@ class FileTableHandle final : public velox::connector::ConnectorTableHandle {
     return _subfield_filters;
   }
 
+  const velox::core::TypedExprPtr& GetRemainingFilter() const {
+    return _remaining_filter;
+  }
+
  private:
   std::shared_ptr<velox::ReadFile> _source;
   std::shared_ptr<ReaderOptions> _options;
   velox::common::SubfieldFilters _subfield_filters;
+  velox::core::TypedExprPtr _remaining_filter;
 };
 
 class FileInsertTableHandle final
@@ -235,6 +245,8 @@ class FileDataSource final : public velox::connector::DataSource {
   FileDataSource(std::shared_ptr<velox::ReadFile> source,
                  std::shared_ptr<ReaderOptions> options,
                  const velox::common::SubfieldFilters& subfield_filters,
+                 const velox::core::TypedExprPtr& remaining_filter,
+                 velox::core::ExpressionEvaluator* evaluator,
                  velox::RowTypePtr output_type,
                  const velox::connector::ColumnHandleMap& column_handles,
                  velox::memory::MemoryPool& memory_pool);

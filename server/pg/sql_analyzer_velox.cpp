@@ -76,6 +76,7 @@
 #include "connector/file_table.hpp"
 #include "connector/serenedb_connector.hpp"
 #include "pg/copy_file.h"
+#include "pg/file_options_parser.h"
 #include "pg/pg_ast_visitor.h"
 #include "pg/pg_list_utils.h"
 #include "pg/protocol.h"
@@ -293,91 +294,6 @@ template<typename T>
 std::shared_ptr<const T> MakePtrView(const std::shared_ptr<const T>& ptr) {
   SDB_ASSERT(ptr);
   return MakePtrView(*ptr);
-}
-
-template<typename T>
-std::optional<T> TryGetImpl(const Node* expr) {
-  SDB_ASSERT(expr);
-
-  if constexpr (std::is_same_v<T, int>) {
-    if (nodeTag(expr) == T_Integer) {
-      return intVal(expr);
-    }
-  } else if constexpr (std::is_same_v<T, double>) {
-    if (nodeTag(expr) == T_Float) {
-      return floatVal(expr);
-    }
-  } else if constexpr (std::is_same_v<T, std::string_view>) {
-    if (nodeTag(expr) == T_String) {
-      return strVal(expr);
-    }
-  } else if constexpr (std::is_same_v<T, char>) {
-    if (nodeTag(expr) == T_String) {
-      std::string_view str = strVal(expr);
-      if (str.size() != 1) {
-        return {};
-      }
-      return str[0];
-    }
-  } else {
-    static_assert(false);
-  }
-  return {};
-}
-
-template<typename T>
-std::optional<T> TryGet(const Node* expr) {
-  if (!expr) {
-    return {};
-  }
-
-  if (nodeTag(expr) == T_A_Const) {
-    const auto& a_const = *castNode(A_Const, expr);
-    if (a_const.isnull) {
-      return {};
-    }
-    return TryGetImpl<T>(castNode(Node, &a_const.val));
-  }
-
-  return TryGetImpl<T>(expr);
-}
-
-std::optional<bool> TryGetBoolOption(const Node* expr) {
-  if (auto val = TryGet<std::string_view>(expr)) {
-    if (*val == "true" || *val == "on") {
-      return true;
-    }
-    if (*val == "false" || *val == "off") {
-      return false;
-    }
-    return {};
-  }
-
-  if (auto val = TryGet<int>(expr)) {
-    switch (*val) {
-      case 0:
-        return false;
-      case 1:
-        return true;
-      default:
-        return {};
-    }
-  }
-
-  return {};
-}
-
-template<typename T>
-std::optional<T> TryGet(const Node& node) {
-  return TryGet<T>(&node);
-}
-
-template<typename T>
-std::optional<T> TryGet(const List* list, size_t i) {
-  if (i < list_length(list)) {
-    return TryGet<T>(castNode(Node, list_nth(list, i)));
-  }
-  return {};
 }
 
 std::string_view ToAlias(std::string_view name) {
@@ -1897,7 +1813,7 @@ void SqlAnalyzer::ProcessDeleteStmt(State& state, const DeleteStmt& stmt) {
     std::move(column_exprs));
 }
 
-void WriteNotice(message::Buffer& send, std::string_view message) {
+void WriteNoticeInBuffer(message::Buffer& send, std::string_view message) {
   SDB_ASSERT(send.GetUncommittedSize() == 0);
   const auto uncommitted_size = send.GetUncommittedSize();
   auto* prefix_data = send.GetContiguousData(5);
@@ -1959,7 +1875,7 @@ class CopyRowRejector {
       auto msg = absl::StrCat(_rejected,
                               " rows were skipped due to data type "
                               "incompatibility");
-      WriteNotice(_send, msg);
+      WriteNoticeInBuffer(_send, msg);
     }
   }
 
@@ -1970,7 +1886,7 @@ class CopyRowRejector {
         absl::StrCat("skipping row due to data type incompatibility at ",
                      "line ", row.rowNumber, " for column \"",
                      ToAlias(row.columnName), "\": \"", row.value, "\"");
-      WriteNotice(_send, msg);
+      WriteNoticeInBuffer(_send, msg);
     }
   }
 
@@ -1982,17 +1898,19 @@ class CopyRowRejector {
   const uint64_t _reject_limit;
 };
 
-class CopyOptionsParser {
+class CopyOptionsParser : public FileOptionsParser {
  public:
   CopyOptionsParser(velox::RowTypePtr row_type, bool is_writer,
                     std::string_view query_string, std::string_view file_path,
                     const List* options, message::Buffer& send_buffer,
                     CopyMessagesQueue* copy_queue, std::string_view table_name,
                     NameToOption& explain_options)
-    : _row_type{std::move(row_type)},
+    : FileOptionsParser{"COPY", query_string, file_path,
+                        [&send_buffer](std::string msg) {
+                          WriteNoticeInBuffer(send_buffer, msg);
+                        }},
+      _row_type{std::move(row_type)},
       _is_writer{is_writer},
-      _query_string{query_string},
-      _file_path{file_path},
       _send_buffer{send_buffer},
       _copy_queue{copy_queue},
       _table_name{table_name} {
@@ -2034,22 +1952,6 @@ class CopyOptionsParser {
   }
 
  private:
-  std::string_view TryFormatFromFile() const {
-    // text format is default so detecting it here would be redundant
-    const auto pos = _file_path.rfind('.');
-    if (pos == std::string_view::npos) {
-      return {};
-    }
-
-    const auto file_format = _file_path.substr(pos + 1);
-    if (file_format == "csv" || file_format == "parquet" ||
-        file_format == "dwrf" || file_format == "orc") {
-      return file_format;
-    }
-
-    return {};
-  }
-
   void Parse() {
     ParseDataSource();
 
@@ -2060,25 +1962,7 @@ class CopyOptionsParser {
                     {"dwrf", [&] { ParseDwrf(); }},
                     {"orc", [&] { ParseOrc(); }}};
 
-    std::string_view format = "text";
-    if (const auto* option = EraseOption("format")) {
-      auto maybe_format = TryGet<std::string_view>(option->arg);
-      if (!maybe_format || !format2parser.contains(*maybe_format)) {
-        THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(&option))),
-                        ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("COPY format \"", DeparseValue(option->arg),
-                                "\" not recognized"));
-      }
-      format = *maybe_format;
-    } else if (auto maybe_format = TryFormatFromFile(); !maybe_format.empty()) {
-      format = maybe_format;
-      WriteNotice(
-        _send_buffer,
-        absl::StrCat(
-          "Format \"", format,
-          "\" was auto-detected from the file extension. To override, "
-          "explicitly specify the format using the WITH (FORMAT ...) clause."));
-    }
+    auto [underlying_format, format, location] = ParseFileFormat();
 
     auto it = format2parser.find(format);
     SDB_ASSERT(it != format2parser.end());
@@ -2100,7 +1984,7 @@ class CopyOptionsParser {
       if (show_progress) {
         _reader_options->report_callback =
           [send = &_send_buffer](uint64_t rows_read) {
-            WriteNotice(
+            WriteNoticeInBuffer(
               *send, absl::StrCat("COPY FROM ", rows_read, " rows processed"));
           };
       }
@@ -2266,7 +2150,7 @@ class CopyOptionsParser {
       }
       text_options->serDeOptions = std::move(serde_options);
       text_options->schema = std::move(_row_type);
-      text_options->fileFormat = FileFormat::TEXT;
+      text_options->fileFormat = velox::dwio::common::FileFormat::TEXT;
       _writer_options =
         std::make_shared<connector::WriterOptions>(std::move(text_options));
     } else {
@@ -2274,7 +2158,7 @@ class CopyOptionsParser {
       auto text_options = std::make_shared<velox::text::ReaderOptions>(nullptr);
       text_options->setSerDeOptions(std::move(serde_options));
       text_options->setFileSchema(std::move(_row_type));
-      text_options->setFileFormat(FileFormat::TEXT);
+      text_options->setFileFormat(velox::dwio::common::FileFormat::TEXT);
 
       auto handler = [rejector = CopyRowRejector{log_verbosity, _send_buffer,
                                                  _table_name, reject_limit}](
@@ -2306,14 +2190,18 @@ class CopyOptionsParser {
     }
 
     _row_type = velox::ROW(std::move(aliases), _row_type->children());
-    CreateDefaultWriterReader(FileFormat::PARQUET);
+    CreateDefaultWriterReader(velox::dwio::common::FileFormat::PARQUET);
   }
 
-  void ParseDwrf() { CreateDefaultWriterReader(FileFormat::DWRF); }
+  void ParseDwrf() {
+    CreateDefaultWriterReader(velox::dwio::common::FileFormat::DWRF);
+  }
 
-  void ParseOrc() { CreateDefaultWriterReader(FileFormat::ORC); }
+  void ParseOrc() {
+    CreateDefaultWriterReader(velox::dwio::common::FileFormat::ORC);
+  }
 
-  void CreateDefaultWriterReader(FileFormat format) {
+  void CreateDefaultWriterReader(velox::dwio::common::FileFormat format) {
     if (_is_writer) {
       const auto& writer_factory = getWriterFactory(format);
       auto* default_opts = writer_factory->createWriterOptions().release();
@@ -2332,34 +2220,6 @@ class CopyOptionsParser {
         std::make_shared<velox::dwio::common::RowReaderOptions>();
       _reader_options = std::make_shared<connector::ReaderOptions>(
         std::move(dwio_options), std::move(row_reader_options));
-    }
-  }
-
-  int ErrorPosition(int location) const {
-    return ::sdb::pg::ErrorPosition(_query_string, location);
-  }
-
-  const DefElem* EraseOption(std::string_view name) {
-    auto it = _options.find(name);
-    if (it == _options.end()) {
-      return nullptr;
-    }
-    const auto* option = it->second;
-    _options.erase(it);
-    SDB_ASSERT(option);
-    if (!option->arg) {
-      THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(&option))),
-                      ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                      ERR_MSG(name, " requires a parameter"));
-    }
-    return option;
-  }
-
-  void CheckUnrecognizedOptions() const {
-    for (const auto& [name, option] : _options) {
-      THROW_SQL_ERROR(CURSOR_POS(ErrorPosition(ExprLocation(option))),
-                      ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                      ERR_MSG("option \"", name, "\" not recognized"));
     }
   }
 
@@ -2385,13 +2245,8 @@ class CopyOptionsParser {
     }
   }
 
-  using CopyOptions = containers::FlatHashMap<std::string_view, const DefElem*>;
-
   velox::RowTypePtr _row_type;
   bool _is_writer;
-  std::string_view _query_string;
-  CopyOptions _options;
-  std::string_view _file_path;
   message::Buffer& _send_buffer;
   CopyMessagesQueue* _copy_queue;
   std::string_view _table_name;
@@ -3882,9 +3737,24 @@ State SqlAnalyzer::ProcessTable(State* parent, std::string_view schema_name,
 State SqlAnalyzer::ProcessFileTable(State* parent, const catalog::Table& table,
                                     std::string_view table_name,
                                     const RangeVar* node) {
-  SDB_ASSERT(table.GetFileSourcePath());
-  const auto& file_path = table.GetFileSourcePath();
-  auto file_format = FileFormat::PARQUET;
+  const auto& file_info = table.GetFileInfo();
+  SDB_ASSERT(file_info.storage);
+
+  auto format = [&] {
+    using VeloxFormat = velox::dwio::common::FileFormat;
+    switch (file_info.format) {
+      case FileFormat::Text:
+        return VeloxFormat::TEXT;
+      case FileFormat::Parquet:
+        return VeloxFormat::TEXT;
+      case FileFormat::Dwrf:
+        return VeloxFormat::DWRF;
+      case FileFormat::Orc:
+        return VeloxFormat::ORC;
+      case FileFormat::None:
+        SDB_UNREACHABLE();
+    }
+  }();
 
   auto row_type = table.RowType();
 
@@ -3899,15 +3769,16 @@ State SqlAnalyzer::ProcessFileTable(State* parent, const catalog::Table& table,
     std::make_shared<velox::dwio::common::ReaderOptions>(nullptr);
   auto& dwio = *reader_options->dwio;
   dwio.setFileSchema(row_type);
-  dwio.setFileFormat(file_format);
+  dwio.setFileFormat(format);
 
   reader_options->row_reader =
     std::make_shared<velox::dwio::common::RowReaderOptions>();
 
-  auto source = std::make_shared<velox::LocalReadFile>(*file_path);
+  auto source = file_info.storage->CreateFileSource();
 
   auto read_file_table = std::make_shared<connector::ReadFileTable>(
-    row_type, *file_path, std::move(source), std::move(reader_options));
+    row_type, file_info.storage->path(), std::move(source),
+    std::move(reader_options));
 
   auto state = parent->MakeChild();
   state.root = std::make_shared<lp::TableScanNode>(

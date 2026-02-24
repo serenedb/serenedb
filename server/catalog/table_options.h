@@ -47,6 +47,7 @@
 #include "catalog/validators.h"
 #include "pg/sql_collector.h"
 #include "pg/sql_utils.h"
+#include "pg/storage_options.h"
 #include "query/utils.h"
 #include "utils/velox_vpack.h"
 
@@ -190,6 +191,15 @@ struct CheckConstraint {
   std::pair<bool, std::string_view> IsNotNull() const noexcept;
 };
 
+struct FileInfo {
+  FileFormat format = FileFormat::None;
+  std::shared_ptr<pg::StorageOptions> storage;
+};
+
+inline bool VPackWriteHook(auto, auto&&, const FileInfo& info) {
+  return info.format != FileFormat::None;
+}
+
 struct CreateTableRequest {
   std::vector<std::string> shardKeys{std::string{StaticStrings::kKeyString}};
   std::vector<Column> columns;
@@ -214,8 +224,7 @@ struct CreateTableRequest {
   std::string_view id;  // TODO(gnusi): make ObjectId
   int type = std::to_underlying(TableType::Document);
   bool waitForSync = false;
-  std::optional<std::string> file_source_path;
-  std::optional<std::string> file_format;
+  FileInfo file_info;
 };
 
 struct TableStats {
@@ -244,8 +253,7 @@ struct TableOptions {
   uint32_t writeConcern = 1;
   int type = std::to_underlying(TableType::Document);
   bool waitForSync = false;
-  std::optional<std::string> file_source_path;
-  std::optional<std::string> file_format;
+  FileInfo file_info;
 };
 
 struct CreateTableOptions : TableOptions {

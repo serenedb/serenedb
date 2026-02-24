@@ -43,6 +43,14 @@ enum class TableType : uint8_t {
   File = 4,
 };
 
+enum class FileFormat : uint8_t {
+  None = 0,
+  Text = 1,
+  Parquet = 2,
+  Dwrf = 3,
+  Orc = 4,
+};
+
 enum class IndexType : uint8_t {
   Unknown = 0,
   Secondary,

@@ -186,7 +186,8 @@ yaclib::Future<Result> CreateFunction(ExecContext& context,
 
   auto sql_impl = std::make_unique<pg::FunctionImpl>();
   auto r = sql_impl->Init(db, function_name, std::move(function_body),
-                          stmt.is_procedure);
+                          stmt.is_procedure,
+                          basics::downCast<const ConnectionContext>(context));
   if (!r.ok()) {
     return yaclib::MakeFuture(std::move(r));
   }

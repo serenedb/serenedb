@@ -20,40 +20,21 @@
 
 #pragma once
 
-#include <vpack/slice.h>
-
-#include "function.h"
-#include "pg/sql_collector.h"
-#include "pg/sql_utils.h"
-#include "query/config.h"
+#include <array>
+#include <string_view>
 
 namespace sdb::pg {
 
-class FunctionImpl {
- public:
-  FunctionImpl() = default;
-
-  Result Init(ObjectId database, std::string_view name, std::string query,
-              bool is_procedure, const Config& config);
-
-  static Result FromVPack(ObjectId database, vpack::Slice slice,
-                          std::unique_ptr<FunctionImpl>& implementation,
-                          bool is_procedure);
-
-  void ToVPack(vpack::Builder& builder) const;
-
-  std::string_view GetQuery() const noexcept { return _query; }
-
-  const RawStmt* GetStatement() const noexcept { return _stmt; }
-
-  pg::Objects& GetObjects() noexcept { return _objects; }
-
- private:
-  std::string _query;
-  pg::MemoryContextPtr _memory_context;
-  const RawStmt* _stmt{nullptr};
-  pg::Objects _objects;
-  // TODO(mbkkt) warnings?
-};
+// TODO(mkornaukhov) write queries in separate sql file
+// TODO revoke, grant, create rules and other stuff?
+inline constexpr auto kSystemFunctionsQueries =
+  std::to_array<std::string_view>({
+    R"(CREATE FUNCTION pg_show_all_settings()
+        RETURNS TABLE(name TEXT, value TEXT, description TEXT)
+        LANGUAGE SQL
+        BEGIN ATOMIC
+            SELECT * FROM sdb_show_all_settings;
+        END;)",
+  });
 
 }  // namespace sdb::pg

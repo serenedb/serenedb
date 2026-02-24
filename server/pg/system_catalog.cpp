@@ -29,6 +29,7 @@
 #include "basics/containers/flat_hash_map.h"
 #include "catalog/function.h"
 #include "catalog/identifiers/object_id.h"
+#include "catalog/sql_function_impl.h"
 #include "catalog/view.h"
 #include "general_server/state.h"
 #include "pg/commands.h"
@@ -82,6 +83,7 @@
 #include "pg/pg_catalog/pg_rewrite.h"
 #include "pg/pg_catalog/pg_seclabel.h"
 #include "pg/pg_catalog/pg_sequence.h"
+#include "pg/pg_catalog/pg_settings.h"
 #include "pg/pg_catalog/pg_shdepend.h"
 #include "pg/pg_catalog/pg_shdescription.h"
 #include "pg/pg_catalog/pg_shseclabel.h"
@@ -103,6 +105,7 @@
 #include "pg/pg_feature.h"
 #include "pg/sdb_catalog/sdb_log.h"
 #include "pg/sql_parser.h"
+#include "pg/system_functions.h"
 #include "pg/system_table.h"
 #include "pg/system_views.h"
 #include "vpack/serializer.h"
@@ -211,6 +214,7 @@ const PgSystemSchema kPgCatalog{
   MakeTable<SystemTable<PgType>>(),
   MakeTable<SystemTable<PgUserMapping>>(),
   MakeTable<SystemTable<SdbLog>>(),
+  MakeTable<SystemTable<SdbShowAllSettings>>(),
 };
 
 const PgSystemSchema kInformationSchema{
@@ -447,11 +451,17 @@ void VisitSystemTables(
   }
 }
 
+containers::FlatHashMap<std::string, std::shared_ptr<Function>>
+  gSystemFunctions;
+
 std::shared_ptr<catalog::Function> GetFunction(std::string_view name) {
 #ifndef SDB_GTEST
   // For query building tests we need to run this without feature
   SDB_ASSERT(SerenedServer::Instance().isEnabled<pg::PostgresFeature>());
 #endif
+  if (auto it = gSystemFunctions.find(name); it != gSystemFunctions.end()) {
+    return it->second;
+  }
   FunctionLanguage language = FunctionLanguage::VeloxNative;
   bool table = false;
   FunctionKind kind = FunctionKind::Scalar;
@@ -490,11 +500,60 @@ std::shared_ptr<View> GetView(std::string_view name) {
 
 void RegisterSystemViews() {
   for (const auto system_view_query : kSystemViewsQueries) {
-    auto stmt = pg::ParseSystemView(system_view_query);
+    auto stmt = pg::ParseSystemObject(system_view_query);
     const auto* raw_stmt = castNode(RawStmt, stmt.tree.GetRoot());
     const auto* view_stmt = castNode(ViewStmt, raw_stmt->stmt);
     auto system_view = pg::CreateSystemView(*view_stmt);
     gSystemViews[system_view->GetName()] = system_view;
+  }
+}
+
+// todo kSystemFunctionsQueries should also contain some options
+void RegisterSystemFunctions() {
+  for (const auto system_func_query : kSystemFunctionsQueries) {
+    auto func_impl = pg::FunctionImpl();
+    auto stmt = pg::ParseSystemObject(system_func_query);
+
+    const auto* raw_stmt = castNode(RawStmt, stmt.tree.GetRoot());
+    const auto* create_func_stmt = castNode(CreateFunctionStmt, raw_stmt->stmt);
+    SDB_ASSERT(create_func_stmt);
+
+    SDB_ASSERT(create_func_stmt->sql_body);
+
+    // Copy pasted, IDK whether this is OK
+    SDB_ASSERT(IsA(create_func_stmt->sql_body, List));
+    const auto* outer_list = castNode(List, create_func_stmt->sql_body);
+    SDB_ASSERT(list_length(outer_list) == 1);
+    const auto* inner_list_node = list_nth_node(Node, outer_list, 0);
+    SDB_ASSERT(IsA(inner_list_node, List));
+    const auto* inner_list = castNode(List, inner_list_node);
+    SDB_ASSERT(list_length(inner_list) == 1);
+    auto* body_stmt = list_nth_node(Node, inner_list, 0);
+    auto function_body = pg::DeparseStmt(body_stmt);
+
+    auto func_name = ParseObjectName(create_func_stmt->funcname, "").relation;
+    auto res =
+      func_impl.Init(id::kSystemDB, func_name, function_body, false, Config());
+    if (!res.ok()) {
+      SDB_PRINT("error initing function: ", res.errorMessage());
+    }
+    SDB_ASSERT(res.ok());
+    FunctionOptions opts;
+    opts.table = true;
+    opts.language = catalog::FunctionLanguage::SQL;
+    opts.internal = true;
+
+    FunctionProperties props;
+    props.signature = pg::ToSignature(create_func_stmt->parameters,
+                                      create_func_stmt->returnType);
+    props.options = opts;
+    props.name = func_name;
+    props.id = {};
+
+    auto func = std::make_shared<pg::Function>(
+      std::move(props),
+      std::make_unique<pg::FunctionImpl>(std::move(func_impl)), id::kSystemDB);
+    gSystemFunctions[func->GetName()] = std::move(func);
   }
 }
 

@@ -90,6 +90,8 @@ void PostgresFeature::prepare() {
 }
 
 void PostgresFeature::start() {
+  // TODO
+  pg::RegisterSystemFunctions();  // <- it should not use system views
   pg::RegisterSystemViews();
   if (ServerState::instance()->IsDBServer() ||
       ServerState::instance()->IsSingle()) {

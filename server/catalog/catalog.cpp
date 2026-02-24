@@ -177,7 +177,12 @@ void CatalogFeature::prepare() {
   _local = std::move(catalog);
 }
 
-void CatalogFeature::start() {}
+void CatalogFeature::start() {
+  auto r = Open();
+  if (!r.ok()) {
+    SDB_THROW(std::move(r));
+  }
+}
 
 void CatalogFeature::unprepare() {
   // TODO(gnusi): fix

@@ -20,12 +20,6 @@ RocksDBEngineCatalog& GetServerEngine() {
 
 void EngineFeature::start() {
   _engine->start();
-
-  auto r = server().getFeature<catalog::CatalogFeature>().Open();
-  if (!r.ok()) {
-    SDB_THROW(std::move(r));
-  }
-
   _started.store(true);
 }
 

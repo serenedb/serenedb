@@ -603,6 +603,12 @@ Result FromVeloxLike(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
   return {};
 }
 
+Result FromSearchPhrase(irs::BooleanFilter& filter, const VeloxFilterContext& ctx,
+                     const velox::core::CallTypedExpr& call) {
+  AddFilter<irs::All>(filter);
+  return {};
+}
+
 }  // namespace
 
 Result FromVeloxExpression(irs::BooleanFilter& filter,
@@ -655,6 +661,10 @@ Result FromVeloxExpression(irs::BooleanFilter& filter,
 
   if (IsLike(call.name())) {
     return FromVeloxLike(filter, ctx, call);
+  }
+
+  if (call.name() == "pg_phrase") {
+    return FromSearchPhrase(filter, ctx, call);
   }
 
   return {ERROR_NOT_IMPLEMENTED, "Unsupported operator: ", call.name()};

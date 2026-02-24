@@ -72,7 +72,7 @@ LIBPG_QUERY_INCLUDES_BEGIN
 #include "utils/elog.h"
 LIBPG_QUERY_INCLUDES_END
 
-#define SDB_LOG_PGSQL(...) SDB_PRINT_IF(false, __VA_ARGS__)
+#define SDB_LOG_PGSQL(...) SDB_PRINT_IF(true, __VA_ARGS__)
 
 namespace sdb::pg {
 namespace {
@@ -378,16 +378,22 @@ void PgSQLCommTaskBase::HandleClientPacket(std::string_view packet) {
   packet.remove_prefix(5);
   switch (msg) {
     case PQ_MSG_QUERY:
+      SDB_LOG_PGSQL("Received simple query: ", packet);
       return RunSimpleQuery(packet);
     case PQ_MSG_PARSE:
+      SDB_LOG_PGSQL("Received parse query: ", packet);
       return ParseQuery(packet);
     case PQ_MSG_BIND:
+      SDB_LOG_PGSQL("Received bind query: ", packet);
       return BindQuery(packet);
     case PQ_MSG_EXECUTE:
+      SDB_LOG_PGSQL("Received execute query: ", packet);
       return ExecuteQuery(packet);
     case PQ_MSG_CLOSE:
+      SDB_LOG_PGSQL("Received close query: ", packet);
       return ExecuteClose(packet);
     case PQ_MSG_DESCRIBE:
+      SDB_LOG_PGSQL("Received describe query: ", packet);
       return DescribeQuery(packet);
     case PQ_MSG_SYNC:
       // TODO(Dronplane) implement Sync

@@ -1741,10 +1741,16 @@ Result RocksDBEngineCatalog::DropDefinition(ObjectId parent_id,
 
 Result RocksDBEngineCatalog::DropEntry(ObjectId parent_id,
                                        RocksDBEntryType type) {
-  return VisitDefinitions(
-    parent_id, type, [&](DefinitionKey key, vpack::Slice value) {
-      return DropDefinition(parent_id, type, key.GetObjectId());
-    });
+  rocksdb::WriteBatch batch;
+  auto* cf = RocksDBColumnFamilyManager::get(
+    RocksDBColumnFamilyManager::Family::Definitions);
+  return VisitDefinitions(parent_id, type,
+                          [&](DefinitionKey key, vpack::Slice value) {
+                            batch.Delete(cf, key.GetBuffer());
+                            return Result{};
+                          });
+  return rocksutils::ConvertStatus(
+    _db->GetRootDB()->Write(rocksdb::WriteOptions{}, &batch));
 }
 
 Result RocksDBEngineCatalog::WriteTombstone(ObjectId parent_id, ObjectId id) {

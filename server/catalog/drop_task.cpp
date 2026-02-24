@@ -42,7 +42,6 @@ bool CheckResult(const Result& result) {
 }  // namespace
 
 AsyncResult TableShardDrop::operator()() {
-  SDB_TRACE("xxxxx", Logger::ROCKSDB, "TableShardDrop task is running...");
   auto& server = GetServerEngine();
   auto r = server.DropDefinition(parent_id, RocksDBEntryType::TableShard, id);
   if (!CheckResult(r)) {
@@ -52,17 +51,18 @@ AsyncResult TableShardDrop::operator()() {
 }
 
 AsyncResult IndexShardDrop::operator()() {
-  SDB_TRACE("xxxxx", Logger::ROCKSDB, "IndexShardDrop task is running...");
   auto& server = GetServerEngine();
-  if (is_root) {
-    if (type == IndexType::Inverted) {
-      auto path = search::InvertedIndexShard::GetPath(db_id, schema_id, id);
-      std::error_code ec;
-      std::filesystem::remove_all(path, ec);
-      if (ec) {
-        return QueueDropTask(shared_from_this());
-      }
+  // TODO(codeworse): in case of table/schema/database drop delete the entire
+  // folder at once
+  if (type == IndexType::Inverted) {
+    auto path = search::InvertedIndexShard::GetPath(db_id, schema_id, id);
+    std::error_code ec;
+    std::filesystem::remove_all(path, ec);
+    if (ec) {
+      return QueueDropTask(shared_from_this());
     }
+  }
+  if (is_root) {
     auto r = server.DropDefinition(parent_id, RocksDBEntryType::IndexShard, id);
     if (!CheckResult(r)) {
       return QueueDropTask(shared_from_this());
@@ -88,7 +88,6 @@ Result IndexDrop::Finalize() {
 }
 
 AsyncResult IndexDrop::operator()() {
-  SDB_TRACE("xxxxx", Logger::ROCKSDB, "IndexDrop task is running...");
   auto shard_task = std::make_shared<IndexShardDrop>(
     DropTask{.parent_id = id, .id = shard_id, .is_root = false}, db_id,
     schema_id, type);
@@ -119,8 +118,6 @@ Result TableDrop::Finalize() {
 }
 
 AsyncResult TableDrop::operator()() {
-  SDB_TRACE("xxxxx", Logger::ROCKSDB, "TableDrop task is running...");
-
   std::vector<yaclib::Future<>> async_results;
   async_results.reserve(indexes.size() + 1);
   auto shard_task = std::make_shared<TableShardDrop>(
@@ -167,7 +164,6 @@ Result SchemaDrop::Finalize() {
 }
 
 AsyncResult SchemaDrop::operator()() {
-  SDB_TRACE("xxxxx", Logger::ROCKSDB, "SchemaDrop task is running...");
   std::vector<yaclib::Future<>> async_results;
   async_results.reserve(tables.size());
   for (auto& table : tables) {
@@ -205,7 +201,6 @@ Result DatabaseDrop::Finalize() {
 }
 
 AsyncResult DatabaseDrop::operator()() {
-  SDB_TRACE("xxxxx", Logger::ROCKSDB, "DatabaseDrop task is running...");
   std::vector<yaclib::Future<>> async_results;
   async_results.reserve(schemas.size());
   for (auto& schema : schemas) {

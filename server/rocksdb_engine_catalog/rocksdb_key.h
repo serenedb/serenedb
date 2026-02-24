@@ -42,6 +42,8 @@ class RocksDBKey {
   RocksDBKey(std::string_view key) : _key{key} {}
   RocksDBKey(rocksdb::Slice slice) : _key{slice.data(), slice.size()} {}
 
+  std::string_view GetBuffer() const { return _key; }
+
  protected:
   std::string_view _key;
 };
@@ -75,6 +77,7 @@ class RocksDBKeyWithBuffer {
     : _buffer{Key::Create(std::forward<Args>(args)...)} {}
 
   Key GetKey() const { return Key{_buffer}; }
+
   const std::string& GetBuffer() const { return _buffer; }
 
  private:

@@ -93,7 +93,8 @@ struct TableShardDrop : DropTask, std::enable_shared_from_this<TableShardDrop> {
   TableShardDrop(DropTask&& task) : DropTask{std::move(task)} {}
 
   std::string GetContext() const {
-    return absl::StrCat("table ", parent_id, " shard ", id);
+    return absl::StrFormat("TableShardDrop(table %d shard %d)", parent_id.id(),
+                           id.id());
   }
 
   AsyncResult operator()();
@@ -114,7 +115,8 @@ struct IndexShardDrop : DropTask, std::enable_shared_from_this<IndexShardDrop> {
       type{type} {}
 
   std::string GetContext() const {
-    return absl::StrCat("index ", parent_id, " shard ", id);
+    return absl::StrFormat("IndexShardDrop(index %d shard %d)", parent_id.id(),
+                           id.id());
   }
 
   AsyncResult operator()();
@@ -128,7 +130,10 @@ struct IndexDrop : DropTask, std::enable_shared_from_this<IndexDrop> {
   ObjectId shard_id;
   IndexType type;
 
-  std::string GetContext() const { return absl::StrCat("index ", id); }
+  std::string GetContext() const {
+    return absl::StrFormat("IndexDrop(schema %d index %d)", parent_id.id(),
+                           id.id());
+  }
 
   AsyncResult operator()();
   Result Finalize();
@@ -140,7 +145,10 @@ struct TableDrop : DropTask, std::enable_shared_from_this<TableDrop> {
   ObjectId shard_id;
   std::vector<std::shared_ptr<IndexDrop>> indexes;
 
-  std::string GetContext() const { return absl::StrCat("table ", id); }
+  std::string GetContext() const {
+    return absl::StrFormat("TableDrop(schema %d table %d)", parent_id.id(),
+                           id.id());
+  }
 
   AsyncResult operator()();
   Result Finalize();
@@ -152,7 +160,8 @@ struct SchemaDrop : DropTask, std::enable_shared_from_this<SchemaDrop> {
   std::vector<std::shared_ptr<TableDrop>> tables;
 
   std::string GetContext() const {
-    return absl::StrCat("schema ", parent_id, ".", id);
+    return absl::StrFormat("SchemaDrop(database %d schema %d)", parent_id.id(),
+                           id.id());
   }
 
   AsyncResult operator()();
@@ -164,7 +173,9 @@ struct DatabaseDrop : DropTask, std::enable_shared_from_this<DatabaseDrop> {
 
   std::vector<std::shared_ptr<SchemaDrop>> schemas;
 
-  std::string GetContext() const { return absl::StrCat("database ", id); }
+  std::string GetContext() const {
+    return absl::StrFormat("DatabaseDrop(database %d)", parent_id.id());
+  }
 
   AsyncResult operator()();
   Result Finalize();

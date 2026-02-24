@@ -161,10 +161,18 @@ class SearchFilterBuilderTest : public ::testing::Test {
 
       auto plan = opt.toVeloxPlan(opt.bestPlan()->op);
 
+      auto column_getter = [&](std::string_view cn) -> const connector::SereneDBColumn* {
+        auto it = table->columnMap().find(cn);
+        if (it == table->columnMap().end()) {
+          return nullptr;
+        }
+        return basics::downCast<const connector::SereneDBColumn>(it->second);
+      };
+
       for (auto& conjunct :
            connector._table_handles[rel.first.relation]->AcceptedFilters()) {
         auto res =
-          connector::search::ExprToFilter(root, conjunct, table->columnMap());
+          connector::search::ExprToFilter(root, conjunct, column_getter);
         ASSERT_EQ(res.ok(), must_succeed) << res.errorMessage();
       }
       if (must_succeed) {

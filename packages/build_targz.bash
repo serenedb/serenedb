@@ -35,8 +35,6 @@ fi
 mkdir -p install/bin
 cd install/bin
 ln -sf ../usr/sbin/serened serened
-ln -sf ../usr/sbin/serene-init-database serene-init-database
-ln -sf ../usr/sbin/serene-secure-installation serene-secure-installation
 cd "$PROJECT_ROOT"
 
 # Packaging - Transform usr/etc and usr/var to top level

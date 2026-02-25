@@ -167,22 +167,10 @@ void RocksDBBackgroundThread::run() {
         }
       }
 
-      bool force = isStopping();
 #ifdef SDB_CLUSTER
       _engine.replicationManager()->garbageCollect(force);
       _engine.dumpManager()->garbageCollect(force);
 #endif
-
-      if (!force) {
-        try {
-          // this only schedules tree rebuilds, but the actual rebuilds are
-          // performed by async tasks in the scheduler.
-          _engine.processTreeRebuilds();
-        } catch (const std::exception& ex) {
-          SDB_WARN("xxxxx", Logger::ENGINES,
-                   "caught exception during tree rebuilding: ", ex.what());
-        }
-      }
 
       const uint64_t latest_seq_no = _engine.db()->GetLatestSequenceNumber();
       const auto earliest_seq_needed =

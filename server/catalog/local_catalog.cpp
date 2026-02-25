@@ -69,7 +69,6 @@
 #include "catalog/table_options.h"
 #include "catalog/types.h"
 #include "catalog/view.h"
-#include "folly/Executor.h"
 #include "general_server/scheduler.h"
 #include "general_server/scheduler_feature.h"
 #include "general_server/state.h"

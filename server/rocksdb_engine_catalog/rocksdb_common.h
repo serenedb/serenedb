@@ -63,11 +63,6 @@ size_t CountKeyRange(rocksdb::DB* db, rocksdb::Slice lower,
                      const rocksdb::Snapshot* snapshot,
                      bool prefix_same_as_start);
 
-/// whether or not the specified range has keys
-bool HasKeys(rocksdb::DB*, rocksdb::Slice lower, rocksdb::Slice upper,
-             rocksdb::ColumnFamilyHandle* cf, const rocksdb::Snapshot* snapshot,
-             bool prefix_same_as_start);
-
 /// helper method to remove large ranges of data
 Result RemoveLargeRange(rocksdb::DB* db, rocksdb::Slice lower,
                         rocksdb::Slice upper, rocksdb::ColumnFamilyHandle* cf,

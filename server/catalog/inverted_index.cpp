@@ -4,6 +4,7 @@
 
 #include "search/inverted_index_shard.h"
 #include "vpack/serializer.h"
+
 namespace sdb::catalog {
 
 ResultOr<std::shared_ptr<IndexShard>> InvertedIndex::CreateIndexShard(

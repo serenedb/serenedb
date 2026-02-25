@@ -373,9 +373,11 @@ Result AnalyzerImpl::FromVPack(ObjectId database, vpack::Slice slice,
   return {};
 }
 
-std::shared_ptr<catalog::Function> MakeAnalyzer(
-  ObjectId database, ObjectId schema, std::string_view name,
-  std::string_view type, vpack::Slice options, Features features) {
+std::shared_ptr<catalog::Function> MakeAnalyzer(ObjectId database,
+                                                std::string_view name,
+                                                std::string_view type,
+                                                vpack::Slice options,
+                                                Features features) {
   catalog::FunctionProperties properties{
     .options =
       {

@@ -47,7 +47,6 @@ struct SchemaDependency : public ObjectDependencyBase {
   }
 };
 
-// For simple object dependencies
 struct DatabaseDependency : public ObjectDependencyBase {
   containers::FlatHashSet<ObjectId> schemas;
 };

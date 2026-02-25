@@ -216,9 +216,6 @@ class RocksDBEngineCatalog {
 
   bool inRecovery() { return recoveryState() < RecoveryState::Done; }
 
-  void scheduleTreeRebuild(ObjectId database, ObjectId collection);
-  void processTreeRebuilds();
-
   void processCompactions();
 
   void CreateTable(const catalog::Table& collection);

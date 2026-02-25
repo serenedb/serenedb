@@ -1,0 +1,36 @@
+query
+SELECT name, setting, short_desc FROM pg_settings
+WHERE name in
+(
+    'search_path',
+    'extra_float_digits',
+    'bytea_output',
+    'client_encoding',
+    'application_name',
+    'transaction_isolation',
+    'default_transaction_isolation',
+    'default_transaction_read_only',
+    'in_hot_standby',
+    'integer_datetimes',
+    'scram_iterations',
+    'server_encoding',
+    'server_version',
+    'standard_conforming_strings'
+)
+ORDER BY name;
+----
+name	setting	short_desc
+application_name	(empty)	Sets the application name to be reported in statistics and logs.
+bytea_output	hex	Sets the output format for bytea.
+client_encoding	UTF8	Sets the client's character set encoding.
+default_transaction_isolation	<slt:ignore>	Sets the transaction isolation level of each new transaction.
+default_transaction_read_only	off	Sets the default read-only status of new transactions.
+extra_float_digits	1	Sets the number of digits displayed for floating-point values.
+in_hot_standby	off	Shows whether hot standby is currently active.
+integer_datetimes	on	Shows whether datetimes are integer based.
+scram_iterations	4096	Sets the iteration count for SCRAM secret generation.
+search_path	"$user", public	Sets the schema search order for names that are not schema-qualified.
+server_encoding	UTF8	Shows the server (database) character set encoding.
+server_version	18.1	Shows the server version.
+standard_conforming_strings	on	Causes '...' strings to treat backslashes literally.
+transaction_isolation	<slt:ignore>	Sets the current transaction's isolation level.

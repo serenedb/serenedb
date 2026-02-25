@@ -69,45 +69,16 @@ constexpr auto kVariableDescription =
       "bytea_output",
       {
         VariableType::PgByteaOutput,
-        "Sets the output format for values of type bytea. Valid values are "
-        "'hex' "
-        "(the default) and 'escape' (the traditional PostgreSQL format).",
+        "Sets the output format for bytea.",
         "hex",
-      },
-    },
-    {
-      "sdb_write_conflict_policy",
-      {
-        VariableType::SdbWriteConflictPolicy,
-        "Sets the write conflict policy. Valid values are "
-        "'emit_error' "
-        "(the default), 'do_nothing' (skip conflicted rows) and 'replace'.",
-        "emit_error",
-      },
-    },
-    {
-      "sdb_read_your_own_writes",
-      {
-        VariableType::Bool,
-        "Controls whether queries can see uncommitted writes from the current "
-        "transaction.",
-        "true",
       },
     },
     {
       "client_encoding",
       {
         VariableType::String,
-        "Sets the client character set encoding.",
+        "Sets the client's character set encoding.",
         "UTF8",
-      },
-    },
-    {
-      "datestyle",
-      {
-        VariableType::String,
-        "Sets the display format for date and time values.",
-        "ISO, MDY",
       },
     },
     {
@@ -146,7 +117,7 @@ constexpr auto kVariableDescription =
       "in_hot_standby",
       {
         VariableType::Bool,
-        "Shows whether the server is currently in hot standby mode.",
+        "Shows whether hot standby is currently active.",
         "off",
       },
     },
@@ -159,18 +130,10 @@ constexpr auto kVariableDescription =
       },
     },
     {
-      "intervalstyle",
-      {
-        VariableType::String,
-        "Sets the display format for interval values.",
-        "postgres",
-      },
-    },
-    {
       "scram_iterations",
       {
         VariableType::I32,
-        "Sets the number of SCRAM iterations for password hashing.",
+        "Sets the iteration count for SCRAM secret generation.",
         "4096",
       },
     },
@@ -178,7 +141,7 @@ constexpr auto kVariableDescription =
       "server_encoding",
       {
         VariableType::String,
-        "Sets the server character set encoding.",
+        "Shows the server (database) character set encoding.",
         "UTF8",
       },
     },
@@ -198,12 +161,48 @@ constexpr auto kVariableDescription =
         "on",
       },
     },
+    // SereneDB specific
+    {
+      "datestyle",
+      {
+        VariableType::String,
+        "Sets the display format for date and time values.",
+        "ISO, MDY",
+      },
+    },
+    {
+      "intervalstyle",
+      {
+        VariableType::String,
+        "Sets the display format for interval values.",
+        "postgres",
+      },
+    },
     {
       "timezone",
       {
         VariableType::String,
         "Sets the time zone for displaying and interpreting time stamps.",
         "Etc/UTC",
+      },
+    },
+    {
+      "sdb_write_conflict_policy",
+      {
+        VariableType::SdbWriteConflictPolicy,
+        "Sets the write conflict policy. Valid values are "
+        "'emit_error' "
+        "(the default), 'do_nothing' (skip conflicted rows) and 'replace'.",
+        "emit_error",
+      },
+    },
+    {
+      "sdb_read_your_own_writes",
+      {
+        VariableType::Bool,
+        "Controls whether queries can see uncommitted writes from the current "
+        "transaction.",
+        "true",
       },
     },
   });

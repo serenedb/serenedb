@@ -296,7 +296,7 @@ Result CatalogFeature::RegisterViews(ObjectId db_id, ObjectId schema_id) {
         return r;
       }
 
-      return Global().RegisterView(schema_id, view->GetId(), view);
+      return Global().RegisterView(schema_id, view);
     });
 }
 

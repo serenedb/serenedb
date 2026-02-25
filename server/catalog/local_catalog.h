@@ -55,8 +55,7 @@ class LocalCatalog final : public LogicalCatalog,
   Result RegisterDatabase(std::shared_ptr<Database> database) final;
   Result RegisterSchema(ObjectId database_id,
                         std::shared_ptr<Schema> schema) final;
-  Result RegisterView(ObjectId database_id, ObjectId schema_id,
-                      std::shared_ptr<View> view) final;
+  Result RegisterView(ObjectId schema_id, std::shared_ptr<View> view) final;
   Result RegisterFunction(ObjectId database_id, ObjectId schema_id,
                           std::shared_ptr<Function> function) final;
   Result RegisterTable(ObjectId database_id, ObjectId schema_id,
@@ -108,8 +107,6 @@ class LocalCatalog final : public LogicalCatalog,
   Result DropIndex(ObjectId database_id, std::string_view schema,
                    std::string_view name, AsyncResult* async_result) final;
   std::shared_ptr<Snapshot> GetSnapshot() const noexcept final;
-
-  void DropTableShard(ObjectId id);
 
   bool GetSkipBackgroundErrors() const noexcept {
     return _skip_background_errors;

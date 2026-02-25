@@ -172,7 +172,7 @@ struct LogicalCatalog {
   virtual Result RegisterDatabase(std::shared_ptr<Database> database) = 0;
   virtual Result RegisterSchema(ObjectId database,
                                 std::shared_ptr<catalog::Schema> schema) = 0;
-  virtual Result RegisterView(ObjectId database_id, ObjectId schema_id,
+  virtual Result RegisterView(ObjectId schema_id,
                               std::shared_ptr<catalog::View> view) = 0;
   virtual Result RegisterTable(ObjectId database_id, ObjectId schema_id,
                                CreateTableOptions options) = 0;

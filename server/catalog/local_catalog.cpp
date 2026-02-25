@@ -647,18 +647,6 @@ class SnapshotImpl : public Snapshot {
     return std::dynamic_pointer_cast<Database>(obj);
   }
 
-  std::vector<std::shared_ptr<Index>> GetIndexesByTable(ObjectId table_id) {
-    auto dep_it = _object_dependencies.find(table_id);
-    if (dep_it == _object_dependencies.end()) {
-      return {};
-    }
-    auto& table_dep = basics::downCast<TableDependency>(*dep_it->second);
-    return table_dep.indexes |
-           std::ranges::views::transform(
-             [&](ObjectId index_id) { return GetObject<Index>(index_id); }) |
-           std::ranges::to<std::vector>();
-  }
-
   template<ResolveType Type>
   Result ReplaceObject(ObjectId parent_id, std::string_view old_name,
                        std::shared_ptr<Object> new_object) {
@@ -714,7 +702,6 @@ class SnapshotImpl : public Snapshot {
           auto table_deps = GetDependency<TableDependency>(parent_id);
           SDB_ASSERT(table_deps);
           table_deps->indexes.erase(id);
-          auto index = std::dynamic_pointer_cast<Index>(obj);
           break;
         }
         case ObjectType::IndexShard: {
@@ -869,7 +856,7 @@ Result LocalCatalog::RegisterSchema(ObjectId database_id,
   return _snapshot->RegisterObject(std::move(schema), database_id, false);
 }
 
-Result LocalCatalog::RegisterView(ObjectId database_id, ObjectId schema_id,
+Result LocalCatalog::RegisterView(ObjectId schema_id,
                                   std::shared_ptr<View> view) {
   absl::MutexLock lock{&_mutex};
   return _snapshot->RegisterObject(std::move(view), schema_id, false);

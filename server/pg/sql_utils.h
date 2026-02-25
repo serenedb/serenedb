@@ -25,6 +25,7 @@
 
 #include "basics/assert.h"
 #include "catalog/fwd.h"
+#include "query/config.h"
 
 struct Node;
 struct AConst;
@@ -62,6 +63,7 @@ struct JsonObjectConstructor;
 struct SQLValueFunction;
 struct SubLink;
 struct TypeName;
+struct CreateFunctionStmt;
 
 namespace sdb {
 class QueryString;
@@ -75,6 +77,10 @@ std::string GetUnnamedFunctionArgumentName(size_t param_idx);
 
 catalog::FunctionSignature ToSignature(const List* pg_parameters,
                                        const TypeName* pg_return_type);
+
+std::shared_ptr<catalog::Function> CreateFunctionImpl(
+  const Config& config, ObjectId database_id, std::string_view database_name,
+  std::string_view current_schema, const CreateFunctionStmt& stmt);
 
 std::string DeparseStmt(Node* node);
 

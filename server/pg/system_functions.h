@@ -25,16 +25,21 @@
 
 namespace sdb::pg {
 
+struct SystemFunction {
+  const std::string_view query;
+  const bool is_table;
+};
+
 // TODO(mkornaukhov) write queries in separate sql file
 // TODO revoke, grant, create rules and other stuff?
-inline constexpr auto kSystemFunctionsQueries =
-  std::to_array<std::string_view>({
-    R"(CREATE FUNCTION pg_show_all_settings()
+inline constexpr auto kSystemFunctionsQueries = std::to_array<SystemFunction>({
+  {.query = R"(CREATE FUNCTION pg_show_all_settings()
         RETURNS TABLE(name TEXT, value TEXT, description TEXT)
         LANGUAGE SQL
         BEGIN ATOMIC
             SELECT * FROM sdb_show_all_settings;
         END;)",
-  });
+   .is_table = true},
+});
 
 }  // namespace sdb::pg

@@ -510,49 +510,43 @@ void RegisterSystemViews() {
 
 // todo kSystemFunctionsQueries should also contain some options
 void RegisterSystemFunctions() {
-  for (const auto system_func_query : kSystemFunctionsQueries) {
-    auto func_impl = pg::FunctionImpl();
+  for (const auto [system_func_query, is_table] : kSystemFunctionsQueries) {
+    // auto func_impl = pg::FunctionImpl();
     auto stmt = pg::ParseSystemObject(system_func_query);
 
     const auto* raw_stmt = castNode(RawStmt, stmt.tree.GetRoot());
     const auto* create_func_stmt = castNode(CreateFunctionStmt, raw_stmt->stmt);
     SDB_ASSERT(create_func_stmt);
+    // SDB_ASSERT(create_func_stmt->sql_body);
+    // SDB_ASSERT(IsA(create_func_stmt->sql_body, List));
+    // const auto* outer_list = castNode(List, create_func_stmt->sql_body);
+    // SDB_ASSERT(list_length(outer_list) == 1);
+    // const auto* inner_list_node = list_nth_node(Node, outer_list, 0);
+    // SDB_ASSERT(IsA(inner_list_node, List));
+    // const auto* inner_list = castNode(List, inner_list_node);
+    // SDB_ASSERT(list_length(inner_list) == 1);
+    // auto* body_stmt = list_nth_node(Node, inner_list, 0);
+    // auto function_body = pg::DeparseStmt(body_stmt);
 
-    SDB_ASSERT(create_func_stmt->sql_body);
+    // auto func_name = ParseObjectName(create_func_stmt->funcname,
+    // "").relation; auto res =
+    //   func_impl.Init(id::kSystemDB, func_name, function_body, false,
+    //   Config{});
+    // SDB_ASSERT(res.ok(), res.errorMessage());
+    // FunctionOptions opts;
+    // opts.table = is_table;
+    // opts.language = catalog::FunctionLanguage::SQL;
+    // opts.internal = true;
 
-    // Copy pasted, IDK whether this is OK
-    SDB_ASSERT(IsA(create_func_stmt->sql_body, List));
-    const auto* outer_list = castNode(List, create_func_stmt->sql_body);
-    SDB_ASSERT(list_length(outer_list) == 1);
-    const auto* inner_list_node = list_nth_node(Node, outer_list, 0);
-    SDB_ASSERT(IsA(inner_list_node, List));
-    const auto* inner_list = castNode(List, inner_list_node);
-    SDB_ASSERT(list_length(inner_list) == 1);
-    auto* body_stmt = list_nth_node(Node, inner_list, 0);
-    auto function_body = pg::DeparseStmt(body_stmt);
+    // FunctionProperties props;
+    // props.signature = pg::ToSignature(create_func_stmt->parameters,
+    //                                   create_func_stmt->returnType);
+    // props.options = opts;
+    // props.name = func_name;
+    // props.id = {};
 
-    auto func_name = ParseObjectName(create_func_stmt->funcname, "").relation;
-    auto res =
-      func_impl.Init(id::kSystemDB, func_name, function_body, false, Config());
-    if (!res.ok()) {
-      SDB_PRINT("error initing function: ", res.errorMessage());
-    }
-    SDB_ASSERT(res.ok());
-    FunctionOptions opts;
-    opts.table = true;
-    opts.language = catalog::FunctionLanguage::SQL;
-    opts.internal = true;
-
-    FunctionProperties props;
-    props.signature = pg::ToSignature(create_func_stmt->parameters,
-                                      create_func_stmt->returnType);
-    props.options = opts;
-    props.name = func_name;
-    props.id = {};
-
-    auto func = std::make_shared<pg::Function>(
-      std::move(props),
-      std::make_unique<pg::FunctionImpl>(std::move(func_impl)), id::kSystemDB);
+    auto func =
+      CreateFunctionImpl(Config{}, id::kSystemDB, "", "", *create_func_stmt);
     gSystemFunctions[func->GetName()] = std::move(func);
   }
 }

@@ -18,11 +18,11 @@ scram_iterations	4096	Sets the iteration count for SCRAM secret generation.
 server_encoding	UTF8	Shows the server (database) character set encoding.
 server_version	18.1	Shows the server version.
 standard_conforming_strings	on	Causes '...' strings to treat backslashes literally.
-intervalstyle	postgres	Sets the display format for interval values.
 datestyle	ISO, MDY	Sets the display format for date and time values.
+intervalstyle	postgres	Sets the display format for interval values.
+timezone	Etc/UTC	Sets the time zone for displaying and interpreting time stamps.
 sdb_write_conflict_policy	emit_error	Sets the write conflict policy. Valid values are 'emit_error' (the default), 'do_nothing' (skip conflicted rows) and 'replace'.
 sdb_read_your_own_writes	true	Controls whether queries can see uncommitted writes from the current transaction.
-timezone	Etc/UTC	Sets the time zone for displaying and interpreting time stamps.
 query_max_memory_per_node	0B	Maximum memory that a query can use on a single host.
 session_timezone	(empty)	User provided session timezone. Stores a string with the actual timezone name, e.g: "America/Los_Angeles".
 adjust_timestamp_to_session_timezone	false	If true, timezone-less timestamp conversions (e.g. string to timestamp, when the string does not specify a timezone) will be adjusted to the user provided session timezone (if any). False by default.

@@ -105,7 +105,9 @@ FileDataSource::FileDataSource(
   const velox::common::SubfieldFilters& subfield_filters,
   velox::RowTypePtr output_type,
   const velox::connector::ColumnHandleMap& column_handles,
-  velox::memory::MemoryPool& memory_pool)
+  velox::memory::MemoryPool& memory_pool,
+  const velox::core::TypedExprPtr& remaining_filter,
+  velox::core::ExpressionEvaluator* evaluator)
   : _output_type{std::move(output_type)},
     _source{std::move(source)},
     _reader_options_dwio{options->dwio},
@@ -126,6 +128,13 @@ FileDataSource::FileDataSource(
 
   for (auto& [subfield, filter] : subfield_filters) {
     spec->getOrCreateChild(subfield)->setFilter(filter);
+  }
+
+  if (remaining_filter) {
+    SDB_ASSERT(evaluator);
+    _row_reader_options->setMetadataFilter(
+      std::make_shared<velox::common::MetadataFilter>(*spec, *remaining_filter,
+                                                      evaluator));
   }
 
   _row_reader_options->setScanSpec(std::move(spec));

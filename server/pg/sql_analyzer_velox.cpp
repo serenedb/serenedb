@@ -1962,7 +1962,7 @@ class CopyOptionsParser : public FileOptionsParser {
                     {"dwrf", [&] { ParseDwrf(); }},
                     {"orc", [&] { ParseOrc(); }}};
 
-    auto [underlying_format, format, location] = ParseFileFormat();
+    auto [_, format, location] = ParseFileFormat();
 
     auto it = format2parser.find(format);
     SDB_ASSERT(it != format2parser.end());
@@ -2180,13 +2180,14 @@ class CopyOptionsParser : public FileOptionsParser {
     aliases.reserve(_row_type->size());
 
     for (const auto& name : _row_type->names()) {
-      if (absl::c_contains(aliases, name)) {
+      std::string_view alias = ToAlias(name);
+      if (absl::c_contains(aliases, alias)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_COLUMN),
-                        ERR_MSG("column \"", name,
+                        ERR_MSG("column \"", alias,
                                 "\" specified more than once. That's forbidden "
                                 "for \"PARQUET\" format"));
       }
-      aliases.emplace_back(ToAlias(name));
+      aliases.emplace_back(alias);
     }
 
     _row_type = velox::ROW(std::move(aliases), _row_type->children());

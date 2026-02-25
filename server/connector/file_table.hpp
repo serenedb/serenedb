@@ -122,6 +122,16 @@ class ReadFileTable final : public FileTable {
 
   const std::shared_ptr<ReaderOptions>& GetOptions() const { return _options; }
 
+  bool SupportsFilterPushdown() const {
+    switch (_options->dwio->fileFormat()) {
+      using enum velox::dwio::common::FileFormat;
+      case PARQUET:
+        return true;
+      default:
+        return false;
+    }
+  }
+
  private:
   std::shared_ptr<velox::ReadFile> _source;
   std::shared_ptr<ReaderOptions> _options;
@@ -154,11 +164,13 @@ class FileTableHandle final : public velox::connector::ConnectorTableHandle {
  public:
   FileTableHandle(std::shared_ptr<velox::ReadFile> source,
                   std::shared_ptr<ReaderOptions> options,
-                  velox::common::SubfieldFilters subfield_filters)
+                  velox::common::SubfieldFilters subfield_filters,
+                  velox::core::TypedExprPtr remaining_filter)
     : velox::connector::ConnectorTableHandle{"serenedb"},
       _source{std::move(source)},
       _options{std::move(options)},
       _subfield_filters{std::move(subfield_filters)},
+      _remaining_filter{std::move(remaining_filter)},
       _name{absl::StrCat(
         "File(", velox::dwio::common::toString(_options->dwio->fileFormat()),
         ")")} {}
@@ -190,10 +202,15 @@ class FileTableHandle final : public velox::connector::ConnectorTableHandle {
     return _subfield_filters;
   }
 
+  const velox::core::TypedExprPtr& GetRemainingFilter() const {
+    return _remaining_filter;
+  }
+
  private:
   std::shared_ptr<velox::ReadFile> _source;
   std::shared_ptr<ReaderOptions> _options;
   velox::common::SubfieldFilters _subfield_filters;
+  velox::core::TypedExprPtr _remaining_filter;
   std::string _name;
 };
 
@@ -261,7 +278,9 @@ class FileDataSource final : public velox::connector::DataSource {
                  const velox::common::SubfieldFilters& subfield_filters,
                  velox::RowTypePtr output_type,
                  const velox::connector::ColumnHandleMap& column_handles,
-                 velox::memory::MemoryPool& memory_pool);
+                 velox::memory::MemoryPool& memory_pool,
+                 const velox::core::TypedExprPtr& remaining_filter,
+                 velox::core::ExpressionEvaluator* evaluator);
 
   void addSplit(std::shared_ptr<velox::connector::ConnectorSplit> split) final;
 

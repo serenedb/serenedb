@@ -29,6 +29,7 @@
 #include <velox/core/Expressions.h>
 #include <velox/dwio/common/Options.h>
 #include <velox/dwio/common/ReaderFactory.h>
+#include <velox/expression/ExprConstants.h>
 #include <velox/type/Type.h>
 #include <velox/vector/DecodedVector.h>
 
@@ -248,19 +249,31 @@ class SereneDBTableLayout final : public axiom::connector::TableLayout {
     if (const auto* read_file_table =
           dynamic_cast<const ReadFileTable*>(&this->table())) {
       velox::common::SubfieldFilters subfield_filters;
+
       double sample_rate = 1.0;
+      std::vector<velox::core::TypedExprPtr> remaining_conjuncts;
       for (auto& filter : filters) {
         auto remaining =
           velox::connector::hive::extractFiltersFromRemainingFilter(
             filter, &evaluator, subfield_filters, sample_rate);
         if (remaining) {
-          rejected_filters.push_back(remaining);
+          remaining_conjuncts.push_back(remaining);
+          rejected_filters.push_back(std::move(remaining));
         }
       }
 
-      return std::make_shared<FileTableHandle>(read_file_table->GetSource(),
-                                               read_file_table->GetOptions(),
-                                               std::move(subfield_filters));
+      velox::core::TypedExprPtr remaining_filter;
+      if (remaining_conjuncts.size() == 1) {
+        remaining_filter = std::move(remaining_conjuncts[0]);
+      } else if (remaining_conjuncts.size() > 1) {
+        remaining_filter = std::make_shared<velox::core::CallTypedExpr>(
+          velox::BOOLEAN(), std::move(remaining_conjuncts),
+          velox::expression::kAnd);
+      }
+
+      return std::make_shared<FileTableHandle>(
+        read_file_table->GetSource(), read_file_table->GetOptions(),
+        std::move(subfield_filters), std::move(remaining_filter));
     }
 
     rejected_filters = std::move(filters);
@@ -626,7 +639,8 @@ class SereneDBConnector final : public velox::connector::Connector {
       return std::make_unique<FileDataSource>(
         file_handle->GetSource(), file_handle->GetOptions(),
         file_handle->GetSubfieldFilters(), output_type, column_handles,
-        *connector_query_ctx->memoryPool());
+        *connector_query_ctx->memoryPool(), file_handle->GetRemainingFilter(),
+        connector_query_ctx->expressionEvaluator());
     }
 
     const auto& serene_table_handle =

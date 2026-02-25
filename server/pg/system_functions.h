@@ -25,6 +25,10 @@
 
 namespace sdb::pg {
 
+// TODO
+// Queries is enough
+// Make pg_show_all_settings() Postgres compatible
+
 struct SystemFunction {
   const std::string_view query;
   const bool is_table;

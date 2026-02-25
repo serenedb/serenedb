@@ -509,7 +509,7 @@ void RegisterSystemViews() {
 }
 
 void RegisterSystemFunctions() {
-  for (const auto [system_func_query, is_table] : kSystemFunctionsQueries) {
+  for (const auto system_func_query : kSystemFunctionsQueries) {
     auto stmt = pg::ParseSystemObject(system_func_query);
     const auto* raw_stmt = castNode(RawStmt, stmt.tree.GetRoot());
     const auto* create_func_stmt = castNode(CreateFunctionStmt, raw_stmt->stmt);

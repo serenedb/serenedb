@@ -25,25 +25,49 @@
 
 namespace sdb::pg {
 
-// TODO
-// Queries is enough
-// Make pg_show_all_settings() Postgres compatible
-
-struct SystemFunction {
-  const std::string_view query;
-  const bool is_table;
-};
-
 // TODO(mkornaukhov) write queries in separate sql file
-// TODO revoke, grant, create rules and other stuff?
-inline constexpr auto kSystemFunctionsQueries = std::to_array<SystemFunction>({
-  {.query = R"(CREATE FUNCTION pg_show_all_settings()
-        RETURNS TABLE(name TEXT, value TEXT, description TEXT)
+inline constexpr auto kSystemFunctionsQueries =
+  std::to_array<std::string_view>({
+    R"(CREATE FUNCTION pg_show_all_settings()
+        RETURNS TABLE( name TEXT,
+                       setting TEXT,
+                       unit TEXT,
+                       category TEXT,
+                       short_desc TEXT,
+                       extra_desc TEXT,
+                       context TEXT,
+                       vartype TEXT,
+                       source TEXT,
+                       min_val TEXT,
+                       max_val TEXT,
+                       enumvals TEXT[],
+                       boot_val TEXT,
+                       reset_val TEXT,
+                       sourcefile TEXT,
+                       sourceline INTEGER,
+                       pending_restart BOOLEAN)
         LANGUAGE SQL
         BEGIN ATOMIC
-            SELECT * FROM sdb_show_all_settings;
+            SELECT
+              name,
+              value as setting,
+              NULL::TEXT as unit,
+              NULL::TEXT as category,
+              description as short_desc,
+              NULL::TEXT as extra_desc,
+              NULL::TEXT as context,
+              NULL::TEXT as vartype,
+              NULL::TEXT as source,
+              NULL::TEXT as min_val,
+              NULL::TEXT as max_val,
+              NULL::TEXT[] as enumvals,
+              NULL::TEXT as boot_val,
+              NULL::TEXT as reset_val,
+              NULL::TEXT as sourcefile,
+              NULL::INT as sourceline,
+              NULL::BOOL as pending_restart
+            FROM sdb_show_all_settings;
         END;)",
-   .is_table = true},
-});
+  });
 
 }  // namespace sdb::pg
